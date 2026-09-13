@@ -94,7 +94,9 @@ Var StartNow   ;/Start - a silent install starts the products at the end, as the
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${SRC_DIR}\LICENSE"
-!define MULTIUSER_INSTALLMODEPAGE_TEXT_TOP "Choose how ${PRODUCT} runs.$\r$\n$\r$\nAll users installs under Program Files and registers the selected products as Windows services - administrator rights are required.$\r$\n$\r$\nCurrent user installs under your profile and runs them from Start Menu shortcuts - no administrator rights."
+;MultiUser draws this in a 42-dialog-unit label - five lines at the page's width - and three paragraphs overran it, the
+;"Current user" one drawn behind the radio buttons (reviews/install-issues.md #9).  Two sentences, one per mode.
+!define MULTIUSER_INSTALLMODEPAGE_TEXT_TOP "All users: under Program Files, as Windows services - administrator rights are required.$\r$\nCurrent user: under your profile, from Start Menu shortcuts - no administrator rights."
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_ALLUSERS "All users - Windows services (administrator)"
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_CURRENTUSER "Current user - Start Menu shortcuts (no administrator)"
 !define MULTIUSER_PAGE_CUSTOMFUNCTION_LEAVE ModePageLeave
@@ -109,10 +111,17 @@ Var StartNow   ;/Start - a silent install starts the products at the end, as the
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${PRODUCT} now"
 !define MUI_FINISHPAGE_RUN_FUNCTION StartProducts
 !define MUI_FINISHPAGE_TEXT "$FinishText"
+;The text control is 40 dialog units - five lines of ~48 characters - once the "Start now" box takes its rows, and what
+;overflows is clipped without a sign: the Web UI url fell off it (reviews/install-issues.md #10).  TEXT_LARGE makes it 60u,
+;seven lines, the texts are written to that, and the url is the link MUI draws on its own row under the box.  The restart
+;form (below) has no link, so its text carries the url in its first lines.
+!define MUI_FINISHPAGE_TEXT_LARGE
+!define MUI_FINISHPAGE_LINK "Web UI: http://localhost:1967/"
+!define MUI_FINISHPAGE_LINK_LOCATION "http://localhost:1967/"
 ;With the reboot flag set (-VCRedist: the runtime's installer returned 3010) MUI shows this text and restart-now/later
 ;instead - no "Start now" box, the products may not load until the restart.  The reboot case is all-users only (the
 ;runtime is installed in that mode alone), so "the services start with Windows" is always true of it.
-!define MUI_FINISHPAGE_TEXT_REBOOT "Windows must be restarted to finish installing the Visual C++ runtime ${PRODUCT} runs on.$\r$\n$\r$\nThe ${PRODUCT} services are registered to start with Windows, so they come up after the restart; until then they may not start.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs.$\r$\n$\r$\nRestart now?"
+!define MUI_FINISHPAGE_TEXT_REBOOT "Windows must be restarted to finish installing the Visual C++ runtime ${PRODUCT} runs on; its services start with Windows after the restart.$\r$\n$\r$\nWeb UI: http://localhost:1967/ after the restart."
 !define MUI_FINISHPAGE_TEXT_REBOOTNOW "Restart now"
 !define MUI_FINISHPAGE_TEXT_REBOOTLATER "I will restart Windows later"
 !insertmacro MUI_PAGE_FINISH
@@ -158,6 +167,30 @@ FunctionEnd
 		MessageBox MB_OK|MB_ICONSTOP "Registering the ${svc} service failed - see the details above." /SD IDOK
 		Abort "Service registration failed"
 	${EndIf}
+!macroend
+
+; Inbound firewall rules for the all-users install: a LocalSystem service never gets the "allow this app?" prompt an
+; interactive program does, so without these the hub answers only its own machine (reviews/install-issues.md #11).
+; "any" by ruling: Windows puts a new network in Public unless someone says otherwise - the clean-machine VM is - and a
+; private,domain rule silently would not apply there, which is worse than no rule, since the details pane still reads
+; "Allowing".  The price is that 1967 (plain http with a login on it, by ruling) answers on an untrusted network too.
+; One word here narrows it again.
+!define FIREWALL_PROFILES "any"
+; A netsh failure is printed, never fatal: the products run either way, they are simply local-only.
+!macro OpenFirewallPort name port exe
+	nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${name}"' ;idempotent - a reinstall must not stack rules
+	Pop $0
+	DetailPrint "Allowing inbound TCP ${port} (${name}) on ${FIREWALL_PROFILES}"
+	nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${name}" dir=in action=allow protocol=TCP localport=${port} profile=${FIREWALL_PROFILES} program="${exe}"'
+	Pop $0
+	${If} $0 != 0
+		DetailPrint "  netsh returned $0 - open TCP ${port} by hand to reach this machine from another"
+	${EndIf}
+!macroend
+
+!macro CloseFirewallPort name
+	nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${name}"'
+	Pop $0
 !macroend
 
 ;--------------------------------------------------------------------------------------------------------------------------
@@ -327,6 +360,8 @@ Section -Services
 		!insertmacro RequireService "Jde.OpcHub"
 		nsExec::ExecToLog 'sc config Jde.OpcHub start= auto'
 		Pop $0
+		;the hub's port: the Web UI and the api, for a browser or a client on any other machine (#11)
+		!insertmacro OpenFirewallPort "Jde OpcHub (TCP 1967)" "1967" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe"
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
 			!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
 			DetailPrint "Registering the Jde.OpcServer service"
@@ -335,8 +370,11 @@ Section -Services
 			!insertmacro RequireService "Jde.OpcServer"
 			nsExec::ExecToLog 'sc config Jde.OpcServer start= auto depend= Jde.OpcHub'
 			Pop $0
+			;the UA endpoint, for OPC clients elsewhere.  1970 (its http) stays closed - the hub reaches it over loopback.
+			!insertmacro OpenFirewallPort "Jde OpcServer (TCP 4840)" "4840" "$INSTDIR\OpcServer\Jde.Opc.Server.exe"
 		${EndIf}
-		StrCpy $FinishText "${PRODUCT} is installed as Windows services.$\r$\n$\r$\nThey start when you finish (the box below), or later with:$\r$\n    net start Jde.OpcHub$\r$\n    net start Jde.OpcServer$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs."
+		;six lines at the finish page's width (MUI_FINISHPAGE_TEXT_LARGE, seven) - the database's whereabouts are the README's
+		StrCpy $FinishText "${PRODUCT} is installed as Windows services: they start when you finish (the box below), or later with net start Jde.OpcHub / Jde.OpcServer.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs - the link below."
 	${Else}
 		;no services without administrator rights: shortcuts, the exes run in a console window (-c)
 		CreateDirectory "$SMPROGRAMS\${COMPANY}"
@@ -348,7 +386,7 @@ Section -Services
 		${EndIf}
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		SetOutPath "$INSTDIR"
-		StrCpy $FinishText "${PRODUCT} is installed for your account.$\r$\n$\r$\nIt starts when you finish (the box below), or later from the Start Menu folder '${COMPANY}' - each product runs in its own console window.$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde OpcHub runs."
+		StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once it runs - the link below."
 	${EndIf}
 SectionEnd
 
@@ -378,7 +416,8 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub, port 1967): the REST/websocket API the Web UI talks to.  Required."
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's own OPC UA server (service Jde.OpcServer, opc.tcp 4840, http 1970) with the DI/IA nodesets and the pumps demo address space; seeded as the hub's default connection, with the Web UI's Google login.  Optional - the hub can connect to any OPC UA server."
+	;the description box holds ~200 characters and has no scrollbar - this one lost its last sentence (reviews/install-issues.md #9)
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's OPC UA server (Jde.OpcServer, opc.tcp 4840): DI/IA nodesets and the pumps demo; seeded as the hub's default connection, with the Web UI's Google login.  Optional."
 !ifndef SKIP_WEB
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_WEB} "The Angular site under <install dir>\Web, served by the hub at http://<host>:1967/.  IIS is not needed; web.config is included for putting the site behind it (see the README)."
 !endif
@@ -506,6 +545,8 @@ Section "Uninstall"
 	${If} $MultiUser.InstallMode == "AllUsers"
 		!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
 		!insertmacro StopAndRemove "Jde.OpcHub" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 1967)"
+		!insertmacro CloseFirewallPort "Jde OpcServer (TCP 4840)"
 	${Else}
 		nsExec::ExecToLog 'taskkill /F /IM Jde.Opc.Server.exe /IM Jde.Opc.Hub.exe'
 		Pop $0

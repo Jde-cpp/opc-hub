@@ -50,7 +50,8 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
 - creates the `jde-cpp` system account, owner of `/var/lib/Jde-Cpp`;
 - enables and starts `jde-opchub` (port 1967).  The OPC UA server is installed but not enabled - the hub can connect to
   any OPC UA server: `sudo systemctl enable --now jde-opcserver` (opc.tcp 4840, http 1970; requires the hub, as the
-  Windows service's `depend=`);
+  Windows service's `depend=`).  The package opens no firewall port (the Windows installer does): with ufw or firewalld
+  on, allow 1967/tcp, and 4840/tcp for the OPC UA server, yourself;
 - the Web UI: the site file is installed, not enabled - `sudo ln -s /etc/jde-cpp/nginx-opchub.conf
   /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`, then http://127.0.0.1:8071 - optional: the hub serves the
   site itself at http://<host>:1967/ (`http.site` = `$(ExeDir)/../web`, the package's `/opt/jde-cpp/web`);
