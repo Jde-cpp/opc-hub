@@ -103,8 +103,8 @@ Three certificates, three directions:
 
 | certificate | where | trusted by |
 |---|---|---|
-| login (`http.ssl`, CN `PlcEmulator.debug.webServer`) | `Jde-Cpp/PlcEmulator/ssl/certs/…webServer.PlcEmulator.pem` | the AppServer: its `/access/trustedCertDirs` lists the `PlcEmulator` dir; the CN becomes the user |
-| UA channel (`emulator.ssl`, CN `PlcEmulator.opc`, SAN `urn:jde:plc-emulator`) | same dir | the OpcServer: the same `trustedCertDirs` entry; it rescans on a failed verify, so a re-issued cert is picked up |
+| login (`http.ssl`, CN `PlcEmulator.debug.webServer`) | `Jde-Cpp/PlcEmulator/ssl/certs/…webServer.PlcEmulator.pem` | the AppServer: its `/access/trustedCertDirs` lists the `PlcEmulator` dir (the dev configs; an installed hub's `config/args/install` lists only the OpcServer's - add this one there); the CN becomes the user |
+| UA channel (`emulator.ssl`, CN `PlcEmulator.opc`, SAN `urn:jde:plc-emulator`) | same dir | the OpcServer: the same `trustedCertDirs` entry (again the dev args; the installed ones need it added); it rescans on a failed verify, so a re-issued cert is picked up |
 | the OpcServer's own | `Jde-Cpp/OpcServer/ssl/certs` | this process: `/access/trustedCertDirs` in this config, checked before every session (`verifyServerCertificate`) - the anchors, not the OS root store |
 
 The login TLS handshake with the AppServer is anchored separately (`web.client.ssl.caFile` = the AppServer's own cert;

@@ -102,8 +102,8 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 				file:{ path: logsDir, md: false }
 			}
 		},
-		memory:{
-			default: "trace"
+		memory:{ //kept past Init only with a level under `tags` (log.cpp) - `default` at this depth was dropped at startup.  TrustListTests reads it (Logging::Find).
+			tags: { default: "Debug" }
 		}
 	},
 	workers:{

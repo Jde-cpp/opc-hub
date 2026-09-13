@@ -24,6 +24,7 @@ namespace Jde::Access{
 	static sp<QL::LocalQL> _ql;
 	static std::mutex _anchorMutex;
 	static flat_map<fs::path, fs::file_time_type> _anchorFiles;//mtime at load - failed files are recorded too, retried only when they change.
+	static flat_set<fs::path> _missingDirs;//warned about once - every failed verification rescans, and a dir that is never created (a product not installed) would warn each time (reviews/install-issues.md, "Noise in a production log").
 
 	Ω loadTrustAnchors( Crypto::TrustStore& trust )ι->bool{//loads new/changed certs from /access/trustedCertDirs; true if an anchor was added.
 		std::lock_guard _{ _anchorMutex };
@@ -31,10 +32,12 @@ namespace Jde::Access{
 		for( const string& sdir : Settings::FindStringArray("/access/trustedCertDirs") ){
 			try{
 				const fs::path dir{ sdir };
-				if( !fs::is_directory(dir) ){
-					WARN( "Trusted certificate directory does not exist: '{}'.", sdir );//normal pre-provisioning state - no client cert has been anchored yet.
+				if( !fs::is_directory(dir) ){//normal pre-provisioning state - no client cert has been anchored yet.
+					const auto level = _missingDirs.emplace( dir ).second ? ELogLevel::Warning : ELogLevel::Debug;//not inline in LOG - the macro evaluates its level twice.
+					LOG( level, _tags, "Trusted certificate directory does not exist: '{}' - no client certificate is anchored from it until it does (rescanned on a failed verification).", sdir );
 					continue;
 				}
+				_missingDirs.erase( dir );
 				for( const auto& entry : fs::directory_iterator(dir) ){
 					if( entry.path().extension()!=".pem" && entry.path().extension()!=".crt" )
 						continue;

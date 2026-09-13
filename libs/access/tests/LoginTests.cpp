@@ -4,6 +4,7 @@
 #include <jde/access/server/awaits/LoginAwait.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/crypto/TrustStore.h>
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 
@@ -139,5 +140,32 @@ namespace Jde::Access::Tests{
 		let user = Select( "users", userPK.Value, GetRoot(), "email" );
 		EXPECT_EQ( Json::AsSV(user, "slug"), "loginTests-dir" );
 		PurgeUser( userPK, GetRoot() );
+	}
+
+	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
+	//yet - is one Warning, not one per rescan; every failed verification rescans, so it used to repeat for the life of the
+	//process.  Later sightings are Debug, and a dir that appears clears the memory, so its vanishing warns again.
+	TEST_F( LoginTests, MissingAnchorDir_WarnsOnce ){
+		let dir = testsDir()/Ƒ( "loginTests-missing-{}", Process::ProcessId() );//never created - and a name no earlier scan has seen.
+		std::error_code ec; fs::remove_all( dir, ec );
+		Settings::Set( "/access/trustedCertDirs", jarray{dir.string()} );
+		Logging::ClearMemory();
+		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );//a rescan each: the untrusted cert fails the verify, the rescan finds nothing.
+		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
+		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
+		let missing = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(dir.string()); } );
+		ASSERT_EQ( missing.size(), 3u ) << "one line per rescan";
+		EXPECT_EQ( missing[0].Level, ELogLevel::Warning );
+		EXPECT_EQ( missing[1].Level, ELogLevel::Debug );
+		EXPECT_EQ( missing[2].Level, ELogLevel::Debug );
+
+		fs::create_directories( dir );//now there (empty): the next scan forgets it, so a later disappearance is a fresh Warning.
+		Logging::ClearMemory();
+		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
+		fs::remove_all( dir, ec );
+		EXPECT_ANY_THROW( keyLogin(Untrusted.Key, vector<byte>{Untrusted.Der}) );
+		let again = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(dir.string()); } );
+		ASSERT_EQ( again.size(), 1u );
+		EXPECT_EQ( again[0].Level, ELogLevel::Warning );
 	}
 }

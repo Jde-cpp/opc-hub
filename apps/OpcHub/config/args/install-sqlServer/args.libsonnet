@@ -8,6 +8,7 @@ paths + {
 	local hubDir = args.companyDir+"/OpcHub",
 	sqlType: "sqlServer",
 	logsDir: hubDir,
+	access:{ trustedCertDirs: [ args.certsDir("OpcServer") ] }, //as args/install: the installed products only - see the comment there.
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],
 		scriptPaths: [hubDir+"/sql"],

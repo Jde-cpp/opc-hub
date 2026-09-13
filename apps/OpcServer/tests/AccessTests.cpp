@@ -5,6 +5,7 @@
 #include "../src/access/UAAccess.h"
 #include "../src/access/OpcAuthorize.h"
 #include "../src/ql/OpcQL.h"
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/ql/ql.h>
 #define let const auto
 
@@ -309,6 +310,33 @@ namespace Jde::Opc::Server::Tests{
 		UATrust::LoadTrustList( after );//resync the mtime cache so the rest of the process sees the real trust list.
 		EXPECT_NE( after.trustedCertificatesSize, 0u ) << "the good certificates in that directory are still trusted";
 		UA_TrustListDataType_clear( &after );
+	}
+
+	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
+	//yet - is one Warning, not one per scan; a failed verify rescans, so it used to repeat for the life of the process.
+	//Later sightings are Debug.  The dir is appended to the real list and the list restored, so the running server's trust
+	//is untouched.
+	TEST( TrustListTests, AMissingDirectoryWarnsOnce ){
+		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( dirs.empty() );
+		let missing = fs::path{ dirs.front() }.parent_path()/Ƒ( "missing-{}", Process::ProcessId() );//never created - and a name no earlier scan has seen.
+		jarray withMissing; for( let& d : dirs ) withMissing.push_back( jvalue{d} );
+		withMissing.push_back( jvalue{missing.string()} );
+		Settings::Set( "/access/trustedCertDirs", withMissing );
+		Logging::ClearMemory();
+		for( uint i=0; i<3; ++i ){
+			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
+			UATrust::LoadTrustList( list );
+			UA_TrustListDataType_clear( &list );
+		}
+		jarray original; for( let& d : dirs ) original.push_back( jvalue{d} );
+		Settings::Set( "/access/trustedCertDirs", original );
+
+		let lines = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(missing.string()); } );
+		ASSERT_EQ( lines.size(), 3u ) << "one line per scan";
+		EXPECT_EQ( lines[0].Level, ELogLevel::Warning );
+		EXPECT_EQ( lines[1].Level, ELogLevel::Debug );
+		EXPECT_EQ( lines[2].Level, ELogLevel::Debug );
 	}
 
 	//opcserver-review3 L24:  every accepting branch of ActivateSession assigned straight through *sessionContext, and

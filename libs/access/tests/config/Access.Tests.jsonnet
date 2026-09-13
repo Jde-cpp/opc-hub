@@ -34,6 +34,9 @@ local logsDir = args.logsDir;
 				console:{},
 				file:{ path: logsDir, md: false }
 			}
+		},
+		memory:{ //kept past Init only with a level under `tags` - LoginTests reads it (Logging::Find).
+			tags: { default: "Debug" }
 		}
 	},
 	workers:{

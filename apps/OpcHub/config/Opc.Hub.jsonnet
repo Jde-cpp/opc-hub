@@ -21,9 +21,11 @@ function( sync=false )
 	gateway: gw.gateway, //pingInterval/ttl/search/issuedCerts/verifyServerCertificate - the issued OPC client certs land under $(ProgramData)/Jde-Cpp/OpcHub via ProductName.
 	//One list serves both roles: the AppServer's enrollment anchors (Access::Server::Trust - the OpcServer and the PLC
 	//emulator log in with their client certs) and the gateway's OPC server trust (src/ServerTrust.cpp).  No OpcGateway
-	//entry: no separate gateway process logs in to this one.
+	//entry: no separate gateway process logs in to this one.  The dev default names the emulator's dir; args.access
+	//(args/install) names only what is installed - a dir that is never created is a warning in every log
+	//(reviews/install-issues.md, "Noise in a production log").
 	access:{
-		trustedCertDirs: [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator") ]
+		trustedCertDirs: if std.objectHas(args, 'access') then args.access.trustedCertDirs else [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator") ]
 	},
 	dbServers: app.dbServers, //args-driven: the hub args mount access + app + gateway and list all three script dirs.
 	logging:{

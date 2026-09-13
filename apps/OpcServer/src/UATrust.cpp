@@ -11,6 +11,7 @@ namespace Jde::Opc::Server{
 	static std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; kept for parity with access's _anchorMutex and against future threading changes.
 	struct Entry{ fs::file_time_type MTime; vector<byte> Der; };//empty Der = unreadable; retried only on mtime change (mirrors _anchorFiles).
 	static flat_map<fs::path, Entry> _files;
+	static flat_set<fs::path> _missingDirs;//warned about once - a failed verify rescans, and a dir that is never created (a product not installed) would warn on each (reviews/install-issues.md, "Noise in a production log").
 	static std::array<UA_CertificateGroup*,2> _groups{};//secureChannelPKI, sessionPKI in the server-owned config; a change updates BOTH so the shared mtime cache stays honest.
 	static std::array<UA_StatusCode(*)( UA_CertificateGroup*, const UA_ByteString* ),2> _originals{};//per-group - no assumption both are memorystore.
 	//A failed verify is what an unauthenticated OPN with a junk senderCertificate produces - before any body decryption -
@@ -31,9 +32,11 @@ namespace Jde::Opc::Server{
 			try{
 				const fs::path dir{ sdir };
 				if( !fs::exists(dir) || !fs::is_directory(dir) ){//files under a vanished dir legitimately drop out of trust below.
-					WARN( "Trusted certificate directory does not exist: '{}'.", dir.string() );
+					let level = _missingDirs.emplace( dir ).second ? ELogLevel::Warning : ELogLevel::Debug;//not inline in LOG - the macro evaluates its level twice.
+					LOG( level, _tags, "Trusted certificate directory does not exist: '{}' - no client certificate is trusted from it until it does (rescanned on a failed verify).", dir.string() );
 					continue;
 				}
+				_missingDirs.erase( dir );
 				for( let& entry : fs::directory_iterator(dir) ){
 					if( entry.path().extension()!=".pem" && entry.path().extension()!=".crt" )
 						continue;

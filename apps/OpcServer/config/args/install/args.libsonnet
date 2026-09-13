@@ -12,9 +12,11 @@ paths + {
 	access: {
 		trustedCertDirs: [
 			//Production products only - never a test product's dir.  Every cert under these dirs opens a secured UA session.
-			args.certsDir( "OpcHub" ), //Jde.Opc.Hub - the gateway role's OPC client certs live under its own product dir.
-			args.certsDir( "OpcGateway" ), //a split gateway, should one ever be pointed at this server.
-			args.certsDir( "PlcEmulator" ) //apps/OpcServer/emulator - its UA client cert.
+			//Only what the installer ships: the dev args also list a split gateway's dir and the PLC emulator's
+			//(apps/OpcServer/emulator), which no install creates - each a warning in every log until it exists
+			//(reviews/install-issues.md, "Noise in a production log").  Either is its dir added here
+			//(args.certsDir("OpcGateway"), args.certsDir("PlcEmulator")) and the service restarted.
+			args.certsDir( "OpcHub" ) //Jde.Opc.Hub - the gateway role's OPC client certs live under its own product dir.
 		]
 	},
 	dbServers: {

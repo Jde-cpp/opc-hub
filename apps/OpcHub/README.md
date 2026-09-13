@@ -38,7 +38,10 @@ Certs: `ProductName` puts the hub's tree under `$(ProgramData)/Jde-Cpp/OpcHub`. 
 anchor the split AppServer's cert for their login TLS, so against a hub they need the overlays
 `apps/OpcServer/config/Opc.Server.Hub.jsonnet` / `apps/OpcServer/emulator/config/Opc.PlcEmulator.Hub.jsonnet`
 (`caFile` = the hub's `OpcHub.pem`); the OpcServer's args already trust `certsDir("OpcHub")` for the gateway role's
-OPC client certs.
+OPC client certs.  The installed args (`config/args/install`, the OpcServer's too) trust only what the installer ships -
+the hub the OpcServer's dir, the OpcServer the hub's - so the emulator, or a split gateway, run against an installed
+product is its dir added to that args file (the comment there) and the service restarted; a listed dir that is never
+created is a warning in the log.
 
 ## Tests
 

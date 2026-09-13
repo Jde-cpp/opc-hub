@@ -14,6 +14,14 @@ paths + {
 	local appServerDll = lib( "Jde.DB.Sqlite.AppServer" ),
 	sqlType: "sqlite",
 	logsDir: hubDir,
+	//The client certificates the hub trusts (Opc.Hub.jsonnet access.trustedCertDirs): the AppServer role enrolls a user for
+	//each - the OpcServer's login - and the gateway role verifies OPC servers against them.  Only what the installer ships: the
+	//dev config also lists the PLC emulator (apps/OpcServer/emulator), a dir no install creates and so a warning in every
+	//log.  Anything else that should log in with its certificate - the emulator run against this hub, a split gateway - is
+	//its product dir added here (args.certsDir("PlcEmulator")) and the service restarted.
+	access:{
+		trustedCertDirs: [ args.certsDir("OpcServer") ]
+	},
 	//The Web UI the installer put beside the exe's dir (Web on windows - the file system does not mind the case - web on linux),
 	//served by the hub at http://<host>:1967/ (Opc.Hub.jsonnet http.site).
 	siteDir: "$(ExeDir)/../web",
