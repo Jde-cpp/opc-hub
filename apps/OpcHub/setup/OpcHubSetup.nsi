@@ -86,6 +86,7 @@ VIAddVersionKey "LegalCopyright" "MIT license"
 Var DataDir    ;%ProgramData%\Jde-Cpp - both modes; the apps hardcode it (Process::ProgramDataFolder, paths-common.libsonnet)
 Var ConfigDir  ;$DataDir\config - the settings mirror
 Var FinishText
+Var StartNow   ;/Start - a silent install starts the products at the end, as the finish page's box does
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -101,6 +102,12 @@ Var FinishText
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+;the "Start now" box (reviews/install-issues.md #5): the services in the all-users mode - this installer is the elevated console
+;the finish text used to send a standard user to - or the products' console windows in the current-user mode.  A silent
+;install has no finish page: /Start does the same (.onInstSuccess).
+!define MUI_FINISHPAGE_RUN ""
+!define MUI_FINISHPAGE_RUN_TEXT "Start ${PRODUCT} now"
+!define MUI_FINISHPAGE_RUN_FUNCTION StartProducts
 !define MUI_FINISHPAGE_TEXT "$FinishText"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -317,7 +324,7 @@ Section -Services
 			nsExec::ExecToLog 'sc config Jde.OpcServer start= auto depend= Jde.OpcHub'
 			Pop $0
 		${EndIf}
-		StrCpy $FinishText "${PRODUCT} is installed as Windows services.$\r$\n$\r$\nStart them with:$\r$\n    net start Jde.OpcHub$\r$\n    net start Jde.OpcServer$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs."
+		StrCpy $FinishText "${PRODUCT} is installed as Windows services.$\r$\n$\r$\nThey start when you finish (the box below), or later with:$\r$\n    net start Jde.OpcHub$\r$\n    net start Jde.OpcServer$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs."
 	${Else}
 		;no services without administrator rights: shortcuts, the exes run in a console window (-c)
 		CreateDirectory "$SMPROGRAMS\${COMPANY}"
@@ -329,7 +336,7 @@ Section -Services
 		${EndIf}
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		SetOutPath "$INSTDIR"
-		StrCpy $FinishText "${PRODUCT} is installed for your account.$\r$\n$\r$\nStart it from the Start Menu folder '${COMPANY}' - each product runs in its own console window.$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde OpcHub runs."
+		StrCpy $FinishText "${PRODUCT} is installed for your account.$\r$\n$\r$\nIt starts when you finish (the box below), or later from the Start Menu folder '${COMPANY}' - each product runs in its own console window.$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde OpcHub runs."
 	${EndIf}
 SectionEnd
 
@@ -407,6 +414,12 @@ Function .onInit
 	${IfNot} ${Errors}
 		!insertmacro SelectSection ${SEC_OPCSERVER}
 	${EndIf}
+	;/Start starts the products at the end of a silent install - the finish page's box, which /S never shows
+	ClearErrors
+	${GetOptions} $0 "/Start" $1
+	${IfNot} ${Errors}
+		StrCpy $StartNow 1
+	${EndIf}
 	;an earlier install (either hive): offer its uninstaller first
 	ReadRegStr $0 HKLM "${REG_UNINST}" "UninstallString"
 	ReadRegStr $1 HKLM "${REG_UNINST}" "InstallLocation"
@@ -417,6 +430,45 @@ Function .onInit
 	${If} $0 != ""
 		MessageBox MB_YESNO|MB_ICONQUESTION "${PRODUCT} is already installed in $1.$\r$\n$\r$\nUninstall it first?  (No installs over it; the data under $DataDir is kept either way.)" /SD IDNO IDNO +2
 		ExecWait '$0 /S _?=$1'
+	${EndIf}
+FunctionEnd
+
+;The finish page's "Start now" box, and /Start in a silent install.  All users: the services, in order - the hub first, the
+;OpcServer (which depends on it) after; this installer runs elevated in that mode, which `net start` needs.  Current user: the
+;same console windows the Start Menu shortcuts open, the hub given a moment to listen before the OpcServer logs in to it.
+;A failed `net start` is reported here rather than swallowed - the finish page shows no log.
+Function StartProducts
+	${If} $MultiUser.InstallMode == "AllUsers"
+		nsExec::ExecToStack 'net start Jde.OpcHub'
+		Pop $0
+		Pop $1
+		${If} $0 != 0
+			MessageBox MB_OK|MB_ICONEXCLAMATION "net start Jde.OpcHub returned $0:$\r$\n$1$\r$\nStart it from an elevated console." /SD IDOK
+		${EndIf}
+		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
+			nsExec::ExecToStack 'net start Jde.OpcServer'
+			Pop $0
+			Pop $1
+			${If} $0 != 0
+				MessageBox MB_OK|MB_ICONEXCLAMATION "net start Jde.OpcServer returned $0:$\r$\n$1$\r$\nStart it from an elevated console." /SD IDOK
+			${EndIf}
+		${EndIf}
+	${Else}
+		SetOutPath "$INSTDIR\OpcHub" ;the working dir, as the shortcut's
+		Exec '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install -sync'
+		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
+			Sleep 5000
+			SetOutPath "$INSTDIR\OpcServer"
+			Exec '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync'
+		${EndIf}
+		SetOutPath "$INSTDIR"
+	${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+	${If} ${Silent}
+	${AndIf} $StartNow == 1
+		Call StartProducts
 	${EndIf}
 FunctionEnd
 
