@@ -1,0 +1,4 @@
+mutation{
+	createProviderTypes( id:1, name:"Google" )
+	createProvider( id:1, providerType:1 )
+}

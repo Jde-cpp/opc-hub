@@ -44,7 +44,8 @@ function( sync=false )
 		maxLogLength: app.http.maxLogLength,
 		bodyLimit: app.http.bodyLimit,
 		accessControl: app.http.accessControl,
-		clientSettings: app.http.clientSettings,
+		//the Web UI's Google login: an args file may name the site's own OAuth client id (args/install does - setup/README.md "First login"); otherwise the AppServer's.
+		clientSettings: app.http.clientSettings + ( if std.objectHas(args, 'googleAuthClientId') then { googleAuthClientId: args.googleAuthClientId } else {} ),
 		ssl:{
 			certificate:{
 				//DNS/IP: what TLS clients (the OpcServer's login) match.  URI: the gateway role authenticates to OPC servers with this

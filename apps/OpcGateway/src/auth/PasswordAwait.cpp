@@ -12,7 +12,9 @@ namespace Jde::Opc::Gateway{
 
 	α PasswordAwait::CheckProvider()ι->TAwait<Access::ProviderPK>::Task{
 		try{
-			let providerPK = co_await ProviderAwait{ _opcNK };
+			auto providerPK = co_await ProviderAwait{ _opcNK };
+			if( !providerPK )//a connection without its provider row - seeded (release-opcServer.mutation) onto a db whose provider 7 was already taken, or a row purged by hand: create it here, as the insert hook would have.
+				providerPK = co_await ProviderMAwait{ DB::Key{_opcNK}, true };
 			THROW_IF( providerPK==0, "Provider not found for '{}'.", _opcNK );
 			AddSession( providerPK );
 		}

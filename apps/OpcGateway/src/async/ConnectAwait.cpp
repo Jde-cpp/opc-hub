@@ -48,7 +48,28 @@ namespace Jde::Opc::Gateway{
 		return handles;
 	}
 
+	//"" names the default connection (ServerCnnctnAwait: is_default) - the login page's username with no DOMAIN\
+	//(reviews/install-issues.md #1).  Resolved before anything is keyed:  _requests, UAClient::Find and the activation's
+	//Resume all go by the slug the client carries, so a waiter registered under "" was never woken - the session activated
+	//on the server and the login timed out - and a second login would have built a second client for the same slug.
+	α ConnectAwait::ResolveDefault()ι->TAwait<vector<ServerCnnctn>>::Task{
+		try{
+			auto servers = co_await ServerCnnctnAwait{ string{} };
+			THROW_IFX( servers.empty(), Exception( _sl, {EHttpStatus::NotFound}, "No default OPC server connection.") );
+			_opcSlug = servers.front().Slug;
+			Start();
+		}
+		catch( Exception& e ){
+			base::ResumeExp( move(e) );
+		}
+	}
 	α ConnectAwait::Suspend()ι->void{
+		if( _opcSlug.empty() )
+			ResolveDefault();
+		else
+			Start();
+	}
+	α ConnectAwait::Start()ι->void{
 		if( auto client = UAClient::Find(_opcSlug, _cred); client ){
 			TRACET( ((ELogTags)EOpcLogTags::Opc) | ELogTags::Access, "[{}]Found client for cred: {}", hex(client->Handle()), _cred.ToString() );
 			base::Resume( move(client) );

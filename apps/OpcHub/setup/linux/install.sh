@@ -49,6 +49,9 @@ for p in OpcHub OpcServer; do #sql/ and nodesets/ are installer-owned - recreate
 	install -d "$dataRoot/$p"
 	cp -r "$here/var/lib/Jde-Cpp/$p/." "$dataRoot/$p/"
 done
+if [ $opcServer = 0 ]; then #the OPC UA server's seeds - the Web UI's Google provider, the server as the hub's default connection - go only with it (README.md "First login")
+	rm -f "$dataRoot/OpcHub/sql/access_google.mutation" "$dataRoot/OpcHub/sql/access_opcServer.mutation" "$dataRoot/OpcHub/sql/gateway_opcServer.mutation"
+fi
 chmod 700 "$dataRoot"
 
 #The --user counterparts of the package's units:  no User=/StateDirectory= (the data root is this account's $XDG_CONFIG_HOME,

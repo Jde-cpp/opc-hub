@@ -75,7 +75,7 @@ components page to pick it on), `/D=<dir>` for the program dir.
 | component | section | ships |
 |---|---|---|
 | OPC Hub (`Jde.OpcHub`) | required | `Jde.Opc.Hub.exe` - the AppServer and the OpcGateway in one process, port 1967 |
-| OPC UA Server (`Jde.OpcServer`) | optional, off | `Jde.Opc.Server.exe` - opc.tcp 4840, http 1970, DI/IA nodesets + the pumps demo address space; logs in to the hub with its certificate |
+| OPC UA Server (`Jde.OpcServer`) | optional, off | `Jde.Opc.Server.exe` - opc.tcp 4840, http 1970, DI/IA nodesets + the pumps demo address space; logs in to the hub with its certificate.  With it, the hub's seeds for it - the server as the default connection, its provider row, the Web UI's Google provider (First login, below) |
 | Web UI files | optional, on | the Angular site + `web.config` under `<program dir>\Web`, for an IIS site (IIS is configured by hand - `apps/OpcGateway/README.md`) |
 | Start at logon | current-user only | HKCU Run entries for the selected products |
 
@@ -102,6 +102,8 @@ C:\ProgramData\Jde-Cpp
   OpcHub\                                                the product dir (Process::ProductName): created here by the service -> OpcHub.db, ssl\, *.log
     access-meta.jsonnet access-ql.jsonnet app-meta.jsonnet opcGateway-meta.jsonnet common-meta.libsonnet
     sql\  access.mutation (libs/access/config/release.mutation) access.roles (libs/access/config/release.roles) app.mutation, the sqlite *_ql.sql views
+          with the OPC UA Server: access_google.mutation, access_opcServer.mutation (libs/access/config/release-google.mutation, release-opcServer.mutation),
+          gateway_opcServer.mutation (apps/OpcGateway/config/release-opcServer.mutation)
   OpcServer\                                             OpcServer.db, ssl\, *.log
     access-meta.jsonnet access-ql.jsonnet common-meta.libsonnet opcServer-meta.jsonnet
     nodesets\ Opc.Ua.Di.NodeSet2.xml Opc.Ua.IA.NodeSet2.xml Opc.Ua.IA.NodeSet2.examples.xml pumps.NodeSet2.xml
@@ -118,6 +120,24 @@ command lines (composed by the exe's `-install`, `libs/fwk/src/process/process.c
 The current-user shortcuts are the same lines with `-c` in front.  `-sync` creates the tables in the fresh `.db` on the
 first start and is idempotent afterwards (create-missing tables, recreate the views, upsert the mutations); drop it later
 with `sc config Jde.OpcHub binPath= "…"` or by editing the shortcut.
+
+## First login
+
+On a fresh install the login is **Google**, and it comes with the **OPC UA Server** component
+([`reviews/install-issues.md`](../../../../reviews/install-issues.md) #1 - by ruling no username or password is seeded, and a
+hub installed without the component has no login path): the component seeds the Google provider (`access_google.mutation`)
+and `Jde.OpcServer` as the hub's default server connection (`gateway_opcServer.mutation`: slug `OpcServer`,
+`opc.tcp://127.0.0.1:4840`; `access_opcServer.mutation`: its provider row).  The button works only from an origin registered
+under the OAuth client id the hub serves (`GET /GoogleAuthClientId`).  The default is the project's own client id, so a
+browser on the hub machine at `http://localhost:8071` works once that origin is registered on it; any other host needs its
+own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript origin
+`http://<host>:8071`), put in `config\apps\OpcHub\config\args\install\args.libsonnet` (`googleAuthClientId`), then
+`Jde.OpcHub` restarted.  The first grant is manual by ruling (the seeded roles); every resource ships unenforced, so the first
+user can make it.
+
+The page's username/password form is the OPC server's login, and the bundled server offers the username token only when
+its settings list users (`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing
+shipped sets it); the form then logs in against the default connection, so the username needs no `DOMAIN\`.
 
 ## Uninstall
 
@@ -141,8 +161,8 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
   before the first start to change that.
 - `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries; the
-  Web UI's Google login needs those added.  The roles grant on `opc.install`, the schema the installed OpcServer registers
-  its nodes under (`Opc.Server.Install.jsonnet`'s `resource: "install"`).
+  OPC UA Server component adds them (`access_google.mutation` - First login, above).  The roles grant on `opc.install`, the
+  schema the installed OpcServer registers its nodes under (`Opc.Server.Install.jsonnet`'s `resource: "install"`).
 - SQL Server instead of sqlite, by hand: `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` is the equivalent profile.
   Copy it to `config\apps\OpcHub\config\args\install-sqlServer\`, put `Jde.DB.Odbc.dll` (from the build's `bin\`) beside the
   exe, create a 64-bit System DSN `jde` ("ODBC Driver 17 for SQL Server", `Trusted_Connection=Yes`) with a database `jde` in

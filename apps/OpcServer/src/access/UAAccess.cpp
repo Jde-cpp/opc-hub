@@ -19,6 +19,7 @@ typedef struct {
 
 	bool AllowCertificate;
 	bool AllowIssued;
+	bool AllowUsername;///opc/tokenTypes/username (default true) AND a non-empty login list - an empty one would advertise a token nobody can present.
 	UA_String UserTokenPolicyUri;
 } AccessControlContext;
 
@@ -94,12 +95,42 @@ namespace Jde::Opc::Server::UAAccess{
 	}
 	//Startup installs it (opcServerStartup: SetAcl, then explicitly on the cached schema), so the cast is the schema's own type.
 	Ω authorizer()ι->OpcAuthorize&{ return static_cast<OpcAuthorize&>( *GetSchema().Authorizer ); }
+	//The username token's login list, matched by ActivateSession's username branch the way open62541's default plugin matches
+	//its static one:  /opc/users ([{name,password}]).  An opt-in - nothing shipped configures it (reviews/install-issues.md #1:
+	//a fresh install logs in with Google, by ruling no username is seeded); the test configs do, for the gateway's password
+	//login (PasswordTests).  Plain text, on purpose:  a hashed per-user store is the hub's job.  Nothing here throws -
+	//setContext is noexcept - a malformed entry is logged and skipped.
+	Ω loadUsers( AccessControlContext& cntxt )ι->void{
+		vector<std::pair<string,string>> users;
+		auto add = [&]( const jarray& a, sv source ){
+			for( let& v : a ){
+				let name = v.is_object() ? Json::FindDefaultSV( v.get_object(), "name" ) : sv{};
+				if( !name.empty() )
+					users.emplace_back( string{name}, string{Json::FindDefaultSV(v.get_object(), "password")} );
+				else
+					WARNT( (ELogTags)EOpcLogTags::Server, "{}: a user without a name is skipped.", source );
+			}
+		};
+		if( let a = Settings::FindArray("/opc/users"); a )
+			add( *a, "/opc/users" );
+		if( users.empty() )
+			return;
+		cntxt.usernamePasswordLogin = ( UA_UsernamePasswordLogin* )UA_calloc( users.size(), sizeof(UA_UsernamePasswordLogin) );
+		for( let& [name, password] : users ){
+			auto& login = cntxt.usernamePasswordLogin[cntxt.usernamePasswordLoginSize++];
+			login.username = UA_String_fromChars( name.c_str() );
+			login.password = UA_String_fromChars( password.c_str() );
+		}
+	}
 	Ω setContext( UA_AccessControl& ac )ι->AccessControlContext&{
     auto cntxt = ( AccessControlContext* )UA_malloc( sizeof(AccessControlContext) );
     memset( cntxt, 0, sizeof(AccessControlContext) );
     cntxt->allowAnonymous = Settings::FindBool( "/opc/tokenTypes/anonymous" ).value_or( false );
 		cntxt->AllowCertificate = Settings::FindBool( "/opc/tokenTypes/certificate" ).value_or( true );
 		cntxt->AllowIssued = Settings::FindBool( "/opc/tokenTypes/issued" ).value_or( true );
+		if( Settings::FindBool("/opc/tokenTypes/username").value_or(true) )
+			loadUsers( *cntxt );
+		cntxt->AllowUsername = cntxt->usernamePasswordLoginSize>0;
 		cntxt->UserTokenPolicyUri = AllocUAString( Settings::FindString("/opc/userTokenPolicyUri").value_or("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256") );
 		ac.context = cntxt;
 		return *cntxt;
@@ -108,6 +139,11 @@ namespace Jde::Opc::Server::UAAccess{
 	Ω clearAccessControl( UA_AccessControl* ac )ι->void{
 		if( auto context = (AccessControlContext*)ac->context ){
 			UA_String_clear( &context->UserTokenPolicyUri );
+			for( size_t i=0; i<context->usernamePasswordLoginSize; ++i ){
+				UA_String_clear( &context->usernamePasswordLogin[i].username );
+				UA_String_clear( &context->usernamePasswordLogin[i].password );
+			}
+			UA_free( context->usernamePasswordLogin );
 			UA_free( context );
 			ac->context = nullptr;
 		}
@@ -143,6 +179,10 @@ namespace Jde::Opc::Server{
     uint policies{}; string log{};
     if( context.allowAnonymous ){
 			log += "Anonymous,";
+      ++policies;
+		}
+    if( context.AllowUsername ){
+			log += Ƒ( "Username({} users),", context.usernamePasswordLoginSize );
       ++policies;
 		}
     if( context.AllowCertificate ){
@@ -182,6 +222,14 @@ namespace Jde::Opc::Server{
       if( context.allowAnonymous ){
       	ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_ANONYMOUS;
         ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-anonymous-policy" );// must be heap-owned: UA_Array_delete in clearAccessControl deep-frees policyId; a ToUV view would free a string literal.
+        UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
+        ++policies;
+      }
+      if( context.AllowUsername ){
+      	ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_USERNAME;
+        ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-username-policy" );// heap-owned, as the others: clearAccessControl deep-frees policyId.
+        if( UA_String_equal(&utpUri, &UA_SECURITY_POLICY_NONE_URI) )
+					DBGT( (ELogTags)EOpcLogTags::Server, "Username/Password Authentication configured, but no encrypting SecurityPolicy. This can leak credentials on the network." );
         UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
         ++policies;
       }
@@ -260,6 +308,8 @@ namespace Jde::Opc::Server{
 					ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, UserPK{} );//UserPK{}==0: unauthenticated. Every later callback dereferences sessionContext, so it must be non-null on the GOOD path.
 			} else if( tokenType == &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN] ) {
 				/* Username and password */
+				if( !context->AllowUsername )//not offered (no login list) - the endpoint carries no username policy, so this is a client ignoring the endpoint description.
+					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
 				const UA_UserNameIdentityToken *userToken = ( UA_UserNameIdentityToken* )
 						userIdentityToken->content.decoded.data;
 
@@ -297,7 +347,7 @@ namespace Jde::Opc::Server{
 				}
 				if( !match )
 						throw UAException{ UA_STATUSCODE_BADUSERACCESSDENIED };
-				ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, UserPK{} );//the static login list carries no UserPK; grant no rights until username auth resolves a real user. Must be non-null so later callbacks don't deref null.
+				ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, ResolveUser(ToSV(userToken->userName)) );//the list carries no UserPK - the hub's row for the login name does (or UserPK{}: no rights).  Must be non-null so later callbacks don't deref null.
 			} else if( tokenType == &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN] ) {
 				const UA_X509IdentityToken *userToken = ( UA_X509IdentityToken* )userIdentityToken->content.decoded.data;
 				if( userToken->policyId.length < certificate_policy.length ||
@@ -346,6 +396,38 @@ namespace Jde::Opc::Server{
 		catch( const runtime_error& e ){
 			return UA_STATUSCODE_BADIDENTITYTOKENINVALID;
 		}
+	}
+	//The hub's user for a login name the list matched - the row the hub's own OPC password login creates for it
+	//(Access::Server::Authenticate: login_name under the connection's OpcServer-type provider), so what is granted to that
+	//user in the hub applies here.  The same authority and the same sync call as the certificate branch; two round trips,
+	//since a login name is unique only per provider and this server does not know which connection row names it - every
+	//OpcServer-type provider's user of that name is a candidate, and there is normally one.  Not found is the first login on
+	//a fresh install:  the hub inserts the user only after this session activates, so that session runs with no identity
+	//(UserPK{}) and the next login resolves it - the shipped resources are unenforced, so the first-run walk is unaffected;
+	//an enforced one waits for the re-login.
+	α UAAccess::ResolveUser( sv loginName )ι->UserPK{
+		UserPK y{};
+		try{
+			let providers = AppClient()->QuerySync<jarray>( "providers( providerTypeId:$type ){ id }", {{"type", underlying(Access::EProviderType::OpcServer)}} );
+			flat_set<Access::ProviderPK> opcProviders;
+			for( let& p : providers )
+				opcProviders.insert( Json::AsNumber<Access::ProviderPK>(p.as_object(), "id") );
+			let users = AppClient()->QuerySync<jarray>( "users( loginName:$name ){ id providerId }", {{"name", string{loginName}}} );
+			for( let& u : users ){
+				let& o = u.as_object();
+				if( !opcProviders.contains(Json::FindNumber<Access::ProviderPK>(o, "providerId").value_or(0)) )
+					continue;
+				if( !y )
+					y = UserPK{ Json::AsNumber<UserPK::Type>(o, "id") };
+				else
+					WARNT( (ELogTags)EOpcLogTags::Server, "Login name '{}' names more than one OpcServer user in the hub - using {}.", loginName, y.Value );
+			}
+			LOG( y ? ELogLevel::Debug : ELogLevel::Information, (ELogTags)EOpcLogTags::Server, "Username login '{}' {}.", loginName, y ? Ƒ("is user {}", y.Value) : string{"is not yet a user of the hub - this session carries no identity until the next login"} );
+		}
+		catch( const std::exception& e ){
+			WARNT( (ELogTags)EOpcLogTags::Server, "Username login '{}' could not be resolved to a hub user: {}", loginName, e.what() );
+		}
+		return y;
 	}
 	α UAAccess::CloseSession( UA_Server* server, UA_AccessControl* ac,const UA_NodeId* sessionId, void* sessionContext )ι->void{
 		SessionContext* ctx = static_cast<SessionContext*>( sessionContext );

@@ -12,7 +12,7 @@ local logsDir = args.logsDir;
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedOpcServer:: false
 	},
-	opc: args.opc,
+	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
 	ql:{
 		introspection: [ "../../../OpcGateway/config/introspection/serverConnection.jsonnet", "../../../OpcGateway/config/introspection/search.jsonnet" ] //relative to this file (gatewayStartup.cpp).
 	},

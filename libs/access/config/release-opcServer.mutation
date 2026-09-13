@@ -1,0 +1,3 @@
+mutation{
+	createProvider( id:7, providerType:7, slug:"OpcServer" )
+}

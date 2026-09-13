@@ -9,7 +9,7 @@ local logsDir = args.logsDir;
 		embeddedAppServer:: false,
 		embeddedOpcServer:: false
 	},
-	opc: args.opc,
+	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
 		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
 	},

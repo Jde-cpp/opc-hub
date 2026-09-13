@@ -14,6 +14,7 @@ namespace Jde::Opc::Server::UAAccess{
 	};
 
 	α Init( UAConfig& config )ε->void;
+	α ResolveUser( sv loginName )ι->UserPK;//the hub's user for a username login the list matched, UserPK{} when there is none yet - see the definition.
 
 	α ActivateSession( UA_Server *server, UA_AccessControl *ac, const UA_EndpointDescription *endpointDescription, const UA_ByteString *secureChannelRemoteCertificate, const UA_NodeId *sessionId, const UA_ExtensionObject *userIdentityToken, void **sessionContext )ι->UA_StatusCode;
 	α CloseSession(UA_Server *server, UA_AccessControl *ac,const UA_NodeId *sessionId, void *sessionContext)ι->void;

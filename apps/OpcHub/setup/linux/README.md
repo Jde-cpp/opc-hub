@@ -81,6 +81,8 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
   OpcHub/                                                the product dir (Process::ProductName): created here by the service -> OpcHub.db, ssl/, *.log
     access-meta.jsonnet access-ql.jsonnet app-meta.jsonnet opcGateway-meta.jsonnet common-meta.libsonnet
     sql/  access.mutation (libs/access/config/release.mutation) app.mutation, the sqlite *_ql.sql views
+          access_google.mutation, access_opcServer.mutation, gateway_opcServer.mutation - the OPC UA server's (libs/access/config/release-*.mutation,
+          apps/OpcGateway/config/release-opcServer.mutation): the Web UI's Google provider, the server as the default connection with its provider row
   OpcServer/                                             OpcServer.db, ssl/, *.log
     access-meta.jsonnet access-ql.jsonnet common-meta.libsonnet opcServer-meta.jsonnet
     nodesets/ Opc.Ua.Di.NodeSet2.xml Opc.Ua.IA.NodeSet2.xml Opc.Ua.IA.NodeSet2.examples.xml pumps.NodeSet2.xml
@@ -145,8 +147,11 @@ nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp`
   `dataPaths` seed.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway`) shares port 1967 with the hub; it
   is not packaged.
-- `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries;
-  the Web UI's Google login needs those added.
+- First login: the package seeds the OPC UA server as the hub's default connection (with its provider row) and the Web UI's
+  Google provider - the fresh install's login; by ruling no username or password is seeded.  `systemctl enable --now
+  jde-opcserver`, then log in with Google: the site's origin must be registered under the OAuth client id the hub serves
+  (`googleAuthClientId` in `apps/OpcHub/config/args/install/args.libsonnet`) - the Windows README's "First login" has the
+  details.  The tarball's `install.sh` seeds the same with `--opcserver` and drops the seeds without it.
 - MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile like
   `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` - the driver beside the exe, the `sql/mysql` scripts in the
   product's `sql/` - re-registered with `-include=args/install-mysql` through `systemctl edit`.

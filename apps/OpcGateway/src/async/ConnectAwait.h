@@ -21,6 +21,8 @@ namespace Jde::Opc::Gateway{
 		Ω Resume( str slug, Credential cred, const UAClientException&& e )ι->void;
 	private:
 		Ω Resume( str slug, Credential cred, function<void(ConnectAwait::Handle)> resume )ι->void;
+		α ResolveDefault()ι->TAwait<vector<ServerCnnctn>>::Task;//"" -> the default connection's slug, then Start.
+		α Start()ι->void;//find a live client, else register and Create - Suspend once the slug is known.
 		α Create()ι->TAwait<vector<ServerCnnctn>>::Task;
 		Ω EraseRequests( str opcNK, Credential cred, lg& _ )ι->vector<ConnectAwait::Handle>;
 		string _opcSlug;

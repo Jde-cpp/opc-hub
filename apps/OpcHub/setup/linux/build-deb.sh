@@ -154,6 +154,12 @@ install -m 640 "$setupDir/env" "$etcDir/env"
 install -D -m 644 -t "$dataDir/OpcHub" "$repo/libs/access/config/access-meta.jsonnet" "$repo/libs/access/config/access-ql.jsonnet" \
 	"$repo/apps/AppServer/config/app-meta.jsonnet" "$repo/apps/OpcGateway/config/opcGateway-meta.jsonnet" "$repo/libs/db/config/common-meta.libsonnet"
 install -D -m 644 "$repo/libs/access/config/release.mutation" "$dataDir/OpcHub/sql/access.mutation" #<schema>*.mutation - the release seed, not the dev one
+#the OPC UA server's seeds (reviews/install-issues.md #1): the Web UI's Google provider, the server as the hub's default connection
+#and its provider row.  The package ships the server, so always; the tarball's install.sh drops them without --opcserver.  The
+#underscore names sort after access.mutation, whose provider type 7 (OpcServer) they reference.
+install -m 644 "$repo/libs/access/config/release-google.mutation" "$dataDir/OpcHub/sql/access_google.mutation"
+install -m 644 "$repo/libs/access/config/release-opcServer.mutation" "$dataDir/OpcHub/sql/access_opcServer.mutation"
+install -m 644 "$repo/apps/OpcGateway/config/release-opcServer.mutation" "$dataDir/OpcHub/sql/gateway_opcServer.mutation"
 install -m 644 -t "$dataDir/OpcHub/sql" "$repo/apps/AppServer/config/app.mutation" \
 	"$repo"/libs/access/config/sql/sqlite/*.sql "$repo"/apps/AppServer/config/sql/sqlite/*.sql "$repo"/apps/OpcGateway/config/sql/sqlite/*.sql #the sqlite views; the procs are compiled into the MODULEs
 install -D -m 644 -t "$dataDir/OpcServer" "$repo/libs/access/config/access-meta.jsonnet" "$repo/libs/access/config/access-ql.jsonnet" \

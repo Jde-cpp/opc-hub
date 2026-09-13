@@ -21,6 +21,7 @@ namespace Jde::Opc::Gateway{
 		α Suspend()ι->void override;
 	private:
 		α Execute( ServerCnnctnPK opcPK )ι->TAwait<vector<ServerCnnctn>>::Task;
+		α Check( string slug )ι->ProviderAwait::Task;//reuses an existing row, else Insert.  By value: Execute's frame is gone by the time this resumes.
 		α Insert( str slug )ι->TAwait<jobject>::Task;
 		α Purge( str slug )ι->ProviderAwait::Task;
 		α Purge( Access::ProviderPK pk )ι->TAwait<jvalue>::Task;

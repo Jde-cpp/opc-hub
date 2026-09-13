@@ -27,9 +27,24 @@ namespace Jde::Opc::Gateway{
 			auto server = co_await ServerCnnctnAwait{ opcPK, true };
 			THROW_IF( server.empty(), "[{}]Could not find OpcServer", opcPK );
 			if( _insert )
-				Insert( move(server.front().Slug) );
+				Check( move(server.front().Slug) );
 			else
 				Purge( move(server.front().Slug) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
+	//An existing row is reused, not re-inserted:  the seed ships one for the bundled OpcServer (release-opcServer.mutation -
+	//applied inside the schema sync, before this hook is registered), and (type, slug) is the natural key, so a second
+	//createProvider would fail and take the connection insert down with it.
+	α ProviderMAwait::Check( string slug )ι->ProviderAwait::Task{
+		try{
+			let existing = co_await ProviderAwait{ slug };
+			if( existing )
+				ResumeScaler( existing );
+			else
+				Insert( slug );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
@@ -77,7 +92,7 @@ namespace Jde::Opc::Gateway{
 		if( _opcKey.IsPK() )
 			Execute( _opcKey.PK() );
 		else if( _insert )
-			Insert( _opcKey.NK() );
+			Check( _opcKey.NK() );
 		else
 			Purge( _opcKey.NK() );
 	}

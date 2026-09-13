@@ -14,6 +14,12 @@ paths + {
 	local appServerDll = lib( "Jde.DB.Sqlite.AppServer" ),
 	sqlType: "sqlite",
 	logsDir: hubDir,
+	//The Web UI's Google login (a provider the "OPC UA Server" component seeds - access_google.mutation): the OAuth 2.0 client
+	//id the site's origin is registered under, served to the page by GET /GoogleAuthClientId.  The default is the project's
+	//own id, whose authorized JavaScript origins are its dev ports on localhost - a site browsed from anywhere else needs its
+	//own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript
+	//origin http://<host>:8071), set here and the service restarted.  A reinstall overwrites this file - keep a copy.
+	googleAuthClientId: "445012155442-1v8ntaa22konm0boge6hj5mfs15o9lvd.apps.googleusercontent.com",
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],
 		scriptPaths: [hubDir+"/sql"],

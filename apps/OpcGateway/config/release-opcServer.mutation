@@ -1,0 +1,3 @@
+mutation{
+	createServerConnection( slug:"OpcServer", name:"Jde OpcServer", description:"The bundled OPC UA server - Jde.OpcServer on this machine (opc.tcp 4840).", certificateUri:"urn:open62541.server.application", url:"opc.tcp://127.0.0.1:4840", isDefault:true )
+}

@@ -1,8 +1,12 @@
+#include <jde/fwk/io/file.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
 #include <jde/web/server/Sessions.h>
+#include "../../AppServer/src/appStartup.h"
 #include "../../AppServer/src/LocalClient.h"
 #include "../../OpcGateway/src/GatewayAppClient.h"
+#include "../../OpcGateway/src/auth/OpcServerSession.h"
+#include "../../OpcServer/src/access/UAAccess.h"
 #define let const auto
 
 //One listener for both roles (src/HttpRequestAwait.cpp, src/ql/HubQL.cpp): the AppServer's and the gateway's REST routes, one
@@ -126,5 +130,60 @@ namespace Jde::Opc::Hub::Tests{
 		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:null}}] )", instance), authorization );
 		EXPECT_NE( level(), "Critical" );
 		Web::Server::Sessions::Remove( sessionId );
+	}
+
+	//install-issues #1 (b):  the login page's username with no DOMAIN\ posts an empty `opc`, which ServerCnnctnAwait reads as
+	//the default connection.  What follows the connect has to key on the slug it resolved to (AuthAwait::Execute) - the provider
+	//lookup, and the credential cache GetCredential reads by slug - and the OpcServer's side of the login (UAAccess::ResolveUser)
+	//has to name the user the hub's AddSession did.  A wrong password is the server's BadUserAccessDenied, surfaced as 401.
+	TEST_F( HubRoutingTests, LoginDefaultConnection ){
+		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
+		let root = Ƒ( "{:x}", rootSession );
+		let opc = Gateway::Tests::GetConnection( Gateway::Tests::OpcServerSlug );//the embedded OpcServer's row, with its provider row
+		auto setDefault = [&]( bool isDefault ){ QL( AppPort(), Ƒ("mutation updateServerConnection( id:{}, isDefault:{} )", opc.Id, isDefault), root ); };
+		setDefault( true );
+		auto body = []( sv password ){ return serialize( jobject{{"opc",""},{"user","user1"},{"password",password}} ); };
+		let res = Post( AppPort(), "/login", body("0123456789ABCD") );
+		let authorization = string{ res.Headers()[http::field::authorization] };
+		ASSERT_FALSE( authorization.empty() ) << "the login minted no session";
+		let sessionId = Str::TryTo<SessionPK>( authorization, 0, 16 ).value_or( 0 );
+		let cred = Gateway::GetCredential( sessionId, Gateway::Tests::OpcServerSlug );//keyed by the resolved slug, not ""
+		ASSERT_TRUE( cred ) << "the credential is not cached under the default connection's slug";
+		EXPECT_EQ( cred->LoginName(), "user1" );
+		EXPECT_TRUE( cred->UserPK() ) << "AddSession resolved no user";
+		EXPECT_EQ( Opc::Server::UAAccess::ResolveUser("user1").Value, cred->UserPK().Value ) << "the OpcServer resolves the login to another user than the hub";
+		optional<http::status> bad;
+		try{ Post( AppPort(), "/login", body("nope") ); }
+		catch( ClientHttpResException& e ){ bad = e.Status(); }
+		EXPECT_EQ( bad, optional{http::status::unauthorized} );
+		Post( AppPort(), "/logout", "{}", authorization );
+		setDefault( false );
+		Web::Server::Sessions::Remove( rootSession );
+	}
+
+	//The "OPC UA Server" component's seeds (setup/OpcHubSetup.nsi SEC_OPCSERVER, setup/linux/build-deb.sh), applied the way the
+	//hub applies them - LocalQL::Upsert, twice:  the Google provider type and row, provider 7 for the bundled server, the server
+	//as the default connection.  Here the connection insert also meets the gateway's hook (registered by now, unlike on an
+	//install's first sync), which has to reuse the seeded provider row rather than insert a second one (ProviderMAwait::Check).
+	TEST_F( HubRoutingTests, OpcServerComponentSeeds ){
+		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
+		let root = Ƒ( "{:x}", rootSession );
+		let& scriptPaths = Settings::FindDefaultArray( "/dbServers/scriptPaths" );//<repo>/apps/AppServer/config/sql/<dialect>, libs/access/config/sql/<dialect>, apps/OpcGateway/config/sql/<dialect>
+		ASSERT_EQ( scriptPaths.size(), 3u );
+		auto configDir = [&]( uint i ){ return fs::path{ string{Json::AsSV(scriptPaths[i])} }.parent_path().parent_path(); };
+		let ql = App::Server::QLPtr();
+		for( uint pass=0; pass<2; ++pass ){
+			for( let& file : {configDir(1)/"release-google.mutation", configDir(1)/"release-opcServer.mutation", configDir(2)/"release-opcServer.mutation"} )
+				ASSERT_NO_THROW( ql->Upsert(IO::Load(file), {}, {UserPK::System}) ) << file.string() << " pass " << pass;
+		}
+		auto one = [&]( string query, sv name )->jobject{ let d = QL( AppPort(), move(query), root ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
+		EXPECT_EQ( Json::FindDefaultSV(one("provider(id:1){ id providerTypeId }", "provider"), "providerTypeId"), "Google" );//the ql spells the enum by name
+		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's hook created the row
+		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault }", "serverConnection" );
+		EXPECT_EQ( Json::FindDefaultSV(connection, "url"), "opc.tcp://127.0.0.1:4840" );
+		EXPECT_TRUE( Json::FindBool(connection, "isDefault").value_or(false) );
+		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
+		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
+		Web::Server::Sessions::Remove( rootSession );
 	}
 }

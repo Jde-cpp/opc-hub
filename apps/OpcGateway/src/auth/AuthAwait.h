@@ -21,6 +21,8 @@ namespace Jde::Opc::Gateway{
 	Ŧ AuthAwait<T>::Execute()ι->TAwait<sp<UAClient>>::Task{
 		try{
 			_client = co_await UAClient::GetClient( _opcNK, _cred, base::_sl );
+			if( _opcNK.empty() )//"" is the default connection (ServerCnnctnAwait) - the login page's username with no DOMAIN\.  Everything after the connect keys on the slug it resolved to:  the provider lookup (PasswordAwait), the credential cache (Gateway::AddSession - read back by slug), the session counts.
+				_opcNK = _client->Slug();
 			OnSuccess();
 		}
 		catch( runtime_error& e ){

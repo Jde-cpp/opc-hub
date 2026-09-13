@@ -224,6 +224,14 @@ Section /o "OPC UA Server (Jde.OpcServer)" SEC_OPCSERVER
 	File "${UA_NODE_SETS}\IA\Opc.Ua.IA.NodeSet2.xml"
 	File "${UA_NODE_SETS}\IA\Opc.Ua.IA.NodeSet2.examples.xml"
 	File "${SRC_DIR}\apps\OpcServer\config\nodesets\pumps.NodeSet2.xml"
+	;the hub's seeds for this component (reviews/install-issues.md #1): the Web UI's Google provider - the fresh install's login,
+	;by ruling no username is seeded - and this server as the default connection with its provider row.  <schema>*.mutation,
+	;applied by the hub's -sync inside the schema sync; the underscore names sort after access.mutation, whose provider type 7
+	;(OpcServer) they reference.  Only with this component - a hub without it has no login path, by decision.
+	SetOutPath "$DataDir\OpcHub\sql"
+	File /oname=access_google.mutation "${SRC_DIR}\libs\access\config\release-google.mutation"
+	File /oname=access_opcServer.mutation "${SRC_DIR}\libs\access\config\release-opcServer.mutation"
+	File /oname=gateway_opcServer.mutation "${SRC_DIR}\apps\OpcGateway\config\release-opcServer.mutation"
 SectionEnd
 
 !ifndef SKIP_WEB
@@ -351,7 +359,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub, port 1967): the REST/websocket API the Web UI talks to.  Required."
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's own OPC UA server (service Jde.OpcServer, opc.tcp 4840, http 1970) with the DI/IA nodesets and the pumps demo address space.  Optional - the hub can connect to any OPC UA server."
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's own OPC UA server (service Jde.OpcServer, opc.tcp 4840, http 1970) with the DI/IA nodesets and the pumps demo address space; seeded as the hub's default connection, with the Web UI's Google login.  Optional - the hub can connect to any OPC UA server."
 !ifndef SKIP_WEB
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_WEB} "The Angular site, copied to <install dir>\Web for an IIS site to serve (IIS itself is configured by hand - see the README)."
 !endif
