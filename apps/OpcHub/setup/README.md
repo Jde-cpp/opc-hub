@@ -77,7 +77,7 @@ components page to pick it on), `/D=<dir>` for the program dir.
 |---|---|---|
 | OPC Hub (`Jde.OpcHub`) | required | `Jde.Opc.Hub.exe` - the AppServer and the OpcGateway in one process, port 1967 |
 | OPC UA Server (`Jde.OpcServer`) | optional, off | `Jde.Opc.Server.exe` - opc.tcp 4840, http 1970, DI/IA nodesets + the pumps demo address space; logs in to the hub with its certificate.  With it, the hub's seeds for it - the server as the default connection, its provider row, the Web UI's Google provider (First login, below) |
-| Web UI | optional, on | the Angular site under `<program dir>\Web`, served by the hub itself at `http://<host>:1967/` (`Opc.Hub.jsonnet` `http.site`, `$(ExeDir)/../web` from the install args - the page and its api on one origin, no IIS). `web.config` is included for anyone who prefers the site behind IIS (`apps/OpcGateway/README.md` - deep links there need the URL Rewrite module, step 2c). The page reaches the hub by the host it was browsed from |
+| Web UI | optional, on | the Angular site under `<program dir>\Web`, served by the hub itself at `http://<host>:1967/` (`Opc.Hub.jsonnet` `http.site`, `$(ExeDir)/../web` from the install args - the page and its api on one origin, no IIS). `web.config` is included for anyone who prefers the site behind IIS (`apps/OpcHub/README.md`, its IIS paragraph - deep links there need the URL Rewrite module). The page reaches the hub by the host it was browsed from |
 | Start at logon | current-user only | HKCU Run entries for the selected products |
 
 ## Installed layout

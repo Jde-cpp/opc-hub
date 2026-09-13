@@ -54,11 +54,59 @@ the gateway page (`app-resolver.ts`).
 
 ## Install
 
-Windows: `setup/` - an NSIS installer (`OpcHubSetup-<version>.exe`, built by `setup/build-setup.ps1`) with the hub, the
-OpcServer and the Web UI as components, an all-users (Windows services) or current-user (Start Menu shortcuts, no
-administrator rights) mode, and sqlite as the database.  The installed layout, the service command lines and what
-uninstall leaves behind are in `setup/README.md`; the settings it ships are `config/args/install` (sqlite - `args/install-sqlServer`
-is the by-hand SQL Server variant) and `apps/OpcServer/config/Opc.Server.Install.jsonnet`.
+The installers ship the hub, the OpcServer and the Web UI; the hub serves the Web UI itself, so a browser needs nothing
+but the hub's port.  What each installer lays down, the service command lines and what an uninstall leaves behind are in
+[`setup/README.md`](setup/README.md) (Windows - an NSIS installer, `OpcHubSetup-<version>.exe`, built by
+`setup/build-setup.ps1`) and [`setup/linux/README.md`](setup/linux/README.md) (the `.deb` and the per-user tarball); the
+settings they ship are `config/args/install` (sqlite - `args/install-sqlServer` is the by-hand SQL Server variant) and
+`apps/OpcServer/config/Opc.Server.Install.jsonnet`.
+
+### Windows
+
+1) Run `OpcHubSetup-<version>.exe`.
+   - Install mode: **All users** registers the selected products as Windows services (administrator rights; the VC++ v14
+     x64 runtime is installed when missing); **Current user** installs under `%LOCALAPPDATA%\Programs` and runs them from
+     Start Menu shortcuts (no administrator rights; the runtime must be present).
+   - Components: the OPC Hub (`Jde.OpcHub` - the AppServer and the OpcGateway in one process, required), the OPC UA Server
+     (`Jde.OpcServer`, optional - it seeds the Web UI's login provider and the hub's default connection), the Web UI.
+   - The finish page's "Start now" box starts the products; later, `net start Jde.OpcHub` / `net start Jde.OpcServer`, or
+     the Start Menu shortcuts (a console window each).  The database is sqlite, one file per product under
+     `C:\ProgramData\Jde-Cpp\<Product>`, created on the first start - no SQL Server, no setup script.
+2) Browse to http://localhost:1967/ - from another machine, `http://<hub>:1967/`; the page calls the hub by the name it
+   was browsed by.
+3) Log in with Google (the OPC UA Server component seeds the provider and the connection).  The site's origin must be
+   registered under the OAuth client id the hub serves - [`setup/README.md`](setup/README.md) "First login".
+4) Uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder).  The
+   database, certificates and logs under `C:\ProgramData\Jde-Cpp` are left in place.
+
+IIS is optional - the site behind IIS instead of, or beside, the hub's own url.  Windows features: Internet Information
+Services > World Wide Web Services > Common HTTP Features > *Static Content* and *Default Document*, nothing else.  IIS
+Manager > Add Website: site name `OpcHub`, physical path `C:\Program Files\Jde-Cpp\Web` (the current-user install's
+`Web` dir), binding http, port 8071.  Reloading or bookmarking a route (`/login`, `/apps/gateways`) is a 404 there until
+the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is installed and the `<rewrite>` rule in
+`Web\web.config` is uncommented (it sends every path that is not a file to `index.html`); the page then calls the hub's
+1967 by the host it was browsed from.
+
+### Linux
+
+1) `sudo apt install ./jde-opchub_<version>_amd64.deb` (Ubuntu 24.04 or later).  The hub runs as the `jde-opchub`
+   systemd service (port 1967, a `jde-cpp` account); the OPC UA server is installed but not enabled:
+   `sudo systemctl enable --now jde-opcserver`.  The database is sqlite under `/var/lib/Jde-Cpp/<Product>`, created on
+   the first start.  Without root: the tarball's `install.sh` installs under your account and runs the products as
+   `systemctl --user` units (`--opcserver` for the server).
+2) Browse to http://localhost:1967/ - the hub serves the site; the packaged nginx site on 8071 is optional
+   (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
+3) Log in with Google, as above.
+4) Uninstall: `sudo apt remove jde-opchub` (`./install.sh --uninstall` for a per-user install); the data under
+   `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.
+
+### First run
+
+With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection: Opc Servers in the Web UI lists it, and
+browsing to a node shows its value - Snapshot re-reads, the checkbox beside a node streams it, a typed value writes it.
+Any other OPC UA server is a connection added there (Settings > Opc Servers); the hub's client certificate may need
+trusting on that server the first time.  Roles are seeded but the first grant is manual - every resource ships unenforced,
+so the first user can make it.
 
 ## Not done here
 
