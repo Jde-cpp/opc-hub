@@ -18,6 +18,8 @@ Rest/Websocket Application on top of [open62541.org](https://www.open62541.org/)
 
   b.  Settings:  ![](./doc/iis-site-settings.png)
 
+  c.  Deep links: reloading or bookmarking a route (`/login`, `/apps/gateways`) is a 404 under IIS until the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is installed and the `<rewrite>` rule in `Web\web.config` is uncommented (it sends every path that is not a file to `index.html`). The hub's own url needs no such step.
+
 3) Log in with Google - with the OPC UA Server component installed (it seeds the login provider and the hub's default connection); the site's origin must be registered under the OAuth client id the hub serves - [`apps/OpcHub/setup/README.md`](../OpcHub/setup/README.md) "First login".
 4) To uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder). The database, certificates and logs under `C:\ProgramData\Jde-Cpp` are left in place.
 
