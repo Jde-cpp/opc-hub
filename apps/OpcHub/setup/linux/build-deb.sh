@@ -17,7 +17,7 @@ usage: build-deb.sh [options]
   --web-dist <dir>     ng build output (index.html)      default: <repo>/web/opc/my-workspace/dist/my-workspace/browser
   --skip-web           omit the Web UI (opt/jde-cpp/web and the nginx site file)
   --ua-nodesets <dir>  OPCFoundation/UA-Nodeset clone    default: $UA_NODE_SETS, else $REPO_DIR/UA-Nodeset
-  --version <v>        default: git describe --tags --always
+  --version <v>        default: CMakePresets.common.json's JDE_VERSION (2026.09.01); the release workflow passes the tag, which should equal it
   --out-dir <dir>      default: <build dir>/setup
   --maintainer <s>     control's Maintainer field        default: git config user.name <user.email>
   --no-strip           keep the debug sections (default --strip-debug: symbols stay for the stack traces, dwarf goes)
@@ -74,7 +74,13 @@ for t in dpkg-deb dpkg ldd objdump; do command -v $t >/dev/null || die "$t not f
 command -v "$patchelf" >/dev/null || die "patchelf not found - apt install patchelf, or pip install patchelf and --patchelf <path>"
 
 #--- version -----------------------------------------------------------------------------------------------------------
-[ -n "$version" ] || version=$(git -C "$repo" describe --tags --always)
+#The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
+#are built with and the Web UI's about page displays, so the package agrees with them.  --version names it outright (the release
+#workflow passes the tag) and is expected to be the same string; anything else is warned about, not refused.
+jdeVersion=$(sed -n 's/.*"JDE_VERSION": *"\([^"]*\)".*/\1/p' "$repo/CMakePresets.common.json" | head -1)
+[ -n "$jdeVersion" ] || die "JDE_VERSION not found in $repo/CMakePresets.common.json"
+[ -n "$version" ] || version=$jdeVersion
+[ "$version" = "$jdeVersion" ] || warn "--version $version is not CMakePresets.common.json's JDE_VERSION $jdeVersion - the package's version and the product's will disagree"
 #A deb version is [0-9][A-Za-z0-9.+~]*:  a `yyyy.MM.dd` tag is one as it is; `yyyy.MM.dd-N-gsha` (N commits past the tag)
 #becomes yyyy.MM.dd+N.gsha - `+` sorts after the tag, which it is newer than; anything else (a bare sha) becomes 0+…
 if [[ $version =~ ^([0-9]{4}\.[0-9]{2}\.[0-9]{2})-([0-9]+)-g([0-9a-f]+)$ ]]; then

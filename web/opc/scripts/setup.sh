@@ -49,9 +49,12 @@ cd ../..;
 #libraries and the C++ services carry, so anything reading it (npm ls, a future about-box) agrees with them.
 jdeVersion jdeVer;
 jqEdit package.json ".version = \"$jdeVer\"";
-#the same version as a build-time constant for the about page:  the builder replaces the identifier JDE_VERSION with the
-#string literal under serve, build and test alike (the unit-test builder inherits the application options through buildTarget).
-jqEdit angular.json ".projects.\"my-workspace\".architect.build.options.define = {\"JDE_VERSION\": (\"$jdeVer\" | tojson)}";
+#the version as a build-time constant for the about page:  the builder replaces the identifier JDE_VERSION with the string
+#literal under serve, build and test alike (the unit-test builder inherits the application options through buildTarget).
+#As the presets spell it (2026.09.01) - the string the installers name themselves by - not npm's 2026.9.1, which only the
+#package versions above need (reviews/install-issues.md, "Version string").
+jdeVersionRaw jdeVerRaw;
+jqEdit angular.json ".projects.\"my-workspace\".architect.build.options.define = {\"JDE_VERSION\": (\"$jdeVerRaw\" | tojson)}";
 #create-workspace.sh writes angular.json, but only when the workspace is absent, so the swap is re-applied here on
 #every run.  Without it `ng serve` and `--configuration development` build against the production environment.ts.
 jqEdit angular.json '.projects."my-workspace".architect.build.configurations.development.fileReplacements = [{"replace":"src/environments/environment.ts","with":"src/environments/environment.development.ts"}]';

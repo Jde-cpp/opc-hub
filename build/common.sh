@@ -31,14 +31,24 @@ function addHard {
 #JDE_VERSION is a date (2026.09.01) and that is not semver: npm's semver rejects leading zeros in a numeric
 #identifier, so semver.valid("2026.09.01") is null and satisfies("2026.09.01","2026.09.01") answers false - a
 #library packed at that version would never match a sibling's peer range.  Drop the zeros: 2026.9.1.
+#The version as the presets spell it - 2026.09.01, the date, zeros and all: what the installers name themselves and
+#Add/Remove Programs shows (build-setup.ps1, build-deb.sh), and what the Web UI's about page displays (setup.sh's
+#JDE_VERSION define).  Only npm's package versions take the semver form, jdeVersion below.
+function jdeVersionRaw {
+	local -n _jdeVersionRaw=$1;
+	local presets=${2:-$JDE_BASH/CMakePresets.common.json};
+	#assign on its own line - `local raw=`cmd`` returns local's status, not the command's, so the || never fires.
+	local presetsVersion; #not `raw`: a caller passing a variable of that name would be shadowed by it (nameref)
+	presetsVersion=`jq -er '.configurePresets[] | select(.name=="common") | .cacheVariables.JDE_VERSION' "$presets" 2> /dev/null` || { echo `pwd`; echo could not read JDE_VERSION from $presets; exit 1; };
+	_jdeVersionRaw=$presetsVersion;
+}
 function jdeVersion {
 	local -n _jdeVersion=$1;
 	local presets=${2:-$JDE_BASH/CMakePresets.common.json};
-	#assign on its own line - `local raw=`cmd`` returns local's status, not the command's, so the || never fires.
-	local raw;
-	raw=`jq -er '.configurePresets[] | select(.name=="common") | .cacheVariables.JDE_VERSION' "$presets" 2> /dev/null` || { echo `pwd`; echo could not read JDE_VERSION from $presets; exit 1; };
+	local rawVersion;
+	jdeVersionRaw rawVersion "$presets";
 	#a lone 0 is left alone: `0+([0-9])` needs a digit after the zeros, so 1.0.0 does not become 1..
-	_jdeVersion=`echo "$raw" | sed -E 's/(^|\.)0+([0-9])/\1\2/g'`;
+	_jdeVersion=`echo "$rawVersion" | sed -E 's/(^|\.)0+([0-9])/\1\2/g'`;
 }
 
 #`ng new` emits tsconfig.json with leading /* */ comment lines, which jq cannot parse.  Strip whole-line

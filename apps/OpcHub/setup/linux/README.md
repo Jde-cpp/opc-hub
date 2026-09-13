@@ -19,7 +19,7 @@ resolved against the machine that builds it):
 | `patchelf` | `apt install patchelf`, or the PyPI wheel (`pip install patchelf`, then `--patchelf <path>`) - sets every staged exe's and `.so`'s RUNPATH to `$ORIGIN` |
 
 ```bash
-apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<git describe>_amd64.deb + .tar.gz
+apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<JDE_VERSION>_amd64.deb + .tar.gz (CMakePresets.common.json - 2026.09.01)
 apps/OpcHub/setup/linux/build-deb.sh --version 2026.09.08 --skip-web
 apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dwarf (file:line in the stack traces); several times the size
 ```
@@ -32,7 +32,9 @@ exe and `.so` gets `RUNPATH=$ORIGIN` (patchelf), so a product dir resolves by it
 `Depends:` is what is left: the packages owning the system libraries the staged binaries still load (`libssl3t64`,
 `zlib1g`, `libzstd1`, `liburing2`, `libxml2`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
 `adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`); `ca-certificates` is recommended, for the OS trust
-store.  The version is `git describe --tags`: a `yyyy.MM.dd` tag as it is, `yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`.
+store.  The version is `CMakePresets.common.json`'s `JDE_VERSION` - the string the C++ targets and the Web UI carry - unless
+`--version` names one (the release workflow passes the tag, which should equal it): a `yyyy.MM.dd` as it is,
+`yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`.
 
 CI: the Linux Release workflow (`.github/workflows/linux-release.yml`) builds the release tree on the self-hosted runner
 (`.github/docker/`), the Web UI on a GitHub-hosted `web` job as the Windows workflow does, runs `build-deb.sh` and uploads

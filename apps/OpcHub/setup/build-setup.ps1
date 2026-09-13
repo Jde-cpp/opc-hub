@@ -8,7 +8,7 @@ version), checks they exist, and runs makensis.  -Sign signs what ships - the ex
 uninstaller from inside it (!uninstfinalize) and the installer after - through sign.ps1 (README.md, "Signing").
 
 .EXAMPLE
-.\build-setup.ps1                       # defaults: $env:JDE_RBUILD_DIR\clang++\<repo dir>\release, the repo's web dist, git describe
+.\build-setup.ps1                       # defaults: $env:JDE_RBUILD_DIR\clang++\<repo dir>\release, the repo's web dist, CMakePresets.common.json's JDE_VERSION
 .\build-setup.ps1 -SkipWeb -Version 1.0 # no Web UI component
 .\build-setup.ps1 -Sign -PfxPath C:\certs\test.pfx  # signed with a .pfx; -Sign alone signs with Azure Artifact Signing ($env:JDE_SIGN_*)
 #>
@@ -19,7 +19,7 @@ param(
 	[switch]$SkipWeb,                    # omit the Web UI component
 	[string]$UaNodeSets = $env:UA_NODE_SETS, # OPCFoundation/UA-Nodeset clone (DI/IA for the OpcServer)
 	[string]$VcRedist = 'C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Redist\MSVC\v145\vc_redist.x64.exe',
-	[string]$Version,                    # default: git describe --tags --always
+	[string]$Version,                    # default: CMakePresets.common.json's JDE_VERSION (2026.09.01); CI passes the release tag, which should equal it
 	[string]$OutDir,                     # default: <BuildDir>\setup - outside the repo
 	[string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe',
 	[switch]$Sign,                       # sign.ps1: Azure Artifact Signing ($env:JDE_SIGN_ENDPOINT/ACCOUNT/PROFILE) or a .pfx ($env:JDE_SIGN_PFX)
@@ -63,7 +63,14 @@ if( $Sign ){
 	if( -not $env:JDE_SIGN_ENDPOINT -and -not $env:JDE_SIGN_PFX ){ throw '-Sign needs a certificate: JDE_SIGN_ENDPOINT, JDE_SIGN_ACCOUNT and JDE_SIGN_PROFILE (Azure Artifact Signing), or -PfxPath / JDE_SIGN_PFX - see README.md, Signing' }
 }
 
-if( -not $Version ){ $Version = (& git -C $repo describe --tags --always).Trim() }
+# The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
+# are built with and the Web UI's about page displays, so Add/Remove Programs agrees with them.  A -Version names it outright
+# (the release workflow passes the tag) and is expected to be the same string; anything else is warned about, not refused.
+$presets = Get-Content (Join-Path $repo 'CMakePresets.common.json') -Raw | ConvertFrom-Json
+$jdeVersion = ($presets.configurePresets | Where-Object { $_.name -eq 'common' }).cacheVariables.JDE_VERSION
+if( -not $jdeVersion ){ throw 'JDE_VERSION not found in CMakePresets.common.json' }
+if( -not $Version ){ $Version = $jdeVersion }
+elseif( $Version -ne $jdeVersion ){ Write-Warning "-Version $Version is not CMakePresets.common.json's JDE_VERSION $jdeVersion - the installer's version and the product's will disagree" }
 # VIProductVersion needs four 16-bit numbers: yyyy.M.d.N from a `yyyy.MM.dd[-N-gsha]` describe, else 0.0.0.0
 $vi = '0.0.0.0'
 if( $Version -match '^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+)-g[0-9a-f]+)?$' ){

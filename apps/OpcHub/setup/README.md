@@ -19,7 +19,7 @@ Prerequisites on the build machine:
 | `vc_redist.x64.exe` | the VS 2026 install's `VC\Redist\MSVC\v145\` (`-VcRedist`), or https://aka.ms/vs/18/release/vc_redist.x64.exe - 14.50 or later, the installer's gate: the exes are built with the 14.51 toolset and Microsoft's rule is a redistributable at least as new as the toolset (the VS 2022 line's 14.44 happens to export every symbol they import, checked 09-12, but only by luck); bundled for the all-users mode, skipped with a warning if missing |
 
 ```powershell
-.\build-setup.ps1                              # -> <BuildDir>\setup\OpcHubSetup-<git describe>.exe
+.\build-setup.ps1                              # -> <BuildDir>\setup\OpcHubSetup-<JDE_VERSION>.exe (CMakePresets.common.json - 2026.09.01)
 .\build-setup.ps1 -Version 2026.09.08 -SkipWeb
 .\build-setup.ps1 -Sign -PfxPath <cert.pfx>    # signed with a .pfx; -Sign alone uses Azure Artifact Signing - see Signing
 ```
