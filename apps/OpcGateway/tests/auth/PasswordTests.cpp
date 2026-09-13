@@ -39,14 +39,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//web session owns, which is what happened to the literal `1` this used to pass - the third login's credential was gone by
 	//the time the test read it back.
 	Ω session()ι->SessionPK{ return Web::Server::Sessions::Add( Jde::UserPK{}, "localhost", false )->SessionId; }
-	α AuthenticateTest( ServerCnnctnNK opcId, SessionPK sessionId, bool badPassword=false )ι->TAwait<optional<Web::FromServer::SessionInfo>>::Task{
-		optional<Web::FromServer::SessionInfo> sessionInfo; up<Exception> exception;
-		try{
-			sessionInfo = co_await PasswordAwait{ "user1", badPassword ? "xyz" : _password, move(opcId), "localhost", false, sessionId };
-		}
-		catch( Exception& e ){
-			exception = e.Move();
-		}
+	//The bookkeeping in a plain function, not in the coroutine:  with the lock and the notify in the body after the try/catch,
+	//clang 22.1's optimizer (-O3, the release preset) crashed in jump-threading on the resume function - the tag build of
+	//2026.09.01.  Out of line, the coroutine is one await and one call.
+	[[gnu::noinline]] Ω completed( optional<Web::FromServer::SessionInfo>&& sessionInfo, up<Exception>&& exception )ι->void{
 		{
 			std::lock_guard l{ mtx };
 			if( sessionInfo )
@@ -56,6 +52,16 @@ namespace Jde::Opc::Gateway::Tests{
 			++_completed;
 		}
 		cv.notify_all();
+	}
+	α AuthenticateTest( ServerCnnctnNK opcId, SessionPK sessionId, bool badPassword=false )ι->TAwait<optional<Web::FromServer::SessionInfo>>::Task{
+		optional<Web::FromServer::SessionInfo> sessionInfo; up<Exception> exception;
+		try{
+			sessionInfo = co_await PasswordAwait{ "user1", badPassword ? "xyz" : _password, move(opcId), "localhost", false, sessionId };
+		}
+		catch( Exception& e ){
+			exception = e.Move();
+		}
+		completed( move(sessionInfo), move(exception) );
 	}
 	Ω waitFor( uint completed )ε->void{
 		std::unique_lock l{ mtx };
