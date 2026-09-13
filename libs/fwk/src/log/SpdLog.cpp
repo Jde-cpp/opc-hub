@@ -96,7 +96,11 @@ namespace Jde::Logging{
 		auto sinks = loadSinks( settings );
 		spdlog::logger logger{ "my_logger", sinks.begin(), sinks.end() };
 
-		let flushOn = Json::FindEnum<ELogLevel>( settings, "/logging/spd/flushOn", ToLogLevel ).value_or( _debug ? ELogLevel::Debug : ELogLevel::Information );
+		//`settings` is this logger's own object (/logging/spd - loadSinks reads its "sinks"), and the jobject overload of FindEnum
+		//takes a key, not a path: the root path it used to spell never matched, every config's flushOn was ignored, and a
+		//release build flushed on Information alone - a service's text log then showed nothing below that until a flush or
+		//exit (reviews/install-issues.md #7).  FlushLevel() is what the test pins.
+		let flushOn = Json::FindEnum<ELogLevel>( settings, "flushOn", ToLogLevel ).value_or( _debug ? ELogLevel::Debug : ELogLevel::Information );
 		logger.flush_on( (level_enum)flushOn );
 
 		let minSinkLevel = std::accumulate( sinks.begin(), sinks.end(), ELogLevel::Critical, [](ELogLevel min, auto& p){return std::min((ELogLevel)p->level(), min);} );

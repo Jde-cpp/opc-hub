@@ -209,6 +209,24 @@ namespace Jde::Tests{
 	// the DBG both proves that level and memoizes it into the logger's ExtrapolatedTags, and only then is the tag
 	// raised to Trace - which fails unless SetLevel reaches the cumulative (it short-circuits the TRACE before any
 	// logger is consulted) *and* drops that memo.
+	//install-issues #7: SpdLog is handed its own /logging/spd object and looked `flushOn` up by a root path, which the jobject
+	//overload (a key, not a path) never resolves - every config's flushOn was ignored and the default stood, Information in a
+	//release build, so a service's text log showed nothing below that until a flush.  The key reads it; the default holds without.
+	TEST_F( LogGeneralTests, SpdLogReadsFlushOnFromItsOwnSettings ){
+		let dir = fs::temp_directory_path()/"jde-spd-flush";
+		fs::create_directories( dir );
+		auto settings = [&]( optional<sv> flushOn )->jobject{
+			jobject o{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}}}}} };
+			if( flushOn )
+				o["flushOn"] = *flushOn;
+			return o;
+		};
+		EXPECT_EQ( Logging::SpdLog{settings("Trace")}.FlushLevel(), ELogLevel::Trace );
+		EXPECT_EQ( Logging::SpdLog{settings("Warning")}.FlushLevel(), ELogLevel::Warning );
+		EXPECT_EQ( Logging::SpdLog{settings(nullopt)}.FlushLevel(), _debug ? ELogLevel::Debug : ELogLevel::Information );
+		fs::remove_all( dir );
+	}
+
 	TEST_F( LogGeneralTests, CachedTags ){
 		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 

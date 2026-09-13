@@ -14,12 +14,13 @@ namespace Jde::Logging{
 	Φ FormatSourceUri( sv file )ι->string;
 	Ξ ToSpdSL( SL sl )ι->spdlog::source_loc{ return {sl.file_name(), (int)sl.line(), sl.function_name()}; }
 	struct SpdLog final : ILogger{
-		SpdLog( const jobject& settings )ι;
+		Γ SpdLog( const jobject& settings )ι;
 		ψ Write( ELogLevel level, SL sl, FormatString&& m, ARGS... args )ε{
 			_logger.log( ToSpdSL(sl), (spdlog::level::level_enum)level, FWD(m), FWD(args)... );
 		}
 		α Shutdown( bool /*terminate*/, SL )ι->void override{ _logger.flush(); }
 		α Name()Ι->sv override{ return _logger.name(); }
+		α FlushLevel()Ι->ELogLevel{ return (ELogLevel)_logger.flush_level(); }
 		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
 		α WriteFormatted( ELogLevel level, SL sl, fmt::string_view m, fmt::format_args args )ι->bool override{
 			_logger.log( ToSpdSL(sl), (spdlog::level::level_enum)level, fmt::vformat(m, args) );

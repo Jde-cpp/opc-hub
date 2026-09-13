@@ -158,6 +158,10 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   (the gateway's group/role) is still not seeded: its `createRole( permissionRights:[…] )` shape is not one the seed applies.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer) shares
   port 1967 with the hub; the installer stops them and says so.  Deregister them with each exe's `-uninstall`.
+- Logs: `C:\ProgramData\Jde-Cpp\OpcHub\Opc.Hub.log` and `OpcServer\Opc.Server.log` are the text logs (truncated on each
+  start; the tags' levels and `flushOn` under each config's `logging.spd` - the shipped `flushOn: "Trace"` writes every line
+  through at once), and `OpcHub\opc-hub\log.binpb` / `OpcServer\opc-server\log.binpb` the binary ones the Web UI's Logs
+  page reads.  A service has no console, so a failure before logging is up shows only in the Windows event log.
 - `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under LocalSystem, so
   the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
   before the first start to change that.
