@@ -50,7 +50,8 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
   any OPC UA server: `sudo systemctl enable --now jde-opcserver` (opc.tcp 4840, http 1970; requires the hub, as the
   Windows service's `depend=`);
 - the Web UI: the site file is installed, not enabled - `sudo ln -s /etc/jde-cpp/nginx-opchub.conf
-  /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`, then http://127.0.0.1:8071;
+  /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`, then http://127.0.0.1:8071 - optional: the hub serves the
+  site itself at http://<host>:1967/ (`http.site` = `$(ExeDir)/../web`, the package's `/opt/jde-cpp/web`);
 - `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs): unset, the keys are written in the
   clear - the documented behaviour of an empty passcode.  Set it in `/etc/jde-cpp/env` (root-owned, `jde-cpp`-readable)
   before the first start.

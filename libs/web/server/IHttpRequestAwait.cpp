@@ -6,7 +6,9 @@ namespace Jde::Web::Server{
 	HttpTaskResult::HttpTaskResult( HttpTaskResult&& rhs )ι:
 		Json( move(rhs.Json) ),
 		Request{ move(rhs.Request) },
-		Source{ move(rhs.Source) }
+		Source{ move(rhs.Source) },
+		Body{ move(rhs.Body) },
+		ContentType{ move(rhs.ContentType) }
 	{}
 
 	α HttpTaskResult::operator=( HttpTaskResult&& rhs )ι->HttpTaskResult&{
@@ -16,6 +18,8 @@ namespace Jde::Web::Server{
 			Request.reset();
 		Json=move( rhs.Json );
 		Source=move( rhs.Source );
+		Body=move( rhs.Body );
+		ContentType=move( rhs.ContentType );
 		return *this;
 	}
 

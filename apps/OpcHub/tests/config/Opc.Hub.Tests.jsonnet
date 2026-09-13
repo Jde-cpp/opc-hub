@@ -41,6 +41,7 @@ local logsDir = args.logsDir;
 	http:{
 		host: "127.0.0.1", //what /opcGateways advertises; the test clients connect by ip (sessions are endpoint-bound).
 		port: 1973,
+		site: args.repoSourceDir + "/apps/OpcHub/tests/config/site", //a stand-in for the built site - HubRoutingTests.SiteServedFromTheHub.
 		clientSettings:{
 			googleAuthClientId: "opc-hub-tests-google-client-id" //served by GET /GoogleAuthClientId.
 		},

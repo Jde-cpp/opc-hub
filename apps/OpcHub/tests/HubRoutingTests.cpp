@@ -133,6 +133,33 @@ namespace Jde::Opc::Hub::Tests{
 		Web::Server::Sessions::Remove( sessionId );
 	}
 
+	//install-issues #3/#4: the hub serves the site (/http/site) from the listener the api shares - the page (index.html, always
+	//revalidated), the build's hashed assets (cached for good), a nested asset - and an extension-less path that is no route of
+	//the api is the page, the deep-link fallback IIS needed the rewrite module for.  A missing asset is 404, a dot segment never
+	//resolves, and the api's own GETs come first.
+	TEST_F( HubRoutingTests, SiteServedFromTheHub ){
+		let index = Get( AppPort(), "/" );
+		EXPECT_EQ( index.Status(), http::status::ok );
+		EXPECT_EQ( string{index.Headers()[http::field::content_type]}, "text/html; charset=utf-8" );
+		EXPECT_EQ( string{index.Headers()[http::field::cache_control]}, "no-cache" );
+		EXPECT_NE( index.Body().find("<app-root>"), string::npos );
+		let js = Get( AppPort(), "/main-ABCDEFGH.js" );
+		EXPECT_EQ( string{js.Headers()[http::field::content_type]}, "text/javascript; charset=utf-8" );
+		EXPECT_EQ( string{js.Headers()[http::field::cache_control]}, "public, max-age=31536000, immutable" );
+		EXPECT_EQ( Get(AppPort(), "/assets/site/hello.txt").Body(), "hello\n" );
+		for( let route : {"/login", "/apps/gateways", "/access/users"} )
+			EXPECT_EQ( Get(AppPort(), route).Body(), index.Body() ) << route;
+		auto status = [&]( string target )->optional<http::status>{
+			try{ return Get( AppPort(), move(target) ).Status(); }
+			catch( ClientHttpResException& e ){ return e.Status(); }
+			catch( const std::exception& ){ return {}; }
+		};
+		EXPECT_EQ( status("/missing.js"), optional{http::status::not_found} );
+		EXPECT_EQ( status("/assets/../Opc.Hub.Tests.jsonnet"), optional{http::status::not_found} );
+		EXPECT_EQ( status("/.git/config"), optional{http::status::not_found} );
+		EXPECT_TRUE( Get(AppPort(), "/opcGateways").Json().contains("servers") );//the api's own GET, ahead of the page
+	}
+
 	//install-issues #2's certificate:  the hub's web certificate names this machine - DNS:$(HostName) in the config's subjectAltName,
 	//the settings expander's built-in - beside localhost, so https://<machine>:1967 passes the name check once the certificate is
 	//trusted there; a config change re-issues on the same key (Crypto::ReissueReason), so an existing install picks it up.

@@ -76,7 +76,7 @@ components page to pick it on), `/D=<dir>` for the program dir.
 |---|---|---|
 | OPC Hub (`Jde.OpcHub`) | required | `Jde.Opc.Hub.exe` - the AppServer and the OpcGateway in one process, port 1967 |
 | OPC UA Server (`Jde.OpcServer`) | optional, off | `Jde.Opc.Server.exe` - opc.tcp 4840, http 1970, DI/IA nodesets + the pumps demo address space; logs in to the hub with its certificate.  With it, the hub's seeds for it - the server as the default connection, its provider row, the Web UI's Google provider (First login, below) |
-| Web UI files | optional, on | the Angular site + `web.config` under `<program dir>\Web`, for an IIS site (IIS is configured by hand - `apps/OpcGateway/README.md`). The page reaches the hub by the host it was browsed from, so any name that resolves to the machine works, given its port 1967 is reachable from there |
+| Web UI | optional, on | the Angular site under `<program dir>\Web`, served by the hub itself at `http://<host>:1967/` (`Opc.Hub.jsonnet` `http.site`, `$(ExeDir)/../web` from the install args - the page and its api on one origin, no IIS). `web.config` is included for anyone who prefers the site behind IIS (`apps/OpcGateway/README.md`). The page reaches the hub by the host it was browsed from |
 | Start at logon | current-user only | HKCU Run entries for the selected products |
 
 ## Installed layout
@@ -86,7 +86,7 @@ components page to pick it on), `/D=<dir>` for the program dir.
   OpcHub\     Jde.Opc.Hub.exe Jde.dll Jde.DB.dll fmt.dll z.dll libcrypto-3-x64.dll libssl-3-x64.dll
               Jde.DB.Sqlite.dll sqlite3.dll Jde.DB.Sqlite.AppServer.dll Jde.DB.Sqlite.OpcGateway.dll
   OpcServer\  Jde.Opc.Server.exe + the same + libxml2.dll, Jde.DB.Sqlite.dll sqlite3.dll
-  Web\        the Angular site + web.config
+  Web\        the Angular site, served by the hub at http://<host>:1967/ (+ web.config for IIS, optional)
   Uninstall.exe
 C:\ProgramData\Jde-Cpp
   config\                                                settings mirror - repo layout, so the configs' relative imports keep working
@@ -129,9 +129,9 @@ hub installed without the component has no login path): the component seeds the 
 and `Jde.OpcServer` as the hub's default server connection (`gateway_opcServer.mutation`: slug `OpcServer`,
 `opc.tcp://127.0.0.1:4840`; `access_opcServer.mutation`: its provider row).  The button works only from an origin registered
 under the OAuth client id the hub serves (`GET /GoogleAuthClientId`).  The default is the project's own client id, so a
-browser on the hub machine at `http://localhost:8071` works once that origin is registered on it; any other host needs its
+browser on the hub machine at `http://localhost:1967` works once that origin is registered on it; any other host needs its
 own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript origin
-`http://<host>:8071`), put in `config\apps\OpcHub\config\args\install\args.libsonnet` (`googleAuthClientId`), then
+`http://<host>:1967`), put in `config\apps\OpcHub\config\args\install\args.libsonnet` (`googleAuthClientId`), then
 `Jde.OpcHub` restarted.  The first grant is manual by ruling (the seeded roles); every resource ships unenforced, so the first
 user can make it.
 

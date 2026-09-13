@@ -12,7 +12,9 @@ namespace Jde::Opc::Hub{
 	//               with `opc` is the gateway's OPC user/password login; neither is 401 as the AppServer answers.
 	//  POST /logout: the gateway's OPC credentials dropped, then the web session removed - one call closes both protocols'
 	//               sockets (Sessions::Remove); no upstream purgeSession, which in-process would only re-enter that.
-	//  ?opc=…: the gateway's CoHandleRequest;  anything else 404.
+	//  ?opc=…: the gateway's CoHandleRequest.
+	//  GET  anything else: the site (Web::Server::StaticSite, /http/site) - a file under it, or its index.html for a route of the
+	//       page (install-issues #3/#4);  then the 404.
 	struct HttpRequestAwait final : Gateway::HttpRequestAwait{
 		using base = Gateway::HttpRequestAwait;
 		HttpRequestAwait( HttpRequest&& req, SRCE )ι: base{ move(req), sl }{}
@@ -22,5 +24,6 @@ namespace Jde::Opc::Hub{
 		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override;
 		α HubLogout()ι->void;
 		α HasOpcBody()ι->bool;
+		α ServeSite()ι->void;
 	};
 }

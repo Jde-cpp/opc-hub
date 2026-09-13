@@ -9,10 +9,10 @@ Rest/Websocket Application on top of [open62541.org](https://www.open62541.org/)
 ### Steps
 1) Run `OpcHubSetup-<version>.exe` - built from [`apps/OpcHub/setup`](../OpcHub/setup/README.md), which also documents the installed layout.
    - Install mode: **All users** registers the selected products as Windows services (administrator rights); **Current user** installs under `%LOCALAPPDATA%\Programs` and runs them from Start Menu shortcuts (no administrator rights).
-   - Components: the OPC Hub (`Jde.OpcHub` - the AppServer and the OpcGateway in one process, required), the OPC UA Server (`Jde.OpcServer`, optional), the Web UI files for IIS.
+   - Components: the OPC Hub (`Jde.OpcHub` - the AppServer and the OpcGateway in one process, required), the OPC UA Server (`Jde.OpcServer`, optional), the Web UI (served by the hub).
 
    The database is sqlite, one file per product under `C:\ProgramData\Jde-Cpp\<Product>`, created on first start - no SQL Server, no setup script.
-2) IIS - physical path `C:\Program Files\Jde-Cpp\Web` (or the current-user install's `Web` dir)
+2) Browse to http://localhost:1967/ once `Jde.OpcHub` runs - the hub serves the Web UI itself; from another machine, `http://<hub>:1967/`. IIS is optional: to put the site behind it, physical path `C:\Program Files\Jde-Cpp\Web` (or the current-user install's `Web` dir), port 8071
 
   a.  Features:  ![](./doc/iis-features.png)
 
@@ -40,7 +40,7 @@ Rest/Websocket Application on top of [open62541.org](https://www.open62541.org/)
     net start Jde.OpcServer
 ```
    or, in a current-user install, the Start Menu shortcuts (each runs in its own console window). The standalone `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway`) still builds for split deployments but is not installed.
-2) Browse to http://127.0.0.1:8071 - or from any machine that reaches the hub's port 1967, by the hub's name: `http://<hub>:8071`. The page calls the hub by the name it was browsed by.
+2) Browse to http://127.0.0.1:1967/ - or from any machine that reaches the hub's port 1967, by the hub's name: `http://<hub>:1967/`. The page calls the hub by the name it was browsed by.
 3) Setup Opc Server.
 ![](./doc/OpcServer.png)
    1) Click Settings.

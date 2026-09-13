@@ -41,6 +41,9 @@ function( sync=false )
 		address: null,
 		host: "localhost", //advertised through /opcGateways.  A loopback name here reaches the hub only from its own machine, so the page rewrites it to the host it was served from (web: resolveInstanceHost) - which is also what allowOrigin 'sameHost' needs.  Set a real name only for a split deployment the page must reach elsewhere.
 		port: 1967, //the AppServer's port: web/opc/site/environments/environment*.ts (applicationServer) stays as it is.
+		//the Angular site, served at / by this listener (Web::Server::StaticSite - install-issues #3): the installers' <program dir>/web,
+		//named by args/install; none in dev, where ng serve has it.
+		site: if std.objectHas(args, 'siteDir') then args.siteDir else null,
 		threads: app.http.threads,
 		timeout: app.http.timeout,
 		socketTimeout:: app.http.socketTimeout,

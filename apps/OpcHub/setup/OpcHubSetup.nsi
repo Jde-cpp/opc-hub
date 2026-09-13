@@ -3,7 +3,7 @@
 ;
 ; Two install modes (MultiUser.nsh):  All users - Program Files, the selected products registered as Windows services,
 ; administrator rights;  Current user - %LOCALAPPDATA%\Programs, run from Start Menu shortcuts, no administrator rights.
-; Three components:  the OPC Hub (required), the OPC UA Server, the Web UI files for IIS.  The database is sqlite - one file
+; Three components:  the OPC Hub (required), the OPC UA Server, the Web UI (served by the hub).  The database is sqlite - one file
 ; per product under %ProgramData%\Jde-Cpp\<Product>, created on the first start (-sync).
 ;
 ; The service registration is the exe's own (`-install`, libs/fwk/src/process/process.cpp): this script never writes an
@@ -235,7 +235,7 @@ Section /o "OPC UA Server (Jde.OpcServer)" SEC_OPCSERVER
 SectionEnd
 
 !ifndef SKIP_WEB
-Section "Web UI files (for IIS)" SEC_WEB
+Section "Web UI" SEC_WEB
 	SetOutPath "$INSTDIR\Web"
 	File /r "${WEB_DIST}\*.*"
 	File "${SRC_DIR}\web\opc\scripts\web.config"
@@ -317,7 +317,7 @@ Section -Services
 			nsExec::ExecToLog 'sc config Jde.OpcServer start= auto depend= Jde.OpcHub'
 			Pop $0
 		${EndIf}
-		StrCpy $FinishText "${PRODUCT} is installed as Windows services.$\r$\n$\r$\nStart them with:$\r$\n    net start Jde.OpcHub$\r$\n    net start Jde.OpcServer$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir."
+		StrCpy $FinishText "${PRODUCT} is installed as Windows services.$\r$\n$\r$\nStart them with:$\r$\n    net start Jde.OpcHub$\r$\n    net start Jde.OpcServer$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs."
 	${Else}
 		;no services without administrator rights: shortcuts, the exes run in a console window (-c)
 		CreateDirectory "$SMPROGRAMS\${COMPANY}"
@@ -329,7 +329,7 @@ Section -Services
 		${EndIf}
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		SetOutPath "$INSTDIR"
-		StrCpy $FinishText "${PRODUCT} is installed for your account.$\r$\n$\r$\nStart it from the Start Menu folder '${COMPANY}' - each product runs in its own console window.$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir."
+		StrCpy $FinishText "${PRODUCT} is installed for your account.$\r$\n$\r$\nStart it from the Start Menu folder '${COMPANY}' - each product runs in its own console window.$\r$\n$\r$\nThe sqlite database is created on the first start under $DataDir.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde OpcHub runs."
 	${EndIf}
 SectionEnd
 
@@ -361,7 +361,7 @@ SectionEnd
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub, port 1967): the REST/websocket API the Web UI talks to.  Required."
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's own OPC UA server (service Jde.OpcServer, opc.tcp 4840, http 1970) with the DI/IA nodesets and the pumps demo address space; seeded as the hub's default connection, with the Web UI's Google login.  Optional - the hub can connect to any OPC UA server."
 !ifndef SKIP_WEB
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_WEB} "The Angular site, copied to <install dir>\Web for an IIS site to serve (IIS itself is configured by hand - see the README)."
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_WEB} "The Angular site under <install dir>\Web, served by the hub at http://<host>:1967/.  IIS is not needed; web.config is included for putting the site behind it (see the README)."
 !endif
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_AUTOSTART} "Current-user installs only: start the selected products at logon (HKCU Run)."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END

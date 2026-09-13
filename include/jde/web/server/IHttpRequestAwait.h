@@ -11,11 +11,14 @@ namespace Jde::Web::Server{
 		HttpTaskResult( HttpRequest&& req )ι:Request{move(req)}{}
 		HttpTaskResult( HttpTaskResult&& rhs )ι;
 		HttpTaskResult( jvalue&& j, HttpRequest&& req, SRCE )ι:Json( move(j) ), Request{ move(req) }, Source{sl}{}
+		HttpTaskResult( string&& body, string contentType, HttpRequest&& req, SRCE )ι:Request{ move(req) }, Source{sl}, Body{ move(body) }, ContentType{ move(contentType) }{}//a file, not json - the site's (StaticSite).
 		α operator=( HttpTaskResult&& rhs)ι->HttpTaskResult&;
 
 		jvalue Json;
 		optional<HttpRequest> Request; //why optional?
 		optional<SL> Source;
+		optional<string> Body;//set: sent as is with ContentType, Json ignored - a file of the site; the request's ResponseHeaders carry the rest (Cache-Control).
+		string ContentType;
 	};
 
 	struct IHttpRequestAwait : TAwait<HttpTaskResult> {

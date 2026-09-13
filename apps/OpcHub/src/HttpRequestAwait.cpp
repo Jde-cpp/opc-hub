@@ -1,5 +1,6 @@
 #include "HttpRequestAwait.h"
 #include <jde/web/server/Sessions.h>
+#include <jde/web/server/StaticSite.h>
 #include "../../AppServer/src/HttpRequestAwait.h"
 #include "../../AppServer/src/WebServer.h"
 #include "../../OpcGateway/src/auth/OpcServerSession.h"
@@ -41,6 +42,22 @@ namespace Jde::Opc::Hub{
 			ResumeExp( RestException{EHttpStatus::InternalServerError, move(e), move(_request)} );
 		}
 	}
+	//The site, after every route of the api - GET only, and not the gateway's ?opc= requests.  A miss is the gateway's 404, as before.
+	α HttpRequestAwait::ServeSite()ι->void{
+		try{
+			if( auto file = Web::Server::Site()->Resolve(_request.Target()); file ){
+				_request.LogRead();
+				_request.ResponseHeaders.emplace( "Cache-Control", move(file->CacheControl) );
+				_request.ResponseHeaders.emplace( "X-Content-Type-Options", "nosniff" );
+				Resume( HttpTaskResult{move(file->Body), move(file->ContentType), move(_request)} );
+			}
+			else
+				base::Suspend();
+		}
+		catch( runtime_error& e ){
+			ResumeExp( RestException{EHttpStatus::InternalServerError, move(e), move(_request)} );
+		}
+	}
 	α HttpRequestAwait::Suspend()ι->void{
 		if( _request.IsPost("/login") ){
 			if( _request.Header("Authorization").starts_with("Bearer ") )
@@ -52,6 +69,8 @@ namespace Jde::Opc::Hub{
 		}
 		else if( _request.IsPost("/logout") )
 			HubLogout();
+		else if( _request.IsGet() && _request["opc"].empty() && Web::Server::Site() )
+			ServeSite();//the page and its files, then the 404
 		else
 			base::Suspend();//?opc= and the 404.
 	}

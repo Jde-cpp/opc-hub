@@ -123,7 +123,16 @@ namespace Server{
 		try{
 			HttpTaskResult result = co_await *requestAwait;
 			THROW_IF( !result.Request, "Request not set." );
-			send( move(*result.Request), move(stream), move(result.Json), {}, result.Source.value_or(SRCE_CUR) );
+			if( result.Body ){//a file of the site (StaticSite), sent as is - the resolver's headers ride on the request's ResponseHeaders.
+				DBGT( ELogTags::HttpServerWrite, "HttpResponse:  {} - {}, {} bytes", result.Request->Target(), result.ContentType, result.Body->size() );
+				auto res = result.Request->Response<http::string_body>();
+				res.set( http::field::content_type, result.ContentType );
+				res.body() = move( *result.Body );
+				res.prepare_payload();
+				stream->AsyncWrite( move(res) );
+			}
+			else
+				send( move(*result.Request), move(stream), move(result.Json), {}, result.Source.value_or(SRCE_CUR) );
 		}
 		catch( RestException& e ){
 			send( move(e), move(stream) );
