@@ -63,13 +63,15 @@ interstitial fades as the certificate accrues download reputation, which a new o
 | rights | administrator (UAC prompt) | none - a standard user never sees a prompt; an administrator sees one and may still pick this mode |
 | program dir | `C:\Program Files\Jde-Cpp` | `%LOCALAPPDATA%\Programs\Jde-Cpp` |
 | how the products run | Windows services `Jde.OpcHub`, `Jde.OpcServer` (auto start; `net start`/`net stop`) - the finish page's "Start now" box starts them at once | Start Menu folder `Jde-Cpp`: a shortcut per product, each a console window (`-c`) - the finish page's "Start now" box opens them at once; optional "Start at logon" component (HKCU Run) |
-| VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older | must be present already (installing it needs administrator rights) |
+| VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older; when its installer wants a restart (its files were in use) the finish page says so and offers it - the services start with Windows after it, and "Start now" is not offered | must be present already (installing it needs administrator rights) |
 | Add/Remove Programs | HKLM | HKCU (`Jde OpcHub (current user)`) |
 | data | `C:\ProgramData\Jde-Cpp\<Product>` in both modes - the apps hardcode it (`Process::ProgramDataFolder()`, `libs/db/config/paths-common.libsonnet`).  A standard user can create the tree and owns it; one created by an all-users install is read-only to them, so the installer refuses the current-user mode in that case. | |
 
 Silent: `OpcHubSetup-<v>.exe /S /AllUsers` or `/CurrentUser`, `/Start` to start the products at the end (the finish page's box,
 which `/S` never shows), `/OpcServer` to add the OPC UA Server component (there is no
-components page to pick it on), `/D=<dir>` for the program dir.
+components page to pick it on), `/D=<dir>` for the program dir.  Exit code 3010 (msiexec's) means the runtime's installer
+needs a restart: the products were not started and the services come up with Windows after it; nothing restarts the
+machine by itself.
 
 ## Components
 

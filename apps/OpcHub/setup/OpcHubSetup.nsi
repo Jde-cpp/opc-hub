@@ -109,6 +109,12 @@ Var StartNow   ;/Start - a silent install starts the products at the end, as the
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${PRODUCT} now"
 !define MUI_FINISHPAGE_RUN_FUNCTION StartProducts
 !define MUI_FINISHPAGE_TEXT "$FinishText"
+;With the reboot flag set (-VCRedist: the runtime's installer returned 3010) MUI shows this text and restart-now/later
+;instead - no "Start now" box, the products may not load until the restart.  The reboot case is all-users only (the
+;runtime is installed in that mode alone), so "the services start with Windows" is always true of it.
+!define MUI_FINISHPAGE_TEXT_REBOOT "Windows must be restarted to finish installing the Visual C++ runtime ${PRODUCT} runs on.$\r$\n$\r$\nThe ${PRODUCT} services are registered to start with Windows, so they come up after the restart; until then they may not start.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs.$\r$\n$\r$\nRestart now?"
+!define MUI_FINISHPAGE_TEXT_REBOOTNOW "Restart now"
+!define MUI_FINISHPAGE_TEXT_REBOOTLATER "I will restart Windows later"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -282,8 +288,14 @@ Section -VCRedist
 		File "${VC_REDIST}"
 		ExecWait '"$TEMP\vc_redist.x64.exe" /install /quiet /norestart' $0
 		Delete "$TEMP\vc_redist.x64.exe"
-		${If} $0 != 0
-		${AndIf} $0 != 3010
+		${If} $0 == 3010
+			;the runtime's files were in use (an older msvcp140 loaded by some process): Windows swaps them in at the next
+			;restart, and until then the exes may load the old ones and fail.  Used to be accepted in silence
+			;(reviews/install-issues.md, Notes "VC++ runtime"); the reboot flag turns the finish page into its restart form
+			;(MUI_FINISHPAGE_TEXT_REBOOT above) and a silent install exits 3010 (.onInstSuccess).
+			DetailPrint "The Visual C++ runtime needs Windows restarted to finish - ${PRODUCT} starts after it"
+			SetRebootFlag true
+		${ElseIf} $0 != 0
 			MessageBox MB_OK|MB_ICONEXCLAMATION "The Visual C++ runtime installer returned $0.  Install the Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, before starting ${PRODUCT}." /SD IDOK
 		${EndIf}
 !else
@@ -466,7 +478,14 @@ Function StartProducts
 FunctionEnd
 
 Function .onInstSuccess
-	${If} ${Silent}
+	${If} ${RebootFlag}
+		;the runtime's restart (-VCRedist): the products may not load until then, so /Start is not honoured - the services
+		;come up with Windows - and a silent install reports it the way msiexec does, exit code 3010, for whatever ran it
+		;to act on.  NSIS never restarts a silent install's machine by itself.
+		${If} ${Silent}
+			SetErrorLevel 3010
+		${EndIf}
+	${ElseIf} ${Silent}
 	${AndIf} $StartNow == 1
 		Call StartProducts
 	${EndIf}
