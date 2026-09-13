@@ -13,7 +13,7 @@ resolved against the machine that builds it):
 | what | where |
 |---|---|
 | the release build tree | `$JDE_BUILD_DIR/$JDE_COMPILER/<repo dir>/release` (`--build-dir`), configured with `linux-clang-relWithDebInfo-jde`: the targets `Jde.Opc.Hub`, `Jde.Opc.Server`, `Jde.DB.Sqlite`, `Jde.DB.Sqlite.AppServer`, `Jde.DB.Sqlite.OpcGateway` |
-| the Angular site | `web/opc/my-workspace/dist/my-workspace/browser` - `web/opc/scripts/setup.sh` runs `ng build` (`--web-dist`, or `--skip-web`) |
+| the Angular site | `web/opc/my-workspace/dist/my-workspace/browser` - `web/opc/scripts/setup.sh` runs `ng build` (`--web-dist`, or `--skip-web`); its `*.map` files are not packed.  `setup.sh --release` (the workflows' tag runs) hashes the output names, which the hub then serves as immutable; a plain `setup.sh` keeps `main.js` |
 | [OPCFoundation/UA-Nodeset](https://github.com/OPCFoundation/UA-Nodeset) | `$UA_NODE_SETS`, else `$REPO_DIR/UA-Nodeset` (`--ua-nodesets`) - DI/IA nodesets for the OpcServer |
 | `dpkg-deb`, `binutils` | dpkg's own, `objdump`/`strip` (`apt install binutils`) |
 | `patchelf` | `apt install patchelf`, or the PyPI wheel (`pip install patchelf`, then `--patchelf <path>`) - sets every staged exe's and `.so`'s RUNPATH to `$ORIGIN` |

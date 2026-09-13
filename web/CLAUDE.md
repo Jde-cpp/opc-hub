@@ -25,7 +25,8 @@ Editing a **hard-linked** `my-workspace/src` file is not: any tool that replaces
 than writing it in place (most editors, and the Edit tool) breaks the link, and the change
 silently stops being tracked. Prefer editing `web/opc/site/…` directly; if you did edit the
 workspace copy, re-link it with `ln -f <site-file> <workspace-file>` or re-run
-`web/opc/scripts/setup.sh`.
+`web/opc/scripts/setup.sh`.  Its `ng build` keeps unhashed output names (`main.js`) unless run as
+`setup.sh --release`, which the workflows' tag runs do; the installers never pack the `*.map` files.
 
 `preserveSymlinks` is set in both `angular.json` and `tsconfig.json` and must stay — without it
 tsc and esbuild resolve the library sources to their real paths outside the workspace, which

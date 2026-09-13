@@ -176,6 +176,7 @@ install -D -m 644 -t "$dataDir/OpcServer/nodesets" "$uaNodeSets/DI/Opc.Ua.Di.Nod
 if [ $skipWeb = 0 ]; then
 	install -d "$optDir/web"
 	cp -rL "$webDist/." "$optDir/web/"
+	find "$optDir/web" -type f -name '*.map' -delete #not the source maps - ~7 MB a browser never asks for unless devtools are open (as the Windows installer)
 	find "$optDir/web" -type d -exec chmod 755 {} +
 	find "$optDir/web" -type f -exec chmod 644 {} +
 fi

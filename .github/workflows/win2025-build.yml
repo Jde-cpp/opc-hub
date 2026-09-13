@@ -51,7 +51,9 @@ jobs:
           JDE_BASH: ${{ github.workspace }}
         run: |
           npm install -g @angular/cli@22
-          bash web/opc/scripts/setup.sh
+          # a tag run is a release: hashed output names, which the hub serves as immutable; other runs keep main.js
+          release=""; if [ "$GITHUB_REF_TYPE" = tag ]; then release=--release; fi
+          bash web/opc/scripts/setup.sh $release
 
       - name: Upload the site
         uses: actions/upload-artifact@v4

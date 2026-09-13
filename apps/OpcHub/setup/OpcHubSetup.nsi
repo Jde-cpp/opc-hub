@@ -250,7 +250,7 @@ SectionEnd
 !ifndef SKIP_WEB
 Section "Web UI" SEC_WEB
 	SetOutPath "$INSTDIR\Web"
-	File /r "${WEB_DIST}\*.*"
+	File /r /x *.map "${WEB_DIST}\*.*" ;not the source maps - ~7 MB a browser never asks for unless devtools are open (reviews/install-issues.md, "Shipped weight")
 	File "${SRC_DIR}\web\opc\scripts\web.config"
 SectionEnd
 !endif

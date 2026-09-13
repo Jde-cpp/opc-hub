@@ -1,6 +1,6 @@
 #!/bin/bash
-clean=${1:-0};
-shouldFetch=${2:-0};
+#--release: hash the build's output names (see the ng build line); anything else on the command line is ignored.
+release=0; for arg in "$@"; do [ "$arg" = "--release" ] && release=1; done
 scriptDir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd $scriptDir;
 source env.sh;
@@ -61,4 +61,10 @@ jqEdit angular.json '.projects."my-workspace".architect.build.configurations.dev
 #src/assets (linked above) ships as assets/site - the same shape create-workspace.sh writes for each library's assets dir.
 jqEdit angular.json '.projects."my-workspace".architect.build.options.assets |= ((. // []) | map(select((type=="object" and .input=="src/assets") | not)) + [{"glob":"**/*","input":"src/assets","output":"assets/site","followSymlinks":true}])';
 echo ------------------- Starting Build -------------------;
-ng build --output-hashing=none --source-map=true;
+#Output hashing: none for a dev build - the dist keeps main.js/styles.css, stable names for whatever points at them and
+#no churn - and `all` for a release (--release: the workflows' tag runs), main-<8 chars>.js, which the hub serves as
+#immutable (libs/web/server/StaticSite.cpp's cache policy) while index.html stays no-cache, so a new build is picked up
+#on the next load and its assets are never revalidated.  Source maps either way: the installers skip *.map
+#(apps/OpcHub/setup - reviews/install-issues.md, "Shipped weight"), so they cost nothing shipped and a local dist still debugs.
+if [ $release = 1 ]; then hashing=all; else hashing=none; fi
+ng build --output-hashing=$hashing --source-map=true;

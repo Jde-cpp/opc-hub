@@ -146,6 +146,9 @@ namespace Jde::Opc::Hub::Tests{
 		let js = Get( AppPort(), "/main-ABCDEFGH.js" );
 		EXPECT_EQ( string{js.Headers()[http::field::content_type]}, "text/javascript; charset=utf-8" );
 		EXPECT_EQ( string{js.Headers()[http::field::cache_control]}, "public, max-age=31536000, immutable" );
+		let chunk = Get( AppPort(), "/chunk-D_2EVq-6.js" );//esbuild's hash alphabet has `_` and `-`: still a hashed name.
+		EXPECT_EQ( chunk.Body(), "chunk\n" );
+		EXPECT_EQ( string{chunk.Headers()[http::field::cache_control]}, "public, max-age=31536000, immutable" );
 		EXPECT_EQ( Get(AppPort(), "/assets/site/hello.txt").Body(), "hello\n" );
 		for( let route : {"/login", "/apps/gateways", "/access/users"} )
 			EXPECT_EQ( Get(AppPort(), route).Body(), index.Body() ) << route;

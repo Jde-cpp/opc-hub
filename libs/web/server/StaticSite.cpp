@@ -28,10 +28,12 @@ namespace Jde::Web::Server{
 
 	//the build's output hashing - main-MHJYHGLH.js, chunk-BBIwwlZT.js: a changed file gets a new name, so a cached copy can never
 	//go stale and the browser may keep it for good.  Everything else - index.html above all - is revalidated on every load.
+	//The hash is esbuild's: 8 chars of a base64 alphabet, so `_` and `-` occur in it (chunk-D_2EVqc6.js, chunk-DJVAsKa_.js) -
+	//the 8 are counted from the end, not from the last dash.  The lazy chunks carry one even in an unhashed build
+	//(--output-hashing=none: web/opc/scripts/setup.sh); the entry files do only for a release build.
 	Ω hashed( const fs::path& file )ι->bool{
 		let stem = file.stem().string();
-		let dash = stem.rfind( '-' );
-		return dash!=string::npos && stem.size()-dash-1==8 && std::all_of( stem.begin()+dash+1, stem.end(), [](char c){ return std::isalnum((unsigned char)c)!=0; } );
+		return stem.size()>9 && stem[stem.size()-9]=='-' && std::all_of( stem.end()-8, stem.end(), [](char c){ return std::isalnum((unsigned char)c)!=0 || c=='_' || c=='-'; } );
 	}
 
 	α StaticSite::Resolve( sv target )Ε->optional<File>{
