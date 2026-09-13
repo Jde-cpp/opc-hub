@@ -147,6 +147,10 @@ nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp`
   `dataPaths` seed.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway`) shares port 1967 with the hub; it
   is not packaged.
+- The hub's web certificate (self-signed, issued on the first start) names `localhost`, the machine's name and `127.0.0.1`;
+  `hostNames` in `/etc/jde-cpp/apps/OpcHub/config/args/install/args.libsonnet` adds the others a browser reaches the hub by, and
+  `certificate:{ managed:false, path:… }` + `privateKey:{ path:…, passcode:… }` there use your own CA-issued pair as found -
+  the Windows README's Notes have the details.  The Web UI uses plain HTTP on 1967 by ruling.
 - First login: the package seeds the OPC UA server as the hub's default connection (with its provider row) and the Web UI's
   Google provider - the fresh install's login; by ruling no username or password is seeded.  `systemctl enable --now
   jde-opcserver`, then log in with Google: the site's origin must be registered under the OAuth client id the hub serves

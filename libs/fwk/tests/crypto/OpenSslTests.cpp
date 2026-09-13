@@ -384,6 +384,36 @@ namespace Jde::Crypto{
 		EXPECT_TRUE( ReadCertificate(certFile)==healedDer );//equivalent config - the cert stands, no re-issue loop.
 		fs::remove_all( dir );
 	}
+	//certificate.managed:false - the operator's pair, a CA-issued one:  EnsureKeyCertificate uses it as found (no SAN reconciliation,
+	//no re-issue), writes the public key file the app server's identity reads when the pair came without one, and refuses to
+	//start on a missing file rather than mint a self-signed replacement for a certificate somebody vouched for.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_UnmanagedIsUsedAsFound ){
+		let dir = ScratchDir( "unmanaged" );
+		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
+		let issued = SslSettings( publicFile, privateFile, certFile, "unmanaged-cn", "DNS:issued" );
+		issued.CreateDirectories();
+		Crypto::CreateKeyCertificate( issued );//stands in for the operator's pair
+		auto originalDer = ReadCertificate( certFile );
+		fs::remove( publicFile );//a supplied pair comes without one
+		auto unmanaged = [&]( sv san )->CryptoSettings{
+			return CryptoSettings{ jobject{
+				{"certificate", jobject{{"path", certFile}, {"managed", false}, {"subjectAltName", san}, {"commonName", "unmanaged-cn"}}},
+				{"privateKey", jobject{{"path", privateFile}, {"passcode", issued.PrivateKey.Passcode}}},
+				{"publicKey", jobject{{"path", publicFile}}},
+				{"dh", ""}
+			}, {} };
+		};
+		let drifted = unmanaged( "DNS:configured-elsewhere" );
+		EXPECT_FALSE( drifted.Certificate.Managed );
+		EXPECT_FALSE( Crypto::ReissueReason(drifted).empty() );//the SAN differs - a managed certificate would be re-issued here
+		Crypto::EnsureKeyCertificate( drifted );
+		EXPECT_TRUE( ReadCertificate(certFile)==originalDer );//used as found
+		EXPECT_TRUE( Crypto::ReadPublicKey(publicFile)==Crypto::ExtractPublicKey(originalDer, SRCE_CUR) );//the public key file, derived from the private key
+		fs::remove( certFile );
+		EXPECT_THROW( Crypto::EnsureKeyCertificate(drifted), Exception );//nothing minted in its place
+		fs::remove_all( dir );
+	}
+
 	TEST_F( OpenSslTests, PrivateKey ){
 		Crypto::ReadPrivateKey( PrivateKeySettings{PrivateKeyFile, passcode} );
 		//the key was created with a passcode - it must be encrypted at rest, i.e. unreadable without it.

@@ -52,6 +52,10 @@ namespace Jde::Crypto{
 		string Email;      //SAN rfc822Name, empty if absent.
 		TimePoint Expiration; //notAfter.
 		string Fingerprint; //sha-256 of the DER, colon-separated upper hex as `openssl x509 -fingerprint -sha256` prints it, der ctor only.  users.fingerprint
+		//settings "managed", default true:  this product issues the certificate, re-issues it on expiry or SAN drift on the same
+		//key, and never deletes it.  false:  the operator's pair - one a CA the browsers trust issued - used as found, never
+		//issued or replaced; EnsureKeyCertificate requires both files and derives the public key file when the pair came without one.
+		bool Managed{ true };
 	};
 
 	struct Γ CryptoSettings final{

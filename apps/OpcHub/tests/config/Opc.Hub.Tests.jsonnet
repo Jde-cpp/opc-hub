@@ -46,7 +46,7 @@ local logsDir = args.logsDir;
 		},
 		ssl:{
 			certificate:{
-				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,IP:127.0.0.1",//the URI: the gateway role's OPC certificate authentication signs with this cert; the DNS/IP: TLS clients match the SAN.
+				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,DNS:$(HostName),IP:127.0.0.1",//the URI: the gateway role's OPC certificate authentication signs with this cert; the DNS/IP: TLS clients match the SAN - $(HostName) as Opc.Hub.jsonnet carries it (HubRoutingTests.CertificateNamesTheHost).
 				commonName: args.instanceName + ".web"
 			}
 		},

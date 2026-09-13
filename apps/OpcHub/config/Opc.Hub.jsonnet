@@ -13,6 +13,9 @@ local logsDir = args.logsDir;
 function( sync=false )
 	local app = (import '../../AppServer/config/App.Server.jsonnet')( sync );
 	local gw = (import '../../OpcGateway/config/Opc.Gateway.jsonnet')( sync );
+	//the web certificate's names beyond localhost, this machine ($(HostName), the settings expander's built-in) and the loopback
+	//ip:  args.hostNames (args/install) adds the others a browser or a split OpcServer reaches the hub by, as DNS entries.
+	local hostNames = if std.objectHas(args, 'hostNames') then std.join('', [',DNS:' + n for n in args.hostNames]) else '';
 {
 	instanceName: args.instanceName, //"OpcHub.<buildTarget>": the process's one connections{} row, the /opcGateways instanceName, and the cert CN root.
 	gateway: gw.gateway, //pingInterval/ttl/search/issuedCerts/verifyServerCertificate - the issued OPC client certs land under $(ProgramData)/Jde-Cpp/OpcHub via ProductName.
@@ -36,7 +39,7 @@ function( sync=false )
 	//no `web.client.ssl.caFile`: the gateway anchors the AppServer's cert for its login - there is none here.
 	http:{
 		address: null,
-		host: "localhost", //advertised through /opcGateways - the browser reaches the hub by this name; allowOrigin 'sameHost' requires it to match the page's host.
+		host: "localhost", //advertised through /opcGateways.  A loopback name here reaches the hub only from its own machine, so the page rewrites it to the host it was served from (web: resolveInstanceHost) - which is also what allowOrigin 'sameHost' needs.  Set a real name only for a split deployment the page must reach elsewhere.
 		port: 1967, //the AppServer's port: web/opc/site/environments/environment*.ts (applicationServer) stays as it is.
 		threads: app.http.threads,
 		timeout: app.http.timeout,
@@ -47,15 +50,20 @@ function( sync=false )
 		//the Web UI's Google login: an args file may name the site's own OAuth client id (args/install does - setup/README.md "First login"); otherwise the AppServer's.
 		clientSettings: app.http.clientSettings + ( if std.objectHas(args, 'googleAuthClientId') then { googleAuthClientId: args.googleAuthClientId } else {} ),
 		ssl:{
+			//args/install may supply the operator's own pair in place of the product's self-signed one:  certificate:{ managed:false,
+			//path:… }, privateKey:{ path:…, passcode:… } - used as found, never issued or replaced (setup/README.md "Notes").
 			certificate:{
-				//DNS/IP: what TLS clients (the OpcServer's login) match.  URI: the gateway role authenticates to OPC servers with this
-				//cert too (UAClient certificate authentication signs with the app client's SslSettings), and open62541 wants the
-				//application uri in the SAN - as the gateway's own web cert carries it.
-				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,IP:127.0.0.1",
+				//DNS/IP: what TLS clients (the OpcServer's login) match - localhost, this machine's own name (DNS:$(HostName), so
+				//https://<machine>:1967 passes the name check from another browser once the certificate is trusted there) and the
+				//loopback ip, plus args.hostNames.  A change re-issues on the same key at the next start (Crypto::ReissueReason).
+				//URI: the gateway role authenticates to OPC servers with this cert too (UAClient certificate authentication signs
+				//with the app client's SslSettings), and open62541 wants the application uri in the SAN - as the gateway's own web
+				//cert carries it.
+				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,DNS:$(HostName),IP:127.0.0.1" + hostNames,
 				country: "US",
 				commonName: "OpcHub" //-> $(ProgramData)/Jde-Cpp/OpcHub/ssl/certs/OpcHub.pem: what the OpcServer/PlcEmulator hub overlays anchor (web.client.ssl.caFile).
-			},
-			privateKey:{ passcode: "$(JDE_PASSCODE)" }
+			} + (if std.objectHas(args, 'certificate') then args.certificate else {}),
+			privateKey:{ passcode: "$(JDE_PASSCODE)" } + (if std.objectHas(args, 'privateKey') then args.privateKey else {})
 		}
 	},
 	workers:{

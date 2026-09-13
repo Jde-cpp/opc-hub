@@ -6,7 +6,7 @@ import { fromIsoDuration, verify } from '../utils/utils';
 import { TableSchema } from '../model/ql/schema/table-schema';
 import { EnumValue, Log, IQueryResult, Query } from './graphql';
 import { MutationSchema } from '../model/ql/schema/mutation-schema';
-import { Instance } from './app/app-service-types';
+import { Instance, resolveInstance } from './app/app-service-types';
 import { ELogLevel } from 'jde-proto/Log';
 import { Exception as IException } from 'jde-proto/Common';
 import { AuthStore } from './auth-store';
@@ -567,7 +567,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	//Informational purposes only to match with server logs.
 	protected get socketId():number{ return this.#socketId; } #socketId!:number;
 	get instances(){return this.#instances;} set instances(x){
-		this.#instances = x;
+		this.#instances = x.map( instance=>resolveInstance(instance) );//an empty or loopback host is the page's - resolveInstanceHost (install-issues #2)
 		for( let callback of this.#initCallbacks ){
 			if( x.length )
 				callback.resolve();

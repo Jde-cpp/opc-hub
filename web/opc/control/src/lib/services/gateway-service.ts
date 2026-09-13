@@ -141,7 +141,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	constructor( gateway:Instance, transport:ETransport, http: HttpClient, authStore:AuthStore, private store:OpcStore, googleAuth?:GoogleAuthService ){
 		super( FromClient.Transmission, http, transport, authStore, false, googleAuth );
 		super.instances = [gateway];
-		if( typeof location!="undefined" && gateway.host!=location.hostname )//the registry reports the machine hostname; a page served from another host fails the server's allowOrigin 'sameHost' check
+		if( typeof location!="undefined" && gateway.host!=location.hostname )//a loopback advertisement was already rewritten to the page's host (resolveInstance); what remains is a split deployment's own name, and a page served from another host fails the server's allowOrigin 'sameHost' check
 			console.warn( `Gateway '${gateway.instanceName}' is registered at host '${gateway.host}' but the app is served from '${location.hostname}' - requests will be CORS-blocked unless http/accessControl/allowOrigin is pinned or the app is browsed via '${gateway.host}'.` );
 		//No connection warm-up here.  The navbar's search box injects SEARCH_PROVIDERS, which instantiates NodeSearchProvider,
 		//which injects GATEWAY_SERVICE - so a Gateway is built on EVERY page, and a `serverConnections{…}` in this constructor

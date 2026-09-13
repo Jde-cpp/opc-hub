@@ -41,6 +41,26 @@ const create = ( env:Record<string,any> = {} )=>{
 	return TestBed.runInInjectionContext( ()=>new TestAppService() );
 };
 
+//install-issues #2: the production environment leaves the host empty, and the service reaches the app server by the host the
+//page was served from - so the installed site, served by IIS from any name, calls that name's 1967 rather than the browser's
+//own localhost.  A loopback host resolves the same way (the development environment's); a registry name is kept.
+describe( 'AppService host', ()=>{
+	const pageHost = typeof location=="undefined" ? "localhost" : location.hostname;
+	it( 'reaches the app server by the page host when the environment leaves it empty', ()=>{
+		const service = create( {applicationServer:{host:"", port:1967}} );
+		expect( service.instances[0].host ).toBe( pageHost );
+		expect( service.instances[0].port ).toBe( 1967 );
+	} );
+	it( 'resolves the development environment\'s localhost the same way', ()=>{
+		const service = create();
+		expect( service.instances[0].host ).toBe( pageHost );
+	} );
+	it( 'keeps a host that names another machine', ()=>{
+		const service = create( {applicationServer:{host:"hub", port:1967}} );
+		expect( service.instances[0].host ).toBe( "hub" );
+	} );
+} );
+
 describe( 'AppService socket message field names', ()=>{
 
 	const md5 = new Uint8Array( 16 ).fill( 7 );

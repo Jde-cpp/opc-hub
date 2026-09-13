@@ -1,4 +1,5 @@
 #include <jde/fwk/io/file.h>
+#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
 #include <jde/web/server/Sessions.h>
@@ -130,6 +131,16 @@ namespace Jde::Opc::Hub::Tests{
 		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:null}}] )", instance), authorization );
 		EXPECT_NE( level(), "Critical" );
 		Web::Server::Sessions::Remove( sessionId );
+	}
+
+	//install-issues #2's certificate:  the hub's web certificate names this machine - DNS:$(HostName) in the config's subjectAltName,
+	//the settings expander's built-in - beside localhost, so https://<machine>:1967 passes the name check once the certificate is
+	//trusted there; a config change re-issues on the same key (Crypto::ReissueReason), so an existing install picks it up.
+	TEST_F( HubRoutingTests, CertificateNamesTheHost ){
+		let ssl = Crypto::CryptoSettings{ Json::FindDefaultObject(Settings::AsObject("/http"), "ssl"), {} };
+		let san = Crypto::Certificate{ Crypto::ReadCertificate(ssl.Certificate.Path), SRCE_CUR }.SubjectAltName;
+		EXPECT_NE( san.find("DNS:"+Process::HostName()), string::npos ) << san;
+		EXPECT_NE( san.find("DNS:localhost"), string::npos ) << san;
 	}
 
 	//install-issues #1 (b):  the login page's username with no DOMAIN\ posts an empty `opc`, which ServerCnnctnAwait reads as

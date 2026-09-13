@@ -8,7 +8,7 @@ declare const JDE_VERSION:string;
 export const environment = {
 	defaultNS: 0,
 	httpTransport: ETransport.Unsecure,
-	applicationServer: {port:1967, host:"localhost"},
+	applicationServer: {port:1967, host:""},//"": the host the page was served from (resolveInstanceHost, install-issues #2) - the installed site is browsed by whatever name reaches the hub's 1967, and that name is what it calls.
 	version: typeof JDE_VERSION=='string' ? JDE_VERSION : 'unversioned',
 	production: true
 };

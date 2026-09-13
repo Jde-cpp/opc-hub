@@ -102,6 +102,19 @@ namespace Jde{
 	}
 
 	α Crypto::EnsureKeyCertificate( const CryptoSettings& settings, SL sl )ε->void{
+		if( !settings.Certificate.Managed ){//the operator's pair, used as found:  the expiry and SAN checks below re-issue only what this product issued, and a certificate a CA vouched for must never be replaced by a self-signed one (web-certs3 (b)).
+			THROW_IF( !fs::exists(settings.PrivateKey.Path), "certificate.managed is false and the private key '{}' does not exist - supply the pair, or set managed:true to have one issued.", settings.PrivateKey.Path.string() );
+			THROW_IF( !fs::exists(settings.Certificate.Path), "certificate.managed is false and the certificate '{}' does not exist - supply the pair, or set managed:true to have one issued.", settings.Certificate.Path.string() );
+			if( !fs::exists(settings.PublicKey.Path) ){//CreateKey writes it beside a key it generates; an operator's key comes without one, and the app server's identity (SetPublicKey) reads it.
+				settings.CreateDirectories();
+				let pKey = Internal::ReadPrivateKey( settings.PrivateKey.Path, settings.PrivateKey.Passcode, sl );
+				BioPtr publicBio{ BIO_new_file(settings.PublicKey.Path.string().c_str(), "w"), ::BIO_free }; CHECK_NULL( publicBio );
+				CALL( PEM_write_bio_PUBKEY(publicBio.get(), pKey.get()) );
+				INFO( "Wrote the public key of '{}' to '{}'.", settings.PrivateKey.Path.string(), settings.PublicKey.Path.string() );
+			}
+			Certificate{ ReadCertificate(settings.Certificate.Path), sl }.Log( Ƒ("Read unmanaged certificate at {}", settings.Certificate.Path.string()), sl );
+			return;
+		}
 		try{
 			if( !fs::exists(settings.PrivateKey.Path) )
 				CreateKeyCertificate( settings, sl );

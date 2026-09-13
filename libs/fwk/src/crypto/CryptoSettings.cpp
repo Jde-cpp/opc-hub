@@ -66,7 +66,8 @@ namespace Jde::Crypto{
 		//comparison and re-issue on every start.
 		SubjectAltName{ Json::FindString(settings, "subjectAltName").value_or("DNS:localhost,IP:127.0.0.1") },
 		Country{ Json::FindString(settings, "country").value_or("") },
-		Company{ Json::FindString(settings, "company").value_or("Jde-Cpp") }{
+		Company{ Json::FindString(settings, "company").value_or("Jde-Cpp") },
+		Managed{ Json::FindBool(settings, "managed").value_or(true) }{
 		ASSERT( CommonName.size() && CommonName!="localhost" );
 	}
 	Ω asn1String( const ASN1_STRING* s )ι->string{ return {(const char*)::ASN1_STRING_get0_data(s), (uint)::ASN1_STRING_length(s)}; }

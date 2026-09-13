@@ -14,7 +14,7 @@ declare const JDE_VERSION:string;
 export const environment = {
 	defaultNS: 0,
 	httpTransport: ETransport.Unsecure,
-	applicationServer: {port:1967, host:"localhost"},
+	applicationServer: {port:1967, host:"localhost"},//a loopback host is rewritten to the page's (resolveInstanceHost) - localhost under ng serve, 127.0.0.1 when browsed so.
 	version: typeof JDE_VERSION=='string' ? JDE_VERSION : 'unversioned',
 	production: false
 };

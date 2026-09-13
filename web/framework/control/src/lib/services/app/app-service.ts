@@ -1,7 +1,7 @@
 import { Subject,Observable, tap } from 'rxjs';
 import { Injectable, InjectionToken, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import {Instance} from './app-service-types'
+import {Instance, resolveInstance} from './app-service-types'
 
 import { ETransport, ProtoService, RequestId } from '../proto-service';
 import * as FromServer from 'jde-proto/App.FromServer';
@@ -27,10 +27,10 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 		let appServer = environment.get<Instance>( 'applicationServer' );
 		if( !appServer ){
 			console.log( "No Application Server set in environment" );
-			appServer = { port:1967, host:"localhost" };
+			appServer = { port:1967, host:"" };
 		}
-		console.log( `AppService: ${appServer.host}:${appServer.port}` );
-		super.instances = [appServer];
+		super.instances = [appServer];//the setter resolves an empty or loopback host to the page's
+		console.log( `AppService: ${this.instances[0].host}:${this.instances[0].port}` );
 	}
 	// ping():Promise<string>{
 	// 	return this.sendSingularRequest( FromClient.ERequest.Ping );
@@ -50,14 +50,17 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 		return { sessionId };
 	}
 
+	//The registry's host is the instance's configured one - `localhost` on an install and under ng serve - which reaches it
+	//only from its own machine; resolved to the page's host here, so a caller building a url or showing the row sees the name
+	//that works from where the page runs (resolveInstanceHost, install-issues #2).
 	async gatewayInstances():Promise<Instance[]>{
 		const y = await this.get( "opcGateways", (m)=>console.log(m) ) as any;
-		return y["servers"];
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
 	}
 
 	async opcServerInstances():Promise<Instance[]>{
 		const y = await this.get( "opcServers", (m)=>console.log(m) ) as any;
-		return y["servers"];
+		return (y["servers"] as Instance[]).map( instance=>resolveInstance(instance) );
 	}
 
 	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{

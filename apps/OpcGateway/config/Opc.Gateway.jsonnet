@@ -111,7 +111,7 @@ function( sync=false )
 	},
 	http:{
 		address: null,
-		host: "localhost",//advertised to the AppServer registry - the frontend fetches this host, and allowOrigin 'sameHost' requires it to match the page's host (localhost:4200).
+		host: "localhost",//advertised to the AppServer registry.  A loopback name is rewritten by the page to the host it was served from (web: resolveInstanceHost), which is what allowOrigin 'sameHost' needs; a real name is kept as the page's target.
 		port: 1968,
 		threads: 1,
 		timeout:: "PT30M",

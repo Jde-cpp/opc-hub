@@ -40,7 +40,7 @@ Rest/Websocket Application on top of [open62541.org](https://www.open62541.org/)
     net start Jde.OpcServer
 ```
    or, in a current-user install, the Start Menu shortcuts (each runs in its own console window). The standalone `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway`) still builds for split deployments but is not installed.
-2) Browse to http://127.0.0.1:8071.
+2) Browse to http://127.0.0.1:8071 - or from any machine that reaches the hub's port 1967, by the hub's name: `http://<hub>:8071`. The page calls the hub by the name it was browsed by.
 3) Setup Opc Server.
 ![](./doc/OpcServer.png)
    1) Click Settings.

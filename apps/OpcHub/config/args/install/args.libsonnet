@@ -20,6 +20,16 @@ paths + {
 	//own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript
 	//origin http://<host>:8071), set here and the service restarted.  A reinstall overwrites this file - keep a copy.
 	googleAuthClientId: "445012155442-1v8ntaa22konm0boge6hj5mfs15o9lvd.apps.googleusercontent.com",
+	//The hub's web certificate (Opc.Hub.jsonnet http.ssl).  Its names are localhost, this machine's name and 127.0.0.1; hostNames
+	//adds the others a browser or a split OpcServer reaches the hub by - a fully qualified name, an alias - as DNS entries.  A
+	//change re-issues the certificate on the same key at the next start.
+	hostNames: [],
+	//Your own certificate in place of the self-signed one - a CA your browsers trust:  merged into the config's certificate and
+	//privateKey blocks.  managed:false uses the pair as found and never issues or replaces it; both files must exist or the
+	//service does not start; the public key file the hub's identity reads is derived from the private key.  Uncomment and
+	//point at the files:
+	//certificate: { managed: false, path: "C:/ProgramData/Jde-Cpp/OpcHub/ssl/certs/OpcHub.pem" },
+	//privateKey: { path: "C:/ProgramData/Jde-Cpp/OpcHub/ssl/private/OpcHub.pem", passcode: "" },
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],
 		scriptPaths: [hubDir+"/sql"],

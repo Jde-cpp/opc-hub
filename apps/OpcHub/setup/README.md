@@ -76,7 +76,7 @@ components page to pick it on), `/D=<dir>` for the program dir.
 |---|---|---|
 | OPC Hub (`Jde.OpcHub`) | required | `Jde.Opc.Hub.exe` - the AppServer and the OpcGateway in one process, port 1967 |
 | OPC UA Server (`Jde.OpcServer`) | optional, off | `Jde.Opc.Server.exe` - opc.tcp 4840, http 1970, DI/IA nodesets + the pumps demo address space; logs in to the hub with its certificate.  With it, the hub's seeds for it - the server as the default connection, its provider row, the Web UI's Google provider (First login, below) |
-| Web UI files | optional, on | the Angular site + `web.config` under `<program dir>\Web`, for an IIS site (IIS is configured by hand - `apps/OpcGateway/README.md`) |
+| Web UI files | optional, on | the Angular site + `web.config` under `<program dir>\Web`, for an IIS site (IIS is configured by hand - `apps/OpcGateway/README.md`). The page reaches the hub by the host it was browsed from, so any name that resolves to the machine works, given its port 1967 is reachable from there |
 | Start at logon | current-user only | HKCU Run entries for the selected products |
 
 ## Installed layout
@@ -160,6 +160,14 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 - `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under LocalSystem, so
   the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
   before the first start to change that.
+- The hub's web certificate (`OpcHub.pem`, self-signed, issued on the first start) names `localhost`, this machine's name and
+  `127.0.0.1`; `hostNames` in `config\apps\OpcHub\config\args\install\args.libsonnet` adds the others a browser or a split
+  OpcServer reaches the hub by (a fully qualified name, an alias), and a change re-issues the certificate on the same key at the
+  next start.  Trust is a separate matter: a self-signed certificate is untrusted until it is imported where it should be
+  trusted (`certutil -addstore Root C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.pem`, as an administrator), or replaced by
+  one a CA your browsers trust issued - `certificate:{ managed:false, path:… }` and `privateKey:{ path:…, passcode:… }` in the
+  same args file use that pair as found and never issue or replace it (both files must exist; the public key file the hub's
+  identity reads is derived from the private key).  The Web UI uses plain HTTP on 1967 by ruling and needs none of this.
 - `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries; the
   OPC UA Server component adds them (`access_google.mutation` - First login, above).  The roles grant on `opc.install`, the
   schema the installed OpcServer registers its nodes under (`Opc.Server.Install.jsonnet`'s `resource: "install"`).

@@ -87,7 +87,10 @@ function findExecutable {
 function mklink {
 	local file=$1;
 	local fetchLocation=$2;
-	if [ -f $file ]; then rm $file; fi;
+	#-L as well as -f:  a link whose target moved (the checkout renamed from Public to opc-hub) fails -f, was never removed,
+	#and cmd's mklink then refused it with "already exists" - silently, since cmd's exit status does not carry it - so a
+	#stale workspace could not be repaired by re-running setup.  mklinkDir tests -L for the same reason.
+	if [ -L $file ] || [ -f $file ]; then rm -f $file; fi;
 	if windows; then
 		toWinDir "$fetchLocation" _source;
 		if [ ! -f "$_source/$file" ]; then echo $PS4 $_source/$file not found; exit 1; fi;
