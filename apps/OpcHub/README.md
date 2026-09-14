@@ -77,8 +77,9 @@ settings they ship are `config/args/install` (sqlite - `args/install-sqlServer` 
      `C:\ProgramData\Jde-Cpp\<Product>`, created on the first start - no SQL Server, no setup script.
 2) Browse to http://localhost:1967/ (the finish page's link) - from another machine, `http://<hub>:1967/`; the page calls
    the hub by the name it was browsed by.  The all-users installer allows inbound TCP 1967 (and 4840 with the OPC UA
-   Server) through Windows Firewall; a current-user install cannot, so there an administrator opens the ports by hand or
-   the products answer this machine only.
+   Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only (no firewall
+   prompt) and the products answer that machine alone - for another machine, install for all users, or set
+   `listenAddress: null` in its `args/install-user` and have an administrator open the ports.
 3) Log in with Google (the OPC UA Server component seeds the provider and the connection).  The site's origin must be
    registered under the OAuth client id the hub serves - [`setup/README.md`](setup/README.md) "First login".
 4) Uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder).  The

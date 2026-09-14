@@ -11,23 +11,35 @@ namespace Jde::Web::Client::Ssl{
 	static shared_mutex _mutex;
 	static vector<fs::path> _anchors;
 	static up<ssl::context> _shared;
+	//Configured anchors that were not on disk when the shared context was built - a peer's certificate this process started
+	//ahead of, the OpcServer reading the hub's caFile 139 ms before the hub's first start wrote it (install-issues #12).  The
+	//context was cached without them, so every later connection failed its verify however often the caller retried.  Context()
+	//rebuilds once one of these exists.  Only absent files are recorded: a present-but-unreadable file would rebuild forever.
+	static vector<fs::path> _missing;
+	//Contexts a rebuild replaced.  The SSL objects of live streams hold their SSL_CTX either way, but keeping the wrappers
+	//costs nothing and leaves no question of freeing one under a handshake.
+	static vector<up<ssl::context>> _retired;
 
 	α VerifyPeer()ι->bool{
 		static const bool y = Settings::FindBool( "/web/client/ssl/verifyPeer" ).value_or( true );
 		return y;
 	}
 
-	Ω load( ssl::context& ctx, const fs::path& pem )ι->void{
+	Ω load( ssl::context& ctx, const fs::path& pem, vector<fs::path>* missing )ι->void{
 		beast::error_code ec;
 		ctx.load_verify_file( pem.string(), ec );
-		if( ec )//not fatal: the OS roots may still cover the peer, and failing closed here would take the process down at startup.
+		if( ec ){//not fatal: the OS roots may still cover the peer, and failing closed here would take the process down at startup.
 			CodeException{ static_cast<std::error_code>(ec), _tags, Ƒ("Could not load trust anchor '{}'", pem.string()), ELogLevel::Error };
+			std::error_code fsec;
+			if( missing && !fs::exists(pem, fsec) )
+				missing->push_back( pem );
+		}
 		else
 			TRACET( _tags, "Loaded trust anchor '{}'.", pem.string() );
 	}
 
-	//_mutex held by the caller.
-	Ω make()ι->ssl::context{
+	//_mutex held by the caller.  `missing` collects the configured anchors that were not on disk (see _missing).
+	Ω make( vector<fs::path>* missing=nullptr )ι->ssl::context{
 		ssl::context ctx{ ssl::context::tlsv12_client };
 		if( !VerifyPeer() ){
 			WARNT( _tags, "/web/client/ssl/verifyPeer is false - server certificates are not checked, so any peer can impersonate any host." );
@@ -47,9 +59,9 @@ namespace Jde::Web::Client::Ssl{
 			WARNT( _tags, "Could not load the OS trust store ({}) - public hosts will fail verification unless /web/client/ssl/caFile names an anchor.", e.what() );
 		}
 		if( let caFile = Settings::FindPath("/web/client/ssl/caFile"); caFile )
-			load( ctx, *caFile );
+			load( ctx, *caFile, missing );
 		for( let& anchor : _anchors )
-			load( ctx, anchor );
+			load( ctx, anchor, missing );
 		ctx.set_verify_mode( ssl::verify_peer );
 		return ctx;
 	}
@@ -61,8 +73,17 @@ namespace Jde::Web::Client::Ssl{
 
 	α Context()ι->ssl::context&{
 		ul _{ _mutex };
-		if( !_shared )
-			_shared = mu<ssl::context>( make() );
+		if( _shared && _missing.size() ){
+			std::error_code ec;
+			if( auto p = find_if( _missing, [&](let& pem){ return fs::exists(pem, ec); } ); p!=_missing.end() ){
+				INFOT( _tags, "Trust anchor '{}' exists now - rebuilding the client TLS context that was built without it.", p->string() );
+				_retired.push_back( move(_shared) );
+			}
+		}
+		if( !_shared ){
+			_missing.clear();
+			_shared = mu<ssl::context>( make(&_missing) );
+		}
 		return *_shared;
 	}
 
@@ -74,7 +95,7 @@ namespace Jde::Web::Client::Ssl{
 		//after construction, so add it rather than rebuilding under live connections.  Register anchors at startup in a server:
 		//mutating a context that handshakes are running against is not something OpenSSL promises.
 		if( _shared && VerifyPeer() )
-			load( *_shared, _anchors.back() );
+			load( *_shared, _anchors.back(), &_missing );
 	}
 
 	α SetVerifyHost( beast::ssl_stream<beast::tcp_stream>& stream, str host )ι->void{

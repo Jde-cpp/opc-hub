@@ -23,7 +23,7 @@ namespace Jde::App::Client{
 		α Suspend()ι->void{ HttpLogin(); }
 		α HttpLogin()ι->TAwait<SessionPK>::Task;
 		α RunSocket( SessionPK sessionId )ι->TAwait<Proto::FromServer::ConnectionInfo>::Task;
-		α Retry()ι->DurationTimer::Task;
+		α Retry( const runtime_error& e )ι->DurationTimer::Task;//logs why, waits /server/reconnectWait, logs in again.
 
 		sp<IAppClient> _appClient;
 		bool _retry;

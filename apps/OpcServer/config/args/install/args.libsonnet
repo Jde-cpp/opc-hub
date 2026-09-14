@@ -8,6 +8,10 @@ paths + {
 	local serverDir = args.companyDir+"/OpcServer", //companyDir is the one spelling of the company root - see paths-common.
 	sqlType: "sqlite",
 	logsDir: serverDir,
+	//The text log (<product dir>/<Product>.log): a start rolls the previous run aside as <Product>.1.log … .3.log instead of
+	//erasing it, and the file rolls at 10 MB too - so the log of a failure survives the restart that recovers from it
+	//(reviews/install-issues.md #13).  The dev configs keep one file.
+	logFile: { keep: 3 },
 	nodesetsDir: serverDir+"/nodesets", //read by Opc.Server.Install.jsonnet.
 	access: {
 		trustedCertDirs: [

@@ -38,10 +38,27 @@ namespace Jde::Opc::Server{
 	///opc/tokenTypes/* (opcserver-review3 #7).  Silently, too: the missing "UserToken Uris" INFO was the only tell, and
 	//a hidden `ssl::` or a mistyped key reads here exactly like a deliberate omission.  Same sequence as the vendor's,
 	//with our access control in place of its allow-all and the configured port.
+	//"/opcServer/address": the interface the endpoint listens on.  Absent or null: every interface - open62541's own default, an
+	//empty host in the url.  The current-user install binds loopback (args/install-user, install-issues #16), so Windows raises
+	//no firewall prompt for it.  setBasics writes serverUrls as opc.tcp://:port; this puts the host in, which the tcp layer then
+	//binds to alone and the discovery url carries.
+	Ω applyAddress( UA_ServerConfig& config, PortType port )ε->void{
+		let address = Settings::FindString( "/opcServer/address" ).value_or( "" );
+		if( address.empty() )
+			return;
+		UA_Array_delete( config.serverUrls, config.serverUrlsSize, &UA_TYPES[UA_TYPES_STRING] );
+		config.serverUrls = (UA_String*)UA_Array_new( 1, &UA_TYPES[UA_TYPES_STRING] );
+		THROW_IF( !config.serverUrls, "Could not allocate the server url." );
+		config.serverUrlsSize = 1;
+		config.serverUrls[0] = UA_STRING_ALLOC( Ƒ("opc.tcp://{}:{}", address, port).c_str() );
+		INFO( "OPC UA endpoint bound to {}:{} only ('/opcServer/address').", address, port );
+	}
+
 	α UAConfig::SetupUnsecured()ε->void{
 		let port = Settings::FindNumber<PortType>( "/opcServer/port" ).value_or( 4840 );
 		WARN( "No '/opcServer/ssl':  the OPC UA server on port {} runs unencrypted - one None endpoint, no trust list, no client-certificate verification.  Both shipped configs set it.", port );
 		UAε( UA_ServerConfig_setBasics_withPort(this, port) );
+		applyAddress( *this, port );
 		UAε( UA_ServerConfig_addSecurityPolicyNone(this, nullptr) );
 		UAAccess::Init( *this );//throws "No allowed policies set." when /opc/tokenTypes/* leaves nothing enabled - a server nobody can activate a session on, which is the fail-closed answer.
 		UAε( UA_ServerConfig_addAllEndpoints(this) );
@@ -61,6 +78,7 @@ namespace Jde::Opc::Server{
 
 	α UAConfig::SetConfig( PortType port, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
     UAε( UA_ServerConfig_setBasics_withPort(this, port) );
+		applyAddress( *this, port );
 
     UA_TrustListDataType list;
     UA_TrustListDataType_init( &list );

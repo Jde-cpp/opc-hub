@@ -8,6 +8,7 @@ paths + {
 	local hubDir = args.companyDir+"/OpcHub",
 	sqlType: "sqlServer",
 	logsDir: hubDir,
+	logFile: { keep: 3 }, //as args/install: the previous starts' logs kept beside the file - see the comment there.
 	access:{ trustedCertDirs: [ args.certsDir("OpcServer") ] }, //as args/install: the installed products only - see the comment there.
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],

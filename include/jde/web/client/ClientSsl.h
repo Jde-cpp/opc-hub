@@ -17,7 +17,9 @@ namespace Jde::Web::Client::Ssl{
 	Φ VerifyPeer()ι->bool;
 	//a fresh context for a caller that owns one (the websocket sessions take an optional<ssl::context> by value).
 	Φ MakeContext()ι->ssl::context;
-	//the shared context the pooled http sessions hand to every stream.
+	//the shared context the pooled http sessions hand to every stream.  Built once - except that a configured anchor absent
+	//at that build (a peer's certificate written after this process started) is looked for again on each call, and the
+	//context rebuilt when it exists, so a retried connection can succeed where the first one could not (install-issues #12).
 	Φ Context()ι->ssl::context&;
 	//per-connection: the context carries the trust anchors, but the name to match is only known once we know who we dialled.
 	Φ SetVerifyHost( beast::ssl_stream<beast::tcp_stream>& stream, str host )ι->void;

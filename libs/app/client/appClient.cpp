@@ -93,7 +93,10 @@ namespace Jde::App::Client{
 		_retry{ retry }
 	{}
 
-	α ConnectAwait::Retry()ι->DurationTimer::Task{
+	α ConnectAwait::Retry( const runtime_error& e )ι->DurationTimer::Task{
+		//Said, not silent: a product whose registry is not up yet - the OpcServer started beside a hub still on its first
+		//start (install-issues #12) - retries here for as long as it takes, and its console or log should show why it waits.
+		WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", Host(), Port(), std::chrono::duration_cast<std::chrono::seconds>(reconnectWait()).count(), e.what() );
 		try{
 			(void)co_await DurationTimer{ reconnectWait() };
 			THROW_IF( Process::ShuttingDown(), "Shutting down." );
@@ -115,7 +118,7 @@ namespace Jde::App::Client{
 		}
 		catch( runtime_error& e ){
 			if( _retry && !Process::ShuttingDown() )
-				Retry();
+				Retry( e );
 			else
 				ResumeExp( move(e) );
 		}
@@ -128,7 +131,7 @@ namespace Jde::App::Client{
 		}
 		catch( runtime_error& e ){
 			if( _retry && !Process::ShuttingDown() )//a retry timer armed during teardown only delays the executor drain.
-				Retry();
+				Retry( e );
 			else
 				ResumeExp( move(e) );
 		}

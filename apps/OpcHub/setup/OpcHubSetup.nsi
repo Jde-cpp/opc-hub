@@ -87,6 +87,7 @@ Var DataDir    ;%ProgramData%\Jde-Cpp - both modes; the apps hardcode it (Proces
 Var ConfigDir  ;$DataDir\config - the settings mirror
 Var FinishText
 Var StartNow   ;/Start - a silent install starts the products at the end, as the finish page's box does
+Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's after the offer to install it (#14) - the finish page says so
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -101,6 +102,7 @@ Var StartNow   ;/Start - a silent install starts the products at the end, as the
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_CURRENTUSER "Current user - Start Menu shortcuts (no administrator)"
 !define MULTIUSER_PAGE_CUSTOMFUNCTION_LEAVE ModePageLeave
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW ComponentsShow ;a standard user is told the mode was chosen for them (#15)
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -196,7 +198,9 @@ FunctionEnd
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Components
 ;--------------------------------------------------------------------------------------------------------------------------
-Section "OPC Hub (Jde.OpcHub)" SEC_HUB
+;the component names without the service names - the components list is too narrow for "OPC UA Server (Jde.OpcServer)"
+;and clipped it (reviews/install-issues.md #17); the descriptions name the services.
+Section "OPC Hub" SEC_HUB
 	SectionIn RO
 	Call CheckDataDir
 	${If} $0 == 0
@@ -217,6 +221,8 @@ Section "OPC Hub (Jde.OpcHub)" SEC_HUB
 	File "${SRC_DIR}\apps\OpcHub\config\Opc.Hub.jsonnet"
 	SetOutPath "$ConfigDir\apps\OpcHub\config\args\install"
 	File "${SRC_DIR}\apps\OpcHub\config\args\install\args.libsonnet"
+	SetOutPath "$ConfigDir\apps\OpcHub\config\args\install-user"
+	File "${SRC_DIR}\apps\OpcHub\config\args\install-user\args.libsonnet" ;the current-user mode's -include: args/install plus a loopback listen address (#16)
 	SetOutPath "$ConfigDir\apps\AppServer\config"
 	File "${SRC_DIR}\apps\AppServer\config\App.Server.jsonnet"
 	SetOutPath "$ConfigDir\apps\OpcGateway\config"
@@ -246,7 +252,7 @@ Section "OPC Hub (Jde.OpcHub)" SEC_HUB
 	File "${SRC_DIR}\apps\OpcGateway\config\sql\sqlite\*.sql"
 SectionEnd
 
-Section /o "OPC UA Server (Jde.OpcServer)" SEC_OPCSERVER
+Section /o "OPC UA Server" SEC_OPCSERVER
 	SetOutPath "$INSTDIR\OpcServer"
 	File "${BIN}\Jde.Opc.Server\Jde.Opc.Server.exe"
 	File "${BIN}\Jde.Opc.Server\*.dll"
@@ -257,6 +263,8 @@ Section /o "OPC UA Server (Jde.OpcServer)" SEC_OPCSERVER
 	File "${SRC_DIR}\apps\OpcServer\config\Opc.Server.Install.jsonnet"
 	SetOutPath "$ConfigDir\apps\OpcServer\config\args\install"
 	File "${SRC_DIR}\apps\OpcServer\config\args\install\args.libsonnet"
+	SetOutPath "$ConfigDir\apps\OpcServer\config\args\install-user"
+	File "${SRC_DIR}\apps\OpcServer\config\args\install-user\args.libsonnet" ;as the hub's: the current-user mode's -include (#16)
 	SetOutPath "$ConfigDir\apps\OpcServer\config\pubsub"
 	File "${SRC_DIR}\apps\OpcServer\config\pubsub\pumps.libsonnet"
 	SetOutPath "$DataDir\OpcServer"
@@ -291,9 +299,9 @@ SectionEnd
 ;current-user mode only - ModeChanged hides it otherwise
 Section /o "Start at logon" SEC_AUTOSTART
 	${If} $MultiUser.InstallMode == "CurrentUser"
-		WriteRegStr HKCU "${REG_RUN}" "Jde.OpcHub" '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install -sync'
+		WriteRegStr HKCU "${REG_RUN}" "Jde.OpcHub" '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install-user -sync'
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
-			WriteRegStr HKCU "${REG_RUN}" "Jde.OpcServer" '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync'
+			WriteRegStr HKCU "${REG_RUN}" "Jde.OpcServer" '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync'
 		${EndIf}
 	${EndIf}
 SectionEnd
@@ -336,7 +344,27 @@ Section -VCRedist
 		MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, is not installed.  Install it (vc_redist.x64.exe, https://aka.ms/vs/18/release/vc_redist.x64.exe) before starting ${PRODUCT}." /SD IDOK
 !endif
 	${Else}
-		MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, is not installed, and a current-user install cannot add it.  Install it (vc_redist.x64.exe, https://aka.ms/vs/18/release/vc_redist.x64.exe) before starting ${PRODUCT}." /SD IDOK
+		;current user (reviews/install-issues.md #14): the runtime is machine-wide, so this mode cannot add it in silence - but
+		;vc_redist asks UAC for itself, so a user with administrator credentials to hand can let it in from here, and only one
+		;with none at all is left with the download.  The products ran a whole walk on 14.40, so the wording is a risk, not a
+		;verdict, and the install goes on either way; while the runtime is still old the finish page repeats the warning.
+!if /FileExists "${VC_REDIST}"
+		MessageBox MB_YESNO|MB_ICONQUESTION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.$\r$\n$\r$\nInstall it now?  It is machine-wide, so Windows will ask for an administrator.$\r$\n$\r$\n(No: it can be installed later from https://aka.ms/vs/18/release/vc_redist.x64.exe)" /SD IDNO IDNO runtimeDeclined
+		DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51) - Windows asks for an administrator..."
+		SetOutPath "$TEMP"
+		File "${VC_REDIST}"
+		ExecShellWait "runas" "$TEMP\vc_redist.x64.exe" "/install /passive /norestart" ;elevated by UAC; no exit code comes back through runas, so the registry says whether it landed
+		Delete "$TEMP\vc_redist.x64.exe"
+		ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Minor"
+		runtimeDeclined:
+!else
+	!warning "VC_REDIST not found - the installer will not bundle the Visual C++ runtime"
+		MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.  It is machine-wide - an administrator installs it from https://aka.ms/vs/18/release/vc_redist.x64.exe." /SD IDOK
+!endif
+		${If} $2 < 50
+			StrCpy $RuntimeOld 1
+			DetailPrint "Visual C++ runtime still below 14.50 - ${PRODUCT} may fail to start"
+		${EndIf}
 	${EndIf}
 SectionEnd
 
@@ -376,17 +404,24 @@ Section -Services
 		;six lines at the finish page's width (MUI_FINISHPAGE_TEXT_LARGE, seven) - the database's whereabouts are the README's
 		StrCpy $FinishText "${PRODUCT} is installed as Windows services: they start when you finish (the box below), or later with net start Jde.OpcHub / Jde.OpcServer.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs - the link below."
 	${Else}
-		;no services without administrator rights: shortcuts, the exes run in a console window (-c)
+		;no services without administrator rights: shortcuts, the exes run in a console window (-c).  args/install-user, here and
+		;wherever else this mode starts the products (the Run key, StartProducts): args/install plus a loopback listen address, so
+		;the products answer this machine only and Windows raises no firewall prompt - one a standard user could only answer with
+		;an administrator's credentials (reviews/install-issues.md #16).
 		CreateDirectory "$SMPROGRAMS\${COMPANY}"
 		SetOutPath "$INSTDIR\OpcHub" ;the shortcut's working dir
-		CreateShortcut "$SMPROGRAMS\${COMPANY}\Jde OpcHub.lnk" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "-c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install -sync"
+		CreateShortcut "$SMPROGRAMS\${COMPANY}\Jde OpcHub.lnk" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "-c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install-user -sync"
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
 			SetOutPath "$INSTDIR\OpcServer"
-			CreateShortcut "$SMPROGRAMS\${COMPANY}\Jde OpcServer.lnk" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "-c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync"
+			CreateShortcut "$SMPROGRAMS\${COMPANY}\Jde OpcServer.lnk" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "-c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync"
 		${EndIf}
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		SetOutPath "$INSTDIR"
-		StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once it runs - the link below."
+		${If} $RuntimeOld == 1
+			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nWeb UI: http://localhost:1967/"
+		${Else}
+			StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once it runs - the link below."
+		${EndIf}
 	${EndIf}
 SectionEnd
 
@@ -428,6 +463,18 @@ SectionEnd
 ; Functions
 ;--------------------------------------------------------------------------------------------------------------------------
 ;MultiUser calls this on every mode switch, .onInit's included
+;A standard user never sees Choose Users: MultiUser skips that page for anyone without administrator privileges and picks
+;the current-user mode in silence (reviews/install-issues.md #15), so the mode's explanation - written for exactly that user
+;- never reaches them, and nothing says how an all-users install is reached.  Choose Components is the first page they do
+;see; its top line says what was decided and how to decide otherwise.  An administrator who picked the mode saw the page.
+Function ComponentsShow
+	${If} $MultiUser.InstallMode == "CurrentUser"
+	${AndIf} $MultiUser.Privileges != "Admin"
+	${AndIf} $MultiUser.Privileges != "Power"
+		SendMessage $mui.ComponentsPage.Text ${WM_SETTEXT} 0 "STR:Installing for your account - no administrator rights, so no Windows services: the products run in console windows.  For services, run Setup as administrator."
+	${EndIf}
+FunctionEnd
+
 Function ModeChanged
 	${If} $MultiUser.InstallMode == "AllUsers"
 		SectionSetText ${SEC_AUTOSTART} "" ;hidden
@@ -506,11 +553,23 @@ Function StartProducts
 		${EndIf}
 	${Else}
 		SetOutPath "$INSTDIR\OpcHub" ;the working dir, as the shortcut's
-		Exec '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install -sync'
+		Exec '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install-user -sync'
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
-			Sleep 5000
+			;the OpcServer anchors the hub's certificate (Opc.Server.Install.jsonnet caFile), and a first start of the hub writes it
+			;only after its schema sync and keys - later than the five seconds this used to wait (reviews/install-issues.md #12).
+			;Wait for the file, up to a minute, then a moment for the listener.  The server retries its login on its own now,
+			;so a miss here costs it a retry, not its life.
+			StrCpy $2 0
+			${DoUntil} ${FileExists} "$DataDir\OpcHub\ssl\certs\OpcHub.pem"
+				Sleep 500
+				IntOp $2 $2 + 1
+				${If} $2 >= 120
+					${ExitDo}
+				${EndIf}
+			${Loop}
+			Sleep 2000
 			SetOutPath "$INSTDIR\OpcServer"
-			Exec '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync'
+			Exec '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync'
 		${EndIf}
 		SetOutPath "$INSTDIR"
 	${EndIf}

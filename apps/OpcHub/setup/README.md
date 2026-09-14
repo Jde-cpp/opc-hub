@@ -60,11 +60,11 @@ interstitial fades as the certificate accrues download reputation, which a new o
 
 | | All users | Current user |
 |---|---|---|
-| rights | administrator (UAC prompt) | none - a standard user never sees a prompt; an administrator sees one and may still pick this mode |
+| rights | administrator (UAC prompt) | none - a standard user never sees a prompt, nor the mode page: Setup picks this mode for them and says so at the top of *Choose Components* (for services, run Setup as administrator - right-click); an administrator sees the mode page and may still pick this mode |
 | program dir | `C:\Program Files\Jde-Cpp` | `%LOCALAPPDATA%\Programs\Jde-Cpp` |
 | how the products run | Windows services `Jde.OpcHub`, `Jde.OpcServer` (auto start; `net start`/`net stop`) - the finish page's "Start now" box starts them at once, and its link is the Web UI's url | Start Menu folder `Jde-Cpp`: a shortcut per product, each a console window (`-c`) - the finish page's "Start now" box opens them at once, and its link is the Web UI's url; optional "Start at logon" component (HKCU Run) |
-| firewall | inbound TCP 1967 allowed, and 4840 with the OPC UA Server component, on every profile (`netsh advfirewall`, rules named `Jde OpcHub (TCP 1967)` / `Jde OpcServer (TCP 4840)`; removed on uninstall) - a browser or an OPC client on another machine reaches the products.  Every profile because a new network lands in Public unless someone says otherwise, and 1967 is plain http with a login on it, by ruling | no rule - adding one needs administrator rights - so the products answer this machine only until an administrator opens the ports |
-| VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older; when its installer wants a restart (its files were in use) the finish page says so and offers it - the services start with Windows after it, and "Start now" is not offered | must be present already (installing it needs administrator rights) |
+| firewall | inbound TCP 1967 allowed, and 4840 with the OPC UA Server component, on every profile (`netsh advfirewall`, rules named `Jde OpcHub (TCP 1967)` / `Jde OpcServer (TCP 4840)`; removed on uninstall) - a browser or an OPC client on another machine reaches the products.  Every profile because a new network lands in Public unless someone says otherwise, and 1967 is plain http with a login on it, by ruling | none needed: this mode's `-include=args/install-user` binds the listeners to loopback (`listenAddress: "127.0.0.1"`), so Windows raises no firewall prompt - one a standard user could only answer with an administrator's credentials - and the products answer this machine only.  For another machine: install for all users, or `listenAddress: null` there and an administrator's inbound rule |
+| VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older; when its installer wants a restart (its files were in use) the finish page says so and offers it - the services start with Windows after it, and "Start now" is not offered | when missing or older, Setup offers to run the bundled redistributable - it is machine-wide, so Windows asks for an administrator - and installs the products either way; while the runtime is still old, the finish page says they may fail to start and where the redistributable is.  (They ran on 14.40 through a whole walk; the gate is Microsoft's rule, not a measured floor.) |
 | Add/Remove Programs | HKLM | HKCU (`Jde OpcHub (current user)`) |
 | data | `C:\ProgramData\Jde-Cpp\<Product>` in both modes - the apps hardcode it (`Process::ProgramDataFolder()`, `libs/db/config/paths-common.libsonnet`).  A standard user can create the tree and owns it; one created by an all-users install is read-only to them, so the installer refuses the current-user mode in that case. | |
 
@@ -96,11 +96,13 @@ C:\ProgramData\Jde-Cpp
   config\                                                settings mirror - repo layout, so the configs' relative imports keep working
     apps\OpcHub\config\Opc.Hub.jsonnet                   (imports ../../AppServer/config/App.Server.jsonnet, ../../OpcGateway/config/Opc.Gateway.jsonnet)
     apps\OpcHub\config\args\install\args.libsonnet       sqlite; the driver/proc modules by $(ExeDir), the data by $(ProgramData)
+    apps\OpcHub\config\args\install-user\args.libsonnet  the current-user mode's: args/install plus listenAddress 127.0.0.1
     apps\AppServer\config\App.Server.jsonnet
     apps\OpcGateway\config\Opc.Gateway.jsonnet
     apps\OpcGateway\config\introspection\*.jsonnet
     apps\OpcServer\config\Opc.Server.jsonnet + Opc.Server.Install.jsonnet (the overlay the service loads)
     apps\OpcServer\config\args\install\args.libsonnet
+    apps\OpcServer\config\args\install-user\args.libsonnet  as the hub's
     apps\OpcServer\config\pubsub\pumps.libsonnet
     libs\db\config\paths-common.libsonnet
   OpcHub\                                                the product dir (Process::ProductName): created here by the service -> OpcHub.db, ssl\, *.log
@@ -161,10 +163,14 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   (the gateway's group/role) is still not seeded: its `createRole( permissionRights:[…] )` shape is not one the seed applies.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer) shares
   port 1967 with the hub; the installer stops them and says so.  Deregister them with each exe's `-uninstall`.
-- Logs: `C:\ProgramData\Jde-Cpp\OpcHub\Opc.Hub.log` and `OpcServer\Opc.Server.log` are the text logs (truncated on each
-  start; the tags' levels and `flushOn` under each config's `logging.spd` - the shipped `flushOn: "Trace"` writes every line
+- Logs: `C:\ProgramData\Jde-Cpp\OpcHub\Opc.Hub.log` and `OpcServer\Opc.Server.log` are the text logs (a start rolls the
+  previous run aside as `Opc.Hub.1.log` … `.3.log` rather than erasing it, and a file rolls at 10 MB - `logFile` in the
+  args; the tags' levels and `flushOn` under each config's `logging.spd` - the shipped `flushOn: "Trace"` writes every line
   through at once), and `OpcHub\opc-hub\log.binpb` / `OpcServer\opc-server\log.binpb` the binary ones the Web UI's Logs
-  page reads.  A service has no console, so a failure before logging is up shows only in the Windows event log.
+  page reads.  A service has no console, so a failure before logging is up shows only in the Windows event log.  A
+  running service's log lists as 0 bytes in `dir` and Explorer until it is opened - read it, do not trust the listing.
+- The OpcServer waits for the hub: started before the hub listens, or before a first start of the hub has written the
+  certificate it anchors, it logs a warning and retries every 5 seconds (`/server/reconnectWait`) until the hub answers.
 - `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under LocalSystem, so
   the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
   before the first start to change that.

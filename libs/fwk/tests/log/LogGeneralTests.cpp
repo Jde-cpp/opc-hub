@@ -1,6 +1,7 @@
 #include "jde/fwk/log/ILogger.h"
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/log/SpdLog.h>
+#include <fstream>
 #define let const auto
 #pragma warning( disable: 4702 )
 
@@ -224,6 +225,38 @@ namespace Jde::Tests{
 		EXPECT_EQ( Logging::SpdLog{settings("Trace")}.FlushLevel(), ELogLevel::Trace );
 		EXPECT_EQ( Logging::SpdLog{settings("Warning")}.FlushLevel(), ELogLevel::Warning );
 		EXPECT_EQ( Logging::SpdLog{settings(nullopt)}.FlushLevel(), _debug ? ELogLevel::Debug : ELogLevel::Information );
+		fs::remove_all( dir );
+	}
+
+	//install-issues #13: a start truncated the text log, so restarting a product after a failure erased the lines that said
+	//why.  With `keep`, the file sink rolls the previous run aside on open - <stem>.1.log - instead of erasing it.
+	TEST_F( LogGeneralTests, FileSinkKeepsPreviousRuns ){
+		let dir = fs::temp_directory_path()/"jde-spd-keep";
+		fs::remove_all( dir );
+		fs::create_directories( dir );
+		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}, {"keep", 2}}}}} };
+		let read = [&]( const fs::path& p )->string{ std::ifstream is{ p }; return string{ std::istreambuf_iterator<char>{is}, {} }; };
+		{
+			Logging::SpdLog spd{ settings };
+			spd.Write( Logging::Entry{SRCE_CUR, ELogLevel::Warning, ELogTags::Test, string{"first run"}} );
+			spd.Shutdown( false, SRCE_CUR );
+		}
+		string stem;//<settings file stem>.log - the one file the first run left; Settings::FileStem is not exported.
+		for( let& entry : fs::directory_iterator(dir) )
+			stem = entry.path().stem().string();
+		ASSERT_FALSE( stem.empty() ) << "the first run wrote no log file";
+		ASSERT_TRUE( fs::exists(dir/(stem+".log")) );
+		EXPECT_FALSE( fs::exists(dir/(stem+".1.log")) );
+		{
+			Logging::SpdLog spd{ settings };//a second start: the first run's file rolls to .1.log and this one starts empty.
+			spd.Write( Logging::Entry{SRCE_CUR, ELogLevel::Warning, ELogTags::Test, string{"second run"}} );
+			spd.Shutdown( false, SRCE_CUR );
+		}
+		ASSERT_TRUE( fs::exists(dir/(stem+".1.log")) );
+		EXPECT_NE( read(dir/(stem+".1.log")).find("first run"), string::npos );
+		let current = read( dir/(stem+".log") );
+		EXPECT_NE( current.find("second run"), string::npos );
+		EXPECT_EQ( current.find("first run"), string::npos );
 		fs::remove_all( dir );
 	}
 

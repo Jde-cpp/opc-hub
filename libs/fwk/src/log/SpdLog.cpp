@@ -4,6 +4,7 @@
 #include <numeric>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/pattern_formatter.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/log/log.h>
@@ -67,9 +68,17 @@ namespace Jde::Logging{
 				let fileNameWithExt = Settings::FileStem()+( markdown ? ".md" : ".log" );
 				let path = pPath && !pPath->empty() ? *pPath/fileNameWithExt : Process::AppDataFolder()/"logs"/fileNameWithExt;
 				let truncate = Json::FindBool( sink, "/truncate" ).value_or( true );
-				additional = Ƒ( " truncate='{}' path='{}'", truncate, path.string() );
+				//keep: previous runs kept beside the file as <stem>.1.log … <stem>.<keep>.log - restarting a product after a failure
+				//used to erase the lines that said why (reviews/install-issues.md #13).  With truncate, a start rolls the file
+				//aside rather than emptying it; it also rolls at maxSize (bytes, 10 MB).  Absent or 0: one file, as before.
+				let keep = Json::FindNumber<uint32>( sink, "/keep" ).value_or( 0 );
+				let maxSize = Json::FindNumber<size_t>( sink, "/maxSize" ).value_or( 10*1024*1024 );
+				additional = Ƒ( " truncate='{}' keep='{}' path='{}'", truncate, keep, path.string() );
 				try{
-					pSink = ms<spdlog::sinks::basic_file_sink_mt>( path.string(), truncate );
+					if( keep )
+						pSink = ms<spdlog::sinks::rotating_file_sink_mt>( path.string(), maxSize, keep, truncate );
+					else
+						pSink = ms<spdlog::sinks::basic_file_sink_mt>( path.string(), truncate );
 				}
 				catch( const spdlog::spdlog_ex& e ){
 					ERRT( ELogTags::Settings, "Could not create log:  ({}) path='{}' - {}", string{name}, path.string(), string{e.what()} );

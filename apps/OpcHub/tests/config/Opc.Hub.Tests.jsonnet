@@ -40,6 +40,7 @@ local logsDir = args.logsDir;
 	},
 	http:{
 		host: "127.0.0.1", //what /opcGateways advertises; the test clients connect by ip (sessions are endpoint-bound).
+		address: "127.0.0.1", //the loopback bind a current-user install uses (args/install-user - install-issues #16): the listener takes it, and the suite still reaches it.
 		port: 1973,
 		site: args.repoSourceDir + "/apps/OpcHub/tests/config/site", //a stand-in for the built site - HubRoutingTests.SiteServedFromTheHub.
 		clientSettings:{
@@ -77,6 +78,7 @@ local logsDir = args.logsDir;
 			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.examples.xml"
 		],
 		port: 4842,
+		address: "127.0.0.1", //as /http/address: the UA endpoint bound to loopback (UAConfig.cpp applyAddress), reached by HubRoutingTests.LoginDefaultConnection.
 		ssl: instance.http.opcServer.ssl
 	},
 	credentials:{

@@ -6,9 +6,15 @@
 // forced once shadowed, and args/install need not define them.
 local args = import 'args.libsonnet';
 local base = import 'Opc.Server.jsonnet';
+//the interface both listeners bind: null (args/install) is every interface; args/install-user - the current-user mode - is
+//loopback, so Windows raises no firewall prompt for a profile install and the server answers its own machine only
+//(install-issues #16).  /http/address is the web server's; /opcServer/address the UA endpoint's (UAConfig.cpp).
+local listen = if std.objectHas(args, 'listenAddress') then args.listenAddress else null;
 function( sync=false ) base( sync ) + {
+	http+: { address: listen },
 	opcServer+: {
 		resource: "install",
+		address: listen,
 		configFiles: [
 			args.nodesetsDir+"/Opc.Ua.Di.NodeSet2.xml", //OPC Foundation UA-Nodeset DI/IA - bundled by the installer.
 			args.nodesetsDir+"/Opc.Ua.IA.NodeSet2.xml",
@@ -17,5 +23,6 @@ function( sync=false ) base( sync ) + {
 		]
 	},
 	credentials+: { name: "OpcServer" }, //the login name; the hub enrolls it through its trustedCertDirs anchor on certsDir("OpcServer").
+	logging+: { spd+: { sinks+: { file+: args.logFile } } }, //keep the previous starts' logs beside the file (args/install).
 	web+:{ client+:{ ssl+:{ caFile: args.certsDir("OpcHub")+"/OpcHub.pem" } } } //the hub is the registry - Opc.Hub.jsonnet's /http commonName.
 }

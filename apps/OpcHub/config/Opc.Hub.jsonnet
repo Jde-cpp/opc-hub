@@ -30,7 +30,8 @@ function( sync=false )
 	dbServers: app.dbServers, //args-driven: the hub args mount access + app + gateway and list all three script dirs.
 	logging:{
 		breakLevel: "Critical", //the gateway's: a hub that BREAKs on Warning is unusable under a debugger.
-		spd: app.logging.spd + { tags: app.logging.spd.tags + gw.logging.spd.tags },
+		//args.logFile (args/install: keep the previous starts' logs beside the file) merges into the file sink; the dev args set none.
+		spd: app.logging.spd + { tags: app.logging.spd.tags + gw.logging.spd.tags, sinks: app.logging.spd.sinks + { file: app.logging.spd.sinks.file + (if std.objectHas(args, 'logFile') then args.logFile else {}) } },
 		subscribe: {}, //the AppServer's SubscribeLog - the Logs tab's live feed.
 		proto: gw.logging.proto + { path: logsDir + "/opc-hub" }, //one binary archive for the process; the `logs` query reads it.
 	},
@@ -40,7 +41,7 @@ function( sync=false )
 	credentials: gw.credentials, //the gateway's user name "OpcGateway" - the seeded role/group (config/access-opcGateway.mutation) still applies.
 	//no `web.client.ssl.caFile`: the gateway anchors the AppServer's cert for its login - there is none here.
 	http:{
-		address: null,
+		address: if std.objectHas(args, 'listenAddress') then args.listenAddress else null, //null: every interface; args/install-user binds loopback - a current-user install raises no firewall prompt (install-issues #16).
 		host: "localhost", //advertised through /opcGateways.  A loopback name here reaches the hub only from its own machine, so the page rewrites it to the host it was served from (web: resolveInstanceHost) - which is also what allowOrigin 'sameHost' needs.  Set a real name only for a split deployment the page must reach elsewhere.
 		port: 1967, //the AppServer's port: web/opc/site/environments/environment*.ts (applicationServer) stays as it is.
 		//the Angular site, served at / by this listener (Web::Server::StaticSite - install-issues #3): the installers' <program dir>/web,

@@ -14,6 +14,10 @@ paths + {
 	local appServerDll = lib( "Jde.DB.Sqlite.AppServer" ),
 	sqlType: "sqlite",
 	logsDir: hubDir,
+	//The text log (<product dir>/<Product>.log): a start rolls the previous run aside as <Product>.1.log … .3.log instead of
+	//erasing it, and the file rolls at 10 MB too - so the log of a failure survives the restart that recovers from it
+	//(reviews/install-issues.md #13).  The dev configs keep one file.
+	logFile: { keep: 3 },
 	//The client certificates the hub trusts (Opc.Hub.jsonnet access.trustedCertDirs): the AppServer role enrolls a user for
 	//each - the OpcServer's login - and the gateway role verifies OPC servers against them.  Only what the installer ships: the
 	//dev config also lists the PLC emulator (apps/OpcServer/emulator), a dir no install creates and so a warning in every
