@@ -35,6 +35,10 @@ namespace Jde::Opc::Gateway{
 		α SendDataChange( Handle h, const Value&& value )ι->uint;
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
 		α GetResult( Handle requestId, StatusCode status )ι->FromServer::SubscriptionAck;
+		//What a session-loss rebuild has to re-create: the live node→listener map, taken *out* - every handle in here names a
+		//subscription the server dropped with the session, so nothing keyed by one can be reused.  See UAClient::Resubscribe.
+		//In-flight creates are not taken:  their requests stay, so each resumes with a per-node failure (see the definition).
+		α TakeForResubscribe()ι->flat_map<sp<IDataChange>,flat_set<NodeId>>;
 		α Count()ι->uint{ sl _{_mutex}; return _subscriptions.size(); }
 	private:
 		struct Subscription{
@@ -51,6 +55,7 @@ namespace Jde::Opc::Gateway{
 		flat_map<MonitorHandle,flat_set<NodeId>> _requests;
 		flat_map<MonitorHandle,tuple<flat_set<NodeId>,sp<IDataChange>>> _calls;
 		flat_map<MonitorHandle,flat_map<NodeId,StatusCode>> _errors;
+		flat_set<MonitorHandle> _takenCalls;//in-flight creates TakeForResubscribe dropped from _calls - their late answers are expected, not errors.  Until GetResult.
 		shared_mutex _mutex;
 		flat_map<MonitorHandle,Subscription> _subscriptions;
 		wp<UAClient> _client;

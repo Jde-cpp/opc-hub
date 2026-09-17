@@ -10,7 +10,7 @@ namespace Jde::Opc::Gateway{
 	//the gateway socket, ClientQuery, the search/opcSessions awaits - then answers from that one.
 	α SetQL( sp<QL::LocalQL> ql )ι->void;
 	α Schemas()ι->const vector<sp<DB::AppSchema>>&;
-	α AddStatusCounts( jobject& status )ι->void;//the gateway's `clients`/`monitoredItems` on a status document - GatewayQL's and HubQL's StatusQuery.
+	α AddStatusCounts( jobject& status )ι->void;//the gateway's `clients`/`monitoredItems`/`pendingItems` on a status document - GatewayQL's and HubQL's StatusQuery.
 
 	struct GatewayQL final: App::AppQL{
 		GatewayQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer )ι;

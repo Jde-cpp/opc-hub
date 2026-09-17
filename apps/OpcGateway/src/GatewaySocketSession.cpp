@@ -131,6 +131,16 @@ namespace Jde::Opc::Gateway{
 					}
 				}
 			}
+			//Then what is parked for a reconnect (soak-findings #10):  while the server is down these nodes belong to no live
+			//client, so without this they are reported as failures and the reconnect re-subscribes what was just dropped.
+			if( remaining.size() ){
+				let dropped = UAClient::UnsubscribePending( opcId, self, remaining );
+				for( let& node : dropped ){
+					anyClient = true;//it is this session's subscription either way - answering "Client not found" for it would be a lie.
+					successes.emplace( node );
+					remaining.erase( node );
+				}
+			}
 			if( anyClient )
 				Write( FromServer::UnsubscribeTrans(requestId, move(successes), move(remaining)) );
 			else

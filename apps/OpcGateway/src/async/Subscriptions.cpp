@@ -16,7 +16,16 @@ namespace Jde::Opc::Gateway{
 	Ω deleteSubscriptionCallback( UA_Client* ua, UA_UInt32 subId, void* /*subContext*/ )ι->void{
 		if( auto client = UAClient::TryFind(ua); client ){
 			INFO( "[{}.{}]DeleteSubscriptionCallback", hex(client->Handle()), subId );
-			client->SetCreatedSubscriptionResponse( nullptr );
+			//Only if it is still *this* subscription:  a delete that lands after a rebuild (UAClient::Resubscribe) names the
+			//old id, and clearing unconditionally would drop the new subscription every later monitored item is created on.
+			//Deliberately NOT a Resubscribe() here, though monitored items surviving this delete are dead by definition (they
+			//sit on a subscription the server no longer has).  That state comes from one race - a subscribe landing inside the
+			//delete's round trip - and rebuilding from here fixes it only when that subscribe has already *completed*: a create
+			//still in flight has its bookkeeping taken out from under it by the rebuild, and its items are stranded just as
+			//dead, with a successful-looking ack.  Healing it properly means re-driving in-flight creates too - soak-findings
+			//#11, which is where the race is written up.
+			if( auto p = client->CreatedSubscriptionResponse(); p && p->subscriptionId==subId )
+				client->SetCreatedSubscriptionResponse( nullptr );
 		}
 	}
 

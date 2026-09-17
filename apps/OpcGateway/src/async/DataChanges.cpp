@@ -1,6 +1,8 @@
 ﻿#include "DataChanges.h"
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../UAClient.h"
+#include "Subscriptions.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
 
 #define let const auto
@@ -26,39 +28,61 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α DataChangeAwait::Suspend()ι->void{
-		_client->PostUA( [this]{//UA submissions must run on the client's strand.
-			auto subscription = _client->CreatedSubscriptionResponse();
-			if( !subscription ){
+		_client->PostUA( [this]{ Submit(); } );//UA submissions must run on the client's strand.
+	}
+	α DataChangeAwait::Submit()ι->void{
+		auto request = _client->MonitoredNodes().MonitoredItemsRequest( sp<IDataChange>{_dataChange}, flat_set<NodeId>{_nodes}, _monitoredRequestId );//copies:  a redrive asks again.
+		if( !_monitoredRequestId ){
+			//No subscription for the new nodes:  the one the caller's SubscribeAwait found was deleted before this reached the strand -
+			//DeleteMonitoring's pass, a second after another listener's last item went.  That failed the subscribe with BadInternalError
+			//for every node; build a subscription and ask once more instead (subscription-disconnect #6).  Once:  a second miss is not
+			//that race.
+			if( !_redriven ){
+				_redriven = true;
+				Redrive();
+			}
+			else
 				ResumeExp( Exception{"CreatedSubscriptionResponse==null"} );
-				return;
-			}
-			auto request = _client->MonitoredNodes().MonitoredItemsRequest( move(_dataChange), move(_nodes), _monitoredRequestId );
-			if( !request ){
-				_h.resume();
-				return;
-			}
-			try{
-				vector<UA_Client_DeleteMonitoredItemCallback> deleteCallbacks{ request->itemsToCreateSize, dataChangesDeleteCallback };
-				vector<UA_Client_DataChangeNotificationCallback> dataChangeCallbacks{ request->itemsToCreateSize, dataChangesCallback };
-				void** contexts = nullptr;
-				request->subscriptionId = subscription->subscriptionId;
+			return;
+		}
+		if( !request ){
+			_h.resume();
+			return;
+		}
+		//The id the request registered under, not a fresh read:  MonitoredItemsRequest captured it under the same lock
+		//DeleteMonitoring decides on, so this is the subscription that cannot be deleted out from under these items (#11).
+		let subscriptionId = MonitorHandle{ _monitoredRequestId }.SubId();
+		try{
+			vector<UA_Client_DeleteMonitoredItemCallback> deleteCallbacks{ request->itemsToCreateSize, dataChangesDeleteCallback };
+			vector<UA_Client_DataChangeNotificationCallback> dataChangeCallbacks{ request->itemsToCreateSize, dataChangesCallback };
+			void** contexts = nullptr;
+			request->subscriptionId = subscriptionId;
 
-				UAε( UA_Client_MonitoredItems_createDataChanges_async(_client->UAPointer(), *request, contexts, dataChangeCallbacks.data(), deleteCallbacks.data(), createDataChangesCallback, this, &_requestId) );
-				UA_CreateMonitoredItemsRequest_clear( &*request );
-				//TRACET( MonitoringTag, "[{:x}.{:x}]DataSubscriptions - {}", Handle(), requestId, serialize(request.ToJson()) );
-				_client->Process( _requestId, "MonitoredItems_createDataChanges" );//TODO handle BadSubscriptionIdInvalid
-			}
-			catch( UAException& e ){
-				ResumeExp( move(e) );
-			}
-		});
+			UAε( UA_Client_MonitoredItems_createDataChanges_async(_client->UAPointer(), *request, contexts, dataChangeCallbacks.data(), deleteCallbacks.data(), createDataChangesCallback, this, &_requestId) );
+			UA_CreateMonitoredItemsRequest_clear( &*request );
+			//TRACET( MonitoringTag, "[{:x}.{:x}]DataSubscriptions - {}", Handle(), requestId, serialize(request.ToJson()) );
+			_client->Process( _requestId, "MonitoredItems_createDataChanges" );//TODO handle BadSubscriptionIdInvalid
+		}
+		catch( UAException& e ){
+			ResumeExp( move(e) );
+		}
+	}
+	//Any: this awaitable's own task type is TAwait<SubscriptionAck>, and the subscribe is a VoidAwait.
+	α DataChangeAwait::Redrive()ι->VoidTask{
+		try{
+			co_await Any( SubscribeAwait{_client} );
+			_client->PostUA( [this]{ Submit(); } );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );//last use of this:  resuming the caller ends the awaitable.
+		}
 	}
 	α DataChangeAwait::OnComplete( UA_CreateMonitoredItemsResponse* response )ι->void{
 		_client->ClearRequest( _requestId );
 		let sc = response->responseHeader.serviceResult;
 		TRACE( "[{}.{}]CreateDataChangesCallback: {}", hex(_client->Handle()), hex(_requestId), UAException::Message(sc) );
 		if( sc )
-			ResumeExp( UAClientException{sc, _client->Handle(), _requestId} );//TODO clear monitored items
+			ResumeExp( UAClientException{sc, _client->Handle(), _requestId} );//the request's bookkeeping goes in GetResult, which await_resume calls.
 		else{
 			_client->MonitoredNodes().OnCreateResponse( response, _monitoredRequestId );
 			_h.resume();
@@ -68,6 +92,12 @@ namespace Jde::Opc::Gateway{
 		StatusCode sc{};
 		if( up<Exception> e = Promise() && Promise()->Exp() ? Promise()->MoveExp() : nullptr; e )
 			sc = e->HasCode() ? (StatusCode)e->Code() : UA_STATUSCODE_BADINTERNALERROR;
+		if( !_monitoredRequestId ){//never registered - no subscription even after the redrive - so GetResult has nothing to answer from:  fail each node here.
+			FromServer::SubscriptionAck y;
+			for( uint i=0; i<_nodes.size(); ++i )
+				y.add_results()->set_status_code( sc ? sc : UA_STATUSCODE_BADINTERNALERROR );
+			return y;
+		}
 		return FromServer::SubscriptionAck{ _client->MonitoredNodes().GetResult(_monitoredRequestId, sc) };
 	}
 }

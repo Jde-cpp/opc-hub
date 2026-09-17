@@ -10,6 +10,8 @@ namespace Jde::Opc::Gateway::Soak{
 		vector<NodeId> Nodes;
 		sp<Tests::GatewayClientSocket> Socket;//legs without a User share the main session's socket; a User leg gets its own logged-in socket.
 		SessionPK SessionId{};
+		bool Subscribed{};//the current Socket holds an acked subscription for every node.  False after a reconnect until a subscribe succeeds - WriteCycle retries it.
+		bool Reconnecting{};//a User leg's socket dropped and no reconnect has succeeded yet - one socketDrop per outage, not per attempt.  Main-session legs share SoakRunner::_mainReconnecting.
 		uint Counter{}, WriteIndex{}, ConsecutiveFailures{};
 		uint Writes{}, WriteFailures{}, WriteRetries{}, Pushes{}, Misses{}, MissRetries{};//WriteRetries/MissRetries: attempts beyond the first that a write / a push needed - a PASS shows how often it leaned on them.
 		vector<uint32> LatenciesMs;

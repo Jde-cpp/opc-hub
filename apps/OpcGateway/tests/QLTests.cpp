@@ -1,3 +1,4 @@
+#include <jde/fwk/process/execution.h>
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
 #include <jde/fwk/str.h>
@@ -320,5 +321,35 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( serialize(value).size() );
 		let& namespaces = Json::AsArray( value.as_object(), "namespaces" );//keyed by the query name, the alias the others carry.
 		EXPECT_GE( namespaces.size(), 2u ) << serialize( value );
+	}
+
+	//GatewayErrorResponse means the gateway *answered* with an error, over a socket that works; a dead socket has to fail as a
+	//plain Exception.  The soak's reconnect keys on the difference:  when CloseTasks stamped its transport failures as answers,
+	//every dropped socket reset the soak's failure count and it never reconnected (subscription-disconnect #1).
+	TEST_F( QLTests, errorsTypedByOrigin ){
+		optional<ssl::context> ctx;
+		auto session = ms<GatewayClientSocket>( Executor(), ctx );
+		BlockVoidAwait( session->RunSession("localhost", GatewayPort()) );
+		BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( session->Connect(AppClient()->SessionId()) );
+		let q = "__type( opc: $opc, ns:2, i:6244 ){ enumValues{ id name } }";//answered with an error - enumTypes' no-such-connection case.
+		const jobject vars{ {"opc", "no-such-connection"} };
+		try{
+			session->QuerySync( q, vars );
+			ADD_FAILURE() << "a query on an unknown connection succeeded";
+		}
+		catch( const GatewayErrorResponse& ){}
+		catch( const std::exception& e ){
+			ADD_FAILURE() << "the gateway's answer did not arrive as a GatewayErrorResponse: " << e.what();
+		}
+
+		BlockVoidAwait( session->Close(false, SRCE_CUR) );
+		try{
+			session->QuerySync( q, vars );//no stream: Write fails the request through CloseTasks( not_connected ).
+			ADD_FAILURE() << "a query on a closed socket succeeded";
+		}
+		catch( const GatewayErrorResponse& e ){
+			ADD_FAILURE() << "a closed socket's failure read as the gateway's answer: " << e.what();
+		}
+		catch( const std::exception& ){}
 	}
 }

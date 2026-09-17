@@ -12,6 +12,17 @@ namespace Jde::Opc::Gateway::Tests{
 	struct IListener{
 		β OnData( string opcId, NodeId nodeId, const vector<FromServer::Value>& values )ι->void=0;
 	};
+	//An error the gateway *answered* with - it came back over a working socket, unlike a transport failure.  Anything that reacts
+	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server
+	//that is down, a rejected write).  The soak's reconnect-on-failure did, and killed itself trying to re-subscribe to a server
+	//that was still down (soak-findings #12).  Move/Throw keep the type across BlockAwait's rethrow.
+	//Only OnRead's kException path produces one; CloseTasks fails tasks with a plain Exception, so a dead socket never reads
+	//as an answer (subscription-disconnect #1).
+	struct GatewayErrorResponse final : Exception{
+		using Exception::Exception;
+		α Move()ι->up<Exception> override{ return mu<GatewayErrorResponse>(move(*this)); }
+		[[noreturn]] α Throw()->void override{ throw move(*this); }
+	};
 	struct GatewayClientSocket final : Web::Client::TClientSocketSession<FromClient::Transmission,FromServer::Transmission>{
 		using base = Web::Client::TClientSocketSession<FromClient::Transmission,FromServer::Transmission>;
 		Τ using await = Web::Client::ClientSocketAwait<T>;
@@ -33,7 +44,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
-		α HandleException( std::any&& h, Jde::Proto::Exception&& what )ι;
+		α HandleException( std::any&& h, Exception&& e )ι;//e arrives typed by the caller: GatewayErrorResponse or a transport failure.
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnClose( beast::error_code ec )ι->void override;
 		α OnAck( uint32 ack )ι->void;

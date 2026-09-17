@@ -127,8 +127,9 @@ namespace Jde::Opc::Gateway{
 			//ping starter would leave the client in _clients with neither loop nor ping - a zombie every later request
 			//trips over - so deregister it and let the next request build a fresh connection.  No MonitoredNodes
 			//shutdown first: the transport is dead, so the delete-subscription round trip could never complete.
+			//ConnectionLost, not RemoveClient:  what the client monitored is parked and reconnected rather than forgotten.
 			INFO( "{}run_iterate failed - deregistering; the next request will reconnect.", logPrefix() );
-			UAClient::RemoveClient( move(client) );
+			UAClient::ConnectionLost( move(client) );
 		}
 		else
 			DBG( "{}ProcessingLoop stopped", logPrefix() );
@@ -137,7 +138,9 @@ namespace Jde::Opc::Gateway{
 	α AsyncRequest::Clear( RequestId requestId )ι->void{//strand-only (cross-thread callers go through UAClient::ClearRequest)
 		ASSERT( _strand.running_in_this_thread() );
 		TRACE( "[{}.{}]Clearing", hex(UAHandle()), hex(requestId) );
-		if( !_requests.erase(requestId) && requestId!=ConnectRequestId ){
+		//SubscriptionRequestId's clear means "stop processing data subscriptions", and may find them already stopped - a teardown whose
+		//client never had an item, or DeleteMonitoring stopping a kept subscription that has none left (subscription-disconnect #12).
+		if( !_requests.erase(requestId) && requestId!=ConnectRequestId && requestId!=SubscriptionRequestId ){
 			//after Stop it was submitted too late to register (UAClient::Process drops it) and FailPending failed it - expected.
 			let level = _stopped.test() ? ELogLevel::Debug : ELogLevel::Critical;
 			LOG( level, _tags, "[{}.{}]Could not find request handle{}.", hex(UAHandle()), hex(requestId), _stopped.test() ? " - submitted after Stop" : "" );

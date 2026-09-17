@@ -111,8 +111,9 @@ namespace Jde::Opc::Gateway::Soak{
 		α Login( ServerLeg& leg )ε->void;//POST /login for the leg's user; the leg gets its own socket on the returned session.
 		α EnsureServerConnections()ε->void;
 		α Subscribe( ServerLeg& leg )ε->void;
-		α WriteCycle( ServerLeg& leg )ε->void;//throws only when a reconnect attempt fails - anything else is counted and survived.
-		α Write( ServerLeg& leg, const NodeId& node, uint value )ε->bool;//one write with its retries; false = counted as a WriteFailure (and reconnected if it was the third in a row).
+		α TrySubscribe( ServerLeg& leg, sv when )ι->bool;//Subscribe, logging a failure instead of throwing it; the leg stays unsubscribed for WriteCycle to retry.
+		α WriteCycle( ServerLeg& leg )ε->void;//failures are counted and survived, a failed reconnect included - it is retried on the next transport failure.
+		α Write( ServerLeg& leg, const NodeId& node, uint value )ε->bool;//one write with its retries; false = counted as a WriteFailure (and reconnected if it was the third *transport* failure in a row - an error the gateway answered with never reconnects).
 		α SampleStatus()ι->void;
 		α Reconnect( ServerLeg& leg )ε->void;
 		α FindLeg( sv slug )ι->ServerLeg*;
@@ -135,6 +136,7 @@ namespace Jde::Opc::Gateway::Soak{
 
 		uint _socketDrops{}, _statusFailures{}, _quietWindows{};
 		bool _completed{};
+		bool _mainReconnecting{};//ServerLeg::Reconnecting for the shared main-session socket - one drop for all of its legs.
 	};
 
 	SoakRunner::SoakRunner( sp<App::Client::IAppClient> client )ε:
@@ -172,15 +174,23 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 	}
 
+	//Built aside and swapped in only once it is up, so a failed attempt throws before it touches anything.  It used to replace _socket
+	//first:  a failure left _socket a never-handshaken socket - the next status query on it blocked for the full request timeout - and
+	//the legs on the retired one (subscription-disconnect #8).  A failed attempt's socket is simply released:  its destructor takes
+	//back the shutdown registration its Connect made, and a long outage would otherwise pile one up per attempt.
 	α SoakRunner::Connect()ε->void{
 		optional<ssl::context> ctx;
-		_socket = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( _socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( _socket->Connect(_client->SessionId()) );
+		auto socket = ms<GatewayClientSocket>( Executor(), ctx );
+		BlockVoidAwait( socket->RunSession(_host, _port) );
+		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(_client->SessionId()) );
+		if( _socket )
+			_retiredSockets.push_back( move(_socket) );
+		_socket = move( socket );
 		for( auto& leg : _legs ){
 			if( leg.User.empty() ){
 				leg.Socket = _socket;
 				leg.SessionId = _client->SessionId();
+				leg.Subscribed = false;//a new socket carries no subscription.
 			}
 		}
 		INFO( "Connected to gateway {}:{}.", _host, _port );
@@ -208,11 +218,15 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		let sessionId = Str::TryTo<SessionPK>( authorization, nullptr, 16 );
 		THROW_IF( !sessionId || !*sessionId, "[{}]/login for user '{}' returned no session id in the Authorization header ('{}').", leg.Slug, leg.User, authorization );
-		leg.SessionId = *sessionId;
 		optional<ssl::context> ctx;
-		leg.Socket = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( leg.Socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( leg.Socket->Connect(leg.SessionId) );
+		auto socket = ms<GatewayClientSocket>( Executor(), ctx );//built aside and swapped in only once it is up, as in Connect (#8).
+		BlockVoidAwait( socket->RunSession(_host, _port) );
+		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(*sessionId) );
+		if( leg.Socket )
+			_retiredSockets.push_back( move(leg.Socket) );
+		leg.Socket = move( socket );
+		leg.SessionId = *sessionId;
+		leg.Subscribed = false;//a new socket carries no subscription.
 		INFO( "[{}]Logged in as '{}' - session {:x}.", leg.Slug, leg.User, leg.SessionId );
 	}
 
@@ -230,20 +244,23 @@ namespace Jde::Opc::Gateway::Soak{
 	}
 
 	α SoakRunner::Subscribe( ServerLeg& leg )ε->void{
+		leg.Subscribed = false;
+		THROW_IF( !leg.Socket, "[{}]no socket to subscribe on - a reconnect failed and will be retried.", leg.Slug );
+		let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( leg.Socket->Subscribe(leg.Slug, leg.Nodes, shared_from_this()) );
+		THROW_IF( (uint)ack.results_size()!=leg.Nodes.size(), "Subscription ack has {} results for {} nodes.", ack.results_size(), leg.Nodes.size() );
+		for( int i=0; i<ack.results_size(); ++i )
+			THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {:x}.", leg.Nodes[i].ToString(), ack.results(i).status_code() );
+		leg.Subscribed = true;
+		INFO( "Subscribed to {} node(s) on '{}'.", leg.Nodes.size(), leg.Slug );
+	}
+	α SoakRunner::TrySubscribe( ServerLeg& leg, sv when )ι->bool{
 		try{
-			let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( leg.Socket->Subscribe(leg.Slug, leg.Nodes, shared_from_this()) );
-			THROW_IF( (uint)ack.results_size()!=leg.Nodes.size(), "Subscription ack has {} results for {} nodes.", ack.results_size(), leg.Nodes.size() );
-			for( int i=0; i<ack.results_size(); ++i )
-				THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {:x}.", leg.Nodes[i].ToString(), ack.results(i).status_code() );
-			INFO( "Subscribed to {} node(s) on '{}'.", leg.Nodes.size(), leg.Slug );
+			Subscribe( leg );
 		}
-		catch( const std::exception& ){
-			//Connection-level failures (untrusted cert, bad credential) already surfaced in Login; reaching here on an
-			//external leg points at the nodes themselves.
-			if( leg.User.size() )
-				WARN( "[{}]Subscribe failed - confirm the configured nodes exist and '{}' may read them; if the server rejected the client certificate, trust '{}' in its configuration manager.", leg.Slug, leg.User, CertPath(leg.Slug) );
-			throw;
+		catch( const std::exception& e ){
+			WARN( "[{}]Subscribe {} failed - the next write cycle retries it: {}", leg.Slug, when, e.what() );
 		}
+		return leg.Subscribed;
 	}
 
 	α SoakRunner::FindLeg( sv slug )ι->ServerLeg*{
@@ -270,24 +287,35 @@ namespace Jde::Opc::Gateway::Soak{
 	}
 
 	α SoakRunner::Reconnect( ServerLeg& leg )ε->void{
-		++_socketDrops;
-		leg.ConsecutiveFailures = 0;
-		WARN( "[{}]Reconnecting to the gateway (drop #{}).", leg.Slug, _socketDrops );
+		//One drop per outage, however many attempts it takes:  counting each attempt reported a 30s outage as 15 drops (#8).  The
+		//shared main-session socket is one drop for all of its legs.  Counted at the first attempt, not on success, so a gateway
+		//that never comes back still shows its drop.
+		bool& reconnecting = leg.User.empty() ? _mainReconnecting : leg.Reconnecting;
+		let first = !reconnecting;
+		if( first ){
+			reconnecting = true;
+			++_socketDrops;
+		}
+		WARN( "[{}]Reconnecting to the gateway{} (drop #{}).", leg.Slug, first ? "" : " again", _socketDrops );
+		//A socket that comes back does not bring its subscriptions:  every leg on it is unsubscribed until a subscribe succeeds.  That
+		//subscribe can fail on a socket that works - the gateway's OPC server still coming back - and used to throw out of here,
+		//leaving the leg connected, never re-subscribed, and missing every push for the rest of the run; on the shared socket the
+		//legs after the failing one were not even tried (subscription-disconnect #7).  So each leg is tried on its own, a failure
+		//is left to WriteCycle to retry, and only the connect or login - a socket that did not come back - throws.  Those throw
+		//before they change anything (#8), so a failed attempt leaves the legs on the old socket and the counters where they were.
 		if( leg.User.empty() ){//shared main-session socket: recreate it and resubscribe every leg on it.
-			if( _socket )
-				_retiredSockets.push_back( move(_socket) );
 			Connect();
 			for( auto& l : _legs ){
 				if( l.User.empty() )
-					Subscribe( l );
+					TrySubscribe( l, "after the reconnect" );
 			}
 		}
 		else{//the old session may no longer authenticate after a drop - log in again.
-			if( leg.Socket )
-				_retiredSockets.push_back( move(leg.Socket) );
 			Login( leg );
-			Subscribe( leg );
+			TrySubscribe( leg, "after the reconnect" );
 		}
+		reconnecting = false;
+		leg.ConsecutiveFailures = 0;
 	}
 
 	α SoakRunner::Write( ServerLeg& leg, const NodeId& node, uint value )ε->bool{
@@ -296,6 +324,11 @@ namespace Jde::Opc::Gateway::Soak{
 		//harmless (same value), and the caller's push wait is satisfied either way.  Only exhausting the attempts is a WriteFailure;
 		//WriteRetries counts the extra attempts so a PASS still shows how often it leaned on them.  ConsecutiveFailures stays a
 		//per-cycle count, so the reconnect threshold is unchanged.
+		if( !leg.Socket ){//not reachable since Connect/Login swap a socket in only once it is up (#8); outside the loop so it could not burn the retries.
+			++leg.WriteFailures;
+			WARN( "[{}]updateVariable for {} skipped - the leg has no socket.", leg.Slug, node.ToString() );
+			return false;
+		}
 		for( uint attempt{}; ; ++attempt ){
 			try{
 				//no {value} result-request: the subscription push is the round-trip assertion, and the mutation's read-back
@@ -314,14 +347,38 @@ namespace Jde::Opc::Gateway::Soak{
 				}
 				++leg.WriteFailures;
 				WARN( "[{}]updateVariable failed for {} after {} attempt(s): {}", leg.Slug, node.ToString(), attempt+1, e.what() );
-				if( ++leg.ConsecutiveFailures>=3 )
-					Reconnect( leg );
+				//Only a dead socket is a reason to reconnect.  An error the gateway *answered* with came back over a working
+				//connection - an OPC server that is down, a rejected write - and reconnecting cannot fix it: the reconnect's
+				//re-subscribe asks the gateway for the same server and fails the same way.  That is what ended the client on a
+				//25s OpcServer outage, with the gateway healthy throughout (soak-findings #12).  It still counts as a
+				//WriteFailure; it just does not count toward a reconnect, and the socket that answered is evidently fine.  A dead
+				//socket, a write on a closed one and a request timeout all arrive as a plain Exception (GatewayClientSocket::CloseTasks).
+				if( dynamic_cast<const Tests::GatewayErrorResponse*>(&e) )
+					leg.ConsecutiveFailures = 0;
+				else if( ++leg.ConsecutiveFailures>=3 ){
+					try{
+						Reconnect( leg );
+					}
+					catch( const std::exception& re ){
+						//Not fatal:  the gateway may still be restarting.  (A socket that came back while the server behind it has not
+						//is no failure here - Reconnect leaves that leg's subscribe to WriteCycle.)  The drop is already counted, the
+						//legs are still on the old socket, and leaving the counter at the threshold means the next transport failure
+						//tries again - a run that never recovers still fails on its counters, and soak.sh fails a gateway that has
+						//actually gone away.
+						leg.ConsecutiveFailures = 2;
+						WARN( "[{}]Reconnect to the gateway failed - retrying on the next failure: {}", leg.Slug, re.what() );
+					}
+				}
 				return false;
 			}
 		}
 	}
 
 	α SoakRunner::WriteCycle( ServerLeg& leg )ε->void{
+		//No subscription, no push to wait for:  every round below would time out into a Miss.  A failed retry is only logged - the
+		//write still runs and counts, which during an outage is a WriteFailure, as it should be.
+		if( !leg.Subscribed && leg.Socket )
+			TrySubscribe( leg, "retry" );
 		let& node = leg.Nodes[leg.WriteIndex++ % leg.Nodes.size()];
 		let start = steady_clock::now();
 		//A miss - the write was acked but no data-change push arrived within _pushTimeout - is retried the same way, with a FRESH
@@ -367,13 +424,13 @@ namespace Jde::Opc::Gateway::Soak{
 
 	α SoakRunner::SampleStatus()ι->void{
 		try{
-			string q{ "status{ memory startTime uptimeSeconds clients monitoredItems }" };
+			string q{ "status{ memory startTime uptimeSeconds clients monitoredItems pendingItems }" };
 			let j = _socket->QuerySync( move(q) );
 			let& o = j.as_object();
-			let num = [&o]( sv name )->int64_t{ auto p = o.find(name); return p==o.end() ? -1 : p->value().to_number<int64_t>(); };
+			let num = [&o]( sv name )->int64_t { auto p = o.find(name); return p==o.end() ? -1 : p->value().to_number<int64_t>(); };
 			let all = AllLatencies();
 			_csv << ToIsoString( Clock::now() )
-				<< ',' << num("memory") << ',' << num("uptimeSeconds") << ',' << num("clients") << ',' << num("monitoredItems")
+				<< ',' << num("memory") << ',' << num("uptimeSeconds") << ',' << num("clients") << ',' << num("monitoredItems") << ',' << num("pendingItems")
 				<< ',' << Total(&ServerLeg::Writes) << ',' << Total(&ServerLeg::Pushes) << ',' << Total(&ServerLeg::Misses) << ',' << Total(&ServerLeg::WriteFailures) << ',' << Total(&ServerLeg::WriteRetries) << ',' << Total(&ServerLeg::MissRetries) << ',' << _socketDrops << ',' << _statusFailures
 				<< ',' << percentile(all, .5) << ',' << percentile(all, .99);
 			for( let& l : _legs )
@@ -417,7 +474,7 @@ namespace Jde::Opc::Gateway::Soak{
 		_csv.open( _csvPath, std::ios::app );
 		THROW_IF( !_csv.is_open(), "Could not open csv '{}'.", _csvPath.string() );
 		if( _csv.tellp()==0 ){
-			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,writes,pushes,misses,writeFailures,writeRetries,missRetries,socketDrops,statusFailures,p50Ms,p99Ms";
+			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,pendingItems,writes,pushes,misses,writeFailures,writeRetries,missRetries,socketDrops,statusFailures,p50Ms,p99Ms";
 			for( let& l : _legs )
 				_csv << Ƒ( ",writes_{0},pushes_{0},misses_{0},writeFailures_{0},writeRetries_{0},missRetries_{0},p50Ms_{0},p99Ms_{0}", l.Slug );
 			_csv << std::endl;
@@ -428,8 +485,18 @@ namespace Jde::Opc::Gateway::Soak{
 			if( leg.User.size() )
 				Login( leg );
 		}
-		for( auto& leg : _legs )
-			Subscribe( leg );
+		for( auto& leg : _legs ){
+			try{
+				Subscribe( leg );
+			}
+			catch( const std::exception& ){
+				//At startup a failure is fatal and worth a hint.  Connection-level failures (untrusted cert, bad credential) already
+				//surfaced in Login; reaching here on an external leg points at the nodes themselves.
+				if( leg.User.size() )
+					WARN( "[{}]Subscribe failed - confirm the configured nodes exist and '{}' may read them; if the server rejected the client certificate, trust '{}' in its configuration manager.", leg.Slug, leg.User, CertPath(leg.Slug) );
+				throw;
+			}
+		}
 		if( let d = argDuration("-startDelay", "/soak/startDelay", 0s); d>Duration::zero() )
 			std::this_thread::sleep_for( d );//see if a settle delay after the subscription ack avoids the first-write hang.
 		let start = Clock::now();
@@ -464,6 +531,13 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		_completed = Clock::now()>=deadline;
 		for( auto& leg : _legs ){
+			//A null socket here is an access violation, which no catch below sees:  the run ended with no final status sample and no
+			//summary.json.  A user leg whose re-login failed used to be left without one (subscription-disconnect #9); since
+			//Connect/Login swap a socket in only once it is up (#8) none can be, and the guard keeps it that way for any later path.
+			if( !leg.Socket ){
+				WARN( "[{}]Unsubscribe skipped - the leg has no socket.", leg.Slug );
+				continue;
+			}
 			try{
 				BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( leg.Socket->Unsubscribe(leg.Slug, leg.Nodes) );
 			}

@@ -14,9 +14,10 @@ namespace Jde::Opc{
 	}
 	α Gateway::SetQL( sp<QL::LocalQL> ql )ι->void{ _ql = move(ql); }
 	α Gateway::AddStatusCounts( jobject& status )ι->void{
-		const auto [clients, monitoredItems] = UAClient::StatusCounts();
+		const auto [clients, monitoredItems, pendingItems] = UAClient::StatusCounts();
 		status["clients"] = clients;
 		status["monitoredItems"] = monitoredItems;
+		status["pendingItems"] = pendingItems;//subscriptions a lost connection parked for its reconnect - monitoredItems counts only what is on a client.
 	}
 }
 namespace Jde::Opc::Gateway{

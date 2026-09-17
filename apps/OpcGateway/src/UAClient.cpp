@@ -1,6 +1,7 @@
 #include "UAClient.h"
 
 #include <open62541/plugin/securitypolicy_default.h>
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/app/client/IAppClient.h>
@@ -25,6 +26,78 @@ namespace Jde::Opc::Gateway{
 	//failure that is credential-specific still leaves the slug unusable for that caller.  Its own mutex - the status query reads it
 	//without touching _clients, and StateCallback writes it while unlocked.
 	flat_map<ServerCnnctnNK,string> _connectErrors; mutex _connectErrorMutex;
+
+	//Subscriptions that outlived their client.  A connection failure destroys the UAClient (ProcessingLoop's deregister
+	//path) and takes every websocket session's monitored nodes with it, so a later write silently builds a fresh client
+	//and the pushes never come back - soak-findings #10, seen by restarting the OpcServer under a live subscription.
+	//What the dying client was monitoring is parked here, keyed exactly as _clients is, and the reconnect puts it back.
+	//Entries leave only three ways: a reconnect moves them to _rebuilds, every subscriber drops them (a closed tab), or the
+	//process shuts down.  A rebuild whose own client dies part-way parks what it had not finished back here (resubscribe).
+	using Listeners = flat_map<sp<IDataChange>,flat_set<NodeId>>;
+	//One chain per key, and the entry *is* the chain:  parkLocked creates it and has the caller start the chain, and only that
+	//chain (or StopReconnects) erases it.  So an entry that exists always has a chain running on it - a second failure meanwhile
+	//merges into it rather than starting another - and nothing else may erase one, however empty it looks (see PurgePending).
+	struct PendingSubscription final{
+		Listeners Nodes;
+		sp<DurationTimer> Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
+		uint Rejections{};//reconnect attempts refused outright in a row - see isRejection; the chain gives up at MaxRejections.
+		string LastFailure;//what the last attempt failed with; a repeat of it logs quietly.
+	};
+	flat_map<ServerCnnctnNK,flat_map<Credential,PendingSubscription>> _pending; mutex _pendingMutex;
+	std::atomic<uint> _reconnectsWaiting;
+	//Listeners a rebuild has taken - out of _pending (connectPending) or off a client (Resubscribe) - and not yet put back on a
+	//client.  Held only in resubscribe's frame they were out of reach of both unsubscribes, so a session that closed or dropped a
+	//node mid-rebuild had it re-created for a listener nothing would unsubscribe (subscription-disconnect #4).  Keyed by rebuild,
+	//under _pendingMutex, and moved in and out of _pending under that same lock so a listener is never in neither place.
+	struct Rebuild final{
+		ServerCnnctnNK Slug;//UnsubscribePending's filter.
+		Listeners Nodes;
+	};
+	flat_map<uint,Rebuild> _rebuilds; uint _rebuildId{};
+
+	Ω pendingFind( const ServerCnnctnNK& slug, const Credential& credential )ι->PendingSubscription*{//_pendingMutex held
+		auto creds = _pending.find( slug );
+		if( creds==_pending.end() )
+			return nullptr;
+		auto p = creds->second.find( credential );
+		return p==creds->second.end() ? nullptr : &p->second;
+	}
+	Ω pendingErase( const ServerCnnctnNK& slug, const Credential& credential )ι->void{//_pendingMutex held
+		if( auto creds = _pending.find(slug); creds!=_pending.end() ){
+			creds->second.erase( credential );
+			if( creds->second.empty() )
+				_pending.erase( creds );
+		}
+	}
+	Ω rebuildStart( const ServerCnnctnNK& slug, Listeners&& listeners )ι->uint{//_pendingMutex held
+		let id = ++_rebuildId;
+		_rebuilds.try_emplace( id, Rebuild{slug, move(listeners)} );
+		return id;
+	}
+	Ω rebuildHasNodes( uint rebuild )ι->bool{
+		lg _{ _pendingMutex };
+		auto r = _rebuilds.find( rebuild );
+		return r!=_rebuilds.end() && r->second.Nodes.size();
+	}
+	Ω stashPending( const sp<UAClient>& client )ι->void;//defined beside the rebuild it feeds, far below; ConnectionLost (here) is what calls it.
+	Ω parkLocked( const ServerCnnctnNK& slug, const Credential& credential, const Listeners& listeners )ι->bool;//into _pending - also defined below.
+	Ω startReconnect( const ServerCnnctnNK& slug, const Credential& credential )ι->void;//the chain parkLocked asked for - also defined below.
+	Ω nodeCount( const Listeners& listeners )ι->uint{
+		uint y{};
+		for( let& [_,nodes] : listeners )
+			y += nodes.size();
+		return y;
+	}
+	//The distinct nodes these listeners hold - what they cost as monitored items once they are back on a client, since two
+	//listeners watching one node share its item.  nodeCount is the per-listener total the logs report instead; this is the one
+	//that lines up with UAMonitoringNodes::Count(), so status can add the two.
+	Ω itemCount( const Listeners& listeners )ι->uint{
+		flat_set<NodeId> nodes;
+		for( let& [_,listenerNodes] : listeners )
+			nodes.insert( listenerNodes.begin(), listenerNodes.end() );
+		return nodes.size();
+	}
+
 	α UAClient::ConnectErrors()ι->flat_map<ServerCnnctnNK,string>{
 		lg _{ _connectErrorMutex };
 		return _connectErrors;
@@ -37,8 +110,21 @@ namespace Jde::Opc::Gateway{
 		lg _{ _connectErrorMutex };
 		_connectErrors.erase( slug );
 	}
-	α UAClient::RemoveClient( sp<UAClient>&& client )ι->bool{
+	//The two ways a client goes.  RemoveClient forgets it:  what it was monitoring ends with it, which is what teardown, the tests and an
+	//idle client's shutdown mean.  ConnectionLost parks that first and reconnects it (soak-findings #10), and is only for a client whose
+	//connection failed.  RemoveClient used to park as well, so a test suite's teardown revived whatever a failed test left monitored, a
+	//second after gtest had deleted the fixture its pushes wrote into (subscription-disconnect #10).
+	α UAClient::ConnectionLost( sp<UAClient>&& client )ι->bool{
 		client->Connected = false;
+		stashPending( client );//before anything else drops it: whatever this client was monitoring has to outlive it, or the subscriptions die here.
+		return Deregister( move(client) );
+	}
+	α UAClient::RemoveClient( sp<UAClient>&& client )ι->bool{
+		client->Discarded = true;//before Connected:  a rebuild reads Connected first, and must then see why it went - see resubscribe.
+		client->Connected = false;
+		return Deregister( move(client) );
+	}
+	α UAClient::Deregister( sp<UAClient>&& client )ι->bool{
 		client->StopProcessing();//cancels the ping timer & processing loop; otherwise _pingTimer stays pending on the io_context (and the ping coroutine keeps a UAClient ref), blocking shutdown.
 		bool erased{};
 		ul _{ _clientsMutex };
@@ -61,7 +147,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void{
 		if( sc==UA_STATUSCODE_BADSERVERNOTCONNECTED && client )
-			RemoveClient( sp<UAClient>{client} );
+			ConnectionLost( sp<UAClient>{client} );
 	}
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
 		vector<sp<UAClient>> y;
@@ -81,7 +167,7 @@ namespace Jde::Opc::Gateway{
 			y[slug] = (uint32)creds.size();
 		return y;
 	}
-	α UAClient::StatusCounts()ι->tuple<uint,uint>{
+	α UAClient::StatusCounts()ι->tuple<uint,uint,uint>{
 		vector<sp<UAClient>> clients;
 		{
 			sl _{ _clientsMutex };
@@ -92,7 +178,20 @@ namespace Jde::Opc::Gateway{
 		uint monitored{};//count outside the lock - MonitoredNodes() lazily constructs and Count() takes the nodes mutex.
 		for( let& client : clients )
 			monitored += client->MonitoredNodes().Count();
-		return { clients.size(), monitored };
+		//Nothing parked is on a client, so `monitored` reads 0 for a server that is down while its subscriptions are very much
+		//alive - report them separately rather than folding them in, so an outage still shows as live items going to 0.  Taken
+		//after _clientsMutex has been released, never inside it - the two are never held together anywhere.
+		uint parked{};
+		{
+			lg _{ _pendingMutex };
+			for( let& [slug, creds] : _pending ){
+				for( let& [cred, entry] : creds )
+					parked += itemCount( entry.Nodes );
+			}
+			for( let& [id, rebuild] : _rebuilds )//out of _pending and not yet back on a client: counted here, so a rebuild does not make them vanish.
+				parked += itemCount( rebuild.Nodes );
+		}
+		return { clients.size(), monitored, parked };
 	}
 	concurrent_flat_map<uint32_t, uint32_t> _handles;
 	α createHandle( const ServerCnnctn& slug )ι->Jde::Handle{
@@ -130,6 +229,9 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α UAClient::Shutdown( bool /*terminate*/, SL /*sl*/ )ι->VoidAwait::Task{
+		//Before the first co_await:  this runs fire-and-forget from Process::Shutdown, so everything after that suspends runs late,
+		//and a chain waking in the gap built a client after the snapshot below that nothing ever stopped (subscription-disconnect #3).
+		StopReconnects();
 		vector<sp<UAClient>> clients;
 		{
 			sl _1{ _clientsMutex };
@@ -298,6 +400,8 @@ namespace Jde::Opc::Gateway{
 			//that never fires.
 			client->TriggerSessionAwaitables();
 			client->ClearRequest( ConnectRequestId );
+			if( client->RecordSession() )
+				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
 		}
 
 		if( sessionState == UA_SESSIONSTATE_ACTIVATED || connectStatus ){
@@ -326,6 +430,7 @@ namespace Jde::Opc::Gateway{
 
 				client->ClearRequest( ConnectRequestId );//previous clear didn't have client
 				if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
+					client->RecordSession();//the baseline the re-activation branch above compares against; nothing to rebuild on a first activation.
 					ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
 					client->_asyncRequest.RequestDrain();//open62541 fires its namespace-array read right after this callback returns; ProcessingLoop must keep pumping until the reply is serviced (OnServiceBegin).
 					{
@@ -483,6 +588,387 @@ namespace Jde::Opc::Gateway{
 		Process( SubscriptionRequestId, "DataSubscriptions" );
 	}
 
+	//One coroutine for the whole rebuild: AnyAwait is what lets a single frame co_await both the subscribe (a VoidAwait) and
+	//the monitored-item creates (a TAwait<SubscriptionAck>) - the pairing rule would otherwise force a hand-off chain.
+	//
+	//The listeners wait in _rebuilds, not in this frame, and each leaves only once its create has answered:  in the frame they
+	//were out of reach of both unsubscribes (subscription-disconnect #4).  Nodes unsubscribed while their create was out are taken
+	//off the client again when it answers.
+	//
+	//The client can die under it - a server still starting drops the channel again - and then nothing else knows what this
+	//rebuild had not yet put back:  the dying client's stashPending finds only the creates that completed.  So every node ends one
+	//of four ways - restored, refused by a live server (a retry would be refused again), unsubscribed meanwhile, or parked for the
+	//reconnect chain because the client died (subscription-disconnect #2).  Connected separates refused from parked:  ConnectionLost
+	//clears it before anything can fail.  A node restored just before the client dies is not parked here:  its create completed,
+	//so the dying client's stashPending takes it with the rest.  A client RemoveClient discarded parks nothing:  removing it means
+	//forgetting what it monitored, and a rebuild must not bring that back (subscription-disconnect #10).
+	Ω resubscribe( sp<UAClient> client, uint rebuild )ι->VoidTask{
+		let handle = client->Handle();
+		let slug = client->Slug();
+		optional<string> subscribeError;
+		try{
+			if( client->Connected && rebuildHasNodes(rebuild) )//every listener may have gone already, and an empty subscription would linger.
+				co_await Any( SubscribeAwait{client} );
+			while( client->Connected ){
+				sp<IDataChange> dataChange; flat_set<NodeId> nodes;
+				{//read, not taken:  the listener stays in _rebuilds, where both unsubscribes look, until its create has answered.
+					lg _{ _pendingMutex };
+					auto r = _rebuilds.find( rebuild );
+					if( r==_rebuilds.end() || r->second.Nodes.empty() )
+						break;
+					dataChange = r->second.Nodes.begin()->first;
+					nodes = r->second.Nodes.begin()->second;//the ack's results come back in this set's order.
+				}
+				let ack = co_await Any( DataChangeAwait{nodes, dataChange, client} );
+				flat_set<NodeId> restored;
+				if( (uint)ack.results_size()==nodes.size() ){//fewer:  GetResult found no request - the dying client's stashPending, or this listener's close, took it.
+					auto result = ack.results().begin();
+					for( let& node : nodes ){
+						if( !(result++)->status_code() )
+							restored.emplace( node );
+					}
+				}
+				flat_set<NodeId> dropped;//restored for a listener that unsubscribed them while the create was out.
+				uint wantedCount{}, parked{}, parkedListeners{};
+				bool died{}, start{};
+				{
+					lg _{ _pendingMutex };
+					auto& remaining = _rebuilds[rebuild].Nodes;//only this frame erases its entry.
+					flat_set<NodeId> wanted;
+					if( auto p = remaining.find(dataChange); p!=remaining.end() ){
+						wanted = move( p->second );
+						remaining.erase( p );
+					}
+					wantedCount = wanted.size();
+					for( let& node : restored ){
+						if( !wanted.contains(node) )
+							dropped.emplace( node );
+					}
+					died = !client->Connected;
+					if( died && !client->Discarded ){//into _pending under the lock they leave _rebuilds by:  this listener's unrestored nodes, and every listener not yet attempted.
+						for( let& node : wanted ){
+							if( !restored.contains(node) )
+								remaining[dataChange].emplace( node );
+						}
+						parked = nodeCount( remaining );
+						parkedListeners = remaining.size();
+						start = parkLocked( slug, client->Credential, remaining );
+						remaining.clear();
+					}
+				}
+				if( dropped.size() ){//off the client again - and out of _pending, should the client's death have parked them first.
+					client->MonitoredNodes().Unsubscribe( flat_set<NodeId>{dropped}, dataChange );
+					UAClient::UnsubscribePending( slug, dataChange, dropped );
+				}
+				let kept = restored.size()-dropped.size();
+				let failed = wantedCount-kept;
+				let gone = nodes.size()-wantedCount;
+				//One call, not an if/else:  the log macros expand to a bare `if`, so an `else` after one does not parse.
+				LOG( failed ? ELogLevel::Warning : ELogLevel::Information, _tags, "[{}]Re-subscribed {} of {} node(s) for '{}'{}{}.", hex(handle), kept, nodes.size(), dataChange->to_string(),
+					failed ? !died ? " - the server refused the rest" : client->Discarded ? " - the client was removed, the rest are dropped" : " - the client died, the rest go back to the reconnect" : "",
+					gone ? Ƒ(" - {} unsubscribed during the rebuild", gone) : string{} );
+				if( parked )
+					WARN( "[{}]Connection to '{}' lost while restoring its subscriptions - {} node(s) for {} listener(s) go back to the reconnect.", hex(handle), slug, parked, parkedListeners );
+				if( start )
+					startReconnect( slug, client->Credential );
+			}
+		}
+		catch( runtime_error& e ){
+			subscribeError = e.what();
+		}
+		Listeners left;//never attempted:  the subscribe failed, or the client died before their turn.
+		bool start{};
+		{
+			lg _{ _pendingMutex };
+			if( auto r = _rebuilds.find(rebuild); r!=_rebuilds.end() ){
+				left = move( r->second.Nodes );
+				_rebuilds.erase( r );
+				if( !client->Connected && !client->Discarded )
+					start = parkLocked( slug, client->Credential, left );
+			}
+		}
+		if( left.empty() )
+			co_return;
+		//A live client refused the subscription:  nothing retries, and loud because the symptom is silence - writes keep working and
+		//the live view never comes back.  Two ifs, not an if/else:  the log macros expand to a bare `if`.
+		if( client->Connected )
+			ERR( "[{}]Could not re-create the subscription; {} listener(s)' data changes stay dead:  {}", hex(handle), left.size(), subscribeError.value_or("") );
+		if( !client->Connected && client->Discarded )
+			DBG( "[{}]Client removed while restoring its subscriptions - {} node(s) for {} listener(s) are dropped with it.", hex(handle), nodeCount(left), left.size() );
+		if( !client->Connected && !client->Discarded )
+			WARN( "[{}]Connection to '{}' lost while restoring its subscriptions - {} node(s) for {} listener(s) go back to the reconnect.", hex(handle), slug, nodeCount(left), left.size() );
+		if( start )
+			startReconnect( slug, client->Credential );
+	}
+
+	//A session the server drops takes every subscription with it, and open62541 does not rebuild them - it only re-creates the
+	//session, so writes recover and pushes never do (soak-findings #8: 12 min of successful writes with no data change, nothing
+	//logged after DeleteSubscriptionCallback).  Called on re-activation, this puts back what this client was monitoring.
+	//The reconnect half of #10.  Nothing else will do it: a client is built lazily by whatever request needs one, so a
+	//connection that only subscribes has no traffic of its own to revive it and would stay dead until someone wrote to it.
+	//It ends when the subscription is back, when every subscriber has gone, or at shutdown.
+	//
+	//Two coroutines, not one loop:  this is the house hand-off chain, because the two awaitables have different task types.
+	//An earlier version bridged ConnectAwait through Any() so one frame could do both, and that is not safe here - take the
+	//awaitable as your own task type, the way UAClient::Retry does.
+	constexpr auto MaxReconnectDelay{ 15s };//capped, not given up on:  an industrial server can be down for a maintenance window and the live view is expected back with it.
+	constexpr uint MaxRejections{ 3 };//in a row, ~7s apart at most:  one could be a server still loading its users; three is the credential or the certificate.
+
+	//A connect failure a retry would only repeat:  the server refusing this credential or this client's certificate, the gateway
+	//refusing the server's, or the connection row gone.  Anything else - refused, closed, timed out - is the server being away,
+	//which is what the chain waits out.  The chain used to retry these too, forever:  a rotated password cost the server a real
+	//login every 15s for as long as the subscriber's websocket lived (subscription-disconnect #13).
+	Ω isRejection( const std::exception& e )ι->bool{
+		let p = dynamic_cast<const Exception*>( &e );
+		if( !p )
+			return false;
+		if( p->HttpStatus()==EHttpStatus::NotFound )//ConnectAwait::Create:  no ServerCnnctn row for the slug.
+			return true;
+		if( !p->HasCode() )
+			return false;
+		switch( (StatusCode)p->Code() ){
+		case UA_STATUSCODE_BADIDENTITYTOKENREJECTED://also open62541's "no suitable endpoint" - a configuration mismatch, just as lasting.
+		case UA_STATUSCODE_BADIDENTITYTOKENINVALID:
+		case UA_STATUSCODE_BADUSERACCESSDENIED:
+		case UA_STATUSCODE_BADUSERSIGNATUREINVALID:
+		case UA_STATUSCODE_BADCERTIFICATEUNTRUSTED://either side's:  ServerTrust reports the gateway refusing the server with this code too.
+		case UA_STATUSCODE_BADCERTIFICATEINVALID:
+		case UA_STATUSCODE_BADCERTIFICATEREVOKED:
+		case UA_STATUSCODE_BADCERTIFICATEURIINVALID:
+		case UA_STATUSCODE_BADSECURITYPOLICYREJECTED:
+			return true;
+		default:
+			return false;
+		}
+	}
+	Ω connectPending( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->ConnectAwait::Task;
+
+	//ShuttingDown(), never Finalizing():  Finalizing is set after every shutdown function has run, so a chain gated on it could
+	//still reconnect while UAClient::Shutdown was tearing the clients down (subscription-disconnect #3).
+	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->DurationTimer::Task{
+		sp<DurationTimer> timer;
+		{//registered under the same lock StopReconnects cancels under:  it either finds this wait or has already cleared the entry.
+			lg _{ _pendingMutex };
+			auto p = Process::ShuttingDown() ? nullptr : pendingFind( slug, credential );
+			if( !p )
+				co_return;
+			p->Wait = timer = ms<DurationTimer>( delay );
+		}
+		++_reconnectsWaiting;
+		(void)co_await *timer;//a cancel resumes early with an error - not the signal; the checks below are.
+		--_reconnectsWaiting;
+		if( Process::ShuttingDown() )
+			co_return;
+		{//every subscriber gone (tabs closed while the server was down) - nothing left to restore.
+			lg _{ _pendingMutex };
+			auto p = pendingFind( slug, credential );
+			if( p && p->Wait==timer )
+				p->Wait = nullptr;
+			if( !p || p->Nodes.empty() ){
+				if( p )
+					pendingErase( slug, credential );
+				co_return;
+			}
+		}
+		connectPending( move(slug), move(credential), attempt, delay );
+	}
+
+	Ω connectPending( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->ConnectAwait::Task{
+		try{
+			auto client = co_await UAClient::GetClient( string{slug}, credential );
+			if( Process::ShuttingDown() ){
+				//Connected while the process was stopping.  UAClient::Shutdown's client snapshot can predate this client, and one left
+				//running keeps the executor alive with its loop and ping until the shutdown watchdog exits the process hard.
+				UAClient::RemoveClient( move(client) );
+				co_return;
+			}
+			uint rebuild{}, listenerCount{};
+			{//straight from _pending into _rebuilds under the one lock, so an unsubscribe finds them in one or the other (#4).
+				lg _{ _pendingMutex };
+				Listeners listeners;
+				if( auto p = pendingFind(slug, credential); p )
+					listeners = move( p->Nodes );
+				pendingErase( slug, credential );//the chain ends here:  the rebuild owns them now, and parks back whatever this client dies before restoring (#2).
+				listenerCount = listeners.size();
+				if( listenerCount )
+					rebuild = rebuildStart( slug, move(listeners) );
+			}
+			if( !rebuild )
+				co_return;
+			INFO( "[{}]Reconnected to '{}' after {} attempt(s) - restoring {} listener(s)' monitored nodes.", hex(client->Handle()), slug, attempt, listenerCount );
+			resubscribe( move(client), rebuild );//the same rebuild the session-loss path uses.
+		}
+		catch( runtime_error& e ){
+			//A server away for a day is ~5,800 attempts at the 15s cap, so only the first failure and each change of it warn - a repeat
+			//logs at debug, and the warning in force always names why.  A rejection a retry would only repeat ends the chain after
+			//MaxRejections in a row, dropping what it was restoring (#13).
+			let rejected = isRejection( e );
+			let p = dynamic_cast<const Exception*>( &e );
+			let failure = p && p->HasCode() ? Ƒ( "{:x}", p->Code() ) : string{ e.what() };//the code, where there is one:  the message carries per-attempt detail.
+			let next = std::min( delay*2, steady_clock::duration{MaxReconnectDelay} );
+			bool found{}, changed{};
+			uint rejections{}, listeners{};
+			{
+				lg _{ _pendingMutex };
+				if( auto entry = pendingFind(slug, credential); entry ){//gone:  every subscriber left, or shutdown - nothing to restore.
+					found = true;
+					changed = entry->LastFailure!=failure;
+					entry->LastFailure = failure;
+					rejections = entry->Rejections = rejected ? entry->Rejections+1 : 0;
+					if( rejections>=MaxRejections ){
+						listeners = entry->Nodes.size();
+						pendingErase( slug, credential );
+					}
+				}
+			}
+			let giveUp = rejections>=MaxRejections;
+			if( giveUp )
+				ERR( "Giving up reconnecting to '{}' after {} rejections in a row - {} listener(s)' monitored nodes are dropped until they subscribe again:  {}", slug, rejections, listeners, e.what() );
+			if( found && !giveUp )
+				LOG( changed ? ELogLevel::Warning : ELogLevel::Debug, _tags, "Could not reconnect to '{}' to restore its subscriptions (attempt {}{}) - retrying in {}:  {}", slug, attempt, rejected ? Ƒ(", rejection {} of {}", rejections, MaxRejections) : string{}, Chrono::ToString(next), e.what() );
+			if( found && !giveUp && !Process::ShuttingDown() )
+				waitThenConnect( move(slug), move(credential), attempt+1, next );
+		}
+	}
+
+	Ω startReconnect( const ServerCnnctnNK& slug, const Credential& credential )ι->void{ waitThenConnect( slug, credential, 1, 1s ); }
+
+	//Both ways into _pending - a dying client's stashPending and a rebuild its client died under - so they share one chain per key.
+	//True when the caller has to start that chain (startReconnect), which it does once it has released the lock.  Always under the
+	//lock the listeners were taken under, so an unsubscribe finds them in one place or the other (#4, #14).
+	Ω parkLocked( const ServerCnnctnNK& slug, const Credential& credential, const Listeners& listeners )ι->bool{//_pendingMutex held
+		if( listeners.empty() || Process::ShuttingDown() )//ShuttingDown under the lock StopReconnects clears under:  an entry parked after that clear would outlive Shutdown.
+			return false;
+		auto& creds = _pending[slug];
+		let start = !creds.contains( credential );//no entry yet is no chain yet - the entry's existence is the flag, so it has to be read before the insert below creates one.
+		auto& entry = creds[credential];
+		for( let& [dataChange, nodes] : listeners )//merge: a second failure before the first reconnect finished must not drop the earlier listeners.
+			entry.Nodes[dataChange].insert( nodes.begin(), nodes.end() );
+		return start;
+	}
+	//Called as the client dies.  Deliberate teardowns park nothing: ShutdownIdle and Shutdown await MonitoredNodes::Shutdown
+	//first, which deletes the items and leaves nothing to take.
+	Ω stashPending( const sp<UAClient>& client )ι->void{
+		auto monitoredNodes = client->TryMonitoredNodes();
+		if( !monitoredNodes || Process::ShuttingDown() )//nothing reconnects on the way out, and the items stay put for Shutdown's MonitoredNodes::Shutdown to delete.
+			return;
+		uint nodes{}, listenerCount{};
+		bool start{};
+		{//take and park under the one lock, as Resubscribe takes into _rebuilds:  between the two the listeners were in neither place, so
+			//UAClient::Unsubscribe's purge could miss a session closing at that instant, and the park then revived it (subscription-disconnect #14).
+			lg _{ _pendingMutex };
+			auto listeners = monitoredNodes->TakeForResubscribe();
+			if( listeners.empty() )
+				return;
+			nodes = nodeCount( listeners );
+			listenerCount = listeners.size();
+			start = parkLocked( client->Slug(), client->Credential, listeners );
+		}
+		WARN( "[{}]Connection to '{}' lost with {} monitored node(s) for {} listener(s) - reconnecting to restore them.", hex(client->Handle()), client->Slug(), nodes, listenerCount );
+		if( start )
+			startReconnect( client->Slug(), client->Credential );
+	}
+
+	α UAClient::StopReconnects()ι->uint{
+		uint cancelled{};
+		lg _{ _pendingMutex };
+		for( auto&& [_, creds] : _pending ){//auto&&: flat_map's iterator hands back a proxy pair.
+			for( auto&& [__, entry] : creds ){
+				if( entry.Wait ){//a Cancel before the wait starts is remembered - DurationTimer::Start re-issues it.
+					entry.Wait->Cancel();
+					++cancelled;
+				}
+			}
+		}
+		_pending.clear();
+		return cancelled;
+	}
+	α UAClient::ReconnectsWaiting()ι->uint{ return _reconnectsWaiting; }
+
+	α UAClient::PurgePending( const sp<IDataChange>& dataChange )ι->void{
+		lg _{ _pendingMutex };
+		for( auto&& [_, rebuild] : _rebuilds )//and what a rebuild is still putting back (#4) - the rebuild erases its own entry.
+			rebuild.Nodes.erase( dataChange );
+		//Nodes only:  an entry always has a chain running on it, and that chain erases it on its next tick once nothing is left
+		//to restore (waitThenConnect).  Erasing one here would let a later failure start a second chain for the same key.
+		for( auto&& [_, creds] : _pending ){
+			for( auto&& [__, entry] : creds )
+				entry.Nodes.erase( dataChange );
+		}
+	}
+
+	α UAClient::UnsubscribePending( const ServerCnnctnNK& slug, const sp<IDataChange>& dataChange, const flat_set<NodeId>& nodes )ι->flat_set<NodeId>{
+		flat_set<NodeId> dropped;
+		auto drop = [&]( Listeners& listeners )ι{
+			if( auto p = listeners.find(dataChange); p!=listeners.end() ){
+				for( let& node : nodes ){
+					if( p->second.erase(node) )
+						dropped.emplace( node );
+				}
+				if( p->second.empty() )
+					listeners.erase( p );
+			}
+		};
+		lg _{ _pendingMutex };
+		if( auto creds = _pending.find(slug); creds!=_pending.end() ){
+			for( auto&& [_,entry] : creds->second )//auto&&: flat_map's iterator hands back a proxy pair.
+				drop( entry.Nodes );
+		}
+		for( auto&& [_,rebuild] : _rebuilds ){//and what a rebuild is still putting back (#4).
+			if( rebuild.Slug==slug )
+				drop( rebuild.Nodes );
+		}
+		return dropped;
+	}
+
+	//The session's authentication token is unique per session, so it is what separates the two things ACTIVATED reports: a
+	//*new* session (the server dropped ours - its subscriptions went with it, since a subscription belongs to its session)
+	//from the *same* session re-activated on a new secure channel, where the server still holds everything and a rebuild
+	//would duplicate the monitored items and orphan the originals.  True means "different session than the last one seen".
+	α UAClient::ReadSessionToken()Ι->string{
+		string token;
+		UA_NodeId id{};
+		UA_ByteString nonce{};
+		if( !UA_Client_getSessionAuthenticationToken(_ptr, &id, &nonce) ){
+			NodeId owned{ move(id) };//both come back copied - the wrapper clears the id, and the nonce is cleared below.
+			UA_ByteString_clear( &nonce );
+			token = owned.ToString();
+		}
+		return token;
+	}
+	α UAClient::RecordSession()ι->bool{
+		auto token = ReadSessionToken();
+		lg _{ _sessionTokenMutex };
+		let changed = token.size() && _sessionToken.size() && token!=_sessionToken;//an unreadable or first-seen token is never a "change": there is nothing to rebuild before the first activation, and a rebuild on a guess would duplicate live items.
+		_sessionToken = move( token );
+		return changed;
+	}
+
+	α UAClient::Resubscribe()ι->void{
+		//First, and whether or not anything is rebuilt:  the cached id belongs to the session that went away - on a server restart it is
+		//stale rather than cleared (no deleteSubscriptionCallback fires), and SubscribeAwait::await_ready would skip the create and build
+		//the next subscribe's items on a subscription no server has.  It used to be cleared only when there were listeners to rebuild,
+		//leaving the stale id to a DeleteMonitoring pass that happened to be pending - which no longer clears what it did not empty (#6).
+		SetCreatedSubscriptionResponse( nullptr );
+		auto monitoredNodes = TryMonitoredNodes();//never MonitoredNodes(): a client that never subscribed has nothing to rebuild.
+		if( !monitoredNodes )
+			return;
+		uint rebuild{}, nodes{}, listenerCount{};
+		{//held across the take:  the listeners go straight off the client into _rebuilds, so an unsubscribe finds them in one or the other (#4).
+			lg _{ _pendingMutex };
+			auto listeners = monitoredNodes->TakeForResubscribe();
+			if( listeners.empty() )
+				return;
+			nodes = nodeCount( listeners );
+			listenerCount = listeners.size();
+			rebuild = rebuildStart( Slug(), move(listeners) );
+		}
+		INFO( "[{}]Re-creating {} monitored node(s) for {} listener(s).", hex(Handle()), nodes, listenerCount );
+		//PostStrand, not PostUA:  this runs inside StateCallback, i.e. inside run_iterate on the strand, and PostUA's dispatch
+		//would submit re-entrantly on that stack.
+		PostStrand( [client=shared_from_this(), rebuild]{ resubscribe( client, rebuild ); } );
+	}
+
 	α UAClient::StopProcessDataSubscriptions()ι->void{
 		ClearRequest( SubscriptionRequestId );
 	}
@@ -495,8 +981,12 @@ namespace Jde::Opc::Gateway{
 	α UAClient::RetryVoid( function<void(sp<UAClient>&&) > f, UAException&& e, sp<UAClient>&& client )ι->ConnectAwait::Task{
 		let slug = client->Slug();
 		let credential = client->Credential;
-		RemoveClient( move(client) );
-		if( e.Code()==UA_STATUSCODE_BADCONNECTIONCLOSED || e.Code()==UA_STATUSCODE_BADSERVERNOTCONNECTED ){
+		let lost = e.Code()==UA_STATUSCODE_BADCONNECTIONCLOSED || e.Code()==UA_STATUSCODE_BADSERVERNOTCONNECTED;
+		if( lost )//a failed connection keeps what the client monitored; any other failure removes it as before.
+			ConnectionLost( move(client) );
+		else
+			RemoveClient( move(client) );
+		if( lost ){
 			try{
 				client = co_await GetClient( move(slug), move(credential) );
 				f( move(client) );
@@ -509,6 +999,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α UAClient::Unsubscribe( const sp<IDataChange>& dataChange )ι->void{
+		PurgePending( dataChange );//a session that closed while its server was down must not be revived by the reconnect.
 		vector<sp<UAClient>> clients;
 		{
 			sl _{ _clientsMutex };
@@ -521,6 +1012,11 @@ namespace Jde::Opc::Gateway{
 			if( auto p = client->TryMonitoredNodes(); p )//a client that never subscribed has nothing to drop - no reason to build it one here.
 				p->Unsubscribe( dataChange );
 		}
+		//And again after the walk.  A client that died between the purge above and the walk parked this session's nodes after the purge
+		//had run, and its reconnect revived a session that had closed - one nothing would ever unsubscribe (subscription-disconnect #14).
+		//stashPending takes and parks under the purge's lock, so whatever it took before the walk reached that client is parked by now,
+		//and whatever it takes after, the walk had already removed.
+		PurgePending( dataChange );
 	}
 
 	α UAClient::BrowsePathsToNodeIds( sv path, bool parents )Ε->flat_map<string,ExpectedNodeId>{
