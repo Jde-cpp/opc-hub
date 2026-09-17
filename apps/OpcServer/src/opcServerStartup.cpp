@@ -41,8 +41,10 @@ namespace Jde::Opc{
 		//retry: the hub is this process's registry, and a first start of the hub - schema sync, keys, then its certificate - can
 		//outlast the installer's head start or a logon's, so the login here used to fail its verify and end the process
 		//(install-issues #12).  Now it waits for the hub, a warning per attempt, for as long as it takes or until shutdown;
-		//the client TLS context picks the hub's certificate up when it appears (Web::Client::Ssl::Context).
-		BlockVoidAwait( App::Client::ConnectAwait{appClient, true} );
+		//the client TLS context picks the hub's certificate up when it appears (Web::Client::Ssl::Context).  The block's own
+		//stall line is capped at Information: it read like a hang - a warning at 30 s, criticals after - beside the retry
+		//warnings that say what the wait is for (the 09-15 rerun's retry table).
+		BlockVoidAwait( App::Client::ConnectAwait{appClient, true}, ELogLevel::Information );
 		appClient->LoadLogSettings();
 
 		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, {uaSchema}, UserPK{UserPK::System}, resourceSchema) );

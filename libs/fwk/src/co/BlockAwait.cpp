@@ -31,7 +31,7 @@ namespace Jde{
 		if( _sites.insert(Ƒ("{}:{}", sl.file_name(), sl.line())) )
 			LOGSL( ELogLevel::Warning, sl, _tags, "BlockAwait entered on an executor thread - if its result needs this pool, that is a deadlock in waiting (db-review3 #1).  Awaiting it (Any()) frees the thread." );
 	}
-	α BlockAwaitSync::Wait( SL sl )ι->void{
+	α BlockAwaitSync::Wait( SL sl, ELogLevel stallLevel )ι->void{
 		std::unique_lock l{ _mutex };
 		if( !_done )
 			warnIfOnExecutor( sl );
@@ -49,7 +49,8 @@ namespace Jde{
 			//"{}" and a pre-formatted string, not "{:.1f}" and a double: Logging::Entry stringifies its arguments, so a spec
 			//that only applies to a number makes Entry::Message() take its format-error path - which logs, from inside
 			//MemoryLog::Find's write lock.
-			LOGSL( i==1 ? ELogLevel::Warning : ELogLevel::Critical, sl, _tags, "BlockAwait has been waiting {}s for its result.", Ƒ("{:.1f}", std::chrono::duration<double>(interval*static_cast<Duration::rep>(i)).count()) );
+			//stallLevel (Await.h) caps the level for a wait the caller knows to be long; a real hang still climbs to Critical.
+			LOGSL( std::min(i==1 ? ELogLevel::Warning : ELogLevel::Critical, stallLevel), sl, _tags, "BlockAwait has been waiting {}s for its result.", Ƒ("{:.1f}", std::chrono::duration<double>(interval*static_cast<Duration::rep>(i)).count()) );
 		}
 	}
 }

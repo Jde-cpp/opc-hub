@@ -23,10 +23,11 @@ namespace Jde::App::Client{
 		α Suspend()ι->void{ HttpLogin(); }
 		α HttpLogin()ι->TAwait<SessionPK>::Task;
 		α RunSocket( SessionPK sessionId )ι->TAwait<Proto::FromServer::ConnectionInfo>::Task;
-		α Retry( const runtime_error& e )ι->DurationTimer::Task;//logs why, waits /server/reconnectWait, logs in again.
+		α Retry( const runtime_error& e )ι->DurationTimer::Task;//logs why, waits out /server/reconnectWait from the attempt's start, logs in again.
 
 		sp<IAppClient> _appClient;
 		bool _retry;
+		steady_clock::time_point _attemptStart{};//HttpLogin sets it: the wait is measured from here, so the cadence is the setting's whatever a refused connect costs.
 	};
 	α Connect( sp<IAppClient> appClient )ι->ConnectAwait::Task;
 }
