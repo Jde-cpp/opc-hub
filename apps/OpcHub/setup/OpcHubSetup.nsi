@@ -104,6 +104,9 @@ Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's a
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW ComponentsShow ;a standard user is told the mode was chosen for them (#15)
 !insertmacro MUI_PAGE_COMPONENTS
+;the page names the program folder only, and a profile install writes outside the profile too - the data root is
+;%ProgramData%\Jde-Cpp in both modes (the 09-15 reruns' location rows).  DirText expands $DataDir at run time.
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Setup installs ${PRODUCT}'s programs in the folder below.  Its data - the settings, the sqlite database, keys and certificates, logs - goes under $DataDir, in both install modes.  $_CLICK"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 ;the "Start now" box (reviews/install-issues.md #5): the services in the all-users mode - this installer is the elevated console
@@ -322,46 +325,51 @@ Section -VCRedist
 	${AndIf} $1 >= 14
 	${AndIf} $2 >= 50
 		DetailPrint "Visual C++ runtime $1.$2 present"
-	${ElseIf} $MultiUser.InstallMode == "AllUsers"
-!if /FileExists "${VC_REDIST}"
-		DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51)..."
-		SetOutPath "$TEMP"
-		File "${VC_REDIST}"
-		ExecWait '"$TEMP\vc_redist.x64.exe" /install /quiet /norestart' $0
-		Delete "$TEMP\vc_redist.x64.exe"
-		${If} $0 == 3010
-			;the runtime's files were in use (an older msvcp140 loaded by some process): Windows swaps them in at the next
-			;restart, and until then the exes may load the old ones and fail.  Used to be accepted in silence
-			;(reviews/install-issues.md, Notes "VC++ runtime"); the reboot flag turns the finish page into its restart form
-			;(MUI_FINISHPAGE_TEXT_REBOOT above) and a silent install exits 3010 (.onInstSuccess).
-			DetailPrint "The Visual C++ runtime needs Windows restarted to finish - ${PRODUCT} starts after it"
-			SetRebootFlag true
-		${ElseIf} $0 != 0
-			MessageBox MB_OK|MB_ICONEXCLAMATION "The Visual C++ runtime installer returned $0.  Install the Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, before starting ${PRODUCT}." /SD IDOK
-		${EndIf}
-!else
-	!warning "VC_REDIST not found - the installer will not bundle the Visual C++ runtime"
-		MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, is not installed.  Install it (vc_redist.x64.exe, https://aka.ms/vs/18/release/vc_redist.x64.exe) before starting ${PRODUCT}." /SD IDOK
-!endif
 	${Else}
-		;current user (reviews/install-issues.md #14): the runtime is machine-wide, so this mode cannot add it in silence - but
-		;vc_redist asks UAC for itself, so a user with administrator credentials to hand can let it in from here, and only one
-		;with none at all is left with the download.  The products ran a whole walk on 14.40, so the wording is a risk, not a
-		;verdict, and the install goes on either way; while the runtime is still old the finish page repeats the warning.
 !if /FileExists "${VC_REDIST}"
-		MessageBox MB_YESNO|MB_ICONQUESTION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.$\r$\n$\r$\nInstall it now?  It is machine-wide, so Windows will ask for an administrator.$\r$\n$\r$\n(No: it can be installed later from https://aka.ms/vs/18/release/vc_redist.x64.exe)" /SD IDNO IDNO runtimeDeclined
-		DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51) - Windows asks for an administrator..."
+		;One File, whichever mode runs it.  NSIS adds every File in a section to the size the components and location pages show,
+		;whichever branch executes, so the second copy the current-user branch used to carry made the pages count the runtime
+		;twice - 103.8 MB for an install that leaves neither copy behind (reviews/install-issues.md, the 09-15 rerun's 5:44 row).
+		;Current user (#14): the runtime is machine-wide, so this mode cannot add it in silence - but vc_redist asks UAC for
+		;itself, so a user with administrator credentials to hand can let it in from here, and only one with none at all is
+		;left with the download.  The products ran a whole walk on 14.40, so the wording is a risk, not a verdict, and the
+		;install goes on either way; while the runtime is still old the finish page repeats the warning.  Asked before the
+		;extraction, so a No leaves nothing to clean up.
+		${If} $MultiUser.InstallMode != "AllUsers"
+			MessageBox MB_YESNO|MB_ICONQUESTION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.$\r$\n$\r$\nInstall it now?  It is machine-wide, so Windows will ask for an administrator.$\r$\n$\r$\n(No: it can be installed later from https://aka.ms/vs/18/release/vc_redist.x64.exe)" /SD IDNO IDNO runtimeDeclined
+		${EndIf}
 		SetOutPath "$TEMP"
 		File "${VC_REDIST}"
-		ExecShellWait "runas" "$TEMP\vc_redist.x64.exe" "/install /passive /norestart" ;elevated by UAC; no exit code comes back through runas, so the registry says whether it landed
+		${If} $MultiUser.InstallMode == "AllUsers"
+			DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51)..."
+			ExecWait '"$TEMP\vc_redist.x64.exe" /install /quiet /norestart' $0
+			${If} $0 == 3010
+				;the runtime's files were in use (an older msvcp140 loaded by some process): Windows swaps them in at the next
+				;restart, and until then the exes may load the old ones and fail.  Used to be accepted in silence
+				;(reviews/install-issues.md, Notes "VC++ runtime"); the reboot flag turns the finish page into its restart form
+				;(MUI_FINISHPAGE_TEXT_REBOOT above) and a silent install exits 3010 (.onInstSuccess).
+				DetailPrint "The Visual C++ runtime needs Windows restarted to finish - ${PRODUCT} starts after it"
+				SetRebootFlag true
+			${ElseIf} $0 != 0
+				MessageBox MB_OK|MB_ICONEXCLAMATION "The Visual C++ runtime installer returned $0.  Install the Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, before starting ${PRODUCT}." /SD IDOK
+			${EndIf}
+		${Else}
+			DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51) - Windows asks for an administrator..."
+			ExecShellWait "runas" "$TEMP\vc_redist.x64.exe" "/install /passive /norestart" ;elevated by UAC; no exit code comes back through runas, so the registry says whether it landed
+			ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Minor"
+		${EndIf}
 		Delete "$TEMP\vc_redist.x64.exe"
-		ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Minor"
 		runtimeDeclined:
 !else
 	!warning "VC_REDIST not found - the installer will not bundle the Visual C++ runtime"
-		MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.  It is machine-wide - an administrator installs it from https://aka.ms/vs/18/release/vc_redist.x64.exe." /SD IDOK
+		${If} $MultiUser.InstallMode == "AllUsers"
+			MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, is not installed.  Install it (vc_redist.x64.exe, https://aka.ms/vs/18/release/vc_redist.x64.exe) before starting ${PRODUCT}." /SD IDOK
+		${Else}
+			MessageBox MB_OK|MB_ICONEXCLAMATION "The Microsoft Visual C++ v14 x64 Redistributable this build expects (14.50 or later) is not installed; ${PRODUCT} may fail to start without it.  It is machine-wide - an administrator installs it from https://aka.ms/vs/18/release/vc_redist.x64.exe." /SD IDOK
+		${EndIf}
 !endif
-		${If} $2 < 50
+		${If} $MultiUser.InstallMode != "AllUsers"
+		${AndIf} $2 < 50
 			StrCpy $RuntimeOld 1
 			DetailPrint "Visual C++ runtime still below 14.50 - ${PRODUCT} may fail to start"
 		${EndIf}
@@ -401,8 +409,9 @@ Section -Services
 			;the UA endpoint, for OPC clients elsewhere.  1970 (its http) stays closed - the hub reaches it over loopback.
 			!insertmacro OpenFirewallPort "Jde OpcServer (TCP 4840)" "4840" "$INSTDIR\OpcServer\Jde.Opc.Server.exe"
 		${EndIf}
-		;six lines at the finish page's width (MUI_FINISHPAGE_TEXT_LARGE, seven) - the database's whereabouts are the README's
-		StrCpy $FinishText "${PRODUCT} is installed as Windows services: they start when you finish (the box below), or later with net start Jde.OpcHub / Jde.OpcServer.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once Jde.OpcHub runs - the link below."
+		;six lines at the finish page's width (MUI_FINISHPAGE_TEXT_LARGE, seven) - the database's whereabouts are the README's.  The url
+		;is the link row's alone (the 09-15 rerun saw it twice); the restart form, which has no link, keeps it in its text.
+		StrCpy $FinishText "${PRODUCT} is installed as Windows services: they start when you finish (the box below), or later with net start Jde.OpcHub / Jde.OpcServer.$\r$\n$\r$\nThe Web UI is the link below, once Jde.OpcHub runs."
 	${Else}
 		;no services without administrator rights: shortcuts, the exes run in a console window (-c).  args/install-user, here and
 		;wherever else this mode starts the products (the Run key, StartProducts): args/install plus a loopback listen address, so
@@ -415,12 +424,12 @@ Section -Services
 			SetOutPath "$INSTDIR\OpcServer"
 			CreateShortcut "$SMPROGRAMS\${COMPANY}\Jde OpcServer.lnk" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "-c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync"
 		${EndIf}
+		SetOutPath "$INSTDIR" ;before the shortcut: its working dir is the last SetOutPath, and this one used to inherit the OpcServer's (the 09-15 rerun noted it)
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
-		SetOutPath "$INSTDIR"
 		${If} $RuntimeOld == 1
-			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nWeb UI: http://localhost:1967/"
+			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nThe Web UI is the link below."
 		${Else}
-			StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nWeb UI: http://localhost:1967/ once it runs - the link below."
+			StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nThe Web UI is the link below, once it runs."
 		${EndIf}
 	${EndIf}
 SectionEnd

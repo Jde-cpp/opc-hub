@@ -121,7 +121,10 @@ namespace Jde{
 	//reviews/gateway-review.md #36.
 	struct Γ BlockAwaitSync{
 		α Signal()ι->void;
-		α Wait( SL sl )ι->void;
+		//stallLevel caps the stall lines - Warning at the first interval, Critical from the second - for a wait the caller knows
+		//to be long: the OpcServer's startup blocked on a hub that is not up yet, whose retry warnings already say why (a
+		//hang would read the same way otherwise - install-issues, the 09-15 retry table).  The line still comes every interval.
+		α Wait( SL sl, ELogLevel stallLevel=ELogLevel::Critical )ι->void;
 	private:
 		std::mutex _mutex;
 		std::condition_variable _cv;
@@ -153,11 +156,11 @@ namespace Jde{
 	}
 
 	template<class TAwait, class TResult>
-	α BlockAwait( TAwait&& a )ε->TResult{
+	α BlockAwait( TAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->TResult{
 		auto s = ms<BlockAwaitState<TResult>>();
 		const auto sl = a.Source();//copied before the co_await - the awaitable is the caller's only clue to what a stalled wait is waiting on.
 		BlockAwaitExecute<TAwait,TResult>( a, s );
-		s->Wait( sl );
+		s->Wait( sl, stallLevel );
 		if( s->Error )
 			s->Error->Throw();
 		if constexpr( std::is_same_v<TResult,std::monostate> )
@@ -166,10 +169,10 @@ namespace Jde{
 			return move( *s->Result );
 	}
 
-	Ξ BlockVoidAwait( VoidAwait&& a )ε->void{ BlockAwait<VoidAwait,std::monostate>( move(a) ); }
+	Ξ BlockVoidAwait( VoidAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->void{ BlockAwait<VoidAwait,std::monostate>( move(a), stallLevel ); }
 
-	Ŧ BlockTAwait( TAwait<T>&& a )ε->T{
-		return BlockAwait<TAwait<T>,T>( move(a) );
+	Ŧ BlockTAwait( TAwait<T>&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->T{
+		return BlockAwait<TAwait<T>,T>( move(a), stallLevel );
 	}
 }
 #endif

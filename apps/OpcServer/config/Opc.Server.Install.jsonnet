@@ -23,6 +23,10 @@ function( sync=false ) base( sync ) + {
 		]
 	},
 	credentials+: { name: "OpcServer" }, //the login name; the hub enrolls it through its trustedCertDirs anchor on certsDir("OpcServer").
+	//the hub, by ip: `localhost` resolves to ::1 and then 127.0.0.1, and Windows takes ~2 s to refuse each while the hub is not
+	//up yet, which doubled the retry's cost (install-issues, the 09-15 rerun's retry table); the hub's certificate names
+	//IP:127.0.0.1, so the login's host check passes, and it is the address a current-user hub binds (args/install-user).
+	server+: { host: "127.0.0.1" },
 	logging+: { spd+: { sinks+: { file+: args.logFile } } }, //keep the previous starts' logs beside the file (args/install).
 	web+:{ client+:{ ssl+:{ caFile: args.certsDir("OpcHub")+"/OpcHub.pem" } } } //the hub is the registry - Opc.Hub.jsonnet's /http commonName.
 }

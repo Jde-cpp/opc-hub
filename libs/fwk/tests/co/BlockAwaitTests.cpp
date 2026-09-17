@@ -88,4 +88,17 @@ namespace Jde::Tests{
 		let warnings = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
 		EXPECT_GE( warnings.size(), 1u ) << "a stalled block logged nothing";
 	}
+
+	//install-issues (the 09-15 rerun's retry table): a wait the caller knows to be long - the OpcServer's startup blocked on a
+	//hub not up yet - read like a hang: a warning at 30 s, criticals after.  The caller caps the level; the lines still come,
+	//one per interval, so a reader sees the wait, at the level the caller chose.
+	TEST_F( BlockAwaitTests, StallLevelCapped ){
+		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		EXPECT_EQ( BlockTAwait(SlowInt{700ms}, ELogLevel::Information), 9 );
+		let lines = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
+		ASSERT_GE( lines.size(), 2u ) << "700ms over a 200ms interval should say so more than once";
+		for( let& line : lines )
+			EXPECT_EQ( line.Level, ELogLevel::Information ) << line.Message();
+	}
 }

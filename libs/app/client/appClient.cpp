@@ -96,9 +96,14 @@ namespace Jde::App::Client{
 	α ConnectAwait::Retry( const runtime_error& e )ι->DurationTimer::Task{
 		//Said, not silent: a product whose registry is not up yet - the OpcServer started beside a hub still on its first
 		//start (install-issues #12) - retries here for as long as it takes, and its console or log should show why it waits.
-		WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", Host(), Port(), std::chrono::duration_cast<std::chrono::seconds>(reconnectWait()).count(), e.what() );
+		//The wait is what is left of reconnectWait since the attempt began, not reconnectWait on top of the attempt: a refused
+		//connect costs ~2 s per address on Windows, and `localhost` is two addresses, so "retrying in 5s" used to run at 9
+		//(the 09-15 rerun's retry table).  A floor of half a second keeps an attempt that outlasts the setting from spinning.
+		let elapsed = steady_clock::now() - _attemptStart;
+		let wait = std::max( duration_cast<Duration>(reconnectWait()-elapsed), duration_cast<Duration>(500ms) );
+		WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", Host(), Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
 		try{
-			(void)co_await DurationTimer{ reconnectWait() };
+			(void)co_await DurationTimer{ wait };
 			THROW_IF( Process::ShuttingDown(), "Shutting down." );
 			HttpLogin();
 		}
@@ -124,6 +129,7 @@ namespace Jde::App::Client{
 		}
 	}
 	α ConnectAwait::HttpLogin()ι->LoginAwait::Task{
+		_attemptStart = steady_clock::now();
 		try{
 			let sessionId = co_await LoginAwait{ *_appClient->SslSettings };//http call
 			THROW_IF( Process::ShuttingDown(), "Shutting down." );

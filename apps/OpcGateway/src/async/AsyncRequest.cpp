@@ -57,7 +57,10 @@ namespace Jde::Opc::Gateway{
 					TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
 				if( sc = UA_Client_run_iterate(*client, 0); sc ){
 					_running.clear();
-					let level = _requests.size()>0 ? ELogLevel::Critical : ELogLevel::Debug;
+					//Warning, not Critical, with requests outstanding: a server that went away under a request is an operational event the
+					//loop handles - the requests are dropped here, the client deregistered below, the next request reconnects - and
+					//the walk's reader took the critical for the failure (install-issues, the 09-15 rerun's retry table).  Debug with none.
+					let level = _requests.size()>0 ? ELogLevel::Warning : ELogLevel::Debug;
 					string requests;
 					for_each( _requests, [&requests](auto r){requests += Ƒ("{:x}, ", r);} );
 					LOG( level, _tags, "{}UA_Client_run_iterate returned ({}){}, requests: [{}]", logPrefix(), hex(sc), UAException::Message(sc), requests );
