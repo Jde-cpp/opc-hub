@@ -17,7 +17,7 @@ namespace Jde::App::Server{
 		else if( q.JsonName.starts_with( "setting" ) )
 			y = mu<Web::Server::SettingQLAwait>( move(q), AppClient(), sl );
 		else if( InstanceTagLevelAwait::IsApplicable(q) )
-			y = mu<InstanceTagLevelAwait>( move(q), sl );
+			y = mu<InstanceTagLevelAwait>( move(q), executer.UserPK(), sl );
 		return y;
 	}
 }

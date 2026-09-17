@@ -329,6 +329,7 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		const UserPK system{ UserPK::System };
 		constexpr sv slug{ "parityNew" }, criteria{ "x" };
+		//criteria-scoped, so still created active (install-issues #25 ships only a criteria-null root resource unenforced).
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:"{}" ){{ id name }})", slug, criteria );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) ) //a previous run's row would make this a no-op.
 			Purge( "resource", GetId(Json::AsObject(v)), root );
@@ -339,6 +340,28 @@ namespace Jde::Access::Tests{
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_EQ( Json::AsSV(Json::AsObject(resources[0]), "name"), slug ) << "name coalesced over the slug";
 		RemoveRolePermission( rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id"), system ); //root holds nothing over the new resource.
+		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
+		Purge( "role", rolePK, root );
+	}
+
+	//install-issues #25: a root (criteria-null) resource that exists only because a role referenced it ships unenforced - created
+	//deleted - so the OpcServer's own `opc.install nodeIds`, created this way by the hub's role seed before the OpcServer connects
+	//and declares it, no longer ships enforced and closes node access on a fresh install.  The `deleted` column in the selection
+	//is what returns the unenforced row; the criteria-scoped case above stays enforced.
+	TEST_F( RoleTests, AddPermissionOnNewRootResourceShipsUnenforced ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		constexpr sv slug{ "parityRoot" };
+		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
+			Purge( "resource", GetId(Json::AsObject(v)), root );
+		const RolePK rolePK{ (RolePK)GetId(getRole("roleParityRoot", root)) };
+		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK, slug );
+		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		let resources = QL().QuerySync<jarray>( select, {}, root );
+		ASSERT_EQ( resources.size(), 1u );
+		EXPECT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() ) << "a role-referenced root resource should ship unenforced";
+		RemoveRolePermission( rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id"), system );
 		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
 		Purge( "role", rolePK, root );
 	}

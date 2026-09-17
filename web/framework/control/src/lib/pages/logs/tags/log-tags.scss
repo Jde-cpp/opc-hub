@@ -1,6 +1,6 @@
 :host{
 	display: block;
-	width: 600px;//the three column widths below — a definite width is what lets the parent flex container center it
+	width: 700px;//the four column widths below — a definite width is what lets the parent flex container center it
 	max-width: 100%;
 }
 /* sized for the longest name the catalogue can offer - the composites are the flag names joined by TagSeparator, so
@@ -19,6 +19,17 @@ where the wrapping showed up. */
 }
 .mat-column-level{
 	flex: 0 0 200px;
+}
+//install-issues #19: which rows are overrides saved for the instance, and which the levels it reports running with.
+.mat-column-source{
+	flex: 0 0 100px;
+}
+.override{
+	font-weight: 500;
+	color: var(--mat-sys-primary);
+}
+.configured{
+	opacity: 0.7;
 }
 .mat-column-delete{
 	flex: 0 0 80px;

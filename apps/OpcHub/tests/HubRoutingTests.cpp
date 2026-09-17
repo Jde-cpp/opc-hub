@@ -150,7 +150,9 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_EQ( chunk.Body(), "chunk\n" );
 		EXPECT_EQ( string{chunk.Headers()[http::field::cache_control]}, "public, max-age=31536000, immutable" );
 		EXPECT_EQ( Get(AppPort(), "/assets/site/hello.txt").Body(), "hello\n" );
-		for( let route : {"/login", "/apps/gateways", "/access/users"} )
+		//install-issues #23: a dot in the last segment is not an extension - a user slug carries the Google email, an OPC
+		//user ends `.web` - so these routes have to reach the page too, not 404 as a missing `.com`/`.web` file.
+		for( let route : {"/login", "/apps/gateways", "/access/users", "/access/users/Google-johnmduffy@gmail.com", "/access/users/OpcServer.web"} )
 			EXPECT_EQ( Get(AppPort(), route).Body(), index.Body() ) << route;
 		auto status = [&]( string target )->optional<http::status>{
 			try{ return Get( AppPort(), move(target) ).Status(); }
@@ -214,15 +216,25 @@ namespace Jde::Opc::Hub::Tests{
 		auto configDir = [&]( uint i ){ return fs::path{ string{Json::AsSV(scriptPaths[i])} }.parent_path().parent_path(); };
 		let ql = App::Server::QLPtr();
 		for( uint pass=0; pass<2; ++pass ){
-			for( let& file : {configDir(1)/"release-google.mutation", configDir(1)/"release-opcServer.mutation", configDir(2)/"release-opcServer.mutation"} )
-				ASSERT_NO_THROW( ql->Upsert(IO::Load(file), {}, {UserPK::System}) ) << file.string() << " pass " << pass;
+			for( let& file : {configDir(1)/"release-google.mutation", configDir(1)/"release-opcServer.mutation", configDir(2)/"release-opcServer.mutation", configDir(1)/"release-opcServer.roles"} )
+				ASSERT_NO_THROW( ql->Upsert(IO::Load(file), {}, {UserPK::System}) ) << file.string() << " pass " << pass;//Upsert is idempotent (LocalQL checks the slug first), so the .roles createRole survives the second pass.
 		}
-		auto one = [&]( string query, sv name )->jobject{ let d = QL( AppPort(), move(query), root ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
+		auto one = [&]( string query, sv name )->jobject { let d = QL( AppPort(), move(query), root ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(id:1){ id providerTypeId }", "provider"), "providerTypeId"), "Google" );//the ql spells the enum by name
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's hook created the row
 		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault }", "serverConnection" );
 		EXPECT_EQ( Json::FindDefaultSV(connection, "url"), "opc.tcp://127.0.0.1:4840" );
 		EXPECT_TRUE( Json::FindBool(connection, "isDefault").value_or(false) );
+		//install-issues #25: the machine role this component ships (release-opcServer.roles) - Administer on opc.install nodeIds,
+		//so granting OpcServer.web is one tick on its Roles tab, the grant the server's startup warning asks for.
+		let role = one( "role(slug:\"opc-server-instance\"){ name permissionRight{ allowed resource(schemaName:\"opc.install\", slug:\"nodeIds\"){ slug } } }", "role" );
+		EXPECT_EQ( Json::FindDefaultSV(role, "name"), "OPC Server Instance" ) << serialize( role );
+		let perm = Json::FindDefaultObject( role, "permissionRight" );
+		EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(perm, "resource"), "slug"), "nodeIds" ) << "grants on opc.install nodeIds";
+		bool administer = false;
+		for( let& r : Json::FindDefaultArray(perm, "allowed") )
+			administer |= r.is_string() && r.get_string()=="Administer";
+		EXPECT_TRUE( administer ) << "Administer - the delegation grant - " << serialize( perm );
 		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 		Web::Server::Sessions::Remove( rootSession );

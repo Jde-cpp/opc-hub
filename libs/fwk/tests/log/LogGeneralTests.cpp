@@ -156,7 +156,10 @@ namespace Jde::Tests{
 	// MinLevel memoizes its answer into ExtrapolatedTags, so both mutators have to drop the memo as well as the
 	// configuration - otherwise a cleared or re-set tag keeps resolving to whatever it was when first asked.
 	TEST_F( LogGeneralTests, LogTagsMutatorsDropTheMemo ){
-		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"socket.client","Debug"},{"client","Error"}}}} };
+		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"client","Error"}}}} };
+		//an override, not a configured level: ClearLevel puts a configured level back (install-issues #21), and the point here
+		//is the best match moving to the next entry once the cleared one is gone.
+		t.SetLevel( ToLogTags(sv{"socket.client"}), ELogLevel::Debug );
 		ASSERT_EQ( t.MinLevel(ELogTags::SocketClientRead), ELogLevel::Debug );//memoizes socket|client|read -> Debug
 		ASSERT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Warning );//and sql -> the default
 
@@ -166,6 +169,39 @@ namespace Jde::Tests{
 		t.SetLevels( jobject{{"default","Critical"},{"sql","Trace"}} );//the flat tag->level map, 'default' included.
 		EXPECT_EQ( t.DefaultLevel(), ELogLevel::Critical );
 		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Trace ) << "the memoized default survived SetLevels";
+	}
+
+	// install-issues #21: ClearLevel erased the tag outright, so an override on a tag the settings had configured fell to the
+	// default instead of back to the configured level - and stayed there until a restart, since nothing at runtime knew what
+	// the settings had said.  The settings' levels are remembered apart from the overrides that sit on them.
+	TEST_F( LogGeneralTests, ClearLevelRestoresTheSettingsLevel ){
+		LogTags t{ jobject{{"tags", jobject{{"default","Warning"},{"sql","Trace"}}}} };
+		t.SetLevel( ELogTags::Sql, ELogLevel::Critical );
+		ASSERT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Critical );
+		t.ClearLevel( ELogTags::Sql );
+		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Trace ) << "the level the settings gave the tag, not the default";
+
+		t.SetLevel( ELogTags::Http, ELogLevel::Debug );
+		t.ClearLevel( ELogTags::Http );
+		EXPECT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Warning ) << "a tag the settings never named falls back to the default";
+
+		t.SetDefaultLevel( ELogLevel::Critical );
+		ASSERT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Critical );
+		t.ClearDefaultLevel();
+		EXPECT_EQ( t.DefaultLevel(), ELogLevel::Warning ) << "the default override cleared: the settings' default";
+		EXPECT_EQ( t.MinLevel(ELogTags::Http), ELogLevel::Warning ) << "and the memo dropped with it";
+
+		t.SetLevels( jobject{{"sql","Error"},{"default","Debug"}} );//the instance_tag_levels rows applied at start are overrides too…
+		ASSERT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Error );
+		t.ClearLevel( ELogTags::Sql );
+		t.ClearDefaultLevel();
+		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Trace ) << "…so clearing one reaches the settings underneath, not the row";
+		EXPECT_EQ( t.DefaultLevel(), ELogLevel::Warning );
+
+		t.SetLevels( jobject{{"sql","Error"}}, true );//…where a map given as settings is what a later clear falls back to.
+		t.SetLevel( ELogTags::Sql, ELogLevel::NoLog );
+		t.ClearLevel( ELogTags::Sql );
+		EXPECT_EQ( t.MinLevel(ELogTags::Sql), ELogLevel::Error );
 	}
 
 	// Logging::min is not std::min: NoLog is -1, below every real level, so a plain minimum would let one logger

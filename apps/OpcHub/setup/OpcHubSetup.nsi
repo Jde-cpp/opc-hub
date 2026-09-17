@@ -289,6 +289,10 @@ Section /o "OPC UA Server" SEC_OPCSERVER
 	File /oname=access_google.mutation "${SRC_DIR}\libs\access\config\release-google.mutation"
 	File /oname=access_opcServer.mutation "${SRC_DIR}\libs\access\config\release-opcServer.mutation"
 	File /oname=gateway_opcServer.mutation "${SRC_DIR}\apps\OpcGateway\config\release-opcServer.mutation"
+	;the machine role for this server (reviews/install-issues.md #25): an "OPC Server Instance" role with Administer on
+	;opc.install nodeIds, so granting OpcServer.web is one tick on its Roles tab, not a hand-written mutation.  A *.roles file,
+	;applied by the same post-configure pass as access.roles above; only with this component, since only then does the server exist.
+	File /oname=access_opcServer.roles "${SRC_DIR}\libs\access\config\release-opcServer.roles"
 SectionEnd
 
 !ifndef SKIP_WEB

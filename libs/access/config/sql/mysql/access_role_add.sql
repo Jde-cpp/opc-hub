@@ -11,7 +11,11 @@ begin
 		and schema_name = coalesce(_schema, schema_name)
 		and criteria <=> _criteria;
 	if _resource_id is null then
-		insert into access_resources( slug, schema_name, name, criteria ) values( _resourceSlug, _schema, coalesce(_resourceName, _resourceSlug), _criteria );
+		-- install-issues #25: a *root* (criteria-null) resource that exists only because a role referenced it (the seed's addRole
+		-- on opc.install nodeIds, run before the OpcServer declares it) ships deleted, i.e. unenforced - creating it enforced closed
+		-- node access on a fresh install.  Unenforced is the shipped default (ResourceSyncAwait creates then deletes each one); the
+		-- grant applies once an operator enforces it.  A criteria-scoped row is a deliberate per-node grant and stays enforced.
+		insert into access_resources( slug, schema_name, name, criteria, deleted ) values( _resourceSlug, _schema, coalesce(_resourceName, _resourceSlug), _criteria, case when _criteria is null then CURRENT_TIMESTAMP else null end );
 		set _resource_id = LAST_INSERT_ID();
 	end if;
 	select permission_id

@@ -235,12 +235,16 @@ namespace Jde{
 			return true;
 		});
 		_minLevel = _defaultLevel;
+		_settingsTags = _configuredTags;//nothing has been overridden yet: what is configured is what the settings gave.
+		_settingsDefault = _defaultLevel;
 	}
 	LogTags::LogTags( const LogTags& x )ι:
 		_configuredTags{ x._configuredTags },
+		_settingsTags{ x._settingsTags },
 		ExtrapolatedTags{ _configuredTags },
 		_minLevel{ x._minLevel },
-		_defaultLevel{ x._defaultLevel }
+		_defaultLevel{ x._defaultLevel },
+		_settingsDefault{ x._settingsDefault }
 	{}
 	α LogTags::operator+=( const LogTags& x )ι->LogTags&{
 		_minLevel = Logging::min( _minLevel, x._minLevel );
@@ -253,13 +257,19 @@ namespace Jde{
 		ExtrapolatedTags = _configuredTags;
 		return *this;
 	}
-	α LogTags::SetLevels( const jobject& tagLevels )ι->void{
+	α LogTags::SetLevels( const jobject& tagLevels, bool settings )ι->void{
 		auto parsedTags = parseTags<flat_map<ELogTags,ELogLevel>>( tagLevels );
 		for( auto&& [tag, level] : parsedTags ){
-			if( tag==ELogTags::None )
+			if( tag==ELogTags::None ){
 				_defaultLevel = level;
-			else
+				if( settings )
+					_settingsDefault = level;
+			}
+			else{
 				_configuredTags.insert_or_assign( tag, level );
+				if( settings )
+					_settingsTags.insert_or_assign( tag, level );
+			}
 		}
 		ExtrapolatedTags = _configuredTags;
 	}
@@ -309,7 +319,12 @@ namespace Jde{
 	}
 
 	α LogTags::ClearLevel( ELogTags tags )ι->void{
-		_configuredTags.erase( tags );
+		optional<ELogLevel> settingsLevel;
+		_settingsTags.cvisit( tags, [&](let& kv){ settingsLevel = kv.second; } );
+		if( settingsLevel )//the override sat on a configured level: put that back (install-issues #21) - erasing lost it until a restart.
+			_configuredTags.insert_or_assign( tags, *settingsLevel );
+		else
+			_configuredTags.erase( tags );
 		ExtrapolatedTags = _configuredTags;//MinLevel memoizes into ExtrapolatedTags, so the cleared tag has to be dropped from the cache too, not just the configuration.
 		UpdateCumulative( Logging::Loggers() );
 	}

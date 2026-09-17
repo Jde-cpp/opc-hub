@@ -1,0 +1,4 @@
+mutation{
+	createRole( slug:"opc-server-instance", name:"OPC Server Instance", description:"The bundled OPC UA server's own account.  Administer on its node resource lets it delegate node-access checks to the hub - the grant the server's startup warning asks for.  Assign it to the OpcServer.web user on that user's Roles tab." )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
+}

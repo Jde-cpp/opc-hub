@@ -39,6 +39,22 @@ namespace Jde::Opc::Gateway::Tests{
 	optional<Web::Jwt> BrowseTests::_jwt;
 	sp<UAClient> BrowseTests::_client;
 
+	//install-issues #24: a signed-out page is an anonymous web session - a real session id, no user, no stored credential - which
+	//resolves to an anonymous credential.  Anonymous access is allowed while gateway/serverConnections is unenforced (the default),
+	//so the hub does NOT refuse it: the connect is attempted, and here fails at the OpcServer, which offers no anonymous endpoint -
+	//a 403, not the hub's own 401.  Once an admin enforces the resource, Authorize::Test throws Unauthorized for the unknown user
+	//(AuthorizeTests) and the connect is refused before a client is made.  The gate consults the authorizer only for the anonymous
+	//credential; the jwt-backed browses above are authenticated and connect regardless.
+	TEST_F( BrowseTests, AnonymousWebSessionNotRefusedWhenUnenforced ){
+		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{}, "localhost", false )->SessionId;
+		try{
+			BlockAwait<TAwait<sp<UAClient>>,sp<UAClient>>( ConnectAwait{ string{OpcServerSlug}, sessionId, Jde::UserPK{} } );
+		}
+		catch( Exception& e ){
+			EXPECT_NE( e.HttpStatus(), EHttpStatus::Unauthorized ) << "the hub refused an anonymous session while the resource was unenforced: " << e.what();
+		}
+	}
+
 	TEST_F( BrowseTests, NodeId ){
 		auto query = "node( opc: $opc, path:$path ){ id name parents{id name path} }";
 		jobject variables{ {"opc", OpcServerSlug}, {"path", "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"} };

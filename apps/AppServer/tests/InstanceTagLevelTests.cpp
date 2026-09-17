@@ -45,7 +45,9 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( FindConfigured(ELogTags::Threads), ELogLevel::Critical ) << "the push should have applied the level in this process";
 
 		RunQL( Ƒ(R"(mutation updateInstanceTagLevel( "id":{}, "text":[{{tags:["threads"],level:null}}] ))", instanceId) );
-		EXPECT_FALSE( FindConfigured(ELogTags::Threads) ) << "deleting the row should clear the runtime override, not leave the old level in place";
+		//install-issues #21: `threads` is Information in App.Server.Tests.jsonnet, and that - not nothing, not Critical - is what
+		//deleting the row has to leave the tag at.
+		EXPECT_EQ( FindConfigured(ELogTags::Threads), ELogLevel::Information ) << "deleting the row should put the tag back to its configured level, not leave the override in place";
 		if( restore )
 			TextLogger().SetLevel( ELogTags::Threads, *restore );
 	}
@@ -151,6 +153,41 @@ namespace Jde::App::Server::Tests{
 		let rows = TagRows( instanceId );
 		ASSERT_EQ( rows.size(), 1u );
 		EXPECT_EQ( rows[0].Get<uint>(1), underlying(ELogTags::SocketClientRead) );
+	}
+
+	//install-issues #19: the rows are only what the page saved; `running` is what the instance logs at - its own logSetting
+	//answer, tag->level with `default`, for the sinks asked for.  Our own instance answers through the local ql, and an
+	//override just pushed shows up in it at the level pushed.
+	TEST_F( InstanceTagLevelTests, RunningLevelsComeFromTheInstance ){
+		let instanceId = Server::AppClient()->InstancePK();
+		ASSERT_TRUE( instanceId ) << "AppStartup registers this process; without its pk there is nothing to ask";
+		let restore = FindConfigured( ELogTags::Threads );
+		RunQL( Ƒ(R"(mutation updateInstanceTagLevel( "id":{}, "text":[{{tags:["threads"],level:"Critical"}}] ))", instanceId) );
+		auto y = RunQL( Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId) );
+		let& o = y.as_object();
+		ASSERT_TRUE( o.contains("running") );
+		let& running = o.at( "running" ).as_object();
+		ASSERT_TRUE( running.contains("text") );
+		EXPECT_FALSE( running.contains("binary") ) << "only the sinks the query names are asked of the instance";
+		let& text = running.at( "text" ).as_object();
+		EXPECT_EQ( text.at("default").as_string(), ToString(TextLogger().DefaultLevel()) ) << "the running default, not the Information the ui used to assume";
+		EXPECT_EQ( text.at("threads").as_string(), "Critical" ) << "the pushed override, as the instance now runs it";
+		EXPECT_EQ( o.at("text").as_object().at("Critical").as_array()[0].as_string(), "threads" ) << "and the stored row beside it";
+
+		RunQL( Ƒ(R"(mutation updateInstanceTagLevel( "id":{}, "text":[{{tags:["threads"],level:null}}] ))", instanceId) );
+		if( restore )
+			TextLogger().SetLevel( ELogTags::Threads, *restore );
+	}
+
+	//an instance with no session cannot say what it runs with: null, and the rows still come back.
+	TEST_F( InstanceTagLevelTests, RunningIsNullForADisconnectedInstance ){
+		let instanceId = MintInstance( "offlineRunning" );
+		RunQL( Ƒ(R"(mutation updateInstanceTagLevel( "id":{}, "text":[{{tags:["sql"],level:"Debug"}}] ))", instanceId) );
+		auto y = RunQL( Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId) );
+		let& o = y.as_object();
+		ASSERT_TRUE( o.contains("running") );
+		EXPECT_TRUE( o.at("running").is_null() );
+		EXPECT_EQ( o.at("text").as_object().at("Debug").as_array()[0].as_string(), "sql" );
 	}
 
 	//the appServer group rides the same table with its own type discriminator.

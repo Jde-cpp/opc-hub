@@ -455,7 +455,7 @@ namespace Jde::Access{
 		else if( resourcePK )
 			Permissions.emplace( member, Permission{member, *resourcePK, allowed, denied} );
 		else
-			CRITICAL( "[{}]Resource '{}' not found for role permission.", member, resource.Slug );
+			DBGT( _ptags, "[{}]Role permission grants on '{}', not in the enforced set here; the grant applies once the resource loads or is enforced.", member, resource.Slug );
 		auto role = Roles.try_emplace( rolePK, rolePK, false );
 		role.first->second.Members.emplace( PermissionRole{std::in_place_index<0>, member} );
 		Recalc( l );

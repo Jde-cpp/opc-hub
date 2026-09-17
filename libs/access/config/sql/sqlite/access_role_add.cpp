@@ -10,7 +10,13 @@ namespace Jde::DB::Sqlite::AccessProcs{
 		procs.RegisterProc( "access_role_add", [&procs]( sqlite3& db, const vector<Value>& params, RowΛ* onRow, SL sl )->uint{
 			auto resourceId = procs.ScalarUInt( db, "select resource_id from access_resources where slug=? and schema_name=coalesce(?, schema_name) and criteria is ?", {params[3], params[4], params[6]}, sl );
 			if( !resourceId ){
-				procs.ExecuteStatement( db, "insert into access_resources( slug, schema_name, name, criteria ) values( ?, ?, coalesce(?, ?), ? )", {params[3], params[4], params[5], params[3], params[6]}, nullptr, sl );
+				//install-issues #25: a *root* (criteria-null) resource that exists only because a role referenced it ships deleted,
+				//i.e. unenforced.  The seed's `addRole(resource:{schemaName:"opc.install", slug:"nodeIds"})` runs before the
+				//OpcServer connects and declares it, and creating it enforced (deleted null) refused the OpcServer's own delegation
+				//and closed node access on a fresh install.  ResourceSyncAwait creates every shipped resource then deleteResource's
+				//it, so unenforced is the shipped default; the grant applies once an operator enforces it.  A *criteria-scoped* row
+				//is a deliberate per-node grant (the node-access page) and stays enforced - hence the `case`, not a flat deleted.
+				procs.ExecuteStatement( db, "insert into access_resources( slug, schema_name, name, criteria, deleted ) values( ?, ?, coalesce(?, ?), ?, case when ? is null then unixepoch() else null end )", {params[3], params[4], params[5], params[3], params[6], params[6]}, nullptr, sl );
 				resourceId = procs.LastInsertRowId( db );
 			}
 			auto permissionId = procs.ScalarUInt( db,

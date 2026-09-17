@@ -182,6 +182,23 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( _text->DefaultLevel(), _textDefault ); //a tag level is not the default.
 	}
 
+	//install-issues #21: a null level deletes the override, and the tag has to go back to what the settings configured -
+	//`settings` is Debug in App.Tests.jsonnet - not fall to the default (or, for the default itself, stay where the override
+	//left it) until a restart.
+	TEST_F( LogSettingsTests, UpdateNullRestoresTheConfiguredLevel ){
+		auto app = ms<AppStub>();
+		app->SetAppPKs( 42, 1 );
+		updateLogSettings( R"({text: {settings: "Critical", default: "Critical"}})", {}, app );
+		ASSERT_EQ( logSettings({"text"}).at("text").as_object().at("settings").as_string(), "Critical" );
+		ASSERT_EQ( defaultLevel("text"), ELogLevel::Critical );
+		ASSERT_FALSE( _text->ShouldLog(ELogLevel::Debug, ELogTags::Settings) );
+
+		updateLogSettings( R"({text: {settings: null, default: null}})", {}, app );
+		EXPECT_EQ( logSettings({"text"}).at("text").as_object().at("settings").as_string(), "Debug" ) << "the configured level, not the default and not the cleared override";
+		EXPECT_EQ( defaultLevel("text"), _textDefault ) << "the settings' default";
+		EXPECT_TRUE( _text->ShouldLog(ELogLevel::Debug, ELogTags::Settings) ) << "and the gate answers from it";
+	}
+
 	//The runtime update and the app-server hand-off are two halves of one mutation:  the levels change here, and the same
 	//args are forwarded as the instance's stored tag levels so they survive a restart.
 	TEST_F( LogSettingsTests, UpdateForwardsToTheAppServer ){
