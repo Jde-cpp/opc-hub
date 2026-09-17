@@ -30,26 +30,26 @@ namespace Tests{
 		INFOT( ELogTags::SocketClientRead, "[{}]{} GatewayClientSocket created: {}.", Id(), IsSsl() ? "Ssl" : "Plain", Host() );
 	}
 
-	α GatewayClientSocket::HandleException( std::any&& h, Jde::Proto::Exception&& e )ι{
+	α GatewayClientSocket::HandleException( std::any&& h, Exception&& e )ι{
 		if( auto echo = std::any_cast<await<string>::Handle>(&h) ){
-			echo->promise().SetExp( Exception{e.what(), e.code()} );
+			echo->promise().SetExp( move(e) );//SetExp stores e.Move(), so the caller's GatewayErrorResponse-or-not survives.
 			echo->resume();
 		}
 		else if( auto ack = std::any_cast<await<SessionPK>::Handle>(&h) ){
-			ack->promise().SetExp( Exception{e.what(), e.code()} );
+			ack->promise().SetExp( move(e) );
 			ack->resume();
 		}
 		else if( auto q = std::any_cast<await<jvalue>::Handle>(&h) ){
-			q->promise().SetExp( Exception{e.what(), e.code()} );
+			q->promise().SetExp( move(e) );
 			q->resume();
 		}
 		else if( auto sub = std::any_cast<await<FromServer::SubscriptionAck>::Handle>(&h) ){
-			sub->promise().SetExp( Exception{e.what(), e.code()} );
+			sub->promise().SetExp( move(e) );
 			sub->resume();
 		}
 		else if( auto unsub = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>(&h) ){
 			//the _unsubscribeRequests record stays (no request id here) - harmless, and the listeners must stay: the server still pushes.
-			unsub->promise().SetExp( Exception{e.what(), e.code()} );
+			unsub->promise().SetExp( move(e) );
 			unsub->resume();
 		}
 		else
@@ -74,7 +74,8 @@ namespace Tests{
 				break;
 			case kException:{
 				std::any h = requestId==0 ? coroutine_handle<>{} : PopTask( requestId );
-				HandleException( move(h), move(*m->mutable_exception()) );
+				let& e = m->exception();
+				HandleException( move(h), GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.
 				break;}
 			case kQuery:{
 				auto h = std::any_cast<await<jvalue>::Handle>( IClientSocketSession::PopTask(requestId) );
@@ -217,9 +218,13 @@ namespace Tests{
 	}
 
 	α GatewayClientSocket::CloseTasks( beast::error_code ec )ι->void{
+		//A plain Exception, never a GatewayErrorResponse:  every transport failure fails its tasks here - the socket closing,
+		//a write on a closed stream, a request timing out (AddTimeout -> CloseOnError) - and the soak's reconnect keys on
+		//the difference.  Stamping these as answered made every dead socket reset the soak's failure count, so it never
+		//reconnected (subscription-disconnect #1).
 		auto f = [this, ec]( std::any&& h )->void {
-			CodeException e{ ec, ELogTags::SocketClientWrite, ELogLevel::NoLog };
-			HandleException( move(h), App::ProtoUtils::ToException(move(e)) );
+			let e = App::ProtoUtils::ToException( CodeException{ec, ELogTags::SocketClientWrite, ELogLevel::NoLog} );
+			HandleException( move(h), Exception{e.what(), e.code()} );
 		};
 		base::CloseTasks( f );
 	}

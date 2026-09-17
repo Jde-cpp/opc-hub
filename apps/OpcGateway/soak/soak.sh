@@ -4,8 +4,18 @@
 # Launches AppServer -> OpcServer -> OpcGateway -> Jde.Opc.Soak as separate processes against fresh file-backed
 # sqlite dbs, monitors liveness + RSS for all four, and writes a PASS/FAIL verdict.
 #
-# Runs under Linux bash and Windows Git Bash (the win11 workstation has no pwsh; the one PowerShell use below is a
-# powershell.exe -Command one-liner for Ctrl-C delivery, which bash cannot send to native console apps).
+# Runs under Linux bash and Windows Git Bash (the win11 workstation has no pwsh; the PowerShell uses below are
+# powershell.exe -Command one-liners for what bash cannot do on Windows: Ctrl-C delivery to native console apps, the
+# console preflight, and holding the machine awake).
+#
+# Windows preconditions, both checked before anything launches (soak-findings H1/H2):
+#   - a console that delivers Ctrl-C.  Teardown stops the servers by attaching to their console and broadcasting Ctrl-C.  Agent
+#     shells and CI runners start commands with Ctrl-C *disabled* for the whole process tree: the attach still succeeds, the
+#     servers silently ignore the event, every stop is a 60s wait and a hard kill, and the verdict is FAIL on "unclean stop"
+#     even when the client passed.  Such a launch is refused at startup; detach a console instead:
+#       Start-Process 'C:\Program Files\Gitinash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
+#   - no idle sleep.  The guest's AC standby timeout is 5h and a sleep ends the run; this script holds ES_SYSTEM_REQUIRED for
+#     its own lifetime and reads it back.  It cannot stop a VM *host* from suspending the guest (H3) - that is a host setting.
 #
 #   soak.sh [--duration PT24H] [--run-dir DIR] [--smoke] [--build-dir DIR]
 #           [--warmup PT1H] [--quiet-interval PT6H] [--quiet-period PT10M]
@@ -118,6 +128,61 @@ warmupSeconds=3600; [[ $smoke -eq 0 ]] || warmupSeconds=120
 isWindows=0
 case "${OSTYPE:-}" in msys*|cygwin*) isWindows=1;; esac
 
+if [[ $isWindows -eq 1 ]]; then
+	# H1 - fail now, not 24h from now at teardown.  Probe exactly what stopGraceful does: broadcast Ctrl-C through the console
+	# this shell hands its children, at a native child that exits on Ctrl-C (ping -t).  If ping is still running afterwards,
+	# Ctrl-C is disabled for this process tree and every server would ignore teardown's event too.  Measured 2026-09-17: from an
+	# agent's shell, ignored (that context's teardowns were all hard kills, though attaching to its console worked - so an
+	# attach test is not enough); from a console window, delivered (clean stops).  Before the keep-awake watcher starts, which a
+	# delivered Ctrl-C would end; the broadcast is the same one teardown sends, so nothing here sees an event it would not anyway.
+	consolePing="$(cygpath -u "$SYSTEMROOT")/System32/PING.EXE"
+	"$consolePing" -t 127.0.0.1 >/dev/null 2>&1 & consoleProbe=$!
+	sleep 2 #let the fork settle: /proc/<pid>/winpid read at once can name MSYS's short-lived fork stub.
+	trap '' INT
+	powershell.exe -NoProfile -Command "
+		Add-Type -Namespace W -Name K -MemberDefinition '
+			[DllImport(\"kernel32.dll\")] public static extern bool FreeConsole();
+			[DllImport(\"kernel32.dll\")] public static extern bool AttachConsole(uint p);
+			[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr h, bool a);
+			[DllImport(\"kernel32.dll\")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint p);';
+		[W.K]::FreeConsole() | Out-Null;
+		if( [W.K]::AttachConsole( $(cat /proc/$consoleProbe/winpid) ) ){
+			[W.K]::SetConsoleCtrlHandler([IntPtr]::Zero, \$true) | Out-Null;
+			[W.K]::GenerateConsoleCtrlEvent(0, 0) | Out-Null;
+		}" >/dev/null 2>&1
+	sleep 3 #asynchronous, as in stopGraceful - stay masked until it lands.
+	trap - INT
+	if kill -0 $consoleProbe 2>/dev/null; then
+		kill $consoleProbe 2>/dev/null; wait $consoleProbe 2>/dev/null
+		echo "FATAL: Ctrl-C is not delivered from this shell - every server would ignore teardown's Ctrl-C, be hard-killed after" >&2
+		echo "       60s, and the run would FAIL on 'unclean stop'.  Agent shells and CI runners disable it; detach a console:" >&2
+		echo "       Start-Process 'C:\Program Files\Git\bin\bash.exe' -ArgumentList '<path>/soak.sh',... -WindowStyle Minimized" >&2
+		exit 2
+	fi
+	wait $consoleProbe 2>/dev/null
+
+	# H2 - hold the machine awake for exactly as long as this script runs.  The watcher re-asserts ES_CONTINUOUS|ES_SYSTEM_REQUIRED
+	# every 30s and exits once this shell is gone, which releases it - no power setting is changed, and a script killed outright
+	# still lets go.  The flags are [uint32]2147483649, never 0x80000001: Windows PowerShell 5.1 parses that literal as Int32
+	# -2147483647, the conversion throws, and the helper silently holds nothing (the 2026-09-14 run slept 5h20m that way).
+	powershell.exe -NoProfile -Command "
+		Add-Type -Namespace W -Name P -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);';
+		while( Get-Process -Id $(cat /proc/$$/winpid) -ErrorAction SilentlyContinue ){
+			[W.P]::SetThreadExecutionState( [uint32]2147483649 ) | Out-Null;
+			Start-Sleep -Seconds 30
+		}" >/dev/null 2>&1 &
+	executionState(){ powershell.exe -NoProfile -Command "
+		Add-Type -Namespace W -Name N -MemberDefinition '[DllImport(\"powrprof.dll\")] public static extern uint CallNtPowerInformation(int l, System.IntPtr i, uint il, out uint o, uint ol);';
+		\$s = [uint32]0; [W.N]::CallNtPowerInformation( 16, [IntPtr]::Zero, 0, [ref]\$s, 4 ) | Out-Null; '0x{0:X8}' -f \$s" 2>/dev/null | tr -d '\r'; }
+	for i in $(seq 1 15); do
+		state=$(executionState)
+		[[ "$state" == "0x00000001" ]] && break
+		sleep 1
+	done
+	[[ "$state" == "0x00000001" ]] || { echo "FATAL: could not keep the machine awake (SystemExecutionState=$state) - a 5h idle sleep would end the run" >&2; exit 2; }
+	echo "keep-awake holding (SystemExecutionState=$state) for the life of this run"
+fi
+
 scriptDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$scriptDir/../../.." && pwd)"
 repoName="$(basename "$repo")"
@@ -200,9 +265,14 @@ stopGraceful(){ # <pid> - SIGINT / console Ctrl-C; caller waits+escalates
 		# the same worker-stop path SIGINT takes on Linux. powershell.exe gets its own console, so FreeConsole is safe.
 		#
 		# NOT per-process: GenerateConsoleCtrlEvent's group 0 signals every process on the attached console, and MSYS
-		# bash hands all its children its own console rather than creating one each - so this reaches all three servers
-		# AND this script.  Harmless for teardown (they are all stopping anyway), but the INT mask is required or the
-		# script trips its own `trap failEarly INT` and aborts the run.  Callers needing to stop ONE app must hardKill.
+		# bash hands all its children its own console rather than creating one each - so this reaches all three servers,
+		# the keep-awake watcher AND this script.  Harmless for teardown (they are all stopping anyway), but the INT mask is
+		# required or the script trips its own `trap failEarly INT` and aborts the run.  Callers needing to stop ONE app
+		# must hardKill - a process group cannot be targeted instead, MSYS's children are not group leaders.
+		#
+		# It only works where this process tree has Ctrl-C enabled, which the H1 probe at startup checks for.  Ctrl-Break
+		# would sidestep the "ignore Ctrl-C" flag, and the servers do stop on it - but MSYS bash cannot survive one (the
+		# console's default handler ends it with STATUS_CONTROL_C_EXIT, no trap reaches it), so the verdict is never written.
 		trap '' INT
 		powershell.exe -NoProfile -Command "
 			Add-Type -Namespace W -Name K -MemberDefinition '

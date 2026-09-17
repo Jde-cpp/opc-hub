@@ -17,6 +17,7 @@ namespace Jde::Opc::Gateway{
 		_requests.clear();
 		_calls.clear();
 		_errors.clear();
+		_takenCalls.clear();
 
 		flat_map<SubscriptionId,flat_set<MonitorId>> monitoredItems;
 		for( let& [h,_] : _subscriptions )
@@ -32,16 +33,32 @@ namespace Jde::Opc::Gateway{
 
 	α UAMonitoringNodes::MonitoredItemsRequest( sp<IDataChange>&& dataChange, flat_set<NodeId>&& nodes, Handle& requestId )ι->optional<CreateMonitoredItemsRequest>{
 		auto client = _client.lock();
-		requestId = MonitorHandle{ client->SubscriptionId(), ++_requestId };
 		flat_set<NodeId> newNodes;
-		//todo:  check for existing node subscriptions in progress.
+		//Only nodes already monitored are found here, not ones whose create is still in flight - a second create for such a node is
+		//merged into the first when it answers (OnCreateResponse, subscription-disconnect #15).
 		ul lock{ _mutex };
-		for( auto n : nodes ){
+		//Both under the lock, and in this order:  DeleteMonitoring decides whether the subscription may go under this same
+		//lock and keeps it if _requests holds anything, so reading the id outside left a window where a delete committed
+		//between the read and the registration - and these items were then created on an id the server was about to drop,
+		//acked as successful and never pushed (#11).
+		let subscriptionId = client->SubscriptionId();
+		vector<Subscription*> existing;
+		for( let& n : nodes ){
 			if( auto pSubscription = get<1>(FindNode(n)); pSubscription )
-				pSubscription->ClientCalls.emplace( dataChange );
+				existing.push_back( pSubscription );
 			else
-				newNodes.emplace( move(n) );
+				newNodes.emplace( n );
 		}
+		//No subscription to create the new nodes on:  the one the caller's SubscribeAwait found was deleted before this reached the
+		//strand (DeleteMonitoring's pass, or a session loss).  Nothing is attached or registered, and requestId 0 tells DataChangeAwait
+		//to build a subscription and ask again (subscription-disconnect #6).
+		if( newNodes.size() && !subscriptionId ){
+			requestId = 0;
+			return nullopt;
+		}
+		requestId = MonitorHandle{ subscriptionId, ++_requestId };//never 0:  the low half counts from 1.
+		for( auto pSubscription : existing )
+			pSubscription->ClientCalls.emplace( dataChange );
 		_requests.emplace( requestId, move(nodes) );
 		if( newNodes.empty() ){
 			lock.unlock();
@@ -55,37 +72,64 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAMonitoringNodes::OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void{
 		MonitorHandle requestHandle{ requestId };
-		ul _{ _mutex };
-		if( auto pCall = _calls.find(requestId); pCall!=_calls.end() ){
-			auto& nodes = get<0>(pCall->second);
-			auto& dataChange = get<1>(pCall->second);
-			ASSERT( nodes.size()==response->resultsSize );
-			uint i{};
-			for( auto pNode = nodes.begin(); i<response->resultsSize && pNode!=nodes.end(); ++pNode, ++i ){
-		  	MonitoredItemCreateResult result{ move(response->results[i]) };
-				if( result.statusCode ){
-					DBG( "[{}]Could not create monitored item for node '{}':  {}.", hex(requestId), pNode->ToString(), UAException::Message(result.statusCode) );
-					_errors.try_emplace( {requestId} ).first->second.try_emplace( move(*pNode), result.statusCode );
+		let client = _client.lock();
+		flat_map<SubscriptionId,flat_set<MonitorId>> duplicates;
+		{
+			ul _{ _mutex };
+			if( auto pCall = _calls.find(requestId); pCall!=_calls.end() ){
+				auto& nodes = get<0>(pCall->second);
+				auto& dataChange = get<1>(pCall->second);
+				ASSERT( nodes.size()==response->resultsSize );
+				uint i{};
+				for( auto pNode = nodes.begin(); i<response->resultsSize && pNode!=nodes.end(); ++pNode, ++i ){
+					MonitoredItemCreateResult result{ move(response->results[i]) };
+					if( result.statusCode ){
+						DBG( "[{}]Could not create monitored item for node '{}':  {}.", hex(requestId), pNode->ToString(), UAException::Message(result.statusCode) );
+						_errors.try_emplace( {requestId} ).first->second.try_emplace( move(*pNode), result.statusCode );
+					}
+					else if( !client ){//braced:  the log macros expand to a bare `if`.
+						CRITICAL( "Could not lock UAClient for subscription processing." );
+					}
+					else if( auto pExisting = get<1>(FindNode(*pNode)); pExisting ){
+						//Another create for this node answered first.  MonitoredItemsRequest only finds nodes already monitored, so two creates
+						//in flight at once - a rebuild restoring a node while its session subscribes to it again, or two sessions subscribing a
+						//new node together - made two monitored items for one node:  every change was pushed twice, and an unsubscribe by node
+						//removed only one (subscription-disconnect #15).  This listener joins the item that exists, whose result the ack
+						//reports, and the new item is deleted.
+						pExisting->ClientCalls.emplace( dataChange );
+						duplicates.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
+						TRACE( "[{}.{}]Monitoring '{}' already - joined the existing item, deleting the duplicate.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
+					}
+					else{
+						let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };
+						TRACE( "[{}.{}]Monitoring '{}'", hex(client->Handle()), hex((Handle)h), pNode->ToString() );
+						_subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange} );
+						if( _subscriptions.size()==1 )
+							client->ProcessDataSubscriptions();
+					}
 				}
-				else if( auto client = _client.lock(); client ){
-					let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };
-					TRACE( "[{}.{}]Monitoring '{}'", hex(client->Handle()), hex((Handle)h), pNode->ToString() );
-					_subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange} );
-					if( _subscriptions.size()==1 )
-						client->ProcessDataSubscriptions();
-				}
-				else
-					CRITICAL( "Could not lock UAClient for subscription processing." );
-  		}
-			_calls.erase( requestId );
+				_calls.erase( requestId );
+			}
+			else{//answered - successfully - after its client's items were taken (see TakeForResubscribe), or a real miss.  Two ifs:  the log macros expand to a bare `if`.
+				let taken = _takenCalls.contains( requestHandle );
+				if( taken )
+					DBG( "[{}]Create answered after TakeForResubscribe - its items went with the old session.", hex(requestId) );
+				if( !taken )
+					CRITICAL( "Could not find call for subscription='{}' index='{}'.", hex(requestHandle.SubId()), hex(requestHandle.MonitorId()) );
+			}
 		}
-		else
-			CRITICAL( "Could not find call for subscription='{}' index='{}'.", hex(requestHandle.SubId()), hex(requestHandle.MonitorId()) );
+		//Posted, after the lock:  this runs inside run_iterate, and a refused submission reaches ConnectionLost, which takes _mutex.
+		if( duplicates.size() ){
+			client->PostStrand( [client, duplicates]()mutable{
+				[&]()->DeleteMonitoredItemsAwait::Task { co_await DeleteMonitoredItemsAwait{ move(duplicates), move(client) }; }();
+			});
+		}
 	}
 	α UAMonitoringNodes::GetResult( Handle requestId, StatusCode sc )ι->FromServer::SubscriptionAck{
 		FromServer::SubscriptionAck y;
 		ul _{ _mutex };
 		flat_map<NodeId,StatusCode>* errors = _errors.find(requestId)!=_errors.end() ? &_errors[requestId] : nullptr;
+		let taken = _takenCalls.erase( MonitorHandle{requestId} )>0;
 		if( auto pRequest = _requests.find(requestId); pRequest!=_requests.end() ){
 			for( auto& n : pRequest->second ){
 				auto nodeResult = y.add_results();
@@ -94,19 +138,51 @@ namespace Jde::Opc::Gateway{
 					nodeResult->set_revised_sampling_interval( pSubscription->Result.revisedSamplingInterval );
 					nodeResult->set_revised_queue_size( pSubscription->Result.revisedQueueSize );
 				}
-				else if( auto nodeSC = errors ? Find(*errors,n) : StatusCode{}; nodeSC )
+				//An empty optional, not StatusCode{}:  the ternary converted that to an *engaged* optional holding Good, so with no
+				//_errors entry every node without an item - a create that failed outright included - was acked as subscribed.
+				else if( auto nodeSC = errors ? Find(*errors,n) : optional<StatusCode>{}; nodeSC )
 					nodeResult->set_status_code( *nodeSC );
 				else{
-					nodeResult->set_status_code( sc ? sc : UA_STATUSCODE_BADCONFIGURATIONERROR );
-					if( !sc )
+					//No item and no per-node error:  the create failed as a whole (sc), or its answer came after TakeForResubscribe took
+					//its client's items, so what it created went with that session.
+					nodeResult->set_status_code( sc ? sc : taken ? UA_STATUSCODE_BADSESSIONCLOSED : UA_STATUSCODE_BADCONFIGURATIONERROR );
+					if( !sc && !taken )
 						CRITICAL( "[{}]Could not find subscription for node '{}'.", hex(requestId), n.ToString() );
 				}
 			}
 			_requests.erase( pRequest );
 		}
+		//A create that failed - refused outright, or failed by the server as a whole - never reaches OnCreateResponse, which erases the
+		//_calls entry of one that answered.  Every create resumes through here, so this is where the rest goes:  left behind, each held
+		//its listener - a websocket session - until that session closed or the client went (subscription-disconnect #11).
+		_calls.erase( requestId );
 
 		if( errors )
 			_errors.erase( requestId );
+		return y;
+	}
+
+	α UAMonitoringNodes::TakeForResubscribe()ι->flat_map<sp<IDataChange>,flat_set<NodeId>>{
+		flat_map<sp<IDataChange>,flat_set<NodeId>> y;
+		ul _{ _mutex };
+		for( let& [h,subscription] : _subscriptions ){
+			for( let& call : subscription.ClientCalls )
+				y.try_emplace( call ).first->second.emplace( subscription.Node );
+		}
+		//The live items go:  every handle names the dead session's subscription, and a left-behind entry would shadow the node on
+		//the way back (MonitoredItemsRequest treats a node it still finds as already monitored and asks the server for nothing).
+		//So do _calls, the in-flight creates' node lists:  those creates fail with BadSessionClosed, a failure never reaches
+		//OnCreateResponse, and nothing else would erase them.  Their handles move to _takenCalls, because a create the server
+		//already answered can still be read - successfully - while the client disconnects, and that is expected rather than the
+		//"could not find call" it would otherwise log.  Their nodes are not parked with the rest:  the subscriber is told they
+		//failed, and restoring them anyway would monitor nodes it has already dropped.
+		//_requests and _errors stay.  A failed create still resumes through GetResult - DataChangeAwait::await_resume is noexcept
+		//and always calls it - and GetResult answers each node from them.  Clearing them sent that subscribe an ack of zero results
+		//for its N nodes, which the web client reads as success (subscription-disconnect #5).
+		_subscriptions.clear();
+		for( let& [h,_] : _calls )
+			_takenCalls.emplace( h );
+		_calls.clear();
 		return y;
 	}
 
@@ -172,7 +248,7 @@ namespace Jde::Opc::Gateway{
 		auto wait = 1s;
 		TRACE( "[{}]DeleteMonitoring count={}, wait={}", hex(uaHandle), requested.size(), Chrono::ToString(wait) ); //duration_cast<std::chrono::seconds>(wait).count()
 		(void)co_await DurationTimer{ wait };
-		flat_map<UA_UInt32,flat_set<MonitorId>> toDelete;
+		flat_map<UA_UInt32,flat_set<MonitorId>> toDelete;//co_return below releases the lock with the frame's locals.
 		ul _{ _mutex };
 		for( auto&& [subscriptionId, monitoredIds] : requested ){
 			for( auto&& monitoredId : monitoredIds ){
@@ -184,9 +260,37 @@ namespace Jde::Opc::Gateway{
 				}
 			}
 		}
-		if( _subscriptions.size()==0 )
+		//Every item it was armed for was re-subscribed, or taken for a rebuild, meanwhile:  nothing here is finished with, least of
+		//all the cached subscription - by now possibly a newer one a subscribe just made, which the old code deleted and uncached,
+		//orphaning it on the server (subscription-disconnect #6).
+		if( toDelete.empty() )
+			co_return;
+		//The subscription may only go when nothing is monitored *and* no subscribe is in flight:  a request registered in
+		//_requests has already been told which subscription its items belong to, so deleting it here is what stranded them
+		//(#11).  With one in flight the items go but the subscription stays - the racing subscribe keeps a live id, and the
+		//next round of this is what eventually retires it.  And only the cached subscription this pass emptied, for the same
+		//reason as the return above.
+		if( _subscriptions.size()==0 && _requests.empty() && toDelete.contains(ua->SubscriptionId()) ){
+			//Stop advertising it in the same breath:  from here a subscribe finds no cached subscription (SubscribeAwait's
+			//await_ready) and creates its own instead of building on the one being deleted.  Still under _mutex, so it cannot
+			//interleave with the MonitoredItemsRequest that reads the id.
+			ua->SetCreatedSubscriptionResponse( nullptr );
 			[&]()->UnsubscribeAwait::Task { co_await UnsubscribeAwait( move(toDelete), move(ua) ); }();
-		else
+		}
+		else{
+			//A kept subscription can end up with no items at all:  the subscribe it was kept for may then fail for every node, and with no
+			//item left nothing schedules another round of this to retire it.  SubscriptionRequestId stayed queued, holding the processing
+			//loop - and with it the client, its session and the empty subscription - awake past its ttl for good (subscription-disconnect
+			//#12).  So once nothing is monitored, stop processing:  the client idles out as it should, and a create that does succeed
+			//registers it again (OnCreateResponse).  Decided on the strand, where that re-registration happens:  a clear sent straight from
+			//here could land after an item that had just arrived and silence its pushes.  Posted, never run inline - this holds _mutex.
+			if( _subscriptions.empty() ){
+				ua->PostStrand( [client=ua]{
+					if( !client->MonitoredNodes().Count() )
+						client->StopProcessDataSubscriptions();
+				});
+			}
 			[&]()->DeleteMonitoredItemsAwait::Task { co_await DeleteMonitoredItemsAwait{ move(toDelete), move(ua) }; }();
+		}
 	}
 }

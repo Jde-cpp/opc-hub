@@ -60,6 +60,21 @@ namespace Jde::Opc::Server::UAAccess{
 		}
 	}
 
+	//The context for a *read* callback (GetUserAccessLevel, GetUserRightsMask) - which, unlike browse or add-reference, open62541
+	//also makes with no session at all.  When a session times out it keeps the session's subscriptions for TransferSubscriptions
+	//(UA_Session_remove), and their monitored items go on sampling with sub->session == NULL, so every read arrives here with the
+	//session id and context both null - by design, and "no access" is the answer it expects ("Session for read operations can be
+	//NULL. For example for a MonitoredItem where the underlying Subscription was detached", ua_services_attribute.c, 1.5.6).
+	//Asserting on that wrote a CRITICAL twice a second for the rest of the subscription's lifetime - ~83 min at the default
+	//lifetime count - after every lost session (soak-findings #9).  A *session* that arrives without the context ActivateSession
+	//installs is still a bug, and still asserts.
+	Ω readContext( const UA_NodeId* sessionId, void* sessionContext, SRCE )ι->SessionContext*{
+		let ctx = static_cast<SessionContext*>( sessionContext );
+		if( !ctx && sessionId )
+			ASSERTSL( ctx, sl );
+		return ctx;
+	}
+
 	Ω expired( SessionContext* ctx )ι->bool{//non-authenticated paths set Expiration=TimePoint::max(); only JWT/SessionInfo sessions carry a real expiry.
 		if( !ctx || ctx->Expiration>=Clock::now() )
 			return false;
@@ -439,7 +454,7 @@ namespace Jde::Opc::Server{
 	}
 	α UAAccess::GetUserRightsMask( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, void *nodeContext )ι->UA_UInt32{
 		ASSERT( nodeId );
-		let ctx = static_cast<SessionContext*>( sessionContext ); ASSERT( ctx );
+		let ctx = readContext( sessionId, sessionContext );//null for a detached subscription's read - denied below, silently.
 		if( !nodeId || !ctx || expired(ctx) )
 			return 0;
 		//Was Rights( <schema>, "node", … ) - a resource name nothing ever creates, which Authorize::Rights answers with
@@ -454,14 +469,14 @@ namespace Jde::Opc::Server{
 			mask |= UA_WRITEMASK_ROLEPERMISSIONS | UA_WRITEMASK_ACCESSRESTRICTIONS | UA_WRITEMASK_ACCESSLEVELEX | UA_WRITEMASK_USERWRITEMASK | UA_WRITEMASK_ACCESSLEVEL | UA_WRITEMASK_USERACCESSLEVEL | UA_WRITEMASK_WRITEMASK;
 		return mask;
 	}
-	α UAAccess::GetUserAccessLevel( UA_Server* /*server*/, UA_AccessControl* /*ac*/, const UA_NodeId* /*sessionId*/, void* sessionContext, const UA_NodeId* nodeId, void* /*nodeContext*/ )ι->UA_Byte{
+	α UAAccess::GetUserAccessLevel( UA_Server* /*server*/, UA_AccessControl* /*ac*/, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId* nodeId, void* /*nodeContext*/ )ι->UA_Byte{
 		ASSERT( nodeId );
 		if( !nodeId )
 			return 0;
 		//only read identifier.numeric once the id is known numeric; string/GUID ids are valid here and go straight to UserRights.
 		if( nodeId->namespaceIndex==0 && nodeId->identifierType==UA_NODEIDTYPE_NUMERIC && nodeId->identifier.numeric==UA_NS0ID_SERVER_NAMESPACEARRAY )
 			return UA_ACCESSLEVELMASK_READ;
-		let ctx = static_cast<SessionContext*>( sessionContext ); ASSERT( ctx );
+		let ctx = readContext( sessionId, sessionContext );//null for a detached subscription's sampling - the source of #9's assert storm; denied below, silently.
 		if( !ctx || expired(ctx) )
 			return 0;
 		return underlying( authorizer().UserRights(*nodeId, ctx->UserPK) );
