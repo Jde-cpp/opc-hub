@@ -155,6 +155,29 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( mayAddReference(unknownUser) );
 	}
 
+	//soak-findings #9:  a session that times out keeps its subscriptions for TransferSubscriptions, and open62541 goes on sampling
+	//their monitored items with no session at all - the read callbacks then arrive with a null session id and a null context,
+	//which open62541 documents as normal and expects to be denied.  They were denied, but only after `ASSERT( ctx )` logged a
+	//CRITICAL: twice a second (the sampling interval) for the subscription's remaining lifetime, after every lost session - 1,432
+	//of them in the 12 minutes the 09-14 soak ran on after its session timed out.  The sessionless read must be denied quietly;
+	//a real session that arrives without its context is still a bug and must still say so.
+	TEST_F( AccessTests, ASessionlessReadIsDeniedWithoutAnAssert ){
+		let nodeId = UA_NODEID_NUMERIC( 4, 6020 );
+		//Message(), not Text:  Text is the format string "Assert:  {} is false", which never contains the argument.
+		let asserts = []{ return Logging::Find( [](const Logging::Entry& e){ return e.Level==ELogLevel::Critical && e.Message().contains("ctx is false"); } ).size(); };
+
+		Logging::ClearMemory();
+		EXPECT_EQ( UAAccess::GetUserAccessLevel(_ua->Ptr(), nullptr, nullptr, nullptr, &nodeId, nullptr), 0 ) << "a detached subscription's sample reads nothing";
+		EXPECT_EQ( UAAccess::GetUserRightsMask(_ua->Ptr(), nullptr, nullptr, nullptr, &nodeId, nullptr), 0u );
+		EXPECT_EQ( asserts(), 0u ) << "the sessionless read is open62541's design, not a fault - it must not log a CRITICAL";
+
+		const UA_NodeId sessionId = UA_NODEID_NUMERIC( 1, 42 );
+		Logging::ClearMemory();
+		EXPECT_EQ( UAAccess::GetUserAccessLevel(_ua->Ptr(), nullptr, &sessionId, nullptr, &nodeId, nullptr), 0 ) << "still denied";
+		EXPECT_EQ( UAAccess::GetUserRightsMask(_ua->Ptr(), nullptr, &sessionId, nullptr, &nodeId, nullptr), 0u );
+		EXPECT_EQ( asserts(), 2u ) << "a session without the context ActivateSession installs is a real bug and must still assert";
+	}
+
 	//appserver-review3 #13:  the AppServer's delegated admin check, answered here (OpcServerQL's adminCheck →
 	//OpcAuthorize::TestAdminNode):  who may grant on a node is whoever administers the resource governing it - its own row when
 	//it has one, else the nearest configured ancestor's, else root.  The criteria row is created by SetUpTestCase after
