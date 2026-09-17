@@ -7,7 +7,11 @@ create or alter proc [dbo].access_role_add( @role_id int, @allowed bigint, @deni
 		and schema_name = coalesce(@schema, schema_name)
 		and criteria is not distinct from @criteria;
 	if @resource_id is null begin
-		insert into access_resources( slug, schema_name, name, criteria ) values( @resourceSlug, @schema, coalesce(@resourceName, @resourceSlug), @criteria );
+		-- install-issues #25: a *root* (criteria-null) resource that exists only because a role referenced it (the seed's addRole
+		-- on opc.install nodeIds, run before the OpcServer declares it) ships deleted, i.e. unenforced - creating it enforced closed
+		-- node access on a fresh install.  Unenforced is the shipped default (ResourceSyncAwait creates then deletes each one); the
+		-- grant applies once an operator enforces it.  A criteria-scoped row is a deliberate per-node grant and stays enforced.
+		insert into access_resources( slug, schema_name, name, criteria, deleted ) values( @resourceSlug, @schema, coalesce(@resourceName, @resourceSlug), @criteria, case when @criteria is null then getutcdate() else null end );
 		set @resource_id = scope_identity();
 	end;
 

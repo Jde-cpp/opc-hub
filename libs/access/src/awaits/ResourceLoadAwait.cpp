@@ -46,12 +46,20 @@ namespace Jde::Access{
 		try{
 			for( let& schema : _schemas ){
 				let schemaName = getSchemaName(schema, _opcServerInstance);
-				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug deleted description}}", schemaName );
+				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug deleted description allowed}}", schemaName );
 				auto existing = Json::AsArray( co_await *_qlServer->Query(move(q), {}, _executer) );
 				flat_set<string> slugs;
+				flat_map<string,ResourcePK> bare;//install-issues #25: existing rows with no `allowed` - the ops-fill below keys off this.
 				for( auto& value : existing ){
 					let& resource = Json::AsObject( value );
-					slugs.emplace( Json::AsString(resource, "slug") );
+					let slug = string{ Json::AsString(resource, "slug") };
+					slugs.emplace( slug );
+					//A row created by a role reference (the seed's `addRole(resource:{schemaName:"opc.install", slug:"nodeIds"})`,
+					//run before the OpcServer declares it) carries no `allowed`, so the permission table showed no checkboxes (#25).
+					//Remember it, keyed by slug, for the declare loop to fill from the meta's ops.
+					let allowed = resource.if_contains( "allowed" );
+					if( !allowed || allowed->is_null() || (allowed->is_array() && allowed->get_array().empty()) )
+						bare.emplace( slug, Json::AsNumber<ResourcePK>(resource, "id") );
 					//A row a sync created and never got to disable:  the disable is a second call, and a failure between the two left the
 					//table denying every non-System user - for good, since a slug with a row was then skipped here (access-review3 #24).
 					//Its signature is the sync's own description and not one right on it; an operator who enabled a resource granted something.
@@ -76,9 +84,16 @@ namespace Jde::Access{
 
 				for( let& [name,ops] : declared ){
 					auto jsonName = DB::Names::ToJson( name );
-					if( empty(ops) || slugs.contains(jsonName) )
+					if( empty(ops) )
 						continue;
-
+					if( slugs.contains(jsonName) ){
+						//install-issues #25: the slug is already present.  If it was created bare - by a role reference, before this
+						//sync could declare it - fill its ops now so the permission table has checkboxes.  updateResource cannot touch
+						//`deleted`, so an unenforced row stays unenforced;  a row that already has its ops is left alone.
+						if( auto p = bare.find(jsonName); p!=bare.end() )
+							co_await *_qlServer->Query( Ƒ("updateResource( id:{}, allowed:{} )", p->second, underlying(ops)), {}, _executer );
+						continue;
+					}
 					auto create = Ƒ( "createResource( schemaName:\"{}\", name:\"{}\", slug:\"{}\", allowed:{}, description:\"From installation\" ){{id}}",
 						schemaName, name, move(jsonName), underlying(ops) );
 					let resourceId = QL::AsId<UserPK::Type>( co_await *_qlServer->Query(move(create), {}, _executer) );

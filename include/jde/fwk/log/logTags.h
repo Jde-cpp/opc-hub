@@ -53,27 +53,36 @@ namespace Jde{
 		Φ UpdateCumulative( const vector<up<Logging::ILogger>>& loggers )ι->void;
 	}
 	struct Γ LogTags{
-		LogTags( ELogLevel defaultLevel=ELogLevel::Information ):_minLevel{defaultLevel},_defaultLevel{defaultLevel}{}
+		LogTags( ELogLevel defaultLevel=ELogLevel::Information ):_minLevel{defaultLevel},_defaultLevel{defaultLevel},_settingsDefault{defaultLevel}{}
 		LogTags( const jobject& o )ι;
 		LogTags( const LogTags& x )ι;
 		α operator+=( const LogTags& other )ι->LogTags&;
-		α SetLevels( const jobject& tagLevels )ι->void;
+		//settings: the map is the configuration (Logging::Init's /logging/memory/tags), remembered as what a cleared override
+		//falls back to.  Otherwise the map is overrides - the instance_tag_levels rows at start (IApp::LoadLogSettings) - which
+		//sit on top of the settings and can be cleared back off.
+		α SetLevels( const jobject& tagLevels, bool settings=false )ι->void;
 		β Name()Ι->sv{ return "Cumulative"; }
 		α DefaultLevel()Ι->ELogLevel{ return _defaultLevel; }
 		α SetDefaultLevel( ELogLevel level )ι->void{ _defaultLevel = level; ExtrapolatedTags = _configuredTags; }
+		α ClearDefaultLevel()ι->void{ SetDefaultLevel( _settingsDefault ); }//the default override deleted: back to the settings' default.
 		β MinLevel()Ι->ELogLevel{ return _minLevel; }
 		β MinLevel( ELogTags tags )Ι->ELogLevel;
 		β SetMinLevel( ELogLevel level )ι->void{ _minLevel = level; }
 		α SetLevel( ELogTags tags, ELogLevel level )ι->void;
-		α ClearLevel( ELogTags tags )ι->void;//drops the override so the tag falls back to _defaultLevel - the runtime twin of deleting the instance_tag_levels row.
+		//drops the override - the runtime twin of deleting the instance_tag_levels row - so the tag goes back to the level the
+		//settings gave it, or to _defaultLevel when they gave none.  Erasing the entry outright lost the settings level until a
+		//restart (install-issues #21).
+		α ClearLevel( ELogTags tags )ι->void;
 		β ShouldLog( ELogLevel level, ELogTags tags )Ι->bool;
 		β ToString()ι->string;
-		α ConfiguredTags()Ι->const concurrent_flat_map<ELogTags,ELogLevel>&{ return _configuredTags; }
+		α ConfiguredTags()Ι->const concurrent_flat_map<ELogTags,ELogLevel>&{ return _configuredTags; }//the levels in force: the settings' with the overrides on top.
 	protected:
 		concurrent_flat_map<ELogTags,ELogLevel> _configuredTags;
+		concurrent_flat_map<ELogTags,ELogLevel> _settingsTags;//the levels as configured, before any override - what ClearLevel restores.
 		mutable concurrent_flat_map<ELogTags,ELogLevel> ExtrapolatedTags;
 		ELogLevel	_minLevel;
 		ELogLevel _defaultLevel;
+		ELogLevel _settingsDefault;
 		friend α Logging::UpdateCumulative( const vector<up<Logging::ILogger>>& loggers )ι->void;
 	};
 

@@ -82,6 +82,40 @@ namespace Jde::Access::Tests{
 		CreateAcl( root, ERights::All, ERights::None, slug, system ); //as GetRoot left it.
 	}
 
+	//install-issues #25 (the no-checkboxes half):  a resource that exists only because a role referenced it - the hub's role seed
+	//names opc.install nodeIds before the OpcServer connects and declares it - carries no `allowed`, so the permission table shows
+	//no checkboxes.  The OpcServer's next resource sync fills the ops from the meta, and does not re-enable the unenforced row.
+	TEST_F( ResourceTests, SyncFillsOpsOnAResourceCreatedBareByARoleReference ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		const string slug{ "providerTypes" }; //a declared table; un-synced here so a role reference re-creates it bare.
+		let bareAllowed = []( const jobject& o ){ auto p = o.if_contains("allowed"); return !p || p->is_null() || (p->is_array() && p->get_array().empty()); };
+		if( auto grant = SelectAcl(root, slug); !grant.empty() )
+			PurgeAcl( root, GetId(grant), system );
+		if( auto row = SelectResource(slug, root, true); !row.empty() )
+			Purge( "resource", GetId(row), root );
+
+		//a role references it -> access_role_add creates it, and (criteria-null, install-issues #25) bare and unenforced.
+		const RolePK rolePK{ (RolePK)GetId(Get("role", "roleSyncOpsFill", root)) };
+		QL().QuerySync<jvalue>( Ƒ(R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK, slug), {}, root );
+		auto row = SelectResource( slug, root, true );
+		ASSERT_FALSE( row.empty() );
+		EXPECT_TRUE( bareAllowed(row) ) << "created bare - the permission table would show no checkboxes";
+		EXPECT_FALSE( row.at("deleted").is_null() ) << "and unenforced";
+
+		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );//the OpcServer's next start.
+		row = SelectResource( slug, root, true );
+		EXPECT_FALSE( bareAllowed(row) ) << "the sync filled the ops from the meta - the checkboxes are there now";
+		EXPECT_FALSE( row.at("deleted").is_null() ) << "and left it unenforced - updateResource cannot touch deleted";
+
+		//restore the shipped state:  drop the test role and resource, let the sync recreate it, and give root its grant back.
+		Purge( "role", rolePK, root );
+		if( auto r = SelectResource(slug, root, true); !r.empty() )
+			Purge( "resource", GetId(r), root );
+		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );
+		CreateAcl( root, ERights::All, ERights::None, slug, system );
+	}
+
 	TEST_F( ResourceTests, CheckDefaults ){
 		let ql = "resources( schemaName:\"access\", criteria:null ){ id allowed name attributes created deleted updated slug description }";
 		let& resources = QL().QuerySync<jarray>( ql, {}, GetRoot() );

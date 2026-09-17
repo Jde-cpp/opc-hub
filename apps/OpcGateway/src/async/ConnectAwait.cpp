@@ -1,5 +1,7 @@
 ﻿#include "ConnectAwait.h"
 #include "../UAClient.h"
+#include "../GatewayAppClient.h"
+#include <jde/access/Authorize.h>
 #include "jde/fwk/exceptions/Exception.h"
 #include <stdexcept>
 
@@ -64,6 +66,22 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	α ConnectAwait::Suspend()ι->void{
+		//install-issues #24: a web session with no user and no stored credential resolves to an empty Credential, whose Type()
+		//is Anonymous.  Opening a client on it browses the OPC server anonymously - which the bundled OpcServer does not offer
+		//(certificate/token only), so a signed-out page's restored tab drew `No suitable endpoint found`/`BadIdentityTokenRejected`
+		//twice per load and left the connection reading Error.  Anonymous access is allowed while the connection resource is
+		//unenforced (open access is the point of leaving it so), and refused 401 once an admin enforces gateway/serverConnections,
+		//where an anonymous session holds no grant - before a client is opened.  Delegated to Authorize::Test, which passes an
+		//unenforced resource (FindActiveResourcePK null) and throws Unauthorized for an unknown user on an enforced one.  Only the
+		//anonymous credential consults it: a stored password login (Username) or a jwt session (IssuedToken) is authenticated.
+		if( _sessionId && _cred.Type()==ETokenType::Anonymous ){
+			if( auto acl = AppClient()->Acl(); acl ){
+				try{
+					acl->Test( "gateway", "serverConnections", Access::ERights::Read, _cred.UserPK(), _sl );
+				}
+				catch( Exception& e ){ base::ResumeExp( move(e) ); return; }
+			}
+		}
 		if( _opcSlug.empty() )
 			ResolveDefault();
 		else

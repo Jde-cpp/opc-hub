@@ -14,6 +14,7 @@ namespace Jde::Web::Server{
 			WARN( "/http/site '{}' is not a directory - no page is served (404).", _root.string() );
 	}
 
+	constexpr sv DefaultContentType{ "application/octet-stream" };
 	α StaticSite::ContentType( const fs::path& file )ι->sv{
 		static const flat_map<string,sv> types{
 			{".html", "text/html; charset=utf-8"}, {".js", "text/javascript; charset=utf-8"}, {".mjs", "text/javascript; charset=utf-8"},
@@ -23,7 +24,15 @@ namespace Jde::Web::Server{
 			{".txt", "text/plain; charset=utf-8"}, {".md", "text/markdown; charset=utf-8"}, {".wasm", "application/wasm"}
 		};
 		let p = types.find( Str::ToLower(file.extension().string()) );
-		return p==types.end() ? sv{"application/octet-stream"} : p->second;
+		return p==types.end() ? DefaultContentType : p->second;
+	}
+
+	//Whether the last segment names an asset this site serves, so its miss is a 404 rather than the page.  A dot alone does
+	//not: an SPA route segment can carry one - a user slug `Google-<email>`, an OPC user `<instance>.web` - and treating any
+	//extension as a file 404'd those pages instead of routing them client-side (install-issues #23).  Only an extension the
+	//content-type table knows counts; the browser's "cache html as a script" hazard the 404 guards against is a served type.
+	Ω servedExtension( const fs::path& file )ι->bool{
+		return file.has_extension() && StaticSite::ContentType(file)!=DefaultContentType;
 	}
 
 	//the build's output hashing - main-MHJYHGLH.js, chunk-BBIwwlZT.js: a changed file gets a new name, so a cached copy can never
@@ -47,9 +56,9 @@ namespace Jde::Web::Server{
 		auto file = relative.empty() ? _root/"index.html" : _root/relative;
 		bool page = relative.empty();
 		if( !page && !fs::is_regular_file(file) ){
-			if( relative.has_extension() )//a missing asset is a 404, not the page - the browser would otherwise cache html as a script.
+			if( servedExtension(relative) )//a missing asset (js/css/png…) is a 404, not the page - the browser would otherwise cache html as a script.
 				return nullopt;
-			file = _root/"index.html";//a route of the page, routed client-side (#4)
+			file = _root/"index.html";//a route of the page - dotted segment and all - routed client-side (#4, #23)
 			page = true;
 		}
 		if( !fs::is_regular_file(file) )

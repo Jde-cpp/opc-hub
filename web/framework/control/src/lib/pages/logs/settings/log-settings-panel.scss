@@ -6,8 +6,15 @@
 	margin: 16px;
 	color: var(--mat-sys-error, #b3261e);
 }
-.restart-hint{
+.save-hint{
 	margin-left: 16px;
 	font-size: 12px;
 	opacity: 0.7;
+}
+//install-issues #19: the instance did not answer for its running levels, or runs no such log - the rows are overrides only.
+.sink-note{
+	margin: 8px 16px;
+	font-size: 12px;
+	opacity: 0.7;
+	text-align: center;
 }

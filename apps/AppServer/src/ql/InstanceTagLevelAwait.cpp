@@ -7,15 +7,51 @@
 #include "../ServerSocketSession.h"
 #include "../WebServer.h"
 #include "jde/fwk/log/break.h"
+#include <jde/fwk/co/AnyAwait.h>
 
 
 #define let const auto
 namespace Jde::App::Server{
 
-	//instanceTagLevel( id:42 ){ text binary appServer } -> { "text": {"Debug":["sql",["socket","client","read"]], "Information":["default"]} }
+	//The levels the instance runs with: its own `logSetting{ text binary appServer }` answer - tag->level per sink, with
+	//`default` - fetched the way pushRuntime delivers a change: through the local ql for this process, over the socket for
+	//a connected instance.  Null when it is not connected or does not answer: the rows are the record and are still
+	//returned; what runs is best-effort, and a wedged instance must fail this column, not the query (install-issues #19).
+	//An AnyAwait so InstanceTagLevelAwait::Execute, whose task type is the row query's, can co_await it (AnyAwait.h).
+	struct RunningLevelsAwait final : AnyAwait<jvalue>{
+		RunningLevelsAwait( ProgInstPK instanceId, QL::TableQL&& ql, UserPK executer, SRCE )ι:
+			AnyAwait<jvalue>{sl}, _instanceId{instanceId}, _ql{move(ql)}, _executer{executer}{}
+	protected:
+		α Suspend()ι->void override{ Execute(); }
+	private:
+		α Execute()ι->TAwait<jvalue>::Task;
+		ProgInstPK _instanceId;
+		QL::TableQL _ql;
+		UserPK _executer;
+	};
+	α RunningLevelsAwait::Execute()ι->TAwait<jvalue>::Task{
+		try{
+			if( _instanceId==AppClient()->InstancePK() )
+				Resume( co_await *AppClient()->Query<jvalue>(_ql.ToString(), {}, true, _sl) );
+			else if( auto session = FindInstance(_instanceId); session ){
+				IWebsocketSession& base = *session;//ServerSocketSession's own QueryClient override hides the awaitable-returning overloads.
+				Resume( co_await base.QueryClient(move(_ql), _executer, _sl) );
+			}
+			else
+				Resume( jvalue{} );//not connected: nothing is running to report.
+		}
+		catch( runtime_error& e ){
+			Exception{ move(e), ExceptionArgs{ELogLevel::Warning, ELogTags::Settings}, _sl };
+			Resume( jvalue{} );
+		}
+	}
+
+	//instanceTagLevel( id:42 ){ text binary appServer running } -> { "text": {"Debug":["sql",["socket","client","read"]], "Information":["default"]}, "running": {"text":{"default":"Trace","sql":"Debug",…}, "binary":{…}} }
 	//Grouped by level, with the tags as the values: a multi-tag override has no name of its own - as a key ToString spells
 	//it `["socket","client","read"]`, which is not a tag name and comes back as one - but as a value ToValue's array feeds
 	//straight into ToLogTags( jvalue ).  Levels also repeat far more than tags do, so the object is smaller this way.
+	//`running` is the instance's logSetting answer for the same sinks, verbatim (tag->level, so the other shape), or null -
+	//the rows alone are only what has been saved for the instance, not what it logs at (install-issues #19).
 	α InstanceTagLevelAwait::Execute()ι->TAwait<vector<DB::Row>>::Task{
 		try{
 			auto schema = AppSchema();
@@ -57,6 +93,14 @@ namespace Jde::App::Server{
 				y["binary"] = move(*binary);
 			if( appServer )
 				y["appServer"] = move(*appServer);
+			if( _query.FindColumn("running") ){
+				QL::TableQL ql{ "logSetting", {}, ms<jobject>(), {}, true, _sl };
+				for( let sink : {"text", "binary", "appServer"} ){//the sinks asked for here, from the instance.
+					if( _query.FindColumn(sink) )
+						ql.Columns.push_back( QL::ColumnQL{string{sink}, nullptr} );//not AddColumn: that resolves against a db table, and logSetting has none.
+				}
+				y["running"] = co_await RunningLevelsAwait{ (ProgInstPK)instanceId, move(ql), _executer, _sl };
+			}
 			Resume( y );
 		}
 		catch( runtime_error& e ){

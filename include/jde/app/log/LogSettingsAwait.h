@@ -57,17 +57,18 @@ namespace Jde::App{
 			if( key==Logging::BreakTag )//process-local trap level, not a tag - and ToLogTags would fold it into None, silently overwriting the default level.
 				continue;
 			if( key=="default" ){
-				if( value.is_string() ){ //null deletes the row; the settings-file default it reverts to is not recoverable at runtime, so the level stands until a restart.
+				if( value.is_string() )
 					logger->SetDefaultLevel( ToLogLevel(value.as_string()) );
-					defaultChanged = true;
-				}
+				else
+					logger->ClearDefaultLevel();//null deletes the row: back to the settings' default, which the logger remembers (install-issues #21).
+				defaultChanged = true;
 				continue;
 			}
 			let tags = ToLogTags( string{key} );
 			if( value.is_string() )
 				logger->SetLevel( tags, ToLogLevel(value.as_string()) );
 			else
-				logger->ClearLevel( tags );//null: the override was deleted, fall back to the default.
+				logger->ClearLevel( tags );//null: the override was deleted, fall back to the level the settings gave the tag, or the default.
 		}
 		if( defaultChanged )//SetLevel/ClearLevel refresh the cumulative filter themselves, SetDefaultLevel does not.
 			Logging::UpdateCumulative( Logging::Loggers() );

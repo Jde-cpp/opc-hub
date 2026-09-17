@@ -70,7 +70,7 @@ namespace Jde{
 		if( !memory || Json::FindEnum<ELogLevel>(*memory, "default", ToLogLevel).value_or(ELogLevel::NoLog)==ELogLevel::NoLog )
 			_loggers.erase( _loggers.begin() );
 		else
-		 	_loggers.front()->SetLevels( *memory );
+		 	_loggers.front()->SetLevels( *memory, true );//settings, not overrides: what a cleared override on the memory logger falls back to.
 		Logging::UpdateCumulative( _loggers );
 	}
 }

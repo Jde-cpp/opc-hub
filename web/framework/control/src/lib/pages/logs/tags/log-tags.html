@@ -5,6 +5,9 @@
 			@if( isDefault(row) ){
 				<span class="default-tag">{{tagName(row.tag)}}</span>
 			}
+			@else if( isConfigured(row) ){
+				<span class="configured-tag">{{tagName(row.tag)}}</span>
+			}
 			@else{
 				<mat-form-field subscriptSizing="dynamic">
 					<mat-select [value]="row.tag" (selectionChange)="onTagChange(row, $event.value)">
@@ -24,16 +27,27 @@
 			}
 		</mat-cell>
 	</ng-container>
+	<ng-container matColumnDef="source">
+		<mat-header-cell *matHeaderCellDef> Source </mat-header-cell>
+		<mat-cell *matCellDef="let row">
+			@if( row.tag && row.override ){
+				<span class="override" matTooltip="An override saved for this instance. It replaces the configured level until it is removed.">Override</span>
+			}
+			@else if( isConfigured(row) ){
+				<span class="configured" matTooltip="The level the instance is running with, from its configuration.">Configured</span>
+			}
+		</mat-cell>
+	</ng-container>
 	<ng-container matColumnDef="delete">
 		<mat-header-cell *matHeaderCellDef></mat-header-cell>
 		<mat-cell *matCellDef="let row">
-			@if( row.tag && !isDefault(row) ){
-				<button matIconButton (click)="onDelete(row)" matTooltip="Remove — the tag falls back to the default level. Pick level None to silence it instead.">
-					<mat-icon>delete</mat-icon>
+			@if( row.tag && !isDefault(row) && row.override ){
+				<button matIconButton (click)="onDelete(row)" [matTooltip]="isConfigured(row) ? 'Revert — the tag goes back to its configured level.' : 'Remove — the tag goes back to its configured level, or the default. Pick level None to silence it instead.'">
+					<mat-icon>{{isConfigured(row) ? 'undo' : 'delete'}}</mat-icon>
 				</button>
 			}
 		</mat-cell>
 	</ng-container>
-	<mat-header-row *matHeaderRowDef="['tag', 'level', 'delete']"></mat-header-row>
-	<mat-row *matRowDef="let row; columns: ['tag', 'level', 'delete'];"></mat-row>
+	<mat-header-row *matHeaderRowDef="['tag', 'level', 'source', 'delete']"></mat-header-row>
+	<mat-row *matRowDef="let row; columns: ['tag', 'level', 'source', 'delete'];"></mat-row>
 </mat-table>
