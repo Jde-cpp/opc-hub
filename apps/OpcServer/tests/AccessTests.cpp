@@ -1,6 +1,7 @@
 #include <semaphore>
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
+#include "../src/UAConfig.h"
 #include "../src/UATrust.h"
 #include "../src/access/UAAccess.h"
 #include "../src/access/OpcAuthorize.h"
@@ -333,6 +334,24 @@ namespace Jde::Opc::Server::Tests{
 		UATrust::LoadTrustList( after );//resync the mtime cache so the rest of the process sees the real trust list.
 		EXPECT_NE( after.trustedCertificatesSize, 0u ) << "the good certificates in that directory are still trusted";
 		UA_TrustListDataType_clear( &after );
+	}
+
+	//security-matrix #5:  there is no unsecured shape.  A config with no /opcServer/ssl - a hidden `ssl::`, a mistyped key - used to
+	//build a None-only server with no certificate and no trust list;  now the server refuses to start, and names the setting.
+	TEST( UAConfigTests, NoSslIsRefused ){
+		let ssl = Settings::FindObject( "/opcServer/ssl" );
+		ASSERT_TRUE( ssl ) << "the suite's own server runs secured";
+		const jobject original{ *ssl };
+		struct Restore final{ const jobject& Ssl; ~Restore(){ try{ Settings::Set("/opcServer/ssl", Ssl); }catch( const std::exception& ){} } } restore{ original };
+		Settings::Set( "/opcServer/ssl", jvalue{} );//null - FindObject answers nullptr for it, as for an absent key.
+		ASSERT_FALSE( Settings::FindObject("/opcServer/ssl") );
+		try{
+			UAConfig config;
+			FAIL() << "a server config was built without /opcServer/ssl";
+		}
+		catch( const std::exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains("/opcServer/ssl") ) << e.what();
+		}
 	}
 
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started

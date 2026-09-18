@@ -11,6 +11,7 @@
 #include <jde/access/client/accessClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/app/client/IAppClient.h>
+#include <jde/opc/ServerTrust.h>
 #include "jde/fwk/settings.h"
 #include "GatewayAppClient.h"
 #include "opcInternal.h"
@@ -47,6 +48,7 @@ namespace Jde::Opc{
 		//value_or defaults mirror config/Opc.Gateway.jsonnet - keep them in lockstep so a deployment missing a key runs what the shipped config documents.
 		_pingInterval = Settings::FindDuration("/gateway/pingInterval").value_or( 30s );
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
+		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );
 		appClient->SslSettings = move(sslSettings);//the AppServer login's JWT and the OPC certificate authentication both sign with it.

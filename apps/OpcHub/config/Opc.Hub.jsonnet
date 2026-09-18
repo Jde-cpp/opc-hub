@@ -18,12 +18,13 @@ function( sync=false )
 	local hostNames = if std.objectHas(args, 'hostNames') then std.join('', [',DNS:' + n for n in args.hostNames]) else '';
 {
 	instanceName: args.instanceName, //"OpcHub.<buildTarget>": the process's one connections{} row, the /opcGateways instanceName, and the cert CN root.
-	gateway: gw.gateway, //pingInterval/ttl/search/issuedCerts/verifyServerCertificate - the issued OPC client certs land under $(ProgramData)/Jde-Cpp/OpcHub via ProductName.
-	//One list serves both roles: the AppServer's enrollment anchors (Access::Server::Trust - the OpcServer and the PLC
-	//emulator log in with their client certs) and the gateway's OPC server trust (src/ServerTrust.cpp).  No OpcGateway
-	//entry: no separate gateway process logs in to this one.  The dev default names the emulator's dir; args.access
-	//(args/install) names only what is installed - a dir that is never created is a warning in every log
-	//(reviews/install-issues.md, "Noise in a production log").
+	gateway: gw.gateway, //pingInterval/ttl/search/issuedCerts/verifyServerCertificate/trustedCertDirs - the issued OPC client certs, and ssl/servers for third-party OPC servers' certificates, land under $(ProgramData)/Jde-Cpp/OpcHub via ProductName.
+	//The AppServer role's enrollment anchors (Access::Server::Trust): the OpcServer and the PLC emulator log in with their
+	//client certs, and a certificate under one of these directories may create a user.  That is all this list is - the OPC
+	//servers the gateway role trusts are gateway.trustedCertDirs, a list of its own since 2026-09-18, so trusting a
+	//third-party server copies nothing in here (reviews/security-matrix.md #3).  No OpcGateway entry: no separate gateway
+	//process logs in to this one.  The dev default names the emulator's dir; args.access (args/install) names only what is
+	//installed - a dir that is never created is a warning in every log (reviews/install-issues.md, "Noise in a production log").
 	access:{
 		trustedCertDirs: if std.objectHas(args, 'access') then args.access.trustedCertDirs else [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator") ]
 	},
@@ -65,7 +66,7 @@ function( sync=false )
 				//URI: the gateway role authenticates to OPC servers with this cert too (UAClient certificate authentication signs
 				//with the app client's SslSettings), and open62541 wants the application uri in the SAN - as the gateway's own web
 				//cert carries it.
-				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,DNS:$(HostName),IP:127.0.0.1" + hostNames,
+				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,DNS:$(HostName),IP:127.0.0.1" + hostNames, //the URI: the gateway role's own applicationUri, the one gw.gateway.issuedCerts carries - not an OPC server's (security-matrix #8).
 				country: "US",
 				commonName: "OpcHub" //-> $(ProgramData)/Jde-Cpp/OpcHub/ssl/certs/OpcHub.pem: what the OpcServer/PlcEmulator hub overlays anchor (web.client.ssl.caFile).
 			} + (if std.objectHas(args, 'certificate') then args.certificate else {}),

@@ -18,7 +18,7 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 			certificate:{
 				productName: gatewayProduct,
 				commonName: gatewayProduct+"."+std.extVar("buildTarget"),
-				subjectAltName: "URI:urn:open62541.server.application" //per-leg certificateUri overrides this at issue time.
+				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:"+gatewayProduct //the gateway's own applicationUri, spelled as Opc.Gateway.jsonnet's resolves in the gateway process - $(PRODUCT_NAME) here would be the soak exe's.  A different SAN and the gateway re-issues at its first connect, voiding the trust set up before the run (security-matrix #8).
 			},
 			privateKey:{ productName: gatewayProduct, passcode: "$(JDE_PASSCODE)" },
 			publicKey:{ productName: gatewayProduct }
@@ -60,7 +60,7 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 				flag: "-external", //leg active only when this CLI arg is present.
 				slug: "ExternalSoak", name: "External soak server",
 				description: "Externally-managed OPC-UA server (not launched/monitored by soak.sh)",
-				certificateUri: "", //set via -externalUri= to the server's application URI (raw; %20-encoded at use) - required for Basic256Sha256; empty falls back to SecurityPolicy None and no client cert.
+				certificateUri: "", //set via -externalUri= to the server's application URI (raw; %20-encoded at use) - required for a secured session; empty falls back to SecurityPolicy None - no client cert on the channel, the login still encrypted.
 				url: "opc.tcp://127.0.0.1:49320",
 				user: "soak", //server account with tag-write access - presence of `user` makes the leg log in.
 				password: "", //set via -externalPwd=.

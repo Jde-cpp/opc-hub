@@ -52,7 +52,7 @@ local logsDir = args.logsDir;
 			port: 1968,
 			ssl:{
 				certificate:{
-					subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,IP:127.0.0.1",
+					subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,IP:127.0.0.1", //the URI: the gateway's own applicationUri - gateway.issuedCerts, below, is this block - where the opcServer's, next, is the server's (security-matrix #8).
 					commonName: args.instanceName + ".gateway.web"
 				}
 			}
@@ -68,7 +68,9 @@ local logsDir = args.logsDir;
 		}
 	},
 	gateway:{
+		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded AppServer anchors enrollment on, but a list of its own (ServerTrust.h).
 		issuedCerts: instance.http.gateway.ssl,
+		allowPlaintextPassword: false, //the shipped default; PlaintextPasswordTests flips it for one test.
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false }
 	},
 	opcServer:{

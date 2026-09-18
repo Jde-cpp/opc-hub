@@ -23,7 +23,7 @@ namespace Jde{
 		App::Server::InitLogging();//as the hub: the AppServer's - the one Logging::Init in the process.
 		if( Settings::FindBool("/testing/embeddedOpcServer").value_or(true) ){
 			//the gateway role's OPC client cert before the OpcServer starts - spares the first connect a fail-rescan-retry cycle (Jde.Opc.Tests does the same).
-			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug, Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") );
+			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug );
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
 		}

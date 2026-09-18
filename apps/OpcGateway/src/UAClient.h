@@ -87,13 +87,28 @@ namespace Jde::Opc::Gateway{
 		α AddSessionAwait( VoidAwait::Handle h )ι->void;
 		α TriggerSessionAwaitables()ι->void;
 
-		Ω EnsureCertificate( const ServerCnnctnNK& slug, sv certificateUri, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
-		Ω CryptoSettings( const ServerCnnctnNK& slug, sv certificateUri={} )ι->Crypto::CryptoSettings; //for soak
+		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
+		//does - then that address in the name's place.  open62541 connects to the first address a name resolves to and never tries
+		//the next (eventloop_posix_tcp.c), so such a name fails BadConnectionRejected one address short of the server:  IPv6
+		//link-local ahead of IPv4 against a server that listens on IPv4 alone - Kepware on a dual-stack box - or `localhost`, ::1
+		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  An address, a name
+		//with one address, and a name whose first address answers all come back exactly as given, so nothing changes where a connect
+		//already works;  the substitution is made only where open62541 would have failed.
+		Ω ReachableUrl( str url, Jde::Handle h )ι->string;
+		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
+		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
+		//certificateUri, which is the server's and only filters its endpoints (reviews/security-matrix.md #8; ApplicationUriTests).
+		//`applicationUri` puts another uri in the SAN's place:  the re-issue tests' seam - nothing in production passes it.
+		Ω EnsureCertificate( const ServerCnnctnNK& slug, sv applicationUri={}, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
+		Ω CryptoSettings( const ServerCnnctnNK& slug, sv applicationUri={} )ι->Crypto::CryptoSettings; //for soak
 		α Slug()Ι->const ServerCnnctnNK&{ return _opcServer.Slug; }
 		α Name()Ι->str{ return _opcServer.Name; }
 		α Index()ι->NodeIndex&{ return _nodeIndex; }//node names for `search`, crawled on first use;  dies with the client.
 		α EnumTypes()ι->EnumTypeCache&{ return _enumTypes; }//enumeration definitions for `__type(opc,ns,i)`, read on first use;  dies with the client.
 		α Url()Ι->str{ return _opcServer.Url; }
+		α ConnectUrl()Ι->str{ return _connectUrl.empty() ? _opcServer.Url : _connectUrl; }//what Connect() handed open62541 - Url(), or ReachableUrl's substitute for it.
+		α ApplicationUri()Ι->string;//the endpoint filter open62541 matches against the server's ApplicationUri - not clientDescription's.
+		α AdvertisedUri()Ι->string;//clientDescription's:  what this client calls itself - the uri SAN of the certificate it presents (Configuration(), security-matrix #8).
 		α IsDefault()Ι->bool{ return _opcServer.IsDefault; }
 		α DefaultBrowseNs()Ι->NsIndex{ return _opcServer.DefaultBrowseNs; }
 		α Handle()Ι->Jde::Handle{ return _handle; }
@@ -113,13 +128,27 @@ namespace Jde::Opc::Gateway{
 		α Configuration()ε->UA_ClientConfig*;
 		α Create()ε->UA_Client*;
 		α Connect()ε->void;
-		Ω LogServerEndpoints( str url, Jde::Handle h )ι->string;//returns the server's ApplicationUri, empty if the endpoints could not be read.
+		//What GetEndpoints on `url` answers, for the connect-failure diagnostics:  the server's ApplicationUri (empty when the
+		//endpoints could not be read), whether it has an unsecured (None) endpoint at that url at all, and every token policy of
+		//every endpoint - the endpoint's mode and channel policy, the token type, and the policy that encrypts the token:  its
+		//own securityPolicyUri, or the channel's when that is unset (open62541 matchUserTokenPolicy).
+		struct EndpointSummary final{
+			struct TokenPolicy final{ UA_MessageSecurityMode Mode; string ChannelPolicy; ETokenType Type; string Policy; };
+			string ServerUri;
+			vector<TokenPolicy> Policies;
+			bool NoneEndpoint{};
+			α Tokens()Ι->ETokenType{ ETokenType y{}; for( const auto& p : Policies ) y |= p.Type; return y; }//every type offered, on any endpoint.
+		};
+		Ω LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary;
 		α LogClientEndpoints()ι->void;
-		α ApplicationUri()Ι->string;//the endpoint filter open62541 matches against the server's ApplicationUri - not clientDescription's.
+		//The certificate this client shows a server:  the app client's own for certificate authentication, else the connection's
+		//issued one, which goes on the channel when there is a certificateUri.  nullopt when it shows none.
+		α PresentedCertificate()Ι->optional<Crypto::CryptoSettings>;
 
-		α CryptoSettings()Ι->Crypto::CryptoSettings{ return CryptoSettings(Slug(), _opcServer.CertificateUri); }
+		α CryptoSettings()Ι->Crypto::CryptoSettings{ return CryptoSettings(Slug()); }
 
 		ServerCnnctn _opcServer;
+		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
 
 		vector<VoidAwait::Handle> _sessionAwaitables; mutable mutex _sessionAwaitableMutex;
 

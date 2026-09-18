@@ -125,7 +125,7 @@ namespace Jde::Opc::Server{
 		_groups = { &config->secureChannelPKI, &config->sessionPKI };
 		for( uint i=0; i<_groups.size(); ++i ){
 			auto g = _groups[i];
-			if( g->verifyCertificate && g->verifyCertificate!=&verifyCertificate ){//null covers the non-ssl UA_ServerConfig_setDefault path.
+			if( g->verifyCertificate && g->verifyCertificate!=&verifyCertificate ){//null: a group with no verifier.  The unsecured config that built one is gone (security-matrix #5); the guard stays a guard.
 				_originals[i] = g->verifyCertificate;
 				g->verifyCertificate = &verifyCertificate;
 			}

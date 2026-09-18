@@ -21,10 +21,10 @@ namespace Jde::Opc::Gateway{
 	ServerCnnctn::ServerCnnctn( jobject&& o )ε:
 		Id{ Json::FindNumber<uint32>(o, "id").value_or(0) },
 		Url{ Json::FindDefaultSV(o, "url") },
-		CertificateUri{ Json::FindDefaultSV(o, "certificate_uri") },
+		CertificateUri{ Json::FindDefaultSV(o, "certificateUri") },//the QL's names, not the columns':  a serverConnection{…} result is what arrives here (security-matrix #7).
 		DefaultBrowseNs{ Json::FindNumber<NsIndex>(o, "defaultBrowseNs").value_or(0) },
 		Description{ Json::FindDefaultSV(o, "description") },
-		IsDefault{ Json::FindBool(o, "is_default") },
+		IsDefault{ Json::FindBool(o, "isDefault").value_or(false) },//the value, not the optional:  braces take an optional<bool> for "has one", which the old, never-matching key hid.
 		Name{ Json::FindDefaultSV(o, "name") },
 		Deleted{ Json::FindTimePoint(o, "deleted") },
 		Slug{ Json::FindDefaultSV(o, "slug") }
@@ -34,8 +34,8 @@ namespace Jde::Opc::Gateway{
 		o.emplace( "id", Id );
 		//o.emplace("client_id", Id);
 		o.emplace("url", Url);
-		o.emplace("certificate_uri", CertificateUri);
-		o.emplace("is_default", IsDefault);
+		o.emplace("certificateUri", CertificateUri);
+		o.emplace("isDefault", IsDefault);
 		o.emplace("defaultBrowseNs", DefaultBrowseNs);
 		o.emplace("name", Name);
 		o.emplace("slug", Slug);

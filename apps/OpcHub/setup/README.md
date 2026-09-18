@@ -182,6 +182,16 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   one a CA your browsers trust issued - `certificate:{ managed:false, path:… }` and `privateKey:{ path:…, passcode:… }` in the
   same args file use that pair as found and never issue or replace it (both files must exist; the public key file the hub's
   identity reads is derived from the private key).  The Web UI uses plain HTTP on 1967 by ruling and needs none of this.
+- Connecting the hub to another OPC UA server (`/apps/gateways`, Add): set the connection's Certificate URI to that server's
+  application URI and the gateway opens a Sign & Encrypt session - Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or
+  Basic256Sha256, the strongest the server shares - with a certificate it issues for the connection
+  (`C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.<slug>.pem` - labelled with the hub's own application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces
+  itself to every server; the Certificate URI is the server's and only selects its endpoints); an empty URI is an unsecured session - the data in the
+  clear, the credential still encrypted to the server's certificate - for a server that publishes an unsecured endpoint at
+  that URL.  Trust is two-way and manual: copy the
+  server's certificate into `C:\ProgramData\Jde-Cpp\OpcHub\ssl\servers` (created on the first start; `gateway.trustedCertDirs`
+  in `config\apps\OpcGateway\config\Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the
+  certificates that may log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's Gateways help topic (`?`) has the details.
 - `release.mutation` seeds the access schema without the Google provider rows `access.mutation` (the dev seed) carries; the
   OPC UA Server component adds them (`access_google.mutation` - First login, above).  The roles grant on `opc.install`, the
   schema the installed OpcServer registers its nodes under (`Opc.Server.Install.jsonnet`'s `resource: "install"`).

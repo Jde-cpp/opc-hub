@@ -5,6 +5,7 @@
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/app/client/IAppClient.h>
 #include "../../src/GatewayAppClient.h"
+#include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
 #include "../../src/auth/UM.h"
 #include "../../src/ql/GatewayQL.h"
@@ -14,10 +15,11 @@
 namespace Jde::Opc::Gateway::Tests{
 	α CreateServerCnnctnAwait::Execute()ι->QL::QLAwait<jobject>::Task{
 		try{
-			let certificateUri{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
-			let url{ Settings::FindSV("/opc/url").value_or( "opc.tcp://127.0.0.1:4840") };
-			let create = Ƒ( "mutation createServerConnection( slug:'{}', name:'My Test Server', certificateUri:'{}', description:'Test basic functionality', url:'{}', isDefault:false ){{id}}",
-				OpcServerSlug,
+			str certificateUri = _certificateUri ? *_certificateUri : string{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
+			str url = _url ? *_url : string{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4840") };
+			let create = Ƒ( "mutation createServerConnection( slug:'{}', name:'{}', certificateUri:'{}', description:'Test basic functionality', url:'{}', isDefault:false ){{id}}",
+				_slug.value_or( OpcServerSlug ),
+				_slug ? *_slug : "My Test Server",//name is unique too - a second row of the caller's shape cannot share the default's.
 				certificateUri,
 				url
 			);
@@ -62,6 +64,15 @@ namespace Jde::Opc::Gateway{
 		}
 		return *con;
 	}
+	α Tests::GetConnection( str slug, str url, str certificateUri )ε->ServerCnnctn{
+		auto con = SelectServerCnnctn( {slug} );
+		if( !con ){
+			BlockTAwait<Access::ProviderPK>( ProviderMAwait{slug, false} );//a stale provider row goes first, as above - the create's hook inserts the slug's own.
+			let id = BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{slug, url, certificateUri} );
+			con = SelectServerCnnctn( id );
+		}
+		return *con;
+	}
 
 	using Web::Client::ClientHttpAwait;
 	using Web::Client::ClientHttpRes;
@@ -84,9 +95,28 @@ namespace Jde::Opc::Gateway{
 		return {};
 	}
 
+	//the policy and mode the session was opened with, read on the client's strand - the only place UA_Client_* calls may run.
+	α Tests::Negotiated( const sp<UAClient>& client )ι->string{
+		if( !client )
+			return "ok";
+		string y{ "ok" }; atomic_flag done;
+		client->PostUA( [&]{
+			UA_Variant policy{}, mode{};
+			if( !UA_Client_getConnectionAttributeCopy(*client, UA_QUALIFIEDNAME(0, (char*)"securityPolicyUri"), &policy) && !UA_Client_getConnectionAttributeCopy(*client, UA_QUALIFIEDNAME(0, (char*)"securityMode"), &mode) ){
+				constexpr array<sv,4> modes{ "Invalid", "None", "Sign", "SignAndEncrypt" };
+				let uri = ToString( *(UA_String*)policy.data );
+				y = Ƒ( "ok ({}/{})", uri.substr(uri.rfind('#')+1), FromEnum(modes, *(UA_MessageSecurityMode*)mode.data) );
+			}
+			UA_Variant_clear( &policy ); UA_Variant_clear( &mode );
+			done.test_and_set(); done.notify_all();
+		});
+		done.wait( false );
+		return y;
+	}
+
 	flat_map<string,ETokenType> _userTokens;
 	α Tests::AvailableUserTokens( sv url_ )ε->ETokenType{
-		const string url{url_};
+		str url{url_};
 		if( _userTokens.contains(url) )
 			return _userTokens[url];
 		Logger logger;

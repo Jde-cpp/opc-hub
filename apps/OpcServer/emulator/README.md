@@ -88,7 +88,8 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 | `opcSchema` | `-opcSchema=` | the acl schema `-grant` writes into (`opc.<buildTarget>`) |
 | `applicationUri` | | this device's identity: what it advertises and the SAN of its channel certificate |
 | `serverApplicationUri` | | the endpoint filter: only endpoints whose server advertises it; `""` takes any |
-| `verifyServerCertificate` | | verify the OpcServer's certificate against `/access/trustedCertDirs` before opening the session (default `true`) |
+| `verifyServerCertificate` | | verify the OpcServer's certificate against `trustedCertDirs` before opening the session (default `true`) |
+| `trustedCertDirs` | | the OPC servers this PLC trusts, one `.pem`/`.crt` per server, read on every connect - the emulator's own list (`/emulator/trustedCertDirs`), not the enrollment anchors |
 | `plc.port` / `plc.bind` / `plc.nodeset` | | the PLC server's endpoint (`bind: ""` = every interface, and a WARN) and the NodeSet2 it loads |
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
@@ -105,7 +106,7 @@ Three certificates, three directions:
 |---|---|---|
 | login (`http.ssl`, CN `PlcEmulator.debug.webServer`) | `Jde-Cpp/PlcEmulator/ssl/certs/…webServer.PlcEmulator.pem` | the AppServer: its `/access/trustedCertDirs` lists the `PlcEmulator` dir (the dev configs; an installed hub's `config/args/install` lists only the OpcServer's - add this one there); the CN becomes the user |
 | UA channel (`emulator.ssl`, CN `PlcEmulator.opc`, SAN `urn:jde:plc-emulator`) | same dir | the OpcServer: the same `trustedCertDirs` entry (again the dev args; the installed ones need it added); it rescans on a failed verify, so a re-issued cert is picked up |
-| the OpcServer's own | `Jde-Cpp/OpcServer/ssl/certs` | this process: `/access/trustedCertDirs` in this config, checked before every session (`verifyServerCertificate`) - the anchors, not the OS root store |
+| the OpcServer's own | `Jde-Cpp/OpcServer/ssl/certs` | this process: `/emulator/trustedCertDirs` in this config, checked before every session (`verifyServerCertificate`) - the anchors, not the OS root store |
 
 The login TLS handshake with the AppServer is anchored separately (`web.client.ssl.caFile` = the AppServer's own cert;
 the hub overlay swaps in the hub's).

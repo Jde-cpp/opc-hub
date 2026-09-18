@@ -48,7 +48,7 @@ local logsDir = args.logsDir;
 		},
 		ssl:{
 			certificate:{
-				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,DNS:$(HostName),IP:127.0.0.1",//the URI: the gateway role's OPC certificate authentication signs with this cert; the DNS/IP: TLS clients match the SAN - $(HostName) as Opc.Hub.jsonnet carries it (HubRoutingTests.CertificateNamesTheHost).
+				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,DNS:$(HostName),IP:127.0.0.1",//the URI: the gateway role's own applicationUri (security-matrix #8) - the gateway role's OPC certificate authentication signs with this cert; the DNS/IP: TLS clients match the SAN - $(HostName) as Opc.Hub.jsonnet carries it (HubRoutingTests.CertificateNamesTheHost).
 				commonName: args.instanceName + ".web"
 			}
 		},
@@ -66,6 +66,7 @@ local logsDir = args.logsDir;
 	},
 	server:{ host: "127.0.0.1", port: 1973, isSsl: false }, //the embedded OpcServer's app client - it still logs in over the socket, to the hub's one listener.
 	gateway:{
+		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is in the test product's one ssl/certs; the gateway role reads its own list, not the enrollment anchors (ServerTrust.h).
 		issuedCerts: instance.http.gateway.ssl,
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false }
 	},

@@ -69,8 +69,9 @@ namespace Jde::Opc::Emulator{
 			//Two different uris (#15).  config->applicationUri only FILTERS the server's endpoints (matchEndpoint: keep those
 			//whose server advertises it; empty keeps all), so it is the server's.  clientDescription's is what we advertise
 			//as ourselves, and the server verifies it against the SAN of the certificate we present (validateCertificate) -
-			//against each other, never against its own - so it is this device's.  The gateway sets both from one string
-			//and so introduces itself as the server it is calling; a PLC has a name of its own.
+			//against each other, never against its own - so it is this device's.  The gateway keeps the same two apart since
+			//security-matrix #8 (UAClient::Configuration);  until then it set both from one string and introduced itself as the
+			//server it was calling.
 			UA_String_clear( &config->applicationUri );
 			if( _serverApplicationUri.size() )
 				config->applicationUri = AllocUAString( _serverApplicationUri );
@@ -94,8 +95,8 @@ namespace Jde::Opc::Emulator{
 		config->secureChannelLifeTime = 60*60*1000;
 		//A UA-enabled PLC checks who it is talking to: without this, setDefault's AcceptAll below would take any certificate
 		//the endpoint answers with, so anything that can occupy the OpcServer's address collects our issued token and our
-		//process values.  Same verifier and same /access/trustedCertDirs anchors as the gateway's - see jde/opc/ServerTrust.h.
-		ServerTrust::Install( *config, "/emulator/verifyServerCertificate", (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
+		//process values.  The gateway's verifier, anchored on this app's own list, /emulator/trustedCertDirs - see jde/opc/ServerTrust.h.
+		ServerTrust::Install( *config, "/emulator", (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
 		//after the policies: setDefault back-fills only what is unset (the verifier just installed, the UDP/interrupt event
 		//sources) and skips its own None policy because securityPoliciesSize!=0.  Before them it would install a
 		//default policy set this block then trips over.
