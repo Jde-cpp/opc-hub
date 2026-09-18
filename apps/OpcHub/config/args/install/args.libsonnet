@@ -19,7 +19,8 @@ paths + {
 	//(reviews/install-issues.md #13).  The dev configs keep one file.
 	logFile: { keep: 3 },
 	//The client certificates the hub trusts (Opc.Hub.jsonnet access.trustedCertDirs): the AppServer role enrolls a user for
-	//each - the OpcServer's login - and the gateway role verifies OPC servers against them.  Only what the installer ships: the
+	//each - the OpcServer's login.  (The OPC servers the gateway role trusts are a separate list, gateway.trustedCertDirs in
+	//Opc.Gateway.jsonnet: the OpcServer's dir and this product's own ssl/servers.)  Only what the installer ships: the
 	//dev config also lists the PLC emulator (apps/OpcServer/emulator), a dir no install creates and so a warning in every
 	//log.  Anything else that should log in with its certificate - the emulator run against this hub, a split gateway - is
 	//its product dir added here (args.certsDir("PlcEmulator")) and the service restarted.

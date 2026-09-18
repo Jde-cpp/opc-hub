@@ -19,9 +19,11 @@ namespace Jde::Opc::Gateway::Tests{
 			fs::remove( UAClient::CryptoSettings(ServerCnnctnNK{Slug}).Certificate.Path, ec );
 		}
 	};
-	//the cert file name keys on the slug, its SAN on the certificateUri - editing a connection's uri must re-issue,
-	//or the gateway presents a stale SAN forever and every session is refused BadCertificateUriInvalid.
-	TEST_F( CertFileTests, ReissuesWhenCertificateUriChanges ){
+	//the cert file name keys on the slug, its SAN on the gateway's applicationUri (/gateway/issuedCerts - security-matrix #8;
+	//the second argument here stands in for an edited config) - a changed uri must re-issue, or the gateway presents a stale
+	//SAN forever and every session is refused BadCertificateUriInvalid.  It is also how the certificates issued before #8,
+	//their SAN the server's uri, replace themselves.
+	TEST_F( CertFileTests, ReissuesWhenApplicationUriChanges ){
 		let path = UAClient::CryptoSettings( ServerCnnctnNK{Slug} ).Certificate.Path;
 		let sanUri = [&]{ return Crypto::Certificate{ Crypto::ReadCertificate(path) }.SanUri(); };
 
@@ -85,7 +87,7 @@ namespace Jde::Opc::Gateway::Tests{
 			fs::remove( path, ec );
 	}
 
-	//server-side counterpart to ReissuesWhenCertificateUriChanges: the OpcServer must trust a transport cert re-issued
+	//server-side counterpart to ReissuesWhenApplicationUriChanges: the OpcServer must trust a transport cert re-issued
 	//AFTER its startup snapshot (UATrust rescans on a failed verify) - pre-fix every secured connect fails
 	//BadCertificateUntrusted until the server restarts. IssuedToken auth, not Certificate: certAuth swaps the transport
 	//cert to AppClient()->SslSettings (Configuration()), while every other credential presents the per-slug issued
@@ -125,12 +127,11 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( _client );
 		UAClient::RemoveClient( move(_client) );//the next connect builds a fresh UAClient => full OPN handshake.
 
-		//in-place re-issue: same SAN+key, new serial/validity => a DER the server's snapshot has never seen.  The SAN uri comes
-		//from the certificate on disk - Connection->CertificateUri is empty here, and an empty uri keeps the config block's
-		//whole SAN, which ReissueReason would read as drift and re-issue again on the next connect (a different DER than the
-		//one this test means the server to reload).
-		let settings = UAClient::CryptoSettings( Connection->Slug );
-		Crypto::IssueCertificate( UAClient::CryptoSettings(Connection->Slug, Crypto::Certificate{Crypto::ReadCertificate(settings.Certificate.Path)}.SanUri()) );
+		//in-place re-issue: same SAN+key, new serial/validity => a DER the server's snapshot has never seen.  The settings are
+		//the ones Configuration() issues with - the config block's SAN, the gateway's own applicationUri (security-matrix #8) -
+		//so ReissueReason sees no drift at the next connect and the DER presented is the one written here.
+		ASSERT_FALSE( Connection->CertificateUri.empty() );//a secured connection:  the issued certificate goes on the channel.
+		Crypto::IssueCertificate( UAClient::CryptoSettings(Connection->Slug) );
 
 		atomic_flag second;
 		Connect( second );//no server restart - the verify shim must rescan trustedCertDirs and trust the new file.
@@ -193,6 +194,14 @@ namespace Jde::Opc::Gateway::Tests{
 		c.wait( false );
 		d.wait( false );
 		EXPECT_FALSE( _exception );
+		//security-matrix #8:  certificate authentication presents the app client's own certificate, so the name the gateway gives
+		//is that certificate's uri - the gateway's, not the server's, which stays the endpoint filter.
+		ASSERT_TRUE( _client );
+		let own = Crypto::Certificate{ Crypto::ReadCertificate(AppClient()->SslSettings->Certificate.Path) }.SanUri();
+		EXPECT_FALSE( own.empty() );
+		EXPECT_EQ( _client->AdvertisedUri(), own );
+		EXPECT_EQ( _client->ApplicationUri(), Connection->CertificateUri );
+		EXPECT_NE( _client->AdvertisedUri(), _client->ApplicationUri() );
 	}
 
 	TEST_F( CertTests, Authenticate_Bad ){
@@ -205,6 +214,7 @@ namespace Jde::Opc::Gateway::Tests{
 		bad.PrivateKey.Path = root/"ssl_badTest"/"private"/bad.PrivateKey.Path.filename();
 		bad.PublicKey.Path = root/"ssl_badTest"/"public"/bad.PublicKey.Path.filename();
 		Crypto::EnsureKeyCertificate( bad );//no-op when a previous run left the tree behind.
+		let badCertificate = bad.Certificate.Path.string();
 		struct Restore final{ //the real settings have to come back even when the body throws - otherwise every later test connects with the bad cert.
 			Crypto::CryptoSettings Good; Crypto::CryptoSettings& Live;
 			~Restore(){ Live = move(Good); }
@@ -217,6 +227,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 		EXPECT_TRUE( _exception );
 		EXPECT_TRUE( _exception && string{_exception->what()}.contains("BadSecurityChecksFailed") );
+		EXPECT_TRUE( _exception && string{_exception->what()}.contains(badCertificate) ) << "the refusal names the certificate that was presented (security-matrix #12)";
 		EXPECT_FALSE( _client );
 		DBG( "{}", _exception ? _exception->what() : "Error no exception." );
 	}

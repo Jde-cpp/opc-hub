@@ -8,7 +8,6 @@ namespace Jde::Opc::Server {
 		UAConfig()ε;
 	private:
 		α SetConfig( PortType port, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void;
-		α SetupUnsecured()ε->void;
 		α SetupSecurityPolicies( const Crypto::CryptoSettings& settings, SRCE )ε->void;
 		α AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void;
 		Logger _logger;

@@ -1,5 +1,11 @@
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
+//The gateway's own OPC UA applicationUri:  what its clients tell a server they are, and so the uri SAN of every certificate
+//they present - the per-connection issued ones (gateway.issuedCerts) and, under certificate authentication, the web
+//certificate (http.ssl) - since a server holds the two against each other.  It is NOT a connection's certificateUri, which
+//is the server's uri and only selects its endpoints (reviews/security-matrix.md #8).  A change re-issues on the same keys,
+//and a third-party server then has the new certificate to trust.
+local applicationUri = "urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME)";
 function( sync=false )
 {
 	local instance = self,
@@ -15,22 +21,29 @@ function( sync=false )
 		},
 		issuedCerts: {
 			certificate:{
-				subjectAltName: "URI:urn:open62541.server.application",
+				subjectAltName: "URI:" + applicationUri,
 				commonName: args.instanceName,
 			},
 			privateKey:{ passcode: "$(JDE_PASSCODE)" }
 		},
-		//Verify every OPC server's certificate against /access/trustedCertDirs before a session is opened (src/ServerTrust.cpp).
+		//Verify every OPC server's certificate against trustedCertDirs, below, before a session is opened (libs/opc ServerTrust.cpp).
 		//open62541 checks the certificate of any endpoint that carries one - None security mode included - so a server whose
 		//certificate is in none of those directories is refused BadCertificateUntrusted, and the connection error says which
 		//server and what to do.  false accepts any certificate (the pre-2026-09 behaviour): a lab setting, never a deployment.
-		verifyServerCertificate: true
-	},
-	//The OPC servers this gateway trusts (gateway.verifyServerCertificate), one .pem/.crt per server, read on every
-	//connect.  A Jde OpcServer on this host publishes its own at certsDir("OpcServer"); for any other server copy its
-	//certificate into one of these directories.  Not the OS root store - OPC server certificates are self-signed.
-	access:{
-		trustedCertDirs: [ args.certsDir("OpcServer") ]
+		verifyServerCertificate: true,
+		//The OPC servers this gateway trusts, one .pem/.crt per server, read on every connect.  A Jde OpcServer on this host
+		//publishes its own at certsDir("OpcServer"); any other server's certificate is copied into this product's own ssl/servers,
+		//which the gateway creates at startup.  Not the OS root store - OPC server certificates are self-signed.  And not
+		///access/trustedCertDirs, where this list lived until 2026-09-18:  in the hub that one is the AppServer role's enrollment
+		//anchors - every certificate under it may create a user - and a server the gateway talks to has no business among them
+		//(reviews/security-matrix.md #3).
+		trustedCertDirs: [ args.certsDir("OpcServer"), args.serversDir("$(PRODUCT_NAME)") ],
+		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.
+		//Where a server offers it only under a token policy of None on a channel that is not Sign & Encrypt, it would cross the
+		//wire in the clear, and the gateway refuses the connection and says why.  true sends it anyway (open62541's
+		//allowNonePolicyPassword): for a server that can do no better, on a network you trust - and the server has to accept
+		//it too (reviews/security-matrix.md #6).
+		allowPlaintextPassword: false
 	},
 	logging:{
 		breakLevel: "Critical",
@@ -125,7 +138,7 @@ function( sync=false )
 		},
 		ssl: {
 			certificate:{
-				subjectAltName: "URI:urn:open62541.server.application",
+				subjectAltName: "URI:" + applicationUri,
 				company:: "Jde-Cpp",
 				fileName: args.instanceName + ".web",
 				commonName: args.instanceName + ".web.$(HostName)",

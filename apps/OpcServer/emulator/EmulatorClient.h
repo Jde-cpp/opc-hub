@@ -6,7 +6,7 @@
 namespace Jde::Opc::Emulator{
 	//The emulator's session on the OpcServer - the client half of a UA-enabled PLC.  Single-threaded: every call runs on
 	//the emulator's loop thread and the data-change callbacks fire inside Iterate().  The recipe - policies
-	//[None, Basic256Sha256], both applicationUris from the certificateUri, the token's auth policy, setDefault LAST - is
+	//[None, Basic256Sha256], the two applicationUris, the token's auth policy, setDefault LAST - is
 	//the gateway's UAClient::Create/Configuration, the one configuration this server is known to accept.
 	struct EmulatorClient final : noncopyable{
 		//applicationUri: this client's identity - advertised, and the SAN of `certificate`.  serverApplicationUri: the endpoint

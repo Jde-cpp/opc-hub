@@ -30,7 +30,7 @@ namespace Jde{
 			//create both gateway certs (UAClient transport + AppClient SslSettings auth) before the server: not required
 			//anymore (UATrust rescans trustedCertDirs on a failed verify), but it spares the first connect a
 			//fail-rescan-retry cycle and still matters for embeddedOpcServer=false against a snapshotting server.
-			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug, Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") );
+			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug );
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http/gateway"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
 			Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") );

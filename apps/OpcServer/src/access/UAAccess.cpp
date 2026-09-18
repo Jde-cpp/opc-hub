@@ -214,8 +214,9 @@ namespace Jde::Opc::Server{
 		INFOT( (ELogTags)EOpcLogTags::Server, "UserToken Uris:  [{}]", move(log) );
 		log.clear();
 		//An explicit /opc/userTokenPolicyUri is stamped on every token policy below whether or not the server offers that
-		//security policy;  a client then has no endpoint to present its token on and every ActivateSession fails.  The
-		//unsecured config is where this bites - it offers None alone, and the setting defaults to Basic256Sha256.
+		//security policy;  a client then has no endpoint to present its token on and every ActivateSession fails.  (The
+		//unsecured config was where this bit - None alone, under a default of Basic256Sha256; it is gone, security-matrix #5 -
+		//but a policy named here and not carried, an Aes one say, still lands in this warning.)
 		if( context.UserTokenPolicyUri.length ){//otherwise each policy names itself, which always matches.
 			string offered; bool found{};
 			for( uint i=0; i<config.securityPoliciesSize; ++i ){

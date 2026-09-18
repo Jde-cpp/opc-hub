@@ -4,6 +4,7 @@
 //installed on a bare UA_ClientConfig and its verifyCertificate called directly, on two certificates the harness already
 //issued - the gateway's app certificate and the per-slug issued certificate (tests/main.cpp EnsureCertificate).
 #include <open62541/client_config_default.h>
+#include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/ServerTrust.h>
@@ -15,6 +16,11 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
+	struct RestoreTrustedCertDirs final{//puts /gateway/trustedCertDirs back however the test leaves - every later connect in the process reads it.
+		RestoreTrustedCertDirs(){ for( let& dir : Settings::FindStringArray("/gateway/trustedCertDirs") ) Dirs.emplace_back( dir ); }
+		~RestoreTrustedCertDirs(){ try{ Settings::Set("/gateway/trustedCertDirs", Dirs); }catch( const std::exception& ){} }
+		jarray Dirs;
+	};
 	struct ServerTrustTests : ::testing::Test{
 		static constexpr Jde::Handle TestHandle{ 0x5e77 };
 		Logger _logger{ TestHandle };
@@ -74,11 +80,51 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 
+	//security-matrix #3:  the verifier reads the app's own list, /gateway/trustedCertDirs, and never /access/trustedCertDirs -
+	//in the hub, and in this harness (the AppServer is in-process), those are the enrollment anchors:  every certificate under
+	//them may create a user, so an OPC server's certificate has no business there, and a certificate that may enroll is not
+	//thereby a server the gateway will talk to.  _trusted sits in the harness's enrollment directory, which makes it the probe.
+	TEST_F( ServerTrustTests, TheEnrollmentAnchorsAreNotTheServerTrust ){
+		let enrollment = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( enrollment.empty() );
+		ASSERT_TRUE( find_if(enrollment, [&](let& dir){ return fs::equivalent(fs::path{dir}, _trusted.parent_path()); })!=enrollment.end() ) << _trusted;
+		RestoreTrustedCertDirs restore;
+		ServerTrust::OverrideTrustedCertDirs( nullopt );//the setting itself is the subject.
+
+		Settings::Set( "/gateway/trustedCertDirs", jarray{} );
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 0u );//nothing borrowed from the enrollment list.
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+		let rejection = ServerTrust::Rejection( _config );
+		EXPECT_NE( rejection.find("/gateway/trustedCertDirs"), string::npos ) << rejection;//names the list that is read.
+		EXPECT_EQ( rejection.find("/access/trustedCertDirs"), string::npos ) << rejection;
+
+		Settings::Set( "/gateway/trustedCertDirs", jarray{_trustedDir.string()} );
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 1u );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+	}
+
+	//EnsureDirs - the gateway's startup step - creates what is this product's to create:  its ssl/servers, where an operator drops
+	//a third-party server's certificate.  Another product's directory is that product's:  absent there means not installed.
+	TEST_F( ServerTrustTests, EnsureDirsCreatesOnlyThisProductsDirectories ){
+		let own = Process::AppDataFolder()/"ssl"/Ƒ( "servers-test-{}", Process::ProcessId() );
+		let foreign = _trustedDir/"another-product"/"ssl"/"certs";
+		ASSERT_FALSE( fs::exists(own) ) << own;
+		RestoreTrustedCertDirs restore;
+		Settings::Set( "/gateway/trustedCertDirs", jarray{own.string(), foreign.string()} );
+		ServerTrust::EnsureDirs( "/gateway" );
+		EXPECT_TRUE( fs::is_directory(own) ) << own;
+		EXPECT_FALSE( fs::exists(foreign) ) << foreign;
+		std::error_code ec; fs::remove( own, ec );
+	}
+
 	//The live half:  a connect to the embedded OpcServer with no anchors must be refused by OUR verifier, with the detail
 	//naming the server and the switch, and leave nothing behind - the same credential connects once the anchors are back.
 	//IssuedToken, as TrustReloadTests:  the per-slug issued cert is what every non-certificate credential presents, and
-	//the OpcServer offers no Username policy.  The anchors are swapped through ServerTrust's seam rather than the setting -
-	///access/trustedCertDirs is also the in-process AppServer's enrollment anchor (see the header).
+	//the OpcServer offers no Username policy.  The anchors are swapped through ServerTrust's seam rather than the setting,
+	//which every other client in the process is reading (see the header).
 	class ServerTrustLiveTests : public Auth{
 	protected:
 		ServerTrustLiveTests()ι:Auth{ETokenType::IssuedToken}{}

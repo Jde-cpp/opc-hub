@@ -31,15 +31,15 @@ local serverApplicationUri = "urn:open62541.server.application";
 	http:{ ssl:{ productName: "PlcEmulator" } }, //keys under $(companyDir)/PlcEmulator/ssl; -createCert issues it.
 	//the AppServer is its own root; without this anchor the login TLS handshake rejects its self-signed cert (as the OpcServer/gateway configs anchor it).
 	web:{ client:{ ssl:{ caFile: "$(ProgramData)/Jde-Cpp/AppServer/ssl/certs/AppServer.pem" } } },
-	//The OPC servers this PLC will talk to (emulator.verifyServerCertificate), one .pem/.crt per server, read on every
-	//connect - the same list and the same verifier the gateway uses.  A Jde OpcServer on this host publishes its own here;
-	//for any other server copy its certificate in.  Not the OS root store - OPC server certificates are self-signed.
-	access:{ trustedCertDirs: [ "$(ProgramData)/Jde-Cpp/OpcServer/ssl/certs" ] },
 	emulator:{
 		transport: "pubsub", //pubsub | write
-		//Verify the OpcServer's certificate against /access/trustedCertDirs before opening the session (jde/opc/ServerTrust.h),
-		//as the gateway does with /gateway/verifyServerCertificate.  The anchors are /access/trustedCertDirs above.
+		//Verify the OpcServer's certificate against trustedCertDirs before opening the session (jde/opc/ServerTrust.h), as the
+		//gateway does with /gateway/verifyServerCertificate and /gateway/trustedCertDirs.
 		verifyServerCertificate: true,
+		//The OPC servers this PLC will talk to, one .pem/.crt per server, read on every connect - the gateway's verifier, on a
+		//list of this app's own.  A Jde OpcServer on this host publishes its own here; for any other server copy its
+		//certificate into a directory named here.  Not the OS root store - OPC server certificates are self-signed.
+		trustedCertDirs: [ "$(ProgramData)/Jde-Cpp/OpcServer/ssl/certs" ],
 		url: "opc.tcp://127.0.0.1:4840",
 		applicationUri: applicationUri,
 		serverApplicationUri: serverApplicationUri,

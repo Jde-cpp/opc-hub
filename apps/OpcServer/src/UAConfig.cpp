@@ -18,10 +18,15 @@ namespace Jde::Opc::Server{
 			.logging = &_logger,
 		}{
 		try{
-			if( auto ssl = Settings::FindObject("/opcServer/ssl"); ssl )
-				SetupSecurityPolicies( Crypto::CryptoSettings{*ssl} );
-			else
-				SetupUnsecured();
+			//One shape:  secured.  Without /opcServer/ssl this used to build a second one - a None endpoint with no certificate and no
+			//trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's own
+			//core lets nobody but an anonymous session use:  a non-anonymous token on a None channel under a None token policy is
+			//skipped unless allowNonePolicyPassword, and then only a password (reviews/security-matrix.md #5, deleted 09-18).  It had
+			//no config, no test and no use, and a missing block is far likelier a hidden `ssl::` or a mistyped key than a decision -
+			//so it reads as the configuration error it is, and the server does not start (UAConfigTests.NoSslIsRefused).
+			let ssl = Settings::FindObject( "/opcServer/ssl" );
+			THROW_IF( !ssl, "No '/opcServer/ssl':  the OPC UA server runs only with a certificate - its secured policies, beside the None endpoint clients discover it through.  Every shipped config sets it; look for a hidden `ssl::` or a mistyped key." );
+			SetupSecurityPolicies( Crypto::CryptoSettings{*ssl} );
 		}
 		catch( std::exception& ){
 			UA_ServerConfig_clear( this );
@@ -32,12 +37,6 @@ namespace Jde::Opc::Server{
 		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", Ƒ("Jde-Cpp OpcServer [{}]", accessResource).c_str() );
 	}
 
-	//No /opcServer/ssl.  This used to be UA_ServerConfig_setDefault, which is setMinimalCustomBuffer - and that installs
-	//UA_AccessControl_default( config, allowAnonymous=true, … ), whose getUserRightsMask/getUserAccessLevel/allowBrowseNode
-	//answer 0xFFFFFFFF/0xFF/true to every session, never reaches UAAccess::Init, and hard-codes port 4840 while ignoring
-	///opc/tokenTypes/* (opcserver-review3 #7).  Silently, too: the missing "UserToken Uris" INFO was the only tell, and
-	//a hidden `ssl::` or a mistyped key reads here exactly like a deliberate omission.  Same sequence as the vendor's,
-	//with our access control in place of its allow-all and the configured port.
 	//"/opcServer/address": the interface the endpoint listens on.  Absent or null: every interface - open62541's own default, an
 	//empty host in the url.  The current-user install binds loopback (args/install-user, install-issues #16), so Windows raises
 	//no firewall prompt for it.  setBasics writes serverUrls as opc.tcp://:port; this puts the host in, which the tcp layer then
@@ -52,16 +51,6 @@ namespace Jde::Opc::Server{
 		config.serverUrlsSize = 1;
 		config.serverUrls[0] = UA_STRING_ALLOC( Ƒ("opc.tcp://{}:{}", address, port).c_str() );
 		INFO( "OPC UA endpoint bound to {}:{} only ('/opcServer/address').", address, port );
-	}
-
-	α UAConfig::SetupUnsecured()ε->void{
-		let port = Settings::FindNumber<PortType>( "/opcServer/port" ).value_or( 4840 );
-		WARN( "No '/opcServer/ssl':  the OPC UA server on port {} runs unencrypted - one None endpoint, no trust list, no client-certificate verification.  Both shipped configs set it.", port );
-		UAε( UA_ServerConfig_setBasics_withPort(this, port) );
-		applyAddress( *this, port );
-		UAε( UA_ServerConfig_addSecurityPolicyNone(this, nullptr) );
-		UAAccess::Init( *this );//throws "No allowed policies set." when /opc/tokenTypes/* leaves nothing enabled - a server nobody can activate a session on, which is the fail-closed answer.
-		UAε( UA_ServerConfig_addAllEndpoints(this) );
 	}
 
 	α UAConfig::SetupSecurityPolicies( const Crypto::CryptoSettings& settings, SL sl )ε->void{
@@ -131,8 +120,11 @@ namespace Jde::Opc::Server{
     /* Basic256Sha256 */
     UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(this, &localCertificate,&decryptedPrivateKey) );
 
-    //UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
-    //UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
+    //The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
+    //securityLevel - and one that carries Basic256Sha256 alone (the PLC emulator, most installed clients) still connects
+    //(reviews/security-matrix.md #4).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
+    UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
+    UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
     UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );
     //UAε( UA_ServerConfig_addSecurityPolicyEccNistP256(this, &localCertificate, &decryptedPrivateKey);
     UA_ByteString_memZero( &decryptedPrivateKey );

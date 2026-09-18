@@ -21,6 +21,9 @@
 	local paths = self,
 	companyDir:: "$(ProgramData)/Jde-Cpp",
 	certsDir( product ):: paths.companyDir+"/"+product+"/ssl/certs",
+	//The OPC servers a gateway trusts beyond the bundled one (gateway.trustedCertDirs): third-party server certificates, copied in
+	//by an operator.  Beside ssl/certs, never in it - certs is what the product issues for itself, and what enrolls with a hub.
+	serversDir( product ):: paths.companyDir+"/"+product+"/ssl/servers",
 	instanceName: "$(PRODUCT_NAME)",
 	//`paths.instanceName`, not `self.instanceName`: helpers are called through the *import* binding, so self is this
 	//object rather than the caller's merged one - which is what we want here, the bare product without the override.

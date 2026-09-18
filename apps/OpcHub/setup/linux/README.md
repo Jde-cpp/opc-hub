@@ -160,6 +160,17 @@ nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp`
   jde-opcserver`, then log in with Google: the site's origin must be registered under the OAuth client id the hub serves
   (`googleAuthClientId` in `apps/OpcHub/config/args/install/args.libsonnet`) - the Windows README's "First login" has the
   details.  The tarball's `install.sh` seeds the same with `--opcserver` and drops the seeds without it.
+- Connecting the hub to another OPC UA server (`/apps/gateways`, Add): set the connection's Certificate URI to that server's
+  application URI and the gateway opens a Sign & Encrypt session - Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or
+  Basic256Sha256, the strongest the server shares - with a certificate it issues for the connection
+  (`/var/lib/Jde-Cpp/OpcHub/ssl/certs/OpcHub.<slug>.pem` - labelled with the hub's own application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces
+  itself to every server; the Certificate URI is the server's and only selects its endpoints); an empty URI is an unsecured session - the data in the clear, the
+  credential still encrypted to the server's certificate - for a server that publishes an unsecured endpoint at that URL.
+  Trust is two-way and manual: copy the server's
+  certificate into `/var/lib/Jde-Cpp/OpcHub/ssl/servers` (created on the first start; `gateway.trustedCertDirs` in
+  `apps/OpcGateway/config/Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the certificates that may
+  log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's
+  Gateways help topic (`?`) has the details.
 - MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile like
   `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` - the driver beside the exe, the `sql/mysql` scripts in the
   product's `sql/` - re-registered with `-include=args/install-mysql` through `systemctl edit`.

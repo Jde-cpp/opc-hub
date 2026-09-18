@@ -26,12 +26,12 @@ namespace Jde::Opc::Gateway::Soak{
 	//Opc.Soak.jsonnet supplies the gateway's product and CN.
 	Ω createGatewayCerts()ε->void{
 		for( let& leg : ActiveServers() ){
-			if( leg.CertificateUri.empty() ){//no uri -> the gateway connects with SecurityPolicy None and never presents a cert.
+			if( leg.CertificateUri.empty() ){//no uri -> the gateway connects with SecurityPolicy None and presents no cert on the channel;  the one it encrypts the user token with (UAClient::Configuration) it issues itself at connect, and nobody has to trust it.
 				INFO( "No certificateUri for '{}' - skipping certificate.", leg.Slug );
 				continue;
 			}
-			UAClient::EnsureCertificate( leg.Slug, leg.CertificateUri );
-			let certificateFile = UAClient::CryptoSettings( leg.Slug, leg.CertificateUri ).Certificate.Path;
+			UAClient::EnsureCertificate( leg.Slug );//its SAN is the gateway's own applicationUri (/gateway/issuedCerts), not the leg's certificateUri - security-matrix #8.
+			let certificateFile = UAClient::CryptoSettings( leg.Slug ).Certificate.Path;
 			INFO( "Gateway certificate ready: {}.", certificateFile.string() );
 			if( leg.User.size() )
 				INFO( "External server '{}': trust {} in its server configuration before the run.", leg.Slug, certificateFile.string() );
