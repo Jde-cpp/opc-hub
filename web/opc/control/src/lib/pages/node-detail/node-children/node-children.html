@@ -74,30 +74,30 @@
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
 						@else if( r.dataType==ETypes.Boolean && !r.isArray ){
-							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="r.userAccessLevel < EAccess.Write"></mat-checkbox>
+							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale"></mat-checkbox>
 						}
 						@else if( r.isInteger && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="r.userAccessLevel < EAccess.Write" (change)="changeDouble(r,$event);">
+							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
 						}
 						@else if( r.isUnsigned && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="r.userAccessLevel < EAccess.Write" (change)="changeDouble(r,$event);">
+							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
 						}
 						@else if( r.isFloating && !r.isArray ){
-							<input type=number [value]=r.value [disabled]="r.userAccessLevel < EAccess.Write" (change)="changeDouble(r,$event);">
+							<input type=number [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
 						}
 						@else if( [ETypes.String, ETypes.LocalizedText].includes(r.dataType) && !r.isArray ){
-							<input type="text" [value]=r.value [disabled]="r.userAccessLevel < EAccess.Write" (change)="changeString(r,$event);">
+							<input type="text" [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeString(r,$event);">
 						}
 						@else if( r.dataType==ETypes.BaseData && !r.isArray ){
-							<span>{{toString(r.value)}}</span>
+							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
 						@else if( [ETypes.DateTime, ETypes.UtcDateTime].includes(r.dataType) && !r.isArray ){
-								<input matInput [matDatepicker]="picker" [value]="dateValue(r)" (dateChange)="changeDate(r, $event);">
+								<input matInput [matDatepicker]="picker" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" (dateChange)="changeDate(r, $event);">
 								<mat-datepicker-toggle matSuffix [for]="picker"></mat-datepicker-toggle>
 								<mat-datepicker #picker></mat-datepicker>
 						}
 						@else if( r.customDataType && !r.isArray ){
-							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="r.userAccessLevel < EAccess.Write">
+							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale">
 								@for( option of r.customDataType.enumValues; track option.id ){
 									<mat-option [value]=option.id>{{option.name}}</mat-option>
 								}
@@ -106,6 +106,21 @@
 						<!-- <span *ngIf="r.dataType==ETypes.None">{{toString(r.value)}}</span> -->
 						<!-- <span *ngIf="valueType(r.value)!='boolean'" [title]="toString(r.value)">{{valueType(r.value)}}</span> -->
 						<!--  -->
+						<!--the reading's quality, beside the value - only where the view hides the Status column, which says it better:  a Bad or Uncertain reading must not pass for a good one there.  A shape per severity and a label, so the colour is never the only signal;  focusable, so the tooltip is a keyboard's too-->
+						@if( !statusShown() && qualityIcon(r); as icon ){
+							<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r)" [fontIcon]="icon"></mat-icon>
+						}
+					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="status">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Status </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">
+						@if( status(r); as text ){
+							@if( qualityIcon(r); as icon ){
+								<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
+							}
+							<span class="status-text" [class.status-good]="!r.sc" [matTooltip]="statusCode(r)">{{text}}</span>
+						}
 					</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="access">

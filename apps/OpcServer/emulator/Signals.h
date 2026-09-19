@@ -1,4 +1,5 @@
 #pragma once
+#include "Quality.h"
 
 namespace Jde::Opc::Emulator{
 	//How a tag's value evolves.  Free-running modes ignore the device's run command; Follow tracks it; Command tags are
@@ -14,6 +15,8 @@ namespace Jde::Opc::Emulator{
 		EMode Mode{ EMode::Counter };
 		double Min{ 0 }, Max{ 100 }, Step{ 1 }, RatedRpm{ 1450 };
 		Duration Period{ 30s }, Tau{ 3s };
+		optional<double> SensorMin, SensorMax;//the transmitter's range: a reading outside it is published pinned there, with the limit bit (Quality.h).
+		vector<QualityWindow> Quality;//the scheduled faults, first active wins.
 	};
 
 	//One tag's value generator.  `dt` is the time since the previous sample, `command` the device's run command.

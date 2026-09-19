@@ -33,6 +33,12 @@ namespace Jde::Opc::Emulator::Tests{
 			UA_Variant_clear( &v );
 			return y;
 		}
+		Ω read( const NodeId& node )ι->UA_DataValue{//the whole DataValue, as the publisher samples it; the caller clears it.
+			UA_ReadValueId id; UA_ReadValueId_init( &id );
+			id.nodeId = node;
+			id.attributeId = UA_ATTRIBUTEID_VALUE;
+			return UA_Server_read( _plc->Ptr(), &id, UA_TIMESTAMPSTORETURN_NEITHER );
+		}
 		static up<PlcServer> _plc;
 	};
 	up<PlcServer> PlcServerTests::_plc;
@@ -57,6 +63,20 @@ namespace Jde::Opc::Emulator::Tests{
 		_plc->Write( 4, 42 );
 		EXPECT_EQ( readDouble(_plc->Contract().Fields[0].Node), optional<double>{1234.5} );
 		EXPECT_EQ( readDouble(_plc->Contract().Fields[4].Node), optional<double>{42} );
+	}
+	//The quality is stored with the value - Bad included, because the OpcServer's reader skips a field without one - and
+	//the next Good write replaces it.
+	TEST_F( PlcServerTests, WriteCarriesTheStatus ){
+		let& node = _plc->Contract().Fields[1].Node;
+		constexpr UA_StatusCode pinnedHigh{ UA_STATUSCODE_UNCERTAINENGINEERINGUNITSEXCEEDED | 0x0400 | 0x0200 };//InfoType DataValue + LimitBits High
+		for( let status : {pinnedHigh, (UA_StatusCode)UA_STATUSCODE_BADSENSORFAILURE, (UA_StatusCode)UA_STATUSCODE_GOOD} ){
+			_plc->Write( 1, 777, status );
+			auto dv = read( node );
+			EXPECT_EQ( dv.status, status ) << UA_StatusCode_name( status );
+			ASSERT_TRUE( dv.hasValue && UA_Variant_hasScalarType(&dv.value, &UA_TYPES[UA_TYPES_DOUBLE]) ) << UA_StatusCode_name( status );
+			EXPECT_EQ( *(UA_Double*)dv.value.data, 777 );
+			UA_DataValue_clear( &dv );
+		}
 	}
 	TEST_F( PlcServerTests, WriteRefusesAnUnknownField ){
 		EXPECT_ANY_THROW( _plc->Write(99, 1) );

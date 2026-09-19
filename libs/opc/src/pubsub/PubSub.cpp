@@ -120,6 +120,12 @@ namespace Jde::Opc::PubSub{
 		dsw.name = uv( writerName );
 		dsw.dataSetWriterId = c.DataSetWriterId;
 		dsw.keyFrameCount = 0;//every message a keyframe: open62541's reader discards anything else ("Only keyframes are supported", ua_pubsub_reader.c), so any other value silently drops samples.  0 - not 1 - is what suppresses delta frames: the writer emits a delta while `deltaFrameCounter>0 && deltaFrameCounter<=keyFrameCount` (ua_pubsub_writer.c), so 1 alternates key/delta and 10 sent nine deltas per keyframe.
+		//A reading travels with its quality (OPC 10000-4 7.38).  The writer samples each field's whole DataValue and then
+		//strips the status unless this bit is set (ua_pubsub_writer.c); with it the fields go out DataValue-encoded instead
+		//of as bare variants.  The reader needs nothing in return - the encoding is in the message header, and it writes
+		//the received DataValue, status included, into the target variable (ua_pubsub_reader.c `writeVal.value = *field`).
+		//It does skip a field that carries no value, so a publisher keeps the value on a Bad reading.
+		dsw.dataSetFieldContentMask = UA_DATASETFIELDCONTENTMASK_STATUSCODE;
 		check( UA_Server_addDataSetWriter(&server, WriterGroup, DataSet, &dsw, &DataSetWriter), "addDataSetWriter", sl );
 		check( UA_Server_enableAllPubSubComponents(&server), "enableAllPubSubComponents", sl );
 		INFO( "PubSub writer: {}", c.ToString() );

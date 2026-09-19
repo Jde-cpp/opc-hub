@@ -16,6 +16,7 @@ import { GATEWAY_SERVICE, GatewayService, SubscriptionResult } from '../../../se
 import { NodeId } from '../../../model/node-id';
 import { Variable } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
+import { OpcError } from '../../../model/opc-error';
 import { EAccess } from '../../../model/types';
 import { NodeChildren } from './node-children';
 
@@ -27,12 +28,17 @@ describe( 'NodeChildren subscription values', ()=>{
 	let page:NodeChildren;
 	let pushes:Subject<SubscriptionResult>;
 	let unsubscribed:{nodes:NodeId[]}[];
-	let subscribes:number, adds:number;
+	let subscribes:number, adds:number, nameFetches:number;
+	let written:any;//what the gateway's write/read stub answers with
 	beforeEach( ()=>{
 		pushes = new Subject<SubscriptionResult>();
 		unsubscribed = [];
-		subscribes = 0; adds = 0;
+		subscribes = 0; adds = 0; nameFetches = 0;
+		written = undefined;
 		const gateway = {
+			updateErrorCodes: ()=>{ ++nameFetches; return Promise.resolve(); },
+			write: ()=>Promise.resolve( written ),
+			read: ()=>Promise.resolve( written ),
 			subscribe: ()=>{ ++subscribes; return pushes.asObservable(); },
 			addToSubscription: ()=>{ ++adds; },
 			unsubscribe: ( _cnnctn:string, nodes:NodeId[] )=>{ unsubscribed.push({nodes}); return Promise.resolve(); }
@@ -118,6 +124,77 @@ describe( 'NodeChildren subscription values', ()=>{
 		page.onSubscriptionChange( {added: [X], removed: []} as any );
 		pushes.complete();
 		expect( page.subscription ).toBeUndefined();
+	} );
+
+	//OPC 10000-4 7.38:  the push handler set `row.value` alone, so the quality the socket carried never reached the row - and a
+	//Bad reading arrived as an OpcError that the number editor bound as its value.  Fresh rows:  X and Y above are shared.
+	describe( 'quality', ()=>{
+		const bad = 0x808C0000, uncertain = 0x40940600;
+		let row:Variable;
+		beforeEach( ()=>{
+			row = new Variable( <any>{ns:2, i:7, name:"q", browse:{ns:2, name:"q"}, value: 5, userAccessLevel: EAccess.Read | EAccess.Write} );
+			setNodes( [row], true );
+			page.onSubscriptionChange( {added: [row], removed: []} as any );
+		} );
+		const push = ( reading:object )=>pushes.next( {opcId: 'local', node: row.nodeId, ...reading} as any );
+
+		it( 'keeps the quality a push carries', ()=>{
+			push( {value: 1500, sc: uncertain} );
+			expect( row ).toMatchObject( {value: 1500, sc: uncertain} );
+			expect( page.readOnly(row) ).toBe( false );//uncertain is still a reading, and still the user's to write over
+			expect( page.qualityIcon(row) ).toBe( "warning" );
+		} );
+
+		it( 'holds the last value, locked, through a Bad reading', ()=>{
+			push( {sc: bad} );
+			expect( row ).toMatchObject( {value: 5, sc: bad} );
+			expect( page.readOnly(row) ).toBe( true );
+			expect( page.qualityIcon(row) ).toBe( "error" );
+			expect( page.statusTooltip(row) ).toContain( "0x808C0000" );
+			expect( page.statusCode(row) ).toBe( "0x808C0000" );//the Status cell's tooltip:  the code alone, beside the name the cell shows
+		} );
+
+		it( 'never puts a failure in the value', ()=>{
+			push( {value: new OpcError(0x80340000, "Subscribe", "", undefined), sc: 0x80340000} );
+			expect( row.value ).toBe( 5 );
+			expect( row.sc ).toBe( 0x80340000 );
+		} );
+
+		it( 'unlocks on the next good reading', ()=>{
+			push( {sc: bad} );
+			push( {value: 6, sc: 0} );
+			expect( row ).toMatchObject( {value: 6, sc: 0} );
+			expect( page.readOnly(row) ).toBe( false );
+			expect( page.qualityIcon(row) ).toBeUndefined();
+			expect( page.status(row) ).toBe( "Good" );
+			expect( page.statusTooltip(row) ).toBe( "" );//plain Good has nothing to add
+			expect( page.statusCode(row) ).toBe( "" );
+		} );
+
+		//a fault holds its code on every tick it lasts - one request for its name, not one a second.
+		it( 'asks for a code\'s name when the code changes, not on every push', ()=>{
+			const code = 0x80AB0000;//one no other test has named
+			push( {value: 1, sc: code} );
+			push( {value: 2, sc: code} );
+			push( {value: 3, sc: code + 0x0600} );//the same name, flagged - still a change of code
+			expect( nameFetches ).toBe( 2 );
+			push( {value: 4, sc: 0} );
+			expect( nameFetches ).toBe( 2 );//Good needs no name
+		} );
+
+		//the icon beside the value stands in for the Status column - beside it, it would only say the same thing twice.
+		it( 'leaves the quality to the Status column where the view shows one', ()=>{
+			page.views.set( [NodeView.default(), new NodeView({name: "quality", configColumns: ["id", "name", "snapshot", "status"], sort: []}, NodeView.schema)] );
+			expect( page.statusShown() ).toBe( false );//the default view hides Status, so the icon is what says it
+			page.viewIndex.set( 1 );
+			expect( page.statusShown() ).toBe( true );
+		} );
+
+		it( 'takes a write\'s echo as a reading, quality and all', async ()=>{
+			written = {value: 9, sc: uncertain};
+			await page.changeDouble( row, {target: {value: "9"}} as any );
+			expect( row ).toMatchObject( {value: 9, sc: uncertain} );
+		} );
 	} );
 } );
 

@@ -61,23 +61,29 @@ namespace Jde::Opc::Emulator{
 		}
 		return {};
 	}
-	α PlcServer::Write( uint field, double value )ε->void{
+	α PlcServer::Write( uint field, double value, UA_StatusCode status )ε->void{
 		let& f = _contract.Fields.at( field );
-		UA_Variant v;
-		if( f.Type==&UA_TYPES[UA_TYPES_BOOLEAN] ){
-			UA_Boolean b = value!=0;
-			UA_Variant_setScalar( &v, &b, f.Type );
-			UAε( UA_Server_writeValue(_server, f.Node, v) );
-		}
-		else if( f.Type==&UA_TYPES[UA_TYPES_FLOAT] ){
-			UA_Float x = (UA_Float)value;
-			UA_Variant_setScalar( &v, &x, f.Type );
-			UAε( UA_Server_writeValue(_server, f.Node, v) );
-		}
+		UA_Boolean b = value!=0;
+		UA_Float x = (UA_Float)value;
+		UA_WriteValue write;
+		UA_WriteValue_init( &write );
+		write.nodeId = f.Node;//borrowed, like the scalars: nothing here is cleared.
+		write.attributeId = UA_ATTRIBUTEID_VALUE;
+		if( f.Type==&UA_TYPES[UA_TYPES_BOOLEAN] )
+			UA_Variant_setScalar( &write.value.value, &b, f.Type );
+		else if( f.Type==&UA_TYPES[UA_TYPES_FLOAT] )
+			UA_Variant_setScalar( &write.value.value, &x, f.Type );
 		else{
 			THROW_IF( f.Type!=&UA_TYPES[UA_TYPES_DOUBLE], "Field '{}' is {} - the emulator writes Boolean, Float or Double.", f.Name, f.Type->typeName );
-			UA_Variant_setScalar( &v, &value, f.Type );
-			UAε( UA_Server_writeValue(_server, f.Node, v) );
+			UA_Variant_setScalar( &write.value.value, &value, f.Type );
 		}
+		//The whole DataValue, not UA_Server_writeValue's variant: the writer samples the node's DataValue and publishes its
+		//status with it (PubSub::Writer's field content mask).  The value is always there, Bad or not - the OpcServer's
+		//reader skips a field without one (ua_pubsub_reader.c `if(!field->hasValue) continue`), so a valueless Bad would
+		//never arrive.  hasStatus always: the node stores it as written, which is how a reading returns to Good.
+		write.value.hasValue = true;
+		write.value.status = status;
+		write.value.hasStatus = true;
+		UAε( UA_Server_write(_server, &write) );
 	}
 }

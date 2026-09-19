@@ -1,4 +1,5 @@
 #include "Devices.h"
+#include <ranges>
 #include <jde/fwk/str.h>
 
 #define let const auto
@@ -16,6 +17,7 @@ namespace Jde::Opc::Emulator{
 				Tag tag{ TagSpec{Json::AsObject(t, sl), sl} };
 				if( tag.Spec.Mode!=EMode::Command ){
 					tag.Generator = MakeGenerator( tag.Spec );
+					tag.Quality = TagQuality{ tag.Spec.Quality, tag.Spec.SensorMin, tag.Spec.SensorMax };
 					if( findField )
 						tag.Field = findField( Ƒ("{}.{}", device.Name, tag.Spec.Name) );
 				}
@@ -29,7 +31,8 @@ namespace Jde::Opc::Emulator{
 			vector<string> routes;
 			for( auto& tag : device.Tags ){
 				tag.Owner = &device;
-				routes.push_back( Ƒ("{}={}{}", tag.Spec.Name, ToString(tag.Spec.Mode), tag.Spec.Mode==EMode::Command ? " (subscribed)" : tag.Field ? " (published)" : " (written)") );
+				let quality = tag.Spec.Quality.size() ? Ƒ( " quality={}", Str::Join(tag.Spec.Quality | std::views::transform([](let& w){ return ToString(w.Status); }), "/") ) : string{};
+				routes.push_back( Ƒ("{}={}{}{}", tag.Spec.Name, ToString(tag.Spec.Mode), tag.Spec.Mode==EMode::Command ? " (subscribed)" : tag.Field ? " (published)" : " (written)", quality) );
 			}
 			INFO( "[{}]{}", device.Name, Str::Join(routes, ", ") );
 		}

@@ -23,7 +23,19 @@ class TestGateway extends Gateway{
 		super( {host:'localhost', port:1968, instanceName:'gw'} as any, ETransport.Unsecure, {} as HttpClient,
 			{user: ()=>undefined, logout: ()=>{}} as unknown as AuthStore, new OpcStore() );
 	}
-	override async ql<Y>():Promise<Y>{ return {serverConnections: []} as Y; }//the constructor's connection query - no http here
+	qlResult:any = {serverConnections: []};
+	override async ql<Y>():Promise<Y>{ return this.qlResult as Y; }//the constructor's connection query - no http here;  then whatever a test's read() should get
+	posted:any;
+	override async post<Y>():Promise<Y>{ return this.posted as Y; }//write()'s mutation
+	gets:string[] = [];
+	release?:()=>void;//set = a get() parks until the test lets it go
+	names:{sc:number, message:string}[] = [];
+	override async get<Y>( target:string ):Promise<Y>{
+		this.gets.push( target );
+		if( this.release )
+			await new Promise<void>( r=>this.release = r );
+		return {errorCodes: this.names} as Y;
+	}
 	//the subscribe reply the server would send, or a rejection standing in for a send that never got there.
 	statusCodes:( number|undefined )[] = [];
 	rejectWith?:any;
@@ -100,6 +112,78 @@ describe( 'Gateway subscribe failures', ()=>{
 		await Promise.resolve(); await Promise.resolve();
 		expect( results.map(r=>r.sc) ).toEqual( [0x80340000] );
 		expect( (results[0].value as OpcError).sc ).toBe( 0x80340000 );
+	} );
+} );
+
+//OPC 10000-4 7.38:  the quality travels with the value on every path.  read(), write() and snapshot() ran toValue() alone and
+//dropped it;  nodeValues swapped a Bad reading's value for an OpcError, though the socket carries the one the server holds.
+describe( 'Gateway readings', ()=>{
+	const bad = 0x808C0000, uncertain = 0x40940600;
+	let gateway:TestGateway;
+	let results:SubscriptionResult[];
+	beforeEach( async ()=>{
+		gateway = new TestGateway();
+		results = [];
+		gateway.statusCodes = [undefined];
+		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		await Promise.resolve();
+	} );
+	const push = ( values:object[], sc?:number )=>(gateway as any).nodeValues( {opcId, node: {namespaceIndex: 2, numeric: 1}, values, sc} );
+
+	it( 'pushes a Good reading as its value', ()=>{
+		push( [{doubleValue: 7}] );//proto3 leaves 0/Good off the wire
+		expect( results ).toMatchObject( [{value: 7, sc: 0}] );
+	} );
+
+	it( 'keeps an Uncertain reading\'s value and says what it is worth', ()=>{
+		push( [{doubleValue: 1500}], uncertain );
+		expect( results ).toMatchObject( [{value: 1500, sc: uncertain}] );
+	} );
+
+	it( 'keeps the value a Bad push carries, rather than an OpcError in its place', ()=>{
+		push( [{doubleValue: 612}], bad );
+		expect( results ).toMatchObject( [{value: 612, sc: bad}] );
+	} );
+
+	it( 'has no value for a Bad push that carries none - not an empty array', ()=>{
+		push( [], bad );
+		expect( results[0].value ).toBeUndefined();
+		expect( results[0].sc ).toBe( bad );
+	} );
+
+	it( 'reads the quality with the value', async ()=>{
+		gateway.qlResult = {node: {value: {v: 1500, sc: uncertain}}};
+		expect( await gateway.read(opcId, A) ).toEqual( {value: 1500, sc: uncertain} );
+		gateway.qlResult = {node: {value: {sc: bad}}};
+		expect( await gateway.read(opcId, A) ).toEqual( {sc: bad} );
+		gateway.qlResult = {node: {value: 7}};
+		expect( await gateway.read(opcId, A) ).toEqual( {value: 7, sc: 0} );
+	} );
+
+	it( 'answers a write with the echo\'s quality', async ()=>{
+		gateway.posted = {data: {updateVariable: {value: {v: 9, sc: uncertain}}}};
+		expect( await gateway.write(opcId, A, 9, ()=>{}) ).toEqual( {value: 9, sc: uncertain} );
+	} );
+
+	//a fault holds its code on every push it lasts, and each of those asks.
+	it( 'fetches the status names once while a request is out, and as unsigned codes', async ()=>{
+		new OpcError( 0x80AC0600, "OpcError", "", undefined );//a name to fetch - one no other test has asked for
+		gateway.release = ()=>{};
+		const first = gateway.updateErrorCodes(), second = gateway.updateErrorCodes();
+		await Promise.resolve();
+		expect( gateway.gets ).toHaveLength( 1 );
+		expect( gateway.gets[0] ).toContain( String(0x80AC0000) );//the name's key:  flags off, and not the negative int32 `&` makes of a Bad code
+		expect( gateway.gets[0] ).not.toContain( "-" );
+		gateway.names = [{sc: 0x80AC0000, message: "BadTest"}];
+		gateway.release();
+		await Promise.all( [first, second] );
+		expect( OpcError.text(0x80AC0600) ).toBe( "BadTest+High" );
+	} );
+
+	it( 'does not reject when the names cannot be fetched', async ()=>{
+		new OpcError( 0x80AD0000, "OpcError", "", undefined );
+		gateway.get = ()=>Promise.reject( new Error("offline") );
+		await expect( gateway.updateErrorCodes() ).resolves.toBeUndefined();
 	} );
 } );
 
