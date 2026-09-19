@@ -113,7 +113,12 @@ install -m 755 "$serverExe" "$optDir/opcserver/"
 install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$optDir/opcserver/"
 
 #Every .so an exe or module resolves outside the system dirs comes along (the deps tree: fmt, boost, jsonnet), and of
-#the system ones LLVM's libc++/libc++abi (and libunwind, should libc++abi ever link it).  What to copy comes from ldd on
+#the system ones LLVM's libc++/libc++abi (and libunwind, should libc++abi ever link it) plus libxml2 and the ICU pair it
+#links.  libxml2 is the one system library whose soname moves between the releases we claim to support - Ubuntu 24.04
+#builds against libxml2.so.2, 26.04 ships only libxml2.so.16 (package `libxml2-16`, and `libicu74` -> `libicu78`) - so a
+#package built on the older release could not install on the newer one, and forcing it past apt left Jde.Opc.Server
+#unable to load at all (reviews/install-issues.md #28).  Carrying it costs ~8.6 MB compressed, almost all of it
+#libicudata, and is what makes "24.04 or later" true.  What to copy comes from ldd on
 #the *originals* - their build RUNPATHs still reach the deps tree, and ldd lists the whole closure as the loader would
 #resolve it for that exe, a bundled lib's own deps included.  Then every staged file gets RUNPATH=$ORIGIN, and ldd on
 #the staged copies must resolve everything beside the exe or on the system - the target's view.
@@ -126,7 +131,7 @@ bundle(){ #dir original...
 		[ -n "$path" ] && [ ! -e "$dir/$name" ] || continue
 		case "$path" in
 			/lib/*|/lib64/*|/usr/lib/*|/usr/lib64/*)
-				case "$name" in libc++.so.*|libc++abi.so.*|libunwind.so.*) ;; *) continue;; esac;;
+				case "$name" in libc++.so.*|libc++abi.so.*|libunwind.so.*|libxml2.so.*|libicuuc.so.*|libicudata.so.*) ;; *) continue;; esac;;
 		esac
 		install -m 644 "$(realpath "$path")" "$dir/$name"
 	done < <(for f in "$@"; do ldd "$f" | awk '/ => \//{print $1, $3}'; done | sort -u)

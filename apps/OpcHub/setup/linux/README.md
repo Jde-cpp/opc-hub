@@ -7,8 +7,9 @@ the per-user install - `install.sh`, no root, `systemctl --user` units.  The dat
 
 ## Building the package
 
-Prerequisites on the build machine (Ubuntu 24.04 or later - the binaries need glibc 2.38 and the package's `Depends:` are
-resolved against the machine that builds it):
+Prerequisites on the build machine (Ubuntu 24.04 - the binaries need glibc 2.38, and both the `Depends:` names and the
+`GLIBC_x.y` floor are resolved against the machine that builds it, so **build on the oldest release the package claims**;
+the CI runner's container is `ubuntu-noble` for that reason):
 
 | what | where |
 |---|---|
@@ -26,11 +27,15 @@ apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dw
 
 What it does: stages one dir per product with the exe, `libJde.so`, `libJde.DB.so`, the sqlite driver and the proc
 modules, and beside them every `.so` those resolve outside the system dirs - fmt, Boost json/container, jsonnet from the
-`$REPO_DIR` deps tree - plus LLVM's `libc++`/`libc++abi`, which the target distro ships an older major of.  Every staged
+`$REPO_DIR` deps tree - plus LLVM's `libc++`/`libc++abi`, which the target distro ships an older major of, and `libxml2`
+with the `libicuuc`/`libicudata` pair it links.  libxml2 is the one system library whose soname moves between the releases
+this package claims: 24.04 builds against `libxml2.so.2`, 26.04 ships only `libxml2.so.16` (`libxml2-16`, and `libicu74`
+-> `libicu78`), so a package built on the older one would not install on the newer, and forced past apt its
+`Jde.Opc.Server` could not load at all.  Carrying the three costs ~8.6 MB compressed, nearly all of it `libicudata`.  Every staged
 exe and `.so` gets `RUNPATH=$ORIGIN` (patchelf), so a product dir resolves by itself: our own are linked that way already
 (`build/functions.cmake`, with the build tree's entries behind it), the third-party ones have no RUNPATH at all.
 `Depends:` is what is left: the packages owning the system libraries the staged binaries still load (`libssl3t64`,
-`zlib1g`, `libzstd1`, `liburing2`, `libxml2`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
+`zlib1g`, `libzstd1`, `liburing2`, `liblzma5`, `libstdc++6`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
 `adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`); `ca-certificates` is recommended, for the OS trust
 store.  The version is `CMakePresets.common.json`'s `JDE_VERSION` - the string the C++ targets and the Web UI carry - unless
 `--version` names one (the release workflow passes the tag, which should equal it): a `yyyy.MM.dd` as it is,
