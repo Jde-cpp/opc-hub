@@ -135,6 +135,28 @@ describe( 'Gateway readings', ()=>{
 		expect( results ).toMatchObject( [{value: 7, sc: 0}] );
 	} );
 
+	//toNode built the NodeId from its namespace alone and set the id after - and an id-less NodeId is what the constructor
+	//reports, so every push (one a second, per node) wrote "NodeId - unrecognized json" to the console for a node that was fine.
+	it( 'builds the pushed node without a console error, whatever kind of id it has', ()=>{
+		const errors:any[] = [];
+		const previous = console.error;
+		console.error = ( ...args:any[] )=>errors.push( args );
+		try{
+			push( [{doubleValue: 7}] );
+			const toNode = ( proto:object )=>(Gateway as any).toNode( proto );
+			expect( toNode({namespaceIndex: 2, numeric: 0}) ).toMatchObject( {ns: 2, id: 0} );//0 and "" are ids, not absence
+			expect( toNode({namespaceIndex: 2, string: ""}) ).toMatchObject( {ns: 2, id: ""} );
+			expect( toNode({namespaceIndex: 2, byteString: new Uint8Array([1, 2])}).id ).toEqual( new Uint8Array([1, 2]) );
+			const expanded = (Gateway as any).toExpanded( {node: {namespaceIndex: 3, numeric: 9}, namespaceUri: "urn:x", serverIndex: 1} );
+			expect( expanded ).toMatchObject( {ns: 3, id: 9, nsu: "urn:x", serverIndex: 1} );
+			expect( errors ).toEqual( [] );
+			toNode( {namespaceIndex: 2} );//no identifier at all is still worth a line
+			expect( errors ).toHaveLength( 1 );
+		}
+		finally{ console.error = previous; }
+		expect( results[0].node.equals(A) ).toBe( true );
+	} );
+
 	it( 'keeps an Uncertain reading\'s value and says what it is worth', ()=>{
 		push( [{doubleValue: 1500}], uncertain );
 		expect( results ).toMatchObject( [{value: 1500, sc: uncertain}] );
