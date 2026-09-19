@@ -115,10 +115,16 @@ mat-cell.mat-column-name > *{
 	padding-left: 5px;
 	padding-right: 5px;
 }
+/* 260px:  the widest editor (a date and its calendar toggle) and the quality icon beside it.  The editors may shrink to
+make room for that icon - min-width:0, as an input's automatic minimum is its intrinsic width. */
 .mat-column-snapshot{
-	flex: 0 0 235px;
+	flex: 0 0 260px;
+	gap: 4px;
 	padding-left: 5px;
 	padding-right: 5px;
+}
+mat-cell.mat-column-snapshot > input{
+	min-width: 0;
 }
 /* the cell itself stays flex-start:  it holds whatever editor the value type needs (number, text, datepicker, select),
 and those keep their left edges lined up down the column.  A lone checkbox is the one that reads as adrift under the
@@ -169,6 +175,47 @@ mat-table{
 
 //a variable the server will not let this user read:  muted, and titled with what to ask for
 .no-access{
+	color: var(--mat-sys-on-surface-variant);
+	font-style: italic;
+}
+
+/* the reading's quality (OPC 10000-4 7.38).  A status name is an open set and runs long with its flags
+("UncertainEngineeringUnitsExceeded+High"), so it is text that ends in an ellipsis, not a chip - the tooltip has it whole.
+320px is that one in full, icon included:  the flags come last, and they are the part an ellipsis must not eat. */
+.mat-column-status{
+	flex: 0 0 320px;
+	min-width: 0;
+	gap: 4px;
+	padding-left: 5px;
+	padding-right: 5px;
+}
+mat-cell.mat-column-status > .status-text{//the ellipsis box is the child, as under .mat-column-name
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+//the severity is the icon's shape first (error / warning / info) and its colour second.  System tokens only:  they hold
+//their contrast in every theme, which a literal red or amber would not.
+.quality-icon{
+	flex: 0 0 auto;
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+	color: var(--mat-sys-on-surface-variant);
+}
+.quality-bad{
+	color: var(--mat-sys-error);
+}
+.quality-uncertain{
+	color: var(--mat-sys-tertiary);
+}
+.status-good{
+	color: var(--mat-sys-on-surface-variant);
+}
+//a value kept from before a Bad reading:  the last one known, not a current one.  Muted by colour, never opacity - this is
+//text that still has to be read.
+.stale{
 	color: var(--mat-sys-on-surface-variant);
 	font-style: italic;
 }

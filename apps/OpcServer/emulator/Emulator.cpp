@@ -116,6 +116,7 @@ namespace Jde::Opc::Emulator{
 					continue;//published - the OpcServer's reader owns that node's writes.
 				tag.Node = _client->Resolve( Ƒ("{}/{}", device.Path, tag.Spec.Name), ns, {} );
 				tag.Seen = false;
+				tag.StatusRefused = false;//a fresh session may come with a different acl - ask again.
 				if( command ){
 					if( !_subscription )
 						_subscription = _client->CreateSubscription( _period );
@@ -159,10 +160,11 @@ namespace Jde::Opc::Emulator{
 			for( auto& tag : device.Tags ){
 				if( !tag.Generator )
 					continue;
-				tag.Value = tag.Generator->Next( dt, device.Command );
+				//The generator is sampled even through a fault that holds the reading: the process runs on, the sensor is blind.
+				tag.Status = tag.Quality.Apply( dt, tag.Generator->Next(dt, device.Command), tag.Value );
 				if( tag.Field ){
 					try{
-						_plc->Write( *tag.Field, tag.Value );
+						_plc->Write( *tag.Field, tag.Value, tag.Status );
 						++_published;
 					}
 					catch( const std::exception& e ){
@@ -179,7 +181,21 @@ namespace Jde::Opc::Emulator{
 				else
 					UA_Variant_setScalar( &v, &tag.Value, &UA_TYPES[UA_TYPES_DOUBLE] );
 				try{
-					_client->Write( tag.Node, v );
+					try{
+						_client->Write( tag.Node, v, tag.StatusRefused ? UA_STATUSCODE_GOOD : tag.Status );
+					}
+					catch( const UAException& e ){
+						//Over a session a non-Good status needs StatusWrite twice - on the node's AccessLevel (else
+						//BadWriteNotSupported) and on the user's (else BadUserAccessDenied; open62541 copyAttributeIntoNode,
+						//OPC 10000-3 8.57).  The pumps nodeset is AccessLevel 3 and -grant stops at Read|Update|Subscribe (#6), so
+						//this transport carries the reading and PubSub carries its quality: say so once, then send the value alone.
+						let refused = e.Code()==UA_STATUSCODE_BADWRITENOTSUPPORTED || e.Code()==UA_STATUSCODE_BADUSERACCESSDENIED;
+						if( !refused || !tag.Status || tag.StatusRefused )
+							throw;
+						tag.StatusRefused = true;
+						WARN( "[{}]{}: the server refused this reading's status ({}) over the session - {}.  Writing the value alone from here on; the pubsub transport carries the status.", device.Name, tag.Spec.Name, ToString(tag.Status), UAException::Message((StatusCode)e.Code()) );
+						_client->Write( tag.Node, v );
+					}
 					++_writes;
 					_consecutiveFailures = 0;
 				}
@@ -251,7 +267,7 @@ namespace Jde::Opc::Emulator{
 				let value = tag.Spec.IsBool()
 					? Ƒ( "{}={}", tag.Spec.Name, tag.Generator ? tag.Value!=0 : device.Command )
 					: Ƒ( "{}={:.1f}", tag.Spec.Name, tag.Value );
-				tags.push_back( value );
+				tags.push_back( tag.Status ? Ƒ("{}({})", value, ToString(tag.Status)) : value );//Good is the unmarked case.
 			}
 			values.push_back( Ƒ("{}[{}]", device.Name, Str::Join(tags, " ")) );
 		}

@@ -24,7 +24,7 @@ set( targetName Jde.Opc.PlcEmulator )
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
 
-target_sources( ${targetName} PRIVATE main.cpp EmulatorAppClient.cpp EmulatorClient.cpp PlcServer.cpp Signals.cpp Devices.cpp Emulator.cpp )
+target_sources( ${targetName} PRIVATE main.cpp EmulatorAppClient.cpp EmulatorClient.cpp PlcServer.cpp Quality.cpp Signals.cpp Devices.cpp Emulator.cpp )
 target_include_directories( ${targetName} PRIVATE ${jdeRoot}/include/jde/app/proto )
 if( NOT WIN32 )
 	target_include_directories( ${targetName} PRIVATE /usr/include/libxml2 )

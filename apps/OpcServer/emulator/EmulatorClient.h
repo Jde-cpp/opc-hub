@@ -19,7 +19,7 @@ namespace Jde::Opc::Emulator{
 		α Iterate( uint32 timeoutMs )ι->UA_StatusCode;
 		α Namespace( sv uri, SRCE )ε->NsIndex;
 		α Resolve( sv path, NsIndex defaultNs, const flat_map<string,NsIndex>& nsAliases, SRCE )ε->NodeId;//browse path from Objects, see BrowsePath.
-		α Write( const NodeId& node, const UA_Variant& value, SRCE )ε->void;
+		α Write( const NodeId& node, const UA_Variant& value, UA_StatusCode status=UA_STATUSCODE_GOOD, SRCE )ε->void;//the value with its quality.
 		α CreateSubscription( Duration publishingInterval, SRCE )ε->UA_UInt32;
 		α DeleteSubscription( UA_UInt32 subscription )ι->void;//before a clean Disconnect - see the definition.
 		α Monitor( UA_UInt32 subscription, const NodeId& node, Duration samplingInterval, void* context, UA_Client_DataChangeNotificationCallback callback, SRCE )ε->UA_UInt32;

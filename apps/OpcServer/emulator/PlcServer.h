@@ -13,7 +13,7 @@ namespace Jde::Opc::Emulator{
 		~PlcServer();
 		α Iterate()ι->void;//drives the publisher's timers; call from the emulator's loop thread.
 		α FindField( sv name )Ι->optional<uint>;//index into Contract().Fields, or none when the contract does not publish it.
-		α Write( uint field, double value )ε->void;//the local node the writer samples.
+		α Write( uint field, double value, UA_StatusCode status=UA_STATUSCODE_GOOD )ε->void;//the local node the writer samples - value and quality together.
 		α Contract()Ι->const PubSub::Config&{ return _contract; }
 		α Port()Ι->UA_UInt16{ return _port; }
 		α Ptr()Ι->UA_Server*{ return _server; }//the tests read its config (serverUrls) and its nodes back; the emulator itself never reaches past Write/Iterate.

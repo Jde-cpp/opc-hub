@@ -21,7 +21,9 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcNodeRouteService } from '../../../services/routes/opc-node-route-service';
 import { OpcStore } from '../../../services/opc-store';
-import { Value, valueString } from '../../../model/value';
+import { Reading, Value, valueString } from '../../../model/value';
+import { OpcError } from '../../../model/opc-error';
+import { scHex, statusIcon } from '../../../model/status-code';
 import { ENodeClass, Variable, UaNode }  from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -109,6 +111,12 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.isRefreshing.set( true );
 		try{
 			const references = await this._iot.browseObjectsFolder( this.cnnctnSlug, this.node(), true, (m)=>console.log(m) );
+			//REST answers a Bad reading with the code alone, so a refresh in the middle of a fault would blank the value the row is
+			//holding:  the new row takes it over, as a push would have left it.
+			for( const fresh of <Variable[]>references.filter(r=>r.isVariable) ){
+				if( fresh.stale && fresh.value===undefined )
+					fresh.value = this.variables.find( v=>v.key==fresh.key )?.value;
+			}
 			this.setNodes( references.filter( r=>r.displayed ), false );
 		}
 		catch( e ){
@@ -212,6 +220,14 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.cdRef.markForCheck();
 	}
 	#dates = new WeakMap<Variable,Date|null>();
+	//every reading a row takes - a push, a write's echo, a re-read - so the quality travels with the value.  Only a CHANGE of
+	//code asks for its name:  a fault holds its code on every tick it lasts, and the socket has no REST call behind it to bring one.
+	#setReading( row:Variable, r:Reading ){
+		const previous = row.sc;
+		row.setReading( r );
+		if( row.sc && row.sc!=previous && !OpcError.statusCodeText(row.sc) )
+			this._iot.updateErrorCodes().then( ()=>this.#repaint() );
+	}
 
 	toObject( x:ENodeClass ):string{ return ENodeClass[x]; }
 	toString( value:Value|undefined ){ return valueString(value); }//Variable.value is optional - a node the read could not answer for has none
@@ -239,7 +255,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 							const row = this.variables.find( (r)=>r.nodeId.equals(value.node) );
 							if( !row )
 								return console.debug( `subscription value for '${value.node}', which is no longer a row on this page.` );
-							row.value = value.value;
+							this.#setReading( row, value );
 							this.#repaint();
 						},
 						error:(e: Error) =>{
@@ -288,7 +304,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	async toggleValue( x:Variable, e:MatCheckboxChange ){
 		e.source.checked = !e.source.checked;
 		try {
-			x.value = await this._iot.write( this.cnnctnSlug, x.nodeId, !x.value, (x)=>console.log(x) );
+			this.#setReading( x, await this._iot.write(this.cnnctnSlug, x.nodeId, !x.value, (x)=>console.log(x)) );
 			this.cdRef.detectChanges();
 		}
 		catch (e) {
@@ -297,18 +313,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 	}
 	async changeDouble( x:Variable, e:Event ){
 		try {
-			x.value = await this._iot.write( this.cnnctnSlug, x.nodeId, +(<HTMLInputElement>e.target).value, (x)=>console.log(x) );
+			this.#setReading( x, await this._iot.write(this.cnnctnSlug, x.nodeId, +(<HTMLInputElement>e.target).value, (x)=>console.log(x)) );
 		}
 		catch (e) {
 			this.snackbar.exception( "Could not change double value.", e );
-			x.value = await this._iot.read( this.cnnctnSlug, x.nodeId );
-			console.log(x.value);
+			this.#setReading( x, await this._iot.read(this.cnnctnSlug, x.nodeId) );
 		}
 		this.#repaint();
 	}
 	async changeString( n:Variable, e:Event ){
 		try{
-			n.value = await this._iot.write( this.cnnctnSlug, n.nodeId, (<HTMLInputElement>e.target).value, (x)=>console.log(x) );
+			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, (<HTMLInputElement>e.target).value, (x)=>console.log(x)) );
 		}
 		catch(err){
 			(<HTMLInputElement>e.target).value = String( n.value );
@@ -318,7 +333,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	}
 	async changeEnum( n:Variable, e:MatSelectChange<number> ){
 		try{
-			n.value = await this._iot.write( this.cnnctnSlug, n.nodeId, e.value, (x)=>console.log(x) );
+			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, e.value, (x)=>console.log(x)) );
 		}
 		catch(err){
 			e.source.value = <number>n.value;
@@ -330,7 +345,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		if( !e.value )//unparseable text, or a cleared box:  beginningOfDay(null) is TODAY, and the old value would have been overwritten with it
 			return this.#repaint( n );
 		try{
-			n.value = await this._iot.write( this.cnnctnSlug, n.nodeId, <Timestamp>ProtoUtils.fromDate(DateUtils.beginningOfDay(e.value)), (x)=>console.log(x) );
+			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, <Timestamp>ProtoUtils.fromDate(DateUtils.beginningOfDay(e.value)), (x)=>console.log(x)) );
 			this.#repaint();
 		}
 		catch( err ){
@@ -346,6 +361,14 @@ export class NodeChildren implements OnInit, OnDestroy {
 	EAccess = EAccess;
 	ETypes = ETypes;
 	get _iot():Gateway{ return this.pageData.gateway; }
+	//the quality of a row's reading (OPC 10000-4 7.38) - the Status cell's text, and the icon that stands in beside the value where a view hides the column
+	status( r:UaNode ):string{ return NodeView.cellValue( r, "status" )?.toString() ?? ""; }
+	//the icon's tooltip carries the name, as the icon is all there is;  the Status cell's is the code alone, beside a name the
+	//cell already spells out.  Neither for plain Good - it adds nothing, and an empty matTooltip does not open.
+	statusTooltip( r:Variable ):string{ return r.sc ? `${scHex( r.sc )} - ${this.status( r )}` : ""; }
+	statusCode( r:Variable ):string{ return r.sc ? scHex( r.sc ) : ""; }
+	qualityIcon( r:UaNode ){ return this.status( r ) ? statusIcon( (r as Variable).sc ) : undefined; }
+	readOnly( r:Variable ):boolean{ return r.userAccessLevel! < EAccess.Write || r.stale; }//a stale value is the last one known, not one to edit
 	readDenied( r:UaNode ):boolean{ return NodeView.readDenied( r ); }//the Snapshot cell's "no read access" - the model's rule, reachable from the template
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
@@ -360,6 +383,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	nodes = signal<UaNode[]>( [] );//every child the browse returned;  rows() is the view's cut of them
 	rows = computed<UaNode[]>( ()=>this.view() ? this.view().apply( this.nodes() ) : [] );
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
+	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
 	routerSubscription!:Subscription;
 	selections = new SelectionModel<UaNode>(true, []);

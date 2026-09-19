@@ -9,7 +9,10 @@ namespace Jde::Opc::Emulator{
 		up<IGenerator> Generator;//null for command tags.
 		optional<uint> Field;//index into the PubSub contract when published; else written over the client session.
 		NodeId Node;//on the OpcServer - command tags and session-written tags, resolved per session.
-		double Value{};
+		double Value{};//the last published reading - held through a quality window that holds.
+		TagQuality Quality;
+		UA_StatusCode Status{};//Value's quality (OPC 10000-4 7.38); published with the value, and written with it where the server lets a session.
+		bool StatusRefused{};//this session's server refused a non-Good status (no StatusWrite) - the value goes alone, see Cycle.
 		bool Seen{};//a monitored item's first notification is the current value, not a change.
 		Device* Owner{};
 		Emulator* Self{};
