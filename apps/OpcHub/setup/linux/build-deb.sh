@@ -17,7 +17,8 @@ usage: build-deb.sh [options]
   --web-dist <dir>     ng build output (index.html)      default: <repo>/web/opc/my-workspace/dist/my-workspace/browser
   --skip-web           omit the Web UI (opt/jde-cpp/web and the nginx site file)
   --ua-nodesets <dir>  OPCFoundation/UA-Nodeset clone    default: $UA_NODE_SETS, else $REPO_DIR/UA-Nodeset
-  --version <v>        default: CMakePresets.common.json's JDE_VERSION (2026.09.01); the release workflow passes the tag, which should equal it
+  --version <v>        default: CMakePresets.common.json's JDE_VERSION (2026.09.01); the release workflow passes the tag, which should equal it,
+                       and an empty string on a run that has none - so `--version ""` is the default, not an error
   --out-dir <dir>      default: <build dir>/setup
   --maintainer <s>     control's Maintainer field        default: git config user.name <user.email>
   --no-strip           keep the debug sections (default --strip-debug: symbols stay for the stack traces, dwarf goes)
@@ -36,7 +37,7 @@ while [ $# -gt 0 ]; do
 		--web-dist) webDist=${2:?}; shift 2;;     --web-dist=*) webDist=${1#*=}; shift;;
 		--skip-web) skipWeb=1; shift;;
 		--ua-nodesets) uaNodeSets=${2:?}; shift 2;; --ua-nodesets=*) uaNodeSets=${1#*=}; shift;;
-		--version) version=${2:?}; shift 2;;      --version=*) version=${1#*=}; shift;;
+		--version) version=${2?}; shift 2;;       --version=*) version=${1#*=}; shift;;
 		--out-dir) outDir=${2:?}; shift 2;;       --out-dir=*) outDir=${1#*=}; shift;;
 		--maintainer) maintainer=${2:?}; shift 2;; --maintainer=*) maintainer=${1#*=}; shift;;
 		--no-strip) strip=0; shift;;
