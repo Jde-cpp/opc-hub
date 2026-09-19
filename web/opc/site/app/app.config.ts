@@ -12,7 +12,7 @@ import { ACCESS_SERVICE, AccessCardStatus, AccessCollectionStatus, accessHelpTop
 
 //the site's own help topics - the libraries export theirs.  Served from src/assets (web/opc/site/assets, linked by setup.sh).
 const siteOverview:HelpTopic[] = [ {id: 'overview', title: 'Overview', summary: 'What this site is and where to start', icon: 'menu_book', url: 'assets/site/help/overview.md'} ];
-const siteAbout:HelpTopic[] = [ {id: 'about', title: 'About', summary: 'Version and components', icon: 'info', url: 'assets/site/help/about.md'} ];
+const siteAbout:HelpTopic[] = [ {id: 'about', title: 'About', summary: 'Version and source', icon: 'info', url: 'assets/site/help/about.md'} ];
 const siteLinks:HelpLink[] = [ {title: 'Report an issue', summary: 'Bugs and feature requests, on GitHub', icon: 'bug_report', href: 'https://github.com/Jde-cpp/opc-hub/issues'} ];
 
 //2-digit rather than the native numeric:  it zero-pads the datepicker input ("08/27/2026", not "8/27/2026"), so a column
@@ -60,12 +60,13 @@ export const appConfig: ApplicationConfig = {
 		{provide: CARD_STATUS, useExisting: AppCardStatus, multi: true},
 		{provide: CARD_STATUS, useExisting: HelpCardStatus, multi: true},
 		{provide: SEGMENT_NAME, useValue: nodeSegmentName},//node pages' breadcrumbs (and Recently visited) read pump1, not 5~pump1
-		//the help section (jde-spa) lists these in registration order - the site's overview first, about last.
+		//the help section (jde-spa) lists these in registration order - the site's overview first, about last, the sections
+		//between them in the navbar's order.
 		{provide: HELP_TOPICS, useValue: siteOverview, multi: true},
 		{provide: HELP_TOPICS, useValue: spaHelpTopics, multi: true},
-		{provide: HELP_TOPICS, useValue: frameworkHelpTopics, multi: true},
-		{provide: HELP_TOPICS, useValue: accessHelpTopics, multi: true},
 		{provide: HELP_TOPICS, useValue: opcHelpTopics, multi: true},
+		{provide: HELP_TOPICS, useValue: accessHelpTopics, multi: true},
+		{provide: HELP_TOPICS, useValue: frameworkHelpTopics, multi: true},
 		{provide: HELP_TOPICS, useValue: siteAbout, multi: true},
 		//and after them on /help, the cards that leave the site
 		{provide: HELP_LINKS, useValue: siteLinks, multi: true},

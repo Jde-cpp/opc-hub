@@ -3,17 +3,17 @@
 
 @if( !providers.isLoading() ) {
 	@if( user()?.picture ){
-		<a mat-list-item (click)="onLogout()">
-			<img class="profile-picture" [src]="user()?.picture">
-		</a>
+		<button type="button" class="account" (click)="onLogout()" [attr.aria-label]="signOutLabel()" [matTooltip]="signOutLabel()">
+			<img class="profile-picture" [src]="user()?.picture" alt="">
+		</button>
 	}
 	@else if( user()?.name ){
-		<a mat-list-item (click)="onLogout()">
+		<button mat-button type="button" (click)="onLogout()" [attr.aria-label]="signOutLabel()" [matTooltip]="signOutLabel()">
 			{{`${user()?.domain}/${user()?.name}`}}
-		</a>
+		</button>
 	}
 	@else {
-		<a mat-list-item routerLink="login" routerLinkActive="docs-navbar-header-item-selected">
+		<a matIconButton routerLink="login" routerLinkActive="docs-navbar-header-item-selected" aria-label="Sign in" matTooltip="Sign in">
 			<mat-icon routerLinkActive="selected">account_circle</mat-icon>
 		</a>
 	}

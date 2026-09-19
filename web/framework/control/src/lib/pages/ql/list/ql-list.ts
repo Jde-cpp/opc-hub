@@ -83,6 +83,8 @@ export class QLList implements OnInit, OnDestroy{
 			paths.push( x.routeConfig.data['name'] );
 		if( paths.length )//guard:  QLList also renders inside a tab (GatewayDetail), where the route has no 'name' - the unguarded assignment wrote undefined over the host page's title
 			this.componentPageTitle.title = paths[0];//.join( " | " ); 	//this.componentPageTitle.title ? `${this.componentPageTitle.title} | ${title}` : title;
+		else if( this.route.component==QLList && data.routing?.title )//the routed page itself (/access/resources):  a ':collectionDisplay' route has no title of its own, which left the tab bare
+			this.componentPageTitle.title = data.routing.title;
 
 /*		const order = ["name", "created", "updated", "deleted", "slug", "description"];
 		this.displayedFields = Field.filterSort( this.schema().fields, order, [...this.excludedColumns(), "description"], this.showDeleted() );

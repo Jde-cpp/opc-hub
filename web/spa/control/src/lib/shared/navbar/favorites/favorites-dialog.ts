@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import {MatInputModule} from '@angular/material/input';
 import {MatAutocompleteModule} from '@angular/material/autocomplete';
 import {MatFormFieldModule} from '@angular/material/form-field';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogConfig, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
 import { Favorite } from '../navbar';
 import { DocumentTitle } from '../../../services/document-title';
@@ -12,9 +13,12 @@ import { DocumentTitle } from '../../../services/document-title';
 type DialogData = { existing:Favorite, folderNames:string[], name:string };
 @Component( {
 	selector: "favorites",
-	template: "<mat-icon #icon (click)='onClick()' [class.highlight]='isFavorite()'>star</mat-icon>",
-	styles: ".highlight { color: gold; } mat-icon { cursor: pointer; }",
-	imports: [MatIconModule]
+	//a real button:  the bare <mat-icon (click)> it replaced was aria-hidden and unreachable by keyboard.
+	template: `<button #icon matIconButton type="button" aria-haspopup="dialog" [attr.aria-label]="label()" [matTooltip]="label()" (click)="onClick()">
+		<mat-icon [class.highlight]="isFavorite()">star</mat-icon>
+	</button>`,
+	styles: ".highlight { color: gold; }",
+	imports: [MatButtonModule, MatIconModule, MatTooltipModule]
 })
 export class Favorites {
 	onClick(){
@@ -41,6 +45,7 @@ export class Favorites {
 	name = input.required<string>();
   onChange = output<Favorite>();
 	isFavorite = computed<boolean>( ()=>this.existing()!=null );
+	label = computed<string>( ()=>this.isFavorite() ? 'Edit favorite' : 'Add to favorites' );
 }
 
 @Component({
