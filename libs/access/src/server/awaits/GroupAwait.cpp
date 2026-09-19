@@ -39,7 +39,9 @@ namespace Jde::Access::Server{
 			_query.AddFilter( "is_group", true );
 			_query.ReturnRaw = true;
 			let onlyHaveId = _query.Columns.size()==1 && _query.Columns[0].JsonName=="id";
-			auto groups = !onlyHaveId && _query.Columns.size() ? co_await QL::QLAwait( move(_query), _executer, _sl ) : jobject{};
+			//the shortcut serves one group's members - `group(id:5){ groupMembers{…} }` needs nothing from identities.  A list always
+			//queries:  `groups{ id }` used to come back {} whatever the table held, so a client counting groups read zero.
+			auto groups = _query.Columns.size() && (_query.IsPlural() || !onlyHaveId) ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
 			if( membersQL ){
 				let& groupTable = GetTable( "group_members" );
 				haveId = membersQL->FindColumn( "id" );

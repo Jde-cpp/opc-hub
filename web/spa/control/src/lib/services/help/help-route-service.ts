@@ -1,16 +1,22 @@
 import { inject, Injectable } from '@angular/core';
-import { ActivatedRouteSnapshot, ResolveFn, Routes } from '@angular/router';
+import { ActivatedRouteSnapshot, ResolveFn, Routes, UrlSegment } from '@angular/router';
 import { RouteService } from '../route-service';
 import { RouteStore } from '../route-store';
 import { RouteItem } from '../../pages/component-sidenav/route-item';
-import { HELP_TOPICS, HelpTopic, helpTopics } from './help-topic';
+import { HELP_LINKS, HELP_TOPICS, HelpTopic, helpTopics } from './help-topic';
 
-//IRouteService for the /help cards page:  the topics as child routes, so the inherited docItems turns them into tiles.
+//IRouteService for the /help cards page:  the topics as child routes, so the inherited docItems turns them into tiles, then
+//the HELP_LINKS as cards that open their page outside the site.
 @Injectable()
 export class HelpRouteService extends RouteService{
 	#topics = helpTopics( inject(HELP_TOPICS, {optional: true}) );
+	#links = (inject( HELP_LINKS, {optional: true} ) ?? []).flat();
 	override children():Promise<Routes>{
 		return Promise.resolve( this.#topics.map( t=>({path: t.id, title: t.title, data: {icon: t.icon, summary: t.summary, cardClass: 'card-help'}}) ) );
+	}
+	override async docItems( urlSegments:UrlSegment[] ):Promise<RouteItem[]>{
+		const links = this.#links.map( l=>new RouteItem({path: l.href, title: l.title, icon: l.icon, summary: l.summary, externalRedirect: l.href, cardClass: 'card-help'}) );
+		return [ ...await super.docItems(urlSegments), ...links ];
 	}
 }
 

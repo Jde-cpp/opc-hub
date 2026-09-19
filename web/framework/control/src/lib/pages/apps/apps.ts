@@ -1,18 +1,18 @@
 import {Component, OnDestroy, OnInit, Inject, inject} from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import {ActivatedRoute} from '@angular/router';
 import { RouterLink } from '@angular/router';
-import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { RouteItem, RouteStore } from 'jde-spa';
 import { Connection } from '../../services/resolvers/app-resolver';
 import { pageHeading } from '../cards/cards';
+import { SectionHeader } from '../cards/section-header/section-header';
 
 @Component({
     selector: 'apps',
     templateUrl: './apps.html',
     styleUrls: ['./apps.scss'],
-    imports: [DatePipe, MatCardModule, MatIconModule, RouterLink]
+    imports: [DatePipe, MatIconModule, NgTemplateOutlet, RouterLink, SectionHeader]
 })
 export class Apps implements OnInit{
 	private route:ActivatedRoute = inject( ActivatedRoute );
@@ -21,7 +21,7 @@ export class Apps implements OnInit{
 		this.heading = pageHeading( this.route );
 		this.route.data.subscribe( (data)=>{
 			this.connections = data["connections"];
-			this.routeStore.setChildren( '/apps', this.connections.map( c=>new RouteItem({ path: c.urlSegments.join('/'), title: `${c.displayName}/${c.instanceName}` }) ) );
+			this.routeStore.setChildren( '/apps', this.connections.filter( c=>c.linked ).map( c=>new RouteItem({ path: c.urlSegments.join('/'), title: `${c.displayName}/${c.instanceName}` }) ) );//search offers these, so only the ones with a page
     });
 	}
 	//the gateway tiles on /gateways use router too, so the same service reads the same in both places
@@ -30,6 +30,7 @@ export class Apps implements OnInit{
 			case "Gateway": return "router";
 			case "AppServer": return "dns";
 			case "OpcServer": return "sensors";//radiating signal - an opc server publishes live tag data
+			case "Opc.PlcEmulator": return "precision_manufacturing";//the machine the emulated PLC would be running
 		}
 		return "apps";
 	}

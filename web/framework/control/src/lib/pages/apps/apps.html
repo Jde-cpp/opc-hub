@@ -1,50 +1,38 @@
-<!-- <component-page-header>Applications</component-page-header> -->
-<div class="cards">
-@if( heading ){
-	<h2 class="page-heading">{{heading}}</h2>
-}
-<div class="cards-row">
-	@for( c of connections; track c.id ){
-		<a class="card-link" [routerLink]=c.urlSegments>
-			<span class="docs-component-list-item">
-				<mat-card class="docs-component-category-list-card">
-					<!-- a plain header row, not mat-card-title-group: the group projects title/subtitle into a div of
-					     its own, so wrapping them here left that div behind as an empty third flex item -->
-					<div class="card-heading">
-						<div class="card-heading-text">
-							<mat-card-title>{{c.displayName}}</mat-card-title>
-							<mat-card-subtitle>{{c.instanceName}}</mat-card-subtitle>
-						</div>
-						<mat-icon class="card-icon" aria-hidden="true">{{icon(c.programName)}}</mat-icon>
-					</div>
-					<mat-card-content class="card-facts">
-						<!-- @if( c.on ) { -->
-							<span class="card-label">Uptime</span><span [title]="c.created | date:'medium'">{{uptime(c.created)}}</span>
-							<span class="card-label">Memory</span><span>{{formatMemory(c.status?.memory)}}</span>
-							<span class="card-label">Host</span><span>{{c.hostName}}</span>
-							<!-- <ng-container>
-								@for( desc of c.description; track desc ){
-									<div>{{desc}}</div>
-								}
-							</ng-container> -->
-						<!-- } -->
-					</mat-card-content>
-					<!-- <mat-card-content class="docs-component-category-list-card-summary">{{application.summary}}</mat-card-content> -->
-					<!-- an empty mat-card-actions still renders 52px of padding, so it stays out until it has buttons:
-					<mat-card-actions>
-						<button><mat-icon class="iconButton" (click)="togglePower(application)" >{{application.on ? 'toggle_off' : 'toggle_on' }}</mat-icon></button>
-						[disabled]="!mainOn || application.Name=='Main'"
-						<button mat-icon-button><mat-icon class="iconButton">edit</mat-icon></button>
-					</mat-card-actions> -->
-				</mat-card>
-			</span>
-		</a>
-	} @empty {
-		<div class="jde-empty" role="status">
-			<mat-icon aria-hidden="true">apps</mat-icon>
-			<p class="title">No application has registered yet.</p>
-			<p class="detail">A gateway, an OPC server or a hub appears here once it starts and registers with this app server.</p>
+<div class="section-page card-apps">
+	<section class="section">
+		<section-header url="/apps" [heading]="heading" />
+		<div class="section-cards">
+			@for( c of connections; track c.id ){
+				<!-- a service the site has no page for (the PLC emulator) is a plain card:  as a link it went to NG04002 -->
+				@if( c.linked ){
+					<a class="section-card" [routerLink]="c.urlSegments"><ng-container [ngTemplateOutlet]="card" [ngTemplateOutletContext]="{$implicit: c}" /></a>
+				} @else {
+					<div class="section-card"><ng-container [ngTemplateOutlet]="card" [ngTemplateOutletContext]="{$implicit: c}" /></div>
+				}
+			} @empty {
+				<div class="jde-empty" role="status">
+					<mat-icon aria-hidden="true">apps</mat-icon>
+					<p class="title">No application has registered yet.</p>
+					<p class="detail">A gateway, an OPC server or a hub appears here once it starts and registers with this app server.</p>
+				</div>
+			}
 		</div>
+	</section>
+</div>
+<ng-template #card let-c>
+	<span class="section-card-top">
+		<span class="section-chip" aria-hidden="true"><mat-icon>{{icon(c.programName)}}</mat-icon></span>
+		<span class="section-card-text">
+			<span class="section-card-title">{{c.displayName}}</span>
+			<span class="section-card-sub">{{c.instanceName}}</span>
+		</span>
+	</span>
+	<dl class="stats">
+		<div><dt>Uptime</dt><dd [title]="c.created | date:'medium'">{{uptime(c.created)}}</dd></div>
+		<div><dt>Memory</dt><dd>{{formatMemory(c.status?.memory)}}</dd></div>
+		<div><dt>Host</dt><dd [title]="c.hostName">{{c.hostName}}</dd></div>
+	</dl>
+	@if( !c.linked ){
+		<span class="no-page"><mat-icon aria-hidden="true">info</mat-icon>No details page</span>
 	}
-</div>
-</div>
+</ng-template>

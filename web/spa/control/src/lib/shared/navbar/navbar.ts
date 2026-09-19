@@ -25,6 +25,8 @@ import { matchConfig, segmentDisplay } from '../../services/route-utils';
 import { SearchService } from '../../services/search/search-service';
 import { SearchResult } from '../../services/search/search-provider';
 import { HELP_TOPICS, helpTopicFor, helpTopics } from '../../services/help/help-topic';
+import { APP_LOGO, APP_NAME } from '../../services/document-title';
+import { RecentVisits, SEGMENT_NAME } from '../../services/recent-visits';
 
 export type Favorite={
 	folderName?:string;
@@ -78,6 +80,7 @@ export class NavBar implements OnInit {
 			this.crumbs.set( crumbs );
 			this.name.set( crumbs[crumbs.length-1].title );
 			this.route.set( path );
+			this.#recentVisits.visit( path, crumbs );//the home page's Recently visited row names each page as its crumbs do
 		});
 		this.favorites.set( await this.#profileStore.load<Favorite[]>("favorites", this.defaultFavorites) );
 		this.isLoading.set( false );
@@ -115,19 +118,22 @@ export class NavBar implements OnInit {
 		const crumbs = [ new RouteItem({ path: '/', title: (home?.title as string) ?? 'Home' }) ];
 		for( let i=0; i<segments.length; i++ ){
 			const config = NavBar.matchConfig( this.router.config, segments.slice(0, i+1) );
-			let title = config?.title as string|undefined;
-			if( !title || title.startsWith(':') )//no title, or the ':param' substitute-the-segment convention
-				title = this.#segmentName( segments.slice(0,i).join('/'), segments[i] ) ?? segmentDisplay( segments[i] );
-			crumbs.push( new RouteItem({ path: config ? '/'+segments.slice(0,i+1).join('/') : undefined, title }) );//no matching route ⇒ no path ⇒ rendered as text, not a link
+			let title = config?.title as string|undefined, icon:string|undefined;
+			if( !title || title.startsWith(':') ){//no title, or the ':param' substitute-the-segment convention
+				const child = this.#segmentItem( segments.slice(0,i).join('/'), segments[i] );
+				title = child?.title ?? this.#segmentName?.( segments, i ) ?? segmentDisplay( segments[i] );
+				icon = child?.icon;//the recently visited row draws it;  the crumb itself does not
+			}
+			crumbs.push( new RouteItem({ path: config ? '/'+segments.slice(0,i+1).join('/') : undefined, title, icon }) );//no matching route ⇒ no path ⇒ rendered as text, not a link
 		}
 		return crumbs;
 	}
-	#segmentName( parentUrl:string, segment:string ):string|undefined{//RouteStore writers key inconsistently: "gateways/gw1" (UrlSegments join), '/apps', bare "users"
+	#segmentItem( parentUrl:string, segment:string ):RouteItem|undefined{//RouteStore writers key inconsistently: "gateways/gw1" (UrlSegments join), '/apps', bare "users"
 		const last = parentUrl.split('/').pop() ?? '';
 		for( const key of [parentUrl, '/'+parentUrl, last] ){
 			const child = this.#routeStore.getChildren( key ).find( c=>c.path==segment || c.path?.endsWith('/'+segment) );//child paths are bare slugs or parent-prefixed
 			if( child?.title )
-				return child.title;
+				return child;
 		}
 		return undefined;
 	}
@@ -169,6 +175,8 @@ export class NavBar implements OnInit {
 		if( !this.favorites() )
 			return [];
 		for( let fav of this.favorites() ){
+			if( this.appName && !fav.folderName && fav.route=='/' )//the brand is the home link, so a top-level Home favorite would repeat it
+				continue;
 			if( !fav.folderName )
 				items.push( fav );
 			else{
@@ -181,7 +189,11 @@ export class NavBar implements OnInit {
 		}
 		return items;
 	});
+	appName = inject( APP_NAME, {optional: true} );//a site that names itself gets a brand link in place of the Home favorite
+	appLogo = inject( APP_LOGO, {optional: true} );
 	#profileStore = inject(ProfileStore);
+	#recentVisits = inject(RecentVisits);
+	#segmentName = inject( SEGMENT_NAME, {optional: true} );//a site's name for a segment no route or RouteStore child names (an opc node)
 	#routeStore = inject(RouteStore);
 	crumbs = signal<RouteItem[]>( [] );
 	showBreadcrumbs = signal<boolean>( ProfileStore.local<boolean>("showBreadcrumbs", true) );//sync static read — awaiting #profileStore.load here would delay isLoading

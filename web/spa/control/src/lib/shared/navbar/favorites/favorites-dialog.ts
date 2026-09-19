@@ -7,7 +7,7 @@ import {MatAutocompleteModule} from '@angular/material/autocomplete';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogConfig, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
 import { Favorite } from '../navbar';
-import { Title } from '@angular/platform-browser';
+import { DocumentTitle } from '../../../services/document-title';
 
 type DialogData = { existing:Favorite, folderNames:string[], name:string };
 @Component( {
@@ -54,7 +54,7 @@ export class FavoritesDialog {
 	public data:DialogData = inject<DialogData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
 	constructor(){
 		const data = this.data;
-		this.favoriteModel.set( {name: data.existing?.name || data.name || this.titleService.getTitle(), folderName: data.existing?.folderName ?? ""} );//the document title is ':instance' for parameterized routes; data.name is the resolved segment.
+		this.favoriteModel.set( {name: data.existing?.name || data.name || this.documentTitle.page(), folderName: data.existing?.folderName ?? ""} );//the page's name without the tab's app suffix; data.name is the resolved segment.
 		this.folderNames = data.folderNames;
 	};
 	onRemove(): void {
@@ -66,5 +66,5 @@ export class FavoritesDialog {
 	folderNames = new Array<string>;
   favoriteModel = signal<{ name:string, folderName:string }>(null as any);
   favoriteForm = form(this.favoriteModel);
-	titleService = inject(Title);
+	documentTitle = inject(DocumentTitle);
 }

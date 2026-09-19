@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- favicon.svg's hex nut in one colour, the hub cut out of it:  the navbar paints it through a CSS mask (APP_LOGO), so
+  only the shape counts and it takes the navbar's colour in every theme. -->
+  <mask id="hub">
+    <rect width="32" height="32" fill="#fff"/>
+    <path d="M16 14L16 22M16 14L9.07 10M16 14L22.93 10" stroke="#000" stroke-width="2.2" stroke-linecap="round"/>
+    <circle cx="16" cy="14" r="3.8"/>
+    <circle cx="16" cy="22" r="2.8"/>
+    <circle cx="9.07" cy="10" r="2.8"/>
+    <circle cx="22.93" cy="10" r="2.8"/>
+  </mask>
+  <path d="M16 2L28.12 9L28.12 23L16 30L3.88 23L3.88 9Z" stroke="#000" stroke-width="3" stroke-linejoin="round" mask="url(#hub)"/>
+</svg>

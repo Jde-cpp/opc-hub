@@ -31,6 +31,35 @@
   }
 }
 
+// the site's name and mark (APP_NAME/APP_LOGO), leading the bar as its home link.  Sized to the 40px of the buttons beside it.
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin-right: 8px;
+  padding: 0 12px 0 6px;
+  vertical-align: middle;
+  border-radius: var(--mat-sys-corner-full);
+  font: var(--mat-sys-title-medium);
+  font-weight: 600;
+  white-space: nowrap;
+  &, &:visited { color: var(--mat-sys-primary); text-decoration: none; }
+  &:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
+  &:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
+}
+
+// the mark is a mask, so it paints in the link's colour and reads on every theme's navbar
+.brand-logo {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  background: currentColor;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+}
+
 .folder-item-selected {
 	background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
 }

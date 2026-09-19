@@ -1,0 +1,98 @@
+@use 'section-tints' as tints;
+
+// A section page (Gateways, Access, Applications, Help and the pages under them) in the home page's language:  a band of
+// the section's tint behind the header, then cards in the home page's 1080px column - left-aligned, so a page of one card
+// does not float a lone tile mid-screen.  A mixin rather than global styles:  Cards and the Applications page each include
+// it into their own encapsulated sheet.  The host wraps the page in `.section-page.card-<section>`, which sets --tint.
+@mixin section-page(){
+	.section-page {
+		--tint: var(--mat-sys-primary);
+		background: linear-gradient( 180deg, color-mix(in srgb, var(--tint) 14%, transparent), transparent 320px );
+	}
+	@each $section, $tint in tints.$section-tints {
+		.section-page.card-#{$section} { --tint: #{$tint}; }
+	}
+
+	.section {
+		box-sizing: border-box;
+		width: 100%;
+		max-width: 1080px;
+		margin: 0 auto;
+		padding: 28px 20px 40px;
+	}
+
+	.section-cards {
+		display: grid;
+		grid-template-columns: repeat( auto-fill, minmax(min(100%, 250px), 1fr) );
+		gap: 14px;
+	}
+
+	.section-card {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		box-sizing: border-box;
+		padding: 16px 18px;
+		border: 1px solid color-mix( in srgb, var(--tint) 28%, var(--mat-sys-outline-variant) );
+		border-radius: 16px;
+		background: linear-gradient( 160deg, color-mix(in srgb, var(--tint) 18%, var(--mat-sys-surface-container)), var(--mat-sys-surface-container) 70% );
+		transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+
+		// a target, not a link:  hold every state at the card's own colours against the global `a{color:primary}`
+		&, &:visited, &:active, &:hover, &:focus { color: var(--mat-sys-on-surface); text-decoration: none; }
+	}
+	a.section-card:hover, a.section-card:focus-visible {//a card with no page to open (div) holds still
+		border-color: color-mix( in srgb, var(--tint) 70%, var(--mat-sys-primary) );
+		box-shadow: 0 6px 18px color-mix( in srgb, var(--tint) 24%, transparent );
+		transform: translateY( -2px );
+	}
+	a.section-card:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 3px; }
+
+	.section-card-top {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.section-chip {
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 40px;
+		height: 40px;
+		border-radius: 12px;
+		background: color-mix( in srgb, var(--tint) 24%, var(--mat-sys-surface-container) );
+		color: color-mix( in srgb, var(--tint) 55%, var(--mat-sys-on-surface) );
+	}
+
+	.section-card-text {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
+	}
+
+	.section-card-title {
+		font-size: 16px;
+		font-weight: 500;
+		overflow-wrap: anywhere;//node/gateway names are unspaced and would otherwise widen the column
+	}
+
+	.section-card-sub {
+		font-size: 12.5px;
+		line-height: 1.4;
+		color: var(--mat-sys-on-surface-variant);
+	}
+
+	.section-empty {
+		grid-column: 1 / -1;
+		padding: 24px 0;
+		color: var(--mat-sys-on-surface-variant);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.section-card { transition: none; }
+		a.section-card:hover, a.section-card:focus-visible { transform: none; }
+	}
+}

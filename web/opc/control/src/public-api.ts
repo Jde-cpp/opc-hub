@@ -18,5 +18,7 @@ export {OpcNodeLinkResolver} from './lib/services/node-link-resolver';
 export {SettingsRouteService} from './lib/services/routes/settings-route-service';
 export {OPC_STORE, OpcStore} from './lib/services/opc-store';
 export {NodeSearchProvider} from './lib/services/node-search-provider';
+export {GatewayCardStatus, GatewayConnectionsStatus} from './lib/services/gateway-card-status';
+export {nodeSegmentName} from './lib/services/routes/node-segment-name';
 export type {NodeSearchRow} from './lib/services/node-search-provider';
 export * from './lib/help-topics';

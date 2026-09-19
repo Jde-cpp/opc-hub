@@ -1,0 +1,107 @@
+@use '../../../../styles/section-tints' as tints;
+
+:host { display: block; }
+
+// A landing page's Recently visited row (RecentVisits):  small cards three across, each with its section's tint on the icon
+// chip, so a page reads as belonging to the tile above it.
+.recent-section {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 1080px;
+	margin: 0 auto;
+	padding: 0 20px 40px;
+}
+
+.recent-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.recent-heading {//the tiles' heading, one row up
+	margin: 0;
+	font: var(--mat-sys-title-large);
+	color: var(--mat-sys-on-surface);
+}
+
+.recent {
+	display: grid;
+	grid-template-columns: repeat( 3, minmax(0, 1fr) );
+	gap: 12px;
+
+	@media (max-width: 1000px) { grid-template-columns: repeat( 2, minmax(0, 1fr) ); }
+	@media (max-width: 540px) { grid-template-columns: minmax(0, 1fr); }
+}
+
+.recent-card {
+	--tint: var(--mat-sys-primary);
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	border: 1px solid var(--mat-sys-outline-variant);
+	border-radius: 14px;
+	background: var(--mat-sys-surface-container);
+	transition: background 150ms ease, border-color 150ms ease;
+
+	&, &:visited, &:active, &:hover, &:focus { color: var(--mat-sys-on-surface); text-decoration: none; }
+	&:hover, &:focus-visible {
+		background: var(--mat-sys-surface-container-high);
+		border-color: color-mix( in srgb, var(--tint) 60%, var(--mat-sys-outline-variant) );
+	}
+	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
+}
+
+.recent-chip {
+	flex: none;
+	display: grid;
+	place-items: center;
+	width: 40px;
+	height: 40px;
+	border-radius: 12px;
+	background: color-mix( in srgb, var(--tint) 22%, var(--mat-sys-surface-container) );
+	color: color-mix( in srgb, var(--tint) 55%, var(--mat-sys-on-surface) );
+}
+
+.recent-text {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;//lets the lines below ellipsize instead of widening the card
+}
+
+.recent-title, .recent-path {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.recent-title { font-size: 15px; font-weight: 500; }
+
+.recent-path, .recent-time {
+	font-size: 12px;
+	color: var(--mat-sys-on-surface-variant);
+}
+
+.recent-time { margin-top: 2px; }
+
+.recent-empty {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 16px;
+	border: 1px dashed var(--mat-sys-outline-variant);
+	border-radius: 14px;
+	font-size: 14px;
+	color: var(--mat-sys-on-surface-variant);
+}
+
+@each $section, $tint in tints.$section-tints {
+	.recent-card.card-#{$section} { --tint: #{$tint}; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.recent-card { transition: none; }
+}
