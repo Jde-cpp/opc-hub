@@ -1,139 +1,44 @@
-//@import '../../../../styles/constants';
-@use '../../../styles/section-tints' as tints;
+@use '../../../styles/section-page' as section;
 
-.cards {
-	display: flex;
-	flex-direction: column;
-}
+// the section layout Cards uses, so /apps reads like /gateways, /access and /help
+@include section.section-page();
 
-// same wrapping-and-centered row as the cards page
-.cards-row {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: center;
-	align-content: start;
-	gap: 20px;
-	padding: 24px 20px 32px;
-}
-
-.card-link {
-	flex: 0 1 280px;//shrinks on a phone, never grows past the tile width
-	border-radius: var(--mat-sys-corner-large);
-
-	// the tile is a target, not a link:  hold every state at the surrounding colour so the global `a{color:primary}`
-	// in styles.scss does not paint the card's own text (it used to be `a:visited{color:magenta}`, and turned visited tiles pink)
-	&, &:visited, &:active, &:hover, &:focus { color: inherit; text-decoration: none; }
-	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 3px; }
-}
-
-// same hover/focus affordance as the cards page - these tiles are links, so they should react like one.
-// This is the Applications section, so its tiles carry the tint its home tile advertised.
-.docs-component-category-list-card {
-	height: 100%;
-	box-sizing: border-box;
-	border: 1px solid transparent;//reserved so the hover border does not shift the layout
-	transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-	@include tints.tint( apps );
-
-	.card-link:hover &, .card-link:focus-visible & {
-		@include tints.tintHover( apps );
-		box-shadow: var(--mat-sys-level2);
-		transform: translateY( -2px );
-	}
-}
-
-.card-heading {
-	display: flex;
-	justify-content: space-between;
-	align-items: start;
-	gap: 12px;
-	padding: 16px 16px 0;//mat-card-header's padding, which we are standing in for
-}
-
-.card-heading-text {
-	min-width: 0;//lets a long instance name wrap instead of pushing the icon off the card
-
-	// the instance is a qualifier on the program name, not a second title
-	.mat-mdc-card-subtitle {
-		margin-top: 2px;
-		font-weight: 400;
-		color: var(--mat-sys-on-surface-variant);
-		opacity: 0.75;
-	}
-}
-
-// label/value pairs line up in a column instead of running as "Label:  value" text
-.card-facts {
+// uptime, memory and host across the foot of a card:  the three facts a running service is scanned for
+.stats {
 	display: grid;
-	grid-template-columns: auto 1fr;
-	gap: 4px 12px;
-	align-items: baseline;
-	padding-top: 12px;
-	padding-bottom: 16px;
-}
+	grid-template-columns: repeat( 3, minmax(0, 1fr) );
+	gap: 8px;
+	margin: 0;
+	padding-top: 10px;
+	border-top: 1px solid color-mix( in srgb, var(--tint) 20%, var(--mat-sys-outline-variant) );
 
-.card-label {
-	color: var(--mat-sys-on-surface-variant);
-	opacity: 0.75;//on-surface-variant is barely dimmer than on-surface in these themes
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.docs-component-category-list-card {
-		transition: none;
-
-		.card-link:hover &, .card-link:focus-visible & { transform: none; }
+	div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	dt {
+		font-size: 10.5px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--mat-sys-on-surface-variant);
+	}
+	dd {
+		margin: 0;
+		overflow: hidden;
+		font-size: 13.5px;
+		font-weight: 500;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		text-overflow: ellipsis;//a long host name;  the title attribute carries it whole
 	}
 }
 
-.card-icon {
-	flex: none;
-	color: var(--mat-sys-primary);
-}
-
-.docs-component-category-list-summary
-{
-	padding: 25px 40px 0;
-}
-
-.docs-component-category-list
-{
+.no-page {
 	display: flex;
-	flex-wrap: wrap;
-	padding: 20px;
+	align-items: center;
+	gap: 4px;
+	font-size: 11.5px;
+	color: var(--mat-sys-on-surface-variant);
 
-//	@media (max-width: $small-breakpoint-width) { justify-content: center; }
+	mat-icon { width: 14px; height: 14px; font-size: 14px; }
 }
 
-.docs-component-category-list-item
-{
-	display: inline-block;
-	margin: 20px;
-	vertical-align: top;
-	width: 260px;
-
-	.mat-card-title { font-size: 20px; }
-	&, &:active, &:hover, &:focus { text-decoration: none; }
-}
-
-.docs-component-category-list-card-summary
-{
-	min-height: 2.4em;
-	margin-bottom: 8px;
-}
-
-.iconButton
-{
-	cursor: pointer;
-}
-
-.docs-component-list-item {
-	display: block;
-
-	.mat-card-title {
-	  font-size: 20px;
-	}
-
-	&, &:active, &:hover, &:focus {
-	  text-decoration: none;
-	}
- }
+.jde-empty { grid-column: 1 / -1; }//the global empty state, across the whole grid

@@ -1,0 +1,26 @@
+<section class="recent-section" aria-labelledby="recent-heading">
+	<div class="recent-head">
+		<h2 id="recent-heading" class="recent-heading">Recently visited</h2>
+		@if( recent().length ){
+			<button matButton type="button" (click)="clear()">Clear</button>
+		}
+	</div>
+	@if( recent().length ){
+		<div class="recent">
+			@for( r of recent(); track r.url ){
+				<a [routerLink]="r.url" class="recent-card" [class]="'card-'+r.section">
+					<span class="recent-chip" aria-hidden="true"><mat-icon>{{r.icon ?? 'history'}}</mat-icon></span>
+					<span class="recent-text">
+						<span class="recent-title">{{r.title}}</span>
+						@if( r.path ){
+							<span class="recent-path">{{r.path}}</span>
+						}
+						<span class="recent-time">{{ago(r.at)}}</span>
+					</span>
+				</a>
+			}
+		</div>
+	} @else {
+		<div class="recent-empty"><mat-icon aria-hidden="true">history</mat-icon>Pages you open (a node, a user, a running service) will show up here.</div>
+	}
+</section>

@@ -1,95 +1,197 @@
+@use 'sass:map';
 @use '../../../styles/section-tints' as tints;
+@use '../../../styles/section-page' as section;
 
 .page {
 	display: flex;
 	flex-direction: column;
 }
 
-// wrapping flex row rather than a grid: a fixed tile width keeps three of them from stretching across a 4k
-// monitor, and justify-content centers whatever is on the row - including a short last row
-.cards {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: center;
-	align-content: start;
-	gap: 20px;
-	padding: 24px 20px 32px;
+// the landing banner (route data `hero`):  a primary glow washes down from the top edge, mixed into transparent so it
+// follows whichever theme is selected, and the rule under the title runs the section tints of the tiles below it
+.hero {
+	margin: 0 20px;
+	padding: 48px 24px 28px;
+	text-align: center;
+	background: radial-gradient( ellipse 55% 100% at 50% 0%, color-mix(in srgb, var(--mat-sys-primary) 16%, transparent), transparent );
 }
 
-.card-link {
-	display: block;
-	flex: 0 1 280px;//shrinks on a phone, never grows past the tile width
-	border-radius: var(--mat-sys-corner-large);
-
-	// the tile is a target, not a link:  hold every state at the surrounding colour so the global `a{color:primary}`
-	// in styles.scss does not paint the card's own text (it used to be `a:visited{color:magenta}`, and turned visited tiles pink)
-	&, &:visited, &:active, &:hover, &:focus { color: inherit; text-decoration: none; }
-	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 3px; }
+.hero-title {
+	margin: 0;
+	font: var(--mat-sys-display-small);
+	letter-spacing: -0.25px;
+	color: var(--mat-sys-on-surface);
 }
 
-.card {
-	position: relative;//.card-icon is positioned against this
-	box-sizing: border-box;
-	height: 100%;
-	min-height: 96px;
-	padding: 20px 60px 20px 20px;//right side left clear for the icon
-	border: 1px solid var(--mat-sys-outline-variant);
-	border-radius: var(--mat-sys-corner-large);
-	background: var(--mat-sys-surface-container);
-	box-shadow: var(--mat-sys-level1);
-	transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-
-	.card-link:hover &, .card-link:focus-visible & {
-		background: var(--mat-sys-surface-container-high);
-		border-color: var(--mat-sys-primary);
-		box-shadow: var(--mat-sys-level2);
-		transform: translateY( -2px );
-	}
-}
-
-.card-icon {
-	position: absolute;
-	top: 18px;
-	right: 18px;
+.hero-name {
+	font-weight: 600;
 	color: var(--mat-sys-primary);
 }
 
-.card-title {
-	font-size: 18px;
-	font-weight: 600;
-	letter-spacing: 0.2px;
-	color: var(--mat-sys-on-surface);
-	overflow-wrap: anywhere;//node/gateway names are unspaced and would otherwise widen the column
+.hero-rule {
+	width: 96px;
+	height: 4px;
+	margin: 16px auto 0;
+	border-radius: 2px;
+	background: linear-gradient( 90deg, map.get(tints.$section-tints, gateways), map.get(tints.$section-tints, access), map.get(tints.$section-tints, apps), map.get(tints.$section-tints, help) );
 }
 
-.card-summary {
-	margin-top: 6px;
+.hero-tagline {
+	max-width: 40em;
+	margin: 16px auto 0;
+	font: var(--mat-sys-body-large);
+	color: var(--mat-sys-on-surface-variant);
+	text-wrap: balance;
+}
+
+// A landing page's tiles:  a label, one figure and a detail line (CARD_STATUS) over a gradient of the section's tint, with
+// the section icon drawn large and faint behind them.  Four across, two, then one - a count the four home tiles fill, so
+// none sits alone on a row.
+.tiles-section {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 1080px;
+	margin: 0 auto;
+	padding: 8px 20px 36px;
+}
+
+.tiles-heading {
+	margin: 0 0 14px;
+	font: var(--mat-sys-title-large);
+	color: var(--mat-sys-on-surface);
+}
+
+.tiles {
+	display: grid;
+	grid-template-columns: repeat( 4, minmax(0, 1fr) );
+	gap: 16px;
+
+	@media (max-width: 1000px) { grid-template-columns: repeat( 2, minmax(0, 1fr) ); }
+	@media (max-width: 540px) { grid-template-columns: minmax(0, 1fr); }
+}
+
+// --tint is the section's colour (set per section below);  every shade here is mixed from it and a theme token, so the
+// tiles follow light and dark themes alike.  Mixing toward on-surface darkens the figure on a light theme and lightens it
+// on a dark one, which keeps it readable on the tinted ground either way.
+.tile {
+	--tint: var(--mat-sys-primary);
+	position: relative;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	min-height: 168px;
+	padding: 18px 20px 16px;
+	border: 1px solid color-mix( in srgb, var(--tint) 35%, var(--mat-sys-outline-variant) );
+	border-radius: 20px;
+	background: linear-gradient( 155deg, color-mix(in srgb, var(--tint) 30%, var(--mat-sys-surface-container)), color-mix(in srgb, var(--tint) 10%, var(--mat-sys-surface-container)) 75% );
+	transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+
+	// a target, not a link:  hold every state at the tile's own colours against the global `a{color:primary}` in styles.scss
+	&, &:visited, &:active, &:hover, &:focus { color: var(--mat-sys-on-surface); text-decoration: none; }
+	&:hover, &:focus-visible {
+		border-color: color-mix( in srgb, var(--tint) 70%, var(--mat-sys-primary) );
+		box-shadow: 0 8px 22px color-mix( in srgb, var(--tint) 28%, transparent );
+		transform: translateY( -2px );
+	}
+	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 3px; }
+}
+
+.tile-icon {
+	position: absolute;
+	top: 18px;
+	right: -18px;
+	width: 132px;
+	height: 132px;
+	font-size: 132px;
+	color: color-mix( in srgb, var(--tint) 14%, transparent );
+	pointer-events: none;
+}
+
+.tile-title {
+	position: relative;
+	font: var(--mat-sys-title-large);
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
+.tile-body {
+	position: relative;
+	margin-top: auto;//the figure sits at the foot, however long the title runs
+	padding-top: 18px;
+}
+
+.tile-label {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.09em;
+	text-transform: uppercase;
+	color: color-mix( in srgb, var(--tint) 45%, var(--mat-sys-on-surface) );
+}
+
+.tile-figure {
+	margin-top: 2px;
+	font-size: 42px;
+	line-height: 1.05;
+	font-variant-numeric: tabular-nums;//counts:  the digits keep one width as they change
+	color: color-mix( in srgb, var(--tint) 55%, var(--mat-sys-on-surface) );
+}
+
+.tile-detail {
+	margin-top: 2px;
 	font-size: 13px;
 	line-height: 1.4;
 	color: var(--mat-sys-on-surface-variant);
 }
 
-// the home tiles are color coded per section so the areas read apart at a glance - HomeRouteService tags each
-// tile `card-<route path>`, and the section page it leads to wears the same tint
-@each $section, $tint in tints.$section-tints {
-	.card.card-#{$section} {
-		@include tints.tint( $section );
-
-		.card-link:hover &, .card-link:focus-visible & { @include tints.tintHover( $section ); }
-	}
+.tile.warn {
+	.tile-figure, .tile-detail { color: var(--mat-sys-error); }
 }
 
-.cards-empty {
-	flex: 1 1 100%;
-	padding: 24px 20px;
-	text-align: center;
+.tile-warn-icon {
+	width: 15px;
+	height: 15px;
+	margin-right: 3px;
+	font-size: 15px;
+	vertical-align: -3px;
+}
+
+@each $section, $tint in tints.$section-tints {
+	.tile.card-#{$section} { --tint: #{$tint}; }
+}
+
+// a section page's cards (not a landing page):  the shared section layout, plus the figure a CARD_STATUS gives a card
+@include section.section-page();
+
+.section-card-external {//a card that leaves the site
+	flex: none;
+	margin-left: auto;
+	align-self: flex-start;
+	width: 18px;
+	height: 18px;
+	font-size: 18px;
 	color: var(--mat-sys-on-surface-variant);
 }
 
+.section-card-figure {
+	font-size: 13px;
+	color: var(--mat-sys-on-surface-variant);
+
+	b {
+		margin-right: 6px;
+		font-size: 26px;
+		font-weight: 400;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
+		color: color-mix( in srgb, var(--tint) 55%, var(--mat-sys-on-surface) );
+	}
+	&.warn, &.warn b { color: var(--mat-sys-error); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.card {
+	.tile {
 		transition: none;
 
-		.card-link:hover &, .card-link:focus-visible & { transform: none; }
+		&:hover, &:focus-visible { transform: none; }
 	}
 }

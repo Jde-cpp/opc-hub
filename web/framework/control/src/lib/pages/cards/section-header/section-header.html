@@ -1,0 +1,21 @@
+<header class="section-head">
+	@if( name() ){
+		<div class="section-eyebrow">
+			@if( icon() ){
+				<mat-icon aria-hidden="true">{{icon()}}</mat-icon>
+			}
+			{{name()}}
+		</div>
+	}
+	@if( heading() ){
+		<h1 class="section-title">{{heading()}}</h1>
+	}
+	@if( status()?.summary; as summary ){
+		<p class="section-status" [class.warn]="status()!.warn">
+			@if( status()!.warn ){
+				<mat-icon aria-hidden="true">error</mat-icon>
+			}
+			{{summary}}
+		</p>
+	}
+</header>

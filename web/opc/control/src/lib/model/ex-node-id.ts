@@ -4,7 +4,7 @@ export interface IExNodeId extends INodeId{
 	serverIndex:number;
 	nsu:string;
 }
-export type ExNodeIdJson = {nsu?:string,serverIndex?:number} & NodeIdJson;
+export type ExNodeIdJson = {nsu?:string,serverIndex?:number} & (NodeIdJson | Partial<INodeId>);//NodeId's constructor takes either form - the wire's {ns,i|s|g|b}, or {ns,id} with the identifier already built
 
 export class ExNodeId extends NodeId /*implements IExNodeId*/{
 	constructor( json: ExNodeIdJson ){

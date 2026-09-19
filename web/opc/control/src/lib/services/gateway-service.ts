@@ -14,7 +14,7 @@ import * as FromClient from 'jde-proto/Opc.FromClient';
 import * as FromServer from 'jde-proto/Opc.FromServer';
 import { OPC_STORE, OpcStore } from './opc-store';
 import { CnnctnSlug } from "../model/server-cnnctn";
-import { NodeKey, NodeId } from '../model/node-id';
+import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
 import { ENodeClass, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
@@ -230,22 +230,22 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				console.error( e );
 		}
 	}
+	//protobufjs exposed a virtual `Identifier` getter naming the set oneof field; ts-proto emits the fields as plain
+	//optionals, so test for undefined rather than truthiness - id 0 and "" are legitimate values, not absence.
+	private static toIdentifier( proto:Common.NodeId ):NodeIdentifier|undefined{
+		return proto.numeric!=undefined ? proto.numeric
+			: proto.string!=undefined ? proto.string
+			: proto.byteString!=undefined ? proto.byteString
+			: proto.guid!=undefined ? Gateway.toGuid( proto.guid ) : undefined;
+	}
+	//The id goes in WITH the namespace.  Both of these built the node from its namespace alone and assigned the id after, and
+	//a NodeId with no identifier is what the constructor reports - so every subscription push (one a second, per node) logged
+	//"NodeId - unrecognized json" to the console for a node that was fine.  A proto with no identifier still says so.
 	private static toNode( proto:Common.NodeId ):NodeId{
-		let node = new NodeId( {ns:proto.namespaceIndex} );
-		//protobufjs exposed a virtual `Identifier` getter naming the set oneof field; ts-proto emits the fields as plain
-		//optionals, so test for undefined rather than truthiness - id 0 and "" are legitimate values, not absence.
-		if( proto.numeric!=undefined )         node.id = proto.numeric;
-		else if( proto.string!=undefined )     node.id = proto.string;
-		else if( proto.byteString!=undefined ) node.id = proto.byteString;
-		else if( proto.guid!=undefined )       node.id = Gateway.toGuid( proto.guid );
-		return node;
+		return new NodeId( {ns: proto.namespaceIndex, id: Gateway.toIdentifier(proto)} );
 	}
 	private static toExpanded( proto:Common.ExpandedNodeId ):ExNodeId{
-		const en = new ExNodeId( {nsu:proto.namespaceUri!, serverIndex:proto.serverIndex!} );
-		const n = Gateway.toNode(proto.node!);
-		en.id = n.id;
-		en.ns = n.ns;
-		return en;
+		return new ExNodeId( {ns: proto.node!.namespaceIndex, id: Gateway.toIdentifier(proto.node!), nsu: proto.namespaceUri!, serverIndex: proto.serverIndex!} );
 	}
 
 	private static toProto( nodes:NodeId[] ):Common.NodeId[]{

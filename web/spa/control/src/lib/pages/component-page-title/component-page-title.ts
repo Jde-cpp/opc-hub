@@ -1,5 +1,5 @@
 import {Injectable, signal, inject } from '@angular/core';
-import {Title} from '@angular/platform-browser';
+import {DocumentTitle} from '../../services/document-title';
 
 /**
  * Service responsible for setting the title that appears above the components and guide pages.
@@ -15,17 +15,11 @@ export class ComponentPageTitle {
 
   set title(title: string) {
     this._title.set(title);
-    if (title !== '') {
-      //title = `${title} | Angular Material`;
-      title = title; //
-    } else {
-      title = 'Jde';//this._originalTitle;
-    }
-    this.bodyTitle.setTitle(title);
+    this.documentTitle.set(title);//adds the app name, and falls back to it for ''
   }
 	set detail( x:string ){//
 		//const main = this.title?.includes("|") ? this.title.substring( this.title.lastIndexOf('|') ) : this.title;
 		this._title.set( x );
  	}
-  private bodyTitle:Title = inject( Title );
+  private documentTitle:DocumentTitle = inject( DocumentTitle );
 }
