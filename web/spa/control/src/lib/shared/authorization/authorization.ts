@@ -1,13 +1,14 @@
-import { Component, Signal, inject, resource } from '@angular/core';
+import { Component, Signal, computed, inject, resource } from '@angular/core';
 import {Router, RouterLink, RouterLinkActive} from '@angular/router';
 import {MatButtonModule} from '@angular/material/button';
 import { EProvider, IAUTH, IAuth, User } from '../../services/authorization/auth';
 import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 declare const gapi: any;
 @Component( {
 	selector: "authorization", templateUrl: "./authorization.html", styleUrls: ["./authorization.scss"],
-	imports: [MatButtonModule, MatIconModule, RouterLink, RouterLinkActive]} )
+	imports: [MatButtonModule, MatIconModule, MatTooltipModule, RouterLink, RouterLinkActive]} )
 export class Authorization{
 	private authService:IAuth = inject( IAUTH );
 	constructor(){
@@ -52,4 +53,9 @@ export class Authorization{
 
 	router = inject(Router);
 	user:Signal<User | undefined>;
+	//the picture alone says nothing to a screen reader, nor who is signed in - the label and tooltip carry both.
+	signOutLabel = computed<string>( ()=>{
+		const who = this.user()?.name ?? this.user()?.email;
+		return who ? `Sign out ${who}` : 'Sign out';
+	});
 }

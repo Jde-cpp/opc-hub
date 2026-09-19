@@ -1,6 +1,6 @@
 # Navigation
 
-The bar across the top of every page carries the favorites, the search box, and the account and display controls.
+The bar across the top of every page carries the home link, the favorites, the search box, and the account, display and help controls.
 
 ## Search
 
@@ -8,7 +8,7 @@ Type into the search box, or press `/` from anywhere on a page to jump to it. Ma
 
 The search covers the site's pages and the records the site knows about. A prefix narrows it to one kind of record:
 
-| prefix | finds |
+| Prefix | Finds |
 |---|---|
 | `user:` | users |
 | `role:` | roles |
@@ -19,15 +19,15 @@ Nodes on a gateway connection appear once a connection has been browsed in this 
 
 ## Favorites
 
-The buttons at the left of the bar are favorites. New profiles start with one per top-level section. The star button adds the current page under a name of your choosing, optionally inside a folder, which becomes a drop-down; opening the same dialog on a page that is already a favorite renames or removes it. Favorites are saved with your profile, so they follow you between browsers.
+The buttons at the left of the bar are favorites. New profiles start with one per top-level section. The star button adds the current page under a name of your choosing, optionally inside a folder, which becomes a drop-down; opening the same dialog on a page that is already a favorite renames or removes it. Favorites are saved with your profile, so they follow you between browsers. A narrow window hides them; the search box still reaches every page.
 
 ## Breadcrumbs
 
-The chevron button at the right of the bar shows or hides the breadcrumb trail beneath it. Each crumb is a link back up the path.
+The chevron button at the right of the bar shows or hides the breadcrumb trail beneath it. Each crumb links back up the path. The setting is remembered in this browser.
 
 ## Themes
 
-The paint-bucket button picks one of the site's colour themes. The choice is remembered in this browser.
+The paint-bucket button picks one of the site's color themes. The choice is remembered in this browser.
 
 ## Signing in and out
 

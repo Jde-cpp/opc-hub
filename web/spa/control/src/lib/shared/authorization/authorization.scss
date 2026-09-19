@@ -1,2 +1,5 @@
 .profile-picture {max-height: 34px; max-width: 34px; border-radius: 50%;}
 .selected {background: color-mix(in srgb, var(--mat-sys-primary) 40%, transparent);}
+//a plain button, not matIconButton:  that sizes any <img> inside it to the 24px icon.
+.account {display: inline-flex; align-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer;}
+.account:focus-visible {outline: 2px solid currentColor; outline-offset: 2px;}
