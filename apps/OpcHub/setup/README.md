@@ -91,6 +91,7 @@ machine by itself.
               Jde.DB.Sqlite.dll sqlite3.dll Jde.DB.Sqlite.AppServer.dll Jde.DB.Sqlite.OpcGateway.dll
   OpcServer\  Jde.Opc.Server.exe + the same + libxml2.dll, Jde.DB.Sqlite.dll sqlite3.dll
   Web\        the Angular site, served by the hub at http://<host>:1967/ (+ web.config for IIS, optional)
+  LICENSE.txt THIRD-PARTY-NOTICES.txt                     ours (MIT), and the notices of the third-party code inside the exes and dlls
   Uninstall.exe
 C:\ProgramData\Jde-Cpp
   config\                                                settings mirror - repo layout, so the configs' relative imports keep working

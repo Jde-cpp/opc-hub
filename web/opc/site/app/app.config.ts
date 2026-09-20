@@ -3,7 +3,7 @@ import { ApplicationConfig } from '@angular/core';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { MAT_NATIVE_DATE_FORMATS, MatDateFormats, provideNativeDateAdapter } from '@angular/material/core';
 import { provideRouter, TitleStrategy } from '@angular/router';
-import { APP_SERVICE, AppCardStatus, AppService, AUTH_STORE, AuthStore, CARD_STATUS, frameworkHelpTopics, HelpCardStatus, ProfileService } from 'jde-framework'
+import { APP_SERVICE, AppCardStatus, AppService, AUTH_STORE, AuthStore, CARD_STATUS, frameworkHelpTopics, HelpCardStatus, listHelpTopics, ProfileService } from 'jde-framework'
 import { GATEWAY_SERVICE, GatewayCardStatus, GatewayConnectionsStatus, GatewayService, nodeSegmentName, NodeSearchProvider, OPC_STORE, OpcAuthService, opcHelpTopics, OpcNodeLinkResolver, OpcStore} from 'jde-opc';
 import { APP_LOGO, APP_NAME, AppTitleStrategy, HELP_LINKS, HELP_TOPICS, HelpLink, HelpTopic, IAUTH, IENVIRONMENT, IPROFILE_SERVICE, RouteSearchProvider, SEARCH_PROVIDERS, SEGMENT_NAME, spaHelpTopics } from 'jde-spa';
 import {EnvironmentService} from './services/environment-service';
@@ -64,6 +64,7 @@ export const appConfig: ApplicationConfig = {
 		//between them in the navbar's order.
 		{provide: HELP_TOPICS, useValue: siteOverview, multi: true},
 		{provide: HELP_TOPICS, useValue: spaHelpTopics, multi: true},
+		{provide: HELP_TOPICS, useValue: listHelpTopics, multi: true},
 		{provide: HELP_TOPICS, useValue: opcHelpTopics, multi: true},
 		{provide: HELP_TOPICS, useValue: accessHelpTopics, multi: true},
 		{provide: HELP_TOPICS, useValue: frameworkHelpTopics, multi: true},

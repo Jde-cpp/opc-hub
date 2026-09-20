@@ -439,6 +439,11 @@ Section -Services
 SectionEnd
 
 Section -Post
+	;the licenses on disk, not just on the wizard's page: ours, and the notices of the third-party code inside the exes and
+	;dlls (build/third-party-notices.sh) - MIT, BSD and Apache-2.0 ask for theirs to travel with the binaries
+	SetOutPath "$INSTDIR"
+	File /oname=LICENSE.txt "${SRC_DIR}\LICENSE"
+	File "${SRC_DIR}\THIRD-PARTY-NOTICES.txt"
 	WriteUninstaller "$INSTDIR\Uninstall.exe"
 	${If} $MultiUser.InstallMode == "AllUsers"
 		StrCpy $1 "/AllUsers"
@@ -630,6 +635,8 @@ Section "Uninstall"
 	RMDir /r "$INSTDIR\OpcHub"
 	RMDir /r "$INSTDIR\OpcServer"
 	RMDir /r "$INSTDIR\Web"
+	Delete "$INSTDIR\LICENSE.txt"
+	Delete "$INSTDIR\THIRD-PARTY-NOTICES.txt"
 	Delete "$INSTDIR\Uninstall.exe"
 	RMDir "$INSTDIR"
 	RMDir /r "$ConfigDir"

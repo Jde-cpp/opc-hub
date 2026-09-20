@@ -71,4 +71,9 @@ echo ------------------- Starting Build -------------------;
 #on the next load and its assets are never revalidated.  Source maps either way: the installers skip *.map
 #(apps/OpcHub/setup - reviews/install-issues.md, "Shipped weight"), so they cost nothing shipped and a local dist still debugs.
 if [ $release = 1 ]; then hashing=all; else hashing=none; fi
-ng build --output-hashing=$hashing --source-map=true;
+ng build --output-hashing=$hashing --source-map=true || { echo `pwd`; echo ng build failed; exit 1; };
+#the two license lists the about page links (site/assets/help/about.md).  ng build writes its own - the npm packages in the
+#bundle - beside browser/, and browser/ is all the workflows upload and the installers pack, so it goes inside, with the
+#services' notices (build/third-party-notices.sh) next to it.
+dist=dist/my-workspace;
+cp $dist/3rdpartylicenses.txt $JDE_BASH/THIRD-PARTY-NOTICES.txt $dist/browser/ || { echo `pwd`; echo copying the license lists into $dist/browser failed; exit 1; };

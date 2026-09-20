@@ -8,7 +8,7 @@ The [Gateways](/gateways) page lists the gateways; a gateway lists its connectio
 
 A node page has two tabs.
 
-**Children** lists the node's child nodes with their current values. Click an object node to descend; the breadcrumb trail leads back up. The refresh button re-reads the values, the view buttons choose the columns, and **Access** opens the node's rights.
+**Children** lists the node's child nodes with their current values. Click an object node to descend; the breadcrumb trail leads back up. The refresh button re-reads the values, the view buttons choose the columns, filters and sort - see [Views](/help/lists#views) - and **Access** opens the node's rights.
 
 **Status** is the quality the server gives a value - **Good**, **Uncertain** or **Bad**, as OPC UA defines them - by its name: `Good`, `UncertainSensorNotAccurate`, `BadSensorFailure`. A suffix adds what the server says about the reading itself: `+Low`, `+High` or `+Constant` when it is pinned at a limit, `+Overflow` when readings were lost, `+StructureChanged` or `+SemanticsChanged` when the node's definition has moved under it. Hover over the status for its numeric code. A status that is not plain Good shows as an icon beside the value - an error mark for Bad, a warning for Uncertain, an *i* for a Good that carries a note - with the status in its tooltip. The **Status** column itself is hidden in the default view; switch it on in the view editor to read, sort or filter on it, and the icon moves into that column.
 
