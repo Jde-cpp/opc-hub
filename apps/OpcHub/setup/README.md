@@ -182,7 +182,7 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   one a CA your browsers trust issued - `certificate:{ managed:false, path:… }` and `privateKey:{ path:…, passcode:… }` in the
   same args file use that pair as found and never issue or replace it (both files must exist; the public key file the hub's
   identity reads is derived from the private key).  The Web UI uses plain HTTP on 1967 by ruling and needs none of this.
-- Connecting the hub to another OPC UA server (`/apps/gateways`, Add): set the connection's Certificate URI to that server's
+- Connecting the hub to another OPC UA server (`/apps` > the OpcHub card > Connections > Add): set the connection's Certificate URI to that server's
   application URI and the gateway opens a Sign & Encrypt session - Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or
   Basic256Sha256, the strongest the server shares - with a certificate it issues for the connection
   (`C:\ProgramData\Jde-Cpp\OpcHub\ssl\certs\OpcHub.<slug>.pem` - labelled with the hub's own application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces

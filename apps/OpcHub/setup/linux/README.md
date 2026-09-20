@@ -20,7 +20,7 @@ the CI runner's container is `ubuntu-noble` for that reason):
 | `patchelf` | `apt install patchelf`, or the PyPI wheel (`pip install patchelf`, then `--patchelf <path>`) - sets every staged exe's and `.so`'s RUNPATH to `$ORIGIN` |
 
 ```bash
-apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<JDE_VERSION>_amd64.deb + .tar.gz (CMakePresets.common.json - 2026.09.01)
+apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<version>_amd64.deb + .tar.gz (`git describe --tags`, else CMakePresets.common.json's JDE_VERSION - 2026.09.01)
 apps/OpcHub/setup/linux/build-deb.sh --version 2026.09.08 --skip-web
 apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dwarf (file:line in the stack traces); several times the size
 ```
@@ -37,9 +37,10 @@ exe and `.so` gets `RUNPATH=$ORIGIN` (patchelf), so a product dir resolves by it
 `Depends:` is what is left: the packages owning the system libraries the staged binaries still load (`libssl3t64`,
 `zlib1g`, `libzstd1`, `liburing2`, `liblzma5`, `libstdc++6`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
 `adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`); `ca-certificates` is recommended, for the OS trust
-store.  The version is `CMakePresets.common.json`'s `JDE_VERSION` - the string the C++ targets and the Web UI carry - unless
-`--version` names one (the release workflow passes the tag, which should equal it): a `yyyy.MM.dd` as it is,
-`yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`.
+store.  The version is `git describe --tags` unless `--version` names one (the release workflow passes the tag): a
+`yyyy.MM.dd` as it is, `yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`, which `dpkg` sorts after the tag it is newer than, so a
+build past a release can be installed over it.  Where no tag is reachable it falls back to `CMakePresets.common.json`'s
+`JDE_VERSION` - the string the C++ targets and the Web UI carry, and what `--version` is expected to agree with.
 
 CI: the Linux Release workflow (`.github/workflows/linux-release.yml`) builds the release tree on the self-hosted runner
 (`.github/docker/`), the Web UI on a GitHub-hosted `web` job as the Windows workflow does, runs `build-deb.sh` and uploads
@@ -118,7 +119,7 @@ registration.
 The counterpart of the Windows installer's "Current user" mode - no root, the products as `systemctl --user` units:
 
 ```bash
-tar xzf jde-opchub-<version>-linux-amd64.tar.gz && cd jde-opchub-<version>-linux-amd64   # or wherever it was unpacked
+tar xzf jde-opchub-<version>-linux-amd64.tar.gz && cd jde-opchub-<version>-linux-amd64   # the archive's one top-level directory
 ./install.sh                # the hub (+ the Web UI files); enable and start jde-opchub
 ./install.sh --opcserver    # ... and the OPC UA server
 ./install.sh --uninstall
@@ -130,6 +131,7 @@ tar xzf jde-opchub-<version>-linux-amd64.tar.gz && cd jde-opchub-<version>-linux
 | settings mirror | `~/.config/Jde-Cpp/config` - the same tree as `/etc/jde-cpp` |
 | data | `~/.config/Jde-Cpp/<Product>` (`$XDG_CONFIG_HOME`) - what `Process::ProgramDataFolder()` returns for a user process |
 | passcode | `~/.config/Jde-Cpp/env` (never overwritten) |
+| addresses | loopback only - the hub on `127.0.0.1:1967`, the server on `127.0.0.1:1970` and `opc.tcp://127.0.0.1:4840`.  The units run `-include=args/install-user`, whose `listenAddress` binds them: an install that needs no root cannot open a firewall port, so it does not publish one (the `.deb` binds every interface, where the administrator who installed it decides).  To reach this install from another machine, use the `.deb` - or set `listenAddress: null` in `~/.config/Jde-Cpp/config/apps/{OpcHub,OpcServer}/config/args/install-user/args.libsonnet`, allow the ports in the firewall and `systemctl --user restart jde-opchub jde-opcserver` |
 | units | `~/.config/systemd/user/jde-opchub.service`, `jde-opcserver.service`; `journalctl --user -u jde-opchub` |
 
 The units run while the account is logged in; `loginctl enable-linger $USER` starts them at boot instead (the "Start at
@@ -165,7 +167,7 @@ nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp`
   jde-opcserver`, then log in with Google: the site's origin must be registered under the OAuth client id the hub serves
   (`googleAuthClientId` in `apps/OpcHub/config/args/install/args.libsonnet`) - the Windows README's "First login" has the
   details.  The tarball's `install.sh` seeds the same with `--opcserver` and drops the seeds without it.
-- Connecting the hub to another OPC UA server (`/apps/gateways`, Add): set the connection's Certificate URI to that server's
+- Connecting the hub to another OPC UA server (`/apps` > the OpcHub card > Connections > Add): set the connection's Certificate URI to that server's
   application URI and the gateway opens a Sign & Encrypt session - Aes256_Sha256_RsaPss, Aes128_Sha256_RsaOaep or
   Basic256Sha256, the strongest the server shares - with a certificate it issues for the connection
   (`/var/lib/Jde-Cpp/OpcHub/ssl/certs/OpcHub.<slug>.pem` - labelled with the hub's own application URI, `urn:<machine>:Jde-Cpp:OpcHub`, which is how it introduces

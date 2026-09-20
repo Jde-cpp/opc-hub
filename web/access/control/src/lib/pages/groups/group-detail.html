@@ -15,7 +15,8 @@
 			</ng-template>
 		</mat-tab>
 		<mat-tab>
-			<ng-template mat-tab-label title="Child Groups">Groups</ng-template>
+			<!--the tooltip goes on a real element in the label:  an attribute on the ng-template is never rendered, so `title` here said nothing-->
+			<ng-template mat-tab-label><span matTooltip="Groups nested in this group">Groups</span></ng-template>
 			<ng-template matTabContent>
 				<ql-selector type=Group [ql]=ql [excludedIds]=[id] [(selections)]=childGroups></ql-selector>
 			</ng-template>

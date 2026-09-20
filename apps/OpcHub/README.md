@@ -88,7 +88,7 @@ settings they ship are `config/args/install` (sqlite - `args/install-sqlServer` 
 IIS is optional - the site behind IIS instead of, or beside, the hub's own url.  Windows features: Internet Information
 Services > World Wide Web Services > Common HTTP Features > *Static Content* and *Default Document*, nothing else.  IIS
 Manager > Add Website: site name `OpcHub`, physical path `C:\Program Files\Jde-Cpp\Web` (the current-user install's
-`Web` dir), binding http, port 8071.  Reloading or bookmarking a route (`/login`, `/apps/gateways`) is a 404 there until
+`Web` dir), binding http, port 8071.  Reloading or bookmarking a route (`/login`, `/gateways`) is a 404 there until
 the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is installed and the `<rewrite>` rule in
 `Web\web.config` is uncommented (it sends every path that is not a file to `index.html`); the page then calls the hub's
 1967 by the host it was browsed from.
@@ -108,11 +108,16 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
 
 ### First run
 
-With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection: Opc Servers in the Web UI lists it, and
-browsing to a node shows its value - Snapshot re-reads, the checkbox beside a node streams it, a typed value writes it.
-Any other OPC UA server is a connection added there (Settings > Opc Servers); the hub's client certificate may need
-trusting on that server the first time.  Roles are seeded but the first grant is manual - every resource ships unenforced,
-so the first user can make it.
+With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection: Gateways in the Web UI lists it under
+the hub's gateway, and browsing to a node shows its value - Snapshot re-reads, the checkbox beside a node streams it, a
+typed value writes it.  Every value in the shipped address space is static, though, so the checkbox on its own watches a
+number that never moves: to see the stream, open the node in two browser windows, tick the box in one and type a value in
+the other - the untouched window takes the new value through the subscription, which is the subscription working.  What
+moves values by itself is `Jde.Opc.PlcEmulator` ([`apps/OpcServer/emulator/README.md`](../OpcServer/emulator/README.md)),
+which neither installer packages; it is built from the repo and pointed at the server.  Any other OPC UA server is a
+connection added under `/apps` > the OpcHub card > Connections > Add; the hub's client certificate may need trusting on
+that server the first time.  Roles are seeded but the first grant is manual - every resource ships unenforced, so the
+first user can make it.
 
 ## Not done here
 
