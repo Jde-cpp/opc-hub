@@ -196,6 +196,40 @@ describe( 'NodeChildren subscription values', ()=>{
 			expect( row ).toMatchObject( {value: 9, sc: uncertain} );
 		} );
 	} );
+
+	//install-issues #35.  The gate was `userAccessLevel < EAccess.Write` - a magnitude test on a bitmask, and one that read
+	//JSON null as 0.  Against a third-party OPC server every value cell locked itself and the Access column drew nothing,
+	//which is exactly what a `null` level does; and a read-only node carrying any higher bit offered an editor the server
+	//would refuse.  The level is a mask, and "the server did not say" is not "the server said no".
+	describe( 'the write gate', ()=>{
+		const row = ( level:any )=>new Variable( <any>{ns:2, i:8, name:"w", browse:{ns:2, name:"w"}, value: 1, userAccessLevel: level} );
+		it( 'reads the CurrentWrite bit, not the magnitude', ()=>{
+			expect( page.readOnly(row(EAccess.Read)) ).toBe( true );
+			expect( page.readOnly(row(EAccess.Read | EAccess.Write)) ).toBe( false );
+			expect( page.readOnly(row(EAccess.Read | EAccess.HistoryRead)) ).toBe( true );//5 - "greater than Write", and read-only
+			expect( page.readOnly(row(EAccess.Read | EAccess.StatusWrite)) ).toBe( true );//0x21 - StatusWrite is not CurrentWrite
+		} );
+		//a server that answers the AccessLevel read with nothing sends JSON null, which compared as 0 and locked the row.
+		it( 'treats an unreported level as unknown, not as read-only', ()=>{
+			for( const unknown of [null, undefined] ){
+				const r = row( unknown );
+				expect( r.userAccessLevel ).toBeUndefined();//normalised at the boundary, so one rule covers both
+				expect( page.readOnly(r) ).toBe( false );
+				expect( page.readOnlyReason(r) ).toBe( "" );
+			}
+		} );
+		it( 'unwraps a level the gateway sent with a status', ()=>{
+			expect( row({v: EAccess.Read | EAccess.Write, sc: 0x40940600}).userAccessLevel ).toBe( EAccess.Read | EAccess.Write );
+			expect( row({sc: 0x80340000}).userAccessLevel ).toBeUndefined();//a status and no reading says nothing about the level
+		} );
+		//the finding's own words: "the row should say 'the server reports this node read-only for you' rather than dim in silence"
+		it( 'says why a cell is locked', ()=>{
+			expect( page.readOnlyReason(row(EAccess.Read)) ).toContain( "read-only for you" );
+			expect( page.readOnlyReason(row(EAccess.Read)) ).toContain( "Read" );//and what it did grant
+			expect( page.readOnlyReason(row(EAccess.Read | EAccess.Write)) ).toBe( "" );//nothing to explain
+			expect( page.readOnlyReason(row(EAccess.None)) ).toBe( "" );//"no read access" is the cell's own text there
+		} );
+	} );
 } );
 
 //MVP first-run:  an identity with no role gets userAccessLevel 0 on every node, and the Snapshot cell showed a blank that

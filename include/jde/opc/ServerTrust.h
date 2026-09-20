@@ -9,7 +9,10 @@
 //certificates under the caller's own <root>/trustedCertDirs, or AcceptAll when its <root>/verifyServerCertificate is
 //false.  Anchors only, no OS root store:  an OPC server's certificate is self-signed, so a public CA vouches for nothing
 //here.  Loaded per client, i.e. per connect, so a certificate copied in or re-issued after startup is trusted by the
-//next connection without a rescan.
+//next connection without a rescan.  A certificate file is taken by extension - .pem, .crt, .der or .cer - and either
+//encoding parses:  a UA server publishes DER, and skipping it in silence was install-issues #33.  Anything else in the
+//directory is logged at Debug and counted, so a rejection with no anchors can say the files were passed over rather than
+//leave "0 trusted certificates loaded" to be read as an empty directory.
 //
 //Both settings are per app, under the root the caller passes: the gateway's are /gateway/trustedCertDirs and
 ///gateway/verifyServerCertificate, the emulator's /emulator/….  The list is the app's own, and NOT

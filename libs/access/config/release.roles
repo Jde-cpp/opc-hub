@@ -38,9 +38,9 @@ mutation{
 	createRole( slug:"engineer", name:"Engineer", description:"Configures server connections, the nodes exposed from them, and subscriptions. No user administration." )
 	addRole( slug:"engineer", role:{ slug:"viewer" } )
 
-	createRole( slug:"operator", name:"Operator", description:"Runs the process - reads and writes values on assigned equipment. No configuration." )
+	createRole( slug:"operator", name:"Operator", description:"Runs the process - browses and watches values. Writing a value is the OPC server's own decision, not a role's. No configuration." )
 	addRole( slug:"operator", role:{ slug:"viewer" } )
 
-	createRole( slug:"maint-tech", name:"Maintenance Technician", description:"Tests and calibrates equipment; reads logs to diagnose faults. No configuration." )
+	createRole( slug:"maint-tech", name:"Maintenance Technician", description:"Diagnoses faults - browses values and reads logs. Writing a value is the OPC server's own decision, not a role's. No configuration." )
 	addRole( slug:"maint-tech", role:{ slug:"viewer" } )
 }

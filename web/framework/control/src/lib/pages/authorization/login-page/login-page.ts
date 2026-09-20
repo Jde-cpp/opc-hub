@@ -97,7 +97,11 @@ export class LoginPage implements OnDestroy{
 			throw new Error( "googleAuthClientId is not defined" );
 		return y;
 	}
-	hasUserPassword = computed(() => { return !this.providers.isLoading() && (this.providers.value()?.includes( EProvider.OpcServer ) ?? false); });//value() is undefined when the providers resource errored
+	//install-issues #38:  a `hasUserPassword` computed lived here - true when the providers include EProvider.OpcServer -
+	//and nothing ever read it;  the form has always rendered unconditionally.  Deleted rather than wired up, deliberately:
+	//the form must show on a hub that has no OPC provider yet, because adding the first server connection is done signed
+	//out and this page is where the user lands afterwards.  What the form lacked was not a condition but an explanation,
+	//which is now the Username hint in the template.
 	providers = resource<EProvider[], {}>( {loader: async () =>await this.authService.providers( console.log )} );
 
 	fb = inject(FormBuilder);

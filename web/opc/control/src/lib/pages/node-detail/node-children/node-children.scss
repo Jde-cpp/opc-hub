@@ -204,6 +204,16 @@ mat-cell.mat-column-status > .status-text{//the ellipsis box is the child, as un
 	height: 18px;
 	color: var(--mat-sys-on-surface-variant);
 }
+//why a value cell is locked (install-issues #35).  The same muted weight as the quality icon - it is an explanation sitting
+//next to a control, not a warning:  the lock shape carries the meaning and the tooltip carries the reason.
+.lock-icon{
+	flex: 0 0 auto;
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	margin-left: 4px;
+	color: var(--mat-sys-on-surface-variant);
+}
 .quality-bad{
 	color: var(--mat-sys-error);
 }

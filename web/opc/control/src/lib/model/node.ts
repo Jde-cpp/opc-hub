@@ -76,8 +76,18 @@ export class Variable extends UaNode{
 		if( json.value!==undefined )//a browse that arrives Bad is a blank cell with a status - never an OpcError for the editors to bind
 			this.setReading( toReading(json.value) );
 		this.valueRank = json.valueRank ?? -1;
-		this.accessLevel = json["accessLevel"];
-		this.userAccessLevel = json["userAccessLevel"];
+		this.accessLevel = Variable.accessLevelOf( json["accessLevel"] );
+		this.userAccessLevel = Variable.accessLevelOf( json["userAccessLevel"] );
+	}
+	//install-issues #35:  the gateway writes a key for every attribute it asked for, whatever came back - ReadResponse::SetJson
+	//loops the request, not the results - so a server that answers the AccessLevel read with an empty value sends
+	//`"userAccessLevel": null`, and one that answers with a status sends `{sc}` or `{v,sc}`.  Our own OpcServer always sends a
+	//number, which is why this never showed here.  `null` is not 0:  left raw it compared as 0 and every value cell on that
+	//server locked itself with nothing to say, which is the whole of #35.  Unknown is `undefined` - the same thing
+	//NodeView.readDenied already means by it - so one rule covers "the server did not say" everywhere.
+	private static accessLevelOf( x:any ):EAccess|undefined{
+		const level = x!=null && typeof x=="object" ? x["v"] : x;//{v,sc}: a reading with a status rides along with it
+		return typeof level=="number" ? level as EAccess : undefined;
 	}
 	override get nodeClass():ENodeClass{ return ENodeClass.Variable; }
 

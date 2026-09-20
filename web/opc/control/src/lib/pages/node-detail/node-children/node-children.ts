@@ -368,7 +368,24 @@ export class NodeChildren implements OnInit, OnDestroy {
 	statusTooltip( r:Variable ):string{ return r.sc ? `${scHex( r.sc )} - ${this.status( r )}` : ""; }
 	statusCode( r:Variable ):string{ return r.sc ? scHex( r.sc ) : ""; }
 	qualityIcon( r:UaNode ){ return this.status( r ) ? statusIcon( (r as Variable).sc ) : undefined; }
-	readOnly( r:Variable ):boolean{ return r.userAccessLevel! < EAccess.Write || r.stale; }//a stale value is the last one known, not one to edit
+	//install-issues #35.  Two bugs lived on the `< EAccess.Write` this replaces.  It was a magnitude test on a bitmask, so
+	//Read|HistoryRead (5) and Read|StatusWrite (0x21) - read-only nodes both - compared "greater than Write" and offered an
+	//editor the server would refuse;  and `null < 2` is true, so a server that reports no access level at all (see
+	//Variable.accessLevelOf) locked every cell it had.  Now: a level we were given decides by its CurrentWrite bit, and one we
+	//were not given is unknown, not a denial - the editor stays live and the server's own refusal is the answer, which is a
+	//status the user can see rather than a dimmed box that says nothing.
+	readOnly( r:Variable ):boolean{ return r.stale || (r.userAccessLevel!=undefined && !(r.userAccessLevel & EAccess.Write)); }//a stale value is the last one known, not one to edit
+	//why an editor is locked - the tooltip and aria-label on the cell.  #35: a disabled box with no explanation is what cost
+	//the walk the afternoon;  the level is spelled out so an operator can tell "the server says read-only" from "the value is
+	//stale" without the log.
+	readOnlyReason( r:Variable ):string{
+		if( !r.isVariable || this.readDenied(r) || !this.readOnly(r) )
+			return "";//no editor to explain, or one that is live
+		if( r.stale )
+			return `The last reading was ${this.status(r) || "bad"}, so this is the last value known and not one to edit.`;
+		const names = NodeView.accessList( r );
+		return `The server reports this node read-only for you (access: ${names.length ? names.join(", ") : "none"}).`;
+	}
 	readDenied( r:UaNode ):boolean{ return NodeView.readDenied( r ); }//the Snapshot cell's "no read access" - the model's rule, reachable from the template
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );

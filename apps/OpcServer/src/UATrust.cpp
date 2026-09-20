@@ -27,6 +27,7 @@ namespace Jde::Opc::Server{
 	α UATrust::LoadTrustList( UA_TrustListDataType& list )ι->bool{
 		std::lock_guard _{ _mutex };
 		bool changed{}, scanOk{ true };
+		uint skipped{};//files that carried no certificate extension - said out loud below when the scan anchored nothing (install-issues #33).
 		flat_set<fs::path> seen;
 		for( const string& sdir : Settings::FindStringArray("/access/trustedCertDirs") ){
 			try{
@@ -38,8 +39,11 @@ namespace Jde::Opc::Server{
 				}
 				_missingDirs.erase( dir );
 				for( let& entry : fs::directory_iterator(dir) ){
-					if( entry.path().extension()!=".pem" && entry.path().extension()!=".crt" )
+					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a UA client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
+						++skipped;
+						DBG( "Not a certificate, skipped: '{}' ({} are read).", entry.path().string(), Crypto::CertificateExtensions );
 						continue;
+					}
 					seen.emplace( entry.path() );
 					let mtime = entry.last_write_time();
 					auto it = _files.find( entry.path() );
@@ -77,6 +81,11 @@ namespace Jde::Opc::Server{
 			if( entry.Der.size() )
 				certs.emplace_back( UA_ByteString{ entry.Der.size(), (UA_Byte*)entry.Der.data() } );
 		}
+		//install-issues #33:  an empty trust list and a trust list of files this build would not read look identical from the
+		//outside - the client is refused either way, and the operator has just copied its certificate in.  Warned once per
+		//rescan that anchored nothing, not per file:  a failed verify rescans, so a per-file line would repeat under a flood.
+		if( certs.empty() && skipped )
+			WARN( "No trusted client certificates under /access/trustedCertDirs - {} file{} passed over for {} extension.  {} are read.", skipped, skipped==1 ? " was" : "s were", skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
 		list.specifiedLists |= UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;//always, even empty - UA_TrustListDataType_set only replaces sections named here, so a shrink-to-empty must carry the mask.
 		if( certs.size() ){
 			if( UA_Array_copy(certs.data(), certs.size(), (void**)&list.trustedCertificates, &UA_TYPES[UA_TYPES_BYTESTRING]) ){

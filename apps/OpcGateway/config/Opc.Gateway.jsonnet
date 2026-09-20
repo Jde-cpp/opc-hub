@@ -31,7 +31,8 @@ function( sync=false )
 		//certificate is in none of those directories is refused BadCertificateUntrusted, and the connection error says which
 		//server and what to do.  false accepts any certificate (the pre-2026-09 behaviour): a lab setting, never a deployment.
 		verifyServerCertificate: true,
-		//The OPC servers this gateway trusts, one .pem/.crt per server, read on every connect.  A Jde OpcServer on this host
+		//The OPC servers this gateway trusts, one certificate per server (.pem, .crt, .der or .cer - a UA server publishes DER),
+		//read on every connect.  A Jde OpcServer on this host
 		//publishes its own at certsDir("OpcServer"); any other server's certificate is copied into this product's own ssl/servers,
 		//which the gateway creates at startup.  Not the OS root store - OPC server certificates are self-signed.  And not
 		///access/trustedCertDirs, where this list lived until 2026-09-18:  in the hub that one is the AppServer role's enrollment

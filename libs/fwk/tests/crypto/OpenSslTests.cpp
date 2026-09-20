@@ -123,6 +123,42 @@ namespace Jde::Crypto{
 		EXPECT_TRUE( ExtractPublicKey(bytes, SRCE_CUR)==Crypto::ReadPublicKey(PublicKeyFile) );
 	}
 
+	//install-issues #33:  this repo writes PEM, but every certificate it is *given* comes from somewhere else - an OPC UA
+	//server publishes its instance certificate as DER (Kepware's kepserverex_ua_server.der), and a UA trust list is a
+	//directory of .der by convention.  Both encodings carry the same X.509, so both must read back to the same bytes; the
+	//return value is DER either way.  Junk in either encoding still throws, naming the file.
+	TEST_F( OpenSslTests, ReadCertificateTakesPemOrDer ){
+		let dir = ScratchDir( "readDer" );
+		IO::CreateDirectories( dir );//nothing here issues into it - the files are written by hand.
+		let pem = ReadCertificate( CertificateFile );//DER bytes, from the PEM fixture.
+		let derFile = dir/"cert.der";
+		IO::SaveBinary<const byte>( derFile, std::span{pem} );
+		EXPECT_TRUE( ReadCertificate(derFile)==pem ) << "the same certificate read back differently for being DER on disk";
+
+		let garbage = dir/"garbage.der";
+		let junk = string{ "neither a PEM header nor a DER SEQUENCE" };
+		IO::SaveBinary<const char>( garbage, std::span{junk} );
+		try{
+			ReadCertificate( garbage );
+			ADD_FAILURE() << "a file that is neither encoding parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find(garbage.string()), string::npos ) << e.what();//the path is what tells the operator which file is bad.
+		}
+		fs::remove_all( dir );
+	}
+
+	//the one filter every certificate drop-directory scan now shares - ServerTrust (the gateway's and the emulator's trusted
+	//servers), UATrust (the OpcServer's trusted clients) and the enrollment anchors - so the three cannot drift apart again
+	//and re-open install-issues #33 one scan at a time.  `.der`/`.cer` are the encoding a third party publishes; the rest of
+	//what lives in such a directory - a CRL, a key, a README, a backup - must still stay out of the parser.
+	TEST_F( OpenSslTests, IsCertificateFileTakesTheFourExtensions ){
+		for( let& name : {"server.pem", "server.crt", "kepserverex_ua_server.der", "server.cer"} )
+			EXPECT_TRUE( Crypto::IsCertificateFile(fs::path{name}) ) << name;
+		for( let& name : {"server.crl", "private.key", "README", "README.txt", "server.pem.bak", "der"} )
+			EXPECT_FALSE( Crypto::IsCertificateFile(fs::path{name}) ) << name;
+	}
+
 	//what made #26 latent: no test asserted the fixture's certificate and key pair belong together, so the split
 	//regeneration - keys re-created when either key was missing, the certificate kept whenever it existed - could leave
 	//a cert advertising a public key its private key cannot sign for, and every test still passed.  That is the same
