@@ -5,16 +5,20 @@ import { MatIconModule } from '@angular/material/icon';
 import {MatInputModule} from '@angular/material/input';
 import {MatAutocompleteModule} from '@angular/material/autocomplete';
 import {MatFormFieldModule} from '@angular/material/form-field';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogConfig, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
 import { Favorite } from '../navbar';
-import { Title } from '@angular/platform-browser';
+import { DocumentTitle } from '../../../services/document-title';
 
 type DialogData = { existing:Favorite, folderNames:string[], name:string };
 @Component( {
 	selector: "favorites",
-	template: "<mat-icon #icon (click)='onClick()' [class.highlight]='isFavorite()'>star</mat-icon>",
-	styles: ".highlight { color: gold; } mat-icon { cursor: pointer; }",
-	imports: [MatIconModule]
+	//a real button:  the bare <mat-icon (click)> it replaced was aria-hidden and unreachable by keyboard.
+	template: `<button #icon matIconButton type="button" aria-haspopup="dialog" [attr.aria-label]="label()" [matTooltip]="label()" (click)="onClick()">
+		<mat-icon [class.highlight]="isFavorite()">star</mat-icon>
+	</button>`,
+	styles: ".highlight { color: gold; }",
+	imports: [MatButtonModule, MatIconModule, MatTooltipModule]
 })
 export class Favorites {
 	onClick(){
@@ -41,6 +45,7 @@ export class Favorites {
 	name = input.required<string>();
   onChange = output<Favorite>();
 	isFavorite = computed<boolean>( ()=>this.existing()!=null );
+	label = computed<string>( ()=>this.isFavorite() ? 'Edit favorite' : 'Add to favorites' );
 }
 
 @Component({
@@ -54,7 +59,7 @@ export class FavoritesDialog {
 	public data:DialogData = inject<DialogData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
 	constructor(){
 		const data = this.data;
-		this.favoriteModel.set( {name: data.existing?.name || data.name || this.titleService.getTitle(), folderName: data.existing?.folderName ?? ""} );//the document title is ':instance' for parameterized routes; data.name is the resolved segment.
+		this.favoriteModel.set( {name: data.existing?.name || data.name || this.documentTitle.page(), folderName: data.existing?.folderName ?? ""} );//the page's name without the tab's app suffix; data.name is the resolved segment.
 		this.folderNames = data.folderNames;
 	};
 	onRemove(): void {
@@ -66,5 +71,5 @@ export class FavoritesDialog {
 	folderNames = new Array<string>;
   favoriteModel = signal<{ name:string, folderName:string }>(null as any);
   favoriteForm = form(this.favoriteModel);
-	titleService = inject(Title);
+	documentTitle = inject(DocumentTitle);
 }

@@ -19,7 +19,7 @@ param(
 	[switch]$SkipWeb,                    # omit the Web UI component
 	[string]$UaNodeSets = $env:UA_NODE_SETS, # OPCFoundation/UA-Nodeset clone (DI/IA for the OpcServer)
 	[string]$VcRedist = 'C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Redist\MSVC\v145\vc_redist.x64.exe',
-	[string]$Version,                    # default: CMakePresets.common.json's JDE_VERSION (2026.09.01); CI passes the release tag, which should equal it
+	[string]$Version,                    # default: `git describe --tags` - the tag on a tag, <tag>-N-gsha past one, else CMakePresets.common.json's JDE_VERSION (2026.09.01); CI passes the release tag
 	[string]$OutDir,                     # default: <BuildDir>\setup - outside the repo
 	[string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe',
 	[switch]$Sign,                       # sign.ps1: Azure Artifact Signing ($env:JDE_SIGN_ENDPOINT/ACCOUNT/PROFILE) or a .pfx ($env:JDE_SIGN_PFX)
@@ -65,12 +65,21 @@ if( $Sign ){
 
 # The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
 # are built with and the Web UI's about page displays, so Add/Remove Programs agrees with them.  A -Version names it outright
-# (the release workflow passes the tag) and is expected to be the same string; anything else is warned about, not refused.
+# (the release workflow passes the tag) and is expected to carry that same string; anything else is warned about, not refused.
 $presets = Get-Content (Join-Path $repo 'CMakePresets.common.json') -Raw | ConvertFrom-Json
 $jdeVersion = ($presets.configurePresets | Where-Object { $_.name -eq 'common' }).cacheVariables.JDE_VERSION
 if( -not $jdeVersion ){ throw 'JDE_VERSION not found in CMakePresets.common.json' }
-if( -not $Version ){ $Version = $jdeVersion }
-elseif( $Version -ne $jdeVersion ){ Write-Warning "-Version $Version is not CMakePresets.common.json's JDE_VERSION $jdeVersion - the installer's version and the product's will disagree" }
+if( -not $Version ){
+	# Without one it is `git describe`, not JDE_VERSION alone: Add/Remove Programs and the exe name carry the version and
+	# not the contents, so a build past the tag calling itself the tag cannot be told from that release
+	# (reviews/install-issues.md #27).  The tag itself on a tag, <tag>-N-gsha past one - the shape VI_VERSION below already
+	# reads.  `20*` is the release workflow's own tag filter.  No tag reachable (a shallow clone, an export, no git on
+	# PATH) leaves JDE_VERSION, as before.
+	try{ $Version = (& git -C $repo describe --tags --match '20*' 2>$null | Select-Object -First 1) }catch{ $Version = $null }
+	if( -not $Version ){ $Version = $jdeVersion }
+}
+# the release the installer claims, so the tag part is what is compared: <tag>-N-gsha carries JDE_VERSION, and is no disagreement
+if( $Version.Split('-')[0] -ne $jdeVersion ){ Write-Warning "version $Version does not carry CMakePresets.common.json's JDE_VERSION $jdeVersion - the installer's version and the product's will disagree" }
 # VIProductVersion needs four 16-bit numbers: yyyy.M.d.N from a `yyyy.MM.dd[-N-gsha]` describe, else 0.0.0.0
 $vi = '0.0.0.0'
 if( $Version -match '^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+)-g[0-9a-f]+)?$' ){

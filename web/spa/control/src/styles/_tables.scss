@@ -12,11 +12,16 @@
 
 // Styles specific only to the table inside markdown.
 .docs-markdown > table {
-  font-size: 14px;
-
   // Code tends to wrap inside tables which doesn't look great with the background color.
   code {
     background: transparent;
+  }
+
+  // The first column is the row's label;  the th max-width below would otherwise break it over two lines.  width: 1%
+  // shrinks it to that label - the table is width: 100%, which otherwise splits a two-column table down the middle.
+  td:first-child {
+    white-space: nowrap;
+    width: 1%;
   }
 }
 

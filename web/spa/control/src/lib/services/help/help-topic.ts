@@ -17,6 +17,17 @@ export const HELP_TOPICS = new InjectionToken<HelpTopic[][]>( 'HelpTopics' );
 
 export function helpTopics( injected:HelpTopic[][]|null ):HelpTopic[]{ return (injected ?? []).flat(); }
 
+//A card on /help that leaves the site - the issue tracker - rather than opening a topic.  Its own token, not a HelpTopic:
+//the help page's side list, the navbar's ? button and search all expect a markdown page behind a topic's id.  Multi, in
+//display order, after the topics.
+export interface HelpLink{
+	title:string;
+	summary?:string;
+	icon?:string;
+	href:string;
+}
+export const HELP_LINKS = new InjectionToken<HelpLink[][]>( 'HelpLinks' );
+
 //The topic for a url.  The pattern spelling out the most literal segments wins ('access' over 'gateways/:g/:c' for
 ///access/users/alice, as route-utils' matchLiterals reasons), then the longer pattern, then registration order.
 export function helpTopicFor( topics:HelpTopic[], segments:string[] ):HelpTopic|undefined{

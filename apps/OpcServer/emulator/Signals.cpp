@@ -23,12 +23,24 @@ namespace Jde::Opc::Emulator{
 		Step{ Json::FindNumber<double>(o, "step").value_or(1) },
 		RatedRpm{ Json::FindNumber<double>(o, "ratedRpm").value_or(1450) },
 		Period{ Json::FindDuration(o, "period").value_or(30s) },
-		Tau{ Json::FindDuration(o, "tau").value_or(3s) }{
+		Tau{ Json::FindDuration(o, "tau").value_or(3s) },
+		SensorMin{ Json::FindNumber<double>(o, "sensorMin") },
+		SensorMax{ Json::FindNumber<double>(o, "sensorMax") }{
 		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
 		//randomWalk builds uniform_real_distribution{-Step,Step}, which is UB unless -Step<=Step, and counter wraps on
 		//`>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
 		THROW_IFSL( Step<=0 && (Mode==EMode::RandomWalk || Mode==EMode::Counter), "Tag '{}': step ({}) must be positive for mode '{}'.", Name, Step, ToString(Mode) );
+		let quality = o.if_contains( "quality" );
+		THROW_IFSL( quality && !quality->is_array(), "Tag '{}': quality must be an array of windows.", Name );
+		//A command tag is the UI's - the emulator never writes it, so a quality on it would silently do nothing.
+		THROW_IFSL( Mode==EMode::Command && (quality || SensorMin || SensorMax), "Tag '{}': a command tag is subscribed, not written - it has no quality or sensor range.", Name );
+		THROW_IFSL( IsBool() && (SensorMin || SensorMax), "Tag '{}': a bool has no sensor range.", Name );
+		THROW_IFSL( SensorMin && SensorMax && *SensorMax<=*SensorMin, "Tag '{}': sensorMax ({}) must exceed sensorMin ({}).", Name, *SensorMax, *SensorMin );
+		if( quality ){
+			for( let& window : quality->get_array() )
+				Quality.emplace_back( Json::AsObject(window, sl), Name, sl );
+		}
 	}
 
 	Ω seconds( Duration d )ι->double{ return std::chrono::duration<double>( d ).count(); }

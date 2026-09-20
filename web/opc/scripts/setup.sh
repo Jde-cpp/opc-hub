@@ -15,8 +15,12 @@ rm main.ts;
 addHard main.ts $sitePath;
 addHard styles.scss $sitePath;
 addHard index.html $sitePath;
+#the icons go in public/, the one folder the build copies to the output root - a favicon.ico beside index.html in src/
+#is never served, and `ng new`'s own public/favicon.ico (the Angular logo) was, until addHard replaced it here.
+cd ../public;
 addHard favicon.ico $sitePath;
-cd app;
+addHard favicon.svg $sitePath;
+cd ../src/app;
 #`ng new` scaffolds a hello-world root component (app.ts/app.html/app.scss/app.spec.ts) that this site replaces.
 #addHard rm's its target first, so the three linked names overwrite themselves; the orphan spec has no link to
 #overwrite it and would otherwise keep running against the deleted scaffold under `ng test`.

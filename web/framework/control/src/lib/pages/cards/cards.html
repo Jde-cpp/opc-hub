@@ -1,22 +1,83 @@
 <div class="page">
-	@if( heading() ){
-		<h2 class="page-heading">{{heading()}}</h2>
-	}
-	<div class="cards">
-		@for( c of items(); track c.path ){
-			<a [routerLink]="c.path" class="card-link">
-				<div class="card" [class]="c.cardClass">
-					@if( c.icon ){
-						<mat-icon class="card-icon" aria-hidden="true">{{c.icon}}</mat-icon>
-					}
-					<div class="card-title">{{c.title}}</div>
-					@if( c.summary ){
-						<div class="card-summary">{{c.summary}}</div>
+	@if( hero(); as h ){
+		<header class="hero">
+			<h1 class="hero-title">{{h.lead}} <span class="hero-name">{{h.name}}</span></h1>
+			<div class="hero-rule" aria-hidden="true"></div>
+			@if( h.tagline ){
+				<p class="hero-tagline">{{h.tagline}}</p>
+			}
+		</header>
+		<section class="tiles-section">
+			@if( h.tilesHeading ){
+				<h2 class="tiles-heading">{{h.tilesHeading}}</h2>
+			}
+			<div class="tiles">
+				@for( c of items(); track c.path ){
+					@let status = statuses()[c.path];
+					<a [routerLink]="c.path" class="tile" [class]="c.cardClass" [class.warn]="status?.warn"
+							[attr.aria-label]="status ? c.title+': '+(status.summary ?? status.figure+' '+status.label+(status.detail ? ', '+status.detail : '')) : null">
+						@if( c.icon ){
+							<mat-icon class="tile-icon" aria-hidden="true">{{c.icon}}</mat-icon>
+						}
+						<span class="tile-title">{{c.title}}</span>
+						<div class="tile-body">
+							@if( status ){
+								<div class="tile-label">{{status.label}}</div>
+								<div class="tile-figure">{{status.figure}}</div>
+								@if( status.detail ){
+									<div class="tile-detail">
+										@if( status.warn ){
+											<mat-icon class="tile-warn-icon" aria-hidden="true">error</mat-icon>
+										}
+										{{status.detail}}
+									</div>
+								}
+							} @else if( c.summary ){
+								<div class="tile-detail">{{c.summary}}</div>
+							}
+						</div>
+					</a>
+				}
+			</div>
+		</section>
+		<recent-row />
+	} @else {
+		<div class="section-page" [class]="'card-'+section()">
+			<section class="section">
+				<section-header [url]="url()" [heading]="heading()" />
+				<div class="section-cards">
+					@for( c of items(); track c.path ){
+						@if( c.externalRedirect ){
+							<!-- leaves the site (the issue tracker):  a new tab, so the page the reader came from stays open -->
+							<a [href]="c.externalRedirect" target="_blank" rel="noopener" class="section-card">
+								<ng-container [ngTemplateOutlet]="card" [ngTemplateOutletContext]="{$implicit: c}" />
+							</a>
+						} @else {
+							<a [routerLink]="c.path" class="section-card"><ng-container [ngTemplateOutlet]="card" [ngTemplateOutletContext]="{$implicit: c}" /></a>
+						}
+					} @empty {
+						<div class="section-empty">Nothing to show here.</div>
 					}
 				</div>
-			</a>
-		} @empty {
-			<div class="cards-empty">Nothing to show here.</div>
-		}
-	</div>
+			</section>
+		</div>
+	}
 </div>
+<ng-template #card let-c>
+	@let status = statuses()[c.path];
+	<span class="section-card-top">
+		<span class="section-chip" aria-hidden="true"><mat-icon>{{c.icon ?? sectionIcon() ?? 'arrow_forward'}}</mat-icon></span>
+		<span class="section-card-text">
+			<span class="section-card-title">{{c.title}}</span>
+			@if( c.summary ){
+				<span class="section-card-sub">{{c.summary}}</span>
+			}
+		</span>
+		@if( c.externalRedirect ){
+			<mat-icon class="section-card-external" aria-hidden="true">open_in_new</mat-icon><span class="cdk-visually-hidden">(opens in a new tab)</span>
+		}
+	</span>
+	@if( status ){
+		<span class="section-card-figure" [class.warn]="status.warn"><b>{{status.figure}}</b>{{status.label}}@if( status.detail ){ · {{status.detail}}}</span>
+	}
+</ng-template>

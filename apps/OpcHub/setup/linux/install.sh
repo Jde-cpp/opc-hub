@@ -56,6 +56,10 @@ chmod 700 "$dataRoot"
 
 #The --user counterparts of the package's units:  no User=/StateDirectory= (the data root is this account's $XDG_CONFIG_HOME,
 #pinned here so the manager's environment cannot move it), WantedBy=default.target.  `-c`: foreground, log on the journal.
+#`-include=args/install-user`, where the package's units take args/install:  that overlay binds the listeners to 127.0.0.1,
+#so an install that needed no root does not publish 1967, 1970 and 4840 to the network it cannot open a firewall port on
+#(reviews/install-issues.md #32; the Windows current-user mode is the same overlay, #16).  README.md, "Per-user install",
+#says how to reach it from another machine.
 unit(){ #name description exeDir exe settings
 	cat > "$units/$1.service" <<UNIT
 # Jde $2 - installed by jde-opchub's install.sh (per-user).  \`systemctl --user edit $1\` for local changes.
@@ -68,7 +72,7 @@ Type=simple
 Environment=XDG_CONFIG_HOME=$configHome
 EnvironmentFile=-$dataRoot/env
 WorkingDirectory=$programs/$3
-ExecStart=$programs/$3/$4 -c -settings=$config/$5 -include=args/install -sync
+ExecStart=$programs/$3/$4 -c -settings=$config/$5 -include=args/install-user -sync
 Restart=on-failure
 RestartSec=5
 

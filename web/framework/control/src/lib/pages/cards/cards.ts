@@ -1,8 +1,12 @@
 import { inject } from '@angular/core';
-import { Component, Injectable, OnInit, signal } from "@angular/core";
+import { Component, computed, Injectable, OnInit, signal } from "@angular/core";
 import { ActivatedRoute, Router, RouterLink, Routes, UrlSegment } from "@angular/router";
+import { NgTemplateOutlet } from "@angular/common";
 import { MatIconModule } from "@angular/material/icon";
 import { RouteItem, IROUTE_SERVICE, IRouteService, RouteService } from "jde-spa";
+import { CARD_STATUS, CardStatusValue, statusFor } from './card-status';
+import { RecentRow } from './recent-row/recent-row';
+import { SectionHeader } from './section-header/section-header';
 
 
 @Injectable( {providedIn: 'root'} )
@@ -27,10 +31,15 @@ export function pageHeading( route:ActivatedRoute ):string{
 	return summary ?? (title?.startsWith(":") ? "" : title ?? "");
 }
 
+//Route data `hero` makes the page a landing page:  a banner in place of the plain heading - `lead` + the accented `name` make
+//the title, `tagline` the line under it - and big tiles in place of the cards, under `tilesHeading`, each drawing its
+//CARD_STATUS figure.
+interface CardsHero{ lead:string; name:string; tagline?:string; tilesHeading?:string; }
+
 @Component( {
 	templateUrl: './cards.html',
 	styleUrls: ['./cards.scss'],
-	imports: [MatIconModule, RouterLink]
+	imports: [MatIconModule, NgTemplateOutlet, RecentRow, RouterLink, SectionHeader]
 })
 export class Cards implements OnInit {
 	private route:ActivatedRoute = inject( ActivatedRoute );
@@ -39,10 +48,32 @@ export class Cards implements OnInit {
 	ngOnInit(){
 		this.route.url.subscribe( async (urlSegments)=>{
 			this.heading.set( pageHeading(this.route) );
+			this.hero.set( this.route.snapshot.data["hero"] );
+			this.url.set( '/'+this.route.snapshot.pathFromRoot.flatMap( r=>r.url.map(s=>s.path) ).join('/') );
 			let items = await this.routerService.docItems( urlSegments );
 			this.items.set( items.filter((x)=>x.path.length && x.path!="login") );
+			this.#loadStatuses( this.items() );
 		});
 	}
+	//Each tile's status settles on its own, so one slow gateway does not hold the other lines back.  The generation drops
+	//an answer that lands after the page moved on to another set of tiles.
+	#loadStatuses( items:RouteItem[] ){
+		const generation = ++this.#generation;
+		this.statuses.set( {} );
+		for( const item of items ){
+			const url = this.url().replace( /\/$/, '' )+'/'+item.path;
+			statusFor( this.#cardStatus, url )?.status( url ).then(
+				value=>{ if( generation==this.#generation ) this.statuses.update( s=>({...s, [item.path]: value}) ); },
+				()=>{} );//no rights to the rows, a service down:  the tile keeps its static summary
+		}
+	}
 	heading = signal<string>( "" );
+	hero = signal<CardsHero|undefined>( undefined );
+	url = signal<string>( '/' );//this page's, '/gateways/gw1'
+	section = computed( ()=>this.url().split('/').find( s=>s.length ) ?? '' );//the first segment - the home tile it sits under
+	sectionIcon = computed( ()=>this.router.config.find( r=>r.path==this.section() && r.data?.['icon'] )?.data!['icon'] as string|undefined );//for a card with no icon of its own
 	items = signal<RouteItem[]>( [] );
+	statuses = signal<Record<string,CardStatusValue>>( {} );//by item path
+	#cardStatus = inject( CARD_STATUS, {optional: true} ) ?? [];
+	#generation = 0;
 }

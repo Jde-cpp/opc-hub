@@ -6,6 +6,8 @@ export * from './lib/pages/component-sidenav/route-item';
 export * from './lib/pages/component-sidenav/can-activate-component-sidenav';
 export * from './lib/pages/component-category-list/component-category-list';
 export * from './lib/services/route-service';
+export * from './lib/services/document-title';
+export * from './lib/services/recent-visits';
 export * from './lib/services/help/help-topic';
 export * from './lib/services/help/help-route-service';
 export * from './lib/services/help/spa-help-topics';

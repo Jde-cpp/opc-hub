@@ -45,10 +45,19 @@ namespace Jde::Opc::Emulator::Tests{
 			}
 		}
 	}
+	TEST( ParseDevicesTests, AGeneratedTagCarriesItsQualitySchedule ){
+		auto y = devices( R"([{ "path":"pump1", "tags":[ { "name":"motorRpm", "mode":"sine", "quality":[{ "status":"BadSensorFailure", "duration":"PT5S" }] }, { "name":"status", "mode":"toggle" } ] }])" );
+		auto& tag = y[0].Tags[0];
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_GOOD );//until the first cycle says otherwise
+		tag.Status = tag.Quality.Apply( 1s, 1000, tag.Value );
+		EXPECT_EQ( tag.Status, UA_STATUSCODE_BADSENSORFAILURE );
+		EXPECT_EQ( y[0].Tags[1].Quality.Apply(1s, 1, y[0].Tags[1].Value), UA_STATUSCODE_GOOD );//no schedule: Good
+	}
 	TEST( ParseDevicesTests, Refusals ){
 		EXPECT_THROW( devices("[]"), Exception );
 		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[] }])"), Exception );
 		EXPECT_THROW( devices(R"([{ "tags":[ { "name":"motorRpm" } ] }])"), Exception );//no path
 		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"motorRpm", "mode":"randomWalk", "step":0 } ] }])"), Exception );//#9 propagates
+		EXPECT_THROW( devices(R"([{ "path":"pump1", "tags":[ { "name":"status", "mode":"command", "quality":[{ "status":"Bad", "duration":"PT1S" }] } ] }])"), Exception );//so does a quality nothing would write
 	}
 }

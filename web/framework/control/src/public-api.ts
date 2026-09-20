@@ -14,6 +14,7 @@ export * from './lib/pages/graphql/model/page-settings';
 export * from './lib/pages/graphql/table/graphql-table';
 export * from './lib/pages/home/home';
 export * from './lib/pages/cards/cards';
+export * from './lib/pages/cards/card-status';
 export * from './lib/pages/ql/list/ql-list';
 export * from './lib/pages/ql/list/ql-list-settings/ql-list-settings';
 export * from './lib/pages/ql/list/ql-list-route-service';
@@ -33,6 +34,7 @@ export * from './lib/services/google-auth-service'
 export * from './lib/services/profile-service'
 export * from './lib/services/proto-service'
 export * from './lib/services/app/app-service';
+export * from './lib/services/app/app-card-status';
 export * from './lib/shared/snackbar/snackbar-service';
 export * from './lib/services/ql-list-resolver';
 export * from './lib/services/detail-resolver';

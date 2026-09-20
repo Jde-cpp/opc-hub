@@ -54,6 +54,21 @@ namespace Jde::Access::Tests{
  		PurgeGroup( {id}, GetRoot() );
  		ASSERT_TRUE( SelectGroup("groupTest", GetRoot(), true).empty() );
 	}
+	//GroupAwait's id-only shortcut - meant for one group's members - also caught a list, so `groups{ id }` skipped the query
+	//and answered {} whatever the table held:  a client counting groups read zero.
+	TEST_F( GroupTests, ListOnlyIds ){
+		let root = GetRoot();
+		const GroupPK a{ GetId(GetGroup("listIdsA", root)) }, b{ GetId(GetGroup("listIdsB", root)) };
+		let ids = QL().QuerySync<jvalue>( "groups{ id }", {}, root );
+		ASSERT_TRUE( ids.is_array() ) << serialize( ids );
+		flat_set<uint> found;
+		for( let& row : ids.get_array() )
+			found.emplace( GetId(AsObject(row)) );
+		EXPECT_TRUE( found.contains(a.Value) && found.contains(b.Value) ) << serialize( ids );
+		EXPECT_EQ( ids.get_array().size(), QL().QuerySync<jvalue>("groups{ id name }", {}, root).as_array().size() );
+		PurgeGroup( a, root );
+		PurgeGroup( b, root );
+	}
 	TEST_F( GroupTests, AddRemove ){
 		let root = GetRoot();
 		const GroupPK hrManagers{ GetId(GetGroup("HR-Managers", root)) };

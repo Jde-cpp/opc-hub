@@ -17,16 +17,16 @@ freeze because a client left.
 
 | | value |
 |---|---|
-| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 25 units, no database or server) |
+| exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 44 units, no database or server) |
 | `Process::ProductName()` (`$(ProgramData)/Jde-Cpp/<product>`: certs) | `PlcEmulator` |
-| settings / log | `config/Opc.PlcEmulator.jsonnet` (`Opc.PlcEmulator.Hub.jsonnet` against a hub) / `Opc.PlcEmulator.log` |
+| settings / log | [`Opc.PlcEmulator.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on `127.0.0.1:4841`; UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator` |
 
 ## Run
 
 The OpcServer needs the emulator overlay for the default transport - `opcserver-emulator` in the run-services driver
-(`Opc.Server.Emulator.jsonnet`; `opcserver-emulator-hub` against a hub).  Started as plain `opcserver` everything looks
+([`Opc.Server.Emulator.jsonnet`](../../../apps/OpcServer/config/Opc.Server.Emulator.jsonnet); `opcserver-emulator-hub` against a hub).  Started as plain `opcserver` everything looks
 healthy and the samples land nowhere: the stock config carries no reader (see *Security* below).  `-transport=write`
 needs no overlay.
 
@@ -75,7 +75,7 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 
 ## Config
 
-`config/Opc.PlcEmulator.jsonnet`; the keys under `/emulator` and the command-line overrides that beat them:
+[`Opc.PlcEmulator.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.jsonnet); the keys under `/emulator` and the command-line overrides that beat them:
 
 | key | override | meaning |
 |---|---|---|
@@ -97,6 +97,72 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 
 Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, and a
 non-positive `step` for `randomWalk`/`counter`, at startup, naming the tag.
+
+## Status codes
+
+Every reading carries a StatusCode - its data quality, [OPC 10000-4 §7.38](https://reference.opcfoundation.org/specs/OPC-10000-4/7.38).
+**The pubsub transport delivers it**: the PLC server's node holds the whole DataValue, the writer publishes it
+DataValue-encoded (`PubSub::Writer`'s `STATUSCODE` field content mask), and the OpcServer's reader writes value and status
+into the target variable.  A session write carries it too, but a server only takes a non-Good status from a session with
+`StatusWrite` on the node's AccessLevel *and* on the user's ([OPC 10000-3 §8.57](https://reference.opcfoundation.org/specs/OPC-10000-3/v1.05.06/8.57));
+the pumps nodeset is AccessLevel 3 and `-grant` stops at `Read|Update|Subscribe`, so the OpcServer answers
+`BadWriteNotSupported`, the emulator WARNs once per tag per session and writes the value alone from there - under
+`-transport=write` the quality shows in the emulator's status line and nowhere downstream.  A tag is Good unless its config says otherwise, and the stock config says nothing - [`Opc.PlcEmulator.Quality.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.Quality.jsonnet)
+is the overlay that does - one example of every shape the UI decodes, on a 2 min cycle with one scheduled fault at a time:
+
+```bash
+$E -c -tests -settings=$JDE_DIR/apps/OpcServer/emulator/config/Opc.PlcEmulator.Quality.jsonnet   # …Quality.Hub.jsonnet against a hub
+```
+
+| into the cycle | tag | status | code |
+|---|---|---|---|
+| 20-30 s | `pump2.motorRpm` | `UncertainSensorNotAccurate` - the value keeps moving | `0x40930000` |
+| 30-35 s | `pumpManual.motorRpm` | `Good+SemanticsChanged` | `0x00004000` |
+| 40-55 s | `pump3.motorRpm` | `BadSensorFailure` - held; the ramp runs on underneath | `0x808C0000` |
+| 60-75 s | `pump1.motorRpm` | `GoodLocalOverride` - a Good sub-code | `0x00960000` |
+| 80-90 s | `pump4.motorRpm` | `Good+Overflow` | `0x00000480` |
+| 90-95 s | `pumpManual.motorRpm` | `Good+StructureChanged` | `0x00008000` |
+| 100-115 s | `pump4.motorRpm` | `UncertainLastUsableValue+Constant` - held | `0x40900700` |
+| every peak and trough | `pump2.motorRpm` | `UncertainEngineeringUnitsExceeded+High` / `+Low` - a sine of 800-1600 read by a transmitter ranged 900-1500 | `0x40940600` / `0x40940500` |
+
+The layout the emulator composes (Tables 176/177):
+
+| bits | field | emulated |
+|---|---|---|
+| 31:30 | Severity - `00` Good, `01` Uncertain, `10` Bad (`11` reserved, refused) | from `status` |
+| 27:16 | SubCode | from `status` |
+| 15 / 14 | StructureChanged / SemanticsChanged | `structureChanged` / `semanticsChanged` |
+| 11:10 | InfoType - `01` DataValue: the info bits below apply | set whenever a limit or overflow bit is |
+| 9:8 | LimitBits - `00` None, `01` Low, `10` High, `11` Constant | `limit`, or the sensor range |
+| 7 | Overflow | `overflow` |
+| 4:0 | historian bits | no - they describe stored data, not a live reading |
+
+Per tag, beside `mode` (not on a `command` tag - the emulator never writes one):
+
+| key | meaning |
+|---|---|
+| `sensorMin` / `sensorMax` | the transmitter's range.  A generated value outside it is published pinned at the range as `UncertainEngineeringUnitsExceeded` with LimitBits Low/High.  Not on a bool. |
+| `quality[]` | scheduled faults on the tag's own clock (it starts with the emulator); the **first active** window wins, outside them the sensor range decides, else Good |
+| `quality[].status` | a name below, or any code by number (`"0x80340000"`, or the JSON number) - the rest of Table 178 |
+| `quality[].start` / `duration` / `every` | active from `start` (default 0) for `duration` (required), again every `every` (not shorter than `duration`; absent = once) |
+| `quality[].hold` | publish the last reading from before the window - a blind sensor.  Default `true` for Bad and the two `…LastUsableValue` codes, else `false`.  The generator advances either way, so the reading jumps when the window closes. |
+| `quality[].limit` | `none` \| `low` \| `high` \| `constant`; absent = the sensor range's limit, if pinned |
+| `quality[].overflow` / `structureChanged` / `semanticsChanged` | the flag bits |
+
+Names, spelled as the stack spells them: `Good` `GoodLocalOverride` `GoodClamped` · `Uncertain`
+`UncertainNoCommunicationLastUsableValue` `UncertainLastUsableValue` `UncertainSubstituteValue` `UncertainInitialValue`
+`UncertainSensorNotAccurate` `UncertainEngineeringUnitsExceeded` `UncertainSubNormal` · `Bad` `BadConfigurationError`
+`BadNotConnected` `BadDeviceFailure` `BadSensorFailure` `BadOutOfService` `BadNoCommunication` `BadCommunicationError`
+`BadWaitingForInitialData` `BadOutOfRange`.
+
+Downstream, the gateway renders an Uncertain (or flagged Good) reading as `{"v":…,"sc":…}` and a Bad one as `{"sc":…}` -
+the code in place of the value (`Value::ToJson`); subscriptions carry `sc` beside the value.  The status line marks a
+non-Good tag: `motorRpm=1500.0(UncertainEngineeringUnitsExceeded+High)`.
+
+The web UI words it the same way.  A node's **Children** table marks a reading that is not plain Good with an icon
+beside the value (error / warning / info; the name, its flags and the numeric code in the tooltip), and has a **Status**
+column - hidden in the default view, switched on in the view editor - that spells it out and takes the icon over.  A Bad row keeps the last value it had, dimmed and locked, until a reading that is not Bad arrives
+(`Variable.setReading` in [`node.ts`](../../../web/opc/control/src/lib/model/node.ts), the decoding in [`status-code.ts`](../../../web/opc/control/src/lib/model/status-code.ts)).
 
 ## Trust
 
@@ -132,9 +198,11 @@ each side; the test configs use it.
 
 ## Tests
 
-`Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape), `ParseDevices`, and
-`PlcServer` on loopback 4851 with the writer aimed at a port nothing reads.  `ctest -R Jde.Opc.PlcEmulator.Tests`.  The
-OpcServer suite's `PubSubTests` covers the reader end with an in-process publisher of the same shape.
+`Jde.Opc.PlcEmulator.Tests` (`tests/`): `Signals` (parsing, every refusal, each generator's shape), `Quality` (the
+status names, the §7.38 bit layout, the windows, hold and the sensor range), `ParseDevices`, and `PlcServer` on loopback
+4851 with the writer aimed at a port nothing reads.  `ctest -R Jde.Opc.PlcEmulator.Tests`.  The OpcServer suite's
+`PubSubTests` covers the reader end with an in-process publisher of the same shape - values, and
+`PublishedStatusLandsInTargetVariable` for a status crossing the wire.
 
 ## Known limits
 
@@ -143,3 +211,7 @@ OpcServer suite's `PubSubTests` covers the reader end with an in-process publish
   are refused (`BadIdentityTokenInvalid`) until the emulator is restarted.
 - `UA_Client_connect` is synchronous: a failed attempt stalls the device clock for up to the 10 s client timeout.
 - Only the `Double`/`Float`/`Boolean` field types are published; the pumps contract is all `Double`.
+- Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no
+  `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader
+  skips a field without one.  The source timestamp is not held with a held reading, and the historian bits are not
+  emulated.

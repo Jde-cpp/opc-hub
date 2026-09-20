@@ -16,10 +16,11 @@ const sidenav = ()=>import('jde-spa').then( m=>m.ComponentSidenav );
 const cards = ()=>import('jde-framework').then( m=>m.Cards );
 
 export const routes: Routes = [
-	{ path: '', title: "Home", loadComponent: cards, data: {summary: "Welcome" },
+	{ path: '', title: "Home", loadComponent: cards,
+		data: {summary: "Welcome to OPC Hub", hero: {lead: "Welcome to", name: "OPC Hub", tagline: "Browse OPC UA servers, manage who can reach them, and monitor the services behind them.", tilesHeading: "Where do you want to begin?"} },
 		canActivate: [AuthGuard],
 		providers: [  {provide: IROUTE_SERVICE, useClass: HomeRouteService} ]},
-	{ path: 'login', loadComponent: ()=>import('jde-framework').then( m=>m.LoginPage ), data: {name: "Login", summary: "Login to Site"} },
+	{ path: 'login', title: "Login", loadComponent: ()=>import('jde-framework').then( m=>m.LoginPage ), data: {name: "Login", summary: "Login to Site"} },
 	{ path: 'gateways', title: "Gateways", canActivate: [AuthGuard], loadComponent: cards,
 		providers: [{provide: IROUTE_SERVICE, useClass: GatewayRouteService}],
 		data: {summary: "Available Gateways", icon: "hub"}
@@ -76,10 +77,11 @@ export const routes: Routes = [
 					resolve: { data: QLListResolver },
 					canActivate: [AuthGuard],
 					data: { collections: [
-						{ path:"users", data:{tableSettings: userTableSettings, icon: "person"} },
-						{ path:"groups", data:{tableSettings: groupTableSettings, icon: "group"} },
-						{ path: "roles", data:{tableSettings: roleTableSettings, icon: "badge"} },
-						{ path:"resources", data:{tableSettings: resourceTableSettings, icon: "lock"} }
+						//summary:  the line under each card on /access (and its search result) - what the list is for
+						{ path:"users", data:{tableSettings: userTableSettings, icon: "person", summary: "People and service identities"} },
+						{ path:"groups", data:{tableSettings: groupTableSettings, icon: "group", summary: "Users gathered to grant roles once"} },
+						{ path: "roles", data:{tableSettings: roleTableSettings, icon: "badge", summary: "Sets of rights"} },
+						{ path:"resources", data:{tableSettings: resourceTableSettings, icon: "lock", summary: "What access rules apply to"} }
 					]}
 				},
 			]

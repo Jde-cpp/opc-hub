@@ -1,7 +1,9 @@
 import { NodeId, NodeIdJson } from "./node-id";
 import { ETypes, Browse, ILocalizedText, Ns, toLocalizedText, EAccess, EWriteAccess, StatusCode } from "./types";
-import { toValue, valueSc, Value } from "./value";
+import { Reading, toReading, Value } from "./value";
 import { Enum } from "./enum";
+import { OpcError } from "./opc-error";
+import { isBad } from "./status-code";
 
 export enum ENodeClass{
   Unspecified = 0,
@@ -71,8 +73,8 @@ export class Variable extends UaNode{
 		}
 		else
 			this.dataType = <ETypes>json.dataType?.i;
-		this.value = toValue( json.value );
-		this.sc = valueSc( json.value );//the reading's quality, which REST used to drop — the socket path carries it as SubscriptionResult.sc
+		if( json.value!==undefined )//a browse that arrives Bad is a blank cell with a status - never an OpcError for the editors to bind
+			this.setReading( toReading(json.value) );
 		this.valueRank = json.valueRank ?? -1;
 		this.accessLevel = json["accessLevel"];
 		this.userAccessLevel = json["userAccessLevel"];
@@ -89,7 +91,18 @@ export class Variable extends UaNode{
 	get isInteger():boolean{ return [ETypes.SByte, ETypes.Int16, ETypes.Int32, ETypes.Int64].includes(this.dataType!); }
 	get isFloating():boolean{ return [ETypes.Float, ETypes.Double].includes(this.dataType!); }
 	get isUnsigned():boolean{ return [ETypes.Byte, ETypes.UInt16, ETypes.UInt32, ETypes.UInt64].includes(this.dataType!); }
+	//The one way a reading reaches a row - the browse, a subscription push, a write's echo and a re-read all come through
+	//here, so the quality can't be dropped by one of them again.
+	setReading( r:Reading ){
+		this.sc = r.sc ?? 0;
+		if( this.sc )
+			OpcError.statusCodeText( this.sc );//asks for the name:  an Uncertain {v,sc} never built an OpcError, so its name was never fetched
+		const usable = r.value instanceof OpcError ? undefined : r.value;//a failure is not a value:  bound into <input type=number> it rendered NaN
+		if( usable!==undefined || !isBad(this.sc) )//Bad with nothing usable keeps the last value the row had
+			this.value = usable;
+	}
+	get stale():boolean{ return isBad( this.sc ); }//`value` is the last one known, not a current reading:  shown dimmed and locked
 	value?:Value;
-	sc?:StatusCode;//0/undefined = Good.  Bad arrives as an OpcError in `value`; this mainly distinguishes Uncertain.
+	sc?:StatusCode;//the reading's quality (OPC 10000-4 7.38).  0 = Good;  undefined = no reading yet, which is not the same thing.
 	valueRank?:number; // -1 scalar, 1 one-dimensional array, etc.
 }

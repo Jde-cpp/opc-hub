@@ -2,6 +2,7 @@ import { Field, FieldKind, Operator, TableSchema, View, ViewType } from 'jde-fra
 import { ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
+import { OpcError } from './opc-error';
 import { EAccess, ETypes } from './types';
 import { valueString } from './value';
 
@@ -9,11 +10,11 @@ import { valueString } from './value';
 //hand-built schema and applies its filters and sort in the browser rather than through query().
 export class NodeView extends View{
 	static readonly collectionName = "opcNodes";//profile keys `opcNodes/views` and `opcNodes/viewIndex`:  one set of views for every node on every connection, the way a ql-list collection has one
-	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", access: "Access", description: "Description" };
+	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", status: "Status", access: "Access", description: "Description" };
 	//every column a non-null String:  ids and values are of mixed types and are filtered on their cell text, and NON_NULL keeps the <null>/<not null> suggestions out of the filter tab
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():NodeView{
-		const view = new NodeView( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "access", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
+		const view = new NodeView( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "access", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
 		view.showSelector = true;//the subscription checkboxes
 		view.type = ViewType.System;
 		return view;
@@ -75,6 +76,7 @@ export class NodeView extends View{
 			case "class":       return ENodeClass[node.nodeClass];
 			case "dataType":    return NodeView.dataType( variable );
 			case "snapshot":    return typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value );
+			case "status":      return NodeView.status( variable );
 			case "access":      return NodeView.access( variable );
 			case "description": return node.description?.text;
 		}
@@ -85,6 +87,11 @@ export class NodeView extends View{
 			return undefined;
 		const custom = variable.customDataType;
 		return custom ? (custom instanceof NodeId ? custom.uaString() : custom.name || custom.id.uaString()) : ETypes[variable.dataType!] ?? `${variable.dataType}`;//the enum's name once resolved; the raw id while (or if) the lookup failed.
+	}
+	//the reading's quality (OPC 10000-4 7.38) as the Status cell words it - "Good", "BadSensorFailure", "UncertainEngineeringUnitsExceeded+High".
+	//Blank where there is no reading to qualify:  an object, a denied read, a variable the browse brought no value for.
+	static status( variable:Variable|undefined ):string|undefined{
+		return !variable || NodeView.readDenied( variable ) || ( variable.value==null && !variable.sc ) ? undefined : OpcError.text( variable.sc ?? 0 );
 	}
 	static access( variable:Variable|undefined ):string|undefined{
 		return variable ? NodeView.accessList( variable ).join( ", " ) : undefined;

@@ -14,11 +14,11 @@ import * as FromClient from 'jde-proto/Opc.FromClient';
 import * as FromServer from 'jde-proto/Opc.FromServer';
 import { OPC_STORE, OpcStore } from './opc-store';
 import { CnnctnSlug } from "../model/server-cnnctn";
-import { NodeKey, NodeId } from '../model/node-id';
+import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
 import { ENodeClass, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
-import { toValue, Value, valueJson } from '../model/value';
+import { Reading, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 
 interface IError{ requestId:number; message: string; }
@@ -230,22 +230,22 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				console.error( e );
 		}
 	}
+	//protobufjs exposed a virtual `Identifier` getter naming the set oneof field; ts-proto emits the fields as plain
+	//optionals, so test for undefined rather than truthiness - id 0 and "" are legitimate values, not absence.
+	private static toIdentifier( proto:Common.NodeId ):NodeIdentifier|undefined{
+		return proto.numeric!=undefined ? proto.numeric
+			: proto.string!=undefined ? proto.string
+			: proto.byteString!=undefined ? proto.byteString
+			: proto.guid!=undefined ? Gateway.toGuid( proto.guid ) : undefined;
+	}
+	//The id goes in WITH the namespace.  Both of these built the node from its namespace alone and assigned the id after, and
+	//a NodeId with no identifier is what the constructor reports - so every subscription push (one a second, per node) logged
+	//"NodeId - unrecognized json" to the console for a node that was fine.  A proto with no identifier still says so.
 	private static toNode( proto:Common.NodeId ):NodeId{
-		let node = new NodeId( {ns:proto.namespaceIndex} );
-		//protobufjs exposed a virtual `Identifier` getter naming the set oneof field; ts-proto emits the fields as plain
-		//optionals, so test for undefined rather than truthiness - id 0 and "" are legitimate values, not absence.
-		if( proto.numeric!=undefined )         node.id = proto.numeric;
-		else if( proto.string!=undefined )     node.id = proto.string;
-		else if( proto.byteString!=undefined ) node.id = proto.byteString;
-		else if( proto.guid!=undefined )       node.id = Gateway.toGuid( proto.guid );
-		return node;
+		return new NodeId( {ns: proto.namespaceIndex, id: Gateway.toIdentifier(proto)} );
 	}
 	private static toExpanded( proto:Common.ExpandedNodeId ):ExNodeId{
-		const en = new ExNodeId( {nsu:proto.namespaceUri!, serverIndex:proto.serverIndex!} );
-		const n = Gateway.toNode(proto.node!);
-		en.id = n.id;
-		en.ns = n.ns;
-		return en;
+		return new ExNodeId( {ns: proto.node!.namespaceIndex, id: Gateway.toIdentifier(proto.node!), nsu: proto.namespaceUri!, serverIndex: proto.serverIndex!} );
 	}
 
 	private static toProto( nodes:NodeId[] ):Common.NodeId[]{
@@ -267,11 +267,25 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return protoNodes;
 	}
 
-	private async updateErrorCodes(){
-		const scs = OpcError.emptyMessages();
-		if( scs.length ){
-			const json = await super.get( `ErrorCodes?scs=${scs.join(',')}` ) as any;
-			OpcError.setMessages( json["errorCodes"] );
+	//Fetches the names of the codes seen so far.  Public:  a status that arrives on the socket has no REST call behind it to
+	//bring its name, so the table asks.  One request at a time - a fault holds its code on every push, and each of those
+	//would otherwise re-request a name that is already on its way.  Never rejects:  most callers don't await it, and a name
+	//is a nicety - the screen falls back to the severity and the code.
+	updateErrorCodes():Promise<void>{
+		return this.#errorCodes ??= this.#fetchErrorCodes().finally( ()=>this.#errorCodes = undefined );
+	}
+	#errorCodes:Promise<void>|undefined;
+	async #fetchErrorCodes():Promise<void>{
+		const asked = new Set<StatusCode>();//a code the server has no row for stays pending, and must not be asked for in a loop
+		for( let scs = OpcError.emptyMessages(); scs.length; scs = OpcError.emptyMessages().filter(sc=>!asked.has(sc)) ){//round again for a code that turned up while the request was out - its caller was handed this same promise
+			scs.forEach( sc=>asked.add(sc) );
+			try{
+				const json = await this.get( `ErrorCodes?scs=${scs.join(',')}` ) as any;//this., not super.:  the same method, and one a spec can stand in for
+				OpcError.setMessages( json["errorCodes"] );
+			}
+			catch( e ){
+				return console.warn( `Could not fetch the status code names - ${errorText(e)}` );
+			}
 		}
 	}
 	async errorCodeText( sc:StatusCode ):Promise<string>{
@@ -316,33 +330,34 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 				y.push( child );
 		}
 		this.store.setNodes( this.slug, cnnctn, parent, y );
-		this.updateErrorCodes();
+		await this.updateErrorCodes();//awaited:  the rows are plain objects, so a name that lands after the first paint repaints nothing
 		return y;
 	}
-	async snapshot( opcId:CnnctnSlug, nodes:NodeId[] ):Promise<Map<NodeId,Value>>{
-		const results = await super.queryArray<{id:NodeId,value:Value}>( `nodes( opc: ${StringUtils.qlString(opcId)}, id:[${NodeId.qlArgsArray(nodes)}]){id value}` );
-		var y = new Map<NodeId,Value>();
+	async snapshot( opcId:CnnctnSlug, nodes:NodeId[] ):Promise<Map<NodeId,Reading>>{
+		const results = await super.queryArray<{id:NodeId,value:any}>( `nodes( opc: ${StringUtils.qlString(opcId)}, id:[${NodeId.qlArgsArray(nodes)}]){id value}` );
+		var y = new Map<NodeId,Reading>();
 		for( const snapshot of results )
-			y.set( new NodeId(snapshot.id), toValue(snapshot.value) );
+			y.set( new NodeId(snapshot.id), toReading(snapshot.value) );
 		this.updateErrorCodes();
 		return y;
 	}
-	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Value>{
+	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
+	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{
 		//`id` has to be an OBJECT argument: NodeId::ParseQL (libs/opc/src/uatypes/NodeId.cpp) reads FindPtr<jvalue>("id")
 		//and accepts only an object or an array of them, so the flat `ns:…,i:…` qlArgs() form matched nothing, the server
 		//answered {"node":{}}, and read() returned undefined for every node - silently blanking the cell on changeDouble's
 		//failed-write restore.  snapshot() below already passes id:[{…}] and works, and write() already uses $id; this is
 		//the same shape via variables, which also avoids hand-escaping the literal.
 		const v = await super.querySingle<{value:any}>( `node( opc: $opc, id: $id ){value}`, {opc: opcId, id: n.toJson()} );
-		return toValue( v["value"] );
+		return toReading( v["value"] );
 	}
-	async write( opcId:CnnctnSlug, n:NodeId, v:Value, log:Log ):Promise<Value>{
+	async write( opcId:CnnctnSlug, n:NodeId, v:Value, log:Log ):Promise<Reading>{
 		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;
 		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v) };
 		const data:any = await super.postQL<any>( q, vars, log );
 		this.updateErrorCodes();
 		//unwrap first, toValue last - mirroring read().  postQL returns the `data` object and the server keys a mutation payload by command name (QLAwait: `result[commandName]`, skipped only for `raw`, which this never requests), so toValue used to run on the wrapper and `["value"]` off its result was always undefined - blanking the cell.  `?? data` keeps the raw/unkeyed shape working too.
-		return toValue( (data?.["updateVariable"] ?? data)?.["value"] );
+		return toReading( (data?.["updateVariable"] ?? data)?.["value"] );
 	}
 
 	private onUnsubscriptionResult( requestId:number, result:FromServer.UnsubscribeAck ){
@@ -472,7 +487,10 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		let opcSubscriptions = this.#subscriptions.get( nodeValues.opcId! ); if( !opcSubscriptions ){ return console.error(`Could not find opc ${nodeValues.opcId}`);}
 		const node = Gateway.toNode( nodeValues.node! );
 		const sc = nodeValues.sc ?? 0;//proto3 omits 0/Good from the wire.
-		const value = sc>=0x80000000 ? new OpcError( sc, "OpcError", "", undefined ) : Gateway.toValues( nodeValues.values! );//Bad → error, matching the REST shape; Uncertain keeps the reading and sc says so.
+		//A Bad push still carries the reading the server holds.  Swapping it for an OpcError here destroyed it, and the table
+		//bound the error into its editors;  sc says what the reading is worth.  No values = none was sent - toValues([]) is
+		//an empty array, which a row would take for an array reading.
+		const value = nodeValues.values?.length ? Gateway.toValues( nodeValues.values ) : undefined;
 		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)!.next({opcId:nodeValues.opcId!, node:node, value:value, sc:sc}) );
 	};
 
@@ -535,6 +553,6 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	get name():string{ return this.instances[0].instanceName!; }
 	get slug():GatewaySlug{ return this.instances[0].instanceName!; }
 }
-export type SubscriptionResult = {opcId:string, node:NodeId, value:Value, sc?:StatusCode};//sc: the reading's quality; 0/undefined = Good.  Bad already arrives as an OpcError in `value`; sc mainly distinguishes Uncertain.
+export type SubscriptionResult = Reading & {opcId:string, node:NodeId};//a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a refused request, not a reading.
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );

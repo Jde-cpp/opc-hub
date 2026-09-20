@@ -164,8 +164,29 @@ namespace Jde::Opc::Emulator{
 		THROW_IFSL( UA_NodeId_isNull(&y), "No target for browse path '{}'.", browsePath.ToString() );
 		return y;
 	}
-	α EmulatorClient::Write( const NodeId& node, const UA_Variant& value, SL sl )ε->void{
-		check( UA_Client_writeValueAttribute(_ptr, node, &value), Ƒ("write {}", node.ToString()), sl );
+	//UA_Client_writeValueAttribute sends the variant alone; a reading's quality rides in the DataValue, so this is the
+	//Write service itself.  Good needs nothing more than Write.  Anything else needs StatusWrite on the node's AccessLevel
+	//and on the user's (open62541 copyAttributeIntoNode: BadWriteNotSupported, then BadUserAccessDenied) - the caller
+	//decides what a refusal means (Emulator::Cycle).
+	α EmulatorClient::Write( const NodeId& node, const UA_Variant& value, UA_StatusCode status, SL sl )ε->void{
+		UA_WriteValue write;
+		UA_WriteValue_init( &write );
+		write.nodeId = node;//borrowed for the call, as is the variant; the request is not cleared.
+		write.attributeId = UA_ATTRIBUTEID_VALUE;
+		write.value.value = value;
+		write.value.hasValue = true;
+		write.value.status = status;
+		write.value.hasStatus = true;//Good included: the node stores the status as written, which is how a reading returns to Good.
+		UA_WriteRequest request;
+		UA_WriteRequest_init( &request );
+		request.nodesToWrite = &write;
+		request.nodesToWriteSize = 1;
+		auto response = UA_Client_Service_write( _ptr, request );
+		auto sc = response.responseHeader.serviceResult;
+		if( !sc )
+			sc = response.resultsSize ? response.results[0] : UA_STATUSCODE_BADUNEXPECTEDERROR;
+		UA_WriteResponse_clear( &response );
+		check( sc, Ƒ("write {}", node.ToString()), sl );
 	}
 	α EmulatorClient::CreateSubscription( Duration publishingInterval, SL sl )ε->UA_UInt32{
 		auto request = UA_CreateSubscriptionRequest_default();

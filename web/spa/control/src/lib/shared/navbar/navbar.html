@@ -2,6 +2,14 @@
 <!-- @if( !isLoading() ) { -->
 	<nav class="docs-navbar-header" aria-label="Top Toolbar">
 		<div style="flex: 1;justify-content: flex-start;">
+			@if( appName ){
+				<a class="brand" routerLink="/" [attr.aria-label]="appName + ' home'">
+					@if( appLogo ){
+						<span class="brand-logo" aria-hidden="true" [style.mask-image]="'url(' + appLogo + ')'"></span>
+					}
+					<span>{{appName}}</span>
+				</a>
+			}
 			@for( fav of favoriteMenus(); track fav) {
 				@if( fav["folderName"] ) {
 					<mat-menu #favMenu="matMenu">

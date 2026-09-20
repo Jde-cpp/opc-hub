@@ -72,3 +72,12 @@ export function toValue( json:any ):Value{
 export function valueSc( json:any ):StatusCode|undefined{
 	return json?.hasOwnProperty('sc') ? <StatusCode>json.sc : undefined;
 }
+
+//A reading whole - the value and its quality together, which is how every path hands one to a row (Variable.setReading).
+//sc 0/undefined = Good.  No `value` = the server sent none:  REST drops it on Bad (`{sc}`), where the socket still carries
+//the one the server holds.
+export type Reading = { value?:Value, sc?:StatusCode };
+export function toReading( json:any ):Reading{
+	const sc = valueSc( json ) ?? 0;
+	return !Array.isArray(json) && json?.hasOwnProperty('sc') && !json.hasOwnProperty('v') ? {sc} : { value: toValue(json), sc };
+}

@@ -37,10 +37,15 @@ namespace Jde::Opc::Server::Tests{
 			UA_Server_delete( _server );
 		}
 		α Iterate()ι->void{ UA_Server_run_iterate( _server, false ); }
-		α Write( uint field, double value )ε->void{
-			UA_Variant v;
-			UA_Variant_setScalar( &v, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
-			UAε( UA_Server_writeValue(_server, Contract.Fields[field].Node, v) );
+		α Write( uint field, double value, UA_StatusCode status=UA_STATUSCODE_GOOD )ε->void{//the reading with its quality, as PlcServer::Write.
+			UA_WriteValue write; UA_WriteValue_init( &write );
+			write.nodeId = Contract.Fields[field].Node;
+			write.attributeId = UA_ATTRIBUTEID_VALUE;
+			UA_Variant_setScalar( &write.value.value, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
+			write.value.hasValue = true;
+			write.value.status = status;
+			write.value.hasStatus = true;
+			UAε( UA_Server_write(_server, &write) );
 		}
 		PubSub::Config Contract;
 	private:
@@ -65,6 +70,18 @@ namespace Jde::Opc::Server::Tests{
 			if( UA_Server_readValue(GetUAServer().Ptr(), node, &v)==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&v, &UA_TYPES[UA_TYPES_DOUBLE]) )
 				y = *(UA_Double*)v.data;
 			UA_Variant_clear( &v );
+			return y;
+		}
+		//The target variable's whole DataValue - UA_Server_readValue returns any non-Good status instead of the value.
+		Ω Read( const NodeId& node )ι->std::pair<optional<double>,UA_StatusCode>{
+			UA_ReadValueId id; UA_ReadValueId_init( &id );
+			id.nodeId = node;
+			id.attributeId = UA_ATTRIBUTEID_VALUE;
+			auto dv = UA_Server_read( GetUAServer().Ptr(), &id, UA_TIMESTAMPSTORETURN_NEITHER );
+			std::pair<optional<double>,UA_StatusCode> y{ {}, dv.status };
+			if( dv.hasValue && UA_Variant_hasScalarType(&dv.value, &UA_TYPES[UA_TYPES_DOUBLE]) )
+				y.first = *(UA_Double*)dv.value.data;
+			UA_DataValue_clear( &dv );
 			return y;
 		}
 	};
@@ -121,5 +138,31 @@ namespace Jde::Opc::Server::Tests{
 		let took = Chrono::ToString( duration_cast<Duration>(steady_clock::now()-start) );
 		EXPECT_EQ( got.value_or(0), second ) << "the second write did not land within " << Chrono::ToString(limit) << " (" << took << ") - delta frames being discarded?  PubSub::Writer keyFrameCount must stay 0.";
 		EXPECT_EQ( gotManual.value_or(0), second*2 ) << "pumpManual.motorRpm's second write did not land within " << Chrono::ToString(limit) << " (" << took << ").";
+	}
+
+	//A reading's quality (OPC 10000-4 7.38) crosses the wire with it:  the writer's STATUSCODE field content mask sends
+	//DataValue-encoded fields, and the reader writes the whole DataValue into the target variable.  Uncertain with its
+	//info bits, then Bad - which still carries the value, or the reader would skip the field - then back to Good, each
+	//within a couple of publishing intervals.  Ends Good so the node is left as the other tests expect it.
+	TEST_F( PubSubTests, PublishedStatusLandsInTargetVariable ){
+		let& contract = PubSub()->Config();
+		Publisher publisher{ Settings::AsObject("/opcServer/pubsub"), pumpsNodeset() };
+		let& node = contract.Fields[1].Node;
+		let limit = 2*contract.PublishingInterval + 500ms;
+		constexpr UA_StatusCode pinnedHigh{ UA_STATUSCODE_UNCERTAINENGINEERINGUNITSEXCEEDED | 0x0400 | 0x0200 };//InfoType DataValue + LimitBits High
+		double value{ 1500 };
+		for( let status : {pinnedHigh, (UA_StatusCode)UA_STATUSCODE_BADSENSORFAILURE, (UA_StatusCode)UA_STATUSCODE_GOOD} ){
+			publisher.Write( 1, ++value, status );
+			std::pair<optional<double>,UA_StatusCode> got;
+			//the first message of a fresh publisher may take longer than an interval to go out - the first act's 10 s covers it.
+			for( let deadline = steady_clock::now()+( status==pinnedHigh ? Duration{10s} : Duration{limit} ); steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
+				publisher.Iterate();
+				got = Read( node );
+				if( got.first==optional<double>{value} && got.second==status )
+					break;
+			}
+			EXPECT_EQ( got.second, status ) << "expected " << UA_StatusCode_name( status ) << ", the target variable has " << UA_StatusCode_name( got.second ) << " - PubSub::Writer's dataSetFieldContentMask must carry STATUSCODE.";
+			EXPECT_EQ( got.first, optional<double>{value} ) << UA_StatusCode_name( status );
+		}
 	}
 }

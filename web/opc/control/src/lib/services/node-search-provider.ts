@@ -2,6 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import { Router } from '@angular/router';
 import { ISearchProvider, SearchResult } from 'jde-spa';
 import { ENodeClass } from '../model/node';
+import { toBrowse } from '../model/types';
 import { Gateway, GATEWAY_SERVICE, GatewayService } from './gateway-service';
 
 export type NodeSearchRow = { connection:{ slug:string; name:string }; path:string; name:string; nodeClass:number; depth:number };
@@ -42,11 +43,15 @@ export class NodeSearchProvider implements ISearchProvider{
 		return hits.slice( 0, limit ).map( ({gateway, row})=>({
 			title: row.name,
 			route: [ '/gateways', gateway.slug, row.connection.slug, ...row.path.split('/') ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
-			summary: `${row.connection.name}/${row.path}`,
+			summary: `${row.connection.name}/${NodeSearchProvider.displayPath(row.path)}`,
 			icon: NodeSearchProvider.icon( row.nodeClass ),
 			rank: row.name.toLowerCase().startsWith( text ) ? 0 : 1,
 			source: this.name
 		}) );
+	}
+	//the browse path as the breadcrumbs name it (nodeSegmentName):  `5~pumps/5~pump1` reads pumps/pump1.
+	static displayPath( path:string ):string{
+		return path.split( '/' ).map( segment=>String(toBrowse(segment, undefined).name) ).join( '/' );
 	}
 	static icon( nodeClass:number ):string{
 		switch( nodeClass ){

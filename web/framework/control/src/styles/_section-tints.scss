@@ -1,25 +1,4 @@
-@use 'sass:map';
-
-// One place for the per-section colors, so the tiles on the home page and the pages they lead to agree.
-// The hue is mixed into the theme surface rather than set outright: the tint then follows whichever of the
-// four themes is selected, and the card text keeps its contrast on a light theme and a dark one alike.
+// One place for the per-section colors, so the tiles on the home page and the pages they lead to agree.  Each page sets
+// the one it sits under as --tint and mixes every shade from it and a theme token, so the tint follows whichever of the
+// themes is selected and the text keeps its contrast on a light theme and a dark one alike.
 $section-tints: (gateways: #1976d2, access: #f9a825, apps: #2e7d32, help: #6a1b9a);
-
-@mixin tint( $section ){
-	$tint: map.get( $section-tints, $section );
-
-	background: color-mix( in srgb, $tint 16%, var(--mat-sys-surface-container) );
-	border-color: color-mix( in srgb, $tint 40%, var(--mat-sys-outline-variant) );
-
-	//shading toward on-surface darkens the icon on a light theme and lightens it on a dark one, either way
-	//keeping it off the tinted background it sits on
-	.card-icon { color: color-mix( in srgb, $tint 70%, var(--mat-sys-on-surface) ); }
-}
-
-// the hover arm of the same tint - kept separate because each page nests its own hover selector
-@mixin tintHover( $section ){
-	$tint: map.get( $section-tints, $section );
-
-	background: color-mix( in srgb, $tint 26%, var(--mat-sys-surface-container-high) );
-	border-color: color-mix( in srgb, $tint 70%, var(--mat-sys-primary) );
-}
