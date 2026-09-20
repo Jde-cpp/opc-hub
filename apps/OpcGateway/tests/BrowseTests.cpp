@@ -43,8 +43,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//resolves to an anonymous credential.  Anonymous access is allowed while gateway/serverConnections is unenforced (the default),
 	//so the hub does NOT refuse it: the connect is attempted, and here fails at the OpcServer, which offers no anonymous endpoint -
 	//a 403, not the hub's own 401.  Once an admin enforces the resource, Authorize::Test throws Unauthorized for the unknown user
-	//(AuthorizeTests) and the connect is refused before a client is made.  The gate consults the authorizer only for the anonymous
-	//credential; the jwt-backed browses above are authenticated and connect regardless.
+	//(AuthorizeTests) and the connect is refused before a client is made.  #39: that is now true of *every* web session, not only
+	//an anonymous one - being signed in is no longer a way past the resource - so this test says what unenforced means, and
+	//EnforcedConnectionResourceRefusesAnUngrantedSession below says what enforced does.
 	TEST_F( BrowseTests, AnonymousWebSessionNotRefusedWhenUnenforced ){
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{}, "localhost", false )->SessionId;
 		try{
@@ -52,6 +53,34 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		catch( Exception& e ){
 			EXPECT_NE( e.HttpStatus(), EHttpStatus::Unauthorized ) << "the hub refused an anonymous session while the resource was unenforced: " << e.what();
+		}
+	}
+
+	//install-issues #39.  The gate used to run only for the *anonymous* credential, so a signed-in session walked past an enforced
+	//gateway/serverConnections and opened a client on any connection it could name - measured on a live hub, where a user with no
+	//grant anywhere was refused `serverConnections{}` and still read, browsed and wrote that connection's nodes.
+	//The probe has to be **authenticated**, or it only re-tests the anonymous path this was always closed against:  the session
+	//carries the harness's own jwt - a valid IssuedToken, so the connect would otherwise succeed - under a user id no grant names.
+	//That is the whole of the finding:  a credential good enough to open a UA session, on a resource the admin has enforced and
+	//this user holds nothing on.  The resource is restored before the test leaves - every other test in the process reads it.
+	TEST_F( BrowseTests, EnforcedConnectionResourceRefusesAnUngrantedSession ){
+		//`deleted` is the enforcement switch, so restore = enforce - the Resources page's toggle by another name.  The schemaName
+		//is named as well as the slug:  one slug can belong to more than one schema, and only the gateway's is this test's.
+		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"serverConnections\", criteria:null )", on ? "restore" : "delete"), {} ); };
+		enforce( true );
+		struct Restore final{ decltype(enforce) F; ~Restore(){ try{ F(false); }catch( const std::exception& ){} } } _{ enforce };
+
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x39'0000 };//no acl, no role, no group names it
+		let sessionId = Web::Server::Sessions::Add( ungranted, "localhost", false )->SessionId;
+		Credential cred{ _jwt->Payload() }; cred.SetUserPK( ungranted );
+		ASSERT_NE( cred.Type(), ETokenType::Anonymous ) << "the probe must be authenticated or it tests the wrong branch";
+		AddSession( sessionId, OpcServerSlug, move(cred) );
+		try{
+			BlockAwait<TAwait<sp<UAClient>>,sp<UAClient>>( ConnectAwait{ string{OpcServerSlug}, sessionId, ungranted } );
+			ADD_FAILURE() << "a signed-in session with no grant opened a client on an enforced connection resource";
+		}
+		catch( Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::Unauthorized ) << e.what();
 		}
 	}
 

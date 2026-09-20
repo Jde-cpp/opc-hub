@@ -106,6 +106,13 @@
 						<!-- <span *ngIf="r.dataType==ETypes.None">{{toString(r.value)}}</span> -->
 						<!-- <span *ngIf="valueType(r.value)!='boolean'" [title]="toString(r.value)">{{valueType(r.value)}}</span> -->
 						<!--  -->
+						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
+								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A disabled control
+								takes no pointer events, so the reason cannot ride on the control itself;  it rides on a lock beside it, the same
+								focusable icon-with-tooltip shape the quality icon below uses, so a keyboard reaches it too.-->
+						@if( readOnlyReason(r); as reason ){
+							<mat-icon class="lock-icon" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="reason" [matTooltip]="reason" fontIcon="lock"></mat-icon>
+						}
 						<!--the reading's quality, beside the value - only where the view hides the Status column, which says it better:  a Bad or Uncertain reading must not pass for a good one there.  A shape per severity and a label, so the colour is never the only signal;  focusable, so the tooltip is a keyboard's too-->
 						@if( !statusShown() && qualityIcon(r); as icon ){
 							<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="false" role="img" tabindex="0" [attr.aria-label]="status(r)" [matTooltip]="statusTooltip(r)" [fontIcon]="icon"></mat-icon>

@@ -6,14 +6,23 @@
 			<h3>Login</h3>
 
 			<form [formGroup]="form" fxLayout="column" fxLayoutAlign="center stretch" >
-				<mat-form-field>
+				<!--install-issues #38:  this form signs in against an OPC server the hub connects to, and the connection's slug is
+						what picks which one - onLogin splits the username on the backslash and sends the slug as the request's `opc`
+						field, so without it the server answers "opc server not specified".  The form renders whether or not a
+						connection exists yet (adding the first one is done signed out), so the shape has to be said here:  it is the
+						one place a user meets it at the moment they need it.-->
+				<!--subscriptSizing dynamic:  the default reserves one line for the subscript and clips the rest, which hid all but
+						the first few words of the hint behind the Password field.  The card is 400px at most and narrower on a phone, so
+						this hint wraps by design.-->
+				<mat-form-field subscriptSizing="dynamic">
 					<mat-label>Username</mat-label>
-					<input matInput formControlName="username" autocomplete="username">
+					<input matInput formControlName="username" autocomplete="username" placeholder="plant1\operator1">
+					<mat-hint>An OPC server's own login: the connection's slug, a backslash, then your user on that server.</mat-hint>
 				</mat-form-field>
 
 				<mat-form-field>
 					<mat-label>Password</mat-label>
-					<input matInput formControlName="password" type="password" />
+					<input matInput formControlName="password" type="password" autocomplete="current-password" />
 				</mat-form-field>
 			</form>
 		</div>

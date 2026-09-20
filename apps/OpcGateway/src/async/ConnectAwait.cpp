@@ -72,9 +72,19 @@ namespace Jde::Opc::Gateway{
 		//twice per load and left the connection reading Error.  Anonymous access is allowed while the connection resource is
 		//unenforced (open access is the point of leaving it so), and refused 401 once an admin enforces gateway/serverConnections,
 		//where an anonymous session holds no grant - before a client is opened.  Delegated to Authorize::Test, which passes an
-		//unenforced resource (FindActiveResourcePK null) and throws Unauthorized for an unknown user on an enforced one.  Only the
-		//anonymous credential consults it: a stored password login (Username) or a jwt session (IssuedToken) is authenticated.
-		if( _sessionId && _cred.Type()==ETokenType::Anonymous ){
+		//unenforced resource (FindActiveResourcePK null) and throws Unauthorized for an unknown user on an enforced one.
+		//
+		//install-issues #39:  `&& _cred.Type()==ETokenType::Anonymous` used to stand here too, and it left the Enforced switch on
+		//gateway/serverConnections gating the *table* - listing and editing connections - but not opening a session on one.  Any
+		//authenticated user reached any connection by slug.  Measured on a live hub with the resource enforced and a user holding
+		//no grant anywhere:  `serverConnections{}` refused with "does not have 'Read' access", while a node read, a full browse and
+		//an `updateVariable` write on that same connection all went through.  Every web session consults the authorizer now, and
+		//being authenticated is no longer a way past a resource the admin chose to enforce.
+		//
+		//Still only a web session:  the ctor that carries an explicit Credential sets no _sessionId - the soak harness, the tests,
+		//anything internal - and has no user to test.  Unenforced, which is how this ships and how every walk ran, Test passes for
+		//everyone and nothing changes.
+		if( _sessionId ){
 			if( auto acl = AppClient()->Acl(); acl ){
 				try{
 					acl->Test( "gateway", "serverConnections", Access::ERights::Read, _cred.UserPK(), _sl );

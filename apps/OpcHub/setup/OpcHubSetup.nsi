@@ -88,6 +88,7 @@ Var ConfigDir  ;$DataDir\config - the settings mirror
 Var FinishText
 Var StartNow   ;/Start - a silent install starts the products at the end, as the finish page's box does
 Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's after the offer to install it (#14) - the finish page says so
+Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was closed to reinstall over it (#37) - the finish page says to start it again
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -198,6 +199,70 @@ FunctionEnd
 	Pop $0
 !macroend
 
+; Is this user running ${exe}?  -> $0 == 0 when yes.  tasklist piped through find rather than a plugin:  the exit code is
+; the whole answer (find returns 1 for no match), and the uninstaller already reaches for taskkill for the same job.  The
+; USERNAME filter is what keeps an all-users *service* - LocalSystem's, which this mode may not touch - out of the answer.
+!macro UserProcRunning exe
+	nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${exe}" /FI "USERNAME eq %USERNAME%" /NH | find /I "${exe}"'
+	Pop $0
+	Pop $1
+!macroend
+
+; Close a product this user is running, and wait for it to go.  Windows will not let an installer overwrite a running
+; image, and - the case #37 found - a hub that keeps running through the install never applies the seeds a newly added
+; component just wrote, because those land on a `-sync` start:  the pages look exactly as they did before the component
+; was added.  This is the current-user counterpart of StopAndRemove, which does the same for the services.
+; taskkill without /F first:  these run as console windows (-c), so they get a close and shut down as they would on
+; Ctrl+C;  /F only if ten seconds pass.  -> $UserClosed 1 when anything was closed.
+!macro CloseUserProduct exe label
+	!insertmacro UserProcRunning "${exe}"
+	${If} $0 == 0
+		DetailPrint "Closing ${label} - it is running from an earlier install"
+		nsExec::ExecToLog 'taskkill /IM "${exe}"'
+		Pop $0
+		StrCpy $2 0
+		${Do}
+			Sleep 500
+			!insertmacro UserProcRunning "${exe}"
+			${If} $0 != 0
+				${ExitDo}
+			${EndIf}
+			IntOp $2 $2 + 1
+			${If} $2 >= 20
+				DetailPrint "  ${label} did not close - ending it"
+				nsExec::ExecToLog 'taskkill /F /IM "${exe}"'
+				Pop $0
+				Sleep 1000
+				${ExitDo}
+			${EndIf}
+		${Loop}
+		StrCpy $UserClosed 1
+	${EndIf}
+!macroend
+
+; #37:  in the current-user mode there is no service to stop, so a reinstall walks into a running product.  Its binaries
+; cannot be replaced while it runs, and a hub that survives the install never applies the seeds a newly added component
+; just wrote - `<schema>*.mutation` and `*.roles` are read by a `-sync` start, so the walk that added the OPC UA Server
+; component over an existing install got the files on disk, the server started, and a hub still showing no Google
+; provider, no OpcServer connection and no "OPC Server Instance" role.  Asked, not assumed:  these are console windows
+; the user opened.  /SD IDOK so a silent install closes them without a prompt, as it must.
+Function CloseRunningUserProducts
+	!insertmacro UserProcRunning "Jde.Opc.Hub.exe"
+	StrCpy $3 $0
+	!insertmacro UserProcRunning "Jde.Opc.Server.exe"
+	${If} $3 != 0
+	${AndIf} $0 != 0
+		DetailPrint "No ${PRODUCT} of yours is running - nothing to close" ;said either way, so an install log shows the check ran (#37)
+	${Else}
+		MessageBox MB_OKCANCEL|MB_ICONINFORMATION "${PRODUCT} is already running from an earlier install.  Setup has to close it: its files cannot be replaced while it runs, and a component added now is only picked up when it next starts.$\r$\n$\r$\nThe finish page's 'Start now' box brings it back." /SD IDOK IDOK closeThem
+		Abort "Close ${PRODUCT} and run Setup again"
+		closeThem:
+		;the server first:  it holds a session on the hub, and stopping it after would leave the hub logging a lost client
+		!insertmacro CloseUserProduct "Jde.Opc.Server.exe" "Jde.OpcServer"
+		!insertmacro CloseUserProduct "Jde.Opc.Hub.exe" "Jde.OpcHub"
+	${EndIf}
+FunctionEnd
+
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Components
 ;--------------------------------------------------------------------------------------------------------------------------
@@ -209,6 +274,9 @@ Section "OPC Hub" SEC_HUB
 	${If} $0 == 0
 		MessageBox MB_OK|MB_ICONSTOP "$DataDir is not writable by you.  It was created by an all-users install - choose All users, or ask an administrator." /SD IDOK
 		Abort "Data dir not writable"
+	${EndIf}
+	${If} $MultiUser.InstallMode == "CurrentUser"
+		Call CloseRunningUserProducts ;before the first File - see the function (#37)
 	${EndIf}
 	;binaries - the exe's dir carries its dlls; the sqlite driver and the proc MODULEs come from the bin root
 	SetOutPath "$INSTDIR\OpcHub"
@@ -284,7 +352,8 @@ Section /o "OPC UA Server" SEC_OPCSERVER
 	;the hub's seeds for this component (reviews/install-issues.md #1): the Web UI's Google provider - the fresh install's login,
 	;by ruling no username is seeded - and this server as the default connection with its provider row.  <schema>*.mutation,
 	;applied by the hub's -sync inside the schema sync; the underscore names sort after access.mutation, whose provider type 7
-	;(OpcServer) they reference.  Only with this component - a hub without it has no login path, by decision.
+	;(OpcServer) they reference.  Only with this component - a hub without it has no *seeded* login (#36: it is not without a
+	;login path, since adding a server connection creates one; what it lacks is one that needs no setup).
 	SetOutPath "$DataDir\OpcHub\sql"
 	File /oname=access_google.mutation "${SRC_DIR}\libs\access\config\release-google.mutation"
 	File /oname=access_opcServer.mutation "${SRC_DIR}\libs\access\config\release-opcServer.mutation"
@@ -432,6 +501,10 @@ Section -Services
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		${If} $RuntimeOld == 1
 			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nThe Web UI is the link below."
+		${ElseIf} $UserClosed == 1
+			;#37:  the copy that was running is gone, and starting it again is the only way this install - its new files, and
+			;any seeds a component added with it - takes effect.  Said here because this mode has no service to do it.
+			StrCpy $FinishText "${PRODUCT} is installed for your account.  The copy that was running was closed to replace its files - start it again for this install to take effect: the box below, or the Start Menu folder '${COMPANY}'.$\r$\n$\r$\nThe Web UI is the link below, once it runs."
 		${Else}
 			StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nThe Web UI is the link below, once it runs."
 		${EndIf}

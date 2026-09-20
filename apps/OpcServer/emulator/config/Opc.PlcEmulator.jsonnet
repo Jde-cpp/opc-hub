@@ -36,7 +36,8 @@ local serverApplicationUri = "urn:open62541.server.application";
 		//Verify the OpcServer's certificate against trustedCertDirs before opening the session (jde/opc/ServerTrust.h), as the
 		//gateway does with /gateway/verifyServerCertificate and /gateway/trustedCertDirs.
 		verifyServerCertificate: true,
-		//The OPC servers this PLC will talk to, one .pem/.crt per server, read on every connect - the gateway's verifier, on a
+		//The OPC servers this PLC will talk to, one certificate per server (.pem, .crt, .der or .cer), read on every connect -
+		//the gateway's verifier, on a
 		//list of this app's own.  A Jde OpcServer on this host publishes its own here; for any other server copy its
 		//certificate into a directory named here.  Not the OS root store - OPC server certificates are self-signed.
 		trustedCertDirs: [ "$(ProgramData)/Jde-Cpp/OpcServer/ssl/certs" ],

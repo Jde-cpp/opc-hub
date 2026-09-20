@@ -89,7 +89,7 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 | `applicationUri` | | this device's identity: what it advertises and the SAN of its channel certificate |
 | `serverApplicationUri` | | the endpoint filter: only endpoints whose server advertises it; `""` takes any |
 | `verifyServerCertificate` | | verify the OpcServer's certificate against `trustedCertDirs` before opening the session (default `true`) |
-| `trustedCertDirs` | | the OPC servers this PLC trusts, one `.pem`/`.crt` per server, read on every connect - the emulator's own list (`/emulator/trustedCertDirs`), not the enrollment anchors |
+| `trustedCertDirs` | | the OPC servers this PLC trusts, one certificate per server (`.pem`, `.crt`, `.der` or `.cer`), read on every connect - the emulator's own list (`/emulator/trustedCertDirs`), not the enrollment anchors |
 | `plc.port` / `plc.bind` / `plc.nodeset` | | the PLC server's endpoint (`bind: ""` = every interface, and a WARN) and the NodeSet2 it loads |
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |

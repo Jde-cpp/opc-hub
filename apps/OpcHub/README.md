@@ -80,8 +80,16 @@ settings they ship are `config/args/install` (sqlite - `args/install-sqlServer` 
    Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only (no firewall
    prompt) and the products answer that machine alone - for another machine, install for all users, or set
    `listenAddress: null` in its `args/install-user` and have an administrator open the ports.
-3) Log in with Google (the OPC UA Server component seeds the provider and the connection).  The site's origin must be
-   registered under the OAuth client id the hub serves - [`setup/README.md`](setup/README.md) "First login".
+3) Log in.  Which login you have depends on step 1's components - [`setup/README.md`](setup/README.md) "First login":
+   - **With the OPC UA Server component**, it is **Google**, seeded ready to use along with the bundled server as the
+     default connection.  The site's origin must be registered under the OAuth client id the hub serves, which the
+     project's default covers for `http://localhost:1967` only - any other host needs its own client id.
+   - **Without it**, the login is **an OPC server's own**, and adding the connection is what creates it: on
+     [Applications](http://localhost:1967/apps) > the OpcHub card > *Connections* > *Add*, save the connection while still
+     signed out, have the two sides trust each other's certificates, then sign in as **`<slug>\<user>`** -
+     `plant1\operator1` - with that user's password on the server.  The Web UI's *Overview* help walks it as *First steps*.
+     Walked against a KEPServerEX 6.12 on 2026-09-20: signed in 11 minutes from the start of the install, a value
+     streaming at 13.
 4) Uninstall: Settings > Apps (a current-user install also has an Uninstall shortcut in its Start Menu folder).  The
    database, certificates and logs under `C:\ProgramData\Jde-Cpp` are left in place.
 
@@ -102,7 +110,7 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
    `systemctl --user` units (`--opcserver` for the server).
 2) Browse to http://localhost:1967/ - the hub serves the site; the packaged nginx site on 8071 is optional
    (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
-3) Log in with Google, as above.
+3) Log in, as above - Google with the OPC UA Server component, otherwise a connection's own `<slug>\<user>`.
 4) Uninstall: `sudo apt remove jde-opchub` (`./install.sh --uninstall` for a per-user install); the data under
    `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.
 
@@ -110,7 +118,8 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
 
 With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection: Gateways in the Web UI lists it under
 the hub's gateway, and browsing to a node shows its value - Snapshot re-reads, the checkbox beside a node streams it, a
-typed value writes it.  Every value in the shipped address space is static, though, so the checkbox on its own watches a
+typed value writes it where the server reports the node writable for you - a lock beside a cell says when it does not.
+Every value in the shipped address space is static, though, so the checkbox on its own watches a
 number that never moves: to see the stream, open the node in two browser windows, tick the box in one and type a value in
 the other - the untouched window takes the new value through the subscription, which is the subscription working.  What
 moves values by itself is `Jde.Opc.PlcEmulator` ([`apps/OpcServer/emulator/README.md`](../OpcServer/emulator/README.md)),

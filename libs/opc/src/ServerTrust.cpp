@@ -17,6 +17,7 @@ namespace Jde::Opc{
 			string Url;
 			string SettingsRoot;//the caller's own settings, named in the rejection - see the header.
 			uint Anchors{};
+			uint Skipped{};//files in the directories that carried no certificate extension - named in the rejection when nothing loaded (install-issues #33).
 			string Rejection;//the last failure;  written by verifyCertificate and read by StateCallback, both on the client's strand.
 		};
 		α context( const UA_CertificateGroup& g )ι->Context*{ return (Context*)g.context; }
@@ -31,7 +32,10 @@ namespace Jde::Opc{
 				return UA_STATUSCODE_GOOD;
 			}
 			catch( const std::exception& e ){
-				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} trusted certificate{} loaded from {}/trustedCertDirs) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), c.Anchors, c.Anchors==1 ? "" : "s", c.SettingsRoot, c.SettingsRoot );
+				//"0 trusted certificates loaded" alone reads as "the directory is empty" - the operator who *did* copy the
+				//certificate in is then told to do the thing they just did (install-issues #33), so say what was passed over.
+				let skipped = c.Anchors || !c.Skipped ? string{} : Ƒ( ", {} file{} skipped for {} extension - {} are read", c.Skipped, c.Skipped==1 ? " was" : "s were", c.Skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
+				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} trusted certificate{} loaded from {}/trustedCertDirs{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), c.Anchors, c.Anchors==1 ? "" : "s", c.SettingsRoot, skipped, c.SettingsRoot );
 				ERRT( _tags, "[{}]{}", hex(c.Handle), c.Rejection );
 				return UA_STATUSCODE_BADCERTIFICATEUNTRUSTED;
 			}
@@ -57,8 +61,11 @@ namespace Jde::Opc{
 					}
 					{ std::lock_guard _{ _missingMutex }; _missingDirs.erase( dir ); }
 					for( let& entry : fs::directory_iterator(dir) ){
-						if( entry.path().extension()!=".pem" && entry.path().extension()!=".crt" )
+						if( !Crypto::IsCertificateFile(entry.path()) ){
+							++c.Skipped;
+							DBGT( _tags, "[{}]Not a certificate, skipped: '{}' ({} are read).", hex(c.Handle), entry.path().string(), Crypto::CertificateExtensions );
 							continue;
+						}
 						try{
 							c.Store.AddCertificate( Crypto::ReadCertificate(entry.path(), sl), sl );
 							++c.Anchors;
@@ -96,7 +103,7 @@ namespace Jde::Opc{
 			if( ec )
 				WARNT( _tags, "Could not create the trusted server certificate directory '{}': {}", dir.string(), ec.message() );
 			if( !ec )//not `else`: the log macros expand to their own `if`.
-				INFOT( _tags, "Created '{}' ({}/trustedCertDirs) - copy an OPC server's certificate (.pem/.crt) here to trust it.", dir.string(), settingsRoot );
+				INFOT( _tags, "Created '{}' ({}/trustedCertDirs) - copy an OPC server's certificate ({}) here to trust it.", dir.string(), settingsRoot, Crypto::CertificateExtensions );
 		}
 	}
 
@@ -137,8 +144,10 @@ namespace Jde::Opc{
 			INFOT( _tags, "[{}]Verifying '{}'s certificate against {} trusted certificate{} from {}/trustedCertDirs.", hex(h), url, c->Anchors, c->Anchors==1 ? "" : "s", settingsRoot );
 		//A config from before the split (security-matrix #3) names its servers under /access/trustedCertDirs alone:  say where they belong now.
 		let moved = dirs.empty() && !Settings::FindStringArray( "/access/trustedCertDirs" ).empty();
+		//#33:  the directories are not empty, they hold files this build would not read - the one thing the operator cannot see.
+		let skipped = c->Skipped ? Ƒ( "  {} file{} passed over for {} extension - {} are read.", c->Skipped, c->Skipped==1 ? " was" : "s were", c->Skipped==1 ? "its" : "their", Crypto::CertificateExtensions ) : string{};
 		if( !c->Anchors )//not `else`: the log macros expand to their own `if`.
-			WARNT( _tags, "[{}]No trusted certificates under {}/trustedCertDirs ({} director{}) - every certificate '{}' presents will be rejected.{}", hex(h), settingsRoot, dirs.size(), dirs.size()==1 ? "y" : "ies", url, moved ? "  /access/trustedCertDirs is the enrollment anchors' list and is no longer read for this - name the directories under this setting." : "" );
+			WARNT( _tags, "[{}]No trusted certificates under {}/trustedCertDirs ({} director{}) - every certificate '{}' presents will be rejected.{}{}", hex(h), settingsRoot, dirs.size(), dirs.size()==1 ? "y" : "ies", url, skipped, moved ? "  /access/trustedCertDirs is the enrollment anchors' list and is no longer read for this - name the directories under this setting." : "" );
 		g.context = c.release();
 	}
 	α ServerTrust::Rejection( const UA_ClientConfig& config )ι->string{
