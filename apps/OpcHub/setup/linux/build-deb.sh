@@ -17,8 +17,10 @@ usage: build-deb.sh [options]
   --web-dist <dir>     ng build output (index.html)      default: <repo>/web/opc/my-workspace/dist/my-workspace/browser
   --skip-web           omit the Web UI (opt/jde-cpp/web and the nginx site file)
   --ua-nodesets <dir>  OPCFoundation/UA-Nodeset clone    default: $UA_NODE_SETS, else $REPO_DIR/UA-Nodeset
-  --version <v>        default: CMakePresets.common.json's JDE_VERSION (2026.09.01); the release workflow passes the tag, which should equal it,
-                       and an empty string on a run that has none - so `--version ""` is the default, not an error
+  --version <v>        default: `git describe --tags` - the tag itself on a tag, <tag>-N-gsha past one, and
+                       CMakePresets.common.json's JDE_VERSION (2026.09.01) where no tag is reachable; the release
+                       workflow passes the tag, and an empty string on a run that has none - so `--version ""` is the
+                       default, not an error
   --out-dir <dir>      default: <build dir>/setup
   --maintainer <s>     control's Maintainer field        default: git config user.name <user.email>
   --no-strip           keep the debug sections (default --strip-debug: symbols stay for the stack traces, dwarf goes)
@@ -77,11 +79,20 @@ command -v "$patchelf" >/dev/null || die "patchelf not found - apt install patch
 #--- version -----------------------------------------------------------------------------------------------------------
 #The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
 #are built with and the Web UI's about page displays, so the package agrees with them.  --version names it outright (the release
-#workflow passes the tag) and is expected to be the same string; anything else is warned about, not refused.
+#workflow passes the tag) and is expected to carry that same string; anything else is warned about, not refused.
 jdeVersion=$(sed -n 's/.*"JDE_VERSION": *"\([^"]*\)".*/\1/p' "$repo/CMakePresets.common.json" | head -1)
 [ -n "$jdeVersion" ] || die "JDE_VERSION not found in $repo/CMakePresets.common.json"
-[ -n "$version" ] || version=$jdeVersion
-[ "$version" = "$jdeVersion" ] || warn "--version $version is not CMakePresets.common.json's JDE_VERSION $jdeVersion - the package's version and the product's will disagree"
+#Without one it is `git describe`, not JDE_VERSION alone:  dpkg compares versions and not contents, so a build past the tag
+#calling itself the tag installs over that release as a no-op, and `dpkg -l` cannot tell the two apart (reviews/install-issues.md
+##27).  Describe answers the tag itself on a tag and <tag>-N-gsha past one, which becomes <tag>+N.gsha below; `20*` is the
+#release workflow's own tag filter.  Not --dirty:  that suffix is not a deb version and would land in the 0+ bucket, which
+#sorts before every release.  No tag reachable - a shallow clone, an export, no git - leaves JDE_VERSION, as before.
+if [ -z "$version" ]; then
+	version=$(git -C "$repo" describe --tags --match '20*' 2>/dev/null || true)
+	[ -n "$version" ] || version=$jdeVersion
+fi
+#the release the package claims, so the tag part is what is compared:  <tag>-N-gsha carries JDE_VERSION and is no disagreement
+[ "${version%%-*}" = "$jdeVersion" ] || warn "version $version does not carry CMakePresets.common.json's JDE_VERSION $jdeVersion - the package's version and the product's will disagree"
 #A deb version is [0-9][A-Za-z0-9.+~]*:  a `yyyy.MM.dd` tag is one as it is; `yyyy.MM.dd-N-gsha` (N commits past the tag)
 #becomes yyyy.MM.dd+N.gsha - `+` sorts after the tag, which it is newer than; anything else (a bare sha) becomes 0+…
 if [[ $version =~ ^([0-9]{4}\.[0-9]{2}\.[0-9]{2})-([0-9]+)-g([0-9a-f]+)$ ]]; then
@@ -227,10 +238,22 @@ dpkg-deb --build --root-owner-group "$stage" "$debFile"
 echo "built $debFile ($(du -h "$debFile" | cut -f1)) - Depends: $dependsList"
 
 #the per-user install:  the same trees plus install.sh (README.md) - no DEBIAN, no /usr/share/doc
+#Under one top-level directory, the archive's own name:  the stage's children packed bare scattered six entries over
+#whatever the extract directory already held, and the README's `cd` into a directory nothing created could not work
+#(reviews/install-issues.md #29).  --transform renames the members on the way in - the stage stays as dpkg-deb needs it -
+#and the `s` scope is turned off so a symlink target is never rewritten with it.
 if [ $tar = 1 ]; then
-	tarFile=$outDir/jde-opchub-${debVersion}-linux-${arch}.tar.gz
+	tarRoot=jde-opchub-${debVersion}-linux-${arch}
+	tarFile=$outDir/$tarRoot.tar.gz
 	install -m 755 "$setupDir/install.sh" "$stage/install.sh"
 	install -m 644 "$setupDir/README.md" "$stage/README.md"
-	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share ./opt ./etc ./var ./usr ./install.sh ./README.md
-	echo "built $tarFile ($(du -h "$tarFile" | cut -f1))"
+	#args/install-user, the loopback overlay install.sh's units run with:  an install that needs no root cannot open a
+	#port, so it must not publish one (reviews/install-issues.md #32) - the same reasoning that bound the Windows
+	#current-user mode (#16), and the same two files.  Added here and not above:  the .deb's units run args/install, where
+	#the machine's administrator decides the address, so the package has no use for it.
+	install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install-user" "$repo/apps/OpcHub/config/args/install-user/args.libsonnet"
+	install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install-user" "$repo/apps/OpcServer/config/args/install-user/args.libsonnet"
+	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share \
+		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md
+	echo "built $tarFile ($(du -h "$tarFile" | cut -f1)) - unpacks into $tarRoot/"
 fi
