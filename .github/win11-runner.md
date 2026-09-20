@@ -77,7 +77,12 @@ Run the service as `duffyj`, the interactive dev account, for two reasons:
 The `win-clang-debug-jde` preset uses bare compiler names resolved from `PATH`, so the runner
 **service** environment (not just your interactive shell) must expose:
 
-- LLVM **clang++** and **ld.lld** 22
+- LLVM **clang++** and **ld.lld** 23 — 23.1.1, installed 2026-09-19 from the official
+  `LLVM-23.1.1-win64.msi` into `C:\Program Files\LLVM` (the same path 22 used, so the user
+  PATH entry above needed no change). 23.x ships an MSI rather than the NSIS `.exe` of
+  earlier releases, and the MSI has no `Environment` table — it never touches PATH itself.
+  The MSI also omits a few tools the NSIS installer carried, notably `llvm-dwarfdump`;
+  pull those from the `clang+llvm-<ver>-x86_64-pc-windows-msvc.tar.xz` if needed.
 - **CMake** ≥ 4.2.3
 - **Ninja**
 - the Windows SDK providing **`dbgeng.lib`** — the preset links `-ldbgeng` and defines

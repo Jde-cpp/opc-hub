@@ -12,7 +12,7 @@ name: Win11
 #     deletes a self-hosted runner that stays disconnected for 14 days, which is
 #     what happened to the interactive run.cmd registration of 2026-07 — a
 #     dispatch then queues forever.
-#   - LLVM clang++ / ld.lld 22, CMake >=4.2.3, Ninja on the *service* PATH. On
+#   - LLVM clang++ / ld.lld 23, CMake >=4.2.3, Ninja on the *service* PATH. On
 #     this box LLVM is on the user PATH only, hence the dev-account service.
 #   - functions.cmake makes one configure-time symlink for the static config
 #     files (file(CREATE_LINK … SYMBOLIC)); Developer Mode is on, which lets any

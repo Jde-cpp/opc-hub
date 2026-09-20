@@ -1,7 +1,7 @@
 name: Setup Windows toolchain
 description: >-
   Provision the GitHub-hosted windows-2025 (VS2026) image for a clang/C++26
-  Jde build: install LLVM 22 (the image ships 20.1.8, too old), fix the fixed
+  Jde build: install LLVM 23 (the image ships 20.1.8, too old), fix the fixed
   build/dep paths + PATH, and emit the deterministic third-party deps cache key.
   Shared by win2025-deps.yml and win2025-build.yml so the toolchain and — most
   importantly — the cache key can never drift between the two workflows. This
@@ -46,7 +46,7 @@ runs:
       id: meta
       shell: pwsh
       run: |
-        $llvm  = "22.1.8"
+        $llvm  = "23.1.1"
         $boost = "1.91.0"
         $boostU = $boost -replace '\.','_'
         $hash = "${{ hashFiles('CMakePresets*.json', 'build/CMakeLists.txt', 'build/functions.cmake', 'vcpkg.json') }}"
@@ -59,14 +59,14 @@ runs:
         ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
         Write-Host "deps cache key: $key"
 
-    # LLVM 22 is cached as a plain tool (keyed only on version) — this is the
+    # LLVM 23 is cached as a plain tool (keyed only on version) — this is the
     # compiler, not the third-party deps, so restoring it in the build workflow
     # does not weaken the strict "deps must come from the deps workflow" rule.
     - name: Cache LLVM ${{ steps.meta.outputs.llvm }}
       id: llvm-cache
       uses: actions/cache@v4
       with:
-        path: C:/llvm22
+        path: C:/llvm23
         key: llvm-${{ steps.meta.outputs.llvm }}-x86_64-pc-windows-msvc
 
     - name: Install LLVM ${{ steps.meta.outputs.llvm }}
@@ -78,17 +78,17 @@ runs:
         $xz  = "$env:RUNNER_TEMP/llvm.tar.xz"
         Write-Host "Downloading $url"
         Invoke-WebRequest -Uri $url -OutFile $xz
-        New-Item -ItemType Directory -Force -Path C:/llvm22 | Out-Null
+        New-Item -ItemType Directory -Force -Path C:/llvm23 | Out-Null
         # bsdtar on the image decompresses .xz in one pass; strip the top
-        # clang+llvm-<ver>-... dir so bin/ lands directly at C:/llvm22/bin.
-        tar -xf $xz -C C:/llvm22 --strip-components=1
+        # clang+llvm-<ver>-... dir so bin/ lands directly at C:/llvm23/bin.
+        tar -xf $xz -C C:/llvm23 --strip-components=1
         if ($LASTEXITCODE -ne 0) { throw "LLVM extract failed" }
 
     # PATH runs on both hit and miss so clang++/ld.lld are always resolvable.
     - name: Add LLVM to PATH
       shell: pwsh
       run: |
-        "C:/llvm22/bin" | Add-Content -Path $env:GITHUB_PATH -Encoding utf8
+        "C:/llvm23/bin" | Add-Content -Path $env:GITHUB_PATH -Encoding utf8
 
     - name: Report toolchain
       shell: pwsh

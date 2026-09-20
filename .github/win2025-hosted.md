@@ -20,9 +20,9 @@ The `windows-2025` (VS2026) image already has **CMake 4.4.0**, **Ninja 1.13.2**,
 and `dbgeng.lib` that clang++ links). The composite action adds the two missing
 pieces:
 
-- **LLVM 22.1.8** — the image ships LLVM 20.1.8, too old for this C++26 codebase
-  (clang/lld 22 is required). Downloaded from the LLVM GitHub release
-  (`clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz`) to `C:\llvm22`, cached by
+- **LLVM 23.1.1** — the image ships LLVM 20.1.8, too old for this C++26 codebase
+  (clang/lld 23 is required). Downloaded from the LLVM GitHub release
+  (`clang+llvm-23.1.1-x86_64-pc-windows-msvc.tar.xz`) to `C:\llvm23`, cached by
   version.
 - **Boost 1.91.0 source** — absent from the image; downloaded to
   `C:\jde\libs\boostorg\boost_1_91_0` (Windows compiles `boost_json` inline from
@@ -43,7 +43,7 @@ Paths: `C:/jde/libs/install/clang++/Release`, `C:/jde/libs/boostorg/boost_1_91_0
 
 Key (exact match, no `restore-keys`):
 ```
-windows-deps-release-llvm22.1.8-boost1.91.0-<hash of CMakePresets*.json, build/CMakeLists.txt, build/functions.cmake, vcpkg.json>
+windows-deps-release-llvm23.1.1-boost1.91.0-<hash of CMakePresets*.json, build/CMakeLists.txt, build/functions.cmake, vcpkg.json>
 ```
 `build/CMakeLists.txt` holds every dependency `GIT_TAG`, so bumping any dep
 changes the hash and forces a fresh deps build.
@@ -75,8 +75,10 @@ refresh. Re-dispatch it whenever a key input changes or the cache lapses the
   `-repos`/`-jde` presets may surface first-run issues. The build step keeps the
   `-j 1` serial fallback for the in-source protobuf codegen race (see
   [`win11-runner.md`](win11-runner.md)).
-- **LLVM 22 on hosted Windows is the biggest unknown** — if a future pinned
+- **LLVM 23 on hosted Windows is the biggest unknown** — if a future pinned
   version lacks the `...-x86_64-pc-windows-msvc.tar.xz` asset, switch the
-  composite action to the `LLVM-<ver>-win64.exe` installer (`/S`).
+  composite action to the `LLVM-<ver>-win64.msi` installer
+  (`msiexec /i <msi> /qn INSTALL_ROOT="C:\llvm23"`) — 23.x ships an MSI, not the
+  NSIS `.exe` earlier releases used.
 - **Cache budget:** the three cached paths total a few GB against the repo's
   10 GB limit — fine for one Release config; watch it if more are added.
