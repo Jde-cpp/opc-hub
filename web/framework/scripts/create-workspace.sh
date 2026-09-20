@@ -65,20 +65,18 @@ if [ ! -d $workspace ]; then
 	jqEdit tsconfig.json ".compilerOptions.preserveSymlinks = true";
 	#ng analytics disable;
 	echo -------------------- npm install start --------------------;
-	npm install material-design-icons;
+	#Material only.  What a library needs beyond it, its own script installs (jde-spa.sh: marked; jde-framework-proto.sh:
+	#@bufbuild/protobuf, long, ts-proto).  Not installed, on purpose: material-design-icons - the icon fonts come from
+	#Google Fonts (site/index.html); @types/long - long 5 ships its own types; chalk, jsdoc, uglify-js - pbjs's cli
+	#dependencies, gone with protobufjs.
 	#@angular/animations is not installed: material 22 has no dependency on it, nothing here uses the animations
 	#metadata api, and the package is deprecated in v22 in favour of animate.enter/animate.leave.
-	echo -------------------- icons installed --------------------;
 	#material/cdk have their own patch cadence (no @angular/material 22.0.8 exists when the cli is 22.0.8), so pin
 	#the major rather than $ngVersion.
 	ng add @angular/material@$ngMajor --defaults --skip-confirmation; #use skip-confirmation when interactive
 	echo -------------------- material installed --------------------;
 	#echo `pwd`;
 	#exit 1;
-	npm install @types/long --save;
-	npm --silent install chalk@^4.0.0;
-	npm --silent install jsdoc@^3.6.3;
-	npm --silent install uglify-js@^3.7.7;
 	echo -------------------- npm install complete --------------------;
 	echo `pwd`;
 	#no protobufjs bootstrap appended to main.ts any more: ts-proto's generated code carries its own wire runtime

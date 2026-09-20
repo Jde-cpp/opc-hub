@@ -202,6 +202,7 @@ fi
 install -D -m 644 -t "$unitDir" "$setupDir/jde-opchub.service" "$setupDir/jde-opcserver.service"
 install -D -m 644 "$setupDir/README.md" "$docDir/README.md"
 install -m 644 "$repo/LICENSE" "$docDir/copyright"
+install -m 644 "$repo/THIRD-PARTY-NOTICES.txt" "$docDir/THIRD-PARTY-NOTICES.txt" #the bundled .so's and what is linked into ours (build/third-party-notices.sh)
 
 #--- DEBIAN ------------------------------------------------------------------------------------------------------------
 #Depends: the package owning each system .so the staged binaries still resolve to (the build machine's names - libssl3t64
@@ -247,6 +248,7 @@ if [ $tar = 1 ]; then
 	tarFile=$outDir/$tarRoot.tar.gz
 	install -m 755 "$setupDir/install.sh" "$stage/install.sh"
 	install -m 644 "$setupDir/README.md" "$stage/README.md"
+	install -m 644 "$repo/LICENSE" "$repo/THIRD-PARTY-NOTICES.txt" "$stage/" #usr/share is excluded below, so the licenses ride at the top
 	#args/install-user, the loopback overlay install.sh's units run with:  an install that needs no root cannot open a
 	#port, so it must not publish one (reviews/install-issues.md #32) - the same reasoning that bound the Windows
 	#current-user mode (#16), and the same two files.  Added here and not above:  the .deb's units run args/install, where
@@ -254,6 +256,6 @@ if [ $tar = 1 ]; then
 	install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install-user" "$repo/apps/OpcHub/config/args/install-user/args.libsonnet"
 	install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install-user" "$repo/apps/OpcServer/config/args/install-user/args.libsonnet"
 	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share \
-		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md
+		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md ./LICENSE ./THIRD-PARTY-NOTICES.txt
 	echo "built $tarFile ($(du -h "$tarFile" | cut -f1)) - unpacks into $tarRoot/"
 fi

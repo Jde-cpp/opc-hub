@@ -8,19 +8,11 @@ The section opens on a card for each list: **Users**, **Groups**, **Roles** and 
 
 ## Lists
 
-**Add** starts a new record and the refresh button re-reads the list, with the row count beside it.
+The four lists work as every list on the site does - **Add**, the views, **Show deleted** - and so do the pages their rows open: see [Lists and records](/help/lists).
 
-The view buttons choose a view - which rows are filtered out, which columns are shown, and how they are sorted. The tune button edits the current view over three tabs, **Filter**, **Display** and **Sort**, and saves it under a name; an unsaved change reads *(edited)*. Views are kept with your profile, so they follow you between browsers.
+[Resources](/access/resources) is the exception: its rows are registered by the services themselves, so that list has no **Add** and its rows do not open. It has no **Show deleted** either - the **Enforced** switch in each row takes its place, see [Resources](#resources).
 
-**Show deleted** returns deleted records to the list, which is the only way to reach one and restore it.
-
-Click a row to open the record. [Resources](/access/resources) is the exception: its rows are registered by the services themselves, so that list has no **Add** and its rows do not open.
-
-## Records
-
-**Save** writes the changes and returns to the list. It stays disabled until something has changed, and a failure leaves you on the page with the reason. **Cancel** discards the changes and returns to the list.
-
-**Delete** does not remove the record: it marks it deleted, and the button reads **Restore** when you open it again from the **Show deleted** view. A deleted group or role also offers **Purge**, which removes it for good.
+Users, groups and roles are deleted and restored as any record is. A deleted group or role also offers **Purge**, which removes it for good.
 
 ## Users
 
