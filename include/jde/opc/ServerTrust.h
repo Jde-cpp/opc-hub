@@ -33,7 +33,7 @@ namespace Jde::Opc::ServerTrust{
 	α Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& trustedCertDirs, Jde::Handle h, str url, sv settingsRoot="/gateway", SRCE )ε->void;//explicit, for tests.
 	//Test seam:  the directories the settings-driven Install uses instead of <root>/trustedCertDirs, for every client
 	//created until nullopt restores the setting - the live rejection is provoked here, mid-run, without rewriting a
-	//setting other clients in the process are reading.
+	//setting other clients in the process are reading.  An empty list is an override too:  no directories, nothing trusted.
 	α OverrideTrustedCertDirs( optional<vector<fs::path>> dirs )ι->void;
 	//Why this client's verifier last rejected a server certificate, "" if it never did or verification is off - the detail
 	//StateCallback hands the waiting requests, since the status alone (BadCertificateUntrusted) reads the same as the server

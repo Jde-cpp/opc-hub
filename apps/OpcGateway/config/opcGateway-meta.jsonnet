@@ -18,5 +18,15 @@ local common = import 'common-meta.libsonnet';
 			customInsertProc:true,
 			naturalKeys: common.slugNKs
 		},
+	},
+	//The gateway's other two Authorize::Test gates (reviews/m2-closing.md #8).  `opcSessions` and `search` are QL *system*
+	//tables - live state, nothing in the database - so no table declared their resource, ResourceSyncAwait created no row, and
+	//Test() passes whatever it finds no active row for:  neither gate could be enforced from the product, and with
+	//gateway/serverConnections enforced an ungranted user was still told who holds which credential on which connection.
+	//Declared outright, as the OpcServer's nodeIds is, so both are created like serverConnections - shipped unenforced, there
+	//for an admin to enforce on the Resources page.  Read is all either offers:  it is all either gate asks.
+	resources:{
+		sessions:{ ops:["Read"] }, //opcSessions{…}, and the opcSessions/opcConnections/connectionStatus grafts on serverConnections (OpcSessionsQLAwait)
+		search:{ ops:["Read"] } //search(…) - the navbar's node search (SearchQLAwait)
 	}
 }

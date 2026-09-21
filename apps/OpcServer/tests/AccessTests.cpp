@@ -381,6 +381,37 @@ namespace Jde::Opc::Server::Tests{
 		UA_TrustListDataType_clear( &after );
 	}
 
+	//reviews/m2-closing.md #11:  the scan's "passed over" Warning fired only when the *whole* trust list came up empty, and an
+	//installed OpcServer's never does - its one trusted dir holds the hub's own certificate before the server starts - so a
+	//file ignored beside it was a Debug line and nothing else.  This directory is that case:  the suite's own client
+	//certificate is already anchored in it.  The file is named at Warning the first time the scan passes it over and at Debug
+	//from then on - a failed verify rescans, so louder every time would repeat under a junk-certificate flood.
+	TEST( TrustListTests, APassedOverFileIsNamedOnceBesideARealAnchor ){
+		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( dirs.empty() );
+		const fs::path dir{ dirs.front() };
+		let staged = dir/Ƒ( "m2-closing-11-{}.pfx", Process::ProcessId() );//a name no earlier scan in this process has seen.
+		let junk = string{ "a PKCS#12 bundle, as far as its name goes" };
+		IO::SaveBinary<const char>( staged, std::span{junk} );
+
+		Logging::ClearMemory();
+		uint anchored{};
+		for( uint scan=0; scan<3; ++scan ){
+			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
+			UATrust::LoadTrustList( list );
+			anchored = list.trustedCertificatesSize;
+			UA_TrustListDataType_clear( &list );
+		}
+		std::error_code ec; fs::remove( staged, ec );
+		ASSERT_NE( anchored, 0u ) << "the point is a list that is NOT empty - the suite's own client certificate should be anchored here";
+
+		let named = Logging::Find( [&]( const Logging::Entry& e ){ return e.Message().contains(staged.string()); } );
+		ASSERT_EQ( named.size(), 3u ) << "one line per scan";
+		EXPECT_EQ( named[0].Level, ELogLevel::Warning ) << "passed over beside a real anchor, and only Debug said so";
+		EXPECT_EQ( named[1].Level, ELogLevel::Debug );
+		EXPECT_EQ( named[2].Level, ELogLevel::Debug );
+	}
+
 	//security-matrix #5:  there is no unsecured shape.  A config with no /opcServer/ssl - a hidden `ssl::`, a mistyped key - used to
 	//build a None-only server with no certificate and no trust list;  now the server refuses to start, and names the setting.
 	TEST( UAConfigTests, NoSslIsRefused ){

@@ -42,6 +42,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α LogSubscribe( jobject&& ql, jobject vars, sp<IListener> listener, SRCE )ε->await<jarray>;
 
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
+		Ω PendingSubscriptionRecords()ι->uint;//subscribe + unsubscribe requests still awaiting their ack, across every socket - a failed request may leave none (m2-closing #15).
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α HandleException( std::any&& h, Exception&& e )ι;//e arrives typed by the caller: GatewayErrorResponse or a transport failure.

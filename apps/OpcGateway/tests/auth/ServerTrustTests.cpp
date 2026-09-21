@@ -110,6 +110,26 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 
+	//reviews/m2-closing.md #12:  the settings-driven Install took an override of *no* directories for no override at all - it
+	//tested the copied list for empty, not the optional for engaged - and fell back to <root>/trustedCertDirs.  "Trust
+	//nothing" spelled the obvious way therefore trusted everything production does, without a word.  The setting here holds
+	//a directory that anchors _trusted, so whichever list is read shows in the count.
+	TEST_F( ServerTrustTests, AnEmptyOverrideTrustsNothing ){
+		RestoreTrustedCertDirs restore;
+		Settings::Set( "/gateway/trustedCertDirs", jarray{_trustedDir.string()} );
+		struct Restore final{ ~Restore(){ ServerTrust::OverrideTrustedCertDirs( nullopt ); } } restoreOverride;//every later client in the process reads it.
+
+		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{} );
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 0u ) << "an override of no directories fell back to the setting's";
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+
+		ServerTrust::OverrideTrustedCertDirs( nullopt );//and with none, the setting is read again.
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 1u );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+	}
+
 	//security-matrix #3:  the verifier reads the app's own list, /gateway/trustedCertDirs, and never /access/trustedCertDirs -
 	//in the hub, and in this harness (the AppServer is in-process), those are the enrollment anchors:  every certificate under
 	//them may create a user, so an OPC server's certificate has no business there, and a certificate that may enroll is not

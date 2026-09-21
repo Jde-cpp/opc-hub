@@ -12,7 +12,7 @@ namespace Jde::Opc::Gateway{
 
 	α SearchQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
-			QL().Authorizer().Test( "gateway", "search", Access::ERights::Read, UserPK(), _sl ); //enforced once an admin creates the gateway/search resource.
+			QL().Authorizer().Test( "gateway", "search", Access::ERights::Read, UserPK(), _sl ); //gateway/search - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced;  enforced once an admin says so.
 			auto session = Session(); THROW_IF( !session, "No Session for query" );
 			let textPtr = _query.FindPtr<jstring>( "text" );
 			let text = textPtr ? Str::ToLower( Str::Trim(sv{*textPtr}) ) : string{};

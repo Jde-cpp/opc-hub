@@ -175,15 +175,24 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 
 - Reinstalling over an existing install is fine: the services are deregistered and re-registered, the `.db` is kept, the
   installer-owned `sql\` and `nodesets\` are recreated (the settings under `config\` are overwritten - keep a copy of edits).
+  There is no need to stop anything first.  In **all users** mode Setup stops and deregisters `Jde.OpcServer` and
+  `Jde.OpcHub` - the server first, since it depends on the hub - and waits for their processes to go **before it copies
+  a file**, because Windows will not replace a running image; if a service will not stop within twenty seconds Setup
+  says so and ends, rather than lay new settings and seeds over an exe it could not replace
+  ([`reviews/m2-closing.md`](../../../../reviews/m2-closing.md) #4).  A `Jde.OpcServer` an earlier install registered is
+  stopped with the hub even when the *OPC UA Server* component is left unticked; it stays registered on its old files -
+  `net start Jde.OpcServer`, or tick the component.
 - **A reinstall - and adding a component to one - only takes effect once the products restart.**  The seeds a component
   brings (`<schema>*.mutation`, `*.roles`) are applied by a `-sync` start, so a hub that keeps running through the
   install shows none of them: no Google provider, no `OpcServer` connection, no *OPC Server Instance* role, and pages
   that look exactly as they did before ([`reviews/install-issues.md`](../../../../reviews/install-issues.md) #37).  In
-  **all users** mode `-Services` stops and re-registers the services, so the next start has them.  In **current user**
+  **all users** mode Setup stops the services before it copies anything and `-Services` re-registers them, so the next start has them.  In **current user**
   mode there is no service to stop, so Setup closes a running `Jde.OpcHub` / `Jde.OpcServer` of yours first - it asks
   before it does, since these are console windows you opened (a silent install closes them without asking) - and the
   finish page's *Start now* box, or the Start Menu shortcut, brings the product back on the new files and the new seeds.
-  Cancel the prompt to close them yourself and run Setup again.
+  Cancel the prompt to close them yourself and run Setup again.  Setup goes on only once it has *seen* the copy gone: it
+  asks the window to close, ends it after ten seconds, and if it is still there five seconds later - a copy you started
+  elevated, say - Setup stops and names what to close, rather than lay new settings over files it could not replace.
 - Roles are seeded by a second pass: `<schema>.roles` files under `dataPaths` are upserted after the access server is
   configured (`createRole`/`addRole` run through its mutations, which the `.mutation` pass runs too early for).
   `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician; `addRole` names

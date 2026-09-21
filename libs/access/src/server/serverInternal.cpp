@@ -42,7 +42,8 @@ namespace Jde::Access{
 				for( const auto& entry : fs::directory_iterator(dir) ){
 					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
 						++skipped;
-						DBGT( _tags, "Not a certificate, skipped: '{}' ({} are read).", entry.path().string(), Crypto::CertificateExtensions );
+						const auto level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
+						LOG( level, _tags, "Passed over, not a certificate by its extension: '{}' - no client certificate is anchored from it.  {} are read.", entry.path().string(), Crypto::CertificateExtensions );
 						continue;
 					}
 					const auto mtime = entry.last_write_time();
