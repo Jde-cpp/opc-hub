@@ -336,6 +336,82 @@ namespace Jde::Opc::Server::Tests{
 		UA_TrustListDataType_clear( &after );
 	}
 
+	//install-issues #33, the server's half:  a UA client publishes its instance certificate as DER, and this scan took
+	//`.pem`/`.crt` only - so a client certificate copied into /access/trustedCertDirs in the form its owner actually writes
+	//was passed over in silence, and the handshake was refused with nothing in the log to say why.  Staged in the real
+	//directory and removed again, as the test above does, with the cache resynced so the running server's trust is as found.
+	TEST( TrustListTests, ADerEntryIsTrusted ){
+		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( dirs.empty() );
+		const fs::path dir{ dirs.front() };
+		std::error_code ec; fs::create_directories( dir, ec );
+
+		UA_TrustListDataType before; UA_TrustListDataType_init( &before );
+		UATrust::LoadTrustList( before );
+		let baseline = before.trustedCertificatesSize;
+		UA_TrustListDataType_clear( &before );
+		ASSERT_NE( baseline, 0u ) << "the suite's own client certificate should already be anchored here";
+
+		//a certificate this directory does not hold, written in the encoding a third-party server publishes.  Issued into a
+		//sibling scratch dir, never into the trust dir itself - a .pem there would be anchored and the test would pass blind.
+		let scratch = dir.parent_path()/"install-issues-33";
+		fs::remove_all( scratch, ec ); fs::create_directories( scratch, ec );
+		let settings = Crypto::CryptoSettings{ jobject{
+			{"certificate", jobject{{"path", (scratch/"cert.pem").string()}, {"commonName", "install-issues-33"}, {"company", "jde-cpp"}, {"country", "US"}}},
+			{"privateKey", jobject{{"path", (scratch/"private.pem").string()}}},
+			{"publicKey", jobject{{"path", (scratch/"public.pem").string()}}},
+			{"dh", ""}
+		}, {} };
+		Crypto::CreateKeyCertificate( settings );
+		let staged = dir/"install-issues-33.der";
+		fs::remove( staged, ec );
+		let der = Crypto::ReadCertificate( settings.Certificate.Path );
+		IO::SaveBinary<const byte>( staged, std::span{der} );
+
+		UA_TrustListDataType list; UA_TrustListDataType_init( &list );
+		UATrust::LoadTrustList( list );
+		EXPECT_EQ( list.trustedCertificatesSize, baseline+1 ) << "the .der was passed over";
+		UA_TrustListDataType_clear( &list );
+
+		fs::remove( staged, ec );
+		fs::remove_all( scratch, ec );
+		UA_TrustListDataType after; UA_TrustListDataType_init( &after );
+		UATrust::LoadTrustList( after );//resync the mtime cache - the rest of the process must see the real trust list.
+		EXPECT_EQ( after.trustedCertificatesSize, baseline );
+		UA_TrustListDataType_clear( &after );
+	}
+
+	//reviews/m2-closing.md #11:  the scan's "passed over" Warning fired only when the *whole* trust list came up empty, and an
+	//installed OpcServer's never does - its one trusted dir holds the hub's own certificate before the server starts - so a
+	//file ignored beside it was a Debug line and nothing else.  This directory is that case:  the suite's own client
+	//certificate is already anchored in it.  The file is named at Warning the first time the scan passes it over and at Debug
+	//from then on - a failed verify rescans, so louder every time would repeat under a junk-certificate flood.
+	TEST( TrustListTests, APassedOverFileIsNamedOnceBesideARealAnchor ){
+		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
+		ASSERT_FALSE( dirs.empty() );
+		const fs::path dir{ dirs.front() };
+		let staged = dir/Ƒ( "m2-closing-11-{}.pfx", Process::ProcessId() );//a name no earlier scan in this process has seen.
+		let junk = string{ "a PKCS#12 bundle, as far as its name goes" };
+		IO::SaveBinary<const char>( staged, std::span{junk} );
+
+		Logging::ClearMemory();
+		uint anchored{};
+		for( uint scan=0; scan<3; ++scan ){
+			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
+			UATrust::LoadTrustList( list );
+			anchored = list.trustedCertificatesSize;
+			UA_TrustListDataType_clear( &list );
+		}
+		std::error_code ec; fs::remove( staged, ec );
+		ASSERT_NE( anchored, 0u ) << "the point is a list that is NOT empty - the suite's own client certificate should be anchored here";
+
+		let named = Logging::Find( [&]( const Logging::Entry& e ){ return e.Message().contains(staged.string()); } );
+		ASSERT_EQ( named.size(), 3u ) << "one line per scan";
+		EXPECT_EQ( named[0].Level, ELogLevel::Warning ) << "passed over beside a real anchor, and only Debug said so";
+		EXPECT_EQ( named[1].Level, ELogLevel::Debug );
+		EXPECT_EQ( named[2].Level, ELogLevel::Debug );
+	}
+
 	//security-matrix #5:  there is no unsecured shape.  A config with no /opcServer/ssl - a hidden `ssl::`, a mistyped key - used to
 	//build a None-only server with no certificate and no trust list;  now the server refuses to start, and names the setting.
 	TEST( UAConfigTests, NoSslIsRefused ){

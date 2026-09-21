@@ -32,6 +32,17 @@ namespace Jde::Opc::Gateway{
 	α SubscribeAwait::await_ready()ι->bool{ return _client->CreatedSubscriptionResponse()!=nullptr; }
 
 	static flat_map<sp<UAClient>,vector<SubscribeAwait::Handle>> _requests; static mutex _requestsMutex;
+	//Everything waiting on this client's create, and the entry with it - the key is an sp<UAClient>, so a left-behind entry pins
+	//the client for the life of the process.  Both ends of a create come through here:  the response, and a submit that was refused.
+	Ω takeRequests( const sp<UAClient>& client )ι->vector<SubscribeAwait::Handle>{
+		vector<SubscribeAwait::Handle> handles;
+		lg _{ _requestsMutex };
+		if( auto clientRequests = _requests.find(client); clientRequests!=_requests.end() ){
+			handles = move( clientRequests->second );
+			_requests.erase( clientRequests );
+		}
+		return handles;
+	}
 	Ω createSubscriptionCallback( UA_Client*, void* userdata, RequestId, UA_CreateSubscriptionResponse* response )ι->void{
 		auto await = (SubscribeAwait*)userdata;
 		await->OnComplete( *response );
@@ -55,7 +66,19 @@ namespace Jde::Opc::Gateway{
 					TRACE( "[{}.{}]CreateSubscription - queued", hex(_client->Handle()), hex(_requestId) );
 			}
 			catch( runtime_error& e ){
-				ResumeExp( move(e) );
+				//The create was refused, so nothing will ever answer it:  open62541 frees the call before it registers a callback, and
+				//OnComplete - the only other thing that empties this client's entry - never runs.  Resuming this awaiter alone left its
+				//handle queued and the client pinned by the key, and `first` is the only gate on submitting:  every later subscribe on
+				//the client found the entry, queued behind a create that was never sent, and was never resumed - its frame, its
+				//websocket session and the client leaked with it (reviews/m2-closing.md #3).  The rebuild and DataChangeAwait::Redrive
+				//both subscribe on a client whose connection is failing, which is when a submit is refused.  So:  what OnComplete does.
+				let p = dynamic_cast<const Exception*>( &e );
+				let sc = p && p->HasCode() ? (StatusCode)p->Code() : UA_STATUSCODE_BADINTERNALERROR;
+				for( auto&& h : takeRequests(_client) ){//strand-serialized with the push above, so in practice this awaiter's alone.
+					if( h!=_h )
+						Post( move(h), UAClientException{sc, _client->Handle()} );
+				}
+				ResumeExp( move(e) );//last use of this:  resuming the caller ends the awaitable.
 			}
 		});
 	}
@@ -65,17 +88,12 @@ namespace Jde::Opc::Gateway{
 		TRACE( "[{}.{}]createSubscriptionCallback - subscriptionId: {}, sc: {}", hex(_client->Handle()), hex(_requestId), response.subscriptionId, hex(sc) );
 		if( !sc )
 			_client->SetCreatedSubscriptionResponse( ms<UA_CreateSubscriptionResponse>( move(response) ) );
-		vector<SubscribeAwait::Handle> handles;
-		{//resume outside the lock - a resumed chain can subscribe again (Suspend takes _requestsMutex).
-			lg _{ _requestsMutex };
-			if( auto clientRequests = _requests.find(_client); clientRequests != _requests.end() ){
-				handles = move( clientRequests->second );
-				_requests.erase( clientRequests );
-			}
-		}
-		for( auto&& h : handles ){
+		//resumed outside the lock - a resumed chain can subscribe again (Suspend takes _requestsMutex).  This awaiter's own handle
+		//is among them, and its posted resume can end the awaitable on another thread before the loop has:  no members past the take.
+		let handle = _client->Handle();
+		for( auto&& h : takeRequests(_client) ){
 			if( sc )
-				Post( move(h), UAClientException{sc, _client->Handle()} );
+				Post( move(h), UAClientException{sc, handle} );
 			else
 				Post( move(h) );
 		}

@@ -6,6 +6,7 @@
 #include <open62541/client_config_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/io/file.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/ServerTrust.h>
 #include "../../src/UAClient.h"
@@ -64,6 +65,35 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ServerTrust::Rejection(_config), "" );//a later success clears the last rejection.
 	}
 
+	//install-issues #33:  an OPC UA server publishes its instance certificate as DER - Kepware's kepserverex_ua_server.der -
+	//and a UA trust list is a directory of .der by convention.  The operator step the Gateways help describes, done with the
+	//file the server actually writes, used to change nothing:  the scan took .pem/.crt only, skipped the rest without a word,
+	//and the refusal then said "0 trusted certificates loaded", which reads as an empty directory.  The same bytes under
+	//either extension must anchor the same server.
+	TEST_F( ServerTrustTests, DerIsTrustedLikePem ){
+		fs::remove( _trustedDir/"trusted.pem" );//the DER copy is the only anchor.
+		let der = Crypto::ReadCertificate( _trusted );
+		IO::SaveBinary<const byte>( _trustedDir/"trusted.der", std::span{der} );
+		ServerTrust::Install( _config, true, {_trustedDir}, TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 1u );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Verify(_other), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+	}
+
+	//...and what is genuinely not a certificate is still passed over - but the rejection now says so, instead of leaving
+	//"0 trusted certificates loaded" to be read as "the directory is empty" and sending the operator round again.
+	TEST_F( ServerTrustTests, SkippedFilesAreNamedInTheRejection ){
+		fs::remove( _trustedDir/"trusted.pem" );
+		let readme = string{ "not a certificate" };
+		IO::SaveBinary<const char>( _trustedDir/"README.txt", std::span{readme} );
+		ServerTrust::Install( _config, true, {_trustedDir}, TestHandle, "opc.tcp://server.under.test:4840" );
+		ASSERT_EQ( ServerTrust::AnchorCount(_config), 0u );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+		let rejection = ServerTrust::Rejection( _config );
+		EXPECT_NE( rejection.find("1 file was skipped"), string::npos ) << rejection;
+		EXPECT_NE( rejection.find(".der"), string::npos ) << rejection;//and what it should have been called.
+	}
+
 	TEST_F( ServerTrustTests, NoAnchorsRejectsEverything ){
 		ServerTrust::Install( _config, true, {_trustedDir/"does-not-exist"}, TestHandle, "opc.tcp://server.under.test:4840" );
 		EXPECT_EQ( ServerTrust::AnchorCount(_config), 0u );
@@ -79,6 +109,26 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ServerTrust::Rejection(_config), "" );
 	}
 
+
+	//reviews/m2-closing.md #12:  the settings-driven Install took an override of *no* directories for no override at all - it
+	//tested the copied list for empty, not the optional for engaged - and fell back to <root>/trustedCertDirs.  "Trust
+	//nothing" spelled the obvious way therefore trusted everything production does, without a word.  The setting here holds
+	//a directory that anchors _trusted, so whichever list is read shows in the count.
+	TEST_F( ServerTrustTests, AnEmptyOverrideTrustsNothing ){
+		RestoreTrustedCertDirs restore;
+		Settings::Set( "/gateway/trustedCertDirs", jarray{_trustedDir.string()} );
+		struct Restore final{ ~Restore(){ ServerTrust::OverrideTrustedCertDirs( nullopt ); } } restoreOverride;//every later client in the process reads it.
+
+		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{} );
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 0u ) << "an override of no directories fell back to the setting's";
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
+
+		ServerTrust::OverrideTrustedCertDirs( nullopt );//and with none, the setting is read again.
+		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );
+		EXPECT_EQ( ServerTrust::AnchorCount(_config), 1u );
+		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_GOOD );
+	}
 
 	//security-matrix #3:  the verifier reads the app's own list, /gateway/trustedCertDirs, and never /access/trustedCertDirs -
 	//in the hub, and in this harness (the AppServer is in-process), those are the enrollment anchors:  every certificate under

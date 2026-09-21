@@ -8,19 +8,11 @@ The section opens on a card for each list: **Users**, **Groups**, **Roles** and 
 
 ## Lists
 
-**Add** starts a new record and the refresh button re-reads the list, with the row count beside it.
+The four lists work as every list on the site does - **Add**, the views, **Show deleted** - and so do the pages their rows open: see [Lists and records](/help/lists).
 
-The view buttons choose a view - which rows are filtered out, which columns are shown, and how they are sorted. The tune button edits the current view over three tabs, **Filter**, **Display** and **Sort**, and saves it under a name; an unsaved change reads *(edited)*. Views are kept with your profile, so they follow you between browsers.
+[Resources](/access/resources) is the exception: its rows are registered by the services themselves, so that list has no **Add** and its rows do not open. It has no **Show deleted** either - the **Enforced** switch in each row takes its place, see [Resources](#resources).
 
-**Show deleted** returns deleted records to the list, which is the only way to reach one and restore it.
-
-Click a row to open the record. [Resources](/access/resources) is the exception: its rows are registered by the services themselves, so that list has no **Add** and its rows do not open.
-
-## Records
-
-**Save** writes the changes and returns to the list. It stays disabled until something has changed, and a failure leaves you on the page with the reason. **Cancel** discards the changes and returns to the list.
-
-**Delete** does not remove the record: it marks it deleted, and the button reads **Restore** when you open it again from the **Show deleted** view. A deleted group or role also offers **Purge**, which removes it for good.
+Users, groups and roles are deleted and restored as any record is. A deleted group or role also offers **Purge**, which removes it for good.
 
 ## Users
 
@@ -74,5 +66,11 @@ A resource is what a permission names. Every service registers one for each tabl
 The [Resources](/access/resources) list is the registered ones, a row each, with an **Enforced** toggle. Node-scoped resources are not listed here - they are granted from the node's own page, see [Gateways](/help/gateways), and appear under a user's **Effective rights**.
 
 A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it and every signed-in user has full access, the only restrictions being the OPC server's own on what it lets the signed-in user read and write. Once it is enforced, only a user holding a grant gets through.
+
+### What the hub gates, and what it does not
+
+The hub gates **its own** resources - the tables behind these pages, the server connection list (both reading it and opening a session on one of its connections), the log settings - and the nodes of the **bundled** Jde OPC server, which enforces them itself once it has been granted delegation. It does **not** gate the nodes of a third-party OPC server. You sign in to such a server as one of *its* users (`slug\user`), the hub opens the session as that user, and what you may then read or write is that server's own decision, taken in its own configuration tool. No role here grants or withholds it, and the node page's **Permissions** tab is not offered for one.
+
+So a role's rights on an OPC node - the right-hand column above - describe the bundled server. Against a server of your own, a role still decides what a user may do *in the hub*; the values themselves are the server's to protect.
 
 So grant first and enforce second. Enforcing a resource you hold no permission on shuts you out of it as surely as anyone else, which is why the toggle asks before it changes either way.

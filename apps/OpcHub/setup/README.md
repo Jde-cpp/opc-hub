@@ -91,6 +91,7 @@ machine by itself.
               Jde.DB.Sqlite.dll sqlite3.dll Jde.DB.Sqlite.AppServer.dll Jde.DB.Sqlite.OpcGateway.dll
   OpcServer\  Jde.Opc.Server.exe + the same + libxml2.dll, Jde.DB.Sqlite.dll sqlite3.dll
   Web\        the Angular site, served by the hub at http://<host>:1967/ (+ web.config for IIS, optional)
+  LICENSE.txt THIRD-PARTY-NOTICES.txt                     ours (MIT), and the notices of the third-party code inside the exes and dlls
   Uninstall.exe
 C:\ProgramData\Jde-Cpp
   config\                                                settings mirror - repo layout, so the configs' relative imports keep working
@@ -129,9 +130,11 @@ with `sc config Jde.OpcHub binPath= "…"` or by editing the shortcut.
 
 ## First login
 
-On a fresh install the login is **Google**, and it comes with the **OPC UA Server** component
-([`reviews/install-issues.md`](../../../../reviews/install-issues.md) #1 - by ruling no username or password is seeded, and a
-hub installed without the component has no login path): the component seeds the Google provider (`access_google.mutation`)
+There are two ways in, and which you get depends on the **OPC UA Server** component.
+
+**With the component, the login is Google** and it needs nothing set up
+([`reviews/install-issues.md`](../../../../reviews/install-issues.md) #1 - by ruling no username or password is seeded, and
+Google is seeded only with this component): the component seeds the Google provider (`access_google.mutation`)
 and `Jde.OpcServer` as the hub's default server connection (`gateway_opcServer.mutation`: slug `OpcServer`,
 `opc.tcp://127.0.0.1:4840`; `access_opcServer.mutation`: its provider row).  The button works only from an origin registered
 under the OAuth client id the hub serves (`GET /GoogleAuthClientId`).  The default is the project's own client id, so a
@@ -141,9 +144,25 @@ own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web
 `Jde.OpcHub` restarted.  The first grant is manual by ruling (the seeded roles); every resource ships unenforced, so the first
 user can make it.
 
-The page's username/password form is the OPC server's login, and the bundled server offers the username token only when
-its settings list users (`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing
-shipped sets it); the form then logs in against the default connection, so the username needs no `DOMAIN\`.
+**Without it, the login is a server connection's own, and adding the connection is what creates it.**  The page's
+username/password form signs in against *an OPC server the hub connects to* - any of them, not the bundled one - so it
+works on a hub that has no bundled server at all.  Add the connection first, signed out (every resource ships unenforced,
+so an anonymous write is permitted by design), exchange certificates with that server, then sign in.  The username is
+**`<connection slug>\<user on that server>`** - `plant1\operator1` - and the **prefix is required**: the slug is what
+selects the connection.  [`login-page.ts`](../../../web/framework/control/src/lib/pages/authorization/login-page/login-page.ts)
+splits the username on the backslash and puts the slug in the request's `opc` field; without it
+[`HttpRequestAwait::Login`](../../OpcGateway/src/HttpRequestAwait.cpp#L74) answers `400 "opc server not specified"`.  The connection's
+insert is the whole mechanism - it creates an `OpcServer` provider row for the slug, and the first sign-in creates the
+user.  The Web UI writes this up as *First steps* in its own
+[Overview help](../../../web/opc/site/assets/help/overview.md), which is the copy an operator actually meets.
+
+The **bundled** server is one such connection, and it offers the username token only when its settings list users
+(`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing shipped sets it).  Its slug
+is `OpcServer`, so its form login is `OpcServer\<name>` like any other - the prefix is not optional there either.
+
+Walked end to end on 2026-09-20 against a KEPServerEX 6.12 on a hub installed **without** the component: connection added,
+trust exchanged, signed in as `kepware\Administrator` 11 minutes in, a node value streaming at 13
+([`reviews/install-issues.md`](../../../../reviews/install-issues.md), "The login the product is for").
 
 ## Uninstall
 
@@ -156,6 +175,24 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 
 - Reinstalling over an existing install is fine: the services are deregistered and re-registered, the `.db` is kept, the
   installer-owned `sql\` and `nodesets\` are recreated (the settings under `config\` are overwritten - keep a copy of edits).
+  There is no need to stop anything first.  In **all users** mode Setup stops and deregisters `Jde.OpcServer` and
+  `Jde.OpcHub` - the server first, since it depends on the hub - and waits for their processes to go **before it copies
+  a file**, because Windows will not replace a running image; if a service will not stop within twenty seconds Setup
+  says so and ends, rather than lay new settings and seeds over an exe it could not replace
+  ([`reviews/m2-closing.md`](../../../../reviews/m2-closing.md) #4).  A `Jde.OpcServer` an earlier install registered is
+  stopped with the hub even when the *OPC UA Server* component is left unticked; it stays registered on its old files -
+  `net start Jde.OpcServer`, or tick the component.
+- **A reinstall - and adding a component to one - only takes effect once the products restart.**  The seeds a component
+  brings (`<schema>*.mutation`, `*.roles`) are applied by a `-sync` start, so a hub that keeps running through the
+  install shows none of them: no Google provider, no `OpcServer` connection, no *OPC Server Instance* role, and pages
+  that look exactly as they did before ([`reviews/install-issues.md`](../../../../reviews/install-issues.md) #37).  In
+  **all users** mode Setup stops the services before it copies anything and `-Services` re-registers them, so the next start has them.  In **current user**
+  mode there is no service to stop, so Setup closes a running `Jde.OpcHub` / `Jde.OpcServer` of yours first - it asks
+  before it does, since these are console windows you opened (a silent install closes them without asking) - and the
+  finish page's *Start now* box, or the Start Menu shortcut, brings the product back on the new files and the new seeds.
+  Cancel the prompt to close them yourself and run Setup again.  Setup goes on only once it has *seen* the copy gone: it
+  asks the window to close, ends it after ten seconds, and if it is still there five seconds later - a copy you started
+  elevated, say - Setup stops and names what to close, rather than lay new settings over files it could not replace.
 - Roles are seeded by a second pass: `<schema>.roles` files under `dataPaths` are upserted after the access server is
   configured (`createRole`/`addRole` run through its mutations, which the `.mutation` pass runs too early for).
   `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician; `addRole` names

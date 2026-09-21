@@ -6,6 +6,9 @@
 #include "../src/GatewayAppClient.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/web/server/Sessions.h>
+#include "../src/ql/GatewayQL.h"//after Sessions.h:  IQLAwaitExe.h names Web::Server::SessionInfo.
+#include "../src/ql/OpcSessionsQLAwait.h"
+#include "../src/ql/SearchQLAwait.h"
 
 #define let const auto
 
@@ -101,6 +104,54 @@ namespace Jde::Opc::Gateway::Tests{
 			let& o = r.as_object();
 			EXPECT_TRUE( o.contains("count") && !o.contains("user") && !o.contains("connection") && !o.contains("type") ) << serialize( o );
 		}
+	}
+
+	//reviews/m2-closing.md #8:  the gateway gates on three resources and only one had a row.  `opcSessions` and `search` are
+	//QL system tables, so no table declared gateway/sessions or gateway/search, ResourceSyncAwait created neither, and
+	//Authorize::Test passes whatever it finds no active row for - both gates were unconditional, with no product path to
+	//make them anything else.  With gateway/serverConnections enforced an ungranted user was refused `serverConnections{}`
+	//and still read who holds which credential on which connection.  The meta declares both now (`resources`), so the rows
+	//are there - shipped unenforced, as every resource is - and enforcing one closes its gate.  The probe is a user no grant
+	//names, as in BrowseTests.EnforcedConnectionResourceRefusesAnUngrantedSession;  each resource goes back as it was found.
+	TEST_F( QLTests, SessionsAndSearchAreResourcesAnAdminCanEnforce ){
+		let listed = AppClient()->QuerySync<jvalue>( "resources( schemaName:[\"gateway\"] ){ slug deleted allowed }", {} );
+		let& rows = listed.is_array() ? listed.get_array() : Json::AsArray( listed.as_object(), "resources" );
+		for( let slug : {"serverConnections"sv, "sessions"sv, "search"sv} ){
+			auto row = find_if( rows, [&]( let& r ){ return Json::AsSV(r.as_object(), "slug")==slug; } );
+			ASSERT_NE( row, rows.end() ) << "gateway/" << slug << " has no resource row - its gate cannot be enforced: " << serialize( listed );
+			let deleted = row->as_object().if_contains( "deleted" );
+			EXPECT_TRUE( deleted && !deleted->is_null() ) << "gateway/" << slug << " ships enforced: " << serialize( *row );
+			let allowed = row->as_object().if_contains( "allowed" );
+			EXPECT_TRUE( allowed && allowed->is_array() && !allowed->get_array().empty() ) << "gateway/" << slug << " offers the permission table nothing to tick: " << serialize( *row );
+		}
+
+		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
+		let enforce = []( sv slug, bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"{}\", criteria:null )", on ? "restore" : "delete", slug), {} ); };
+		auto refused = [&]( sv slug, function<void()> query )->bool{//the gateway's authorizer hears of the switch over its subscription, so ask until it has.
+			enforce( slug, true );
+			struct Restore final{ decltype(enforce) F; sv Slug; ~Restore(){ try{ F(Slug, false); }catch( const std::exception& ){} } } _{ enforce, slug };
+			for( let deadline = steady_clock::now()+5s; steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
+				try{
+					query();
+				}
+				catch( const Exception& e ){
+					if( e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden )
+						return true;
+				}
+			}
+			return false;
+		};
+		EXPECT_TRUE( refused("sessions", [&]{
+			auto ql = QL::Parse( "opcSessions{ connection{slug} type user{id name} count }", {}, Schemas(), true );
+			BlockAwait<OpcSessionsQLAwait,jvalue>( OpcSessionsQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		}) ) << "gateway/sessions is enforced and an ungranted user still reads every session on every connection";
+		EXPECT_TRUE( refused("search", [&]{
+			auto ql = QL::Parse( "search( text:\"lamp\" ){ name }", {}, Schemas(), true );
+			BlockAwait<SearchQLAwait,jvalue>( SearchQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		}) ) << "gateway/search is enforced and an ungranted user is still let through its gate";
+
+		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("opcSessions{ count }", {}, true) );//and unenforced again, the harness's own session still reads it.
+		EXPECT_TRUE( value.is_array() ) << serialize( value );
 	}
 
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).

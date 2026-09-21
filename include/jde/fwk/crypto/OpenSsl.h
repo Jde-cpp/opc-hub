@@ -29,7 +29,23 @@ namespace Jde::Crypto{
 	Φ Fingerprint( const PublicKey& key, SRCE )ε->MD5;
 	Φ ReadPublicKey( const fs::path& publicKey, SRCE )ε->PublicKey;
 	Φ ToBytes( const PublicKey& key, SRCE )ε->vector<byte>;
-	Φ ReadCertificate( const fs::path& certificate, SRCE )ε->vector<byte>;
+	Φ ReadCertificate( const fs::path& certificate, SRCE )ε->vector<byte>;//PEM or DER - see IsCertificateFile.
+	//What a file dropped in a certificate directory may be called - an operator's drop-dir is scanned, not a configured path,
+	//so something has to keep the .crl/.key/README out of the parser.  `.der`/`.cer` are the encoding a third party publishes:
+	//an OPC UA server writes DER (Kepware's kepserverex_ua_server.der) and a UA trust list is a directory of .der by
+	//convention, and skipping those in silence was install-issues #33 - the operator copied in the file the server actually
+	//produces and nothing changed.  One list for every such scan (ServerTrust, UATrust, the enrollment anchors) so they cannot
+	//drift, and one sentence to quote back when a scan found nothing.
+	constexpr sv CertificateExtensions{ ".pem, .crt, .der and .cer" };
+	Ξ IsCertificateFile( const fs::path& p )ι->bool{ const auto ext = p.extension(); return ext==".pem" || ext==".crt" || ext==".der" || ext==".cer"; }
+	//The skip, said once - the filter's other half, shared for the same reason.  Each scan warns, with a count, when it ends
+	//having anchored *nothing*;  but a drop-dir that already holds a certificate never anchors nothing - an installed OpcServer's
+	//only trusted dir always has the hub's own OpcHub.pem - so there that warning cannot fire, and a file passed over beside it
+	//(`client.pfx`, `SERVER.DER`) was a Debug line and nothing else (reviews/m2-closing.md #11).  The per-file line cannot simply
+	//be louder:  every one of these scans reruns - on a failed verify, on each connect - and a junk-certificate flood would
+	//repeat it.  True the first time this process passes `p` over, false from then on:  the caller logs a Warning once and
+	//Debug after, as each already does for a missing directory.
+	Φ FirstSkip( const fs::path& p )ι->bool;
 	Φ ReadPrivateKey( const PrivateKeySettings& settings )ε->vector<byte>;
 	Φ RsaSign( str content, const fs::path& privateKeyFile, str passcode={}, SRCE )ε->Signature;
 	Φ Verify( const PublicKey& certificate, str decrypted, const Signature& signature, SRCE )ε->void;

@@ -29,6 +29,7 @@ namespace Jde::Access{
 	Ω loadTrustAnchors( Crypto::TrustStore& trust )ι->bool{//loads new/changed certs from /access/trustedCertDirs; true if an anchor was added.
 		std::lock_guard _{ _anchorMutex };
 		bool added{};
+		uint skipped{};//files passed over for their extension - see the warning below (install-issues #33).
 		for( const string& sdir : Settings::FindStringArray("/access/trustedCertDirs") ){
 			try{
 				const fs::path dir{ sdir };
@@ -39,8 +40,12 @@ namespace Jde::Access{
 				}
 				_missingDirs.erase( dir );
 				for( const auto& entry : fs::directory_iterator(dir) ){
-					if( entry.path().extension()!=".pem" && entry.path().extension()!=".crt" )
+					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
+						++skipped;
+						const auto level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
+						LOG( level, _tags, "Passed over, not a certificate by its extension: '{}' - no client certificate is anchored from it.  {} are read.", entry.path().string(), Crypto::CertificateExtensions );
 						continue;
+					}
 					const auto mtime = entry.last_write_time();
 					if( auto it = _anchorFiles.find(entry.path()); it!=_anchorFiles.end() && it->second==mtime )
 						continue;
@@ -59,6 +64,12 @@ namespace Jde::Access{
 				CRITICAL( "Could not scan trusted certificate directory '{}': {}", sdir, e.what() );
 			}
 		}
+		//install-issues #33:  a directory holding only files this build would not read is indistinguishable, from the operator's
+		//side, from one they have not filled yet - the key login is refused either way and nothing says why.  _anchorFiles holds
+		//every file ever attempted, loaded or not, so empty-and-skipped is exactly "you copied something in and it was ignored".
+		//Once per rescan that anchored nothing, not per file:  a failed verification rescans, so per-file would repeat under a flood.
+		if( _anchorFiles.empty() && skipped )
+			WARNT( _tags, "No trust anchors under /access/trustedCertDirs - {} file{} passed over for {} extension.  {} are read.", skipped, skipped==1 ? " was" : "s were", skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
 		return added;
 	}
 	α Server::AccessSchema()ι->DB::AppSchema&{ return GetSchema(); }

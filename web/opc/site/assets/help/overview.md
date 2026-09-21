@@ -20,12 +20,22 @@ OPC Hub is the web front end of the Jde OPC services: it browses and secures the
 1. Under [Applications](/apps), open the **OpcHub** card, press **Add** on its **Connections** tab, fill these in and save:
    - **Slug** - the short name that stands for the connection in URLs and at sign-in, `plant1` say. It is fixed once saved.
    - **Name** - what the pages call the connection.
+   - **Description** - optional, your own note of what the server is.
    - **URL** - the server's endpoint, `opc.tcp://plant-server:4840` say.
    - **Certificate URI** - empty for an unsecured session, or set as [Security](/help/gateways#security) describes.
+   - **Default Namespace** - the namespace index a node address is taken to mean when it names none. Node urls then carry
+     an index only where they differ from it (`4~Examples`), which is what keeps the common case readable. Set it to the
+     index your server keeps its own nodes under - its documentation or its address space will say. Getting it wrong is
+     not an error here; it shows up later as node addresses that will not resolve.
 2. Have the hub and the server trust each other's certificates, as [Security](/help/gateways#security) describes.
 3. Sign in as one of that server's users, on the [login page](/login):
    - **Username** - the connection's slug from step 1, a backslash and the user's name on the server: `plant1\operator1`.
+     The slug prefix is what picks the connection, so it is required - without it the sign-in is refused with *"opc server
+     not specified"*. The bundled server is a connection like any other, and its slug is `OpcServer`.
    - **Password** - that user's password on the server.
+
+   Adding the connection is what created this login: the hub makes a sign-in provider for the slug as the connection
+   saves, and your first sign-in creates your user.
 
 ### Then
 

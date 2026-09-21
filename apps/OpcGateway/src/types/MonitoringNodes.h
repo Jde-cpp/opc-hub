@@ -53,7 +53,9 @@ namespace Jde::Opc::Gateway{
 
 		atomic<RequestId> _requestId{};
 		flat_map<MonitorHandle,flat_set<NodeId>> _requests;
-		flat_map<MonitorHandle,tuple<flat_set<NodeId>,sp<IDataChange>>> _calls;
+		//the creates in flight:  the new nodes asked for - in the order the server answers them, so never edited - the listener, and the
+		//nodes that listener unsubscribed while the create was out (the by-node Unsubscribe), which its answer must not attach.
+		flat_map<MonitorHandle,tuple<flat_set<NodeId>,sp<IDataChange>,flat_set<NodeId>>> _calls;
 		flat_map<MonitorHandle,flat_map<NodeId,StatusCode>> _errors;
 		flat_set<MonitorHandle> _takenCalls;//in-flight creates TakeForResubscribe dropped from _calls - their late answers are expected, not errors.  Until GetResult.
 		shared_mutex _mutex;

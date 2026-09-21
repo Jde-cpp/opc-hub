@@ -123,10 +123,81 @@ namespace Jde::Crypto{
 		EXPECT_TRUE( ExtractPublicKey(bytes, SRCE_CUR)==Crypto::ReadPublicKey(PublicKeyFile) );
 	}
 
+	//install-issues #33:  this repo writes PEM, but every certificate it is *given* comes from somewhere else - an OPC UA
+	//server publishes its instance certificate as DER (Kepware's kepserverex_ua_server.der), and a UA trust list is a
+	//directory of .der by convention.  Both encodings carry the same X.509, so both must read back to the same bytes; the
+	//return value is DER either way.  Junk in either encoding still throws, naming the file.
+	TEST_F( OpenSslTests, ReadCertificateTakesPemOrDer ){
+		let dir = ScratchDir( "readDer" );
+		IO::CreateDirectories( dir );//nothing here issues into it - the files are written by hand.
+		let pem = ReadCertificate( CertificateFile );//DER bytes, from the PEM fixture.
+		let derFile = dir/"cert.der";
+		IO::SaveBinary<const byte>( derFile, std::span{pem} );
+		EXPECT_TRUE( ReadCertificate(derFile)==pem ) << "the same certificate read back differently for being DER on disk";
+
+		let garbage = dir/"garbage.der";
+		let junk = string{ "neither a PEM header nor a DER SEQUENCE" };
+		IO::SaveBinary<const char>( garbage, std::span{junk} );
+		try{
+			ReadCertificate( garbage );
+			ADD_FAILURE() << "a file that is neither encoding parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find(garbage.string()), string::npos ) << e.what();//the path is what tells the operator which file is bad.
+		}
+		fs::remove_all( dir );
+	}
+
+	//reviews/m2-closing.md #10:  an OpenSslException took one error off the thread's queue and left the rest.  A file that is
+	//neither encoding fails two parses, and the DER one queues more than one error, so every bad file in a trust directory -
+	//loadAnchors reads them one by one and carries on - left its tail behind, and the next OpenSslException on that thread,
+	//whatever it was about, led with it.  Nothing may be left, and an exception raised afterwards with nothing queued has
+	//to say so rather than name the certificate's fault.
+	TEST_F( OpenSslTests, AFailedParseLeavesNothingOnTheErrorQueue ){
+		let dir = ScratchDir( "errQueue" );
+		IO::CreateDirectories( dir );
+		let garbage = dir/"pkcs7-or-anything.cer";
+		//SEQUENCE{ OID pkcs7-signedData } - how a PKCS#7 .cer opens, and complete, which is what matters:  d2i_X509 gets as far as
+		//the member that should be the tbsCertificate SEQUENCE and queues "wrong tag" and then "nested asn1 error" twice on the
+		//way back out.  A *truncated* blob queues one error ("not enough data") and would prove nothing here.
+		const vector<unsigned char> junk{ 0x30, 0x0b, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02 };
+		IO::SaveBinary<const unsigned char>( garbage, std::span{junk} );
+		ERR_clear_error();
+		EXPECT_THROW( ReadCertificate(garbage), OpenSslException );
+		EXPECT_EQ( ERR_peek_error(), 0ul ) << "left on the queue for the next exception: " << OpenSslException::CurrentError( (uint32)ERR_peek_error() );
+
+		const OpenSslException unrelated{ "an unrelated failure, with nothing queued" };
+		EXPECT_EQ( unrelated.Code(), 0u ) << unrelated.what();
+		EXPECT_EQ( string{unrelated.what()}.find("asn1"), string::npos ) << unrelated.what();
+		fs::remove_all( dir );
+	}
+
+	//the one filter every certificate drop-directory scan now shares - ServerTrust (the gateway's and the emulator's trusted
+	//servers), UATrust (the OpcServer's trusted clients) and the enrollment anchors - so the three cannot drift apart again
+	//and re-open install-issues #33 one scan at a time.  `.der`/`.cer` are the encoding a third party publishes; the rest of
+	//what lives in such a directory - a CRL, a key, a README, a backup - must still stay out of the parser.
+	TEST_F( OpenSslTests, IsCertificateFileTakesTheFourExtensions ){
+		for( let& name : {"server.pem", "server.crt", "kepserverex_ua_server.der", "server.cer"} )
+			EXPECT_TRUE( Crypto::IsCertificateFile(fs::path{name}) ) << name;
+		for( let& name : {"server.crl", "private.key", "README", "README.txt", "server.pem.bak", "der"} )
+			EXPECT_FALSE( Crypto::IsCertificateFile(fs::path{name}) ) << name;
+	}
+
 	//what made #26 latent: no test asserted the fixture's certificate and key pair belong together, so the split
 	//regeneration - keys re-created when either key was missing, the certificate kept whenever it existed - could leave
 	//a cert advertising a public key its private key cannot sign for, and every test still passed.  That is the same
 	//damaged install EnsureKeyCertificate_MissingKeyReissuesCert guards for a scratch dir; this guards the fixture.
+	//reviews/m2-closing.md #11 - the once-only half of the shared filter:  the first sighting of a passed-over file is the one a
+	//scan says out loud, however often it reruns;  another file is another first.
+	TEST_F( OpenSslTests, FirstSkipIsTrueOncePerFile ){
+		let dir = ScratchDir( "firstSkip" );
+		EXPECT_TRUE( FirstSkip(dir/"client.pfx") );
+		EXPECT_FALSE( FirstSkip(dir/"client.pfx") );
+		EXPECT_FALSE( FirstSkip(dir/"client.pfx") );
+		EXPECT_TRUE( FirstSkip(dir/"SERVER.DER") ) << "the filter is case-sensitive, so this is passed over too - and is its own first";
+		EXPECT_FALSE( IsCertificateFile(dir/"SERVER.DER") );
+	}
+
 	TEST_F( OpenSslTests, FixtureCertificateMatchesItsKey ){
 		auto der = ReadCertificate( CertificateFile );
 		auto certKey = Crypto::ExtractPublicKey( der, SRCE_CUR );

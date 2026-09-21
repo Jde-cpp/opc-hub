@@ -65,7 +65,7 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		}
 		else{
-			_calls.emplace( requestId, make_tuple(newNodes,move(dataChange)) );
+			_calls.emplace( requestId, make_tuple(newNodes,move(dataChange),flat_set<NodeId>{}) );
 			lock.unlock();
 			return CreateMonitoredItemsRequest{ move(newNodes) };
 		}
@@ -73,12 +73,13 @@ namespace Jde::Opc::Gateway{
 	α UAMonitoringNodes::OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void{
 		MonitorHandle requestHandle{ requestId };
 		let client = _client.lock();
-		flat_map<SubscriptionId,flat_set<MonitorId>> duplicates;
+		flat_map<SubscriptionId,flat_set<MonitorId>> surplus;//items this answer created that nothing wants:  duplicates, and nodes unsubscribed while the create was out.
 		{
 			ul _{ _mutex };
 			if( auto pCall = _calls.find(requestId); pCall!=_calls.end() ){
 				auto& nodes = get<0>(pCall->second);
 				auto& dataChange = get<1>(pCall->second);
+				let& cancelled = get<2>(pCall->second);
 				ASSERT( nodes.size()==response->resultsSize );
 				uint i{};
 				for( auto pNode = nodes.begin(); i<response->resultsSize && pNode!=nodes.end(); ++pNode, ++i ){
@@ -90,6 +91,14 @@ namespace Jde::Opc::Gateway{
 					else if( !client ){//braced:  the log macros expand to a bare `if`.
 						CRITICAL( "Could not lock UAClient for subscription processing." );
 					}
+					else if( cancelled.contains(*pNode) ){
+						//Its listener unsubscribed it by node while this create was out (reviews/m2-closing.md #6).  The item is nobody's -
+						//another create's answer may have made the node's real one meanwhile, and this listener left that too - so it goes
+						//the way a duplicate does, and the subscribe's ack says what became of the node rather than "subscribed".
+						surplus.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
+						TRACE( "[{}.{}]'{}' was unsubscribed while its create was out - deleting the item.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
+						_errors.try_emplace( {requestId} ).first->second.try_emplace( move(*pNode), UA_STATUSCODE_BADREQUESTCANCELLEDBYCLIENT );
+					}
 					else if( auto pExisting = get<1>(FindNode(*pNode)); pExisting ){
 						//Another create for this node answered first.  MonitoredItemsRequest only finds nodes already monitored, so two creates
 						//in flight at once - a rebuild restoring a node while its session subscribes to it again, or two sessions subscribing a
@@ -97,7 +106,7 @@ namespace Jde::Opc::Gateway{
 						//removed only one (subscription-disconnect #15).  This listener joins the item that exists, whose result the ack
 						//reports, and the new item is deleted.
 						pExisting->ClientCalls.emplace( dataChange );
-						duplicates.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
+						surplus.try_emplace( requestHandle.SubId() ).first->second.emplace( result.monitoredItemId );
 						TRACE( "[{}.{}]Monitoring '{}' already - joined the existing item, deleting the duplicate.", hex(client->Handle()), hex(result.monitoredItemId), pNode->ToString() );
 					}
 					else{
@@ -119,9 +128,9 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		//Posted, after the lock:  this runs inside run_iterate, and a refused submission reaches ConnectionLost, which takes _mutex.
-		if( duplicates.size() ){
-			client->PostStrand( [client, duplicates]()mutable{
-				[&]()->DeleteMonitoredItemsAwait::Task { co_await DeleteMonitoredItemsAwait{ move(duplicates), move(client) }; }();
+		if( surplus.size() ){
+			client->PostStrand( [client, surplus]()mutable{
+				[&]()->DeleteMonitoredItemsAwait::Task { co_await DeleteMonitoredItemsAwait{ move(surplus), move(client) }; }();
 			});
 		}
 	}
@@ -133,15 +142,18 @@ namespace Jde::Opc::Gateway{
 		if( auto pRequest = _requests.find(requestId); pRequest!=_requests.end() ){
 			for( auto& n : pRequest->second ){
 				auto nodeResult = y.add_results();
-				if( auto pSubscription = get<1>(FindNode(n)); pSubscription ){
+				//This request's own word on the node first:  its create failed, or its listener unsubscribed the node while the create
+				//was out.  The node can be monitored all the same - for another listener - and answering from that item told this one
+				//it was subscribed to something it was never attached to (reviews/m2-closing.md #6).
+				//An empty optional, not StatusCode{}:  the ternary converted that to an *engaged* optional holding Good, so with no
+				//_errors entry every node without an item - a create that failed outright included - was acked as subscribed.
+				if( auto nodeSC = errors ? Find(*errors,n) : optional<StatusCode>{}; nodeSC )
+					nodeResult->set_status_code( *nodeSC );
+				else if( auto pSubscription = get<1>(FindNode(n)); pSubscription ){
 					nodeResult->set_status_code( pSubscription->Result.statusCode );
 					nodeResult->set_revised_sampling_interval( pSubscription->Result.revisedSamplingInterval );
 					nodeResult->set_revised_queue_size( pSubscription->Result.revisedQueueSize );
 				}
-				//An empty optional, not StatusCode{}:  the ternary converted that to an *engaged* optional holding Good, so with no
-				//_errors entry every node without an item - a create that failed outright included - was acked as subscribed.
-				else if( auto nodeSC = errors ? Find(*errors,n) : optional<StatusCode>{}; nodeSC )
-					nodeResult->set_status_code( *nodeSC );
 				else{
 					//No item and no per-node error:  the create failed as a whole (sc), or its answer came after TakeForResubscribe took
 					//its client's items, so what it created went with that session.
@@ -226,11 +238,22 @@ namespace Jde::Opc::Gateway{
 		tuple<flat_set<NodeId>,flat_set<NodeId>> successFailures;
 		ul _{ _mutex };
 		for( auto& node : nodes ){
-			if( auto [id,pSubscription] = FindNode(node); pSubscription && pSubscription->ClientCalls.erase(dataChange) ){
-				get<0>(successFailures).emplace( move(node) );
-				if( pSubscription->ClientCalls.empty() )
-					toDelete.try_emplace( id.SubId() ).first->second.emplace( id.MonitorId() );
+			auto [id,pSubscription] = FindNode( node );
+			bool dropped = pSubscription && pSubscription->ClientCalls.erase( dataChange );
+			if( dropped && pSubscription->ClientCalls.empty() )
+				toDelete.try_emplace( id.SubId() ).first->second.emplace( id.MonitorId() );
+			//And the creates still out.  FindNode sees _subscriptions alone, and a node is not there until its create answers, so an
+			//unsubscribe inside that round trip - a view opened and closed at once - found nothing, reported a failure, and the
+			//answer then attached a listener that would never ask again:  pushed to until its socket closed, the item never retired
+			//(reviews/m2-closing.md #6).  The close-path overload, above, always looked here.  Marked, not removed:  the answer is
+			//matched to the node list by position.  Both, not either:  a second subscribe for a node can still be out when the
+			//first one's answer has already attached this listener.
+			for( auto&& [_, call] : _calls ){
+				if( get<1>(call)==dataChange && get<0>(call).contains(node) && get<2>(call).emplace(node).second )
+					dropped = true;
 			}
+			if( dropped )
+				get<0>(successFailures).emplace( move(node) );
 			else{
 				TRACE( "Could not find node '{}' for unsubscription.", node.ToString() );
 				get<1>(successFailures).emplace( move(node) );

@@ -55,6 +55,8 @@ message( CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX} )
 # changes — forcing a reconfigure+rebuild — when the dependency is bumped. Stamps never
 # invalidate across ExternalProjects on their own (StepDependencies only orders steps),
 # so without the echo a bump leaves consumers built against the old headers.
+# After bumping any GIT_TAG in this file, re-run ./third-party-notices.sh: the checked-in THIRD-PARTY-NOTICES.txt the
+# installers ship names these versions.
 set( fmtTag 12.2.0 )
 set( abslTag 20260526.0 )
 set( rymlTag v0.10.0 )

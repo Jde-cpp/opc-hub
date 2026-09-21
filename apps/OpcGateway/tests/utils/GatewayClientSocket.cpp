@@ -48,7 +48,7 @@ namespace Tests{
 			sub->resume();
 		}
 		else if( auto unsub = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>(&h) ){
-			//the _unsubscribeRequests record stays (no request id here) - harmless, and the listeners must stay: the server still pushes.
+			//the listeners stay: the server still pushes.  The request's own record goes with the failure - forgetRequest/CloseTasks.
 			unsub->promise().SetExp( move(e) );
 			unsub->resume();
 		}
@@ -57,6 +57,7 @@ namespace Tests{
 	}
 
 	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
+	α forgetRequest( RequestId requestId )ι->void;
 	α onUnsubscribeAck( RequestId requestId )ι->void;
 	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
@@ -74,6 +75,7 @@ namespace Tests{
 				break;
 			case kException:{
 				std::any h = requestId==0 ? coroutine_handle<>{} : PopTask( requestId );
+				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.
 				let& e = m->exception();
 				HandleException( move(h), GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.
 				break;}
@@ -117,6 +119,24 @@ namespace Tests{
 	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>, sp<IListener>>> _subscriptionRequests; shared_mutex _subscriptionRequestMutex;
 	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>>> _unsubscribeRequests;//under _subscriptionRequestMutex.  The ack prunes the nodes' listeners: they used to stay registered forever, so a later Subscribe on the same node through the same socket dispatched pushes to a listener whose fixture was long destroyed.
 	flat_map<ServerCnnctnNK, flat_map<NodeId, flat_set<sp<IListener>>>> _subscriptions; shared_mutex _subscriptionsMutex;
+	//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
+	//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the
+	//socket dead, a write on a closed stream, a timeout.  subscription-disconnect #7's per-cycle re-subscribe made that one
+	//per second for the length of an outage, in the harness that scores the soak (reviews/m2-closing.md #15).  Request ids
+	//are process-wide (IClientSocketSession::NextRequestId), so one file-scope map serves every socket.  Two ways out now
+	//besides the ack:  here, by id, for an error the gateway answered;  and CloseTasks' sweep, for everything a dead socket
+	//takes with it, where no id is handed over.
+	α forgetRequest( RequestId requestId )ι->void{
+		if( !requestId )
+			return;
+		ul _{ _subscriptionRequestMutex };
+		_subscriptionRequests.erase( requestId );
+		_unsubscribeRequests.erase( requestId );
+	}
+	α GatewayClientSocket::PendingSubscriptionRecords()ι->uint{
+		sl _{ _subscriptionRequestMutex };
+		return _subscriptionRequests.size()+_unsubscribeRequests.size();
+	}
 	α GatewayClientSocket::Query( string&& query, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]'{}', variables: {}.", requestId, query, serialize(variables) );
@@ -226,6 +246,12 @@ namespace Tests{
 			let e = App::ProtoUtils::ToException( CodeException{ec, ELogTags::SocketClientWrite, ELogLevel::NoLog} );
 			HandleException( move(h), Exception{e.what(), e.code()} );
 		};
+		{//the records of what this socket still has pending go with its tasks (#15).  Before the drain:  the drain hands over
+			//handles, not ids, and HasTask is only true of a request until it has run.  Another socket's records are not this one's to take.
+			ul _{ _subscriptionRequestMutex };
+			erase_if( _subscriptionRequests, [this]( let& kv ){ return HasTask(kv.first); } );
+			erase_if( _unsubscribeRequests, [this]( let& kv ){ return HasTask(kv.first); } );
+		}
 		base::CloseTasks( f );
 	}
 	α GatewayClientSocket::OnClose( beast::error_code ec )ι->void{

@@ -17,7 +17,12 @@ namespace Jde{
 		constexpr ELogTags _tags{ ELogTags::Crypto };
 		α OpenSslException::CurrentError()ι->string{ return CurrentError(CurrentErrorCode()); }
 		α OpenSslException::CurrentError( uint32 rc )ι->string{ if(!rc) return "no queued openssl error"; char b[256]; ERR_error_string_n(rc, b, sizeof(b)); return {b}; }//0 would format as 'error:00000000...' - noise masquerading as detail.
-		α OpenSslException::CurrentErrorCode()ι->uint32{ return (uint32)ERR_get_error(); }
+		//The earliest queued error, and the queue emptied behind it.  One failed call queues several - a DER parse leaves "wrong
+		//tag" and then "nested asn1 error", the same failure seen from further out - and this popped the first alone, so the rest
+		//stayed on the thread's queue to be the *first* thing the next OpenSslException on that thread found:  a trust scan that
+		//skipped an unparseable .cer made a later, unrelated key failure read "asn1 encoding routines::wrong tag"
+		//(reviews/m2-closing.md #10).  The earliest is the one kept - it is the cause; what follows it is its echo.
+		α OpenSslException::CurrentErrorCode()ι->uint32{ let rc = (uint32)ERR_get_error(); ERR_clear_error(); return rc; }
 
 		//https://stackoverflow.com/questions/1986888/how-to-compute-a-32-bit-fingerprint-of-a-certificate
 		α PublicKey::Hash32()Ι->uint32_t{
@@ -288,13 +293,25 @@ namespace Jde{
 			throw OpenSslException{ rc==0 ? string{"Signature verification failed."} : Ƒ("EVP_VerifyFinal -> {}", rc), sl };
 	}
 
+	α Crypto::FirstSkip( const fs::path& p )ι->bool{
+		static std::mutex mutex;
+		static flat_set<fs::path> skipped;//only ever grows, by the files an operator has put in a certificate directory - a handful.
+		std::lock_guard _{ mutex };
+		return skipped.emplace( p ).second;
+	}
+
 	α Crypto::ReadCertificate( const fs::path& certificate, SL sl )ε->vector<byte>{
 		X509Ptr cert{ PEM_read_bio_X509(Internal::ReadFile(certificate, sl).get(), nullptr, 0, nullptr), ::X509_free };
-		//not CHECK_NULL:  "null returned" names no file, and a process reads several pems - the web cert, the ua server cert,
-		//one per opc slug, every trust anchor - so the path is what tells the operator which one is bad.  A *missing* file
-		//already throws IOException(path); this is the parse failure.  The openssl reason ("no start line", "bad base64
-		//decode") rides along from the ERR queue either way.
-		THROW_IFX( !cert, Crypto::OpenSslException(Ƒ("Could not parse certificate '{}'", certificate.string()), sl) );
+		if( !cert ){//not PEM - try DER, which is what an OPC UA server publishes its instance certificate as (install-issues #33).
+			ERR_clear_error();//the PEM attempt's "no start line" would otherwise ride along on a later, unrelated exception.
+			cert = X509Ptr{ ::d2i_X509_bio(Internal::ReadFile(certificate, sl).get(), nullptr), ::X509_free };//a second open, not BIO_reset:  file BIOs invert its return.
+		}
+		//not CHECK_NULL:  "null returned" names no file, and a process reads several certificates - the web cert, the ua server
+		//cert, one per opc slug, every trust anchor - so the path is what tells the operator which one is bad.  A *missing* file
+		//already throws IOException(path); this is the parse failure of both encodings.  The openssl reason rides along from the
+		//ERR queue - DER's ("wrong tag"), since PEM's was cleared - and the exception takes the rest of the queue with it
+		//(CurrentErrorCode):  the second parse doubled what a bad file left behind.
+		THROW_IFX( !cert, Crypto::OpenSslException(Ƒ("Could not parse certificate '{}' as PEM or DER", certificate.string()), sl) );
 
 		auto len = i2d_X509( cert.get(), nullptr ); THROW_IFX( len<=0, OpenSslException("i2d_X509 failed") );
 		vector<byte> y( len );

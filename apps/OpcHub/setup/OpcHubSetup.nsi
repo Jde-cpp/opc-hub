@@ -88,6 +88,7 @@ Var ConfigDir  ;$DataDir\config - the settings mirror
 Var FinishText
 Var StartNow   ;/Start - a silent install starts the products at the end, as the finish page's box does
 Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's after the offer to install it (#14) - the finish page says so
+Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was closed to reinstall over it (#37) - the finish page says to start it again
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -154,8 +155,11 @@ FunctionEnd
 
 ; Stop a service and let its exe deregister itself; the exe's own -uninstall throws on a missing service, so the result
 ; is ignored - this is the reinstall path (CreateService fails on ERROR_SERVICE_EXISTS) and the uninstaller's.
+; /y:  Jde.OpcServer depends on Jde.OpcHub (`sc config ... depend=`, -Services), and `net stop` of a service with a running
+; dependent asks "continue? (Y/N)" - with no console to answer it stops nothing, and -uninstall below only deletes the
+; registration (Process::Uninstall is DeleteService alone), so the hub would run on, its image locked, through the install.
 !macro StopAndRemove svc exe settings
-	nsExec::ExecToLog 'net stop "${svc}"'
+	nsExec::ExecToLog 'net stop "${svc}" /y'
 	Pop $0
 	${If} ${FileExists} "${exe}"
 		nsExec::ExecToLog '"${exe}" -uninstall -settings=${settings} -include=args/install'
@@ -198,6 +202,121 @@ FunctionEnd
 	Pop $0
 !macroend
 
+; Is this user running ${exe}?  -> $0:  0 yes, 1 no, anything else *not known*.  tasklist piped through find rather than a
+; plugin:  the exit code is the whole answer (find returns 0 for a match and 1 for none), and the uninstaller already
+; reaches for taskkill for the same job.  Three answers, not two (reviews/m2-closing.md #14):  nsExec pushes the word
+; `error` when it cannot launch the command and `timeout` when it gives up, and reading everything but 0 as "gone" - the one
+; place this file turned "non-zero is failure" round - made a probe that never ran the same as a product that had closed.  The
+; USERNAME filter is what keeps an all-users *service* - LocalSystem's, which this mode may not touch - out of the answer.
+; One spelling for the probe and for every kill that acts on it (reviews/m2-closing.md #13):  the kills carried no filter, so
+; what was *found* was this user's and what was *ended* was every process of that image on the machine - and with
+; MULTIUSER_EXECUTIONLEVEL Highest an administrator's run is elevated in either mode, so that could reach a service's.
+; Always through `cmd /c`:  %USERNAME% is cmd's to expand - handed straight to nsExec it is a literal, the filter matches
+; nobody, and a kill so filtered ends nothing at all.
+!define USER_FILTER '/FI "USERNAME eq %USERNAME%"'
+!macro UserProcRunning exe
+	nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${exe}" ${USER_FILTER} /NH | find /I "${exe}"'
+	Pop $0
+	Pop $1
+!macroend
+
+; A service's process still there?  -> $0 == 0 when yes.  UserProcRunning turned round:  session 0 is where services run and
+; no console window does, and unlike "NT AUTHORITY\SYSTEM" it reads the same on every language of Windows.
+!macro ServiceProcRunning exe
+	nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${exe}" /FI "SESSION eq 0" /NH | find /I "${exe}"'
+	Pop $0
+	Pop $1
+!macroend
+
+; `net stop` returns when the service *reports* stopped, which is a moment before its process has gone and let go of its
+; image - and a File that meets a locked exe is an Abort/Retry/Ignore box, or under /S a file skipped in silence.  Twenty
+; seconds, then the install stops rather than carry on over an exe it cannot replace (reviews/m2-closing.md #4).
+!macro WaitServiceGone exe svc
+	StrCpy $2 0
+	${Do}
+		!insertmacro ServiceProcRunning "${exe}"
+		${If} $0 == 1
+			${ExitDo}
+		${ElseIf} $0 != 0 ;the probe did not answer.  Not fatal here, unlike CloseUserProduct:  net stop has already reported the service stopped, and this wait only covers the moment between that and the process going.
+			DetailPrint "  could not check that ${svc}'s process has gone (tasklist answered $0) - continuing"
+			${ExitDo}
+		${EndIf}
+		IntOp $2 $2 + 1
+		${If} $2 >= 40
+			MessageBox MB_OK|MB_ICONSTOP "The ${svc} service did not stop, so its files cannot be replaced.  Stop it (net stop ${svc}, or the Services console) and run Setup again." /SD IDOK
+			Abort "${svc} did not stop"
+		${EndIf}
+		Sleep 500
+	${Loop}
+!macroend
+
+; Close a product this user is running, and wait for it to go.  Windows will not let an installer overwrite a running
+; image, and - the case #37 found - a hub that keeps running through the install never applies the seeds a newly added
+; component just wrote, because those land on a `-sync` start:  the pages look exactly as they did before the component
+; was added.  This is the current-user counterpart of StopAndRemove, which does the same for the services.
+; taskkill without /F first:  these run as console windows (-c), so they get a close and shut down as they would on
+; Ctrl+C;  /F only if ten seconds pass.  -> $UserClosed 1 when it was closed - and only then.
+; One loop, and the only way out of it into the File commands is the probe saying *gone* (reviews/m2-closing.md #14).  The
+; forced kill used to be followed by a second's sleep and an exit with no look at all, so a kill that was refused - a copy
+; this user started elevated - or an image not yet released read as a success:  $UserClosed was set, the finish page said
+; the running copy had been closed, and the Files went ahead over a locked exe - an Abort/Retry/Ignore box, or under /S
+; nothing, and new settings and seeds over the old binary.  Now the forced kill gets five seconds of the same probe, and
+; after that Setup stops and says what to close.
+!macro CloseUserProduct exe label
+	!insertmacro UserProcRunning "${exe}"
+	${If} $0 == 0
+		DetailPrint "Closing ${label} - it is running from an earlier install"
+		nsExec::ExecToLog 'cmd /c taskkill /IM "${exe}" ${USER_FILTER}'
+		Pop $0
+		StrCpy $2 0
+		${Do}
+			Sleep 500
+			!insertmacro UserProcRunning "${exe}"
+			${If} $0 == 1 ;gone - find's "no match", the one answer that says so.  `error`/`timeout` are not it:  keep asking.
+				${ExitDo}
+			${EndIf}
+			IntOp $2 $2 + 1
+			${If} $2 == 20
+				DetailPrint "  ${label} did not close - ending it"
+				nsExec::ExecToLog 'cmd /c taskkill /F /IM "${exe}" ${USER_FILTER}'
+				Pop $0
+			${ElseIf} $2 >= 30
+				MessageBox MB_OK|MB_ICONSTOP "${label} is still running and could not be closed, so its files cannot be replaced.  Close its console window - or end ${exe} in Task Manager - and run Setup again." /SD IDOK
+				Abort "${label} could not be closed"
+			${EndIf}
+		${Loop}
+		StrCpy $UserClosed 1
+	${EndIf}
+!macroend
+
+; #37:  in the current-user mode there is no service to stop, so a reinstall walks into a running product.  Its binaries
+; cannot be replaced while it runs, and a hub that survives the install never applies the seeds a newly added component
+; just wrote - `<schema>*.mutation` and `*.roles` are read by a `-sync` start, so the walk that added the OPC UA Server
+; component over an existing install got the files on disk, the server started, and a hub still showing no Google
+; provider, no OpcServer connection and no "OPC Server Instance" role.  Asked, not assumed:  these are console windows
+; the user opened.  /SD IDOK so a silent install closes them without a prompt, as it must.
+Function CloseRunningUserProducts
+	!insertmacro UserProcRunning "Jde.Opc.Hub.exe"
+	StrCpy $3 $0
+	!insertmacro UserProcRunning "Jde.Opc.Server.exe"
+	${If} $3 == 1
+	${AndIf} $0 == 1
+		DetailPrint "No ${PRODUCT} of yours is running - nothing to close" ;said either way, so an install log shows the check ran (#37)
+	${ElseIf} $3 != 0
+	${AndIf} $0 != 0
+		;neither is known to be running, and a probe did not answer (#14) - tasklist or cmd refused to this user, by policy say.
+		;Not a reason to refuse the install:  a locked exe still stops the Files below with its own box.  But not "nothing to close".
+		DetailPrint "Could not check whether ${PRODUCT} is running (tasklist answered $3 / $0) - if it is, close it:  Setup cannot replace a running copy's files"
+	${Else}
+		MessageBox MB_OKCANCEL|MB_ICONINFORMATION "${PRODUCT} is already running from an earlier install.  Setup has to close it: its files cannot be replaced while it runs, and a component added now is only picked up when it next starts.$\r$\n$\r$\nThe finish page's 'Start now' box brings it back." /SD IDOK IDOK closeThem
+		Abort "Close ${PRODUCT} and run Setup again"
+		closeThem:
+		;the server first:  it holds a session on the hub, and stopping it after would leave the hub logging a lost client
+		!insertmacro CloseUserProduct "Jde.Opc.Server.exe" "Jde.OpcServer"
+		!insertmacro CloseUserProduct "Jde.Opc.Hub.exe" "Jde.OpcHub"
+	${EndIf}
+FunctionEnd
+
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Components
 ;--------------------------------------------------------------------------------------------------------------------------
@@ -209,6 +328,12 @@ Section "OPC Hub" SEC_HUB
 	${If} $0 == 0
 		MessageBox MB_OK|MB_ICONSTOP "$DataDir is not writable by you.  It was created by an all-users install - choose All users, or ask an administrator." /SD IDOK
 		Abort "Data dir not writable"
+	${EndIf}
+	;before the first File, in both modes - what is running holds the images the Files below replace
+	${If} $MultiUser.InstallMode == "CurrentUser"
+		Call CloseRunningUserProducts ;see the function (#37)
+	${Else}
+		Call StopRunningServices ;see the function (reviews/m2-closing.md #4)
 	${EndIf}
 	;binaries - the exe's dir carries its dlls; the sqlite driver and the proc MODULEs come from the bin root
 	SetOutPath "$INSTDIR\OpcHub"
@@ -284,7 +409,8 @@ Section /o "OPC UA Server" SEC_OPCSERVER
 	;the hub's seeds for this component (reviews/install-issues.md #1): the Web UI's Google provider - the fresh install's login,
 	;by ruling no username is seeded - and this server as the default connection with its provider row.  <schema>*.mutation,
 	;applied by the hub's -sync inside the schema sync; the underscore names sort after access.mutation, whose provider type 7
-	;(OpcServer) they reference.  Only with this component - a hub without it has no login path, by decision.
+	;(OpcServer) they reference.  Only with this component - a hub without it has no *seeded* login (#36: it is not without a
+	;login path, since adding a server connection creates one; what it lacks is one that needs no setup).
 	SetOutPath "$DataDir\OpcHub\sql"
 	File /oname=access_google.mutation "${SRC_DIR}\libs\access\config\release-google.mutation"
 	File /oname=access_opcServer.mutation "${SRC_DIR}\libs\access\config\release-opcServer.mutation"
@@ -382,18 +508,8 @@ SectionEnd
 
 Section -Services
 	${If} $MultiUser.InstallMode == "AllUsers"
-		;a split AppServer/OpcGateway pair shares port 1967 with the hub - never beside it
-		nsExec::ExecToStack 'sc query Jde.AppServer'
-		Pop $0
-		Pop $1
-		${If} $0 == 0
-			nsExec::ExecToLog 'net stop Jde.AppServer'
-			Pop $0
-			nsExec::ExecToLog 'net stop Jde.OpcGateway'
-			Pop $0
-			MessageBox MB_OK|MB_ICONEXCLAMATION "The split Jde.AppServer / Jde.OpcGateway services are registered on this machine and share port 1967 with the hub.  They have been stopped; deregister them (each exe's -uninstall) before starting Jde.OpcHub." /SD IDOK
-		${EndIf}
-		!insertmacro StopAndRemove "Jde.OpcHub" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+		;registration only:  an earlier install's services were stopped and deregistered before the first File
+		;(StopRunningServices), so CreateService finds no ERROR_SERVICE_EXISTS and these are the new exes.
 		DetailPrint "Registering the Jde.OpcHub service"
 		nsExec::ExecToLog '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -install -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install -sync'
 		Pop $0
@@ -403,7 +519,6 @@ Section -Services
 		;the hub's port: the Web UI and the api, for a browser or a client on any other machine (#11)
 		!insertmacro OpenFirewallPort "Jde OpcHub (TCP 1967)" "1967" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe"
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
-			!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
 			DetailPrint "Registering the Jde.OpcServer service"
 			nsExec::ExecToLog '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -install -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync'
 			Pop $0
@@ -432,6 +547,10 @@ Section -Services
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
 		${If} $RuntimeOld == 1
 			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nThe Web UI is the link below."
+		${ElseIf} $UserClosed == 1
+			;#37:  the copy that was running is gone, and starting it again is the only way this install - its new files, and
+			;any seeds a component added with it - takes effect.  Said here because this mode has no service to do it.
+			StrCpy $FinishText "${PRODUCT} is installed for your account.  The copy that was running was closed to replace its files - start it again for this install to take effect: the box below, or the Start Menu folder '${COMPANY}'.$\r$\n$\r$\nThe Web UI is the link below, once it runs."
 		${Else}
 			StrCpy $FinishText "${PRODUCT} is installed for your account: it starts when you finish (the box below), or from the Start Menu folder '${COMPANY}' later.$\r$\n$\r$\nThe Web UI is the link below, once it runs."
 		${EndIf}
@@ -439,6 +558,11 @@ Section -Services
 SectionEnd
 
 Section -Post
+	;the licenses on disk, not just on the wizard's page: ours, and the notices of the third-party code inside the exes and
+	;dlls (build/third-party-notices.sh) - MIT, BSD and Apache-2.0 ask for theirs to travel with the binaries
+	SetOutPath "$INSTDIR"
+	File /oname=LICENSE.txt "${SRC_DIR}\LICENSE"
+	File "${SRC_DIR}\THIRD-PARTY-NOTICES.txt"
 	WriteUninstaller "$INSTDIR\Uninstall.exe"
 	${If} $MultiUser.InstallMode == "AllUsers"
 		StrCpy $1 "/AllUsers"
@@ -495,6 +619,37 @@ Function ModeChanged
 	${Else}
 		SectionSetText ${SEC_AUTOSTART} "Start at logon"
 	${EndIf}
+FunctionEnd
+
+;reviews/m2-closing.md #4 - the all-users counterpart of CloseRunningUserProducts, and for the same reason.  These stops
+;used to sit in -Services, which NSIS runs in declaration order:  after "OPC Hub" and "OPC UA Server" had already written
+;the exes and dlls.  Windows holds a running image against writes, so a reinstall over live services failed the binary
+;Files - an Ignore on the Abort/Retry/Ignore box, or under /S no box at all - while every unlocked file beside them, the
+;settings mirror and the recreated sql\ seeds, was replaced:  new configs and new seeds, re-registered on the *previous*
+;release's exe, with the new DisplayVersion in Add/Remove Programs and nothing to say so.  Here it is the old exe that
+;deregisters itself, against the old settings it was installed with;  on a first install there is no exe and the macro
+;skips it.  Below the sections because it reads SEC_OPCSERVER.
+Function StopRunningServices
+	;a split AppServer/OpcGateway pair shares port 1967 with the hub - never beside it
+	nsExec::ExecToStack 'sc query Jde.AppServer'
+	Pop $0
+	Pop $1
+	${If} $0 == 0
+		nsExec::ExecToLog 'net stop Jde.AppServer'
+		Pop $0
+		nsExec::ExecToLog 'net stop Jde.OpcGateway'
+		Pop $0
+		MessageBox MB_OK|MB_ICONEXCLAMATION "The split Jde.AppServer / Jde.OpcGateway services are registered on this machine and share port 1967 with the hub.  They have been stopped; deregister them (each exe's -uninstall) before starting Jde.OpcHub." /SD IDOK
+	${EndIf}
+	;the server first, as the uninstaller does:  it depends on the hub and holds a session on it.  Only when this install
+	;brings the component - one an earlier install registered and this one leaves unticked is stopped with the hub (/y)
+	;and stays registered, its files untouched.
+	${If} ${SectionIsSelected} ${SEC_OPCSERVER}
+		!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
+		!insertmacro WaitServiceGone "Jde.Opc.Server.exe" "Jde.OpcServer"
+	${EndIf}
+	!insertmacro StopAndRemove "Jde.OpcHub" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+	!insertmacro WaitServiceGone "Jde.Opc.Hub.exe" "Jde.OpcHub"
 FunctionEnd
 
 ;the install-mode page's leave: a current-user install into a data root it cannot write stays on the page
@@ -620,7 +775,7 @@ Section "Uninstall"
 		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 1967)"
 		!insertmacro CloseFirewallPort "Jde OpcServer (TCP 4840)"
 	${Else}
-		nsExec::ExecToLog 'taskkill /F /IM Jde.Opc.Server.exe /IM Jde.Opc.Hub.exe'
+		nsExec::ExecToLog 'cmd /c taskkill /F /IM Jde.Opc.Server.exe /IM Jde.Opc.Hub.exe ${USER_FILTER}' ;this user's alone, as the installer's close is - an all-users service of the same image is not this mode's to end (#13)
 		Pop $0
 		DeleteRegValue HKCU "${REG_RUN}" "Jde.OpcHub"
 		DeleteRegValue HKCU "${REG_RUN}" "Jde.OpcServer"
@@ -630,6 +785,8 @@ Section "Uninstall"
 	RMDir /r "$INSTDIR\OpcHub"
 	RMDir /r "$INSTDIR\OpcServer"
 	RMDir /r "$INSTDIR\Web"
+	Delete "$INSTDIR\LICENSE.txt"
+	Delete "$INSTDIR\THIRD-PARTY-NOTICES.txt"
 	Delete "$INSTDIR\Uninstall.exe"
 	RMDir "$INSTDIR"
 	RMDir /r "$ConfigDir"

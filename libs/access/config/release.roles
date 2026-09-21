@@ -8,6 +8,8 @@ mutation{
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"instances" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"instanceTagLevels" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
+	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"sessions" } } )
+	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"search" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
 
 	createRole( slug:"sa", name:"System Administrator", description:"Users, roles, permissions, certificate trust and log settings. Grants access to everyone else." )
@@ -35,12 +37,13 @@ mutation{
 	addRole( slug:"owner", permissionRight:{ allowed:29, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
 	addRole( slug:"owner", permissionRight:{ allowed:93, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
 
-	createRole( slug:"engineer", name:"Engineer", description:"Configures server connections, the nodes exposed from them, and subscriptions. No user administration." )
+	createRole( slug:"engineer", name:"Engineer", description:"Configures server connections - adds, edits and removes them. What a user may do on a connection's nodes is the OPC server's own decision, not a role's. No user administration." )
 	addRole( slug:"engineer", role:{ slug:"viewer" } )
+	addRole( slug:"engineer", permissionRight:{ allowed:13, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
 
-	createRole( slug:"operator", name:"Operator", description:"Runs the process - reads and writes values on assigned equipment. No configuration." )
+	createRole( slug:"operator", name:"Operator", description:"Runs the process - browses and watches values. Writing a value is the OPC server's own decision, not a role's. No configuration." )
 	addRole( slug:"operator", role:{ slug:"viewer" } )
 
-	createRole( slug:"maint-tech", name:"Maintenance Technician", description:"Tests and calibrates equipment; reads logs to diagnose faults. No configuration." )
+	createRole( slug:"maint-tech", name:"Maintenance Technician", description:"Diagnoses faults - browses values and reads logs. Writing a value is the OPC server's own decision, not a role's. No configuration." )
 	addRole( slug:"maint-tech", role:{ slug:"viewer" } )
 }

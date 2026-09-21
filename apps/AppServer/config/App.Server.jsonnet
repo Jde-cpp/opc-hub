@@ -39,7 +39,8 @@ function( sync=false )
 		},
 	},
 	access:{
-		//operator drop-dir for enrollment trust anchors: a client cert (.pem/.crt) copied here authorizes its key-login enrollment. Rescanned on failed verification - no restart needed.
+		//operator drop-dir for enrollment trust anchors: a client cert (.pem, .crt, .der or .cer - either encoding parses)
+		//copied here authorizes its key-login enrollment. Rescanned on failed verification - no restart needed.
 		//Production products only.  Every cert under these dirs can enroll a user whose identity is the cert's CN, so a
 		//test/dev product dir here would let anything that writes one provision an account in the production access db;
 		//the test binaries anchor their own dirs in their own configs (Opc.Server.Tests.jsonnet, Opc.Tests.jsonnet).
