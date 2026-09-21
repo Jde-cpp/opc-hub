@@ -173,7 +173,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//Nothing but that logout ever removed an entry, so opcSessions reported every session that had touched the slug since
 	//startup, an ever-climbing number that opcConnections (drained by the idle ttl) never matched.
 	TEST_F( QLTests, deadSessionsAreNotCounted ){
-		let count = []ι->uint32{
+		let count = []ι->uint32 {
 			uint32 y{};
 			for( let& c : SessionCounts() ){
 				if( c.Connection==OpcServerSlug )
