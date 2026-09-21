@@ -2,6 +2,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../UAClient.h"
+#include "../types/UAClientException.h"
 #include "Subscriptions.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
 
@@ -58,7 +59,11 @@ namespace Jde::Opc::Gateway{
 			void** contexts = nullptr;
 			request->subscriptionId = subscriptionId;
 
-			UAε( UA_Client_MonitoredItems_createDataChanges_async(_client->UAPointer(), *request, contexts, dataChangeCallbacks.data(), deleteCallbacks.data(), createDataChangesCallback, this, &_requestId) );
+			//UACε, as every other submission:  this one used UAε, so a create refused because the connection had gone never reached
+			//RemoveIfDisconnected - BadServerNotConnected included - and a rebuild read the refusal on a client still `Connected` as
+			//the server's, dropping its listeners (reviews/m2-closing.md #2).  The take behind it moves this request to _takenCalls;
+			//GetResult still answers every node with the refusal.
+			UACε( UA_Client_MonitoredItems_createDataChanges_async(_client->UAPointer(), *request, contexts, dataChangeCallbacks.data(), deleteCallbacks.data(), createDataChangesCallback, this, &_requestId) );
 			UA_CreateMonitoredItemsRequest_clear( &*request );
 			//TRACET( MonitoringTag, "[{:x}.{:x}]DataSubscriptions - {}", Handle(), requestId, serialize(request.ToJson()) );
 			_client->Process( _requestId, "MonitoredItems_createDataChanges" );//TODO handle BadSubscriptionIdInvalid

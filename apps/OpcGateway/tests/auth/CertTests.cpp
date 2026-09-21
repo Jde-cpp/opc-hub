@@ -87,6 +87,40 @@ namespace Jde::Opc::Gateway::Tests{
 			fs::remove( path, ec );
 	}
 
+	//reviews/m2-closing.md #7: certificate.managed:false - the operator's own pair, one a CA issued - was parsed on
+	///gateway/issuedCerts and then ignored:  this path took EnsureKeyCertificate's re-issue predicate without the guard in
+	//front of it, so a pair whose SAN was not the block's was overwritten in place with a self-signed one.  A changed uri is
+	//the drift that re-issues a managed certificate (the first test);  it must leave this one exactly as found.  And a pair
+	//that is not there is the operator's to supply - said with the file's name, since it carries the slug.
+	TEST_F( CertFileTests, AnUnmanagedPairIsLeftAsFound ){
+		constexpr sv missing{ "unmanagedMissingTest" };
+		let path = UAClient::CryptoSettings( ServerCnnctnNK{Slug} ).Certificate.Path;
+		UAClient::EnsureCertificate( ServerCnnctnNK{Slug}, "urn:operator.supplied" );//stands in for the pair the operator brought.
+		let before = Crypto::ReadCertificate( path );
+
+		let saved = Settings::FindDefaultObject( "/gateway/issuedCerts" );
+		struct Restore final{ const jobject& Saved; ~Restore(){ try{ Settings::Set("/gateway/issuedCerts", Saved); }catch( const std::exception& ){} } } restore{ saved };//every later client in the process reads it.
+		Settings::Set( "/gateway/issuedCerts/certificate/managed", false );
+		ASSERT_FALSE( UAClient::CryptoSettings(ServerCnnctnNK{Slug}).Certificate.Managed );
+
+		EXPECT_NO_THROW( UAClient::EnsureCertificate(ServerCnnctnNK{Slug}, "urn:what.the.config.says") );
+		EXPECT_EQ( Crypto::ReadCertificate(path), before ) << "the operator's certificate was replaced";
+		EXPECT_EQ( Crypto::Certificate{Crypto::ReadCertificate(path)}.SanUri(), "urn:operator.supplied" );
+
+		let absent = UAClient::CryptoSettings( ServerCnnctnNK{missing} ).Certificate.Path;
+		std::error_code ec;
+		fs::remove( absent, ec );//what a run without the guard leaves behind - in the directory the suite trusts.
+		struct Remove final{ const fs::path& Path; ~Remove(){ std::error_code ec; fs::remove( Path, ec ); } } remove{ absent };
+		try{
+			UAClient::EnsureCertificate( ServerCnnctnNK{missing}, "urn:what.the.config.says" );
+			ADD_FAILURE() << "no pair for the connection, and nothing said so";
+		}
+		catch( const std::exception& e ){
+			EXPECT_TRUE( string{e.what()}.contains(absent.string()) ) << e.what();//the file to supply, by name.
+		}
+		EXPECT_FALSE( fs::exists(absent) ) << "a certificate was issued for a block that says not to";
+	}
+
 	//server-side counterpart to ReissuesWhenApplicationUriChanges: the OpcServer must trust a transport cert re-issued
 	//AFTER its startup snapshot (UATrust rescans on a failed verify) - pre-fix every secured connect fails
 	//BadCertificateUntrusted until the server restarts. IssuedToken auth, not Certificate: certAuth swaps the transport

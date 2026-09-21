@@ -19,6 +19,10 @@ function( sync=false )
 			limit: 20, //default rows when the query passes no limit
 			includeServer: false //index the ns=0 Server object's diagnostics subtree
 		},
+		//certificate.managed:false (default true) presents your own pair - one a CA the OPC servers trust issued - as found:  never
+		//issued, never re-issued on expiry or a changed applicationUri.  One private key for the block (privateKey.path), and one
+		//certificate per connection, looked for at <certificate.path, or the default>.<connection slug>.pem - a copy of the same
+		//file will do;  a connection whose file is missing fails with that file's name.
 		issuedCerts: {
 			certificate:{
 				subjectAltName: "URI:" + applicationUri,

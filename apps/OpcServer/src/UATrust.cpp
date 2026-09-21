@@ -41,7 +41,8 @@ namespace Jde::Opc::Server{
 				for( let& entry : fs::directory_iterator(dir) ){
 					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a UA client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
 						++skipped;
-						DBG( "Not a certificate, skipped: '{}' ({} are read).", entry.path().string(), Crypto::CertificateExtensions );
+						let level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
+						LOG( level, _tags, "Passed over, not a certificate by its extension: '{}' - no client is trusted from it.  {} are read.", entry.path().string(), Crypto::CertificateExtensions );
 						continue;
 					}
 					seen.emplace( entry.path() );
@@ -84,6 +85,8 @@ namespace Jde::Opc::Server{
 		//install-issues #33:  an empty trust list and a trust list of files this build would not read look identical from the
 		//outside - the client is refused either way, and the operator has just copied its certificate in.  Warned once per
 		//rescan that anchored nothing, not per file:  a failed verify rescans, so a per-file line would repeat under a flood.
+		//It is the *whole* list, though, and an installed server's is never empty (the hub's own certificate is in it) - the
+		//file beside that one is named by the scan's own once-only Warning, above.
 		if( certs.empty() && skipped )
 			WARN( "No trusted client certificates under /access/trustedCertDirs - {} file{} passed over for {} extension.  {} are read.", skipped, skipped==1 ? " was" : "s were", skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
 		list.specifiedLists |= UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;//always, even empty - UA_TrustListDataType_set only replaces sections named here, so a shrink-to-empty must carry the mask.

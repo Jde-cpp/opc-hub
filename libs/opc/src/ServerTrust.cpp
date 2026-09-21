@@ -63,7 +63,8 @@ namespace Jde::Opc{
 					for( let& entry : fs::directory_iterator(dir) ){
 						if( !Crypto::IsCertificateFile(entry.path()) ){
 							++c.Skipped;
-							DBGT( _tags, "[{}]Not a certificate, skipped: '{}' ({} are read).", hex(c.Handle), entry.path().string(), Crypto::CertificateExtensions );
+							let level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet:  this scan runs on every connect - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
+							LOG( level, _tags, "[{}]Passed over, not a certificate by its extension: '{}' - no server is trusted from it.  {} are read.", hex(c.Handle), entry.path().string(), Crypto::CertificateExtensions );
 							continue;
 						}
 						try{
@@ -114,15 +115,15 @@ namespace Jde::Opc{
 		_override = move( dirs );
 	}
 	α ServerTrust::Install( UA_ClientConfig& config, sv settingsRoot, Jde::Handle h, str url, SL sl )ε->void{
-		vector<fs::path> dirs;
+		//On the optional, not on what it holds:  an override of no directories is the plainest way to say "this client trusts
+		//nothing", and testing the copy for empty read it as "no override" - the production list came back in silence, and a
+		//test written that way passed for trusting the very anchors it meant to leave out (reviews/m2-closing.md #12).
+		optional<vector<fs::path>> overridden;
 		{
 			std::lock_guard _{ _overrideMutex };
-			if( _override )
-				dirs = *_override;
+			overridden = _override;
 		}
-		if( dirs.empty() )
-			dirs = settingDirs( settingsRoot );
-		Install( config, Enabled(settingsRoot), dirs, h, url, settingsRoot, sl );
+		Install( config, Enabled(settingsRoot), overridden ? *overridden : settingDirs(settingsRoot), h, url, settingsRoot, sl );
 	}
 	α ServerTrust::Install( UA_ClientConfig& config, bool verify, const vector<fs::path>& dirs, Jde::Handle h, str url, sv settingsRoot, SL sl )ε->void{
 		auto& g = config.certificateVerification;

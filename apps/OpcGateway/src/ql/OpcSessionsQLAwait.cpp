@@ -33,7 +33,7 @@ namespace Jde::Opc::Gateway{
 
 	α OpcSessionsQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
-			QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl ); //enforced once an admin enables the gateway/sessions resource.
+			QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl ); //gateway/sessions - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced;  enforced once an admin says so.
 			let counts = SessionCounts();
 			let userQL = _query.FindTable( "user" );
 			let connectionQL = _query.FindTable( "connection" );

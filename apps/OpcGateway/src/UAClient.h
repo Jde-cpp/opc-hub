@@ -45,7 +45,12 @@ namespace Jde::Opc::Gateway{
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
 		Ω ConnectionLost( sp<UAClient>&& client )ι->bool;//RemoveClient for a client whose connection failed:  what it was monitoring is parked and reconnected first.
-		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;
+		//The statuses that say the connection went, not that the server turned the request down - the one definition Retry, RetryVoid,
+		//RemoveIfDisconnected and the rebuild read (reviews/m2-closing.md #2).  BadServerNotConnected:  the submit found the channel
+		//already down.  BadConnectionClosed:  it went under the submit - sendRequest hands back connectStatus, or the send failed.
+		//BadSecureChannelClosed:  the same, and what open62541 answers every call in flight with when the channel closes.
+		Ω IsConnectionLoss( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADSERVERNOTCONNECTED || sc==UA_STATUSCODE_BADCONNECTIONCLOSED || sc==UA_STATUSCODE_BADSECURECHANNELCLOSED; }
+		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
 		Ω Unsubscribe( const sp<IDataChange>& dataChange )ι->void;//drop dataChange from every client's monitored items - a websocket session's OnClose, which is the only thing that ends its subscriptions.
 		//A connection failure destroys the client but not what it was monitoring: that is parked and reconnected (soak-findings
@@ -181,7 +186,7 @@ namespace Jde::Opc::Gateway{
 		//TODO limit retry attempts.
 		let slug = client->Slug();
 		let credential = client->Credential;
-		let lost = e.Code()==UA_STATUSCODE_BADCONNECTIONCLOSED || e.Code()==UA_STATUSCODE_BADSERVERNOTCONNECTED;
+		let lost = IsConnectionLoss( (StatusCode)e.Code() );
 		if( lost )//a failed connection keeps what the client monitored; any other failure removes it as before.
 			ConnectionLost( move(client) );
 		else

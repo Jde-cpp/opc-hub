@@ -77,6 +77,10 @@ namespace Jde::Opc::Emulator{
 				config->applicationUri = AllocUAString( _serverApplicationUri );
 			UA_String_clear( &config->clientDescription.applicationUri );
 			config->clientDescription.applicationUri = AllocUAString( _applicationUri );
+			//The floor (reviews/m2-closing.md #1):  None is carried for the discovery channel alone.  Without a configured mode
+			//matchEndpoint takes whichever endpoint claims the highest securityLevel - the server's word, read off that
+			//unauthenticated channel - so a None endpoint claiming 255 would carry our process values in the clear.
+			config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
 			//the user token rides an encrypted policy (/opc/userTokenPolicyUri) - this is the policy that encrypts it.
 			auto grown = (UA_SecurityPolicy*)UA_realloc( config->authSecurityPolicies, sizeof(UA_SecurityPolicy)*(config->authSecurityPoliciesSize+1) );
 			check( grown ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADOUTOFMEMORY, "authSecurityPolicies", sl );

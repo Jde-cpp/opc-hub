@@ -115,8 +115,7 @@ namespace Jde::Opc::Gateway{
 	//connection failed.  RemoveClient used to park as well, so a test suite's teardown revived whatever a failed test left monitored, a
 	//second after gtest had deleted the fixture its pushes wrote into (subscription-disconnect #10).
 	α UAClient::ConnectionLost( sp<UAClient>&& client )ι->bool{
-		client->Connected = false;
-		stashPending( client );//before anything else drops it: whatever this client was monitoring has to outlive it, or the subscriptions die here.
+		stashPending( client );//before anything else drops it: whatever this client was monitoring has to outlive it, or the subscriptions die here.  Clears Connected - there, not here:  see it.
 		return Deregister( move(client) );
 	}
 	α UAClient::RemoveClient( sp<UAClient>&& client )ι->bool{
@@ -145,8 +144,25 @@ namespace Jde::Opc::Gateway{
 		client = nullptr;
 		return erased;
 	}
+	//A refused submission, from UACε.  It tested BadServerNotConnected alone, which open62541 returns only for a channel already
+	//down when the call starts;  one that goes under the call comes back as connectStatus - BadConnectionClosed,
+	//BadSecureChannelClosed, or whatever ERR the server closed with - and the client stayed `Connected` for a rebuild to misread
+	//(reviews/m2-closing.md #2).  So:  the statuses that mean it, or the refusal being connectStatus itself - sendRequest's
+	//`return client->connectStatus`, after which the processing loop's next run_iterate fails and deregisters the client anyway;
+	//this only gets there before the caller's catch reads Connected.  A refusal that is neither - BadOutOfMemory, a
+	//BadSubscriptionIdInvalid found locally, a request too large to encode - leaves the client alone, as before.
+	//Only a client still thought connected:  one already lost has been parked, and one RemoveClient discarded must not be -
+	//ConnectionLost would park what it was monitoring, and a late submission on it would bring that back (subscription-disconnect #10).
 	α UAClient::RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void{
-		if( sc==UA_STATUSCODE_BADSERVERNOTCONNECTED && client )
+		if( !client || !sc || !client->Connected )
+			return;
+		auto lost = IsConnectionLoss( sc );
+		if( !lost ){
+			StatusCode connectStatus{};
+			UA_Client_getState( client->UAPointer(), nullptr, nullptr, &connectStatus );
+			lost = connectStatus==sc;
+		}
+		if( lost )
 			ConnectionLost( sp<UAClient>{client} );
 	}
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
@@ -272,6 +288,17 @@ namespace Jde::Opc::Gateway{
 	//through the der ctor (URI among them; otherName is excluded on both sides), so a lossy rendering cannot re-issue in a loop.
 	α UAClient::EnsureCertificate( const ServerCnnctnNK& slug, sv uri, SL sl )ε->void{
 		let& settings = CryptoSettings( slug, uri );
+		//EnsureKeyCertificate's guard, which came across with neither of this path's rewrites:  certificate.managed:false is the
+		//operator's pair, used as found - the expiry and SAN checks below re-issue only what this product issued, and a
+		//certificate a CA vouched for must never be replaced by a self-signed one (web-certs3 (b)).  It was parsed on this block
+		//and ignored, so a CA-issued channel certificate whose SAN was not /gateway/issuedCerts' was overwritten in place behind
+		//one INFO line (reviews/m2-closing.md #7).  Both files are the operator's to supply, and the certificate's name carries
+		//the slug, so a missing one is named rather than left to fail as a file that could not be read.
+		if( !settings.Certificate.Managed ){
+			THROW_IFSL( !fs::exists(settings.PrivateKey.Path), "/gateway/issuedCerts/certificate/managed is false and the private key '{}' does not exist - supply the pair for connection '{}', or set managed:true to have one issued.", settings.PrivateKey.Path.string(), slug );
+			THROW_IFSL( !fs::exists(settings.Certificate.Path), "/gateway/issuedCerts/certificate/managed is false and connection '{}' has no certificate at '{}' - supply the pair, or set managed:true to have one issued.", slug, settings.Certificate.Path.string() );
+			return;
+		}
 		//the same predicate EnsureKeyCertificate uses for the web certificates - missing, expired or expiring, or the SAN (here the
 		//gateway's own applicationUri, which a server holds against what we advertise) drifted - which is also how a certificate
 		//issued before security-matrix #8, its SAN the server's uri, replaces itself - so the two paths cannot diverge again:  this
@@ -307,6 +334,8 @@ namespace Jde::Opc::Gateway{
 		//takes the endpoint with the highest securityLevel among the policies it finds here, so a server that offers an Aes policy
 		//gets it, and one that offers Basic256Sha256 alone - Kepware - gets that (reviews/security-matrix.md #4; SecurityPolicyTests).
 		//The deprecated ones (Basic128Rsa15, Basic256) are not carried, and a server that offers nothing else is told so (StateCallback).
+		//securityLevel is the *server's* claim, read off the unauthenticated discovery channel, so it only ever ranks endpoints
+		//that already meet the floor pinned below (config->securityMode) - it never chooses the mode (reviews/m2-closing.md #1).
 		using PolicyCtor = UA_StatusCode(*)( UA_SecurityPolicy*, const UA_ByteString, const UA_ByteString, const UA_Logger* );
 		const array<PolicyCtor,3> securedPolicies{ &UA_SecurityPolicy_Basic256Sha256, &UA_SecurityPolicy_Aes128Sha256RsaOaep, &UA_SecurityPolicy_Aes256Sha256RsaPss };//_securedPolicyUris, below, names the same three.
 		const uint size = addSecurity ? 1+securedPolicies.size() : 1; ASSERT( !config->securityPoliciesSize );
@@ -335,7 +364,13 @@ namespace Jde::Opc::Gateway{
 		if( addSecurity ){
 			UA_String_clear( &config->applicationUri );//clear any existing value before overwriting so the default isn't leaked.
 			config->applicationUri = UA_STRING_ALLOC( serverUri.c_str() );
-			INFO( "[{}]Offering Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss with certificate '{}'", hex(Handle()), settings.Certificate.Path.string() );
+			//The floor:  a certificateUri means Sign & Encrypt, and this is the only mode filter open62541 has (matchEndpoint:
+			//configuredSM > 0).  Unset, the None policy the discovery channel needs also matches a None *endpoint*, and whoever
+			//answers GetEndpoints - the server, or anything on-path - takes the channel to None/None by claiming securityLevel 255
+			//on it, with the real server's public certificate passing ServerTrust (reviews/m2-closing.md #1; SecurityPolicyTests).
+			//The discovery channel is untouched - it opens on None before any endpoint is matched (initSecurityPolicy).
+			config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+			INFO( "[{}]Offering Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss, Sign & Encrypt only, with certificate '{}'", hex(Handle()), settings.Certificate.Path.string() );
 			for( let ctor : securedPolicies ){
 				sc = ctor( &securityPolicies.get()[initialized], *certificate, *privateKey, &_logger ); THROW_IFX( sc, UAClientException(sc, Handle()) );
 				++initialized;
@@ -518,15 +553,19 @@ namespace Jde::Opc::Gateway{
 					let allowPlain = UA_Client_getConfig( ua )->allowNonePolicyPassword;
 					let secretType = type==ETokenType::Username || type==ETokenType::IssuedToken;
 					let noneUri = ToString( UA_SECURITY_POLICY_NONE_URI );
-					//What this client could have presented:  on an endpoint whose channel policy it carries (None always, a secured one
-					//with a certificateUri), a token under a secured policy it carries - or under None where that puts no secret on the
+					//What this client could have presented:  on an endpoint it can reach (None without a certificateUri;  with one, a
+					//Sign & Encrypt endpoint under a secured policy it carries), a token under a secured policy it carries - or under None where that puts no secret on the
 					//wire unencrypted:  an anonymous token, a Sign & Encrypt channel, or the operator's allowPlaintextPassword.
-					bool offered{}, presentable{}, refusedPlain{}, securedOffer{};
+					bool offered{}, presentable{}, refusedPlain{}, securedOffer{}, belowFloor{};
 					flat_set<string> foreign;//policies the server asks for and the gateway does not carry - Basic256, an ECC one.
 					for( let& p : endpoints.Policies ){
 						if( p.Type!=type )
 							continue;
 						offered = true;
+						if( !noUri && p.Mode!=UA_MESSAGESECURITYMODE_SIGNANDENCRYPT ){//under the floor a certificateUri pins (Configuration) - out of reach, whatever securityLevel it claims (m2-closing #1).
+							belowFloor = true;
+							continue;
+						}
 						let inClear = secretType && p.Policy==noneUri && p.Mode!=UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
 						let encryptable = type==ETokenType::Anonymous || carried( p.Policy ) || ( p.Policy==noneUri && type!=ETokenType::Certificate );
 						if( !encryptable && p.Policy!=noneUri )
@@ -556,6 +595,8 @@ namespace Jde::Opc::Gateway{
 						detail = Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None, and the unsecured endpoint of '{}' takes {} authentication only under a security policy the gateway does not carry ([{}]; it carries {}) - try the connection with its certificateUri set to the server's applicationUri '{}'", client->Slug(), client->Url(), TokenTypeName(type), foreignNames, _securedPolicyNames, endpoints.ServerUri );
 					else if( foreign.size() )
 						detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, _securedPolicyNames );
+					else if( belowFloor )
+						detail = Ƒ( "'{}' has a certificateUri, which means Sign & Encrypt, and '{}' offers {} authentication only on endpoints that are not (None or Sign) - refused rather than downgraded.  Enable a Sign & Encrypt endpoint on the server, or clear the connection's certificateUri to connect unsecured", client->Slug(), client->Url(), TokenTypeName(type) );
 					if( let clientUri = client->ApplicationUri(); detail.empty() && clientUri.size() && !endpoints.ServerUri.empty() && clientUri!=endpoints.ServerUri )
 						detail = Ƒ( "the connection's certificateUri '{}' is not the applicationUri of the server at '{}', which is '{}' - every endpoint is filtered out; correct the certificateUri", clientUri, client->Url(), endpoints.ServerUri );
 					if( detail.size() )
@@ -821,10 +862,23 @@ namespace Jde::Opc::Gateway{
 	//The client can die under it - a server still starting drops the channel again - and then nothing else knows what this
 	//rebuild had not yet put back:  the dying client's stashPending finds only the creates that completed.  So every node ends one
 	//of four ways - restored, refused by a live server (a retry would be refused again), unsubscribed meanwhile, or parked for the
-	//reconnect chain because the client died (subscription-disconnect #2).  Connected separates refused from parked:  ConnectionLost
-	//clears it before anything can fail.  A node restored just before the client dies is not parked here:  its create completed,
+	//reconnect chain because the client died (subscription-disconnect #2).  Connected separates refused from parked - and it used
+	//to be taken on trust, as something ConnectionLost had cleared before anything could fail.  It had not:  the failure is
+	//usually the first the gateway hears of the loss, and a step that failed with the connection's status on a client still
+	//`Connected` was read as the server's refusal - nothing parked, no chain, the live views gone for good, and by the time the
+	//processing loop deregistered the client there was nothing left on it to park (reviews/m2-closing.md #2).  So the rebuild
+	//reads the failure itself - declareLost - and Connected is true to it before anything is decided.
+	//A node restored just before the client dies is not parked here:  its create completed,
 	//so the dying client's stashPending takes it with the rest.  A client RemoveClient discarded parks nothing:  removing it means
 	//forgetting what it monitored, and a rebuild must not bring that back (subscription-disconnect #10).
+	//
+	//ConnectionLost, not a park alone:  a parked entry's chain asks GetClient, which hands back whatever is registered, so a dead
+	//client left in _clients would be given the same rebuild a second later.  Twice is harmless - the processing loop's own call,
+	//when run_iterate fails behind this one, finds nothing on the client and no entry to erase.
+	Ω declareLost( const sp<UAClient>& client, StatusCode sc )ι->void{
+		if( UAClient::IsConnectionLoss(sc) && client->Connected && !client->Discarded )
+			UAClient::ConnectionLost( sp<UAClient>{client} );
+	}
 	Ω resubscribe( sp<UAClient> client, uint rebuild )ι->VoidTask{
 		let handle = client->Handle();
 		let slug = client->Slug();
@@ -847,8 +901,10 @@ namespace Jde::Opc::Gateway{
 				if( (uint)ack.results_size()==nodes.size() ){//fewer:  GetResult found no request - the dying client's stashPending, or this listener's close, took it.
 					auto result = ack.results().begin();
 					for( let& node : nodes ){
-						if( !(result++)->status_code() )
+						let sc = (StatusCode)(result++)->status_code();
+						if( !sc )
 							restored.emplace( node );
+						declareLost( client, sc );//a create refused, or cancelled in flight, by the connection going - not the server's word on the node.  Before the lock:  it parks under it.
 					}
 				}
 				flat_set<NodeId> dropped;//restored for a listener that unsubscribed them while the create was out.
@@ -898,6 +954,8 @@ namespace Jde::Opc::Gateway{
 		}
 		catch( runtime_error& e ){
 			subscribeError = e.what();
+			if( let p = dynamic_cast<const Exception*>(&e); p && p->HasCode() )
+				declareLost( client, (StatusCode)p->Code() );//the subscribe went the same way - park below, rather than "a live client refused it".
 		}
 		Listeners left;//never attempted:  the subscribe failed, or the client died before their turn.
 		bool start{};
@@ -1071,22 +1129,33 @@ namespace Jde::Opc::Gateway{
 	}
 	//Called as the client dies.  Deliberate teardowns park nothing: ShutdownIdle and Shutdown await MonitoredNodes::Shutdown
 	//first, which deletes the items and leaves nothing to take.
+	//
+	//Connected goes false here, under the lock and after the park - not in ConnectionLost ahead of it, where it used to.  The
+	//by-node unsubscribe (GatewaySocketSession::Unsubscribe) looks on the live clients - LiveClients(), which is Connected - and
+	//then in _pending, and between that store and this park a session's nodes were in neither:  the whole web-thread operation
+	//fits in the gap, the node was reported a failure, then parked, and the reconnect restored it for a listener that would
+	//never ask again - pushed to a view the user had closed until the socket went, its ClientCalls never empty, so
+	//DeleteMonitoring could not retire it either (reviews/m2-closing.md #5).  Now a client stays live until what it monitored is
+	//parked:  a walk that still sees it takes the node off before the take, or finds it gone and waits on this lock for the
+	//park.  After the park, not before it, for the rebuild's sake:  the take fails its in-flight create, and it reads Connected
+	//under this lock to tell that apart from a refusal (resubscribe).
 	Ω stashPending( const sp<UAClient>& client )ι->void{
-		auto monitoredNodes = client->TryMonitoredNodes();
-		if( !monitoredNodes || Process::ShuttingDown() )//nothing reconnects on the way out, and the items stay put for Shutdown's MonitoredNodes::Shutdown to delete.
-			return;
+		auto monitoredNodes = Process::ShuttingDown() ? nullptr : client->TryMonitoredNodes();//nothing reconnects on the way out, and the items stay put for Shutdown's MonitoredNodes::Shutdown to delete.
 		uint nodes{}, listenerCount{};
 		bool start{};
 		{//take and park under the one lock, as Resubscribe takes into _rebuilds:  between the two the listeners were in neither place, so
 			//UAClient::Unsubscribe's purge could miss a session closing at that instant, and the park then revived it (subscription-disconnect #14).
 			lg _{ _pendingMutex };
-			auto listeners = monitoredNodes->TakeForResubscribe();
-			if( listeners.empty() )
-				return;
-			nodes = nodeCount( listeners );
-			listenerCount = listeners.size();
-			start = parkLocked( client->Slug(), client->Credential, listeners );
+			if( monitoredNodes ){
+				let listeners = monitoredNodes->TakeForResubscribe();
+				nodes = nodeCount( listeners );
+				listenerCount = listeners.size();
+				start = parkLocked( client->Slug(), client->Credential, listeners );
+			}
+			client->Connected = false;
 		}
+		if( !listenerCount )
+			return;
 		WARN( "[{}]Connection to '{}' lost with {} monitored node(s) for {} listener(s) - reconnecting to restore them.", hex(client->Handle()), client->Slug(), nodes, listenerCount );
 		if( start )
 			startReconnect( client->Slug(), client->Credential );
@@ -1204,7 +1273,7 @@ namespace Jde::Opc::Gateway{
 	α UAClient::RetryVoid( function<void(sp<UAClient>&&) > f, UAException&& e, sp<UAClient>&& client )ι->ConnectAwait::Task{
 		let slug = client->Slug();
 		let credential = client->Credential;
-		let lost = e.Code()==UA_STATUSCODE_BADCONNECTIONCLOSED || e.Code()==UA_STATUSCODE_BADSERVERNOTCONNECTED;
+		let lost = IsConnectionLoss( (StatusCode)e.Code() );
 		if( lost )//a failed connection keeps what the client monitored; any other failure removes it as before.
 			ConnectionLost( move(client) );
 		else
