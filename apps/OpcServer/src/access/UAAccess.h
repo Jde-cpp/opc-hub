@@ -3,6 +3,8 @@
 
 namespace Jde::Opc::Server{ struct UAConfig; }
 namespace Jde::Opc::Server::UAAccess{
+	//Halfway from now to an expiry:  when to re-ask the authority about a snapshot that is still good.  See renewAhead.
+	Ξ HalfLife( TimePoint expiration )ι->TimePoint{ const auto now = Clock::now(); return expiration>now ? now+( expiration-now )/2 : expiration; }
 	struct SessionContext final{
 		SessionContext& operator=( const SessionContext& ) = delete;
 		string Endpoint;
@@ -11,6 +13,8 @@ namespace Jde::Opc::Server::UAAccess{
 		UserPK UserPK;
 		TimePoint LastRenewal{};//Throttles the renewal, so a session the authority says is genuinely gone costs one round trip per interval, not one per node access.
 		bool Answered{};//the authority has since answered for this Expiration - so it is its verdict, not a stale snapshot, and gets no grace.
+		TimePoint RenewAt{ SessionId ? HalfLife(Expiration) : TimePoint::max() };//when to ask ahead of the lapse;  never, with no session to ask about.
+		bool Denied{};//the lapse has been logged - the callbacks ask twice a second per monitored item, the log says it once.
 	};
 
 	α Init( UAConfig& config )ε->void;

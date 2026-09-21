@@ -28,9 +28,6 @@
 		{
 			"path": ".",
 			"name": "src"
-		},
-		{
-			"path": "../reviews"
 		}
 	]
 }

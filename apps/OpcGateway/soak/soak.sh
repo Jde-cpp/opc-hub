@@ -19,10 +19,27 @@
 #
 #   soak.sh [--duration PT24H] [--run-dir DIR] [--smoke] [--build-dir DIR]
 #           [--warmup PT1H] [--quiet-interval PT6H] [--quiet-period PT10M]
+#           [--no-grant-restart] [--read-back] [--session-timeout PT2M]
 #           [--external] [--external-url opc.tcp://host:port] [--external-uri URI]
 #           [--external-user USER] [--external-pwd PWD]
 #
 #   --smoke   10-minute validation run: PT30S status samples, quiet window at 3m for 1m.
+#
+#   --no-grant-restart  do the rights grant but do NOT restart OpcServer afterwards, so the acl reaches it only
+#               through the live event path.  The restart is a workaround for soak-findings #4 (live acl events
+#               never update a split-process OpcServer's in-memory rights, and its own resource registration races
+#               the startup AssignRights snapshot); with it in place every run measures a deterministically
+#               authorized user and #4's fixes are never scored.  Expect one of three outcomes, all of them data:
+#               writes authorized (the live path works, or first boot came up open), every write denied with
+#               BadUserAccessDenied (the acl never reached the running OpcServer), or a run that differs from the
+#               last one on identical config (the registration race).  Read opcserver/console.log and
+#               client/grant.log together with the verdict.
+#
+#   --read-back  hand the client -readBack, so every updateVariable asks for { value } and checks the echo.  The
+#               default omits the result-request: soak-findings #6 recorded the read-back as never resuming on a
+#               split-process localhost stack.  That was most likely #2 - a noexcept QuerySync that terminated the
+#               process on an exception response - fixed 09-16, which is what this re-tests.  A wrong or missing
+#               echo counts as an ordinary write failure, so a still-broken #6 ends as a FAIL, not a hang.
 #
 #   --external  add a second gateway connection to an externally-managed OPC-UA server - it is NOT launched,
 #               stopped, or RSS-monitored here, only pre-checked for reachability. The other --external-* flags
@@ -41,6 +58,12 @@
 #   --quiet-interval  idle gap between write bursts (client default PT6H - never fires in a run under 6h)
 #   --quiet-period    how long each idle window lasts (client default PT10M)
 #
+#   --session-timeout  the AppServer's /http/timeout and /http/socketTimeout (default P1D, production's) - how long a web
+#               session lives without being slid.  The client's session is slid by nothing but the OpcServer's renewal of
+#               its expiry snapshot, so this is the wall soak-findings #13 hit: every write denied from exactly one
+#               timeout in, which at P1D only a run of a day or more reaches.  PT2M with --duration PT10M crosses it
+#               several times in a run of minutes; a PASS is the renewal working.
+#
 # Verdict criteria (verdict.json + exit code):
 #   - soak client exit 0 (completed, zero misses/writeFailures/socketDrops/statusFailures; a failed write is re-sent up to
 #     /soak/writeRetries times and a missed push re-tried with a fresh value up to /soak/missRetries times (both default 2)
@@ -57,9 +80,12 @@ duration="PT24H"
 runDir=""
 smoke=0
 buildDirOverride=""
+noGrantRestart=0
+readBack=0
 warmup=""
 quietInterval=""
 quietPeriod=""
+sessionTimeout="P1D"
 external=0
 externalUrl=""
 externalUri=""
@@ -73,7 +99,10 @@ while [[ $# -gt 0 ]]; do
 		--warmup) warmup="$2"; shift 2;;
 		--quiet-interval) quietInterval="$2"; shift 2;;
 		--quiet-period) quietPeriod="$2"; shift 2;;
+		--session-timeout) sessionTimeout="$2"; shift 2;;
 		--smoke) smoke=1; duration="PT10M"; shift;;
+		--no-grant-restart) noGrantRestart=1; shift;;
+		--read-back) readBack=1; shift;;
 		--external) external=1; shift;;
 		--external-url) external=1; externalUrl="$2"; shift 2;;
 		--external-uri) external=1; externalUri="$2"; shift 2;;
@@ -235,11 +264,11 @@ startIso=$(date -u +%Y-%m-%dT%H:%M:%S)
 ulimit -c unlimited 2>/dev/null
 
 cat >"$runDir/manifest.json" <<EOF
-{ "sha": "$(git -C "$repo" rev-parse HEAD 2>/dev/null)", "start": "$startIso", "duration": "$duration",
+{ "sha": "$(git -C "$repo" rev-parse HEAD 2>/dev/null)", "start": "$startIso", "duration": "$duration", "sessionTimeout": "$sessionTimeout",
   "buildDir": "$(np "$buildDir")", "os": "$(uname -s)", "smoke": $smoke, "host": "$(hostname)" }
 EOF
 
-echo "=== soak run: $runDir (duration $duration, build $buildDir) ==="
+echo "=== soak run: $runDir (duration $duration, session timeout $sessionTimeout, build $buildDir) ==="
 
 # ---------------------------------------------------------------- process helpers
 declare -A pids exitCodes cleanStop
@@ -417,7 +446,7 @@ echo "gateway certificate bootstrapped"
 
 # ---------------------------------------------------------------- launch: AppServer -> OpcServer -> Gateway -> client
 launch appserver "$appServerExe" "$scriptDir/config/App.Server.Soak.jsonnet" "../../../AppServer/config/args/sqlite" \
-	-arg "path=$(np "$runDir/db/app.db")"
+	-arg "path=$(np "$runDir/db/app.db")" -arg "sessionTimeout=$sessionTimeout"
 waitPort appserver 1967
 
 launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
@@ -432,20 +461,28 @@ waitHttp gateway "http://localhost:1968/ErrorCodes"
 # (soak finding): grant AFTER OpcServer's first boot registered the nodeIds resource, then RESTART OpcServer so its
 # startup load picks the acl up. First boot may or may not have enabled enforcement (its own registration races
 # AssignRights); after the restart, enforcement is deterministically on and the soak user is authorized.
+# --no-grant-restart keeps the grant and skips the restart - that is the run that scores #4 (see the flag above).
 "$soakExe" -c -tests "-settings=$(np "$scriptDir/config/Opc.Soak.jsonnet")" "-include=." -grant >"$runDir/client/grant.log" 2>&1 \
 	|| failEarly "rights grant failed - see $runDir/client/grant.log"
-echo "soak user granted OPC node access - restarting opcserver to load it"
-# Hard kill on windows: a console Ctrl-C cannot be aimed at one process (see stopGraceful), and signalling the whole
-# console here would take the AppServer and gateway down mid-startup.  This is a restart, not a shutdown assertion -
-# the verdict never reads this stop - and OpcServer reloads its per-run sqlite db from disk on the way back up.
-if [[ $isWindows -eq 1 ]]; then hardKill "${pids[opcserver]}"; else stopGraceful "${pids[opcserver]}"; fi
-for i in $(seq 1 30); do alive "${pids[opcserver]}" || break; sleep 1; done
-alive "${pids[opcserver]}" && { hardKill "${pids[opcserver]}"; sleep 1; }
-wait "${pids[opcserver]}" 2>/dev/null
-mv "$runDir/opcserver/console.log" "$runDir/opcserver/console.boot1.log" 2>/dev/null
-launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
-	-arg "path=$(np "$runDir/db/opc.db")"
-waitPort opcserver 4840
+if [[ $noGrantRestart -eq 1 ]]; then
+	# --no-grant-restart: the acl reaches the running OpcServer only through the live event path, which is the thing
+	# soak-findings #4 says does not work.  Nothing here asserts an outcome - a denied run is a result, not a harness
+	# failure - so the verdict criteria are unchanged, and the evidence is opcserver/console.log beside client/grant.log.
+	echo "soak user granted OPC node access - NOT restarting opcserver (--no-grant-restart): scoring soak-findings #4"
+else
+	echo "soak user granted OPC node access - restarting opcserver to load it"
+	# Hard kill on windows: a console Ctrl-C cannot be aimed at one process (see stopGraceful), and signalling the whole
+	# console here would take the AppServer and gateway down mid-startup.  This is a restart, not a shutdown assertion -
+	# the verdict never reads this stop - and OpcServer reloads its per-run sqlite db from disk on the way back up.
+	if [[ $isWindows -eq 1 ]]; then hardKill "${pids[opcserver]}"; else stopGraceful "${pids[opcserver]}"; fi
+	for i in $(seq 1 30); do alive "${pids[opcserver]}" || break; sleep 1; done
+	alive "${pids[opcserver]}" && { hardKill "${pids[opcserver]}"; sleep 1; }
+	wait "${pids[opcserver]}" 2>/dev/null
+	mv "$runDir/opcserver/console.log" "$runDir/opcserver/console.boot1.log" 2>/dev/null
+	launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
+		-arg "path=$(np "$runDir/db/opc.db")"
+	waitPort opcserver 4840
+fi
 
 clientArgs=( "-duration=$duration" "-csv=$(np "$runDir/client/soak.csv")" "-summary=$(np "$runDir/client/summary.json")" )
 if [[ $smoke -eq 1 ]]; then
@@ -455,6 +492,7 @@ if [[ $smoke -eq 1 ]]; then
 fi
 [[ -z "$quietInterval" ]] || clientArgs+=( "-quietInterval=$quietInterval" )
 [[ -z "$quietPeriod" ]] || clientArgs+=( "-quietPeriod=$quietPeriod" )
+[[ $readBack -eq 0 ]] || clientArgs+=( "-readBack" )
 [[ $external -eq 0 ]] || clientArgs+=( "${externalArgs[@]}" )
 launch client "$soakExe" "$scriptDir/config/Opc.Soak.jsonnet" "." "${clientArgs[@]}"
 

@@ -43,6 +43,13 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		return Settings::FindNumber<uint>( path ).value_or( dflt );
 	}
+	//A bare presence flag - no '=value' - falling back to a settings bool.  argString/argNumber cannot serve: both
+	//require a value, and Process::FindArg on a bare flag yields an empty string that each discards as unset.
+	Ω argFlag( sv arg, sv path )ι->bool{
+		if( Process::FindArg(string{arg}) )
+			return true;
+		return Settings::FindBool( path ).value_or( false );
+	}
 
 	α ActiveServers()ε->vector<ServerLeg>{
 		vector<ServerLeg> legs;
@@ -129,6 +136,7 @@ namespace Jde::Opc::Gateway::Soak{
 		PortType _port;
 		Duration _duration, _writePeriod, _pushTimeout, _statusPeriod, _quietInterval, _quietPeriod, _retryDelay;
 		uint _writeRetries, _missRetries;//extra attempts per write / extra rounds per missed push before they count as a WriteFailure / Miss.
+		bool _readBack;//ask the mutation for { value } and check what it echoes - soak-findings #6, off by default.  See Write().
 		fs::path _csvPath, _summaryPath;
 		std::ofstream _csv;
 
@@ -153,6 +161,7 @@ namespace Jde::Opc::Gateway::Soak{
 		_retryDelay{ argDuration("-retryDelay", "/soak/retryDelay", 1s) },
 		_writeRetries{ argNumber("-writeRetries", "/soak/writeRetries", 2) },
 		_missRetries{ argNumber("-missRetries", "/soak/missRetries", 2) },
+		_readBack{ argFlag("-readBack", "/soak/readBack") },
 		_csvPath{ argString("-csv", "/soak/csv", "soak.csv") },
 		_summaryPath{ argString("-summary", "/soak/summary", "summary.json") }
 	{
@@ -331,10 +340,21 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		for( uint attempt{}; ; ++attempt ){
 			try{
-				//no {value} result-request: the subscription push is the round-trip assertion, and the mutation's read-back
-				//never resumes when UA responses land in the same run_iterate (split-process localhost; see soak findings).
-				string q{ "updateVariable( opc: $opc, id: $id, value: $value )" };
-				leg.Socket->QuerySync( move(q), jobject{ {"opc",leg.Slug}, {"id",node.ToJson()}, {"value",value} } );
+				//By default no {value} result-request: the subscription push is the round-trip assertion, and the
+				//mutation's read-back was recorded as never resuming when UA responses land in the same run_iterate
+				//(split-process localhost; soak-findings #6).  -readBack asks for the echo and checks it, which is how
+				//#6 gets re-tested: its likely cause was #2, a noexcept QuerySync that terminated the process on any
+				//exception response, and that was fixed 09-16.  A wrong or missing echo is an ordinary write failure -
+				//it takes the retries and the counters with it - so a stale #6 shows up as a FAIL, never as a hang.
+				string q{ _readBack
+					? "updateVariable( opc: $opc, id: $id, value: $value ){ value }"
+					: "updateVariable( opc: $opc, id: $id, value: $value )" };
+				let result = leg.Socket->QuerySync( move(q), jobject{ {"opc",leg.Slug}, {"id",node.ToJson()}, {"value",value} } );
+				if( _readBack ){
+					let echoed = result.is_object() ? Json::FindNumber<uint>( result.as_object(), "value" ) : std::nullopt;
+					THROW_IF( !echoed, "the write asked for {{ value }} and got back '{}'", serialize(result) );
+					THROW_IF( *echoed!=value, "the write echoed back {}, not the {} it was given", *echoed, value );
+				}
 				leg.ConsecutiveFailures = 0;
 				return true;
 			}

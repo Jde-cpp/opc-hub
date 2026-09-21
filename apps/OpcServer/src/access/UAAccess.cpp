@@ -75,21 +75,61 @@ namespace Jde::Opc::Server::UAAccess{
 		return ctx;
 	}
 
+	Ω delivered( SessionPK sessionId )ι->optional<TimePoint>{//whatever the io thread has answered since the last look, whichever way it went.
+		optional<TimePoint> y;
+		std::scoped_lock _{ _renewalsMutex };
+		if( auto p = _renewals.find(sessionId); p!=_renewals.end() ){
+			y = p->second;
+			_renewals.erase( p );
+		}
+		return y;
+	}
+	Ω renewed( SessionContext& ctx, TimePoint expiration )ι->void{
+		ctx.Expiration = expiration;
+		ctx.RenewAt = HalfLife( expiration );
+		ctx.Answered = ctx.Denied = false;//fresh again - the next lapse is a new question, and gets its own grace.
+		DBG( "[{}]Renewed session for user '{}' to '{}'", hex(ctx.SessionId), ctx.UserPK.Value, ToIsoString(ctx.Expiration) );
+	}
+
+	//Asking only once the snapshot had lapsed could never renew a session on its own.  The snapshot *is* the authority's
+	//expiry - ActivateSession's ask slid the session and copied the result - so the two lapse at the same instant, and an
+	//ask made after it finds a session Sessions::Extend will not revive.  It only ever worked for a session something else
+	//had slid in between, and for a user who reaches the AppServer through the gateway alone nothing does:  the gateway
+	//slides its own copy of the session, and asks again only once that has lapsed.  So an OPC session in continuous use
+	//was denied at exactly /http/socketTimeout - a day in, reachable only by a run that long (soak-findings #13: 82,815
+	//writes, then BadUserAccessDenied).  So ask at half-life, while the ask can still slide it, and again at half of what
+	//remains if that did not.  Only an extension is taken:  ahead of the lapse the snapshot is still the authority's own
+	//word, and a failure - the AppServer restarting, say - must not cut it short.  What a failure means is left to the lapse.
+	Ω renewAhead( SessionContext& ctx, TimePoint now )ι->void{
+		if( let answer = delivered(ctx.SessionId); answer ){
+			if( *answer>ctx.Expiration )
+				renewed( ctx, *answer );
+			else
+				ctx.RenewAt = std::max( HalfLife(ctx.Expiration), now+_renewInterval );
+		}
+		else if( now-ctx.LastRenewal>=_renewInterval ){
+			ctx.LastRenewal = now;
+			renew( ctx.SessionId, ctx.UserPK );//posts the request and returns; it is answered on the io thread.
+		}
+	}
+
 	Ω expired( SessionContext* ctx )ι->bool{//non-authenticated paths set Expiration=TimePoint::max(); only JWT/SessionInfo sessions carry a real expiry.
-		if( !ctx || ctx->Expiration>=Clock::now() )
+		if( !ctx )
 			return false;
+		if( let now = Clock::now(); ctx->Expiration>=now ){
+			if( now>=ctx->RenewAt )
+				renewAhead( *ctx, now );
+			return false;
+		}
 		if( ctx->SessionId ){
-			{//whatever the io thread has delivered since the last check, whichever way it went.
-				std::scoped_lock _{ _renewalsMutex };
-				if( auto p = _renewals.find(ctx->SessionId); p!=_renewals.end() ){
-					ctx->Expiration = p->second;
-					ctx->Answered = true;
-					_renewals.erase( p );
-				}
+			//A failure that answers a question asked ahead of the lapse says nothing about it - that ask may be hours old -
+			//so it is dropped and the lapse asks its own.  An expiry is good whenever it was read.
+			if( let answer = delivered(ctx->SessionId); answer && (*answer>ctx->Expiration || ctx->LastRenewal>ctx->Expiration) ){
+				ctx->Expiration = *answer;
+				ctx->Answered = true;
 			}
 			if( ctx->Expiration>=Clock::now() ){
-				ctx->Answered = false;//fresh again - the next lapse is a new question, and gets its own grace.
-				DBG( "[{}]Renewed session for user '{}' to '{}'", hex(ctx->SessionId), ctx->UserPK.Value, ToIsoString(ctx->Expiration) );
+				renewed( *ctx, ctx->Expiration );
 				return false;
 			}
 			if( !ctx->Answered ){
@@ -105,7 +145,13 @@ namespace Jde::Opc::Server::UAAccess{
 					return false;
 			}
 		}
-		DBG( "Session for user '{}' expired at '{}'", ctx->UserPK.Value, ToIsoString(ctx->Expiration) );
+		//Was a DBG per denied access, so at the shipped log level a user denied for the rest of the session was recorded
+		//nowhere - the only account of soak-findings #13 was the client's.  Information, once per lapse.
+		if( !ctx->Denied ){
+			ctx->Denied = true;
+			let why = ctx->Expiration==TimePoint{} ? string{"could not be renewed"} : Ƒ( "expired at '{}'", ToIsoString(ctx->Expiration) );//epoch is renew()'s failure.
+			INFO( "[{}]Session for user '{}' {} - denying its access until it activates again.", hex(ctx->SessionId), ctx->UserPK.Value, why );
+		}
 		return true;
 	}
 	//Startup installs it (opcServerStartup: SetAcl, then explicitly on the cached schema), so the cast is the schema's own type.

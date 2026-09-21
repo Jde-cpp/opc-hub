@@ -441,6 +441,47 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( access(lapsed), EAccess::None ) << "once the authority has answered, the lapsed snapshot is no longer served";
 	}
 
+	//soak-findings #13:  the renewal above was asked only once the snapshot had lapsed - the instant the authority's own copy
+	//lapses too, the snapshot being a copy of it - and an expired session is never revived.  So it could not renew a session
+	//nothing else was sliding, and an OPC session in continuous use through the gateway was denied a day in.  It is now
+	//asked ahead, at the snapshot's half-life, while the ask still slides the session.
+	TEST_F( AccessTests, ASessionIsRenewedAheadOfItsLapse ){
+		let nodeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
+		let readerPK = (UserPK::Type)_users.at( "readerUser" );
+		let access = [&]( UAAccess::SessionContext& ctx ){ return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr ); };
+
+		UAAccess::SessionContext fresh{ "", Clock::now()+1h, 4244, {readerPK} };
+		EXPECT_GT( fresh.RenewAt, Clock::now()+29min ) << "asked at half-life, not before";
+		EXPECT_LT( fresh.RenewAt, fresh.Expiration ) << "and not at the lapse, which is too late";
+		EXPECT_EQ( (UAAccess::SessionContext{"", TimePoint::max(), 0, {readerPK}}).RenewAt, TimePoint::max() ) << "no session, nothing to ask about";
+
+		//The suite's own app session - one the AppServer knows - a minute from lapsing here, its half-life reached.
+		UAAccess::SessionContext live{ "", Clock::now()+1min, AppClient()->SessionId(), {readerPK} };
+		ASSERT_TRUE( live.SessionId );
+		live.RenewAt = Clock::now()-1s;
+		let snapshot = live.Expiration;
+		EXPECT_EQ( access(live), ToAccess(_readerAllowed) ) << "still good, so served - and the ask is posted";
+		for( uint i=0; i<100 && live.Expiration==snapshot; ++i ){
+			std::this_thread::sleep_for( 50ms );
+			access( live );
+		}
+		EXPECT_GT( live.Expiration, snapshot ) << "the authority's answer extends the snapshot before it lapses";
+		EXPECT_GT( live.RenewAt, Clock::now() ) << "and the next ask waits for the new half-life";
+
+		//4245 is not a session the AppServer knows, so the ask fails.  At the lapse that is a verdict;  ahead of it the snapshot
+		//is still the authority's own word, and a failure - an AppServer restart would be one - must not cut it short.
+		UAAccess::SessionContext unknown{ "", Clock::now()+1min, 4245, {readerPK} };
+		unknown.RenewAt = Clock::now()-1s;
+		let good = unknown.Expiration;
+		for( uint i=0; i<100 && unknown.RenewAt<=Clock::now(); ++i ){
+			EXPECT_EQ( access(unknown), ToAccess(_readerAllowed) );
+			std::this_thread::sleep_for( 50ms );
+		}
+		EXPECT_GT( unknown.RenewAt, Clock::now() ) << "the failure was collected, and the next ask backs off";
+		EXPECT_EQ( unknown.Expiration, good ) << "and left the snapshot alone";
+		EXPECT_EQ( access(unknown), ToAccess(_readerAllowed) );
+	}
+
 	//access-review3 L22:  _nodeResources was built once, by the AssignRights that startup runs, and nothing rebuilt it - so
 	//a criteria-scoped `nodeIds` resource created afterwards (what the node-access page writes) was never mapped.  The node
 	//kept falling back to the root's rights, and a per-node allow or deny did nothing until the process restarted.
