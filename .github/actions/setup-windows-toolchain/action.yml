@@ -42,25 +42,33 @@ runs:
     # vcpkg.json's builtin-baseline (reviews/m4-closing.md #21) names a microsoft/vcpkg
     # commit, and the manifest install resolves openssl/sqlite3 through it - in *both*
     # workflows, since the -jde configure runs the manifest install too. The image's
-    # C:/vcpkg clone is whatever commit it was built with, so the baseline is usually
-    # not in it: fetch that one commit (GitHub serves an arbitrary sha) before any
-    # configure, and say so here rather than leave vcpkg's own error to explain it.
-    - name: Ensure the vcpkg baseline
+    # C:/vcpkg clone sits at whatever commit the image was built with (09-04 as of
+    # writing), and vcpkg reads the baseline out of git but every *version* entry off
+    # the working tree - so fetching the commit alone leaves the older tree answering
+    # "no version database entry for sqlite3 at 3.53.4#1". Check the pin out instead:
+    # ports and version database then come from the one commit, which is what the pin
+    # was for. bootstrap follows, because vcpkg.exe is gitignored - it stays the image's
+    # build while the ports tree it now serves may want a newer tool.
+    - name: Pin vcpkg to the baseline
       shell: pwsh
       run: |
         $baseline = (Get-Content "$env:GITHUB_WORKSPACE/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
-        if( -not $baseline ){ Write-Host 'vcpkg.json has no builtin-baseline - nothing to fetch'; exit 0 }
+        if( -not $baseline ){ Write-Host 'vcpkg.json has no builtin-baseline - leaving the image vcpkg as it is'; exit 0 }
         $root = $env:VCPKG_INSTALLATION_ROOT
         if( -not (Test-Path "$root/.git") ){ Write-Host "::error::$root is not a git clone, so the vcpkg builtin-baseline ($baseline) cannot resolve."; exit 1 }
+        $head = (git -C $root rev-parse HEAD).Trim()
+        if( $head -eq $baseline ){ Write-Host "vcpkg is already at the baseline $baseline"; exit 0 }
+        Write-Host "vcpkg is at $head; checking out the baseline $baseline"
         git -C $root cat-file -e "$baseline^{commit}" 2>$null
         if( $LASTEXITCODE -ne 0 ){
-          Write-Host "fetching vcpkg baseline $baseline into $root (image is at $(git -C $root rev-parse --short HEAD))"
           git -C $root fetch --no-tags --depth 1 origin $baseline
-          if( $LASTEXITCODE -ne 0 ){ Write-Host "::error::could not fetch the vcpkg builtin-baseline $baseline - bump it in vcpkg.json to a commit the image carries, or drop it."; exit 1 }
-          git -C $root cat-file -e "$baseline^{commit}" 2>$null
-          if( $LASTEXITCODE -ne 0 ){ Write-Host "::error::vcpkg baseline $baseline is still missing after the fetch."; exit 1 }
+          if( $LASTEXITCODE -ne 0 ){ Write-Host "::error::could not fetch the vcpkg builtin-baseline $baseline - bump it in vcpkg.json to a commit microsoft/vcpkg still serves, or drop it."; exit 1 }
         }
-        Write-Host "vcpkg builtin-baseline $baseline present in $root"
+        git -C $root checkout --force --detach $baseline
+        if( $LASTEXITCODE -ne 0 ){ Write-Host "::error::could not check out the vcpkg builtin-baseline $baseline in $root."; exit 1 }
+        & "$root/bootstrap-vcpkg.bat" -disableMetrics
+        if( $LASTEXITCODE -ne 0 ){ Write-Host "::error::bootstrap-vcpkg failed after checking out $baseline."; exit 1 }
+        Write-Host "vcpkg pinned to $baseline ($(git -C $root log -1 --format=%cs))"
 
     # Single source of truth for the pinned tool versions AND the deps cache key.
     # build/CMakeLists.txt holds every dependency GIT_TAG, so bumping any dep (or
