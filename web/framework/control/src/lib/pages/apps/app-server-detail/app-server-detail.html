@@ -15,7 +15,9 @@
 			<mat-tab>
 				<ng-template mat-tab-label>Log Settings</ng-template>
 				<ng-template matTabContent>
-					<log-settings [service]=appService [instanceId]=instanceId()!></log-settings>
+					@for( id of [instanceId()]; track id ){<!--keyed on the instance, as the opc-server and gateway pages (reviews/m3-closing.md #31)-->
+						<log-settings [service]=appService [instanceId]=id!></log-settings>
+					}
 				</ng-template>
 			</mat-tab>
 		</mat-tab-group>

@@ -31,6 +31,10 @@ where the wrapping showed up. */
 .configured{
 	opacity: 0.7;
 }
+.removed{
+	opacity: 0.7;
+	font-style: italic;
+}
 .mat-column-delete{
 	flex: 0 0 80px;
 }

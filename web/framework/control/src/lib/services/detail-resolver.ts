@@ -5,7 +5,7 @@ import { TableSchema } from '../model/ql/schema/table-schema';
 import { IGRAPHQL, IGraphQL } from './graphql';
 import { ListRoute, TableSettings } from './ql-list-resolver';
 import { MetaObject } from '../model/ql/schema/meta-object';
-import { RouteItem, RouteStore } from 'jde-spa';
+import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { ProfileStore } from 'jde-spa';
 
 export type DetailPageSettings = {
@@ -42,14 +42,15 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 	private router = inject( Router );
 	private snackbar = inject( SnackbarService );
 	private ql:IGraphQL = inject( IGRAPHQL );
+	private recentVisits = inject( RecentVisits );
 
 	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<DetailResolverData<T>>{
 		let collectionDisplay = route.url.length>1 ? route.url[route.url.length-2].path : route.data["collectionName"]; //users
 		let slug = route.paramMap.get( "slug" )!;
-		return this.loadProfile( route, collectionDisplay, slug );
+		return this.loadProfile( route, state.url, collectionDisplay, slug );
 	}
-	//The absolute list url the breadcrumb needs is rebuilt from the route below, so the state url this also used to take was never read.
-	private async loadProfile( route: ActivatedRouteSnapshot, collectionDisplay:string, slug:string ):Promise<DetailResolverData<T>>{
+	//The absolute list url the breadcrumb needs is rebuilt from the route below;  `url` is only for Recently visited.
+	private async loadProfile( route: ActivatedRouteSnapshot, url:string, collectionDisplay:string, slug:string ):Promise<DetailResolverData<T>>{
 		//ComponentNav renders each sibling as parent.path + '/' + sibling.path, so the parent must be the absolute list url
 		//('/access/users') and the siblings bare targets — the relative ListRoute path resolved against the sidenav route
 		//('/access/users/users/<slug>'), breaking sibling navigation and the routerLinkActive highlight.
@@ -62,8 +63,10 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 			return await DetailResolver.load<T>( this.ql, this.ql.toCollectionName(collectionDisplay), slug, routing );//await inside try — without it, async failures skip the catch entirely
 		}
 		catch( e ){
-			if( e instanceof SlugNotFoundError )
+			if( e instanceof SlugNotFoundError ){
 				this.snackbar.error( e.message );
+				this.recentVisits.forget( RecentVisits.bare(url) );//the redirect below is a NavigationCancel, not the NavigationError RecentVisits drops a page on (reviews/m3-closing.md #25);  only a missing row - a failed query is transient
+			}
 			else
 				this.snackbar.exception( `Could not load '${slug}'`, e );//whatever actually failed - a 500 from a malformed query used to be indistinguishable from a missing row
 			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.

@@ -34,6 +34,24 @@ describe( 'ServerCnnctn.defaultBrowseNs', ()=>{
 		expect( edited.mutation(original) ).toEqual( [] );
 	} );
 
+	//reviews/m3-closing.md #3:  a create left at the default the form shows sent nothing, so the column stayed NULL - and the
+	//gateway read NULL as 0 where this form said 1.  A create states the value, so a connection never depends on what NULL means.
+	it( 'is sent on a create left at the default', ()=>{
+		const original = new ServerCnnctn( {} as ServerCnnctnProps );//DetailPage's row for $new
+		const created = new ServerCnnctn( props({id: undefined as any, defaultBrowseNs: undefined}) );
+		const [mutation] = created.mutation( original );
+		expect( mutation.type ).toBe( MutationType.Create );
+		expect( mutation.args.defaultBrowseNs ).toBe( 1 );
+		expect( mutation.toString() ).toContain( 'defaultBrowseNs:1' );
+	} );
+
+	it( 'is sent as a number on a create whose field was typed', ()=>{//Properties.onChange assigns the input's string without reconstructing
+		const original = new ServerCnnctn( {} as ServerCnnctnProps );
+		const created = new ServerCnnctn( props({id: undefined as any}) );
+		(created as any).defaultBrowseNs = "3";
+		expect( created.mutation(original)[0].args.defaultBrowseNs ).toBe( 3 );
+	} );
+
 	it( 'falls back to the default when cleared or non-numeric', ()=>{
 		expect( new ServerCnnctn(props({defaultBrowseNs: "" as any})).defaultBrowseNs ).toBe( 1 );
 		expect( new ServerCnnctn(props({defaultBrowseNs: "abc" as any})).defaultBrowseNs ).toBe( 1 );

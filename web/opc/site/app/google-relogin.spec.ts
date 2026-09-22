@@ -33,6 +33,7 @@ class TestService extends ProtoService<object,object>{
 	protected override processMessage():void{}
 	protected override handleConnectionError():void{}
 	authGetPublic<Y>( target:string, auth?:string ):Promise<Y>{ return (this as any).authGet( target, auth, ()=>{} ); }
+	postPublic<Y>( target:string, body:any ):Promise<Y>{ return this.post<Y>( target, body ); }
 	setSocket( id:number ){ this.setSocketId( id ); }
 	sentAuthorizations:number[] = [];
 	protected override async sendAuthorization( socketId:number ):Promise<void>{ this.sentAuthorizations.push( socketId ); }
@@ -223,5 +224,50 @@ describe( 'ProtoService silent Google re-login on 401', ()=>{
 
 		await expect( service.authGetPublic('data', 'stale-session') ).resolves.toEqual( {ok:true} );
 		expect( service.sentAuthorizations ).toEqual( [5] );
+	});
+});
+
+//reviews/m3-closing.md #22:  a mutation went out with the stored session and a 401 back - the hub restarted, the tab idled past
+///http/timeout, the laptop changed network - was only reported:  the stale session stayed, and every Save repeated the 401 until
+//some unrelated read happened to renew it.  A POST now takes GET's policy:  renew a Google session and retry once;  an
+//anonymous session retries anonymously;  a signed-in user who cannot be renewed is signed out and the mutation is refused,
+//never re-run as anonymous.
+describe( 'ProtoService POST on 401', ()=>{
+	let authStore:AuthStore;
+	let http:{ get:any, post:any };
+	const loginResponse = ()=>of( new HttpResponse({body:'{}', headers:new HttpHeaders({Authorization:'fresh-session'})}) );
+	beforeEach( ()=>{
+		localStorage.clear();
+		TestBed.resetTestingModule();
+		authStore = TestBed.inject( AuthStore );
+		http = { get:vi.fn(), post:vi.fn() };
+	});
+	const makeService = ( renewed:string|null )=>new TestService( http as unknown as HttpClient, authStore, {renewCredential: vi.fn().mockResolvedValue(renewed)} as unknown as GoogleAuthService );
+
+	it( 'renews a Google session and retries the mutation once with it', async ()=>{
+		authStore.append( new User(makeJwt('stale@example.com')) );
+		authStore.append( {sessionId:'stale-session'} );
+		http.post.mockReturnValueOnce( the401() ).mockReturnValueOnce( loginResponse() ).mockReturnValueOnce( of({saved:true}) );
+		await expect( makeService(freshJwt).postPublic('graphql', {q:1}) ).resolves.toEqual( {saved:true} );
+		expect( http.post ).toHaveBeenCalledTimes( 3 );
+		expect( http.post.mock.calls[1][0] ).toContain( '/login' );
+		expect( http.post.mock.calls[2][2].headers.Authorization ).toBe( 'fresh-session' );
+	});
+
+	it( 'retries an anonymous session anonymously', async ()=>{
+		authStore.append( {sessionId:'stale-anonymous'} );
+		http.post.mockReturnValueOnce( the401() ).mockReturnValueOnce( of(new HttpResponse({body:{saved:true}, headers:new HttpHeaders({Authorization:'new-anonymous'})})) );//the server mints a session for an anonymous request
+		await expect( makeService(null).postPublic('graphql', {q:1}) ).resolves.toEqual( {saved:true} );
+		expect( http.post.mock.calls[1][2].headers ).toBeUndefined();
+		expect( authStore.user()?.authorization ).toBe( 'new-anonymous' );
+	});
+
+	it( 'signs out a user it cannot renew and refuses the mutation', async ()=>{
+		authStore.append( {id:'bob', provider:EProvider.OpcServer, sessionId:'stale-session'} as UserJson );
+		const logout = vi.spyOn( authStore, 'logout' );
+		http.post.mockReturnValueOnce( the401() );
+		await expect( makeService(null).postPublic('graphql', {q:1}) ).rejects.toMatchObject( {status: 401} );
+		expect( logout ).toHaveBeenCalled();
+		expect( http.post ).toHaveBeenCalledTimes( 1 );//never re-run as anonymous
 	});
 });

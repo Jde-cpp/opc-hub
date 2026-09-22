@@ -45,14 +45,25 @@ export class QLSelector{
 		//rows → ids.  The list only holds the current page of rows, so an id it does not show (a deleted identity, one past
 		//the page size, one a view filter hides) can be neither checked nor unchecked and must survive untouched.  The
 		//original order is kept so the owner's arraysEqual against the loaded ids reads "unchanged" until a box is toggled.
+		//Only a toggle is the user's word, and a toggle never replaces the list's data array;  a re-query always does - a view
+		//switch, a filter shown or removed, a sort, a refresh.  The list rebuilds its checks from its OWN previous checks, so a
+		//member the previous rows hid came back shown and unchecked, was dropped here, and Save removed it (reviews/m3-closing.md
+		//#2).  On a new array the owner's ids win:  re-derive the checks from them and publish nothing.  Not by making the
+		//ids→rows effect track list.data() instead - both would be dirty in one flush, and whichever ran first would decide.
 		effect( ()=>{
 			const rows = this.rowSelections();
 			const list = this.list();
 			if( !rows || !list )
 				return;
-			const shown = new Set<number>( list.data().map( r=>r.id ) );
-			const checked = rows.selected.map( r=>r.id );
+			const data = list.data();
 			const prior = untracked( ()=>this.selections().selected );//outside the tracking scope, or the set() below re-runs this forever
+			if( data!==this.#shownData ){
+				this.#shownData = data;
+				untracked( ()=>this.#syncRows(this.listData(), prior) );
+				return;
+			}
+			const shown = new Set<number>( data.map( r=>r.id ) );
+			const checked = rows.selected.map( r=>r.id );
 			const ids = [...prior.filter( id=>!shown.has(id) || checked.includes(id) ), ...checked.filter( id=>!prior.includes(id) )];
 			if( !arraysEqual(ids, prior) )
 				this.selections.set( new SelectionModel<number>(true, ids) );
@@ -107,6 +118,7 @@ export class QLSelector{
 	list = viewChild( QLList );
 
 	#loadId = 0;
+	#shownData:QLRow[]|undefined;//the list's data array the rows→ids effect last saw - a different one is a re-query
 	private route = inject( ActivatedRoute );
 	private profileStore = inject( ProfileStore );
 	private snackbar = inject( SnackbarService );

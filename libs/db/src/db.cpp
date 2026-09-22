@@ -80,8 +80,11 @@ namespace Jde{
 	α DB::SyncSchema( const AppSchema& schema, sp<QL::IQL> ql )ε->void{
 		SchemaDdl::Sync( schema, ql );
 	}
-	α DB::SyncData( const AppSchema& schema, sp<QL::IQL> ql, sv extension )ε->void{
-		SchemaDdl::SeedData( schema, extension, ql );
+	α DB::SyncData( const AppSchema& schema, sp<QL::IQL> ql, sv extension, bool skipUnchanged )ε->void{
+		SchemaDdl::SeedData( schema, extension, ql, skipUnchanged );
+	}
+	α DB::SeedFile( const AppSchema& schema, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool{
+		return SchemaDdl::SeedFile( schema, move(name), text, ql, skipUnchanged );
 	}
 }
 

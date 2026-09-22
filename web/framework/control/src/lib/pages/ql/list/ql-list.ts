@@ -332,14 +332,22 @@ export class QLList implements OnInit, OnDestroy{
 		const e = this.error();
 		if( e===undefined )
 			return undefined;
-		const noun = this.resolvedData().routing.title.toLowerCase();
+		const routing = this.resolvedData().routing;
+		const noun = routing.tableSettings?.noun ?? routing.title.toLowerCase();
 		const what = errorText( e )?.replace( /^\(\d+\)/, "" ) ?? "";//errorText prefixes the status; the title already says which
 		return httpStatus( e )==403
 			? { kind: "forbidden", title: `No access to ${noun}.`, detail: `${what}  Ask an administrator for a role that can read ${noun}.`.trim() }
 			: { kind: "failed", title: `Could not load ${noun}.`, detail: what };
 	});
-	emptyState = computed<Required<EmptyState>>( ()=>QLListResolver.emptyState(this.resolvedData().routing) );
+	//the rows the view's filters narrowed:  they are not the default view's.  Against the default, not against none - the
+	//resources page's default filters on criteria <null>, and a database no service has started against must still say so.
+	viewFiltered = computed<boolean>( ()=>{
+		const home = this.resolvedData().profile.views?.[0];
+		return !!home && !!this.view() && !View.sameFilters( this.view(), home );
+	});
+	emptyState = computed<Required<Omit<EmptyState,"add">>>( ()=>QLListResolver.emptyState(this.resolvedData().routing, {filtered: this.viewFiltered(), excluded: !!this.resolvedData().fixedFilters?.length, selector: this.selector()}) );
 	showEmpty = computed<boolean>( ()=>!this.isRefreshing() && this.error()===undefined && !this.data().length );//not while a reload has the rows cleared
+	addFilled = computed<boolean>( ()=>this.showEmpty() && !this.viewFiltered() );//Add is the one useful action only on a genuinely empty list - not under a filter, a refusal or a failure (#fail and loadOrFail empty the rows too)
 	//the help topic for wherever the list is showing - its own page or a detail page's tab - resolved as the navbar's ? does;
 	//the fallback topic (the '' route) is navigation help, not this page's, so it is left out
 	#helpTopics = helpTopics( inject(HELP_TOPICS, {optional: true}) );

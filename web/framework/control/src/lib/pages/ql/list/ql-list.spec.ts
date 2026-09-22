@@ -17,7 +17,8 @@ import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
 import { TableSchema } from '../../../model/ql/schema/table-schema';
-import { View } from '../../../model/ql/view';
+import { DbScalar, FieldFilter, Operator, View } from '../../../model/ql/view';
+import { Field } from '../../../model/ql/schema/field';
 import { PageProfile } from '../../graphql/model/page-settings';
 import { QLList } from './ql-list';
 
@@ -184,6 +185,17 @@ describe( 'QLList empty and refused states', ()=>{
 		expect( page.failure() ).toEqual( {kind: "forbidden", title: "No access to users.", detail: "[bob]User does not have 'Read' access to 'users'.  Ask an administrator for a role that can read users."} );
 	} );
 
+	//reviews/m3-closing.md #6:  embedded in a detail page's tab the route title is the page's - "gateways/opchub.debug" - and
+	//"No access to gateways/opchub.debug" names nothing a user could ask for.  A route that says what its rows are is read first.
+	it( "names the rows by the route's noun where it gives one", ()=>{
+		const routing = new ListRoute( {path: 'gateways/opchub', data: {tableSettings: {noun: "server connections"}}} as any );
+		const page = create( routing, new HttpErrorResponse({status: 403, error: "no"}) );
+		expect( page.failure()?.title ).toBe( "No access to server connections." );
+		expect( page.failure()?.detail ).toContain( "a role that can read server connections" );
+		page.error.set( undefined );
+		expect( page.emptyState().title ).toBe( "No server connections yet." );
+	} );
+
 	it( 'reads any other failure as could-not-load', ()=>{
 		expect( create(new ListRoute('users'), new Error("gateway down")).failure() ).toEqual( {kind: "failed", title: "Could not load users.", detail: "gateway down"} );
 	} );
@@ -201,5 +213,76 @@ describe( 'QLList empty and refused states', ()=>{
 		const page = TestBed.createComponent( QLList ).componentInstance;
 		page.resolvedData.set( {routing: new ListRoute('users'), schema: {collectionName: 'users'}, profile: {showDeleted: false}} as unknown as QLListData );//ngOnDestroy's showDeleted save reads it
 		expect( page.helpRoute() ).toBeUndefined();
+	} );
+} );
+
+//reviews/m3-closing.md #24:  the empty state came from the route alone, so a view whose filters matched nothing, a selector
+//tab's excluded rows, and a selector tab (no Add) all read "No <things> yet … use Add".
+describe( 'QLList empty state on a narrowed list', ()=>{
+	const view = ( filters:[string, Operator, DbScalar[]][] )=>{
+		const v = new View( {} as any );
+		v.fieldFilters = filters.map( ([name, operator, value])=>({field: {name} as Field, filter: {operator, value}}) );
+		return v;
+	};
+	const create = ( routing:ListRoute, options:{views?:View[], current?:View, fixedFilters?:FieldFilter[], selector?:boolean} = {} )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			{ provide: ActivatedRoute, useValue: {data: NEVER, routeConfig: {}} },
+			{ provide: Router, useValue: {navigate: vi.fn(), url: '/access/users'} },
+			{ provide: ComponentPageTitle, useValue: {} },
+			{ provide: IGRAPHQL, useValue: {} },
+			{ provide: SnackbarService, useValue: {error: vi.fn(), exception: vi.fn()} }
+		]});
+		const fixture = TestBed.createComponent( QLList );
+		if( options.selector )
+			fixture.componentRef.setInput( 'selector', true );
+		const page = fixture.componentInstance;
+		const views = options.views ?? [view( [] )];
+		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: {showDeleted: false, views}, fixedFilters: options.fixedFilters} as unknown as QLListData );
+		page.view.set( options.current ?? views[0] );
+		return page;
+	};
+	const users = new ListRoute( {path: 'users', data: {tableSettings: {empty: {title: "No users yet.", detail: "Sign in first."}}}} as any );
+
+	it( 'a view whose filters match nothing says so, not "yet"', ()=>{
+		const certs = view( [["provider", Operator.In, ["Key"]]] );
+		const page = create( users, {views: [view([]), certs], current: certs} );
+		expect( page.showEmpty() ).toBe( true );
+		expect( page.emptyState().title ).toBe( "No users match this view." );
+		expect( page.emptyState().detail ).toBe( "" );
+	} );
+
+	it( "the default view's own filter still reads as the whole list, re-sorted or not", ()=>{
+		const resources = new ListRoute( {path: 'resources', data: {tableSettings: {canAdd: false, empty: {title: "No resources registered.", detail: "Start the hub."}}}} as any );
+		const tables = view( [["criteria", Operator.In, [null]]] );
+		const resorted = new View( tables );
+		resorted.sort = [{active: "schemaName", direction: "desc"}];
+		expect( create(resources, {views: [tables]}).emptyState().title ).toBe( "No resources registered." );
+		expect( create(resources, {views: [tables], current: resorted}).emptyState().title ).toBe( "No resources registered." );
+	} );
+
+	it( 'a selector tab drops the Add pointer - the tab has no Add', ()=>{
+		const page = create( new ListRoute('groups'), {selector: true} );
+		expect( page.emptyState().title ).toBe( "No groups yet." );
+		expect( page.emptyState().detail ).toBe( "" );
+	} );
+
+	it( 'a selector tab whose only rows are excluded reads "No other …"', ()=>{
+		const excluded:FieldFilter[] = [{field: {name: "id"} as Field, filter: {operator: Operator.NotIn, value: [7]}}];
+		const page = create( new ListRoute('roles'), {selector: true, fixedFilters: excluded} );
+		expect( page.emptyState().title ).toBe( "No other roles." );
+		expect( page.emptyState().detail ).toBe( "" );
+	} );
+
+	it( 'fills Add only on a genuinely empty list', ()=>{
+		expect( create(users).addFilled() ).toBe( true );
+		const certs = view( [["provider", Operator.In, ["Key"]]] );
+		expect( create(users, {views: [view([]), certs], current: certs}).addFilled() ).toBe( false );
+		const refused = create( users );
+		refused.error.set( new HttpErrorResponse({status: 403}) );
+		expect( refused.addFilled() ).toBe( false );
+		const shown = create( users );
+		shown.data.set( [{id: 1}] );
+		expect( shown.addFilled() ).toBe( false );
 	} );
 } );

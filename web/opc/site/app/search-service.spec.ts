@@ -67,3 +67,35 @@ describe('SearchService', () => {
 		expect( await lastValueFrom(service.search('   ')) ).toEqual( [] );
 	});
 });
+
+//reviews/m3-closing.md #26:  a resource has no page of its own, so every `resource:` hit routes to the one list - and the key
+//merge de-duplicated on was the route alone:  `resource:` showed one resource of a dozen, and an unscoped "res" none at all
+//behind the Resources page.  A hit is its landing page AND its title;  the same page under the same name from two providers
+//is still one row - the RouteStore's children repeat the access provider's users, groups and roles without its prefix.
+describe('SearchService keys a hit, not just its page', () => {
+	const resource = ( title:string ):SearchResult=>({ title, route: '/access/resources', prefix: 'resource', rank: 0, source: 'access' });
+	const setup = ( ...providers:ISearchProvider[] )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: providers.map( p=>({provide: SEARCH_PROVIDERS, useValue: p, multi: true}) ) });
+		return TestBed.inject( SearchService );
+	};
+
+	it('shows every resource, though they all open the resources list', async () => {
+		const service = setup( provider('access', [resource('acl'), resource('search'), resource('sessions')], ['resource']) );
+		expect( (await lastValueFrom(service.search('resource:'))).map(r=>r.title) ).toEqual( ['acl', 'search', 'sessions'] );
+	});
+
+	it('keeps the resource hits beside the Resources page in an unscoped search', async () => {
+		const service = setup(
+			provider( 'routes', [{title: 'Resources', route: '/access/resources', rank: 0, source: 'routes'}] ),
+			provider( 'access', [resource('resources'), resource('roles')], ['resource'] ) );
+		expect( (await lastValueFrom(service.search('res'))).map(r=>`${r.prefix ?? ''}:${r.title}`) ).toEqual( [':Resources', 'resource:resources', 'resource:roles'] );
+	});
+
+	it('still shows a page two providers both name the same way once', async () => {
+		const service = setup(
+			provider( 'routes', [{title: 'Alice', route: '/access/users/alice', rank: 0, source: 'routes'}] ),
+			provider( 'access', [{title: 'Alice', route: ['/access', 'users', 'alice'], prefix: 'user', rank: 0, source: 'access'}], ['user'] ) );
+		expect( await lastValueFrom(service.search('ali')) ).toHaveLength( 1 );
+	});
+});

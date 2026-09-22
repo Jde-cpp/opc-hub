@@ -42,12 +42,19 @@ export class NodeSearchProvider implements ISearchProvider{
 		}
 		return hits.slice( 0, limit ).map( ({gateway, row})=>({
 			title: row.name,
-			route: [ '/gateways', gateway.slug, row.connection.slug, ...row.path.split('/') ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
+			route: [ '/gateways', gateway.slug, row.connection.slug, ...NodeSearchProvider.pagePath(row) ],//array form: the router encodes each browse segment, NodeRoute decodes them back.
 			summary: `${row.connection.name}/${NodeSearchProvider.displayPath(row.path)}`,
 			icon: NodeSearchProvider.icon( row.nodeClass ),
 			rank: row.name.toLowerCase().startsWith( text ) ? 0 : 1,
 			source: this.name
 		}) );
+	}
+	//The page a hit opens.  Only an Object has a page:  a Variable (or a Method) is a row on its parent's - its value, status and
+	//subscribe box - and routing to it showed a false "Not found." or the variable's own children (reviews/m3-closing.md #9).
+	//A Variable the crawl found under another Variable still lands on a Variable here;  NodeResolver walks that on up.
+	static pagePath( row:NodeSearchRow ):string[]{
+		const segments = row.path.split( '/' );
+		return row.nodeClass==ENodeClass.Object ? segments : segments.slice( 0, -1 );
 	}
 	//the browse path as the breadcrumbs name it (nodeSegmentName):  `5~pumps/5~pump1` reads pumps/pump1.
 	static displayPath( path:string ):string{

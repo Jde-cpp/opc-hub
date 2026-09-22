@@ -7,8 +7,13 @@ if( typeof globalThis.localStorage=="undefined" ){
 		clear: ()=>backing.clear()
 	};
 }
+import { Component } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { provideRouter, Router } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { vi } from 'vitest';
-import { DetailRoute, SnackbarService, SlugNotFoundError } from 'jde-framework';
+import { RecentVisits } from 'jde-spa';
+import { DetailRoute, IGRAPHQL, SnackbarService, SlugNotFoundError } from 'jde-framework';
 import { Gateway } from '../gateway-service';
 import { OpcStore } from '../opc-store';
 import { ClientResolver } from './client-resolver';
@@ -90,5 +95,84 @@ describe( 'ClientResolver.load delegation', ()=>{
 		const getConnection = vi.fn();
 		await ClientResolver.load( spyGateway([]), {getConnection} as unknown as OpcStore, '$new', routing, snackbar );
 		expect( getConnection ).not.toHaveBeenCalled();
+	} );
+} );
+
+//reviews/m3-closing.md #5:  the Connection tab answered from OpcStore's memoized describe, so after one success it never
+//showed "Not connected" again - a server stopped since then still listed its old Application Name, Policy and Mode.  The
+//tab describes fresh, with the real store, and a failure leaves the row's server unset and says why.
+describe( 'ClientResolver.load on a connection described before', ()=>{
+	const routing = new DetailRoute( 'plc1', undefined, [], <any>{path:'.', title:'gw'} );
+	const describe = { connection: {id: 4, slug: 'plc1', name: 'PLC 1', url: 'opc.tcp://plc:4840', certificateUri: '', defaultBrowseNs: 1}, desc: {}, policy: '', mode: 'None', namespaces: [] };
+	const gateway = ( serverUp:()=>boolean )=>(<unknown>{
+		slug: 'gw',
+		schemaWithEnums: async ()=>({collectionName:'serverConnections', type:'ServerConnection'}),
+		slugQuery: ()=>'serverConnection(...)',
+		subQueries: ()=>[],
+		querySingle: async ()=>({id: 4, slug: 'plc1'}),
+		query: async ( ql:string )=>{
+			if( !ql.includes("serverDescription") )
+				return {};
+			if( !serverUp() )
+				throw new Error( "BadServerNotConnected" );
+			return describe;
+		}
+	}) as Gateway;
+
+	it( 'shows the server down rather than the last describe', async ()=>{
+		const snackbar = { exception: vi.fn(), error: vi.fn() } as unknown as SnackbarService;
+		TestBed.configureTestingModule({});
+		const store = TestBed.inject( OpcStore );
+		let up = true;
+		const ql = gateway( ()=>up );
+		expect( (await ClientResolver.load(ql, store, 'plc1', routing, snackbar)).row.server ).toBeDefined();
+		up = false;
+		const data = await ClientResolver.load( ql, store, 'plc1', routing, snackbar );
+		expect( data.row.server ).toBeUndefined();
+		expect( data.row.serverError ).toContain( "BadServerNotConnected" );
+	} );
+} );
+
+@Component( {template: ''} ) class Dummy{}
+
+//reviews/m3-closing.md #25:  a removed connection's Recently visited tile stayed - the resolver redirects on failure, which the
+//router reports as a NavigationCancel, not the NavigationError RecentVisits drops a page on.  It forgets the page itself, for
+//a connection the gateway does not have;  a failed query is transient.
+describe( 'ClientResolver on a connection that is gone', ()=>{
+	async function open( querySingle:()=>Promise<unknown> ){
+		const forget = vi.fn();
+		const ql = {
+			slug: 'gw',
+			schemaWithEnums: async ()=>({collectionName: 'serverConnections', type: 'ServerConnection'}),
+			slugQuery: ()=>'serverConnection(...)',
+			subQueries: ()=>[],
+			querySingle,
+			query: async ()=>({})
+		};
+		TestBed.configureTestingModule( {providers: [
+			provideRouter( [{ path: 'gateways/:gateway', children: [
+				{ path: ':connection', component: Dummy, providers: [ClientResolver], resolve: {pageData: ClientResolver} },
+				{ path: '', component: Dummy }
+			]}] ),
+			{ provide: IGRAPHQL, useValue: {gateway: async ()=>ql} },
+			{ provide: OpcStore, useValue: {getConnection: async ()=>({})} },
+			{ provide: SnackbarService, useValue: {exception: vi.fn(), error: vi.fn()} },
+			{ provide: RecentVisits, useValue: {forget} }
+		]} );
+		const harness = await RouterTestingHarness.create();
+		await harness.navigateByUrl( '/gateways/gw/plc1' );
+		await new Promise( r=>setTimeout(r, 20) );//the redirect is a second navigation
+		return { router: TestBed.inject(Router), forget };
+	}
+
+	it( "forgets a removed connection's page, and still goes back to the gateway", async ()=>{
+		const { router, forget } = await open( async ()=>null );
+		expect( forget ).toHaveBeenCalledWith( '/gateways/gw/plc1' );
+		expect( router.url ).toBe( '/gateways/gw' );
+	} );
+
+	it( 'keeps the page when the query merely failed', async ()=>{
+		const { forget } = await open( async ()=>{ throw new Error( "(500)gateway error" ); } );
+		expect( forget ).not.toHaveBeenCalled();
 	} );
 } );

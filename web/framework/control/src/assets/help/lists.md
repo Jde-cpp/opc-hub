@@ -1,6 +1,6 @@
 # Lists and records
 
-Most of the site is a **list** of records that opens onto a page for one **record**: the users, groups and roles under [Access](/access), and a gateway's server connections under [Gateways](/gateways). They all work the same way, which is described here; each section's own topic covers what is particular to it.
+Most of the site is a **list** of records that opens onto a page for one **record**: the users, groups and roles under [Access](/access), and a gateway's server connections, on the **Connections** tab of the gateway's page under [Applications](/apps). They all work the same way, which is described here; each section's own topic covers what is particular to it.
 
 A node's **Children** and an application server's **Logs** are not lists of records - nothing is added or deleted there - but they share the [views](#views).
 
@@ -16,7 +16,7 @@ Click a row to open the record. Click a column header to sort by that column, wh
 
 **Show deleted** returns deleted records to the list, which is the only way to reach one and restore it. It is remembered in this browser.
 
-An empty list says so. A list you hold no right to read says **No access** rather than looking empty - ask an administrator for a role that can read it - and a list that could not be loaded gives the reason and a **Retry** button.
+An empty list says so; a view whose filters match nothing says *No … match this view* instead, since the rows may only be hidden - switch back to the default view to see them. A list you hold no right to read says **No access** rather than looking empty - ask an administrator for a role that can read it - and a list that could not be loaded gives the reason and a **Retry** button.
 
 ## Views
 

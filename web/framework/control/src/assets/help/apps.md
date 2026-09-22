@@ -40,6 +40,6 @@ In the table, column headers sort as well, all but *Line*. The *Time* column sho
 
 The log levels the instance is running with, by tag. Rows marked *Configured* come from the instance's own configuration; rows marked *Override* were saved for this instance from this page and replace the configured level until they are removed.
 
-Changing a configured row's level makes it an override, and the undo button reverts it. A change is pushed to the running service straight away and saved, so the service applies it again at every start.
+Changing a configured row's level makes it an override, and the undo button reverts it. The *Default* row's undo button removes a saved default override too: the row reads *Removed on save*, and after the save it shows the level the configuration gives. A change is pushed to the running service straight away and saved, so the service applies it again at every start.
 
 An instance that is not connected cannot report what it runs with, so only its saved overrides are listed; a change made then is picked up when the service next starts.

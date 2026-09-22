@@ -8,6 +8,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 	};
 }
 import { HttpClient } from '@angular/common/http';
+import { vi } from 'vitest';
 import { AuthStore, ETransport } from 'jde-framework';
 import { NodeId } from '../model/node-id';
 import { OpcError } from '../model/opc-error';
@@ -38,6 +39,7 @@ class TestGateway extends Gateway{
 	}
 	//the subscribe reply the server would send, or a rejection standing in for a send that never got there.
 	statusCodes:( number|undefined )[] = [];
+	acked?:{ statusCode?:number, node?:any }[];//set = the reply as given, node ids and all - in the gateway's order, not the request's
 	rejectWith?:any;
 	sent:any[] = [];
 	override sendPromise<T>( m:any, log:string ):Promise<T>{
@@ -46,7 +48,7 @@ class TestGateway extends Gateway{
 			return Promise.resolve( undefined as T );
 		if( this.rejectWith )
 			return Promise.reject( this.rejectWith );
-		return Promise.resolve( this.statusCodes.map( statusCode=>({statusCode}) ) as T );
+		return Promise.resolve( (this.acked ?? this.statusCodes.map( statusCode=>({statusCode}) )) as T );
 	}
 	get unsubscribed():NodeId[]{ return this.sent.filter( m=>m.unsubscribe ).flatMap( m=>m.unsubscribe.nodes ); }
 }
@@ -103,6 +105,31 @@ describe( 'Gateway subscribe failures', ()=>{
 		expect( results[0].node.equals(B) ).toBe( true );
 		expect( results[0].value ).toBeInstanceOf( OpcError );
 		expect( results[0].sc ).toBe( scBadUnexpectedError );//no per-node code to report - the request never got there
+	} );
+
+	//reviews/m3-closing.md #10:  the gateway answers in NodeId order - never the request's - and the client blamed results[i] on
+	//nodes[i].  Asked [B, C, A] with B refused, the ack reads [A, B✗, C]:  C - healthy - was marked Bad and dropped, B stayed on.
+	it( 'places a failure on the node the ack names, not on the row at its index', async ()=>{
+		const C = new NodeId( {ns:2, i:3} );
+		const results:SubscriptionResult[] = [];
+		gateway.acked = [ {node: {namespaceIndex: 2, numeric: 1}}, {node: {namespaceIndex: 2, numeric: 2}, statusCode: 0x80340000}, {node: {namespaceIndex: 2, numeric: 3}} ];
+		gateway.subscribe( opcId, [B, C, A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		await Promise.resolve(); await Promise.resolve();
+		expect( results.map(r=>r.node.key) ).toEqual( [B.key] );
+		expect( await stillRegistered(gateway, C, "owner1") ).toBe( true );
+		expect( await stillRegistered(gateway, B, "owner1") ).toBe( false );
+	} );
+
+	//an ack that names no nodes - a gateway older than the field - can only be trusted positionally for a single node
+	it( 'blames nothing when a multi-node ack does not name its nodes', async ()=>{
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		const results:SubscriptionResult[] = [];
+		gateway.statusCodes = [undefined, 0x80340000];
+		gateway.subscribe( opcId, [B, A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
+		await Promise.resolve(); await Promise.resolve();
+		expect( results ).toHaveLength( 0 );
+		expect( warn ).toHaveBeenCalled();
+		warn.mockRestore();
 	} );
 
 	it( 'carries the server\'s own status code through when it gave one', async ()=>{

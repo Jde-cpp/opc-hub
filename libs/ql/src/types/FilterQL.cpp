@@ -316,8 +316,8 @@ namespace Jde{
 			if( name=="orderBy" || name=="limit" || name=="offset" || name=="skip" )
 				continue;
 			auto column = FilterColumn( dbTable, name );
-			if( name=="deleted" )
-				includeDeleted = false;
+			if( name=="deleted" )//an explicit filter on deleted is the whole predicate.  It set this false, which ANDed the implicit `deleted is null` onto it:  "not null" and a date could never match, only the null the implicit one already meant (reviews/m3-closing.md #16).
+				includeDeleted = true;
 			for( auto& filter : filters ){
 				auto& value = filter.Value;
 				const jvalue* json{};

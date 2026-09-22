@@ -84,6 +84,40 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
+	//reviews/m3-closing.md #3, ruled 09-21:  an unset Default Namespace means 1.  A connection saved without one - this helper's
+	//shape, the installer's seeded row, every SPA create before the fix - is a NULL column, which the SPA reads as 1 and so spells
+	//a namespace-1 child as a bare segment.  The gateway read the NULL as 0, so a reloaded, bookmarked or Recently-visited url of
+	//a namespace-1 node translated to 0:name and answered "Not found."  All three readers have to agree with the SPA.
+	TEST_F( BrowseTests, AnUnsetDefaultNamespaceIsOne ){
+		let stored = QL().QuerySync<jobject>( Ƒ(R"(serverConnection( slug:"{}" ){{ id defaultBrowseNs }})", OpcServerSlug), {}, {UserPK::System} );
+		let column = stored.if_contains( "defaultBrowseNs" );
+		ASSERT_TRUE( !column || column->is_null() ) << "the precondition, a NULL column:  " << serialize( stored );
+		let rows = BlockTAwait<vector<ServerCnnctn>>( ServerCnnctnAwait{DB::Key{string{OpcServerSlug}}} );
+		ASSERT_EQ( rows.size(), 1u );
+		EXPECT_EQ( rows.front().DefaultBrowseNs, 1 ) << "the row ctor - what ConnectAwait builds a client from";
+		EXPECT_EQ( ServerCnnctn{jobject{stored}}.DefaultBrowseNs, 1 ) << "the json ctor";
+		EXPECT_EQ( _client->DefaultBrowseNs(), 1 ) << "the live client, which translates a bare path segment";
+	}
+
+	//reviews/m3-closing.md #9:  the node page's path query asks the node's class too, so a search hit or a url that names a
+	//Variable - which has no page of its own - goes to its parent instead of being browsed as an object.  The class has to come
+	//back as the number the SPA's ENodeClass compares.
+	TEST_F( BrowseTests, APathQueryAnswersTheNodesClass ){
+		auto run = [&]( string query, jobject vars ){
+			auto ql = QL::Parse( move(query), move(vars), Schemas(), true );
+			let value = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+			TRACE( "{}", serialize(value) );
+			return value.as_object();
+		};
+		auto nodeClass = [&]( sv path ){//NodeResolver's query, parents and all
+			return Json::FindNumber<uint>( run("node( opc: $opc, path:$path ){ id name nodeClass parents{id name path} }", {{"opc", OpcServerSlug}, {"path", path}}), "nodeClass" );
+		};
+		EXPECT_EQ( nodeClass("4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"), UA_NODECLASS_OBJECT );
+		const NodeId variable{ 4, 6017 };//the Variable SubscribeTests monitors - its page path, as the node-scoped resources' links find it
+		let path = string{ Json::AsSV(run("node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", variable.ToJson()}}), "path") };
+		EXPECT_EQ( nodeClass(path), UA_NODECLASS_VARIABLE ) << path;
+	}
+
 	TEST_F( BrowseTests, NodeId ){
 		auto query = "node( opc: $opc, path:$path ){ id name parents{id name path} }";
 		jobject variables{ {"opc", OpcServerSlug}, {"path", "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"} };

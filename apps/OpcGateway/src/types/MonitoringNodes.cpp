@@ -1,5 +1,6 @@
 ﻿#include "MonitoringNodes.h"
 #include <jde/fwk/utils/collections.h>
+#include "proto/opc.Common.h"
 #include "../UAClient.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
 #include "../async/DataChanges.h"
@@ -142,6 +143,7 @@ namespace Jde::Opc::Gateway{
 		if( auto pRequest = _requests.find(requestId); pRequest!=_requests.end() ){
 			for( auto& n : pRequest->second ){
 				auto nodeResult = y.add_results();
+				*nodeResult->mutable_node() = ProtoUtils::ToNodeId( n );//the set's order, not the request's:  the client matches on this (reviews/m3-closing.md #10)
 				//This request's own word on the node first:  its create failed, or its listener unsubscribed the node while the create
 				//was out.  The node can be monitored all the same - for another listener - and answering from that item told this one
 				//it was subscribed to something it was never attached to (reviews/m2-closing.md #6).

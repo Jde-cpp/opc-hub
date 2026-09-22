@@ -68,6 +68,42 @@ describe( 'EffectiveRight.fromRows', ()=>{
 	} );
 } );
 
+//reviews/m3-closing.md #14:  a node resource is enforced the moment a role is granted on it (access_role_add mints it that
+//way), and the OpcServer resolves the node's subtree to it alone - so a user holding nothing on it is locked out there,
+//whatever they hold on the table.  The tab never showed it:  its resources were the table rows only.
+describe( 'EffectiveRight.fromRows on node resources', ()=>{
+	const table = ( deleted?:string )=>new Resource( {id: 20, schemaName: "opc.install", slug: "nodeIds", name: "node_ids", allowed: Rights.Read|Rights.Update, deleted} );
+	//as the server lists a node row:  its slug coalesced as the name, and no `allowed` - access_role_add inserts none
+	const nodeRow = ( id:number, criteria:string )=>new Resource( {id, schemaName: "opc.install", slug: "nodeIds", name: "nodeIds", criteria, deleted: undefined} );
+	const onTable:UserRightsRow = { resource: {id: 20, schemaName: "opc.install", slug: "nodeIds", criteria: "", deleted: null}, allowed: Rights.Read, denied: Rights.None, effective: Rights.Read, sources: [ {permissionId: 5, allowed: Rights.Read, denied: Rights.None, path: [{id: 11, type: "role"}]} ] };
+
+	it( 'marks a node the user holds nothing on as a lockout under its table, named and offering what the table offers', ()=>{
+		const rights = EffectiveRight.fromRows( [onTable], [table(), nodeRow(32, "ns=4;i=6030")], names );
+		const root = rights.find( r=>r.resource.id==20 )!;
+		expect( root.effective ).toBe( Rights.Read );
+		expect( root.children.map(c=>c.resource.id) ).toEqual( [32] );
+		const node = root.children[0];
+		expect( node.isLockout ).toBe( true );
+		expect( node.resource.name ).toBe( "node_ids" );
+		expect( node.resource.availableRights ).toBe( Rights.Read|Rights.Update );//else no lockout mark would render
+	} );
+
+	it( 'shows it at the top when the table itself is unenforced and ungranted - the fresh-install default', ()=>{
+		const rights = EffectiveRight.fromRows( [], [table("2026-09-01T00:00:00Z"), nodeRow(32, "ns=4;i=6030")], names );
+		expect( rights.map(r=>r.resource.id) ).toEqual( [32] );
+		expect( rights[0].isLockout ).toBe( true );
+		expect( rights[0].resource.criteria ).toBe( "ns=4;i=6030" );
+	} );
+
+	it( 'names a granted node after its table even though the list now holds the node row itself', ()=>{
+		const granted:UserRightsRow = { resource: {id: 32, schemaName: "opc.install", slug: "nodeIds", criteria: "ns=4;i=6030", deleted: null}, allowed: Rights.Read, denied: Rights.None, effective: Rights.Read, sources: [ {permissionId: 6, allowed: Rights.Read, denied: Rights.None, path: []} ] };
+		const node = EffectiveRight.fromRows( [onTable, granted], [table(), nodeRow(32, "ns=4;i=6030")], names ).find( r=>r.resource.id==20 )!.children[0];
+		expect( node.isLockout ).toBe( false );
+		expect( node.resource.name ).toBe( "node_ids" );
+		expect( node.resource.availableRights ).toBe( Rights.Read|Rights.Update );
+	} );
+} );
+
 describe( 'EffectiveRight.tooltip', ()=>{
 	const groups = EffectiveRight.fromRows( [row], resources, names ).find( r=>r.resource.id==12 )!;
 	it( 'lists the sources touching one right, allows first', ()=>{

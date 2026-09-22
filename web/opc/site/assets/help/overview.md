@@ -30,8 +30,9 @@ OPC Hub is the web front end of the Jde OPC services: it browses and secures the
 2. Have the hub and the server trust each other's certificates, as [Security](/help/gateways#security) describes.
 3. Sign in as one of that server's users, on the [login page](/login):
    - **Username** - the connection's slug from step 1, a backslash and the user's name on the server: `plant1\operator1`.
-     The slug prefix is what picks the connection, so it is required - without it the sign-in is refused with *"opc server
-     not specified"*. The bundled server is a connection like any other, and its slug is `OpcServer`.
+     The slug prefix is what picks the connection, so give it. Without one the hub tries its default connection - the
+     bundled server, when that component is installed - and otherwise refuses the sign-in with *"No default OPC server
+     connection."* The bundled server is a connection like any other, and its slug is `OpcServer`.
    - **Password** - that user's password on the server.
 
    Adding the connection is what created this login: the hub makes a sign-in provider for the slug as the connection

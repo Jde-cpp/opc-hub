@@ -1,4 +1,4 @@
-import { verify } from '../../utils/utils';
+import { arraysEqual, verify } from '../../utils/utils';
 import { StringUtils } from '../../utils/string-utils';
 import { Query } from '../../services/graphql';
 import { TableSettings } from '../../services/ql-list-resolver';
@@ -363,6 +363,10 @@ export class View{
 			const name = fieldFilter.field.name;
 			if( values.length==1 && values[0]=="<not null>" )
 				args.push( `${name}:{"ne":null}` );
+			else if( values.length==1 && values[0]=="<null>" && View.comparisonOperator(filter.operator)!="nin" ){//under any operator but NotIn (which means not null):  a DateTime column offers only < and >, and `{gt:"<null>"}` reached the server as a timestamp to parse - the bare-array form is the one it reads as `is null` (reviews/m3-closing.md #16)
+				args.push( `${name}:$${name}` );
+				vars[name] = [null];
+			}
 			else{
 				const op = View.comparisonOperator( filter.operator );
 				if( op=="nin" ){//NotIn takes the full value array (server nin now fixed)
@@ -382,7 +386,11 @@ export class View{
 			}
 		}
 		const iDeletedArg = args.findIndex( a=>a.startsWith("deleted:") );
-		if( showDeleted && iDeletedArg!=-1 ){
+		//Show deleted wins over a filter on the trash-can column - the checkbox is the way out.  A live-toggle page has no checkbox:
+		//`deleted` is its switch (the Resources page's Enforced), it queries with showDeleted always on, and a filter on it is the
+		//point - it used to be spliced out, so "enforced only" listed everything (reviews/m3-closing.md #16).
+		const liveToggle = this.fields.some( f=>f.name=="deleted" && f.liveToggle );
+		if( showDeleted && iDeletedArg!=-1 && !liveToggle ){
 			args.splice( iDeletedArg, 1 );
 			delete vars["deleted"];
 		}
@@ -396,6 +404,11 @@ export class View{
 	append( fields: Field[] ){
 		for( let field of fields.filter(f=>!this.fields.find(v=>v.name==f.name)) )
 			this.fields.push( new ViewField({qlField: field, settings: {name: field.name, hidden: true}}) );
+	}
+	//the same filters in any order:  a view that was only re-sorted or re-columned shows the same rows
+	static sameFilters( a:View, b:View ):boolean{
+		const keys = ( v:View )=>v.fieldFilters.map( ff=>JSON.stringify([ff.field.name, ff.filter.operator, ff.filter.value]) ).sort();
+		return arraysEqual( keys(a), keys(b) );
 	}
 	setDeletedDisplayed( show:boolean ){ this.fields.find(f=>f.name=="deleted")!.displayed = show; }
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{

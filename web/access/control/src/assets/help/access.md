@@ -24,7 +24,7 @@ A user's page opens on **Properties**. Once the user is saved three more tabs ap
 
 A resource that is enforced and that the user holds no grant on is a lockout: every right it offers is marked, and the mark says so. That is the row to look for after turning **Enforced** on.
 
-Rights granted on individual OPC nodes are folded under the row of the resource they belong to; expand it to see them, each named and linking to its node page where the node can be resolved.
+Rights granted on individual OPC nodes are folded under the row of the resource they belong to; expand it to see them, each named and linking to its node page where the node can be resolved. A node is enforced from the moment any role is granted on it, and the OPC server checks that node and everything under it against the node's own grants alone, whatever the user holds on the table above it - so a user with no grant on the node is locked out of that part of the tree, and the node's row shows the lockout. While the table itself is not enforced, such a node row sits at the top of the list rather than under it.
 
 ## Groups
 

@@ -1,5 +1,7 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { OpcObject, UaNode } from '../model/node';
+import { Gateway } from './gateway-service';
 import { OpcStore } from './opc-store';
 
 const gateway = "gw", cnnctn = "local";
@@ -41,5 +43,50 @@ describe( 'OpcStore.findNodeId', ()=>{
 
 	it( 'answers undefined for a connection it has never seen', ()=>{
 		expect( store.findNodeId(gateway, "other", "2~a") ).toBeUndefined();
+	} );
+} );
+
+//reviews/m3-closing.md #5:  a describe that succeeded was kept for the life of the page and nothing removed it - an edited
+//Name or Default Namespace never reached the node pages, and the Connection tab never went back to "Not connected".
+describe( 'OpcStore.getConnection', ()=>{
+	let store:OpcStore;
+	const props = ( name:string )=>({ connection: {id: 1, slug: cnnctn, name, url: "opc.tcp://plc:4840", certificateUri: "", defaultBrowseNs: 1}, desc: {}, policy: "", mode: "None", namespaces: [] });
+	const gatewayOf = ( query:any )=>(<unknown>{ slug: gateway, query }) as Gateway;
+	beforeEach( ()=>{
+		TestBed.configureTestingModule({});
+		store = TestBed.inject( OpcStore );
+	} );
+
+	it( 'memoizes a describe - the node pages share it', async ()=>{
+		const query = vi.fn().mockResolvedValue( props("Line 1") );
+		await store.getConnection( gatewayOf(query), cnnctn );
+		await store.getConnection( gatewayOf(query), cnnctn );
+		expect( query ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	it( 'describes again once the connection is forgotten', async ()=>{
+		const query = vi.fn().mockResolvedValueOnce( props("Line 1") ).mockResolvedValueOnce( props("Line 2") );
+		await store.getConnection( gatewayOf(query), cnnctn );
+		store.forget( gateway, cnnctn );
+		const server = await store.getConnection( gatewayOf(query), cnnctn );
+		expect( query ).toHaveBeenCalledTimes( 2 );
+		expect( server.connection.name ).toBe( "Line 2" );
+	} );
+
+	it( 'describes fresh when asked, and keeps nothing when that fails', async ()=>{
+		const query = vi.fn().mockResolvedValueOnce( props("Line 1") ).mockRejectedValueOnce( new Error("server down") ).mockResolvedValueOnce( props("Line 2") );
+		await store.getConnection( gatewayOf(query), cnnctn );
+		await expect( store.getConnection(gatewayOf(query), cnnctn, {fresh: true}) ).rejects.toThrow( "server down" );
+		const server = await store.getConnection( gatewayOf(query), cnnctn );//the memoized path must not answer with the stale describe
+		expect( query ).toHaveBeenCalledTimes( 3 );
+		expect( server.connection.name ).toBe( "Line 2" );
+	} );
+
+	it( 'forgets the connection\'s nodes with it - a new url can be another server', ()=>{
+		const a = node( 1, "a" );
+		store.setNodes( gateway, cnnctn, OpcObject.rootNode, [a] );
+		expect( store.findNodeId(gateway, cnnctn, "2~a") ).toBe( a );
+		store.forget( gateway, cnnctn );
+		expect( store.findNodeId(gateway, cnnctn, "2~a") ).toBeUndefined();
 	} );
 } );

@@ -11,14 +11,18 @@
 		<mat-tab>
 			<ng-template mat-tab-label>Logs</ng-template>
 			<ng-template matTabContent>
-				<log-detail [service]=gateway></log-detail>
+				@for( g of [gateway()]; track g ){<!--keyed on the gateway:  the router reuses this page from one to the next, and a tab loads once (reviews/m3-closing.md #31)-->
+					<log-detail [service]=g!></log-detail>
+				}
 			</ng-template>
 		</mat-tab>
 		<mat-tab>
 			<ng-template mat-tab-label>Log Settings</ng-template>
 			<ng-template matTabContent>
 				@if( instanceId() !== undefined ){
-					<log-settings [service]=appService [instanceId]=instanceId()!></log-settings>
+					@for( id of [instanceId()]; track id ){<!--keyed, as Logs:  a Save used to diff against the previous gateway's snapshot and write to this one's id-->
+						<log-settings [service]=appService [instanceId]=id!></log-settings>
+					}
 				}
 				@else{
 					<p>No application instance registered for this gateway — log settings are unavailable.</p>

@@ -5,6 +5,7 @@ import { APP_SERVICE, AppService } from '../app/app-service';
 import { resolveInstanceHost } from '../app/app-service-types';
 import { StringUtils } from '../../utils/string-utils';
 import { TableSettings } from '../ql-list-resolver';
+import { SnackbarService } from '../../shared/snackbar/snackbar-service';
 
 
 export type Connection = { id: number, instanceId: number, programName: string, displayName: string, instanceName: string, hostName: string, created: Date, status: { memory: number, values: any[] }, urlSegments:string[], linked:boolean };//linked:  the site has a page for it (the PLC emulator has none)
@@ -23,7 +24,14 @@ export class AppInstanceRoute extends RouteItem{
 export class AppResolver implements Resolve<Connection[]> {
 	private appService:AppService = inject( APP_SERVICE );
 	async resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<Connection[]>{
-		let connections = await this.appService.queryArray<Connection>( "connections{id instanceId programName instanceName hostName created status{memory values}}", null, (m)=>console.log(m) );
+		let connections:Connection[];
+		try{
+			connections = await this.appService.queryArray<Connection>( "connections{id instanceId programName instanceName hostName created status{memory values}}", null, (m)=>console.log(m) );
+		}
+		catch( e ){//a rejected resolve reaches only the console - the Applications link would do nothing, silently (reviews/m3-closing.md #6)
+			this.#snackbar.exception( "Could not load the applications.", e );
+			throw e;
+		}
 		let urlMap:any = {};
 		const pageHost = typeof location=="undefined" ? "" : location.hostname;
 		connections.forEach( c=>{
@@ -58,4 +66,5 @@ export class AppResolver implements Resolve<Connection[]> {
 
 	routeStore = inject( RouteStore );
 	#router = inject( Router );
+	#snackbar = inject( SnackbarService );
 }

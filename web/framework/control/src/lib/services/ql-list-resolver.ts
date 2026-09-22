@@ -15,8 +15,8 @@ import { Sort } from '@angular/material/sort';
 //viewName: the toggle label of the default view ("default" when unset);  filters: the default view's, same vocabulary as a
 //ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
-export type EmptyState = { title?:string, detail?:string, icon?:string };
-export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filters?:ViewFilterSettings[], views?:ViewSettings[], empty?:EmptyState};
+export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
+export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filters?:ViewFilterSettings[], views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
 export type CollectionItem = string | { path:string, title?:string, data?:{summary:string, collectionName:string, tableSettings:TableSettings} };
 export class ListRoute extends RouteItem{
 	constructor( collection:string|CollectionItem ){
@@ -99,11 +99,20 @@ export class QLListResolver implements Resolve<QLListData> {
 		try{ return await QLListResolver.load( ql, data, routeStore ); }
 		catch( e ){ return { ...data, results: {[data.schema.collectionName]: []}, error: e }; }
 	}
-	//what an empty list says:  the route's own words, else the collection's name and - where Add is offered - a pointer at it
-	static emptyState( routing:ListRoute ):Required<EmptyState>{
+	//what an empty list says:  the route's own words, else the collection's name and - where Add is offered - a pointer at it.
+	//Those words are about an empty collection, so they are only said of one (reviews/m3-closing.md #24):  a list the view's
+	//filters narrowed may have rows the view hides, one QLSelector's excludedIds narrowed has none but those, and a selector
+	//tab has no Add to point at.
+	static emptyState( routing:ListRoute, narrowed:{filtered?:boolean, excluded?:boolean, selector?:boolean} = {} ):Required<Omit<EmptyState,"add">>{
 		const settings = routing.tableSettings;
-		const noun = routing.title.toLowerCase();
-		return { title: settings.empty?.title ?? `No ${noun} yet.`, detail: settings.empty?.detail ?? (settings.canAdd===false ? "" : "Use Add to create the first one."), icon: settings.empty?.icon ?? "inbox" };
+		const noun = settings.noun ?? routing.title.toLowerCase();
+		const icon = settings.empty?.icon ?? "inbox";
+		if( narrowed.filtered )
+			return { title: `No ${noun} match this view.`, detail: "", icon: "filter_alt_off" };
+		if( narrowed.excluded )
+			return { title: `No other ${noun}.`, detail: "", icon };
+		const add = narrowed.selector || settings.canAdd===false ? "" : settings.empty?.add ?? (settings.empty?.detail ? "" : "Use Add to create the first one.");//a route's own detail with no `add` is the whole text, as before `add` existed
+		return { title: settings.empty?.title ?? `No ${noun} yet.`, detail: [settings.empty?.detail, add].filter( s=>s ).join( "  " ), icon };
 	}
 	//everything but the rows:  the schema, the default view plus the user's saved ones, and the column display names.
 	//QLSelector builds a collection's list the same way, so it lives here rather than in resolve().

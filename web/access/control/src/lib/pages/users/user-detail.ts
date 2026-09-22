@@ -81,7 +81,7 @@ const providerTones:ChipTones = { Google:"ok", Facebook:"ok", Amazon:"ok", Micro
 const identityColumns:(string|ViewFieldSettings)[] = [ { name:"name", style: new Style(300) }, { name:"provider", style: new Style(100), chip: providerTones } ];
 //three system views:  'all' (the default), the people - password/Google logons - and the certificate identities with their key columns
 export const userTableSettings:TableSettings = {
-	empty: { title: "No users yet.", detail: "An identity becomes a user the first time it signs in; use Add to create one ahead of that." },
+	empty: { title: "No users yet.", detail: "An identity becomes a user the first time it signs in.", add: "Use Add to create one ahead of that." },
 	excludedColumns: ["isGroup"],
 	viewName: "All",
 	columns: [ ...identityColumns, "description" ],

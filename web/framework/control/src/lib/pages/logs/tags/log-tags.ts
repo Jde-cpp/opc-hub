@@ -16,7 +16,9 @@ import { ELogLevel } from 'jde-proto/Log';
 export type TagLevel = { tag:string, level:string, override:boolean };
 //configured: the level a non-override row came in with - what removing an override falls back to, and what makes picking
 //it again no override.  Unset for a stored override (the instance cannot say what its config had) and for a new row.
-export type TagRow = { tag:string, level:ELogLevel, override:boolean, configured?:ELogLevel };
+//removed: a stored Default override the user removed - the Default row is fixed, so it stays; the save sends `default: null`
+//and the reload shows the level the instance's configuration gives it (reviews/m3-closing.md #30).
+export type TagRow = { tag:string, level:ELogLevel, override:boolean, configured?:ELogLevel, removed?:boolean };
 
 @Component({
 	selector: 'log-tags',
@@ -28,6 +30,7 @@ export class LogTags implements OnInit{
 	ngOnInit(){
 		const given = this.tags();
 		const stored = given.find( t=>t.tag==LogTags.defaultTag );
+		this.#storedDefault = !!stored?.override;
 		this.dataSource = [
 			//LogTags() in logTags.h defaults to Information when nothing is stored.  A default the instance did not report has no
 			//configured level to fall back to, so it is not an override until the user picks a level - see onLevelChange/entries.
@@ -45,6 +48,8 @@ export class LogTags implements OnInit{
 	onLevelChange( row:TagRow, level:ELogLevel ){
 		row.level = level;
 		row.override = row.configured===undefined || level!=row.configured;
+		if( row.removed )
+			row.removed = false;//picked a level after all:  the override stays
 	}
 	onTagChange( row:TagRow, tag:string ){
 		const isNew = !row.tag;
@@ -55,11 +60,21 @@ export class LogTags implements OnInit{
 		}
 	}
 	//removing an override: a configured tag goes back to the level it came in with; a stored override's row goes, the
-	//save then sends `level:null` for it.
+	//save then sends `level:null` for it - except the Default row, which is fixed:  spliced out, it left the sink without one
+	//and offered "default" to the new-row picker.  A stored Default is marked removed (its configured level is known only
+	//after the save's reload);  one the user picked but nothing stored goes back to the synthesized row.
 	onDelete( row:TagRow ){
 		if( row.configured!==undefined ){
 			row.level = row.configured;
 			row.override = false;
+			return;
+		}
+		if( this.isDefault(row) ){
+			row.override = false;
+			if( this.#storedDefault )
+				row.removed = true;
+			else
+				row.level = ELogLevel.Information;
 			return;
 		}
 		this.dataSource.splice( this.dataSource.indexOf(row), 1 );
@@ -91,4 +106,5 @@ export class LogTags implements OnInit{
 	static toWire( l:ELogLevel ):string{ return l==ELogLevel.NoLog || l==ELogLevel.LogLevelNone ? "None" : ELogLevel[l]; }
 	static fromWire( s:string ):ELogLevel{ return s=="None" ? ELogLevel.NoLog : (<any>ELogLevel)[s] ?? ELogLevel.Information; }
 	@ViewChild('table', {static: true}) table!: MatTable<TagRow>;
+	#storedDefault = false;//the instance has a saved Default override - removing it is a `default: null` on save
 }

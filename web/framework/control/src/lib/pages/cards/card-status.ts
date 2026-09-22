@@ -35,11 +35,12 @@ export function counted( n:number, noun:string ):string{ return `${n} ${plural(n
 //The rows a plural query returns, counted.  Not queryArray:  a server-side custom select can answer a list with {} - the
 //access server's GroupAwait did for `groups{ id }` until 2026-09 - and queryArray rejects that as "not an array", which
 //would cost the card its whole line.  {} counts as none; anything else that is not a list still rejects.
-export async function countRows( service:{ query<Y>( ql:string ):Promise<Y> }, collection:string, field = 'id' ):Promise<number>{
-	return (await queryRows( service, collection, field )).length;
+//args:  the query's inline arguments, `criteria:null` - where the card has to count only what its page lists.
+export async function countRows( service:{ query<Y>( ql:string ):Promise<Y> }, collection:string, field = 'id', args?:string ):Promise<number>{
+	return (await queryRows( service, collection, field, args )).length;
 }
-export async function queryRows<T = Record<string,unknown>>( service:{ query<Y>( ql:string ):Promise<Y> }, collection:string, fields = 'id' ):Promise<T[]>{
-	const rows = (await service.query<Record<string,unknown>>( `${collection}{ ${fields} }` ))[collection];
+export async function queryRows<T = Record<string,unknown>>( service:{ query<Y>( ql:string ):Promise<Y> }, collection:string, fields = 'id', args?:string ):Promise<T[]>{
+	const rows = (await service.query<Record<string,unknown>>( `${collection}${args ? `(${args})` : ''}{ ${fields} }` ))[collection];
 	if( Array.isArray(rows) )
 		return rows;
 	if( rows && typeof rows=='object' && !Object.keys(rows).length )

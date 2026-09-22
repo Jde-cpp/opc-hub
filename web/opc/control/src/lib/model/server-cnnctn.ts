@@ -28,8 +28,12 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 			args["url"] = this.url;
 		if( this.certificateUri!=original?.certificateUri )
 			args["certificateUri"] = this.certificateUri;
-		if( this.defaultBrowseNs!=original?.defaultBrowseNs )
-			args["defaultBrowseNs"] = this.defaultBrowseNs;
+		//A create always states it:  left at the default the form shows, it used to send nothing and store NULL, which the gateway
+		//read as another namespace (reviews/m3-closing.md #3) - a connection should not depend on what NULL means.  Through toNs,
+		//as equals() compares:  Properties.onChange leaves the input's raw string on the record.
+		const ns = ServerCnnctn.toNs( this.defaultBrowseNs );
+		if( !original?.id || ns!=ServerCnnctn.toNs(original.defaultBrowseNs) )
+			args["defaultBrowseNs"] = ns;
 		return Object.keys( args ).length ? [new Mutation(this.type, this.id, args, original?.id ? MutationType.Update : MutationType.Create)] : [];
 	}
 

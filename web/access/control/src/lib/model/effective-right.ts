@@ -22,7 +22,7 @@ export class EffectiveRight{
 		this.sources = obj.sources ?? [];
 	}
 
-	//The server's rows joined to what it does not cache - resource name and available rights from loadResources(), path
+	//The server's rows joined to what it does not cache - resource name and available rights from the resources list, path
 	//names from the two lists - plus a row per ENFORCED resource the user has no grant on:  an enforced resource with nothing
 	//is a lockout, which is what the first-run admin is looking for, and a silent absence would hide it.  Unenforced
 	//resources without a grant are left out - they are open to everyone, there is nothing to say.
@@ -33,13 +33,20 @@ export class EffectiveRight{
 	static fromRows( rows:UserRightsRow[], resources:Resource[], names:Names ):EffectiveRight[]{
 		const byId = new Map( resources.map( r=>[r.id, r] ) );
 		const roots = new Map( resources.filter( r=>!r.criteria ).map( r=>[EffectiveRight.key(r.schema, r.slug), r] ) );
+		//A node resource shows as its table:  its own name is the slug access_role_add coalesced ("nodeIds" under the synced
+		//"node_ids"), and it carries no `allowed` - it offers what its table offers, or no lockout mark would render.
+		const asTable = ( schema:string|undefined, slug:string|undefined, criteria:string|undefined, cached:Resource|undefined )=>{
+			const root = roots.get( EffectiveRight.key(schema, slug) );
+			return criteria
+				? { name: root?.name ?? cached?.name ?? slug, availableRights: root?.availableRights ?? Rights.All }
+				: { name: cached?.name ?? root?.name ?? slug, availableRights: cached?.availableRights ?? Rights.All };
+		};
 		const y = rows.map( row=>{
 			const cached = byId.get( row.resource.id );
 			//the row's own schema/slug/criteria/deleted win:  loadResources() filters criteria:null, so a node resource is only ever known
 			//from here - and takes its root's name, since its own is the QL slug access_role_add coalesced ("nodeIds" under "node_ids")
-			const schema = row.resource.schemaName ?? cached?.schema, slug = row.resource.slug ?? cached?.slug;
-			const name = cached?.name ?? roots.get( EffectiveRight.key(schema, slug) )?.name ?? slug;
-			const resource = new Resource( { ...(cached ?? {}), id: row.resource.id, schemaName: schema, slug, name, criteria: row.resource.criteria || undefined, deleted: row.resource.deleted ?? undefined, availableRights: cached?.availableRights ?? Rights.All } );
+			const schema = row.resource.schemaName ?? cached?.schema, slug = row.resource.slug ?? cached?.slug, criteria = row.resource.criteria || undefined;
+			const resource = new Resource( { ...(cached ?? {}), id: row.resource.id, schemaName: schema, slug, criteria, deleted: row.resource.deleted ?? undefined, ...asTable(schema, slug, criteria, cached) } );
 			const sources:RightsSource[] = row.sources.map( s=>({
 				permissionId: s.permissionId,
 				allowed: s.allowed as Rights,
@@ -49,9 +56,12 @@ export class EffectiveRight{
 			return new EffectiveRight( { resource, allowed: row.allowed as Rights, denied: row.denied as Rights, effective: row.effective as Rights, sources } );
 		});
 		const granted = new Set( rows.map( r=>r.resource.id ) );
+		//A node resource is here too (reviews/m3-closing.md #14):  granting a role on a node mints it enforced, and the OpcServer
+		//resolves the node's subtree to it alone, so a user holding nothing on it is locked out there whatever they hold on the
+		//table.  With the table unenforced and ungranted (a fresh install's default) the row has no parent and stays top-level.
 		for( const resource of resources ){
 			if( !resource.deleted && !granted.has(resource.id) )
-				y.push( new EffectiveRight({ resource }) );
+				y.push( new EffectiveRight({ resource: resource.criteria ? new Resource( {...resource, schemaName: resource.schema, ...asTable(resource.schema, resource.slug, resource.criteria, resource)} ) : resource }) );
 		}
 		y.sort( (a,b)=>(a.resource.schema ?? '').localeCompare(b.resource.schema ?? '') || (a.resource.name ?? '').localeCompare(b.resource.name ?? '') || (a.resource.criteria ?? '').localeCompare(b.resource.criteria ?? '') );
 		return EffectiveRight.nest( y );

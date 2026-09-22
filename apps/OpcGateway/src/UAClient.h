@@ -52,6 +52,7 @@ namespace Jde::Opc::Gateway{
 		Ω IsConnectionLoss( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADSERVERNOTCONNECTED || sc==UA_STATUSCODE_BADCONNECTIONCLOSED || sc==UA_STATUSCODE_BADSECURECHANNELCLOSED; }
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
+		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  OpcQLHook.
 		Ω Unsubscribe( const sp<IDataChange>& dataChange )ι->void;//drop dataChange from every client's monitored items - a websocket session's OnClose, which is the only thing that ends its subscriptions.
 		//A connection failure destroys the client but not what it was monitoring: that is parked and reconnected (soak-findings
 		//#10), which puts those nodes in a second place an unsubscribe has to reach, or a closed session comes back to life.

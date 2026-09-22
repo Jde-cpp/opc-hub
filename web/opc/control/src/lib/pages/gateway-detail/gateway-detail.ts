@@ -23,7 +23,7 @@ export class GatewayDetail implements OnInit, OnDestroy{
 			this.sideNav.set( this.pageData.routing );
 			const instanceName = this.pageData.routing.path.split('/').slice(-1)[0];
 			this.componentPageTitle.title = `${instanceName} - Gateway`;
-			this.gateway = await this.gatewayService.gateway( instanceName );
+			this.gateway.set( await this.gatewayService.gateway(instanceName) );
 			this.isLoading.set( false );
 			this.instanceId.set( await this.appService.instancePK(instanceName, "OpcGateway") ?? await this.appService.instancePK(instanceName, "OpcHub") );//a hub registers under its own program name
 		});
@@ -40,7 +40,7 @@ export class GatewayDetail implements OnInit, OnDestroy{
 	tabIndex:number = ProfileStore.tabIndex( 'gateway-detail' );
 	sideNav = model.required<RouteItem>();
 
-	gateway!:Gateway;
+	gateway = signal<Gateway|undefined>( undefined );//a signal, not a field:  the Logs tab's body sits in the tab group's OnPush portal, which only a signal read refreshes - a field never re-keyed it on a switch (reviews/m3-closing.md #31)
 	gatewayService = inject(GatewayService);
 	appService = inject(AppService);
 	instanceId = signal<number|undefined>( undefined );
@@ -48,7 +48,8 @@ export class GatewayDetail implements OnInit, OnDestroy{
 }
 
 export const gatewayTableSettings:TableSettings = {
-	empty: { title: "No server connections.", detail: "Use Add to connect this gateway to an OPC server." },
+	empty: { title: "No server connections.", add: "Use Add to connect this gateway to an OPC server." },
+	noun: "server connections",//the route title is the instance path - "No access to gateways/opchub.debug" named nothing to ask for
 	//Read left to right:  what the connection is (name), how it is doing (status and the two counts that back it), then where it
 	//points (url, and the certificate uri that has to match the server at that url), then the description.  The two uris are the
 	//widest and least often read, so they sit after the state rather than pushing it off the side.

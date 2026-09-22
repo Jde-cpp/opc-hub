@@ -5,6 +5,7 @@
 #include "../types/UAClientException.h"
 #include "Subscriptions.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
+#include "../types/proto/opc.Common.h"
 
 #define let const auto
 
@@ -99,8 +100,11 @@ namespace Jde::Opc::Gateway{
 			sc = e->HasCode() ? (StatusCode)e->Code() : UA_STATUSCODE_BADINTERNALERROR;
 		if( !_monitoredRequestId ){//never registered - no subscription even after the redrive - so GetResult has nothing to answer from:  fail each node here.
 			FromServer::SubscriptionAck y;
-			for( uint i=0; i<_nodes.size(); ++i )
-				y.add_results()->set_status_code( sc ? sc : UA_STATUSCODE_BADINTERNALERROR );
+			for( let& node : _nodes ){
+				auto result = y.add_results();
+				result->set_status_code( sc ? sc : UA_STATUSCODE_BADINTERNALERROR );
+				*result->mutable_node() = ProtoUtils::ToNodeId( node );//as GetResult names its results (reviews/m3-closing.md #10)
+			}
 			return y;
 		}
 		return FromServer::SubscriptionAck{ _client->MonitoredNodes().GetResult(_monitoredRequestId, sc) };
