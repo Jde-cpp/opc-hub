@@ -8,6 +8,7 @@
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
 #include "../src/types/proto/opc.FromServer.h"
+#include "../src/types/proto/opc.Common.h"
 #include "utils/ITest.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/opc/ServerTrust.h>
@@ -437,6 +438,32 @@ namespace Jde::Opc::Gateway::Tests{
 
 		_client->MonitoredNodes().Unsubscribe( listener );
 		sw.Reset();
+		while( _client->MonitoredNodes().Count()!=before )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) );
+	}
+
+	//reviews/m3-closing.md #10:  the ack answers in NodeId order - GetResult walks the request's flat_set - never in the order the
+	//client asked, and a result carried no node to match on, so the web client blamed a failure on whichever row sat at its index:
+	//a healthy row was marked Bad, locked and its pushes dropped, while the node that failed stayed ticked with nothing said.  Each
+	//result names its node now.  An unknown node the server refuses per item, asked for ahead of a good one:  the set puts it second.
+	TEST_F( SubscribeTests, EachResultNamesItsNode ){
+		const NodeId good{ 4, 6017 }, unknown{ 4, 999'999 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<PushCount>();
+		ASSERT_NO_THROW( BlockVoidAwait(SubscribeAwait{_client}) );
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = BlockTAwait<FromServer::SubscriptionAck>(DataChangeAwait{{unknown, good}, listener, _client}) );
+		_client->MonitoredNodes().Unsubscribe( listener );
+		ASSERT_EQ( ack.results_size(), 2 );
+		flat_map<NodeId,uint32> byNode;
+		for( let& result : ack.results() ){
+			EXPECT_TRUE( result.has_node() ) << "a result that does not say which node it answers";
+			byNode.emplace( ProtoUtils::ToNodeId(result.node()), result.status_code() );
+		}
+		EXPECT_EQ( byNode.size(), 2u );
+		EXPECT_EQ( byNode[good], (uint32)UA_STATUSCODE_GOOD );
+		EXPECT_EQ( byNode[unknown], (uint32)UA_STATUSCODE_BADNODEIDUNKNOWN );
+		Stopwatch sw;
 		while( _client->MonitoredNodes().Count()!=before )
 			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) );
 	}

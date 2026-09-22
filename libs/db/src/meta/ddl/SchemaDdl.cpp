@@ -1,5 +1,7 @@
 ﻿#include "SchemaDdl.h"
 #include <jde/fwk/io/file.h>
+#include <jde/fwk/crypto/OpenSsl.h>
+#include <boost/uuid/uuid_io.hpp>
 #include "TableDdl.h"
 #include <jde/db/DBException.h>
 #include <jde/db/IDataSource.h>
@@ -177,7 +179,7 @@ namespace Jde::DB{
 	α SchemaDdl::SyncData( const AppSchema& config, const jobject& )ε->void{//the config is re-read by SeedData - the one entry point the app's later ".roles" pass shares.
 		SeedData( config, ".mutation", _ql );
 	}
-	α SchemaDdl::SeedData( const AppSchema& config, sv extension, sp<QL::IQL> ql )ε->void{
+	α SchemaDdl::SeedData( const AppSchema& config, sv extension, sp<QL::IQL> ql, bool skipUnchanged )ε->void{
 		let json = ConfigurationJson( config );//by value - a reference into it below outlives a temporary.
 		let& initConfig = Json::AsObject( json, "tables" );
 		vector<string> prefixes{ config.Name };
@@ -186,10 +188,29 @@ namespace Jde::DB{
 			move( additional.begin(), additional.end(), std::back_inserter(prefixes) );
 		}
 		forEachDir( "/dbServers/dataPaths", extension, prefixes, [&](const fs::path& file){
-			let text = IO::Load( file );
 			INFO( "Mutation: '{}'", file.string() );
-			ql->Upsert( text, {}, {UserPK::System} );
+			SeedFile( config, file.filename().string(), IO::Load(file), ql, skipUnchanged );
 		});
+	}
+	//The .roles pass reran every file at every -sync start - every installed start - so a permission or child role an admin had
+	//removed from a seeded role came back at the next reboot (reviews/m3-closing.md #12, ruled 09-21:  the admin's edits win).  A
+	//schema with a `seeds` table records each file by content once it has applied, and skips it while it is unchanged;  a release
+	//whose seed changed applies it again, adding what is missing (Upsert's adds rewrite nothing).  Recorded only after the text
+	//applied, so a pass that throws is retried at the next start.  No `seeds` table (a schema without one), no skipping.
+	α SchemaDdl::SeedFile( const AppSchema& config, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool{
+		let seeds = skipUnchanged ? config.FindTable( "seeds" ) : nullptr;
+		let hash = seeds ? boost::uuids::to_string( Crypto::CalcMd5(text) ) : string{};
+		auto& ds = *config.DS();
+		if( seeds && ds.ScalerSyncOpt<string>({Ƒ("select content_hash from {} where name=?", seeds->DBName), {Value{name}}})==hash ){
+			INFO( "Seed '{}' is unchanged since it was applied - skipped.", name );
+			return false;
+		}
+		ql->Upsert( text, {}, {UserPK::System} );
+		if( seeds ){
+			ds.ExecuteSync( {Ƒ("delete from {} where name=?", seeds->DBName), {Value{name}}} );
+			ds.ExecuteSync( {Ƒ("insert into {}( name, content_hash, applied ) values( ?, ?, {} )", seeds->DBName, ds.Syntax().UtcNow()), {Value{name}, Value{hash}}} );
+		}
+		return true;
 	}
 
 	α SchemaDdl::SyncScripts( const AppSchema& config, const jobject& initConfig )ε->void{

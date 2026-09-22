@@ -38,7 +38,7 @@ describe('NodeSearchProvider', () => {
 		expect( gw.calls[0].ql ).toContain( 'opc:$opc' );
 		expect( other.calls ).toHaveLength( 0 );
 		expect( results ).toHaveLength( 1 );
-		expect( results[0] ).toMatchObject( { title: 'Lamp 1', summary: 'Line 1/4~Examples/4~Lamp 1', icon: 'folder', rank: 0, route: ['/gateways', 'gw', 'cn1', '4~Examples', '4~Lamp 1'] } );
+		expect( results[0] ).toMatchObject( { title: 'Lamp 1', summary: 'Line 1/Examples/Lamp 1', icon: 'folder', rank: 0, route: ['/gateways', 'gw', 'cn1', '4~Examples', '4~Lamp 1'] } );//the summary names segments as the breadcrumbs do (3703ff0e);  this copy of the spec had not followed
 	});
 
 	it('elsewhere fans out over every gateway without an opc, ignoring one that fails', async () => {
@@ -51,6 +51,15 @@ describe('NodeSearchProvider', () => {
 		expect( results[0].rank ).toBe( 1 );//'motorRpm' contains but does not start with 'rpm'
 		expect( warn ).toHaveBeenCalled();
 		warn.mockRestore();
+	});
+
+	//reviews/m3-closing.md #9:  a Variable (or a Method) has no page - it is a row on its parent's - so its hit opens the parent;
+	//the summary still names the node itself.  One directly under Objects opens the connection.
+	it('opens a variable\'s parent, naming the variable in the summary', async () => {
+		const top:NodeSearchRow = { connection: {slug: 'cn2', name: 'Line 2'}, path: 'status', name: 'status', nodeClass: 2, depth: 1 };
+		const results = await setup( '/access/users', [gateway( 'gw', [rpm, top] )] ).search( 'r', undefined, 5 );
+		expect( results[0] ).toMatchObject( { title: 'motorRpm', summary: 'Line 2/pump1/motorRpm', route: ['/gateways', 'gw', 'cn2', 'pump1'] } );
+		expect( results[1].route ).toEqual( ['/gateways', 'gw', 'cn2'] );
 	});
 
 	it('returns nothing for blank text without asking any gateway', async () => {

@@ -279,6 +279,25 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return await this.authGet<Y>( target, undefined, log );
 	}
 
+	//handle401's policy for a mutation (reviews/m3-closing.md #22):  the session the POST carried is gone - a hub restart, an idle
+	//past /http/timeout, a changed client address - and a POST used to report the 401 and keep the stale session, so every Save
+	//repeated it until some unrelated GET renewed it.  A Google session is renewed and the POST retried once with it;  an
+	//anonymous one retries anonymously - it has no identity to lose;  a signed-in user who cannot be renewed is signed out and
+	//the 401 stands, so the navbar says so and the mutation is never re-run as somebody else.
+	async #post401<Y>( e:unknown, target:string, body:any, preferSecure:boolean, renew:boolean ):Promise<Y>{
+		console.log( `(401)${errorText(e)}` );
+		if( renew ){
+			const renewed = await this.renewGoogleSession( console.log );
+			if( renewed )
+				return await this.postRaw<Y>( target, body, preferSecure, undefined, false );//carries the renewed session, now stored
+		}
+		const anonymous = !this.isLoggedIn();
+		this.authStore.logout();
+		if( anonymous && renew )
+			return await this.postRaw<Y>( target, body, preferSecure, undefined, false );
+		throw e;
+	}
+
 	//Silent Google re-login (reviews/todo.md §7): renew the lapsed session in place instead of degrading to anonymous.
 	//Resolves the fresh authorization, or null when the silent path has nothing to offer — password/OpcServer users have
 	//no silent-renewal primitive, and a prompt that produced no credential is a normal outcome (FedCM cooldown, multiple
@@ -330,10 +349,11 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return await this.postRaw<Y>( target, body, preferSecure );
 	}
 
-	async postRaw<Y>( target:string, body:any, preferSecure:boolean=false, options?:any ):Promise<Y>{
+	async postRaw<Y>( target:string, body:any, preferSecure:boolean=false, options?:any, renew:boolean=true ):Promise<Y>{
 		if( !this.#instances )
 			await this.initWait();
 		const url = this.urlWithTarget( target, preferSecure );
+		const sentAuth = options ? undefined : this.user()?.authorization;//only the stored session this call attached is renewable - a caller's own options (login, logout) are theirs to handle, and a wrong-password 401 must stay one
 		if( !options ){
 			if( !this.user()?.authorization )
 				options = {observe: "response", transferCache:{includeHeaders:["Authorization"]}};
@@ -346,7 +366,15 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			}
 		}
 
-		let event:HttpEvent<Y>|any = await firstValueFrom( this.http.post<Y>(url, body, options) );
+		let event:HttpEvent<Y>|any;
+		try{
+			event = await firstValueFrom( this.http.post<Y>(url, body, options) );
+		}
+		catch( e:unknown ){
+			if( httpStatus(e)!=401 || !sentAuth )
+				throw e;
+			return await this.#post401<Y>( e, target, body, preferSecure, renew );
+		}
 		let y:Y;
 		if( options.observe=="response" ){
 			let response:HttpResponse<Y> = <HttpResponse<Y>>( event instanceof HttpResponse ? event : null );

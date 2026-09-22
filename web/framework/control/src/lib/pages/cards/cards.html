@@ -56,9 +56,21 @@
 							<a [routerLink]="c.path" class="section-card"><ng-container [ngTemplateOutlet]="card" [ngTemplateOutletContext]="{$implicit: c}" /></a>
 						}
 					} @empty {
-						<div class="section-empty">Nothing to show here.</div>
+						@if( loaded() && !failure() ){
+							<div class="section-empty">Nothing to show here.</div>
+						}
 					}
 				</div>
+				@if( failure(); as f ){
+					<div class="jde-empty" role="alert">
+						<mat-icon aria-hidden="true">{{ f.kind=='forbidden' ? 'lock' : 'error_outline' }}</mat-icon>
+						<p class="title">{{ f.title }}</p>
+						@if( f.detail ){ <p class="detail">{{ f.detail }}</p> }
+						@if( f.kind!='forbidden' ){
+							<div class="actions"><button matButton="tonal" (click)="onRetry()"><mat-icon>refresh</mat-icon>Retry</button></div>
+						}
+					</div>
+				}
 			</section>
 		</div>
 	}

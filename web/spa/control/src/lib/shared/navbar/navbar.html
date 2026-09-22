@@ -14,7 +14,7 @@
 				@if( fav["folderName"] ) {
 					<mat-menu #favMenu="matMenu">
 						@for( item of asFolder(fav).items; track item) {
-							<a mat-menu-item [routerLink]=item.route routerLinkActive="folder-item-selected">{{item.name}}</a>
+							<a mat-menu-item [routerLink]=item.link routerLinkActive="folder-item-selected">{{item.name}}</a>
 						}
 					</mat-menu>
 					<button mat-button [matMenuTriggerFor]="favMenu" class="docs-navbar-hide-small docs-button">
@@ -23,7 +23,7 @@
 					</button>
 				} @else {
 					<a mat-button class="docs-navbar-hide-small docs-button"
-						[routerLink]='$any(fav).route'
+						[routerLink]='$any(fav).link'
 						[routerLinkActiveOptions]="{exact: true}"
 						routerLinkActive="docs-navbar-header-item-selected">{{$any(fav).name}}</a>
 				}
@@ -50,7 +50,7 @@
 		<div style="flex: 1;justify-content: flex-end; display: flex;align-items: center;">
 			<authorization></authorization>
 			<theme-picker></theme-picker>
-			<favorites [favorites]=favorites() [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>
+			<favorites [favorites]="favorites() ?? []" [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>
 			<a matIconButton [routerLink]="helpRoute()" aria-label="Help" matTooltip="Help"><mat-icon>help_outline</mat-icon></a>
 			<button matIconButton aria-label="Toggle breadcrumb bar" [attr.aria-pressed]="showBreadcrumbs()"
 					[matTooltip]="showBreadcrumbs() ? 'Hide breadcrumbs' : 'Show breadcrumbs'"

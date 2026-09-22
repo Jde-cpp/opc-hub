@@ -5,6 +5,10 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
 #include <jde/db/awaits/ExecuteAwait.h>
+#include <jde/db/awaits/SelectAwait.h>
+#include <jde/db/Row.h>
+#include <jde/fwk/chrono.h>
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/LocalSubscriptions.h>
@@ -151,6 +155,19 @@ namespace Jde::Access::Server{
 			auto adminCheck = auth.TestAdmin( *schema, resourceKey.NK(), criteria.value_or(""), _userPK );//the schema's OpcServer answers when one is registered - it knows which resource governs the node; else the flat rule, where a criteria without a row falls back to the slug's root (appserver-review3 #13).
 			co_await *adminCheck;
 			let& table = GetTable( "roles" );
+			if( _mutation.AddIfMissing ){//the seed's add (LocalQL::Upsert):  a role that already holds a grant on this resource keeps it as it is.  access_role_add would have rewritten it with the seed's numbers at every -sync start - Delete back on a hardened Engineer, a deny on Viewer cleared (reviews/m3-closing.md #12, ruled 09-21).
+				let byCriteria = criteria ? "r.criteria=?" : "r.criteria is null";
+				vector<DB::Value> params{ {rolePK}, {resourceKey.NK()}, {*schema} };
+				if( criteria )
+					params.emplace_back( *criteria );
+				let held = co_await Any( table.Schema->DS()->SelectAsync({ Ƒ("select m.member_id from {} m join {} p on p.permission_id=m.member_id join {} r on r.resource_id=p.resource_id where m.role_id=? and r.slug=? and r.schema_name=? and {}",
+					GetTable("role_members").DBName, GetTable("permission_rights").DBName, GetTable("resources").DBName, byCriteria), move(params) }) );
+				if( held.size() ){
+					DBGT( ELogTags::Access, "[{}]Seed grant on '{}.{}' skipped - the role holds one.", rolePK, *schema, resourceKey.NK() );
+					Resume( jobject{{"permissionRight", jobject{{"id", held.front().Get<PermissionRightsPK>(0)}}}} );
+					co_return;
+				}
+			}
 			DB::InsertClause insert{ DB::Names::ToSingular(table.DBName)+"_add" };
 			insert.Add( rolePK );
 			insert.Add( Json::FindNumber<uint>(rights, "allowed").value_or(0) );
@@ -165,6 +182,7 @@ namespace Jde::Access::Server{
 			auto& permissionRight = y["permissionRight"].emplace_object();
 			//if( criteria ){
 				auto resourcePK = auth.FindActiveResourcePK( *schema, resourceKey.NK(), criteria.value_or(string{}) );
+				optional<string> resourceDeleted;
 				vector<DB::Value> params{ {*schema}, {resourceKey.NK()} };
 				if( !resourcePK ){
 					string dbCriteria;
@@ -174,17 +192,26 @@ namespace Jde::Access::Server{
 					}
 					else
 						dbCriteria = "criteria is null";
-					let foundPK = co_await ds->Scaler<ResourcePK>({ //COALESCE so a missing/deleted resource returns 0 instead of throwing "No value returned".
-						Ƒ( "select coalesce( (select resource_id from {} where schema_name=? and slug=? and {} and deleted is null), 0 )", GetTable("resources").DBName, dbCriteria ),
-						move(params)
-					});
-					if( foundPK ){
-						resourcePK = foundPK;
-						auth.AddResource( *resourcePK, *schema, resourceKey.NK(), criteria.value_or(string{}) );
+					//Deleted rows too:  access_role_add creates a missing root resource unenforced (f8b191cd), and `deleted is null` missed
+					//the very row it had just made - the grant went out with no resource id, the authorizer dropped it, and until a restart
+					//a grant on it by id was refused, enforcing it threw in the listener, and Effective rights read a lockout
+					//(reviews/m3-closing.md #11 - the hub's seed-created `opc.install nodeIds`).  Its id and `deleted` go out with the grant,
+					//so the listener caches the row as it is;  only a live row joins the enforced set here.
+					let rows = co_await Any( ds->SelectAsync({ Ƒ("select resource_id, deleted from {} where schema_name=? and slug=? and {}", GetTable("resources").DBName, dbCriteria), move(params) }) );
+					if( rows.size() ){
+						resourcePK = rows.front().Get<ResourcePK>( 0 );
+						if( let deleted = rows.front().GetOpt<DB::DBTimePoint>(1); deleted )
+							resourceDeleted = ToIsoString( *deleted );//a string:  Resource(jobject) reads it with Json::FindTimePoint, which takes nothing else
+						else
+							auth.AddResource( *resourcePK, *schema, resourceKey.NK(), criteria.value_or(string{}) );
 					}
 				}
-				if( resourcePK )
-					permissionRight["resource"].emplace_object()["id"] = *resourcePK;
+				if( resourcePK ){
+					auto& jResource = permissionRight["resource"].emplace_object();
+					jResource["id"] = *resourcePK;
+					if( resourceDeleted )
+						jResource["deleted"] = *resourceDeleted;
+				}
 			//}
 			permissionRight["id"] = permissionPK;
 			QL::Subscriptions::OnMutation(

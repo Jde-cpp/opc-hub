@@ -53,6 +53,51 @@ describe( 'OpcNodeLinkResolver', ()=>{
 	} );
 } );
 
+//reviews/m3-closing.md #29:  the cache dropped a miss but kept a REJECTED lookup, so one refused or failed request left every
+//node of that server as plain text for the session, with no request ever sent again.  A gateway that refuses its connection
+//list is now a miss for that gateway;  whatever else rejects is dropped from the cache.
+describe( 'OpcNodeLinkResolver after a failed lookup', ()=>{
+	let refuse:boolean;//gw1 answers its connection list with a 403
+	let down:boolean;//the gateway list itself fails
+	let connectionLists:number;
+	const gateway = ( slug:string, connections:string[] )=>({
+		slug,
+		queryArray: async ()=>{
+			++connectionLists;
+			if( slug=="gw1" && refuse ) throw new Error( "(403)[bob]User does not have 'Read' access to 'serverConnections'." );
+			return connections.map( c=>({slug: c}) );
+		},
+		querySingle: async ()=>({ name: "Pump 1", path: "pumps/pump1" })
+	});
+	const gateways = [gateway( "gw1", ["other"] ), gateway( "gw2", ["local"] )];
+	let resolver:OpcNodeLinkResolver;
+	beforeEach( ()=>{
+		refuse = false; down = false; connectionLists = 0;
+		TestBed.configureTestingModule({ providers: [
+			{ provide: GATEWAY_SERVICE, useValue: { gateways: async ()=>{ if( down ) throw new Error( "Failed to fetch" ); return gateways; } } },
+			{ provide: OPC_STORE, useValue: { getConnection: async ( _g:any, cnnctn:string )=>({ accessResource: cnnctn=="local" ? "debug" : "other" }) } }
+		]});
+		resolver = TestBed.inject( OpcNodeLinkResolver );
+	} );
+	const pump = { route: ['/gateways', 'gw2', 'local', 'pumps', 'pump1'], name: "Pump 1", path: "pumps/pump1" };
+
+	it( 'a gateway that refuses its connections does not sink the next one', async ()=>{
+		refuse = true;
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		expect( await resolver.resolve("opc.debug", "ns=5;i=5005") ).toEqual( pump );
+		expect( warn ).toHaveBeenCalled();
+		warn.mockRestore();
+	} );
+
+	it( 'looks again once the gateway list answers', async ()=>{
+		down = true;
+		await expect( resolver.resolve("opc.debug", "ns=5;i=5005") ).rejects.toThrow( "Failed to fetch" );
+		down = false;
+		expect( await resolver.resolve("opc.debug", "ns=5;i=5005") ).toEqual( pump );
+		expect( connectionLists ).toBe( 2 );//a request went out this time
+	} );
+} );
+
 describe( 'NodeId.fromUaString', ()=>{
 	it( 'round-trips uaString for every identifier kind', ()=>{
 		for( const s of ["ns=5;i=5005", "i=85", "ns=2;s=pump 1", "ns=3;g=12345678-1234-1234-1234-123456789abc"] )

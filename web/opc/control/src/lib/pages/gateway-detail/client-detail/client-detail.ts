@@ -10,6 +10,7 @@ import { ServerProperties } from './server-properties/server-properties';
 import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
 import { Gateway, GatewayService } from '../../../services/gateway-service';
 import { Server } from '../../../model/server';
+import { OpcStore } from '../../../services/opc-store';
 
 @Component( {
 	templateUrl: './client-detail.html',
@@ -35,6 +36,10 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			...this.properties(),
 		} as ServerCnnctnProps);
 	}
+	protected override afterMutate(){//the node pages answer from OpcStore's describe:  an edit has to reach them, a delete end them (reviews/m3-closing.md #5)
+		if( this.row.slug )
+			this.opcStore.forget( this.gateway.slug, this.row.slug );
+	}
 	protected override get title(){ return this.row.name ? `${this.row.name} - Connection` : "New Connection"; }
 	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - resolved in ngOnInit
 
@@ -49,5 +54,6 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	get server(): Server|undefined{ return this.row?.server; }
 	get serverError(): string|undefined{ return this.row?.serverError; }
 	gatewayService:GatewayService = inject( GatewayService );
+	private opcStore = inject( OpcStore );
 	gateway!:Gateway;
 }

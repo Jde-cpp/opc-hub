@@ -9,6 +9,7 @@ message MonitoredItemCreateResult{
   uint32 status_code=1;
   double revised_sampling_interval=2;
   uint32 revised_queue_size=3;
+  Jde.Opc.Proto.NodeId node=4;//the node this result answers - the gateway answers in NodeId order, never the request's (reviews/m3-closing.md #10)
 }
 
 message SubscriptionAck{

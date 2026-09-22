@@ -35,6 +35,27 @@ namespace Jde::Access::Tests{
 		PurgeUser( {fetchedUserPK}, GetRoot() );
 	}
 
+	//reviews/m3-closing.md #15:  a user an admin adds ahead of their first sign-in is the one that sign-in finds - but only
+	//when the create carries what the lookup keys on.  The SPA's create is now this string (web/access/.../user.spec.ts pins
+	//it); it used to be `createUser( slug, name )` alone, and the sign-in made a second identity.
+	TEST_F( AuthTests, APreCreatedUserIsTheOneASignInFinds ){
+		const string login{ "precreated@plant.com" };
+		let google = underlying( Access::EProviderType::Google );
+		let q = Ƒ( R"(mutation createUser( slug:"precreated", name:"Pre Created", providerId:{}, loginName:"{}", email:"{}" ){{id}})", google, login, login );
+		const UserPK created{ GetId(QL().QuerySync(q, {}, GetRoot())) };
+		let row = QL().QuerySync( Ƒ(R"(user( id:{} ){{ email loginName provider }})", created.Value), {}, GetRoot() );
+		EXPECT_EQ( Json::FindSV(row, "email").value_or(""), login ) << serialize( row );
+		EXPECT_EQ( Tests::login(login, google, {}), created ) << "the first sign-in bound to the pre-created identity";
+		PurgeUser( created, GetRoot() );
+
+		const string oldLogin{ "precreated-old@plant.com" };//the shape the SPA used to send
+		const UserPK bare{ GetId(QL().QuerySync(R"(mutation createUser( slug:"precreatedOld", name:"Pre Created Old" ){id})", {}, GetRoot())) };
+		let second = Tests::login( oldLogin, google, {} );
+		EXPECT_NE( second, bare ) << "without provider and login name the sign-in cannot find it - it makes a second identity";
+		PurgeUser( second, GetRoot() );
+		PurgeUser( bare, GetRoot() );
+	}
+
 	TEST_F( AuthTests, Login_New ){
 		const string user{ "Login_New" };
 		let userId = login( user, underlying(Access::EProviderType::Google), {} );

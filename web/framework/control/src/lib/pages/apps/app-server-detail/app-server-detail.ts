@@ -27,6 +27,7 @@ export class AppServerDetail implements OnInit, OnDestroy{
 		//the ':instance' param sits on the parent route; this component is its path:'' child, which inherits it.
 		this.route.params.subscribe( async (params)=>{
 			const instanceName = params["instance"];
+			this.error.set( undefined );//the page is reused across instances:  a failed one's banner must not outlive the switch
 			this.componentPageTitle.title = `${instanceName} - AppServer`;
 			this.sideNav.set( this.routeItem(instanceName) );
 			try{

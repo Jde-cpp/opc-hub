@@ -178,6 +178,15 @@ local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"]
 			map:: { parentId:"identity_id", childId:"permission_id" },//not a map, but connector.
 			ops: ["Read", "Administer", "Subscribe"] //the mutations gate on TestAdmin of the target resource; Read is what AclQLSelectAwait gates on, and with no ops ResourceSync never made a row for it to gate with, so the acl was enumerable by anyone (access-review3 #21).  Created disabled like every synced resource - restore it to enforce.
 		},
+		seeds:{
+			comment: "The seed files (.roles) applied, by content - a start whose file is unchanged skips it, so an admin's edits to a seeded role survive (reviews/m3-closing.md #12)",
+			columns: {
+				name: types.varchar+{ length: 256, sk: 0, i:0, comment: "the file's name, e.g. access.roles" },
+				contentHash: types.varchar+{ length: 64, i:1, comment: "md5 of the text last applied" },
+				applied: types.dateTime+{ i:2 }
+			},
+			ops: ["None"]
+		},
 		profiles:{
 			comment: "Per-user UI profile blobs, keyed by page/component",
 			columns: {

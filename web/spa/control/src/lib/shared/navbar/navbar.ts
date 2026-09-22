@@ -1,5 +1,5 @@
 //https://github.com/angular/components/blob/a55b19797f0bccf467d5602f526eef236737498b/docs/src/app/shared/navbar/navbar.ts
-import {Component, computed, ElementRef, inject, OnInit, signal, viewChild} from '@angular/core';
+import {Component, computed, effect, ElementRef, inject, OnInit, signal, untracked, viewChild} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import {FormControl, ReactiveFormsModule} from '@angular/forms';
 import {MatAutocompleteModule, MatAutocompleteTrigger} from '@angular/material/autocomplete';
@@ -10,7 +10,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import {ActivatedRoute, NavigationEnd, RouterLink, RouterLinkActive} from '@angular/router';
-import {Route, Router, Routes} from '@angular/router';
+import {Route, Router, Routes, UrlTree} from '@angular/router';
 import { Title } from '@angular/platform-browser';
 import { debounceTime, distinctUntilChanged, filter, map, of, switchMap } from 'rxjs';
 import {NavigationFocusService} from '../navigation-focus/navigation-focus-service';
@@ -27,6 +27,7 @@ import { SearchResult } from '../../services/search/search-provider';
 import { HELP_TOPICS, helpTopicFor, helpTopics } from '../../services/help/help-topic';
 import { APP_LOGO, APP_NAME } from '../../services/document-title';
 import { RecentVisits, SEGMENT_NAME } from '../../services/recent-visits';
+import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
 
 export type Favorite={
 	folderName?:string;
@@ -34,7 +35,8 @@ export type Favorite={
 	route:string;
 	queryParams?:Record<string,unknown>;
 }
-export type Folder = { folderName:string, items:Favorite[] };
+export type LinkedFavorite = Favorite & { link:UrlTree };//the menu's form of a favorite - see favoriteMenus
+export type Folder = { folderName:string, items:LinkedFavorite[] };
 @Component({
   selector: 'app-navbar',
   templateUrl: './navbar.html',
@@ -70,6 +72,13 @@ export class NavBar implements OnInit {
 			&& !x.path!.includes('/')
 			&& ( !x.children || x.children.find( y=>!y.path!.length) )
 		).map( x=>({ name: x.title as string, route: '/'+x.path } ));
+		//Favorites are the signed-in user's, and the bar outlives a sign-in:  it loaded them once per document, so a sign-in, a
+		//re-login or another user on the same browser kept the list it had, and the next star saved that list over theirs
+		//(reviews/m3-closing.md #17).  Reloaded whenever the user changes, as RecentVisits does.
+		effect( ()=>{
+			const user = this.#profile?.userKey();
+			untracked( ()=>this.#loadFavorites(user) );
+		});
   }
 	async ngOnInit(){
 		this.router.events.pipe(//subscribe before the await:  the load defers the rest of ngOnInit past the initial NavigationEnd.
@@ -82,16 +91,35 @@ export class NavBar implements OnInit {
 			this.route.set( path );
 			this.#recentVisits.visit( path, crumbs );//the home page's Recently visited row names each page as its crumbs do
 		});
-		this.favorites.set( await this.#profileStore.load<Favorite[]>("favorites", this.defaultFavorites) );
+		await this.#favoritesLoading;
 		this.isLoading.set( false );
 	}
-	asFolder(item:Favorite|Folder):Folder{
+	#loadFavorites( user:string|undefined ):void{
+		if( user===this.#loadingFor )
+			return;//already loading, or loaded, for this user
+		this.#loadingFor = user;
+		const generation = ++this.#favoritesGeneration;
+		this.favorites.set( null as any );//not the previous user's list while the next one loads
+		this.#favoritesLoading = this.#profileStore.load<Favorite[]>( "favorites", this.defaultFavorites ).then( list=>{
+			if( generation==this.#favoritesGeneration )//a later user's load has taken over
+				this.favorites.set( list );
+		});
+	}
+	asFolder(item:LinkedFavorite|Folder):Folder{
 		return item as Folder;
 	}
   routerLinkOptions( route:Route ):{exact:boolean}{
     return {exact:!route.path!.length};
   }
-	onFavoriteChange( change:Favorite ){
+	async onFavoriteChange( change:Favorite ){
+		//Applied to the signed-in user's own list:  the effect may not have run yet for a user who just changed, and a load may be
+		//under way - a change made then was saved over their row on top of the previous user's list, or the defaults.
+		this.#loadFavorites( this.#profile?.userKey() );
+		for( let loading = this.#favoritesLoading; ; loading = this.#favoritesLoading ){
+			await loading;
+			if( loading===this.#favoritesLoading )
+				break;
+		}
 		const route = this.route();
 		let favs;
 		if( !change ) //delete
@@ -170,13 +198,18 @@ export class NavBar implements OnInit {
 	}
 	displayWith = ( result:string|SearchResult|null ):string=>typeof result=='string' ? result : result ? (result.prefix ? result.prefix+':' : '')+result.title : '';
 	trackResult( result:SearchResult ):string{ return SearchService.key( result ); }
+	//Each favorite with its `route` parsed into a tree as `link`, which is what the menu binds.  `route` is the serialized -
+	//percent-encoded - url it was saved on, and a string routerLink encodes its '%' again, so a favorite on a node under a
+	//browse name with a space never reopened it (reviews/m3-closing.md #8).  `route` stays the stored string:  `existing` and
+	//onFavoriteChange compare on it, and favorites saved before the fix are repaired with no migration.
 	favoriteMenus = computed( ()=>{
-		let items:Array<Favorite|Folder> = [];
+		let items:Array<LinkedFavorite|Folder> = [];
 		if( !this.favorites() )
 			return [];
-		for( let fav of this.favorites() ){
-			if( this.appName && !fav.folderName && fav.route=='/' )//the brand is the home link, so a top-level Home favorite would repeat it
+		for( let stored of this.favorites() ){
+			if( this.appName && !stored.folderName && stored.route=='/' )//the brand is the home link, so a top-level Home favorite would repeat it
 				continue;
+			const fav:LinkedFavorite = { ...stored, link: this.router.parseUrl(stored.route) };
 			if( !fav.folderName )
 				items.push( fav );
 			else{
@@ -192,6 +225,10 @@ export class NavBar implements OnInit {
 	appName = inject( APP_NAME, {optional: true} );//a site that names itself gets a brand link in place of the Home favorite
 	appLogo = inject( APP_LOGO, {optional: true} );
 	#profileStore = inject(ProfileStore);
+	#profile = inject( IPROFILE_SERVICE, {optional: true} );//whose favorites:  the signed-in user's key, undefined signed out
+	#loadingFor:string|undefined|null = null;//the user the favorites were last loaded for - null before the first load
+	#favoritesGeneration = 0;
+	#favoritesLoading:Promise<void> = Promise.resolve();
 	#recentVisits = inject(RecentVisits);
 	#segmentName = inject( SEGMENT_NAME, {optional: true} );//a site's name for a segment no route or RouteStore child names (an opc node)
 	#routeStore = inject(RouteStore);

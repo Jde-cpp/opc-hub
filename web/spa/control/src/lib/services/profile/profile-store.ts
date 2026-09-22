@@ -57,6 +57,8 @@ export class ProfileStore{
 				console.warn( `ProfileStore.load('${key}') failed - using localStorage.`, e );
 				return ProfileStore.local<T>( key, defaultValue );//failure not cached ⇒ retried next visit.
 			}
+			if( this.profileService.userKey()!=userKey )//the user changed under the await - a lapsed session is reset to anonymous there, and the anonymous answer (no row) was cached as known-absent under this user's key, so after they signed in again the next star saved the defaults over their row (reviews/m3-closing.md #17)
+				return defaultValue;
 			if( json==null ){//no server row: migrate any pre-existing local value up.
 				const local = localStorage.getItem( key );
 				if( local!=null ){

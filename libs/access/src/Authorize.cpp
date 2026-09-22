@@ -438,12 +438,27 @@ namespace Jde::Access{
 		ul l{ Mutex };
 		Resource resource{ jResource };
 		optional<ResourcePK> resourcePK;
-		if( auto p = FindResource(resource, l); p )
-			resourcePK = p->PK;
-		else if( resource.PK ){ //new resource
-			auto& saved = Resources.emplace( resource.PK, move(resource) ).first->second;
+		auto found = FindResource( resource, l );
+		//The grant names its row - pk, schema and slug - and the entry cached under that pk is another resource:  sqlite reuses a
+		//purged pk and resource purges are not subscribed (CreateResource), so it is a stale row.  Taken as this one, the grant -
+		//and every later grant on the new row by id - landed on the old row's slug (reviews/m3-closing.md #11).  Replace it.
+		let names = [&]( const Resource& cached )->bool{//what the payload says, where it says it - a grant by slug alone names no schema
+			return cached.Slug!=resource.Slug || (resource.Schema.size() && cached.Schema!=resource.Schema) || (jResource.contains("criteria") && cached.Criteria!=resource.Criteria);
+		};
+		if( found && found->PK==resource.PK && resource.Slug.size() && names(*found) ){
+			if( auto schema = SchemaResources.find(found->Schema); schema!=SchemaResources.end() ){
+				if( auto slug = schema->second.find(found->Slug); slug!=schema->second.end() && Find(slug->second, found->Criteria)==found->PK )
+					slug->second.erase( found->Criteria );
+			}
+			found = nullptr;
+		}
+		if( found )
+			resourcePK = found->PK;
+		else if( resource.PK ){ //new resource, or a reused pk's
+			auto& saved = Resources.insert_or_assign( resource.PK, move(resource) ).first->second;
 			ASSERT( saved.Schema.size() && saved.Slug.size() );
-			SchemaResources[saved.Schema][saved.Slug][saved.Criteria] = saved.PK;
+			if( !saved.IsDeleted )//as CreateResource:  a row a role grant created unenforced is cached - so a grant by id finds it, and enforcing it is the toggle's to do - but not enforced here (reviews/m3-closing.md #11)
+				SchemaResources[saved.Schema][saved.Slug][saved.Criteria] = saved.PK;
 			resourcePK = saved.PK;
 		}
 		if( auto permission = Permissions.find(member); permission!=Permissions.end() ){ //a re-grant, or a purged pk the db reused (sqlite) - the entry outlives PurgeAcl/RemoveRoleChildren, so take the resource from the payload like AddAcl does, not from the stale entry.
@@ -455,7 +470,7 @@ namespace Jde::Access{
 		else if( resourcePK )
 			Permissions.emplace( member, Permission{member, *resourcePK, allowed, denied} );
 		else
-			DBGT( _ptags, "[{}]Role permission grants on '{}', not in the enforced set here; the grant applies once the resource loads or is enforced.", member, resource.Slug );
+			DBGT( _ptags, "[{}]Role permission grants on '{}', a resource neither cached nor named by id in the grant - it applies once the resource loads.", member, resource.Slug );//RoleMAwait now names every row it finds, deleted ones included (reviews/m3-closing.md #11), so this is a grant on a row the db does not have
 		auto role = Roles.try_emplace( rolePK, rolePK, false );
 		role.first->second.Members.emplace( PermissionRole{std::in_place_index<0>, member} );
 		Recalc( l );

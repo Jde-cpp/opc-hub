@@ -176,6 +176,33 @@ namespace Jde::Opc::Gateway{
 		}
 		return y;
 	}
+	//A client copies its row once, at construction, and ConnectAwait hands back the registered client - so an edit reached no live
+	//client, and one holding a subscription never idles out:  a Certificate URI pasted in for Sign & Encrypt left the traffic on
+	//None/None indefinitely, for every credential on the slug (reviews/m3-closing.md #4).  Edited:  ConnectionLost, the path a
+	//dropped connection takes - what each monitored is parked and the reconnect builds its client from the row as it now is, so
+	//other sessions' subscriptions come back on the new settings.  Removed:  RemoveClient - nothing to reconnect to, and Discarded
+	//keeps it from parking;  the server drops the session's items with the session.  Matched by the row's id when that is the
+	//key (a purge has no row left to read the slug from), else by slug.  Off the strand is fine:  both paths lock what they touch.
+	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
+		vector<sp<UAClient>> clients;
+		{
+			sl _{ _clientsMutex };
+			for( let& [slug, creds] : _clients ){
+				for( let& [_, client] : creds ){
+					if( connection.IsPK() ? client->_opcServer.Id==connection.PK() : slug==connection.NK() )
+						clients.push_back( client );
+				}
+			}
+		}
+		for( auto& client : clients ){
+			INFO( "[{}]Connection '{}' was {} - {}.", hex(client->Handle()), client->Slug(), removed ? "removed" : "edited", removed ? "closing its client" : "reconnecting on its new settings" );
+			if( removed )
+				RemoveClient( move(client) );
+			else
+				ConnectionLost( move(client) );
+		}
+		return clients.size();
+	}
 	α UAClient::ConnectionCounts()ι->flat_map<ServerCnnctnNK,uint32>{
 		flat_map<ServerCnnctnNK,uint32> y;
 		sl _{ _clientsMutex };

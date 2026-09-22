@@ -7,5 +7,7 @@ namespace Jde::Opc::Gateway{
 		α InsertFailure( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;
 		α PurgeBefore( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;
 		α PurgeFailure( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;
+		α UpdateAfter( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;//the live clients an edit or delete leaves stale - reviews/m3-closing.md #4.
+		α PurgeAfter( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;
 	};
 }

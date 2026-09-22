@@ -29,7 +29,9 @@ class TestPage extends DetailPage<Widget>{
 	protected override get ctor(){ return Widget; }
 	protected override onRow(){ this.loaded.push( this.row.name ); }
 	protected override upsert():Widget{ return new Widget( this.properties() ); }
+	protected override afterMutate(){ ++this.mutated; }
 	loaded:string[] = [];
+	mutated = 0;
 	override ql:IGraphQL = <IGraphQL><unknown>{ mutate: vi.fn().mockResolvedValue({}) };
 }
 
@@ -106,6 +108,20 @@ describe( 'DetailPage', ()=>{
 		await page.onSubmitClick();
 		expect( exception ).toHaveBeenCalledWith( "Save failed.", expect.any(Error) );
 		expect( navigate ).not.toHaveBeenCalled();
+	} );
+
+	//reviews/m3-closing.md #5:  a page whose row something else caches (ClientDetail - OpcStore's describe) has to hear that a
+	//mutation landed, or the cache outlives the edit.  Once per landed mutation, never for a refused one.
+	it( 'tells the subclass a save, delete, restore or purge landed - and not a failed one', async ()=>{
+		const page = create( {id: 3, name: 'w', slug: 'w'} ).componentInstance;
+		page.properties.set( new Widget({id: 3, name: 'renamed', slug: 'w'}) );
+		await page.onSubmitClick();
+		await page.onDeleteClick();
+		expect( page.mutated ).toBe( 2 );
+		(<any>page.ql.mutate).mockRejectedValue( new Error("denied") );
+		await page.onSubmitClick();
+		await page.onDeleteClick();
+		expect( page.mutated ).toBe( 2 );
 	} );
 
 	it( 'cancels back to the list', ()=>{

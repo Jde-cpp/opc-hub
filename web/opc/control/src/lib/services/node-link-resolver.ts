@@ -30,14 +30,24 @@ export class OpcNodeLinkResolver implements NodeLinkResolver{
 	#connection( accessResource:string ):Promise<Placement|undefined>{
 		let y = this.#connections.get( accessResource );
 		if( !y ){
-			y = this.#find( accessResource ).then( found=>{ if( !found ) this.#connections.delete( accessResource ); return found; } );//a miss is not remembered - the server may simply be down right now
+			y = this.#find( accessResource ).then(
+				found=>{ if( !found ) this.#connections.delete( accessResource ); return found; },//a miss is not remembered - the server may simply be down right now
+				e=>{ this.#connections.delete( accessResource ); throw e; } );//nor is a failure:  kept, every later call re-awaited it and no request went out for the session (reviews/m3-closing.md #29)
 			this.#connections.set( accessResource, y );
 		}
 		return y;
 	}
 	async #find( accessResource:string ):Promise<Placement|undefined>{
 		for( const gateway of await this.#gateways.gateways() ){
-			for( const c of await gateway.queryArray<{slug:string}>(`serverConnections{ slug }`) ){
+			let connections:{slug:string}[];
+			try{
+				connections = await gateway.queryArray<{slug:string}>( `serverConnections{ slug }` );
+			}
+			catch( e ){//down, or refusing (serverConnections enforced, no Read):  a miss on this gateway, not the end of the search
+				console.warn( `node link: '${gateway.slug}' did not list its connections.`, e );
+				continue;
+			}
+			for( const c of connections ){
 				try{
 					if( (await this.#store.getConnection(gateway, c.slug)).accessResource==accessResource )
 						return { gateway, cnnctn: c.slug };

@@ -11,7 +11,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router, Routes } from '@angular/router';
-import { provideHttpClient } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { AppService, AUTH_STORE, AuthStore, ETransport } from 'jde-framework';
 import { GatewayService } from './gateway-service';
 import { OPC_STORE } from './opc-store';
@@ -111,6 +111,18 @@ describe('GatewayService.gateway', () => {
 		const queued = service.gateway( 'nosuch' );
 		land!( instances );
 		await expect( queued ).rejects.toThrow( /No gateway 'nosuch' is registered/ );
+	});
+
+	//reviews/m3-closing.md #7:  after a failed instance lookup nothing ever settled a later gateway()/gateways() - /gateways
+	//awaited forever, and a Retry could not help.  A later call looks the instances up again.
+	it('looks the instances up again once a lookup has failed', async () => {
+		let calls = 0;
+		const service = configure( ()=>++calls==1 ? Promise.reject(new HttpErrorResponse({status: 0})) : Promise.resolve(instances) );
+		await expect( service.gateways() ).rejects.toBeTruthy();
+		const later = service.gateway( 'B' );
+		const gaveUp = new Promise( resolve=>setTimeout(()=>resolve("still waiting"), 500) );
+		expect( await Promise.race([later.then(g=>g.slug), gaveUp]) ).toBe( 'B' );
+		expect( calls ).toBe( 2 );
 	});
 
 	it('still resolves a queued request that does name a registered gateway', async () => {

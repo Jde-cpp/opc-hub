@@ -2,6 +2,7 @@
 #include <jde/opc/uatypes/Logger.h>
 #include "../auth/UM.h"
 #include "../types/ServerCnnctn.h"
+#include "../UAClient.h"
 
 
 #define let const auto
@@ -63,4 +64,21 @@ namespace Jde::Opc::Gateway{
 	α OpcQLHook::PurgeFailure( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Failure, sl ) : nullptr;
 	}
+
+	//reviews/m3-closing.md #4:  a live client holds the copy of its row it was built from.  What it reads from the copy that
+	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs - takes its clients off the registry, to
+	//reconnect on the new row;  a delete or purge closes them.  Name and description it only reports (search), and a rename is
+	//not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted row cannot connect.
+	Ω connectionEdited( const QL::MutationQL& m )ι->QL::IQLHook::HookResult{
+		using enum QL::EMutationQL;
+		let removed = m.Type==Delete || m.Type==Purge;
+		let edited = m.Type==Update && ( m.Args.contains("url") || m.Args.contains("certificateUri") || m.Args.contains("defaultBrowseNs") );
+		if( m.TableName()=="server_connections" && (removed || edited) ){
+			if( let key = m.FindKey(); key )
+				UAClient::ConnectionEdited( *key, removed );
+		}
+		return nullptr;
+	}
+	α OpcQLHook::UpdateAfter( const QL::MutationQL& m, UserPK, SL )ι->HookResult{ return connectionEdited( m ); }
+	α OpcQLHook::PurgeAfter( const QL::MutationQL& m, UserPK, SL )ι->HookResult{ return connectionEdited( m ); }
 }

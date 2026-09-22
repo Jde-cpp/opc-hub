@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, UrlSegment } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { HELP_TOPICS, IROUTE_SERVICE, RecentVisit, RecentVisits, RouteItem } from 'jde-spa';
 import { Cards } from './cards';
@@ -110,6 +111,71 @@ describe( 'Cards section links', ()=>{
 		expect( (byTitle(page, '.section-card', 'Gateways') as HTMLAnchorElement).target ).toBe( '' );
 	});
 });
+
+//reviews/m3-closing.md #7:  a rejected docItems() - a refused serverConnections query, a gateway no longer registered, a
+//gateway down - was an unhandled rejection, and the page said "Nothing to show here.", the same as a gateway with no
+//connections.  It said so while loading too, and a failed move to another gateway left the previous one's cards up.
+describe( 'Cards when the items cannot be loaded', ()=>{
+	const cards = ( ...titles:string[] )=>titles.map( t=>new RouteItem({path: t.toLowerCase().replace(/ /g, ''), title: t}) );
+	async function section( docItems:( segments:UrlSegment[] )=>Promise<RouteItem[]> ){
+		TestBed.configureTestingModule( {providers: [
+			provideRouter( [{ path: 'gateways/:gateway', component: Cards, data: {summary: 'Connections'},
+				providers: [{provide: IROUTE_SERVICE, useValue: {docItems, children: async ()=>[]}}] }] ),
+			{provide: RecentVisits, useValue: {visits: signal([]), load: async ()=>{}, clear: ()=>{}}}
+		]} );
+		return RouterTestingHarness.create();
+	}
+	const settle = async ( harness:RouterTestingHarness )=>{ await new Promise( r=>setTimeout(r) ); harness.detectChanges(); };
+	const alert = ( harness:RouterTestingHarness )=>harness.routeNativeElement!.querySelector<HTMLElement>( '[role=alert]' );
+	const saysNothing = ( harness:RouterTestingHarness )=>harness.routeNativeElement!.textContent!.includes( "Nothing to show here." );
+	const titles = ( harness:RouterTestingHarness )=>[...harness.routeNativeElement!.querySelectorAll('.section-card-title')].map( t=>t.textContent!.trim() );
+
+	it( 'says a refused load is refused, quoting the server - not that there is nothing', async ()=>{
+		const harness = await section( async ()=>{ throw new HttpErrorResponse({status: 403, error: "User does not have 'Read' access to 'serverConnections'."}); } );
+		await harness.navigateByUrl( '/gateways/gw1' );
+		await settle( harness );
+		expect( alert(harness)?.textContent ).toContain( "No access." );
+		expect( alert(harness)?.textContent ).toContain( "User does not have 'Read' access to 'serverConnections'." );
+		expect( alert(harness)?.querySelector('button') ).toBeNull();//asking again will not change a refusal
+		expect( saysNothing(harness) ).toBe( false );
+	} );
+
+	it( 'says a failed load failed, in its own words, with a Retry that clears it', async ()=>{
+		let fail = true;
+		const harness = await section( async ()=>{ if( fail ) throw new Error( "No gateway 'gw1' is registered.  Registered: 'OpcHub'." ); return cards( "Line 1" ); } );
+		await harness.navigateByUrl( '/gateways/gw1' );
+		await settle( harness );
+		expect( alert(harness)?.textContent ).toContain( "Could not load." );
+		expect( alert(harness)?.textContent ).toContain( "No gateway 'gw1' is registered." );
+		fail = false;
+		alert( harness )!.querySelector( 'button' )!.click();
+		await settle( harness );
+		expect( alert(harness) ).toBeNull();
+		expect( titles(harness) ).toEqual( ["Line 1"] );
+	} );
+
+	it( 'says there is nothing only once the load has answered', async ()=>{
+		let answer!:( items:RouteItem[] )=>void;
+		const harness = await section( ()=>new Promise<RouteItem[]>( resolve=>{ answer = resolve; } ) );
+		await harness.navigateByUrl( '/gateways/gw1' );
+		harness.detectChanges();
+		expect( saysNothing(harness) ).toBe( false );
+		answer( [] );
+		await settle( harness );
+		expect( saysNothing(harness) ).toBe( true );
+	} );
+
+	it( "drops the previous gateway's cards when the next one fails", async ()=>{
+		const harness = await section( async ( segments )=>{ if( segments[1].path=="gw2" ) throw new Error( "gw2 is down" ); return cards( "Line 1" ); } );
+		await harness.navigateByUrl( '/gateways/gw1' );
+		await settle( harness );
+		expect( titles(harness) ).toEqual( ["Line 1"] );
+		await harness.navigateByUrl( '/gateways/gw2' );//the same route config, so the component is reused
+		await settle( harness );
+		expect( titles(harness) ).toEqual( [] );
+		expect( alert(harness)?.textContent ).toContain( "gw2 is down" );
+	} );
+} );
 
 describe( 'HelpCardStatus', ()=>{
 	it( 'counts every registered topic and names the first', async ()=>{

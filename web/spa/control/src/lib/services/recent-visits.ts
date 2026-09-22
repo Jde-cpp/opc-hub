@@ -43,7 +43,11 @@ export class RecentVisits{
 		await this.#ready();//so a visit made while the history loads lands on top of it rather than being overwritten by it
 		this.#set( [visit, ...this.visits().filter(v=>v.url!=url)].slice(0, RecentVisits.max) );
 	}
-	forget( url:string ):void{
+	//A page that no longer opens:  its resolver says so (DetailResolver and the rest catch and redirect, which the router reports
+	//as a NavigationCancel), or the navigation errors.  After the load - a deep link to a deleted page fails before anything
+	//has read the history, and forgetting from the empty list let the load bring it straight back.
+	async forget( url:string ):Promise<void>{
+		await this.#ready();
 		if( this.visits().some(v=>v.url==url) )
 			this.#set( this.visits().filter(v=>v.url!=url) );
 	}

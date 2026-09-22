@@ -33,6 +33,9 @@
 			@if( row.tag && row.override ){
 				<span class="override" matTooltip="An override saved for this instance. It replaces the configured level until it is removed.">Override</span>
 			}
+			@else if( row.removed ){
+				<span class="removed" matTooltip="The saved override is removed when you save; the instance then runs at the level its configuration gives it.">Removed on save</span>
+			}
 			@else if( isConfigured(row) ){
 				<span class="configured" matTooltip="The level the instance is running with, from its configuration.">Configured</span>
 			}
@@ -41,9 +44,9 @@
 	<ng-container matColumnDef="delete">
 		<mat-header-cell *matHeaderCellDef></mat-header-cell>
 		<mat-cell *matCellDef="let row">
-			@if( row.tag && !isDefault(row) && row.override ){
-				<button matIconButton (click)="onDelete(row)" [matTooltip]="isConfigured(row) ? 'Revert — the tag goes back to its configured level.' : 'Remove — the tag goes back to its configured level, or the default. Pick level None to silence it instead.'">
-					<mat-icon>{{isConfigured(row) ? 'undo' : 'delete'}}</mat-icon>
+			@if( row.tag && row.override ){<!--the Default row too (reviews/m3-closing.md #30):  it is the one override every Save leaves stored-->
+				<button matIconButton (click)="onDelete(row)" [matTooltip]="isConfigured(row) ? 'Revert — the tag goes back to its configured level.' : isDefault(row) ? 'Revert — on save the override is removed and the default goes back to its configured level.' : 'Remove — the tag goes back to its configured level, or the default. Pick level None to silence it instead.'">
+					<mat-icon>{{isConfigured(row) || isDefault(row) ? 'undo' : 'delete'}}</mat-icon>
 				</button>
 			}
 		</mat-cell>

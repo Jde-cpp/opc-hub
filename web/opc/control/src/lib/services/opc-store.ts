@@ -27,13 +27,18 @@ export class OpcStore{
 	//the resolver - before the component hears of the new route - so the view has to already be here rather than asked for.
 	nodeView = signal<NodeView|undefined>( undefined );
 
-	public async getConnection( gatewayService:Gateway, cnnctn:CnnctnSlug ):Promise<Server>{
-		//#connections = new Map<GatewaySlug,Map<CnnctnSlug, ServerCnnctn>>();
+	//Memoized per gateway for the node pages, which share it.  That used to be the whole story, so a describe that succeeded once
+	//answered for the life of the page:  an edited Name or Default Namespace never reached the node pages, and the Connection tab
+	//never went back to "Not connected" (reviews/m3-closing.md #5).  `fresh` - the Connection tab - describes again and keeps
+	//nothing when that fails;  forget() is what saving or deleting the connection calls.
+	public async getConnection( gatewayService:Gateway, cnnctn:CnnctnSlug, options?:{fresh?:boolean} ):Promise<Server>{
 		const gateway = gatewayService.slug;
 		let gatewayConnections = this.#connections.get( gateway );
 		if( !gatewayConnections )
 			this.#connections.set( gateway, gatewayConnections = new Map<CnnctnSlug, Server>() );
-		if( gatewayConnections.has(cnnctn) )
+		if( options?.fresh )
+			gatewayConnections.delete( cnnctn );//before the query:  a failure leaves nothing for the memoized path to answer with
+		else if( gatewayConnections.has(cnnctn) )
 			return gatewayConnections.get(cnnctn)!;
 		let q = `\
 			connection: serverConnection( slug: $opc ){ id name slug url certificateUri defaultBrowseNs }
@@ -45,6 +50,12 @@ export class OpcStore{
 		let server = new Server( props );
 		gatewayConnections.set( cnnctn, server );
 		return server;
+	}
+
+	//The connection's describe and the nodes browsed under it - a changed url can be another server entirely.
+	forget( gateway:GatewaySlug, cnnctn:CnnctnSlug ):void{
+		this.#connections.get( gateway )?.delete( cnnctn );
+		this.#nodes.get( gateway )?.delete( cnnctn );
 	}
 
 	private getNodes( gateway:GatewaySlug, cnnctn:CnnctnSlug ):Map<NodeKey,StoreNode>{

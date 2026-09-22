@@ -35,8 +35,11 @@ export class SearchService{
 		);
 	}
 
+	//A hit, not just the page it lands on:  every resource hit opens the one resources list, and keyed by route alone the merge
+	//kept the first and dropped the rest (reviews/m3-closing.md #26).  Not the prefix:  RouteSearchProvider repeats the users,
+	//groups and roles a list page parked in RouteStore - same page, same name, no prefix - and those are still one row.
 	static key( r:SearchResult ):string{
-		return (Array.isArray(r.route) ? r.route.join('/') : r.route) + (r.queryParams ? JSON.stringify(r.queryParams) : '');
+		return (Array.isArray(r.route) ? r.route.join('/') : r.route) + (r.queryParams ? JSON.stringify(r.queryParams) : '') + '\n' + r.title;
 	}
 	static merge( acc:SearchResult[], results:SearchResult[], order:Map<string,number> ):SearchResult[]{
 		const seen = new Set( acc.map(SearchService.key) );

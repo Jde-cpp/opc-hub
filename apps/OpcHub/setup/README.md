@@ -196,7 +196,11 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 - Roles are seeded by a second pass: `<schema>.roles` files under `dataPaths` are upserted after the access server is
   configured (`createRole`/`addRole` run through its mutations, which the `.mutation` pass runs too early for).
   `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician; `addRole` names
-  roles by `slug`, and a rerun on a later `-sync` start changes nothing.  `apps/OpcGateway/config/access-opcGateway.mutation`
+  roles by `slug`.  Each file is recorded (`access_seeds`, by content) once it applies, and a later `-sync` start skips it
+  while it is unchanged, so an administrator's edits to a seeded role - a changed right, a deny, a removed permission or
+  child role - survive restarts.  A release whose seed changed applies it again and adds only what a role is missing: it
+  never rewrites an existing grant, but it does restore a permission or child role the administrator had removed.
+  `apps/OpcGateway/config/access-opcGateway.mutation`
   (the gateway's group/role) is still not seeded: its `createRole( permissionRights:[…] )` shape is not one the seed applies.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer) shares
   port 1967 with the hub; the installer stops them and says so.  Deregister them with each exe's `-uninstall`.

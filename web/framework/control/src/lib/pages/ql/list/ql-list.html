@@ -6,7 +6,7 @@
 			<mat-toolbar>
 				<div class="bar-left">
 					@if( canAdd() && !selector() ){
-						<button [matButton]="isRefreshing() || data().length ? 'tonal' : 'filled'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action; isRefreshing suppresses the flash while a reload has the rows cleared-->
+						<button [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
 					}
 				</div>
 				<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->

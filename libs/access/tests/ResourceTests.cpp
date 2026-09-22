@@ -50,6 +50,22 @@ namespace Jde::Access::Tests{
 	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
 	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject;
 	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
+	//reviews/m3-closing.md #16:  what the Resources page now sends for a filter on its Enforced column - the server applies it
+	//like any other, "null" as `is null` in the bare-array form and "not null" as `ne`.  The page used to drop the arg.
+	TEST_F( ResourceTests, TheEnforcedFilterIsApplied ){
+		let root = GetRoot();
+		let all = QL().QuerySync<jarray>( R"(resources( schemaName:"access", criteria:null ){ id deleted })", {}, root );
+		uint enforced{}, unenforced{};
+		for( let& r : all )
+			++( Json::AsObject(r).at("deleted").is_null() ? enforced : unenforced );
+		ASSERT_TRUE( enforced && unenforced ) << "the fixture needs both:  " << serialize( all );
+		let isNull = QL().QuerySync<jarray>( R"(resources( schemaName:"access", criteria:null, deleted:$deleted ){ id deleted })", {{"deleted", jarray{nullptr}}}, root );
+		EXPECT_EQ( isNull.size(), enforced );
+		EXPECT_TRUE( std::ranges::all_of(isNull, [](let& r){ return Json::AsObject(r).at("deleted").is_null(); }) );
+		let notNull = QL().QuerySync<jarray>( R"(resources( schemaName:"access", criteria:null, deleted:{"ne":null} ){ id deleted })", {}, root );
+		EXPECT_EQ( notNull.size(), unenforced );
+	}
+
 	TEST_F( ResourceTests, SyncHealsARowLeftActiveByAnInterruptedInstall ){
 		let root = GetRoot();
 		const UserPK system{ UserPK::System };

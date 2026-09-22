@@ -13,7 +13,7 @@ namespace Jde::Opc::Gateway{
 		Id{ r.Get<uint32>(0) },
 		Url{ r.TakeString(1) },
 		CertificateUri{ r.TakeString(2) },
-		DefaultBrowseNs{ r.GetOpt<uint16_t>(4).value_or(0) },
+		DefaultBrowseNs{ r.GetOpt<uint16_t>(4).value_or(1) },//unset means 1 - what the SPA reads a NULL as, and so spells a namespace-1 segment bare (reviews/m3-closing.md #3, ruled 09-21; gateway-review #26 had unified both ctors on 0).
 		IsDefault{ r.GetBit(3) },
 		Name{ r.TakeString(5) },
 		Slug{ r.TakeString(6) }
@@ -22,7 +22,7 @@ namespace Jde::Opc::Gateway{
 		Id{ Json::FindNumber<uint32>(o, "id").value_or(0) },
 		Url{ Json::FindDefaultSV(o, "url") },
 		CertificateUri{ Json::FindDefaultSV(o, "certificateUri") },//the QL's names, not the columns':  a serverConnection{…} result is what arrives here (security-matrix #7).
-		DefaultBrowseNs{ Json::FindNumber<NsIndex>(o, "defaultBrowseNs").value_or(0) },
+		DefaultBrowseNs{ Json::FindNumber<NsIndex>(o, "defaultBrowseNs").value_or(1) },//as the row ctor.
 		Description{ Json::FindDefaultSV(o, "description") },
 		IsDefault{ Json::FindBool(o, "isDefault").value_or(false) },//the value, not the optional:  braces take an optional<bool> for "has one", which the old, never-matching key hid.
 		Name{ Json::FindDefaultSV(o, "name") },

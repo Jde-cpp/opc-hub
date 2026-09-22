@@ -55,6 +55,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	async onSubmitClick(){
 		try{
 			await this.ql.mutate( this.upsert().mutation(this.row), (m)=>console.log(m) );
+			this.afterMutate();
 			this.router.navigate( ['..'], {relativeTo: this.route} );
 		}
 		catch( e ){
@@ -71,6 +72,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 		const restore = this.isDeleted;
 		try{
 			await this.ql.mutate( `${restore ? "restore" : "delete"}${this.row.type}(id:${this.row.id})`, (m)=>console.log(m) );
+			this.afterMutate();
 			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
 			this.snackbar.exception( `${restore ? "Restore" : "Delete"} failed.`, e );
@@ -88,6 +90,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 			return;
 		try{
 			await this.ql.mutate( `purge${this.row.type}(id:${this.row.id})`, (m)=>console.log(m) );
+			this.afterMutate();
 			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
 			this.snackbar.exception( "Purge failed.", e );
@@ -97,6 +100,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected abstract get ctor():new (item:any)=>T;//a constructor cannot be reached through T, and a subclass field would initialise too late for #load
 	protected abstract upsert():T;//the edited row to save - the one thing every page assembles differently
 	protected abstract onRow():void;//per-page state off the freshly loaded `row`
+	protected afterMutate():void{}//a save, delete, restore or purge landed - for a page whose row something else caches (ClientDetail, reviews/m3-closing.md #5)
 	protected get onlyPropertiesTab():boolean{ return !this.row.id; }//client-detail gates its extra tab on `server`, not on the id
 	protected get title():string{ return this.row.name; }
 

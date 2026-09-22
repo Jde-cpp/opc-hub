@@ -72,7 +72,7 @@ export class RoleDetail extends DetailPage<Role>{
 	override ql:IGraphQL = inject( AccessService );
 }
 export const roleTableSettings:TableSettings = {
-	empty: { title: "No roles yet.", detail: "An install seeds Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician - an empty list means that seed has not run against this database.  Use Add to create one." },
+	empty: { title: "No roles yet.", detail: "An install seeds Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician - an empty list means that seed has not run against this database.", add: "Use Add to create one." },
 	excludedColumns:["permissions"],
 	columns: [
 		{ name:"name", style: new Style(300) },

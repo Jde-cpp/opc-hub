@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { ELogLevel } from 'jde-proto/Log';
 import { LogTags, TagLevel } from './log-tags';
 
@@ -107,5 +108,52 @@ describe( 'LogTags configured levels', ()=>{
 	it( 'offers a configured tag to no new row', ()=>{
 		const tags = make( [configured("sessions", "Trace")] );
 		expect( tags.selectableTags(tags.dataSource.find(r=>!r.tag)!) ).toEqual( ['sql', 'socket'] );
+	} );
+} );
+
+//reviews/m3-closing.md #30:  the Default row never had the remove button, and after a Save it is always a stored override - so
+//`default: null` (install-issues #21, ClearDefaultLevel) was unreachable:  the override was re-applied at every start, masking
+//the configured default, with no way back but the database.
+describe( 'LogTags removing a Default override', ()=>{
+	beforeEach( ()=>TestBed.configureTestingModule({}) );
+	//pick:  a level chosen on the Default row's picker, as the page does it - its event, not a direct call, which marks no view dirty
+	const buttonOn = ( tags:TagLevel[], pick?:ELogLevel )=>{
+		const fixture = TestBed.createComponent( LogTags );
+		fixture.componentRef.setInput( 'tags', tags );
+		fixture.componentRef.setInput( 'catalogue', ['default', 'sql'] );
+		fixture.detectChanges();
+		if( pick!==undefined ){
+			fixture.debugElement.query( By.css('mat-row severity-picker') ).triggerEventHandler( 'levelChange', pick );
+			fixture.detectChanges();
+		}
+		const first = (fixture.nativeElement as HTMLElement).querySelector( 'mat-row' )!;//the Default row leads
+		return first.querySelector( 'button mat-icon' )?.textContent?.trim();
+	};
+
+	it( 'offers the button on the Default row when it is an override', ()=>{
+		expect( buttonOn([override("default", "Warning")]) ).toBe( "undo" );//the row stays - it is reverted, not deleted
+		expect( buttonOn([configured("default", "Trace")], ELogLevel.Warning) ).toBe( "undo" );
+		expect( buttonOn([configured("default", "Trace")]) ).toBeUndefined();//nothing to remove
+	} );
+
+	it( 'keeps the row when a stored Default override is removed, and the save then clears it', ()=>{
+		const given = [override("default", "Warning"), override("sql", "Debug")];
+		const tags = make( given );
+		tags.onDelete( row(tags, "default") );
+		expect( row(tags, "default") ).toMatchObject( {override: false, removed: true} );
+		expect( tags.entries() ).toEqual( {sql: "Debug"} );//stored {default, sql} less this - the save diff sends default: null
+		expect( tags.selectableTags(tags.dataSource.find(r=>!r.tag)!) ).not.toContain( "default" );
+		tags.onLevelChange( row(tags, "default"), ELogLevel.Error );//changed its mind
+		expect( row(tags, "default") ).toMatchObject( {override: true, removed: false} );
+		expect( tags.entries() ).toEqual( {default: "Error", sql: "Debug"} );
+	} );
+
+	it( 'resets a Default the user picked but nothing stored in place', ()=>{
+		const tags = make( [] );
+		tags.onLevelChange( row(tags, "default"), ELogLevel.Warning );
+		tags.onDelete( row(tags, "default") );
+		expect( row(tags, "default") ).toMatchObject( {level: ELogLevel.Information, override: false} );
+		expect( row(tags, "default") ).not.toMatchObject( {removed: true} );//nothing stored, nothing to remove on save
+		expect( tags.entries() ).toEqual( {} );
 	} );
 } );

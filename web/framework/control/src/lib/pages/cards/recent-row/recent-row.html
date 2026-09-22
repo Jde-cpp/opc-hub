@@ -8,7 +8,7 @@
 	@if( recent().length ){
 		<div class="recent">
 			@for( r of recent(); track r.url ){
-				<a [routerLink]="r.url" class="recent-card" [class]="'card-'+r.section">
+				<a [routerLink]="r.link" class="recent-card" [class]="'card-'+r.section">
 					<span class="recent-chip" aria-hidden="true"><mat-icon>{{r.icon ?? 'history'}}</mat-icon></span>
 					<span class="recent-text">
 						<span class="recent-title">{{r.title}}</span>

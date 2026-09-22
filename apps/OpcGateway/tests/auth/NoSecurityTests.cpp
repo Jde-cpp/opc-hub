@@ -4,6 +4,9 @@
 #include "../../src/UAClient.h"
 #include "../../src/GatewayAppClient.h"
 #include "../../src/auth/OpcServerSession.h"
+#include "../../src/ql/GatewayQL.h"
+#include "../../src/async/Subscriptions.h"
+#include <jde/fwk/utils/Stopwatch.h>
 
 #define let const auto
 
@@ -72,6 +75,99 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( _client );
 		EXPECT_EQ( "ok (None/None)", Negotiated(_client) );//the channel stayed unsecured;  only the token was encrypted - the server's token policy is Basic256Sha256, and it activates nothing else.
 		EXPECT_FALSE( UAClient::ConnectErrors().contains(NoSecuritySlug) );//serverConnections{connectionStatus} has nothing to report.
+	}
+
+	//reviews/m3-closing.md #4:  a UAClient copies its connection row once, and ConnectAwait hands back the cached client, so an
+	//edit never reached it - the Gateways help's own step (copy the Application URI into Certificate URI for Sign & Encrypt) left
+	//the traffic on None/None under a row that said otherwise, for as long as anything kept the client busy.  An edit that
+	//changes how the client connects or translates paths now takes every client on the row off the registry, parking what they
+	//monitor for the reconnect, which builds its client from the row as it now is.
+	TEST_F( NoSecurityTests, AnEditedConnectionReconnectsOnItsNewSettings ){
+		let urn = Settings::FindSV( "/opc/urn" ).value_or( "urn:open62541.server.application" );
+		const Credential cred{ _jwt->Payload() };
+		ASSERT_TRUE( Attempt(cred).empty() );
+		ASSERT_EQ( "ok (None/None)", Negotiated(_client) );
+		let before = _client;
+		auto update = [&]( sv certificateUri ){
+			QL().QuerySync<jvalue>( Ƒ(R"(mutation updateServerConnection( id:{}, certificateUri:"{}" ))", _connection->Id, certificateUri), {}, {UserPK::System} );
+		};
+		update( urn );
+		EXPECT_FALSE( UAClient::Find(NoSecuritySlug, cred) ) << "the pre-edit client is still registered";
+		_client = nullptr;
+		let what = Attempt( cred );
+		let negotiated = what.empty() ? Negotiated( _client ) : string{};//before the restore below, which rebuilds this client in turn
+		update( "" );//back as the suite made it, for the cells after this one.
+		ASSERT_TRUE( what.empty() ) << what;
+		EXPECT_NE( before, _client );
+		EXPECT_TRUE( negotiated.ends_with("/SignAndEncrypt)") ) << negotiated;
+	}
+
+	//The same edit, seen from a subscription:  what the pre-edit client monitored - another session's watch page, say - is parked and
+	//comes back by itself on a client built from the edited row.  Before, a subscription pinned the pre-edit client indefinitely.
+	struct PushCount final : IDataChange{
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{ ++Pushes; }
+		α to_string()Ι->string override{ return "NoSecurityTests.PushCount"; }
+		atomic<uint> Pushes;
+	};
+	TEST_F( NoSecurityTests, AnEditedConnectionsSubscriptionsComeBackOnItsNewSettings ){
+		let urn = Settings::FindSV( "/opc/urn" ).value_or( "urn:open62541.server.application" );
+		const NodeId nodeId{ 4, 6017 };
+		const Credential cred{ _jwt->Payload() };
+		ASSERT_TRUE( Attempt(cred).empty() );
+		auto listener = ms<PushCount>();
+		ASSERT_NO_THROW( BlockVoidAwait(SubscribeAwait{_client}) );
+		ASSERT_NO_THROW( BlockTAwait<FromServer::SubscriptionAck>(DataChangeAwait{{nodeId}, listener, _client}) );
+		Stopwatch sw;
+		while( !listener->Pushes )
+			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) ) << "no initial push on the None client";
+		let lost = _client->Handle();
+		let pushes = listener->Pushes.load();
+		auto update = [&]( sv certificateUri ){
+			QL().QuerySync<jvalue>( Ƒ(R"(mutation updateServerConnection( id:{}, certificateUri:"{}" ))", _connection->Id, certificateUri), {}, {UserPK::System} );
+		};
+		update( urn );
+
+		sp<UAClient> revived;//the reconnect waits a second, then connects on the edited row, subscribes and re-creates the item.
+		auto start = steady_clock::now();//not CheckTimeout:  a throw here would skip the unsubscribe and the restore below.
+		while( !revived ){
+			for( let& client : UAClient::LiveClients() ){
+				let nodes = client->Handle()!=lost && client->Slug()==NoSecuritySlug ? client->TryMonitoredNodes() : nullptr;
+				if( nodes && nodes->Count() )
+					revived = client;
+			}
+			if( steady_clock::now()-start>30s )
+				break;
+			std::this_thread::sleep_for( 10ms );
+		}
+		let negotiated = revived ? Negotiated( revived ) : string{};
+		start = steady_clock::now();
+		while( revived && listener->Pushes==pushes && steady_clock::now()-start<6s )
+			std::this_thread::sleep_for( 1ms );
+		let pushed = listener->Pushes.load()>pushes;
+		UAClient::Unsubscribe( listener );//before the restore, or its rebuild would park the listener again.
+		update( "" );
+		_client = revived;
+		ASSERT_TRUE( revived ) << "no replacement client came up with the monitored node restored";
+		EXPECT_TRUE( negotiated.ends_with("/SignAndEncrypt)") ) << negotiated;
+		EXPECT_TRUE( pushed ) << "the listener heard nothing from the replacement client";
+	}
+
+	TEST_F( NoSecurityTests, AnEditThatChangesNothingTheClientUsesKeepsIt ){//the description, say:  no reason to drop anyone's session.
+		const Credential cred{ _jwt->Payload() };
+		ASSERT_TRUE( Attempt(cred).empty() );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateServerConnection( id:{}, description:"edited" ))", _connection->Id), {}, {UserPK::System} );
+		EXPECT_EQ( UAClient::Find(NoSecuritySlug, cred), _client );
+	}
+
+	TEST_F( NoSecurityTests, ADeletedConnectionClosesItsClients ){//and nothing reconnects it:  the row is gone.
+		const Credential cred{ _jwt->Payload() };
+		ASSERT_TRUE( Attempt(cred).empty() );
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteServerConnection( id:{} )", _connection->Id), {}, {UserPK::System} );
+		EXPECT_FALSE( UAClient::Find(NoSecuritySlug, cred) );
+		_client = nullptr;
+		let what = Attempt( cred );
+		QL().QuerySync<jvalue>( Ƒ("mutation restoreServerConnection( id:{} )", _connection->Id), {}, {UserPK::System} );
+		EXPECT_TRUE( what.contains("Could not find connection") ) << what;
 	}
 
 	TEST_F( NoSecurityTests, AnonymousIsNotOfferedAtAll ){

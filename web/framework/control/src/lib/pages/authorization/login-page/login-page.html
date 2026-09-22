@@ -8,7 +8,9 @@
 			<form [formGroup]="form" fxLayout="column" fxLayoutAlign="center stretch" >
 				<!--install-issues #38:  this form signs in against an OPC server the hub connects to, and the connection's slug is
 						what picks which one - onLogin splits the username on the backslash and sends the slug as the request's `opc`
-						field, so without it the server answers "opc server not specified".  The form renders whether or not a
+						field.  Without one the field goes out empty, which the gateway reads as its default connection (install-issues #1) -
+						the bundled OpcServer when that component is installed, else the refusal "No default OPC server connection."  It
+						never answers "opc server not specified" to this form (reviews/m3-closing.md #18).  The form renders whether or not a
 						connection exists yet (adding the first one is done signed out), so the shape has to be said here:  it is the
 						one place a user meets it at the moment they need it.-->
 				<!--subscriptSizing dynamic:  the default reserves one line for the subscript and clips the rest, which hid all but

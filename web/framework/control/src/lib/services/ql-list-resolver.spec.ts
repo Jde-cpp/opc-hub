@@ -109,6 +109,20 @@ describe( 'QLListResolver.emptyState', ()=>{
 		const own = QLListResolver.emptyState( new ListRoute({path: "roles", data: {tableSettings: {empty: {title: "Nothing.", detail: "Yet."}}} as any}) );
 		expect( own ).toEqual( {title: "Nothing.", detail: "Yet.", icon: "inbox"} );
 	} );
+	//reviews/m3-closing.md #24:  the Add pointer is its own sentence, so a list without Add can leave it off
+	it( "appends the route's Add sentence only where Add is shown", ()=>{
+		const route = ( tableSettings:object )=>new ListRoute( {path: "groups", data: {tableSettings}} as any );
+		const empty = {title: "No groups yet.", detail: "A group collects users.", add: "Use Add to create one."};
+		expect( QLListResolver.emptyState(route({empty})).detail ).toBe( "A group collects users.  Use Add to create one." );
+		expect( QLListResolver.emptyState(route({empty}), {selector: true}).detail ).toBe( "A group collects users." );
+		expect( QLListResolver.emptyState(route({empty, canAdd: false})).detail ).toBe( "A group collects users." );
+		expect( QLListResolver.emptyState(route({empty: {add: "Use Add to connect one."}})).detail ).toBe( "Use Add to connect one." );
+	} );
+	it( 'says a narrowed list is narrowed, not empty', ()=>{
+		const route = new ListRoute( {path: "roles", data: {tableSettings: {empty: {title: "No roles yet.", detail: "Seeded."}}}} as any );
+		expect( QLListResolver.emptyState(route, {filtered: true}) ).toEqual( {title: "No roles match this view.", detail: "", icon: "filter_alt_off"} );
+		expect( QLListResolver.emptyState(route, {excluded: true, selector: true}) ).toEqual( {title: "No other roles.", detail: "", icon: "inbox"} );
+	} );
 } );
 
 //A refused rows query used to reject the resolve, which the router turned into a NavigationError nobody saw.  It is the

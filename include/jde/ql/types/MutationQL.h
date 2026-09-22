@@ -20,5 +20,6 @@ namespace Jde::QL{
 		optional<TableQL> ResultRequest;
 		bool ReturnRaw;
 		EMutationQL Type;
+		bool AddIfMissing{};//LocalQL::Upsert's adds - the seeds':  an add whose target already holds it changes nothing, so an admin's edit to a seeded grant survives the next start (reviews/m3-closing.md #12).  Only RoleMAwait's permission add reads it; a member add skips an existing member anyway.
 	};
 }

@@ -5,6 +5,9 @@
 #include <jde/fwk/settings.h>
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
+#include <jde/db/db.h>
+#include <jde/db/IDataSource.h>
+#include <jde/db/meta/AppSchema.h>
 #include "../src/awaits/RoleLoadAwait.h"
 #include "globals.h"
 
@@ -227,8 +230,10 @@ namespace Jde::Access::Tests{
 
 	//The seed's spelling - libs/access/config/release.roles, applied by DB::SyncData(".roles") through LocalQL::Upsert once the
 	//access server is up:  createRole by slug, addRole naming the role and its member roles by slug (a file cannot know the
-	//pks it just created), permissions by schema+slug.  Upsert skips a createRole whose slug exists and always runs an
-	//addRole - so a second pass over the same text (every -sync start) changes nothing and fails nothing.
+	//pks it just created), permissions by schema+slug.  Upsert skips a createRole whose slug exists, and an addRole whose role
+	//already holds that member or a permission on that resource - so a second pass adds only what is missing, and an admin's
+	//edit to a seeded grant survives it.  It used to rewrite the grant with the seed's numbers:  a hardened Engineer got Delete
+	//back, a deny on Viewer was cleared, at every -sync start (reviews/m3-closing.md #12, ruled 09-21:  the admin's edits win).
 	TEST_F( RoleTests, SeedBySlug ){
 		let root = GetRoot();
 		for( let slug : {"seedAdmin", "seedViewer"} ){//a previous run's rows would make the first pass a rerun.
@@ -247,12 +252,88 @@ namespace Jde::Access::Tests{
 			ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) ) << "pass " << pass;
 			const RolePK viewer{ (RolePK)GetId(getRole("seedViewer", root)) }, admin{ (RolePK)GetId(getRole("seedAdmin", root)) };
 			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "groups", root), "allowed")), ERights::Read ) << "pass " << pass;
-			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(admin, "groups", root), "allowed")), ERights::Administer ) << "pass " << pass;
+			let adminGroups = GetRolePermission( admin, "groups", root );
+			EXPECT_EQ( ToRights(Json::AsArray(adminGroups, "allowed")), pass==0 ? ERights::Administer : ERights::Read ) << "pass " << pass;
+			EXPECT_EQ( ToRights(Json::AsArray(adminGroups, "denied")), pass==0 ? ERights::None : ERights::Update ) << "pass " << pass << " - the admin's deny";
 			EXPECT_FALSE( GetRoleChild(admin, viewer, root).empty() ) << "pass " << pass;//and the second pass did not insert the membership twice - a duplicate key would have thrown above.
+			if( pass==0 )//the admin hardens the seeded grant between starts - the Permissions tab's save
+				QL().QuerySync<jvalue>( Ƒ("mutation updatePermissionRight( id:{}, allowed:{}, denied:{} )", GetId(adminGroups), underlying(ERights::Read), underlying(ERights::Update)), {}, root );
 		}
 		const RolePK admin{ (RolePK)GetId(getRole("seedAdmin", root)) };
 		Purge( "role", admin, root );
 		Purge( "role", (RolePK)GetId(getRole("seedViewer", root)), root );
+	}
+
+	//reviews/m3-closing.md #1:  a seeded row an admin soft-deleted is still a row - its slug and name keep their unique indexes -
+	//so the next -sync start's pass has to count it as existing.  The probe filtered `deleted is null`, took the create branch
+	//and died on the index, which escaped Startup:  the hub, and the UI whose Restore button would have undone it, stayed down.
+	//A group too - access-opcGateway.mutation seeds one through the same Upsert in the .mutation pass.
+	TEST_F( RoleTests, ASoftDeletedSeedRowIsNotRecreated ){
+		let root = GetRoot();
+		for( let& v : QL().QuerySync<jarray>(R"(roles( slug:"seedDeleted" ){ id deleted })", {}, root) )
+			Purge( "role", GetId(Json::AsObject(v)), root );
+		if( let group = SelectGroup("seedDeletedGroup", root, true); !group.empty() )
+			PurgeGroup( {GetId(group)}, root );
+		constexpr sv seed = R"(mutation{
+			createRole( slug:"seedDeleted", name:"Seed Deleted", description:"seed" )
+			addRole( slug:"seedDeleted", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"groups" } } )
+			createGroups( slug:"seedDeletedGroup" )
+		})";
+		const UserPK system{ UserPK::System };
+		ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) );
+		const RolePK role{ (RolePK)GetId(getRole("seedDeleted", root)) };
+		const GroupPK group{ GetId(SelectGroup("seedDeletedGroup", root, false)) };
+		Delete( "role", role, root );
+		Delete( "group", group.Value, root );
+
+		ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) ) << "the next start's pass";
+		let roleRow = Select( "role", "seedDeleted", root, {}, true );
+		EXPECT_EQ( GetId(roleRow), role ) << "no second row";
+		EXPECT_TRUE( Json::FindTimePoint(roleRow, "deleted") ) << "and the admin's delete stands";
+		let groupRow = SelectGroup( "seedDeletedGroup", root, true );
+		EXPECT_EQ( GetId(groupRow), group.Value );
+		EXPECT_TRUE( Json::FindTimePoint(groupRow, "deleted") );
+
+		Purge( "role", role, root );
+		PurgeGroup( group, root );
+	}
+
+	//reviews/m3-closing.md #12, ruled 09-21:  the .roles pass reran every file at every -sync start, so a permission or a child role
+	//the admin removed from a seeded role came back at the next reboot.  A file is now recorded by content when it is applied and
+	//skipped while unchanged;  a release whose seed changed applies it again - adding what is missing, rewriting nothing.
+	TEST_F( RoleTests, AnUnchangedSeedFileIsNotReapplied ){
+		let root = GetRoot();
+		for( let slug : {"seedFileParent", "seedFileChild"} ){
+			for( let& v : QL().QuerySync<jarray>(Ƒ(R"(roles( slug:"{}" ){{ id deleted }})", slug), {}, root) )
+				Purge( "role", GetId(Json::AsObject(v)), root );
+		}
+		const string seed{ R"(mutation{
+			createRole( slug:"seedFileChild", name:"Seed File Child", description:"seed" )
+			createRole( slug:"seedFileParent", name:"Seed File Parent", description:"seed" )
+			addRole( slug:"seedFileParent", role:{ slug:"seedFileChild" } )
+			addRole( slug:"seedFileParent", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"groups" } } )
+		})" };
+		auto schema = GetTable( "roles" )->Schema;
+		auto ql = QL().shared_from_this();
+		constexpr sv name{ "access.seedFileTest.roles" };
+		schema->DS()->ExecuteSync( {Ƒ("delete from {} where name=?", schema->GetTable("seeds").DBName), {DB::Value{string{name}}}} );//a direct run's db keeps the record
+		ASSERT_TRUE( DB::SeedFile(*schema, string{name}, seed, ql, true) ) << "a file never applied is applied";
+		const RolePK parent{ (RolePK)GetId(getRole("seedFileParent", root)) }, child{ (RolePK)GetId(getRole("seedFileChild", root)) };
+		let permission = GetRolePermission( parent, "groups", root );
+		ASSERT_FALSE( permission.empty() );
+		RemoveRoleMember( parent, child, root );//the admin unticks the child role, and clears the permission
+		RemoveRolePermission( parent, GetId(permission), root );
+
+		EXPECT_FALSE( DB::SeedFile(*schema, string{name}, seed, ql, true) ) << "the next start's pass over the same file";
+		EXPECT_TRUE( GetRoleChild(parent, child, root).empty() ) << "the admin's removal survives";
+		EXPECT_TRUE( GetRolePermission(parent, "groups", root).empty() );
+
+		EXPECT_TRUE( DB::SeedFile(*schema, string{name}, seed+"\n", ql, true) ) << "a release whose seed changed";
+		EXPECT_FALSE( GetRoleChild(parent, child, root).empty() ) << "a changed seed adds what is missing";
+		EXPECT_FALSE( GetRolePermission(parent, "groups", root).empty() );
+
+		Purge( "role", parent, root );
+		Purge( "role", child, root );
 	}
 
 	//The shipped seed itself - libs/access/config/release.roles, installed as access.roles (setup/OpcHubSetup.nsi) - applied the way
@@ -388,6 +469,41 @@ namespace Jde::Access::Tests{
 		RemoveRolePermission( rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id"), system );
 		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
 		Purge( "role", rolePK, root );
+	}
+
+	//reviews/m3-closing.md #11:  the resource the grant above creates never reached the running authorizer.  The lookup that
+	//registers it asked for `deleted is null` and missed the row it had just made unenforced, so the published grant carried no
+	//resource id and the cache dropped it - until a restart.  Meanwhile a grant on it by id (the Permissions tab) was refused
+	//"Resource with PK not found", enforcing it threw in the listener, and Effective rights read it as a lockout.  The hub's
+	//`opc.install nodeIds` is exactly this:  the role seed creates it before the OpcServer declares it.
+	TEST_F( RoleTests, AResourceARoleGrantCreatesIsCachedWithoutARestart ){
+		let root = GetRoot();
+		constexpr sv slug{ "m3c11Seeded" };
+		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
+			Purge( "resource", GetId(Json::AsObject(v)), root );
+		const RolePK seeded{ (RolePK)GetId(getRole("roleM3c11Seeded", root)) }, granted{ (RolePK)GetId(getRole("roleM3c11Granted", root)) };
+		const UserPK holder{ GetId(GetUser("m3c11Holder", root)) };
+		CreateAcl( holder, granted, root );
+		let add = [&]( RolePK role, string resource ){
+			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ {} }} }} ))", role, resource );
+			return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		};
+		add( seeded, Ƒ(R"(schemaName:"access", slug:"{}")", slug) );//the seed's spelling:  no row yet, so the grant makes one - unenforced
+		let resources = QL().QuerySync<jarray>( select, {}, root );
+		ASSERT_EQ( resources.size(), 1u );
+		const ResourcePK resourcePK{ GetId(Json::AsObject(resources[0])) };
+		ASSERT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() );
+
+		EXPECT_NO_THROW( add(granted, Ƒ("id:{}", resourcePK)) ) << "a grant by id, as the Permissions tab sends it";
+		EXPECT_EQ( Authorizer()->Rights("access", string{slug}, holder), ERights::All ) << "caching the row must not enforce it";
+		EXPECT_NO_THROW( Restore("resources", resourcePK, root) ) << "enforcing it - the Resources page's toggle";
+		EXPECT_EQ( Authorizer()->Rights("access", string{slug}, holder), ERights::Read ) << "the holder's grant applies the moment it is enforced";
+
+		Purge( "role", seeded, root );
+		Purge( "role", granted, root );
+		PurgeUser( holder, root );
+		Purge( "resource", resourcePK, root );
 	}
 
 	TEST_F( RoleTests, DeletedLoad ){

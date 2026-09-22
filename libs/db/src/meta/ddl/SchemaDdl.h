@@ -12,7 +12,8 @@ namespace Jde::DB{
 	struct SchemaDdl : DBSchema, std::enable_shared_from_this<SchemaDdl>{
 		SchemaDdl( str name, sv tablePrefix, const IServerMeta& loader, sp<QL::IQL> ql )ε;
 		Ω Sync( const AppSchema& config, sp<QL::IQL> ql )ε->void;
-		Ω SeedData( const AppSchema& config, sv extension, sp<QL::IQL> ql )ε->void;//the /dbServers/dataPaths files of one extension, upserted through `ql` - Sync's ".mutation" pass, and the ".roles" pass the app runs once the access server is up (DB::SyncData).
+		Ω SeedData( const AppSchema& config, sv extension, sp<QL::IQL> ql, bool skipUnchanged=false )ε->void;
+		Ω SeedFile( const AppSchema& config, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool;//DB::SeedFile//the /dbServers/dataPaths files of one extension, upserted through `ql` - Sync's ".mutation" pass, and the ".roles" pass the app runs once the access server is up (DB::SyncData).
 		Ω Create( const DBSchema& config )ε->void;
 		α IsPhysical()Ι->bool { return true; }
 		α Tables()ι->flat_map<string,sp<Table>>&{ return Meta()->Tables; }

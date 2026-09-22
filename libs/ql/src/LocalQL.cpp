@@ -62,7 +62,8 @@ namespace Jde::QL{
 		auto result = QL::Parse( move(query), variables, _schemas ); THROW_IF( !result.IsMutation(), "Query is not a mutation" );
 		jarray y;
 		for( auto&& m : result.Mutations() ){
-			if( m.Type==EMutationQL::Add ){//a membership or a permission, not a keyed row:  the key names the role it goes ON, which exists - so the create-if-missing rule below would skip every add.  The server's add is the idempotent half (access_role_add upserts per resource, RoleMAwait skips a member the role holds), so it always runs - and through this IQL, whose CustomMutation is what answers addRole; the create branch's QLAwait carries none and would fall to the stock add.
+			if( m.Type==EMutationQL::Add ){//a membership or a permission, not a keyed row:  the key names the role it goes ON, which exists - so the create-if-missing rule below would skip every add.  It runs, as add-if-missing (RoleMAwait skips a member the role holds, and with AddIfMissing a permission on a resource the role already has one on) - and through this IQL, whose CustomMutation is what answers addRole; the create branch's QLAwait carries none and would fall to the stock add.
+				m.AddIfMissing = true;//a seed adds what is missing and rewrites nothing:  the admin's edit to a seeded grant wins (reviews/m3-closing.md #12)
 				vector<MutationQL> one; one.push_back( move(m) );
 				y.push_back( BlockAwait<QLAwait<jvalue>,jvalue>(QLAwait<jvalue>{RequestQL{move(one)}, Creds{executer}, shared_from_this()}) );
 				continue;
@@ -77,7 +78,11 @@ namespace Jde::QL{
 			auto input = key->IsPK()
 				? "id:"+std::to_string(key->PK())
 				: "slug:\""+move(key->NK())+'"';
-			auto ql = Ƒ( "{}({}){{ id }}", DB::Names::ToSingular(m.JsonTableName), move(input) );
+			//a soft-deleted row is still a row - its keys keep their unique indexes - so it has to count as existing:  naming deleted
+			//drops the select's `deleted is null`.  Only where the column is, or the select throws (rights, providerTypes, logLevels).
+			//Without it a seeded role an admin deleted was re-created at the next -sync start and died on the index (reviews/m3-closing.md #1).
+			let columns = m.DBTable && m.DBTable->FindColumn("deleted") ? "id deleted" : "id";
+			auto ql = Ƒ( "{}({}){{ {} }}", DB::Names::ToSingular(m.JsonTableName), move(input), columns );
 			if( auto existing = BlockAwait<TAwait<jobject>,jobject>(move(*QueryObject(move(ql), variables, executer))); existing.empty() ){
 				if( auto name = m.Args.contains("name") ? nullptr : m.Args.if_contains("slug"); name )
 					m.Args["name"] = Json::AsString( *name );

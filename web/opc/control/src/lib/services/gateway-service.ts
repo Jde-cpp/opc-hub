@@ -33,12 +33,20 @@ const gatewayUrl = /^\/(?:apps\/)?gateways\/([^/?#]+)/;
 export class GatewayService implements IGraphQL{
 	private router = inject( Router );
 	constructor(){
-		const authStore:AuthStore = inject( AUTH_STORE ), opcStore:OpcStore = inject( OPC_STORE );
+		this.#lookup();
+	}
+	//After a failed lookup nothing settled a later gateway()/gateways() - /gateways awaited forever and a Retry could not help
+	//(reviews/m3-closing.md #7) - so a call made once one has failed looks the instances up again.
+	#lookup(){
+		this.#lookingUp = true;
 		this.appService.gatewayInstances().then(
-			(instances)=>this.onGatewaySuccess( instances, this.appService.transport, this.http, authStore, opcStore ),
-			(e)=>this.onInstancesError( e )//wrap so `this` is bound (bare method reference would run with this===undefined)
+			(instances)=>{ this.#lookingUp = false; this.onGatewaySuccess( instances, this.appService.transport, this.http, this.#authStore, this.#opcStore ); },
+			(e)=>{ this.#lookingUp = false; this.onInstancesError( e ); }//wrap so `this` is bound (bare method reference would run with this===undefined)
 		);
 	}
+	#authStore:AuthStore = inject( AUTH_STORE );
+	#opcStore:OpcStore = inject( OPC_STORE );
+	#lookingUp = false;
 	private onGatewaySuccess(gateways:Instance[], transport:ETransport, http: HttpClient, authStore:AuthStore, opcStore:OpcStore){
 		if( gateways.length==0 )
 			console.error("No IotServies running");
@@ -63,10 +71,15 @@ export class GatewayService implements IGraphQL{
 	}
 	//A url segment naming a gateway that is not registered - a stale bookmark, a renamed instance - used to come back as
 	//`undefined` behind a `!`, so the miss only surfaced as "cannot read properties of undefined" inside the resolver's
-	//first query, with nothing naming the gateway.  Reject:  the Router turns that into a NavigationError that does.
+	//first query, with nothing naming the gateway.  Reject, naming it:  a resolver route's caller says so (GatewayResolver's
+	//snackbar), and so does a Cards page (its could-not-load state) - a bare rejection reached neither (reviews/m3-closing.md #7).
 	async gateway( instanceName:string ):Promise<Gateway>{
-		if( !this.#gateways )
-			return new Promise<Gateway>( (resolve,reject)=>this.#gatewayCallbacks.push({instanceName, resolve, reject}) );
+		if( !this.#gateways ){
+			const queued = new Promise<Gateway>( (resolve,reject)=>this.#gatewayCallbacks.push({instanceName, resolve, reject}) );
+			if( !this.#lookingUp )
+				this.#lookup();
+			return queued;
+		}
 		const gateway = this.#gateways.find( gateway=>gateway.instances[0].instanceName==instanceName );
 		if( !gateway )
 			throw this.#unknownGateway( instanceName );
@@ -77,8 +90,12 @@ export class GatewayService implements IGraphQL{
 		return new Error( `No gateway '${instanceName}' is registered.  ${known.length ? `Registered: '${known.join("', '")}'.` : "None are registered."}` );
 	}
 	async gateways():Promise<Gateway[]>{
-		if( !this.#gateways )
-			return new Promise<Gateway[]>( (resolve,reject)=>this.#gatewaysCallbacks.push({resolve:resolve,reject:reject}) );
+		if( !this.#gateways ){
+			const queued = new Promise<Gateway[]>( (resolve,reject)=>this.#gatewaysCallbacks.push({resolve:resolve,reject:reject}) );
+			if( !this.#lookingUp )
+				this.#lookup();
+			return queued;
+		}
 		return Promise.resolve( this.#gateways );
 	}
 	//Every IGraphQL entry point goes through defaultGatewayAsync, not the synchronous getter: until gatewayInstances()
@@ -388,9 +405,20 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		const failed = new Array<{node:NodeId, sc:StatusCode}>();
 		try{
 			const y = await this.sendPromise<FromServer.MonitoredItemCreateResult[]>( {"subscribe":request}, `subscribe opcId: ${opcId}, nodeCount: ${nodes.length}` );
-			for( let i=0; i<y.length; ++i ){
-				if( y[i].statusCode )
-					failed.push( {node: nodes[i], sc: y[i].statusCode!} );
+			//Matched on the node each result names:  the gateway answers in NodeId order, never the request's, so blaming results[i]
+			//on nodes[i] marked a healthy row Bad - locked, its pushes dropped - and left the node that failed ticked with nothing
+			//said (reviews/m3-closing.md #10).  A result naming no node (a gateway older than the field) can be placed only when
+			//there is one node to place it on;  otherwise nothing is blamed rather than the wrong row.
+			const asked = new Map( nodes.map(node=>[node.key, node]) );
+			const single = y.length==1 && nodes.length==1 ? nodes[0] : undefined;
+			for( const result of y ){
+				if( !result.statusCode )
+					continue;
+				const node = result.node ? asked.get( Gateway.toNode(result.node).key ) : single;
+				if( node )
+					failed.push( {node, sc: result.statusCode} );
+				else
+					console.warn( `subscribe opcId: ${opcId} - a failed result (${result.statusCode.toString(16)}) ${result.node ? `names a node that was not asked for: ${JSON.stringify(result.node)}` : "names no node"} - left unplaced.` );
 			}
 		}
 		catch( e:unknown ){

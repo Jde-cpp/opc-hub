@@ -79,6 +79,16 @@ describe( 'RecentVisits', ()=>{
 		expect( urls() ).toEqual( ['/gateways/gw1'] );
 	});
 
+	//reviews/m3-closing.md #25:  a deep link to a deleted page fails in its resolver, before anything has loaded the history;
+	//forgetting from the empty list let the load bring the page straight back.
+	it( 'forgets a saved page even before the history has loaded', async ()=>{
+		history['alice'] = [ saved('/access/roles/temp'), saved('/access/roles/engineer') ];
+		const recent = TestBed.inject( RecentVisits );
+		recent.forget( '/access/roles/temp' );
+		await recent.load();
+		expect( urls() ).toEqual( ['/access/roles/engineer'] );
+	});
+
 	it( 'renames a saved entry\'s title and path by SEGMENT_NAME, as the crumbs would name them now', async ()=>{
 		segmentName = ( segments, i )=>segments[0]=='gateways' && i>=3 ? segments[i].replace( /^\d+~/, '' ) : undefined;
 		history['alice'] = [ {url: '/gateways/gw1/local/5~pump1/5~motorRpm', title: '5~motorRpm', path: 'Local OPC Server › 5~pump1', section: 'gateways', at: 0},
