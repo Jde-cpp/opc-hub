@@ -12,7 +12,7 @@ paths + {
 	access:{ trustedCertDirs: [ args.certsDir("OpcServer") ] }, //as args/install: the installed products only - see the comment there.
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],
-		scriptPaths: [hubDir+"/sql"],
+		scriptPaths: [hubDir+"/sql-sqlServer"], //the T-SQL views and procs, copied by hand:  never sql/, which the installer recreates on every reinstall and fills with the sqlite scripts - it wiped these, and a sqlite trigger with no T-SQL twin was sent to SQL Server (reviews/m4-closing.md #18, #19).  dataPaths stays sql/: the seeds are the installer's, and dialect-free.
 		localhost:{
 			driver: "$(ExeDir)/Jde.DB.Odbc.dll", //beside the exe, wherever the installer put it (settings.cpp builtIns) - not companyDir, a different root.
 			connectionString: "DSN=jde",

@@ -24,14 +24,14 @@ function addHard {
 	fi;
 };
 
-#The version the C++ build stamps into every target - CMakePresets.common.json's JDE_VERSION, the same string
-#`project( … VERSION ${JDE_VERSION} )` uses - into the variable named by $1, normalised to what npm accepts.
+#The version the C++ build carries - CMakePresets.common.json's JDE_VERSION, the same string `project( … VERSION ${JDE_VERSION} )`
+#uses and the Windows exes' version resource (build/version.rc.h.in) - into the variable named by $1, normalised to what npm accepts.
 #The presets file to read defaults to $JDE_BASH's, which is the checkout whose build/common.sh was sourced; pass $2
 #to read another one.
-#JDE_VERSION is a date (2026.09.01) and that is not semver: npm's semver rejects leading zeros in a numeric
+#JDE_VERSION is a yyyy.MM.dd date and that is not semver: npm's semver rejects leading zeros in a numeric
 #identifier, so semver.valid("2026.09.01") is null and satisfies("2026.09.01","2026.09.01") answers false - a
 #library packed at that version would never match a sibling's peer range.  Drop the zeros: 2026.9.1.
-#The version as the presets spell it - 2026.09.01, the date, zeros and all: what the installers name themselves and
+#The version as the presets spell it - the yyyy.MM.dd date, zeros and all: what the installers name themselves and
 #Add/Remove Programs shows (build-setup.ps1, build-deb.sh), and what the Web UI's about page displays (setup.sh's
 #JDE_VERSION define).  Only npm's package versions take the semver form, jdeVersion below.
 function jdeVersionRaw {

@@ -1,0 +1,6 @@
+//Written by jdeVersionResource (build/functions.cmake) - an exe's VERSIONINFO values from CMakePresets.common.json's
+//JDE_VERSION.  The .rc files carried a static 1.0.0.1 / 2025, so every release identified itself alike to Explorer's Details
+//tab and to WER's "Faulting application … version:" (reviews/m4-closing.md #20).
+#define JDE_VERSION_NUMBERS @jdeRcMajor@,@jdeRcMinor@,@jdeRcPatch@,0
+#define JDE_VERSION_STRING "@JDE_VERSION@"
+#define JDE_COPYRIGHT "Copyright (C) @jdeRcMajor@"

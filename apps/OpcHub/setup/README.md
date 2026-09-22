@@ -19,7 +19,7 @@ Prerequisites on the build machine:
 | `vc_redist.x64.exe` | the VS 2026 install's `VC\Redist\MSVC\v145\` (`-VcRedist`), or https://aka.ms/vs/18/release/vc_redist.x64.exe - 14.50 or later, the installer's gate: the exes are built with the 14.51 toolset and Microsoft's rule is a redistributable at least as new as the toolset (the VS 2022 line's 14.44 happens to export every symbol they import, checked 09-12, but only by luck); bundled for the all-users mode, skipped with a warning if missing |
 
 ```powershell
-.\build-setup.ps1                              # -> <BuildDir>\setup\OpcHubSetup-<JDE_VERSION>.exe (CMakePresets.common.json - 2026.09.01)
+.\build-setup.ps1                              # -> <BuildDir>\setup\OpcHubSetup-<JDE_VERSION>.exe (CMakePresets.common.json's JDE_VERSION)
 .\build-setup.ps1 -Version 2026.09.08 -SkipWeb
 .\build-setup.ps1 -Sign -PfxPath <cert.pfx>    # signed with a .pfx; -Sign alone uses Azure Artifact Signing - see Signing
 ```
@@ -62,11 +62,11 @@ interstitial fades as the certificate accrues download reputation, which a new o
 |---|---|---|
 | rights | administrator (UAC prompt) | none - a standard user never sees a prompt, nor the mode page: Setup picks this mode for them and says so at the top of *Choose Components* (for services, run Setup as administrator - right-click); an administrator sees the mode page and may still pick this mode |
 | program dir | `C:\Program Files\Jde-Cpp` | `%LOCALAPPDATA%\Programs\Jde-Cpp` |
-| how the products run | Windows services `Jde.OpcHub`, `Jde.OpcServer` (auto start; `net start`/`net stop`) - the finish page's "Start now" box starts them at once, and its link is the Web UI's url | Start Menu folder `Jde-Cpp`: a shortcut per product, each a console window (`-c`) - the finish page's "Start now" box opens them at once, and its link is the Web UI's url; optional "Start at logon" component (HKCU Run) |
+| how the products run | Windows services `Jde.OpcHub`, `Jde.OpcServer` (auto start; `net start`/`net stop`), both running as **Local Service** - an unprivileged account, as the `.deb`'s `jde-cpp` is, not LocalSystem - the finish page's "Start now" box starts them at once, and its link is the Web UI's url | Start Menu folder `Jde-Cpp`: a shortcut per product, each a console window (`-c`) - the finish page's "Start now" box opens them at once, and its link is the Web UI's url; optional "Start at logon" component (HKCU Run) |
 | firewall | inbound TCP 1967 allowed, and 4840 with the OPC UA Server component, on every profile (`netsh advfirewall`, rules named `Jde OpcHub (TCP 1967)` / `Jde OpcServer (TCP 4840)`; removed on uninstall) - a browser or an OPC client on another machine reaches the products.  Every profile because a new network lands in Public unless someone says otherwise, and 1967 is plain http with a login on it, by ruling | none needed: this mode's `-include=args/install-user` binds the listeners to loopback (`listenAddress: "127.0.0.1"`), so Windows raises no firewall prompt - one a standard user could only answer with an administrator's credentials - and the products answer this machine only.  For another machine: install for all users, or `listenAddress: null` there and an administrator's inbound rule |
 | VC++ v14 x64 runtime, 14.50 or later | installed, or upgraded when older; when its installer wants a restart (its files were in use) the finish page says so and offers it - the services start with Windows after it, and "Start now" is not offered | when missing or older, Setup offers to run the bundled redistributable - it is machine-wide, so Windows asks for an administrator - and installs the products either way; while the runtime is still old, the finish page says they may fail to start and where the redistributable is.  (They ran on 14.40 through a whole walk; the gate is Microsoft's rule, not a measured floor.) |
 | Add/Remove Programs | HKLM | HKCU (`Jde OpcHub (current user)`) |
-| data | `C:\ProgramData\Jde-Cpp\<Product>` in both modes - the apps hardcode it (`Process::ProgramDataFolder()`, `libs/db/config/paths-common.libsonnet`).  A standard user can create the tree and owns it; one created by an all-users install is read-only to them, so the installer refuses the current-user mode in that case. | |
+| data | `C:\ProgramData\Jde-Cpp\<Product>` in both modes - the apps hardcode it (`Process::ProgramDataFolder()`, `libs/db/config/paths-common.libsonnet`).  Setup makes the tree SYSTEM's, the Administrators' and the services' alone: owner Administrators, nothing inherited from `%ProgramData%`, no entry for Users; Local Service reads it and may change `OpcHub\` and `OpcServer\` (the `.db`, `ssl\`, the logs).  The services' settings, keys and databases are no other account's to read or change, so read the logs or edit the settings from an elevated editor.  When another account already has files there - a current-user install of theirs - Setup names the first one and asks before taking them over (a silent install stops instead), and it refuses a link another account made. | The tree must be this install's to write:  Setup opens a file it is about to overwrite - the hub's config, else its `.db` - for writing, and refuses the current-user mode when it cannot, since the tree then belongs to another account's install.  An all-users install leaves a mark, `C:\ProgramData\Jde-Cpp\.all-users`, and Setup refuses this mode on it whoever runs Setup, an administrator included: the two modes do not share a data root.  After uninstalling the all-users install, delete the folder (as an administrator) before a current-user install. |
 
 Silent: `OpcHubSetup-<v>.exe /S /AllUsers` or `/CurrentUser`, `/Start` to start the products at the end (the finish page's box,
 which `/S` never shows), `/OpcServer` to add the OPC UA Server component (there is no
@@ -148,17 +148,17 @@ user can make it.
 username/password form signs in against *an OPC server the hub connects to* - any of them, not the bundled one - so it
 works on a hub that has no bundled server at all.  Add the connection first, signed out (every resource ships unenforced,
 so an anonymous write is permitted by design), exchange certificates with that server, then sign in.  The username is
-**`<connection slug>\<user on that server>`** - `plant1\operator1` - and the **prefix is required**: the slug is what
-selects the connection.  [`login-page.ts`](../../../web/framework/control/src/lib/pages/authorization/login-page/login-page.ts)
-splits the username on the backslash and puts the slug in the request's `opc` field; without it
-[`HttpRequestAwait::Login`](../../OpcGateway/src/HttpRequestAwait.cpp#L74) answers `400 "opc server not specified"`.  The connection's
+**`<connection slug>\<user on that server>`** - `plant1\operator1` - and **give the prefix**: the slug is what selects
+the connection.  [`login-page.ts`](../../../web/framework/control/src/lib/pages/authorization/login-page/login-page.ts) splits the username on the backslash and puts the slug in the request's
+`opc` field; without one the hub tries its *default* connection - the bundled server, when that component is installed - and
+otherwise refuses the sign-in with *"No default OPC server connection."* ([`ConnectAwait::ResolveDefault`](../../OpcGateway/src/async/ConnectAwait.cpp#L57)).  The connection's
 insert is the whole mechanism - it creates an `OpcServer` provider row for the slug, and the first sign-in creates the
 user.  The Web UI writes this up as *First steps* in its own
 [Overview help](../../../web/opc/site/assets/help/overview.md), which is the copy an operator actually meets.
 
 The **bundled** server is one such connection, and it offers the username token only when its settings list users
 (`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing shipped sets it).  Its slug
-is `OpcServer`, so its form login is `OpcServer\<name>` like any other - the prefix is not optional there either.
+is `OpcServer`, so its form login is `OpcServer\<name>` like any other; it is also the seeded default connection, so a bare `<name>` reaches it too.
 
 Walked end to end on 2026-09-20 against a KEPServerEX 6.12 on a hub installed **without** the component: connection added,
 trust exchanged, signed in as `kepware\Administrator` 11 minutes in, a node value streaming at 13
@@ -181,7 +181,7 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   says so and ends, rather than lay new settings and seeds over an exe it could not replace
   ([`reviews/m2-closing.md`](../../../../reviews/m2-closing.md) #4).  A `Jde.OpcServer` an earlier install registered is
   stopped with the hub even when the *OPC UA Server* component is left unticked; it stays registered on its old files -
-  `net start Jde.OpcServer`, or tick the component.
+  `net start Jde.OpcServer`, or tick the component.  A reinstall into a different program folder (the directory page offers the previous one) deregisters the services through the previous folder's exes and registers the new ones - the old folder is left behind, delete it; a registration Setup cannot remove, or an `-install` that fails, stops Setup with the exe's exit code rather than carrying on over the old registration ([`reviews/m4-closing.md`](../../../../reviews/m4-closing.md) #7).
 - **A reinstall - and adding a component to one - only takes effect once the products restart.**  The seeds a component
   brings (`<schema>*.mutation`, `*.roles`) are applied by a `-sync` start, so a hub that keeps running through the
   install shows none of them: no Google provider, no `OpcServer` connection, no *OPC Server Instance* role, and pages
@@ -199,7 +199,7 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   roles by `slug`.  Each file is recorded (`access_seeds`, by content) once it applies, and a later `-sync` start skips it
   while it is unchanged, so an administrator's edits to a seeded role - a changed right, a deny, a removed permission or
   child role - survive restarts.  A release whose seed changed applies it again and adds only what a role is missing: it
-  never rewrites an existing grant, but it does restore a permission or child role the administrator had removed.
+  never rewrites an existing grant, but it does restore a permission or child role the administrator had removed.  Nor does it rewrite a seeded row's `create*` text - a role's name and description, the seeded connection's url: a changed seed reaches new rows only, so an install upgraded from 2026.09.02 keeps that release's Engineer, Operator and Maintenance Technician descriptions (edit them on Access > Roles; the current text is in `libs/access/config/release.roles`).
   `apps/OpcGateway/config/access-opcGateway.mutation`
   (the gateway's group/role) is still not seeded: its `createRole( permissionRights:[…] )` shape is not one the seed applies.
 - A split `Jde.AppServer` + `Jde.OpcGateway` pair (`apps/AppServer`, `apps/OpcGateway` - not shipped by this installer) shares
@@ -212,9 +212,9 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
   running service's log lists as 0 bytes in `dir` and Explorer until it is opened - read it, do not trust the listing.
 - The OpcServer waits for the hub: started before the hub listens, or before a first start of the hub has written the
   certificate it anchors, it logs a warning and retries every 5 seconds (`/server/reconnectWait`) until the hub answers.
-- `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under LocalSystem, so
+- `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs) is unset for a service under Local Service, so
   the keys are written in the clear - the documented behaviour of an empty passcode.  Set it as a system environment variable
-  before the first start to change that.
+  and restart the services:  a key already written in the clear is encrypted with it at that start - the same key, so no certificate changes.  A key written under one passcode does not open under another.
 - The hub's web certificate (`OpcHub.pem`, self-signed, issued on the first start) names `localhost`, this machine's name and
   `127.0.0.1`; `hostNames` in `config\apps\OpcHub\config\args\install\args.libsonnet` adds the others a browser or a split
   OpcServer reaches the hub by (a fully qualified name, an alias), and a change re-issues the certificate on the same key at the
@@ -239,5 +239,5 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 - SQL Server instead of sqlite, by hand: `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` is the equivalent profile.
   Copy it to `config\apps\OpcHub\config\args\install-sqlServer\`, put `Jde.DB.Odbc.dll` (from the build's `bin\`) beside the
   exe, create a 64-bit System DSN `jde` ("ODBC Driver 17 for SQL Server", `Trusted_Connection=Yes`) with a database `jde` in
-  which `NT AUTHORITY\System` is `db_owner`, copy the `sql\sqlServer\*.sql` scripts of `libs/access`, `apps/AppServer` and
-  `apps/OpcGateway` into the product's `sql\`, and re-register the service with `-include=args/install-sqlServer`.
+  which `NT AUTHORITY\LOCAL SERVICE` is `db_owner` (a SQL Server on another machine sees Local Service as ANONYMOUS LOGON: run the service as a domain account or `NT AUTHORITY\NetworkService` there - `sc config Jde.OpcHub obj= "NT AUTHORITY\NetworkService"` - and grant that account Modify on `C:\ProgramData\Jde-Cpp\OpcHub`), copy the `sql\sqlServer\*.sql` scripts of `libs/access`, `apps/AppServer` and
+  `apps/OpcGateway` into the product's `sql-sqlServer\` (the profile's `scriptPaths` - not `sql\`, which is the installer's: it recreates it with the sqlite scripts on every reinstall, and keeps the seeds there, which this profile still reads), and re-register the service with `-include=args/install-sqlServer`.  A reinstall re-registers `Jde.OpcHub` with `-include=args/install` - sqlite again - so redo that one step after it; the profile, the dll, the DSN and `sql-sqlServer\` survive.

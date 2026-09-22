@@ -134,8 +134,13 @@ jobs:
 
       # The installer (apps/OpcHub/setup/build-setup.ps1). The windows-2025 image
       # has no NSIS - choco installs it (~30 s); the OpcServer's DI/IA nodesets
-      # come from OPCFoundation/UA-Nodeset, pinned to the commit the dev clone is
-      # on, the VC++ runtime from Microsoft, and the Web UI from the `web` job.
+      # come from OPCFoundation/UA-Nodeset at a pinned commit (linux-release.yml's
+      # Nodesets step takes the same one - change the two together), the VC++
+      # runtime from Microsoft, and the Web UI from the `web` job.  NSIS is pinned
+      # to 3.11.0; the runtime cannot be (aka.ms serves Microsoft's latest 14.5x),
+      # so its version is read off the file - into the installer's text by
+      # build-setup.ps1, and into the job summary with NSIS's and vcpkg's baseline
+      # (reviews/m4-closing.md #21).
       # The runtime is the VS 2026 line (aka.ms/vs/18, 14.5x): the image builds
       # with the VS 2026 toolset (VC/Tools/MSVC/14.51), and Microsoft's rule is a
       # redistributable at least as new as the toolset. The VS 2022 line (vs/17,
@@ -144,7 +149,7 @@ jobs:
       - name: Installer inputs
         if: success()
         run: |
-          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis --version 3.11.0 -y --no-progress }
           New-Item -ItemType Directory -Force C:/jde/nodesets/DI, C:/jde/nodesets/IA | Out-Null
           $raw = 'https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/4a6f0c8e9790116eb2eb4511ae688109ee281934'
           foreach ($f in 'DI/Opc.Ua.Di.NodeSet2.xml', 'IA/Opc.Ua.IA.NodeSet2.xml', 'IA/Opc.Ua.IA.NodeSet2.examples.xml') {
@@ -153,6 +158,10 @@ jobs:
           }
           curl.exe -sSfL https://aka.ms/vs/18/release/vc_redist.x64.exe -o C:/jde/vc_redist.x64.exe
           if ($LASTEXITCODE -ne 0) { throw 'download failed: vc_redist.x64.exe' }
+          $redist = (Get-Item C:/jde/vc_redist.x64.exe).VersionInfo.ProductVersion
+          $nsis = (Get-Item 'C:\Program Files (x86)\NSIS\makensis.exe').VersionInfo.ProductVersion
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          "Installer inputs: vc_redist ``$redist``, NSIS ``$nsis``, vcpkg baseline ``$baseline``, UA-Nodeset ``4a6f0c8e``" >> $env:GITHUB_STEP_SUMMARY
 
       # The `web` job normally finishes long before the C++ build does; this is the
       # guard for the day it does not (or fails) - a `needs:` would instead put its

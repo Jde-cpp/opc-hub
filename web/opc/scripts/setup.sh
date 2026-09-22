@@ -55,7 +55,7 @@ jdeVersion jdeVer;
 jqEdit package.json ".version = \"$jdeVer\"";
 #the version as a build-time constant for the about page:  the builder replaces the identifier JDE_VERSION with the string
 #literal under serve, build and test alike (the unit-test builder inherits the application options through buildTarget).
-#As the presets spell it (2026.09.01) - the string the installers name themselves by - not npm's 2026.9.1, which only the
+#As the presets spell it (yyyy.MM.dd, zeros and all) - the string the installers name themselves by - not npm's zero-less form, which only the
 #package versions above need (reviews/install-issues.md, "Version string").
 jdeVersionRaw jdeVerRaw;
 jqEdit angular.json ".projects.\"my-workspace\".architect.build.options.define = {\"JDE_VERSION\": (\"$jdeVerRaw\" | tojson)}";

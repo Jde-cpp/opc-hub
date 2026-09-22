@@ -28,6 +28,9 @@ SetCompressor /SOLID lzma
 !ifndef VC_REDIST
 	!define VC_REDIST "C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Redist\MSVC\v145\vc_redist.x64.exe"
 !endif
+!ifndef VC_REDIST_VERSION
+	!define VC_REDIST_VERSION "14.5x" ;build-setup.ps1 reads it off the bundled file (reviews/m4-closing.md #21)
+!endif
 !ifdef SIGN_SCRIPT
 	;build-setup.ps1 -Sign.  The uninstaller is generated at install time from a stub makensis builds here, so this hook is the
 	;only place it can be signed; the payload and the installer are signed by build-setup.ps1 around makensis.  SIGN_HOST is the
@@ -138,19 +141,34 @@ Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was cl
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Helpers
 ;--------------------------------------------------------------------------------------------------------------------------
-; The data root must be writable:  a standard user can create %ProgramData%\Jde-Cpp and owns it, but not one an
-; administrator's all-users install created.  -> $0: 1 writable, 0 not.
+; Can this install write the data root it is about to fill?  -> $0: 1 yes, 0 no - it belongs to another install.
+; What is probed is a file the install will overwrite - the hub's config, else its .db - opened for writing and left as it
+; was;  only a fresh tree gets a new file.  Whether the folder admits a new file said nothing:  %ProgramData% hands Users
+; the right to add files to every folder beneath it, so that probe passed on every tree - another account's current-user
+; install's, an all-users install's - and the Files then failed on each file already there (reviews/m4-closing.md #4).
+; A current-user install never shares an all-users install's root, which is SYSTEM's and the Administrators' alone (#2)
+; and which an elevated run would pass:  TakeDataDir's mark, .all-users, refuses it whoever runs Setup.
 Function CheckDataDir
+	StrCpy $0 0
+	${If} $MultiUser.InstallMode == "CurrentUser"
+	${AndIf} ${FileExists} "$DataDir\.all-users"
+		Return
+	${EndIf}
+	StrCpy $1 "$ConfigDir\${HUB_SETTINGS}" ;the first file SEC_HUB overwrites
+	${IfNot} ${FileExists} $1
+		StrCpy $1 "$DataDir\OpcHub\OpcHub.db" ;an uninstall keeps it (README.md), the config goes
+	${EndIf}
+	${IfNot} ${FileExists} $1
+		CreateDirectory "$DataDir"
+		StrCpy $1 "$DataDir\.write-test"
+	${EndIf}
 	ClearErrors
-	CreateDirectory "$DataDir"
-	FileOpen $1 "$DataDir\.write-test" w
-	${If} ${Errors}
-		StrCpy $0 0
-	${Else}
-		FileClose $1
-		Delete "$DataDir\.write-test"
+	FileOpen $2 $1 a ;append:  an existing file is opened for writing, and nothing is written
+	${IfNot} ${Errors}
+		FileClose $2
 		StrCpy $0 1
 	${EndIf}
+	Delete "$DataDir\.write-test"
 FunctionEnd
 
 ; Stop a service and let its exe deregister itself; the exe's own -uninstall throws on a missing service, so the result
@@ -158,27 +176,49 @@ FunctionEnd
 ; /y:  Jde.OpcServer depends on Jde.OpcHub (`sc config ... depend=`, -Services), and `net stop` of a service with a running
 ; dependent asks "continue? (Y/N)" - with no console to answer it stops nothing, and -uninstall below only deletes the
 ; registration (Process::Uninstall is DeleteService alone), so the hub would run on, its image locked, through the install.
+; ${exe} is relative to the program folder.  The one under $INSTDIR is not always the registered one:  the directory page
+; is pre-filled with the previous install's folder, and changeable - so a reinstall into another folder found no exe,
+; skipped the deregistration, and -install then met the old service (reviews/m4-closing.md #7).  So the previous install's
+; exe (MultiUser read its InstallLocation), else - a registration with no exe of ours left to remove it - sc delete.
 !macro StopAndRemove svc exe settings
 	nsExec::ExecToLog 'net stop "${svc}" /y'
 	Pop $0
-	${If} ${FileExists} "${exe}"
-		nsExec::ExecToLog '"${exe}" -uninstall -settings=${settings} -include=args/install'
+	${If} ${FileExists} "$INSTDIR\${exe}"
+		nsExec::ExecToLog '"$INSTDIR\${exe}" -uninstall -settings=${settings} -include=args/install'
 		Pop $0
+	${ElseIf} $MultiUser.InstDir != ""
+	${AndIf} ${FileExists} "$MultiUser.InstDir\${exe}"
+		nsExec::ExecToLog '"$MultiUser.InstDir\${exe}" -uninstall -settings=${settings} -include=args/install'
+		Pop $0
+	${Else}
+		nsExec::ExecToStack 'sc query "${svc}"' ;guarded:  on a first install there is nothing to delete, and nothing to print
+		Pop $0
+		Pop $1
+		${If} $0 == 0
+			nsExec::ExecToLog 'sc delete "${svc}"'
+			Pop $0
+		${EndIf}
 	${EndIf}
 !macroend
 
-; The service exists after -install?  The exe exits through a Trace exception on success, so `sc query` is the signal.
+; Did -install register the service?  Its exit code first - the caller's $0:  the exe exits 0 only through its Trace
+; "successfully installed." throw (process.cpp, Process::ExitException) and nonzero for every failure, "Service already
+; exists." and "CreateService failed - 1072" (marked for deletion:  a Services console holding it) among them.  This used to
+; read `sc query` alone, which an earlier install's registration passes - and the install "succeeded" on the previous
+; release's exe (reviews/m4-closing.md #7).  `sc query` stays, as the second word.
 !macro RequireService svc
+	StrCpy $1 $0
 	nsExec::ExecToStack 'sc query "${svc}"'
 	Pop $0
-	Pop $1
-	${If} $0 != 0
-		MessageBox MB_OK|MB_ICONSTOP "Registering the ${svc} service failed - see the details above." /SD IDOK
+	Pop $2
+	${If} $1 != 0
+	${OrIf} $0 != 0
+		MessageBox MB_OK|MB_ICONSTOP "Registering the ${svc} service failed (-install returned $1) - see the details above.  If the Services console is open, close it and run Setup again." /SD IDOK
 		Abort "Service registration failed"
 	${EndIf}
 !macroend
 
-; Inbound firewall rules for the all-users install: a LocalSystem service never gets the "allow this app?" prompt an
+; Inbound firewall rules for the all-users install: a service never gets the "allow this app?" prompt an
 ; interactive program does, so without these the hub answers only its own machine (reviews/install-issues.md #11).
 ; "any" by ruling: Windows puts a new network in Public unless someone says otherwise - the clean-machine VM is - and a
 ; private,domain rule silently would not apply there, which is worse than no rule, since the details pane still reads
@@ -207,7 +247,7 @@ FunctionEnd
 ; reaches for taskkill for the same job.  Three answers, not two (reviews/m2-closing.md #14):  nsExec pushes the word
 ; `error` when it cannot launch the command and `timeout` when it gives up, and reading everything but 0 as "gone" - the one
 ; place this file turned "non-zero is failure" round - made a probe that never ran the same as a product that had closed.  The
-; USERNAME filter is what keeps an all-users *service* - LocalSystem's, which this mode may not touch - out of the answer.
+; USERNAME filter is what keeps an all-users *service* - Local Service's, which this mode may not touch - out of the answer.
 ; One spelling for the probe and for every kill that acts on it (reviews/m2-closing.md #13):  the kills carried no filter, so
 ; what was *found* was this user's and what was *ended* was every process of that image on the machine - and with
 ; MULTIUSER_EXECUTIONLEVEL Highest an administrator's run is elevated in either mode, so that could reach a service's.
@@ -221,7 +261,7 @@ FunctionEnd
 !macroend
 
 ; A service's process still there?  -> $0 == 0 when yes.  UserProcRunning turned round:  session 0 is where services run and
-; no console window does, and unlike "NT AUTHORITY\SYSTEM" it reads the same on every language of Windows.
+; no console window does, and unlike the service account's name it reads the same on every language of Windows.
 !macro ServiceProcRunning exe
 	nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${exe}" /FI "SESSION eq 0" /NH | find /I "${exe}"'
 	Pop $0
@@ -230,8 +270,10 @@ FunctionEnd
 
 ; `net stop` returns when the service *reports* stopped, which is a moment before its process has gone and let go of its
 ; image - and a File that meets a locked exe is an Abort/Retry/Ignore box, or under /S a file skipped in silence.  Twenty
-; seconds, then the install stops rather than carry on over an exe it cannot replace (reviews/m2-closing.md #4).
-!macro WaitServiceGone exe svc
+; seconds, then the install stops rather than carry on over an exe it cannot replace (reviews/m2-closing.md #4) - and the
+; uninstall, rather than delete around a mapped image and leave the program folder behind with no uninstaller (m4-closing #17).
+; `done`/`again`:  what the files cannot be (replaced, removed) and what to run again (Setup, the uninstaller).
+!macro WaitServiceGone exe svc done again
 	StrCpy $2 0
 	${Do}
 		!insertmacro ServiceProcRunning "${exe}"
@@ -243,7 +285,7 @@ FunctionEnd
 		${EndIf}
 		IntOp $2 $2 + 1
 		${If} $2 >= 40
-			MessageBox MB_OK|MB_ICONSTOP "The ${svc} service did not stop, so its files cannot be replaced.  Stop it (net stop ${svc}, or the Services console) and run Setup again." /SD IDOK
+			MessageBox MB_OK|MB_ICONSTOP "The ${svc} service did not stop, so its files cannot be ${done}.  Stop it (net stop ${svc}, or the Services console) and run ${again} again." /SD IDOK
 			Abort "${svc} did not stop"
 		${EndIf}
 		Sleep 500
@@ -326,13 +368,13 @@ Section "OPC Hub" SEC_HUB
 	SectionIn RO
 	Call CheckDataDir
 	${If} $0 == 0
-		MessageBox MB_OK|MB_ICONSTOP "$DataDir is not writable by you.  It was created by an all-users install - choose All users, or ask an administrator." /SD IDOK
+		MessageBox MB_OK|MB_ICONSTOP "$DataDir belongs to another install - an all-users one, or another account's - and this one cannot write to it.  Choose All users (as an administrator), or remove that install first." /SD IDOK
 		Abort "Data dir not writable"
 	${EndIf}
-	;before the first File, in both modes - what is running holds the images the Files below replace
-	${If} $MultiUser.InstallMode == "CurrentUser"
+	${If} $MultiUser.InstallMode == "CurrentUser" ;before the first File, in both modes - what is running holds the images the Files below replace
 		Call CloseRunningUserProducts ;see the function (#37)
 	${Else}
+		Call TakeDataDir ;before anything is written under it, and before the services stop - a refusal leaves them running (reviews/m4-closing.md #2)
 		Call StopRunningServices ;see the function (reviews/m2-closing.md #4)
 	${EndIf}
 	;binaries - the exe's dir carries its dlls; the sqlite driver and the proc MODULEs come from the bin root
@@ -471,7 +513,7 @@ Section -VCRedist
 		SetOutPath "$TEMP"
 		File "${VC_REDIST}"
 		${If} $MultiUser.InstallMode == "AllUsers"
-			DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51)..."
+			DetailPrint "Installing the Visual C++ v14 x64 runtime (${VC_REDIST_VERSION})..."
 			ExecWait '"$TEMP\vc_redist.x64.exe" /install /quiet /norestart' $0
 			${If} $0 == 3010
 				;the runtime's files were in use (an older msvcp140 loaded by some process): Windows swaps them in at the next
@@ -484,7 +526,7 @@ Section -VCRedist
 				MessageBox MB_OK|MB_ICONEXCLAMATION "The Visual C++ runtime installer returned $0.  Install the Microsoft Visual C++ v14 x64 Redistributable, 14.50 or later, before starting ${PRODUCT}." /SD IDOK
 			${EndIf}
 		${Else}
-			DetailPrint "Installing the Visual C++ v14 x64 runtime (14.51) - Windows asks for an administrator..."
+			DetailPrint "Installing the Visual C++ v14 x64 runtime (${VC_REDIST_VERSION}) - Windows asks for an administrator..."
 			ExecShellWait "runas" "$TEMP\vc_redist.x64.exe" "/install /passive /norestart" ;elevated by UAC; no exit code comes back through runas, so the registry says whether it landed
 			ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Minor"
 		${EndIf}
@@ -645,11 +687,11 @@ Function StopRunningServices
 	;brings the component - one an earlier install registered and this one leaves unticked is stopped with the hub (/y)
 	;and stays registered, its files untouched.
 	${If} ${SectionIsSelected} ${SEC_OPCSERVER}
-		!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
-		!insertmacro WaitServiceGone "Jde.Opc.Server.exe" "Jde.OpcServer"
+		!insertmacro StopAndRemove "Jde.OpcServer" "OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
+		!insertmacro WaitServiceGone "Jde.Opc.Server.exe" "Jde.OpcServer" "replaced" "Setup"
 	${EndIf}
-	!insertmacro StopAndRemove "Jde.OpcHub" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
-	!insertmacro WaitServiceGone "Jde.Opc.Hub.exe" "Jde.OpcHub"
+	!insertmacro StopAndRemove "Jde.OpcHub" "OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+	!insertmacro WaitServiceGone "Jde.Opc.Hub.exe" "Jde.OpcHub" "replaced" "Setup"
 FunctionEnd
 
 ;the install-mode page's leave: a current-user install into a data root it cannot write stays on the page
@@ -657,7 +699,7 @@ Function ModePageLeave
 	${If} $MultiUser.InstallMode == "CurrentUser"
 		Call CheckDataDir
 		${If} $0 == 0
-			MessageBox MB_OK|MB_ICONEXCLAMATION "$DataDir exists but is not writable by you - it was created by an all-users install.  Choose All users, or ask an administrator." /SD IDOK
+			MessageBox MB_OK|MB_ICONEXCLAMATION "$DataDir belongs to another install - an all-users one, or another account's - so a current-user install cannot use it.  Choose All users, or remove that install first." /SD IDOK
 			Abort
 		${EndIf}
 	${EndIf}
@@ -770,8 +812,10 @@ FunctionEnd
 
 Section "Uninstall"
 	${If} $MultiUser.InstallMode == "AllUsers"
-		!insertmacro StopAndRemove "Jde.OpcServer" "$INSTDIR\OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
-		!insertmacro StopAndRemove "Jde.OpcHub" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+		!insertmacro StopAndRemove "Jde.OpcServer" "OpcServer\Jde.Opc.Server.exe" "$ConfigDir\${SERVER_SETTINGS}"
+		!insertmacro WaitServiceGone "Jde.Opc.Server.exe" "Jde.OpcServer" "removed" "the uninstaller" ;the installer's wait (m4-closing #17):  its RMDir /r would skip a still-mapped image in silence
+		!insertmacro StopAndRemove "Jde.OpcHub" "OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
+		!insertmacro WaitServiceGone "Jde.Opc.Hub.exe" "Jde.OpcHub" "removed" "the uninstaller"
 		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 1967)"
 		!insertmacro CloseFirewallPort "Jde OpcServer (TCP 4840)"
 	${Else}
@@ -799,6 +843,81 @@ Section "Uninstall"
 	Delete "$DataDir\OpcServer\common-meta.libsonnet"
 	RMDir /r "$DataDir\OpcServer\nodesets"
 	RMDir "$DataDir\OpcServer"
+	Delete "$DataDir\.all-users"
 	RMDir "$DataDir"
+	${If} $MultiUser.InstallMode == "AllUsers"
+	${AndIf} ${FileExists} "$DataDir\*.*" ;kept - the .db, ssl\, the logs - and still SYSTEM's and the Administrators' (#2):  still no current-user install's (#4)
+		FileOpen $1 "$DataDir\.all-users" w
+		FileClose $1
+	${EndIf}
 	DeleteRegKey SHCTX "${REG_UNINST}"
 SectionEnd
+
+;--------------------------------------------------------------------------------------------------------------------------
+; The all-users data root - SEC_HUB's TakeDataDir (reviews/m4-closing.md #2)
+;--------------------------------------------------------------------------------------------------------------------------
+; An icacls step of TakeDataDir:  a failure stops the install - a data root this mode could not secure is not one to put a
+; service's settings and keys in.
+!macro Icacls args
+	nsExec::ExecToLog 'icacls ${args} /Q'
+	Pop $0
+	${If} $0 != 0
+		MessageBox MB_OK|MB_ICONSTOP "Setup could not secure $DataDir - icacls returned $0 (the details show the command).  Take it over as an administrator - takeown /F $\"$DataDir$\" /A /R - or move it aside, and run Setup again." /SD IDOK
+		Abort "Could not secure $DataDir"
+	${EndIf}
+!macroend
+
+; All users (reviews/m4-closing.md #2, #10):  the data root becomes the services', SYSTEM's and the Administrators' alone.  %ProgramData% lets
+; any account create a folder in it and makes that account the folder's owner, and what is created beneath inherits Users'
+; right to add files - so a standard account that made the root first (a current-user install of theirs, or a mkdir) held
+; Full Control of the overlay that names the dll a service loads, and of its private key; and any account could
+; drop a seed into OpcHub\sql or a certificate into a trustedCertDirs.  Nothing a standard account runs reads this tree in
+; this mode - the services run as Local Service (#10), the Web UI reads the logs through the hub - so no Users entry:  that also
+; keeps the keys, written in the clear under a service (README.md), and the .db from every other local account.  The root:
+; owner Administrators, its DACL protected - nothing inherited from %ProgramData% - with SYSTEM and Administrators full
+; control and Local Service read, which everything under it inherits, and Local Service's Modify on the product dirs it writes
+; (the .db, ssl\, the logs); then every object under it owned by Administrators.  SIDs, not names, which Windows translates.
+; Before that, whose is what is already there.  powershell, the one thing here that can read an owner, lists the first
+; object that is not SYSTEM's, Local Service's, the Administrators' or this account's:  11 - another account's files, usually a current-user
+; install of theirs (its .db, keys and settings) - asked about, since taking them over hands them to the services, and a Yes
+; also resets every object's own ACL, which that account may have written;  12 - a link another account made, refused:
+; the services' data would land wherever it points.  A probe that cannot run (a policy, say) is not a reason to refuse the
+; install - the whole tree is reset instead, unasked.  Root first, then the tree:  once the root is protected nobody else
+; can add to it, and the tree-wide owner pass catches anything added before.
+Function TakeDataDir
+	StrCpy $3 0 ;1 - reset every object's ACL beneath the root too, not only the root's
+	nsExec::ExecToStack `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$k='S-1-5-18','S-1-5-19','S-1-5-32-544',[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$d=Join-Path $$env:ProgramData '${COMPANY}';function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]);if($$k -notcontains $$o.Value){$$n=$$o.Value;try{$$n=$$o.Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$n+' owns '+$$i.FullName);if($$i.Attributes -band 1024){exit 12};exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
+	Pop $0
+	Pop $1
+	${If} $0 == 11
+		MessageBox MB_YESNO|MB_ICONEXCLAMATION "$1.$\r$\n$\r$\nAnother account has files in $DataDir - usually a current-user install of theirs: its database, keys and settings.  The services run as Local Service, so Setup makes the folder theirs and the administrators' alone, and taking it over hands them that account's database and keys.$\r$\n$\r$\nYes: take it over.  No: stop, to uninstall that account's copy and move $DataDir aside first." /SD IDNO IDYES takeOver
+		Abort "$DataDir holds another account's files"
+		takeOver:
+		StrCpy $3 1
+	${ElseIf} $0 == 12
+		MessageBox MB_OK|MB_ICONSTOP "$1, and it is a link - the services' data would land wherever it points.  Remove it, or move $DataDir aside, and run Setup again." /SD IDOK
+		Abort "$DataDir holds another account's link"
+	${ElseIf} $0 != 0
+		DetailPrint "Could not check who owns what under $DataDir (powershell answered $0: $1) - resetting all of it"
+		StrCpy $3 1
+	${EndIf}
+	DetailPrint "Making $DataDir the services', SYSTEM's and the Administrators' alone"
+	!insertmacro Icacls '"$DataDir" /setowner *S-1-5-32-544'
+	${If} $3 == 1
+		!insertmacro Icacls '"$DataDir" /setowner *S-1-5-32-544 /T'
+		!insertmacro Icacls '"$DataDir" /reset /T'
+	${EndIf}
+	!insertmacro Icacls '"$DataDir" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-19:(OI)(CI)RX'
+	!insertmacro Icacls '"$DataDir" /setowner *S-1-5-32-544 /T'
+	;what the services write:  Local Service (Process::Install, #10) - one identity for both, so the hub can still stop the
+	;OpcServer (AppInstanceHook's Process::Kill), and each reads the other's certificates.  Created here, before SEC_HUB's Files.
+	CreateDirectory "$DataDir\OpcHub"
+	!insertmacro Icacls '"$DataDir\OpcHub" /grant *S-1-5-19:(OI)(CI)M'
+	${If} ${SectionIsSelected} ${SEC_OPCSERVER}
+	${OrIf} ${FileExists} "$DataDir\OpcServer\*.*"
+		CreateDirectory "$DataDir\OpcServer"
+		!insertmacro Icacls '"$DataDir\OpcServer" /grant *S-1-5-19:(OI)(CI)M'
+	${EndIf}
+	FileOpen $1 "$DataDir\.all-users" w ;the mark CheckDataDir refuses a current-user install on, elevated or not - no such install can use this root (#4)
+	FileClose $1
+FunctionEnd

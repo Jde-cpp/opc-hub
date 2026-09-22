@@ -94,7 +94,7 @@ function( sync=false )
 		},
 		proto:{
 			path: logsDir + "/opc-gateway",
-			timeZone: "America/New_York",
+			//no timeZone:  the archive's day directories (<path>/<yyyy>/<m>/<d>) follow the machine's zone, ProtoLog's default - a developer's "America/New_York" here shipped to every install (reviews/m4-closing.md #14).  An IANA name pins them.
 			delay: "PT1M",
 			tags: {
 				default: "Debug",

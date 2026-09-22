@@ -330,6 +330,7 @@ namespace Jde::Opc::Gateway{
 		//gateway's own applicationUri, which a server holds against what we advertise) drifted - which is also how a certificate
 		//issued before security-matrix #8, its SAN the server's uri, replaces itself - so the two paths cannot diverge again:  this
 		//one compared the SAN uri alone and let an issued certificate run until the peer rejected it as expired (web-certs3 #17).
+		Crypto::EncryptPrivateKey( settings, sl );//a per-target key issued before the passcode was set (reviews/m4-closing.md #11)
 		let reason = Crypto::ReissueReason( settings, sl );
 		if( reason.empty() )
 			return;

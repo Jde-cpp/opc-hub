@@ -485,6 +485,66 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
+	//reviews/m4-closing.md #11:  the Linux install starts the services itself, so a key is written before an operator can set
+	//JDE_PASSCODE - and one set afterwards used to change nothing, silently.  The next start now encrypts that same key.
+	Ω keyed( const fs::path& dir, str passcodeValue, bool managed=true )->CryptoSettings{
+		return CryptoSettings{ jobject{
+			{"certificate", jobject{{"path", (dir/"cert.pem").string()}, {"managed", managed}, {"subjectAltName", "URI:urn:passcode.later"}, {"company", "jde-cpp"}, {"country", "US"}, {"commonName", "passcode-later"}}},
+			{"privateKey", jobject{{"path", (dir/"private.pem").string()}, {"passcode", passcodeValue}}},
+			{"publicKey", jobject{{"path", (dir/"public.pem").string()}}},
+			{"dh", ""}
+		}, {} };
+	}
+	Ω pemHeader( const fs::path& path )->string{ std::ifstream f{ path }; string line; std::getline( f, line ); return line; }
+
+	TEST_F( OpenSslTests, EnsureKeyCertificate_EncryptsAKeyWrittenBeforeThePasscode ){
+		let dir = ScratchDir( "passcodeLater" );
+		let clear = keyed( dir, {} );
+		clear.CreateDirectories();
+		Crypto::CreateKeyCertificate( clear );//the install's first start:  JDE_PASSCODE unset
+		ASSERT_EQ( pemHeader(clear.PrivateKey.Path), "-----BEGIN PRIVATE KEY-----" );
+		let originalKey = Crypto::ReadPublicKey( clear.PublicKey.Path );
+		let originalDer = ReadCertificate( clear.Certificate.Path );
+
+		let later = keyed( dir, passcode );//the operator sets it, and restarts
+		Crypto::EnsureKeyCertificate( later );
+		EXPECT_EQ( pemHeader(later.PrivateKey.Path), "-----BEGIN ENCRYPTED PRIVATE KEY-----" );
+		Crypto::ReadPrivateKey( PrivateKeySettings{later.PrivateKey.Path.string(), passcode} );//opens with it...
+		EXPECT_THROW( Crypto::ReadPrivateKey(PrivateKeySettings{later.PrivateKey.Path.string(), string{}}), Exception );//...and only with it
+		EXPECT_TRUE( Crypto::ReadPublicKey(later.PublicKey.Path)==originalKey );//the same key - enrollment and trust stand
+		EXPECT_TRUE( ReadCertificate(later.Certificate.Path)==originalDer );//and nothing was re-issued
+		EXPECT_FALSE( fs::exists(fs::path{later.PrivateKey.Path.string()+".encrypting"}) );
+		EXPECT_EQ( ::ERR_peek_error(), 0ul );
+		fs::remove_all( dir );
+	}
+	//the start after that, and every one:  an encrypted key is left exactly as it is, and the probe leaves no error behind.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_LeavesAnEncryptedKeyAlone ){
+		let dir = ScratchDir( "passcodeSet" );
+		let settings = keyed( dir, passcode );
+		settings.CreateDirectories();
+		Crypto::CreateKeyCertificate( settings );
+		let before = IO::Load( settings.PrivateKey.Path );
+		Crypto::EnsureKeyCertificate( settings );
+		EXPECT_EQ( IO::Load(settings.PrivateKey.Path), before );
+		EXPECT_EQ( ::ERR_peek_error(), 0ul );
+		fs::remove_all( dir );
+	}
+	//no passcode, nothing to encrypt with:  the key stays as the documented empty passcode writes it.  And an operator's own
+	//pair (certificate.managed:false) is used as found, passcode or not - never rewritten.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_DoesNotEncryptWithoutAPasscodeOrAnOperatorsKey ){
+		let dir = ScratchDir( "passcodeNone" );
+		let clear = keyed( dir, {} );
+		clear.CreateDirectories();
+		Crypto::CreateKeyCertificate( clear );
+		Crypto::EnsureKeyCertificate( clear );
+		EXPECT_EQ( pemHeader(clear.PrivateKey.Path), "-----BEGIN PRIVATE KEY-----" );
+
+		let before = IO::Load( clear.PrivateKey.Path );
+		Crypto::EnsureKeyCertificate( keyed(dir, passcode, false) );
+		EXPECT_EQ( IO::Load(clear.PrivateKey.Path), before );
+		fs::remove_all( dir );
+	}
+
 	TEST_F( OpenSslTests, PrivateKey ){
 		Crypto::ReadPrivateKey( PrivateKeySettings{PrivateKeyFile, passcode} );
 		//the key was created with a passcode - it must be encrypted at rest, i.e. unreadable without it.

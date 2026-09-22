@@ -1,6 +1,7 @@
 // Microsoft Visual C++ generated resource script.
 //
 #include "resource.h"
+#include "version.rc.h" //JDE_VERSION_*, JDE_COPYRIGHT - written by the build (jdeVersionResource, build/functions.cmake; reviews/m4-closing.md #20)
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -51,8 +52,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,0,0,1
-PRODUCTVERSION 1,0,0,1
+FILEVERSION JDE_VERSION_NUMBERS
+PRODUCTVERSION JDE_VERSION_NUMBERS
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -69,12 +70,12 @@ BLOCK "040904b0"
 BEGIN
 VALUE "CompanyName", "Jde-Cpp"
 VALUE "FileDescription", "Jde OPC hub - AppServer + OpcGateway in one process"
-VALUE "FileVersion", "1.0.0.1"
+VALUE "FileVersion", JDE_VERSION_STRING
 VALUE "InternalName", "Jde.Opc.Hub.exe"
-VALUE "LegalCopyright", "Copyright (C) 2025"
+VALUE "LegalCopyright", JDE_COPYRIGHT
 VALUE "OriginalFilename", "Jde.Opc.Hub.exe"
 VALUE "ProductName", "OpcHub"
-VALUE "ProductVersion", "1.0.0.1"
+VALUE "ProductVersion", JDE_VERSION_STRING
 END
 END
 BLOCK "VarFileInfo"

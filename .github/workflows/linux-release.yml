@@ -68,9 +68,7 @@ jobs:
       JDE_BUILD_DIR: /mnt/ram/linux
       # Bind-mount point of the host's third-party install tree; the presets read $REPO_DIR/install/clang++/RelWithDebInfo.
       REPO_DIR: /deps
-      # Bind-mounted clone of https://github.com/OPCFoundation/UA-Nodeset (see .github/docker/README.md) - the DI/IA
-      # nodesets the package installs for the OpcServer.
-      UA_NODE_SETS: /deps/UA-Nodeset
+      # UA_NODE_SETS is the Nodesets step's download, not the host's bind-mounted clone (reviews/m4-closing.md #21).
       PRESET: linux-clang-relWithDebInfo-jde
 
     steps:
@@ -103,6 +101,20 @@ jobs:
         with:
           name: web-dist-${{ github.run_id }}
           path: ${{ runner.temp }}/web
+
+      # The DI/IA nodesets the package installs for the OpcServer, at the commit win2025-build.yml's Installer inputs
+      # pins - change the two together.  They came from the host's bind-mounted UA-Nodeset clone, which is whatever the
+      # host last pulled:  it did not even contain the Windows pin, so the two platforms shipped different nodesets, and a
+      # tag re-run shipped whatever the host had moved to (reviews/m4-closing.md #21).  linux-ci's tests still read the mount.
+      - name: Nodesets
+        run: |
+          raw=https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/4a6f0c8e9790116eb2eb4511ae688109ee281934
+          for f in DI/Opc.Ua.Di.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.examples.xml; do
+            mkdir -p "$RUNNER_TEMP/UA-Nodeset/$(dirname $f)"
+            wget -q -O "$RUNNER_TEMP/UA-Nodeset/$f" "$raw/$f" || { echo "download failed: $f"; exit 1; }
+          done
+          echo "UA_NODE_SETS=$RUNNER_TEMP/UA-Nodeset" >> "$GITHUB_ENV"
+          echo "UA-Nodeset: \`4a6f0c8e\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package
         shell: bash

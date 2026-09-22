@@ -13,7 +13,7 @@ OPC Hub is the web front end of the Jde OPC services: it browses and secures the
 ### The bundled OPC server
 
 1. Sign in with Google, using the account button at the right of the top bar.
-2. There is nothing to add: the installer's OPC UA Server component set up the **OpcServer** connection (`opc.tcp://localhost:4840`), and your sign-in reaches it.
+2. There is nothing to add: the installer's OPC UA Server component set up the **OpcServer** connection (listed as *Jde OpcServer*, `opc.tcp://127.0.0.1:4840`), and your sign-in reaches it.
 
 ### An OPC UA server of your own
 

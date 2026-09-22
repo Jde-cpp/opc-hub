@@ -1,0 +1,8 @@
+#!/bin/sh
+# jde-opchub preinst.  /etc/jde-cpp/env stops being a conffile (reviews/m4-closing.md #6):  a purge deleted it, the passcode
+# with it, and kept the keys under /var/lib/Jde-Cpp that only it opens.  Upgrading from a package that shipped it as one,
+# the helper sets the operator's copy aside so dpkg forgets it; postinst puts it back as a plain file.  No version bound:
+# once the package no longer owns the file, the helper leaves it alone.
+set -e
+dpkg-maintscript-helper rm_conffile /etc/jde-cpp/env -- "$@"
+exit 0

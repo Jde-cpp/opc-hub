@@ -116,7 +116,7 @@ namespace Jde{
 	}
 
 	α Process::Executable()ι->fs::path{
-		return fs::path{ Process::Args().find( {} )->second };
+		return fs::path{ Windows::ToWString(Process::Args().find( {} )->second) };//the args are UTF-8 (Windows::ToString above) - fs::path's narrow constructor would read them in the ANSI code page (reviews/m4-closing.md #3)
 	}
 
 	α Process::UnPause()ι->void{
@@ -139,23 +139,23 @@ namespace Jde{
 
 //could get run before initialize logger.
 #define CHECK_NOLOG(condition) if( !(condition) ) throw Jde::Exception{ SRCE_CUR, Jde::ELogLevel::NoLog, "error: {}", #condition }
-	Ω loadResource( sv key )ι->string{
+	Ω loadResource( sv key )ι->string{//the running module's own version resource, by its wide path through the W calls (A and W must not mix on one block).  It took argv[0] - UTF-8 by then - through the A calls, which read it in the ANSI code page:  under C:\Users\Zoë that found no resource, and ProductName() forked the data and certificate tree as "Jde-cpp" (reviews/m4-closing.md #3)
 		string y;
 		try{
+			std::wstring exe( 32767, L'\0' );//the longest path there is - GetModuleFileNameW cannot truncate
+			exe.resize( ::GetModuleFileNameW(nullptr, exe.data(), (DWORD)exe.size()) );
+			CHECK_NOLOG( exe.size() );
 			DWORD _;
-			var exe = Process::Executable().string();
-			var size = ::GetFileVersionInfoSize( exe.c_str(), &_ );
+			var size = ::GetFileVersionInfoSizeW( exe.c_str(), &_ );
 			if( !size )
 				return y;
 			vector<BYTE> block( size );
-			CHECK_NOLOG( ::GetFileVersionInfo(exe.c_str(), _, size, block.data()) );
+			CHECK_NOLOG( ::GetFileVersionInfoW(exe.c_str(), 0, size, block.data()) );
 			struct LANGANDCODEPAGE { WORD wLanguage; WORD wCodePage; } *lpTranslate; UINT cbTranslate;
-			::VerQueryValue( block.data(), TEXT("\\VarFileInfo\\Translation"), (LPVOID*)&lpTranslate, &cbTranslate ); CHECK_NOLOG( (cbTranslate/sizeof(struct LANGANDCODEPAGE)) );
-			char name[50];
-			CHECK_NOLOG( SUCCEEDED(::StringCchPrintf(name, sizeof(name), Jde::format("\\StringFileInfo\\%04x%04x\\{}", key).c_str(),  lpTranslate[0].wLanguage, lpTranslate[0].wCodePage)) );
-			char* pCompanyName; UINT bytes;
-			::VerQueryValue( block.data(),  name, (LPVOID*)&pCompanyName, &bytes );
-			y = sv{ pCompanyName, bytes-1 };
+			CHECK_NOLOG( ::VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation", (LPVOID*)&lpTranslate, &cbTranslate) && cbTranslate>=sizeof(LANGANDCODEPAGE) );
+			var name = Windows::ToWString( Jde::format("\\StringFileInfo\\{:04x}{:04x}\\{}", lpTranslate[0].wLanguage, lpTranslate[0].wCodePage, key) ); wchar_t* value; UINT chars;
+			CHECK_NOLOG( ::VerQueryValueW(block.data(), name.c_str(), (LPVOID*)&value, &chars) && chars );
+			y = Windows::ToString( std::wstring{value, ::wcsnlen(value, chars)} );//chars counts the terminator - or not, by resource compiler
 		}
 		catch( const runtime_error& )
 		{}
@@ -174,8 +174,8 @@ namespace Jde{
 	α Process::ProductName()ι->sv{
 		if( _productName.empty() ){
 			_productName = loadResource( "ProductName" );
-			if( _productName.empty() )
-				_productName = "Jde-cpp";
+			if( _productName.empty() )//said, not just done:  this name is the data and certificate dir, and a silent one forked the tree with nothing to name the cause (#3).  stderr - perhaps before the logger, and the console mode is where that happened; not the event log - the test exes carry no .rc, so this is their name on every run.
+				std::cerr << "No ProductName in the exe's version resource - the product dir is '" << (_productName = "Jde-cpp") << "', which no installed setting names.\n";
 		}
 		return _productName;
 	}
@@ -221,7 +221,7 @@ namespace Jde{
 		const string serviceName{ Process::AppName() };
 		//The SCM launches this line verbatim, so it carries the caller's -settings/-include/-sync and quotes the exe - see ServiceCommandLine.
 		const auto commandLine = ServiceCommandLine( ExePath(), args );
-		auto service = ServiceHandle{ ::CreateService(schSCManager.get(), serviceName.c_str(), (serviceName).c_str(), SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, commandLine.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr) };
+		auto service = ServiceHandle{ ::CreateService(schSCManager.get(), serviceName.c_str(), (serviceName).c_str(), SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, commandLine.c_str(), nullptr, nullptr, nullptr, "NT AUTHORITY\\LocalService", nullptr) };//Local Service, not the SCM's default LocalSystem:  nothing the service does needs SYSTEM, and the .deb runs it as an unprivileged account - one identity for every product, so the hub can still stop the OpcServer (AppInstanceHook's Process::Kill); the installer grants it its data dirs (reviews/m4-closing.md #10)
 		if( !service.get() ){
 			if( ::GetLastError()==ERROR_SERVICE_EXISTS )
 				THROW( "Service already exists." );

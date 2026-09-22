@@ -134,10 +134,13 @@ HEADER
 
 	section "Boost" https://www.boost.org BSL-1.0
 	text "$boostLicense"
-	section "SQLite" https://www.sqlite.org/copyright.html "Public domain"
+	section "SQLite" https://www.sqlite.org/copyright.html "Public domain" \
+		"Windows: vcpkg's sqlite3.dll, at the version vcpkg.json's builtin-baseline resolves (named in its \$comment)."
 	echo "SQLite is in the public domain and asks for no notice; it is listed for completeness."
+	#Not "linked statically on Linux":  both exes import libssl.so.3/libcrypto.so.3 and the package Depends on libssl3t64
+	#(reviews/m4-closing.md #22) - nothing of OpenSSL is inside the Linux binaries.
 	section "OpenSSL" https://www.openssl.org Apache-2.0 \
-		"Linked statically on Linux, shipped as vcpkg's DLLs on Windows.  The Apache License 2.0 text is reproduced under Abseil above."
+		"Windows: vcpkg's DLLs, shipped, at the version vcpkg.json's builtin-baseline resolves (named in its \$comment).  Linux: the system's libssl3t64, a package dependency - nothing of it is inside the binaries.  The Apache License 2.0 text is reproduced under Abseil above."
 	debian libssl3t64 libssl3
 	section "libxml2 (Windows: $libxml2Tag; Linux: the build machine's libxml2.so, bundled)" https://gitlab.gnome.org/GNOME/libxml2 MIT
 	debian libxml2-16 libxml2
@@ -148,6 +151,11 @@ HEADER
 	section "LLVM libc++ and libc++abi (Linux only, bundled)" https://libcxx.llvm.org "Apache-2.0 WITH LLVM-exception" \
 		"The Apache License 2.0 text is reproduced under Abseil above."
 	debian libc++1 "$(cd /usr/share/doc && ls -d libc++1-[0-9]* 2>/dev/null | sort -V | tail -1)"
+	#the release runner builds libbacktrace static-only (.github/docker/Dockerfile) and the Linux presets link it for
+	#Boost.Stacktrace (-lbacktrace), so its object code is inside both exes - BSD-3-Clause, whose clause (2) asks for this
+	#notice (reviews/m4-closing.md #22).  Windows uses WinDbg for stack traces, not this.
+	section "libbacktrace (Linux only, statically linked into Jde.Opc.Hub and Jde.Opc.Server)" https://github.com/ianlancetaylor/libbacktrace BSD-3-Clause
+	debian libbacktrace0 libbacktrace-dev
 } > "$tmp"
 mv "$tmp" "$out"; trap - EXIT
 chmod 644 "$out"

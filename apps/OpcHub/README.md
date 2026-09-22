@@ -112,7 +112,7 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
    (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
 3) Log in, as above - Google with the OPC UA Server component, otherwise a connection's own `<slug>\<user>`.
 4) Uninstall: `sudo apt remove jde-opchub` (`./install.sh --uninstall` for a per-user install); the data under
-   `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.
+   `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.  `apt purge` also removes the nginx site's link from step 2; after `apt remove`, `sudo rm /etc/nginx/sites-enabled/jde-opchub` if you made it.
 
 ### First run
 
