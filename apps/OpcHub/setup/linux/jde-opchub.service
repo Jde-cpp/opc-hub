@@ -15,7 +15,7 @@ Group=jde-cpp
 StateDirectory=Jde-Cpp
 StateDirectoryMode=0750
 # JDE_PASSCODE, the private keys' passphrase (empty: the keys are written in the clear) - and anything else the process
-# should see.  Set it before the first start.
+# should see.  Set it, then `systemctl restart`: a key the install's first start wrote in the clear is encrypted with it then.
 EnvironmentFile=-/etc/jde-cpp/env
 WorkingDirectory=/opt/jde-cpp/opchub
 # -c keeps the process in the foreground with the log on stdout, i.e. the journal - without it the exe daemon()s.

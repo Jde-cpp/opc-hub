@@ -41,8 +41,26 @@ fi
 
 [ -x "$here/opt/jde-cpp/opchub/Jde.Opc.Hub" ] || { echo "install.sh: run it from the unpacked tarball (opt/jde-cpp/opchub/Jde.Opc.Hub not found beside it)" >&2; exit 1; }
 install -d "$programs" "$config" "$dataRoot" "$units"
-cp -r "$here/opt/jde-cpp/." "$programs/"
+cp -r --remove-destination "$here/opt/jde-cpp/." "$programs/" #unlink first: a rerun copies over the running products, where a plain cp dies ETXTBSY on the exe and rewrites each mapped .so in place; a new inode, like dpkg's rename, leaves the old image to the restart below (reviews/m4-closing.md #1)
+#The four overlays the README sends the operator to edit keep an edited copy, as the .deb's conffiles do:  $config/.dist
+#holds what the last run laid, so one that differs from it - or, with no record (a tarball before this one), from this
+#release's - is the operator's.  It stays in use, this release's lands beside it as .new, and the closing message names it
+#(reviews/m4-closing.md #8).  The rest of $config is replaced:  the base configs and the metas must match the exes.
+overlays="apps/OpcHub/config/args/install/args.libsonnet apps/OpcHub/config/args/install-user/args.libsonnet apps/OpcServer/config/args/install/args.libsonnet apps/OpcServer/config/args/install-user/args.libsonnet"
+kept=""; unrecorded=""
+for f in $overlays; do
+	[ -f "$here/etc/jde-cpp/$f" ] || continue #a tarball without it has nothing to lay over it
+	rm -f "$config/$f.new"
+	if [ -f "$config/$f" ] && ! cmp -s "$config/$f" "$here/etc/jde-cpp/$f" && ! cmp -s "$config/$f" "$config/.dist/$f"; then
+		mv "$config/$f" "$config/$f.kept"; kept="$kept $f"
+		[ -f "$config/.dist/$f" ] || unrecorded="$unrecorded $f"
+	fi
+done
 cp -r "$here/etc/jde-cpp/apps" "$here/etc/jde-cpp/libs" "$config/"
+for f in $kept; do
+	mv "$config/$f" "$config/$f.new"; mv "$config/$f.kept" "$config/$f"
+done
+for f in $overlays; do [ ! -f "$here/etc/jde-cpp/$f" ] || install -D -m 644 "$here/etc/jde-cpp/$f" "$config/.dist/$f"; done
 [ -f "$dataRoot/env" ] || install -m 600 "$here/etc/jde-cpp/env" "$dataRoot/env" #the passcode file - never overwritten
 for p in OpcHub OpcServer; do #sql/ and nodesets/ are installer-owned - recreated, so a seed an older version shipped cannot linger
 	rm -rf "$dataRoot/$p/sql" "$dataRoot/$p/nodesets"
@@ -93,9 +111,15 @@ fi
 cat <<MSG
 installed for $USER:
   programs  $programs
-  settings  $config
+  settings  $config  (replaced on a rerun - but for an args.libsonnet you edited, kept)
   data      $dataRoot/<Product>  (the sqlite database is created on the first start)
   units     $units/jde-opchub.service, jde-opcserver.service$([ $opcServer = 1 ] || echo " (not enabled: systemctl --user enable --now jde-opcserver)")
   log       journalctl --user -u jde-opchub
 The units run while you are logged in; \`loginctl enable-linger $USER\` starts them at boot instead.
 MSG
+for f in $kept; do
+	case " $unrecorded " in
+		*" $f "*) echo "kept $config/$f - it differs from this release's and no earlier run recorded what it laid; if you never edited it, move the $(basename "$f").new beside it over it";;
+		*) echo "kept your edited $config/$f - this release's is beside it as $(basename "$f").new: merge any change by hand";;
+	esac
+done

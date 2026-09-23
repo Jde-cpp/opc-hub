@@ -1,7 +1,7 @@
 # Environment of the jde-opchub and jde-opcserver services (systemd EnvironmentFile: KEY=value, no shell expansion).
-# Owned by root, readable by the jde-cpp group only - the package's postinst sets that.
+# Owned by root, readable by the jde-cpp group only - the package's postinst sets that, laying this file when there is none; an upgrade never replaces it and a purge keeps it while it sets a passcode.
 #
 # The private keys' passphrase, $(JDE_PASSCODE) in the configs.  Unset, the keys are written in the clear (the documented
-# behaviour of an empty passcode).  Set it before the first start: a key written under one passcode does not open under
-# another.
+# behaviour of an empty passcode).  Set it and restart the services:  a key written in the clear (the install starts them) is encrypted with it at that start - the same key, so no certificate changes.  A key written under one passcode does not open under
+# another:  change it only by deleting the product's ssl/ and re-trusting the certificates issued in its place.
 #JDE_PASSCODE=

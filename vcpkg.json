@@ -1,4 +1,6 @@
 {
+  "$comment": "builtin-baseline pins what the ports resolve to - microsoft/vcpkg 0c8f465c (2026-09-14): openssl 3.6.4, sqlite3 3.53.4#1. Without it the -jde configure re-resolved the manifest against the runner image's ports tree on every Windows run, so a tag re-run shipped whatever the image carried (reviews/m4-closing.md #21). Bump it deliberately, and THIRD-PARTY-NOTICES with it.",
+  "builtin-baseline": "0c8f465c549616e897a34b9393054931fda6339c",
   "dependencies": [
     {
       "name": "openssl",

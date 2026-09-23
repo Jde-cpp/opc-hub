@@ -18,7 +18,7 @@ usage: build-deb.sh [options]
   --skip-web           omit the Web UI (opt/jde-cpp/web and the nginx site file)
   --ua-nodesets <dir>  OPCFoundation/UA-Nodeset clone    default: $UA_NODE_SETS, else $REPO_DIR/UA-Nodeset
   --version <v>        default: `git describe --tags` - the tag itself on a tag, <tag>-N-gsha past one, and
-                       CMakePresets.common.json's JDE_VERSION (2026.09.01) where no tag is reachable; the release
+                       CMakePresets.common.json's JDE_VERSION where no tag is reachable; the release
                        workflow passes the tag, and an empty string on a run that has none - so `--version ""` is the
                        default, not an error
   --out-dir <dir>      default: <build dir>/setup
@@ -77,7 +77,7 @@ for t in dpkg-deb dpkg ldd objdump; do command -v $t >/dev/null || die "$t not f
 command -v "$patchelf" >/dev/null || die "patchelf not found - apt install patchelf, or pip install patchelf and --patchelf <path>"
 
 #--- version -----------------------------------------------------------------------------------------------------------
-#The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
+#The product version is CMakePresets.common.json's JDE_VERSION - a yyyy.MM.dd date, zeros and all: the string the C++ targets
 #are built with and the Web UI's about page displays, so the package agrees with them.  --version names it outright (the release
 #workflow passes the tag) and is expected to carry that same string; anything else is warned about, not refused.
 jdeVersion=$(sed -n 's/.*"JDE_VERSION": *"\([^"]*\)".*/\1/p' "$repo/CMakePresets.common.json" | head -1)
@@ -169,7 +169,7 @@ install -D -m 644 -t "$etcDir/libs/db/config" "$repo/libs/db/config/paths-common
 install -D -m 644 -t "$etcDir/apps/OpcServer/config" "$repo/apps/OpcServer/config/Opc.Server.jsonnet" "$repo/apps/OpcServer/config/Opc.Server.Install.jsonnet"
 install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install" "$repo/apps/OpcServer/config/args/install/args.libsonnet"
 install -D -m 644 -t "$etcDir/apps/OpcServer/config/pubsub" "$repo/apps/OpcServer/config/pubsub/pumps.libsonnet"
-install -m 640 "$setupDir/env" "$etcDir/env"
+install -D -m 644 "$setupDir/env" "$stage/usr/share/jde-opchub/env" #the template postinst lays at /etc/jde-cpp/env when absent - not a conffile, which a purge deletes with the kept keys' passcode in it (reviews/m4-closing.md #6)
 [ $skipWeb = 1 ] || install -m 644 "$setupDir/nginx-opchub.conf" "$etcDir/nginx-opchub.conf"
 
 #the products' data dirs - meta/sql flat, where args/install points (common-meta from libs/db: the copies beside the app
@@ -224,7 +224,7 @@ dependsList=$( { depends | sed "s/^libc6\$/libc6 (>= $glibc)/"; echo adduser; ec
 
 deb=$stage/DEBIAN
 install -d -m 755 "$deb"
-install -m 755 -t "$deb" "$setupDir/debian/postinst" "$setupDir/debian/prerm" "$setupDir/debian/postrm"
+install -m 755 -t "$deb" "$setupDir/debian/preinst" "$setupDir/debian/postinst" "$setupDir/debian/prerm" "$setupDir/debian/postrm"
 find "$etcDir" -type f | sed "s|^$stage||" | sort > "$deb/conffiles"
 size=$(du -sk --exclude=DEBIAN "$stage" | cut -f1)
 sed -e "s|@VERSION@|$debVersion|" -e "s|@ARCH@|$arch|" -e "s|@MAINTAINER@|$maintainer|" -e "s|@SIZE@|$size|" -e "s|@DEPENDS@|$dependsList|" \
@@ -255,6 +255,7 @@ if [ $tar = 1 ]; then
 	#the machine's administrator decides the address, so the package has no use for it.
 	install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install-user" "$repo/apps/OpcHub/config/args/install-user/args.libsonnet"
 	install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install-user" "$repo/apps/OpcServer/config/args/install-user/args.libsonnet"
+	install -m 640 "$setupDir/env" "$etcDir/env" #install.sh's template for $dataRoot/env; the package's is under usr/share, which this archive leaves out
 	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share \
 		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md ./LICENSE ./THIRD-PARTY-NOTICES.txt
 	echo "built $tarFile ($(du -h "$tarFile" | cut -f1)) - unpacks into $tarRoot/"

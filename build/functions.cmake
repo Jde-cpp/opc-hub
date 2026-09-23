@@ -229,3 +229,17 @@ function( sqliteProcModule targetName )
 		)
 	endif()
 endfunction()
+#A Windows exe's version resource from JDE_VERSION:  writes version.rc.h (build/version.rc.h.in) beside the target's build
+#and puts that dir on its include path, so the checked-in .rc stays as it is and #includes the values.  The numbers are
+#JDE_VERSION's without their leading zeros - 2026.09.02's "09" is an octal literal to rc - and the copyright year is its
+#first part, not the build's clock, so a rebuild of a tag stamps the same bytes (reviews/m4-closing.md #20).
+function( jdeVersionResource targetName )
+	if( NOT JDE_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" )
+		message( FATAL_ERROR "JDE_VERSION '${JDE_VERSION}' is not yyyy.MM.dd - the version resource needs three numbers." )
+	endif()
+	math( EXPR jdeRcMajor "${CMAKE_MATCH_1}" )
+	math( EXPR jdeRcMinor "${CMAKE_MATCH_2}" )
+	math( EXPR jdeRcPatch "${CMAKE_MATCH_3}" )
+	configure_file( ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/version.rc.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.rc.h @ONLY )
+	target_include_directories( ${targetName} PRIVATE ${CMAKE_CURRENT_BINARY_DIR} )
+endfunction()

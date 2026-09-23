@@ -20,7 +20,7 @@ namespace Jde::DB::MySql{
 		α AtSchema( sv schema, SRCE )ε->sp<IDataSource> override;
 		α SchemaNameConfig( SRCE )ι->string override;
 		α SetConfig( const jobject& config )ε->void override;
-		α Disconnect()ε->void override{ THROW("Not implemented"); }
+		α Disconnect()ε->void override;
 		α ConnectionParams()ι->const mysql::connect_params&{ return _cs; }
 	private:
 		α Execute( Sql&& sql, SL sl, Params exeParams )ε->uint override; //C1: the one primitive; IDataSource implements the sync wrappers over it.

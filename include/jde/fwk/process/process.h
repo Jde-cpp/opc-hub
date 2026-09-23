@@ -48,6 +48,9 @@ namespace Process{
 	Φ Kill( uint processId )ι->bool;
 
 	Φ AddShutdownFunction( function<void(bool terminating, SL)>&& shutdown )ι->void;
+	//Run by Shutdown after the executor's threads have joined - no work can still be running - and before the loggers go:  for what
+	//has to follow the last write, e.g. closing a database (reviews/m4-closing.md #24).
+	Φ AddFinalizeFunction( function<void(bool terminating)>&& finalize )ι->void;
 
 	Φ AddShutdown( IShutdown* pShutdown )ι->void; //global unique ptrs
 	Φ RemoveShutdown( IShutdown* pShutdown )ι->void;

@@ -49,7 +49,7 @@ function( sync=false )
 		},
 		proto:{//without this ProtoLog::Init is a no-op, there is no binary archive, and the `logs` query 500s on GetLogger<ProtoLog> - which is what the web ui's Logs tab reads.
 			path: logsDir + "/opc-server",
-			timeZone: "America/New_York",
+			//no timeZone:  the archive's day directories (<path>/<yyyy>/<m>/<d>) follow the machine's zone, ProtoLog's default - a developer's "America/New_York" here shipped to every install (reviews/m4-closing.md #14).  An IANA name pins them.
 			delay: "PT1M",
 			tags: {
 				default: "Debug",

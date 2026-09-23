@@ -2,15 +2,36 @@
 # jde-opchub postrm.  dpkg has removed the programs, the units, the settings (on purge) and the meta/sql/nodesets it
 # installed under /var/lib/Jde-Cpp; what the products created there - OpcHub.db, OpcServer.db, ssl/ (certificates and
 # keys the OPC servers trust), the logs - stays, on purge too, as the Windows uninstaller leaves %ProgramData%\Jde-Cpp.
-# The jde-cpp account stays as well (it owns those files).
+# The jde-cpp account stays as well (it owns those files), and so does /etc/jde-cpp/env when it sets the keys' passcode.
 set -e
+dpkg-maintscript-helper rm_conffile /etc/jde-cpp/env -- "$@" #preinst's other half:  on purge, any .dpkg-bak it left; on an aborted upgrade, the file put back
 case "$1" in
 	remove|purge)
 		if [ -d /run/systemd/system ]; then
 			systemctl daemon-reload || true
 		fi
 		if [ "$1" = purge ]; then
-			rm -rf /etc/jde-cpp
+			# the Web UI site's link, as the README has the operator make it (sites-enabled/jde-opchub) or under another name:
+			# dpkg has already deleted the conffile it points at, and nginx refuses a config naming a missing file - every site
+			# on the machine down at its next restart (reviews/m4-closing.md #9).  Only links that resolve to this package's file.
+			unlinked=0
+			for link in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*; do
+				if [ -L "$link" ] && [ "$(readlink -m "$link")" = /etc/jde-cpp/nginx-opchub.conf ]; then
+					rm -f "$link"; unlinked=1
+					echo "jde-opchub: removed $link, the Web UI site's link to the purged /etc/jde-cpp/nginx-opchub.conf."
+				fi
+			done
+			if [ $unlinked = 1 ] && [ -d /run/systemd/system ]; then
+				systemctl try-reload-or-restart nginx.service || true
+			fi
+			# the settings go; a passcode stays with the keys it opens (reviews/m4-closing.md #6) - env is no conffile, so this is
+			# the one place it could be deleted.  An env that sets none is only the template, and goes with the rest.
+			if grep -q '^[[:space:]]*JDE_PASSCODE=.' /etc/jde-cpp/env 2>/dev/null; then
+				find /etc/jde-cpp -mindepth 1 -maxdepth 1 ! -name env -exec rm -rf {} +
+				echo "jde-opchub: /etc/jde-cpp/env is left in place - it holds the passcode of the keys under /var/lib/Jde-Cpp."
+			else
+				rm -rf /etc/jde-cpp
+			fi
 			if [ -d /var/lib/Jde-Cpp ]; then
 				echo "jde-opchub: /var/lib/Jde-Cpp (databases, certificates, logs) is left in place - delete it by hand for a clean slate."
 			fi

@@ -19,7 +19,7 @@ param(
 	[switch]$SkipWeb,                    # omit the Web UI component
 	[string]$UaNodeSets = $env:UA_NODE_SETS, # OPCFoundation/UA-Nodeset clone (DI/IA for the OpcServer)
 	[string]$VcRedist = 'C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Redist\MSVC\v145\vc_redist.x64.exe',
-	[string]$Version,                    # default: `git describe --tags` - the tag on a tag, <tag>-N-gsha past one, else CMakePresets.common.json's JDE_VERSION (2026.09.01); CI passes the release tag
+	[string]$Version,                    # default: `git describe --tags` - the tag on a tag, <tag>-N-gsha past one, else CMakePresets.common.json's JDE_VERSION; CI passes the release tag
 	[string]$OutDir,                     # default: <BuildDir>\setup - outside the repo
 	[string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe',
 	[switch]$Sign,                       # sign.ps1: Azure Artifact Signing ($env:JDE_SIGN_ENDPOINT/ACCOUNT/PROFILE) or a .pfx ($env:JDE_SIGN_PFX)
@@ -63,8 +63,8 @@ if( $Sign ){
 	if( -not $env:JDE_SIGN_ENDPOINT -and -not $env:JDE_SIGN_PFX ){ throw '-Sign needs a certificate: JDE_SIGN_ENDPOINT, JDE_SIGN_ACCOUNT and JDE_SIGN_PROFILE (Azure Artifact Signing), or -PfxPath / JDE_SIGN_PFX - see README.md, Signing' }
 }
 
-# The product version is CMakePresets.common.json's JDE_VERSION - 2026.09.01, the date, zeros and all: the string the C++ targets
-# are built with and the Web UI's about page displays, so Add/Remove Programs agrees with them.  A -Version names it outright
+# The product version is CMakePresets.common.json's JDE_VERSION - a yyyy.MM.dd date, zeros and all: the string the C++ targets
+# are built with (the exes' version resource too - build/version.rc.h.in) and the Web UI's about page displays, so Add/Remove Programs agrees with them.  A -Version names it outright
 # (the release workflow passes the tag) and is expected to carry that same string; anything else is warned about, not refused.
 $presets = Get-Content (Join-Path $repo 'CMakePresets.common.json') -Raw | ConvertFrom-Json
 $jdeVersion = ($presets.configurePresets | Where-Object { $_.name -eq 'common' }).cacheVariables.JDE_VERSION
@@ -96,7 +96,12 @@ if( $Sign ){
 }
 
 $defs = @( "/DBUILD_DIR=$BuildDir", "/DWEB_DIST=$WebDist", "/DUA_NODE_SETS=$UaNodeSets", "/DVERSION=$Version", "/DVI_VERSION=$vi", "/DOUT_DIR=$OutDir" )
-if( $VcRedist ){ $defs += "/DVC_REDIST=$VcRedist" }
+if( $VcRedist ){
+	$defs += "/DVC_REDIST=$VcRedist"
+	#the runtime's version off the file - the installer's "Installing the Visual C++ … runtime" line said 14.51 whatever it bundled (reviews/m4-closing.md #21)
+	$redistVersion = (Get-Item $VcRedist).VersionInfo.ProductVersion
+	if( $redistVersion ){ $defs += "/DVC_REDIST_VERSION=$redistVersion" }
+}
 if( $SkipWeb ){ $defs += '/DSKIP_WEB' }
 # the uninstaller's signing hook: sign.ps1, run by the PowerShell this script runs under (the one the ArtifactSigning module is installed for)
 if( $Sign ){ $defs += "/DSIGN_SCRIPT=$signScript", "/DSIGN_HOST=$((Get-Process -Id $PID).Path)" }

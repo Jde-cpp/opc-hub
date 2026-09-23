@@ -1,6 +1,7 @@
 // Microsoft Visual C++ generated resource script.
 //
 #include "resource.h"
+#include "version.rc.h" //JDE_VERSION_*, JDE_COPYRIGHT - written by the build (jdeVersionResource, build/functions.cmake; reviews/m4-closing.md #20)
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -50,8 +51,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,1
- PRODUCTVERSION 1,0,0,1
+ FILEVERSION JDE_VERSION_NUMBERS
+ PRODUCTVERSION JDE_VERSION_NUMBERS
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -68,12 +69,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Jde-Cpp"
             VALUE "FileDescription", "Opc Server"
-            VALUE "FileVersion", "1.0.0.1"
-            VALUE "InternalName", "OpcServer.exe"
-            VALUE "LegalCopyright", "Copyright (C) 2025"
-            VALUE "OriginalFilename", "OpcServer.exe"
+            VALUE "FileVersion", JDE_VERSION_STRING
+            VALUE "InternalName", "Jde.Opc.Server.exe"
+            VALUE "LegalCopyright", JDE_COPYRIGHT
+            VALUE "OriginalFilename", "Jde.Opc.Server.exe"
             VALUE "ProductName", "OpcServer"
-            VALUE "ProductVersion", "1.0.0.1"
+            VALUE "ProductVersion", JDE_VERSION_STRING
         END
     END
     BLOCK "VarFileInfo"

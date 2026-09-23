@@ -55,6 +55,7 @@ file( GLOB sources CONFIGURE_DEPENDS *.cpp src/main.cpp )
 file( GLOB headers CONFIGURE_DEPENDS *.h )
 if( WIN32)
 	list( APPEND sources src/OpcHub.rc )
+	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
 endif()
 target_sources( ${targetName} PRIVATE ${sources} ${resources} ${headers} )
 

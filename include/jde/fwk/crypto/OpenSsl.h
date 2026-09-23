@@ -23,6 +23,8 @@ namespace Jde::Crypto{
 	Φ IssueCertificate( const CryptoSettings& settings, std::chrono::seconds validity = std::chrono::days{365}, SRCE )ε->void;
 	//why the certificate on disk can no longer stand for `settings` - missing, expired or expiring within a day, or a SAN drifted from the configured one - empty if it can.  One predicate for every issuer (EnsureKeyCertificate, the gateway's per-target EnsureCertificate), so the two cannot drift apart again (web-certs3 #17).  An unreadable certificate throws (#3(b)).
 	Φ ReissueReason( const CryptoSettings& settings, SRCE )ε->string;
+	//a managed private key written in the clear, before privateKey.passcode was set, rewritten encrypted with it - the same key, so its certificates and every trust built on them stand.  A no-op without a passcode, or for a key that is missing or already encrypted.  The Linux install starts the services itself, so "set the passcode before the first start" could not be followed, and one set after changed nothing (reviews/m4-closing.md #11).  EnsureKeyCertificate's and the gateway's per-target EnsureCertificate's.
+	Φ EncryptPrivateKey( const CryptoSettings& settings, SRCE )ε->void;
 	Φ CreateKeyCertificate( const CryptoSettings& settings, SRCE )ε->void;
 	Φ EnsureKeyCertificate( const CryptoSettings& settings, SRCE )ε->void;
 	Φ ExtractPublicKey( std::span<byte> certificate, SL sl )ε->PublicKey;

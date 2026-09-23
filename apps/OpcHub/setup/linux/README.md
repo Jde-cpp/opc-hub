@@ -20,7 +20,7 @@ the CI runner's container is `ubuntu-noble` for that reason):
 | `patchelf` | `apt install patchelf`, or the PyPI wheel (`pip install patchelf`, then `--patchelf <path>`) - sets every staged exe's and `.so`'s RUNPATH to `$ORIGIN` |
 
 ```bash
-apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<version>_amd64.deb + .tar.gz (`git describe --tags`, else CMakePresets.common.json's JDE_VERSION - 2026.09.01)
+apps/OpcHub/setup/linux/build-deb.sh                               # -> <BuildDir>/setup/jde-opchub_<version>_amd64.deb + .tar.gz (`git describe --tags`, else CMakePresets.common.json's JDE_VERSION)
 apps/OpcHub/setup/linux/build-deb.sh --version 2026.09.08 --skip-web
 apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dwarf (file:line in the stack traces); several times the size
 ```
@@ -63,7 +63,7 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
   site itself at http://<host>:1967/ (`http.site` = `$(ExeDir)/../web`, the package's `/opt/jde-cpp/web`);
 - `JDE_PASSCODE` (the private keys' passphrase, `$(JDE_PASSCODE)` in the configs): unset, the keys are written in the
   clear - the documented behaviour of an empty passcode.  Set it in `/etc/jde-cpp/env` (root-owned, `jde-cpp`-readable)
-  before the first start.
+  and `sudo systemctl restart jde-opchub jde-opcserver`:  the install has already started the hub, and a key it wrote in the clear is encrypted with the passcode at that restart - the same key, so no certificate or trust changes (the log says `Encrypted the private key at …`).  A key written under one passcode does not open under another.  The file is not a conffile:  an upgrade never replaces it, and `apt purge` keeps it while it sets a passcode, since it keeps the keys that passcode opens.
 
 The log is the journal - `journalctl -u jde-opchub -f` - and the files under the product dir.
 
@@ -85,7 +85,7 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
   apps/OpcServer/config/args/install/args.libsonnet
   apps/OpcServer/config/pubsub/pumps.libsonnet
   libs/db/config/paths-common.libsonnet
-  env                                                    the services' environment (JDE_PASSCODE)
+  env                                                    the services' environment (JDE_PASSCODE) - laid from /usr/share/jde-opchub/env when absent
   nginx-opchub.conf                                      the Web UI site, for /etc/nginx/sites-enabled
 /var/lib/Jde-Cpp                                         the data root - $STATE_DIRECTORY's parent (Process::ProgramDataFolder), owned by jde-cpp
   OpcHub/                                                the product dir (Process::ProductName): created here by the service -> OpcHub.db, ssl/, *.log
@@ -125,10 +125,13 @@ tar xzf jde-opchub-<version>-linux-amd64.tar.gz && cd jde-opchub-<version>-linux
 ./install.sh --uninstall
 ```
 
+Rerun `./install.sh` from a newer tarball to upgrade, or with `--opcserver` to add the OPC UA server later: it replaces the
+programs while they run and restarts the products onto the new files (a running jde-opcserver restarts with the hub).  The settings under `~/.config/Jde-Cpp/config` are replaced too - but for an `args/install*/args.libsonnet` you edited, which stays in use with this release's copy beside it as `args.libsonnet.new` (the script names each one - merge any change by hand), as the `.deb` does with its conffiles.
+
 | | where |
 |---|---|
 | programs | `~/.local/share/jde-cpp/{opchub,opcserver,web}` (`$XDG_DATA_HOME`) |
-| settings mirror | `~/.config/Jde-Cpp/config` - the same tree as `/etc/jde-cpp` |
+| settings mirror | `~/.config/Jde-Cpp/config` - the same tree as `/etc/jde-cpp`; `.dist/` beside it is what the last `install.sh` laid, how a rerun tells your edits from its own copies |
 | data | `~/.config/Jde-Cpp/<Product>` (`$XDG_CONFIG_HOME`) - what `Process::ProgramDataFolder()` returns for a user process |
 | passcode | `~/.config/Jde-Cpp/env` (never overwritten) |
 | addresses | loopback only - the hub on `127.0.0.1:1967`, the server on `127.0.0.1:1970` and `opc.tcp://127.0.0.1:4840`.  The units run `-include=args/install-user`, whose `listenAddress` binds them: an install that needs no root cannot open a firewall port, so it does not publish one (the `.deb` binds every interface, where the administrator who installed it decides).  To reach this install from another machine, use the `.deb` - or set `listenAddress: null` in `~/.config/Jde-Cpp/config/apps/{OpcHub,OpcServer}/config/args/install-user/args.libsonnet`, allow the ports in the firewall and `systemctl --user restart jde-opchub jde-opcserver` |
@@ -141,12 +144,12 @@ the data root as `debian/postinst` does.
 
 ## Uninstall
 
-`sudo apt remove jde-opchub` stops and disables the services, removes the program dirs, the units and the meta/sql/
-nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp` as well.  Left in place, deliberately
+`sudo apt remove jde-opchub` stops and disables the services (`apt install` again enables and starts the ones that were enabled), removes the program dirs, the units and the meta/sql/
+nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp` as well - but for an `env` that sets `JDE_PASSCODE`.  Left in place, deliberately
 - on purge too, as the Windows uninstaller leaves `%ProgramData%\Jde-Cpp`: `OpcHub.db`, `OpcServer.db`, `ssl/`
-(certificates and keys - the OPC servers trust them), the logs, and the `jde-cpp` account that owns them.  Delete
-`/var/lib/Jde-Cpp` by hand for a clean slate.  `./install.sh --uninstall` does the same for a per-user install, keeping
-`~/.config/Jde-Cpp/<Product>`.
+(certificates and keys - the OPC servers trust them), the logs, and the `jde-cpp` account that owns them - with the
+passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp` and `/etc/jde-cpp` by hand for a clean slate.  A database is its `.db` with any `.db-wal`/`.db-shm` beside it:  a clean stop folds them back into the `.db` and deletes them, but after a crash or a `kill -9` the latest rows are still in the `-wal` - copy, move or delete the three together.  `./install.sh --uninstall` does the same for a per-user install, keeping
+`~/.config/Jde-Cpp/<Product>`.  The Web UI site's link into nginx (`/etc/nginx/sites-enabled/jde-opchub`, or any `sites-enabled`/`conf.d` link to `/etc/jde-cpp/nginx-opchub.conf`) goes with `apt purge`, and nginx is reloaded; after a plain `apt remove` the link still works (the conffile is kept) - `sudo rm` it by hand to drop the 8071 site.
 
 ## Notes
 
@@ -180,6 +183,6 @@ nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp`
   Gateways help topic (`?`) has the details.
 - MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile like
   `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` - the driver beside the exe, the `sql/mysql` scripts in the
-  product's `sql/` - re-registered with `-include=args/install-mysql` through `systemctl edit`.
+  product's `sql-mysql/` and the profile's `scriptPaths` pointing there (`sql/` is the package's, sqlite scripts replaced on every upgrade) - re-registered with `-include=args/install-mysql` through `systemctl edit`.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only
   under its `StateDirectory`.  Loosen with `systemctl edit` if a local change needs it.

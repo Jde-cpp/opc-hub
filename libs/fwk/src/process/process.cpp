@@ -190,12 +190,19 @@ namespace Jde{
 		if( !ExitReason() )
 			SetExitReason( y, false );
 		std::cerr << prefix << message << std::endl;
+		if( y!=EXIT_SUCCESS && !IsConsole() )//a service's stderr goes nowhere, and a startup failure never reaches the dispatcher:  the file log was its only record (reviews/m4-closing.md #10, run 4).
+			AddApplicationLog( ELogLevel::Critical, Ƒ("{}{}", prefix, message) );
 		return y;
 	}
 
 	vector<function<void( bool, SL )>> _shutdownFunctions;
 	α Process::AddShutdownFunction( function<void(bool, SL)>&& shutdown )ι->void{
 		_shutdownFunctions.push_back( shutdown );
+	}
+
+	vector<function<void(bool)>> _finalizeFunctions;
+	α Process::AddFinalizeFunction( function<void(bool)>&& finalize )ι->void{
+		_finalizeFunctions.push_back( move(finalize) );
 	}
 
 	up<IShutdown> _executor;
@@ -274,8 +281,10 @@ namespace Jde{
 		auto ioc = ExecutorIoc();//keep the io_context alive across teardown so it is destroyed last — after sessions, loggers and timers release their asio objects.
 		if( _executor ){
 			_executor->Shutdown( terminate );
-			_executor = nullptr;
+			_executor = nullptr;//joins the executor's threads.
 		}
+		for_each( _finalizeFunctions, [=](let& finalize){finalize(terminate);} );
+		_finalizeFunctions.clear();
 		Logging::DestroyLoggers( terminate );
 		if( ioc && ioc.use_count()>1 )//everything that used the io_context should have released it by now; a leftover ref means an asio object would otherwise outlive the io_context (use-after-free).
 			std::cout << "WARNING: io_context still has " << ioc.use_count()-1 << " reference(s) at finalize." << std::endl;

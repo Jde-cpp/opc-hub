@@ -9,6 +9,14 @@ case "$1" in
 		fi
 		chown -R jde-cpp:jde-cpp /var/lib/Jde-Cpp
 		chmod 750 /var/lib/Jde-Cpp
+		# The passcode file:  a plain file, not a conffile, so a purge - which keeps the keys under /var/lib/Jde-Cpp - does not
+		# delete what opens them (reviews/m4-closing.md #6).  From a package that shipped it as a conffile, preinst's helper set
+		# the operator's copy aside as .dpkg-bak:  back it goes.  Laid from the template only when there is none.
+		dpkg-maintscript-helper rm_conffile /etc/jde-cpp/env -- "$@" >/dev/null
+		if [ ! -f /etc/jde-cpp/env ] && [ -f /etc/jde-cpp/env.dpkg-bak ]; then
+			mv /etc/jde-cpp/env.dpkg-bak /etc/jde-cpp/env
+		fi
+		[ -f /etc/jde-cpp/env ] || cp /usr/share/jde-opchub/env /etc/jde-cpp/env
 		chgrp jde-cpp /etc/jde-cpp/env
 		chmod 640 /etc/jde-cpp/env
 		if [ -d /run/systemd/system ]; then
@@ -16,6 +24,13 @@ case "$1" in
 			if [ -z "$2" ]; then
 				# first install: the hub runs; the OPC UA server is optional - `systemctl enable --now jde-opcserver`
 				systemctl enable --now jde-opchub.service || true
+			elif [ -f /etc/jde-cpp/.enabled-at-remove ]; then
+				# a reinstall after `apt remove`:  dpkg keeps a removed package's conffiles and its Config-Version, so $2 is set, but
+				# prerm disabled the units - enable again what it recorded as enabled, and only that (reviews/m4-closing.md #5)
+				for unit in $(cat /etc/jde-cpp/.enabled-at-remove); do
+					systemctl enable --now "$unit" || true
+				done
+				rm -f /etc/jde-cpp/.enabled-at-remove
 			else
 				# upgrade: the binaries were replaced under the running processes - restart whatever is running
 				systemctl try-restart jde-opchub.service jde-opcserver.service || true

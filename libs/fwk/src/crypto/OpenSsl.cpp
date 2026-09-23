@@ -106,6 +106,24 @@ namespace Jde{
 		return {};
 	}
 
+	α Crypto::EncryptPrivateKey( const CryptoSettings& settings, SL sl )ε->void{
+		let& path = settings.PrivateKey.Path;
+		if( settings.PrivateKey.Passcode.empty() || !fs::exists(path) )
+			return;
+		//read with a callback that supplies no passphrase:  an encrypted key fails on it - the case on every start once this has
+		//run, so it neither throws nor logs - and a clear one never calls it.
+		EVP_PKEY* clear = ::PEM_read_bio_PrivateKey( Internal::ReadFile(path, sl).get(), nullptr, [](char*, int, int, void*)->int{ return -1; }, nullptr );
+		if( !clear ){
+			::ERR_clear_error();
+			return;
+		}
+		//written beside it and renamed over it:  a crash mid-write must not cost the only copy of the key the certificates were issued on.
+		let temp = fs::path{ path.string()+".encrypting" };
+		Internal::WritePrivateKey( temp, Internal::KeyPtr{clear, ::EVP_PKEY_free}, settings.PrivateKey.Passcode, sl );
+		fs::rename( temp, path );
+		INFO( "Encrypted the private key at {} with privateKey.passcode - it was written in the clear, before the passcode was set.", path.string() );
+	}
+
 	α Crypto::EnsureKeyCertificate( const CryptoSettings& settings, SL sl )ε->void{
 		if( !settings.Certificate.Managed ){//the operator's pair, used as found:  the expiry and SAN checks below re-issue only what this product issued, and a certificate a CA vouched for must never be replaced by a self-signed one (web-certs3 (b)).
 			THROW_IF( !fs::exists(settings.PrivateKey.Path), "certificate.managed is false and the private key '{}' does not exist - supply the pair, or set managed:true to have one issued.", settings.PrivateKey.Path.string() );
@@ -123,9 +141,12 @@ namespace Jde{
 		try{
 			if( !fs::exists(settings.PrivateKey.Path) )
 				CreateKeyCertificate( settings, sl );
-			else if( let reason = ReissueReason(settings, sl); reason.size() ){
-				INFO( "Re-issuing '{}': {}.", settings.Certificate.Path.string(), reason );
-				IssueCertificate( settings, std::chrono::days{365}, sl );
+			else{
+				EncryptPrivateKey( settings, sl );//before a re-issue, which signs with the key as it will be read from now on
+				if( let reason = ReissueReason(settings, sl); reason.size() ){
+					INFO( "Re-issuing '{}': {}.", settings.Certificate.Path.string(), reason );
+					IssueCertificate( settings, std::chrono::days{365}, sl );
+				}
 			}
 
 			Certificate{ ReadCertificate(settings.Certificate.Path), sl }.Log( Ƒ("Read Certificate at {}", settings.Certificate.Path.string()), sl );

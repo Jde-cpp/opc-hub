@@ -1555,6 +1555,7 @@ DEALINGS IN THE SOFTWARE.
 SQLite
 https://www.sqlite.org/copyright.html
 License: Public domain
+Windows: vcpkg's sqlite3.dll, at the version vcpkg.json's builtin-baseline resolves (named in its $comment).
 ====================================================================================================
 
 SQLite is in the public domain and asks for no notice; it is listed for completeness.
@@ -1563,7 +1564,7 @@ SQLite is in the public domain and asks for no notice; it is listed for complete
 OpenSSL
 https://www.openssl.org
 License: Apache-2.0
-Linked statically on Linux, shipped as vcpkg's DLLs on Windows.  The Apache License 2.0 text is reproduced under Abseil above.
+Windows: vcpkg's DLLs, shipped, at the version vcpkg.json's builtin-baseline resolves (named in its $comment).  Linux: the system's libssl3t64, a package dependency - nothing of it is inside the binaries.  The Apache License 2.0 text is reproduced under Abseil above.
 ====================================================================================================
 
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -1999,3 +2000,196 @@ License: MIT
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
+
+====================================================================================================
+libbacktrace (Linux only, statically linked into Jde.Opc.Hub and Jde.Opc.Server)
+https://github.com/ianlancetaylor/libbacktrace
+License: BSD-3-Clause
+====================================================================================================
+
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: libbacktrace
+Upstream-Contact: Ian Lance Taylor <iant@golang.org>
+Source: https://github.com/ianlancetaylor/libbacktrace
+
+Files:     Makefile.am
+           README.md
+           alloc.c
+           allocfail.c
+           allocfail.sh
+           atomic.c
+           backtrace.c
+           backtrace.h
+           backtrace-supported.h.in
+           btest.c
+           configure.ac
+           dwarf.c
+           edtest.c
+           edtest2.c
+           elf.c
+           fileline.c
+           filenames.h
+           filetype.awk
+           instrumented_alloc.c
+           install-debuginfo-for-buildid.sh.in
+           internal.h
+           macho.c
+           mmap.c
+           mmapio.c
+	   mtest.c
+           nounwind.c
+           pecoff.c
+           posix.c
+           print.c
+           read.c
+           simple.c
+           sort.c
+           state.c
+           stest.c
+           test_format.c
+           testlib.c
+           testlib.h
+           ttest.c
+           unittest.c
+           unknown.c
+           xcoff.c
+           xztest.c
+           ztest.c
+Copyright: 2012-2021 Free Software Foundation, Inc.
+License: BSD-3-clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are
+ met:
+ .
+ (1) Redistributions of source code must retain the above copyright
+ notice, this list of conditions and the following disclaimer.
+ .
+ (2) Redistributions in binary form must reproduce the above copyright
+ notice, this list of conditions and the following disclaimer in
+ the documentation and/or other materials provided with the
+ distribution.
+ .
+ (3) The name of the author may not be used to
+ endorse or promote products derived from this software without
+ specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+ INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ POSSIBILITY OF SUCH DAMAGE.
+
+
+Files:     Isaac.Newton-Opticks.txt
+Copyright: Expired
+License:   public-domain
+ No license required for any purpose; the work is not subject to copyright in any jurisdiction.
+
+Files:     aclocal.m4
+           config/lead-dot.m4
+           config/multi.m4
+           config/override.m4
+           libtool.m4
+	   ltoptions.m4
+           ltsugar.m4
+	   ltversion.m4
+	   lt~obsolete.m4
+Copyright: 1996-2009 Free Software Foundation, Inc.
+License:   PERMISSIVE
+ This file is free software; the Free Software Foundation gives
+ unlimited permission to copy and/or distribute it, with or without
+ modifications, as long as this notice is preserved.
+
+
+Files:     Makefile.in
+           compile
+           config.guess
+	   config.h.in
+           config.sub
+	   config/libtool.m4
+	   config/lt*.m4
+           configure
+           install-sh
+           ltmain.sh
+           missing
+           test-driver
+Copyright: 1992-2018 Free Software Foundation, Inc.
+           1994 X Consortium
+License:   __AUTO_PERMISSIVE__
+ Autogenerated files with permissive licenses.
+
+
+Files:     config/enable.m4
+           config/unwind_ipinfo.m4
+	   config/warnings.m4
+Copyright: 2003-2011 Free Software Foundation, Inc.
+License:   GPL-3.0+
+ This file is part of GCC.
+ .
+ GCC is free software; you can redistribute it and/or modify it under
+ the terms of the GNU General Public License as published by the Free
+ Software Foundation; either version 3, or (at your option) any later
+ version.
+ .
+ GCC is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with GCC; see the file COPYING3.  If not see
+ <http://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ Version 3 can be found in `/usr/share/common-licenses/GPL-3'.
+
+
+Files:     move-if-change
+Copyright: 2002-2014 Free Software Foundation, Inc.
+License:   GPL-3.0+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ Version 3 can be found in `/usr/share/common-licenses/GPL-3'.
+
+Files:     debian/*
+Copyright: 2022 Wookey <wookey@debian.org>
+License:   BSD-2-clause
+ Redistribution and use in source and binary forms, with or without modification,
+ are permitted provided that the following conditions are met:
+ .
+    1. Redistributions of source code must retain the above copyright notice,
+       this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright notice,
+       this list of conditions and the following disclaimer in the documentation
+       and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY
+ WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ POSSIBILITY OF SUCH DAMAGE.

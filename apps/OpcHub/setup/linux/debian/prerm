@@ -1,9 +1,14 @@
 #!/bin/sh
-# jde-opchub prerm - stop and disable on removal; an upgrade keeps the services running (postinst restarts them).
+# jde-opchub prerm - stop and disable on removal (a reinstall enables again what was enabled); an upgrade keeps the services running (postinst restarts them).
 set -e
 case "$1" in
 	remove|deconfigure)
 		if [ -d /run/systemd/system ]; then
+			# which were enabled, for postinst to enable again on a reinstall - `apt install` after `apt remove`, which dpkg
+			# hands postinst as an upgrade (reviews/m4-closing.md #5).  Under /etc/jde-cpp:  a purge removes it with the rest.
+			for unit in jde-opchub.service jde-opcserver.service; do
+				if systemctl is-enabled --quiet "$unit" 2>/dev/null; then echo "$unit"; fi
+			done > /etc/jde-cpp/.enabled-at-remove || true
 			systemctl disable --now jde-opcserver.service jde-opchub.service || true
 		fi
 		;;

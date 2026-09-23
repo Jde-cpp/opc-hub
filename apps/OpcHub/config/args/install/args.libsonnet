@@ -34,8 +34,8 @@ paths + {
 	//id the site's origin is registered under, served to the page by GET /GoogleAuthClientId.  The default is the project's
 	//own id, whose authorized JavaScript origins are its dev ports on localhost - a site browsed from anywhere else needs its
 	//own (Google Cloud console > APIs & Services > Credentials > OAuth client ID, Web application, authorized JavaScript
-	//origin http://<host>:1967 - the page's own origin, the hub's), set here and the service restarted.  A reinstall overwrites
-	//this file - keep a copy.
+	//origin http://<host>:1967 - the page's own origin, the hub's), set here and the service restarted.  A Windows reinstall
+	//overwrites this file - keep a copy; on Linux the .deb (a conffile) and the tarball's install.sh (.new beside it) keep your edit.
 	googleAuthClientId: "445012155442-1v8ntaa22konm0boge6hj5mfs15o9lvd.apps.googleusercontent.com",
 	//The hub's web certificate (Opc.Hub.jsonnet http.ssl).  Its names are localhost, this machine's name and 127.0.0.1; hostNames
 	//adds the others a browser or a split OpcServer reaches the hub by - a fully qualified name, an alias - as DNS entries.  A
