@@ -11,14 +11,11 @@ namespace Jde::Opc::Emulator{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Client };
 	Ω check( UA_StatusCode sc, string what, SL sl )ε->void{ THROW_IFX( sc, UAException(sc, move(what), {.Tags=EOpcLogTags::Client}, sl) ); }
 
-	EmulatorClient::EmulatorClient( string url, string applicationUri, string serverApplicationUri, const Crypto::CryptoSettings& certificate, string issuedToken, SL sl )ε:
+	EmulatorClient::EmulatorClient( string url, string applicationUri, string serverApplicationUri, const Crypto::CryptoSettings& certificate, SL sl )ε:
 		_url{ move(url) },
 		_applicationUri{ Str::Replace(applicationUri, " ", "%20") },
 		_serverApplicationUri{ Str::Replace(serverApplicationUri, " ", "%20") },
-		_token{ move(issuedToken) },
 		_logger{ 0 }{
-		//UAAccess::ActivateSession reads a token under 9 chars as the AppServer session id in hex; anything longer is parsed as a JWT.
-		THROW_IFSL( _token.empty() || _token.size()>8, "Issued token '{}' must be the AppServer session id in hex (1-8 chars).", _token );
 		//credential material first: a throw here leaves nothing allocated.
 		auto cert = ToUAByteString( Crypto::ReadCertificate(certificate.Certificate.Path) );
 		auto key = ToUAByteString( Crypto::ReadPrivateKey(certificate.PrivateKey) );
@@ -31,13 +28,6 @@ namespace Jde::Opc::Emulator{
 		//no noReconnect: open62541's initial connect must close the None discovery channel and reopen with the selected
 		//Basic256Sha256 endpoint (that reopen counts as a reconnect); blocking it aborts every connect with BadNotConnected.
 		//A genuine session drop is caught by the loop's IsActivated() check, which Disconnect()s and Connect()s afresh.
-		//issued token = the AppServer session id, as the gateway sends it (UAClient::Create).  open62541 overwrites the
-		//policyId with the endpoint's before ActivateSession, and the server ignores it for issued tokens.
-		auto identityToken = UA_IssuedIdentityToken_new();
-		identityToken->policyId = AllocUAString( "open62541-issuedtoken-policy"sv );
-		UA_ByteString_allocBuffer( &identityToken->tokenData, _token.size() );
-		memcpy( identityToken->tokenData.data, _token.data(), _token.size() );
-		UA_ExtensionObject_setValue( &_config.userIdentityToken, identityToken, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
 		_ptr = UA_Client_newWithConfig( &_config );
 		THROW_IFSL( !_ptr, "UA_Client_newWithConfig failed." );
 		UA_Client_getConfig( _ptr )->eventLoop->logger = _config.logging;
@@ -108,7 +98,7 @@ namespace Jde::Opc::Emulator{
 		vector<string> policyUris;
 		for( size_t i=0; i<config->securityPoliciesSize; ++i )
 			policyUris.emplace_back( ToString(config->securityPolicies[i].policyUri) );
-		INFO( "Client security policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}', token: {} chars.", Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri), _token.size() );
+		INFO( "Client security policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}'.", Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri) );
 	}
 
 	α EmulatorClient::StateCallback( UA_Client* ua, UA_SecureChannelState channelState, UA_SessionState sessionState, UA_StatusCode connectStatus )ι->void{
@@ -122,7 +112,21 @@ namespace Jde::Opc::Emulator{
 		}
 	}
 
-	α EmulatorClient::Connect( SL sl )ε->void{
+	α EmulatorClient::Connect( string issuedToken, SL sl )ε->void{
+		//SessionId() is 0 while the app socket is down or still logging in - a backoff, not a token to present.
+		THROW_IFSL( issuedToken=="0", "No AppServer session yet - not connecting to '{}'.", _url );
+		//UAAccess::ActivateSession reads a token under 9 chars as the AppServer session id in hex; anything longer is parsed as a JWT.
+		THROW_IFSL( issuedToken.empty() || issuedToken.size()>8, "Issued token '{}' must be the AppServer session id in hex (1-8 chars).", issuedToken );
+		//issued token = the AppServer session id, as the gateway sends it (UAClient::Create).  open62541 overwrites the
+		//policyId with the endpoint's before ActivateSession, and the server ignores it for issued tokens.  ActivateSession
+		//copies the config's token, so replacing it between sessions is what the next connect presents.
+		auto identityToken = UA_IssuedIdentityToken_new();
+		identityToken->policyId = AllocUAString( "open62541-issuedtoken-policy"sv );
+		UA_ByteString_allocBuffer( &identityToken->tokenData, issuedToken.size() );
+		memcpy( identityToken->tokenData.data, issuedToken.data(), issuedToken.size() );
+		auto config = UA_Client_getConfig( _ptr );
+		UA_ExtensionObject_clear( &config->userIdentityToken );
+		UA_ExtensionObject_setValue( &config->userIdentityToken, identityToken, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
 		DBG( "Connecting to '{}'.", _url );
 		check( UA_Client_connect(_ptr, _url.c_str()), Ƒ("connect '{}'", _url), sl );
 		INFO( "Session activated on '{}'.", _url );

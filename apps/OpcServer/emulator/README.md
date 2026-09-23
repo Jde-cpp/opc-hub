@@ -206,9 +206,6 @@ status names, the §7.38 bit layout, the windows, hold and the sensor range), `P
 
 ## Known limits
 
-- The OPC issued token is the AppServer session id, captured when the client is built; after an AppServer (or hub)
-  restart the app socket logs in again with a new session, but the OpcServer reconnects keep presenting the old one and
-  are refused (`BadIdentityTokenInvalid`) until the emulator is restarted.
 - `UA_Client_connect` is synchronous: a failed attempt stalls the device clock for up to the 10 s client timeout.
 - Only the `Double`/`Float`/`Boolean` field types are published; the pumps contract is all `Double`.
 - Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no

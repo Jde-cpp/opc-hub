@@ -59,6 +59,7 @@ namespace Jde::Opc::Emulator{
 		uint _cycles{}, _published{}, _writes{}, _writeFailures{}, _consecutiveFailures{}, _externalChanges{}, _reconnects{};
 		bool _connected{};//a session has activated at least once.  Until then a failed attempt is the initial connect still failing, not a lost session (#17).
 		uint _attempts{};//connect attempts before the first activation - the initial phase's own count; _reconnects counts only losses after it.
+		SessionPK _session{};//the AppServer session the OPC session was activated with - its identity (#1).
 		string _lastStatus;//what LogStatus last wrote - the final line compares against it (#12).
 	};
 
@@ -96,11 +97,13 @@ namespace Jde::Opc::Emulator{
 		//otherwise present the stale SAN forever, refused BadCertificateUriInvalid with nothing naming the file to delete
 		//(the gateway's CertTests lesson).  EnsureKeyCertificate re-issues on SAN drift and expiry as well as absence.
 		Crypto::EnsureKeyCertificate( opc );
-		_client = mu<EmulatorClient>( _url, _applicationUri, _serverApplicationUri, opc, Ƒ("{:x}", _app->SessionId()) );
+		_client = mu<EmulatorClient>( _url, _applicationUri, _serverApplicationUri, opc );
 	}
 
 	α Emulator::Connect()ε->void{
-		_client->Connect();
+		let session = _app->SessionId();
+		_client->Connect( Ƒ("{:x}", session) );
+		_session = session;
 		//Device paths and tag names resolve in the contract's namespace by default - the one the published fields live
 		//in - so config writes `pump1`, not `pumps~pump1`.  That alias is the contract's own convention (PubSub.h:
 		//dataSet.name stands for dataSet.namespace inside its field paths); borrowing it here tied every device path to
@@ -297,6 +300,14 @@ namespace Jde::Opc::Emulator{
 			if( _plc )
 				_plc->Iterate();//the publisher's timer fires in here.
 			if( !_client->IsActivated() || _consecutiveFailures>=3 ){
+				Reconnect();
+				continue;
+			}
+			//A restarted AppServer logs the app socket in under a new session id and never revives the old one.  An OPC session
+			//activated with the old id keeps working until the OpcServer's snapshot of it lapses (up to a session lifetime), then
+			//is denied everything - commands included - with nothing here to notice under pubsub.  Rebind now instead (#1).
+			if( let session = _app->SessionId(); session && session!=_session ){
+				INFO( "AppServer session replaced - reactivating on '{}' with the new token.", _url );
 				Reconnect();
 				continue;
 			}

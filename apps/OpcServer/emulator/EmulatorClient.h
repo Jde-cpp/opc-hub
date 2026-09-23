@@ -11,9 +11,11 @@ namespace Jde::Opc::Emulator{
 	struct EmulatorClient final : noncopyable{
 		//applicationUri: this client's identity - advertised, and the SAN of `certificate`.  serverApplicationUri: the endpoint
 		//filter, the server's own uri; empty takes any endpoint.
-		EmulatorClient( string url, string applicationUri, string serverApplicationUri, const Crypto::CryptoSettings& certificate, string issuedToken, SRCE )ε;
+		EmulatorClient( string url, string applicationUri, string serverApplicationUri, const Crypto::CryptoSettings& certificate, SRCE )ε;
 		~EmulatorClient();
-		α Connect( SRCE )ε->void;//synchronous - returns with the session activated or throws.
+		//synchronous - returns with the session activated or throws.  issuedToken: the AppServer session id in hex, read at
+		//each connect - a restarted AppServer issues a new one, and the old one is refused for good (emulator-review #1).
+		α Connect( string issuedToken, SRCE )ε->void;
 		α Disconnect()ι->void;
 		α IsActivated()Ι->bool;
 		α Iterate( uint32 timeoutMs )ι->UA_StatusCode;
@@ -27,7 +29,7 @@ namespace Jde::Opc::Emulator{
 	private:
 		α Configure( const UA_ByteString& certificate, const UA_ByteString& privateKey, SL sl )ε->void;
 		Ω StateCallback( UA_Client* ua, UA_SecureChannelState channelState, UA_SessionState sessionState, UA_StatusCode connectStatus )ι->void;
-		string _url, _applicationUri, _serverApplicationUri, _token;
+		string _url, _applicationUri, _serverApplicationUri;
 		Logger _logger;
 		UA_ClientConfig _config{};//newWithConfig shallow-copies this; UA_Client_delete clears the client's copy - never UA_ClientConfig_clear(&_config).
 		UA_Client* _ptr{};
