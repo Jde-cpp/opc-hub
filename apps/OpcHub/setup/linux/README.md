@@ -148,7 +148,7 @@ the data root as `debian/postinst` does.
 nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp` as well - but for an `env` that sets `JDE_PASSCODE`.  Left in place, deliberately
 - on purge too, as the Windows uninstaller leaves `%ProgramData%\Jde-Cpp`: `OpcHub.db`, `OpcServer.db`, `ssl/`
 (certificates and keys - the OPC servers trust them), the logs, and the `jde-cpp` account that owns them - with the
-passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp` and `/etc/jde-cpp` by hand for a clean slate.  `./install.sh --uninstall` does the same for a per-user install, keeping
+passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp` and `/etc/jde-cpp` by hand for a clean slate.  A database is its `.db` with any `.db-wal`/`.db-shm` beside it:  a clean stop folds them back into the `.db` and deletes them, but after a crash or a `kill -9` the latest rows are still in the `-wal` - copy, move or delete the three together.  `./install.sh --uninstall` does the same for a per-user install, keeping
 `~/.config/Jde-Cpp/<Product>`.  The Web UI site's link into nginx (`/etc/nginx/sites-enabled/jde-opchub`, or any `sites-enabled`/`conf.d` link to `/etc/jde-cpp/nginx-opchub.conf`) goes with `apt purge`, and nginx is reloaded; after a plain `apt remove` the link still works (the conffile is kept) - `sudo rm` it by hand to drop the 8071 site.
 
 ## Notes

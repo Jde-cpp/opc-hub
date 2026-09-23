@@ -1,6 +1,7 @@
 #include <jde/db/db.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/dll.h>
+#include <jde/fwk/process/process.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/generators/Functions.h>
 #include <jde/db/meta/Cluster.h>
@@ -17,6 +18,19 @@
 
 namespace Jde::DB{
 	vector<sp<Cluster>> _clusters;
+	//Nothing releases a cluster (the graph db-review2 #38 accepted), so no data source's destructor runs:  close them once
+	//nothing can write any more.  sqlite folds its WAL back into the .db only on a close (reviews/m4-closing.md #24).
+	Ω disconnect()ι->void{
+		for( let& cluster : _clusters ){
+			try{
+				cluster->DataSource->Disconnect();
+				DBGT( ELogTags::Sql | ELogTags::Shutdown, "[{}]Disconnected.", cluster->ConfigName );
+			}
+			catch( const std::exception& e ){
+				WARNT( ELogTags::Sql | ELogTags::Shutdown, "[{}]Disconnect failed:  {}", cluster->ConfigName, e.what() );
+			}
+		}
+	}
 	Ω buildClusters( const jobject& dbServers, sp<Access::IAcl> authorize )ε->vector<sp<Cluster>>{
 		vector<sp<Cluster>> y;
 		for( auto&& [name, value] : dbServers ){
@@ -29,8 +43,10 @@ namespace Jde::DB{
 		return y;
 	}
 	Ω getClusters( sp<Access::IAcl> authorize )ε->const vector<sp<Cluster>>&{ //global-settings cache; supplied dbSettings go through buildClusters instead (see GetAppSchema).
-		if( _clusters.empty() )
+		if( _clusters.empty() ){
 			_clusters = buildClusters( Settings::AsObject("/dbServers"), authorize );
+			Process::AddFinalizeFunction( [](bool){ disconnect(); } );
+		}
 		return _clusters;
 	}
 }

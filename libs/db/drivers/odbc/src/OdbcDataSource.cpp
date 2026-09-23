@@ -14,9 +14,7 @@ Jde::DB::IDataSource* GetDataSource(){
 
 namespace Jde::DB::Odbc{
 	constexpr ELogTags _tags = ELogTags::Sql;
-	α OdbcDataSource::Disconnect()ε->void{
-		BREAK;
-	}
+	α OdbcDataSource::Disconnect()ε->void{}//holds no connection:  each statement's HandleSession connects and disconnects its own, pooled by the driver manager.
 	α AllocateBindings( const HandleStatement& statement,  SQLSMALLINT columnCount )ε->vector<up<Binding>>;
 	α OdbcDataSource::AtCatalog( sv catalog, SL /*sl*/ )ε->sp<IDataSource>{
 		string catalogName;

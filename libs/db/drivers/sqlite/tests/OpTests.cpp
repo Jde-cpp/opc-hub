@@ -190,6 +190,33 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_TRUE( weak.expired() ); //was false forever: the data source owned itself.
 	}
 
+	//m4-closing #24: sqlite folds the WAL back into the .db only when the connection closes, and nothing closed the products'
+	//- a .db copied alone, the one file the READMEs said an uninstall keeps, held none of the rows.  DB's finalize function
+	//makes this same Disconnect at exit.
+	TEST_P( OpTests, DisconnectFoldsTheWalIntoTheDb ){
+		if( GetParam()!="file" )
+			GTEST_SKIP() << "a :memory: db has no WAL.";
+		_ds->ExecuteSync( {"insert into access_identities( name, slug ) values( ?, ? )", {Value{"walter"}, Value{"walter@example.com"}}} );
+		let path = *Settings::FindString( "/dbServers/file/catalogs/testDb/path" );
+		ASSERT_TRUE( fs::exists(path+"-wal") );
+
+		_ds->Disconnect();
+		EXPECT_FALSE( fs::exists(path+"-wal") );
+		EXPECT_FALSE( fs::exists(path+"-shm") );
+
+		let copy = path+".copy";
+		fs::copy_file( path, copy, fs::copy_options::overwrite_existing );
+		auto config = Settings::AsObject( "/dbServers/file" );
+		config.at( "catalogs" ).as_object().at( "testDb" ).as_object()["path"] = copy;
+		{
+			let alone = DB::DataSource( config );
+			EXPECT_EQ( alone->ScalerSync<uint>({"select count(*) from access_identities where name=?", {Value{"walter"}}}), 1u );
+		}
+		for( let& file : {copy, copy+"-wal", copy+"-shm"} )
+			fs::remove( file );
+		EXPECT_EQ( _ds->ScalerSync<uint>({"select count(*) from access_identities where name=?", {Value{"walter"}}}), 1u ); //the next statement reopens.
+	}
+
 	//#53: the async ScalerOpt read the cell with Row::Get, which ASSERTs on a NULL and returns T{} - so it answered an
 	//*engaged* optional{0} where the sync ScalerSyncOpt, which goes through Row::GetOpt, answers nullopt.  One API, two
 	//answers, and Scaler<T> inherited it: 0 instead of "No value returned".

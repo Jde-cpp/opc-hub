@@ -169,7 +169,7 @@ trust exchanged, signed in as `kepware\Administrator` 11 minutes in, a node valu
 Add/Remove Programs (or the Start Menu shortcut in a current-user install) stops and deregisters the services (or ends the
 console windows and removes the shortcuts/Run entries), removes the program dir, the `config\` mirror and the meta/sql/
 nodesets the installer put in the product dirs.  Left in place, deliberately: `OpcHub.db`, `OpcServer.db`, `ssl\`
-(certificates and keys - the OPC servers trust them) and the logs.  Delete `C:\ProgramData\Jde-Cpp` by hand for a clean slate.
+(certificates and keys - the OPC servers trust them) and the logs.  Delete `C:\ProgramData\Jde-Cpp` by hand for a clean slate.  A database is its `.db` with any `.db-wal`/`.db-shm` beside it:  a clean stop folds them back into the `.db` and deletes them, but after a crash or a forced end the latest rows are still in the `-wal` - copy, move or delete the three together.
 
 ## Notes
 

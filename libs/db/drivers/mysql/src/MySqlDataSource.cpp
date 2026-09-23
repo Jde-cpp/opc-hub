@@ -50,13 +50,25 @@ namespace Jde::DB::MySql{
 	};
 	constexpr uint MaxIdleSessions{ 4 };
 
-	MySqlDataSource::~MySqlDataSource(){
-		for( auto& session : _idleSessions ){
+	Ω closeSessions( vector<up<Session>>& sessions )ι->void{
+		for( auto& session : sessions ){
 			try{
 				session->Conn.close();
 			}
 			catch( ... ){}
 		}
+	}
+	MySqlDataSource::~MySqlDataSource(){
+		closeSessions( _idleSessions );
+	}
+	//The idle pool only - a session in use goes back to ReleaseSession, which pools it afresh.
+	α MySqlDataSource::Disconnect()ε->void{
+		vector<up<Session>> sessions;
+		{
+			lg l{ _idleSessionsMutex };
+			sessions.swap( _idleSessions );
+		}
+		closeSessions( sessions );
 	}
 
 	α MySqlDataSource::AcquireSession( SL sl )ε->up<Session>{
