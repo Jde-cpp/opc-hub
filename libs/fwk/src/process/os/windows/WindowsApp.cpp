@@ -239,10 +239,10 @@ namespace Jde{
 		auto manager = MyOpenSCManager();
 		auto service = ServiceHandle{ ::OpenService(manager.get(), Process::AppName().c_str(), DELETE) };
 		if( !service.get() ){
-			if( ::GetLastError()==ERROR_SERVICE_DOES_NOT_EXIST )
-				THROW( "Service '{}' not found.", Process::AppName() );
-			else
+			if( ::GetLastError()!=ERROR_SERVICE_DOES_NOT_EXIST )
 				THROW( "DeleteService failed - {}", ::GetLastError() );
+			INFOT( ELogTags::App, "Service '{}' not found - nothing to uninstall.", Process::AppName() );//already gone is what -uninstall asks for:  a reinstall after an aborted Setup, or an `sc delete`, meets it, and a throw here reached the Application log as Critical (reviews/m4-closing.md #10)
+			return;
 		}
 		THROW_IF( !::DeleteService(service.get()), "DeleteService failed:  {:x}", GetLastError() );
 

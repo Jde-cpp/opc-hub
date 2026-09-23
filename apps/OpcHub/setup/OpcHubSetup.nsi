@@ -171,8 +171,8 @@ Function CheckDataDir
 	Delete "$DataDir\.write-test"
 FunctionEnd
 
-; Stop a service and let its exe deregister itself; the exe's own -uninstall throws on a missing service, so the result
-; is ignored - this is the reinstall path (CreateService fails on ERROR_SERVICE_EXISTS) and the uninstaller's.
+; Stop a service and let its exe deregister itself; its -uninstall exits 0 on a missing service too, and the result is
+; ignored - this is the reinstall path (CreateService fails on ERROR_SERVICE_EXISTS) and the uninstaller's.
 ; /y:  Jde.OpcServer depends on Jde.OpcHub (`sc config ... depend=`, -Services), and `net stop` of a service with a running
 ; dependent asks "continue? (Y/N)" - with no console to answer it stops nothing, and -uninstall below only deletes the
 ; registration (Process::Uninstall is DeleteService alone), so the hub would run on, its image locked, through the install.
@@ -203,7 +203,7 @@ FunctionEnd
 
 ; Did -install register the service?  Its exit code first - the caller's $0:  the exe exits 0 only through its Trace
 ; "successfully installed." throw (process.cpp, Process::ExitException) and nonzero for every failure, "Service already
-; exists." and "CreateService failed - 1072" (marked for deletion:  a Services console holding it) among them.  This used to
+; exists." and "CreateService failed - 1072" (marked for deletion:  another program holding it open) among them.  This used to
 ; read `sc query` alone, which an earlier install's registration passes - and the install "succeeded" on the previous
 ; release's exe (reviews/m4-closing.md #7).  `sc query` stays, as the second word.
 !macro RequireService svc
@@ -213,7 +213,7 @@ FunctionEnd
 	Pop $2
 	${If} $1 != 0
 	${OrIf} $0 != 0
-		MessageBox MB_OK|MB_ICONSTOP "Registering the ${svc} service failed (-install returned $1) - see the details above.  If the Services console is open, close it and run Setup again." /SD IDOK
+		MessageBox MB_OK|MB_ICONSTOP "Registering the ${svc} service failed (-install returned $1) - see the details above.  A 1072 there means another program still holds the old registration open:  close it, or restart Windows, and run Setup again." /SD IDOK
 		Abort "Service registration failed"
 	${EndIf}
 !macroend
