@@ -190,6 +190,8 @@ namespace Jde{
 		if( !ExitReason() )
 			SetExitReason( y, false );
 		std::cerr << prefix << message << std::endl;
+		if( y!=EXIT_SUCCESS && !IsConsole() )//a service's stderr goes nowhere, and a startup failure never reaches the dispatcher:  the file log was its only record (reviews/m4-closing.md #10, run 4).
+			AddApplicationLog( ELogLevel::Critical, Ƒ("{}{}", prefix, message) );
 		return y;
 	}
 
