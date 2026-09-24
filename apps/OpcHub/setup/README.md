@@ -125,7 +125,7 @@ command lines (composed by the exe's `-install`, `libs/fwk/src/process/process.c
 ```
 
 The current-user shortcuts are the same lines with `-c` in front.  `-sync` creates the tables in the fresh `.db` on the
-first start and is idempotent afterwards (create-missing tables, recreate the views, upsert the mutations); drop it later
+first start and is idempotent afterwards (create-missing tables and views, upsert the mutations); drop it later
 with `sc config Jde.OpcHub binPath= "…"` or by editing the shortcut.
 
 ## First login

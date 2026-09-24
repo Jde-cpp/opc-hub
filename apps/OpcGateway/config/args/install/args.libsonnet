@@ -1,3 +1,8 @@
+// A standalone Windows install on SQL Server: paths under $(ProgramData)/Jde-Cpp/OpcGateway, the odbc driver from the
+// AppServer's Program Files dir, DSN=jde, the gateway tables in schema `opc` with no prefix and the access meta from
+// the AppServer's dir.  Nothing loads it today: the installers ship the hub, whose own config/args/install mounts this
+// directory's meta and sql, and no setup script copies this file.  paths-common only - no ext vars, since a service
+// starts without -tests.
 local paths = import '../../../../../libs/db/config/paths-common.libsonnet';
 paths + {
 	local args = self,

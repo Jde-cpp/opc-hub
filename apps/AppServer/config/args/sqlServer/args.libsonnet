@@ -1,3 +1,6 @@
+// The SQL Server dev args, Windows only (the odbc driver builds nowhere else): `-include=args/sqlServer`.  args-common
+// binds the ext vars and the roots; the connection is DSN=<debug|rls> by build target with the odbc driver from the
+// build's bin, the tables under dbo with their `access_`/`app_` prefixes.
 local common = import '../../../../../libs/db/config/args-common.libsonnet';
 common + {
 	local args = self,

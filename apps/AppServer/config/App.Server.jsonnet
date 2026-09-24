@@ -1,3 +1,11 @@
+// The AppServer's settings.  Loaded three ways: by the standalone Jde.App.Server (`-settings=<this file>
+// -include=args/<dialect>`), by Opc.Hub.jsonnet, which imports it as a function and picks the keys the hub keeps, and
+// by the soak harness's App.Server.Soak.jsonnet overlay.  `sync` is the `-sync` flag (schema sync on start);
+// `args.libsonnet` is whichever config/args/<dialect> the `-include` names - there is no default.  An installed product
+// reaches this file through the hub's config, whose args/install supplies the paths.  The keys someone would touch:
+// /http address, port and accessControl (the site's origin), /http/clientSettings/googleAuthClientId (the OAuth client
+// the login page serves), /access/trustedCertDirs (who may enroll by certificate), /workers (thread counts) and
+// /logging.
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 function( sync=false )

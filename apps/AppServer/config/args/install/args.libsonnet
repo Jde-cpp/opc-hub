@@ -1,3 +1,7 @@
+// A standalone Windows install on SQL Server: paths under $(ProgramData)/Jde-Cpp/AppServer, the odbc driver from
+// Program Files, DSN=jde, the access tables in schema `acc` and the app tables in `app`, no prefixes.  Nothing loads it
+// today: the installers ship the hub, whose own config/args/install mounts this directory's meta and sql, and no setup
+// script copies this file.  paths-common only - no ext vars, since a service starts without -tests.
 local paths = import '../../../../../libs/db/config/paths-common.libsonnet';
 paths + {
 	local args = self,

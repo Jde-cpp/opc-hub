@@ -1,3 +1,9 @@
+// The `app` schema: programs, their instances and hosts, the connections each run registers, the log levels and the
+// per-instance tag levels the site's log settings set.  Mounted by name from an args file's catalog (`app:{ meta: <this
+// file>, prefix: "app_" }`) - this app's args, the hub's, and the test configs of every app that embeds an AppServer -
+// and synced by DB::SyncSchema on start.  `common-meta.libsonnet` beside it is a link the build makes to
+// libs/db/config/common-meta.libsonnet.  The seed rows are app.mutation; the custom insert procs are
+// config/sql/<dialect>, compiled into Jde.DB.Sqlite.AppServer for sqlite.
 local common = import 'common-meta.libsonnet';
 {
 	local tables = self.tables,

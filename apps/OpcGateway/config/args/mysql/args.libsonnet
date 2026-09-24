@@ -1,3 +1,7 @@
+// The MySQL dev args: `-include=args/mysql`, a MySQL on localhost.  args-common binds the ext vars and the build/source
+// roots; the login is $(JDE_MYSQL_USER)/$(JDE_MYSQL_PWD), the gateway tables sit in schema `debug` or `rls` by build
+// target (args.schema()) with the `opc_` prefix, and the access meta is mounted for its types only (`_access`, no
+// twins).
 local common = import '../../../../../libs/db/config/args-common.libsonnet';
 common + {
 	local args = self,
