@@ -69,10 +69,9 @@ namespace Jde::Opc::Server{
 		}
 		Access::ResourcePK rootResourcePK{};
 		std::map<NodeId, Access::ResourcePK> nodeResources;
-		if( baseResources.empty() ){//publish the empty state anyway: on a re-run the operator has just deleted the last one, and a stale map would keep enforcing it.
-			DBG( "No base resources found for OPC UA server authorization." );
-		}
-		else{
+		//An empty scan publishes the empty state anyway: on a re-run the operator has just deleted the last one, and a
+		//stale map would keep enforcing it.
+		if( !baseResources.empty() ){
 			if( let it = baseResources.find(root); it!=baseResources.end() ){
 				rootResourcePK = it->second;
 				nodeResources.emplace( root, rootResourcePK );
@@ -81,6 +80,7 @@ namespace Jde::Opc::Server{
 			std::set<NodeId> visited{ root };
 			AssignRights( root, server, rootResourcePK, baseResources, nodeResources, visited );
 		}
+		let nodeCount = nodeResources.size();
 		{
 			ul _{ _nodeResourcesMutex };//_enabled last of the three: it is what opens NodeRights' lookup of the other two.
 			_nodeResources = move( nodeResources );
@@ -88,6 +88,10 @@ namespace Jde::Opc::Server{
 			_enabled = !baseResources.empty();
 		}
 		_assigned = true;
+		//Which branch this took decides open-vs-enforcing for the process lifetime, and nothing said so: a run whose
+		//writes were authorized could not be told from one that was never enforcing (soak-findings #4).
+		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}.", _app,
+			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK );
 	}
 
 	α OpcAuthorize::CreateResource( Access::Resource&& resource )ε->void{

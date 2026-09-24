@@ -133,6 +133,9 @@ namespace Jde::Access{
 	α AccessListener::AclChanged( ESubscription event, const jobject& o )ε->void{
 		using enum ESubscription;
 		let identityPK = Json::AsNumber<IdentityPK::Type>( o, "identity/id" );
+		//The only account of the live acl path: without it an acl that never reached this process looks exactly like one
+		//that reached it and changed nothing (soak-findings #4).
+		DBGT( ELogTags::Access, "[{}]acl event {:x} for identity {}: {}", Name, (uint16)underlying(event), identityPK, serialize(o) );
 		switch( event ){
 			case Created:{
 				if( auto v = o.if_contains("permissionRight"); v ){ //identity{id:y}, permission:{ allowed:x, denied:x, resource:{id:x} }
