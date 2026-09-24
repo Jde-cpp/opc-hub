@@ -1,3 +1,12 @@
+// The `gateway` schema: server_connections, the OPC servers the site connects to, plus `sessions` and `search`,
+// read-only names with no table behind them that the QL grafts live data onto (opcSessions, search).  Mounted by name
+// from an args file's catalog (`gateway:{ meta: <this file>, prefix: … }`) - this app's args, the hub's, and the test
+// configs that embed a gateway - and synced by DB::SyncSchema on start.  `common-meta.libsonnet` beside it is a link
+// the build makes to libs/db/config/common-meta.libsonnet.  The insert proc is config/sql/<dialect>, compiled into
+// Jde.DB.Sqlite.OpcGateway for sqlite.  Of the two .mutation files here, the installer applies
+// release-opcServer.mutation (renamed gateway_opcServer.mutation: the bundled server as the default connection) and
+// skips access-opcGateway.mutation, whose createRole shape the seed does not apply; the dev args list no dataPaths, so
+// neither runs in a dev tree.
 local common = import 'common-meta.libsonnet';
 {
 	local tables = self.tables,

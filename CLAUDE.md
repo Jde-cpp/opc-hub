@@ -86,6 +86,7 @@ Awaitables inherit from `VoidAwait` or `IAwait<TResult, TTask>` in `co/Await.h`.
 | `$JDE_COMPILER` | Compiler subdirectory name under `$JDE_BUILD_DIR` (e.g. `clang++`) |
 
 ## Other Stuff
+- Don't create branches — work on whatever branch is checked out; the user creates branches and lands changes through their own PR flow. (A branch made with `git switch -c <name> origin/main` tracks `origin/main`, so a plain push from it goes straight to `main`.)
 - Never suggest enclosing single-line `if` statements with braces.
 - Never run an unscoped/filesystem-wide search (e.g. `find /`, or any search rooted above the repo). Always scope file searches to `C:\Users\duffyj\source\repos` or `$JDE_BUILD_DIR` (build outputs, e.g. `x:\build` on Windows) — or a narrower subdirectory of either. A full-drive search can run for tens of minutes burning CPU for no benefit. Prefer Glob/Grep over shelling out to `find`/`grep` in the first place.
 - Markdown docs that cite repo files (reviews, findings, design notes) must link them per the **`md-file-refs`** skill — `` [`DBException.h:37`](../opc-hub/include/jde/db/DBException.h#L37) ``, never `file://` (the VS Code preview blocks it) or root-relative. Run its `linkify.py` over the doc when finishing it; no need to ask first.

@@ -1,3 +1,11 @@
+// The gateway's settings.  Loaded three ways: by the standalone Jde.Opc.Gateway (`-settings=<this file>
+// -include=args/<dialect>`), by Opc.Hub.jsonnet, which imports it as a function and picks the keys the hub keeps, and
+// by the soak harness's Opc.Gateway.Soak.jsonnet overlay.  `sync` is the `-sync` flag (schema sync on start);
+// `args.libsonnet` is whichever config/args/<dialect> the `-include` names - there is no default.  An installed product
+// reaches this file through the hub's config, whose args/install supplies the paths.  The keys someone would touch:
+// /gateway (pingInterval and ttl for the OPC sessions, search's crawl caps, issuedCerts, verifyServerCertificate and
+// trustedCertDirs for the servers it connects to, allowPlaintextPassword), /http address, host and port,
+// /ql/introspection and /logging.
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 //The gateway's own OPC UA applicationUri:  what its clients tell a server they are, and so the uri SAN of every certificate
