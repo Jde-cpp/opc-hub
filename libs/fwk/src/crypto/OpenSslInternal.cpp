@@ -14,7 +14,7 @@ namespace Jde::Crypto{
 	using namespace Jde::Crypto::Internal;
 	α Internal::File( const fs::path& path, bool write, SL sl )ε->BioPtr{
 		THROW_IFX( !write && !fs::exists(path), IO::IOException(path, "File does not exist.") );
-		auto p = BIO_new_file(path.string().c_str(), write ? "w" : "r"); CHECK_NULL( p );
+		auto p = BIO_new_file(path.string().c_str(), write ? "w" : "rb"); CHECK_NULL( p );//"rb":  a Windows text-mode read ends a DER certificate at its first 0x1A byte.
 		return BioPtr{ p, ::BIO_free };
 	}
 	α Internal::ReadFile( const fs::path& path, SL sl )ε->BioPtr{ return File( path, false, sl ); }
