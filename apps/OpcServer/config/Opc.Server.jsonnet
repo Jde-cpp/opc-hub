@@ -1,3 +1,13 @@
+// The OpcServer's settings, the base every overlay here imports as a function: Opc.Server.Hub.jsonnet (against a hub),
+// Opc.Server.Install.jsonnet (the installed service), Opc.Server.Emulator.jsonnet and Opc.Server.Emulator.Hub.jsonnet
+// (plus the PubSub reader), and the soak harness's Opc.Server.Soak.jsonnet.  Loaded directly only by the standalone
+// Jde.Opc.Server against a split AppServer (`-settings=<this file> -include=args/<dialect>`).  `sync` is the `-sync`
+// flag (schema sync on start); `args.libsonnet` is whichever config/args/<dialect> the `-include` names - there is no
+// default.  The keys someone would touch: /opcServer (port, address, configFiles - the nodesets that are the address
+// space - slug, description, ssl), /opc (tokenTypes, the opt-in users list, userTokenPolicyUri),
+// /access/trustedCertDirs (the UA trust list - see the note at that key), /http (the 1970 listener, whose certificate
+// is the hub login), /web/client/ssl/caFile (that login's TLS anchor, what the Hub overlay swaps), /workers and
+// /logging.  /credentials is read at startup but is not the login identity (Opc.Server.Install.jsonnet says why).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 function( sync=false )

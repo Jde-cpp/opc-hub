@@ -1,3 +1,7 @@
+//Jde.Fwk.Tests: the framework - chrono, strings, json, settings, files, io drive, cache, timers, process, exceptions.
+//No data source and no args/ dir, so addJdeTest's `-include=args/sqlite -arg path=:memory:` is inert; `-tests`/`-ctest`
+//binds logsDir, which is where testing.file and the logs land.  cryptoTests.clear keeps the generated key material;
+//workers.blockStallWarning is short so the stall warning is observable.
 local logsDir = std.extVar("logsDir");
 {
 	testing:{

@@ -1,6 +1,8 @@
 local common = import '../../../../../libs/db/config/args-common.libsonnet';
-//The AppServer's mounts plus the gateway's, in the one <buildTarget> schema - the same table names (access_*, app_*, opc_*)
-//the split AppServer + gateway create, so the hub runs against the existing data.
+//The MySQL dev args: `-include=args/mysql`, a MySQL on localhost, the login $(JDE_MYSQL_USER)/$(JDE_MYSQL_PWD);
+//args-common binds the ext vars and the build/source roots.  The AppServer's mounts plus the gateway's, in the one
+//<buildTarget> schema - the same table names (access_*, app_*, opc_*) the split AppServer + gateway create, so the hub
+//runs against the existing data.
 common + {
 	local args = self,
 	sqlType: "mysql",

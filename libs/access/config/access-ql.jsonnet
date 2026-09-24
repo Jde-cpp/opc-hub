@@ -1,3 +1,7 @@
+// GraphQL introspection for the access schema's Group and User types - the field list and type of each, including the
+// fields no table column carries (Group.members, the Identity union; User's certificate fields).  Read by QL::Configure
+// from the `ql:` path beside a schema's `meta:` in the args files (libs/ql ql.cpp AddIntrospection) and served to the
+// site's __type queries.
 local String = { kind:"SCALAR", name:'String' };
 local NonNullString = { kind: 'NON_NULL', name:null, ofType:String };
 local Id = { kind: 'NON_NULL', name:null, ofType:{kind:"SCALER", name:"ID"} };

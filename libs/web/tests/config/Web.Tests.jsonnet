@@ -1,3 +1,7 @@
+//Jde.Web.Tests: the HTTP and websocket client and server - sessions and their two expiries, body and message caps,
+//CORS, TLS with a certificate generated into testing.certDir, JWTs, the proto exceptions.  No data source and no args/
+//dir, so addJdeTest's `-include=args/sqlite -arg path=:memory:` is inert.  The server listens on 5005 (`/http/port`);
+//the timeouts and caps are set small on purpose - each comment below names the test that needs it.
 local logsDir = std.extVar("logsDir");
 {
 	testing:{

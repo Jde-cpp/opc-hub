@@ -1,3 +1,9 @@
+// The vocabulary every *-meta.jsonnet builds its tables from: the column `types`, the `$now` sql function, the
+// sequenced primary-key shapes (small/pk/long), the `name` column and the slug set (slug, attributes, created, updated,
+// deleted, description) with their natural keys, and filter() for dropping fields.  Column keys: `i` the column order,
+// `sk` the natural-key position, `sequence` a generated key, `insertable`/`updateable` whether writes carry it (libs/db
+// meta/Column.cpp, Table.cpp).  Not imported by path: the build links it beside each meta (linkConfigFile in the
+// access, AppServer and OpcGateway CMakeLists) and the installers copy it into the product dir.
 {
 	local types = self.types,
 	types: {

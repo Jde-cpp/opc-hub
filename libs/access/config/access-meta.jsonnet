@@ -1,3 +1,14 @@
+// The `access` schema: identities (users and groups), providers and their types, resources, permissions and their
+// rights, roles and their members, the acl, the seeds ledger and profiles, plus the groupMembers/providersQL/usersQL
+// views.  Mounted by name from an args file's catalog (`access:{ meta: <this file>, ql: access-ql.jsonnet, prefix: …
+// }`) by every app that hosts the access library - the AppServer, the hub, the OpcServer's and the gateway's args for
+// its types - and synced by DB::SyncSchema on start; the procs are config/sql/<dialect>, compiled into
+// Jde.DB.Sqlite.AppServer for sqlite.  `common-meta.libsonnet` beside it is a link the build makes to
+// libs/db/config/common-meta.libsonnet.  The seed files here: access.mutation (the dev seed, rights and provider types)
+// is applied wherever an args file's dataPaths lists this directory; the installers ship release.mutation and
+// release.roles as access.mutation and access.roles, and with the OPC UA Server component release-google.mutation,
+// release-opcServer.mutation and release-opcServer.roles as access_*.  test.mutation is applied by nothing today: no
+// schema is named `test`.
 local common = import 'common-meta.libsonnet';
 local types = common.types;
 local sqlFunctions = common.sqlFunctions;

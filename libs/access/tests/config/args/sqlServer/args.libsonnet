@@ -1,3 +1,6 @@
+//The SQL Server args for Jde.Access.Tests, Windows only (the odbc driver builds nowhere else):
+//`-include=args/sqlServer`, a System DSN `TestAccessDebug` onto database test_access_debug, the access tables in schema
+//`acc` with no prefix, the odbc driver from the build's bin.  args-common binds the ext vars and the roots.
 local common = import '../../../../../../libs/db/config/args-common.libsonnet';
 common + {
 	local args = self,

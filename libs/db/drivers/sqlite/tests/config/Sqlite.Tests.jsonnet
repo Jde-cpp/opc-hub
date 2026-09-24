@@ -1,3 +1,8 @@
+//Jde.DB.Sqlite.Tests: the sqlite driver - schema sync, ops and awaits, the proc registry, connections.  Inherently
+//sqlite, so no args/ dir: the clusters are spelled out here on sqlite-common - `memory` and `file`
+//(<cwd>/sqlite-tests.db) with the access, app, opc and gateway schemas, plus the bare busyHolder/busyWaiter pair for
+//the busy-timeout test and `wedge`, whose open must fail.  The `*/SchemaTests.*/file` filter shape is the parameterised
+//suite name: <suite>.<test>/<cluster>.
 local common = import '../../../../config/sqlite-common.libsonnet';
 local logsDir = common.logsDir;
 local repoSourceDir = common.repoSourceDir;
