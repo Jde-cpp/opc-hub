@@ -1,3 +1,8 @@
+// The sqlite dev and test args: `-include=args/sqlite -arg path=<file>` (`:memory:` if omitted, which is what ctest
+// passes).  sqlite-common binds the ext vars (-tests/-ctest) and the one-file catalog; this file mounts the access
+// schema (meta and ql, under `_appServer`: the `_` prefix means no twins and no proc module are loaded here) and the
+// `opc` schema, whose meta declares only the nodeIds resource, so there are no procs and no scripts.  The trust list
+// below is the same in every dialect.
 local common = import '../../../../../libs/db/config/sqlite-common.libsonnet';
 common + {
 	local args = self,

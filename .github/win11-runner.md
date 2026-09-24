@@ -105,6 +105,19 @@ user-level env vars): `REPO_DIR=C:/Users/duffyj/source/repos/libs`,
 `VCPKG_ROOT=C:/Users/duffyj/source/repos/libs/vcpkg`,
 `UA_NODE_SETS=C:/Users/duffyj/source/repos/libs/UA-Nodeset`.
 
+The vcpkg clone at `%VCPKG_ROOT%` must be at or past the commit named by
+[`vcpkg.json`](../vcpkg.json)'s `builtin-baseline`. vcpkg reads the baseline out of git but every
+version entry out of the working tree, so an older checkout fails Configure with
+`no version database entry for openssl at 3.6.4` (Win11 #6, 2026-09-24). The hosted Win2025 workflow
+checks the pin out itself ([`setup-windows-toolchain/action.yml`](actions/setup-windows-toolchain/action.yml),
+*Pin vcpkg to the baseline*); `win11-ci.yml` has no such step, since this runner uses the dev
+account's own clone. After a baseline bump, update it on the box:
+
+```
+git -C C:\Users\duffyj\source\repos\libs\vcpkg pull
+C:\Users\duffyj\source\repos\libs\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+```
+
 ## Build directory
 
 The workflow sets a **CI-only** `JDE_BUILD_DIR=C:/Users/duffyj/source/build/ci`, kept separate from

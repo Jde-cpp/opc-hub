@@ -1,3 +1,6 @@
+//The MySQL args for Jde.Access.Tests: `-include=args/mysql`, a MySQL on localhost, the login
+//$(JDE_MYSQL_USER)/$(JDE_MYSQL_PWD), the schema `<buildTarget>_access` with no table prefix.  Its own preamble rather
+//than args-common: it predates it, and binds the same buildTarget/logsDir/repo roots itself.
 {
   local args = self,
 	local buildTarget = std.extVar("buildTarget"),

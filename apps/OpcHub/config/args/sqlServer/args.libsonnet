@@ -1,6 +1,8 @@
 local common = import '../../../../../libs/db/config/args-common.libsonnet';
-//As args/mysql, for the windows default.  gateway prefix "opc_" as mysql - the gateway's own sqlServer args say "opc"
-//(no underscore); a box provisioned by the split gateway may need that spelling instead.
+//The SQL Server dev args, Windows only (the odbc driver builds nowhere else): `-include=args/sqlServer`,
+//DSN=<debug|rls> by build target with the odbc driver from the build's bin; args-common binds the ext vars and the
+//roots.  As args/mysql otherwise: gateway prefix "opc_" as mysql - the gateway's own sqlServer args say "opc" (no
+//underscore); a box provisioned by the split gateway may need that spelling instead.
 common + {
 	local args = self,
 	sqlType: "sqlServer",
