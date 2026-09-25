@@ -35,6 +35,19 @@ case "$1" in
 				# upgrade: the binaries were replaced under the running processes - restart whatever is running
 				systemctl try-restart jde-opchub.service jde-opcserver.service || true
 			fi
+			# the Web UI site, when the operator enabled it (README):  dpkg may just have replaced its conffile, and a running nginx
+			# keeps the old one until told (install-issues #57).  A config nginx -t rejects is left unloaded, not half-applied.
+			for link in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*; do
+				if [ -L "$link" ] && [ "$(readlink -m "$link")" = /etc/jde-cpp/nginx-opchub.conf ] && command -v nginx >/dev/null; then
+					if out=$(nginx -t 2>&1); then
+						systemctl try-reload-or-restart nginx.service || true
+					else
+						echo "jde-opchub: nginx -t failed, so nginx was not reloaded for $link - fix the config, then \`systemctl reload nginx\`:" >&2
+						echo "$out" >&2
+					fi
+					break
+				fi
+			done
 		fi
 		;;
 esac
