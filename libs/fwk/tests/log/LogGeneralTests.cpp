@@ -296,6 +296,39 @@ namespace Jde::Tests{
 		fs::remove_all( dir );
 	}
 
+#ifdef _WIN32
+	//install-issues #52:  a second copy of a running product rolled the live log on open - windows refused the rename of the file
+	//the first copy held, and spdlog then truncated it under that copy.  A held log is appended to instead, and nothing rolls.
+	TEST_F( LogGeneralTests, FileSinkLeavesALiveLogAlone ){
+		let dir = fs::temp_directory_path()/"jde-spd-live";
+		fs::remove_all( dir );
+		fs::create_directories( dir );
+		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}, {"keep", 2}}}}} };
+		let read = [&]( const fs::path& p )->string{ std::ifstream is{ p, std::ios::binary }; return string{ std::istreambuf_iterator<char>{is}, {} }; };
+		{
+			Logging::SpdLog running{ settings };
+			running.Write( Logging::Entry{SRCE_CUR, ELogLevel::Warning, ELogTags::Test, string{"running copy"}} );
+			{
+				Logging::SpdLog second{ settings };
+				second.Write( Logging::Entry{SRCE_CUR, ELogLevel::Warning, ELogTags::Test, string{"second copy"}} );
+				second.Shutdown( false, SRCE_CUR );
+			}
+			running.Write( Logging::Entry{SRCE_CUR, ELogLevel::Warning, ELogTags::Test, string{"still running"}} );
+			running.Shutdown( false, SRCE_CUR );
+		}
+		string stem;
+		for( let& entry : fs::directory_iterator(dir) )
+			stem = entry.path().stem().string();
+		ASSERT_FALSE( stem.empty() );
+		EXPECT_FALSE( fs::exists(dir/(stem+".1.log")) ) << "the live log was rolled";
+		let log = read( dir/(stem+".log") );
+		EXPECT_NE( log.find("running copy"), string::npos ) << log;
+		EXPECT_NE( log.find("second copy"), string::npos ) << log;
+		EXPECT_NE( log.find("still running"), string::npos ) << log;
+		EXPECT_EQ( log.find('\0'), string::npos ) << "a zero-filled head - the file was truncated under the running copy";
+		fs::remove_all( dir );
+	}
+#endif
 	TEST_F( LogGeneralTests, CachedTags ){
 		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 

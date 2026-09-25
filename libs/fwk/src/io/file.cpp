@@ -3,6 +3,9 @@
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/str.h>
 #include <fstream>
+#ifdef _WIN32
+	#include <windows.h>
+#endif
 
 #define let const auto
 namespace Jde{
@@ -44,6 +47,14 @@ namespace Jde{
 			str[1] = ':';
 		}
 		return fs::path{ "\\\\?\\"s+Str::Replace(str, '/', '\\') };
+	}
+	//An open that shares nothing fails on any other handle - spdlog's among them, which shares read and write but not delete.
+	α IO::InUse( const fs::path& path )ι->bool{
+		HANDLE h = ::CreateFileW( path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
+		if( h==INVALID_HANDLE_VALUE )
+			return ::GetLastError()==ERROR_SHARING_VIOLATION;
+		::CloseHandle( h );
+		return false;
 	}
 #endif
 }

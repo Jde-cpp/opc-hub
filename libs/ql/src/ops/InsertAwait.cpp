@@ -162,8 +162,16 @@ namespace Jde::QL{
 				catch( runtime_error& e ){
 					failure = ToExceptionPtr( move(e) );
 				}
-				if( failure )
-					co_await Hook::InsertFailure( _mutation, _userPK );//the db error is the one reported; a failure hook that itself throws replaces it.
+				if( failure ){
+					try{
+						co_await Hook::InsertFailure( _mutation, _userPK );//the db error is the one reported; a failure hook that itself throws replaces it.
+					}
+					catch( runtime_error& ){
+						if( auto p = dynamic_cast<Exception*>(failure.get()); p )
+							p->SetLevel( ELogLevel::Debug );//superseded - the hook's refusal says what went wrong (install-issues #51).
+						throw;
+					}
+				}
 				else{
 					let id = y.size() ? Json::FindNumber<uint>(y[0], "id").value_or(0) : 0;
 					co_await Hook::InsertAfter( id, _mutation, _userPK );

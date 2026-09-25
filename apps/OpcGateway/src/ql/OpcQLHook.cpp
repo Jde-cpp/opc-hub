@@ -26,16 +26,20 @@ namespace Jde::Opc::Gateway{
 			DB::Key id = (_op & Operation::Purge)==Operation::Purge
 				? DB::Key{ _mutation.Id<ServerCnnctnPK>() }
 				: DB::Key{ Json::AsString(_mutation.Args, "slug") };
-			optional<uint> rowCount;
+			//reviews/install-issues.md #51:  the insert failed on the slug's unique index - a delete is soft, so a deleted row keeps its
+			//slug, and its provider, which InsertBefore reused:  purging it would leave the deleted row nothing to restore to.  The
+			//engine's duplicate names the schema and is withheld from the client, so this refusal replaces it (InsertAwait).
 			if( _op==(Operation::Insert | Operation::Failure) ){
-				auto opcServers = co_await ServerCnnctnAwait{ id };
-				if( opcServers.size() ) //assume failed because already exists.
-					rowCount = 0;
+				if( let existing = co_await ServerCnnctnAwait{ id, true }; existing.size() ){
+					let& slug = existing.front().Slug;
+					ResumeExp( Exception{existing.front().Deleted
+						? Ƒ( "Slug '{}' belongs to a deleted connection:  restore it, or purge it to reuse the slug.", slug )
+						: Ƒ( "Slug '{}' is in use by another connection.", slug ),
+						ExceptionArgs{EHttpStatus::BadRequest}, _sl} );
+					co_return;
+				}
 			}
-			if( !rowCount.has_value() )
-				Fix( move(id) );
-			else
-				ResumeScaler( {{"rowCount", *rowCount}} );
+			Fix( move(id) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

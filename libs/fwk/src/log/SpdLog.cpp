@@ -7,6 +7,7 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/pattern_formatter.h>
 #include <jde/fwk/settings.h>
+#include <jde/fwk/io/file.h>
 #include <jde/fwk/log/log.h>
 
 #define let const auto
@@ -67,13 +68,21 @@ namespace Jde::Logging{
 				let markdown = Json::FindBool( sink, "/md" ).value_or( false );
 				let fileNameWithExt = Settings::FileStem()+( markdown ? ".md" : ".log" );
 				let path = pPath && !pPath->empty() ? *pPath/fileNameWithExt : Process::AppDataFolder()/"logs"/fileNameWithExt;
-				let truncate = Json::FindBool( sink, "/truncate" ).value_or( true );
+				//A live log - another copy of this product's, started twice from a shortcut or run elevated beside itself - is appended
+				//to, not rolled:  windows refuses the rename, and spdlog then truncates the file under the running copy
+				//(reviews/install-issues.md #52).  The copy that holds it rolls it on its own next start.
+#ifdef _WIN32
+				let live = IO::InUse( path );
+#else
+				constexpr bool live{};//the rename succeeds under an open file, and the running copy writes on as <stem>.1.log
+#endif
+				let truncate = !live && Json::FindBool( sink, "/truncate" ).value_or( true );
 				//keep: previous runs kept beside the file as <stem>.1.log … <stem>.<keep>.log - restarting a product after a failure
 				//used to erase the lines that said why (reviews/install-issues.md #13).  With truncate, a start rolls the file
 				//aside rather than emptying it; it also rolls at maxSize (bytes, 10 MB).  Absent or 0: one file, as before.
 				let keep = Json::FindNumber<uint32>( sink, "/keep" ).value_or( 0 );
 				let maxSize = Json::FindNumber<size_t>( sink, "/maxSize" ).value_or( 10*1024*1024 );
-				additional = Ƒ( " truncate='{}' keep='{}' path='{}'", truncate, keep, path.string() );
+				additional = Ƒ( " truncate='{}' keep='{}' path='{}'{}", truncate, keep, path.string(), live ? " - in use by another process, appending" : "" );
 				try{
 					if( keep )
 						pSink = ms<spdlog::sinks::rotating_file_sink_mt>( path.string(), maxSize, keep, truncate );

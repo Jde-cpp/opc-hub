@@ -16,6 +16,7 @@ namespace Jde::Opc::Gateway{
 		DefaultBrowseNs{ r.GetOpt<uint16_t>(4).value_or(1) },//unset means 1 - what the SPA reads a NULL as, and so spells a namespace-1 segment bare (reviews/m3-closing.md #3, ruled 09-21; gateway-review #26 had unified both ctors on 0).
 		IsDefault{ r.GetBit(3) },
 		Name{ r.TakeString(5) },
+		Deleted{ r.GetOpt<TimePoint>(7) },
 		Slug{ r.TakeString(6) }
 	{}
 	ServerCnnctn::ServerCnnctn( jobject&& o )ε:
@@ -59,7 +60,7 @@ namespace Jde::Opc::Gateway{
 					where.Add( view->GetColumnPtr("is_default"), true );
 			}
 		}
-		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug"})}, {view}, move(where) };
+		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug", "deleted"})}, {view}, move(where) };
 		try{
 			vector<ServerCnnctn> y;
 			auto rows = co_await DS()->SelectAsync( statement.Move() );
