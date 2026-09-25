@@ -11,7 +11,8 @@ name: Win2025
 # no fork-PR fence is needed - or push a release tag (yyyy.MM.dd). Every run
 # also builds the Windows installer (apps/OpcHub/setup) as an artifact -
 # unsigned, no certificate route yet (apps/OpcHub/setup/README.md, "Signing") -
-# and smoke-tests it with a silent install and uninstall; a tag run whose smoke
+# and smoke-tests it with a silent install and uninstall (after checking that an
+# all-users install refuses another account's data root); a tag run whose smoke
 # test passes publishes it as that tag's GitHub release. The deps-cache coupling holds
 # for tag runs too: GitHub evicts caches unused for 7 days, so after a quiet
 # stretch re-run "Win2025 Deps" before tagging.
@@ -223,6 +224,21 @@ jobs:
           $services = 'Jde.OpcHub', 'Jde.OpcServer'
           $failures = [System.Collections.Generic.List[string]]::new()
           function Fail( $message ){ Write-Host "::error::$message"; $failures.Add( $message ) }
+
+          # reviews/install-issues.md #55: an all-users install over another account's data root has to stop, not take it over.
+          # 2026.09.05's take-over probe was cut at NSIS's string limit, never parsed, and every such install took the root
+          # unasked - a clean runner never showed it. A .current-user mark naming another account is what TakeDataDir asks
+          # about, and /S answers No (/SD IDNO).
+          $foreign = 'S-1-5-21-1000000000-1000000000-1000000000-1001'
+          New-Item -ItemType Directory $data -Force | Out-Null
+          Set-Content (Join-Path $data '.current-user') $foreign -NoNewline
+          $p = Start-Process $setup -ArgumentList '/S /AllUsers /OpcServer' -Wait -PassThru
+          if( $p.ExitCode -eq 0 ){ Fail "Setup exited 0 over another account's data root - it took the root over instead of stopping" }
+          if( (Get-Content (Join-Path $data '.current-user') -Raw -ErrorAction SilentlyContinue) -ne $foreign ){ Fail "Setup removed another account's .current-user mark" }
+          if( Test-Path (Join-Path $data '.all-users') ){ Fail "Setup marked another account's data root .all-users" }
+          foreach( $name in $services ){ if( Get-Service $name -ErrorAction SilentlyContinue ){ Fail "$name was registered over another account's data root" } }
+          Remove-Item $data -Recurse -Force
+          if( Test-Path $programs ){ Remove-Item $programs -Recurse -Force }
 
           $p = Start-Process $setup -ArgumentList '/S /AllUsers /OpcServer /Start' -Wait -PassThru
           if( $p.ExitCode -eq 3010 ){ # the VC++ runtime wants a restart, and Setup then leaves /Start to Windows

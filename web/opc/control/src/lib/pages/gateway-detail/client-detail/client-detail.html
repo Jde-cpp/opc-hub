@@ -21,7 +21,13 @@
 	<button tabindex="101" matButton="outlined" (click)="onCancelClick()">Cancel</button>
 	<!--the only icon in the row, so the trash can still reads as a warning; it also carries the delete/restore state.
 		Pushed to the far side of the row: it sat one gap from Cancel, in the click path of the two safe actions-->
-	<button tabindex="102" matButton="outlined" style="margin-left: auto;" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
+	@if( isDeleted ){
+		<!--group-detail's Purge:  only on an already-deleted row.  A deleted connection keeps its slug, and the create refusal says to restore or purge it (reviews/install-issues.md #51, #53)-->
+		<button tabindex="103" matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
+			<mat-icon>delete_forever</mat-icon>Purge
+		</button>
+	}
+	<button tabindex="102" matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
 		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
 	</button>
 </div>

@@ -376,6 +376,20 @@ namespace Jde::Web{
 		EXPECT_THROW( Server::Start(handler), Exception ) << "a listener that cannot bind must fail Start, not park it";
 	}
 
+	//install-issues #56:  the check a server runs before its database, on the fixture's live listener's port and on one nothing holds.
+	TEST_F( SocketTests, ThrowIfPortTaken ){
+		const Server::IRequestHandler::WebServerSettings held{ Settings::AsObject("/http") };
+		EXPECT_THROW( Server::ThrowIfPortTaken(held.Address(), held.Port()), Exception ) << "the fixture's listener holds this port";
+		PortType free{};
+		{
+			net::io_context ioc;
+			tcp::acceptor probe{ ioc, tcp::endpoint{net::ip::make_address(held.Address()), 0} };//the OS picks a free port, released at scope end
+			free = probe.local_endpoint().port();
+		}
+		EXPECT_NO_THROW( Server::ThrowIfPortTaken(held.Address(), free) );
+		EXPECT_NO_THROW( Server::ThrowIfPortTaken(held.Address(), free) ) << "the check released the port it bound";
+	}
+
 	TEST_F( SocketTests, BadSessionId ){
 		_sessionId = Math::Random();
 		EXPECT_THROW(createSession(), Exception);

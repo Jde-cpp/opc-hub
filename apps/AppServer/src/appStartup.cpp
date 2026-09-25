@@ -11,6 +11,8 @@
 #include <jde/access/server/accessServer.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/AccessListener.h>
+#include <jde/web/server/IRequestHandler.h>
+#include <jde/web/server/Server.h>
 #include <jde/web/server/SessionGraphQL.h>
 #include <jde/web/server/SettingQL.h>
 #include <jde/web/server/SubscribeLog.h>
@@ -123,6 +125,10 @@ namespace Jde::App::Server{
 	}
 
 	α Configure( const jobject& webServerSettings, ConfigureOptions options )ε->void{
+		//first:  a second copy of a running server found its port taken only at StartWebServer - after configureDS's sync and seeds,
+		//endAppInstances and AddConnection had run against the first's database, ending every live app connection (reviews/install-issues.md #56).
+		Web::Server::IRequestHandler::WebServerSettings listener{ webServerSettings };
+		Web::Server::ThrowIfPortTaken( listener.Address(), listener.Port() );
 		configureDS( options );
 		str instanceName{ Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") };
 		let pks = AddConnection( Process::AppName(), instanceName, Process::HostName(), Process::ProcessId() );

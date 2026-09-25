@@ -104,6 +104,51 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_FALSE( Web::Server::Sessions::Find(sessionId) );
 	}
 
+	//install-issues #54:  the page's OPC sign-out sent no Authorization, so the hub removed the session made for the request,
+	//answered removed:true, and the signed-in session - with its cached OPC credential - lived on.  A header-less logout now
+	//answers false and leaves the signed-in session alone;  one naming the session ends it and its credential.
+	TEST_F( HubRoutingTests, OpcLogoutEndsItsSession ){
+		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
+		let root = Ƒ( "{:x}", rootSession );
+		let opc = Gateway::Tests::GetConnection( Gateway::Tests::OpcServerSlug );
+		auto setDefault = [&]( bool isDefault ){ QL( AppPort(), Ƒ("mutation updateServerConnection( id:{}, isDefault:{} )", opc.Id, isDefault), root ); };
+		setDefault( true );
+		let res = Post( AppPort(), "/login", serialize(jobject{{"opc",""},{"user","user1"},{"password","0123456789ABCD"}}) );
+		let authorization = string{ res.Headers()[http::field::authorization] };
+		let sessionId = Str::TryTo<SessionPK>( authorization, 0, 16 ).value_or( 0 );
+		ASSERT_TRUE( sessionId ) << "the login minted no session";
+		ASSERT_TRUE( Gateway::GetCredential(sessionId, Gateway::Tests::OpcServerSlug) );
+
+		let anonymous = Post( AppPort(), "/logout", "{}" );
+		EXPECT_FALSE( Json::AsBool(anonymous.Json(), "removed") ) << "a logout naming no session reported one removed";
+		EXPECT_TRUE( Web::Server::Sessions::Find(sessionId) );
+		EXPECT_TRUE( Gateway::GetCredential(sessionId, Gateway::Tests::OpcServerSlug) );
+
+		let named = Post( AppPort(), "/logout", "{}", authorization );
+		EXPECT_TRUE( Json::AsBool(named.Json(), "removed") );
+		EXPECT_FALSE( Web::Server::Sessions::Find(sessionId) );
+		EXPECT_FALSE( Gateway::GetCredential(sessionId, Gateway::Tests::OpcServerSlug) ) << "the OPC credential outlived the session";
+		setDefault( false );
+		Web::Server::Sessions::Remove( rootSession );
+	}
+
+	//install-issues #56:  a second copy of a running hub ran its whole startup against the first's database before its listener
+	//failed - endAppInstances ended every live app connection, and AddConnection registered the doomed copy.  This process's hub
+	//holds the port, so a second Configure is that copy:  it has to stop before the database, and the connections stay as they were.
+	TEST_F( HubRoutingTests, SecondCopyStopsBeforeTheDatabase ){
+		auto live = [&]{
+			vector<uint> ids;
+			for( let& c : Json::AsArray(QL(AppPort(), "connections{ id }").as_object(), "connections") )
+				ids.push_back( Json::AsNumber<uint>(c.as_object(), "id") );
+			std::ranges::sort( ids );
+			return ids;
+		};
+		let before = live();
+		ASSERT_FALSE( before.empty() );
+		EXPECT_THROW( App::Server::Configure(Settings::AsObject("/http")), Exception );
+		EXPECT_EQ( live(), before ) << "the second copy touched the live connections";
+	}
+
 	//a session minted through the AppServer role is honoured by the gateway role without a lookup - one table, IsLocal.
 	TEST_F( HubRoutingTests, SessionShared ){
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;

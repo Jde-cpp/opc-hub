@@ -144,6 +144,17 @@ namespace Server{
 		}
 	}
 
+	//The listener's and ThrowIfPortTaken's, so the check refuses exactly the ports the listener would.
+	template<class TAcceptor> Ω exclusiveUse( TAcceptor& acceptor, beast::error_code& ec )ι->void{
+#ifdef _WIN32
+		//On Windows SO_REUSEADDR lets a second socket bind a port another socket is *listening* on and take its connections, so a Start
+		//on a held port succeeded where POSIX fails with EADDRINUSE (SocketTests.StartThrowsWhenPortIsHeld).  SO_EXCLUSIVEADDRUSE is the
+		//Windows spelling of "mine alone"; it still allows re-binding over the previous listener's TIME_WAIT connections (Server 2003+).
+		acceptor.set_option( net::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>(true), ec );
+#else
+		acceptor.set_option( net::socket_base::reuse_address(true), ec );//restart over TIME_WAIT; POSIX still refuses a port with a live listener.
+#endif
+	}
 	Ω initListener( typename tcp::acceptor::rebind_executor<executor_with_default>::other& acceptor, const tcp::endpoint& endpoint )ι->bool{
 		beast::error_code ec;
 		acceptor.open( endpoint.protocol(), ec );
@@ -153,14 +164,7 @@ namespace Server{
 			return false;
 		}
 
-#ifdef _WIN32
-		//On Windows SO_REUSEADDR lets a second socket bind a port another socket is *listening* on and take its connections, so a Start
-		//on a held port succeeded where POSIX fails with EADDRINUSE (SocketTests.StartThrowsWhenPortIsHeld).  SO_EXCLUSIVEADDRUSE is the
-		//Windows spelling of "mine alone"; it still allows re-binding over the previous listener's TIME_WAIT connections (Server 2003+).
-		acceptor.set_option( net::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>(true), ec );
-#else
-		acceptor.set_option( net::socket_base::reuse_address(true), ec );//restart over TIME_WAIT; POSIX still refuses a port with a live listener.
-#endif
+		exclusiveUse( acceptor, ec );
 		if( ec ){
 			CodeException{ ec, ELogTags::Server | ELogTags::Http, ELogLevel::Critical };
 			return false;
@@ -254,6 +258,26 @@ namespace Server{
 				);// We dont't need a strand, since the awaitable is an implicit strand.
 			}
 		}
+	}
+
+	//A second copy of a running product found its port taken only here, in Start - after its whole startup had run against the
+	//first's database:  the hub's ended every live app connection and registered itself (reviews/install-issues.md #56).  The same
+	//open, option and bind as the listener, on a throwaway acceptor, released before Start binds for real.
+	α ThrowIfPortTaken( str addressString, PortType port, SL sl )ε->void{
+		net::io_context ioc;
+		tcp::acceptor acceptor{ ioc };
+		beast::error_code ec;
+		let address = net::ip::make_address( addressString, ec );
+		if( !ec ){
+			let endpoint = tcp::endpoint{ address, port };
+			acceptor.open( endpoint.protocol(), ec );
+			if( !ec )
+				exclusiveUse( acceptor, ec );
+			if( !ec )
+				acceptor.bind( endpoint, ec );
+		}
+		if( ec )
+			throw Exception{ sl, ELogLevel::Error, "Cannot listen on {}:{} - {}.  Is another copy running?", addressString, port, ec.message() };
 	}
 
 	α Internal::Start( sp<IRequestHandler> handler )ε->void{
