@@ -155,7 +155,8 @@ passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp`
 
 - Upgrading (installing a newer `.deb` over the old one) restarts whatever was running; the `.db` is kept, `sql/` and
   `nodesets/` are replaced, and the settings under `/etc/jde-cpp` are conffiles - dpkg keeps an edited one and asks when
-  the package's copy changed too.
+  the package's copy changed too.  When the Web UI site is enabled, nginx is reloaded as well, so a new site file is live
+  at once; if `nginx -t` rejects the config, the upgrade says so and leaves nginx on the one it has.
 - `apps/OpcGateway/config/access-opcGateway.mutation` (the gateway's group/role) is not seeded: `createGroup`/`createRole`
   run through the access server's QL, which is up only after the schema sync, so it is a post-start step, not a
   `dataPaths` seed.

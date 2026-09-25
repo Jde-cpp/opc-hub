@@ -190,7 +190,9 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		let self = this;
 		if( this.log.restRequests )	console.log( `logout()` );
 		try{
-			await this.postRaw<string>( 'logout', {}, false, {} );
+			//AppService.logout's header:  options of the caller's own attach no session, and a logout without one ended a session
+			//made for the request while the signed-in one lived on (reviews/install-issues.md #54)
+			await this.postRaw<string>( 'logout', {}, false, {observe: "response", headers:{"Authorization":this.user()?.authorization}} );
 			if( this.log.restResults ) console.log( `logout` );
 		}
 		catch( e:unknown ){

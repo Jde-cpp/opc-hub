@@ -182,6 +182,17 @@ Function CheckDataDir
 	Delete "$DataDir\.write-test"
 FunctionEnd
 
+; Both data-root probes, CheckDataDirOwner's and TakeDataDir's, are data-dir-probe.ps1, extracted and run with -File -> the stack:
+; its exit code, then its output.  Inline -Command, TakeDataDir's outgrew NSIS's 1,024-character string and was cut:  it never
+; parsed, and every all-users install took the root unasked (reviews/install-issues.md #55).  -ExecutionPolicy Bypass:  -File,
+; unlike -Command, is subject to the policy, Restricted by default on a client Windows.  /OEM:  powershell writes a pipe in the
+; console's OEM code page, and without it an account's name came back through the ANSI one - install\Zo‰ for install\Zoë (#50).
+!macro DataDirProbe mode
+	InitPluginsDir
+	File "/oname=$PLUGINSDIR\data-dir-probe.ps1" "data-dir-probe.ps1"
+	nsExec::ExecToStack /OEM 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-dir-probe.ps1" -Mode ${mode} -Company "${COMPANY}"'
+!macroend
+
 ; Current user:  is the data root this account's, or fresh?  -> $0:  1 yes, 0 another account's - $DataDirOwner says whose.
 ; The write probe alone let an administrator's current-user run - elevated, MULTIUSER_EXECUTIONLEVEL Highest - into
 ; another account's live install:  it overwrote her settings and seeds, and its Start now truncated her running logs and
@@ -192,11 +203,9 @@ FunctionEnd
 ;  - the owners, for a root no mark names - one from before it:  every object the Administrators' (an elevated Setup's)
 ;    or this account's.  Another account's is theirs;  SYSTEM's or Local Service's is an all-users install's services'.
 ; A probe that cannot run (a policy, say) is no reason to refuse:  the write probe still runs, as it did before.
-; /OEM, here and in TakeDataDir:  powershell writes a pipe in the console's OEM code page, and without it an account's
-; name came back through the ANSI one - install\Zo‰ for install\Zoë (install-issues #50).
 Function CheckDataDirOwner
 	StrCpy $UserSid ""
-	nsExec::ExecToStack /OEM `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$k='S-1-5-32-544',$$u;$$d=Join-Path $$env:ProgramData '${COMPANY}';function n($$s){try{(New-Object Security.Principal.SecurityIdentifier $$s).Translate([Security.Principal.NTAccount]).Value}catch{$$s}};$$m=Join-Path $$d '.current-user';if(Test-Path -LiteralPath $$m){$$o=(Get-Content -LiteralPath $$m -Raw).Trim();if($$o -and $$o -ne $$u){[Console]::Write((n $$o)+' installed '+$$d);exit 11}};function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value;if($$k -notcontains $$o){[Console]::Write((n $$o)+' owns '+$$i.FullName);exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};[Console]::Write($$u);exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
+	!insertmacro DataDirProbe CurrentUser
 	Pop $0
 	Pop $1
 	${If} $0 == 0
@@ -1009,15 +1018,17 @@ SectionEnd
 ; install of theirs (its .db, keys and settings), or a .current-user mark naming another account - an administrator's
 ; current-user install is the Administrators' by owner, whoever ran it (install-issues #43) - asked about, since taking them over hands them to the services, and a Yes
 ; also resets every object's own ACL, which that account may have written;  12 - a link another account made, refused:
-; the services' data would land wherever it points.  A probe that cannot run (a policy, say) is not a reason to refuse the
-; install - the whole tree is reset instead, unasked.  Root first, then the tree:  once the root is protected nobody else
+; the services' data would land wherever it points.  A probe that cannot run (a policy, say) fails safe (#55, which the
+; old "reset it all, unasked" turned into a silent take-over):  on a root an all-users install already protected (its .all-users
+; mark - nobody else can write there) or an empty one, the whole tree is reset as before;  on anything else, the same question
+; as 11, which a silent install answers No.  Root first, then the tree:  once the root is protected nobody else
 ; can add to it, and the tree-wide owner pass catches anything added before.
 Function TakeDataDir
 	StrCpy $3 0 ;1 - reset every object's ACL beneath the root too, not only the root's
 	${If} ${FileExists} "$DataDir\.current-user" ;a current-user root, this account's own included:  its product dirs carry that account's Modify (GrantUserProductDir), which the services' data must not
 		StrCpy $3 1
 	${EndIf}
-	nsExec::ExecToStack /OEM `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$k='S-1-5-18','S-1-5-19','S-1-5-32-544',$$u;$$d=Join-Path $$env:ProgramData '${COMPANY}';$$m=Join-Path $$d '.current-user';if(Test-Path -LiteralPath $$m){$$o=(Get-Content -LiteralPath $$m -Raw).Trim();if($$o -and $$o -ne $$u){try{$$o=(New-Object Security.Principal.SecurityIdentifier $$o).Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$o+' installed '+$$d);exit 11}};function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]);if($$k -notcontains $$o.Value){$$n=$$o.Value;try{$$n=$$o.Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$n+' owns '+$$i.FullName);if($$i.Attributes -band 1024){exit 12};exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
+	!insertmacro DataDirProbe AllUsers
 	Pop $0
 	Pop $1
 	${If} $0 == 11
@@ -1029,7 +1040,15 @@ Function TakeDataDir
 		MessageBox MB_OK|MB_ICONSTOP "$1, and it is a link - the services' data would land wherever it points.  Remove it, or move $DataDir aside, and run Setup again." /SD IDOK
 		Abort "$DataDir holds another account's link"
 	${ElseIf} $0 != 0
-		DetailPrint "Could not check who owns what under $DataDir (powershell answered $0: $1) - resetting all of it"
+		${DirState} "$DataDir" $4 ;-1 missing, 0 empty, 1 has files
+		${If} ${FileExists} "$DataDir\.all-users"
+		${OrIf} $4 != 1
+			DetailPrint "Could not check who owns what under $DataDir (powershell answered $0: $1) - resetting all of it"
+		${Else}
+			MessageBox MB_YESNO|MB_ICONEXCLAMATION "Setup could not check who owns the files in $DataDir (powershell answered $0: $1).$\r$\n$\r$\nIf they are another account's - a current-user install of theirs: its database, keys and settings - taking the folder over hands them to the services.$\r$\n$\r$\nYes: take it over.  No: stop." /SD IDNO IDYES takeOverUnchecked
+			Abort "Could not check who owns $DataDir"
+			takeOverUnchecked:
+		${EndIf}
 		StrCpy $3 1
 	${EndIf}
 	DetailPrint "Making $DataDir the services', SYSTEM's and the Administrators' alone"

@@ -13,6 +13,8 @@ import { of } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { SnackbarService } from 'jde-framework';
 import { GatewayService } from '../../../services/gateway-service';
+import { MatDialog } from '@angular/material/dialog';
+import { OpcStore } from '../../../services/opc-store';
 import { ClientDetail } from './client-detail';
 
 //angular-review3 L2: only group-detail clamped the stored tab index.  Here the Connection tab is gated on the row being
@@ -45,5 +47,42 @@ describe( 'ClientDetail tab index', ()=>{
 
 	it( 'keeps the stored index for a saved connection whose server is unreachable', ()=>{
 		expect( create({id: 7, name: "plc", serverError: "no route to host"}).tabIndex() ).toBe( 1 );
+	} );
+} );
+//reviews/install-issues.md #53:  a deleted connection keeps its slug, and #51's refusal says to restore or purge it - but
+//the page had no Purge.  group-detail's button and DetailPage's confirmation, on the per-gateway ql ngOnInit resolves.
+let confirmed = true;//what the stubbed confirmation dialog answers
+const createWithQl = async ( row:any, mutations:string[] )=>{
+	TestBed.configureTestingModule({ providers: [
+		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}}})} },
+		{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/eng-test"} },
+		{ provide: ComponentPageTitle, useValue: {} },
+		{ provide: SnackbarService, useValue: {exception: ()=>{}} },
+		{ provide: GatewayService, useValue: {gateway: async ()=>({slug: "g", mutate: async ( ql:string )=>{ mutations.push( ql ); }})} },
+		{ provide: OpcStore, useValue: {forget: ()=>{}} },
+		{ provide: MatDialog, useValue: {open: ()=>({afterClosed: ()=>({subscribe: ( f:( y:boolean )=>void )=>f( confirmed )})})} }
+	]});
+	const page = TestBed.createComponent( ClientDetail ).componentInstance;
+	await page.ngOnInit();
+	return page;
+};
+describe( 'ClientDetail purge', ()=>{
+	afterEach( ()=>{ confirmed = true; } );
+	const deleted = {id: 2, name: "eng-test", slug: "eng-test", deleted: "2026-09-25T16:33:00Z"};
+
+	it( 'purges by id once confirmed', async ()=>{
+		const sent:string[] = [];
+		const page = await createWithQl( deleted, sent );
+		expect( page.isDeleted ).toBe( true );
+		await page.onPurgeClick();
+		expect( sent ).toEqual( ["purgeServerConnection(id:2)"] );
+	} );
+
+	it( 'sends nothing when the confirmation is declined', async ()=>{
+		confirmed = false;
+		const sent:string[] = [];
+		const page = await createWithQl( deleted, sent );
+		await page.onPurgeClick();
+		expect( sent ).toEqual( [] );
 	} );
 } );

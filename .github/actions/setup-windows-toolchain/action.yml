@@ -73,6 +73,10 @@ runs:
     # Single source of truth for the pinned tool versions AND the deps cache key.
     # build/CMakeLists.txt holds every dependency GIT_TAG, so bumping any dep (or
     # a preset / vcpkg manifest) changes the hash -> a fresh, non-colliding cache.
+    # Except the product version: CMakePresets.common.json's JDE_VERSION is blanked
+    # before hashing. No dependency is built from it (build/CMakeLists.txt only names
+    # its project() with it), and hashing it made every version bump a cache miss
+    # that failed the tag's build until "Win2025 Deps" ran on main again.
     - name: Compute versions and deps cache key
       id: meta
       shell: pwsh
@@ -80,7 +84,17 @@ runs:
         $llvm  = "23.1.1"
         $boost = "1.91.0"
         $boostU = $boost -replace '\.','_'
-        $hash = "${{ hashFiles('CMakePresets*.json', 'build/CMakeLists.txt', 'build/functions.cmake', 'vcpkg.json') }}"
+        # hashFiles' inputs, hashed here instead so the version can be left out. LF
+        # line ends and repo-relative names, so any checkout computes the same key;
+        # APIs Windows PowerShell 5.1 has too, so the same lines can be checked off CI.
+        $files = @( Get-ChildItem -File -Path CMakePresets*.json | ForEach-Object Name ) + 'build/CMakeLists.txt', 'build/functions.cmake', 'vcpkg.json'
+        $text = foreach( $f in ($files | Sort-Object) ){
+          $content = (Get-Content -Raw -Encoding UTF8 -LiteralPath $f) -replace "`r`n", "`n"
+          $content = $content -replace '("JDE_VERSION"\s*:\s*)"[^"]*"', '$1""'
+          "--- $f`n$content"
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes( ($text -join "`n") )
+        $hash = -join ( [Security.Cryptography.SHA256]::Create().ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') } )
         $key = "windows-deps-release-llvm$llvm-boost$boost-$hash"
         @(
           "llvm=$llvm"

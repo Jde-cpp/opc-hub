@@ -33,9 +33,14 @@ namespace Jde::Opc::Hub{
 	α HttpRequestAwait::HubLogout()ι->void{
 		try{
 			_request.LogRead();
+			//A logout with no Authorization names no session:  the request is given one of its own (Sessions::UpsertAwait), and
+			//removing that ended nothing while the answer said it had - the page's OPC sign-out sent no header, and the signed-in
+			//session lived on (reviews/install-issues.md #54).  That session still goes, but the answer is false.
+			let named = !_request.Header( "Authorization" ).empty();
 			let sessionId = _request.SessionId();
 			Gateway::Logout( sessionId );//the OPC credentials cached for the session.
-			jobject j{ {"removed", Web::Server::Sessions::Remove(sessionId)} };//and every socket bound to it, on either path.
+			let removed = Web::Server::Sessions::Remove( sessionId );//and every socket bound to it, on either path.
+			jobject j{ {"removed", named && removed} };
 			Resume( {move(j), move(_request)} );
 		}
 		catch( runtime_error& e ){

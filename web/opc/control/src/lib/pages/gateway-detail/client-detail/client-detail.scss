@@ -5,3 +5,8 @@
 	flex: 1 1 100%;
 }
 // The Save/Cancel/Delete row is `.jde-detail-actions` in jde-spa's _general.scss - one rule for every detail page.
+
+// the one destructive control in the row - the error colour is what separates it from Restore beside it (group-detail's)
+.purge{
+	color: var(--mat-sys-error);
+}

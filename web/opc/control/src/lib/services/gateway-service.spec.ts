@@ -133,3 +133,27 @@ describe('GatewayService.gateway', () => {
 		expect( (await queued).slug ).toBe( 'B' );
 	});
 });
+//reviews/install-issues.md #54:  the OPC sign-out passed options of its own, and postRaw attaches the stored session only when
+//a caller passes none - so /logout went without an Authorization header, the hub ended a session made for that request, and
+//the signed-in one lived on.  It now names the session, as AppService.logout does, and still drops the local one.
+describe( 'Gateway.logout', ()=>{
+	it( 'names the signed-in session and clears the local one', async ()=>{
+		TestBed.configureTestingModule({ providers: [
+			provideRouter( routes ),
+			provideHttpClient(),
+			{ provide: AUTH_STORE, useValue: {user: ()=>undefined, logout: ()=>{}} as unknown as AuthStore },
+			{ provide: OPC_STORE, useValue: {} },
+			{ provide: AppService, useValue: {transport: ETransport.Unsecure, gatewayInstances: ()=>Promise.resolve(instances)} }
+		]});
+		const gateway = await TestBed.inject( GatewayService ).gateway( 'B' );
+		let cleared = 0;
+		(gateway as any).authStore = { user: ()=>({authorization: "d10c90aa"}), logout: ()=>{ ++cleared; } };
+		const sent:{target:string, options:any}[] = [];
+		(gateway as any).postRaw = async ( target:string, _body:any, _secure:boolean, options:any )=>{ sent.push( {target, options} ); };
+		await gateway.logout( ()=>{} );
+		expect( sent.length ).toBe( 1 );
+		expect( sent[0].target ).toBe( 'logout' );
+		expect( sent[0].options?.headers?.Authorization ).toBe( "d10c90aa" );
+		expect( cleared ).toBe( 1 );
+	} );
+} );
