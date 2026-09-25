@@ -13,6 +13,7 @@ namespace Jde::IO{
 
 #ifdef _WIN32
 	α BashToWindows( const fs::path& path )ι->fs::path;
+	α InUse( const fs::path& path )ι->bool;//another handle holds the file open - it cannot be renamed.
 #endif
 }
 #undef Φ

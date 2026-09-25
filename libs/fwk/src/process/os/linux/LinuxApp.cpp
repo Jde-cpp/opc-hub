@@ -180,6 +180,7 @@ namespace Jde{
 	}
 
 	α Process::IsTerminal()ι->bool{ return ::isatty(STDOUT_FILENO)!=0; }
+	α Process::PrepareConsole()ι->bool{ return true; }//a terminal draws them, and is UTF-8
 	α Process::SetConsoleTitle( sv title )ι->void{
 		if( IsTerminal() ) //a service runs with -c too (Type=simple), stdout on the journal - the escape would be its first line.
 			std::cout << "\033]0;" << title << "\007";

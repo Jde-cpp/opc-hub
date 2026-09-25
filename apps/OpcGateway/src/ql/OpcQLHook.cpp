@@ -26,16 +26,20 @@ namespace Jde::Opc::Gateway{
 			DB::Key id = (_op & Operation::Purge)==Operation::Purge
 				? DB::Key{ _mutation.Id<ServerCnnctnPK>() }
 				: DB::Key{ Json::AsString(_mutation.Args, "slug") };
-			optional<uint> rowCount;
+			//reviews/install-issues.md #51:  the insert failed on the slug's unique index - a delete is soft, so a deleted row keeps its
+			//slug, and its provider, which InsertBefore reused:  purging it would leave the deleted row nothing to restore to.  The
+			//engine's duplicate names the schema and is withheld from the client, so this refusal replaces it (InsertAwait).
 			if( _op==(Operation::Insert | Operation::Failure) ){
-				auto opcServers = co_await ServerCnnctnAwait{ id };
-				if( opcServers.size() ) //assume failed because already exists.
-					rowCount = 0;
+				if( let existing = co_await ServerCnnctnAwait{ id, true }; existing.size() ){
+					let& slug = existing.front().Slug;
+					ResumeExp( Exception{existing.front().Deleted
+						? Ƒ( "Slug '{}' belongs to a deleted connection:  restore it, or purge it to reuse the slug.", slug )
+						: Ƒ( "Slug '{}' is in use by another connection.", slug ),
+						ExceptionArgs{EHttpStatus::BadRequest}, _sl} );
+					co_return;
+				}
 			}
-			if( !rowCount.has_value() )
-				Fix( move(id) );
-			else
-				ResumeScaler( {{"rowCount", *rowCount}} );
+			Fix( move(id) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
@@ -52,8 +56,23 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
+	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
+	//url segment, and " eng-test" was accepted into all three.  Not updateable (opcGateway-meta), so the insert is the one door.
+	//The web form trims and checks the same rule (ServerCnnctn.slugPattern).
+	Ω slugError( const QL::MutationQL& m, SL sl )ι->up<Exception>{
+		let slug = Json::FindString( m.Args, "slug" );
+		if( !slug )
+			return {};//the column is NOT NULL - the insert says so
+		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
+		let valid = !slug->empty() && alnum( slug->front() ) && std::ranges::all_of( *slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
+		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", *slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+	}
 	α OpcQLHook::InsertBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
-		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Insert | Operation::Before, sl ) : nullptr;
+		if( m.TableName()!="server_connections" /*&& m.TableName()!="opc_clients"*/ )
+			return nullptr;
+		if( auto e = slugError(m, sl); e )
+			return mu<ExceptionAwait<jvalue>>( move(e) );
+		return mu<HookAwait>( m, userPK, Operation::Insert | Operation::Before, sl );
 	}
 	α OpcQLHook::InsertFailure( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Insert | Operation::Failure, sl ) : nullptr;

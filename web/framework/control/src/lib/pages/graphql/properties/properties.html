@@ -35,6 +35,9 @@
 							[tabIndex]=tab+1
 							(input)="onChange( field.name, $any($event.target).value )" >
 					}
+					@if( fieldError(field); as error ){
+						<mat-hint style="color: var(--mat-sys-error)">{{error}}</mat-hint>
+					}
 				</mat-form-field>
 			}
 			@if( boolFields().length ){

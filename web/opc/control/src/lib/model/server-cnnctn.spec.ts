@@ -68,3 +68,32 @@ describe( 'ServerCnnctn.canSave', ()=>{
 		expect( new ServerCnnctn(props({name: ""})).canSave ).toBe( false );
 	} );
 } );
+
+//reviews/install-issues.md #48:  " eng-test" was saved as-is - the provider, the certificate's file name and the `slug\user` login
+//all carried the space.  Trimmed on the way out; what is left must be the gateway's rule, or the form says so and will not save.
+describe( 'ServerCnnctn.slug', ()=>{
+	const create = ( slug:string )=>new ServerCnnctn( props({id: undefined as any, slug}) );
+	it( 'is trimmed on a create', ()=>{
+		const [mutation] = create( " eng-test " ).mutation( new ServerCnnctn({} as ServerCnnctnProps) );
+		expect( mutation.args.slug ).toBe( "eng-test" );
+	} );
+	it( 'accepts letters, digits, dot, underscore and dash', ()=>{
+		for( const slug of ["local", "eng-test", "Line_1.a", " padded "] ){
+			expect( create(slug).fieldError("slug") ).toBeUndefined();
+			expect( create(slug).canSave ).toBe( true );
+		}
+	} );
+	it( 'refuses anything else, and will not save', ()=>{
+		for( const slug of ["eng test", "eng\\test", "-eng", ".eng", "ëng", "a/b"] ){
+			expect( create(slug).fieldError("slug") ).toBeDefined();
+			expect( create(slug).canSave ).toBe( false );
+		}
+	} );
+	it( 'says nothing while empty, and will not save a blank one', ()=>{
+		expect( create("").fieldError("slug") ).toBeUndefined();//the required asterisk covers it
+		expect( create("   ").canSave ).toBe( false );
+	} );
+	it( 'leaves other fields alone', ()=>{
+		expect( create("eng test").fieldError("name") ).toBeUndefined();
+	} );
+} );

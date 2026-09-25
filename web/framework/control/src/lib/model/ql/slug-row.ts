@@ -62,6 +62,8 @@ export abstract class ISlugRow extends Row{
 	}
 
 	get canSave():boolean{ return this.name?.length>0 && this.slug?.length>0; }
+	//What is wrong with a field's value, for Properties to say under it - a row that returns one should not canSave either.
+	fieldError( _field:string ):string|undefined{ return undefined; }
 
 	readonly id:number;
 	slug!:Slug;

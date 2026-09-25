@@ -9,10 +9,19 @@ namespace Jde::Opc::Gateway{
 	//same way - its _clients drain on the idle ttl.)  Web::Server's store is the authority and trims itself on expiry, so an id
 	//it no longer knows - or knows only as expired, which UpdateExpiration will not revive - has no session behind it.  Called
 	//under the caller's lock at the two growth points and on the read; the map is tiny, so an O(n) sweep is cheaper than a timer.
+	Ω isLive( SessionPK sessionId )ι->bool{
+		let session = Web::Server::Sessions::Find( sessionId );
+		return session && session->Expiration>steady_clock::now();
+	}
+	//A session someone has signed in to.  A login page's request always has a live session - the web server gives every
+	//request without an Authorization header a fresh one (Sessions::UpsertAwait) - but an anonymous one, no user behind it.
+	Ω isSignedIn( SessionPK sessionId )ι->bool{
+		let session = Web::Server::Sessions::Find( sessionId );
+		return session && session->Expiration>steady_clock::now() && session->UserPK;
+	}
 	Ω pruneDeadSessions( ul& )ι->void{
 		for( auto p = _sessions.begin(); p!=_sessions.end(); ){
-			let session = Web::Server::Sessions::Find( p->first );
-			if( session && session->Expiration>steady_clock::now() )
+			if( isLive(p->first) )
 				++p;
 			else{
 				TRACET( ELogTags::Sessions, "Session {} gone - dropping its {} opc credential(s).", hex(p->first), p->second.size() );
@@ -84,6 +93,13 @@ namespace Jde::Opc{
 
 	α Gateway::AuthCache( const Credential& cred, const ServerCnnctnNK& opcNK, SessionPK sessionId )ι->optional<bool>{
 		optional<bool> authenticated;
+		//A hit stores the credential under the caller's session and hands that session back (PasswordAwait::await_resume) - which
+		//signs no one in:  a login page's session is anonymous, and a second sign-in of a cached user stayed anonymous, under
+		//enforcement locked out until a restart emptied the cache (reviews/install-issues.md #47).  Only a signed-in session is
+		//vouched for - a re-auth, or a second connection;  anything else takes the full path, which mints a session with the
+		//user (PasswordAwait::AddSession), on the pooled client its credential finds.
+		if( !isSignedIn(sessionId) )
+			return authenticated;
 		Jde::UserPK matchedUser; //by value: the reference into _sessions is dead once the insert below runs.
 		ul l{ _sessionsMutex };
 		for( let& [_,sessionConnections] : _sessions ){

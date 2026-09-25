@@ -128,6 +128,54 @@ namespace Jde::Opc::Gateway::Tests{
 		return GetProviderPK( OpcServerSlug );
 	}
 
+	//install-issues #48:  " eng-test" was accepted - provider " eng-test", certificate `OpcHub. eng-test.pem`, a login that had to carry
+	//the space.  The slug is refused before the insert, so neither the row nor its provider is made.
+	TEST_F( ServerCnnctnDBTests, SlugRefused ){
+		for( let slug : {" eng-test", "eng-test ", "eng test", "eng\\\\test", "-eng", ""} ){
+			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Slug test\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", slug );
+			bool refused{};
+			try{ QL().QuerySync<jvalue>( create, {}, {UserPK::System} ); }
+			catch( const std::exception& e ){ refused = true; TRACET( _tags, "'{}' refused: {}", slug, e.what() ); }
+			EXPECT_TRUE( refused ) << "slug '" << slug << "'";
+			if( !*slug )
+				continue;//"" is the default connection's key to the lookups below
+			EXPECT_FALSE( SelectServerCnnctn(string{slug}) ) << "slug '" << slug << "'";
+			EXPECT_EQ( 0, GetProviderPK(slug) ) << "slug '" << slug << "'";
+		}
+	}
+
+	//install-issues #51:  a delete is soft and keeps the slug.  A create on it reached the insert, failed on the UNIQUE constraint
+	//with a raw sqlite error, and the failure hook then purged the deleted row's provider.
+	TEST_F( ServerCnnctnDBTests, SlugReuse ){
+		const string slug{ "reuse-test" };
+		if( auto stale = GetOpcServers( DB::Key{slug}, true ); stale.size() )
+			PurgeServerCnnctn( stale.front().Id );
+		let create = [&]()->optional<string>{
+			try{ BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{slug, "opc.tcp://127.0.0.1:4840", "urn:reuse-test"} ); }
+			catch( const std::exception& e ){ return e.what(); }
+			return nullopt;
+		};
+		ASSERT_FALSE( create() );
+		let id = SelectServerCnnctn( slug )->Id;
+		let providerPK = GetProviderPK( slug );
+		ASSERT_NE( 0, providerPK );
+
+		auto error = create();
+		ASSERT_TRUE( error );
+		EXPECT_NE( string::npos, error->find("in use") ) << *error;
+
+		QL().QuerySync<jvalue>( Ƒ("deleteServerConnection(\"id\":{})", id), {}, {UserPK::System} );
+		error = create();
+		ASSERT_TRUE( error );
+		EXPECT_NE( string::npos, error->find("deleted connection") ) << *error;
+		EXPECT_EQ( providerPK, GetProviderPK(slug) );
+
+		PurgeServerCnnctn( id );
+		EXPECT_FALSE( create() );
+		if( let recreated = SelectServerCnnctn(slug); recreated )
+			PurgeServerCnnctn( recreated->Id );
+	}
+
 	TEST_F( ServerCnnctnDBTests, Crud ){
 		try{
 			auto providerPK = CrudImpl();

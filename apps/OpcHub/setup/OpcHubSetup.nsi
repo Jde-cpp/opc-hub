@@ -92,6 +92,8 @@ Var FinishText
 Var StartNow   ;/Start - a silent install starts the products at the end, as the finish page's box does
 Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's after the offer to install it (#14) - the finish page says so
 Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was closed to reinstall over it (#37) - the finish page says to start it again
+Var DataDirOwner ;CheckDataDir's refusal, named:  "<account> owns <path>" - empty when it has no one to name
+Var UserSid    ;current-user mode: this account's SID, read by CheckDataDirOwner - SEC_HUB writes it to the .current-user mark
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -147,12 +149,21 @@ Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was cl
 ; the right to add files to every folder beneath it, so that probe passed on every tree - another account's current-user
 ; install's, an all-users install's - and the Files then failed on each file already there (reviews/m4-closing.md #4).
 ; A current-user install never shares an all-users install's root, which is SYSTEM's and the Administrators' alone (#2)
-; and which an elevated run would pass:  TakeDataDir's mark, .all-users, refuses it whoever runs Setup.
+; and which an elevated run would pass:  TakeDataDir's mark, .all-users, refuses it whoever runs Setup.  Nor another
+; account's current-user root, which the write probe cannot tell from this account's either when Setup is elevated - an
+; administrator's is, in both modes:  CheckDataDirOwner.
 Function CheckDataDir
 	StrCpy $0 0
+	StrCpy $DataDirOwner ""
 	${If} $MultiUser.InstallMode == "CurrentUser"
-	${AndIf} ${FileExists} "$DataDir\.all-users"
-		Return
+		${If} ${FileExists} "$DataDir\.all-users"
+			Return
+		${EndIf}
+		Call CheckDataDirOwner
+		${If} $0 == 0
+			Return
+		${EndIf}
+		StrCpy $0 0
 	${EndIf}
 	StrCpy $1 "$ConfigDir\${HUB_SETTINGS}" ;the first file SEC_HUB overwrites
 	${IfNot} ${FileExists} $1
@@ -169,6 +180,35 @@ Function CheckDataDir
 		StrCpy $0 1
 	${EndIf}
 	Delete "$DataDir\.write-test"
+FunctionEnd
+
+; Current user:  is the data root this account's, or fresh?  -> $0:  1 yes, 0 another account's - $DataDirOwner says whose.
+; The write probe alone let an administrator's current-user run - elevated, MULTIUSER_EXECUTIONLEVEL Highest - into
+; another account's live install:  it overwrote her settings and seeds, and its Start now truncated her running logs and
+; synced against her open .db (reviews/install-issues.md #43).  Two tests, TakeDataDir's powershell as the one thing here
+; that reads an owner:
+;  - the mark, .current-user, the SID of the account that installed there (SEC_HUB).  An owner cannot tell two
+;    administrators apart:  what an elevated run creates is the Administrators', whoever ran it.
+;  - the owners, for a root no mark names - one from before it:  every object the Administrators' (an elevated Setup's)
+;    or this account's.  Another account's is theirs;  SYSTEM's or Local Service's is an all-users install's services'.
+; A probe that cannot run (a policy, say) is no reason to refuse:  the write probe still runs, as it did before.
+; /OEM, here and in TakeDataDir:  powershell writes a pipe in the console's OEM code page, and without it an account's
+; name came back through the ANSI one - install\Zo‰ for install\Zoë (install-issues #50).
+Function CheckDataDirOwner
+	StrCpy $UserSid ""
+	nsExec::ExecToStack /OEM `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$k='S-1-5-32-544',$$u;$$d=Join-Path $$env:ProgramData '${COMPANY}';function n($$s){try{(New-Object Security.Principal.SecurityIdentifier $$s).Translate([Security.Principal.NTAccount]).Value}catch{$$s}};$$m=Join-Path $$d '.current-user';if(Test-Path -LiteralPath $$m){$$o=(Get-Content -LiteralPath $$m -Raw).Trim();if($$o -and $$o -ne $$u){[Console]::Write((n $$o)+' installed '+$$d);exit 11}};function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value;if($$k -notcontains $$o){[Console]::Write((n $$o)+' owns '+$$i.FullName);exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};[Console]::Write($$u);exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
+	Pop $0
+	Pop $1
+	${If} $0 == 0
+		StrCpy $UserSid $1
+		StrCpy $0 1
+	${ElseIf} $0 == 11
+		StrCpy $DataDirOwner $1
+		StrCpy $0 0
+	${Else}
+		DetailPrint "Could not check whose $DataDir is (powershell answered $0: $1) - going on the write probe alone"
+		StrCpy $0 1
+	${EndIf}
 FunctionEnd
 
 ; Stop a service and let its exe deregister itself; its -uninstall exits 0 on a missing service too, and the result is
@@ -295,21 +335,33 @@ FunctionEnd
 ; Close a product this user is running, and wait for it to go.  Windows will not let an installer overwrite a running
 ; image, and - the case #37 found - a hub that keeps running through the install never applies the seeds a newly added
 ; component just wrote, because those land on a `-sync` start:  the pages look exactly as they did before the component
-; was added.  This is the current-user counterpart of StopAndRemove, which does the same for the services.
-; taskkill without /F first:  these run as console windows (-c), so they get a close and shut down as they would on
-; Ctrl+C;  /F only if ten seconds pass.  -> $UserClosed 1 when it was closed - and only then.
+; was added.  This is the current-user counterpart of StopAndRemove, which does the same for the services.  The uninstaller
+; closes with it too:  an ordered stop folds the .db's -wal and ends the log whole, and its RMDir /r would skip a still-mapped
+; image in silence (m4-closing #17).  `done`/`again` as WaitServiceGone's.
+; The product's own stop event first (WindowsApp.cpp addStopEvent), and it shuts down as it would on Ctrl+C.  taskkill without
+; /F is a close to the console window, and Windows 11 hands an unelevated console launch - the Start Menu's, or this Setup's
+; Exec when it is not elevated - to Windows Terminal, which leaves no window to close:  every such close reached /F
+; (reviews/install-issues.md #42).  So taskkill without /F only for a copy with no event this Setup can open - a release from
+; before it, or a copy started elevated.  /F only if ten seconds pass.  -> $UserClosed 1 when it was closed - and only then.
 ; One loop, and the only way out of it into the File commands is the probe saying *gone* (reviews/m2-closing.md #14).  The
 ; forced kill used to be followed by a second's sleep and an exit with no look at all, so a kill that was refused - a copy
 ; this user started elevated - or an image not yet released read as a success:  $UserClosed was set, the finish page said
 ; the running copy had been closed, and the Files went ahead over a locked exe - an Abort/Retry/Ignore box, or under /S
 ; nothing, and new settings and seeds over the old binary.  Now the forced kill gets five seconds of the same probe, and
 ; after that Setup stops and says what to close.
-!macro CloseUserProduct exe label
+!macro CloseUserProduct exe label done again
 	!insertmacro UserProcRunning "${exe}"
 	${If} $0 == 0
-		DetailPrint "Closing ${label} - it is running from an earlier install"
-		nsExec::ExecToLog 'cmd /c taskkill /IM "${exe}" ${USER_FILTER}'
-		Pop $0
+		DetailPrint "Closing ${label} - it is running"
+		System::Call 'kernel32::OpenEventW(i 2, i 0, w "Local\${label}.Stop") p.r4' ;EVENT_MODIFY_STATE.  Local\:  this session's, the one the USERNAME filter's copies run in
+		${If} $4 != 0
+			DetailPrint "  signalled its stop event"
+			System::Call 'kernel32::SetEvent(p r4)'
+			System::Call 'kernel32::CloseHandle(p r4)' ;at once:  a handle held open would keep the event, signalled, for the copy Start now launches
+		${Else}
+			nsExec::ExecToLog 'cmd /c taskkill /IM "${exe}" ${USER_FILTER}'
+			Pop $0
+		${EndIf}
 		StrCpy $2 0
 		${Do}
 			Sleep 500
@@ -323,11 +375,13 @@ FunctionEnd
 				nsExec::ExecToLog 'cmd /c taskkill /F /IM "${exe}" ${USER_FILTER}'
 				Pop $0
 			${ElseIf} $2 >= 30
-				MessageBox MB_OK|MB_ICONSTOP "${label} is still running and could not be closed, so its files cannot be replaced.  Close its console window - or end ${exe} in Task Manager - and run Setup again." /SD IDOK
+				MessageBox MB_OK|MB_ICONSTOP "${label} is still running and could not be closed, so its files cannot be ${done}.  Close its console window - or end ${exe} in Task Manager - and run ${again} again." /SD IDOK
 				Abort "${label} could not be closed"
 			${EndIf}
 		${Loop}
 		StrCpy $UserClosed 1
+	${ElseIf} $0 != 1
+		DetailPrint "Could not check whether ${label} is running (tasklist answered $0) - if it is, close it:  its files cannot be ${done} while it runs"
 	${EndIf}
 !macroend
 
@@ -354,10 +408,28 @@ Function CloseRunningUserProducts
 		Abort "Close ${PRODUCT} and run Setup again"
 		closeThem:
 		;the server first:  it holds a session on the hub, and stopping it after would leave the hub logging a lost client
-		!insertmacro CloseUserProduct "Jde.Opc.Server.exe" "Jde.OpcServer"
-		!insertmacro CloseUserProduct "Jde.Opc.Hub.exe" "Jde.OpcHub"
+		!insertmacro CloseUserProduct "Jde.Opc.Server.exe" "Jde.OpcServer" "replaced" "Setup"
+		!insertmacro CloseUserProduct "Jde.Opc.Hub.exe" "Jde.OpcHub" "replaced" "Setup"
 	${EndIf}
 FunctionEnd
+
+; Current user, elevated Setup:  this account may change what its products write - the .db, ssl\, the logs - as the
+; all-users mode grants Local Service (TakeDataDir).  An unelevated product needs no grant for what it creates itself, but an
+; elevated one - #44's Start now, before it went through the shell, or a Run as administrator - leaves the Administrators'
+; files that the Start Menu's launch cannot write, and an uninstall keeps them:  inherited, the grant reaches those as well,
+; so a reinstall repairs a tree #44 left (reviews/install-issues.md #44).  Not fatal:  the files are in, and the products
+; still run elevated.
+!macro GrantUserProductDir dir
+	${If} $UserSid == ""
+		DetailPrint "Could not give your account write access to ${dir} - its SID is not known (see above)"
+	${Else}
+		nsExec::ExecToLog 'icacls "${dir}" /grant *$UserSid:(OI)(CI)M /Q'
+		Pop $0
+		${If} $0 != 0
+			MessageBox MB_OK|MB_ICONEXCLAMATION "Setup could not give your account write access to ${dir} (icacls returned $0).  Started from the Start Menu, ${PRODUCT} may not be able to write its database and logs there." /SD IDOK
+		${EndIf}
+	${EndIf}
+!macroend
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Components
@@ -368,11 +440,20 @@ Section "OPC Hub" SEC_HUB
 	SectionIn RO
 	Call CheckDataDir
 	${If} $0 == 0
-		MessageBox MB_OK|MB_ICONSTOP "$DataDir belongs to another install - an all-users one, or another account's - and this one cannot write to it.  Choose All users (as an administrator), or remove that install first." /SD IDOK
-		Abort "Data dir not writable"
+		${If} $DataDirOwner != ""
+			StrCpy $DataDirOwner "$DataDirOwner.$\r$\n$\r$\n"
+		${EndIf}
+		MessageBox MB_OK|MB_ICONSTOP "$DataDirOwner$DataDir belongs to another install - an all-users one, or another account's - and this one cannot use it.  Choose All users (as an administrator), or remove that install first." /SD IDOK
+		Abort "Data dir belongs to another install"
 	${EndIf}
 	${If} $MultiUser.InstallMode == "CurrentUser" ;before the first File, in both modes - what is running holds the images the Files below replace
 		Call CloseRunningUserProducts ;see the function (#37)
+		${If} $UserSid != "" ;CheckDataDirOwner's mark (#43):  this root is this account's current-user install's
+			CreateDirectory "$DataDir"
+			FileOpen $1 "$DataDir\.current-user" w
+			FileWrite $1 $UserSid
+			FileClose $1
+		${EndIf}
 	${Else}
 		Call TakeDataDir ;before anything is written under it, and before the services stop - a refusal leaves them running (reviews/m4-closing.md #2)
 		Call StopRunningServices ;see the function (reviews/m2-closing.md #4)
@@ -587,6 +668,12 @@ Section -Services
 		${EndIf}
 		SetOutPath "$INSTDIR" ;before the shortcut: its working dir is the last SetOutPath, and this one used to inherit the OpcServer's (the 09-15 rerun noted it)
 		CreateShortcut "$SMPROGRAMS\${COMPANY}\Uninstall ${PRODUCT}.lnk" "$INSTDIR\Uninstall.exe" "/CurrentUser"
+		${If} $MultiUser.Privileges == "Admin"
+			!insertmacro GrantUserProductDir "$DataDir\OpcHub"
+			${If} ${FileExists} "$DataDir\OpcServer\*.*"
+				!insertmacro GrantUserProductDir "$DataDir\OpcServer"
+			${EndIf}
+		${EndIf}
 		${If} $RuntimeOld == 1
 			StrCpy $FinishText "${PRODUCT} is installed for your account.  The Visual C++ runtime is older than this build expects (14.50), so it may fail to start - https://aka.ms/vs/18/release/vc_redist.x64.exe installs it (administrator).$\r$\nThe Web UI is the link below."
 		${ElseIf} $UserClosed == 1
@@ -699,7 +786,10 @@ Function ModePageLeave
 	${If} $MultiUser.InstallMode == "CurrentUser"
 		Call CheckDataDir
 		${If} $0 == 0
-			MessageBox MB_OK|MB_ICONEXCLAMATION "$DataDir belongs to another install - an all-users one, or another account's - so a current-user install cannot use it.  Choose All users, or remove that install first." /SD IDOK
+			${If} $DataDirOwner != ""
+				StrCpy $DataDirOwner "$DataDirOwner.$\r$\n$\r$\n"
+			${EndIf}
+			MessageBox MB_OK|MB_ICONEXCLAMATION "$DataDirOwner$DataDir belongs to another install - an all-users one, or another account's - so a current-user install cannot use it.  Choose All users, or remove that install first." /SD IDOK
 			Abort
 		${EndIf}
 	${EndIf}
@@ -745,6 +835,12 @@ FunctionEnd
 ;OpcServer (which depends on it) after; this installer runs elevated in that mode, which `net start` needs.  Current user: the
 ;same console windows the Start Menu shortcuts open, the hub given a moment to listen before the OpcServer logs in to it.
 ;A failed `net start` is reported here rather than swallowed - the finish page shows no log.
+;An administrator's Setup is elevated in the current-user mode too (MULTIUSER_EXECUTIONLEVEL Highest), and an Exec from it
+;started the products elevated:  everything that first start created - the .db, the keys, the logs - was the Administrators',
+;and from then on the Start Menu's unelevated launch died on its own log and a read-only database (reviews/install-issues.md
+;#44).  So an elevated Setup opens the shortcuts through the shell - explorer.exe hands a file it is given to the running
+;Explorer, which is this user's unelevated desktop - and the shortcuts carry the arguments explorer.exe would not pass.
+;Without that desktop (no Shell_TrayWnd) the new explorer.exe would itself be elevated:  Setup says to use the Start Menu.
 Function StartProducts
 	${If} $MultiUser.InstallMode == "AllUsers"
 		nsExec::ExecToStack 'net start Jde.OpcHub'
@@ -762,8 +858,21 @@ Function StartProducts
 			${EndIf}
 		${EndIf}
 	${Else}
-		SetOutPath "$INSTDIR\OpcHub" ;the working dir, as the shortcut's
-		Exec '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install-user -sync'
+		StrCpy $3 0 ;1 - through the shell
+		${If} $MultiUser.Privileges == "Admin" ;elevated:  UserInfo sees Administrators enabled only in an elevated token
+			FindWindow $0 "Shell_TrayWnd"
+			${If} $0 == 0
+				MessageBox MB_OK|MB_ICONINFORMATION "Start ${PRODUCT} from the Start Menu folder '${COMPANY}'.  Setup runs as administrator, and started from here the products would too." /SD IDOK
+				Return
+			${EndIf}
+			StrCpy $3 1
+		${EndIf}
+		${If} $3 == 1
+			Exec '"$WINDIR\explorer.exe" "$SMPROGRAMS\${COMPANY}\Jde OpcHub.lnk"'
+		${Else}
+			SetOutPath "$INSTDIR\OpcHub" ;the working dir, as the shortcut's
+			Exec '"$INSTDIR\OpcHub\Jde.Opc.Hub.exe" -c -settings=$ConfigDir\${HUB_SETTINGS} -include=args/install-user -sync'
+		${EndIf}
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
 			;the OpcServer anchors the hub's certificate (Opc.Server.Install.jsonnet caFile), and a first start of the hub writes it
 			;only after its schema sync and keys - later than the five seconds this used to wait (reviews/install-issues.md #12).
@@ -778,8 +887,12 @@ Function StartProducts
 				${EndIf}
 			${Loop}
 			Sleep 2000
-			SetOutPath "$INSTDIR\OpcServer"
-			Exec '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync'
+			${If} $3 == 1
+				Exec '"$WINDIR\explorer.exe" "$SMPROGRAMS\${COMPANY}\Jde OpcServer.lnk"'
+			${Else}
+				SetOutPath "$INSTDIR\OpcServer"
+				Exec '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -c -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install-user -sync'
+			${EndIf}
 		${EndIf}
 		SetOutPath "$INSTDIR"
 	${EndIf}
@@ -819,8 +932,9 @@ Section "Uninstall"
 		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 1967)"
 		!insertmacro CloseFirewallPort "Jde OpcServer (TCP 4840)"
 	${Else}
-		nsExec::ExecToLog 'cmd /c taskkill /F /IM Jde.Opc.Server.exe /IM Jde.Opc.Hub.exe ${USER_FILTER}' ;this user's alone, as the installer's close is - an all-users service of the same image is not this mode's to end (#13)
-		Pop $0
+		;the installer's close (reviews/install-issues.md #42), not a bare /F:  that cut the logs, left the -wal and never looked to see the exes gone
+		!insertmacro CloseUserProduct "Jde.Opc.Server.exe" "Jde.OpcServer" "removed" "the uninstaller"
+		!insertmacro CloseUserProduct "Jde.Opc.Hub.exe" "Jde.OpcHub" "removed" "the uninstaller"
 		DeleteRegValue HKCU "${REG_RUN}" "Jde.OpcHub"
 		DeleteRegValue HKCU "${REG_RUN}" "Jde.OpcServer"
 		Delete "$SMPROGRAMS\${COMPANY}\*.lnk"
@@ -843,12 +957,25 @@ Section "Uninstall"
 	Delete "$DataDir\OpcServer\common-meta.libsonnet"
 	RMDir /r "$DataDir\OpcServer\nodesets"
 	RMDir "$DataDir\OpcServer"
-	Delete "$DataDir\.all-users"
-	RMDir "$DataDir"
-	${If} $MultiUser.InstallMode == "AllUsers"
-	${AndIf} ${FileExists} "$DataDir\*.*" ;kept - the .db, ssl\, the logs - and still SYSTEM's and the Administrators' (#2):  still no current-user install's (#4)
-		FileOpen $1 "$DataDir\.all-users" w
+	StrCpy $2 "" ;the .current-user mark's SID, put back below when the root stays
+	ClearErrors
+	FileOpen $1 "$DataDir\.current-user" r
+	${IfNot} ${Errors}
+		FileRead $1 $2
 		FileClose $1
+	${EndIf}
+	Delete "$DataDir\.all-users"
+	Delete "$DataDir\.current-user"
+	RMDir "$DataDir"
+	${If} ${FileExists} "$DataDir\*.*" ;kept - the .db, ssl\, the logs
+		${If} $MultiUser.InstallMode == "AllUsers" ;still SYSTEM's and the Administrators' (#2):  still no current-user install's (#4)
+			FileOpen $1 "$DataDir\.all-users" w
+			FileClose $1
+		${ElseIf} $2 != "" ;still this account's database and keys:  still no other account's current-user install's (install-issues #43)
+			FileOpen $1 "$DataDir\.current-user" w
+			FileWrite $1 $2
+			FileClose $1
+		${EndIf}
 	${EndIf}
 	DeleteRegKey SHCTX "${REG_UNINST}"
 SectionEnd
@@ -879,14 +1006,18 @@ SectionEnd
 ; (the .db, ssl\, the logs); then every object under it owned by Administrators.  SIDs, not names, which Windows translates.
 ; Before that, whose is what is already there.  powershell, the one thing here that can read an owner, lists the first
 ; object that is not SYSTEM's, Local Service's, the Administrators' or this account's:  11 - another account's files, usually a current-user
-; install of theirs (its .db, keys and settings) - asked about, since taking them over hands them to the services, and a Yes
+; install of theirs (its .db, keys and settings), or a .current-user mark naming another account - an administrator's
+; current-user install is the Administrators' by owner, whoever ran it (install-issues #43) - asked about, since taking them over hands them to the services, and a Yes
 ; also resets every object's own ACL, which that account may have written;  12 - a link another account made, refused:
 ; the services' data would land wherever it points.  A probe that cannot run (a policy, say) is not a reason to refuse the
 ; install - the whole tree is reset instead, unasked.  Root first, then the tree:  once the root is protected nobody else
 ; can add to it, and the tree-wide owner pass catches anything added before.
 Function TakeDataDir
 	StrCpy $3 0 ;1 - reset every object's ACL beneath the root too, not only the root's
-	nsExec::ExecToStack `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$k='S-1-5-18','S-1-5-19','S-1-5-32-544',[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$d=Join-Path $$env:ProgramData '${COMPANY}';function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]);if($$k -notcontains $$o.Value){$$n=$$o.Value;try{$$n=$$o.Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$n+' owns '+$$i.FullName);if($$i.Attributes -band 1024){exit 12};exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
+	${If} ${FileExists} "$DataDir\.current-user" ;a current-user root, this account's own included:  its product dirs carry that account's Modify (GrantUserProductDir), which the services' data must not
+		StrCpy $3 1
+	${EndIf}
+	nsExec::ExecToStack /OEM `powershell.exe -NoProfile -NonInteractive -Command "$$ProgressPreference='SilentlyContinue';$$ErrorActionPreference='Stop';try{$$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$$k='S-1-5-18','S-1-5-19','S-1-5-32-544',$$u;$$d=Join-Path $$env:ProgramData '${COMPANY}';$$m=Join-Path $$d '.current-user';if(Test-Path -LiteralPath $$m){$$o=(Get-Content -LiteralPath $$m -Raw).Trim();if($$o -and $$o -ne $$u){try{$$o=(New-Object Security.Principal.SecurityIdentifier $$o).Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$o+' installed '+$$d);exit 11}};function t($$i){$$o=$$i.GetAccessControl('Owner').GetOwner([Security.Principal.SecurityIdentifier]);if($$k -notcontains $$o.Value){$$n=$$o.Value;try{$$n=$$o.Translate([Security.Principal.NTAccount]).Value}catch{};[Console]::Write($$n+' owns '+$$i.FullName);if($$i.Attributes -band 1024){exit 12};exit 11}};if(Test-Path -LiteralPath $$d){t (Get-Item -LiteralPath $$d -Force);Get-ChildItem -LiteralPath $$d -Recurse -Force|%{t $$_}};exit 0}catch{[Console]::Write($$_.Exception.Message);exit 13}"`
 	Pop $0
 	Pop $1
 	${If} $0 == 11
@@ -918,6 +1049,7 @@ Function TakeDataDir
 		CreateDirectory "$DataDir\OpcServer"
 		!insertmacro Icacls '"$DataDir\OpcServer" /grant *S-1-5-19:(OI)(CI)M'
 	${EndIf}
+	Delete "$DataDir\.current-user" ;the root is no longer that account's current-user install's (install-issues #43)
 	FileOpen $1 "$DataDir\.all-users" w ;the mark CheckDataDir refuses a current-user install on, elevated or not - no such install can use this root (#4)
 	FileClose $1
 FunctionEnd

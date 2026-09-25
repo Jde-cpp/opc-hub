@@ -29,10 +29,13 @@ namespace Jde::Web::Client::Ssl{
 		beast::error_code ec;
 		ctx.load_verify_file( pem.string(), ec );
 		if( ec ){//not fatal: the OS roots may still cover the peer, and failing closed here would take the process down at startup.
-			CodeException{ static_cast<std::error_code>(ec), _tags, Ƒ("Could not load trust anchor '{}'", pem.string()), ELogLevel::Error };
 			std::error_code fsec;
-			if( missing && !fs::exists(pem, fsec) )
+			if( missing && !fs::exists(pem, fsec) ){//Context() rebuilds once it exists, so every per-user first start would log an error for a race it wins (install-issues #41).
+				INFOT( _tags, "Trust anchor '{}' is not there yet - the client TLS context will be rebuilt once it exists.", pem.string() );
 				missing->push_back( pem );
+			}
+			else
+				CodeException{ static_cast<std::error_code>(ec), _tags, Ƒ("Could not load trust anchor '{}'", pem.string()), ELogLevel::Error };
 		}
 		else
 			TRACET( _tags, "Loaded trust anchor '{}'.", pem.string() );
