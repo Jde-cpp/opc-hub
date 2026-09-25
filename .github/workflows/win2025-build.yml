@@ -10,8 +10,9 @@ name: Win2025
 # branch to build - workflow_dispatch is gated to users with write access, so
 # no fork-PR fence is needed - or push a release tag (yyyy.MM.dd). Every run
 # also builds the Windows installer (apps/OpcHub/setup) as an artifact -
-# unsigned, no certificate route yet (apps/OpcHub/setup/README.md, "Signing"); a tag
-# run publishes it as that tag's GitHub release. The deps-cache coupling holds
+# unsigned, no certificate route yet (apps/OpcHub/setup/README.md, "Signing") -
+# and smoke-tests it with a silent install and uninstall; a tag run whose smoke
+# test passes publishes it as that tag's GitHub release. The deps-cache coupling holds
 # for tag runs too: GitHub evicts caches unused for 7 days, so after a quiet
 # stretch re-run "Win2025 Deps" before tagging.
 on:
@@ -200,6 +201,81 @@ jobs:
           name: windows-installer-${{ github.run_id }}
           path: C:/jde/setup/OpcHubSetup-*.exe
           if-no-files-found: error
+          retention-days: 7
+
+      # A silent all-users install of the installer just built, on this throwaway
+      # VM: Setup succeeds, both services run as Local Service, the hub serves the
+      # Web UI, the OpcServer logs in to it (/opcServers lists live sockets only),
+      # and the uninstall deregisters both and closes the databases (no -wal left).
+      # The logs are read after the uninstall, when the stopped services have
+      # flushed them. Before Release, so a tag whose installer cannot do this
+      # publishes nothing. The interactive paths - current-user mode, Windows
+      # Terminal, UAC, a second account - are the install walk's
+      # (reviews/install-issues.md), not this.
+      - name: Install smoke test
+        if: success()
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-Item C:/jde/setup/OpcHubSetup-*.exe).FullName
+          $data = Join-Path $env:ProgramData 'Jde-Cpp'
+          $programs = Join-Path $env:ProgramFiles 'Jde-Cpp'
+          $services = 'Jde.OpcHub', 'Jde.OpcServer'
+          $failures = [System.Collections.Generic.List[string]]::new()
+          function Fail( $message ){ Write-Host "::error::$message"; $failures.Add( $message ) }
+
+          $p = Start-Process $setup -ArgumentList '/S /AllUsers /OpcServer /Start' -Wait -PassThru
+          if( $p.ExitCode -eq 3010 ){ # the VC++ runtime wants a restart, and Setup then leaves /Start to Windows
+            Write-Host '::warning::Setup exited 3010 (restart wanted by the VC++ runtime) - starting the services by hand'
+            Start-Service $services
+          }elseif( $p.ExitCode -ne 0 ){ throw "Setup exited $($p.ExitCode)" }
+
+          # the hub reports running before it listens, and the OpcServer logs in once the hub's certificate exists
+          $site = $null; $servers = @()
+          foreach( $i in 1..60 ){
+            try{
+              $site = Invoke-WebRequest http://127.0.0.1:1967/ -TimeoutSec 5
+              $servers = @( (Invoke-RestMethod http://127.0.0.1:1967/opcServers -TimeoutSec 5).servers | Where-Object { $_ } )
+              if( $servers.Count ){ break }
+            }catch{}
+            Start-Sleep -Seconds 2
+          }
+          foreach( $name in $services ){
+            $svc = Get-CimInstance Win32_Service -Filter "Name='$name'"
+            if( -not $svc ){ Fail "$name is not registered"; continue }
+            if( $svc.State -ne 'Running' ){ Fail "$name is $($svc.State)" }
+            if( $svc.StartName -ne 'NT AUTHORITY\LocalService' ){ Fail "$name runs as $($svc.StartName)" }
+          }
+          if( -not $site -or $site.StatusCode -ne 200 -or "$($site.Headers['Content-Type'])" -notlike 'text/html*' ){ Fail 'the hub did not serve the Web UI on 1967' }
+          if( -not $servers.Count ){ Fail 'no OpcServer logged in to the hub - /opcServers is empty' }
+
+          # _?= runs the uninstaller in place and waits for it; without it, it copies itself to %TEMP% and returns at once
+          $p = Start-Process (Join-Path $programs 'Uninstall.exe') -ArgumentList "/AllUsers /S _?=$programs" -Wait -PassThru
+          if( $p.ExitCode -ne 0 ){ Fail "the uninstaller exited $($p.ExitCode)" }
+          foreach( $name in $services ){ if( Get-Service $name -ErrorAction SilentlyContinue ){ Fail "$name is still registered" } }
+          foreach( $db in "$data/OpcHub/OpcHub.db", "$data/OpcServer/OpcServer.db" ){
+            if( -not (Test-Path $db) ){ Fail "$db is gone - the uninstaller keeps it" }
+            if( Test-Path "$db-wal" ){ Fail "$db-wal is left - the database was not closed" }
+          }
+          $logs = @( Get-ChildItem "$data/OpcHub", "$data/OpcServer" -Filter *.log -File -ErrorAction SilentlyContinue )
+          if( $logs.Count -lt 2 ){ Fail "expected a text log per product, found $($logs.Count)" }
+          foreach( $hit in ($logs | Select-String -Pattern '^(err|cri)-') ){ Fail "$($hit.Filename):$($hit.LineNumber): $($hit.Line)" }
+
+          New-Item -ItemType Directory -Force C:/jde/smoke | Out-Null
+          $logs | Copy-Item -Destination C:/jde/smoke
+          if( $failures.Count ){ throw "install smoke test: $($failures.Count) failure(s)" }
+          "Install smoke test: installed, both services Running as Local Service, Web UI served, $($servers.Count) OpcServer logged in, uninstalled clean, no err-/cri- in $($logs.Count) log(s)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload install smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-smoke-logs-${{ github.run_id }}
+          path: |
+            C:/jde/smoke/**
+            C:/ProgramData/Jde-Cpp/OpcHub/*.log
+            C:/ProgramData/Jde-Cpp/OpcServer/*.log
+          if-no-files-found: ignore
           retention-days: 7
 
       # A tag run publishes the installer as the tag's GitHub release - created
