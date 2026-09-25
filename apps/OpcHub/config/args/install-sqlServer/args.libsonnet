@@ -9,6 +9,7 @@ paths + {
 	sqlType: "sqlServer",
 	logsDir: hubDir,
 	logFile: { keep: 3 }, //as args/install: the previous starts' logs kept beside the file - see the comment there.
+	logConsole: { pattern: "%^%3!l%$-%H:%M:%S.%e %v" }, //as args/install: no source locations in the console - see the comment there.
 	access:{ trustedCertDirs: [ args.certsDir("OpcServer") ] }, //as args/install: the installed products only - see the comment there.
 	dbServers: {
 		dataPaths: [hubDir+"/sql"],

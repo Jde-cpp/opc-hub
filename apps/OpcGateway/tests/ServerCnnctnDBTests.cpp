@@ -128,6 +128,22 @@ namespace Jde::Opc::Gateway::Tests{
 		return GetProviderPK( OpcServerSlug );
 	}
 
+	//install-issues #48:  " eng-test" was accepted - provider " eng-test", certificate `OpcHub. eng-test.pem`, a login that had to carry
+	//the space.  The slug is refused before the insert, so neither the row nor its provider is made.
+	TEST_F( ServerCnnctnDBTests, SlugRefused ){
+		for( let slug : {" eng-test", "eng-test ", "eng test", "eng\\\\test", "-eng", ""} ){
+			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Slug test\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", slug );
+			bool refused{};
+			try{ QL().QuerySync<jvalue>( create, {}, {UserPK::System} ); }
+			catch( const std::exception& e ){ refused = true; TRACET( _tags, "'{}' refused: {}", slug, e.what() ); }
+			EXPECT_TRUE( refused ) << "slug '" << slug << "'";
+			if( !*slug )
+				continue;//"" is the default connection's key to the lookups below
+			EXPECT_FALSE( SelectServerCnnctn(string{slug}) ) << "slug '" << slug << "'";
+			EXPECT_EQ( 0, GetProviderPK(slug) ) << "slug '" << slug << "'";
+		}
+	}
+
 	TEST_F( ServerCnnctnDBTests, Crud ){
 		try{
 			auto providerPK = CrudImpl();

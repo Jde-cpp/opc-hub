@@ -94,6 +94,30 @@ namespace Jde::Opc::Gateway::Tests{
 		INFO( "~PasswordTests.Authenticate" );
 	}
 
+	//install-issues #47:  a login page with no session sends 0.  With user1's credential already cached, the AuthCache used to
+	//vouch for that 0 and hand it back as the session - the user signed in as nobody.  Each must get a session of its own.
+	TEST_F( PasswordTests, Authenticate_Sessionless ){
+		string opcId{ Connection->Slug };
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
+		AuthenticateTest( opcId, session() );//cached, whatever ran before
+		waitFor( 1 );
+		AuthenticateTest( opcId, 0 );
+		waitFor( 2 );
+		AuthenticateTest( opcId, 0 );
+		waitFor( 3 );
+		ASSERT_FALSE( _exception ) << _exception->what();
+		ASSERT_EQ( _sessionIds.size(), 3u );
+		EXPECT_NE( _sessionIds[1], 0u );
+		EXPECT_NE( _sessionIds[2], 0u );
+		EXPECT_NE( _sessionIds[1], _sessionIds[2] );
+		for( let sessionId : {_sessionIds[1], _sessionIds[2]} ){
+			let creds = GetCredential( sessionId, opcId );
+			ASSERT_TRUE( creds ) << hex( sessionId );
+			EXPECT_EQ( "user1", creds->LoginName() );
+		}
+		EXPECT_FALSE( GetCredential(0, opcId) );
+	}
+
 	TEST_F( PasswordTests, Authenticate_BadPassword ){
 		INFO( "PasswordTests.Authenticate_BadPassword" );
 		{ std::lock_guard l{ mtx }; _completed = 0; _exception = nullptr; }

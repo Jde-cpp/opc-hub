@@ -32,6 +32,6 @@ function( sync=false ) base( sync ) + {
 	//up yet, which doubled the retry's cost (install-issues, the 09-15 rerun's retry table); the hub's certificate names
 	//IP:127.0.0.1, so the login's host check passes, and it is the address a current-user hub binds (args/install-user).
 	server+: { host: "127.0.0.1" },
-	logging+: { spd+: { sinks+: { file+: args.logFile } } }, //keep the previous starts' logs beside the file (args/install).
+	logging+: { spd+: { sinks+: { file+: args.logFile, console+: args.logConsole } } }, //keep the previous starts' logs beside the file, and no source locations in the console (args/install).
 	web+:{ client+:{ ssl+:{ caFile: args.certsDir("OpcHub")+"/OpcHub.pem" } } } //the hub is the registry - Opc.Hub.jsonnet's /http commonName.
 }

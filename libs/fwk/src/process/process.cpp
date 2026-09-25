@@ -185,11 +185,11 @@ namespace Jde{
 		if( message.empty() )//e.g. a default-constructed derived std::exception whose what() is ""
 			message = Ƒ( "[{}] no message", typeid(e).name() );
 
-		sv prefix = y==0 ? "Exiting on exception:  " : "Exiting on error:  ";
+		sv prefix = y==0 ? "" : "Exiting on error:  ";//a success is said bare, on stdout:  -install/-uninstall report theirs by throwing it, and "Exiting on exception:" read as a failure in Setup's details pane (reviews/install-issues.md #46).
 		LOG( y==0 ? ELogLevel::Information : ELogLevel::Critical, ELogTags::App | ELogTags::Shutdown, "{}{}", prefix, message );
 		if( !ExitReason() )
 			SetExitReason( y, false );
-		std::cerr << prefix << message << std::endl;
+		(y==0 ? std::cout : std::cerr) << prefix << message << std::endl;
 		if( y!=EXIT_SUCCESS && !IsConsole() )//a service's stderr goes nowhere, and a startup failure never reaches the dispatcher:  the file log was its only record (reviews/m4-closing.md #10, run 4).
 			AddApplicationLog( ELogLevel::Critical, Ƒ("{}{}", prefix, message) );
 		return y;

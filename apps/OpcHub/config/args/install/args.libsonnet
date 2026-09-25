@@ -18,6 +18,10 @@ paths + {
 	//erasing it, and the file rolls at 10 MB too - so the log of a failure survives the restart that recovers from it
 	//(reviews/install-issues.md #13).  The dev configs keep one file.
 	logFile: { keep: 3 },
+	//The console sink - the product's console window, or on linux its journal - without the source locations the dev defaults
+	//give it (libs/fwk/src/log/SpdLog.cpp):  a link to, or the path of, a file on the build machine, which no install has
+	//(reviews/install-issues.md #49).  The text log keeps them - a support request may want them.
+	logConsole: { pattern: "%^%3!l%$-%H:%M:%S.%e %v" },
 	//The client certificates the hub trusts (Opc.Hub.jsonnet access.trustedCertDirs): the AppServer role enrolls a user for
 	//each - the OpcServer's login.  (The OPC servers the gateway role trusts are a separate list, gateway.trustedCertDirs in
 	//Opc.Gateway.jsonnet: the OpcServer's dir and this product's own ssl/servers.)  Only what the installer ships: the

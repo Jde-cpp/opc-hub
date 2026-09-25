@@ -12,6 +12,10 @@ paths + {
 	//erasing it, and the file rolls at 10 MB too - so the log of a failure survives the restart that recovers from it
 	//(reviews/install-issues.md #13).  The dev configs keep one file.
 	logFile: { keep: 3 },
+	//The console sink - the product's console window, or on linux its journal - without the source locations the dev defaults
+	//give it (libs/fwk/src/log/SpdLog.cpp):  a link to, or the path of, a file on the build machine, which no install has
+	//(reviews/install-issues.md #49).  The text log keeps them - a support request may want them.
+	logConsole: { pattern: "%^%3!l%$-%H:%M:%S.%e %v" },
 	nodesetsDir: serverDir+"/nodesets", //read by Opc.Server.Install.jsonnet.
 	access: {
 		trustedCertDirs: [

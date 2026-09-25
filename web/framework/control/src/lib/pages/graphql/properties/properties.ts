@@ -82,6 +82,7 @@ export class Properties implements OnInit{
 	displayNames = input<Record<string,string>>( {} );//label overrides by field name, for the ones the camelCase split gets wrong ("Url", "Certificate Uri")
 	readonlyFields = input<string[]>( [] );//shown but not editable - a key the server will not update (client-detail's slug on an existing connection)
 	isReadonly( field:PropertyField ){ return this.readonlyFields().includes( field.name ); }
+	fieldError( field:PropertyField ):string|undefined{ return this.record()?.fieldError?.( field.name ); }//ISlugRow.fieldError - a plain record has none
 	record = model.required<any>();
 	schema = input.required<TableSchema>();
 	type = input.required<string>();

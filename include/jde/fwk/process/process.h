@@ -26,6 +26,7 @@ namespace Process{
 	Φ SetConsole( bool isConsole )ι->void;
 	Φ SetConsoleTitle( sv title )ι->void;
 	Φ IsTerminal()ι->bool; // Where stdout goes.
+	Φ PrepareConsole()ι->bool; // The terminal stdout is on, readied for the console sink:  whether it draws escape sequences (the dev pattern's links).
 	Φ SetExecutor( up<IShutdown>&& executor )ι->void;
 	Φ MemorySize()ι->size_t;
 	Φ ProcessId()ι->uint32;

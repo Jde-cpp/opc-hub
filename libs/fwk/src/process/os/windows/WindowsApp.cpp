@@ -26,6 +26,18 @@ namespace Jde{
 		::SetConsoleTitleA( Jde::format("{}({})", title, ProcessId()).c_str() );
 	}
 	α Process::IsTerminal()ι->bool{ return ::_isatty(::_fileno(stdout))!=0; }
+	//A classic console window (conhost) - an elevated launch, Windows 10, a default terminal set to it - prints an escape sequence
+	//as text until asked not to:  every line of an installed product's window was led by `←]8;;file:///…` (reviews/install-issues.md
+	//#49).  Windows Terminal draws them either way.  And the console writes in its own code page (the OEM one, 437), not the
+	//process's UTF-8 (build/utf8.manifest, #45) - it is the console's, so a cmd window the product ran in keeps it after.
+	α Process::PrepareConsole()ι->bool{
+		HANDLE out = ::GetStdHandle( STD_OUTPUT_HANDLE );
+		DWORD mode{};
+		if( out==INVALID_HANDLE_VALUE || !::GetConsoleMode(out, &mode) )
+			return false;
+		::SetConsoleOutputCP( CP_UTF8 );
+		return (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) || ::SetConsoleMode( out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING );
+	}
 
 	Ω handlerRoutine( DWORD ctrlType )->BOOL{
 		bool handled{ true };
@@ -42,8 +54,30 @@ namespace Jde{
 			Windows::WindowsWorkerMain::Stop( ctrlType );
 		return handled;
 	}
+	Ω stopRequested( PVOID, BOOLEAN )->void{
+		INFOT( ELogTags::App | ELogTags::Shutdown, "Stop event" );
+		Windows::WindowsWorkerMain::Stop( EXIT_SUCCESS );
+	}
+	//A console copy's stop, whatever hosts it (reviews/install-issues.md #42):  a polite taskkill is a close to the console
+	//window, and Windows 11 hands an unelevated console launch to Windows Terminal, which leaves this process no window to
+	//close - so Setup's reinstall always reached /F.  OpcHubSetup.nsi's CloseUserProduct signals this name.  Local\ - this
+	//session's, as Setup's USERNAME filter is this user's.
+	Ω addStopEvent()ι->void{
+		var name = Jde::format( "Local\\{}.Stop", Process::AppName() );
+		HANDLE stop = ::CreateEventA( nullptr, TRUE, FALSE, name.c_str() );
+		HANDLE wait{};
+		if( stop && ::RegisterWaitForSingleObject(&wait, stop, stopRequested, nullptr, INFINITE, WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION) )
+			return;
+		var error = ::GetLastError();
+		WARNT( ELogTags::App | ELogTags::Startup, "Could not wait on '{}' - error {}.  Setup cannot close this copy in order; it will end it.", name, error );
+		if( stop )
+			::CloseHandle( stop );//so Setup finds no event and falls back to taskkill, rather than signal one nothing waits on.
+	}
+	bool _isService{false};
 	α Process::AddSignals()ε->void{
 		THROW_IF( !SetConsoleCtrlHandler(handlerRoutine, TRUE), "Could not set control handler" );
+		if( !_isService )//a service's stop is the SCM's.
+			addStopEvent();
 	}
 
 	α Process::MemorySize()ι->size_t{
@@ -86,7 +120,6 @@ namespace Jde{
 		::DeregisterEventSource( source );
 	}
 
-	bool _isService{false};
 	α Process::AsService()ι->bool{
 		_isService = true;
 		Windows::Service::ReportStatus( SERVICE_START_PENDING, NO_ERROR, 3000 );

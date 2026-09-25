@@ -14,7 +14,17 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		this.serverError = obj.serverError;
 	}
 
-	override get canSave():boolean{ return super.canSave && this.url?.length>0; }//url is non-null in the gateway meta - the base only knows name/slug
+	override get canSave():boolean{ return super.canSave && this.url?.length>0 && !!this.slug.trim() && !this.fieldError("slug"); }//url is non-null in the gateway meta - the base only knows name/slug
+	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
+	//url segment, and " eng-test" went into all three.  Trimmed on the way out (mutation); what is left must match the gateway's
+	//own rule, which refuses anything else (OpcQLHook::InsertBefore).
+	static slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+	override fieldError( field:string ):string|undefined{
+		const slug = this.slug?.trim();
+		return field=="slug" && slug && !ServerCnnctn.slugPattern.test( slug )
+			? "Letters, digits, '.', '_' and '-' only, starting with a letter or digit."
+			: undefined;
+	}
 
 	override equals( row:ISlugRow ):boolean{
 		let other = row as ServerCnnctn;
@@ -24,6 +34,8 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	override mutation( original:ServerCnnctn ):Mutation[]{
 		console.assert( this.canSave );
 		let args = super.mutationArgs( original );
+		if( args.slug!==undefined )
+			args.slug = args.slug.trim();
 		if( this.url!=original?.url )
 			args["url"] = this.url;
 		if( this.certificateUri!=original?.certificateUri )

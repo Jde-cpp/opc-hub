@@ -150,6 +150,14 @@ function(compileOptions)
 		endif()
 		set_property( TARGET ${ARGV0} PROPERTY POSITION_INDEPENDENT_CODE ON )
 	endif()
+	#Every exe runs with UTF-8 as its ANSI code page (Windows 10 1903+), so the narrow Win32/CRT calls - _get_pgmptr,
+	#_dupenv_s, fs::path::string(), the A functions - hand back and take UTF-8, the encoding the rest of the code and the
+	#logs assume.  Under cp1252 a profile path wrote 'ë' as byte EB into every log, and a letter outside the code page
+	#became '?' (reviews/install-issues.md #45).  A .manifest source is merged into the linker's own (/MANIFESTINPUT).
+	get_target_property( type ${ARGV0} TYPE )
+	if( WIN32 AND type STREQUAL "EXECUTABLE" )
+		target_sources( ${ARGV0} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/utf8.manifest )
+	endif()
 endfunction()
 
 #Registers targetName with ctest: runs from ${CMAKE_BINARY_DIR}/Testing with the env vars the jsonnet

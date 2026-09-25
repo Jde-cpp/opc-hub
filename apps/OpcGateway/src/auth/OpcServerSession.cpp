@@ -9,10 +9,13 @@ namespace Jde::Opc::Gateway{
 	//same way - its _clients drain on the idle ttl.)  Web::Server's store is the authority and trims itself on expiry, so an id
 	//it no longer knows - or knows only as expired, which UpdateExpiration will not revive - has no session behind it.  Called
 	//under the caller's lock at the two growth points and on the read; the map is tiny, so an O(n) sweep is cheaper than a timer.
+	Ω isLive( SessionPK sessionId )ι->bool{
+		let session = Web::Server::Sessions::Find( sessionId );
+		return session && session->Expiration>steady_clock::now();
+	}
 	Ω pruneDeadSessions( ul& )ι->void{
 		for( auto p = _sessions.begin(); p!=_sessions.end(); ){
-			let session = Web::Server::Sessions::Find( p->first );
-			if( session && session->Expiration>steady_clock::now() )
+			if( isLive(p->first) )
 				++p;
 			else{
 				TRACET( ELogTags::Sessions, "Session {} gone - dropping its {} opc credential(s).", hex(p->first), p->second.size() );
@@ -84,6 +87,12 @@ namespace Jde::Opc{
 
 	α Gateway::AuthCache( const Credential& cred, const ServerCnnctnNK& opcNK, SessionPK sessionId )ι->optional<bool>{
 		optional<bool> authenticated;
+		//A hit stores the credential under the caller's session and hands that session back (PasswordAwait::await_resume), so
+		//it needs one:  a login page with none sends 0, and a second sign-in of a cached user came back with session 0 -
+		//anonymous, and under enforcement locked out until a restart emptied the cache (reviews/install-issues.md #47).  No
+		//match, then:  the full path mints the session (PasswordAwait::AddSession), on the pooled client its credential finds.
+		if( !isLive(sessionId) )
+			return authenticated;
 		Jde::UserPK matchedUser; //by value: the reference into _sessions is dead once the insert below runs.
 		ul l{ _sessionsMutex };
 		for( let& [_,sessionConnections] : _sessions ){
