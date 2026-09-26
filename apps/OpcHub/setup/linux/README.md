@@ -36,7 +36,9 @@ exe and `.so` gets `RUNPATH=$ORIGIN` (patchelf), so a product dir resolves by it
 (`build/functions.cmake`, with the build tree's entries behind it), the third-party ones have no RUNPATH at all.
 `Depends:` is what is left: the packages owning the system libraries the staged binaries still load (`libssl3t64`,
 `zlib1g`, `libzstd1`, `liburing2`, `liblzma5`, `libstdc++6`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
-`adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`); `ca-certificates` is recommended, for the OS trust
+`adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`).  The tarball also carries, beside the exes, those
+`Depends:` whose package is neither `required` nor `important` - today `liburing2`'s `liburing.so.2` - since nothing installs
+a tarball's dependencies and a system may lack them.  `ca-certificates` is recommended, for the OS trust
 store.  The version is `git describe --tags` unless `--version` names one (the release workflow passes the tag): a
 `yyyy.MM.dd` as it is, `yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`, which `dpkg` sorts after the tag it is newer than, so a
 build past a release can be installed over it.  Where no tag is reachable it falls back to `CMakePresets.common.json`'s
@@ -125,6 +127,10 @@ tar xzf jde-opchub-<version>-linux-amd64.tar.gz && cd jde-opchub-<version>-linux
 ./install.sh --uninstall
 ```
 
+It needs no package installed first: the tarball carries the libraries a system may lack, `liburing.so.2` among them, which
+the `.deb` gets from apt.  `install.sh` checks with `ldd` that everything the products load resolves, and if not, it names the
+missing library and stops before copying anything.
+
 Rerun `./install.sh` from a newer tarball to upgrade, or with `--opcserver` to add the OPC UA server later: it replaces the
 programs while they run and restarts the products onto the new files (a running jde-opcserver restarts with the hub).  The settings under `~/.config/Jde-Cpp/config` are replaced too - but for an `args/install*/args.libsonnet` you edited, which stays in use with this release's copy beside it as `args.libsonnet.new` (the script names each one - merge any change by hand), as the `.deb` does with its conffiles.
 
@@ -182,8 +188,9 @@ passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp`
   `apps/OpcGateway/config/Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the certificates that may
   log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's
   Gateways help topic (`?`) has the details.
-- MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile like
-  `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` - the driver beside the exe, the `sql/mysql` scripts in the
+- MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile that imports
+  `args/install` and replaces only `sqlType` and `dbServers`, as `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` does,
+  so the Web UI, its Google client id and the host names stay that file's - the driver beside the exe, the `sql/mysql` scripts in the
   product's `sql-mysql/` and the profile's `scriptPaths` pointing there (`sql/` is the package's, sqlite scripts replaced on every upgrade) - re-registered with `-include=args/install-mysql` through `systemctl edit`.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only
   under its `StateDirectory`.  Loosen with `systemctl edit` if a local change needs it.
