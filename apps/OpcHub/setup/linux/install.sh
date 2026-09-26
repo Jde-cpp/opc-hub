@@ -40,6 +40,14 @@ if [ $uninstall = 1 ]; then
 fi
 
 [ -x "$here/opt/jde-cpp/opchub/Jde.Opc.Hub" ] || { echo "install.sh: run it from the unpacked tarball (opt/jde-cpp/opchub/Jde.Opc.Hub not found beside it)" >&2; exit 1; }
+#Every library the products load must resolve, beside the exes or on the system:  the tarball carries those a system may
+#lack (build-deb.sh), and a gap would otherwise show only as units restarting every 5 s on a loader error after this script
+#said "installed" (reviews/install-issues.md #59).  Checked before anything is copied, so an upgrade leaves the running ones be.
+missing=$(for f in "$here"/opt/jde-cpp/opchub/* "$here"/opt/jde-cpp/opcserver/*; do { ldd "$f" 2>/dev/null || true; } | awk '/ => not found/{print $1}'; done | sort -u | paste -sd' ')
+if [ -n "$missing" ]; then
+	echo "install.sh: the products load $missing, which neither this tarball nor the system has - nothing was installed.  Install the distro package that provides it, or use the .deb, whose apt install brings it." >&2
+	exit 1
+fi
 install -d "$programs" "$config" "$dataRoot" "$units"
 cp -r --remove-destination "$here/opt/jde-cpp/." "$programs/" #unlink first: a rerun copies over the running products, where a plain cp dies ETXTBSY on the exe and rewrites each mapped .so in place; a new inode, like dpkg's rename, leaves the old image to the restart below (reviews/m4-closing.md #1)
 #The four overlays the README sends the operator to edit keep an edited copy, as the .deb's conffiles do:  $config/.dist
@@ -102,12 +110,12 @@ unit jde-opchub "OpcHub - AppServer + OPC gateway (port 1967)" opchub Jde.Opc.Hu
 unit jde-opcserver "OpcServer - OPC UA server (opc.tcp 4840, http 1970)" opcserver Jde.Opc.Server apps/OpcServer/config/Opc.Server.Install.jsonnet \
 	"$(printf 'Requires=jde-opchub.service\nAfter=jde-opchub.service')"
 systemctl --user daemon-reload
-systemctl --user enable jde-opchub.service
-systemctl --user restart jde-opchub.service #restart, not start: an upgrade over a running instance
-if [ $opcServer = 1 ]; then
-	systemctl --user enable jde-opcserver.service
-	systemctl --user restart jde-opcserver.service
-fi
+services=jde-opchub.service
+[ $opcServer = 0 ] || services="$services jde-opcserver.service"
+systemctl --user enable $services
+#restart, not start: an upgrade over a running instance.  One call, as postinst's try-restart:  jde-opcserver Requires= the hub,
+#so the hub's restart already restarts a running server, and a second call would stop that new copy mid-start (install-issues #58).
+systemctl --user restart $services
 cat <<MSG
 installed for $USER:
   programs  $programs

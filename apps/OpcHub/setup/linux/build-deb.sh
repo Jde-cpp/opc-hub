@@ -5,7 +5,8 @@
 #
 # Stages the tree (opt/jde-cpp, etc/jde-cpp, var/lib/Jde-Cpp, the systemd units), bundles the .so's the exes load from
 # outside the system - the $REPO_DIR deps (fmt, boost, jsonnet) and LLVM's libc++/libc++abi, which the target distro
-# ships an older major of - computes Depends: from what is left on the system, and runs dpkg-deb.  Every staged exe and
+# ships an older major of - computes Depends: from what is left on the system, and runs dpkg-deb; the tarball then also
+# carries the Depends: that are neither required nor important, which nothing installs for it.  Every staged exe and
 # .so gets RUNPATH=$ORIGIN (patchelf), so one dir per product resolves by itself:  our own are linked that way already
 # (build/functions.cmake) but keep the build-tree entries behind it, and the third-party ones have no RUNPATH at all -
 # libboost_json would not find libboost_container beside it, nor libjsonnet++ libjsonnet.
@@ -208,12 +209,17 @@ install -m 644 "$repo/THIRD-PARTY-NOTICES.txt" "$docDir/THIRD-PARTY-NOTICES.txt"
 #Depends: the package owning each system .so the staged binaries still resolve to (the build machine's names - libssl3t64
 #on noble), libc6 at the highest GLIBC_x.y symbol version any of them imports, adduser for the postinst, and tzdata -
 #libc++'s chrono reads /usr/share/zoneinfo (the proto logger dies without it: "corrupt tzdb", seen on a minimal image).
+owner(){ #path - the package that owns it, or nothing
+	local pkg
+	pkg=$(dpkg -S "$1" 2>/dev/null | head -1 | cut -d: -f1) || true
+	[ -n "$pkg" ] || pkg=$(dpkg -S "$(realpath "$1")" 2>/dev/null | head -1 | cut -d: -f1) || true
+	echo "$pkg"
+}
 depends(){
 	local name path pkg
 	while read -r name path; do
 		case "$path" in "$optDir"/*) continue;; esac
-		pkg=$(dpkg -S "$path" 2>/dev/null | head -1 | cut -d: -f1) || true
-		[ -n "$pkg" ] || pkg=$(dpkg -S "$(realpath "$path")" 2>/dev/null | head -1 | cut -d: -f1) || true
+		pkg=$(owner "$path")
 		[ -n "$pkg" ] || die "no package owns $path (needed by the staged binaries) - install it from a package, or bundle it"
 		echo "$pkg"
 	done < <(for f in "${binaries[@]}"; do ldd "$f" | awk '/ => \//{print $1, $3}'; done | sort -u) | sort -u
@@ -256,6 +262,21 @@ if [ $tar = 1 ]; then
 	install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install-user" "$repo/apps/OpcHub/config/args/install-user/args.libsonnet"
 	install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install-user" "$repo/apps/OpcServer/config/args/install-user/args.libsonnet"
 	install -m 640 "$setupDir/env" "$etcDir/env" #install.sh's template for $dataRoot/env; the package's is under usr/share, which this archive leaves out
+	#The Depends: a system may lack ride along:  apt installs the .deb's, but nothing installs the tarball's - its install needs
+	#no root, and getting a package does.  liburing2 is optional, absent from a 24.04 that never had the .deb, and without it
+	#neither product loads (reviews/install-issues.md #59).  A required or important package is on every install and stays the
+	#system's; the rest go beside the exes that load them, where RUNPATH=$ORIGIN finds them first.  Added after dpkg-deb, as the
+	#overlays above, so the .deb keeps its Depends: instead.
+	for dir in "$optDir/opchub" "$optDir/opcserver"; do
+		while read -r name path; do
+			case "$path" in "$optDir"/*) continue;; esac
+			pkg=$(owner "$path")
+			case "$(dpkg-query -W -f='${Priority}\n' "$pkg" | head -1)" in required|important) continue;; esac
+			install -m 644 "$(realpath "$path")" "$dir/$name"
+			"$patchelf" --set-rpath '$ORIGIN' "$dir/$name" #a bundled one's own deps resolve beside it too - RUNPATH is not inherited
+			echo "tarball: ${dir#"$stage"/}/$name from $pkg, which a system may lack"
+		done < <(for f in "$dir"/*; do ldd "$f" | awk '/ => \//{print $1, $3}'; done | sort -u)
+	done
 	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share \
 		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md ./LICENSE ./THIRD-PARTY-NOTICES.txt
 	echo "built $tarFile ($(du -h "$tarFile" | cut -f1)) - unpacks into $tarRoot/"

@@ -156,6 +156,10 @@ HEADER
 	#notice (reviews/m4-closing.md #22).  Windows uses WinDbg for stack traces, not this.
 	section "libbacktrace (Linux only, statically linked into Jde.Opc.Hub and Jde.Opc.Server)" https://github.com/ianlancetaylor/libbacktrace BSD-3-Clause
 	debian libbacktrace0 libbacktrace-dev
+	#libJde's io_uring (.github/docker/Dockerfile):  the .deb depends on liburing2, but the per-user tarball carries
+	#liburing.so.2, since nothing installs a tarball's dependencies (apps/OpcHub/setup/linux/build-deb.sh; reviews/install-issues.md #59)
+	section "liburing (Linux only: the .deb depends on liburing2; the per-user tarball bundles liburing.so.2)" https://github.com/axboe/liburing "MIT (offered as LGPL-2.1 OR MIT)"
+	debian liburing2
 } > "$tmp"
 mv "$tmp" "$out"; trap - EXIT
 chmod 644 "$out"
