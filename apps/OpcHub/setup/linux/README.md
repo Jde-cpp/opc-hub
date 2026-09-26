@@ -36,9 +36,11 @@ exe and `.so` gets `RUNPATH=$ORIGIN` (patchelf), so a product dir resolves by it
 (`build/functions.cmake`, with the build tree's entries behind it), the third-party ones have no RUNPATH at all.
 `Depends:` is what is left: the packages owning the system libraries the staged binaries still load (`libssl3t64`,
 `zlib1g`, `libzstd1`, `liburing2`, `liblzma5`, `libstdc++6`, `libgcc-s1`), `libc6` at the highest `GLIBC_x.y` any of them imports,
-`adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`).  The tarball also carries, beside the exes, those
-`Depends:` whose package is neither `required` nor `important` - today `liburing2`'s `liburing.so.2` - since nothing installs
-a tarball's dependencies and a system may lack them.  `ca-certificates` is recommended, for the OS trust
+`adduser` and `tzdata` (libc++'s chrono reads `/usr/share/zoneinfo`).  The tarball also carries, beside the exes, the
+`Depends:` a system may lack - today `liburing2`'s `liburing.so.2` - since nothing installs a tarball's dependencies.  Both
+halves are lists named in `build-deb.sh`, `tarballPkgs` and `systemPkgs` (the glibc, gcc runtime, openssl and compression
+packages, left to the system so its loader keeps its own glibc and apt keeps updating openssl), and a package in neither
+fails the build.  `ca-certificates` is recommended, for the OS trust
 store.  The version is `git describe --tags` unless `--version` names one (the release workflow passes the tag): a
 `yyyy.MM.dd` as it is, `yyyy.MM.dd-N-gsha` as `yyyy.MM.dd+N.gsha`, which `dpkg` sorts after the tag it is newer than, so a
 build past a release can be installed over it.  Where no tag is reachable it falls back to `CMakePresets.common.json`'s

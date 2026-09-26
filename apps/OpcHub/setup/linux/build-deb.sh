@@ -6,7 +6,7 @@
 # Stages the tree (opt/jde-cpp, etc/jde-cpp, var/lib/Jde-Cpp, the systemd units), bundles the .so's the exes load from
 # outside the system - the $REPO_DIR deps (fmt, boost, jsonnet) and LLVM's libc++/libc++abi, which the target distro
 # ships an older major of - computes Depends: from what is left on the system, and runs dpkg-deb; the tarball then also
-# carries the Depends: that are neither required nor important, which nothing installs for it.  Every staged exe and
+# carries the Depends: a system may lack (tarballPkgs), which nothing installs for it.  Every staged exe and
 # .so gets RUNPATH=$ORIGIN (patchelf), so one dir per product resolves by itself:  our own are linked that way already
 # (build/functions.cmake) but keep the build-tree entries behind it, and the third-party ones have no RUNPATH at all -
 # libboost_json would not find libboost_container beside it, nor libjsonnet++ libjsonnet.
@@ -264,18 +264,28 @@ if [ $tar = 1 ]; then
 	install -m 640 "$setupDir/env" "$etcDir/env" #install.sh's template for $dataRoot/env; the package's is under usr/share, which this archive leaves out
 	#The Depends: a system may lack ride along:  apt installs the .deb's, but nothing installs the tarball's - its install needs
 	#no root, and getting a package does.  liburing2 is optional, absent from a 24.04 that never had the .deb, and without it
-	#neither product loads (reviews/install-issues.md #59).  A required or important package is on every install and stays the
-	#system's; the rest go beside the exes that load them, where RUNPATH=$ORIGIN finds them first.  Added after dpkg-deb, as the
-	#overlays above, so the .deb keeps its Depends: instead.
+	#neither product loads (reviews/install-issues.md #59).  They go beside the exes that load them, where RUNPATH=$ORIGIN finds
+	#them first; the toolchain floor and openssl stay the system's - its glibc is paired with its own loader, and apt updates its
+	#openssl.  Both lists are named, not read from dpkg's Priority:  that is the build machine's status file, and the release
+	#runner's records libc6 and the rest as optional, which bundled all of them (#64).  A package in neither list fails the
+	#build until it is placed.  Added after dpkg-deb, as the overlays above, so the .deb keeps its Depends: instead.
+	tarballPkgs=' liburing2 '
+	systemPkgs=' libc6 libgcc-s1 libstdc++6 libssl3t64 libzstd1 liblzma5 zlib1g '
+	bundled=' '
 	for dir in "$optDir/opchub" "$optDir/opcserver"; do
 		while read -r name path; do
 			case "$path" in "$optDir"/*) continue;; esac
 			pkg=$(owner "$path")
-			case "$(dpkg-query -W -f='${Priority}\n' "$pkg" | head -1)" in required|important) continue;; esac
+			case "$systemPkgs" in *" $pkg "*) continue;; esac
+			case "$tarballPkgs" in *" $pkg "*) ;; *) die "$path (${pkg:-no package}) is in neither build-deb.sh's tarballPkgs nor its systemPkgs - name it in one: the tarball carries the first, a system must have the second";; esac
 			install -m 644 "$(realpath "$path")" "$dir/$name"
 			"$patchelf" --set-rpath '$ORIGIN' "$dir/$name" #a bundled one's own deps resolve beside it too - RUNPATH is not inherited
 			echo "tarball: ${dir#"$stage"/}/$name from $pkg, which a system may lack"
+			bundled="$bundled$pkg "
 		done < <(for f in "$dir"/*; do ldd "$f" | awk '/ => \//{print $1, $3}'; done | sort -u)
+	done
+	for pkg in $tarballPkgs; do
+		case "$bundled" in *" $pkg "*) ;; *) die "tarballPkgs names $pkg, which nothing staged loads - drop it";; esac
 	done
 	tar -czf "$tarFile" --owner=0 --group=0 --numeric-owner -C "$stage" --exclude=./usr/share \
 		--transform "s,^\./,$tarRoot/,S" ./opt ./etc ./var ./usr ./install.sh ./README.md ./LICENSE ./THIRD-PARTY-NOTICES.txt
