@@ -949,6 +949,7 @@ FunctionEnd
 ;newest Application event (Process::AddApplicationLog, the source its name), which Event Viewer cannot render - the source has no
 ;message file - so Setup reads it:  XPath, not -ProviderName, since an unregistered source is no provider to Get-WinEvent;  the
 ;last two minutes, so an older failure's is not shown.  No event:  the log it names.
+;Leaves net start's exit code in $0.
 !macro StartService svc log
 	nsExec::ExecToStack 'net start ${svc}'
 	Pop $0
@@ -967,7 +968,12 @@ FunctionEnd
 Function StartProducts
 	${If} $MultiUser.InstallMode == "AllUsers"
 		!insertmacro StartService Jde.OpcHub "OpcHub\Opc.Hub.log"
-		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
+		;Jde.OpcServer depends on Jde.OpcHub, so its net start after a hub that failed only starts the hub again - which fails the
+		;same way, and the OpcServer box then named a log its process never got to write (reviews/install-issues.md #65).  The hub's
+		;box has said why;  the OpcServer starts with the hub, next time it does.
+		${If} $0 != 0
+			DetailPrint "Jde.OpcServer not started: it needs Jde.OpcHub, which did not start"
+		${ElseIf} ${SectionIsSelected} ${SEC_OPCSERVER}
 			!insertmacro StartService Jde.OpcServer "OpcServer\Opc.Server.log"
 		${EndIf}
 	${Else}

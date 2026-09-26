@@ -27,6 +27,12 @@ namespace Jde::DB{
 		for_each(self->Schemas, [self](auto&& schema){ schema->Initialize(self,schema); });
 	}
 
+	//The driver answers its dialect without a connection;  DS() may need one, to ask the server its catalog's name.  So the data
+	//source already built, else the cluster's - through DS(), a noexcept Syntax() that met an unreachable server ended the
+	//process (reviews/install-issues.md #66).
+	α Catalog::Syntax()Ι->const DB::Syntax&{
+		return _dataSource ? _dataSource->Syntax() : Cluster->Syntax();
+	}
 	α Catalog::DS()Ε->sp<IDataSource>{
 		if( !_dataSource ){
 			auto cluster = Cluster->DataSource;

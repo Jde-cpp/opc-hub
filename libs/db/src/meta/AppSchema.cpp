@@ -99,7 +99,7 @@ namespace Jde::DB{
 		return DBSchema->DS();
 	}
 	α AppSchema::ResetDS()Ι->void{ DBSchema->ResetDS(); }
-	α AppSchema::Syntax()Ι->const DB::Syntax&{ return DBSchema->DS()->Syntax(); }
+	α AppSchema::Syntax()Ι->const DB::Syntax&{ return DBSchema->Catalog->Syntax(); }//not DS():  that may connect, and this is noexcept (install-issues #66)
 
 	α AppSchema::FindTable( str name )Ι->sp<Table>{
 		let y = Tables.find( name );
