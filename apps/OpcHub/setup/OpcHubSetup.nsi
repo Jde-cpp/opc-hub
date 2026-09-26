@@ -187,10 +187,29 @@ FunctionEnd
 ; parsed, and every all-users install took the root unasked (reviews/install-issues.md #55).  -ExecutionPolicy Bypass:  -File,
 ; unlike -Command, is subject to the policy, Restricted by default on a client Windows.  /OEM:  powershell writes a pipe in the
 ; console's OEM code page, and without it an account's name came back through the ANSI one - install\Zo‰ for install\Zoë (#50).
+; Sysnative:  Setup is 32-bit, so a bare powershell.exe is SysWOW64's, whose CLR crashed with 0x4000001E about one run in seven on
+; the walk's VM - a crashed probe let an administrator's current-user Setup past its owner check, and cost the root its mark (#60).
+; The 64-bit one did not crash in 30 runs;  Sysnative is how a 32-bit process reaches it (the script requires x64, .onInit).
+; A probe that still dies - any code the script does not use - is run again, up to three times.
 !macro DataDirProbe mode
 	InitPluginsDir
 	File "/oname=$PLUGINSDIR\data-dir-probe.ps1" "data-dir-probe.ps1"
-	nsExec::ExecToStack /OEM 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-dir-probe.ps1" -Mode ${mode} -Company "${COMPANY}"'
+	StrCpy $R9 0
+	${Do}
+		IntOp $R9 $R9 + 1
+		nsExec::ExecToStack /OEM '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-dir-probe.ps1" -Mode ${mode} -Company "${COMPANY}"'
+		Pop $R8
+		Pop $R7
+		${If} $R8 == 0
+		${OrIf} $R8 == 11
+		${OrIf} $R8 == 12
+		${OrIf} $R8 == 13
+			${Break}
+		${EndIf}
+		DetailPrint "The data-root probe died (attempt $R9, powershell answered $R8: $R7)"
+	${LoopUntil} $R9 >= 3
+	Push $R7
+	Push $R8
 !macroend
 
 ; Current user:  is the data root this account's, or fresh?  -> $0:  1 yes, 0 another account's - $DataDirOwner says whose.
@@ -202,21 +221,87 @@ FunctionEnd
 ;    administrators apart:  what an elevated run creates is the Administrators', whoever ran it.
 ;  - the owners, for a root no mark names - one from before it:  every object the Administrators' (an elevated Setup's)
 ;    or this account's.  Another account's is theirs;  SYSTEM's or Local Service's is an all-users install's services'.
-; A probe that cannot run (a policy, say) is no reason to refuse:  the write probe still runs, as it did before.
+; A probe that cannot run (a policy, say) leaves the write probe, which is enough unelevated:  a standard account cannot write
+; another's files.  Elevated it is not - an administrator can write anyone's - so there Setup asks, and a silent install
+; answers No (#60).  $DataDirOwner "*" tells the callers the user has been told already.  The SID for the mark comes from the
+; token, not the probe, so a probe that fails does not cost the root its mark (#60).
 Function CheckDataDirOwner
-	StrCpy $UserSid ""
+	Call GetUserSid
 	!insertmacro DataDirProbe CurrentUser
 	Pop $0
 	Pop $1
 	${If} $0 == 0
-		StrCpy $UserSid $1
 		StrCpy $0 1
 	${ElseIf} $0 == 11
+		Call NameOwner
 		StrCpy $DataDirOwner $1
 		StrCpy $0 0
+	${ElseIf} $MultiUser.Privileges == "Admin"
+		MessageBox MB_YESNO|MB_ICONEXCLAMATION "Setup could not check whose $DataDir is (powershell answered $0: $1).$\r$\n$\r$\nRunning as administrator, it cannot tell another account's current-user install there from yours, and installing over one overwrites its settings and seeds, and starts against its database.$\r$\n$\r$\nYes: install anyway.  No: stop." /SD IDNO IDYES ownerUnchecked
+		StrCpy $DataDirOwner "*"
+		StrCpy $0 0
+		Return
+		ownerUnchecked:
+		StrCpy $0 1
 	${Else}
 		DetailPrint "Could not check whose $DataDir is (powershell answered $0: $1) - going on the write probe alone"
 		StrCpy $0 1
+	${EndIf}
+FunctionEnd
+
+; The probe's "<SID> installed …" / "<SID> owns …" -> "<DOMAIN\name> …", in $1.  The probe used to name the account itself, through
+; a pipe in the console's OEM code page, which best-fit a name outside it - install\Łukasz read install\Lukasz - or dropped it to
+; ?s (#62).  LookupAccountSidW is Unicode, as this script is.  A SID with no account (deleted) stays a SID, as the probe left it.
+Function NameOwner
+	StrLen $R3 $1
+	StrCpy $R0 0
+	${Do}
+		${If} $R0 >= $R3
+			Return ;no space:  nothing to name
+		${EndIf}
+		StrCpy $R1 $1 1 $R0
+		${IfThen} $R1 == " " ${|} ${ExitDo} ${|}
+		IntOp $R0 $R0 + 1
+	${Loop}
+	StrCpy $R2 $1 $R0 ;the SID
+	StrCpy $R4 $1 "" $R0 ;" installed …" / " owns …"
+	System::Call 'advapi32::ConvertStringSidToSidW(w R2, *p .R5) i .R6'
+	${If} $R6 != 0
+		System::Call 'advapi32::LookupAccountSidW(p 0, p R5, w .R7, *i ${NSIS_MAX_STRLEN}, w .R8, *i ${NSIS_MAX_STRLEN}, *i .R9) i .R6'
+		${If} $R6 != 0
+			${If} $R8 != ""
+				StrCpy $1 "$R8\$R7$R4"
+			${Else}
+				StrCpy $1 "$R7$R4"
+			${EndIf}
+		${EndIf}
+		System::Call 'kernel32::LocalFree(p R5)'
+	${EndIf}
+FunctionEnd
+
+; This account's SID -> $UserSid, from the process token:  the .current-user mark and GrantUserProductDir's grant used to take it
+; from the probe's output, so a probe that crashed left the root without its mark, silently (#60).  An elevated token's user is
+; the same account's.  Empty if the token cannot be read.
+Function GetUserSid
+	StrCpy $UserSid ""
+	System::Call 'kernel32::GetCurrentProcess() p .R0'
+	System::Call 'advapi32::OpenProcessToken(p R0, i 0x8, *p .R1) i .R2' ;TOKEN_QUERY
+	${If} $R2 != 0
+		System::Call 'advapi32::GetTokenInformation(p R1, i 1, p 0, i 0, *i .R3)' ;TokenUser:  the size
+		System::Alloc $R3
+		Pop $R4
+		System::Call 'advapi32::GetTokenInformation(p R1, i 1, p R4, i R3, *i .R3) i .R2'
+		${If} $R2 != 0
+			System::Call '*$R4(p .R5)' ;TOKEN_USER.User.Sid
+			System::Call 'advapi32::ConvertSidToStringSidW(p R5, *p .R6) i .R2'
+			${If} $R2 != 0
+				System::Call '*$R6(&w256 .R7)'
+				StrCpy $UserSid $R7
+				System::Call 'kernel32::LocalFree(p R6)'
+			${EndIf}
+		${EndIf}
+		System::Free $R4
+		System::Call 'kernel32::CloseHandle(p R1)'
 	${EndIf}
 FunctionEnd
 
@@ -448,6 +533,10 @@ FunctionEnd
 Section "OPC Hub" SEC_HUB
 	SectionIn RO
 	Call CheckDataDir
+	${If} $0 == 0
+	${AndIf} $DataDirOwner == "*" ;CheckDataDirOwner asked, and was told No (#60)
+		Abort "Could not check whose the data dir is"
+	${EndIf}
 	${If} $0 == 0
 		${If} $DataDirOwner != ""
 			StrCpy $DataDirOwner "$DataDirOwner.$\r$\n$\r$\n"
@@ -795,6 +884,10 @@ Function ModePageLeave
 	${If} $MultiUser.InstallMode == "CurrentUser"
 		Call CheckDataDir
 		${If} $0 == 0
+		${AndIf} $DataDirOwner == "*" ;CheckDataDirOwner asked, and was told No (#60) - back on the page
+			Abort
+		${EndIf}
+		${If} $0 == 0
 			${If} $DataDirOwner != ""
 				StrCpy $DataDirOwner "$DataDirOwner.$\r$\n$\r$\n"
 			${EndIf}
@@ -850,21 +943,32 @@ FunctionEnd
 ;#44).  So an elevated Setup opens the shortcuts through the shell - explorer.exe hands a file it is given to the running
 ;Explorer, which is this user's unelevated desktop - and the shortcuts carry the arguments explorer.exe would not pass.
 ;Without that desktop (no Shell_TrayWnd) the new explorer.exe would itself be elevated:  Setup says to use the Start Menu.
+;
+;A failed net start said "Start it from an elevated console" - advice for a mode that is already elevated, over net start's 2186,
+;which only means the service exited before it reported running (reviews/install-issues.md #61).  The service wrote why as its
+;newest Application event (Process::AddApplicationLog, the source its name), which Event Viewer cannot render - the source has no
+;message file - so Setup reads it:  XPath, not -ProviderName, since an unregistered source is no provider to Get-WinEvent;  the
+;last two minutes, so an older failure's is not shown.  No event:  the log it names.
+!macro StartService svc log
+	nsExec::ExecToStack 'net start ${svc}'
+	Pop $0
+	Pop $1
+	${If} $0 != 0
+		nsExec::ExecToStack /OEM `"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$e=Get-WinEvent -LogName Application -FilterXPath \"*[System[Provider[@Name='${svc}'] and TimeCreated[timediff(@SystemTime)<=120000]]]\" -MaxEvents 1 -ErrorAction SilentlyContinue;if($$e){[Console]::Write(($$e.Properties|%{$$_.Value}) -join ' ')}"`
+		Pop $R1
+		Pop $R2
+		${If} $R2 != ""
+			MessageBox MB_OK|MB_ICONEXCLAMATION "${svc} did not start (net start answered $0):$\r$\n$\r$\n$R2$\r$\n$\r$\nIts log:  $DataDir\${log}" /SD IDOK
+		${Else}
+			MessageBox MB_OK|MB_ICONEXCLAMATION "${svc} did not start (net start answered $0):$\r$\n$1$\r$\nWhy is in its log:  $DataDir\${log}" /SD IDOK
+		${EndIf}
+	${EndIf}
+!macroend
 Function StartProducts
 	${If} $MultiUser.InstallMode == "AllUsers"
-		nsExec::ExecToStack 'net start Jde.OpcHub'
-		Pop $0
-		Pop $1
-		${If} $0 != 0
-			MessageBox MB_OK|MB_ICONEXCLAMATION "net start Jde.OpcHub returned $0:$\r$\n$1$\r$\nStart it from an elevated console." /SD IDOK
-		${EndIf}
+		!insertmacro StartService Jde.OpcHub "OpcHub\Opc.Hub.log"
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
-			nsExec::ExecToStack 'net start Jde.OpcServer'
-			Pop $0
-			Pop $1
-			${If} $0 != 0
-				MessageBox MB_OK|MB_ICONEXCLAMATION "net start Jde.OpcServer returned $0:$\r$\n$1$\r$\nStart it from an elevated console." /SD IDOK
-			${EndIf}
+			!insertmacro StartService Jde.OpcServer "OpcServer\Opc.Server.log"
 		${EndIf}
 	${Else}
 		StrCpy $3 0 ;1 - through the shell
@@ -1031,6 +1135,10 @@ Function TakeDataDir
 	!insertmacro DataDirProbe AllUsers
 	Pop $0
 	Pop $1
+	${If} $0 == 11
+	${OrIf} $0 == 12
+		Call NameOwner
+	${EndIf}
 	${If} $0 == 11
 		MessageBox MB_YESNO|MB_ICONEXCLAMATION "$1.$\r$\n$\r$\nAnother account has files in $DataDir - usually a current-user install of theirs: its database, keys and settings.  The services run as Local Service, so Setup makes the folder theirs and the administrators' alone, and taking it over hands them that account's database and keys.$\r$\n$\r$\nYes: take it over.  No: stop, to uninstall that account's copy and move $DataDir aside first." /SD IDNO IDYES takeOver
 		Abort "$DataDir holds another account's files"

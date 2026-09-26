@@ -188,8 +188,9 @@ passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp`
   `apps/OpcGateway/config/Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the certificates that may
   log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's
   Gateways help topic (`?`) has the details.
-- MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile like
-  `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` - the driver beside the exe, the `sql/mysql` scripts in the
+- MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile that imports
+  `args/install` and replaces only `sqlType` and `dbServers`, as `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` does,
+  so the Web UI, its Google client id and the host names stay that file's - the driver beside the exe, the `sql/mysql` scripts in the
   product's `sql-mysql/` and the profile's `scriptPaths` pointing there (`sql/` is the package's, sqlite scripts replaced on every upgrade) - re-registered with `-include=args/install-mysql` through `systemctl edit`.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only
   under its `StateDirectory`.  Loosen with `systemctl edit` if a local change needs it.
