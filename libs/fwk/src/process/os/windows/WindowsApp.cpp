@@ -122,8 +122,7 @@ namespace Jde{
 
 	α Process::AsService()ι->bool{
 		_isService = true;
-		Windows::Service::ReportStatus( SERVICE_START_PENDING, NO_ERROR, 3000 );
-		return true;
+		return Windows::Service::Connect(); //the SCM first, before the startup - see WindowsSvc.cpp
 	}
 
 	up<flat_multimap<string,string>> _args;
@@ -158,12 +157,8 @@ namespace Jde{
 
 	α Process::Pause()ι->int{
 		INFOT( ELogTags::App | ELogTags::Startup, "Starting main thread loop...{}", _getpid() );
-		if( _isService ){
-			SERVICE_TABLE_ENTRY DispatchTable[] = {  { (char*)Process::AppName().data(), (LPSERVICE_MAIN_FUNCTION)Windows::Service::Main },  { nullptr, nullptr }  };
-			var success = StartServiceCtrlDispatcher( DispatchTable );//blocks?
-			if( !success )
-				Windows::Service::ReportEvent( "StartServiceCtrlDispatcher" );
-		}
+		if( _isService )
+			Windows::Service::Started(); //the dispatcher connected in AsService;  this runs the loop until the service stops
 		else
 			Windows::WindowsWorkerMain::Start( false );
 		return 1;

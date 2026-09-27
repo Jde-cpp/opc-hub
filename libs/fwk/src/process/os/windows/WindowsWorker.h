@@ -3,8 +3,7 @@
 #include <jde/fwk/co/Task.h>
 #include <thread>
 
-namespace Jde::Windows
-{
+namespace Jde::Windows{
 	struct CoEvent{
 		coroutine_handle<> CoEvent;
 		bool Close;
@@ -28,15 +27,15 @@ namespace Jde::Windows
 		α MainLoop()ι->optional<DWORD>;
 		α Loop()ι->DWORD;
 		β HandleEvent( Event&& e )ι->void;
-		HANDLE _eventQueue;
-		HANDLE _eventStop;
+		HandlePtr _eventQueue;//before _pThread:  closed after it joins
+		HandlePtr _eventStop;
 		sp<WindowsWorker> _pKeepAlive;
 		atomic<TimePoint> _stop;
 		vector<CoEvent> _coroutines;
 		vector<HANDLE> _objects;
 		std::queue<Event> _queue;
 	private:
-		α AddInternalEvents()ι->void{ _objects.push_back( _eventQueue );  _objects.push_back( _eventStop ); if( _eventWorker ) _objects.push_back( _eventWorker ); }
+		α AddInternalEvents()ι->void{ _objects.push_back( _eventQueue.get() );  _objects.push_back( _eventStop.get() ); if( _eventWorker ) _objects.push_back( _eventWorker ); }
 		constexpr virtual uint MaxEvents()ι{return MAXIMUM_WAIT_OBJECTS-2; }
 		β HandleWorkerEvent()ι->void{ ASSERT(false); }
 		α IsMainThread()Ι{ return _eventWorker!=nullptr; }
@@ -46,8 +45,7 @@ namespace Jde::Windows
 		mutex _lock;
 	};
 
-	struct WindowsWorkerMain final: WindowsWorker
-	{
+	struct WindowsWorkerMain final: WindowsWorker{
 		Γ Ω Push( coroutine_handle<>&& h, HANDLE hEvent, bool close=true )ι->void;
 		Γ Ω Start( optional<bool> service )ι->void;
 		Γ Ω Stop( int exitCode )ι->void;
@@ -55,8 +53,8 @@ namespace Jde::Windows
 		WindowsWorkerMain( bool runOnMainThread )ι;
 		vector<sp<WindowsWorker>> _workerBuffers;
 		constexpr virtual uint MaxEvents()ι override{return MAXIMUM_WAIT_OBJECTS-3; }
-		void HandleEvent( Event&& e )ι override;
-		void HandleWorkerEvent()ι override;
+		α HandleEvent( Event&& e )ι->void override;
+		α HandleWorkerEvent()ι->void override;
 		static up<WindowsWorkerMain> _pInstance;
 	};
 }

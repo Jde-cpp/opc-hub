@@ -5,6 +5,7 @@
 namespace Jde{
   struct WinHandle final{
     WinHandle( std::nullptr_t=nullptr )ι : _value(nullptr) {}
+    explicit WinHandle( HANDLE value )ι : _value(value) {}
 		//TODO: forward exception?
     WinHandle( HANDLE value, function<IO::IOException()> e )ε:
       _value( value ){
@@ -25,4 +26,6 @@ namespace Jde{
     HANDLE _value;
   };
   using HandlePtr=std::unique_ptr<WinHandle, WinHandle::Deleter>;
+  //Unnamed, manual-reset, initially unsignaled - null if CreateEvent failed.
+  Ξ ManualResetEvent()ι->HandlePtr{ return HandlePtr{ WinHandle{::CreateEvent(nullptr, TRUE, FALSE, nullptr)} }; }
 }

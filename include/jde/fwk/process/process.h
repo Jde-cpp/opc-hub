@@ -52,6 +52,9 @@ namespace Process{
 	//Run by Shutdown after the executor's threads have joined - no work can still be running - and before the loggers go:  for what
 	//has to follow the last write, e.g. closing a database (reviews/m4-closing.md #24).
 	Φ AddFinalizeFunction( function<void(bool terminating)>&& finalize )ι->void;
+	//Run by Shutdown last, after the loggers and the io_context have gone - the process holds nothing now:  for telling the outside
+	//it has ended, e.g. a service's stopped.  No logging.
+	Φ AddExitFunction( function<void()>&& exit )ι->void;
 
 	Φ AddShutdown( IShutdown* pShutdown )ι->void; //global unique ptrs
 	Φ RemoveShutdown( IShutdown* pShutdown )ι->void;
