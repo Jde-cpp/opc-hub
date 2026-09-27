@@ -1,9 +1,9 @@
 name: Linux Release
 
 # Builds the release tree (linux-clang-relWithDebInfo-jde, the app targets only) on the self-hosted, containerised
-# runner (.github/docker/) and packages it with apps/OpcHub/setup/linux/build-deb.sh: the .deb and the per-user tarball
-# come out as artifacts, and a push of a `yyyy.MM.dd` tag publishes them on that tag's GitHub release - beside the
-# Windows installer win2025-build.yml puts there. The Web UI comes from the `web` job, a GitHub-hosted `ng build`, as in
+# runner (.github/docker/) and packages it with apps/OpcHub/setup/linux/build-deb.sh: a push of a `yyyy.MM.dd` tag publishes
+# the .deb and the per-user tarball on that tag's GitHub release - beside the Windows installer win2025-build.yml puts
+# there - and any other run uploads them as an artifact. The Web UI comes from the `web` job, a GitHub-hosted `ng build`, as in
 # the Windows workflow. Dispatch it by hand (Actions -> Linux Release -> Run workflow, any branch; gated to users with
 # write access, so no fork-PR fence is needed) or push a tag.
 on:
@@ -14,6 +14,9 @@ on:
 concurrency:
   group: linux-release-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   # The Angular site the package ships (opt/jde-cpp/web). web/opc/scripts/setup.sh scaffolds the workspace from npm,
@@ -48,7 +51,7 @@ jobs:
           name: web-dist-${{ github.run_id }}
           path: web/opc/my-workspace/dist/my-workspace/browser
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1 # only the build job below needs it
 
   build:
     name: Linux Release
@@ -126,6 +129,7 @@ jobs:
             --out-dir "$RUNNER_TEMP/setup" --version "$version" --maintainer "Jde-Cpp <noreply@jde-cpp.invalid>"
 
       - name: Upload the package
+        if: github.ref_type != 'tag' # a tag run publishes it on the release instead
         uses: actions/upload-artifact@v4
         with:
           name: linux-package-${{ github.run_id }}
@@ -133,13 +137,13 @@ jobs:
             ${{ runner.temp }}/setup/*.deb
             ${{ runner.temp }}/setup/*.tar.gz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
 
       # A tag run publishes the package on the tag's GitHub release - created here if the Windows workflow has not
       # already, the files replaced when the run is repeated.
       - name: Release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2 - the repo's Actions policy allows only this SHA
         with:
           files: |
             ${{ runner.temp }}/setup/*.deb

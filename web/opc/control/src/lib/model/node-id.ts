@@ -1,4 +1,4 @@
-import { Guid } from "jde-framework";
+import { Guid, StringUtils } from "jde-framework";
 
 export type NodeKey = Symbol;
 
@@ -83,17 +83,17 @@ export class NodeId implements INodeId{
 		else if( this.id instanceof Uint8Array ) return `${p}b=${btoa( this.id.reduce((acc, current) => acc + String.fromCharCode(current), "") )}`;
 		return p;
 	}
-	qlArgs(escape:boolean=false):string{ // ns:4,i:5003
+	qlArgs():string{ // ns:4,i:5003
 		let y: string = `ns:${this.ns},`;
 		if( typeof this.id === "number" )
 			y += `i:${this.id}`;
 		else if( typeof this.id === "string" )
-			y += `s:"${this.id}"`;
+			y += `s:${StringUtils.qlString(this.id)}`;//a string id may hold any character, quotes and backslashes included
 		else if( this.id instanceof Guid )
 			y += `g:"${this.id.toString()}"`;
 		else if( this.id instanceof Uint8Array )
 			y += `b:"${btoa( this.id.reduce((acc, current) => acc + String.fromCharCode(current), "") )}"`;
-		return escape ? y.replace(/['"]/g, '\\$&') : y;
+		return y;
 	}
 	static qlArgsArray( nodes:NodeId[] ):string{
 		return nodes.map( n=>`{${n.qlArgs()}}` ).join( "," );

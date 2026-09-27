@@ -22,6 +22,9 @@ concurrency:
   group: win2025-deps-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-deps:
     runs-on: windows-2025

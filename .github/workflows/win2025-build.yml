@@ -9,11 +9,12 @@ name: Win2025
 # Dispatch it manually (Actions -> Win2025 -> Run workflow), picking the
 # branch to build - workflow_dispatch is gated to users with write access, so
 # no fork-PR fence is needed - or push a release tag (yyyy.MM.dd). Every run
-# also builds the Windows installer (apps/OpcHub/setup) as an artifact -
+# also builds the Windows installer (apps/OpcHub/setup) -
 # unsigned, no certificate route yet (apps/OpcHub/setup/README.md, "Signing") -
 # and smoke-tests it with a silent install and uninstall (after checking that an
 # all-users install refuses another account's data root); a tag run whose smoke
-# test passes publishes it as that tag's GitHub release. The deps-cache coupling holds
+# test passes publishes it as that tag's GitHub release, any other run as an artifact.
+# The deps-cache coupling holds
 # for tag runs too: GitHub evicts caches unused for 7 days, so after a quiet
 # stretch re-run "Win2025 Deps" before tagging.
 on:
@@ -24,6 +25,9 @@ on:
 concurrency:
   group: win2025-build-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   # The Angular site the installer ships (its Web UI component). web/opc/scripts/setup.sh
@@ -63,7 +67,7 @@ jobs:
           name: web-dist-${{ github.run_id }}
           path: web/opc/my-workspace/dist/my-workspace/browser
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1 # only the build job below needs it
 
   build:
     # This becomes the check-run name on the commit the run was dispatched against,
@@ -123,16 +127,6 @@ jobs:
             Write-Host "::warning::Parallel build failed once (in-source protobuf codegen race); completing serially (-j 1)."
             cmake --build $buildDir -j 1
           }
-
-      - name: Upload binaries
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-binaries-${{ github.run_id }}
-          # functions.cmake redirects all exe/DLL/lib/pdb output to <build>/bin.
-          path: C:/jde/build/clang++-jde/release/bin/**
-          if-no-files-found: error
-          retention-days: 7
 
       # The installer (apps/OpcHub/setup/build-setup.ps1). The windows-2025 image
       # has no NSIS - choco installs it (~30 s); the OpcServer's DI/IA nodesets
@@ -196,13 +190,13 @@ jobs:
           ./apps/OpcHub/setup/build-setup.ps1 -BuildDir C:/jde/build/clang++-jde/release -UaNodeSets C:/jde/nodesets -VcRedist C:/jde/vc_redist.x64.exe -WebDist C:/jde/web -OutDir C:/jde/setup -Version $version
 
       - name: Upload installer
-        if: success()
+        if: success() && github.ref_type != 'tag' # a tag run publishes it on the release instead
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ github.run_id }}
           path: C:/jde/setup/OpcHubSetup-*.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
 
       # A silent all-users install of the installer just built, on this throwaway
       # VM: Setup succeeds, both services run as Local Service, the hub serves the
