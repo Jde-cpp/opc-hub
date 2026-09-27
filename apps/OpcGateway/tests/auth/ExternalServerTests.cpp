@@ -24,6 +24,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//		certificateUri: "urn:JDE-CPP:External.KEPServerEX.V6:UA Server", //the server's applicationUri, raw - the Basic256Sha256 rows' certificateUri; absent: those cells are skipped
 	//		user: "user1", password: "…", //absent: the username cells are skipped
 	//		secureOnlyUrl: "opc.tcp://127.0.0.1:49320", //a url of the same server with no None endpoint - External's loopback; absent: that cell is skipped
+	//		idle: "PT90S", //IdleSession's wait:  longer than the server's session timeout, shorter than /gateway/ttl; absent: that cell is skipped
 	//		expect: { noneUsername: "ok", noneAnonymous: "BadIdentityTokenRejected" } //optional, per cell:  "ok", or text the failure must contain
 	//	} }
 	//The secured cells take the two-way trust the doc describes:  the server's certificate under /gateway/trustedCertDirs, and
@@ -119,5 +120,25 @@ namespace Jde::Opc::Gateway::Tests{
 		if( _certificateUri.empty() || _user.empty() )
 			GTEST_SKIP() << "/testing/external needs certificateUri and user.";
 		Cell( "secureUsername", ExternalSecureSlug, _certificateUri, Credential{User{_user, _password}} );
+	}
+	//reviews/m3-closing.md #34:  a session left idle past the server's timeout failed the next request with BadSessionIdInvalid.
+	//The wait, /testing/external/idle, is longer than the server's session timeout and shorter than /gateway/ttl:  at the ttl the
+	//client retires during the sleep, and the read fails on a stopped client for a reason that is not #34's.
+	TEST_F( ExternalServerTests, IdleSession ){
+		let idle = Settings::FindDuration( "/testing/external/idle" );
+		if( !idle || _user.empty() )
+			GTEST_SKIP() << "/testing/external needs idle and user.";
+		if( let ttl = Settings::FindDuration( "/gateway/ttl" ).value_or( 2min ); *idle>=ttl )
+			GTEST_SKIP() << Ƒ( "/testing/external/idle ({}) must be shorter than /gateway/ttl ({}) - the client retires during the wait.", Chrono::ToString(*idle), Chrono::ToString(ttl) );
+		let& slug = _certificateUri.empty() ? ExternalNoneSlug : ExternalSecureSlug;
+		GetConnection( slug, _url, _certificateUri );//not Cell():  idle is no security-matrix cell, so it writes no MATRIX row.
+		_exception = nullptr; _done.clear();
+		Connect( slug, Credential{User{_user, _password}} );
+		_done.wait( false );
+		ASSERT_TRUE( _client ) << (_exception ? _exception->what() : "");
+		std::this_thread::sleep_for( *idle );
+		const NodeId nodeId{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_STATE) };
+		let value = BlockTAwait<flat_map<NodeId, Value>>( ReadValueAwait{{nodeId}, _client} ).at( nodeId );
+		EXPECT_FALSE( value.status ) << UAException::Message( value.status );
 	}
 }

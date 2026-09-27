@@ -1,5 +1,7 @@
 #include "AsyncRequest.h"
 #include "../UAClient.h"
+#include "ReadAwait.h"
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <stdexcept>
 #define let const auto
@@ -25,10 +27,39 @@ namespace Jde::Opc::Gateway{
 		DBGT( EOpcLogTags::ProcessingLoop, "Pinging '{}' in '{}'", client->Slug(), Chrono::ToString(_pingInterval) );
 		auto result = co_await *_pingTimer;//resumes on _strand
 		_pingTimer.reset();
-		if( result )
-			client->Process( PingRequestId, "ping" );
-		else
+		if( !result ){
 			CodeException resultEx{ result.error(), (ELogTags)EOpcLogTags::ProcessingLoop };
+			co_return;
+		}
+		if( _stopped.test() || _stopping )
+			co_return;
+		//A server drops a session that sends nothing for its revised timeout - External cuts the requested 20 minutes to about a
+		//minute - and open62541 fails the request that finds it gone without re-sending it, so an idle client's next page load
+		//answered 500 BadSessionIdInvalid (reviews/m3-closing.md #34).  open62541's own connectivityCheckInterval cannot stand in:
+		//its reply is only pumped at the next ping, long after its timeout.  So each ping reads the server state, and the loop
+		//pumps it like any request - but as a keep-alive, which leaves _lastRequest alone.
+		try{
+			co_await Any( ReadAwait{{NodeId{UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_STATE)}, UA_ATTRIBUTEID_VALUE}, client, true/*keepAlive*/} );
+		}
+		catch( UAException& e ){
+			let stopping = _stopped.test() || _stopping;//FailPending's disconnect fails it BadSessionClosed.
+			let sc = (StatusCode)e.Code();
+			let lapsed = !stopping && ( sc==UA_STATUSCODE_BADSESSIONIDINVALID || sc==UA_STATUSCODE_BADSESSIONCLOSED );//the ping interval outlasts the server's session timeout.
+			//A hung server or a silent network drop:  the keep-alive is the probe that sees the outage first.
+			let lost = !stopping && ( sc==UA_STATUSCODE_BADTIMEOUT || UAClient::IsConnectionLoss(sc) );
+			e.SetLevel( ELogLevel::NoLog );//~Exception logs the format string, never _what - so the hint is written here.
+			LOG( lapsed || lost ? ELogLevel::Warning : ELogLevel::Debug, _tags, "[{}]keep-alive {}: {}", hex(UAHandle()),
+				lapsed ? Ƒ("found the session gone - set /gateway/pingInterval ({}) below the server's session timeout", Chrono::ToString(_pingInterval)) : string{lost ? "lost the server" : "failed"},
+				UAException::Message(sc) );
+			//Lapsed:  open62541 has already sent CreateSession, and ActivateSession follows its reply - round trips only run_iterate
+			//pumps.  ConnectRequestId holds the loop open until the re-activation's StateCallback clears it, so the next request
+			//finds a live session (reviews/opc-client-keep-alive.md #2).  Otherwise run_iterate reports a dead connection, as the
+			//ping always did.
+			if( lapsed )
+				Process( ConnectRequestId, "keep-alive rebuild", true );
+			else if( !stopping )
+				Process( PingRequestId, "ping" );
+		}
 	}
 	// 1 per UAClient. Runs entirely on _strand: started there by Process, and every co_await below resumes there
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
@@ -50,8 +81,6 @@ namespace Jde::Opc::Gateway{
 					drainStart.reset();//before the trace guard, so the iteration that picks up a mid-drain request keeps its queue snapshot; the drain window re-arms fresh if the queue empties again.
 					if( *_requests.begin()==PingRequestId )
 						_requests.erase( PingRequestId );
-					else
-						_lastRequest = Clock::now();
 				}
 				if( !drainStart )//tracing every drain poll buries the log.
 					TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
@@ -157,12 +186,14 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α AsyncRequest::Process( RequestId requestId, sv what )ι->void{//strand-only (cross-thread callers go through UAClient::Process)
+	α AsyncRequest::Process( RequestId requestId, sv what, bool keepAlive )ι->void{//strand-only (cross-thread callers go through UAClient::Process)
 		ASSERT( _strand.running_in_this_thread() );
 		TRACE( "[{}.{}]Processing: {}", hex(UAHandle()), hex(requestId), what );
 		if( _stopped.test() || !_client )
 			return;
 		_requests.emplace( requestId );
+		if( !keepAlive && requestId!=PingRequestId )
+			_lastRequest = Clock::now();
 		if( !_running.test_and_set() )
 			ProcessingLoop();
 	}

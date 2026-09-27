@@ -853,10 +853,10 @@ namespace Jde::Opc::Gateway{
 		boost::asio::post( _asyncRequest.Strand(), [self=shared_from_this(), f=move(f)]{f();} );
 	}
 
-	α UAClient::Process( RequestId requestId, sv what )ι->void{
+	α UAClient::Process( RequestId requestId, sv what, bool keepAlive )ι->void{
 		if( _asyncRequest.IsStopped() )
 			return;
-		PostUA( [this, requestId, what=string{what}]{_asyncRequest.Process(requestId, what);} );
+		PostUA( [this, requestId, what=string{what}, keepAlive]{_asyncRequest.Process(requestId, what, keepAlive);} );
 	}
 
 	α UAClient::ClearRequest( RequestId requestId )ι->void{
