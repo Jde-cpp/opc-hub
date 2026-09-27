@@ -60,3 +60,26 @@ describe( 'DetailResolver on a row that is gone', ()=>{
 		expect( router.url ).toBe( '/access/roles' );
 	} );
 } );
+
+//reviews/m3-closing.md #32:  /access/users has no Add, but a typed or bookmarked 'users/$new' still opened a blank form.
+describe( 'DetailResolver on $new for a list with no Add', ()=>{
+	it( 'refuses it and goes back to the list', async ()=>{
+		const error = vi.fn();
+		const schemaWithEnums = vi.fn( async ()=>({collectionName: 'users', type: 'User', fields: []}) );
+		TestBed.configureTestingModule( {providers: [
+			provideRouter( [{ path: 'access', children: [
+				{ path: 'users/:slug', component: Dummy, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
+				{ path: ':collectionDisplay', component: Dummy, data: {collections: [{path: 'users', data: {tableSettings: {canAdd: false}}}]} }
+			]}] ),
+			{ provide: IGRAPHQL, useValue: {toCollectionName: ( s:string )=>s, schemaWithEnums} },
+			{ provide: SnackbarService, useValue: {exception: vi.fn(), error} },
+			{ provide: RecentVisits, useValue: {forget: vi.fn()} }
+		]} );
+		const harness = await RouterTestingHarness.create();
+		await harness.navigateByUrl( '/access/users/$new' );
+		await new Promise( r=>setTimeout(r, 20) );
+		expect( error ).toHaveBeenCalled();
+		expect( schemaWithEnums ).not.toHaveBeenCalled();
+		expect( TestBed.inject(Router).url ).toBe( '/access/users' );
+	} );
+} );

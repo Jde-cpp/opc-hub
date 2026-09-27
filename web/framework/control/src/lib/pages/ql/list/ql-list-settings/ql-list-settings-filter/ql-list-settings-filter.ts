@@ -34,7 +34,7 @@ export class QLListSettingsFilter implements OnInit{
 	ngOnInit(){
 		for( let fieldFilter of this.view().fieldFilters ){
 			this.dataSource.push( { field: fieldFilter.field, filter: View.copyFilter(fieldFilter.filter), displayName: this.columns()[fieldFilter.field.name] } );//edit a copy: every handler below mutates col.filter in place, and holding the live view's Filter meant those edits survived Cancel
-			this.addSignals( fieldFilter.field, fieldFilter.filter.operator );
+			this.addSignals( fieldFilter.field, fieldFilter.filter.operator, fieldFilter.filter.value );
 		}
 		this.dataSource.push( {field: undefined as any, filter: {operator: Operator.None, value: []}, displayName: ""} );//placeholder add-row: the template renders the column-select only when field is falsy (new Field({}) also threw in Field's ctor)
 	}
@@ -73,16 +73,19 @@ export class QLListSettingsFilter implements OnInit{
 		this.addSignals( field, operator );
 		this.table.renderRows();
 	}
-	addSignals( field: Field, operator: Operator ){
+	addSignals( field: Field, operator: Operator, value:Filter['value'] = [] ){
 		this.operatorSignals.set( field.name, signal(operator) );
-		if( field.isNullable )
-			this.nullSignals.set( field.name, signal(NullCriteria.None) );
+		if( field.isNullable )//from the saved value:  a reopened filter showed both boxes clear, so ticking one added a second marker (reviews/m3-closing.md #35)
+			this.nullSignals.set( field.name, signal(value.includes("<not null>") ? NullCriteria.NonNull : value.includes("<null>") ? NullCriteria.Null : NullCriteria.None) );
 	}
+	//A DateTime filter is one of none, null, not null or a date - never several.  They shared one array, so a date and a
+	//marker could both end up in it and the query sent `{gt:"<null>"}` (reviews/m3-closing.md #35).
 	onChangeDate( event:MatDatepickerInputEvent<Date>, col: ColumnFilter ){
-		if( col.filter.operator==Operator.Greater )
-			col.filter.value[0] = new Days(event.value!);
+		if( !event.value )
+			col.filter.value = [];
 		else
-			col.filter.value[0] = event.value;
+			col.filter.value = [col.filter.operator==Operator.Greater ? new Days(event.value) : event.value];
+		this.nullSignals.get( col.field.name )?.set( NullCriteria.None );
 	}
 	dateValue( col: ColumnFilter ): Date|undefined{
 		if( !col.filter.value.length )
@@ -164,34 +167,18 @@ export class QLListSettingsFilter implements OnInit{
 		return this.nullSignals.get(colName)!;
 	}
 	onNullToggle( add:boolean, col: ColumnFilter ){
-		//let arg = this.args.get( col.field.name );
-		if( add ){
-			let notNullIndex = col.filter.value.indexOf("<not null>");
-			if( notNullIndex != -1 )
-				col.filter.value.splice( notNullIndex, 1 );
-			col.filter.value.push("<null>");
-			this.nullSignals.get( col.field.name )!.set( NullCriteria.Null );
-		}else{
-			let nullIndex = col.filter.value.indexOf("<null>");
-			if( nullIndex != -1 )
-				col.filter.value.splice( nullIndex, 1 );
-			this.nullSignals.get( col.field.name )!.set( NullCriteria.None );
-		}
+		col.filter.value = add ? ["<null>"] : [];
+		this.nullSignals.get( col.field.name )!.set( add ? NullCriteria.Null : NullCriteria.None );
 	}
 	onNonNullToggle( add:boolean, col: ColumnFilter ){
-		if( add ){
-			let nullIndex = col.filter.value.indexOf("<null>");
-			if( nullIndex != -1 )
-				col.filter.value.splice( nullIndex, 1 );
-			col.filter.value.push("<not null>");
-			this.nullSignals.get( col.field.name )!.set( NullCriteria.NonNull );
-		}else{
-			let notNullIndex = col.filter.value.indexOf("<not null>");
-			if( notNullIndex != -1 )
-				col.filter.value.splice( notNullIndex, 1 );
-			this.nullSignals.get( col.field.name )!.set( NullCriteria.None );
-		}
+		col.filter.value = add ? ["<not null>"] : [];
+		this.nullSignals.get( col.field.name )!.set( add ? NullCriteria.NonNull : NullCriteria.None );
 	}
+	//A live-toggle column (the Resources page's Enforced) is a yes/no:  its null is the switch ON, so "null" read backwards under
+	//that header, and a date or an operator means nothing there.
+	liveToggle( col:ColumnFilter ):boolean{ return !!this.view().fields.find( f=>f.name==col.field.name )?.liveToggle; }
+	nullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? col.displayName : "null"; }
+	nonNullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? `Not ${col.displayName.toLowerCase()}` : "not null"; }
 	get columnNames(){ return ["name", "operation", "filter", "delete"] };//
 	get unFilteredColumns():Record<string,string>{
 		let columns:Record<string,string> = {};

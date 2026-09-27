@@ -21,7 +21,7 @@
 		<ng-container matColumnDef="operation">
 			<mat-header-cell *matHeaderCellDef>Operator</mat-header-cell>
 			<mat-cell *matCellDef="let col">
-				@if( col.field ){
+				@if( col.field && !liveToggle(col) ){
 					<mat-form-field class="operation" subscriptSizing="dynamic">
 						<mat-select (selectionChange)="onOperatorChange($event.value, col)" [value]="col.filter?.operator ?? 'In'">
 							@if( !col.field.isDateTime ){
@@ -73,15 +73,17 @@
 						</mat-form-field>
 					}
 					@else{
-						<mat-form-field subscriptSizing="dynamic">
-							<mat-label>{{operatorSignal(col)()==MyOperator.Greater ? "Start Date" : "End Date"}}</mat-label>
-							<input matInput [matDatepicker]="picker" [disabled]="col.field.isNullable && nullSignal(col.field.name)() == NullCriteria.NonNull" (dateChange)="onChangeDate($event, col)" [value]="dateValue(col)">
-							<mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
-							<mat-datepicker #picker></mat-datepicker>
-						</mat-form-field>
+						@if( !liveToggle(col) ){
+							<mat-form-field subscriptSizing="dynamic">
+								<mat-label>{{operatorSignal(col)()==MyOperator.Greater ? "Start Date" : "End Date"}}</mat-label>
+								<input matInput [matDatepicker]="picker" [disabled]="col.field.isNullable && nullSignal(col.field.name)() == NullCriteria.NonNull" (dateChange)="onChangeDate($event, col)" [value]="dateValue(col)">
+								<mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
+								<mat-datepicker #picker></mat-datepicker>
+							</mat-form-field>
+						}
 						@if( col.field.isNullable ){
-							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.Null" (change)="onNullToggle($event['checked'], col)">null</mat-checkbox>
-							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.NonNull" (change)="onNonNullToggle($event['checked'], col)">not null</mat-checkbox>
+							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.Null" (change)="onNullToggle($event['checked'], col)">{{nullLabel(col)}}</mat-checkbox>
+							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.NonNull" (change)="onNonNullToggle($event['checked'], col)">{{nonNullLabel(col)}}</mat-checkbox>
 						}
 					}
 				}

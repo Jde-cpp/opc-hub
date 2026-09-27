@@ -46,24 +46,11 @@ export class User extends SlugRow<User>{
 			&& JSON.stringify(this.permissions)==JSON.stringify(row.permissions)
 			&& JSON.stringify(this.roles)==JSON.stringify(row.roles);
 	}
-	//The form edits Provider, Email and Login name, and only slug, name and description went on the wire (reviews/m3-closing.md
-	//#15):  a user added ahead of their first sign-in was stored with no provider and no login name, so the sign-in - which
-	//looks the account up by both - missed it and made a second identity, and an Email edit saved nothing.  On create all three;
-	//after that the email alone - the provider and the login name are what binds the account, and re-binding it is not an edit.
-	//`providerId` and the numeric id the form's select holds:  the server looks an arg up by the column's member name, and
-	//`provider` is not one - it is silently skipped.
+	//The form edits Email, and only slug, name and description went on the wire (reviews/m3-closing.md #15).  Provider and
+	//login name are never sent:  they bind the account, and a user is only created by signing in (#32), never from this form.
 	override mutationArgs( original:User ){
 		const args:Record<string,unknown> = super.mutationArgs( original );
-		if( !original?.id ){
-			const providerId = Number( this.provider );
-			if( this.provider!=undefined && `${this.provider}`!="" && Number.isInteger(providerId) )
-				args["providerId"] = providerId;
-			if( this.loginName )
-				args["loginName"] = this.loginName;
-			if( this.email )
-				args["email"] = this.email;
-		}
-		else if( (this.email ?? "")!=(original.email ?? "") )
+		if( original?.id && (this.email ?? "")!=(original.email ?? "") )
 			args["email"] = this.email || null;//cleared:  null, not "" - the column is nullable
 		return args as Partial<User>;
 	}

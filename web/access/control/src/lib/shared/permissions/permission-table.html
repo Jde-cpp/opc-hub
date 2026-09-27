@@ -2,11 +2,11 @@
 	<mat-table matSort #mainTable [dataSource]="availablePermissions" class="mat-elevation-z8" (matSortChange)="sortData($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction">
 		<ng-container matColumnDef="schema">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header>Schema</mat-header-cell>
-			<mat-cell *matCellDef="let row"> {{row.resource.schema}} </mat-cell>
+			<mat-cell *matCellDef="let row" [title]="row.resource.schema ?? ''"> {{row.resource.schema}} </mat-cell>
 		</ng-container>
 		<ng-container matColumnDef="resource">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header>Resource</mat-header-cell>
-			<mat-cell *matCellDef="let row"> {{row.resource.name}} </mat-cell>
+			<mat-cell *matCellDef="let row" [title]="row.resource.name ?? ''"> {{row.resource.name}} </mat-cell>
 		</ng-container>
 		<ng-container matColumnDef="deleted">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header>Deleted</mat-header-cell>

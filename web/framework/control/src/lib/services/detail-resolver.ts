@@ -59,6 +59,11 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 		const parent = ListRoute.find( collectionDisplay, route.parent!.routeConfig!.children!.find(x=>x.path==":collectionDisplay")!.data!["collections"] );
 		parent.path = `/${[...route.parent!.url.map(s=>s.path), collectionDisplay].join('/')}`;
 		const routing = new DetailRoute( slug, siblings.find(s=>s.path==slug)?.title, siblings, parent );
+		if( slug=="$new" && routing.tableSettings.canAdd===false ){//a typed or bookmarked '$new' on a list with no Add
+			this.snackbar.error( `There is no Add for ${collectionDisplay}.` );
+			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );
+			return null as unknown as DetailResolverData<T>;
+		}
 		try{
 			return await DetailResolver.load<T>( this.ql, this.ql.toCollectionName(collectionDisplay), slug, routing );//await inside try — without it, async failures skip the catch entirely
 		}
