@@ -1,6 +1,7 @@
 {
 	"name": "jde-proto",
 	"version": "0.0.1",
+	"license": "Apache-2.0",
 	"description": "TypeScript generated from the C++ .proto sources by ts-proto - see web/framework/scripts/common-proto.sh.  Not an Angular library: its own tsconfig compiles src/*.ts to the .js/.d.ts pair the package ships, and the libraries import it by name so ng-packagr leaves the import external instead of trying to inline files it cannot re-emit.",
 	"peerDependencies": {
 		"@bufbuild/protobuf": "^2.0.0",

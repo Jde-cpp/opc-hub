@@ -6,7 +6,7 @@ The site, its libraries and the C++ services are built and released together und
 
 Source: [github.com/Jde-cpp/opc-hub](https://github.com/Jde-cpp/opc-hub)
 
-License: [MIT](https://github.com/Jde-cpp/opc-hub/blob/main/LICENSE), © Jde-cpp.
+License: [Apache-2.0](https://github.com/Jde-cpp/opc-hub/blob/main/LICENSE), © John Duffy.
 
 <!-- plain files beside index.html (web/opc/scripts/setup.sh), not routes: target="_blank" leaves the click to the browser, and the relative href follows <base href> -->
 Third-party software, each under its own license: the site's <a href="3rdpartylicenses.txt" target="_blank" rel="noopener">npm packages</a> and the services' <a href="THIRD-PARTY-NOTICES.txt" target="_blank" rel="noopener">C++ libraries</a>.

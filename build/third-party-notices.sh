@@ -80,8 +80,8 @@ tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
 	cat <<HEADER
 OPC Hub - third-party notices
 
-OPC Hub itself is MIT licensed (LICENSE, beside this file).  Its services - Jde.Opc.Hub, Jde.Opc.Server and the
-libraries installed with them - contain or are shipped with the third-party software below, each under its own
+OPC Hub itself is Apache-2.0 licensed (LICENSE, beside this file).  Its services - Jde.Opc.Hub, Jde.Opc.Server and
+the libraries installed with them - contain or are shipped with the third-party software below, each under its own
 license.  The web site's bundle has a list of its own, 3rdpartylicenses.txt, served beside index.html.
 
 Each component is built from the unmodified upstream tag named here unless its entry says otherwise; where it says
