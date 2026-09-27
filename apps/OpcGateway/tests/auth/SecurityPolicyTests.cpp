@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//security-matrix #4:  more than one secured policy.  The gateway and the OpcServer each carried Basic256Sha256 alone;  both now
 	//carry the three current RSA policies - Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss - and open62541 takes the
 	//endpoint with the highest securityLevel the two sides share, so between the Jde products that is the strongest, and against
-	//a server that offers Basic256Sha256 alone (Kepware - ExternalServerTests) it is still that.  A server that shares none - the
+	//a server that offers Basic256Sha256 alone (External - ExternalServerTests) it is still that.  A server that shares none - the
 	//deprecated Basic256 here - used to fail as a bare BadIdentityTokenRejected;  the connection error now names what the server
 	//asked for and what the gateway carries.
 	class SecurityPolicyTests : public ::testing::Test{

@@ -79,7 +79,7 @@ namespace Jde::Opc::Gateway{
 		α TryMonitoredNodes()ι->UAMonitoringNodes*{ return _monitoredNodes.get(); }//never constructs: null means "no subscriptions", which for a query or an unsubscribe is simply nothing to do. Nothing clears the member once set - Shutdown used to move it out, which left this and MonitoredNodes() racing a still-pumping strand.
 		Ŧ Retry( function<void(sp<UAClient>&&, T)> f, UAException&& e, sp<UAClient> pClient, T h )ι->ConnectAwait::Task;
 		α RetryVoid( function<void(sp<UAClient>&&) > f, UAException&& e, sp<UAClient>&& pClient )ι->ConnectAwait::Task;
-		α Process( RequestId requestId, sv what )ι->void;
+		α Process( RequestId requestId, sv what, bool keepAlive=false )ι->void;
 		α StopProcessing()ι->void;//dispatches AsyncRequest::Stop onto the strand with a keep-alive.
 		α PostUA( function<void()> f )ι->void;//runs f on this client's strand - the only place UA_Client_* calls are allowed once the processing loop can run. Holds shared_from_this until f runs.
 		α PostStrand( function<void()> f )ι->void;//like PostUA but always defers (asio::post, not dispatch): use when a strand callback must not run re-entrantly inside the current strand handler. Holds shared_from_this until f runs.
@@ -96,7 +96,7 @@ namespace Jde::Opc::Gateway{
 		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
 		//does - then that address in the name's place.  open62541 connects to the first address a name resolves to and never tries
 		//the next (eventloop_posix_tcp.c), so such a name fails BadConnectionRejected one address short of the server:  IPv6
-		//link-local ahead of IPv4 against a server that listens on IPv4 alone - Kepware on a dual-stack box - or `localhost`, ::1
+		//link-local ahead of IPv4 against a server that listens on IPv4 alone - External on a dual-stack box - or `localhost`, ::1
 		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  An address, a name
 		//with one address, and a name whose first address answers all come back exactly as given, so nothing changes where a connect
 		//already works;  the substitution is made only where open62541 would have failed.

@@ -15,7 +15,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//(matchUserTokenPolicy, "must not be transmitted without encryption"), which reaches the gateway as "No suitable endpoint
 	//found" - BadIdentityTokenRejected - and the connection error has to say what was refused and what permits it:
 	///gateway/allowPlaintextPassword, which sets open62541's allowNonePolicyPassword.  Neither the embedded OpcServer nor
-	//Kepware offers this shape - both encrypt the token on their None endpoints - so the suite brings its own server:  one None
+	//External offers this shape - both encrypt the token on their None endpoints - so the suite brings its own server:  one None
 	//endpoint, no certificate, one login, and the server-side allowNonePolicyPassword, without which open62541's server
 	//refuses such a token just as its client does.
 	Ω plainPasswordServer( uint16_t port )ε->up<TestUaServer>{

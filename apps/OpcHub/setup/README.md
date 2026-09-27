@@ -160,10 +160,6 @@ The **bundled** server is one such connection, and it offers the username token 
 (`/opc/users: [{name, password}]` under `config\apps\OpcServer\config\` - an opt-in, nothing shipped sets it).  Its slug
 is `OpcServer`, so its form login is `OpcServer\<name>` like any other; it is also the seeded default connection, so a bare `<name>` reaches it too.
 
-Walked end to end on 2026-09-20 against a KEPServerEX 6.12 on a hub installed **without** the component: connection added,
-trust exchanged, signed in as `kepware\Administrator` 11 minutes in, a node value streaming at 13
-([`reviews/install-issues.md`](../../../../reviews/install-issues.md), "The login the product is for").
-
 ## Uninstall
 
 Add/Remove Programs (or the Start Menu shortcut in a current-user install) stops and deregisters the services (or closes the

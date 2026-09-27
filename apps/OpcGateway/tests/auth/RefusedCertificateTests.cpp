@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 	//security-matrix #12:  the other direction of trust.  When the gateway rejects a server's certificate its verifier says which
 	//server and what to do (ServerTrustTests).  When a server rejects the GATEWAY's, it answers the OPN with a status -
-	//BadSecurityChecksFailed from the Jde OpcServer and from Kepware alike - and nothing a client can show, so the operator saw a
+	//BadSecurityChecksFailed from the Jde OpcServer and from External alike - and nothing a client can show, so the operator saw a
 	//bare status and had to know which file the server wanted.  The connection error now names it:  the connection's issued
 	//certificate here, the app client's own under certificate authentication (CertTests.Authenticate_Bad).  The embedded
 	//OpcServer cannot play the refusing server - it trusts the whole directory the issued certificates land in, and rescans it -

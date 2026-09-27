@@ -361,9 +361,9 @@ export class View{
 			if( !values.length )
 				continue;
 			const name = fieldFilter.field.name;
-			if( values.length==1 && values[0]=="<not null>" )
+			if( values.every(v=>v=="<not null>") )
 				args.push( `${name}:{"ne":null}` );
-			else if( values.length==1 && values[0]=="<null>" && View.comparisonOperator(filter.operator)!="nin" ){//under any operator but NotIn (which means not null):  a DateTime column offers only < and >, and `{gt:"<null>"}` reached the server as a timestamp to parse - the bare-array form is the one it reads as `is null` (reviews/m3-closing.md #16)
+			else if( values.every(v=>v=="<null>") && View.comparisonOperator(filter.operator)!="nin" ){//under any operator but NotIn (which means not null):  a DateTime column offers only < and >, and `{gt:"<null>"}` reached the server as a timestamp to parse - the bare-array form is the one it reads as `is null` (reviews/m3-closing.md #16)
 				args.push( `${name}:$${name}` );
 				vars[name] = [null];
 			}
@@ -373,9 +373,12 @@ export class View{
 					args.push( `${name}:{nin:$${name}}` );
 					vars[name] = values.map( v=>v=="<null>" ? null : v );
 				}
-				else if( op ){
+				else if( op ){//a comparison takes one real value:  a marker or a missing one went out as `{gt:"<null>"}` or an unbound $var, and the server answered "Query failed." (reviews/m3-closing.md #35)
+					const value = values.find( v=>v!=null && v!="<null>" && v!="<not null>" );
+					if( value===undefined )
+						continue;
 					args.push( `${name}:{${op}:$${name}}` );
-					vars[name] = View.comparisonJson( values[0] );
+					vars[name] = View.comparisonJson( value );
 				}
 				else{//In → bare-array form the server treats as `in`
 					args.push( `${name}:$${name}` );

@@ -1,9 +1,11 @@
 import { inject, Injectable } from '@angular/core';
 import { Router } from '@angular/router';
 import { ISearchProvider, SearchResult } from 'jde-spa';
+import { errorText, httpStatus } from 'jde-framework';
 import { ENodeClass } from '../model/node';
 import { toBrowse } from '../model/types';
 import { Gateway, GATEWAY_SERVICE, GatewayService } from './gateway-service';
+import { OPC_STORE, OpcStore } from './opc-store';
 
 export type NodeSearchRow = { connection:{ slug:string; name:string }; path:string; name:string; nodeClass:number; depth:number };
 
@@ -16,6 +18,7 @@ export class NodeSearchProvider implements ISearchProvider{
 	readonly prefixes = [ 'node' ];
 	#router = inject( Router );
 	private gatewayService:GatewayService = inject( GATEWAY_SERVICE );
+	private opcStore:OpcStore = inject( OPC_STORE );
 
 	static readonly columns = '{ connection{ slug name } path name nodeClass depth }';
 	static readonly currentConnection = /^\/gateways\/([^/?#]+)\/([^/?#]+)/;//app.routes.ts: gateways/:gateway/:connection/**
@@ -27,8 +30,15 @@ export class NodeSearchProvider implements ISearchProvider{
 		const current = NodeSearchProvider.currentConnection.exec( this.#router.url );
 		if( current ){
 			const gateway = await this.gatewayService.gateway( decodeURIComponent(current[1]) );
-			const rows = await gateway.queryArray<NodeSearchRow>( `search( opc:$opc, text:$text, limit:$limit )${NodeSearchProvider.columns}`, {opc: decodeURIComponent(current[2]), text, limit} );
-			hits.push( ...rows.map( row=>({gateway, row}) ) );
+			const opc = decodeURIComponent( current[2] );
+			try{
+				const rows = await gateway.queryArray<NodeSearchRow>( `search( opc:$opc, text:$text, limit:$limit )${NodeSearchProvider.columns}`, {opc, text, limit} );
+				hits.push( ...rows.map( row=>({gateway, row}) ) );
+			}
+			catch( e ){//the connection's index failed:  say so, rather than read as "no such node" (reviews/m3-closing.md #33).
+				console.warn( `search: '${opc}' on gateway '${gateway.slug}' failed.`, e );
+				return [ this.unavailable( gateway, opc, e ) ];
+			}
 		}
 		else{
 			const gateways = await this.gatewayService.gateways();
@@ -48,6 +58,11 @@ export class NodeSearchProvider implements ISearchProvider{
 			rank: row.name.toLowerCase().startsWith( text ) ? 0 : 1,
 			source: this.name
 		}) );
+	}
+	unavailable( gateway:Gateway, opc:string, e:unknown ):SearchResult{
+		const name = this.opcStore.cnnctnName( gateway.slug, opc );//the node pages' memo, else the slug - never a describe against the gateway that just failed.
+		const refused = [401, 403].includes( httpStatus(e) ?? 0 );//gateway/search is enforceable:  the index is fine, the user is not allowed.
+		return { title: refused ? `Search is not permitted for ${name}` : `Search is unavailable for ${name}`, summary: errorText(e) ?? 'Unknown error', route: [], icon: refused ? 'block' : 'error_outline', rank: 0, source: this.name, disabled: true };
 	}
 	//The page a hit opens.  Only an Object has a page:  a Variable (or a Method) is a row on its parent's - its value, status and
 	//subscribe box - and routing to it showed a false "Not found." or the variable's own children (reviews/m3-closing.md #9).

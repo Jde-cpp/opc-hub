@@ -11,17 +11,15 @@ namespace Jde::Windows{
 	up<WindowsWorkerMain> WindowsWorkerMain::_pInstance;
 	constexpr ELogTags _tags{ ELogTags::Threads };
 
-#define CREATE_EVENT ::CreateEvent(nullptr, TRUE, FALSE, nullptr)
-
 	WindowsWorker::WindowsWorker( bool runOnMainThread )ι:
-		_eventQueue{ CREATE_EVENT },
-		_eventStop{ CREATE_EVENT },
+		_eventQueue{ ManualResetEvent() },
+		_eventStop{ ManualResetEvent() },
 		_pThread{ runOnMainThread ? nullptr : mu<std::jthread>([&](){Loop();}) }
 	{}
 
 	WindowsWorker::WindowsWorker( Event&& initial )ι:
-		_eventQueue{ CREATE_EVENT },
-		_eventStop{ CREATE_EVENT },
+		_eventQueue{ ManualResetEvent() },
+		_eventStop{ ManualResetEvent() },
 		_queue{ {initial} },
 		_pThread{ mu<std::jthread>( [&](){Loop();}) }
 	{}
@@ -29,34 +27,28 @@ namespace Jde::Windows{
 	void WindowsWorker::Stop()ι
 	{}
 
-	α WindowsWorkerMain::Push( coroutine_handle<>&& h, HANDLE hEvent, bool close )ι->void
-	{
+	α WindowsWorkerMain::Push( coroutine_handle<>&& h, HANDLE hEvent, bool close )ι->void{
 		ASSERT( _pInstance );
-		if( _pInstance )
-		{
+		if( _pInstance ){
 			_pInstance->_queue.push( {{move(h), close}, hEvent} );
-			if( !::SetEvent(_pInstance->_eventQueue) )
+			if( !::SetEvent(_pInstance->_eventQueue.get()) )
 				ERR( "SetEvent returned false" );
 		}
 	}
 
-	α WindowsWorker::SubPush( Event& e )ι->bool
-	{
+	α WindowsWorker::SubPush( Event& e )ι->bool{
 		lg _{ _lock };
 		var set = !Stopped() && _queue.size()+_coroutines.size()<MaxEvents();
-		if( set )
-		{
+		if( set ){
 			_queue.push( move(e) );
-			if( !::SetEvent(_eventQueue) )
+			if( !::SetEvent(_eventQueue.get()) )
 				ERR( "SetEvent returned false" );
 		}
 		return set;
 	}
 
-	α WindowsWorker::AddWaitRoutine( Event&& e )ι->void
-	{
-		if( ((TimePoint)_stop)==TimePoint{} )
-		{
+	α WindowsWorker::AddWaitRoutine( Event&& e )ι->void{
+		if( ((TimePoint)_stop)==TimePoint{} ){
 			_coroutines.push_back( e );
 			_objects.push_back( e.WindowsEvent );
 		}
@@ -64,14 +56,12 @@ namespace Jde::Windows{
 			ERR( "Stopped can't add event." );
 	}
 
-	void WindowsWorker::HandleEvent( Event&& e )ι
-	{
+	α WindowsWorker::HandleEvent( Event&& e )ι->void{
 		ASSERT( _coroutines.size()<MaxEvents() );
 		AddWaitRoutine( move(e) );
 	}
 
-	void WindowsWorkerMain::HandleEvent( Event&& e )ι
-	{
+	α WindowsWorkerMain::HandleEvent( Event&& e )ι->void{
 		if( _coroutines.size()<MaxEvents() )
 			AddWaitRoutine( move(e) );
 		else
@@ -88,7 +78,7 @@ namespace Jde::Windows{
 		for( auto pp = _workerBuffers.begin(); pp!=_workerBuffers.end(); pp = (*pp)->Stopped() ? _workerBuffers.erase(pp) : next(pp) );
 	}
 
-	DWORD WindowsWorker::Loop()ι{
+	α WindowsWorker::Loop()ι->DWORD{
 		PreLoop();
 		DWORD waitResult;
 		for( ;; ){
@@ -158,8 +148,7 @@ namespace Jde::Windows{
 		WindowsWorker{ runOnMainThread }
 	{}
 
-	α WindowsWorkerMain::Start( optional<bool> pService )ι->void
-	{
+	α WindowsWorkerMain::Start( optional<bool> pService )ι->void{
 		var runOnMainThread = pService.has_value();
 		var service = runOnMainThread && *pService;
 		if( !_pInstance )
@@ -180,7 +169,7 @@ namespace Jde::Windows{
 			DBGT( tags, "({})Stopping", exitCode );
 			Process::Shutdown( exitCode );
 			DBGT( tags, "({})Shutdown Complete", exitCode );
-			if( !::SetEvent(_pInstance->_eventStop) )
+			if( !::SetEvent(_pInstance->_eventStop.get()) )
 				ERR( "SetEvent returned false" );
 		}
 		else

@@ -152,8 +152,8 @@ namespace Jde{
 			std::set_terminate( OnTerminate );
 		if( isConsole )
 			Process::SetConsoleTitle( appName );
-		else
-			AsService();
+		else if( !AsService() )//unconnected, it would run on as a service the SCM has given up on and cannot stop
+			throw Exception{ "Could not start as a service." };
 		Thread::SetName( appName );
 		Process::AddSignals();
 		Cache::Init();
@@ -190,7 +190,7 @@ namespace Jde{
 		if( !ExitReason() )
 			SetExitReason( y, false );
 		(y==0 ? std::cout : std::cerr) << prefix << message << std::endl;
-		if( y!=EXIT_SUCCESS && !IsConsole() )//a service's stderr goes nowhere, and a startup failure never reaches the dispatcher:  the file log was its only record (reviews/m4-closing.md #10, run 4).
+		if( y!=EXIT_SUCCESS && !IsConsole() )//a service's stderr goes nowhere, and the SCM's record of a failed start (7024) carries only the exit code:  this event names the cause, and Setup's StartService shows it.
 			AddApplicationLog( ELogLevel::Critical, Ƒ("{}{}", prefix, message) );
 		return y;
 	}
@@ -203,6 +203,11 @@ namespace Jde{
 	vector<function<void(bool)>> _finalizeFunctions;
 	α Process::AddFinalizeFunction( function<void(bool)>&& finalize )ι->void{
 		_finalizeFunctions.push_back( move(finalize) );
+	}
+
+	vector<function<void()>> _exitFunctions;
+	α Process::AddExitFunction( function<void()>&& exit )ι->void{
+		_exitFunctions.push_back( move(exit) );
 	}
 
 	up<IShutdown> _executor;
@@ -289,6 +294,8 @@ namespace Jde{
 		if( ioc && ioc.use_count()>1 )//everything that used the io_context should have released it by now; a leftover ref means an asio object would otherwise outlive the io_context (use-after-free).
 			std::cout << "WARNING: io_context still has " << ioc.use_count()-1 << " reference(s) at finalize." << std::endl;
 		ioc = nullptr;//io_context destroyed here, deterministically last.
+		for_each( _exitFunctions, [](let& exit){exit();} );//still under the watchdog
+		_exitFunctions.clear();
 		{ lg _{_shutdownMutex}; _shutdownFinished = true; }
 		_shutdownComplete.notify_all();//disarms the watchdog.
 		std::cout << "Shutdown complete." << std::endl;

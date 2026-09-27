@@ -73,12 +73,8 @@ describe( 'UserDetail delete', ()=>{
 //the server authenticates a logon by loginName+provider (AuthenticateAwait), so both are fixed once the row exists - and a
 //key user's provider doubly so, since changing it swaps key-properties for the generic form mid-edit.  One list feeds both forms.
 describe( 'UserDetail readonly fields', ()=>{
-	it( 'fixes provider and login name on a saved user', ()=>{
+	it( 'fixes provider and login name', ()=>{
 		expect( create({id: 7, name: "bob"}).readonlyFields ).toEqual( ["provider", "loginName"] );
-	} );
-
-	it( 'leaves both settable on a new user', ()=>{
-		expect( create({}).readonlyFields ).toEqual( [] );
 	} );
 } );
 
@@ -122,6 +118,12 @@ describe( 'resourceTableSettings', ()=>{
 	it( 'offers neither Add nor Purge', ()=>{
 		expect( resourceTableSettings.canAdd ).toBe( false );
 		expect( resourceTableSettings.canPurge ).toBe( false );
+	} );
+
+	//reviews/m3-closing.md #32:  a user is only created by signing in, so the list has no Add and its empty state points at none
+	it( 'offers no Add on users', ()=>{
+		expect( userTableSettings.canAdd ).toBe( false );
+		expect( userTableSettings.empty?.add ).toBeUndefined();
 	} );
 
 	//A node-scoped resource (criteria set) is minted when a role is granted on a node and shares its table's slug, so on a

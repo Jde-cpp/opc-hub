@@ -23,7 +23,7 @@ namespace Jde::Opc::Gateway{
 	//strand-only - cross-thread callers go through UAClient, which dispatches onto the strand with a keep-alive.
 	struct AsyncRequest final{
 		AsyncRequest()ι;
-		α Process( RequestId requestId, sv what )ι->void;//strand-only
+		α Process( RequestId requestId, sv what, bool keepAlive=false )ι->void;//strand-only.  keepAlive:  not user traffic - it leaves _lastRequest, and so the idle TTL, alone.
 		α Clear( RequestId requestId )ι->void;//strand-only
 		α RequestDrain()ι->void{ _drainNeeded = true; }//strand-only (StateCallback inside run_iterate): the session just activated and open62541 is about to fire its own namespace-array read - hold ProcessingLoop open until OnServiceBegin sees it serviced.
 		α OnServiceBegin( RequestId requestId )ι->void;//strand-only (ServiceNotificationCallback inside run_iterate): open62541 started processing a response; an id we never sent is its own traffic - the drain's wait is over.

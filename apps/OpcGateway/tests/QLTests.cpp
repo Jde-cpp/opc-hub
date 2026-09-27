@@ -9,6 +9,7 @@
 #include "../src/ql/GatewayQL.h"//after Sessions.h:  IQLAwaitExe.h names Web::Server::SessionInfo.
 #include "../src/ql/OpcSessionsQLAwait.h"
 #include "../src/ql/SearchQLAwait.h"
+#include "../src/UAClient.h"
 
 #define let const auto
 
@@ -262,6 +263,24 @@ namespace Jde::Opc::Gateway::Tests{
 
 		let unknown = rows( "search( opc: \"noSuchConnection\", text: \"lamp1\" ){ path }" );//no live client ⇒ empty, and no ConnectAwait (which would throw 'not found').
 		EXPECT_TRUE( unknown.empty() ) << serialize( unknown );
+		{//a client that is held but not Connected - a lapsed session, a dropped socket - rejects rather than answering empty.
+			vector<sp<UAClient>> held;
+			for( auto& client : UAClient::LiveClients() ){
+				if( client->Slug()==OpcServerSlug )
+					held.push_back( client );
+			}
+			ASSERT_FALSE( held.empty() );
+			struct Reconnect final{ vector<sp<UAClient>>& Clients; ~Reconnect(){ for( auto& c : Clients ) c->Connected = true; } } _{ held };
+			for( auto& c : held )
+				c->Connected = false;
+			try{
+				Socket().QuerySync( "search( opc: $opc, text: \"lamp1\" ){ path }", vars );
+				ADD_FAILURE() << "a search on a disconnected client answered";
+			}
+			catch( const GatewayErrorResponse& e ){
+				EXPECT_NE( string{e.what()}.find("BadServerNotConnected"), string::npos ) << e.what();
+			}
+		}
 
 		let refreshed = rows( "search( opc: $opc, text: \"lamp1\", refresh: true ){ path }" );
 		ASSERT_NE( find(refreshed, lampPath), refreshed.end() ) << serialize( refreshed );

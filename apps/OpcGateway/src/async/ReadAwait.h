@@ -42,9 +42,9 @@ namespace Jde::Opc::Gateway{
 	};
 
 	struct ReadAwait final : TAwait<ReadResponse>{
-		ReadAwait( ReadRequest&& req, sp<UAClient> c )ι:_request{move(req)}, _client{move(c)}{}
-		ReadAwait( NodeId nodeId, UA_AttributeId attrib, sp<UAClient> c )ι:ReadAwait{{move(nodeId), attrib}, move(c)}{}
-		ReadAwait( Browse::Response&& browse, QL::TableQL&& ql, sp<UAClient> c )ι:ReadAwait{{move(browse), move(ql)}, move(c)}{}
+		ReadAwait( ReadRequest&& req, sp<UAClient> c, bool keepAlive=false, SRCE )ι:TAwait<ReadResponse>{sl}, _request{move(req)}, _client{move(c)}, _keepAlive{keepAlive}{}//keepAlive:  AsyncRequest::Ping's - not user traffic.
+		ReadAwait( NodeId nodeId, UA_AttributeId attrib, sp<UAClient> c, SRCE )ι:ReadAwait{{move(nodeId), attrib}, move(c), false, sl}{}
+		ReadAwait( Browse::Response&& browse, QL::TableQL&& ql, sp<UAClient> c, SRCE )ι:ReadAwait{{move(browse), move(ql)}, move(c), false, sl}{}
 
 		α await_ready()ι->bool override{ return !_request.nodesToReadSize; }
 		α Suspend()ι->void override;
@@ -55,5 +55,6 @@ namespace Jde::Opc::Gateway{
 		ReadRequest _request;
 		RequestId 	_requestId{};
 		sp<UAClient> _client;
+		bool _keepAlive;
 	};
 }

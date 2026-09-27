@@ -224,7 +224,7 @@ namespace Jde::Opc::Gateway{
 		_client->PostUA( [this]{//UA submissions must run on the client's strand; `this` outlives suspension (resume only via OnComplete).
 			try{
 				UACε( UA_Client_sendAsyncReadRequest(*_client, &_request, ReadAwait::OnResponse, this, &_requestId) );
-				_client->Process( _requestId, "read" );
+				_client->Process( _requestId, _keepAlive ? "keep-alive" : "read", _keepAlive );
 			}
 			catch( UAException& e ){
 				ResumeExp( move(e) );

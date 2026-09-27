@@ -36,7 +36,7 @@
 				<mat-icon matPrefix>search</mat-icon>
 				<mat-autocomplete #searchAC=matAutocomplete class="search-panel" panelWidth="560px" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)">
 					@for( result of searchResults(); track trackResult(result) ){
-						<mat-option [value]=result class="search-option">
+						<mat-option [value]=result [disabled]="result.disabled" class="search-option">
 							<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
 							<span class="search-title">@if( result.prefix ){<span class="search-prefix">{{result.prefix}}:</span>}{{result.title}}</span>
 							@if( result.summary ){

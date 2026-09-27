@@ -73,6 +73,22 @@ describe( 'NavBar.onSearch', ()=>{
 		navbar.onSearch( enter() );
 		expect( navbar.selected ).toEqual( [] );
 	} );
+
+	//reviews/opc-server-search.md #11:  a disabled notice ("Search is unavailable for …") routes to [] - the app root - if picked.
+	const notice:SearchResult = {title:'Search is unavailable for External', route:[], disabled:true, source:'nodes'};
+	it( 'skips a disabled notice for the first real result', ()=>{
+		const navbar = create();
+		navbar.searchResults.set( [notice, first] );
+		navbar.onSearch( enter() );
+		expect( navbar.selected ).toEqual( [first] );
+	} );
+
+	it( 'does nothing when the only result is a disabled notice', ()=>{
+		const navbar = create();
+		navbar.searchResults.set( [notice] );
+		navbar.onSearch( enter() );
+		expect( navbar.selected ).toEqual( [] );
+	} );
 } );
 
 //reviews/m3-closing.md #8:  a favorite's route is the serialized - percent-encoded - url it was saved on, and a string

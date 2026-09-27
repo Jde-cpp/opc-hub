@@ -33,12 +33,13 @@ namespace Browse{
 		Request( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι;//one BrowseDescription per id;  results[i] answers ids[i].
 		Request( NodeId&& id, const QL::TableQL& ql )ι;
 		Ω Hierarchical( NodeId&& id, UA_BrowseResultMask mask )ι->Request;//forward HierarchicalReferences (subtypes included), objects/variables/methods only - the NodeIndex crawl.
-		Ω Hierarchical( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι->Request;//the same, for a whole BFS level in one round trip.
+		Ω Hierarchical( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι->Request;//the same, for a whole BFS level in one round trip.  PerNode.
 		Ω Properties( NodeId&& id )ι->Request;//forward HasProperty (no subtypes), variables only, browse names - a DataType's EnumValues/EnumStrings (EnumTypeCache).
 		Ω Parents( NodeId&& id )ι->Request;//INVERSE HierarchicalReferences (subtypes included), objects/variables, browse name + class - one step of the walk up to the Objects folder (NodeQLAwait::Path).
-		Request( Request&& x )ι:UA_BrowseRequest{ x }{ UA_BrowseRequest_init( &x );}
-		Request( const Request& x )ι{ UA_BrowseRequest_copy( &x, this ); }
+		Request( Request&& x )ι:UA_BrowseRequest{ x }, PerNode{ x.PerNode }{ UA_BrowseRequest_init( &x );}
+		Request( const Request& x )ι:PerNode{ x.PerNode }{ UA_BrowseRequest_copy( &x, this ); }
 		~Request(){ UA_BrowseRequest_clear(this); }
+		bool PerNode{};//a bad results[i].statusCode is the caller's to read - one unbrowsable node does not fail the request.  Set by the request, so a caller cannot forget it.
 	};
 
 	struct FoldersAwait final : TAwait<Response>, noncopyable{

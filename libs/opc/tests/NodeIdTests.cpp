@@ -297,9 +297,6 @@ namespace Jde::Opc::Tests{
 	//decoder wrote its 24-byte image over the vptr and the returned node carried a bogus identifier.  ToString and
 	//DecodeJson are each other's inverse and must round trip.
 	TEST( NodeIdTests, DecodeJsonRoundTripsToString ){
-		//review3 #4: the last two carry a ':' in the identifier - URN-style and Kepware/PLC-style - which the old
-		//`find(':')` dispatch sent to the QL parser.  `urn:plant:line1` threw there; `Tag:5` parsed as {"ns=2;s=Tag":5}
-		//and came back as ns=0;i=0, so the round trip silently landed on a different node.
 		for( let& n : { numeric(2, 5002), numeric(0, 85), fromJson(R"({"ns":2,"s":"tag.one"})"),
 				guidNode(2, nodeGuid), fromJson(R"({"ns":4,"s":"Examples/Stacklights"})"),
 				fromJson(R"({"ns":2,"s":"urn:plant:line1"})"), fromJson(R"({"ns":2,"s":"Tag:5"})") } )

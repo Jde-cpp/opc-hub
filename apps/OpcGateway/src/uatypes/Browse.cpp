@@ -58,9 +58,9 @@ namespace Browse{
 		_client->ClearRequest( _requestId );
 		let sc = response->responseHeader.serviceResult;
 		DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest::Complete", hex(_client->Handle()), hex(_requestId), hex(sc) );
-		if( !sc ){
-			if( auto resultSC = response->resultsSize>0 ? response->results[0].statusCode : UA_STATUSCODE_GOOD; resultSC ){
-				DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest::Results Error", hex(_client->Handle()), hex(_requestId), hex(sc) );
+		if( !UA_StatusCode_isBad(sc) ){//a Good_*/Uncertain_* informational code still carries the results.
+			if( auto resultSC = !_request.PerNode && response->resultsSize>0 ? response->results[0].statusCode : UA_STATUSCODE_GOOD; UA_StatusCode_isBad(resultSC) ){
+				DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest::Results Error", hex(_client->Handle()), hex(_requestId), hex(resultSC) );
 				ResumeExp( UAClientException{resultSC, _client->Handle(), _requestId} );
 			}else{
 #ifdef __cpp_lib_move_only_function
@@ -191,6 +191,7 @@ namespace Browse{
 	}
 	α Request::Hierarchical( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι->Request{
 		Request y{ move(ids), mask };
+		y.PerNode = true;//the crawl reads every result - a batch of one after a fallback included.
 		for( uint i=0; i<y.nodesToBrowseSize; ++i ){
 			auto& d = y.nodesToBrowse[i];
 			d.browseDirection = UA_BROWSEDIRECTION_FORWARD;

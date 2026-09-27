@@ -19,15 +19,15 @@ mat-table{
 }
 
 .mat-column-schema {
-	flex: 0 0 7em;
+	flex: 0 0 9em;
 }
 
 .mat-column-resource {
-	flex: 0 0 8em;
+	flex: 0 0 14em;
 }
 
 .mat-column-deleted {
-	flex: 0 0 5em;
+	flex: 0 0 7.5em;/* the header and its sort arrow:  5em clipped the checkbox too */
 }
 
 .mat-column-permission{

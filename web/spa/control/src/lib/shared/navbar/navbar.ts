@@ -186,7 +186,7 @@ export class NavBar implements OnInit {
 		event.preventDefault();//never submit anything
 		if( handled )
 			return;
-		const first = this.searchResults()[0];
+		const first = this.searchResults().find( r=>!r.disabled );
 		if( first )
 			this.onSearchSelected( first );
 	}

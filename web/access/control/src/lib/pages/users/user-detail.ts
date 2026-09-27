@@ -65,9 +65,10 @@ export class UserDetail extends DetailPage<User>{
 	isKeyProvider = computed<boolean>( ()=>this.providerName().toLowerCase()=="key" );
 	excludedColumns = [...userTableSettings.excludedColumns!, ...keyFields];
 	fieldOrder = ["slug", "name", "provider", "email", "loginName", "description"];//identity together, the provider beside the id it prefixes, the free text last - key-properties keeps the same shape
-	//the server authenticates a logon by loginName+provider, so changing either on an existing user re-binds the account - only a
-	//new user sets them.  One list for both forms:  key-properties has no loginName field and ignores it.
-	get readonlyFields():string[]{ return this.user?.id ? ["provider", "loginName"] : []; }
+	//the server authenticates a logon by loginName+provider, so changing either re-binds the account - and a user is only ever
+	//created by signing in so neither is ever set here.  One list for both forms:  key-properties has
+	//no loginName field and ignores it.
+	readonlyFields = ["provider", "loginName"];
 	override ql:IGraphQL = inject( AccessService );
 }
 
@@ -80,8 +81,11 @@ const keyFields = ["modulus", "exponent", "issuer", "subjectAlt", "distinguished
 const providerTones:ChipTones = { Google:"ok", Facebook:"ok", Amazon:"ok", Microsoft:"ok", VK:"ok", Key:"neutral" };
 const identityColumns:(string|ViewFieldSettings)[] = [ { name:"name", style: new Style(300) }, { name:"provider", style: new Style(100), chip: providerTones } ];
 //three system views:  'all' (the default), the people - password/Google logons - and the certificate identities with their key columns
+//No Add (reviews/m3-closing.md #32):  an identity becomes a user by signing in - Google and OPC-server logons on their first
+//sign-in, a Key identity when the AppServer enrolls it from access.trustedCertDirs.
 export const userTableSettings:TableSettings = {
-	empty: { title: "No users yet.", detail: "An identity becomes a user the first time it signs in.", add: "Use Add to create one ahead of that." },
+	empty: { title: "No users yet.", detail: "An identity becomes a user the first time it signs in." },
+	canAdd: false,
 	excludedColumns: ["isGroup"],
 	viewName: "All",
 	columns: [ ...identityColumns, "description" ],

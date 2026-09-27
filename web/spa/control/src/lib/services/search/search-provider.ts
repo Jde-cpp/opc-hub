@@ -12,6 +12,7 @@ export type SearchResult = {
 	prefix?:string;
 	rank?:number;//0 best - providers rank starts-with ahead of contains;  ties fall back to registration order, then title.
 	source:string;//the provider's name.
+	disabled?:boolean;//a notice, not a hit - shown, never navigated to.
 };
 
 //jde-spa owns the navbar but sits below the libraries that own the data (routes here, users/roles in jde-access, opc nodes in
