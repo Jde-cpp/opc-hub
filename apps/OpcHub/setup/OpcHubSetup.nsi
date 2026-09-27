@@ -84,7 +84,7 @@ VIAddVersionKey "CompanyName" "${COMPANY}"
 VIAddVersionKey "FileDescription" "${PRODUCT} setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" "MIT license"
+VIAddVersionKey "LegalCopyright" "Copyright (C) John Duffy, Apache-2.0 license"
 
 Var DataDir    ;%ProgramData%\Jde-Cpp - both modes; the apps hardcode it (Process::ProgramDataFolder, paths-common.libsonnet)
 Var ConfigDir  ;$DataDir\config - the settings mirror
