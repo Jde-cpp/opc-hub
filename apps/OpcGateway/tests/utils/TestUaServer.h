@@ -6,7 +6,7 @@
 #include <jde/opc/uatypes/Logger.h>
 
 namespace Jde::Opc::Gateway::Tests{
-	//A throwaway open62541 server on loopback, for the shapes neither the embedded OpcServer nor Kepware offers:  a password in
+	//A throwaway open62541 server on loopback, for the shapes neither the embedded OpcServer nor External offers:  a password in
 	//the clear (PlaintextPasswordTests), a security policy the gateway does not carry (SecurityPolicyTests).  `configure` gets the
 	//config after UA_ServerConfig_setBasics_withPort and the loopback url - setBasics listens on every interface - and adds the
 	//policies, the access control and the endpoints;  the server then runs on its own thread until the object goes.

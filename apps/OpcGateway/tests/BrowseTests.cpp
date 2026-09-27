@@ -168,6 +168,35 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( string{described.what()}, "(80340000)BadNodeIdUnknown - applicationUri mismatch" );
 	}
 
+	//A batched Hierarchical request (PerNode) hands back a bad result instead of failing, and keeps the good ones;  a request
+	//without PerNode still fails on a bad results[0] - the single-node contract every other caller relies on (opc-server-search.md #12).
+	TEST_F( BrowseTests, PerNodeDeliversABadResult ){
+		const NodeId missing{ UA_NODEID_STRING_ALLOC(1, "noSuchNode") };
+		constexpr UA_BrowseResultMask mask{ UA_BROWSERESULTMASK_BROWSENAME };
+		{
+			vector<NodeId> ids; ids.push_back( NodeId::ObjectsFolder() ); ids.push_back( NodeId{missing} );
+			auto request = Browse::Request::Hierarchical( move(ids), mask );
+			ASSERT_TRUE( request.PerNode );
+			let response = BlockAwait<Browse::FoldersAwait,Browse::Response>( Browse::FoldersAwait{move(request), _client} );
+			ASSERT_EQ( response.resultsSize, 2u );
+			EXPECT_EQ( response.results[0].statusCode, UA_STATUSCODE_GOOD );
+			EXPECT_GT( response.results[0].referencesSize, 0u ) << "the good node's references must survive the bad one";
+			EXPECT_EQ( response.results[1].statusCode, UA_STATUSCODE_BADNODEIDUNKNOWN );
+		}
+		{
+			vector<NodeId> ids; ids.push_back( NodeId{missing} ); ids.push_back( NodeId::ObjectsFolder() );
+			Browse::Request request{ move(ids), mask };//the plain constructor:  no PerNode.
+			ASSERT_FALSE( request.PerNode );
+			try{
+				BlockAwait<Browse::FoldersAwait,Browse::Response>( Browse::FoldersAwait{move(request), _client} );
+				ADD_FAILURE() << "a bad results[0] without PerNode did not fail the request";
+			}
+			catch( const UAException& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADNODEIDUNKNOWN ) << e.what();
+			}
+		}
+	}
+
 	//A server may answer a browse with a GOOD serviceResult and resultsSize==0 (results==nullptr);  FoldersAwait::OnComplete
 	//treats that as success, and the QL path then visits it.  VisitWhile's only bounds check was an ASSERT_DESC, which
 	//merely logs and carries on into results[0] (review3 #13).

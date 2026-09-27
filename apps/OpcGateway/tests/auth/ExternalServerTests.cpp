@@ -19,11 +19,11 @@ namespace Jde::Opc::Gateway::Tests{
 	//certificateUri at a url that has no unsecured endpoint.  A None connection still presents its credential encrypted
 	//(UAClient::Configuration), so noneUsername succeeds wherever the server's None endpoint takes usernames under Basic256Sha256.
 	//	testing:{ external:{
-	//		url: "opc.tcp://192.168.84.130:49320", //Kepware publishes its None endpoint under its hostname/addresses only, not 127.0.0.1
-	//		nameUrl: "opc.tcp://JDE-CPP:49320", //the same server by a name whose first addresses are dead - IPv6 link-local, where Kepware listens on IPv4 alone (security-matrix #10); absent: that cell is skipped
-	//		certificateUri: "urn:JDE-CPP:Kepware.KEPServerEX.V6:UA Server", //the server's applicationUri, raw - the Basic256Sha256 rows' certificateUri; absent: those cells are skipped
+	//		url: "opc.tcp://192.168.84.130:49320", //External publishes its None endpoint under its hostname/addresses only, not 127.0.0.1
+	//		nameUrl: "opc.tcp://JDE-CPP:49320", //the same server by a name whose first addresses are dead - IPv6 link-local, where External listens on IPv4 alone (security-matrix #10); absent: that cell is skipped
+	//		certificateUri: "urn:JDE-CPP:External.KEPServerEX.V6:UA Server", //the server's applicationUri, raw - the Basic256Sha256 rows' certificateUri; absent: those cells are skipped
 	//		user: "user1", password: "…", //absent: the username cells are skipped
-	//		secureOnlyUrl: "opc.tcp://127.0.0.1:49320", //a url of the same server with no None endpoint - Kepware's loopback; absent: that cell is skipped
+	//		secureOnlyUrl: "opc.tcp://127.0.0.1:49320", //a url of the same server with no None endpoint - External's loopback; absent: that cell is skipped
 	//		expect: { noneUsername: "ok", noneAnonymous: "BadIdentityTokenRejected" } //optional, per cell:  "ok", or text the failure must contain
 	//	} }
 	//The secured cells take the two-way trust the doc describes:  the server's certificate under /gateway/trustedCertDirs, and

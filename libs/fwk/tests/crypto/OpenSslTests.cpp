@@ -124,7 +124,7 @@ namespace Jde::Crypto{
 	}
 
 	//install-issues #33:  this repo writes PEM, but every certificate it is *given* comes from somewhere else - an OPC UA
-	//server publishes its instance certificate as DER (Kepware's kepserverex_ua_server.der), and a UA trust list is a
+	//server publishes its instance certificate as DER, and a UA trust list is a
 	//directory of .der by convention.  Both encodings carry the same X.509, so both must read back to the same bytes; the
 	//return value is DER either way.  Junk in either encoding still throws, naming the file.
 	TEST_F( OpenSslTests, ReadCertificateTakesPemOrDer ){

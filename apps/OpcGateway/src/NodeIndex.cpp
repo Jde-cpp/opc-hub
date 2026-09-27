@@ -6,6 +6,31 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
+	//The session or channel went under the crawl:  nothing more in this crawl will browse.
+	Ω sessionLost( StatusCode sc )ι->bool{
+		switch( sc ){
+			case UA_STATUSCODE_BADSESSIONIDINVALID: case UA_STATUSCODE_BADSESSIONCLOSED: case UA_STATUSCODE_BADSERVERHALTED:
+			case UA_STATUSCODE_BADCONNECTIONCLOSED: case UA_STATUSCODE_BADSERVERNOTCONNECTED: case UA_STATUSCODE_BADSECURECHANNELCLOSED:
+				return true;
+			default: return false;
+		}
+	}
+	//The server could not serve the node this time, not "cannot browse it".
+	Ω transient( StatusCode sc )ι->bool{
+		switch( sc ){
+			case UA_STATUSCODE_BADNOCONTINUATIONPOINTS: case UA_STATUSCODE_BADTOOMANYOPERATIONS: case UA_STATUSCODE_BADTIMEOUT: case UA_STATUSCODE_BADRESOURCEUNAVAILABLE:
+				return true;
+			default: return false;
+		}
+	}
+	constexpr std::chrono::seconds _failedHold{ 30 };
+	//A silent copy for each waiter - the original logs, once.  Keeps the type:  Exception{e} slices a UAException's status off,
+	//and that status is what the SPA's notice shows.  ExternalException's copy ctor is already NoLog.
+	Ω copy( const Exception& e )ι->up<Exception>{
+		if( auto ua = dynamic_cast<const UAException*>(&e); ua )
+			return mu<UAException>( *ua );
+		return mu<Exception>( e.What(), ExceptionArgs{ELogLevel::NoLog, e.Tags, e.Code(), e.HttpStatus()}, e.Source() );
+	}
 	α NodeIndex::ReadyAwait::await_ready()ι->bool{
 		sl _{ _index._mutex };
 		return _index._state==EState::Ready && !_refresh;
@@ -16,28 +41,35 @@ namespace Jde::Opc::Gateway{
 
 	α NodeIndex::StartLocked( sp<UAClient>&& client, bool refresh, AnyVoidAwait* waiter )ι->void{
 		bool launch{}, ready{};
+		sp<Exception> failed;
 		{
 			ul _{ _mutex };
 			if( _state==EState::Crawling )
 				{}//join the in-flight crawl - a refresh included:  its result is fresh enough.
+			else if( _state==EState::Failed && !refresh && _error && steady_clock::now()-_failedAt<_failedHold )
+				failed = copy( *_error );//answer the recent failure - `refresh` bypasses it.
 			else if( _state!=EState::Ready || refresh ){
 				_state = EState::Crawling;
 				launch = true;
 			}
 			else
 				ready = true;
-			if( waiter && !ready )
+			if( waiter && !ready && !failed )
 				_waiters.push_back( waiter );
 		}
 		if( launch )
 			Crawl( move(client) );//fire & forget:  the task keeps the client (and so this index) alive until Finish.
 		if( waiter && ready )
 			Post( [waiter]{ waiter->Resume(); } );//a Finish raced in between await_ready and here - never resume inside await_suspend.
+		else if( waiter && failed )
+			Post( [waiter, failed]{ waiter->ResumeExp( move(*copy(*failed)) ); } );//never inside await_suspend, as above.
 	}
 
 	α NodeIndex::Crawl( sp<UAClient> client )ι->TAwait<Browse::Response>::Task{
 		vector<Entry> entries;
 		bool truncated{};//the index is incomplete - reported through Truncated().
+		uint refused{};//nodes whose own browse result was bad - skipped, not fatal.
+		StatusCode firstRefusal{};
 		bool stop{};//abandon the crawl entirely.  Only maxNodes does that:  a continuation point caps one folder, and the
 		//children that folder *did* return still have to be visited and queued, so the two cannot share a flag.
 		up<Exception> error;
@@ -47,9 +79,10 @@ namespace Jde::Opc::Gateway{
 		let maxNodes = Settings::FindNumber<uint>( "/gateway/search/maxNodes" ).value_or( 25000 );
 		let includeServer = Settings::FindBool( "/gateway/search/includeServer" ).value_or( false );
 		let browseBatch = std::max<uint>( 1, Settings::FindNumber<uint>("/gateway/search/browseBatch").value_or(64) );
+		let skipNames = Settings::FindArray( "/gateway/search/skipBrowseNames" ) ? Settings::FindStringArray( "/gateway/search/skipBrowseNames" ) : vector<string>{ "_Hints" };
 		try{
 			let defaultNs = client->DefaultBrowseNs();
-			struct Pending{ NodeId Id; string Path; uint8 Depth; };
+			struct Pending{ NodeId Id; string Path; uint8 Depth; bool Retried{}; };
 			std::deque<Pending> pending;
 			pending.push_back( {NodeId::ObjectsFolder(), {}, 0} );
 			flat_set<NodeId> seen; seen.emplace( NodeId::ObjectsFolder() );//cycles:  hierarchical references may still reach a node twice.
@@ -87,8 +120,41 @@ namespace Jde::Opc::Gateway{
 						pending.push_front( move(*p) );
 					continue;
 				}
+				if( response->resultsSize<level.size() ){//the spec owes one result per description:  a short answer is a server fault.
+					Logging::LogOnce( SRCE_CUR, BrowseTag, "[{}]search index: a browse of {} nodes answered {} results.  Short answers log at Debug from here on.", hex(client->Handle()), level.size(), response->resultsSize );
+					DBGT( BrowseTag, "[{}]search index: a browse of {} nodes answered {} results.", hex(client->Handle()), level.size(), response->resultsSize );
+					batch = std::max<uint>( 1, batch/2 );
+					for( uint i=response->resultsSize; i<level.size(); ++i ){
+						if( !level[i].Retried )//once more, as a transient refusal is.
+							pending.push_back( {NodeId{level[i].Id}, level[i].Path, level[i].Depth, true} );
+						else{
+							truncated = true;
+							if( !refused++ )
+								firstRefusal = UA_STATUSCODE_BADUNEXPECTEDERROR;
+						}
+					}
+				}
 				for( uint r=0; r<level.size() && r<response->resultsSize && !stop; ++r ){
 					let& parent = level[r];
+					let rsc = response->results[r].statusCode;
+					if( rsc && !UA_StatusCode_isBad(rsc) )//Good_*/Uncertain_* informational:  the references came with it, so index them.
+						TRACET( BrowseTag, "[{}]search index: '{}' ({}) answered ({}){} - indexing its references.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
+					if( UA_StatusCode_isBad(rsc) ){//e.g. BadNodeIdUnknown for _Hints templates under a filtered browse.
+						if( sessionLost(rsc) )//fail the crawl, so the next search starts over on a live session.
+							throw UAException{ rsc, Ƒ("'{}' lost its session while indexing '{}'.", client->Slug(), parent.Path) };
+						if( transient(rsc) && !parent.Retried ){//once more, at the back of the queue, in smaller batches.
+							DBGT( BrowseTag, "[{}]search index: retrying '{}' ({}) - ({}){}.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
+							batch = std::max<uint>( 1, batch/2 );
+							pending.push_back( {NodeId{parent.Id}, parent.Path, parent.Depth, true} );
+							continue;
+						}
+						truncated = true;//the node and everything under it is missing.
+						if( !refused++ )
+							firstRefusal = rsc;
+						Logging::LogOnce( SRCE_CUR, BrowseTag, "[{}]search index: skipping '{}' ({}) - ({}){}.  Refusals log at Debug from here on.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
+						DBGT( BrowseTag, "[{}]search index: skipping '{}' ({}) - ({}){}.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
+						continue;
+					}
 					if( response->results[r].continuationPoint.length ){//v1 does not BrowseNext:  the folder is indexed up to the server's per-browse cap.
 						WARNT( BrowseTag, "[{}]search index: '{}' returned a continuation point - children beyond the server's limit are not indexed.", hex(client->Handle()), parent.Path );
 						truncated = true;//not `stop`:  the references this browse did return are still ours to index.
@@ -100,6 +166,8 @@ namespace Jde::Opc::Gateway{
 						if( !includeServer && ref.nodeId.nodeId.namespaceIndex==0 && ref.nodeId.nodeId.identifierType==UA_NODEIDTYPE_NUMERIC && ref.nodeId.nodeId.identifier.numeric==UA_NS0ID_SERVER )
 							return true;//the Server object's diagnostics/capabilities subtree is hundreds of nodes nobody searches for.
 						string browse{ ToSV(ref.browseName.name) };
+						if( std::ranges::find(skipNames, browse)!=skipNames.end() )
+							return true;//not indexed, not descended - e.g. _Hints address templates.
 						if( browse.find('/')!=string::npos ){//unroutable:  the node url is '/'-delimited browse segments.
 							if( !warnedSlash ){
 								WARNT( BrowseTag, "[{}]search index: skipping browse names containing '/' ('{}' under '{}').", hex(client->Handle()), browse, parent.Path );
@@ -124,8 +192,10 @@ namespace Jde::Opc::Gateway{
 					} );
 				}
 			}
+			if( entries.empty() && refused )//Objects itself refused:  a Ready empty index would answer [] until a refresh, and the notice would never show.
+				throw UAException{ firstRefusal, Ƒ("'{}' refused browsing Objects.", client->Slug()) };
 			let ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now()-start ).count();
-			INFOT( BrowseTag, "[{}]Indexed {} nodes under Objects for '{}' (maxDepth={}) in {}ms{}.", hex(client->Handle()), entries.size(), client->Slug(), maxDepth, ms, truncated ? " - truncated" : "" );
+			INFOT( BrowseTag, "[{}]Indexed {} nodes under Objects for '{}' (maxDepth={}) in {}ms{}{}.", hex(client->Handle()), entries.size(), client->Slug(), maxDepth, ms, truncated ? " - truncated" : "", refused ? Ƒ(" - {} node(s) refused browse", refused) : string{} );
 		}
 		catch( runtime_error& e ){
 			WARNT( BrowseTag, "[{}]search index for '{}' failed: {}", hex(client->Handle()), client->Slug(), e.what() );
@@ -141,9 +211,13 @@ namespace Jde::Opc::Gateway{
 		vector<AnyVoidAwait*> waiters;
 		{
 			ul _{ _mutex };
-			if( error )
-				_state = EState::Failed;//the next search retries from scratch.
+			if( error ){
+				_state = EState::Failed;//searches within _failedHold get this error;  the first after it crawls from scratch.
+				_error = copy( *error );
+				_failedAt = steady_clock::now();
+			}
 			else{
+				_error.reset();
 				_entries = move( entries );
 				_truncated = truncated;
 				_state = EState::Ready;
@@ -153,7 +227,7 @@ namespace Jde::Opc::Gateway{
 		}
 		for( auto* waiter : waiters ){//outside the lock:  Resume may run the awaiter to completion (and back into Search) inline - it is the last use of the waiter.
 			if( error )
-				waiter->ResumeExp( Exception{*error} );
+				waiter->ResumeExp( move(*copy(*error)) );
 			else
 				waiter->Resume();
 		}

@@ -65,7 +65,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ServerTrust::Rejection(_config), "" );//a later success clears the last rejection.
 	}
 
-	//install-issues #33:  an OPC UA server publishes its instance certificate as DER - Kepware's kepserverex_ua_server.der -
+	//install-issues #33:  an OPC UA server publishes its instance certificate as DER - External's kepserverex_ua_server.der -
 	//and a UA trust list is a directory of .der by convention.  The operator step the Gateways help describes, done with the
 	//file the server actually writes, used to change nothing:  the scan took .pem/.crt only, skipped the rest without a word,
 	//and the refusal then said "0 trusted certificates loaded", which reads as an empty directory.  The same bytes under

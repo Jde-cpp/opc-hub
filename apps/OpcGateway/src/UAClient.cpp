@@ -350,7 +350,7 @@ namespace Jde::Opc::Gateway{
 		//policy only from a local certificate, though the token itself is encrypted to the server's, which every endpoint
 		//description carries.  So a connection with no certificateUri stays on SecurityPolicy None - its data in the clear - and
 		//still presents its credential encrypted wherever the server's token policy asks for that, as the Jde OpcServer and
-		//Kepware both do on their None endpoints (reviews/security-matrix.md #1, ruled 09-18; NoSecurityTests).  The certificate
+		//External both do on their None endpoints (reviews/security-matrix.md #1, ruled 09-18; NoSecurityTests).  The certificate
 		//is the per-connection issued one (its SAN the gateway's own applicationUri - /gateway/issuedCerts);  certificate
 		//authentication uses the app client's own instead, since the X509 token and the auth policy that signs for it must be the
 		//same certificate - which is also why that credential's transport and authentication certificates are equal.
@@ -360,7 +360,7 @@ namespace Jde::Opc::Gateway{
 		ServerTrust::Install( *config, "/gateway", Handle(), Url() );//before setDefault, which would otherwise install AcceptAll;  applies to every endpoint that carries a certificate, secured or not.
 		//The secured policies the gateway carries - for the channel with a certificateUri, for the user token always.  open62541
 		//takes the endpoint with the highest securityLevel among the policies it finds here, so a server that offers an Aes policy
-		//gets it, and one that offers Basic256Sha256 alone - Kepware - gets that (reviews/security-matrix.md #4; SecurityPolicyTests).
+		//gets it, and one that offers Basic256Sha256 alone - External - gets that (reviews/security-matrix.md #4; SecurityPolicyTests).
 		//The deprecated ones (Basic128Rsa15, Basic256) are not carried, and a server that offers nothing else is told so (StateCallback).
 		//securityLevel is the *server's* claim, read off the unauthenticated discovery channel, so it only ever ranks endpoints
 		//that already meet the floor pinned below (config->securityMode) - it never chooses the mode (reviews/m2-closing.md #1).
@@ -452,8 +452,7 @@ namespace Jde::Opc::Gateway{
 			return AppClient()->SslSettings;
 		return _opcServer.CertificateUri.empty() ? optional<Crypto::CryptoSettings>{} : optional<Crypto::CryptoSettings>{ CryptoSettings() };
 	}
-	//The statuses a server turns a client certificate down with.  The first is the one that matters:  the Jde OpcServer and
-	//Kepware both answer an untrusted certificate with BadSecurityChecksFailed at the OPN, whatever their own logs call it.
+	//The statuses a server turns a client certificate down with.  The first is the one that matters:  the Jde OpcServer answer an untrusted certificate with BadSecurityChecksFailed at the OPN, whatever their own logs call it.
 	Ω refusesCertificate( StatusCode sc )ι->bool{
 		switch( sc ){
 		case UA_STATUSCODE_BADSECURITYCHECKSFAILED:
@@ -502,7 +501,7 @@ namespace Jde::Opc::Gateway{
 		}
 		//The discovery channel, preset:  with config.endpoint empty, UA_Client_getEndpoints' connect fetches the endpoints and then
 		//SELECTS one for its own channel (ua_client_connect.c endpointUnconfigured), and a None-only client finds none at a url whose
-		//endpoints are all secured - Kepware publishes its None endpoint under the hostname url alone - so the very listing that
+		//endpoints are all secured - External publishes its None endpoint under the hostname url alone - so the very listing that
 		//would explain the failure fails the same way.  A configured endpoint skips the selection (connectIterate: "an exact
 		//endpoint was configured"), and GetEndpoints is a discovery service every server answers on a None channel.
 		config.endpoint.endpointUrl = UA_STRING_ALLOC( url.c_str() );
@@ -570,7 +569,7 @@ namespace Jde::Opc::Gateway{
 					//problem.  A token type the server never offers (install-issues #24: anonymous, to a server that takes certificates
 					//and issued tokens).  A credential the server takes only in the clear, which open62541 will not send unless
 					///gateway/allowPlaintextPassword says so (security-matrix #6).  A connection with no certificateUri - SecurityPolicy
-					//None, its tokens still encrypted (Configuration) - at a url with no unsecured endpoint (Kepware publishes none under
+					//None, its tokens still encrypted (Configuration) - at a url with no unsecured endpoint (External publishes none under
 					//127.0.0.1), or whose unsecured endpoint takes the token only under a policy the gateway does not carry.  A server
 					//that offers the credential only under policies the gateway does not carry at all - a deprecated one, an ECC one
 					//(security-matrix #4; SecurityPolicyTests).  And with a certificateUri, our configured applicationUri filtering out every endpoint (matchEndpoint):  name
@@ -632,7 +631,7 @@ namespace Jde::Opc::Gateway{
 				}
 				else if( auto presented = refusesCertificate(connectStatus) ? client->PresentedCertificate() : optional<Crypto::CryptoSettings>{}; presented ){
 					//The other direction:  the server turned OUR certificate down.  It says so with a status and nothing a client can show
-					//- Kepware's "An error occurred verifying security." rides the ERR message into the log - so where our verifier, above,
+					//- External's "An error occurred verifying security." rides the ERR message into the log - so where our verifier, above,
 					//names the server and the fix, this read as a bare BadSecurityChecksFailed, and only certificate authentication named a
 					//file at all (reviews/security-matrix.md #12; RefusedCertificateTests, CertTests.Authenticate_Bad).  The status can
 					//have other causes, hence "usually";  the certificate is the one to rule out first, and the file is what an operator

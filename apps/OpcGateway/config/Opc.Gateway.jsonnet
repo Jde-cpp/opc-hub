@@ -25,7 +25,8 @@ function( sync=false )
 			maxNodes: 25000, //stop crawling (results flagged truncated) beyond this
 			browseBatch: 64, //folders browsed per request - the crawl browses a whole BFS level at once; a server refusing with BadTooManyOperations drops it to 1 for the rest of that crawl
 			limit: 20, //default rows when the query passes no limit
-			includeServer: false //index the ns=0 Server object's diagnostics subtree
+			includeServer: false, //index the ns=0 Server object's diagnostics subtree
+			skipBrowseNames:: ["_Hints"] // Browse names neither indexed nor descended
 		},
 		//certificate.managed:false (default true) presents your own pair - one a CA the OPC servers trust issued - as found:  never
 		//issued, never re-issued on expiry or a changed applicationUri.  One private key for the block (privateKey.path), and one

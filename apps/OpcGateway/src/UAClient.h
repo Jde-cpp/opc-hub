@@ -96,7 +96,7 @@ namespace Jde::Opc::Gateway{
 		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
 		//does - then that address in the name's place.  open62541 connects to the first address a name resolves to and never tries
 		//the next (eventloop_posix_tcp.c), so such a name fails BadConnectionRejected one address short of the server:  IPv6
-		//link-local ahead of IPv4 against a server that listens on IPv4 alone - Kepware on a dual-stack box - or `localhost`, ::1
+		//link-local ahead of IPv4 against a server that listens on IPv4 alone - External on a dual-stack box - or `localhost`, ::1
 		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  An address, a name
 		//with one address, and a name whose first address answers all come back exactly as given, so nothing changes where a connect
 		//already works;  the substitution is made only where open62541 would have failed.

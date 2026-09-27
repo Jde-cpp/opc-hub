@@ -23,8 +23,11 @@ namespace Jde::Opc::Gateway{
 			vector<sp<UAClient>> clients;
 			if( text.size() ){
 				if( opcPtr ){
-					if( auto client = UAClient::Find( opc, SessionCredential(session->SessionId, session->UserPK, opc).value_or(Credential{}) ); client && client->Connected )
+					if( auto client = UAClient::Find( opc, SessionCredential(session->SessionId, session->UserPK, opc).value_or(Credential{}) ); client ){
+						if( !client->Connected )//a lapsed session or a dropped socket:  say so - an empty list reads as "no such node" (reviews/opc-server-search.md #2).
+							throw UAException{ UA_STATUSCODE_BADSERVERNOTCONNECTED, Ƒ("'{}' is not connected.", opc), {ELogLevel::Debug} };
 						clients.push_back( move(client) );
+					}
 				}
 				else{
 					for( auto& client : UAClient::LiveClients() ){

@@ -10,7 +10,7 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 	//security-matrix #10:  open62541 connects to the first address a name resolves to and never tries the next, so a name whose
 	//first address is dead fails BadConnectionRejected one address short of the server - found as `opc.tcp://JDE-CPP:49320`, IPv6
-	//link-local ahead of IPv4 against Kepware, which listens on IPv4 alone.  The hermetic form of it:  `localhost` resolves to ::1
+	//link-local ahead of IPv4 against External, which listens on IPv4 alone.  The hermetic form of it:  `localhost` resolves to ::1
 	//first on windows, and the server here is bound to 127.0.0.1.  UAClient::ReachableUrl probes the first address of a name with
 	//several and, only when it takes no connection, substitutes the first that does.  Where `localhost` resolves to 127.0.0.1
 	//first the url comes back as given and the connect works as it always did - the test passes either way, and says which.

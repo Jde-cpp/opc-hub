@@ -46,6 +46,8 @@ namespace Jde::Opc::Gateway{
 		α Finish( vector<Entry>&& entries, bool truncated, up<Exception> error )ι->void;
 
 		vector<Entry> _entries;
+		up<Exception> _error;	//a Failed crawl's error, answered for _failedHold without crawling again - keystrokes must not each re-crawl a refusing server.
+		steady_clock::time_point _failedAt;
 		vector<AnyVoidAwait*> _waiters;	//parked on the in-flight crawl;  resumed by Finish.
 		EState _state{ EState::Empty };
 		bool _truncated{};
