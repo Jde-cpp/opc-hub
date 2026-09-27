@@ -138,13 +138,19 @@ namespace Jde{
 			Certificate{ ReadCertificate(settings.Certificate.Path), sl }.Log( Ƒ("Read unmanaged certificate at {}", settings.Certificate.Path.string()), sl );
 			return;
 		}
+		bool unwritable{};
 		try{
 			if( !fs::exists(settings.PrivateKey.Path) )
 				CreateKeyCertificate( settings, sl );
 			else{
 				EncryptPrivateKey( settings, sl );//before a re-issue, which signs with the key as it will be read from now on
 				if( let reason = ReissueReason(settings, sl); reason.size() ){
-					INFO( "Re-issuing '{}': {}.", settings.Certificate.Path.string(), reason );
+					let& path = settings.Certificate.Path;
+					//checked up front:  BIO_new_file's failure on Windows reports ERROR_ACCESS_DENIED (5) through strerror - "Input/output error".
+					//Opened for append so nothing is truncated; only an existing file, so a failed check leaves no empty pem behind.
+					unwritable = fs::exists( path ) && !std::ofstream{ path, std::ios::app }.is_open();
+					THROW_IFSL( unwritable, "'{}' has to be re-issued ({}), but this process cannot write it.  Run once as an account that can (e.g. elevated, if an elevated install created it), or grant this account write access to it - the key is untouched either way.", path.string(), reason );
+					INFO( "Re-issuing '{}': {}.", path.string(), reason );
 					IssueCertificate( settings, std::chrono::days{365}, sl );
 				}
 			}
@@ -156,7 +162,8 @@ namespace Jde{
 			throw;
 		}
 		catch( Exception& e ){
-			e.PrependWhat( Ƒ("Delete {} and restart to re-issue it on the existing key - the key is untouched, so the modulus and the enrolled identity survive.", settings.Certificate.Path.string()) );
+			if( !unwritable )
+				e.PrependWhat( Ƒ("Delete {} and restart to re-issue it on the existing key - the key is untouched, so the modulus and the enrolled identity survive.", settings.Certificate.Path.string()) );
 			throw;
 		}
 	}
