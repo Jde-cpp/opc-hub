@@ -50,8 +50,7 @@ signing policy" page and an application they review; signs the installer on thei
 individual OV certificate from a CA that validates individuals (SSL.com's eSigner has a hosted-runner GitHub Action; Certum's
 open-source certificate signs on a dev box or the self-hosted runner), or an EV certificate, which needs a registered
 business.  Until one is chosen, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type
-CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on your own machines; the
-`windows-release-binaries` artifact is the raw build tree either way.
+CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on your own machines.
 
 SmartScreen: a public-trust certificate takes "Unknown publisher" off the UAC prompt at once; the "Windows protected your PC"
 interstitial fades as the certificate accrues download reputation, which a new one starts without.

@@ -22,6 +22,9 @@ concurrency:
   group: linux-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     # Matches the LABELS set when the runner container was registered.

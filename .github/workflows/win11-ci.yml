@@ -29,6 +29,9 @@ concurrency:
   group: win11-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     # This becomes the check-run name on the commit the run was dispatched against,
