@@ -9,13 +9,14 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
-import { signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { vi } from 'vitest';
 import { NavigationFocusService } from '../navigation-focus/navigation-focus-service';
 import { SearchService } from '../../services/search/search-service';
 import { SearchResult } from '../../services/search/search-provider';
 import { Favorite, NavBar } from './navbar';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
+import { RecentVisits } from '../../services/recent-visits';
 
 //review3 L9: onSearch called event.preventDefault() and THEN tested event.defaultPrevented - the flag it had just set - so
 //the Enter fallback below it was unreachable and Enter with nothing highlighted did nothing.
@@ -150,5 +151,42 @@ describe( 'NavBar favorites follow the signed-in user', ()=>{
 		await navbar.onFavoriteChange( {name: "Apps", route: "/apps"} );
 		const saved = save.mock.calls.at( -1 ) as unknown as [string, string];
 		expect( JSON.parse(saved[1]).map((f:Favorite)=>f.name) ).toEqual( ["Bob's", "Apps"] );
+	} );
+} );
+
+//reviews/m3-closing.md #38:  the site's not-found catch-all is a titled top-level route with no children, so it passed every
+//filter the default favorites use;  and the url that reached it is a mistake, not a page to put on Recently visited.
+@Component( {template: ''} ) class Page{}
+describe( 'NavBar and the not-found route', ()=>{
+	const create = ()=>{
+		const visit = vi.fn( async ()=>{} );
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			provideRouter( [
+				{path: 'x', title: 'X', children: [{path: 'y', component: Page}]},
+				{path: 'z', title: 'Z', component: Page},
+				{path: '**', title: 'Page not found', component: Page, data: {notFound: true}}
+			] ),
+			{ provide: NavigationFocusService, useValue: {} },
+			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
+			{ provide: RecentVisits, useValue: {visit} }
+		]});
+		return { navbar: TestBed.runInInjectionContext( ()=>new NavBar() ), visit };
+	};
+
+	it( 'leaves it out of the default favorites', ()=>{
+		const { navbar } = create();
+		expect( navbar.defaultFavorites.map(f=>f.route) ).toEqual( ['/z'] );
+	} );
+
+	it( 'does not record a not-found url as visited', async ()=>{
+		const { navbar, visit } = create();
+		navbar.ngOnInit();
+		const router = TestBed.inject( Router );
+		await router.navigateByUrl( '/x/y' );
+		expect( visit ).toHaveBeenCalledTimes( 1 );
+		await router.navigateByUrl( '/no/such/page' );
+		expect( visit ).toHaveBeenCalledTimes( 1 );
+		expect( navbar.crumbs().slice(1).every(c=>!c.path) ).toBe( true );//no crumb links to the catch-all
 	} );
 } );

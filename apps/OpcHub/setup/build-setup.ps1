@@ -14,7 +14,7 @@ uninstaller from inside it (!uninstfinalize) and the installer after - through s
 #>
 [CmdletBinding()]
 param(
-	[string]$BuildDir,                   # the release build tree: bin\Jde.Opc.Hub\, bin\Jde.Opc.Server\, bin\Jde.DB.Sqlite*.dll
+	[string]$BuildDir,                   # the release build tree: bin\Jde.Opc.Hub\, bin\Jde.Opc.Server\, bin\Jde.DB.Sqlite*.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll
 	[string]$WebDist,                    # ng build output - web\opc\my-workspace\dist\my-workspace\browser
 	[switch]$SkipWeb,                    # omit the Web UI component
 	[string]$UaNodeSets = $env:UA_NODE_SETS, # OPCFoundation/UA-Nodeset clone (DI/IA for the OpcServer)
@@ -48,8 +48,8 @@ $UaNodeSets = [IO.Path]::GetFullPath( $UaNodeSets )
 $OutDir = [IO.Path]::GetFullPath( $OutDir )
 if( $VcRedist ){ $VcRedist = [IO.Path]::GetFullPath( $VcRedist ) }
 
-foreach( $f in 'bin\Jde.Opc.Hub\Jde.Opc.Hub.exe', 'bin\Jde.Opc.Server\Jde.Opc.Server.exe', 'bin\Jde.DB.Sqlite.dll', 'bin\sqlite3.dll', 'bin\Jde.DB.Sqlite.AppServer.dll', 'bin\Jde.DB.Sqlite.OpcGateway.dll' ){
-	if( -not (Test-Path (Join-Path $BuildDir $f)) ){ throw "missing $f under $BuildDir - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer and Jde.DB.Sqlite.OpcGateway in the release tree first, or pass -BuildDir" }
+foreach( $f in 'bin\Jde.Opc.Hub\Jde.Opc.Hub.exe', 'bin\Jde.Opc.Server\Jde.Opc.Server.exe', 'bin\Jde.DB.Sqlite.dll', 'bin\sqlite3.dll', 'bin\Jde.DB.Sqlite.AppServer.dll', 'bin\Jde.DB.Sqlite.OpcGateway.dll', 'bin\Jde.DB.Odbc.dll', 'bin\Jde.DB.MySql.dll' ){
+	if( -not (Test-Path (Join-Path $BuildDir $f)) ){ throw "missing $f under $BuildDir - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer, Jde.DB.Sqlite.OpcGateway, Jde.DB.Odbc and Jde.DB.MySql in the release tree first, or pass -BuildDir" }
 }
 if( -not $SkipWeb -and -not (Test-Path (Join-Path $WebDist 'index.html')) ){ throw "no index.html under $WebDist - run web/opc/scripts/setup.sh (ng build), pass -WebDist, or -SkipWeb" }
 foreach( $f in 'DI\Opc.Ua.Di.NodeSet2.xml', 'IA\Opc.Ua.IA.NodeSet2.xml', 'IA\Opc.Ua.IA.NodeSet2.examples.xml' ){
@@ -91,7 +91,7 @@ New-Item -ItemType Directory -Force $OutDir | Out-Null
 if( $Sign ){
 	# the payload, in place, before makensis packs it - what the nsi's File lines take from bin\
 	$payload = @( Get-ChildItem -Path (Join-Path $BuildDir 'bin\Jde.Opc.Hub\*'), (Join-Path $BuildDir 'bin\Jde.Opc.Server\*') -Include *.exe, *.dll -File | ForEach-Object FullName )
-	$payload += 'Jde.DB.Sqlite.dll', 'sqlite3.dll', 'Jde.DB.Sqlite.AppServer.dll', 'Jde.DB.Sqlite.OpcGateway.dll' | ForEach-Object { Join-Path $BuildDir "bin\$_" }
+	$payload += 'Jde.DB.Sqlite.dll', 'sqlite3.dll', 'Jde.DB.Sqlite.AppServer.dll', 'Jde.DB.Sqlite.OpcGateway.dll', 'Jde.DB.Odbc.dll', 'Jde.DB.MySql.dll' | ForEach-Object { Join-Path $BuildDir "bin\$_" }
 	& $signScript @payload
 }
 

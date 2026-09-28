@@ -1,6 +1,6 @@
 //The SQL Server variant of the installed layout.  The installer (apps/OpcHub/setup) ships args/install, which is sqlite; this one
-//is reached by hand - `-include=args/install-sqlServer` on the service's command line, Jde.DB.Odbc.dll beside the exe, a System
-//DSN `jde` - see setup/README.md.  args/install and only the database overridden:  a copy of its other keys drifted - it never
+//is reached by hand - `-include=args/install-sqlServer` on the service's command line and a System DSN `jde` (the installer puts
+//Jde.DB.Odbc.dll beside the exe) - see setup/README.md.  args/install and only the database overridden:  a copy of its other keys drifted - it never
 //gained #3's siteDir, so the switched hub served no Web UI (reviews/install-issues.md #63) - and its logs, certificates, Web UI,
 //OAuth client id and host names are the same install's.  Edit those there;  it sits beside this dir in an install too.
 (import '../install/args.libsonnet') + {

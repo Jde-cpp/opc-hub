@@ -13,7 +13,7 @@ the CI runner's container is `ubuntu-noble` for that reason):
 
 | what | where |
 |---|---|
-| the release build tree | `$JDE_BUILD_DIR/$JDE_COMPILER/<repo dir>/release` (`--build-dir`), configured with `linux-clang-relWithDebInfo-jde`: the targets `Jde.Opc.Hub`, `Jde.Opc.Server`, `Jde.DB.Sqlite`, `Jde.DB.Sqlite.AppServer`, `Jde.DB.Sqlite.OpcGateway` |
+| the release build tree | `$JDE_BUILD_DIR/$JDE_COMPILER/<repo dir>/release` (`--build-dir`), configured with `linux-clang-relWithDebInfo-jde`: the targets `Jde.Opc.Hub`, `Jde.Opc.Server`, `Jde.DB.Sqlite`, `Jde.DB.Sqlite.AppServer`, `Jde.DB.Sqlite.OpcGateway`, `Jde.DB.MySql` |
 | the Angular site | `web/opc/my-workspace/dist/my-workspace/browser` - `web/opc/scripts/setup.sh` runs `ng build` (`--web-dist`, or `--skip-web`); its `*.map` files are not packed.  `setup.sh --release` (the workflows' tag runs) hashes the output names, which the hub then serves as immutable; a plain `setup.sh` keeps `main.js` |
 | [OPCFoundation/UA-Nodeset](https://github.com/OPCFoundation/UA-Nodeset) | `$UA_NODE_SETS`, else `$REPO_DIR/UA-Nodeset` (`--ua-nodesets`) - DI/IA nodesets for the OpcServer |
 | `dpkg-deb`, `binutils` | dpkg's own, `objdump`/`strip` (`apt install binutils`) |
@@ -76,8 +76,9 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
 ```
 /opt/jde-cpp
   opchub/     Jde.Opc.Hub libJde.so libJde.DB.so libJde.DB.Sqlite.so libJde.DB.Sqlite.AppServer.so libJde.DB.Sqlite.OpcGateway.so
-              libfmt.so.12 libboost_json.so.1.92.0 libboost_container.so.1.92.0 libjsonnet.so.0 libjsonnet++.so.0 libc++.so.1 libc++abi.so.1
-  opcserver/  Jde.Opc.Server + the same, without the proc modules
+              libJde.DB.MySql.so libfmt.so.12 libboost_json.so.1.92.0 libboost_container.so.1.92.0 libboost_charconv.so.1.92.0
+              libjsonnet.so.0 libjsonnet++.so.0 libc++.so.1 libc++abi.so.1
+  opcserver/  Jde.Opc.Server + the same, without the proc modules or the MySQL driver
   web/        the Angular site
 /etc/jde-cpp                                             settings mirror - repo layout, so the configs' relative imports keep working (dpkg conffiles)
   apps/OpcHub/config/Opc.Hub.jsonnet                     (imports ../../AppServer/config/App.Server.jsonnet, ../../OpcGateway/config/Opc.Gateway.jsonnet)
@@ -190,9 +191,15 @@ passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp`
   `apps/OpcGateway/config/Opc.Gateway.jsonnet` - the servers the gateway talks to, a list apart from the certificates that may
   log in to the hub), and trust the hub's certificate above in the server's own trust list.  The Web UI's
   Gateways help topic (`?`) has the details.
-- MySQL instead of sqlite, by hand: the driver builds on Linux (`libs/db/drivers/mysql`); an args profile that imports
-  `args/install` and replaces only `sqlType` and `dbServers`, as `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` does,
-  so the Web UI, its Google client id and the host names stay that file's - the driver beside the exe, the `sql/mysql` scripts in the
-  product's `sql-mysql/` and the profile's `scriptPaths` pointing there (`sql/` is the package's, sqlite scripts replaced on every upgrade) - re-registered with `-include=args/install-mysql` through `systemctl edit`.
+- MySQL instead of sqlite, by hand: `apps/OpcHub/config/args/install-mysql/args.libsonnet` is the profile, and its driver,
+  `libJde.DB.MySql.so`, is installed beside the exe.  Copy the profile to `/etc/jde-cpp/apps/OpcHub/config/args/install-mysql/`
+  (its `host` and `port` name the server - `localhost` and 3306 as shipped), create a database `jde` there and a login with all
+  privileges on it, and set that login as `JDE_MYSQL_USER` and `JDE_MYSQL_PWD` in `/etc/jde-cpp/env`.  Copy the `sql/mysql/*.sql`
+  scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into `/var/lib/Jde-Cpp/OpcHub/sql-mysql/` (the profile's
+  `scriptPaths` - not `sql/`, which is the package's, its sqlite scripts replaced on every upgrade), then re-register with
+  `-include=args/install-mysql` through `systemctl edit jde-opchub` (an `ExecStart=` reset, then the unit's line with the new
+  `-include`) and, for a MySQL on this machine, `After=mysql.service`.  The driver connects without TLS, so a MySQL on another
+  machine gets the login and the data in the clear: a trusted network only.  The profile imports `args/install` and replaces only the
+  database, so the Web UI, its Google client id and the host names stay that file's.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only
   under its `StateDirectory`.  Loosen with `systemctl edit` if a local change needs it.

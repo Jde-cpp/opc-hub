@@ -147,5 +147,8 @@ export const routes: Routes = [
 		children :[
 			{ path: ':topic', loadComponent: ()=>import('jde-spa').then( m=>m.HelpPage ), resolve: { topic: helpTopicResolver }, runGuardsAndResolvers: "paramsChange" }
 		]
-	}
+	},
+	//last:  a url nothing above matches (a mistyped or stale bookmark) was a blank page (reviews/m3-closing.md #38).  data.notFound
+	//keeps it out of the crumbs, tiles, favorites, search and Recently visited (jde-spa isNotFound).  No AuthGuard, like help.
+	{ path: '**', title: "Page not found", loadComponent: ()=>import('jde-spa').then( m=>m.NotFound ), data: {notFound: true} }
 ];

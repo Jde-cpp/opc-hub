@@ -1,4 +1,4 @@
-import {ActivatedRoute, ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot} from '@angular/router';
+import {ActivatedRoute, ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, RouterStateSnapshot} from '@angular/router';
 import { inject, Injectable } from '@angular/core';
 import {SnackbarService} from '../shared/snackbar/snackbar-service';
 import { TableSchema} from '../model/ql/schema/table-schema';
@@ -65,6 +65,11 @@ export class QLListResolver implements Resolve<QLListData> {
 			siblings.push( sibling );
 			if( sibling.path==collectionDisplay )
 				routing = sibling;
+		}
+		if( !routing && collectionDisplay ){//a typed or bookmarked name the route does not list opened the first list under that name (reviews/m3-closing.md #38)
+			this.cnsl.error( `There is no ${collectionDisplay} list.` );
+			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );
+			return Promise.resolve( null as unknown as QLListData );
 		}
 		if( !routing )
 			routing = siblings[0];

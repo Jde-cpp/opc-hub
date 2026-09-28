@@ -12,6 +12,7 @@ export * from './lib/services/help/help-topic';
 export * from './lib/services/help/help-route-service';
 export * from './lib/services/help/spa-help-topics';
 export * from './lib/pages/help/help-page';
+export * from './lib/pages/not-found/not-found';
 export * from './lib/services/route-store';
 export * from './lib/services/route-utils';
 export * from './lib/services/search/search-provider';

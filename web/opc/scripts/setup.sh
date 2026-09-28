@@ -39,6 +39,7 @@ addHard search-service.spec.ts $sitePath/app;
 addHard route-search-provider.spec.ts $sitePath/app;
 addHard node-search-provider.spec.ts $sitePath/app;
 addHard environment-keys.spec.ts $sitePath/app;
+addHard not-found.spec.ts $sitePath/app;
 moveToDir services;
 addHard environment-service.ts $sitePath/app/services;
 cd ../..;
