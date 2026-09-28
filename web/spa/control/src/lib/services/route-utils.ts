@@ -1,9 +1,16 @@
 import { Route, Routes } from '@angular/router';
 
+//The site's catch-all page for a url no route matches (data.notFound, reviews/m3-closing.md #38).  It matches everything, so
+//whatever reads the route table for what exists - the crumbs, the home tiles, the default favorites, the search, a card's
+//link - skips it.
+export function isNotFound( route:Route ):boolean{ return !!route.data?.['notFound']; }
+
 //First match wins, so the duplicated 'access' path resolves like Angular's own matcher.  ':param' segments match anything;
-//'**' consumes any remainder, so every prefix inside a node browse path is routable.
+//'**' consumes any remainder, so every prefix inside a node browse path is routable - but not the not-found catch-all.
 export function matchConfig( routes:Routes, segments:string[] ):Route|undefined{
 	for( const config of routes ){
+		if( isNotFound(config) )
+			continue;
 		if( config.path=='**' )
 			return config;
 		const configSegments = (config.path ?? '').split('/').filter( s=>s.length );
@@ -23,6 +30,8 @@ export function matchConfig( routes:Routes, segments:string[] ):Route|undefined{
 //segments is the one the writer meant ('/access/users/alice').
 export function matchLiterals( routes:Routes, segments:string[] ):number{
 	for( const config of routes ){
+		if( isNotFound(config) )
+			continue;
 		if( config.path=='**' )
 			return 0;
 		const configSegments = (config.path ?? '').split('/').filter( s=>s.length );

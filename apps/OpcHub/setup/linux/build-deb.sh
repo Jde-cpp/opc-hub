@@ -66,8 +66,9 @@ dbLib=$buildDir/libs/db/lib/libJde.DB.so
 sqliteLib=$buildDir/libs/db/drivers/sqlite/lib/libJde.DB.Sqlite.so
 appServerMod=$buildDir/apps/AppServer/config/sql/sqlite/libJde.DB.Sqlite.AppServer.so
 gatewayMod=$buildDir/apps/OpcGateway/config/sql/sqlite/libJde.DB.Sqlite.OpcGateway.so
-for f in "$hubExe" "$serverExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod"; do
-	[ -f "$f" ] || die "missing $f - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer and Jde.DB.Sqlite.OpcGateway in the release tree first, or pass --build-dir"
+mysqlLib=$buildDir/libs/db/drivers/mysql/lib/libJde.DB.MySql.so #loaded only by a by-hand MySQL profile (README.md)
+for f in "$hubExe" "$serverExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib"; do
+	[ -f "$f" ] || die "missing $f - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer, Jde.DB.Sqlite.OpcGateway and Jde.DB.MySql in the release tree first, or pass --build-dir"
 done
 [ $skipWeb = 1 ] || [ -f "$webDist/index.html" ] || die "no index.html under $webDist - run web/opc/scripts/setup.sh (ng build), pass --web-dist, or --skip-web"
 for f in DI/Opc.Ua.Di.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.examples.xml; do
@@ -120,7 +121,7 @@ unitDir=$stage/usr/lib/systemd/system; docDir=$stage/usr/share/doc/jde-opchub
 #where args/install's $(ExeDir) looks
 install -d "$optDir/opchub" "$optDir/opcserver"
 install -m 755 "$hubExe" "$optDir/opchub/"
-install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$optDir/opchub/"
+install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib" "$optDir/opchub/"
 install -m 755 "$serverExe" "$optDir/opcserver/"
 install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$optDir/opcserver/"
 
@@ -152,7 +153,7 @@ bundle(){ #dir original...
 		if ldd "$f" | grep -q 'not found'; then die "$f: $(ldd "$f" | grep 'not found' | tr -s ' \t' ' ' | tr '\n' ';')"; fi
 	done
 }
-bundle "$optDir/opchub" "$hubExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod"
+bundle "$optDir/opchub" "$hubExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib"
 bundle "$optDir/opcserver" "$serverExe" "$jdeLib" "$dbLib" "$sqliteLib"
 binaries=( "$optDir"/opchub/* "$optDir"/opcserver/* ) #every ELF in the package - not opt/jde-cpp/web
 if [ $strip = 1 ]; then

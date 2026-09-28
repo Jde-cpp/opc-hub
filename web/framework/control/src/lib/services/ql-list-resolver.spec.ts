@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { Component } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { provideRouter, Router } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
+import { ProfileStore, RouteStore } from 'jde-spa';
+import { SnackbarService } from '../shared/snackbar/snackbar-service';
+import { IGRAPHQL } from './graphql';
 import { Operator, View } from '../model/ql/view';
 import { TableSchema } from '../model/ql/schema/table-schema';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from './ql-list-resolver';
@@ -139,5 +146,33 @@ describe( 'QLListResolver.loadOrFail', ()=>{
 		expect( y.error ).toBe( refused );
 		expect( y.results ).toEqual( {[schema.collectionName]: []} );
 		expect( y.schema ).toBe( schema );
+	} );
+} );
+
+//reviews/m3-closing.md #38:  a list name the route does not declare - a typed or bookmarked /access/nonsense - opened the
+//first declared list (Users) under a "Nonsense" breadcrumb.  It is refused the way DetailResolver refuses '$new' where there is no Add.
+@Component( {template: ''} ) class Dummy{}
+describe( 'QLListResolver on a list name the route does not declare', ()=>{
+	it( 'refuses it and goes back to the section, querying nothing', async ()=>{
+		const error = vi.fn();
+		const schemaWithEnums = vi.fn();
+		TestBed.configureTestingModule( {providers: [
+			provideRouter( [
+				{ path: 'access', component: Dummy },
+				{ path: 'access', children: [
+					{ path: ':collectionDisplay', component: Dummy, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: ['users', 'resources']} }
+				]}
+			] ),
+			{ provide: IGRAPHQL, useValue: {schemaWithEnums} },
+			{ provide: SnackbarService, useValue: {error, exception: vi.fn()} },
+			{ provide: RouteStore, useValue: {setChildren: vi.fn()} },
+			{ provide: ProfileStore, useValue: {} }
+		]} );
+		const harness = await RouterTestingHarness.create();
+		await harness.navigateByUrl( '/access/nonsense' );
+		await new Promise( r=>setTimeout(r, 20) );
+		expect( error ).toHaveBeenCalledWith( 'There is no nonsense list.' );
+		expect( schemaWithEnums ).not.toHaveBeenCalled();
+		expect( TestBed.inject(Router).url ).toBe( '/access' );
 	} );
 } );

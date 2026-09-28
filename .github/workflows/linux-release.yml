@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build "$BUILD_DIR" -j "$(nproc)" --target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway
+          cmake --build "$BUILD_DIR" -j "$(nproc)" --target Jde.Opc.Hub Jde.Opc.Server Jde.DB.Sqlite Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway Jde.DB.MySql
 
       - name: Download the Web UI
         uses: actions/download-artifact@v4

@@ -21,7 +21,7 @@ import { Favorites } from './favorites/favorites-dialog';
 import { ProfileStore } from '../../services/profile/profile-store';
 import { RouteStore } from '../../services/route-store';
 import { RouteItem } from '../../pages/component-sidenav/route-item';
-import { matchConfig, segmentDisplay } from '../../services/route-utils';
+import { isNotFound, matchConfig, segmentDisplay } from '../../services/route-utils';
 import { SearchService } from '../../services/search/search-service';
 import { SearchResult } from '../../services/search/search-provider';
 import { HELP_TOPICS, helpTopicFor, helpTopics } from '../../services/help/help-topic';
@@ -71,6 +71,7 @@ export class NavBar implements OnInit {
 			&& x.path!.indexOf(':slug')==-1
 			&& !x.path!.includes('/')
 			&& ( !x.children || x.children.find( y=>!y.path!.length) )
+			&& !isNotFound( x )
 		).map( x=>({ name: x.title as string, route: '/'+x.path } ));
 		//Favorites are the signed-in user's, and the bar outlives a sign-in:  it loaded them once per document, so a sign-in, a
 		//re-login or another user on the same browser kept the list it had, and the next star saved that list over theirs
@@ -89,7 +90,8 @@ export class NavBar implements OnInit {
 			this.crumbs.set( crumbs );
 			this.name.set( crumbs[crumbs.length-1].title );
 			this.route.set( path );
-			this.#recentVisits.visit( path, crumbs );//the home page's Recently visited row names each page as its crumbs do
+			if( !this.#endsOnNotFound() )//a mistyped url is not a page the user visited
+				this.#recentVisits.visit( path, crumbs );//the home page's Recently visited row names each page as its crumbs do
 		});
 		await this.#favoritesLoading;
 		this.isLoading.set( false );
@@ -164,6 +166,12 @@ export class NavBar implements OnInit {
 				return child;
 		}
 		return undefined;
+	}
+	#endsOnNotFound():boolean{
+		let route = this.router.routerState.snapshot.root;
+		while( route.firstChild )
+			route = route.firstChild;
+		return !!route.routeConfig && isNotFound( route.routeConfig );
 	}
 	static matchConfig( routes:Routes, segments:string[] ):Route|undefined{ return matchConfig( routes, segments ); }//lives in services/route-utils now - RouteSearchProvider needs it without importing a component.
 

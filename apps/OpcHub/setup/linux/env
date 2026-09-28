@@ -5,3 +5,7 @@
 # behaviour of an empty passcode).  Set it and restart the services:  a key written in the clear (the install starts them) is encrypted with it at that start - the same key, so no certificate changes.  A key written under one passcode does not open under
 # another:  change it only by deleting the product's ssl/ and re-trusting the certificates issued in its place.
 #JDE_PASSCODE=
+#
+# The MySQL login, $(JDE_MYSQL_USER) and $(JDE_MYSQL_PWD) in args/install-mysql - only a hub switched to MySQL reads them (README.md).
+#JDE_MYSQL_USER=
+#JDE_MYSQL_PWD=

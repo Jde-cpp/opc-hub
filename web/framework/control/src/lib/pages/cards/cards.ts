@@ -4,7 +4,7 @@ import { ActivatedRoute, Router, RouterLink, Routes, UrlSegment } from "@angular
 import { NgTemplateOutlet } from "@angular/common";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
-import { RouteItem, IROUTE_SERVICE, IRouteService, RouteService } from "jde-spa";
+import { RouteItem, IROUTE_SERVICE, IRouteService, RouteService, isNotFound } from "jde-spa";
 import { CARD_STATUS, CardStatusValue, statusFor } from './card-status';
 import { RecentRow } from './recent-row/recent-row';
 import { SectionHeader } from './section-header/section-header';
@@ -16,7 +16,7 @@ export class HomeRouteService extends RouteService{
 	private router:Router = inject( Router );
 	override children():Promise<Routes>{
 		let y:Routes = [];
-		for( let config of this.router.config.filter(x=> x.title && x.path!.length && x.path!="login" && !x.path!.includes('/')) ){
+		for( let config of this.router.config.filter(x=> x.title && x.path!.length && x.path!="login" && !x.path!.includes('/') && !isNotFound(x)) ){
 			const data = config.data ?? {};
 			const pageSettings = data["pageSettings"];//the app routes set summary/icon directly; pageSettings is the older shape
 			//cards.scss colors the tile per section; the route path is the section name (gateways/access/apps)

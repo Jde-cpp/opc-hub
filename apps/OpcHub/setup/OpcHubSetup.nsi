@@ -16,7 +16,7 @@ SetCompressor /SOLID lzma
 ; Inputs - each overridable with makensis /DNAME=value (build-setup.ps1 sets them all).
 ;--------------------------------------------------------------------------------------------------------------------------
 !ifndef BUILD_DIR
-	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree: bin\<Target>\<Target>.exe + dlls, bin\Jde.DB.Sqlite*.dll, bin\sqlite3.dll
+	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree: bin\<Target>\<Target>.exe + dlls, bin\Jde.DB.Sqlite*.dll, bin\sqlite3.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll
 !endif
 !define SRC_DIR "${__FILEDIR__}\..\..\.." ;apps\OpcHub\setup -> the repo root
 !ifndef WEB_DIST
@@ -564,6 +564,8 @@ Section "OPC Hub" SEC_HUB
 	File "${BIN}\sqlite3.dll"
 	File "${BIN}\Jde.DB.Sqlite.AppServer.dll"
 	File "${BIN}\Jde.DB.Sqlite.OpcGateway.dll"
+	File "${BIN}\Jde.DB.Odbc.dll" ;SQL Server - loaded only by the by-hand args/install-sqlServer profile (README.md)
+	File "${BIN}\Jde.DB.MySql.dll" ;MySQL - loaded only by the by-hand args/install-mysql profile (README.md)
 	;settings mirror - the hub config imports the AppServer's and the gateway's by repo-relative path, and the gateway's
 	;introspection files by Settings::Directory()-relative path, so the repo layout is kept
 	SetOutPath "$ConfigDir\apps\OpcHub\config"
@@ -695,10 +697,13 @@ Section -VCRedist
 			DetailPrint "Installing the Visual C++ v14 x64 runtime (${VC_REDIST_VERSION})..."
 			ExecWait '"$TEMP\vc_redist.x64.exe" /install /quiet /norestart' $0
 			${If} $0 == 3010
-				;the runtime's files were in use (an older msvcp140 loaded by some process): Windows swaps them in at the next
-				;restart, and until then the exes may load the old ones and fail.  Used to be accepted in silence
-				;(reviews/install-issues.md, Notes "VC++ runtime"); the reboot flag turns the finish page into its restart form
-				;(MUI_FINISHPAGE_TEXT_REBOOT above) and a silent install exits 3010 (.onInstSuccess).
+				;a runtime file could not be replaced now:  some process holds it open without sharing delete (a backup agent, a
+				;scanner), so Windows Installer cannot rename it aside.  A file that is only loaded - even by winlogon - is renamed
+				;aside and costs no restart (reviews/install-issues.md, "The 3010 walk").  The new copy is swapped in at the next
+				;restart; until then a process that starts loads the old one, below the 14.50 this build expects (-Services'
+				;-install ran clean on that mix in the walk).  Used to be accepted in silence (reviews/install-issues.md, Notes
+				;"VC++ runtime"); the reboot flag turns the finish page into its restart form (MUI_FINISHPAGE_TEXT_REBOOT above)
+				;and a silent install exits 3010 (.onInstSuccess).
 				DetailPrint "The Visual C++ runtime needs Windows restarted to finish - ${PRODUCT} starts after it"
 				SetRebootFlag true
 			${ElseIf} $0 != 0
