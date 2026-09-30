@@ -17,6 +17,12 @@ connection.
 
 ![OPC Hub home page, the search box finding nodes on the bundled server](docs/images/home.png)
 
+A subscribed node streams its value.  Here `status` is written off and on, and `motorRpm` winds down and back up.  The
+values come from the PLC emulator ([`apps/OpcServer/emulator`](apps/OpcServer/emulator/README.md)), which is built from
+the repo; the installers do not ship it.
+
+![pump1 in the Web UI: writing status off and on, motorRpm following](https://github.com/user-attachments/assets/85ef0702-d761-474a-ae89-3cec44adc8ab)
+
 ## Install
 
 Each [release](https://github.com/Jde-cpp/opc-hub/releases) carries three assets: `OpcHubSetup-<version>.exe` (Windows -

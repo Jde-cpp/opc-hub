@@ -58,6 +58,7 @@
   </UAVariable>
   <UAObject NodeId="ns=1;i=5001" BrowseName="1:pump1" ParentNodeId="i=85">
     <DisplayName>Pump 1</DisplayName>
+    <Description Locale="en">Follows its run command: motorRpm spins up to 1450 rpm while status is on and coasts down when it is off.</Description>
     <References>
       <Reference ReferenceType="HasTypeDefinition">ns=1;i=1001</Reference>
       <Reference ReferenceType="Organizes" IsForward="false">i=85</Reference>
@@ -67,6 +68,7 @@
   </UAObject>
   <UAVariable NodeId="ns=1;i=6011" BrowseName="1:status" ParentNodeId="ns=1;i=5001" DataType="Boolean" AccessLevel="3">
     <DisplayName>status</DisplayName>
+    <Description Locale="en">Run command: on starts the motor.</Description>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
@@ -77,6 +79,7 @@
   </UAVariable>
   <UAVariable NodeId="ns=1;i=6012" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5001" DataType="Double" AccessLevel="3">
     <DisplayName>motorRpm</DisplayName>
+    <Description Locale="en">Measured motor speed, rpm.</Description>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
