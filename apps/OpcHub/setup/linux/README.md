@@ -153,12 +153,29 @@ the data root as `debian/postinst` does.
 
 ## Uninstall
 
-`sudo apt remove jde-opchub` stops and disables the services (`apt install` again enables and starts the ones that were enabled), removes the program dirs, the units and the meta/sql/
-nodesets the package put in the product dirs; `apt purge` removes `/etc/jde-cpp` as well - but for an `env` that sets `JDE_PASSCODE`.  Left in place, deliberately
-- on purge too, as the Windows uninstaller leaves `%ProgramData%\Jde-Cpp`: `OpcHub.db`, `OpcServer.db`, `ssl/`
-(certificates and keys - the OPC servers trust them), the logs, and the `jde-cpp` account that owns them - with the
-passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp` and `/etc/jde-cpp` by hand for a clean slate.  After the *MySQL instead of sqlite* switch (Notes), its `systemctl edit` drop-in, `/etc/systemd/system/jde-opchub.service.d/`, stays too:  delete it by hand as well, then `sudo systemctl daemon-reload`.  Left behind, it starts the next install on the profile the purge removed, and the hub restarts every 5 s with `couldn't open import "args.libsonnet"`; `sudo systemctl revert jde-opchub` clears it then.  A database is its `.db` with any `.db-wal`/`.db-shm` beside it:  a clean stop folds them back into the `.db` and deletes them, but after a crash or a `kill -9` the latest rows are still in the `-wal` - copy, move or delete the three together.  `./install.sh --uninstall` does the same for a per-user install, keeping
-`~/.config/Jde-Cpp/<Product>`.  The Web UI site's link into nginx (`/etc/nginx/sites-enabled/jde-opchub`, or any `sites-enabled`/`conf.d` link to `/etc/jde-cpp/nginx-opchub.conf`) goes with `apt purge`, and nginx is reloaded; after a plain `apt remove` the link stays valid (the conffile is kept), so nginx still loads, but 8071 answers 404 until the package is back - `sudo rm` it by hand to drop the 8071 site.
+`sudo apt remove jde-opchub` stops and disables the services (`apt install` again enables and starts the ones that were
+enabled), removes the program dirs, the units and the meta/sql/nodesets the package put in the product dirs; `apt purge`
+removes `/etc/jde-cpp` as well - but for an `env` that sets `JDE_PASSCODE`.
+
+Left in place, deliberately - on purge too, as the Windows uninstaller leaves `%ProgramData%\Jde-Cpp`: `OpcHub.db`,
+`OpcServer.db`, `ssl/` (certificates and keys - the OPC servers trust them), the logs, and the `jde-cpp` account that
+owns them - with the passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp` and `/etc/jde-cpp`
+by hand for a clean slate.
+
+After the *MySQL instead of sqlite* switch (Notes), its `systemctl edit` drop-in, `/etc/systemd/system/jde-opchub.service.d/`,
+stays too:  delete it by hand as well, then `sudo systemctl daemon-reload`.  Left behind, it starts the next install on
+the profile the purge removed, and the hub restarts every 5 s with `couldn't open import "args.libsonnet"`;
+`sudo systemctl revert jde-opchub` clears it then.
+
+A database is its `.db` with any `.db-wal`/`.db-shm` beside it:  a clean stop folds them back into the `.db` and deletes
+them, but after a crash or a `kill -9` the latest rows are still in the `-wal` - copy, move or delete the three together.
+
+`./install.sh --uninstall` does the same for a per-user install, keeping `~/.config/Jde-Cpp/<Product>`.
+
+The Web UI site's link into nginx (`/etc/nginx/sites-enabled/jde-opchub`, or any `sites-enabled`/`conf.d` link to
+`/etc/jde-cpp/nginx-opchub.conf`) goes with `apt purge`, and nginx is reloaded; after a plain `apt remove` the link stays
+valid (the conffile is kept), so nginx still loads, but 8071 answers 404 until the package is back - `sudo rm` it by hand
+to drop the 8071 site.
 
 ## Notes
 
@@ -193,23 +210,30 @@ passcode in `/etc/jde-cpp/env` that opens those keys.  Delete `/var/lib/Jde-Cpp`
   Gateways help topic (`?`) has the details.
 - MySQL instead of sqlite, by hand: `apps/OpcHub/config/args/install-mysql/args.libsonnet` is the profile, and its
   driver, `libJde.DB.MySql.so`, is installed beside the exe.  The package ships only the driver, so take the profile and
-  the scripts below from the repository at the installed version's tag (`dpkg-query -W jde-opchub` prints it).  Copy the
-  profile to `/etc/jde-cpp/apps/OpcHub/config/args/install-mysql/` (its `host` and `port` name the server - `localhost`
-  and 3306 as shipped), create a database `jde` there and a login with all privileges on it, and set that login as
-  `JDE_MYSQL_USER` and `JDE_MYSQL_PWD` in `/etc/jde-cpp/env`.  As MySQL's root, also run
-  `SET PERSIST log_bin_trust_function_creators = ON`.  MySQL 8 turns binary logging on, and with it on, a login without
-  SUPER cannot create the gateway's trigger: the hub's first start exits on error 1419 and restarts every 5 s.  Copy the
-  `sql/mysql/*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into
-  `/var/lib/Jde-Cpp/OpcHub/sql-mysql/` (the profile's `scriptPaths` - not `sql/`, which is the package's, its sqlite
-  scripts replaced on every upgrade).  Then re-register with `-include=args/install-mysql` through
-  `systemctl edit jde-opchub`: under `[Service]`, an `ExecStart=` reset, then the unit's line with the new `-include`.
-  For a MySQL on this machine, add `After=mysql.service` under `[Unit]`; systemd ignores it in `[Service]`.  Then
-  `sudo systemctl restart jde-opchub`: `systemctl edit` restarts nothing, and the hub stays on sqlite until it restarts.
-  It starts on MySQL, and its first `-sync` makes the tables in `jde`.  The driver connects without TLS, so with a MySQL
-  on another machine the user name, the SQL and the rows cross the network in the clear.  The password does not: MySQL's
-  login sends it RSA-encrypted or scrambled, though nothing authenticates the server's key.  A trusted network only.
-  The profile imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host
-  names stay that file's.  `apt reinstall` keeps the switch.  To go back to sqlite, `sudo systemctl revert jde-opchub`
-  removes the drop-in, and `sudo systemctl restart jde-opchub` starts the hub on `-include=args/install` again.
+  the scripts below from the repository at the installed version's tag (`dpkg-query -W jde-opchub` prints it).  The
+  profile imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names
+  stay that file's.
+  1. Copy the profile to `/etc/jde-cpp/apps/OpcHub/config/args/install-mysql/`.  Its `host` and `port` name the server -
+     `localhost` and 3306 as shipped.
+  2. Create a database `jde` on that server and a login with all privileges on it.  Set that login as `JDE_MYSQL_USER`
+     and `JDE_MYSQL_PWD` in `/etc/jde-cpp/env`.
+  3. Let the login create the gateway's trigger.  MySQL 8 turns binary logging on, and with it on, creating a trigger
+     needs `SET_ANY_DEFINER` (or SUPER); without it the hub's first start exits on error 1419 and
+     restarts every 5 s.  As MySQL's root, either
+     `GRANT SET_ANY_DEFINER ON *.* TO <login>` (MySQL 8.2 and later) or `SET PERSIST log_bin_trust_function_creators = ON`
+     (every 8.x, but deprecated since 8.0.34 and it warns when set).
+  4. Copy the `config/sql/mysql/*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into
+     `/var/lib/Jde-Cpp/OpcHub/sql-mysql/` - the profile's `scriptPaths`, not `sql/`, which is the package's, its sqlite
+     scripts replaced on every upgrade.
+  5. Re-register with `-include=args/install-mysql` through `systemctl edit jde-opchub`: under `[Service]`, an
+     `ExecStart=` reset, then the unit's line with the new `-include`.  For a MySQL on this machine, add
+     `After=mysql.service` under `[Unit]`; systemd ignores it in `[Service]`.
+  6. `sudo systemctl restart jde-opchub`.  `systemctl edit` restarts nothing, and the hub stays on sqlite until it
+     restarts.  It starts on MySQL, and its first `-sync` makes the tables in `jde`.
+  - The driver connects without TLS, so with a MySQL on another machine the user name, the SQL and the rows cross the
+    network in the clear.  The password does not: MySQL's login sends it RSA-encrypted or scrambled, though nothing
+    authenticates the server's key.  A trusted network only.
+  - `apt reinstall` keeps the switch.  To go back to sqlite, `sudo systemctl revert jde-opchub` removes the drop-in, and
+    `sudo systemctl restart jde-opchub` starts the hub on `-include=args/install` again.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only
   under its `StateDirectory`.  Loosen with `systemctl edit` if a local change needs it.

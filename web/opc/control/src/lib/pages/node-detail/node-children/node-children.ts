@@ -366,7 +366,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 	//the icon's tooltip carries the name, as the icon is all there is;  the Status cell's is the code alone, beside a name the
 	//cell already spells out.  Neither for plain Good - it adds nothing, and an empty matTooltip does not open.
 	statusTooltip( r:Variable ):string{ return r.sc ? `${scHex( r.sc )} - ${this.status( r )}` : ""; }
-	statusCode( r:Variable ):string{ return r.sc ? scHex( r.sc ) : ""; }
 	qualityIcon( r:UaNode ){ return this.status( r ) ? statusIcon( (r as Variable).sc ) : undefined; }
 	//install-issues #35.  Two bugs lived on the `< EAccess.Write` this replaces.  It was a magnitude test on a bitmask, so
 	//Read|HistoryRead (5) and Read|StatusWrite (0x21) - read-only nodes both - compared "greater than Write" and offered an

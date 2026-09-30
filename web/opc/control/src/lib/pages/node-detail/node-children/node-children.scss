@@ -180,8 +180,9 @@ mat-table{
 }
 
 /* the reading's quality (OPC 10000-4 7.38).  A status name is an open set and runs long with its flags
-("UncertainEngineeringUnitsExceeded+High"), so it is text that ends in an ellipsis, not a chip - the tooltip has it whole.
-200px holds the common names whole, icon included; the long flagged ones lose their tail to the ellipsis. */
+("UncertainEngineeringUnitsExceeded+High"), so it is text that ends in an ellipsis, not a chip - its tooltip has it whole,
+code and name.  200px holds the common names whole, icon included; the long flagged ones lose their tail to the ellipsis,
+and the tooltip is where their flags are read. */
 .mat-column-status{
 	flex: 0 0 200px;
 	min-width: 0;

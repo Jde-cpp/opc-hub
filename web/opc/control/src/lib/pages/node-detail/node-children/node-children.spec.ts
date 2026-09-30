@@ -150,8 +150,7 @@ describe( 'NodeChildren subscription values', ()=>{
 			expect( row ).toMatchObject( {value: 5, sc: bad} );
 			expect( page.readOnly(row) ).toBe( true );
 			expect( page.qualityIcon(row) ).toBe( "error" );
-			expect( page.statusTooltip(row) ).toContain( "0x808C0000" );
-			expect( page.statusCode(row) ).toBe( "0x808C0000" );//the Status cell's tooltip:  the code alone, beside the name the cell shows
+			expect( page.statusTooltip(row) ).toContain( "0x808C0000" );//the Status cell's tooltip:  code and name - the cell's ellipsis eats a long name's tail
 		} );
 
 		it( 'never puts a failure in the value', ()=>{
@@ -168,7 +167,6 @@ describe( 'NodeChildren subscription values', ()=>{
 			expect( page.qualityIcon(row) ).toBeUndefined();
 			expect( page.status(row) ).toBe( "Good" );
 			expect( page.statusTooltip(row) ).toBe( "" );//plain Good has nothing to add
-			expect( page.statusCode(row) ).toBe( "" );
 		} );
 
 		//a fault holds its code on every tick it lasts - one request for its name, not one a second.
