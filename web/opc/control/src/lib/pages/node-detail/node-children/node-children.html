@@ -126,7 +126,7 @@
 							@if( qualityIcon(r); as icon ){
 								<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
 							}
-							<span class="status-text" [class.status-good]="!r.sc" [matTooltip]="statusCode(r)">{{text}}</span>
+							<span class="status-text" [class.status-good]="!r.sc" [matTooltip]="statusTooltip(r)">{{text}}</span>
 						}
 					</mat-cell>
 				</ng-container>

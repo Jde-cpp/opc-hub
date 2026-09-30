@@ -238,15 +238,30 @@ nodesets the installer put in the product dirs.  Left in place, deliberately: `O
 - SQL Server instead of sqlite, by hand: `apps/OpcHub/config/args/install-sqlServer/args.libsonnet` is the equivalent profile.
   Copy it to `config\apps\OpcHub\config\args\install-sqlServer\` (its driver, `Jde.DB.Odbc.dll`, is installed beside the
   exe), create a 64-bit System DSN `jde` ("ODBC Driver 17 for SQL Server", `Trusted_Connection=Yes`) with a database `jde` in
-  which `NT AUTHORITY\LOCAL SERVICE` is `db_owner` (a SQL Server on another machine sees Local Service as ANONYMOUS LOGON: run the service as a domain account or `NT AUTHORITY\NetworkService` there - `sc config Jde.OpcHub obj= "NT AUTHORITY\NetworkService"` - and grant that account Modify on `C:\ProgramData\Jde-Cpp\OpcHub`), copy the `sql\sqlServer\*.sql` scripts of `libs/access`, `apps/AppServer` and
+  which `NT AUTHORITY\LOCAL SERVICE` is `db_owner` (a SQL Server on another machine sees Local Service as ANONYMOUS LOGON: run the service as a domain account or `NT AUTHORITY\NetworkService` there - `sc config Jde.OpcHub obj= "NT AUTHORITY\NetworkService"` - and grant that account Modify on `C:\ProgramData\Jde-Cpp\OpcHub`), copy the `config/sql/sqlServer/*.sql` scripts of `libs/access`, `apps/AppServer` and
   `apps/OpcGateway` into the product's `sql-sqlServer\` (the profile's `scriptPaths` - not `sql\`, which is the installer's: it recreates it with the sqlite scripts on every reinstall, and keeps the seeds there, which this profile still reads), and re-register the service with `-include=args/install-sqlServer`, then `sc config Jde.OpcHub start= auto` - the exe's `-install` registers it to start on demand, and Setup's own `sc config` is what makes it automatic.  So that it starts after its database at boot: for a SQL Server on this machine, `sc config Jde.OpcHub depend= MSSQL$SQLEXPRESS` (the instance's service - `MSSQLSERVER` for a default instance).  Express installs as *Automatic (Delayed Start)*, two minutes after the hub, and a delayed service that an automatic one depends on is started with it.  For a SQL Server on another machine, whose network may not be up at boot either, `sc failure Jde.OpcHub reset= 86400 actions= restart/60000` and `sc failureflag Jde.OpcHub 1` restart the hub a minute after a start that could not connect (the flag counts an exit with an error, not only a crash).  The profile imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names are that file's.  A reinstall re-registers `Jde.OpcHub` with `-include=args/install` - sqlite again - so redo these steps after it.  The profile, the DSN and `sql-sqlServer\` survive when Setup's *"Uninstall it first?"* is answered **No**; **Yes** runs the uninstaller, which removes `config\` (the profile), so copy it again.
-- MySQL instead of sqlite, by hand: `apps/OpcHub/config/args/install-mysql/args.libsonnet` is the profile, and its driver,
-  `Jde.DB.MySql.dll`, is installed beside the exe.  Copy the profile to `config\apps\OpcHub\config\args\install-mysql\` (its
-  `host` and `port` name the server - `localhost` and 3306 as shipped), create a database `jde` there and a login with all
-  privileges on it, and set that login as the system environment variables `JDE_MYSQL_USER` and `JDE_MYSQL_PWD`, as for
-  `JDE_PASSCODE` above.  Copy the `sql\mysql\*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into the
-  product's `sql-mysql\` (not `sql\`, for the reason above), then re-register the service with `-include=args/install-mysql`
-  and `sc config Jde.OpcHub start= auto`, as for SQL Server.  For a MySQL on this machine, `sc config Jde.OpcHub depend= MySQL80`
-  (the server's service name) starts the hub after it; for one on another machine, the same `sc failure` lines - and the driver
-  connects without TLS, so the login and the data cross the network in the clear: a trusted network only.  A reinstall
-  and an uninstall treat it as they treat the SQL Server switch.
+- MySQL instead of sqlite, by hand: `apps/OpcHub/config/args/install-mysql/args.libsonnet` is the profile, and its
+  driver, `Jde.DB.MySql.dll`, is installed beside the exe.  Setup installs only the driver, so take the profile and the
+  scripts below from the repository at the installed version's tag (*Installed apps* shows the version).  The profile
+  imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names are that
+  file's.
+  1. Copy the profile to `config\apps\OpcHub\config\args\install-mysql\`.  Its `host` and `port` name the server -
+     `localhost` and 3306 as shipped.
+  2. Create a database `jde` on that server and a login with all privileges on it.  Set that login as the system
+     environment variables `JDE_MYSQL_USER` and `JDE_MYSQL_PWD`, as for `JDE_PASSCODE` above.
+  3. Let the login create the gateway's trigger.  MySQL 8 turns binary logging on, and with it on, creating a trigger
+     needs `SET_ANY_DEFINER` (or SUPER); without it the hub's first start exits on error 1419.  As MySQL's root, either
+     `GRANT SET_ANY_DEFINER ON *.* TO <login>` (MySQL 8.2 and later) or `SET PERSIST log_bin_trust_function_creators = ON`
+     (every 8.x, but deprecated since 8.0.34 and it warns when set).
+  4. Copy the `config/sql/mysql/*.sql` scripts of `libs/access`, `apps/AppServer` and `apps/OpcGateway` into the
+     product's `sql-mysql\` - not `sql\`, for the reason above.
+  5. Re-register the service with `-include=args/install-mysql` and `sc config Jde.OpcHub start= auto`, as for SQL
+     Server.
+  6. For a MySQL on this machine, `sc config Jde.OpcHub depend= <MySQL's service>` starts the hub after it.  MySQL's
+     installer names the service after the release series - `MySQL84` for 8.4 LTS, `MySQL80` for 8.0 - and
+     `sc query state= all | findstr /i mysql` shows it.  `sc config` accepts a name that does not exist, and every start
+     then fails with error 1075.  For a MySQL on another machine, the same `sc failure` lines.
+  - The driver connects without TLS, so the user name, the SQL and the rows cross the network in the clear.  The
+    password does not: MySQL's login sends it RSA-encrypted or scrambled, though nothing authenticates the server's key.
+    A trusted network only.
+  - A reinstall and an uninstall treat it as they treat the SQL Server switch.
