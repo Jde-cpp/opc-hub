@@ -18,7 +18,7 @@ import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
 import { ENodeClass, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
-import { Reading, toReading, Value, valueJson } from '../model/value';
+import { ExtensionObject, Reading, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 
 interface IError{ requestId:number; message: string; }
@@ -481,7 +481,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	}
 
 	private static toGuid( proto:Uint8Array ):Guid{ let guid = new Guid(); guid.value = proto; return guid; }
-	private static toValue( proto:FromServer.Value ):Value{
+	private static toValue( proto:Common.Value ):Value{
 		//protobufjs exposed a virtual `of` getter naming the set oneof field; ts-proto emits plain optionals, so each arm
 		//tests for undefined rather than truthiness - false, 0 and "" are values, not absence.
 		if( proto.boolean!=undefined )      return proto.boolean;
@@ -504,23 +504,23 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		if( proto.uint32!=undefined )       return proto.uint32;
 		if( proto.uint64!=undefined )       return proto.uint64;
 		if( proto.xmlElement!=undefined )   return proto.xmlElement;
+		if( proto.localizedText!=undefined ) return proto.localizedText.text ?? "";//the text alone, as REST gives it
+		if( proto.qualifiedName!=undefined ){ const q = proto.qualifiedName; return q.namespaceIndex ? `${q.namespaceIndex}:${q.name}` : q.name; }
+		if( proto.extensionObject!=undefined ){
+			const x = proto.extensionObject;
+			return new ExtensionObject( Gateway.toNode(x.typeId ?? Common.NodeId.create()), x.binary ?? x.xml );
+		}
+		if( proto.array!=undefined )        return proto.array.values.map( v=>Gateway.toValue(v) );
 		return undefined!;
 	}
-	private static toValues( proto:FromServer.Value[] ):Value{
-		let value = proto.length==1 ? Gateway.toValue( proto[0] ) : new Array<Value>();
-		if( proto.length>1 )
-			proto.forEach( v => (<Value[]>value).push( Gateway.toValue(v) ) );
-		return value;
-	}
-
 	private nodeValues( nodeValues:FromServer.NodeValues ):void{
 		let opcSubscriptions = this.#subscriptions.get( nodeValues.opcId! ); if( !opcSubscriptions ){ return console.error(`Could not find opc ${nodeValues.opcId}`);}
 		const node = Gateway.toNode( nodeValues.node! );
 		const sc = nodeValues.sc ?? 0;//proto3 omits 0/Good from the wire.
 		//A Bad push still carries the reading the server holds.  Swapping it for an OpcError here destroyed it, and the table
-		//bound the error into its editors;  sc says what the reading is worth.  No values = none was sent - toValues([]) is
-		//an empty array, which a row would take for an array reading.
-		const value = nodeValues.values?.length ? Gateway.toValues( nodeValues.values ) : undefined;
+		//bound the error into its editors;  sc says what the reading is worth.  No member = an empty Variant, undefined rather
+		//than the empty array an empty array reading is.
+		const value = nodeValues.value ? Gateway.toValue( nodeValues.value ) : undefined;
 		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)!.next({opcId:nodeValues.opcId!, node:node, value:value, sc:sc}) );
 	};
 

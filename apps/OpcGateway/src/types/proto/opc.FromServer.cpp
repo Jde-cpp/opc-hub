@@ -1,8 +1,8 @@
 #include "opc.FromServer.h"
-#include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
-#include "opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 #define let const auto
 
 namespace Jde::Opc::Gateway{
@@ -70,200 +70,27 @@ namespace Jde::Opc::Gateway{
 		auto& m = *t.add_messages();
 		m.set_request_id( id );
 		auto ack = m.mutable_unsubscribe_ack();
-		for_each( move(successes), [&ack](let& n){*ack->add_successes() = ToNodeProto(n);} );
-		for_each( move(failures), [&ack](let& n){*ack->add_failures() = ToNodeProto(n);} );
+		for_each( move(successes), [&ack](let& n){*ack->add_successes() = ProtoUtils::ToNodeId(n);} );
+		for_each( move(failures), [&ack](let& n){*ack->add_failures() = ProtoUtils::ToNodeId(n);} );
 		return t;
 	}
 
-	α FromServer::ToProto( const ExNodeId& id )ι->Proto::ExpandedNodeId{
-		Proto::ExpandedNodeId y;
-		if( id.namespaceUri.length )
-			y.set_allocated_namespace_uri( new string{ToSV(id.namespaceUri)} );
-		y.set_server_index( id.serverIndex );
-		y.set_allocated_node( new Proto::NodeId{ToNodeProto(id.nodeId)} );
-		return y;
-	}
-	//A UA_Duration is a double count of milliseconds, not a time point, so it does not go through UADateTime at all -
-	//see #20.  protobuf wants seconds and nanos to share a sign (a Timestamp is the opposite, nanos non-negative), so
-	//truncate toward zero.  Clamped to protobuf's own documented Duration range first: the value comes off the wire, and
-	//a NaN or 1e300 would make the integer casts undefined.
-	constexpr double _maxDurationMs = 315'576'000'000.*1000.;//±10000 years, what a google.protobuf.Duration is defined for.
-	Ω toDurationProto( UA_Duration ms )ι->google::protobuf::Duration{
-		let clamped = std::isfinite( ms ) ? std::clamp( ms, -_maxDurationMs, _maxDurationMs ) : 0.;
-		let seconds = std::trunc( clamped/1000. );
-		google::protobuf::Duration y;
-		y.set_seconds( (int64_t)seconds );
-		y.set_nanos( (int32_t)((clamped-seconds*1000.)*1'000'000.) );
-		return y;
-	}
-	Ω toDuration( const google::protobuf::Duration& d )ι->UA_Duration{
-		return d.seconds()*1000. + d.nanos()/1'000'000.;//the same arithmetic Value::Set's {seconds,nanos} branch does.
-	}
-
-#define IS( ua ) type==&UA_TYPES[ua]
 	α FromServer::ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId )ι->FromServer::Message{
-		let scaler = v.IsScalar();
-		let type = v.value.type;
-		auto nv = mu<FromServer::NodeValues>(); nv->set_allocated_node( new Proto::NodeId{ToNodeProto(node)} ); nv->set_opc_id( opcId );
-		//auto p = m.mutable_data_change();
-		for( uint i=0; i<(scaler ? 1 : v.value.arrayLength); ++i ){
-			auto& proto = *nv->add_values();
-			if( IS(UA_TYPES_BOOLEAN) )
-				proto.set_boolean( v.Get<UA_Boolean>(i) );
-			else if( IS(UA_TYPES_BYTE) )
-				proto.set_byte( (uint8_t)v.Get<UA_Byte>(i) );
-			else if( IS(UA_TYPES_BYTESTRING) ) [[unlikely]]
-				proto.set_allocated_byte_string( new string(ToSV(((UA_ByteString*)v.value.data)[i])) );
-			else if( IS(UA_TYPES_DATETIME) )
-				proto.set_allocated_date( new google::protobuf::Timestamp{UADateTime{v.Get<UA_DateTime>(i)}.ToProto()} );//construct, don't Get the wrapper - #20.
-			else if( IS(UA_TYPES_DOUBLE) )
-				proto.set_double_value( v.Get<UA_Double>(i) );
-			else if( IS(UA_TYPES_DURATION) ) [[unlikely]]
-				proto.set_allocated_duration( new google::protobuf::Duration{toDurationProto(v.Get<UA_Duration>(i))} );
-			else if( IS(UA_TYPES_EXPANDEDNODEID) ) [[unlikely]]
-				proto.set_allocated_expanded_node( new Proto::ExpandedNodeId{ToProto(v.Get<UA_ExpandedNodeId>(i))} );
-			else if( IS(UA_TYPES_FLOAT) )
-				proto.set_float_value( v.Get<UA_Float>(i) );
-			else if( IS(UA_TYPES_GUID) ) [[unlikely]]
-				proto.set_allocated_guid( new string{ToBinaryString(v.Get<UA_Guid>(i))} );
-			else if( IS(UA_TYPES_INT16) ) [[likely]]
-				proto.set_int16( v.Get<UA_Int16>(i) );
-			else if( IS(UA_TYPES_INT32) ) [[likely]]
-				proto.set_int32( v.Get<UA_Int32>(i) );
-			else if( IS(UA_TYPES_INT64) )
-				proto.set_int64( v.Get<UA_Int64>(i) );
-			else if( IS(UA_TYPES_NODEID) )
-				proto.set_allocated_node( new Proto::NodeId{ToNodeProto(v.Get<UA_NodeId>(i))} );
-			else if( IS(UA_TYPES_SBYTE) )
-				proto.set_sbyte( (int8_t)v.Get<UA_SByte>(i) );
-			else if( IS(UA_TYPES_STATUSCODE) )
-				proto.set_status_code( v.Get<StatusCode>(i) );
-			else if( IS(UA_TYPES_STRING) ) [[likely]]
-				proto.set_allocated_string_value( new string{ToSV(v.Get<UA_String>(i))} );
-			else if( IS(UA_TYPES_UINT16) )
-				proto.set_uint16( v.Get<UA_UInt16>(i) );
-			else if( IS(UA_TYPES_UINT32) ) [[likely]]
-				proto.set_uint32( v.Get<UA_UInt32>(i) );
-			else if( IS(UA_TYPES_UINT64) )
-				proto.set_uint64( v.Get<UA_UInt64>(i) );
-			else if( IS(UA_TYPES_XMLELEMENT) ) [[unlikely]]
-				proto.set_allocated_xml_element( new string{ToSV(v.Get<UA_XmlElement>(i))} );
-			else{
-				WARNT( IotReadTag, "Unsupported type {}.", type->typeName );
-				proto.set_status_code( UA_STATUSCODE_BADNOTIMPLEMENTED );
-			}
+		auto nv = mu<FromServer::NodeValues>();
+		*nv->mutable_node() = ProtoUtils::ToNodeId( node );
+		nv->set_opc_id( opcId );
+		StatusCode sc = v.status;//the reading's quality - without it a Bad or Uncertain reading was indistinguishable from a Good one on the socket (proto3 omits 0/Good from the wire).
+		try{
+			*nv->mutable_value() = ProtoUtils::ToValue( v.value );
 		}
-		nv->set_sc( v.status );//the reading's quality - without it a Bad or Uncertain reading was indistinguishable from a Good one on the socket (proto3 omits 0/Good from the wire).
+		catch( const UAException& e ){//the whole reading, as the historian refuses it - a Variant array's good elements alone would pass for the array.
+			WARNT( IotReadTag, "{} - {}", node.ToString(), e.what() );
+			sc = (StatusCode)e.Code();//BadNotSupported for a DataValue or DiagnosticInfo, with no value, as the historian stores it.  A status_code value read as a StatusCode reading.
+		}
+		nv->set_sc( sc );
 		FromServer::Message m;
 		m.set_request_id( requestId );
 		m.set_allocated_node_values( nv.release() );
 		return m;
-	}
-
-	α FromServer::ToValue( const FromServer::Value& proto )ι->Opc::Value{
-		UA_Variant y{};
-		switch( proto.of_case() ){
-		case FromServer::Value::OfCase::kBoolean:{
-			let v = UA_Boolean{ proto.boolean() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_BOOLEAN] );
-			break;}
-		case FromServer::Value::OfCase::kByte:{
-			let v = UA_Byte{ (UA_Byte)proto.byte() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_BYTE] );
-			break;}
-		case FromServer::Value::OfCase::kByteString:{
-			let v = ToUV( proto.byte_string() );
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_BYTESTRING] );
-			break;}
-		case FromServer::Value::OfCase::kDate:{
-			let v = UADateTime{ proto.date() }.UA();
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_DATETIME] );
-			break;}
-		case FromServer::Value::OfCase::kDoubleValue:{
-			let v = UA_Double{ proto.double_value() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_DOUBLE] );
-			break;}
-		case FromServer::Value::OfCase::kDuration:{
-			let v = toDuration( proto.duration() );//not UADateTime{}.UA(), which returns 100ns ticks since 1601 - #20.
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_DURATION] );
-			break;}
-		case FromServer::Value::OfCase::kExpandedNode:{
-			let v = ProtoUtils::ToExNodeId( proto.expanded_node() );
-			UA_Variant_setScalarCopy( &y, static_cast<const UA_ExpandedNodeId*>(&v), &UA_TYPES[UA_TYPES_EXPANDEDNODEID] );//upcast, not &v: the wrapper is a `const void*` away from handing the vendor whatever sits at its offset 0.
-			break;}
-		case FromServer::Value::OfCase::kFloatValue:{
-			let v = UA_Float{ proto.float_value() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_FLOAT] );
-			break;}
-		case FromServer::Value::OfCase::kGuid:{
-			UA_Guid v{};//zero-init: a proto guid shorter than 16 bytes would otherwise leave the tail uninitialized and send garbage to the server.
-			memcpy( &v, proto.guid().data(), std::min(sizeof(UA_Guid),proto.guid().size()) );
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_GUID] );
-			break;}
-		case FromServer::Value::OfCase::kInt16:{
-			let v = UA_Int16{ (int16_t)proto.int16() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_INT16] );
-			break;}
-		case FromServer::Value::OfCase::kInt32:{
-			let v = UA_Int32{ proto.int32() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_INT32] );
-			break;}
-		case FromServer::Value::OfCase::kInt64:{
-			let v = UA_Int64{ proto.int64() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_INT64] );
-			break;}
-		case FromServer::Value::OfCase::kNode:{
-			let v = ProtoUtils::ToNodeId( proto.node() );
-			UA_Variant_setScalarCopy( &y, static_cast<const UA_NodeId*>(&v), &UA_TYPES[UA_TYPES_NODEID] );//upcast, not &v: NodeId is polymorphic, so &v is the vptr and the vendor would copy that as the node id.
-			break;}
-		case FromServer::Value::OfCase::kSbyte:{
-			let v = UA_SByte{ (UA_SByte)proto.sbyte() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_SBYTE] );
-			break;}
-		case FromServer::Value::OfCase::kStatusCode:{
-			let v = StatusCode{ proto.status_code() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_STATUSCODE] );
-			break;}
-		case FromServer::Value::OfCase::kStringValue:{
-			let v = ToUV( proto.string_value() );
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_STRING] );
-			break;}
-		case FromServer::Value::OfCase::kUint16:{
-			let v = UA_UInt16{ (UA_UInt16)proto.uint16() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_UINT16] );
-			break;}
-		case FromServer::Value::OfCase::kUint32:{
-			let v = UA_UInt32{ proto.uint32() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_UINT32] );
-			break;}
-		case FromServer::Value::OfCase::kUint64:{
-			let v = UA_UInt64{ proto.uint64() };
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_UINT64] );
-			break;}
-		case FromServer::Value::OfCase::kXmlElement:{
-			let v = ToUV( proto.xml_element() );
-			UA_Variant_setScalarCopy( &y, &v, &UA_TYPES[UA_TYPES_XMLELEMENT] );
-			break;}
-		default:
-			ASSERT_DESC( false, Ƒ("Unsupported FromServer::Value type {}.", (uint)proto.of_case()) );
-		}
-		UA_DataValue dv{};
-		dv.value = y;
-		dv.hasValue = true;
-		return Opc::Value{ move(dv) };
-	}
-
-	α FromServer::ToNodeProto( const NodeId& id )ι->Proto::NodeId{
-		Proto::NodeId y;
-		y.set_namespace_index( id.namespaceIndex );
-		if( id.identifierType==UA_NodeIdType::UA_NODEIDTYPE_NUMERIC )
-			y.set_numeric( id.identifier.numeric );
-		else if( id.identifierType==UA_NodeIdType::UA_NODEIDTYPE_STRING )
-			y.set_allocated_string( new string{ToSV(id.identifier.string)} );
-		else if( id.identifierType==UA_NodeIdType::UA_NODEIDTYPE_BYTESTRING )
-			y.set_allocated_byte_string( new string{ToSV(id.identifier.byteString)} );
-		else if( id.identifierType==UA_NodeIdType::UA_NODEIDTYPE_GUID )
-			y.set_guid( ToBinaryString(id.identifier.guid) );
-		return y;
 	}
 }

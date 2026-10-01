@@ -5,6 +5,7 @@
 #include <jde/db/Value.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Variant.h>
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -298,5 +299,218 @@ namespace Jde::Opc::Tests{
 		ASSERT_NO_THROW( json = v.ToUAJson() );
 		ASSERT_EQ( json.size(), 1u );
 		EXPECT_EQ( json[0].size(), text.size()+2 ); //the value plus its two quotes.
+	}
+
+	//#195, the historian's round trip:  Variant -> Proto::Value -> protobuf's own wire -> Variant.  "The same" is the UA
+	//binary encoding, the one form a Variant's type survives in:  an alias leaves as its built-in type and a structure as
+	//an encoded ExtensionObject, and both encode exactly as the original did.
+	Ω binary( const UA_Variant& v )ι->string{
+		UAString y;
+		EXPECT_EQ( UA_encodeBinary(&v, &UA_TYPES[UA_TYPES_VARIANT], &y, nullptr), UA_STATUSCODE_GOOD );
+		return y.ToString();
+	}
+	Ω roundTrip( const UA_Variant& v )ε->Variant{
+		Proto::Value wire;
+		EXPECT_TRUE( wire.ParseFromString(ProtoUtils::ToValue(v).SerializeAsString()) );
+		return ProtoUtils::ToVariant( wire );
+	}
+	Ω expectRoundTrip( const UA_Variant& v, sv what )ι->void{
+		try{
+			EXPECT_EQ( binary(roundTrip(v)), binary(v) ) << what;
+		}
+		catch( const std::exception& e ){
+			ADD_FAILURE() << what << " - " << e.what();
+		}
+	}
+	//As a scalar, and as a two-element array of it.
+	Ω expectRoundTrip( const void* value, const UA_DataType& type )ι->void{
+		Variant scalar{ scalarVariant(value, type) };
+		expectRoundTrip( scalar, Ƒ("scalar {}", type.typeName) );
+		auto data = UA_Array_new( 2, &type );
+		for( uint i=0; i<2; ++i )
+			UA_copy( value, (UA_Byte*)data+i*type.memSize, &type );
+		UA_Variant raw{};
+		UA_Variant_setArray( &raw, data, 2, &type );
+		Variant array{ move(raw) };
+		expectRoundTrip( array, Ƒ("array {}", type.typeName) );
+	}
+
+	TEST( VariantTests, EveryBuiltInTypeRoundTrips ){
+		const UA_Boolean boolean{ true };
+		expectRoundTrip( &boolean, UA_TYPES[UA_TYPES_BOOLEAN] );
+		const UA_SByte sbyte{ -5 };
+		expectRoundTrip( &sbyte, UA_TYPES[UA_TYPES_SBYTE] );
+		const UA_Byte byte{ 200 };
+		expectRoundTrip( &byte, UA_TYPES[UA_TYPES_BYTE] );
+		const UA_Int16 int16{ -300 };
+		expectRoundTrip( &int16, UA_TYPES[UA_TYPES_INT16] );
+		const UA_UInt16 uint16{ 60'000 };
+		expectRoundTrip( &uint16, UA_TYPES[UA_TYPES_UINT16] );
+		const UA_Int32 int32{ -70'000 };
+		expectRoundTrip( &int32, UA_TYPES[UA_TYPES_INT32] );
+		const UA_UInt32 uint32{ 4'000'000'000u };
+		expectRoundTrip( &uint32, UA_TYPES[UA_TYPES_UINT32] );
+		const UA_Int64 int64{ std::numeric_limits<UA_Int64>::min() };
+		expectRoundTrip( &int64, UA_TYPES[UA_TYPES_INT64] );
+		const UA_UInt64 uint64{ std::numeric_limits<UA_UInt64>::max() };
+		expectRoundTrip( &uint64, UA_TYPES[UA_TYPES_UINT64] );
+		const UA_Float float_{ -0.f };//the sign bit has to survive, and a NaN's payload below.
+		expectRoundTrip( &float_, UA_TYPES[UA_TYPES_FLOAT] );
+		const UA_Double double_{ std::numeric_limits<double>::quiet_NaN() };
+		expectRoundTrip( &double_, UA_TYPES[UA_TYPES_DOUBLE] );
+		const UA_String string_ = ToUV( sv{"a\0b", 3} );
+		expectRoundTrip( &string_, UA_TYPES[UA_TYPES_STRING] );
+		const UA_DateTime dateTime{ UA_DateTime_fromUnixTime(1'700'000'000)+1'234'567 };//down to the 100ns digit.
+		expectRoundTrip( &dateTime, UA_TYPES[UA_TYPES_DATETIME] );
+		const UA_Guid guid{ 0x01020304, 0x0506, 0x0708, {9, 10, 11, 12, 13, 14, 15, 16} };
+		expectRoundTrip( &guid, UA_TYPES[UA_TYPES_GUID] );
+		const UA_ByteString byteString = ToUV( sv{"\x00\xff\x80", 3} );
+		expectRoundTrip( &byteString, UA_TYPES[UA_TYPES_BYTESTRING] );
+		const UA_XmlElement xml = ToUV( R"(<a b="c"/>)" );
+		expectRoundTrip( &xml, UA_TYPES[UA_TYPES_XMLELEMENT] );
+		const UA_NodeId nodeId{ 2, UA_NODEIDTYPE_NUMERIC, {5002} };
+		expectRoundTrip( &nodeId, UA_TYPES[UA_TYPES_NODEID] );
+		const UA_ExpandedNodeId exNodeId{ {3, UA_NODEIDTYPE_STRING, {.string=ToUV("Tag1")}}, ToUV("urn:plc"), 1 };
+		expectRoundTrip( &exNodeId, UA_TYPES[UA_TYPES_EXPANDEDNODEID] );
+		const UA_StatusCode statusCode{ UA_STATUSCODE_BADNODEIDUNKNOWN };
+		expectRoundTrip( &statusCode, UA_TYPES[UA_TYPES_STATUSCODE] );
+		const UA_QualifiedName qualifiedName{ 2, ToUV("Temperature") };
+		expectRoundTrip( &qualifiedName, UA_TYPES[UA_TYPES_QUALIFIEDNAME] );
+		const UA_LocalizedText localizedText{ ToUV("en-US"), ToUV("Hello") };
+		expectRoundTrip( &localizedText, UA_TYPES[UA_TYPES_LOCALIZEDTEXT] );
+		const UA_ByteString body = ToUV( sv{"\x01\x02\x03", 3} );
+		UA_ExtensionObject extensionObject{ UA_EXTENSIONOBJECT_ENCODED_BYTESTRING, {} };
+		extensionObject.content.encoded = { UA_NodeId{2, UA_NODEIDTYPE_NUMERIC, {5001}}, body };
+		expectRoundTrip( &extensionObject, UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+	}
+
+	//The other identifier kinds, and the members whose absence is part of the encoding.
+	TEST( VariantTests, IdentifiersAndNullMembersRoundTrip ){
+		const UA_NodeId ids[]{
+			{1, UA_NODEIDTYPE_STRING, {.string=ToUV("a/b")}},
+			{1, UA_NODEIDTYPE_GUID, {.guid={0xAABBCCDD, 0x1122, 0x3344, {1, 2, 3, 4, 5, 6, 7, 8}}}},
+			{1, UA_NODEIDTYPE_BYTESTRING, {.byteString=ToUV(sv{"\xde\xad", 2})}}
+		};
+		for( let& id : ids )
+			expectRoundTrip( &id, UA_TYPES[UA_TYPES_NODEID] );
+		const UA_ExpandedNodeId local{ {0, UA_NODEIDTYPE_NUMERIC, {85}}, UA_STRING_NULL, 0 };
+		expectRoundTrip( &local, UA_TYPES[UA_TYPES_EXPANDEDNODEID] );
+
+		//LocalizedText's encoding mask says which members are there, and a missing locale is the common case.
+		for( let& lt : {UA_LocalizedText{UA_STRING_NULL, ToUV("text only")}, UA_LocalizedText{ToUV(""), ToUV("")}, UA_LocalizedText{UA_STRING_NULL, UA_STRING_NULL}} )
+			expectRoundTrip( &lt, UA_TYPES[UA_TYPES_LOCALIZEDTEXT] );
+
+		UA_ExtensionObject noBody{};
+		noBody.content.encoded.typeId = UA_NodeId{ 2, UA_NODEIDTYPE_NUMERIC, {5001} };
+		expectRoundTrip( &noBody, UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+		UA_ExtensionObject xmlBody{ UA_EXTENSIONOBJECT_ENCODED_XML, {} };
+		xmlBody.content.encoded = { UA_NodeId{2, UA_NODEIDTYPE_NUMERIC, {5002}}, ToUV("<Range/>") };
+		expectRoundTrip( &xmlBody, UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+	}
+
+	//UA_DateTime's whole range, not just the part a TimePoint holds.
+	TEST( VariantTests, DateTimeExtremesRoundTrip ){
+		using Limits = std::numeric_limits<UA_DateTime>;
+		for( let dt : {UA_DateTime{0}, UA_DateTime{UA_DATETIME_UNIX_EPOCH-1}, (Limits::min)(), (Limits::max)()} ){
+			Variant v{ scalarVariant(&dt, UA_TYPES[UA_TYPES_DATETIME]) };
+			let round = roundTrip( v );
+			ASSERT_TRUE( round.IsScalar() );
+			EXPECT_EQ( *(const UA_DateTime*)round.data, dt );
+		}
+	}
+
+	//What is not a built-in type goes as the built-in type it encodes as:  an alias as itself, an enum as an Int32 and a
+	//structure - bare, or decoded inside an ExtensionObject - as an ExtensionObject holding its binary encoding.
+	TEST( VariantTests, AliasesEnumsAndStructuresRoundTrip ){
+		const UA_DateTime utc{ UA_DateTime_fromUnixTime(1'700'000'000) };
+		expectRoundTrip( &utc, UA_TYPES[UA_TYPES_UTCTIME] );
+		const UA_Duration duration{ 1500.5 };
+		expectRoundTrip( &duration, UA_TYPES[UA_TYPES_DURATION] );
+		const UA_UInt32 integerId{ 7 };
+		expectRoundTrip( &integerId, UA_TYPES[UA_TYPES_INTEGERID] );
+		const UA_String localeId = ToUV( "de-DE" );
+		expectRoundTrip( &localeId, UA_TYPES[UA_TYPES_LOCALEID] );
+		const UA_ServerState state{ UA_SERVERSTATE_SHUTDOWN };
+		expectRoundTrip( &state, UA_TYPES[UA_TYPES_SERVERSTATE] );
+
+		const UA_Range range{ -1.5, 99.5 };
+		expectRoundTrip( &range, UA_TYPES[UA_TYPES_RANGE] );
+		UA_EUInformation eu{ ToUV("http://www.opcfoundation.org/UA/units/un/cefact"), 4408652, {ToUV("en"), ToUV("°C")}, {UA_STRING_NULL, ToUV("degree Celsius")} };
+		expectRoundTrip( &eu, UA_TYPES[UA_TYPES_EUINFORMATION] );
+		UA_ExtensionObject decoded;
+		UA_ExtensionObject_setValueNoDelete( &decoded, &eu, &UA_TYPES[UA_TYPES_EUINFORMATION] );
+		expectRoundTrip( &decoded, UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+
+		const UA_Range ranges[]{ {0, 1}, {2, 3} };
+		Variant v{ arrayVariant(ranges, 2u, UA_TYPES[UA_TYPES_RANGE]) };
+		expectRoundTrip( v, "Range[]" );
+		let proto = ProtoUtils::ToValue( v );
+		ASSERT_TRUE( proto.has_array() );
+		EXPECT_EQ( proto.array().type(), UA_TYPES_EXTENSIONOBJECT+1 );
+		EXPECT_EQ( ProtoUtils::ToVariant(proto).type, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] ) << "encoded, not decoded - nothing here needs the type";
+	}
+
+	//The shapes an array can take:  a matrix, an empty one of a type, a Variant array mixing types and nesting an array.
+	TEST( VariantTests, ArrayShapesRoundTrip ){
+		const UA_Int32 values[]{ 1, 2, 3, 4, 5, 6 };
+		UA_Variant matrix{};
+		UA_Variant_setArrayCopy( &matrix, values, 6, &UA_TYPES[UA_TYPES_INT32] );
+		matrix.arrayDimensions = (UA_UInt32*)UA_Array_new( 2, &UA_TYPES[UA_TYPES_UINT32] );
+		matrix.arrayDimensions[0] = 2; matrix.arrayDimensions[1] = 3;
+		matrix.arrayDimensionsSize = 2;
+		Variant m{ move(matrix) };
+		expectRoundTrip( m, "2x3 Int32" );
+		EXPECT_EQ( roundTrip(m).ArrayDimString(), "2,3" );
+
+		for( let type : {UA_TYPES_STRING, UA_TYPES_DOUBLE, UA_TYPES_VARIANT} ){
+			UA_Variant empty{};
+			UA_Variant_setArray( &empty, UA_Array_new(0, &UA_TYPES[type]), 0, &UA_TYPES[type] );
+			Variant e{ move(empty) };
+			expectRoundTrip( e, Ƒ("empty {}", UA_TYPES[type].typeName) );
+			UA_Variant undefined{};
+			undefined.type = &UA_TYPES[type];//data NULL:  length -1, which Array_decodeBinary leaves for a server's -1.
+			Variant u{ move(undefined) };
+			expectRoundTrip( u, Ƒ("null {}", UA_TYPES[type].typeName) );
+			EXPECT_NE( binary(u), binary(e) ) << "-1 and 0 have to differ on the wire, or this proves nothing";
+		}
+
+		const UA_Int32 five{ 5 };
+		let text = ToUV( "x" );
+		const UA_Int32 inner[]{ 7, 8 };
+		auto mixed = (UA_Variant*)UA_Array_new( 4, &UA_TYPES[UA_TYPES_VARIANT] );
+		UA_Variant_setScalarCopy( &mixed[0], &five, &UA_TYPES[UA_TYPES_INT32] );
+		UA_Variant_setScalarCopy( &mixed[1], &text, &UA_TYPES[UA_TYPES_STRING] );
+		UA_Variant_setArrayCopy( &mixed[2], inner, 2, &UA_TYPES[UA_TYPES_INT32] );
+		//mixed[3] stays empty - a Variant array may hold a null.
+		UA_Variant raw{};
+		UA_Variant_setArray( &raw, mixed, 4, &UA_TYPES[UA_TYPES_VARIANT] );
+		Variant v{ move(raw) };
+		expectRoundTrip( v, "Variant[]" );
+
+		const UA_Int32 one[]{ 9 };
+		Variant single{ arrayVariant(one, 1u, UA_TYPES[UA_TYPES_INT32]) };
+		expectRoundTrip( single, "one-element Int32[]" );
+		EXPECT_FALSE( roundTrip(single).IsScalar() );
+
+		Variant null{ UA_Variant{} };
+		EXPECT_EQ( ProtoUtils::ToValue(null).of_case(), Proto::Value::OF_NOT_SET );
+		EXPECT_TRUE( roundTrip(null).IsNull() );
+	}
+
+	//The two the spec leaves out of the historian; the gateway sends their status code instead.
+	TEST( VariantTests, DataValueAndDiagnosticInfoAreNotSupported ){
+		const UA_DataValue dataValue{};
+		const UA_DiagnosticInfo diagnosticInfo{};
+		const std::pair<const void*, int> cases[]{ {&dataValue, UA_TYPES_DATAVALUE}, {&diagnosticInfo, UA_TYPES_DIAGNOSTICINFO} };
+		for( let& [p, type] : cases ){
+			Variant v{ scalarVariant(p, UA_TYPES[type]) };
+			try{
+				ProtoUtils::ToValue( v );
+				ADD_FAILURE() << UA_TYPES[type].typeName << " converted.";
+			}
+			catch( const UAException& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADNOTSUPPORTED ) << UA_TYPES[type].typeName;
+			}
+		}
 	}
 }

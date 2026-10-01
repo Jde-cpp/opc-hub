@@ -2,7 +2,7 @@
 #include <jde/fwk/io/protobuf.h>
 #include <jde/app/proto/common.h>
 #include <jde/opc/uatypes/NodeId.h>
-#include "opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 

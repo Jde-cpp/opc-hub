@@ -2,7 +2,7 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/app/proto/common.h>
 #include "../../src/GatewayAppClient.h"
-#include "../../src/types/proto/opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 #include "../../src/types/proto/opc.FromClient.h"
 #include "helpers.h"
 #include "jde/fwk/process/process.h"
@@ -232,9 +232,8 @@ namespace Tests{
 			DBGT( ELogTags::SocketClientRead, "[{},{}]No subscriptions.", opcId, nodeId.ToString() );
 			return;
 		}
-		for( let& listener : listeners->second ){
-			listener->OnData( opcId, nodeId, Protobuf::ToVector<FromServer::Value>(move(*nodeValues.mutable_values())) );
-		}
+		for( let& listener : listeners->second )
+			listener->OnData( opcId, nodeId, nodeValues.value() );
 	}
 
 	α GatewayClientSocket::CloseTasks( beast::error_code ec )ι->void{

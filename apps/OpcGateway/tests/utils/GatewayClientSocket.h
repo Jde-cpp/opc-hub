@@ -10,7 +10,7 @@
 
 namespace Jde::Opc::Gateway::Tests{
 	struct IListener{
-		β OnData( string opcId, NodeId nodeId, const vector<FromServer::Value>& values )ι->void=0;
+		β OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void=0;
 	};
 	//An error the gateway *answered* with - it came back over a working socket, unlike a transport failure.  Anything that reacts
 	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server

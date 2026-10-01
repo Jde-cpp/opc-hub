@@ -1,6 +1,6 @@
 ﻿#include "MonitoringNodes.h"
 #include <jde/fwk/utils/collections.h>
-#include "proto/opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 #include "../UAClient.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
 #include "../async/DataChanges.h"

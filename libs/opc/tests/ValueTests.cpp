@@ -5,6 +5,8 @@
 #include <gtest/gtest.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
+#include <jde/opc/uatypes/Variant.h>
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -543,5 +545,148 @@ namespace Jde::Opc::Tests{
 		ASSERT_NO_THROW( v.Set(jvalue{true}) );
 		EXPECT_TRUE( v.ToJson().as_bool() );
 		EXPECT_EQ( v.value.type, &UA_TYPES[UA_TYPES_BOOLEAN] );
+	}
+
+	//#195, the other direction:  a Proto::Value - what the historian's files and the pass-through hold - through a Variant
+	//and back is the message it started as, member for member.
+	Ω expectRoundTrip( const Proto::Value& proto )ι->void{
+		try{
+			let round = ProtoUtils::ToValue( ProtoUtils::ToVariant(proto) );
+			EXPECT_EQ( round.SerializeAsString(), proto.SerializeAsString() ) << proto.ShortDebugString() << " came back as " << round.ShortDebugString();
+		}
+		catch( const std::exception& e ){
+			ADD_FAILURE() << proto.ShortDebugString() << " - " << e.what();
+		}
+	}
+	Ω nodeId( uint32 ns, uint32 numeric )ι->Proto::NodeId{
+		Proto::NodeId y;
+		y.set_namespace_index( ns );
+		y.set_numeric( numeric );
+		return y;
+	}
+
+	TEST( ValueTests, EveryProtoMemberRoundTrips ){
+		vector<Proto::Value> values;
+		auto add = [&]( auto set ){ set( values.emplace_back() ); };
+		add( []( auto& v ){ v.set_boolean( false ); } );//a default is still a member, not an empty Value.
+		add( []( auto& v ){ v.set_byte( 200 ); } );
+		add( []( auto& v ){ v.set_byte_string( string{"\x00\xff", 2} ); } );
+		add( []( auto& v ){ auto& d = *v.mutable_date(); d.set_seconds( -1 ); d.set_nanos( 999'999'900 ); } );//just before 1970, to the 100ns.
+		add( []( auto& v ){ v.set_double_value( 2.5 ); } );
+		add( []( auto& v ){ auto& d = *v.mutable_duration(); d.set_seconds( 1 ); d.set_nanos( 500'000'000 ); } );
+		add( []( auto& v ){ auto& x = *v.mutable_expanded_node(); x.mutable_node()->set_string( "Tag1" ); x.mutable_node()->set_namespace_index( 3 ); x.set_namespace_uri( "urn:plc" ); x.set_server_index( 1 ); } );
+		add( []( auto& v ){ v.set_float_value( 1.25f ); } );
+		add( []( auto& v ){ v.set_guid( string{"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10", 16} ); } );
+		add( []( auto& v ){ v.set_int16( -300 ); } );
+		add( []( auto& v ){ v.set_int32( -70'000 ); } );
+		add( []( auto& v ){ v.set_int64( std::numeric_limits<int64_t>::min() ); } );
+		add( []( auto& v ){ auto& n = *v.mutable_node(); n.set_namespace_index( 1 ); n.set_byte_string( string{"\xde\xad", 2} ); } );
+		add( []( auto& v ){ auto& n = *v.mutable_node(); n.set_namespace_index( 1 ); n.set_string( string{"a\0b", 3} ); } );//by size, past the NUL.
+		add( []( auto& v ){ v.mutable_node()->set_guid( string{"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10", 16} ); } );
+		add( []( auto& v ){ v.set_sbyte( -5 ); } );
+		add( []( auto& v ){ v.set_status_code( UA_STATUSCODE_BADNODEIDUNKNOWN ); } );
+		add( []( auto& v ){ v.set_string_value( "tag value" ); } );
+		add( []( auto& v ){ v.set_uint16( 60'000 ); } );
+		add( []( auto& v ){ v.set_uint32( 4'000'000'000u ); } );
+		add( []( auto& v ){ v.set_uint64( std::numeric_limits<uint64_t>::max() ); } );
+		add( []( auto& v ){ v.set_xml_element( "<a/>" ); } );
+		add( []( auto& v ){ auto& t = *v.mutable_localized_text(); t.set_locale( "en-US" ); t.set_text( "Hello" ); } );
+		add( []( auto& v ){ v.mutable_localized_text()->set_text( "text only" ); } );
+		add( []( auto& v ){ auto& q = *v.mutable_qualified_name(); q.set_namespace_index( 2 ); q.set_name( "Temperature" ); } );
+		add( []( auto& v ){ auto& x = *v.mutable_extension_object(); *x.mutable_type_id() = nodeId( 2, 5001 ); x.set_binary( string{"\x01\x02", 2} ); } );
+		add( []( auto& v ){ auto& x = *v.mutable_extension_object(); *x.mutable_type_id() = nodeId( 2, 5002 ); x.set_xml( "<Range/>" ); } );
+		add( []( auto& v ){ *v.mutable_extension_object()->mutable_type_id() = nodeId( 2, 5003 ); } );//no body
+		add( []( auto& v ){
+			auto& a = *v.mutable_array();
+			a.set_type( UA_TYPES_INT32+1 );
+			for( int i=1; i<=4; ++i )
+				a.add_values()->set_int32( i );
+			a.add_dimensions( 2 ); a.add_dimensions( 2 );
+		} );
+		add( []( auto& v ){ v.mutable_array()->set_type( UA_TYPES_STRING+1 ); } );//empty, and still a String array.
+		add( []( auto& v ){ auto& a = *v.mutable_array(); a.set_type( UA_TYPES_STRING+1 ); a.set_is_null( true ); } );//length -1, not 0.
+		add( []( auto& v ){
+			auto& a = *v.mutable_array();
+			a.set_type( UA_TYPES_VARIANT+1 );
+			a.add_values()->set_int32( 5 );
+			a.add_values()->set_string_value( "x" );
+			a.add_values()->mutable_array()->set_type( UA_TYPES_DOUBLE+1 );
+		} );
+		add( []( auto& ){} );//no member at all:  an empty Variant.
+		for( let& v : values )
+			expectRoundTrip( v );
+	}
+
+	//A hand-built message can say what no Variant can hold; it is refused rather than guessed at.
+	TEST( ValueTests, AMalformedArrayIsRejected ){
+		Proto::Value mixed;
+		mixed.mutable_array()->add_values()->set_int32( 1 );
+		mixed.mutable_array()->add_values()->set_string_value( "x" );
+		EXPECT_THROW( ProtoUtils::ToVariant(mixed), UAException ) << "mixed types need the Variant type";
+
+		Proto::Value wrongType;
+		wrongType.mutable_array()->set_type( UA_TYPES_STRING+1 );
+		wrongType.mutable_array()->add_values()->set_int32( 1 );
+		EXPECT_THROW( ProtoUtils::ToVariant(wrongType), UAException );
+
+		Proto::Value emptyFirst;
+		emptyFirst.mutable_array()->set_type( UA_TYPES_INT32+1 );
+		emptyFirst.mutable_array()->add_values();
+		EXPECT_THROW( ProtoUtils::ToVariant(emptyFirst), UAException ) << "only a Variant array may hold a null";
+
+		Proto::Value emptyLater;
+		emptyLater.mutable_array()->set_type( UA_TYPES_INT32+1 );
+		emptyLater.mutable_array()->add_values()->set_int32( 1 );
+		emptyLater.mutable_array()->add_values();
+		EXPECT_THROW( ProtoUtils::ToVariant(emptyLater), UAException );
+
+		Proto::Value nested;
+		nested.mutable_array()->set_type( UA_TYPES_INT32+1 );
+		nested.mutable_array()->add_values()->set_int32( 1 );
+		auto& inner = *nested.mutable_array()->add_values()->mutable_array();
+		inner.set_type( UA_TYPES_INT32+1 );
+		inner.add_values()->set_int32( 2 );
+		try{
+			ProtoUtils::ToVariant( nested );
+			ADD_FAILURE() << "a nested Int32[] converted.";
+		}
+		catch( const UAException& e ){
+			EXPECT_NE( string{e.what()}.find("nested"), string::npos ) << e.what();
+		}
+
+		Proto::Value nullWithValues;
+		nullWithValues.mutable_array()->set_type( UA_TYPES_INT32+1 );
+		nullWithValues.mutable_array()->set_is_null( true );
+		nullWithValues.mutable_array()->add_values()->set_int32( 1 );
+		EXPECT_THROW( ProtoUtils::ToVariant(nullWithValues), UAException );
+
+		Proto::Value wrongShape;
+		wrongShape.mutable_array()->set_type( UA_TYPES_INT32+1 );
+		wrongShape.mutable_array()->add_values()->set_int32( 1 );
+		wrongShape.mutable_array()->add_dimensions( 2 );
+		EXPECT_THROW( ProtoUtils::ToVariant(wrongShape), UAException );
+
+		Proto::Value notBuiltIn;
+		notBuiltIn.mutable_array()->set_type( 26 );
+		EXPECT_THROW( ProtoUtils::ToVariant(notBuiltIn), UAException );
+	}
+
+	//A Timestamp holds seconds no UA_DateTime can; they saturate as UADateTime's Timestamp ctor does.
+	TEST( ValueTests, AnOutOfRangeDateSaturates ){
+		Proto::Value late;
+		late.mutable_date()->set_seconds( 1'000'000'000'000'000 );
+		EXPECT_EQ( *(const UA_DateTime*)ProtoUtils::ToVariant(late).data, (std::numeric_limits<UA_DateTime>::max)() );
+		Proto::Value early;
+		early.mutable_date()->set_seconds( -1'000'000'000'000'000 );
+		EXPECT_EQ( *(const UA_DateTime*)ProtoUtils::ToVariant(early).data, (std::numeric_limits<UA_DateTime>::min)() );
+	}
+
+	//What the gateway's tests and soak runner read a pushed value with.
+	TEST( ValueTests, FromAProtoValue ){
+		Proto::Value proto;
+		proto.set_uint32( 42 );
+		Value v{ ProtoUtils::ToVariant(proto) };
+		EXPECT_TRUE( v.hasValue );
+		EXPECT_EQ( v.AsNumber<uint>(), 42u );
 	}
 }

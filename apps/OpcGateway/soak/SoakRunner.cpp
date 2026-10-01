@@ -13,7 +13,7 @@
 #include <jde/web/client/http/ClientHttpResException.h>
 #include "../tests/utils/GatewayClientSocket.h"
 #include "../src/UAClient.h"
-#include "../src/types/proto/opc.FromServer.h"
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -112,7 +112,7 @@ namespace Jde::Opc::Gateway::Soak{
 	struct SoakRunner final : Tests::IListener, std::enable_shared_from_this<SoakRunner>{
 		SoakRunner( sp<App::Client::IAppClient> client )ε;
 		α Run()ε->int;
-		α OnData( string opcId, NodeId nodeId, const vector<FromServer::Value>& values )ι->void override;
+		α OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void override;
 	private:
 		α Connect()ε->void;//main session's socket, shared by every leg without a User.
 		α Login( ServerLeg& leg )ε->void;//POST /login for the leg's user; the leg gets its own socket on the returned session.
@@ -277,11 +277,11 @@ namespace Jde::Opc::Gateway::Soak{
 		return p==_legs.end() ? nullptr : &*p;
 	}
 
-	α SoakRunner::OnData( string opcId, NodeId nodeId, const vector<FromServer::Value>& values )ι->void{
-		if( values.empty() )
+	α SoakRunner::OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void{
+		if( value.of_case()==Proto::Value::OF_NOT_SET )
 			return;
 		try{
-			let v = FromServer::ToValue( values.back() ).AsNumber<uint>();
+			let v = Opc::Value{ ProtoUtils::ToVariant(value) }.AsNumber<uint>();
 			{
 				std::lock_guard _{ _mutex };
 				if( auto leg = FindLeg(opcId); leg )

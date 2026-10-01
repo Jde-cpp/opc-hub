@@ -11,6 +11,7 @@ add_library( ${targetName} )
 compileOptions( ${targetName} )
 file( GLOB_RECURSE sources CONFIGURE_DEPENDS *.cpp )
 file( GLOB_RECURSE headers CONFIGURE_DEPENDS  *.h )
+file( GLOB protos CONFIGURE_DEPENDS proto/*.proto )
 
 target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 
@@ -33,3 +34,15 @@ target_precompile_headers(${targetName}
   PRIVATE
 		"pc.h"
 )
+
+#Out-of-source, as libs/app/shared does:  `<jde/opc/proto/X.pb.h>` resolves through the exported root.  ${protoOutDir}
+#too, because the gateway's generated Opc.From*.pb.h import Opc.Common.proto and so include its header by bare name.
+set( protoOutDir ${jdeGeneratedIncludeDir}/jde/opc/proto )
+file( MAKE_DIRECTORY ${protoOutDir} )
+protobuf_generate(
+	TARGET ${targetName}
+	IMPORT_DIRS proto
+	PROTOC_OUT_DIR ${protoOutDir}
+)
+suppressProtoWarnings( "${protos}" ${protoOutDir} )
+target_include_directories( ${targetName} PUBLIC ${jdeGeneratedIncludeDir} ${protoOutDir} )

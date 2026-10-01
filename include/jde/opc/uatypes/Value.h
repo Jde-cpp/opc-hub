@@ -12,6 +12,7 @@ namespace Jde::Opc{
 		Value( UA_DataValue&& x )ι:UA_DataValue{x}{ UA_DataValue_init(&x); }
 		Value( const Value& x )ι{ UA_DataValue_copy( &x, this ); }
 		Value( Value&& x )ι:UA_DataValue{x}{ UA_DataValue_init(&x); }
+		Value( UA_Variant&& v )ι:UA_DataValue{ .value=v, .hasValue=true }{ UA_Variant_init(&v); }
 		Value( const jvalue& j, const UA_DataType* dt, SRCE )ε:UA_DataValue{ .value{.type=dt} }{ Set(j, sl); hasValue = true; }
 		~Value(){ UA_DataValue_clear(this); }
 

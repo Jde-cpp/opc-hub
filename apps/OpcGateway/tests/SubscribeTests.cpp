@@ -8,7 +8,7 @@
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
 #include "../src/types/proto/opc.FromServer.h"
-#include "../src/types/proto/opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 #include "utils/ITest.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/opc/ServerTrust.h>
@@ -20,12 +20,13 @@ namespace Jde::Opc::Gateway::Tests{
 	struct SubscribeTests : ITest{
 		struct Listener final : IListener{
 			Listener( SubscribeTests* tests )ι:_tests{ tests }{}
-			α OnData( string opcId, NodeId nodeId, const vector<FromServer::Value>& values )ι->void override{
-				TRACE( "OnData: opcId: '{}', nodeId: {}, valueCount: {}. 0={}", opcId, nodeId.ToString(), values.size(), values.size() ? std::to_string(values[0].of_case()) : "n/a" );
-				ASSERT( values.size()==1 );
-				if( values.size()==1 ){
+			α OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void override{
+				TRACE( "OnData: opcId: '{}', nodeId: {}, member: {}.", opcId, nodeId.ToString(), (int)value.of_case() );
+				let scalar = value.of_case()!=Proto::Value::OF_NOT_SET && !value.has_array();
+				ASSERT( scalar );
+				if( scalar ){
 					try{//ι: AsNumber throws for a non-finite or out-of-range reading (review3 #13), and this override may not let one out.
-						auto v = FromServer::ToValue( values[0] );
+						Opc::Value v{ ProtoUtils::ToVariant(value) };
 						_tests->_value = v.AsNumber<uint>();
 						TRACE( "Value updated to {}.", _tests->_value.load() );
 					}
@@ -1006,5 +1007,25 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_FALSE( results->What[i].empty() ) << "waiter " << i << " got a message-less exception.";
 			ASSERT_EQ( results->What[i], results->What[0] ) << "waiter " << i << " got a different exception than waiter 0.";
 		}
+	}
+
+	//#195 review #4:  an unconvertible reading's failure rode in Value.status_code, which a client reads as a StatusCode reading.
+	TEST( FromServerTests, AnUnconvertibleReadingSendsItsCodeAsTheQuality ){
+		UA_DataValue dv{};
+		dv.hasValue = true;
+		const UA_DataValue inner{};
+		UA_Variant_setScalarCopy( &dv.value, &inner, &UA_TYPES[UA_TYPES_DATAVALUE] );
+		let m = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0 );
+		ASSERT_TRUE( m.has_node_values() );
+		EXPECT_FALSE( m.node_values().has_value() );
+		EXPECT_EQ( m.node_values().sc(), UA_STATUSCODE_BADNOTSUPPORTED );
+
+		UA_DataValue bad{};
+		bad.hasValue = true; bad.hasStatus = true; bad.status = UA_STATUSCODE_BADSENSORFAILURE;
+		const UA_Int32 i{ 7 };
+		UA_Variant_setScalarCopy( &bad.value, &i, &UA_TYPES[UA_TYPES_INT32] );
+		let ok = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(bad)}, 0 );
+		EXPECT_EQ( ok.node_values().value().int32(), 7 );
+		EXPECT_EQ( ok.node_values().sc(), UA_STATUSCODE_BADSENSORFAILURE );
 	}
 }

@@ -1,0 +1,2 @@
+# LF in the repo and in every checkout, Windows included.  text=auto leaves binaries alone.
+* text=auto eol=lf

@@ -7,7 +7,7 @@
 #include "async/Subscriptions.h"
 #include "async/DataChanges.h"
 #include "ql/GatewayQLAwait.h"
-#include "types/proto/opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 #include "types/proto/opc.FromServer.h"
 
 #define let const auto

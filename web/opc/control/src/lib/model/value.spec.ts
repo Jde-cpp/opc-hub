@@ -8,7 +8,8 @@ if( typeof globalThis.localStorage=="undefined" ){
 	};
 }
 import Long from 'long';
-import { toReading } from './value';
+import { ExtensionObject, toReading, valueJson, valueString } from './value';
+import { NodeId } from './node-id';
 
 //the gateway's three shapes (Value::ToJson):  the bare value for Good, {v,sc} for any other code that is not Bad, {sc} for Bad.
 describe( 'toReading', ()=>{
@@ -39,5 +40,23 @@ describe( 'toReading', ()=>{
 
 	it( 'takes a null - the server\'s empty value - as it comes', ()=>{
 		expect( toReading(null) ).toEqual( {value: null, sc: 0} );
+	} );
+} );
+
+describe( 'valueString', ()=>{
+	it( 'shows an ExtensionObject as its type id and body', ()=>{
+		const typeId = new NodeId( {ns: 2, i: 5001} );
+		expect( valueString(new ExtensionObject(typeId, new Uint8Array([1, 2, 3]))) ).toBe( "ns=2;i=5001 AQID" );
+		expect( valueString(new ExtensionObject(typeId, "<Range/>")) ).toBe( "ns=2;i=5001 <Range/>" );
+		expect( valueString(new ExtensionObject(typeId)) ).toBe( "ns=2;i=5001" );
+	} );
+} );
+
+//#195 review #3:  valueJson is the write side, and fell through to the instance - a NodeId with methods and a Uint8Array body.
+describe( 'valueJson', ()=>{
+	it( 'refuses an ExtensionObject rather than serialising the class', ()=>{
+		const x = new ExtensionObject( new NodeId({ns: 2, i: 5001}), new Uint8Array([1, 2]) );
+		expect( ()=>valueJson(x) ).toThrow( /ns=2;i=5001/ );
+		expect( ()=>valueJson([1, x]) ).toThrow();
 	} );
 } );

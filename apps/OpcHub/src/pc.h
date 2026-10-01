@@ -35,7 +35,7 @@
 #include "../../OpcGateway/src/usings.h"
 #include "../../OpcGateway/src/types/UAClientException.h"
 DISABLE_WARNINGS
-#include <Opc.Common.pb.h>
+#include <jde/opc/proto/Opc.Common.pb.h>
 #include <Opc.FromServer.pb.h>
 #include <Opc.FromClient.pb.h>
 ENABLE_WARNINGS

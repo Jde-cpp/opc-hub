@@ -5,7 +5,13 @@ import { ExNodeId } from "./ex-node-id";
 import {OpcError} from "./opc-error";
 import { StatusCode } from "./types";
 
-export type Value = boolean | Duration | OpcError | ExNodeId | Guid | Long | NodeId | number | string | Timestamp | Uint8Array | Value[];
+export type Value = boolean | Duration | ExtensionObject | OpcError | ExNodeId | Guid | Long | NodeId | number | string | Timestamp | Uint8Array | Value[];
+
+//A structure as it travels - the encoding's type id and the encoded body - since nothing here knows how to decode it.
+export class ExtensionObject{
+	constructor( public typeId:NodeId, public body?:Uint8Array|string ){}
+	toString():string{ return this.body===undefined ? this.typeId.uaString() : `${this.typeId.uaString()} ${valueString(this.body)}`; }
+}
 
 export function valueJson( value: Value ):any/*:NodeIdJson*/{
 	if( value instanceof ExNodeId )
@@ -16,6 +22,8 @@ export function valueJson( value: Value ):any/*:NodeIdJson*/{
 		return {b: btoa(value.reduce((acc, current) => acc + String.fromCharCode(current), "")) };
 	else if( value instanceof OpcError )
 		return {sc: value.sc };
+	else if( value instanceof ExtensionObject )//Value::Set has no arm for a structure, so refuse it here rather than send the class's fields.
+		throw new Error( `Writing a structure is not supported - ${value.typeId.uaString()}.` );
 	else if( Array.isArray(value) )
 		return value.map( x=>valueJson(x) );
 	else
@@ -41,6 +49,8 @@ export function valueString( value: Value|undefined ):string{
 		const date = ProtoUtils.toDate( <Timestamp>value );
 		return date ? date.toISOString() : "";//unset is seconds==0
 	}
+	else if( value instanceof ExtensionObject )
+		return value.toString();
 	else if( value instanceof ExNodeId )
 		return JSON.stringify(value.toJson());
 	else if( value instanceof NodeId )
