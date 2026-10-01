@@ -38,6 +38,9 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
 target_link_libraries( ${targetName} PUBLIC fmt::fmt )
 target_link_libraries( ${targetName} PUBLIC Boost::json )
+#io/crc.h's Calc32c is inline, so its caller makes the absl call.  PUBLIC also hands every target abseil_dll's
+#ABSL_CONSUME_DLL - the ones that only reach absl through protobuf's headers included.
+target_link_libraries( ${targetName} PUBLIC absl::crc32c )
 if( WIN32 )
 	#Jde.dll is the Boost.JSON dll (see boost() in functions.cmake): io/json.cpp compiles <boost/json/src.hpp> in, so
 	#BOOST_JSON_DECL must be dllexport throughout this target.  Target-wide rather than in json.cpp alone because the PCH

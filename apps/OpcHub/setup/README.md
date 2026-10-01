@@ -86,7 +86,7 @@ machine by itself.
 
 ```
 <program dir>                                            C:\Program Files\Jde-Cpp  |  %LOCALAPPDATA%\Programs\Jde-Cpp
-  OpcHub\     Jde.Opc.Hub.exe Jde.dll Jde.DB.dll fmt.dll z.dll libcrypto-3-x64.dll libssl-3-x64.dll
+  OpcHub\     Jde.Opc.Hub.exe Jde.dll Jde.DB.dll fmt.dll z.dll abseil_dll.dll libcrypto-3-x64.dll libssl-3-x64.dll
               Jde.DB.Sqlite.dll sqlite3.dll Jde.DB.Sqlite.AppServer.dll Jde.DB.Sqlite.OpcGateway.dll
               Jde.DB.Odbc.dll Jde.DB.MySql.dll
   OpcServer\  Jde.Opc.Server.exe + the same + libxml2.dll, Jde.DB.Sqlite.dll sqlite3.dll

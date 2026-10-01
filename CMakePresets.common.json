@@ -5,7 +5,8 @@
 			"name": "common",
 			"hidden": true,
 			"environment": {
-				"installRoot": "$env{REPO_DIR}/install/$env{CXX}"
+				"installRoot": "$env{REPO_DIR}/install/$env{CXX}",
+				"cpuFlags": "-msse4.2 -mpclmul"
 			},
 			"cacheVariables": {
 				"CMAKE_CXX_STANDARD": "26",

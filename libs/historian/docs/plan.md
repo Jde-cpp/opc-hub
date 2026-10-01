@@ -23,7 +23,7 @@ Each item is its own PR, useful without the historian.
 | # | Item | Why now |
 | --- | --- | --- |
 | 0.1 [#195] | **`Value` move** (spec *Values*, [`spec.md:73`](spec.md#L73)). Move `Value` from [`Opc.FromServer.proto`](../../../apps/OpcGateway/src/types/proto/Opc.FromServer.proto) into [`Opc.Common.proto`](../../../libs/opc/src/proto/Opc.Common.proto), and move that file from the gateway into `Jde.Opc`. Add `LocalizedText`, `QualifiedName`, `ExtensionObject` (type id and body), and `Array` (`repeated Value` plus dimensions). Add `Variant`↔`Value` conversion in both directions. Regenerate the web's generated code in `web/opc/control` (the current tree) and in `web/opc/proto`. | Both hosts encode with it, and the pass-through decodes with it. `/opc` gains the new types immediately, and the web shows them instead of `BadNotImplemented`. Round-trip every built-in type in `libs/opc/tests`' `ValueTests`/`VariantTests`. |
-| 0.2 [#196] | **CRC-32C.** Add `IO::Crc::Calc32c` beside `Calc32` ([`crc.h:78`](../../../include/jde/fwk/io/crc.h#L78)): a compile-time table, and `absl::ComputeCrc32c` at run time. | Needed for checkpoints and `.flushed`. Test both paths against the standard vector, `"123456789"` → `0xE3069283`. |
+| 0.2 [#196] | **CRC-32C.** Add `IO::Crc::Calc32c` beside `Calc32` in [`crc.h`](../../../include/jde/fwk/io/crc.h): a compile-time table, and `absl::ComputeCrc32c` at run time. Abseil becomes one shared library, built with `-msse4.2 -mpclmul` on every preset so the run-time path is its hardware CRC. | Needed for checkpoints and `.flushed`. Test both paths against the standard vector, `"123456789"` → `0xE3069283`. |
 | 0.3 [#197] | **Build flag.** Pin `-DUA_ENABLE_HISTORIZING=ON` in [`build/CMakeLists.txt`](../../../build/CMakeLists.txt). | Today it is only open62541's default. |
 | 0.4 [#198] | **`Authorize` keeps names current.** `AccessListener::UserChanged` ([`AccessListener.cpp:49`](../../../libs/access/src/AccessListener.cpp#L49)) passes the event's name to `CreateUser` and applies `Updated`. | OpcServer's edits store `user_name` through `OpcAuthorize` too, so this can't wait for the gateway. |
 
@@ -94,7 +94,7 @@ Fold the *Appendix* into the spec first, with its rulings ([#213]). Then:
 
 ## Phase 4 — web for pass-through, step 3 ([#217])
 
-- **Charting library.** There is none in [`web/opc/control/package.json`](../../../web/opc/control/package.json) today, so choosing one comes first. It needs stepped and interpolated series, a time axis that pans into more pages, and point markers for status.
+- **Charting library.** There is none in [`opc/control/package.json`](../../../web/opc/control/package.json) today, so choosing one comes first. It needs stepped and interpolated series, a time axis that pans into more pages, and point markers for status.
 - **One history service** takes a source, `{opc}` or `{group}`. Phase 4 implements `opc`, and Phase 6 adds `group` without touching the components.
 - **Components.**
   - A trend: stepped by default, gaps drawn where status is Bad; "load earlier" is a reverse read with only `end`.

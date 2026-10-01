@@ -3,6 +3,7 @@
 #define CRC_H//gcc precompiled headers
 DISABLE_WARNINGS
 #include <boost/crc.hpp>
+#include <absl/crc/crc32c.h>
 ENABLE_WARNINGS
 //https://gist.github.com/oktal/5573082
 
@@ -87,6 +88,30 @@ namespace Jde::IO::Crc{
 	}
 
 	static_assert( "Hello"_crc32 == 0xF7D18982, "CRC32 sanity check failed" );
+
+	inline constexpr std::array<uint32_t,256> crc32c_table = []{
+		std::array<uint32_t,256> table{};
+		for( uint32_t i=0; i<256; ++i ){
+			uint32_t crc = i;
+			for( int bit=0; bit<8; ++bit )
+				crc = (crc >> 1) ^ ( (crc & 1) ? 0x82F63B78 : 0 );//the Castagnoli polynomial, reflected.
+			table[i] = crc;
+		}
+		return table;
+	}();
+
+	//CRC-32C: the table at compile time; at run time abseil's hardware CRC, which the presets' cpuFlags compile in
+	//(build/CMakeLists.txt).  uint32_t, not uint32: uint_fast32_t is 64 bits on Linux.
+	inline constexpr α Calc32c( sv value )->uint32_t{
+		if( !std::is_constant_evaluated() )
+			return static_cast<uint32_t>( absl::ComputeCrc32c(value) );
+		uint32_t crc = 0xFFFFFFFF;
+		for( char ch : value )
+			crc = crc32c_table[static_cast<uint8_t>(crc) ^ static_cast<uint8_t>(ch)] ^ (crc >> 8);
+		return crc ^ 0xFFFFFFFF;
+	}
+
+	static_assert( Calc32c("123456789") == 0xE3069283, "CRC-32C sanity check failed" );
 }
 namespace Jde{
 	Ξ Calc32RunTime( sv value )->unsigned int{ return IO::Crc::Calc32( value ); }

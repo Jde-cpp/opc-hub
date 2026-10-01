@@ -4,7 +4,7 @@
 # the package does on install/remove, and the per-user tarball install.
 #
 # Stages the tree (opt/jde-cpp, etc/jde-cpp, var/lib/Jde-Cpp, the systemd units), bundles the .so's the exes load from
-# outside the system - the $REPO_DIR deps (fmt, boost, jsonnet) and LLVM's libc++/libc++abi, which the target distro
+# outside the system - the $REPO_DIR deps (fmt, abseil, boost, jsonnet) and LLVM's libc++/libc++abi, which the target distro
 # ships an older major of - computes Depends: from what is left on the system, and runs dpkg-deb; the tarball then also
 # carries the Depends: a system may lack (tarballPkgs), which nothing installs for it.  Every staged exe and
 # .so gets RUNPATH=$ORIGIN (patchelf), so one dir per product resolves by itself:  our own are linked that way already
@@ -125,7 +125,7 @@ install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$m
 install -m 755 "$serverExe" "$optDir/opcserver/"
 install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$optDir/opcserver/"
 
-#Every .so an exe or module resolves outside the system dirs comes along (the deps tree: fmt, boost, jsonnet), and of
+#Every .so an exe or module resolves outside the system dirs comes along (the deps tree: fmt, abseil, boost, jsonnet), and of
 #the system ones LLVM's libc++/libc++abi (and libunwind, should libc++abi ever link it) plus libxml2 and the ICU pair it
 #links.  libxml2 is the one system library whose soname moves between the releases we claim to support - Ubuntu 24.04
 #builds against libxml2.so.2, 26.04 ships only libxml2.so.16 (package `libxml2-16`, and `libicu74` -> `libicu78`) - so a
