@@ -3,6 +3,7 @@
 #include <jde/app/client/IAppClient.h>
 #include "globals.h"
 #include "opcServerStartup.h"
+#include <jde/fwk/process/cpu.h>
 
 #define let const auto
 std::optional<int> _exitCode;
@@ -11,6 +12,8 @@ std::optional<int> _exitCode;
 #endif
 
 α main( int argc, char **argv )->int{
+	if( !Jde::Process::CheckCpu() )
+		return EXIT_FAILURE;
 	using namespace Jde;
 	Logging::AddTagParser( mu<Opc::UALogParser>() );
 	int exitCode;

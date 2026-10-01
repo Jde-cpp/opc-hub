@@ -11,6 +11,7 @@
 #include "../src/UAClient.h"
 #include "SoakAppClient.h"
 #include "SoakRunner.h"
+#include <jde/fwk/process/cpu.h>
 
 #define let const auto
 #ifndef _MSC_VER
@@ -40,6 +41,8 @@ namespace Jde::Opc::Gateway::Soak{
 }
 
 α main( int argc, char **argv )->int{
+	if( !Jde::Process::CheckCpu() )
+		return EXIT_FAILURE;
 	using namespace Jde;
 	using namespace Jde::Opc::Gateway;
 	Logging::AddTagParser( mu<Opc::UALogParser>() );

@@ -4,5 +4,14 @@
 # the helper sets the operator's copy aside so dpkg forgets it; postinst puts it back as a plain file.  No version bound:
 # once the package no longer owns the file, the helper leaves it alone.
 set -e
+# The binaries are built with -msse4.2 -mpclmul; on a CPU without them they die on SIGILL with nothing logged, so refuse
+# before anything is unpacked.  No /proc (a chroot):  the products' own start-up check still says why.
+case "$1" in
+	install|upgrade)
+		if [ -r /proc/cpuinfo ] && ! { grep -qw sse4_2 /proc/cpuinfo && grep -qw pclmulqdq /proc/cpuinfo; }; then
+			echo "jde-opchub: this CPU lacks SSE4.2 or PCLMULQDQ, which the binaries require - nothing was installed.  In a VM, choose a CPU model that passes them through (e.g. host)." >&2
+			exit 1
+		fi;;
+esac
 dpkg-maintscript-helper rm_conffile /etc/jde-cpp/env -- "$@"
 exit 0

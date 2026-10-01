@@ -1,6 +1,7 @@
 ﻿#include "appStartup.h"
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/process/cpu.h>
 
 namespace Jde{
 #ifndef _MSC_VER
@@ -18,6 +19,8 @@ namespace Jde{
 }
 
 α main( int argc, char** argv )->int{
+	if( !Jde::Process::CheckCpu() )
+		return EXIT_FAILURE;
 	using namespace Jde;
 	int exitCode;
 	try{

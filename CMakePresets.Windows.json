@@ -9,7 +9,7 @@
 			"hidden": true,
 			"inherits": "common",
 			"environment": {
-				"cxxFlags": "-DWIN32_LEAN_AND_MEAN"
+				"cxxFlags": "-DWIN32_LEAN_AND_MEAN $env{cpuFlags}"
 			},
 			"cacheVariables": {
 				"CMAKE_BUILD_TYPE": "$env{buildType}",

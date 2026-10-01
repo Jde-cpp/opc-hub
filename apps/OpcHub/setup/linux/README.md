@@ -26,7 +26,7 @@ apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dw
 ```
 
 What it does: stages one dir per product with the exe, `libJde.so`, `libJde.DB.so`, the sqlite driver and the proc
-modules, and beside them every `.so` those resolve outside the system dirs - fmt, Boost json/container, jsonnet from the
+modules, and beside them every `.so` those resolve outside the system dirs - fmt, abseil, Boost json/container, jsonnet from the
 `$REPO_DIR` deps tree - plus LLVM's `libc++`/`libc++abi`, which the target distro ships an older major of, and `libxml2`
 with the `libicuuc`/`libicudata` pair it links.  libxml2 is the one system library whose soname moves between the releases
 this package claims: 24.04 builds against `libxml2.so.2`, 26.04 ships only `libxml2.so.16` (`libxml2-16`, and `libicu74`
@@ -77,7 +77,7 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
 /opt/jde-cpp
   opchub/     Jde.Opc.Hub libJde.so libJde.DB.so libJde.DB.Sqlite.so libJde.DB.Sqlite.AppServer.so libJde.DB.Sqlite.OpcGateway.so
               libJde.DB.MySql.so libfmt.so.12 libboost_json.so.1.92.0 libboost_container.so.1.92.0 libboost_charconv.so.1.92.0
-              libjsonnet.so.0 libjsonnet++.so.0 libc++.so.1 libc++abi.so.1
+              libjsonnet.so.0 libjsonnet++.so.0 libabseil_dll.so.2605.0.0 libc++.so.1 libc++abi.so.1
   opcserver/  Jde.Opc.Server + the same, without the proc modules or the MySQL driver
   web/        the Angular site
 /etc/jde-cpp                                             settings mirror - repo layout, so the configs' relative imports keep working (dpkg conffiles)

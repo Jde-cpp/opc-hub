@@ -59,6 +59,9 @@ message( CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX} )
 # installers ship names these versions.
 set( fmtTag 12.2.0 )
 set( abslTag 20260526.0 )
+#abseil's ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY, patched into options.h below; upstream's 0 keeps the headers portable.
+#2 lets its inline hash use the CRC32 instruction cpuFlags enable.  Echoed like a tag:  protobuf inlines that hash too.
+set( abslHwAccel 2 )
 set( rymlTag v0.10.0 )
 set( open62541Tag v1.5.6 )
 
@@ -104,13 +107,34 @@ ExternalProject_Add(spdlog
 		-DSPDLOG_BUILD_PIC=ON
 )
 
+# One shared abseil (libabseil_dll.so / abseil_dll.dll) for Jde and every exe: a static one is linked into each of them
+# separately - into the exes through protobuf, and again into Jde the moment fwk calls absl.  MONOLITHIC is also what
+# turns on abseil's dll mode under win-clang, which cmake does not count as MSVC.
+# The presets' cpuFlags (-msse4.2 -mpclmul) reach it through stdArgs' CMAKE_CXX_FLAGS: abseil compiles its hardware
+# CRC-32C only when both are on, and with abslHwAccel its hash header keys off __SSE4_2__ too - so they are on every
+# preset, never on abseil alone (build/dependencies.cmake checks).
+set( _abslPatch "${CMAKE_CURRENT_BINARY_DIR}/absl-options.cmake" )
+file( WRITE "${_abslPatch}" [=[
+set(_file "${SOURCE_DIR}/absl/base/options.h")
+file(READ "${_file}" _c)
+string(REGEX REPLACE "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY [0-9]" "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY ${STRATEGY}" _patched "${_c}")
+if(NOT _patched MATCHES "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY ${STRATEGY}")
+    message(FATAL_ERROR "absl patch no longer applies: no ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY in ${_file}")
+endif()
+if(NOT _patched STREQUAL _c) #unchanged on a re-run:  rewriting it would recompile everything that includes it
+    file(WRITE "${_file}" "${_patched}")
+endif()
+]=] )
 ExternalProject_Add(absl
 	GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
 	GIT_TAG ${abslTag}
 	PREFIX absl
 	INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/absl
+	PATCH_COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=<SOURCE_DIR>" -DSTRATEGY=${abslHwAccel} -P "${_abslPatch}"
 	CMAKE_ARGS ${stdArgs}
 		-DCMAKE_PREFIX_PATH=${CMAKE_INSTALL_PREFIX}
+		-DBUILD_SHARED_LIBS=ON
+		-DABSL_BUILD_MONOLITHIC_SHARED_LIBS=ON
 		-DABSL_BUILD_TESTING=OFF
 		-DABSL_USE_EXTERNAL_GOOGLETEST=ON
 		#-DABSL_FIND_GOOGLETEST=ON
@@ -321,12 +345,42 @@ ExternalProject_Add(protobuf
 	CMAKE_ARGS ${stdArgs}
 		-DCMAKE_PREFIX_PATH=${CMAKE_INSTALL_PREFIX}
 		-Djde_DEP_TAG_absl=${abslTag}
+		-Djde_DEP_ABSL_HW_ACCEL=${abslHwAccel}
 		-Dprotobuf_USE_EXTERNAL_GTEST=ON
 		-Dprotobuf_BUILD_TESTS=OFF
 		-Dprotobuf_ABSL_PROVIDER=package
 		-Dprotobuf_LOCAL_DEPENDENCIES_ONLY=ON
 		-Dprotobuf_MSVC_STATIC_RUNTIME=OFF
 )
+# protoc links the shared abseil, but protobuf pins its install RPATH to its own lib dir ($ORIGIN/../lib) and Windows
+# loads from beside the exe - so the build's protobuf_generate steps die on a missing abseil_dll.  Put it where protoc
+# looks: a relative link (CI mounts the tree at another path) beside protobuf's libs, a copy beside protoc.exe.  After
+# abseil's install as well as protobuf's, so a --target absl rebuild does not leave protoc a stale copy.
+set( _protocAbsl "${CMAKE_CURRENT_BINARY_DIR}/protoc-absl.cmake" )
+file( WRITE "${_protocAbsl}" [=[
+if(CMAKE_HOST_WIN32)
+    file(COPY "${PREFIX}/absl/bin/abseil_dll.dll" DESTINATION "${PREFIX}/protobuf/bin")
+else()
+    file(GLOB _libs "${PREFIX}/absl/lib/libabseil_dll.so*")
+    if(NOT _libs)
+        message(FATAL_ERROR "no ${PREFIX}/absl/lib/libabseil_dll.so* - abseil is no longer one shared library?")
+    endif()
+    file(MAKE_DIRECTORY "${PREFIX}/protobuf/lib") #abseil installs first on a fresh tree
+    foreach(_lib ${_libs})
+        get_filename_component(_name "${_lib}" NAME)
+        file(REMOVE "${PREFIX}/protobuf/lib/${_name}")
+        file(CREATE_LINK "../../absl/lib/${_name}" "${PREFIX}/protobuf/lib/${_name}" SYMBOLIC)
+    endforeach()
+endif()
+]=] )
+foreach( _project absl protobuf )
+	ExternalProject_Add_Step( ${_project} absl-runtime
+		COMMAND ${CMAKE_COMMAND} "-DPREFIX=${CMAKE_INSTALL_PREFIX}" -P "${_protocAbsl}"
+		DEPENDEES install
+		DEPENDS "${_protocAbsl}"
+		COMMENT "${_project}: placing the shared abseil where protoc loads it from"
+	)
+endforeach()
 
 # open62541-nodeset-loader only does install(EXPORT NodesetLoader ...), producing a bare
 # NodesetLoader.cmake targets file with no NodesetLoaderConfig.cmake wrapper. find_package()
