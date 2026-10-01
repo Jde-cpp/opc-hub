@@ -12,8 +12,4 @@ namespace Jde::Opc::Gateway::FromServer{
 	α QueryTrans( string&& result, RequestId requestId )ι->FromServer::Transmission;
 
 	α ToProto( const ServerCnnctnNK& opcId, const NodeId& node, const Opc::Value& v, RequestId requestId )ι->FromServer::Message;
-	α ToProto( const ExNodeId& id )ι->Proto::ExpandedNodeId;
-	//α ToProto( Opc::Value&& value )ι->FromServer::Value;
-	α ToValue( const FromServer::Value& value )ι->Opc::Value;
-	α ToNodeProto( const NodeId& id )ι->Proto::NodeId;
 }

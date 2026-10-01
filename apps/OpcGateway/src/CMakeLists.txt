@@ -30,11 +30,15 @@ set( PROTO_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR} )
 set( protoOutDir ${CMAKE_CURRENT_BINARY_DIR}/types/proto )
 file( MAKE_DIRECTORY ${protoOutDir} )#protoc will not create it and Unix Makefiles does not either - see libs/app/shared.
 set( protoIncludeDir "${jdeRoot}/libs/app/shared/proto" )
+#Stale-output purge which moved Opc.Common.proto to libs/opc:  a build dir configured before it still holds this
+#dir's generated copy, and Opc.From*.pb.h's `#include "Opc.Common.pb.h"` finds its own directory first.  Remove after 2026-12-31.
+file( REMOVE ${protoOutDir}/Opc.Common.pb.h ${protoOutDir}/Opc.Common.pb.cc )
 protobuf_generate(
 	TARGET ${targetName}
 	IMPORT_DIRS
 		"types/proto"
 		"${protoIncludeDir}"
+		"${jdeRoot}/libs/opc/src/proto"
 	PROTOC_OUT_DIR ${protoOutDir})
 
 suppressProtoWarnings( "${protos}" ${protoOutDir} )

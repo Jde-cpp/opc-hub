@@ -5,7 +5,7 @@
 #include "../types/UAClientException.h"
 #include "Subscriptions.h"
 #include "../uatypes/CreateMonitoredItemsRequest.h"
-#include "../types/proto/opc.Common.h"
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 

@@ -1,7 +1,5 @@
 syntax = "proto3";
 package Jde.Opc.Gateway.FromServer;
-import "google/protobuf/duration.proto";
-import "google/protobuf/timestamp.proto";
 import "Opc.Common.proto";
 import "Common.proto";
 
@@ -16,36 +14,11 @@ message SubscriptionAck{
 	repeated MonitoredItemCreateResult results=1;
 }
 
-message Value{
-	oneof of{
-		bool boolean=1;
-		uint32 byte=2;
-		bytes byte_string=3;
-		google.protobuf.Timestamp date=4;
-		double double_value=5;
-		google.protobuf.Duration duration=6;
-		Jde.Opc.Proto.ExpandedNodeId expanded_node=7;
-		float float_value=8;
-		bytes guid=9;
-		int32 int16=10;
-		int32 int32=11;
-		int64 int64=12;
-		Jde.Opc.Proto.NodeId node=13;
-		int32 sbyte=14;
-		uint32 status_code=15;
-		string string_value=16;
-		uint32 uint16=17;
-		uint32 uint32=18;
-		uint64 uint64=19;
-		string xml_element=20;
-	}
-}
-
 message NodeValues{
 	string opc_id=1;
 	Jde.Opc.Proto.NodeId node=2;
-	repeated Value values=3;
-	uint32 sc=4;//the UA_DataValue's quality - one per reading, even when the value is an array.  0 = Good.
+	Jde.Opc.Proto.Value value=3;//the whole reading:  an array is its `array` member, with its type and dimensions.  No member = an empty Variant.
+	uint32 sc=4;//the UA_DataValue's quality - one per reading, even when the value is an array.  0 = Good.  The gateway's own code, with no value, when it cannot convert the value.
 }
 
 message UnsubscribeAck{

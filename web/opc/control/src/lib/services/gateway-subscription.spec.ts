@@ -11,6 +11,7 @@ import { HttpClient } from '@angular/common/http';
 import { vi } from 'vitest';
 import { AuthStore, ETransport } from 'jde-framework';
 import { NodeId } from '../model/node-id';
+import { ExtensionObject, valueString } from '../model/value';
 import { OpcError } from '../model/opc-error';
 import { scBadUnexpectedError } from '../model/types';
 import { Gateway, SubscriptionResult } from './gateway-service';
@@ -155,10 +156,10 @@ describe( 'Gateway readings', ()=>{
 		gateway.subscribe( opcId, [A], "owner1" ).subscribe( {next: r=>results.push(r), error: ()=>{}} );
 		await Promise.resolve();
 	} );
-	const push = ( values:object[], sc?:number )=>(gateway as any).nodeValues( {opcId, node: {namespaceIndex: 2, numeric: 1}, values, sc} );
+	const push = ( value:object|undefined, sc?:number )=>(gateway as any).nodeValues( {opcId, node: {namespaceIndex: 2, numeric: 1}, value, sc} );
 
 	it( 'pushes a Good reading as its value', ()=>{
-		push( [{doubleValue: 7}] );//proto3 leaves 0/Good off the wire
+		push( {doubleValue: 7} );//proto3 leaves 0/Good off the wire
 		expect( results ).toMatchObject( [{value: 7, sc: 0}] );
 	} );
 
@@ -169,7 +170,7 @@ describe( 'Gateway readings', ()=>{
 		const previous = console.error;
 		console.error = ( ...args:any[] )=>errors.push( args );
 		try{
-			push( [{doubleValue: 7}] );
+			push( {doubleValue: 7} );
 			const toNode = ( proto:object )=>(Gateway as any).toNode( proto );
 			expect( toNode({namespaceIndex: 2, numeric: 0}) ).toMatchObject( {ns: 2, id: 0} );//0 and "" are ids, not absence
 			expect( toNode({namespaceIndex: 2, string: ""}) ).toMatchObject( {ns: 2, id: ""} );
@@ -184,20 +185,43 @@ describe( 'Gateway readings', ()=>{
 		expect( results[0].node.equals(A) ).toBe( true );
 	} );
 
+	//#195:  the gateway sent BadNotImplemented for these, and a structure is its encoded form, as the historian keeps it.
+	it( 'shows the built-in types the gateway used to leave out', ()=>{
+		push( {localizedText: {locale: "en", text: "Hello"}} );
+		push( {localizedText: {}} );//no text at all
+		push( {qualifiedName: {namespaceIndex: 2, name: "Temperature"}} );
+		push( {qualifiedName: {namespaceIndex: 0, name: "Server"}} );
+		push( {extensionObject: {typeId: {namespaceIndex: 0, numeric: 886}, binary: new Uint8Array([0, 255])}} );
+		push( {array: {values: [{int32: 1}, {stringValue: "x"}], dimensions: [], type: 24}} );
+		expect( results.map(r=>r.value) ).toMatchObject( ["Hello", "", "2:Temperature", "Server", {body: new Uint8Array([0, 255])}, [1, "x"]] );
+		const x = results[4].value as ExtensionObject;
+		expect( x ).toBeInstanceOf( ExtensionObject );
+		expect( valueString(x) ).toBe( "i=886 AP8=" );
+	} );
+
 	it( 'keeps an Uncertain reading\'s value and says what it is worth', ()=>{
-		push( [{doubleValue: 1500}], uncertain );
+		push( {doubleValue: 1500}, uncertain );
 		expect( results ).toMatchObject( [{value: 1500, sc: uncertain}] );
 	} );
 
 	it( 'keeps the value a Bad push carries, rather than an OpcError in its place', ()=>{
-		push( [{doubleValue: 612}], bad );
+		push( {doubleValue: 612}, bad );
 		expect( results ).toMatchObject( [{value: 612, sc: bad}] );
 	} );
 
 	it( 'has no value for a Bad push that carries none - not an empty array', ()=>{
-		push( [], bad );
+		push( undefined, bad );
 		expect( results[0].value ).toBeUndefined();
 		expect( results[0].sc ).toBe( bad );
+	} );
+
+	//#195 review #2:  the gateway sent one Value per element, so a one-element array read as a scalar and an empty one as no value.
+	it( 'keeps an array reading an array, whatever its length', ()=>{
+		push( {array: {values: [{int32: 9}], dimensions: [], type: 6}} );
+		push( {array: {values: [], dimensions: [], type: 12}} );//an empty String[]
+		push( {} );//an empty Variant
+		push( {array: {values: [1, 2, 3, 4, 5, 6].map( i=>({int32: i}) ), dimensions: [2, 3], type: 6}} );
+		expect( results.map(r=>r.value) ).toEqual( [[9], [], undefined, [1, 2, 3, 4, 5, 6]] );
 	} );
 
 	it( 'reads the quality with the value', async ()=>{

@@ -1,0 +1,78 @@
+syntax = "proto3";
+package Jde.Opc.Proto;
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+message NodeId{
+	uint32 namespace_index=1;
+  oneof Identifier{
+		uint32 numeric=2;
+		string string=3;
+		bytes guid=4;
+		bytes byte_string=5;
+	}
+}
+
+message ExpandedNodeId{
+	NodeId node=1;
+	string namespace_uri=2;
+	uint32 server_index=3;
+}
+
+//optional: unlike the other strings here, a null member is common - most text has no locale - and changes the encoding.
+message LocalizedText{
+	optional string locale=1;
+	optional string text=2;
+}
+
+message QualifiedName{
+	uint32 namespace_index=1;
+	string name=2;
+}
+
+//A structure is kept encoded, so it survives whether or not anything here knows its type.  type_id is the encoding's
+//NodeId (e.g. a type's DefaultBinary), as on the wire; no body is UA's ENCODED_NOBODY.
+message ExtensionObject{
+	NodeId type_id=1;
+	oneof body{
+		bytes binary=2;
+		string xml=3;
+	}
+}
+
+message Array{
+	repeated Value values=1;
+	repeated uint32 dimensions=2;//a matrix's shape, outermost first.  Empty for a one-dimensional array.
+	uint32 type=3;//the elements' built-in type id (Part 6 5.1.2) - what the values cannot say for an empty array or a Variant array.
+	bool is_null=4;//length -1, which encodes apart from an empty array.  No values.
+}
+
+//proto3 has no null string, so a null String, ByteString or XmlElement comes back empty.
+message Value{
+	oneof of{
+		bool boolean=1;
+		uint32 byte=2;
+		bytes byte_string=3;
+		google.protobuf.Timestamp date=4;
+		double double_value=5;
+		google.protobuf.Duration duration=6;
+		ExpandedNodeId expanded_node=7;
+		float float_value=8;
+		bytes guid=9;
+		int32 int16=10;
+		int32 int32=11;
+		int64 int64=12;
+		NodeId node=13;
+		int32 sbyte=14;
+		uint32 status_code=15;
+		string string_value=16;
+		uint32 uint16=17;
+		uint32 uint32=18;
+		uint64 uint64=19;
+		string xml_element=20;
+		LocalizedText localized_text=21;
+		QualifiedName qualified_name=22;
+		ExtensionObject extension_object=23;
+		Array array=24;
+	}
+}
