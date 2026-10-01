@@ -69,6 +69,7 @@ libs/app/shared/proto/Web.FromServer.proto
 # Must re-include the dir before its contents (git won't descend into an ignored dir).
 !.github/
 !.github/**
+!/.gitattributes
 apps/OpcGateway/config/common-meta.libsonnet
 apps/AppServer/config/common-meta.libsonnet
 libs/access/config/common-meta.libsonnet
