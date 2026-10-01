@@ -4,6 +4,7 @@
 #include <jde/opc/uatypes/Logger.h>
 #include "GatewayAppClient.h"
 #include "gatewayStartup.h"
+#include <jde/fwk/process/cpu.h>
 
 #define let const auto
 #ifndef _MSC_VER
@@ -11,6 +12,8 @@
 #endif
 
 α main( int argc, char **argv )->int{
+	if( !Jde::Process::CheckCpu() )
+		return EXIT_FAILURE;
 	using namespace Jde;
 	Logging::AddTagParser( mu<Opc::UALogParser>() );
 	int exitCode{ EXIT_FAILURE };

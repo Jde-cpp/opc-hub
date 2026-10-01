@@ -48,6 +48,11 @@ if [ -n "$missing" ]; then
 	echo "install.sh: the products load $missing, which neither this tarball nor the system has - nothing was installed.  Install the distro package that provides it, or use the .deb, whose apt install brings it." >&2
 	exit 1
 fi
+#Built with -msse4.2 -mpclmul:  without them the units die on SIGILL with nothing logged.
+if ! { grep -qw sse4_2 /proc/cpuinfo && grep -qw pclmulqdq /proc/cpuinfo; }; then
+	echo "install.sh: this CPU lacks SSE4.2 or PCLMULQDQ, which the products require - nothing was installed.  In a VM, choose a CPU model that passes them through (e.g. host)." >&2
+	exit 1
+fi
 install -d "$programs" "$config" "$dataRoot" "$units"
 cp -r --remove-destination "$here/opt/jde-cpp/." "$programs/" #unlink first: a rerun copies over the running products, where a plain cp dies ETXTBSY on the exe and rewrites each mapped .so in place; a new inode, like dpkg's rename, leaves the old image to the restart below (reviews/m4-closing.md #1)
 #The four overlays the README sends the operator to edit keep an edited copy, as the .deb's conffiles do:  $config/.dist

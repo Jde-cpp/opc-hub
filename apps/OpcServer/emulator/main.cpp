@@ -10,6 +10,7 @@
 #include <jde/ql/ql.h>
 #include "EmulatorAppClient.h"
 #include "Emulator.h"
+#include <jde/fwk/process/cpu.h>
 
 #define let const auto
 #ifndef _MSC_VER
@@ -23,6 +24,8 @@
 //First run:  -createCert (both certs; the UA one must sit in a dir the OpcServer trusts - see /access/trustedCertDirs),
 //then -grant once OpcServer has booted (it registers the nodeIds resource), then RESTART OpcServer so it loads the acl.
 α main( int argc, char **argv )->int{
+	if( !Jde::Process::CheckCpu() )
+		return EXIT_FAILURE;
 	using namespace Jde;
 	using namespace Jde::Opc;
 	Logging::AddTagParser( mu<Opc::UALogParser>() );
