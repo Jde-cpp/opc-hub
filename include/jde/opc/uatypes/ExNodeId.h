@@ -48,10 +48,5 @@ namespace Jde::Opc{
 
 	Ξ operator==( const ExNodeId& x, const ExNodeId& y )ι->bool{ return !(x<y) && !(y<x); }
 	α ToJson( const UA_ExpandedNodeId& nodeId )ε->jobject;
-
-	//absl::Hash, reseeded every run:  for in-process containers only - never store, send or log one (Calc32c for that, reviews/abseil.md D2).
-	struct NodeIdHash{
-		α operator()(const ExNodeId& n)Ι->uint;
-	};
 }
 #endif

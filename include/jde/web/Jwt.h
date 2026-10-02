@@ -29,7 +29,7 @@ namespace Jde::Web{
 		string UserName;
 		string UserSlug;
 		string Description;
-		α SetModulus( str encoded )ι->void;
-		α SetExponent( str encoded )ι->void;
+		α SetModulus( str encoded )ε->void;
+		α SetExponent( str encoded )ε->void;
 	};
 }

@@ -100,7 +100,7 @@ namespace Jde::Web::Server{
 	α HttpRequest::SessionId()Ι->SessionPK{
 		SessionPK sessionId{ SessionInfo ? SessionInfo->SessionId : 0 };
 		if( auto authorization = sessionId ? string{} : Header("authorization"); authorization.size() )
-			sessionId = Str::TryTo<SessionPK>( authorization, 16 ).value_or( 0 );
+			sessionId = Str::TryTo<SessionPK,16>( authorization ).value_or( 0 );
 
 		return sessionId;
 	}

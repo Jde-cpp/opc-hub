@@ -41,17 +41,19 @@ namespace Jde{
 			for( auto d=is.peek(); (d>='0'&&d<='9')||d=='.'; d=is.peek() )
 				num += (char)is.get();
 			let type = is.get();
-			if( num.empty() || type==std::char_traits<char>::eof() )
-				break;
+			//every token is a number and a designator:  one missing is a typo, not a zero - and so is an unknown designator (the final else).
+			THROW_IFSL( num.empty() || type==std::char_traits<char>::eof(), "ISO duration token missing its {}:  '{}'", num.empty() ? "number" : "designator", num.empty() ? string{(char)type} : num );
 			double value;
 			if( !absl::SimpleAtod(num, &value) )
-				throw Exception{ sl, ExceptionArgs{}, "Could not parse ISO duration token:  {}{}", num, type };
+				throw Exception{ sl, ExceptionArgs{}, "Could not parse ISO duration token:  {}{}", num, (char)type };
 			//date units use the exact std::chrono period ratios so ToDuration is the inverse of ToString
 			//(which emits years/months/days) - a month is ~730.5h, not 720h; a year 365.2425d, not 365.25d.
 			if( type=='Y' )
 				duration += duration_cast<Duration>( std::chrono::duration<double,years::period>{value} );
 			else if( !parsingTime && type=='M' )
 				duration += duration_cast<Duration>( std::chrono::duration<double,months::period>{value} );
+			else if( !parsingTime && type=='W' )
+				duration += duration_cast<Duration>( std::chrono::duration<double,weeks::period>{value} );
 			else if( type=='D' )
 				duration += duration_cast<Duration>( std::chrono::duration<double,days::period>{value} );
 			else if( type=='H' )
@@ -60,6 +62,8 @@ namespace Jde{
 				duration += seconds( Round(value*60) );
 			else if( type=='S' )
 				duration += milliseconds( Round(value*1000) );
+			else
+				throw Exception{ sl, ExceptionArgs{}, "Unknown ISO duration designator:  {}{}", num, (char)type };
 		}
 		return duration;
 	}
@@ -74,10 +78,12 @@ namespace Jde{
 	}
 
 	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{
-		//%E*S takes any number of fraction digits, %Ez a 'Z' or a ±hh[[:]mm] offset; no zone at all reads as UTC.
+		//%E*S takes any number of fraction digits, %Ez a 'Z' or a ±hh[[:]mm] offset; no zone at all reads as UTC.  Past the 'T' only a
+		//zone holds Z, + or -, so the format is picked up front rather than by a failed parse.
+		let time = iso.find_first_of( "Tt" );
+		let zoned = time!=string::npos && iso.find_first_of( "Zz+-", time )!=string::npos;
 		absl::Time t; string error;
-		let parsed = absl::ParseTime( "%Y-%m-%d%ET%H:%M:%E*S%Ez", iso, absl::UTCTimeZone(), &t, &error )
-			|| absl::ParseTime( "%Y-%m-%d%ET%H:%M:%E*S", iso, absl::UTCTimeZone(), &t, &error );
+		let parsed = absl::ParseTime( zoned ? "%Y-%m-%d%ET%H:%M:%E*S%Ez" : "%Y-%m-%d%ET%H:%M:%E*S", iso, absl::UTCTimeZone(), &t, &error );
 		THROW_IFSL( !parsed, "Could not parse ISO time:  {} - {}", iso, error );
 		return absl::ToChronoTime( t );
 	}

@@ -110,7 +110,7 @@ namespace Jde::Web{
 						let echoIndex = To<SessionPK>( Json::AsString(jsonResult) );
 						if( echoIndex!=idx )
 							THROW( "index={} echoIndex={}", idx, echoIndex );
-						(*pSessionIds)[idx] = *Str::TryTo<SessionPK>( res[http::field::authorization], 16 );
+						(*pSessionIds)[idx] = *Str::TryTo<SessionPK,16>( res[http::field::authorization] );
 					}
 					catch( Exception& e ){
 						DBG( "connections={}", connections.load() );
@@ -129,7 +129,7 @@ namespace Jde::Web{
 					uint idx = index;
 					let sessionId = (*pSessionIds)[idx].load();
 					ClientHttpRes res = co_await ClientHttpAwait{ Host, "/Authorization", Port, {.Authorization=Ƒ("{:x}", sessionId)} };
-					if( sessionId!=*Str::TryTo<uint>(res[http::field::authorization], 16) )
+					if( sessionId!=*Str::TryTo<uint,16>(res[http::field::authorization]) )
 						THROW( "sessionId={} authorization={}", sessionId, res[http::field::authorization] );
 					(*pSessionIds)[idx] = 0;
 				}();
@@ -224,7 +224,7 @@ namespace Jde::Web{
 		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::internal_server_error, e.Status() );
 			let authorization = e.Res()[http::field::authorization];
-			let sessionId = Str::TryTo<SessionPK>( authorization, 16 );
+			let sessionId = Str::TryTo<SessionPK,16>( authorization );
 			ASSERT_TRUE( sessionId && *sessionId ) << Ƒ( "authorization='{}'", authorization );
 		}
 	}
@@ -435,6 +435,14 @@ namespace Jde::Web{
 		let keyed = parseJwt( {{"iat", now}, {"n", Str::Encode64("modulus"s, true)}, {"e", Str::Encode64("\x01\x00\x01"s, true)}} );//a key without a description used to get the fingerprint
 		EXPECT_EQ( "", keyed.Description );
 		EXPECT_FALSE( keyed.UserName.empty() ) << "the fingerprint still names an anonymous key";
+	}
+
+	//security-review #1:  SetModulus/SetExponent were noexcept around a throwing Decode64, so a malformed n or e claim - read
+	//before exp, iat or any signature - terminated the process instead of failing the parse.
+	TEST( JwtKeyClaimTests, MalformedKeyClaimThrows ){
+		let now = time( nullptr );
+		EXPECT_THROW( parseJwt({{"iat", now}, {"n", "!!!"}, {"e", Str::Encode64("\x01\x00\x01"s, true)}}), Exception );
+		EXPECT_THROW( parseJwt({{"iat", now}, {"n", Str::Encode64("modulus"s, true)}, {"e", "!!!"}}), Exception );
 	}
 
 	//web-review3 O4: the parse gate above bounds when a token may be *presented*; Expires() is what bounds the session a consumer

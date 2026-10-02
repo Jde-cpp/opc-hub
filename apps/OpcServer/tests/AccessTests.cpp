@@ -488,6 +488,23 @@ namespace Jde::Opc::Server::Tests{
 		UA_IssuedIdentityToken_clear( &issued );
 	}
 
+	//security-review #1:  an issued token of 9+ bytes is parsed as a jwt, and a malformed n claim in it terminated the OpcServer.
+	TEST_F( AccessTests, AnIssuedTokenWithAMalformedKeyClaimIsRefused ){
+		let head = jobject{ {"alg","RS256"}, {"typ","JWT"} };
+		let body = jobject{ {"iat", time(nullptr)}, {"n", "!!!"}, {"e", "AQAB"} };
+		let token = Str::Encode64( serialize(head), true )+"."+Str::Encode64( serialize(body), true )+"."+Str::Encode64( "notVerifiedHere"s, true );
+		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
+		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
+		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
+		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
+
+		void* slot{};
+		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
+		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYTOKENINVALID );
+		EXPECT_FALSE( slot );
+		UA_IssuedIdentityToken_clear( &issued );
+	}
+
 	//opcserver-review3 L20:  the session-expiry renewal was a BlockAwait made from inside the access-control callbacks -
 	//which open62541 calls with its serviceMutex held - so a hung AppServer froze every OPC client for the socket deadline,
 	//and the timeout then tore down the app-client socket.  It is now posted and answered on the io thread; the UA thread

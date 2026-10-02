@@ -94,6 +94,15 @@ namespace Jde::App::Server::Tests{
 		EXPECT_NE( *status, http::status::ok );
 	}
 
+	//security-review #1:  a malformed n claim, unauthenticated, terminated the server - this whole suite - before any signature check.
+	TEST_F( HttpRoutingTests, LoginRejectsMalformedKeyClaim ){
+		let jwt = EncodeJwt( jobject{{"iat", time(nullptr)}, {"n", "!!!"}, {"e", "AQAB"}} );
+		let status = FailureStatus( [&]{ Post("/login", "{}", "Bearer "+jwt); } );
+		ASSERT_TRUE( status );
+		EXPECT_NE( *status, http::status::ok );
+		EXPECT_EQ( Json::AsString(Get("/GoogleAuthClientId").Json(), "value"), "app-server-tests-google-client-id" ) << "the server still answers";
+	}
+
 	//The contract the spa depends on: a rejected /login answers 401, and answers it in a form the browser will hand to
 	//fetch - without Access-Control-Allow-Origin the response is blocked outright, `status` reads 0, and proto-service's
 	//`if( e["status"]!=401 )` skips the re-login.  Server::HandleRequest resolves the bearer token before HttpRequestAwait

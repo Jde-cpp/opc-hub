@@ -100,7 +100,7 @@ namespace Jde::Web{
 		Web::Jwt jwt{ move(publicKey), {0}, "testUser", "testUserCallSign", 0, "127.0.0.1", Clock::now()+1h, {}/*description*/, settings.PrivateKey };
 		auto await = ClientHttpAwait{ Host, "/login", serialize(jobject{{"jwt", jwt.Payload()}}), Port };
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-		_sessionId = *Str::TryTo<SessionPK>( res[http::field::authorization], 16 );
+		_sessionId = *Str::TryTo<SessionPK,16>( res[http::field::authorization] );
 		INFO( "({:x})Loggin Complete.", _sessionId );
 	}
 	Ω connectSocket( optional<ssl::context> ctx=nullopt )->void{

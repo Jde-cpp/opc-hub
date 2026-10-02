@@ -134,9 +134,7 @@ namespace Jde::Tests{
 		EXPECT_EQ( ToIsoString<days>(Chrono::ToTimePoint(2024, 2, 29)), "2024-02-29" );
 	}
 
-	//ToDuration is fed straight from config (Settings/json durations), so the leading 'P' check is the only thing
-	//between a mistyped setting and a silently-zero duration - every token loop below it just breaks on what it
-	//cannot read, which for "5M" would be immediately.
+	//ToDuration is fed straight from config (Settings/json durations), so a mistyped one must throw, never parse as zero.
 	TEST( ChronoTests, ToDurationRequiresP ){
 		for( let iso : {"5M", "", "T5M", "p5M"} ){
 			try{
@@ -151,6 +149,21 @@ namespace Jde::Tests{
 			}
 		}
 		EXPECT_NO_THROW( Chrono::ToDuration(sv{"P5M"}) );
+	}
+	//reviews-issue/abseil-review.md #5:  an unknown designator, or a token missing its number or designator, was skipped - "P2W" parsed as zero.
+	TEST( ChronoTests, ToDurationRejectsBadTokens ){
+		for( let iso : {"PT5X", "PT1W", "P5", "PD", "P1DX", "PT1H5"} ){
+			try{
+				let d = Chrono::ToDuration( sv{iso} );
+				ADD_FAILURE() << "'" << iso << "' parsed as " << Chrono::ToString( d );
+			}
+			catch( const Exception& ){}
+		}
+		EXPECT_FALSE( Chrono::TryToDuration(string{"P2WX"}).has_value() );
+	}
+	TEST( ChronoTests, ToDurationWeeks ){
+		EXPECT_EQ( Chrono::ToDuration(sv{"P2W"}), duration_cast<Duration>(weeks{2}) );
+		EXPECT_EQ( Chrono::ToDuration(sv{"P1W2D"}), duration_cast<Duration>(days{9}) );
 	}
 
 	//the nullopt contract is load-bearing: Settings and json durations call only through here, and a throw escaping

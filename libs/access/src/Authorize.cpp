@@ -103,8 +103,7 @@ namespace Jde::Access{
 	}
 	α Authorize::TestAdminLocal( str schema, str resource, str criteria, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
-		auto active = [&]( str c )->const Resource*{ //SchemaResources keeps a deleted criteria row (UpdateResourceDeleted maintains it for criteria-less rows only) - the row decides.
-			Mutex.AssertReaderHeld();//a lambda is analyzed on its own - this tells it the caller's lock.
+		auto active = [&]( str c ) ABSL_SHARED_LOCKS_REQUIRED(Mutex)->const Resource*{ //SchemaResources keeps a deleted criteria row (UpdateResourceDeleted maintains it for criteria-less rows only) - the row decides.
 			let pk = FindActiveResourcePKLocked( schema, resource, c );
 			auto p = pk ? Resources.find( *pk ) : Resources.end();
 			return p!=Resources.end() && !p->second.IsDeleted ? &p->second : nullptr;
@@ -420,7 +419,7 @@ namespace Jde::Access{
 		THROW_IFX( parent==child, Exception(sl, ELogLevel::Debug, "Role cannot be a member of itself.") );
 		flat_set<RolePK> visited;
 		function<bool( RolePK,RolePK )> isChild = [&]( RolePK parent, RolePK child )->bool {
-			Mutex.AssertReaderHeld();
+			Mutex.AssertReaderHeld();//a std::function's call isn't analyzed, so an attribute here would be unchecked.
 			auto children = visited.emplace( parent ).second ? Roles.find( parent ) : Roles.end();//visited guards cycles in existing data.
 			if( children==Roles.end() )
 				return false;
@@ -582,8 +581,7 @@ namespace Jde::Access{
 			return {};
 		flat_map<ResourcePK,ResourceRights> byResource;
 		vector<GroupPK> groups; vector<RolePK> roles;//the path so far
-		auto expand = [&]( this auto&& self, PermissionRole permissionRole )ι->void {
-			Mutex.AssertReaderHeld();
+		auto expand = [&]( this auto&& self, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
 			if( permissionRole.index()==0 ){
 				auto p = Permissions.find( get<0>(permissionRole) );
 				if( p==Permissions.end() )
@@ -605,8 +603,7 @@ namespace Jde::Access{
 			}
 		};
 		//does the acl identity reach the user - itself, or a live group whose members do - expanding the grant along each way in.
-		auto reach = [&]( this auto&& self, IdentityPK identity, PermissionRole permissionRole )ι->void {
-			Mutex.AssertReaderHeld();
+		auto reach = [&]( this auto&& self, IdentityPK identity, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
 			if( identity.IsUser() ){
 				if( identity.UserPK()==userPK )
 					expand( permissionRole );
