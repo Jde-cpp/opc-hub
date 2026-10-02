@@ -1,0 +1,20 @@
+cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
+include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
+message( Jde.Opc.HistorianLib )
+project( Jde.Opc.HistorianLib VERSION ${JDE_VERSION} LANGUAGES CXX )
+include( ${jdeRoot}/build/dependencies.cmake )
+find_package( open62541 REQUIRED )
+
+#Linked into Jde.Opc.ServerLib and Jde.Opc.GatewayLib, the two hosts (spec *Placement*).
+set( targetName Jde.Opc.HistorianLib )
+add_library( ${targetName} )
+compileOptions( ${targetName} )
+file( GLOB_RECURSE sources CONFIGURE_DEPENDS *.cpp )
+file( GLOB_RECURSE headers CONFIGURE_DEPENDS *.h ${jdeRoot}/include/jde/historian/*.h )
+target_sources( ${targetName} PRIVATE ${sources} ${headers} )
+if( WIN32 )
+	target_compile_definitions( ${targetName} PRIVATE NOMINMAX )
+endif()
+
+target_link_libraries( ${targetName} Jde.Opc open62541::open62541 fmt::fmt )
+target_precompile_headers( ${targetName} PRIVATE pc.h )
