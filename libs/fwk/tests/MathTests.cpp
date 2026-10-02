@@ -25,6 +25,16 @@ namespace Jde::Tests{
 		let distinct = flat_set<uint32>{ firstDraws.begin(), firstDraws.end() };
 		EXPECT_EQ( distinct.size(), (uint)threadCount ) << "two threads drew the same first value - they are not being seeded independently";
 	}
+	TEST( MathTests, RandomBounded ){
+		flat_set<uint32> seen;
+		for( uint i=0; i<1000; ++i ){
+			let x = Math::Random( 5 );
+			ASSERT_LT( x, 5u );
+			seen.emplace( x );
+		}
+		EXPECT_EQ( seen.size(), 5u ) << "1000 draws missed a value of [0,5) - odds of 5*0.8^1000";
+		EXPECT_LE( Math::Random(), (uint32)std::numeric_limits<uint32_t>::max() );
+	}
 
 	TEST( MathTests, StatisticsAllNegative ){
 		let r = Math::Statistics( vector<double>{-3.0, -1.0, -2.0} );

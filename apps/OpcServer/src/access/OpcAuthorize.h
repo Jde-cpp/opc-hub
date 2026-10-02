@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/access/Authorize.h>
+#include <absl/synchronization/mutex.h>
 
 namespace Jde::Opc::Server{
 //	struct Listener; struct Loader; struct Permission;
@@ -57,9 +58,10 @@ namespace Jde::Opc::Server{
 		//Fills `nodeResources` - a local map the public overload swaps in afterwards, never the member, so no lock is held
 		//across UA_Server_browse (opcserver-review3 #10).
 		α AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited )ι->void;
-		std::map<NodeId, Access::ResourcePK> _nodeResources; shared_mutex _nodeResourcesMutex;
-		bool _enabled{};//true once base resources are configured; when false the server is unauthorized and every node is fully accessible.
+		absl::Mutex _nodeResourcesMutex;
+		std::map<NodeId, Access::ResourcePK> _nodeResources ABSL_GUARDED_BY(_nodeResourcesMutex);
+		bool _enabled ABSL_GUARDED_BY(_nodeResourcesMutex){};//true once base resources are configured; when false the server is unauthorized and every node is fully accessible.
 		std::atomic<bool> _assigned{};//AssignRights has run (with or without base resources) - TestAdminNode denies until then.
-		Access::ResourcePK _rootResourcePK{};//resource covering the ObjectsFolder root; unmapped nodes inherit it rather than being granted all access.
+		Access::ResourcePK _rootResourcePK ABSL_GUARDED_BY(_nodeResourcesMutex){};//resource covering the ObjectsFolder root; unmapped nodes inherit it rather than being granted all access.
 	};
 }

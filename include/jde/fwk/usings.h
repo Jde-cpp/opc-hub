@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <boost/uuid/uuid.hpp>
 #include <fmt/format.h>
+#include <absl/synchronization/mutex.h>
 
 namespace Jde{
 	using namespace std::literals::string_view_literals;
@@ -39,9 +40,8 @@ namespace Jde{
 	template <typename T, typename D = std::default_delete<T>> using up = std::unique_ptr<T,D>;
 	using std::get;
 	using std::static_pointer_cast;
-	using ul=std::unique_lock<std::shared_mutex>;
-	using sl=std::shared_lock<std::shared_mutex>;
-	using std::shared_mutex;
+	using ul=absl::MutexLock;
+	using rl=absl::ReaderMutexLock;
 	using sv = std::string_view;
 	Τ using limits = std::numeric_limits<T>;
 	using std::ranges::find;

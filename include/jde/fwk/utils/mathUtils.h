@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <numeric>
 #include <random>
+#include <absl/random/random.h>
 #include <ranges>
 
 namespace Jde{
@@ -16,15 +17,10 @@ namespace Jde::Math{
 		T Max{0.0};
 	};
 
-	Ξ Random()->uint32{//not cryptographically secure - use Crypto::Random for anything security-bearing (session ids, tokens, keys).
-		static thread_local std::mt19937 engine{ [](){
-			std::random_device rd;
-			auto rd_range = std::ranges::transform_view( std::ranges::iota_view(static_cast<std::size_t>(0), std::mt19937::state_size), [&rd](size_t){return rd();} );
-			std::seed_seq seeds( rd_range.begin(), rd_range.end() );
-			return std::mt19937{ seeds };
-		}() };
-		return engine();
-	}
+	//Not cryptographically secure - use Crypto::Random for anything security-bearing (session ids, tokens, keys).
+	Ξ BitGen()->absl::BitGen&{ static thread_local absl::BitGen gen; return gen; }//seeded from OS entropy, per thread.
+	Ξ Random()->uint32{ return absl::Uniform<uint32_t>( BitGen() ); }//32 bits:  uint32 is uint_fast32_t, 64 wide on linux.
+	Ξ Random( uint32 n )->uint32{ return absl::Uniform<uint32>( BitGen(), 0, n ); }//[0, n), unbiased - unlike Random()%n.
 
 #define let const auto
 	Ŧ Statistics( const T& values, bool calcVariance=true )ι->StatResult<typename T::value_type>{

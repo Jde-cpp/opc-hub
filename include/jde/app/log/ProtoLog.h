@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <absl/synchronization/mutex.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/co/Timer.h>
@@ -29,50 +30,50 @@ namespace Jde::App{
 		α Archive()ι->VoidAwait::Task;
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		α DailyFile()ι->fs::path{ return _root/"log.binpb"; }
-		α DailyFileStart()Ι->TimePoint{ lg _{_mutex}; return _dailyFileStart; }
+		α DailyFileStart()Ι->TimePoint{ ul _{_mutex}; return _dailyFileStart; }
 		Ω Deserialize( sv bytes )ε->vector<App::Log::Proto::FileEntry>;
 		α Entries()Ε->vector<App::Log::Proto::FileEntry>;//the buffer *and* whatever is in flight - see the definition (L1).
-		α BufferSize()Ι->uint{ lg _{_mutex}; return _toSave.size(); }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
+		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSave.size(); }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
 		α Name()Ι->sv override{ return "ProtoLog"; }
 		α Root()Ι->const fs::path&{ return _root; }
 		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
 		α SetAppPKs( App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{ _appPK = appPK; _instancePK = instancePK; }
 		α TimeZone()Ι->const std::chrono::time_zone&{ return _tz; }
-		α Today()Ι->std::chrono::year_month_day{ lg _{_mutex}; return _today; }
+		α Today()Ι->std::chrono::year_month_day{ ul _{_mutex}; return _today; }
 		α Write( const Logging::Entry& m )ι->void override;
 		α Write( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void override;
 	private:
 		App::ProgramPK _appPK{};
 		App::ProgInstPK _instancePK{};
 		α Write( const Logging::Entry& m, App::Log::Proto::FileEntry&& entry )ι->void;
-		α AddString( uuid id, sv str )ι->void;
-		α AddString( uuid id, sv str, flat_map<uuid,uint>& cache )ι->void;
-		α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.
-		α Save()ι->TAwait<CoLockGuard>::Task;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str, flat_map<uuid,uint>& cache )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.
+		ABSL_UNLOCK_FUNCTION(_mutex) α Save()ι->TAwait<CoLockGuard>::Task;//releases _mutex before its first suspend.
 		α Save( vector<byte> toSave, uint flushId, CoLockGuard l )ι->VoidAwait::Task;
-		α DropBufferUnlocked()ι->uint;//_mutex must already be held - see the definition.  Returns the bytes dropped, 0 while under the cap.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α DropBufferUnlocked()ι->uint;//Returns the bytes dropped, 0 while under the cap.
 
-		α StartTimer()ι->TimerAwait::Task;
-		α ResetTimerUnlocked()ι->void;//_mutex must already be held - see the definition.
-		α StopTimer()ι->void;//shutdown: takes _mutex, and no timer starts again.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α StartTimer()ι->TimerAwait::Task;//held until its first suspend; the continuation retakes it.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ResetTimerUnlocked()ι->void;
+		ABSL_LOCKS_EXCLUDED(_mutex) α StopTimer()ι->void;//shutdown: no timer starts again.
 
-		ProtoLogCache _cache;
-		TimePoint _dailyFileStart{ TimePoint::max() };//re-seeded in the ctor when a daily file already exists; guarded by _mutex.
-		Duration _delay;
+		ProtoLogCache _cache ABSL_GUARDED_BY(_mutex);
+		TimePoint _dailyFileStart ABSL_GUARDED_BY(_mutex){ TimePoint::max() };//re-seeded in the ctor when a daily file already exists.
+		Duration _delay ABSL_GUARDED_BY(_mutex);
 		const uint16 _delaySize{8096};
-		bool _flushFailed{};//M5: a flush that failed suppresses the size trigger, so the timer retries instead of every log line starting a fresh Save.
-		uint _droppedBytes{};//reported and reset when the file becomes writable again.
+		bool _flushFailed ABSL_GUARDED_BY(_mutex){};//M5: a flush that failed suppresses the size trigger, so the timer retries instead of every log line starting a fresh Save.
+		uint _droppedBytes ABSL_GUARDED_BY(_mutex){};//reported and reset when the file becomes writable again.
 		const uint32 _maxBufferSize;
-		mutable mutex _mutex;
-		bool _needsArchive{false};
+		mutable absl::Mutex _mutex;
+		bool _needsArchive ABSL_GUARDED_BY(_mutex){false};
 		atomic<uint> _running{};
 		fs::path _root;
 		static constexpr ELogTags _tags{ ELogTags::ExternalLogger };
-		up<DurationTimer> _timer;
+		up<DurationTimer> _timer ABSL_GUARDED_BY(_mutex);
 		const std::chrono::time_zone& _tz;
-		std::chrono::year_month_day _today;
-		vector<byte> _toSave;
-		flat_map<uint,vector<byte>> _inFlight;
-		uint _flushId{};
+		std::chrono::year_month_day _today ABSL_GUARDED_BY(_mutex);
+		vector<byte> _toSave ABSL_GUARDED_BY(_mutex);
+		flat_map<uint,vector<byte>> _inFlight ABSL_GUARDED_BY(_mutex);
+		uint _flushId ABSL_GUARDED_BY(_mutex){};
 	};
 }

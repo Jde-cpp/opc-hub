@@ -1,4 +1,5 @@
 #include <jde/ql/LocalSubscriptions.h>
+#include <absl/synchronization/mutex.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/generators/Sql.h>
 #include <jde/db/generators/WhereClause.h>
@@ -25,7 +26,8 @@ namespace Jde::QL{
 		TableQL Fields;
 		sp<IListener> Listener;
 	};
-	flat_map<TableOp,vector<ListenerSubs>> _serverSubs; std::shared_mutex _serverMutex;
+	absl::Mutex _serverMutex;
+	flat_map<TableOp,vector<ListenerSubs>> _serverSubs ABSL_GUARDED_BY(_serverMutex);
 
 	//A mutation result only carries the row's id when the insert went through a proc; otherwise recover it so subscribers see the
 	//same shape.  every failure here used to escape to OnMutation's catch _before_ the first
@@ -117,7 +119,7 @@ namespace Jde::QL{
 		try{
 			vector<ListenerSubs> matches;
 			{
-				sl l{ _serverMutex };
+				rl _{ _serverMutex };
 				auto subs = _serverSubs.find( {m.TableName(), m.Type} );
 				if( subs==_serverSubs.end() )
 					return;//everything is pushed.

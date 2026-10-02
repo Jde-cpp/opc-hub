@@ -53,7 +53,7 @@ namespace Jde::Opc::Server{
 		std::map<NodeId, Access::ResourcePK> baseResources;
 		const NodeId root=NodeId::ObjectsFolder();
 		{
-			sl _{ Mutex };
+			rl _{ Mutex };
 			for( let& [pk,resource] : Resources ){
 				if( resource.IsDeleted || resource.Slug!="nodeIds" || resource.Schema!=_app )
 					continue;
@@ -113,7 +113,7 @@ namespace Jde::Opc::Server{
 			return *slug=="nodeIds" && (schemaName.empty() || schemaName==_app);
 		if( !pk )
 			pk = Json::FindNumber<Access::ResourcePK>( args, "id" ).value_or( 0 );
-		sl _{ Mutex };
+		rl _{ Mutex };
 		let p = Resources.find( pk );
 		return p!=Resources.end() && p->second.Slug=="nodeIds" && p->second.Schema==_app;
 	}
@@ -134,7 +134,7 @@ namespace Jde::Opc::Server{
 		THROW_IFSL( !_assigned, "[{}]admin check before AssignRights - not ready.", _app );
 		Access::ResourcePK pk{};
 		{
-			Jde::sl _{ _nodeResourcesMutex };
+			rl _{ _nodeResourcesMutex };
 			if( !_enabled )
 				return;//no base resources: the server is unauthorized and every node open, as UserRights answers.
 			let node = criteria.empty() ? NodeId::ObjectsFolder() : NodeId::DecodeJson( criteria );//an undecodable criteria throws - a denial.
@@ -148,7 +148,7 @@ namespace Jde::Opc::Server{
 		using enum Access::ERights;
 		optional<Access::ResourcePK> resourcePK;
 		{
-			sl _{ _nodeResourcesMutex };
+			rl _{ _nodeResourcesMutex };
 			if( !_enabled )
 				return All; //authorization not configured for this server: all nodes open.
 			resourcePK = Find( _nodeResources, nodeId );
@@ -160,7 +160,7 @@ namespace Jde::Opc::Server{
 		}
 
 
-		sl _{ Mutex };
+		rl _{ Mutex };
 		//Both resource checks precede the user lookup:  whether a node is protected is a property of the resource, not of
 		//who is asking.  The other way round, an unprotected tree answered None to a user with no acl row and All to one
 		//with any - which is what denied a gateway session every read, and (once browse and the write mask were routed

@@ -2,21 +2,16 @@
 #ifndef CONTEXT_THREAD_H
 #define CONTEXT_THREAD_H
 #include <jde/fwk/co/Await.h>
-#include <version>
+#include <absl/functional/any_invocable.h>
 
 namespace boost::asio{ class io_context; class cancellation_signal; }
 #define Φ Γ α
 namespace Jde{
 	Φ Executor()ι->sp<boost::asio::io_context>;
 	Φ ExecutorIoc()ι->sp<boost::asio::io_context>;//current io_context without creating one; lets shutdown keep it alive and destroy it last.
-	Φ Post( function<void()> f )ι->void;
-#ifdef __cpp_lib_move_only_function
-	Φ PostM( std::move_only_function<void()> f )ι->void;
+	Φ Post( absl::AnyInvocable<void()> f )ι->void;
 	Ŧ Post( T&& value, typename TAwait<T>::Handle h )ι->void;
-#else
-	//Ŧ Post( T value, typename TAwait<T>::Handle h )ι->void;
-#endif
-	Φ PostIO( function<void()> f )ι->void;
+	Φ PostIO( absl::AnyInvocable<void()> f )ι->void;
 	Φ Post( VoidAwait::Handle&& h )ι->void;
 	Φ Post( VoidAwait::Handle&& h, Exception&& e )ι->void;
 
@@ -28,19 +23,11 @@ namespace Jde{
 		Φ Run()->void;
 	}
 }
-#ifdef __cpp_lib_move_only_function
 	Ŧ Jde::Post( T&& value, typename TAwait<T>::Handle h )ι->void{
-			PostM( [ v = move(value), h ]() mutable {
+			Post( [ v = move(value), h ]() mutable {
 				h.promise().Resume( move(v), h );
 			} );
 	}
-#else
-	// Ŧ Jde::Post( T value, typename TAwait<T>::Handle h )ι->void{
-	// 		Post( [ value, h ]() mutable {
-	// 			h.promise().Resume( move(v), h );
-	// 		} );
-	// }
-#endif
 
 #endif
 #undef Φ

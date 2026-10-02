@@ -187,23 +187,6 @@ namespace Jde::Opc{
 	α ExNodeId::to_string()Ι->string{
 		return serialize( ToJson() );
 	}
-	α NodeIdHash::operator()(const ExNodeId& n)Ι->uint{
-		uint seed = 0;
-		boost::hash_combine( seed, ToSV(n.namespaceUri) );
-		boost::hash_combine( seed, n.serverIndex );
-		let& nodeId = n.nodeId;
-		boost::hash_combine( seed, nodeId.namespaceIndex );//folded in: without it ns=2;i=5 and ns=3;i=5 collided, and
-		//operator< - which is what equality is built on - separates them, so the hash disagreed with equality.
-		if( nodeId.identifierType==UA_NodeIdType::UA_NODEIDTYPE_NUMERIC )
-			boost::hash_combine( seed, nodeId.identifier.numeric );
-		else if( nodeId.identifierType==UA_NodeIdType::UA_NODEIDTYPE_STRING )
-			boost::hash_combine( seed, ToSV(nodeId.identifier.string) );
-		else if( nodeId.identifierType==UA_NodeIdType::UA_NODEIDTYPE_GUID )
-			boost::hash_combine( seed, ToBinaryString(nodeId.identifier.guid) );
-		else if( nodeId.identifierType==UA_NodeIdType::UA_NODEIDTYPE_BYTESTRING )
-			boost::hash_combine( seed, ToSV(nodeId.identifier.byteString) );
-		return seed;
-	}
 	α ExNodeId::Add( jobject& j )Ι->void{
 		if( namespaceUri.length )
 			j["nsu"] = ToSV(namespaceUri);

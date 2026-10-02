@@ -1,5 +1,6 @@
 //#include <boost/beast/ssl.hpp>
 #include <jde/web/client/ClientSsl.h>
+#include <absl/synchronization/mutex.h>
 #include "jde/fwk/co/Await.h"
 #include "jde/fwk/usings.h"
 #include "mocks/ServerMock.h"
@@ -51,17 +52,14 @@ namespace Jde::Web{
 	α SocketTests::SetUp()->void{
 		Logging::ClearMemory();
 	}
-	//_notified + a predicate, not a bare notify_one: a completion that lands before Wait() blocks is otherwise lost and the test
-	//hangs instead of the code.  That happens whenever a close or a request finishes synchronously - which C3 and C6 both made
-	//routine.
-	#define NOTIFY sl l{ _mutex }; _notified = true; cv.notify_one()
-	std::shared_mutex _mutex;
-	std::condition_variable_any cv;
-	bool _notified{};
+	//A flag awaited under the mutex, not a bare notify_one: a completion that lands before Wait() blocks is otherwise lost and the
+	//test hangs instead of the code.  That happens whenever a close or a request finishes synchronously - which C3 and C6 both
+	//made routine.
+	absl::Mutex _mutex;
+	bool _notified ABSL_GUARDED_BY(_mutex){};
 	α Notify()ι{
-		sl l{ _mutex };
+		ul _{ _mutex };
 		_notified = true;
-		cv.notify_one();
 	}
 	α Close()ι->VoidTask{
 		co_await _clientSession->Close( true, SRCE_CUR );
@@ -69,8 +67,8 @@ namespace Jde::Web{
 	}
 
 	α Wait()ι{
-		sl l{ _mutex };
-		cv.wait( l, []{ return _notified; } );
+		ul _{ _mutex };
+		_mutex.Await( absl::Condition(&_notified) );
 		_notified = false;
 	}
 
@@ -102,7 +100,7 @@ namespace Jde::Web{
 		Web::Jwt jwt{ move(publicKey), {0}, "testUser", "testUserCallSign", 0, "127.0.0.1", Clock::now()+1h, {}/*description*/, settings.PrivateKey };
 		auto await = ClientHttpAwait{ Host, "/login", serialize(jobject{{"jwt", jwt.Payload()}}), Port };
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-		_sessionId = *Str::TryTo<SessionPK>( res[http::field::authorization], nullptr, 16 );
+		_sessionId = *Str::TryTo<SessionPK,16>( res[http::field::authorization] );
 		INFO( "({:x})Loggin Complete.", _sessionId );
 	}
 	Ω connectSocket( optional<ssl::context> ctx=nullopt )->void{
@@ -469,7 +467,7 @@ namespace Jde::Web{
 		catch( Exception& e ){
 			_exception = e.Move();
 		}
-		NOTIFY;
+		Notify();
 	}
 
 	TEST_F( SocketTests, BadTransmissionClient ){
@@ -499,7 +497,7 @@ namespace Jde::Web{
 		catch( Exception& e ){
 			_exception = e.Move();
 		}
-		NOTIFY;
+		Notify();
 	}
 	TEST_F( SocketTests, BadTransmissionServer ){
 		createSession();

@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <forward_list>
 #include <sstream>
-#include <jde/fwk/io/crc.h>
 
 #define let const auto
 namespace Jde{

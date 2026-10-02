@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway{
 			auto strings = Str::Split( scsString );
 			jarray j;
 			for( let s : strings ){
-				if( let sc = Str::TryTo<StatusCode>(string(s)); sc )
+				if( let sc = Str::TryTo<StatusCode>(s); sc )
 					j.push_back( UAException::ToJson(*sc, true) );
 			}
 			_readyResult = mu<jvalue>( jobject{{"errorCodes", j}} );

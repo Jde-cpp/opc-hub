@@ -46,8 +46,7 @@ namespace Jde::QL::Tests{
 		EXPECT_FALSE( junk.Test(DB::Value{string{"2026-08-02T10:00:00Z"}}) );
 		EXPECT_FALSE( junk.Test(DB::Value{Chrono::ToTimePoint("2026-08-02T10:00:00Z")}) ); //no _times, so a time column cannot match it.
 		EXPECT_NO_THROW( filterValue(DB::EOperator::In, jarray{"2026-08-02T10:00:00Z", "2026-08-02T10:00:00+ab"}) ); //one bad literal in an array drops them all.
-		//#17: the other half of the repro - a junk *fraction* rather than a junk offset.  It reaches ToTimePoint's other
-		//branch (libc++ read this with stod; the %FT%T parse refuses it here), and it must be as harmless as the offset is.
+		//#17: the other half of the repro - a junk *fraction* rather than a junk offset.  It must be as harmless as the offset is.
 		EXPECT_NO_THROW( filterValue(DB::EOperator::Equal, "2026-08-02T10:00:00.x") );
 		EXPECT_TRUE( filterValue(DB::EOperator::Equal, "2026-08-02T10:00:00.x").Test(DB::Value{string{"2026-08-02T10:00:00.x"}}) );
 

@@ -1,4 +1,5 @@
 #include <semaphore>
+#include <absl/cleanup/cleanup.h>
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include "../src/UAConfig.h"
@@ -418,7 +419,7 @@ namespace Jde::Opc::Server::Tests{
 		let ssl = Settings::FindObject( "/opcServer/ssl" );
 		ASSERT_TRUE( ssl ) << "the suite's own server runs secured";
 		const jobject original{ *ssl };
-		struct Restore final{ const jobject& Ssl; ~Restore(){ try{ Settings::Set("/opcServer/ssl", Ssl); }catch( const std::exception& ){} } } restore{ original };
+		absl::Cleanup restore = [&original]{ try{ Settings::Set("/opcServer/ssl", original); }catch( const std::exception& ){} };
 		Settings::Set( "/opcServer/ssl", jvalue{} );//null - FindObject answers nullptr for it, as for an absent key.
 		ASSERT_FALSE( Settings::FindObject("/opcServer/ssl") );
 		try{
@@ -484,6 +485,23 @@ namespace Jde::Opc::Server::Tests{
 		//Process::Shutdown ends in std::_Exit and LSan never runs, and a recoverable leak check would trip on the suite's
 		//pre-existing ones (opcserver-review #23).
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
+		UA_IssuedIdentityToken_clear( &issued );
+	}
+
+	//security-review #1:  an issued token of 9+ bytes is parsed as a jwt, and a malformed n claim in it terminated the OpcServer.
+	TEST_F( AccessTests, AnIssuedTokenWithAMalformedKeyClaimIsRefused ){
+		let head = jobject{ {"alg","RS256"}, {"typ","JWT"} };
+		let body = jobject{ {"iat", time(nullptr)}, {"n", "!!!"}, {"e", "AQAB"} };
+		let token = Str::Encode64( serialize(head), true )+"."+Str::Encode64( serialize(body), true )+"."+Str::Encode64( "notVerifiedHere"s, true );
+		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
+		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
+		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
+		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
+
+		void* slot{};
+		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
+		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYTOKENINVALID );
+		EXPECT_FALSE( slot );
 		UA_IssuedIdentityToken_clear( &issued );
 	}
 

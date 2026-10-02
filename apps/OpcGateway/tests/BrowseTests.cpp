@@ -1,4 +1,5 @@
 #include <jde/web/Jwt.h>
+#include <absl/cleanup/cleanup.h>
 #include <jde/web/client/socket/ClientSocketAwait.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/UAClient.h"
@@ -15,7 +16,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω SetUpTestCase()ε->void{
 			try{
 				_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-				auto sessionId = *Str::TryTo<SessionPK>(_jwt->SessionId, nullptr, 16);
+				auto sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
 				TRACE( "UserPK: {:x}, SessionId: {:x}", _jwt->UserPK.Value, sessionId );
 				auto con = GetConnection( OpcServerSlug );
 				Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
@@ -68,7 +69,7 @@ namespace Jde::Opc::Gateway::Tests{
 		//is named as well as the slug:  one slug can belong to more than one schema, and only the gateway's is this test's.
 		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"serverConnections\", criteria:null )", on ? "restore" : "delete"), {} ); };
 		enforce( true );
-		struct Restore final{ decltype(enforce) F; ~Restore(){ try{ F(false); }catch( const std::exception& ){} } } _{ enforce };
+		absl::Cleanup _ = [enforce]{ try{ enforce(false); }catch( const std::exception& ){} };
 
 		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x39'0000 };//no acl, no role, no group names it
 		let sessionId = Web::Server::Sessions::Add( ungranted, "localhost", false )->SessionId;

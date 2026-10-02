@@ -1,7 +1,7 @@
 #include "Signals.h"
 #include <cmath>
 #include <numbers>
-#include <random>
+#include <jde/fwk/utils/mathUtils.h>
 
 #define let const auto
 namespace Jde::Opc::Emulator{
@@ -28,8 +28,8 @@ namespace Jde::Opc::Emulator{
 		SensorMax{ Json::FindNumber<double>(o, "sensorMax") }{
 		THROW_IFSL( Max<=Min && !IsBool() && Mode!=EMode::Follow, "Tag '{}': max ({}) must exceed min ({}).", Name, Max, Min );
 		THROW_IFSL( Period<=Duration::zero() || Tau<=Duration::zero(), "Tag '{}': period and tau must be positive.", Name );
-		//randomWalk builds uniform_real_distribution{-Step,Step}, which is UB unless -Step<=Step, and counter wraps on
-		//`>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
+		//randomWalk draws from [-Step,Step), which is empty unless Step>0 - absl::Uniform then returns -Step every time - and
+		//counter wraps on `>Max`, so a non-positive step walks down from Min forever.  A config typo either way - it must fail like one.
 		THROW_IFSL( Step<=0 && (Mode==EMode::RandomWalk || Mode==EMode::Counter), "Tag '{}': step ({}) must be positive for mode '{}'.", Name, Step, ToString(Mode) );
 		let quality = o.if_contains( "quality" );
 		THROW_IFSL( quality && !quality->is_array(), "Tag '{}': quality must be an array of windows.", Name );
@@ -56,9 +56,9 @@ namespace Jde::Opc::Emulator{
 		double _min, _span, _period, _t{};
 	};
 	struct RandomWalk final : IGenerator{
-		RandomWalk( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _value{ (s.Min+s.Max)/2 }, _engine{ std::random_device{}() }, _dist{ -s.Step, s.Step }{}
-		α Next( Duration, bool )ι->double override{ _value = std::clamp( _value+_dist(_engine), _min, _max ); return _value; }
-		double _min, _max, _value; std::mt19937 _engine; std::uniform_real_distribution<double> _dist;
+		RandomWalk( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _value{ (s.Min+s.Max)/2 }, _step{ s.Step }{}
+		α Next( Duration, bool )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>( Math::BitGen(), -_step, _step ), _min, _max ); return _value; }
+		double _min, _max, _value, _step;
 	};
 	struct Counter final : IGenerator{//the soak's mode: +Step per cycle, wrapping at Max.
 		Counter( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _step{ s.Step }, _value{ s.Min }{}

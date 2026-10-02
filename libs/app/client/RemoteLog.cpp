@@ -80,8 +80,9 @@ namespace Jde::App::Client{
 	//still finishing, so no single flag could say "nobody is running" - only a count could.  One coroutine at a time makes
 	//_running a plain bool, and every transition of it happens under _mutex: set here while the caller still holds the
 	//lock, cleared in the same critical section as the final unlock.
-	//_mutex is held on entry by every caller and released before the first suspend - the contract Write relies on.
-	α RemoteLog::StartTimer()ι->TimerAwait::Task{
+	//_mutex is held on entry by every caller and released before the first suspend - the contract Write relies on.  Not analyzed:
+	//the loop retakes and releases it around each round, which a per-function analysis cannot follow.
+	ABSL_NO_THREAD_SAFETY_ANALYSIS α RemoteLog::StartTimer()ι->TimerAwait::Task{
 		_running = true;
 		for( bool again=true; again; ){
 			again = false;

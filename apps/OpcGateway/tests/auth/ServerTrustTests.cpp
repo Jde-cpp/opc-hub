@@ -4,6 +4,7 @@
 //installed on a bare UA_ClientConfig and its verifyCertificate called directly, on two certificates the harness already
 //issued - the gateway's app certificate and the per-slug issued certificate (tests/main.cpp EnsureCertificate).
 #include <open62541/client_config_default.h>
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/io/file.h>
@@ -117,7 +118,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( ServerTrustTests, AnEmptyOverrideTrustsNothing ){
 		RestoreTrustedCertDirs restore;
 		Settings::Set( "/gateway/trustedCertDirs", jarray{_trustedDir.string()} );
-		struct Restore final{ ~Restore(){ ServerTrust::OverrideTrustedCertDirs( nullopt ); } } restoreOverride;//every later client in the process reads it.
+		absl::Cleanup restoreOverride = []{ ServerTrust::OverrideTrustedCertDirs( nullopt ); };//every later client in the process reads it.
 
 		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{} );
 		ServerTrust::Install( _config, "/gateway", TestHandle, "opc.tcp://server.under.test:4840" );

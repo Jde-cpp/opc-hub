@@ -224,7 +224,7 @@ namespace Jde::Opc{
 		let size = dims.size();
 		auto arrayDims = (UA_UInt32*)UA_Array_new( size, &UA_TYPES[UA_TYPES_UINT32] );
 		for( uint i=0; i<size; ++i )
-			arrayDims[i] = Str::TryTo<UA_UInt32>( string{dims[i]} ).value_or(0);
+			arrayDims[i] = Str::TryTo<UA_UInt32>( dims[i] ).value_or(0);
 		return {arrayDims, size};
 	}
 }

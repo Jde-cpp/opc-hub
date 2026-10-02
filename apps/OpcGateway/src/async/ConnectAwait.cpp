@@ -1,4 +1,5 @@
 ﻿#include "ConnectAwait.h"
+#include <absl/synchronization/mutex.h>
 #include "../UAClient.h"
 #include "../GatewayAppClient.h"
 #include <jde/access/Authorize.h>
@@ -8,7 +9,8 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	flat_map<ServerCnnctnNK,flat_map<Credential,vector<ConnectAwait::Handle>>> _requests; mutex _requestMutex;
+	absl::Mutex _requestMutex;
+	flat_map<ServerCnnctnNK,flat_map<Credential,vector<ConnectAwait::Handle>>> _requests ABSL_GUARDED_BY(_requestMutex);
 	α SessionCredential( SessionPK sessionId, UserPK user, str opc )ι->optional<Credential>{
 		optional<Credential> cred;
 		if( sessionId ){
@@ -37,7 +39,7 @@ namespace Jde::Opc::Gateway{
 		ConnectAwait{ move(opc), session.SessionId, session.UserPK, sl }
 	{}
 
-	α ConnectAwait::EraseRequests( str opcNK, Credential cred, lg& )ι->vector<ConnectAwait::Handle>{
+	ABSL_EXCLUSIVE_LOCKS_REQUIRED(_requestMutex) Ω eraseRequests( str opcNK, Credential cred )ι->vector<ConnectAwait::Handle>{
 		vector<ConnectAwait::Handle> handles;
 		if( auto p = _requests.find(opcNK); p != _requests.end() ){
 			if( auto q = p->second.find(cred); q != p->second.end() ){
@@ -106,7 +108,7 @@ namespace Jde::Opc::Gateway{
 		sp<UAClient> client;
 		bool create = false;
 		{
-			lg l{ _requestMutex };
+			ul _{ _requestMutex };
 			//Re-check under _requestMutex: a client can activate and drain _requests between the unlocked Find above and here. StateCallback inserts into _clients *before* Posting the drain (which needs this mutex), so a locked Find cannot miss a client whose drain already ran. Without this, a stale miss registers as the new first handle → duplicate Create() → the second client fails StateCallback's ASSERT(inserted) and is silently dropped.
 			if( client = UAClient::Find(_opcSlug, _cred); !client ){
 				auto opcHandles = _requests.try_emplace( _opcSlug ).first;
@@ -130,8 +132,8 @@ namespace Jde::Opc::Gateway{
 		catch( Exception& e ){
 			vector<ConnectAwait::Handle> handles;
 			{
-				lg l{ _requestMutex };
-				handles = EraseRequests( _opcSlug, _cred, l );
+				ul _{ _requestMutex };
+				handles = eraseRequests( _opcSlug, _cred );
 			}
 			//Copy per waiter, never Move:  Move() moves the payload *out of* e, so the first "clone" hollowed it and every
 			//waiter after it - the last, which takes e itself, included - got the format string with its _args gone
@@ -155,8 +157,8 @@ namespace Jde::Opc::Gateway{
 	α ConnectAwait::Resume( str opcNK, Credential cred, function<void(ConnectAwait::Handle)> resume )ι->void{
 		vector<ConnectAwait::Handle> handles;
 		{
-			lg l{ _requestMutex };
-			handles = EraseRequests( opcNK, cred, l );
+			ul _{ _requestMutex };
+			handles = eraseRequests( opcNK, cred );
 		}
 		for( auto h : handles )
 			resume( h );

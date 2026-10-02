@@ -9,7 +9,7 @@
 namespace Jde::Opc::Gateway::Tests{
 	α ITest::SetUpTestCase()ε->void{
 		_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-		let sessionId = *Str::TryTo<SessionPK>(_jwt->SessionId, nullptr, 16);
+		let sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
 		TRACE( "UserPK: {:x}, SessionId: {:x}", _jwt->UserPK.Value, sessionId );
 		auto con = GetConnection( OpcServerSlug );
 		Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );

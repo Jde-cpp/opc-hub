@@ -22,6 +22,7 @@ namespace Jde::Opc{
 		α operator=( const NodeId& x )ι->NodeId&;
 		α operator=( NodeId&& x )ι->NodeId&;
 		α operator<( const NodeId& x )Ι->bool;
+		template<class H> friend α AbslHashValue( H h, const NodeId& n )ι->H{ return HashNodeId( std::move(h), n ); }
 		//Hands the identifier to a raw UA_NodeId and leaves this null.  `raw = move(wrapper)` cannot do that - it slices
 		//to the base, whose implicit copy assignment is a shallow byte copy that leaves both sides owning the identifier.
 		α Move()ι->UA_NodeId;

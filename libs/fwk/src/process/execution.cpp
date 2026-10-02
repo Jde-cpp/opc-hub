@@ -6,7 +6,6 @@
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/process/thread.h>
 #include <jde/fwk/utils/Vector.h>
-#include <version>
 
 #define let const auto
 namespace Jde{
@@ -174,31 +173,21 @@ namespace Jde{
 		_stopped.notify_all();
 	}
 }
-α Jde::Post( function<void()> f )ι->void{
+α Jde::Post( absl::AnyInvocable<void()> f )ι->void{
 	auto ctx = Executor();
 	if( !ctx ){
 		WARN( "Post after executor teardown - dropping work." );
 		return;
 	}
-	asio::post( *ctx, f );
+	asio::post( *ctx, std::move(f) );
 	Execution::Run();
 }
-#ifdef __cpp_lib_move_only_function
-α Jde::PostM( std::move_only_function<void()> f )ι->void{
-	auto ctx = Executor();
-	if( !ctx ){
-		WARN( "PostM after executor teardown - dropping work." );
-		return;
-	}
-	asio::post( *ctx, std::move(f) );
-}
-#endif
-α Jde::PostIO( function<void()> f )ι->void{
+α Jde::PostIO( absl::AnyInvocable<void()> f )ι->void{
 	Executor();
 	sp<IoStrand> s;
 	{ lg _{ _executorMutex }; s = _ioStrand; }
 	if( s )//null while shutting down - the io threads are gone & the work could never run anyway.
-		asio::post( s->Strand, move(f) );
+		asio::post( s->Strand, std::move(f) );
 	Execution::Run();
 }
 α Jde::Post( VoidAwait::Handle&& h )ι->void{

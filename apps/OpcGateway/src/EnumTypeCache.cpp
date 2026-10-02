@@ -52,7 +52,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α EnumTypeCache::Find( const NodeId& id )Ι->Ptr{
-		sl _{ _mutex };
+		rl _{ _mutex };
 		auto p = _slots.find( id );
 		return p!=_slots.end() && p->second.State==EState::Ready ? p->second.Type : Ptr{};
 	}

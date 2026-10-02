@@ -4,7 +4,6 @@ DISABLE_WARNINGS
 #include <sqltypes.h>
 #include <sql.h>
 #include <sqlext.h>
-#include <boost/crc.hpp>
 #include <boost/noncopyable.hpp>
 #include <boost/system/error_code.hpp>
 #include <spdlog/spdlog.h>

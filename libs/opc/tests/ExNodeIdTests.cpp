@@ -2,6 +2,7 @@
 //7-column insert contract.  Same round trips as NodeIdTests, plus the ownership handoff NodeId is missing.
 #include <concepts>
 #include <gtest/gtest.h>
+#include <absl/hash/hash.h>
 #include <jde/db/Value.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/NodeId.h>
@@ -141,17 +142,46 @@ namespace Jde::Opc::Tests{
 		EXPECT_TRUE( exFromParams("i", "5", "", 1) == exFromParams("i", "5", "", 1) );
 	}
 
-	//NodeIdHash folds namespaceUri, serverIndex, the namespace index and the identifier.  The namespace index was missing
+	//ExNodeId's hash folds namespaceUri, serverIndex, the namespace index and the identifier.  The namespace index was missing
 	//(C4), so ids differing only by namespace collided while operator< - what equality is built on - separated them.
 	TEST( ExNodeIdTests, HashAgreesWithEquality ){
-		NodeIdHash hash;
-		EXPECT_EQ( hash(exFromJson(R"({"ns":2,"s":"tag"})")), hash(exFromJson(R"({"ns":2,"s":"tag"})")) );
-		EXPECT_EQ( hash(exFromJson(R"({"i":5})")), hash(exFromJson(R"({"i":5})")) );
-		EXPECT_NE( hash(exFromJson(R"({"s":"tag"})")), hash(exFromJson(R"({"s":"other"})")) );
-		EXPECT_NE( hash(exFromJson(R"({"i":5})")), hash(exFromParams("i", "5", "", 1)) );
-		EXPECT_NE( hash(exFromJson(R"({"i":5})")), hash(exFromParams("i", "5", "urn:test", 0)) );
-		EXPECT_NE( hash(exFromJson(R"({"ns":2,"i":5})")), hash(exFromJson(R"({"ns":3,"i":5})")) );//the namespace index
-		EXPECT_NE( hash(exFromJson(R"({"ns":2,"s":"tag"})")), hash(exFromJson(R"({"s":"tag"})")) );//...including against ns 0.
+		EXPECT_EQ( absl::HashOf(exFromJson(R"({"ns":2,"s":"tag"})")), absl::HashOf(exFromJson(R"({"ns":2,"s":"tag"})")) );
+		EXPECT_EQ( absl::HashOf(exFromJson(R"({"i":5})")), absl::HashOf(exFromJson(R"({"i":5})")) );
+		EXPECT_NE( absl::HashOf(exFromJson(R"({"s":"tag"})")), absl::HashOf(exFromJson(R"({"s":"other"})")) );
+		EXPECT_NE( absl::HashOf(exFromJson(R"({"i":5})")), absl::HashOf(exFromParams("i", "5", "", 1)) );
+		EXPECT_NE( absl::HashOf(exFromJson(R"({"i":5})")), absl::HashOf(exFromParams("i", "5", "urn:test", 0)) );
+		EXPECT_NE( absl::HashOf(exFromJson(R"({"ns":2,"i":5})")), absl::HashOf(exFromJson(R"({"ns":3,"i":5})")) );//the namespace index
+		EXPECT_NE( absl::HashOf(exFromJson(R"({"ns":2,"s":"tag"})")), absl::HashOf(exFromJson(R"({"s":"tag"})")) );//...including against ns 0.
+	}
+
+	//ExNodeId's AbslHashValue covers every field operator< compares (reviews/abseil.md D3):  each identifier kind, alone and with a
+	//namespaceUri or serverIndex, differs from every other and equals its copy.  A null and an empty namespaceUri compare equal,
+	//so they must hash equal - the representation case absl::VerifyTypeImplementsAbslHashCorrectly would catch, were gmock built.
+	TEST( ExNodeIdTests, AbslHashAgreesWithEquality ){
+		vector<ExNodeId> ids;
+		for( let json : {R"({"ns":2,"i":5})", R"({"ns":3,"i":5})", R"({"ns":2,"s":"5"})", R"({"ns":2,"g":"12345678-1234-5678-1234-567812345678"})", R"({"ns":2,"b":"BQ=="})"} ){
+			ids.push_back( exFromJson(json) );
+			auto withUri = exFromJson( json );
+			withUri.namespaceUri = UA_String_fromChars( "urn:test" );
+			ids.push_back( move(withUri) );
+			auto withServer = exFromJson( json );
+			withServer.serverIndex = 1;
+			ids.push_back( move(withServer) );
+		}
+		const vector<ExNodeId> copies = ids;
+		for( uint i=0; i<ids.size(); ++i ){
+			for( uint j=0; j<copies.size(); ++j ){
+				ASSERT_EQ( ids[i]==copies[j], i==j ) << ids[i].to_string() << " vs " << copies[j].to_string();
+				if( i==j )
+					EXPECT_EQ( absl::HashOf(ids[i]), absl::HashOf(copies[j]) ) << ids[i].to_string();
+				else
+					EXPECT_NE( absl::HashOf(ids[i]), absl::HashOf(copies[j]) ) << ids[i].to_string() << " vs " << copies[j].to_string();
+			}
+		}
+		auto emptyUri = exFromJson( R"({"ns":2,"i":5})" );
+		emptyUri.namespaceUri = UA_String_fromChars( "" );
+		ASSERT_TRUE( emptyUri==ids[0] );
+		EXPECT_EQ( absl::HashOf(emptyUri), absl::HashOf(ids[0]) );
 	}
 
 	TEST( ExNodeIdTests, InsertParams ){

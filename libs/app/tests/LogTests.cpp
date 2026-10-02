@@ -4,6 +4,7 @@
 //Unlike the rest of this suite these are integration tests - ProtoLog flushes on a worker and the archive round is
 //asynchronous - so they poll rather than assert immediately.
 #include <gtest/gtest.h>
+#include <absl/cleanup/cleanup.h>
 #include <thread>
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
@@ -438,7 +439,7 @@ namespace Jde::App::Tests{
 		}
 		//removed however this exits - every other test in the suite reads the archives too, and the tree outlives the run.
 		//SetUp sweeps it too, for the exits that run no destructor at all - which is the very failure this pins.
-		struct Cleanup final{ fs::path Dir; ~Cleanup(){ std::error_code ec; fs::remove_all( Dir, ec ); } } cleanup{ dir };
+		absl::Cleanup cleanup = [dir]{ std::error_code ec; fs::remove_all( dir, ec ); };
 		//T4: the exception, not EXPECT_ANY_THROW.  A QL parse error, a renamed view, a read that fails for any other reason
 		//- all of them are throws, and under any of them this reports green while the terminate it exists for goes unguarded.
 		//What it has to be is the deserialize of that file failing, and Deserialize names itself when it does.

@@ -24,12 +24,15 @@ namespace Jde::Opc::Gateway{
 		for( let& [h,_] : _subscriptions )
 			monitoredItems.try_emplace( h.SubId() ).first->second.emplace( h.MonitorId() );
 		_subscriptions.clear();
+		_byNode.clear();
 		return UnsubscribeAwait{ move(monitoredItems), _client.lock(), sl };
 	}
 
 	α UAMonitoringNodes::FindNode( const NodeId& node )ι->tuple<MonitorHandle,Subscription*>{
-		auto p = find_if( _subscriptions, [&node](let& x){ return x.second.Node==node;} );
-		return p!=_subscriptions.end() ? make_tuple( p->first, &p->second ) : make_tuple( MonitorHandle{0,0}, nullptr );
+		auto pHandle = _byNode.find( node );
+		auto p = pHandle==_byNode.end() ? _subscriptions.end() : _subscriptions.find( pHandle->second );
+		//The Node check:  a server reusing a monitoredItemId leaves _subscriptions' entry with the old node, so the index alone could name another node's item.
+		return p!=_subscriptions.end() && p->second.Node==node ? make_tuple( p->first, &p->second ) : make_tuple( MonitorHandle{0,0}, nullptr );
 	}
 
 	α UAMonitoringNodes::MonitoredItemsRequest( sp<IDataChange>&& dataChange, flat_set<NodeId>&& nodes, Handle& requestId )ι->optional<CreateMonitoredItemsRequest>{
@@ -37,13 +40,13 @@ namespace Jde::Opc::Gateway{
 		flat_set<NodeId> newNodes;
 		//Only nodes already monitored are found here, not ones whose create is still in flight - a second create for such a node is
 		//merged into the first when it answers (OnCreateResponse, subscription-disconnect #15).
-		ul lock{ _mutex };
+		absl::ReleasableMutexLock lock{ _mutex };
 		//Both under the lock, and in this order:  DeleteMonitoring decides whether the subscription may go under this same
 		//lock and keeps it if _requests holds anything, so reading the id outside left a window where a delete committed
 		//between the read and the registration - and these items were then created on an id the server was about to drop,
 		//acked as successful and never pushed (#11).
 		let subscriptionId = client->SubscriptionId();
-		vector<Subscription*> existing;
+		vector<Subscription*> existing;//into _subscriptions, a flat_map:  an insert moves its elements, so nothing may add to it before these are used (reviews/abseil.md D4).
 		for( let& n : nodes ){
 			if( auto pSubscription = get<1>(FindNode(n)); pSubscription )
 				existing.push_back( pSubscription );
@@ -62,12 +65,12 @@ namespace Jde::Opc::Gateway{
 			pSubscription->ClientCalls.emplace( dataChange );
 		_requests.emplace( requestId, move(nodes) );
 		if( newNodes.empty() ){
-			lock.unlock();
+			lock.Release();
 			return nullopt;
 		}
 		else{
 			_calls.emplace( requestId, make_tuple(newNodes,move(dataChange),flat_set<NodeId>{}) );
-			lock.unlock();
+			lock.Release();
 			return CreateMonitoredItemsRequest{ move(newNodes) };
 		}
 	}
@@ -113,6 +116,7 @@ namespace Jde::Opc::Gateway{
 					else{
 						let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };
 						TRACE( "[{}.{}]Monitoring '{}'", hex(client->Handle()), hex((Handle)h), pNode->ToString() );
+						_byNode.insert_or_assign( *pNode, h );//FindNode found nothing, so any entry already here is stale.
 						_subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange} );
 						if( _subscriptions.size()==1 )
 							client->ProcessDataSubscriptions();
@@ -194,6 +198,7 @@ namespace Jde::Opc::Gateway{
 		//and always calls it - and GetResult answers each node from them.  Clearing them sent that subscribe an ack of zero results
 		//for its N nodes, which the web client reads as success (subscription-disconnect #5).
 		_subscriptions.clear();
+		_byNode.clear();
 		for( let& [h,_] : _calls )
 			_takenCalls.emplace( h );
 		_calls.clear();
@@ -201,7 +206,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α UAMonitoringNodes::SendDataChange( Handle h, const Value&& value )ι->uint{
-		sl _{ _mutex };
+		rl _{ _mutex };
 		uint calls{};
 		auto client = _client.lock();
 		if( auto pSubscription = _subscriptions.find(h); client && pSubscription!=_subscriptions.end() ){
@@ -280,7 +285,8 @@ namespace Jde::Opc::Gateway{
 				const MonitorHandle h{subscriptionId,monitoredId};
 				if( auto p = _subscriptions.find(h); p!=_subscriptions.end() && p->second.ClientCalls.empty() ){
 					TRACE( "[{}.{}]DeleteMonitoring for:  {}", hex(uaHandle), hex((Handle)h), p->second.Node.ToString() );
-					_subscriptions.erase( h );
+					_byNode.erase( p->second.Node );
+					_subscriptions.erase( p );
 					toDelete.try_emplace( subscriptionId ).first->second.emplace( monitoredId );
 				}
 			}

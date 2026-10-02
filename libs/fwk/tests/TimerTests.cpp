@@ -37,8 +37,8 @@ namespace Jde::Tests{
 		std::atomic<uint> WrongError{};//canceled with something other than operation_aborted.
 	};
 	Ω test( sp<std::binary_semaphore> done, uint i, sp<Outcomes> outcomes )ι->TimerAwait::Task{
-		let delay = _windows ? Math::Random()%4000 : Math::Random()%200;
-		let kill = _windows ? Math::Random()%4000 : Math::Random()%100;
+		let delay = Math::Random( _windows ? 4000 : 200 );
+		let kill = Math::Random( _windows ? 4000 : 100 );
 		atomic_flag threadDone;
 		atomic_flag threadStart;
 		auto timer = mu<DurationTimer>( microseconds(delay) );

@@ -24,7 +24,7 @@ namespace Jde{
 	}
 
 	α DurationTimer::Start()ι->void{
-		lg _{_mutex};
+		ul _{_mutex};
 		_timer.expires_after( _duration );
 		auto handler = [h=_h](const boost::system::error_code& ec){
 			if( !ec )

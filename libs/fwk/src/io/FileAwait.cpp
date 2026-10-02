@@ -59,17 +59,8 @@ namespace IO{
 					CRITICAL( "[{}]no handle.", Path.string() );
 				return;
 			}
-			if constexpr( isRead ){
-#ifdef __cpp_lib_move_only_function
+			if constexpr( isRead )
 				Post( get<string>(move(Buffer)), move(h) );
-#else
-				auto p = new string{ get<string>(move(Buffer)) };
-				Post( [=](){
-					h.promise().Resume( move(*p), h );
-					delete p;
-				} );
-#endif
-			}
 			else
 				Post( move(h) );
 		}, CoHandle() );

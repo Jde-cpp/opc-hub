@@ -1,6 +1,7 @@
 ﻿#pragma once
 #ifndef JDE_APP_H
 #define JDE_APP_H
+#include <absl/functional/any_invocable.h>
 
 #define Φ Γ α
 namespace Jde{
@@ -54,7 +55,7 @@ namespace Process{
 	Φ AddFinalizeFunction( function<void(bool terminating)>&& finalize )ι->void;
 	//Run by Shutdown last, after the loggers and the io_context have gone - the process holds nothing now:  for telling the outside
 	//it has ended, e.g. a service's stopped.  No logging.
-	Φ AddExitFunction( function<void()>&& exit )ι->void;
+	Φ AddExitFunction( absl::AnyInvocable<void()>&& exit )ι->void;
 
 	Φ AddShutdown( IShutdown* pShutdown )ι->void; //global unique ptrs
 	Φ RemoveShutdown( IShutdown* pShutdown )ι->void;

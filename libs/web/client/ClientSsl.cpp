@@ -1,4 +1,5 @@
 #include <jde/web/client/ClientSsl.h>
+#include <absl/synchronization/mutex.h>
 #include <boost/asio/ssl/host_name_verification.hpp>
 #include <openssl/ssl.h>
 #include <jde/fwk/crypto/TrustStore.h>
@@ -8,17 +9,17 @@
 namespace Jde::Web::Client::Ssl{
 	constexpr ELogTags _tags{ ELogTags::Http | ELogTags::Client };
 
-	static shared_mutex _mutex;
-	static vector<fs::path> _anchors;
-	static up<ssl::context> _shared;
+	static absl::Mutex _mutex;
+	static vector<fs::path> _anchors ABSL_GUARDED_BY(_mutex);
+	static up<ssl::context> _shared ABSL_GUARDED_BY(_mutex);
 	//Configured anchors that were not on disk when the shared context was built - a peer's certificate this process started
 	//ahead of, the OpcServer reading the hub's caFile 139 ms before the hub's first start wrote it (install-issues #12).  The
 	//context was cached without them, so every later connection failed its verify however often the caller retried.  Context()
 	//rebuilds once one of these exists.  Only absent files are recorded: a present-but-unreadable file would rebuild forever.
-	static vector<fs::path> _missing;
+	static vector<fs::path> _missing ABSL_GUARDED_BY(_mutex);
 	//Contexts a rebuild replaced.  The SSL objects of live streams hold their SSL_CTX either way, but keeping the wrappers
 	//costs nothing and leaves no question of freeing one under a handshake.
-	static vector<up<ssl::context>> _retired;
+	static vector<up<ssl::context>> _retired ABSL_GUARDED_BY(_mutex);
 
 	α VerifyPeer()ι->bool{
 		static const bool y = Settings::FindBool( "/web/client/ssl/verifyPeer" ).value_or( true );
@@ -41,8 +42,8 @@ namespace Jde::Web::Client::Ssl{
 			TRACET( _tags, "Loaded trust anchor '{}'.", pem.string() );
 	}
 
-	//_mutex held by the caller.  `missing` collects the configured anchors that were not on disk (see _missing).
-	Ω make( vector<fs::path>* missing=nullptr )ι->ssl::context{
+	//`missing` collects the configured anchors that were not on disk (see _missing).
+	ABSL_SHARED_LOCKS_REQUIRED(_mutex) Ω make( vector<fs::path>* missing=nullptr )ι->ssl::context{
 		ssl::context ctx{ ssl::context::tlsv12_client };
 		if( !VerifyPeer() ){
 			WARNT( _tags, "/web/client/ssl/verifyPeer is false - server certificates are not checked, so any peer can impersonate any host." );
@@ -70,7 +71,7 @@ namespace Jde::Web::Client::Ssl{
 	}
 
 	α MakeContext()ι->ssl::context{
-		sl _{ _mutex };
+		rl _{ _mutex };
 		return make();
 	}
 

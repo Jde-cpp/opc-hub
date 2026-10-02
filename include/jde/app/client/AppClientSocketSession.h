@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/app/client/usings.h>
+#include <absl/synchronization/mutex.h>
 #include <jde/app/proto/app.FromClient.h>
 #include <jde/access/usings.h>
 #include <jde/ql/types/Subscription.h>
@@ -59,8 +60,8 @@ namespace Jde::App::Client{
 		//than what was merely attempted - a request the server rejects must not be replayed on every reconnect forever.
 		struct SubscriptionRequest final{ sp<QL::IListener> Listener; vector<QL::Subscription> Subscriptions; string Query; jobject Variables; };
 		concurrent_flat_map<RequestId, SubscriptionRequest> _subscriptionRequests;
-		flat_map<QL::SubscriptionId,flat_set<sp<QL::IListener>>> _subs;
-		mutable std::shared_mutex _subsMutex;
+		mutable absl::Mutex _subsMutex;
+		flat_map<QL::SubscriptionId,flat_set<sp<QL::IListener>>> _subs ABSL_GUARDED_BY(_subsMutex);
 #ifdef TESTS
 	public:
 		α ProcessTransmissionTest( Proto::FromServer::Transmission&& t, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void{ ProcessTransmission( move(t), userPK, clientRequestId, depth ); }

@@ -1,4 +1,5 @@
 #include <jde/fwk/io/json.h>
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include "Auth.h"
@@ -99,7 +100,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let before = Crypto::ReadCertificate( path );
 
 		let saved = Settings::FindDefaultObject( "/gateway/issuedCerts" );
-		struct Restore final{ const jobject& Saved; ~Restore(){ try{ Settings::Set("/gateway/issuedCerts", Saved); }catch( const std::exception& ){} } } restore{ saved };//every later client in the process reads it.
+		absl::Cleanup restore = [&saved]{ try{ Settings::Set("/gateway/issuedCerts", saved); }catch( const std::exception& ){} };//every later client in the process reads it.
 		Settings::Set( "/gateway/issuedCerts/certificate/managed", false );
 		ASSERT_FALSE( UAClient::CryptoSettings(ServerCnnctnNK{Slug}).Certificate.Managed );
 
@@ -110,7 +111,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let absent = UAClient::CryptoSettings( ServerCnnctnNK{missing} ).Certificate.Path;
 		std::error_code ec;
 		fs::remove( absent, ec );//what a run without the guard leaves behind - in the directory the suite trusts.
-		struct Remove final{ const fs::path& Path; ~Remove(){ std::error_code ec; fs::remove( Path, ec ); } } remove{ absent };
+		absl::Cleanup remove = [&absent]{ std::error_code ec; fs::remove( absent, ec ); };
 		try{
 			UAClient::EnsureCertificate( ServerCnnctnNK{missing}, "urn:what.the.config.says" );
 			ADD_FAILURE() << "no pair for the connection, and nothing said so";

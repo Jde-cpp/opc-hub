@@ -235,12 +235,12 @@ namespace Jde::App{
 	α ArchiveLoadAwait::ArchiveFiles()ε->flat_map<year_month_day, fs::path>{
 		flat_map<year_month_day, fs::path> y;
 		for( let& yearEntry : fs::directory_iterator(_root) ){
-			if( let yearV = yearEntry.is_directory() ? Str::TryTo<year>(yearEntry.path().stem().string()) : nullopt; yearV ){
+			if( let yearV = yearEntry.is_directory() ? Str::TryTo<int>(yearEntry.path().stem().string()) : nullopt; yearV ){
 				for( let& monthEntry : fs::directory_iterator(yearEntry.path()) ){
-					if( let monthV = monthEntry.is_directory() ? Str::TryTo<month>(monthEntry.path().stem().string()) : nullopt; monthV ){
+					if( let monthV = monthEntry.is_directory() ? Str::TryTo<unsigned>(monthEntry.path().stem().string()) : nullopt; monthV ){
 						for( let& dayEntry : fs::directory_iterator(monthEntry.path()) ){
-							if( let dayV = dayEntry.is_directory() ? Str::TryTo<day>(dayEntry.path().stem().string()) : nullopt; dayV ){
-								let ymd = year_month_day{ *yearV, *monthV, *dayV };
+							if( let dayV = dayEntry.is_directory() ? Str::TryTo<unsigned>(dayEntry.path().stem().string()) : nullopt; dayV ){
+								let ymd = year_month_day{ year{*yearV}, month{*monthV}, day{*dayV} };
 								if( ymd.ok() && fs::exists(dayEntry.path()/"archive.binpb") )
 									y[ymd] = dayEntry.path()/"archive.binpb";
 							}

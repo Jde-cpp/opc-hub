@@ -2,6 +2,7 @@
 //and InsertParams (the shape the insert procs dispatch on) - across all four identifier kinds.
 #include <concepts>
 #include <gtest/gtest.h>
+#include <absl/hash/hash.h>
 #include <jde/db/Value.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/ql/types/TableQL.h>
@@ -409,6 +410,40 @@ namespace Jde::Opc::Tests{
 			let id = NodeId{ jvalue{jstring{identifier}} };
 			ASSERT_TRUE( id.IsString() );
 			EXPECT_EQ( id.ToString(), "s="+identifier ) << length << ": " << id.ToString().substr( 0, 64 );
+		}
+	}
+
+	//absl::Hash must agree with equality, which operator< defines (reviews/abseil.md D3) - the gateway's by-node index rests on it.
+	//Pairs that differ only in namespace, identifier type or identifier.
+	TEST( NodeIdTests, AbslHashAgreesWithEquality ){
+		const vector<NodeId> ids{ numeric(2, 5), numeric(3, 5), numeric(2, 6), fromJson(R"({"ns":2,"s":"5"})"), fromJson(R"({"ns":2,"s":"6"})"),
+			guidNode(2, nodeGuid), guidNode(3, nodeGuid), bytesNode(2, {5}), bytesNode(2, {6}) };
+		const vector<NodeId> copies = ids;
+		for( uint i=0; i<ids.size(); ++i ){
+			for( uint j=0; j<copies.size(); ++j ){
+				ASSERT_EQ( ids[i]==copies[j], i==j ) << ids[i].ToString() << " vs " << copies[j].ToString();
+				if( i==j )
+					EXPECT_EQ( absl::HashOf(ids[i]), absl::HashOf(copies[j]) ) << ids[i].ToString();
+				else
+					EXPECT_NE( absl::HashOf(ids[i]), absl::HashOf(copies[j]) ) << ids[i].ToString() << " vs " << copies[j].ToString();
+			}
+		}
+	}
+	//Equal values held differently must hash the same - what absl::VerifyTypeImplementsAbslHashCorrectly checks, which needs gmock
+	//(the deps build googletest with BUILD_GMOCK=OFF).  A null and an empty identifier both read as "", so they compare equal.
+	TEST( NodeIdTests, AbslHashOfEqualRepresentations ){
+		auto withString = []( UA_NodeIdType type, UA_String s ){
+			UA_NodeId ua{};
+			ua.namespaceIndex = 2;
+			ua.identifierType = type;
+			ua.identifier.string = s;
+			return NodeId{ move(ua) };
+		};
+		for( let type : {UA_NODEIDTYPE_STRING, UA_NODEIDTYPE_BYTESTRING} ){
+			let null = withString( type, UA_STRING_NULL );
+			let empty = withString( type, UA_String_fromChars("") );
+			ASSERT_TRUE( null==empty ) << type;
+			EXPECT_EQ( absl::HashOf(null), absl::HashOf(empty) ) << type;
 		}
 	}
 }
