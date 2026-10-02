@@ -5,19 +5,55 @@
 namespace Jde::Opc::Hist{
 	Ω utc()ι->const std::chrono::time_zone&{ return *std::chrono::locate_zone( "UTC" ); }
 
+	//A key that is there has to parse:  a silent default would leave the operator believing the config was applied.
+	Ω find( const jobject& hist, sv key )ι->const jvalue*{
+		let p = hist.if_contains( key );
+		return p && !p->is_null() ? p : nullptr;
+	}
+	Ω asString( const jvalue& v, sv key, SL sl )ε->string{
+		THROW_IFSL( !v.is_string(), "hist.{} must be a string, not {}.", key, serialize(v) );
+		return string{ v.get_string() };
+	}
+	Ω positive( const jvalue& v, sv key, SL sl )ε->uint{
+		let n = v.try_to_number<uint>();
+		THROW_IFSL( !n || !*n, "hist.{} must be a positive integer, not {}.", key, serialize(v) );
+		return *n;
+	}
+	//No fallback for a zone that isn't found:  fixing the name later would move every day's boundary under existing files.
+	Ω timeZone( const jobject& hist, SL sl )ε->const std::chrono::time_zone&{
+		let p = find( hist, "timeZone" );
+		if( !p )
+			return utc();
+		let name = asString( *p, "timeZone", sl );
+		try{
+			return *std::chrono::locate_zone( name );
+		}
+		catch( const std::runtime_error& e ){
+			THROWSL( "hist.timeZone '{}' is not a known time zone: {}", name, e.what() );
+		}
+	}
+
 	Settings::Settings( fs::path path )ι:
 		Path{ move(path) },
 		TimeZone{ &utc() }
 	{}
 	Settings::Settings( const jobject& hist, fs::path defaultPath, SL sl )ε:
-		Path{ Json::FindString(hist, "path").value_or(move(defaultPath).string()) },
-		Delay{ Json::FindDuration(hist, "delay", ELogLevel::Error, sl).value_or(1min) },
-		MaxBuffer{ Json::FindNumber<uint>(hist, "maxBuffer").value_or(64*1024*1024) },
-		TimeZone{ &Json::FindTimeZone(hist, "timeZone", utc(), ELogLevel::Error, sl) },
-		ReadLimit{ Json::FindNumber<uint>(hist, "readLimit").value_or(10'000) }{
+		Path{ move(defaultPath) },
+		TimeZone{ &timeZone(hist, sl) }{
+		if( let p = find(hist, "path"); p )
+			Path = asString( *p, "path", sl );
+		if( let p = find(hist, "delay"); p ){
+			let iso = asString( *p, "delay", sl );
+			let delay = Chrono::TryToDuration( string{iso}, ELogLevel::Debug, sl );
+			THROW_IFSL( !delay, "hist.delay '{}' is not an ISO 8601 duration.", iso );
+			Delay = *delay;
+		}
+		if( let p = find(hist, "maxBuffer"); p )
+			MaxBuffer = positive( *p, "maxBuffer", sl );
+		if( let p = find(hist, "readLimit"); p )
+			ReadLimit = positive( *p, "readLimit", sl );
 		THROW_IFSL( Path.empty(), "hist.path is empty." );
 		THROW_IFSL( Delay<=Duration::zero(), "hist.delay must be positive, not {}.", Chrono::ToString(Delay) );
-		THROW_IFSL( !ReadLimit, "hist.readLimit must be positive." );
 	}
 
 	Historian::Historian( Settings settings, sp<IClock> clock )ι:
@@ -29,13 +65,25 @@ namespace Jde::Opc::Hist{
 	Ω fileStem( sv name )ι->bool{
 		return !name.empty() && std::ranges::all_of( name, []( char c ){ return std::isalnum((unsigned char)c) || c=='-' || c=='_'; } );
 	}
-	α Historian::AddGroup( GroupConfig config, SL sl )ε->sp<Group>{
+	α Historian::AddGroup( GroupConfig config, vector<Member> members, SL sl )ε->sp<Group>{
 		THROW_IFSL( !fileStem(config.Name), "'{}' cannot name a group's files.", config.Name );
 		ul _{ _mutex };
 		THROW_IFSL( _groups.contains(config.Name), "Group '{}' already exists.", config.Name );
-		auto group = ms<Group>( move(config), _clock );
+		auto group = ms<Group>( move(config), _clock, move(members), Restored{}, sl );//#203 restores from the group's newest file.
 		_groups.emplace( group->Name(), group );
 		return group;
+	}
+	α Historian::RemoveGroup( sv name, optional<Writer> by, SL sl )ε->void{
+		sp<Group> group;
+		{
+			ul _{ _mutex };
+			auto p = _groups.find( name );
+			THROW_IFSL( p==_groups.end(), "Group '{}' does not exist.", name );
+			group = move( p->second );
+			_groups.erase( p );
+			_removed.push_back( group );
+		}
+		group->Close( move(by) );
 	}
 	α Historian::FindGroup( sv name )Ι->sp<Group>{
 		ul _{ _mutex };

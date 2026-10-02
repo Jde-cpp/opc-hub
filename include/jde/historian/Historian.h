@@ -20,7 +20,12 @@ namespace Jde::Opc::Hist{
 	//hist_groups row, named by its guid, whenever one is created.
 	struct Historian final : noncopyable{
 		Historian( Settings settings, sp<IClock> clock )ι;
-		α AddGroup( GroupConfig config, SRCE )ε->sp<Group>;
+		//members is the group's whole membership at start:  OpcServer's historized nodes, or a hist_groups row's
+		//hist_group_nodes rows.  Add and Remove change it after.
+		α AddGroup( GroupConfig config, vector<Member> members={}, SRCE )ε->sp<Group>;
+		//Deleting a hist_groups row:  every member leaves, by the caller who deleted it.  The group's files are kept, as
+		//every archive is, and what it buffered is still written.
+		α RemoveGroup( sv name, optional<Writer> by={}, SRCE )ε->void;
 		α FindGroup( sv name )Ι->sp<Group>;
 		α Config()Ι->const Settings&{ return _settings; }
 		α Time()Ι->IClock&{ return *_clock; }
@@ -28,6 +33,7 @@ namespace Jde::Opc::Hist{
 		sp<IClock> _clock;
 		mutable absl::Mutex _mutex;
 		flat_map<string,sp<Group>,std::less<>> _groups ABSL_GUARDED_BY(_mutex);
+		vector<sp<Group>> _removed ABSL_GUARDED_BY(_mutex);//until the flush writes what each buffered (#203).
 		const Settings _settings;
 	};
 }

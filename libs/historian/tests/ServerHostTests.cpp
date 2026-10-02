@@ -22,6 +22,26 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_THROW( Historize("Pump1.Speed"), Exception );//already a member.
 	}
 
+	//The newest file's preamble gives the map and its FileStart the next index:  a node keeps its index across a restart,
+	//a new one takes the next, and one the nodesets dropped is removed.  Index 4 went to a node removed before it.
+	TEST_F( ServerHost, KeepsIndexesAcrossRestart ){
+		Server = Restart( {.Name="server", .Indexes=EIndexes::Issued},
+			{ {Node("Pump1.Speed")}, {Node("Tank1.Level")}, {Node("Pump2.Speed")} },
+			{ .Members={{Node("Pump1.Speed"), 1}, {Node("Pump1.Flow"), 2}, {Node("Tank1.Level"), 3}}, .NextIndex=5 } );
+		EXPECT_EQ( Server->Find(Node("Pump1.Speed")), 1 );
+		EXPECT_EQ( Server->Find(Node("Tank1.Level")), 3 );
+		EXPECT_EQ( Server->Find(Node("Pump2.Speed")), 5 );
+		EXPECT_FALSE( Server->Find(Node("Pump1.Flow")) );
+		let added = Records<NodeAdded>();
+		ASSERT_EQ( added.size(), 1 );//the others are already in the preamble.
+		EXPECT_EQ( added[0].Index, 5 );
+		EXPECT_FALSE( added[0].By );
+		let removed = Records<NodeRemoved>();
+		ASSERT_EQ( removed.size(), 1 );
+		EXPECT_EQ( removed[0].Index, 2 );
+		EXPECT_EQ( Historize("Pump1.Flow"), 6 );//never issued twice, even to the same node.
+	}
+
 	TEST_F( ServerHost, OneGroup ){
 		EXPECT_EQ( Library.FindGroup("server"), Server );
 		EXPECT_THROW( Library.AddGroup({.Name="server", .Indexes=EIndexes::Issued}), Exception );

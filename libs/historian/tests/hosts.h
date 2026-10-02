@@ -37,6 +37,11 @@ namespace Jde::Opc::Hist::Tests{
 			return y;
 		}
 
+		//A restart, until #203 reads the files:  the group as its newest file left it, and the host's members at start.
+		α Restart( GroupConfig config, vector<Member> members, Restored restored )ε->sp<Group>{
+			return _group = ms<Group>( move(config), Time, move(members), move(restored) );
+		}
+
 		sp<ManualClock> Time{ ms<ManualClock>(sys_days{2026y/March/7}+17h) };
 		Historian Library{ Settings{"hist"}, Time };
 	protected:

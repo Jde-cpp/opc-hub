@@ -34,9 +34,9 @@ namespace Jde::Opc::Hist::Tests{
 		vector<TimePoint> beats;
 		std::function<void()> beat = [&]{
 			beats.push_back( clock.Now() );
-			clock.Schedule( clock.Now()+10s, [&]{ beat(); } );
+			clock.Schedule( 10s, [&]{ beat(); } );
 		};
-		clock.Schedule( _start+10s, [&]{ beat(); } );
+		clock.Schedule( 10s, [&]{ beat(); } );
 		EXPECT_EQ( clock.Advance(1min), 6 );
 		ASSERT_EQ( beats.size(), 6 );
 		EXPECT_EQ( beats.back(), _start+1min );
@@ -55,13 +55,30 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_FALSE( clock.Cancel(other) );//already ran.
 	}
 
+	//A test fails on a callback's exception, rather than the binary aborting, and the timers after it still run.
+	TEST( ClockTests, CallbackThrows ){
+		ManualClock clock{ _start };
+		bool ran{};
+		clock.Schedule( 1min, []{ THROW( "flush failed" ); } );
+		clock.Schedule( 2min, [&]{ ran = true; } );
+		EXPECT_THROW( clock.Advance(1h), Exception );
+		EXPECT_EQ( clock.Now(), _start+1min );
+		EXPECT_EQ( clock.Advance(1h), 1 );
+		EXPECT_TRUE( ran );
+	}
+
+	//A time runs on a system_timer, as midnight does, and an interval on a steady_timer, as delay and the heartbeat do.
 	TEST( ClockTests, SystemClock ){
 		auto clock = SystemClock();
-		std::latch done{ 1 };
+		std::latch done{ 2 };
 		std::atomic<bool> cancelledRan{};
-		let cancelled = clock->Schedule( clock->Now()+20ms, [&]{ cancelledRan = true; } );
+		let cancelled = clock->Schedule( clock->Now()+1h, [&]{ cancelledRan = true; } );//never due before the Cancel, however slow the box.
+		let cancelledInterval = clock->Schedule( 1h, [&]{ cancelledRan = true; } );
+		clock->Schedule( 10ms, []{ THROW( "flush failed" ); } );//logged, and the process carries on.
 		clock->Schedule( clock->Now()+50ms, [&]{ done.count_down(); } );
+		clock->Schedule( 50ms, [&]{ done.count_down(); } );
 		EXPECT_TRUE( clock->Cancel(cancelled) );
+		EXPECT_TRUE( clock->Cancel(cancelledInterval) );
 		let start = steady_clock::now();
 		while( !done.try_wait() && steady_clock::now()-start<10s )
 			std::this_thread::sleep_for( 1ms );

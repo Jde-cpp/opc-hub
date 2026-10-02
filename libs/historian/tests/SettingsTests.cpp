@@ -7,12 +7,15 @@ namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 
 	TEST( SettingsTests, Defaults ){
-		let settings = Settings{ jobject{}, "logs/hist/opc-server" };
-		EXPECT_EQ( settings.Path, "logs/hist/opc-server" );
-		EXPECT_EQ( settings.Delay, 1min );
-		EXPECT_EQ( settings.MaxBuffer, 64*1024*1024 );
-		EXPECT_EQ( settings.TimeZone, locate_zone("UTC") );//not the machine's zone, as the log's is.
-		EXPECT_EQ( settings.ReadLimit, 10'000 );
+		for( sv hist : {"{}", R"({"path":null,"delay":null,"maxBuffer":null,"timeZone":null,"readLimit":null})"} ){
+			SCOPED_TRACE( hist );
+			let settings = Settings{ parse(hist).as_object(), "logs/hist/opc-server" };
+			EXPECT_EQ( settings.Path, "logs/hist/opc-server" );
+			EXPECT_EQ( settings.Delay, 1min );
+			EXPECT_EQ( settings.MaxBuffer, 64*1024*1024 );
+			EXPECT_EQ( settings.TimeZone, locate_zone("UTC") );//not the machine's zone, as the log's is.
+			EXPECT_EQ( settings.ReadLimit, 10'000 );
+		}
 	}
 
 	TEST( SettingsTests, Parse ){
@@ -25,9 +28,16 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( settings.ReadLimit, 500 );
 	}
 
+	//A malformed value is an error, never its default.
 	TEST( SettingsTests, Invalid ){
-		EXPECT_THROW( (Settings{parse(R"({"delay":"PT0S"})").as_object(), "hist"}), Exception );
-		EXPECT_THROW( (Settings{parse(R"({"readLimit":0})").as_object(), "hist"}), Exception );
-		EXPECT_THROW( (Settings{parse(R"({"path":""})").as_object(), "hist"}), Exception );
+		for( sv hist : {
+			R"({"path":""})", R"({"path":7})",
+			R"({"delay":"PT0S"})", R"({"delay":"30s"})", R"({"delay":30})",
+			R"({"maxBuffer":0})", R"({"maxBuffer":-1})", R"({"maxBuffer":1.5})", R"({"maxBuffer":"1048576"})",
+			R"({"timeZone":"America/New_Yrok"})", R"({"timeZone":-5})",
+			R"({"readLimit":0})", R"({"readLimit":-5})", R"({"readLimit":"500"})" }){
+			SCOPED_TRACE( hist );
+			EXPECT_THROW( (Settings{parse(hist).as_object(), "hist"}), Exception );
+		}
 	}
 }
