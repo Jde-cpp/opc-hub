@@ -244,7 +244,8 @@ namespace Jde::Opc::Gateway{
 			if( rank<3 )
 				hits.push_back( &e );
 		}
-		auto rankOf = [&]( const Entry* e ){ _mutex.AssertReaderHeld(); return ranks[e-&_entries[0]]; };//a lambda is analyzed on its own - this tells it the lock.
+		let first = _entries.data();//taken under the lock, so the comparator below - called from inside sort, where no lock attribute reaches - touches no guarded member.
+		auto rankOf = [&]( const Entry* e ){ return ranks[e-first]; };
 		std::ranges::sort( hits, [&]( const Entry* a, const Entry* b ){
 			let ra = rankOf(a), rb = rankOf(b);
 			return ra!=rb ? ra<rb : a->Depth!=b->Depth ? a->Depth<b->Depth : a->NameLower<b->NameLower;

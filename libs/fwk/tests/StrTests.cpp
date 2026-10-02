@@ -129,12 +129,12 @@ namespace Jde::Tests{
 		EXPECT_FALSE( Str::TryTo<uint32>(string{"abc"}).has_value() );
 		EXPECT_FALSE( Str::TryTo<uint32>(string{""}).has_value() );
 		EXPECT_FALSE( Str::TryTo<uint>(string{"99999999999999999999999"}).has_value() ) << "past unsigned long long - out_of_range, not a throw";
-		EXPECT_EQ( Str::TryTo<uint>(string{"ff"}, 16), 255u );
+		EXPECT_EQ( (Str::TryTo<uint,16>(string{"ff"})), 255u );
 		EXPECT_FALSE( Str::TryTo<uint>("42abc").has_value() ) << "the whole string, not a prefix";
 		EXPECT_FALSE( Str::TryTo<uint16_t>("70000").has_value() ) << "out of range for T, not truncated to 4464";
 		EXPECT_EQ( Str::TryTo<uint16_t>("65535"), 65535u );
 		EXPECT_FALSE( Str::TryTo<uint16_t>("-1").has_value() ) << "no sign on an unsigned type";
-		EXPECT_FALSE( Str::TryTo<uint32_t>("100000000", 16).has_value() ) << "nine hex digits overflow 32 bits";
+		EXPECT_FALSE( (Str::TryTo<uint32_t,16>("100000000").has_value()) ) << "nine hex digits overflow 32 bits";
 		EXPECT_EQ( Str::TryTo<int>("-5"), -5 );
 	}
 

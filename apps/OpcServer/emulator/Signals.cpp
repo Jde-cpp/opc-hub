@@ -1,7 +1,7 @@
 #include "Signals.h"
 #include <cmath>
 #include <numbers>
-#include <absl/random/random.h>
+#include <jde/fwk/utils/mathUtils.h>
 
 #define let const auto
 namespace Jde::Opc::Emulator{
@@ -57,8 +57,8 @@ namespace Jde::Opc::Emulator{
 	};
 	struct RandomWalk final : IGenerator{
 		RandomWalk( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _value{ (s.Min+s.Max)/2 }, _step{ s.Step }{}
-		α Next( Duration, bool )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>(_gen, -_step, _step), _min, _max ); return _value; }
-		double _min, _max, _value, _step; absl::BitGen _gen;
+		α Next( Duration, bool )ι->double override{ _value = std::clamp( _value+absl::Uniform<double>( Math::BitGen(), -_step, _step ), _min, _max ); return _value; }
+		double _min, _max, _value, _step;
 	};
 	struct Counter final : IGenerator{//the soak's mode: +Step per cycle, wrapping at Max.
 		Counter( const TagSpec& s )ι:_min{ s.Min }, _max{ s.Max }, _step{ s.Step }, _value{ s.Min }{}

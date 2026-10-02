@@ -63,6 +63,7 @@ namespace Jde::Opc{
 	};
 
 	//absl::Hash over the fields NodeId/ExNodeId's operator< compares, so it agrees with their equality (reviews/abseil.md D3).
+	//Reseeded every run:  for in-process containers only - never store, send or log one (Calc32c for that, D2).
 	Ŧ HashNodeId( T h, const UA_NodeId& n )ι->T{
 		switch( n.identifierType ){
 			case UA_NODEIDTYPE_NUMERIC: return T::combine( std::move(h), n.namespaceIndex, n.identifierType, n.identifier.numeric );

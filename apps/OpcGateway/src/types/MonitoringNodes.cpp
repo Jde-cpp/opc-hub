@@ -31,7 +31,8 @@ namespace Jde::Opc::Gateway{
 	α UAMonitoringNodes::FindNode( const NodeId& node )ι->tuple<MonitorHandle,Subscription*>{
 		auto pHandle = _byNode.find( node );
 		auto p = pHandle==_byNode.end() ? _subscriptions.end() : _subscriptions.find( pHandle->second );
-		return p!=_subscriptions.end() ? make_tuple( p->first, &p->second ) : make_tuple( MonitorHandle{0,0}, nullptr );
+		//The Node check:  a server reusing a monitoredItemId leaves _subscriptions' entry with the old node, so the index alone could name another node's item.
+		return p!=_subscriptions.end() && p->second.Node==node ? make_tuple( p->first, &p->second ) : make_tuple( MonitorHandle{0,0}, nullptr );
 	}
 
 	α UAMonitoringNodes::MonitoredItemsRequest( sp<IDataChange>&& dataChange, flat_set<NodeId>&& nodes, Handle& requestId )ι->optional<CreateMonitoredItemsRequest>{
@@ -115,7 +116,7 @@ namespace Jde::Opc::Gateway{
 					else{
 						let h = MonitorHandle{ requestHandle.SubId(), result.monitoredItemId };
 						TRACE( "[{}.{}]Monitoring '{}'", hex(client->Handle()), hex((Handle)h), pNode->ToString() );
-						_byNode.emplace( *pNode, h );
+						_byNode.insert_or_assign( *pNode, h );//FindNode found nothing, so any entry already here is stale.
 						_subscriptions.emplace( h, Subscription{move(*pNode), move(result), dataChange} );
 						if( _subscriptions.size()==1 )
 							client->ProcessDataSubscriptions();

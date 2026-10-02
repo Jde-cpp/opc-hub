@@ -92,10 +92,10 @@ namespace Jde::Web{
 		auto payload = Ƒ( "{}.{}", HeaderBodyEncoded, signature );
 		return payload;
 	}
-	α Jwt::SetModulus( str encoded )ι->void{
+	α Jwt::SetModulus( str encoded )ε->void{
 		PublicKey.Modulus = Str::Decode64<Crypto::Modulus>( encoded, true );
 	}
-	α Jwt::SetExponent( str encoded )ι->void{
+	α Jwt::SetExponent( str encoded )ε->void{
 		PublicKey.Exponent = Str::Decode64<Crypto::Exponent>( encoded, true );
 	}
 }

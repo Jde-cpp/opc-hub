@@ -225,7 +225,7 @@ namespace Jde::Opc::Gateway::Soak{
 		catch( runtime_error& e ){
 			throw Exception{ SRCE_CUR, {}, move(e), "[{}]/login for user '{}' could not reach the gateway at {}:{}.", leg.Slug, leg.User, _host, _port };
 		}
-		let sessionId = Str::TryTo<SessionPK>( authorization, 16 );
+		let sessionId = Str::TryTo<SessionPK,16>( authorization );
 		THROW_IF( !sessionId || !*sessionId, "[{}]/login for user '{}' returned no session id in the Authorization header ('{}').", leg.Slug, leg.User, authorization );
 		optional<ssl::context> ctx;
 		auto socket = ms<GatewayClientSocket>( Executor(), ctx );//built aside and swapped in only once it is up, as in Connect (#8).

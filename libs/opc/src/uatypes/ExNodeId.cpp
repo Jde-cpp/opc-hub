@@ -1,5 +1,4 @@
 ﻿#include <jde/opc/uatypes/ExNodeId.h>
-#include <absl/hash/hash.h>
 #include <jde/db/Row.h>
 #include <jde/db/Value.h>
 #include <jde/opc/uatypes/NodeId.h>
@@ -187,9 +186,6 @@ namespace Jde::Opc{
 
 	α ExNodeId::to_string()Ι->string{
 		return serialize( ToJson() );
-	}
-	α NodeIdHash::operator()(const ExNodeId& n)Ι->uint{
-		return absl::HashOf( n );
 	}
 	α ExNodeId::Add( jobject& j )Ι->void{
 		if( namespaceUri.length )

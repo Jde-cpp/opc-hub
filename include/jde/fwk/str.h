@@ -48,7 +48,7 @@ namespace Jde::Str{
 	Ŧ ToHex( const T& x )ι->string requires requires{ x.data(); x.size(); }{ return ToHex( std::as_bytes(std::span{x.data(), x.size()}) ); }//any contiguous container or span of any byte-sized element.
 	Φ ToLower( sv source )ι->string;
 	Φ ToUpper( sv source )ι->string;
-	template<class T=uint> α TryTo( sv s, int base=10 )ι->optional<T>;//the whole of s, in range for T; base 10 or 16.
+	template<class T=uint, int Base=10> α TryTo( sv s )ι->optional<T>;//the whole of s, in range for T; Base 10 or 16.
 
 	Ξ Trim( sv s )->sv{ return RTrim(LTrim(s)); }
 	Ξ Trim( string&& s )->string{ return RTrim(LTrim(move(s))); }
@@ -117,9 +117,10 @@ namespace Jde{
 		return tokens;
 	}
 
-	Ŧ Str::TryTo( sv s, int base )ι->optional<T>{
+	template<class T, int Base> α Str::TryTo( sv s )ι->optional<T>{
+		static_assert( Base==10 || Base==16, "Str::TryTo parses base 10 or 16 only." );
 		T y;
-		return ( base==16 ? absl::SimpleHexAtoi(s, &y) : absl::SimpleAtoi(s, &y) ) ? optional<T>{ y } : nullopt;
+		return ( Base==16 ? absl::SimpleHexAtoi(s, &y) : absl::SimpleAtoi(s, &y) ) ? optional<T>{ y } : nullopt;
 	}
 }
 #undef Φ
