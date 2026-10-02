@@ -1,4 +1,5 @@
 #include <jde/historian/Group.h>
+#include <absl/container/flat_hash_set.h>
 
 #define let const auto
 
@@ -25,11 +26,14 @@ namespace Jde::Opc::Hist{
 		_clock{ move(clock) },
 		_config{ move(config) }{
 		let now = _clock->Now();
-		flat_set<NodeIndex> restoredIndexes, kept;
+		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
+		restoredIndexes.reserve( restored.Members.size() );
 		for( let& [_,index] : restored.Members )
 			restoredIndexes.emplace( index );
 		vector<Record> added;
 		ul _{ _mutex };
+		_nodes.reserve( members.size() );
+		_indexes.reserve( members.size() );
 		_nextIndex = restored.NextIndex;
 		for( auto& member : members ){
 			auto node = Normalize( member, sl );
@@ -158,7 +162,12 @@ namespace Jde::Opc::Hist{
 	α Group::Close( optional<Writer> by )ι->void{
 		let now = _clock->Now();
 		ul _{ _mutex };
+		vector<NodeIndex> indexes;//in index order, so the same members leave the same way every run.
+		indexes.reserve( _nodes.size() );
 		for( let& [index,_] : _nodes )
+			indexes.push_back( index );
+		std::ranges::sort( indexes );
+		for( let index : indexes )
 			_buffer.emplace_back( NodeRemoved{index, now, by} );
 		_nodes.clear();
 		_indexes.clear();

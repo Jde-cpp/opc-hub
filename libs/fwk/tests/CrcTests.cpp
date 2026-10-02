@@ -39,6 +39,13 @@ namespace Jde::Tests{
 		EXPECT_EQ( RunTime(View(_descending)), 0x113FDB5Cu );
 	}
 
+	TEST( CrcTests, Extend32c ){
+		using IO::Crc::Extend32c;
+		for( uint split=0; split<=_check.size(); ++split )
+			EXPECT_EQ( Extend32c(Calc32c(string{_check.substr(0, split)}), _check.substr(split)), 0xE3069283u );
+		EXPECT_EQ( Extend32c(0, View(_ascending)), 0x46DD794Eu );
+	}
+
 	//Up to 64 bytes abseil computes inline in the caller; longer inputs reach abseil_dll's own paths - under 256 bytes, under
 	//2048, and the multi-stream PCLMUL one - each from an aligned and an unaligned start.  Expected values: the table's.
 	constexpr auto _large = Fill<5003>( [](uint i){ return i*131 + (i>>8); } );//every byte value, not 256-periodic

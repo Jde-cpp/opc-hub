@@ -3,7 +3,16 @@
 #define let const auto
 
 namespace Jde::Opc::Hist{
-	Ω utc()ι->const std::chrono::time_zone&{ return *std::chrono::locate_zone( "UTC" ); }
+	//libc++ loads the whole tz database for any zone, UTC included, so a host without it, such as a minimal container,
+	//fails here:  a startup error naming the cause, not a terminate.
+	Ω utc( SL sl )ε->const std::chrono::time_zone&{
+		try{
+			return *std::chrono::locate_zone( "UTC" );
+		}
+		catch( const std::runtime_error& e ){
+			THROWSL( "hist.timeZone defaults to UTC, which the time zone database could not give - is tzdata installed?  {}", e.what() );
+		}
+	}
 
 	//A key that is there has to parse:  a silent default would leave the operator believing the config was applied.
 	Ω find( const jobject& hist, sv key )ι->const jvalue*{
@@ -23,7 +32,7 @@ namespace Jde::Opc::Hist{
 	Ω timeZone( const jobject& hist, SL sl )ε->const std::chrono::time_zone&{
 		let p = find( hist, "timeZone" );
 		if( !p )
-			return utc();
+			return utc( sl );
 		let name = asString( *p, "timeZone", sl );
 		try{
 			return *std::chrono::locate_zone( name );
@@ -33,9 +42,9 @@ namespace Jde::Opc::Hist{
 		}
 	}
 
-	Settings::Settings( fs::path path )ι:
+	Settings::Settings( fs::path path, SL sl )ε:
 		Path{ move(path) },
-		TimeZone{ &utc() }
+		TimeZone{ &utc(sl) }
 	{}
 	Settings::Settings( const jobject& hist, fs::path defaultPath, SL sl )ε:
 		Path{ move(defaultPath) },

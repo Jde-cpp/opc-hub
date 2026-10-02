@@ -1,4 +1,5 @@
 #pragma once
+#include <absl/container/flat_hash_map.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include "Clock.h"
@@ -99,9 +100,10 @@ namespace Jde::Opc::Hist{
 		sp<IClock> _clock;
 		const GroupConfig _config;
 		mutable absl::Mutex _mutex;
-		flat_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);
-		flat_map<ExNodeId,NodeIndex> _indexes ABSL_GUARDED_BY(_mutex);
-		flat_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
+		//Hashed, so loading a group's members is linear and Enqueue's lookup constant.  Their order changes run to run.
+		absl::flat_hash_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);
+		absl::flat_hash_map<ExNodeId,NodeIndex> _indexes ABSL_GUARDED_BY(_mutex);
+		absl::flat_hash_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
 		bool _connected ABSL_GUARDED_BY(_mutex){ true };
 		bool _closed ABSL_GUARDED_BY(_mutex){};
