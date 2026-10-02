@@ -65,8 +65,8 @@ namespace Jde::Tests{
 		EXPECT_EQ( value->load(), 7 );
 	}
 
-	//BlockAwaitState is co-owned because the waiter can wake between Signal's assignment and its notify_all - a
-	//stack-owned state would be destroyed while notify_all still touched it.  Repeat enough to hit that window.
+	//BlockAwaitState is on the waiter's stack, and the waiter can wake while Signal is still inside Notify - absl::Notification
+	//allows destroying it then.  Repeat enough to hit that window.
 	TEST_F( BlockAwaitTests, RepeatedBlocksDoNotRaceTheNotify ){
 		for( int i=0; i<300; ++i )
 			ASSERT_EQ( BlockTAwait(ThreadedInt{i}), i ) << "iteration " << i;

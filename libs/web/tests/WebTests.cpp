@@ -110,7 +110,7 @@ namespace Jde::Web{
 						let echoIndex = To<SessionPK>( Json::AsString(jsonResult) );
 						if( echoIndex!=idx )
 							THROW( "index={} echoIndex={}", idx, echoIndex );
-						(*pSessionIds)[idx] = *Str::TryTo<SessionPK>( res[http::field::authorization], nullptr, 16 );
+						(*pSessionIds)[idx] = *Str::TryTo<SessionPK>( res[http::field::authorization], 16 );
 					}
 					catch( Exception& e ){
 						DBG( "connections={}", connections.load() );
@@ -129,7 +129,7 @@ namespace Jde::Web{
 					uint idx = index;
 					let sessionId = (*pSessionIds)[idx].load();
 					ClientHttpRes res = co_await ClientHttpAwait{ Host, "/Authorization", Port, {.Authorization=Ƒ("{:x}", sessionId)} };
-					if( sessionId!=*Str::TryTo<uint>(res[http::field::authorization], nullptr, 16) )
+					if( sessionId!=*Str::TryTo<uint>(res[http::field::authorization], 16) )
 						THROW( "sessionId={} authorization={}", sessionId, res[http::field::authorization] );
 					(*pSessionIds)[idx] = 0;
 				}();
@@ -166,8 +166,7 @@ namespace Jde::Web{
 		uint delay = 2;
 		http::request<http::empty_body> req{ http::verb::get, Ƒ("/delay?seconds={}", delay), 11 };
 		req.set( http::field::content_type, ContentType );
-		std::condition_variable_any cv;
-		std::shared_mutex mtx;
+		absl::Notification readDone;
 		auto onWrite = []( beast::error_code ec, uint /*bytes_transferred*/ )ι{
 			ASSERT( !ec );
 			DBG( "onWrite" );
@@ -177,8 +176,7 @@ namespace Jde::Web{
 		});
 		auto onRead = [&]( beast::error_code ec, uint /*bytes_transferred*/ )ε{
 			CodeException{ ec, _tags }; //expected.
-			sl l{ mtx };
-			cv.notify_one();
+			readDone.Notify();
 		};
 		beast::flat_buffer buffer;
 		http::request_parser<http::string_body> parser;
@@ -193,8 +191,7 @@ namespace Jde::Web{
 			stream = nullptr;
 			DBG( "client stream shutdown" );
 		});
-		sl l{ mtx };
-		cv.wait( l );
+		readDone.WaitForNotification();//a Notification, not a predicate-less cv.wait:  a read that completes first is not lost.
 		std::this_thread::sleep_for( std::chrono::seconds{delay}+500ms );
 		//TODO rest stream write succeeds even though stream is shutdown.
 	}
@@ -227,7 +224,7 @@ namespace Jde::Web{
 		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::internal_server_error, e.Status() );
 			let authorization = e.Res()[http::field::authorization];
-			let sessionId = Str::TryTo<SessionPK>( authorization, nullptr, 16 );
+			let sessionId = Str::TryTo<SessionPK>( authorization, 16 );
 			ASSERT_TRUE( sessionId && *sessionId ) << Ƒ( "authorization='{}'", authorization );
 		}
 	}

@@ -62,6 +62,16 @@ namespace Jde::Opc{
 		return y;
 	};
 
+	//absl::Hash over the fields NodeId/ExNodeId's operator< compares, so it agrees with their equality (reviews/abseil.md D3).
+	Ŧ HashNodeId( T h, const UA_NodeId& n )ι->T{
+		switch( n.identifierType ){
+			case UA_NODEIDTYPE_NUMERIC: return T::combine( std::move(h), n.namespaceIndex, n.identifierType, n.identifier.numeric );
+			case UA_NODEIDTYPE_STRING: return T::combine( std::move(h), n.namespaceIndex, n.identifierType, ToSV(n.identifier.string) );
+			case UA_NODEIDTYPE_BYTESTRING: return T::combine( std::move(h), n.namespaceIndex, n.identifierType, ToSV(n.identifier.byteString) );
+			default: return T::combine_contiguous( T::combine(std::move(h), n.namespaceIndex, n.identifierType), (const unsigned char*)&n.identifier.guid, sizeof(UA_Guid) );
+		}
+	}
+
 	Τ using Iterable = std::span<T>;
 }
 #undef let

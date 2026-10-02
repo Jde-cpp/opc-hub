@@ -1,4 +1,5 @@
 ﻿#include <jde/fwk/crypto/OpenSsl.h>
+#include <absl/strings/match.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
@@ -81,7 +82,7 @@ namespace Jde{
 			if( colon==sv::npos )
 				continue;
 			let type = Str::Trim( entry.substr(0, colon) );
-			let p = find_if( types, [type](sv t){ return t.size()==type.size() && Str::StartsWithInsensitive(type, t); } );
+			let p = find_if( types, [type](sv t){ return absl::EqualsIgnoreCase(type, t); } );
 			if( p!=types.end() )
 				y.push_back( Ƒ("{}:{}", *p, Str::Trim(entry.substr(colon+1))) );
 		}

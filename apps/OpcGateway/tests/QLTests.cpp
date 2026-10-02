@@ -1,4 +1,5 @@
 #include <jde/fwk/process/execution.h>
+#include <absl/cleanup/cleanup.h>
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
 #include <jde/fwk/str.h>
@@ -130,7 +131,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let enforce = []( sv slug, bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"{}\", criteria:null )", on ? "restore" : "delete", slug), {} ); };
 		auto refused = [&]( sv slug, function<void()> query )->bool{//the gateway's authorizer hears of the switch over its subscription, so ask until it has.
 			enforce( slug, true );
-			struct Restore final{ decltype(enforce) F; sv Slug; ~Restore(){ try{ F(Slug, false); }catch( const std::exception& ){} } } _{ enforce, slug };
+			absl::Cleanup _ = [enforce, slug]{ try{ enforce(slug, false); }catch( const std::exception& ){} };
 			for( let deadline = steady_clock::now()+5s; steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
 				try{
 					query();
@@ -270,7 +271,7 @@ namespace Jde::Opc::Gateway::Tests{
 					held.push_back( client );
 			}
 			ASSERT_FALSE( held.empty() );
-			struct Reconnect final{ vector<sp<UAClient>>& Clients; ~Reconnect(){ for( auto& c : Clients ) c->Connected = true; } } _{ held };
+			absl::Cleanup _ = [&held]{ for( auto& c : held ) c->Connected = true; };
 			for( auto& c : held )
 				c->Connected = false;
 			try{

@@ -84,7 +84,7 @@ namespace Jde::App{
 		auto lock = TryLockKey( DailyFile().string() );
 		uint dropped{};
 		{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			if( _toSave.empty() )
 				return;
 			if( lock ){
@@ -188,7 +188,7 @@ namespace Jde::App{
 	//L1: the buffer, plus every batch that has left it and not yet reached the file.  In flush order, and older than anything still
 	//buffered - so a query sees the same entries in the same order whether or not a flush happens to be waiting on the key.
 	α ProtoLog::Entries()Ε->vector<App::Log::Proto::FileEntry>{
-		lg _{ _mutex };
+		ul _{ _mutex };
 		vector<App::Log::Proto::FileEntry> y;
 		auto append = [&y]( const vector<byte>& bytes ){
 			auto parsed = Deserialize( sv{(char*)bytes.data(), bytes.size()} );
@@ -223,21 +223,22 @@ namespace Jde::App{
 			co_await IO::WriteAwait( DailyFile(), vector<byte>{toSave}, true, IO::EWriteMode::Append, _tags );
 		}
 		catch( const runtime_error& ){
-			bool firstFailure; uint dropped;
+			bool firstFailure; uint dropped; Duration delay;
 			{
-				lg _{ _mutex };
+				ul _{ _mutex };
 				firstFailure = !_flushFailed;
 				_flushFailed = true;
 				_inFlight.erase( flushId );//back out of flight before it goes back in the buffer, or Entries() would report it twice.
 				_toSave.insert( _toSave.begin(), toSave.begin(), toSave.end() );//prepend: strings must precede the entries referencing them.
 				dropped = DropBufferUnlocked();
+				delay = _delay;
 				if( !_timer )
 					StartTimer();//the retry must not depend on another log line arriving - StartTimer returns at its first suspend with _mutex still held.
 			}
 			//M5: the failure had no line of its own - only the IOException's, one per log line written, which said nothing about the
 			//buffer behind it.  Once per outage, not once per flush.
 			if( firstFailure )
-				WARN( "Could not write the daily log file '{}' - buffering, and retrying every {}.", DailyFile().string(), Chrono::ToString(_delay) );
+				WARN( "Could not write the daily log file '{}' - buffering, and retrying every {}.", DailyFile().string(), Chrono::ToString(delay) );
 			if( dropped )
 				WARN( "The daily log buffer passed its {:L} byte cap while '{}' was unwritable - dropped {:L} buffered bytes.", _maxBufferSize, DailyFile().string(), dropped );
 			co_return;
@@ -245,7 +246,7 @@ namespace Jde::App{
 		{//recovered: say so, and account for what the outage cost.
 			uint dropped{}; bool recovered{};
 			{
-				lg _{ _mutex };
+				ul _{ _mutex };
 				_inFlight.erase( flushId );//durable now, and readable from the file - Entries() must stop reporting it.
 				if( (recovered = _flushFailed) ){
 					_flushFailed = false;
@@ -261,7 +262,7 @@ namespace Jde::App{
 		//Still holding the daily file's LockKey, so no other flush can interleave with the drain.
 		vector<byte> pending;
 		{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			if( !_needsArchive )
 				co_return;
 			pending = move( _toSave );
@@ -274,7 +275,7 @@ namespace Jde::App{
 				co_await IO::WriteAwait( DailyFile(), vector<byte>{pending}, true, IO::EWriteMode::Append, _tags );
 			}
 			catch( const runtime_error& ){
-				lg _{ _mutex };
+				ul _{ _mutex };
 				_toSave.insert( _toSave.begin(), pending.begin(), pending.end() );
 				_needsArchive = true;//nothing archived - re-arm so the next flush retries the round.
 				co_return;//no bound to take back since L1: the drain no longer releases it on the promise of a round.
@@ -287,14 +288,14 @@ namespace Jde::App{
 		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		try{
 			co_await ArchiveAwait{ DailyFile(), _root, _tz };
-			lg _{ _mutex };
+			ul _{ _mutex };
 			//L1: parked here, not in the drain - the file is gone now, so nothing local is behind this bound.  Only when nothing has
 			//been written since: an entry that arrived during the round is in _toSave, which is local, and already lowered it.
 			if( _toSave.empty() && _inFlight.empty() )
 				_dailyFileStart = TimePoint::max();
 		}
 		catch( const runtime_error& ){
-			lg _{ _mutex };//the round failed, so the daily file survives with everything the drain wrote into it - keep the widest bound.
+			ul _{ _mutex };//the round failed, so the daily file survives with everything the drain wrote into it - keep the widest bound.
 			_dailyFileStart = TimePoint::min();
 		}
 	}
@@ -317,7 +318,8 @@ namespace Jde::App{
 			AddString( ToGuid(ids.Get((int)i)), args[i], _cache.Args );
 	}
 
-	α ProtoLog::StartTimer()ι->TimerAwait::Task{
+	//Not analyzed:  entered with _mutex held - the caller's - until the first suspend, then retakes it in the continuation.
+	ABSL_NO_THREAD_SAFETY_ANALYSIS α ProtoLog::StartTimer()ι->TimerAwait::Task{
 		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		if( _delay==Duration::min() )
 			co_return;
@@ -332,7 +334,7 @@ namespace Jde::App{
 				_mutex.unlock();
 		}
 		else{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			if( _toSave.size() )
 				StartTimer();
 			else
@@ -340,7 +342,7 @@ namespace Jde::App{
 		}
 	}
 
-	//_mutex must be held.  StartTimer's continuation nulls _timer - destroying the DurationTimer - under this same lock, so
+	//StartTimer's continuation nulls _timer - destroying the DurationTimer - under this same lock, so
 	//an unguarded `if( _timer ) _timer->Cancel()` could pass the test on the shutdown thread and then call Cancel() on
 	//freed memory once the io thread ran the continuation.  Every other _timer access was already guarded; this one was
 	//not, only because Save() calls it with the lock already held.
@@ -354,7 +356,7 @@ namespace Jde::App{
 	//One locked operation, because it is two writes: _delay is read by StartTimer under _mutex, so setting it from the
 	//shutdown thread without the lock raced the very timer being cancelled.  min() is the sentinel StartTimer bails on.
 	α ProtoLog::StopTimer()ι->void{
-		lg _{ _mutex };
+		ul _{ _mutex };
 		_delay = Duration::min();
 		ResetTimerUnlocked();
 	}

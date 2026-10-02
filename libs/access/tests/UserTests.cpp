@@ -11,8 +11,6 @@ namespace Jde::Access{
 	class UserTests : public ::testing::Test{
 	protected:
 	};
-	std::condition_variable_any cv;
-	std::shared_mutex mtx;
 
 
 	TEST_F( UserTests, Fields ){

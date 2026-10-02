@@ -1,4 +1,5 @@
 #include <exception>
+#include <absl/strings/match.h>
 #include <jde/web/client/http/ClientHttpSession.h>
 #include <jde/web/client/ClientSsl.h>
 #include <jde/web/client/http/ClientHttpRes.h>
@@ -152,7 +153,7 @@ namespace Jde::Web::Client{
 					//an Authorization header is a credential for the host it was issued to; a redirect elsewhere must not carry it.
 					//Whoever controls the Location header would otherwise be handed the caller's session id or bearer token.
 					let downgrade = _args.IsSsl && !args.IsSsl;
-					if( args.Authorization.size() && (downgrade || Str::ToLower(host)!=Str::ToLower(_session->Host)) ){
+					if( args.Authorization.size() && (downgrade || !absl::EqualsIgnoreCase(host, _session->Host)) ){
 						DBG( "dropping Authorization: redirect leaves {}{} for {}{}", _args.IsSsl ? "https://" : "http://", _session->Host, args.IsSsl ? "https://" : "http://", host );
 						args.Authorization.clear();
 					}

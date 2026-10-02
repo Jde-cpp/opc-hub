@@ -1,4 +1,5 @@
 #include <jde/web/server/SubscribeLog.h>
+#include <absl/synchronization/mutex.h>
 #include <jde/ql/types/Subscription.h>
 #include <jde/web/server/IWebsocketSession.h>
 
@@ -56,19 +57,20 @@ namespace Jde::Web::Server{
 		LogSubscription Sub;
 	};
 
-	vector<sp<SessionSubscription>> _subs; shared_mutex _mutex;
+	absl::Mutex _mutex;
+	vector<sp<SessionSubscription>> _subs ABSL_GUARDED_BY(_mutex);
 
 	//O1: what Add overwrote when it lowered a tag-set's floor, so Unsubscribe can put it back.  Prior is the effective level
 	//before the first lowering - what a surviving subscription's floor is compared against; PriorOverride is the explicit
 	//override if there was one, so the restore reinstates it rather than leaving behind one the configuration never had.
 	struct LoweredTag{ ELogLevel Prior; optional<ELogLevel> PriorOverride; };
-	flat_map<ELogTags,LoweredTag> _loweredTags;//guarded by _mutex, like _subs.
+	flat_map<ELogTags,LoweredTag> _loweredTags ABSL_GUARDED_BY(_mutex);
 
 	//The level each lowered tag-set should be put back to, given what is left in _subs.  nullopt = ClearLevel, i.e. there was no
-	//override before.  Callers hold _mutex; applying the answer is deliberately left until after they release it, because
+	//override before.  Applying the answer is deliberately left until after they release it, because
 	//SetLevel/ClearLevel call Logging::UpdateCumulative over the logger list and Logging::Log holds that while calling Write,
 	//which takes _mutex - the opposite order.
-	Ω takeRestores()ι->vector<std::pair<ELogTags,optional<ELogLevel>>>{
+	ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) Ω takeRestores()ι->vector<std::pair<ELogTags,optional<ELogLevel>>>{
 		vector<std::pair<ELogTags,optional<ELogLevel>>> y;
 		for( auto it = _loweredTags.begin(); it!=_loweredTags.end(); ){
 			optional<ELogLevel> needed;//the deepest floor the surviving subscriptions on this tag-set still ask for.
@@ -150,7 +152,7 @@ namespace Jde::Web::Server{
 		WriteGuard guard;
 		vector<sp<SessionSubscription>> matches;
 		{
-			sl _{ _mutex };
+			rl _{ _mutex };
 			for( let& s : _subs ){
 				bool valid{ m.Level>=s->Sub.MinLevel };
 				valid = valid && !empty( m.Tags & s->Sub.Tags );

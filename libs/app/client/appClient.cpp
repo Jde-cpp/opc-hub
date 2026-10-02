@@ -78,7 +78,7 @@ namespace Jde::App::Client{
 			jobject j{ {"jwt", _jwt.Payload()} };
 			TRACET( ELogTags::App, "Logging in {}:{}", Host(), Port() );
 			auto res = co_await ClientHttpAwait{ Host(), "/login", {}, Port(), {.Authorization= Ƒ("Bearer {}", _jwt.Payload())} };
-			auto sessionPK = Str::TryTo<SessionPK>( res[http::field::authorization], nullptr, 16 );
+			auto sessionPK = Str::TryTo<SessionPK>( res[http::field::authorization], 16 );
 			THROW_IF( !sessionPK, "Invalid authorization: {}.", res[http::field::authorization] );
 			Resume( move(*sessionPK) );
 		}

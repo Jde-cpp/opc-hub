@@ -39,10 +39,11 @@ namespace Jde::Access{
 	α Loader::Acl( ConfigureAwait& await )->AclLoadAwait::Task{
 		try{
 			let acl = co_await AclLoadAwait{ await.QlServer, await.Executer };
-			ul l{ await.Authorizer->Mutex };
-			await.Authorizer->Acl = move( acl );
-			await.Authorizer->SetUserPermissions( {}, l );
-			l.unlock();//as LoadUsers does:  Subscribe touches none of this, and holding the authorizer's mutex across it deadlocks anything downstream that authorizes.
+			{//released before Subscribe, as LoadUsers does:  Subscribe touches none of this, and holding the authorizer's mutex across it deadlocks anything downstream that authorizes.
+				ul _{ await.Authorizer->Mutex };
+				await.Authorizer->Acl = move( acl );
+				await.Authorizer->SetUserPermissions( {} );
+			}
 			if( await.Reload )
 				await.Resume();//the subscriptions are still live (Replay re-issued them) - this was only ever about the snapshot.
 			else
@@ -56,9 +57,10 @@ namespace Jde::Access{
   α Loader::Roles( ConfigureAwait& await )ι->RoleLoadAwait::Task{
 		try{
 			auto roles = co_await RoleLoadAwait{ await.QlServer, await.Executer };
-			ul l{ await.Authorizer->Mutex };
-			await.Authorizer->Roles = move( roles );
-			l.unlock();
+			{
+				ul _{ await.Authorizer->Mutex };
+				await.Authorizer->Roles = move( roles );
+			}
 			Acl( await );
 		}
 		catch( runtime_error& e ){
@@ -69,19 +71,20 @@ namespace Jde::Access{
 	α Loader::Resources( ConfigureAwait& await )ι->TAwait<ResourcePermissions>::Task{
 		try{
 			auto loaded = co_await ResourceLoadAwait{ await.QlServer, await.Schemas, await.OpcServerInstance, await.Executer, await.AllSchemas };
-			ul l{ await.Authorizer->Mutex };
-			await.Authorizer->SchemaResources.clear();
-			await.Authorizer->Resources.clear();
-			for( let& [pk, resource] : loaded.Resources ){
-				if( !resource.IsDeleted ){
-					auto& slugResources = await.Authorizer->SchemaResources.try_emplace( resource.Schema ).first->second;
-					auto& criteras = slugResources.try_emplace( resource.Slug ).first->second;
-					criteras.try_emplace( resource.Criteria, pk );
+			{
+				ul _{ await.Authorizer->Mutex };
+				await.Authorizer->SchemaResources.clear();
+				await.Authorizer->Resources.clear();
+				for( let& [pk, resource] : loaded.Resources ){
+					if( !resource.IsDeleted ){
+						auto& slugResources = await.Authorizer->SchemaResources.try_emplace( resource.Schema ).first->second;
+						auto& criteras = slugResources.try_emplace( resource.Slug ).first->second;
+						criteras.try_emplace( resource.Criteria, pk );
+					}
+					await.Authorizer->Resources.emplace( pk, move(resource) );
 				}
-				await.Authorizer->Resources.emplace( pk, move(resource) );
+				await.Authorizer->Permissions = move( loaded.Permissions );
 			}
-			await.Authorizer->Permissions = move( loaded.Permissions );
-			l.unlock();
 			Roles( await );
 		}
 		catch( runtime_error& e ){
@@ -105,10 +108,11 @@ namespace Jde::Access{
 	α ConfigureAwait::LoadUsers()ι->TAwait<Identities>::Task{
 		try{
 			auto identities = co_await IdentityLoadAwait{ QlServer, Executer };
-			ul l{ Authorizer->Mutex };
-			Authorizer->Users = std::move( identities.Users );
-			Authorizer->Groups = std::move( identities.Groups );
-			l.unlock();
+			{
+				ul _{ Authorizer->Mutex };
+				Authorizer->Users = std::move( identities.Users );
+				Authorizer->Groups = std::move( identities.Groups );
+			}
 			Loader::Resources( *this );
 		}
 		catch( runtime_error& e ){

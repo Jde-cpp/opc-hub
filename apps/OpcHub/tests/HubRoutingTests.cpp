@@ -115,7 +115,7 @@ namespace Jde::Opc::Hub::Tests{
 		setDefault( true );
 		let res = Post( AppPort(), "/login", serialize(jobject{{"opc",""},{"user","user1"},{"password","0123456789ABCD"}}) );
 		let authorization = string{ res.Headers()[http::field::authorization] };
-		let sessionId = Str::TryTo<SessionPK>( authorization, 0, 16 ).value_or( 0 );
+		let sessionId = Str::TryTo<SessionPK>( authorization, 16 ).value_or( 0 );
 		ASSERT_TRUE( sessionId ) << "the login minted no session";
 		ASSERT_TRUE( Gateway::GetCredential(sessionId, Gateway::Tests::OpcServerSlug) );
 
@@ -234,7 +234,7 @@ namespace Jde::Opc::Hub::Tests{
 		let res = Post( AppPort(), "/login", body("0123456789ABCD") );
 		let authorization = string{ res.Headers()[http::field::authorization] };
 		ASSERT_FALSE( authorization.empty() ) << "the login minted no session";
-		let sessionId = Str::TryTo<SessionPK>( authorization, 0, 16 ).value_or( 0 );
+		let sessionId = Str::TryTo<SessionPK>( authorization, 16 ).value_or( 0 );
 		let cred = Gateway::GetCredential( sessionId, Gateway::Tests::OpcServerSlug );//keyed by the resolved slug, not ""
 		ASSERT_TRUE( cred ) << "the credential is not cached under the default connection's slug";
 		EXPECT_EQ( cred->LoginName(), "user1" );

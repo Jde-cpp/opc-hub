@@ -1,5 +1,6 @@
 #include <jde/fwk/chrono.h>
-#include <limits>
+#include <absl/strings/numbers.h>
+#include <absl/time/time.h>
 #include <jde/fwk/utils/mathUtils.h>
 
 #define let const auto
@@ -42,26 +43,23 @@ namespace Jde{
 			let type = is.get();
 			if( num.empty() || type==std::char_traits<char>::eof() )
 				break;
-			try{
-				let value = std::stod( num );
-				//date units use the exact std::chrono period ratios so ToDuration is the inverse of ToString
-				//(which emits years/months/days) - a month is ~730.5h, not 720h; a year 365.2425d, not 365.25d.
-				if( type=='Y' )
-					duration += duration_cast<Duration>( std::chrono::duration<double,years::period>{value} );
-				else if( !parsingTime && type=='M' )
-					duration += duration_cast<Duration>( std::chrono::duration<double,months::period>{value} );
-				else if( type=='D' )
-					duration += duration_cast<Duration>( std::chrono::duration<double,days::period>{value} );
-				else if( type=='H' )
-					duration += minutes( Round(value*60) );
-				else if( type=='M' )
-					duration += seconds( Round(value*60) );
-				else if( type=='S' )
-					duration += milliseconds( Round(value*1000) );
-			}
-			catch( std::logic_error& e ){
-				throw Exception{ sl, ExceptionArgs{}, move(e), "Could not parse ISO duration token:  {}{}", num, type };
-			}
+			double value;
+			if( !absl::SimpleAtod(num, &value) )
+				throw Exception{ sl, ExceptionArgs{}, "Could not parse ISO duration token:  {}{}", num, type };
+			//date units use the exact std::chrono period ratios so ToDuration is the inverse of ToString
+			//(which emits years/months/days) - a month is ~730.5h, not 720h; a year 365.2425d, not 365.25d.
+			if( type=='Y' )
+				duration += duration_cast<Duration>( std::chrono::duration<double,years::period>{value} );
+			else if( !parsingTime && type=='M' )
+				duration += duration_cast<Duration>( std::chrono::duration<double,months::period>{value} );
+			else if( type=='D' )
+				duration += duration_cast<Duration>( std::chrono::duration<double,days::period>{value} );
+			else if( type=='H' )
+				duration += minutes( Round(value*60) );
+			else if( type=='M' )
+				duration += seconds( Round(value*60) );
+			else if( type=='S' )
+				duration += milliseconds( Round(value*1000) );
 		}
 		return duration;
 	}
@@ -75,83 +73,13 @@ namespace Jde{
 		return {};
 	}
 
-	//Where the optional numeric zone - "+hh[:mm]" / "-hh[:mm]" - starts, or npos.  Searched from 19 so the date's own
-	//'-' separators are skipped; anything shorter has no room for one.
-	Ω zoneOffsetPos( str iso )ι->string::size_type{ return iso.size()>19 ? iso.find_first_of("+-", 19) : string::npos; }
-	//Both ToTimePoint branches read the date/time fields as UTC, so a numeric offset is subtracted explicitly to
-	//normalize (local = UTC + offset).  One body for both - it used to be written once per #if branch.
-	Ω applyZoneOffset( TimePoint& tp, str off, SL sl )ε->void{
-		let sign = off[0]=='-' ? -1 : 1;
-		string digits; for( char ch : off.substr(1) ) if( ch!=':' ) digits += ch;
-		try{
-			let oh = digits.size()>=2 ? std::stoi(digits.substr(0,2)) : 0;
-			let om = digits.size()>=4 ? std::stoi(digits.substr(2,2)) : 0;
-			tp -= sign*( hours{oh}+minutes{om} );
-		}
-		catch( std::logic_error& e ){
-			throw Exception{ sl, ExceptionArgs{}, move(e), "Could not parse ISO time zone offset:  {}", off };
-		}
-	}
-
 	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{
-		#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
-			TimePoint tp;
-			//an optional zone follows the seconds: 'Z' (UTC) or a numeric ±hh[:mm] offset - see applyZoneOffset.
-			let zonePos = zoneOffsetPos( iso );
-			if( !iso.empty() && iso.back()=='Z' ){
-				std::istringstream is{ iso.substr(0, iso.size()-1) };
-				is >> std::chrono::parse( "%FT%T", tp );
-				THROW_IFSL( is.fail(), "Could not parse ISO time:  {}", iso );
-			}
-			else if( zonePos!=string::npos ){
-				std::istringstream is{ iso.substr(0, zonePos) };
-				is >> std::chrono::parse( "%FT%T", tp );
-				THROW_IFSL( is.fail(), "Could not parse ISO time:  {}", iso );
-				applyZoneOffset( tp, iso.substr(zonePos), sl );
-			}
-			else{
-				std::istringstream is{ iso };
-				is >> std::chrono::parse( "%FT%T", tp );
-				THROW_IFSL( is.fail(), "Could not parse ISO time:  {}", iso );
-			}
-			return tp;
-		#else
-			if( !iso.empty() && iso.back()=='Z' )//UTC designator; timegm below already treats the fields as UTC.
-				iso.pop_back();
-			std::istringstream is{ iso };
-			//Sentinels, because is.fail() alone does not mean what it does on the %FT%T branch: get_time that runs out of
-			//input mid-format sets eofbit and *not* failbit, so "2024-01-02" and "2024-01-02T03:04" came back "parsed" with
-			//the fields it never reached left at whatever tm held - silently 00:00:00, where chrono::parse throws.  get_time
-			//writes each field as it reads it, so a field still holding its sentinel is one the format never got to.  This
-			//stays width-agnostic: "2024-1-2T3:4:5" fills all six and is accepted, exactly as chrono::parse accepts it.
-			constexpr int unset{ std::numeric_limits<int>::min() };
-			std::tm tm{};
-			tm.tm_year = tm.tm_mon = tm.tm_mday = tm.tm_hour = tm.tm_min = tm.tm_sec = unset;
-			is >> std::get_time( &tm, "%Y-%m-%dT%H:%M:%S" );
-			THROW_IFSL( is.fail() || tm.tm_year==unset || tm.tm_mon==unset || tm.tm_mday==unset || tm.tm_hour==unset || tm.tm_min==unset || tm.tm_sec==unset, "Could not parse ISO time:  {}", iso );
-			// timegm interprets tm as UTC, matching the %FT%T sys_time branch (mktime would apply the local tz offset).
-			auto tp = std::chrono::system_clock::from_time_t( ::timegm(&tm) );
-			//Sub-second field, read off the stream where get_time stopped rather than at a fixed offset, and accumulated in
-			//Duration's own ticks.  The old stod(fraction)*1000 rounded to whole milliseconds, so ToIsoString<microseconds>
-			//came back as .123000 from .123456 - the %FT%T branch keeps every digit the time_point can hold.
-			is.clear();//get_time sets eofbit on a timestamp that ends at the seconds; peek needs a good stream.
-			if( is.peek()=='.' ){
-				static_assert( Duration::period::num==1, "the digit scaling below assumes a 1/n tick period" );
-				is.get();
-				Duration::rep scale{ Duration::period::den }; Duration::rep ticks{};
-				for( auto ch=is.peek(); ch>='0' && ch<='9'; ch=is.peek() ){
-					is.get();
-					if( scale<=1 )
-						continue;//finer than Duration can represent: consumed so it cannot be mistaken for a zone, then dropped - the same truncation ToIsoString applies on the way out.
-					scale /= 10;
-					ticks += ( ch-'0' )*scale;
-				}
-				tp += Duration{ ticks };
-			}
-			if( let zonePos = zoneOffsetPos(iso); zonePos!=string::npos )
-				applyZoneOffset( tp, iso.substr(zonePos), sl );
-			return tp;
-		#endif
+		//%E*S takes any number of fraction digits, %Ez a 'Z' or a ±hh[[:]mm] offset; no zone at all reads as UTC.
+		absl::Time t; string error;
+		let parsed = absl::ParseTime( "%Y-%m-%d%ET%H:%M:%E*S%Ez", iso, absl::UTCTimeZone(), &t, &error )
+			|| absl::ParseTime( "%Y-%m-%d%ET%H:%M:%E*S", iso, absl::UTCTimeZone(), &t, &error );
+		THROW_IFSL( !parsed, "Could not parse ISO time:  {} - {}", iso, error );
+		return absl::ToChronoTime( t );
 	}
 
 	α Chrono::ToTimePoint( uint16_t y, uint8_t mnth, uint8_t dayOfMonth, uint8 h, uint8 mnt, uint8 scnd, Duration subseconds, SL sl )ε->TimePoint{

@@ -1,4 +1,5 @@
 #include <sqlite3.h>
+#include <absl/synchronization/mutex.h>
 #include "SqliteProcs.h"
 #include "SqliteRow.h" //Bind/ToRow
 #include "SqliteException.h"
@@ -11,7 +12,8 @@ namespace Jde::DB::Sqlite{
 	//insert or erase moves every element, so a raw pointer into it would dangle for the whole run of the proc it names.
 	//A caller holding the sp also survives a RegisterProc that replaces the same name out from under it.
 	struct Registration{ const void* Owner; sp<const ProcΛ> Proc; }; //Owner: see the note on RegisterProc in the header.
-	flat_map<string,Registration> _procs; std::shared_mutex _procsMutex;
+	absl::Mutex _procsMutex;
+	flat_map<string,Registration> _procs ABSL_GUARDED_BY(_procsMutex);
 
 	α RegisterProc( string name, ProcΛ proc, uint minParams, const void* owner )ι->void{
 		if( minParams ) //wrap once here: the dispatch path can't know what arity each twin expects.
@@ -37,12 +39,12 @@ namespace Jde::DB::Sqlite{
 		}
 	}
 	α FindProc( sv name )ι->sp<const ProcΛ>{
-		sl _{ _procsMutex };
+		rl _{ _procsMutex };
 		let p = _procs.find( string{name} );
 		return p==_procs.end() ? nullptr : p->second.Proc;
 	}
 	α RegisteredProcNames()ι->vector<string>{
-		sl _{ _procsMutex };
+		rl _{ _procsMutex };
 		vector<string> names; names.reserve( _procs.size() );
 		for( let& [name, _] : _procs )
 			names.push_back( name );

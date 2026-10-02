@@ -1,4 +1,5 @@
 ﻿#include <sqlite3.h>
+#include <absl/strings/match.h>
 #include "SqliteServerMeta.h"
 #include <jde/db/IDataSource.h>
 #include <jde/db/Row.h>
@@ -23,10 +24,10 @@ namespace Jde::DB::Sqlite{
 			let close = declared.find( ')', open );
 			let args = declared.substr( open+1, close==sv::npos ? sv::npos : close-open-1 );
 			let comma = args.find( ',' );
-			if( let first = Str::TryTo<uint>(string{comma==sv::npos ? args : args.substr(0, comma)}); first ){
+			if( let first = Str::TryTo<uint>(comma==sv::npos ? args : args.substr(0, comma)); first ){
 				length = precision = first;
 				if( comma!=sv::npos )
-					scale = Str::TryTo<uint>( string{args.substr(comma+1)} );
+					scale = Str::TryTo<uint>( args.substr(comma+1) );
 			}
 		}
 		return { move(base), length, precision, scale };
@@ -47,7 +48,7 @@ namespace Jde::DB::Sqlite{
 			let [baseType, maxLength, precision, scale] = parseDeclaredType( declared );
 			let type = meta.ToType( baseType );
 			//rowid alias: only a single-column integer pk auto-assigns - see SqliteSyntax::ToString/CreatePrimaryKey.
-			let isIdentity = pk==1 && pkCount==1 && Str::ToLower(baseType).find("int")!=string::npos;
+			let isIdentity = pk==1 && pkCount==1 && absl::StrContainsIgnoreCase(baseType, "int");
 			FoldColumnRow( tables, table, ms<ColumnDdl>(name, BitDefault(dflt, type), isNullable, type, maxLength, isIdentity, pk ? optional<uint8>((uint8)(pk-1)) : optional<uint8>{}, precision, scale) );
 		};
 		Sql sql{ Ƒ("select m.name, ti.name, ti.cid, coalesce(ti.dflt_value,''), ti.\"notnull\", ti.type, ti.pk,"

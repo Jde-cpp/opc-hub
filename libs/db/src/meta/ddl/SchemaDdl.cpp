@@ -1,4 +1,6 @@
 ﻿#include "SchemaDdl.h"
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_replace.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <boost/uuid/uuid_io.hpp>
@@ -88,7 +90,7 @@ namespace Jde::DB{
 		db->Initialize( catalog, db );
 		catalog = nullptr;
 
-		struct Guard{ SchemaDdl& Db; ~Guard(){ Db.Teardown(); } } teardown{ *db }; //on every exit, thrown or not - the graph is cyclic, see Teardown.
+		absl::Cleanup teardown = [&]{ db->Teardown(); }; //on every exit, thrown or not - the graph is cyclic, see Teardown.
 		db->SyncTables( config );
 		db->SyncScripts( config, initConfig );
 		db->SyncData( config, Json::AsObject(initConfig, "tables") );
@@ -227,9 +229,7 @@ namespace Jde::DB{
 			TRACE( "Executing '{}'", scriptFile.string() );
 			let queries = Str::Split<sv,Str::iv>( text, "\ngo"_iv );
 			for( let& text : queries ){
-				let query = Str::Replace(
-					Str::Replace(text, "[dbo]"sv, Ƒ("[{}]", config.DBSchema->Name) ),
-					stdPrefix, prefix );
+				let query = absl::StrReplaceAll( text, {{"[dbo]", Ƒ("[{}]", config.DBSchema->Name)}, {stdPrefix, prefix}} );
 
 				std::ostringstream os;
 				for( uint i=0; i<query.size(); ++i ){

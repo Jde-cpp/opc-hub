@@ -125,12 +125,12 @@ namespace Client{
 	}
 	//The listeners for an id, copied out from under the lock.  Callbacks must not run while _subsMutex is held: a listener that
 	//subscribes or unsubscribes in response to an event re-enters ListenRemote/StopListenRemote/ClearSubscriptions, all of which
-	//take the same mutex exclusively - and a shared_mutex is not recursive, so that is a hang (formally, UB).  Copying the
+	//take the same mutex exclusively - and the mutex is not recursive, so that is a hang (formally, UB).  Copying the
 	//shared_ptrs also keeps every listener alive across its own callback, which holding the lock only did by accident.
 	//The trade is that a listener can be dropped between the snapshot and the call, so it may see one event after
 	//unsubscribing - which is the ordinary cost of not holding a lock across a callback, and cheaper than the alternative.
 	α AppClientSocketSession::ListenersFor( QL::SubscriptionId id )Ι->flat_set<sp<QL::IListener>>{
-		sl _{ _subsMutex };
+		rl _{ _subsMutex };
 		let kv = _subs.find( id );
 		return kv==_subs.end() ? flat_set<sp<QL::IListener>>{} : kv->second;//_subs never holds an empty set - StopListenRemote erases the key when the last listener goes - so empty means absent.
 	}

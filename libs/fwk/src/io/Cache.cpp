@@ -1,4 +1,5 @@
 ﻿#include <jde/fwk/io/Cache.h>
+#include <absl/synchronization/mutex.h>
 #include <chrono>
 #include <thread>
 #include "jde/fwk/log/logTags.h"
@@ -34,9 +35,11 @@ namespace Jde{
 			std::this_thread::sleep_for( 1ms );
 		}
 	}
-	std::multimap<steady_clock::time_point,string> _timeouts; shared_mutex _timeoutsLock;
-	std::flat_map<string,sp<const std::any>> _cache; shared_mutex _cacheLock;
-	Ω eraseTimeout( str id, ul& /*timeoutsLock*/ )ι->void{
+	absl::Mutex _timeoutsLock;
+	std::multimap<steady_clock::time_point,string> _timeouts ABSL_GUARDED_BY(_timeoutsLock);
+	absl::Mutex _cacheLock;
+	std::flat_map<string,sp<const std::any>> _cache ABSL_GUARDED_BY(_cacheLock);
+	ABSL_EXCLUSIVE_LOCKS_REQUIRED(_timeoutsLock) Ω eraseTimeout( str id )ι->void{
 		for( auto p = _timeouts.begin(); p!=_timeouts.end(); ++p ){
 			if( p->second==id ){
 				_timeouts.erase( p );
@@ -44,15 +47,15 @@ namespace Jde{
 			}
 		}
 	}
-	Ω getTimer( ul& /*timeoutsLock*/ )ι->up<DurationTimer>{
+	ABSL_SHARED_LOCKS_REQUIRED(_timeoutsLock) Ω getTimer()ι->up<DurationTimer>{
 		return _timeouts.empty() || Process::Finalizing()
 			? nullptr
       : mu<DurationTimer>( std::max(_timeouts.begin()->first-steady_clock::now(), steady_clock::duration::zero()) );
 	}
-	Ω startTimer( up<DurationTimer>&& timer, mutex& timerMutex )ι->DurationTimer::Task{
+	ABSL_UNLOCK_FUNCTION(_timerMutex) Ω startTimer( up<DurationTimer>&& timer )ι->DurationTimer::Task{//entered holding _timerMutex.
 		ASSERT( !_timer );
 		_timer = move( timer );
-		timerMutex.unlock();
+		_timerMutex.unlock();
 		auto _ = co_await *_timer;
 		ul timeoutsLock{ _timeoutsLock };
 		for( auto p = _timeouts.begin(); p!=_timeouts.end() && p->first<=steady_clock::now(); ){
@@ -63,17 +66,17 @@ namespace Jde{
 			}
 			p = _timeouts.erase( p );
 		}
-		auto newTimer = getTimer( timeoutsLock );
+		auto newTimer = getTimer();
 		_timerMutex.lock();
 		_timer = nullptr;
 		if( newTimer && !Process::Finalizing() )//re-checked under _timerMutex - getTimer's read isn't ordered with Shutdown.
-			startTimer( move(newTimer), _timerMutex );
+			startTimer( move(newTimer) );
 		else
 		 	_timerMutex.unlock();
 	}
 	namespace Cache{
 		α Internal::Get( str id )ι->sp<const std::any>{
-			sl l{ _cacheLock };
+			rl _{ _cacheLock };
 			return FindDefault( _cache, id );
 		}
 		α Internal::Set( str id, sp<std::any> value, optional<steady_clock::duration> duration )ι->sp<const std::any>{
@@ -88,7 +91,7 @@ namespace Jde{
 				isNew = _cache.insert_or_assign( id, value ).second;
 			}
 			if( !isNew ) // could have replaced existing duration
-				eraseTimeout( id, timeoutsLock );
+				eraseTimeout( id );
 			if( duration.has_value() ){
 				let deadline = steady_clock::now() + *duration;
 				let isEarliest = _timeouts.empty() || deadline<_timeouts.begin()->first;
@@ -100,9 +103,9 @@ namespace Jde{
 					_timerMutex.unlock();
 				}
 				else{
-					auto newTimer = getTimer( timeoutsLock );
+					auto newTimer = getTimer();
 					if( newTimer )
-						startTimer( move(newTimer), _timerMutex );
+						startTimer( move(newTimer) );
 					else
 					 	_timerMutex.unlock();
 				}
@@ -119,7 +122,7 @@ namespace Jde{
 			DBGT( ELogTags::Cache, "[{}]Cache removed", id );
 		}
 		if( erased )
-			eraseTimeout( id, timeoutsLock );
+			eraseTimeout( id );
 		return erased;
 	}
 }

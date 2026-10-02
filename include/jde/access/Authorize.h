@@ -1,4 +1,5 @@
 #pragma once
+#include <absl/synchronization/mutex.h>
 #include <jde/access/IAcl.h>
 #include "types/Resource.h"
 #include "types/Group.h"
@@ -21,8 +22,8 @@ namespace Jde::Access{
 		α AddResource( ResourcePK resourcePK, string schema, string resourceSlug, string criteria )ι->void;
 		//By value:  the protected overload's pointer aliases Resources, a flat_map any concurrent insert reallocates, so nothing may
 		//carry it past the lock (access-review3 #19).  A shared lock, as this reads only.
-		α FindResource( const Resource& resource )Ι->optional<Resource>{ Jde::sl l{Mutex}; auto p = FindResource( resource, l ); return p ? optional<Resource>{*p} : optional<Resource>{}; }
-		α FindActiveResourcePK( string schema, str resourceName, str criteria )ι->optional<ResourcePK>{ Jde::sl _{Mutex}; return FindActiveResourcePK(schema, resourceName, criteria, _); }
+		α FindResource( const Resource& resource )Ι->optional<Resource>{ rl _{Mutex}; auto p = FindResourceLocked( resource ); return p ? optional<Resource>{*p} : optional<Resource>{}; }
+		α FindActiveResourcePK( string schema, str resourceName, str criteria )ι->optional<ResourcePK>{ rl _{Mutex}; return FindActiveResourcePKLocked(schema, resourceName, criteria); }
 		α GetSchema( str resourceSlug, SL sl )ε->string;
 
 		α TestAdmin( str resource, UserPK userPK, SRCE )ε->void;
@@ -62,23 +63,23 @@ namespace Jde::Access{
 		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for an unknown user; by PK.
 		α IsRoleMember( RolePK parent, RolePK child )Ι->bool;//a direct member, as the cache holds it - RoleMAwait::AddRole's no-op check for a re-add (the seed reruns on every -sync start).
 	protected:
-		Ŧ FindResource( const Resource& resource, T& l )Ι->const Resource*;
-		Ŧ FindActiveResourcePK( str schemaName, str resourceName, str criteria, T& l )Ι->optional<ResourcePK>;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindResourceLocked( const Resource& resource )Ι->const Resource*;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindActiveResourcePKLocked( str schemaName, str resourceName, str criteria )Ι->optional<ResourcePK>;
 
 		string _app;
-		mutable std::shared_mutex Mutex;
+		mutable absl::Mutex Mutex;
 		/// Active only <schemaName, <resourceJsonName,<criteria, resourcePK>>>
-		flat_map<string, flat_map<string,flat_map<string,Access::ResourcePK>>> SchemaResources;
-		flat_map<UserPK,User> Users;
-		α SetUserPermissions( flat_set<UserPK>&& users, const ul& l )ι->void;
-		α RecalcGroupMembers( GroupPK groupPK, const ul& l, bool remove=false )ι->void;
-		α Recalc( const ul& l )ι->void;
-		α RecursiveUsers( GroupPK groupPK, const ul& l, bool clear=false )ι->flat_set<UserPK>;
-		α RecursiveUsers( GroupPK groupPK, const ul& l, bool clear, flat_set<GroupPK>& visited )ι->flat_set<UserPK>;
+		flat_map<string, flat_map<string,flat_map<string,Access::ResourcePK>>> SchemaResources ABSL_GUARDED_BY(Mutex);
+		flat_map<UserPK,User> Users ABSL_GUARDED_BY(Mutex);
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α SetUserPermissions( flat_set<UserPK>&& users )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecalcGroupMembers( GroupPK groupPK, bool remove=false )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α Recalc()ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK, bool clear=false )ι->flat_set<UserPK>;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK, bool clear, flat_set<GroupPK>& visited )ι->flat_set<UserPK>;
 		α FindAdminAuthorizer( str schemaName )ι->optional<AdminAuthorizer>;
 
-		α AddAclEntry( IdentityPK identityPK, PermissionRole permissionRole, const ul& l )ι->void;
-		α PurgeIdentity( IdentityPK identityPK, const ul& l )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α AddAclEntry( IdentityPK identityPK, PermissionRole permissionRole )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α PurgeIdentity( IdentityPK identityPK )ι->void;
 		α AddAcl( IdentityPK::Type userGroupPK, PermissionPK permissionPK, ERights allowed, ERights denied, ResourcePK resourcePK )ι->void;
 		α AddAcl( IdentityPK::Type userGroupPK, RolePK rolePK )ι->void;
 		α RemoveAcl( IdentityPK::Type userGroupPK, PermissionRole rolePK )ι->void;
@@ -89,9 +90,9 @@ namespace Jde::Access{
 		α RemoveFromGroup( GroupPK groupPK, flat_set<IdentityPK::Type> members )ι->void;
 		α PurgeGroup( GroupPK groupPK )ι->void;
 
-		α AddPermission( IdentityPK identityPK, PermissionRole permissionRole, const flat_set<UserPK>& users, const ul& l )ι->void;
-		α AddPermission( IdentityPK identityPK, PermissionRole permissionRole, const flat_set<UserPK>& users, flat_set<GroupPK>& visitedGroups, const ul& l )ι->void;
-		α AddUserPermissions( User& user, PermissionRole permissionRole, flat_set<RolePK>& visitedRoles )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α AddPermission( IdentityPK identityPK, PermissionRole permissionRole, const flat_set<UserPK>& users )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α AddPermission( IdentityPK identityPK, PermissionRole permissionRole, const flat_set<UserPK>& users, flat_set<GroupPK>& visitedGroups )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α AddUserPermissions( User& user, PermissionRole permissionRole, flat_set<RolePK>& visitedRoles )ι->void;
 		α UpdatePermission( PermissionPK permissionPK, optional<ERights> allowed, optional<ERights> denied )ε->void;
 
 		β CreateResource( Resource&& resource )ε->void;
@@ -108,25 +109,25 @@ namespace Jde::Access{
 		α RestoreUser( UserPK identityPK )ι->void;
 		α PurgeUser( UserPK identityPK )ι->void;
 
-		α TestAdmin( const Resource& resource, UserPK userPK, SL sl )ε->void;
-		α ToIdentityPK( IdentityPK::Type userGroupPK, const ul& l )Ι->IdentityPK;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α TestAdmin( const Resource& resource, UserPK userPK, SL sl )ε->void;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ToIdentityPK( IdentityPK::Type userGroupPK )Ι->IdentityPK;
 
 		/// Includes inactive resources.
-		flat_map<ResourcePK,Resource> Resources;
+		flat_map<ResourcePK,Resource> Resources ABSL_GUARDED_BY(Mutex);
 
-		flat_map<PermissionPK,Permission> Permissions;
-		flat_map<GroupPK,Group> Groups;
-		flat_map<RolePK,Role> Roles;
-		flat_multimap<IdentityPK,PermissionRole> Acl;
+		flat_map<PermissionPK,Permission> Permissions ABSL_GUARDED_BY(Mutex);
+		flat_map<GroupPK,Group> Groups ABSL_GUARDED_BY(Mutex);
+		flat_map<RolePK,Role> Roles ABSL_GUARDED_BY(Mutex);
+		flat_multimap<IdentityPK,PermissionRole> Acl ABSL_GUARDED_BY(Mutex);
 	private:
 		concurrent_flat_map<string,AdminAuthorizer> _adminAuthorizers;
 		friend struct AccessListener; friend struct Loader; friend struct ConfigureAwait; friend struct Server::AuthenticateAwait; friend struct Server::LoginAwait;
 	};
 
-	Ŧ Authorize::FindResource( const Resource& resource, T& l )Ι->const Resource*{
+	Ξ Authorize::FindResourceLocked( const Resource& resource )Ι->const Resource*{
 		auto pk = resource.PK;
 		if( !pk && resource.Schema.size() && resource.Slug.size() )
-			pk = FindActiveResourcePK( resource.Schema, resource.Slug, resource.Criteria, l ).value_or( 0 );
+			pk = FindActiveResourcePKLocked( resource.Schema, resource.Slug, resource.Criteria ).value_or( 0 );
 		if( auto p = pk ? Resources.find(pk) : Resources.end(); p!=Resources.end() )
 			return &p->second;
 		//Only a criteria-less request may fall back to the criteria-less row.  Without that guard a *criteria-scoped* lookup
@@ -143,7 +144,7 @@ namespace Jde::Access{
 		}
 		return nullptr;
 	}
-	Ŧ Authorize::FindActiveResourcePK( str schemaName, str resourceSlug, str criteria, T& /*lock*/ )Ι->optional<ResourcePK>{
+	Ξ Authorize::FindActiveResourcePKLocked( str schemaName, str resourceSlug, str criteria )Ι->optional<ResourcePK>{
 		if( auto schemaResources = SchemaResources.find(schemaName); schemaResources!=SchemaResources.end() ){
 			if( auto slugResources = schemaResources->second.find(resourceSlug); slugResources!=schemaResources->second.end() ){
 				auto& criteras = slugResources->second;

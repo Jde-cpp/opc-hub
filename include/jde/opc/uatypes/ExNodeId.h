@@ -21,6 +21,7 @@ namespace Jde::Opc{
 		α operator=( ExNodeId&& x )ι->ExNodeId&;
 		~ExNodeId(){ Clear(); }
 		α operator<( const ExNodeId& x )Ι->bool;
+		template<class H> friend α AbslHashValue( H h, const ExNodeId& n )ι->H{ return HashNodeId( H::combine(std::move(h), ToSV(n.namespaceUri), n.serverIndex), n.nodeId ); }
 		α operator=( const ExNodeId& x )ι->ExNodeId&;
 		α InsertParams( bool extended )Ι->vector<DB::Value>;
 
@@ -48,6 +49,7 @@ namespace Jde::Opc{
 	Ξ operator==( const ExNodeId& x, const ExNodeId& y )ι->bool{ return !(x<y) && !(y<x); }
 	α ToJson( const UA_ExpandedNodeId& nodeId )ε->jobject;
 
+	//absl::Hash, reseeded every run:  for in-process containers only - never store, send or log one (Calc32c for that, reviews/abseil.md D2).
 	struct NodeIdHash{
 		α operator()(const ExNodeId& n)Ι->uint;
 	};

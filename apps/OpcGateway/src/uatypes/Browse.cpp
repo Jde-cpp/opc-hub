@@ -22,7 +22,7 @@ namespace Jde::Opc::Gateway{
 			auto ns = defaultNS;
 			string path{ segments[i] };
 			if( let nsPath = Str::Split(segments[i], '~'); nsPath.size()>1 ){
-				auto specifiedNs = Str::TryTo<NsIndex>( string{nsPath[0]} );
+				auto specifiedNs = Str::TryTo<NsIndex>( nsPath[0] );
 				if( specifiedNs ){
 					ns = *specifiedNs;
 					path = Str::Join( std::span{nsPath}.subspan(1), "~" );
@@ -62,16 +62,8 @@ namespace Browse{
 			if( auto resultSC = !_request.PerNode && response->resultsSize>0 ? response->results[0].statusCode : UA_STATUSCODE_GOOD; UA_StatusCode_isBad(resultSC) ){
 				DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest::Results Error", hex(_client->Handle()), hex(_requestId), hex(resultSC) );
 				ResumeExp( UAClientException{resultSC, _client->Handle(), _requestId} );
-			}else{
-#ifdef __cpp_lib_move_only_function
+			}else
 				Post<Response>( move(*response), move(_h) );
-#else
-				Post( [r=UA_BrowseResponse{*response},h=_h]()mutable{
-					h.promise().Resume(Response{move(r)}, h);
-				});
-				UA_BrowseResponse_init( response );
-#endif
-			}
 		}else
 			ResumeExp( UAClientException{sc, _client->Handle(), _requestId} );
 	}

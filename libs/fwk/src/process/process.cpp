@@ -1,10 +1,14 @@
 #include <jde/fwk/process/process.h>
-#include <condition_variable>
+#include <absl/synchronization/notification.h>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
 #include <typeinfo>
 #include <sys/types.h>
+#if defined(__linux__) && !defined(__SANITIZE_ADDRESS__)
+	#include <absl/debugging/failure_signal_handler.h>
+	#include <absl/debugging/symbolize.h>
+#endif
 
 #include <jde/fwk/settings.h>
 #include <jde/fwk/io/Cache.h>
@@ -93,6 +97,15 @@ namespace Jde{
 	}
 }
 namespace Jde{
+	//A SIGSEGV, SIGABRT, SIGBUS, SIGILL or SIGFPE prints the signal and a symbolized stack to stderr - the journal, under systemd -
+	//then re-raises, so the core dump and exit status are unchanged.  Installed before AddSignals, whose SIGTERM handler replaces
+	//abseil's:  SIGTERM is the graceful stop here.  Not under ASan, which has its own reporter; not on Windows, where WER has it.
+	Ω installFailureHandler( [[maybe_unused]] const char* argv0 )ι->void{
+#if defined(__linux__) && !defined(__SANITIZE_ADDRESS__)
+		absl::InitializeSymbolizer( argv0 );
+		absl::InstallFailureSignalHandler( {} );
+#endif
+	}
 #undef SetConsoleTitle
 	α Process::Startup( int argc, char** argv, sv appName, string serviceDescription, optional<bool> console )ε->flat_set<string>{
 		auto isConsole = console ? *console : Process::FindArg( "-c" ).has_value();
@@ -155,6 +168,7 @@ namespace Jde{
 		else if( !AsService() )//unconnected, it would run on as a service the SCM has given up on and cannot stop
 			throw Exception{ "Could not start as a service." };
 		Thread::SetName( appName );
+		installFailureHandler( argc ? argv[0] : nullptr );
 		Process::AddSignals();
 		Cache::Init();
 		return values;
@@ -205,9 +219,9 @@ namespace Jde{
 		_finalizeFunctions.push_back( move(finalize) );
 	}
 
-	vector<function<void()>> _exitFunctions;
-	α Process::AddExitFunction( function<void()>&& exit )ι->void{
-		_exitFunctions.push_back( move(exit) );
+	vector<absl::AnyInvocable<void()>> _exitFunctions;
+	α Process::AddExitFunction( absl::AnyInvocable<void()>&& exit )ι->void{
+		_exitFunctions.push_back( std::move(exit) );
 	}
 
 	up<IShutdown> _executor;
@@ -231,9 +245,7 @@ namespace Jde{
 
 	Ω cleanup( bool terminate )ι->void;
 
-	std::mutex _shutdownMutex;
-	std::condition_variable _shutdownComplete;
-	bool _shutdownFinished{};
+	absl::Notification _shutdownFinished;
 	Ω shutdownTimeout()ι->Duration{
 		if( let configured = Settings::FindDuration("/shutdown/timeout"); configured )
 			return *configured;
@@ -248,10 +260,8 @@ namespace Jde{
 			return;
 		std::thread{ [timeout,exitReason](){
 			Thread::SetName( "ShutdownWatchdog" );
-			std::unique_lock l{ _shutdownMutex };
-			if( _shutdownComplete.wait_for(l, timeout, [](){return _shutdownFinished;}) )
+			if( _shutdownFinished.WaitForNotificationWithTimeout(absl::FromChrono(timeout)) )
 				return;
-			l.unlock();
 			let message = Ƒ( "Shutdown did not complete within {}ms - exiting hard.", std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count() );
 			std::cerr << message << std::endl;//the loggers are the likeliest thing wedged - say it somewhere that cannot be.
 			Process::AddApplicationLog( ELogLevel::Critical, message );
@@ -294,10 +304,9 @@ namespace Jde{
 		if( ioc && ioc.use_count()>1 )//everything that used the io_context should have released it by now; a leftover ref means an asio object would otherwise outlive the io_context (use-after-free).
 			std::cout << "WARNING: io_context still has " << ioc.use_count()-1 << " reference(s) at finalize." << std::endl;
 		ioc = nullptr;//io_context destroyed here, deterministically last.
-		for_each( _exitFunctions, [](let& exit){exit();} );//still under the watchdog
+		for_each( _exitFunctions, [](auto& exit){exit();} );//still under the watchdog
 		_exitFunctions.clear();
-		{ lg _{_shutdownMutex}; _shutdownFinished = true; }
-		_shutdownComplete.notify_all();//disarms the watchdog.
+		_shutdownFinished.Notify();//disarms the watchdog.  Once only:  Shutdown runs once.
 		std::cout << "Shutdown complete." << std::endl;
 	}
 	α Process::AppDataFolder()ι->fs::path{

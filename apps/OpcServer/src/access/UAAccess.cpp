@@ -430,17 +430,15 @@ namespace Jde::Opc::Server{
 				const UA_IssuedIdentityToken* userToken = ( UA_IssuedIdentityToken* )userIdentityToken->content.decoded.data;
 				THROW_IFX( !userToken->tokenData.length, Exception("Empty issued token", {_tags}) );
 				if( userToken->tokenData.length<9 ){
-					let token = string{ ToSV(userToken->tokenData) };
-					uint end{};
-					let sessionId = Str::TryTo<SessionPK>( token, &end, 16 );//attacker-chosen plaintext on the None endpoint;  std::stoul threw invalid_argument for a non-hex token, past this ι boundary.
-					THROW_IFX( !sessionId || end!=token.size(), UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );
+					let sessionId = Str::TryTo<SessionPK>( ToSV(userToken->tokenData), 16 );//attacker-chosen plaintext on the None endpoint.
+					THROW_IFX( !sessionId, UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );
 					let sessionInfo = BlockAwait<TAwait<Web::FromServer::SessionInfo>, Web::FromServer::SessionInfo>( 	move(*AppClient()->SessionInfoAwait(*sessionId)) );
 					ctx = mu<SessionContext>( sessionInfo.user_endpoint(), Protobuf::ToTimePoint(sessionInfo.expiration()), (SessionPK)sessionInfo.session_id(), UserPK{sessionInfo.user_pk()} );
 				}
 				else{
 					Web::Jwt jwt{ ToSV(userToken->tokenData) };
 					AppClient()->Verify( jwt );
-					ctx = mu<SessionContext>( string{}, jwt.Expires(), Str::TryTo<SessionPK>(jwt.SessionId, 0, 16).value_or(0), jwt.UserPK );
+					ctx = mu<SessionContext>( string{}, jwt.Expires(), Str::TryTo<SessionPK>(jwt.SessionId, 16).value_or(0), jwt.UserPK );
 				}
 			}
 			else {

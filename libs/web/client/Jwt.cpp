@@ -17,8 +17,8 @@ namespace Jde::Web{
 			{ "name", userName },
 			{ "slug", userSlug },
 		};
-		if( certificate.size() ){ //the cert is the single source of key material - n/e derive from it on parse. Encode64 iterates elements - std::byte won't feed transform_width, so view as chars.
-			Body["x5c"] = Str::Encode64( sv{(const char*)certificate.data(), certificate.size()}, true );
+		if( certificate.size() ){ //the cert is the single source of key material - n/e derive from it on parse.
+			Body["x5c"] = Str::Encode64( certificate, true );
 			Certificate = move( certificate );
 		}
 		else{
@@ -49,8 +49,7 @@ namespace Jde::Web{
 		if( auto type = Json::AsSV(header, "typ"); type!="JWT" )
 			THROW( "Invalid jwt.  Expected typ=JWT, found '{}'.", type );
 		Kid = Json::FindSV( header, "kid" ).value_or( "" );
-		let fp = encoded.substr( fpIndex+1 );
-		Signature = Str::Decode64<Crypto::Signature>( fp.substr(0, fp.find_first_of('=')), true );
+		Signature = Str::Decode64<Crypto::Signature>( encoded.substr(fpIndex+1), true );
 
 		auto body = Str::Decode64( HeaderBodyEncoded.substr(bodyIndex+1), true );
 		Body = Json::Parse( body );

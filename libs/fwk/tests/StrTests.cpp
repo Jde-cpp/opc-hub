@@ -39,6 +39,15 @@ namespace Jde::Tests{
 		ASSERT_EQ( Str::Decode64<Bytes>("AAAA"), (Bytes{0x00, 0x00, 0x00}) );//all-zero payload previously decoded to empty.
 	}
 
+	TEST( StrTests, Encode64FileSafeIsBase64Url ){
+		let bytes = Bytes{ 0xFB, 0xFF };
+		EXPECT_EQ( Str::Encode64(bytes), "+/8=" );
+		EXPECT_EQ( Str::Encode64(bytes, true), "-_8" ) << "base64url alphabet, no padding (RFC 7515 §2)";
+		EXPECT_EQ( Str::Decode64<Bytes>("-_8=", true), bytes ) << "padding still accepted";
+		EXPECT_THROW( Str::Decode64("+/8", true), Exception ) << "standard alphabet in a base64url field";
+		EXPECT_THROW( Str::Decode64("qwA=="), Exception ) << "bad padding";
+	}
+
 	//To is noexcept; the double specialization used to let stod's invalid_argument escape → std::terminate.
 	TEST( StrTests, ToDoubleBadInput ){
 		EXPECT_EQ( To<double>("abc"), 0.0 );
@@ -59,7 +68,7 @@ namespace Jde::Tests{
 		EXPECT_EQ( Str::Replace("a", "abc", "X"), "a" );//find longer than source.
 		EXPECT_EQ( Str::Replace("", "a", "X"), "" );
 		EXPECT_EQ( Str::Replace("abc", "", "X"), "abc" ) << "an empty find must return the source, not spin";
-		EXPECT_EQ( Str::Replace(sv{"a/b/c"}, '/', '_'), "a_b_c" );//the char overload Decode64's file-safe path uses.
+		EXPECT_EQ( Str::Replace(sv{"a/b/c"}, '/', '_'), "a_b_c" );//the char overload.
 	}
 
 	//two different split contracts: the char form drops every empty field, the sv/sv form keeps interior and
@@ -120,10 +129,13 @@ namespace Jde::Tests{
 		EXPECT_FALSE( Str::TryTo<uint32>(string{"abc"}).has_value() );
 		EXPECT_FALSE( Str::TryTo<uint32>(string{""}).has_value() );
 		EXPECT_FALSE( Str::TryTo<uint>(string{"99999999999999999999999"}).has_value() ) << "past unsigned long long - out_of_range, not a throw";
-		EXPECT_EQ( Str::TryTo<uint>(string{"ff"}, nullptr, 16), 255u );
-		uint pos{};
-		EXPECT_EQ( Str::TryTo<uint>(string{"42abc"}, &pos), 42u );//stoull stops at the first non-digit.
-		EXPECT_EQ( pos, 2u );
+		EXPECT_EQ( Str::TryTo<uint>(string{"ff"}, 16), 255u );
+		EXPECT_FALSE( Str::TryTo<uint>("42abc").has_value() ) << "the whole string, not a prefix";
+		EXPECT_FALSE( Str::TryTo<uint16_t>("70000").has_value() ) << "out of range for T, not truncated to 4464";
+		EXPECT_EQ( Str::TryTo<uint16_t>("65535"), 65535u );
+		EXPECT_FALSE( Str::TryTo<uint16_t>("-1").has_value() ) << "no sign on an unsigned type";
+		EXPECT_FALSE( Str::TryTo<uint32_t>("100000000", 16).has_value() ) << "nine hex digits overflow 32 bits";
+		EXPECT_EQ( Str::TryTo<int>("-5"), -5 );
 	}
 
 	TEST( StrTests, TrimFirstLast ){
@@ -148,6 +160,9 @@ namespace Jde::Tests{
 		EXPECT_EQ( ToSV("ABC"_iv), "ABC" );//the view still carries the original spelling.
 		EXPECT_EQ( Str::ToLower("AbC"), "abc" );
 		EXPECT_EQ( Str::ToUpper("AbC"), "ABC" );
+		EXPECT_EQ( Str::ToLower("\xC3\x89T\xC3\x89"), "\xC3\x89t\xC3\x89" ) << "ASCII only, whatever the locale:  UTF-8 bytes pass through";
+		EXPECT_TRUE( "\xC3\x89" "A"_iv=="\xC3\x89" "a"_iv ) << "bytes >= 0x80 compare as themselves - toupper on a negative char was ub";
+		EXPECT_TRUE( Str::iv{"a"} < Str::iv{"\xC3"} ) << "and order as unsigned, as char_traits<char> does";
 	}
 
 	TEST( StrTests, Decode64RoundTrip ){

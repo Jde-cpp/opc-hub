@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/fwk/co/AnyAwait.h>
+#include <absl/synchronization/mutex.h>
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::QL{ struct TableQL; }
@@ -34,7 +35,7 @@ namespace Jde::Opc::Gateway{
 		};
 		α Get( sp<UAClient> client, NodeId id, SRCE )ι->GetAwait{ return GetAwait{*this, move(client), move(id), sl}; }
 		α Find( const NodeId& id )Ι->Ptr;	//a Ready entry, else null.
-		α Size()Ι->size_t{ sl _{_mutex}; return _slots.size(); }
+		α Size()Ι->size_t{ rl _{_mutex}; return _slots.size(); }
 		Ω SourceName( ESource s )ι->sv;
 	private:
 		enum class EState : uint8{ Fetching, Ready, Failed };
@@ -52,7 +53,7 @@ namespace Jde::Opc::Gateway{
 		Ω FromEnumValues( const UA_Variant& v )ε->vector<Field>;	//EnumValueType[] - open62541 unwraps the ExtensionObjects since the type is in UA_TYPES.
 		Ω FromEnumStrings( const UA_Variant& v )ε->vector<Field>;	//LocalizedText[], the value is the index.
 
-		flat_map<NodeId, Slot> _slots;
-		mutable shared_mutex _mutex;
+		mutable absl::Mutex _mutex;
+		flat_map<NodeId, Slot> _slots ABSL_GUARDED_BY(_mutex);
 	};
 }

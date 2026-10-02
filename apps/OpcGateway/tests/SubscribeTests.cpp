@@ -1,4 +1,5 @@
 #include <jde/fwk/process/execution.h>
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/async/ConnectAwait.h"
@@ -766,7 +767,7 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
 		let waiting = UAClient::ReconnectsWaiting();
 
-		struct RestoreTrust{ ~RestoreTrust(){ ServerTrust::OverrideTrustedCertDirs( nullopt ); } } restoreTrust;//whatever the assertions below do - the rest of the suite needs the server trusted.
+		absl::Cleanup restoreTrust = []{ ServerTrust::OverrideTrustedCertDirs( nullopt ); };//whatever the assertions below do - the rest of the suite needs the server trusted.
 		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{ fs::temp_directory_path()/"jde-reconnect-no-anchors" } );
 		UAClient::ConnectionLost( sp<UAClient>{_client} );//parks the node; every reconnect from here is refused.
 

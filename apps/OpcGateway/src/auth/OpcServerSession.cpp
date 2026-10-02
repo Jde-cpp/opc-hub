@@ -1,9 +1,12 @@
 #include "OpcServerSession.h"
+#include <jde/fwk/io/crc.h>
+#include <absl/synchronization/mutex.h>
 #include <jde/web/server/Sessions.h>
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	flat_map<SessionPK,flat_map<ServerCnnctnNK,Credential>> _sessions; shared_mutex _sessionsMutex;
+	absl::Mutex _sessionsMutex;
+	flat_map<SessionPK,flat_map<ServerCnnctnNK,Credential>> _sessions ABSL_GUARDED_BY(_sessionsMutex);
 	//Nothing but an explicit /logout ever removed an entry, so this was a high-water mark:  every web session that had touched
 	//a slug since startup, counted by opcSessions long after the session itself was gone.  (opcConnections never drifted the
 	//same way - its _clients drain on the idle ttl.)  Web::Server's store is the authority and trims itself on expiry, so an id
@@ -19,7 +22,7 @@ namespace Jde::Opc::Gateway{
 		let session = Web::Server::Sessions::Find( sessionId );
 		return session && session->Expiration>steady_clock::now() && session->UserPK;
 	}
-	Ω pruneDeadSessions( ul& )ι->void{
+	ABSL_EXCLUSIVE_LOCKS_REQUIRED(_sessionsMutex) Ω pruneDeadSessions()ι->void{
 		for( auto p = _sessions.begin(); p!=_sessions.end(); ){
 			if( isLive(p->first) )
 				++p;
@@ -77,7 +80,7 @@ namespace Jde::Opc::Gateway{
 			using enum ETokenType;
 			case None: case Anonymous: _display = "anonymous"; break;
 			case Username: _display = Ƒ( "user: {}", LoginName() ); break;
-			case IssuedToken: _display = Ƒ( "token: {:x}", (uint32)std::hash<string>{}(get<Gateway::Token>(_value)) ); break;
+			case IssuedToken: _display = Ƒ( "token: {:x}", IO::Crc::Calc32c(get<Gateway::Token>(_value)) ); break;//stable across runs, unlike std::hash.
 			case Certificate: _display = Ƒ( "cert: {:x}", get<Crypto::PublicKey>(_value).Hash32() ); break;
 		}
 		return _display;
@@ -85,8 +88,8 @@ namespace Jde::Opc::Gateway{
 }
 namespace Jde::Opc{
 	α Gateway::AddSession( SessionPK sessionId, ServerCnnctnNK opcNK, Credential credential )ι->void{
-		ul l{ _sessionsMutex };
-		pruneDeadSessions( l ); //the map only grows here and in AuthCache - sweeping both bounds it without a timer, for a gateway nobody is watching the Connections list of.
+		ul _{ _sessionsMutex };
+		pruneDeadSessions(); //the map only grows here and in AuthCache - sweeping both bounds it without a timer, for a gateway nobody is watching the Connections list of.
 		auto& sessionConnections = _sessions[sessionId];
 		sessionConnections[opcNK] = move( credential );
 	}
@@ -101,7 +104,7 @@ namespace Jde::Opc{
 		if( !isSignedIn(sessionId) )
 			return authenticated;
 		Jde::UserPK matchedUser; //by value: the reference into _sessions is dead once the insert below runs.
-		ul l{ _sessionsMutex };
+		ul _{ _sessionsMutex };
 		for( let& [_,sessionConnections] : _sessions ){
 			auto p = sessionConnections.find(opcNK);
 			if( p==sessionConnections.end() )
@@ -125,7 +128,7 @@ namespace Jde::Opc{
 			stored.SetUserPK( matchedUser ); //the incoming credential never carries the user - the matched one does.
 			_sessions[sessionId][opcNK] = move( stored );
 		}
-		pruneDeadSessions( l ); //after the match, not before:  whether a dead session's credential may still vouch for a new one is the AuthCache design (review #14), untouched here.
+		pruneDeadSessions(); //after the match, not before:  whether a dead session's credential may still vouch for a new one is the AuthCache design (review #14), untouched here.
 		return authenticated;
 	}
 
@@ -139,7 +142,7 @@ namespace Jde::Opc{
 	}
 	α Gateway::GetCredential( SessionPK sessionId, str opcId )ι->optional<Credential>{
 		optional<Credential> cred;
-		sl _{ _sessionsMutex };
+		rl _{ _sessionsMutex };
 		if( auto p = _sessions.find(sessionId); p!=_sessions.end() ){
 			if( auto creds = p->second.find(opcId); creds!=p->second.end() ){
 				cred = creds->second;
@@ -150,8 +153,8 @@ namespace Jde::Opc{
 	α Gateway::SessionCounts()ι->vector<SessionCount>{
 		flat_map<tuple<ServerCnnctnNK,ETokenType,Jde::UserPK>,uint32> counts;
 		{
-			ul l{ _sessionsMutex }; //unique, not shared:  the sweep below erases.
-			pruneDeadSessions( l );
+			ul _{ _sessionsMutex }; //exclusive, not shared:  the sweep below erases.
+			pruneDeadSessions();
 			for( let& [_,sessionConnections] : _sessions ){ //at most one credential per opcNK per session - no per-session dedup needed.
 				for( let& [opcNK,cred] : sessionConnections )
 					++counts[ {opcNK, cred.Type(), cred.UserPK()} ];

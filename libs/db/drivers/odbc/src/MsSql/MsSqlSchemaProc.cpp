@@ -19,7 +19,7 @@ namespace Jde::DB::MsSql{
 			sv v = dflt;
 			while( v.size()>=2 && v.front()=='(' && v.back()==')' )
 				v = v.substr( 1, v.size()-2 );
-			if( let value = Str::TryTo<_int>(string{v}); value )
+			if( let value = Str::TryTo<_int>(v); value )
 				y = Value{ *value };
 		}
 		else if( type==EType::Bit )

@@ -11,7 +11,6 @@
 	#include <sqlext.h>
 #endif
 #pragma warning( disable : 4245)
-#include <boost/crc.hpp>
 #pragma warning( default : 4245)
 #include <boost/noncopyable.hpp>
 #include <boost/system/error_code.hpp>

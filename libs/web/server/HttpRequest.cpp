@@ -1,4 +1,5 @@
 #include <jde/web/server/HttpRequest.h>
+#include <absl/strings/match.h>
 #include <jde/web/server/Server.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/chrono.h>
@@ -54,7 +55,7 @@ namespace Jde::Web::Server{
 			return { configured, false };//literal "*" or a pinned origin: same answer for every caller, so nothing to vary on.
 		let origin = Header( "origin" );
 		let host = Header( "host" );
-		let allowed = origin.size() && Str::ToLower( hostOf(origin) )==Str::ToLower( hostOf(host) );
+		let allowed = origin.size() && absl::EqualsIgnoreCase( hostOf(origin), hostOf(host) );
 		if( origin.size() && !allowed )//the browser only shows an opaque 'Failed to fetch' - this side knows why the header was withheld.
 			DBGT( ELogTags::Server | ELogTags::Http, "CORS: rejecting Origin '{}' for Host '{}' - allowOrigin='sameHost' requires matching hosts; pin /http/accessControl/allowOrigin or serve the page from '{}'.", origin, host, hostOf(host) );
 		return { allowed ? origin : string{}, true };
@@ -99,7 +100,7 @@ namespace Jde::Web::Server{
 	α HttpRequest::SessionId()Ι->SessionPK{
 		SessionPK sessionId{ SessionInfo ? SessionInfo->SessionId : 0 };
 		if( auto authorization = sessionId ? string{} : Header("authorization"); authorization.size() )
-			sessionId = Str::TryTo<SessionPK>( authorization, nullptr, 16 ).value_or( 0 );
+			sessionId = Str::TryTo<SessionPK>( authorization, 16 ).value_or( 0 );
 
 		return sessionId;
 	}

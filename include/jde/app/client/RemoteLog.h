@@ -17,7 +17,7 @@ namespace Jde::App::Client{
 		// Shutdown has to: the executor is being torn down, so a posted lambda can simply never run
 		α Send( bool post=true )ι->void;
 		α Start( sp<IAppClient> client )ι->void;
-		α StartTimer()ι->TimerAwait::Task;
+		ABSL_UNLOCK_FUNCTION(_mutex) α StartTimer()ι->TimerAwait::Task;
 		sp<IAppClient> _client;
 		Duration _delay;
 		//Entries go in whenever the process logs and only come out when the app server is reachable

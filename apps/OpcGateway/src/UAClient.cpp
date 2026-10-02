@@ -1,4 +1,6 @@
 #include "UAClient.h"
+#include <jde/fwk/io/crc.h>
+#include <absl/synchronization/mutex.h>
 
 #include <open62541/plugin/securitypolicy_default.h>
 #include <jde/fwk/co/AnyAwait.h>
@@ -21,7 +23,8 @@
 
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
-	flat_map<ServerCnnctnNK,flat_map<Credential,sp<UAClient>>> _clients; shared_mutex _clientsMutex;
+	absl::Mutex _clientsMutex;
+	flat_map<ServerCnnctnNK,flat_map<Credential,sp<UAClient>>> _clients ABSL_GUARDED_BY(_clientsMutex);
 	//Why the last connect attempt on a slug failed.  Keyed by slug, not by credential: the connection list is per slug and a
 	//failure that is credential-specific still leaves the slug unusable for that caller.  Its own mutex - the status query reads it
 	//without touching _clients, and StateCallback writes it while unlocked.
@@ -167,7 +170,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
 		vector<sp<UAClient>> y;
-		sl _{ _clientsMutex };
+		rl _{ _clientsMutex };
 		for( let& [_, creds] : _clients ){
 			for( let& [__, client] : creds ){
 				if( client->Connected )
@@ -186,7 +189,7 @@ namespace Jde::Opc::Gateway{
 	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
 		vector<sp<UAClient>> clients;
 		{
-			sl _{ _clientsMutex };
+			rl _{ _clientsMutex };
 			for( let& [slug, creds] : _clients ){
 				for( let& [_, client] : creds ){
 					if( connection.IsPK() ? client->_opcServer.Id==connection.PK() : slug==connection.NK() )
@@ -205,7 +208,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClient::ConnectionCounts()ι->flat_map<ServerCnnctnNK,uint32>{
 		flat_map<ServerCnnctnNK,uint32> y;
-		sl _{ _clientsMutex };
+		rl _{ _clientsMutex };
 		for( let& [slug, creds] : _clients )
 			y[slug] = (uint32)creds.size();
 		return y;
@@ -213,7 +216,7 @@ namespace Jde::Opc::Gateway{
 	α UAClient::StatusCounts()ι->tuple<uint,uint,uint>{
 		vector<sp<UAClient>> clients;
 		{
-			sl _{ _clientsMutex };
+			rl _{ _clientsMutex };
 			for( let& [slug, creds] : _clients )
 				for( let& [cred, client] : creds )
 					clients.push_back( client );
@@ -238,8 +241,9 @@ namespace Jde::Opc::Gateway{
 	}
 	concurrent_flat_map<uint32_t, uint32_t> _handles;
 	α createHandle( const ServerCnnctn& slug )ι->Jde::Handle{
-		//Handle packs the server id into its top 32 bits, so fold the 64-bit hash rather than truncating it (xor high^low keeps more entropy). A collision only merges two servers' connection-index counters, which are purely for log correlation - benign.
-		uint32_t serverHash = slug.Id ? slug.Id : []( size_t h )ι{ return (uint32_t)h ^ (uint32_t)(h>>32); }( std::hash<string>{}(slug.Url) );
+		//Handle packs the server id into its top 32 bits.  CRC-32C rather than std::hash:  the same on every run and standard library, so a
+		//handle names the same server in every log.  A collision only merges two servers' connection-index counters, which are purely for log correlation - benign.
+		uint32_t serverHash = slug.Id ? slug.Id : IO::Crc::Calc32c( slug.Url );
 		uint32_t connectionIndex{};
 		auto increment = [&connectionIndex]( auto& last ){ connectionIndex = ++last.second; };
 		_handles.try_emplace_and_visit( serverHash, 0, increment, increment );
@@ -277,7 +281,7 @@ namespace Jde::Opc::Gateway{
 		StopReconnects();
 		vector<sp<UAClient>> clients;
 		{
-			sl _1{ _clientsMutex };
+			rl _1{ _clientsMutex };
 			for( auto&& [_,creds] : _clients )
 				for( auto&& [_,client] : creds )
 					clients.push_back( client );
@@ -838,19 +842,19 @@ namespace Jde::Opc::Gateway{
 		Process( ConnectRequestId, "Connect" );
 	}
 
-	α UAClient::PostUA( function<void()> f )ι->void{
+	α UAClient::PostUA( absl::AnyInvocable<void()> f )ι->void{
 		//All UA_Client_* calls must run on this client's strand (open62541 clients are not thread-safe): run_iterate,
 		//async submissions, and sync services all serialize here. dispatch runs f inline when the caller is already on
 		//the strand (e.g. completion callbacks inside run_iterate) and posts otherwise. `self` keeps the client - and
 		//with it _asyncRequest and the raw UA_Client - alive until f runs.
-		boost::asio::dispatch( _asyncRequest.Strand(), [self=shared_from_this(), f=move(f)]{f();} );
+		boost::asio::dispatch( _asyncRequest.Strand(), [self=shared_from_this(), f=std::move(f)]()mutable{f();} );
 	}
 
-	α UAClient::PostStrand( function<void()> f )ι->void{
+	α UAClient::PostStrand( absl::AnyInvocable<void()> f )ι->void{
 		//Always post (never dispatch inline): the handler runs after the current strand op returns. Used to break
 		//re-entrancy - e.g. resuming a caller from inside run_iterate must not unblock/destroy the awaitable while the
 		//strand handler that drove run_iterate is still touching it. `self` keeps the client (and its strand) alive until f runs.
-		boost::asio::post( _asyncRequest.Strand(), [self=shared_from_this(), f=move(f)]{f();} );
+		boost::asio::post( _asyncRequest.Strand(), [self=shared_from_this(), f=std::move(f)]()mutable{f();} );
 	}
 
 	α UAClient::Process( RequestId requestId, sv what, bool keepAlive )ι->void{
@@ -1321,7 +1325,7 @@ namespace Jde::Opc::Gateway{
 		PurgePending( dataChange );//a session that closed while its server was down must not be revived by the reconnect.
 		vector<sp<UAClient>> clients;
 		{
-			sl _{ _clientsMutex };
+			rl _{ _clientsMutex };
 			for( let& [_, credClients] : _clients ){
 				for( let& [_, client] : credClients )
 					clients.push_back( client );
@@ -1361,7 +1365,7 @@ namespace Jde::Opc::Gateway{
 		if( Process::ShuttingDown() ){
 			LOGSL( ELogLevel::Warning, srce, _tags, "Application is shutting down." );
 		}else{
-			sl _{ _clientsMutex };
+			rl _{ _clientsMutex };
 			for( auto&& [_, credClients] : _clients ){
 				for( auto&& [_, client] : credClients ){
 					if( client->_ptr == ua )
@@ -1373,7 +1377,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α UAClient::Find( str opcNK, const Gateway::Credential& cred )ι->sp<UAClient>{
-		sl _{ _clientsMutex };
+		rl _{ _clientsMutex };
 		sp<UAClient> y;
 		if( auto creds = _clients.find(opcNK); creds!=_clients.end() ){
 			if( auto client = creds->second.find(cred); client!=creds->second.end() )

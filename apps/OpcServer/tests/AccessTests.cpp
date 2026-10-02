@@ -1,4 +1,5 @@
 #include <semaphore>
+#include <absl/cleanup/cleanup.h>
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include "../src/UAConfig.h"
@@ -418,7 +419,7 @@ namespace Jde::Opc::Server::Tests{
 		let ssl = Settings::FindObject( "/opcServer/ssl" );
 		ASSERT_TRUE( ssl ) << "the suite's own server runs secured";
 		const jobject original{ *ssl };
-		struct Restore final{ const jobject& Ssl; ~Restore(){ try{ Settings::Set("/opcServer/ssl", Ssl); }catch( const std::exception& ){} } } restore{ original };
+		absl::Cleanup restore = [&original]{ try{ Settings::Set("/opcServer/ssl", original); }catch( const std::exception& ){} };
 		Settings::Set( "/opcServer/ssl", jvalue{} );//null - FindObject answers nullptr for it, as for an absent key.
 		ASSERT_FALSE( Settings::FindObject("/opcServer/ssl") );
 		try{

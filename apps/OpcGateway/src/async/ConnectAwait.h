@@ -24,7 +24,6 @@ namespace Jde::Opc::Gateway{
 		α ResolveDefault()ι->TAwait<vector<ServerCnnctn>>::Task;//"" -> the default connection's slug, then Start.
 		α Start()ι->void;//find a live client, else register and Create - Suspend once the slug is known.
 		α Create()ι->TAwait<vector<ServerCnnctn>>::Task;
-		Ω EraseRequests( str opcNK, Credential cred, lg& _ )ι->vector<ConnectAwait::Handle>;
 		string _opcSlug;
 		Credential _cred;
 		SessionPK _sessionId{};//non-zero only on the web-session ctors: a successful connect is recorded in _sessions so opcSessions counts it.

@@ -2,46 +2,35 @@
 #ifndef TO_VEC_H //gcc pragma once is not supported
 #define TO_VEC_H
 #include <sstream>
+#include <absl/synchronization/mutex.h>
 
 namespace Jde{
 	template<class T>
-	struct Vector : private vector<T>{
-		using base=vector<T>;
-		Vector()ι:base{}{}
-		Vector( uint size )ι:base{ size }{}
-		α copy()Ι->vector<T>{ sl _{Mutex}; vector<T> y; y.reserve(base::size()); std::copy(base::begin(),base::end(),std::back_inserter(y)); return y; }
-		α at( uint index, ul& )ι->T&{ return base::at(index); }
-		α begin( sl& )Ι->typename base::const_iterator{ return base::begin(); }
-		α end( sl& )Ι->typename base::const_iterator{ return base::end(); }
-		α begin( ul& )ι->typename base::iterator{ return base::begin(); }
-		α end( ul& )ι->typename base::iterator{ return base::end(); }
+	struct Vector{
+		Vector()ι{}
+		Vector( uint size )ι:_items( size ){}
+		α copy()Ι->vector<T>{ rl _{Mutex}; return _items; }
 
-		α clear()ι{ ul _(Mutex); base::clear(); }
-		α find( const T& x )ι->optional<T>{ sl l(Mutex); auto p = std::ranges::find(Base(), x); return p==end(l) ? nullopt : optional<T>{*p}; }
-		α erase( const T& x )ι->bool{ ul l(Mutex); auto p = std::ranges::find(Base(), x); bool found = p!=end(l); if( found ) base::erase(p); return found; }
+		α clear()ι{ ul _{Mutex}; _items.clear(); }
+		α find( const T& x )ι->optional<T>{ rl _{Mutex}; auto p = std::ranges::find(_items, x); return p==_items.end() ? nullopt : optional<T>{*p}; }
+		α erase( const T& x )ι->bool{ ul _{Mutex}; auto p = std::ranges::find(_items, x); bool found = p!=_items.end(); if( found ) _items.erase(p); return found; }
 		α	erase( function<void(const T& p)> before )ι->void;
 		α	rerase( function<void(const T& p)> before )ι->void;
 		α	erase_if( function<bool(const T& p)> test )ι->void;
-		α	erase_first( function<bool(const T& p)> test, ul& l )ι->bool;
 
-		α push_back( const T& val )ι{ ul l(Mutex); push_back(val, l); }
-		α push_back( const T& val, ul& )ι{ base::push_back(val); }
-		α push_back( T&& val )ι{ ul l(Mutex); push_back(move(val), l); }
-		α push_back( T&& val, ul& )ι{ base::push_back(move(val)); }
-		ψ emplace_back( Args&&... args )ι->T&{ ul l(Mutex); return emplace_back(l, std::forward<Args>(args)...); }
-		ψ emplace_back( ul&, Args&&... args )ι->T&{ return base::emplace_back(std::forward<Args>(args)...); }
-		α reserve( uint size )ι->void{ ul l(Mutex); reserve(size, l); }
-		α reserve( uint size, ul& )ι->void{ base::reserve(size); }
-		α empty()Ι->bool{ sl _{Mutex}; return base::empty(); }
-		α size()Ι->uint{ sl l(Mutex); return base::size(); }
-		α size( ul& )Ι->uint{ return base::size(); }
-		α size( sl& )Ι->uint{ return base::size(); }
+		α push_back( const T& val )ι{ ul _{Mutex}; _items.push_back(val); }
+		α push_back( T&& val )ι{ ul _{Mutex}; _items.push_back(move(val)); }
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α push_back_locked( T&& val )ι{ _items.push_back(move(val)); }//for a batch under one hold of Mutex.
+		ψ emplace_back( Args&&... args )ι->T&{ ul _{Mutex}; return _items.emplace_back(std::forward<Args>(args)...); }
+		α reserve( uint size )ι->void{ ul _{Mutex}; _items.reserve(size); }
+		α empty()Ι->bool{ rl _{Mutex}; return _items.empty(); }
+		α size()Ι->uint{ rl _{Mutex}; return _items.size(); }
 		α visit( function<void(const T& p)> f )ι->void;
 
-		mutable std::shared_mutex Mutex;
+		mutable absl::Mutex Mutex;
 	private:
-		α Base()ι->vector<T>&{ return (vector<T>&)*this; }
 		α drain( bool reverse, function<void(const T& p)> before )ι->void;
+		vector<T> _items ABSL_GUARDED_BY(Mutex);
 	};
 
 	//erase/rerase drain the whole container, calling `before` on each element. The callback is invoked
@@ -52,31 +41,25 @@ namespace Jde{
 	Ŧ	Vector<T>::drain( bool reverse, function<void(const T& p)> before )ι->void{
 		vector<T> snapshot;
 		{
-			ul _( Mutex );
-			snapshot.reserve( base::size() );
+			ul _{ Mutex };
+			snapshot.reserve( _items.size() );
 			if( reverse )
-				std::move( base::rbegin(), base::rend(), std::back_inserter(snapshot) );//rerase: last registered is called first.
+				std::move( _items.rbegin(), _items.rend(), std::back_inserter(snapshot) );//rerase: last registered is called first.
 			else
-				std::move( base::begin(), base::end(), std::back_inserter(snapshot) );
-			base::clear();
+				std::move( _items.begin(), _items.end(), std::back_inserter(snapshot) );
+			_items.clear();
 		}
 		for( auto& p : snapshot )
 			before( p );
 	}
 	Ŧ	Vector<T>::erase_if( function<bool(const T& p)> test )ι->void{
-		ul _( Mutex );
-		for( auto p=base::begin(); p!=base::end(); p = test(*p) ? base::erase(p) : std::next(p) );
-	}
-	Ŧ	Vector<T>::erase_first( function<bool(const T& p)> test, ul& )ι->bool{
-		auto p = find_if( Base(), test );
-		auto y = p != Base().end();
-		if( y )
-			Base().erase( p );
-		return y;
+		ul _{ Mutex };
+		std::erase_if( _items, test );
 	}
 	Ŧ	Vector<T>::visit( function<void(const T& p)> f )ι->void{
-		ul _( Mutex );
-		for_each( Base(), f );
+		ul _{ Mutex };
+		for( const auto& item : _items )
+			f( item );
 	}
 }
 #endif

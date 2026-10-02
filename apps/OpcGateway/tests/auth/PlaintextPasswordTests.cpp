@@ -1,4 +1,5 @@
 #include <open62541/plugin/accesscontrol_default.h>
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
 #include "../utils/helpers.h"
 #include "../utils/TestUaServer.h"
@@ -88,7 +89,7 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( PlaintextPasswordTests, SentWhenTheSettingAllowsIt ){
-		struct Restore final{ ~Restore(){ try{ Settings::Set("/gateway/allowPlaintextPassword", false); }catch( const std::exception& ){} } } restore;//every later client in the process reads it.
+		absl::Cleanup restore = []{ try{ Settings::Set("/gateway/allowPlaintextPassword", false); }catch( const std::exception& ){} };//every later client in the process reads it.
 		Settings::Set( "/gateway/allowPlaintextPassword", true );
 		let what = Attempt();
 		ASSERT_TRUE( what.empty() ) << what;

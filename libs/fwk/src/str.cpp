@@ -1,6 +1,8 @@
 ﻿#include <jde/fwk/str.h>
+#include <absl/strings/str_split.h>
+#include <absl/strings/str_replace.h>
+#include <absl/strings/match.h>
 #include <algorithm>
-#include <boost/algorithm/hex.hpp>
 #include <boost/uuid/string_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <fmt/args.h>
@@ -11,13 +13,11 @@
 #define let const auto
 
 template<> α Jde::To<double>( sv x )ι->double{
-	double y{}; //use 0.0 to keep consistent with the other To<T>.
-	try{
-		y = stod(string{x});
-	}catch( const std::exception& e ){//not runtime_error: stod throws invalid_argument/out_of_range, both logic_error - narrowing this escapes the noexcept and terminates.
-		DBGT( ELogTags::Parsing, "stod failed on '{}': {}", x, e.what() );
-	}
-	return y;
+	double y;
+	if( absl::SimpleAtod(x, &y) )
+		return y;
+	DBGT( ELogTags::Parsing, "Could not parse '{}' as a double.", x );
+	return 0.0;//consistent with the other To<T>.
 }
 
 boost::uuids::string_generator _gen;
@@ -84,40 +84,13 @@ namespace Jde{
 		ASSERT( find.size() );
 		if( find.empty() )
 			return string{ source };//find("",i) returns i, so i+find.length() never advances
-		string y; y.reserve( source.size() ); uint iLast{ 0 };
-		for( uint i{}; (i = source.find(find, i))!=string::npos; iLast = (i=i+find.length()) ){
-			y += source.substr( iLast, i-iLast );
-			y += replace;
-		}
-		if( iLast<source.size() )
-			y += source.substr( iLast, source.size()-iLast );
+		return absl::StrReplaceAll( source, {{find, replace}} );
+	}
+	α Str::Split( sv s, char delim )ι->vector<sv>{ return absl::StrSplit( s, delim, absl::SkipEmpty() ); }
+	α Str::ToHex( std::span<const byte> bytes )ι->string{ return absl::BytesToHexString( sv{(const char*)bytes.data(), bytes.size()} ); }
 
-		return y;
-	}
-	α Str::Split( sv s, char delim )ι->vector<sv>{
-		vector<sv> y;
-		for( uint fieldStart=0, fieldEnd;fieldStart<s.size();fieldStart = fieldEnd+1 ){
-			fieldEnd = std::min( s.find_first_of(delim, fieldStart), s.size() );
-			sv v{ s.data()+fieldStart, fieldEnd-fieldStart };
-			if( v.size() )
-				y.push_back( v );
-		}
-		return y;
-	}
-	α Str::ToHex( std::span<const byte> bytes )ι->string{
-		string hex;
-		hex.reserve( bytes.size()*2 );
-		boost::algorithm::hex_lower( (const char*)bytes.data(), (const char*)bytes.data()+bytes.size(), std::back_inserter(hex) );
-		return hex;
-	}
-
-	Ω transform( sv source, int(*f)(int) )ι->string{
-		string result{ source };
-		std::ranges::transform( result, result.begin(), [f](char ch){ return (char)f((unsigned char)ch); } );//unsigned cast: tolower/toupper are ub for negative chars.
-		return result;
-	}
-	α Str::ToLower( sv source )ι->string{ return transform(source, ::tolower); }
-	α Str::ToUpper( sv source )ι->string{ return transform(source, ::toupper); }
+	α Str::ToLower( sv source )ι->string{ return absl::AsciiStrToLower( source ); }
+	α Str::ToUpper( sv source )ι->string{ return absl::AsciiStrToUpper( source ); }
 
 
 	//Reads the code point that starts at x[i] into ch and returns the index just past it.  Bytes are read unsigned - a
@@ -195,15 +168,5 @@ namespace Jde{
 		return trimmed.size()==s.size() ? move(s) : string{trimmed};
 	}
 
-	α Str::StartsWithInsensitive( sv value, sv starting )ι->bool{
-		bool equal = starting.size() <= value.size();
-		if( equal ){
-			for( sv::size_type i=0; i<starting.size(); ++i ){
-				equal = ::toupper( starting[i] )==::toupper( value[i] );
-				if( !equal )
-					break;
-			}
-		}
-		return equal;
-	}
+	α Str::StartsWithInsensitive( sv value, sv starting )ι->bool{ return absl::StartsWithIgnoreCase( value, starting ); }
 }

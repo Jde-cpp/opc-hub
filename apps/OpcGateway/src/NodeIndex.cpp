@@ -32,7 +32,7 @@ namespace Jde::Opc::Gateway{
 		return mu<Exception>( e.What(), ExceptionArgs{ELogLevel::NoLog, e.Tags, e.Code(), e.HttpStatus()}, e.Source() );
 	}
 	α NodeIndex::ReadyAwait::await_ready()ι->bool{
-		sl _{ _index._mutex };
+		rl _{ _index._mutex };
 		return _index._state==EState::Ready && !_refresh;
 	}
 	α NodeIndex::ReadyAwait::Suspend()ι->void{
@@ -236,7 +236,7 @@ namespace Jde::Opc::Gateway{
 	α NodeIndex::Search( sv text, uint limit )Ι->vector<Entry>{
 		vector<const Entry*> hits;
 		vector<Entry> y;
-		sl _{ _mutex };
+		rl _{ _mutex };
 		vector<uint8> ranks; ranks.reserve( _entries.size() );
 		for( let& e : _entries ){
 			uint8 rank = e.NameLower.starts_with(text) ? 0 : e.BrowseLower.starts_with(text) ? 1 : e.NameLower.find(text)!=string::npos || e.BrowseLower.find(text)!=string::npos ? 2 : 3;
@@ -244,7 +244,7 @@ namespace Jde::Opc::Gateway{
 			if( rank<3 )
 				hits.push_back( &e );
 		}
-		auto rankOf = [&]( const Entry* e ){ return ranks[e-&_entries[0]]; };
+		auto rankOf = [&]( const Entry* e ){ _mutex.AssertReaderHeld(); return ranks[e-&_entries[0]]; };//a lambda is analyzed on its own - this tells it the lock.
 		std::ranges::sort( hits, [&]( const Entry* a, const Entry* b ){
 			let ra = rankOf(a), rb = rankOf(b);
 			return ra!=rb ? ra<rb : a->Depth!=b->Depth ? a->Depth<b->Depth : a->NameLower<b->NameLower;

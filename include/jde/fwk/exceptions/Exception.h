@@ -96,7 +96,7 @@ namespace Jde{
 		SL _sl;
 		α Code()Ι->uint32{
 			if( !HasCode() )
-				_code = Calc32RunTime( Format() );
+				_code = IO::Crc::Calc32c( Format() );
 			return _code;
 		}
 	};

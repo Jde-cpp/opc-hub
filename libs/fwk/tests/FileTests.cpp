@@ -75,10 +75,10 @@ namespace Jde::IO::Tests{
 	Ω read( fs::path file, sp<Vector<uuid>> readValues, SRCE )ι->TAwait<string>::Task{
 		let content = co_await IO::ReadAwait{ file, false, sl };
 		let guidStrings = Str::Split( content, '\n' );
-		ul l{ readValues->Mutex };
+		ul _{ readValues->Mutex };
 		for( auto&& guid : guidStrings ){
 			try{
-				readValues->push_back( ToUuid(string{guid}), l );
+				readValues->push_back_locked( ToUuid(string{guid}) );
 			}
 			catch( const std::runtime_error& e ){
 				THROW( "[{}] Failed to parse GUID from string '{}': {}", file.string(), guid, e.what() );

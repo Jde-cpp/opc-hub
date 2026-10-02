@@ -86,9 +86,8 @@ namespace Jde::Tests{
 		EXPECT_EQ( Chrono::ToTimePoint("2024-01-02T03:04:05-03:00"), Chrono::ToTimePoint("2024-01-02T06:04:05") );
 	}
 
-	//returns what it could parse and no indication of what it could not, if the is.fail() checks go: a stream that
-	//failed leaves tp default-constructed, so every one of these would silently become the epoch rather than throw -
-	//an unparseable expiry reading as 1970 is a permanent "expired" instead of an error someone can see.
+	//every one of these must throw rather than come back as the epoch - an unparseable expiry reading as 1970 is a
+	//permanent "expired" instead of an error someone can see.
 	Ω parseFailure( sv iso )->string{
 		try{
 			Chrono::ToTimePoint( string{iso} );
@@ -101,26 +100,26 @@ namespace Jde::Tests{
 			let what = parseFailure( iso );
 			EXPECT_NE( what.find("Could not parse ISO time"), string::npos ) << "'" << iso << "' parsed as a time point, or threw something else: " << what;
 		}
-		//the three branches each carry their own fail() check, so garbage has to be rejected through all of them.
+		//with and without a zone - the parse is tried both ways.
 		EXPECT_NE( parseFailure("garbage-with-a-zone+05:00").find("Could not parse ISO time"), string::npos );
 		EXPECT_NE( parseFailure("garbage-that-ends-in-a-zulu-charZ").find("Could not parse ISO time"), string::npos );
 	}
 
-	//ql-review3 #4: the zone offset is read with std::stoi, which throws std::invalid_argument - a logic_error, not a
+	//ql-review3 #4: the zone offset was read with std::stoi, which throws std::invalid_argument - a logic_error, not a
 	//runtime_error - so a junk offset escaped every `catch( runtime_error& )` in the callers and terminated the process
-	//(QL::makeTimes' noexcept lambda, from an anonymous `providers(name:"2026-08-02T10:00:00+ab")`).  ToTimePoint now only
+	//(QL::makeTimes' noexcept lambda, from an anonymous `providers(name:"2026-08-02T10:00:00+ab")`).  ToTimePoint only
 	//throws Jde::Exception.  parseFailure catches Exception, so anything else still takes the suite down with it.
+	//A bare sign and a non-numeric offset are rejected too:  stoi took any numeric prefix and read them as UTC.
 	TEST( ChronoTests, ToTimePointRejectsAMalformedZone ){
-		for( let iso : {"2026-08-02T10:00:00+ab", "2026-08-02T10:00:00-xy"} ){
+		for( let iso : {"2026-08-02T10:00:00+ab", "2026-08-02T10:00:00-xy", "2026-08-02T10:00:00+", "2026-08-02T10:00:00+0a:00"} ){
 			let what = parseFailure( iso );
 			EXPECT_NE( what.find("Could not parse ISO"), string::npos ) << "'" << iso << "' parsed, or threw something else: " << what;
 		}
 		EXPECT_NO_THROW( Chrono::ToTimePoint("2026-08-02T10:00:00+05:00") ); //the control: a real offset still parses.
-		EXPECT_NO_THROW( Chrono::ToTimePoint("2026-08-02T10:00:00.123456") ); //the fraction is a digit loop now, not a stod.
-		//What is *not* claimed:  stoi takes any numeric prefix and an absent offset reads as zero, so these are accepted as
-		//UTC rather than rejected.  Wrong, but quietly wrong - no longer a terminate, which is what #4 was about.
-		EXPECT_NO_THROW( Chrono::ToTimePoint("2026-08-02T10:00:00+") );
-		EXPECT_NO_THROW( Chrono::ToTimePoint("2026-08-02T10:00:00+0a:00") );
+		EXPECT_NO_THROW( Chrono::ToTimePoint("2026-08-02T10:00:00.123456") );
+		//the offset spellings that keep working:  ±hh, ±hhmm, ±hh:mm.
+		EXPECT_EQ( Chrono::ToTimePoint("2024-01-02T03:04:05+05"), Chrono::ToTimePoint("2024-01-01T22:04:05") );
+		EXPECT_EQ( Chrono::ToTimePoint("2024-01-02T03:04:05+0500"), Chrono::ToTimePoint("2024-01-01T22:04:05") );
 	}
 
 	//year_month_day::ok() is what separates a real calendar date from an arithmetic one; without it sys_days{ymd}

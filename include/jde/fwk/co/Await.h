@@ -2,6 +2,7 @@
 #ifndef AWAIT_H
 #define AWAIT_H
 #include <condition_variable>
+#include <absl/synchronization/notification.h>
 #include "Task.h"
 
 namespace Jde{
@@ -126,13 +127,11 @@ namespace Jde{
 		//hang would read the same way otherwise - install-issues, the 09-15 retry table).  The line still comes every interval.
 		α Wait( SL sl, ELogLevel stallLevel=ELogLevel::Critical )ι->void;
 	private:
-		std::mutex _mutex;
-		std::condition_variable _cv;
-		bool _done{};
+		absl::Notification _done;
 	};
 
-	//shared between the blocked thread & the coroutine: the waiter can wake & return between the signal and the notify,
-	//so stack-owned state would be destroyed while notify_all still touches it - the coroutine frame co-owns it instead.
+	//On the blocked thread's stack:  the waiter can wake & return while Signal is still inside Notify, and absl::Notification
+	//allows destroying it then.
 	template<class TResult>
 	struct BlockAwaitState : BlockAwaitSync{
 		optional<TResult> Result;
@@ -142,7 +141,7 @@ namespace Jde{
 	//One bridge for both kinds.  A void awaitable parks a monostate state - there is no value to store - and BlockVoidAwait
 	//is that instantiation; it used to be a second copy of these two functions.
 	template<class TAwait, class TResult>
-	α BlockAwaitExecute( TAwait& a, sp<BlockAwaitState<TResult>> s )ι->TAwait::Task{
+	α BlockAwaitExecute( TAwait& a, BlockAwaitState<TResult>* s )ι->TAwait::Task{
 		try{
 			if constexpr( std::is_same_v<TResult,std::monostate> )
 				co_await a;
@@ -157,16 +156,16 @@ namespace Jde{
 
 	template<class TAwait, class TResult>
 	α BlockAwait( TAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->TResult{
-		auto s = ms<BlockAwaitState<TResult>>();
+		BlockAwaitState<TResult> s;
 		const auto sl = a.Source();//copied before the co_await - the awaitable is the caller's only clue to what a stalled wait is waiting on.
-		BlockAwaitExecute<TAwait,TResult>( a, s );
-		s->Wait( sl, stallLevel );
-		if( s->Error )
-			s->Error->Throw();
+		BlockAwaitExecute<TAwait,TResult>( a, &s );
+		s.Wait( sl, stallLevel );
+		if( s.Error )
+			s.Error->Throw();
 		if constexpr( std::is_same_v<TResult,std::monostate> )
 			return {};
 		else
-			return move( *s->Result );
+			return move( *s.Result );
 	}
 
 	Ξ BlockVoidAwait( VoidAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->void{ BlockAwait<VoidAwait,std::monostate>( move(a), stallLevel ); }

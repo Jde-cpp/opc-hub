@@ -85,7 +85,7 @@ namespace Jde::DB::MySql{
 		let isUnsigned = all.find( " unsigned" )!=sv::npos;
 		let open = all.find( '(' );
 		let base = all.substr( 0, std::min(open, all.find(' ')) );  //'double precision' -> 'double'; 'decimal(10,2)' -> 'decimal'.
-		let width = open==sv::npos ? optional<uint>{} : Str::TryTo<uint>( string{all.substr(open+1, all.find_first_of(",)", open)-open-1)} );
+		let width = open==sv::npos ? optional<uint>{} : Str::TryTo<uint>( all.substr(open+1, all.find_first_of(",)", open)-open-1) );
 
 		//mysql's own: the unsigned/width-bearing integers, the two floats (REAL is a DOUBLE synonym unless REAL_AS_FLOAT is
 		//set, and #30: FLOAT is the 4-byte one - the reverse of the common table, so they must be answered first), the

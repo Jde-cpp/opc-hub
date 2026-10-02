@@ -1,4 +1,5 @@
 #include "GatewayClientSocket.h"
+#include <absl/synchronization/mutex.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/app/proto/common.h>
 #include "../../src/GatewayAppClient.h"
@@ -116,9 +117,11 @@ namespace Tests{
 		return await<uint32>{ FromClientUtils::Connection(sessionId, requestId), requestId, shared_from_this(), sl };
 	}
 
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>, sp<IListener>>> _subscriptionRequests; shared_mutex _subscriptionRequestMutex;
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>>> _unsubscribeRequests;//under _subscriptionRequestMutex.  The ack prunes the nodes' listeners: they used to stay registered forever, so a later Subscribe on the same node through the same socket dispatched pushes to a listener whose fixture was long destroyed.
-	flat_map<ServerCnnctnNK, flat_map<NodeId, flat_set<sp<IListener>>>> _subscriptions; shared_mutex _subscriptionsMutex;
+	absl::Mutex _subscriptionRequestMutex;
+	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>, sp<IListener>>> _subscriptionRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);
+	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>>> _unsubscribeRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);//The ack prunes the nodes' listeners: they used to stay registered forever, so a later Subscribe on the same node through the same socket dispatched pushes to a listener whose fixture was long destroyed.
+	absl::Mutex _subscriptionsMutex;
+	flat_map<ServerCnnctnNK, flat_map<NodeId, flat_set<sp<IListener>>>> _subscriptions ABSL_GUARDED_BY(_subscriptionsMutex);
 	//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
 	//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the
 	//socket dead, a write on a closed stream, a timeout.  subscription-disconnect #7's per-cycle re-subscribe made that one
@@ -134,7 +137,7 @@ namespace Tests{
 		_unsubscribeRequests.erase( requestId );
 	}
 	α GatewayClientSocket::PendingSubscriptionRecords()ι->uint{
-		sl _{ _subscriptionRequestMutex };
+		rl _{ _subscriptionRequestMutex };
 		return _subscriptionRequests.size()+_unsubscribeRequests.size();
 	}
 	α GatewayClientSocket::Query( string&& query, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
@@ -153,7 +156,8 @@ namespace Tests{
 		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId), requestId, shared_from_this(), sl };
 	}
 
-	flat_map<SubscriptionId, sp<IListener>> _logSubscriptions; shared_mutex _logSubscriptionsMutex;
+	absl::Mutex _logSubscriptionsMutex;
+	flat_map<SubscriptionId, sp<IListener>> _logSubscriptions ABSL_GUARDED_BY(_logSubscriptionsMutex);
 	α GatewayClientSocket::LogSubscribe( jobject&& ql, jobject vars, sp<IListener> listener, SL sl )ε->await<jarray>{
 		let requestId = NextRequestId();
 		ql["id"] = requestId;
@@ -219,7 +223,7 @@ namespace Tests{
 	}
 
 	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void{
-		sl _{ _subscriptionsMutex };
+		rl _{ _subscriptionsMutex };
 		let& opcId = nodeValues.opc_id();
 		auto slugNodes = _subscriptions.find( opcId );
 		if( slugNodes==_subscriptions.end() ){

@@ -36,7 +36,6 @@ set( CMAKE_INCLUDE_CURRENT_DIR ON )
 find_package( GTest REQUIRED )
 target_link_libraries( ${targetName} GTest::gtest_main )
 target_link_libraries( ${targetName} Jde.App.Shared Jde.Web.Server )
-target_link_libraries( ${targetName} absl::cord absl::log_internal_check_op absl::log_internal_conditions absl::log_internal_message absl::raw_hash_set absl::status absl::statusor ) #absl::strings
 target_link_libraries( ${targetName} fmt::fmt )
 if( WIN32 )
 	target_include_directories( ${targetName} PRIVATE ${ZLIB_INCLUDE_DIRS} )

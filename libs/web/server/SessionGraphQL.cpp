@@ -25,7 +25,7 @@ namespace Jde::Web::Server{
 	α SessionGraphQLAwait::Select()ι->TAwait<jvalue>::Task{
 		try{
 			let sessionString = Json::FindString( Query.Args, "id" );
-			let sessionId = sessionString ? Str::TryTo<SessionPK>(*sessionString, nullptr, 16 ) : nullopt;
+			let sessionId = sessionString ? Str::TryTo<SessionPK>( *sessionString, 16 ) : nullopt;
 			if( sessionString && !sessionId )
 				co_return ResumeExp( Exception(_sl, {_tags}, "Could not parse sessionid: '{}'", *sessionString) );
 			vector<sp<Server::SessionInfo>> sessions;
@@ -104,7 +104,7 @@ namespace Jde::Web::Server{
 			THROW_IF( !_authorizer, "No authorizer - refusing to purge session." );
 			_authorizer->TestAdmin( "sessions", _executer, _sl );
 			if( auto sessionId = _mutation.FindPtr("id"); sessionId )
-				rows = Sessions::Remove( Str::TryTo<SessionPK>(Json::AsString(*sessionId), nullptr, 16).value_or(0) ) ? 1 : 0;
+				rows = Sessions::Remove( Str::TryTo<SessionPK>(Json::AsString(*sessionId), 16).value_or(0) ) ? 1 : 0;
 			_result["rowCount"] =	rows;
 		}
 		catch( Exception& e ){
