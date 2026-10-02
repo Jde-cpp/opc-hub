@@ -1,0 +1,10 @@
+#pragma once
+#include <open62541/types.h>
+#include <open62541/types_generated.h>
+#include <gtest/gtest.h>
+#include <jde/fwk.h>
+#include <jde/fwk/chrono.h>
+#include <jde/fwk/io/json.h>
+#include <jde/opc/usings.h>
+#include <jde/opc/uatypes/opcHelpers.h>
+#include <jde/opc/uatypes/DateTime.h>

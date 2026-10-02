@@ -23,6 +23,13 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( UADateTime{ua}.UA(), ua );
 	}
 
+	TEST( DateTimeTests, TimePointRoundTrip ){
+		let time = Clock::from_time_t( unixSeconds )+std::chrono::microseconds{ 123'456 };
+		let ua = UADateTime{ time }.UA();
+		EXPECT_EQ( ua, UA_DateTime_fromUnixTime(unixSeconds)+1'234'560 );
+		EXPECT_EQ( UADateTime{ua}.Time(), time );
+	}
+
 	TEST( DateTimeTests, ToJsonSplitsIntoSecondsAndNanos ){
 		let j = UADateTime{ UA_DateTime_fromUnixTime(unixSeconds) }.ToJson();
 		EXPECT_EQ( j.at("seconds").to_number<int64_t>(), unixSeconds );

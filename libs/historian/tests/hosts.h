@@ -1,0 +1,94 @@
+#pragma once
+#include <boost/uuid/random_generator.hpp>
+#include <jde/fwk/str.h>
+#include <jde/historian/Historian.h>
+#include <jde/opc/uatypes/ExNodeId.h>
+#include <jde/opc/uatypes/Value.h>
+#include "ManualClock.h"
+
+//The two shapes the library serves from its first commit, so building for OpcServer first doesn't bake in its shape.
+namespace Jde::Opc::Hist::Tests{
+	using namespace std::chrono;
+	struct HostFixture : ::testing::Test{
+		static ExNodeId Node( sv id, sv uri="urn:jde:pumps" )ι{
+			return ExNodeId{ flat_map<string,string>{ {"nsu", string{uri}}, {"s", string{id}} } };
+		}
+		static Value Reading( double v, optional<TimePoint> source={}, optional<TimePoint> server={} )ι{
+			UA_DataValue dv{};
+			UA_Variant_setScalarCopy( &dv.value, &v, &UA_TYPES[UA_TYPES_DOUBLE] );
+			dv.hasValue = true;
+			if( source ){
+				dv.sourceTimestamp = UADateTime{ *source }.UA();
+				dv.hasSourceTimestamp = true;
+			}
+			if( server ){
+				dv.serverTimestamp = UADateTime{ *server }.UA();
+				dv.hasServerTimestamp = true;
+			}
+			return Value{ move(dv) };
+		}
+		static UA_DateTime Ua( TimePoint t )ι{ return UADateTime{ t }.UA(); }
+		Ŧ Records()Ι->vector<T>{
+			vector<T> y;
+			for( auto& r : _group->Buffer() ){
+				if( auto p = std::get_if<T>(&r); p )
+					y.push_back( move(*p) );
+			}
+			return y;
+		}
+
+		//A restart, until #203 reads the files:  the group as its newest file left it, and the host's members at start.
+		α Restart( GroupConfig config, vector<Member> members, Restored restored )ε->sp<Group>{
+			return _group = ms<Group>( move(config), Time, move(members), move(restored) );
+		}
+
+		sp<ManualClock> Time{ ms<ManualClock>(sys_days{2026y/March/7}+17h) };
+		Historian Library{ Settings{"hist"}, Time };
+	protected:
+		sp<Group> _group;//the one Records reads.
+	};
+
+	//OpcServer:  one group, `server`, whose node_indexes the historian issues itself, since there is no hist_group_nodes
+	//row to take one from.  Each node's thresholds come from its HA Configuration and its membership from the nodesets at
+	//start, so no change carries a writer.  Values arrive as they are written, under open62541's service lock, and there
+	//is no subscription to break.
+	struct ServerHost : HostFixture{
+		ServerHost()ι{ _group = Server; }
+		//The nodeset loader, for a variable marked Historizing.
+		α Historize( sv id, Thresholds config={} )ε->NodeIndex{ return Server->Add( {Node(id), move(config)} ); }
+		//open62541's setValue:  the writer's source timestamp, stamped now when it sent none, and no server timestamp.
+		α SetValue( NodeIndex index, double v )ι->bool{ return Server->Enqueue( index, Reading(v, Time->Now()) ); }
+
+		sp<Group> Server{ Library.AddGroup({.Name="server", .Indexes=EIndexes::Issued}) };
+	};
+
+	//The gateway:  a group per hist_groups row, named by its guid, whose node_indexes are hist_group_nodes row ids - one
+	//autoincrement sequence across every group.  It resolves each node's thresholds itself, and every membership change
+	//is a QL mutation with a caller.  Values arrive on each connection's strand, and a connection can break.
+	struct GatewayHost : HostFixture{
+		//The nullable threshold columns of a hist_group_nodes row or a hist_template_nodes member.
+		struct Columns{ optional<double> ExceptionDeviation; optional<Duration> MaxTimeInterval; };
+		//row, then template member, then group.
+		static Thresholds Resolve( const Columns& row, const Columns& member, Duration groupMaxTimeInterval )ι{
+			return {
+				.ExceptionDeviation = row.ExceptionDeviation ? row.ExceptionDeviation : member.ExceptionDeviation,
+				.MaxTimeInterval = row.MaxTimeInterval.value_or( member.MaxTimeInterval.value_or(groupMaxTimeInterval) )
+			};
+		}
+		α AddGroup()ε->sp<Group>{
+			auto group = Library.AddGroup( {.Name=Jde::ToString(_guids()), .Indexes=EIndexes::Host, .PublishingInterval=500ms} );
+			if( !_group )
+				_group = group;
+			return group;
+		}
+		//The hist_group_nodes insert:  a new row id, and the caller as the writer.
+		α Join( Group& group, sv id, Thresholds config={} )ε->NodeIndex{ return group.Add( {Node(id), move(config), ++_rowId}, Admin ); }
+		//IDataChange::SendDataChange, from the connection's strand:  both timestamps, which the collector's items ask for.
+		α DataChange( Group& group, NodeIndex index, double v, TimePoint source )ι->bool{ return group.Enqueue( index, Reading(v, source, source+5ms) ); }
+
+		Writer Admin{ {{7}}, "admin" };
+	private:
+		NodeIndex _rowId{ 100 };
+		boost::uuids::random_generator _guids;
+	};
+}
