@@ -16,7 +16,7 @@ SetCompressor /SOLID lzma
 ; Inputs - each overridable with makensis /DNAME=value (build-setup.ps1 sets them all).
 ;--------------------------------------------------------------------------------------------------------------------------
 !ifndef BUILD_DIR
-	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree: bin\<Target>\<Target>.exe + dlls, bin\Jde.DB.Sqlite*.dll, bin\sqlite3.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll
+	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree: bin\<Target>\<Target>.exe + dlls, bin\Jde.DB.Sqlite*.dll, bin\sqlite3.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll, bin\Jde.CheckCpu.exe
 !endif
 !define SRC_DIR "${__FILEDIR__}\..\..\.." ;apps\OpcHub\setup -> the repo root
 !ifndef WEB_DIST
@@ -73,6 +73,7 @@ SetCompressor /SOLID lzma
 !include "Sections.nsh"
 !include "x64.nsh"
 !include "FileFunc.nsh"
+!include "TextFunc.nsh"
 
 Name "${PRODUCT}"
 OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
@@ -94,6 +95,9 @@ Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's a
 Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was closed to reinstall over it (#37) - the finish page says to start it again
 Var DataDirOwner ;CheckDataDir's refusal, named:  "<account> owns <path>" - empty when it has no one to name
 Var UserSid    ;current-user mode: this account's SID, read by CheckDataDirOwner - SEC_HUB writes it to the .current-user mark
+
+;.onInit's CPU check, ahead of every other file:  a solid archive unpacks in script order, and .onInit sits below the sections.
+ReserveFile "${BIN}\Jde.CheckCpu.exe"
 
 ;--------------------------------------------------------------------------------------------------------------------------
 ; Pages
@@ -907,23 +911,38 @@ Function .onInit
 		MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} requires 64-bit Windows." /SD IDOK
 		Abort
 	${EndIf}
-	;the products are built for x86-64-v3 (cpuFlags, CMakePresets.common.json), and their own start-up check (process/cpu.h)
-	;comes too late on Windows - the dlls' initializers run first - so without AVX2 they die on 0xC000001D with nothing
-	;logged.  AVX2 stands for the rest of cpuFlags:  Windows has no flag for BMI2, AES or PCLMULQDQ.  An older Windows
-	;answers 0 for AVX (39) and AVX2 (40) alike, whatever the CPU:  where the OS saves the AVX registers (XSTATE_MASK_AVX,
-	;4) yet does not report AVX, it cannot report AVX2 either, and the install goes ahead.
-	System::Call 'kernel32::GetEnabledXStateFeatures() i .r0'
-	IntOp $0 $0 & 4
-	System::Call 'kernel32::IsProcessorFeaturePresent(i 39) i .r1'
-	System::Call 'kernel32::IsProcessorFeaturePresent(i 40) i .r2'
-	${If} $0 == 0 ;no AVX, so no AVX2
-		StrCpy $2 0
-	${ElseIf} $1 == 0
-		StrCpy $2 1
-	${EndIf}
-	${If} $2 == 0
-		MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} requires a CPU with AVX2, which this one lacks.  In a virtual machine, choose a CPU model that passes it through (e.g. host)." /SD IDOK
+	;the products are built for x86-64-v3 with PCLMULQDQ and AES (cpuFlags, CMakePresets.common.json), and their own start-up
+	;check (process/cpu.h) comes too late on Windows - the dlls' initializers run first - so on a lesser CPU they die on
+	;0xC000001D with nothing logged.  Jde.CheckCpu.exe is that check as a process of its own (checkCpu.cpp):  x64, so it reads
+	;the CPU the products will, and with no dll to load but kernel32, so it runs before anything is installed.  1 is its
+	;refusal, the missing features named in its output (reviews-issue/cpu.md #1).
+	InitPluginsDir
+	File "/oname=$PLUGINSDIR\Jde.CheckCpu.exe" "${BIN}\Jde.CheckCpu.exe"
+	nsExec::ExecToStack '"$PLUGINSDIR\Jde.CheckCpu.exe"'
+	Pop $0
+	Pop $1
+	${If} $0 == 1
+		${TrimNewLines} "$1" $1
+		MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} cannot run on this machine.$\r$\n$\r$\n$1" /SD IDOK
 		Abort
+	${ElseIf} $0 != 0
+		;it did not run - a policy that blocks programs under %TEMP%, say - which leaves what Windows reports.  AVX2 stands for
+		;the rest of cpuFlags:  Windows has no flag for BMI2, AES or PCLMULQDQ.  An older Windows answers 0 for AVX (39) and
+		;AVX2 (40) alike, whatever the CPU:  where the OS saves the AVX registers (XSTATE_MASK_AVX, 4) yet does not report AVX,
+		;it cannot report AVX2 either, and the install goes ahead.
+		System::Call 'kernel32::GetEnabledXStateFeatures() i .r0'
+		IntOp $0 $0 & 4
+		System::Call 'kernel32::IsProcessorFeaturePresent(i 39) i .r1'
+		System::Call 'kernel32::IsProcessorFeaturePresent(i 40) i .r2'
+		${If} $0 == 0 ;no AVX, so no AVX2
+			StrCpy $2 0
+		${ElseIf} $1 == 0
+			StrCpy $2 1
+		${EndIf}
+		${If} $2 == 0
+			MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} requires a CPU with AVX2, which this one lacks.  In a virtual machine, choose a CPU model that passes it through (e.g. host)." /SD IDOK
+			Abort
+		${EndIf}
 	${EndIf}
 	SetRegView 64
 	ReadEnvStr $DataDir "ProgramData" ;not $APPDATA - MultiUser's current-user context turns that into the roaming profile

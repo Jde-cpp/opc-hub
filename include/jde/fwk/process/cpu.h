@@ -56,8 +56,9 @@ namespace Jde::Process{
 }
 #undef JDE_CPUID
 #if defined(__linux__) && defined(__x86_64__)
-//main is too late on linux:  the shared libraries' initializers run first, and libabseil_dll's faults without SSE4.1.  The
-//executable's preinit_array runs before any of them - so include this from an executable's main.cpp only, never a library.
+//main is too late on linux:  the shared libraries' initializers run first, and they are built with cpuFlags too - libabseil_dll's
+//is the one that faulted.  The executable's preinit_array runs before any of them - so include this from an executable's main.cpp
+//only, never a library.
 [[gnu::target("arch=x86-64"), gnu::no_sanitize_address]] inline void JdeCheckCpuPreinit( int, char**, char** )noexcept{
 	if( !Jde::Process::CheckCpu() )
 		std::_Exit( EXIT_FAILURE );
