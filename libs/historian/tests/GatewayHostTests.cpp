@@ -39,6 +39,18 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_THROW( Library.RemoveGroup(pump1->Name()), Exception );
 	}
 
+	//Members leave in index order however they joined, so a removed group writes the same records every run.
+	TEST_F( GatewayHost, RemovedInIndexOrder ){
+		vector<Member> members;
+		for( NodeIndex index=40; index>0; --index )
+			members.push_back( {Node(Ƒ("Pump{}.Speed", index)), {}, index*7} );
+		_group = Library.AddGroup( {.Name="pumps", .Indexes=EIndexes::Host}, move(members) );
+		Library.RemoveGroup( "pumps", Admin );
+		let removed = Records<NodeRemoved>();
+		ASSERT_EQ( removed.size(), 40 );
+		EXPECT_TRUE( std::ranges::is_sorted(removed, {}, &NodeRemoved::Index) );
+	}
+
 	TEST_F( GatewayHost, RowIdsAsIndexes ){
 		auto pump1 = AddGroup();
 		auto pump2 = AddGroup();

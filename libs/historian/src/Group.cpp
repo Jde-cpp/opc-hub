@@ -1,5 +1,6 @@
 #include <jde/historian/Group.h>
 #include <absl/container/flat_hash_set.h>
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -22,6 +23,12 @@ namespace Jde::Opc::Hist{
 		}
 	}
 
+	Writer::Writer( UserPK identityId, string userName, SL sl )ε:
+		IdentityId{ identityId },
+		UserName{ move(userName) }{
+		THROW_IFSL( identityId.Value!=UserPK::System && identityId.Value>=std::numeric_limits<uint32_t>::max(), "Identity {} doesn't fit a record's 32-bit identity_id.", identityId.Value );
+	}
+
 	Group::Group( GroupConfig config, sp<IClock> clock, vector<Member> members, Restored restored, SL sl )ε:
 		_clock{ move(clock) },
 		_config{ move(config) }{
@@ -32,7 +39,6 @@ namespace Jde::Opc::Hist{
 			restoredIndexes.emplace( index );
 		vector<Record> added;
 		ul _{ _mutex };
-		_nodes.reserve( members.size() );
 		_indexes.reserve( members.size() );
 		_nextIndex = restored.NextIndex;
 		for( auto& member : members ){
@@ -60,6 +66,7 @@ namespace Jde::Opc::Hist{
 		THROW_IFSL( !node.namespaceUri.length, "'{}' has no namespace URI - the historian keeps none by its index.", node.to_string() );
 		node.nodeId.namespaceIndex = 0;
 		THROW_IFSL( Issued()==(member.Index!=0), "Group '{}' {} node_index, but '{}' came with {}.", Name(), Issued() ? "issues its own" : "takes the host's", node.to_string(), member.Index );
+		THROW_IFSL( !std::in_range<uint32_t>(member.Index), "Group '{}' cannot give '{}' node_index {}: it doesn't fit a record's 32 bits.", Name(), node.to_string(), member.Index );
 		validate( node, member.Config, sl );
 		return node;
 	}
@@ -125,11 +132,13 @@ namespace Jde::Opc::Hist{
 			copy.serverTimestamp = UADateTime{ _clock->Now() }.UA();
 			copy.hasServerTimestamp = true;
 		}
+		let unsupported = copy.hasValue && !ProtoUtils::Supported( copy.value );
 		ul _{ _mutex };
 		auto p = _nodes.find( index );
 		if( p==_nodes.end() )
 			return false;
-		_buffer.emplace_back( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt)} );
+		let first = unsupported && !std::exchange( p->second.Unsupported, true );
+		_buffer.emplace_back( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt), first} );
 		return true;
 	}
 
@@ -162,12 +171,7 @@ namespace Jde::Opc::Hist{
 	α Group::Close( optional<Writer> by )ι->void{
 		let now = _clock->Now();
 		ul _{ _mutex };
-		vector<NodeIndex> indexes;//in index order, so the same members leave the same way every run.
-		indexes.reserve( _nodes.size() );
 		for( let& [index,_] : _nodes )
-			indexes.push_back( index );
-		std::ranges::sort( indexes );
-		for( let index : indexes )
 			_buffer.emplace_back( NodeRemoved{index, now, by} );
 		_nodes.clear();
 		_indexes.clear();

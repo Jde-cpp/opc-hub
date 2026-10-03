@@ -11,6 +11,7 @@ namespace Jde::Opc{
 	using Hist::Proto::HistoryRecord;
 }
 namespace Jde::Opc::Hist{
+	namespace{
 		//Wrapping, so a garbled time read from disk can't overflow, and a delta always undoes exactly.
 		Ξ add( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a+(uint64_t)b ); }
 		Ξ sub( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a-(uint64_t)b ); }
@@ -80,17 +81,23 @@ namespace Jde::Opc::Hist{
 			const bool ToDisk;
 			Ticks& Last;
 		};
+	}
 
 	Ω setWriter( auto& record, const optional<Writer>& by )ι->void{
 		if( !by )
 			return;
-		record.set_identity_id( (uint32_t)by->IdentityId.Value );
+		let id = by->IdentityId.Value;
+		record.set_identity_id( id==UserPK::System ? std::numeric_limits<uint32_t>::max() : (uint32_t)id );//Writer's constructor checked it fits.
 		record.set_user_name( by->UserName );
 	}
 
 	α Appender::Add( HistoryRecord&& r )ε->void{
-		ToDisk( r, _chain );
+		if( r.has_file_start() )
+			r.mutable_file_start()->set_crc( StartCrc(r.file_start()) );
+		auto chain = _chain;//moved on only once r is in out, so a record Write refuses leaves the chain where the bytes end.
+		ToDisk( r, chain );
 		Write( r );
+		_chain = chain;
 	}
 	α Appender::Write( const HistoryRecord& r )ε->void{
 		let size = r.ByteSizeLong();
@@ -101,7 +108,7 @@ namespace Jde::Opc::Hist{
 		p = CodedOutputStream::WriteVarint32ToArray( (uint32_t)size, p );
 		(void)r.SerializeWithCachedSizesToArray( p );
 	}
-	α Appender::Seal()ι->Ticks{
+	α Appender::Seal()ε->Ticks{
 		HistoryRecord checkpoint;
 		checkpoint.mutable_checkpoint()->set_crc( IO::Crc::Calc32c(sv{_out}.substr(_start)) );
 		Write( checkpoint );
@@ -110,6 +117,13 @@ namespace Jde::Opc::Hist{
 	}
 }
 namespace Jde::Opc{
+	α Hist::StartCrc( const Proto::FileStart& start )ι->uint32_t{
+		uint8_t bytes[16];
+		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)start.ts(), bytes );
+		p = CodedOutputStream::WriteLittleEndian32ToArray( start.generation(), p );
+		(void)CodedOutputStream::WriteLittleEndian32ToArray( start.next_node_index(), p );
+		return IO::Crc::Calc32c( sv{reinterpret_cast<const char*>(bytes), sizeof(bytes)} );
+	}
 	α Hist::ToDisk( HistoryRecord& r, Ticks& last )ι->void{ Convert{ true, last }( r ); }
 	α Hist::ToMemory( HistoryRecord& r, Ticks& last )ι->void{ Convert{ false, last }( r ); }
 
@@ -130,17 +144,25 @@ namespace Jde::Opc{
 		y.set_node_index( index );
 		if( v.hasSourceTimestamp )
 			y.set_source_ts( v.sourceTimestamp );
+		if( v.hasSourcePicoseconds )
+			y.set_source_picoseconds( v.sourcePicoseconds );
 		if( v.hasServerTimestamp )
 			y.set_server_ts( v.serverTimestamp );
+		if( v.hasServerPicoseconds )
+			y.set_server_picoseconds( v.serverPicoseconds );
 		if( v.hasStatus )
 			y.set_status( v.status );
 		if( v.hasValue && !UA_Variant_isEmpty(&v.value) ){
-			try{
-				*y.mutable_value() = ProtoUtils::ToValue( v.value );
-			}
-			catch( const UAException& e ){
-				WARN( "node_index {}'s '{}' value is stored without it:  {}", index, v.value.type->typeName, e.what() );
-				y.set_status( (StatusCode)e.Code() );
+			if( !ProtoUtils::Supported(v.value) )
+				y.set_status( UA_STATUSCODE_BADNOTSUPPORTED );
+			else{
+				try{
+					*y.mutable_value() = ProtoUtils::ToValue( v.value );
+				}
+				catch( const UAException& e ){
+					WARN( "node_index {}'s '{}' value is stored without it:  {}", index, v.value.type->typeName, e.what() );
+					y.set_status( (StatusCode)e.Code() );
+				}
 			}
 		}
 		return y;
@@ -160,9 +182,17 @@ namespace Jde::Opc{
 			y.sourceTimestamp = v.source_ts();
 			y.hasSourceTimestamp = true;
 		}
+		if( v.source_picoseconds() ){
+			y.sourcePicoseconds = (UA_UInt16)v.source_picoseconds();
+			y.hasSourcePicoseconds = true;
+		}
 		if( v.has_server_ts() ){
 			y.serverTimestamp = v.server_ts();
 			y.hasServerTimestamp = true;
+		}
+		if( v.server_picoseconds() ){
+			y.serverPicoseconds = (UA_UInt16)v.server_picoseconds();
+			y.hasServerPicoseconds = true;
 		}
 		return Value{ move(y) };
 	}
@@ -185,6 +215,8 @@ namespace Jde::Opc{
 		else{
 			let& value = get<DataValue>( r );
 			*y.mutable_value() = ToProto( value.Data, value.Index );
+			if( value.Unsupported )
+				WARN( "node_index {}'s '{}' value has no file form, so it and later ones are stored without it, as BadNotSupported.", value.Index, value.Data.value.type->typeName );
 		}
 		return y;
 	}

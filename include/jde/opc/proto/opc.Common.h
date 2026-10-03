@@ -18,6 +18,9 @@ namespace Jde::Opc::ProtoUtils{
 	//BadNotSupported.
 	α ToValue( const UA_Variant& v )ε->Proto::Value;
 	α ToValue( const void* element, const UA_DataType& type )ε->Proto::Value;//one element, e.g. of an array.
+	//Whether ToValue holds v, which it doesn't for a DataValue, a DiagnosticInfo, a BitfieldCluster, or a Variant holding
+	//one:  a check that costs no exception.
+	α Supported( const UA_Variant& v )ι->bool;
 	//The inverse, up to the wire:  the result binary-encodes as the original did, while an alias comes back as its
 	//built-in type and a structure as an encoded ExtensionObject.
 	α ToVariant( const Proto::Value& v )ε->Variant;

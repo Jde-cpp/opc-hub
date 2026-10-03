@@ -5,6 +5,8 @@ import "Opc.Common.proto";
 //A history file is HistoryRecords in protobuf's delimited form, a varint length then the body, so any language's
 //parseDelimitedFrom reads it.  Times are UA ticks, 100 ns since 1601.  Only FileStart's is absolute:  every other
 //record's primary time is a delta from the previous record's, and its other times are deltas from its own primary time.
+//A body is only ever its oneof member, one field filling it, which a reader checks before buffering it, so HistoryRecord
+//never gains a field outside the oneof:  a build before it would read that as damage.
 message HistoryRecord{
 	oneof record{
 		FileStart file_start=1;
@@ -21,6 +23,7 @@ message FileStart{
 	int64 ts=1;
 	uint32 generation=2;//0 for a live file; each archive rewrite increments it.
 	uint32 next_node_index=3;//OpcServer's only:  the node_index it issues next.
+	fixed32 crc=4;//the CRC-32C of ts, generation and next_node_index, each little-endian:  a reader checks it before it trusts them.
 }
 
 //A node joining the group, or a current member at the start of a file, which alone carries a start value.  Primary time ts.
@@ -28,7 +31,7 @@ message NodeAdded{
 	uint32 node_index=1;
 	Jde.Opc.Proto.ExpandedNodeId node=2;//with its namespace URI; the namespace index is 0.
 	sint64 ts=3;
-	optional uint32 identity_id=4;//unset for a change the historian made itself.
+	optional uint32 identity_id=4;//unset for a change the historian made itself; 4294967295 for the System identity.
 	string user_name=5;
 	DataValue start=6;
 }
@@ -42,14 +45,17 @@ message NodeRemoved{
 
 //A stored value, a heartbeat, or a Bad_DataLost marker, which has no value.  Its primary time is source_ts, or server_ts
 //when the server sent no source timestamp.  Inside another record its node_index is that record's, left unset, and each
-//of its times is a delta from that record's primary time.
+//of its times is a delta from that record's primary time.  A Good status, zero picoseconds or a null value is not stored,
+//even when the UA DataValue's encoding mask has it, so a read returns it with the mask's bit clear.
 message DataValue{
 	uint32 node_index=1;
 	optional sint64 source_ts=2;
-	optional sint64 server_ts=3;
-	uint32 status=4;
-	Jde.Opc.Proto.Value value=5;
-	optional sint64 heartbeat=6;//a heartbeat's:  the source timestamp of the value it repeats.
+	uint32 source_picoseconds=3;//10 ps intervals added to source_ts, as UA's.
+	optional sint64 server_ts=4;
+	uint32 server_picoseconds=5;
+	uint32 status=6;
+	Jde.Opc.Proto.Value value=7;
+	optional sint64 heartbeat=8;//a heartbeat's:  the source timestamp of the value it repeats.
 }
 
 //Part 11's HistoryUpdateType.
@@ -74,7 +80,8 @@ message Modification{
 }
 
 //The end of every append to a live or modifications file:  the CRC-32C of the bytes since the file's previous
-//checkpoint, or since its start.  It has no time, so the delta chain passes over it.
+//checkpoint, or since its start.  It has no time, so the delta chain passes over it.  A scan past damage finds one by
+//its bytes alone, 07 32 05 0D then crc, so Checkpoint only ever holds crc.
 message Checkpoint{
 	fixed32 crc=1;
 }

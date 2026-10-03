@@ -1,4 +1,5 @@
 #pragma once
+#include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
@@ -23,6 +24,9 @@ namespace Jde::Opc::Hist{
 	//Who made a membership change or an edit, resolved by the host: OpcServer through OpcAuthorize, the gateway through
 	//Authorize and the caller's QL creds.  The name is the one the identity has now, so a later rename never rewrites it.
 	struct Writer{
+		//A file's identity_id is 32 bits, as access_identities' is.  UserPK::System, wider on Linux, is stored as UINT32_MAX,
+		//its value on Windows, so any other id from UINT32_MAX up throws.
+		Writer( UserPK identityId, string userName, SRCE )ε;
 		UserPK IdentityId;
 		string UserName;
 	};
@@ -30,7 +34,7 @@ namespace Jde::Opc::Hist{
 	struct Member{
 		ExNodeId Node;//with its namespace URI, which is what the group matches on.
 		Thresholds Config;
-		NodeIndex Index{};//the gateway's hist_group_nodes row id; 0 in a group that issues its own.
+		NodeIndex Index{};//the gateway's hist_group_nodes row id, 32 bits as a file's node_index is; 0 in a group that issues its own.
 	};
 
 	enum class EIndexes : uint8{
@@ -54,8 +58,9 @@ namespace Jde::Opc::Hist{
 	//What a group holds until a flush writes it.  Each record's time is a source time:  Ts for a membership change.
 	struct NodeAdded{ NodeIndex Index; ExNodeId Node; TimePoint Ts; optional<Writer> By; };
 	struct NodeRemoved{ NodeIndex Index; TimePoint Ts; optional<Writer> By; };
-	//Break is set on a node's first value after a break, which the flush judges against it.
-	struct DataValue{ NodeIndex Index; Value Data; optional<TimePoint> Break; };
+	//Break is set on a node's first value after a break, which the flush judges against it.  Unsupported is set on a
+	//node's first value that a file can't hold (ProtoUtils::Supported), which the flush warns of:  Enqueue never logs.
+	struct DataValue{ NodeIndex Index; Value Data; optional<TimePoint> Break; bool Unsupported{}; };
 	using Record = variant<NodeAdded,NodeRemoved,DataValue>;
 
 	//One node group, written to its own files.  Enqueue is the collection path:  OpcServer calls it under open62541's
@@ -92,7 +97,7 @@ namespace Jde::Opc::Hist{
 		//Historian::RemoveGroup's:  every member leaves, and Add throws after.  The buffer stays for the flush.
 		α Close( optional<Writer> by )ι->void;
 	private:
-		struct Node{ ExNodeId Id; Thresholds Config; optional<TimePoint> Break; };
+		struct Node{ ExNodeId Id; Thresholds Config; optional<TimePoint> Break; bool Unsupported{}; };
 		α Issued()Ι->bool{ return _config.Indexes==EIndexes::Issued; }
 		α Normalize( Member& member, SL sl )Ε->ExNodeId;
 		//index 0 issues the next one.
@@ -100,8 +105,9 @@ namespace Jde::Opc::Hist{
 		sp<IClock> _clock;
 		const GroupConfig _config;
 		mutable absl::Mutex _mutex;
-		//Hashed, so loading a group's members is linear and Enqueue's lookup constant.  Their order changes run to run.
-		absl::flat_hash_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);
+		//In index order, so whatever walks it to write records writes them the same way every run, and a B-tree, so loading
+		//and Enqueue's lookup stay logarithmic.  The maps by NodeId are hashed:  nothing walks them.
+		absl::btree_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<ExNodeId,NodeIndex> _indexes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
