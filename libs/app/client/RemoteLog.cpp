@@ -17,14 +17,14 @@ namespace Jde::App::Client{
 	RemoteLog::~RemoteLog(){
 		Process::RemoveShutdown( this );//first: the ctor registered a raw `this`, and nothing else takes it back out.
 		{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			_delay = Duration::min();
 			if( _timer )
 				_timer->Cancel();
 		}
 		for( bool running=true; running; ){
 			{
-				lg _{ _mutex };
+				ul _{ _mutex };
 				running = _running;
 			}
 			if( running )
@@ -38,7 +38,7 @@ namespace Jde::App::Client{
 	}
 	α RemoteLog::Shutdown( bool terminate, SL )ι->void{
 		{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			if( !_client )
 				return;
 			_delay = Duration::min();
@@ -47,7 +47,7 @@ namespace Jde::App::Client{
 		}
 		if( !terminate )
 			Send( false );//inline: a posted write is not guaranteed to run once the executor is stopping.
-		lg _{ _mutex };
+		ul _{ _mutex };
 		_client = nullptr;
 	}
 	α RemoteLog::Init( sp<IAppClient> client )ι->void{
@@ -114,7 +114,7 @@ namespace Jde::App::Client{
 		sp<IAppClient> client;
 		uint dropped{};
 		{
-			lg _{ _mutex };
+			ul _{ _mutex };
 			if( _entries.empty() || !_client || !_client->Connected() )
 				return;
 			entries = move( _entries );

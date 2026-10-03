@@ -16,6 +16,7 @@ set( stdArgs
 	-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 	-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
 	-DCMAKE_CXX_FLAGS_DEBUG=${CMAKE_CXX_FLAGS_DEBUG}
+	-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} #the repos preset's cpuFlags:  protobuf's utf8_range.c compiles its SSE4.1 validator only with them.
 )
 if( isMultiConfig )
 	set( stdArgs ${stdArgs} -DCMAKE_CONFIGURATION_TYPES=$ENV{buildType} )
@@ -110,11 +111,13 @@ ExternalProject_Add(spdlog
 # One shared abseil (libabseil_dll.so / abseil_dll.dll) for Jde and every exe: a static one is linked into each of them
 # separately - into the exes through protobuf, and again into Jde the moment fwk calls absl.  MONOLITHIC is also what
 # turns on abseil's dll mode under win-clang, which cmake does not count as MSVC.
-# The presets' cpuFlags (-msse4.2 -mpclmul) reach it through stdArgs' CMAKE_CXX_FLAGS: abseil compiles its hardware
-# CRC-32C only when both are on, and with abslHwAccel its hash header keys off __SSE4_2__ too - so they are on every
-# preset, never on abseil alone (build/dependencies.cmake checks).
+# The presets' cpuFlags (-march=x86-64-v3 -mpclmul -maes) reach it through stdArgs' CMAKE_CXX_FLAGS: abseil compiles its
+# hardware CRC-32C only with SSE4.2 and PCLMUL on and its AES string hash only with AES on, and with abslHwAccel its hash
+# header keys off __SSE4_2__ too - so they are on every preset, never on abseil alone (build/dependencies.cmake checks).
+#AbseilDll.cmake puts time_zone_name_win.cc in the dll only if(MSVC), yet time_zone_lookup.cc calls it on any _WIN32:  under
+#win-clang the dll fails to link (GetWindowsLocalTimeZone undefined).  Its else() branch (flags in the dll) stays as is.
 set( _abslPatch "${CMAKE_CURRENT_BINARY_DIR}/absl-options.cmake" )
-file( WRITE "${_abslPatch}" [=[
+file( CONFIGURE OUTPUT "${_abslPatch}" @ONLY CONTENT [=[
 set(_file "${SOURCE_DIR}/absl/base/options.h")
 file(READ "${_file}" _c)
 string(REGEX REPLACE "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY [0-9]" "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY ${STRATEGY}" _patched "${_c}")
@@ -123,6 +126,20 @@ if(NOT _patched MATCHES "#define ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY ${STRATEGY
 endif()
 if(NOT _patched STREQUAL _c) #unchanged on a re-run:  rewriting it would recompile everything that includes it
     file(WRITE "${_file}" "${_patched}")
+endif()
+
+set(_file "${SOURCE_DIR}/CMake/AbseilDll.cmake")
+file(READ "${_file}" _c)
+set(_from "if(MSVC)\n  list(APPEND ABSL_INTERNAL_DLL_FILES\n    \"time/internal/cctz/src/time_zone_name_win.cc\"\n    \"time/internal/cctz/src/time_zone_name_win.h\"\n  )\nelse()")
+set(_to "if(WIN32)\n  list(APPEND ABSL_INTERNAL_DLL_FILES\n    \"time/internal/cctz/src/time_zone_name_win.cc\"\n    \"time/internal/cctz/src/time_zone_name_win.h\"\n  )\nendif()\nif(MSVC)\nelse()")
+string(FIND "${_c}" "${_to}" _done)
+if(_done EQUAL -1)
+    string(FIND "${_c}" "${_from}" _at)
+    if(_at EQUAL -1)
+        message(FATAL_ERROR "absl patch no longer applies: no if(MSVC) time_zone_name_win block in ${_file}")
+    endif()
+    string(REPLACE "${_from}" "${_to}" _c "${_c}")
+    file(WRITE "${_file}" "${_c}")
 endif()
 ]=] )
 ExternalProject_Add(absl
@@ -140,6 +157,7 @@ ExternalProject_Add(absl
 		#-DABSL_FIND_GOOGLETEST=ON
 		-DABSL_PROPAGATE_CXX_STD=ON
 )
+ExternalProject_Add_StepDependencies( absl patch "${_abslPatch}" ) #re-patch when the script changes
 
 # jsonnet is pinned to upstream v0.22.0 plus the source patches below (previously held
 # as commits on a Jde-cpp fork). Shared by both platforms; the Windows-only RuntimeError
