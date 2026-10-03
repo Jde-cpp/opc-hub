@@ -10,7 +10,7 @@ namespace Jde::Access::Server{
 		α Suspend()ι->void override;
 	private:
 		α LoginTask()ι->TAwait<optional<UserPK::Type>>::Task;
-		α InsertUser( string&& modulusHex, uint32_t exponent, Crypto::Certificate&& info, string&& name )ι->DB::ScalerAwait<UserPK::Type>::Task;
+		α InsertUser( string&& modulusHex, uint32_t exponent, Crypto::Certificate&& info, string name )ι->DB::ScalerAwait<UserPK::Type>::Task;
 		vector<byte> _certificate;
 		string _description;
 		Crypto::PublicKey _publicKey;

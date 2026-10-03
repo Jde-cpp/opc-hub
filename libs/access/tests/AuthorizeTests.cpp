@@ -23,6 +23,7 @@ namespace Jde::Access::Tests{
 		using Authorize::PurgeUser;
 		using Authorize::RemoveAcl;
 		using Authorize::RemoveFromGroup;
+		using Authorize::RenameUser;
 		using Authorize::RestoreGroup;
 		using Authorize::UpdatePermission;
 		using Authorize::UpdateResourceDeleted;
@@ -36,7 +37,7 @@ namespace Jde::Access::Tests{
 		auto auth = ms<TestAuthorize>();
 		auth->CreateResource( Resource{_resourcePK, jobject{{"schemaName",_schema},{"slug",_slug}}} );
 		auth->AddResource( _resourcePK, _schema, _slug, {} );
-		auth->CreateUser( _user );
+		auth->CreateUser( _user, "user" );
 		return auth;
 	}
 	Ω rights( TestAuthorize& auth )ι->ERights{ return auth.Rights(_schema, _slug, _user); }
@@ -338,7 +339,7 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, TestAdminRoutesToTheRegistrantWhileItAdministersTheSchema ){
 		auto auth = createAuthorizer();
 		const UserPK registrant{ 101 };
-		auth->CreateUser( registrant );
+		auth->CreateUser( registrant, "registrant" );
 		auth->AddAcl( registrant.Value, PermissionPK{11}, Administer, None, _resourcePK );
 		auto stub = ms<StubAdminAcl>();
 		auth->AddAdminAuthorizer( _schema, stub, registrant );
@@ -362,6 +363,27 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		EXPECT_EQ( "4242", auth->UserName(UserPK{4242}) ); //not in Users - the numeric fallback.
 		EXPECT_EQ( "0", auth->UserName(UserPK{0}) );
+		auth->CreateUser( UserPK{4243}, "" ); //a userCreated event that carried no name - an AppServer older than #198 sends only the id.
+		EXPECT_EQ( "4243", auth->UserName(UserPK{4243}) ) << "a cached user with no name answered with an empty one";
+		auth->RenameUser( UserPK{4243}, "named" );
+		EXPECT_EQ( "named", auth->UserName(UserPK{4243}) );
+	}
+	//#198:  history edits store UserName, so a user created or renamed after the snapshot has to answer with its current name.
+	TEST( AuthorizeTests, UserNameFollowsCreateAndRename ){
+		auto auth = createAuthorizer();
+		EXPECT_EQ( "user", auth->UserName(_user) );
+		auth->RenameUser( _user, "renamed" );
+		EXPECT_EQ( "renamed", auth->UserName(_user) );
+		auth->RenameUser( UserPK{4242}, "nobody" );
+		EXPECT_EQ( "4242", auth->UserName(UserPK{4242}) ) << "a rename of an uncached user created it";
+	}
+	//authorize-names review #4:  CreateUser emplaced, so a userCreated event for a pk the cache still held kept the name it had.
+	//sqlite reuses a purged pk, and a purge the cache never saw leaves the purged user's entry - the next user to get that pk
+	//would have had its history edits stored under the purged user's name.
+	TEST( AuthorizeTests, CreateUserNamesAPkTheCacheStillHolds ){
+		auto auth = createAuthorizer();
+		auth->CreateUser( _user, "the pk's next user" );
+		EXPECT_EQ( "the pk's next user", auth->UserName(_user) );
 	}
 
 	TEST( AuthorizeTests, FindResourceBySchemaSlug ){

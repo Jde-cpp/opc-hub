@@ -25,10 +25,15 @@ namespace Jde::DB{
 		return useMaxLength ? Ƒ( "{}({})", syntax.ToString(config.Type), *config.MaxLength ) : syntax.ToString( config.Type );
 	}
 
+	//It can only stand for the whole key:  a sequence in a composite key keeps the table-level constraint, and gets no identity syntax there.
+	α ColumnDdl::DeclaresKey( const Column& config )ι->bool{
+		return config.IsSequence && config.Table->Syntax().IdentityIsPrimaryKey() && config.Table->SurrogateKeys.size()==1;
+	}
+
 	α ColumnDdl::CreateStatement( const Column& config )ε->string{
 		let& syntax = config.Table->Syntax();
 		let null = config.IsNullable ? "null"sv : "not null"sv;
-		const string sequence = config.IsSequence ?  " "+string{syntax.IdentityColumnSyntax()} : string{};
+		const string sequence = config.IsSequence && ( DeclaresKey(config) || !syntax.IdentityIsPrimaryKey() ) ? " "+string{syntax.IdentityColumnSyntax()} : string{};
 		string defaultClause;
 		let& dflt = config.Default;
 		if( dflt && !dflt->is_null() ){

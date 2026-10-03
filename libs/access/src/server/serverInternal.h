@@ -10,5 +10,5 @@ namespace Jde::Access::Server{
 	α GetTablePtr( str name, SRCE )ε->sp<DB::Table>;
 	α GetTable( str name, SRCE )ε->const DB::Table&;
 	α AccessSchema()ι->DB::AppSchema&;
-	α PublishUserCreated( UserPK userPK )ι->void;//the userCreated event for a user the login procs made - see the definition
+	α PublishUserCreated( UserPK userPK, string name )ι->void;//the userCreated event for a user the login procs made - see the definition
 }

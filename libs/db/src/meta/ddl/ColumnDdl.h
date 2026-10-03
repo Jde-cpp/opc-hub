@@ -15,5 +15,6 @@ namespace Jde::DB{
 
 		Ω CreateStatement( const Column& config )ε->string;
 		Ω DataTypeString( const Column& config )ι->string;
+		Ω DeclaresKey( const Column& config )ι->bool; //the column's identity syntax is the table's whole primary key (Syntax::IdentityIsPrimaryKey) - TableDdl then adds no constraint of its own.
 	};
 }

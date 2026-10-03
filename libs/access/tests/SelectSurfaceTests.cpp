@@ -9,6 +9,8 @@
 #include "gtest/gtest.h"
 #include <future>
 #include <thread>
+#include <jde/db/IDataSource.h>
+#include <jde/db/generators/Syntax.h>
 #include <jde/ql/QLAwait.h>
 #include "globals.h"
 
@@ -45,6 +47,12 @@ namespace Jde::Access::Tests{
 				y.emplace_back( AsSV(row.get_object(), "loginName") );
 			return y;
 		}
+		//The two refusal tests pin what a dialect with no regex operator does - sqlite, which ctest runs, and SQL Server.  mysql
+		//has one, so when the suite is run directly against it there is nothing to refuse and they are skipped.
+		Ω hasRegex()ι->bool{
+			try{ DS().Syntax().PatternOperator( DB::EOperator::Regex ); return true; }
+			catch( const std::exception& ){ return false; }
+		}
 	};
 
 	//`glob:` is the only pattern operator sqlite takes, and it takes it verbatim - SqliteSyntax::PatternOperator returns
@@ -70,6 +78,8 @@ namespace Jde::Access::Tests{
 	//execution with "no such function".  SqliteSyntax refuses it at build time instead - and the refusal has to reach the
 	//caller rather than the log, which is what this pins.
 	TEST_F( SelectSurfaceTests, RegexFilterIsRefusedWithATellingMessage ){
+		if( hasRegex() )
+			GTEST_SKIP() << "this dialect has a regex operator - nothing is refused.";
 		try{
 			QL().QuerySync<jarray>( R"(users( loginName:{regex:"^review60"} ){ id })", {}, GetRoot() );
 			ADD_FAILURE() << "sqlite has no regexp - the select cannot have succeeded";
@@ -86,6 +96,8 @@ namespace Jde::Access::Tests{
 	//clause sqlite refuses throws inside the fire-and-forget Task rather than in Query()'s synchronous prologue.  With the
 	//catch removed this does not fail, it hangs - hence the deadline.
 	TEST_F( SelectSurfaceTests, AParentFilterSqliteRefusesThrowsRatherThanHangingTheSubTableSelect ){
+		if( hasRegex() )
+			GTEST_SKIP() << "this dialect has a regex operator - nothing is refused.";
 		let outcome = queryWithin( R"(roles( slug:{regex:"a"} ){ id permissions{ id } })", GetRoot() );
 		ASSERT_TRUE( outcome ) << "the request never came back - SelectSubTables swallowed the throw again (#12)";
 		ASSERT_NE( *outcome, "" ) << "sqlite has no regexp; the sub-table select cannot have succeeded";

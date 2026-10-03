@@ -60,7 +60,7 @@ namespace Jde::QL{
 					auto& ds = *_table->Schema->DS();
 					for( auto& statement : Statements(*_table) )//TODO for mysql allow CLIENT_MULTI_STATEMENTS return ds->Execute( Str::AddSeparators(statements, ";"), parameters, sl );
 						rowCount += co_await Any( ds.Execute(move(statement), _sl) );
-					y = rowCount;
+					y = rowCount;//only a count that is not 0 is published (#47), and mysql counts a call by its last statement - so a purge proc ends on the delete of the row itself.
 				}
 				catch( runtime_error& e ){
 					failure = ToExceptionPtr( move(e) );

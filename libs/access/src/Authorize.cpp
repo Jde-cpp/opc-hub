@@ -164,7 +164,7 @@ namespace Jde::Access{
 	}
 	α Authorize::UserName( UserPK userPK )ι->string{
 		rl _{ Mutex };
-		if( auto user = Users.find(userPK); user!=Users.end() )
+		if( auto user = Users.find(userPK); user!=Users.end() && user->second.Name.size() ) //an empty name - a userCreated event that carried none - would leave a history edit unattributed.
 			return user->second.Name;
 		else
 			return std::to_string( userPK.Value );
@@ -323,7 +323,7 @@ namespace Jde::Access{
 		ul _{ Mutex };
 		if( !resource.IsDeleted )//as Loader::Resources registers every active row:  a row created active is enforced - and found by TestSchemaAdmin - now, not at the next start (appserver-review3 #13).
 			SchemaResources[resource.Schema][resource.Slug][resource.Criteria] = resource.PK;
-		Resources[resource.PK] = move( resource );//assignment, not emplace:  sqlite reuses a purged pk, and resource purges are not subscribed, so the entry may be a stale deleted row.
+		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and resource purges are not subscribed, so the entry may be a stale deleted row.
 	}
 	//A pk names one row.  No pk - the fan-out could not pick one, because a by-slug delete hit several - names every row of that
 	//schema+slug, and the db changed all of them, so the cache does too (access-review3 #22).
@@ -356,9 +356,17 @@ namespace Jde::Access{
 	}
 
 
-	α Authorize::CreateUser( UserPK userPK )ι->void{
+	α Authorize::CreateUser( UserPK userPK, string name )ι->void{
 		ul _{ Mutex };
-		Users.emplace( userPK, User{userPK, "", false} );
+		if( auto p = Users.find(userPK); p!=Users.end() )
+			p->second.Name = move( name ); //the server's own second call, or a pk an older sqlite file reused after a purge the cache never saw - CreateResource's stale entry.
+		else
+			Users.emplace( userPK, User{userPK, move(name), false} );
+	}
+	α Authorize::RenameUser( UserPK userPK, string name )ι->void{
+		ul _{ Mutex };
+		if( auto p = Users.find(userPK); p!=Users.end() )
+			p->second.Name = move( name );
 	}
 	α Authorize::DeleteUser( UserPK identityPK )ι->void{
 		ul _{ Mutex };

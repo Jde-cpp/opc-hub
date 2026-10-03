@@ -22,7 +22,8 @@ namespace Jde::DB::Sqlite{
 		}
 		α HasSchemas()Ι->bool override{ return false; }
 		α HasUnsigned()Ι->bool override{ return false; }
-		α IdentityColumnSyntax()Ι->sv override{ return {}; } //rowid alias: pk must be declared 'integer primary key' - see CreatePrimaryKey.
+		α IdentityColumnSyntax()Ι->sv override{ return "primary key autoincrement"; } //a bare rowid alias hands out max+1, so a deleted newest pk went to the next row; autoincrement never gives one out again.  Only valid as the column's own pk constraint - see IdentityIsPrimaryKey.
+		α IdentityIsPrimaryKey()Ι->bool override{ return true; }
 		α IdentitySelect()Ι->sv override{ return "last_insert_rowid()"; }
 		α IndexName( sv tableName, sv indexName )Ι->string override{ return Ƒ("{}_{}", tableName, indexName); } //index names are schema-wide - qualify with the table (e.g. access_providers_nk).
 		α CreatePrimaryKey( str /*tableName*/, str columns )Ι->string override{ return Ƒ("PRIMARY KEY( {} )", columns); } //columns: comma-separated for composite keys. Single-column integer pk stays a rowid alias.

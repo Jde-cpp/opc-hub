@@ -11,8 +11,8 @@ namespace Jde::Access::Server{
 	α AuthenticateAwait::InsertUser( str prefix, vector<DB::Value>&& params )->TAwait<UserPK::Type>::Task{
 		try{
 			let userPK = UserPK{ co_await DS().InsertSeq<UserPK::Type>(DB::InsertClause{Ƒ("{}user_insert_login", prefix), move(params)}) };
-			Authorizer().CreateUser( userPK );
-			PublishUserCreated( userPK );//the clients' caches - CreateUser is the server's own
+			Authorizer().CreateUser( userPK, _loginName );//the login procs name the identity after its login name.
+			PublishUserCreated( userPK, _loginName );//the clients' caches - CreateUser is the server's own
 			ResumeScaler( userPK );
 		}
 		catch( runtime_error& e ){

@@ -13,6 +13,7 @@
 #include <jde/access/server/awaits/RoleAwait.h>
 #include "../src/accessInternal.h"
 #include "globals.h"
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/LocalSubscriptions.h>
 
@@ -253,17 +254,110 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		const string loginName{ "subLoginBorn" };
 		let provider = (ProviderPK)EProviderType::Google;
-		if( let previous = SelectUser(loginName, root, provider, true); !previous.empty() )
+		if( let previous = SelectUser("Google-"+loginName, root, provider, true); !previous.empty() ) //user_insert_login's slug is <provider>-<login name>.
 			PurgeUser( UserPK{GetId(previous)}, root );
-		auto listener = listenTo( "subscription UserCreated{ userCreated(subscriptionId:$id){id} }" );
+		auto listener = listenTo( "subscription UserCreated{ userCreated(subscriptionId:$id){id name} }" );
 		let userPK = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
 		ASSERT_EQ( listener->Changes.size(), 1u ) << "the login's insert published no userCreated event";
 		EXPECT_EQ( Json::AsNumber<UserPK::Type>(listener->Resource(0), "id"), userPK.Value );
+		EXPECT_EQ( Json::AsSV(listener->Resource(0), "name"), loginName ) << "#198: the clients' caches need the name the proc gave it";
+		EXPECT_EQ( Authorizer()->UserName(userPK), loginName );
 		let again = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
 		EXPECT_EQ( again.Value, userPK.Value );
 		EXPECT_EQ( listener->Changes.size(), 1u ) << "an existing identity's login is not a creation";
 		QL::Subscriptions::StopListen( listener, {} );
 		PurgeUser( userPK, root );
+	}
+
+	//#198:  history edits store Authorize::UserName, and the cache only ever took names from its startup snapshot - userCreated
+	//cached an empty one, and nothing subscribed to userUpdated.  Through the startup listener, as every client's cache gets them.
+	TEST( SubscriptionTests, UserNamesReachTheCache ){
+		let root = GetRoot();
+		const string slug{ "subUserName" };
+		let provider = (ProviderPK)EProviderType::Google;
+		if( let previous = SelectUser(slug, root, provider, true); !previous.empty() ) //a previous run's row, renamed.
+			PurgeUser( UserPK{GetId(previous)}, root );
+		let created = GetUser( slug, root );
+		const UserPK user{ GetId(created) };
+		EXPECT_EQ( Authorizer()->UserName(user), Json::AsSV(created, "name") ) << "userCreated did not carry the name";
+
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( id:{}, name:"subUserName renamed" ))", user.Value), {}, root );
+		EXPECT_EQ( Authorizer()->UserName(user), "subUserName renamed" ) << "userUpdated did not reach the cache";
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( id:{}, description:"subUserName desc" ))", user.Value), {}, root );
+		EXPECT_EQ( Authorizer()->UserName(user), "subUserName renamed" ) << "an update that set no name changed it";
+		PurgeUser( user, root );
+	}
+
+	Ω idWarnings()ι->vector<Logging::Entry>{ return Logging::Find( [](const Logging::Entry& e){ return e.Text.contains("id lookup") || e.Text.contains("carried no id"); } ); }
+
+	//authorize-names review #3:  users extends identities, and the fan-out's id lookup selected from access_users alone with its
+	//predicates on access_identities' columns - "no such column" - so every user mutation keyed by name or slug went out
+	//without an id.  Nothing subscribed to userUpdated before #198; since it, each such update had the startup listener - and
+	//every client's - call its cache stale.  The lookup joins the table an extension extends now, which also gets a by-slug
+	//delete to the cache, where it really was stale.
+	TEST( SubscriptionTests, AUserMutationKeyedByNameOrSlugCarriesItsId ){
+		let root = GetRoot();
+		const string slug{ "subIdLessUser" };
+		let provider = (ProviderPK)EProviderType::Google;
+		if( let previous = SelectUser(slug, root, provider, true); !previous.empty() ) //a previous run's row, deleted.
+			PurgeUser( UserPK{GetId(previous)}, root );
+		let created = GetUser( slug, root );
+		const UserPK user{ GetId(created) };
+		auto updated = listenTo( "subscription UserUpdated{ userUpdated(subscriptionId:$id){id name} }" );
+		auto deleted = listenTo( "subscription UserDeleted{ userDeleted(subscriptionId:$id){id} }" );
+		Logging::ClearMemory();
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( name:"{}", description:"by name" ))", Json::AsSV(created, "name")), {}, root );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( slug:"{}", description:"by slug" ))", slug), {}, root );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation deleteUser( slug:"{}" ))", slug), {}, root );
+		QL::Subscriptions::StopListen( updated, {} );
+		QL::Subscriptions::StopListen( deleted, {} );
+		PurgeUser( user, root );
+
+		let warnings = idWarnings();
+		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text;
+		ASSERT_EQ( updated->Changes.size(), 2u );
+		EXPECT_EQ( Json::FindNumber<UserPK::Type>(updated->Resource(0), "id"), optional{user.Value} ) << "keyed by name";
+		EXPECT_EQ( Json::FindNumber<UserPK::Type>(updated->Resource(1), "id"), optional{user.Value} ) << "keyed by slug";
+		ASSERT_EQ( deleted->Changes.size(), 1u );
+		EXPECT_EQ( Json::FindNumber<UserPK::Type>(deleted->Resource(0), "id"), optional{user.Value} );
+	}
+
+	//deleteGroup soft-deletes the group's identity row - UpdateAwait::CreateDeleteRestore updates the table `deleted` lives in -
+	//but the id lookup took its key from `groups`, the membership map, whose key is ( identity_id, member_id ).  No single key
+	//meant no lookup, so a group deleted by slug went out without an id and stayed active in every access cache.  The key is
+	//now the extended table's, where the map has none of its own.
+	TEST( SubscriptionTests, AGroupDeletedBySlugCarriesItsId ){
+		let root = GetRoot();
+		const string slug{ "subGroupBySlug" };
+		const GroupPK group{ GetId(GetGroup(slug, root)) };
+		auto deleted = listenTo( "subscription GroupDeleted{ groupDeleted(subscriptionId:$id){id} }" );
+		auto restored = listenTo( "subscription GroupRestored{ groupRestored(subscriptionId:$id){id} }" );
+		Logging::ClearMemory();
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation deleteGroup( slug:"{}" ))", slug), {}, root );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation restoreGroup( slug:"{}" ))", slug), {}, root );
+		QL::Subscriptions::StopListen( deleted, {} );
+		QL::Subscriptions::StopListen( restored, {} );
+		PurgeGroup( group, root );
+
+		let warnings = idWarnings();
+		EXPECT_TRUE( warnings.empty() ) << warnings[0].Text;
+		ASSERT_EQ( deleted->Changes.size(), 1u );
+		EXPECT_EQ( Json::FindNumber<GroupPK::Type>(deleted->Resource(0), "id"), optional{group.Value} );
+		ASSERT_EQ( restored->Changes.size(), 1u );
+		EXPECT_EQ( Json::FindNumber<GroupPK::Type>(restored->Resource(0), "id"), optional{group.Value} );
+	}
+
+	//And when the lookup does come back empty - the args match two rows, or none - an update is still no stale cache:  keyed by
+	//name or slug it renamed nobody.  Any other user event without an id is one, and has to go on saying so.
+	TEST( SubscriptionTests, AnIdLessUserUpdateIsNotCalledAStaleCache ){
+		auto listener = ms<Access::AccessListener>( QLPtr() );
+		Logging::ClearMemory();
+		listener->OnChange( jvalue{jobject{ {"users", jobject{{"name","nobody the cache holds"}}} }}, (QL::SubscriptionId)underlying(ESubscription::User|ESubscription::Updated) );
+		EXPECT_TRUE( idWarnings().empty() ) << "an update that renamed nobody was called a stale cache";
+		listener->OnChange( jvalue{jobject{ {"users", jobject{}} }}, (QL::SubscriptionId)underlying(ESubscription::User|ESubscription::Deleted) );
+		let stale = idWarnings();
+		ASSERT_EQ( stale.size(), 1u ) << "an id-less delete does leave the cache stale";
+		EXPECT_TRUE( stale[0].Message().contains("event 84") ) << stale[0].Message(); //rebuilt from the stored args - a `{:x}` in the text itself is a Bad Format there.
 	}
 
 	//access-review3 #25:  AccessListener::Shutdown unsubscribed through UnsubscribeAwait with IListener::Ids, which nothing ever
