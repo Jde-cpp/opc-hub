@@ -8,9 +8,13 @@
 
 OPC Hub is an Angular web front end over OPC UA servers, with a C++ back end.
 
-It browses a server's address space and reads, writes and subscribes to its nodes.  Users, groups, roles and resources
-say who may reach what.  The site talks to the back end over GraphQL and a protobuf websocket.  The database is SQLite by
-default, with MySQL and SQL Server also supported.
+It browses a server's address space and reads, writes and subscribes to its nodes.
+
+Users, groups, roles and resources say who may reach what.
+
+The site talks to the back end over GraphQL and a protobuf websocket.
+
+The database is SQLite by default.  MySQL and SQL Server are also supported.
 
 An OPC UA server of our own, `Jde.Opc.Server` on [open62541](https://www.open62541.org/), ships beside it as a first
 connection.
@@ -25,11 +29,15 @@ the repo; the installers do not ship it.
 
 ## Install
 
-Each [release](https://github.com/Jde-cpp/opc-hub/releases) carries three assets: `OpcHubSetup-<version>.exe` (Windows -
-services for all users, or a per-user install without administrator rights), `jde-opchub_<version>_amd64.deb` (Ubuntu
-24.04 or later, systemd units) and `jde-opchub-<version>-linux-amd64.tar.gz` (Linux without root, `systemctl --user`
-units).  The installers use SQLite, created on the first start; there is no server to set up.  The binaries need an x86-64
-CPU with SSE4.2 and PCLMULQDQ - any since about 2011.
+Each [release](https://github.com/Jde-cpp/opc-hub/releases) carries three assets:
+
+- `OpcHubSetup-<version>.exe` - Windows.  Services for all users, or a per-user install without administrator rights.
+- `jde-opchub_<version>_amd64.deb` - Ubuntu 24.04 or later, with systemd units.
+- `jde-opchub-<version>-linux-amd64.tar.gz` - Linux without root, with `systemctl --user` units.
+
+The installers use SQLite, created on the first start.  There is no database server to set up.
+
+The binaries need an x86-64 CPU with SSE4.2 and PCLMULQDQ, which is any CPU since about 2011.
 
 1. Install it: run `OpcHubSetup-<version>.exe`, or `sudo apt install ./jde-opchub_<version>_amd64.deb`.
 2. Browse to http://localhost:1967/ (from another machine, `http://<hub>:1967/`, for an all-users or root install).
@@ -38,9 +46,10 @@ CPU with SSE4.2 and PCLMULQDQ - any since about 2011.
    trust each other's certificates, then sign in as `<slug>\<user>` with that user's password on the server.  The site's
    *Overview* help walks it as *First steps*.
 
-The full walk - install modes, firewall and ports, IIS or nginx in front, what each installer lays down and what an
-uninstall leaves behind - is [`apps/OpcHub/README.md`](apps/OpcHub/README.md) (Install), then
-[`apps/OpcHub/setup/README.md`](apps/OpcHub/setup/README.md) for Windows and
+The full walk is [`apps/OpcHub/README.md`](apps/OpcHub/README.md) (Install).  It covers the install modes, the firewall
+and ports, IIS or nginx in front, what each installer lays down and what an uninstall leaves behind.
+
+Then read [`apps/OpcHub/setup/README.md`](apps/OpcHub/setup/README.md) for Windows and
 [`apps/OpcHub/setup/linux/README.md`](apps/OpcHub/setup/linux/README.md) for the `.deb` and the tarball.
 
 ## What is here
@@ -68,13 +77,15 @@ On Windows it is LLVM's clang with the VS 2026 toolset's runtime, and openssl an
 
 Every configure is a preset in [`CMakePresets.json`](CMakePresets.json), OS-split into `CMakePresets.Linux.json` and
 `CMakePresets.Windows.json`.  The `-repos` presets build the third-party tree and the `-jde` presets build this repo.
-Both compile with `-msse4.2 -mpclmul` (`cpuFlags` in `CMakePresets.common.json`): abseil is one shared library, built
-with them for its hardware CRC-32C, and its headers require every consumer to match - so rebuild the third-party tree
-and the repo together when they change.
+Both compile with `-msse4.2 -mpclmul` (`cpuFlags` in `CMakePresets.common.json`).
 
-The presets read four environment variables: `REPO_DIR` (the dependency root - **not** this checkout; the deps install
-under `$REPO_DIR/install/$CXX/<Debug|RelWithDebInfo>`), `JDE_DIR` (this checkout), and `JDE_BUILD_DIR` + `JDE_COMPILER`,
-under which a build lands at `$JDE_BUILD_DIR/$JDE_COMPILER/<checkout>/<debug|release>`.
+The `-repos` and `-jde` presets read two environment variables: `REPO_DIR`, the dependency root and **not** this
+checkout, and `CXX`, the compiler.  The deps install under `$REPO_DIR/install/$CXX/<Debug|RelWithDebInfo>`.
+
+The Linux presets set no build directory, so `-B` picks it.  By convention it is
+`$JDE_BUILD_DIR/$JDE_COMPILER/<checkout>/<debug|release>`.
+
+The Windows presets set it themselves under `$JDE_BUILD_DIR`, and also read `VCPKG_ROOT`.
 
 ```bash
 # the third-party tree, once - fmt, spdlog, gtest, absl, protobuf, jsonnet, ryml, open62541 + its nodeset loader;
@@ -92,10 +103,14 @@ cd $B && ctest --timeout 300 --output-on-failure   # the db-backed suites run on
 The release build is `linux-clang-relWithDebInfo-jde` (`win-clang-release-jde` on Windows), which is what the installers
 pack.  `build/buildFunctions.sh` wraps the same commands as `reconfig`, `build` and `compile` for the VS Code tasks.
 
-To run the hub from the build tree, from `<buildDir>/runtime`:
+To run the hub from the build tree, export the two variables the sqlite args expand.  ctest sets them itself.
+`<buildDir>/runtime` is made by `reconfig`.  After a raw configure, make it first.  `$JDE_DIR` is this checkout.
 
 ```bash
-Jde.Opc.Hub -c -tests -settings=$JDE_DIR/apps/OpcHub/config/Opc.Hub.jsonnet -include=args/sqlite -arg path=<file>
+export REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname $B)
+mkdir -p $B/runtime/logs && cd $B/runtime
+$B/apps/OpcHub/exe/Jde.Opc.Hub -c -tests -settings=$JDE_DIR/apps/OpcHub/config/Opc.Hub.jsonnet \
+  -include=args/sqlite -arg path=<file>
 ```
 
 ### The site
