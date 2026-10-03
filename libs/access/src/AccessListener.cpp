@@ -1,7 +1,5 @@
 #include <jde/access/AccessListener.h>
 #include <jde/ql/ql.h>
-//#include <jde/ql/IQL.h>
-//#include <jde/ql/SubscriptionAwait.h>
 #include <jde/access/Authorize.h>
 #include "accessInternal.h"
 
@@ -46,7 +44,6 @@ namespace Jde::Access{
 		else if( !empty(event & Permission) )
 			PermissionUpdated( pk, object );
 	}
-#pragma GCC diagnostic ignored "-Wswitch"
 	α AccessListener::UserChanged( UserPK userPK, ESubscription event, const jobject& o )ι->void{
 		using enum ESubscription;
 		switch( event ){
@@ -58,6 +55,7 @@ namespace Jde::Access{
 			case Deleted: Authorizer().DeleteUser( userPK ); break;
 			case Restored: Authorizer().RestoreUser( userPK ); break;
 			case Purged: Authorizer().PurgeUser( userPK ); break;
+			default: break;
 		}
 	}
 	α AccessListener::GroupChanged( GroupPK groupPK, ESubscription event, const jobject& o )ε->void{
@@ -81,6 +79,7 @@ namespace Jde::Access{
 			case Purged:
 				Authorizer().PurgeGroup( groupPK );
 				break;
+			default: break;
 		}
 	}
 	α AccessListener::RoleChanged( RolePK rolePK, ESubscription event, const jobject& o )ε->void{
@@ -92,10 +91,8 @@ namespace Jde::Access{
 			case Added:
 			case Removed:{
 				if( auto rights = Json::FindObject(o, "permissionRight"); rights ){
-					if( event==Added ){
-						Access::Permission permission{ *rights };
-						Authorizer().AddRolePermission( rolePK, permission.PK, (ERights)permission.Allowed, (ERights)permission.Denied, rights->at("resource").as_object() );
-					}
+					if( event==Added )
+						Authorizer().AddRolePermission( rolePK, Access::Permission{*rights}, rights->at("resource").as_object() );
 					else{
 						flat_set<PermissionRightsPK> members;
 						Json::Visit( Json::AsValue(o, "permissionRight/id"), [&](const jvalue& v){ members.insert( Json::AsNumber<PermissionRightsPK>(v) );} );
@@ -112,6 +109,7 @@ namespace Jde::Access{
 					}
 				}
 			}break;
+			default: break;
 		}
 	}
 	α AccessListener::ResourceChanged( ResourcePK resourcePK, ESubscription event, const jobject& o )ε->void{
@@ -128,12 +126,11 @@ namespace Jde::Access{
 			case Restored:
 				Authorizer().UpdateResourceDeleted( resourcePK, Json::FindDefaultSV(o, "schemaName"), o, event==Restored ); //schemaName - the column is called that (access-review3 #23); "schema" read empty and the by-name fallback could never match.
 				break;
+			default: break;
 		}
 	}
 	α AccessListener::PermissionUpdated( PermissionRightsPK pk, const jobject& o )ε->void{
-		let allowed = Json::FindNumber<uint8>( o, "allowed" );
-		let denied = Json::FindNumber<uint8>( o, "denied" );
-		Authorizer().UpdatePermission( pk, allowed ? optional<ERights>((ERights)*allowed) : nullopt, denied ? optional<ERights>((ERights)*denied) : nullopt );
+		Authorizer().UpdatePermission( pk, FindRights(o, "allowed"), FindRights(o, "denied") );
 	}
 	α AccessListener::AclChanged( ESubscription event, const jobject& o )ε->void{
 		using enum ESubscription;
@@ -143,18 +140,10 @@ namespace Jde::Access{
 		DBGT( ELogTags::Access, "[{}]acl event {:x} for identity {}: {}", Name, (uint16)underlying(event), identityPK, serialize(o) );
 		switch( event ){
 			case Created:{
-				if( auto v = o.if_contains("permissionRight"); v ){ //identity{id:y}, permission:{ allowed:x, denied:x, resource:{id:x} }
-					let& permission = Json::AsObject(*v);
-					Authorizer().AddAcl(
-						identityPK,
-						Json::AsNumber<PermissionRightsPK>( permission, "id" ),
-						(ERights)Json::FindNumber<uint8>( permission, "allowed" ).value_or(0),
-						(ERights)Json::FindNumber<uint8>( permission, "denied" ).value_or(0),
-						Json::AsNumber<ResourcePK>( permission, "resource/id" )
-					);
-				}
+				if( auto v = o.if_contains("permissionRight"); v ) //identity{id:y}, permission:{ allowed:x, denied:x, resource:{id:x} }
+					Authorizer().AddAcl( identityPK, Access::Permission{Json::AsObject(*v)} );
 				else if( auto role = o.if_contains("role"); role ) //identity{id:y}, role:{ id:x }
-					Authorizer().AddAcl( Json::AsNumber<IdentityPK::Type>( o, "identity/id" ), QL::AsId<RolePK>(*role) );
+					Authorizer().AddAcl( identityPK, QL::AsId<RolePK>(*role) );
 			}break;
 			case Purged:{
 				optional<PermissionRole> permissionPK;
@@ -165,6 +154,7 @@ namespace Jde::Access{
 				if( permissionPK )
 					Authorizer().RemoveAcl( identityPK, *permissionPK );
 			}break;
+			default: break;
 		}
 	}
 }

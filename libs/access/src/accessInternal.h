@@ -12,4 +12,5 @@ namespace Jde::Access{
 	α GetSchema()ι->DB::AppSchema&;
 	α GetSchemaPtr()ι->sp<DB::AppSchema>;
 	α SetSchema( sp<DB::AppSchema> schema )ι->void;
+	α InstanceSchemaName( str schemaName, str opcServerInstance )ι->string;
 }

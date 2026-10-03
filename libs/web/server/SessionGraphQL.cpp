@@ -102,7 +102,7 @@ namespace Jde::Web::Server{
 			//session as its own service identity (HttpRequestAwait::Logout), so a legitimate purge is routinely cross-user and
 			//"you may only purge your own" would break logout.  admin over "sessions" is what separates that from an attacker.
 			THROW_IF( !_authorizer, "No authorizer - refusing to purge session." );
-			_authorizer->TestAdmin( "sessions", _executer, _sl );
+			_authorizer->TestAdminSlug( "sessions", _executer, _sl );
 			if( auto sessionId = _mutation.FindPtr("id"); sessionId )
 				rows = Sessions::Remove( Str::TryTo<SessionPK,16>(Json::AsString(*sessionId)).value_or(0) ) ? 1 : 0;
 			_result["rowCount"] =	rows;

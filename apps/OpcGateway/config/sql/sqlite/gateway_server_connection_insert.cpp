@@ -17,6 +17,6 @@ namespace Jde::DB::Sqlite::GatewayProcs{
 			if( onRow )
 				(*onRow)( Row{ {Value{procs.LastInsertRowId(db)}} } ); //out _server_connection_id
 			return y;
-		});
+		}, 8 );
 	}
 }

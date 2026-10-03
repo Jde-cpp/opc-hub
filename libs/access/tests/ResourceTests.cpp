@@ -10,8 +10,6 @@
 
 #define let const auto
 namespace Jde::Access::Tests{
-//	using namespace Json;
-//	using namespace Tests;
 	class ResourceTests : public ::testing::Test{
 	};
 
@@ -26,30 +24,13 @@ namespace Jde::Access::Tests{
 	//access-review3 #24:  ResourceSync creates each resource active and disables it in a second, untransacted call.  A failure in
 	//between left the table denying every non-System user, and the next sync skipped any slug that had a row, so it never healed.
 	//This is the real LocalQL with the second call refused - the failure the finding describes - and the sync's own next pass.
-	struct DeleteRefusingQL final : QL::IQL{
-		DeleteRefusingQL( sp<QL::IQL> inner )ι:_inner{ move(inner) }{}
-		α Authorizer()ε->Access::Authorize& override{ return _inner->Authorizer(); }
-		α AuthorizerPtr()ε->sp<Access::Authorize> override{ return _inner->AuthorizerPtr(); }
-		α CustomQuery( QL::TableQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override{ return _inner->CustomQuery( ql, executer, sl ); }
-		α CustomMutation( QL::MutationQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override{ return _inner->CustomMutation( ql, executer, sl ); }
-		α LogQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>> override{ return _inner->LogQuery( move(ql), executer, sl ); }
-		α LogSettingsQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>> override{ return _inner->LogSettingsQuery( move(ql), executer, sl ); }
-		α StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject override{ return _inner->StatusQuery( move(ql), executer, sl ); }
+	struct DeleteRefusingQL final : ForwardingQL{
+		using ForwardingQL::ForwardingQL;
 		α Query( string query, jobject vars, UserPK executer, bool returnRaw, SL sl )ε->up<TAwait<jvalue>> override{
 			THROW_IF( query.starts_with("deleteResource"), "refused, as the finding's failure: {}", query );
-			return _inner->Query( move(query), move(vars), executer, returnRaw, sl );
+			return ForwardingQL::Query( move(query), move(vars), executer, returnRaw, sl );
 		}
-		α QueryObject( string query, jobject vars, UserPK executer, bool returnRaw, SL sl )ε->up<TAwait<jobject>> override{ return _inner->QueryObject( move(query), move(vars), executer, returnRaw, sl ); }
-		α QueryArray( string query, jobject vars, UserPK executer, bool returnRaw, SL sl )ε->up<TAwait<jarray>> override{ return _inner->QueryArray( move(query), move(vars), executer, returnRaw, sl ); }
-		α Upsert( string query, jobject vars, UserPK executer )ε->jarray override{ return _inner->Upsert( move(query), move(vars), executer ); }
-		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override{ return _inner->Schemas(); }
-		α Subscribe( string&& query, jobject vars, sp<QL::IListener> listener, UserPK executer, SL sl )ε->up<TAwait<vector<QL::SubscriptionId>>> override{ return _inner->Subscribe( move(query), move(vars), listener, executer, sl ); }
-		sp<QL::IQL> _inner;
 	};
-	//AclTests.cpp
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
-	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject;
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
 	//reviews/m3-closing.md #16:  what the Resources page now sends for a filter on its Enforced column - the server applies it
 	//like any other, "null" as `is null` in the bare-array form and "not null" as `ne`.  The page used to drop the arg.
 	TEST_F( ResourceTests, TheEnforcedFilterIsApplied ){
@@ -77,7 +58,7 @@ namespace Jde::Access::Tests{
 		ASSERT_FALSE( row.empty() );
 		Purge( "resource", GetId(row), root ); //un-sync it - the next sync has to create it.
 
-		//what the next start would enforce:  the loader (Loader::Resources) puts every active row into SchemaResources.  CreateResource
+		//what the next start would enforce:  the loader (Authorize::Load) puts every active row into SchemaResources.  CreateResource
 		//registers an active row the same way now (appserver-review3 #13) - it used to fill only Resources, so the lockout was a restart
 		//away - but this looks through the loader rather than at Test(), as the finding is about what a start enforces.
 		auto loadsActive = [&]()->optional<bool>{

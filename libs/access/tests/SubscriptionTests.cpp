@@ -389,11 +389,11 @@ namespace Jde::Access::Tests{
 		ASSERT_EQ( ids.size(), 2u );
 		const UserPK nobody{ GetId(GetUser("subIdLessNobody", root)) };
 		for( let id : ids )
-			EXPECT_THROW( Authorizer()->TestAdmin((ResourcePK)id, nobody), Exception ) << "active in the cache, so enforced";
+			EXPECT_THROW( Authorizer()->TestAdminResource((ResourcePK)id, nobody), Exception ) << "active in the cache, so enforced";
 
 		deleteResource( slug ); //by slug:  both rows, and a notification with no id.
 		for( let id : ids )
-			EXPECT_NO_THROW( Authorizer()->TestAdmin((ResourcePK)id, nobody) ) << "deleted in the cache as well - a deleted resource fail-opens";
+			EXPECT_NO_THROW( Authorizer()->TestAdminResource((ResourcePK)id, nobody) ) << "deleted in the cache as well - a deleted resource fail-opens";
 
 		for( let id : ids )
 			Purge( "resource", id, root );
@@ -401,9 +401,9 @@ namespace Jde::Access::Tests{
 	}
 
 	//appserver-review3 #13:  the server's Configure subscribes with no schema predicate now - its Authorize gates and answers every
-	//schema's grants (TestSchemaAdmin, and the flat rule behind TestAdmin), so it has to see every schema's rows change.  This
+	//schema's grants (TestSchemaAdmin, and the flat rule behind TestAdminGrant), so it has to see every schema's rows change.  This
 	//suite's schema is not "access":  before, the startup listener's resourcesCreated(schemaName:["access"]) dropped the event and
-	//the row never reached the cache, so a nobody passed TestAdmin on it.
+	//the row never reached the cache, so a nobody passed TestAdminResource on it.
 	TEST( SubscriptionTests, OtherSchemasResourcesReachTheStartupCache ){
 		let root = GetRoot();
 		constexpr sv slug{ "subAllSchemas" };
@@ -412,9 +412,9 @@ namespace Jde::Access::Tests{
 		createResource( slug, ", allowed:255" );
 		let ids = resourceIds( slug ); ASSERT_EQ( ids.size(), 1u );
 		const UserPK nobody{ GetId(GetUser("subAllSchemasNobody", root)) };
-		EXPECT_THROW( Authorizer()->TestAdmin((ResourcePK)ids[0], nobody), Exception ) << "created in the cache, so enforced";
+		EXPECT_THROW( Authorizer()->TestAdminResource((ResourcePK)ids[0], nobody), Exception ) << "created in the cache, so enforced";
 		deleteResource( slug );
-		EXPECT_NO_THROW( Authorizer()->TestAdmin((ResourcePK)ids[0], nobody) ) << "deleted in the cache as well";
+		EXPECT_NO_THROW( Authorizer()->TestAdminResource((ResourcePK)ids[0], nobody) ) << "deleted in the cache as well";
 		Purge( "resource", ids[0], root );
 		PurgeUser( nobody, root );
 	}
@@ -434,15 +434,32 @@ namespace Jde::Access::Tests{
 		const RolePK rolePK{ (RolePK)GetId(Get("role", "subAllSchemasRole", root)) };
 		const UserPK holder{ GetId(GetUser("subAllSchemasHolder", root)) };
 		QL().QuerySync<jvalue>( Ƒ("mutation createAcl( identity:{{id:{}}}, role:{{id:{}}} )", holder.Value, rolePK), {}, root );
-		EXPECT_THROW( Authorizer()->TestAdmin(resourcePK, holder), Exception ) << "no grant yet";
+		EXPECT_THROW( Authorizer()->TestAdminResource(resourcePK, holder), Exception ) << "no grant yet";
 		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"{}" }} }} ))", rolePK, underlying(ERights::Administer), Schema, slug );
 		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(grant, {}, Schemas()), UserPK{UserPK::System}} ).as_object();
-		EXPECT_NO_THROW( Authorizer()->TestAdmin(resourcePK, holder) ) << "roleAdded did not reach the cache - the holder's role does not carry the grant";
+		EXPECT_NO_THROW( Authorizer()->TestAdminResource(resourcePK, holder) ) << "roleAdded did not reach the cache - the holder's role does not carry the grant";
 
 		BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ("mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id")), {}, Schemas()), UserPK{UserPK::System}} );
 		QL().QuerySync<jvalue>( Ƒ("purgeAcl( identity:{{ id:{} }}, role:{{ id:{} }} )", holder.Value, rolePK), {}, root );
 		Purge( "role", rolePK, root );
 		Purge( "resource", resourcePK, root );
 		PurgeUser( holder, root );
+	}
+
+	//access-refactor A7:  EventTypeSubscribeAwait loops over the event bits - each bit asked for is one subscription, its id entity | event.
+	TEST( SubscriptionTests, SubscribesEveryEventAskedFor ){
+		using enum ESubscription;
+		auto listener = ms<AccessListener>( QLPtr() );
+		BlockVoidAwait( EventsSubscribeAwait{QLPtr(), {}, UserPK{UserPK::System}, listener} );
+		vector<uint> ids;
+		for( let& id : QL::Subscriptions::StopListen(listener) )
+			ids.push_back( id.to_number<uint>() );
+		vector<uint> expected;
+		for( let e : {User|Created, User|Updated, User|Deleted, User|Restored, User|Purged, Group|Deleted, Group|Restored, Group|Purged, Group|Added, Group|Removed,
+			Role|Deleted, Role|Restored, Role|Purged, Role|Added, Role|Removed, Resources|Created, Resources|Deleted, Resources|Restored, Permission|Updated, Acl|Created, Acl|Purged} )
+			expected.push_back( underlying(e) );
+		std::ranges::sort( ids );
+		std::ranges::sort( expected );
+		EXPECT_EQ( ids, expected );
 	}
 }

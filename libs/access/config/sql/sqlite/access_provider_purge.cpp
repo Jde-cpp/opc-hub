@@ -13,6 +13,6 @@ namespace Jde::DB::Sqlite::AccessProcs{
 			procs.ExecuteStatement( db, "delete from access_users where identity_id in ( select identity_id from access_identities where provider_id=? )", {params[0]}, nullptr, sl );
 			procs.ExecuteStatement( db, "delete from access_identities where provider_id=?", {params[0]}, nullptr, sl );
 			return procs.ExecuteStatement( db, "delete from access_providers where provider_id=?", {params[0]}, nullptr, sl );
-		});
+		}, 1 );
 	}
 }

@@ -7,7 +7,6 @@ namespace Jde::QL{ struct IQL; }
 namespace Jde::Access{
 	enum class ESubscription : uint16;
 	struct Authorize;
-	α IsServer()ι->bool;
 	struct AccessListener final : QL::IListener, IShutdown{
 		AccessListener( sp<QL::IQL> qlServer )ι:QL::IListener{"Access"},_qlServer{qlServer}{}
 		α OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void override;

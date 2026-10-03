@@ -2,9 +2,11 @@
 #include <jde/fwk/str.h>
 #include <jde/db/usings.h>
 #include <jde/access/types/Group.h>
+#include <jde/access/types/Identities.h>
 #include <jde/access/types/User.h>
 #include <jde/access/AccessException.h>
 #include <jde/fwk/utils/collections.h>
+#include "awaits/ResourceLoadAwait.h"
 
 #define let const auto
 namespace Jde::Access{
@@ -15,16 +17,46 @@ namespace Jde::Access{
 		_adminAuthorizers.insert_or_assign( schemaName, AdminAuthorizer{move(authorizer), registrant} );//not emplace: a restarted app must replace its stale registration, not be silently discarded behind the closed one.
 	}
 	α Authorize::RemoveAdminAuthorizer( const sp<IAdminAcl>& authorizer )ι->void{
-		_adminAuthorizers.erase_if( [&](let& pair){ return pair.second.Acl==authorizer; } );//drop every schema this session authorized, so TestAdmin falls back to the local rule instead of a dead stream.
+		_adminAuthorizers.erase_if( [&](let& pair){ return pair.second.Acl==authorizer; } );//drop every schema this session authorized, so TestAdminGrant falls back to the local rule instead of a dead stream.
 	}
 	α Authorize::FindAdminAuthorizer( str schemaName )ι->optional<AdminAuthorizer>{
 		optional<AdminAuthorizer> y;
 		_adminAuthorizers.cvisit( schemaName, [&](let& pair){ y = pair.second; } );
 		return y;
 	}
+	//The whole snapshot in one swap:  published table by table, users waited five round trips with no rights (access-refactor A1).
+	α Authorize::Load( Identities&& identities, ResourcePermissions&& resources, flat_map<RolePK,Role>&& roles, flat_multimap<IdentityPK,PermissionRole>&& acl )ι->void{
+		ul _{ Mutex };
+		Users = move( identities.Users );
+		Groups = move( identities.Groups );
+		Resources = move( resources.Resources );
+		SchemaResources.clear();
+		for( let& [pk, resource] : Resources )
+			Index( resource );
+		Permissions = move( resources.Permissions );
+		Roles = move( roles );
+		Acl = move( acl );
+		SetUserPermissions( {} );
+	}
 	α Authorize::AddResource( ResourcePK resourcePK, string schema, string resourceSlug, string criteria )ι->void{
 		ul _{ Mutex };
-		SchemaResources[schema][resourceSlug][criteria] = resourcePK;
+		Index( schema, resourceSlug, criteria, resourcePK );
+	}
+	α Authorize::Index( const Resource& resource )ι->void{
+		if( !resource.IsDeleted )
+			Index( resource.Schema, resource.Slug, resource.Criteria, resource.PK );
+	}
+	α Authorize::Index( str schema, str slug, str criteria, ResourcePK pk )ι->void{
+		SchemaResources[schema][slug][criteria] = pk;
+	}
+	α Authorize::Unindex( const Resource& resource )ι->void{
+		if( auto schema = SchemaResources.find(resource.Schema); schema!=SchemaResources.end() ){
+			if( auto slug = schema->second.find(resource.Slug); slug!=schema->second.end() && Find(slug->second, resource.Criteria)==resource.PK ){
+				slug->second.erase( resource.Criteria );
+				if( slug->second.empty() )
+					schema->second.erase( slug );
+			}
+		}
 	}
 
 	//A bare slug names a schema only when one schema carries it.  An app schema wins outright; an opc schema ("opc.<server>")
@@ -54,36 +86,44 @@ namespace Jde::Access{
 	α Authorize::Test( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
 		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );
-		if( !resourcePK )//not enabled
-			return;
-
-		//AccessException, as TestAdmin below throws:  a plain Exception carries no http status, so ServerImpl fell through to
-		//its InternalServerError branch and a denial reached the client as 500 "Query failed." - indistinguishable from a
-		//broken query.  Forbidden for what the executer may do, Unauthorized only for who they are (access-review3 #17).
-		//The executer is the exception's own field, not a "[{}]" prefix:  ServerImpl formats it through UserName().
-		if( auto user = Users.find(executer); user!=Users.end() ){
-			THROW_IFX( user->second.IsDeleted, Access::AccessException(sl, executer, "User is deleted.") );
-			let configured = user->second.ResourceRights( *resourcePK );
-			THROW_IFX( !empty(configured.Denied & rights), Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
-			THROW_IFX( empty(configured.Allowed & rights), Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
-		}
-		else if( executer.Value!=UserPK::System )
-			throw Access::AccessException{ sl, executer, EHttpStatus::Unauthorized, "User not found." };//not a known user - anonymous or stale - the one case the client's 401 policy is for.
+		if( resourcePK )//else not enabled
+			TestRights( *resourcePK, resourceName, rights, executer, sl );
 	}
-	α Authorize::TestAdmin( ResourcePK resourcePK, UserPK executer, SL sl )ε->void{
+	α Authorize::ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>{
+		if( executer.Value==UserPK::System )
+			return AllowedDisallowed{ ERights::All, ERights::None };
+		auto user = Users.find( executer );
+		if( user==Users.end() )
+			return std::unexpected{ EHttpStatus::Unauthorized };//not a known user - anonymous or stale - the one case the client's 401 policy is for.
+		if( user->second.IsDeleted )
+			return std::unexpected{ EHttpStatus::Forbidden };
+		return user->second.ResourceRights( resourcePK );
+	}
+	//AccessException:  a plain Exception carries no http status, so ServerImpl fell through to its InternalServerError branch and
+	//a denial reached the client as 500 "Query failed." - indistinguishable from a broken query.  Forbidden for what the executer
+	//may do, Unauthorized only for who they are (access-review3 #17).  The executer is the exception's own field, not a "[{}]"
+	//prefix:  ServerImpl formats it through UserName().
+	α Authorize::TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void{
+		let configured = ConfiguredRightsLocked( executer, resourcePK );
+		THROW_IFX( !configured && configured.error()==EHttpStatus::Unauthorized, Access::AccessException(sl, executer, EHttpStatus::Unauthorized, "User not found.") );
+		THROW_IFX( !configured, Access::AccessException(sl, executer, "User is deleted.") );
+		THROW_IFX( !empty(configured->Denied & rights), Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
+		THROW_IFX( empty(configured->Allowed & rights), Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
+	}
+	α Authorize::TestAdminResource( ResourcePK resourcePK, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
 		auto resource=Resources.find( resourcePK );
 		if( resource!=Resources.end() && !resource->second.IsDeleted )
 			TestAdmin( resource->second, executer, sl );
 	}
 
-	α Authorize::TestAdmin( str resourceSlug, UserPK executer, SL sl )ε->void{
+	α Authorize::TestAdminSlug( str resourceSlug, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
 		auto resource = find_if( Resources, [&](let& r){return r.second.Slug==resourceSlug && !r.second.Schema.contains('.');} );//exclude opc schemas which can have same slug
 		if( resource!=Resources.end() && !resource->second.IsDeleted )
 			TestAdmin( resource->second, executer, sl );
 	}
-	α Authorize::TestAdmin( str schema, str resource, str criteria, UserPK userPK, SL sl )ι->up<AnyVoidAwait>{
+	α Authorize::TestAdminGrant( str schema, str resource, str criteria, UserPK userPK, SL sl )ι->up<AnyVoidAwait>{
 		if( auto remote = FindAdminAuthorizer(schema); remote ){
 			try{
 				TestSchemaAdmin( schema, remote->User, sl );//still entitled to answer for the schema - rights revoked since it registered fall through to the local rule.
@@ -103,7 +143,7 @@ namespace Jde::Access{
 	}
 	α Authorize::TestAdminLocal( str schema, str resource, str criteria, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
-		auto active = [&]( str c ) ABSL_SHARED_LOCKS_REQUIRED(Mutex)->const Resource*{ //SchemaResources keeps a deleted criteria row (UpdateResourceDeleted maintains it for criteria-less rows only) - the row decides.
+		auto active = [&]( str c ) ABSL_SHARED_LOCKS_REQUIRED(Mutex)->const Resource*{ //the row decides:  AddResource indexes a pk without caching its row.
 			let pk = FindActiveResourcePKLocked( schema, resource, c );
 			auto p = pk ? Resources.find( *pk ) : Resources.end();
 			return p!=Resources.end() && !p->second.IsDeleted ? &p->second : nullptr;
@@ -127,14 +167,7 @@ namespace Jde::Access{
 		}
 	}
 	α Authorize::TestAdmin( const Resource& resource, UserPK executer, SL sl )ε->void{
-		if( executer==UserPK{UserPK::System} )
-			return;
-		auto user = Users.find( executer );
-		THROW_IFX( user==Users.end(), Access::AccessException(sl, executer, EHttpStatus::Unauthorized, "User not found.") ); //not a known user - anonymous or stale - the one case the client's 401 policy is for.
-		THROW_IFX( user->second.IsDeleted, Access::AccessException(sl, executer, "User is deleted.") );
-		let configured = user->second.ResourceRights( resource.PK );
-		THROW_IFX( !empty(configured.Denied & ERights::Administer), Access::AccessException(sl, executer, "User denied admin access to '{}'.", resource.Slug) );
-		THROW_IFX( empty(configured.Allowed & ERights::Administer), Access::AccessException(sl, executer, "User does not have admin access to '{}'.", resource.Slug) );
+		TestRights( resource.PK, resource.Slug, ERights::Administer, executer, sl );
 	}
 	α Authorize::TestAdminPermission( PermissionPK permissionPK, UserPK userPK, SL sl )ε->void{
 		ResourcePK resourcePK;
@@ -144,7 +177,7 @@ namespace Jde::Access{
 			THROW_IF( permission==Permissions.end(), "[{}]Permission not found.", permissionPK );
 			resourcePK = permission->second.ResourcePK;
 		}
-		TestAdmin( resourcePK, userPK, sl );
+		TestAdminResource( resourcePK, userPK, sl );
 	}
 
 	α Authorize::Rights( str schemaName, str resourceName, UserPK executer )ι->ERights{
@@ -152,15 +185,8 @@ namespace Jde::Access{
 		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );
 		if( !resourcePK )//not enabled
 			return ERights::All;
-
-		auto user = Users.find( executer );
-		if( user==Users.end() )
-			return executer.Value==UserPK::System ? ERights::All : ERights::None;//System early-passes in Test/TestAdmin - stay consistent.
-		if( user->second.IsDeleted )
-			return ERights::None;
-
-		auto rights = user->second.ResourceRights( *resourcePK );
-		return rights.Allowed & ~rights.Denied;
+		let configured = ConfiguredRightsLocked( executer, *resourcePK );
+		return configured ? configured->Effective() : ERights::None;
 	}
 	α Authorize::UserName( UserPK userPK )ι->string{
 		rl _{ Mutex };
@@ -170,11 +196,11 @@ namespace Jde::Access{
 			return std::to_string( userPK.Value );
 	}
 
-	α Authorize::RecursiveUsers( GroupPK groupPK, bool clear )ι->flat_set<UserPK>{
+	α Authorize::RecursiveUsers( GroupPK groupPK )ι->flat_set<UserPK>{
 		flat_set<GroupPK> visited;
-		return RecursiveUsers( groupPK, clear, visited );
+		return RecursiveUsers( groupPK, visited );
 	}
-	α Authorize::RecursiveUsers( GroupPK groupPK, bool clear, flat_set<GroupPK>& visited )ι->flat_set<UserPK>{
+	α Authorize::RecursiveUsers( GroupPK groupPK, flat_set<GroupPK>& visited )ι->flat_set<UserPK>{
 		flat_set<UserPK> users;
 		auto group = visited.emplace( groupPK ).second ? Groups.find( groupPK ) : Groups.end();//visited guards cycles in existing data.
 		if( group==Groups.end() || group->second.IsDeleted )
@@ -183,11 +209,11 @@ namespace Jde::Access{
 		for( auto member : group->second.Members ){
 			if( member.IsUser() ){
 				users.emplace( member.UserPK() );
-				if( auto user = clear ? Users.find(member.UserPK()) : Users.end(); user!=Users.end() )
+				if( auto user = Users.find(member.UserPK()); user!=Users.end() )
 					user->second.Clear();
 			}
 			else{
-				let groupUsers = RecursiveUsers( member.GroupPK(), clear, visited );
+				let groupUsers = RecursiveUsers( member.GroupPK(), visited );
 				users.insert( groupUsers.begin(), groupUsers.end() );
 			}
 		}
@@ -208,13 +234,13 @@ namespace Jde::Access{
 				GroupPK childGroup{ member };
 				existing.Members.emplace( childGroup );
 				TRACET( _ptags, "[{}+{}]AddToGroup", groupPK.Value, childGroup.Value );
-				let groupUsers = RecursiveUsers( childGroup, true );
+				let groupUsers = RecursiveUsers( childGroup );
 				for( let user : groupUsers )
 					users.emplace( user );
 			}
 		}
 		if( users.size() )
-			SetUserPermissions( move(users) );
+			SetUserPermissions( users );
 	}
 	α Authorize::RemoveFromGroup( GroupPK groupPK, flat_set<IdentityPK::Type> members )ι->void{
 		ul _{ Mutex };
@@ -231,13 +257,13 @@ namespace Jde::Access{
 				users.emplace( pkUser->first );
 			}
 			else if( !existing->IsUser() ){
-				for( let user : RecursiveUsers(existing->GroupPK(), true) )
+				for( let user : RecursiveUsers(existing->GroupPK()) )
 					users.emplace( user );
 			}
 			group->second.Members.erase( existing );
 		}
 		if( users.size() )
-			SetUserPermissions( move(users) );
+			SetUserPermissions( users );
 	}
 
 
@@ -250,11 +276,11 @@ namespace Jde::Access{
 	}
 
 	α Authorize::RecalcGroupMembers( GroupPK groupPK, bool remove )ι->void{
-		auto users = RecursiveUsers( groupPK, true );
+		auto users = RecursiveUsers( groupPK );
 		if( remove )
 			Groups.erase( groupPK );
 		if( users.size() )
-			SetUserPermissions( move(users) );
+			SetUserPermissions( users );
 	}
 	α Authorize::AddAclEntry( IdentityPK identityPK, PermissionRole permissionRole )ι->void{
 		let range = Acl.equal_range( identityPK );
@@ -264,22 +290,22 @@ namespace Jde::Access{
 		}
 		Acl.emplace( identityPK, permissionRole );
 	}
-	α Authorize::AddAcl( IdentityPK::Type userGroupPK, PermissionPK permissionPK, ERights allowed, ERights denied, ResourcePK resourcePK )ι->void{
+	α Authorize::AddAcl( IdentityPK::Type userGroupPK, const Permission& permission )ι->void{
 		ul _{ Mutex };
-		const PermissionRole permissionRole{ std::in_place_index<0>, permissionPK };
-		ASSERT( Resources.find(resourcePK)!=Resources.end() );
+		const PermissionRole permissionRole{ std::in_place_index<0>, permission.PK };
+		ASSERT( Resources.find(permission.ResourcePK)!=Resources.end() );
 		//access_ac_upsert_permission is an upsert on (identity, resource) - a re-grant returns the same pk carrying new rights.
-		auto existing = Permissions.find( permissionPK );
-		let changed = existing!=Permissions.end() && (existing->second.Allowed!=allowed || existing->second.Denied!=denied || existing->second.ResourcePK!=resourcePK);
-		Permissions.insert_or_assign( permissionPK, Permission{permissionPK, resourcePK, allowed, denied} );
-		auto user = Users.find( {userGroupPK} );
-		let identityPK = user!=Users.end() ? IdentityPK{ user->first } : IdentityPK{ GroupPK{userGroupPK} };
+		auto existing = Permissions.find( permission.PK );
+		let changed = existing!=Permissions.end() && (existing->second.Allowed!=permission.Allowed || existing->second.Denied!=permission.Denied || existing->second.ResourcePK!=permission.ResourcePK);
+		Permissions.insert_or_assign( permission.PK, permission );
+		let identityPK = ToIdentityPK( userGroupPK );
 		AddAclEntry( identityPK, permissionRole );
 		if( changed )
 			Recalc();//rebuild everything - the pk may be cached on identities other than this one.
-		else if( user!=Users.end() ){
-			user->second.Clear();//rebuild, operator+= can only raise rights.
-			SetUserPermissions( {user->first} );
+		else if( identityPK.IsUser() ){
+			if( auto user = Users.find(identityPK.UserPK()); user!=Users.end() )
+				user->second.Clear();//rebuild, operator+= can only raise rights.
+			SetUserPermissions( {identityPK.UserPK()} );
 		}
 		else
 			RecalcGroupMembers( identityPK.GroupPK() );
@@ -287,18 +313,17 @@ namespace Jde::Access{
 
 	α Authorize::AddAcl( IdentityPK::Type userGroupPK, RolePK rolePK )ι->void{
 		ul _{ Mutex };
-		auto user = Users.find( {userGroupPK} );
-		let identityPK = user!=Users.end() ? IdentityPK{ user->first } : IdentityPK{ GroupPK{userGroupPK} };
+		let identityPK = ToIdentityPK( userGroupPK );
 		AddAclEntry( identityPK, PermissionRole{std::in_place_index<1>, rolePK} );
-		if( user!=Users.end() )
-			AddPermission( identityPK, PermissionRole{std::in_place_index<1>, rolePK}, {user->first} );
+		if( identityPK.IsUser() )
+			AddPermission( identityPK, PermissionRole{std::in_place_index<1>, rolePK}, {identityPK.UserPK()} );
 		else
 			RecalcGroupMembers( identityPK.GroupPK() );
 	}
 	α Authorize::RemoveAcl( IdentityPK::Type userGroupPK, PermissionRole rolePK )ι->void{
 		ul _{ Mutex };
 		let identityPK = ToIdentityPK( userGroupPK );
-		auto permissionRoles = Acl.equal_range( ToIdentityPK(userGroupPK) );
+		auto permissionRoles = Acl.equal_range( identityPK );
 		for( auto p=permissionRoles.first; p!=permissionRoles.second; ++p ){
 			if( p->second==rolePK ){
 				Acl.erase( p );
@@ -321,8 +346,7 @@ namespace Jde::Access{
 
 	α Authorize::CreateResource( Resource&& resource )ε->void{
 		ul _{ Mutex };
-		if( !resource.IsDeleted )//as Loader::Resources registers every active row:  a row created active is enforced - and found by TestSchemaAdmin - now, not at the next start (appserver-review3 #13).
-			SchemaResources[resource.Schema][resource.Slug][resource.Criteria] = resource.PK;
+		Index( resource );//as Load registers every active row:  a row created active is enforced - and found by TestSchemaAdmin - now, not at the next start (appserver-review3 #13).
 		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and resource purges are not subscribed, so the entry may be a stale deleted row.
 	}
 	//A pk names one row.  No pk - the fan-out could not pick one, because a by-slug delete hit several - names every row of that
@@ -338,18 +362,11 @@ namespace Jde::Access{
 				continue;
 			++applied;
 			resource.IsDeleted = restored ? optional<DB::DBTimePoint>{} : DB::DBClock::now();
-			if( resource.Criteria.empty() ){
-				if( auto resources = resource.IsDeleted ? SchemaResources.find(resource.Schema) : SchemaResources.end(); resources!=SchemaResources.end() ){
-					resources->second.erase( resource.Slug );
-					DBGT( _ptags, "[{}.{}.{}]Deleted from schema resource.", resource.Schema, resource.Slug, resource.PK );
-				}
-				else if( !resource.IsDeleted ){
-					auto& slugResources = SchemaResources.try_emplace( string{resource.Schema} ).first->second;
-					auto& criteras = slugResources.try_emplace( resource.Slug ).first->second;
-					criteras.try_emplace( {}, resource.PK );
-					DBGT( _ptags, "[{}.{}.{}]Restored from schema resource.", resource.Schema, resource.Slug, resource.PK );
-				}
-			}
+			if( restored )
+				Index( resource );
+			else
+				Unindex( resource );//this row alone, as the loader would leave it.  A missing root already disables its slug (FindActiveResourcePKLocked);  erasing the slug's criteria rows with it lost them until a restart.
+			DBGT( _ptags, "[{}.{}.{}]{} schema resource.", resource.Schema, resource.Slug, resource.PK, restored ? "Restored" : "Deleted" );
 		}
 		// ie Testing schema where testing app isn't started.
 		THROW_IFX( !applied, Exception(SRCE_CUR, ELogLevel::Debug, "Resource not found pk: {}, schema:'{}', args:'{}'", pk, schemaName, serialize(args)) );
@@ -376,8 +393,8 @@ namespace Jde::Access{
 	//a purged identity's acl rows and memberships are inert (lookups skip what isn't in Users/Groups) but would leak for the process lifetime.
 	α Authorize::PurgeIdentity( IdentityPK identityPK )ι->void{
 		Acl.erase( identityPK );
-		for( auto group=Groups.begin(); group!=Groups.end(); ++group )
-			group->second.Members.erase( identityPK );//IdentityPK orders on Underlying(), so this matches a user or group member.
+		for( let& group : Groups )
+			group.second.Members.erase( identityPK );//IdentityPK orders on Underlying(), so this matches a user or group member.
 	}
 	α Authorize::PurgeUser( UserPK identityPK )ι->void{
 		ul _{ Mutex };
@@ -394,10 +411,10 @@ namespace Jde::Access{
 		auto p = Groups.find( groupPK );
 		if( p==Groups.end() || p->second.IsDeleted )
 			return;
-		auto users = RecursiveUsers( groupPK, true );//collect+clear while still active, RecursiveUsers early-outs on a deleted group.
+		auto users = RecursiveUsers( groupPK );//collect+clear while still active, RecursiveUsers early-outs on a deleted group.
 		p->second.IsDeleted = true;//soft delete, symmetric with DeleteUser - RestoreGroup needs the row.
 		if( users.size() )
-			SetUserPermissions( move(users) );
+			SetUserPermissions( users );
 	}
 	//TODO test on deleted members.
 	α Authorize::TestAddGroupMember( GroupPK parentGroupPK/*groupD*/, flat_set<IdentityPK::Type>&& memberPKs, SL sl )ε->void{
@@ -445,7 +462,7 @@ namespace Jde::Access{
 		auto p = Roles.find( parent );
 		return p!=Roles.end() && p->second.Members.contains( PermissionRole{std::in_place_index<1>, child} );
 	}
-	α Authorize::AddRolePermission( RolePK rolePK, PermissionPK member, ERights allowed, ERights denied, const jobject& jResource )ι->void{
+	α Authorize::AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& jResource )ι->void{
 		ul _{ Mutex };
 		Resource resource{ jResource };
 		optional<ResourcePK> resourcePK;
@@ -457,10 +474,7 @@ namespace Jde::Access{
 			return cached.Slug!=resource.Slug || (resource.Schema.size() && cached.Schema!=resource.Schema) || (jResource.contains("criteria") && cached.Criteria!=resource.Criteria);
 		};
 		if( found && found->PK==resource.PK && resource.Slug.size() && names(*found) ){
-			if( auto schema = SchemaResources.find(found->Schema); schema!=SchemaResources.end() ){
-				if( auto slug = schema->second.find(found->Slug); slug!=schema->second.end() && Find(slug->second, found->Criteria)==found->PK )
-					slug->second.erase( found->Criteria );
-			}
+			Unindex( *found );
 			found = nullptr;
 		}
 		if( found )
@@ -468,24 +482,23 @@ namespace Jde::Access{
 		else if( resource.PK ){ //new resource, or a reused pk's
 			auto& saved = Resources.insert_or_assign( resource.PK, move(resource) ).first->second;
 			ASSERT( saved.Schema.size() && saved.Slug.size() );
-			if( !saved.IsDeleted )//as CreateResource:  a row a role grant created unenforced is cached - so a grant by id finds it, and enforcing it is the toggle's to do - but not enforced here (reviews/m3-closing.md #11)
-				SchemaResources[saved.Schema][saved.Slug][saved.Criteria] = saved.PK;
+			Index( saved );//as CreateResource:  a row a role grant created unenforced is cached - so a grant by id finds it, and enforcing it is the toggle's to do - but not enforced here (reviews/m3-closing.md #11)
 			resourcePK = saved.PK;
 		}
-		if( auto permission = Permissions.find(member); permission!=Permissions.end() ){ //a re-grant, or a purged pk the db reused (sqlite) - the entry outlives PurgeAcl/RemoveRoleChildren, so take the resource from the payload like AddAcl does, not from the stale entry.
-			permission->second.Allowed = allowed;
-			permission->second.Denied = denied;
+		if( auto existing = Permissions.find(permission.PK); existing!=Permissions.end() ){ //a re-grant, or a purged pk the db reused (sqlite) - the entry outlives PurgeAcl/RemoveRoleChildren, so take the resource from the payload like AddAcl does, not from the stale entry.
+			existing->second.Allowed = permission.Allowed;
+			existing->second.Denied = permission.Denied;
 			if( resourcePK )
-				permission->second.ResourcePK = *resourcePK;
+				existing->second.ResourcePK = *resourcePK;
 		}
 		else if( resourcePK )
-			Permissions.emplace( member, Permission{member, *resourcePK, allowed, denied} );
+			Permissions.emplace( permission.PK, Permission{permission.PK, *resourcePK, permission.Allowed, permission.Denied} );
 		else
-			DBGT( _ptags, "[{}]Role permission grants on '{}', a resource neither cached nor named by id in the grant - it applies once the resource loads.", member, resource.Slug );//RoleMAwait now names every row it finds, deleted ones included (reviews/m3-closing.md #11), so this is a grant on a row the db does not have
+			DBGT( _ptags, "[{}]Role permission grants on '{}', a resource neither cached nor named by id in the grant - it applies once the resource loads.", permission.PK, resource.Slug );//RoleMAwait now names every row it finds, deleted ones included (reviews/m3-closing.md #11), so this is a grant on a row the db does not have
 		auto role = Roles.try_emplace( rolePK, rolePK, false );
-		role.first->second.Members.emplace( PermissionRole{std::in_place_index<0>, member} );
+		role.first->second.Members.emplace( PermissionRole{std::in_place_index<0>, permission.PK} );
 		Recalc();
-		TRACET( _ptags, "[{}+{}]Added role permission.", rolePK, member );
+		TRACET( _ptags, "[{}+{}]Added role permission.", rolePK, permission.PK );
 	}
 	α Authorize::AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePKs )ι->void{
 		ul _{ Mutex };
@@ -533,8 +546,8 @@ namespace Jde::Access{
 		const PermissionRole member{ std::in_place_index<1>, rolePK };
 		for( auto acl=Acl.begin(); acl!=Acl.end(); )//Acl is keyed by identity, so a role has to be swept by value.
 			acl = acl->second==member ? Acl.erase( acl ) : std::next( acl );
-		for( auto role=Roles.begin(); role!=Roles.end(); ++role )
-			role->second.Members.erase( member );
+		for( let& role : Roles )
+			role.second.Members.erase( member );
 		if( !deleted )
 			Recalc();
 	}
@@ -575,7 +588,7 @@ namespace Jde::Access{
 			user.second.Clear();
 		SetUserPermissions( {} );
 	}
-	α Authorize::SetUserPermissions( flat_set<UserPK>&& users )ι->void{
+	α Authorize::SetUserPermissions( const flat_set<UserPK>& users )ι->void{
 		for( let& [identityPK,permissionRole] : Acl )
 			AddPermission( identityPK, permissionRole, users );
 	}

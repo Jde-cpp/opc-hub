@@ -21,13 +21,6 @@ namespace Jde::Access::Tests{
 
 	α RoleTests::SetUpTestCase()->void{
 	}
-	//AclTests.cpp
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
-	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject;
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
-	α CreateAcl( IdentityPK identityPK, RolePK rolePK, UserPK executer )ε->void;
-	α SelectAcl( IdentityPK identityPK, RolePK rolePK )ε->jobject;
-	α restoreResource( string name, UserPK executer )ε->void;
 	α RemoveRolePermission( RolePK rolePK, PermissionPK permissionPK, UserPK userPK )ε->jvalue{
 		let remove = Ƒ( "mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK, permissionPK );
 		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(remove, {}, Schemas()), userPK} );
@@ -128,6 +121,21 @@ namespace Jde::Access::Tests{
 		Purge( "role", parent, GetRoot() );
 		Purge( "role", child, GetRoot() );
 	}
+	//access-refactor A5:  add and remove share one member path, slug lookup included - the seed adds by slug, nothing removed by one.
+	TEST_F( RoleTests, RemoveChildBySlug ){
+		let root = GetRoot();
+		const RolePK parent{ GetId(getRole("roleRemoveSlugParent", root)) };
+		const RolePK child{ GetId(getRole("roleRemoveSlugChild", root)) };
+		auto mutate = [&]( sv op ){ BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ(R"(mutation {}Role( slug:"roleRemoveSlugParent", role:{{ slug:"roleRemoveSlugChild" }} ))", op), {}, Schemas()), root} ); };
+		mutate( "add" );
+		ASSERT_FALSE( GetRoleChild(parent, child, root).empty() );
+		ASSERT_TRUE( Authorizer()->IsRoleMember(parent, child) );
+		mutate( "remove" );
+		EXPECT_TRUE( GetRoleChild(parent, child, root).empty() );
+		EXPECT_FALSE( Authorizer()->IsRoleMember(parent, child) ) << "the published mutation did not carry the resolved ids";
+		Purge( "role", parent, root );
+		Purge( "role", child, root );
+	}
 
 	//access-review3 #2: access_role_remove's deletes were keyed on the permission alone, and both ids come from the client -
 	//a (role, permission) pair that doesn't match destroyed another role's rights row, or a direct acl grant's.  The proc
@@ -163,7 +171,9 @@ namespace Jde::Access::Tests{
 		EXPECT_THROW( mutate("mutation addRole( id:1, role:null )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1, permissionRight:5 )"), Exception );
 		EXPECT_THROW( mutate("mutation removeRole( id:1, role:\"x\" )"), Exception );
-		EXPECT_THROW( mutate("mutation removeRole( id:1, permissionRight:5 )"), Exception ); //RemovePermission reads the id inside its try.
+		EXPECT_THROW( mutate("mutation removeRole( id:1, permissionRight:5 )"), Exception );
+		EXPECT_THROW( mutate("mutation addRole( id:1, role:{} )"), Exception ); //neither 'id' nor 'slug' in the member.
+		EXPECT_THROW( mutate("mutation removeRole( id:1, role:{} )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1 )"), Exception ); //neither key - the refusal that was already there.
 	}
 
@@ -172,7 +182,7 @@ namespace Jde::Access::Tests{
 	//half-destroyed on the autocommit dialects.  Neither shape was covered:  the other purges here are of roles never granted.
 	TEST_F( RoleTests, PurgeAssignedRole ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
+		RestoreResource( "groups", root );
 		const RolePK rolePK{ (RolePK)GetId(getRole("rolePurgeAssigned", root)) };
 		AddRolePermission( rolePK, "groups", ERights::Read, ERights::None, root );
 		const UserPK user{ GetId(GetUser("rolePurgeAssignedUser", root)) };
@@ -202,7 +212,7 @@ namespace Jde::Access::Tests{
 	//parent's own permission rows still go with it - a purge leaves no orphans behind.
 	TEST_F( RoleTests, PurgeParentKeepsChildGrants ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
+		RestoreResource( "groups", root );
 		const RolePK parent{ (RolePK)GetId(getRole("rolePurgeParentGrants", root)) };
 		const RolePK child{ (RolePK)GetId(getRole("rolePurgeChildGrants", root)) };
 		ASSERT_FALSE( AddRoleMember(parent, child, root).empty() );

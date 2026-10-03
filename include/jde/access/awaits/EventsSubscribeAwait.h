@@ -1,6 +1,5 @@
 #pragma once
 #include <jde/ql/ql.h>
-//#include "../accessInternal.h"
 
 namespace Jde::Access{
 	enum class ESubscription : uint16;

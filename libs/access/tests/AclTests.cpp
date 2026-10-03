@@ -83,7 +83,7 @@ namespace Jde::Access::Tests{
 		}
 		return entry;
 	}
-	α restoreResource( string name, UserPK executer )ε->void{
+	α RestoreResource( string name, UserPK executer )ε->void{
 		auto resource = SelectResource( name, executer, true );
 		if( !resource.at("deleted").is_null() )
 			Restore( "resources", GetId(resource), executer );
@@ -131,7 +131,7 @@ namespace Jde::Access::Tests{
 		if( let existingPermission = GetRolePermission( rolePK, resourceName, GetRoot() ); !existingPermission.empty() )
 			RemoveRolePermission( rolePK, GetId(existingPermission), GetRoot() );
 		EXPECT_THROW( AddRolePermission(rolePK, resourceName, ERights::All, ERights::None, executer), Exception );
-		restoreResource( "roles", GetRoot() );
+		RestoreResource( "roles", GetRoot() );
 		EXPECT_THROW( CreateAcl(_usersPKs["intruder"], rolePK, executer), Exception );
 		//review #3 #1 - RoleMAwait's add/remove branches gate on the executer, not only the cycle check.
 		let childRolePK = GetId( Get("role", "EnabledPermissionsTestChild", GetRoot()) );
@@ -150,14 +150,14 @@ namespace Jde::Access::Tests{
 
 	TEST_F( AclTests, EnabledPermissions ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		TestEnabeledPermissions( resourceName, "EnabledPermissions-Group3", _usersPKs["intruder"] );
 		TRACET( ELogTags::Test, "EnabledPermissions" );
 	}
 
 	TEST_F( AclTests, DeletedUser ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		auto juser = GetUser( "deletedRoot", GetRoot(), true );
 		UserPK executer{ GetId( juser ) };
 		GetAcl( executer, "groups", ERights::All, ERights::None );
@@ -168,7 +168,7 @@ namespace Jde::Access::Tests{
 
 	TEST_F( AclTests, TestHierarchy ){
 		let groupResource = "groups";
-		restoreResource( groupResource, GetRoot() );
+		RestoreResource( groupResource, GetRoot() );
 		let adminGroup = Tests::GetGroup( "HierarchyGroupAdmin", GetRoot() );
 		GroupPK adminGroupPK{ GetId( adminGroup ) };
 
@@ -219,7 +219,7 @@ namespace Jde::Access::Tests{
 	}
 	TEST_F( AclTests, TestDeny ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 
 		let deniedGroup = Tests::GetGroup( "DeniedGroup", GetRoot() );
 		let deniedGroupPK = GetId( deniedGroup );
@@ -243,7 +243,7 @@ namespace Jde::Access::Tests{
 	}
 	TEST_F( AclTests, RemoveRoleChild ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("roleChildUser", GetRoot()) ) };
 		let parentRolePK = GetId( Get("role", "RoleChildParent", GetRoot()) );
 		let childRolePK = GetId( Get("role", "RoleChildChild", GetRoot()) );
@@ -257,7 +257,7 @@ namespace Jde::Access::Tests{
 	}
 	TEST_F( AclTests, PurgeAcl ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("purgeAclUser", GetRoot()) ) };
 		let permissionPK = Json::AsNumber<PermissionRightsPK>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" );
 		let groupId = TestCrud( resourceName, "AclTests-PurgeAcl-Group", executer );
@@ -272,7 +272,7 @@ namespace Jde::Access::Tests{
 	//subscription, this pins the startup registration end to end - the mutation, then Authorize::Rights.
 	TEST_F( AclTests, UpdatePermissionRightReachesTheCache ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("permissionUpdateUser", GetRoot()) ) };
 		let permissionPK = Json::AsNumber<PermissionRightsPK>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" );
 		ASSERT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::All );
@@ -293,7 +293,7 @@ namespace Jde::Access::Tests{
 	//invented, the cache is the subject.
 	TEST_F( AclTests, PartialPermissionRightPayloadDoesNotTerminate ){
 		let resourceName = "groups";
-		restoreResource( resourceName, GetRoot() );
+		RestoreResource( resourceName, GetRoot() );
 		let resourcePK = GetId( SelectResource(resourceName, GetRoot()) );
 		UserPK executer{ GetId( GetUser("partialPayloadUser", GetRoot()) ) };
 		let rolePK = GetId( Get("role", "PartialPayloadRole", GetRoot()) );
@@ -323,8 +323,8 @@ namespace Jde::Access::Tests{
 	//from access_permissions.is_role, either spelling is accepted, and the notification carries the key the pk is, so the cache's
 	//RemoveAcl finds the right entry whichever the client sent.
 	TEST_F( AclTests, PurgeAclGatesOnWhatThePkIs ){
-		restoreResource( "roles", GetRoot() );
-		restoreResource( "groups", GetRoot() );
+		RestoreResource( "roles", GetRoot() );
+		RestoreResource( "groups", GetRoot() );
 		UserPK rolesAdmin{ GetId( GetUser("purgeAclRolesAdmin", GetRoot()) ) };
 		UserPK groupsAdmin{ GetId( GetUser("purgeAclGroupsAdmin", GetRoot()) ) };
 		UserPK victim{ GetId( GetUser("purgeAclVictim", GetRoot()) ) };
@@ -379,11 +379,11 @@ namespace Jde::Access::Tests{
 
 		let first = grant( ERights::Read | ERights::Administer );
 		ASSERT_EQ( aclRows(), 1u );
-		EXPECT_NO_THROW( Authorizer()->TestAdmin(resourcePK, user) );
+		EXPECT_NO_THROW( Authorizer()->TestAdminResource(resourcePK, user) );
 		let second = grant( ERights::Read ); //narrowed by a re-grant - the upsert the proc's name promises.
 		EXPECT_EQ( second, first ) << "the same (identity, resource) has to come back as the same permission";
 		EXPECT_EQ( aclRows(), 1u ) << "not a second acl row";
-		EXPECT_THROW( Authorizer()->TestAdmin(resourcePK, user), Exception ) << "Administer is gone live, not OR'd in from the first grant";
+		EXPECT_THROW( Authorizer()->TestAdminResource(resourcePK, user), Exception ) << "Administer is gone live, not OR'd in from the first grant";
 		let reloaded = BlockAwait<AclLoadAwait, flat_multimap<IdentityPK,PermissionRole>>( AclLoadAwait{QLPtr(), system} );
 		EXPECT_EQ( reloaded.count(IdentityPK{user}), 1u ) << "and after a reload"; //the user holds nothing else.
 		PurgeAcl( user, first, system );
@@ -394,7 +394,7 @@ namespace Jde::Access::Tests{
 	//takes the children first, so the identity goes cleanly.
 	TEST_F( AclTests, PurgeUserWithGrantAndMembership ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
+		RestoreResource( "groups", root );
 		const UserPK user{ GetId(GetUser("purgeUserInUse", root)) };
 		GetAcl( user, "groups", ERights::All, ERights::None );
 		const GroupPK group{ GetId(GetGroup("purgeUserInUseGroup", root)) };
@@ -415,7 +415,7 @@ namespace Jde::Access::Tests{
 	//fk from the acl row and from its own member_id row in the parent.  access_group_purge takes both first.
 	TEST_F( AclTests, PurgeGroupWithGrantAndMembership ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
+		RestoreResource( "groups", root );
 		const GroupPK group{ GetId(GetGroup("purgeGroupInUse", root)) };
 		const GroupPK parent{ GetId(GetGroup("purgeGroupInUseParent", root)) };
 		CreateAcl( IdentityPK{group}, ERights::All, ERights::None, "groups", root );
@@ -445,7 +445,7 @@ namespace Jde::Access::Tests{
 	}
 	TEST_F( AclTests, UserRightsProvenance ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
+		RestoreResource( "groups", root );
 		const UserPK user{ GetId(GetUser("userRightsUser", root)) };
 		let group = GetGroup( "userRightsGroup", root );
 		const GroupPK groupPK{ GetId(group) };
@@ -516,7 +516,7 @@ namespace Jde::Access::Tests{
 		auto resource = SelectResource( "acl", GetRoot(), true );
 		ASSERT_FALSE( resource.at("deleted").is_null() ) << "created disabled, like every synced resource";
 		let permissionPK = CreateAcl( GetRoot(), ERights::All, ERights::None, "acl", {UserPK::System} );
-		restoreResource( "acl", GetRoot() );
+		RestoreResource( "acl", GetRoot() );
 		let intruder = _usersPKs["intruder"];
 		let reader = _usersPKs["reader"];
 		EXPECT_THROW( userRights(reader, intruder), Exception );
@@ -534,7 +534,7 @@ namespace Jde::Access::Tests{
 		ASSERT_FALSE( resource.empty() ) << "ResourceSync has to create the acl resource";
 		ASSERT_FALSE( resource.at("deleted").is_null() ) << "created disabled, like every synced resource";
 		let permissionPK = CreateAcl( GetRoot(), ERights::All, ERights::None, "acl", {UserPK::System} ); //grant root while disabled.
-		restoreResource( "acl", GetRoot() );
+		RestoreResource( "acl", GetRoot() );
 		let intruder = _usersPKs["intruder"];
 		let q = "acl( identityId:$identityId ){ identityId permissionRight{id} }";
 		jobject vars{ {"identityId", intruder.Value} };
@@ -546,4 +546,37 @@ namespace Jde::Access::Tests{
 		//the row stays, disabled, as the sync left it - ResourceTests.CheckDefaults counts it now.
 	}
 	//remove user from group/role.
+
+	//access-refactor A8:  the json each acl( … ){ <child> } select returns - the shapes access-service.ts and SelectAcl read.  The
+	//child table's columns nest under its singular, its pk renamed `id`;  acl's own columns, and the identities join's, go
+	//under `identity`.  An identities child is the exception:  rows under `identities`, shaped by the query.
+	TEST_F( AclTests, SelectShapes ){
+		let root = GetRoot();
+		let userJson = GetUser( "aclShapeUser", root );
+		const UserPK user{ GetId(userJson) };
+		let name = Json::AsString( userJson, "name" );
+		const RolePK rolePK{ (RolePK)GetId(Get("role", "aclShapeRole", root)) };
+		let grant = CreateAcl( user, ERights::Read, ERights::Update, "groups", root );
+		CreateAcl( user, rolePK, root );
+		let groupsPK = AsNumber<ResourcePK>( SelectResource("groups", root, true), "id" );
+		let select = [&]( string ql ){ return BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(ql, {}, Schemas()), root} ); };
+		let expect = [&]( string args, string children, string json ){ EXPECT_EQ( select(Ƒ("acl( {} ){{ {} }}", args, children)), parse(json) ) << children; };
+		let byUser = Ƒ( "identityId:{}", user.Value );
+		expect( byUser, "identityId permissionRight{ id allowed denied resource{ id slug deleted } }",
+			Ƒ(R"([{{"permissionRight":{{"id":{},"allowed":2,"denied":4,"resource":{{"id":{},"slug":"groups","deleted":null}}}},"identity":{{"id":{}}}}}])", grant, groupsPK, user.Value) );
+		expect( byUser, "permissionRights{ id resource{ id deleted } }",
+			Ƒ(R"([{{"permissionRight":{{"id":{},"resource":{{"id":{},"deleted":null}}}}}}])", grant, groupsPK) );
+		expect( byUser, "identityId role{ id slug deleted }",
+			Ƒ(R"([{{"role":{{"id":{},"slug":"aclShapeRole","deleted":null}},"identity":{{"id":{}}}}}])", rolePK, user.Value) );
+		expect( byUser, "identities{ name } permissionRight{ id }",
+			Ƒ(R"([{{"permissionRight":{{"id":{}}},"identity":{{"name":"{}"}}}}])", grant, name) );
+		expect( Ƒ("permissionId:{}", grant), "identities{ id isGroup }",
+			Ƒ(R"([{{"identities":[{{"id":{},"isGroup":false}}]}}])", user.Value) );
+		expect( byUser, "identityId permissions{ id }",
+			Ƒ(R"([{{"permissions":{{"id":{}}},"identityId":{}}},{{"permissions":{{"id":{}}},"identityId":{}}}])", std::min<uint>(rolePK, grant), user.Value, std::max<uint>(rolePK, grant), user.Value) );
+
+		PurgeAcl( user, grant, root );
+		Purge( "role", rolePK, root );
+		PurgeUser( user, root );
+	}
 }

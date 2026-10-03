@@ -167,6 +167,19 @@ namespace Jde::DB::Sqlite::Tests{
 	//#43: ExecuteProc's catch(...) issues `rollback` unconditionally, and ExecuteStatement throws on a failed step - so
 	//when sqlite had already auto-rolled-back (SQLITE_FULL/IOERR/NOMEM/INTERRUPT) the `throw;` never ran and the real
 	//failure was replaced by "cannot rollback - no transaction is active", reported as EDbError::Syntax.
+	//access-refactor B3:  every access twin that indexes params is registered with its count, so a short call is an error
+	//naming it - not a read past the end of the vector.  Seven used to omit the count, which left them unchecked.
+	TEST_P( SchemaTests, AccessProcsCheckTheirArity ){
+		constexpr array<std::pair<sv,uint>,13> twins{ {{"access_ac_insert_role",2}, {"access_ac_upsert_permission",4}, {"access_group_purge",1},
+			{"access_identity_insert",7}, {"access_provider_purge",1}, {"access_role_add",7}, {"access_role_insert",4}, {"access_role_purge",1},
+			{"access_role_remove",2}, {"access_user_insert",5}, {"access_user_insert_key",12}, {"access_user_insert_login",3}, {"access_user_purge",1}} };
+		for( let& [proc, count] : twins ){
+			string what;
+			try{ _ds->ExecuteSync( DB::Sql{Ƒ("{}()", proc), {}, true} ); }
+			catch( const Exception& e ){ what = e.what(); }
+			EXPECT_NE( what.find(Ƒ("expects {} params", count)), string::npos ) << proc << ": " << what;
+		}
+	}
 	TEST_P( SchemaTests, ProcRollbackKeepsTheOriginalError ){
 		let scalar = [&]( sv text ){ return BlockAwait<ScalerAwait<uint>,uint>( _ds->Scaler<uint>(DB::Sql{string{text}}) ); };
 		let message = [&]( DB::Sql&& sql ){

@@ -21,8 +21,9 @@ namespace Jde::DB::Sqlite{
 		//minParams = the twin's declared parameter count, checked centrally at dispatch: bodies index params[N]
 		//positionally and would otherwise read past the end of a short vector (a Value variant from uninitialized
 		//memory - bad_variant_access or a segfault inside a dlopen'd .so).  `<`, not `!=`: callers append an out
-		//placeholder the twins ignore, so extra trailing params are expected.  0 (the default) = unchecked.
-		β RegisterProc( string name, ProcΛ proc, uint minParams=0 )ι->void =0;
+		//placeholder the twins ignore, so extra trailing params are expected.  0 = unchecked, for a twin that takes none.  No
+		//default:  an omitted count was no check at all, and seven twins had omitted it (access-refactor B3).
+		β RegisterProc( string name, ProcΛ proc, uint minParams )ι->void =0;
 		β ExecuteStatement( sqlite3& db, sv sql, const vector<Value>& params, RowΛ* onRow, SL sl )ε->uint =0; //rows affected
 		β ScalarUInt( sqlite3& db, sv sql, const vector<Value>& params, SL sl )ε->optional<uint> =0;
 		β LastInsertRowId( sqlite3& db )Ι->uint =0; //sqlite3_last_insert_rowid - here so proc DLLs needn't link their own sqlite3 copy.

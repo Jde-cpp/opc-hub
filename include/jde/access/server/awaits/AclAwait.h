@@ -33,12 +33,10 @@ namespace Jde::Access::Server{
 			_executer{ executer }
 		{}
 		α Suspend()ι->void;
+		struct Nest final{ Nest( string table, vector<string> path )ε; string Table; vector<string> Path; string IdKey; };//where a joined table's columns land in each row.
 	private:
 		α GetStatement( const QL::TableQL& childTable, sp<DB::Column> joinColumn )ε->DB::Statement;
-		α LoadRoles( const QL::TableQL& permissionRightsQL )ι->DB::SelectAwait::Task;
-		α LoadPermissionRights( const QL::TableQL& permissionRightsQL )ι->DB::SelectAwait::Task;
-		α LoadPermissions( const QL::TableQL& permissionsQL )ι->DB::SelectAwait::Task;
-		α LoadIdentities( const QL::TableQL& identitiesQL )ι->DB::SelectAwait::Task;
+		α Load( DB::Statement statement, vector<Nest> nesting, const QL::TableQL* identitiesQL={} )ι->DB::SelectAwait::Task;
 		QL::TableQL Query;
 		Jde::UserPK _executer;
 	};

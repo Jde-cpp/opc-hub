@@ -34,6 +34,47 @@ namespace Jde::Access::Tests{
 		EXPECT_TRUE( QL::Subscriptions::StopListen(listener).empty() ) << "a reload subscribed a second time - every event would now arrive twice";
 	}
 
+	//access-refactor A1:  a reload is one swap.  The chain it replaced swapped Users for fresh, rightless User objects, then ran
+	//five more queries before SetUserPermissions - and a live service refused every request in between.  Each loader query here
+	//first asks the authorizer for a grant the old snapshot holds.
+	struct ProbingQL final : ForwardingQL{
+		ProbingQL( sp<QL::IQL> inner, function<void()> probe )ι:ForwardingQL{ move(inner) }, _probe{ move(probe) }{}
+		α QueryArray( string query, jobject vars, UserPK executer, bool returnRaw, SL sl )ε->up<TAwait<jarray>> override{
+			_probe();
+			return ForwardingQL::QueryArray( move(query), move(vars), executer, returnRaw, sl );
+		}
+		function<void()> _probe;
+	};
+	TEST( ConfigureReloadTests, ReloadKeepsTheOldSnapshotUntilItSwaps ){
+		let root = GetRoot();
+		const string slug{ "providerTypes" };//a synced table nothing here grants on but root.
+		const UserPK user{ GetId(GetUser("reload-window-grantee", root)) };
+		let resource = SelectResource( slug, root, true );
+		ASSERT_FALSE( resource.empty() );
+		const ResourcePK resourcePK{ GetId(resource) };
+		let wasDeleted = !resource.at("deleted").is_null();
+		if( wasDeleted )
+			Restore( "resources", resourcePK, root );//enforced, so the grant decides.
+		let grant = CreateAcl( user, ERights::Read, ERights::None, slug, root );
+
+		auto authorizer = ms<Access::Authorize>( "access" );
+		auto listener = ms<Access::AccessListener>( QLPtr() );
+		reload( authorizer, listener );
+		ASSERT_EQ( authorizer->Rights("access", slug, user), ERights::Read );
+
+		vector<ERights> seen;
+		auto probing = ms<ProbingQL>( QLPtr(), [&]{ seen.push_back( authorizer->Rights("access", slug, user) ); } );
+		BlockVoidAwait( ConfigureAwait{probing, Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
+		EXPECT_GE( seen.size(), 5u ) << "the probe did not see the loaders' queries";
+		EXPECT_TRUE( std::ranges::all_of(seen, [](ERights r){ return r==ERights::Read; }) ) << "a query ran while the authorizer held a half-loaded snapshot";
+		EXPECT_EQ( authorizer->Rights("access", slug, user), ERights::Read );
+
+		QL::Subscriptions::StopListen( listener );
+		PurgeAcl( user, grant, root );
+		if( wasDeleted )
+			Delete( "resources", resourcePK, root );
+	}
+
 	//The half of the reload that is not just "run the loaders again":  Loader::Resources used to `emplace` into maps it never cleared,
 	//which keeps the incumbent - so a resource that changed, or was deleted, while the socket was down would have kept its stale entry
 	//however many times the loaders ran.
@@ -55,8 +96,6 @@ namespace Jde::Access::Tests{
 	//the row live:  enforcement then ran against a map that never held it, and every identity was denied until a restart.  The
 	//regression the review asked for, without OPC:  a soft-deleted resource with a direct grant, loaded, restored through the
 	//listener's path, still resolves the grant.
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
 	struct RestoringAuthorize final : Access::Authorize{ using Authorize::Authorize; using Authorize::UpdateResourceDeleted; };//the listener's protected entry, driven by the test.
 	TEST( ConfigureReloadTests, LoadsRightsOnAnUnenforcedResource ){
 		let root = GetRoot();

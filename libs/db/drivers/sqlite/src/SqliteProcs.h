@@ -24,7 +24,7 @@ namespace Jde::DB::Sqlite{
 	//The IProcs handed to proc DLLs (see sqlite_api.h); forwards to the registry free functions above so a DLL
 	//can register + run statements without linking this driver.
 	struct ProcRegistry : IProcs{ //SqliteApi extends this to also track+unregister its dll's proc names.
-		α RegisterProc( string name, ProcΛ proc, uint minParams )ι->void override{ Sqlite::RegisterProc( move(name), move(proc), minParams ); } //default lives on IProcs - overrides must not restate it.
+		α RegisterProc( string name, ProcΛ proc, uint minParams )ι->void override{ Sqlite::RegisterProc( move(name), move(proc), minParams ); }
 		α ExecuteStatement( sqlite3& db, sv sql, const vector<Value>& params, RowΛ* onRow, SL sl )ε->uint override{ return Sqlite::ExecuteStatement( db, sql, params, onRow, sl ); }
 		α ScalarUInt( sqlite3& db, sv sql, const vector<Value>& params, SL sl )ε->optional<uint> override{ return Sqlite::ScalarUInt( db, sql, params, sl ); }
 		α LastInsertRowId( sqlite3& db )Ι->uint override{ return Sqlite::LastInsertRowId( db ); }

@@ -1,3 +1,4 @@
+#pragma once
 #include <jde/ql/QLHook.h>
 #include <jde/db/generators/Statement.h>
 

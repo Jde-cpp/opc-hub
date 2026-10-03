@@ -1,7 +1,7 @@
 #pragma once
 
 namespace Jde::DB{ struct AppSchema; struct IDataSource; struct Table; }
-namespace QL{ struct LocalQL; }
+namespace Jde::QL{ struct LocalQL; }
 namespace Jde::Access{ struct Authorize; }
 namespace Jde::Access::Server{
 	α LocalQL()ι->QL::LocalQL&;

@@ -34,6 +34,6 @@ namespace Jde::DB::Sqlite::AccessProcs{
 			if( onRow )
 				(*onRow)( Row{ {Value{*permissionId}} } ); //out _permission_id
 			return y;
-		});
+		}, 7 );
 	}
 }

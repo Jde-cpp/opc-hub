@@ -1,7 +1,6 @@
 #pragma once
 #include <jde/fwk/co/Await.h>
 #include <jde/ql/ql.h>
-#include <jde/access/types/Identities.h>
 
 namespace Jde::Access{
 	struct AccessListener;
@@ -10,9 +9,8 @@ namespace Jde::Access{
 			VoidAwait{sl}, Authorizer{authorizer}, Executer{executer}, Listener{listener}, OpcServerInstance{move(opcServerInstance)}, QlServer{qlServer}, Schemas{schemas}, Reload{reload}, AllSchemas{allSchemas}, SyncOnly{syncOnly}{
 				ASSERT( listener );
 			};
-		α Suspend()ι->void override{ if( Reload ) LoadUsers(); else SyncResources(); }
-		α SyncResources()ι->VoidTask;
-		α LoadUsers()ι->TAwait<Identities>::Task;
+		α Suspend()ι->void override{ Run(); }
+		α Run()ι->VoidTask;
 
 		sp<Authorize> Authorizer;
 		UserPK Executer;

@@ -141,7 +141,7 @@ namespace Jde::Opc::Server{
 			pk = Find( _nodeResources, node ).value_or( _rootResourcePK );//the governing resource - the nearest configured ancestor's, else root - exactly UserRights' resolution, so who may grant on a node is who administers what already protects it.
 		}
 		if( pk )//outside every configured branch - open, as UserRights leaves it.
-			TestAdmin( pk, user, sl );//no-op on a deleted row, as UserRights opens a deleted resource.
+			TestAdminResource( pk, user, sl );//no-op on a deleted row, as UserRights opens a deleted resource.
 	}
 
 	α OpcAuthorize::NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{

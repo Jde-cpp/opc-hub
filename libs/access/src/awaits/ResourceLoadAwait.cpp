@@ -8,16 +8,12 @@
 
 #define let const auto
 namespace Jde::Access{
-	Ω getSchemaName( const sp<DB::AppSchema>& schema, const string& opcServerInstance )ι->string{
-		return opcServerInstance.empty() ? schema->Name : Ƒ( "{}.{}", schema->Name, opcServerInstance );
-	}
-
 	α ResourceLoadAwait::Load()ι->QL::QLAwait<jarray>::Task{
 		ResourcePermissions y;
 		try{
 			jarray schemaNames;
 			for( let& schema : _schemas )
-				schemaNames.push_back( {getSchemaName(schema, _opcServerInstance)} );
+				schemaNames.push_back( {InstanceSchemaName(schema->Name, _opcServerInstance)} );
 			auto vars = _allSchemas ? jobject{} : jobject{ {"schemaNames", move(schemaNames)} };//explicit now - "app" in the list used to mean this.
 			auto input = _allSchemas ? "" : "(schemaName:$schemaNames)";
 			let resources = co_await *_qlServer->QueryArray( Ƒ("resources{}{{ id schemaName slug criteria deleted }}", input), vars, _executer );
@@ -45,7 +41,7 @@ namespace Jde::Access{
 	α ResourceSyncAwait::Sync()ι->TAwait<jvalue>::Task{
 		try{
 			for( let& schema : _schemas ){
-				let schemaName = getSchemaName(schema, _opcServerInstance);
+				let schemaName = InstanceSchemaName( schema->Name, _opcServerInstance );
 				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug deleted description allowed}}", schemaName );
 				auto existing = Json::AsArray( co_await *_qlServer->Query(move(q), {}, _executer) );
 				flat_set<string> slugs;
