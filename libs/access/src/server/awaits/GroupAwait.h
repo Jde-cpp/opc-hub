@@ -14,7 +14,7 @@ namespace Jde::Access::Server{
 	private:
 		QL::TableQL _query;
 		Jde::UserPK _executer;
-		α MembersStatement( QL::TableQL& membersQL )ε->DB::Statement;
+		α MembersStatement( QL::TableQL& membersQL, const jobject& groupArgs )ε->DB::Statement;
 		α Select()ι->QL::QLAwait<>::Task;
 	};
 

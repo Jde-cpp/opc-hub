@@ -35,6 +35,7 @@ namespace Jde::Access::Server{
 			_query.AddFilter( "is_group", true );
 			_query.ReturnRaw = true;
 			let onlyHaveId = _query.Columns.size()==1 && _query.Columns[0].JsonName=="id";
+			const jobject groupArgs = _query.Args;//the members query's filter:  the QLAwait below moves _query.
 			//the shortcut serves one group's members - `group(id:5){ groupMembers{…} }` needs nothing from identities.  A list always
 			//queries:  `groups{ id }` used to come back {} whatever the table held, so a client counting groups read zero.
 			auto groups = _query.Columns.size() && (_query.IsPlural() || !onlyHaveId) ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
@@ -42,7 +43,7 @@ namespace Jde::Access::Server{
 				haveId = membersQL->FindColumn( "id" );
 				if( haveId )
 					membersQL->EraseColumn( "id" );
-				auto statement = MembersStatement( *membersQL );
+				auto statement = MembersStatement( *membersQL, groupArgs );
 				auto membersResult = co_await QL::QLAwait( move(*membersQL), move(statement), _executer, _sl );
 				if( membersResult.is_array() )
 					members = move( membersResult.get_array() );
@@ -81,7 +82,7 @@ namespace Jde::Access::Server{
 		}
 	}
 
-	α GroupAwait::MembersStatement( QL::TableQL& membersQL )ε->DB::Statement{
+	α GroupAwait::MembersStatement( QL::TableQL& membersQL, const jobject& groupArgs )ε->DB::Statement{
 		let& groupTable = GetTable( "group_members" );
 		membersQL.Columns.push_back( QL::ColumnQL{"groupId", groupTable.GetColumnPtr("group_id")} );
 		membersQL.Columns.push_back( QL::ColumnQL{"memberId", groupTable.GetColumnPtr("member_id")} );
@@ -92,7 +93,7 @@ namespace Jde::Access::Server{
 		}
 		membersQL.JsonName = "groupMembers";
 		auto statement = QL::SelectStatement( membersQL, {}, false );
-		for( let& [name,value] : _query.Args ){
+		for( let& [name,value] : groupArgs ){
 			if( name=="is_group" )
 				continue;
 			string groupName = name=="id"
