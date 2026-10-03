@@ -1,6 +1,7 @@
 #include <jde/ql/LocalSubscriptions.h>
 #include <absl/synchronization/mutex.h>
 #include <jde/db/IDataSource.h>
+#include <jde/db/generators/FromClause.h>
 #include <jde/db/generators/Sql.h>
 #include <jde/db/generators/WhereClause.h>
 #include <jde/db/meta/AppSchema.h>
@@ -33,7 +34,9 @@ namespace Jde::QL{
 	//same shape.  every failure here used to escape to OnMutation's catch _before_ the first
 	//OnChange, so one awkward column cost *every* subscriber the notification.  Now a failed lookup costs the id field alone.
 	Ω findId( const MutationQL& m, const jobject& args )ι->optional<uint>{
-		let table = m.DBTable;
+		auto table = m.DBTable;
+		while( table && !table->FindPK() ) //a map has no key of its own - groups keys ( identity_id, member_id ) - and the row a delete or restore changes is the extended table's (UpdateAwait::CreateDeleteRestore), so that is whose id it is.
+			table = table->Extends;
 		let pk = table ? table->FindPK() : sp<DB::Column>{};
 		if( !pk )
 			return {};
@@ -60,9 +63,13 @@ namespace Jde::QL{
 			return {};
 		optional<uint> y;
 		try{
+			vector<sp<DB::Table>> tables{ table };
+			while( tables.back()->Extends ) //an extension's args are mostly its parent's columns (users: name, slug), which the where clause qualifies by the parent - so it has to be in the select.
+				tables.push_back( tables.back()->Extends );
+			let from = DB::FromClause{ tables }.ToString();
 			auto select = [&]()ε{
 				vector<uint> ids;
-				table->Schema->DS()->Select( DB::Sql{Ƒ("select {} from {} {}", pk->FQName(), table->SqlName(), where.ToString()), where.Params()}, [&ids](DB::Row&& r){ ids.push_back( r.Get<uint>(0) ); } );
+				table->Schema->DS()->Select( DB::Sql{Ƒ("select {} {} {}", pk->FQName(), from, where.ToString()), where.Params()}, [&ids](DB::Row&& r){ ids.push_back( r.Get<uint>(0) ); } );
 				return ids;
 			};
 			auto ids = select();

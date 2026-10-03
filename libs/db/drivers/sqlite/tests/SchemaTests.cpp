@@ -251,6 +251,8 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_EQ( syntax.ToString(EType::UInt), "integer" ); //rowid alias requires 'integer' exactly.
 		EXPECT_EQ( syntax.ToString(EType::Long), "integer" );
 		EXPECT_EQ( syntax.ToString(EType::VarChar), "varchar" );
+		EXPECT_EQ( syntax.IdentityColumnSyntax(), "primary key autoincrement" );
+		EXPECT_TRUE( syntax.IdentityIsPrimaryKey() ); //so TableDdl leaves the table-level PRIMARY KEY out for a table keyed by its sequence.
 		let refusal = []( auto&& fnctn ){ string y; try{ fnctn(); }catch( const Exception& e ){ y = e.what(); } return y; };
 		let sqliteOperator = refusal( [&]{ syntax.PatternOperator( EOperator::Regex ); } );
 		EXPECT_NE( sqliteOperator.find("needs a udf"), string::npos ) << sqliteOperator;

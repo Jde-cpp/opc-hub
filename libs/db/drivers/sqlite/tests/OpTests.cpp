@@ -113,6 +113,15 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_EQ( last, id2 );
 	}
 
+	//A bare rowid alias hands out max+1, so the pk of a deleted newest row went to the next insert - and whatever still held the
+	//old row by its pk, Access::Authorize's cache for one, then described the new row.  `autoincrement` never gives one out again.
+	TEST_P( OpTests, ADeletedIdentityIsNotReused ){
+		let insert = [&]( string name ){ return _ds->ExecuteScalerSync( {"insert into access_identities( name, slug ) values( ?, ? ) returning identity_id", {Value{name}, Value{name+"@example.com"}}}, EValue::UInt64 ).get_number<uint>(); };
+		let newest = insert( "grace" );
+		_ds->ExecuteSync( {"delete from access_identities where identity_id=?", {Value{newest}}} );
+		EXPECT_GT( insert("heidi"), newest );
+	}
+
 	TEST_P( OpTests, DefaultNowApplied ){
 		_ds->ExecuteSync( {"insert into access_identities( name, slug ) values( ?, ? )", {Value{"dave"}, Value{"dave@example.com"}}} );
 		let rows = _ds->Select( {"select created from access_identities where name=?", {Value{"dave"}}} );

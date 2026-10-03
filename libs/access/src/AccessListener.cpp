@@ -32,7 +32,8 @@ namespace Jde::Access{
 			return;
 		}
 		if( !id ){
-			WARNT( ELogTags::Access, "[{}]a notification for event {:x} carried no id, and nothing else finds the row - the access cache is stale for it until a reload: {}", Name, (uint16)underlying(event), serialize(object) );
+			if( event!=(User|Updated) ) //an update keyed by name or slug renames nobody - UpdateAwait keys on the name before it sets one - and the name is all the cache holds of a user.
+				WARNT( ELogTags::Access, "[{}]a notification for event {} carried no id, and nothing else finds the row - the access cache is stale for it until a reload: {}", Name, hex(underlying(event)), serialize(object) );
 			return;
 		}
 		let pk = *id;
@@ -51,8 +52,8 @@ namespace Jde::Access{
 		switch( event ){
 			case Created: Authorizer().CreateUser( userPK, string{Json::FindDefaultSV(o, "name")} ); break;
 			case Updated:
-				if( let name = Json::FindSV(o, "name"); name ) //absent when the update set other columns.
-					Authorizer().RenameUser( userPK, string{*name} );
+				if( auto name = Json::FindString(o, "name"); name ) //absent when the update set other columns.
+					Authorizer().RenameUser( userPK, move(*name) );
 				break;
 			case Deleted: Authorizer().DeleteUser( userPK ); break;
 			case Restored: Authorizer().RestoreUser( userPK ); break;

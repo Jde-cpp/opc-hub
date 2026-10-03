@@ -19,7 +19,7 @@ namespace Jde::DB{
 			suffix = ",";
 		}
 		//SurrogateKeys is the (possibly composite) primary key, ordered by SKIndex; a sequence column has SKIndex 0 so it is included here.
-		if( SurrogateKeys.size() ){
+		if( SurrogateKeys.size() && !ColumnDdl::DeclaresKey(*SurrogateKeys[0]) ){ //sqlite's sequence column declared the key itself, and a second declaration is an error.
 			vector<string> columns;
 			for( let& c : SurrogateKeys )
 				columns.push_back( c->Name );

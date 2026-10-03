@@ -51,8 +51,7 @@ namespace Jde::Access{
 		const string byName = all ? "" : "(schemaName:$schemas)";
 		const string bySchema = all ? "" : "(schema:$schemas)";
 		try{
-			co_await EventTypeSubscribeAwait{ _qlServer, "user", User, "id name", {}, Created | Updated, {}, _executer, _listener };//name: Authorize::UserName, which history edits store.
-			co_await EventTypeSubscribeAwait{ _qlServer, "user", User, "id", {}, Deleted | Restored | Purged, {}, _executer, _listener };
+			co_await EventTypeSubscribeAwait{ _qlServer, "user", User, "id name", {}, Created | Updated | Deleted | Restored | Purged, {}, _executer, _listener };//name: Authorize::UserName, which history edits store - on the events whose args carry one.
 			co_await EventTypeSubscribeAwait{ _qlServer, "group", Group, "id", {}, Deleted | Restored | Purged, {}, _executer, _listener };
 			co_await EventTypeSubscribeAwait{ _qlServer, "group", Group, "id memberId", {}, Added | Removed, {}, _executer, _listener };
 			co_await EventTypeSubscribeAwait{ _qlServer, "role", Role, "id", {}, Deleted | Restored | Purged, {}, _executer, _listener };

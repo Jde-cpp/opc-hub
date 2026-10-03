@@ -48,7 +48,7 @@ namespace Jde::Access::Server{
 			ResumeExp( move(e) );
 		}
 	}
-	α LoginAwait::InsertUser( string&& modulusHex, uint32_t exponent, Crypto::Certificate&& info, string&& name )ι->DB::ScalerAwait<UserPK::Type>::Task{
+	α LoginAwait::InsertUser( string&& modulusHex, uint32_t exponent, Crypto::Certificate&& info, string name )ι->DB::ScalerAwait<UserPK::Type>::Task{ //name by value: it is read after the insert suspends, when LoginTask's local is gone.
 		DB::InsertClause insert{ AccessSchema().Prefix+"user_insert_key",
 			{ DB::Value{move(modulusHex)}, DB::Value{exponent}, DB::Value{underlying(EProviderType::Key)},
 				DB::Value{ name }, //users.name

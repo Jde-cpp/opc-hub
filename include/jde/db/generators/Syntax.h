@@ -50,6 +50,7 @@ namespace Jde::DB{
 		β HasSchemas()Ι->bool{ return true; }
 		β HasUnsigned()Ι->bool{ return false; }
 		β IdentityColumnSyntax()Ι->sv{ return "identity(1001,1)"; }
+		β IdentityIsPrimaryKey()Ι->bool{ return false; } //true (sqlite): the identity syntax is the column's own primary key constraint, so a table keyed by its sequence alone gets no table-level one.
 		β IdentitySelect()Ι->sv{ return "@@identity"; }
 		β IndexName( sv /*tableName*/, sv indexName )Ι->string{ return string{indexName}; } //per-table index namespace; schema-wide dialects qualify with the table.
 		β IsReservedWord( sv /*name*/ )Ι->bool{ return false; } //only words actually used as unprefixed object names - extend the dialect override when a new collision appears.
