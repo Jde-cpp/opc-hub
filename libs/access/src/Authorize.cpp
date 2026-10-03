@@ -419,6 +419,9 @@ namespace Jde::Access{
 	//TODO test on deleted members.
 	α Authorize::TestAddGroupMember( GroupPK parentGroupPK/*groupD*/, flat_set<IdentityPK::Type>&& memberPKs, SL sl )ε->void{
 		rl _{ Mutex };
+		//access_groups' fk is to access_identities, so the insert alone would give a user members (access-refactor B5).  Users, not
+		//Groups:  a group enters Groups with its first member, while every user is cached from its creation.
+		THROW_IFX( Users.contains({parentGroupPK.Value}), Exception(sl, ELogLevel::Debug, "Identity '{}' is a user - only a group has members.", parentGroupPK.Value) );
 		for( let memberPK : memberPKs ){
 			if( Users.contains({memberPK}) )
 				continue;

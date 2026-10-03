@@ -25,7 +25,8 @@ namespace Jde::QL{
 		}
 		return Refused();
 	}
-	α PurgeAwait::Statements( const DB::Table& table )ε->vector<DB::Sql>{
+	//An extension's purge proc checks the kind itself (access_user_purge, access_group_purge).
+	α PurgeAwait::Statements( const DB::Table& table, const optional<DB::Criteria>& kind )ε->vector<DB::Sql>{
 		table.Authorize( Access::ERights::Purge, _userPK, _sl );
 
 		auto pk = table.Extends ? table.SurrogateKeys[0] : table.GetPK();
@@ -34,10 +35,14 @@ namespace Jde::QL{
 			{ DB::Value{_mutation.AsNumber<uint>("id", _sl)} },
 			!table.PurgeProcName.empty()
 		};
+		if( kind && table.PurgeProcName.empty() ){
+			sql.Text += Ƒ( " and {}=?", kind->Column->Name );
+			sql.Params.push_back( kind->Value );
+		}
 		vector<DB::Sql> statements{ move(sql) };
 
 		if( table.Extends ){
-			let extendedPurge = Statements( *table.Extends );
+			let extendedPurge = Statements( *table.Extends, table.GetSK0()->Criteria );
 			statements.insert( end(statements), begin(extendedPurge), end(extendedPurge) );
 		}
 		return statements;
