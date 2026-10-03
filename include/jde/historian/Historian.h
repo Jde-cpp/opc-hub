@@ -5,7 +5,7 @@ namespace Jde::Opc::Hist{
 	//The host's `hist` block.  Both hosts read the same keys; only the path's default differs, hist/opc-gateway or
 	//hist/opc-server under the host's logsDir, so the host passes it.
 	struct Settings{
-		Settings( fs::path path )ι;
+		Settings( fs::path path, SRCE )ε;
 		Settings( const jobject& hist, fs::path defaultPath, SRCE )ε;
 		fs::path Path;
 		Duration Delay{ 1min };

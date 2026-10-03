@@ -224,10 +224,25 @@ namespace Jde::Opc{
 		case UA_DATATYPEKIND_UNION:
 			*y.mutable_extension_object() = encoded( p, type );
 			break;
-		default://DataValue, DiagnosticInfo.
+		default://DataValue, DiagnosticInfo, BitfieldCluster:  what Supported refuses.
 			throw UAException{ UA_STATUSCODE_BADNOTSUPPORTED, Ƒ("A '{}' value is not supported.", type.typeName) };
 		}
 		return y;
+	}
+	α ProtoUtils::Supported( const UA_Variant& v )ι->bool{
+		if( !v.type )
+			return true;
+		switch( v.type->typeKind ){
+		case UA_DATATYPEKIND_DATAVALUE:
+		case UA_DATATYPEKIND_DIAGNOSTICINFO:
+		case UA_DATATYPEKIND_BITFIELDCLUSTER:
+			return false;
+		case UA_DATATYPEKIND_VARIANT:{
+			let elements = std::span{ (const UA_Variant*)v.data, UA_Variant_isScalar(&v) ? 1 : v.arrayLength };
+			return std::ranges::all_of( elements, []( const UA_Variant& e ){ return Supported(e); } );}
+		default:
+			return true;
+		}
 	}
 	#undef CASE
 	#undef STR_CASE

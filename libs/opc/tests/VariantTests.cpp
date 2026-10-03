@@ -504,6 +504,7 @@ namespace Jde::Opc::Tests{
 		const std::pair<const void*, int> cases[]{ {&dataValue, UA_TYPES_DATAVALUE}, {&diagnosticInfo, UA_TYPES_DIAGNOSTICINFO} };
 		for( let& [p, type] : cases ){
 			Variant v{ scalarVariant(p, UA_TYPES[type]) };
+			EXPECT_FALSE( ProtoUtils::Supported(v) ) << UA_TYPES[type].typeName;
 			try{
 				ProtoUtils::ToValue( v );
 				ADD_FAILURE() << UA_TYPES[type].typeName << " converted.";
@@ -512,5 +513,15 @@ namespace Jde::Opc::Tests{
 				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADNOTSUPPORTED ) << UA_TYPES[type].typeName;
 			}
 		}
+		const double reading{ 1.5 };
+		UA_Variant elements[2]{ scalarVariant(&reading, UA_TYPES[UA_TYPES_DOUBLE]), scalarVariant(&reading, UA_TYPES[UA_TYPES_DOUBLE]) };
+		Variant supported{ arrayVariant(elements, 2, UA_TYPES[UA_TYPES_VARIANT]) };
+		EXPECT_TRUE( ProtoUtils::Supported(supported) );
+		UA_Variant_clear( &elements[1] );
+		elements[1] = scalarVariant( &diagnosticInfo, UA_TYPES[UA_TYPES_DIAGNOSTICINFO] );
+		Variant holding{ arrayVariant(elements, 2, UA_TYPES[UA_TYPES_VARIANT]) };//a Variant array holding one.
+		EXPECT_FALSE( ProtoUtils::Supported(holding) );
+		for( auto& e : elements )
+			UA_Variant_clear( &e );
 	}
 }

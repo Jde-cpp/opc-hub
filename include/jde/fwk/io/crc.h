@@ -34,6 +34,10 @@ namespace Jde::IO::Crc{
 		}
 		return CalcReflected<crc32c_table>( value );
 	}
+	//Calc32c continued over more bytes:  Extend32c( Calc32c(a), b )==Calc32c( a+b ), so a stream needs no whole buffer.
+	inline α Extend32c( uint32_t crc, sv more )->uint32_t{
+		return static_cast<uint32_t>( absl::ExtendCrc32c(absl::crc32c_t{crc}, more) );
+	}
 
 	static_assert( Calc32c("123456789") == 0xE3069283, "CRC-32C sanity check failed" );
 }

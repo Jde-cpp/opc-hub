@@ -1,4 +1,6 @@
 #include <jde/historian/Group.h>
+#include <absl/container/flat_hash_set.h>
+#include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
 
@@ -21,15 +23,23 @@ namespace Jde::Opc::Hist{
 		}
 	}
 
+	Writer::Writer( UserPK identityId, string userName, SL sl )ε:
+		IdentityId{ identityId },
+		UserName{ move(userName) }{
+		THROW_IFSL( identityId.Value!=UserPK::System && identityId.Value>=std::numeric_limits<uint32_t>::max(), "Identity {} doesn't fit a record's 32-bit identity_id.", identityId.Value );
+	}
+
 	Group::Group( GroupConfig config, sp<IClock> clock, vector<Member> members, Restored restored, SL sl )ε:
 		_clock{ move(clock) },
 		_config{ move(config) }{
 		let now = _clock->Now();
-		flat_set<NodeIndex> restoredIndexes, kept;
+		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
+		restoredIndexes.reserve( restored.Members.size() );
 		for( let& [_,index] : restored.Members )
 			restoredIndexes.emplace( index );
 		vector<Record> added;
 		ul _{ _mutex };
+		_indexes.reserve( members.size() );
 		_nextIndex = restored.NextIndex;
 		for( auto& member : members ){
 			auto node = Normalize( member, sl );
@@ -56,6 +66,7 @@ namespace Jde::Opc::Hist{
 		THROW_IFSL( !node.namespaceUri.length, "'{}' has no namespace URI - the historian keeps none by its index.", node.to_string() );
 		node.nodeId.namespaceIndex = 0;
 		THROW_IFSL( Issued()==(member.Index!=0), "Group '{}' {} node_index, but '{}' came with {}.", Name(), Issued() ? "issues its own" : "takes the host's", node.to_string(), member.Index );
+		THROW_IFSL( !std::in_range<uint32_t>(member.Index), "Group '{}' cannot give '{}' node_index {}: it doesn't fit a record's 32 bits.", Name(), node.to_string(), member.Index );
 		validate( node, member.Config, sl );
 		return node;
 	}
@@ -121,11 +132,13 @@ namespace Jde::Opc::Hist{
 			copy.serverTimestamp = UADateTime{ _clock->Now() }.UA();
 			copy.hasServerTimestamp = true;
 		}
+		let unsupported = copy.hasValue && !ProtoUtils::Supported( copy.value );
 		ul _{ _mutex };
 		auto p = _nodes.find( index );
 		if( p==_nodes.end() )
 			return false;
-		_buffer.emplace_back( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt)} );
+		let first = unsupported && !std::exchange( p->second.Unsupported, true );
+		_buffer.emplace_back( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt), first} );
 		return true;
 	}
 

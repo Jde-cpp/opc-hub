@@ -43,7 +43,7 @@ Each item is its own PR, useful without the historian.
 
 **Build order.** Each step merges with its own tests. Steps 1–4 are [#202]–[#205] under [#200], step 5 is [#206], and steps 6–7 are [#207].
 
-1. **Records and I/O.** The `HistoryRecord` oneof, delimited writes straight into the buffer, a `CodedInputStream` reader over offset and limit, delta times, checkpoints, and the first-open scan that truncates at the last good checkpoint. Tests truncate a live file at every byte offset, append a zero-filled tail, and garble a body with its length intact.
+1. **Records and I/O.** The `HistoryRecord` oneof, delimited writes straight into the buffer, a `CodedInputStream` reader over offset and limit, delta times, checkpoints, the first-open scan through the last good checkpoint, and the first append's truncation there. Tests truncate a live file at every byte offset, append a zero-filled tail, and garble a body with its length intact.
 2. **Day files and durability.**
    - Layout: the `hist.path` lock, which disables the historian instead of exiting, and the two-slot `.flushed` file.
    - fsync of files and directories.
