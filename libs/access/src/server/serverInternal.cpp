@@ -77,12 +77,12 @@ namespace Jde::Access{
 	//The login procs (user_insert_login, user_insert_key) create users outside the mutation path, so the userCreated event every
 	//client's AccessListener subscribes to (EventsSubscribeAwait) never fired for them - a user born after a client's Configure
 	//was absent from that client's snapshot, and denied on a protected node tree, until the client restarted (opcserver-review3
-	//#16's user-snapshot gap).  The same fan-out the createUser mutation gets from IMutationAwait::Publish, by hand:  the id in
-	//the args is what the subscription's `{id}` is trimmed from.  Called after the server's own CreateUser, so an in-process
+	//#16's user-snapshot gap).  The same fan-out the createUser mutation gets from IMutationAwait::Publish, by hand:  the args
+	//are what the subscription's `{id name}` is trimmed from.  Called after the server's own CreateUser, so an in-process
 	//listener finds the user already there.
-	α Server::PublishUserCreated( UserPK userPK )ι->void{
+	α Server::PublishUserCreated( UserPK userPK, string name )ι->void{
 		try{
-			QL::MutationQL m{ "createUser", jobject{{"id", userPK.Value}}, ms<jobject>(), {}, false, LocalQL().Schemas(), false };
+			QL::MutationQL m{ "createUser", jobject{{"id", userPK.Value}, {"name", move(name)}}, ms<jobject>(), {}, false, LocalQL().Schemas(), false };
 			QL::Subscriptions::OnMutation( m, jvalue{userPK.Value} );
 		}
 		catch( const std::exception& e ){

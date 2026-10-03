@@ -46,10 +46,14 @@ namespace Jde::Access{
 			PermissionUpdated( pk, object );
 	}
 #pragma GCC diagnostic ignored "-Wswitch"
-	α AccessListener::UserChanged( UserPK userPK, ESubscription event, const jobject& )ι->void{
+	α AccessListener::UserChanged( UserPK userPK, ESubscription event, const jobject& o )ι->void{
 		using enum ESubscription;
 		switch( event ){
-			case Created: Authorizer().CreateUser( userPK ); break;
+			case Created: Authorizer().CreateUser( userPK, string{Json::FindDefaultSV(o, "name")} ); break;
+			case Updated:
+				if( let name = Json::FindSV(o, "name"); name ) //absent when the update set other columns.
+					Authorizer().RenameUser( userPK, string{*name} );
+				break;
 			case Deleted: Authorizer().DeleteUser( userPK ); break;
 			case Restored: Authorizer().RestoreUser( userPK ); break;
 			case Purged: Authorizer().PurgeUser( userPK ); break;

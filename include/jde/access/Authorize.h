@@ -104,7 +104,8 @@ namespace Jde::Access{
 		α AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePK )ι->void;
 		α RemoveRoleChildren(	RolePK rolePK, flat_set<PermissionRightsPK> toRemove )ι->void;
 
-		α CreateUser( UserPK userPK )ι->void;
+		α CreateUser( UserPK userPK, string name )ι->void;
+		α RenameUser( UserPK userPK, string name )ι->void;
 		α DeleteUser( UserPK identityPK )ι->void;
 		α RestoreUser( UserPK identityPK )ι->void;
 		α PurgeUser( UserPK identityPK )ι->void;

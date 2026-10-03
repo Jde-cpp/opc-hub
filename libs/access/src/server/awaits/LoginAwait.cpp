@@ -51,7 +51,7 @@ namespace Jde::Access::Server{
 	α LoginAwait::InsertUser( string&& modulusHex, uint32_t exponent, Crypto::Certificate&& info, string&& name )ι->DB::ScalerAwait<UserPK::Type>::Task{
 		DB::InsertClause insert{ AccessSchema().Prefix+"user_insert_key",
 			{ DB::Value{move(modulusHex)}, DB::Value{exponent}, DB::Value{underlying(EProviderType::Key)},
-				DB::Value{ move(name) }, //users.name
+				DB::Value{ name }, //users.name
 				DB::Value{ move(info.CommonName) }, //users.slug
 				DB::Value{ move(_description) }, DB::Value{ move(info.Issuer) },
 				DB::Value{ move(info.SubjectAltName) },
@@ -60,8 +60,8 @@ namespace Jde::Access::Server{
 				DB::Value{ move(info.Fingerprint) }} };
 		try{
 			UserPK userPK{ co_await DS().InsertSeq<UserPK::Type>(move(insert)) };
-			Authorizer().CreateUser( userPK );
-			PublishUserCreated( userPK );//the clients' caches - CreateUser is the server's own
+			Authorizer().CreateUser( userPK, name );
+			PublishUserCreated( userPK, move(name) );//the clients' caches - CreateUser is the server's own
 			ResumeScaler( userPK );
 		}
 		catch( runtime_error& e ){

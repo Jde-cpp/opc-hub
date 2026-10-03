@@ -255,15 +255,36 @@ namespace Jde::Access::Tests{
 		let provider = (ProviderPK)EProviderType::Google;
 		if( let previous = SelectUser(loginName, root, provider, true); !previous.empty() )
 			PurgeUser( UserPK{GetId(previous)}, root );
-		auto listener = listenTo( "subscription UserCreated{ userCreated(subscriptionId:$id){id} }" );
+		auto listener = listenTo( "subscription UserCreated{ userCreated(subscriptionId:$id){id name} }" );
 		let userPK = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
 		ASSERT_EQ( listener->Changes.size(), 1u ) << "the login's insert published no userCreated event";
 		EXPECT_EQ( Json::AsNumber<UserPK::Type>(listener->Resource(0), "id"), userPK.Value );
+		EXPECT_EQ( Json::AsSV(listener->Resource(0), "name"), loginName ) << "#198: the clients' caches need the name the proc gave it";
+		EXPECT_EQ( Authorizer()->UserName(userPK), loginName );
 		let again = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
 		EXPECT_EQ( again.Value, userPK.Value );
 		EXPECT_EQ( listener->Changes.size(), 1u ) << "an existing identity's login is not a creation";
 		QL::Subscriptions::StopListen( listener, {} );
 		PurgeUser( userPK, root );
+	}
+
+	//#198:  history edits store Authorize::UserName, and the cache only ever took names from its startup snapshot - userCreated
+	//cached an empty one, and nothing subscribed to userUpdated.  Through the startup listener, as every client's cache gets them.
+	TEST( SubscriptionTests, UserNamesReachTheCache ){
+		let root = GetRoot();
+		const string slug{ "subUserName" };
+		let provider = (ProviderPK)EProviderType::Google;
+		if( let previous = SelectUser(slug, root, provider, true); !previous.empty() ) //a previous run's row, renamed.
+			PurgeUser( UserPK{GetId(previous)}, root );
+		let created = GetUser( slug, root );
+		const UserPK user{ GetId(created) };
+		EXPECT_EQ( Authorizer()->UserName(user), Json::AsSV(created, "name") ) << "userCreated did not carry the name";
+
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( id:{}, name:"subUserName renamed" ))", user.Value), {}, root );
+		EXPECT_EQ( Authorizer()->UserName(user), "subUserName renamed" ) << "userUpdated did not reach the cache";
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation updateUser( id:{}, description:"subUserName desc" ))", user.Value), {}, root );
+		EXPECT_EQ( Authorizer()->UserName(user), "subUserName renamed" ) << "an update that set no name changed it";
+		PurgeUser( user, root );
 	}
 
 	//access-review3 #25:  AccessListener::Shutdown unsubscribed through UnsubscribeAwait with IListener::Ids, which nothing ever

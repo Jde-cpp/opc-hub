@@ -356,9 +356,14 @@ namespace Jde::Access{
 	}
 
 
-	α Authorize::CreateUser( UserPK userPK )ι->void{
+	α Authorize::CreateUser( UserPK userPK, string name )ι->void{
 		ul _{ Mutex };
-		Users.emplace( userPK, User{userPK, "", false} );
+		Users.emplace( userPK, User{userPK, move(name), false} );
+	}
+	α Authorize::RenameUser( UserPK userPK, string name )ι->void{
+		ul _{ Mutex };
+		if( auto p = Users.find(userPK); p!=Users.end() )
+			p->second.Name = move( name );
 	}
 	α Authorize::DeleteUser( UserPK identityPK )ι->void{
 		ul _{ Mutex };

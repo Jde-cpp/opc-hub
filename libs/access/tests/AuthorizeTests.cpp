@@ -23,6 +23,7 @@ namespace Jde::Access::Tests{
 		using Authorize::PurgeUser;
 		using Authorize::RemoveAcl;
 		using Authorize::RemoveFromGroup;
+		using Authorize::RenameUser;
 		using Authorize::RestoreGroup;
 		using Authorize::UpdatePermission;
 		using Authorize::UpdateResourceDeleted;
@@ -36,7 +37,7 @@ namespace Jde::Access::Tests{
 		auto auth = ms<TestAuthorize>();
 		auth->CreateResource( Resource{_resourcePK, jobject{{"schemaName",_schema},{"slug",_slug}}} );
 		auth->AddResource( _resourcePK, _schema, _slug, {} );
-		auth->CreateUser( _user );
+		auth->CreateUser( _user, "user" );
 		return auth;
 	}
 	Ω rights( TestAuthorize& auth )ι->ERights{ return auth.Rights(_schema, _slug, _user); }
@@ -338,7 +339,7 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, TestAdminRoutesToTheRegistrantWhileItAdministersTheSchema ){
 		auto auth = createAuthorizer();
 		const UserPK registrant{ 101 };
-		auth->CreateUser( registrant );
+		auth->CreateUser( registrant, "registrant" );
 		auth->AddAcl( registrant.Value, PermissionPK{11}, Administer, None, _resourcePK );
 		auto stub = ms<StubAdminAcl>();
 		auth->AddAdminAuthorizer( _schema, stub, registrant );
@@ -362,6 +363,15 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		EXPECT_EQ( "4242", auth->UserName(UserPK{4242}) ); //not in Users - the numeric fallback.
 		EXPECT_EQ( "0", auth->UserName(UserPK{0}) );
+	}
+	//#198:  history edits store UserName, so a user created or renamed after the snapshot has to answer with its current name.
+	TEST( AuthorizeTests, UserNameFollowsCreateAndRename ){
+		auto auth = createAuthorizer();
+		EXPECT_EQ( "user", auth->UserName(_user) );
+		auth->RenameUser( _user, "renamed" );
+		EXPECT_EQ( "renamed", auth->UserName(_user) );
+		auth->RenameUser( UserPK{4242}, "nobody" );
+		EXPECT_EQ( "4242", auth->UserName(UserPK{4242}) ) << "a rename of an uncached user created it";
 	}
 
 	TEST( AuthorizeTests, FindResourceBySchemaSlug ){
