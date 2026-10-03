@@ -14,10 +14,10 @@ namespace Jde{
 	α Cache::Init()ι->void{
 		_defaultDuration = Settings::FindDuration( "/cache/default/duration" ).value_or( 1h );
 	}
-	up<DurationTimer> _timer; mutex _timerMutex;//_timer guarded by _timerMutex. Requires _finalizing set before this is called - the sweep re-arms otherwise.
+	up<DurationTimer> _timer; absl::Mutex _timerMutex;//_timer guarded by _timerMutex. Requires _finalizing set before this is called - the sweep re-arms otherwise.
 	α Cache::Shutdown( bool terminate, SL sl )ι->void{
 		{
-			lg _{ _timerMutex };
+			ul _{ _timerMutex };
 			if( !_timer )
 				return;
 			LOGSL( ELogLevel::Information, sl, ELogTags::App, "Shutting down cache timer" );
@@ -28,7 +28,7 @@ namespace Jde{
 		}
 		for( uint i=0; i<100; ++i ){//wait for the sweep coroutine to finish - its frame leaks if the executor stops before the cancel handler runs.
 			{
-				lg _{ _timerMutex };
+				ul _{ _timerMutex };
 				if( !_timer )
 					return;
 			}

@@ -22,6 +22,7 @@ else()
 endif()
 
 if( WIN32 )
+	target_link_libraries( ${targetName} absl::abseil_dll )#ABSL_CONSUME_DLL for the generated .pb.cc - the raw protobuf .lib below doesn't carry it.
 	target_link_libraries( ${targetName} ${CMAKE_INSTALL_PREFIX}/protobuf/lib/protobuf$<IF:$<CONFIG:Debug>,d,>.lib )
 endif()
 

@@ -24,7 +24,7 @@ namespace Jde::App::Client{
 		uint32 _maxEntries;
 		uint32 _maxBatch;
 		uint _dropped{};
-		mutex _mutex;
+		absl::Mutex _mutex;
 		bool _running{};
 		static constexpr ELogTags _tags{ ELogTags::ExternalLogger };
 		up<DurationTimer> _timer;
