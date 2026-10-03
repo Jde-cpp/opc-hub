@@ -88,4 +88,10 @@ if( WIN32 )
 		PDB_OUTPUT_DIRECTORY "${appOutDir}"
 	)
 	copyCommonDlls()
+	#Jde.CheckCpu:  Process::CheckCpu as an exe of its own, which Setup runs before it installs anything (OpcHubSetup.nsi,
+	#.onInit).  No Jde library and the static CRT - Setup has not installed the Visual C++ runtime yet - so it imports
+	#kernel32 alone.
+	add_executable( Jde.CheckCpu setup/checkCpu.cpp )
+	compileOptions( Jde.CheckCpu )
+	set_target_properties( Jde.CheckCpu PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" )
 endif()

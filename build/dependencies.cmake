@@ -22,11 +22,11 @@ if( CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" )
 	endif()
 	block() #scopes the set below to this check - an includer's or toolchain's value is left as it was
 		set( CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY ) #compile only: win-clang cannot link cmake's test exe.
-		check_cxx_source_compiles( "#if !defined(__SSE4_2__) || !defined(__PCLMUL__)\n#error\n#endif\nint cpuFlagsCheck();" jdeCpuFlags )
+		check_cxx_source_compiles( "#if !defined(__SSE4_2__) || !defined(__AVX2__) || !defined(__BMI2__) || !defined(__LZCNT__) || !defined(__PCLMUL__) || !defined(__AES__)\n#error\n#endif\nint cpuFlagsCheck();" jdeCpuFlags )
 	endblock()
 	set( jdeCpuFlagsChecked "${CMAKE_CXX_FLAGS}" CACHE INTERNAL "the CMAKE_CXX_FLAGS jdeCpuFlags was checked with" )
 	if( NOT jdeCpuFlags )
-		message( FATAL_ERROR "CMAKE_CXX_FLAGS lacks -msse4.2 -mpclmul, which abseil was built with - configure with a preset (cpuFlags in CMakePresets.common.json)." )
+		message( FATAL_ERROR "CMAKE_CXX_FLAGS lacks -march=x86-64-v3 -mpclmul -maes, which abseil was built with - configure with a preset (cpuFlags in CMakePresets.common.json)." )
 	endif()
 endif()
 include_directories( ${CMAKE_CURRENT_LIST_DIR}/../include )

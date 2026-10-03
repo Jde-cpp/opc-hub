@@ -7,6 +7,7 @@
 #include "jde/fwk/exceptions/Exception.h"
 #include "jde/fwk/log/log.h"
 #include "jde/fwk/log/logTags.h"
+#include "jde/fwk/process/cpu.h" // IWYU pragma: keep - its linux start-up check, for every test exe:  only a test's main.cpp includes this header.
 #define let const auto
 
 namespace Jde{
