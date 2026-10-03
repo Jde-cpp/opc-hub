@@ -1,15 +1,7 @@
 #include <jde/access/types/Resource.h>
-#include <jde/db/Row.h>
 
 #define let const auto
 namespace Jde::Access{
-	Resource::Resource( DB::Row&& row )ι{
-		PK = row.Get<uint16_t>(0);
-		Schema = row.TakeString(1);
-		Slug = row.TakeString(2);
-		Criteria = row.TakeString(3);
-		IsDeleted = row.GetOpt<DB::DBTimePoint>(4);
-	}
 	Resource::Resource( ResourcePK pk, jobject j )ι:
 		PK{ pk },
 		Schema{ string{Json::FindDefaultSV(j, "schemaName")} },
@@ -18,6 +10,6 @@ namespace Jde::Access{
 		IsDeleted{ Json::FindTimePoint(j, "deleted") }
 	{}
 	Resource::Resource( jobject j )ι:
-		Resource{ Json::FindNumber<ResourcePK>(j, "id").value_or(0), j }
+		Resource{ ResourcePK{Json::FindNumber<ResourcePK::Type>(j, "id").value_or(0)}, j }
 	{}
 }

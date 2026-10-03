@@ -1,9 +1,12 @@
 # Jde.Opc.Hub
 
-The AppServer and the OpcGateway in one process: `Jde.App.ServerLib` + `Jde.Opc.GatewayLib` linked into one exe
-(`src/hubStartup.cpp` composes the two startups), with the gateway's app client answered in-process
-(`src/HubAppClient.h`) instead of over the loopback login + websocket a split gateway uses.  The standalone
-`Jde.App.Server` and `Jde.Opc.Gateway` keep building for split (N gateways per AppServer) deployments.
+The AppServer and the OpcGateway in one process.  `Jde.App.ServerLib` and `Jde.Opc.GatewayLib` link into one exe, and
+`src/hubStartup.cpp` composes the two startups.
+
+The gateway's app client is answered in-process (`src/HubAppClient.h`).  A split gateway logs in over loopback and a
+websocket instead.
+
+The standalone `Jde.App.Server` and `Jde.Opc.Gateway` still build, for split deployments of N gateways per AppServer.
 
 | | value |
 |---|---|
@@ -11,28 +14,45 @@ The AppServer and the OpcGateway in one process: `Jde.App.ServerLib` + `Jde.Opc.
 | `Process::AppName()` (service name, `connections{programName}`) | `Jde.OpcHub` |
 | `Process::ProductName()` (`$(ProgramData)/Jde-Cpp/<product>`: certs, issued OPC certs, app data) | `OpcHub` |
 | settings / log | `config/Opc.Hub.jsonnet` / `Opc.Hub.log` (derived by `Settings::FileStem()`) |
-| port | one, 1967 (`/http`): the AppServer's REST + app-protocol socket at `/`, the gateway's REST + OPC socket at `/opc`, one `/graphql` over access+app+gateway |
+| port | 1967 (`/http`), shared by both roles |
+
+The one port serves:
+
+- `/` - the AppServer's REST and app-protocol socket.
+- `/opc` - the gateway's REST and OPC socket.
+- `/graphql` - one endpoint over access, app and gateway.
 
 ## Run
 
+Stop any split AppServer first.  Both listen on 1967.
+
+Run the hub in the foreground from `<buildDir>/runtime`.  Export the two roots the args expand first; only ctest sets
+them.
+
 ```bash
-D=$JDE_DIR/.claude/skills/run-services/driver.sh
-$D start hub                 # never beside the split appserver - they share 1967
-$D start opcserver-hub       # the OpcServer with config/Opc.Server.Hub.jsonnet: anchors the hub's cert for its login
-$D smoke hub
-curl -s localhost:1967/opcGateways   # {"servers":[{"host":"localhost","port":1967,"instanceName":"OpcHub.debug"}]}
-curl -s localhost:1967/ErrorCodes?scs=2150891520 && curl -s localhost:1967/GoogleAuthClientId   # both apps' routes, one port
+export REPO_SOURCE_DIR=$JDE_DIR REPO_BUILD_DIR=$(dirname <buildDir>)
+../apps/OpcHub/exe/Jde.Opc.Hub -c -tests -settings=$JDE_DIR/apps/OpcHub/config/Opc.Hub.jsonnet -include=args/mysql
 ```
 
-Foreground: `Jde.Opc.Hub -c -tests -settings=$JDE_DIR/apps/OpcHub/config/Opc.Hub.jsonnet -include=args/mysql` from
-`<buildDir>/runtime` (`-include=args/sqlite -arg path=<file>` for sqlite).
+For sqlite, use `-include=args/sqlite -arg path=<file>`.
+
+From a second shell, check both apps' routes on the one port:
+
+```bash
+curl -s localhost:1967/opcGateways
+curl -s localhost:1967/ErrorCodes?scs=2150891520 && curl -s localhost:1967/GoogleAuthClientId
+```
+
+For the OPC path, also start the OpcServer with `apps/OpcServer/config/Opc.Server.Hub.jsonnet`.  It anchors the hub's
+cert for its login.
 
 ## Config
 
 `config/Opc.Hub.jsonnet` imports both production configs and picks every top-level key explicitly (jsonnet `+`
 replaces whole sub-objects).  `config/args/<dialect>/args.libsonnet` mounts `access` + `app` + `gateway` in one
 catalog with the split apps' table prefixes, so the hub runs against the data a split AppServer + gateway created.
-No meta/sql of its own - the mounts point at `apps/AppServer/config` and `apps/OpcGateway/config`.
+The hub has no meta or sql of its own.  Its mounts point at `libs/access/config`, `apps/AppServer/config` and
+`apps/OpcGateway/config`.
 
 Certs: `ProductName` puts the hub's tree under `$(ProgramData)/Jde-Cpp/OpcHub`.  The OpcServer and the PLC emulator
 anchor the split AppServer's cert for their login TLS, so against a hub they need the overlays
@@ -57,21 +77,35 @@ the gateway page (`app-resolver.ts`).
 
 ## Install
 
-The installers ship the hub, the OpcServer and the Web UI; the hub serves the Web UI itself, so a browser needs nothing
-but the hub's port.  What each installer lays down, the service command lines and what an uninstall leaves behind are in
-[`setup/README.md`](setup/README.md) (Windows - an NSIS installer, `OpcHubSetup-<version>.exe`, built by
-`setup/build-setup.ps1`) and [`setup/linux/README.md`](setup/linux/README.md) (the `.deb` and the per-user tarball); the
-settings they ship are `config/args/install` (sqlite - `args/install-sqlServer` is the by-hand SQL Server variant) and
-`apps/OpcServer/config/Opc.Server.Install.jsonnet`.
+The installers ship the hub, the OpcServer and the Web UI.
+
+The hub serves the Web UI itself, so a browser needs nothing but the hub's port.
+
+What each installer lays down, the service command lines and what an uninstall leaves behind are in:
+
+- [`setup/README.md`](setup/README.md) - Windows.  An NSIS installer, `OpcHubSetup-<version>.exe`, built by
+  `setup/build-setup.ps1`.
+- [`setup/linux/README.md`](setup/linux/README.md) - the `.deb` and the per-user tarball.
+
+The settings they ship:
+
+- `config/args/install` - sqlite.  `args/install-sqlServer` is the by-hand SQL Server variant.
+- `apps/OpcServer/config/Opc.Server.Install.jsonnet`.
 
 ### Windows
 
 1) Run `OpcHubSetup-<version>.exe`.
-   - Install mode: **All users** registers the selected products as Windows services (administrator rights; the VC++ v14
-     x64 runtime is installed when missing); **Current user** installs under `%LOCALAPPDATA%\Programs` and runs them from
-     Start Menu shortcuts (no administrator rights; the runtime must be present).
-   - Components: the OPC Hub (`Jde.OpcHub` - the AppServer and the OpcGateway in one process, required), the OPC UA Server
-     (`Jde.OpcServer`, optional - it seeds the Web UI's login provider and the hub's default connection), the Web UI.
+   - Install mode: **All users** registers the selected products as Windows services.  It needs administrator rights and
+     installs the VC++ v14 x64 runtime when missing.
+   - **Current user** installs under `%LOCALAPPDATA%\Programs` and runs the products from Start Menu shortcuts.  It
+     needs no administrator rights.  When the runtime is missing it offers to install it, which asks for an
+     administrator once.
+   - Components:
+     - the OPC Hub (`Jde.OpcHub`), required.  It is the AppServer and the OpcGateway in one process.
+     - the OPC UA Server (`Jde.OpcServer`), optional.  It seeds the Web UI's login provider and the hub's default
+       connection.
+     - the Web UI.
+     - Start at logon, current-user installs only, off by default.  It starts the selected products when you log on.
    - The finish page's "Start now" box starts the products; later, `net start Jde.OpcHub` / `net start Jde.OpcServer`, or
      the Start Menu shortcuts (a console window each).  The database is sqlite, one file per product under
      `C:\ProgramData\Jde-Cpp\<Product>`, created on the first start - no SQL Server, no setup script.
@@ -106,27 +140,36 @@ the [URL Rewrite module](https://www.iis.net/downloads/microsoft/url-rewrite) is
 1) `sudo apt install ./jde-opchub_<version>_amd64.deb` (Ubuntu 24.04 or later).  The hub runs as the `jde-opchub`
    systemd service (port 1967, a `jde-cpp` account); the OPC UA server is installed but not enabled:
    `sudo systemctl enable --now jde-opcserver`.  The database is sqlite under `/var/lib/Jde-Cpp/<Product>`, created on
-   the first start.  Without root: the tarball's `install.sh` installs under your account and runs the products as
-   `systemctl --user` units (`--opcserver` for the server).
+   the first start.  Without root, the tarball's `install.sh` installs under your account and runs the products as
+   `systemctl --user` units (`--opcserver` for the server).  Like the Windows current-user mode, it listens on
+   `127.0.0.1` only.  To reach it from another machine, use the `.deb`, or set `listenAddress: null` in its
+   `args/install-user` and open the ports.
 2) Browse to http://localhost:1967/ - the hub serves the site; the packaged nginx site on 8071 is optional
    (`sudo ln -s /etc/jde-cpp/nginx-opchub.conf /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`).
 3) Log in, as above - Google with the OPC UA Server component, otherwise a connection's own `<slug>\<user>`.
 4) Uninstall: `sudo apt remove jde-opchub` (`./install.sh --uninstall` for a per-user install); the data under
-   `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.  `apt purge` also removes the nginx site's link from step 2; after `apt remove`, `sudo rm /etc/nginx/sites-enabled/jde-opchub` if you made it.
+   `/var/lib/Jde-Cpp` (`~/.config/Jde-Cpp`) is left in place.  `apt purge` also removes the nginx site's link from
+   step 2; after `apt remove`, `sudo rm /etc/nginx/sites-enabled/jde-opchub` if you made it.
 
 ### First run
 
-With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection: Gateways in the Web UI lists it under
-the hub's gateway, and browsing to a node shows its value - Snapshot re-reads, the checkbox beside a node streams it, a
-typed value writes it where the server reports the node writable for you - a lock beside a cell says when it does not.
-Every value in the shipped address space is static, though, so the checkbox on its own watches a
-number that never moves: to see the stream, open the node in two browser windows, tick the box in one and type a value in
-the other - the untouched window takes the new value through the subscription, which is the subscription working.  What
-moves values by itself is `Jde.Opc.PlcEmulator` ([`apps/OpcServer/emulator/README.md`](../OpcServer/emulator/README.md)),
-which neither installer packages; it is built from the repo and pointed at the server.  Any other OPC UA server is a
-connection added under `/apps` > the OpcHub card > Connections > Add; the hub's client certificate may need trusting on
-that server the first time.  Roles are seeded but the first grant is manual - every resource ships unenforced, so the
-first user can make it.
+With the OPC UA Server component, `Jde.OpcServer` is the hub's default connection.  Gateways in the Web UI lists it
+under the hub's gateway.  Browse to a node to see its value:
+
+- Snapshot re-reads it.
+- The checkbox beside it streams it.
+- A typed value writes it, where the server reports the node writable for you.  A lock beside a cell means it is not.
+
+Every value in the shipped address space is static.  To see the stream, open the node in two browser windows, tick the
+box in one and type a value in the other.  The untouched window takes the new value through the subscription.
+
+`Jde.Opc.PlcEmulator` ([`apps/OpcServer/emulator/README.md`](../OpcServer/emulator/README.md)) moves values by
+itself.  Neither installer packages it; build it from the repo and point it at the server.
+
+Any other OPC UA server is a connection added under `/apps` > the OpcHub card > Connections > Add.  That server may
+need to trust the hub's client certificate the first time.
+
+Roles are seeded, but the first grant is manual.  Every resource ships unenforced, so the first user can make it.
 
 ## Not done here
 

@@ -21,30 +21,23 @@ namespace Jde::Access::Tests{
 
 	α RoleTests::SetUpTestCase()->void{
 	}
-	//AclTests.cpp
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
-	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject;
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
-	α CreateAcl( IdentityPK identityPK, RolePK rolePK, UserPK executer )ε->void;
-	α SelectAcl( IdentityPK identityPK, RolePK rolePK )ε->jobject;
-	α restoreResource( string name, UserPK executer )ε->void;
 	α RemoveRolePermission( RolePK rolePK, PermissionPK permissionPK, UserPK userPK )ε->jvalue{
-		let remove = Ƒ( "mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK, permissionPK );
+		let remove = Ƒ( "mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK.Value, permissionPK.Value );
 		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(remove, {}, Schemas()), userPK} );
 	}
 	α RemoveRoleMember( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jvalue{
-		jobject vars{ {"parent", parentRolePK}, {"child", childRolePK} };
+		jobject vars{ {"parent", parentRolePK.Value}, {"child", childRolePK.Value} };
 		let q = "mutation removeRole( id:$parent, role:{id:$child} )";
 		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 	}
 	α GetRolePermission( RolePK rolePK, sv resourceName, UserPK executer )ε->jobject{
-		jobject vars{ {"roleId", rolePK}, {"resource", resourceName} };
+		jobject vars{ {"roleId", rolePK.Value}, {"resource", resourceName} };
 		let q = "role( id:$roleId ){permissionRight{id allowed denied resource(slug:$resource,criteria:null)} }";
 		let role = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object(); //{"role":{"member":{"id":1,"allowed":[],"denied":[]}}}
 		return Json::FindDefaultObjectPath( role, "permissionRight" );
 	}
 	α GetRoleChild( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jobject{
-		jobject vars = { {"parent", parentRolePK}, {"child",childRolePK} };
+		jobject vars = { {"parent", parentRolePK.Value}, {"child",childRolePK.Value} };
 		let q = "role( id:$parent ){role(id:$child){id slug deleted} }";
 		auto y = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), userPK} );
 		return y.is_object() ? Json::FindDefaultObjectPath( y.get_object(), "role" ) : jobject{};
@@ -62,7 +55,7 @@ namespace Jde::Access::Tests{
 			}
 		}
 		else{
-			jobject vars{ {"roleId", rolePK}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"resource", resourceName} };
+			jobject vars{ {"roleId", rolePK.Value}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"resource", resourceName} };
 			auto q = "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{slug:$resource}} )";
 			BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 			permission = GetRolePermission( rolePK, resourceName, userPK );
@@ -70,7 +63,7 @@ namespace Jde::Access::Tests{
 		return permission;
 	}
 	α InsertRoleMember( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jvalue{ //the bare mutation - AddRoleMember's pre-read trips the roles read gate before the mutation's own gate is reached.
-		jobject vars{ {"parent", parentRolePK}, {"child", childRolePK} };
+		jobject vars{ {"parent", parentRolePK.Value}, {"child", childRolePK.Value} };
 		let q = "mutation addRole( id:$parent, role:{id:$child} )";
 		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 	}
@@ -91,12 +84,12 @@ namespace Jde::Access::Tests{
 	Ω getRole( str slug, UserPK executer )ε->jobject{ return Get("role", slug, executer); }
 
 	TEST_F( RoleTests, AddRemove ){
-		let rolePK = GetId( getRole("rolePermissionsTest", GetRoot()) );
+		const RolePK rolePK{ GetId( getRole("rolePermissionsTest", GetRoot()) ) };
 		auto initial = AddRolePermission( rolePK, "users", ERights::All, ERights::None, GetRoot() );
 		ASSERT_EQ( ToRights( Json::AsArrayPath(initial, "allowed") ), ERights::All );
 		ASSERT_EQ( ToRights( Json::AsArrayPath(initial, "denied") ), ERights::None );
 
-		RemoveRolePermission( rolePK, GetId(initial), GetRoot() );
+		RemoveRolePermission( rolePK, PermissionPK{GetId(initial)}, GetRoot() );
 		auto roleMember = GetRolePermission( rolePK, "users", GetRoot() );
 		ASSERT_TRUE( roleMember.empty() );
 
@@ -128,6 +121,21 @@ namespace Jde::Access::Tests{
 		Purge( "role", parent, GetRoot() );
 		Purge( "role", child, GetRoot() );
 	}
+	//access-refactor A5:  add and remove share one member path, slug lookup included - the seed adds by slug, nothing removed by one.
+	TEST_F( RoleTests, RemoveChildBySlug ){
+		let root = GetRoot();
+		const RolePK parent{ GetId(getRole("roleRemoveSlugParent", root)) };
+		const RolePK child{ GetId(getRole("roleRemoveSlugChild", root)) };
+		auto mutate = [&]( sv op ){ BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ(R"(mutation {}Role( slug:"roleRemoveSlugParent", role:{{ slug:"roleRemoveSlugChild" }} ))", op), {}, Schemas()), root} ); };
+		mutate( "add" );
+		ASSERT_FALSE( GetRoleChild(parent, child, root).empty() );
+		ASSERT_TRUE( Authorizer()->IsRoleMember(parent, child) );
+		mutate( "remove" );
+		EXPECT_TRUE( GetRoleChild(parent, child, root).empty() );
+		EXPECT_FALSE( Authorizer()->IsRoleMember(parent, child) ) << "the published mutation did not carry the resolved ids";
+		Purge( "role", parent, root );
+		Purge( "role", child, root );
+	}
 
 	//access-review3 #2: access_role_remove's deletes were keyed on the permission alone, and both ids come from the client -
 	//a (role, permission) pair that doesn't match destroyed another role's rights row, or a direct acl grant's.  The proc
@@ -138,7 +146,7 @@ namespace Jde::Access::Tests{
 		const RolePK bRole{ GetId(getRole("roleRemoveScopeB", GetRoot())) };
 		AddRolePermission( aRole, "users", ERights::Read, ERights::None, GetRoot() );
 		let bPermission = AddRolePermission( bRole, "users", ERights::Read, ERights::Update, GetRoot() );
-		EXPECT_THROW( RemoveRolePermission(aRole, GetId(bPermission), GetRoot()), Exception );//B's permission through A.
+		EXPECT_THROW( RemoveRolePermission(aRole, PermissionPK{GetId(bPermission)}, GetRoot()), Exception );//B's permission through A.
 		let bAfter = GetRolePermission( bRole, "users", GetRoot() );
 		ASSERT_FALSE( bAfter.empty() );
 		EXPECT_EQ( GetId(bAfter), GetId(bPermission) );
@@ -148,7 +156,7 @@ namespace Jde::Access::Tests{
 		const UserPK victim{ GetId(GetUser("roleRemoveScopeVictim", GetRoot())) };
 		let aclPermissionPK = CreateAcl( victim, ERights::Read, ERights::None, "users", GetRoot() );//a direct grant, in no role at all.
 		EXPECT_THROW( RemoveRolePermission(aRole, aclPermissionPK, GetRoot()), Exception );
-		EXPECT_EQ( GetId(SelectAcl(victim, "users")), aclPermissionPK );
+		EXPECT_EQ( GetId(SelectAcl(victim, "users")), aclPermissionPK.Value );
 		PurgeAcl( victim, aclPermissionPK, GetRoot() );
 		Purge( "role", aRole, GetRoot() );
 		Purge( "role", bRole, GetRoot() );
@@ -163,7 +171,9 @@ namespace Jde::Access::Tests{
 		EXPECT_THROW( mutate("mutation addRole( id:1, role:null )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1, permissionRight:5 )"), Exception );
 		EXPECT_THROW( mutate("mutation removeRole( id:1, role:\"x\" )"), Exception );
-		EXPECT_THROW( mutate("mutation removeRole( id:1, permissionRight:5 )"), Exception ); //RemovePermission reads the id inside its try.
+		EXPECT_THROW( mutate("mutation removeRole( id:1, permissionRight:5 )"), Exception );
+		EXPECT_THROW( mutate("mutation addRole( id:1, role:{} )"), Exception ); //neither 'id' nor 'slug' in the member.
+		EXPECT_THROW( mutate("mutation removeRole( id:1, role:{} )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1 )"), Exception ); //neither key - the refusal that was already there.
 	}
 
@@ -172,8 +182,8 @@ namespace Jde::Access::Tests{
 	//half-destroyed on the autocommit dialects.  Neither shape was covered:  the other purges here are of roles never granted.
 	TEST_F( RoleTests, PurgeAssignedRole ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
-		const RolePK rolePK{ (RolePK)GetId(getRole("rolePurgeAssigned", root)) };
+		RestoreResource( "groups", root );
+		const RolePK rolePK{ GetId(getRole("rolePurgeAssigned", root)) };
 		AddRolePermission( rolePK, "groups", ERights::Read, ERights::None, root );
 		const UserPK user{ GetId(GetUser("rolePurgeAssignedUser", root)) };
 		CreateAcl( user, rolePK, root );
@@ -187,8 +197,8 @@ namespace Jde::Access::Tests{
 	}
 	TEST_F( RoleTests, PurgeNestedChildRole ){
 		let root = GetRoot();
-		const RolePK parent{ (RolePK)GetId(getRole("rolePurgeNestedParent", root)) };
-		const RolePK child{ (RolePK)GetId(getRole("rolePurgeNestedChild", root)) };
+		const RolePK parent{ GetId(getRole("rolePurgeNestedParent", root)) };
+		const RolePK child{ GetId(getRole("rolePurgeNestedChild", root)) };
 		ASSERT_FALSE( AddRoleMember(parent, child, root).empty() );
 
 		EXPECT_NO_THROW( Purge("role", child, root) ); //used to throw on the parent's membership fk.
@@ -202,9 +212,9 @@ namespace Jde::Access::Tests{
 	//parent's own permission rows still go with it - a purge leaves no orphans behind.
 	TEST_F( RoleTests, PurgeParentKeepsChildGrants ){
 		let root = GetRoot();
-		restoreResource( "groups", root );
-		const RolePK parent{ (RolePK)GetId(getRole("rolePurgeParentGrants", root)) };
-		const RolePK child{ (RolePK)GetId(getRole("rolePurgeChildGrants", root)) };
+		RestoreResource( "groups", root );
+		const RolePK parent{ GetId(getRole("rolePurgeParentGrants", root)) };
+		const RolePK child{ GetId(getRole("rolePurgeChildGrants", root)) };
 		ASSERT_FALSE( AddRoleMember(parent, child, root).empty() );
 		let parentPermission = GetId( AddRolePermission(parent, "groups", ERights::Update, ERights::None, root) );
 		let childPermission = GetId( AddRolePermission(child, "groups", ERights::Read, ERights::None, root) );
@@ -250,7 +260,7 @@ namespace Jde::Access::Tests{
 		const UserPK system{ UserPK::System };
 		for( uint pass=0; pass<2; ++pass ){
 			ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) ) << "pass " << pass;
-			const RolePK viewer{ (RolePK)GetId(getRole("seedViewer", root)) }, admin{ (RolePK)GetId(getRole("seedAdmin", root)) };
+			const RolePK viewer{ GetId(getRole("seedViewer", root)) }, admin{ RolePK{GetId(getRole("seedAdmin", root))} };
 			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "groups", root), "allowed")), ERights::Read ) << "pass " << pass;
 			let adminGroups = GetRolePermission( admin, "groups", root );
 			EXPECT_EQ( ToRights(Json::AsArray(adminGroups, "allowed")), pass==0 ? ERights::Administer : ERights::Read ) << "pass " << pass;
@@ -259,9 +269,9 @@ namespace Jde::Access::Tests{
 			if( pass==0 )//the admin hardens the seeded grant between starts - the Permissions tab's save
 				QL().QuerySync<jvalue>( Ƒ("mutation updatePermissionRight( id:{}, allowed:{}, denied:{} )", GetId(adminGroups), underlying(ERights::Read), underlying(ERights::Update)), {}, root );
 		}
-		const RolePK admin{ (RolePK)GetId(getRole("seedAdmin", root)) };
+		const RolePK admin{ GetId(getRole("seedAdmin", root)) };
 		Purge( "role", admin, root );
-		Purge( "role", (RolePK)GetId(getRole("seedViewer", root)), root );
+		Purge( "role", RolePK{GetId(getRole("seedViewer", root))}, root );
 	}
 
 	//reviews/m3-closing.md #1:  a seeded row an admin soft-deleted is still a row - its slug and name keep their unique indexes -
@@ -281,14 +291,14 @@ namespace Jde::Access::Tests{
 		})";
 		const UserPK system{ UserPK::System };
 		ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) );
-		const RolePK role{ (RolePK)GetId(getRole("seedDeleted", root)) };
+		const RolePK role{ GetId(getRole("seedDeleted", root)) };
 		const GroupPK group{ GetId(SelectGroup("seedDeletedGroup", root, false)) };
 		Delete( "role", role, root );
 		Delete( "group", group.Value, root );
 
 		ASSERT_NO_THROW( QL().Upsert(string{seed}, {}, system) ) << "the next start's pass";
 		let roleRow = Select( "role", "seedDeleted", root, {}, true );
-		EXPECT_EQ( GetId(roleRow), role ) << "no second row";
+		EXPECT_EQ( GetId(roleRow), role.Value ) << "no second row";
 		EXPECT_TRUE( Json::FindTimePoint(roleRow, "deleted") ) << "and the admin's delete stands";
 		let groupRow = SelectGroup( "seedDeletedGroup", root, true );
 		EXPECT_EQ( GetId(groupRow), group.Value );
@@ -318,11 +328,11 @@ namespace Jde::Access::Tests{
 		constexpr sv name{ "access.seedFileTest.roles" };
 		schema->DS()->ExecuteSync( {Ƒ("delete from {} where name=?", schema->GetTable("seeds").DBName), {DB::Value{string{name}}}} );//a direct run's db keeps the record
 		ASSERT_TRUE( DB::SeedFile(*schema, string{name}, seed, ql, true) ) << "a file never applied is applied";
-		const RolePK parent{ (RolePK)GetId(getRole("seedFileParent", root)) }, child{ (RolePK)GetId(getRole("seedFileChild", root)) };
+		const RolePK parent{ GetId(getRole("seedFileParent", root)) }, child{ RolePK{GetId(getRole("seedFileChild", root))} };
 		let permission = GetRolePermission( parent, "groups", root );
 		ASSERT_FALSE( permission.empty() );
 		RemoveRoleMember( parent, child, root );//the admin unticks the child role, and clears the permission
-		RemoveRolePermission( parent, GetId(permission), root );
+		RemoveRolePermission( parent, PermissionPK{GetId(permission)}, root );
 
 		EXPECT_FALSE( DB::SeedFile(*schema, string{name}, seed, ql, true) ) << "the next start's pass over the same file";
 		EXPECT_TRUE( GetRoleChild(parent, child, root).empty() ) << "the admin's removal survives";
@@ -348,12 +358,12 @@ namespace Jde::Access::Tests{
 		const UserPK system{ UserPK::System };
 		for( uint pass=0; pass<2; ++pass )
 			ASSERT_NO_THROW( QL().Upsert(seed, {}, system) ) << "pass " << pass;
-		const RolePK viewer{ (RolePK)GetId(getRole("viewer", root)) }, sa{ (RolePK)GetId(getRole("sa", root)) }, owner{ (RolePK)GetId(getRole("owner", root)) };
+		const RolePK viewer{ GetId(getRole("viewer", root)) }, sa{ RolePK{GetId(getRole("sa", root))} }, owner{ RolePK{GetId(getRole("owner", root))} };
 		EXPECT_FALSE( GetRoleChild(sa, viewer, root).empty() );
 		EXPECT_FALSE( GetRoleChild(owner, sa, root).empty() );
 		EXPECT_FALSE( GetRoleChild(owner, viewer, root).empty() );
 		for( let slug : {"engineer", "operator", "maint-tech"} )
-			EXPECT_FALSE( GetRoleChild((RolePK)GetId(getRole(slug, root)), viewer, root).empty() ) << slug;
+			EXPECT_FALSE( GetRoleChild(RolePK{GetId(getRole(slug, root))}, viewer, root).empty() ) << slug;
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "users", root), "allowed")), ERights::Read );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(sa, "users", root), "allowed")), ERights::Administer );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "users", root), "allowed")), ERights::Create|ERights::Update|ERights::Delete|ERights::Purge|ERights::Subscribe|ERights::Execute );
@@ -369,7 +379,7 @@ namespace Jde::Access::Tests{
 		//nothing of their own, and say so.  The provider row a new connection brings is written under the gateway's own
 		//identity (ProviderMAwait), so gateway/serverConnections is all that configuring one asks of its user.
 		constexpr array gated{ "acl", "groups", "providerTypes", "roles", "users", "instances", "instanceTagLevels", "serverConnections", "sessions", "search", "nodeIds" };
-		let direct = [&]( str role, sv resource ){ let p = GetRolePermission( (RolePK)GetId(getRole(role, root)), resource, root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
+		let direct = [&]( str role, sv resource ){ let p = GetRolePermission( RolePK{GetId(getRole(role, root))}, resource, root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
 		let description = [&]( sv role )->string{//from the file - what an operator reads on the Roles page.
 			let start = seed.find( Ƒ("createRole( slug:\"{}\"", role) );
 			return start==string::npos ? string{} : seed.substr( start, seed.find('\n', start)-start );
@@ -383,7 +393,7 @@ namespace Jde::Access::Tests{
 			EXPECT_TRUE( description(role).contains("No configuration") ) << role << " grants nothing of its own, and its description has to say so: " << description( role );
 		}
 		for( let slug : {"owner", "engineer", "operator", "maint-tech", "sa", "viewer"} )//parents before children - a purge strips the parent's memberships, the children survive.
-			Purge( "role", (RolePK)GetId(getRole(slug, root)), root );
+			Purge( "role", RolePK{GetId(getRole(slug, root))}, root );
 	}
 
 	//access-review3 #15:  sqlServer/access_role_add.sql inserted the resource name as sent, where mysql and sqlite coalesce it over
@@ -438,13 +448,13 @@ namespace Jde::Access::Tests{
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:"{}" ){{ id name }})", slug, criteria );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) ) //a previous run's row would make this a no-op.
 			Purge( "resource", GetId(Json::AsObject(v)), root );
-		const RolePK rolePK{ (RolePK)GetId(getRole("roleParityNew", root)) };
-		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK, slug, criteria );
+		const RolePK rolePK{ GetId(getRole("roleParityNew", root)) };
+		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
 		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_EQ( Json::AsSV(Json::AsObject(resources[0]), "name"), slug ) << "name coalesced over the slug";
-		RemoveRolePermission( rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id"), system ); //root holds nothing over the new resource.
+		RemoveRolePermission( rolePK, PermissionPK{Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")}, system ); //root holds nothing over the new resource.
 		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
 		Purge( "role", rolePK, root );
 	}
@@ -460,13 +470,13 @@ namespace Jde::Access::Tests{
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
 			Purge( "resource", GetId(Json::AsObject(v)), root );
-		const RolePK rolePK{ (RolePK)GetId(getRole("roleParityRoot", root)) };
-		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK, slug );
+		const RolePK rolePK{ GetId(getRole("roleParityRoot", root)) };
+		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
 		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() ) << "a role-referenced root resource should ship unenforced";
-		RemoveRolePermission( rolePK, Json::AsNumber<PermissionPK>(added, "permissionRight/id"), system );
+		RemoveRolePermission( rolePK, PermissionPK{Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")}, system );
 		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
 		Purge( "role", rolePK, root );
 	}
@@ -482,11 +492,11 @@ namespace Jde::Access::Tests{
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
 			Purge( "resource", GetId(Json::AsObject(v)), root );
-		const RolePK seeded{ (RolePK)GetId(getRole("roleM3c11Seeded", root)) }, granted{ (RolePK)GetId(getRole("roleM3c11Granted", root)) };
+		const RolePK seeded{ GetId(getRole("roleM3c11Seeded", root)) }, granted{ GetId(getRole("roleM3c11Granted", root)) };
 		const UserPK holder{ GetId(GetUser("m3c11Holder", root)) };
 		CreateAcl( holder, granted, root );
 		let add = [&]( RolePK role, string resource ){
-			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ {} }} }} ))", role, resource );
+			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ {} }} }} ))", role.Value, resource );
 			return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		};
 		add( seeded, Ƒ(R"(schemaName:"access", slug:"{}")", slug) );//the seed's spelling:  no row yet, so the grant makes one - unenforced
@@ -495,7 +505,7 @@ namespace Jde::Access::Tests{
 		const ResourcePK resourcePK{ GetId(Json::AsObject(resources[0])) };
 		ASSERT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() );
 
-		EXPECT_NO_THROW( add(granted, Ƒ("id:{}", resourcePK)) ) << "a grant by id, as the Permissions tab sends it";
+		EXPECT_NO_THROW( add(granted, Ƒ("id:{}", resourcePK.Value)) ) << "a grant by id, as the Permissions tab sends it";
 		EXPECT_EQ( Authorizer()->Rights("access", string{slug}, holder), ERights::All ) << "caching the row must not enforce it";
 		EXPECT_NO_THROW( Restore("resources", resourcePK, root) ) << "enforcing it - the Resources page's toggle";
 		EXPECT_EQ( Authorizer()->Rights("access", string{slug}, holder), ERights::Read ) << "the holder's grant applies the moment it is enforced";

@@ -4,11 +4,11 @@
 namespace Jde::Access{
 	struct GroupPK final : PK<uint32>{};
 	using ProviderPK=uint32;
-	//using PermissionIdentityPK=uint32;
-	using PermissionPK=uint32;
-	using PermissionRightsPK=PermissionPK;
-	using RolePK=PermissionPK;
-	using ResourcePK=uint16;
+	//A role is an access_permissions row too - roles share that pk space - but the two are never interchangeable here:  a
+	//role's members are permissions or roles, and PermissionRole says which (access-refactor A3).
+	struct PermissionPK final : PK<uint32>{};
+	struct RolePK final : PK<uint32>{};
+	struct ResourcePK final : PK<uint16>{};
 	using PermissionRole=variant<PermissionPK,RolePK>;
 	enum class EProviderType : ProviderPK{
 		None = 0,

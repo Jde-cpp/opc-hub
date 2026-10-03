@@ -25,6 +25,6 @@ namespace Jde::DB::Sqlite::AccessProcs{
 			if( onRow )
 				(*onRow)( Row{ {Value{identityId}} } ); //out _identity_id
 			return y;
-		});
+		}, 3 );
 	}
 }

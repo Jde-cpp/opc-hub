@@ -1,7 +1,6 @@
 #pragma once
 #include <jde/db/awaits/ExecuteAwait.h>
 #include <jde/db/awaits/ScalerAwait.h>
-//#include <jde/ql/QLHook.h>
 #include <jde/ql/QLAwait.h>
 
 namespace Jde::DB{ struct Statement; }
@@ -21,22 +20,19 @@ namespace Jde::Access::Server{
 
 	//addRole/removeRole.  The role by id, or by slug - a seed file (libs/access/config/release.roles) names the roles it created
 	//a line earlier and cannot know their pks - and a member role likewise:  role:{id:N} or role:{slug:"viewer"}.  Each slug
-	//is a lookup, so the chain is Start → [Resolve] → Add/Remove → [ResolveChildren] → AddMembers/RemoveMembers, state on the
+	//is a lookup, so the chain is Start → [Resolve] → Dispatch → Members → [ResolveChildren] → AddMembers/RemoveMembers, state on the
 	//members between hand-offs.
 	struct RoleMAwait final : TAwait<jvalue>{
 		RoleMAwait( const QL::MutationQL& m, UserPK userPK, SRCE )ι:TAwait<jvalue>{ sl }, _mutation{m}, _userPK{userPK}{}
 		α Suspend()ι->void override{ Start(); }
 	private:
 		α Start()ι->void;
-		α Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK>::Task;
+		α Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task;
 		α Dispatch( RolePK rolePK )ι->void;
-		α Add( RolePK rolePK )ι->void;
-		α AddRole( RolePK parentRolePK, const jobject& childRole )ι->void;
-		α ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK>::Task;
+		α Members( RolePK parentRolePK, const jobject& childRole )ι->void;
+		α ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task;
 		α AddMembers( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
-		α AddPermission( RolePK parentRolePK, const jobject& permissionRights )ι->TAwait<PermissionRightsPK>::Task;
-		α Remove( RolePK rolePK )ι->void;
-		α RemoveRole( RolePK parentRolePK, const jobject& childRole )ι->void;
+		α AddPermission( RolePK parentRolePK, const jobject& permissionRights )ι->TAwait<PermissionPK::Type>::Task;
 		α RemoveMembers( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
 		α RemovePermission( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
 

@@ -9,7 +9,7 @@
 struct UA_Server;
 namespace Jde::Access{
 	namespace Server{ struct AuthenticateAwait; struct LoginAwait; }
-	struct Listener; struct Loader; struct Permission;
+	struct Identities; struct Listener; struct Permission; struct ResourcePermissions;
 
 	struct Authorize /*final*/ : IAcl, std::enable_shared_from_this<Authorize>{
 		Authorize( string app )ι:_app{move(app)}{}
@@ -23,19 +23,20 @@ namespace Jde::Access{
 		//By value:  the protected overload's pointer aliases Resources, a flat_map any concurrent insert reallocates, so nothing may
 		//carry it past the lock (access-review3 #19).  A shared lock, as this reads only.
 		α FindResource( const Resource& resource )Ι->optional<Resource>{ rl _{Mutex}; auto p = FindResourceLocked( resource ); return p ? optional<Resource>{*p} : optional<Resource>{}; }
+		α FindResource( ResourcePK pk )Ι->optional<Resource>{ rl _{Mutex}; auto p = Resources.find( pk ); return p!=Resources.end() ? optional<Resource>{p->second} : optional<Resource>{}; }
 		α FindActiveResourcePK( string schema, str resourceName, str criteria )ι->optional<ResourcePK>{ rl _{Mutex}; return FindActiveResourcePKLocked(schema, resourceName, criteria); }
 		α GetSchema( str resourceSlug, SL sl )ε->string;
 
-		α TestAdmin( str resource, UserPK userPK, SRCE )ε->void;
+		α TestAdminSlug( str slug, UserPK userPK, SRCE )ε->void;//an app schema's slug:  opc schemas reuse slugs across instances, so they are not searched.
 		//The gate on a role/acl grant for (schema, slug, criteria).  Remote - the schema's registered IAdminAcl, the OpcServer,
 		//which alone knows which resource governs a node - when one is registered and its registrant still passes TestSchemaAdmin;
 		//else TestAdminLocal, pre-completed (appserver-review3 #13).
-		α TestAdmin( str schema, str resource, str criteria, UserPK userPK, SRCE )ι->up<AnyVoidAwait>;
+		α TestAdminGrant( str schema, str resource, str criteria, UserPK userPK, SRCE )ι->up<AnyVoidAwait>;
 		//The flat rule, on this cache alone:  the active (schema,slug,criteria) row when there is one - a mapped criteria is its
 		//own resource, root does not inherit down - else the slug's criteria-less root row, which an unmapped criteria inherits
 		//as an unmapped node inherits it in OpcAuthorize::UserRights.  Neither active = not enabled, passes as Test does.
 		α TestAdminLocal( str schema, str resource, str criteria, UserPK userPK, SRCE )ε->void;
-		α TestAdmin( ResourcePK resourcePK, UserPK userPK, SRCE )ε->void;
+		α TestAdminResource( ResourcePK resourcePK, UserPK userPK, SRCE )ε->void;
 		α TestAdminPermission( PermissionPK permissionPK, UserPK userPK, SRCE )ε->void;
 		//May userPK stand in for the schema and answer its admin checks (AddAdminAuthorizer)?  Administer on every active
 		//criteria-less resource of the schema.  A schema with no active root passes:  unknown, or every root deleted, is a
@@ -63,24 +64,30 @@ namespace Jde::Access{
 		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for an unknown user; by PK.
 		α IsRoleMember( RolePK parent, RolePK child )Ι->bool;//a direct member, as the cache holds it - RoleMAwait::AddRole's no-op check for a re-add (the seed reruns on every -sync start).
 	protected:
+		α Load( Identities&& identities, ResourcePermissions&& resources, flat_map<RolePK,Role>&& roles, flat_multimap<IdentityPK,PermissionRole>&& acl )ι->void;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindResourceLocked( const Resource& resource )Ι->const Resource*;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindActiveResourcePKLocked( str schemaName, str resourceName, str criteria )Ι->optional<ResourcePK>;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>;//System is granted everything; Unauthorized = an unknown user, Forbidden = a deleted one.
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void;
 
 		string _app;
 		mutable absl::Mutex Mutex;
 		/// Active only <schemaName, <resourceJsonName,<criteria, resourcePK>>>
 		flat_map<string, flat_map<string,flat_map<string,Access::ResourcePK>>> SchemaResources ABSL_GUARDED_BY(Mutex);
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α Index( const Resource& resource )ι->void;//a deleted row is a no-op.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α Index( str schema, str slug, str criteria, ResourcePK pk )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α Unindex( const Resource& resource )ι->void;//only while the entry is still this row's.
 		flat_map<UserPK,User> Users ABSL_GUARDED_BY(Mutex);
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α SetUserPermissions( flat_set<UserPK>&& users )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α SetUserPermissions( const flat_set<UserPK>& users )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecalcGroupMembers( GroupPK groupPK, bool remove=false )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α Recalc()ι->void;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK, bool clear=false )ι->flat_set<UserPK>;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK, bool clear, flat_set<GroupPK>& visited )ι->flat_set<UserPK>;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK )ι->flat_set<UserPK>;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α RecursiveUsers( GroupPK groupPK, flat_set<GroupPK>& visited )ι->flat_set<UserPK>;
 		α FindAdminAuthorizer( str schemaName )ι->optional<AdminAuthorizer>;
 
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α AddAclEntry( IdentityPK identityPK, PermissionRole permissionRole )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(Mutex) α PurgeIdentity( IdentityPK identityPK )ι->void;
-		α AddAcl( IdentityPK::Type userGroupPK, PermissionPK permissionPK, ERights allowed, ERights denied, ResourcePK resourcePK )ι->void;
+		α AddAcl( IdentityPK::Type userGroupPK, const Permission& permission )ι->void;
 		α AddAcl( IdentityPK::Type userGroupPK, RolePK rolePK )ι->void;
 		α RemoveAcl( IdentityPK::Type userGroupPK, PermissionRole rolePK )ι->void;
 
@@ -100,9 +107,9 @@ namespace Jde::Access{
 
 		α DeleteRestoreRole( RolePK rolePK, bool deleted )ι->void;
 		α PurgeRole( RolePK rolePK )ι->void;
-		α AddRolePermission( RolePK rolePK, PermissionPK member, ERights allowed, ERights denied, const jobject& resource )ι->void;
+		α AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& resource )ι->void;
 		α AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePK )ι->void;
-		α RemoveRoleChildren(	RolePK rolePK, flat_set<PermissionRightsPK> toRemove )ι->void;
+		α RemoveRoleChildren( RolePK rolePK, const flat_set<PermissionRole>& toRemove )ι->void;
 
 		α CreateUser( UserPK userPK, string name )ι->void;
 		α RenameUser( UserPK userPK, string name )ι->void;
@@ -122,13 +129,13 @@ namespace Jde::Access{
 		flat_multimap<IdentityPK,PermissionRole> Acl ABSL_GUARDED_BY(Mutex);
 	private:
 		concurrent_flat_map<string,AdminAuthorizer> _adminAuthorizers;
-		friend struct AccessListener; friend struct Loader; friend struct ConfigureAwait; friend struct Server::AuthenticateAwait; friend struct Server::LoginAwait;
+		friend struct AccessListener; friend struct ConfigureAwait; friend struct Server::AuthenticateAwait; friend struct Server::LoginAwait;
 	};
 
 	Ξ Authorize::FindResourceLocked( const Resource& resource )Ι->const Resource*{
 		auto pk = resource.PK;
 		if( !pk && resource.Schema.size() && resource.Slug.size() )
-			pk = FindActiveResourcePKLocked( resource.Schema, resource.Slug, resource.Criteria ).value_or( 0 );
+			pk = FindActiveResourcePKLocked( resource.Schema, resource.Slug, resource.Criteria ).value_or( ResourcePK{} );
 		if( auto p = pk ? Resources.find(pk) : Resources.end(); p!=Resources.end() )
 			return &p->second;
 		//Only a criteria-less request may fall back to the criteria-less row.  Without that guard a *criteria-scoped* lookup

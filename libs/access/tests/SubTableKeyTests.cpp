@@ -17,8 +17,8 @@ namespace Jde::Access::Tests{
 			//sub-table and answers it from RoleAwait, which never reaches SelectAwait at all.
 			_parentA = RolePK{ GetId(Get("role", "review22-parentA", GetRoot())) };
 			_parentB = RolePK{ GetId(Get("role", "review22-parentB", GetRoot())) };
-			_childA = RolePK{ GetId(AddRolePermission(_parentA, "users", ERights::Read, ERights::None, GetRoot())) };
-			_childB = RolePK{ GetId(AddRolePermission(_parentB, "groups", ERights::Read, ERights::None, GetRoot())) };
+			_childA = PermissionPK{ GetId(AddRolePermission(_parentA, "users", ERights::Read, ERights::None, GetRoot())) };
+			_childB = PermissionPK{ GetId(AddRolePermission(_parentB, "groups", ERights::Read, ERights::None, GetRoot())) };
 		}
 		α TearDown()->void override{
 			for( let role : {_parentA, _parentB} )
@@ -36,20 +36,21 @@ namespace Jde::Access::Tests{
 			}
 			return y;
 		}
-		RolePK _parentA{}, _childA{}, _parentB{}, _childB{};
+		RolePK _parentA{}, _parentB{};
+		PermissionPK _childA{}, _childB{};
 	};
 
 	TEST_F( SubTableKeyTests, ChildrenFollowTheirOwnParent ){
 		let idFirst = members( "roles{ id slug permissions{ id } }" );//the shipped angular order - correct before the fix too.
-		ASSERT_TRUE( idFirst.contains(_parentA) && idFirst.contains(_parentB) );
-		EXPECT_EQ( idFirst.at(_parentA), vector<uint>{_childA} );
-		EXPECT_EQ( idFirst.at(_parentB), vector<uint>{_childB} );
+		ASSERT_TRUE( idFirst.contains(_parentA.Value) && idFirst.contains(_parentB.Value) );
+		EXPECT_EQ( idFirst.at(_parentA.Value), vector<uint>{_childA.Value} );
+		EXPECT_EQ( idFirst.at(_parentB.Value), vector<uint>{_childB.Value} );
 
 		//the same query with the columns the other way round:  the pk is no longer select column 0.
 		let nameFirst = members( "roles{ slug id permissions{ id } }" );
-		ASSERT_TRUE( nameFirst.contains(_parentA) && nameFirst.contains(_parentB) );
-		EXPECT_EQ( nameFirst.at(_parentA), vector<uint>{_childA} ) << "parent A got another role's members";
-		EXPECT_EQ( nameFirst.at(_parentB), vector<uint>{_childB} ) << "parent B got another role's members";
+		ASSERT_TRUE( nameFirst.contains(_parentA.Value) && nameFirst.contains(_parentB.Value) );
+		EXPECT_EQ( nameFirst.at(_parentA.Value), vector<uint>{_childA.Value} ) << "parent A got another role's members";
+		EXPECT_EQ( nameFirst.at(_parentB.Value), vector<uint>{_childB.Value} ) << "parent B got another role's members";
 
 	}
 }

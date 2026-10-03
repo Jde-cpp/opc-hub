@@ -56,9 +56,10 @@ namespace Jde::QL{
 		return p->second;
 	}
 
-	Ω createUpdate( const DB::Table& table, const jobject& input, Enums& enums, vector<DB::UpdateClause>& updates )ε->DB::Value{
+	//kind:  the extension's criteria on the row it extends - users and groups share identities, and is_group says whose a row is.
+	Ω createUpdate( const DB::Table& table, const jobject& input, Enums& enums, vector<DB::UpdateClause>& updates, const optional<DB::Criteria>& kind={} )ε->DB::Value{
 		let pExtendedFromTable = table.Extends;
-		DB::Value rowKey = pExtendedFromTable  ? createUpdate(*pExtendedFromTable, input, enums, updates) : DB::Value{};
+		DB::Value rowKey = pExtendedFromTable  ? createUpdate(*pExtendedFromTable, input, enums, updates, table.GetSK0()->Criteria) : DB::Value{};
 
 		DB::UpdateClause update;
 		if( pExtendedFromTable )
@@ -74,6 +75,8 @@ namespace Jde::QL{
 			else
 				THROW( "Could not get criteria from {}", serialize(args) );
 			rowKey = update.Where.Params()[0];
+			if( kind )
+				update.Where.Add( *kind );
 		}
 
 		for( let& c : table.Columns ){
@@ -118,6 +121,8 @@ namespace Jde::QL{
 		update.Add( deleted, value );
 		auto key = _mutation.GetKey();
 		update.Where.Add( key.IsPK() ? deleted->Table->GetPK() : deleted->Table->GetColumnPtr("slug"), DB::Value::FromKey(key) );//deleted=main table, table=possibly extension table.
+		if( auto kind = table.Extends ? table.GetSK0()->Criteria : nullopt; kind )//else deleteGroup with a user's id deletes the user (access-refactor B5).
+			update.Where.Add( *kind );
 		for( let& arg : input ){
 			if( arg.key()=="id" || arg.key()=="slug" )
 				continue;

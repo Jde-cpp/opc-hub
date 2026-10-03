@@ -10,6 +10,7 @@ namespace Jde::Access{
 	constexpr sv format{ "subscription {0}{2}{{ {1}{2}(subscriptionId:$id{4}){{{3}}} }}" }; //subscription UserCreated{ userCreated(subscriptionId:129){id} }
 	α EventTypeSubscribeAwait::Subscribe()ι->TAwait<vector<QL::SubscriptionId>>::Task{
 		using enum ESubscription;
+		static constexpr array<std::pair<ESubscription,sv>,7> events{ {{Created,"Created"}, {Deleted,"Deleted"}, {Restored,"Restored"}, {Purged,"Purged"}, {Added,"Added"}, {Removed,"Removed"}, {Updated,"Updated"}} };
 		let capitalized = DB::Names::Capitalize( _name );
 		auto vars = [&]( ESubscription event )->jobject {
 			jobject vars = _vars;
@@ -17,20 +18,10 @@ namespace Jde::Access{
 			return vars;
 		};
 		try{
-			if( !empty(_events & Created) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Created", _cols, _args), vars(Created), _listener, _executer );
-			if( !empty(_events & Deleted) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Deleted", _cols, _args), vars(Deleted), _listener, _executer );
-			if( !empty(_events & Restored) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Restored", _cols, _args), vars(Restored), _listener, _executer );
-			if( !empty(_events & Purged) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Purged", _cols, _args), vars(Purged), _listener, _executer );
-			if( !empty(_events & Added) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Added", _cols, _args), vars(Added), _listener, _executer );
-			if( !empty(_events & Removed) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Removed", _cols, _args), vars(Removed), _listener, _executer );
-			if( !empty(_events & Updated) )
-				co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, "Updated", _cols, _args), vars(Updated), _listener, _executer );
+			for( let& [event, eventName] : events ){
+				if( !empty(_events & event) )
+					co_await *_qlServer->Subscribe( Ƒ(format, capitalized, _name, eventName, _cols, _args), vars(event), _listener, _executer );
+			}
 			Resume();
 		}
 		catch( runtime_error& e ){

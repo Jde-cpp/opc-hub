@@ -13,6 +13,6 @@ namespace Jde::DB::Sqlite::AccessProcs{
 			if( onRow )
 				(*onRow)( Row{ {Value{roleId}} } ); //out _role_id
 			return y;
-		});
+		}, 4 );
 	}
 }

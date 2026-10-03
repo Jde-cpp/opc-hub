@@ -27,7 +27,6 @@ namespace Jde::Access{
 
 
 namespace Tests{
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
 	Ω testUnauthGet( str table, str slug, UserPK executer, sv cols, bool includeDeleted )ε->jobject{
 		auto y = Select( table, slug, GetRoot(), cols, includeDeleted );
 		if( y.empty() ){
@@ -150,7 +149,7 @@ namespace Tests{
 		return QL().QuerySync( ql, {}, executer );
 	}
 	α Tests::SelectPermission( ResourcePK resourcePK, UserPK executer )ε->jobject{
-		let ql = Ƒ( "permission( resourceId:{} ){{ id resourceId allowed denied }}", resourcePK );
+		let ql = Ƒ( "permission( resourceId:{} ){{ id resourceId allowed denied }}", resourcePK.Value );
 		return QL().QuerySync( ql, {}, executer );
 	}
 

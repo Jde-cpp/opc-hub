@@ -1,5 +1,4 @@
 #include "GroupAwait.h"
-//#include <jde/db/awaits/RowAwait.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/names.h>
 #include <jde/db/meta/AppSchema.h>
@@ -17,9 +16,6 @@
 #define let const auto
 
 namespace Jde::Access::Server{
-	//Ω removeFromGroup( GroupPK groupPK, flat_set<IdentityPK> members )ι->void;
-
-
 	α GroupAwait::Select()ι->QL::QLAwait<>::Task{
 		try{
 			//group_id, member_id & member columns.
@@ -39,34 +35,15 @@ namespace Jde::Access::Server{
 			_query.AddFilter( "is_group", true );
 			_query.ReturnRaw = true;
 			let onlyHaveId = _query.Columns.size()==1 && _query.Columns[0].JsonName=="id";
+			const jobject groupArgs = _query.Args;//the members query's filter:  the QLAwait below moves _query.
 			//the shortcut serves one group's members - `group(id:5){ groupMembers{…} }` needs nothing from identities.  A list always
 			//queries:  `groups{ id }` used to come back {} whatever the table held, so a client counting groups read zero.
 			auto groups = _query.Columns.size() && (_query.IsPlural() || !onlyHaveId) ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
 			if( membersQL ){
-				let& groupTable = GetTable( "group_members" );
 				haveId = membersQL->FindColumn( "id" );
 				if( haveId )
 					membersQL->EraseColumn( "id" );
-				membersQL->Columns.push_back( QL::ColumnQL{"groupId", groupTable.GetColumnPtr("group_id")} );
-				membersQL->Columns.push_back( QL::ColumnQL{"memberId", groupTable.GetColumnPtr("member_id")} );
-				if( let idArg = membersQL->Args.if_contains("id"); idArg ){
-					auto id = *idArg;
-					membersQL->Args["memberId"] = id;
-					membersQL->Args.erase( "id" );
-				}
-				membersQL->JsonName = "groupMembers";
-				auto statement = QL::SelectStatement( *membersQL, {}, false );
-				for( let& [name,value] : _query.Args ){
-					if( name=="is_group" )
-						continue;
-					string groupName = name=="id"
-						? "groupId"
-						: name=="slug" ? "group_slug" : name;
-					membersQL->Args[groupName] = value;
-				}
-				statement.Where = QL::ToWhereClause( *membersQL, groupTable, membersQL->FindColumn("deleted")!=nullptr );
-				//statement.Where.Remove( "is_group" );
-				//statement.Where.Replace( "identities.", "members." );
+				auto statement = MembersStatement( *membersQL, groupArgs );
 				auto membersResult = co_await QL::QLAwait( move(*membersQL), move(statement), _executer, _sl );
 				if( membersResult.is_array() )
 					members = move( membersResult.get_array() );
@@ -103,6 +80,29 @@ namespace Jde::Access::Server{
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
+	}
+
+	α GroupAwait::MembersStatement( QL::TableQL& membersQL, const jobject& groupArgs )ε->DB::Statement{
+		let& groupTable = GetTable( "group_members" );
+		membersQL.Columns.push_back( QL::ColumnQL{"groupId", groupTable.GetColumnPtr("group_id")} );
+		membersQL.Columns.push_back( QL::ColumnQL{"memberId", groupTable.GetColumnPtr("member_id")} );
+		if( let idArg = membersQL.Args.if_contains("id"); idArg ){
+			auto id = *idArg;
+			membersQL.Args["memberId"] = id;
+			membersQL.Args.erase( "id" );
+		}
+		membersQL.JsonName = "groupMembers";
+		auto statement = QL::SelectStatement( membersQL, {}, false );
+		for( let& [name,value] : groupArgs ){
+			if( name=="is_group" )
+				continue;
+			string groupName = name=="id"
+				? "groupId"
+				: name=="slug" ? "group_slug" : name;
+			membersQL.Args[groupName] = value;
+		}
+		statement.Where = QL::ToWhereClause( membersQL, groupTable, membersQL.FindColumn("deleted")!=nullptr );
+		return statement;
 	}
 
 	//{ mutation addGroup( "id":14, "memberId":[15,13] ) } - or "identityId":14, the map parent column's json name, which

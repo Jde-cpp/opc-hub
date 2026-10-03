@@ -32,21 +32,21 @@ namespace Jde::Access::Server{
 		try{
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );
-			auto permissionPK = Json::FindNumberPath<PermissionPK>( args, "permissionRight/id" );
+			auto permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "permissionRight/id" );
 			if( !permissionPK )
-				permissionPK = Json::FindNumberPath<PermissionPK>( args, "role/id" );
+				permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "role/id" );
 			THROW_IF( !permissionPK, "Could not find permissionRight or role id in '{}'", serialize(args) );
 			let isRole = co_await DS().ScalerOpt<uint>( DB::Sql{Ƒ("select is_role from {} where permission_id=?", GetTable("permissions").DBName), vector<DB::Value>{{*permissionPK}}} );
 			THROW_IF( !isRole, "[{}]Permission not found.", *permissionPK );
 			if( *isRole )
-				Authorizer().TestAdmin( "roles", _executer, _sl );
+				Authorizer().TestAdminSlug( "roles", _executer, _sl );
 			else
-				Authorizer().TestAdminPermission( *permissionPK, _executer, _sl );
+				Authorizer().TestAdminPermission( PermissionPK{*permissionPK}, _executer, _sl );
 			//the listener - and any subscriber - branches on the key, so the notification has to carry the one the pk is.
 			const sv key = *isRole ? "role" : "permissionRight", other = *isRole ? "permissionRight" : "role";
 			_mutation.Args.erase( other );
 			_mutation.Args[key] = jobject{ {"id", *permissionPK} };
-			PurgeAcl( identityPK, *permissionPK, *isRole!=0 );
+			PurgeAcl( identityPK, PermissionPK{*permissionPK}, *isRole!=0 );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
@@ -56,14 +56,13 @@ namespace Jde::Access::Server{
 		try{
 			let ds = Table().Schema->DS();
 			let aclCount = co_await ds->Execute(
-				DB::Sql{ Ƒ("delete from {} where identity_id=? and permission_id=?", Table().DBName), vector<DB::Value>{{identityPK}, {permissionPK}} }, _sl );
+				DB::Sql{ Ƒ("delete from {} where identity_id=? and permission_id=?", Table().DBName), vector<DB::Value>{{identityPK}, {permissionPK.Value}} }, _sl );
 			if( aclCount && !isRole ){ //a direct grant's rights row goes with its last acl link;  a role has no rights row, and the acl row was the whole assignment.
 				co_await ds->Execute(
-					DB::Sql{ Ƒ("delete from {} where permission_id=? and not exists( select 1 from {} where permission_id=? )", GetTable("permission_rights").DBName, Table().DBName), vector<DB::Value>{{permissionPK}, {permissionPK}} }, _sl );
+					DB::Sql{ Ƒ("delete from {} where permission_id=? and not exists( select 1 from {} where permission_id=? )", GetTable("permission_rights").DBName, Table().DBName), vector<DB::Value>{{permissionPK.Value}, {permissionPK.Value}} }, _sl );
 			}
 			jobject y;
 			y["rowCount"] = aclCount;
-			//y["complete"] = true;
 			QL::Subscriptions::OnMutation( _mutation, y );
 			Resume( move(y) );
 		}
@@ -83,12 +82,12 @@ namespace Jde::Access::Server{
 	α AclQLAwait::InsertRole()ι->DB::ExecuteAwait::Task{
 		jobject y;
 		try{
-			Authorizer().TestAdmin( "roles", _executer, _sl );
+			Authorizer().TestAdminSlug( "roles", _executer, _sl );
 			DB::InsertClause insert{ Table().InsertProcName()+"_role" };
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );
 			insert.Add( identityPK );
-			let rolePK = Json::AsNumber<ResourcePK>( args, "role/id" );
+			let rolePK = Json::AsNumber<RolePK::Type>( args, "role/id" );
 			insert.Add( rolePK );
 			y["rowCount"] = co_await DS().Execute( insert.Move() );
 			QL::Subscriptions::OnMutation( _mutation, y );
@@ -98,7 +97,7 @@ namespace Jde::Access::Server{
 			ResumeExp( move(e) );
 		}
 	}
-	α AclQLAwait::InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK>>::Task{
+	α AclQLAwait::InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK::Type>>::Task{
 		let allowed = ( ERights )Json::FindNumber<uint8>( permission, "allowed" ).value_or( 0 );
 		let denied = ( ERights )Json::FindNumber<uint8>( permission, "denied" ).value_or( 0 );
 		try{
@@ -107,7 +106,7 @@ namespace Jde::Access::Server{
 			if( !key.IsPK() ){
 				auto criteria = Json::FindString( resource, "criteria" );
 				auto dbCriteria = criteria ? DB::Value{move(*criteria)} : DB::Value{nullptr};
-				auto resPK = co_await DS().ScalerOpt<ResourcePK>({
+				auto resPK = co_await DS().ScalerOpt<ResourcePK::Type>({
 					Ƒ( "select resource_id from {} where schema_name=? and slug=? and coalesce(criteria, '')=coalesce(?, '')", GetTable("resources").DBName ),
 					{ DB::Value{Json::AsString(resource, "schemaName")}, DB::Value::FromKey(key.NK()), dbCriteria }
 				});
@@ -117,23 +116,23 @@ namespace Jde::Access::Server{
 				}else
 					THROW( "Resource not found for slug '{}' schema '{}'", key.NK(), Json::AsString(resource, "schemaName") );//TODO implement TestAdmin for this
 			}
-			InsertPermission( allowed, denied, key.PK() );
+			InsertPermission( allowed, denied, ResourcePK{static_cast<ResourcePK::Type>(key.PK())} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
 	}
-	α AclQLAwait::InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK>::Task{
+	α AclQLAwait::InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK::Type>::Task{
 		try{
-			Authorizer().TestAdmin( resourcePK, _executer, _sl );
+			Authorizer().TestAdminResource( resourcePK, _executer, _sl );
 			DB::InsertClause insert{ Table().UpsertProcName()+"_permission" };
 			let identityPK = _mutation.AsPathNumber<IdentityPK::Type>( "identity/id" );
 			insert.Add( identityPK );
 
 			insert.Add( underlying(allowed) );
 			insert.Add( underlying(denied) );
-			insert.Add( resourcePK );
-			let permissionPK = co_await DS().InsertSeq<PermissionPK>( move(insert) );
+			insert.Add( resourcePK.Value );
+			let permissionPK = co_await DS().InsertSeq<PermissionPK::Type>( move(insert) );
 			jobject y;
 			y["permissionRight"].emplace_object()["id"] = permissionPK;
 			QL::Subscriptions::OnMutation( _mutation, y );
@@ -144,24 +143,31 @@ namespace Jde::Access::Server{
 		}
 	}
 
+	//the identities an acl entry names, joined the other way round.
+	Ω identitiesStatement( const QL::TableQL& aclQL, const QL::TableQL& identitiesQL )ε->DB::Statement{
+		auto statement = QL::SelectStatement( aclQL );
+		statement.Select += move( QL::SelectStatement(identitiesQL).Select );
+		statement.From = DB::Join{ GetTable("acl").GetColumnPtr("identity_id"), GetTable("identities").GetColumnPtr("identity_id"), true };
+		return statement;
+	}
 	α AclQLSelectAwait::Suspend()ι->void{
 		try{
 			GetTable( "acl" ).Authorize( Access::ERights::Read, _executer, _sl );
+			const Nest identity{ "identities", {"identity"} };
+			if( auto rights = Query.FindTable("permissionRights"); rights )
+				Load( GetStatement(*rights, GetTable("permission_rights").GetColumnPtr("permission_id")), {{"permission_rights", {"permissionRight"}}, {"resources", {"permissionRight", "resource"}}, identity} );
+			else if( auto roles = Query.FindTable("roles"); roles )
+				Load( GetStatement(*roles, GetTable("roles").GetColumnPtr("role_id")), {{"roles", {"role"}}, identity} );
+			else if( auto permissions = Query.FindTable("permissions"); permissions )
+				Load( GetStatement(*permissions, GetTable("permissions").GetColumnPtr("permission_id")), {} );
+			else if( auto identities = Query.FindTable("identities"); identities )
+				Load( identitiesStatement(Query, *identities), {}, identities );
+			else
+				ResumeExp( Exception{"query not implemented"} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
-			return;
 		}
-		if( auto rights = Query.FindTable("permissionRights"); rights )
-			LoadPermissionRights( *rights );
-		else if( auto roles = Query.FindTable("roles"); roles )
-			LoadRoles( *roles );
-		else if( auto roles = Query.FindTable("permissions"); roles )
-			LoadPermissions( *roles );
-		else if( auto identities = Query.FindTable("identities"); identities )
-			LoadIdentities( *identities );
-		else
-			ResumeExp( Exception{"query not implemented"} );
 	}
 	α AclQLSelectAwait::GetStatement( const QL::TableQL& childTable, sp<DB::Column> joinColumn )ε->DB::Statement{
 		let& table = GetTable( "acl" );
@@ -176,116 +182,46 @@ namespace Jde::Access::Server{
 		}
 		return statement;
 	}
-	α AclQLSelectAwait::LoadIdentities( const QL::TableQL& identitiesQL )ι->DB::SelectAwait::Task{
-		jarray identities;
-		try{
-			auto statement = QL::SelectStatement( identitiesQL );
-			auto aclStatement = QL::SelectStatement( Query );
-			aclStatement.Select += move( statement.Select );
-			aclStatement.From = DB::Join{ GetTable("acl").GetColumnPtr("identity_id"), GetTable("identities").GetColumnPtr("identity_id"), true };
-			auto rows = co_await DS().SelectAsync( aclStatement.Move() );
-			let& columns = aclStatement.Select.Columns;
-			for( auto& row : rows ){
-				jobject jrow;
-				for( uint i=0; i<row.Size() && i<columns.size(); ++i )
-					identitiesQL.SetResult( jrow, get<DB::AliasCol>(columns[i]).Column, move(row[i]) );
-				identities.emplace_back( move(jrow) );
+	AclQLSelectAwait::Nest::Nest( string table, vector<string> path )ε:
+		Table{ move(table) }, Path{ move(path) }, IdKey{ DB::Names::ToJson(GetTable(Table).GetPK()->Name) }
+	{}
+	//A column lands under its table's entry, else the last entry - acl's own columns go with the identity - and the entry
+	//table's pk is `id`.  No nesting = the query's own shape.
+	Ω shapeRow( DB::Row& row, const vector<DB::Object>& columns, const vector<AclQLSelectAwait::Nest>& nesting, const QL::TableQL& ql )ε->jobject{
+		jobject y;
+		for( uint i=0; i<row.Size() && i<columns.size(); ++i ){
+			let& column = get<DB::AliasCol>( columns[i] ).Column;
+			if( nesting.empty() ){
+				ql.SetResult( y, column, move(row[i]) );
+				continue;
 			}
-			jobject o{ {"identities", identities} };
-			if( Query.IsPlural() )
-				Resume( jarray{o} );
+			let entry = std::ranges::find( nesting, column->Table->Name, &AclQLSelectAwait::Nest::Table );
+			let& nest = entry!=nesting.end() ? *entry : nesting.back();
+			jobject* target = &y;
+			for( let& key : nest.Path ){
+				auto& v = ( *target )[key];
+				target = v.is_object() ? &v.get_object() : &v.emplace_object();
+			}
+			let key = DB::Names::ToJson( column->Name );
+			( *target )[key==nest.IdKey ? "id" : key] = row[i].Move();
+		}
+		return y;
+	}
+	α AclQLSelectAwait::Load( DB::Statement statement, vector<Nest> nesting, const QL::TableQL* identitiesQL )ι->DB::SelectAwait::Task{
+		try{
+			auto rows = co_await DS().SelectAsync( statement.Move() );
+			jarray y;
+			for( auto& row : rows )
+				y.emplace_back( shapeRow(row, statement.Select.Columns, nesting, identitiesQL ? *identitiesQL : Query) );
+			if( identitiesQL ){//one object holding the rows, where every other child is a row per acl entry.
+				jobject o{ {"identities", move(y)} };
+				if( Query.IsPlural() )
+					Resume( jarray{o} );
+				else
+					Resume( move(o) );
+			}
 			else
-				Resume( o );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	Ω addIdentityColumn( jobject& jrow, jobject*& identity, str key, DB::Value&& value )ι->void{
-		if( !identity )
-			identity = &jrow["identity"].emplace_object();
-		( *identity )[key=="identityId" ? "id" : key] = value.Move();
-	}
-	α AclQLSelectAwait::LoadRoles( const QL::TableQL& roleQL )ι->DB::SelectAwait::Task{
-		jarray y;
-		try{
-			auto statement = GetStatement( roleQL, GetTable("roles").GetColumnPtr("role_id") );
-			auto rows = co_await DS().SelectAsync( statement.Move() );
-			let& columns = statement.Select.Columns;
-			for( auto& row : rows ){
-				jobject jrow;
-				jobject* role{};
-				jobject* identity{};
-				for( uint i=0; i<row.Size() && i<columns.size(); ++i ){
-					let& column = get<DB::AliasCol>( columns[i] ).Column;
-					auto& value = row[i];
-					let key = DB::Names::ToJson( column->Name );
-					if( column->Table->Name=="roles" ){
-						if( !role )
-							role = &jrow["role"].emplace_object();
-						( *role )[key=="roleId" ? "id" : key] = value.Move();
-					}
-					else
-						addIdentityColumn( jrow, identity, key, move(value) );
-				}
-				y.emplace_back( move(jrow) );
-			}
-			Resume( move(y) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α AclQLSelectAwait::LoadPermissions( const QL::TableQL& permissionsQL )ι->DB::SelectAwait::Task{
-		jarray y;
-		try{
-			auto statement = GetStatement( permissionsQL, GetTable("permissions").GetColumnPtr("permission_id") );
-			auto rows = co_await DS().SelectAsync( statement.Move() );
-			let& columns = statement.Select.Columns;
-			for( auto& row : rows ){
-				jobject jrow;
-				for( uint i=0; i<row.Size() && i<columns.size(); ++i )
-					Query.SetResult( jrow, get<DB::AliasCol>(columns[i]).Column, move(row[i]) );
-				y.emplace_back( move(jrow) );
-			}
-			Resume( move(y) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α AclQLSelectAwait::LoadPermissionRights( const QL::TableQL& permissionRights )ι->DB::SelectAwait::Task{
-		jarray y;
-		try{
-			auto statement = GetStatement( permissionRights, GetTable("permission_rights").GetColumnPtr("permission_id") );
-			auto rows = co_await DS().SelectAsync( statement.Move() );
-			let& columns = statement.Select.Columns;
-			for( auto& row : rows ){
-				jobject jrow;
-				jobject* right{};
-				jobject* resource{};
-				jobject* identity{};
-				for( uint i=0; i<row.Size() && i<columns.size(); ++i ){
-					let& column = get<DB::AliasCol>( columns[i] ).Column;
-					auto& value = row[i];
-					let key = DB::Names::ToJson( column->Name );
-					if( column->Table->Name=="permission_rights" || column->Table->Name=="resources" ){
-						if( !right )
-							right = &jrow["permissionRight"].emplace_object();
-						if( column->Table->Name=="permission_rights" )
-							( *right )[key=="permissionId" ? "id" : key] = value.Move();
-						else{
-							if( !resource )
-								resource = &( *right )["resource"].emplace_object();
-							( *resource )[key=="resourceId" ? "id" : key] = value.Move();
-						}
-					}
-					else
-						addIdentityColumn( jrow, identity, key, move(value) );
-				}
-				y.emplace_back( move(jrow) );
-			}
-			Resume( move(y) );
+				Resume( move(y) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

@@ -30,19 +30,19 @@ namespace Jde::Access::Server{
 	//its admin check, which suspends when the schema's authorizer is remote.
 	α RoleMAwait::Start()ι->void{
 		_args = _mutation.ExtrapolateVariables();
-		if( auto id = _mutation.FindId<RolePK>(); id )
-			Dispatch( *id );
+		if( auto id = _mutation.FindId<RolePK::Type>(); id )
+			Dispatch( RolePK{*id} );
 		else if( auto slug = _mutation.FindPtr<jstring>("slug"); slug )
 			Resolve( string{*slug} );
 		else
 			ResumeExp( Exception{"Invalid mutation, expecting the role's id or slug."} );
 	}
 	Ω roleBySlug( const DB::Table& roles )ι->string{ return Ƒ( "select {} from {} where slug=?", roles.GetPK()->Name, roles.DBName ); }
-	α RoleMAwait::Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK>::Task{
+	α RoleMAwait::Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task{
 		try{
-			auto pk = co_await DS().ScalerOpt<RolePK>( {roleBySlug(GetTable("roles")), {DB::Value{slug}}} );
+			auto pk = co_await DS().ScalerOpt<RolePK::Type>( {roleBySlug(GetTable("roles")), {DB::Value{slug}}} );
 			THROW_IFX( !pk, Exception(_sl, ELogLevel::Debug, "Role '{}' not found.", slug) );
-			Dispatch( *pk );
+			Dispatch( RolePK{*pk} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
@@ -51,17 +51,14 @@ namespace Jde::Access::Server{
 	//The notification the listener updates the cache from reads ids (AccessListener::RoleChanged), so a slug-keyed mutation is
 	//rewritten to the pks it resolved to before it is published - here for the role, in ResolveChildren for its members.
 	α RoleMAwait::Dispatch( RolePK rolePK )ι->void{
-		_mutation.Args["id"] = rolePK;
+		_mutation.Args["id"] = rolePK.Value;
 		_mutation.Args.erase( "slug" );
-		if( _mutation.Type==QL::EMutationQL::Remove )
-			Remove( rolePK );
-		else
-			Add( rolePK );
-	}
-	α RoleMAwait::Add( RolePK rolePK )ι->void{
+		let rights = _args.if_contains( "permissionRight" );
 		if( auto role = _args.if_contains("role"); role && role->is_object() )
-			AddRole( rolePK, role->get_object() );
-		else if( auto rights = _args.if_contains("permissionRight"); rights && rights->is_object() )
+			Members( rolePK, role->get_object() );
+		else if( rights && rights->is_object() && _mutation.Type==QL::EMutationQL::Remove )
+			RemovePermission( rolePK );
+		else if( rights && rights->is_object() )
 			AddPermission( rolePK, rights->get_object() );
 		else
 			ResumeExp( Exception{"Invalid mutation, expecting object 'role' or 'permissionRight'."} );
@@ -73,14 +70,18 @@ namespace Jde::Access::Server{
 			y = slug->is_array() ? Json::ToVector<string>( *slug ) : vector<string>{ string{Json::AsString(childRole, "slug")} };
 		return y;
 	}
-	α RoleMAwait::AddRole( RolePK parentRolePK, const jobject& childRole )ι->void{
+	α RoleMAwait::Members( RolePK parentRolePK, const jobject& childRole )ι->void{
 		try{
-			Authorizer().TestAdmin( "roles", _userPK, _sl );//TestAddRoleMember below is only the cycle check - the executer gate is here, as in AclQLAwait::InsertRole.
-			_children = childRole.contains( "id" ) ? Json::ToVector<RolePK>( childRole.at("id") ) : vector<RolePK>{};
+			Authorizer().TestAdminSlug( "roles", _userPK, _sl );//TestAddRoleMember in AddMembers is only the cycle check - the executer gate is here, as in AclQLAwait::InsertRole.
+			_children.clear();
+			if( let ids = childRole.if_contains("id"); ids )
+				Json::Visit( *ids, [&](const jvalue& v){ _children.push_back( RolePK{Json::AsNumber<RolePK::Type>(v)} ); } );
 			if( auto slugs = childSlugs(childRole); slugs.size() )
 				ResolveChildren( parentRolePK, move(slugs) );
 			else if( _children.empty() )
 				ResumeExp( Exception{"Invalid mutation, expecting 'id' or 'slug' in role."} );
+			else if( _mutation.Type==QL::EMutationQL::Remove )
+				RemoveMembers( parentRolePK );
 			else
 				AddMembers( parentRolePK );
 		}
@@ -88,15 +89,15 @@ namespace Jde::Access::Server{
 			ResumeExp( move(e) );
 		}
 	}
-	α RoleMAwait::ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK>::Task{
+	α RoleMAwait::ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task{
 		try{
 			let sql = roleBySlug( GetTable("roles") );
 			for( let& slug : slugs ){
-				auto pk = co_await DS().ScalerOpt<RolePK>( {sql, {DB::Value{slug}}} );
+				auto pk = co_await DS().ScalerOpt<RolePK::Type>( {sql, {DB::Value{slug}}} );
 				THROW_IFX( !pk, Exception(_sl, ELogLevel::Debug, "Role '{}' not found.", slug) );
-				_children.push_back( *pk );
+				_children.push_back( RolePK{*pk} );
 			}
-			jarray ids; for( let child : _children ) ids.push_back( child );
+			jarray ids; for( let child : _children ) ids.push_back( child.Value );
 			_mutation.Args["role"] = jobject{ {"id", move(ids)} };//as above - the listener reads role/id.
 			if( _mutation.Type==QL::EMutationQL::Remove )
 				RemoveMembers( parentRolePK );
@@ -118,8 +119,8 @@ namespace Jde::Access::Server{
 					continue;
 				Authorizer().TestAddRoleMember( parentRolePK, childRolePK );
 				DB::InsertClause insert;
-				insert.Add( table.GetColumnPtr("role_id"), parentRolePK );
-				insert.Add( table.GetColumnPtr("member_id"), childRolePK );
+				insert.Add( table.GetColumnPtr("role_id"), parentRolePK.Value );
+				insert.Add( table.GetColumnPtr("member_id"), childRolePK.Value );
 				rowCount += co_await table.Schema->DS()->Execute( insert.Move() );
 			}
 			QL::Subscriptions::OnMutation( _mutation, jvalue{} );
@@ -129,117 +130,102 @@ namespace Jde::Access::Server{
 			ResumeExp( move(e) );
 		}
 	}
-	α RoleMAwait::AddPermission( RolePK rolePK, const jobject& rights )ι->TAwait<PermissionRightsPK>::Task{
+	//`resource:{id}`, or `{slug, schemaName?, criteria?, name?}` with the schema defaulting to the slug's.
+	struct ResourceKey final{ string Slug; string Schema; optional<string> Criteria; optional<string> Name; };
+	Ω resolveResourceKey( const jobject& resource, Authorize& auth, SL sl )ε->ResourceKey{
+		ResourceKey y{ {}, {}, Json::FindString(resource, "criteria"), Json::FindString(resource, "name") };
+		if( y.Criteria && y.Criteria->empty() )
+			y.Criteria = nullopt;
+		auto schema = Json::FindString( resource, "schemaName" );
+		if( let key = Json::AsKey(resource); key.IsPK() ){
+			let existing = auth.FindResource( ResourcePK{static_cast<ResourcePK::Type>(key.PK())} );
+			THROW_IF( !existing, "Resource with PK '{}' not found.", key.PK() );
+			y.Slug = existing->Slug;
+			schema = existing->Schema;
+			if( !y.Criteria && !existing->Criteria.empty() )//the row's own criteria, else a PK naming a criteria-scoped resource would grant on the slug's root instead.
+				y.Criteria = existing->Criteria;
+		}
+		else
+			y.Slug = key.NK();
+		y.Schema = schema ? move( *schema ) : auth.GetSchema( y.Slug, sl );
+		return y;
+	}
+	//Deleted rows too:  access_role_add creates a missing root resource unenforced (f8b191cd), and `deleted is null` missed
+	//the very row it had just made - the grant went out with no resource id, the authorizer dropped it, and until a restart
+	//a grant on it by id was refused, enforcing it threw in the listener, and Effective rights read a lockout
+	//(reviews/m3-closing.md #11 - the hub's seed-created `opc.install nodeIds`).  Its id and `deleted` go out with the grant,
+	//so the listener caches the row as it is;  only a live row joins the enforced set here.
+	Ω resourceSelect( const ResourceKey& key )ε->DB::Sql{
+		vector<DB::Value> params{ {key.Schema}, {key.Slug} };
+		if( key.Criteria )
+			params.emplace_back( *key.Criteria );
+		return { Ƒ("select resource_id, deleted from {} where schema_name=? and slug=? and {}", GetTable("resources").DBName, key.Criteria ? "criteria=?" : "criteria is null"), move(params) };
+	}
+	Ω resourceRow( const DB::Row& row, const ResourceKey& key, Authorize& auth )ε->jobject{
+		const ResourcePK resourcePK{ row.Get<ResourcePK::Type>(0) };
+		jobject y{ {"id", resourcePK.Value} };
+		if( let deleted = row.GetOpt<DB::DBTimePoint>(1); deleted )
+			y["deleted"] = ToIsoString( *deleted );//a string:  Resource(jobject) reads it with Json::FindTimePoint, which takes nothing else
+		else
+			auth.AddResource( resourcePK, key.Schema, key.Slug, key.Criteria.value_or(string{}) );
+		return y;
+	}
+	//a subscription filtering permissionRights{resource(schemaName:…)} hears only the schemas it names.
+	Ω subscribesToSchema( const QL::TableQL& subscription, str schema )ι->bool{
+		let permissionRights = subscription.FindTable( "permissionRights" );
+		let resource = permissionRights ? permissionRights->FindTable( "resource" ) : nullptr;
+		let filter = resource ? resource->FindPtr<jvalue>( "schemaName" ) : nullptr;
+		if( !filter )
+			return true;
+		if( filter->is_string() )
+			return schema==filter->get_string();
+		if( filter->is_array() )
+			return std::ranges::any_of( filter->get_array(), [&](let& v){ return v.is_string() && schema==v.get_string(); } );
+		DBGT( ELogTags::Access, "Unexpected schemaName type in subscription: {}", serialize(*filter) );
+		return false;
+	}
+	//addRole( id:1, permissionRight:{allowed:1, denied:0, resource:{schemaName:"opc.default", slug:"nodeIds", criteria:null}} )
+	α RoleMAwait::AddPermission( RolePK rolePK, const jobject& rights )ι->TAwait<PermissionPK::Type>::Task{
 		try{
-			//addRole( id:1, permissionRight:{allowed:1, denied:0, resource:{schema:\"opc.default\", slug:\"nodeIds\", criteria:null}} )","variables":{}}
-			auto& resource = Json::AsObject( rights, "resource" );
-			auto schema = Json::FindString( resource, "schemaName" );
-			auto criteria = Json::FindString( resource, "criteria" );
-			if( criteria && criteria->empty() )
-				criteria = nullopt;
-			auto resourceName = Json::FindString( resource, "name" );
 			auto& auth = Authorizer();
-			auto resourceKey = Json::AsKey( resource );
-			if( resourceKey.IsPK() ){
-				if( auto existing = auth.FindResource( Resource{(ResourcePK)resourceKey.PK(), {}} ); existing ){
-					resourceKey = DB::Key{ existing->Slug };
-					schema = existing->Schema;
-					if( !criteria && !existing->Criteria.empty() )//the row's own criteria, else a PK naming a criteria-scoped resource would grant on the slug's root instead.
-						criteria = existing->Criteria;
-				}else
-					THROW( "Resource with PK '{}' not found.", resourceKey.PK() );
-			}
-			if( !schema )
-				schema = auth.GetSchema( resourceKey.NK(), _sl );
-
-			auto adminCheck = auth.TestAdmin( *schema, resourceKey.NK(), criteria.value_or(""), _userPK );//the schema's OpcServer answers when one is registered - it knows which resource governs the node; else the flat rule, where a criteria without a row falls back to the slug's root (appserver-review3 #13).
+			let key = resolveResourceKey( Json::AsObject(rights, "resource"), auth, _sl );
+			auto adminCheck = auth.TestAdminGrant( key.Schema, key.Slug, key.Criteria.value_or(""), _userPK );//the schema's OpcServer answers when one is registered - it knows which resource governs the node; else the flat rule, where a criteria without a row falls back to the slug's root (appserver-review3 #13).
 			co_await *adminCheck;
 			let& table = GetTable( "roles" );
 			if( _mutation.AddIfMissing ){//the seed's add (LocalQL::Upsert):  a role that already holds a grant on this resource keeps it as it is.  access_role_add would have rewritten it with the seed's numbers at every -sync start - Delete back on a hardened Engineer, a deny on Viewer cleared (reviews/m3-closing.md #12, ruled 09-21).
-				let byCriteria = criteria ? "r.criteria=?" : "r.criteria is null";
-				vector<DB::Value> params{ {rolePK}, {resourceKey.NK()}, {*schema} };
-				if( criteria )
-					params.emplace_back( *criteria );
+				let byCriteria = key.Criteria ? "r.criteria=?" : "r.criteria is null";
+				vector<DB::Value> params{ {rolePK.Value}, {key.Slug}, {key.Schema} };
+				if( key.Criteria )
+					params.emplace_back( *key.Criteria );
 				let held = co_await Any( table.Schema->DS()->SelectAsync({ Ƒ("select m.member_id from {} m join {} p on p.permission_id=m.member_id join {} r on r.resource_id=p.resource_id where m.role_id=? and r.slug=? and r.schema_name=? and {}",
 					GetTable("role_members").DBName, GetTable("permission_rights").DBName, GetTable("resources").DBName, byCriteria), move(params) }) );
 				if( held.size() ){
-					DBGT( ELogTags::Access, "[{}]Seed grant on '{}.{}' skipped - the role holds one.", rolePK, *schema, resourceKey.NK() );
-					Resume( jobject{{"permissionRight", jobject{{"id", held.front().Get<PermissionRightsPK>(0)}}}} );
+					DBGT( ELogTags::Access, "[{}]Seed grant on '{}.{}' skipped - the role holds one.", rolePK.Value, key.Schema, key.Slug );
+					Resume( jobject{{"permissionRight", jobject{{"id", held.front().Get<PermissionPK::Type>(0)}}}} );
 					co_return;
 				}
 			}
 			DB::InsertClause insert{ DB::Names::ToSingular(table.DBName)+"_add" };
-			insert.Add( rolePK );
+			insert.Add( rolePK.Value );
 			insert.Add( Json::FindNumber<uint>(rights, "allowed").value_or(0) );
 			insert.Add( Json::FindNumber<uint>(rights, "denied").value_or(0) );
-			insert.Add( resourceKey.NK() );
-			insert.Add( *schema );
-			insert.AddOpt( move(resourceName) );
-			insert.AddOpt( criteria );
+			insert.Add( key.Slug );
+			insert.Add( key.Schema );
+			insert.AddOpt( key.Name );
+			insert.AddOpt( key.Criteria );
 			auto ds = table.Schema->DS();
-			let permissionPK = co_await ds->InsertSeq<PermissionRightsPK>( move(insert) );
+			let permissionPK = co_await ds->InsertSeq<PermissionPK::Type>( move(insert) );
 			jobject y;
 			auto& permissionRight = y["permissionRight"].emplace_object();
-			//if( criteria ){
-				auto resourcePK = auth.FindActiveResourcePK( *schema, resourceKey.NK(), criteria.value_or(string{}) );
-				optional<string> resourceDeleted;
-				vector<DB::Value> params{ {*schema}, {resourceKey.NK()} };
-				if( !resourcePK ){
-					string dbCriteria;
-					if( criteria.has_value() ){
-						dbCriteria = "criteria=?";
-						params.emplace_back( *criteria );
-					}
-					else
-						dbCriteria = "criteria is null";
-					//Deleted rows too:  access_role_add creates a missing root resource unenforced (f8b191cd), and `deleted is null` missed
-					//the very row it had just made - the grant went out with no resource id, the authorizer dropped it, and until a restart
-					//a grant on it by id was refused, enforcing it threw in the listener, and Effective rights read a lockout
-					//(reviews/m3-closing.md #11 - the hub's seed-created `opc.install nodeIds`).  Its id and `deleted` go out with the grant,
-					//so the listener caches the row as it is;  only a live row joins the enforced set here.
-					let rows = co_await Any( ds->SelectAsync({ Ƒ("select resource_id, deleted from {} where schema_name=? and slug=? and {}", GetTable("resources").DBName, dbCriteria), move(params) }) );
-					if( rows.size() ){
-						resourcePK = rows.front().Get<ResourcePK>( 0 );
-						if( let deleted = rows.front().GetOpt<DB::DBTimePoint>(1); deleted )
-							resourceDeleted = ToIsoString( *deleted );//a string:  Resource(jobject) reads it with Json::FindTimePoint, which takes nothing else
-						else
-							auth.AddResource( *resourcePK, *schema, resourceKey.NK(), criteria.value_or(string{}) );
-					}
-				}
-				if( resourcePK ){
-					auto& jResource = permissionRight["resource"].emplace_object();
-					jResource["id"] = *resourcePK;
-					if( resourceDeleted )
-						jResource["deleted"] = *resourceDeleted;
-				}
-			//}
+			if( auto resourcePK = auth.FindActiveResourcePK(key.Schema, key.Slug, key.Criteria.value_or(string{})); resourcePK )
+				permissionRight["resource"] = jobject{ {"id", resourcePK->Value} };
+			else{
+				let rows = co_await Any( ds->SelectAsync(resourceSelect(key)) );
+				if( rows.size() )
+					permissionRight["resource"] = resourceRow( rows.front(), key, auth );
+			}
 			permissionRight["id"] = permissionPK;
-			QL::Subscriptions::OnMutation(
-				_mutation,
-				y,
-				[&]( QL::TableQL& subscription )->bool {
-					let permissionRights = subscription.FindTable("permissionRights");
-					if( !permissionRights )
-						return true;
-					let resource = permissionRights->FindTable("resource");
-					if( !resource )
-						return true;
-					let subscriptionSchema = resource->FindPtr<jvalue>("schemaName");
-					if( !subscriptionSchema )
-						return true;
-					if( subscriptionSchema->is_string() )
-						return *schema==subscriptionSchema->as_string();
-					else if( subscriptionSchema->is_array() ){
-						for( let& v : subscriptionSchema->as_array() ){
-							if( v.is_string() && *schema==v.get_string() )
-								return true;
-						}
-						return false;
-					}
-					DBGT( ELogTags::Access, "Unexpected schemaName type in subscription: {}", serialize(*subscriptionSchema) );
-					return false;
-				}
-			);
+			QL::Subscriptions::OnMutation( _mutation, y, [&]( QL::TableQL& subscription ){ return subscribesToSchema( subscription, key.Schema ); } );
 			Resume( y );
 		}
 		catch( runtime_error& e ){
@@ -247,31 +233,6 @@ namespace Jde::Access::Server{
 		}
 	}
 
-	//{ mutation removeRole(id:42, permissionRight:{id:420}) }
-	//{ mutation removeRole(id:11, role:{id:13}) }
-	α RoleMAwait::Remove( RolePK rolePK )ι->void{
-		if( auto role = _args.if_contains("role"); role && role->is_object() )
-			RemoveRole( rolePK, role->get_object() );
-		else if( _args.contains("permissionRight") )
-			RemovePermission( rolePK ); //reads the id inside its own try.
-		else
-			ResumeExp( Exception{"Invalid mutation, expecting object 'role' or 'permissionRight'."} );
-	}
-	α RoleMAwait::RemoveRole( RolePK parentRolePK, const jobject& childRole )ι->void{
-		try{
-			Authorizer().TestAdmin( "roles", _userPK, _sl );
-			_children = childRole.contains( "id" ) ? Json::ToVector<RolePK>( childRole.at("id") ) : vector<RolePK>{};
-			if( auto slugs = childSlugs(childRole); slugs.size() )
-				ResolveChildren( parentRolePK, move(slugs) );
-			else if( _children.empty() )
-				ResumeExp( Exception{"Invalid mutation, expecting 'id' or 'slug' in role."} );
-			else
-				RemoveMembers( parentRolePK );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
 	α RoleMAwait::RemoveMembers( RolePK parentRolePK )ι->DB::ExecuteAwait::Task{
 		try{
 			let& table = GetTable( "role_members" );
@@ -279,7 +240,7 @@ namespace Jde::Access::Server{
 			let sql = Ƒ( "delete from {} where {}=? and {}=?", table.DBName, table.GetColumnPtr("role_id")->Name, table.GetColumnPtr("member_id")->Name );
 			uint rowCount{};
 			for( let childRolePK : _children )
-				rowCount += co_await table.Schema->DS()->Execute( DB::Sql{sql, {DB::Value{parentRolePK}, DB::Value{childRolePK}}} );
+				rowCount += co_await table.Schema->DS()->Execute( DB::Sql{sql, {DB::Value{parentRolePK.Value}, DB::Value{childRolePK.Value}}} );
 			QL::Subscriptions::OnMutation( _mutation, jvalue{} );
 			Resume( rowCount );
 		}
@@ -289,12 +250,12 @@ namespace Jde::Access::Server{
 	}
 	α RoleMAwait::RemovePermission( RolePK parentRolePK )ι->DB::ExecuteAwait::Task{
 		try{
-			let permissionPK = _mutation.AsPathNumber<PermissionPK>( "permissionRight/id" );
+			const PermissionPK permissionPK{ _mutation.AsPathNumber<PermissionPK::Type>("permissionRight/id") };
 			Authorizer().TestAdminPermission( permissionPK, _userPK, _sl );//admin of the permission's resource, the same right AddPermission requires to grant it.
 			let& table = GetTable( "roles" );
 			DB::InsertClause remove{ DB::Names::ToSingular(table.DBName)+"_remove" };
-			remove.Add( parentRolePK );
-			remove.Add( permissionPK );
+			remove.Add( parentRolePK.Value );
+			remove.Add( permissionPK.Value );
 			let y = co_await table.Schema->DS()->Execute( remove.Move() );
 			QL::Subscriptions::OnMutation( _mutation, jvalue{} );
 			ResumeScaler( y );
@@ -380,17 +341,17 @@ namespace Jde::Access::Server{
 				rolePlural = roleQL->IsPlural();
 				auto dbMembers = co_await QL::QLAwait( move(*roleQL), move(statement), UserPK );
 				if( dbMembers.is_array() )
-					roleMembers = dbMembers.get_array().empty() ? jarray{} : move( dbMembers.get_array() );
+					roleMembers = move( dbMembers.get_array() );
 				else if( dbMembers.is_object() ){
 					roleKey = "role";
-					roleMembers = dbMembers.get_object().empty() ? jobject{} : move( dbMembers.get_object() );
+					roleMembers = move( dbMembers.get_object() );
 				}
 			}
 
-			flat_map<RolePK,jobject> roles;
+			flat_map<RolePK::Type,jobject> roles;
 			auto createRolesFromMembers = [&roles]( jvalue& roleMembers, str memberName, bool plural ){
 				auto addRoleMember = [&]( jobject& member ){
-					let parentRolePK = Json::AsNumber<RolePK>( member, "parentRoleId" );
+					let parentRolePK = Json::AsNumber<RolePK::Type>( member, "parentRoleId" );
 					member.erase( "parentRoleId" );
 					auto role = roles.try_emplace( parentRolePK, jobject{{"id", parentRolePK}} );
 					auto& jmember = role.first->second;
@@ -417,7 +378,7 @@ namespace Jde::Access::Server{
 			Query.ReturnRaw = true;
 			auto qlRoles = co_await QL::QLAwait( move(Query), UserPK );
 			auto addRole = [&]( jobject&& roleProperties ){
-				let rolePK = Json::AsNumber<RolePK>( roleProperties, "id" );
+				let rolePK = Json::AsNumber<RolePK::Type>( roleProperties, "id" );
 				auto existing = roles.find( rolePK );
 				if( existing!=roles.end() ){
 					for( auto&& [key,value] : roleProperties )

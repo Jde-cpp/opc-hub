@@ -3,11 +3,6 @@
 
 namespace Jde::DB{ struct AppSchema; }
 namespace Jde::Access{
-	struct RoleRights final{
-		Access::RolePK RolePK;
-		Access::PermissionPK PermissionPK;
-	};
-
 	struct Role final{
 		Role( RolePK rolePK, bool isDeleted  )ι:PK{rolePK}, IsDeleted{isDeleted}{}
 		Role( const jobject& j )ι;

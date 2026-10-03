@@ -60,7 +60,7 @@ namespace Jde{
 				for( int i=0; i<50 && !done; ++i )
 					std::this_thread::sleep_for( std::chrono::milliseconds{100} );
 				if( !done ){
-					std::cerr << "access-review3 #20: Configure's continuation cannot read Authorize - Loader::Acl is holding the mutex across Subscribe." << std::endl;
+					std::cerr << "access-review3 #20: Configure's continuation cannot read Authorize - Configure is holding the mutex across Subscribe." << std::endl;
 					std::abort();
 				}
 			} };

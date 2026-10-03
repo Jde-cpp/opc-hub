@@ -7,17 +7,17 @@ namespace Jde::Access{
 		flat_set<PermissionRole> members;
 		if( auto p = Json::FindArray(j, "permissionRights"); p ){
 			for( let& value : *p )
-				members.emplace( PermissionRole{std::in_place_index<0>, Json::AsNumber<PermissionPK>(Json::AsObject(value), "id")} );
+				members.emplace( PermissionPK{Json::AsNumber<PermissionPK::Type>(Json::AsObject(value), "id")} );
 		}
 		if( auto p = Json::FindArray(j, "roles"); p ){
 			for( let& value : *p )
-				members.emplace( PermissionRole{std::in_place_index<1>, Json::AsNumber<RolePK>(Json::AsObject(value), "id")} );
+				members.emplace( RolePK{Json::AsNumber<RolePK::Type>(Json::AsObject(value), "id")} );
 		}
 		return members;
 	}
 
 	Role::Role( const jobject& j )ι:
-		PK{ Json::FindNumber<RolePK>(j, "id").value_or(0) },
+		PK{ Json::FindNumber<RolePK::Type>(j, "id").value_or(0) },
 		IsDeleted{ Json::FindTimePoint(j, "deleted").has_value() },
 		Members{ getMembers(j) }
 	{}

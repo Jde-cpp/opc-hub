@@ -191,4 +191,32 @@ namespace Jde::Access::Tests{
 		PurgeUser( first, root );
 		PurgeUser( second, root );
 	}
+
+	//GroupAwait::Select moves _query into the identities query, then MembersStatement copied the group filter off it - an empty
+	//jobject by then.  The members query ran unfiltered, and addMembers' in-memory filter needs the group's id in the result, so
+	//`group( id:A ){ name groupMembers{ id } }` came back with every group's members.
+	TEST_F( GroupTests, MembersStayWithTheirGroup ){
+		let root = GetRoot();
+		const GroupPK a{ GetId(GetGroup("members-own-a", root)) }, b{ GetId(GetGroup("members-own-b", root)) };
+		const UserPK aMember{ GetId(GetUser("members-own-a-user", root)) }, bMember{ GetId(GetUser("members-own-b-user", root)) };
+		AddToGroup( a, {aMember}, root );
+		AddToGroup( b, {bMember}, root );
+
+		for( let& key : {Ƒ("id:{}", a.Value), string{"slug:\"members-own-a\""}} ){
+			let group = QL().QuerySync( Ƒ("group( {} ){{ name groupMembers{{ id }} }}", key), {}, root );
+			vector<uint> ids;
+			if( let members = FindArray(group, "groupMembers"); members ){
+				for( let& member : *members )
+					ids.push_back( GetId(AsObject(member)) );
+			}
+			EXPECT_EQ( ids, vector<uint>{aMember.Value} ) << key << ": " << serialize( group );
+		}
+
+		RemoveFromGroup( a, {aMember}, root );
+		RemoveFromGroup( b, {bMember}, root );
+		PurgeGroup( a, root );
+		PurgeGroup( b, root );
+		PurgeUser( aMember, root );
+		PurgeUser( bMember, root );
+	}
 }

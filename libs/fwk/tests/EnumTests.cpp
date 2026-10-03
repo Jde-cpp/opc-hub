@@ -3,7 +3,7 @@
 #define let const auto
 
 namespace Jde::Tests{
-	//these back Access::ToRight/ToString(ERights), ToLogLevel, ToProviderType, Syntax, Introspection and
+	//these back Access::ToRight/ToString(ERights), ToLogLevel, Syntax, Introspection and
 	//OpcServerSession - the permission and level strings the whole system parses - and had no test anywhere.
 
 	//index-based: stringValues[i] names the value i.

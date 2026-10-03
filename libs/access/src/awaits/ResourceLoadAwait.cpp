@@ -8,16 +8,12 @@
 
 #define let const auto
 namespace Jde::Access{
-	Ω getSchemaName( const sp<DB::AppSchema>& schema, const string& opcServerInstance )ι->string{
-		return opcServerInstance.empty() ? schema->Name : Ƒ( "{}.{}", schema->Name, opcServerInstance );
-	}
-
 	α ResourceLoadAwait::Load()ι->QL::QLAwait<jarray>::Task{
 		ResourcePermissions y;
 		try{
 			jarray schemaNames;
 			for( let& schema : _schemas )
-				schemaNames.push_back( {getSchemaName(schema, _opcServerInstance)} );
+				schemaNames.push_back( {InstanceSchemaName(schema->Name, _opcServerInstance)} );
 			auto vars = _allSchemas ? jobject{} : jobject{ {"schemaNames", move(schemaNames)} };//explicit now - "app" in the list used to mean this.
 			auto input = _allSchemas ? "" : "(schemaName:$schemaNames)";
 			let resources = co_await *_qlServer->QueryArray( Ƒ("resources{}{{ id schemaName slug criteria deleted }}", input), vars, _executer );
@@ -45,7 +41,7 @@ namespace Jde::Access{
 	α ResourceSyncAwait::Sync()ι->TAwait<jvalue>::Task{
 		try{
 			for( let& schema : _schemas ){
-				let schemaName = getSchemaName(schema, _opcServerInstance);
+				let schemaName = InstanceSchemaName( schema->Name, _opcServerInstance );
 				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug deleted description allowed}}", schemaName );
 				auto existing = Json::AsArray( co_await *_qlServer->Query(move(q), {}, _executer) );
 				flat_set<string> slugs;
@@ -59,14 +55,14 @@ namespace Jde::Access{
 					//Remember it, keyed by slug, for the declare loop to fill from the meta's ops.
 					let allowed = resource.if_contains( "allowed" );
 					if( !allowed || allowed->is_null() || (allowed->is_array() && allowed->get_array().empty()) )
-						bare.emplace( slug, Json::AsNumber<ResourcePK>(resource, "id") );
+						bare.emplace( slug, ResourcePK{Json::AsNumber<ResourcePK::Type>(resource, "id")} );
 					//A row a sync created and never got to disable:  the disable is a second call, and a failure between the two left the
 					//table denying every non-System user - for good, since a slug with a row was then skipped here (access-review3 #24).
 					//Its signature is the sync's own description and not one right on it; an operator who enabled a resource granted something.
 					let deleted = resource.if_contains( "deleted" );
 					if( !(deleted && deleted->is_null()) || Json::FindDefaultSV(resource, "description")!="From installation" )
 						continue;
-					let id = Json::AsNumber<ResourcePK>( resource, "id" );
+					let id = Json::AsNumber<ResourcePK::Type>( resource, "id" );
 					if( Json::AsArray(co_await *_qlServer->Query(Ƒ("permissionRights( resourceId:{} ){{ id }}", id), {}, _executer)).empty() ){
 						INFOT( ELogTags::Access, "[{}.{}]resource {} is active with no rights on it - disabling it, as the installation that created it meant to.", schemaName, Json::AsString(resource, "slug"), id );
 						co_await *_qlServer->Query( Ƒ("deleteResource( id:{} )", id), {}, _executer );
@@ -91,12 +87,12 @@ namespace Jde::Access{
 						//sync could declare it - fill its ops now so the permission table has checkboxes.  updateResource cannot touch
 						//`deleted`, so an unenforced row stays unenforced;  a row that already has its ops is left alone.
 						if( auto p = bare.find(jsonName); p!=bare.end() )
-							co_await *_qlServer->Query( Ƒ("updateResource( id:{}, allowed:{} )", p->second, underlying(ops)), {}, _executer );
+							co_await *_qlServer->Query( Ƒ("updateResource( id:{}, allowed:{} )", p->second.Value, underlying(ops)), {}, _executer );
 						continue;
 					}
 					auto create = Ƒ( "createResource( schemaName:\"{}\", name:\"{}\", slug:\"{}\", allowed:{}, description:\"From installation\" ){{id}}",
 						schemaName, name, move(jsonName), underlying(ops) );
-					let resourceId = QL::AsId<UserPK::Type>( co_await *_qlServer->Query(move(create), {}, _executer) );
+					let resourceId = QL::AsId<ResourcePK::Type>( co_await *_qlServer->Query(move(create), {}, _executer) );
 					co_await *_qlServer->Query( Ƒ("deleteResource( id:{} )", resourceId), {}, _executer );
 				}
 			}

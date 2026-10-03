@@ -19,8 +19,8 @@ namespace Jde::Access::Server{
 		Jde::UserPK _executer;
 
 		α Table()ε->const DB::Table&;
-		α InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK>>::Task;
-		α InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK>::Task;
+		α InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK::Type>>::Task;
+		α InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK::Type>::Task;
 		α InsertRole()ι->DB::ExecuteAwait::Task;
 		α PurgeAcl()ι->DB::ScalerAwaitOpt<uint>::Task;
 		α PurgeAcl( IdentityPK::Type identityPK, PermissionPK permissionPK, bool isRole )ι->DB::ExecuteAwait::Task;
@@ -33,12 +33,10 @@ namespace Jde::Access::Server{
 			_executer{ executer }
 		{}
 		α Suspend()ι->void;
+		struct Nest final{ Nest( string table, vector<string> path )ε; string Table; vector<string> Path; string IdKey; };//where a joined table's columns land in each row.
 	private:
 		α GetStatement( const QL::TableQL& childTable, sp<DB::Column> joinColumn )ε->DB::Statement;
-		α LoadRoles( const QL::TableQL& permissionRightsQL )ι->DB::SelectAwait::Task;
-		α LoadPermissionRights( const QL::TableQL& permissionRightsQL )ι->DB::SelectAwait::Task;
-		α LoadPermissions( const QL::TableQL& permissionsQL )ι->DB::SelectAwait::Task;
-		α LoadIdentities( const QL::TableQL& identitiesQL )ι->DB::SelectAwait::Task;
+		α Load( DB::Statement statement, vector<Nest> nesting, const QL::TableQL* identitiesQL={} )ι->DB::SelectAwait::Task;
 		QL::TableQL Query;
 		Jde::UserPK _executer;
 	};

@@ -15,5 +15,4 @@ namespace Jde::Access{
 
 		variant<Jde::UserPK,Access::GroupPK> Value;
 	};
-	α LoadResources( sv schemaName )ι->void;
 }

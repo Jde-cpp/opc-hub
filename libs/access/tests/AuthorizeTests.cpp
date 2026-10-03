@@ -18,6 +18,7 @@ namespace Jde::Access::Tests{
 		using Authorize::CreateResource;
 		using Authorize::CreateUser;
 		using Authorize::DeleteGroup;
+		using Authorize::DeleteUser;
 		using Authorize::PurgeGroup;
 		using Authorize::PurgeRole;
 		using Authorize::PurgeUser;
@@ -28,6 +29,8 @@ namespace Jde::Access::Tests{
 		using Authorize::UpdatePermission;
 		using Authorize::UpdateResourceDeleted;
 	};
+	//access-refactor A3:  three ids, three types - a role id where a permission's goes, or a bare number, does not compile.
+	static_assert( !std::is_convertible_v<RolePK,PermissionPK> && !std::is_convertible_v<PermissionPK,RolePK> && !std::is_convertible_v<uint32,ResourcePK> );
 	constexpr ResourcePK _resourcePK{ 1 };
 	const UserPK _user{ 100 };
 	const string _schema{ "unitTest" };
@@ -44,23 +47,23 @@ namespace Jde::Access::Tests{
 
 	TEST( AuthorizeTests, RemoveAclRevokes ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
-		auth->RemoveAcl( _user.Value, PermissionRole{std::in_place_index<0>, PermissionPK{10}} );
+		auth->RemoveAcl( _user.Value, PermissionRole{PermissionPK{10}} );
 		ASSERT_EQ( rights(*auth), None );
 	}
 
 	TEST( AuthorizeTests, UpdatePermissionDeniedOnly ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		auth->UpdatePermission( PermissionPK{10}, {}, Delete );//denied-only update must not wipe allowed.
 		ASSERT_EQ( rights(*auth), Read );
 	}
 
 	TEST( AuthorizeTests, UpdatePermissionSiblings ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );
-		auth->AddAcl( _user.Value, PermissionPK{11}, Create, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );
+		auth->AddAcl( _user.Value, {PermissionPK{11}, _resourcePK, Create, None} );
 		ASSERT_EQ( rights(*auth), Read | Create );
 		auth->UpdatePermission( PermissionPK{10}, Update, {} );//sibling 11 must keep its own rights.
 		ASSERT_EQ( rights(*auth), Update | Create );
@@ -71,7 +74,7 @@ namespace Jde::Access::Tests{
 		const GroupPK parent{ 200 }, child{ 201 };
 		auth->AddToGroup( child, {_user.Value} );
 		auth->AddToGroup( parent, {child.Value} );
-		auth->AddAcl( parent.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( parent.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->RemoveFromGroup( parent, {child.Value} );//removing nested group must clear its users' rights.
 		ASSERT_EQ( rights(*auth), None );
@@ -81,7 +84,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 240 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( group.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( group.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->DeleteGroup( group );//soft delete - members lose the group's grants...
 		ASSERT_EQ( rights(*auth), None );
@@ -94,7 +97,7 @@ namespace Jde::Access::Tests{
 		const GroupPK parent{ 250 }, child{ 251 };
 		auth->AddToGroup( child, {_user.Value} );
 		auth->AddToGroup( parent, {child.Value} );
-		auth->AddAcl( parent.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( parent.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->DeleteGroup( parent );
 		ASSERT_EQ( rights(*auth), None );
@@ -106,7 +109,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 260 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( group.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( group.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		auth->DeleteGroup( group );
 		ASSERT_EQ( rights(*auth), None );
 		auth->AddToGroup( group, {_user.Value} );//a later recalc must not re-apply a deleted group's acl.
@@ -118,8 +121,8 @@ namespace Jde::Access::Tests{
 		const GroupPK deleted{ 270 }, purged{ 271 };
 		auth->AddToGroup( deleted, {_user.Value} );
 		auth->AddToGroup( purged, {_user.Value} );
-		auth->AddAcl( deleted.Value, PermissionPK{10}, Read, None, _resourcePK );
-		auth->AddAcl( purged.Value, PermissionPK{11}, Create, None, _resourcePK );
+		auth->AddAcl( deleted.Value, {PermissionPK{10}, _resourcePK, Read, None} );
+		auth->AddAcl( purged.Value, {PermissionPK{11}, _resourcePK, Create, None} );
 		ASSERT_EQ( rights(*auth), Read | Create );
 		auth->DeleteGroup( purged );
 		auth->PurgeGroup( purged );//delete-then-purge: the deleted branch of PurgeGroup, reachable now.
@@ -131,7 +134,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 210 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( group.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( group.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->PurgeGroup( group );//purging an active group must clear its members' rights.
 		ASSERT_EQ( rights(*auth), None );
@@ -142,7 +145,7 @@ namespace Jde::Access::Tests{
 		const GroupPK parent{ 220 }, child{ 221 };
 		auth->AddToGroup( child, {_user.Value} );
 		auth->AddToGroup( parent, {child.Value} );
-		auth->AddAcl( parent.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( parent.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->PurgeGroup( parent );//the grant is on the parent - the nested member must lose it too.
 		ASSERT_EQ( rights(*auth), None );
@@ -152,7 +155,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 230 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( _user.Value, PermissionPK{11}, Create, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{11}, _resourcePK, Create, None} );
 		auth->Groups().find( group )->second.IsDeleted = true;//soft-deleted row - members already recalculated.
 		auth->PurgeGroup( group );//the deleted branch just erases, unrelated grants must survive.
 		ASSERT_EQ( rights(*auth), Create );
@@ -161,33 +164,33 @@ namespace Jde::Access::Tests{
 
 	TEST( AuthorizeTests, AclUpsertLowersRights ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read | Update, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Update, None} );
 		ASSERT_EQ( rights(*auth), Read | Update );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );//re-grant is an upsert on the same pk - it must lower.
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );//re-grant is an upsert on the same pk - it must lower.
 		ASSERT_EQ( rights(*auth), Read );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{_user}), 1u );//...and must not append a duplicate entry.
 	}
 
 	TEST( AuthorizeTests, AclUpsertRaisesDenied ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read | Update, None, _resourcePK );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read | Update, Update, _resourcePK );//denied added on the re-grant.
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Update, None} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Update, Update} );//denied added on the re-grant.
 		ASSERT_EQ( rights(*auth), Read );
 	}
 
 	TEST( AuthorizeTests, AclUpsertKeepsSiblingGrant ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read | Update, None, _resourcePK );
-		auth->AddAcl( _user.Value, PermissionPK{11}, Create, None, _resourcePK );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );//lowering 10 must not disturb 11.
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Update, None} );
+		auth->AddAcl( _user.Value, {PermissionPK{11}, _resourcePK, Create, None} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );//lowering 10 must not disturb 11.
 		ASSERT_EQ( rights(*auth), Read | Create );
 	}
 
 	TEST( AuthorizeTests, AclRegrantThenRemoveRevokes ){
 		auto auth = createAuthorizer();
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );//identical re-grant.
-		auth->RemoveAcl( _user.Value, PermissionRole{std::in_place_index<0>, PermissionPK{10}} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );//identical re-grant.
+		auth->RemoveAcl( _user.Value, PermissionRole{PermissionPK{10}} );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{_user}), 0u );//RemoveAcl breaks after the first match - a duplicate would outlive the purge.
 		ASSERT_EQ( rights(*auth), None );
 	}
@@ -196,9 +199,9 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 280 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( group.Value, PermissionPK{10}, Read | Update, None, _resourcePK );
+		auth->AddAcl( group.Value, {PermissionPK{10}, _resourcePK, Read | Update, None} );
 		ASSERT_EQ( rights(*auth), Read | Update );
-		auth->AddAcl( group.Value, PermissionPK{10}, Read, None, _resourcePK );//the member must follow the group's lowered grant.
+		auth->AddAcl( group.Value, {PermissionPK{10}, _resourcePK, Read, None} );//the member must follow the group's lowered grant.
 		ASSERT_EQ( rights(*auth), Read );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{group}), 1u );
 	}
@@ -206,12 +209,12 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, AclRoleGrantNotDuplicated ){
 		auto auth = createAuthorizer();
 		const RolePK role{ 60 };
-		auth->Roles().try_emplace( role, Role{role,false} ).first->second.Members.emplace( PermissionRole{std::in_place_index<0>, PermissionPK{10}} );
+		auth->Roles().try_emplace( role, Role{role,false} ).first->second.Members.emplace( PermissionRole{PermissionPK{10}} );
 		auth->Permissions().emplace( PermissionPK{10}, Permission{PermissionPK{10}, _resourcePK, Read, None} );
 		auth->AddAcl( _user.Value, role );
 		auth->AddAcl( _user.Value, role );//re-granting the same role must not append a second entry either.
 		ASSERT_EQ( auth->Acl().count(IdentityPK{_user}), 1u );
-		auth->RemoveAcl( _user.Value, PermissionRole{std::in_place_index<1>, role} );
+		auth->RemoveAcl( _user.Value, PermissionRole{role} );
 		ASSERT_EQ( rights(*auth), None );
 	}
 
@@ -219,7 +222,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const GroupPK group{ 290 };
 		auth->AddToGroup( group, {_user.Value} );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{_user}), 1u );
 		ASSERT_TRUE( auth->Groups().find(group)->second.Members.contains(IdentityPK{_user}) );
 		auth->PurgeUser( _user );
@@ -232,7 +235,7 @@ namespace Jde::Access::Tests{
 		const GroupPK parent{ 300 }, child{ 301 };
 		auth->AddToGroup( child, {_user.Value} );
 		auth->AddToGroup( parent, {child.Value} );
-		auth->AddAcl( child.Value, PermissionPK{10}, Read, None, _resourcePK );
+		auth->AddAcl( child.Value, {PermissionPK{10}, _resourcePK, Read, None} );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->PurgeGroup( child );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{child}), 0u );
@@ -243,14 +246,14 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, PurgeRoleSweepsReferences ){
 		auto auth = createAuthorizer();
 		const RolePK parent{ 70 }, child{ 71 };
-		auth->Roles().try_emplace( child, Role{child,false} ).first->second.Members.emplace( PermissionRole{std::in_place_index<0>, PermissionPK{10}} );
-		auth->Roles().try_emplace( parent, Role{parent,false} ).first->second.Members.emplace( PermissionRole{std::in_place_index<1>, child} );
+		auth->Roles().try_emplace( child, Role{child,false} ).first->second.Members.emplace( PermissionRole{PermissionPK{10}} );
+		auth->Roles().try_emplace( parent, Role{parent,false} ).first->second.Members.emplace( PermissionRole{child} );
 		auth->Permissions().emplace( PermissionPK{10}, Permission{PermissionPK{10}, _resourcePK, Read, None} );
 		auth->AddAcl( _user.Value, child );
 		ASSERT_EQ( rights(*auth), Read );
 		auth->PurgeRole( child );
 		ASSERT_EQ( auth->Acl().count(IdentityPK{_user}), 0u );//the acl row named the purged role - swept by value, not by key.
-		ASSERT_FALSE( auth->Roles().find(parent)->second.Members.contains(PermissionRole{std::in_place_index<1>, child}) );
+		ASSERT_FALSE( auth->Roles().find(parent)->second.Members.contains(PermissionRole{child}) );
 		ASSERT_EQ( rights(*auth), None );
 	}
 
@@ -259,19 +262,56 @@ namespace Jde::Access::Tests{
 		const UserPK system{ UserPK::System };
 		ASSERT_EQ( auth->Rights(_schema, _slug, system), All );//all three entry points must agree that System is all-access.
 		EXPECT_NO_THROW( auth->Test(_schema, _slug, All, system) );
-		EXPECT_NO_THROW( auth->TestAdmin(_slug, system) );
+		EXPECT_NO_THROW( auth->TestAdminSlug(_slug, system) );
 
 		const UserPK unknown{ 999 };//...and that an unknown non-System user is not.
 		ASSERT_EQ( auth->Rights(_schema, _slug, unknown), None );
 		EXPECT_THROW( auth->Test(_schema, _slug, Read, unknown), Exception );
-		EXPECT_THROW( auth->TestAdmin(_slug, unknown), Exception );
+		EXPECT_THROW( auth->TestAdminSlug(_slug, unknown), Exception );
+	}
+
+	//access-refactor A4:  Test, TestAdmin and Rights share one lookup, so each state answers alike through all three -
+	//Unauthorized only for who the user is, Forbidden for what they may do.
+	Ω status( function<void()> f )ι->EHttpStatus{
+		try{
+			f();
+		}
+		catch( const Exception& e ){
+			return e.HttpStatus();
+		}
+		return EHttpStatus::None;
+	}
+	TEST( AuthorizeTests, EntryPointsAgree ){
+		auto auth = createAuthorizer();
+		let test = [&]( UserPK user ){ return status( [&]{ auth->Test(_schema, _slug, Read, user); } ); };
+		let testAdmin = [&]( UserPK user ){ return status( [&]{ auth->TestAdminSlug(_slug, user); } ); };
+
+		const UserPK unknown{ 999 };
+		EXPECT_EQ( auth->Rights(_schema, _slug, unknown), None );
+		EXPECT_EQ( test(unknown), EHttpStatus::Unauthorized );
+		EXPECT_EQ( testAdmin(unknown), EHttpStatus::Unauthorized );
+
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Administer, None} );
+		EXPECT_EQ( rights(*auth), Read | Administer );
+		EXPECT_EQ( test(_user), EHttpStatus::None );
+		EXPECT_EQ( testAdmin(_user), EHttpStatus::None );
+
+		auth->UpdatePermission( PermissionPK{10}, {}, Administer );
+		EXPECT_EQ( rights(*auth), Read );
+		EXPECT_EQ( test(_user), EHttpStatus::None );
+		EXPECT_EQ( testAdmin(_user), EHttpStatus::Forbidden );
+
+		auth->DeleteUser( _user );
+		EXPECT_EQ( rights(*auth), None );
+		EXPECT_EQ( test(_user), EHttpStatus::Forbidden );
+		EXPECT_EQ( testAdmin(_user), EHttpStatus::Forbidden );
 	}
 
 	//todo.md §12: with no remote registered for the schema, the schema overload returns a pre-completed awaitable any coroutine
 	//can co_await - the denial arrives at the co_await, not at the call. VoidTask return: the awaitable dictates no task type.
 	Ω testAdminAwait( TestAuthorize& auth, UserPK user, bool& threw, bool& completed )->VoidTask{
 		try{
-			auto check = auth.TestAdmin( _schema, _slug, "", user );
+			auto check = auth.TestAdminGrant( _schema, _slug, "", user );
 			co_await *check;
 			threw = false;
 		}
@@ -299,7 +339,7 @@ namespace Jde::Access::Tests{
 		const string criteria{ "ns=4;i=1" };
 		auth->CreateResource( Resource{criteriaPK, jobject{{"schemaName",_schema},{"slug",_slug},{"criteria",criteria}}} );
 		auth->AddResource( criteriaPK, _schema, _slug, criteria );
-		auth->AddAcl( _user.Value, PermissionPK{10}, Administer, None, _resourcePK );//admin of the root only.
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Administer, None} );//admin of the root only.
 
 		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, _slug, "", _user) );
 		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, _slug, "ns=4;i=2", _user) ) << "an unmapped criteria inherits the root";
@@ -309,8 +349,30 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, "notEnabled", "x", UserPK{999}) ) << "no active root - not enabled, as Test";
 		EXPECT_NO_THROW( auth->TestAdminLocal("other", _slug, "", UserPK{999}) ) << "the schema is part of the key";
 
-		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK}}, false );//SchemaResources keeps the entry - the row's own flag has to win.
+		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, false );
 		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, _slug, criteria, _user) ) << "a deleted criteria row falls back to the root";
+	}
+
+	//access-refactor A2:  a delete unindexes its own row and nothing else, as a restart would load the cache.  The root still
+	//disables its slug (FindActiveResourcePKLocked), but deleting it used to erase the slug's criteria rows too, so restoring it
+	//left them unenforced until a restart;  and a deleted criteria row stayed indexed.
+	TEST( AuthorizeTests, DeleteUnindexesItsRowOnly ){
+		auto auth = createAuthorizer();
+		constexpr ResourcePK criteriaPK{ 2 };
+		const string criteria{ "ns=4;i=1" };
+		auth->CreateResource( Resource{criteriaPK, jobject{{"schemaName",_schema},{"slug",_slug},{"criteria",criteria}}} );
+		ASSERT_EQ( auth->FindActiveResourcePK(_schema, _slug, criteria), criteriaPK );
+
+		auth->UpdateResourceDeleted( _resourcePK, _schema, jobject{{"id",_resourcePK.Value}}, false );
+		EXPECT_FALSE( auth->FindActiveResourcePK(_schema, _slug, criteria) ) << "a deleted root disables its slug";
+		auth->UpdateResourceDeleted( _resourcePK, _schema, jobject{{"id",_resourcePK.Value}}, true );
+		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, criteria), criteriaPK ) << "restoring the root brings its criteria rows back";
+
+		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, false );
+		EXPECT_FALSE( auth->FindActiveResourcePK(_schema, _slug, criteria) ) << "a deleted criteria row is unindexed";
+		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, ""), _resourcePK ) << "and only that row";
+		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, true );
+		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, criteria), criteriaPK );
 	}
 
 	//The gate on standing in for a schema (AddAdminAuthorizer):  Administer on every active criteria-less resource of the
@@ -320,14 +382,14 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		EXPECT_NO_THROW( auth->TestSchemaAdmin("unknown", _user) ) << "no active root - nothing to enforce, as Test does";
 		EXPECT_THROW( auth->TestSchemaAdmin(_schema, _user), Exception ) << "no rights yet";
-		auth->AddAcl( _user.Value, PermissionPK{10}, Administer, None, _resourcePK );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Administer, None} );
 		EXPECT_NO_THROW( auth->TestSchemaAdmin(_schema, _user) );
 		EXPECT_NO_THROW( auth->TestSchemaAdmin(_schema, UserPK{UserPK::System}) );
 		constexpr ResourcePK otherPK{ 3 };
 		auth->CreateResource( Resource{otherPK, jobject{{"schemaName",_schema},{"slug","gadgets"}}} );
 		auth->AddResource( otherPK, _schema, "gadgets", {} );
 		EXPECT_THROW( auth->TestSchemaAdmin(_schema, _user), Exception ) << "every active root, not just one";
-		auth->UpdateResourceDeleted( otherPK, _schema, jobject{{"id",otherPK}}, false );
+		auth->UpdateResourceDeleted( otherPK, _schema, jobject{{"id",otherPK.Value}}, false );
 		EXPECT_NO_THROW( auth->TestSchemaAdmin(_schema, _user) ) << "a disabled root is not enforced";
 	}
 
@@ -340,7 +402,7 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		const UserPK registrant{ 101 };
 		auth->CreateUser( registrant, "registrant" );
-		auth->AddAcl( registrant.Value, PermissionPK{11}, Administer, None, _resourcePK );
+		auth->AddAcl( registrant.Value, {PermissionPK{11}, _resourcePK, Administer, None} );
 		auto stub = ms<StubAdminAcl>();
 		auth->AddAdminAuthorizer( _schema, stub, registrant );
 		bool threw{}, completed{};
@@ -348,7 +410,7 @@ namespace Jde::Access::Tests{
 		ASSERT_TRUE( completed );
 		EXPECT_FALSE( threw ) << "the registered authorizer answers";
 		EXPECT_EQ( stub->Calls, 1u );
-		auth->RemoveAcl( registrant.Value, PermissionRole{std::in_place_index<0>, PermissionPK{11}} );
+		auth->RemoveAcl( registrant.Value, PermissionRole{PermissionPK{11}} );
 		completed = false;
 		testAdminAwait( *auth, UserPK{999}, threw, completed );
 		ASSERT_TRUE( completed );
@@ -393,6 +455,9 @@ namespace Jde::Access::Tests{
 		ASSERT_TRUE( found );
 		ASSERT_EQ( found->PK, _resourcePK );
 		EXPECT_FALSE( auth->FindResource(Resource{ResourcePK{99}, {}}) ); //unknown pk, no schema/slug to fall back on.
+		ASSERT_TRUE( auth->FindResource(_resourcePK) );
+		EXPECT_EQ( auth->FindResource(_resourcePK)->Slug, _slug );
+		EXPECT_FALSE( auth->FindResource(ResourcePK{99}) );
 	}
 
 	TEST( AuthorizeTests, GroupCycleGuards ){
@@ -403,7 +468,7 @@ namespace Jde::Access::Tests{
 		groupB.Members.emplace( IdentityPK{a} );
 		groupB.Members.emplace( IdentityPK{_user} );
 		EXPECT_NO_THROW( auth->TestAddGroupMember( GroupPK{999}, {a.Value} ) );//IsChild traverses the cycle.
-		auth->AddAcl( a.Value, PermissionPK{10}, Read, None, _resourcePK );//RecursiveUsers+AddPermission traverse the cycle.
+		auth->AddAcl( a.Value, {PermissionPK{10}, _resourcePK, Read, None} );//RecursiveUsers+AddPermission traverse the cycle.
 		ASSERT_EQ( rights(*auth), Read );
 		auth->DeleteGroup( a );
 		ASSERT_EQ( rights(*auth), None );
@@ -412,10 +477,10 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, RoleCycleGuards ){
 		auto auth = createAuthorizer();
 		const RolePK r1{ 50 }, r2{ 51 };//cycle in existing data - bypasses TestAddRoleMember.
-		auth->Roles().try_emplace( r1, Role{r1,false} ).first->second.Members.emplace( PermissionRole{std::in_place_index<1>, r2} );
+		auth->Roles().try_emplace( r1, Role{r1,false} ).first->second.Members.emplace( PermissionRole{r2} );
 		auto& role2 = auth->Roles().try_emplace( r2, Role{r2,false} ).first->second;
-		role2.Members.emplace( PermissionRole{std::in_place_index<1>, r1} );
-		role2.Members.emplace( PermissionRole{std::in_place_index<0>, PermissionPK{10}} );
+		role2.Members.emplace( PermissionRole{r1} );
+		role2.Members.emplace( PermissionRole{PermissionPK{10}} );
 		auth->Permissions().emplace( PermissionPK{10}, Permission{PermissionPK{10}, _resourcePK, Read, None} );
 		EXPECT_NO_THROW( auth->TestAddRoleMember( RolePK{52}, r1 ) );//isChild traverses the cycle.
 		auth->AddAcl( _user.Value, r1 );//role walk traverses the cycle to reach permission 10.

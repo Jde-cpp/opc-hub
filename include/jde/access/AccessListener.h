@@ -7,7 +7,6 @@ namespace Jde::QL{ struct IQL; }
 namespace Jde::Access{
 	enum class ESubscription : uint16;
 	struct Authorize;
-	α IsServer()ι->bool;
 	struct AccessListener final : QL::IListener, IShutdown{
 		AccessListener( sp<QL::IQL> qlServer )ι:QL::IListener{"Access"},_qlServer{qlServer}{}
 		α OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void override;
@@ -20,6 +19,6 @@ namespace Jde::Access{
 		α GroupChanged( GroupPK groupPK, ESubscription event, const jobject& o )ε->void;
 		α RoleChanged( RolePK rolePK, ESubscription event, const jobject& o )ε->void;
 		α ResourceChanged( ResourcePK resourcePK, ESubscription event, const jobject& o )ε->void;
-		α PermissionUpdated( PermissionRightsPK pk, const jobject& o )ε->void;
+		α PermissionUpdated( PermissionPK pk, const jobject& o )ε->void;
 	};
 }
