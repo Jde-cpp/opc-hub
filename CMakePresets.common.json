@@ -6,7 +6,7 @@
 			"hidden": true,
 			"environment": {
 				"installRoot": "$env{REPO_DIR}/install/$env{CXX}",
-				"cpuFlags": "-msse4.2 -mpclmul"
+				"cpuFlags": "-march=x86-64-v3 -mpclmul -maes"
 			},
 			"cacheVariables": {
 				"CMAKE_CXX_STANDARD": "26",
@@ -21,7 +21,8 @@
 			"cacheVariables": {
 				"jde_REPOS": true,
 				"jde_TESTS": false,
-				"jde_APPS": false
+				"jde_APPS": false,
+				"CMAKE_C_FLAGS": "$env{cpuFlags}"
 			}
 		},
 		{

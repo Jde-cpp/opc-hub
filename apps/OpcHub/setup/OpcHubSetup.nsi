@@ -907,6 +907,24 @@ Function .onInit
 		MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} requires 64-bit Windows." /SD IDOK
 		Abort
 	${EndIf}
+	;the products are built for x86-64-v3 (cpuFlags, CMakePresets.common.json), and their own start-up check (process/cpu.h)
+	;comes too late on Windows - the dlls' initializers run first - so without AVX2 they die on 0xC000001D with nothing
+	;logged.  AVX2 stands for the rest of cpuFlags:  Windows has no flag for BMI2, AES or PCLMULQDQ.  An older Windows
+	;answers 0 for AVX (39) and AVX2 (40) alike, whatever the CPU:  where the OS saves the AVX registers (XSTATE_MASK_AVX,
+	;4) yet does not report AVX, it cannot report AVX2 either, and the install goes ahead.
+	System::Call 'kernel32::GetEnabledXStateFeatures() i .r0'
+	IntOp $0 $0 & 4
+	System::Call 'kernel32::IsProcessorFeaturePresent(i 39) i .r1'
+	System::Call 'kernel32::IsProcessorFeaturePresent(i 40) i .r2'
+	${If} $0 == 0 ;no AVX, so no AVX2
+		StrCpy $2 0
+	${ElseIf} $1 == 0
+		StrCpy $2 1
+	${EndIf}
+	${If} $2 == 0
+		MessageBox MB_OK|MB_ICONSTOP "${PRODUCT} requires a CPU with AVX2, which this one lacks.  In a virtual machine, choose a CPU model that passes it through (e.g. host)." /SD IDOK
+		Abort
+	${EndIf}
 	SetRegView 64
 	ReadEnvStr $DataDir "ProgramData" ;not $APPDATA - MultiUser's current-user context turns that into the roaming profile
 	StrCpy $DataDir "$DataDir\${COMPANY}"

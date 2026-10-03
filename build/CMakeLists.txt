@@ -16,6 +16,7 @@ set( stdArgs
 	-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 	-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
 	-DCMAKE_CXX_FLAGS_DEBUG=${CMAKE_CXX_FLAGS_DEBUG}
+	-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} #the repos preset's cpuFlags:  protobuf's utf8_range.c compiles its SSE4.1 validator only with them.
 )
 if( isMultiConfig )
 	set( stdArgs ${stdArgs} -DCMAKE_CONFIGURATION_TYPES=$ENV{buildType} )
@@ -110,9 +111,9 @@ ExternalProject_Add(spdlog
 # One shared abseil (libabseil_dll.so / abseil_dll.dll) for Jde and every exe: a static one is linked into each of them
 # separately - into the exes through protobuf, and again into Jde the moment fwk calls absl.  MONOLITHIC is also what
 # turns on abseil's dll mode under win-clang, which cmake does not count as MSVC.
-# The presets' cpuFlags (-msse4.2 -mpclmul) reach it through stdArgs' CMAKE_CXX_FLAGS: abseil compiles its hardware
-# CRC-32C only when both are on, and with abslHwAccel its hash header keys off __SSE4_2__ too - so they are on every
-# preset, never on abseil alone (build/dependencies.cmake checks).
+# The presets' cpuFlags (-march=x86-64-v3 -mpclmul -maes) reach it through stdArgs' CMAKE_CXX_FLAGS: abseil compiles its
+# hardware CRC-32C only with SSE4.2 and PCLMUL on and its AES string hash only with AES on, and with abslHwAccel its hash
+# header keys off __SSE4_2__ too - so they are on every preset, never on abseil alone (build/dependencies.cmake checks).
 set( _abslPatch "${CMAKE_CURRENT_BINARY_DIR}/absl-options.cmake" )
 file( WRITE "${_abslPatch}" [=[
 set(_file "${SOURCE_DIR}/absl/base/options.h")

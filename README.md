@@ -28,8 +28,9 @@ the repo; the installers do not ship it.
 Each [release](https://github.com/Jde-cpp/opc-hub/releases) carries three assets: `OpcHubSetup-<version>.exe` (Windows -
 services for all users, or a per-user install without administrator rights), `jde-opchub_<version>_amd64.deb` (Ubuntu
 24.04 or later, systemd units) and `jde-opchub-<version>-linux-amd64.tar.gz` (Linux without root, `systemctl --user`
-units).  The installers use SQLite, created on the first start; there is no server to set up.  The binaries need an x86-64
-CPU with SSE4.2 and PCLMULQDQ - any since about 2011.
+units).  The installers use SQLite, created on the first start; there is no server to set up.  The binaries need an x86-64-v3
+CPU (AVX2, BMI2, FMA) with AES-NI and PCLMULQDQ - Intel Core since Haswell (2013) or AMD since Excavator (2015).  Atom-class
+CPUs before Gracemont, and most Celeron and Pentium parts before Alder Lake, lack AVX2.
 
 1. Install it: run `OpcHubSetup-<version>.exe`, or `sudo apt install ./jde-opchub_<version>_amd64.deb`.
 2. Browse to http://localhost:1967/ (from another machine, `http://<hub>:1967/`, for an all-users or root install).
@@ -68,7 +69,7 @@ On Windows it is LLVM's clang with the VS 2026 toolset's runtime, and openssl an
 
 Every configure is a preset in [`CMakePresets.json`](CMakePresets.json), OS-split into `CMakePresets.Linux.json` and
 `CMakePresets.Windows.json`.  The `-repos` presets build the third-party tree and the `-jde` presets build this repo.
-Both compile with `-msse4.2 -mpclmul` (`cpuFlags` in `CMakePresets.common.json`): abseil is one shared library, built
+Both compile with `-march=x86-64-v3 -mpclmul -maes` (`cpuFlags` in `CMakePresets.common.json`): abseil is one shared library, built
 with them for its hardware CRC-32C, and its headers require every consumer to match - so rebuild the third-party tree
 and the repo together when they change.
 

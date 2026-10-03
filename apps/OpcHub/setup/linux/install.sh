@@ -48,9 +48,10 @@ if [ -n "$missing" ]; then
 	echo "install.sh: the products load $missing, which neither this tarball nor the system has - nothing was installed.  Install the distro package that provides it, or use the .deb, whose apt install brings it." >&2
 	exit 1
 fi
-#Built with -msse4.2 -mpclmul:  without them the units die on SIGILL with nothing logged.
-if ! { grep -qw sse4_2 /proc/cpuinfo && grep -qw pclmulqdq /proc/cpuinfo; }; then
-	echo "install.sh: this CPU lacks SSE4.2 or PCLMULQDQ, which the products require - nothing was installed.  In a VM, choose a CPU model that passes them through (e.g. host)." >&2
+#Built with -march=x86-64-v3 -mpclmul -maes:  without them the units die on SIGILL with nothing logged.  abm is lzcnt.
+lacks=$(for flag in avx2 bmi1 bmi2 fma f16c movbe abm pclmulqdq aes; do grep -qw $flag /proc/cpuinfo || echo $flag; done | paste -sd' ')
+if [ -n "$lacks" ]; then
+	echo "install.sh: this CPU lacks $lacks, which the products require - nothing was installed.  In a VM, choose a CPU model that passes them through (e.g. host)." >&2
 	exit 1
 fi
 install -d "$programs" "$config" "$dataRoot" "$units"
