@@ -10,6 +10,6 @@ namespace Jde::Access{
 		IsDeleted{ Json::FindTimePoint(j, "deleted") }
 	{}
 	Resource::Resource( jobject j )ι:
-		Resource{ Json::FindNumber<ResourcePK>(j, "id").value_or(0), j }
+		Resource{ ResourcePK{Json::FindNumber<ResourcePK::Type>(j, "id").value_or(0)}, j }
 	{}
 }

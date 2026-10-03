@@ -19,8 +19,8 @@ namespace Jde::Access::Server{
 		Jde::UserPK _executer;
 
 		α Table()ε->const DB::Table&;
-		α InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK>>::Task;
-		α InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK>::Task;
+		α InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK::Type>>::Task;
+		α InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK::Type>::Task;
 		α InsertRole()ι->DB::ExecuteAwait::Task;
 		α PurgeAcl()ι->DB::ScalerAwaitOpt<uint>::Task;
 		α PurgeAcl( IdentityPK::Type identityPK, PermissionPK permissionPK, bool isRole )ι->DB::ExecuteAwait::Task;

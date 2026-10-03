@@ -27,12 +27,12 @@ namespace Jde::Access::Server{
 		α Suspend()ι->void override{ Start(); }
 	private:
 		α Start()ι->void;
-		α Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK>::Task;
+		α Resolve( string slug )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task;
 		α Dispatch( RolePK rolePK )ι->void;
 		α Members( RolePK parentRolePK, const jobject& childRole )ι->void;
-		α ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK>::Task;
+		α ResolveChildren( RolePK parentRolePK, vector<string> slugs )ι->DB::ScalerAwaitOpt<RolePK::Type>::Task;
 		α AddMembers( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
-		α AddPermission( RolePK parentRolePK, const jobject& permissionRights )ι->TAwait<PermissionRightsPK>::Task;
+		α AddPermission( RolePK parentRolePK, const jobject& permissionRights )ι->TAwait<PermissionPK::Type>::Task;
 		α RemoveMembers( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
 		α RemovePermission( RolePK parentRolePK )ι->DB::ExecuteAwait::Task;
 

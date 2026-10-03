@@ -8,8 +8,8 @@
 #define let const auto
 
 namespace Jde::Access::Tests{
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;//AclTests.cpp
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;//AclTests.cpp
+	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionPK;//AclTests.cpp
+	α PurgeAcl( IdentityPK identityPK, PermissionPK permissionPK, UserPK executer )ε->void;//AclTests.cpp
 
 	//permission_rights rows come from acls, and whether any exist when this suite runs depends on test order - so make one.
 	struct HostileInputTests : ::testing::Test{
@@ -22,7 +22,7 @@ namespace Jde::Access::Tests{
 			PurgeUser( _user, GetRoot() );
 		}
 		Jde::UserPK _user;
-		PermissionRightsPK _permission{};
+		PermissionPK _permission{};
 	};
 	//#5(c)/#17: `resource` is both a column - the bare fk stem, which addColumn resolves through resource_id to resources.name
 	//and writes as a *string* - and a sub-table of the same name, whose SetResult then wanted an object at that key.  SetResult

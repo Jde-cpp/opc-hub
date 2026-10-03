@@ -149,7 +149,7 @@ namespace Tests{
 		return QL().QuerySync( ql, {}, executer );
 	}
 	α Tests::SelectPermission( ResourcePK resourcePK, UserPK executer )ε->jobject{
-		let ql = Ƒ( "permission( resourceId:{} ){{ id resourceId allowed denied }}", resourcePK );
+		let ql = Ƒ( "permission( resourceId:{} ){{ id resourceId allowed denied }}", resourcePK.Value );
 		return QL().QuerySync( ql, {}, executer );
 	}
 

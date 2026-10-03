@@ -49,7 +49,7 @@ namespace Jde::Opc::Server::Tests{
 			let existed = !role.empty();
 			if( !existed )
 				role = _app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug",slug_}, {"name", slug_+" name"}} );
-			let roleId = Json::AsNumber<Access::RolePK>( role.at("id") );
+			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
 			_roles.emplace( slug_, roleId );//keyed as the db names it - the same key SetUpTestCase's roles() load uses, which is what made every guard below always-true.
 			if( existed )
 				return;//its permissions and acl are in the db already; re-adding them trips their unique indexes too.
@@ -73,7 +73,7 @@ namespace Jde::Opc::Server::Tests{
 			_app->QuerySync<jvalue>( "deleteResource( slug:$slug, criteria:null )", nodeSlug );
 			let jroles = _app->QuerySync<jarray>( "roles(){ id slug }", {} );
 			for( let& jrole : jroles )
-				_roles.emplace( jrole.at("slug").get_string(), jrole.at("id").to_number<Access::RolePK>() );
+				_roles.emplace( jrole.at("slug").get_string(), jrole.at("id").to_number<Access::RolePK::Type>() );
 			if( !_roles.contains(roleSlug("reader")) )//this program's own acl, once - re-creating it trips the same indexes.
 				_app->QuerySync<jvalue>( "createAcl( identity:{id:$testProgUser}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName: $schemaName, slug:$nodeResSlug}} )",
 					{ {"testProgUser", AppClient()->UserPK().Value}, {"allowed", underlying(ERights::All)}, {"schemaName", _resource}, {"nodeResSlug", "nodeIds"} } );
@@ -593,7 +593,7 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( auth.NodeRights(serverNode, reader), Access::ERights::None ) << "after: its own resource governs it, and the reader holds nothing on that one";
 		EXPECT_EQ( auth.NodeRights(NodeId::ObjectsFolder(), reader), _readerAllowed ) << "the root is untouched";
 
-		auth.UpdateResourceDeleted( scratchPK, _resource, jobject{{"id",scratchPK}}, false );
+		auth.UpdateResourceDeleted( scratchPK, _resource, jobject{{"id",scratchPK.Value}}, false );
 		EXPECT_EQ( auth.NodeRights(serverNode, reader), _readerAllowed ) << "deleting it hands the node back to the root, also without a restart";
 	}
 }

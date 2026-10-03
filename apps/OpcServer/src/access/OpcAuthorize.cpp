@@ -32,7 +32,7 @@ namespace Jde::Opc::Server{
 			auto childResourcePK = resourcePK;//per-child: siblings must inherit this node's resource, not whatever a previous sibling overrode it to.
 			if( let it = baseResources.find(childNodeId); it!=baseResources.end() ){
 				childResourcePK = it->second;
-				TRACE( "[{}]resource:{}", childNodeId.ToString(), it->second );
+				TRACE( "[{}]resource:{}", childNodeId.ToString(), it->second.Value );
 			}
 			if( childResourcePK )
 				nodeResources.insert_or_assign( childNodeId, childResourcePK );
@@ -61,7 +61,7 @@ namespace Jde::Opc::Server{
 					baseResources.emplace( resource.Criteria.empty() ? root : NodeId::DecodeJson(resource.Criteria), pk );
 				}
 				catch( runtime_error& e ){
-					ERR( "Invalid NodeId '{}' for permission {}: {}", resource.Criteria, pk, e.what() );
+					ERR( "Invalid NodeId '{}' for permission {}: {}", resource.Criteria, pk.Value, e.what() );
 					if( auto jde = dynamic_cast<Exception*>(&e); jde )
 						jde->SetLevel( ELogLevel::NoLog );
 				}
@@ -75,7 +75,7 @@ namespace Jde::Opc::Server{
 			if( let it = baseResources.find(root); it!=baseResources.end() ){
 				rootResourcePK = it->second;
 				nodeResources.emplace( root, rootResourcePK );
-				TRACE( "[{}]resource: {}", root.ToString(), rootResourcePK );
+				TRACE( "[{}]resource: {}", root.ToString(), rootResourcePK.Value );
 			}
 			std::set<NodeId> visited{ root };
 			AssignRights( root, server, rootResourcePK, baseResources, nodeResources, visited );
@@ -91,7 +91,7 @@ namespace Jde::Opc::Server{
 		//Which branch this took decides open-vs-enforcing for the process lifetime, and nothing said so: a run whose
 		//writes were authorized could not be told from one that was never enforcing (soak-findings #4).
 		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}.", _app,
-			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK );
+			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK.Value );
 	}
 
 	α OpcAuthorize::CreateResource( Access::Resource&& resource )ε->void{
@@ -112,7 +112,7 @@ namespace Jde::Opc::Server{
 		if( let slug = Json::FindSV(args, "slug"); slug )
 			return *slug=="nodeIds" && (schemaName.empty() || schemaName==_app);
 		if( !pk )
-			pk = Json::FindNumber<Access::ResourcePK>( args, "id" ).value_or( 0 );
+			pk = Access::ResourcePK{ Json::FindNumber<Access::ResourcePK::Type>(args, "id").value_or(0) };
 		rl _{ Mutex };
 		let p = Resources.find( pk );
 		return p!=Resources.end() && p->second.Slug=="nodeIds" && p->second.Schema==_app;
@@ -173,7 +173,7 @@ namespace Jde::Opc::Server{
 			//which is the same answer Authorize::Rights gives for a resource nothing configured.
 			static std::atomic_flag logged;//once:  stable for the life of the process, and this runs per read and per browse.
 			if( !logged.test_and_set() )
-				WARNT( _tags, "Resource {} is no longer loaded - the nodes it covered are unprotected.  AssignRights took it as a base resource when it was still present.", *resourcePK );
+				WARNT( _tags, "Resource {} is no longer loaded - the nodes it covered are unprotected.  AssignRights took it as a base resource when it was still present.", resourcePK->Value );
 			return All;
 		}
 		if( resource->second.IsDeleted )

@@ -42,25 +42,25 @@ namespace Jde::Access::Tests{
 		return acl.empty() ? jobject{} : Json::AsObject(acl[0], "/permissionRight");
 	}
 	α SelectAcl( IdentityPK identityPK, RolePK rolePK )ε->jobject{
-		let ql = Ƒ( "acl(identityId:{})<identityId role(id:{})<id slug deleted>>", identityPK.Underlying(), rolePK );
+		let ql = Ƒ( "acl(identityId:{})<identityId role(id:{})<id slug deleted>>", identityPK.Underlying(), rolePK.Value );
 		let acl = QL().QuerySync<jarray>( Str::Replace(Str::Replace(ql,"<","{"), ">", "}"), {}, GetRoot() );
 		return acl.empty() ? jobject{} : Json::AsObject(acl[0], "/role");
 	}
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK{
-		let resourcePK = AsNumber<ResourcePK>( SelectResource(resource, {UserPK::System}, true), "id" );
+	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionPK{
+		let resourcePK = AsNumber<ResourcePK::Type>( SelectResource(resource, {UserPK::System}, true), "id" );
 		jobject vars{ {"id", identityPK.Underlying()}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"resource", resourcePK} };
 		let q = "createAcl( identity:{ id:$id }, permissionRight:{ allowed:$allowed, denied:$denied, resource:{id:$resource}} ){ permissionRight{id} }";
 		let y = BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} ).as_object();
-		return Json::AsNumber<PermissionRightsPK>( y, "permissionRight/id" );
+		return PermissionPK{Json::AsNumber<PermissionPK::Type>( y, "permissionRight/id" )};
 	}
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void{
-		let q = Ƒ( "purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", identityPK.Underlying(), permissionPK );
+	α PurgeAcl( IdentityPK identityPK, PermissionPK permissionPK, UserPK executer )ε->void{
+		let q = Ƒ( "purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", identityPK.Underlying(), permissionPK.Value );
 		BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, {}, Schemas()), executer} );
 	}
 	α CreateAcl( IdentityPK identityPK, RolePK rolePK, UserPK executer )ε->void{
 		let existing = SelectAcl( identityPK, rolePK );
 		if( existing.empty() ){
-			jobject vars{ {"id", identityPK.Underlying()}, {"roleId", rolePK} };
+			jobject vars{ {"id", identityPK.Underlying()}, {"roleId", rolePK.Value} };
 			let q = "createAcl( identity:{ id:$id }, role:{ id:$roleId } )";
 			BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} );
 		}
@@ -76,7 +76,7 @@ namespace Jde::Access::Tests{
 			let existingAllowed = (ERights)Json::AsNumber<uint8>( entry, "allowed" ); //ToRights( Json::AsArray(entry, "allowed") );
 			let existingDenied = (ERights)Json::AsNumber<uint8>( entry, "denied" ); //ToRights( Json::AsArray(entry, "denied") );
 			if( allowed!=existingAllowed || existingDenied!=denied ){
-				let update = Ƒ( "mutation updatePermissionRight( id:{}, allowed:{}, denied:{} )", Json::AsNumber<PermissionPK>(entry, "id"), underlying(allowed), underlying(denied) );
+				let update = Ƒ( "mutation updatePermissionRight( id:{}, allowed:{}, denied:{} )", Json::AsNumber<PermissionPK::Type>(entry, "id"), underlying(allowed), underlying(denied) );
 				let updateJson = QL().QuerySync( update, {}, GetRoot() );
 				entry = SelectAcl( identityPK, resource );
 			}
@@ -93,7 +93,7 @@ namespace Jde::Access::Tests{
 		array<string,10> users{ "intruder", "creator", "reader", "updater", "deleter", "purger", "admin", "subscriber", "executor", "root" };
 		let resourceSlug = "groups";
 		let resource = SelectResource( resourceSlug, GetRoot(), true );
-		_resourcePK = GetId( resource );
+		_resourcePK = ResourcePK{ GetId(resource) };
 		if( resource.at("deleted").is_null() )
 			Delete( "resources", GetId(resource), GetRoot() );
 
@@ -127,23 +127,23 @@ namespace Jde::Access::Tests{
 		TestUnauthAddRemove( resourceName, groupId, {_usersPKs["intruder"].Value, _usersPKs["creator"].Value, _usersPKs["reader"].Value}, executer );
 		TestUnauthPurge( resourceName, groupId, executer );
 		EXPECT_THROW( CreateAcl(_usersPKs["intruder"], ERights::All, ERights::None, resourceName, executer), Exception );
-		let rolePK = GetId( Get("role", "EnabledPermissionsTest", GetRoot()) );
+		const RolePK rolePK{ GetId( Get("role", "EnabledPermissionsTest", GetRoot()) ) };
 		if( let existingPermission = GetRolePermission( rolePK, resourceName, GetRoot() ); !existingPermission.empty() )
-			RemoveRolePermission( rolePK, GetId(existingPermission), GetRoot() );
+			RemoveRolePermission( rolePK, PermissionPK{GetId(existingPermission)}, GetRoot() );
 		EXPECT_THROW( AddRolePermission(rolePK, resourceName, ERights::All, ERights::None, executer), Exception );
 		RestoreResource( "roles", GetRoot() );
 		EXPECT_THROW( CreateAcl(_usersPKs["intruder"], rolePK, executer), Exception );
 		//review #3 #1 - RoleMAwait's add/remove branches gate on the executer, not only the cycle check.
-		let childRolePK = GetId( Get("role", "EnabledPermissionsTestChild", GetRoot()) );
+		const RolePK childRolePK{ GetId( Get("role", "EnabledPermissionsTestChild", GetRoot()) ) };
 		EXPECT_THROW( InsertRoleMember(rolePK, childRolePK, executer), Exception );
 		EXPECT_THROW( RemoveRoleMember(rolePK, childRolePK, executer), Exception );
 		EXPECT_TRUE( GetRoleChild(rolePK, childRolePK, GetRoot()).empty() );
-		let permissionPK = GetId( AddRolePermission(rolePK, resourceName, ERights::Read, ERights::None, GetRoot()) );
+		const PermissionPK permissionPK{ GetId(AddRolePermission(rolePK, resourceName, ERights::Read, ERights::None, GetRoot())) };
 		EXPECT_THROW( RemoveRolePermission(rolePK, permissionPK, executer), Exception );
 		EXPECT_FALSE( GetRolePermission(rolePK, resourceName, GetRoot()).empty() );
-		let aclPermissionPK = GetId( _users["reader"] );//a direct acl grant, not a role member - access_role_remove would drop its rights row unscoped.
+		const PermissionPK aclPermissionPK{ GetId(_users["reader"]) };//a direct acl grant, not a role member - access_role_remove would drop its rights row unscoped.
 		EXPECT_THROW( RemoveRolePermission(rolePK, aclPermissionPK, executer), Exception );
-		EXPECT_EQ( GetId(SelectAcl(_usersPKs["reader"], resourceName)), aclPermissionPK );
+		EXPECT_EQ( GetId(SelectAcl(_usersPKs["reader"], resourceName)), aclPermissionPK.Value );
 		RemoveRolePermission( rolePK, permissionPK, GetRoot() );//an admin still passes the gate.
 		EXPECT_TRUE( GetRolePermission(rolePK, resourceName, GetRoot()).empty() );
 	}
@@ -183,9 +183,9 @@ namespace Jde::Access::Tests{
 		if( find_if(adminGroupMembers, [adminPK](const jvalue& member){ return GetId(Json::AsObject(member))==adminPK.Value; })==adminGroupMembers.end() )
 			AddToGroup( adminGroupPK, {adminPK}, GetRoot() );
 
-		let userRolePK = GetId( Get("role", "HierarchyGroupUserRole", GetRoot()) );
+		const RolePK userRolePK{ GetId( Get("role", "HierarchyGroupUserRole", GetRoot()) ) };
 		AddRolePermission( userRolePK, groupResource, ERights::Read, ERights::None, GetRoot() );
-		let adminRolePK = GetId( Get("role", "HierarchyGroupAdminRole", GetRoot()) );
+		const RolePK adminRolePK{ GetId( Get("role", "HierarchyGroupAdminRole", GetRoot()) ) };
 		AddRolePermission( adminRolePK, groupResource, ERights::All & ~ERights::Read, ERights::None, GetRoot() );
 		AddRoleMember( adminRolePK, userRolePK, GetRoot() );
 		CreateAcl( userGroupPK, userRolePK, GetRoot() );
@@ -212,9 +212,9 @@ namespace Jde::Access::Tests{
 		TestPurge( groupResource, testGroupPK2, adminPK );
 
 		EXPECT_THROW( CreateAcl(_usersPKs["intruder"], ERights::All, ERights::None, groupResource, hierarchyUser), Exception );
-		let rolePK = GetId( Get("role", "HierarchyPermissionsTest", GetRoot()) );
+		const RolePK rolePK{ GetId( Get("role", "HierarchyPermissionsTest", GetRoot()) ) };
 		if( auto permission = GetRolePermission(rolePK, groupResource, GetRoot()); !permission.empty() )
-			RemoveRolePermission( rolePK, GetId(permission), GetRoot() );
+			RemoveRolePermission( rolePK, PermissionPK{GetId(permission)}, GetRoot() );
 		EXPECT_THROW( AddRolePermission(rolePK, groupResource, ERights::All, ERights::None, hierarchyUser), Exception );
 	}
 	TEST_F( AclTests, TestDeny ){
@@ -233,9 +233,9 @@ namespace Jde::Access::Tests{
 		if( find_if(deniedGroupMembers, [executer](const jvalue& member){ return GetId(Json::AsObject(member))==executer.Value; })==deniedGroupMembers.end() )
 			AddToGroup( {deniedGroupPK}, {executer}, GetRoot() );
 
-		let deniedRolePK = GetId( Get("role", "DeniedRole", GetRoot()) );
+		const RolePK deniedRolePK{ GetId( Get("role", "DeniedRole", GetRoot()) ) };
 		AddRolePermission( deniedRolePK, resourceName, ERights::None, ERights::All, GetRoot() );
-		let allowedRolePK = GetId( Get("role", "AllowedRole", GetRoot()) );
+		const RolePK allowedRolePK{ GetId( Get("role", "AllowedRole", GetRoot()) ) };
 		AddRolePermission( allowedRolePK, resourceName, ERights::All, ERights::None, GetRoot() );
 		CreateAcl( GroupPK{deniedGroupPK}, deniedRolePK, GetRoot() );
 		CreateAcl( GroupPK{allowedGroupPK}, allowedRolePK, GetRoot() );
@@ -245,8 +245,8 @@ namespace Jde::Access::Tests{
 		let resourceName = "groups";
 		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("roleChildUser", GetRoot()) ) };
-		let parentRolePK = GetId( Get("role", "RoleChildParent", GetRoot()) );
-		let childRolePK = GetId( Get("role", "RoleChildChild", GetRoot()) );
+		const RolePK parentRolePK{ GetId( Get("role", "RoleChildParent", GetRoot()) ) };
+		const RolePK childRolePK{ GetId( Get("role", "RoleChildChild", GetRoot()) ) };
 		AddRolePermission( childRolePK, resourceName, ERights::All, ERights::None, GetRoot() );//rights live on the child only.
 		AddRoleMember( parentRolePK, childRolePK, GetRoot() );
 		CreateAcl( executer, parentRolePK, GetRoot() );
@@ -259,7 +259,7 @@ namespace Jde::Access::Tests{
 		let resourceName = "groups";
 		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("purgeAclUser", GetRoot()) ) };
-		let permissionPK = Json::AsNumber<PermissionRightsPK>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" );
+		let permissionPK = PermissionPK{Json::AsNumber<PermissionPK::Type>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" )};
 		let groupId = TestCrud( resourceName, "AclTests-PurgeAcl-Group", executer );
 		TestPurge( resourceName, groupId, executer );
 		PurgeAcl( executer, permissionPK, GetRoot() );
@@ -274,9 +274,9 @@ namespace Jde::Access::Tests{
 		let resourceName = "groups";
 		RestoreResource( resourceName, GetRoot() );
 		UserPK executer{ GetId( GetUser("permissionUpdateUser", GetRoot()) ) };
-		let permissionPK = Json::AsNumber<PermissionRightsPK>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" );
+		let permissionPK = PermissionPK{Json::AsNumber<PermissionPK::Type>( GetAcl(executer, resourceName, ERights::All, ERights::None), "id" )};
 		ASSERT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::All );
-		auto update = [&]( sv args ){ QL().QuerySync<jvalue>( Ƒ("mutation updatePermissionRight( id:{}, {} )", permissionPK, args), {}, GetRoot() ); };
+		auto update = [&]( sv args ){ QL().QuerySync<jvalue>( Ƒ("mutation updatePermissionRight( id:{}, {} )", permissionPK.Value, args), {}, GetRoot() ); };
 
 		update( "allowed:0, denied:0" );
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None ); //revoked - without a restart.
@@ -296,7 +296,7 @@ namespace Jde::Access::Tests{
 		RestoreResource( resourceName, GetRoot() );
 		let resourcePK = GetId( SelectResource(resourceName, GetRoot()) );
 		UserPK executer{ GetId( GetUser("partialPayloadUser", GetRoot()) ) };
-		let rolePK = GetId( Get("role", "PartialPayloadRole", GetRoot()) );
+		const RolePK rolePK{ GetId( Get("role", "PartialPayloadRole", GetRoot()) ) };
 		CreateAcl( executer, rolePK, GetRoot() );
 		ASSERT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None ); //the role holds nothing yet.
 
@@ -304,18 +304,18 @@ namespace Jde::Access::Tests{
 		let roleAdded = (QL::SubscriptionId)underlying( ESubscription::Role | ESubscription::Added );
 		auto notify = [&]( jobject permissionRight ){
 			permissionRight["resource"] = jobject{ {"id", resourcePK} };
-			listener.OnChange( jvalue{jobject{{"roleAdded", jobject{{"id", rolePK}, {"permissionRight", move(permissionRight)}}}}}, roleAdded );
+			listener.OnChange( jvalue{jobject{{"roleAdded", jobject{{"id", rolePK.Value}, {"permissionRight", move(permissionRight)}}}}}, roleAdded );
 		};
 		constexpr PermissionPK fakePK{ 987654321 };
-		notify( {{"id", fakePK}, {"allowed", underlying(ERights::Read)}} ); //denied omitted - used to terminate here.
+		notify( {{"id", fakePK.Value}, {"allowed", underlying(ERights::Read)}} ); //denied omitted - used to terminate here.
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::Read );
-		notify( {{"id", fakePK}, {"denied", underlying(ERights::Read)}} ); //allowed omitted - None, as the mutation would have stored.
+		notify( {{"id", fakePK.Value}, {"denied", underlying(ERights::Read)}} ); //allowed omitted - None, as the mutation would have stored.
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None );
 		EXPECT_THROW( notify({{"allowed", underlying(ERights::All)}}), Exception ); //id omitted - unusable:  refused, not cached under pk 0, not terminated on.
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None );
 		//take the invented permission back out through the Removed path.  The role and its acl row stay (Get/CreateAcl are
 		//get-or-create):  access_role_purge trips the acl fk on a role that is still assigned - finding 13, not this one.
-		listener.OnChange( jvalue{jobject{{"roleRemoved", jobject{{"id", rolePK}, {"permissionRight", jobject{{"id", fakePK}}}}}}}, (QL::SubscriptionId)underlying(ESubscription::Role | ESubscription::Removed) );
+		listener.OnChange( jvalue{jobject{{"roleRemoved", jobject{{"id", rolePK.Value}, {"permissionRight", jobject{{"id", fakePK.Value}}}}}}}, (QL::SubscriptionId)underlying(ESubscription::Role | ESubscription::Removed) );
 		EXPECT_EQ( Authorizer()->Rights("access", resourceName, executer), ERights::None );
 	}
 	//access-review3 #11:  purgeAcl gated on which key the client sent - role:{id} meant Administer of `roles`, whatever the pk was -
@@ -331,7 +331,7 @@ namespace Jde::Access::Tests{
 		let rolesAdminPK = GetId( GetAcl(rolesAdmin, "roles", ERights::Administer, ERights::None) );
 		let groupsAdminPK = GetId( GetAcl(groupsAdmin, "groups", ERights::Administer, ERights::None) );
 		let grantPK = GetId( GetAcl(victim, "groups", ERights::Read, ERights::None) ); //a direct grant...
-		let rolePK = GetId( Get("role", "PurgeAclGateRole", GetRoot()) );
+		const RolePK rolePK{ GetId( Get("role", "PurgeAclGateRole", GetRoot()) ) };
 		AddRolePermission( rolePK, "groups", ERights::Update, ERights::None, GetRoot() );
 		CreateAcl( victim, rolePK, GetRoot() ); //...and a role assignment, in the same pk space.
 		ASSERT_EQ( Authorizer()->Rights("access", "groups", victim), ERights::Read | ERights::Update );
@@ -341,18 +341,18 @@ namespace Jde::Access::Tests{
 
 		EXPECT_THROW( purge(victim, "role", grantPK, rolesAdmin), Exception ); //the finding:  a direct grant spelled as a role.
 		EXPECT_EQ( GetId(SelectAcl(victim, "groups")), grantPK );
-		EXPECT_THROW( purge(victim, "permissionRight", rolePK, groupsAdmin), Exception ); //the mirror:  a role spelled as a permission.
+		EXPECT_THROW( purge(victim, "permissionRight", rolePK.Value, groupsAdmin), Exception ); //the mirror:  a role spelled as a permission.
 		EXPECT_FALSE( SelectAcl(victim, rolePK).empty() );
 		EXPECT_EQ( Authorizer()->Rights("access", "groups", victim), ERights::Read | ERights::Update );
 
-		purge( victim, "permissionRight", rolePK, rolesAdmin ); //the right admin under the "wrong" spelling - what the pk is decides.
+		purge( victim, "permissionRight", rolePK.Value, rolesAdmin ); //the right admin under the "wrong" spelling - what the pk is decides.
 		EXPECT_TRUE( SelectAcl(victim, rolePK).empty() );
 		EXPECT_EQ( Authorizer()->Rights("access", "groups", victim), ERights::Read ); //and the cache dropped the role, not a permission of that pk.
 		purge( victim, "role", grantPK, groupsAdmin );
 		EXPECT_TRUE( SelectAcl(victim, "groups").empty() );
 		EXPECT_EQ( Authorizer()->Rights("access", "groups", victim), ERights::None );
-		PurgeAcl( rolesAdmin, rolesAdminPK, GetRoot() );
-		PurgeAcl( groupsAdmin, groupsAdminPK, GetRoot() );
+		PurgeAcl( rolesAdmin, PermissionPK{rolesAdminPK}, GetRoot() );
+		PurgeAcl( groupsAdmin, PermissionPK{groupsAdminPK}, GetRoot() );
 	}
 	//access-review3 #12:  access_ac_upsert_permission looked the existing grant up with `criteria is null` - a column only
 	//access_resources has, and one resource_id already pins - so for a criteria-scoped resource the lookup never matched, every
@@ -369,11 +369,11 @@ namespace Jde::Access::Tests{
 			resources = QL().QuerySync<jarray>( select, {}, root );
 		}
 		ASSERT_EQ( resources.size(), 1u );
-		let resourcePK = GetId( Json::AsObject(resources[0]) );
+		const ResourcePK resourcePK{ GetId(Json::AsObject(resources[0])) };
 		const UserPK user{ GetId(GetUser("aclUpsertUser", root)) };
-		auto grant = [&]( ERights allowed )->PermissionRightsPK{
-			let q = Ƒ( "createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ id:{} }} }} ){{ permissionRight{{id}} }}", user.Value, underlying(allowed), resourcePK );
-			return Json::AsNumber<PermissionRightsPK>( BlockTAwait<jvalue>( Server::AclQLAwait{QL::ParseM(q, {}, Schemas()), system} ).as_object(), "permissionRight/id" );
+		auto grant = [&]( ERights allowed )->PermissionPK{
+			let q = Ƒ( "createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ id:{} }} }} ){{ permissionRight{{id}} }}", user.Value, underlying(allowed), resourcePK.Value );
+			return PermissionPK{Json::AsNumber<PermissionPK::Type>( BlockTAwait<jvalue>( Server::AclQLAwait{QL::ParseM(q, {}, Schemas()), system} ).as_object(), "permissionRight/id" )};
 		};
 		auto aclRows = [&]{ return QL().QuerySync<jarray>( Ƒ("acl( identityId:{} ){{ identityId permissionRight{{ id }} }}", user.Value), {}, root ).size(); };
 
@@ -440,7 +440,7 @@ namespace Jde::Access::Tests{
 		return BlockTAwait<jvalue>( Server::UserRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
 	}
 	Ω findResourceRights( const jarray& rows, ResourcePK resourcePK )ε->jobject{
-		auto p = find_if( rows, [=](const jvalue& row){ return AsNumber<ResourcePK>(Json::AsObject(row), "resource/id")==resourcePK; } );
+		auto p = find_if( rows, [=](const jvalue& row){ return ResourcePK{AsNumber<ResourcePK::Type>(Json::AsObject(row), "resource/id")}==resourcePK; } );
 		return p==rows.end() ? jobject{} : p->as_object();
 	}
 	TEST_F( AclTests, UserRightsProvenance ){
@@ -458,12 +458,12 @@ namespace Jde::Access::Tests{
 		};
 		addMember( group, groupPK, user );
 		addMember( parent, parentPK, groupPK );
-		let parentRolePK = GetId( Get("role", "userRightsParentRole", root) );
-		let childRolePK = GetId( Get("role", "userRightsChildRole", root) );
-		let permissionPK = GetId( AddRolePermission(childRolePK, "groups", ERights::Read|ERights::Update, ERights::None, root) );
+		const RolePK parentRolePK{ GetId( Get("role", "userRightsParentRole", root) ) };
+		const RolePK childRolePK{ GetId( Get("role", "userRightsChildRole", root) ) };
+		const PermissionPK permissionPK{ GetId(AddRolePermission(childRolePK, "groups", ERights::Read|ERights::Update, ERights::None, root)) };
 		AddRoleMember( parentRolePK, childRolePK, root );
 		CreateAcl( parentPK, parentRolePK, root );
-		let denyPK = GetId( GetAcl(user, "groups", ERights::None, ERights::Update) );
+		const PermissionPK denyPK{ GetId(GetAcl(user, "groups", ERights::None, ERights::Update)) };
 
 		auto check = [&]( UserPK executer ){
 			let row = findResourceRights( userRights(user, executer), _resourcePK );
@@ -475,14 +475,14 @@ namespace Jde::Access::Tests{
 			let sources = AsArray( row, "sources" );
 			ASSERT_EQ( sources.size(), 2u );
 			auto source = [&]( PermissionPK pk )->jobject{
-				auto p = find_if( sources, [=](const jvalue& s){ return AsNumber<PermissionPK>(Json::AsObject(s), "permissionId")==pk; } );
+				auto p = find_if( sources, [=](const jvalue& s){ return PermissionPK{AsNumber<PermissionPK::Type>(Json::AsObject(s), "permissionId")}==pk; } );
 				return p==sources.end() ? jobject{} : p->as_object();
 			};
 			let viaRole = source( permissionPK );
 			ASSERT_FALSE( viaRole.empty() );
 			let path = AsArray( viaRole, "path" );
 			ASSERT_EQ( path.size(), 4u ) << "top-down: the granted group, the group holding the user, the assigned role, the role holding the permission";
-			const array<std::pair<uint32,string>,4> expected{ {{parentPK.Value, "group"}, {groupPK.Value, "group"}, {parentRolePK, "role"}, {childRolePK, "role"}} };
+			const array<std::pair<uint32,string>,4> expected{ {{parentPK.Value, "group"}, {groupPK.Value, "group"}, {parentRolePK.Value, "role"}, {childRolePK.Value, "role"}} };
 			for( uint i=0; i<expected.size(); ++i ){
 				let step = Json::AsObject( path[i] );
 				EXPECT_EQ( GetId(step), expected[i].first ) << i;
@@ -555,25 +555,25 @@ namespace Jde::Access::Tests{
 		let userJson = GetUser( "aclShapeUser", root );
 		const UserPK user{ GetId(userJson) };
 		let name = Json::AsString( userJson, "name" );
-		const RolePK rolePK{ (RolePK)GetId(Get("role", "aclShapeRole", root)) };
+		const RolePK rolePK{ GetId(Get("role", "aclShapeRole", root)) };
 		let grant = CreateAcl( user, ERights::Read, ERights::Update, "groups", root );
 		CreateAcl( user, rolePK, root );
-		let groupsPK = AsNumber<ResourcePK>( SelectResource("groups", root, true), "id" );
+		let groupsPK = ResourcePK{AsNumber<ResourcePK::Type>( SelectResource("groups", root, true), "id" )};
 		let select = [&]( string ql ){ return BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(ql, {}, Schemas()), root} ); };
 		let expect = [&]( string args, string children, string json ){ EXPECT_EQ( select(Ƒ("acl( {} ){{ {} }}", args, children)), parse(json) ) << children; };
 		let byUser = Ƒ( "identityId:{}", user.Value );
 		expect( byUser, "identityId permissionRight{ id allowed denied resource{ id slug deleted } }",
-			Ƒ(R"([{{"permissionRight":{{"id":{},"allowed":2,"denied":4,"resource":{{"id":{},"slug":"groups","deleted":null}}}},"identity":{{"id":{}}}}}])", grant, groupsPK, user.Value) );
+			Ƒ(R"([{{"permissionRight":{{"id":{},"allowed":2,"denied":4,"resource":{{"id":{},"slug":"groups","deleted":null}}}},"identity":{{"id":{}}}}}])", grant.Value, groupsPK.Value, user.Value) );
 		expect( byUser, "permissionRights{ id resource{ id deleted } }",
-			Ƒ(R"([{{"permissionRight":{{"id":{},"resource":{{"id":{},"deleted":null}}}}}}])", grant, groupsPK) );
+			Ƒ(R"([{{"permissionRight":{{"id":{},"resource":{{"id":{},"deleted":null}}}}}}])", grant.Value, groupsPK.Value) );
 		expect( byUser, "identityId role{ id slug deleted }",
-			Ƒ(R"([{{"role":{{"id":{},"slug":"aclShapeRole","deleted":null}},"identity":{{"id":{}}}}}])", rolePK, user.Value) );
+			Ƒ(R"([{{"role":{{"id":{},"slug":"aclShapeRole","deleted":null}},"identity":{{"id":{}}}}}])", rolePK.Value, user.Value) );
 		expect( byUser, "identities{ name } permissionRight{ id }",
-			Ƒ(R"([{{"permissionRight":{{"id":{}}},"identity":{{"name":"{}"}}}}])", grant, name) );
-		expect( Ƒ("permissionId:{}", grant), "identities{ id isGroup }",
+			Ƒ(R"([{{"permissionRight":{{"id":{}}},"identity":{{"name":"{}"}}}}])", grant.Value, name) );
+		expect( Ƒ("permissionId:{}", grant.Value), "identities{ id isGroup }",
 			Ƒ(R"([{{"identities":[{{"id":{},"isGroup":false}}]}}])", user.Value) );
 		expect( byUser, "identityId permissions{ id }",
-			Ƒ(R"([{{"permissions":{{"id":{}}},"identityId":{}}},{{"permissions":{{"id":{}}},"identityId":{}}}])", std::min<uint>(rolePK, grant), user.Value, std::max<uint>(rolePK, grant), user.Value) );
+			Ƒ(R"([{{"permissions":{{"id":{}}},"identityId":{}}},{{"permissions":{{"id":{}}},"identityId":{}}}])", std::min<uint>(rolePK.Value, grant.Value), user.Value, std::max<uint>(rolePK.Value, grant.Value), user.Value) );
 
 		PurgeAcl( user, grant, root );
 		Purge( "role", rolePK, root );

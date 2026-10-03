@@ -23,7 +23,7 @@ namespace Jde::Access{
 	α User::operator+=( const Permission& permission )ι->User&{
 		Permissions.insert_or_assign( permission.PK, permission );
 		ASSERT( permission.ResourcePK );
-		TRACE( "assigned user: {}, permission: {}, allowed: {}, denied: {}", PK.Value, permission.PK, underlying(permission.Allowed), underlying(permission.Denied) );
+		TRACE( "assigned user: {}, permission: {}, allowed: {}, denied: {}", PK.Value, permission.PK.Value, underlying(permission.Allowed), underlying(permission.Denied) );
 		auto& rights = Rights[permission.ResourcePK];
 		rights.Allowed |= permission.Allowed;
 		rights.Denied |= permission.Denied;

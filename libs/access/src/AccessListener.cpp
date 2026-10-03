@@ -26,7 +26,7 @@ namespace Jde::Access{
 
 		let id = Json::FindNumber<uint32>( object, "id" );
 		if( !empty(event & Resources) && (id || object.contains("slug")) ){ //no id means the fan-out could not pick one row - a by-slug delete that hit several - and the slug (with the schema, when the mutation named one) names every row it hit, which UpdateResourceDeleted applies to all of them (access-review3 #22).
-			ResourceChanged( id.value_or(0), event & ~Resources, object );
+			ResourceChanged( ResourcePK{Json::FindNumber<ResourcePK::Type>(object, "id").value_or(0)}, event & ~Resources, object );
 			return;
 		}
 		if( !id ){
@@ -40,9 +40,9 @@ namespace Jde::Access{
 		else if( !empty(event & Group) )
 			GroupChanged( {pk}, event & ~Group, object );
 		else if( !empty(event & Role) )
-			RoleChanged( pk, event & ~Role, object );
+			RoleChanged( RolePK{pk}, event & ~Role, object );
 		else if( !empty(event & Permission) )
-			PermissionUpdated( pk, object );
+			PermissionUpdated( PermissionPK{pk}, object );
 	}
 	α AccessListener::UserChanged( UserPK userPK, ESubscription event, const jobject& o )ι->void{
 		using enum ESubscription;
@@ -94,17 +94,20 @@ namespace Jde::Access{
 					if( event==Added )
 						Authorizer().AddRolePermission( rolePK, Access::Permission{*rights}, rights->at("resource").as_object() );
 					else{
-						flat_set<PermissionRightsPK> members;
-						Json::Visit( Json::AsValue(o, "permissionRight/id"), [&](const jvalue& v){ members.insert( Json::AsNumber<PermissionRightsPK>(v) );} );
+						flat_set<PermissionRole> members;
+						Json::Visit( Json::AsValue(o, "permissionRight/id"), [&](const jvalue& v){ members.insert( PermissionPK{Json::AsNumber<PermissionPK::Type>(v)} );} );
 						Authorizer().RemoveRoleChildren( rolePK, members );
 					}
 				}
 				else if( auto child = Json::FindObject(o, "role"); child ){
-					if( event==Added )
-						Authorizer().AddRoleChild( rolePK, Json::ToVector<RolePK>(Json::AsValue(*child, "id")) );
+					if( event==Added ){
+						vector<RolePK> children;
+						Json::Visit( Json::AsValue(*child, "id"), [&](const jvalue& v){ children.push_back( RolePK{Json::AsNumber<RolePK::Type>(v)} );} );
+						Authorizer().AddRoleChild( rolePK, move(children) );
+					}
 					else{
-						flat_set<PermissionRightsPK> members;
-						Json::Visit( Json::AsValue(*child, "id"), [&](const jvalue& v){ members.insert( Json::AsNumber<RolePK>(v) );} );//child's id - o["id"] is the parent role.
+						flat_set<PermissionRole> members;
+						Json::Visit( Json::AsValue(*child, "id"), [&](const jvalue& v){ members.insert( RolePK{Json::AsNumber<RolePK::Type>(v)} );} );//child's id - o["id"] is the parent role.
 						Authorizer().RemoveRoleChildren( rolePK, members );
 					}
 				}
@@ -129,7 +132,7 @@ namespace Jde::Access{
 			default: break;
 		}
 	}
-	α AccessListener::PermissionUpdated( PermissionRightsPK pk, const jobject& o )ε->void{
+	α AccessListener::PermissionUpdated( PermissionPK pk, const jobject& o )ε->void{
 		Authorizer().UpdatePermission( pk, FindRights(o, "allowed"), FindRights(o, "denied") );
 	}
 	α AccessListener::AclChanged( ESubscription event, const jobject& o )ε->void{
@@ -143,14 +146,14 @@ namespace Jde::Access{
 				if( auto v = o.if_contains("permissionRight"); v ) //identity{id:y}, permission:{ allowed:x, denied:x, resource:{id:x} }
 					Authorizer().AddAcl( identityPK, Access::Permission{Json::AsObject(*v)} );
 				else if( auto role = o.if_contains("role"); role ) //identity{id:y}, role:{ id:x }
-					Authorizer().AddAcl( identityPK, QL::AsId<RolePK>(*role) );
+					Authorizer().AddAcl( identityPK, RolePK{QL::AsId<RolePK::Type>(*role)} );
 			}break;
 			case Purged:{
 				optional<PermissionRole> permissionPK;
 				if( auto p = o.if_contains("permissionRight"); p ) //identity{id:y}, permissionRight:{ allowed:x, denied:x, resource:{id:x} }
-					permissionPK = PermissionRole{ std::in_place_index<0>, QL::AsId<PermissionRightsPK>(*p) };
+					permissionPK = PermissionRole{ PermissionPK{QL::AsId<PermissionPK::Type>(*p)} };
 				else if( auto role = o.if_contains("role"); role ) //identity{id:y}, role:{ id:x }
-					permissionPK = PermissionRole{ std::in_place_index<1>, QL::AsId<RolePK>(*role) };
+					permissionPK = PermissionRole{ RolePK{QL::AsId<RolePK::Type>(*role)} };
 				if( permissionPK )
 					Authorizer().RemoveAcl( identityPK, *permissionPK );
 			}break;

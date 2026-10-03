@@ -17,7 +17,7 @@ namespace Jde::Access::Server{
 			if( _executer!=userPK )//one's own rights are always readable - "why am I denied" should not itself need a grant.
 				GetTable( "acl" ).Authorize( ERights::Read, _executer, _sl );
 			for( let& resource : Authorizer().UserRights(userPK) ){
-				jobject jresource{ {"id", resource.PK} };
+				jobject jresource{ {"id", resource.PK.Value} };
 				if( resource.Cached ){
 					jresource["schemaName"] = resource.Cached->Schema;
 					jresource["slug"] = resource.Cached->Slug;
@@ -30,8 +30,8 @@ namespace Jde::Access::Server{
 					for( let group : source.Groups )
 						path.push_back( jobject{ {"id", group.Value}, {"type", "group"} } );
 					for( let role : source.Roles )
-						path.push_back( jobject{ {"id", role}, {"type", "role"} } );
-					sources.push_back( jobject{ {"permissionId", source.Permission}, {"allowed", underlying(source.Allowed)}, {"denied", underlying(source.Denied)}, {"path", move(path)} } );
+						path.push_back( jobject{ {"id", role.Value}, {"type", "role"} } );
+					sources.push_back( jobject{ {"permissionId", source.Permission.Value}, {"allowed", underlying(source.Allowed)}, {"denied", underlying(source.Denied)}, {"path", move(path)} } );
 				}
 				y.push_back( jobject{
 					{"resource", move(jresource)},

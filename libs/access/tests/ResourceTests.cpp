@@ -53,7 +53,7 @@ namespace Jde::Access::Tests{
 		const string slug{ "providerTypes" }; //a synced table nothing here grants on - except root, whom GetRoot grants everything once.
 		let rootGrant = SelectAcl( root, slug );
 		ASSERT_FALSE( rootGrant.empty() );
-		PurgeAcl( root, GetId(rootGrant), system ); //or the resource row cannot be purged.
+		PurgeAcl( root, PermissionPK{GetId(rootGrant)}, system ); //or the resource row cannot be purged.
 		auto row = SelectResource( slug, root, true );
 		ASSERT_FALSE( row.empty() );
 		Purge( "resource", GetId(row), root ); //un-sync it - the next sync has to create it.
@@ -88,13 +88,13 @@ namespace Jde::Access::Tests{
 		const string slug{ "providerTypes" }; //a declared table; un-synced here so a role reference re-creates it bare.
 		let bareAllowed = []( const jobject& o ){ auto p = o.if_contains("allowed"); return !p || p->is_null() || (p->is_array() && p->get_array().empty()); };
 		if( auto grant = SelectAcl(root, slug); !grant.empty() )
-			PurgeAcl( root, GetId(grant), system );
+			PurgeAcl( root, PermissionPK{GetId(grant)}, system );
 		if( auto row = SelectResource(slug, root, true); !row.empty() )
 			Purge( "resource", GetId(row), root );
 
 		//a role references it -> access_role_add creates it, and (criteria-null, install-issues #25) bare and unenforced.
-		const RolePK rolePK{ (RolePK)GetId(Get("role", "roleSyncOpsFill", root)) };
-		QL().QuerySync<jvalue>( Ƒ(R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK, slug), {}, root );
+		const RolePK rolePK{ GetId(Get("role", "roleSyncOpsFill", root)) };
+		QL().QuerySync<jvalue>( Ƒ(R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug), {}, root );
 		auto row = SelectResource( slug, root, true );
 		ASSERT_FALSE( row.empty() );
 		EXPECT_TRUE( bareAllowed(row) ) << "created bare - the permission table would show no checkboxes";

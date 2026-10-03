@@ -174,7 +174,7 @@ namespace Jde::Access{
 		{
 			rl _{ Mutex };
 			auto permission = Permissions.find( permissionPK );
-			THROW_IF( permission==Permissions.end(), "[{}]Permission not found.", permissionPK );
+			THROW_IF( permission==Permissions.end(), "[{}]Permission not found.", permissionPK.Value );
 			resourcePK = permission->second.ResourcePK;
 		}
 		TestAdminResource( resourcePK, userPK, sl );
@@ -292,7 +292,7 @@ namespace Jde::Access{
 	}
 	α Authorize::AddAcl( IdentityPK::Type userGroupPK, const Permission& permission )ι->void{
 		ul _{ Mutex };
-		const PermissionRole permissionRole{ std::in_place_index<0>, permission.PK };
+		const PermissionRole permissionRole{ permission.PK };
 		ASSERT( Resources.find(permission.ResourcePK)!=Resources.end() );
 		//access_ac_upsert_permission is an upsert on (identity, resource) - a re-grant returns the same pk carrying new rights.
 		auto existing = Permissions.find( permission.PK );
@@ -314,9 +314,9 @@ namespace Jde::Access{
 	α Authorize::AddAcl( IdentityPK::Type userGroupPK, RolePK rolePK )ι->void{
 		ul _{ Mutex };
 		let identityPK = ToIdentityPK( userGroupPK );
-		AddAclEntry( identityPK, PermissionRole{std::in_place_index<1>, rolePK} );
+		AddAclEntry( identityPK, PermissionRole{rolePK} );
 		if( identityPK.IsUser() )
-			AddPermission( identityPK, PermissionRole{std::in_place_index<1>, rolePK}, {identityPK.UserPK()} );
+			AddPermission( identityPK, PermissionRole{rolePK}, {identityPK.UserPK()} );
 		else
 			RecalcGroupMembers( identityPK.GroupPK() );
 	}
@@ -354,7 +354,7 @@ namespace Jde::Access{
 	α Authorize::UpdateResourceDeleted( ResourcePK pk, sv schemaName, const jobject& args, bool restored )ε->void{
 		ul _{ Mutex };
 		if( !pk )
-			pk = Json::FindNumber<ResourcePK>( args, "id" ).value_or( 0 );
+			pk = ResourcePK{ Json::FindNumber<ResourcePK::Type>(args, "id").value_or(0) };
 		let slug = Json::FindSV( args, "slug" );
 		uint applied{};
 		for( auto&& [resourcePK, resource] : Resources ){ //&&: flat_map iterates a proxy pair.
@@ -366,10 +366,10 @@ namespace Jde::Access{
 				Index( resource );
 			else
 				Unindex( resource );//this row alone, as the loader would leave it.  A missing root already disables its slug (FindActiveResourcePKLocked);  erasing the slug's criteria rows with it lost them until a restart.
-			DBGT( _ptags, "[{}.{}.{}]{} schema resource.", resource.Schema, resource.Slug, resource.PK, restored ? "Restored" : "Deleted" );
+			DBGT( _ptags, "[{}.{}.{}]{} schema resource.", resource.Schema, resource.Slug, resource.PK.Value, restored ? "Restored" : "Deleted" );
 		}
 		// ie Testing schema where testing app isn't started.
-		THROW_IFX( !applied, Exception(SRCE_CUR, ELogLevel::Debug, "Resource not found pk: {}, schema:'{}', args:'{}'", pk, schemaName, serialize(args)) );
+		THROW_IFX( !applied, Exception(SRCE_CUR, ELogLevel::Debug, "Resource not found pk: {}, schema:'{}', args:'{}'", pk.Value, schemaName, serialize(args)) );
 	}
 
 
@@ -452,18 +452,18 @@ namespace Jde::Access{
 			if( children==Roles.end() )
 				return false;
 			for( PermissionRole member : children->second.Members ){
-				if( member.index()==1 && (get<1>(member)==child || isChild(get<1>(member), child)) )
+				if( let role = get_if<RolePK>(&member); role && (*role==child || isChild(*role, child)) )
 					return true;
 			}
 			return false;
 		};
 		rl _{ Mutex };
-		THROW_IFX( isChild(child, parent), Exception(sl, ELogLevel::Debug, "Role '{}' cannot be a member of '{}' because it is a ancester.", child, parent) );
+		THROW_IFX( isChild(child, parent), Exception(sl, ELogLevel::Debug, "Role '{}' cannot be a member of '{}' because it is a ancester.", child.Value, parent.Value) );
 	}
 	α Authorize::IsRoleMember( RolePK parent, RolePK child )Ι->bool{
 		rl _{ Mutex };
 		auto p = Roles.find( parent );
-		return p!=Roles.end() && p->second.Members.contains( PermissionRole{std::in_place_index<1>, child} );
+		return p!=Roles.end() && p->second.Members.contains( PermissionRole{child} );
 	}
 	α Authorize::AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& jResource )ι->void{
 		ul _{ Mutex };
@@ -497,23 +497,23 @@ namespace Jde::Access{
 		else if( resourcePK )
 			Permissions.emplace( permission.PK, Permission{permission.PK, *resourcePK, permission.Allowed, permission.Denied} );
 		else
-			DBGT( _ptags, "[{}]Role permission grants on '{}', a resource neither cached nor named by id in the grant - it applies once the resource loads.", permission.PK, resource.Slug );//RoleMAwait now names every row it finds, deleted ones included (reviews/m3-closing.md #11), so this is a grant on a row the db does not have
+			DBGT( _ptags, "[{}]Role permission grants on '{}', a resource neither cached nor named by id in the grant - it applies once the resource loads.", permission.PK.Value, resource.Slug );//RoleMAwait now names every row it finds, deleted ones included (reviews/m3-closing.md #11), so this is a grant on a row the db does not have
 		auto role = Roles.try_emplace( rolePK, rolePK, false );
-		role.first->second.Members.emplace( PermissionRole{std::in_place_index<0>, permission.PK} );
+		role.first->second.Members.emplace( permission.PK );
 		Recalc();
-		TRACET( _ptags, "[{}+{}]Added role permission.", rolePK, permission.PK );
+		TRACET( _ptags, "[{}+{}]Added role permission.", rolePK.Value, permission.PK.Value );
 	}
 	α Authorize::AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePKs )ι->void{
 		ul _{ Mutex };
 		auto role = Roles.try_emplace( parentRolePK, parentRolePK, false );
 		for( let childRolePK : childRolePKs )
-			role.first->second.Members.emplace( PermissionRole{std::in_place_index<1>,childRolePK} );
+			role.first->second.Members.emplace( childRolePK );
 
 		Recalc();
-		TRACET( _ptags, "[{}+{}]Added role child.", parentRolePK, Str::Join(childRolePKs) );
+		TRACET( _ptags, "[{}+{}]Added role child.", parentRolePK.Value, Str::Join(childRolePKs | std::views::transform(&RolePK::Value)) );
 	}
 
-	α Authorize::RemoveRoleChildren( 	RolePK rolePK, flat_set<PermissionRightsPK> toRemove )ι->void{
+	α Authorize::RemoveRoleChildren( RolePK rolePK, const flat_set<PermissionRole>& toRemove )ι->void{
 		if( !toRemove.size() )
 			return;
 		ul _{ Mutex };
@@ -521,15 +521,8 @@ namespace Jde::Access{
 		ASSERT( role!=Roles.end() );
 		if( role==Roles.end() )
 			return;
-		for( let& member : toRemove ){
-			auto& members = role->second.Members;
-			for( auto p = members.begin(); p!=members.end(); ++p ){
-				if( member==std::visit([](auto id)->PermissionRightsPK{return id;}, *p) ) {
-					members.erase( p );
-					break;
-				}
-			}
-		}
+		for( let& member : toRemove )
+			role->second.Members.erase( member );
 		Recalc();
 	}
 
@@ -546,7 +539,7 @@ namespace Jde::Access{
 			return;
 		let deleted = p->second.IsDeleted;
 		Roles.erase( p );
-		const PermissionRole member{ std::in_place_index<1>, rolePK };
+		const PermissionRole member{ rolePK };
 		for( auto acl=Acl.begin(); acl!=Acl.end(); )//Acl is keyed by identity, so a role has to be swept by value.
 			acl = acl->second==member ? Acl.erase( acl ) : std::next( acl );
 		for( let& role : Roles )
@@ -572,16 +565,18 @@ namespace Jde::Access{
 		}
 	}
 	α Authorize::AddUserPermissions( User& user, PermissionRole permissionRole, flat_set<RolePK>& visitedRoles )ι->void{
-		if( auto p = permissionRole.index()==0 ? Permissions.find(get<0>(permissionRole)) : Permissions.end(); p!=Permissions.end() )
-			user += p->second;
-		else if( auto rolePermissions = permissionRole.index()==1 ? Roles.find(get<1>(permissionRole)) : Roles.end(); rolePermissions!=Roles.end() && !rolePermissions->second.IsDeleted && visitedRoles.emplace(rolePermissions->first).second ){
+		if( let permissionPK = get_if<PermissionPK>(&permissionRole) ){
+			if( auto p = Permissions.find(*permissionPK); p!=Permissions.end() )
+				user += p->second;
+		}
+		else if( auto rolePermissions = Roles.find(get<RolePK>(permissionRole)); rolePermissions!=Roles.end() && !rolePermissions->second.IsDeleted && visitedRoles.emplace(rolePermissions->first).second ){
 			for( let& rolePermission : rolePermissions->second.Members )
 				AddUserPermissions( user, rolePermission, visitedRoles );
 		}
 	}
 	α Authorize::UpdatePermission( PermissionPK permissionPK, optional<ERights> allowed, optional<ERights> denied )ε->void{
 		ul _{ Mutex };
-		auto p = Permissions.find( permissionPK ); THROW_IF( p==Permissions.end(), "[{}]Permission not found", permissionPK );
+		auto p = Permissions.find( permissionPK ); THROW_IF( p==Permissions.end(), "[{}]Permission not found", permissionPK.Value );
 		p->second.Update( allowed, denied );
 		for( let& user : Users )
 			user.second.UpdatePermission( permissionPK, allowed, denied );
@@ -606,8 +601,8 @@ namespace Jde::Access{
 		flat_map<ResourcePK,ResourceRights> byResource;
 		vector<GroupPK> groups; vector<RolePK> roles;//the path so far
 		auto expand = [&]( this auto&& self, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
-			if( permissionRole.index()==0 ){
-				auto p = Permissions.find( get<0>(permissionRole) );
+			if( let permissionPK = get_if<PermissionPK>(&permissionRole) ){
+				auto p = Permissions.find( *permissionPK );
 				if( p==Permissions.end() )
 					return;
 				auto& resource = byResource.try_emplace( p->second.ResourcePK, ResourceRights{p->second.ResourcePK} ).first->second;
@@ -616,7 +611,7 @@ namespace Jde::Access{
 				resource.Sources.emplace_back( RightsSource{p->first, p->second.Allowed, p->second.Denied, groups, roles} );
 			}
 			else{
-				let rolePK = get<1>( permissionRole );
+				let rolePK = get<RolePK>( permissionRole );
 				auto role = Roles.find( rolePK );
 				if( role==Roles.end() || role->second.IsDeleted || std::ranges::find(roles, rolePK)!=roles.end() )
 					return;

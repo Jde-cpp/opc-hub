@@ -8,7 +8,6 @@ namespace Jde::QL{ struct LocalQL; }
 namespace Jde::Access{ struct Authorize; }
 namespace Jde::Access::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
-	using ResourcePK=uint16;
 
 	α Authorizer()ι->sp<Access::Authorize>;
 	α QL()ι->QL::LocalQL&;
@@ -19,9 +18,9 @@ namespace Jde::Access::Tests{
 	α Schemas()ι->vector<sp<DB::AppSchema>>;
 
 	//AclTests.cpp
-	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionRightsPK;
+	α CreateAcl( IdentityPK identityPK, ERights allowed, ERights denied, string resource, UserPK executer )ε->PermissionPK;
 	α CreateAcl( IdentityPK identityPK, RolePK rolePK, UserPK executer )ε->void;
-	α PurgeAcl( IdentityPK identityPK, PermissionRightsPK permissionPK, UserPK executer )ε->void;
+	α PurgeAcl( IdentityPK identityPK, PermissionPK permissionPK, UserPK executer )ε->void;
 	α RestoreResource( string name, UserPK executer )ε->void;
 	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject;
 	α SelectAcl( IdentityPK identityPK, RolePK rolePK )ε->jobject;
@@ -34,6 +33,8 @@ namespace Jde::Access::Tests{
 	α Create( str table, sv slug, UserPK userPK, str input={}, SRCE )ε->uint;
 	α Delete( str table, uint id, UserPK userPK )ε->jvalue;
 	α Restore( str table, uint id, UserPK userPK )ε->jvalue;
+	Ŧ Delete( str table, PK<T> id, UserPK userPK )ε->jvalue{ return Delete( table, id.Value, userPK ); }
+	Ŧ Restore( str table, PK<T> id, UserPK userPK )ε->jvalue{ return Restore( table, id.Value, userPK ); }
 	α Get( str table, str slug, UserPK userPK, sv cols={}, bool includeDeleted=false )ε->jobject;
 	Ξ GetId( const jobject& j )ε->uint32{ return Json::AsNumber<uint32>( j, "id" ); }
 	α GetGroup( str slug, UserPK userPK )ε->jobject;
@@ -41,6 +42,7 @@ namespace Jde::Access::Tests{
 	α GetUser( str slug, UserPK userPK, bool includeDeleted=false, ProviderPK providerId=(ProviderPK)Access::EProviderType::Google )ε->jobject;
 
 	α Purge( str table, uint id, UserPK userPK )ε->jvalue;
+	Ŧ Purge( str table, PK<T> id, UserPK userPK )ε->jvalue{ return Purge( table, id.Value, userPK ); }
 	α PurgeGroup( GroupPK id, UserPK userPK )ε->void;
 	α PurgeUser( UserPK userId, UserPK userPK, SRCE )ε->void;
 

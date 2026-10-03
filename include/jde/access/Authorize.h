@@ -109,7 +109,7 @@ namespace Jde::Access{
 		α PurgeRole( RolePK rolePK )ι->void;
 		α AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& resource )ι->void;
 		α AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePK )ι->void;
-		α RemoveRoleChildren(	RolePK rolePK, flat_set<PermissionRightsPK> toRemove )ι->void;
+		α RemoveRoleChildren( RolePK rolePK, const flat_set<PermissionRole>& toRemove )ι->void;
 
 		α CreateUser( UserPK userPK, string name )ι->void;
 		α RenameUser( UserPK userPK, string name )ι->void;
@@ -135,7 +135,7 @@ namespace Jde::Access{
 	Ξ Authorize::FindResourceLocked( const Resource& resource )Ι->const Resource*{
 		auto pk = resource.PK;
 		if( !pk && resource.Schema.size() && resource.Slug.size() )
-			pk = FindActiveResourcePKLocked( resource.Schema, resource.Slug, resource.Criteria ).value_or( 0 );
+			pk = FindActiveResourcePKLocked( resource.Schema, resource.Slug, resource.Criteria ).value_or( ResourcePK{} );
 		if( auto p = pk ? Resources.find(pk) : Resources.end(); p!=Resources.end() )
 			return &p->second;
 		//Only a criteria-less request may fall back to the criteria-less row.  Without that guard a *criteria-scoped* lookup

@@ -83,7 +83,7 @@ namespace Jde::Access::Tests{
 		auto listener = ms<Access::AccessListener>( QLPtr() );
 		reload( authorizer, listener );
 
-		authorizer->AddResource( 0xFFFF, "reload-test", "stale", "" );//stands in for a resource the server no longer returns.
+		authorizer->AddResource( ResourcePK{0xFFFF}, "reload-test", "stale", "" );//stands in for a resource the server no longer returns.
 		ASSERT_TRUE( authorizer->FindActiveResourcePK("reload-test", "stale", "") );
 
 		reload( authorizer, listener );

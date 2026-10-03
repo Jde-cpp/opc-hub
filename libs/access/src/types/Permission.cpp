@@ -18,8 +18,8 @@ namespace Jde::Access{
 		return nullopt;
 	}
 	Permission::Permission( const jobject& o )ε:
-		PK{ Json::AsNumber<PermissionPK>(o, "id") },
-		ResourcePK{ Json::FindNumberPath<Access::ResourcePK>(o, "resource/id").value_or(0) },
+		PK{ Json::AsNumber<PermissionPK::Type>(o, "id") },
+		ResourcePK{ Json::FindNumberPath<Access::ResourcePK::Type>(o, "resource/id").value_or(0) },
 		Allowed{ FindRights(o, "allowed").value_or(ERights::None) },
 		Denied{ FindRights(o, "denied").value_or(ERights::None) }
 	{}

@@ -32,21 +32,21 @@ namespace Jde::Access::Server{
 		try{
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );
-			auto permissionPK = Json::FindNumberPath<PermissionPK>( args, "permissionRight/id" );
+			auto permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "permissionRight/id" );
 			if( !permissionPK )
-				permissionPK = Json::FindNumberPath<PermissionPK>( args, "role/id" );
+				permissionPK = Json::FindNumberPath<PermissionPK::Type>( args, "role/id" );
 			THROW_IF( !permissionPK, "Could not find permissionRight or role id in '{}'", serialize(args) );
 			let isRole = co_await DS().ScalerOpt<uint>( DB::Sql{Ƒ("select is_role from {} where permission_id=?", GetTable("permissions").DBName), vector<DB::Value>{{*permissionPK}}} );
 			THROW_IF( !isRole, "[{}]Permission not found.", *permissionPK );
 			if( *isRole )
 				Authorizer().TestAdminSlug( "roles", _executer, _sl );
 			else
-				Authorizer().TestAdminPermission( *permissionPK, _executer, _sl );
+				Authorizer().TestAdminPermission( PermissionPK{*permissionPK}, _executer, _sl );
 			//the listener - and any subscriber - branches on the key, so the notification has to carry the one the pk is.
 			const sv key = *isRole ? "role" : "permissionRight", other = *isRole ? "permissionRight" : "role";
 			_mutation.Args.erase( other );
 			_mutation.Args[key] = jobject{ {"id", *permissionPK} };
-			PurgeAcl( identityPK, *permissionPK, *isRole!=0 );
+			PurgeAcl( identityPK, PermissionPK{*permissionPK}, *isRole!=0 );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
@@ -56,10 +56,10 @@ namespace Jde::Access::Server{
 		try{
 			let ds = Table().Schema->DS();
 			let aclCount = co_await ds->Execute(
-				DB::Sql{ Ƒ("delete from {} where identity_id=? and permission_id=?", Table().DBName), vector<DB::Value>{{identityPK}, {permissionPK}} }, _sl );
+				DB::Sql{ Ƒ("delete from {} where identity_id=? and permission_id=?", Table().DBName), vector<DB::Value>{{identityPK}, {permissionPK.Value}} }, _sl );
 			if( aclCount && !isRole ){ //a direct grant's rights row goes with its last acl link;  a role has no rights row, and the acl row was the whole assignment.
 				co_await ds->Execute(
-					DB::Sql{ Ƒ("delete from {} where permission_id=? and not exists( select 1 from {} where permission_id=? )", GetTable("permission_rights").DBName, Table().DBName), vector<DB::Value>{{permissionPK}, {permissionPK}} }, _sl );
+					DB::Sql{ Ƒ("delete from {} where permission_id=? and not exists( select 1 from {} where permission_id=? )", GetTable("permission_rights").DBName, Table().DBName), vector<DB::Value>{{permissionPK.Value}, {permissionPK.Value}} }, _sl );
 			}
 			jobject y;
 			y["rowCount"] = aclCount;
@@ -87,7 +87,7 @@ namespace Jde::Access::Server{
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );
 			insert.Add( identityPK );
-			let rolePK = Json::AsNumber<ResourcePK>( args, "role/id" );
+			let rolePK = Json::AsNumber<RolePK::Type>( args, "role/id" );
 			insert.Add( rolePK );
 			y["rowCount"] = co_await DS().Execute( insert.Move() );
 			QL::Subscriptions::OnMutation( _mutation, y );
@@ -97,7 +97,7 @@ namespace Jde::Access::Server{
 			ResumeExp( move(e) );
 		}
 	}
-	α AclQLAwait::InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK>>::Task{
+	α AclQLAwait::InsertPermission( const jobject& permission )ι->TAwait<optional<ResourcePK::Type>>::Task{
 		let allowed = ( ERights )Json::FindNumber<uint8>( permission, "allowed" ).value_or( 0 );
 		let denied = ( ERights )Json::FindNumber<uint8>( permission, "denied" ).value_or( 0 );
 		try{
@@ -106,7 +106,7 @@ namespace Jde::Access::Server{
 			if( !key.IsPK() ){
 				auto criteria = Json::FindString( resource, "criteria" );
 				auto dbCriteria = criteria ? DB::Value{move(*criteria)} : DB::Value{nullptr};
-				auto resPK = co_await DS().ScalerOpt<ResourcePK>({
+				auto resPK = co_await DS().ScalerOpt<ResourcePK::Type>({
 					Ƒ( "select resource_id from {} where schema_name=? and slug=? and coalesce(criteria, '')=coalesce(?, '')", GetTable("resources").DBName ),
 					{ DB::Value{Json::AsString(resource, "schemaName")}, DB::Value::FromKey(key.NK()), dbCriteria }
 				});
@@ -116,13 +116,13 @@ namespace Jde::Access::Server{
 				}else
 					THROW( "Resource not found for slug '{}' schema '{}'", key.NK(), Json::AsString(resource, "schemaName") );//TODO implement TestAdmin for this
 			}
-			InsertPermission( allowed, denied, key.PK() );
+			InsertPermission( allowed, denied, ResourcePK{static_cast<ResourcePK::Type>(key.PK())} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
 	}
-	α AclQLAwait::InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK>::Task{
+	α AclQLAwait::InsertPermission( ERights allowed, ERights denied, ResourcePK resourcePK )ι->DB::ScalerAwait<PermissionPK::Type>::Task{
 		try{
 			Authorizer().TestAdminResource( resourcePK, _executer, _sl );
 			DB::InsertClause insert{ Table().UpsertProcName()+"_permission" };
@@ -131,8 +131,8 @@ namespace Jde::Access::Server{
 
 			insert.Add( underlying(allowed) );
 			insert.Add( underlying(denied) );
-			insert.Add( resourcePK );
-			let permissionPK = co_await DS().InsertSeq<PermissionPK>( move(insert) );
+			insert.Add( resourcePK.Value );
+			let permissionPK = co_await DS().InsertSeq<PermissionPK::Type>( move(insert) );
 			jobject y;
 			y["permissionRight"].emplace_object()["id"] = permissionPK;
 			QL::Subscriptions::OnMutation( _mutation, y );

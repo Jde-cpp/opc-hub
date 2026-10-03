@@ -231,7 +231,7 @@ namespace Jde::App::Server::Tests{
 	Ω probeRole( sv slug )->Access::RolePK{//find-or-create: roles.slug is uniquely indexed, so a persisted db would trip createRole on the second run.
 		auto existing = systemQL( Ƒ(R"(role( slug:"{0}" ){{id}})", slug) );
 		let found = existing.is_object() && existing.get_object().contains( "id" );
-		return QL::AsId<Access::RolePK>( found ? existing : systemQL(Ƒ(R"(mutation createRole( slug:"{0}", name:"{0}" ){{id}})", slug)) );
+		return Access::RolePK{ QL::AsId<Access::RolePK::Type>( found ? existing : systemQL(Ƒ(R"(mutation createRole( slug:"{0}", name:"{0}" ){{id}})", slug)) ) };
 	}
 	//The delegated admin check end to end:  granting a role rights on ANOTHER schema's resource asks that schema's registered
 	//instance, over the socket, whether the executer may grant it (appserver-review3 #13).  The AppServer parses the `adminCheck`
@@ -246,7 +246,7 @@ namespace Jde::App::Server::Tests{
 		let registered = RegisterInstance( *_session, "Tests.Delegate", "delegate", "auth-host", 0, 1234, string{schema}, admin );
 		ASSERT_TRUE( registered.AuthResult ) << "the registrant administers the schema's root resource";
 
-		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"nodeIds" }} }} ))", probeRole("delegate-role"), underlying(Access::ERights::Read), schema );
+		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"nodeIds" }} }} ))", probeRole("delegate-role").Value, underlying(Access::ERights::Read), schema );
 		string failure;
 		std::thread mutation{ [&]{ try{ systemQL( grant ); }catch( const std::exception& e ){ failure = e.what(); } } };//systemQL blocks on the reply this thread has to send.
 		auto query = _session->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kClientQuery && m.client_query().query().contains("adminCheck"); } );

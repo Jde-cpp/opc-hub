@@ -19,6 +19,6 @@ namespace Jde::Access{
 		α GroupChanged( GroupPK groupPK, ESubscription event, const jobject& o )ε->void;
 		α RoleChanged( RolePK rolePK, ESubscription event, const jobject& o )ε->void;
 		α ResourceChanged( ResourcePK resourcePK, ESubscription event, const jobject& o )ε->void;
-		α PermissionUpdated( PermissionRightsPK pk, const jobject& o )ε->void;
+		α PermissionUpdated( PermissionPK pk, const jobject& o )ε->void;
 	};
 }

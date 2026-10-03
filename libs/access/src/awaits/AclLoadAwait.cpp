@@ -11,8 +11,8 @@ namespace Jde::Access{
 				let acl = Json::AsObject(value);
 				let groupUserPK = Json::AsNumber<IdentityPK::Type>( acl, "identity/id" );
 				let identityPK = Json::AsBool(acl, "identity/isGroup") ? IdentityPK{ GroupPK{groupUserPK} } : IdentityPK{ UserPK{groupUserPK} };
-				let permissionRolePK = Json::AsNumber<PermissionPK>( acl, "permission/id" );
-				let permissionRole = Json::AsBool(acl, "permission/isRole") ? PermissionRole{ std::in_place_index<1>, permissionRolePK } : PermissionRole{ std::in_place_index<0>, permissionRolePK };
+				let permissionRolePK = Json::AsNumber<PermissionPK::Type>( acl, "permission/id" );
+				let permissionRole = Json::AsBool(acl, "permission/isRole") ? PermissionRole{ RolePK{permissionRolePK} } : PermissionRole{ PermissionPK{permissionRolePK} };
 				y.emplace( identityPK, permissionRole );
 			}
 			Resume( move(y) );
