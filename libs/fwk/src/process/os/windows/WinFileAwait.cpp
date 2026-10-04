@@ -16,21 +16,26 @@ namespace Jde::IO{
 			IFileChunkArg{ arg, index },
 			StartIndex{ Index*ChunkByteSize() },
 			Bytes{ std::min(StartIndex+ChunkByteSize(), FileArg()->Size())-StartIndex },
-			FileOffset{ arg->InitialSize+StartIndex }
+			FileOffset{ arg->Offset+StartIndex }
 		{}
 		uint StartIndex;//offset into Buffer - partial transfers advance this together with FileOffset.
 		uint Bytes;//bytes still to transfer for this chunk.
-		uint FileOffset;//explicit file offset - reads: ==StartIndex; appends: EOF at Open + StartIndex. Never eof (offset -1) semantics: chunks past the first would land at the wrong offset & parallel chunks would interleave.
+		uint FileOffset;//explicit file offset - the op's Offset + StartIndex; an append's Offset is the EOF at Open. Never eof (offset -1) semantics: chunks past the first would land at the wrong offset & parallel chunks would interleave.
 	};
 
 	FileIOArg::~FileIOArg(){}//HandlePtr self-closes when Send never ran (cache hit / open failure); after Send the asio handle owns the close.
 
-	α FileIOArg::Open( bool create, bool append )ε->void{
+	α FileIOArg::Open( bool create )ε->void{
 		const DWORD access = IsRead ? GENERIC_READ : GENERIC_WRITE;
-		//FILE_SHARE_DELETE on the read path so a whole-file rewrite can rename its temp over a file being read (ArchiveFileAwait::Save): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
-		const DWORD sharing = IsRead ? FILE_SHARE_READ|FILE_SHARE_DELETE : FILE_SHARE_WRITE;
-		//truncate must drop the old contents: chunks write from offset 0 (InitialSize stays 0), so OPEN_EXISTING would leave a longer previous version's tail behind.  create picks whether a missing file is an error, matching linux's O_CREAT.
-		const DWORD creationDisposition = IsRead ? OPEN_EXISTING : (append ? OPEN_ALWAYS : (create ? CREATE_ALWAYS : TRUNCATE_EXISTING));
+		//Every open shares all three, as linux does.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (ArchiveFileAwait::Save): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.  FILE_SHARE_READ and FILE_SHARE_WRITE so a reader and an appender can hold one file: each open has to admit the access the other already has.
+		const DWORD sharing = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
+		let append = Mode==EWriteMode::Append;
+		let replace = Mode==EWriteMode::Truncate && !Offset;
+		//replace must drop the old contents: chunks write from offset 0, so OPEN_EXISTING would leave a longer previous version's tail behind.  create picks whether a missing file is an error, matching linux's O_CREAT.  At, and a Truncate that keeps a prefix, open what is there.
+		const DWORD creationDisposition = IsRead ? OPEN_EXISTING
+			: append ? OPEN_ALWAYS
+			: replace ? ( create ? CREATE_ALWAYS : TRUNCATE_EXISTING )
+			: ( create ? OPEN_ALWAYS : OPEN_EXISTING );
 		const DWORD dwFlagsAndAttributes = IsRead ? FILE_FLAG_SEQUENTIAL_SCAN : FILE_ATTRIBUTE_ARCHIVE;
 		auto tmp = Str::Replace( Path.string(), '/', '\\' );
 		let path = string{"\\\\?\\"}+tmp;
@@ -40,11 +45,18 @@ namespace Jde::IO{
 		LARGE_INTEGER fileSize;
 		if( IsRead ){
 			THROW_IFX( !::GetFileSizeEx(Handle.get(), &fileSize), IOException(Path, GetLastError(), "GetFileSizeEx") );
-			std::visit( [fileSize](auto&& b){b.resize(fileSize.QuadPart);}, Buffer );
+			let total = (uint)fileSize.QuadPart;
+			let size = total>Offset ? std::min( Limit.value_or(total), total-Offset ) : 0;//a range that starts at or past the end reads nothing.
+			std::visit( [size](auto&& b){b.resize(size);}, Buffer );
 		}
 		else if( append ){//chunks write at explicit offsets - capture the base here. (a file is appended by one process at a time - eof-offset semantics couldn't handle multiple chunks anyway.)
 			THROW_IFX( !::GetFileSizeEx(Handle.get(), &fileSize), IOException(Path, GetLastError(), "GetFileSizeEx") );
-			InitialSize = fileSize.QuadPart;
+			Offset = (uint)fileSize.QuadPart;
+		}
+		else if( Mode==EWriteMode::Truncate && Offset ){//keeps the first Offset bytes.  By handle, not SetEndOfFile: an overlapped handle has no file pointer to set it from.
+			FILE_END_OF_FILE_INFO end;
+			end.EndOfFile.QuadPart = (LONGLONG)Offset;
+			THROW_IFX( !::SetFileInformationByHandle(Handle.get(), FileEndOfFileInfo, &end, sizeof(end)), IOException(Path, GetLastError(), "SetFileInformationByHandle") );
 		}
 		TRACE( "[{}]{} size={}", Path.string(), IsRead ? "Read" : "Write", Size() );
 	}
@@ -63,11 +75,16 @@ namespace Jde::IO{
 	}
 
 	Ω resumeCompleted( const sp<RandomAccessHandle>& h, const sp<FileIOArg>& op )ι->void{//final chunk completed.
+		//FlushFileBuffers has no overlapped form, so it holds this executor thread until the device has the data.
+		const DWORD syncError = op->Sync && !::FlushFileBuffers( h->native_handle() ) ? ::GetLastError() : 0;
 		boost::system::error_code ec;
-		h->close( ec );//before the resume posts: the sharing mode may not admit a reader the coroutine opens right after. Safe inline - the queue is empty, so no initiation can race the close.
+		h->close( ec );//before the resume posts, so the coroutine never finds its own handle still open. Safe inline - the queue is empty, so no initiation can race the close.
 		if( ec )
 			WARN( "[{}]close failed: {}", op->Path.string(), ec.message() );
-		op->ResumeComplete();
+		if( syncError )
+			op->PostExp( up<IFileChunkArg>{}, (uint32)syncError, "FlushFileBuffers failed\n" );
+		else
+			op->ResumeComplete();
 	}
 
 	Ω onChunk( const sp<RandomAccessHandle>& h, const sp<IFileChunkArg>& chunk, const boost::system::error_code& ec, uint bytes )ι->void{
@@ -124,7 +141,10 @@ namespace Jde::IO{
 		TRACE( "[{}] chunks = {}", Path.string(), ChunksToSend );
 		if( ChunksToSend==0 ){//empty file - no completions will arrive; resume immediately.
 			TRACE( "[{}]Empty file - resuming without io.", Path.string() );
-			ResumeComplete();
+			if( Sync && !::FlushFileBuffers(Handle.get()) )//an empty write that syncs.
+				PostExp( up<IFileChunkArg>{}, (uint32)::GetLastError(), "FlushFileBuffers failed\n" );
+			else
+				ResumeComplete();
 			return;
 		}
 		auto executor = Executor();

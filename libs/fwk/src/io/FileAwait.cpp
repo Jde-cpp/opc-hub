@@ -83,7 +83,7 @@ namespace IO{
 		}
 		else{
 			try{
-				_arg->Open( false, false );
+				_arg->Open( false );
 			}
 			catch( IOException& e ){
 				ExceptionPtr = e.Move();
@@ -94,7 +94,7 @@ namespace IO{
 
 	α WriteAwait::await_ready()ι->bool{
 		try{
-			_arg->Open( _create, _append );
+			_arg->Open( _create );
 		}
 		catch( IOException& e ){
 			ExceptionPtr = e.Move();

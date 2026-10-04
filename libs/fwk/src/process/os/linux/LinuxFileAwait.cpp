@@ -34,19 +34,31 @@ namespace Jde::IO{
 			EndIndex{ std::min(StartIndex+ChunkByteSize(), FileArg()->Size()) },
 			Bytes{ EndIndex-StartIndex }
 		{}
+		struct SyncTag{};
+		LinuxChunk( sp<FileIOArg> arg, SyncTag )ι://the fdatasync that follows a write's last chunk - it moves no bytes.
+			IFileChunkArg{ arg, arg->ChunksToSend },
+			StartIndex{},
+			EndIndex{},
+			Bytes{},
+			IsSync{ true }
+		{}
 #undef StartIndex
 		uint StartIndex;
 		uint EndIndex;
 		uint Bytes;
+		bool IsSync{};
 	};
 
 
-	α FileIOArg::Open( bool create, bool append )ε->void{
-		auto flags = O_NONBLOCK | ( IsRead ? O_RDONLY : O_WRONLY );
+	α FileIOArg::Open( bool create )ε->void{
+		auto flags = O_NONBLOCK | O_CLOEXEC | ( IsRead ? O_RDONLY : O_WRONLY );
 		if( !IsRead ){
 			if( create )
 				flags |= O_CREAT;
-			flags |= append ? O_APPEND : O_TRUNC;//O_TRUNC, not a plain overwrite: chunks write from offset 0, so without it a shorter write leaves the old file's tail in place.
+			if( Mode==EWriteMode::Append )
+				flags |= O_APPEND;
+			else if( Mode==EWriteMode::Truncate && !Offset )
+				flags |= O_TRUNC;//O_TRUNC, not a plain overwrite: chunks write from offset 0, so without it a shorter write leaves the old file's tail in place.
 		}
 		for( bool retried = false;; retried = true ){
 			Handle = ::open( Path.string().c_str(), flags, 0666 );
@@ -66,10 +78,15 @@ namespace Jde::IO{
 			struct stat st;
 			THROW_IFX( ::fstat( Handle, &st )==-1, IOException(Path, errno, "fstat", _sl) );
 			TRACE( "[{}]Opened file: {}, size: {}", hex(Handle), Path.string(), st.st_size );
-			std::visit( [size=st.st_size](auto&& b){b.resize(size);}, Buffer );
+			let fileSize = (uint)st.st_size;
+			let size = fileSize>Offset ? std::min( Limit.value_or(fileSize), fileSize-Offset ) : 0;//a range that starts at or past the end reads nothing.
+			std::visit( [size](auto&& b){b.resize(size);}, Buffer );
 		}
-		else
-			TRACE( "[{}]{} {}", hex(Handle), append ? "appending" : "truncating", Path.string() );
+		else{
+			if( Mode==EWriteMode::Truncate && Offset )//keeps the first Offset bytes - O_TRUNC keeps none.
+				THROW_IFX( ::ftruncate(Handle, (off_t)Offset)==-1, IOException(Path, errno, "ftruncate", _sl) );
+			TRACE( "[{}]{} {}", hex(Handle), Mode==EWriteMode::Append ? "appending" : Mode==EWriteMode::Truncate ? "truncating" : "writing at", Path.string() );
+		}
 	}
 	FileIOArg::~FileIOArg(){
 		if( Handle>=0 ){//fd -1 is invalid
@@ -97,17 +114,32 @@ namespace Jde::IO{
 		}
 		//no IOSQE_IO_LINK: a link chain spans whatever sqes share a submission batch - including unrelated
 		//ops/files - and a short read severs the chain, canceling the rest with -ECANCELED. Ordering isn't
-		//needed here: reads use explicit offsets and appends allow only one write chunk in flight (Send).
+		//needed here: reads use explicit offsets and writes allow only one chunk in flight (Send).
 
 		if( isRead ){
 			TRACE( "Preparing read: {}, index: {}, bytes: {}", op->Path.string(), lchunk.Index, lchunk.Bytes );
-			io_uring_prep_read( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, lchunk.StartIndex );
+			io_uring_prep_read( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, op->Offset+lchunk.StartIndex );
 		}
 		else{
 			TRACE( "Preparing write: {}, index: {}, bytes: {}", op->Path.string(), lchunk.Index, lchunk.Bytes );
-			io_uring_prep_write( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, -1 );
+			const __u64 offset = op->Mode==EWriteMode::Append ? (__u64)-1 : op->Offset+lchunk.StartIndex;//-1: O_APPEND places an append.
+			io_uring_prep_write( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, offset );
 		}
 		io_uring_sqe_set_data( sqe, chunk.release() );
+		return true;
+	}
+
+	//Queued when a write's last chunk has completed, so it covers every byte of the op and needs no link to order it.
+	Ω prepSync( const sp<FileIOArg>& op )ι->bool{
+		struct io_uring_sqe* sqe = io_uring_get_sqe( &_ring );
+		if( !sqe ){
+			markFinished( op );
+			op->PostExp( {}, EBUSY, "Could not get file queue:  fdatasync\n" );
+			return false;
+		}
+		TRACE( "Preparing fdatasync: {}", op->Path.string() );
+		io_uring_prep_fsync( sqe, op->Handle, IORING_FSYNC_DATASYNC );
+		io_uring_sqe_set_data( sqe, new LinuxChunk{op, LinuxChunk::SyncTag{}} );
 		return true;
 	}
 
@@ -131,9 +163,13 @@ namespace Jde::IO{
 				//converts - and that conversion moves, emptying `chunk`.  Argument order is unspecified, and clang empties it
 				//before evaluating the format, so reading chunk->Index inline dereferenced null: every failed read/write
 				//(EISDIR, EIO, ENOSPC) crashed the process instead of reporting.
-				auto message = Ƒ( "AIO index: {} failed: {}\n", chunk->Index, strerror(-res) );
+				auto message = chunk->IsSync ? Ƒ( "fdatasync failed: {}\n", strerror(-res) ) : Ƒ( "AIO index: {} failed: {}\n", chunk->Index, strerror(-res) );
 				markFinished( op );
 				op->PostExp( move(chunk), -res, move(message) );
+				continue;
+			}
+			if( chunk->IsSync ){//before the byte counts below: it moved none, and its res of 0 would read as no progress.
+				completedOps.push_back( chunk->FileArg() );
 				continue;
 			}
 			if( (uint)res < chunk->Bytes ){//partial read/write - resubmit the remainder.
@@ -155,6 +191,10 @@ namespace Jde::IO{
 			if( op->ChunksToSend>++op->ChunksCompleted ){
 				if( addNextChunkToQueue(op) )
 					submitOps.push_back(op);
+			}
+			else if( op->Sync ){
+				if( prepSync(op) )
+					submitOps.push_back( op );
 			}
 			else
 				completedOps.push_back(op);
@@ -257,18 +297,21 @@ namespace Jde::IO{
 			for( uint i=0; i*chunkByteSize<totalBytes; ++i )
 				Chunks.emplace( mu<LinuxChunk>(self, i) );
 		}
-		if( ChunksToSend==0 ){//empty file - no completions will arrive; resume immediately.
+		if( ChunksToSend==0 && !Sync ){//empty file - no completions will arrive; resume immediately.
 			TRACE( "[{}]Empty file - resuming without io.", Path.string() );
 			ResumeComplete();
 			return;
 		}
 		++_requestCount;
-		//writes append (offset -1/O_APPEND): concurrent in-flight chunks can be executed out of order by the
+		//appends (offset -1/O_APPEND): concurrent in-flight chunks can be executed out of order by the
 		//kernel (io-wq), permuting the file's contents - only one write chunk may be in flight at a time.
+		//The other writes keep that window too: a sync has to follow the last of them.
 		//reads use explicit offsets, so a window of parallel chunks is safe.
 		PostIO( [self, initialSendTotal = IsRead ? std::min<uint>(ChunksToSend, threadSize) : 1u, tags=_tags ](){
-			for( uint i=0; i<initialSendTotal; ++i )
+			for( uint i=0; i<initialSendTotal && i<self->ChunksToSend; ++i )
 				addNextChunkToQueue( self );
+			if( !self->ChunksToSend )//an empty write that syncs.
+				prepSync( self );
 			submit( move(self), tags );
 		} );
 	}

@@ -591,6 +591,162 @@ namespace Jde::IO::Tests{
 		EXPECT_THROW( IO::SaveBinary<const char>(full, std::span{content}), IOException );
 	}
 
+	Ω writeWith( fs::path file, string content, IO::WriteOptions options, sp<std::atomic<bool>> done, sp<up<Exception>> error, SRCE )->VoidAwait::Task{
+		try{
+			co_await IO::WriteAwait{ move(file), move(content), options, sl };
+		}
+		catch( Exception& e ){
+			*error = e.Move();
+		}
+		*done = true;
+	}
+	//"" when the write finished cleanly, as waitError.
+	Ω writeNow( const fs::path& file, string content, IO::WriteOptions options, SRCE )ι->string{
+		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+		writeWith( file, move(content), options, done, error, sl );
+		return waitError( done, error );
+	}
+	Ω readRange( fs::path file, IO::ReadOptions options, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error, SRCE )ι->TAwait<string>::Task{
+		try{
+			*content = co_await IO::ReadAwait{ move(file), options, sl };
+		}
+		catch( Exception& e ){
+			*error = e.Move();
+		}
+		*done = true;
+	}
+	Ω onDisk( const fs::path& file )ι->string{
+		std::ifstream is{ file, std::ios::binary };
+		return string{ std::istreambuf_iterator<char>{is}, std::istreambuf_iterator<char>{} };
+	}
+	//distinct at every offset a chunk boundary can fall on, so bytes that land in the wrong place compare unequal.
+	Ω pattern( uint size )ι->string{
+		string y( size, '\0' );
+		for( uint i=0; i<size; ++i )
+			y[i] = (char)( 'a'+i%23 );
+		return y;
+	}
+
+	// At writes over what is at Offset and leaves the rest of the file alone - a slot rewritten in place.  Append and
+	// Truncate could only ever add to the end or replace the whole file.
+	TEST_F( FileTests, WriteAtOverwritesInPlace ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1000 );
+		fs::remove( file );
+		let original = pattern( chunk*3+chunk/2 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let patch = string( chunk+chunk/2, 'Z' );
+		let offset = chunk/2+1;//starts mid-chunk and ends mid-chunk.
+		ASSERT_EQ( writeNow(file, patch, {.Mode=IO::EWriteMode::At, .Offset=offset}), "" );
+		auto expected = original;
+		expected.replace( offset, patch.size(), patch );
+		EXPECT_EQ( onDisk(file), expected ) << "an At write moved or dropped bytes outside its range";
+	}
+
+	TEST_F( FileTests, WriteAtMissingFile ){
+		let file = Tests::file( 1001 );
+		fs::remove( file );
+		auto error = ms<up<Exception>>();
+		auto done = ms<std::atomic<bool>>();
+		writeWith( file, "x", {.Mode=IO::EWriteMode::At, .Offset=4}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+		ASSERT_TRUE( *error ) << "an At write to a missing file without Create did not throw";
+		EXPECT_TRUE( dynamic_cast<IOException*>(error->get()) ) << (*error)->what();
+		EXPECT_FALSE( fs::exists(file) ) << "Create=false created the file anyway";
+
+		ASSERT_EQ( writeNow(file, "x", {.Create=true, .Mode=IO::EWriteMode::At, .Offset=4}), "" );
+		EXPECT_EQ( onDisk(file), string( 4, '\0' )+"x" ) << "a write past the end leaves zeros before it";
+	}
+
+	// Truncate with an Offset keeps that prefix and puts the data after it, so whatever followed the prefix is gone -
+	// an append that first drops a torn tail.  Offset 0 is the whole-file replace TruncateReplacesFile pins.
+	TEST_F( FileTests, TruncateKeepsPrefix ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1002 );
+		fs::remove( file );
+		let original = pattern( chunk*4 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let kept = chunk+chunk/2;
+		let data = string( chunk, 'Z' );
+		ASSERT_EQ( writeNow(file, data, {.Mode=IO::EWriteMode::Truncate, .Offset=kept}), "" );
+		let expected = original.substr( 0, kept )+data;
+		ASSERT_EQ( onDisk(file), expected ) << "the old tail outlived a write shorter than it";
+
+		//a prefix that is the whole file is a plain append.
+		ASSERT_EQ( writeNow(file, data, {.Mode=IO::EWriteMode::Truncate, .Offset=expected.size()}), "" );
+		EXPECT_EQ( onDisk(file), expected+data );
+	}
+
+	// Sync adds an fdatasync after the last chunk, and its completion is what resumes the awaiter.  Durability is not
+	// observable here - this pins that each mode still completes, once, with the right bytes, and that an empty write,
+	// which has no chunk to follow, still resumes.
+	TEST_F( FileTests, SyncedWrites ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1003 );
+		fs::remove( file );
+		let first = pattern( chunk*2+3 ), second = string( chunk+1, 'b' );
+		ASSERT_EQ( writeNow(file, first, {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" );
+		ASSERT_EQ( onDisk(file), first );
+		ASSERT_EQ( writeNow(file, second, {.Sync=true}), "" );
+		ASSERT_EQ( onDisk(file), first+second );
+		ASSERT_EQ( writeNow(file, "ZZ", {.Mode=IO::EWriteMode::At, .Offset=1, .Sync=true}), "" );
+		auto expected = first+second;
+		expected.replace( 1, 2, "ZZ" );
+		ASSERT_EQ( onDisk(file), expected );
+		ASSERT_EQ( writeNow(file, {}, {.Sync=true}), "" ) << "an empty write that syncs";
+		EXPECT_EQ( onDisk(file), expected );
+
+		fs::remove( file );
+		ASSERT_EQ( writeNow(file, {}, {.Create=true, .Sync=true}), "" ) << "an empty write that creates and syncs";
+		EXPECT_TRUE( fs::exists(file) );
+		EXPECT_EQ( fs::file_size(file), 0u );
+	}
+
+	// The proof that Sync really syncs, and that its failure reaches the awaiter:  /dev/null takes any write and has no
+	// fsync, so the same write succeeds without Sync and fails with it.
+	TEST_F( FileTests, SyncFailureSurfaces ){
+		let null = fs::path{ "/dev/null" };//no Windows equivalent that refuses a flush.
+		if( !fs::exists(null) )
+			GTEST_SKIP() << null.string() << " not available on this platform";
+		ASSERT_EQ( writeNow(null, "x", {}), "" );
+
+		auto error = ms<up<Exception>>();
+		auto done = ms<std::atomic<bool>>();
+		writeWith( null, "x", {.Sync=true}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing sync never completed";
+		ASSERT_TRUE( *error ) << "a sync the device refuses did not throw";
+		EXPECT_TRUE( dynamic_cast<IOException*>(error->get()) ) << (*error)->what();
+		EXPECT_TRUE( string{(*error)->what()}.contains("fdatasync") ) << "it failed, but not at the sync:  " << (*error)->what();
+
+		ASSERT_EQ( writeNow(Tests::file(1005), "after", {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" ) << "the io after a failed sync";
+	}
+
+	// A ranged read takes Size bytes from Offset, or what the file has left.  ReadAwait could only read a whole file.
+	TEST_F( FileTests, ReadRange ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1004 );
+		fs::remove( file );
+		let content = pattern( chunk*4+chunk/2 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let read = [&file]( IO::ReadOptions options )->string{
+			auto y = ms<string>( "sentinel" );
+			auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+			readRange( file, options, y, done, error );
+			let failure = waitError( done, error );
+			return failure.empty() ? *y : "failed: "+failure;
+		};
+		EXPECT_EQ( read({.Offset=chunk/2+1, .Size=chunk*2+chunk/4}), content.substr(chunk/2+1, chunk*2+chunk/4) ) << "mid-chunk to mid-chunk";
+		EXPECT_EQ( read({.Size=3}), content.substr(0, 3) );
+		EXPECT_EQ( read({.Offset=chunk+1}), content.substr(chunk+1) ) << "no Size reads to the end";
+		EXPECT_EQ( read({.Offset=chunk*4, .Size=chunk*3}), content.substr(chunk*4) ) << "a Size past the end is clamped";
+		EXPECT_EQ( read({.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
+		EXPECT_EQ( read({.Offset=content.size()+7}), "" ) << "a range that starts past the end";
+		EXPECT_EQ( read({}), content ) << "no range is the whole file";
+	}
+
 	constexpr uint _fileSize{ 5 };
 	TEST_F( FileTests, WriteRead ){
 		ASSERT_TRUE( IO::ChunkByteSize()<74 ); //guid+\n*2
