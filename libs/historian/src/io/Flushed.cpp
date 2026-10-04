@@ -2,7 +2,6 @@
 #include <fstream>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/crc.h>
-#include "File.h"
 DISABLE_WARNINGS
 #include <google/protobuf/io/coded_stream.h>
 ENABLE_WARNINGS
@@ -18,8 +17,8 @@ namespace Jde::Opc::Hist{
 		constexpr uint Covered{ 12 };//the time and the sequence, which the crc is of.
 		static_assert( IO::Crc::Calc32c(sv{"\0\0\0\0\0\0\0\0\0\0\0\0", Covered})!=0, "A zero-filled slot must not read as a flush." );
 
-		struct Slot{ UA_DateTime Time; uint32_t Sequence; };
-		Ω parse( sv bytes )ι->optional<Slot>{
+		struct Stored{ UA_DateTime Time; uint32_t Sequence; };
+		Ω parse( sv bytes )ι->optional<Stored>{
 			if( bytes.size()<Flushed::SlotSize )
 				return nullopt;
 			auto p = reinterpret_cast<const uint8_t*>( bytes.data() );
@@ -28,7 +27,7 @@ namespace Jde::Opc::Hist{
 			p = CodedInputStream::ReadLittleEndian64FromArray( p, &time );
 			p = CodedInputStream::ReadLittleEndian32FromArray( p, &sequence );
 			(void)CodedInputStream::ReadLittleEndian32FromArray( p, &crc );
-			return crc==IO::Crc::Calc32c( bytes.substr(0, Covered) ) ? optional<Slot>{ Slot{(UA_DateTime)time, sequence} } : nullopt;
+			return crc==IO::Crc::Calc32c( bytes.substr(0, Covered) ) ? optional<Stored>{ Stored{(UA_DateTime)time, sequence} } : nullopt;
 		}
 	}
 
@@ -46,7 +45,7 @@ namespace Jde::Opc::Hist{
 		if( in.bad() )
 			throw IO::IOException{ sl, _file, ELogLevel::Error, "could not be read for the last flush" };
 		let read = sv{ bytes, (uint)in.gcount() };
-		const array<optional<Slot>,2> slots{ parse(read), parse(read.substr(std::min<uint>(SlotSize, read.size()))) };
+		const array<optional<Stored>,2> slots{ parse(read), parse(read.substr(std::min<uint>(SlotSize, read.size()))) };
 		//The sequence wraps, so the later of two is the one ahead by less than half its range.
 		let second = slots[1] && ( !slots[0] || (int32_t)(slots[1]->Sequence-slots[0]->Sequence)>0 );
 		if( let& slot = slots[second]; slot ){
@@ -58,20 +57,19 @@ namespace Jde::Opc::Hist{
 			WARN( "'{}' holds no valid slot, so its group is taken as never flushed.", _file.string() );
 	}
 
-	α Flushed::Write( TimePoint time, SL sl )ε->void{
-		let sequence = _sequence+1;
-		const uint8 slot = 1-_slot;
-		char bytes[SlotSize];
-		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)UADateTime{time}.UA(), reinterpret_cast<uint8_t*>(bytes) );
-		p = CodedOutputStream::WriteLittleEndian32ToArray( sequence, p );
-		(void)CodedOutputStream::WriteLittleEndian32ToArray( IO::Crc::Calc32c(sv{bytes, Covered}), p );
-		auto file = File::Open( _file, sl );
-		file.Write( slot*SlotSize, sv{bytes, sizeof(bytes)}, sl );
-		file.Sync( sl );
-		if( file.Created() )
-			SyncDirectories( _file.parent_path(), {}, sl );
-		_time = time;
-		_sequence = sequence;
-		_slot = slot;
+	α Flushed::Next( TimePoint time )Ι->Slot{
+		Slot y{ .File=_file, .Index=(uint8)(1-_slot), .Sequence=_sequence+1, .Time=time, .Bytes=string(SlotSize, '\0') };
+		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)UADateTime{time}.UA(), reinterpret_cast<uint8_t*>(y.Bytes.data()) );
+		p = CodedOutputStream::WriteLittleEndian32ToArray( y.Sequence, p );
+		(void)CodedOutputStream::WriteLittleEndian32ToArray( IO::Crc::Calc32c(sv{y.Bytes}.substr(0, Covered)), p );
+		return y;
+	}
+	α Flushed::Slot::Write( SL sl )Ι->IO::WriteAwait{
+		return IO::WriteAwait{ File, Bytes, IO::WriteOptions{.Create=true, .Mode=IO::EWriteMode::At, .Offset=Index*SlotSize, .Sync=true}, sl };
+	}
+	α Flushed::Wrote( const Slot& slot )ι->void{
+		_time = slot.Time;
+		_sequence = slot.Sequence;
+		_slot = slot.Index;
 	}
 }

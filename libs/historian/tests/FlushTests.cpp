@@ -125,6 +125,12 @@ namespace Jde::Opc::Hist::Tests{
 				y[12+i] = (char)( crc>>(8*i) );
 			return y;
 		}
+		//As a flush writes it.
+		Ω Write( Flushed& flushed, TimePoint time )ε->void{
+			let slot = flushed.Next( time );
+			BlockVoidAwait( slot.Write() );
+			flushed.Wrote( slot );
+		}
 		const TimePoint Time{ sys_days{2026y/March/7}+17h };
 		const fs::path File{ fs::current_path()/"hist-tests"/::testing::UnitTest::GetInstance()->current_test_info()->name()/"group.flushed" };
 	};
@@ -135,18 +141,18 @@ namespace Jde::Opc::Hist::Tests{
 			Flushed flushed{ File };
 			EXPECT_FALSE( flushed.Time() );//no file:  never flushed.
 			EXPECT_FALSE( fs::exists(File) );
-			flushed.Write( Time );
+			Write( flushed, Time );
 			EXPECT_EQ( flushed.Time(), Time );
 			EXPECT_EQ( contents(File), Slot(Time, 1) );
-			flushed.Write( Time+1min );
+			Write( flushed, Time+1min );
 			EXPECT_EQ( contents(File), Slot(Time, 1)+Slot(Time+1min, 2) );
-			flushed.Write( Time+2min );
+			Write( flushed, Time+2min );
 			EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+1min, 2) );
 			EXPECT_EQ( flushed.Time(), Time+2min );
 		}
 		Flushed read{ File };
 		EXPECT_EQ( read.Time(), Time+2min );
-		read.Write( Time+3min );//over the older slot.
+		Write( read, Time+3min );//over the older slot.
 		EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+3min, 4) );
 	}
 
@@ -160,7 +166,7 @@ namespace Jde::Opc::Hist::Tests{
 			save( File, written.substr(0, torn)+before.substr(torn) );
 			Flushed flushed{ File };
 			EXPECT_EQ( flushed.Time(), Time+1min );
-			flushed.Write( Time+3min );
+			Write( flushed, Time+3min );
 			EXPECT_EQ( contents(File), Slot(Time+3min, 3)+Slot(Time+1min, 2) );
 		}
 		save( File, written+before.substr(Flushed::SlotSize) );
@@ -183,7 +189,7 @@ namespace Jde::Opc::Hist::Tests{
 			let warned = Logging::Find( [this]( const Logging::Entry& e ){ return e.Message().contains(File.string()); } );
 			ASSERT_EQ( warned.size(), 1 );
 			EXPECT_EQ( warned[0].Level, ELogLevel::Warning );
-			flushed.Write( Time );
+			Write( flushed, Time );
 			EXPECT_EQ( Flushed{File}.Time(), Time );
 		}
 	}
@@ -194,10 +200,11 @@ namespace Jde::Opc::Hist::Tests{
 		save( File, Slot(Time+1min, 0)+Slot(Time, last) );
 		Flushed flushed{ File };
 		EXPECT_EQ( flushed.Time(), Time+1min );
-		flushed.Write( Time+2min );
+		Write( flushed, Time+2min );
 		EXPECT_EQ( contents(File), Slot(Time+1min, 0)+Slot(Time+2min, 1) );
 		save( File, Slot(Time, last-1)+Slot(Time+1min, last) );
-		Flushed{ File }.Write( Time+2min );
+		Flushed wrapped{ File };
+		Write( wrapped, Time+2min );
 		EXPECT_EQ( contents(File), Slot(Time+2min, 0)+Slot(Time+1min, last) );
 	}
 
@@ -224,7 +231,7 @@ namespace Jde::Opc::Hist::Tests{
 			EXPECT_FALSE( third.Enabled() );
 		}
 		DataChange( *group, Join(*group, "Pump1.Speed"), 1750, Time->Now() );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		Library.reset();
 		Historian next{ Config(1min), Time };//the lock goes with its holder.
 		EXPECT_TRUE( next.Enabled() );
@@ -253,6 +260,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_GT( Library->Buffered(), 0 );
 
 		EXPECT_EQ( Time->Advance(1s), 1 );
+		Settle( *group );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( Library->Buffered(), 0 );
 		EXPECT_EQ( group->Flushed(), joined+1min );
@@ -274,6 +282,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( group->Runs(March7).size(), 2 );//the preamble, and the flush.
 
 		EXPECT_EQ( Time->Advance(1min), 1 );//every `delay`, with nothing buffered too.
+		Settle( *group );
 		EXPECT_EQ( group->Flushed(), joined+2min );
 		EXPECT_EQ( readFile(file).size(), 4 );
 	}
@@ -295,11 +304,13 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_FALSE( fs::exists(file) );
 
 		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( std::ranges::count_if(readFile(file), &HistoryRecord::has_value), count );
 		EXPECT_EQ( Time->Pending(), 1 );
 		EXPECT_EQ( Time->Advance(59s), 0 );
 		EXPECT_EQ( Time->Advance(1s), 1 );
+		Settle( *group );
 		EXPECT_EQ( group->Flushed(), Time->Now() );
 	}
 
@@ -313,7 +324,7 @@ namespace Jde::Opc::Hist::Tests{
 		DataChange( *group, speed, 1, now-18h );//yesterday's, late.
 		DataChange( *group, speed, 2, now-3s );
 		DataChange( *group, speed, 4, now+8h );//tomorrow's, from a clock ahead.
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 
 		let yesterday = readFile( File(*group, March6) );
 		ASSERT_EQ( yesterday.size(), 3 );
@@ -334,7 +345,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isValue(tomorrow[2], speed, 4, now+8h) );
 
 		DataChange( *group, speed, 2.5, now-2s );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		let runs = group->Runs( March7 );
 		ASSERT_EQ( runs.size(), 3 );
 		EXPECT_EQ( runs[1].First, ticks(now-3s) );
@@ -356,7 +367,7 @@ namespace Jde::Opc::Hist::Tests{
 		Time->AdvanceTo( sys_days{March8}+30s );
 		let second = Time->Now();
 		SetValue( speed, 2 );
-		EXPECT_TRUE( Server->Flush() );
+		EXPECT_TRUE( Flush(*Server) );
 		auto records = readFile( File(March8) );
 		ASSERT_EQ( records.size(), 4 );
 		EXPECT_EQ( records[0].file_start().next_node_index(), 3 );
@@ -375,7 +386,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Server->Find(Node("Pump1.Flow")), flow );
 		Time->AdvanceTo( sys_days{March9}+30s );
 		SetValue( flow, 5 );
-		EXPECT_TRUE( Server->Flush() );
+		EXPECT_TRUE( Flush(*Server) );
 		records = readFile( File(March9) );
 		ASSERT_EQ( records.size(), 4 );
 		EXPECT_EQ( records[1].node_added().start().source_ts(), ticks(second) );
@@ -389,11 +400,11 @@ namespace Jde::Opc::Hist::Tests{
 	TEST_F( ServerFiles, MembershipReachesLaterFiles ){
 		let speed = Historize( "Pump1.Speed" );
 		Server->Enqueue( speed, Reading(1, Time->Now()+days{1}) );//a writer's clock a day ahead.
-		EXPECT_TRUE( Server->Flush() );
+		EXPECT_TRUE( Flush(*Server) );
 		EXPECT_EQ( readFile(File(March8)).size(), 3 );
 		let flow = Historize( "Pump1.Flow" );
 		Server->Remove( speed );
-		EXPECT_TRUE( Server->Flush() );
+		EXPECT_TRUE( Flush(*Server) );
 
 		let today = readFile( File(March7) );
 		ASSERT_EQ( today.size(), 5 );
@@ -421,12 +432,12 @@ namespace Jde::Opc::Hist::Tests{
 		let speed = Join( *group, "Pump1.Speed" );
 		let first = Time->Now();
 		DataChange( *group, speed, 1, first );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		Time->AdvanceTo( sys_days{March8}+10min );
 		let flow = Join( *group, "Pump1.Flow" );
 		let changed = sys_days{March7}+23h;
 		DataChange( *group, flow, 3, changed );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 
 		let yesterday = readFile( File(*group, March7) );
 		ASSERT_EQ( yesterday.size(), 6 );
@@ -449,7 +460,7 @@ namespace Jde::Opc::Hist::Tests{
 		DataChange( *group, speed, 0, Time->Now() );
 		let buffered = Library->Buffered();
 		Block();
-		EXPECT_FALSE( group->Flush() );
+		EXPECT_FALSE( Flush(*group) );
 		let back = group->Buffer();
 		ASSERT_EQ( back.size(), 2 );
 		EXPECT_TRUE( std::holds_alternative<NodeAdded>(back[0]) );
@@ -461,6 +472,7 @@ namespace Jde::Opc::Hist::Tests{
 			DataChange( *group, speed, i, Time->Now()+i*1ms );
 		EXPECT_EQ( Time->Pending(), 1 );
 		EXPECT_EQ( Time->Advance(1min), 1 );
+		Settle( *group );
 		let held = group->Buffer();
 		ASSERT_EQ( held.size(), 302 );
 		for( uint i=0; i<=300; ++i )//in the order they arrived.
@@ -468,6 +480,7 @@ namespace Jde::Opc::Hist::Tests{
 
 		Unblock();
 		EXPECT_EQ( Time->Advance(1min), 1 );
+		Settle( *group );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( Library->Buffered(), 0 );
 		EXPECT_EQ( readFile(File(*group, March7)).size(), 304 );
@@ -515,8 +528,8 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( left.back(), count );
 
 		Unblock();
-		EXPECT_TRUE( pump1->Flush() );
-		EXPECT_TRUE( pump2->Flush() );
+		EXPECT_TRUE( Flush(*pump1) );
+		EXPECT_TRUE( Flush(*pump2) );
 		let stored = [&]( const Group& group, NodeIndex index ){
 			vector<HistoryRecord> y;
 			for( let& r : readFile(File(group, March7)) ){
@@ -560,7 +573,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( fs::file_size(file), whole.size()+20 );
 		DataChange( *group, speed, 2, Time->Now() );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		EXPECT_EQ( contents(file).substr(0, whole.size()), whole );
 		let records = readFile( file );
 		ASSERT_EQ( records.size(), 5 );
@@ -578,14 +591,14 @@ namespace Jde::Opc::Hist::Tests{
 		fs::create_directories( file.parent_path() );
 		const string foreign( 64, 'n' );
 		save( file, foreign );
-		EXPECT_FALSE( group->Flush() );
+		EXPECT_FALSE( Flush(*group) );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_FALSE( group->Flushed() );
 		EXPECT_EQ( contents(file), foreign );
 
 		fs::remove( file );
 		DataChange( *group, speed, 2, Time->Now() );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		let records = readFile( file );
 		ASSERT_EQ( records.size(), 3 );
 		EXPECT_TRUE( isValue(records[2], speed, 2, Time->Now()) );
@@ -597,10 +610,10 @@ namespace Jde::Opc::Hist::Tests{
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
 		DataChange( *group, speed, 1, Time->Now() );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		fs::remove_all( Path()/"2026" );
 		DataChange( *group, speed, 2, Time->Now() );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		let records = readFile( File(*group, March7) );
 		ASSERT_EQ( records.size(), 3 );
 		EXPECT_TRUE( records[0].has_file_start() );
@@ -618,6 +631,7 @@ namespace Jde::Opc::Hist::Tests{
 		Library->RemoveGroup( name, Admin );
 		EXPECT_FALSE( fs::exists(File(*group, March7)) );
 		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
 		let records = readFile( File(*group, March7) );
 		ASSERT_EQ( records.size(), 4 );//no member is left for a preamble.
 		EXPECT_EQ( records[1].node_added().node_index(), speed );
@@ -638,9 +652,11 @@ namespace Jde::Opc::Hist::Tests{
 		Block();
 		Library->RemoveGroup( name, Admin );
 		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
 		EXPECT_THROW( Library->AddGroup({.Name=name}), Exception );
 		Unblock();
 		EXPECT_EQ( Time->Advance(1min), 1 );
+		Settle( *group );
 		EXPECT_EQ( readFile(File(*group, March7)).size(), 3 );
 		EXPECT_NO_THROW( Library->AddGroup({.Name=name}) );
 	}
@@ -657,7 +673,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Time->Pending(), 0 );
 		EXPECT_FALSE( DataChange(*group, speed, 2, Time->Now()) );
 		EXPECT_THROW( Join(*group, "Pump1.Flow"), Exception );
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		EXPECT_EQ( readFile(file).size(), 4 );
 	}
 
@@ -684,6 +700,36 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( stored, count );
 	}
 
+	//One flush runs at a time, and holds no thread while its write is out.  A caller that asks during one waits for the
+	//next, which takes what was buffered when it began:  so whatever a caller enqueued is in the file when its flush
+	//returns, however many ask at once.
+	TEST_F( GatewayFiles, FlushesFollowOneAnother ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		EXPECT_TRUE( Settle(*group) );//none is running.
+		let start = Time->Now();
+		constexpr uint callers{ 4 }, each{ 25 };
+		std::atomic<uint> next{};
+		{
+			vector<std::jthread> threads;
+			for( uint t=0; t<callers; ++t ){
+				threads.emplace_back( [&]{
+					for( uint i=0; i<each; ++i ){
+						let at = ticks( start+next++*1ms );
+						DataChange( *group, speed, 0, UADateTime{at}.Time() );
+						EXPECT_TRUE( Flush(*group) );
+						EXPECT_TRUE( std::ranges::any_of(group->Runs(March7), [at]( let& run ){ return run.First<=at && at<=run.Last; }) );
+					}
+				});
+			}
+		}
+		EXPECT_TRUE( Settle(*group) );
+		EXPECT_TRUE( group->Buffer().empty() );
+		let file = File( *group, March7 );
+		EXPECT_EQ( std::ranges::count_if(readFile(file), &HistoryRecord::has_value), callers*each );
+		expectRuns( group->Runs(March7), file );
+	}
+
 	//The collection path only ever takes the buffer's lock, so it runs while a flush writes.
 	TEST_F( GatewayFiles, FlushesWhileEnqueuing ){
 		auto group = AddGroup();
@@ -695,9 +741,9 @@ namespace Jde::Opc::Hist::Tests{
 					DataChange( *group, speed, (double)i, Time->Now() );
 			}};
 			for( uint i=0; i<20; ++i )
-				EXPECT_TRUE( group->Flush() );
+				EXPECT_TRUE( Flush(*group) );
 		}
-		EXPECT_TRUE( group->Flush() );
+		EXPECT_TRUE( Flush(*group) );
 		let file = File( *group, March7 );
 		EXPECT_EQ( std::ranges::count_if(readFile(file), &HistoryRecord::has_value), count );
 		EXPECT_EQ( Library->Buffered(), 0 );

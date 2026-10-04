@@ -39,22 +39,43 @@ namespace Jde::Opc::Hist{
 		vector<Run> Runs;//each append that holds a record with a time, as the first-open scan would rebuild them.
 		absl::flat_hash_set<NodeIndex> Mapped;//the indexes its NodeAdded records name.
 		optional<Scanned> Unopened;//its scan, until the first append drops a torn tail by it.
-		bool Named{};//this process has fsynced its name into its directory:  one that crashed may have made it and not.
+		bool Named{};//this process made it, or has fsynced its name into its directory:  one that crashed may have made it and not.
 		string Refused;//why the historian won't append to it; empty when it will.
 		uint Discarded{};//the appends refused so far.
 	};
 
-	//One group's files under hist.path.  Only its group's flush touches them, under the group's write lock.
+	//One append to a day's file, a run, between GroupFiles::Prepare and Commit.
+	struct Pending final{
+		Day Date;
+		fs::path Path;
+		uint Offset{};//the file's bytes that stay, which the run follows.
+		string Bytes;
+		//What Commit takes:  whether the file was there, its size with the run, and what the run adds to it.
+		bool Existed{};
+		uint End{};
+		Ticks Chain{};
+		vector<Run> Runs;
+		absl::flat_hash_set<NodeIndex> Mapped;
+		vector<Proto::DataValue> Stored;//each node's newest in the run.
+		//Cuts the file to Offset, writes the run after it and fsyncs.  A file this makes has its directories fsynced too.
+		α Write( SRCE )ι->IO::WriteAwait;
+	};
+
+	//One group's files under hist.path.  Only its group's flush changes them, one flush at a time, under the group's
+	//files lock.
 	struct GroupFiles final{
 		//Reads the group's .flushed file, and its newest day file for AtStart() and each node's last stored value.  Throws
 		//when that file can't be read through.
 		GroupFiles( fs::path root, string name, const std::chrono::time_zone& tz, Day today, SRCE )ε;
 		α AtStart()Ι->const Restored&{ return _restored; }
-		//One append to day's file, a run:  records, sorted by primary time with their times absolute, then a checkpoint,
-		//fsynced.  A file that isn't there is made, with its preamble, and its directories fsynced.  A node the file holds a
-		//value of and doesn't map gets a preamble record in the run.  False for a file the historian won't append to, said
-		//at Error the first time.  Throws, having changed nothing it knows of the file, when the append can't be written.
-		α Append( Day day, vector<Proto::HistoryRecord>&& records, const Membership& members, SRCE )ε->bool;
+		//One append to day's file, a run:  records, sorted by primary time with their times absolute, then a checkpoint.
+		//A file that isn't there opens with its preamble.  A node the file holds a value of and doesn't map gets a preamble
+		//record in the run.  None for a file the historian won't append to, said at Error the first time.  Throws when the
+		//file can't take an append.  What it knows of the file changes only in Commit.
+		α Prepare( Day day, vector<Proto::HistoryRecord>&& records, const Membership& members, SRCE )ε->optional<Pending>;
+		//Once the run's Write has returned.  The first append to a file an earlier process made fsyncs its directories
+		//first, and throws when it can't, with the run still to be written again.
+		α Commit( Pending&& run, SRCE )ε->void;
 		//The days after day that hold a file of the group, which a membership change on day is copied into.
 		α LaterDays( Day day )Ι->vector<Day>;
 		α Find( Day day )Ι->const DayFile*;//none until the process opens it.

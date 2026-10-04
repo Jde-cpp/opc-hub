@@ -176,22 +176,19 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 
-	α GroupFiles::Append( Day day, vector<HistoryRecord>&& records, const Membership& members, SL sl )ε->bool{
+	α GroupFiles::Prepare( Day day, vector<HistoryRecord>&& records, const Membership& members, SL sl )ε->optional<Pending>{
 		auto& file = Open( day, sl );
 		std::error_code ec;
 		if( !file.Refused.empty() ){
 			if( fs::exists(file.Path, ec) || ec ){
 				if( !file.Discarded++ )
 					ERR( "'{}' {}, so the historian won't append to it:  its {} records, and any after them, are dropped until it is repaired or removed.", file.Path.string(), file.Refused, records.size() );
-				return false;
+				return nullopt;
 			}
 			file = DayFile{ .Path=move(file.Path) };//removed since, so it starts again.
 		}
-		let directory = DayDirectory( day );
-		fs::create_directories( _root/directory, ec );
-		if( ec )
-			throw failed( _root/directory, ec, sl );
-		if( file.Unopened ){//before the file is open to write, which on Windows shares no second writer.
+		MakeDirectories( file.Path.parent_path(), sl );
+		if( file.Unopened ){
 			try{
 				Truncate( file.Path, *file.Unopened, sl );
 			}
@@ -201,10 +198,12 @@ namespace Jde::Opc::Hist{
 			}
 			file.Unopened.reset();
 		}
-		auto out = File::Open( file.Path, sl );
-		if( let actual = out.Size(sl); actual>file.Size )
-			out.Resize( file.Size, sl );//an append of this process's that failed part-way.
-		else if( actual<file.Size ){
+		let existed = fs::exists( file.Path, ec );
+		let actual = existed && !ec ? fs::file_size( file.Path, ec ) : 0;
+		if( ec )
+			throw failed( file.Path, ec, sl );
+		//More than Size is an append of this process's that failed part-way, which the run's write cuts off.
+		if( actual<file.Size ){
 			if( actual ){
 				IO::IOException e{ sl, file.Path, ELogLevel::Error, "holds {} bytes, not the {} the historian wrote, so its next append scans it again", actual, file.Size };
 				_files.erase( day );
@@ -279,24 +278,35 @@ namespace Jde::Opc::Hist{
 		}
 		chain = appender.Seal();
 
-		out.Write( file.Size, bytes, sl );
-		out.Sync( sl );
+		Pending y{ .Date=day, .Path=file.Path, .Offset=file.Size, .Existed=existed, .End=file.Size+bytes.size(), .Chain=chain, .Runs=move(runs) };
+		if( timed ){
+			appended.End = y.End;
+			y.Runs.push_back( appended );
+		}
+		y.Mapped = std::move( mapped );
+		y.Stored = move( stored );
+		y.Bytes = move( bytes );
+		return y;
+	}
+
+	α Pending::Write( SL sl )ι->IO::WriteAwait{
+		return IO::WriteAwait{ Path, move(Bytes), IO::WriteOptions{.Create=true, .Mode=IO::EWriteMode::Truncate, .Offset=Offset, .Sync=true}, sl };
+	}
+
+	α GroupFiles::Commit( Pending&& run, SL sl )ε->void{
+		auto& file = _files.at( run.Date );
 		if( !file.Named ){
-			SyncDirectories( _root, directory, sl );
+			if( run.Existed )
+				SyncDirectories( _root, DayDirectory(run.Date), sl );
 			file.Named = true;
 		}
-		file.Size += bytes.size();
-		file.Chain = chain;
-		std::ranges::move( runs, std::back_inserter(file.Runs) );
-		if( timed ){
-			appended.End = file.Size;
-			file.Runs.push_back( appended );
-		}
-		file.Mapped.insert( mapped.begin(), mapped.end() );
-		for( auto& value : stored )
+		file.Size = run.End;
+		file.Chain = run.Chain;
+		std::ranges::move( run.Runs, std::back_inserter(file.Runs) );
+		file.Mapped.insert( run.Mapped.begin(), run.Mapped.end() );
+		for( auto& value : run.Stored )
 			Newer( move(value) );
-		_days.insert( day );
-		return true;
+		_days.insert( run.Date );
 	}
 
 	α GroupFiles::LaterDays( Day day )Ι->vector<Day>{

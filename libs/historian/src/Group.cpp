@@ -154,7 +154,7 @@ namespace Jde::Opc::Hist{
 	α Group::Schedule( Duration after )ι->IClock::TimerId{
 		return _store->Time->Schedule( after, [weak=weak_from_this()]{
 			if( auto group = weak.lock() )
-				group->Flush();
+				group->Request( nullptr, true, SRCE_CUR );
 		});
 	}
 
@@ -357,8 +357,11 @@ namespace Jde::Opc::Hist{
 		_failing = true;
 		return _store->Add( size+records.size()*sizeof(Buffered) );
 	}
+	α Group::Written()Ι->bool{
+		return _closed && _changes.empty() && _values.empty() && _lost.empty();
+	}
 	α Group::Idle()Ι->bool{
 		ul _{ _mutex };
-		return _closed && _changes.empty() && _values.empty() && _lost.empty();
+		return Written() && !_flushing;
 	}
 }

@@ -2,6 +2,7 @@
 #include <deque>
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include "Clock.h"
@@ -57,14 +58,27 @@ namespace Jde::Opc::Hist{
 	struct DataValue{ NodeIndex Index; Value Data; optional<TimePoint> Break; bool Unsupported{}; };
 	using Record = variant<NodeAdded,NodeRemoved,DataValue>;
 
+	struct Group;
 	struct GroupFiles;
 	struct Run;
 	struct Store;
 
+	//What Group::Flush and Settled return, which any coroutine can co_await, and BlockAny waits on from a thread that
+	//isn't the executor's.  It resumes on the thread that finished the flush.
+	struct FlushAwait final : AnyAwait<bool>{
+		FlushAwait( sp<Group> group, bool flush, SL sl )ι:AnyAwait<bool>{ sl }, _group{ move(group) }, _flush{ flush }{}
+	protected:
+		α Suspend()ι->void override;
+	private:
+		sp<Group> _group;
+		bool _flush;
+	};
+
 	//One node group, written to its own files.  Enqueue is the collection path:  OpcServer calls it under open62541's
 	//service lock, and the gateway on the connection's strand under the monitoring lock.  So it takes only the group's
 	//buffer lock - it never waits on I/O, a flush or a /hist snapshot - and never calls back into the host.  The rest is
-	//the host telling the group about membership, thresholds and its connection.
+	//the host telling the group about membership, thresholds and its connection.  A flush writes through IO::WriteAwait,
+	//so it holds no thread while a write or its fsync is out, and no lock.
 	struct Group final : noncopyable, std::enable_shared_from_this<Group>{
 		//Historian::AddGroup's.  members is the host's whole membership at start, checked against what the group's newest
 		//file holds:  a member the file holds keeps its index, with the group's last flush as its break, a new one is added,
@@ -94,20 +108,26 @@ namespace Jde::Opc::Hist{
 		α IsConnected()Ι->bool;
 		α FindBreak( NodeIndex index )Ι->optional<TimePoint>;//the one the node's next value will carry.
 
-		α Buffer()Ι->vector<Record>;//a copy, as a /hist snapshot takes it.
+		//A copy, as a /hist snapshot takes it.  What a running flush took is no longer here, and not yet in its files.
+		α Buffer()Ι->vector<Record>;
 		//Historian::RemoveGroup's:  every member leaves, and Add throws after.  The buffer stays for the flush.
 		α Close( optional<Writer> by )ι->void;
 
 		//Writes what the group buffered:  sorted by source time, each record to its own day's file, each file fsynced, and
 		//then the group's .flushed.  The clock runs it when the buffer reaches 8 KB and every `delay`, so a host needn't.
+		//One flush runs at a time:  this one follows any that is running, and takes what is buffered when it starts.
 		//False when it didn't write all it took.  The records of a file that couldn't be written, and those of later days,
 		//go back to the buffer, for `delay` to try again; those of a file the historian won't append to are dropped.
-		α Flush( SRCE )ι->bool;
+		α Flush( SRCE )ι->FlushAwait;
+		//Asks for no flush:  resumes once none is running or waiting to, at once when none is.  False when the last one
+		//it waited on didn't write all it took.
+		α Settled( SRCE )ι->FlushAwait;
 		//The last flush that wrote all it took, which is the group's break if the process stops here.
 		α Flushed()Ι->optional<TimePoint>;
 		//A day's live file's, once the process has opened it:  as its first-open scan would rebuild them.
 		α Runs( std::chrono::year_month_day day )Ι->vector<Run>;
 	private:
+		friend struct FlushAwait;
 		friend struct Historian;
 		friend struct Store;
 		struct Node{ ExNodeId Id; Thresholds Config; optional<TimePoint> Break; bool Unsupported{}; };
@@ -134,9 +154,16 @@ namespace Jde::Opc::Hist{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Take()ι->vector<Buffered>;
 		//What a flush couldn't write, back to the front of the buffer.  True as Push.
 		α Return( vector<Buffered>&& records )ι->bool;
+		//A flush for waiter, or for the clock when there is none, unless one is running:  that one then runs another
+		//after.  Without flush, waiter only waits for those there are.
+		α Request( FlushAwait* waiter, bool flush, SL sl )ι->void;
+		//Flushes until no other was asked for meanwhile.  self keeps the group for as long as its writes are out.
+		α Flushing( sp<Group> self, SL sl )ι->VoidTask;
 		α Start()ι->void;//arms `delay`, once the group is shared.
-		α Stop()ι->void;//the historian's end:  takes no more, writes what it holds, and flushes no more.
-		α Idle()Ι->bool;//removed, and all it buffered written.
+		//The historian's end:  takes no more, writes what it holds, waiting for that, and flushes no more.
+		α Stop()ι->void;
+		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α Written()Ι->bool;//removed, and all it buffered taken by a flush.
+		α Idle()Ι->bool;//written, with no flush running:  nothing of it is left to reach its files.
 		//The Store's, to trim the buffers:  the group's oldest value, and dropping those older than before until need
 		//bytes are freed.  Returns how many it dropped.
 		α Oldest()Ι->optional<uint>;
@@ -144,13 +171,17 @@ namespace Jde::Opc::Hist{
 
 		const sp<Store> _store;
 		const GroupConfig _config;
-		//The group's write lock:  a flush holds it from taking the buffer through writing .flushed.  Taken before _mutex,
-		//never under it.
-		mutable absl::Mutex _writeMutex;
-		up<GroupFiles> _files ABSL_PT_GUARDED_BY(_writeMutex);
-		IClock::TimerId _timer ABSL_GUARDED_BY(_writeMutex){};//`delay`'s.
-		bool _ended ABSL_GUARDED_BY(_writeMutex){};
+		//What the group knows of its files.  A flush takes it for each step between its writes, never across one, and
+		//before _mutex, never under it.
+		mutable absl::Mutex _filesMutex;
+		up<GroupFiles> _files ABSL_PT_GUARDED_BY(_filesMutex);
 		mutable absl::Mutex _mutex;
+		IClock::TimerId _timer ABSL_GUARDED_BY(_mutex){};//`delay`'s.
+		bool _ended ABSL_GUARDED_BY(_mutex){};//no flush starts.
+		bool _flushing ABSL_GUARDED_BY(_mutex){};//a flush is running, the only one that changes _files.
+		bool _again ABSL_GUARDED_BY(_mutex){};//the clock asked for another meanwhile.
+		vector<FlushAwait*> _waiters ABSL_GUARDED_BY(_mutex);//each waits on the next flush to start.
+		vector<FlushAwait*> _settling ABSL_GUARDED_BY(_mutex);//each waits for no flush to be running.
 		//In index order, so whatever walks it to write records writes them the same way every run, and a B-tree, so loading
 		//and Enqueue's lookup stay logarithmic.  The maps by NodeId are hashed:  nothing walks them.
 		absl::btree_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);

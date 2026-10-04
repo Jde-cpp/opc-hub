@@ -22,7 +22,9 @@ namespace Jde::Opc::Hist{
 		//Takes the exclusive lock on settings.Path.  When another process holds it, or the path can't be made, the host
 		//runs without its historian, with a Critical log, rather than exiting.
 		Historian( Settings settings, sp<IClock> clock )ι;
-		//Writes what each group buffered, then drops the lock.
+		//Writes what each group buffered, waiting for it, then drops the lock.  So the host ends its historian while the
+		//process's executor still runs, where those writes complete, and from a thread that isn't the executor's.  Once the
+		//executor is gone, what is buffered is lost, with an error.
 		~Historian();
 		//false for a host that runs without its historian:  it answers its history fields and /hist with an error, and
 		//OpcServer installs no history backend.  AddGroup throws.

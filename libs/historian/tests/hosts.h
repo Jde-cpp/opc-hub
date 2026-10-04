@@ -28,6 +28,10 @@ namespace Jde::Opc::Hist::Tests{
 			return Value{ move(dv) };
 		}
 		static UA_DateTime Ua( TimePoint t )ι{ return UADateTime{ t }.UA(); }
+		//A flush of what group buffered, waited for:  false when it didn't write all it took.
+		static bool Flush( Group& group )ε{ return BlockAny( group.Flush() ); }
+		//Waits out the flushes the clock started, which write on the executor's threads.
+		static bool Settle( Group& group )ε{ return BlockAny( group.Settled() ); }
 		Ŧ Records()Ι->vector<T>{
 			vector<T> y;
 			for( auto& r : _group->Buffer() ){

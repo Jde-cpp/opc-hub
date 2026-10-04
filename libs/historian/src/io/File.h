@@ -1,34 +1,15 @@
 #pragma once
 
 namespace Jde::Opc::Hist{
-	//A file the historian writes, through the OS's own handle, which is what an fsync takes.  Every failure throws an
-	//IOException at Error with the OS's code:  history that stops being written, which an operator must see.
-	struct File final{
-		//Opens path for writing, making it when it isn't there.  Others may read it meanwhile, and rename over it.
-		Ω Open( fs::path path, SRCE )ε->File;
-		File( File&& x )ι;
-		~File();
-		α Created()Ι->bool{ return _created; }//by this Open, so its directory holds a name to fsync.
-		α Size( SRCE )Ε->uint;
-		α Write( uint offset, sv bytes, SRCE )ε->void;
-		α Resize( uint size, SRCE )ε->void;
-		//The file's bytes, and the size that reaches them, to the device:  fdatasync on Linux, FlushFileBuffers on Windows.
-		α Sync( SRCE )ε->void;
-	private:
-#ifdef _WIN32
-		using Handle = void*;
-#else
-		using Handle = int;
-#endif
-		File( fs::path path, Handle handle, bool created )ι:_path{ move(path) }, _handle{ handle }, _created{ created }{}
-		fs::path _path;
-		Handle _handle;
-		bool _created;
-	};
+	//What the historian asks of the OS that a write through IO::WriteAwait doesn't do for it.
 
-	//fsyncs root/relative and each directory above it through root, so a name created under root survives a power loss
-	//along with its data, whoever made the directories and whenever.  Nothing on Windows, which has no such call:  there
-	//a rename itself writes through.
+	//A day file's directories, on Windows, where a write makes none.  Nothing on Linux:  there the file's first write
+	//makes them, and fsyncs each one it makes.
+	α MakeDirectories( const fs::path& directory, SRCE )ε->void;
+
+	//fsyncs root/relative and each directory above it through root, so a name an earlier process made under root, and
+	//may have crashed before it fsynced, survives a power loss along with its data.  Nothing on Windows, which has no
+	//such call.
 	α SyncDirectories( const fs::path& root, const fs::path& relative={}, SRCE )ε->void;
 
 	//The exclusive OS lock a host takes on <hist.path>/historian.lock, flock on Linux and LockFileEx on Windows, so two
