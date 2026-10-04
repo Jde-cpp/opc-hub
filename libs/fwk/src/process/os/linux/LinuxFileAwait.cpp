@@ -34,44 +34,99 @@ namespace Jde::IO{
 			EndIndex{ std::min(StartIndex+ChunkByteSize(), FileArg()->Size()) },
 			Bytes{ EndIndex-StartIndex }
 		{}
+		struct SyncTag{ uint Step; };//0: the file's fdatasync.  n: the fsync of NameDirs[n-1].
+		LinuxChunk( sp<FileIOArg> arg, SyncTag sync )ι://the syncs that follow a write's last chunk - they move no bytes.
+			IFileChunkArg{ arg, arg->ChunksToSend },
+			StartIndex{},
+			EndIndex{},
+			Bytes{},
+			IsSync{ true },
+			SyncStep{ sync.Step }
+		{}
 #undef StartIndex
 		uint StartIndex;
 		uint EndIndex;
 		uint Bytes;
+		bool IsSync{};
+		uint SyncStep{};
 	};
 
 
-	α FileIOArg::Open( bool create, bool append )ε->void{
-		auto flags = O_NONBLOCK | ( IsRead ? O_RDONLY : O_WRONLY );
+	α FileIOArg::Open( bool create )ε->void{
+		auto flags = O_NONBLOCK | O_CLOEXEC | ( IsRead ? O_RDONLY : O_WRONLY );
+		let keepsPrefix = Mode==EWriteMode::Truncate && Offset;
 		if( !IsRead ){
-			if( create )
+			if( create && !keepsPrefix )//a file made here has no prefix to keep.
 				flags |= O_CREAT;
-			flags |= append ? O_APPEND : O_TRUNC;//O_TRUNC, not a plain overwrite: chunks write from offset 0, so without it a shorter write leaves the old file's tail in place.
+			if( Mode==EWriteMode::Append )
+				flags |= O_APPEND;
 		}
-		for( bool retried = false;; retried = true ){
-			Handle = ::open( Path.string().c_str(), flags, 0666 );
-			if( Handle!=-1 )
+		//A synced write that may create the file counts the names it adds, so Send can sync their directories as well.
+		//O_CREAT alone doesn't say whether it created, so the file is opened as new (O_EXCL), then as existing (no O_CREAT).
+		//Either is the plain open: all there is without syncNames, and the last resort with it, for a file deleted between
+		//the two or a dangling symlink - the name is then synced whether or not it is new.
+		let syncNames = Sync && ( flags & O_CREAT );
+		enum class EOpen : uint8{ New, Existing, Either };
+		auto how = syncNames ? EOpen::New : EOpen::Either;
+		uint newNames{};
+		for( bool retried{};; ){
+			Handle = ::open( Path.string().c_str(), how==EOpen::New ? flags | O_EXCL : how==EOpen::Existing ? flags & ~O_CREAT : flags, 0666 );
+			if( Handle!=-1 ){
+				if( syncNames && how!=EOpen::Existing )
+					++newNames;
 				break;
+			}
 			let err = errno;
-			if( !retried && !IsRead && err==ENOENT ){//parent dir may not exist - create it & retry once.
-				std::error_code ec;
-				fs::create_directories( Path.parent_path(), ec );
-				THROW_IFX( ec, IOException(Path, (uint32)ec.value(), "create_directories", _sl) );//copy, not move: keep Path for later logging on this object.
-				INFO( "Created dir {}", Path.parent_path().string() );
+			if( how==EOpen::New && err==EEXIST ){
+				how = EOpen::Existing;
 				continue;
 			}
+			if( how==EOpen::Existing && err==ENOENT ){
+				how = EOpen::Either;
+				continue;
+			}
+			if( !retried && (flags & O_CREAT) && err==ENOENT ){//the parent dir may not exist - an open that makes the file makes it too, and retries once.
+				retried = true;
+				let parent = Path.parent_path();
+				std::error_code ec;
+				if( syncNames ){
+					for( auto dir = parent; !dir.empty() && !fs::exists(dir, ec); dir = dir.parent_path() )
+						++newNames;
+				}
+				if( !parent.empty() && fs::create_directories(parent, ec) ){
+					INFO( "Created dir {}", parent.string() );
+					continue;
+				}
+				THROW_IFX( ec, IOException(Path, (uint32)ec.value(), "create_directories", _sl) );//copy, not move: keep Path for later logging on this object.
+			}//the parent was there all along: the open's own error stands.
 			throw IOException{ Path, (uint32)err, "open", _sl };
+		}
+		auto dir = Path.parent_path();
+		for( uint i=0; i<newNames; ++i, dir = dir.parent_path() ){//the file's directory, then the parent of each directory made for it.
+			let fd = ::open( dir.empty() ? "." : dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC );
+			THROW_IFX( fd==-1, IOException(dir, errno, "open", _sl) );
+			NameDirs.push_back( fd );
 		}
 		if( IsRead ){
 			struct stat st;
 			THROW_IFX( ::fstat( Handle, &st )==-1, IOException(Path, errno, "fstat", _sl) );
 			TRACE( "[{}]Opened file: {}, size: {}", hex(Handle), Path.string(), st.st_size );
-			std::visit( [size=st.st_size](auto&& b){b.resize(size);}, Buffer );
+			SizeBuffer( (uint)st.st_size );
 		}
-		else
-			TRACE( "[{}]{} {}", hex(Handle), append ? "appending" : "truncating", Path.string() );
+		else{
+			if( Mode==EWriteMode::Truncate ){//the file ends at Offset, the bytes kept, and the data follows.  One cut for every Offset, 0 included: without it a shorter write leaves the old file's tail in place.
+				struct stat st;
+				THROW_IFX( ::fstat(Handle, &st)==-1, IOException(Path, errno, "fstat", _sl) );
+				CheckPrefix( (uint)st.st_size );
+				if( (uint)st.st_size>Offset )//nothing to cut from a new file, or from a device, which has no length and refuses ftruncate.
+					THROW_IFX( ::ftruncate(Handle, (off_t)Offset)==-1, IOException(Path, errno, "ftruncate", _sl) );
+			}
+			TRACE( "[{}]{} {}", hex(Handle), Mode==EWriteMode::Append ? "appending" : Mode==EWriteMode::Truncate ? "truncating" : "writing at", Path.string() );
+		}
 	}
 	FileIOArg::~FileIOArg(){
+		for( let fd : NameDirs )
+			::close( fd );
 		if( Handle>=0 ){//fd -1 is invalid
 			::close( Handle );
 			TRACE( "[{}]Closed file handle for {}", hex(Handle), Path.string() );
@@ -97,17 +152,39 @@ namespace Jde::IO{
 		}
 		//no IOSQE_IO_LINK: a link chain spans whatever sqes share a submission batch - including unrelated
 		//ops/files - and a short read severs the chain, canceling the rest with -ECANCELED. Ordering isn't
-		//needed here: reads use explicit offsets and appends allow only one write chunk in flight (Send).
+		//needed here: reads and positioned writes use explicit offsets, and an append has only one chunk in flight (Send).
 
 		if( isRead ){
 			TRACE( "Preparing read: {}, index: {}, bytes: {}", op->Path.string(), lchunk.Index, lchunk.Bytes );
-			io_uring_prep_read( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, lchunk.StartIndex );
+			io_uring_prep_read( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, op->Offset+lchunk.StartIndex );
 		}
 		else{
 			TRACE( "Preparing write: {}, index: {}, bytes: {}", op->Path.string(), lchunk.Index, lchunk.Bytes );
-			io_uring_prep_write( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, -1 );
+			const __u64 offset = op->Mode==EWriteMode::Append ? (__u64)-1 : op->Offset+lchunk.StartIndex;//-1: O_APPEND places an append.
+			io_uring_prep_write( sqe, op->Handle, op->Data()+lchunk.StartIndex, lchunk.Bytes, offset );
 		}
 		io_uring_sqe_set_data( sqe, chunk.release() );
+		return true;
+	}
+
+	//Queued when every chunk of a write has completed, so it covers every byte of the op and needs no link to order it.
+	//Step 0 is the file's fdatasync; step n fsyncs NameDirs[n-1], each queued when the step before it completes.
+	Ω prepSync( const sp<FileIOArg>& op, uint step=0 )ι->bool{
+		struct io_uring_sqe* sqe = io_uring_get_sqe( &_ring );
+		if( !sqe ){
+			markFinished( op );
+			op->PostExp( {}, EBUSY, step ? "Could not get file queue:  directory fsync\n" : "Could not get file queue:  fdatasync\n", true );
+			return false;
+		}
+		if( step ){
+			DBGT( op->_tags, "[{}]Syncing directory {} of {}.", op->Path.string(), step, op->NameDirs.size() );
+			io_uring_prep_fsync( sqe, op->NameDirs[step-1], 0 );
+		}
+		else{
+			TRACE( "Preparing fdatasync: {}", op->Path.string() );
+			io_uring_prep_fsync( sqe, op->Handle, IORING_FSYNC_DATASYNC );
+		}
+		io_uring_sqe_set_data( sqe, new LinuxChunk{op, LinuxChunk::SyncTag{step}} );
 		return true;
 	}
 
@@ -131,9 +208,20 @@ namespace Jde::IO{
 				//converts - and that conversion moves, emptying `chunk`.  Argument order is unspecified, and clang empties it
 				//before evaluating the format, so reading chunk->Index inline dereferenced null: every failed read/write
 				//(EISDIR, EIO, ENOSPC) crashed the process instead of reporting.
-				auto message = Ƒ( "AIO index: {} failed: {}\n", chunk->Index, strerror(-res) );
+				let isSync = chunk->IsSync;
+				auto message = isSync ? Ƒ( "{} failed: {}\n", chunk->SyncStep ? "directory fsync" : "fdatasync", strerror(-res) ) : Ƒ( "AIO index: {} failed: {}\n", chunk->Index, strerror(-res) );
 				markFinished( op );
-				op->PostExp( move(chunk), -res, move(message) );
+				op->PostExp( move(chunk), -res, move(message), isSync );
+				continue;
+			}
+			if( chunk->IsSync ){//before the byte counts below: it moved none, and its res of 0 would read as no progress.
+				auto op = chunk->FileArg();
+				if( chunk->SyncStep<op->NameDirs.size() ){
+					if( prepSync(op, chunk->SyncStep+1) )
+						submitOps.push_back( move(op) );
+				}
+				else
+					completedOps.push_back( move(op) );
 				continue;
 			}
 			if( (uint)res < chunk->Bytes ){//partial read/write - resubmit the remainder.
@@ -155,6 +243,10 @@ namespace Jde::IO{
 			if( op->ChunksToSend>++op->ChunksCompleted ){
 				if( addNextChunkToQueue(op) )
 					submitOps.push_back(op);
+			}
+			else if( op->Sync ){
+				if( prepSync(op) )
+					submitOps.push_back( op );
 			}
 			else
 				completedOps.push_back(op);
@@ -257,18 +349,21 @@ namespace Jde::IO{
 			for( uint i=0; i*chunkByteSize<totalBytes; ++i )
 				Chunks.emplace( mu<LinuxChunk>(self, i) );
 		}
-		if( ChunksToSend==0 ){//empty file - no completions will arrive; resume immediately.
+		if( ChunksToSend==0 && !Sync ){//empty file - no completions will arrive; resume immediately.
 			TRACE( "[{}]Empty file - resuming without io.", Path.string() );
 			ResumeComplete();
 			return;
 		}
 		++_requestCount;
-		//writes append (offset -1/O_APPEND): concurrent in-flight chunks can be executed out of order by the
-		//kernel (io-wq), permuting the file's contents - only one write chunk may be in flight at a time.
-		//reads use explicit offsets, so a window of parallel chunks is safe.
-		PostIO( [self, initialSendTotal = IsRead ? std::min<uint>(ChunksToSend, threadSize) : 1u, tags=_tags ](){
-			for( uint i=0; i<initialSendTotal; ++i )
+		//appends (offset -1/O_APPEND): concurrent in-flight chunks can be executed out of order by the
+		//kernel (io-wq), permuting the file's contents - only one of its chunks may be in flight at a time.
+		//reads and the positioned writes use explicit offsets, so a window of parallel chunks is safe: a
+		//write's sync is queued once every chunk has completed, whatever order they finish in.
+		PostIO( [self, initialSendTotal = Mode==EWriteMode::Append ? 1u : std::min<uint>(ChunksToSend, threadSize), tags=_tags ](){
+			for( uint i=0; i<initialSendTotal && i<self->ChunksToSend; ++i )
 				addNextChunkToQueue( self );
+			if( !self->ChunksToSend )//an empty write that syncs.
+				prepSync( self );
 			submit( move(self), tags );
 		} );
 	}
