@@ -21,22 +21,41 @@ namespace IO{
 	α IFileChunkArg::Handle()Ι->HFile&{ return _fileIOArg->Handle; }
 	α IFileChunkArg::IsRead()Ι->bool{ return _fileIOArg->IsRead; }
 
-	FileIOArg::FileIOArg( fs::path path, bool vec, SL sl )ι:
+	FileIOArg::FileIOArg( fs::path path, ReadOptions options, bool vec, SL sl )ι:
+		Offset{ options.Offset },
+		Limit{ options.Size },
 		IsRead{ true },
 		Path{ move(path) },
-		_sl{ sl }{
+		_sl{ sl },
+		_tags{ options.Tags }{
 		if( vec )
 			Buffer = vector<byte>{};
 	}
-	FileIOArg::FileIOArg( fs::path path, variant<string,vector<byte>> data, ELogTags tags, SL sl )ι:
+	FileIOArg::FileIOArg( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SL sl )ι:
 		Buffer{ move(data) },
+		Offset{ options.Offset },
+		Mode{ options.Mode },
+		Sync{ options.Sync },
 		IsRead{ false },
 		Path{ move(path) },
 		_sl{ sl },
-		_tags{ tags }
+		_tags{ options.Tags }
 	{}
 
-	α FileIOArg::PostExp( up<IFileChunkArg>&& chunk, uint32 code, string&& m )ι->void{
+	α FileIOArg::SizeBuffer( uint fileSize )ε->void{
+		let size = fileSize>Offset ? std::min( Limit.value_or(fileSize), fileSize-Offset ) : 0;//a range that starts at or past the end reads nothing.
+		visit( [size](auto&& b){ b.resize(size); }, Buffer );
+	}
+	α FileIOArg::CheckPrefix( uint fileSize )ε->void{
+		if( fileSize>=Offset )
+			return;
+		//cutting a shorter file to Offset grows it with zeros, which would then pass for the kept bytes.
+		IOException e{ Path, Ƒ("Truncate offset {} is past the end of the file, {} bytes", Offset, fileSize), _sl };
+		e.Error = EIOError::Invalid;
+		e.Throw();
+	}
+
+	α FileIOArg::PostExp( up<IFileChunkArg>&& chunk, uint32 code, string&& m, bool written )ι->void{
 		{
 			lg l{ ChunkMutex };
 			while( Chunks.size() )
@@ -46,7 +65,11 @@ namespace IO{
 		//nulled _coHandle under _coHandleMutex; a null handle means the awaiter was already resumed, nothing to post.
 		visit( [&]( auto h ){
 			if( h )
-				Post( [path=move(Path), sl=_sl, m=move(m), code, h](){ h.promise().ResumeExp( IO::IOException{path, code, move(m), sl}, h ); } );
+				Post( [path=move(Path), sl=_sl, m=move(m), code, written, h](){
+					IO::IOException e{ path, code, move(m), sl };
+					e.Written = written;
+					h.promise().ResumeExp( move(e), h );
+				} );
 		}, CoHandle() );
 		chunk=nullptr;
 	}
@@ -55,7 +78,7 @@ namespace IO{
 		visit( [this]( auto h ){
 			constexpr bool isRead = std::is_same_v<decltype(h), StringAwait::Handle>;
 			if( !h ){//a read loses its handle to PostExp when an earlier chunk failed while a later one was still in flight - that
-				if constexpr( !isRead )//completion is expected & silent.  A write has one chunk in flight, so a missing handle is a bug.
+				if constexpr( !isRead )//completion is expected & silent.  A write completes only once every chunk has, so a missing handle is a bug.
 					CRITICAL( "[{}]no handle.", Path.string() );
 				return;
 			}
@@ -93,6 +116,12 @@ namespace IO{
 	}
 
 	α WriteAwait::await_ready()ι->bool{
+		if( _arg->Mode==EWriteMode::Append && _arg->Offset ){//an At that lost its Mode - appending instead would grow the file on every write.
+			auto e = mu<IOException>( _arg->Path, "Append takes no Offset - EWriteMode::At writes at one", _arg->_sl );
+			e->Error = EIOError::Invalid;
+			ExceptionPtr = move( e );
+			return true;
+		}
 		try{
 			_arg->Open( _create );
 		}
