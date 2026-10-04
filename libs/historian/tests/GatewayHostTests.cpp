@@ -10,11 +10,11 @@ namespace Jde::Opc::Hist::Tests{
 		let pump1 = AddGroup();
 		let pump2 = AddGroup();
 		EXPECT_NE( pump1->Name(), pump2->Name() );
-		EXPECT_EQ( Library.FindGroup(pump1->Name()), pump1 );
-		EXPECT_FALSE( Library.FindGroup("server") );
-		EXPECT_THROW( Library.AddGroup({.Name=pump1->Name()}), Exception );
-		EXPECT_THROW( Library.AddGroup({.Name="../pump"}), Exception );//names a file.
-		EXPECT_THROW( Library.AddGroup({.Name=""}), Exception );
+		EXPECT_EQ( Library->FindGroup(pump1->Name()), pump1 );
+		EXPECT_FALSE( Library->FindGroup("server") );
+		EXPECT_THROW( Library->AddGroup({.Name=pump1->Name()}), Exception );
+		EXPECT_THROW( Library->AddGroup({.Name="../pump"}), Exception );//names a file.
+		EXPECT_THROW( Library->AddGroup({.Name=""}), Exception );
 	}
 
 	//Deleting a hist_groups row:  every member leaves, by the caller who deleted it, and what the group buffered stays for
@@ -25,9 +25,9 @@ namespace Jde::Opc::Hist::Tests{
 		let speed = Join( *pump1, "Pump1.Speed" );
 		Join( *pump1, "Pump1.Flow" );
 		DataChange( *pump1, speed, 1750, Time->Now() );
-		Library.RemoveGroup( pump1->Name(), Writer{{{8}}, "operator"} );
-		EXPECT_FALSE( Library.FindGroup(pump1->Name()) );
-		EXPECT_EQ( Library.FindGroup(pump2->Name()), pump2 );
+		Library->RemoveGroup( pump1->Name(), Writer{{{8}}, "operator"} );
+		EXPECT_FALSE( Library->FindGroup(pump1->Name()) );
+		EXPECT_EQ( Library->FindGroup(pump2->Name()), pump2 );
 		let removed = Records<NodeRemoved>();
 		ASSERT_EQ( removed.size(), 2 );
 		ASSERT_TRUE( removed[0].By );
@@ -36,7 +36,7 @@ namespace Jde::Opc::Hist::Tests{
 
 		EXPECT_FALSE( DataChange(*pump1, speed, 1760, Time->Now()) );//one racing the delete.
 		EXPECT_THROW( Join(*pump1, "Pump1.Level"), Exception );
-		EXPECT_THROW( Library.RemoveGroup(pump1->Name()), Exception );
+		EXPECT_THROW( Library->RemoveGroup(pump1->Name()), Exception );
 	}
 
 	//Members leave in index order however they joined, so a removed group writes the same records every run.
@@ -44,8 +44,8 @@ namespace Jde::Opc::Hist::Tests{
 		vector<Member> members;
 		for( NodeIndex index=40; index>0; --index )
 			members.push_back( {Node(Ƒ("Pump{}.Speed", index)), {}, index*7} );
-		_group = Library.AddGroup( {.Name="pumps", .Indexes=EIndexes::Host}, move(members) );
-		Library.RemoveGroup( "pumps", Admin );
+		_group = Library->AddGroup( {.Name="pumps", .Indexes=EIndexes::Host}, move(members) );
+		Library->RemoveGroup( "pumps", Admin );
 		let removed = Records<NodeRemoved>();
 		ASSERT_EQ( removed.size(), 40 );
 		EXPECT_TRUE( std::ranges::is_sorted(removed, {}, &NodeRemoved::Index) );
@@ -68,7 +68,7 @@ namespace Jde::Opc::Hist::Tests{
 
 	//A group's hist_group_nodes rows when the gateway starts.
 	TEST_F( GatewayHost, MembersAtStart ){
-		auto group = Library.AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {.MaxTimeInterval=1min}, 103}} );
+		auto group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {.MaxTimeInterval=1min}, 103}} );
 		_group = group;
 		EXPECT_EQ( group->Find(Node("Pump1.Speed")), 101 );
 		EXPECT_EQ( group->Find(Node("Pump1.Flow")), 103 );
@@ -76,15 +76,17 @@ namespace Jde::Opc::Hist::Tests{
 		let added = Records<NodeAdded>();
 		ASSERT_EQ( added.size(), 2 );
 		EXPECT_FALSE( added[0].By );//no caller at start.
-		EXPECT_THROW( Library.AddGroup({.Name="pump2"}, {{Node("Pump2.Speed")}}), Exception );//the row id is required.
+		EXPECT_THROW( Library->AddGroup({.Name="pump2"}, {{Node("Pump2.Speed")}}), Exception );//the row id is required.
 	}
 
 	//Each row id is the node's index, so a node that left and rejoined while the gateway was down comes back under its
 	//new row, and a row deleted meanwhile is removed.
 	TEST_F( GatewayHost, Restart ){
-		auto group = Restart( {.Name="pump1"},
-			{ {Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 105}, {Node("Pump1.Temp"), {}, 106} },
-			{ .Members={{Node("Pump1.Speed"), 101}, {Node("Pump1.Flow"), 102}, {Node("Pump1.Level"), 103}} } );
+		Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 102}, {Node("Pump1.Level"), {}, 103}} );
+		let stopped = Time->Now();
+		Restart();
+		Time->Advance( 1h );
+		auto group = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 105}, {Node("Pump1.Temp"), {}, 106}} );
 		EXPECT_EQ( group->Find(Node("Pump1.Flow")), 105 );
 		flat_set<NodeIndex> removed, added;
 		for( let& r : Records<NodeRemoved>() )
@@ -94,8 +96,11 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( removed, (flat_set<NodeIndex>{102, 103}) );
 		EXPECT_EQ( added, (flat_set<NodeIndex>{105, 106}) );
 		EXPECT_TRUE( std::holds_alternative<NodeRemoved>(group->Buffer().front()) );//a rejoin leaves before it joins.
+		EXPECT_EQ( group->FindBreak(101), stopped );//the stop, which the group's last flush gives.
+		EXPECT_FALSE( group->FindBreak(105) );
 
-		EXPECT_THROW( Restart({.Name="pump1"}, {{Node("Pump1.Pressure"), {}, 101}}, {.Members={{Node("Pump1.Speed"), 101}}}), Exception );//Speed's index.
+		Restart();
+		EXPECT_THROW( Library->AddGroup({.Name="pump1"}, {{Node("Pump1.Pressure"), {}, 101}}), Exception );//Speed's index.
 	}
 
 	//row, then template member, then group:  the library holds only the result, so an edit to a template member or a

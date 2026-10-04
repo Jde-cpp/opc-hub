@@ -37,14 +37,43 @@ namespace Jde::Opc::Hist::Tests{
 			return y;
 		}
 
-		//A restart, until #203 reads the files:  the group as its newest file left it, and the host's members at start.
-		α Restart( GroupConfig config, vector<Member> members, Restored restored )ε->sp<Group>{
-			return _group = ms<Group>( move(config), Time, move(members), move(restored) );
+		//The host's process ending and starting again on its hist.path:  the library is destroyed, which writes what each
+		//group buffered, and made again.  The host then adds its groups, with their members at start.
+		α Restart( optional<Settings> config={} )ι->void{
+			_group.reset();
+			Library.reset();
+			Library = mu<Historian>( config ? move(*config) : Config(Delay), Time );
+		}
+		//A hist.path of the test's own, beside the logs.
+		static fs::path Path()ι{
+			const auto test = ::testing::UnitTest::GetInstance()->current_test_info();
+			return fs::current_path()/"hist-tests"/Ƒ( "{}.{}", test->test_suite_name(), test->name() );
+		}
+		static Settings Config( Duration delay )ι{
+			Settings y{ Path() };
+			y.Delay = delay;
+			return y;
+		}
+		~HostFixture(){
+			_group.reset();
+			Library.reset();
+			fs::remove_all( Path() );
+			std::error_code ec;
+			fs::remove( Path().parent_path(), ec );//once the last test's is gone.
 		}
 
+		//`delay` is a year unless a fixture sets its own, so that a test moving the clock still reads what its group
+		//buffered.
+		const Duration Delay;
 		sp<ManualClock> Time{ ms<ManualClock>(sys_days{2026y/March/7}+17h) };
-		Historian Library{ Settings{"hist"}, Time };
+		up<Historian> Library{ New(Config(Delay), Time) };
 	protected:
+		HostFixture( Duration delay=days{365} )ι:Delay{ delay }{}
+		//After clearing what a run that crashed left behind.
+		static up<Historian> New( Settings config, sp<IClock> clock )ι{
+			fs::remove_all( config.Path );
+			return mu<Historian>( move(config), move(clock) );
+		}
 		sp<Group> _group;//the one Records reads.
 	};
 
@@ -53,19 +82,20 @@ namespace Jde::Opc::Hist::Tests{
 	//start, so no change carries a writer.  Values arrive as they are written, under open62541's service lock, and there
 	//is no subscription to break.
 	struct ServerHost : HostFixture{
-		ServerHost()ι{ _group = Server; }
+		ServerHost( Duration delay=days{365} )ι:HostFixture{ delay }{ _group = Server; }
 		//The nodeset loader, for a variable marked Historizing.
 		α Historize( sv id, Thresholds config={} )ε->NodeIndex{ return Server->Add( {Node(id), move(config)} ); }
 		//open62541's setValue:  the writer's source timestamp, stamped now when it sent none, and no server timestamp.
 		α SetValue( NodeIndex index, double v )ι->bool{ return Server->Enqueue( index, Reading(v, Time->Now()) ); }
 
-		sp<Group> Server{ Library.AddGroup({.Name="server", .Indexes=EIndexes::Issued}) };
+		sp<Group> Server{ Library->AddGroup({.Name="server", .Indexes=EIndexes::Issued}) };
 	};
 
 	//The gateway:  a group per hist_groups row, named by its guid, whose node_indexes are hist_group_nodes row ids - one
 	//autoincrement sequence across every group.  It resolves each node's thresholds itself, and every membership change
 	//is a QL mutation with a caller.  Values arrive on each connection's strand, and a connection can break.
 	struct GatewayHost : HostFixture{
+		GatewayHost( Duration delay=days{365} )ι:HostFixture{ delay }{}
 		//The nullable threshold columns of a hist_group_nodes row or a hist_template_nodes member.
 		struct Columns{ optional<double> ExceptionDeviation; optional<Duration> MaxTimeInterval; };
 		//row, then template member, then group.
@@ -76,7 +106,7 @@ namespace Jde::Opc::Hist::Tests{
 			};
 		}
 		α AddGroup()ε->sp<Group>{
-			auto group = Library.AddGroup( {.Name=Jde::ToString(_guids()), .Indexes=EIndexes::Host, .PublishingInterval=500ms} );
+			auto group = Library->AddGroup( {.Name=Jde::ToString(_guids()), .Indexes=EIndexes::Host, .PublishingInterval=500ms} );
 			if( !_group )
 				_group = group;
 			return group;

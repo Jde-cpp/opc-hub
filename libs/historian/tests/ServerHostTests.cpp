@@ -25,9 +25,12 @@ namespace Jde::Opc::Hist::Tests{
 	//The newest file's preamble gives the map and its FileStart the next index:  a node keeps its index across a restart,
 	//a new one takes the next, and one the nodesets dropped is removed.  Index 4 went to a node removed before it.
 	TEST_F( ServerHost, KeepsIndexesAcrossRestart ){
-		Server = Restart( {.Name="server", .Indexes=EIndexes::Issued},
-			{ {Node("Pump1.Speed")}, {Node("Tank1.Level")}, {Node("Pump2.Speed")} },
-			{ .Members={{Node("Pump1.Speed"), 1}, {Node("Pump1.Flow"), 2}, {Node("Tank1.Level"), 3}}, .NextIndex=5 } );
+		Historize( "Pump1.Speed" );
+		Historize( "Pump1.Flow" );
+		Historize( "Tank1.Level" );
+		Server->Remove( Historize("Pump1.Temp") );
+		Restart();
+		_group = Server = Library->AddGroup( {.Name="server", .Indexes=EIndexes::Issued}, {{Node("Pump1.Speed")}, {Node("Tank1.Level")}, {Node("Pump2.Speed")}} );
 		EXPECT_EQ( Server->Find(Node("Pump1.Speed")), 1 );
 		EXPECT_EQ( Server->Find(Node("Tank1.Level")), 3 );
 		EXPECT_EQ( Server->Find(Node("Pump2.Speed")), 5 );
@@ -43,8 +46,8 @@ namespace Jde::Opc::Hist::Tests{
 	}
 
 	TEST_F( ServerHost, OneGroup ){
-		EXPECT_EQ( Library.FindGroup("server"), Server );
-		EXPECT_THROW( Library.AddGroup({.Name="server", .Indexes=EIndexes::Issued}), Exception );
+		EXPECT_EQ( Library->FindGroup("server"), Server );
+		EXPECT_THROW( Library->AddGroup({.Name="server", .Indexes=EIndexes::Issued}), Exception );
 	}
 
 	TEST_F( ServerHost, ThresholdsFromHAConfiguration ){

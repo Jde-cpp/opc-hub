@@ -19,21 +19,28 @@ namespace Jde::Opc::Hist{
 	//The library's root, one per host:  OpcServer adds its one group, `server`, at start; the gateway adds one per
 	//hist_groups row, named by its guid, whenever one is created.
 	struct Historian final : noncopyable{
+		//Takes the exclusive lock on settings.Path.  When another process holds it, or the path can't be made, the host
+		//runs without its historian, with a Critical log, rather than exiting.
 		Historian( Settings settings, sp<IClock> clock )ι;
+		//Writes what each group buffered, then drops the lock.
+		~Historian();
+		//false for a host that runs without its historian:  it answers its history fields and /hist with an error, and
+		//OpcServer installs no history backend.  AddGroup throws.
+		α Enabled()Ι->bool;
 		//members is the group's whole membership at start:  OpcServer's historized nodes, or a hist_groups row's
-		//hist_group_nodes rows.  Add and Remove change it after.
+		//hist_group_nodes rows.  Add and Remove change it after.  What the group's files hold of it is restored first.
 		α AddGroup( GroupConfig config, vector<Member> members={}, SRCE )ε->sp<Group>;
 		//Deleting a hist_groups row:  every member leaves, by the caller who deleted it.  The group's files are kept, as
 		//every archive is, and what it buffered is still written.
 		α RemoveGroup( sv name, optional<Writer> by={}, SRCE )ε->void;
 		α FindGroup( sv name )Ι->sp<Group>;
-		α Config()Ι->const Settings&{ return _settings; }
-		α Time()Ι->IClock&{ return *_clock; }
+		α Config()Ι->const Settings&;
+		α Time()Ι->IClock&;
+		α Buffered()Ι->uint;//the memory every group's buffer takes together, which maxBuffer caps.
 	private:
-		sp<IClock> _clock;
+		const sp<Store> _store;
 		mutable absl::Mutex _mutex;
 		flat_map<string,sp<Group>,std::less<>> _groups ABSL_GUARDED_BY(_mutex);
-		vector<sp<Group>> _removed ABSL_GUARDED_BY(_mutex);//until the flush writes what each buffered (#203).
-		const Settings _settings;
+		vector<sp<Group>> _removed ABSL_GUARDED_BY(_mutex);//each until a flush has written what it buffered.
 	};
 }

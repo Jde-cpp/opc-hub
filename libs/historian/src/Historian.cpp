@@ -1,4 +1,5 @@
 #include <jde/historian/Historian.h>
+#include "Store.h"
 
 #define let const auto
 
@@ -66,20 +67,40 @@ namespace Jde::Opc::Hist{
 	}
 
 	Historian::Historian( Settings settings, sp<IClock> clock )ι:
-		_clock{ move(clock) },
-		_settings{ move(settings) }
+		_store{ ms<Store>(move(settings), move(clock)) }
 	{}
+	Historian::~Historian(){
+		vector<sp<Group>> groups;
+		{
+			ul _{ _mutex };
+			groups = _removed;
+			for( let& [_,group] : _groups )
+				groups.push_back( group );
+		}
+		for( let& group : groups )
+			group->Stop();
+		_store->Lock.reset();
+	}
+	α Historian::Enabled()Ι->bool{ return _store->Disabled.empty(); }
+	α Historian::Config()Ι->const Settings&{ return _store->Config; }
+	α Historian::Time()Ι->IClock&{ return *_store->Time; }
+	α Historian::Buffered()Ι->uint{ return _store->Buffered(); }
 
 	//A group's name is the stem of its files, so it has to be one in any file system.
 	Ω fileStem( sv name )ι->bool{
 		return !name.empty() && std::ranges::all_of( name, []( char c ){ return std::isalnum((unsigned char)c) || c=='-' || c=='_'; } );
 	}
 	α Historian::AddGroup( GroupConfig config, vector<Member> members, SL sl )ε->sp<Group>{
+		THROW_IFSL( !Enabled(), "The historian is disabled:  {}.", _store->Disabled );
 		THROW_IFSL( !fileStem(config.Name), "'{}' cannot name a group's files.", config.Name );
 		ul _{ _mutex };
 		THROW_IFSL( _groups.contains(config.Name), "Group '{}' already exists.", config.Name );
-		auto group = ms<Group>( move(config), _clock, move(members), Restored{}, sl );//#203 restores from the group's newest file.
+		//One still writing what it buffered holds the files a new group of its name would write.
+		std::erase_if( _removed, []( let& group ){ return group->Idle(); } );
+		THROW_IFSL( std::ranges::contains(_removed, config.Name, &Group::Name), "Group '{}' was removed, and what it buffered is not yet written.", config.Name );
+		auto group = ms<Group>( move(config), _store, move(members), sl );
 		_groups.emplace( group->Name(), group );
+		group->Start();
 		return group;
 	}
 	α Historian::RemoveGroup( sv name, optional<Writer> by, SL sl )ε->void{
@@ -90,6 +111,7 @@ namespace Jde::Opc::Hist{
 			THROW_IFSL( p==_groups.end(), "Group '{}' does not exist.", name );
 			group = move( p->second );
 			_groups.erase( p );
+			std::erase_if( _removed, []( let& removed ){ return removed->Idle(); } );
 			_removed.push_back( group );
 		}
 		group->Close( move(by) );
