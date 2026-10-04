@@ -146,9 +146,9 @@ namespace Jde::IO::Tests{
 		}( move(file), move(content), move(done), move(l), mode, move(error), create );
 	}
 
-	Ω readRaw( fs::path file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, bool cache=false, SRCE )ι->TAwait<string>::Task{
+	Ω readRaw( fs::path file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->TAwait<string>::Task{
 		try{
-			*content = co_await IO::ReadAwait{ move(file), cache, sl };
+			*content = co_await IO::ReadAwait{ move(file), options, sl };
 		}
 		catch( Exception& e ){
 			if( error )
@@ -187,8 +187,7 @@ namespace Jde::IO::Tests{
 			let failure = waitError( done, error );
 			ASSERT_TRUE( failure.empty() ) << "write of " << size << " bytes (" << chunks << " chunk(s)): " << failure;
 
-			std::ifstream is{ file, std::ios::binary };
-			let actual = string{ std::istreambuf_iterator<char>{is}, std::istreambuf_iterator<char>{} };
+			let actual = IO::Load( file );
 			ASSERT_EQ( actual.size(), size );
 			ASSERT_EQ( actual, content );
 		}
@@ -211,8 +210,7 @@ namespace Jde::IO::Tests{
 			let failure = waitError( done, error );
 			ASSERT_TRUE( failure.empty() ) << "append of " << content->size() << " bytes: " << failure;
 		}
-		std::ifstream is{ file, std::ios::binary };
-		let actual = string{ std::istreambuf_iterator<char>{is}, std::istreambuf_iterator<char>{} };
+		let actual = IO::Load( file );
 		ASSERT_EQ( actual, first+second );
 	}
 
@@ -223,10 +221,6 @@ namespace Jde::IO::Tests{
 		let file = Tests::file( 500 );
 		if( fs::exists(file) )
 			fs::remove( file );
-		let readBack = [&file](){
-			std::ifstream is{ file, std::ios::binary };
-			return string{ std::istreambuf_iterator<char>{is}, std::istreambuf_iterator<char>{} };
-		};
 		let write = [&file]( str content, IO::EWriteMode mode )->string{
 			auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
 			writeRaw( file, content, done, error, mode );
@@ -235,16 +229,16 @@ namespace Jde::IO::Tests{
 		let long_ = string( IO::ChunkByteSize()*2, 'l' );//multi-chunk: the short write must not leave chunk 1 behind.
 		let truncating = write( long_, IO::EWriteMode::Truncate );
 		ASSERT_TRUE( truncating.empty() ) << "truncating write: " << truncating;
-		ASSERT_EQ( readBack(), long_ );
+		ASSERT_EQ( IO::Load( file ), long_ );
 
 		let short_ = string( 16, 's' );
 		let second = write( short_, IO::EWriteMode::Truncate );
 		ASSERT_TRUE( second.empty() ) << "second truncating write: " << second;
-		ASSERT_EQ( readBack(), short_ ) << "truncate left the previous, longer contents in place";
+		ASSERT_EQ( IO::Load( file ), short_ ) << "truncate left the previous, longer contents in place";
 
 		let appended = write( short_, IO::EWriteMode::Append );//the default must still append - the daily proto log depends on it.
 		ASSERT_TRUE( appended.empty() ) << "append: " << appended;
-		ASSERT_EQ( readBack(), short_+short_ );
+		ASSERT_EQ( IO::Load( file ), short_+short_ );
 	}
 
 	// Regression: a zero-byte operation produced no chunks, so no completion ever arrived — the
@@ -275,7 +269,7 @@ namespace Jde::IO::Tests{
 		Cache::Set<string>( file.string(), "" );//explicit - `{}` is ambiguous between the T and sp<const T> overloads.
 		auto content = ms<string>( "sentinel" );
 		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
-		readRaw( file, content, done, error, true );
+		readRaw( file, content, done, error, {.Cache=true} );
 		let failure = waitError( done, error );
 		ASSERT_TRUE( failure.empty() ) << "cached empty read: " << failure;
 		EXPECT_TRUE( content->empty() ) << "expected empty content, got: " << *content;
@@ -301,7 +295,7 @@ namespace Jde::IO::Tests{
 		ASSERT_FALSE( Cache::Get<string>(file.string()) ) << "the entry exists before any read - the test proves nothing";
 		auto first = ms<string>();
 		auto firstDone = ms<std::atomic<bool>>(); auto firstError = ms<up<Exception>>();
-		readRaw( file, first, firstDone, firstError, true );
+		readRaw( file, first, firstDone, firstError, {.Cache=true} );
 		let firstFailure = waitError( firstDone, firstError );
 		ASSERT_TRUE( firstFailure.empty() ) << "populating read: " << firstFailure;
 		ASSERT_EQ( *first, content );
@@ -312,7 +306,7 @@ namespace Jde::IO::Tests{
 		fs::remove( file );//...so a second read that still succeeds can only have been served from the entry above.
 		auto second = ms<string>( "sentinel" );
 		auto secondDone = ms<std::atomic<bool>>(); auto secondError = ms<up<Exception>>();
-		readRaw( file, second, secondDone, secondError, true );
+		readRaw( file, second, secondDone, secondError, {.Cache=true} );
 		let secondFailure = waitError( secondDone, secondError );
 		ASSERT_TRUE( secondFailure.empty() ) << "cached read after the file was deleted: " << secondFailure;
 		EXPECT_EQ( *second, content );
@@ -326,9 +320,9 @@ namespace Jde::IO::Tests{
 		Cache::Clear( file.string() );
 	}
 
-	Ω writeBytes( fs::path file, vector<byte> data, sp<std::atomic<bool>> done, sp<up<Exception>> error, SRCE )->VoidAwait::Task{
+	Ω writeWith( fs::path file, variant<string,vector<byte>> content, IO::WriteOptions options, sp<std::atomic<bool>> done, sp<up<Exception>> error, SRCE )->VoidAwait::Task{
 		try{
-			co_await IO::WriteAwait{ move(file), move(data), true, IO::EWriteMode::Truncate, Jde::ELogTags::IO, sl };
+			co_await IO::WriteAwait{ move(file), move(content), options, sl };
 		}
 		catch( Exception& e ){
 			*error = e.Move();
@@ -414,7 +408,7 @@ namespace Jde::IO::Tests{
 		for( uint i=0; i<data.size(); ++i )
 			data[i] = (byte)( i%251 );//251 is prime, so no value lines up with a chunk boundary.
 		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
-		writeBytes( file, data, done, error );
+		writeWith( file, data, {.Create=true, .Mode=IO::EWriteMode::Truncate}, done, error );
 		let failure = waitError( done, error );
 		ASSERT_TRUE( failure.empty() ) << "byte write: " << failure;
 
@@ -445,14 +439,17 @@ namespace Jde::IO::Tests{
 		let file = Tests::file( 701 );
 		if( fs::exists(file) )
 			fs::remove( file );
-		auto error = ms<up<Exception>>();
-		auto done = ms<std::atomic<bool>>();
-		//Truncate, not Append: windows opens an append with OPEN_ALWAYS, which creates the file whatever `create` says.
-		writeRaw( file, "x", done, error, IO::EWriteMode::Truncate, false );
-		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
-		ASSERT_TRUE( *error ) << "writing a missing file with create=false did not throw";
-		EXPECT_TRUE( dynamic_cast<IOException*>(error->get()) ) << (*error)->what();
-		EXPECT_FALSE( fs::exists(file) ) << "create=false created the file anyway";
+		for( let mode : {IO::EWriteMode::Append, IO::EWriteMode::Truncate, IO::EWriteMode::At} ){
+			auto error = ms<up<Exception>>();
+			auto done = ms<std::atomic<bool>>();
+			writeRaw( file, "x", done, error, mode, false );
+			ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+			ASSERT_TRUE( *error ) << "writing a missing file with create=false did not throw";
+			let io = dynamic_cast<IOException*>( error->get() );
+			ASSERT_TRUE( io ) << (*error)->what();
+			EXPECT_EQ( io->Error, IO::EIOError::NotFound ) << io->what();
+			EXPECT_FALSE( fs::exists(file) ) << "create=false created the file anyway";
+		}
 	}
 
 	// A directory opens read-only fine on linux, so the failure arrives as -EISDIR on the io_uring completion -
@@ -589,6 +586,385 @@ namespace Jde::IO::Tests{
 			GTEST_SKIP() << full.string() << " not available on this platform";
 		let content = string( 16, 'f' );
 		EXPECT_THROW( IO::SaveBinary<const char>(full, std::span{content}), IOException );
+	}
+
+	//"" when the write finished cleanly, as waitError.
+	Ω writeNow( const fs::path& file, string content, IO::WriteOptions options, SRCE )ι->string{
+		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+		writeWith( file, move(content), options, done, error, sl );
+		return waitError( done, error );
+	}
+	//distinct at every offset a chunk boundary can fall on, so bytes that land in the wrong place compare unequal.
+	Ω pattern( uint size )ι->string{
+		string y( size, '\0' );
+		for( uint i=0; i<size; ++i )
+			y[i] = (char)( 'a'+i%23 );
+		return y;
+	}
+
+	TEST_F( FileTests, WriteAtOverwritesInPlace ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1000 );
+		fs::remove( file );
+		let original = pattern( chunk*3+chunk/2 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let patch = string( chunk+chunk/2, 'Z' );
+		let offset = chunk/2+1;//starts mid-chunk and ends mid-chunk.
+		ASSERT_EQ( writeNow(file, patch, {.Mode=IO::EWriteMode::At, .Offset=offset}), "" );
+		auto expected = original;
+		expected.replace( offset, patch.size(), patch );
+		EXPECT_EQ( IO::Load(file), expected ) << "an At write moved or dropped bytes outside its range";
+	}
+
+	TEST_F( FileTests, WriteAtMissingFile ){
+		let file = Tests::file( 1001 );
+		fs::remove( file );
+		auto error = ms<up<Exception>>();
+		auto done = ms<std::atomic<bool>>();
+		writeWith( file, "x", {.Mode=IO::EWriteMode::At, .Offset=4}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+		ASSERT_TRUE( *error ) << "an At write to a missing file without Create did not throw";
+		EXPECT_TRUE( dynamic_cast<IOException*>(error->get()) ) << (*error)->what();
+		EXPECT_FALSE( fs::exists(file) ) << "Create=false created the file anyway";
+
+		ASSERT_EQ( writeNow(file, "x", {.Create=true, .Mode=IO::EWriteMode::At, .Offset=4}), "" );
+		EXPECT_EQ( IO::Load(file), string( 4, '\0' )+"x" ) << "a write past the end leaves zeros before it";
+	}
+
+	// Truncate with an Offset keeps that prefix and puts the data after it, so whatever followed the prefix is gone -
+	// an append that first drops a torn tail.  Offset 0 is the whole-file replace TruncateReplacesFile pins.
+	TEST_F( FileTests, TruncateKeepsPrefix ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1002 );
+		fs::remove( file );
+		let original = pattern( chunk*4 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let kept = chunk+chunk/2;
+		let data = string( chunk, 'Z' );
+		ASSERT_EQ( writeNow(file, data, {.Mode=IO::EWriteMode::Truncate, .Offset=kept}), "" );
+		let expected = original.substr( 0, kept )+data;
+		ASSERT_EQ( IO::Load(file), expected ) << "the old tail outlived a write shorter than it";
+
+		//a prefix that is the whole file is a plain append.
+		ASSERT_EQ( writeNow(file, data, {.Mode=IO::EWriteMode::Truncate, .Offset=expected.size()}), "" );
+		EXPECT_EQ( IO::Load(file), expected+data );
+	}
+
+	// An Offset on an Append is an At that lost its Mode.  Appending anyway would grow the file on every write, so the
+	// write fails and leaves the file alone.  The bool overloads refuse a number outright, where it would have converted
+	// to cache or create.
+	TEST_F( FileTests, AppendWithOffsetThrows ){
+		static_assert( std::is_constructible_v<IO::ReadAwait, fs::path, bool> && !std::is_constructible_v<IO::ReadAwait, fs::path, int> && !std::is_constructible_v<IO::ReadAwait, fs::path, uint> );
+		static_assert( std::is_constructible_v<IO::WriteAwait, fs::path, string, bool> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, int> && !std::is_constructible_v<IO::WriteAwait, fs::path, string, uint> );
+
+		let file = Tests::file( 1011 );
+		fs::remove( file );
+		let content = string{ "0123456789" };
+		ASSERT_EQ( writeNow(file, content, {.Create=true}), "" );
+
+		auto error = ms<up<Exception>>(); auto done = ms<std::atomic<bool>>();
+		writeWith( file, "x", {.Offset=4}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+		let io = dynamic_cast<IOException*>( error->get() );
+		ASSERT_TRUE( io ) << "an Append with an Offset did not throw";
+		EXPECT_EQ( io->Error, IO::EIOError::Invalid ) << io->what();
+		EXPECT_FALSE( io->Written );
+		EXPECT_EQ( IO::Load(file), content ) << "the write that failed changed the file";
+	}
+
+#ifndef _MSC_VER
+	// Only an open that may make the file makes the directories on its path.  A write without Create to a file that
+	// isn't there fails at the open and leaves nothing behind:  no directories, and no log line claiming one.
+	TEST_F( FileTests, NoCreateMakesNoDirectories ){
+		let root = Tests::file( 1010 ).parent_path()/"noCreate";
+		fs::remove_all( root );
+		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		let createdDirs = [&logger]()->uint{
+			return logger.Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){ return e.Message().contains( "Created dir" ); }} ).size();
+		};
+		let failedAtOpen = []( str failure )->bool{ return failure.contains( "- open path=" ) && !failure.contains( "create_directories" ); };
+
+		let orphan = root/"a"/"orphan.txt";
+		for( let mode : {IO::EWriteMode::Append, IO::EWriteMode::Truncate, IO::EWriteMode::At} ){
+			let failure = writeNow( orphan, "x", {.Mode=mode} );
+			EXPECT_TRUE( failedAtOpen(failure) ) << "'" << failure << "'";
+		}
+		EXPECT_FALSE( fs::exists(root) ) << "a write without Create made directories";
+
+		fs::create_directories( root );
+		EXPECT_TRUE( failedAtOpen(writeNow(root/"missing.txt", "x", {})) );
+		EXPECT_EQ( createdDirs(), 0u ) << "logged a directory it never made";
+
+		let relative = writeNow( "noCreate-missing.txt", "x", {} );
+		EXPECT_TRUE( failedAtOpen(relative) ) << "'" << relative << "'";
+
+		ASSERT_EQ( writeNow(orphan, "x", {.Create=true}), "" );
+		EXPECT_EQ( IO::Load(orphan), "x" );
+		EXPECT_EQ( createdDirs(), 1u ) << "Create makes the directory, and says so";
+	}
+#endif
+
+	// A Truncate that keeps a prefix needs the file to hold it.  Growing a shorter or missing file to Offset would pass
+	// zeros off as the kept bytes, so the write fails and leaves the file as it found it.
+	TEST_F( FileTests, TruncatePastEndThrows ){
+		let file = Tests::file( 1007 );
+		fs::remove( file );
+		let content = string{ "0123456789" };
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		auto error = ms<up<Exception>>(); auto done = ms<std::atomic<bool>>();
+		writeWith( file, "x", {.Mode=IO::EWriteMode::Truncate, .Offset=content.size()+1}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+		let io = dynamic_cast<IOException*>( error->get() );
+		ASSERT_TRUE( io ) << "a Truncate past the end did not throw";
+		EXPECT_TRUE( string{io->what()}.contains("past the end") ) << io->what();
+		EXPECT_EQ( io->Error, IO::EIOError::Invalid );
+		EXPECT_EQ( IO::Load(file), content ) << "the write that failed changed the file";
+
+		fs::remove( file );
+		EXPECT_NE( writeNow(file, "x", {.Create=true, .Mode=IO::EWriteMode::Truncate, .Offset=4}), "" ) << "no file, so no prefix to keep";
+		EXPECT_FALSE( fs::exists(file) ) << "the write that failed left a file behind";
+	}
+
+#ifdef _MSC_VER
+	// Windows share modes:  a reader can hold a file that is appended to, written in place or cut to a prefix, but not one
+	// that is replaced - it would size its buffer from one version and read the bytes of another.
+	TEST_F( FileTests, ReplaceExcludesReader ){
+		let file = Tests::file( 1008 );
+		fs::remove( file );
+		let content = string{ "0123456789" };
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		{
+			const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;//what ReadAwait's open shares.
+			HandlePtr reader{ WinHandle{::CreateFileA(file.string().c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, 0, nullptr)} };
+			ASSERT_TRUE( static_cast<bool>(reader.get()) ) << "the reader's open failed: " << ::GetLastError();
+			EXPECT_NE( writeNow(file, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a replace went ahead under a reader";
+			EXPECT_EQ( IO::Load(file), content ) << "the replace that failed changed the file";
+			EXPECT_EQ( writeNow(file, "a", {}), "" ) << "an append under a reader";
+			EXPECT_EQ( writeNow(file, "Z", {.Mode=IO::EWriteMode::At}), "" ) << "a write in place under a reader";
+			EXPECT_EQ( writeNow(file, "b", {.Mode=IO::EWriteMode::Truncate, .Offset=content.size()+1}), "" ) << "a cut to a prefix under a reader";
+			EXPECT_EQ( IO::Load(file), "Z123456789ab" );
+		}
+		EXPECT_EQ( writeNow(file, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a replace once the reader has closed";
+		EXPECT_EQ( IO::Load(file), "x" );
+	}
+#endif
+
+	// At and Truncate place every chunk by its offset, so they send a window of chunks at once, as a read does, and a
+	// sync follows the last to finish.  Whatever order the chunks land in, each byte ends up where it belongs.
+	TEST_F( FileTests, PositionedWritesSendManyChunks ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1013 );
+		fs::remove( file );
+		let original = pattern( chunk*40+3 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" );
+		ASSERT_EQ( IO::Load(file), original );
+
+		let patch = string( chunk*20+1, 'Z' );
+		ASSERT_EQ( writeNow(file, patch, {.Mode=IO::EWriteMode::At, .Offset=chunk+1, .Sync=true}), "" );
+		auto expected = original;
+		expected.replace( chunk+1, patch.size(), patch );
+		ASSERT_EQ( IO::Load(file), expected );
+
+		let tail = pattern( chunk*30+7 );
+		ASSERT_EQ( writeNow(file, tail, {.Mode=IO::EWriteMode::Truncate, .Offset=chunk*5, .Sync=true}), "" );
+		EXPECT_EQ( IO::Load(file), expected.substr(0, chunk*5)+tail );
+	}
+
+	// Sync adds an fdatasync after the last chunk, and its completion is what resumes the awaiter.  Durability is not
+	// observable here - this pins that each mode still completes, once, with the right bytes, and that an empty write,
+	// which has no chunk to follow, still resumes.
+	TEST_F( FileTests, SyncedWrites ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1003 );
+		fs::remove( file );
+		let first = pattern( chunk*2+3 ), second = string( chunk+1, 'b' );
+		ASSERT_EQ( writeNow(file, first, {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" );
+		ASSERT_EQ( IO::Load(file), first );
+		ASSERT_EQ( writeNow(file, second, {.Sync=true}), "" );
+		ASSERT_EQ( IO::Load(file), first+second );
+		ASSERT_EQ( writeNow(file, "ZZ", {.Mode=IO::EWriteMode::At, .Offset=1, .Sync=true}), "" );
+		auto expected = first+second;
+		expected.replace( 1, 2, "ZZ" );
+		ASSERT_EQ( IO::Load(file), expected );
+		ASSERT_EQ( writeNow(file, {}, {.Sync=true}), "" ) << "an empty write that syncs";
+		EXPECT_EQ( IO::Load(file), expected );
+
+		fs::remove( file );
+		ASSERT_EQ( writeNow(file, {}, {.Create=true, .Sync=true}), "" ) << "an empty write that creates and syncs";
+		EXPECT_TRUE( fs::exists(file) );
+		EXPECT_EQ( fs::file_size(file), 0u );
+	}
+
+	// The proof that Sync really syncs, and that its failure reaches the awaiter:  /dev/null takes any write and has no
+	// fsync, so the same write succeeds without Sync and fails with it.
+	TEST_F( FileTests, SyncFailureSurfaces ){
+		let null = fs::path{ "/dev/null" };//no Windows equivalent that refuses a flush.
+		if( !fs::exists(null) )
+			GTEST_SKIP() << null.string() << " not available on this platform";
+		ASSERT_EQ( writeNow(null, "x", {}), "" );
+		ASSERT_EQ( writeNow(null, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a device has no length to cut";
+
+		auto error = ms<up<Exception>>();
+		auto done = ms<std::atomic<bool>>();
+		writeWith( null, "x", {.Sync=true}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing sync never completed";
+		ASSERT_TRUE( *error ) << "a sync the device refuses did not throw";
+		let io = dynamic_cast<IOException*>( error->get() );
+		ASSERT_TRUE( io ) << (*error)->what();
+		EXPECT_TRUE( string{io->what()}.contains("fdatasync") ) << "it failed, but not at the sync:  " << io->what();
+		EXPECT_TRUE( io->Written ) << "the write landed, and only the sync after it failed";
+		EXPECT_EQ( io->Error, IO::EIOError::Invalid ) << io->what();
+
+		ASSERT_EQ( writeNow(Tests::file(1005), "after", {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" ) << "the io after a failed sync";
+	}
+
+	// A synced write that adds a name syncs its directory as well - the file's, and on linux the parent of each directory
+	// made for it - or a power loss could keep the data and lose the name.  The syncs aren't observable, so this counts
+	// the ones logged, and pins that a file already there adds none.
+	TEST_F( FileTests, SyncedCreateSyncsDirectories ){
+		let root = Tests::file( 1006 ).parent_path()/"syncDirs";
+		fs::remove_all( root );
+		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		let dirSyncs = [&logger]( const fs::path& file )->uint{
+			return logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+				let message = e.Message();
+				return message.contains( "Syncing directory" ) && message.contains( file.string() );
+			}} ).size();
+		};
+
+		let nested = root/"a"/"b"/"nested.txt";
+#ifdef _MSC_VER
+		fs::create_directories( nested.parent_path() );//windows' Open makes no directories, so the file's is the only name it adds.
+		let added = 1u;
+#else
+		let added = 4u;//the file's directory, and the parents of the three made for it.
+#endif
+		ASSERT_EQ( writeNow(nested, "x", {.Create=true, .Sync=true, .Tags=ELogTags::Test}), "" );
+		EXPECT_EQ( IO::Load(nested), "x" );
+		EXPECT_EQ( dirSyncs(nested), added ) << "a directory that gained a name was not synced";
+
+		ASSERT_EQ( writeNow(nested, "y", {.Create=true, .Sync=true, .Tags=ELogTags::Test}), "" );
+		ASSERT_EQ( writeNow(nested, "z", {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true, .Tags=ELogTags::Test}), "" );
+		EXPECT_EQ( IO::Load(nested), "z" ) << "Create on a file already there still appends to it and truncates it";
+		EXPECT_EQ( dirSyncs(nested), added ) << "a write to a file already there added no name";
+
+		let sibling = root/"a"/"b"/"sibling.txt";
+		ASSERT_EQ( writeNow(sibling, {}, {.Create=true, .Sync=true, .Tags=ELogTags::Test}), "" ) << "an empty write that creates and syncs";
+		EXPECT_EQ( dirSyncs(sibling), 1u ) << "a new file in a directory already there";
+
+		let unsynced = nested.parent_path()/"unsynced.txt";
+		ASSERT_EQ( writeNow(unsynced, "x", {.Create=true, .Tags=ELogTags::Test}), "" );
+		EXPECT_EQ( dirSyncs(unsynced), 0u ) << "a write that doesn't sync";
+	}
+
+	// IOException::Error names what went wrong without the native code, an errno here and a GetLastError value on
+	// windows.  Written is set only by a failed sync:  a write that fails may have left none or part of its data.
+	TEST_F( FileTests, FailuresAreClassified ){
+		let fail = []( const fs::path& file, IO::WriteOptions options )->sp<up<Exception>>{
+			auto error = ms<up<Exception>>(); auto done = ms<std::atomic<bool>>();
+			writeWith( file, "x", options, done, error );
+			waitDone( *done );
+			return error;
+		};
+		let missing = Tests::file( 1009 );
+		fs::remove( missing );
+		auto error = fail( missing, {.Mode=IO::EWriteMode::At} );
+		auto io = dynamic_cast<IOException*>( error->get() );
+		ASSERT_TRUE( io ) << "a write to a missing file without Create did not throw an IOException";
+		EXPECT_EQ( io->Error, IO::EIOError::NotFound ) << io->what();
+		EXPECT_FALSE( io->Written );
+
+		let full = fs::path{ "/dev/full" };//refuses every write with ENOSPC - no windows equivalent.
+		if( fs::exists(full) ){
+			error = fail( full, {} );
+			io = dynamic_cast<IOException*>( error->get() );
+			ASSERT_TRUE( io ) << "a write the device refuses did not throw an IOException";
+			EXPECT_EQ( io->Error, IO::EIOError::NoSpace ) << io->what();
+			EXPECT_FALSE( io->Written ) << "the write itself failed";
+		}
+	}
+
+	// The options reach the op through its constructor, and a read has no write mode:  nothing that asks whether an op
+	// appends or truncates can take a read for one.
+	TEST( FileAwaitTests, OptionsReachTheOp ){
+		IO::ReadAwait read{ "x", IO::ReadOptions{.Offset=4, .Size=2, .Tags=ELogTags::Test} };
+		EXPECT_TRUE( read._arg->IsRead );
+		EXPECT_FALSE( read._arg->Mode );
+		EXPECT_EQ( read._arg->Offset, 4u );
+		EXPECT_EQ( read._arg->Limit, 2u );
+		EXPECT_EQ( read._arg->_tags, ELogTags::Test );
+
+		IO::WriteAwait write{ "x", string{"data"}, IO::WriteOptions{.Mode=IO::EWriteMode::At, .Offset=8, .Sync=true, .Tags=ELogTags::Test} };
+		EXPECT_FALSE( write._arg->IsRead );
+		EXPECT_EQ( write._arg->Mode, IO::EWriteMode::At );
+		EXPECT_EQ( write._arg->Offset, 8u );
+		EXPECT_TRUE( write._arg->Sync );
+		EXPECT_FALSE( write._arg->Limit );
+		EXPECT_EQ( write._arg->_tags, ELogTags::Test );
+		EXPECT_EQ( (IO::WriteAwait{"x", string{"data"}}._arg->Mode), IO::EWriteMode::Append ) << "the default";
+	}
+
+	TEST( IOExceptionTests, MapsNativeCodes ){
+#ifdef _MSC_VER
+		EXPECT_EQ( IO::ToIOError(ERROR_PATH_NOT_FOUND), IO::EIOError::NotFound );
+		EXPECT_EQ( IO::ToIOError(ERROR_SHARING_VIOLATION), IO::EIOError::Busy );
+		EXPECT_EQ( IO::ToIOError(ERROR_DISK_FULL), IO::EIOError::NoSpace );
+		let notFound = ERROR_FILE_NOT_FOUND;
+#else
+		EXPECT_EQ( IO::ToIOError(EDQUOT), IO::EIOError::NoSpace );
+		EXPECT_EQ( IO::ToIOError(EBUSY), IO::EIOError::Busy );
+		EXPECT_EQ( IO::ToIOError(EIO), IO::EIOError::Device );
+		let notFound = ENOENT;
+#endif
+		EXPECT_EQ( IO::ToIOError(0xFFFFFF), IO::EIOError::None );
+		EXPECT_EQ( (IOException{ "x", (uint32)notFound, "open" }.Error), IO::EIOError::NotFound );
+		EXPECT_EQ( (IOException{ fs::filesystem_error{"open", fs::path{"x"}, std::error_code{(int)notFound, std::system_category()}} }.Error), IO::EIOError::NotFound );
+		EXPECT_EQ( (IOException{ "x", "no code" }.Error), IO::EIOError::None );
+	}
+
+	// A read logs under ReadOptions.Tags, as a write does under WriteOptions.Tags.
+	TEST_F( FileTests, ReadLogsUnderItsTags ){
+		let file = Tests::file( 1012 );
+		fs::remove( file );
+		ASSERT_EQ( writeNow(file, "content", {.Create=true}), "" );
+		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		auto content = ms<string>(); auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+		readRaw( file, content, done, error, {.Tags=ELogTags::Test} );
+		ASSERT_EQ( waitError(done, error), "" );
+		EXPECT_EQ( *content, "content" );
+		let suspends = logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+			return e.Tags==ELogTags::Test && e.Message().contains( "ReadAwait::Suspend" ) && e.Message().contains( file.string() );
+		}} );
+		EXPECT_EQ( suspends.size(), 1u ) << "the read did not log under the tag it was given";
+	}
+
+	TEST_F( FileTests, ReadRange ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1004 );
+		fs::remove( file );
+		let content = pattern( chunk*4+chunk/2 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+
+		let read = [&file]( IO::ReadOptions options )->string{
+			auto y = ms<string>( "sentinel" );
+			auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+			readRaw( file, y, done, error, options );
+			let failure = waitError( done, error );
+			return failure.empty() ? *y : "failed: "+failure;
+		};
+		EXPECT_EQ( read({.Offset=chunk/2+1, .Size=chunk*2+chunk/4}), content.substr(chunk/2+1, chunk*2+chunk/4) ) << "mid-chunk to mid-chunk";
+		EXPECT_EQ( read({.Size=3}), content.substr(0, 3) );
+		EXPECT_EQ( read({.Offset=chunk+1}), content.substr(chunk+1) ) << "no Size reads to the end";
+		EXPECT_EQ( read({.Offset=chunk*4, .Size=chunk*3}), content.substr(chunk*4) ) << "a Size past the end is clamped";
+		EXPECT_EQ( read({.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
+		EXPECT_EQ( read({.Offset=content.size()+7}), "" ) << "a range that starts past the end";
+		EXPECT_EQ( read({}), content ) << "no range is the whole file";
 	}
 
 	constexpr uint _fileSize{ 5 };
