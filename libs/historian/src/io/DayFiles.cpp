@@ -631,6 +631,10 @@ namespace Jde::Opc::Hist{
 		fs::create_directories( path.parent_path(), ec );
 		return !ec && std::ofstream{ path, std::ios::binary | std::ios::app }.is_open();
 	}
+	α GroupFiles::Newest( NodeIndex index )Ι->const Proto::DataValue*{
+		auto p = _last.find( index );
+		return p==_last.end() ? nullptr : &p->second;
+	}
 	α GroupFiles::Find( Day day )Ι->const DayFile*{
 		auto p = _files.find( day );
 		return p==_files.end() ? nullptr : &p->second;

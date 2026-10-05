@@ -121,6 +121,8 @@ namespace Jde::Opc::Hist{
 		//rewrite that a crash cut short left.  A file there it can't tell about is said, and taken as live for its rewrite.
 		GroupFiles( fs::path root, string name, const std::chrono::time_zone& tz, Duration delay, Day today, SRCE )ε;
 		α TakeRestored()ι->Restored{ return move( _restored ); }//once, for the group's start:  nothing keeps it after.
+		//A node's newest stored record in the files, a heartbeat or a marker included:  none when they hold nothing of it.
+		α Newest( NodeIndex index )Ι->const Proto::DataValue*;
 		//How a flush at now writes records to day's file:  sorted by primary time, with their times absolute.
 		//
 		//A live file takes them as a run on its end, closed by a checkpoint.  A file that isn't there opens with its

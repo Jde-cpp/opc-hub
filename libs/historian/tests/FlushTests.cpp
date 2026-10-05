@@ -414,8 +414,9 @@ namespace Jde::Opc::Hist::Tests{
 		let records = readFile( File(March8) );
 		ASSERT_GE( records.size(), 3 );
 		ASSERT_TRUE( isPreamble(records[1], speed, March8) );
-		let& start = records[1].node_added().start();
-		EXPECT_EQ( start.value().double_value(), 2 );
+		let& start = records[1].node_added().start();//the stop's marker, which the value of March 8 ends:  until then the node reads Bad.
+		EXPECT_EQ( start.status(), UA_STATUSCODE_BADDATALOST );
+		EXPECT_FALSE( start.has_value() );
 		EXPECT_EQ( start.source_ts(), ticks(second) );
 		ASSERT_TRUE( isPreamble(records[2], flow, March8) );
 		EXPECT_FALSE( records[2].node_added().has_start() );//its newest is after the day, which step 5's walk back covers.
@@ -1081,12 +1082,14 @@ namespace Jde::Opc::Hist::Tests{
 		group = Rejoin( name, {{Node("Pump1.Speed"), {}, speed}} );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( fs::file_size(file), whole.size()+20 );
+		Time->Advance( 1s );
 		DataChange( *group, speed, 2, Time->Now() );
 		EXPECT_TRUE( Flush(*group) );
 		EXPECT_EQ( contents(file).substr(0, whole.size()), whole );
 		let records = readFile( file );
-		ASSERT_EQ( records.size(), 5 );
-		EXPECT_TRUE( isValue(records[4], speed, 2, Time->Now()) );
+		ASSERT_EQ( records.size(), 6 );//with the stop's marker, before the value that ends it.
+		EXPECT_EQ( records[4].value().status(), UA_STATUSCODE_BADDATALOST );
+		EXPECT_TRUE( isValue(records[5], speed, 2, Time->Now()) );
 		expectRuns( group->Runs(March7), file );
 	}
 
@@ -1270,9 +1273,10 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( group->Enqueue(label, Text("26\xB0" "C", Time->Now())) );
 		EXPECT_TRUE( Flush(*group) );
 		records = readFile( file );
-		ASSERT_EQ( records.size(), 7 );
-		EXPECT_EQ( records[6].value().source_ts(), ticks(Time->Now()) );
-		EXPECT_EQ( records[6].value().status(), UA_STATUSCODE_BADENCODINGERROR );
+		ASSERT_EQ( records.size(), 8 );
+		EXPECT_EQ( records[6].value().status(), UA_STATUSCODE_BADDATALOST );//the stop's marker.
+		EXPECT_EQ( records[7].value().source_ts(), ticks(Time->Now()) );
+		EXPECT_EQ( records[7].value().status(), UA_STATUSCODE_BADENCODINGERROR );
 
 		Time->AdvanceTo( sys_days{March8}+30s );
 		DataChange( *group, speed, 1, Time->Now() );

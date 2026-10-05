@@ -24,8 +24,7 @@ namespace Jde::Opc::Hist{
 	α PrimaryTime( const UA_DataValue& v )ι->Ticks;//Enqueue stamps a server time on one that came with neither.
 	α PrimaryTime( const Record& r )ι->Ticks;
 
-	//What a group buffered, as the file holds it, with absolute times.  A DataValue's break is not carried:  judging it
-	//is the flush's.
+	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
 	//A value with no file form, a DataValue or a DiagnosticInfo from a node typed BaseDataType, is stored without it, as
 	//BadNotSupported, which ToProto( Record ) warns of once per node.  One with text that isn't UTF-8, which protobuf

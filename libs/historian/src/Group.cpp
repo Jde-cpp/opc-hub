@@ -1,6 +1,7 @@
 #include <jde/historian/Group.h>
 #include <absl/container/flat_hash_set.h>
 #include <jde/opc/proto/opc.Common.h>
+#include "Compress.h"
 #include "Store.h"
 #include "io/DayFiles.h"
 
@@ -27,6 +28,20 @@ namespace Jde::Opc::Hist{
 		y.hasServerTimestamp = dropped.hasServerTimestamp;
 		return Value{ move(y) };
 	}
+	//The Bad_DataLost a break leaves, found by the value that ended it.
+	Ω marker( UA_DateTime at, const UA_DataValue& ended )ι->Value{
+		UA_DataValue y{};
+		y.status = UA_STATUSCODE_BADDATALOST;
+		y.hasStatus = true;
+		y.sourceTimestamp = at;
+		y.hasSourceTimestamp = true;
+		y.serverTimestamp = ended.serverTimestamp;
+		y.hasServerTimestamp = ended.hasServerTimestamp;
+		return Value{ move(y) };
+	}
+	using UATicks = std::chrono::duration<UA_DateTime,std::ratio<1,10'000'000>>;
+	Ω ticks( Duration d )ι->UA_DateTime{ return std::chrono::duration_cast<UATicks>( d ).count(); }
+	Ω ticks( TimePoint t )ι->UA_DateTime{ return UADateTime{ t }.UA(); }
 
 	//A percent-of-range format with no usable range stores every change, warned of when the node is added; anything else
 	//wrong is the host's config, named by its node.
@@ -62,6 +77,29 @@ namespace Jde::Opc::Hist{
 		restoredIndexes.reserve( restored.Members.size() );
 		for( let& [_,index] : restored.Members )
 			restoredIndexes.emplace( index );
+		//A member's newest record in the files stands in for what the process no longer remembers:  its last stored value,
+		//and the last delivered one its first value is compared with - a value by its own SourceTimestamp, a heartbeat by
+		//that of the value it repeats, and a marker by none.
+		let resume = []( Node& node, const Proto::DataValue& newest ){
+			let primary = *PrimaryTime( newest );
+			node.RecordTs = primary;
+			node.StoredAt = UADateTime{ primary }.Time();
+			if( !newest.has_value() && !newest.has_heartbeat() && newest.status()==UA_STATUSCODE_BADDATALOST ){
+				node.Stored.emplace( (StatusCode)UA_STATUSCODE_BADDATALOST );
+				node.Marked = true;
+				return;
+			}
+			try{
+				node.Stored.emplace( ToUA(newest) );
+			}
+			catch( Exception& e ){//whatever comes next is stored.
+				e.SetLevel( ELogLevel::Warning );
+				return;
+			}
+			node.ValueTs = newest.has_heartbeat() ? newest.heartbeat() : primary;
+			if( newest.has_heartbeat() || newest.has_source_ts() )
+				node.Delivered = newest.has_heartbeat() ? newest.heartbeat() : newest.source_ts();
+		};
 		vector<NodeAdded> added;
 		{
 			ul _{ _mutex };
@@ -72,7 +110,12 @@ namespace Jde::Opc::Hist{
 				if( auto p = restored.Members.find(node); p!=restored.Members.end() && (Issued() || p->second==member.Index) ){
 					kept.emplace( p->second );
 					let index = Insert( move(node), move(member.Config), p->second, sl );
-					_nodes.find( index )->second.Break = restored.Flushed;//the stop or the crash.
+					//The stop or the crash is its break, unless the files hold nothing of it:  there was no value to lose.
+					if( let newest = _files->Newest(index) ){
+						auto& known = _nodes.find( index )->second;
+						known.Break = restored.Flushed;
+						resume( known, *newest );
+					}
 				}
 				else{
 					let index = Insert( node, move(member.Config), member.Index, sl );
@@ -96,7 +139,7 @@ namespace Jde::Opc::Hist{
 	}
 	Group::~Group(){
 		_store->Unregister( *this );
-		Cancel( {_timer, _midnight} );
+		Cancel( {_timer, _midnight, _beat} );
 		_store->Subtract( _held );
 	}
 
@@ -182,26 +225,34 @@ namespace Jde::Opc::Hist{
 	α Group::Remove( NodeIndex index, optional<Writer> by, SL sl )ε->void{
 		let now = _store->Time->Now();
 		let size = bytes( by );
-		Pushing pushing;
+		Effects effects;
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( index );
 			THROW_IFSL( p==_nodes.end() || _stopped, "node_index {} is not in group '{}'.", index, Name() );
+			if( p->second.Pending )//delivered while it was a member.
+				Settle( index, p->second, now, effects );
 			_indexes.erase( p->second.Id );
 			_gone.insert_or_assign( index, p->second.Id );
 			_left.insert_or_assign( move(p->second.Id), p->second.Break.value_or(now) );
 			_nodes.erase( p );
-			pushing = Push( NodeRemoved{index, now, move(by)}, size );
+			effects += Push( NodeRemoved{index, now, move(by)}, size );
 		}
-		Pushed( pushing );
+		Finish( move(effects) );
 	}
 
 	α Group::SetThresholds( NodeIndex index, Thresholds thresholds, SL sl )ε->void{
-		ul _{ _mutex };
-		auto p = _nodes.find( index );
-		THROW_IFSL( p==_nodes.end(), "node_index {} is not in group '{}'.", index, Name() );
-		validate( p->second.Id, thresholds, sl );
-		p->second.Config = move( thresholds );
+		let now = _store->Time->Now();
+		Effects effects;
+		{
+			ul _{ _mutex };
+			auto p = _nodes.find( index );
+			THROW_IFSL( p==_nodes.end(), "node_index {} is not in group '{}'.", index, Name() );
+			validate( p->second.Id, thresholds, sl );
+			p->second.Config = move( thresholds );
+			Arm( p->second, now, effects );//a MaxTimeInterval it gained, or a shorter one.
+		}
+		Finish( move(effects) );
 	}
 	α Group::FindThresholds( NodeIndex index )Ι->optional<Thresholds>{
 		ul _{ _mutex };
@@ -218,42 +269,246 @@ namespace Jde::Opc::Hist{
 
 	α Group::Enqueue( NodeIndex index, const UA_DataValue& value )ι->bool{
 		Value copy{ value };//outside the lock, which the host's own lock is already held over.
+		let now = _store->Time->Now();
 		//A time no day holds would be filed at the last or first day, and a 9999 file would stay the newest for good.
 		if( copy.hasSourceTimestamp && !Fileable(copy.sourceTimestamp) ){
 			copy.hasSourceTimestamp = copy.hasSourcePicoseconds = false;
 			copy.sourceTimestamp = copy.sourcePicoseconds = 0;
 		}
 		if( !copy.hasServerTimestamp || !Fileable(copy.serverTimestamp) ){
-			copy.serverTimestamp = UADateTime{ _store->Time->Now() }.UA();
+			copy.serverTimestamp = ticks( now );
 			copy.hasServerTimestamp = true;
 		}
 		let unsupported = copy.hasValue && !ProtoUtils::Supported( copy.value );
 		let notUtf8 = copy.hasValue && !unsupported && !ProtoUtils::Utf8( copy.value );
 		let size = bytes( copy );
-		Pushing pushing;
+		Effects effects;
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( index );
 			if( p==_nodes.end() || _stopped )
 				return false;
-			let first = ( unsupported && !std::exchange(p->second.Unsupported, true) ) || ( notUtf8 && !std::exchange(p->second.NotUtf8, true) );
-			pushing = Push( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt), first}, size );
+			Collect( index, p->second, {move(copy), size, unsupported, notUtf8}, now, effects );
 		}
-		Pushed( pushing );
+		Finish( move(effects) );
 		return true;
 	}
 
-	α Group::Disconnected( TimePoint at )ι->void{
-		ul _{ _mutex };
-		_connected = false;
-		for( auto&& [_,node] : _nodes ){
-			if( !node.Break )//no value since an earlier break, so that one still stands.
-				node.Break = at;
+	α Group::Collect( NodeIndex index, Node& node, Arrival&& arrival, TimePoint now, Effects& effects )ι->void{
+		let& value = arrival.Data;
+		let source = value.hasSourceTimestamp ? optional<UA_DateTime>{ value.sourceTimestamp } : nullopt;
+		let time = PrimaryTime( value );
+		let last = std::exchange( node.Delivered, source );
+		let joined = std::exchange( node.Joined, false );
+		if( let broke = std::exchange(node.Break, nullopt) ){
+			if( source && last && *source==*last ){//nothing was lost.
+				Arm( node, now, effects );
+				return;
+			}
+			//Earlier, the source's clock or state went backwards:  at its own time the value would land before a record
+			//reads have already returned.  A comparison with no SourceTimestamp on either side means nothing, so it is later.
+			let earlier = source && last && *source<*last;
+			Mark( index, node, earlier ? ticks(*broke) : std::min(ticks(*broke), time), value, now, effects );
+			if( earlier ){
+				effects.Warning = Ƒ( "'{}' in group '{}' came back from the break at {} with a value sourced at {}, earlier than the {} it last delivered:  the value is not stored, and the node reads Bad_DataLost until its next change.",
+					node.Id.to_string(), Name(), ToIsoString(*broke), ToIsoString(UADateTime{*source}.Time()), ToIsoString(UADateTime{*last}.Time()) );
+				return;
+			}
+			DropBeats( index, node, time );
+			StoreValue( index, node, move(arrival), now, effects );
+			return;
 		}
+		//Not from its first value after a join or a break, whose SourceTimestamp is when the value last changed, not when
+		//it was sent.
+		if( !joined && source )
+			node.Offset = now-UADateTime{ *source }.Time();
+
+		let min = ticks( node.Config.MinTimeInterval );
+		let within = [&]{ return min>0 && node.ValueTs && time-*node.ValueTs<min; };
+		if( node.Pending && !within() )//by the source's clock its interval ended before this change.
+			Settle( index, node, now, effects );
+		let passes = !node.Stored || Passes( node.Config, *node.Stored, value );
+		if( passes )
+			DropBeats( index, node, time );
+		if( node.Pending ){//replaced, passing or not:  what the interval's end stores is where the value settled.
+			*node.Pending = move( arrival );
+			return;
+		}
+		if( !passes )
+			return;
+		if( !within() ){
+			StoreValue( index, node, move(arrival), now, effects );
+			return;
+		}
+		node.Pending = move( arrival );
+		let left = UATicks{ min-std::clamp<UA_DateTime>(time-*node.ValueTs, 0, min) };
+		_store->Time->Schedule( std::chrono::duration_cast<Duration>(left), [weak=weak_from_this(), index, serial=++node.Serial]{
+			if( auto group = weak.lock() )
+				group->Expire( index, serial );
+		});
+	}
+	α Group::StoreValue( NodeIndex index, Node& node, Arrival&& arrival, TimePoint now, Effects& effects )ι->void{
+		let first = ( arrival.Unsupported && !std::exchange(node.Unsupported, true) ) || ( arrival.NotUtf8 && !std::exchange(node.NotUtf8, true) );
+		let time = PrimaryTime( arrival.Data );
+		node.Stored.emplace( arrival.Data );
+		node.Marked = false;
+		node.ValueTs = time;
+		node.RecordTs = std::max( node.RecordTs, time );
+		node.StoredAt = now;
+		effects += Push( DataValue{index, move(arrival.Data), {}, first}, arrival.Bytes );
+		Arm( node, now, effects );
+	}
+	α Group::Mark( NodeIndex index, Node& node, UA_DateTime at, const UA_DataValue& ended, TimePoint now, Effects& effects )ι->void{
+		auto lost = marker( at, ended );
+		let size = bytes( lost );
+		node.Stored.emplace( (StatusCode)UA_STATUSCODE_BADDATALOST );
+		node.Marked = true;
+		node.RecordTs = std::max( node.RecordTs, at );
+		node.StoredAt = now;
+		effects += Push( DataValue{index, move(lost)}, size );
+	}
+	α Group::Settle( NodeIndex index, Node& node, TimePoint now, Effects& effects )ι->void{
+		auto pending = move( *node.Pending );
+		node.Pending.reset();
+		++node.Serial;//its timer, if that is still to run, finds nothing of its own.
+		if( !node.Stored || Passes(node.Config, *node.Stored, pending.Data) )
+			StoreValue( index, node, move(pending), now, effects );
+		else
+			Arm( node, now, effects );//the heartbeat left it alone while it was pending.
+	}
+	α Group::Expire( NodeIndex index, uint serial )ι->void{
+		let now = _store->Time->Now();
+		Effects effects;
+		{
+			ul _{ _mutex };
+			auto p = _nodes.find( index );
+			if( p==_nodes.end() || !p->second.Pending || p->second.Serial!=serial || _stopped )
+				return;
+			Settle( index, p->second, now, effects );
+		}
+		Finish( move(effects) );
+	}
+	α Group::DropBeats( NodeIndex index, Node& node, UA_DateTime from )ι->void{
+		if( !node.Beat || from>*node.Beat )
+			return;
+		node.Beat.reset();
+		uint freed{}, fresh{};
+		std::erase_if( _values, [&]( const Buffered& b ){
+			let& value = get<DataValue>( b.Item );
+			if( value.Index!=index || !value.Heartbeat )
+				return false;
+			let made = PrimaryTime( value.Data );
+			if( made<from ){
+				node.Beat = std::max( node.Beat.value_or(made), made );
+				return false;
+			}
+			freed += Cost( b );
+			fresh += b.Bytes;
+			return true;
+		});
+		_held -= freed;
+		_fresh -= std::min( _fresh, fresh );
+		_store->Subtract( freed );
+	}
+
+	α Group::Arm( const Node& node, TimePoint now, Effects& effects )ι->void{
+		if( !Beats(node) || !_connected || _stopped || _closed )
+			return;
+		Arm( std::max(node.StoredAt+node.Config.MaxTimeInterval, now), now, effects );
+	}
+	α Group::Arm( TimePoint due, TimePoint now, Effects& effects )ι->void{
+		if( _beat && _beatDue<=due )
+			return;
+		if( _beat )
+			effects.Stale.push_back( _beat );
+		ScheduleBeat( due, now );
+	}
+	α Group::ScheduleBeat( TimePoint due, TimePoint now )ι->void{
+		_beatDue = due;
+		_beat = _store->Time->Schedule( due-now, [weak=weak_from_this(), serial=++_beatSerial]{
+			if( auto group = weak.lock() )
+				group->Beat( serial );
+		});
+	}
+	α Group::Beat( uint serial )ι->void{
+		let now = _store->Time->Now();
+		Effects effects;
+		{
+			ul _{ _mutex };
+			if( serial!=_beatSerial || _stopped || _ended )
+				return;
+			_beat = 0;
+			if( !_connected )//a dead feed stays apart from a flat line:  each node's first value after the break arms it again.
+				return;
+			optional<TimePoint> next;
+			for( auto&& [index,node] : _nodes ){
+				if( !Beats(node) )
+					continue;
+				let max = node.Config.MaxTimeInterval;
+				node.StoredAt = std::min( node.StoredAt, now );//one after now is from before a clock set back:  the wait is never longer.
+				if( node.StoredAt+max<=now ){
+					//In the source's clock, so it never sorts after a change sampled before it, and never earlier than
+					//MaxTimeInterval after the node's last record.
+					Value beat{ *node.Stored };
+					beat.sourceTimestamp = std::max( ticks(now-node.Offset), node.RecordTs+ticks(max) );
+					beat.serverTimestamp = ticks( now );
+					beat.hasSourceTimestamp = beat.hasServerTimestamp = true;
+					beat.sourcePicoseconds = beat.serverPicoseconds = 0;
+					beat.hasSourcePicoseconds = beat.hasServerPicoseconds = false;
+					node.RecordTs = beat.sourceTimestamp;
+					node.StoredAt = now;
+					node.Beat = beat.sourceTimestamp;
+					let size = bytes( beat );
+					effects += Push( DataValue{index, move(beat), node.ValueTs}, size );
+				}
+				let due = node.StoredAt+max;
+				next = next ? std::min( *next, due ) : due;
+			}
+			if( next )
+				ScheduleBeat( *next, now );
+		}
+		Finish( move(effects) );
+	}
+	α Group::Finish( Effects&& effects )ι->void{
+		Pushed( effects.Pushed );
+		for( let id : effects.Stale )
+			_store->Time->Cancel( id );
+		if( !effects.Warning.empty() )
+			_store->Time->Schedule( Duration::zero(), [warning=move(effects.Warning)]{ WARN( "{}", warning ); } );
+	}
+
+	α Group::Disconnected( TimePoint at )ι->void{
+		let now = _store->Time->Now();
+		Effects effects;
+		{
+			ul _{ _mutex };
+			_connected = false;
+			for( auto&& [index,node] : _nodes ){
+				//Delivered before the break, and the first value after it goes to the comparison instead of replacing it.
+				if( node.Pending )
+					Settle( index, node, now, effects );
+				if( !node.Break )//no value since an earlier break, so that one still stands.
+					node.Break = at;
+			}
+		}
+		Finish( move(effects) );
 	}
 	α Group::Connected()ι->void{
-		ul _{ _mutex };
-		_connected = true;
+		let now = _store->Time->Now();
+		Effects effects;
+		{
+			ul _{ _mutex };
+			_connected = true;
+			//A node's first value after the break arms the heartbeat, but not one whose break a value in flight already took.
+			optional<TimePoint> due;
+			for( let& [_,node] : _nodes ){
+				if( Beats(node) )
+					due = std::min( due.value_or(TimePoint::max()), std::max(node.StoredAt+node.Config.MaxTimeInterval, now) );
+			}
+			if( due )
+				Arm( *due, now, effects );
+		}
+		Finish( move(effects) );
 	}
 	α Group::IsConnected()Ι->bool{
 		ul _{ _mutex };
@@ -283,17 +538,22 @@ namespace Jde::Opc::Hist{
 		let now = _store->Time->Now();
 		let size = bytes( by );
 		bool over{}, trim;
+		Effects effects;
 		{
 			ul _{ _mutex };
 			for( auto&& [index,node] : _nodes ){
+				if( node.Pending )
+					Settle( index, node, now, effects );
 				_gone.insert_or_assign( index, move(node.Id) );
 				over = Hold( NodeRemoved{index, now, by}, size ) || over;
 			}
 			_nodes.clear();
 			_indexes.clear();
 			_closed = true;
-			trim = over && _failing;//the flush asked for here takes the rest, if it can write.
+			trim = ( over || effects.Pushed.Trim ) && _failing;//the flush asked for here takes the rest, if it can write.
 		}
+		for( let id : effects.Stale )
+			_store->Time->Cancel( id );
 		Pushed( {.Flush=true, .Trim=trim} );
 	}
 
@@ -318,14 +578,11 @@ namespace Jde::Opc::Hist{
 				lost.Newest = move( dropped );
 				continue;
 			}
-			//The break a dropped value carried goes to the one written back, for the flush to judge.
 			auto& newest = get<DataValue>( lost.Newest->Item );
-			let broke = newest.Break && value.Break ? std::min( *newest.Break, *value.Break ) : newest.Break ? newest.Break : value.Break;
 			let replace = PrimaryTime( value.Data )>=PrimaryTime( newest.Data );
 			Unflag( replace ? newest : value );//the one not written back.
 			if( replace )
 				lost.Newest = move( dropped );
-			get<DataValue>( lost.Newest->Item ).Break = broke;
 		}
 		_held -= freed;
 		_store->Subtract( freed );
@@ -359,15 +616,29 @@ namespace Jde::Opc::Hist{
 		}
 		_lost.clear();
 	}
-	α Group::Take()ι->vector<Buffered>{
+	α Group::Take( TimePoint taken )ι->vector<Buffered>{
 		vector<Buffered> y;
 		y.reserve( 2*_lost.size()+_changes.size()+_values.size() );
 		MarkLost( y );
-		_store->Subtract( std::exchange(_held, 0) );
-		std::ranges::merge( _changes | std::views::as_rvalue, _values | std::views::as_rvalue, std::back_inserter(y), {}, &Buffered::Sequence, &Buffered::Sequence );
+		auto kept = _values.end();
+		if( let interval = _config.PublishingInterval; interval>Duration::zero() && !_stopped && !_closed ){
+			let now = ticks( taken ), from = ticks( taken-interval );
+			kept = std::stable_partition( _values.begin(), _values.end(), [=]( const Buffered& b ){
+				let& value = get<DataValue>( b.Item );
+				let made = value.Data.serverTimestamp;
+				return !value.Heartbeat || made<=from || made>now;//one after now is from before a clock set back, so it waits no longer.
+			});
+		}
+		uint held{}, fresh{};
+		for( auto p = kept; p!=_values.end(); ++p ){
+			held += Cost( *p );
+			fresh += p->Bytes;
+		}
+		_store->Subtract( std::exchange(_held, held)-held );
+		std::ranges::merge( _changes | std::views::as_rvalue, std::ranges::subrange{_values.begin(), kept} | std::views::as_rvalue, std::back_inserter(y), {}, &Buffered::Sequence, &Buffered::Sequence );
 		_changes.clear();
-		_values.clear();
-		_fresh = 0;
+		_values.erase( _values.begin(), kept );
+		_fresh = fresh;
 		_requested = false;
 		return y;
 	}
@@ -413,7 +684,7 @@ namespace Jde::Opc::Hist{
 		return true;
 	}
 	α Group::Cancel( Timers timers )ι->void{
-		for( let id : {timers.Delay, timers.Midnight} ){
+		for( let id : {timers.Delay, timers.Midnight, timers.Beat} ){
 			if( id )
 				_store->Time->Cancel( id );
 		}
