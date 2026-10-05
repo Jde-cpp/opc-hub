@@ -6,6 +6,8 @@ ENABLE_WARNINGS
 
 namespace Jde::Opc::Hist{
 	using Ticks = UA_DateTime;//a record's time:  100 ns since 1601.
+	Ξ ticks( Duration d )ι->Ticks{ return std::chrono::duration_cast<UATick>( d ).count(); }//a span in them.
+	Ξ ticks( TimePoint t )ι->Ticks{ return UADateTime{ t }.UA(); }//a time in them.
 
 	//A record's times are absolute in memory and deltas on disk (Hist.Records.proto).  ToDisk makes r's primary time a
 	//delta from last and its other times deltas from its primary, then moves last on to its primary; ToMemory undoes it.
@@ -24,8 +26,7 @@ namespace Jde::Opc::Hist{
 	α PrimaryTime( const UA_DataValue& v )ι->Ticks;//Enqueue stamps a server time on one that came with neither.
 	α PrimaryTime( const Record& r )ι->Ticks;
 
-	//What a group buffered, as the file holds it, with absolute times.  A DataValue's break is not carried:  judging it
-	//is the flush's.
+	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
 	//A value with no file form, a DataValue or a DiagnosticInfo from a node typed BaseDataType, is stored without it, as
 	//BadNotSupported, which ToProto( Record ) warns of once per node.  One with text that isn't UTF-8, which protobuf

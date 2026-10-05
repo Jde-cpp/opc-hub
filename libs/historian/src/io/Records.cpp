@@ -225,7 +225,11 @@ namespace Jde::Opc{
 		}
 		else{
 			let& value = get<DataValue>( r );
-			let& stored = *y.mutable_value() = ToProto( value.Data, value.Index );
+			auto& stored = *y.mutable_value() = ToProto( value.Data, value.Index );
+			if( value.Heartbeat )
+				stored.set_heartbeat( *value.Heartbeat );
+			if( value.Unsourced )
+				stored.set_heartbeat_unsourced( true );
 			if( value.Unsupported ){
 				let notUtf8 = stored.status()==UA_STATUSCODE_BADENCODINGERROR;
 				WARN( "node_index {}'s '{}' value {}, so it and later ones like it are stored without it, as {}.", value.Index, value.Data.value.type->typeName,

@@ -522,8 +522,10 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 3 );
 		EXPECT_TRUE( Flush(*Server) );
 		let today = readFile( File(March9) );
-		ASSERT_EQ( today.size(), 3 );
+		ASSERT_EQ( today.size(), 4 );
 		EXPECT_EQ( today[1].node_added().start().value().double_value(), 2 );
+		EXPECT_EQ( today[2].value().status(), UA_STATUSCODE_BADDATALOST );//the stop's marker.
+		EXPECT_EQ( today[3].value().value().double_value(), 3 );
 		EXPECT_EQ( generation(file), 1 );
 	}
 

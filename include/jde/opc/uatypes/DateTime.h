@@ -1,6 +1,7 @@
 #pragma once
 
 namespace Jde::Opc{
+	using UATick = std::chrono::duration<UA_Int64,std::ratio<1,10'000'000>>;//UA_DateTime's own unit: 100ns ticks since 1601.
 	struct UADateTime{
 		UADateTime( const UA_DateTime& dt )ι;
 		UADateTime( TimePoint time )ι:_time{time}{}

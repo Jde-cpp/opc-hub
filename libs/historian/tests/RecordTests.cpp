@@ -21,7 +21,6 @@ namespace Jde::Opc::Hist::Tests{
 
 	namespace{
 		const Ticks Day = UADateTime{ sys_days{2026y/March/7} }.UA();
-		Ξ ticks( Duration d )ι->Ticks{ return duration_cast<duration<Ticks,std::ratio<1,10'000'000>>>( d ).count(); }
 		Ξ at( Duration d )ι->Ticks{ return Day+ticks( d ); }
 
 		Ω fileStart( uint32_t generation=0 )ι->HistoryRecord{

@@ -87,11 +87,12 @@ namespace Jde::Opc::Hist::Tests{
 	//Each row id is the node's index, so a node that left and rejoined while the gateway was down comes back under its
 	//new row, and a row deleted meanwhile is removed.
 	TEST_F( GatewayHost, Restart ){
-		Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 102}, {Node("Pump1.Level"), {}, 103}} );
+		Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 102}, {Node("Pump1.Level"), {}, 103}, {Node("Pump1.Power"), {}, 104}} );
+		DataChange( *Library->FindGroup("pump1"), 101, 1750, Time->Now() );
 		let stopped = Time->Now();
 		Restart();
 		Time->Advance( 1h );
-		auto group = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 105}, {Node("Pump1.Temp"), {}, 106}} );
+		auto group = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Power"), {}, 104}, {Node("Pump1.Flow"), {}, 105}, {Node("Pump1.Temp"), {}, 106}} );
 		EXPECT_EQ( group->Find(Node("Pump1.Flow")), 105 );
 		flat_set<NodeIndex> removed, added;
 		for( let& r : Records<NodeRemoved>() )
@@ -102,6 +103,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( added, (flat_set<NodeIndex>{105, 106}) );
 		EXPECT_TRUE( std::holds_alternative<NodeRemoved>(group->Buffer().front()) );//a rejoin leaves before it joins.
 		EXPECT_EQ( group->FindBreak(101), stopped );//the stop, which the group's last flush gives.
+		EXPECT_FALSE( group->FindBreak(104) );//the files hold no value of it to lose.
 		EXPECT_FALSE( group->FindBreak(105) );
 
 		Restart();
@@ -183,8 +185,8 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( values[0].Data.serverTimestamp, ticks(source+5ms) );
 	}
 
-	//A connection breaks for every group on it; the gateway calls each.  A node's break is the first one until a value
-	//arrives, however many callbacks come before, and that value carries it.
+	//A connection breaks for every group on it; the gateway calls each.  A node's break is the first one until its first
+	//value after the connection returns, however many callbacks come before, and that value is judged against it.
 	TEST_F( GatewayHost, Break ){
 		auto pump1 = AddGroup();
 		auto pump2 = AddGroup();
@@ -208,9 +210,11 @@ namespace Jde::Opc::Hist::Tests{
 		DataChange( *pump1, speed, 1750, Time->Now() );
 		DataChange( *pump1, speed, 1760, Time->Now() );
 		let values = Records<DataValue>();
-		ASSERT_EQ( values.size(), 2 );
-		EXPECT_EQ( values[0].Break, broke );
-		EXPECT_FALSE( values[1].Break );
+		ASSERT_EQ( values.size(), 3 );
+		EXPECT_EQ( values[0].Data.status, UA_STATUSCODE_BADDATALOST );//nothing to compare the first with, so it is taken as later.
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( values[1].Data.Get<double>(0), 1750 );
+		EXPECT_EQ( values[2].Data.Get<double>(0), 1760 );
 		EXPECT_FALSE( pump1->FindBreak(speed) );
 		EXPECT_EQ( pump1->FindBreak(flow), broke );//no value yet.
 
@@ -220,10 +224,12 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( pump1->FindBreak(speed), again );
 		EXPECT_EQ( pump1->FindBreak(flow), broke );
 
-		DataChange( *pump1, speed, 1770, Time->Now() );//one already in flight when the callback came.
+		DataChange( *pump1, speed, 1770, Time->Now() );//one already in flight when the callback came:  sent before the break.
+		EXPECT_EQ( pump1->FindBreak(speed), again );
+		EXPECT_EQ( Records<DataValue>().size(), 4 );
 		Time->Advance( 1min );
 		pump1->Disconnected( Time->Now() );
-		EXPECT_EQ( pump1->FindBreak(speed), Time->Now() );
+		EXPECT_EQ( pump1->FindBreak(speed), again );
 	}
 
 	//A rejoin is a break at the removal time, or at the break the node left with, and its first value is judged against
@@ -240,8 +246,10 @@ namespace Jde::Opc::Hist::Tests{
 		DataChange( *group, rejoined, 1750, Time->Now() );
 		EXPECT_FALSE( group->FindBreak(rejoined) );
 		let values = Records<DataValue>();
-		ASSERT_EQ( values.size(), 1 );
-		EXPECT_EQ( values[0].Break, removed );
+		ASSERT_EQ( values.size(), 2 );
+		EXPECT_EQ( values[0].Data.status, UA_STATUSCODE_BADDATALOST );
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(removed) );
+		EXPECT_EQ( values[1].Data.Get<double>(0), 1750 );
 
 		let broke = Time->Now();
 		group->Disconnected( broke );

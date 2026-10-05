@@ -119,10 +119,16 @@ namespace Jde::Opc::Hist{
 	α Group::Stopping()ι->void{
 		Timers timers;
 		bool start{};
+		let now = _store->Time->Now();
+		Effects effects;
 		{
 			ul _{ _mutex };
 			_stopped = true;
 			timers = Disarm();
+			for( auto&& [index,node] : _nodes ){//the stop is a break, so each pending value is stored as at its interval's end.
+				if( node.Pending )
+					Settle( index, node, now, effects );
+			}
 			if( running() ){//marked here, so Stopped waits for it however late the executor starts it.
 				if( _flushing )
 					_again = true;
@@ -131,6 +137,8 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		Cancel( timers );
+		effects.Pushed.Flush = false;//the last flush, started here, takes what the settles stored.
+		Finish( move(effects) );
 		if( start )//on the executor, so every group's runs at once, and a write that never returns holds none of this thread.
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}
@@ -201,7 +209,7 @@ namespace Jde::Opc::Hist{
 				_again = false;
 				taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
 				over = _store->Buffered()>_store->Config.MaxBuffer;
-				batch = Take();
+				batch = Take( taken );
 				members.NextIndex = Issued() ? _nextIndex : 0;
 				stopping = _stopped;
 				closed = _closed;
