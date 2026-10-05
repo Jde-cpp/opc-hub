@@ -7,7 +7,6 @@
 #include "Merge.h"
 
 namespace Jde::Opc::Hist{
-	using Day = std::chrono::year_month_day;
 	//The day a record with primary time t is filed under.  A time outside 1601 through 9999, which UA has no date for,
 	//takes the nearest day inside.
 	α DayOf( Ticks t, const std::chrono::time_zone& tz )ι->Day;
@@ -43,7 +42,7 @@ namespace Jde::Opc::Hist{
 	};
 
 	//A day's file as the process knows it:  from its first-open scan, and from its own appends since.  A live file's, or
-	//one the historian leaves alone:  an archive's is dropped once it is read, since each rewrite reads it again.
+	//one the historian leaves alone:  an archive's only while its day is merged into, so each merge needn't scan it.
 	struct DayFile final{
 		fs::path Path;
 		uint32_t Generation{};//past 0, an archive, with no runs:  Size is all of it.
@@ -54,7 +53,9 @@ namespace Jde::Opc::Hist{
 		optional<Scanned> Unopened;//its scan, until the first append drops a torn tail by it.
 		bool Named{};//this process made it, or has fsynced its name into its directory:  one that crashed may have made it and not.
 		string Refused;//why the historian won't write to it; empty when it will.
-		optional<Stamp> Scanned;//as its first-open scan began:  a refused file changed since, repaired perhaps, is scanned again.
+		//As its first-open scan began, or its rewrite left it:  a refused file or an archive changed since, repaired perhaps,
+		//is scanned again.
+		optional<Stamp> Scanned;
 		uint Discarded{};//the appends refused so far.
 		//The append Prepare handed out and Commit hasn't taken, which may have failed part-way:  the Size it went at, and the
 		//farthest it could have written.  The bytes past that Size, up to End, are its own, which the next append cuts.
@@ -101,6 +102,7 @@ namespace Jde::Opc::Hist{
 		//Writes the part.  The first makes the temp file, or cuts one a crash left, and the last fsyncs it.
 		α Write( SRCE )ι->IO::WriteAwait;
 		α Unreadable()Ι->bool;//the file no longer reads as its scan did.
+		α Archive()ι->DayFile;//what is known of the archive once Commit has renamed it, which no scan then needs to tell.
 	private:
 		up<State> _state;
 	};
@@ -115,8 +117,8 @@ namespace Jde::Opc::Hist{
 		//Reads the group's .flushed file, its newest day file for TakeRestored(), and every day file down to the first that isn't
 		//after the present, today or its last flush's day when a clock set back makes that later, for each node's last
 		//stored value.  Throws when one of them can't be read through.  From there the walk goes on down to the day
-		//before the last flush's, for the live files a midnight left behind (Due), and removes each temp file it passes,
-		//which a rewrite that a crash cut short left.
+		//.flushed names, for the live files a midnight left behind (Due), and removes each temp file it passes, which a
+		//rewrite that a crash cut short left.  A file there it can't tell about is said, and taken as live for its rewrite.
 		GroupFiles( fs::path root, string name, const std::chrono::time_zone& tz, Duration delay, Day today, SRCE )ε;
 		α TakeRestored()ι->Restored{ return move( _restored ); }//once, for the group's start:  nothing keeps it after.
 		//How a flush at now writes records to day's file:  sorted by primary time, with their times absolute.
@@ -139,9 +141,12 @@ namespace Jde::Opc::Hist{
 		//first, and throws when it can't, with the run still to be written again.
 		α Commit( Pending&& run, SRCE )ε->void;
 		//Once the rewrite's last Write has returned:  renames its temp file over the day's, and fsyncs the directory.
-		//Throws when the rename fails, with the day's file as it was.  False when only the fsync failed:  the archive is
-		//in place, its records with it, and whether the rename survives a power loss isn't known.
-		α Commit( Rewrite&& rewrite, TimePoint now, SRCE )ε->bool;
+		//Throws when the rename fails, with the day's file as it was.  When only the fsync fails the archive is in place,
+		//its records with it, and SyncRenamed tries the fsync again.
+		α Commit( Rewrite&& rewrite, TimePoint now, SRCE )ε->void;
+		//fsyncs the directory of each archive whose Commit couldn't, so a power loss can't take back its rename:  false
+		//while one still can't, which .flushed waits on, since it would claim the archive's records.
+		α SyncRenamed( SRCE )ι->bool;
 		//A rewrite that failed:  its temp file goes, and what is known of a file that no longer reads as it was scanned,
 		//so the next write scans it again.
 		α Abandon( const Rewrite& rewrite )ι->void;
@@ -149,6 +154,12 @@ namespace Jde::Opc::Hist{
 		//the process knows whose day ended `delay` ago, and each the start found.
 		α Due( TimePoint now )ι->vector<Day>;
 		α Recovers()Ι->bool{ return !_recover.empty(); }//the start found live files that a midnight left behind.
+		//A removed group's:  each live file is due at once, and each write after is a rewrite, so none is left live.
+		α Retire()ι->void;
+		α Archived()Ι->bool{ return _unarchived.empty(); }//no file it knows of is live.
+		//The day a start after a flush at flushed walks down to for live files:  the day before flushed's, whose midnight
+		//rewrite may yet be cut short, or an older one whose file is still live, its rewrite failing.
+		α RecoverFrom( TimePoint flushed )Ι->Day;
 		//Whether day's file was rewritten less than `delay` before now:  the clock's flushes then hold its records, so an
 		//archive is rewritten at most once per `delay` however often late records arrive.
 		α Deferred( Day day, TimePoint now )Ι->bool;
@@ -179,9 +190,17 @@ namespace Jde::Opc::Hist{
 		const Duration _delay;
 		Flushed _flushed;
 		Restored _restored;
-		std::map<Day,DayFile> _files;//a rewrite drops a day's entry:  an archive's is read again by the next.
-		flat_set<Day> _recover;//each day before today the start found a live file for, until it is rewritten.
-		flat_map<Day,TimePoint> _rewritten;//when each archive was last rewritten, for `delay` after.
+		std::map<Day,DayFile> _files;//an archive's only while _rewritten holds its day:  one merged into later is scanned again.
+		//Each day whose live file is due at once, not at its midnight, until it is rewritten:  each before today the start
+		//found, and each of a removed group's.
+		flat_set<Day> _recover;
+		bool _retired{};
+		flat_set<Day> _unarchived;//each day known to hold a live file, _recover's among them, until it is rewritten.
+		//When each archive was last rewritten, for two `delay`s:  the first holds the clock's merges into it, and through the
+		//second, when the next comes, its entry in _files stays.  One after now, which a clock set back since leaves, has
+		//expired, so neither lasts longer than it should.
+		flat_map<Day,TimePoint> _rewritten;
+		flat_set<Day> _unsynced;//each day whose archive's rename its directory's fsync hasn't yet made durable.
 		flat_set<Day> _days;//each day known to hold a file:  from the newest back to the first that isn't after the present at start, and each made since.
 		Day _present;//the latest of the host clock's day and its last flush's:  a clock set back doesn't move it.
 		//Each node's newest stored value, a heartbeat or a marker included, which a new file's preamble takes as its start

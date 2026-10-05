@@ -96,10 +96,7 @@ namespace Jde::Opc::Hist{
 	}
 	Group::~Group(){
 		_store->Unregister( *this );
-		if( _timer )
-			_store->Time->Cancel( _timer );
-		if( _midnight )
-			_store->Time->Cancel( _midnight );
+		Cancel( {_timer, _midnight} );
 		_store->Subtract( _held );
 	}
 
@@ -130,6 +127,8 @@ namespace Jde::Opc::Hist{
 	}
 
 	α Group::Hold( Record&& record, uint32_t bytes )ι->bool{
+		if( _deferred && !_deferredDays.contains(DayOf(PrimaryTime(record), *_store->Config.TimeZone)) )
+			_deferred = false;
 		let isValue = std::holds_alternative<DataValue>( record );
 		Buffered buffered{ move(record), _store->Sequence(), bytes };
 		let cost = Cost( buffered );
@@ -399,22 +398,24 @@ namespace Jde::Opc::Hist{
 		return _store->Add( cost );
 	}
 	α Group::Written()Ι->bool{
-		return _closed && _changes.empty() && _values.empty() && _lost.empty();
+		return _closed && _archived && _changes.empty() && _values.empty() && _lost.empty();
 	}
 	α Group::EndIfWritten()ι->bool{
-		IClock::TimerId timer, midnight;
+		Timers timers;
 		{
 			ul _{ _mutex };
 			if( !Written() || _flushing )
 				return false;
 			_ended = true;
-			timer = std::exchange( _timer, 0 );
-			midnight = std::exchange( _midnight, 0 );
+			timers = Disarm();
 		}
-		if( timer )
-			_store->Time->Cancel( timer );
-		if( midnight )
-			_store->Time->Cancel( midnight );
+		Cancel( timers );
 		return true;
+	}
+	α Group::Cancel( Timers timers )ι->void{
+		for( let id : {timers.Delay, timers.Midnight} ){
+			if( id )
+				_store->Time->Cancel( id );
+		}
 	}
 }

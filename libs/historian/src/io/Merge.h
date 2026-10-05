@@ -11,7 +11,7 @@ namespace Jde::Opc::Hist{
 		//late is in order too.  Throws when file, which runs are of, can't be opened.
 		Merge( fs::path file, vector<Run> runs, vector<Proto::HistoryRecord> late, SRCE )ε;
 		~Merge();
-		//False at the end.  Throws when a run can't be read through.
+		//False at the end, where the file is closed.  Throws when a run can't be read through.
 		α Next( Proto::HistoryRecord& r )ε->bool;
 		α Unreadable()Ι->bool{ return _unreadable; }//a run its scan kept no longer reads as it did:  the file changed.
 	private:

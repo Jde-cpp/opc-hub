@@ -250,6 +250,78 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( group->Flushed(), Time->Now() );
 	}
 
+	//A clock set back after an archive's rewrite doesn't stretch its hold past `delay`:  a rewrite stamped after now has
+	//expired, so the flush at 8 KB merges the late record at once.
+	TEST_F( GatewayFiles, ClockSetBackEndsTheHold ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let late = sys_days{March6}+12h;
+		DataChange( *group, speed, 1, late );
+		EXPECT_TRUE( Flush(*group) );
+		let file = File( *group, March6 );
+		let pending = Time->Pending();
+
+		Time->Step( -1h );
+		DataChange( *group, speed, 2, late+1s );
+		for( uint i=0; Time->Pending()==pending; ++i )//to the flush at 8 KB.
+			DataChange( *group, speed, i, Time->Now()+i*1ms );
+		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
+		EXPECT_TRUE( group->Buffer().empty() );
+		EXPECT_EQ( archived(file, 2, March6).size(), 3 );
+	}
+
+	//A flush that only held an archive's records holds back no other day's:  the first record for one lets the flush at
+	//8 KB run again, which writes it and holds the archive's once more.
+	TEST_F( GatewayFiles, DeferredArchiveHoldsOnlyItsOwn ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let late = sys_days{March6}+12h;
+		DataChange( *group, speed, 1, late );
+		EXPECT_TRUE( Flush(*group) );
+		let file = File( *group, March6 );
+		ASSERT_EQ( generation(file), 1 );
+		let pending = Time->Pending();
+
+		Time->Advance( 10s );
+		uint held{};
+		for( ; Time->Pending()==pending; ++held )//to the flush at 8 KB, all for the archive just rewritten.
+			DataChange( *group, speed, held, late+1s+held*1ms );
+		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
+		EXPECT_EQ( group->Buffer().size(), held );
+		EXPECT_EQ( generation(file), 1 );
+
+		uint count{};
+		for( ; Time->Pending()==pending && count<10'000; ++count )//to the flush at 8 KB, for today.
+			DataChange( *group, speed, count, Time->Now()+count*1ms );
+		ASSERT_EQ( Time->Pending(), pending+1 );
+		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
+		EXPECT_EQ( group->Buffer().size(), held );
+		EXPECT_EQ( generation(file), 1 );
+		EXPECT_EQ( std::ranges::count_if(readFile(File(*group, March7)), &HistoryRecord::has_value), count );
+	}
+
+	//A merge into an archive that the last one wrote takes what that one knew of it, rather than scanning it again:  its
+	//size, and the nodes it maps, so a node it maps gets no second NodeAdded.
+	TEST_F( GatewayFiles, MergeKeepsWhatItWrote ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let late = sys_days{March6}+12h;
+		DataChange( *group, speed, 1, late );
+		EXPECT_TRUE( Flush(*group) );
+		let file = File( *group, March6 );
+		let flow = Join( *group, "Pump1.Flow" );
+		for( uint i=0; i<2; ++i ){
+			DataChange( *group, flow, i, late+(i+1)*1s );
+			EXPECT_TRUE( Flush(*group) );
+		}
+		let records = archived( file, 3, March6 );
+		EXPECT_EQ( std::ranges::count_if(records, &HistoryRecord::has_value), 3 );
+		EXPECT_EQ( std::ranges::count_if(records, [flow]( let& r ){ return r.has_node_added() && r.node_added().node_index()==flow; }), 1 );
+	}
+
 	//Unless the buffers are past maxBuffer:  a group that can write is flushed rather than trimmed, its archives' records
 	//with the rest.
 	TEST_F( GatewayFiles, FullBuffersMergeAtOnce ){
@@ -298,6 +370,123 @@ namespace Jde::Opc::Hist::Tests{
 			ASSERT_EQ( value.source_ts(), ticks(start+k*1ms) );
 			ASSERT_EQ( (uint)value.value().double_value()*step%count, k );
 		}
+	}
+
+	//A merge closes the file at its end, while its Rewrite still holds it, so the rewrite's temp file can be renamed over
+	//it:  Windows opened it without FILE_SHARE_DELETE.
+	TEST_F( GatewayFiles, MergeClosesItsFileAtItsEnd ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let start = Time->Now();
+		for( uint i=0; i<2; ++i ){
+			DataChange( *group, speed, i, start+i*1s );
+			EXPECT_TRUE( Flush(*group) );
+		}
+		let file = Path()/"merged.binpb";
+		fs::copy_file( File(*group, March7), file );
+		Merge merge{ file, Scan(file).Runs, {} };
+		HistoryRecord r;
+		uint values{};
+		while( merge.Next(r) )
+			values += r.has_value();
+		EXPECT_EQ( values, 2 );
+#ifndef _WIN32
+		for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
+			std::error_code ec;
+			EXPECT_NE( fs::read_symlink(fd.path(), ec), file );
+		}
+#endif
+		let temp = Path()/"merged.tmp";
+		save( temp, "rewritten" );
+		std::error_code ec;
+		fs::rename( temp, file, ec );
+		EXPECT_FALSE( ec ) << ec.message();
+	}
+
+	//A node removed and re-added with no writer, both copied to the start of a later day's file, stays a member in that
+	//day's archive:  the re-add isn't folded into the preamble record before its NodeRemoved as a corrected start value.
+	TEST_F( GatewayFiles, ReAddSurvivesTheRewrite ){
+		auto group = AddGroup();
+		let name = group->Name();
+		let speed = Join( *group, "Pump1.Speed" );
+		DataChange( *group, speed, 1, Time->Now()+days{1} );//a source clock a day ahead, which makes tomorrow's file.
+		EXPECT_TRUE( Flush(*group) );
+		group->Remove( speed );
+		group->Add( {Node("Pump1.Speed"), {}, speed} );
+		EXPECT_TRUE( Flush(*group) );
+		Time->AdvanceTo( sys_days{March9}+1min );//both midnights' rewrites.
+		Settle( *group );
+
+		let records = archived( File(*group, March8), 1, March8 );
+		let added = std::ranges::count_if( records, [speed]( let& r ){ return r.has_node_added() && r.node_added().node_index()==speed; } );
+		EXPECT_EQ( added, 2 );
+		Restart();
+		let again = Rejoin( name, {{Node("Pump1.Speed"), {}, speed}} );
+		EXPECT_EQ( again->Find(Node("Pump1.Speed")), speed );
+		EXPECT_TRUE( Records<NodeAdded>().empty() );//restored a member, not added again.
+	}
+
+	//A start that can't tell about an older day's file, below the newest, starts all the same:  the day is taken as live,
+	//and its rewrite tries again until it can read the file.
+	TEST_F( ServerFiles, StartPassesAnUnreadableOlderDay ){
+		let speed = Historize( "Pump1.Speed" );
+		SetValue( speed, 1 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March8}+30s );//inside yesterday's `delay`, so its file is still live.
+		Settle( *Server );
+		SetValue( speed, 2 );
+		EXPECT_TRUE( Flush(*Server) );
+		let file = File( March7 );
+		let dir = file.parent_path();
+		fs::permissions( dir, fs::perms::none, fs::perm_options::replace );
+		std::error_code ec;
+		if( fs::exists(file, ec) || !ec ){
+			fs::permissions( dir, fs::perms::owner_all, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can stat a file in a directory it can't search.";
+		}
+
+		EXPECT_NO_THROW( Start({{Node("Pump1.Speed")}}) );
+		EXPECT_EQ( Time->Advance(0s), 1 );//the rewrite, which still can't read it.
+		Settle( *Server );
+		fs::permissions( dir, fs::perms::owner_all, fs::perm_options::replace );
+		EXPECT_EQ( generation(file), 0 );
+		Time->Advance( 1min );
+		Settle( *Server );
+		EXPECT_EQ( archived(file, 1, March7).size(), 3 );
+	}
+
+	//A removed group's live files, today's included, are rewritten as their archives by the flush that writes the removal:
+	//no midnight comes for a group that is gone, and no start adds it again.  One whose rewrite fails holds the group until
+	//`delay` writes it.
+	TEST_F( GatewayFiles, RemovalArchivesTheGroup ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_TRUE( Flush(*group) );
+		Time->AdvanceTo( sys_days{March8}+30s );//inside yesterday's `delay`, so its file is still live.
+		Settle( *group );
+		DataChange( *group, speed, 2, Time->Now() );
+		EXPECT_TRUE( Flush(*group) );
+		let yesterday = File( *group, March7 ), today = File( *group, March8 );
+		ASSERT_EQ( generation(yesterday), 0 );
+		ASSERT_EQ( generation(today), 0 );
+		fs::create_directories( temp(today) );//where its rewrite's temp file goes, which no Abandon removes once it isn't empty.
+		save( temp(today)/"in the way", "" );
+
+		Library->RemoveGroup( group->Name() );
+		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *group );
+		EXPECT_EQ( std::ranges::count_if(archived(yesterday, 1, March7), &HistoryRecord::has_value), 1 );
+		EXPECT_EQ( generation(today), 0 );
+		EXPECT_GT( Time->Pending(), 0 );
+
+		fs::remove_all( temp(today) );
+		Time->Advance( 2min );//yesterday's midnight timer, a no-op now, then `delay`'s.
+		Settle( *group );
+		let records = archived( today, 1, March8 );
+		EXPECT_EQ( std::ranges::count_if(records, &HistoryRecord::has_value), 1 );
+		EXPECT_TRUE( !records.empty() && records.back().has_node_removed() );
+		EXPECT_EQ( Time->Pending(), 0 );
 	}
 
 	//A start removes the temp file of a rewrite that a crash cut short, and rewrites each file still live from the day
@@ -462,7 +651,7 @@ namespace Jde::Opc::Hist::Tests{
 	}
 
 	//A rewrite that can't make its temp file leaves the day as it was, and its records in the buffer for `delay` to
-	//try again.
+	//try again.  What is in the way is left there:  only a temp file a rewrite made is removed.
 	TEST_F( GatewayFiles, FailedRewriteIsRetried ){
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
@@ -474,13 +663,80 @@ namespace Jde::Opc::Hist::Tests{
 		fs::create_directories( temp(file) );//where the temp file goes.
 
 		DataChange( *group, speed, 2, late+1s );
-		EXPECT_FALSE( Flush(*group) );
-		EXPECT_EQ( group->Buffer().size(), 1 );
-		EXPECT_EQ( contents(file), before );
+		for( uint i=0; i<2; ++i ){
+			SCOPED_TRACE( Ƒ("attempt {}", i) );
+			EXPECT_FALSE( Flush(*group) );
+			EXPECT_EQ( group->Buffer().size(), 1 );
+			EXPECT_EQ( contents(file), before );
+			EXPECT_TRUE( fs::is_directory(temp(file)) );
+		}
 		fs::remove( temp(file) );
 		EXPECT_EQ( Time->Advance(1min), 1 );
 		Settle( *group );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( archived(file, 2, March6).size(), 3 );
+	}
+
+	//A midnight rewrite that keeps failing is found by a start however far the flushes have moved on since:  .flushed
+	//names the oldest day whose file is still live, here below a later day's archive.
+	TEST_F( ServerFiles, StartRewritesAFailingMidnight ){
+		let speed = Historize( "Pump1.Speed" );
+		SetValue( speed, 1 );
+		EXPECT_TRUE( Flush(*Server) );
+		let file = File( March7 );
+		fs::create_directories( temp(file) );//where the rewrite's temp file goes, which no Abandon removes once it isn't empty.
+		save( temp(file)/"in the way", "" );
+		for( let day : {March8, March9} ){
+			Time->AdvanceTo( sys_days{day}+1h );
+			Settle( *Server );
+			SetValue( speed, 2 );
+			EXPECT_TRUE( Flush(*Server) );
+		}
+		EXPECT_EQ( generation(file), 0 );
+		EXPECT_EQ( generation(File(March8)), 1 );
+
+		fs::remove_all( temp(file) );//the space freed, and the process started again.
+		Start( {{Node("Pump1.Speed")}} );
+		EXPECT_EQ( Time->Advance(0s), 1 );
+		Settle( *Server );
+		EXPECT_EQ( archived(file, 1, March7).size(), 3 );
+	}
+
+	//A rewrite's rename whose directory can't be fsynced holds .flushed back, through the flushes after it too, until a
+	//flush's fsync succeeds:  here a midnight rewrite, which has no records of its own.
+	TEST_F( GatewayFiles, UnsyncedRenameHoldsFlushed ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let start = Time->Now();
+		constexpr uint count{ 60'000 };//past a part, so only the rename's fsync opens the directory, not the temp file's writes.
+		for( uint i=0; i<count; ++i ){
+			DataChange( *group, speed, i, start+i*1ms );
+			if( i%10'000==9'999 )
+				EXPECT_TRUE( Flush(*group) );
+		}
+		let flushed = group->Flushed();
+		let file = File( *group, March7 );
+		let dir = file.parent_path();
+		fs::permissions( dir, fs::perms::owner_read, fs::perm_options::remove );//so the fsync's open fails.
+		std::error_code ec;
+		(void)fs::directory_iterator{ dir, ec };//the open the fsync makes.
+		if( !ec ){
+			fs::permissions( dir, fs::perms::owner_read, fs::perm_options::add );
+			GTEST_SKIP() << "This user opens a directory it can't read.";
+		}
+		Time->AdvanceTo( sys_days{March8}+1min );
+		Settle( *group );
+		EXPECT_EQ( generation(file), 1 );
+		EXPECT_EQ( group->Flushed(), flushed );
+
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_FALSE( Flush(*group) );
+		EXPECT_EQ( std::ranges::count_if(readFile(File(*group, March8)), &HistoryRecord::has_value), 1 );
+		EXPECT_EQ( group->Flushed(), flushed );
+
+		fs::permissions( dir, fs::perms::owner_read, fs::perm_options::add );
+		Time->Advance( 1s );
+		EXPECT_TRUE( Flush(*group) );
+		EXPECT_EQ( group->Flushed(), Time->Now() );
 	}
 }

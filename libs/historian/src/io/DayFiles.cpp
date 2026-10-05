@@ -17,6 +17,12 @@ namespace Jde::Opc::Hist{
 		constexpr int64_t EpochSeconds{ UA_DATETIME_UNIX_EPOCH/PerSecond };//1601 to 1970.
 		constexpr Ticks Latest{ (sys_days{year{9999}/December/31}.time_since_epoch()/1s+86'399+EpochSeconds)*PerSecond };
 
+		//A rewrite's temp file, but nothing else at its path:  a directory or a link there isn't one a rewrite left, and
+		//stays, for the rewrite's open to fail on and say.
+		Ω removeTemp( const fs::path& temp )ι->bool{
+			std::error_code ec;
+			return fs::symlink_status( temp, ec ).type()==fs::file_type::regular && fs::remove( temp, ec );
+		}
 		//None for a file that isn't there, or can't be stat'ed.
 		Ω stamp( const fs::path& path )ι->optional<Stamp>{
 			std::error_code ec;
@@ -82,12 +88,12 @@ namespace Jde::Opc::Hist{
 		_present{ today }{
 		_restored.Flushed = _flushed.Time();
 		//The midnight before the last flush may have had its rewrite cut short, in the `delay` after it, and none since has
-		//had one:  so each file still live from the day before that flush on is rewritten, but for today's.
+		//had one, and an older one's rewrite may have kept failing:  so each file still live from the day .flushed names
+		//on is rewritten, but for today's.
 		optional<Day> from;
 		if( _restored.Flushed ){
-			let flushed = DayOf( UADateTime{*_restored.Flushed}.UA(), _tz );
-			Present( flushed );
-			from = Day{ sys_days{flushed}-days{1} };
+			Present( DayOf(UADateTime{*_restored.Flushed}.UA(), _tz) );
+			from = _flushed.Recover();
 		}
 		//The newest file that holds anything says what the group is:  one a crash cut short in its preamble holds nothing.
 		//Each node's newest value is in any file down to the first that isn't after the present, since a future-dated file's
@@ -98,13 +104,13 @@ namespace Jde::Opc::Hist{
 			if( settled && (!from || day<*from) )
 				return true;
 			std::error_code ec;
-			if( fs::remove(Temp(day), ec) )
+			if( removeTemp(Temp(day)) )
 				WARN( "Removed '{}', which a rewrite that didn't finish left.", Temp(day).string() );
 			let path = File( day );
 			let there = fs::exists( path, ec );
-			if( ec )//it may be the newest.
+			if( ec && !settled )//it may be the newest.
 				throw Failed( path, ec, sl );
-			if( !there )
+			if( !there && !ec )
 				return false;
 			if( !settled ){
 				_days.insert( day );
@@ -115,13 +121,23 @@ namespace Jde::Opc::Hist{
 					_recover.insert( day );
 			}
 			else if( day<today ){
+				//Only for its rewrite, so one that can't be read now is taken as live:  its rewrite finds out, and .flushed
+				//keeps the day until then.
+				bool live{ true };
 				try{
-					if( let start = ReadStart(path, sl); start && !start->generation() )
-						_recover.insert( day );
+					if( ec )
+						throw Failed( path, ec, sl );
+					let start = ReadStart( path, sl );
+					live = start && !start->generation();
 				}
-				catch( const IO::IOException& )//said as it goes:  the file is left to whatever writes its day next.
-				{}
+				catch( const IO::IOException& ){}//said as it goes.
+				if( live ){
+					_unarchived.insert( day );
+					_recover.insert( day );
+				}
 			}
+			else if( ec )
+				Failed( path, ec, sl ).Log();
 			return false;
 		});
 		std::erase_if( _files, []( let& file ){ return file.second.Generation!=0; } );
@@ -215,6 +231,8 @@ namespace Jde::Opc::Hist{
 		}
 		else if( ec )
 			throw Failed( file.Path, ec, sl );
+		if( file.Size && !file.Generation && file.Refused.empty() )
+			_unarchived.insert( day );
 		return _files.emplace( day, move(file) ).first->second;
 	}
 
@@ -233,9 +251,10 @@ namespace Jde::Opc::Hist{
 	}
 
 	struct Rewrite::State final{
-		State( fs::path file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, SL sl )ε:
+		State( fs::path file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, absl::flat_hash_set<NodeIndex> mapped, SL sl )ε:
 			Records{ move(file), move(runs), move(late), sl },
-			Start{ move(start) }
+			Start{ move(start) },
+			Mapped{ std::move(mapped) }
 		{}
 		//Onto the part.  One too large for a file is left out, as an append leaves it.
 		α Add( HistoryRecord&& r )ε->void{
@@ -248,6 +267,8 @@ namespace Jde::Opc::Hist{
 		}
 		Merge Records;
 		Proto::FileStart Start;
+		absl::flat_hash_set<NodeIndex> Mapped;//the file's and the flush's.
+		uint Size{};//written so far.
 		string Part;
 		Appender Writer{ Part, 0 };//never sealed:  an archive carries no checkpoint.
 		optional<HistoryRecord> Ahead;//the record after the part's last, so the last part is known as it is made.
@@ -266,6 +287,9 @@ namespace Jde::Opc::Hist{
 	α Rewrite::operator=( Rewrite&& )ι->Rewrite& =default;
 	Rewrite::~Rewrite()=default;
 	α Rewrite::Unreadable()Ι->bool{ return _state && _state->Records.Unreadable(); }
+	α Rewrite::Archive()ι->DayFile{
+		return DayFile{ .Path=Path, .Generation=_state->Start.generation(), .Size=_state->Size, .Mapped=std::move(_state->Mapped), .Named=true };
+	}
 
 	α Rewrite::Next()ε->bool{
 		auto& s = *_state;
@@ -278,7 +302,8 @@ namespace Jde::Opc::Hist{
 			*first.mutable_file_start() = s.Start;
 			s.Add( move(first) );
 			//The preamble is every record at the day's start.  A member's later preamble record there is a corrected start
-			//value, which a reader of the live file took in its place:  it goes into the first.
+			//value, which a reader of the live file took in its place:  it goes into the first.  One after the member's
+			//NodeRemoved there is a re-add, which stays.
 			vector<HistoryRecord> head;
 			absl::flat_hash_map<NodeIndex,uint> members;
 			while( s.Records.Next(r) ){
@@ -286,7 +311,9 @@ namespace Jde::Opc::Hist{
 					s.Ahead = move( r );
 					break;
 				}
-				if( r.has_node_added() && bare(r.node_added()) ){
+				if( r.has_node_removed() )
+					members.erase( r.node_removed().node_index() );
+				else if( r.has_node_added() && bare(r.node_added()) ){
 					let [p, added] = members.try_emplace( r.node_added().node_index(), head.size() );
 					if( !added ){
 						auto& kept = *head[p->second].mutable_node_added();
@@ -317,13 +344,14 @@ namespace Jde::Opc::Hist{
 	α Rewrite::Write( SL sl )ι->IO::WriteAwait{
 		auto& s = *_state;
 		let first = !std::exchange( s.Written, true );
+		s.Size += s.Part.size();
 		return IO::WriteAwait{ Temp, std::exchange(s.Part, {}), IO::WriteOptions{.Create=first, .Mode=first ? IO::EWriteMode::Truncate : IO::EWriteMode::Append, .Sync=s.Last}, sl };
 	}
 
 	α GroupFiles::Prepare( Day day, vector<HistoryRecord>&& records, const Membership& members, TimePoint now, SL sl )ε->DayWrite{
-		if( auto p = _files.find(day); p!=_files.end() && !p->second.Refused.empty() ){
+		if( auto p = _files.find(day); p!=_files.end() && (p->second.Generation || !p->second.Refused.empty()) ){
 			if( let changed = stamp(p->second.Path); changed && changed!=p->second.Scanned )
-				_files.erase( p );//changed since its scan, repaired perhaps, so Open scans it again.
+				_files.erase( p );//changed since its scan, or its rewrite, repaired perhaps, so Open scans it again.
 		}
 		auto& file = Open( day, sl );
 		std::error_code ec;
@@ -331,6 +359,7 @@ namespace Jde::Opc::Hist{
 		if( !file.Refused.empty() ){
 			if( fs::exists(file.Path, ec) || ec ){
 				_recover.erase( day );
+				_unarchived.erase( day );
 				if( !records.empty() && !file.Discarded++ )
 					ERR( "'{}' {}, so the historian won't write to it:  its {} records, and any after them, are dropped until it is repaired or removed.", file.Path.string(), file.Refused, records.size() );
 				return {};
@@ -338,7 +367,7 @@ namespace Jde::Opc::Hist{
 			restart = true;//removed since.
 		}
 		MakeDirectories( file.Path.parent_path(), sl );
-		let rewrite = ( file.Generation && !restart ) || Past( day, now ) || _recover.contains( day );
+		let rewrite = ( file.Generation && !restart ) || Past( day, now ) || _recover.contains( day ) || _retired;
 		if( file.Unopened && !restart && !rewrite ){
 			try{
 				Truncate( file.Path, *file.Unopened, sl );
@@ -370,6 +399,7 @@ namespace Jde::Opc::Hist{
 		let& known = restart ? fresh : file;
 		if( rewrite && records.empty() && (!known.Size || known.Generation) ){//nothing to make an archive of, or it is one.
 			_recover.erase( day );
+			_unarchived.erase( day );
 			_files.erase( day );
 			return {};
 		}
@@ -424,7 +454,8 @@ namespace Jde::Opc::Hist{
 			auto runs = known.Generation ? vector<Run>{ Run{.Offset=0, .End=known.Size, .Chain=0, .First=std::numeric_limits<Ticks>::min(), .Last=start} } : known.Runs;
 			std::ranges::move( run, std::back_inserter(preamble) );
 			first.mutable_file_start()->set_generation( known.Generation+1 );
-			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(file.Path, move(runs), move(preamble), first.file_start(), sl) };
+			mapped.insert( known.Mapped.begin(), known.Mapped.end() );
+			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(file.Path, move(runs), move(preamble), first.file_start(), std::move(mapped), sl) };
 			if( file.Generation )
 				_files.erase( day );
 			return DayWrite{ move(y) };
@@ -500,27 +531,46 @@ namespace Jde::Opc::Hist{
 		for( auto& value : run.Stored )
 			Newer( move(value) );
 		_days.insert( run.Date );
+		_unarchived.insert( run.Date );
 	}
 
-	α GroupFiles::Commit( Rewrite&& rewrite, TimePoint now, SL sl )ε->bool{
+	α GroupFiles::Commit( Rewrite&& rewrite, TimePoint now, SL sl )ε->void{
 		Replace( rewrite.Temp, rewrite.Path, sl );
-		_files.erase( rewrite.Date );
+		auto archive = rewrite.Archive();
+		archive.Scanned = stamp( archive.Path );
+		_files.insert_or_assign( rewrite.Date, move(archive) );
 		_recover.erase( rewrite.Date );
+		_unarchived.erase( rewrite.Date );
 		_days.insert( rewrite.Date );
 		_rewritten.insert_or_assign( rewrite.Date, now );
 		for( auto& value : rewrite.Stored )
 			Newer( move(value) );
+		_unsynced.insert( rewrite.Date );
 		try{
 			SyncDirectories( _root, DayDirectory(rewrite.Date), sl );
+			_unsynced.erase( rewrite.Date );
 		}
-		catch( const IO::IOException& ){//said as it goes.
-			return false;
+		catch( const IO::IOException& ){}//said as it goes.
+	}
+	α GroupFiles::SyncRenamed( SL sl )ι->bool{
+		while( !_unsynced.empty() ){
+			let day = *_unsynced.begin();
+			std::error_code ec;
+			if( fs::exists(File(day), ec) || ec ){//one purged since has no name to keep.
+				try{
+					SyncDirectories( _root, DayDirectory(day), sl );
+				}
+				catch( const IO::IOException& e ){
+					e.SetLevel( ELogLevel::Debug );//said at Error by its Commit.
+					return false;
+				}
+			}
+			_unsynced.erase( day );
 		}
 		return true;
 	}
 	α GroupFiles::Abandon( const Rewrite& rewrite )ι->void{
-		std::error_code ec;
-		fs::remove( rewrite.Temp, ec );
+		removeTemp( rewrite.Temp );
 		if( rewrite.Unreadable() )
 			_files.erase( rewrite.Date );
 	}
@@ -531,19 +581,33 @@ namespace Jde::Opc::Hist{
 	α GroupFiles::File( Day day )Ι->fs::path{ return _root/DayDirectory( day )/( _name+".binpb" ); }
 	α GroupFiles::Temp( Day day )Ι->fs::path{ return _root/DayDirectory( day )/( _name+".binpb.tmp" ); }
 	α GroupFiles::Due( TimePoint now )ι->vector<Day>{
-		for( auto p = _rewritten.begin(); p!=_rewritten.end(); )
-			p = now<p->second+_delay ? std::next( p ) : _rewritten.erase( p );
-		vector<Day> y{ _recover.begin(), _recover.end() };
-		for( let& [day,file] : _files ){
-			if( file.Size && !file.Generation && file.Refused.empty() && Past(day, now) && !_recover.contains(day) )
+		for( auto p = _rewritten.begin(); p!=_rewritten.end(); ){
+			if( p->second<=now && now<p->second+2*_delay ){
+				++p;
+				continue;
+			}
+			if( auto f = _files.find(p->first); f!=_files.end() && f->second.Generation )
+				_files.erase( f );
+			p = _rewritten.erase( p );
+		}
+		vector<Day> y;
+		for( let day : _unarchived ){
+			if( _recover.contains(day) || Past(day, now) )
 				y.push_back( day );
 		}
-		std::ranges::sort( y );
 		return y;
+	}
+	α GroupFiles::Retire()ι->void{
+		_retired = true;
+		_recover.insert( _unarchived.begin(), _unarchived.end() );
+	}
+	α GroupFiles::RecoverFrom( TimePoint flushed )Ι->Day{
+		const Day before{ sys_days{DayOf(flushed, _tz)}-days{1} };
+		return _unarchived.empty() ? before : std::min( before, *_unarchived.begin() );
 	}
 	α GroupFiles::Deferred( Day day, TimePoint now )Ι->bool{
 		auto p = _rewritten.find( day );
-		return p!=_rewritten.end() && now<p->second+_delay;
+		return p!=_rewritten.end() && p->second<=now && now<p->second+_delay;
 	}
 
 	α GroupFiles::LaterDays( Day day )ι->vector<Day>{

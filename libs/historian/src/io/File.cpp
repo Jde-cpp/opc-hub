@@ -36,7 +36,11 @@ namespace Jde::Opc{
 	α Hist::Failed( const fs::path& path, const std::error_code& ec, SL sl )ι->IO::IOException{
 		return Hist::Failed( path, (uint32)ec.value(), ec.message(), sl );
 	}
-
+namespace Hist{
+	PathLock::PathLock( PathLock&& x )ι:
+		_handle{ std::exchange(x._handle, closed()) }
+	{}
+}
 #ifdef _WIN32
 	α Hist::MakeDirectories( const fs::path& directory, SL sl )ε->void{
 		IO::CreateDirectories( directory, sl );
@@ -104,13 +108,7 @@ namespace Hist{
 		if( ::rename(from.c_str(), to.c_str())==-1 )
 			throw failed( to, "rename", sl );
 	}
-}
-
-namespace Jde::Opc::Hist{
-	PathLock::PathLock( PathLock&& x )ι:
-		_handle{ std::exchange(x._handle, closed()) }
-	{}
-
+namespace Hist{
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
 		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";
@@ -131,5 +129,6 @@ namespace Jde::Opc::Hist{
 		if( _handle!=closed() )
 			::close( _handle );//which drops the lock.
 	}
+}
 #endif
 }

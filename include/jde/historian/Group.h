@@ -117,7 +117,9 @@ namespace Jde::Opc::Hist{
 
 		//A copy, as a /hist snapshot takes it.  What a running flush took is no longer here, and not yet in its files.
 		α Buffer()Ι->vector<Record>;
-		//Historian::RemoveGroup's:  every member leaves, and Add throws after.  The buffer stays for the flush.
+		//Historian::RemoveGroup's:  every member leaves, and Add throws after.  The buffer stays for the flush, which also
+		//rewrites each live file the group has, today's included, as its archive:  no midnight comes for a group that is
+		//gone, and no start adds it again.
 		α Close( optional<Writer> by )ι->void;
 
 		//Writes what the group buffered:  sorted by source time, each record to its own day's file, each file fsynced, and
@@ -174,6 +176,10 @@ namespace Jde::Opc::Hist{
 		//rewrites the day's file as its archive.
 		α ScheduleMidnight()ι->IClock::TimerId;
 		α Midnight()ι->void;//that timer's:  the next midnight's, and the flush.
+		//The group's timers, which Disarm takes off it under _mutex, for Cancel to cancel outside it.
+		struct Timers final{ IClock::TimerId Delay{}; IClock::TimerId Midnight{}; };
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Disarm()ι->Timers{ return { std::exchange(_timer, 0), std::exchange(_midnight, 0) }; }
+		α Cancel( Timers timers )ι->void;
 		//After a flush that wrote all it took:  forgets each node that left whose values are all written, since no other
 		//can arrive for it.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α PruneGone()ι->void;
@@ -201,14 +207,18 @@ namespace Jde::Opc::Hist{
 		α Start()ι->void;
 		//The historian's end, in two steps so every group's last flush runs at once.  Stopping takes no more, disarms
 		//`delay` and starts the last flush on the executor.  Stopped waits for it, and any already running, until
-		//deadline, then flushes no more.  Neither waits on an executor that isn't running, where no write returns.
+		//deadline, then flushes no more:  a flush still out starts no write after, a rename included, though one the OS
+		//already has finishes.  Neither waits on an executor that isn't running, where no write returns.
 		α Stopping()ι->void;
 		α Stopped( std::chrono::steady_clock::time_point deadline )ι->void;
-		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α Written()Ι->bool;//removed, and all it buffered taken by a flush.
+		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α Written()Ι->bool;//removed, all it buffered taken by a flush, and its files archives.
 		//Once a removed group is written, with no flush running, nothing of it is left to reach its files:  it then flushes
 		//no more, so neither the flush its Close asked for nor a host that kept it writes after its name is let go, and
 		//returns true.
 		α EndIfWritten()ι->bool;
+		//Whether the group has ended:  a flush the historian's end gave up on checks it before each write it starts, so none
+		//starts once the lock is let go.
+		α Ended()Ι->bool;
 		//The Store's, to trim the buffers:  the group's oldest value, and dropping those older than before until need
 		//bytes are freed.  Returns how many it dropped, and sets began when they begin the group's streak of drops, which
 		//the Store warns of once.
@@ -239,6 +249,7 @@ namespace Jde::Opc::Hist{
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
 		bool _connected ABSL_GUARDED_BY(_mutex){ true };
 		bool _closed ABSL_GUARDED_BY(_mutex){};
+		bool _archived ABSL_GUARDED_BY(_mutex){};//as the last flush left the group's files:  none live.
 		bool _stopped ABSL_GUARDED_BY(_mutex){};
 		//The buffer, each part in the order it arrived:  membership changes, which are never dropped, and values.
 		vector<Buffered> _changes ABSL_GUARDED_BY(_mutex);
@@ -250,8 +261,9 @@ namespace Jde::Opc::Hist{
 		bool _dropping ABSL_GUARDED_BY(_mutex){};//values were dropped since the last flush that wrote all it took.
 		bool _failing ABSL_GUARDED_BY(_mutex){};//the last flush held records back and wrote none, so only `delay` tries again.
 		//The last flush wrote none, and held records only for an archive rewritten less than `delay` before:  `delay` tries
-		//again, or the buffers passing maxBuffer.
+		//again, or the buffers passing maxBuffer, or a record for another day, which the flush at 8 KB can write.
 		bool _deferred ABSL_GUARDED_BY(_mutex){};
+		flat_set<std::chrono::year_month_day> _deferredDays ABSL_GUARDED_BY(_mutex);//the archives it held records for.
 		//Each day a flush couldn't write, and when the clock's flushes may try it again:  a day that stays unwritable is
 		//tried once a `delay`, not at every 8 KB the others reach.
 		flat_map<std::chrono::year_month_day,TimePoint> _failingDays ABSL_GUARDED_BY(_filesMutex);

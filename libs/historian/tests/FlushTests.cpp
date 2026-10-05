@@ -69,21 +69,24 @@ namespace Jde::Opc::Hist::Tests{
 			std::error_code ec;
 			fs::remove( File.parent_path().parent_path(), ec );
 		}
-		Ω Slot( TimePoint time, uint32_t sequence )ι->string{
+		Ω Slot( TimePoint time, uint32_t sequence, Day recover=March6 )ι->string{
 			string y( Flushed::SlotSize, '\0' );
 			let t = (uint64_t)ticks( time );
 			for( uint i=0; i<8; ++i )
 				y[i] = (char)( t>>(8*i) );
 			for( uint i=0; i<4; ++i )
 				y[8+i] = (char)( sequence>>(8*i) );
-			let crc = IO::Crc::Calc32c( sv{y}.substr(0, 12) );
+			let day = (uint32_t)sys_days{ recover }.time_since_epoch().count();
 			for( uint i=0; i<4; ++i )
-				y[12+i] = (char)( crc>>(8*i) );
+				y[12+i] = (char)( day>>(8*i) );
+			let crc = IO::Crc::Calc32c( sv{y}.substr(0, 16) );
+			for( uint i=0; i<4; ++i )
+				y[16+i] = (char)( crc>>(8*i) );
 			return y;
 		}
 		//As a flush writes it.
-		Ω Write( Flushed& flushed, TimePoint time )ε->void{
-			let slot = flushed.Next( time );
+		Ω Write( Flushed& flushed, TimePoint time, Day recover=March6 )ε->void{
+			let slot = flushed.Next( time, recover );
 			BlockVoidAwait( slot.Write() );
 			flushed.Wrote( slot );
 		}
@@ -91,25 +94,31 @@ namespace Jde::Opc::Hist::Tests{
 		const fs::path File{ fs::current_path()/"hist-tests"/::testing::UnitTest::GetInstance()->current_test_info()->name()/"group.flushed" };
 	};
 
-	//Two 16-byte slots, written alternately in place:  the time in UA ticks, a sequence and a CRC-32C, little-endian.
+	//Two 20-byte slots, written alternately in place:  the time in UA ticks, a sequence, the day a start looks for live
+	//files from, in days since 1970-01-01, and a CRC-32C, little-endian.
 	TEST_F( FlushedTests, AlternatesSlots ){
 		{
 			Flushed flushed{ File };
 			EXPECT_FALSE( flushed.Time() );//no file:  never flushed.
+			EXPECT_FALSE( flushed.Recover() );
 			EXPECT_FALSE( fs::exists(File) );
 			Write( flushed, Time );
 			EXPECT_EQ( flushed.Time(), Time );
 			EXPECT_EQ( contents(File), Slot(Time, 1) );
 			Write( flushed, Time+1min );
 			EXPECT_EQ( contents(File), Slot(Time, 1)+Slot(Time+1min, 2) );
-			Write( flushed, Time+2min );
-			EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+1min, 2) );
+			Write( flushed, Time+2min, March7 );
+			EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+1min, 2) );
 			EXPECT_EQ( flushed.Time(), Time+2min );
+			EXPECT_EQ( flushed.Recover(), March7 );
 		}
 		Flushed read{ File };
 		EXPECT_EQ( read.Time(), Time+2min );
-		Write( read, Time+3min );//over the older slot.
-		EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+3min, 4) );
+		EXPECT_EQ( read.Recover(), March7 );
+		constexpr Day first{ 1601y/January/1 };//before 1970, so negative.
+		Write( read, Time+3min, first );//over the older slot.
+		EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+3min, 4, first) );
+		EXPECT_EQ( Flushed{File}.Recover(), first );
 	}
 
 	//A write torn at any byte loses that flush's time, not the file:  the reader falls back to the other slot, and the
@@ -883,6 +892,61 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( readFile(written).size(), 4 );
 		let logged = Logging::Find( [&]( const Logging::Entry& e ){ return e.Level==ELogLevel::Error && e.Message().contains("stopped with a flush still out") && e.Message().contains(name); } );
 		EXPECT_EQ( logged.size(), 1 );
+#endif
+	}
+
+	//A clock set back doesn't stretch a failing day's wait for `delay`:  a retry more than `delay` off is due.
+	TEST_F( GatewayFiles, ClockSetBackEndsTheRetryWait ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		Block();
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_FALSE( Flush(*group) );
+		Unblock();
+		Time->Step( -1h );
+		EXPECT_EQ( Time->Advance(1min), 1 );//`delay`, an interval, as long as it was.
+		Settle( *group );
+		EXPECT_TRUE( group->Buffer().empty() );
+	}
+
+	//A flush the end gave up on starts no write once the lock is let go:  here an archive's merge, queued behind a day
+	//whose scan a FIFO holds past StopLimit, is never renamed over the archive, and its records stay unwritten.
+	TEST_F( GatewayFiles, GivenUpFlushWritesNoMore ){
+#ifdef _WIN32
+		GTEST_SKIP() << "No FIFO to hold the flush.";
+#else
+		auto config = Config( 1min );
+		config.StopLimit = 200ms;
+		Restart( move(config) );
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let archive = File( *group, March6 );
+		DataChange( *group, speed, 1, sys_days{March6}+12h );
+		EXPECT_TRUE( Flush(*group) );
+		let before = contents( archive );
+		constexpr Day march5{ 2026y/March/5 };
+		let stuck = File( *group, march5 );
+		fs::create_directories( stuck.parent_path() );
+		ASSERT_EQ( ::mkfifo(stuck.c_str(), 0600), 0 );
+		DataChange( *group, speed, 2, sys_days{march5}+12h );//first in the flush, whose scan waits on the FIFO for a writer.
+		DataChange( *group, speed, 3, sys_days{March6}+13h );
+		_group.reset();
+
+		Library.reset();
+		bool released{};
+		for( let deadline = steady_clock::now()+10s; !released && steady_clock::now()<deadline; std::this_thread::sleep_for(1ms) ){
+			if( let fd = ::open(stuck.c_str(), O_WRONLY | O_NONBLOCK); fd!=-1 ){
+				::close( fd );
+				released = true;
+			}
+		}
+		ASSERT_TRUE( released );
+		for( let deadline = steady_clock::now()+5s; group->Buffer().size()<2 && steady_clock::now()<deadline; )
+			std::this_thread::sleep_for( 1ms );
+		EXPECT_EQ( group->Buffer().size(), 2 );//held, and dropped with the group.
+		EXPECT_EQ( contents(archive), before );
+		EXPECT_FALSE( fs::exists(fs::path{archive}+=".tmp") );
+		EXPECT_TRUE( fs::is_fifo(stuck) );
 #endif
 	}
 

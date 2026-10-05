@@ -101,8 +101,11 @@ namespace Jde::Opc::Hist{
 				std::ranges::push_heap( _open, later );
 			}
 		}
-		if( _open.empty() )
+		if( _open.empty() ){
+			if( _file.is_open() )
+				_file.close();//before the rewrite renames over it:  Windows opened it without FILE_SHARE_DELETE.
 			return false;
+		}
 		std::ranges::pop_heap( _open, later );
 		auto& source = *_open.back();
 		r = move( source.Record );
