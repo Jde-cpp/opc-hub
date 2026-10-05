@@ -6,6 +6,8 @@ ENABLE_WARNINGS
 
 namespace Jde::Opc::Hist{
 	using Ticks = UA_DateTime;//a record's time:  100 ns since 1601.
+	Ξ ticks( Duration d )ι->Ticks{ return std::chrono::duration_cast<UATick>( d ).count(); }//a span in them.
+	Ξ ticks( TimePoint t )ι->Ticks{ return UADateTime{ t }.UA(); }//a time in them.
 
 	//A record's times are absolute in memory and deltas on disk (Hist.Records.proto).  ToDisk makes r's primary time a
 	//delta from last and its other times deltas from its primary, then moves last on to its primary; ToMemory undoes it.

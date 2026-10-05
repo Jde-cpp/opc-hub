@@ -1,5 +1,6 @@
 #pragma once
 #include <deque>
+#include <queue>
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
 #include <jde/fwk/co/AnyAwait.h>
@@ -56,10 +57,10 @@ namespace Jde::Opc::Hist{
 	struct NodeAdded{ NodeIndex Index; ExNodeId Node; TimePoint Ts; optional<Writer> By; };
 	struct NodeRemoved{ NodeIndex Index; TimePoint Ts; optional<Writer> By; };
 	//A value that passed the compression test, a Bad_DataLost marker, or a heartbeat, whose Heartbeat is the
-	//SourceTimestamp of the value it repeats.  Unsupported is set on a node's first value that a file can't hold
-	//(ProtoUtils::Supported), and on its first with text that isn't UTF-8 (ProtoUtils::Utf8), which the flush warns of:
-	//Enqueue never logs.
-	struct DataValue{ NodeIndex Index; Value Data; optional<UA_DateTime> Heartbeat; bool Unsupported{}; };
+	//SourceTimestamp of the value it repeats, or with Unsourced that value's server timestamp:  it came with no
+	//SourceTimestamp.  Unsupported is set on a node's first value that a file can't hold (ProtoUtils::Supported), and on
+	//its first with text that isn't UTF-8 (ProtoUtils::Utf8), which the flush warns of:  Enqueue never logs.
+	struct DataValue{ NodeIndex Index; Value Data; optional<UA_DateTime> Heartbeat; bool Unsupported{}; bool Unsourced{}; };
 	using Record = variant<NodeAdded,NodeRemoved,DataValue>;
 
 	struct Group;
@@ -118,16 +119,21 @@ namespace Jde::Opc::Hist{
 		//A node's first value after a break is judged by Part 11 §4.3's comparison instead, against the SourceTimestamp of
 		//the last value it delivered, or after a start of its newest record in the group's files:  equal stores nothing,
 		//later stores a Bad_DataLost marker no later than the value and then the value, and earlier the marker alone, at
-		//the break.
+		//the break.  Equal is later when the value doesn't agree with the last stored one, the same but for what the
+		//thresholds drop:  a source can change a value inside one timestamp.  The marker is never before the node's newest record, which is in the source's clock as the break
+		//isn't, unless the value itself is.
 		α Enqueue( NodeIndex index, const UA_DataValue& value )ι->bool;
 
-		//The gateway's connection-state callback, with the time the connection broke.  Each member keeps the first break
-		//until its next value, which is judged against it, and a pending value is settled as at its interval's end.
-		//OpcServer never calls these: its only breaks are stops and crashes, which its next start finds.
+		//The gateway's connection-state callbacks:  the first with the time the connection broke, the second once it is
+		//back, before any value the new subscription delivers.  Each member keeps the first break until its first value
+		//after Connected, which is judged against it, and a pending value is settled as at its interval's end.  A value
+		//that arrives between the two was in flight when the connection broke:  it takes the ordinary test, and the break
+		//stands.  A callback that comes late drops each heartbeat made at or after that time, unless a flush already
+		//took it.  OpcServer never calls these: its only breaks are stops and crashes, which its next start finds.
 		α Disconnected( TimePoint at )ι->void;
 		α Connected()ι->void;
 		α IsConnected()Ι->bool;
-		α FindBreak( NodeIndex index )Ι->optional<TimePoint>;//the one the node's next value is judged against.
+		α FindBreak( NodeIndex index )Ι->optional<TimePoint>;//the one the node's first value after it is judged against.
 
 		//A copy, as a /hist snapshot takes it:  what will be stored, a pending value not yet among it.  What a running
 		//flush took is no longer here, and not yet in its files.
@@ -161,8 +167,9 @@ namespace Jde::Opc::Hist{
 		friend struct FlushAwait;
 		friend struct Historian;
 		friend struct Store;
-		//A value as Enqueue took it:  what it takes in a file, and whether a file can hold it.
-		struct Arrival{ Value Data; uint32_t Bytes; bool Unsupported; bool NotUtf8; };
+		//A value as Enqueue took it:  what it takes in a file, and whether a file can hold it.  Kept is the copy its node
+		//keeps once it is stored, made before the lock unless the value goes over the node's last one in place.
+		struct Arrival{ Value Data; uint32_t Bytes; bool Unsupported; bool NotUtf8; optional<Value> Kept; };
 		struct Node{
 			ExNodeId Id; Thresholds Config; optional<TimePoint> Break; bool Unsupported{}; bool NotUtf8{};
 			//Its last stored value as collected, which the compression test compares and a heartbeat repeats, or the marker
@@ -171,13 +178,17 @@ namespace Jde::Opc::Hist{
 			bool Marked{};
 			optional<UA_DateTime> ValueTs;//the last stored value's primary time:  MinTimeInterval counts from it, and a heartbeat carries it.
 			UA_DateTime RecordTs{ std::numeric_limits<UA_DateTime>::min() };//the newest primary time it stored, a heartbeat's or a marker's included.
+			UA_DateTime KeptTs{ std::numeric_limits<UA_DateTime>::min() };//RecordTs, but for a heartbeat still buffered:  what dropping those leaves.
 			TimePoint StoredAt{};//when it last stored a record, which MaxTimeInterval counts from.
 			optional<Arrival> Pending;//what MinTimeInterval holds.
+			TimePoint Due{};//when its interval ends, which a change of MinTimeInterval moves.
 			uint Serial{};//its pending value's, which that one's timer names.
 			optional<UA_DateTime> Delivered;//the SourceTimestamp of the last value it delivered, when that came with one.
 			Duration Offset{};//arrival less SourceTimestamp, of the last change it delivered.
 			bool Joined{ true };//no value since it joined.
 			optional<UA_DateTime> Beat;//its newest heartbeat still buffered, as far as is known.
+			optional<TimePoint> BeatAt;//when the heartbeat timer looks at it next:  its place in the group's queue.
+			α Keep( UA_DateTime time )ι->void{ KeptTs = std::max( KeptTs, time ); RecordTs = std::max( RecordTs, time ); }//a record no drop takes back.
 		};
 		//Bytes is what the record takes in a file, near enough.  Copied is a membership change whose copies for later
 		//days' files are made, or one of those copies.
@@ -185,7 +196,9 @@ namespace Jde::Opc::Hist{
 		Ω Cost( const Buffered& b )ι->uint{ return b.Bytes+sizeof(Buffered); }//what a buffered record counts against maxBuffer.
 		//What a full buffer dropped of a node, until a flush marks it:  a Bad_DataLost at the earliest source time among
 		//them, then the one with the latest, written back.
-		struct Lost{ Value Marker{ (StatusCode)UA_STATUSCODE_BADDATALOST }; optional<Buffered> Newest; uint Count{}; };
+		//Newest is none once DropBeats took it, a heartbeat:  the marker then goes at its Sequence, and the gap ends at the
+		//node's next value.
+		struct Lost{ Value Marker{ (StatusCode)UA_STATUSCODE_BADDATALOST }; optional<Buffered> Newest; uint Count{}; uint Sequence{}; };
 
 		α Issued()Ι->bool{ return _config.Indexes==EIndexes::Issued; }
 		α Normalize( Member& member, SL sl )Ε->ExNodeId;
@@ -221,17 +234,24 @@ namespace Jde::Opc::Hist{
 		//The node's pending value, at its interval's end, a break, or the node's leaving:  stored if it still passes.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Settle( NodeIndex index, Node& node, TimePoint now, Effects& effects )ι->void;
 		α Expire( NodeIndex index, uint serial )ι->void;//a pending value's timer.
+		//That timer, for an interval that ends at due:  one it replaces finds nothing of its own.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ExpireAt( NodeIndex index, Node& node, TimePoint due, TimePoint now )ι->void;
 		//Drops the node's buffered heartbeats at or after `from`, the time of a change that passed:  each would replay
-		//the old value over it.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α DropBeats( NodeIndex index, Node& node, UA_DateTime from )ι->void;
+		//the old value over it.  With made, those the timer made at or after `from`, a break reported late:  each repeats
+		//the value over a dead feed.  One the trim holds to write back goes as one in the buffer does.  The node's newest
+		//record is then the newest that is left.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α DropBeats( NodeIndex index, Node& node, UA_DateTime from, bool made=false )ι->void;
 		//Whether the heartbeat repeats the node's last value:  it has one, and neither a break nor a pending value is
 		//waiting to say what follows it.
 		Ω Beats( const Node& node )ι->bool{ return node.Config.MaxTimeInterval>Duration::zero() && node.Stored && !node.Marked && !node.Break && !node.Pending; }
-		//The group's heartbeat timer, moved up to the node's deadline when that is the earliest.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Arm( const Node& node, TimePoint now, Effects& effects )ι->void;
+		//The group's heartbeat timer, moved up to the node's deadline when that is the earliest.  The node waits in the
+		//timer's queue for it, unless it already waits there for a sooner one.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Arm( NodeIndex index, Node& node, TimePoint now, Effects& effects )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Arm( TimePoint due, TimePoint now, Effects& effects )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Watch( NodeIndex index, Node& node, TimePoint due )ι->void;//queues the node for due.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ScheduleBeat( TimePoint due, TimePoint now )ι->void;
 		//That timer's:  a heartbeat for each node that stored nothing for its MaxTimeInterval, and the next deadline's timer.
+		//It visits the nodes whose deadline has come, not the group.
 		α Beat( uint serial )ι->void;
 		α Schedule( Duration after )ι->IClock::TimerId;
 		//The clock's flush `delay` after the next midnight in timeZone, by when the day's last flush has landed:  it
@@ -300,6 +320,10 @@ namespace Jde::Opc::Hist{
 		IClock::TimerId _beat ABSL_GUARDED_BY(_mutex){};//the heartbeat's, due at _beatDue.
 		TimePoint _beatDue ABSL_GUARDED_BY(_mutex){};
 		uint _beatSerial ABSL_GUARDED_BY(_mutex){};//the timer that counts:  one it replaced does nothing.
+		//The nodes the heartbeat timer is to look at, soonest first, so that it visits only those whose time has come.  An
+		//entry counts while it is its node's BeatAt.
+		using Deadline = std::pair<TimePoint,NodeIndex>;
+		std::priority_queue<Deadline,vector<Deadline>,std::greater<Deadline>> _beats ABSL_GUARDED_BY(_mutex);
 		bool _ended ABSL_GUARDED_BY(_mutex){};//no flush starts.
 		bool _flushing ABSL_GUARDED_BY(_mutex){};//a flush is running, the only one that changes _files.
 		bool _again ABSL_GUARDED_BY(_mutex){};//the clock asked for another meanwhile.
@@ -313,7 +337,7 @@ namespace Jde::Opc::Hist{
 		//Each index that left, which a file holding a value of it may yet need to map, until those values are written.
 		absl::flat_hash_map<NodeIndex,ExNodeId> _gone ABSL_GUARDED_BY(_mutex);
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
-		bool _connected ABSL_GUARDED_BY(_mutex){ true };
+		optional<TimePoint> _down ABSL_GUARDED_BY(_mutex);//when the connection broke, while it is down.
 		bool _closed ABSL_GUARDED_BY(_mutex){};
 		bool _archived ABSL_GUARDED_BY(_mutex){};//as the last flush left the group's files:  none live.
 		bool _stopped ABSL_GUARDED_BY(_mutex){};

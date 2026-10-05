@@ -1,6 +1,7 @@
 //What a node's thresholds store of what it delivers:  the deviation band, MinTimeInterval's pending value, the
 //heartbeat, and the comparison that judges a node's first value after a break.
 #include "dayFiles.h"
+#include <jde/fwk/log/MemoryLog.h>
 
 #define let const auto
 
@@ -194,6 +195,36 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Of(jittered).Values.size(), 3 );
 	}
 
+	//A change of MinTimeInterval moves the end of the interval a pending value waits out:  one that has already ended
+	//stores it at once, and its heartbeat is held back no longer.
+	TEST_F( Compression, ThresholdsMoveAPendingValuesInterval ){
+		let speed = Join( *Pump, "Pump1.Speed", {.MinTimeInterval=1h} );
+		let flow = Join( *Pump, "Pump1.Flow", {.MinTimeInterval=1h} );
+		let level = Join( *Pump, "Tank1.Level", {.MinTimeInterval=1min} );
+		for( let index : {speed, flow, level} )
+			Change( index, 1 );
+		Time->Advance( 10s );
+		for( let index : {speed, flow, level} )
+			Change( index, 2 );
+		EXPECT_EQ( Of(speed).Values.size(), 1 );
+
+		Pump->SetThresholds( speed, {.MaxTimeInterval=10s} );//no interval.
+		EXPECT_EQ( Of(speed).Values, (vector<double>{1, 2}) );
+		Pump->SetThresholds( flow, {.MinTimeInterval=30s} );//20 s of it are left.
+		Pump->SetThresholds( level, {.MinTimeInterval=2min} );
+		EXPECT_EQ( Of(flow).Values.size(), 1 );
+		Time->Advance( 19s );
+		EXPECT_EQ( Of(flow).Values.size(), 1 );
+		Time->Advance( 1s );
+		EXPECT_EQ( Of(flow).Values, (vector<double>{1, 2}) );
+		EXPECT_EQ( Of(speed).Heartbeats.size(), 2 );
+
+		Time->Advance( 30s );//the interval it was held for at first.
+		EXPECT_EQ( Of(level).Values.size(), 1 );
+		Time->Advance( 1min );
+		EXPECT_EQ( Of(level).Values, (vector<double>{1, 2}) );
+	}
+
 	//A break, or the node's leaving, settles the pending value at once:  it was delivered before.
 	TEST_F( Compression, BreakSettlesPending ){
 		let speed = Join( *Pump, "Pump1.Speed", {.MinTimeInterval=1s} );
@@ -217,6 +248,42 @@ namespace Jde::Opc::Hist::Tests{
 		Pump->Remove( level );
 		EXPECT_EQ( Of(level).Values, (vector<double>{1, 2}) );
 		EXPECT_TRUE( std::holds_alternative<NodeRemoved>(Pump->Buffer().back()) );//after its last value.
+	}
+
+	//So do the group's removal and the historian's stop, whose last flush writes it.
+	TEST_F( GatewayFiles, CloseAndStopSettlePending ){
+		auto closing = AddGroup();
+		auto stopping = AddGroup();
+		let speed = Join( *closing, "Pump1.Speed", {.MinTimeInterval=1min} );
+		let flow = Join( *stopping, "Pump1.Flow", {.MinTimeInterval=1min} );
+		let first = Time->Now();
+		DataChange( *closing, speed, 1, first );
+		DataChange( *stopping, flow, 1, first );
+		Time->Advance( 200ms );
+		let second = Time->Now();
+		DataChange( *closing, speed, 2, second );
+		DataChange( *stopping, flow, 2, second );
+		EXPECT_EQ( Buffered(*closing, speed).Values.size(), 1 );
+		EXPECT_EQ( Buffered(*stopping, flow).Values.size(), 1 );
+
+		closing->Close( Admin );
+		EXPECT_EQ( Buffered(*closing, speed).Values, (vector<double>{1, 2}) );
+		EXPECT_TRUE( std::holds_alternative<NodeRemoved>(closing->Buffer().back()) );//after its last value.
+		EXPECT_EQ( Time->Advance(0s), 1 );//the flush Close asks for.
+		EXPECT_TRUE( Settle(*closing) );
+		let closed = readFile( File(*closing, March7) );
+		ASSERT_GE( closed.size(), 2 );
+		EXPECT_TRUE( closed.back().has_node_removed() );
+		EXPECT_TRUE( isValue(closed[closed.size()-2], speed, 2, second) );
+
+		let file = File( *stopping, March7 );
+		closing.reset();
+		stopping.reset();
+		Restart();//the stop is a break too.
+		let stopped = readFile( file );
+		ASSERT_GE( stopped.size(), 2 );
+		EXPECT_TRUE( isValue(stopped.back(), flow, 2, second) );
+		EXPECT_TRUE( isValue(stopped[stopped.size()-2], flow, 1, first) );
 	}
 
 	//OpcServer's shape:  values arrive as they are written, so a heartbeat's time is the timer's.
@@ -257,6 +324,101 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( beats[2].Heartbeat, ticks(second) );
 		EXPECT_TRUE( Of(quiet).Heartbeats.empty() );//MaxTimeInterval 0 is off.
 		EXPECT_EQ( Of(speed).Values, (vector<double>{1, 2}) );
+	}
+
+	//What a node keeps to repeat is its last stored value whatever its type:  a number over the last one, anything else
+	//as a copy of its own.
+	TEST_F( Heartbeat, RepeatsTheLastOfAnyType ){
+		let state = Historize( "Pump1.State", {.MaxTimeInterval=10s} );
+		let text = []( const DataValue& v ){
+			let& s = *(const UA_String*)v.Data.value.data;
+			return string{ (const char*)s.data, s.length };
+		};
+		Server->Enqueue( state, Text("idle", Time->Now()) );
+		Server->Enqueue( state, Text("running", Time->Now()) );
+		Time->Advance( 10s );
+		auto values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 3 );
+		ASSERT_TRUE( values[2].Heartbeat );
+		EXPECT_EQ( text(values[2]), "running" );
+		EXPECT_EQ( text(values[0]), "idle" );
+
+		Time->Advance( 1s );
+		SetValue( state, 7 );
+		SetValue( state, 8 );
+		Time->Advance( 10s );
+		values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 6 );
+		ASSERT_TRUE( values[5].Heartbeat );
+		EXPECT_EQ( values[5].Data.Get<double>(0), 8 );
+		EXPECT_EQ( values[3].Data.Get<double>(0), 7 );//each record is its own copy.
+		EXPECT_EQ( values[4].Data.Get<double>(0), 8 );
+
+		Time->Advance( 1s );
+		Server->Enqueue( state, Text("stopped", Time->Now()) );
+		Time->Advance( 10s );
+		values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 8 );
+		ASSERT_TRUE( values[7].Heartbeat );
+		EXPECT_EQ( text(values[7]), "stopped" );
+	}
+
+	//Each node is looked at on its own deadline:  one that stores meanwhile waits again, a shorter interval is found at
+	//once, a longer one when the old one is up, and a node that left not at all.
+	TEST_F( Heartbeat, EachNodeOnItsOwnDeadline ){
+		let fast = Historize( "Pump1.Speed", {.MaxTimeInterval=10s} );
+		let slow = Historize( "Pump1.Flow", {.MaxTimeInterval=25s} );
+		let busy = Historize( "Tank1.Level", {.MaxTimeInterval=10s} );
+		let first = Time->Now();
+		for( let index : {fast, slow, busy} )
+			SetValue( index, 0 );
+		for( uint i=1; i<=50; ++i ){
+			Time->Advance( 1s );
+			SetValue( busy, i );
+		}
+		let made = [&]( NodeIndex index ){
+			vector<Duration> y;
+			for( let& beat : Of(index).Heartbeats )
+				y.push_back( UADateTime{beat.Data.serverTimestamp}.Time()-first );
+			return y;
+		};
+		EXPECT_EQ( made(fast), (vector<Duration>{10s, 20s, 30s, 40s, 50s}) );
+		EXPECT_EQ( made(slow), (vector<Duration>{25s, 50s}) );
+		EXPECT_TRUE( made(busy).empty() );
+
+		Server->SetThresholds( slow, {.MaxTimeInterval=5s} );
+		Server->SetThresholds( fast, {.MaxTimeInterval=1min} );
+		Time->Advance( 10s );
+		EXPECT_EQ( made(slow), (vector<Duration>{25s, 50s, 55s, 60s}) );
+		EXPECT_EQ( made(busy), (vector<Duration>{60s}) );
+		Server->Remove( slow );
+		Time->Advance( 50s );
+		EXPECT_EQ( made(fast), (vector<Duration>{10s, 20s, 30s, 40s, 50s, 110s}) );
+		EXPECT_EQ( made(slow).size(), 4 );
+		EXPECT_EQ( made(busy), (vector<Duration>{60s, 70s, 80s, 90s, 100s, 110s}) );
+	}
+
+	//The wall clock set back leaves every deadline in the time before it.  The timer then has each node wait from now,
+	//so none waits longer than its own interval.
+	TEST_F( Heartbeat, ClockSetBack ){
+		let speed = Historize( "Pump1.Speed", {.MaxTimeInterval=10s} );
+		let flow = Historize( "Pump1.Flow", {.MaxTimeInterval=10s} );
+		SetValue( speed, 1 );
+		Time->Advance( 4s );
+		SetValue( flow, 1 );
+		Time->Advance( 3s );
+		Time->Step( -1h );
+		Time->Advance( 3s );//the timer's interval is up.
+		Time->Advance( 9s );
+		EXPECT_TRUE( Of(speed).Heartbeats.empty() );
+		EXPECT_TRUE( Of(flow).Heartbeats.empty() );
+		Time->Advance( 1s );
+		for( let index : {speed, flow} ){
+			SCOPED_TRACE( index );
+			let beats = Of( index ).Heartbeats;
+			ASSERT_EQ( beats.size(), 1 );
+			EXPECT_EQ( beats[0].Data.serverTimestamp, ticks(Time->Now()) );
+		}
 	}
 
 	//A node that gains a MaxTimeInterval, or a shorter one, is found by the timer.
@@ -342,22 +504,95 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( beats[0].Heartbeat, ticks(first) );
 	}
 
-	//A value in flight when the connection broke takes the node's break, so the reconnect itself arms its heartbeat.
-	TEST_F( Compression, HeartbeatResumesWithTheConnection ){
+	//A value in flight when the connection broke was sent before the break:  it takes the ordinary test, and the break
+	//stands for the first value the connection brings back, which arms the heartbeat again.
+	TEST_F( Compression, InFlightValueLeavesTheBreak ){
 		let speed = Join( *Pump, "Pump1.Speed", {.ExceptionDeviation=100, .MaxTimeInterval=10s} );
+		let flow = Join( *Pump, "Pump1.Flow" );
 		Change( speed, 1 );
+		Change( flow, 1 );
 		Time->Advance( 1s );
-		Pump->Disconnected( Time->Now() );
-		Change( speed, 1.5 );
-		EXPECT_FALSE( Pump->FindBreak(speed) );
+		let broke = Time->Now();
+		Pump->Disconnected( broke );
+		Change( speed, 1.5 );//inside the band.
+		Change( flow, 2, 200ms );
+		for( let index : {speed, flow} ){
+			SCOPED_TRACE( index );
+			EXPECT_EQ( Pump->FindBreak(index), broke );
+			EXPECT_TRUE( Of(index).Markers.empty() );
+		}
+		EXPECT_EQ( Of(speed).Values, (vector<double>{1}) );
+		EXPECT_EQ( Of(flow).Values, (vector<double>{1, 2}) );
+		Time->Advance( 1min );
+		Pump->Connected();
 		Time->Advance( 1min );
 		EXPECT_TRUE( Of(speed).Heartbeats.empty() );
-		Pump->Connected();
-		Change( speed, 1.6 );//the new subscription's first value, inside the band.
-		Time->Advance( 0s );
-		EXPECT_EQ( Of(speed).Heartbeats.size(), 1 );
+
+		Change( speed, 1.6 );//the new subscription's first value:  inside the band, and later than the last delivered.
+		let later = Of( speed );
+		ASSERT_EQ( later.Markers.size(), 1 );
+		EXPECT_EQ( later.Markers[0].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( later.Values, (vector<double>{1, 1.6}) );
+		EXPECT_FALSE( Pump->FindBreak(speed) );
 		Time->Advance( 10s );
-		EXPECT_EQ( Of(speed).Heartbeats.size(), 2 );
+		EXPECT_EQ( Of(speed).Heartbeats.size(), 1 );
+
+		DataChange( *Pump, flow, 2, broke-200ms );//what was in flight is the last delivered, so nothing was lost.
+		EXPECT_TRUE( Of(flow).Markers.empty() );
+		EXPECT_EQ( Of(flow).Values, (vector<double>{1, 2}) );
+		EXPECT_FALSE( Pump->FindBreak(flow) );
+	}
+
+	//One that MinTimeInterval holds is settled by the first value after the break, as the break settles those before it.
+	TEST_F( Compression, InFlightPendingIsSettledFirst ){
+		let speed = Join( *Pump, "Pump1.Speed", {.MinTimeInterval=1min} );
+		Change( speed, 1 );
+		Time->Advance( 1s );
+		let broke = Time->Now();
+		Pump->Disconnected( broke );
+		Change( speed, 2 );
+		EXPECT_EQ( Of(speed).Values.size(), 1 );
+		Time->Advance( 10s );
+		Pump->Connected();
+		Change( speed, 3 );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 4 );
+		EXPECT_EQ( values[1].Data.Get<double>(0), 2 );
+		EXPECT_TRUE( isMarker(values[2]) );
+		EXPECT_EQ( values[2].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( values[3].Data.Get<double>(0), 3 );
+		Time->Advance( 1min );
+		EXPECT_EQ( Of(speed).Values, (vector<double>{1, 2, 3}) );
+	}
+
+	//A connection that breaks again before a node has answered its first break:  the value in flight is the node's
+	//first since that one, so it is judged, and the second break stands in its place.
+	TEST_F( Compression, InFlightValueAnswersAnEarlierBreak ){
+		let speed = Join( *Pump, "Pump1.Speed", {.ExceptionDeviation=100} );
+		Change( speed, 1 );
+		Time->Advance( 1min );
+		let broke = Time->Now();
+		Pump->Disconnected( broke );
+		Time->Advance( 1min );
+		Pump->Connected();
+		Time->Advance( 1s );
+		let again = Time->Now();
+		Pump->Disconnected( again );
+		Change( speed, 1.5, 500ms );
+		EXPECT_EQ( Pump->FindBreak(speed), again );
+		auto of = Of( speed );
+		ASSERT_EQ( of.Markers.size(), 1 );
+		EXPECT_EQ( of.Markers[0].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( of.Values, (vector<double>{1, 1.5}) );
+
+		Time->Advance( 1min );
+		Pump->Connected();
+		Change( speed, 1.6 );
+		of = Of( speed );
+		ASSERT_EQ( of.Markers.size(), 2 );
+		EXPECT_EQ( of.Markers[1].Data.sourceTimestamp, ticks(again) );
+		EXPECT_EQ( of.Values, (vector<double>{1, 1.5, 1.6}) );
+		EXPECT_FALSE( Pump->FindBreak(speed) );
 	}
 
 	//A change sampled at or before a heartbeat still buffered drops it:  the heartbeat would replay the old value over
@@ -378,6 +613,7 @@ namespace Jde::Opc::Hist::Tests{
 
 		Time->Advance( 10s );
 		ASSERT_EQ( Of(speed).Heartbeats.size(), 1 );
+		EXPECT_EQ( Of(speed).Heartbeats[0].Data.sourceTimestamp, ticks(Time->Now()-500ms) );//MaxTimeInterval after the change, not after the heartbeat it dropped.
 		Time->Advance( 50ms );
 		Change( speed, 4 );//sampled after it.
 		EXPECT_EQ( Of(speed).Heartbeats.size(), 1 );
@@ -397,6 +633,60 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( Of(speed).Heartbeats.empty() );
 		Time->Advance( 2s );//a minute after the stored value, by the source's clock.
 		EXPECT_EQ( Of(speed).Values, (vector<double>{1, 2}) );
+	}
+
+	//A full buffer drops a node's heartbeat with its oldest values, and holds the newest of what a node lost to write
+	//back.  A change sampled before a heartbeat held so drops it too:  nothing then ends the node's gap but the change.
+	TEST_F( GatewayFiles, EarlierChangeDropsALostHeartbeat ){
+		auto config = Config( 1min );
+		config.MaxBuffer = 4'000;
+		Restart( move(config) );
+		auto group = AddGroup();
+		const Thresholds beat{ .MaxTimeInterval=10s };
+		let speed = Join( *group, "Pump1.Speed", beat );
+		let flow = Join( *group, "Pump1.Flow", beat );
+		let level = Join( *group, "Tank1.Level" );
+		let first = Time->Now();
+		DataChange( *group, speed, 1, first );
+		EXPECT_TRUE( Flush(*group) );//its value is in the file, so its heartbeat is all it loses.
+		let file = File( *group, March7 ), aside = file.parent_path()/"aside";
+		fs::rename( file, aside );
+		fs::create_directory( file );//nothing appends to a directory.
+		DataChange( *group, flow, 1, first );
+		EXPECT_FALSE( Flush(*group) );//so it trims rather than flushes.
+		Time->Advance( 10s );
+		ASSERT_EQ( Buffered(*group, speed).Heartbeats.size(), 1 );
+		ASSERT_EQ( Buffered(*group, flow).Heartbeats.size(), 1 );
+		for( uint i=1; i<200 && !Buffered(*group, flow).Heartbeats.empty(); ++i ){
+			DataChange( *group, level, i, Time->Now()+i*1ms );
+			Time->Advance( 0s );//the trim's hop.
+		}
+		ASSERT_TRUE( Buffered(*group, speed).Heartbeats.empty() );
+		ASSERT_TRUE( Buffered(*group, flow).Heartbeats.empty() );
+		ASSERT_TRUE( Buffered(*group, flow).Values.empty() );
+
+		DataChange( *group, speed, 2, first+5s );
+		DataChange( *group, flow, 2, first+5s );
+		fs::remove( file );
+		fs::rename( aside, file );
+		EXPECT_TRUE( Flush(*group) );
+		let stored = [&]( NodeIndex index ){
+			vector<Proto::HistoryRecord> y;
+			for( let& r : readFile(file) ){
+				if( r.has_value() && r.value().node_index()==index )
+					y.push_back( r );
+			}
+			return y;
+		};
+		let speeds = stored( speed );
+		ASSERT_EQ( speeds.size(), 2 );
+		EXPECT_TRUE( isValue(speeds[0], speed, 1, first) );
+		EXPECT_TRUE( isValue(speeds[1], speed, 2, first+5s) );
+		let flows = stored( flow );
+		ASSERT_EQ( flows.size(), 2 );
+		EXPECT_EQ( flows[0].value().status(), UA_STATUSCODE_BADDATALOST );//the value it lost.
+		EXPECT_EQ( flows[0].value().source_ts(), ticks(first) );
+		EXPECT_TRUE( isValue(flows[1], flow, 2, first+5s) );
 	}
 
 	//A flush leaves a heartbeat made less than a publishing interval ago for the next, so a change still on its way
@@ -454,6 +744,41 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Records<DataValue>().size(), 1 );
 	}
 
+	//But only when the value agrees.  A source whose timestamps are coarse can change it inside one, in its value or its
+	//status code, and that is taken as later.  A change the node's band would drop is none.
+	TEST_F( Compression, GapWithAnotherValueAtTheSameTimestamp ){
+		let speed = Join( *Pump, "Pump1.Speed" );
+		let flow = Join( *Pump, "Pump1.Flow" );
+		let level = Join( *Pump, "Tank1.Level", {.ExceptionDeviation=100} );
+		let first = Time->Now();
+		for( let index : {speed, flow, level} )
+			Change( index, 1 );
+		Time->Advance( 1min );
+		Pump->Disconnected( Time->Now() );
+		Time->Advance( 1min );
+		Pump->Connected();
+
+		DataChange( *Pump, speed, 2, first );
+		let changed = Of( speed );
+		ASSERT_EQ( changed.Markers.size(), 1 );
+		EXPECT_EQ( changed.Markers[0].Data.sourceTimestamp, ticks(first) );//no later than the value.
+		EXPECT_EQ( changed.Values, (vector<double>{1, 2}) );
+		EXPECT_EQ( changed.Sources.back(), ticks(first) );
+		EXPECT_FALSE( Pump->FindBreak(speed) );
+
+		auto uncertain = Reading( 1, first, first+5ms );
+		uncertain.status = UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE;
+		uncertain.hasStatus = true;
+		Pump->Enqueue( flow, uncertain );
+		EXPECT_EQ( Of(flow).Markers.size(), 1 );
+		EXPECT_EQ( Of(flow).Values, (vector<double>{1, 1}) );
+
+		DataChange( *Pump, level, 1.5, first );
+		EXPECT_TRUE( Of(level).Markers.empty() );
+		EXPECT_EQ( Of(level).Values, (vector<double>{1}) );
+		EXPECT_FALSE( Pump->FindBreak(level) );
+	}
+
 	//A later one means the historian cannot know what it missed:  a Bad_DataLost at the break, then the value.
 	TEST_F( Compression, GapMarkedAtTheBreak ){
 		let speed = Join( *Pump, "Pump1.Speed" );
@@ -481,6 +806,7 @@ namespace Jde::Opc::Hist::Tests{
 		let broke = Time->Now();
 		Pump->Disconnected( broke );
 		Time->Advance( 1min );
+		Pump->Connected();
 		DataChange( *Pump, speed, 2, broke-1s );
 		let values = Records<DataValue>();
 		ASSERT_EQ( values.size(), 3 );
@@ -492,6 +818,9 @@ namespace Jde::Opc::Hist::Tests{
 	//An earlier one means the source's clock or state went backwards:  the marker alone, and the node reads Bad until
 	//its next change, which is stored whatever the band says.
 	TEST_F( Compression, GapWithAnEarlierValue ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::ClearMemory();
 		let speed = Join( *Pump, "Pump1.Speed", {.ExceptionDeviation=100} );
 		let first = Time->Now();
 		Change( speed, 1 );
@@ -499,13 +828,72 @@ namespace Jde::Opc::Hist::Tests{
 		let broke = Time->Now();
 		Pump->Disconnected( broke );
 		Time->Advance( 1min );
+		Pump->Connected();
 		DataChange( *Pump, speed, 2, first-1s );
 		auto values = Records<DataValue>();
 		ASSERT_EQ( values.size(), 2 );
 		EXPECT_TRUE( isMarker(values[1]) );
 		EXPECT_EQ( values[1].Data.sourceTimestamp, ticks(broke) );
+		Time->Advance( 0s );//the warning's hop, off the collection path.
+		let warned = Logging::Find( []( const Logging::Entry& e ){ return e.Message().contains("came back from the break"); } );
+		ASSERT_EQ( warned.size(), 1 );
+		EXPECT_EQ( warned[0].Level, ELogLevel::Warning );
+		EXPECT_EQ( warned[0].Tags, ELogTags::IO );//with the historian's other warnings about its records.
 		Change( speed, 3 );
 		EXPECT_EQ( Of(speed).Values, (vector<double>{1, 3}) );
+	}
+
+	//The break is in the historian's clock and a node's records are in the source's.  With the source's ahead, the
+	//marker goes at the node's newest record, never before it, whether the value that ends the gap is later or earlier.
+	TEST_F( Compression, GapMarkedNoEarlierThanTheNewestRecord ){
+		let speed = Join( *Pump, "Pump1.Speed" );
+		let flow = Join( *Pump, "Pump1.Flow" );
+		let stored = Time->Now()+30s;
+		DataChange( *Pump, speed, 1, stored );
+		DataChange( *Pump, flow, 1, stored );
+		Time->Advance( 10s );
+		let broke = Time->Now();
+		Pump->Disconnected( broke );
+		Time->Advance( 10min );
+		Pump->Connected();
+
+		DataChange( *Pump, speed, 2, Time->Now()+30s );
+		let later = Of( speed );
+		ASSERT_EQ( later.Markers.size(), 1 );
+		EXPECT_EQ( later.Markers[0].Data.sourceTimestamp, ticks(stored) );
+		EXPECT_EQ( later.Values, (vector<double>{1, 2}) );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 4 );
+		EXPECT_TRUE( isMarker(values[2]) );//after the record it shares a time with, as every sort by source time keeps it.
+
+		DataChange( *Pump, flow, 2, stored-5s );//its clock was set back meanwhile.
+		let earlier = Of( flow );
+		ASSERT_EQ( earlier.Markers.size(), 1 );
+		EXPECT_EQ( earlier.Markers[0].Data.sourceTimestamp, ticks(stored) );
+		EXPECT_EQ( earlier.Values, (vector<double>{1}) );
+	}
+
+	//A heartbeat is a record too, and its time is in the source's clock.
+	TEST_F( Compression, GapMarkedNoEarlierThanAHeartbeat ){
+		let speed = Join( *Pump, "Pump1.Speed", {.MaxTimeInterval=10s} );
+		Change( speed, 1 );
+		Time->Advance( 1s );
+		Change( speed, 2, -30s );//the source's clock is 30 s ahead.
+		Time->Advance( 10s );
+		let beats = Of( speed ).Heartbeats;
+		ASSERT_EQ( beats.size(), 1 );
+		Time->Advance( 1s );
+		let broke = Time->Now();
+		ASSERT_GT( beats[0].Data.sourceTimestamp, ticks(broke) );
+		Pump->Disconnected( broke );
+		Time->Advance( 10min );
+		Pump->Connected();
+		Change( speed, 3, -30s );
+		let after = Of( speed );
+		ASSERT_EQ( after.Markers.size(), 1 );
+		EXPECT_EQ( after.Markers[0].Data.sourceTimestamp, beats[0].Data.sourceTimestamp );
+		EXPECT_EQ( after.Heartbeats.size(), 1 );
+		EXPECT_EQ( after.Values, (vector<double>{1, 2, 3}) );
 	}
 
 	//The comparison is with the last value delivered, whether the band dropped it, MinTimeInterval held it, or a
@@ -539,6 +927,89 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Of(beating).Values, (vector<double>{1}) );
 	}
 
+	//But one the value that ends the gap drops is no floor for the marker.
+	TEST_F( Compression, GapFloorIsWhatTheValueLeaves ){
+		let speed = Join( *Pump, "Pump1.Speed", {.MaxTimeInterval=10s} );
+		Change( speed, 1 );
+		Time->Advance( 1s );
+		let second = Time->Now()+30s;
+		Change( speed, 2, -30s );//the source's clock is 30 s ahead.
+		Time->Advance( 10s );
+		ASSERT_EQ( Of(speed).Heartbeats.size(), 1 );
+		Time->Advance( 1s );
+		Pump->Disconnected( Time->Now() );
+		Time->Advance( 10s );
+		Pump->Connected();
+		DataChange( *Pump, speed, 3, second+4s );//sourced before the heartbeat's time.
+		let after = Of( speed );
+		EXPECT_TRUE( after.Heartbeats.empty() );
+		ASSERT_EQ( after.Markers.size(), 1 );
+		EXPECT_EQ( after.Markers[0].Data.sourceTimestamp, ticks(second) );
+		EXPECT_EQ( after.Sources.back(), ticks(second+4s) );
+	}
+
+	//A break the host reports late:  the timer went on repeating each value over a dead feed.  The heartbeats made
+	//since the break go, and its marker goes at the break, whichever way the value that ends it compares.
+	TEST_F( Compression, LateBreakDropsItsHeartbeats ){
+		const Thresholds beat{ .ExceptionDeviation=100, .MaxTimeInterval=10s };
+		let speed = Join( *Pump, "Pump1.Speed", beat );
+		let flow = Join( *Pump, "Pump1.Flow", beat );
+		let first = Time->Now();
+		Change( speed, 1 );
+		Change( flow, 1 );
+		Time->Advance( 10s );
+		let held = Library->Buffered();
+		Time->Advance( 15s );
+		ASSERT_EQ( Of(speed).Heartbeats.size(), 2 );
+		let broke = first+15s;
+		Pump->Disconnected( broke );
+		EXPECT_EQ( Library->Buffered(), held );
+		for( let index : {speed, flow} ){
+			SCOPED_TRACE( index );
+			let beats = Of( index ).Heartbeats;
+			ASSERT_EQ( beats.size(), 1 );
+			EXPECT_EQ( beats[0].Data.serverTimestamp, ticks(first+10s) );//made while the connection was up.
+		}
+		Time->Advance( 1min );
+		Pump->Connected();
+
+		Change( speed, 2 );
+		let later = Of( speed );
+		ASSERT_EQ( later.Markers.size(), 1 );
+		EXPECT_EQ( later.Markers[0].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( later.Values, (vector<double>{1, 2}) );
+
+		DataChange( *Pump, flow, 2, first-1s );
+		let earlier = Of( flow );
+		ASSERT_EQ( earlier.Markers.size(), 1 );
+		EXPECT_EQ( earlier.Markers[0].Data.sourceTimestamp, ticks(broke) );
+		EXPECT_EQ( earlier.Heartbeats.size(), 1 );
+		EXPECT_EQ( earlier.Values, (vector<double>{1}) );
+	}
+
+	//One a flush already wrote is out of reach, so the marker goes after it.
+	TEST_F( GatewayFiles, LateBreakKeepsAFlushedHeartbeat ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed", {.MaxTimeInterval=10s} );
+		let first = Time->Now();
+		DataChange( *group, speed, 1, first );
+		Time->Advance( 10s );
+		Time->Advance( 1s );//past the publishing interval, so the flush takes the heartbeat.
+		EXPECT_TRUE( Flush(*group) );
+		EXPECT_TRUE( group->Buffer().empty() );
+		Time->Advance( 9s );
+		ASSERT_EQ( Records<DataValue>().size(), 1 );
+		group->Disconnected( first+5s );
+		EXPECT_TRUE( group->Buffer().empty() );
+		Time->Advance( 30s );
+		group->Connected();
+		DataChange( *group, speed, 2, Time->Now() );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 2 );
+		EXPECT_TRUE( isMarker(values[0]) );
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(first+10s) );
+	}
+
 	//With no SourceTimestamp the comparison means nothing, so the first value is taken as later.
 	TEST_F( Compression, GapWithoutASourceTimestamp ){
 		let speed = Join( *Pump, "Pump1.Speed" );
@@ -546,6 +1017,7 @@ namespace Jde::Opc::Hist::Tests{
 		let broke = Time->Now();
 		Pump->Disconnected( broke );
 		Time->Advance( 1min );
+		Pump->Connected();
 		Pump->Enqueue( speed, Reading(1) );
 		let values = Records<DataValue>();
 		ASSERT_EQ( values.size(), 3 );
@@ -592,6 +1064,86 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isValue(records.back(), flow, 2, second) );
 	}
 
+	//The stop's time is the historian's too, so after it the marker is no earlier than the node's newest record in its
+	//files.
+	TEST_F( GatewayFiles, RestartGapNoEarlierThanTheNewestRecord ){
+		auto group = AddGroup();
+		let name = group->Name();
+		let speed = Join( *group, "Pump1.Speed" );
+		let stored = Time->Now()+30s;
+		DataChange( *group, speed, 1, stored );
+		group.reset();
+		Restart();
+		group = Rejoin( name, {{Node("Pump1.Speed"), {}, speed}} );
+		ASSERT_LT( group->FindBreak(speed), stored );
+		Time->Advance( 10min );
+
+		let ended = Time->Now()+30s;
+		DataChange( *group, speed, 2, ended );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 2 );
+		EXPECT_TRUE( isMarker(values[0]) );
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(stored) );
+		EXPECT_TRUE( Flush(*group) );
+		let records = readFile( File(*group, March7) );
+		ASSERT_GE( records.size(), 3 );
+		EXPECT_TRUE( isValue(records[records.size()-3], speed, 1, stored) );
+		EXPECT_EQ( records[records.size()-2].value().status(), UA_STATUSCODE_BADDATALOST );
+		EXPECT_EQ( records[records.size()-2].value().source_ts(), ticks(stored) );
+		EXPECT_TRUE( isValue(records.back(), speed, 2, ended) );
+	}
+
+	//And the value with that record's, as it reads back:  an alias as its built-in type, which is the same on the wire.
+	TEST_F( GatewayFiles, RestartComparesTheNewestRecordsValue ){
+		auto group = AddGroup();
+		let name = group->Name();
+		let speed = Join( *group, "Pump1.Speed" );
+		let started = Join( *group, "Pump1.Started" );
+		let first = Time->Now();
+		DataChange( *group, speed, 1, first );
+		UA_DataValue dv{};
+		const UA_UtcTime at{ ticks(first-1h) };
+		UA_Variant_setScalarCopy( &dv.value, &at, &UA_TYPES[UA_TYPES_UTCTIME] );
+		dv.hasValue = dv.hasSourceTimestamp = true;
+		dv.sourceTimestamp = ticks( first );
+		const Value utc{ move(dv) };//read back as a DateTime.
+		group->Enqueue( started, utc );
+		group.reset();
+		Restart();
+		group = Rejoin( name, {{Node("Pump1.Speed"), {}, speed}, {Node("Pump1.Started"), {}, started}} );
+		Time->Advance( 30s );
+
+		group->Enqueue( started, utc );
+		EXPECT_TRUE( group->Buffer().empty() );//nothing was lost.
+		EXPECT_FALSE( group->FindBreak(started) );
+
+		DataChange( *group, speed, 2, first );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 2 );
+		EXPECT_TRUE( isMarker(values[0]) );
+		EXPECT_EQ( values[1].Data.Get<double>(0), 2 );
+		EXPECT_EQ( values[1].Data.sourceTimestamp, ticks(first) );
+	}
+
+	//MaxTimeInterval counts in the historian's clock, and the newest record's time is in the source's.  With that one
+	//ahead, the heartbeat still comes MaxTimeInterval after the start at the latest.
+	TEST_F( ServerFiles, RestartHeartbeatInTheHistoriansClock ){
+		let speed = Historize( "Pump1.Speed" );
+		let first = Time->Now();
+		Server->Enqueue( speed, Reading(1, first+1h) );
+		Time->Advance( 5min );
+		Start( {{Node("Pump1.Speed"), {.MaxTimeInterval=10s}}} );
+		Server->Enqueue( speed, Reading(1, first+1h) );//nothing was lost.
+		EXPECT_TRUE( Server->Buffer().empty() );
+		Time->Advance( 9s );
+		EXPECT_TRUE( Server->Buffer().empty() );
+		Time->Advance( 1s );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 1 );
+		EXPECT_EQ( values[0].Heartbeat, ticks(first+1h) );
+		EXPECT_EQ( values[0].Data.serverTimestamp, ticks(Time->Now()) );
+	}
+
 	//A heartbeat in the files compares by the SourceTimestamp of the value it repeats, and the heartbeat goes on from it.
 	TEST_F( ServerFiles, RestartComparesAHeartbeatByItsValue ){
 		const Thresholds beat{ .MaxTimeInterval=10s };
@@ -601,6 +1153,7 @@ namespace Jde::Opc::Hist::Tests{
 		Time->Advance( 10s );
 		Start( {{Node("Pump1.Speed"), beat}} );
 		ASSERT_TRUE( readFile(File(March7)).back().value().has_heartbeat() );
+		EXPECT_FALSE( readFile(File(March7)).back().value().heartbeat_unsourced() );
 		Server->Enqueue( speed, Reading(1, first) );//OpcServer's current value at start.
 		EXPECT_TRUE( Server->Buffer().empty() );
 		Time->Advance( 10s );
@@ -609,6 +1162,30 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( values[0].Heartbeat, ticks(first) );
 		EXPECT_EQ( values[0].Data.Get<double>(0), 1 );
 		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(first+20s) );
+	}
+
+	//A heartbeat's record says when the value it repeats came with no SourceTimestamp.  After a restart there is then
+	//nothing to compare, as there was none in memory, so the first value is taken as later.
+	TEST_F( ServerFiles, RestartComparesNoUnsourcedHeartbeat ){
+		const Thresholds beat{ .MaxTimeInterval=10s };
+		let speed = Historize( "Pump1.Speed", beat );
+		let first = Time->Now();
+		Server->Enqueue( speed, Reading(1) );//filed by the time it arrived.
+		Time->Advance( 10s );
+		ASSERT_EQ( Records<DataValue>().size(), 2 );
+		EXPECT_TRUE( Records<DataValue>()[1].Unsourced );
+		Start( {{Node("Pump1.Speed"), beat}} );
+		let stored = readFile( File(March7) ).back().value();
+		ASSERT_TRUE( stored.has_heartbeat() );
+		EXPECT_TRUE( stored.heartbeat_unsourced() );
+		EXPECT_EQ( stored.heartbeat(), ticks(first) );
+
+		Time->Advance( 30s );
+		Server->Enqueue( speed, Reading(2, first-1s) );//earlier than that server time, were the two compared.
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 2 );
+		EXPECT_TRUE( isMarker(values[0]) );
+		EXPECT_EQ( values[1].Data.Get<double>(0), 2 );
 	}
 
 	//When the newest record is a marker the comparison means nothing, so the first value is taken as later.

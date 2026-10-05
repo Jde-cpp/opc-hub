@@ -55,7 +55,8 @@ message DataValue{
 	uint32 server_picoseconds=5;
 	uint32 status=6;
 	Jde.Opc.Proto.Value value=7;
-	optional sint64 heartbeat=8;//a heartbeat's:  the source timestamp of the value it repeats.
+	optional sint64 heartbeat=8;//a heartbeat's:  the primary time of the value it repeats.
+	bool heartbeat_unsourced=9;//that value came with no source timestamp, so heartbeat is its server_ts.
 }
 
 //Part 11's HistoryUpdateType.

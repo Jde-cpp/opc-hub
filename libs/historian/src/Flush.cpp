@@ -137,6 +137,8 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		Cancel( timers );
+		effects.Pushed.Flush = false;//the last flush, started here, takes what the settles stored.
+		Finish( move(effects) );
 		if( start )//on the executor, so every group's runs at once, and a write that never returns holds none of this thread.
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}

@@ -185,8 +185,8 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( values[0].Data.serverTimestamp, ticks(source+5ms) );
 	}
 
-	//A connection breaks for every group on it; the gateway calls each.  A node's break is the first one until a value
-	//arrives, however many callbacks come before, and that value is judged against it.
+	//A connection breaks for every group on it; the gateway calls each.  A node's break is the first one until its first
+	//value after the connection returns, however many callbacks come before, and that value is judged against it.
 	TEST_F( GatewayHost, Break ){
 		auto pump1 = AddGroup();
 		auto pump2 = AddGroup();
@@ -224,10 +224,12 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( pump1->FindBreak(speed), again );
 		EXPECT_EQ( pump1->FindBreak(flow), broke );
 
-		DataChange( *pump1, speed, 1770, Time->Now() );//one already in flight when the callback came.
+		DataChange( *pump1, speed, 1770, Time->Now() );//one already in flight when the callback came:  sent before the break.
+		EXPECT_EQ( pump1->FindBreak(speed), again );
+		EXPECT_EQ( Records<DataValue>().size(), 4 );
 		Time->Advance( 1min );
 		pump1->Disconnected( Time->Now() );
-		EXPECT_EQ( pump1->FindBreak(speed), Time->Now() );
+		EXPECT_EQ( pump1->FindBreak(speed), again );
 	}
 
 	//A rejoin is a break at the removal time, or at the break the node left with, and its first value is judged against

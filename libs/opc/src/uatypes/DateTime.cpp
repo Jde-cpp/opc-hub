@@ -12,7 +12,6 @@ namespace Jde::Opc{
 	//UADateTime, and not usable in a constant expression.  The two agree by construction - fromUnixTime is documented as
 	//`(unixDate * UA_DATETIME_SEC) + UA_DATETIME_UNIX_EPOCH` - and DateTimeTests pins that they still do.
 	constexpr UA_DateTime _ua1970 = UA_DATETIME_UNIX_EPOCH;
-	using UATick = duration<UA_Int64, std::ratio<1,10'000'000>>;//UA_DateTime's own unit: 100ns ticks since 1601.
 
 	//The tick span that survives conversion into TimePoint's Duration.  duration_cast scales by
 	//UATick::period/Duration::period, so a nanosecond clock (libstdc++) caps it at ~292 years either side of 1970, while

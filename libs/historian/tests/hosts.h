@@ -5,11 +5,11 @@
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include "ManualClock.h"
+#include "../src/io/Records.h"
 
 //The two shapes the library serves from its first commit, so building for OpcServer first doesn't bake in its shape.
 namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
-	Ξ ticks( TimePoint t )ι->UA_DateTime{ return UADateTime{ t }.UA(); }//t as UA's 100 ns ticks since 1601.
 	struct HostFixture : ::testing::Test{
 		static ExNodeId Node( sv id, sv uri="urn:jde:pumps" )ι{
 			return ExNodeId{ flat_map<string,string>{ {"nsu", string{uri}}, {"s", string{id}} } };

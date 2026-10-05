@@ -39,10 +39,11 @@ namespace Jde::Opc{
 		Ω magnitude( const Number& n )ι->double{
 			return std::visit( []( auto v ){ return std::abs((double)v); }, n );
 		}
+		Ω status( const UA_DataValue& v )ι->UA_StatusCode{ return v.hasStatus ? v.status : UA_STATUSCODE_GOOD; }
 	}
 
 	α Hist::Passes( const Thresholds& config, const UA_DataValue& stored, const UA_DataValue& change )ι->bool{
-		if( (stored.hasStatus ? stored.status : UA_STATUSCODE_GOOD)!=(change.hasStatus ? change.status : UA_STATUSCODE_GOOD) )
+		if( status(stored)!=status(change) )
 			return true;
 		if( !config.ExceptionDeviation || !stored.hasValue || !change.hasValue || stored.value.type!=change.value.type )
 			return true;
@@ -64,5 +65,17 @@ namespace Jde::Opc{
 			break;
 		}
 		return !( distance(*from, *to)<band );//a NaN is at no distance, so it passes.
+	}
+
+	α Hist::Repeats( const UA_DataValue& stored, const UA_DataValue& change )ι->bool{
+		if( status(stored)!=status(change) )
+			return false;
+		const UA_Variant none{};
+		UA_ByteString was{}, is{};
+		let encode = [&]( const UA_DataValue& v, UA_ByteString& y ){ return UA_encodeBinary( v.hasValue ? &v.value : &none, &UA_TYPES[UA_TYPES_VARIANT], &y, nullptr )==UA_STATUSCODE_GOOD; };
+		let same = encode( stored, was ) && encode( change, is ) && UA_ByteString_equal( &was, &is );
+		UA_ByteString_clear( &was );
+		UA_ByteString_clear( &is );
+		return same;
 	}
 }
