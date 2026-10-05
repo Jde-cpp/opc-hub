@@ -9,6 +9,7 @@
 //The two shapes the library serves from its first commit, so building for OpcServer first doesn't bake in its shape.
 namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
+	Ξ ticks( TimePoint t )ι->UA_DateTime{ return UADateTime{ t }.UA(); }//t as UA's 100 ns ticks since 1601.
 	struct HostFixture : ::testing::Test{
 		static ExNodeId Node( sv id, sv uri="urn:jde:pumps" )ι{
 			return ExNodeId{ flat_map<string,string>{ {"nsu", string{uri}}, {"s", string{id}} } };
@@ -27,7 +28,18 @@ namespace Jde::Opc::Hist::Tests{
 			}
 			return Value{ move(dv) };
 		}
-		static UA_DateTime Ua( TimePoint t )ι{ return UADateTime{ t }.UA(); }
+		//A String value, with no timestamp for Enqueue to stamp its server time.
+		static Value Text( sv text, optional<TimePoint> source={} )ι{
+			UA_DataValue dv{};
+			const UA_String s{ text.size(), (UA_Byte*)text.data() };
+			UA_Variant_setScalarCopy( &dv.value, &s, &UA_TYPES[UA_TYPES_STRING] );
+			dv.hasValue = true;
+			if( source ){
+				dv.sourceTimestamp = UADateTime{ *source }.UA();
+				dv.hasSourceTimestamp = true;
+			}
+			return Value{ move(dv) };
+		}
 		//A flush of what group buffered, waited for:  false when it didn't write all it took.
 		static bool Flush( Group& group )ε{ return BlockAny( group.Flush() ); }
 		//Waits out the flushes the clock started, which write on the executor's threads.
@@ -43,27 +55,33 @@ namespace Jde::Opc::Hist::Tests{
 
 		//The host's process ending and starting again on its hist.path:  the library is destroyed, which writes what each
 		//group buffered, and made again.  The host then adds its groups, with their members at start.
-		α Restart( optional<Settings> config={} )ι->void{
+		α Restart( optional<Settings> config={} )ε->void{
 			_group.reset();
 			Library.reset();
 			Library = mu<Historian>( config ? move(*config) : Config(Delay), Time );
 		}
 		//A hist.path of the test's own, beside the logs.
-		static fs::path Path()ι{
+		static fs::path Path()ε{
 			const auto test = ::testing::UnitTest::GetInstance()->current_test_info();
 			return fs::current_path()/"hist-tests"/Ƒ( "{}.{}", test->test_suite_name(), test->name() );
 		}
-		static Settings Config( Duration delay )ι{
+		static Settings Config( Duration delay )ε{
 			Settings y{ Path() };
 			y.Delay = delay;
 			return y;
 		}
+		//Leaves what it can't remove, rather than ending the binary from a destructor.
 		~HostFixture(){
 			_group.reset();
 			Library.reset();
-			fs::remove_all( Path() );
-			std::error_code ec;
-			fs::remove( Path().parent_path(), ec );//once the last test's is gone.
+			try{
+				const auto path = Path();
+				std::error_code ec;
+				fs::remove_all( path, ec );
+				fs::remove( path.parent_path(), ec );//once the last test's is gone.
+			}
+			catch( const std::exception& )
+			{}
 		}
 
 		//`delay` is a year unless a fixture sets its own, so that a test moving the clock still reads what its group
@@ -72,9 +90,9 @@ namespace Jde::Opc::Hist::Tests{
 		sp<ManualClock> Time{ ms<ManualClock>(sys_days{2026y/March/7}+17h) };
 		up<Historian> Library{ New(Config(Delay), Time) };
 	protected:
-		HostFixture( Duration delay=days{365} )ι:Delay{ delay }{}
+		HostFixture( Duration delay=days{365} )ε:Delay{ delay }{}
 		//After clearing what a run that crashed left behind.
-		static up<Historian> New( Settings config, sp<IClock> clock )ι{
+		static up<Historian> New( Settings config, sp<IClock> clock )ε{
 			fs::remove_all( config.Path );
 			return mu<Historian>( move(config), move(clock) );
 		}
@@ -86,7 +104,7 @@ namespace Jde::Opc::Hist::Tests{
 	//start, so no change carries a writer.  Values arrive as they are written, under open62541's service lock, and there
 	//is no subscription to break.
 	struct ServerHost : HostFixture{
-		ServerHost( Duration delay=days{365} )ι:HostFixture{ delay }{ _group = Server; }
+		ServerHost( Duration delay=days{365} )ε:HostFixture{ delay }{ _group = Server; }
 		//The nodeset loader, for a variable marked Historizing.
 		α Historize( sv id, Thresholds config={} )ε->NodeIndex{ return Server->Add( {Node(id), move(config)} ); }
 		//open62541's setValue:  the writer's source timestamp, stamped now when it sent none, and no server timestamp.
@@ -99,7 +117,7 @@ namespace Jde::Opc::Hist::Tests{
 	//autoincrement sequence across every group.  It resolves each node's thresholds itself, and every membership change
 	//is a QL mutation with a caller.  Values arrive on each connection's strand, and a connection can break.
 	struct GatewayHost : HostFixture{
-		GatewayHost( Duration delay=days{365} )ι:HostFixture{ delay }{}
+		GatewayHost( Duration delay=days{365} )ε:HostFixture{ delay }{}
 		//The nullable threshold columns of a hist_group_nodes row or a hist_template_nodes member.
 		struct Columns{ optional<double> ExceptionDeviation; optional<Duration> MaxTimeInterval; };
 		//row, then template member, then group.

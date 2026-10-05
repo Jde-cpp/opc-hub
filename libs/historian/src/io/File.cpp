@@ -1,4 +1,6 @@
 #include "File.h"
+#include <jde/fwk/io/file.h>
+#include <absl/container/flat_hash_set.h>
 #include <jde/fwk/exceptions/IOException.h>
 #ifdef _WIN32
 	#include <windows.h>
@@ -19,16 +21,19 @@ namespace Jde::Opc::Hist{
 		Ξ closed()ι->int{ return -1; }
 		Ξ lastError()ι->uint32{ return (uint32)errno; }
 #endif
-		Ω failed( const fs::path& path, sv call, SL sl, uint32 code )ι->IO::IOException{
-			IO::IOException e{ path, code, string{call}, sl };
-			e.SetLevel( ELogLevel::Error );
-			return e;
-		}
 		//With the OS's code for the call that just failed.
 		Ω failed( const fs::path& path, sv call, SL sl )ι->IO::IOException{
 			let code = lastError();
-			return failed( path, call, sl, code );
+			return Failed( path, code, string{call}, sl );
 		}
+	}
+	α Failed( const fs::path& path, uint32 code, string call, SL sl )ι->IO::IOException{
+		IO::IOException e{ path, code, move(call), sl };
+		e.SetLevel( ELogLevel::Error );
+		return e;
+	}
+	α Failed( const fs::path& path, const std::error_code& ec, SL sl )ι->IO::IOException{
+		return Failed( path, (uint32)ec.value(), ec.message(), sl );
 	}
 
 	PathLock::PathLock( PathLock&& x )ι:
@@ -37,18 +42,12 @@ namespace Jde::Opc::Hist{
 
 #ifdef _WIN32
 	α MakeDirectories( const fs::path& directory, SL sl )ε->void{
-		std::error_code ec;
-		fs::create_directories( directory, ec );
-		if( ec )
-			throw failed( directory, "create_directories", sl, (uint32)ec.value() );
+		IO::CreateDirectories( directory, sl );
 	}
 	α SyncDirectories( const fs::path&, const fs::path&, SL )ε->void{}
 
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
-		std::error_code ec;
-		fs::create_directories( path, ec );
-		if( ec )
-			throw failed( path, "create_directories", sl, (uint32)ec.value() );
+		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";
 		//Shared, so a second holder gets as far as the lock, whose refusal can only mean that it is held.
 		let handle = ::CreateFileW( file.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr );
@@ -60,7 +59,7 @@ namespace Jde::Opc::Hist{
 			::CloseHandle( handle );
 			if( code==ERROR_LOCK_VIOLATION || code==ERROR_IO_PENDING )
 				return nullopt;
-			throw failed( file, "LockFileEx", sl, code );
+			throw Failed( file, code, "LockFileEx", sl );
 		}
 		return PathLock{ handle };
 	}
@@ -78,21 +77,29 @@ namespace Jde::Opc::Hist{
 		let code = ::fsync( fd )==-1 ? lastError() : 0;
 		::close( fd );
 		if( code && code!=EINVAL )//EINVAL is a file system with no directory fsync, which has nothing to lose.
-			throw failed( dir, "fsync", sl, code );
+			throw Failed( dir, code, "fsync", sl );
 	}
+	//relative's own directory each time, for the names it gains.  Above it, each directory's name once per process:  the
+	//groups share their days' directories, and a name, once durable, stays so.
 	α SyncDirectories( const fs::path& root, const fs::path& relative, SL sl )ε->void{
-		for( auto dir = relative; ; dir = dir.parent_path() ){
-			syncDirectory( root/dir, sl );
-			if( dir.empty() )
-				break;
+		static absl::Mutex mutex;
+		static absl::flat_hash_set<string> named ABSL_GUARDED_BY( mutex );
+		syncDirectory( root/relative, sl );
+		for( auto dir = relative; !dir.empty(); dir = dir.parent_path() ){
+			let path = ( root/dir ).string();
+			{
+				ul _{ mutex };
+				if( named.contains(path) )
+					break;//and those above it, synced with it.
+			}
+			syncDirectory( root/dir.parent_path(), sl );
+			ul _{ mutex };
+			named.insert( path );
 		}
 	}
 
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
-		std::error_code ec;
-		fs::create_directories( path, ec );
-		if( ec )
-			throw failed( path, "create_directories", sl, (uint32)ec.value() );
+		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";
 		let fd = ::open( file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666 );
 		if( fd==-1 )
@@ -103,7 +110,7 @@ namespace Jde::Opc::Hist{
 			::close( fd );
 			if( code==EWOULDBLOCK )
 				return nullopt;
-			throw failed( file, "flock", sl, code );
+			throw Failed( file, code, "flock", sl );
 		}
 		return PathLock{ fd };
 	}

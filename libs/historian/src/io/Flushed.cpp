@@ -33,18 +33,23 @@ namespace Jde::Opc::Hist{
 
 	Flushed::Flushed( fs::path file, SL sl )ε:
 		_file{ move(file) }{
-		std::ifstream in{ _file, std::ios::binary };
+		std::ifstream in{ _file, std::ios::binary | std::ios::ate };
 		if( !in ){
 			std::error_code ec;
 			if( fs::exists(_file, ec) || ec )
 				throw IO::IOException{ sl, _file, ELogLevel::Error, "could not be opened to read the last flush" };
 			return;
 		}
+		let end = in.tellg();
+		if( end<0 || !in.seekg(0) )
+			throw IO::IOException{ sl, _file, ELogLevel::Error, "could not be sized to read the last flush" };
 		char bytes[2*SlotSize];
-		in.read( bytes, sizeof(bytes) );
-		if( in.bad() )
+		let want = std::min<uint>( (uint)end, sizeof(bytes) );
+		in.read( bytes, want );
+		//libc++ reports a failed read as the end of the file, which then comes short of what the file holds.
+		if( in.bad() || (uint)in.gcount()<want )
 			throw IO::IOException{ sl, _file, ELogLevel::Error, "could not be read for the last flush" };
-		let read = sv{ bytes, (uint)in.gcount() };
+		let read = sv{ bytes, want };
 		const array<optional<Stored>,2> slots{ parse(read), parse(read.substr(std::min<uint>(SlotSize, read.size()))) };
 		//The sequence wraps, so the later of two is the one ahead by less than half its range.
 		let second = slots[1] && ( !slots[0] || (int32_t)(slots[1]->Sequence-slots[0]->Sequence)>0 );
@@ -58,6 +63,8 @@ namespace Jde::Opc::Hist{
 	}
 
 	α Flushed::Next( TimePoint time )Ι->Slot{
+		if( _time )
+			time = std::max( time, *_time );//a clock set back claims less than the last flush did, which still holds.
 		Slot y{ .File=_file, .Index=(uint8)(1-_slot), .Sequence=_sequence+1, .Time=time, .Bytes=string(SlotSize, '\0') };
 		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)UADateTime{time}.UA(), reinterpret_cast<uint8_t*>(y.Bytes.data()) );
 		p = CodedOutputStream::WriteLittleEndian32ToArray( y.Sequence, p );

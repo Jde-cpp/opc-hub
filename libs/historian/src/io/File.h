@@ -1,6 +1,12 @@
 #pragma once
+#include <jde/fwk/exceptions/IOException.h>
 
 namespace Jde::Opc::Hist{
+	//At Error, where IOException's constructors that take an OS code take no level:  history that stops being read or
+	//written, which an operator must see.  call names what failed.
+	α Failed( const fs::path& path, uint32 code, string call, SRCE )ι->IO::IOException;
+	α Failed( const fs::path& path, const std::error_code& ec, SRCE )ι->IO::IOException;
+
 	//What the historian asks of the OS that a write through IO::WriteAwait doesn't do for it.
 
 	//A day file's directories, on Windows, where a write makes none.  Nothing on Linux:  there the file's first write

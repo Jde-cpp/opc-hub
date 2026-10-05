@@ -524,4 +524,48 @@ namespace Jde::Opc::Tests{
 		for( auto& e : elements )
 			UA_Variant_clear( &e );
 	}
+
+	//Utf8 is false for just the values whose ToValue protobuf won't parse back:  text in its `string` fields, not `bytes`.
+	TEST( VariantTests, Utf8 ){
+		const UA_String latin1{ 4, (UA_Byte*)"25\xB0" "C" }, utf8{ 5, (UA_Byte*)"25\xC2\xB0" "C" };
+		let expect = []( UA_Variant&& uaVariant, bool valid, sv what ){
+			const Variant v{ move(uaVariant) };
+			EXPECT_EQ( ProtoUtils::Utf8(v), valid ) << what;
+			Proto::Value parsed;
+			EXPECT_EQ( parsed.ParseFromString(ProtoUtils::ToValue(v).SerializeAsString()), valid ) << what;
+		};
+		expect( scalarVariant(&utf8, UA_TYPES[UA_TYPES_STRING]), true, "String" );
+		expect( scalarVariant(&latin1, UA_TYPES[UA_TYPES_STRING]), false, "Latin-1 String" );
+		expect( scalarVariant(&latin1, UA_TYPES[UA_TYPES_XMLELEMENT]), false, "XmlElement" );
+		expect( scalarVariant(&latin1, UA_TYPES[UA_TYPES_BYTESTRING]), true, "ByteString" );
+		const UA_String strings[]{ utf8, latin1 };
+		expect( arrayVariant(strings, 2, UA_TYPES[UA_TYPES_STRING]), false, "String[]" );
+		const UA_LocalizedText text{ utf8, latin1 }, locale{ latin1, utf8 };
+		expect( scalarVariant(&text, UA_TYPES[UA_TYPES_LOCALIZEDTEXT]), false, "LocalizedText text" );
+		expect( scalarVariant(&locale, UA_TYPES[UA_TYPES_LOCALIZEDTEXT]), false, "LocalizedText locale" );
+		const UA_QualifiedName name{ 1, latin1 };
+		expect( scalarVariant(&name, UA_TYPES[UA_TYPES_QUALIFIEDNAME]), false, "QualifiedName" );
+
+		UA_NodeId id{ .namespaceIndex=1, .identifierType=UA_NODEIDTYPE_STRING };
+		id.identifier.string = latin1;
+		expect( scalarVariant(&id, UA_TYPES[UA_TYPES_NODEID]), false, "string NodeId" );
+		const UA_ExpandedNodeId inExpanded{ id, {}, 0 }, uri{ UA_NODEID_NUMERIC(0, 85), latin1, 0 };
+		EXPECT_FALSE( ProtoUtils::Utf8(inExpanded) );
+		expect( scalarVariant(&uri, UA_TYPES[UA_TYPES_EXPANDEDNODEID]), false, "namespace URI" );
+		id.identifierType = UA_NODEIDTYPE_BYTESTRING;
+		expect( scalarVariant(&id, UA_TYPES[UA_TYPES_NODEID]), true, "ByteString NodeId" );
+
+		UA_ExtensionObject eo{ .encoding=UA_EXTENSIONOBJECT_ENCODED_XML };
+		eo.content.encoded.typeId = UA_NODEID_NUMERIC( 0, 1 );
+		eo.content.encoded.body = latin1;
+		expect( scalarVariant(&eo, UA_TYPES[UA_TYPES_EXTENSIONOBJECT]), false, "ExtensionObject xml" );
+		eo.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+		expect( scalarVariant(&eo, UA_TYPES[UA_TYPES_EXTENSIONOBJECT]), true, "ExtensionObject binary" );
+
+		UA_Variant elements[2]{ scalarVariant(&utf8, UA_TYPES[UA_TYPES_STRING]), scalarVariant(&latin1, UA_TYPES[UA_TYPES_STRING]) };
+		expect( arrayVariant(elements, 2, UA_TYPES[UA_TYPES_VARIANT]), false, "Variant[]" );//a Variant array holding one.
+		for( auto& e : elements )
+			UA_Variant_clear( &e );
+		EXPECT_FALSE( ProtoUtils::Utf8(sv{"25\xB0" "C"}) );
+	}
 }

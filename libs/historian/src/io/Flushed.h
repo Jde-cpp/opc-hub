@@ -21,7 +21,7 @@ namespace Jde::Opc::Hist{
 		//Reads the file.  No file is a group that has never flushed; one with no valid slot is warned of, and read as that.
 		Flushed( fs::path file, SRCE )ε;
 		α Time()Ι->optional<TimePoint>{ return _time; }
-		α Next( TimePoint time )Ι->Slot;
+		α Next( TimePoint time )Ι->Slot;//never before the last, so a clock set back doesn't move it back.
 		α Wrote( const Slot& slot )ι->void;//once its Write has returned.
 	private:
 		fs::path _file;

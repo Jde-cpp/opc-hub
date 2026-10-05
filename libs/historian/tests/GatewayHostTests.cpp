@@ -6,6 +6,11 @@
 #define let const auto
 
 namespace Jde::Opc::Hist::Tests{
+	namespace{
+		//Where the native stack stands:  a coroutine's locals live in its frame, so it calls out to see.
+		[[gnu::noinline]] Ω stackAddress()ι->uintptr_t{ return reinterpret_cast<uintptr_t>( __builtin_frame_address(0) ); }
+	}
+
 	TEST_F( GatewayHost, GroupsByGuid ){
 		let pump1 = AddGroup();
 		let pump2 = AddGroup();
@@ -174,8 +179,8 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( DataChange(*group, index, 1750, source) );
 		let values = Records<DataValue>();
 		ASSERT_EQ( values.size(), 1 );
-		EXPECT_EQ( values[0].Data.sourceTimestamp, Ua(source) );
-		EXPECT_EQ( values[0].Data.serverTimestamp, Ua(source+5ms) );
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(source) );
+		EXPECT_EQ( values[0].Data.serverTimestamp, ticks(source+5ms) );
 	}
 
 	//A connection breaks for every group on it; the gateway calls each.  A node's break is the first one until a value
@@ -268,5 +273,24 @@ namespace Jde::Opc::Hist::Tests{
 			let buffer = group->Buffer();
 			EXPECT_EQ( std::ranges::count_if(buffer, []( let& r ){ return std::holds_alternative<DataValue>(r); }), count );
 		}
+	}
+
+	//Awaiting a group with nothing to wait for completes without suspending, so a coroutine that does it in a loop
+	//doesn't nest a resume, and its stack, per turn.
+	TEST_F( GatewayHost, SettledInALoopDoesntNest ){
+		auto group = AddGroup();
+		uint grew{};
+		bool done{};
+		[]( sp<Group> group, uint& grew, bool& done )->VoidTask{
+			let first = stackAddress();
+			for( uint i=0; i<1'000; ++i ){
+				co_await group->Settled();
+				let now = stackAddress();
+				grew = std::max<uint>( grew, first>now ? first-now : now-first );
+			}
+			done = true;
+		}( group, grew, done );
+		ASSERT_TRUE( done );//nothing suspended.
+		EXPECT_LT( grew, 64*1024 );
 	}
 }

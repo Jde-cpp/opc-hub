@@ -8,7 +8,6 @@
 
 namespace Jde::Opc::Hist{
 	constexpr ELogTags _tags{ ELogTags::Settings };
-	constexpr uint FlushBytes{ 8*1024 };
 
 	//What a record takes in a file, near enough:  its UA encoding, and what frames it.
 	Ω bytes( const UA_DataValue& value )ι->uint32_t{
@@ -16,10 +15,6 @@ namespace Jde::Opc::Hist{
 	}
 	Ω bytes( const optional<Writer>& by, const UA_ExpandedNodeId* node=nullptr )ι->uint32_t{
 		return 16+( by ? (uint32_t)by->UserName.size()+6 : 0 )+( node ? (uint32_t)UA_calcSizeBinary(node, &UA_TYPES[UA_TYPES_EXPANDEDNODEID], nullptr) : 0 );
-	}
-	//What a value is filed and read by:  Enqueue stamps the server's when the value came with neither.
-	Ω primary( const UA_DataValue& value )ι->UA_DateTime{
-		return value.hasSourceTimestamp ? value.sourceTimestamp : value.serverTimestamp;
 	}
 	//The Bad_DataLost that opens a gap at a dropped value's time.
 	Ω marker( const UA_DataValue& dropped )ι->Value{
@@ -53,6 +48,7 @@ namespace Jde::Opc::Hist{
 		IdentityId{ identityId },
 		UserName{ move(userName) }{
 		THROW_IFSL( identityId.Value!=UserPK::System && identityId.Value>=std::numeric_limits<uint32_t>::max(), "Identity {} doesn't fit a record's 32-bit identity_id.", identityId.Value );
+		THROW_IFSL( !ProtoUtils::Utf8(UserName), "Identity {}'s user name isn't UTF-8, which a record's user_name must be.", identityId.Value );
 	}
 
 	Group::Group( GroupConfig config, sp<Store> store, vector<Member> members, SL sl )ε:
@@ -61,7 +57,7 @@ namespace Jde::Opc::Hist{
 		let now = _store->Time->Now();
 		let& tz = *_store->Config.TimeZone;
 		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, DayOf(now, tz), sl );
-		let& restored = _files->AtStart();
+		let restored = _files->TakeRestored();
 		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
 		restoredIndexes.reserve( restored.Members.size() );
 		for( let& [_,index] : restored.Members )
@@ -89,11 +85,11 @@ namespace Jde::Opc::Hist{
 				if( kept.contains(index) )
 					continue;
 				_gone.emplace( index, node );
-				Push( NodeRemoved{index, now, {}}, bytes(optional<Writer>{}) );
+				Hold( NodeRemoved{index, now, {}}, bytes(optional<Writer>{}) );
 			}
 			for( auto& record : added ){
 				let size = bytes( {}, &record.Node );
-				Push( move(record), size );
+				Hold( move(record), size );
 			}
 		}
 		_store->Register( *this );//outside _mutex, which the Store's lock comes before.
@@ -102,13 +98,14 @@ namespace Jde::Opc::Hist{
 		_store->Unregister( *this );
 		if( _timer )
 			_store->Time->Cancel( _timer );
-		_store->Subtract( _bytes+(_changes.size()+_values.size())*sizeof(Buffered) );
+		_store->Subtract( _held );
 	}
 
 	//The URI names the namespace, so the index - the host's own numbering - is dropped and never compared.
 	α Group::Normalize( Member& member, SL sl )Ε->ExNodeId{
 		auto node = move( member.Node );
 		THROW_IFSL( !node.namespaceUri.length, "'{}' has no namespace URI - the historian keeps none by its index.", node.to_string() );
+		THROW_IFSL( !ProtoUtils::Utf8(node), "'{}' has a namespace URI or string identifier that isn't UTF-8, which a file can't hold.", node.to_string() );
 		node.nodeId.namespaceIndex = 0;
 		THROW_IFSL( Issued()==(member.Index!=0), "Group '{}' {} node_index, but '{}' came with {}.", Name(), Issued() ? "issues its own" : "takes the host's", node.to_string(), member.Index );
 		THROW_IFSL( !std::in_range<uint32_t>(member.Index), "Group '{}' cannot give '{}' node_index {}: it doesn't fit a record's 32 bits.", Name(), node.to_string(), member.Index );
@@ -130,31 +127,38 @@ namespace Jde::Opc::Hist{
 		return index;
 	}
 
-	α Group::Push( Record&& record, uint32_t bytes )ι->bool{
+	α Group::Hold( Record&& record, uint32_t bytes )ι->bool{
 		let isValue = std::holds_alternative<DataValue>( record );
 		Buffered buffered{ move(record), _store->Sequence(), bytes };
+		let cost = Cost( buffered );
 		if( isValue )
 			_values.push_back( move(buffered) );
 		else
 			_changes.push_back( move(buffered) );
-		_bytes += bytes;
-		return _store->Add( bytes+sizeof(Buffered) );
+		_held += cost;
+		_fresh += bytes;
+		return _store->Add( cost );
 	}
-	α Group::Full()ι->bool{
-		if( _bytes<FlushBytes || _requested || _failing )
+	α Group::ClaimFlush( bool over )ι->bool{
+		if( (_fresh<Settings::FlushBytes && !over) || _requested || _failing )
 			return false;
 		return _requested = true;
 	}
-	α Group::Pushed( bool flush, bool over )ι->void{
-		if( flush )
+	α Group::Push( Record&& record, uint32_t bytes )ι->Pushing{
+		let over = Hold( move(record), bytes );
+		let flush = ClaimFlush( over );
+		return { flush, over && !flush };
+	}
+	α Group::Pushed( Pushing pushing )ι->void{
+		if( pushing.Flush )
 			Schedule( Duration::zero() );
-		if( over )
-			_store->Trim();
+		if( pushing.Trim )
+			_store->RequestTrim();
 	}
 	α Group::Schedule( Duration after )ι->IClock::TimerId{
 		return _store->Time->Schedule( after, [weak=weak_from_this()]{
 			if( auto group = weak.lock() )
-				group->Request( nullptr, true, SRCE_CUR );
+				group->Request();
 		});
 	}
 
@@ -163,22 +167,21 @@ namespace Jde::Opc::Hist{
 		let now = _store->Time->Now();
 		let size = bytes( by, &node );
 		NodeIndex index;
-		bool flush, over;
+		Pushing pushing;
 		{
 			ul _{ _mutex };
 			THROW_IFSL( _closed || _stopped, "Group '{}' was removed.", Name() );
 			index = Insert( node, move(member.Config), member.Index, sl );
-			over = Push( NodeAdded{index, move(node), now, move(by)}, size );
-			flush = Full();
+			pushing = Push( NodeAdded{index, move(node), now, move(by)}, size );
 		}
-		Pushed( flush, over );
+		Pushed( pushing );
 		return index;
 	}
 
 	α Group::Remove( NodeIndex index, optional<Writer> by, SL sl )ε->void{
 		let now = _store->Time->Now();
 		let size = bytes( by );
-		bool flush, over;
+		Pushing pushing;
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( index );
@@ -187,10 +190,9 @@ namespace Jde::Opc::Hist{
 			_gone.insert_or_assign( index, p->second.Id );
 			_left.insert_or_assign( move(p->second.Id), p->second.Break.value_or(now) );
 			_nodes.erase( p );
-			over = Push( NodeRemoved{index, now, move(by)}, size );
-			flush = Full();
+			pushing = Push( NodeRemoved{index, now, move(by)}, size );
 		}
-		Pushed( flush, over );
+		Pushed( pushing );
 	}
 
 	α Group::SetThresholds( NodeIndex index, Thresholds thresholds, SL sl )ε->void{
@@ -215,23 +217,28 @@ namespace Jde::Opc::Hist{
 
 	α Group::Enqueue( NodeIndex index, const UA_DataValue& value )ι->bool{
 		Value copy{ value };//outside the lock, which the host's own lock is already held over.
-		if( !copy.hasServerTimestamp ){
+		//A time no day holds would be filed at the last or first day, and a 9999 file would stay the newest for good.
+		if( copy.hasSourceTimestamp && !Fileable(copy.sourceTimestamp) ){
+			copy.hasSourceTimestamp = copy.hasSourcePicoseconds = false;
+			copy.sourceTimestamp = copy.sourcePicoseconds = 0;
+		}
+		if( !copy.hasServerTimestamp || !Fileable(copy.serverTimestamp) ){
 			copy.serverTimestamp = UADateTime{ _store->Time->Now() }.UA();
 			copy.hasServerTimestamp = true;
 		}
 		let unsupported = copy.hasValue && !ProtoUtils::Supported( copy.value );
+		let notUtf8 = copy.hasValue && !unsupported && !ProtoUtils::Utf8( copy.value );
 		let size = bytes( copy );
-		bool flush, over;
+		Pushing pushing;
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( index );
 			if( p==_nodes.end() || _stopped )
 				return false;
-			let first = unsupported && !std::exchange( p->second.Unsupported, true );
-			over = Push( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt), first}, size );
-			flush = Full();
+			let first = ( unsupported && !std::exchange(p->second.Unsupported, true) ) || ( notUtf8 && !std::exchange(p->second.NotUtf8, true) );
+			pushing = Push( DataValue{index, move(copy), std::exchange(p->second.Break, std::nullopt), first}, size );
 		}
-		Pushed( flush, over );
+		Pushed( pushing );
 		return true;
 	}
 
@@ -274,37 +281,37 @@ namespace Jde::Opc::Hist{
 	α Group::Close( optional<Writer> by )ι->void{
 		let now = _store->Time->Now();
 		let size = bytes( by );
-		bool over{};
+		bool over{}, trim;
 		{
 			ul _{ _mutex };
 			for( auto&& [index,node] : _nodes ){
 				_gone.insert_or_assign( index, move(node.Id) );
-				over = Push( NodeRemoved{index, now, by}, size );
+				over = Hold( NodeRemoved{index, now, by}, size ) || over;
 			}
 			_nodes.clear();
 			_indexes.clear();
 			_closed = true;
+			trim = over && _failing;//the flush asked for here takes the rest, if it can write.
 		}
-		Pushed( true, over );
+		Pushed( {.Flush=true, .Trim=trim} );
 	}
 
 	α Group::Oldest()Ι->optional<uint>{
 		ul _{ _mutex };
 		return _values.empty() ? optional<uint>{} : _values.front().Sequence;
 	}
-	α Group::Drop( uint before, uint need )ι->uint{
+	α Group::Drop( uint before, uint need, bool& began )ι->uint{
 		uint freed{}, count{};
 		ul _{ _mutex };
 		for( ; !_values.empty() && _values.front().Sequence<before && freed<need; ++count ){
 			auto dropped = move( _values.front() );
 			_values.pop_front();
-			freed += dropped.Bytes+sizeof(Buffered);
-			_bytes -= dropped.Bytes;
+			freed += Cost( dropped );
 			auto& value = get<DataValue>( dropped.Item );
 			auto& lost = _lost[value.Index];
 			//By source time, as a gap is read:  it opens at the earliest that was lost, and ends at the latest, which is
 			//written back.  A late value can make that differ from the order they arrived in.
-			if( !lost.Count++ || primary(value.Data)<primary(lost.Marker) )
+			if( !lost.Count++ || PrimaryTime(value.Data)<PrimaryTime(lost.Marker) )
 				lost.Marker = marker( value.Data );
 			if( !lost.Newest ){
 				lost.Newest = move( dropped );
@@ -313,17 +320,35 @@ namespace Jde::Opc::Hist{
 			//The break a dropped value carried goes to the one written back, for the flush to judge.
 			auto& newest = get<DataValue>( lost.Newest->Item );
 			let broke = newest.Break && value.Break ? std::min( *newest.Break, *value.Break ) : newest.Break ? newest.Break : value.Break;
-			if( primary(value.Data)>=primary(newest.Data) )
+			let replace = PrimaryTime( value.Data )>=PrimaryTime( newest.Data );
+			Unflag( replace ? newest : value );//the one not written back.
+			if( replace )
 				lost.Newest = move( dropped );
 			get<DataValue>( lost.Newest->Item ).Break = broke;
 		}
+		_held -= freed;
 		_store->Subtract( freed );
+		began = count && !std::exchange( _dropping, true );
 		return count;
 	}
 
-	α Group::Take()ι->vector<Buffered>{
-		vector<Buffered> y;
-		y.reserve( 2*_lost.size()+_changes.size()+_values.size() );
+	α Group::PruneGone()ι->void{
+		if( _gone.empty() )
+			return;
+		absl::flat_hash_set<NodeIndex> buffered;
+		for( let& value : _values )
+			buffered.insert( get<DataValue>(value.Item).Index );
+		for( let& [index,_] : _lost )
+			buffered.insert( index );
+		absl::erase_if( _gone, [&]( let& gone ){ return !buffered.contains(gone.first); } );
+	}
+	α Group::Unflag( const DataValue& gone )ι->void{
+		if( !gone.Unsupported )
+			return;
+		if( auto p = _nodes.find(gone.Index); p!=_nodes.end() )
+			( ProtoUtils::Supported(gone.Data.value) ? p->second.NotUtf8 : p->second.Unsupported ) = false;
+	}
+	α Group::MarkLost( vector<Buffered>& y )ι->void{
 		for( auto&& [index,lost] : _lost ){
 			if( lost.Count>1 ){//a node that lost one simply gets it back.
 				let size = bytes( lost.Marker );
@@ -332,36 +357,59 @@ namespace Jde::Opc::Hist{
 			y.push_back( move(*lost.Newest) );
 		}
 		_lost.clear();
-		_store->Subtract( _bytes+(_changes.size()+_values.size())*sizeof(Buffered) );
+	}
+	α Group::Take()ι->vector<Buffered>{
+		vector<Buffered> y;
+		y.reserve( 2*_lost.size()+_changes.size()+_values.size() );
+		MarkLost( y );
+		_store->Subtract( std::exchange(_held, 0) );
 		std::ranges::merge( _changes | std::views::as_rvalue, _values | std::views::as_rvalue, std::back_inserter(y), {}, &Buffered::Sequence, &Buffered::Sequence );
 		_changes.clear();
 		_values.clear();
-		_bytes = 0;
+		_fresh = 0;
 		_requested = false;
 		return y;
 	}
 	α Group::Return( vector<Buffered>&& records )ι->bool{
 		std::ranges::stable_sort( records, {}, &Buffered::Sequence );
 		vector<Buffered> changes;
-		uint size{};
+		uint cost{};
 		ul _{ _mutex };
+		//What was dropped while these were out is a gap of its own, after them:  marked now, so dropping these begins
+		//another, rather than moving its marker back over the values between.  Every such drop came after the flush took
+		//these, and before what is still buffered.
+		vector<Buffered> gaps;
+		MarkLost( gaps );
+		std::ranges::stable_sort( gaps, {}, &Buffered::Sequence );
+		for( auto&& record : gaps | std::views::reverse ){
+			cost += Cost( record );
+			_values.push_front( move(record) );
+		}
 		for( auto&& record : records | std::views::reverse ){
-			size += record.Bytes;
+			cost += Cost( record );
 			if( std::holds_alternative<DataValue>(record.Item) )
 				_values.push_front( move(record) );
 			else
 				changes.push_back( move(record) );
 		}
 		_changes.insert( _changes.begin(), std::make_move_iterator(changes.rbegin()), std::make_move_iterator(changes.rend()) );
-		_bytes += size;
-		_failing = true;
-		return _store->Add( size+records.size()*sizeof(Buffered) );
+		_held += cost;
+		return _store->Add( cost );
 	}
 	α Group::Written()Ι->bool{
 		return _closed && _changes.empty() && _values.empty() && _lost.empty();
 	}
-	α Group::Idle()Ι->bool{
-		ul _{ _mutex };
-		return Written() && !_flushing;
+	α Group::EndIfWritten()ι->bool{
+		IClock::TimerId timer;
+		{
+			ul _{ _mutex };
+			if( !Written() || _flushing )
+				return false;
+			_ended = true;
+			timer = std::exchange( _timer, 0 );
+		}
+		if( timer )
+			_store->Time->Cancel( timer );
+		return true;
 	}
 }

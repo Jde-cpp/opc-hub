@@ -23,12 +23,17 @@ namespace Jde::Opc::Hist::Tests{
 	}
 
 	//The newest file's preamble gives the map and its FileStart the next index:  a node keeps its index across a restart,
-	//a new one takes the next, and one the nodesets dropped is removed.  Index 4 went to a node removed before it.
+	//a new one takes the next, and one the nodesets dropped is removed.  Index 4 went to a node removed in an earlier
+	//day's file, so only the newest file's FileStart says it was issued.
 	TEST_F( ServerHost, KeepsIndexesAcrossRestart ){
-		Historize( "Pump1.Speed" );
+		let speed = Historize( "Pump1.Speed" );
 		Historize( "Pump1.Flow" );
 		Historize( "Tank1.Level" );
 		Server->Remove( Historize("Pump1.Temp") );
+		EXPECT_TRUE( Flush(*Server) );//March 7's file, with Temp's NodeAdded and NodeRemoved.
+		Time->AdvanceTo( sys_days{2026y/March/8}+1h );
+		EXPECT_TRUE( SetValue(speed, 1) );
+		EXPECT_TRUE( Flush(*Server) );//March 8's:  a preamble of 1 to 3, and a FileStart whose next_node_index is 5.
 		Restart();
 		_group = Server = Library->AddGroup( {.Name="server", .Indexes=EIndexes::Issued}, {{Node("Pump1.Speed")}, {Node("Tank1.Level")}, {Node("Pump2.Speed")}} );
 		EXPECT_EQ( Server->Find(Node("Pump1.Speed")), 1 );
@@ -91,8 +96,8 @@ namespace Jde::Opc::Hist::Tests{
 		let values = Records<DataValue>();
 		ASSERT_EQ( values.size(), 1 );
 		EXPECT_EQ( values[0].Index, index );
-		EXPECT_EQ( values[0].Data.sourceTimestamp, Ua(written) );
-		EXPECT_EQ( values[0].Data.serverTimestamp, Ua(Time->Now()) );
+		EXPECT_EQ( values[0].Data.sourceTimestamp, ticks(written) );
+		EXPECT_EQ( values[0].Data.serverTimestamp, ticks(Time->Now()) );
 		EXPECT_EQ( values[0].Data.Get<double>( 0 ), 1750 );
 	}
 

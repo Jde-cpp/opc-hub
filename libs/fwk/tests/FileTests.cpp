@@ -1,4 +1,5 @@
 ﻿#include <fstream>
+#include <latch>
 #include <jde/fwk/io/Cache.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/log/MemoryLog.h>
@@ -860,6 +861,44 @@ namespace Jde::IO::Tests{
 		let unsynced = nested.parent_path()/"unsynced.txt";
 		ASSERT_EQ( writeNow(unsynced, "x", {.Create=true, .Tags=ELogTags::Test}), "" );
 		EXPECT_EQ( dirSyncs(unsynced), 0u ) << "a write that doesn't sync";
+	}
+
+	//Writes that make the same new directories at once, as the historian's groups do at a new day:  one whose
+	//create_directories finds them made by another a moment ago opens again, rather than failing with ENOENT.
+	TEST_F( FileTests, ConcurrentCreatesShareNewDirectories ){
+#ifdef _WIN32
+		GTEST_SKIP() << "windows' Open makes no directories.";
+#endif
+		let root = Tests::file( 1007 ).parent_path()/"concurrentDirs";
+		fs::remove_all( root );
+		constexpr uint threads{ 8 }, rounds{ 40 };
+		uint failures{};
+		string first;
+		for( uint round=0; round<rounds; ++round ){
+			let dir = root/std::to_string( round )/"a"/"b";
+			vector<sp<std::atomic<bool>>> done;
+			vector<sp<up<Exception>>> errors;
+			for( uint i=0; i<threads; ++i ){
+				done.push_back( ms<std::atomic<bool>>() );
+				errors.push_back( ms<up<Exception>>() );
+			}
+			std::latch start{ threads };
+			{
+				vector<std::jthread> writers;
+				for( uint i=0; i<threads; ++i ){
+					writers.emplace_back( [&, i]{
+						start.arrive_and_wait();
+						writeWith( dir/Ƒ("{}.txt", i), string{"x"}, {.Create=true, .Sync=true, .Tags=ELogTags::Test}, done[i], errors[i] );
+					} );
+				}
+			}
+			for( uint i=0; i<threads; ++i ){
+				if( let error = waitError(done[i], errors[i]); !error.empty() && !failures++ )
+					first = error;
+			}
+		}
+		fs::remove_all( root );
+		EXPECT_EQ( failures, 0 ) << "of " << threads*rounds << ", the first:  " << first;
 	}
 
 	// IOException::Error names what went wrong without the native code, an errno here and a GetLastError value on

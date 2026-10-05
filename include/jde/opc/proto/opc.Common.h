@@ -21,6 +21,11 @@ namespace Jde::Opc::ProtoUtils{
 	//Whether ToValue holds v, which it doesn't for a DataValue, a DiagnosticInfo, a BitfieldCluster, or a Variant holding
 	//one:  a check that costs no exception.
 	α Supported( const UA_Variant& v )ι->bool;
+	//Whether the text ToValue puts in a proto3 `string` is UTF-8:  a String, XmlElement, name, locale, string NodeId or
+	//namespace URI.  protobuf serializes one that isn't, logging only, and refuses to parse it back.
+	α Utf8( const UA_Variant& v )ι->bool;
+	α Utf8( const UA_ExpandedNodeId& id )ι->bool;
+	α Utf8( sv text )ι->bool;
 	//The inverse, up to the wire:  the result binary-encodes as the original did, while an alias comes back as its
 	//built-in type and a structure as an encoded ExtensionObject.
 	α ToVariant( const Proto::Value& v )ε->Variant;

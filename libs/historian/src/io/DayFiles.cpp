@@ -17,40 +17,48 @@ namespace Jde::Opc::Hist{
 		constexpr int64_t EpochSeconds{ UA_DATETIME_UNIX_EPOCH/PerSecond };//1601 to 1970.
 		constexpr Ticks Latest{ (sys_days{year{9999}/December/31}.time_since_epoch()/1s+86'399+EpochSeconds)*PerSecond };
 
-		Ω failed( const fs::path& path, const std::error_code& ec, SL sl )ι->IO::IOException{
-			IO::IOException e{ path, (uint32)ec.value(), ec.message(), sl };
-			e.SetLevel( ELogLevel::Error );
-			return e;
+		//None for a file that isn't there, or can't be stat'ed.
+		Ω stamp( const fs::path& path )ι->optional<Stamp>{
+			std::error_code ec;
+			let size = fs::file_size( path, ec );
+			if( ec )
+				return nullopt;
+			let written = fs::last_write_time( path, ec );
+			return ec ? nullopt : optional<Stamp>{ Stamp{size, written} };
 		}
-		//What a stored value is filed and read by.
-		Ω primary( const Proto::DataValue& v )ι->optional<Ticks>{
-			return v.has_source_ts() ? v.source_ts() : v.has_server_ts() ? optional<Ticks>{ v.server_ts() } : nullopt;
-		}
-		//dir's subdirectories whose names are numbers, largest first.
-		Ω numbered( const fs::path& dir, SL sl )ε->vector<unsigned>{
+		//dir's subdirectories named as DayDirectory names them, a number from min to max with no padding, largest first:  so
+		//the path the walk rebuilds from one is the directory's, and the number fits chrono's year, month or day.
+		Ω numbered( const fs::path& dir, unsigned min, unsigned max, SL sl )ε->vector<unsigned>{
 			vector<unsigned> y;
 			std::error_code ec;
 			for( fs::directory_iterator p{dir, ec}, end; !ec && p!=end; p.increment(ec) ){
 				let name = p->path().filename().string();
 				unsigned n{};
 				let [last, error] = std::from_chars( name.data(), name.data()+name.size(), n );
-				if( error==std::errc{} && last==name.data()+name.size() && p->is_directory(ec) )
+				if( error==std::errc{} && last==name.data()+name.size() && n>=min && n<=max && std::to_string(n)==name && p->is_directory(ec) )
 					y.push_back( n );
 			}
 			if( ec )
-				throw failed( dir, ec, sl );
+				throw Failed( dir, ec, sl );
 			std::ranges::sort( y, std::greater{} );
 			return y;
 		}
-		//Each day under root that holds file, newest first, until found returns true.
+		//Each day under root that holds file, newest first, until found returns true.  Throws for a file it can't tell is
+		//there, which may be the newest.
 		Ω walk( const fs::path& root, const string& file, SL sl, const std::function<bool( Day )>& found )ε->void{
-			for( let y : numbered(root, sl) ){
+			for( let y : numbered(root, 1601, 9999, sl) ){//DayOf's range.
 				let yearDir = root/std::to_string( y );
-				for( let m : numbered(yearDir, sl) ){
-					for( let d : numbered(yearDir/std::to_string(m), sl) ){
+				for( let m : numbered(yearDir, 1, 12, sl) ){
+					for( let d : numbered(yearDir/std::to_string(m), 1, 31, sl) ){
 						const Day day{ year{(int)y}, month{m}, std::chrono::day{d} };
+						if( !day.ok() )
+							continue;
+						let path = root/DayDirectory( day )/file;
 						std::error_code ec;
-						if( day.ok() && fs::exists(root/DayDirectory(day)/file, ec) && found(day) )
+						let there = fs::exists( path, ec );
+						if( ec )
+							throw Failed( path, ec, sl );
+						if( there && found(day) )
 							return;
 					}
 				}
@@ -58,12 +66,13 @@ namespace Jde::Opc::Hist{
 		}
 	}
 
+	//Clock.cpp's rules, which its tests cover, for UA's ticks.
 	α DayOf( Ticks t, const time_zone& tz )ι->Day{
-		let since1970 = seconds{ std::clamp<Ticks>(t, 0, Latest)/PerSecond-EpochSeconds };
-		return Day{ floor<days>(tz.to_local(sys_seconds{since1970})) };
+		return DayOf( TimePoint{sys_seconds{seconds{std::clamp<Ticks>(t, 0, Latest)/PerSecond-EpochSeconds}}}, tz );
 	}
+	α Fileable( Ticks t )ι->bool{ return t>=0 && t<Latest+PerSecond; }
 	α StartOf( Day day, const time_zone& tz )ι->Ticks{
-		return ( tz.to_sys(local_days{day}, choose::earliest).time_since_epoch()/1s+EpochSeconds )*PerSecond;
+		return ( duration_cast<seconds>(DayStart(day, tz).time_since_epoch()).count()+EpochSeconds )*PerSecond;
 	}
 	α DayDirectory( Day day )ι->fs::path{
 		return fs::path{ std::to_string((int)day.year()) }/std::to_string( (unsigned)day.month() )/std::to_string( (unsigned)day.day() );
@@ -73,19 +82,41 @@ namespace Jde::Opc::Hist{
 		_root{ move(root) },
 		_name{ move(name) },
 		_tz{ tz },
-		_flushed{ _root/(_name+".flushed"), sl }{
+		_flushed{ _root/(_name+".flushed"), sl },
+		_present{ today }{
 		_restored.Flushed = _flushed.Time();
+		if( _restored.Flushed )
+			Present( DayOf(UADateTime{*_restored.Flushed}.UA(), _tz) );
 		//The newest file that holds anything says what the group is:  one a crash cut short in its preamble holds nothing.
+		//Each node's newest value is in any file down to the first that isn't after the present, since a future-dated file's
+		//preamble holds the start values of when it was made.
 		bool restored{};
 		flat_map<NodeIndex,ExNodeId> members;
 		walk( _root, _name+".binpb", sl, [&]( Day day ){
 			_days.insert( day );
 			if( !restored )
 				restored = Open( day, sl, [&]( HistoryRecord& r ){ Restore(r, members); } ).Size>0;
-			return restored && day<=today;
+			else
+				Open( day, sl, [&]( HistoryRecord& r ){ Fold(r); } );
+			return restored && day<=_present;
 		});
+		//By node, in one sort rather than an insert each:  of two indexes a node has, the later, as an insert each kept.
+		vector<std::pair<ExNodeId,NodeIndex>> byNode;
+		byNode.reserve( members.size() );
 		for( auto&& [index,node] : members )
-			_restored.Members.insert_or_assign( move(node), index );
+			byNode.emplace_back( move(node), index );
+		std::ranges::sort( byNode, []( let& a, let& b ){ return a.first<b.first || (!(b.first<a.first) && a.second>b.second); } );
+		let [last,end] = std::ranges::unique( byNode, {}, &std::pair<ExNodeId,NodeIndex>::first );
+		byNode.erase( last, end );
+		vector<ExNodeId> nodes;
+		vector<NodeIndex> indexes;
+		nodes.reserve( byNode.size() );
+		indexes.reserve( byNode.size() );
+		for( auto&& [node,index] : byNode ){
+			nodes.push_back( move(node) );
+			indexes.push_back( index );
+		}
+		_restored.Members = { std::sorted_unique, move(nodes), move(indexes) };
 	}
 
 	α GroupFiles::Restore( HistoryRecord& r, flat_map<NodeIndex,ExNodeId>& members )ι->void{
@@ -95,32 +126,34 @@ namespace Jde::Opc::Hist{
 			next = std::max<NodeIndex>( next, r.file_start().next_node_index() );
 			break;
 		case HistoryRecord::kNodeAdded:{
-			auto& added = *r.mutable_node_added();
-			let index = added.node_index();
-			members.insert_or_assign( index, ProtoUtils::ToExNodeId(added.node()) );
+			let index = r.node_added().node_index();
+			members.insert_or_assign( index, ProtoUtils::ToExNodeId(r.node_added().node()) );
 			next = std::max<NodeIndex>( next, (NodeIndex)index+1 );//one issued after the file's FileStart was written.
-			if( added.has_start() ){
-				added.mutable_start()->set_node_index( index );
-				Newer( move(*added.mutable_start()) );
-			}
 			break;}
 		case HistoryRecord::kNodeRemoved:
 			members.erase( r.node_removed().node_index() );
 			break;
-		case HistoryRecord::kValue:
-			Newer( move(*r.mutable_value()) );
-			break;
 		default:
 			break;
+		}
+		Fold( r );
+	}
+	α GroupFiles::Fold( HistoryRecord& r )ι->void{
+		if( r.has_value() )
+			Newer( move(*r.mutable_value()) );
+		else if( r.has_node_added() && r.node_added().has_start() ){
+			auto& added = *r.mutable_node_added();
+			added.mutable_start()->set_node_index( added.node_index() );
+			Newer( move(*added.mutable_start()) );
 		}
 	}
 
 	α GroupFiles::Newer( Proto::DataValue&& stored )ι->void{
-		let t = primary( stored );
+		let t = PrimaryTime( stored );
 		if( !t )
 			return;
 		auto [p, inserted] = _last.try_emplace( stored.node_index() );
-		if( inserted || *t>=primary(p->second) )
+		if( inserted || *t>=PrimaryTime(p->second) )
 			p->second = move( stored );
 	}
 
@@ -131,7 +164,14 @@ namespace Jde::Opc::Hist{
 		DayFile file{ .Path=_root/DayDirectory(day)/(_name+".binpb") };
 		std::error_code ec;
 		if( fs::exists(file.Path, ec) ){
-			auto scanned = Scan( file.Path, sl );
+			file.Scanned = stamp( file.Path );//before the scan, so a change during it shows next time.
+			//One read:  the scan hands over each record it keeps, for the indexes the file maps and the restore.
+			auto scanned = Scan( file.Path, [&]( HistoryRecord& r ){
+				if( r.has_node_added() )
+					file.Mapped.insert( r.node_added().node_index() );
+				if( restore )
+					restore( r );
+			}, sl );
 			file.Size = scanned.Size;
 			file.Chain = scanned.Chain;
 			file.Runs = move( scanned.Runs );
@@ -139,26 +179,11 @@ namespace Jde::Opc::Hist{
 				file.Refused = "holds damage a truncation would lose, or is another program's";
 			else if( scanned.Start && scanned.Start->generation() )
 				file.Refused = "is an archive, which this build can't merge a late record into";
-			if( file.Size ){
-				std::ifstream in{ file.Path, std::ios::binary };
-				if( !in )
-					throw IO::IOException{ sl, file.Path, ELogLevel::Error, "could not be opened to read" };
-				google::protobuf::io::IstreamInputStream stream{ &in };
-				Reader reader{ stream, 0, file.Size, 0 };
-				for( HistoryRecord r; reader.Next(r); ){
-					if( r.has_node_added() )
-						file.Mapped.insert( r.node_added().node_index() );
-					if( restore )
-						restore( r );
-				}
-				if( reader.Stop()!=EStop::End )
-					throw IO::IOException{ sl, file.Path, ELogLevel::Error, "read {} at byte {}, short of the {} bytes its scan kept", ToString(*reader.Stop()), reader.Offset(), file.Size };
-			}
 			if( scanned.Size<scanned.FileSize )
 				file.Unopened = move( scanned );
 		}
 		else if( ec )
-			throw failed( file.Path, ec, sl );
+			throw Failed( file.Path, ec, sl );
 		return _files.emplace( day, move(file) ).first->second;
 	}
 
@@ -169,7 +194,7 @@ namespace Jde::Opc::Hist{
 		*added.mutable_node() = ProtoUtils::ToExNodeId( node );
 		added.set_ts( start );
 		//The walk back to the last record before the day, for a value that isn't, is step 5's.
-		if( auto p = _last.find(index); p!=_last.end() && *primary(p->second)<start ){
+		if( auto p = _last.find(index); p!=_last.end() && *PrimaryTime(p->second)<start ){
 			*added.mutable_start() = p->second;
 			added.mutable_start()->clear_node_index();
 		}
@@ -177,18 +202,23 @@ namespace Jde::Opc::Hist{
 	}
 
 	α GroupFiles::Prepare( Day day, vector<HistoryRecord>&& records, const Membership& members, SL sl )ε->optional<Pending>{
+		if( auto p = _files.find(day); p!=_files.end() && !p->second.Refused.empty() ){
+			if( let now = stamp(p->second.Path); now && now!=p->second.Scanned )
+				_files.erase( p );//changed since its scan, repaired perhaps, so Open scans it again.
+		}
 		auto& file = Open( day, sl );
 		std::error_code ec;
+		bool restart{};//Commit's to apply, so a write that fails leaves what is known of the file.
 		if( !file.Refused.empty() ){
 			if( fs::exists(file.Path, ec) || ec ){
 				if( !file.Discarded++ )
 					ERR( "'{}' {}, so the historian won't append to it:  its {} records, and any after them, are dropped until it is repaired or removed.", file.Path.string(), file.Refused, records.size() );
 				return nullopt;
 			}
-			file = DayFile{ .Path=move(file.Path) };//removed since, so it starts again.
+			restart = true;//removed since.
 		}
 		MakeDirectories( file.Path.parent_path(), sl );
-		if( file.Unopened ){
+		if( file.Unopened && !restart ){
 			try{
 				Truncate( file.Path, *file.Unopened, sl );
 			}
@@ -201,23 +231,27 @@ namespace Jde::Opc::Hist{
 		let existed = fs::exists( file.Path, ec );
 		let actual = existed && !ec ? fs::file_size( file.Path, ec ) : 0;
 		if( ec )
-			throw failed( file.Path, ec, sl );
-		//More than Size is an append of this process's that failed part-way, which the run's write cuts off.
-		if( actual<file.Size ){
-			if( actual ){
-				IO::IOException e{ sl, file.Path, ELogLevel::Error, "holds {} bytes, not the {} the historian wrote, so its next append scans it again", actual, file.Size };
-				_files.erase( day );
-				throw move( e );
-			}
-			file = DayFile{ .Path=move(file.Path) };//purged since, so it starts again.
+			throw Failed( file.Path, ec, sl );
+		let size = restart ? 0 : file.Size;
+		let& outstanding = file.Outstanding;
+		if( !actual && size )
+			restart = true;//purged since, or a parent no longer resolves.
+		//More than Size is what an append of this process's left when it failed part-way, which the run's write cuts off.  A
+		//file no append has gone to may be one restored or remade since, which only a scan can tell from what that left.
+		else if( actual<size || (actual>size && (!size || !outstanding || outstanding->Offset!=size || actual>outstanding->End)) ){
+			IO::IOException e{ sl, file.Path, ELogLevel::Error, "holds {} bytes, not the {} the historian wrote, so its next append scans it again", actual, size };
+			_files.erase( day );
+			throw move( e );
 		}
+		const DayFile fresh;
+		let& known = restart ? fresh : file;
 
 		let start = StartOf( day, _tz );
 		string bytes;
 		vector<Run> runs;
 		absl::flat_hash_set<NodeIndex> mapped;//by this append.
-		auto chain = file.Chain;
-		if( !file.Size ){
+		auto chain = known.Chain;
+		if( !known.Size ){
 			Appender preamble{ bytes, 0 };
 			HistoryRecord first;
 			first.mutable_file_start()->set_ts( start );
@@ -245,10 +279,17 @@ namespace Jde::Opc::Hist{
 				continue;
 			let index = r.value().node_index();
 			newest[index] = &r.value();
-			if( file.Mapped.contains(index) || !mapped.insert(index).second )
+			if( known.Mapped.contains(index) || !mapped.insert(index).second )
 				continue;
-			if( let node = members.Find(index); node )
-				run.push_back( Added(index, *node, start) );
+			if( let node = members.Find(index); node ){
+				run.push_back( Added(index, node->Id, start) );
+				if( node->Left ){//as a copy of its NodeRemoved goes to a later file there already was.
+					HistoryRecord removed;
+					removed.mutable_node_removed()->set_node_index( (uint32_t)index );
+					removed.mutable_node_removed()->set_ts( start );
+					run.push_back( move(removed) );
+				}
+			}
 			else
 				ERR( "'{}' takes a value of node_index {}, which it doesn't map and its group doesn't know.", file.Path.string(), index );
 		}
@@ -258,7 +299,7 @@ namespace Jde::Opc::Hist{
 			stored.push_back( *value );
 		std::ranges::move( records, std::back_inserter(run) );
 
-		Run appended{ .Offset=file.Size+bytes.size(), .Chain=chain };
+		Run appended{ .Offset=known.Size+bytes.size(), .Chain=chain };
 		bool timed{};
 		Appender appender{ bytes, chain };
 		for( auto& r : run ){
@@ -278,7 +319,7 @@ namespace Jde::Opc::Hist{
 		}
 		chain = appender.Seal();
 
-		Pending y{ .Date=day, .Path=file.Path, .Offset=file.Size, .Existed=existed, .End=file.Size+bytes.size(), .Chain=chain, .Runs=move(runs) };
+		Pending y{ .Date=day, .Path=file.Path, .Offset=known.Size, .Existed=existed, .Restart=restart, .End=known.Size+bytes.size(), .Chain=chain, .Runs=move(runs) };
 		if( timed ){
 			appended.End = y.End;
 			y.Runs.push_back( appended );
@@ -286,6 +327,11 @@ namespace Jde::Opc::Hist{
 		y.Mapped = std::move( mapped );
 		y.Stored = move( stored );
 		y.Bytes = move( bytes );
+		//One that failed before cutting the file to Offset leaves what an earlier one did.
+		if( auto& o = file.Outstanding; o && o->Offset==y.Offset )
+			o->End = std::max( o->End, y.End );
+		else
+			o = DayFile::Append{ y.Offset, y.End };
 		return y;
 	}
 
@@ -295,11 +341,14 @@ namespace Jde::Opc::Hist{
 
 	α GroupFiles::Commit( Pending&& run, SL sl )ε->void{
 		auto& file = _files.at( run.Date );
-		if( !file.Named ){
-			if( run.Existed )
-				SyncDirectories( _root, DayDirectory(run.Date), sl );
-			file.Named = true;
-		}
+		//Every directory to the root, on a file's first append here:  a new file's write syncs only the names it added,
+		//and another group's write, or an earlier one that failed, may have made the rest.
+		if( run.Restart || !file.Named )
+			SyncDirectories( _root, DayDirectory(run.Date), sl );
+		if( run.Restart )
+			file = DayFile{ .Path=move(file.Path) };
+		file.Named = true;
+		file.Outstanding.reset();
 		file.Size = run.End;
 		file.Chain = run.Chain;
 		std::ranges::move( run.Runs, std::back_inserter(file.Runs) );
@@ -309,8 +358,26 @@ namespace Jde::Opc::Hist{
 		_days.insert( run.Date );
 	}
 
-	α GroupFiles::LaterDays( Day day )Ι->vector<Day>{
-		return { _days.upper_bound(day), _days.end() };
+	α GroupFiles::LaterDays( Day day )ι->vector<Day>{
+		vector<Day> y;
+		for( auto p = _days.upper_bound(std::max(day, _present)); p!=_days.end(); ){
+			std::error_code ec;
+			if( !fs::exists(_root/DayDirectory(*p)/(_name+".binpb"), ec) && !ec ){
+				p = _days.erase( p );//purged since, so no change goes there, and a late record makes it again.
+				continue;
+			}
+			y.push_back( *p++ );
+		}
+		return y;
+	}
+	α GroupFiles::Present( Day today )ι->void{
+		_present = std::max( _present, today );
+	}
+	α GroupFiles::Openable( Day day )Ι->bool{
+		let path = _root/DayDirectory( day )/( _name+".binpb" );
+		std::error_code ec;
+		fs::create_directories( path.parent_path(), ec );
+		return !ec && std::ofstream{ path, std::ios::binary | std::ios::app }.is_open();
 	}
 	α GroupFiles::Find( Day day )Ι->const DayFile*{
 		auto p = _files.find( day );
