@@ -56,7 +56,7 @@ namespace Jde::Opc::Hist{
 		_config{ move(config) }{
 		let now = _store->Time->Now();
 		let& tz = *_store->Config.TimeZone;
-		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, DayOf(now, tz), sl );
+		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, _store->Config.Delay, DayOf(now, tz), sl );
 		let restored = _files->TakeRestored();
 		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
 		restoredIndexes.reserve( restored.Members.size() );
@@ -98,6 +98,8 @@ namespace Jde::Opc::Hist{
 		_store->Unregister( *this );
 		if( _timer )
 			_store->Time->Cancel( _timer );
+		if( _midnight )
+			_store->Time->Cancel( _midnight );
 		_store->Subtract( _held );
 	}
 
@@ -140,7 +142,7 @@ namespace Jde::Opc::Hist{
 		return _store->Add( cost );
 	}
 	α Group::ClaimFlush( bool over )ι->bool{
-		if( (_fresh<Settings::FlushBytes && !over) || _requested || _failing )
+		if( (_fresh<Settings::FlushBytes && !over) || _requested || _failing || (_deferred && !over) )
 			return false;
 		return _requested = true;
 	}
@@ -400,16 +402,19 @@ namespace Jde::Opc::Hist{
 		return _closed && _changes.empty() && _values.empty() && _lost.empty();
 	}
 	α Group::EndIfWritten()ι->bool{
-		IClock::TimerId timer;
+		IClock::TimerId timer, midnight;
 		{
 			ul _{ _mutex };
 			if( !Written() || _flushing )
 				return false;
 			_ended = true;
 			timer = std::exchange( _timer, 0 );
+			midnight = std::exchange( _midnight, 0 );
 		}
 		if( timer )
 			_store->Time->Cancel( timer );
+		if( midnight )
+			_store->Time->Cancel( midnight );
 		return true;
 	}
 }

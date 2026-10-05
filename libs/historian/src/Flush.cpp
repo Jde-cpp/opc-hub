@@ -80,16 +80,50 @@ namespace Jde::Opc::Hist{
 
 	α Group::Start()ι->void{
 		let timer = Schedule( _store->Config.Delay );
-		ul _{ _mutex };
-		_timer = timer;
+		let midnight = ScheduleMidnight();
+		bool recovers;
+		{
+			ul _{ _filesMutex };
+			recovers = _files->Recovers();
+		}
+		{
+			ul _{ _mutex };
+			_timer = timer;
+			_midnight = midnight;
+		}
+		if( recovers )//on the clock's hop:  the historian's lock is held here.
+			Schedule( Duration::zero() );
+	}
+	//A day's rewrite is due `delay` after the day ends, so the next is the first such time after now.
+	α Group::ScheduleMidnight()ι->IClock::TimerId{
+		auto& clock = *_store->Time;
+		let delay = _store->Config.Delay;
+		return clock.Schedule( NextDayStart(clock.Now()-delay, *_store->Config.TimeZone)+delay, [weak=weak_from_this()]{
+			if( auto group = weak.lock() )
+				group->Midnight();
+		});
+	}
+	α Group::Midnight()ι->void{
+		{
+			ul _{ _mutex };
+			if( _ended || _stopped )
+				return;
+		}
+		let timer = ScheduleMidnight();
+		{
+			ul _{ _mutex };
+			_midnight = timer;
+		}
+		Request();
 	}
 	α Group::Stopping()ι->void{
-		IClock::TimerId timer;
+		IClock::TimerId timer, midnight;
 		bool start{};
 		{
 			ul _{ _mutex };
 			_stopped = true;
 			timer = std::exchange( _timer, 0 );
+			midnight = std::exchange( _midnight, 0 );
 			if( running() ){//marked here, so Stopped waits for it however late the executor starts it.
 				if( _flushing )
 					_again = true;
@@ -99,13 +133,15 @@ namespace Jde::Opc::Hist{
 		}
 		if( timer )
 			_store->Time->Cancel( timer );
+		if( midnight )
+			_store->Time->Cancel( midnight );
 		if( start )//on the executor, so every group's runs at once, and a write that never returns holds none of this thread.
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}
 	α Group::Stopped( steady_clock::time_point deadline )ι->void{
 		let wait = running();
 		bool out{};
-		IClock::TimerId timer;
+		IClock::TimerId timer, midnight;
 		uint held;
 		for( ;; ){
 			{
@@ -113,6 +149,7 @@ namespace Jde::Opc::Hist{
 				if( !_flushing || !wait || out ){
 					_ended = true;
 					timer = std::exchange( _timer, 0 );
+					midnight = std::exchange( _midnight, 0 );
 					held = _changes.size()+_values.size();
 					break;
 				}
@@ -121,6 +158,8 @@ namespace Jde::Opc::Hist{
 		}
 		if( timer )
 			_store->Time->Cancel( timer );
+		if( midnight )
+			_store->Time->Cancel( midnight );
 		if( out )
 			ERR( "Group '{}' stopped with a flush still out at hist's stop limit:  what it took may not be in its files.", Name() );
 		if( held )
@@ -159,24 +198,31 @@ namespace Jde::Opc::Hist{
 			TimePoint taken;
 			vector<Buffered> batch;
 			vector<FlushAwait*> waiters, settled;
-			bool stopping;
+			bool stopping, over;
 			{
 				ul _{ _mutex };
 				waiters = std::exchange( _waiters, {} );
 				_again = false;
 				taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
+				over = _store->Buffered()>_store->Config.MaxBuffer;
 				batch = Take();
 				members.NextIndex = Issued() ? _nextIndex : 0;
 				stopping = _stopped;
 			}
 			//A host waiting on it, or the historian's end, tries every day again; the clock only those whose `delay` is up.
 			let retryAll = !waiters.empty() || stopping;
+			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
+			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
+			let mergeNow = retryAll || over;
 
-			//A membership change also goes, at the start of its day, to each later day's file there already is, so every
-			//file maps its own nodes and the newest holds the whole membership.  One made after takes it in its preamble.
+			vector<Day> due;//each day whose file becomes its archive, records for it or not:  the ending leaves them to the next start.
 			{
 				ul _{ _filesMutex };
 				_files->Present( DayOf(UADateTime{taken}.UA(), tz) );
+				if( !stopping )
+					due = _files->Due( taken );
+				//A membership change also goes, at the start of its day, to each later day's file there already is, so every
+				//file maps its own nodes and the newest holds the whole membership.  One made after takes it in its preamble.
 				for( uint i=0, size=batch.size(); i<size; ++i ){
 					if( batch[i].Copied || std::holds_alternative<DataValue>(batch[i].Item) )
 						continue;
@@ -194,28 +240,36 @@ namespace Jde::Opc::Hist{
 			//Each day on its own, so one that stays unwritable holds back only its own records.  A later day's file made
 			//meanwhile takes its start values without them, and they land as late records do.
 			vector<Buffered> held;
-			bool progressed{}, discarded{};
-			for( uint done{}; done<batch.size(); ){
-				let day = DayOf( PrimaryTime(batch[done].Item), tz );
-				let next = StartOf( year_month_day{sys_days{day}+days{1}}, tz );
-				auto end = done+1;
-				while( end<batch.size() && PrimaryTime(batch[end].Item)<next )
-					++end;
+			bool progressed{}, discarded{}, failing{}, deferring{};
+			auto nextDue = due.begin();
+			for( uint done{}; done<batch.size() || nextDue!=due.end(); ){
+				let first = done<batch.size() ? optional<Day>{ DayOf(PrimaryTime(batch[done].Item), tz) } : nullopt;
+				let day = first && ( nextDue==due.end() || *first<=*nextDue ) ? *first : *nextDue;
+				if( nextDue!=due.end() && *nextDue==day )
+					++nextDue;
+				auto end = done;//none of the batch, for a day that is only due.
+				if( first==day ){
+					let next = StartOf( year_month_day{sys_days{day}+days{1}}, tz );
+					for( ++end; end<batch.size() && PrimaryTime(batch[end].Item)<next; )
+						++end;
+				}
 				optional<TimePoint> retry;//when the day, failing, is tried again.
+				bool deferred{};//an archive's records, held for its next rewrite.
 				{
 					ul _{ _filesMutex };
 					if( auto p = _failingDays.find(day); p!=_failingDays.end() )
 						retry = p->second;
+					deferred = done<end && !mergeNow && _files->Deferred( day, taken );
 				}
 				bool failed = retry && !retryAll && taken<*retry;
-				if( !failed && retry ){//one that failed is opened first, before its backlog is converted for a write that fails the same way.
+				if( !failed && !deferred && retry && done<end ){//one that failed is opened first, before its backlog is converted for a write that fails the same way.
 					ul _{ _filesMutex };
 					if( !_files->Openable(day) ){
 						failed = true;
 						_failingDays.insert_or_assign( day, taken+_store->Config.Delay );
 					}
 				}
-				if( !failed ){
+				if( !failed && !deferred ){
 					vector<Proto::HistoryRecord> records;
 					for( auto i = done; i<end; ++i ){
 						try{
@@ -227,20 +281,28 @@ namespace Jde::Opc::Hist{
 							e.SetLevel( ELogLevel::Error );
 						}
 					}
+					DayWrite write;
 					try{
-						if( !records.empty() ){
-							optional<Pending> run;
+						if( !records.empty() || done==end ){
 							{
 								ul _{ _filesMutex };
-								run = _files->Prepare( day, move(records), members );
+								write = _files->Prepare( day, move(records), members, taken );
 							}
-							if( run ){
+							if( auto run = get_if<Pending>(&write) ){
 								co_await run->Write();
 								ul _{ _filesMutex };
 								_files->Commit( move(*run) );
 								progressed = true;
 							}
-							else
+							else if( auto archive = get_if<Rewrite>(&write) ){
+								while( archive->Next() )
+									co_await archive->Write();
+								ul _{ _filesMutex };
+								if( !_files->Commit(move(*archive), taken) && done<end )
+									discarded = true;//in its file, and not known to be durable, so .flushed doesn't claim it.
+								progressed = true;
+							}
+							else if( done<end )
 								discarded = true;
 						}
 					}
@@ -253,28 +315,40 @@ namespace Jde::Opc::Hist{
 						failed = true;
 					}
 					ul _{ _filesMutex };
-					if( failed )
+					if( failed ){
 						_failingDays.insert_or_assign( day, taken+_store->Config.Delay );
+						if( let archive = get_if<Rewrite>(&write) )
+							_files->Abandon( *archive );
+					}
 					else if( retry ){
 						_failingDays.erase( day );
 						DBG( "Group '{}' is writing its {} file again.", Name(), DayDirectory(day).string() );
 					}
 				}
-				if( failed )
+				if( failed || deferred )
 					std::ranges::move( batch.begin()+done, batch.begin()+end, std::back_inserter(held) );
+				failing = failing || ( failed && done<end );
+				deferring = deferring || deferred;
 				done = end;
 			}
 
 			bool failed = !held.empty();
 			{
 				ul _{ _mutex };
-				_failing = failed && !progressed;
+				_failing = failing && !progressed;
+				_deferred = deferring && !failing && !progressed;
 				if( !failed )
 					PruneGone();
 			}
 			if( failed ){
-				if( Return(move(held)) )
-					_store->Trim();
+				if( Return(move(held)) ){
+					if( failing )
+						_store->Trim();
+					else{//held only for an archive's next rewrite, which the buffers passing maxBuffer brings on.
+						ul _{ _mutex };
+						_again = true;
+					}
+				}
 			}
 			else{
 				//After its data files, and only for a flush that wrote all it took, so it never claims records that aren't durable.
@@ -300,15 +374,19 @@ namespace Jde::Opc::Hist{
 				}
 			}
 
-			IClock::TimerId stale;
+			IClock::TimerId stale, midnight{};
 			bool arm;
 			{
 				ul _{ _mutex };
 				stale = std::exchange( _timer, 0 );
 				arm = !Written() && !_stopped;//a stopped group's last flush isn't followed by another.
+				if( !arm )
+					midnight = std::exchange( _midnight, 0 );
 			}
 			if( stale )
 				clock.Cancel( stale );//this flush stands in for it.
+			if( midnight )
+				clock.Cancel( midnight );
 			if( arm ){
 				let timer = Schedule( _store->Config.Delay );
 				ul _{ _mutex };

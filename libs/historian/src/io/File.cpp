@@ -5,6 +5,7 @@
 #ifdef _WIN32
 	#include <windows.h>
 #else
+	#include <cstdio>
 	#include <fcntl.h>
 	#include <sys/file.h>
 	#include <unistd.h>
@@ -12,7 +13,7 @@
 
 #define let const auto
 
-namespace Jde::Opc::Hist{
+namespace Jde::Opc{
 	namespace{
 #ifdef _WIN32
 		Ξ closed()ι->void*{ return INVALID_HANDLE_VALUE; }
@@ -24,28 +25,28 @@ namespace Jde::Opc::Hist{
 		//With the OS's code for the call that just failed.
 		Ω failed( const fs::path& path, sv call, SL sl )ι->IO::IOException{
 			let code = lastError();
-			return Failed( path, code, string{call}, sl );
+			return Hist::Failed( path, code, string{call}, sl );
 		}
 	}
-	α Failed( const fs::path& path, uint32 code, string call, SL sl )ι->IO::IOException{
+	α Hist::Failed( const fs::path& path, uint32 code, string call, SL sl )ι->IO::IOException{
 		IO::IOException e{ path, code, move(call), sl };
 		e.SetLevel( ELogLevel::Error );
 		return e;
 	}
-	α Failed( const fs::path& path, const std::error_code& ec, SL sl )ι->IO::IOException{
-		return Failed( path, (uint32)ec.value(), ec.message(), sl );
+	α Hist::Failed( const fs::path& path, const std::error_code& ec, SL sl )ι->IO::IOException{
+		return Hist::Failed( path, (uint32)ec.value(), ec.message(), sl );
 	}
-
-	PathLock::PathLock( PathLock&& x )ι:
-		_handle{ std::exchange(x._handle, closed()) }
-	{}
 
 #ifdef _WIN32
-	α MakeDirectories( const fs::path& directory, SL sl )ε->void{
+	α Hist::MakeDirectories( const fs::path& directory, SL sl )ε->void{
 		IO::CreateDirectories( directory, sl );
 	}
-	α SyncDirectories( const fs::path&, const fs::path&, SL )ε->void{}
-
+	α Hist::SyncDirectories( const fs::path&, const fs::path&, SL )ε->void{}
+	α Hist::Replace( const fs::path& from, const fs::path& to, SL sl )ε->void{
+		if( !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) )
+			throw failed( to, "MoveFileEx", sl );
+	}
+namespace Hist{
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
 		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";
@@ -67,8 +68,9 @@ namespace Jde::Opc::Hist{
 		if( _handle!=closed() )
 			::CloseHandle( _handle );//which drops the lock.
 	}
+}
 #else
-	α MakeDirectories( const fs::path&, SL )ε->void{}
+	α Hist::MakeDirectories( const fs::path&, SL )ε->void{}
 
 	Ω syncDirectory( const fs::path& dir, SL sl )ε->void{
 		let fd = ::open( dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC );
@@ -77,11 +79,11 @@ namespace Jde::Opc::Hist{
 		let code = ::fsync( fd )==-1 ? lastError() : 0;
 		::close( fd );
 		if( code && code!=EINVAL )//EINVAL is a file system with no directory fsync, which has nothing to lose.
-			throw Failed( dir, code, "fsync", sl );
+			throw Hist::Failed( dir, code, "fsync", sl );
 	}
 	//relative's own directory each time, for the names it gains.  Above it, each directory's name once per process:  the
 	//groups share their days' directories, and a name, once durable, stays so.
-	α SyncDirectories( const fs::path& root, const fs::path& relative, SL sl )ε->void{
+	α Hist::SyncDirectories( const fs::path& root, const fs::path& relative, SL sl )ε->void{
 		static absl::Mutex mutex;
 		static absl::flat_hash_set<string> named ABSL_GUARDED_BY( mutex );
 		syncDirectory( root/relative, sl );
@@ -97,6 +99,17 @@ namespace Jde::Opc::Hist{
 			named.insert( path );
 		}
 	}
+
+	α Hist::Replace( const fs::path& from, const fs::path& to, SL sl )ε->void{
+		if( ::rename(from.c_str(), to.c_str())==-1 )
+			throw failed( to, "rename", sl );
+	}
+}
+
+namespace Jde::Opc::Hist{
+	PathLock::PathLock( PathLock&& x )ι:
+		_handle{ std::exchange(x._handle, closed()) }
+	{}
 
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
 		IO::CreateDirectories( path, sl );

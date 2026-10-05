@@ -28,104 +28,22 @@ namespace Jde::Opc{
 		}
 		return "unknown";
 	}
-}
-namespace Jde::Opc::Hist{
-	Reader::Reader( google::protobuf::io::ZeroCopyInputStream& in, uint start, uint end, Ticks chain, bool keepBytes )ι:
-		_in{ &in, (int64_t)(end-start) },
-		_offset{ start },
-		_end{ end },
-		_chain{ chain },
-		_keepBytes{ keepBytes }
-	{}
 
-	α Reader::Next( Proto::HistoryRecord& r )ι->bool{
-		if( !_stop )
-			_stop = Read( r );
-		return !_stop;
+	α Hist::ReadStart( const fs::path& path, SL sl )ε->optional<Proto::FileStart>{
+		std::ifstream file{ path, std::ios::binary | std::ios::ate };
+		if( !file )
+			throw IO::IOException{ path, "could not be opened to read its FileStart", sl };
+		let end = file.tellg();
+		if( end<0 || !file.seekg(0) )
+			throw IO::IOException{ sl, path, ELogLevel::Error, "could not be sized to read its FileStart" };
+		google::protobuf::io::IstreamInputStream in{ &file, 64 };
+		Reader reader{ in, 0, (uint)end, 0 };
+		Proto::HistoryRecord r;
+		if( !reader.Next(r) || !r.has_file_start() || r.file_start().crc()!=StartCrc(r.file_start()) )
+			return nullopt;
+		return r.file_start();
 	}
-
-	//Whether head, the first bytes of a body of size, starts one field that fills it:  the record's oneof member.  A garbled
-	//length almost never agrees with it.
-	Ω fills( sv head, uint32_t size )ι->bool{
-		using google::protobuf::internal::WireFormatLite;
-		CodedInputStream in{ reinterpret_cast<const uint8_t*>(head.data()), (int)head.size() };
-		let tag = in.ReadTag();
-		if( !WireFormatLite::GetTagFieldNumber(tag) )
-			return false;
-		uint64_t rest{};//past what in reads.
-		switch( WireFormatLite::GetTagWireType(tag) ){
-		case WireFormatLite::WIRETYPE_VARINT:{
-			uint64_t value;
-			if( !in.ReadVarint64(&value) )
-				return false;
-			break;}
-		case WireFormatLite::WIRETYPE_FIXED64: rest = 8; break;
-		case WireFormatLite::WIRETYPE_FIXED32: rest = 4; break;
-		case WireFormatLite::WIRETYPE_LENGTH_DELIMITED:{
-			uint32_t length;
-			if( !in.ReadVarint32(&length) )
-				return false;
-			rest = length;
-			break;}
-		default:
-			return false;
-		}
-		return (uint64_t)in.CurrentPosition()+rest==size;
-	}
-
-	//A CodedInputStream per record, as protobuf's own delimited reader does:  its position is an int, which a whole file
-	//could overflow.  Its destructor backs _in up to the record's end.
-	α Reader::Read( Proto::HistoryRecord& r )ι->optional<EStop>{
-		if( _offset>=_end )
-			return EStop::End;
-		CodedInputStream coded{ &_in };
-		uint32_t size;
-		//Only a length the end of the range cuts short can be torn:  one whole but longer than protobuf's 10 byte varints
-		//isn't, and neither is a file's first that a FileStart, at most MaxFileStartBody, can't fill.
-		if( !coded.ReadVarint32(&size) )
-			return _end-_offset>=10 || !_offset ? EStop::BadLength : EStop::Length;
-		let prefix = (uint)coded.CurrentPosition();
-		//a padded varint isn't one the historian wrote, and would make Bytes() differ from the file's.
-		if( prefix!=CodedOutputStream::VarintSize32(size) || size>(uint32_t)std::numeric_limits<int>::max() )
-			return EStop::BadLength;
-		if( size>_end-_offset-prefix )
-			return !_offset && size>MaxFileStartBody ? EStop::BadLength : EStop::Length;
-		//The body's first bytes are checked before the rest is read, so a garbled length that fits in the file can't make
-		//the reader buffer the rest of it.  16 bytes hold a tag and a length or a varint.
-		char head[16];
-		let headSize = std::min<uint>( size, sizeof(head) );
-		const void* buffered;
-		int available;
-		//A read parses in place, once the head is in the stream's buffer:  one that straddles two of its blocks is copied.
-		if( !_keepBytes && coded.GetDirectBufferPointer(&buffered, &available) && (uint)available>=headSize ){
-			if( size && !fills({(const char*)buffered, headSize}, size) )
-				return EStop::Body;
-			let limit = coded.PushLimit( (int)size );
-			let parsed = r.ParseFromCodedStream( &coded );
-			coded.PopLimit( limit );
-			if( !parsed )
-				return EStop::Body;
-		}
-		else{
-			if( !coded.ReadRaw(head, (int)headSize) )
-				return EStop::Length;
-			if( size && !fills({head, headSize}, size) )
-				return EStop::Body;
-			_bytes.resize( prefix+size );
-			let p = CodedOutputStream::WriteVarint32ToArray( size, reinterpret_cast<uint8_t*>(_bytes.data()) );
-			memcpy( p, head, headSize );
-			if( !coded.ReadRaw(p+headSize, (int)(size-headSize)) )
-				return EStop::Length;
-			if( !r.ParseFromArray(_bytes.data()+prefix, (int)size) )
-				return EStop::Body;
-		}
-		if( r.record_case()==Proto::HistoryRecord::RECORD_NOT_SET )
-			return size ? EStop::Unknown : EStop::Empty;
-		ToMemory( r, _chain );
-		_offset += prefix+size;
-		return nullopt;
-	}
-
+namespace Hist{
 	Ω scan( std::istream& file, uint size, Scanned& y, const std::function<void( Proto::HistoryRecord& )>& sealed )ι->void{
 		google::protobuf::io::IstreamInputStream in{ &file };
 		Reader reader{ in, 0, size, 0, true };
@@ -247,8 +165,8 @@ namespace Jde::Opc::Hist{
 		let sealed = y.SealedAfter ? Ƒ( " since an append a historian sealed follows it, ending at byte {}", *y.SealedAfter ) : string{};
 		return Ƒ( "{} at byte {}, which is {}{}", ToString(y.Stop), y.StopOffset, y.Keep() ? "no torn flush" : "a torn flush", sealed );
 	}
-
-	α Scan( const fs::path& path, const std::function<void( Proto::HistoryRecord& )>& sealed, SL sl )ε->Scanned{
+}
+	α Hist::Scan( const fs::path& path, const std::function<void( Proto::HistoryRecord& )>& sealed, SL sl )ε->Scanned{
 		std::ifstream file{ path, std::ios::binary | std::ios::ate };
 		if( !file )
 			throw IO::IOException{ path, "could not be opened to scan", sl };
@@ -266,8 +184,6 @@ namespace Jde::Opc::Hist{
 		}
 		if( failed )
 			throw IO::IOException{ sl, path, ELogLevel::Error, "could not be read through to scan" };
-		if( y.Start && y.Start->generation() && y.Stop!=EStop::End )//an archive is whole, so one sealed can't read through is damage.
-			throw IO::IOException{ sl, path, ELogLevel::Error, "read {} at byte {}, short of the {} bytes its scan kept", ToString(y.Stop), y.StopOffset, y.Size };
 		if( y.Size<y.FileSize )
 			y.SealedAfter = sealedAfter( file, y.Size, size, path, sl );
 		if( y.Size<y.FileSize )//once, here, so a file that is only read says what its reads leave out.
@@ -275,12 +191,7 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 
-	α Scanned::Keep()Ι->bool{
-		let foreign = !StopOffset && Stop!=EStop::Length && Stop!=EStop::Empty;//a first record no torn preamble leaves.
-		return Size<FileSize && (SealedAfter || foreign);
-	}
-
-	α Truncate( const fs::path& path, Scanned& y, SL sl )ε->void{
+	α Hist::Truncate( const fs::path& path, Scanned& y, SL sl )ε->void{
 		if( y.Keep() )
 			throw IO::IOException{ sl, path, ELogLevel::Error, "holds {}:  it is left as it is", stopped(y) };
 		if( y.Size==y.FileSize )
@@ -297,4 +208,107 @@ namespace Jde::Opc::Hist{
 			throw Failed( path, ec, sl );
 		y.FileSize = y.Size;
 	}
+}
+namespace Jde::Opc::Hist{
+	Reader::Reader( google::protobuf::io::ZeroCopyInputStream& in, uint start, uint end, Ticks chain, bool keepBytes )ι:
+		_in{ &in, (int64_t)(end-start) },
+		_offset{ start },
+		_end{ end },
+		_chain{ chain },
+		_keepBytes{ keepBytes }
+	{}
+
+	α Reader::Next( Proto::HistoryRecord& r )ι->bool{
+		if( !_stop )
+			_stop = Read( r );
+		return !_stop;
+	}
+
+	//Whether head, the first bytes of a body of size, starts one field that fills it:  the record's oneof member.  A garbled
+	//length almost never agrees with it.
+	Ω fills( sv head, uint32_t size )ι->bool{
+		using google::protobuf::internal::WireFormatLite;
+		CodedInputStream in{ reinterpret_cast<const uint8_t*>(head.data()), (int)head.size() };
+		let tag = in.ReadTag();
+		if( !WireFormatLite::GetTagFieldNumber(tag) )
+			return false;
+		uint64_t rest{};//past what in reads.
+		switch( WireFormatLite::GetTagWireType(tag) ){
+		case WireFormatLite::WIRETYPE_VARINT:{
+			uint64_t value;
+			if( !in.ReadVarint64(&value) )
+				return false;
+			break;}
+		case WireFormatLite::WIRETYPE_FIXED64: rest = 8; break;
+		case WireFormatLite::WIRETYPE_FIXED32: rest = 4; break;
+		case WireFormatLite::WIRETYPE_LENGTH_DELIMITED:{
+			uint32_t length;
+			if( !in.ReadVarint32(&length) )
+				return false;
+			rest = length;
+			break;}
+		default:
+			return false;
+		}
+		return (uint64_t)in.CurrentPosition()+rest==size;
+	}
+
+	//A CodedInputStream per record, as protobuf's own delimited reader does:  its position is an int, which a whole file
+	//could overflow.  Its destructor backs _in up to the record's end.
+	α Reader::Read( Proto::HistoryRecord& r )ι->optional<EStop>{
+		if( _offset>=_end )
+			return EStop::End;
+		CodedInputStream coded{ &_in };
+		uint32_t size;
+		//Only a length the end of the range cuts short can be torn:  one whole but longer than protobuf's 10 byte varints
+		//isn't, and neither is a file's first that a FileStart, at most MaxFileStartBody, can't fill.
+		if( !coded.ReadVarint32(&size) )
+			return _end-_offset>=10 || !_offset ? EStop::BadLength : EStop::Length;
+		let prefix = (uint)coded.CurrentPosition();
+		//a padded varint isn't one the historian wrote, and would make Bytes() differ from the file's.
+		if( prefix!=CodedOutputStream::VarintSize32(size) || size>(uint32_t)std::numeric_limits<int>::max() )
+			return EStop::BadLength;
+		if( size>_end-_offset-prefix )
+			return !_offset && size>MaxFileStartBody ? EStop::BadLength : EStop::Length;
+		//The body's first bytes are checked before the rest is read, so a garbled length that fits in the file can't make
+		//the reader buffer the rest of it.  16 bytes hold a tag and a length or a varint.
+		char head[16];
+		let headSize = std::min<uint>( size, sizeof(head) );
+		const void* buffered;
+		int available;
+		//A read parses in place, once the head is in the stream's buffer:  one that straddles two of its blocks is copied.
+		if( !_keepBytes && coded.GetDirectBufferPointer(&buffered, &available) && (uint)available>=headSize ){
+			if( size && !fills({(const char*)buffered, headSize}, size) )
+				return EStop::Body;
+			let limit = coded.PushLimit( (int)size );
+			let parsed = r.ParseFromCodedStream( &coded );
+			coded.PopLimit( limit );
+			if( !parsed )
+				return EStop::Body;
+		}
+		else{
+			if( !coded.ReadRaw(head, (int)headSize) )
+				return EStop::Length;
+			if( size && !fills({head, headSize}, size) )
+				return EStop::Body;
+			_bytes.resize( prefix+size );
+			let p = CodedOutputStream::WriteVarint32ToArray( size, reinterpret_cast<uint8_t*>(_bytes.data()) );
+			memcpy( p, head, headSize );
+			if( !coded.ReadRaw(p+headSize, (int)(size-headSize)) )
+				return EStop::Length;
+			if( !r.ParseFromArray(_bytes.data()+prefix, (int)size) )
+				return EStop::Body;
+		}
+		if( r.record_case()==Proto::HistoryRecord::RECORD_NOT_SET )
+			return size ? EStop::Unknown : EStop::Empty;
+		ToMemory( r, _chain );
+		_offset += prefix+size;
+		return nullopt;
+	}
+
+	α Scanned::Keep()Ι->bool{
+		let foreign = !StopOffset && Stop!=EStop::Length && Stop!=EStop::Empty;//a first record no torn preamble leaves.
+		return Size<FileSize && (SealedAfter || foreign);
+	}
+
 }
