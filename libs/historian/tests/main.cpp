@@ -1,6 +1,8 @@
-//libs/historian's own unit suite.  Everything runs on a ManualClock against an in-memory library - no server, no data
-//source, and no waiting for midnight, delay or a heartbeat.  The fixtures in hosts.h are the two shapes the library
-//serves: OpcServer's single group and the gateway's many.
+//libs/historian's own unit suite.  No server and no data source:  each test writes real files, under hist-tests beside
+//the logs, which its fixture removes.  Nearly every test runs on a ManualClock, so none waits for midnight, delay or a
+//heartbeat; SystemClockFlushes is the one on the system clock.  A flush's writes complete on the process's executor, so
+//a test waits for the flush itself.  The fixtures in hosts.h are the two shapes the library serves: OpcServer's single
+//group and the gateway's many.
 #include "gtest/gtest.h"
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>

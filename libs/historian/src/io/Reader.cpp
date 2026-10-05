@@ -1,4 +1,5 @@
 #include "Reader.h"
+#include "File.h"
 #include <fstream>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/crc.h>
@@ -125,13 +126,14 @@ namespace Jde::Opc::Hist{
 		return nullopt;
 	}
 
-	Ω scan( std::istream& file, uint size, Scanned& y )ι->void{
+	Ω scan( std::istream& file, uint size, Scanned& y, const std::function<void( Proto::HistoryRecord& )>& sealed )ι->void{
 		google::protobuf::io::IstreamInputStream in{ &file };
 		Reader reader{ in, 0, size, 0, true };
 		Proto::HistoryRecord r;
 		optional<Proto::FileStart> start;
 		uint32_t crc{};
 		optional<Run> run;//the append's, once it holds a record with a time.
+		vector<Proto::HistoryRecord> pending;//the append's records, for sealed once its checkpoint matches.
 		//Every stop is just where the kept prefix ends:  whether what follows is torn or must be kept is Scan's
 		//sealedAfter's to judge, and Keep's.
 		for( ;; ){
@@ -148,6 +150,12 @@ namespace Jde::Opc::Hist{
 				start = r.file_start();
 				if( start->generation() ){
 					y = { .Start=move(start), .Size=size, .FileSize=size, .StopOffset=size };
+					if( sealed ){//an archive has no checkpoints:  all of it is kept, so all of it is sealed's.
+						for( sealed(r); reader.Next(r); )
+							sealed( r );
+						y.Stop = *reader.Stop();
+						y.StopOffset = reader.Offset();
+					}
 					return;
 				}
 			}
@@ -162,6 +170,9 @@ namespace Jde::Opc::Hist{
 				}
 				if( !y.Start )
 					y.Start = start;
+				for( auto& record : pending )
+					sealed( record );
+				pending.clear();
 				y.Size = reader.Offset();
 				y.Chain = reader.Chain();
 				if( run ){
@@ -179,6 +190,8 @@ namespace Jde::Opc::Hist{
 				run->First = std::min( run->First, *t );
 				run->Last = std::max( run->Last, *t );
 			}
+			if( sealed )
+				pending.push_back( move(r) );
 		}
 	}
 
@@ -235,7 +248,7 @@ namespace Jde::Opc::Hist{
 		return Ƒ( "{} at byte {}, which is {}{}", ToString(y.Stop), y.StopOffset, y.Keep() ? "no torn flush" : "a torn flush", sealed );
 	}
 
-	α Scan( const fs::path& path, SL sl )ε->Scanned{
+	α Scan( const fs::path& path, const std::function<void( Proto::HistoryRecord& )>& sealed, SL sl )ε->Scanned{
 		std::ifstream file{ path, std::ios::binary | std::ios::ate };
 		if( !file )
 			throw IO::IOException{ path, "could not be opened to scan", sl };
@@ -244,7 +257,7 @@ namespace Jde::Opc::Hist{
 			throw IO::IOException{ sl, path, ELogLevel::Error, "could not be sized to scan" };
 		let size = (uint)end;
 		Scanned y{ .FileSize=size };
-		scan( file, size, y );
+		scan( file, size, y, sealed );
 		//libc++ reports a failed read as the end of the file, which then comes short of the file's size.
 		bool failed = file.bad();
 		if( !failed && file.eof() ){
@@ -253,18 +266,13 @@ namespace Jde::Opc::Hist{
 		}
 		if( failed )
 			throw IO::IOException{ sl, path, ELogLevel::Error, "could not be read through to scan" };
+		if( y.Start && y.Start->generation() && y.Stop!=EStop::End )//an archive is whole, so one sealed can't read through is damage.
+			throw IO::IOException{ sl, path, ELogLevel::Error, "read {} at byte {}, short of the {} bytes its scan kept", ToString(y.Stop), y.StopOffset, y.Size };
 		if( y.Size<y.FileSize )
 			y.SealedAfter = sealedAfter( file, y.Size, size, path, sl );
 		if( y.Size<y.FileSize )//once, here, so a file that is only read says what its reads leave out.
 			LOG( y.Keep() ? ELogLevel::Error : ELogLevel::Warning, _tags, "'{}' holds {}:  reads serve only its first {} of {} bytes, and {}.", path.string(), stopped(y), y.Size, y.FileSize, y.Keep() ? "the historian won't append to it" : "its first append drops the rest" );
 		return y;
-	}
-
-	//At Error, where the constructor that takes errno's code takes no level:  history that stops being read or written,
-	//which an operator must see.
-	Ω error( IO::IOException&& e )ι->IO::IOException{
-		e.SetLevel( ELogLevel::Error );
-		return move( e );
 	}
 
 	α Scanned::Keep()Ι->bool{
@@ -280,13 +288,13 @@ namespace Jde::Opc::Hist{
 		std::error_code ec;
 		let now = fs::file_size( path, ec );
 		if( ec )
-			throw error( IO::IOException{path, (uint32)ec.value(), ec.message(), sl} );
+			throw Failed( path, ec, sl );
 		if( now!=y.FileSize )
 			throw IO::IOException{ sl, path, ELogLevel::Error, "holds {} bytes, not the {} it was scanned at, and is left as it is", now, y.FileSize };
 		WARN( "Truncating '{}' from {} bytes to {}, its last good checkpoint:  {} at byte {}.", path.string(), y.FileSize, y.Size, ToString(y.Stop), y.StopOffset );
 		fs::resize_file( path, y.Size, ec );
 		if( ec )
-			throw error( IO::IOException{path, (uint32)ec.value(), ec.message(), sl} );
+			throw Failed( path, ec, sl );
 		y.FileSize = y.Size;
 	}
 }

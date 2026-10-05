@@ -1,6 +1,7 @@
 #include <jde/opc/proto/opc.Common.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/Variant.h>
+#include <utf8_range.h>
 
 #define let const auto
 
@@ -246,6 +247,52 @@ namespace Jde::Opc{
 	}
 	#undef CASE
 	#undef STR_CASE
+
+	α ProtoUtils::Utf8( sv text )ι->bool{ return utf8_range_IsValid( text.data(), text.size() ); }//what protobuf's parse checks.
+	Ω utf8( const UA_String& s )ι->bool{ return ProtoUtils::Utf8( ToSV(s) ); }
+	Ω utf8( const UA_NodeId& id )ι->bool{ return id.identifierType!=UA_NODEIDTYPE_STRING || utf8( id.identifier.string ); }
+	α ProtoUtils::Utf8( const UA_ExpandedNodeId& id )ι->bool{ return utf8( id.namespaceUri ) && utf8( id.nodeId ); }
+	//The strings ToValue( element, type ) gives a `string` field.
+	Ω utf8( const void* p, const UA_DataType& type )ι->bool{
+		switch( type.typeKind ){
+		case UA_DATATYPEKIND_STRING:
+		case UA_DATATYPEKIND_XMLELEMENT:
+			return utf8( *(const UA_String*)p );
+		case UA_DATATYPEKIND_NODEID:
+			return utf8( *(const UA_NodeId*)p );
+		case UA_DATATYPEKIND_EXPANDEDNODEID:
+			return ProtoUtils::Utf8( *(const UA_ExpandedNodeId*)p );
+		case UA_DATATYPEKIND_QUALIFIEDNAME:
+			return utf8( ((const UA_QualifiedName*)p)->name );
+		case UA_DATATYPEKIND_LOCALIZEDTEXT:{
+			let& lt = *(const UA_LocalizedText*)p;
+			return utf8( lt.locale ) && utf8( lt.text );}
+		case UA_DATATYPEKIND_EXTENSIONOBJECT:{
+			let& eo = *(const UA_ExtensionObject*)p;
+			if( eo.encoding>=UA_EXTENSIONOBJECT_DECODED )
+				return !eo.content.decoded.type || utf8( eo.content.decoded.type->binaryEncodingId );
+			return utf8( eo.content.encoded.typeId ) && ( eo.encoding!=UA_EXTENSIONOBJECT_ENCODED_XML || utf8(eo.content.encoded.body) );}
+		case UA_DATATYPEKIND_VARIANT:
+			return ProtoUtils::Utf8( *(const UA_Variant*)p );
+		case UA_DATATYPEKIND_DECIMAL:
+		case UA_DATATYPEKIND_STRUCTURE:
+		case UA_DATATYPEKIND_OPTSTRUCT:
+		case UA_DATATYPEKIND_UNION:
+			return utf8( type.binaryEncodingId );
+		default:
+			return true;
+		}
+	}
+	α ProtoUtils::Utf8( const UA_Variant& v )ι->bool{
+		if( !v.type || !v.data )
+			return true;
+		let elements = UA_Variant_isScalar( &v ) ? 1 : v.arrayLength;
+		for( uint i=0; i<elements; ++i ){
+			if( !utf8((const UA_Byte*)v.data+i*v.type->memSize, *v.type) )
+				return false;
+		}
+		return true;
+	}
 
 	α ProtoUtils::ToValue( const UA_Variant& v )ε->Proto::Value{
 		if( !v.type )

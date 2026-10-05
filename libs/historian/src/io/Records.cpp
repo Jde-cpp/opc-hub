@@ -132,11 +132,20 @@ namespace Jde::Opc{
 		case HistoryRecord::kNodeAdded: return r.node_added().ts();
 		case HistoryRecord::kNodeRemoved: return r.node_removed().ts();
 		case HistoryRecord::kModification: return r.modification().target_source_ts();
-		case HistoryRecord::kValue:{
-			let& v = r.value();
-			return v.has_source_ts() ? v.source_ts() : v.has_server_ts() ? optional<Ticks>{ v.server_ts() } : nullopt;}
+		case HistoryRecord::kValue: return PrimaryTime( r.value() );
 		default: return nullopt;
 		}
+	}
+	α Hist::PrimaryTime( const Proto::DataValue& v )ι->optional<Ticks>{
+		return v.has_source_ts() ? v.source_ts() : v.has_server_ts() ? optional<Ticks>{ v.server_ts() } : nullopt;
+	}
+	α Hist::PrimaryTime( const UA_DataValue& v )ι->Ticks{
+		return v.hasSourceTimestamp ? v.sourceTimestamp : v.serverTimestamp;
+	}
+	α Hist::PrimaryTime( const Record& r )ι->Ticks{
+		if( let value = get_if<DataValue>(&r) )
+			return PrimaryTime( value->Data );
+		return UADateTime{ std::holds_alternative<NodeAdded>(r) ? get<NodeAdded>(r).Ts : get<NodeRemoved>(r).Ts }.UA();
 	}
 
 	α Hist::ToProto( const UA_DataValue& v, NodeIndex index )ε->Proto::DataValue{
@@ -155,6 +164,8 @@ namespace Jde::Opc{
 		if( v.hasValue && !UA_Variant_isEmpty(&v.value) ){
 			if( !ProtoUtils::Supported(v.value) )
 				y.set_status( UA_STATUSCODE_BADNOTSUPPORTED );
+			else if( !ProtoUtils::Utf8(v.value) )
+				y.set_status( UA_STATUSCODE_BADENCODINGERROR );
 			else{
 				try{
 					*y.mutable_value() = ProtoUtils::ToValue( v.value );
@@ -214,9 +225,12 @@ namespace Jde::Opc{
 		}
 		else{
 			let& value = get<DataValue>( r );
-			*y.mutable_value() = ToProto( value.Data, value.Index );
-			if( value.Unsupported )
-				WARN( "node_index {}'s '{}' value has no file form, so it and later ones are stored without it, as BadNotSupported.", value.Index, value.Data.value.type->typeName );
+			let& stored = *y.mutable_value() = ToProto( value.Data, value.Index );
+			if( value.Unsupported ){
+				let notUtf8 = stored.status()==UA_STATUSCODE_BADENCODINGERROR;
+				WARN( "node_index {}'s '{}' value {}, so it and later ones like it are stored without it, as {}.", value.Index, value.Data.value.type->typeName,
+					notUtf8 ? "has text that isn't UTF-8" : "has no file form", notUtf8 ? "BadEncodingError" : "BadNotSupported" );
+			}
 		}
 		return y;
 	}

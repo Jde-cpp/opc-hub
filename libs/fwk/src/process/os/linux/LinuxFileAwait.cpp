@@ -93,12 +93,14 @@ namespace Jde::IO{
 					for( auto dir = parent; !dir.empty() && !fs::exists(dir, ec); dir = dir.parent_path() )
 						++newNames;
 				}
-				if( !parent.empty() && fs::create_directories(parent, ec) ){
+				let created = !parent.empty() && fs::create_directories( parent, ec );
+				if( created )
 					INFO( "Created dir {}", parent.string() );
-					continue;
-				}
+				if( syncNames && !created && !ec )//another thread made it since this open failed for want of it, so its name is new all the same.
+					newNames = std::max<uint>( newNames, 1 );
 				THROW_IFX( ec, IOException(Path, (uint32)ec.value(), "create_directories", _sl) );//copy, not move: keep Path for later logging on this object.
-			}//the parent was there all along: the open's own error stands.
+				continue;//made here, or by another thread a moment ago, which create_directories can't tell from there all along.
+			}//a second ENOENT, the parent there all along:  the open's own error stands.
 			throw IOException{ Path, (uint32)err, "open", _sl };
 		}
 		auto dir = Path.parent_path();
@@ -202,7 +204,9 @@ namespace Jde::IO{
 			ASSERT( chunk );
 			if( !chunk )
 				continue;
-			if( res < 0 ){
+			//EINVAL from a directory's fsync is a file system with none, vboxsf say, which has nothing to lose:  the chain
+			//goes on, as the file's own fdatasync never does past an error.
+			if( res < 0 && !(chunk->IsSync && chunk->SyncStep && -res==EINVAL) ){
 				auto op = chunk->FileArg();
 				//Message first, as at the EBUSY site above.  PostExp takes up<IFileChunkArg>&&, so passing a up<LinuxChunk>
 				//converts - and that conversion moves, emptying `chunk`.  Argument order is unspecified, and clang empties it

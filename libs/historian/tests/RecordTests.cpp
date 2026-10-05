@@ -1,6 +1,7 @@
 //Records and I/O (#202):  the HistoryRecord oneof with delta times, appends written delimited and ended by a checkpoint,
 //the reader over an offset and a limit, the first-open scan, and the truncation that drops a torn append whole.
 #include "hosts.h"
+#include "files.h"
 #include <fstream>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/crc.h>
@@ -80,19 +81,6 @@ namespace Jde::Opc::Hist::Tests{
 
 		α expectEqual( const HistoryRecord& actual, const HistoryRecord& expected )ι->void{
 			EXPECT_EQ( actual.SerializeAsString(), expected.SerializeAsString() ) << actual.ShortDebugString() << "\n  expected: " << expected.ShortDebugString();
-		}
-		//Every record but the checkpoints, read from start to end.
-		Ω read( google::protobuf::io::ZeroCopyInputStream& in, uint start, uint end, Ticks chain )ι->vector<HistoryRecord>{
-			Reader reader{ in, start, end, chain };
-			vector<HistoryRecord> y;
-			HistoryRecord r;
-			while( reader.Next(r) ){
-				if( !r.has_checkpoint() )
-					y.push_back( r );
-			}
-			EXPECT_EQ( reader.Stop(), EStop::End );
-			EXPECT_EQ( reader.Offset(), end );
-			return y;
 		}
 		Ω readAll( sv bytes )ι->vector<HistoryRecord>{
 			ArrayInputStream in{ bytes.data(), (int)bytes.size() };
@@ -210,7 +198,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( joined.node_index(), speed );
 		EXPECT_EQ( ProtoUtils::ToExNodeId(joined.node()).to_string(), Node("Pump1.Speed").to_string() );
 		EXPECT_EQ( joined.node().namespace_uri(), "urn:jde:pumps" );
-		EXPECT_EQ( joined.ts(), Ua(now) );
+		EXPECT_EQ( joined.ts(), ticks(now) );
 		EXPECT_EQ( joined.identity_id(), Admin.IdentityId.Value );
 		EXPECT_EQ( joined.user_name(), "admin" );
 		EXPECT_FALSE( joined.has_start() );
@@ -300,6 +288,49 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
+	//A String that isn't UTF-8, Latin-1 from an older device say, which protobuf would write and then refuse to read:
+	//stored without it, as BadEncodingError.  The node's first such value is flagged, apart from its first with no file form.
+	TEST_F( GatewayHost, NotUtf8OncePerNode ){
+		auto& group = *AddGroup();
+		let label = Join( group, "Pump1.Label" );
+		let speed = Join( group, "Pump1.Speed" );
+		UA_DataValue diagnostic{};
+		const UA_DiagnosticInfo info{};
+		UA_Variant_setScalarCopy( &diagnostic.value, &info, &UA_TYPES[UA_TYPES_DIAGNOSTICINFO] );
+		diagnostic.hasValue = true;
+		ASSERT_TRUE( group.Enqueue(label, Text("25\xB0" "C")) );
+		ASSERT_TRUE( group.Enqueue(label, Text("25\xC2\xB0" "C")) );
+		ASSERT_TRUE( group.Enqueue(label, Text("26\xB0" "C")) );
+		ASSERT_TRUE( group.Enqueue(speed, Text("\xFF")) );
+		ASSERT_TRUE( group.Enqueue(label, Value{move(diagnostic)}) );
+		let values = Records<DataValue>();
+		ASSERT_EQ( values.size(), 5 );
+		EXPECT_TRUE( values[0].Unsupported );
+		EXPECT_FALSE( values[1].Unsupported );
+		EXPECT_FALSE( values[2].Unsupported );
+		EXPECT_TRUE( values[3].Unsupported );
+		EXPECT_TRUE( values[4].Unsupported );
+		for( let i : {0, 2, 3} ){
+			let stored = ToProto( Record{values[i]} ).value();
+			EXPECT_FALSE( stored.has_value() );
+			EXPECT_EQ( stored.status(), UA_STATUSCODE_BADENCODINGERROR );
+			Proto::DataValue parsed;
+			EXPECT_TRUE( parsed.ParseFromString(stored.SerializeAsString()) );
+		}
+		EXPECT_EQ( ToProto(Record{values[1]}).value().value().string_value(), "25\xC2\xB0" "C" );
+		EXPECT_EQ( ToProto(Record{values[4]}).value().status(), UA_STATUSCODE_BADNOTSUPPORTED );
+	}
+
+	//What a file holds as a `string` - a node's string identifier, its namespace URI, a writer's name - must be UTF-8:
+	//one that isn't is refused before anything is buffered.
+	TEST_F( GatewayHost, NotUtf8Refused ){
+		auto& group = *AddGroup();
+		EXPECT_THROW( Join(group, "Pump1.\xB0" "C"), Exception );
+		EXPECT_THROW( group.Add({Node("Pump1.Speed", "urn:jde:\xE9"), {}, 200}, Admin), Exception );
+		EXPECT_TRUE( Records<NodeAdded>().empty() );
+		EXPECT_THROW( (Writer{{{7}}, "ad\xE9" "min"}), Exception );
+	}
+
 	//A DataValue comes back as it was collected, except that a field at its default, whose flag would cost bytes to store,
 	//comes back with its flag clear.
 	TEST( RecordTests, DataValueRoundTrip ){
@@ -379,14 +410,8 @@ namespace Jde::Opc::Hist::Tests{
 				y.insert( y.end(), Runs[i].begin(), Runs[i].end() );
 			return y;
 		}
-		α Write( sv bytes )Ι->void{
-			std::ofstream f{ File, std::ios::binary | std::ios::trunc };
-			f.write( bytes.data(), bytes.size() );
-		}
-		α OnDisk()Ι->string{
-			std::ifstream f{ File, std::ios::binary };
-			return string{ std::istreambuf_iterator<char>{f}, {} };
-		}
+		α Write( sv bytes )Ι->void{ save( File, bytes ); }
+		α OnDisk()Ι->string{ return contents( File ); }
 		//bytes as the file, scanned, which leaves it as it is, then truncated for an append, and what that left of it.
 		α ScanFile( sv bytes )Ε->tuple<Scanned,string>{
 			Write( bytes );
@@ -442,6 +467,21 @@ namespace Jde::Opc::Hist::Tests{
 	};
 
 	//A torn flush is dropped whole, wherever the file ends, and the chain resumes where the kept runs leave it.
+	//The scan hands each record of every append it keeps to sealed, as a read through what it kept would see it, and none
+	//of a torn one:  so a first open maps and restores in the one read.
+	TEST_F( ScanTests, SealedTakesWhatIsKept ){
+		for( uint size=0; size<=Bytes.size(); ++size ){
+			SCOPED_TRACE( Ƒ("file cut at byte {} of {}", size, Bytes.size()) );
+			Write( sv{Bytes}.substr(0, size) );
+			vector<string> sealed;
+			(void)Scan( File, [&]( HistoryRecord& r ){ sealed.push_back( r.SerializeAsString() ); } );
+			vector<string> expected;
+			for( let& r : Expected(Kept(size)) )
+				expected.push_back( r.SerializeAsString() );
+			ASSERT_EQ( sealed, expected );
+		}
+	}
+
 	TEST_F( ScanTests, TruncatesAtEveryOffset ){
 		for( uint size=0; size<=Bytes.size(); ++size ){
 			SCOPED_TRACE( Ƒ("file cut at byte {} of {}", size, Bytes.size()) );

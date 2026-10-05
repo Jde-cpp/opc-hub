@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "Records.h"
 DISABLE_WARNINGS
 #include <google/protobuf/io/zero_copy_stream_impl.h>
@@ -75,8 +76,10 @@ namespace Jde::Opc::Hist{
 	//generation past 0, is only ever replaced whole and carries no checkpoints, so all of it is kept, with no runs or
 	//chain.  Throws when the file can't be read through, which is no torn append.  Logs once when it keeps less than the
 	//whole file:  at Warning for a torn flush, at Error for what must be kept.  The size is the open file's, so a
-	//rename over file between its open and the scan can't pair one file's size with another's bytes.
-	α Scan( const fs::path& file, SRCE )ε->Scanned;
+	//rename over file between its open and the scan can't pair one file's size with another's bytes.  sealed, when given,
+	//takes each record the scan keeps, a checkpoint aside, as soon as its append's checkpoint proves it:  so a first open
+	//maps and restores in the one read.
+	α Scan( const fs::path& file, const std::function<void( Proto::HistoryRecord& )>& sealed={}, SRCE )ε->Scanned;
 	//Before the first append to a scanned file:  truncates it to y.Size, so a torn append is dropped whole.  A first
 	//record the end of the file cuts short, or a zero byte, is a torn preamble and is dropped too.  Throws, leaving the
 	//file as it is, when y.Keep(), or when there is a tail to cut and the file no longer holds y.FileSize bytes:  y is
