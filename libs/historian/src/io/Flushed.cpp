@@ -14,20 +14,23 @@ namespace Jde::Opc::Hist{
 	using google::protobuf::io::CodedOutputStream;
 
 	namespace{
-		constexpr uint Covered{ 12 };//the time and the sequence, which the crc is of.
-		static_assert( IO::Crc::Calc32c(sv{"\0\0\0\0\0\0\0\0\0\0\0\0", Covered})!=0, "A zero-filled slot must not read as a flush." );
+		constexpr uint Covered{ 16 };//the time, the sequence and the day, which the crc is of.
+		static_assert( IO::Crc::Calc32c(sv{"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", Covered})!=0, "A zero-filled slot must not read as a flush." );
 
-		struct Stored{ UA_DateTime Time; uint32_t Sequence; };
+		struct Stored{ UA_DateTime Time; uint32_t Sequence; Day Recover; };
 		Ω parse( sv bytes )ι->optional<Stored>{
 			if( bytes.size()<Flushed::SlotSize )
 				return nullopt;
 			auto p = reinterpret_cast<const uint8_t*>( bytes.data() );
 			uint64_t time;
-			uint32_t sequence, crc;
+			uint32_t sequence, day, crc;
 			p = CodedInputStream::ReadLittleEndian64FromArray( p, &time );
 			p = CodedInputStream::ReadLittleEndian32FromArray( p, &sequence );
+			p = CodedInputStream::ReadLittleEndian32FromArray( p, &day );
 			(void)CodedInputStream::ReadLittleEndian32FromArray( p, &crc );
-			return crc==IO::Crc::Calc32c( bytes.substr(0, Covered) ) ? optional<Stored>{ Stored{(UA_DateTime)time, sequence} } : nullopt;
+			if( crc!=IO::Crc::Calc32c(bytes.substr(0, Covered)) )
+				return nullopt;
+			return Stored{ (UA_DateTime)time, sequence, Day{std::chrono::sys_days{std::chrono::days{(int32_t)day}}} };
 		}
 	}
 
@@ -55,6 +58,7 @@ namespace Jde::Opc::Hist{
 		let second = slots[1] && ( !slots[0] || (int32_t)(slots[1]->Sequence-slots[0]->Sequence)>0 );
 		if( let& slot = slots[second]; slot ){
 			_time = UADateTime{ slot->Time }.Time();
+			_recover = slot->Recover;
 			_sequence = slot->Sequence;
 			_slot = second;
 		}
@@ -62,12 +66,13 @@ namespace Jde::Opc::Hist{
 			WARN( "'{}' holds no valid slot, so its group is taken as never flushed.", _file.string() );
 	}
 
-	α Flushed::Next( TimePoint time )Ι->Slot{
+	α Flushed::Next( TimePoint time, Day recover )Ι->Slot{
 		if( _time )
 			time = std::max( time, *_time );//a clock set back claims less than the last flush did, which still holds.
-		Slot y{ .File=_file, .Index=(uint8)(1-_slot), .Sequence=_sequence+1, .Time=time, .Bytes=string(SlotSize, '\0') };
+		Slot y{ .File=_file, .Index=(uint8)(1-_slot), .Sequence=_sequence+1, .Time=time, .Recover=recover, .Bytes=string(SlotSize, '\0') };
 		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)UADateTime{time}.UA(), reinterpret_cast<uint8_t*>(y.Bytes.data()) );
 		p = CodedOutputStream::WriteLittleEndian32ToArray( y.Sequence, p );
+		p = CodedOutputStream::WriteLittleEndian32ToArray( (uint32_t)(int32_t)std::chrono::sys_days{recover}.time_since_epoch().count(), p );
 		(void)CodedOutputStream::WriteLittleEndian32ToArray( IO::Crc::Calc32c(sv{y.Bytes}.substr(0, Covered)), p );
 		return y;
 	}
@@ -76,6 +81,7 @@ namespace Jde::Opc::Hist{
 	}
 	α Flushed::Wrote( const Slot& slot )ι->void{
 		_time = slot.Time;
+		_recover = slot.Recover;
 		_sequence = slot.Sequence;
 		_slot = slot.Index;
 	}

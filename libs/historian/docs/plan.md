@@ -49,7 +49,7 @@ Each item is its own PR, useful without the historian.
    - fsync of files and directories.
    - Per-group buffers: 8 KB, `delay` and `maxBuffer`, with drop, marker and write-back.
    - The in-memory list of live runs.
-   - The midnight rewrite as a merge of runs, late-record merges into archives, and start-up recovery (stale temp files; generation-0 rewrites from the day before the last flush).
+   - The midnight rewrite as a merge of runs, late-record merges into archives, and start-up recovery (stale temp files; generation-0 rewrites from the day `.flushed` names).
 3. **Compression, heartbeat, gaps.** The band per format, the `MinTimeInterval` pending value, the heartbeat timer with the node's offset, and dropping a heartbeat on an earlier change with the flush hold-back. The gap comparison against the last delivered value, and after a restart against the newest record on disk.
 4. **Raw reads.** Forward, reverse and open-ended reads; merging a live file's runs; bounds, including the forward scan of later preambles; the stateless continuation with its generation check; `readLimit`.
 5. **Edits.** Flush before the edit, `Modification` records, fsync before the acknowledgement, modified reads, and start-value maintenance (in memory, the walk back, preamble corrections).

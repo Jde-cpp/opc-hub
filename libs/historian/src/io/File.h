@@ -18,6 +18,10 @@ namespace Jde::Opc::Hist{
 	//such call.
 	α SyncDirectories( const fs::path& root, const fs::path& relative={}, SRCE )ε->void;
 
+	//Renames from over to, which is then what from was whatever stops the process:  MoveFileExW with MOVEFILE_WRITE_THROUGH
+	//on Windows, and rename on Linux, where the name is durable once SyncDirectories has fsynced to's directory.
+	α Replace( const fs::path& from, const fs::path& to, SRCE )ε->void;
+
 	//The exclusive OS lock a host takes on <hist.path>/historian.lock, flock on Linux and LockFileEx on Windows, so two
 	//processes never append to the same files.  The OS drops it when its process dies, so a crash leaves none stale.
 	struct PathLock final{

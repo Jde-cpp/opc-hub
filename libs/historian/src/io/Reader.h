@@ -78,8 +78,12 @@ namespace Jde::Opc::Hist{
 	//whole file:  at Warning for a torn flush, at Error for what must be kept.  The size is the open file's, so a
 	//rename over file between its open and the scan can't pair one file's size with another's bytes.  sealed, when given,
 	//takes each record the scan keeps, a checkpoint aside, as soon as its append's checkpoint proves it:  so a first open
-	//maps and restores in the one read.
+	//maps and restores in the one read.  An archive is read only for sealed, and one it can't read through is damaged:
+	//Stop then says where, short of the Size it keeps, for the caller to refuse.
 	α Scan( const fs::path& file, const std::function<void( Proto::HistoryRecord& )>& sealed={}, SRCE )ε->Scanned;
+	//file's FileStart, when it opens with one whose crc matches:  its generation tells an archive from a live file
+	//without a scan.  Throws when the file can't be opened.
+	α ReadStart( const fs::path& file, SRCE )ε->optional<Proto::FileStart>;
 	//Before the first append to a scanned file:  truncates it to y.Size, so a torn append is dropped whole.  A first
 	//record the end of the file cuts short, or a zero byte, is a torn preamble and is dropped too.  Throws, leaving the
 	//file as it is, when y.Keep(), or when there is a tail to cut and the file no longer holds y.FileSize bytes:  y is

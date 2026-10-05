@@ -1,13 +1,11 @@
 //Day files and durability (#228):  the lock on hist.path, the two-slot .flushed file, the buffer's flush at 8 KB and at
 //`delay`, what a full buffer drops and how its gap is marked, and each live file's runs.
-#include "hosts.h"
-#include "files.h"
+#include "dayFiles.h"
 #include <fstream>
 #include <future>
 #include <thread>
 #include <jde/fwk/io/crc.h>
 #include <jde/fwk/log/MemoryLog.h>
-#include "../src/io/DayFiles.h"
 #ifndef _WIN32
 	#include <fcntl.h>
 	#include <sys/stat.h>
@@ -21,24 +19,6 @@ namespace Jde::Opc::Hist::Tests{
 	using Proto::HistoryRecord;
 
 	namespace{
-		constexpr Day March6{ 2026y/March/6 }, March7{ 2026y/March/7 }, March8{ 2026y/March/8 }, March9{ 2026y/March/9 };
-		Ξ utc()ι->const time_zone&{ return *locate_zone( "UTC" ); }
-		//The runs a group holds for a file are those a scan of it rebuilds.
-		Ω expectRuns( const vector<Run>& actual, const fs::path& file )ε->void{
-			let expected = Scan( file ).Runs;
-			ASSERT_EQ( actual.size(), expected.size() ) << file;
-			for( uint i=0; i<actual.size(); ++i ){
-				SCOPED_TRACE( Ƒ("run {} of {}", i, actual.size()) );
-				EXPECT_EQ( actual[i].Offset, expected[i].Offset );
-				EXPECT_EQ( actual[i].End, expected[i].End );
-				EXPECT_EQ( actual[i].Chain, expected[i].Chain );
-				EXPECT_EQ( actual[i].First, expected[i].First );
-				EXPECT_EQ( actual[i].Last, expected[i].Last );
-			}
-		}
-		Ω isValue( const HistoryRecord& r, NodeIndex index, double v, TimePoint source )ι->bool{
-			return r.has_value() && r.value().node_index()==index && r.value().value().double_value()==v && r.value().source_ts()==ticks( source );
-		}
 		//A name at file's path that resolves to nothing, so the file reads as missing and can't be made, as when a parent of
 		//it is renamed away.  False where this user can't make a symlink.
 		Ω dangle( const fs::path& file )ι->bool{
@@ -46,33 +26,7 @@ namespace Jde::Opc::Hist::Tests{
 			fs::create_symlink( "missing/target", file, ec );
 			return !ec;
 		}
-		Ω isPreamble( const HistoryRecord& r, NodeIndex index, Day day )ι->bool{
-			return r.has_node_added() && r.node_added().node_index()==index && r.node_added().ts()==StartOf( day, utc() ) && !r.node_added().has_identity_id();
-		}
 	}
-
-	//The gateway's shape with `delay` at its default, a minute.
-	struct GatewayFiles : GatewayHost{
-		GatewayFiles()ε:GatewayHost{ 1min }{}
-		α File( const Group& group, Day day )Ι->fs::path{ return Path()/DayDirectory( day )/( group.Name()+".binpb" ); }
-		//The gateway starting again with a group's hist_group_nodes rows.
-		α Rejoin( const string& name, vector<Member> members )ε->sp<Group>{
-			return _group = Library->AddGroup( {.Name=name, .Indexes=EIndexes::Host, .PublishingInterval=500ms}, move(members) );
-		}
-		//A file where 2026's directory goes, so no day file of this year can be made, and its removal.
-		α Block()Ι->void{ save( Path()/"2026", "in the way" ); }
-		α Unblock()Ι->void{ fs::remove( Path()/"2026" ); }
-	};
-	//OpcServer's shape with `delay` at a minute.
-	struct ServerFiles : ServerHost{
-		ServerFiles()ε:ServerHost{ 1min }{}
-		α File( Day day )Ι->fs::path{ return Path()/DayDirectory( day )/"server.binpb"; }
-		//OpcServer starting again with the nodes its nodesets historize.
-		α Start( vector<Member> members )ε->void{
-			Restart();
-			_group = Server = Library->AddGroup( {.Name="server", .Indexes=EIndexes::Issued}, move(members) );
-		}
-	};
 
 	//A record goes in the file of its source time's day in timeZone, under <yyyy>/<m>/<d> as the log names a day.
 	TEST( DayTests, FiledByDayInTimeZone ){
@@ -115,21 +69,24 @@ namespace Jde::Opc::Hist::Tests{
 			std::error_code ec;
 			fs::remove( File.parent_path().parent_path(), ec );
 		}
-		Ω Slot( TimePoint time, uint32_t sequence )ι->string{
+		Ω Slot( TimePoint time, uint32_t sequence, Day recover=March6 )ι->string{
 			string y( Flushed::SlotSize, '\0' );
 			let t = (uint64_t)ticks( time );
 			for( uint i=0; i<8; ++i )
 				y[i] = (char)( t>>(8*i) );
 			for( uint i=0; i<4; ++i )
 				y[8+i] = (char)( sequence>>(8*i) );
-			let crc = IO::Crc::Calc32c( sv{y}.substr(0, 12) );
+			let day = (uint32_t)sys_days{ recover }.time_since_epoch().count();
 			for( uint i=0; i<4; ++i )
-				y[12+i] = (char)( crc>>(8*i) );
+				y[12+i] = (char)( day>>(8*i) );
+			let crc = IO::Crc::Calc32c( sv{y}.substr(0, 16) );
+			for( uint i=0; i<4; ++i )
+				y[16+i] = (char)( crc>>(8*i) );
 			return y;
 		}
 		//As a flush writes it.
-		Ω Write( Flushed& flushed, TimePoint time )ε->void{
-			let slot = flushed.Next( time );
+		Ω Write( Flushed& flushed, TimePoint time, Day recover=March6 )ε->void{
+			let slot = flushed.Next( time, recover );
 			BlockVoidAwait( slot.Write() );
 			flushed.Wrote( slot );
 		}
@@ -137,25 +94,31 @@ namespace Jde::Opc::Hist::Tests{
 		const fs::path File{ fs::current_path()/"hist-tests"/::testing::UnitTest::GetInstance()->current_test_info()->name()/"group.flushed" };
 	};
 
-	//Two 16-byte slots, written alternately in place:  the time in UA ticks, a sequence and a CRC-32C, little-endian.
+	//Two 20-byte slots, written alternately in place:  the time in UA ticks, a sequence, the day a start looks for live
+	//files from, in days since 1970-01-01, and a CRC-32C, little-endian.
 	TEST_F( FlushedTests, AlternatesSlots ){
 		{
 			Flushed flushed{ File };
 			EXPECT_FALSE( flushed.Time() );//no file:  never flushed.
+			EXPECT_FALSE( flushed.Recover() );
 			EXPECT_FALSE( fs::exists(File) );
 			Write( flushed, Time );
 			EXPECT_EQ( flushed.Time(), Time );
 			EXPECT_EQ( contents(File), Slot(Time, 1) );
 			Write( flushed, Time+1min );
 			EXPECT_EQ( contents(File), Slot(Time, 1)+Slot(Time+1min, 2) );
-			Write( flushed, Time+2min );
-			EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+1min, 2) );
+			Write( flushed, Time+2min, March7 );
+			EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+1min, 2) );
 			EXPECT_EQ( flushed.Time(), Time+2min );
+			EXPECT_EQ( flushed.Recover(), March7 );
 		}
 		Flushed read{ File };
 		EXPECT_EQ( read.Time(), Time+2min );
-		Write( read, Time+3min );//over the older slot.
-		EXPECT_EQ( contents(File), Slot(Time+2min, 3)+Slot(Time+3min, 4) );
+		EXPECT_EQ( read.Recover(), March7 );
+		constexpr Day first{ 1601y/January/1 };//before 1970, so negative.
+		Write( read, Time+3min, first );//over the older slot.
+		EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+3min, 4, first) );
+		EXPECT_EQ( Flushed{File}.Recover(), first );
 	}
 
 	//A write torn at any byte loses that flush's time, not the file:  the reader falls back to the other slot, and the
@@ -304,20 +267,20 @@ namespace Jde::Opc::Hist::Tests{
 		let file = File( *group, March7 );
 		Time->Advance( 30s );
 		uint count{};
-		for( ; Time->Pending()==1; ++count )
+		for( ; Time->Pending()==2; ++count )//`delay`'s and midnight's.
 			DataChange( *group, speed, (double)count, Time->Now()+count*1ms );
 		EXPECT_GT( count, 150 );//a value is some 34 bytes of a file.
 		EXPECT_LT( count, 300 );
 		DataChange( *group, speed, (double)count, Time->Now()+count*1ms );
 		++count;
-		EXPECT_EQ( Time->Pending(), 2 );//asked for once.
+		EXPECT_EQ( Time->Pending(), 3 );//asked for once.
 		EXPECT_FALSE( fs::exists(file) );
 
 		EXPECT_EQ( Time->Advance(0s), 1 );
 		Settle( *group );
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( std::ranges::count_if(readFile(file), &HistoryRecord::has_value), count );
-		EXPECT_EQ( Time->Pending(), 1 );
+		EXPECT_EQ( Time->Pending(), 2 );
 		EXPECT_EQ( Time->Advance(59s), 0 );
 		EXPECT_EQ( Time->Advance(1s), 1 );
 		Settle( *group );
@@ -326,6 +289,7 @@ namespace Jde::Opc::Hist::Tests{
 
 	//A flush sorts what it took by source time and writes each record to its own day's file, so one flush can touch
 	//several.  A late record lands in its own day's file, after later ones:  a run of its own, which the group lists.
+	//Yesterday's, made here for a day already past, is its archive from the start, with no runs.
 	TEST_F( GatewayFiles, SortedIntoDayFiles ){
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
@@ -339,6 +303,7 @@ namespace Jde::Opc::Hist::Tests{
 		let yesterday = readFile( File(*group, March6) );
 		ASSERT_EQ( yesterday.size(), 3 );
 		EXPECT_EQ( yesterday[0].file_start().ts(), StartOf(March6, utc()) );
+		EXPECT_EQ( yesterday[0].file_start().generation(), 1 );
 		EXPECT_TRUE( isPreamble(yesterday[1], speed, March6) );
 		EXPECT_TRUE( isValue(yesterday[2], speed, 1, now-18h) );
 
@@ -603,7 +568,7 @@ namespace Jde::Opc::Hist::Tests{
 
 	//A node's first value after it joins carries the time the value last changed, which can fall in a day whose file was
 	//made before the node joined.  That file gets a preamble record for the node with the value, so it still maps every
-	//index it holds.
+	//index it holds:  here yesterday's, an archive by then, which takes the record with its preamble.
 	TEST_F( GatewayFiles, MapsEachIndexAFileHolds ){
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
@@ -611,6 +576,7 @@ namespace Jde::Opc::Hist::Tests{
 		DataChange( *group, speed, 1, first );
 		EXPECT_TRUE( Flush(*group) );
 		Time->AdvanceTo( sys_days{March8}+10min );
+		Settle( *group );//midnight's rewrite, which a late record then follows.
 		let flow = Join( *group, "Pump1.Flow" );
 		let changed = sys_days{March7}+23h;
 		DataChange( *group, flow, 3, changed );
@@ -618,7 +584,8 @@ namespace Jde::Opc::Hist::Tests{
 
 		let yesterday = readFile( File(*group, March7) );
 		ASSERT_EQ( yesterday.size(), 6 );
-		EXPECT_TRUE( isPreamble(yesterday[4], flow, March7) );
+		EXPECT_EQ( yesterday[0].file_start().generation(), 2 );
+		EXPECT_TRUE( isPreamble(yesterday[2], flow, March7) );
 		EXPECT_TRUE( isValue(yesterday[5], flow, 3, changed) );
 		let today = readFile( File(*group, March8) );
 		ASSERT_EQ( today.size(), 4 );
@@ -647,7 +614,7 @@ namespace Jde::Opc::Hist::Tests{
 
 		for( uint i=1; i<=300; ++i )//past 8 KB.
 			DataChange( *group, speed, i, Time->Now()+i*1ms );
-		EXPECT_EQ( Time->Pending(), 1 );
+		EXPECT_EQ( Time->Pending(), 2 );
 		EXPECT_EQ( Time->Advance(1min), 1 );
 		Settle( *group );
 		let held = group->Buffer();
@@ -663,9 +630,9 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( readFile(File(*group, March7)).size(), 304 );
 		EXPECT_EQ( group->Flushed(), Time->Now() );
 		DataChange( *group, speed, 301, Time->Now() );
-		for( uint i=0; Time->Pending()==1; ++i )//the buffer's size counts again.
+		for( uint i=0; Time->Pending()==2; ++i )//the buffer's size counts again.
 			DataChange( *group, speed, i, Time->Now() );
-		EXPECT_EQ( Time->Pending(), 2 );
+		EXPECT_EQ( Time->Pending(), 3 );
 	}
 
 	//A day that can't be written, an old one a late record names, holds back only its own records:  the others are
@@ -690,7 +657,7 @@ namespace Jde::Opc::Hist::Tests{
 
 		fs::remove( Path()/"2025" );//writable again, but `delay` isn't up.
 		uint i{};
-		for( ; Time->Pending()==1; ++i )
+		for( ; Time->Pending()==2; ++i )
 			DataChange( *group, speed, 3+i, Time->Now()+2s+i*1ms );
 		EXPECT_EQ( Time->Advance(0s), 1 );
 		Settle( *group );
@@ -718,7 +685,7 @@ namespace Jde::Opc::Hist::Tests{
 		uint flushes{};
 		for( uint i=0; i<count; ++i ){
 			DataChange( *group, speed, i, Time->Now()+i*1ms );
-			if( Time->Pending()>1 ){//the executor's, which runs it at once.
+			if( Time->Pending()>2 ){//the executor's, which runs it at once.
 				EXPECT_EQ( Time->Advance(0s), 1 );
 				Settle( *group );
 				++flushes;
@@ -925,6 +892,61 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( readFile(written).size(), 4 );
 		let logged = Logging::Find( [&]( const Logging::Entry& e ){ return e.Level==ELogLevel::Error && e.Message().contains("stopped with a flush still out") && e.Message().contains(name); } );
 		EXPECT_EQ( logged.size(), 1 );
+#endif
+	}
+
+	//A clock set back doesn't stretch a failing day's wait for `delay`:  a retry more than `delay` off is due.
+	TEST_F( GatewayFiles, ClockSetBackEndsTheRetryWait ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		Block();
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_FALSE( Flush(*group) );
+		Unblock();
+		Time->Step( -1h );
+		EXPECT_EQ( Time->Advance(1min), 1 );//`delay`, an interval, as long as it was.
+		Settle( *group );
+		EXPECT_TRUE( group->Buffer().empty() );
+	}
+
+	//A flush the end gave up on starts no write once the lock is let go:  here an archive's merge, queued behind a day
+	//whose scan a FIFO holds past StopLimit, is never renamed over the archive, and its records stay unwritten.
+	TEST_F( GatewayFiles, GivenUpFlushWritesNoMore ){
+#ifdef _WIN32
+		GTEST_SKIP() << "No FIFO to hold the flush.";
+#else
+		auto config = Config( 1min );
+		config.StopLimit = 200ms;
+		Restart( move(config) );
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let archive = File( *group, March6 );
+		DataChange( *group, speed, 1, sys_days{March6}+12h );
+		EXPECT_TRUE( Flush(*group) );
+		let before = contents( archive );
+		constexpr Day march5{ 2026y/March/5 };
+		let stuck = File( *group, march5 );
+		fs::create_directories( stuck.parent_path() );
+		ASSERT_EQ( ::mkfifo(stuck.c_str(), 0600), 0 );
+		DataChange( *group, speed, 2, sys_days{march5}+12h );//first in the flush, whose scan waits on the FIFO for a writer.
+		DataChange( *group, speed, 3, sys_days{March6}+13h );
+		_group.reset();
+
+		Library.reset();
+		bool released{};
+		for( let deadline = steady_clock::now()+10s; !released && steady_clock::now()<deadline; std::this_thread::sleep_for(1ms) ){
+			if( let fd = ::open(stuck.c_str(), O_WRONLY | O_NONBLOCK); fd!=-1 ){
+				::close( fd );
+				released = true;
+			}
+		}
+		ASSERT_TRUE( released );
+		for( let deadline = steady_clock::now()+5s; group->Buffer().size()<2 && steady_clock::now()<deadline; )
+			std::this_thread::sleep_for( 1ms );
+		EXPECT_EQ( group->Buffer().size(), 2 );//held, and dropped with the group.
+		EXPECT_EQ( contents(archive), before );
+		EXPECT_FALSE( fs::exists(fs::path{archive}+=".tmp") );
+		EXPECT_TRUE( fs::is_fifo(stuck) );
 #endif
 	}
 

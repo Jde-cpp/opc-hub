@@ -56,7 +56,7 @@ namespace Jde::Opc::Hist{
 		_config{ move(config) }{
 		let now = _store->Time->Now();
 		let& tz = *_store->Config.TimeZone;
-		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, DayOf(now, tz), sl );
+		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, _store->Config.Delay, DayOf(now, tz), sl );
 		let restored = _files->TakeRestored();
 		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
 		restoredIndexes.reserve( restored.Members.size() );
@@ -96,8 +96,7 @@ namespace Jde::Opc::Hist{
 	}
 	Group::~Group(){
 		_store->Unregister( *this );
-		if( _timer )
-			_store->Time->Cancel( _timer );
+		Cancel( {_timer, _midnight} );
 		_store->Subtract( _held );
 	}
 
@@ -128,6 +127,8 @@ namespace Jde::Opc::Hist{
 	}
 
 	α Group::Hold( Record&& record, uint32_t bytes )ι->bool{
+		if( _deferred && !_deferredDays.contains(DayOf(PrimaryTime(record), *_store->Config.TimeZone)) )
+			_deferred = false;
 		let isValue = std::holds_alternative<DataValue>( record );
 		Buffered buffered{ move(record), _store->Sequence(), bytes };
 		let cost = Cost( buffered );
@@ -140,7 +141,7 @@ namespace Jde::Opc::Hist{
 		return _store->Add( cost );
 	}
 	α Group::ClaimFlush( bool over )ι->bool{
-		if( (_fresh<Settings::FlushBytes && !over) || _requested || _failing )
+		if( (_fresh<Settings::FlushBytes && !over) || _requested || _failing || (_deferred && !over) )
 			return false;
 		return _requested = true;
 	}
@@ -397,19 +398,24 @@ namespace Jde::Opc::Hist{
 		return _store->Add( cost );
 	}
 	α Group::Written()Ι->bool{
-		return _closed && _changes.empty() && _values.empty() && _lost.empty();
+		return _closed && _archived && _changes.empty() && _values.empty() && _lost.empty();
 	}
 	α Group::EndIfWritten()ι->bool{
-		IClock::TimerId timer;
+		Timers timers;
 		{
 			ul _{ _mutex };
 			if( !Written() || _flushing )
 				return false;
 			_ended = true;
-			timer = std::exchange( _timer, 0 );
+			timers = Disarm();
 		}
-		if( timer )
-			_store->Time->Cancel( timer );
+		Cancel( timers );
 		return true;
+	}
+	α Group::Cancel( Timers timers )ι->void{
+		for( let id : {timers.Delay, timers.Midnight} ){
+			if( id )
+				_store->Time->Cancel( id );
+		}
 	}
 }
