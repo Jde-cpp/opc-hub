@@ -157,6 +157,34 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( mayAddReference(unknownUser) );
 	}
 
+	//open62541 1.5.9 gates every attribute read but Value and RolePermissions on allowBrowseNode, so a user without Read on
+	//the root would lose the NodeClass and DataTypeDefinition reads that decoding a permitted value needs.  Type nodes and
+	//namespace 0 stay browsable; an instance node still needs Read.
+	TEST_F( AccessTests, TypeNodesStayBrowsableWithoutRead ){
+		let unknownUser = UserPK{ std::numeric_limits<UserPK::Type>::max() };//no acl row:  no Read anywhere.
+		let mayBrowse = [&]( const UA_NodeId& nodeId ){
+			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, unknownUser };
+			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
+		};
+		//outside namespace 0 and outside every configured branch, so both fall to the root resource.
+		let typeId = UA_NODEID_STRING( 1, (char*)"AccessTests.Type" );
+		let objectId = UA_NODEID_STRING( 1, (char*)"AccessTests.Object" );
+		ASSERT_EQ( UA_Server_addObjectTypeNode(_ua->Ptr(), typeId, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+			UA_QUALIFIEDNAME(1, (char*)"AccessTestsType"), UA_ObjectTypeAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup removeType = [&]{ UA_Server_deleteNode( _ua->Ptr(), typeId, true ); };
+		ASSERT_EQ( UA_Server_addObjectNode(_ua->Ptr(), objectId, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+			UA_QUALIFIEDNAME(1, (char*)"AccessTestsObject"), typeId, UA_ObjectAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup removeObject = [&]{ UA_Server_deleteNode( _ua->Ptr(), objectId, true ); };
+
+		EXPECT_TRUE( mayBrowse(typeId) ) << "an ObjectType";
+		EXPECT_FALSE( mayBrowse(objectId) ) << "an instance";
+		EXPECT_TRUE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_SERVERSTATUSDATATYPE)) );
+		let statusNode = criteriaNode();
+		EXPECT_TRUE( mayBrowse(statusNode) ) << "namespace 0, even where a resource withholds everything";
+		UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, unknownUser };
+		EXPECT_EQ( (EAccess)UAAccess::GetUserAccessLevel(_ua->Ptr(), nullptr, nullptr, &ctx, &statusNode, nullptr), EAccess::None ) << "its value stays gated";
+	}
+
 	//soak-findings #9:  a session that times out keeps its subscriptions for TransferSubscriptions, and open62541 goes on sampling
 	//their monitored items with no session at all - the read callbacks then arrive with a null session id and a null context,
 	//which open62541 documents as normal and expects to be denied.  They were denied, but only after `ASSERT( ctx )` logged a
@@ -459,10 +487,10 @@ namespace Jde::Opc::Server::Tests{
 	}
 
 	//opcserver-review3 L24:  every accepting branch of ActivateSession assigned straight through *sessionContext, and
-	//open62541 passes &session->context on *every* activation - re-activation is explicitly allowed, and the vendor's own
-	//client re-activates on a channel renew - while closeSession only ever sees the last pointer.  So each re-activation
-	//dropped the previous context on the floor.  Nothing but the gateway suite drives activation at all, and nothing
-	//drives it twice on one session;  this does.
+	//open62541 passes &session->context on *every* activation - re-activation is explicitly allowed for the same user, and
+	//the vendor's own client re-activates on a channel renew - while closeSession only ever sees the last pointer.  So each
+	//re-activation dropped the previous context on the floor.  Nothing but the gateway suite drives activation at all, and
+	//nothing drives it twice on one session;  this does.
 	TEST_F( AccessTests, ReactivatingASessionReplacesItsContext ){
 		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		let token = jwt.Payload();//the wire form the gateway sends (TokenTests does the same).
@@ -484,6 +512,29 @@ namespace Jde::Opc::Server::Tests{
 		//`first` is freed by the second activation - the fix.  Not asserted: the free itself is not observable here, since
 		//Process::Shutdown ends in std::_Exit and LSan never runs, and a recoverable leak check would trip on the suite's
 		//pre-existing ones (opcserver-review #23).
+		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
+		UA_IssuedIdentityToken_clear( &issued );
+	}
+
+	//open62541 1.5.9 refuses an identity change on re-activation, but compares an issued token's user id, which it leaves
+	//empty - so a session activated as one user and re-activated with another user's token reaches ActivateSession, which
+	//must refuse it and keep the session's context rather than swap in the new user.
+	TEST_F( AccessTests, ReactivatingAsAnotherUserIsRefused ){
+		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
+		let token = jwt.Payload();
+		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
+		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
+		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
+		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
+
+		let readerPK = UserPK{ (UserPK::Type)_users.at("readerUser") };
+		ASSERT_NE( readerPK, AppClient()->UserPK() );
+		void* slot = new UAAccess::SessionContext{ "", TimePoint::max(), 0, readerPK };//the session as first activated, by the reader.
+		let first = slot;
+		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
+		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED );
+		EXPECT_EQ( slot, first ) << "the session keeps its context";
+		EXPECT_EQ( static_cast<UAAccess::SessionContext*>(slot)->UserPK, readerPK );
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
 		UA_IssuedIdentityToken_clear( &issued );
 	}

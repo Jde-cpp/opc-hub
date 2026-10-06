@@ -64,7 +64,7 @@ set( abslTag 20260526.0 )
 #2 lets its inline hash use the CRC32 instruction cpuFlags enable.  Echoed like a tag:  protobuf inlines that hash too.
 set( abslHwAccel 2 )
 set( rymlTag v0.10.0 )
-set( open62541Tag v1.5.6 )
+set( open62541Tag v1.5.9 )
 
 ExternalProject_Add(fmt
 	GIT_REPOSITORY https://github.com/fmtlib/fmt.git
@@ -421,16 +421,34 @@ endif()
 # is now a _Generic macro -> -Wc11-extensions) so strip -Werror. Their CMakeLists also installs
 # include/NodesetLoader/ReferenceService.h, which no longer exists in the repo - drop that line.
 # Finally append the missing NodesetLoaderConfig.cmake install rule (see comment above).
+# src/Nodeset.c maps a BrowseName's namespace a second time after UA_QualifiedName_parseEx, which maps it itself
+# since open62541 v1.5.8 (2f2130931) - 1 -> 2 -> 65533, so no browse path into a loaded nodeset resolves.  Drop the
+# second mapping;  a loader whose parseQualifiedName no longer matches fails here rather than loading wrong names.
+# The patch reruns on an open62541 bump (the echoed tag), so every step is idempotent.
 set( _nodesetPatch "${CMAKE_CURRENT_BINARY_DIR}/nodeset-loader-patch.cmake" )
 file( CONFIGURE OUTPUT "${_nodesetPatch}" @ONLY CONTENT
 [[file(READ "${SOURCE_DIR}/CMakeLists.txt" _c)
 string(REPLACE " -Werror" "" _c "${_c}")
 string(REGEX REPLACE "[^\n]*ReferenceService\\.h[^\n]*" "" _c "${_c}")
-string(APPEND _c "\ninstall(FILES \"@_nodesetLoaderCfgFile@\" DESTINATION \${CMAKE_INSTALL_LIBDIR}/cmake/NodesetLoader)\n")
+set(_rule "\ninstall(FILES \"@_nodesetLoaderCfgFile@\" DESTINATION \${CMAKE_INSTALL_LIBDIR}/cmake/NodesetLoader)\n")
+string(FIND "${_c}" "${_rule}" _at)
+if(_at EQUAL -1)
+	string(APPEND _c "${_rule}")
+endif()
 file(WRITE "${SOURCE_DIR}/CMakeLists.txt" "${_c}")
+
+file(READ "${SOURCE_DIR}/src/Nodeset.c" _s)
+set(_parse "UA_QualifiedName_parseEx(&qn, UA_STRING(s), nodeset->fc->nsMapping);")
+set(_remap "[ \t]*qn\\.namespaceIndex = UA_NamespaceMapping_remote2Local\\(nodeset->fc->nsMapping, qn\\.namespaceIndex\\);\r?\n")
+string(FIND "${_s}" "${_parse}" _at)
+if(_at EQUAL -1)
+	message(FATAL_ERROR "nodeset-loader-patch: parseQualifiedName changed in ${SOURCE_DIR}/src/Nodeset.c - check whether it still maps the namespace twice.")
+endif()
+string(REGEX REPLACE "${_remap}" "" _s "${_s}")
+file(WRITE "${SOURCE_DIR}/src/Nodeset.c" "${_s}")
 ]]
 )
-set( _nodesetPatchCmd PATCH_COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=<SOURCE_DIR>" -P "${_nodesetPatch}" )
+set( _nodesetPatchCmd PATCH_COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=<SOURCE_DIR>" -Djde_DEP_TAG_open62541=${open62541Tag} -P "${_nodesetPatch}" )
 
 ExternalProject_Add(open62541
 	GIT_REPOSITORY https://github.com/open62541/open62541.git

@@ -640,7 +640,17 @@ namespace Jde::Opc::Gateway{
 					//file at all (reviews/security-matrix.md #12; RefusedCertificateTests, CertTests.Authenticate_Bad).  The status can
 					//have other causes, hence "usually";  the certificate is the one to rule out first, and the file is what an operator
 					//needs either way.  Path only in the detail - the subject/issuer/SAN dump belongs in the log.
-					detail = Ƒ( "'{}' refused the secure channel - usually a server that does not trust this gateway's certificate yet.  It presented '{}':  trust that file in the server - a Jde OpcServer takes it from any of its /access/trustedCertDirs, another server from its own trust list, where it normally waits among the rejected certificates - and connect again", client->Url(), presented->Certificate.Path.string() );
+					//Trusting the file does not help when it is the uri the server objects to - open62541 1.5.9 servers say so with their
+					//own status, where earlier ones answered BadCertificateInvalid.
+					if( connectStatus==UA_STATUSCODE_BADCERTIFICATEURIINVALID ){
+						string san;
+						try{ san = Crypto::Certificate{ Crypto::ReadCertificate(presented->Certificate.Path) }.SanUri(); }catch( const std::exception& ){}
+						detail = san.empty()
+							? Ƒ( "'{}' refused this gateway's certificate '{}':  it carries no URI in its subjectAltName to vouch for the applicationUri '{}' the gateway advertises.  Give it one - for a gateway-issued certificate, delete the file and the next connect re-issues it", client->Url(), presented->Certificate.Path.string(), client->AdvertisedUri() )
+							: Ƒ( "'{}' refused the URI of this gateway's certificate '{}':  its subjectAltName URI is '{}', the applicationUri the gateway advertises '{}'.  The server holds one against the other - re-issue the certificate with the URI it expects - for a gateway-issued one, correct /gateway/issuedCerts, delete the file and the next connect re-issues it", client->Url(), presented->Certificate.Path.string(), san, client->AdvertisedUri() );
+					}
+					else
+						detail = Ƒ( "'{}' refused the secure channel - usually a server that does not trust this gateway's certificate yet.  It presented '{}':  trust that file in the server - a Jde OpcServer takes it from any of its /access/trustedCertDirs, another server from its own trust list, where it normally waits among the rejected certificates - and connect again", client->Url(), presented->Certificate.Path.string() );
 					ERR( "[{}]{}", hex(client->Handle()), detail );
 					try{//what the file holds - subject, SAN, expiry - for the log;  the settings object knows only where it is.
 						Crypto::Certificate{ Crypto::ReadCertificate(presented->Certificate.Path) }.Log( Ƒ("[{}]Presented certificate '{}'", hex(client->Handle()), presented->Certificate.Path.string()) );

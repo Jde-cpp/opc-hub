@@ -55,13 +55,13 @@ namespace Jde::Opc::Server {
 		PublishDataTypes();//per file, not once at the end:  a later nodeset's variables carry <Value>s typed by an earlier one's enums, and those writes are type-checked as the node is added.
 	}
 
-	//A client writes an enum as the Int32 the wire format gives it - there is no other spelling - and the server is meant
-	//to widen it back to the node's DataType in adjustValueType() before the type check.  That lookup reads
-	//`config.customDataTypes` *only*, while the nodeset loader files everything it reads through
-	//UA_Server_addDataTypeFromDescription, which lands in the server's own internal list.  So a nodeset-defined enum has no
-	//UA_DataType the write path can find, the Int32 is never adjusted, and compatibleValueDataType rejects it:
-	//BadTypeMismatch on every write to e.g. DeviceHealth (ns=2;i=6244, DI).  Publish the internal lists through
-	//config.customDataTypes to close the gap - call it once the last nodeset is loaded, since this is a snapshot.
+	//The nodeset loader files every type it reads through UA_Server_addDataTypeFromDescription, which lands in the server's
+	//own internal list, while PubSub's readers and writers decode and encode with `config.customDataTypes` *only*
+	//(ua_pubsub_reader.c, ua_pubsub_writer.c, ua_pubsub_readergroup.c, 1.5.9).  Publish the internal lists through
+	//config.customDataTypes so they see nodeset-defined types too - call it once the last nodeset is loaded, since this is
+	//a snapshot.  Until 1.5.9 the attribute write path had the same gap:  adjustValueType() never widened a client's Int32
+	//back to a nodeset-defined enum, so every write to e.g. DeviceHealth (ns=2;i=6244, DI) was BadTypeMismatch;  it now
+	//looks through serverCustomTypes(), the internal lists included.
 	//
 	//Mirror nodes, not the internal head itself:  serverCustomTypes() hangs config.customDataTypes off the *end* of the
 	//internal list every time it is asked, so handing it back its own head would tie the chain into a cycle and spin the
