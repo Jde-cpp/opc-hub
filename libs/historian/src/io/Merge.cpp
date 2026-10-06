@@ -47,6 +47,7 @@ namespace Jde::Opc::Hist{
 		up<Stream> File;//none for the flush's records.
 		HistoryRecord Record;
 		Ticks Time{ Earliest };
+		Merge::Position Where{};//Record's, in the file.
 	};
 
 	Merge::Merge( fs::path file, vector<Run> runs, vector<HistoryRecord> late, SL sl )ε:
@@ -79,11 +80,14 @@ namespace Jde::Opc::Hist{
 		else{
 			auto& records = source.File->Records;
 			do{
-				if( records.Next(r) )
+				source.Where.Start = records.Offset();
+				if( records.Next(r) ){
+					source.Where.End = records.Offset();
 					continue;
+				}
 				if( let stop = *records.Stop(); stop!=EStop::End ){
 					_unreadable = true;
-					throw IO::IOException{ _sl, _path, ELogLevel::Error, "reads {} at byte {}, in what its scan kept, so it can't be rewritten", ToString(stop), records.Offset() };
+					throw IO::IOException{ _sl, _path, ELogLevel::Error, "reads {} at byte {}, in what its scan kept, so it can't be read through", ToString(stop), records.Offset() };
 				}
 				return false;
 			}while( r.has_file_start() || r.has_checkpoint() );
@@ -109,6 +113,7 @@ namespace Jde::Opc::Hist{
 		std::ranges::pop_heap( _open, later );
 		auto& source = *_open.back();
 		r = move( source.Record );
+		_where = source.File ? optional<Position>{ source.Where } : nullopt;
 		if( Advance(source) )
 			std::ranges::push_heap( _open, later );
 		else

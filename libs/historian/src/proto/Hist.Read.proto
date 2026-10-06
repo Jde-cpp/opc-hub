@@ -1,0 +1,15 @@
+syntax = "proto3";
+package Jde.Opc.Hist.Proto;
+
+//A raw read's continuation, which Group::Read returns with a page that stops short and takes back for the next:
+//opaque to the host, which passes it as it is, and stateless, so a restart between pages loses nothing.
+message Continuation{
+	fixed32 crc=1;//the CRC-32C of the read's other arguments, which a continuation passed with others fails.
+	sint64 time=2;//the last primary time returned:  the earliest in a reverse read.
+	repeated uint32 counts=3;//per requested node, in the request's order:  its records at time already returned.
+	//Where the page stopped in an archive, when its last record was the archive's:  the next page resumes there when the
+	//file's generation still matches, and by time otherwise.  In a reverse read, where its earliest record starts, which
+	//the next page reads up to.
+	optional uint32 generation=4;
+	uint64 offset=5;
+}

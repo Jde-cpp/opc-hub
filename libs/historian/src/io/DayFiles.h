@@ -174,7 +174,16 @@ namespace Jde::Opc::Hist{
 		//to those after its last flush.
 		α LaterDays( Day day )ι->vector<Day>;
 		α Present( Day today )ι->void;//a flush's day by the host clock, which moves the present on, never back.
+		α Present()Ι->Day{ return _present; }
 		α Find( Day day )Ι->const DayFile*;//none until the process opens it.
+		//What a read serves of a day's file:  an archive whole, a live file through its runs.  As the process knows it once it
+		//has opened the file, else as a scan of it finds it, which is a read of the FileStart alone for an archive.  None for
+		//a day with no file, or one that can't be read, which is said.
+		struct Served final{ fs::path Path; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
+		α Serve( Day day, SL sl )Ι->optional<Served>;
+		//Every day that holds a file of the group, oldest first:  the directory walk, so a read asked for a range of days
+		//opens only those that are there.
+		α Days( SL sl )Ι->vector<Day>;
 		α LastFlush()ι->Flushed&{ return _flushed; }
 	private:
 		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={} )ε->DayFile&;

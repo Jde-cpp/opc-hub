@@ -14,6 +14,9 @@ namespace Jde::Opc::Hist{
 		//False at the end, where the file is closed.  Throws when a run can't be read through.
 		α Next( Proto::HistoryRecord& r )ε->bool;
 		α Unreadable()Ι->bool{ return _unreadable; }//a run its scan kept no longer reads as it did:  the file changed.
+		//Where the last record Next returned lies in the file:  none for one of late's.
+		struct Position final{ uint Start; uint End; };
+		α Where()Ι->optional<Position>{ return _where; }
 	private:
 		struct Source;
 		α First( uint index )Ι->Ticks;
@@ -27,6 +30,7 @@ namespace Jde::Opc::Hist{
 		vector<uint> _order;//each run's index, and late's after them, by first time.
 		uint _next{};//into _order:  the first not yet open.
 		vector<up<Source>> _open;//a heap, the earliest record first.
+		optional<Position> _where;
 		bool _unreadable{};
 		SL _sl;
 	};

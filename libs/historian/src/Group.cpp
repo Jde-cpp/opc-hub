@@ -720,11 +720,33 @@ namespace Jde::Opc::Hist{
 		_requested = false;
 		return y;
 	}
+	α Group::Snapshot()Ι->vector<Buffered>{
+		vector<Buffered> y;
+		y.reserve( _taken.size()+_changes.size()+_values.size() );
+		for( uint i=0; i<_taken.size(); ++i ){
+			if( !_written[i] )
+				y.push_back( _taken[i] );
+		}
+		std::ranges::merge( _changes, _values, std::back_inserter(y), {}, &Buffered::Sequence, &Buffered::Sequence );
+		return y;
+	}
+	α Group::Taking( const vector<Buffered>& batch )ι->void{
+		_taken.clear();
+		_taken.reserve( batch.size() );
+		for( let& b : batch )
+			_taken.push_back( b );
+		_written.assign( batch.size(), false );
+	}
+	α Group::Wrote( uint from, uint to )ι->void{
+		std::fill( _written.begin()+from, _written.begin()+to, true );
+	}
 	α Group::Return( vector<Buffered>&& records )ι->bool{
 		std::ranges::stable_sort( records, {}, &Buffered::Sequence );
 		vector<Buffered> changes;
 		uint cost{};
 		ul _{ _mutex };
+		_taken.clear();//those that stay out are in their files.
+		_written.clear();
 		//What was dropped while these were out is a gap of its own, after them:  marked now, so dropping these begins
 		//another, rather than moving its marker back over the values between.  Every such drop came after the flush took
 		//these, and before what is still buffered.

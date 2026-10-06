@@ -639,4 +639,43 @@ namespace Jde::Opc::Hist{
 		auto p = _files.find( day );
 		return p==_files.end() ? nullptr : &p->second;
 	}
+
+	α GroupFiles::Serve( Day day, SL sl )Ι->optional<Served>{
+		Served y{ .Path=File(day) };
+		if( auto p = _files.find(day); p!=_files.end() ){
+			let& file = p->second;
+			y.Generation = file.Generation;
+			y.Size = file.Size;
+			y.Runs = file.Runs;
+		}
+		else{
+			std::error_code ec;
+			if( !fs::exists(y.Path, ec) && !ec )
+				return nullopt;
+			try{
+				auto scanned = Scan( y.Path, {}, sl );
+				y.Generation = scanned.Start ? scanned.Start->generation() : 0;
+				y.Size = scanned.Size;
+				y.Runs = move( scanned.Runs );
+			}
+			catch( const IO::IOException& ){//said as it goes.
+				return nullopt;
+			}
+		}
+		if( y.Generation )
+			y.Runs = { Run{.Offset=0, .End=y.Size, .Chain=0, .First=std::numeric_limits<Ticks>::min(), .Last=std::numeric_limits<Ticks>::max()} };
+		return y.Size ? optional<Served>{ move(y) } : nullopt;
+	}
+
+	α GroupFiles::Days( SL sl )Ι->vector<Day>{
+		vector<Day> y;
+		walk( _root, sl, [&]( Day day ){
+			std::error_code ec;
+			if( fs::exists(File(day), ec) )
+				y.push_back( day );
+			return false;
+		});
+		std::ranges::reverse( y );
+		return y;
+	}
 }

@@ -203,26 +203,22 @@ namespace Jde::Opc::Hist{
 			vector<Buffered> batch;
 			vector<FlushAwait*> waiters, settled;
 			bool stopping, over, closed;
-			{
-				ul _{ _mutex };
-				waiters = std::exchange( _waiters, {} );
-				_again = false;
-				taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
-				over = _store->Buffered()>_store->Config.MaxBuffer;
-				batch = Take( taken );
-				members.NextIndex = Issued() ? _nextIndex : 0;
-				stopping = _stopped;
-				closed = _closed;
-			}
-			//A host waiting on it, or the historian's end, tries every day again; the clock only those whose `delay` is up.
-			let retryAll = !waiters.empty() || stopping;
-			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
-			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
-			let mergeNow = retryAll || over;
-
 			vector<Day> due;//each day whose file becomes its archive, records for it or not:  the ending leaves them to the next start.
 			{
+				//Under the files lock throughout, which a read takes before its look at the buffer:  so none sees the batch in
+				//neither, between the buffer and Taking.
 				ul _{ _filesMutex };
+				{
+					ul _{ _mutex };
+					waiters = std::exchange( _waiters, {} );
+					_again = false;
+					taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
+					over = _store->Buffered()>_store->Config.MaxBuffer;
+					batch = Take( taken );
+					members.NextIndex = Issued() ? _nextIndex : 0;
+					stopping = _stopped;
+					closed = _closed;
+				}
 				_files->Present( DayOf(UADateTime{taken}.UA(), tz) );
 				if( closed )
 					_files->Retire();
@@ -240,9 +236,16 @@ namespace Jde::Opc::Hist{
 						batch.push_back( move(copy) );
 					}
 				}
+				//Stable, so of two records at one time the first to arrive stays first:  a marker before the value that ends its gap.
+				std::ranges::stable_sort( batch, {}, []( let& buffered ){ return PrimaryTime(buffered.Item); } );
+				ul _{ _mutex };
+				Taking( batch );
 			}
-			//Stable, so of two records at one time the first to arrive stays first:  a marker before the value that ends its gap.
-			std::ranges::stable_sort( batch, {}, []( let& buffered ){ return PrimaryTime(buffered.Item); } );
+			//A host waiting on it, or the historian's end, tries every day again; the clock only those whose `delay` is up.
+			let retryAll = !waiters.empty() || stopping;
+			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
+			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
+			let mergeNow = retryAll || over;
 
 			//Each day on its own, so one that stays unwritable holds back only its own records.  A later day's file made
 			//meanwhile takes its start values without them, and they land as late records do.
@@ -306,6 +309,8 @@ namespace Jde::Opc::Hist{
 								ul _{ _filesMutex };
 								_files->Commit( move(*run) );
 								progressed = true;
+								ul _{ _mutex };
+								Wrote( done, end );
 							}
 							else if( auto archive = get_if<Rewrite>(&write) ){
 								while( archive->Next() ){
@@ -318,9 +323,14 @@ namespace Jde::Opc::Hist{
 									throw Abandoned{};
 								_files->Commit( move(*archive), taken );
 								progressed = true;
+								ul _{ _mutex };
+								Wrote( done, end );
 							}
-							else if( done<end )
+							else if( done<end ){
 								discarded = true;
+								ul _{ _mutex };
+								Wrote( done, end );
+							}
 						}
 					}
 					catch( Exception& e ){
@@ -422,6 +432,8 @@ namespace Jde::Opc::Hist{
 			}
 			{
 				ul _{ _mutex };
+				_taken.clear();//what wasn't written went back in Return, and the rest is in its files.
+				_written.clear();
 				again = _again || !_waiters.empty();
 				if( !again ){
 					_flushing = false;

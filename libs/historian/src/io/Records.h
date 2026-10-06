@@ -1,8 +1,5 @@
 #pragma once
 #include <jde/historian/Group.h>
-DISABLE_WARNINGS
-#include <jde/historian/proto/Hist.Records.pb.h>
-ENABLE_WARNINGS
 
 namespace Jde::Opc::Hist{
 	using Ticks = UA_DateTime;//a record's time:  100 ns since 1601.
