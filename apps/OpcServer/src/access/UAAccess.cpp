@@ -64,7 +64,7 @@ namespace Jde::Opc::Server::UAAccess{
 	//also makes with no session at all.  When a session times out it keeps the session's subscriptions for TransferSubscriptions
 	//(UA_Session_remove), and their monitored items go on sampling with sub->session == NULL, so every read arrives here with the
 	//session id and context both null - by design, and "no access" is the answer it expects ("Session for read operations can be
-	//NULL. For example for a MonitoredItem where the underlying Subscription was detached", ua_services_attribute.c, 1.5.6).
+	//NULL. For example for a MonitoredItem where the underlying Subscription was detached", ua_services_attribute.c, 1.5.9).
 	//Asserting on that wrote a CRITICAL twice a second for the rest of the subscription's lifetime - ~83 min at the default
 	//lifetime count - after every lost session (soak-findings #9).  A *session* that arrives without the context ActivateSession
 	//installs is still a bug, and still asserts.
@@ -341,6 +341,10 @@ namespace Jde::Opc::Server{
 		//Session"), while closeSession only ever sees the last pointer - so assigning straight through leaked the previous
 		//context on every reconnect, which the vendor's own client does on a channel renew (opcserver-review3 L24).
 		//A local, not an early delete:  a branch that throws must leave the session's existing context untouched.
+		//Re-activation must keep the user, though:  1.5.9 refuses an identity change itself, but compares an issued token's
+		//user id, which it leaves empty, so a different user's token still arrives here - the success point refuses it.
+		//Issued tokens only:  the stack holds a username or certificate to the same name or subject, and a username's UserPK
+		//may rightly move between activations - UserPK{} until the hub inserts the user (ResolveUser).
 		up<SessionContext> ctx;
 		try{
 			/* Could the token be decoded? */
@@ -446,6 +450,8 @@ namespace Jde::Opc::Server{
 					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
 			}
 			ASSERT( ctx );
+			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && tokenType==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] && existing->UserPK!=ctx->UserPK )
+				throw UAException{ UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED };
 			delete static_cast<SessionContext*>( *sessionContext );//the one this call replaces, if the session is re-activating.
 			*sessionContext = ctx.release();
 	    return UA_STATUSCODE_GOOD;
@@ -557,8 +563,9 @@ namespace Jde::Opc::Server{
 		if( !nodeId || !ctx || expired(ctx) )
 			return false;
 		//Was Test( "browse", Read ) - a resource name nothing creates, so browse was ungated for every session
-		//(opcserver-review3 #8).  Read on the node itself, the same right that opens its value.
-		return !empty( authorizer().NodeRights(*nodeId, ctx->UserPK) & Access::ERights::Read );
+		//(opcserver-review3 #8).  Now a folder listing (MayBrowse).  Since 1.5.9 this also gates every attribute read but
+		//Value and RolePermissions, and every hop of a path translation.  Values stay gated by GetUserAccessLevel.
+		return authorizer().MayBrowse( *nodeId, ctx->UserPK );
 	}
 	α UAAccess::AllowTransferSubscription( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *oldSessionId, void *oldSessionContext, const UA_NodeId *newSessionId, void *newSessionContext )ι->UA_Boolean{ ASSERT(false); return false; }
 	α UAAccess::AllowHistoryUpdateUpdateData( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_PerformUpdateType performInsertReplace, const UA_DataValue *value )ι->UA_Boolean{ ASSERT(false); return false; }

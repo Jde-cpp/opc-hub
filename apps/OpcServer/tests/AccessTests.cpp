@@ -32,7 +32,9 @@ namespace Jde::Opc::Server::Tests{
 		Ω criteriaNode()ι->UA_NodeId{ return UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_SERVERSTATUS ); }
 		Ω roleSlug( const string& slug )ι->string{ return DB::Names::Capitalize( slug ); }
 
-		Ω addRole( const string& slug, ERights allowed, ERights denied )ε->void{
+		//A `branch` role holds `allowed`/`denied` on ServerStatus alone and nothing on the root - the branch-restricted user
+		//the folder-listing browse rule is for.  The others hold them on the root, and ServerStatus withholds everything.
+		Ω addRole( const string& slug, ERights allowed, ERights denied, bool branch=false )ε->void{
 			let userSlug = Ƒ( "{}User", slug );
 
 			auto user = _app->QuerySync( "user(slug:$slug){id}", {{"slug", userSlug}} );
@@ -54,12 +56,13 @@ namespace Jde::Opc::Server::Tests{
 			if( existed )
 				return;//its permissions and acl are in the db already; re-adding them trips their unique indexes too.
 
-			jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"schema", _resource} };
-			string query{ "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\"}} )" };
-			_app->QuerySync<jvalue>( move(query), move(vars) );
-
-			vars = { {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(_nodeDenied)}, {"schema", _resource}, {"criteria", NodeId{criteriaNode()}.ToString()}, {"resourceName", "ServerStatus"} };
-			query = "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\", criteria:$criteria, name:$resourceName}} )";
+			if( !branch ){
+				jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"schema", _resource} };
+				string query{ "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\"}} )" };
+				_app->QuerySync<jvalue>( move(query), move(vars) );
+			}
+			jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(branch ? denied : _nodeDenied)}, {"schema", _resource}, {"criteria", NodeId{criteriaNode()}.ToString()}, {"resourceName", "ServerStatus"} };
+			string query = "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\", criteria:$criteria, name:$resourceName}} )";
 			_app->QuerySync<jvalue>( move(query), move(vars) );
 
 			_app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", userId}, {"roleId", roleId}} );
@@ -82,6 +85,7 @@ namespace Jde::Opc::Server::Tests{
 			addRole( "reader", _readerAllowed, _readerDenied );
 			addRole( "writer", _writerAllowed, _writerDenied );
 			addRole( "admin", _adminAllowed, _adminDenied );
+			addRole( "branch", ERights::Read, ERights::None, true );
 			_app->QuerySync<jvalue>( "restoreResource( slug:$slug, criteria:null )", nodeSlug );
 		}
 		Ω TearDownTestCase()ι->void{}
@@ -155,6 +159,69 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( mayAddReference(_users.at("readerUser")) ) << "a reference is a write to its source node";
 		EXPECT_TRUE( mayAddReference(_users.at("writerUser")) );//Update
 		EXPECT_FALSE( mayAddReference(unknownUser) );
+	}
+
+	//open62541 1.5.9 gates every attribute read but Value and RolePermissions on allowBrowseNode, so a user without Read on
+	//the root would lose the NodeClass and DataTypeDefinition reads that decoding a permitted value needs.  Outside the
+	//Objects tree, type nodes and namespace 0 stay browsable;  inside it every node follows the folder-listing rule - Read
+	//on it or beneath it - namespace 0 included (open62541-1.5.9 review #1, #2).
+	TEST_F( AccessTests, TypeNodesStayBrowsableWithoutRead ){
+		let unknownUser = UserPK{ std::numeric_limits<UserPK::Type>::max() };//no acl row:  no Read anywhere.
+		let mayBrowse = [&]( const UA_NodeId& nodeId, UserPK user ){
+			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, user };
+			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
+		};
+		//outside namespace 0 and outside every configured branch, so both fall to the root resource.
+		let typeId = UA_NODEID_STRING( 1, (char*)"AccessTests.Type" );
+		let objectId = UA_NODEID_STRING( 1, (char*)"AccessTests.Object" );
+		ASSERT_EQ( UA_Server_addObjectTypeNode(_ua->Ptr(), typeId, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+			UA_QUALIFIEDNAME(1, (char*)"AccessTestsType"), UA_ObjectTypeAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup removeType = [&]{ UA_Server_deleteNode( _ua->Ptr(), typeId, true ); };
+		ASSERT_EQ( UA_Server_addObjectNode(_ua->Ptr(), objectId, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+			UA_QUALIFIEDNAME(1, (char*)"AccessTestsObject"), typeId, UA_ObjectAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup removeObject = [&]{ UA_Server_deleteNode( _ua->Ptr(), objectId, true ); };
+		//AssignRights collects the type nodes, so MayBrowse reads no node class per call (open62541-1.5.9 review #12) - a type
+		//added since it ran is not one yet.  Startup loads every nodeset before AssignRights.
+		EXPECT_FALSE( mayBrowse(typeId, unknownUser) ) << "added after AssignRights";
+		static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( *_ua );
+
+		EXPECT_TRUE( mayBrowse(typeId, unknownUser) ) << "an ObjectType";
+		EXPECT_FALSE( mayBrowse(objectId, unknownUser) ) << "an instance";
+		EXPECT_TRUE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_SERVERSTATUSDATATYPE), unknownUser) );
+		EXPECT_TRUE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), unknownUser) ) << "namespace 0, outside the Objects tree";
+		EXPECT_FALSE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), unknownUser) ) << "namespace 0, but the Objects tree's own root:  nothing beneath it is granted";
+		let statusNode = criteriaNode();
+		EXPECT_FALSE( mayBrowse(statusNode, unknownUser) ) << "namespace 0, but its own resource withholds everything";
+		EXPECT_FALSE( mayBrowse(statusNode, UserPK{(UserPK::Type)_users.at("readerUser")}) ) << "Read on the root does not reach past a configured resource";
+		UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, unknownUser };
+		EXPECT_EQ( (EAccess)UAAccess::GetUserAccessLevel(_ua->Ptr(), nullptr, nullptr, &ctx, &statusNode, nullptr), EAccess::None ) << "its value stays gated";
+	}
+
+	//open62541-1.5.9 review #2, #4:  browse is a folder listing.  Read on a node lists it, and so does Read on anything
+	//configured beneath it, so a user granted one branch can list the path down to it - as r-x on each parent directory
+	//does - and 1.5.9's path translation, which asks on every hop, resolves it.  Nodes off that path stay closed, and a
+	//user granted nothing lists nothing.
+	TEST_F( AccessTests, BrowseFollowsThePathToAGrant ){
+		let mayBrowse = [&]( UA_UInt32 node, UserPK user ){
+			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, user };
+			let nodeId = UA_NODEID_NUMERIC( 0, node );
+			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
+		};
+		let branch = UserPK{ (UserPK::Type)_users.at("branchUser") };//Read on ServerStatus, nothing on the root.
+		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER_SERVERSTATUS, branch) ) << "its grant";
+		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER_SERVERSTATUS_STATE, branch) ) << "inside its grant";
+		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER, branch) ) << "the parent of its grant";
+		EXPECT_TRUE( mayBrowse(UA_NS0ID_OBJECTSFOLDER, branch) ) << "the root of the tree";
+		EXPECT_FALSE( mayBrowse(UA_NS0ID_SERVER_SERVERCAPABILITIES, branch) ) << "a sibling of its grant";
+		EXPECT_FALSE( mayBrowse(UA_NS0ID_SERVER_NAMESPACEARRAY, branch) );
+
+		let unknownUser = UserPK{ std::numeric_limits<UserPK::Type>::max() };//no acl row:  no Read anywhere.
+		EXPECT_FALSE( mayBrowse(UA_NS0ID_OBJECTSFOLDER, unknownUser) );
+		EXPECT_FALSE( mayBrowse(UA_NS0ID_SERVER, unknownUser) );
+
+		let reader = UserPK{ (UserPK::Type)_users.at("readerUser") };//Read on the root, everything withheld on ServerStatus.
+		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER_SERVERCAPABILITIES, reader) );
+		EXPECT_FALSE( mayBrowse(UA_NS0ID_SERVER_SERVERSTATUS, reader) );
 	}
 
 	//soak-findings #9:  a session that times out keeps its subscriptions for TransferSubscriptions, and open62541 goes on sampling
@@ -459,10 +526,10 @@ namespace Jde::Opc::Server::Tests{
 	}
 
 	//opcserver-review3 L24:  every accepting branch of ActivateSession assigned straight through *sessionContext, and
-	//open62541 passes &session->context on *every* activation - re-activation is explicitly allowed, and the vendor's own
-	//client re-activates on a channel renew - while closeSession only ever sees the last pointer.  So each re-activation
-	//dropped the previous context on the floor.  Nothing but the gateway suite drives activation at all, and nothing
-	//drives it twice on one session;  this does.
+	//open62541 passes &session->context on *every* activation - re-activation is explicitly allowed for the same user, and
+	//the vendor's own client re-activates on a channel renew - while closeSession only ever sees the last pointer.  So each
+	//re-activation dropped the previous context on the floor.  Nothing but the gateway suite drives activation at all, and
+	//nothing drives it twice on one session;  this does.
 	TEST_F( AccessTests, ReactivatingASessionReplacesItsContext ){
 		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		let token = jwt.Payload();//the wire form the gateway sends (TokenTests does the same).
@@ -484,6 +551,29 @@ namespace Jde::Opc::Server::Tests{
 		//`first` is freed by the second activation - the fix.  Not asserted: the free itself is not observable here, since
 		//Process::Shutdown ends in std::_Exit and LSan never runs, and a recoverable leak check would trip on the suite's
 		//pre-existing ones (opcserver-review #23).
+		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
+		UA_IssuedIdentityToken_clear( &issued );
+	}
+
+	//open62541 1.5.9 refuses an identity change on re-activation, but compares an issued token's user id, which it leaves
+	//empty - so a session activated as one user and re-activated with another user's token reaches ActivateSession, which
+	//must refuse it and keep the session's context rather than swap in the new user.
+	TEST_F( AccessTests, ReactivatingAsAnotherUserIsRefused ){
+		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
+		let token = jwt.Payload();
+		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
+		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
+		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
+		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
+
+		let readerPK = UserPK{ (UserPK::Type)_users.at("readerUser") };
+		ASSERT_NE( readerPK, AppClient()->UserPK() );
+		void* slot = new UAAccess::SessionContext{ "", TimePoint::max(), 0, readerPK };//the session as first activated, by the reader.
+		let first = slot;
+		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
+		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED );
+		EXPECT_EQ( slot, first ) << "the session keeps its context";
+		EXPECT_EQ( static_cast<UAAccess::SessionContext*>(slot)->UserPK, readerPK );
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
 		UA_IssuedIdentityToken_clear( &issued );
 	}

@@ -23,6 +23,9 @@ namespace Jde::Opc::Gateway{
 	namespace Attributes{ α OnResponse(UA_Client* ua, void* userdata, RequestId requestId, StatusCode status, UA_NodeId* dataType)ι->void; }
 
 	struct CreateMonitoredItemsRequest;
+	//The connection error for a server that refused the certificate this gateway presented.  `sanUri` is the certificate's
+	//subjectAltName URI:  empty when it carries none, nullopt when the file could not be read.
+	α RefusedCertificateDetail( StatusCode sc, sv url, const fs::path& certificate, const optional<string>& sanUri, sv advertisedUri )ι->string;
 
 	struct UAClient final : std::enable_shared_from_this<UAClient>{
 		UAClient( ServerCnnctn&& opcServer, Credential cred )ε;

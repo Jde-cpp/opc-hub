@@ -8,7 +8,7 @@
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags{ ( ELogTags )( (EOpcLogTags)ELogTags::Access | EOpcLogTags::Opc ) };
 
-	α OpcAuthorize::AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited )ι->void{
+	α OpcAuthorize::AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited, vector<NodeId>& path, std::map<NodeId, vector<Access::ResourcePK>>& beneath )ι->void{
 		if( auto it = baseResources.find(nodeId); it!=baseResources.end() )
 			resourcePK = it->second;
 		UA_BrowseDescription bd{
@@ -33,11 +33,16 @@ namespace Jde::Opc::Server{
 			if( let it = baseResources.find(childNodeId); it!=baseResources.end() ){
 				childResourcePK = it->second;
 				TRACE( "[{}]resource:{}", childNodeId.ToString(), it->second.Value );
+				for( let& ancestor : path )
+					beneath[ancestor].push_back( it->second );
 			}
 			if( childResourcePK )
 				nodeResources.insert_or_assign( childNodeId, childResourcePK );
-			if( ref.nodeClass & (UA_NODECLASS_OBJECT|UA_NODECLASS_VARIABLE|UA_NODECLASS_METHOD) )
-				AssignRights( childNodeId, server, childResourcePK, baseResources, nodeResources, visited );
+			if( ref.nodeClass & (UA_NODECLASS_OBJECT|UA_NODECLASS_VARIABLE|UA_NODECLASS_METHOD) ){
+				path.push_back( childNodeId );
+				AssignRights( childNodeId, server, childResourcePK, baseResources, nodeResources, visited, path, beneath );
+				path.pop_back();
+			}
 		}
 		UA_BrowseResult_clear(&br);
 	}
@@ -69,6 +74,7 @@ namespace Jde::Opc::Server{
 		}
 		Access::ResourcePK rootResourcePK{};
 		std::map<NodeId, Access::ResourcePK> nodeResources;
+		std::map<NodeId, vector<Access::ResourcePK>> beneath;
 		//An empty scan publishes the empty state anyway: on a re-run the operator has just deleted the last one, and a
 		//stale map would keep enforcing it.
 		if( !baseResources.empty() ){
@@ -78,20 +84,39 @@ namespace Jde::Opc::Server{
 				TRACE( "[{}]resource: {}", root.ToString(), rootResourcePK.Value );
 			}
 			std::set<NodeId> visited{ root };
-			AssignRights( root, server, rootResourcePK, baseResources, nodeResources, visited );
+			vector<NodeId> path{ root };
+			AssignRights( root, server, rootResourcePK, baseResources, nodeResources, visited, path, beneath );
+		}
+		std::set<NodeId> typeNodes;
+		if( rootResourcePK ){//MayBrowse opens the type nodes the root resource would refuse - known here, not read per call.
+			UA_BrowseDescription bd{ UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), UA_BROWSEDIRECTION_FORWARD, UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES), UA_TRUE,
+				UA_NODECLASS_OBJECTTYPE | UA_NODECLASS_VARIABLETYPE | UA_NODECLASS_DATATYPE | UA_NODECLASS_REFERENCETYPE, 0 };
+			size_t size{}; UA_ExpandedNodeId* found{};
+			if( let sc = UA_Server_browseRecursive(&server, &bd, &size, &found); !sc ){
+				for( size_t i=0; i<size; ++i ){
+					if( found[i].nodeId.namespaceIndex )
+						typeNodes.emplace( found[i].nodeId );
+				}
+				UA_Array_delete( found, size, &UA_TYPES[UA_TYPES_EXPANDEDNODEID] );
+			}
+			else
+				WARNT( _tags, "Could not collect the type nodes - every one outside namespace 0 is refused to a user without Read on the root:  {}", UAException::Message(sc) );
 		}
 		let nodeCount = nodeResources.size();
+		let typeNodeCount = typeNodes.size();
 		{
 			ul _{ _nodeResourcesMutex };//_enabled last of the three: it is what opens NodeRights' lookup of the other two.
 			_nodeResources = move( nodeResources );
+			_beneath = move( beneath );
+			_typeNodes = move( typeNodes );
 			_rootResourcePK = rootResourcePK;
 			_enabled = !baseResources.empty();
 		}
 		_assigned = true;
 		//Which branch this took decides open-vs-enforcing for the process lifetime, and nothing said so: a run whose
 		//writes were authorized could not be told from one that was never enforcing (soak-findings #4).
-		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}.", _app,
-			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK.Value );
+		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}, {} type node(s) outside namespace 0.", _app,
+			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK.Value, typeNodeCount );
 	}
 
 	α OpcAuthorize::CreateResource( Access::Resource&& resource )ε->void{
@@ -145,27 +170,33 @@ namespace Jde::Opc::Server{
 	}
 
 	α OpcAuthorize::NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{
-		using enum Access::ERights;
-		optional<Access::ResourcePK> resourcePK;
+		optional<Governing> governing;
 		{
 			rl _{ _nodeResourcesMutex };
-			if( !_enabled )
-				return All; //authorization not configured for this server: all nodes open.
-			resourcePK = Find( _nodeResources, nodeId );
-			if( !resourcePK ){
-				if( !_rootResourcePK )
-					return All; //no root resource: nodes outside a configured branch stay open (protect-specific-branches config).
-				resourcePK = _rootResourcePK; //unmapped node (e.g. created after startup) inherits the root resource instead of granting all access.
-			}
+			governing = GoverningLocked( nodeId );
 		}
-
-
+		return governing ? RightsOn( governing->Resource, executer ) : Access::ERights::All;
+	}
+	α OpcAuthorize::GoverningLocked( const NodeId& nodeId )Ι->optional<Governing>{
+		if( !_enabled )
+			return nullopt; //authorization not configured for this server: all nodes open.
+		if( let pk = Find(_nodeResources, nodeId); pk )
+			return Governing{ *pk, true };
+		if( !_rootResourcePK )
+			return nullopt; //no root resource: nodes outside a configured branch stay open (protect-specific-branches config).
+		return Governing{ _rootResourcePK, false }; //unmapped node (e.g. created after startup) inherits the root resource instead of granting all access.
+	}
+	α OpcAuthorize::RightsOn( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights{
 		rl _{ Mutex };
+		return RightsOnLocked( resourcePK, executer );
+	}
+	α OpcAuthorize::RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights{
+		using enum Access::ERights;
 		//Both resource checks precede the user lookup:  whether a node is protected is a property of the resource, not of
 		//who is asking.  The other way round, an unprotected tree answered None to a user with no acl row and All to one
 		//with any - which is what denied a gateway session every read, and (once browse and the write mask were routed
 		//here too) every browse, on a server nobody had configured rights on (opcserver-review3 #8).
-		auto resource = Resources.find( *resourcePK );
+		auto resource = Resources.find( resourcePK );
 		if( resource==Resources.end() ){
 			//AssignRights captured this pk from a row that has since gone.  It is the ordinary state, not a corruption:
 			//ResourceSyncAwait creates the installation row soft-deleted, AssignRights does not filter deleted rows
@@ -173,7 +204,7 @@ namespace Jde::Opc::Server{
 			//which is the same answer Authorize::Rights gives for a resource nothing configured.
 			static std::atomic_flag logged;//once:  stable for the life of the process, and this runs per read and per browse.
 			if( !logged.test_and_set() )
-				WARNT( _tags, "Resource {} is no longer loaded - the nodes it covered are unprotected.  AssignRights took it as a base resource when it was still present.", resourcePK->Value );
+				WARNT( _tags, "Resource {} is no longer loaded - the nodes it covered are unprotected.  AssignRights took it as a base resource when it was still present.", resourcePK.Value );
 			return All;
 		}
 		if( resource->second.IsDeleted )
@@ -181,7 +212,33 @@ namespace Jde::Opc::Server{
 		auto user = Users.find( executer );
 		if( user==Users.end() || user->second.IsDeleted )
 			return None;
-		return user->second.ResourceRights( *resourcePK ).Effective();
+		return user->second.ResourceRights( resourcePK ).Effective();
+	}
+	α OpcAuthorize::MayBrowse( const NodeId& nodeId, UserPK executer )ι->bool{
+		optional<Governing> governing;
+		vector<Access::ResourcePK> beneath;
+		bool typeNode{};
+		{
+			rl _{ _nodeResourcesMutex };
+			governing = GoverningLocked( nodeId );
+			if( !governing )
+				return true;
+			if( !governing->InTree )
+				typeNode = nodeId.namespaceIndex==0 || _typeNodes.contains( nodeId );
+			else if( let p = _beneath.find(nodeId); p!=_beneath.end() )
+				beneath = p->second;//a copy:  `Mutex` is never taken under this one.
+		}
+		using enum Access::ERights;
+		rl _{ Mutex };
+		if( !empty(RightsOnLocked(governing->Resource, executer) & Read) )
+			return true;
+		if( !governing->InTree )
+			return typeNode;
+		for( let pk : beneath ){
+			if( !empty(RightsOnLocked(pk, executer) & Read) )
+				return true;
+		}
+		return false;
 	}
 
 	α OpcAuthorize::UserRights( NodeId nodeId, UserPK executer )ι->EAccess{

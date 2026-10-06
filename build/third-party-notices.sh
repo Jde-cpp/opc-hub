@@ -129,7 +129,7 @@ HEADER
 	printf '\nopen62541 bundles these libraries (its deps/README.md):\n\n'
 	sed -n '/^| Library/,$p' "$open62541/deps/README.md" | sed 's/[ \t\r]*$//'
 	section "open62541-nodeset-loader $nodesetTag" https://github.com/open62541/open62541-nodeset-loader MPL-2.0 \
-		"Source code: the URL above, at the commit above.  Modified: CMakeLists.txt only (-Werror, a stale install() line, an added config-file install rule)."
+		"Source code: the URL above, at the commit above.  Modified: CMakeLists.txt (-Werror, a stale install() line, an added config-file install rule) and src/Nodeset.c (a second BrowseName namespace mapping open62541 1.5.8+ already applies, and a node loop that stopped at the first node the server refused) - see build/CMakeLists.txt."
 	text "$reposDir/nodeset-loader/src/open62541-nodeset-loader/LICENSE"
 
 	section "Boost" https://www.boost.org BSL-1.0
