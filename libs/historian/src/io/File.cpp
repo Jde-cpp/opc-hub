@@ -51,6 +51,25 @@ namespace Hist{
 			throw failed( to, "MoveFileEx", sl );
 	}
 namespace Hist{
+	ReadHandle::ReadHandle( fs::path path, SL sl )ε:
+		Path{ move(path) },
+		_handle{ ::CreateFileW(Path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr) }{
+		if( _handle==INVALID_HANDLE_VALUE )
+			throw failed( Path, "CreateFile", sl );
+	}
+	ReadHandle::~ReadHandle(){
+		::CloseHandle( _handle );
+	}
+	α ReadHandle::Read( uint offset, void* buffer, uint size )Ι->optional<uint>{
+		OVERLAPPED at{};
+		at.Offset = (DWORD)offset;
+		at.OffsetHigh = (DWORD)( offset>>32 );
+		DWORD read{};
+		if( ::ReadFile(_handle, buffer, (DWORD)size, &read, &at) )
+			return read;
+		return ::GetLastError()==ERROR_HANDLE_EOF ? optional<uint>{ 0 } : nullopt;
+	}
+
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
 		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";
@@ -109,6 +128,20 @@ namespace Hist{
 			throw failed( to, "rename", sl );
 	}
 namespace Hist{
+	ReadHandle::ReadHandle( fs::path path, SL sl )ε:
+		Path{ move(path) },
+		_handle{ ::open(Path.c_str(), O_RDONLY | O_CLOEXEC) }{
+		if( _handle==-1 )
+			throw failed( Path, "open", sl );
+	}
+	ReadHandle::~ReadHandle(){
+		::close( _handle );
+	}
+	α ReadHandle::Read( uint offset, void* buffer, uint size )Ι->optional<uint>{
+		let read = ::pread( _handle, buffer, size, (off_t)offset );
+		return read==-1 ? nullopt : optional<uint>{ (uint)read };
+	}
+
 	α PathLock::TryLock( const fs::path& path, SL sl )ε->optional<PathLock>{
 		IO::CreateDirectories( path, sl );
 		let file = path/"historian.lock";

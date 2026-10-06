@@ -3,10 +3,14 @@
 #include <queue>
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include "Clock.h"
+DISABLE_WARNINGS
+#include <jde/historian/proto/Hist.Records.pb.h>
+ENABLE_WARNINGS
 
 namespace Jde::Opc::Hist{
 	using NodeIndex = uint32;
@@ -62,6 +66,29 @@ namespace Jde::Opc::Hist{
 	//its first with text that isn't UTF-8 (ProtoUtils::Utf8), which the flush warns of:  Enqueue never logs.
 	struct DataValue{ NodeIndex Index; Value Data; optional<UA_DateTime> Heartbeat; bool Unsupported{}; bool Unsourced{}; };
 	using Record = variant<NodeAdded,NodeRemoved,DataValue>;
+
+	//A raw read, Part 11's ReadRawModifiedDetails over the group's files and buffer (spec *Reads*).  Times are UA ticks,
+	//as the records' are.  At least one of Start and End:  Start alone reads forward from it, End alone backward from
+	//it, and a Start after End reads the range in reverse, later values first.  With both, each is inside the range.
+	struct ReadRequest{
+		vector<NodeIndex> Nodes;//in the order Continuation counts them.
+		optional<UA_DateTime> Start;
+		optional<UA_DateTime> End;
+		//Each node's value at or before the earlier end of the range and its first record at or after the later:  a record
+		//at the time itself serves as the bound, else the one before or after, else Bad_BoundNotFound at that time.  An
+		//open end has none.
+		bool Bounds{};
+		uint Limit{};//the most values a page holds; 0, or more than hist.readLimit, is readLimit.
+		string Continuation;//the page before's, empty for the first.
+	};
+	struct ReadValue{
+		Proto::DataValue Value;//node_index set, and a heartbeat marked as the record marks it.
+		bool Bound{};//one of the Bounds asked for, which counts toward Limit.
+	};
+	struct ReadResult{
+		vector<ReadValue> Values;//in source-time order, later first in a reverse read.
+		string Continuation;//for the next page, empty on the last.
+	};
 
 	struct Group;
 	struct GroupFiles;
@@ -163,6 +190,16 @@ namespace Jde::Opc::Hist{
 		α Flushed()Ι->optional<TimePoint>;
 		//A day's live file's, once the process has opened it:  as its first-open scan would rebuild them.
 		α Runs( std::chrono::year_month_day day )Ι->vector<Run>;
+
+		//A page of the raw records the request asks for:  those of its nodes inside its range, from the day files the
+		//range touches, a live file's runs merged by source time, and from the buffer, a running flush's records among
+		//it.  At most Limit values, the bounds counted, but for a first page whose bounds alone pass it, which holds them,
+		//and a last page's closing bounds, which follow its values.  The continuation is stateless:  where to resume by
+		//time, how many records at that time each node has had, an archive's byte offset and generation, and a CRC of the
+		//other arguments but Limit, so one passed with different nodes, times or bounds is refused.  A record that lands
+		//behind the resume point between pages isn't in the rest of the read.  Throws for a request with neither time,
+		//no nodes or a continuation that isn't this read's, and when a file the read opens can't be opened or read through.
+		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
 	private:
 		friend struct FlushAwait;
 		friend struct Historian;
@@ -268,15 +305,26 @@ namespace Jde::Opc::Hist{
 		//A value flagged for the flush to warn of, dropped without being written back:  its node's next of its kind is
 		//flagged instead, so the warning isn't lost with it.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Unflag( const DataValue& gone )ι->void;
-		//Each node's lost values into y, as a marker and the one written back, emptying _lost.
+		//Each node's lost values into y, as a marker and the one written back.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α LostRecords( vector<Buffered>& y )Ι->void;
+		//LostRecords, emptying _lost.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α MarkLost( vector<Buffered>& y )ι->void;
 		//The buffer, for a flush at taken:  each node's lost values first, as a marker and the one written back, then the
 		//rest as they arrived.  A heartbeat made less than the publishing interval before stays for the next flush, so a
 		//change sampled before it and still on its way finds it to drop:  none at the group's end, which no flush follows.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Take( TimePoint taken )ι->vector<Buffered>;
-		//What a flush couldn't write, back to the front of the buffer, without counting toward the flush at 8 KB, followed by
-		//the marker and value of each gap dropped while it was out.  True as Push.
-		α Return( vector<Buffered>&& records )ι->bool;
+		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
+		//written, then the buffer as the next Take has it, each node's lost values first.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>;
+		//The flush's batch, as it stands, which Read serves until each record is in a file.  Set under _filesMutex, which a
+		//read holds through its look at the buffer, so no record is in neither.  Shared, not copied:  the flush reads it
+		//outside _mutex and changes it only under it.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Taking( sp<vector<Buffered>> batch )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Wrote( uint from, uint to )ι->void;//batch's [from, to) are in a file, or dropped.
+		//What a flush couldn't write, held's records of its batch, back to the front of the buffer, without counting toward
+		//the flush at 8 KB, followed by the marker and value of each gap dropped while it was out.  Moved out of the batch
+		//under _mutex, so a read finds each in one place.  True as Push.
+		α Return( vector<Buffered>& batch, vector<uint>&& held )ι->bool;
 		//A Flush or a Settled awaiter's:  waits for the next flush to start and end, or for none to be running.
 		α Request( FlushAwait& waiter )ι->void;
 		//The clock's flush, which no one waits on, unless one is running:  that one then runs another after.  Each I/O step
@@ -344,6 +392,9 @@ namespace Jde::Opc::Hist{
 		//The buffer, each part in the order it arrived:  membership changes, which are never dropped, and values.
 		vector<Buffered> _changes ABSL_GUARDED_BY(_mutex);
 		std::deque<Buffered> _values ABSL_GUARDED_BY(_mutex);
+		//What the running flush took, in its order, until Return or the flush's end, and which of them it has written.
+		sp<vector<Buffered>> _taken ABSL_GUARDED_BY(_mutex);
+		vector<bool> _written ABSL_GUARDED_BY(_mutex);
 		uint _held ABSL_GUARDED_BY(_mutex){};//what _changes and _values count against maxBuffer, each record's Cost.
 		uint _fresh ABSL_GUARDED_BY(_mutex){};//what arrived since a flush last took the buffer, which the flush at 8 KB counts.
 		absl::btree_map<NodeIndex,Lost> _lost ABSL_GUARDED_BY(_mutex);

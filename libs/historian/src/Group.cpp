@@ -678,15 +678,16 @@ namespace Jde::Opc::Hist{
 		if( auto p = _nodes.find(gone.Index); p!=_nodes.end() )
 			( ProtoUtils::Supported(gone.Data.value) ? p->second.NotUtf8 : p->second.Unsupported ) = false;
 	}
-	α Group::MarkLost( vector<Buffered>& y )ι->void{
-		for( auto&& [index,lost] : _lost ){
-			if( lost.Count>(lost.Newest ? 1u : 0u) ){//a node that lost one simply gets it back.
-				let size = bytes( lost.Marker );
-				y.push_back( {DataValue{index, move(lost.Marker)}, lost.Newest ? lost.Newest->Sequence : lost.Sequence, size} );
-			}
+	α Group::LostRecords( vector<Buffered>& y )Ι->void{
+		for( let& [index,lost] : _lost ){
+			if( lost.Count>(lost.Newest ? 1u : 0u) )//a node that lost one simply gets it back.
+				y.push_back( {DataValue{index, lost.Marker}, lost.Newest ? lost.Newest->Sequence : lost.Sequence, bytes(lost.Marker)} );
 			if( lost.Newest )
-				y.push_back( move(*lost.Newest) );
+				y.push_back( *lost.Newest );
 		}
+	}
+	α Group::MarkLost( vector<Buffered>& y )ι->void{
+		LostRecords( y );
 		_lost.clear();
 	}
 	α Group::Take( TimePoint taken )ι->vector<Buffered>{
@@ -720,8 +721,28 @@ namespace Jde::Opc::Hist{
 		_requested = false;
 		return y;
 	}
-	α Group::Return( vector<Buffered>&& records )ι->bool{
-		std::ranges::stable_sort( records, {}, &Buffered::Sequence );
+	α Group::Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>{
+		let keep = [wanted]( const Buffered& b ){ return wanted( std::visit([]( let& r ){ return r.Index; }, b.Item) ); };
+		vector<Buffered> y;
+		for( uint i=0; _taken && i<_taken->size(); ++i ){
+			if( !_written[i] && keep((*_taken)[i]) )
+				y.push_back( (*_taken)[i] );
+		}
+		let lost = y.size();
+		LostRecords( y );
+		y.erase( std::remove_if(y.begin()+lost, y.end(), std::not_fn(keep)), y.end() );
+		std::ranges::merge( _changes | std::views::filter(keep), _values | std::views::filter(keep), std::back_inserter(y), {}, &Buffered::Sequence, &Buffered::Sequence );
+		return y;
+	}
+	α Group::Taking( sp<vector<Buffered>> batch )ι->void{
+		_written.assign( batch->size(), false );
+		_taken = move( batch );
+	}
+	α Group::Wrote( uint from, uint to )ι->void{
+		std::fill( _written.begin()+from, _written.begin()+to, true );
+	}
+	α Group::Return( vector<Buffered>& batch, vector<uint>&& held )ι->bool{
+		std::ranges::stable_sort( held, {}, [&batch]( uint i ){ return batch[i].Sequence; } );
 		vector<Buffered> changes;
 		uint cost{};
 		ul _{ _mutex };
@@ -735,7 +756,8 @@ namespace Jde::Opc::Hist{
 			cost += Cost( record );
 			_values.push_front( move(record) );
 		}
-		for( auto&& record : records | std::views::reverse ){
+		for( let i : held | std::views::reverse ){//out of the batch in the same hold as it goes, so a read finds each in one place.
+			auto& record = batch[i];
 			cost += Cost( record );
 			if( std::holds_alternative<DataValue>(record.Item) )
 				_values.push_front( move(record) );
@@ -743,6 +765,8 @@ namespace Jde::Opc::Hist{
 				changes.push_back( move(record) );
 		}
 		_changes.insert( _changes.begin(), std::make_move_iterator(changes.rbegin()), std::make_move_iterator(changes.rend()) );
+		_taken.reset();//those that stay out are in their files.
+		_written.clear();
 		_held += cost;
 		return _store->Add( cost );
 	}
