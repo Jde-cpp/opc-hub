@@ -32,7 +32,7 @@ if( NOT WIN32 )
 endif()
 
 
-target_link_libraries( ${targetName} PUBLIC Jde.App.Client Jde.Web.Server Jde.Opc )
+target_link_libraries( ${targetName} PUBLIC Jde.App.Client Jde.Web.Server Jde.Opc Jde.Opc.HistorianLib )
 if( NOT WIN32 )
 	target_link_libraries( ${targetName} PUBLIC protobuf::libprotobuf ) #why not Jde.Web.Server?
 endif()

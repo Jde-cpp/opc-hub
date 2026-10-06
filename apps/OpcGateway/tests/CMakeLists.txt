@@ -31,6 +31,9 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 target_include_directories( ${targetName} PRIVATE ${jdeRoot}/include/jde/app/proto )
 
 if( NOT jde_Superbuild )
+	if( NOT TARGET Jde.Opc.HistorianLib ) #Jde.Opc.ServerLib links it.
+		add_subdirectory( ${jdeRoot}/libs/historian/src ../../../libs/historian/lib )
+	endif()
 	add_subdirectory( ../../OpcServer/src ../../../apps/OpcServer/lib )
 	add_subdirectory( ../../AppServer/src ../../../apps/AppServer/lib )
 endif()

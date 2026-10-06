@@ -26,6 +26,7 @@ namespace Jde::Opc::Server {
 			_thread->join();
 			_thread.reset();
 		}
+		_history.Stop();
 		if( _ua ){
 			UA_Server_delete( _ua );
 			_ua = nullptr;

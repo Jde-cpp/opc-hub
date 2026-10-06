@@ -30,7 +30,6 @@ namespace Jde::Opc::Hist{
 	//writes but won't read back, is stored without it as BadEncodingError, warned of the same way.  Any other value that
 	//can't be encoded is stored without it, with the status that says why and a warning each time.
 	α ToProto( const UA_DataValue& v, NodeIndex index={} )ε->Proto::DataValue;
-	α ToUA( const Proto::DataValue& v )ε->Value;
 
 	//One append to a file, a run:  each record serialized delimited straight onto the end of out, with no copy of its own,
 	//then a Checkpoint holding the CRC-32C of the run's bytes.

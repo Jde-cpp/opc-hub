@@ -15,6 +15,7 @@ namespace Jde::Opc {
 	α Server::Initialize( sp<DB::AppSchema> schema )ε->void{
 		_appSchema = schema;
 		_pubSub.reset();//a re-Initialize (test fixtures) replaces the server it was built on.
+		_ua.reset();//before the next is made:  its historian takes the lock on hist.path that this one's holds.
 		_ua = mu<UAServer>();//throws
 		Process::AddShutdownFunction( [](bool , SL){
 			_pubSub.reset();
