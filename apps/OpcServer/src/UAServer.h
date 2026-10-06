@@ -17,9 +17,9 @@ namespace Jde::Opc::Server {
 		α Load( fs::path configFile, SRCE )ε->void;
 		α Namespaces()ι->flat_map<uint,string>;
 		α Ptr()ι->UA_Server*{ return _ua; }
-		α PublishDataTypes()ι->void; // Public for UALoadTests.WriteNodesetEnum
 		string ServerName;
 	private:
+		α PublishDataTypes()ι->void;
 		UAConfig _config;
 		UA_Server* _ua{};
 		optional<std::jthread> _thread;

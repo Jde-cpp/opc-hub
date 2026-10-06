@@ -40,21 +40,15 @@ namespace Jde::Opc::Gateway{
 		return j;
 	}
 	//getRemoteDataTypes allocates the array with cleanup=true but does not add it to the client config, so the caller owns it. open62541's UA_cleanupDataTypeWithCustom is not exported; mirror it here.
+	//UA_DataType_clear is, and it also frees the typeId and encoding ids - a string or guid id leaked when this freed only the names and members.
 	Ω freeRemoteDataTypes( UA_DataTypeArray* a )ι->void{
 		while( a ){
 			auto next = a->next;
 			if( a->cleanup ){
-				for( size_t i=0; i<a->typesSize; ++i ){
-					const UA_DataType& t = a->types[i];
-#ifdef UA_ENABLE_TYPEDESCRIPTION
-					UA_free( (void*)(uintptr_t)t.typeName );
-					for( size_t j=0; j<t.membersSize; ++j )
-						UA_free( (void*)(uintptr_t)t.members[j].memberName );
-#endif
-					UA_free( (void*)t.members );
-				}
-				UA_free( (void*)(uintptr_t)a->types );
-				UA_free( (void*)(uintptr_t)a );
+				for( size_t i=0; i<a->typesSize; ++i )
+					UA_DataType_clear( &a->types[i] );
+				UA_free( a->types );
+				UA_free( a );
 			}
 			a = next;
 		}

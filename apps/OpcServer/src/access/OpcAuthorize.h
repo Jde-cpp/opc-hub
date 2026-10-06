@@ -41,6 +41,12 @@ namespace Jde::Opc::Server{
 		//callback owes;  a flat Authorize::Rights/Test on a resource *name* answers All for a name nothing created,
 		//which is what left writeMask, browse and AddReferences ungated (opcserver-review3 #8).
 		α NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights;
+		//Whether the user may browse the node - list it, as a folder:  Read on the node, or on any resource configured beneath
+		//it in the Objects tree, so the path down to a granted branch lists as r-x on each parent directory does
+		//(open62541-1.5.9 review #2, #4).  Outside that tree - Root, Types, Views, the type nodes - namespace 0 and the type
+		//nodes stay open whatever the root resource says:  a branch-restricted user decodes the values it may read with them.
+		//Reads nothing from the server - since 1.5.9 it answers for every attribute read but Value (review #12).
+		α MayBrowse( const NodeId& nodeId, UserPK executer )ι->bool;
 		α UserRights( NodeId nodeId, UserPK executer )ι->EAccess;//NodeRights in UA access-level bits, for getUserAccessLevel.
 		α AssignRights( UA_Server& server )ι->void;
 		//The AppServer's delegated admin check (ServerSocketSession::TestAdminAwait → OpcServerQL's adminCheck):  who may grant on a node is
@@ -57,9 +63,18 @@ namespace Jde::Opc::Server{
 		α IsNodeResource( Access::ResourcePK pk, sv schemaName, const jobject& args )ι->bool;
 		//Fills `nodeResources` - a local map the public overload swaps in afterwards, never the member, so no lock is held
 		//across UA_Server_browse (opcserver-review3 #10).
-		α AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited )ι->void;
+		//`path` is nodeId's ancestors and nodeId itself;  each base node the walk meets adds its resource to `beneath` for all of them.
+		α AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited, vector<NodeId>& path, std::map<NodeId, vector<Access::ResourcePK>>& beneath )ι->void;
+		α RightsOn( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights;
+		struct Governing final{ Access::ResourcePK Resource; bool InTree; };//InTree:  AssignRights' walk under Objects mapped the node.
+		//The resource governing the node - its own, the nearest configured ancestor's, else root - or nullopt when it is open:
+		//no base resources at all, or none over it and no root.
+		ABSL_SHARED_LOCKS_REQUIRED(_nodeResourcesMutex) α GoverningLocked( const NodeId& nodeId )Ι->optional<Governing>;
 		absl::Mutex _nodeResourcesMutex;
 		std::map<NodeId, Access::ResourcePK> _nodeResources ABSL_GUARDED_BY(_nodeResourcesMutex);
+		std::map<NodeId, vector<Access::ResourcePK>> _beneath ABSL_GUARDED_BY(_nodeResourcesMutex);//the resources configured below each node in the Objects tree that has any.
+		std::set<NodeId> _typeNodes ABSL_GUARDED_BY(_nodeResourcesMutex);//the ObjectTypes, VariableTypes, DataTypes and ReferenceTypes outside namespace 0, for MayBrowse.
 		bool _enabled ABSL_GUARDED_BY(_nodeResourcesMutex){};//true once base resources are configured; when false the server is unauthorized and every node is fully accessible.
 		std::atomic<bool> _assigned{};//AssignRights has run (with or without base resources) - TestAdminNode denies until then.
 		Access::ResourcePK _rootResourcePK ABSL_GUARDED_BY(_nodeResourcesMutex){};//resource covering the ObjectsFolder root; unmapped nodes inherit it rather than being granted all access.

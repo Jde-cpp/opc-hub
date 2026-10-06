@@ -456,6 +456,30 @@ namespace Jde::Opc::Gateway{
 			return AppClient()->SslSettings;
 		return _opcServer.CertificateUri.empty() ? optional<Crypto::CryptoSettings>{} : optional<Crypto::CryptoSettings>{ CryptoSettings() };
 	}
+	//open62541 1.5.9 servers hold the advertised applicationUri against the presented certificate's SAN URI at CreateSession:  a
+	//different URI is BadCertificateUriInvalid, but no subjectAltName at all is BadCertificateInvalid (verifyApplicationUri's
+	//BadSecurityChecksFailed, which validateCertificate maps).  Trusting the file fixes neither, so the certificate decides,
+	//not the status alone (open62541-1.5.9 review #8).  An untrusted certificate is refused at the OPN, before the URI check.
+	α RefusedCertificateDetail( StatusCode sc, sv url, const fs::path& certificate, const optional<string>& sanUri, sv advertisedUri )ι->string{
+		let file = certificate.string();
+		let noSan = sanUri && sanUri->empty();
+		let reissue = "for a gateway-issued certificate, delete the file and the next connect re-issues it";
+		if( sc==UA_STATUSCODE_BADCERTIFICATEURIINVALID || (noSan && sc==UA_STATUSCODE_BADCERTIFICATEINVALID) ){
+			if( noSan )
+				return Ƒ( "'{}' refused this gateway's certificate '{}':  it carries no URI in its subjectAltName to vouch for the applicationUri '{}' the gateway advertises.  Give it one - {}", url, file, advertisedUri, reissue );
+			if( !sanUri )
+				return Ƒ( "'{}' refused the URI of this gateway's certificate '{}', which could not be read to show its subjectAltName URI - the gateway advertises '{}'", url, file, advertisedUri );
+			//The gateway advertises the URI it read from this file when the connection was configured (Configuration), so the two
+			//differ only when the file has changed since;  an open62541 server takes a matching pair, so a refusal of one is policy.
+			if( *sanUri==advertisedUri )
+				return Ƒ( "'{}' refused the URI '{}' of this gateway's certificate '{}', though the certificate and the applicationUri the gateway advertises agree on it - the server holds client URIs to a policy of its own.  Find the URI it expects of this client and re-issue the certificate with it - for a gateway-issued one, set it in /gateway/issuedCerts, delete the file and the next connect re-issues it", url, *sanUri, file );
+			return Ƒ( "'{}' refused the URI of this gateway's certificate '{}':  its subjectAltName URI is '{}', but the gateway advertised '{}', read before the file changed.  Connect again and the gateway advertises the file's URI", url, file, *sanUri, advertisedUri );
+		}
+		auto y = Ƒ( "'{}' refused the secure channel - usually a server that does not trust this gateway's certificate yet.  It presented '{}':  trust that file in the server - a Jde OpcServer takes it from any of its /access/trustedCertDirs, another server from its own trust list, where it normally waits among the rejected certificates - and connect again", url, file );
+		if( noSan )
+			y += Ƒ( ".  It also carries no URI in its subjectAltName, so a server that checks the applicationUri '{}' the gateway advertises refuses it next - give it one:  {}", advertisedUri, reissue );
+		return y;
+	}
 	//The statuses a server turns a client certificate down with.  The first is the one that matters:  the Jde OpcServer answer an untrusted certificate with BadSecurityChecksFailed at the OPN, whatever their own logs call it.
 	Ω refusesCertificate( StatusCode sc )ι->bool{
 		switch( sc ){
@@ -640,12 +664,15 @@ namespace Jde::Opc::Gateway{
 					//file at all (reviews/security-matrix.md #12; RefusedCertificateTests, CertTests.Authenticate_Bad).  The status can
 					//have other causes, hence "usually";  the certificate is the one to rule out first, and the file is what an operator
 					//needs either way.  Path only in the detail - the subject/issuer/SAN dump belongs in the log.
-					detail = Ƒ( "'{}' refused the secure channel - usually a server that does not trust this gateway's certificate yet.  It presented '{}':  trust that file in the server - a Jde OpcServer takes it from any of its /access/trustedCertDirs, another server from its own trust list, where it normally waits among the rejected certificates - and connect again", client->Url(), presented->Certificate.Path.string() );
-					ERR( "[{}]{}", hex(client->Handle()), detail );
-					try{//what the file holds - subject, SAN, expiry - for the log;  the settings object knows only where it is.
-						Crypto::Certificate{ Crypto::ReadCertificate(presented->Certificate.Path) }.Log( Ƒ("[{}]Presented certificate '{}'", hex(client->Handle()), presented->Certificate.Path.string()) );
+					optional<Crypto::Certificate> certificate;
+					try{
+						certificate.emplace( Crypto::ReadCertificate(presented->Certificate.Path) );
 					}
 					catch( const std::exception& ){}
+					detail = RefusedCertificateDetail( connectStatus, client->Url(), presented->Certificate.Path, certificate ? optional<string>{certificate->SanUri()} : nullopt, client->AdvertisedUri() );
+					ERR( "[{}]{}", hex(client->Handle()), detail );
+					if( certificate )//what the file holds - subject, SAN, expiry - for the log;  the settings object knows only where it is.
+						certificate->Log( Ƒ("[{}]Presented certificate '{}'", hex(client->Handle()), presented->Certificate.Path.string()) );
 				}
 
 				client->ClearRequest( ConnectRequestId );//previous clear didn't have client

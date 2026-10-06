@@ -740,7 +740,7 @@ These notices must be retained in any copies of any part of this
 documentation and/or software.
 
 ====================================================================================================
-open62541 v1.5.6
+open62541 v1.5.9
 https://github.com/open62541/open62541
 License: MPL-2.0
 Source code: the URL above, at the tag above - built unmodified.
@@ -1144,7 +1144,7 @@ open62541 bundles these libraries (its deps/README.md):
 open62541-nodeset-loader de474df8c114eef0c4efeb988df5901f9adc5005
 https://github.com/open62541/open62541-nodeset-loader
 License: MPL-2.0
-Source code: the URL above, at the commit above.  Modified: CMakeLists.txt only (-Werror, a stale install() line, an added config-file install rule).
+Source code: the URL above, at the commit above.  Modified: CMakeLists.txt (-Werror, a stale install() line, an added config-file install rule) and src/Nodeset.c (a second BrowseName namespace mapping open62541 1.5.8+ already applies, and a node loop that stopped at the first node the server refused) - see build/CMakeLists.txt.
 ====================================================================================================
 
 Mozilla Public License Version 2.0
@@ -2209,34 +2209,41 @@ Upstream-Contact:
 Files:
  *
 Copyright:
- Copyright © 2019-2023 Jens Axboe <axboe@kernel.dk>
+ Copyright © 2019-2026 Jens Axboe <axboe@kernel.dk>
 License: MIT
 
 Files:
  debian/*
 Copyright:
- Copyright © 2020-2023 Guillem Jover <guillem@debian.org>
+ Copyright © 2020-2026 Guillem Jover <guillem@debian.org>
 License: MIT
 
 Files:
  test/*
 Copyright:
- Copyright © 2019-2022 Jens Axboe <axboe@kernel.dk>
+ Copyright © 2019-2026 Jens Axboe <axboe@kernel.dk>
  Copyright © 2019 Red Hat, Inc.
 License: MIT
 
 Files:
  man/*
 Copyright:
- Copyright © 2019-2022 Jens Axboe <axboe@kernel.dk>
+ Copyright © 2019-2026 Jens Axboe <axboe@kernel.dk>
  Copyright © 2019 Jon Corbet <corbet@lwn.net>
  Copyright © 2019-2020 Red Hat, Inc.
  Copyright © 2020 Shuveb Hussain <shuveb@gmail.com>
  Copyright © 2021-2022 Stefan Roesch <shr@fb.com>
+ Copyright © 2022 Stefan Roesch <shr@devkernel.io>
+ Copyright © 2022 Christian Hergert <chergert@redhat.com>
  Copyright © 2022 Dylan Yudaken <dylany@fb.com>
+ Copyright © 2022 Josh Triplett <josh@joshtriplett.org>
  Copyright © 2022 Samuel Williams
  Copyright © 2023 Breno Leitao <leitao@debian.org>
  Copyright © 2023 Rutvik Patel <heyrutvik@gmail.com>
+ Copyright © 2023 nick black <dankamongmen@gmail.com>
+ Copyright © 2024 Pavel Begunkov <asml.silence@gmail.com>
+ Copyright © 2024 SUSE LLC
+ Copyright © 2024 Tony Solomonik <tony.solomonik@gmail.com>
 License: LGPL-2.1+ or MIT
 
 Files:

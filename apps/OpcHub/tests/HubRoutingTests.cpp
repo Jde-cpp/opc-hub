@@ -8,6 +8,9 @@
 #include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/src/auth/OpcServerSession.h"
 #include "../../OpcServer/src/access/UAAccess.h"
+#include <jde/opc/uatypes/opcHelpers.h>
+#include "../../OpcServer/src/globals.h"
+#include "../../OpcServer/src/UAServer.h"
 #define let const auto
 
 //One listener for both roles (src/HttpRequestAwait.cpp, src/ql/HubQL.cpp): the AppServer's and the gateway's REST routes, one
@@ -247,6 +250,30 @@ namespace Jde::Opc::Hub::Tests{
 		Post( AppPort(), "/logout", "{}", authorization );
 		setDefault( false );
 		Web::Server::Sessions::Remove( rootSession );
+	}
+
+	//open62541-1.5.9 review #3:  a username login's UserPK is not stable over a session's life - the first login on a fresh
+	//install activates as UserPK{}, since the hub inserts the user only afterwards, and the next re-activation resolves the
+	//hub's row.  The stack already holds a re-activation to the same user name, so ActivateSession takes the resolved user
+	//rather than refusing it as an identity change, which the open62541 client answers by closing the connection.
+	TEST_F( HubRoutingTests, ReactivatingAUsernameLoginResolvesItsUser ){
+		let login = Post( AppPort(), "/login", serialize(jobject{{"opc",Gateway::Tests::OpcServerSlug},{"user","user1"},{"password","0123456789ABCD"}}) );//the hub's row for user1, if no earlier test made it.
+		Post( AppPort(), "/logout", "{}", string{login.Headers()[http::field::authorization]} );
+		let resolved = Opc::Server::UAAccess::ResolveUser( "user1" );
+		ASSERT_TRUE( resolved );
+
+		UA_UserNameIdentityToken token; UA_UserNameIdentityToken_init( &token );
+		token.policyId = UA_STRING_ALLOC( "open62541-username-policy" );
+		token.userName = UA_STRING_ALLOC( "user1" );
+		token.password = UA_BYTESTRING_ALLOC( "0123456789ABCD" );
+		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
+		UA_ExtensionObject_setValueNoDelete( &identity, &token, &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN] );
+		void* slot = new Opc::Server::UAAccess::SessionContext{ "", TimePoint::max(), 0, UserPK{} };//as first activated, before the hub had the user.
+		let ua = Opc::Server::GetUAServer().Ptr();
+		EXPECT_EQ( Opc::Server::UAAccess::ActivateSession(ua, &UA_Server_getConfig(ua)->accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( static_cast<Opc::Server::UAAccess::SessionContext*>(slot)->UserPK, resolved );
+		Opc::Server::UAAccess::CloseSession( ua, nullptr, nullptr, slot );
+		UA_UserNameIdentityToken_clear( &token );
 	}
 
 	//The "OPC UA Server" component's seeds (setup/OpcHubSetup.nsi SEC_OPCSERVER, setup/linux/build-deb.sh), applied the way the
