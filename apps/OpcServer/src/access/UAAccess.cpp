@@ -343,6 +343,8 @@ namespace Jde::Opc::Server{
 		//A local, not an early delete:  a branch that throws must leave the session's existing context untouched.
 		//Re-activation must keep the user, though:  1.5.9 refuses an identity change itself, but compares an issued token's
 		//user id, which it leaves empty, so a different user's token still arrives here - the success point refuses it.
+		//Issued tokens only:  the stack holds a username or certificate to the same name or subject, and a username's UserPK
+		//may rightly move between activations - UserPK{} until the hub inserts the user (ResolveUser).
 		up<SessionContext> ctx;
 		try{
 			/* Could the token be decoded? */
@@ -448,7 +450,7 @@ namespace Jde::Opc::Server{
 					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
 			}
 			ASSERT( ctx );
-			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && existing->UserPK!=ctx->UserPK )
+			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && tokenType==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] && existing->UserPK!=ctx->UserPK )
 				throw UAException{ UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED };
 			delete static_cast<SessionContext*>( *sessionContext );//the one this call replaces, if the session is re-activating.
 			*sessionContext = ctx.release();
@@ -561,17 +563,9 @@ namespace Jde::Opc::Server{
 		if( !nodeId || !ctx || expired(ctx) )
 			return false;
 		//Was Test( "browse", Read ) - a resource name nothing creates, so browse was ungated for every session
-		//(opcserver-review3 #8).  Read on the node itself, the same right that opens its value.
-		//Since 1.5.9 this also gates every attribute read but Value and RolePermissions.  Type nodes and namespace 0 fall
-		//outside any configured branch, to the root resource, so a branch-restricted user could no longer read the
-		//DataTypeDefinition or NodeClass that decoding a value it may read needs - those stay open.  Values stay gated by
-		//GetUserAccessLevel.
-		if( nodeId->namespaceIndex==0 || !empty(authorizer().NodeRights(*nodeId, ctx->UserPK) & Access::ERights::Read) )
-			return true;
-		UA_NodeClass nodeClass{};//admin-session read under the recursive service mutex:  no re-entry into this callback.
-		if( UA_Server_readNodeClass(server, *nodeId, &nodeClass) )
-			return false;
-		return nodeClass==UA_NODECLASS_DATATYPE || nodeClass==UA_NODECLASS_OBJECTTYPE || nodeClass==UA_NODECLASS_VARIABLETYPE || nodeClass==UA_NODECLASS_REFERENCETYPE;
+		//(opcserver-review3 #8).  Now a folder listing (MayBrowse).  Since 1.5.9 this also gates every attribute read but
+		//Value and RolePermissions, and every hop of a path translation.  Values stay gated by GetUserAccessLevel.
+		return authorizer().MayBrowse( *nodeId, ctx->UserPK );
 	}
 	α UAAccess::AllowTransferSubscription( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *oldSessionId, void *oldSessionContext, const UA_NodeId *newSessionId, void *newSessionContext )ι->UA_Boolean{ ASSERT(false); return false; }
 	α UAAccess::AllowHistoryUpdateUpdateData( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_PerformUpdateType performInsertReplace, const UA_DataValue *value )ι->UA_Boolean{ ASSERT(false); return false; }

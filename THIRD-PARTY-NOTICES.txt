@@ -1144,7 +1144,7 @@ open62541 bundles these libraries (its deps/README.md):
 open62541-nodeset-loader de474df8c114eef0c4efeb988df5901f9adc5005
 https://github.com/open62541/open62541-nodeset-loader
 License: MPL-2.0
-Source code: the URL above, at the commit above.  Modified: CMakeLists.txt (-Werror, a stale install() line, an added config-file install rule) and src/Nodeset.c (a second BrowseName namespace mapping open62541 1.5.8+ already applies) - see build/CMakeLists.txt.
+Source code: the URL above, at the commit above.  Modified: CMakeLists.txt (-Werror, a stale install() line, an added config-file install rule) and src/Nodeset.c (a second BrowseName namespace mapping open62541 1.5.8+ already applies, and a node loop that stopped at the first node the server refused) - see build/CMakeLists.txt.
 ====================================================================================================
 
 Mozilla Public License Version 2.0

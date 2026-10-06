@@ -423,8 +423,13 @@ endif()
 # Finally append the missing NodesetLoaderConfig.cmake install rule (see comment above).
 # src/Nodeset.c maps a BrowseName's namespace a second time after UA_QualifiedName_parseEx, which maps it itself
 # since open62541 v1.5.8 (2f2130931) - 1 -> 2 -> 65533, so no browse path into a loaded nodeset resolves.  Drop the
-# second mapping;  a loader whose parseQualifiedName no longer matches fails here rather than loading wrong names.
-# The patch reruns on an open62541 bump (the echoed tag), so every step is idempotent.
+# second mapping;  a loader whose parseQualifiedName no longer matches, or still maps twice after the replace, fails
+# here rather than loading wrong names.
+# Nodeset_forEachNode returns at the first node its callback refuses, and NodesetLoader_loadFile reports success anyway:
+# one node the server would not add (GDS's roles, under an ns0 RoleSet open62541 lacks) silently dropped every node
+# after it, and one it would not finish left the rest unfinished.  Visit every node (open62541-1.5.9 review #5).
+# The patch reruns on an open62541 bump (the echoed tag) and on a change to this script (jde_NODESET_PATCH), so every
+# step is idempotent.
 set( _nodesetPatch "${CMAKE_CURRENT_BINARY_DIR}/nodeset-loader-patch.cmake" )
 file( CONFIGURE OUTPUT "${_nodesetPatch}" @ONLY CONTENT
 [[file(READ "${SOURCE_DIR}/CMakeLists.txt" _c)
@@ -445,10 +450,28 @@ if(_at EQUAL -1)
 	message(FATAL_ERROR "nodeset-loader-patch: parseQualifiedName changed in ${SOURCE_DIR}/src/Nodeset.c - check whether it still maps the namespace twice.")
 endif()
 string(REGEX REPLACE "${_remap}" "" _s "${_s}")
+string(SUBSTRING "${_s}" ${_at} -1 _body)
+string(FIND "${_body}" "\n}" _end)
+string(SUBSTRING "${_body}" 0 ${_end} _body)
+string(FIND "${_body}" "remote2Local" _twice)
+if(NOT _twice EQUAL -1)
+	message(FATAL_ERROR "nodeset-loader-patch: parseQualifiedName in ${SOURCE_DIR}/src/Nodeset.c still maps the namespace after UA_QualifiedName_parseEx - the second mapping changed shape and the patch no longer removes it.")
+endif()
+
+set(_stop "    NodeContainer *c = &nodeset->sortedNodes;\n    for(size_t i = 0; i < c->size; i++) {\n        NL_Node *node = c->nodes[i];\n        bool res = fn(context, node);\n        if(!res)\n            return false;\n    }\n    return true;\n}")
+set(_all "    NodeContainer *c = &nodeset->sortedNodes;\n    bool ok = true;\n    for(size_t i = 0; i < c->size; i++) {\n        NL_Node *node = c->nodes[i];\n        if(!fn(context, node))\n            ok = false;\n    }\n    return ok;\n}")
+string(FIND "${_s}" "${_all}" _at)
+if(_at EQUAL -1)
+	string(FIND "${_s}" "${_stop}" _at)
+	if(_at EQUAL -1)
+		message(FATAL_ERROR "nodeset-loader-patch: Nodeset_forEachNode changed in ${SOURCE_DIR}/src/Nodeset.c - check whether it still stops at the first node it cannot add.")
+	endif()
+	string(REPLACE "${_stop}" "${_all}" _s "${_s}")
+endif()
 file(WRITE "${SOURCE_DIR}/src/Nodeset.c" "${_s}")
 ]]
 )
-set( _nodesetPatchCmd PATCH_COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=<SOURCE_DIR>" -Djde_DEP_TAG_open62541=${open62541Tag} -P "${_nodesetPatch}" )
+set( _nodesetPatchCmd PATCH_COMMAND ${CMAKE_COMMAND} "-DSOURCE_DIR=<SOURCE_DIR>" -Djde_DEP_TAG_open62541=${open62541Tag} -Djde_NODESET_PATCH=3 -P "${_nodesetPatch}" )
 
 ExternalProject_Add(open62541
 	GIT_REPOSITORY https://github.com/open62541/open62541.git

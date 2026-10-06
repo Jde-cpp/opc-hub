@@ -1,3 +1,4 @@
+#include <fstream>
 #include <jde/fwk/settings.h>
 #include "../src/globals.h"
 #include "../src/UAServer.h"
@@ -5,6 +6,124 @@
 #define let const auto
 
 namespace Jde::Opc::Server::Tests{
+	namespace{
+		struct Model final{ string Uri; string PublicationDate; vector<string> Required; };
+		constexpr sv Ns0Uri{ "http://opcfoundation.org/UA/" };
+
+		Ω read( const fs::path& file, uintmax_t limit=std::numeric_limits<uintmax_t>::max() )ε->string{
+			std::ifstream f{ file, std::ios::binary };
+			THROW_IF( !f, "Could not open '{}'", file.string() );
+			string y( std::min(limit, fs::file_size(file)), '\0' );
+			f.read( y.data(), y.size() );
+			return y;
+		}
+		Ω section( sv xml, sv tag )ι->sv{
+			let open = Ƒ( "<{}>", tag );
+			let begin = xml.find( open );
+			let end = begin==sv::npos ? sv::npos : xml.find( Ƒ("</{}>", tag), begin );
+			return end==sv::npos ? sv{} : xml.substr( begin+open.size(), end-begin-open.size() );
+		}
+		Ω unescape( sv text )ι->string{
+			string y{ text };
+			for( let& [entity, c] : std::array<std::pair<sv,sv>,5>{{ {"&lt;","<"}, {"&gt;",">"}, {"&quot;","\""}, {"&apos;","'"}, {"&amp;","&"} }} )
+				y = Str::Replace( y, entity, c );
+			return y;
+		}
+		Ω attribute( sv startTag, sv name )ι->string{
+			let key = Ƒ( "{}=", name );
+			for( auto at = startTag.find(key); at!=sv::npos; at = startTag.find(key, at+1) ){
+				let begin = at+key.size()+1;
+				if( at==0 || !std::isspace((unsigned char)startTag[at-1]) || begin>startTag.size() )
+					continue;//ParentNodeId= for NodeId=
+				let quote = startTag[begin-1];//MTConnect quotes with '
+				return unescape( startTag.substr(begin, startTag.find(quote, begin)-begin) );
+			}
+			return {};
+		}
+		//The <Models> block:  the models the file defines and the ones each requires.  It precedes the nodes, so the head is enough.
+		Ω models( const fs::path& file )ε->vector<Model>{
+			let xml = read( file, 1<<20 );
+			let block = section( xml, "Models" );
+			vector<Model> y;
+			for( auto at = block.find("<Model"); at!=sv::npos; at = block.find("<Model", at+1) ){
+				if( !std::isspace((unsigned char)block[at+6]) )
+					continue;
+				let tagEnd = block.find( '>', at );
+				let tag = block.substr( at, tagEnd-at );
+				Model model{ attribute(tag, "ModelUri"), attribute(tag, "PublicationDate"), {} };
+				if( !tag.ends_with('/') ){
+					let end = block.find( "</Model>", tagEnd );
+					let children = block.substr( tagEnd, end==sv::npos ? sv::npos : end-tagEnd );
+					for( auto r = children.find("<RequiredModel"); r!=sv::npos; r = children.find("<RequiredModel", r+1) )
+						model.Required.push_back( attribute(children.substr(r, children.find('>', r)-r), "ModelUri") );
+				}
+				y.push_back( move(model) );
+			}
+			return y;
+		}
+		//Every file under the UA-Nodeset tree by the model it defines - the latest PublicationDate where several do.
+		Ω modelFiles( const fs::path& root )ε->const flat_map<string,fs::path>&{
+			static const flat_map<string,fs::path> y = [&]{
+				flat_map<string,std::pair<string,fs::path>> latest;
+				for( let& entry : fs::recursive_directory_iterator(root) ){
+					if( !entry.is_regular_file() || entry.path().extension()!=".xml" )
+						continue;
+					for( auto& model : models(entry.path()) ){
+						auto& [date, path] = latest[model.Uri];
+						if( path.empty() || model.PublicationDate>date )
+							latest[model.Uri] = { move(model.PublicationDate), entry.path() };
+					}
+				}
+				flat_map<string,fs::path> files;
+				for( let& [uri, dated] : latest )
+					files.emplace( uri, dated.second );
+				return files;
+			}();
+			return y;
+		}
+		//Required models before the models that require them.
+		Ω loadOrder( const fs::path& file, const flat_map<string,fs::path>& files, flat_set<fs::path>& seen, vector<fs::path>& order )ε->void{
+			if( !seen.emplace(file).second )
+				return;
+			for( let& model : models(file) ){
+				for( let& uri : model.Required ){
+					if( uri==Ns0Uri )
+						continue;
+					let p = files.find( uri );
+					THROW_IF( p==files.end(), "'{}' requires '{}', which no file under the UA-Nodeset tree defines.", file.string(), uri );
+					loadOrder( p->second, files, seen, order );
+				}
+			}
+			order.push_back( file );
+		}
+		//Every node the file declares outside namespace 0, its NodeId mapped from the file's namespace table to the server's.
+		Ω declaredNodes( UA_Server& ua, const fs::path& file )ε->vector<NodeId>{
+			let xml = read( file );
+			vector<string> uris;
+			let table = section( xml, "NamespaceUris" );
+			for( auto at = table.find("<Uri>"); at!=sv::npos; at = table.find("<Uri>", at+1) )
+				uris.push_back( unescape(table.substr(at+5, table.find("</Uri>", at)-at-5)) );
+			constexpr std::array classes{ "UAObject"sv, "UAVariable"sv, "UAMethod"sv, "UAObjectType"sv, "UAVariableType"sv, "UADataType"sv, "UAReferenceType"sv, "UAView"sv };
+			vector<NodeId> y;
+			for( auto at = xml.find("<UA"); at!=string::npos; at = xml.find("<UA", at+1) ){
+				let tag = sv{xml}.substr( at+1, xml.find('>', at)-at-1 );
+				if( std::ranges::find(classes, tag.substr(0, tag.find_first_of(" \t\r\n")))==classes.end() )
+					continue;
+				let text = attribute( tag, "NodeId" );
+				UA_NodeId id;
+				THROW_IF( UA_NodeId_parse(&id, UA_String{text.size(), (UA_Byte*)text.data()}), "'{}' declares an unparsable NodeId '{}'.", file.filename().string(), text );
+				if( id.namespaceIndex ){
+					THROW_IF( id.namespaceIndex>uris.size(), "'{}' declares '{}' outside its namespace table.", file.filename().string(), text );
+					id.namespaceIndex = NamespaceIndex( ua, uris[id.namespaceIndex-1] );
+					y.emplace_back( move(id) );
+				}
+				else
+					UA_NodeId_clear( &id );
+			}
+			return y;
+		}
+	}
+
 	struct UALoadTests : ::testing::Test{
 	protected:
 		Ω SetUpTestCase()ι->void{}
@@ -13,10 +132,32 @@ namespace Jde::Opc::Server::Tests{
 			Server::Initialize( GetSchemaPtr() );
 		}
 		Ω Path()ι->fs::path{ return *Settings::FindPath("/testing/UANodeSets"); }
+		//NodesetLoader_loadFile reports success whatever its node adds did, so a load that dropped every node passed
+		//(open62541-1.5.9 review #5).  Load the models the file requires first, each from the UA-Nodeset tree, then check that
+		//every node it declares outside namespace 0 is in the server - all but `knownDrops`, the nodes open62541 refuses today.
+		Ω LoadWithDependencies( fs::path file, size_t knownDrops=0 )ε->void{
+			file = Path()/file;
+			auto& ua = GetUAServer();
+			flat_set<fs::path> seen; vector<fs::path> order;
+			loadOrder( file, modelFiles(Path()), seen, order );
+			for( let& f : order )
+				ua.Load( f );
+			let declared = declaredNodes( ua, file );
+			EXPECT_FALSE( declared.empty() ) << file.filename().string() << " declares no node outside namespace 0";
+			vector<string> missing;
+			for( let& id : declared ){
+				UA_NodeClass nodeClass;
+				if( UA_Server_readNodeClass(ua.Ptr(), id, &nodeClass) )
+					missing.push_back( id.ToString() );
+			}
+			EXPECT_EQ( missing.size(), knownDrops ) << missing.size() << " of the " << declared.size() << " nodes " << file.filename().string() << " declares are not in the server, where "
+				<< knownDrops << " are known to be refused - a change either way is news;  update the count once it is understood.  e.g. "
+				<< Str::Join( std::span{missing}.first(std::min<size_t>(missing.size(), 5)), ", " );
+		}
 	};
 
 	TEST_F( UALoadTests, LoadMyKitchen ){
-		GetUAServer().Load( Path()/"CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
+		LoadWithDependencies( "CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
 		GetUAServer().Load( fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/kitchen.xml" );
 	}
 
@@ -49,13 +190,15 @@ namespace Jde::Opc::Server::Tests{
 	//A client can only ever put an Int32 on the wire for an enum, so the server has to widen it back to the node's
 	//DataType before the type check - and it can only do that when the enum has a UA_DataType registered where
 	//adjustValueType() looks.  Before 1.5.9 that was config.customDataTypes alone, so without UAServer::PublishDataTypes
-	//this write was BadTypeMismatch, which is what the SPA hit changing ExampleStacklight's DeviceHealth.
+	//this write was BadTypeMismatch, which is what the SPA hit changing ExampleStacklight's DeviceHealth.  1.5.9 looks
+	//through the server's internal lists too, and only Run publishes, so this writes with nothing published
+	//(open62541-1.5.9 review #7, #11).
 	TEST_F( UALoadTests, WriteNodesetEnum ){
 		auto& ua = GetUAServer();
 		ua.Load( Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
 		ua.Load( Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
 		ua.Load( Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
-		ua.PublishDataTypes();
+		ASSERT_FALSE( UA_Server_getConfig(ua.Ptr())->customDataTypes ) << "nothing published";
 		let ns = NamespaceIndex( ua, "http://opcfoundation.org/UA/IA/Examples/" );
 		let deviceHealth = NodeId{ ns, (uint32)6002 };//ExampleStacklight/DeviceHealth - DataType DeviceHealthEnumeration (DI).
 
@@ -71,314 +214,341 @@ namespace Jde::Opc::Server::Tests{
 		UA_Variant_clear( &read );
 	}
 
-	TEST_F( UALoadTests, AdditiveManufacturing ){
-		GetUAServer().Load( Path()/"AdditiveManufacturing/Opc.Ua.AdditiveManufacturing.Nodeset2.xml" );
+	//open62541-1.5.9 review #11:  Load published after every file, so every lookup that missed in a later Load scanned each
+	//type twice.  Run publishes once, after the last nodeset and before PubSub, the one reader of the snapshot.
+	TEST_F( UALoadTests, RunPublishesTheNodesetTypesOnce ){
+		auto& ua = GetUAServer();
+		ua.Load( Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		let config = UA_Server_getConfig( ua.Ptr() );
+		ASSERT_FALSE( config->customDataTypes ) << "Load publishes nothing";
+		ua.Run();
+		let deviceHealthEnumeration = NodeId{ NamespaceIndex(ua, "http://opcfoundation.org/UA/DI/"), (uint32)6244 };
+		EXPECT_TRUE( UA_findDataTypeWithCustom(&deviceHealthEnumeration, config->customDataTypes) ) << "DI's enum, published";
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	TEST_F( UALoadTests, AdditiveManufacturing ){
+		LoadWithDependencies( "AdditiveManufacturing/Opc.Ua.AdditiveManufacturing.Nodeset2.xml", 2 );
+	}
+
+	//open62541 1.5.9 refuses 6 variables whose VariableType's attributes fail the type check, and their children.
 	TEST_F( UALoadTests, Server_loadADINodeset ){
-		GetUAServer().Load( Path()/"ADI/Opc.Ua.Adi.NodeSet2.xml" );
+		LoadWithDependencies( "ADI/Opc.Ua.Adi.NodeSet2.xml", 36 );
 	}
 
 	TEST_F( UALoadTests, LoadAMBNodeset ){
-		GetUAServer().Load( Path()/"AMB/Opc.Ua.AMB.NodeSet2.xml" );
+		LoadWithDependencies( "AMB/Opc.Ua.AMB.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadAMLBaseTypesNodeset ){
-		GetUAServer().Load( Path()/"AML/Opc.Ua.AMLBaseTypes.NodeSet2.xml" );
+		LoadWithDependencies( "AML/Opc.Ua.AMLBaseTypes.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadAutoIDNodeset ){
-		GetUAServer().Load( Path()/"AutoID/Opc.Ua.AutoID.NodeSet2.xml" );
+		LoadWithDependencies( "AutoID/Opc.Ua.AutoID.NodeSet2.xml", 3 );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadBACnetNodeset ){
-		GetUAServer().Load( Path()/"BACnet/Opc.Ua.BACnet.NodeSet2.xml" );
+		LoadWithDependencies( "BACnet/Opc.Ua.BACnet.NodeSet2.xml", 59 );
 	}
 
 	TEST_F( UALoadTests, LoadCASNodeset ){
-		GetUAServer().Load( Path()/"CAS/Opc.Ua.CAS.NodeSet2.xml" );
+		LoadWithDependencies( "CAS/Opc.Ua.CAS.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadCommercialKitchenEquipmentNodeset ){
-		GetUAServer().Load( Path()/"CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
+		LoadWithDependencies( "CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadCSPPlusForMachineNodeset ){
-		GetUAServer().Load( Path()/"CSPPlusForMachine/Opc.Ua.CSPPlusForMachine.NodeSet2.xml" );
+		LoadWithDependencies( "CSPPlusForMachine/Opc.Ua.CSPPlusForMachine.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadDEXPINodeset ){
-		GetUAServer().Load( Path()/"DEXPI/Opc.Ua.DEXPI.NodeSet2.xml" );
+		LoadWithDependencies( "DEXPI/Opc.Ua.DEXPI.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses WarningValues (i=472):  ValueRank -3 with ArrayDimensions 0.
 	TEST_F( UALoadTests, LoadDINodeset ){
-		GetUAServer().Load( Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		LoadWithDependencies( "DI/Opc.Ua.Di.NodeSet2.xml", 1 );
 	}
 
-	TEST_F( UALoadTests, LoadDotNetNodeset ){
-		GetUAServer().Load( Path()/"DotNet/Opc.Ua.NodeSet.xml" );
-	}
 
+	//open62541 1.5.9 refuses the UIPlugInType VariableType (ValueRank 1 with ArrayDimensions 0) and its 8 properties.
 	TEST_F( UALoadTests, LoadFDI5Nodeset ){
-		GetUAServer().Load( Path()/"FDI/Opc.Ua.Fdi5.NodeSet2.xml" );
+		LoadWithDependencies( "FDI/Opc.Ua.Fdi5.NodeSet2.xml", 9 );
 	}
 
 	TEST_F( UALoadTests, LoadFDI7Nodeset ){
-		GetUAServer().Load( Path()/"FDI/Opc.Ua.Fdi7.NodeSet2.xml" );
+		LoadWithDependencies( "FDI/Opc.Ua.Fdi7.NodeSet2.xml" );
 	}
 
 
 	TEST_F( UALoadTests, LoadFDTNodeset ){
-		GetUAServer().Load( Path()/"FDT/Opc.Ua.FDT.NodeSet.xml" );
+		LoadWithDependencies( "FDT/Opc.Ua.FDT.NodeSet.xml" );
 	}
 
+	//open62541 1.5.9 refuses the well-known roles:  they hang off ns0's RoleSet (i=15606), which open62541's namespace 0 lacks.
 	TEST_F( UALoadTests, LoadGDSNodeset ){
-		GetUAServer().Load( Path()/"GDS/Opc.Ua.Gds.NodeSet2.xml" );
+		LoadWithDependencies( "GDS/Opc.Ua.Gds.NodeSet2.xml", 90 );
 	}
 
 	//The nodeset loader refuses it:  "Infinite loop in the references" (open62541-nodeset-loader src/Nodeset.c), open62541 1.5.9.
 	// TEST_F( UALoadTests, LoadServer_loadGlassNodeset ){
-	// 	GetUAServer().Load( Path()/"Glass/Flat/Opc.Ua.Glass.NodeSet2.xml" );
+	// 	LoadWithDependencies( "Glass/Flat/Opc.Ua.Glass.NodeSet2.xml" );
 	// }
 
 
+	//open62541 1.5.9 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadI4AASNodeset ){
-		GetUAServer().Load( Path()/"I4AAS/Opc.Ua.I4AAS.NodeSet2.xml" );
+		LoadWithDependencies( "I4AAS/Opc.Ua.I4AAS.NodeSet2.xml", 27 );
 	}
 
 
 	TEST_F( UALoadTests, LoadIANodeset ){
-		GetUAServer().Load( Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
+		LoadWithDependencies( "IA/Opc.Ua.IA.NodeSet2.xml" );
 	}
 
 /*
 	TEST_F( UALoadTests, LoadIAExamplesNodeset ){
-		GetUAServer().Load( Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
+		LoadWithDependencies( "IA/Opc.Ua.IA.NodeSet2.examples.xml" );
 	}
 */
 
 	TEST_F( UALoadTests, LoadIOLinkIODDNodeset ){
-		GetUAServer().Load( Path()/"IOLink/Opc.Ua.IOLinkIODD.NodeSet2.xml" );
+		LoadWithDependencies( "IOLink/Opc.Ua.IOLinkIODD.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses a variable whose ValueRank and ArrayDimensions disagree, and one whose value fails the type check.
 	TEST_F( UALoadTests, LoadIOLinkNodeset ){
-		GetUAServer().Load( Path()/"IOLink/Opc.Ua.IOLink.NodeSet2.xml" );
+		LoadWithDependencies( "IOLink/Opc.Ua.IOLink.NodeSet2.xml", 2 );
 	}
 
 	TEST_F( UALoadTests, LoadISA95Nodeset ){
-		GetUAServer().Load( Path()/"ISA-95/Opc.ISA95.NodeSet2.xml" );
+		LoadWithDependencies( "ISA-95/Opc.ISA95.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadMachineryNodeset ){
-		GetUAServer().Load( Path()/"Machinery/Opc.Ua.Machinery.NodeSet2.xml" );
+		LoadWithDependencies( "Machinery/Opc.Ua.Machinery.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadMachineryExamplesNodeset ){
-		GetUAServer().Load( Path()/"Machinery/Opc.Ua.Machinery.Examples.NodeSet2.xml" );
+		LoadWithDependencies( "Machinery/Opc.Ua.Machinery.Examples.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadMachineToolNodeset ){
-		GetUAServer().Load( Path()/"MachineTool/Opc.Ua.MachineTool.NodeSet2.xml" );
+		LoadWithDependencies( "MachineTool/Opc.Ua.MachineTool.NodeSet2.xml", 2 );
 	}
 
 
 	TEST_F( UALoadTests, LoadMDISNodeset ){
-		GetUAServer().Load( Path()/"MDIS/Opc.MDIS.NodeSet2.xml" );
+		LoadWithDependencies( "MDIS/Opc.MDIS.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadMiningDevelopmentSupportGeneralNodeset ){
-		GetUAServer().Load( Path()/"Mining/DevelopmentSupport/General/1.0.0/Opc.Ua.Mining.DevelopmentSupport.General.NodeSet2.xml" );
+		LoadWithDependencies( "Mining/DevelopmentSupport/General/1.0.0/Opc.Ua.Mining.DevelopmentSupport.General.NodeSet2.xml" );
 	}
 
 
 	TEST_F( UALoadTests, LoadMiningExtractionGeneralNodeset ){
-		GetUAServer().Load( Path()/"Mining/Extraction/General/1.0.0/Opc.Ua.Mining.Extraction.General.NodeSet2.xml" );
+		LoadWithDependencies( "Mining/Extraction/General/1.0.0/Opc.Ua.Mining.Extraction.General.NodeSet2.xml" );
 	}
 
 
 	TEST_F( UALoadTests, LoadMiningMineralProcessingGeneralNodeset ){
-		GetUAServer().Load( Path()/"Mining/MineralProcessing/General/1.0.0/Opc.Ua.Mining.MineralProcessing.General.NodeSet2.xml" );
+		LoadWithDependencies( "Mining/MineralProcessing/General/1.0.0/Opc.Ua.Mining.MineralProcessing.General.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadMiningMonitoringSupervisionServicesGeneralNodeset ){
-		GetUAServer().Load( Path()/"Mining/MonitoringSupervisionServices/General/1.0.0/Opc.Ua.Mining.MonitoringSupervisionServices.General.NodeSet2.xml" );
+		LoadWithDependencies( "Mining/MonitoringSupervisionServices/General/1.0.0/Opc.Ua.Mining.MonitoringSupervisionServices.General.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadMTConnectNodeset ){
-		GetUAServer().Load( Path()/"MTConnect/Opc.Ua.MTConnect.NodeSet2.xml" );
+		LoadWithDependencies( "MTConnect/Opc.Ua.MTConnect.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadOPENSCSNodeset ){
-		GetUAServer().Load( Path()/"OpenSCS/Opc.Ua.OPENSCS.NodeSet2.xml" );
+		LoadWithDependencies( "OpenSCS/Opc.Ua.OPENSCS.NodeSet2.xml", 1 );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPackMLNodeset ){
-		GetUAServer().Load( Path()/"PackML/Opc.Ua.PackML.NodeSet2.xml" );
+		LoadWithDependencies( "PackML/Opc.Ua.PackML.NodeSet2.xml", 2 );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionCalenderNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Calender/1.00/Opc.Ua.PlasticsRubber.Extrusion.Calender.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Calender/1.00/Opc.Ua.PlasticsRubber.Extrusion.Calender.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionCalibratorNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Calibrator/1.00/Opc.Ua.PlasticsRubber.Extrusion.Calibrator.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Calibrator/1.00/Opc.Ua.PlasticsRubber.Extrusion.Calibrator.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionCorrugatorNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Corrugator/1.00/Opc.Ua.PlasticsRubber.Extrusion.Corrugator.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Corrugator/1.00/Opc.Ua.PlasticsRubber.Extrusion.Corrugator.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionCutterNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Cutter/1.00/Opc.Ua.PlasticsRubber.Extrusion.Cutter.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Cutter/1.00/Opc.Ua.PlasticsRubber.Extrusion.Cutter.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionDieNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Die/1.00/Opc.Ua.PlasticsRubber.Extrusion.Die.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Die/1.00/Opc.Ua.PlasticsRubber.Extrusion.Die.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionExtruderNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Extruder/1.00/Opc.Ua.PlasticsRubber.Extrusion.Extruder.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Extruder/1.00/Opc.Ua.PlasticsRubber.Extrusion.Extruder.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionExtrusionLineNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/ExtrusionLine/1.00/Opc.Ua.PlasticsRubber.Extrusion.ExtrusionLine.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/ExtrusionLine/1.00/Opc.Ua.PlasticsRubber.Extrusion.ExtrusionLine.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionFilterNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Filter/1.00/Opc.Ua.PlasticsRubber.Extrusion.Filter.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Filter/1.00/Opc.Ua.PlasticsRubber.Extrusion.Filter.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionGeneralTypes_v1_0_0_Nodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/GeneralTypes/1.00/Opc.Ua.PlasticsRubber.Extrusion.GeneralTypes.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/GeneralTypes/1.00/Opc.Ua.PlasticsRubber.Extrusion.GeneralTypes.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionGeneralTypes_v1_0_1_Nodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/GeneralTypes/1.01/Opc.Ua.PlasticsRubber.Extrusion.GeneralTypes.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/GeneralTypes/1.01/Opc.Ua.PlasticsRubber.Extrusion.GeneralTypes.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionHaulOffNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/HaulOff/1.00/Opc.Ua.PlasticsRubber.Extrusion.HaulOff.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/HaulOff/1.00/Opc.Ua.PlasticsRubber.Extrusion.HaulOff.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionMeltPumpNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/MeltPump/1.00/Opc.Ua.PlasticsRubber.Extrusion.MeltPump.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/MeltPump/1.00/Opc.Ua.PlasticsRubber.Extrusion.MeltPump.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionPelletizerNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion/Pelletizer/1.00/Opc.Ua.PlasticsRubber.Extrusion.Pelletizer.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion/Pelletizer/1.00/Opc.Ua.PlasticsRubber.Extrusion.Pelletizer.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2CalenderNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Calender/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Calender.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Calender/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Calender.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2CalibratorNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Calibrator/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Calibrator.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Calibrator/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Calibrator.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2CorrugatorNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Corrugator/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Corrugator.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Corrugator/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Corrugator.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2CutterNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Cutter/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Cutter.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Cutter/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Cutter.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2DieNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Die/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Die.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Die/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Die.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2ExtruderNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Extruder/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Extruder.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Extruder/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Extruder.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2ExtrusionLineNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/ExtrusionLine/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.ExtrusionLine.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/ExtrusionLine/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.ExtrusionLine.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2FilterNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Filter/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Filter.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Filter/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Filter.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2GeneralTypesNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/GeneralTypes/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.GeneralTypes.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/GeneralTypes/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.GeneralTypes.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2HaulOffNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/HaulOff/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.HaulOff.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/HaulOff/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.HaulOff.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2MeltPumpNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/MeltPump/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.MeltPump.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/MeltPump/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.MeltPump.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberExtrusionv2PelletizerNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/Extrusion_v2/Pelletizer/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Pelletizer.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Pelletizer/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Pelletizer.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadPlasticsRubberGeneralTypes_v1_0_2_Nodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/GeneralTypes/1.02/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/GeneralTypes/1.02/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml", 3 );
 	}
 
+	//open62541 1.5.9 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadPlasticsRubberGeneralTypes_v1_0_3_Nodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/GeneralTypes/1.03/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/GeneralTypes/1.03/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml", 3 );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberHotRunnerNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/HotRunner/1.00/Opc.Ua.PlasticsRubber.HotRunner.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/HotRunner/1.00/Opc.Ua.PlasticsRubber.HotRunner.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberIMM2MESNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/IMM2MES/1.01/Opc.Ua.PlasticsRubber.IMM2MES.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/IMM2MES/1.01/Opc.Ua.PlasticsRubber.IMM2MES.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberLDSNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/LDS/1.00/Opc.Ua.PlasticsRubber.LDS.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/LDS/1.00/Opc.Ua.PlasticsRubber.LDS.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPlasticsRubberTCDNodeset ){
-		GetUAServer().Load( Path()/"PlasticsRubber/TCD/1.01/Opc.Ua.PlasticsRubber.TCD.NodeSet2.xml" );
+		LoadWithDependencies( "PlasticsRubber/TCD/1.01/Opc.Ua.PlasticsRubber.TCD.NodeSet2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadPLCopenNodeset ){
-		GetUAServer().Load( Path()/"PLCopen/Opc.Ua.PLCopen.NodeSet2_V1.02.xml" );
+		LoadWithDependencies( "PLCopen/Opc.Ua.PLCopen.NodeSet2_V1.02.xml" );
 	}
 
 
 	TEST_F( UALoadTests, LoadPnEmNodeset ){
-		GetUAServer().Load( Path()/"PNEM/Opc.Ua.PnEm.NodeSet2.xml" );
+		LoadWithDependencies( "PNEM/Opc.Ua.PnEm.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPnRioNodeset ){
-		GetUAServer().Load( Path()/"PNRIO/Opc.Ua.PnRio.Nodeset2.xml" );
+		LoadWithDependencies( "PNRIO/Opc.Ua.PnRio.Nodeset2.xml", 3 );
 	}
 
+	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPROFINETNodeset ){
-		GetUAServer().Load( Path()/"PROFINET/Opc.Ua.Pn.NodeSet2.xml" );
+		LoadWithDependencies( "PROFINET/Opc.Ua.Pn.NodeSet2.xml", 3 );
 	}
 
 	TEST_F( UALoadTests, LoadRoboticsNodeset ){
-		GetUAServer().Load( Path()/"Robotics/Opc.Ua.Robotics.NodeSet2.xml" );
+		LoadWithDependencies( "Robotics/Opc.Ua.Robotics.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadSafetyNodeset ){
-		GetUAServer().Load( Path()/"Safety/Opc.Ua.Safety.NodeSet2.xml" );
+		LoadWithDependencies( "Safety/Opc.Ua.Safety.NodeSet2.xml", 1 );
 	}
 
 	TEST_F( UALoadTests, LoadSercosNodeset ){
-		GetUAServer().Load( Path()/"Sercos/Sercos.NodeSet2.xml" );
+		LoadWithDependencies( "Sercos/Sercos.NodeSet2.xml" );
 	}
 
+	//open62541 1.5.9 refuses the WSAnalogUnitType VariableType, whose value does not match its DataType, and its WSTagNumber property.
 	TEST_F( UALoadTests, LoadWeihenstephanNodeset ){
-		GetUAServer().Load( Path()/"Weihenstephan/Opc.Ua.Weihenstephan.NodeSet2.xml" );
+		LoadWithDependencies( "Weihenstephan/Opc.Ua.Weihenstephan.NodeSet2.xml", 2 );
 	}
 
 	TEST_F( UALoadTests, LoadWoodworkingEumaboisNodeset ){
-		GetUAServer().Load( Path()/"Woodworking/Opc.Ua.Eumabois.Nodeset2.xml" );
+		LoadWithDependencies( "Woodworking/Opc.Ua.Eumabois.Nodeset2.xml" );
 	}
 
 	TEST_F( UALoadTests, LoadWoodworkingNodeset ){
-		GetUAServer().Load( Path()/"Woodworking/Opc.Ua.Woodworking.NodeSet2.xml" );
+		LoadWithDependencies( "Woodworking/Opc.Ua.Woodworking.NodeSet2.xml" );
 	}
 
 }

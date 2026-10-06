@@ -46,9 +46,9 @@ namespace Jde::Opc::Gateway{
 			auto next = a->next;
 			if( a->cleanup ){
 				for( size_t i=0; i<a->typesSize; ++i )
-					UA_DataType_clear( const_cast<UA_DataType*>(&a->types[i]) );
-				UA_free( (void*)(uintptr_t)a->types );
-				UA_free( (void*)(uintptr_t)a );
+					UA_DataType_clear( &a->types[i] );
+				UA_free( a->types );
+				UA_free( a );
 			}
 			a = next;
 		}

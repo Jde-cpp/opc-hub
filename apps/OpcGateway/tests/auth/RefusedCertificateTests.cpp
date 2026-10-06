@@ -91,4 +91,41 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( what.contains("trust that file in the server") ) << what;//...and that it is the server's move.
 		EXPECT_TRUE( what.find("server certificate for")==string::npos ) << what;//not OUR verifier's line - that is the other direction.
 	}
+
+	//open62541-1.5.9 review #8:  a 1.5.9 server answers a certificate with no subjectAltName at all with BadCertificateInvalid,
+	//not BadCertificateUriInvalid, so the URI advice keyed on the status alone missed it and told the operator to trust the
+	//file - which cannot help.  The certificate decides now;  an untrusted one is still refused at the OPN, before the URI.
+	TEST( RefusedCertificateDetailTests, TheCertificateDecides ){
+		let detail = []( StatusCode sc, optional<string> san ){ return RefusedCertificateDetail( sc, "opc.tcp://server:4840", "/certs/gateway.pem", san, "urn:gateway" ); };
+		let noSan = "carries no URI in its subjectAltName";
+		let trust = "trust that file in the server";
+
+		let invalid = detail( UA_STATUSCODE_BADCERTIFICATEINVALID, string{} );
+		EXPECT_TRUE( invalid.contains(noSan) ) << invalid;
+		EXPECT_FALSE( invalid.contains(trust) ) << invalid;
+		EXPECT_TRUE( invalid.contains("/certs/gateway.pem") && invalid.contains("urn:gateway") ) << invalid;
+		EXPECT_TRUE( detail(UA_STATUSCODE_BADCERTIFICATEURIINVALID, string{}).contains(noSan) );
+
+		let untrusted = detail( UA_STATUSCODE_BADSECURITYCHECKSFAILED, string{} );
+		EXPECT_TRUE( untrusted.contains(trust) ) << "refused at the OPN:  trust comes first";
+		EXPECT_TRUE( untrusted.contains(noSan) ) << "and the URI it will be refused for next";
+
+		let withSan = detail( UA_STATUSCODE_BADSECURITYCHECKSFAILED, "urn:gateway" );
+		EXPECT_TRUE( withSan.contains(trust) );
+		EXPECT_FALSE( withSan.contains("subjectAltName") ) << withSan;
+		EXPECT_TRUE( detail(UA_STATUSCODE_BADCERTIFICATEINVALID, "urn:gateway").contains(trust) ) << "a SAN URI:  not the URI's fault";
+
+		let unread = detail( UA_STATUSCODE_BADCERTIFICATEURIINVALID, nullopt );
+		EXPECT_TRUE( unread.contains("could not be read") ) << unread;
+		EXPECT_FALSE( unread.contains(noSan) ) << "an unreadable file is not one without a SAN";
+
+		//open62541-1.5.9 review #9:  the gateway advertises the URI it read from the same file, so the two agree, and the
+		//message printed one URI twice and told the operator to re-issue the certificate with the URI it already carries.
+		let policy = detail( UA_STATUSCODE_BADCERTIFICATEURIINVALID, "urn:gateway" );
+		EXPECT_TRUE( policy.contains("policy of its own") ) << policy;
+		EXPECT_EQ( policy.find("urn:gateway"), policy.rfind("urn:gateway") ) << "the one URI, once:  " << policy;
+		let changed = detail( UA_STATUSCODE_BADCERTIFICATEURIINVALID, "urn:other" );
+		EXPECT_TRUE( changed.contains("its subjectAltName URI is 'urn:other'") && changed.contains("advertised 'urn:gateway'") ) << changed;
+		EXPECT_TRUE( changed.contains("Connect again") ) << "a file replaced since the connection was configured";
+	}
 }

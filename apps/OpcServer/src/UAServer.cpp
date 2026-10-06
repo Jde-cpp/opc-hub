@@ -35,6 +35,7 @@ namespace Jde::Opc::Server {
 	α UAServer::Run()ε->void{
 		if( _thread )
 			return;
+		PublishDataTypes();//the last nodeset is loaded and PubSub not yet started (opcServerStartup).
 		UAε( UA_Server_run_startup(_ua) );
 		_running = true;//set before spawning: otherwise a destructor racing an early Run() could clear it before the thread reads it, and join() would hang.
 		_thread = std::jthread{ [this](std::stop_token st){
@@ -52,16 +53,17 @@ namespace Jde::Opc::Server {
 		//xmlSetGenericErrorFunc( nullptr, myXmlError );
 		auto success = NodesetLoader_loadFile( _ua, configFile.string().c_str(), nullptr );
 		THROW_IFSL( !success, "Failed to load nodeset file: '{}'", configFile.string() );
-		PublishDataTypes();//per file, not once at the end:  a later nodeset's variables carry <Value>s typed by an earlier one's enums, and those writes are type-checked as the node is added.
 	}
 
 	//The nodeset loader files every type it reads through UA_Server_addDataTypeFromDescription, which lands in the server's
 	//own internal list, while PubSub's readers and writers decode and encode with `config.customDataTypes` *only*
 	//(ua_pubsub_reader.c, ua_pubsub_writer.c, ua_pubsub_readergroup.c, 1.5.9).  Publish the internal lists through
-	//config.customDataTypes so they see nodeset-defined types too - call it once the last nodeset is loaded, since this is
-	//a snapshot.  Until 1.5.9 the attribute write path had the same gap:  adjustValueType() never widened a client's Int32
-	//back to a nodeset-defined enum, so every write to e.g. DeviceHealth (ns=2;i=6244, DI) was BadTypeMismatch;  it now
-	//looks through serverCustomTypes(), the internal lists included.
+	//config.customDataTypes so they see nodeset-defined types too.  It is a snapshot, so Run takes it once, after the last
+	//nodeset:  taken per Load, every lookup that missed in a later Load scanned each type twice - the internal lists, then
+	//their mirrors (open62541-1.5.9 review #11).  Until 1.5.9 the attribute write path had the same gap:  adjustValueType()
+	//never widened a client's Int32 back to a nodeset-defined enum, so every write to e.g. DeviceHealth was BadTypeMismatch;
+	//it now looks through serverCustomTypes(), the internal lists included.  Today's PubSub contracts carry built-in types
+	//only (PubSub::Config), so nothing reads the snapshot yet.
 	//
 	//Mirror nodes, not the internal head itself:  serverCustomTypes() hangs config.customDataTypes off the *end* of the
 	//internal list every time it is asked, so handing it back its own head would tie the chain into a cycle and spin the
