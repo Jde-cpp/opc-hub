@@ -15,8 +15,15 @@ namespace Jde::Opc::Hist{
 	α Fileable( Ticks t )ι->bool;
 	//When day starts in tz, which its file's FileStart and preamble carry.
 	α StartOf( Day day, const std::chrono::time_zone& tz )ι->Ticks;
+	//A NodeAdded with no writer:  at its day's start, a preamble record, and otherwise a membership change that came with
+	//none.
+	Ξ Bare( const Proto::NodeAdded& added )ι->bool{ return !added.has_identity_id() && added.user_name().empty(); }
 	//<yyyy>/<m>/<d>, as the log's archive names a day.
 	α DayDirectory( Day day )ι->fs::path;
+	//Every day under root that holds the file of the group name, oldest first:  the directory walk, so a read asked for a
+	//range of days opens only those that are there.  A day whose file it can't tell of, in a directory it can't search
+	//say, is among them, so a read that reaches it fails as it opens it.
+	α Days( const fs::path& root, sv name, SRCE )ε->vector<Day>;
 
 	//What a group's files say of it at start:  each member's index, the index an Issued group issues next, and its last
 	//flush, which is its break when the process stopped or crashed.
@@ -176,14 +183,13 @@ namespace Jde::Opc::Hist{
 		α Present( Day today )ι->void;//a flush's day by the host clock, which moves the present on, never back.
 		α Present()Ι->Day{ return _present; }
 		α Find( Day day )Ι->const DayFile*;//none until the process opens it.
-		//What a read serves of a day's file:  an archive whole, a live file through its runs.  As the process knows it once it
-		//has opened the file, else as a scan of it finds it, which is a read of the FileStart alone for an archive.  None for
-		//a day with no file, or one that can't be read, which is said.
-		struct Served final{ fs::path Path; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
-		α Serve( Day day, SL sl )Ι->optional<Served>;
-		//Every day that holds a file of the group, oldest first:  the directory walk, so a read asked for a range of days
-		//opens only those that are there.
-		α Days( SL sl )Ι->vector<Day>;
+		//What a read serves of a day's file:  an archive whole, a live file through its runs, and the file, open.  As the
+		//process knows it once it has opened the file, else as a scan of it finds it, which is a read of the FileStart alone
+		//for an archive.  None for a day with no file, one the process knew of that has since gone included, or with nothing
+		//kept, which a scan logs.  Opened under the files lock with the rest, so a rewrite that renames over the day after
+		//leaves the read the file they describe.  Throws, at Error, when the file can't be opened or scanned.
+		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
+		α Serve( Day day, SL sl )Ε->optional<Served>;
 		α LastFlush()ι->Flushed&{ return _flushed; }
 	private:
 		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={} )ε->DayFile&;

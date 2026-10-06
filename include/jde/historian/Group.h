@@ -3,6 +3,7 @@
 #include <queue>
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
@@ -197,7 +198,7 @@ namespace Jde::Opc::Hist{
 		//time, how many records at that time each node has had, an archive's byte offset and generation, and a CRC of the
 		//other arguments but Limit, so one passed with different nodes, times or bounds is refused.  A record that lands
 		//behind the resume point between pages isn't in the rest of the read.  Throws for a request with neither time,
-		//no nodes or a continuation that isn't this read's, and when a file the read opens can't be read through.
+		//no nodes or a continuation that isn't this read's, and when a file the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
 	private:
 		friend struct FlushAwait;
@@ -304,21 +305,26 @@ namespace Jde::Opc::Hist{
 		//A value flagged for the flush to warn of, dropped without being written back:  its node's next of its kind is
 		//flagged instead, so the warning isn't lost with it.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Unflag( const DataValue& gone )ι->void;
-		//Each node's lost values into y, as a marker and the one written back, emptying _lost.
+		//Each node's lost values into y, as a marker and the one written back.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α LostRecords( vector<Buffered>& y )Ι->void;
+		//LostRecords, emptying _lost.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α MarkLost( vector<Buffered>& y )ι->void;
 		//The buffer, for a flush at taken:  each node's lost values first, as a marker and the one written back, then the
 		//rest as they arrived.  A heartbeat made less than the publishing interval before stays for the next flush, so a
 		//change sampled before it and still on its way finds it to drop:  none at the group's end, which no flush follows.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Take( TimePoint taken )ι->vector<Buffered>;
-		//What a read sees of the buffer:  it, and what a running flush took and hasn't yet written, by sequence.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot()Ι->vector<Buffered>;
+		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
+		//written, then the buffer as the next Take has it, each node's lost values first.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>;
 		//The flush's batch, as it stands, which Read serves until each record is in a file.  Set under _filesMutex, which a
-		//read holds through its look at the buffer, so no record is in neither.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Taking( const vector<Buffered>& batch )ι->void;
+		//read holds through its look at the buffer, so no record is in neither.  Shared, not copied:  the flush reads it
+		//outside _mutex and changes it only under it.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Taking( sp<vector<Buffered>> batch )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Wrote( uint from, uint to )ι->void;//batch's [from, to) are in a file, or dropped.
-		//What a flush couldn't write, back to the front of the buffer, without counting toward the flush at 8 KB, followed by
-		//the marker and value of each gap dropped while it was out.  True as Push.
-		α Return( vector<Buffered>&& records )ι->bool;
+		//What a flush couldn't write, held's records of its batch, back to the front of the buffer, without counting toward
+		//the flush at 8 KB, followed by the marker and value of each gap dropped while it was out.  Moved out of the batch
+		//under _mutex, so a read finds each in one place.  True as Push.
+		α Return( vector<Buffered>& batch, vector<uint>&& held )ι->bool;
 		//A Flush or a Settled awaiter's:  waits for the next flush to start and end, or for none to be running.
 		α Request( FlushAwait& waiter )ι->void;
 		//The clock's flush, which no one waits on, unless one is running:  that one then runs another after.  Each I/O step
@@ -387,7 +393,7 @@ namespace Jde::Opc::Hist{
 		vector<Buffered> _changes ABSL_GUARDED_BY(_mutex);
 		std::deque<Buffered> _values ABSL_GUARDED_BY(_mutex);
 		//What the running flush took, in its order, until Return or the flush's end, and which of them it has written.
-		vector<Buffered> _taken ABSL_GUARDED_BY(_mutex);
+		sp<vector<Buffered>> _taken ABSL_GUARDED_BY(_mutex);
 		vector<bool> _written ABSL_GUARDED_BY(_mutex);
 		uint _held ABSL_GUARDED_BY(_mutex){};//what _changes and _values count against maxBuffer, each record's Cost.
 		uint _fresh ABSL_GUARDED_BY(_mutex){};//what arrived since a flush last took the buffer, which the flush at 8 KB counts.

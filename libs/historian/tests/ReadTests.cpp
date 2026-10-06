@@ -367,16 +367,258 @@ namespace Jde::Opc::Hist::Tests{
 	}
 
 	//What a running flush took and hasn't yet written is read all the same:  no record is in neither the buffer nor a file.
+	//The executor is held, so the read lands between the flush's Taking and its Commit every time.
 	TEST_F( Reads, ReadsWhatAFlushIsWriting ){
 		Pump = AddGroup();
 		Speed = Join( *Pump, "Pump1.Speed" );
 		for( uint i=1; i<=3; ++i )
 			DataChange( *Pump, Speed, i, T0+seconds{i} );
-		Time->Advance( 1min );//the flush at `delay`, whose write is out on the executor.
-		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s)})), (vector<double>{1, 2, 3}) );
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s) };
+		{
+			HeldExecutor held;
+			Time->Advance( 1min );//the flush at `delay`, which takes the buffer and waits on its write.
+			EXPECT_TRUE( Pump->Buffer().empty() );
+			EXPECT_TRUE( Pump->Runs(March7).empty() );//nothing committed
+			EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
+		}
 		Settle( *Pump );
-		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s)})), (vector<double>{1, 2, 3}) );
+		EXPECT_FALSE( Pump->Runs(March7).empty() );
+		EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
 		EXPECT_TRUE( Pump->Buffer().empty() );
+	}
+
+	//A reverse read jumps over the days that hold nothing of its nodes though one has left the group, which no later
+	//preamble lists:  its newest record ends it.  The days between aren't opened, so an unreadable one doesn't fail it.
+	TEST_F( Reads, ReverseJumpsPastANodeThatLeft ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		let flow = Join( *Pump, "Pump1.Flow" );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		DataChange( *Pump, Temp, 10, T0+2s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, Temp, 11, Eighth+2min );
+		Pump->Remove( Temp );
+		EXPECT_TRUE( Flush(*Pump) );
+		for( uint d=1; d<=5; ++d ){//Flow alone, March 9 through 13, each day's file rewritten at the next midnight.
+			Time->AdvanceTo( Eighth+days{d}+1min );
+			Settle( *Pump );
+			DataChange( *Pump, flow, d, Time->Now() );
+			EXPECT_TRUE( Flush(*Pump) );
+		}
+		let file = File( *Pump, March10 );//an archive the process has forgotten, so a read would scan it.
+		fs::permissions( file, fs::perms::none, fs::perm_options::replace );
+		if( std::ifstream{file}.is_open() ){
+			fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can open a file it has no permission to read.";
+		}
+		const ReadRequest request{ .Nodes={Speed, Temp}, .End=ticks(Time->Now()) };
+		EXPECT_EQ( doubles(All(request)), (vector<double>{11, 10, 1}) );
+		fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+		EXPECT_EQ( doubles(All(request)), (vector<double>{11, 10, 1}) );
+	}
+
+	//A reverse read seeds its closing bounds only on the page that reaches the range's first day, so the pages before
+	//don't read the file before that day through:  here March 7's, since March 8, the first day, has none.
+	TEST_F( Reads, ReverseSeedsOnlyItsLastPage ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		const TimePoint ninth{ sys_days{March9} };
+		Time->AdvanceTo( ninth+1min );//March 7's file rewritten, and none for March 8.
+		Settle( *Pump );
+		for( uint i=2; i<=5; ++i )
+			DataChange( *Pump, Speed, i, ninth+1min+seconds{i} );
+		EXPECT_TRUE( Flush(*Pump) );
+		let file = File( *Pump, March7 );//unreadable, so a read that opens it fails.
+		fs::permissions( file, fs::perms::none, fs::perm_options::replace );
+		if( std::ifstream{file}.is_open() ){
+			fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can open a file it has no permission to read.";
+		}
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(ninth+1h), .End=ticks(Eighth+12h), .Bounds=true, .Limit=2 };
+		let page = Read( request );
+		EXPECT_EQ( doubles(page.Values).size(), 2 );
+		EXPECT_FALSE( page.Continuation.empty() );
+		fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+		let all = All( request );
+		ASSERT_EQ( all.size(), 6 );
+		EXPECT_TRUE( notFound(all[0], Speed, ninth+1h) );
+		EXPECT_EQ( doubles({all.begin()+1, all.end()-1}), (vector<double>{5, 4, 3, 2}) );
+		EXPECT_TRUE( isBound(all.back(), Speed, 1, T0+1s) );
+	}
+
+	//A day's file removed while the process still knows it, today's here, reads as a purged day does, with no records:
+	//neither a read over that day nor one of its buffered nodes elsewhere fails.  The next flush makes it again.
+	TEST_F( Reads, RemovedDayReadsAsPurged ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		DataChange( *Pump, Speed, 2, T0+2s );
+		ASSERT_TRUE( fs::remove(File(*Pump, March7)) );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s)})), (vector<double>{2}) );
+		EXPECT_TRUE( All({.Nodes={Speed}, .Start=ticks(T0-48h), .End=ticks(T0-24h)}).empty() );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_TRUE( fs::exists(File(*Pump, March7)) );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s)})), (vector<double>{2}) );
+	}
+
+	//A day's file that the process doesn't know and can't open fails the read, at Error, rather than reading as a day with
+	//no records.
+	TEST_F( Reads, UnreadableDayFailsTheRead ){
+		TwoDays();
+		Time->Advance( 3min );
+		EXPECT_TRUE( Flush(*Pump) );//two `delay`s past March 7's rewrite, so it forgets the archive.
+		let file = File( *Pump, March7 );
+		fs::permissions( file, fs::perms::none, fs::perm_options::replace );
+		if( std::ifstream{file}.is_open() ){
+			fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can open a file it has no permission to read.";
+		}
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+4min) };
+		try{
+			Read( request );
+			ADD_FAILURE() << "read past a day it can't open";
+		}
+		catch( const IO::IOException& e ){
+			EXPECT_EQ( e.Level(), ELogLevel::Error );
+		}
+		fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+		EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3, 4}) );
+	}
+
+	//So does one in a day directory the process can't search, which the day walk keeps rather than passes:  a read that
+	//reaches the day fails, and one that doesn't is served.
+	TEST_F( Reads, UnsearchableDayFailsTheRead ){
+		TwoDays();
+		Time->Advance( 3min );
+		EXPECT_TRUE( Flush(*Pump) );//two `delay`s past March 7's rewrite, so it forgets the archive.
+		let file = File( *Pump, March7 );
+		let dir = file.parent_path();
+		fs::permissions( dir, fs::perms::none, fs::perm_options::replace );
+		std::error_code ec;
+		if( fs::exists(file, ec) || !ec ){
+			fs::permissions( dir, fs::perms::owner_all, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can stat a file in a directory it can't search.";
+		}
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+4min) };
+		try{
+			Read( request );
+			ADD_FAILURE() << "read past a day it can't search";
+		}
+		catch( const IO::IOException& e ){
+			EXPECT_EQ( e.Level(), ELogLevel::Error );
+		}
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(Eighth), .End=ticks(Eighth+4min)})), (vector<double>{3, 4}) );
+		fs::permissions( dir, fs::perms::owner_all, fs::perm_options::replace );
+		EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3, 4}) );
+	}
+
+	//What a full buffer dropped is read as the next flush writes it:  the gap's Bad_DataLost marker at the first dropped
+	//value's time, then the newest dropped, written back, before the values still buffered.
+	TEST_F( Reads, ReadsWhatATrimDropped ){
+		auto config = Config( 1min );
+		config.MaxBuffer = 4'000;
+		Restart( move(config) );
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Block();
+		EXPECT_FALSE( Flush(*Pump) );//so the group knows its files are unwritable, and trims rather than flushes.
+		for( uint n=1; n<=40; ++n ){
+			DataChange( *Pump, Speed, n, T0+n*10ms );
+			Time->Advance( 0s );//the trim's hop.
+		}
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+1s) };
+		let buffered = All( request );
+		ASSERT_GE( buffered.size(), 3 );
+		EXPECT_EQ( buffered[0].Value.status(), UA_STATUSCODE_BADDATALOST );
+		EXPECT_EQ( buffered[0].Value.source_ts(), ticks(T0+10ms) );
+		EXPECT_EQ( buffered[1].Value.value().double_value()+1, buffered[2].Value.value().double_value() );
+		Unblock();
+		EXPECT_TRUE( Flush(*Pump) );
+		let flushed = All( request );
+		ASSERT_EQ( flushed.size(), buffered.size() );
+		for( uint i=0; i<flushed.size(); ++i )
+			EXPECT_EQ( flushed[i].Value.ShortDebugString(), buffered[i].Value.ShortDebugString() ) << i;
+	}
+
+	//What a flush has written and not yet finished with is read from its file, and not again from what it took:  the test
+	//runs the held executor's handlers until the day is committed, which leaves the flush waiting on its .flushed write.
+	TEST_F( Reads, ReadsWhatAFlushHasWritten ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		for( uint i=1; i<=3; ++i )
+			DataChange( *Pump, Speed, i, T0+seconds{i} );
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+10s) };
+		{
+			HeldExecutor held;
+			Time->Advance( 1min );
+			ASSERT_TRUE( held.RunUntil([this]{ return !Pump->Runs(March7).empty(); }) ) << "the day's commit";
+			EXPECT_FALSE( Pump->Flushed() ) << "the flush has ended";
+			EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
+		}
+		Settle( *Pump );
+		EXPECT_TRUE( Pump->Flushed() );
+		EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
+	}
+
+	//Each day the snapshot holds records for is served with it, file or none, so a flush that writes them before the read
+	//reaches the day doesn't return them twice.  Here a late record makes its day's file, an archive from the start, which
+	//takes the day's name only when the rewrite commits:  meanwhile the read crosses a month of archives.  The commit may
+	//land before the read or after it instead, so the test can pass without that.
+	TEST_F( Reads, FlushDuringTheReadReturnsItsRecordsOnce ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		constexpr uint count = 30;
+		vector<double> expected;
+		for( uint i=0; i<count; ++i ){
+			DataChange( *Pump, Speed, i, T0-days{count+2-i} );
+			expected.push_back( i );
+		}
+		EXPECT_TRUE( Flush(*Pump) );
+		DataChange( *Pump, Speed, 100, T0-days{2} );
+		expected.push_back( 100 );
+		Time->Advance( 1min );//the rewrite that makes its file, out on the executor.
+		const ReadRequest request{ .Nodes={Speed}, .Start=ticks(T0-days{count+3}), .End=ticks(T0) };
+		EXPECT_EQ( doubles(All(request)), expected );
+		Settle( *Pump );
+		EXPECT_EQ( doubles(All(request)), expected );
+	}
+
+	//A read opens each day's file as it serves the day, under the files lock, so a rewrite that renames its archive over
+	//the day before the read reaches it leaves the read the file its runs describe.
+	TEST_F( Reads, ServedFileOutlivesARewrite ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		for( uint i=1; i<=2; ++i ){
+			DataChange( *Pump, Speed, i, T0+seconds{i} );
+			EXPECT_TRUE( Flush(*Pump) );
+		}
+		let root = Path()/"served";
+		let file = root/DayDirectory( March7 )/( Pump->Name()+".binpb" );
+		fs::create_directories( file.parent_path() );
+		fs::copy_file( File(*Pump, March7), file );
+		GroupFiles files{ root, Pump->Name(), utc(), 1min, March7 };
+		let served = files.Serve( March7, SRCE_CUR );
+		ASSERT_TRUE( served );
+		EXPECT_EQ( served->Generation, 0 ) << "a live file, read through its runs";
+		let temp = root/"rewritten.tmp";
+		save( temp, "rewritten" );
+		Replace( temp, file );
+		Merge merge{ served->File, served->Runs, {} };
+		vector<double> values;
+		for( Proto::HistoryRecord r; merge.Next(r); ){
+			if( r.has_value() )
+				values.push_back( r.value().value().double_value() );
+		}
+		EXPECT_EQ( values, (vector<double>{1, 2}) );
+		Merge reopened{ ms<ReadHandle>(file), served->Runs, {} };//as the path opens now
+		Proto::HistoryRecord r;
+		EXPECT_THROW( while(reopened.Next(r)){}, IO::IOException );
 	}
 
 	//A heartbeat is a stored value, returned as its record marks it, and a Bad_DataLost marker a value with none.

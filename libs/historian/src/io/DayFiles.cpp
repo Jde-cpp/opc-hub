@@ -63,8 +63,6 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
-		//A preamble record's, or a membership change's that came with no writer.
-		Ω bare( const Proto::NodeAdded& added )ι->bool{ return !added.has_identity_id() && added.user_name().empty(); }
 	}
 
 	//Clock.cpp's rules, which its tests cover, for UA's ticks.
@@ -251,7 +249,7 @@ namespace Jde::Opc::Hist{
 	}
 
 	struct Rewrite::State final{
-		State( fs::path file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, absl::flat_hash_set<NodeIndex> mapped, SL sl )ε:
+		State( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, absl::flat_hash_set<NodeIndex> mapped, SL sl )ε:
 			Records{ move(file), move(runs), move(late), sl },
 			Start{ move(start) },
 			Mapped{ std::move(mapped) }
@@ -313,7 +311,7 @@ namespace Jde::Opc::Hist{
 				}
 				if( r.has_node_removed() )
 					members.erase( r.node_removed().node_index() );
-				else if( r.has_node_added() && bare(r.node_added()) ){
+				else if( r.has_node_added() && Bare(r.node_added()) ){
 					let [p, added] = members.try_emplace( r.node_added().node_index(), head.size() );
 					if( !added ){
 						auto& kept = *head[p->second].mutable_node_added();
@@ -455,7 +453,8 @@ namespace Jde::Opc::Hist{
 			std::ranges::move( run, std::back_inserter(preamble) );
 			first.mutable_file_start()->set_generation( known.Generation+1 );
 			mapped.insert( known.Mapped.begin(), known.Mapped.end() );
-			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(file.Path, move(runs), move(preamble), first.file_start(), std::move(mapped), sl) };
+			auto opened = runs.empty() ? nullptr : ms<ReadHandle>( file.Path, sl );
+			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(move(opened), move(runs), move(preamble), first.file_start(), std::move(mapped), sl) };
 			if( file.Generation )
 				_files.erase( day );
 			return DayWrite{ move(y) };
@@ -640,8 +639,9 @@ namespace Jde::Opc::Hist{
 		return p==_files.end() ? nullptr : &p->second;
 	}
 
-	α GroupFiles::Serve( Day day, SL sl )Ι->optional<Served>{
-		Served y{ .Path=File(day) };
+	α GroupFiles::Serve( Day day, SL sl )Ε->optional<Served>{
+		let path = File( day );
+		Served y;
 		if( auto p = _files.find(day); p!=_files.end() ){
 			let& file = p->second;
 			y.Generation = file.Generation;
@@ -650,28 +650,41 @@ namespace Jde::Opc::Hist{
 		}
 		else{
 			std::error_code ec;
-			if( !fs::exists(y.Path, ec) && !ec )
+			if( !fs::exists(path, ec) && !ec )
 				return nullopt;
 			try{
-				auto scanned = Scan( y.Path, {}, sl );
+				auto scanned = Scan( path, {}, sl );
 				y.Generation = scanned.Start ? scanned.Start->generation() : 0;
 				y.Size = scanned.Size;
 				y.Runs = move( scanned.Runs );
 			}
-			catch( const IO::IOException& ){//said as it goes.
-				return nullopt;
+			catch( const IO::IOException& e ){
+				e.SetLevel( ELogLevel::Error );//history a read can't serve, which an operator must see.
+				throw;
 			}
 		}
+		if( !y.Size )
+			return nullopt;
 		if( y.Generation )
 			y.Runs = { Run{.Offset=0, .End=y.Size, .Chain=0, .First=std::numeric_limits<Ticks>::min(), .Last=std::numeric_limits<Ticks>::max()} };
-		return y.Size ? optional<Served>{ move(y) } : nullopt;
+		try{
+			y.File = ms<ReadHandle>( path, sl );
+		}
+		catch( const IO::IOException& e ){
+			if( e.Error!=IO::EIOError::NotFound )
+				throw;
+			e.SetLevel( ELogLevel::Debug );//removed since the process last knew it:  purged, which a read sees as no records.
+			return nullopt;
+		}
+		return y;
 	}
 
-	α GroupFiles::Days( SL sl )Ι->vector<Day>{
+	α Days( const fs::path& root, sv name, SL sl )ε->vector<Day>{
+		let file = string{ name }+".binpb";
 		vector<Day> y;
-		walk( _root, sl, [&]( Day day ){
+		walk( root, sl, [&]( Day day ){
 			std::error_code ec;
-			if( fs::exists(File(day), ec) )
+			if( fs::exists(root/DayDirectory(day)/file, ec) || ec )//one it can't tell of fails the read that opens it.
 				y.push_back( day );
 			return false;
 		});

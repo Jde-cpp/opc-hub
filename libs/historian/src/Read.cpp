@@ -22,7 +22,6 @@ namespace Jde::Opc::Hist{
 
 	namespace{
 		constexpr Ticks Earliest{ std::numeric_limits<Ticks>::min() }, Latest{ std::numeric_limits<Ticks>::max() };
-		Ω bare( const Proto::NodeAdded& added )ι->bool{ return !added.has_identity_id() && added.user_name().empty(); }
 		Ω time( const HistoryRecord& r )ι->Ticks{ return *PrimaryTime( r ); }
 
 		//The CRC-32C of a read's arguments but Limit, which a continuation carries:  the same read, paged at any size.
@@ -91,11 +90,11 @@ namespace Jde::Opc::Hist{
 		//A day's records in primary-time order, one ahead:  the file's, through the runs that matter, and the buffer's for
 		//the day, merged.
 		struct Stream final{
-			Stream( fs::path path, vector<Run> runs, vector<HistoryRecord> late, SL sl )ε:_merge{ move(path), move(runs), move(late), sl }{ Advance(); }
+			Stream( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, SL sl )ε:_merge{ move(file), move(runs), move(late), sl }{ Advance(); }
 			α Peek()Ι->const HistoryRecord*{ return _has ? &_next : nullptr; }
 			α Time()Ι->optional<Ticks>{ return _has ? PrimaryTime( _next ) : nullopt; }
 			//Whether the next record is a preamble record of day:  a bare NodeAdded at its start.
-			α AtPreamble( Ticks start )Ι->bool{ return _has && _next.has_node_added() && bare(_next.node_added()) && PrimaryTime(_next)==start; }
+			α AtPreamble( Ticks start )Ι->bool{ return _has && _next.has_node_added() && Bare(_next.node_added()) && PrimaryTime(_next)==start; }
 			α Take( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{
 				if( !_has )
 					return false;
@@ -130,7 +129,7 @@ namespace Jde::Opc::Hist{
 				case HistoryRecord::kNodeAdded:{
 					let& added = r.node_added();
 					let day = DayOf( t, _tz );
-					if( !bare(added) || t!=StartOf(day, _tz) )
+					if( !Bare(added) || t!=StartOf(day, _tz) )
 						break;
 					if( added.has_start() ){
 						if( let start = PrimaryTime(added.start()); start && *start<earlier ){
@@ -200,12 +199,16 @@ namespace Jde::Opc::Hist{
 			return values;
 		}
 
-		//What a read takes of the group's files under its lock:  which days hold a file, and what each day the read looks
-		//at serves, taken with the buffer so no record is in both or neither.  A day past those, which the bounds alone
-		//look at, is served as it is asked for.
+		//What a read takes of the group's files:  under their lock, what each day the snapshot holds records for serves, its
+		//file open, or none, so no record is in both or neither; and after it, which days hold a file.  Any other day can
+		//gain only records that arrived since, which its file then holds once:  it is served as the read reaches it, under
+		//the lock again.
 		struct Files final{
 			vector<Day> OnDisk;
 			std::map<Day,optional<GroupFiles::Served>> Taken;
+			//Each node's newest stored record, as the process knows it, which says where one a preamble doesn't list ends.
+			//None for one it doesn't know:  after a restart, a node that left before the newest files.
+			absl::flat_hash_map<NodeIndex,Ticks> Newest;
 			std::function<optional<GroupFiles::Served>( Day )> Serve;
 			α Of( Day day )->optional<GroupFiles::Served>{
 				auto p = Taken.find( day );
@@ -269,7 +272,7 @@ namespace Jde::Opc::Hist{
 							runs.push_back( run );
 					}
 				}
-				return mu<Stream>( served ? served->Path : fs::path{}, move(runs), move(buffered), _sl );
+				return mu<Stream>( served ? served->File : nullptr, move(runs), move(buffered), _sl );
 			}
 			α Emit( Picked&& picked, bool bound )ι->void{
 				if( !_hasLast || picked.Time!=_last ){
@@ -343,23 +346,20 @@ namespace Jde::Opc::Hist{
 				let scan = [&]( Stream& stream ){//through the stream, until each node in need has a record past `later`.
 					HistoryRecord r;
 					optional<Merge::Position> where;
-					absl::flat_hash_set<NodeIndex> found;
 					while( !need.empty() && stream.Take(r, where) ){
 						let t = time( r );
 						if( r.has_value() ){
 							offer( r.value(), t );
-							if( t>later && need.erase(r.value().node_index()) )
-								found.insert( r.value().node_index() );
+							if( t>later )
+								need.erase( r.value().node_index() );//in time order:  the day holds none earlier.
 						}
-						else if( r.has_node_added() && bare(r.node_added()) && r.node_added().has_start() ){
+						else if( r.has_node_added() && Bare(r.node_added()) && r.node_added().has_start() ){
 							auto value = r.node_added().start();
 							value.set_node_index( r.node_added().node_index() );
 							if( let start = PrimaryTime(value); start )
 								offer( value, *start );
 						}
 					}
-					for( let index : found )//found in order:  the day holds none earlier.
-						need.erase( index );
 				};
 				if( rest )
 					scan( *rest );
@@ -412,7 +412,7 @@ namespace Jde::Opc::Hist{
 						need.insert( index );
 				}
 				auto found = After( rest, lastDay, std::move(need) );
-				return bounds( _plan, served, [&]( NodeIndex index )->optional<Proto::DataValue>{
+				return bounds( _plan, served, [&]( NodeIndex index )->optional<Proto::DataValue> {
 					auto p = found.find( index );
 					return p==found.end() ? optional<Proto::DataValue>{} : optional<Proto::DataValue>{ p->second };
 				}, *_plan.Later, _plan.Reverse );
@@ -569,8 +569,20 @@ namespace Jde::Opc::Hist{
 					skip[i] = _plan.Had( i, to );
 				absl::flat_hash_set<NodeIndex> atLater, atEarlier;
 				Before before{ _plan, _tz };
-				if( closing )
+				//Seeded once the walk reaches the range's first day, or ends short of it, so a page that ends with more, which
+				//returns no closing bounds, reads no older file for them.  A later day's preamble records, all of its that
+				//Before takes, wait for the seed, so Before takes everything in the order it always has:  of two at one time,
+				//the later decides.
+				bool seeded = !closing;
+				vector<std::pair<HistoryRecord,Ticks>> preambles;
+				let seed = [&]{
+					if( std::exchange(seeded, true) )
+						return;
 					Seed( before, *firstDay );
+					for( let& [r,t] : preambles )
+						before.Take( r, t );
+					preambles.clear();
+				};
 				bool opened = !( first && _plan.Bounds );//the opening bounds, from the first day read.
 				bool more{};
 				//Each day read forward, the latest kept, and returned reversed.
@@ -584,6 +596,8 @@ namespace Jde::Opc::Hist{
 					jump.reset();
 					if( firstDay && *day<*firstDay )
 						break;
+					if( firstDay && *day==*firstDay )
+						seed();
 					let isLast = *day==lastDay;
 					auto stream = Open( *day, _plan.Earlier.value_or(Earliest), to, _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast), isLast && _plan.From ? &*_plan.From : nullptr );
 					if( !stream )
@@ -601,13 +615,16 @@ namespace Jde::Opc::Hist{
 						if( *t>to )
 							break;
 						stream->Take( r, where );
-						if( r.has_node_added() && bare(r.node_added()) && *t==StartOf(*day, _tz) && _plan.Slot(r.node_added().node_index()) ){
+						let preamble = r.has_node_added() && Bare( r.node_added() ) && *t==StartOf( *day, _tz ) && _plan.Slot( r.node_added().node_index() );
+						if( preamble ){
 							listed.insert( r.node_added().node_index() );
 							if( r.node_added().has_start() )
 								starts.insert_or_assign( r.node_added().node_index(), *PrimaryTime(r.node_added().start()) );
 						}
-						if( closing )
+						if( closing && seeded )
 							before.Take( r, *t );
+						else if( closing && preamble )
+							preambles.emplace_back( r, *t );
 						if( !Wants(r) || (_plan.Earlier && *t<*_plan.Earlier) )
 							continue;
 						let index = r.value().node_index();
@@ -657,10 +674,25 @@ namespace Jde::Opc::Hist{
 						optional<Day> target;
 						if( auto late = _buffered.lower_bound(*day); late!=_buffered.begin() )
 							target = std::prev( late )->first;
-						if( std::ranges::all_of(_plan.Nodes, [&]( NodeIndex index ){ return listed.contains( index ); }) ){
-							optional<Ticks> latest;
-							for( let& [_,t] : starts )
-								latest = std::max( latest.value_or(t), t );
+						//Each node's last record before the day:  a listed node's start value, and the newest of one that left, or
+						//joined later, when that is before the day.  One with neither may have records in the days between.
+						optional<Ticks> latest;
+						let dayStart = StartOf( *day, _tz );
+						let ends = std::ranges::all_of( _plan.Nodes, [&]( NodeIndex index ){
+							optional<Ticks> last;
+							if( listed.contains(index) ){
+								if( auto p = starts.find(index); p!=starts.end() )
+									last = p->second;
+							}
+							else if( auto p = _files.Newest.find(index); p!=_files.Newest.end() && p->second<dayStart )
+								last = p->second;
+							else
+								return false;
+							if( last )
+								latest = std::max( latest.value_or(*last), *last );
+							return true;
+						});
+						if( ends ){
 							if( latest )
 								target = std::max( target.value_or(Day0(*latest)), Day0(*latest) );
 							if( !target )
@@ -687,6 +719,7 @@ namespace Jde::Opc::Hist{
 				}
 				if( !closing )
 					return;
+				seed();
 				for( let index : _plan.Nodes ){
 					if( _plan.HadOf(index, *_plan.Earlier) )
 						atEarlier.insert( index );
@@ -719,23 +752,26 @@ namespace Jde::Opc::Hist{
 	α Group::Read( const ReadRequest& request, SL sl )ε->ReadResult{
 		let& tz = *_store->Config.TimeZone;
 		const Plan plan{ request, _store->Config.ReadLimit, sl };
-		//The days the values come from, which the look at the buffer under the same hold leaves in one place or the other.
-		let from = plan.Reverse ? plan.Earlier : optional<Ticks>{ plan.Resume().value_or(*plan.Earlier) };
-		let to = plan.Reverse ? optional<Ticks>{ plan.Resume().value_or(*plan.Later) } : plan.Later;
 		vector<Buffered> snapshot;
 		Files files;
 		{
 			ul _{ _filesMutex };
 			{
 				ul _{ _mutex };
-				snapshot = Snapshot();
+				snapshot = Snapshot( [&plan]( NodeIndex index ){ return plan.Slot( index ).has_value(); } );
 			}
-			files.OnDisk = _files->Days( sl );
-			for( let day : files.OnDisk ){
-				if( (!from || day>=DayOf(*from, tz)) && (!to || day<=DayOf(*to, tz)) )
-					files.Taken.emplace( day, _files->Serve(day, sl) );
+			flat_set<Day> days;//whose files a flush may write the snapshot's records to once the lock is let go.
+			for( let& b : snapshot )
+				days.insert( DayOf(PrimaryTime(b.Item), tz) );
+			for( let day : days )
+				files.Taken.emplace( day, _files->Serve(day, sl) );
+			for( let index : plan.Nodes ){
+				if( let newest = _files->Newest(index) )
+					files.Newest.try_emplace( index, *PrimaryTime(*newest) );
 			}
 		}
+		//After the lock:  a file made or gone meanwhile holds none of the snapshot's records.
+		files.OnDisk = Days( _store->Config.Path, Name(), sl );
 		files.Serve = [this, sl]( Day day ){
 			ul _{ _filesMutex };
 			return _files->Serve( day, sl );

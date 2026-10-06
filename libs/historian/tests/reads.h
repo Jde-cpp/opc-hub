@@ -1,12 +1,46 @@
 #pragma once
 //A read as a test runs it:  every page, and what each value says.
 #include "dayFiles.h"
+#include <thread>
+#include <boost/asio/io_context.hpp>
+#include <jde/fwk/process/execution.h>
+#include <jde/fwk/settings.h>
 DISABLE_WARNINGS
 #include <jde/historian/proto/Hist.Read.pb.h>
 ENABLE_WARNINGS
 
 namespace Jde::Opc::Hist::Tests{
 	constexpr Day March10{ 2026y/March/10 }, March11{ 2026y/March/11 };
+	//Every executor thread busy until it ends, so a flush's write, which completes there, waits:  the flush holds what it
+	//took, between Taking and its Commit.  The test fails, rather than hangs, when the threads aren't all taken.
+	struct HeldExecutor final{
+		HeldExecutor()ι{
+			const auto threads = std::max( 1u, Jde::Settings::FindNumber<unsigned>("/workers/executor/threads").value_or(std::thread::hardware_concurrency()) );
+			for( uint i=0; i<threads; ++i )
+				Post( [state=_state]{ ++state->Running; state->Released.wait( false ); } );
+			for( const auto deadline = std::chrono::steady_clock::now()+5s; _state->Running<threads && std::chrono::steady_clock::now()<deadline; )
+				std::this_thread::sleep_for( 1ms );
+			EXPECT_EQ( _state->Running, threads ) << "executor threads held";
+		}
+		~HeldExecutor(){
+			_state->Released = true;
+			_state->Released.notify_all();
+		}
+		//Runs the executor's ready handlers on this thread, one at a time, until done:  false when it isn't within a few
+		//seconds.  A flush moves on one await at a time, so the test can stop it between any two.
+		α RunUntil( const std::function<bool()>& done )ι->bool{
+			const auto ioc = Executor();
+			for( const auto deadline = std::chrono::steady_clock::now()+5s; !done(); ){
+				if( std::chrono::steady_clock::now()>=deadline )
+					return false;
+				ioc->run_one_for( 10ms );
+			}
+			return true;
+		}
+	private:
+		struct State final{ std::atomic<uint> Running; std::atomic<bool> Released; };
+		sp<State> _state{ ms<State>() };
+	};
 	//Every page of a read, each page's size in pages.
 	Ξ readAll( Group& group, ReadRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
 		vector<ReadValue> y;

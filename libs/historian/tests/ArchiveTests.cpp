@@ -384,7 +384,7 @@ namespace Jde::Opc::Hist::Tests{
 		}
 		let file = Path()/"merged.binpb";
 		fs::copy_file( File(*group, March7), file );
-		Merge merge{ file, Scan(file).Runs, {} };
+		Merge merge{ ms<ReadHandle>(file), Scan(file).Runs, {} };
 		HistoryRecord r;
 		uint values{};
 		while( merge.Next(r) )

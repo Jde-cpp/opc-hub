@@ -1,5 +1,5 @@
 #pragma once
-#include <fstream>
+#include "File.h"
 #include "Reader.h"
 
 namespace Jde::Opc::Hist{
@@ -8,10 +8,10 @@ namespace Jde::Opc::Hist{
 	//stable as a sort.  A run is opened only when the merge reaches its first time, so memory follows how many runs
 	//overlap, not how many there are, and one handle serves them all.  The FileStart and the checkpoints are left out.
 	struct Merge final : noncopyable{
-		//late is in order too.  Throws when file, which runs are of, can't be opened.
-		Merge( fs::path file, vector<Run> runs, vector<Proto::HistoryRecord> late, SRCE )ε;
+		//late is in order too.  file, which runs are of, is open when there are runs.
+		Merge( sp<ReadHandle> file, vector<Run> runs, vector<Proto::HistoryRecord> late, SRCE )ι;
 		~Merge();
-		//False at the end, where the file is closed.  Throws when a run can't be read through.
+		//False at the end, where it lets the file go.  Throws when a run can't be read through.
 		α Next( Proto::HistoryRecord& r )ε->bool;
 		α Unreadable()Ι->bool{ return _unreadable; }//a run its scan kept no longer reads as it did:  the file changed.
 		//Where the last record Next returned lies in the file:  none for one of late's.
@@ -22,11 +22,10 @@ namespace Jde::Opc::Hist{
 		α First( uint index )Ι->Ticks;
 		α Advance( Source& source )ε->bool;//its next record:  false at its end.
 
-		const fs::path _path;
+		sp<ReadHandle> _file;
 		const vector<Run> _runs;
 		vector<Proto::HistoryRecord> _late;
 		uint _lateNext{};
-		std::ifstream _file;
 		vector<uint> _order;//each run's index, and late's after them, by first time.
 		uint _next{};//into _order:  the first not yet open.
 		vector<up<Source>> _open;//a heap, the earliest record first.
