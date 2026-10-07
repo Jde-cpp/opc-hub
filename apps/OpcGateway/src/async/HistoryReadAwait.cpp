@@ -40,26 +40,26 @@ namespace Jde::Opc::Gateway{
 		SetNodes();
 	}
 
-	HistoryReadResponse::HistoryReadResponse( UA_HistoryReadResponse&& x, HistoryReadRequest&& request )ι:
-		UA_HistoryReadResponse{ x }, Request{ move(request) }{
+	HistoryReadResponse::HistoryReadResponse( UA_HistoryReadResponse&& x, uint requested )ι:
+		UA_HistoryReadResponse{ x }, Requested{ requested }{
 		UA_HistoryReadResponse_init( &x );
 	}
 	HistoryReadResponse::HistoryReadResponse( HistoryReadResponse&& x )ι:
-		UA_HistoryReadResponse{ x }, Request{ move(x.Request) }{
+		UA_HistoryReadResponse{ x }, Requested{ x.Requested }{
 		UA_HistoryReadResponse_init( &x );
 	}
 	α HistoryReadResponse::operator=( HistoryReadResponse&& x )ι->HistoryReadResponse&{
 		if( this!=&x ){
 			UA_HistoryReadResponse_clear( this );
 			*( UA_HistoryReadResponse* )this = x;
-			Request = move( x.Request );
+			Requested = x.Requested;
 			UA_HistoryReadResponse_init( &x );
 		}
 		return *this;
 	}
 	α HistoryReadResponse::Validate( Handle uahandle, SL sl )ε->void{
 		THROW_IFX( responseHeader.serviceResult, UAClientException(responseHeader.serviceResult, uahandle, "HistoryRead", sl) );
-		THROW_IFSL( !Request || resultsSize!=Request->Size(), "HistoryRead answered {} of {} nodes.", resultsSize, Request ? Request->Size() : 0 );
+		THROW_IFSL( resultsSize!=Requested, "HistoryRead answered {} of {} nodes.", resultsSize, Requested );
 	}
 
 	α HistoryReadAwait::Suspend()ι->void{
@@ -79,7 +79,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistoryReadAwait::OnComplete( UA_HistoryReadResponse* rr )ι->void{
 		_client->ClearRequest( _requestId );
-		HistoryReadResponse response{ move(*rr), move(_request) };
+		HistoryReadResponse response{ move(*rr), _request.Size() };
 		try{
 			response.Validate( _client->Handle(), _sl );
 			Resume( move(response) );

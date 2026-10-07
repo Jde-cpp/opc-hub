@@ -46,6 +46,8 @@ namespace Jde::Opc::Gateway{
 		α Earlier( const Held& a, uint slotA, const Held& b, uint slotB )Ι->bool;//the merge's order:  time, values before closing bounds, then the request's order.
 		Ω Time( const UA_DataValue& v )ι->UA_DateTime{ return v.hasSourceTimestamp ? v.sourceTimestamp : v.serverTimestamp; }
 		Ω NotFound( const UA_DataValue& v )ι->bool{ return v.hasStatus && v.status==UA_STATUSCODE_BADBOUNDNOTFOUND; }
+		//The first tick after 1601:  the end a resumed read from an end alone goes back to, standing in for none.
+		static constexpr UA_DateTime FirstTick{ 1 };
 
 		sp<UAClient> _client;
 		QL::TableQL _query;

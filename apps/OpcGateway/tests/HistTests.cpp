@@ -1,6 +1,9 @@
 //Historian 3A (#214):  hist with `opc`, the gateway reading a server's own history for the caller (spec *Pass-through*)
 //- here the embedded OpcServer's pump nodes, written on the server with source times on three past days, so a read
 //pages across its day files, and read back through the gateway's QL by time, as the web will.
+#include <absl/cleanup/cleanup.h>
+#include <jde/fwk/settings.h>
+#include <jde/historian/Historian.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
@@ -23,12 +26,14 @@ namespace Jde::Opc::Gateway::Tests{
 	struct HistTests : ::testing::Test{
 	protected:
 		Ω SetUpTestCase()ε->void{
+			let ua = Server::FindUAServer();
+			if( !ua )//SetUp skips each test.
+				return;
 			if( !SelectServerCnnctn(OpcServerSlug) )
 				CreateServerCnnctn();
-			auto& ua = Server::GetUAServer();
-			THROW_IF( !ua.History().Enabled(), "The embedded OpcServer keeps no history:  /opcServer/hist." );
+			THROW_IF( !ua->History().Enabled(), "The embedded OpcServer keeps no history:  /opcServer/hist." );
 			size_t ns{};
-			UAε( UA_Server_getNamespaceByName(ua.Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) );
+			UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) );
 			_ns = (NsIndex)ns;
 			//Three whole days before today:  before the value each node took at the start, which today's file holds, and
 			//days no midnight moves while the tests run.
@@ -40,7 +45,12 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			Write( RpmManual, 50, At(0, 15) );
 			Write( RpmManual, 70, At(2, 45) );
-			THROW_IF( !BlockAny(ua.History().Group()->Flush()), "The flush didn't write all it took." );
+			THROW_IF( !BlockAny(ua->History().Group()->Flush()), "The flush didn't write all it took." );
+		}
+		//The tests write to the server itself, so an external one (/testing/embeddedOpcServer false) can't serve them.
+		α SetUp()->void override{
+			if( !Server::FindUAServer() )
+				GTEST_SKIP() << "HistTests need the embedded OpcServer.";
 		}
 		Ω Node( UA_UInt32 id )ι->NodeId{ return NodeId{ _ns, id }; }
 		Ω At( uint day, uint second )ι->TimePoint{ return _day+days{ day }+seconds{ second }; }
@@ -180,27 +190,31 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( Same(rows, Expected(request)) );
 	}
 
-	//With returnBounds, each node's value at or before the start and its first at or after the end come too, marked:  the
-	//opening one on the first page, the closing one after the last page's values.  A later page drops the bound the
-	//server gives for the resume time.
+	//With returnBounds, each node's value at or before the start and its first at or after the end come too, the other way
+	//round in a reverse read, marked:  the opening one on the first page, the closing one after the last page's values.
+	//A later page drops the bound the server gives for the resume time.
 	TEST_F( HistTests, ReturnsBounds ){
-		const Request request{ .Nodes={Rpm4}, .Start=At(0, 15), .End=At(2, 45), .Limit=6, .Bounds=true };
-		vector<uint> pages;
-		let rows = ReadAll( request, &pages );
-		EXPECT_EQ( pages, (vector<uint>{6, 6, 5}) );
-		ASSERT_EQ( rows.size(), 17u );
-		EXPECT_TRUE( rows.front().Bound );
-		EXPECT_EQ( rows.front().Source, At(0, 10) );
-		EXPECT_TRUE( rows.back().Bound );
-		EXPECT_EQ( rows.back().Source, At(2, 50) );
-		for( uint i=1; i+1<rows.size(); ++i )
-			EXPECT_FALSE( rows[i].Bound ) << i;
-		const vector<Row> inside{ rows.begin()+1, rows.end()-1 };
-		EXPECT_TRUE( Same(inside, Expected({.Nodes={Rpm4}, .Start=At(0, 15), .End=At(2, 50)})) );
+		for( let reverse : {false, true} ){
+			SCOPED_TRACE( reverse ? "reverse" : "forward" );
+			let start = reverse ? At(2, 45) : At(0, 15), end = reverse ? At(0, 15) : At(2, 45);
+			vector<uint> pages;
+			let rows = ReadAll( {.Nodes={Rpm4}, .Start=start, .End=end, .Limit=6, .Bounds=true}, &pages );
+			EXPECT_EQ( pages, (vector<uint>{6, 6, 5}) );
+			ASSERT_EQ( rows.size(), 17u );
+			EXPECT_TRUE( rows.front().Bound );
+			EXPECT_EQ( rows.front().Source, reverse ? At(2, 50) : At(0, 10) );
+			EXPECT_TRUE( rows.back().Bound );
+			EXPECT_EQ( rows.back().Source, reverse ? At(0, 10) : At(2, 50) );
+			for( uint i=1; i+1<rows.size(); ++i )
+				EXPECT_FALSE( rows[i].Bound ) << i;
+			const vector<Row> inside{ rows.begin()+1, rows.end()-1 };
+			EXPECT_TRUE( Same(inside, Expected({.Nodes={Rpm4}, .Start=start, .End=end})) );
+		}
 	}
 
 	//An end alone reads backward from it, the common "last N values", and a start alone forward from it;  either pages on,
-	//the backward one bounded at 1601 from its second page.
+	//the backward one bounded at 1601 from its second page.  With bounds, the end's bound comes first, and the bound the
+	//server gives at 1601, an end the read doesn't have, is dropped.
 	TEST_F( HistTests, ReadsFromOneEnd ){
 		let last = Read( {.Nodes={Rpm4}, .End=At(3, 0), .Limit=4} );
 		ASSERT_EQ( last.Values.size(), 4u );
@@ -212,6 +226,12 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( before.Values[0].Source, At(2, 20) );
 		EXPECT_EQ( before.Values[3].Source, At(1, 50) );
 
+		let bounded = ReadAll( {.Nodes={Rpm4}, .End=At(3, 0), .Limit=4, .Bounds=true} );
+		ASSERT_FALSE( bounded.empty() );
+		EXPECT_TRUE( bounded.front().Bound );
+		const vector<Row> inside{ bounded.begin()+1, bounded.end() };
+		EXPECT_TRUE( Same(inside, Expected({.Nodes={Rpm4}, .Start=At(3, 0), .End=At(0, 0)})) );
+
 		let from = Read( {.Nodes={Rpm4}, .Start=At(2, 30), .Limit=3} );
 		ASSERT_EQ( from.Values.size(), 3u );
 		EXPECT_EQ( from.Values[0].Source, At(2, 30) );
@@ -220,6 +240,21 @@ namespace Jde::Opc::Gateway::Tests{
 		let on = Read( {.Nodes={Rpm4}, .Start=At(2, 30), .Limit=3}, from.Continuation );//past the test's days:  the value the node took at the start follows 2:60.
 		ASSERT_GE( on.Values.size(), 1u );
 		EXPECT_EQ( on.Values[0].Source, At(2, 60) );
+	}
+
+	//readLimit caps a page when the read passes no limit, and 0 is no limit:  the whole range on one page.
+	TEST_F( HistTests, ReadLimitZeroIsNone ){
+		let saved = Settings::FindNumber<uint>( "/gateway/hist/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
+		absl::Cleanup restore = [saved]{ try{ Settings::Set("/gateway/hist/readLimit", saved); }catch( const std::exception& ){} };//every later read takes it.
+		const Request request{ .Nodes={Rpm4, RpmManual}, .Start=At(0, 0), .End=At(3, 0) };
+		Settings::Set( "/gateway/hist/readLimit", 2 );
+		let two = Read( request );
+		EXPECT_EQ( two.Values.size(), 2u );
+		EXPECT_FALSE( two.Continuation.empty() );
+		Settings::Set( "/gateway/hist/readLimit", 0 );
+		let all = Read( request );
+		EXPECT_TRUE( all.Continuation.empty() );
+		EXPECT_TRUE( Same(all.Values, Expected(request)) );
 	}
 
 	//A continuation is the read's own:  it pages at any limit, and is refused with other nodes or times, as is a read that

@@ -13,25 +13,23 @@ namespace Jde::Opc::Gateway{
 		α operator=( HistoryReadRequest&& x )ι->HistoryReadRequest&;
 		//Adds a node, with the continuation point its last page returned, if any.
 		α Add( const UA_NodeId& node, sv continuationPoint={} )ι->void;
-		α Details()Ι->const UA_ReadRawModifiedDetails&{ return _details; }
-		α Node( uint i )Ι->const UA_NodeId&{ return _nodes[i].nodeId; }
 		α Size()Ι->uint{ return _nodes.size(); }
 	private:
 		α SetNodes()ι->void{ nodesToReadSize=_nodes.size(); nodesToRead=_nodes.data(); historyReadDetails.content.decoded.data=&_details; }//_nodes may have reallocated, and _details moved.
 		UA_ReadRawModifiedDetails _details;
 		vector<UA_HistoryReadValueId> _nodes;
 	};
-	//The response, with the request it answers:  results[i] is Request->Node(i)'s, its historyData decoded by the client
-	//to a HistoryData, or a HistoryModifiedData for a modified read.
+	//The response:  results[i] answers the request's i-th node, its historyData decoded by the client to a HistoryData, or
+	//a HistoryModifiedData for a modified read.
 	struct HistoryReadResponse final : UA_HistoryReadResponse{
 		HistoryReadResponse()ι:UA_HistoryReadResponse{}{}
-		HistoryReadResponse( UA_HistoryReadResponse&& x, HistoryReadRequest&& request )ι;
+		HistoryReadResponse( UA_HistoryReadResponse&& x, uint requested )ι;
 		HistoryReadResponse( HistoryReadResponse&& x )ι;
 		~HistoryReadResponse(){ UA_HistoryReadResponse_clear(this); }
 		α operator=( HistoryReadResponse&& x )ι->HistoryReadResponse&;
 		α Validate( Handle uahandle, SL sl )ε->void;//throws for a service result that is bad, or an answer that isn't one per node.
 		α Result( uint i )ι->UA_HistoryReadResult&{ return results[i]; }
-		optional<HistoryReadRequest> Request;
+		uint Requested{};//the nodes the request named.
 	};
 	//Sends the request through open62541's generic asynchronous service on the client's strand:  the typed helpers,
 	//UA_Client_HistoryRead_raw and the rest, are synchronous and take one node, which would hold the strand.

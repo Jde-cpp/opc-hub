@@ -64,7 +64,8 @@ namespace HistQL{
 	}
 }
 	α HistQL::ReadLimit()ι->uint{
-		return Settings::FindNumber<uint>( "/gateway/hist/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
+		let limit = Settings::FindNumber<uint>( "/gateway/hist/readLimit" ).value_or( Hist::Settings::DefaultReadLimit );
+		return limit ? limit : std::numeric_limits<uint>::max();
 	}
 	α HistQL::Encode( const Hist::Proto::Continuation& c )ι->string{
 		return Str::Encode64( c.SerializeAsString(), true );

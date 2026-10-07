@@ -9,6 +9,8 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 
 	α HistQLAwait::Execute()ι->TAwait<HistoryReadResponse>::Task{
+		jvalue y;
+		std::exception_ptr failed;
 		try{
 			_args.emplace( _query, _sl );
 			_nodes.resize( _args->Nodes.size() );
@@ -21,22 +23,32 @@ namespace Jde::Opc::Gateway{
 			}
 			auto page = Page();
 			let continuation = Continuation( page );
-			if( std::ranges::any_of(_nodes, &Node::More) ){
-				try{
-					co_await HistoryReadAwait{ Request(false, true), _client, _sl };
-				}
-				catch( const std::exception& e ){//the server's to drop with the session, then.
-					DBG( "[{}]Releasing the history continuation points failed:  {}", hex(_client->Handle()), e.what() );
-				}
-			}
 			vector<StatusCode> statuses; statuses.reserve( _nodes.size() );
 			for( let& node : _nodes )
 				statuses.push_back( node.Status );
-			Resume( HistQL::ToJson(_query, _args->Nodes, move(page), continuation, statuses) );
+			y = HistQL::ToJson( _query, _args->Nodes, move(page), continuation, statuses );
 		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
+		catch( runtime_error& ){//a round that fails leaves the points the rounds before took, which the release below frees.
+			failed = std::current_exception();
 		}
+		if( std::ranges::any_of(_nodes, &Node::More) ){
+			try{
+				co_await HistoryReadAwait{ Request(false, true), _client, _sl };
+			}
+			catch( const std::exception& e ){//the server's to drop with the session, then.
+				DBG( "[{}]Releasing the history continuation points failed:  {}", hex(_client->Handle()), e.what() );
+			}
+		}
+		if( failed ){
+			try{
+				std::rethrow_exception( failed );
+			}
+			catch( runtime_error& e ){
+				ResumeExp( move(e) );
+			}
+		}
+		else
+			Resume( move(y) );
 	}
 
 	α HistQLAwait::Reach()Ι->Horizon{
@@ -62,7 +74,7 @@ namespace Jde::Opc::Gateway{
 			details.startTime = *resume;
 			//To the end the read goes toward.  An end alone, read backward from it, resumes bounded at the first tick
 			//after 1601:  a startTime alone would read forward from the resume time.
-			details.endTime = _args->Start && _args->End ? *_args->End : _args->Reverse() ? 1 : 0;
+			details.endTime = _args->Start && _args->End ? *_args->End : _args->Reverse() ? FirstTick : 0;
 		}
 		else{
 			details.startTime = _args->Start.value_or( 0 );
@@ -87,7 +99,8 @@ namespace Jde::Opc::Gateway{
 
 	α HistQLAwait::Take( uint slot, UA_HistoryReadResult& result )ι->void{
 		auto& node = _nodes[slot];
-		node.Status = result.statusCode;
+		if( result.statusCode!=UA_STATUSCODE_GOODNODATA || !node.Last )//Good_NoData is a node's that returned nothing this call:  not an empty last page's.
+			node.Status = result.statusCode;
 		node.Point.assign( (const char*)result.continuationPoint.data, result.continuationPoint.length );
 		node.More = node.Point.size() && !UA_StatusCode_isBad( result.statusCode );
 		if( UA_StatusCode_isBad(result.statusCode) ){//the node's answer, as the server gave it.
@@ -111,13 +124,18 @@ namespace Jde::Opc::Gateway{
 		}
 		let resume = ResumeAt();
 		let reversed = _instant && _args->Reverse();//one instant's records come forward:  the pages before took them from the end.
-		uint pushed{};
+		let standIn = resume && _args->Bounds && !_args->Start;//asks for a bound at FirstTick, an end the read doesn't have.
+		//The closing bound, the node's at the end the read goes toward, is its value at or past that end, which the range
+		//leaves out, on whichever page it comes.  An open end has none.
+		let closes = _args->Bounds && _args->Start && _args->End;
 		for( uint k=0; k<count; ++k ){
 			let i = reversed ? count-1-k : k;
 			Held held{ {slot, Value{move(values[i])}} };
 			if( modifications && i<modificationCount )
 				held.Value.Modified = HistQL::Modification{ modifications[i].modificationTime, modifications[i].updateType, ToString(modifications[i].userName) };
 			let time = Time( held.Value.Data );
+			if( standIn && time<=FirstTick )
+				continue;
 			if( !node.Opened ){//the node's first value this call:  the bound at the end the read starts from, and the resume.
 				node.Opened = true;
 				node.Skip = resume ? _args->Continuation->counts( slot ) : 0;
@@ -134,14 +152,10 @@ namespace Jde::Opc::Gateway{
 				--node.Skip;
 				continue;
 			}
+			if( closes && !Before(time, *_args->End) )
+				held.Closing = held.Value.Bound = true;
 			node.Last = time;
 			node.Pending.push_back( move(held) );
-			++pushed;
-		}
-		//The closing bound, the node's at the end the read goes toward, ends its last page.  An open end has none.
-		if( !node.More && pushed && _args->Bounds && _args->Start && _args->End ){
-			auto& closing = node.Pending.back();
-			closing.Closing = closing.Value.Bound = true;
 		}
 	}
 

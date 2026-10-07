@@ -27,7 +27,7 @@ namespace Jde::Opc::Gateway::HistQL{
 		uint Limit{};
 		optional<Hist::Proto::Continuation> Continuation;//the page before's.
 	};
-	//The most values a page holds:  /gateway/hist/readLimit, 10,000 by default.
+	//The most values a page holds:  /gateway/hist/readLimit, 10,000 by default, and 0 for no limit.
 	α ReadLimit()ι->uint;
 	//The continuation as the caller carries it, base64url of the proto, and back.  Decode throws a UAException with
 	//Bad_ContinuationPointInvalid for text that isn't a continuation, one for other nodes, or one of a read with other
