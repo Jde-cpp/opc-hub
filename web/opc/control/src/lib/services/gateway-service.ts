@@ -321,7 +321,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			throw new EvalError( `Cannot browse children of variable node.`, {cause:"Invalid Operation"} );
 		const vars = { opc: cnnctn, id: parent.nodeId.toJson() };
 		const commonColumns = "id name browse nodeClass refType typeDef description";
-		const variableColumns = "dataType value valueRank accessLevel userAccessLevel";
+		const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";//historizing gates the History tab (historian 4A #218)
 		const ql = `node(opc:$opc, id:$id){children{${commonColumns} ... on Variable{${variableColumns}} }}`;
 		const children = (await this.query<any>( ql, vars, (m)=>console.log(m) ))["node"]["children"];
 		var y = new Array<UaNode>();
@@ -521,7 +521,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		//bound the error into its editors;  sc says what the reading is worth.  No member = an empty Variant, undefined rather
 		//than the empty array an empty array reading is.
 		const value = nodeValues.value ? Gateway.toValue( nodeValues.value ) : undefined;
-		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)!.next({opcId:nodeValues.opcId!, node:node, value:value, sc:sc}) );
+		//the timestamps as the server sent them - ts-proto decodes google.protobuf.Timestamp to a Date, and absent stays undefined
+		opcSubscriptions.get( node.key )?.forEach( owner=>this.#ownerSubscriptions.get(owner)!.next({opcId:nodeValues.opcId!, node:node, value:value, sc:sc, source:nodeValues.source, server:nodeValues.server}) );
 	};
 
 	private clearOwnerNode( opcSubscriptions:Map<NodeKey, Owner[]>,  key:NodeKey, owner:Owner ){
@@ -583,6 +584,9 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	get name():string{ return this.instances[0].instanceName!; }
 	get slug():GatewaySlug{ return this.instances[0].instanceName!; }
 }
-export type SubscriptionResult = Reading & {opcId:string, node:NodeId};//a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a refused request, not a reading.
+//a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a
+//refused request, not a reading.  `source`/`server` are the reading's timestamps when the server sent them (historian 4A
+//#218):  the history trend places a push after its read by source time.
+export type SubscriptionResult = Reading & {opcId:string, node:NodeId, source?:Date, server?:Date};
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );

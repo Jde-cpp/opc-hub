@@ -94,7 +94,7 @@ The design is the spec's *Pass-through* section, whose five points were ruled an
 
 ## Phase 4 — web for pass-through, step 3 ([#217])
 
-- **Charting library.** There is none in [`opc/control/package.json`](../../../web/opc/control/package.json) today, so choosing one comes first. It needs stepped and interpolated series, a time axis that pans into more pages, and point markers for status.
+- **Charting library.** There is none in [`opc/control/package.json`](../../../web/opc/control/package.json) today, so choosing one comes first. It needs stepped and interpolated series, a time axis that pans into more pages, and point markers for status. Chosen in 4A ([#218]): Highcharts Stock, a peer of `jde-opc` installed by [`jde-opc.sh`](../../../web/opc/scripts/jde-opc.sh) and loaded on first use, never in the initial bundle.
 - **One history service** takes a source, `{opc}` or `{group}`. Phase 4 implements `opc`, and Phase 6 adds `group` without touching the components.
 - **Components.**
   - A trend: stepped by default, gaps drawn where status is Bad; "load earlier" is a reverse read with only `end`.

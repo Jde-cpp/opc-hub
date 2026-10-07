@@ -1,0 +1,56 @@
+:host{
+	display: block;
+	width: 100%;
+}
+
+/* the toolbar mirrors the Children tab's (node-children.scss):  the node chips where its refresh and view group sit, the
+controls at the right edge */
+mat-toolbar{
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: .5rem;
+	height: auto;
+	min-height: 56px;
+	padding-block: .25rem;
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	flex-wrap: wrap;
+}
+.bar-left, .bar-right{
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	min-width: 0;
+}
+.bar-left{
+	flex: 1 1 300px;
+}
+.node-chips{
+	--mat-chip-container-height: 28px;
+}
+.row-count{
+	font: var(--mat-sys-label-large);
+	color: var(--mat-sys-on-surface-variant);
+	white-space: nowrap;
+}
+.refresh-bar{
+	flex: 0 0 100%;
+}
+/* a node the server refused:  the reason in a line, with the icon the Status cells use for Bad */
+.refused{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: .5rem 1rem 0;
+	color: var(--mat-sys-on-surface-variant);
+	mat-icon{
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-error);
+	}
+}
+hist-trend{
+	margin: .5rem 0;
+}

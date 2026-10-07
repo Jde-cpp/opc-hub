@@ -13,9 +13,11 @@ If the gateway cannot open a session for you, a message says why and you are ret
 
 The connection's **Connection** tab under [Applications](/apps) shows the reason too.
 
-A node page has a **Children** tab and, for the bundled OPC server, a **Permissions** tab.
+A node page has a **Children** tab, a **History** tab when the server keeps the history of any of its children that you may read, and, for the bundled OPC server, a **Permissions** tab.
 
 **Children** lists the node's child nodes with their current values. Click an object node to descend; the breadcrumb trail leads back up. The refresh button re-reads the values; the view buttons switch between saved views, and the tune button beside them sets a view's columns, filters and sort - see [Views](/help/lists#views).
+
+**History** trends the node's historized children and lists their values. The chips pick the nodes, up to eight. The trend is stepped by default - a value holds until the next - or interpolated; drag to zoom, shift-drag to pan, and the strip under it scrolls. A `Bad` reading is a gap in its line, flagged `!` with its status; an `Uncertain` one keeps its value under a triangle. Opening reads the latest values; **Load earlier** reads the page before them, as does panning to the left edge. **Live** appends values as the server publishes them. The table lists every value loaded, newest first, with both timestamps and the status.
 
 **Status** is the quality the server gives a value: **Good**, **Uncertain** or **Bad**, as OPC UA defines them. It shows by name, such as `Good`, `UncertainSensorNotAccurate` or `BadSensorFailure`.
 

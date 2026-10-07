@@ -1,5 +1,6 @@
 #include "opc.FromServer.h"
 #include <jde/opc/UAException.h>
+#include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/proto/opc.Common.h>
@@ -79,6 +80,10 @@ namespace Jde::Opc::Gateway{
 		auto nv = mu<FromServer::NodeValues>();
 		*nv->mutable_node() = ProtoUtils::ToNodeId( node );
 		nv->set_opc_id( opcId );
+		if( v.hasSourceTimestamp )//the history trend places a push after the read by source time (historian 4A #218).
+			*nv->mutable_source() = UADateTime{ v.sourceTimestamp }.ToProto();
+		if( v.hasServerTimestamp )
+			*nv->mutable_server() = UADateTime{ v.serverTimestamp }.ToProto();
 		StatusCode sc = v.status;//the reading's quality - without it a Bad or Uncertain reading was indistinguishable from a Good one on the socket (proto3 omits 0/Good from the wire).
 		try{
 			*nv->mutable_value() = ProtoUtils::ToValue( v.value );

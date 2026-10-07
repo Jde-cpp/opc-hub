@@ -2,6 +2,7 @@ syntax = "proto3";
 package Jde.Opc.Gateway.FromServer;
 import "Opc.Common.proto";
 import "Common.proto";
+import "google/protobuf/timestamp.proto";
 
 message MonitoredItemCreateResult{
   uint32 status_code=1;
@@ -19,6 +20,8 @@ message NodeValues{
 	Jde.Opc.Proto.NodeId node=2;
 	Jde.Opc.Proto.Value value=3;//the whole reading:  an array is its `array` member, with its type and dimensions.  No member = an empty Variant.
 	uint32 sc=4;//the UA_DataValue's quality - one per reading, even when the value is an array.  0 = Good.  The gateway's own code, with no value, when it cannot convert the value.
+	google.protobuf.Timestamp source=5;//the reading's timestamps, those the server sent:  the history trend places a push after the read by source time (historian 4A #218).
+	google.protobuf.Timestamp server=6;
 }
 
 message UnsubscribeAck{

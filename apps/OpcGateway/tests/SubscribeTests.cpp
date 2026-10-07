@@ -10,6 +10,7 @@
 #include "utils/GatewayClientSocket.h"
 #include "../src/types/proto/opc.FromServer.h"
 #include <jde/opc/proto/opc.Common.h>
+#include <jde/opc/uatypes/DateTime.h>
 #include "utils/ITest.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/opc/ServerTrust.h>
@@ -1028,5 +1029,26 @@ namespace Jde::Opc::Gateway::Tests{
 		let ok = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(bad)}, 0 );
 		EXPECT_EQ( ok.node_values().value().int32(), 7 );
 		EXPECT_EQ( ok.node_values().sc(), UA_STATUSCODE_BADSENSORFAILURE );
+	}
+
+	//historian 4A #218:  the web joins a push to a history read by source time, so a push carries the timestamps the reading
+	//has, and none for one the server left out.
+	TEST( FromServerTests, APushCarriesTheReadingsTimestamps ){
+		UA_DataValue dv{};
+		dv.hasValue = true;
+		const UA_Int32 i{ 7 };
+		UA_Variant_setScalarCopy( &dv.value, &i, &UA_TYPES[UA_TYPES_INT32] );
+		let bare = FromServer::ToProto( "opc", NodeId{}, Opc::Value{dv}, 0 );
+		EXPECT_FALSE( bare.node_values().has_source() );
+		EXPECT_FALSE( bare.node_values().has_server() );
+
+		let source = UA_DateTime_now()-UA_DATETIME_SEC, server = source+UA_DATETIME_MSEC;
+		dv.hasSourceTimestamp = true; dv.sourceTimestamp = source;
+		dv.hasServerTimestamp = true; dv.serverTimestamp = server;
+		let stamped = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0 );
+		ASSERT_TRUE( stamped.node_values().has_source() );
+		ASSERT_TRUE( stamped.node_values().has_server() );
+		EXPECT_EQ( UADateTime{stamped.node_values().source()}.UA(), source );
+		EXPECT_EQ( UADateTime{stamped.node_values().server()}.UA(), server );
 	}
 }
