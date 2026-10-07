@@ -24,7 +24,6 @@ endif()
 #######################################################
 target_precompile_headers(${targetName}
   PUBLIC
-	<jde/web/client/exports.h>
 	<jde/web/client/proto/Web.FromServer.pb.h>
 	<jde/fwk.h>
 	PRIVATE

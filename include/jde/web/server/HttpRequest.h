@@ -11,7 +11,7 @@ namespace Jde::Web::Server{
 	α ServerVersion( bool isSsl )ι->str;
 
 	struct RestException;
-	struct ΓWS HttpRequest final{
+	struct HttpRequest final{
 		HttpRequest( TRequestType&& request, tcp::endpoint userEndpoint, bool isSsl, uint32 connectionId )ι;
 		HttpRequest( const HttpRequest& ) = delete;
 		HttpRequest( HttpRequest&& ) = default;

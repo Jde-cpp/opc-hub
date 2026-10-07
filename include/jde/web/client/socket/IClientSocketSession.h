@@ -1,6 +1,5 @@
 #pragma once
 #include <boost/unordered/concurrent_flat_map.hpp>
-#include "../exports.h"
 #include "ClientSocketStream.h"
 #include "ClientSocketAwait.h"
 #include "jde/fwk/process/process.h"
@@ -29,7 +28,7 @@ namespace Jde::Web::Client{
 	};
 
 	//TODO check what should be protected
-	struct ΓWC IClientSocketSession : IShutdown, std::enable_shared_from_this<IClientSocketSession>{
+	struct IClientSocketSession : IShutdown, std::enable_shared_from_this<IClientSocketSession>{
 		IClientSocketSession( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι;// Resolver and socket require an io_context
 		virtual ~IClientSocketSession()=default;
 		α Shutdown( bool terminate, SL sl )ι->void override;

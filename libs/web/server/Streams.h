@@ -3,14 +3,13 @@
 #include <boost/beast/ssl/ssl_stream.hpp>
 #include <jde/web/SocketCore.h>
 #include <jde/web/server/usings.h>
-#include <jde/web/server/exports.h>
 
 namespace Jde::Web::Server{
 	struct IWebsocketSession; struct ISocketStream;
 	//Non-template handle for the http side - RestStream<TStream> owns the socket once RunSession hands it over, and turns it into the websocket on upgrade.
-	struct ΓWS IRestStream: std::enable_shared_from_this<IRestStream>{
+	struct IRestStream: std::enable_shared_from_this<IRestStream>{
 		virtual ~IRestStream()=default;
-		β AsyncWrite( http::message_generator&& m )ι->void=0;
+		β AsyncWrite( http::response<http::string_body>&& res )ι->void=0;//the connection's last response:  sent with Connection: close, then the socket is shut down.
 		β CreateSocketStream( beast::flat_buffer&& buffer )ι->sp<ISocketStream> = 0;
 	protected:
 		α OnWrite( beast::error_code ec, uint bytes_transferred )ι->void;
@@ -20,14 +19,15 @@ namespace Jde::Web::Server{
 	template<class TStream>
 	struct RestStream final: IRestStream{
 		RestStream( TStream&& stream )ι:_stream{ move(stream) }{}
-		α AsyncWrite( http::message_generator&& m )ι->void override;
+		α AsyncWrite( http::response<http::string_body>&& res )ι->void override;
 		α CreateSocketStream( beast::flat_buffer&& buffer )ι->sp<ISocketStream> override;
 	private:
+		α OnWrite( beast::error_code ec, uint bytes_transferred )ι->void;
 		TStream _stream;
 	};
 
 	//Non-template handle held by IWebsocketSession; SocketStream<TStream> supplies the beast ops.
-	struct ΓWS ISocketStream{
+	struct ISocketStream{
 		virtual ~ISocketStream()=default;
 		β Write( string&& buffer, sp<IWebsocketSession> session )ι->void=0;
 		β DoAccept( TRequestType request, sp<IWebsocketSession> session )ι->void=0;

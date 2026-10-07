@@ -16,7 +16,6 @@
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/NodeId.h>
 
-#include <jde/web/client/exports.h>
 DISABLE_WARNINGS
 #include <jde/web/client/proto/Web.FromServer.pb.h>
 #include <jde/app/proto/App.FromClient.pb.h>

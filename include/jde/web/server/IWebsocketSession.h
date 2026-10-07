@@ -14,7 +14,7 @@ namespace Jde::QL{ struct Subscription; }
 
 namespace Jde::Web::Server{
 	struct IRestStream; struct ISocketStream; template<class TStream> struct SocketStream;
-	struct ΓWS IWebsocketSession : std::enable_shared_from_this<IWebsocketSession>{
+	struct IWebsocketSession : std::enable_shared_from_this<IWebsocketSession>{
 		IWebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α Run()ι->void;
 		α Id()Ι->SocketId{ return _id; }

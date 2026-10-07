@@ -56,7 +56,7 @@ namespace Server{
 			}
 			if( !res ){
 				HandleRequest( move(req), ms<RestStream<T>>(move(stream)), reqHandler );
-				co_return;//TODO handle keepalive
+				co_return;//the socket is the RestStream's now, and it answers Connection: close - no keep-alive (web-refactor B3).
 			}
 			if( res && !res->keep_alive() ){
 				auto [ec, sz] = co_await beast::async_write( stream, move(*res) );

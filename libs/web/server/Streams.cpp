@@ -11,8 +11,25 @@ namespace Jde::Web::Server{
 	}
 
 #define $ template<class TStream> auto RestStream<TStream>
-	$::AsyncWrite( http::message_generator&& m )ι->void{
-		beast::async_write( _stream, move(m), beast::bind_front_handler(&RestStream::OnWrite, shared_from_this()) );//&RestStream:: not &IRestStream:: - OnWrite is protected.
+	//No keep-alive (web-refactor B3):  RunSession hands the socket over for one request and reads no further one, so the response
+	//says so - advertising keep-alive left a browser to reuse a connection that was already closing.
+	$::AsyncWrite( http::response<http::string_body>&& res )ι->void{
+		res.keep_alive( false );
+		beast::async_write( _stream, http::message_generator{move(res)}, beast::bind_front_handler(&RestStream::OnWrite, std::static_pointer_cast<RestStream>(shared_from_this())) );
+	}
+	$::OnWrite( beast::error_code ec, uint bytes_transferred )ι->void{
+		IRestStream::OnWrite( ec, bytes_transferred );
+		if constexpr( std::is_same_v<TStream, beast::ssl_stream<StreamType>> ){
+			beast::get_lowest_layer( _stream ).expires_after( 5s );//a peer that never answers the close_notify must not hold the socket.
+			_stream.async_shutdown( [self=std::static_pointer_cast<RestStream>(shared_from_this())]( beast::error_code ec ){
+				if( ec )
+					TRACET( ELogTags::HttpServerWrite, "shutdown: {}", ec.message() );
+			} );
+		}
+		else{
+			beast::error_code shutdownEc;
+			_stream.socket().shutdown( tcp::socket::shutdown_send, shutdownEc );
+		}
 	}
 
 	$::CreateSocketStream( beast::flat_buffer&& buffer )ι->sp<ISocketStream>{

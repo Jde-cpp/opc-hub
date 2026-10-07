@@ -12,11 +12,9 @@
 
 #include <jde/fwk.h>
 #include <jde/fwk/io/json.h>
-#include <jde/web/server/exports.h>
 #include <jde/opc/usings.h>
 #include <jde/opc/UAException.h>
 
-#include <jde/web/client/exports.h>
 DISABLE_WARNINGS
 #include <jde/web/client/proto/Web.FromServer.pb.h>
 #include <jde/app/proto/App.FromClient.pb.h>

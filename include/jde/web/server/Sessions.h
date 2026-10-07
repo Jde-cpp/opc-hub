@@ -3,9 +3,7 @@
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/Task.h>
 #include <jde/ql/IQLSession.h>
-#include "exports.h"
 
-#define Φ auto ΓWS
 namespace Jde::App{ struct IApp; }
 namespace Jde::Web{ struct Jwt; }
 namespace Jde::Web::FromServer{ struct SessionInfo; }
@@ -31,17 +29,17 @@ namespace Jde::Web::Server{
 
 	//TODO - change to GraphQL.
 	namespace Sessions{
-		Φ Add( UserPK userPK, string&& endpoint, bool isSocket )ι->sp<SessionInfo>;
-		Φ Find( SessionPK sessionId )ι->sp<SessionInfo>;
+		α Add( UserPK userPK, string&& endpoint, bool isSocket )ι->sp<SessionInfo>;
+		α Find( SessionPK sessionId )ι->sp<SessionInfo>;
 		//Find, and slide a still-live session's expiration to NewExpiration() - a day for a socket-backed one.  No endpoint
 		//check:  the caller vouches for the asker (the AppServer's SessionInfo handler, for a registered app instance).  An
 		//expired session is returned as-is, never revived - the same rule as UpdateExpiration.
-		Φ Extend( SessionPK sessionId )ι->sp<SessionInfo>;
-		Φ Remove( SessionPK sessionId )ι->bool;
+		α Extend( SessionPK sessionId )ι->sp<SessionInfo>;
+		α Remove( SessionPK sessionId )ι->bool;
 		α RestSessionTimeout()ι->steady_clock::duration;
 		α Get()ι->vector<sp<SessionInfo>>;
 
-		struct ΓWS UpsertAwait : TAwait<sp<SessionInfo>>, noncopyable{
+		struct UpsertAwait : TAwait<sp<SessionInfo>>, noncopyable{
 			using base = TAwait<sp<SessionInfo>>;
 			UpsertAwait( str authorization, str endpoint, bool socket, sp<App::IApp> appClient, bool throw_=true, SRCE )ι:base{sl}, _appClient{move(appClient)}, _authorization{authorization}, _endpoint{endpoint}, _socket{socket}, _throw{throw_}{}
 			α Suspend()ι->void override{ Run(); }
@@ -51,4 +49,3 @@ namespace Jde::Web::Server{
 		};
 	}
 }
-#undef Φ

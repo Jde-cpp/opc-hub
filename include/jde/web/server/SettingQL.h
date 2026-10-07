@@ -1,6 +1,5 @@
 #pragma once
 #include <jde/ql/QLHook.h>
-#include "exports.h"
 
 namespace Jde::App{ struct IApp; }
 namespace Jde::QL{ struct TableQL; }

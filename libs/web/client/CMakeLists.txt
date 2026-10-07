@@ -34,7 +34,6 @@ protobuf_generate(
 	TARGET ${targetName}
 	IMPORT_DIRS proto
 	PROTOC_OUT_DIR ${protoOutDir}
-	EXPORT_MACRO Jde_Web_Client_EXPORT
 )
 suppressProtoWarnings( "${protos}" ${protoOutDir} )
 target_include_directories( ${targetName} PUBLIC ${jdeGeneratedIncludeDir} ${protoOutDir} ) #the root for `<jde/web/client/proto/Web.FromServer.pb.h>`, the proto dir for protoc's own bare-name includes.

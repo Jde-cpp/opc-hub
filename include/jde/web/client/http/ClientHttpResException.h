@@ -1,10 +1,9 @@
 #pragma once
 #include <jde/fwk/exceptions/Exception.h>
-#include "../exports.h"
 #include "ClientHttpRes.h"
 
 namespace Jde::Web::Client{
-	struct ΓWC ClientHttpResException final : ExternalException{
+	struct ClientHttpResException final : ExternalException{
 		//the status alone is not a message - without the reason phrase & body, what() is empty and the failure surfaces as a blank line.
 		ClientHttpResException( ClientHttpRes&& res, string url, SRCE )ι:
 			ExternalException{

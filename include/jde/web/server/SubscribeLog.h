@@ -1,6 +1,5 @@
 #pragma once
 #include <jde/app/usings.h>
-#include "exports.h"
 #include "usings.h"
 
 namespace Jde::QL{ struct Subscription; struct Filter; }

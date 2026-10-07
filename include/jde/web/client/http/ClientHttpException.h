@@ -1,9 +1,8 @@
 #pragma once
 #include "../usings.h"
-#include "../exports.h"
 
 namespace Jde::Web::Client{
-	struct ΓWC ClientHttpException : CodeException{
+	struct ClientHttpException : CodeException{
 		ClientHttpException( beast::error_code ec, ELogLevel level=ELogLevel::Debug, SRCE )ι;
 		ClientHttpException( beast::error_code ec, str host, PortType port={}, ELogLevel level=ELogLevel::Debug, SRCE )ι;
 		ClientHttpException( beast::error_code ec, str host, str target, PortType port, ELogLevel level=ELogLevel::Debug, SRCE )ι;

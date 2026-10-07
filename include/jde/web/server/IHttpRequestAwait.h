@@ -5,7 +5,7 @@
 #include "RestException.h"
 
 namespace Jde::Web::Server{
-	struct ΓWS HttpTaskResult{
+	struct HttpTaskResult{
 		HttpTaskResult()=default;
 		HttpTaskResult( HttpRequest&& req )ι:Request{move(req)}{}
 		HttpTaskResult( HttpTaskResult&& )ι=default;

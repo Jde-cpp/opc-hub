@@ -192,6 +192,12 @@ namespace Jde::Web{
 		EXPECT_TRUE( j.contains("connectionId") ) << serialize(j);
 		EXPECT_FALSE( j.at("active").as_bool() ) << "no Authorization, so no session to be active";
 	}
+	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
+	//browser would reuse a connection that is already closing.
+	TEST_F( WebTests, HandledResponseClosesTheConnection ){
+		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} );
+		EXPECT_EQ( "close", res[http::field::connection] );
+	}
 	TEST_F( WebTests, BadTarget ){
 		try{
 			auto await = ClientHttpAwait{ Host, "/BadTarget", Port };

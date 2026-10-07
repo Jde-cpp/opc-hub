@@ -1,7 +1,6 @@
 #pragma once
 #include "ClientHttpRes.h"
 #include <jde/fwk/co/Await.h>
-#include "../exports.h"
 #include "../usings.h"
 
 namespace Jde::Web::Client{
@@ -15,7 +14,7 @@ namespace Jde::Web::Client{
 		uint8 Redirects{ 5 };//hop budget: each redirect forwards a copy with one fewer, and running out is an error.
 	};
 	//One http request and the redirects that follow it, each hop on a connection of its own.  An error status throws ClientHttpResException.
-	struct ΓWC ClientHttpAwait : TAwait<ClientHttpRes>{
+	struct ClientHttpAwait : TAwait<ClientHttpRes>{
 		using base = TAwait<ClientHttpRes>;
 		ClientHttpAwait( string host, string target, string body, PortType port=443, HttpAwaitArgs args={}, SRCE )ι;
 		ClientHttpAwait( string host, string target, PortType port=443, HttpAwaitArgs args={}, SRCE )ι;
