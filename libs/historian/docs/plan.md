@@ -11,10 +11,10 @@ A plan for [`spec.md`](spec.md) ("last edited 2026-09-29"), written after both s
 That order is kept: OpcServer first and the gateway historian last. The plan changes three things:
 
 - **Phase 0.** Some prerequisites are needed by both hosts. They land first, as small PRs that are each useful alone, so the OpcServer work doesn't start by pulling them in.
-- **Step 2 is not in the spec.** The spec's `hist(group, …)` reads the gateway's own files, and the gateway never sends HistoryRead to a server. The pass-through is worth adding, but it needs a spec section first; a draft is in the *Appendix*, below, ready to fold.
+- **Step 2 was not in the spec.** The spec's `hist(group, …)` read only the gateway's own files, and the gateway never sent HistoryRead to a server. The pass-through was drafted in this plan's appendix and, once its five points were ruled, folded into the spec as *Pass-through* on 2026-10-07 ([#213]).
 - **Steps 1–3 are built one capability at a time, not one layer at a time** (*Slices*, below). Raw reads should work end to end (library → OpcServer → gateway → web) before edits or aggregates start. That way the QL result shape and continuation are tested by a real user of them before Phase 5 has to match them.
 
-Status is tracked on GitHub. [#193] is the parent issue, each phase below names its own issue, and slices A, B and C are milestones. The appendix's rulings are open in [#213].
+Status is tracked on GitHub. [#193] is the parent issue, each phase below names its own issue, and slices A, B and C are milestones. The pass-through's rulings and fold went through [#213].
 
 ## Phase 0 — shared prerequisites ([#194])
 
@@ -22,7 +22,7 @@ Each item is its own PR, useful without the historian.
 
 | # | Item | Why now |
 | --- | --- | --- |
-| 0.1 [#195] | **`Value` move** (spec *Values*, [`spec.md:73`](spec.md#L73)). Move `Value` from [`Opc.FromServer.proto`](../../../apps/OpcGateway/src/types/proto/Opc.FromServer.proto) into [`Opc.Common.proto`](../../../libs/opc/src/proto/Opc.Common.proto), and move that file from the gateway into `Jde.Opc`. Add `LocalizedText`, `QualifiedName`, `ExtensionObject` (type id and body), and `Array` (`repeated Value` plus dimensions). Add `Variant`↔`Value` conversion in both directions. Regenerate the web's generated code in `web/opc/control` (the current tree) and in `web/opc/proto`. | Both hosts encode with it, and the pass-through decodes with it. `/opc` gains the new types immediately, and the web shows them instead of `BadNotImplemented`. Round-trip every built-in type in `libs/opc/tests`' `ValueTests`/`VariantTests`. |
+| 0.1 [#195] | **`Value` move** (spec *Values*, [`spec.md:75`](spec.md#L75)). Move `Value` from [`Opc.FromServer.proto`](../../../apps/OpcGateway/src/types/proto/Opc.FromServer.proto) into [`Opc.Common.proto`](../../../libs/opc/src/proto/Opc.Common.proto), and move that file from the gateway into `Jde.Opc`. Add `LocalizedText`, `QualifiedName`, `ExtensionObject` (type id and body), and `Array` (`repeated Value` plus dimensions). Add `Variant`↔`Value` conversion in both directions. Regenerate the web's generated code in `web/opc/control` (the current tree) and in `web/opc/proto`. | Both hosts encode with it, and the pass-through decodes with it. `/opc` gains the new types immediately, and the web shows them instead of `BadNotImplemented`. Round-trip every built-in type in `libs/opc/tests`' `ValueTests`/`VariantTests`. |
 | 0.2 [#196] | **CRC-32C.** Add `IO::Crc::Calc32c` beside `Calc32` in [`crc.h`](../../../include/jde/fwk/io/crc.h): a compile-time table, and `absl::ComputeCrc32c` at run time. Abseil becomes one shared library, built on every preset with `cpuFlags`, which turn on SSE4.2 and PCLMULQDQ, so the run-time path is its hardware CRC. | Needed for checkpoints and `.flushed`. Test both paths against the standard vector, `"123456789"` → `0xE3069283`. |
 | 0.3 [#197] | **Build flag.** Pin `-DUA_ENABLE_HISTORIZING=ON` in [`build/CMakeLists.txt`](../../../build/CMakeLists.txt). | Today it is only open62541's default. |
 | 0.4 [#198] | **`Authorize` keeps names current.** `AccessListener::UserChanged` ([`AccessListener.cpp:49`](../../../libs/access/src/AccessListener.cpp#L49)) passes the event's name to `CreateUser` and applies `Updated`. | OpcServer's edits store `user_name` through `OpcAuthorize` too, so this can't wait for the gateway. |
@@ -81,7 +81,7 @@ Each item is its own PR, useful without the historian.
 
 ## Phase 3 — gateway pass-through, step 2 ([#212])
 
-Fold the *Appendix* into the spec first, with its rulings ([#213]). Then:
+The design is the spec's *Pass-through* section, whose five points were ruled and folded on 2026-10-07 ([#213]). The work:
 
 - **Awaits.** `HistoryReadAwait` and `HistoryUpdateAwait` go beside `ReadAwait`. They send through open62541's generic async service, [`__UA_Client_AsyncService`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel_async.h#L60), the gateway's first use of it; `ReadAwait` uses the typed `UA_Client_sendAsyncReadRequest` ([`ReadAwait.cpp:226`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L226)). The high-level helpers ([`UA_Client_HistoryRead_raw`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel.h#L166) and the rest) are synchronous and take one node, which would block the strand. The request and response wrappers are move-only and deep-copy their NodeIds, as `ReadRequest` does ([`ReadAwait.h:8`](../../../apps/OpcGateway/src/async/ReadAwait.h#L8)).
 - **Dispatch.** `GatewayQLAwait` routes the `hist*` fields that carry `opc`. `needsClient` already opens the caller's client for any query with `opc` ([`GatewayQLAwait.cpp:45`](../../../apps/OpcGateway/src/ql/GatewayQLAwait.cpp#L45)), the same way `updateVariable` gets it ([`VariableQLAwait.cpp:11`](../../../apps/OpcGateway/src/ql/VariableQLAwait.cpp#L11)).
@@ -148,40 +148,8 @@ Slice A is the long one, since it carries all of storage. Its payoff is the chec
 
 - **Library shaped by its first host.** Mitigated by the host-interface table and a multi-group fixture from Phase 1.
 - **The service lock.** OpcServer's history callbacks run on its one server thread. The one-day-per-callback bound is the guard; measure it under the emulator in Phase 2 rather than assume it.
-- **Pass-through overfetch.** Merging nodes up to a horizon rereads what lies past it (*Appendix*). A 10-node read that asks each node for `limit` values fetches up to 10× what it returns. If that shows, ask for `limit / nodes` per node, rounded up, and accept more round trips when one node dominates.
+- **Pass-through overfetch.** Merging nodes up to a horizon rereads what lies past it (spec *Pass-through*). A 10-node read that asks each node for `limit` values fetches up to 10× what it returns. If that shows, ask for `limit / nodes` per node, rounded up, and accept more round trips when one node dominates.
 - **Spec drift.** When implementation forces a change, the PR changes `spec.md` with it, so the spec stays the description of what ships.
-
-## Appendix — draft spec section: pass-through
-
-Written in the spec's voice, to fold into `spec.md` once the rulings below are made. [#213] tracks the rulings and the fold. Section references are the spec's.
-
-### Rulings needed
-
-| # | Question | Proposed |
-| --- | --- | --- |
-| P1 | QL surface | The same `hist*` fields, taking `opc` in place of `group`; exactly one of the two. The alternative is separate fields (`uaHist`…) with the same result types. |
-| P2 | UA continuation points | Confined to one QL call and released before it answers. The QL continuation is by time, as a group's. |
-| P3 | Several nodes in one read | Merged by source time up to a horizon, as a group read returns them. The alternative is per-node results, which would make the pass-through's shape differ from `hist`'s. |
-| P4 | A gateway group adding a node its server already historizes | Warn and allow, since the spec accepts storage by both (*Hosts*). Refusing would force the pass-through for those nodes. |
-| P5 | `histDeleteAtTime` through the pass-through | Offered. OpcServer refuses it, but other servers may serve it. |
-
-### Requirements row
-
-| Area | Requirement | From |
-| --- | --- | --- |
-| Pass-through | On the gateway, read and edit the history a server keeps itself, through the same QL fields as a group's, over the caller's own UA session, so the server's access rules decide and the gateway stores nothing. | decision pending |
-
-### Edits to existing sections
-
-- **Hosts** ([`spec.md:59`](spec.md#L59)), append: "Apart from its groups, the gateway reads and edits the history a server keeps itself, OpcServer's or any other Part 11 server's, for the caller (*Pass-through*), which stores nothing on the gateway."
-- **Authorization** ([`spec.md:107`](spec.md#L107)), append: "A pass-through read or edit is checked by the server it goes to, under the caller's own session (*Pass-through*)."
-- **Diagram** ([`spec.md:42`](spec.md#L42)): add `GW -->|HistoryRead, HistoryUpdate<br/>pass-through| OS`.
-
-### New section, after *Edits*
-
-**Pass-through.** The gateway also serves the history a server keeps itself, OpcServer's (*OpcServer*) or that of any other server implementing Part 11, so a node the server already historizes can be read and edited from the web without a group storing it again. The QL fields are those of *Reads* and *Edits*: `hist`, `histAtTime`, `histAggregate`, `histInsert`, `histReplace`, `histUpdate`, `histDelete` and `histDeleteAtTime`. Each takes `opc`, the connection as `node` takes it, in place of `group`. A call that names both, or neither, is refused, and `histResolve` and `/hist` stay group-only. The result has a group read's shape, so the web draws both with the same components. The heartbeat flag is never set, since a server's records carry none. The request goes over the caller's own UA session, the client `node(opc:…)` uses, keyed by the web session's credential, never over the collector's (*Collector contract*). So the server's own access control decides what the caller may read or change, and the gateway checks no group rights: a node the server refuses comes back with the server's status code. The gateway sends `HistoryReadRequest` and `HistoryUpdateRequest` through open62541's asynchronous service call on the client's strand. open62541's `UA_Client_HistoryRead_raw` family is synchronous and takes one node, so it is not used. `hist` is `ReadRawModifiedDetails`, with `modified` and `returnBounds` passed through and reverse and open-ended ranges mapped onto Part 11's own. `histAtTime` is `ReadAtTimeDetails`, with `useSimpleBounds` true. `histAggregate` is `ReadProcessedDetails`, with `useServerCapabilitiesDefaults` true: each Part 13 aggregate name maps to its standard NodeId, and any other, such as OpcServer's Median, is found by browse name in the server's `HistoryServerCapabilities/AggregateFunctions` folder, read once per client. Every read asks for `timestampsToReturn` `BOTH`, and values convert to `Value` as `/opc`'s do (*Values*). The edits are `UpdateDataDetails` with the matching `PerformUpdateType`, `DeleteRawModifiedDetails`, and `DeleteAtTimeDetails`, which OpcServer refuses (*UA backend*) but another server may serve. `isDeleteModified` stays false, as on a group. The server keeps its own audit trail, so the gateway writes no `Modification` record and flushes nothing, and each value's result is the server's operation result.
-
-A UA continuation point never outlives the QL call that received it. It lives in the server's session, and a server caps how many one session holds (`MaxHistoryContinuationPoints`). The gateway drops and rebuilds a web user's session when its connection fails, so a point held between pages would be lost on a reconnect, and leaked by a caller that stops paging. Within a call, the gateway asks each node for at most `limit` values and follows each node's continuation point until the call has `limit` values or the server has no more. Before it answers, it releases every point it still holds, with `releaseContinuationPoints` true. The QL continuation it returns has the stateless form a group read's has (*Reads*): the last source time returned, how many records at that time each node has had, and a hash of the other arguments. The next page is a new HistoryRead from that time. A later page of a read with `returnBounds` still asks for bounds, for the end bound, and drops the start bound the server returns for the resume time. The server pages each node on its own, so the gateway merges their pages by source time up to the horizon: the earliest last-returned time among the nodes the server has more for. It returns at most `limit` values up to the horizon, and the next page reads again what lies past it. A reverse read merges the same way, latest first. Nothing a pass-through read or edit does touches the gateway's historian. It works whether or not a group holds the node, and while the historian is disabled by its lock (*Day files*). Live values after the history come from the caller's `/opc` subscription, which the client places by source time; `/hist`'s gap-free snapshot and stream are a group's alone.
 
 [#193]: https://github.com/Jde-cpp/opc-hub/issues/193
 [#194]: https://github.com/Jde-cpp/opc-hub/issues/194
