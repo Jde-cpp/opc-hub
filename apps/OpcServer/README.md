@@ -41,6 +41,14 @@ values moving.  Without it every value in the shipped address space is static.
   - username/password against `/opc/users`, an opt-in list nothing shipped sets.
 
   Anonymous is off by default (`/opc/tokenTypes`).  A session's rights are the hub user's.
+- **History** (`src/hist/`): the server keeps the history of every variable a nodeset marks `Historizing="true"` and
+  serves it to HistoryRead, raw reads so far ([`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md),
+  *OpcServer*).  Each such variable is configured by its `HA Configuration` object - `ExceptionDeviation` and its format,
+  `MinTimeInterval`, `MaxTimeInterval`, `Stepped` - and the server adds what the nodeset leaves out, the object itself
+  included, and the HistoryRead bit in the node's `AccessLevel`.  The files go under `/opcServer/hist/path`, which the
+  process locks; with no `/opcServer/hist` block there is no history.  Reading a node's history takes Read on the node.
+  The pumps nodeset marks six variables, one for each deviation format.  At shutdown the log says how long the history
+  callbacks held open62541's service lock, and a read that holds it 100 ms is warned of as it happens.
 - **Part 14 PubSub** (`src/pubsub/PubSubReader.*`): a UADP `DataSetReader` for the contract in
   [`config/pubsub/pumps.libsonnet`](config/pubsub/pumps.libsonnet) that the emulator publishes with.  Deliberately not
   in the stock config - a reader writes its target nodes with no session and no acl - so it is an overlay, below.
@@ -81,6 +89,8 @@ cannot run beside a live hub or AppServer.  Under ctest it runs on in-memory sql
 `ctest --timeout 300 -R Jde.Opc.Server.Tests`.
 
 - `AccessTests`: sessions and node acls.
+- `HistoryTests`: the pumps nodeset's historized variables, written through the server and read back by a UA client's
+  HistoryRead; history under `<cwd>/logs/hist/opc-server-tests`, cleared at the start.
 - `CustomMutationTests`: log settings is the only mutation the server answers over the socket, and only signed in.
 - `UALoadTests`: loads the companion-spec nodesets from `$UA_NODE_SETS`, which must be set.
 - `PubSubTests`: a unicast reader on udp 4849.

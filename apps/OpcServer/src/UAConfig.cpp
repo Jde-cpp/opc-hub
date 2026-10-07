@@ -6,6 +6,7 @@
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
 #include "access/UAAccess.h"
+#include "hist/UAHistory.h"
 #include "UATrust.h"
 #include "jde/fwk/crypto/CryptoSettings.h"
 #include "jde/fwk/settings.h"
@@ -13,7 +14,7 @@
 #define let const auto
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::Opc;
-	UAConfig::UAConfig()ε:
+	UAConfig::UAConfig( UAHistory* history )ε:
 		UA_ServerConfig{
 			.logging = &_logger,
 		}{
@@ -35,6 +36,16 @@ namespace Jde::Opc::Server{
 		auto accessResource = Settings::FindString( "/opcServer/resource" ).value_or( "default" );
 		UA_LocalizedText_clear( &applicationDescription.applicationName );// setDefaultConfig/setBasics already allocated applicationName; clear before overwriting or it leaks.
 		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", Ƒ("Jde-Cpp OpcServer [{}]", accessResource).c_str() );
+		//The history backend, only with a historian:  open62541 answers every HistoryRead Bad_NotSupported while the
+		//database's context is null, which is the answer of a server with no hist block, or whose hist.path another
+		//process holds.  open62541 publishes HistoryServerCapabilities from these flags, each set only for what is
+		//served:  raw reads so far.
+		if( history && history->Enabled() ){
+			historyDatabase = history->Database();
+			nodeLifecycle = UAHistory::Lifecycle();
+			accessHistoryDataCapability = true;
+			maxReturnDataValues = history->ReadLimit();
+		}
 	}
 
 	//"/opcServer/address": the interface the endpoint listens on.  Absent or null: every interface - open62541's own default, an

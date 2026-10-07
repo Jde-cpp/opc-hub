@@ -111,6 +111,13 @@ function( sync=false )
 			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.examples.xml",
 			args.repoSourceDir + "/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" //the PLC emulator's tags - urn:jde:pumps
 		],
+		//The history of the variables a nodeset marks Historizing="true", each under its HA Configuration object
+		//(libs/historian/docs/spec.md, *OpcServer*).  Without this block the server keeps none and answers HistoryRead
+		//Bad_NotSupported.  The other keys, at their defaults:  delay "PT1M", maxBuffer 67108864, readLimit 10000 and
+		//timeZone "UTC", an IANA name that must not change once `path` holds files.
+		hist:{
+			path: logsDir + "/hist/opc-server"
+		},
 		//No `pubsub` key here, deliberately.  A DataSetReader writes its target variables through the server-internal path -
 		//no session, no OpcAuthorize - so any UADP publisher that can reach the url and carries the contract's three ids
 		//drives those nodes.  That is a demo affordance, not a production one: the PLC-emulator overlays

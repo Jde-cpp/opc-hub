@@ -1,6 +1,7 @@
 //Raw reads (#205):  forward, reverse and open-ended, over archives, a live file's runs and the buffer; the stateless
 //continuation, with its archive offset and generation check, and readLimit; and bounds, including the forward scan of
 //later preambles.
+#include <jde/opc/UAException.h>
 #include "reads.h"
 
 #define let const auto
@@ -668,5 +669,124 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_FALSE( v[1].Bound );
 		EXPECT_EQ( v[1].Value.value().double_value(), 11 );
 		EXPECT_EQ( pages, (vector<uint>{1, 1}) );
+	}
+
+	//OpcServer's bound on a callback, which holds open62541's service lock:  a page ends with the day it read while another
+	//is left to read, whatever it holds.  March 7 and 9 hold speed's values, and March 8 only temp's.
+	TEST_F( ServerFiles, ReadsADayAPage ){
+		let speed = Historize( "Pump1.Speed" );
+		let temp = Historize( "Pump1.Temp" );
+		EXPECT_FALSE( Server->Earliest() );//no file yet.
+		let t0 = Time->Now();
+		SetValue( speed, 1 );
+		SetValue( temp, 10 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March8}+1h );
+		Settle( *Server );
+		SetValue( temp, 11 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March9}+1h );
+		Settle( *Server );
+		SetValue( speed, 3 );
+		Time->Advance( 1s );
+		SetValue( speed, 4 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->Advance( 1s );
+		SetValue( speed, 5 );//buffered.
+		let end = Time->Now()+1min;
+		EXPECT_EQ( Server->Earliest(), TimePoint{sys_days{March7}} );
+
+		vector<uint> pages;
+		EXPECT_EQ( doubles(readAll(*Server, {.Nodes={speed}, .Start=ticks(t0), .End=ticks(end), .OneDay=true}, &pages)), (vector<double>{1, 3, 4, 5}) );
+		EXPECT_EQ( pages, (vector<uint>{1, 0, 3}) );
+		pages.clear();
+		EXPECT_EQ( doubles(readAll(*Server, {.Nodes={speed}, .Start=ticks(t0), .End=ticks(end), .Limit=2, .OneDay=true}, &pages)), (vector<double>{1, 3, 4, 5}) );
+		EXPECT_EQ( pages, (vector<uint>{1, 0, 2, 1}) );//the limit still ends a page inside a day.
+		pages.clear();
+		EXPECT_EQ( doubles(readAll(*Server, {.Nodes={speed}, .Start=ticks(t0), .OneDay=true}, &pages)), (vector<double>{1, 3, 4, 5}) );
+		EXPECT_EQ( pages, (vector<uint>{1, 0, 3}) );
+
+		//Back a day a page, and from March 8, which holds nothing of speed's, straight to its start value's day.
+		pages.clear();
+		EXPECT_EQ( doubles(readAll(*Server, {.Nodes={speed}, .Start=ticks(end), .End=ticks(t0), .OneDay=true}, &pages)), (vector<double>{5, 4, 3, 1}) );
+		EXPECT_EQ( pages, (vector<uint>{3, 0, 1}) );
+		pages.clear();
+		EXPECT_EQ( doubles(readAll(*Server, {.Nodes={speed}, .End=ticks(end), .Limit=2, .OneDay=true}, &pages)), (vector<double>{5, 4, 3, 1}) );
+		EXPECT_EQ( pages, (vector<uint>{2, 1, 0, 1}) );
+
+		//The opening bounds lead the first page, though its day holds no value, and the closing ones end the last.
+		pages.clear();
+		let bounded = readAll( *Server, {.Nodes={speed}, .Start=ticks(t0+1s), .End=ticks(end), .Bounds=true, .OneDay=true}, &pages );
+		ASSERT_EQ( bounded.size(), 5 );
+		EXPECT_TRUE( isBound(bounded[0], speed, 1, t0) );
+		let values = doubles( bounded );
+		EXPECT_EQ( (vector<double>{values.begin(), values.begin()+4}), (vector<double>{1, 3, 4, 5}) );
+		EXPECT_TRUE( notFound(bounded[4], speed, end) );
+		EXPECT_EQ( pages, (vector<uint>{1, 0, 4}) );
+
+		//One day's read is one page.
+		let page = Server->Read( {.Nodes={speed}, .Start=ticks(sys_days{March9}), .End=ticks(end), .OneDay=true} );
+		EXPECT_EQ( page.Values.size(), 3 );
+		EXPECT_TRUE( page.Continuation.empty() );
+	}
+
+	//Good_NoData is the read's, not a page's:  a page OneDay ends can hold nothing and still have one after it, so only a
+	//last page after pages that held nothing either says there was no data.  Speed's one value is March 7's, at t0.
+	TEST_F( ServerFiles, NoDataIsOfTheWholeRead ){
+		let speed = Historize( "Pump1.Speed" );
+		let temp = Historize( "Pump1.Temp" );
+		let t0 = Time->Now();
+		SetValue( speed, 1 );
+		SetValue( temp, 10 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March8}+1h );
+		Settle( *Server );
+		SetValue( temp, 11 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March9}+1h );
+		Settle( *Server );
+		SetValue( temp, 12 );
+		EXPECT_TRUE( Flush(*Server) );
+		let end = Time->Now()+1min;
+
+		//Each page's size, and the last's NoData, which no page before it has.
+		let read = [&]( ReadRequest request ){
+			vector<uint> pages;
+			for( ;; ){
+				auto page = Server->Read( request );
+				pages.push_back( page.Values.size() );
+				if( page.Continuation.empty() )
+					return std::pair{ pages, page.NoData };
+				EXPECT_FALSE( page.NoData );
+				request.Continuation = move( page.Continuation );
+			}
+		};
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0+1s), .End=ticks(end), .OneDay=true}), std::pair(vector<uint>{0, 0, 0}, true) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0), .End=ticks(end), .OneDay=true}), std::pair(vector<uint>{1, 0, 0}, false) );
+		//From March 9 straight to its start value's day.
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(end), .End=ticks(t0+1s), .OneDay=true}), std::pair(vector<uint>{0, 0}, true) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(end), .End=ticks(t0), .OneDay=true}), std::pair(vector<uint>{0, 1}, false) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0+1s), .End=ticks(end)}), std::pair(vector<uint>{0}, true) );
+	}
+
+	//A UA host answers a continuation that isn't the read's with the status the exception carries.
+	TEST_F( ServerFiles, RefusesAContinuationWithItsStatus ){
+		let speed = Historize( "Pump1.Speed" );
+		let t0 = Time->Now();
+		for( uint i=1; i<=3; ++i ){
+			SetValue( speed, i );
+			Time->Advance( 1s );
+		}
+		let page = Server->Read( {.Nodes={speed}, .Start=ticks(t0), .Limit=2} );
+		ASSERT_FALSE( page.Continuation.empty() );
+		for( let& request : {ReadRequest{.Nodes={speed}, .Start=ticks(t0), .Limit=2, .Continuation="x"}, ReadRequest{.Nodes={speed}, .Start=ticks(t0+1s), .Limit=2, .Continuation=page.Continuation}} ){
+			try{
+				Server->Read( request );
+				ADD_FAILURE() << "read with a continuation that isn't its own";
+			}
+			catch( const UAException& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADCONTINUATIONPOINTINVALID );
+			}
+		}
 	}
 }

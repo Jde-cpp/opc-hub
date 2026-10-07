@@ -80,6 +80,10 @@ namespace Jde::Opc::Hist{
 		bool Bounds{};
 		uint Limit{};//the most values a page holds; 0, or more than hist.readLimit, is readLimit.
 		string Continuation;//the page before's, empty for the first.
+		//Ends the page with the first day whose file it reads through while another is left to read, however few values it
+		//holds, none included:  OpcServer's, whose read runs inside open62541's service lock.  A reverse read then goes
+		//back a day a page, or jumps as it would.  The bounds still look where they must.
+		bool OneDay{};
 	};
 	struct ReadValue{
 		Proto::DataValue Value;//node_index set, and a heartbeat marked as the record marks it.
@@ -88,7 +92,11 @@ namespace Jde::Opc::Hist{
 	struct ReadResult{
 		vector<ReadValue> Values;//in source-time order, later first in a reverse read.
 		string Continuation;//for the next page, empty on the last.
+		bool NoData{};//the last page of a read none of whose pages returned a value:  UA's Good_NoData.
 	};
+	//A read's value as UA has it, for a host that serves HistoryRead.  What a record doesn't store, a Good status, zero
+	//picoseconds or a null value, comes back with its mask's bit clear.  Throws for a value this build can't decode.
+	α ToUA( const Proto::DataValue& v )ε->Value;
 
 	struct Group;
 	struct GroupFiles;
@@ -198,8 +206,12 @@ namespace Jde::Opc::Hist{
 		//time, how many records at that time each node has had, an archive's byte offset and generation, and a CRC of the
 		//other arguments but Limit, so one passed with different nodes, times or bounds is refused.  A record that lands
 		//behind the resume point between pages isn't in the rest of the read.  Throws for a request with neither time,
-		//no nodes or a continuation that isn't this read's, and when a file the read opens can't be opened or read through.
+		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
+		//the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
+		//When the earliest day that holds a file of the group starts, in timeZone:  OpcServer's StartOfArchive.  None while
+		//it has no file.  Throws when hist.path can't be walked.
+		α Earliest( SRCE )Ε->optional<TimePoint>;
 	private:
 		friend struct FlushAwait;
 		friend struct Historian;

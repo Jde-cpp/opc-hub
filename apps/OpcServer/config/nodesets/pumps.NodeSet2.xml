@@ -5,6 +5,17 @@
   mirrors the server's.  PumpType.status is the run command (written by the UI, subscribed by the emulator);
   PumpType.motorRpm is the process value the emulator publishes (config/pubsub/pumps.libsonnet lists the fields).
   NodeSet2 does not instantiate types, so every pump declares its own status/motorRpm variables.
+
+  The variables marked Historizing="true" are the ones the OpcServer keeps the history of (libs/historian/docs/spec.md,
+  *OpcServer*), each under the thresholds of its HA Configuration object.  Between them they cover every
+  ExceptionDeviationFormat, a MinTimeInterval and a MaxTimeInterval, the heartbeat, against the emulator's signals:
+    pump1.status        no HA Configuration - the server adds one, with the defaults: every change is stored.
+    pump1.motorRpm      5 rpm, ABSOLUTE_VALUE (0), at most one value a second (MinTimeInterval).
+    pump2.motorRpm      1 PERCENT_OF_VALUE (1), re-stored every minute it holds still (MaxTimeInterval).
+    pump3.motorRpm      1 PERCENT_OF_RANGE (2) of its InstrumentRange, 0-1500: 15 rpm.
+    pump4.motorRpm      0.5 PERCENT_OF_EU_RANGE (3) of its EURange, 0-3000: 15 rpm.
+    pumpManual.motorRpm 10, with no format: the server adds ABSOLUTE_VALUE.
+  The PLC emulator loads the file too and keeps no history: there the attribute and the objects are only nodes.
 -->
 <UANodeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:uax="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://opcfoundation.org/UA/2011/03/UANodeSet.xsd">
   <NamespaceUris>
@@ -21,6 +32,11 @@
     <Alias Alias="String">i=12</Alias>
     <Alias Alias="Organizes">i=35</Alias>
     <Alias Alias="HasModellingRule">i=37</Alias>
+    <Alias Alias="HasProperty">i=46</Alias>
+    <Alias Alias="HasHistoricalConfiguration">i=56</Alias>
+    <Alias Alias="Duration">i=290</Alias>
+    <Alias Alias="Range">i=884</Alias>
+    <Alias Alias="ExceptionDeviationFormat">i=890</Alias>
     <Alias Alias="HasTypeDefinition">i=40</Alias>
     <Alias Alias="HasSubtype">i=45</Alias>
     <Alias Alias="HasComponent">i=47</Alias>
@@ -66,7 +82,7 @@
       <Reference ReferenceType="HasComponent">ns=1;i=6012</Reference>
     </References>
   </UAObject>
-  <UAVariable NodeId="ns=1;i=6011" BrowseName="1:status" ParentNodeId="ns=1;i=5001" DataType="Boolean" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6011" BrowseName="1:status" ParentNodeId="ns=1;i=5001" DataType="Boolean" AccessLevel="3" Historizing="true">
     <DisplayName>status</DisplayName>
     <Description Locale="en">Run command: on starts the motor.</Description>
     <References>
@@ -77,15 +93,67 @@
       <uax:Boolean>true</uax:Boolean>
     </Value>
   </UAVariable>
-  <UAVariable NodeId="ns=1;i=6012" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5001" DataType="Double" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6012" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5001" DataType="Double" AccessLevel="3" Historizing="true">
     <DisplayName>motorRpm</DisplayName>
     <Description Locale="en">Measured motor speed, rpm.</Description>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5001</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration">ns=1;i=7010</Reference>
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=7010" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6012">
+    <DisplayName>HA Configuration</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2318</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration" IsForward="false">ns=1;i=6012</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7011</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7012</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7013</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7014</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=7011" BrowseName="Stepped" ParentNodeId="ns=1;i=7010" DataType="Boolean">
+    <DisplayName>Stepped</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7010</Reference>
+    </References>
+    <Value>
+      <uax:Boolean>false</uax:Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7012" BrowseName="ExceptionDeviation" ParentNodeId="ns=1;i=7010" DataType="Double">
+    <DisplayName>ExceptionDeviation</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7010</Reference>
+    </References>
+    <Value>
+      <uax:Double>5</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7013" BrowseName="ExceptionDeviationFormat" ParentNodeId="ns=1;i=7010" DataType="ExceptionDeviationFormat">
+    <DisplayName>ExceptionDeviationFormat</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7010</Reference>
+    </References>
+    <Value>
+      <uax:Int32>0</uax:Int32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7014" BrowseName="MinTimeInterval" ParentNodeId="ns=1;i=7010" DataType="Duration">
+    <DisplayName>MinTimeInterval</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7010</Reference>
+    </References>
+    <Value>
+      <uax:Double>1000</uax:Double>
     </Value>
   </UAVariable>
   <UAObject NodeId="ns=1;i=5002" BrowseName="1:pump2" ParentNodeId="i=85">
@@ -107,14 +175,66 @@
       <uax:Boolean>true</uax:Boolean>
     </Value>
   </UAVariable>
-  <UAVariable NodeId="ns=1;i=6022" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5002" DataType="Double" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6022" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5002" DataType="Double" AccessLevel="3" Historizing="true">
     <DisplayName>motorRpm</DisplayName>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5002</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration">ns=1;i=7020</Reference>
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=7020" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6022">
+    <DisplayName>HA Configuration</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2318</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration" IsForward="false">ns=1;i=6022</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7021</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7022</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7023</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7024</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=7021" BrowseName="Stepped" ParentNodeId="ns=1;i=7020" DataType="Boolean">
+    <DisplayName>Stepped</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7020</Reference>
+    </References>
+    <Value>
+      <uax:Boolean>false</uax:Boolean>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7022" BrowseName="ExceptionDeviation" ParentNodeId="ns=1;i=7020" DataType="Double">
+    <DisplayName>ExceptionDeviation</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7020</Reference>
+    </References>
+    <Value>
+      <uax:Double>1</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7023" BrowseName="ExceptionDeviationFormat" ParentNodeId="ns=1;i=7020" DataType="ExceptionDeviationFormat">
+    <DisplayName>ExceptionDeviationFormat</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7020</Reference>
+    </References>
+    <Value>
+      <uax:Int32>1</uax:Int32>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7024" BrowseName="MaxTimeInterval" ParentNodeId="ns=1;i=7020" DataType="Duration">
+    <DisplayName>MaxTimeInterval</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7020</Reference>
+    </References>
+    <Value>
+      <uax:Double>60000</uax:Double>
     </Value>
   </UAVariable>
   <UAObject NodeId="ns=1;i=5003" BrowseName="1:pump3" ParentNodeId="i=85">
@@ -136,14 +256,86 @@
       <uax:Boolean>true</uax:Boolean>
     </Value>
   </UAVariable>
-  <UAVariable NodeId="ns=1;i=6032" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5003" DataType="Double" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6032" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5003" DataType="Double" AccessLevel="3" Historizing="true">
     <DisplayName>motorRpm</DisplayName>
     <References>
-      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=2368</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5003</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7035</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7036</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration">ns=1;i=7030</Reference>
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7035" BrowseName="InstrumentRange" ParentNodeId="ns=1;i=6032" DataType="Range">
+    <DisplayName>InstrumentRange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6032</Reference>
+    </References>
+    <Value>
+      <uax:ExtensionObject>
+        <uax:TypeId>
+          <uax:Identifier>i=885</uax:Identifier>
+        </uax:TypeId>
+        <uax:Body>
+          <uax:Range>
+            <uax:Low>0</uax:Low>
+            <uax:High>1500</uax:High>
+          </uax:Range>
+        </uax:Body>
+      </uax:ExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7036" BrowseName="EURange" ParentNodeId="ns=1;i=6032" DataType="Range">
+    <DisplayName>EURange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6032</Reference>
+    </References>
+    <Value>
+      <uax:ExtensionObject>
+        <uax:TypeId>
+          <uax:Identifier>i=885</uax:Identifier>
+        </uax:TypeId>
+        <uax:Body>
+          <uax:Range>
+            <uax:Low>0</uax:Low>
+            <uax:High>3000</uax:High>
+          </uax:Range>
+        </uax:Body>
+      </uax:ExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=7030" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6032">
+    <DisplayName>HA Configuration</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2318</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration" IsForward="false">ns=1;i=6032</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7032</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7033</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=7032" BrowseName="ExceptionDeviation" ParentNodeId="ns=1;i=7030" DataType="Double">
+    <DisplayName>ExceptionDeviation</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7030</Reference>
+    </References>
+    <Value>
+      <uax:Double>1</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7033" BrowseName="ExceptionDeviationFormat" ParentNodeId="ns=1;i=7030" DataType="ExceptionDeviationFormat">
+    <DisplayName>ExceptionDeviationFormat</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7030</Reference>
+    </References>
+    <Value>
+      <uax:Int32>2</uax:Int32>
     </Value>
   </UAVariable>
   <UAObject NodeId="ns=1;i=5004" BrowseName="1:pump4" ParentNodeId="i=85">
@@ -165,14 +357,65 @@
       <uax:Boolean>true</uax:Boolean>
     </Value>
   </UAVariable>
-  <UAVariable NodeId="ns=1;i=6042" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5004" DataType="Double" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6042" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5004" DataType="Double" AccessLevel="3" Historizing="true">
     <DisplayName>motorRpm</DisplayName>
     <References>
-      <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
+      <Reference ReferenceType="HasTypeDefinition">i=2368</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5004</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7045</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration">ns=1;i=7040</Reference>
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7045" BrowseName="EURange" ParentNodeId="ns=1;i=6042" DataType="Range">
+    <DisplayName>EURange</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=6042</Reference>
+    </References>
+    <Value>
+      <uax:ExtensionObject>
+        <uax:TypeId>
+          <uax:Identifier>i=885</uax:Identifier>
+        </uax:TypeId>
+        <uax:Body>
+          <uax:Range>
+            <uax:Low>0</uax:Low>
+            <uax:High>3000</uax:High>
+          </uax:Range>
+        </uax:Body>
+      </uax:ExtensionObject>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=7040" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6042">
+    <DisplayName>HA Configuration</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2318</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration" IsForward="false">ns=1;i=6042</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7042</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7043</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=7042" BrowseName="ExceptionDeviation" ParentNodeId="ns=1;i=7040" DataType="Double">
+    <DisplayName>ExceptionDeviation</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7040</Reference>
+    </References>
+    <Value>
+      <uax:Double>0.5</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAVariable NodeId="ns=1;i=7043" BrowseName="ExceptionDeviationFormat" ParentNodeId="ns=1;i=7040" DataType="ExceptionDeviationFormat">
+    <DisplayName>ExceptionDeviationFormat</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7040</Reference>
+    </References>
+    <Value>
+      <uax:Int32>3</uax:Int32>
     </Value>
   </UAVariable>
   <UAObject NodeId="ns=1;i=5005" BrowseName="1:pumpManual" ParentNodeId="i=85">
@@ -217,14 +460,33 @@
       <uax:Boolean>true</uax:Boolean>
     </Value>
   </UAVariable>
-  <UAVariable NodeId="ns=1;i=6054" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5005" DataType="Double" AccessLevel="3">
+  <UAVariable NodeId="ns=1;i=6054" BrowseName="1:motorRpm" ParentNodeId="ns=1;i=5005" DataType="Double" AccessLevel="3" Historizing="true">
     <DisplayName>motorRpm</DisplayName>
     <References>
       <Reference ReferenceType="HasTypeDefinition">i=63</Reference>
       <Reference ReferenceType="HasComponent" IsForward="false">ns=1;i=5005</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration">ns=1;i=7050</Reference>
     </References>
     <Value>
       <uax:Double>0</uax:Double>
+    </Value>
+  </UAVariable>
+  <UAObject NodeId="ns=1;i=7050" BrowseName="HA Configuration" ParentNodeId="ns=1;i=6054">
+    <DisplayName>HA Configuration</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=2318</Reference>
+      <Reference ReferenceType="HasHistoricalConfiguration" IsForward="false">ns=1;i=6054</Reference>
+      <Reference ReferenceType="HasProperty">ns=1;i=7052</Reference>
+    </References>
+  </UAObject>
+  <UAVariable NodeId="ns=1;i=7052" BrowseName="ExceptionDeviation" ParentNodeId="ns=1;i=7050" DataType="Double">
+    <DisplayName>ExceptionDeviation</DisplayName>
+    <References>
+      <Reference ReferenceType="HasTypeDefinition">i=68</Reference>
+      <Reference ReferenceType="HasProperty" IsForward="false">ns=1;i=7050</Reference>
+    </References>
+    <Value>
+      <uax:Double>10</uax:Double>
     </Value>
   </UAVariable>
 </UANodeSet>

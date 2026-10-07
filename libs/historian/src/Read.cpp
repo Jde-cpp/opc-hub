@@ -5,6 +5,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <jde/fwk/io/crc.h>
+#include <jde/opc/UAException.h>
 #include "Store.h"
 #include "io/DayFiles.h"
 #include "io/Records.h"
@@ -44,7 +45,7 @@ namespace Jde::Opc::Hist{
 
 		//The read as its request and continuation set it out.
 		struct Plan final{
-			Plan( const ReadRequest& r, uint readLimit, SL sl )ε:Nodes{ r.Nodes }, Bounds{ r.Bounds }, Crc{ crc(r) }{
+			Plan( const ReadRequest& r, uint readLimit, SL sl )ε:Nodes{ r.Nodes }, Bounds{ r.Bounds }, OneDay{ r.OneDay }, Crc{ crc(r) }{
 				THROW_IFSL( Nodes.empty(), "A read names no nodes." );
 				THROW_IFSL( !r.Start && !r.End, "A read needs a start or an end." );
 				if( r.Start && r.End ){
@@ -64,8 +65,11 @@ namespace Jde::Opc::Hist{
 				if( r.Continuation.empty() )
 					return;
 				Proto::Continuation from;
-				THROW_IFSL( !from.ParseFromString(r.Continuation) || from.counts_size()!=(int)Nodes.size(), "The continuation isn't one of the historian's." );
-				THROW_IFSL( from.crc()!=Crc, "The continuation is for a read with other arguments." );
+				//A caller's mistake, which a UA host answers with the status:  said at Debug.
+				if( !from.ParseFromString(r.Continuation) || from.counts_size()!=(int)Nodes.size() )
+					throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation isn't one of the historian's.", {ELogLevel::Debug}, sl };
+				if( from.crc()!=Crc )
+					throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation is for a read with other arguments.", {ELogLevel::Debug}, sl };
 				From = move( from );
 			}
 			α Slot( NodeIndex index )Ι->optional<uint>{
@@ -76,12 +80,14 @@ namespace Jde::Opc::Hist{
 			//How many of the node's records at time the pages before returned:  those at the resume time.
 			α Had( uint slot, Ticks time )Ι->uint32_t{ return From && From->time()==time ? From->counts(slot) : 0; }
 			α HadOf( NodeIndex index, Ticks time )Ι->uint32_t{ return Had( *Slot(index), time ); }
+			α Empty()Ι->bool{ return !From || From->no_values(); }//no page before this one returned a value.
 
 			vector<NodeIndex> Nodes;
 			absl::flat_hash_map<NodeIndex,uint> Slots;//each node's place in Nodes, which the continuation counts by.
 			optional<Ticks> Earlier, Later;//the ends of the range, whichever way it flows:  Earlier is set in a forward read, Later in a reverse one.
 			bool Reverse{};
 			bool Bounds;
+			bool OneDay;
 			uint Limit;
 			uint32_t Crc;
 			optional<Proto::Continuation> From;
@@ -301,6 +307,17 @@ namespace Jde::Opc::Hist{
 				}
 				_result.Continuation = next.SerializeAsString();
 			}
+			//A page that OneDay ends between two days:  the next resumes at time, the start of the day a forward read goes on
+			//to or the last tick of the one a reverse read goes back to, where the pages before returned nothing.
+			α ContinueAt( Ticks time )ι->void{
+				Proto::Continuation next;
+				next.set_crc( _plan.Crc );
+				next.set_time( time );
+				for( uint i=0; i<_counts.size(); ++i )
+					next.add_counts( 0 );
+				next.set_no_values( _result.Values.empty() && _plan.Empty() );
+				_result.Continuation = next.SerializeAsString();
+			}
 			//Opening bounds go before the page's values, which they leave room for.
 			α Opening( vector<ReadValue>&& opening )ι->void{
 				_opened = opening.size();
@@ -491,9 +508,17 @@ namespace Jde::Opc::Hist{
 				};
 				HistoryRecord r;
 				optional<Merge::Position> where;
+				optional<Ticks> nextDay;//where OneDay ended the page.
 				for( bool have = open(); have && !more; ){
 					let t = stream->Time();
 					if( !t ){
+						if( _plan.OneDay && day!=_days.end() && (!lastDay || *day<=*lastDay) ){
+							if( !opened )
+								decide();
+							if( !more )
+								nextDay = StartOf( *day, _tz );
+							break;
+						}
 						have = open();
 						continue;
 					}
@@ -543,6 +568,10 @@ namespace Jde::Opc::Hist{
 					Continue();
 					return;
 				}
+				if( nextDay ){
+					ContinueAt( *nextDay );
+					return;
+				}
 				if( !_plan.Bounds || !_plan.Later )
 					return;
 				//The last page:  each node's last record at `later` is its closing bound, on this page or one before.
@@ -589,6 +618,8 @@ namespace Jde::Opc::Hist{
 				struct Kept{ Picked Item; bool FirstAtEarlier; bool LastAtLater; };
 				auto day = std::ranges::upper_bound( _days, lastDay );//one past the day to read.
 				optional<Day> jump;//a day that held nothing jumps to the day of the latest start value.
+				bool read{};//a day's file is read:  OneDay's.
+				optional<Ticks> previousDay;//where OneDay ended the page.
 				while( day!=_days.begin() && !more ){
 					--day;
 					if( jump && *day>*jump )
@@ -596,12 +627,17 @@ namespace Jde::Opc::Hist{
 					jump.reset();
 					if( firstDay && *day<*firstDay )
 						break;
+					if( _plan.OneDay && read ){
+						previousDay = StartOf( Day{sys_days{*day}+days{1}}, _tz )-1;
+						break;
+					}
 					if( firstDay && *day==*firstDay )
 						seed();
 					let isLast = *day==lastDay;
 					auto stream = Open( *day, _plan.Earlier.value_or(Earliest), to, _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast), isLast && _plan.From ? &*_plan.From : nullptr );
 					if( !stream )
 						continue;
+					read = true;
 					std::deque<Kept> kept;
 					let room = [&]{ return _dataLimit-_emitted+1; };//one past what the page can take, which says there is more.
 					vector<Kept> atTo;//the records at the resume time, of which each node's first (all - skip) stay.
@@ -717,6 +753,10 @@ namespace Jde::Opc::Hist{
 					Continue();
 					return;
 				}
+				if( previousDay ){
+					ContinueAt( *previousDay );
+					return;
+				}
 				if( !closing )
 					return;
 				seed();
@@ -788,6 +828,13 @@ namespace Jde::Opc::Hist{
 			{}
 		}
 		std::ranges::stable_sort( buffered, {}, []( let& r ){ return *PrimaryTime(r); } );
-		return Reading{ plan, tz, move(files), move(buffered), sl }.Page();
+		auto page = Reading{ plan, tz, move(files), move(buffered), sl }.Page();
+		page.NoData = page.Values.empty() && page.Continuation.empty() && plan.Empty();
+		return page;
+	}
+
+	α Group::Earliest( SL sl )Ε->optional<TimePoint>{
+		let days = Days( _store->Config.Path, Name(), sl );
+		return days.empty() ? optional<TimePoint>{} : DayStart( days.front(), *_store->Config.TimeZone );
 	}
 }

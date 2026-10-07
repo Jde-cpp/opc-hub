@@ -28,6 +28,7 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 		description: "Test OPC",
 		port: 4840,
 		configFiles: [ args.repoSourceDir + "/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" ],
+		hist:{ path: logsDir + "/hist/opc-server-tests" },//HistoryTests clears it.
 		//unicast on a test port: multicast needs a route the CI container lacks, and 4840/udp would collide with a live server.
 		//The test host keeps a reader where the stock Opc.Server.jsonnet has none (it is opt-in - an unauthenticated write
 		//path, see config/Opc.Server.Emulator.jsonnet); PubSubTests is what covers it, and loopback is not a domain.
