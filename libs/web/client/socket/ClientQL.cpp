@@ -3,33 +3,43 @@
 #include <jde/web/client/socket/IClientSocketSession.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/types/Subscription.h>
-//#include <jde/ql/SubscriptionAwait.h>
 
 #define let const auto
 
 namespace Jde::Web::Client{
-	struct SubscribeQueryAwait : TAwaitEx<vector<QL::SubscriptionId>,typename ClientSocketAwait<jarray>::Task>{
-		using Await = ClientSocketAwait<jarray>;
-		using base = TAwaitEx<vector<QL::SubscriptionId>,typename Await::Task>;
-		SubscribeQueryAwait( Await&& await, SL sl )ι: base{sl}, _await{move(await)}{}
-		α Execute()ι->Await::Task override{
+	//Every ClientQL answer is the socket's reply reshaped for the caller - this awaits the reply and applies `convert`, which is the
+	//one thing the four entry points differ in.  TInner: the session's ClientSocketAwait<>.
+	template<class T, class TInner>
+	struct ConvertAwait final : TAwaitEx<T,typename TInner::Task>{
+		using base = TAwaitEx<T,typename TInner::Task>;
+		using TReply = decltype( std::declval<TInner&>().await_resume() );
+		ConvertAwait( TInner&& inner, function<T(TReply&&)> convert, SL sl )ι: base{sl}, _inner{move(inner)}, _convert{move(convert)}{}
+		α Execute()ι->TInner::Task override{
 			try{
-				auto y = Json::FromArray<QL::SubscriptionId>( co_await _await );
-				base::Resume( move(y) );
+				base::Resume( _convert(co_await _inner) );
 			}
 			catch( runtime_error& e ){
 				base::ResumeExp( move(e) );
 			}
 		}
 	private:
-		Await _await;
+		TInner _inner;
+		function<T(TReply&&)> _convert;
 	};
+
+	//The session's reply to `query`, converted; a session that is gone fails the await with the same exception it always has.
+	template<class T>
+	Ω query( const wp<IClientSocketSession>& weak, string&& query, jobject&& variables, bool returnRaw, function<T(jvalue&&)> convert, SL sl )ι->up<TAwait<T>>{
+		auto session = weak.lock();
+		if( !session )
+			return mu<ExceptionAwait<T>>( mu<Exception>("Client socket session closed.", ExceptionArgs{}, sl), sl );
+		return mu<ConvertAwait<T,ClientSocketAwait<jvalue>>>( session->Query(move(query), move(variables), returnRaw, sl), move(convert), sl );
+	}
 
 	α ClientQL::Subscribe( string&& query, jobject variables, sp<QL::IListener> listener, UserPK /*executer*/, SL sl )ε->up<TAwait<vector<QL::SubscriptionId>>>{
 		auto session = _session.lock();
 		THROW_IF( !session, "Client socket session closed." );
-		auto await = session->Subscribe( move(query), move(variables), listener, sl );
-		return mu<SubscribeQueryAwait>( move(await), sl );
+		return mu<ConvertAwait<vector<QL::SubscriptionId>,ClientSocketAwait<jarray>>>( session->Subscribe(move(query), move(variables), listener, sl), []( jarray&& ids ){ return Json::FromArray<QL::SubscriptionId>( ids ); }, sl );
 	}
 
 	α ClientQL::Unsubscribe( sp<QL::IListener> /*listener*/, vector<QL::SubscriptionId> ids, SL sl )ι->void{
@@ -37,53 +47,23 @@ namespace Jde::Web::Client{
 			session->Unsubscribe( move(ids), sl );
 	}
 
-	Τ struct QueryAwait final : TAwaitEx<T,ClientSocketAwait<jvalue>::Task>{
-		using Await = ClientSocketAwait<jvalue>;
-		using base=TAwaitEx<T,Await::Task>;
-		QueryAwait( string query, jobject variables, sp<IClientSocketSession> session, bool returnRaw, SRCE )ε:
-			base{sl},_query{move(query)},_returnRaw{returnRaw},_session{session},_variables{move(variables)}{}
-	private:
-		α Execute()ι->Await::Task{
-			try{
-				if( !_session )
-					throw Exception{ "Client socket session closed.", {}, base::_sl };
-				Resume( co_await _session->Query(move(_query), move(_variables), _returnRaw, base::_sl) );
-			}
-			catch( runtime_error& e ){
-				base::ResumeExp( move(e) );
-			}
-		}
-		α Resume( jvalue&& result )ι->void;
-		string _query;
-		bool _returnRaw;
-		sp<IClientSocketSession> _session;
-		jobject _variables;
-	};
-
-	template<> Ξ QueryAwait<jvalue>::Resume( jvalue&& result )ι->void{ base::Resume( move(result) ); }
-	template<> Ξ QueryAwait<jobject>::Resume( jvalue&& result )ι->void{
-		if( result.is_object() )
-			base::Resume( move(result.get_object()) );
-		else if( result.is_null() )
-			base::Resume( jobject{} );
-		else
-			ResumeExp( Exception{"Expected object.", {}, _sl} );
+	α ClientQL::Query( string q, jobject variables, UserPK, bool returnRaw, SL sl )ι->up<TAwait<jvalue>>{
+		return query<jvalue>( _session, move(q), move(variables), returnRaw, []( jvalue&& v ){ return move(v); }, sl );
 	}
-	template<> Ξ QueryAwait<jarray>::Resume( jvalue&& result )ι->void{
-		if( result.is_array() )
-			base::Resume( move(result.get_array()) );
-		else
-			ResumeExp( Exception{"Expected array.", {}, _sl} );
+	α ClientQL::QueryObject( string q, jobject variables, UserPK /*executer*/, bool returnRaw, SL sl )ε->up<TAwait<jobject>>{
+		return query<jobject>( _session, move(q), move(variables), returnRaw, [sl]( jvalue&& v )->jobject{
+			if( v.is_object() )
+				return move( v.get_object() );
+			if( v.is_null() )
+				return {};
+			throw Exception{ "Expected object.", {}, sl };
+		}, sl );
 	}
-
-
-	α ClientQL::Query( string query, jobject variables, UserPK, bool returnRaw, SL sl )ι->up<TAwait<jvalue>>{
-		return mu<QueryAwait<jvalue>>( move(query), move(variables), _session.lock(), returnRaw, sl );
-	}
-	α ClientQL::QueryObject( string query, jobject variables, UserPK /*executer*/, bool returnRaw, SL sl )ε->up<TAwait<jobject>>{
-		return mu<QueryAwait<jobject>>( move(query), move(variables), _session.lock(), returnRaw, sl );
-	}
-	α ClientQL::QueryArray( string query, jobject variables, UserPK /*executer*/, bool returnRaw, SL sl )ε->up<TAwait<jarray>>{
-		return mu<QueryAwait<jarray>>( move(query), move(variables), _session.lock(), returnRaw, sl );
+	α ClientQL::QueryArray( string q, jobject variables, UserPK /*executer*/, bool returnRaw, SL sl )ε->up<TAwait<jarray>>{
+		return query<jarray>( _session, move(q), move(variables), returnRaw, [sl]( jvalue&& v )->jarray{
+			if( v.is_array() )
+				return move( v.get_array() );
+			throw Exception{ "Expected array.", {}, sl };
+		}, sl );
 	}
 }

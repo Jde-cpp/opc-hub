@@ -15,8 +15,6 @@ namespace Jde::Web::Server{
 		β WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession> =0;
 
 		α AppServer()ι->sp<App::IApp>{ return _appServer; }
-		α AppServerLocal()ι->bool{ return _appServer->IsLocal(); }
-		α AppQueryAwait( string&& q, jobject variables, SL sl )ι->up<TAwait<jvalue>>{ return _appServer->Query<jvalue>( move(q), move(variables), true, sl ); }
 		α CancelSignal()ι->sp<net::cancellation_signal>{ return _cancelSignal; }
 		α Context()ι->ssl::context&{ return _ctx; }
 		α SessionInfoAwait( SessionPK sessionPK, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>>{ return _appServer->SessionInfoAwait( sessionPK, sl ); }

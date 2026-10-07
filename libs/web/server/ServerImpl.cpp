@@ -1,4 +1,5 @@
 ﻿#include "ServerImpl.h"
+#include <boost/asio/experimental/parallel_group.hpp>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/process/execution.h>
 #include "jde/db/DBException.h"
@@ -11,12 +12,77 @@
 #include <jde/web/server/IRequestHandler.h>
 #include <jde/web/server/IWebsocketSession.h>
 #include <jde/web/server/RestException.h>
+#include <jde/web/server/SettingQL.h>
 #include <jde/app/IApp.h>
 #define let const auto
 
 namespace Jde::Web{
 namespace Server{
-	Ω detectSession( StreamType stream, tcp::endpoint userEndpoint, sp<net::cancellation_signal> cancel, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
+	Τ Ω doEof( T& stream )ι->net::awaitable<void, executor_type>{ beast::error_code ec; stream.socket().shutdown( tcp::socket::shutdown_send, ec ); co_return; }
+	Τ Ω doEof( beast::ssl_stream<T>& stream )ι->net::awaitable<void, executor_type>{ co_await stream.async_shutdown(); }
+
+	Τ Ω runSession( T& stream, beast::flat_buffer& buffer, tcp::endpoint userEndpoint, bool isSsl, uint32 connectionIndex, IRequestHandler* reqHandler )ι->net::awaitable<void, executor_type>{
+		optional<http::request_parser<http::string_body>> parser;// a new parser must be used for every message so we use an optional to reconstruct it every time.
+		parser.emplace();
+		parser->body_limit( BodyLimit() );
+		auto [ec, bytes_transferred] = co_await http::async_read( stream, buffer, *parser );
+		if( ec == http::error::end_of_stream )
+			co_await doEof( stream );
+		if( ec ){
+			CodeException{ ec, ELogTags::HttpServerRead, ErrorSeverity(ec, EErrorRole::HttpServerRead) };
+			co_return;
+		}
+
+		// this can be while ((co_await net::this_coro::cancellation_state).cancelled() == net::cancellation_type::none) on most compilers
+		for( auto cs = co_await net::this_coro::cancellation_state; cs.cancelled() == net::cancellation_type::none; cs = co_await net::this_coro::cancellation_state ){
+			if( websocket::is_upgrade(parser->get()) ){
+				beast::get_lowest_layer(stream).expires_never();// Disable the timeout. The websocket::stream uses its own timeout settings.
+				Internal::RunSocketSession( reqHandler->WebsocketSession(ms<RestStream<T>>(move(stream)), move(buffer), parser->release(), userEndpoint, connectionIndex), reqHandler );
+				co_return;
+			}
+			HttpRequest req{ parser->release(), move(userEndpoint), isSsl, connectionIndex };
+			optional<http::message_generator> res;
+			if( req.Method() == http::verb::options )
+				res = SendOptions( move(req) );
+			else if( req.IsPost("/ping") ){
+				auto pingRes{ req.Response<http::empty_body>() };
+				pingRes.set( "summary", Jde::format("SSL={}", isSsl) );
+				pingRes.prepare_payload();
+				res = move(pingRes);
+			}
+			else if( req.IsGet("/serverSettings") ){
+				SendServerSettings( move(req), ms<RestStream<T>>(move(stream)), reqHandler->AppServer() );
+				co_return;
+			}
+			if( !res ){
+				HandleRequest( move(req), ms<RestStream<T>>(move(stream)), reqHandler );
+				co_return;//the socket is the RestStream's now, and it answers Connection: close - no keep-alive (web-refactor B3).
+			}
+			if( res && !res->keep_alive() ){
+				auto [ec, sz] = co_await beast::async_write( stream, move(*res) );
+				if( ec )
+					CodeException{ ec, ELogTags::HttpServerWrite, ELogLevel::Debug };
+				co_return;
+			}
+			parser.reset();// we must use a new parser for every async_read
+			parser.emplace();
+			parser->body_limit( BodyLimit() );//the keep-alive parser is rebuilt per message, so it needs the same cap.
+			http::message_generator msg{ move(*res) };
+			auto [_, ec_r, sz_r, ec_w, sz_w ] = co_await net::experimental::make_parallel_group(
+				http::async_read( stream, buffer, *parser, net::deferred ),
+				beast::async_write( stream, move(msg), net::deferred ) ).async_wait( net::experimental::wait_for_all(), net::as_tuple(net::use_awaitable_t<executor_type>{}) );
+			if (ec_r){
+				CodeException{ ec_r, ELogTags::HttpServerRead, ELogLevel::Trace };
+				co_return;
+			}
+			if (ec_w){
+				CodeException{ ec_w, ELogTags::HttpServerWrite, ELogLevel::Trace };
+				co_return;
+			}
+		}
+	}
+
+	Ω detectSession( StreamType stream, tcp::endpoint userEndpoint, Server::IRequestHandler* handler )ι->net::awaitable<void, executor_type>{
 		beast::flat_buffer buffer;
 		stream.expires_after( std::chrono::seconds(30) );// Set the timeout.
 		auto [ec, isSsl] = co_await beast::async_detect_ssl( stream, buffer );// on_run
@@ -34,10 +100,10 @@ namespace Server{
 			}
 
 			buffer.consume( bytes_used );
-			co_await RunSession( ssl_stream, buffer, move(userEndpoint), true, index, cancel, handler );
+			co_await runSession( ssl_stream, buffer, move(userEndpoint), true, index, handler );
 		}
 		else
-			co_await RunSession( stream, buffer, move(userEndpoint), false, index, cancel, handler );
+			co_await runSession( stream, buffer, move(userEndpoint), false, index, handler );
 	}
 
 	Ω send( HttpRequest&& req, sp<IRestStream> stream, jvalue j, sv contentType={}, SRCE )ι->void{
@@ -58,20 +124,7 @@ namespace Server{
 		constexpr sv contentType = "application/graphql-response+json";
 		try{
 			let returnRaw = req.Params().contains( "raw" );
-			string query;
-			jobject vars;
-			if( req.IsGet() ){
-				query = req["query"];
-				auto& varContent = req["variables"];
-				vars = varContent.size() ? Json::Parse( move(varContent) ) : jobject{};
-			}
-			else{
-				auto body = req.Body();
-				if( auto jquery = body.if_contains("query"); jquery && jquery->is_string() )
-					query = jquery->get_string();
-				if( auto jvars = body.if_contains("variables"); jvars && jvars->is_object() )
-					vars = move( jvars->get_object() );
-			}
+			auto [query, vars] = req.GraphQLQuery();
 			THROW_IFX( query.empty(), RestException(EHttpStatus::BadRequest, SRCE_CUR, move(req), "No query sent.") );
 			req.LogRead( query, ELogLevel::Trace );
 			optional<QL::RequestQL> q;
@@ -82,15 +135,12 @@ namespace Server{
 				DBGT( ELogTags::HttpServerRead, "parsing failed: {}", e.what() );
 				co_return send( RestException{EHttpStatus::BadRequest, move(e), move(req), "Query parsing failed."}, move(stream), contentType );
 			}
+			THROW_IFX( q->IsMutation() && !req.IsPost(), RestException(EHttpStatus::BadRequest, SRCE_CUR, move(req), "Mutations must use post.") );//a GET must not have side effects.
 			if( Logging::ShouldLog(ELogLevel::Debug, ELogTags::HttpServerRead) ){
 				req.LogRead( q->ToString(), ELogLevel::Debug );
 			}
 
 			auto result = co_await QL::QLAwait{ move(*q), {req.SessionInfo}, reqHandler->QLServer() };
-#ifndef NDEBUG
-			auto debugString = serialize(result);
-			IO::SaveBinary<char>( fs::temp_directory_path()/"response.json", {debugString.data(), debugString.size()} );
-#endif
 			jobject y{ {"data", move(result)} };
 			send( move(req), move(stream), move(y), contentType );
 		}
@@ -123,14 +173,8 @@ namespace Server{
 		try{
 			HttpTaskResult result = co_await *requestAwait;
 			THROW_IF( !result.Request, "Request not set." );
-			if( result.Body ){//a file of the site (StaticSite), sent as is - the resolver's headers ride on the request's ResponseHeaders.
-				DBGT( ELogTags::HttpServerWrite, "HttpResponse:  {} - {}, {} bytes", result.Request->Target(), result.ContentType, result.Body->size() );
-				auto res = result.Request->Response<http::string_body>();
-				res.set( http::field::content_type, result.ContentType );
-				res.body() = move( *result.Body );
-				res.prepare_payload();
-				stream->AsyncWrite( move(res) );
-			}
+			if( result.Body )//a file of the site (StaticSite), sent as is - the resolver's headers ride on the request's ResponseHeaders.
+				stream->AsyncWrite( result.Request->Response(move(*result.Body), result.ContentType, result.Source.value_or(SRCE_CUR)) );
 			else
 				send( move(*result.Request), move(stream), move(result.Json), {}, result.Source.value_or(SRCE_CUR) );
 		}
@@ -242,7 +286,7 @@ namespace Server{
 				Execution::AddCancelSignal( cancelSignal );
 				net::co_spawn(
 					exec,
-					detectSession( StreamType(move(sock)), move(userEndpoint), cancelSignal, handler.get() ),
+					detectSession( StreamType(move(sock)), move(userEndpoint), handler.get() ),
 					net::bind_cancellation_slot( cancelSignal->slot(),
 					[cancelSignal]( std::exception_ptr e ){
 						Execution::RemoveCancelSignal( cancelSignal );
@@ -364,23 +408,6 @@ namespace Server{
 			handleCustomRequest( move(req), move(stream), reqHandler );
 	}
 
-	//compare codes, not ec.value(): values are only unique within a category, and beast's end_of_stream, asio's stream_truncated
-	//and errno's EPERM are all 1.  switching on the value quieted normal keep-alive closes only by that collision, and equally
-	//dropped a genuine category-1 error to Trace.
-	α Server::ReadSeverity( beast::error_code ec )ι->ELogLevel{
-		if( ec==net::error::operation_aborted )
-			return ELogLevel::Debug;
-		if( ec==http::error::end_of_stream )//peer closed a keep-alive connection - how a session normally ends.
-			return ELogLevel::Trace;
-		if( ec==ssl::error::stream_truncated )//an SSL "short read": peer closed without performing the required closing handshake.
-			return ELogLevel::Trace;
-		//ERR_SSL_SSLV3_ALERT_CERTIFICATE_UNKNOWN: the client doesn't trust the certificate.  openssl packs its own codes and asio
-		//has no enumerator to name them, so this one is matched on category+value.
-		if( ec.category()==net::error::get_ssl_category() && ec.value()==0xA000416 )
-			return ELogLevel::Trace;
-		return ELogLevel::Error;
-	}
-
 	Ω allowMethods()ι->str{
 		static const string y = Settings::FindString( "/http/accessControl/allowMethods" ).value_or( "GET, POST, OPTIONS" );
 		return y;
@@ -400,8 +427,8 @@ namespace Server{
 	}
 	α Server::SendServerSettings( HttpRequest req, sp<IRestStream> stream, sp<App::IApp> appClient )ι->Sessions::UpsertAwait::Task{
 		jobject j;
-		j["restSessionTimeout"] = Chrono::ToString( Sessions::RestSessionTimeout() );
-		j["connectionId"] = appClient->ConnectionPK();
+		j["restSessionTimeout"] = ServerSetting( "restSessionTimeout", *appClient );
+		j["connectionId"] = ServerSetting( "serverConnection", *appClient );
 		try{
 			let session = co_await Sessions::UpsertAwait( req.Header("authorization"), req.UserEndpoint.address().to_string(), false, appClient, false );
 			j["active"] = ( bool )session && session->UserPK;

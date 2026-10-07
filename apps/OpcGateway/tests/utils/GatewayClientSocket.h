@@ -16,7 +16,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server
 	//that is down, a rejected write).  The soak's reconnect-on-failure did, and killed itself trying to re-subscribe to a server
 	//that was still down (soak-findings #12).  Move/Throw keep the type across BlockAwait's rethrow.
-	//Only OnRead's kException path produces one; CloseTasks fails tasks with a plain Exception, so a dead socket never reads
+	//Only OnRead's kException path produces one; CloseTasks fails tasks with a CodeException, so a dead socket never reads
 	//as an answer (subscription-disconnect #1).
 	struct GatewayErrorResponse final : Exception{
 		using Exception::Exception;
@@ -45,7 +45,6 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω PendingSubscriptionRecords()ι->uint;//subscribe + unsubscribe requests still awaiting their ack, across every socket - a failed request may leave none (m2-closing #15).
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
-		α HandleException( std::any&& h, Exception&& e )ι;//e arrives typed by the caller: GatewayErrorResponse or a transport failure.
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnClose( beast::error_code ec )ι->void override;
 		α OnAck( uint32 ack )ι->void;

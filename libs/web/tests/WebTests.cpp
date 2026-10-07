@@ -1,5 +1,4 @@
 ﻿#include <execution>
-#include <jde/web/client/client.h>//L5: Client::MaxLogLength
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
 #include <jde/web/Jwt.h>
@@ -63,7 +62,6 @@ namespace Jde::Web{
 	TEST_F( WebTests, IsSsl ){
 		auto await = ClientHttpAwait{ Host, "/ping", Port, {.ContentType="text/ping", .Verb=http::verb::post} };
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-		//Debug( _tags, "Headers.Size: {}", res.Headers().size() );
 		ASSERT_TRUE( res[http::field::server].contains("SSL") );
 	}
 
@@ -122,7 +120,6 @@ namespace Jde::Web{
 				std::this_thread::yield();
 			if( auto e = takeException(); e )
 				e->Throw();
-			//std::for_each( std::execution::par_unseq, indexes.begin(), indexes.end(), [&sessionIds]( auto index )mutable{
 			for_each( indexes, [&sessionIds]( auto index )mutable{
 				[&sessionIds,index]()->ClientHttpAwait::Task{
 					auto pSessionIds=&sessionIds;
@@ -136,33 +133,27 @@ namespace Jde::Web{
 			});
 		}
 		catch( const Exception& e ){
-			e.SetLevel( ELogLevel::Critical );
-			e.Log();
-			ASSERT_FALSE( true );
+			FAIL() << e.what();
 		}
 		while( find_if(sessionIds, [](auto& s){return s.load()!=0;})!=sessionIds.end() )
 			std::this_thread::yield();
 	}
 	TEST_F( WebTests, BadSessionId ){
 		try{
-			auto await = ClientHttpAwait{ Host, "/echo?InvalidSessionId", Port, {.Authorization="xxxxxx"} };
-			let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-			ASSERT_FALSE( true );
+			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/echo?InvalidSessionId", Port, {.Authorization="xxxxxx"}} );
+			FAIL() << "expected unauthorized";
 		}
-		catch( ClientHttpResException& e){
+		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::unauthorized, e.Status() );
-		}
-		catch( runtime_error& e){
-			ASSERT_FALSE( true );
 		}
 	}
 	TEST_F( WebTests, CloseMidRequest ){
 		namespace beast = boost::beast;
 		net::any_io_executor strand = net::make_strand( *Executor() );
 		tcp::resolver resolver{ strand };
-    auto stream = mu<beast::tcp_stream>( strand );
+		auto stream = mu<beast::tcp_stream>( strand );
 		let results = resolver.resolve( Host, std::to_string(Port) );
-    stream->connect( results );
+		stream->connect( results );
 		uint delay = 2;
 		http::request<http::empty_body> req{ http::verb::get, Ƒ("/delay?seconds={}", delay), 11 };
 		req.set( http::field::content_type, ContentType );
@@ -172,7 +163,7 @@ namespace Jde::Web{
 			DBG( "onWrite" );
 		};
 		net::post( strand, [&]{
-    	http::async_write( *stream, req, onWrite );
+			http::async_write( *stream, req, onWrite );
 		});
 		auto onRead = [&]( beast::error_code ec, uint /*bytes_transferred*/ )ε{
 			CodeException{ ec, _tags }; //expected.
@@ -181,7 +172,6 @@ namespace Jde::Web{
 		beast::flat_buffer buffer;
 		http::request_parser<http::string_body> parser;
 		http::async_read( *stream, buffer, parser, onRead );
-		//std::this_thread::sleep_for( std::chrono::seconds{1} );
 		net::post( strand, [&]{
 			beast::error_code ec;
 			stream->socket().shutdown( tcp::socket::shutdown_both, ec );//TODO use cancellation token.
@@ -195,6 +185,19 @@ namespace Jde::Web{
 		std::this_thread::sleep_for( std::chrono::seconds{delay}+500ms );
 		//TODO rest stream write succeeds even though stream is shutdown.
 	}
+	//web-refactor A10.2: GET /serverSettings answers from the same lookup (ServerSetting) as QL's setting(target:…).
+	TEST_F( WebTests, ServerSettings ){
+		let j = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} ).Json();
+		EXPECT_EQ( Json::AsString(j, "restSessionTimeout"), Chrono::ToString<steady_clock::duration>(Server::Sessions::RestSessionTimeout()) );
+		EXPECT_TRUE( j.contains("connectionId") ) << serialize(j);
+		EXPECT_FALSE( j.at("active").as_bool() ) << "no Authorization, so no session to be active";
+	}
+	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
+	//browser would reuse a connection that is already closing.
+	TEST_F( WebTests, HandledResponseClosesTheConnection ){
+		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} );
+		EXPECT_EQ( "close", res[http::field::connection] );
+	}
 	TEST_F( WebTests, BadTarget ){
 		try{
 			auto await = ClientHttpAwait{ Host, "/BadTarget", Port };
@@ -204,11 +207,20 @@ namespace Jde::Web{
 			ASSERT_EQ( http::status::not_found, e.Status() );
 		}
 	}
+	//web-refactor A2: the error names the request that was answered - host, port and target.
+	TEST_F( WebTests, ErrorResponseNamesTheUrl ){
+		try{
+			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/BadTarget", Port} );
+			FAIL() << "expected not_found";
+		}
+		catch( const ClientHttpResException& e ){
+			EXPECT_TRUE( string{e.what()}.contains(Ƒ("{}:{}/BadTarget", Host, Port)) ) << e.what();
+		}
+	}
 	TEST_F( WebTests, BadAwaitable ){
 		try{
-			auto await = ClientHttpAwait{ Host, "/BadAwaitable", Port };
-			let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-			ASSERT_FALSE( true );
+			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/BadAwaitable", Port} );
+			FAIL() << "expected internal_server_error";
 		}
 		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::internal_server_error, e.Status() );
@@ -219,7 +231,7 @@ namespace Jde::Web{
 	TEST_F( WebTests, ErrorResponseKeepsSession ){
 		try{
 			let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/NoResult", Port} );
-			ASSERT_FALSE( true ) << "expected internal_server_error, got " << (uint32)res.Status();
+			FAIL() << "expected internal_server_error, got " << (uint32)res.Status();
 		}
 		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::internal_server_error, e.Status() );
@@ -250,8 +262,8 @@ namespace Jde::Web{
 		std::this_thread::sleep_for( timeout+1s );
 		DBG( "TestTimeout:  '{}'", ToIsoString(Clock::now()) );
 		try{
-			let res3 = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/timeout", Port, {.Authorization=authorization}} );
-			ASSERT_FALSE( true );
+			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/timeout", Port, {.Authorization=authorization}} );
+			FAIL() << "expected unauthorized";
 		}
 		catch( const ClientHttpResException& e ){
 			ASSERT_EQ( http::status::unauthorized, e.Status() );
@@ -281,7 +293,7 @@ namespace Jde::Web{
 	TEST( ClientSettingsTests, MaxLogLengthReadsTheSetting ){
 		let configured = Settings::FindNumber<uint16>( "/http/maxLogLength" );
 		ASSERT_TRUE( configured ) << "Web.Tests.jsonnet sets /http/maxLogLength; without it this proves nothing";
-		EXPECT_EQ( *configured, Client::MaxLogLength() ) << "the client must read the same key the server does";
+		EXPECT_EQ( *configured, Web::MaxLogLength() ) << "one function reads the key for both sides";
 	}
 
 	//web-review3 L2: ParseUri split each param on *every* '=' and only took the value when it got exactly two pieces, so any value
@@ -529,9 +541,4 @@ namespace Jde::Web{
 		EXPECT_EQ( EHttpStatus::Conflict, static_cast<Exception&>(e).HttpStatus() ); //the catch(Exception&) funnel reads the same status.
 		EXPECT_EQ( EHttpStatus::Conflict, (EHttpStatus)e.Response().result() );
 	}
-//TODO! gzip
-//TODO Test redirect.
-//TODO keep alives
-//AppServer
-		//TODO test logout.
 }

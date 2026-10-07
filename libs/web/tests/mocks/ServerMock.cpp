@@ -3,7 +3,6 @@
 #include "jde/fwk.h"
 #include <jde/app/IApp.h>
 #include <jde/web/server/Server.h>
-#include <jde/fwk/io/protobuf.h>//Web.FromServer.h uses Protobuf::ToTimestamp without including it.
 #include <jde/web/server/Web.FromServer.h>
 #include <jde/fwk/process/execution.h>
 

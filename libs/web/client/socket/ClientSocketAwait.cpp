@@ -4,17 +4,9 @@
 namespace Jde::Web::Client{
 	α IClientSocketVoidAwait::SessionId()ι->SessionPK{ return _session->Id(); }
 
-	α IClientSocketVoidAwait::Suspend( std::any hCoroutine )ι->void{
-		_session->AddTask( _requestId, hCoroutine );
+	α IClientSocketVoidAwait::Suspend( PendingTask&& task )ι->void{
+		_session->AddTask( _requestId, move(task) );
 		_session->AddTimeout( _requestId );//C6: every request goes through here, so this is the one place a deadline covers them all.
 		_session->Write( move(_request) );
-	}
-
-	α ClientSocketVoidAwait::await_resume()ε->void{
-		CheckException();
-		auto p = Promise(); THROW_IF( !p, "Not Connected" );
-		if( auto e = p->MoveExp(); e )
-			e->Throw();
-//		p->Log( _session->Id(), _start, _sl );
 	}
 }

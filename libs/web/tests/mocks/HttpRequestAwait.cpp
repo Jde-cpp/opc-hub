@@ -74,7 +74,7 @@ namespace Jde::Web::Mock{
 	}
 	α HttpRequestAwait::Suspend()ι->void{
 		if( _request.Target()=="/delay" ){
-			 _thread = std::jthread( [this,h=_h]()mutable->void {
+			_thread = std::jthread( [this,h=_h]()mutable->void {
 				Thread::SetName( "DelayHandler" );
 				uint seconds = To<uint>( _request["seconds"] );
 				DBGT( ELogTags::HttpServerWrite, "server sleeping for {}", seconds );
@@ -90,7 +90,7 @@ namespace Jde::Web::Mock{
 				h.promise().SetExp( RestException{ EHttpStatus::InternalServerError, SRCE_CUR, move(_request), "BadAwaitable"} );//a handler that just fails is a server fault - the status RestException carried before it took one explicitly.
 				net::post( *Executor(), [h](){ h.resume(); } );
 				DBGT( ELogTags::HttpServerWrite, "~/BadAwaitable handler" );
-			 });
+			});
 		}
 		else if( _request.Target()=="/redirectLoop" || _request.Target()=="/redirectHost" || _request.Target()=="/redirectBadPort" || _request.Target()=="/redirectPlain" ){
 			//302 straight back at the client: /redirectLoop points at itself so the hop budget is the only thing that stops it,

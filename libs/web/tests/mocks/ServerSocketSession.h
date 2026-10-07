@@ -23,7 +23,7 @@ namespace Jde::Web::Mock{
 		α WriteSubscriptionAck( flat_set<QL::SubscriptionId>&&, RequestId )ι->void override{ ASSERT(false); }
 		α WriteComplete( RequestId )ι->void override{ ASSERT(false); }
 		α OnConnect( SessionPK sessionId, RequestId requestId )ι->Server::Sessions::UpsertAwait::Task;
-		α QueryClient( QL::TableQL&&, Jde::UserPK, RequestId )ε->void override{ ASSERT(false); }
+		α SendQueryClient( QL::TableQL&&, Jde::UserPK, RequestId )ε->void override{ ASSERT(false); }
 
 		vector<sp<DB::AppSchema>> _schemas;
 	};

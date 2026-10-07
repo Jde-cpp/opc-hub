@@ -7,8 +7,6 @@
 #define let const auto
 
 namespace Jde::Opc::Hub{
-	α HttpRequestAwait::Schemas()Ι->const vector<sp<DB::AppSchema>>&{ return App::Server::Schemas(); }
-
 	α HttpRequestAwait::await_ready()ι->bool{
 		if( _request.Method()==http::verb::get ){
 			if( _request.Target()=="/GoogleAuthClientId" ){

@@ -23,7 +23,7 @@ namespace Jde::Opc::Gateway{
 		α LocalQL()Ι->sp<QL::IQL> override{ return QLPtr(); }
 		α OnClose()ι->void override;
 		α ProcessTransmission( FromClient::Transmission&& transmission )ι->void;
-		α QueryClient( QL::TableQL&&, Jde::UserPK, Jde::RequestId )ε->void override{ throw Exception{ "NoImpl" }; }
+		α SendQueryClient( QL::TableQL&&, Jde::UserPK, Jde::RequestId )ε->void override{ throw Exception{ "NoImpl" }; }
 		α SetSessionId( str sessionId, RequestId requestId )->Sessions::UpsertAwait::Task;
 		α SharedFromThis()ι->sp<GatewaySocketSession>{ return std::dynamic_pointer_cast<GatewaySocketSession>(shared_from_this()); }
 

@@ -63,7 +63,7 @@ namespace Jde::Web::Mock{
 				Close();
 				break;
 			case kBadTransmissionServer:
-				Stream->Write( "ABCDEFG", shared_from_this() );
+				IWebsocketSession::Write( "ABCDEFG" );
 				break;
 			default:
 				BREAK;

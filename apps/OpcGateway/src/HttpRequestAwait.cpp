@@ -107,10 +107,6 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α HttpRequestAwait::Schemas()Ι->const vector<sp<DB::AppSchema>>&{
-		return Gateway::Schemas();
-	}
-
 	α HttpRequestAwait::Suspend()ι->void{
  		if( _request.IsPost("/login") ) //used with user/password on Opc Server.
 			Login( _request.UserEndpoint.address().to_string() );

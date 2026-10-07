@@ -14,7 +14,7 @@ namespace Jde::QL{ struct Subscription; }
 
 namespace Jde::Web::Server{
 	struct IRestStream; struct ISocketStream; template<class TStream> struct SocketStream;
-	struct ΓWS IWebsocketSession : std::enable_shared_from_this<IWebsocketSession>{
+	struct IWebsocketSession : std::enable_shared_from_this<IWebsocketSession>{
 		IWebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι;
 		α Run()ι->void;
 		α Id()Ι->SocketId{ return _id; }
@@ -34,12 +34,11 @@ namespace Jde::Web::Server{
 		β WriteException( runtime_error&& e, RequestId requestId, SRCE )ι->void=0;
 		β WriteException( string&& e, RequestId requestId, SL sl )ι->void=0;
 		β UserPK()Ι->Jde::UserPK=0;
-		α IsOpen()ι->bool{ return StreamPtr()!=nullptr; }//OnClose nulls Stream, so this is the one place that knows the socket behind a registration is gone.
+		α IsOpen()ι->bool{ return StreamPtr()!=nullptr; }//OnClose nulls _stream, so this is the one place that knows the socket behind a registration is gone.
 		α SessionId()ι{ return _sessionInfo ? _sessionInfo->SessionId : SessionPK{}; }//public: Sessions::Remove has to find the sockets bound to a revoked id (#5).
 		β Close()ι->void;
 	protected:
-		sp<ISocketStream> Stream;
-		α StreamPtr()ι->sp<ISocketStream>{ lg _{ _streamMutex }; return Stream; }//Stream is written by OnClose on the strand & read from other threads (Write/Close) - always copy through here outside the strand.
+		α StreamPtr()ι->sp<ISocketStream>{ lg _{ _streamMutex }; return _stream; }//_stream is written by OnClose on the strand & read from other threads (Write/Close) - always copy through here outside the strand.
 		tcp::endpoint _userEndpoint;
 		β OnClose()ι->void;
 		β OnRead( const char* p, uint size )ι->void=0;
@@ -59,7 +58,7 @@ namespace Jde::Web::Server{
 
 	private:
 		α AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SRCE )ι->TimerAwait::Task;
-		α Disconnect( CodeException&& e )ι{ OnDisconnect(move(e)); }
+		α TakePending( RequestId requestId, bool erase=false )ι->optional<QueryClientAwait::Handle>;
 		//#6: every read error other than websocket::error::closed comes here (Streams.cpp DoRead) - beast's idle timeout,
 		//connection_reset, message_too_big.  OnClose is the safe default: a `{}` base silently leaked the session, its
 		//SocketServerListener<->session sp cycle and its fd on any peer that vanished without a close frame.  An override must add
@@ -69,12 +68,12 @@ namespace Jde::Web::Server{
 
 		α OnRun()ι->void;
 		α DoRead()ι->void;
-		α OnWrite( beast::error_code ec, std::size_t bytes_transferred )ι->void;
-		β QueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ε->void=0;
+		β SendQueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ε->void=0;//the wire write - QueryClient above registers the request first.
 		β LocalQL()Ι->sp<QL::IQL> = 0;
 
 		const SocketId _id{}; // index starts at 0 for each app start.
-		mutex _streamMutex;//guards Stream only - everything else session-related runs on the stream's strand.
+		mutex _streamMutex;//guards _stream only - everything else session-related runs on the stream's strand.
+		sp<ISocketStream> _stream;
 		TRequestType _initialRequest;
 		sp<QL::IListener> _listener;
 		flat_map<RequestId, std::pair<QueryClientAwait::Handle, sp<DurationTimer>>> _pendingQueries; mutex _pendingQueriesMutex;

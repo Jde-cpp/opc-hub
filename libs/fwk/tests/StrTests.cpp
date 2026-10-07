@@ -115,6 +115,23 @@ namespace Jde::Tests{
 		EXPECT_EQ( Str::DecodeUri(""), "" );
 	}
 
+	//the one splitter behind the server's Origin/Host comparison and the client's redirect Location.
+	TEST( StrTests, ParseUrl ){
+		auto url = Str::ParseUrl( "https://h:1968/a/b?c=d" );
+		EXPECT_EQ( url.Scheme, "https" ); EXPECT_EQ( url.Host, "h" ); EXPECT_EQ( url.Port, "1968" ); EXPECT_EQ( url.Path, "/a/b?c=d" );
+		url = Str::ParseUrl( "h:1968" );//a Host header - no scheme, no path.
+		EXPECT_EQ( url.Scheme, "" ); EXPECT_EQ( url.Host, "h" ); EXPECT_EQ( url.Port, "1968" ); EXPECT_EQ( url.Path, "" );
+		url = Str::ParseUrl( "http://[::1]:80/" );//an ipv6 literal keeps its brackets, and its colons are not the port's.
+		EXPECT_EQ( url.Host, "[::1]" ); EXPECT_EQ( url.Port, "80" ); EXPECT_EQ( url.Path, "/" );
+		EXPECT_EQ( Str::ParseUrl("[::1]").Host, "[::1]" );
+		EXPECT_EQ( Str::ParseUrl("[::1").Host, "[::1" );//unterminated - whole thing, as before.
+		url = Str::ParseUrl( "https://h" );
+		EXPECT_EQ( url.Host, "h" ); EXPECT_EQ( url.Port, "" ); EXPECT_EQ( url.Path, "" );
+		url = Str::ParseUrl( "/relative?x" );
+		EXPECT_EQ( url.Scheme, "" ); EXPECT_EQ( url.Host, "" ); EXPECT_EQ( url.Path, "/relative?x" );
+		EXPECT_EQ( Str::ParseUrl("https://").Host, "" );
+	}
+
 	//the modulus spelling every enrolled identity is keyed by - see OpenSslTests.PublicKeyIdentity.
 	TEST( StrTests, ToHex ){
 		let bytes = vector<byte>{ byte{0x00}, byte{0x0f}, byte{0xff}, byte{0xa5} };

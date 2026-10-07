@@ -16,7 +16,5 @@ namespace Jde::App::Server{
 		α await_ready()ι->bool override;
 		α Suspend()ι->void override;
 		α await_resume()ε->Web::Server::HttpTaskResult override;
-	private:
-		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override;
 	};
 }

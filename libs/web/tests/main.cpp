@@ -10,7 +10,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.Web"; }
 #endif
 
- 	α Startup( int argc, char **argv )ι->void{
+	α Startup( int argc, char **argv )ι->void{
 		Thread::SetName( "Main" );
 		Process::Startup( argc, argv, "Tests.Web", "Web tests", true );
 		Logging::Init();

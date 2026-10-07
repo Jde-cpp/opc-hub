@@ -25,9 +25,7 @@ namespace Jde::Web::Mock{
 		α Subscribe( string&&, jobject, sp<QL::IListener>, SL )ε->ClientSocketAwait<jarray> override{ ASSERT(false); return { {}, {}, {} }; }
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
 
-		α HandleException( RequestId requestId, std::any&& h, string&& what )ι;
 		α OnRead( Proto::FromServerTransmission&& transmission )ι->void override;
-		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnClose( beast::error_code ec )ι->void override;
 
 		α OnAck( uint32 ack )ι->void;

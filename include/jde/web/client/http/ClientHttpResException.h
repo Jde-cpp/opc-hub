@@ -1,10 +1,9 @@
 #pragma once
 #include <jde/fwk/exceptions/Exception.h>
-#include "../exports.h"
 #include "ClientHttpRes.h"
 
 namespace Jde::Web::Client{
-	struct ΓWC ClientHttpResException final : ExternalException{
+	struct ClientHttpResException final : ExternalException{
 		//the status alone is not a message - without the reason phrase & body, what() is empty and the failure surfaces as a blank line.
 		ClientHttpResException( ClientHttpRes&& res, string url, SRCE )ι:
 			ExternalException{
@@ -23,7 +22,7 @@ namespace Jde::Web::Client{
 		//error bodies are usually a sentence, but a proxy/gateway can answer with a whole html page - cap it.
 		Ω Detail( const ClientHttpRes& res )ι->string{
 			constexpr uint maxBody{ 512 };
-			const auto body = res.Body();
+			const auto& body = res.Body();
 			return body.empty() ? string{}
 				: body.size()>maxBody ? Ƒ( ": {}...", sv{body.data(), maxBody} )
 				: Ƒ( ": {}", body );

@@ -10,7 +10,7 @@ namespace Jde::Web::Client{
 
 		α operator[]( http::field field )Ι->string{ return _headers[field]; }
 
-		α Body()Ι->string{ return _body; }
+		α Body()Ι->str{ return _body; }
 		α Headers()Ι->const http::header<true, http::fields>&{ return _headers; }
 		α Json()Ι->jobject{ return Json::Parse(_body); }
 		α IsError()Ι->bool{ return http::to_status_class(_status)!=http::status_class::successful && _status!=http::status::found; }

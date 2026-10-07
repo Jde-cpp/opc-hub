@@ -21,7 +21,6 @@ namespace Jde::Opc::Hub{
 		α await_ready()ι->bool override;
 		α Suspend()ι->void override;
 	private:
-		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override;
 		α HubLogout()ι->void;
 		α HasOpcBody()ι->bool;
 		α ServeSite()ι->void;

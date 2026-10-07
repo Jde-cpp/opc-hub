@@ -37,6 +37,25 @@ namespace Jde{
 	const string _empty;
 	α Str::Empty()ι->str{ return _empty; };
 
+	α Str::ParseUrl( sv url )ι->Url{
+		Url y;
+		if( let scheme = url.find("://"); scheme!=sv::npos ){
+			y.Scheme = url.substr( 0, scheme );
+			url = url.substr( scheme+3 );
+		}
+		let slash = url.find( '/' );
+		let authority = url.substr( 0, slash );
+		if( slash!=sv::npos )
+			y.Path = url.substr( slash );
+		//an ipv6 literal's colons are not a port separator - the host runs to its ']'.
+		let close = authority.starts_with('[') ? authority.find(']') : authority.find(':');
+		let hostEnd = close==sv::npos ? authority.size() : authority.starts_with('[') ? close+1 : close;
+		y.Host = authority.substr( 0, hostEnd );
+		if( hostEnd<authority.size() && authority[hostEnd]==':' )
+			y.Port = authority.substr( hostEnd+1 );
+		return y;
+	}
+
 	α Str::DecodeUri( sv x )ι->string{
 		auto fromHex = []( char ch )->int {
 			if( ch>='0' && ch<='9' )

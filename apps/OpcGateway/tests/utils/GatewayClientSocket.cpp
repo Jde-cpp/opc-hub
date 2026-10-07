@@ -31,32 +31,6 @@ namespace Tests{
 		INFOT( ELogTags::SocketClientRead, "[{}]{} GatewayClientSocket created: {}.", Id(), IsSsl() ? "Ssl" : "Plain", Host() );
 	}
 
-	α GatewayClientSocket::HandleException( std::any&& h, Exception&& e )ι{
-		if( auto echo = std::any_cast<await<string>::Handle>(&h) ){
-			echo->promise().SetExp( move(e) );//SetExp stores e.Move(), so the caller's GatewayErrorResponse-or-not survives.
-			echo->resume();
-		}
-		else if( auto ack = std::any_cast<await<SessionPK>::Handle>(&h) ){
-			ack->promise().SetExp( move(e) );
-			ack->resume();
-		}
-		else if( auto q = std::any_cast<await<jvalue>::Handle>(&h) ){
-			q->promise().SetExp( move(e) );
-			q->resume();
-		}
-		else if( auto sub = std::any_cast<await<FromServer::SubscriptionAck>::Handle>(&h) ){
-			sub->promise().SetExp( move(e) );
-			sub->resume();
-		}
-		else if( auto unsub = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>(&h) ){
-			//the listeners stay: the server still pushes.  The request's own record goes with the failure - forgetRequest/CloseTasks.
-			unsub->promise().SetExp( move(e) );
-			unsub->resume();
-		}
-		else
-			WARNT( ELogTags::SocketClientRead, "Failed to process incomming exception '{}'.", e.what() );
-	}
-
 	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
 	α forgetRequest( RequestId requestId )ι->void;
 	α onUnsubscribeAck( RequestId requestId )ι->void;
@@ -75,13 +49,16 @@ namespace Tests{
 				onNodeValues( move(*m->mutable_node_values()) );
 				break;
 			case kException:{
-				std::any h = requestId==0 ? coroutine_handle<>{} : PopTask( requestId );
-				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.
+				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
+				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
 				let& e = m->exception();
-				HandleException( move(h), GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.
+				if( task.Fail )
+					task.Fail( GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives.
+				else
+					WARNT( ELogTags::SocketClientRead, "Failed to process incoming exception '{}'.", e.what() );
 				break;}
 			case kQuery:{
-				auto h = std::any_cast<await<jvalue>::Handle>( IClientSocketSession::PopTask(requestId) );
+				auto h = std::any_cast<await<jvalue>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				try{
 					h.promise().Resume( parse(move(*m->mutable_query())), h );
 				}
@@ -91,7 +68,7 @@ namespace Tests{
 				break;}
 			case kSubscriptionAck:{
 				auto& result = *m->mutable_subscription_ack();
-				auto h = std::any_cast<await<FromServer::SubscriptionAck>::Handle>( IClientSocketSession::PopTask(requestId) );
+				auto h = std::any_cast<await<FromServer::SubscriptionAck>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				if( let sc = onSubscriptionAck(requestId, result); sc )
 					h.promise().ResumeExp( UAException{sc}, h );
 				else
@@ -99,11 +76,11 @@ namespace Tests{
 				break;}
 			case kUnsubscribeAck:{
 				onUnsubscribeAck( requestId );
-				auto h = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>( IClientSocketSession::PopTask(requestId) );
+				auto h = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				h.promise().Resume( move(*m->mutable_unsubscribe_ack()), h );
 				break;}
 			case VALUE_NOT_SET:{
-				auto h = std::any_cast<await<uint32>::Handle>( IClientSocketSession::PopTask(requestId) ); //connect
+				auto h = std::any_cast<await<uint32>::Handle>( IClientSocketSession::PopTask(requestId).Handle ); //connect
 				h.promise().Resume( Id(), h );
 			break;}
 			default:
@@ -164,7 +141,7 @@ namespace Tests{
 		ul _{ _logSubscriptionsMutex };
 		_logSubscriptions.emplace( (uint32)requestId, move(listener) );
 		auto query = serialize( ql );
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::Client::MaxLogLength()) );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::MaxLogLength()) );
 		return await<jarray>{ FromClientUtils::Query(move(query), move(vars), true, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{
@@ -241,21 +218,17 @@ namespace Tests{
 	}
 
 	α GatewayClientSocket::CloseTasks( beast::error_code ec )ι->void{
-		//A plain Exception, never a GatewayErrorResponse:  every transport failure fails its tasks here - the socket closing,
-		//a write on a closed stream, a request timing out (AddTimeout -> CloseOnError) - and the soak's reconnect keys on
-		//the difference.  Stamping these as answered made every dead socket reset the soak's failure count, so it never
+		//The base fails the tasks with a CodeException, never a GatewayErrorResponse:  every transport failure ends here - the
+		//socket closing, a write on a closed stream, a request timing out (AddTimeout -> CloseOnError) - and the soak's reconnect
+		//keys on the difference.  Stamping these as answered made every dead socket reset the soak's failure count, so it never
 		//reconnected (subscription-disconnect #1).
-		auto f = [this, ec]( std::any&& h )->void {
-			let e = App::ProtoUtils::ToException( CodeException{ec, ELogTags::SocketClientWrite, ELogLevel::NoLog} );
-			HandleException( move(h), Exception{e.what(), e.code()} );
-		};
 		{//the records of what this socket still has pending go with its tasks (#15).  Before the drain:  the drain hands over
 			//handles, not ids, and HasTask is only true of a request until it has run.  Another socket's records are not this one's to take.
 			ul _{ _subscriptionRequestMutex };
 			erase_if( _subscriptionRequests, [this]( let& kv ){ return HasTask(kv.first); } );
 			erase_if( _unsubscribeRequests, [this]( let& kv ){ return HasTask(kv.first); } );
 		}
-		base::CloseTasks( f );
+		base::CloseTasks( ec );
 	}
 	α GatewayClientSocket::OnClose( beast::error_code ec )ι->void{
 		base::OnClose( ec );

@@ -30,23 +30,6 @@ namespace Jde::Web::Mock{
 	}
 
 
-	α ClientSocketSession::HandleException( RequestId requestId, std::any&& h, string&& what )ι{
-		if( auto pEcho = std::any_cast<ClientSocketAwait<string>::Handle>(&h) ){
-			pEcho->promise().SetExp( Exception{what} );
-			pEcho->resume();
-		}
-		else if( auto pAck = std::any_cast<ClientSocketAwait<SessionPK>::Handle>(&h) ){
-			pAck->promise().SetExp( Exception{what} );
-			pAck->resume();
-		}
-		else{
-			let severity{ requestId ? ELogLevel::Critical : ELogLevel::Warning };
-			ASSERT_DESC( !requestId, Ƒ("[{}]Type Not Expected={}, {}", hex(requestId), h.type().name(), hex((uint)&h)) );
-			LOG( severity, ELogTags::SocketClientRead, "[{}]Failed to process incoming exception '{}'.", hex(requestId), what );
-		}
-
-	}
-
 	α ClientSocketSession::OnRead( Proto::FromServerTransmission&& transmission )ι->void{
 		auto size = transmission.messages_size();
 		for( auto i=0; i<size; ++i ){
@@ -58,18 +41,20 @@ namespace Jde::Web::Mock{
 				OnAck( m->ack() );
 				break;
 			case kSessionId:{
-				auto h = std::any_cast<ClientSocketAwait<SessionPK>::Handle>( IClientSocketSession::PopTask(requestId) );
+				auto h = std::any_cast<ClientSocketAwait<SessionPK>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				SetSessionId(Ƒ("{:x}", m->session_id()), requestId );
 				h.promise().Resume( m->session_id(), h );
 				break;}
 			case kEchoText:{
-				auto h = std::any_cast<ClientSocketAwait<string>::Handle>( IClientSocketSession::PopTask(requestId) );
+				auto h = std::any_cast<ClientSocketAwait<string>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				h.promise().SetValue( move(*m->mutable_echo_text()) );
 				h.resume();
 				break;}
 			case kException:{
-				std::any h = requestId==0 ? coroutine_handle<>{} : PopTask( requestId );
-				HandleException( requestId, move(h), move(*m->mutable_exception()) );
+				if( auto task = requestId ? PopTask( requestId ) : PendingTask{}; task.Fail )
+					task.Fail( Exception{move(*m->mutable_exception())} );
+				else
+					LOG( requestId ? ELogLevel::Critical : ELogLevel::Warning, ELogTags::SocketClientRead, "[{}]Failed to process incoming exception '{}'.", hex(requestId), m->exception() );
 				break;}
 			default:
 				BREAK;
@@ -116,16 +101,5 @@ namespace Jde::Web::Mock{
 	α ClientSocketSession::OnClose( beast::error_code ec )ι->void{
 		++_onCloseCount;//incremented before the base call: base::OnClose drains _tasks, which resumes whoever is blocked on the request, so the count has to be visible by then.
 		base::OnClose( ec );
-	}
-
-	α ClientSocketSession::CloseTasks( beast::error_code ec )ι->void{
-		auto f = [this, ec]( std::any&& h )->void {
-			HandleException(
-				0,
-				move(h),
-				ec ? CodeException{ec, ELogTags::SocketClientWrite, ELogLevel::NoLog}.what() : "Session closed."
-			);
-		};
-		base::CloseTasks( f );
 	}
 }

@@ -1,14 +1,12 @@
 #pragma once
 #include <jde/fwk/crypto/OpenSsl.h>
-#include "client/exports.h"
 #include "jde/fwk/crypto/CryptoSettings.h"
 
 namespace Jde::Web{
-	struct ΓWC Jwt{
+	struct Jwt{
 		//how stale an exp-less token may be, measured on its iat.  10 minutes is the window the mock login has always enforced,
 		//and it doubles as the clock-skew tolerance between the signer and us - there is nothing else to bound such a token by.
 		static constexpr time_t MaxAgeWithoutExpiration{ 60*10 };
-		Jwt()ι{ ASSERT(false); }
 		Jwt( sv encoded, SRCE )ε;
 		Jwt( Crypto::PublicKey publicKey, Jde::UserPK userPK, str userName, str userSlug, SessionPK sessionId, str endpoint, TimePoint expires, str description, const struct Crypto::PrivateKeySettings& privateKey, vector<byte> certificate={}, SRCE )ε;
 		Jwt( Crypto::PublicKey publicKey, Jde::UserPK userPK, str userName, str userSlug )ι: PublicKey{move(publicKey)}, UserPK{userPK}, UserName{userName}, UserSlug{userSlug}{}

@@ -27,6 +27,10 @@ namespace Jde::Str{
 
 	template<class T=string> α Decode64( sv s, bool fileSafe=false, SRCE )ε->T;//padded or not; fileSafe is base64url.
 	Φ DecodeUri( sv str )ι->string;
+	//scheme://host:port/path, split and nothing more - no decoding, no validation.  Views into the argument:  Scheme without its
+	//"://", Host with an ipv6 literal's brackets, Port as written, Path from its leading '/' to the end.  Each is empty when absent.
+	struct Url{ sv Scheme; sv Host; sv Port; sv Path; };
+	Φ ParseUrl( sv url )ι->Url;
 	Ŧ Encode64( const T& val, bool fileSafe=false )ι->string requires requires{ val.data(); val.size(); }{//fileSafe is base64url, unpadded (RFC 7515 §2).
 		const sv bytes{ (const char*)val.data(), val.size()*sizeof(*val.data()) };
 		return fileSafe ? absl::WebSafeBase64Escape( bytes ) : absl::Base64Escape( bytes );

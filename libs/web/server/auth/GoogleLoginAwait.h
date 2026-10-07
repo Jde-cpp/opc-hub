@@ -1,15 +1,13 @@
 ﻿#pragma once
 #include <jde/fwk/co/Await.h>
 #include <jde/web/Jwt.h>
-#include <jde/web/client/http/ClientHttpAwait.h>
 
 namespace Jde::Web::Server{
-	struct GoogleLoginAwait : TAwaitEx<UserPK,Web::Client::ClientHttpAwait::Task>{
-		using base = TAwaitEx<UserPK,Web::Client::ClientHttpAwait::Task>;
+	struct GoogleLoginAwait : TAwaitEx<UserPK,TAwait<UserPK>::Task>{
+		using base = TAwaitEx<UserPK,TAwait<UserPK>::Task>;
 		GoogleLoginAwait( Web::Jwt jwt, SRCE ):base{sl},_jwt{ move(jwt) }{}
 	private:
-		α Execute()ι->Web::Client::ClientHttpAwait::Task;
-		α Authenticate()->TAwait<UserPK>::Task;
+		α Execute()ι->TAwait<UserPK>::Task;
 
 		Web::Jwt _jwt;
 	};

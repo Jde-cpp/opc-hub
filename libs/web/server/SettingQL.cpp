@@ -1,41 +1,36 @@
 #include <jde/web/server/SettingQL.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/app/IApp.h>
+#include <jde/ql/types/TableQL.h>
 #include <jde/web/server/Sessions.h>
 #define let const auto
 
 namespace Jde::Web::Server{
-	α SettingQLAwait::await_ready()ι->bool{
-		_result = _query.DefaultResult();
-		try{
-			let targets = _query.As<jvalue>("target", _sl);
+	α ServerSetting( sv target, const App::IApp& appClient )ε->jvalue{
+		jvalue y;
+		if( target=="restSessionTimeout" )
+			y = Chrono::ToString<steady_clock::duration>( Sessions::RestSessionTimeout() );
+		else if( target=="serverConnection" )
+			y = appClient.ConnectionPK();
+		else if( let value = Settings::FindString(Ƒ("/http/clientSettings/{}", target)); value )
+			y = *value;
+		return y;
+	}
+
+	α SettingQL( QL::TableQL query, sp<App::IApp> appClient, SL sl )ι->up<TAwait<jvalue>>{
+		return mu<CompletedAwait<jvalue>>( [query=move(query), appClient=move(appClient), sl]()->jvalue{
+			auto y = query.DefaultResult();
+			let targets = query.As<jvalue>( "target", sl );
 			Json::Visit( targets, [&]( const sv& target ){
 				jobject setting;
-				jvalue jv;
-				if( target=="restSessionTimeout" )
-					jv = Chrono::ToString<steady_clock::duration>( Sessions::RestSessionTimeout() );
-				else if( target=="serverConnection" ){
-					jv = _appClient->ConnectionPK();
-				}else{
-					let value = Settings::FindString( Ƒ("/http/clientSettings/{}", target) );
-					jv = value ? jvalue{ *value } : jvalue{ nullptr };
-				}
-				if( _query.FindColumn("target") )
+				if( query.FindColumn("target") )
 					setting["target"] = target;
-				if( _query.FindColumn("value") )
-					setting["value"] = jv;
+				if( query.FindColumn("value") )
+					setting["value"] = ServerSetting( target, *appClient );
 
-				Json::AppendOrAssign( _result, setting );
+				Json::AppendOrAssign( y, setting );
 			});
-		}
-		catch( runtime_error& e ){
-			_exception = mu<Exception>( move(e) );
-		}
-		return true;
-	}
-	α SettingQLAwait::await_resume()ε->jvalue{
-		if( _exception )
-			throw *move( _exception );
-		return _result;
+			return y;
+		}, sl );
 	}
 }

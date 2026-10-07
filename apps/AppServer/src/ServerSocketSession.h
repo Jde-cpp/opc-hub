@@ -29,7 +29,7 @@ namespace Jde::App::Server{
 		α GetJwt( Jde::RequestId requestId )ι->TAwait<jobject>::Task;
 		α Login( string&& jwt, RequestId requestId )ι->TAwait<sp<Web::Server::SessionInfo>>::Task;
 		α ProcessTransmission( Proto::FromClient::Transmission&& transmission, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void;
-		α QueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ι->void override;
+		α SendQueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ι->void override;
 		α SharedFromThis()ι->sp<ServerSocketSession>{ return std::dynamic_pointer_cast<ServerSocketSession>(shared_from_this()); }
 		α TestAdmin( str resource, str criteria, Jde::UserPK userPK, SRCE )ι->up<AnyVoidAwait> override;
 		α WriteException( runtime_error&& e, RequestId requestId, SRCE )ι->void override;

@@ -1,5 +1,4 @@
 #pragma once
-//#include <jde/web/client/socket/IClientSocketSession.h>
 #include "../usings.h"
 #include <jde/fwk/str.h>
 #include "../client.h"
@@ -8,9 +7,6 @@
 namespace Jde::Web::Client{
 	struct IClientSocketSession;
 	struct TimedPromiseType{
-		ψ Log( const fmt::format_string<Args const&...>&& m2, const Args&... args )ι->void{
-			TRACET( ELogTags::SocketClientRead, FWD(m2), FWD(args)... );
-		}
 		α Log( SessionPK sessionId, steady_clock::time_point start, SL sl )ι->void{
 			if( ShouldTrace(ELogTags::SocketClientRead) && ResponseMessage.size() ){
 				const auto msg = Str::Format(ResponseMessage, MessageArgs).substr( 0, MaxLogLength() );
@@ -21,28 +17,23 @@ namespace Jde::Web::Client{
 		sv ResponseMessage;
 		vector<string> MessageArgs;
 	};
-	struct TimedVoidTask final{
-		struct promise_type : VoidPromise<TimedVoidTask>, TimedPromiseType{};
+	//A request in flight:  the typed handle its answer resumes, and how to fail it without knowing that type.
+	struct PendingTask{
+		std::any Handle;
+		function<void(Exception&&)> Fail;
 	};
 
 	struct IClientSocketVoidAwait{
 		IClientSocketVoidAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session )ι:
 			_request{ move(request) }, _requestId{ requestId }, _session{ session }, _start{ steady_clock::now() }{}
 
-		α Suspend( std::any hCoroutine )ι->void;
+		α Suspend( PendingTask&& task )ι->void;
 	protected:
 		α SessionId()ι->SessionPK;
 		string _request;
 		const RequestId _requestId;
 		sp<IClientSocketSession> _session;
 		steady_clock::time_point _start;
-	};
-
-	struct ClientSocketVoidAwait final : VoidAwait, IClientSocketVoidAwait{
-		ClientSocketVoidAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session, SRCE )ι:
-			VoidAwait{ sl }, IClientSocketVoidAwait{ move(request), requestId, session }{}
-		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend(_h); }
-		α await_resume()ε->void override;
 	};
 
 	template<class T>
@@ -55,7 +46,7 @@ namespace Jde::Web::Client{
 		using base = TAwait<T,TTimedTask<T>>;
 		ClientSocketAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session, SRCE )ι;
 		ClientSocketAwait( ClientSocketAwait&& )=default;
-		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend(base::_h); }
+		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend( {base::_h, [h=base::_h]( Exception&& e ){ h.promise().SetExp( move(e) ); h.resume(); }} ); }
 		α await_resume()ε->T override;
 	};
 

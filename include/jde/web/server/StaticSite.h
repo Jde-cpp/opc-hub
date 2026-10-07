@@ -1,5 +1,4 @@
 #pragma once
-#include "exports.h"
 
 namespace Jde::Web::Server{
 	//The Angular site, served from the listener the REST and socket routes share (reviews/install-issues.md #3):  one origin for
@@ -7,7 +6,7 @@ namespace Jde::Web::Server{
 	//directory - the installers put the built site at <program dir>/web, beside the exe's dir - and no key means no site (dev
 	//serves it from ng serve).  A page route - a path without an extension, /login, /apps/gateways - is index.html, which the
 	//page routes client-side:  #4's deep-link fallback, the one IIS needed the rewrite module for.
-	struct ΓWS StaticSite{
+	struct StaticSite{
 		struct File{ string Body; string ContentType; string CacheControl; };
 		StaticSite( fs::path root )ι;
 		//the file for a GET target (decoded, no query) - nullopt for a miss, which is the caller's 404.  Never escapes the root:
@@ -20,5 +19,5 @@ namespace Jde::Web::Server{
 		fs::path _root;
 	};
 	//the site /http/site names, nullptr without one - built on first use, once the settings are loaded.
-	ΓWS auto Site()ι->StaticSite*;
+	α Site()ι->StaticSite*;
 }

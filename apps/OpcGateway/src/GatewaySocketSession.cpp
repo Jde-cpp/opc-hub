@@ -18,7 +18,7 @@ namespace Jde::Opc::Gateway{
 	{}
 
 	α GatewaySocketSession::OnClose()ι->void{
-		if( !Stream )
+		if( !IsOpen() )
 			return;
 		LogRead( "OnClose", 0 );
 		UAClient::Unsubscribe( SharedFromThis() );

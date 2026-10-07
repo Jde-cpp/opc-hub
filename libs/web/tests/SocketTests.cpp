@@ -143,6 +143,21 @@ namespace Jde::Web{
 		Server::Sessions::Remove( info->SessionId );
 	}
 
+	//sessions{lastUpdate} reported the mint time:  both paths that slide Expiration left LastServerUpdate behind (web-refactor B5).
+	TEST_F( SocketTests, SessionLastUpdateSlides ){
+		using Server::SessionInfo; using Server::Sessions::UpsertAwait;
+		let info = Server::Sessions::Add( Jde::UserPK{7}, "10.9.9.4", true );
+		let minted = info->LastServerUpdate;
+		std::this_thread::sleep_for( 2ms );
+		BlockAwait<UpsertAwait,sp<SessionInfo>>( UpsertAwait{Ƒ("{:x}", info->SessionId), "10.9.9.4", true, nullptr} );
+		let resumed = info->LastServerUpdate;
+		EXPECT_GT( resumed, minted ) << "a resume (UpdateExpiration) must move it";
+		std::this_thread::sleep_for( 2ms );
+		Server::Sessions::Extend( info->SessionId );
+		EXPECT_GT( info->LastServerUpdate, resumed ) << "an Extend must move it";
+		Server::Sessions::Remove( info->SessionId );
+	}
+
 	//web-review3 #10: FromSessionId's catch treated every SessionInfoAwait failure as "anonymous user" and cached it under the
 	//caller's real session id, so an AppServer restart or its 60s request-deadline close - hit while a logged-in user was on the
 	//gateway - turned that user anonymous for RestSessionTimeout, with UpdateExpiration refreshing the entry instead of ever
@@ -420,6 +435,16 @@ namespace Jde::Web{
 		//lost wakeup would hang the test rather than the code.  Before this, Suspend went straight at a nulled _stream.
 		BlockVoidAwait( _clientSession->Close(true, SRCE_CUR) );
 		_clientSession = nullptr;//TearDown's Close()/Wait() would hit the same lost wakeup.
+	}
+
+	//web-refactor A1: the client shares the server's never-opened guard.  A close ahead of the websocket handshake has no stream to
+	//send a close frame on - it closes the transport and still has to run OnClose, once, or the awaiting Close/Shutdown hangs.
+	TEST_F( SocketTests, CloseBeforeHandshake ){
+		optional<ssl::context> ctx;
+		_clientSession = ms<Mock::ClientSocketSession>( Executor(), ctx );
+		BlockVoidAwait( _clientSession->Close(false, SRCE_CUR) );
+		EXPECT_EQ( _clientSession->OnCloseCount(), 1u );
+		_clientSession = nullptr;
 	}
 
 	//app-review2 #2: the server closing first must run the *whole* client teardown, not just drain _tasks.  Beast auto-replies
