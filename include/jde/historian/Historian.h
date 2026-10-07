@@ -17,7 +17,8 @@ namespace Jde::Opc::Hist{
 		//UTC unless an IANA name pins another, which must not change once Path holds files:  the day directories decide
 		//which file a read opens.
 		const std::chrono::time_zone* TimeZone;
-		uint ReadLimit{ 10'000 };
+		static constexpr uint DefaultReadLimit{ 10'000 };//the gateway's pass-through reads take it too, which have no group.
+		uint ReadLimit{ DefaultReadLimit };
 		Duration StopLimit{ 1min };//how long the historian's end waits for its groups' last flushes; not read from the hist block.
 	};
 

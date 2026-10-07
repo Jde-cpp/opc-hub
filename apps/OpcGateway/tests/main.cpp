@@ -33,6 +33,14 @@ namespace Jde{
 			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug );
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http/gateway"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
+			//The server's history starts empty every run, so HistTests reads what it wrote and nothing an earlier run left.
+			//The lock file stays, as OpcServer's HistoryTests leave it:  a process holding it keeps it whatever this does.
+			if( let path = Settings::FindPath("/opcServer/hist/path"); path && fs::exists(*path) ){
+				for( let& entry : fs::directory_iterator{*path} ){
+					if( entry.path().filename()!="historian.lock" )
+						fs::remove_all( entry.path() );
+				}
+			}
 			Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") );
 		}
 		Opc::Gateway::Startup( Settings::AsObject("/http/gateway"), Settings::AsObject("/credentials/gateway") );
