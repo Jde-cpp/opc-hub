@@ -126,7 +126,8 @@ function( sync=false )
 	ql:{
 		introspection: [
 			"introspection/serverConnection.jsonnet",
-			"introspection/search.jsonnet"
+			"introspection/search.jsonnet",
+			"introspection/hist.jsonnet"
 		]
 	},
 	credentials:{

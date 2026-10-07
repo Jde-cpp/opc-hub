@@ -11,7 +11,7 @@ local logsDir = args.logsDir;
 	},
 	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
-		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
+		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet", "../../config/introspection/hist.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
 	},
 	access:{
 		trustedCertDirs: [
@@ -79,8 +79,10 @@ local logsDir = args.logsDir;
 		configFiles: [
 			"$(UA_NODE_SETS)/DI/Opc.Ua.Di.NodeSet2.xml",
 			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.xml",
-			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.examples.xml"
+			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.examples.xml",
+			args.repoSourceDir + "/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" //last, so the namespaces the other tests name keep their indexes:  the historized nodes HistTests reads through the gateway.
 		],
+		hist:{ path: logsDir + "/hist/opc-tests" },//the embedded server's own history, which main.cpp empties at the start.
 		port: 4840,
 		ssl: instance.http.opcServer.ssl
 	},

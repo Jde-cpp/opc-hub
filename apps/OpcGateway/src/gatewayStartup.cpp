@@ -37,7 +37,7 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
+		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "hist", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
 		SetSchema( schema );
 		if( ql ){}//the host's QL owns the schema list, and synced it with the rest.
 		else if( Settings::FindBool("/testing/recreateDB").value_or(false) )

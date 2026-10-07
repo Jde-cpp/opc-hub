@@ -307,6 +307,25 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
+	TEST_F( QLTests, histIntrospection ){
+		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
+		for( sv typeName : {"Hist"sv, "hist"sv} ){ //both spellings are declared in config/introspection/hist.jsonnet.
+			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
+			let& fields = Json::AsArray( value.as_object(), "fields" );
+			auto find = [&]( sv name ){ return find_if( fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; } ); };
+			for( sv name : {"continuation"sv, "values"sv, "nodes"sv} )
+				EXPECT_NE( find(name), fields.end() ) << name << ": " << serialize( value );
+			auto values = find( "values" );
+			ASSERT_NE( values, fields.end() );
+			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/kind"), "LIST" );
+			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/ofType/name"), "HistValue" );
+		}
+		let value = Socket().QuerySync( Ƒ("__type( name: \"HistValue\" ){}", fieldsQL), {} );
+		let& fields = Json::AsArray( value.as_object(), "fields" );
+		for( sv name : {"node"sv, "source"sv, "server"sv, "status"sv, "value"sv, "bound"sv, "heartbeat"sv, "modification"sv} )
+			EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << name << ": " << serialize( value );
+	}
+
 	TEST_F( QLTests, serverConnectionIntrospection ){
 		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
 		for( sv typeName : {"ServerConnection"sv, "serverConnections"sv} ){ //both spellings are declared in config/introspection/serverConnection.jsonnet.
