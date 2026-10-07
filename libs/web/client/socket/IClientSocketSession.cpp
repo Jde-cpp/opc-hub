@@ -1,29 +1,63 @@
 #include <jde/web/client/socket/IClientSocketSession.h>
-#include "boost/asio/error.hpp"
-#include "boost/beast/core/error.hpp"
-#include "boost/beast/websocket/error.hpp"
-#include "jde/fwk.h"
-#include "jde/fwk/co/Await.h"
-#include "jde/fwk/log/logTags.h"
-#include "jde/fwk/usings.h"
+#include <boost/asio/error.hpp>
+#include <boost/beast/core/error.hpp>
+#include <boost/beast/websocket/error.hpp>
+#include <jde/fwk.h>
+#include <jde/fwk/co/Await.h>
+#include <jde/fwk/log/logTags.h>
+#include <jde/fwk/usings.h>
 #include <jde/app/client/clientSubscriptions.h>
 #include <jde/fwk/process/execution.h>
 
-namespace Jde::Web{
+namespace Jde{
 	constexpr ELogTags _connectTag{ ELogTags::Socket | ELogTags::Client };
 	constexpr ELogTags _connectPedanticTag{ ELogTags::Socket | ELogTags::Client | ELogTags::Pedantic };
 	constexpr ELogTags _writeTag{ ELogTags::SocketClientWrite };
 	constexpr ELogTags _readTag{ ELogTags::SocketClientRead };
 
 	static optional<uint16> _maxLogLength;
-	α Client::MaxLogLength()ι->uint16{
+	α Web::MaxLogLength()ι->uint16{
 		if( !_maxLogLength )
 			_maxLogLength = Settings::FindNumber<uint16>( "/http/maxLogLength" ).value_or( 255 );//L5: leading slash - without it the path never matched and the default always won, so the setting was inert on the client side.
 		return *_maxLogLength;
 	}
+
+	//compare codes, not ec.value(): values are only unique within a category, and beast's end_of_stream, asio's stream_truncated
+	//and errno's EPERM are all 1.  switching on the value quieted normal keep-alive closes only by that collision, and equally
+	//dropped a genuine category-1 error to Trace.
+	α Web::ErrorSeverity( beast::error_code ec, EErrorRole role )ι->ELogLevel{
+		using enum ELogLevel;
+		switch( role ){
+		case EErrorRole::HttpServerRead:
+			if( ec==net::error::operation_aborted )
+				return Debug;
+			if( ec==http::error::end_of_stream )//peer closed a keep-alive connection - how a session normally ends.
+				return Trace;
+			if( ec==ssl::error::stream_truncated )//an SSL "short read": peer closed without performing the required closing handshake.
+				return Trace;
+			//ERR_SSL_SSLV3_ALERT_CERTIFICATE_UNKNOWN: the client doesn't trust the certificate.  openssl packs its own codes and asio
+			//has no enumerator to name them, so this one is matched on category+value.
+			if( ec.category()==net::error::get_ssl_category() && ec.value()==0xA000416 )
+				return Trace;
+			return Error;
+		case EErrorRole::HttpServerWrite:
+			return ec==beast::error::timeout ? Debug : Error;
+		case EErrorRole::SocketServerRead:
+			return Debug;//every ending of a socket read - closed, timeout, reset, aborted - is routine here; the session's OnDisconnect decides what it means.
+		case EErrorRole::SocketClient:
+			if( ec==net::error::operation_aborted || ec==websocket::error::closed )
+				return Debug;
+			if( ec==net::error::eof || ec==net::error::connection_reset )//server down.
+				return Information;
+			return Error;
+		case EErrorRole::HttpClientShutdown:
+			return ec==net::error::eof || ec==beast::errc::not_connected ? NoLog : Trace;//the peer closed first, or the connection never came up.
+		}
+		return Error;
+	}
 }
 #define CHECK_EC( tag ) if( ec ){ \
-	CodeException e{ static_cast<std::error_code>(ec), tag, GetLogLevel(ec) }; \
+	CodeException e{ static_cast<std::error_code>(ec), tag, ErrorSeverity(ec, EErrorRole::SocketClient) }; \
 	if( auto h = _connectHandle; h ){ \
 		_connectHandle = nullptr; \
 		h.promise().SetExp( move(e) ); \
@@ -32,14 +66,6 @@ namespace Jde::Web{
 	return; \
 }
 namespace Jde::Web::Client{
-	α GetLogLevel( beast::error_code ec )->ELogLevel{
-		if( ec==net::error::operation_aborted || ec==boost::beast::websocket::error::closed )
-			return ELogLevel::Debug;
-		if( ec==boost::asio::error::eof || ec==boost::asio::error::connection_reset ) // server down.
-			return ELogLevel::Information;
-		return ELogLevel::Error;
-	}
-
 	α IClientSocketSession::Shutdown( bool terminate, SL sl )ι->void{
 		if( _ioContext ){
 			TRACET( _connectTag, "[{}]Client::Shutdown: {}", hex(Id()), Host() );
@@ -126,7 +152,7 @@ namespace Jde::Web::Client{
 
 	IClientSocketSession::IClientSocketSession( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι:
 		_resolver{ *ioc },
-		_stream{ ms<ClientSocketStream>(*ioc, ctx) },
+		_stream{ IClientSocketStream::Create(*ioc, ctx) },
 		_ioContext{ ioc }
 	{}
 
@@ -188,7 +214,7 @@ namespace Jde::Web::Client{
 	α IClientSocketSession::OnRead( beast::error_code ec, uint bytes_transferred )ι->void{
 		boost::ignore_unused( bytes_transferred );
 		if( ec ){
-			CodeException{ static_cast<std::error_code>(ec), _readTag, Ƒ("[{:x}]ClientSocket::DoRead", Id()), GetLogLevel(ec) };
+			CodeException{ static_cast<std::error_code>(ec), _readTag, Ƒ("[{:x}]ClientSocket::DoRead", Id()), ErrorSeverity(ec, EErrorRole::SocketClient) };
 			if( ec==net::error::operation_aborted )// our own in-flight Close() cancelled this read; its OnClose completion will drain _tasks with the real close reason, so don't preempt it with a misleading "operation_aborted" one here.
 				return;
 			// websocket::error::closed means the close handshake already completed (Beast auto-replies to a received close frame);
@@ -231,7 +257,7 @@ namespace Jde::Web::Client{
 	}
 	α IClientSocketSession::OnClose( beast::error_code ec )ι->void{
 		if( ec )
-			CodeException{ static_cast<std::error_code>(ec), _readTag, Ƒ("[{}]Client::OnClose: {}", hex(Id()), _host), GetLogLevel(ec) };
+			CodeException{ static_cast<std::error_code>(ec), _readTag, Ƒ("[{}]Client::OnClose: {}", hex(Id()), _host), ErrorSeverity(ec, EErrorRole::SocketClient) };
 		else
 			DBGT( _connectTag, "[{}]Client::OnClose: {}", hex(Id()), _host );
 		CloseTasks( ec );

@@ -16,8 +16,6 @@ namespace Jde::Opc::Gateway{
 		α Suspend()ι->void override;
 		α await_resume()ε->HttpTaskResult override;
 	protected:
-		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override;
-
 		α Login( str endpoint )ι->TAwait<optional<Web::FromServer::SessionInfo>>::Task;//POST /login {opc,user,password} - the OPC server's user/password.
 		α Logout()ι->TAwait<jvalue>::Task;
 		α CoHandleRequest( ServerCnnctnNK&& opcId )ι->void;

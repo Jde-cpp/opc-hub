@@ -224,7 +224,7 @@ namespace Jde::App::Server{
 			WriteException( move(e), requestId );
 		}
 	}
-	//kJwt is a *delegated* validation, not an adoption: JwtLoginAwait::LoginAppServer relays a browser's token over the
+	//kJwt is a *delegated* validation, not an adoption: JwtLoginAwait::Execute relays a browser's token over the
 	//gateway's own registered app socket to ask who it belongs to.  So the answer is echoed back and nothing is installed
 	//here - binding it would silently re-identify a registered server-side socket as whichever user logged in last.
 	α ServerSocketSession::Login( string&& jwt, RequestId requestId )ι->TAwait<sp<Web::Server::SessionInfo>>::Task{
@@ -332,7 +332,7 @@ namespace Jde::App::Server{
 				auto& variablesString = *s.mutable_variables();
 				try{
 					auto vars = variablesString.empty() ? jobject{} : Json::Parse( move(variablesString) );
-					LogRead( Ƒ("Subscription - {}", ql.substr(0, MaxLogLength())), requestId, ELogLevel::Trace, ELogTags::SocketClientReadSub );
+					LogRead( Ƒ("Subscription - {}", ql.substr(0, Web::MaxLogLength())), requestId, ELogLevel::Trace, ELogTags::SocketClientReadSub );
 					THROW_IF( !userPK, "A subscription requires an authenticated session." );
 					Write( FromServer::SubscriptionAck(AddSubscription(move(ql), move(vars), requestId, *userPK), requestId) );
 				}
@@ -357,13 +357,13 @@ namespace Jde::App::Server{
 			TRACET( ELogTags::SocketServerRead, "[{:x}] log entries recieved: {} strings received: {}.", Id(), cLog, cString );
 	}
 
-	α ServerSocketSession::QueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ι->void{
+	α ServerSocketSession::SendQueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ι->void{
 		auto q = query.ToString();
 		LogWrite( Ƒ("QueryClient: {}", q.substr(0,100)), requestId );
 		Write( FromServer::QueryClient(move(q), move(query.Variables), executer, query.ReturnRaw, requestId) );
 	}
 	α ServerSocketSession::OnClose()ι->void{
-		if( !Stream )
+		if( !IsOpen() )
 			return;
 		LogRead( "OnClose", 0 );
 		Server::OnSessionDisconnect( SharedFromThis() );

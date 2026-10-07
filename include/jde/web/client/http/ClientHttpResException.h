@@ -23,7 +23,7 @@ namespace Jde::Web::Client{
 		//error bodies are usually a sentence, but a proxy/gateway can answer with a whole html page - cap it.
 		Ω Detail( const ClientHttpRes& res )ι->string{
 			constexpr uint maxBody{ 512 };
-			const auto body = res.Body();
+			const auto& body = res.Body();
 			return body.empty() ? string{}
 				: body.size()>maxBody ? Ƒ( ": {}...", sv{body.data(), maxBody} )
 				: Ƒ( ": {}", body );

@@ -3,9 +3,6 @@ include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
 project( Jde.Web.Server VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
-#find_package( OpenSSL REQUIRED )
-
-#link_directories( ${Protobuf_DIR}/../.. )
 add_definitions( -DJde_Web_Server_EXPORTS )
 
 set( targetName Jde.Web.Server )

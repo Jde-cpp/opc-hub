@@ -9,7 +9,7 @@
 #include <jde/fwk/io/protobuf.h>
 
 namespace Jde::Web::Client{
-	struct IClientSocketSession;
+	struct IClientSocketSession; template<class TWs> struct ClientSocketStream;
 	struct CreateClientSocketSessionAwait final : VoidAwait{
 		using base = VoidAwait;
 		CreateClientSocketSessionAwait( sp<IClientSocketSession> session, string host, PortType port, string target="/", SRCE )ι;
@@ -69,10 +69,10 @@ namespace Jde::Web::Client{
 		//mirrors the server's StreamPtr (IWebsocketSession.h): _stream is written by OnClose on the strand and read from other
 		//threads - Write from any caller, Close from a shutdown thread - so always take a copy through here, never touch the
 		//member directly, and treat null as "already closed".
-		α StreamPtr()Ι->sp<ClientSocketStream>{ lg _{ _streamMutex }; return _stream; }
+		α StreamPtr()Ι->sp<IClientSocketStream>{ lg _{ _streamMutex }; return _stream; }
 		α IsSsl()Ι->bool{ auto stream = StreamPtr(); return stream && stream->IsSsl(); }
 		α SetId( uint32 id )ι{ _id=id; }
-		ψ LogRead( const fmt::format_string<Args const&...> m, Args&&... args )ι->void;
+		α LogRead( string&& what, SRCE )ι->void{ LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientRead, "{}", move(what) ); }//text formatted by the caller, as the server's IWebsocketSession::LogRead takes it.
 	private:
 		α OnResolve( beast::error_code ec, tcp::resolver::results_type results )ι->void;
 		α OnConnect( beast::error_code ec, tcp::resolver::results_type::endpoint_type ep )ι->void;
@@ -83,7 +83,7 @@ namespace Jde::Web::Client{
 
 		tcp::resolver _resolver;
 		mutable std::mutex _streamMutex;
-		sp<ClientSocketStream> _stream;
+		sp<IClientSocketStream> _stream;
 		string _host;
 		string _target{ "/" };
 		sp<net::io_context> _ioContext;
@@ -96,7 +96,7 @@ namespace Jde::Web::Client{
 		boost::concurrent_flat_map<RequestId,sp<DurationTimer>> _timeouts;
 		atomic<uint32> _id;//_serverSocketIndex
 
-		friend struct ClientSocketStream; friend struct CloseClientSocketSessionAwait;
+		template<class> friend struct ClientSocketStream; friend struct CloseClientSocketSessionAwait;
 	};
 
 	template<class TFromClientMsgs, class TFromServerMsgs>
@@ -123,10 +123,6 @@ namespace Jde::Web::Client{
 			e.SetTags( ELogTags::SocketClientRead );
 			base::CloseOnError( Ƒ("undecodable transmission ({} bytes): {}", transmission.size(), e.what()) );
 		}
-	}
-
-	ψ IClientSocketSession::LogRead( const fmt::format_string<Args const&...> m, Args&&... args )ι->void{
-		TRACET( ELogTags::SocketClientRead, std::forward<const fmt::format_string<Args const&...>>(m), std::forward<Args>(args)... );
 	}
 }
 #undef $

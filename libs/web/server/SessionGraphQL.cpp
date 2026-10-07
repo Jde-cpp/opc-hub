@@ -34,14 +34,14 @@ namespace Jde::Web::Server{
 			else if( auto p = Sessions::Find(*sessionId); p )
 				sessions.push_back( p );
 			if( sessions.empty() )
-				co_return Resume( jobject{} ); //(Json::Parse( "{\"data\": null}"))
+				co_return Resume( jobject{} );
 			flat_map<Jde::UserPK, tuple<string,string>> userDomainLoginNames;
 			jobject users;
 			if( Query.FindColumn("domain") || Query.FindColumn("loginName") ){
-				string inClause; inClause.reserve( sessions.size()*5 );
+				auto ids = Reserve<Jde::UserPK::Type>( sessions.size() );
 				for( let& session : sessions )
-					inClause += std::to_string( session->UserPK.Value ) + ",";
-				auto q = "query{ users(id:["+inClause.substr(0, inClause.size()-1)+"]){id loginName provider{id name}} }";
+					ids.push_back( session->UserPK.Value );
+				auto q = Ƒ( "query{{ users(id:[{}]){{id loginName provider{{id name}}}} }}", Str::Join(ids) );
 				users = Json::AsObject( co_await (*_appClient->Query<jvalue>(move(q), {})) );
 				TRACET( _tags | ELogTags::Pedantic, "users={}"sv, serialize(users) );
 				for( let& vuser : Json::AsArrayPath(users, "data/users") ){
@@ -83,46 +83,23 @@ namespace Jde::Web::Server{
 		}
 	}
 
-	struct PurgeSessionAwait final: TAwait<jvalue>{
-		PurgeSessionAwait( const QL::MutationQL& m, UserPK executer, sp<Access::Authorize> authorizer, SRCE )ι:
-			TAwait<jvalue>{ sl }, _mutation{ m }, _executer{ executer }, _authorizer{ move(authorizer) }{}
-		α await_resume()ε->jvalue override;
-		α await_ready()ι->bool override;
-	private:
-		QL::MutationQL _mutation;
-		Jde::UserPK _executer;
-		sp<Access::Authorize> _authorizer;
-		jobject _result{ {"complete", true} };
-		up<Exception> _exception;
-	};
-	α PurgeSessionAwait::await_ready()ι->bool{
-		uint rows = 0;
-		try{
-			//the acl is the only gate available here - ownership can't be one.  OpcGateway logs a user out by purging *their*
-			//session as its own service identity (HttpRequestAwait::Logout), so a legitimate purge is routinely cross-user and
-			//"you may only purge your own" would break logout.  admin over "sessions" is what separates that from an attacker.
-			THROW_IF( !_authorizer, "No authorizer - refusing to purge session." );
-			_authorizer->TestAdminSlug( "sessions", _executer, _sl );
-			if( auto sessionId = _mutation.FindPtr("id"); sessionId )
-				rows = Sessions::Remove( Str::TryTo<SessionPK,16>(Json::AsString(*sessionId)).value_or(0) ) ? 1 : 0;
-			_result["rowCount"] =	rows;
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		return true;
-	}
-	α PurgeSessionAwait::await_resume()ε->jvalue{
-		if( _exception )
-			_exception->Throw();
-		return _result;
-	}
-
 	α SessionGraphQL::Select( const QL::TableQL& query, UserPK userPK, SL sl )ι->up<TAwait<jvalue>>{
 		return query.JsonName.starts_with( "session" ) ? mu<SessionGraphQLAwait>( query, userPK, _appClient, sl ) : nullptr;
 	}
 
 	α SessionGraphQL::PurgeBefore( const QL::MutationQL& m, UserPK executer, SL sl )ι->HookResult{
-		return m.TableName()=="sessions" ? mu<PurgeSessionAwait>( m, executer, _authorizer, sl ) : nullptr;
+		if( m.TableName()!="sessions" )
+			return nullptr;
+		return mu<CompletedAwait<jvalue>>( [m, executer, authorizer=_authorizer, sl]()->jvalue{
+			//the acl is the only gate available here - ownership can't be one.  OpcGateway logs a user out by purging *their*
+			//session as its own service identity (HttpRequestAwait::Logout), so a legitimate purge is routinely cross-user and
+			//"you may only purge your own" would break logout.  admin over "sessions" is what separates that from an attacker.
+			THROW_IF( !authorizer, "No authorizer - refusing to purge session." );
+			authorizer->TestAdminSlug( "sessions", executer, sl );
+			uint rows{};
+			if( auto sessionId = m.FindPtr("id"); sessionId )
+				rows = Sessions::Remove( Str::TryTo<SessionPK,16>(Json::AsString(*sessionId)).value_or(0) ) ? 1 : 0;
+			return jobject{ {"complete", true}, {"rowCount", rows} };
+		}, sl );
 	}
 }

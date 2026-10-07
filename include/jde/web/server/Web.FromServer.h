@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/io/protobuf.h>
 #include <jde/web/server/Sessions.h>
 #include <jde/web/client/proto/Web.FromServer.pb.h>
 

@@ -3,6 +3,7 @@
 
 #include <jde/web/server/HttpRequest.h>
 #include <jde/fwk/str.h>
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/server/auth/JwtLoginAwait.h>
 #include <jde/app/IApp.h>
@@ -79,8 +80,10 @@ namespace	Sessions{
 		sp<SessionInfo> y;
 		_sessions.visit( sessionId, [&y]( auto& kv ){
 			y = kv.second;
-			if( y->Expiration>steady_clock::now() )
+			if( y->Expiration>steady_clock::now() ){
 				y->Expiration = y->NewExpiration();
+				y->LastServerUpdate = steady_clock::now();
+			}
 		} );
 		return y;
 	}
@@ -90,7 +93,6 @@ namespace	Sessions{
 		_sessions.cvisit_all( [&y](auto& kv){y.emplace_back(kv.second);} );
 		return y;
 	}
-	α Sessions::Size()ι->uint{ return _sessions.size(); }
 
 	SessionInfo::SessionInfo( SessionPK sessionPK, str userEndpoint, bool hasSocket )ι:
 		SessionId{ sessionPK },
@@ -139,6 +141,7 @@ namespace	Sessions{
 			if( existingExpiration>steady_clock::now() ){
 				existing->HasSocket |= socket;//sticky - a socket connecting on a rest session promotes it to the socket timeout, later rest requests must not demote it.
 				existingExpiration = existing->NewExpiration();
+				existing->LastServerUpdate = steady_clock::now();
 				info = existing;
 			}
 			else
@@ -152,36 +155,17 @@ namespace	Sessions{
 	}
 
 namespace Sessions{
-	α UpsertAwait::Suspend()ι->void{
-		if( 	_authorization.starts_with("Bearer ") ){
-			try{
-				FromJwt( _authorization.substr(7) );
-			}
-			catch( runtime_error& e ){
-				ResumeExp( move(e) );
-			}
-		}
-		else if( _authorization.size() )
-			FromSessionId();
-		else
-			CreateSession();
-	}
-	α UpsertAwait::FromJwt( str jwt )ι->TTask<UserPK>{
+	α UpsertAwait::Run()ι->VoidTask{
 		try{
-			auto userPK = co_await JwtLoginAwait{ Web::Jwt{jwt}, _endpoint, _appClient };
-			CreateSession( userPK );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α UpsertAwait::CreateSession( UserPK userPK )ι->void{
-		auto info = Sessions::Internal::CreateSession( userPK, _endpoint, _socket, false );
-		upsert( info );
-		Resume( move(info) );
-	}
-	α UpsertAwait::FromSessionId()ι->TTask<Web::FromServer::SessionInfo>{
-		try{
+			if( _authorization.empty() || _authorization.starts_with("Bearer ") ){
+				UserPK userPK{};
+				if( _authorization.size() )
+					userPK = co_await Any( JwtLoginAwait{Web::Jwt{_authorization.substr(7)}, _endpoint, _appClient} );
+				auto info = Sessions::Internal::CreateSession( userPK, _endpoint, _socket, false );
+				upsert( info );
+				Resume( move(info) );
+				co_return;
+			}
 			optional<SessionPK> sessionId = Str::TryTo<SessionPK,16>( _authorization );
 			THROW_IF( !sessionId, "Invalid sessionId:  '{}'.", _authorization );
 			auto info = UpdateExpiration( *sessionId, _endpoint, _socket );
@@ -190,14 +174,12 @@ namespace Sessions{
 				if( !await ){  //no 3rd party
 					if( _throw )
 						throw Exception( SRCE_CUR, ELogLevel::Debug, "[{}]Session not found.", Ƒ("{:x}", *sessionId) );
-					else{
-						_h.resume();
-						co_return;
-					}
+					Resume( nullptr );
+					co_return;
 				}
 				bool denied{}; string remoteEndpoint;
 				try{
-					Web::FromServer::SessionInfo proto{ co_await *await };
+					Web::FromServer::SessionInfo proto{ co_await Any(*await) };
 					remoteEndpoint = proto.user_endpoint();
 					//#4: the 3rd party answers a bare Sessions::Find with no endpoint check of its own, so the proof of possession
 					//UpdateExpiration enforces locally has to be repeated on its answer.  Without it, overwriting UserEndpoint below
@@ -225,7 +207,7 @@ namespace Sessions{
 					DBGT( ELogTags::HttpServerRead, "[{:x}]Session endpoint '{}' does not match request endpoint '{}' - denying.", *sessionId, remoteEndpoint, _endpoint );
 					if( _throw )
 						throw Exception( SRCE_CUR, ELogLevel::Debug, "[{}]Session not found.", Ƒ("{:x}", *sessionId) );
-					_h.resume();
+					Resume( nullptr );
 					co_return;
 				}
 				upsert( info );
@@ -235,9 +217,5 @@ namespace Sessions{
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
-	}
-	α UpsertAwait::await_resume()ε->sp<SessionInfo>{
-		base::CheckException();
-		return Promise()->Value() ? *Promise()->Value() : sp<SessionInfo>{};
 	}
 }}

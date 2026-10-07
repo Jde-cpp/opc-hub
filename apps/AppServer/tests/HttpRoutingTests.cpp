@@ -150,6 +150,18 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Json::AsString(Json::AsObject(data, "setting"), "value"), "app-server-tests-google-client-id" );
 	}
 
+	//web-refactor A4: a GET must not have side effects.  The rule sat on a branch /graphql never reached, so it was not enforced.
+	TEST_F( HttpRoutingTests, GraphQLGetRefusesMutation ){
+		try{
+			Get( "/graphql?query=mutation%20createUser(slug:%22getMutation%22,name:%22getMutation%22)%7Bid%7D" );
+			ADD_FAILURE() << "a mutation over GET must be refused";
+		}
+		catch( ClientHttpResException& e ){
+			EXPECT_EQ( e.Status(), http::status::bad_request );
+			EXPECT_TRUE( e.Res().Body().contains("Mutations must use post.") ) << e.Res().Body();
+		}
+	}
+
 	TEST_F( HttpRoutingTests, GraphQLRequiresQuery ){
 		EXPECT_EQ( FailureStatus([&]{ Post("/graphql", "{}"); }), http::status::bad_request );
 	}

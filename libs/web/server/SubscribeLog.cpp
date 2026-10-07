@@ -39,20 +39,12 @@ namespace Jde::Web::Server{
 			if( let kv = filter.ColumnFilters.find("tags"); kv != filter.ColumnFilters.end()  && kv->second.size()==1 )
 				Tags = ToLogTags( kv->second.front().Value );
 		}
-		α operator=( LogSubscription&& sub )ι->LogSubscription& = default; /*{
-			QL::Subscription::operator=( move(sub) );
-			MinLevel = sub.MinLevel;
-			Tags = sub.Tags;
-			return *this;
-		}*/
+		α operator=( LogSubscription&& sub )ι->LogSubscription& = default;
 		ELogLevel MinLevel{ ELogLevel::Trace };
 		ELogTags Tags{ ELogTags::All };
 	};
 	struct SessionSubscription{
 		SessionSubscription( sp<IWebsocketSession> session, QL::Subscription&& sub )ι:Session{ move(session) },Sub{ move(sub) }{}
-		//SessionSubscription( const SessionSubscription& )ι=default;
-		//SessionSubscription( SessionSubscription&& )ι=default;
-		//α operator=( const SessionSubscription& x )ι->SessionSubscription&{ Session=x.Session; Sub=x.Sub; return *this; }
 		sp<IWebsocketSession> Session;
 		LogSubscription Sub;
 	};
@@ -154,24 +146,17 @@ namespace Jde::Web::Server{
 		{
 			rl _{ _mutex };
 			for( let& s : _subs ){
-				bool valid{ m.Level>=s->Sub.MinLevel };
-				valid = valid && !empty( m.Tags & s->Sub.Tags );
-				if( !valid )
+				if( m.Level<s->Sub.MinLevel || empty(m.Tags & s->Sub.Tags) )
 					continue;
 				let& filter = s->Sub.Fields.Filter();
-				valid = valid && filter.Test( "time", m.Time );
-				valid = valid && filter.Test( "text", m.Text );
-				valid = valid && filter.Test( "line", m.Line );
-				valid = valid && filter.Test( "templateId", m.Id() );
-				valid = valid && filter.Test( "message", m.Message() );
-				valid = valid && filter.Test( "appPK", appPK );
-				valid = valid && filter.Test( "appConnectionPK", connectionPK );
-				if( valid && filter.ColumnFilters.contains("args") ){
-					for( let& arg : m.Arguments ){
-						if( valid = filter.Test("args", arg); !valid )
-							break;
-					}
-				}
+				let valid = filter.Test( "time", m.Time )
+					&& filter.Test( "text", m.Text )
+					&& filter.Test( "line", m.Line )
+					&& filter.Test( "templateId", m.Id() )
+					&& filter.Test( "message", m.Message() )
+					&& filter.Test( "appPK", appPK )
+					&& filter.Test( "appConnectionPK", connectionPK )
+					&& ( !filter.ColumnFilters.contains("args") || std::ranges::all_of(m.Arguments, [&]( let& arg ){ return filter.Test("args", arg); }) );
 				if( valid )
 					matches.push_back( s );
 			}

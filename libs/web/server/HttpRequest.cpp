@@ -14,7 +14,7 @@ namespace Jde::Web{
 
 	string _plainVersion{ Ƒ("({})Jde.Web.Server - {}", Process::ProductVersion, BOOST_BEAST_VERSION) };
 	string _sslVersion{ Ƒ("({})Jde.Web.Server SSL - {}", Process::ProductVersion, BOOST_BEAST_VERSION) };
-	α Server::ServerVersion( bool isSsl )ι->string{ return isSsl ? _sslVersion : _plainVersion; }//TODO cache
+	α Server::ServerVersion( bool isSsl )ι->str{ return isSsl ? _sslVersion : _plainVersion; }
 }
 
 namespace Jde::Web::Server{
@@ -31,16 +31,7 @@ namespace Jde::Web::Server{
 	}
 
 	//host portion of an Origin ("https://h:1968") or a Host ("h:1968"): scheme and port stripped, ipv6 literal kept whole.
-	Ω hostOf( sv value )ι->sv{
-		if( let scheme = value.find("://"); scheme!=sv::npos )
-			value = value.substr( scheme+3 );
-		if( value.starts_with('[') ){//ipv6 literal - the colons inside it are not a port separator.
-			let close = value.find( ']' );
-			return close==sv::npos ? value : value.substr( 0, close+1 );
-		}
-		let end = value.find_first_of( ":/" );
-		return end==sv::npos ? value : value.substr( 0, end );
-	}
+	Ω hostOf( sv value )ι->sv{ return Str::ParseUrl( value ).Host; }
 
 	//Access-Control-Allow-Origin carries one value - "*", "null", or a single origin - so "same host, any port" cannot be written
 	//as a header pattern; it has to be evaluated per request and the Origin reflected back.  that is the shape of this deployment:
@@ -75,6 +66,22 @@ namespace Jde::Web::Server{
 		}
 		return *_body;
 	}
+	α HttpRequest::GraphQLQuery()ε->std::pair<string,jobject>{
+		string query; jobject vars;
+		if( IsGet() ){
+			query = (*this)["query"];
+			if( let& variables = (*this)["variables"]; variables.size() )
+				vars = Json::Parse( variables );
+		}
+		else{
+			let& body = Body();
+			if( auto jquery = body.if_contains("query"); jquery && jquery->is_string() )
+				query = jquery->get_string();
+			if( auto jvars = body.if_contains("variables"); jvars && jvars->is_object() )
+				vars = jvars->get_object();
+		}
+		return { move(query), move(vars) };
+	}
 	α HttpRequest::ParseUri()->void{
 		let uri = sv{ _request.target() };//split before decoding so encoded '&'/'=' in values don't corrupt parsing.
 		let queryStart = uri.find( '?' );
@@ -94,6 +101,16 @@ namespace Jde::Web::Server{
 		y.body() = serialize( move(j) );
 		y.prepare_payload();
 		LOGSL( ELogLevel::Debug, sl, ELogTags::HttpServerWrite, "[{}.{}.{}]HttpResponse:  {}{} - {}", hex(SessionInfo ? SessionInfo->SessionId : 0), hex(_connectionId), hex(_index), Target(), y.body().substr(0, MaxLogLength()), Chrono::ToString<steady_clock::duration>(steady_clock::now()-_start) );
+		return y;
+	}
+
+	//logged by content type and size where the json response logs its body - a file's first bytes say nothing.
+	α HttpRequest::Response( string&& body, sv contentType, SL sl )Ι->http::response<http::string_body>{
+		auto y = Response<http::string_body>();
+		y.set( http::field::content_type, contentType );
+		y.body() = move( body );
+		y.prepare_payload();
+		LOGSL( ELogLevel::Debug, sl, ELogTags::HttpServerWrite, "[{}.{}.{}]HttpResponse:  {} - {}, {} bytes - {}", hex(SessionInfo ? SessionInfo->SessionId : 0), hex(_connectionId), hex(_index), Target(), contentType, y.body().size(), Chrono::ToString<steady_clock::duration>(steady_clock::now()-_start) );
 		return y;
 	}
 

@@ -158,7 +158,7 @@ namespace Client{
 			App::Client::Connect( _appClient );
 	}
 	α AppClientSocketSession::OnMessage( string&& j, RequestId requestId )ι->void{
-		DBG( "[{}]OnMessage: {}", hex(requestId), j.substr(0, Web::Client::MaxLogLength()) );
+		DBG( "[{}]OnMessage: {}", hex(requestId), j.substr(0, Web::MaxLogLength()) );
 		try{
 			OnSubscription( Json::Parse(j), requestId );
 		}
@@ -171,7 +171,7 @@ namespace Client{
 		return ClientSocketAwait<Web::FromServer::SessionInfo>{ FromClient::Session(sessionId, requestId), requestId, shared_from_this(), sl };
 	}
 	α AppClientSocketSession::ClientQuery( Proto::FromServer::ClientQuery proto, Jde::UserPK executer, RequestId requestId )ι->TAwait<jvalue>::Task{
-		DBG( "[{}.{}]ClientQuery: executer='{}', size='{}'.", hex(Id()), hex(requestId), executer.Value, proto.query().substr(0, Web::Client::MaxLogLength()) );
+		DBG( "[{}.{}]ClientQuery: executer='{}', size='{}'.", hex(Id()), hex(requestId), executer.Value, proto.query().substr(0, Web::MaxLogLength()) );
 		try{
 			auto vars = proto.variables().empty() ? jobject{} : parse( proto.variables() ).as_object();
 			auto result = co_await *_appClient->ClientQuery( QL::Parse(move(*proto.mutable_query()), move(vars), {}, proto.raw()), executer );
@@ -183,13 +183,13 @@ namespace Client{
 	}
 	α AppClientSocketSession::Query( string&& q, jobject variables, bool returnRaw, SL sl )ι->ClientSocketAwait<jvalue>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWrite, "[{}]{}.", hex(requestId), q.substr(0, Web::Client::MaxLogLength()) );
+		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWrite, "[{}]{}.", hex(requestId), q.substr(0, Web::MaxLogLength()) );
 
 		return ClientSocketAwait<jvalue>{ FromClient::Query(move(q), move(variables), requestId, returnRaw), requestId, shared_from_this(), sl };
 	}
 	α AppClientSocketSession::Subscribe( string&& q, jobject vars, sp<QL::IListener> listener, SL sl )ε->await<jarray>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWriteSub, "[{}]{} {}.", hex(requestId), q.substr(0, Web::Client::MaxLogLength()), serialize(vars) );
+		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWriteSub, "[{}]{} {}.", hex(requestId), q.substr(0, Web::MaxLogLength()), serialize(vars) );
 		auto subscriptions = QL::ParseSubscriptions( q, vars, _appClient->SubscriptionSchemas, sl );
 		_subscriptionRequests.emplace( requestId, SubscriptionRequest{listener, move(subscriptions), q, vars} );
 		return ClientSocketAwait<jarray>{ FromClient::Subscription(move(q), move(vars), requestId), requestId, shared_from_this(), sl };
@@ -298,7 +298,7 @@ namespace Client{
 				resume( move(hAny), move(res) );
 				}break;
 			case kQueryResult:
-				DBG( "[{}.{}]query: '{}'.", hex(Id()), hex(requestId), m->query_result().substr(0, Web::Client::MaxLogLength()) );
+				DBG( "[{}.{}]query: '{}'.", hex(Id()), hex(requestId), m->query_result().substr(0, Web::MaxLogLength()) );
 				resumeJValue( move(hAny), move(*m->mutable_query_result()) );
 				break;
 			case kSubscriptionAck:
@@ -338,7 +338,7 @@ namespace Client{
 				bool isAnonymous = m->value_case()==kExecuteAnonymous;
 				auto bytes = isAnonymous ? move( *m->mutable_execute_anonymous() ) : move( *m->mutable_execute()->mutable_transmission() );
 				optional<Jde::UserPK> runAsPK = isAnonymous ? nullopt : depth ? userPK : optional<Jde::UserPK>( {m->execute().user_pk()} );
-				LogRead( "Execute{} size: {:10L}", isAnonymous ? "Anonymous" : "", bytes.size()  );
+				LogRead( Ƒ("Execute{} size: {:10L}", isAnonymous ? "Anonymous" : "", bytes.size()) );
 				Execute( move(bytes), runAsPK, requestId, uint8(depth+1) );
 				break;}
 			case kExecuteResponse://wait for use case.

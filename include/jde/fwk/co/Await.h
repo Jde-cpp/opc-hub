@@ -106,6 +106,34 @@ namespace Jde{
 		up<Exception> _exception;
 	};
 
+	//An already-completed typed awaitable:  `body` runs in await_ready, and co_await returns what it returned - or throws what it
+	//threw, as its own type - without suspending.  The value half of ExceptionAwait, for a hook that answers synchronously.
+	template<class Result,class TTask=Jde::TTask<Result>>
+	struct CompletedAwait final : TAwait<Result,TTask>{
+		CompletedAwait( std::function<Result()>&& body, SRCE )ι:TAwait<Result,TTask>{ sl }, _body{ move(body) }{}
+		α await_ready()ι->bool override{
+			try{
+				_result = _body();
+			}
+			catch( Exception& e ){
+				_exception = e.Move();
+			}
+			catch( std::runtime_error& e ){
+				_exception = mu<Exception>( move(e) );
+			}
+			return true;
+		}
+		α await_resume()ε->Result override{
+			if( _exception )
+				_exception->Throw();
+			return move( *_result );
+		}
+	private:
+		std::function<Result()> _body;
+		optional<Result> _result;
+		up<Exception> _exception;
+	};
+
 	//msvc multiple defined symbols without
 	struct Γ StringAwait : TAwait<string>{
 		StringAwait( SRCE )ι:TAwait<string>{ sl }{}

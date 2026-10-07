@@ -5,6 +5,5 @@
 namespace Jde::Web::Client{
 	struct IClientSocketSession;
 //	α QL( sp<IClientSocketSession> session )ι->sp<QL::IQL>;
-	ΓWC α MaxLogLength()ι->uint16;
 
 }

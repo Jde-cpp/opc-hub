@@ -74,17 +74,11 @@ namespace Jde::App::Server{
 				processed = false;
 		}
 		if( !processed ){
-			if( _request.IsGet("/graphql") || _request.IsPost("/graphql") )
-				Query( QLPtr() );
-			else{
-				_request.LogRead();
-				auto target = _request.Target();
-				ResumeExp( RestException{EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown target '{}'", move(target)} );
-			}
+			_request.LogRead();
+			auto target = _request.Target();
+			ResumeExp( RestException{EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown target '{}'", move(target)} );
 		}
 	}
-
-	α HttpRequestAwait::Schemas()Ι->const vector<sp<DB::AppSchema>>&{ return Server::Schemas(); }
 
 	α HttpRequestAwait::await_resume()ε->HttpTaskResult{
 		if( auto e = Promise() ? Promise()->MoveExp() : nullptr; e ){

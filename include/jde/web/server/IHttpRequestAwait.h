@@ -4,18 +4,17 @@
 #include "HttpRequest.h"
 #include "RestException.h"
 
-namespace Jde::QL{ struct IQL; }
 namespace Jde::Web::Server{
 	struct ΓWS HttpTaskResult{
 		HttpTaskResult()=default;
 		HttpTaskResult( HttpRequest&& req )ι:Request{move(req)}{}
-		HttpTaskResult( HttpTaskResult&& rhs )ι;
+		HttpTaskResult( HttpTaskResult&& )ι=default;
 		HttpTaskResult( jvalue&& j, HttpRequest&& req, SRCE )ι:Json( move(j) ), Request{ move(req) }, Source{sl}{}
 		HttpTaskResult( string&& body, string contentType, HttpRequest&& req, SRCE )ι:Request{ move(req) }, Source{sl}, Body{ move(body) }, ContentType{ move(contentType) }{}//a file, not json - the site's (StaticSite).
-		α operator=( HttpTaskResult&& rhs)ι->HttpTaskResult&;
+		α operator=( HttpTaskResult&& )ι->HttpTaskResult& = default;
 
 		jvalue Json;
-		optional<HttpRequest> Request; //why optional?
+		optional<HttpRequest> Request;//empty from the default constructor - ServerImpl answers that through the error funnel, which builds the response from the await's own request (the mock's /NoResult, web-review3 #3).
 		optional<SL> Source;
 		optional<string> Body;//set: sent as is with ContentType, Json ignored - a file of the site; the request's ResponseHeaders carry the rest (Cache-Control).
 		string ContentType;
@@ -29,9 +28,6 @@ namespace Jde::Web::Server{
 	protected:
 		HttpRequest _request;
 		up<jvalue> _readyResult;
-		α Query( sp<QL::IQL> ql )ι->TAwait<jvalue>::Task;
-	private:
-		β Schemas()Ι->const vector<sp<DB::AppSchema>>& = 0;
 	};
 	inline IHttpRequestAwait::~IHttpRequestAwait(){}
 }

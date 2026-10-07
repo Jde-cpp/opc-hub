@@ -164,7 +164,7 @@ namespace Tests{
 		ul _{ _logSubscriptionsMutex };
 		_logSubscriptions.emplace( (uint32)requestId, move(listener) );
 		auto query = serialize( ql );
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::Client::MaxLogLength()) );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::MaxLogLength()) );
 		return await<jarray>{ FromClientUtils::Query(move(query), move(vars), true, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{

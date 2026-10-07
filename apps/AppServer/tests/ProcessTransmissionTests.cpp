@@ -175,7 +175,7 @@ namespace Jde::App::Server::Tests{
 			ASSERT_TRUE( _session->WaitForException(requestId) ) << "adoption " << i;
 		}
 		EXPECT_TRUE( _session->WaitForClose() ) << "5th failed adoption must close the socket";
-		//#17: and close it properly.  OnClose() only unregistered the session and nulled Stream, so the peer saw the transport
+		//#17: and close it properly.  OnClose() only unregistered the session and nulled the stream, so the peer saw the transport
 		//vanish - no close frame - and the exception above raced the teardown.  websocket::error::closed is what a client's
 		//read reports when the server closed the handshake; a dropped transport gives end_of_stream/connection_reset instead.
 		EXPECT_EQ( _session->CloseCode(), boost::beast::websocket::error::closed ) << _session->CloseCode().message();

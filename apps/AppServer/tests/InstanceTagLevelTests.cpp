@@ -28,6 +28,23 @@ namespace Jde::App::Server::Tests{
 			return instance;
 		}
 		Ω TextLogger()->Logging::SpdLog&{ auto p = Logging::FindLogger<Logging::SpdLog>(); return *p; }
+		//instanceTagLevels{ running } of a connected instance; `end` is what the instance does with the logSetting query it is sent.
+		Ω QueryRunning( str instanceName, function<void(RawClientSession&, RequestId)> end )->jvalue{
+			auto client = Connect();
+			let instanceId = RegisterInstance( *client, "Tests.TagLevels", instanceName, "taglevel-host", 0 ).Instance;
+			jvalue y; string failure;
+			let start = steady_clock::now();
+			std::thread query{ [&]{ try{ y = RunQL( Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId) ); }catch( const std::exception& e ){ failure = e.what(); } } };//RunQL blocks on what `end` does.
+			let asked = client->WaitFor( [](const FromServerMessage& m){ return m.value_case()==FromServerMessage::kClientQuery && m.client_query().query().contains("logSetting"); } );
+			if( asked )
+				end( *client, asked->request_id() );
+			query.join();//unconditional - the query times out on its own when nothing ended it.
+			EXPECT_TRUE( asked ) << "the instance was never asked";
+			EXPECT_TRUE( failure.empty() ) << failure;
+			EXPECT_TRUE( steady_clock::now()-start<5s ) << "ended by the instance, not by the 10s deadline";
+			BlockVoidAwait( client->Close(true, SRCE_CUR) );
+			return y;
+		}
 		Ω FindConfigured( ELogTags tags )->optional<ELogLevel>{
 			optional<ELogLevel> y;
 			TextLogger().ConfiguredTags().cvisit( tags, [&](let& kv){ y = kv.second; } );
@@ -188,6 +205,25 @@ namespace Jde::App::Server::Tests{
 		ASSERT_TRUE( o.contains("running") );
 		EXPECT_TRUE( o.at("running").is_null() );
 		EXPECT_EQ( o.at("text").as_object().at("Debug").as_array()[0].as_string(), "sql" );
+	}
+
+	//web-refactor A6: the two endings of a client query that are not an answer.  A connected instance that replies with an
+	//exception, or drops its socket with the query still pending, fails it at once - `running` is null well inside the deadline.
+	TEST_F( InstanceTagLevelTests, RunningIsNullWhenTheInstanceAnswersWithAnException ){
+		let y = QueryRunning( "throwsRunning", []( RawClientSession& client, RequestId requestId ){
+			FromClientTrans t;
+			auto& m = *t.add_messages();
+			m.set_request_id( requestId );
+			m.mutable_exception()->set_what( "no levels here" );
+			client.Write( move(t) );
+		});
+		ASSERT_TRUE( y.is_object() && y.as_object().contains("running") );
+		EXPECT_TRUE( y.as_object().at("running").is_null() );
+	}
+	TEST_F( InstanceTagLevelTests, RunningIsNullWhenTheInstanceDropsMidQuery ){
+		let y = QueryRunning( "dropsRunning", []( RawClientSession& client, RequestId ){ BlockVoidAwait( client.Close(true, SRCE_CUR) ); } );
+		ASSERT_TRUE( y.is_object() && y.as_object().contains("running") );
+		EXPECT_TRUE( y.as_object().at("running").is_null() );
 	}
 
 	//the appServer group rides the same table with its own type discriminator.

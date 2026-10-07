@@ -3,6 +3,9 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/app/client/AppClientSocketSession.h>
 #include <jde/app/client/appClient.h>
+#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/web/Jwt.h>
+#include <jde/web/server/Sessions.h>
 #include "utils/helpers.h"
 #include "../src/GatewayAppClient.h"
 
@@ -63,6 +66,24 @@ namespace Jde::Opc::Gateway::Tests{
 		catch( const std::exception& e ){
 			TRACE( "Expected exception: {}", e.what() );
 		}
+	}
+
+	//web-refactor A3: the gateway validates a Bearer token by relay - JwtLoginAwait hands it to the AppServer over the gateway's own
+	//app socket, and UpsertAwait mints a local session for the user that answers.  The token is this process's own, built as the
+	//app client's login builds it, so the AppServer answers with the user it enrolled the gateway as.
+	TEST_F( AppClientTests, BearerIsRelayedToAppServer ){
+		using Web::Server::SessionInfo; using Web::Server::Sessions::UpsertAwait;
+		ASSERT_FALSE( AppClient()->IsLocal() );
+		let& settings = *AppClient()->SslSettings;
+		auto certificate = Crypto::ReadCertificate( settings.Certificate.Path );
+		const Crypto::Certificate info{ certificate };
+		let name = info.Upn.size() ? info.Upn : info.Email.size() ? info.Email : info.CommonName;
+		const Web::Jwt jwt{ {}, {0}, name, info.CommonName, 0, {}, TimePoint::min(), "BearerIsRelayedToAppServer", settings.PrivateKey, move(certificate) };
+		let session = BlockAwait<UpsertAwait,sp<SessionInfo>>( UpsertAwait{"Bearer "+jwt.Payload(), "127.0.0.1", false, AppClient()} );
+		ASSERT_TRUE( session );
+		EXPECT_NE( session->UserPK.Value, 0u );
+		EXPECT_EQ( session->UserPK.Value, AppClient()->UserPK().Value ) << "the relayed answer names the user behind the token";
+		Web::Server::Sessions::Remove( session->SessionId );
 	}
 
 	TEST_F( AppClientTests, Login ){

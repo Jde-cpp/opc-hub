@@ -8,9 +8,8 @@
 
 #define let const auto
 
-namespace Jde::App::Proto::FromServer{ class Traces; }
 namespace Jde::Web::Server{
-	//TODO comment
+	//The session's QL listener: a change to any subscription this socket made is written back over it.
 	struct SocketServerListener final: QL::IListener{
 		SocketServerListener( sp<IWebsocketSession> session )ι: QL::IListener{ Ƒ("[{}]Socket", session->Id()) }, _session{ session }{}
 		α OnChange( const jvalue& j, QL::SubscriptionId clientId )ε->void{ _session->WriteSubscription(j, clientId); }
@@ -18,9 +17,9 @@ namespace Jde::Web::Server{
 	};
 
 	IWebsocketSession::IWebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType request, tcp::endpoint&& userEndpoint, uint32 connectionIndex )ι:
-		Stream{ stream->CreateSocketStream(move(buffer)) },
 		_userEndpoint{ userEndpoint },
 		_id{ connectionIndex },
+		_stream{ stream->CreateSocketStream(move(buffer)) },
 		_initialRequest{ move(request) }
 	{}
 
@@ -58,16 +57,9 @@ namespace Jde::Web::Server{
 			stream->Write( move(m), shared_from_this() );
 	}
 
-	α IWebsocketSession::OnWrite( beast::error_code ec, uint c )ι->void{
-		boost::ignore_unused( c );
-		try{
-			THROW_IFX( ec, CodeException(static_cast<std::error_code>(ec), ELogTags::SocketServerWrite, ec == websocket::error::closed ? ELogLevel::Trace : ELogLevel::Error) );
-		}
-		catch( const CodeException& )
-		{}
-	}
-
-	α IWebsocketSession::LogRead( string&& what, RequestId requestId, ELogLevel level, ELogTags tags, SL sl )ι->void{ //TODO forward args.
+	//Takes the text formatted, not a format and its args:  the caller's Ƒ keeps `{:x}`-style specs out of the entry's own text (a
+	//stored entry is re-rendered from string arguments - issue #268), and a variadic overload could not carry the caller's SRCE.
+	α IWebsocketSession::LogRead( string&& what, RequestId requestId, ELogLevel level, ELogTags tags, SL sl )ι->void{
 		Logging::Log( level, tags, sl, "[{:x}.{:x}]{}", Id(), requestId, move(what) );
 	}
 
@@ -90,6 +82,33 @@ namespace Jde::Web::Server{
 		if( auto stream = StreamPtr(); stream )
 			stream->Close( shared_from_this() );
 	}
+	//_pendingQueriesMutex held.  The entry stays, its timer cancelled, for AddTimeout's resumption to erase - so that does not then
+	//log "No pending query" against something another path removed.
+	Ω take( std::pair<QueryClientAwait::Handle,sp<DurationTimer>>& entry )ι->QueryClientAwait::Handle{
+		auto h = entry.first;
+		entry.first = nullptr;
+		entry.second->Cancel();
+		return h;
+	}
+	//Not under _pendingQueriesMutex: a resumed coroutine can come back through _pendingQueries.
+	Ω failPending( QueryClientAwait::Handle h, Exception&& e )ι->void{
+		h.promise().SetExp( move(e) );
+		h.resume();
+	}
+	//requestId's waiting handle, taken out of its entry: null if it was already taken, nullopt if there is no entry.
+	//erase: AddTimeout's own resumption, which removes the entry instead.
+	α IWebsocketSession::TakePending( RequestId requestId, bool erase )ι->optional<QueryClientAwait::Handle>{
+		lg _{ _pendingQueriesMutex };
+		auto it = _pendingQueries.find( requestId );
+		if( it==_pendingQueries.end() )
+			return nullopt;
+		if( !erase )
+			return take( it->second );
+		auto h = it->second.first;
+		_pendingQueries.erase( it );
+		return h;
+	}
+
 	α IWebsocketSession::OnClose()ι->void{
 		LogRead( "ServerSocket::OnClose.", 0 );
 		Internal::RemoveSocketSession( Id() );
@@ -99,26 +118,20 @@ namespace Jde::Web::Server{
 			QL::Subscriptions::StopListen( _listener );
 			_listener = nullptr;
 		}
-		//S3: a query still in flight would otherwise sit out its full timeout on a socket that is already gone.  Same shape as
-		//QueryClientResults - null the handle and cancel the timer, leaving AddTimeout's resumption to erase the entry, so it does
-		//not then log "No pending query" against something we removed.
+		//S3: a query still in flight would otherwise sit out its full timeout on a socket that is already gone.
 		vector<QueryClientAwait::Handle> pending;
 		{
 			lg l{ _pendingQueriesMutex };
 			pending.reserve( _pendingQueries.size() );
 			for( auto it = _pendingQueries.begin(); it!=_pendingQueries.end(); ++it ){//iterator, not a structured binding: flat_map hands back a temporary.
-				if( it->second.first )
-					pending.push_back( it->second.first );
-				it->second.first = nullptr;
-				it->second.second->Cancel();
+				if( auto h = take(it->second); h )
+					pending.push_back( h );
 			}
 		}
-		for( auto h : pending ){//resumed outside the lock: a resumed coroutine can come back through _pendingQueries.
-			h.promise().SetExp( Exception{SRCE_CUR, {ELogTags::SocketServerWrite}, "[{}]Socket closed with the query still pending.", Ƒ("{:x}", Id())} );
-			h.resume();
-		}
+		for( auto h : pending )
+			failPending( h, Exception{SRCE_CUR, {ELogTags::SocketServerWrite}, "[{}]Socket closed with the query still pending.", Ƒ("{:x}", Id())} );
 		lg _{ _streamMutex };
-		Stream = nullptr;
+		_stream = nullptr;
 	}
 
 	α IWebsocketSession::AddSubscription( string&& query, jobject vars, RequestId requestId, Jde::UserPK executer, SL sl )ε->flat_set<QL::SubscriptionId>{
@@ -173,66 +186,39 @@ namespace Jde::Web::Server{
 			_pendingQueries.emplace( requestId, make_pair(h, timer) );
 		}
 		auto _ = co_await *timer;
-		QueryClientAwait::Handle pending;
-		{
-			lg l{ _pendingQueriesMutex };
-			if( auto it = _pendingQueries.find(requestId); it!=_pendingQueries.end() ){
-				pending = it->second.first;
-				_pendingQueries.erase( it );
-			}
-			else
-				CRITICALT( ELogTags::SocketServerRead, "[{}]No pending query", hex(requestId) );
-		}
-		if( pending ){
-			pending.promise().SetExp( Exception{sl, {ELogTags::SocketServerWrite}, "Query {} timed out after {}", hex(requestId), Chrono::ToString(timeout)} );
-			pending.resume();
-		}
+		let pending = TakePending( requestId, true );
+		if( pending && *pending )//null: answered, failed or closed ahead of the deadline.
+			failPending( *pending, Exception{sl, {ELogTags::SocketServerWrite}, "Query {} timed out after {}", hex(requestId), Chrono::ToString(timeout)} );
+		else if( !pending )
+			CRITICALT( ELogTags::SocketServerRead, "[{}]No pending query", hex(requestId) );
 	}
 	α IWebsocketSession::QueryClient( QL::TableQL&& query, Jde::UserPK executer, QueryClientAwait::Handle h, SL sl )ι->void{
 		let requestId = NextRequestId();
 		AddTimeout( requestId, h, 10s, sl );
-		QueryClient( move(query), executer, requestId );
+		SendQueryClient( move(query), executer, requestId );
 	}
 	α IWebsocketSession::QueryClientResults( string&& queryResult, RequestId requestId )ι->void{
 		LogRead( Ƒ("QueryClientResults: {}", queryResult.substr(0,100)), requestId );
-		QueryClientAwait::Handle h;
-		{
-			lg l{ _pendingQueriesMutex };
-			if( auto it = _pendingQueries.find(requestId); it!=_pendingQueries.end() ){
-				h = it->second.first;
-				it->second.first = nullptr;
-				it->second.second->Cancel(); //will delete iterator
-			}
-			else
-				CRITICALT( ELogTags::SocketServerRead, "[{}]No pending query", hex(requestId) );
+		let pending = TakePending( requestId );
+		if( !pending || !*pending ){//no such request, or one already answered, failed or closed.
+			LOG( pending ? ELogLevel::Warning : ELogLevel::Critical, ELogTags::SocketServerRead, "[{}]No pending query", hex(requestId) );
+			return;
 		}
-		if( h ){
-			try{
-				h.promise().SetValue( parse(move(queryResult)) );
-			}
-			catch( runtime_error& e ){
-				h.promise().SetExp( Exception{SRCE_CUR, {ELogLevel::Warning}, move(e), "[{}]QueryClientResults parse exception", hex(requestId)} );
-			}
-			h.resume();
+		auto h = *pending;
+		try{
+			h.promise().SetValue( parse(move(queryResult)) );
 		}
-		else
-			WARNT( ELogTags::SocketServerRead, "[{}]No pending query", hex(requestId) );
+		catch( runtime_error& e ){
+			h.promise().SetExp( Exception{SRCE_CUR, {ELogLevel::Warning}, move(e), "[{}]QueryClientResults parse exception", hex(requestId)} );
+		}
+		h.resume();
 	}
 	α IWebsocketSession::ResumeQueryException( RequestId requestId, Exception&& e )ι->bool{
-		QueryClientAwait::Handle h;
-		{
-			lg l{ _pendingQueriesMutex };
-			auto it = _pendingQueries.find( requestId );
-			if( it==_pendingQueries.end() )
-				return false;//not a query we issued - leave `e` intact for the caller's next router.
-			h = it->second.first;
-			it->second.first = nullptr;
-			it->second.second->Cancel();//will delete iterator
-		}
-		if( h ){
-			h.promise().SetExp( move(e) );
-			h.resume();
-		}
+		let pending = TakePending( requestId );
+		if( !pending )
+			return false;//not a query we issued - leave `e` intact for the caller's next router.
+		if( *pending )
+			failPending( *pending, move(e) );
 		return true;
 	}
 	α IWebsocketSession::SetSessionId( SessionPK sessionId )ι->void{

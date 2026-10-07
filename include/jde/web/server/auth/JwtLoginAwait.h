@@ -10,7 +10,6 @@ namespace Jde::Web::Server{
 		JwtLoginAwait( Web::Jwt&& _jwt, string endpoint, sp<App::IApp> appClient, SRCE )ι:
 			base{ sl }, _jwt{ move(_jwt) }, _endpoint{ endpoint }, _appClient{ appClient }{}
 		α Execute()ι->TAwait<UserPK>::Task;
-		α LoginAppServer()ι->Client::ClientSocketAwait<FromServer::SessionInfo>::Task;
 	private:
 		Web::Jwt _jwt;
 		string _endpoint;
