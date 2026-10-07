@@ -55,10 +55,55 @@ namespace Jde::Opc::Server::Tests{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
 			ua.Load( pumps );
+			AddArray( ua );
+			AddType( ua );
 			ua.History().Load( ua );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
 			ua.Run();
 			_ns = NamespaceIndex( ua, "urn:jde:pumps" );
+		}
+		//A historizing array, which pumps' nodeset has none of, added as a nodeset adds a variable:  [1,2,3,4].
+		Ω Array()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Array") }; }
+		Ω AddArray( UAServer& ua )ε->void{
+			UA_VariableAttributes attributes = UA_VariableAttributes_default;
+			UA_Double values[]{ 1, 2, 3, 4 };
+			UA_Variant_setArray( &attributes.value, values, std::size(values), &UA_TYPES[UA_TYPES_DOUBLE] );
+			attributes.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+			attributes.valueRank = UA_VALUERANK_ONE_DIMENSION;
+			UA_UInt32 anyLength{};
+			attributes.arrayDimensionsSize = 1;
+			attributes.arrayDimensions = &anyLength;
+			attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+			attributes.historizing = true;
+			UAε( UA_Server_addVariableNode(ua.Ptr(), Array(), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(1, (char*)"HistoryTests.Array"),
+				UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
+		}
+		//A type with a member marked Historizing, as companion nodesets mark them, and another inside the type's object
+		//`part`, both Mandatory, and an instance of the type, which open62541 gives copies of both, mark and modelling rule
+		//included.
+		Ω TypeMember()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type.member") }; }
+		Ω PartMember()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type.part.member") }; }
+		Ω Instance()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Instance") }; }
+		Ω AddType( UAServer& ua )ε->void{
+			let server = ua.Ptr();
+			const NodeId type{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type") }, part{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type.part") };
+			let component = UA_NODEID_NUMERIC( 0, UA_NS0ID_HASCOMPONENT );
+			let mandatory = [server]( const UA_NodeId& node ){
+				UAε( UA_Server_addReference(server, node, UA_NODEID_NUMERIC(0, UA_NS0ID_HASMODELLINGRULE), UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_MODELLINGRULE_MANDATORY), true) );
+			};
+			UAε( UA_Server_addObjectTypeNode(server, type, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE), UA_QUALIFIEDNAME(1, (char*)"HistoryTests.Type"),
+				UA_ObjectTypeAttributes_default, nullptr, nullptr) );
+			UAε( UA_Server_addObjectNode(server, part, type, component, UA_QUALIFIEDNAME(1, (char*)"part"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), UA_ObjectAttributes_default, nullptr, nullptr) );
+			mandatory( part );
+			UA_VariableAttributes attributes = UA_VariableAttributes_default;
+			attributes.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+			attributes.historizing = true;
+			for( let& [member, parent] : {std::pair{TypeMember(), type}, std::pair{PartMember(), part}} ){
+				UAε( UA_Server_addVariableNode(server, member, parent, component, UA_QUALIFIEDNAME(1, (char*)"member"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
+				mandatory( member );
+			}
+			UAε( UA_Server_addObjectNode(server, Instance(), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(1, (char*)"HistoryTests.Instance"), type,
+				UA_ObjectAttributes_default, nullptr, nullptr) );
 		}
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );//lets go of the path, and takes it again:  what an earlier run left goes, but for the lock.
@@ -165,10 +210,10 @@ namespace Jde::Opc::Server::Tests{
 			UA_HistoryReadResult_clear( &result );
 			return status;
 		}
-		Ω Property( const NodeId& parent, std::initializer_list<sv> path )ε->NodeId{
+		Ω Property( const NodeId& parent, std::initializer_list<sv> path, UA_UInt16 ns=0 )ε->NodeId{
 			vector<UA_QualifiedName> names;
 			for( let name : path )
-				names.push_back( {0, {name.size(), (UA_Byte*)name.data()}} );
+				names.push_back( {ns, {name.size(), (UA_Byte*)name.data()}} );
 			auto found = UA_Server_browseSimplifiedBrowsePath( GetUAServer().Ptr(), parent, names.size(), names.data() );
 			let good = found.statusCode==UA_STATUSCODE_GOOD && found.targetsSize;
 			NodeId y{ good ? found.targets[0].targetId.nodeId : UA_NODEID_NULL };
@@ -183,6 +228,11 @@ namespace Jde::Opc::Server::Tests{
 			return Value{ move(v) };
 		}
 		template<class T> Ω Setting( UA_UInt32 variable, sv name )ε->T{ return Variant( Property(Node(variable), {"HA Configuration", name}) ).template AsNumber<T>(); }
+		//A property of the HA Configuration's AggregateConfiguration, a Boolean as 0 or 1:  none when it holds no value.
+		Ω Aggregate( UA_UInt32 variable, sv name )ε->optional<double>{
+			auto value = Variant( Property(Node(variable), {"HA Configuration", "AggregateConfiguration", name}) );
+			return value.hasValue && !value.IsEmpty() ? value.AsNumber<double>() : optional<double>{};
+		}
 
 		//Seconds into the minute before the server started:  before the value each node took at its start, and, unless the
 		//run crosses midnight, on its day.
@@ -245,6 +295,10 @@ namespace Jde::Opc::Server::Tests{
 			let today = UADateTime{ floor<days>(Clock::now()) }.UA();//no file yet, and nothing older than today.
 			EXPECT_EQ( Variant(Property(Node(id), {"HA Configuration", "StartOfArchive"})).Get<UA_DateTime>(0), today ) << id;
 			EXPECT_EQ( Variant(Property(Node(id), {"HA Configuration", "StartOfOnlineArchive"})).Get<UA_DateTime>(0), today ) << id;
+			EXPECT_EQ( Aggregate(id, "TreatUncertainAsBad"), 1 ) << id;
+			EXPECT_EQ( Aggregate(id, "PercentDataBad"), 100 ) << id;
+			EXPECT_EQ( Aggregate(id, "PercentDataGood"), 100 ) << id;
+			EXPECT_EQ( Aggregate(id, "UseSlopedExtrapolation"), 0 ) << id;
 		}
 		UA_Byte level{};
 		ASSERT_EQ( UA_Server_readAccessLevel(ua, Node(Status2), &level), UA_STATUSCODE_GOOD );
@@ -261,6 +315,24 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( Setting<double>(Rpm1, "MaxTimeInterval"), 0 );
 		EXPECT_TRUE( Setting<bool>(Rpm3, "Stepped") );
 		EXPECT_EQ( Variant(Property(Node(RpmManual), {"HA Configuration", "ExceptionDeviationFormat"})).Get<UA_Int32>(0), UA_EXCEPTIONDEVIATIONFORMAT_ABSOLUTEVALUE );
+	}
+
+	//A type's members are templates, left alone though marked:  no index, no history bit and no HA Configuration.  The
+	//instance's copies are its live variables, historized.
+	TEST_F( HistoryTests, LeavesATypesMembersOut ){
+		auto ua = GetUAServer().Ptr();
+		for( let& member : {TypeMember(), PartMember()} ){
+			EXPECT_FALSE( History().Find(member) ) << member.ToString();
+			UA_Byte accessLevel{};
+			UAε( UA_Server_readAccessLevel(ua, member, &accessLevel) );
+			EXPECT_FALSE( accessLevel & UA_ACCESSLEVELMASK_HISTORYREAD ) << member.ToString();
+			EXPECT_THROW( Property(member, {"HA Configuration"}), Exception ) << member.ToString();
+		}
+		for( let& path : {std::initializer_list<sv>{"member"}, std::initializer_list<sv>{"part", "member"}} ){
+			let member = Property( Instance(), path, 1 );
+			EXPECT_TRUE( History().Find(member) ) << member.ToString();
+			EXPECT_NO_THROW( Property(member, {"HA Configuration"}) ) << member.ToString();
+		}
 	}
 
 	//Only what is served is claimed:  raw reads, at most readLimit values a call.
@@ -338,6 +410,50 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_EQ( back.Values.size(), 2u );
 		EXPECT_EQ( doubles(back.Values[0]), (vector<double>{300, 200}) );
 		EXPECT_EQ( doubles(back.Values[1]), (vector<double>{0, 100}) );
+
+		//Rpm1 has nothing after its start value on either day, each a file once flushed.  The helper hands over the first
+		//call's empty page, and stops at the second's Good_NoData.
+		ASSERT_TRUE( BlockAny(History().Group()->Flush()) );
+		for( let& request : {Request{.Start=At(100), .End=tomorrow+1min}, Request{.Start=tomorrow+1min, .End=At(100)}} ){
+			let nothing = Read( Rpm1, request );
+			EXPECT_EQ( nothing.Status, UA_STATUSCODE_GOODNODATA ) << UA_StatusCode_name( nothing.Status );
+			ASSERT_EQ( nothing.Values.size(), 1u );
+			EXPECT_TRUE( nothing.Values[0].empty() );
+		}
+	}
+
+	//A write with an IndexRange changes part of an array, and open62541 passes setValue only that part:  the history keeps
+	//the array the write made.  A scalar with a range writes one element.
+	TEST_F( HistoryTests, KeepsTheArrayAPartialWriteMakes ){
+		let node = Array();
+		let write = [&]( const UA_Variant& part, sv range, TimePoint source ){
+			UA_WriteValue w; UA_WriteValue_init( &w );
+			w.nodeId = node;
+			w.attributeId = UA_ATTRIBUTEID_VALUE;
+			w.indexRange = UA_String{ range.size(), (UA_Byte*)range.data() };
+			w.value.value = part;
+			w.value.hasValue = true;
+			w.value.sourceTimestamp = UADateTime{ source }.UA();
+			w.value.hasSourceTimestamp = true;
+			UAε( UA_Server_write(GetUAServer().Ptr(), &w) );
+		};
+		UA_Double nine{ 9 }, seven{ 7 };
+		UA_Variant part;
+		UA_Variant_setArray( &part, &nine, 1, &UA_TYPES[UA_TYPES_DOUBLE] );
+		write( part, "2", At(30) );
+		UA_Variant_setScalar( &part, &seven, &UA_TYPES[UA_TYPES_DOUBLE] );
+		write( part, "0", At(31) );
+		let array = []( const UA_Variant& v ){
+			return v.type==&UA_TYPES[UA_TYPES_DOUBLE] && !UA_Variant_isScalar(&v) ? vector<double>{ (UA_Double*)v.data, (UA_Double*)v.data+v.arrayLength } : vector<double>{};
+		};
+		ASSERT_EQ( array(Variant(node).value), (vector<double>{7, 2, 9, 4}) );
+
+		let history = Read( node, {.Start=At(30), .End=At(32)} );
+		EXPECT_TRUE( UA_StatusCode_isGood(history.Status) ) << UA_StatusCode_name( history.Status );
+		let values = all( history.Values );
+		ASSERT_EQ( values.size(), 2u );
+		EXPECT_EQ( array(values[0].value), (vector<double>{1, 2, 9, 4}) );
+		EXPECT_EQ( array(values[1].value), (vector<double>{7, 2, 9, 4}) );
 	}
 
 	TEST_F( HistoryTests, RefusesWhatItCannotServe ){
@@ -368,8 +484,10 @@ namespace Jde::Opc::Server::Tests{
 	}
 
 	//A start after a stop:  the files give each node its index back, a node the nodesets no longer historize is removed,
-	//and each node's value now is its first after the break.  Last:  it replaces the suite's server.
-	TEST_F( HistoryTests, RestartKeepsIndexesAndRemovesWhatIsNoLongerHistorized ){
+	//and each node's value now is its first after the break.  A suite of its own, with its own server and files, since
+	//it replaces the server and drops the client.
+	struct HistoryRestartTests : HistoryTests{};
+	TEST_F( HistoryRestartTests, KeepsIndexesAndRemovesWhatIsNoLongerHistorized ){
 		Disconnect();
 		let rpm4 = Index( Rpm4 ), manual = Index( RpmManual );
 		ASSERT_TRUE( rpm4 && manual );

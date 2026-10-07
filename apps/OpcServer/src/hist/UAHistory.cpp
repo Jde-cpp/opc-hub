@@ -1,4 +1,5 @@
 #include "UAHistory.h"
+#include <open62541/plugin/nodestore.h>
 #include <jde/fwk/process/process.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "Historized.h"
@@ -11,9 +12,9 @@ namespace Jde::Opc::Server{
 	//A callback this long is said:  every client waits on the service lock meanwhile.
 	constexpr steady_clock::duration SlowRead{ 100ms };
 
-	Ω setValue( UA_Server* /*server*/, void* context, const UA_NodeId* /*sessionId*/, void* /*sessionContext*/, const UA_NodeId* nodeId, UA_Boolean historizing, const UA_DataValue* value )ι->void{
+	Ω setValue( UA_Server* server, void* context, const UA_NodeId* /*sessionId*/, void* /*sessionContext*/, const UA_NodeId* nodeId, UA_Boolean historizing, const UA_DataValue* value )ι->void{
 		if( historizing && nodeId && value )
-			static_cast<UAHistory*>( context )->Collect( *nodeId, *value );
+			static_cast<UAHistory*>( context )->Collect( *server, *nodeId, *value );
 	}
 	Ω readRaw( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadRawModifiedDetails* details,
 		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
@@ -135,10 +136,7 @@ namespace Jde::Opc::Server{
 			THROW_IF( !index, "'{}' is not in the group made with it.", node.Id.ToString() );
 			//There is no subscription to break, so the stop was the break, and the node's value now is its first after it.
 			//Stamped as open62541 stamps a write that carries no source time.
-			UA_ReadValueId id; UA_ReadValueId_init( &id );
-			id.nodeId = node.Id;
-			id.attributeId = UA_ATTRIBUTEID_VALUE;
-			Value value{ UA_Server_read(&ua, &id, UA_TIMESTAMPSTORETURN_BOTH) };
+			auto value = Historized::Read( ua, node.Id, UA_TIMESTAMPSTORETURN_BOTH );
 			if( value.hasValue || !UA_StatusCode_isBad(value.status) ){
 				if( !value.hasSourceTimestamp ){
 					value.sourceTimestamp = UA_DateTime_now();
@@ -151,8 +149,8 @@ namespace Jde::Opc::Server{
 			_indexes.emplace( move(node.Id), *index );
 		}
 		_group = move( group );
-		ul _{ _mutex };
-		_ua = &ua;
+		ul _{ _publishing->Mutex };
+		_publishing->Ua = &ua;
 		PublishArchive();
 		ScheduleMidnight();
 		INFO( "Keeping the history of {} nodes under '{}'.", _indexes.size(), _historian->Config().Path.string() );
@@ -160,9 +158,9 @@ namespace Jde::Opc::Server{
 	α UAHistory::Stop()ι->void{
 		Hist::IClock::TimerId timer;
 		{
-			ul _{ _mutex };
-			_ua = nullptr;
-			timer = std::exchange( _midnight, 0 );
+			ul _{ _publishing->Mutex };
+			_publishing->Ua = nullptr;
+			timer = std::exchange( _publishing->Midnight, 0 );
 		}
 		if( timer )
 			_historian->Time().Cancel( timer );
@@ -182,26 +180,41 @@ namespace Jde::Opc::Server{
 		const UA_UtcTime start{ UADateTime{earliest.value_or(Hist::DayStart(Hist::DayOf(_historian->Time().Now(), tz), tz))}.UA() };
 		UA_Variant value; UA_Variant_setScalar( &value, const_cast<UA_UtcTime*>(&start), &UA_TYPES[UA_TYPES_UTCTIME] );
 		for( let& node : _archiveStarts ){
-			if( let sc = UA_Server_writeValue(_ua, node, value) )
+			if( let sc = UA_Server_writeValue(_publishing->Ua, node, value) )
 				WARN( "Could not write the start of the archive to '{}':  {}", node.ToString(), UAException::Message(sc) );
 		}
 	}
 	α UAHistory::ScheduleMidnight()ι->void{
 		let due = Hist::NextDayStart( _historian->Time().Now(), *_historian->Config().TimeZone )+_historian->Config().Delay;//with the group's rewrite of the day.
-		_midnight = _historian->Time().Schedule( due, [this]{ Midnight(); } );
-	}
-	α UAHistory::Midnight()ι->void{
-		ul _{ _mutex };
-		if( !_ua )
-			return;
-		PublishArchive();
-		ScheduleMidnight();
+		_publishing->Midnight = _historian->Time().Schedule( due, [this, publishing=_publishing]{
+			ul _{ publishing->Mutex };
+			if( !publishing->Ua )
+				return;//stopped:  this may be gone.
+			_publishing->Mutex.AssertHeld();//the same mutex, which the analysis can't tell.
+			PublishArchive();
+			ScheduleMidnight();
+		});
 	}
 
-	α UAHistory::Collect( const UA_NodeId& node, const UA_DataValue& value )ι->void{
+	α UAHistory::Collect( UA_Server& ua, const UA_NodeId& node, const UA_DataValue& value )ι->void{
 		let start = steady_clock::now();
-		if( let index = Find(node); index && _group )//the group stamps a missing server time:  this is the server.
-			_group->Enqueue( *index, value );
+		if( let index = Find(node); index && _group ){//the group stamps a missing server time:  this is the server.
+			//A write with an IndexRange passes only the part it wrote, which open62541 has already written into the node,
+			//in place:  the node holds the whole value.  A data source's value is behind its read callback.
+			auto nodestore = UA_Server_getConfig( &ua )->nodestore;
+			let stored = nodestore->getNode( nodestore, &node, UA_NODEATTRIBUTESMASK_VALUE, UA_REFERENCETYPESET_NONE, UA_BROWSEDIRECTION_INVALID );
+			UA_DataValue whole = value;
+			if( stored && stored->head.nodeClass==UA_NODECLASS_VARIABLE && value.hasValue ){
+				let& variable = stored->variableNode;
+				const UA_DataValue* current = variable.valueSourceType==UA_VALUESOURCETYPE_INTERNAL ? &variable.valueSource.internal.value
+					: variable.valueSourceType==UA_VALUESOURCETYPE_EXTERNAL && variable.valueSource.external.value ? *variable.valueSource.external.value : nullptr;
+				if( current && current->hasValue )
+					whole.value = current->value;
+			}
+			_group->Enqueue( *index, whole );
+			if( stored )
+				nodestore->releaseNode( nodestore, stored );
+		}
 		_collections.Add( steady_clock::now()-start );
 	}
 
@@ -265,8 +278,7 @@ namespace Jde::Opc::Server{
 					return sc;
 				memcpy( continuation.data, page.Continuation.data(), page.Continuation.size() );
 			}
-			//Only of a whole read:  a last page that holds nothing follows ones that did.
-			return page.Values.empty() && page.Continuation.empty() && !node.continuationPoint.length ? UA_STATUSCODE_GOODNODATA : UA_STATUSCODE_GOOD;
+			return page.NoData ? UA_STATUSCODE_GOODNODATA : UA_STATUSCODE_GOOD;
 		}
 		catch( const UAException& e ){
 			return (UA_StatusCode)e.Code();

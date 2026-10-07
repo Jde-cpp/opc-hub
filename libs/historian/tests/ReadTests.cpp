@@ -730,6 +730,45 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( page.Continuation.empty() );
 	}
 
+	//Good_NoData is the read's, not a page's:  a page OneDay ends can hold nothing and still have one after it, so only a
+	//last page after pages that held nothing either says there was no data.  Speed's one value is March 7's, at t0.
+	TEST_F( ServerFiles, NoDataIsOfTheWholeRead ){
+		let speed = Historize( "Pump1.Speed" );
+		let temp = Historize( "Pump1.Temp" );
+		let t0 = Time->Now();
+		SetValue( speed, 1 );
+		SetValue( temp, 10 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March8}+1h );
+		Settle( *Server );
+		SetValue( temp, 11 );
+		EXPECT_TRUE( Flush(*Server) );
+		Time->AdvanceTo( sys_days{March9}+1h );
+		Settle( *Server );
+		SetValue( temp, 12 );
+		EXPECT_TRUE( Flush(*Server) );
+		let end = Time->Now()+1min;
+
+		//Each page's size, and the last's NoData, which no page before it has.
+		let read = [&]( ReadRequest request ){
+			vector<uint> pages;
+			for( ;; ){
+				auto page = Server->Read( request );
+				pages.push_back( page.Values.size() );
+				if( page.Continuation.empty() )
+					return std::pair{ pages, page.NoData };
+				EXPECT_FALSE( page.NoData );
+				request.Continuation = move( page.Continuation );
+			}
+		};
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0+1s), .End=ticks(end), .OneDay=true}), std::pair(vector<uint>{0, 0, 0}, true) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0), .End=ticks(end), .OneDay=true}), std::pair(vector<uint>{1, 0, 0}, false) );
+		//From March 9 straight to its start value's day.
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(end), .End=ticks(t0+1s), .OneDay=true}), std::pair(vector<uint>{0, 0}, true) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(end), .End=ticks(t0), .OneDay=true}), std::pair(vector<uint>{0, 1}, false) );
+		EXPECT_EQ( read({.Nodes={speed}, .Start=ticks(t0+1s), .End=ticks(end)}), std::pair(vector<uint>{0}, true) );
+	}
+
 	//A UA host answers a continuation that isn't the read's with the status the exception carries.
 	TEST_F( ServerFiles, RefusesAContinuationWithItsStatus ){
 		let speed = Historize( "Pump1.Speed" );

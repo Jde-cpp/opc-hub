@@ -80,6 +80,7 @@ namespace Jde::Opc::Hist{
 			//How many of the node's records at time the pages before returned:  those at the resume time.
 			α Had( uint slot, Ticks time )Ι->uint32_t{ return From && From->time()==time ? From->counts(slot) : 0; }
 			α HadOf( NodeIndex index, Ticks time )Ι->uint32_t{ return Had( *Slot(index), time ); }
+			α Empty()Ι->bool{ return !From || From->no_values(); }//no page before this one returned a value.
 
 			vector<NodeIndex> Nodes;
 			absl::flat_hash_map<NodeIndex,uint> Slots;//each node's place in Nodes, which the continuation counts by.
@@ -314,6 +315,7 @@ namespace Jde::Opc::Hist{
 				next.set_time( time );
 				for( uint i=0; i<_counts.size(); ++i )
 					next.add_counts( 0 );
+				next.set_no_values( _result.Values.empty() && _plan.Empty() );
 				_result.Continuation = next.SerializeAsString();
 			}
 			//Opening bounds go before the page's values, which they leave room for.
@@ -826,7 +828,9 @@ namespace Jde::Opc::Hist{
 			{}
 		}
 		std::ranges::stable_sort( buffered, {}, []( let& r ){ return *PrimaryTime(r); } );
-		return Reading{ plan, tz, move(files), move(buffered), sl }.Page();
+		auto page = Reading{ plan, tz, move(files), move(buffered), sl }.Page();
+		page.NoData = page.Values.empty() && page.Continuation.empty() && plan.Empty();
+		return page;
 	}
 
 	α Group::Earliest( SL sl )Ε->optional<TimePoint>{

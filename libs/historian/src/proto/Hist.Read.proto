@@ -15,4 +15,7 @@ message Continuation{
 	//the next page reads up to.
 	optional uint32 generation=4;
 	uint64 offset=5;
+	//No page so far has returned a value:  set only by a page that OneDay ended holding none, so a last page that holds
+	//none either ends a read that found no data.
+	bool no_values=6;
 }

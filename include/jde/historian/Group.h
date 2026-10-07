@@ -92,6 +92,7 @@ namespace Jde::Opc::Hist{
 	struct ReadResult{
 		vector<ReadValue> Values;//in source-time order, later first in a reverse read.
 		string Continuation;//for the next page, empty on the last.
+		bool NoData{};//the last page of a read none of whose pages returned a value:  UA's Good_NoData.
 	};
 	//A read's value as UA has it, for a host that serves HistoryRead.  What a record doesn't store, a Good status, zero
 	//picoseconds or a null value, comes back with its mask's bit clear.  Throws for a value this build can't decode.

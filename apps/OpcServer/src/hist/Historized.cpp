@@ -17,18 +17,18 @@ namespace Jde::Opc::Server{
 		UA_BrowsePathResult_clear( &found );
 		return y;
 	}
-	Ω read( UA_Server& ua, const UA_NodeId& node )ι->Value{
+	α Historized::Read( UA_Server& ua, const UA_NodeId& node, UA_TimestampsToReturn timestamps )ι->Value{
 		UA_ReadValueId id; UA_ReadValueId_init( &id );
 		id.nodeId = node;
 		id.attributeId = UA_ATTRIBUTEID_VALUE;
-		return Value{ UA_Server_read(&ua, &id, UA_TIMESTAMPSTORETURN_NEITHER) };
+		return Value{ UA_Server_read(&ua, &id, timestamps) };
 	}
 	//The property's number, a Boolean as 0 or 1:  none when it isn't there, or holds no value.
 	Ω number( UA_Server& ua, const UA_NodeId& parent, sv browseName, str owner )ε->optional<double>{
 		let property = child( ua, parent, browseName );
 		if( !property )
 			return nullopt;
-		auto value = read( ua, *property );
+		auto value = Historized::Read( ua, *property );
 		if( !value.hasValue || value.IsEmpty() )
 			return nullopt;
 		let kind = value.value.type->typeKind;
@@ -71,6 +71,39 @@ namespace Jde::Opc::Server{
 		let type = UA_Server_findDataType( &ua, &dataType );
 		UA_NodeId_clear( &dataType );
 		return type && type->typeKind==UA_DATATYPEKIND_ENUM;
+	}
+
+	//An instance declaration, a type's member, is a template nothing writes, which a companion nodeset may still mark
+	//Historizing:  it has an ObjectType or VariableType above it.  HasModellingRule doesn't tell, since open62541 keeps it
+	//on the instances it makes (modellingRulesOnInstances).
+	Ω inType( UA_Server& ua, const UA_NodeId& variable )ι->bool{
+		vector<NodeId> next{ NodeId{variable} };
+		flat_set<NodeId> seen;
+		while( next.size() ){
+			const NodeId node{ move(next.back()) };
+			next.pop_back();
+			if( !seen.insert(node).second )
+				continue;
+			UA_BrowseDescription parents; UA_BrowseDescription_init( &parents );
+			parents.nodeId = node;
+			parents.browseDirection = UA_BROWSEDIRECTION_INVERSE;
+			parents.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
+			parents.includeSubtypes = true;
+			parents.nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE | UA_NODECLASS_OBJECTTYPE | UA_NODECLASS_VARIABLETYPE;
+			parents.resultMask = UA_BROWSERESULTMASK_NODECLASS;
+			auto found = UA_Server_browse( &ua, 0, &parents );
+			bool type{};
+			for( uint i=0; i<found.referencesSize && !type; ++i ){
+				let& parent = found.references[i];
+				type = parent.nodeClass==UA_NODECLASS_OBJECTTYPE || parent.nodeClass==UA_NODECLASS_VARIABLETYPE;
+				if( !parent.nodeId.serverIndex )
+					next.emplace_back( parent.nodeId.nodeId );
+			}
+			UA_BrowseResult_clear( &found );
+			if( type )
+				return true;
+		}
+		return false;
 	}
 
 	Ω load( UA_Server& ua, NodeId id, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->Historized{
@@ -121,11 +154,21 @@ namespace Jde::Opc::Server{
 			let ranged = thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFRANGE ? "InstrumentRange"sv
 				: thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE ? "EURange"sv : sv{};
 			if( let property = ranged.empty() ? nullopt : child(ua, id, ranged) ){
-				if( let value = read(ua, *property); value.hasValue && UA_Variant_hasScalarType(&value.value, &UA_TYPES[UA_TYPES_RANGE]) )
+				if( let value = Historized::Read(ua, *property); value.hasValue && UA_Variant_hasScalarType(&value.value, &UA_TYPES[UA_TYPES_RANGE]) )
 					thresholds.Range = Hist::Range{ value.Get<UA_Range>(0).low, value.Get<UA_Range>(0).high };
 			}
 		}
 		boolean( "ServerTimestampSupported", true );//both timestamps are stored.
+		//Part 13's defaults, for a ReadProcessed with useServerCapabilitiesDefaults, over whatever is there:  open62541
+		//fills a property the nodeset leaves out with false or 0, which can't be told from the nodeset's own.
+		if( let aggregate = child(ua, configuration, "AggregateConfiguration") ){
+			const UA_Boolean yes{ true }, no{};
+			const UA_Byte all{ 100 };
+			publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &yes );
+			publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &all );
+			publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &all );
+			publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &no );
+		}
 		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
 		auto startOfArchive = publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		auto startOfOnlineArchive = publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
@@ -140,6 +183,8 @@ namespace Jde::Opc::Server{
 			if( node->head.nodeClass==UA_NODECLASS_VARIABLE && node->variableNode.historizing )
 				static_cast<vector<NodeId>*>( context )->emplace_back( node->head.nodeId );
 		}, &ids );
+		if( let members = std::erase_if(ids, [&ua]( let& id ){ return inType(ua, id); }) )
+			DBG( "{} variables marked Historizing are a type's members, which aren't historized.", members );
 		std::sort( ids.begin(), ids.end() );//so a new file issues its indexes the same way every run.
 		vector<Historized> y;
 		y.reserve( ids.size() );

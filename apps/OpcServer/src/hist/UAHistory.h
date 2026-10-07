@@ -39,7 +39,7 @@ namespace Jde::Opc::Server{
 		α Collections()Ι->Timing{ return _collections.Get(); }
 
 		//open62541's callbacks.
-		α Collect( const UA_NodeId& node, const UA_DataValue& value )ι->void;
+		α Collect( UA_Server& ua, const UA_NodeId& node, const UA_DataValue& value )ι->void;
 		α ReadRaw( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void;
 	private:
@@ -61,9 +61,8 @@ namespace Jde::Opc::Server{
 		//One node's page.  Read on the node is the right, as the node-access page grants it.
 		α Read( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps,
 			const UA_HistoryReadValueId& node, UA_HistoryData& data, UA_ByteString& continuation )ι->UA_StatusCode;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α PublishArchive()ι->void;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ScheduleMidnight()ι->void;
-		α Midnight()ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
 		up<Hist::Historian> _historian;
 		//Set by Load, before the server runs, and only read after:  the callbacks take no lock of the host's.
@@ -72,8 +71,14 @@ namespace Jde::Opc::Server{
 		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Load:  open62541 adds a node under its service lock.
 		vector<NodeId> _archiveStarts;//each HA Configuration's StartOfArchive and StartOfOnlineArchive.
 		Timer _reads, _collections;
-		absl::Mutex _mutex;//before open62541's service lock, which no callback takes it under.
-		UA_Server* _ua ABSL_GUARDED_BY(_mutex){};
-		Hist::IClock::TimerId _midnight ABSL_GUARDED_BY(_mutex){};
+		//Held by the midnight timer's callback too, which the clock can start while Stop cancels it:  Stop nulls Ua under
+		//Mutex, and a callback that finds it null touches nothing of this.  Mutex goes before open62541's service lock,
+		//which no callback takes it under.
+		struct Publishing final{
+			absl::Mutex Mutex;
+			UA_Server* Ua ABSL_GUARDED_BY(Mutex){};
+			Hist::IClock::TimerId Midnight ABSL_GUARDED_BY(Mutex){};
+		};
+		const sp<Publishing> _publishing{ ms<Publishing>() };
 	};
 }

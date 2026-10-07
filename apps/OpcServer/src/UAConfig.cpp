@@ -43,7 +43,6 @@ namespace Jde::Opc::Server{
 		if( history && history->Enabled() ){
 			historyDatabase = history->Database();
 			nodeLifecycle = UAHistory::Lifecycle();
-			historizingEnabled = true;
 			accessHistoryDataCapability = true;
 			maxReturnDataValues = history->ReadLimit();
 		}
