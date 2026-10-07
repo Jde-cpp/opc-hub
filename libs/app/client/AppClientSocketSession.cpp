@@ -86,10 +86,7 @@ namespace Client{
 	}
 
 	α AppClientSocketSession::CloseTasks( beast::error_code ec )ι->void{
-		auto f = [this, ec]( std::any&& h )->void {
-			HandleException( move(h), CodeException{ec, _tags, ELogLevel::NoLog}, false );
-		};
-		base::CloseTasks( f );
+		base::CloseTasks( ec );
 		_subscriptionRequests.clear();
 		ClearSubscriptions();//server-side subscriptions died with the socket; reconnect re-subscribes.
 	}
@@ -253,7 +250,8 @@ namespace Client{
 			let requestId = clientRequestId.value_or( m->request_id() );
 			//Only for kinds that answer a request of ours.  Popping for every kind erased the handle of an unrelated
 			//in-flight await whenever a server-originated push happened to carry a colliding id - see FromServer::IsResponse.
-			std::any hAny = requestId && FromServer::IsResponse( m->value_case() ) ? IClientSocketSession::PopTask( requestId ) : nullptr;
+			auto task = requestId && FromServer::IsResponse( m->value_case() ) ? IClientSocketSession::PopTask( requestId ) : Web::Client::PendingTask{};
+			auto& hAny = task.Handle;
 			switch( m->value_case() ){
 			[[unlikely]] case kAck:
 				SetId( m->ack() );
@@ -316,7 +314,7 @@ namespace Client{
 					Subscriptions::Remember( move(request.Query), move(request.Variables), request.Listener, ids );
 					return true;
 				}) ){ //request not found.
-					HandleException( move(hAny), Exception{"SubscriptionAck: '{}' not found.", requestId}, requestId );
+					Fail( move(task), Exception{"SubscriptionAck: '{}' not found.", requestId}, requestId );
 				}
 				else{ //found the request.
 					jarray y;
@@ -331,7 +329,7 @@ namespace Client{
 			case kException:{
 				_subscriptionRequests.erase( requestId );
 				auto e = App::ProtoUtils::ToException( move(*m->mutable_exception()) );
-				HandleException( move(hAny), move(*e), requestId );
+				Fail( move(task), move(*e), requestId );
 				break;}
 			case kExecute:
 			case kExecuteAnonymous:{
@@ -357,34 +355,11 @@ namespace Client{
 			}
 		}
 	}
-	α AppClientSocketSession::HandleException( std::any&& h, Exception&& e, RequestId requestId )ι->void{
-		auto handle = [&]( sv /*msg*/, auto await ){
-			await->promise().ResponseMessage = "Error: {}";
-			await->promise().MessageArgs.emplace_back( e.what() );
-			await->promise().SetExp( move(e) );
-			await->resume();
-		};
-		if( auto await = std::any_cast<ClientSocketAwait<Proto::FromServer::ConnectionInfo>::Handle>(&h) )
-			handle( "Exception<ConnectionInfo>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<uint32>::Handle>(&h) )
-			handle( "Exception<uint32>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<string>::Handle>(&h) )
-			handle( "Exception<string>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<Proto::FromServer::Strings>::Handle>(&h) )
-			handle( "Exception<Strings>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<Web::FromServer::SessionInfo>::Handle>(&h) )
-			handle( "Exception<SessionInfo>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<jvalue>::Handle>(&h) )
-			handle( "Exception<jvalue>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<jarray>::Handle>(&h) )
-			handle( "Exception<jarray>: '{}'.", await );
-		else if( auto await = std::any_cast<ClientSocketAwait<Web::Jwt>::Handle>(&h) )
-			handle( "Exception<Jwt>: '{}'.", await );
-		else{
-			let severity{ requestId ? ELogLevel::Critical : ELogLevel::Debug };
-			ASSERT_DESC( !requestId, Ƒ("Type Not Expected={}", h.type().name()) );
-			LOG( severity, _tags, "[{}]Failed to process incoming exception '{}'.", hex(requestId), e.what() );
-		}
+	α AppClientSocketSession::Fail( Web::Client::PendingTask&& task, Exception&& e, RequestId requestId )ι->void{
+		if( task.Fail )
+			task.Fail( move(e) );
+		else
+			LOG( requestId ? ELogLevel::Critical : ELogLevel::Debug, _tags, "[{}]Failed to process incoming exception '{}'.", hex(requestId), e.what() );
 	}
 	α AppClientSocketSession::WriteException( runtime_error&& e, RequestId requestId )ι->void{
 		Write( FromClient::Exception(move(e), requestId) );

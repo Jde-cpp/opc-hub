@@ -33,10 +33,10 @@ namespace Jde::Web::Client{
 		IClientSocketSession( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι;// Resolver and socket require an io_context
 		virtual ~IClientSocketSession()=default;
 		α Shutdown( bool terminate, SL sl )ι->void override;
-		α AddTask( RequestId requestId, std::any hCoroutine )ι->void;
+		α AddTask( RequestId requestId, PendingTask&& task )ι->void;
 		//started per request alongside AddTask: if nothing has answered by the deadline the caller would otherwise wait forever.
 		α AddTimeout( RequestId requestId, SRCE )ι->TimerAwait::Task;
-		α PopTask( RequestId requestId )ι->std::any;
+		α PopTask( RequestId requestId )ι->PendingTask;//empty if requestId is not pending:  answered, failed, or never a request.
 
 		α Run( string host, PortType port, string target, CreateClientSocketSessionAwait::Handle h )ι->void;// Start the asynchronous operation
 		//target: the websocket handshake's request path - "/" for every server but a host that routes protocols by path (OpcHub: "/opc" for the gateway's).
@@ -53,13 +53,12 @@ namespace Jde::Web::Client{
 		α Host()Ι->str{ return _host; }
 		α Id()ι->uint32{ return _id; }
 	protected:
-		β CloseTasks( beast::error_code ec )ι->void = 0;
-		//C6: no per-request failure is possible here - the typed handle lives in the derived session's any_cast - so a request
-		//that can never be answered drops the session instead, and OnClose fails every pending task through CloseTasks.  The app
-		//client reconnects on close, so this is recoverable rather than fatal.
+		//Fails every pending task - the socket is gone, so none can be answered.  An override adds its own bookkeeping around this.
+		β CloseTasks( beast::error_code ec )ι->void;
+		//C6: a request that can never be answered drops the session, and OnClose fails every pending task through CloseTasks.  The
+		//app client reconnects on close, so this is recoverable rather than fatal.
 		α CloseOnError( string reason, SRCE )ι->void;
 		α HasTask( RequestId requestId )Ι->bool{ return _tasks.contains( requestId ); }
-		α CloseTasks( function<void(std::any&&)> f )ι->void;
 		//Cancel the deadline AddTimeout armed for this request, if it is still pending.  A DurationTimer that is never
 		//cancelled is *live asio work*: `io_context::run` cannot return while one is queued, so an answered request used to
 		//hold the executor - and with it every shutdown - for the balance of its full requestTimeout.
@@ -90,7 +89,7 @@ namespace Jde::Web::Client{
 		optional<Web::FromServer::SessionInfo> _sessionInfo;
 		CreateClientSocketSessionAwait::Handle _connectHandle;
 		CloseClientSocketSessionAwait::Handle _closeHandle;
-		boost::concurrent_flat_map<RequestId,std::any> _tasks;
+		boost::concurrent_flat_map<RequestId,PendingTask> _tasks;
 		//The deadline per in-flight request, so answering one can cancel it.  The server side has always kept its timers this
 		//way (IWebsocketSession::_pendingQueries, finding S3); the client kept only the handle and paid the full timeout.
 		boost::concurrent_flat_map<RequestId,sp<DurationTimer>> _timeouts;

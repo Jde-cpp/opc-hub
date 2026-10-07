@@ -73,15 +73,15 @@ namespace Jde::Web::Client{
 		}
 	}
 
-	α IClientSocketSession::AddTask( RequestId requestId, std::any hCoroutine )ι->void{
-		_tasks.emplace( requestId, hCoroutine );
+	α IClientSocketSession::AddTask( RequestId requestId, PendingTask&& task )ι->void{
+		_tasks.emplace( requestId, move(task) );
 	}
 
-	α IClientSocketSession::PopTask( RequestId requestId )ι->std::any{
-		std::any h;
-		_tasks.erase_if( requestId, [&h](auto&& kv){h=kv.second; return true;} );//Subscriptions aren't in tasks.
+	α IClientSocketSession::PopTask( RequestId requestId )ι->PendingTask{
+		PendingTask y;
+		_tasks.erase_if( requestId, [&y](auto&& kv){ y = move(kv.second); return true; } );//Subscriptions aren't in tasks.
 		CancelTimeout( requestId );//answered - stop its deadline from holding the io_context for the rest of the timeout.
-		return h;
+		return y;
 	}
 	α IClientSocketSession::CancelTimeout( RequestId requestId )ι->void{
 		_timeouts.visit( requestId, [](auto&& kv){ kv.second->Cancel(); } );//AddTimeout's own resumption erases the entry.
@@ -126,12 +126,16 @@ namespace Jde::Web::Client{
 		CloseOnError( Ƒ("request {} unanswered after {}", hex(requestId), Chrono::ToString(timeout)), sl );
 	}
 
-	α IClientSocketSession::CloseTasks( function<void(std::any&&)> f )ι->void{
+	α IClientSocketSession::CloseTasks( beast::error_code ec )ι->void{
 		CancelTimeouts();//the socket is gone; nothing these guard can still be answered, and each one is live io_context work.
-		_tasks.erase_if( [ f ](auto&& kv){
-			f( move(kv.second) );
-			return true;
-		});
+		vector<PendingTask> tasks;
+		_tasks.erase_if( [&tasks]( auto&& kv ){ tasks.push_back( move(kv.second) ); return true; } );
+		for( auto& task : tasks ){//failed outside the map:  a resumed caller may issue its next request, and the map cannot be entered from its own visitor.
+			if( ec )
+				task.Fail( CodeException{static_cast<std::error_code>(ec), ELogTags::SocketClientWrite, ELogLevel::NoLog} );
+			else
+				task.Fail( Exception{SRCE_CUR, ELogLevel::NoLog, "Session closed."} );
+		}
 	}
 
 	CreateClientSocketSessionAwait::CreateClientSocketSessionAwait( sp<IClientSocketSession> session, string host, PortType port, string target, SL sl )ι:

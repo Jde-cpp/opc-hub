@@ -48,7 +48,7 @@ namespace Jde::App::Client{
 		α WriteException( runtime_error&&, RequestId requestId )ι->void;
 		α WriteException( string&& e, RequestId requestId )ι->void;
 		α ProcessTransmission( Proto::FromServer::Transmission&& t, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void;
-		α HandleException( std::any&& h, Exception&& what, RequestId requestId )ι->void;
+		α Fail( Web::Client::PendingTask&& task, Exception&& e, RequestId requestId )ι->void;
 		α OnRead( Proto::FromServer::Transmission&& transmission )ι->void override;
 		α OnClose( beast::error_code ec )ι->void override;
 		α CloseTasks( beast::error_code ec )ι->void override;

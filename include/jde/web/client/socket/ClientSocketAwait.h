@@ -17,11 +17,17 @@ namespace Jde::Web::Client{
 		sv ResponseMessage;
 		vector<string> MessageArgs;
 	};
+	//A request in flight:  the typed handle its answer resumes, and how to fail it without knowing that type.
+	struct PendingTask{
+		std::any Handle;
+		function<void(Exception&&)> Fail;
+	};
+
 	struct IClientSocketVoidAwait{
 		IClientSocketVoidAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session )ι:
 			_request{ move(request) }, _requestId{ requestId }, _session{ session }, _start{ steady_clock::now() }{}
 
-		α Suspend( std::any hCoroutine )ι->void;
+		α Suspend( PendingTask&& task )ι->void;
 	protected:
 		α SessionId()ι->SessionPK;
 		string _request;
@@ -40,7 +46,7 @@ namespace Jde::Web::Client{
 		using base = TAwait<T,TTimedTask<T>>;
 		ClientSocketAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session, SRCE )ι;
 		ClientSocketAwait( ClientSocketAwait&& )=default;
-		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend(base::_h); }
+		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend( {base::_h, [h=base::_h]( Exception&& e ){ h.promise().SetExp( move(e) ); h.resume(); }} ); }
 		α await_resume()ε->T override;
 	};
 

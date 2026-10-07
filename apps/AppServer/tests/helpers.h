@@ -51,7 +51,6 @@ namespace Jde::App::Server::Tests{
 		α Query( string&&, jobject, bool, SL )ι->Web::Client::ClientSocketAwait<jvalue> override{ ASSERT(false); return { {}, {}, {} }; }
 		α Subscribe( string&&, jobject, sp<QL::IListener>, SL )ε->Web::Client::ClientSocketAwait<jarray> override{ ASSERT(false); return { {}, {}, {} }; }
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
-		α CloseTasks( beast::error_code )ι->void override{}
 		α OnRead( FromServerTrans&& t )ι->void override{
 			{
 				std::unique_lock _{ _mtx };
