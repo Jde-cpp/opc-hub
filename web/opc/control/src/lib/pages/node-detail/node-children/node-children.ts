@@ -1,5 +1,5 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
-import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, signal } from '@angular/core';
 import {MatButtonModule} from '@angular/material/button';
 import {MatButtonToggleModule} from '@angular/material/button-toggle';
 import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
@@ -118,6 +118,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 					fresh.value = this.variables.find( v=>v.key==fresh.key )?.value;
 			}
 			this.setNodes( references.filter( r=>r.displayed ), false );
+			this.refreshed.emit( this.pageData.nodes );
 		}
 		catch( e ){
 			this.snackbar.exception( "Could not refresh nodes.", e );
@@ -391,6 +392,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	isSettings = signal<boolean>( false );
 	get Key():string{ return this.pageData.route.profileKey; }
 	node = model.required<UaNode>();
+	refreshed = output<UaNode[]>();//the nodes a Refresh browsed:  pageData.nodes is assigned, which no signal sees
 	get nodeId(){ return this.node().nodeId; }
 	get server():Server{ return this.pageData.server; }
 	get cnnctnSlug():string{ return this.server.connection.slug; }

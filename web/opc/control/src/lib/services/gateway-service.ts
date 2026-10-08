@@ -18,7 +18,7 @@ import { NodeKey, NodeId, NodeIdentifier } from '../model/node-id';
 import { ENodeClass, ObjectType, OpcObject, UaNode, Variable } from '../model/node';
 import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
-import { ExtensionObject, Reading, toReading, Value, valueJson } from '../model/value';
+import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
 
 interface IError{ requestId:number; message: string; }
@@ -321,7 +321,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			throw new EvalError( `Cannot browse children of variable node.`, {cause:"Invalid Operation"} );
 		const vars = { opc: cnnctn, id: parent.nodeId.toJson() };
 		const commonColumns = "id name browse nodeClass refType typeDef description";
-		const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";//historizing gates the History tab (historian 4A #218)
+		const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";//historizing gates the History tab
 		const ql = `node(opc:$opc, id:$id){children{${commonColumns} ... on Variable{${variableColumns}} }}`;
 		const children = (await this.query<any>( ql, vars, (m)=>console.log(m) ))["node"]["children"];
 		var y = new Array<UaNode>();
@@ -491,7 +491,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		if( proto.doubleValue!=undefined )  return proto.doubleValue;
 		if( proto.duration!=undefined )     return <Duration>proto.duration;
 		if( proto.expandedNode!=undefined ) return Gateway.toExpanded( proto.expandedNode );
-		if( proto.floatValue!=undefined )   return proto.floatValue;
+		if( proto.floatValue!=undefined )   return shortestFloat( proto.floatValue );
 		if( proto.guid!=undefined )         return Gateway.toGuid( proto.guid );
 		if( proto.int16!=undefined )        return proto.int16;
 		if( proto.int32!=undefined )        return proto.int32;
@@ -585,8 +585,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	get slug():GatewaySlug{ return this.instances[0].instanceName!; }
 }
 //a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a
-//refused request, not a reading.  `source`/`server` are the reading's timestamps when the server sent them (historian 4A
-//#218):  the history trend places a push after its read by source time.
+//refused request, not a reading.  `source`/`server` are the reading's timestamps when the server sent them:  the history
+//trend places a push after its read by source time.
 export type SubscriptionResult = Reading & {opcId:string, node:NodeId, source?:Date, server?:Date};
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );

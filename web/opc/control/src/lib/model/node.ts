@@ -97,7 +97,7 @@ export class Variable extends UaNode{
 		return typeof v=="boolean" ? v : undefined;
 	}
 	override get nodeClass():ENodeClass{ return ENodeClass.Variable; }
-	//the History tab's gate (historian 4A #218):  the server historizes the node, and this user may read that history - a level
+	//the History tab's gate:  the server historizes the node, and this user may read that history - a level
 	//the server didn't give is unknown, not a denial, the rule NodeView.readDenied applies to Read.
 	get historyReadable():boolean{ return this.historizing===true && (this.userAccessLevel==undefined || !!(this.userAccessLevel & EAccess.HistoryRead)); }
 

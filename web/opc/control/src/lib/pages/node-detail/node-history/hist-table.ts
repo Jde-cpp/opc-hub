@@ -12,7 +12,7 @@ import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { valueString } from '../../../model/value';
 
-//The table (plan Phase 4):  every value loaded, newest first, with both timestamps and the status, paged.  The read opens with
+//The table:  every value loaded, newest first, with both timestamps and the status, paged.  The read opens with
 //the newest values and Load earlier adds older ones below them, as a log reads.
 @Component({
 	selector: 'hist-table',
@@ -27,7 +27,6 @@ export class HistTable{
 	}
 	values = input.required<HistValue[]>();//in source-time order
 	nodes = input.required<Variable[]>();
-	namesVersion = input( 0 );
 	pageIndex = signal( 0 );
 	pageSize = signal( 100 );
 	//latest first, and a value with no source time, which has no place in that order, last
@@ -39,7 +38,7 @@ export class HistTable{
 	} );
 	displayedColumns = computed<string[]>( ()=>[...(this.nodes().length>1 ? ['node'] : []), 'source', 'server', 'status', 'value', 'flags'] );
 	nodeName( id:NodeId ):string{ return this.nodes().find( n=>n.key==id.key )?.name ?? id.toString(); }
-	status( v:HistValue ):string{ this.namesVersion(); return v.status ? OpcError.text( v.status ) : "Good"; }
+	status( v:HistValue ):string{ return v.status ? OpcError.text( v.status ) : "Good"; }
 	statusTooltip( v:HistValue ):string{ return v.status ? `${scHex( v.status )} - ${this.status( v )}` : ""; }
 	qualityIcon( v:HistValue ){ return statusIcon( v.status ); }
 	valueText( v:HistValue ):string{ return valueString( v.value ); }

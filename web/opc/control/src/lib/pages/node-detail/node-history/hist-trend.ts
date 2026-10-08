@@ -1,7 +1,8 @@
-import { AfterViewInit, Component, computed, effect, ElementRef, inject, input, OnDestroy, output, untracked, viewChild } from '@angular/core';
+import { AfterViewInit, Component, effect, ElementRef, inject, input, OnDestroy, output, untracked, viewChild } from '@angular/core';
 import type Highcharts from 'highcharts/esm/highstock';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
+import { NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { badColor, toTrendPoints, TrendFlag, trendPalette, TrendPoint } from './hist-trend-data';
 
@@ -13,20 +14,20 @@ function loadHighcharts():Promise<HC>{
 	return highcharts ??= Promise.all( [import('highcharts/esm/highstock'), import('highcharts/esm/modules/accessibility')] ).then( ([m])=>m.default );
 }
 
-//The trend (plan Phase 4):  one line per node, stepped by default, a gap where a reading is Bad and a flag naming its status, a
+//The trend:  one line per node, stepped by default, a gap where a reading is Bad and a flag naming its status, a
 //triangle on an Uncertain one.  A time axis that pans into more pages:  reaching the left edge asks the owner for the page before.
 //The chart is Highcharts' own object, driven directly:  points arrive one a second per node on the live tail, which is addPoint
 //work, not a rebuild of an options object.
 @Component({
 	selector: 'hist-trend',
-	template: `<div #plot class="plot" role="img" [attr.aria-label]="ariaLabel()"></div>`,
+	template: `<div #plot class="plot"></div>`,//its role and label are the accessibility module's:  it sets them on every update
 	styles: [`:host{ display:block; width:100%; } .plot{ width:100%; height:360px; }`]
 })
 export class HistTrend implements AfterViewInit, OnDestroy{
 	constructor(){
 		effect( ()=>{
 			const values = this.values(), series = this.series(), stepped = this.stepped();
-			this.namesVersion();//a status name arriving re-renders the flags' text
+			OpcError.namesVersion();//a status name arriving re-renders the flags' text, which #draw reads untracked
 			untracked( ()=>this.#draw(values, series, stepped) );
 		} );
 	}
@@ -48,10 +49,8 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 	stepped = input( true );
 	loading = input( false );
 	hasEarlier = input( true );
-	namesVersion = input( 0 );
 	loadEarlier = output<void>();
 	plot = viewChild.required<ElementRef<HTMLDivElement>>( 'plot' );
-	ariaLabel = computed( ()=>`History trend of ${this.series().map(s=>s.name).join(", ") || "no nodes"}` );
 
 	#draw( values:HistValue[], series:Variable[], stepped:boolean ){
 		const chart = this.#chart;
@@ -59,10 +58,18 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 			return;
 		const keep = new Set<string>();
 		const step = stepped ? 'left' : undefined;
+		const byNode = new Map<NodeKey, HistValue[]>();//one pass, not one per series
+		for( const v of values ){
+			const list = byNode.get( v.node.key );
+			if( list )
+				list.push( v );
+			else
+				byNode.set( v.node.key, [v] );
+		}
 		series.forEach( (node, i)=>{
 			const id = node.nodeId.uaString(), flagsId = `${id}/flags`;//Highcharts ids are strings;  NodeId.key is a Symbol
 			keep.add( id ); keep.add( flagsId );
-			const {points, flags} = toTrendPoints( values, node.nodeId, stepped );
+			const {points, flags} = toTrendPoints( byNode.get(node.key) ?? [], node.nodeId, stepped );
 			const color = trendPalette[Math.min( i, trendPalette.length-1 )];
 			const line = <Highcharts.Series|undefined>chart.get( id );
 			if( !line )
@@ -79,20 +86,22 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 			else
 				HistTrend.setData( flagSeries, flags );
 		} );
-		for( const s of [...chart.series] ){//a node unticked takes its series with it;  the navigator's own series have highcharts- ids
-			const id = s.options.id;
-			if( id && !id.startsWith('highcharts-') && !keep.has(id) )
-				s.remove( false );
-		}
-		chart.update( {legend: {enabled: series.length>1}}, false );
+		//a node unticked takes its series with it;  the navigator's own series have highcharts- ids.  The ids first, then the removes:
+		//removing a line destroys its navigator series, later in chart.series, so a walk that removes as it goes reaches a dead one.
+		const drop = chart.series.map( s=>s.options.id ).filter( (id):id is string=>!!id && !id.startsWith('highcharts-') && !keep.has(id) );
+		for( const id of drop )
+			(<Highcharts.Series|undefined>chart.get( id ))?.remove( false );
+		chart.update( {legend: {enabled: series.length>1}, lang: {accessibility: {defaultChartTitle: HistTrend.title( series )}}}, false );
 		chart.redraw( false );
 	}
+	//the chart's name to a screen reader:  there is no visible title, so the accessibility module's stand-in for one
+	private static title( series:Variable[] ):string{ return `History trend of ${series.map( s=>s.name ).join( ", " ) || "no nodes"}`; }
 	//The live tail appends:  a point a second per node, each a setData of every point held is what a chart stutters on, so a tail
 	//that only grew is added point by point.  Anything else - a page loaded before the first value, a late push merged into the
 	//middle, a line shape change - is a rebuild.
 	private static setData( s:Highcharts.Series, data:(TrendPoint|TrendFlag)[] ){
 		const prev = <(TrendPoint|TrendFlag)[]|undefined>(<Highcharts.SeriesLineOptions>s.options).data;
-		const same = ( a:TrendPoint|TrendFlag, b:TrendPoint|TrendFlag )=>a.x===b.x && (<TrendPoint>a).y===(<TrendPoint>b).y && a.custom?.status===b.custom?.status;
+		const same = ( a:TrendPoint|TrendFlag, b:TrendPoint|TrendFlag )=>a.x===b.x && (<TrendPoint>a).y===(<TrendPoint>b).y && a.custom?.status===b.custom?.status && (<TrendFlag>a).text===(<TrendFlag>b).text;
 		if( prev?.length && data.length>prev.length && same(prev[0], data[0]) && same(prev[prev.length-1], data[prev.length-1]) ){
 			for( let i=prev.length; i<data.length; ++i )
 				s.addPoint( data[i], false );
@@ -120,6 +129,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 		const self = this;
 		return {
 			chart: { backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, panning: {enabled: true, type: 'x'}, panKey: 'shift', spacing: [8, 8, 8, 8] },
+			lang: { accessibility: {defaultChartTitle: HistTrend.title( this.series() )} },
 			accessibility: { description: 'Historical values of the selected nodes over time.  A Bad reading is a gap in its line, flagged with its status;  an Uncertain one keeps its value under a triangle.' },
 			title: { text: undefined },
 			credits: { style: {color: muted} },
@@ -135,7 +145,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 			xAxis: { type: 'datetime', ordinal: false, gridLineWidth: 1, gridLineColor: grid, lineColor: grid, tickColor: grid, labels: {style: {color: muted}}, crosshair: {color: muted, dashStyle: 'Dot'}, events: {afterSetExtremes: e=>self.#onAfterSetExtremes( e )} },
 			yAxis: { opposite: false, gridLineColor: grid, labels: {style: {color: muted}, align: 'right', x: -4}, title: {text: null}, showLastLabel: true },
 			tooltip: {
-				backgroundColor: surface, borderColor: grid, style: {color: text}, xDateFormat: '%Y-%m-%d %H:%M:%S.%L', valueDecimals: 3, shared: false, split: false,
+				backgroundColor: surface, borderColor: grid, style: {color: text}, xDateFormat: '%Y-%m-%d %H:%M:%S.%L', shared: false, split: false,
 				pointFormatter(){
 					const custom = <TrendPoint["custom"]|undefined>this.options.custom;
 					const status = custom?.status ? ` (${OpcError.text( custom.status )})` : '';

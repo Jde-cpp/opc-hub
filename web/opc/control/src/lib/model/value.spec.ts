@@ -8,7 +8,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 	};
 }
 import Long from 'long';
-import { ExtensionObject, toReading, valueJson, valueString } from './value';
+import { ExtensionObject, shortestFloat, toReading, valueJson, valueString } from './value';
 import { NodeId } from './node-id';
 
 //the gateway's three shapes (Value::ToJson):  the bare value for Good, {v,sc} for any other code that is not Bad, {sc} for Bad.
@@ -40,6 +40,24 @@ describe( 'toReading', ()=>{
 
 	it( 'takes a null - the server\'s empty value - as it comes', ()=>{
 		expect( toReading(null) ).toEqual( {value: null, sc: 0} );
+	} );
+} );
+
+//A Float pushed over the socket decoded widened to a double, 21.3 as 21.299999237060547, and every screen showed that
+//(historian-web-trend, Tooltip decimals).
+describe( 'shortestFloat', ()=>{
+	it( 'is the fewest digits that are still the float', ()=>{
+		expect( shortestFloat( Math.fround(21.3) ) ).toBe( 21.3 );
+		expect( shortestFloat( Math.fround(0.000123) ) ).toBe( 0.000123 );
+		expect( shortestFloat( Math.fround(16777217) ) ).toBe( 16777216 );//past 2^24 a float holds even integers alone
+		expect( shortestFloat( 42 ) ).toBe( 42 );
+		expect( shortestFloat( NaN ) ).toBeNaN();
+	} );
+	it( 'narrows back to the same float', ()=>{
+		for( const x of [21.3, 0.1, 3.4028234663852886e38, 1.401298464324817e-45, -1.1754943508222875e-38, 123456.7] ){
+			const f = Math.fround( x );
+			expect( Math.fround(shortestFloat(f)) ).toBe( f );
+		}
 	} );
 } );
 

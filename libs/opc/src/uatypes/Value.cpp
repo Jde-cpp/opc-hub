@@ -1,4 +1,5 @@
 ﻿#include <jde/opc/uatypes/Value.h>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <jde/opc/UAException.h>
@@ -30,6 +31,17 @@ namespace Jde::Opc{
 	//JSON.parse reads as Infinity - but it goes the same way, so the three stay one shape.)
 	Ω toJson( double v )ι->jvalue{
 		return std::isnan( v ) ? jvalue{"NaN"} : std::isinf( v ) ? jvalue{ v<0 ? "-Infinity" : "Infinity" } : jvalue{v};
+	}
+	//A Float at the fewest digits that are still that float.  Widened as it is, 21.3f writes 21.299999237060547, which every screen
+	//showed;  the double parsed from the float's shortest text writes 21.3, and narrows back to the same float.
+	Ω toJson( float v )ι->jvalue{
+		if( !std::isfinite(v) )
+			return toJson( (double)v );
+		char text[32];
+		const char* end = std::to_chars( text, text+sizeof(text), v ).ptr;
+		double y{};
+		std::from_chars( text, end, y );
+		return jvalue{ y };
 	}
 	//The inverse.  nullopt means "not one of the three", and the caller falls through to the ordinary numeric read, so
 	//any other string still fails there with its own message rather than becoming a silent NaN.

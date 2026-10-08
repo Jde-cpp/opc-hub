@@ -266,3 +266,11 @@ describe( 'Gateway socket path', ()=>{
 		expect( (gateway as any).socketUrl ).toBe( 'ws://localhost:1968/opc' );
 	});
 });
+
+describe( 'Gateway.toValue', ()=>{
+	//A pushed Float decoded widened to a double, 21.3 as 21.299999237060547 (historian-web-trend, Tooltip decimals).
+	it( 'takes a Float at its shortest', ()=>{
+		expect( (<any>Gateway).toValue( {floatValue: Math.fround(21.3)} ) ).toBe( 21.3 );
+		expect( (<any>Gateway).toValue( {doubleValue: 0.1+0.2} ) ).toBe( 0.30000000000000004 );//a double is its own
+	} );
+} );

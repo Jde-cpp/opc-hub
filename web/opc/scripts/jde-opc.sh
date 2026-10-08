@@ -12,7 +12,7 @@ addHard index.html $baseDir/site;
 addHard favicon.ico $baseDir/site;
 
 cd $angularDir;
-#jde-opc imports highcharts (the history trend, historian 4A #218).  A peer of the library, so the workspace has to install
+#jde-opc imports highcharts (the history trend).  A peer of the library, so the workspace has to install
 #it - and create-workspace.sh's install block only runs when the workspace is first created, so an existing one never sees
 #it.  Dynamic import only, as jde-spa's marked:  the libraries are not lazy, and a static import would put Highcharts Stock
 #in the initial bundle for every page.

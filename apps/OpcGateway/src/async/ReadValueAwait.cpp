@@ -13,9 +13,13 @@ namespace Jde::Opc::Gateway{
 	}
 
 	ReadValueAwait::ReadValueAwait( flat_set<NodeId> x, sp<UAClient> c, SL sl )ι:
+		ReadValueAwait{ move(x), move(c), UA_TIMESTAMPSTORETURN_NEITHER, sl }
+	{}
+	ReadValueAwait::ReadValueAwait( flat_set<NodeId> x, sp<UAClient> c, UA_TimestampsToReturn timestamps, SL sl )ι:
 		base{ sl },
 		_nodes{ move(x) },
-		_client{ move(c) }
+		_client{ move(c) },
+		_timestamps{ timestamps }
 	{}
 
 	//Suspend's closure and OnComplete (invoked inside run_iterate) both run on the client's strand, so
@@ -26,7 +30,10 @@ namespace Jde::Opc::Gateway{
 			for( auto&& nodeId : _nodes ){
 				RequestId requestId{};
 				try{
-					UAε( UA_Client_readValueAttribute_async(_client->UAPointer(), nodeId, onResponse, this, &requestId) );
+					UA_ReadValueId rvi; UA_ReadValueId_init( &rvi );
+					rvi.nodeId = nodeId;
+					rvi.attributeId = UA_ATTRIBUTEID_VALUE;
+					UAε( UA_Client_readAttribute_async(_client->UAPointer(), &rvi, _timestamps, onResponse, this, &requestId) );
 					_requests.emplace( requestId, move(nodeId) );
 					_client->Process( requestId, "readValueAttribute" );
 				}

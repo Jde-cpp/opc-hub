@@ -5,7 +5,7 @@ import { HistPage, HistReadArgs, HistSource, qlTime, toHistPage } from '../model
 //What a read is sent through:  a Gateway, or a stub in a spec.
 export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
 
-//The one history service (plan Phase 4):  `hist` with `opc` for a server's own history, `group` for a gateway group (Phase 6) -
+//The one history service:  `hist` with `opc` for a server's own history, `group` for a gateway group once there are any -
 //the same arguments, result and continuation either way (spec *Pass-through*), so the trend and table never ask which.
 @Service()
 export class HistoryService{

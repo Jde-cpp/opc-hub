@@ -213,8 +213,10 @@ namespace Tests{
 			DBGT( ELogTags::SocketClientRead, "[{},{}]No subscriptions.", opcId, nodeId.ToString() );
 			return;
 		}
-		for( let& listener : listeners->second )
+		for( let& listener : listeners->second ){
+			listener->OnPush( nodeValues );
 			listener->OnData( opcId, nodeId, nodeValues.value() );
+		}
 	}
 
 	α GatewayClientSocket::CloseTasks( beast::error_code ec )ι->void{

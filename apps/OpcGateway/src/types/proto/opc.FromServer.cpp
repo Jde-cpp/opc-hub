@@ -80,7 +80,7 @@ namespace Jde::Opc::Gateway{
 		auto nv = mu<FromServer::NodeValues>();
 		*nv->mutable_node() = ProtoUtils::ToNodeId( node );
 		nv->set_opc_id( opcId );
-		if( v.hasSourceTimestamp )//the history trend places a push after the read by source time (historian 4A #218).
+		if( v.hasSourceTimestamp )
 			*nv->mutable_source() = UADateTime{ v.sourceTimestamp }.ToProto();
 		if( v.hasServerTimestamp )
 			*nv->mutable_server() = UADateTime{ v.serverTimestamp }.ToProto();

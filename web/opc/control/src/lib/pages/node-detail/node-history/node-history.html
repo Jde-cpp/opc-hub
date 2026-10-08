@@ -23,8 +23,8 @@
 @for( r of refused(); track r.node.key ){
 	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: the server answered {{ statusText(r.status) }}.</p>
 }
-<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" [namesVersion]="namesVersion()" (loadEarlier)="loadEarlier()"></hist-trend>
-<hist-table [values]="values()" [nodes]="selected()" [namesVersion]="namesVersion()"></hist-table>
+<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>
+<hist-table [values]="values()" [nodes]="selected()"></hist-table>
 @if( !loading() && !values().length ){
 	<div class="jde-empty" role="status">
 		<mat-icon aria-hidden="true">history</mat-icon>
