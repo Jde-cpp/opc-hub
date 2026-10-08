@@ -91,7 +91,7 @@ namespace Hist{
 	}
 
 	α Applied::Next( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{
-		if( _queue.empty() ){
+		while( _queue.empty() ){//empty again when every record at t was deleted:  the next time.
 			if( !_ahead )
 				Advance();
 			let modsLeft = _nextMod!=_mods.ByTime.end();
@@ -113,8 +113,6 @@ namespace Hist{
 			}
 			for( uint i=0; i<at.size(); ++i )
 				_queue.push_back( {move(at[i]), places[i]} );
-			if( _queue.empty() )
-				return Next( r, where );//every record at t deleted:  the next time.
 		}
 		r = move( _queue.front().Record );
 		where = _queue.front().Where;

@@ -9,10 +9,9 @@ namespace Jde::Opc::Hist{
 	struct Group::Editing final{
 		Editing( vector<EditDetails> details, Writer by, EditAwait* waiter, SL sl )ι:Details{ move(details) }, By{ move(by) }, Waiter{ waiter }, Sl{ sl }{ Results.resize( Details.size() ); }
 		//The day couldn't be made or written:  each of its values, and each entry's status that depends on it, is
-		//Bad_UnexpectedError.
+		//Bad_UnexpectedError.  Again for a day that failed before, so an entry a range delete adds to it since fails too.
 		α Fail( Day day )ι->void{
-			if( !Failed.insert(day).second )
-				return;
+			Failed.insert( day );
 			for( const auto& [entry,value] : ByDay[day] )
 				( value ? Results[entry].Results[*value] : Results[entry].Status ) = UA_STATUSCODE_BADUNEXPECTEDERROR;
 		}

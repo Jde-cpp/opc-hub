@@ -64,6 +64,38 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
+
+		using Starts = decltype( DayFile::Starts );
+		//An archive's start values, from the records at its day's start alone, into which its rewrite folded every
+		//correction:  without the first-open scan, which reads an archive through.  Empty when the file isn't there, and
+		//none when it isn't an archive.  Throws when it can't be opened or its preamble read through.
+		Ω archiveStarts( const fs::path& path, SL sl )ε->optional<Starts>{
+			std::error_code ec;
+			if( !fs::exists(path, ec) && !ec )
+				return Starts{};
+			std::ifstream file{ path, std::ios::binary | std::ios::ate };
+			if( !file )
+				throw IO::IOException{ path, "could not be opened to read its preamble", sl };
+			let end = file.tellg();
+			if( end<0 || !file.seekg(0) )
+				throw IO::IOException{ sl, path, ELogLevel::Error, "could not be sized to read its preamble" };
+			google::protobuf::io::IstreamInputStream in{ &file };
+			Reader reader{ in, 0, (uint)end, 0 };
+			HistoryRecord r;
+			if( !reader.Next(r) || !r.has_file_start() || r.file_start().crc()!=StartCrc(r.file_start()) || !r.file_start().generation() )
+				return nullopt;
+			let start = r.file_start().ts();
+			Starts y;
+			while( reader.Next(r) ){
+				if( PrimaryTime(r)!=start )
+					return y;
+				if( r.has_node_added() && Bare(r.node_added()) )
+					y.insert_or_assign( r.node_added().node_index(), r.node_added().has_start() ? optional<Proto::DataValue>{ r.node_added().start() } : nullopt );
+			}
+			if( reader.Stop()!=EStop::End )
+				throw IO::IOException{ sl, path, ELogLevel::Error, "{} in its preamble, at byte {}", ToString(*reader.Stop()), reader.Offset() };
+			return y;
+		}
 	}
 
 	//Clock.cpp's rules, which its tests cover, for UA's ticks.
@@ -115,7 +147,8 @@ namespace Jde::Opc::Hist{
 				_days.insert( day );
 				let& file = restored ? Open( day, sl, [&]( HistoryRecord& r ){ Fold(r, day); } ) : Open( day, sl, [&]( HistoryRecord& r ){ Restore(r, members, day); } );
 				restored = restored || file.Size>0;
-				_edited = _edited || fs::exists( ModsFile(day), ec ) || ec;//one it can't tell of is read through the edits too.
+				if( fs::exists(ModsFile(day), ec) || ec )//one it can't tell of is read through the edits too.
+					_edited.push_back( day );
 				settled = restored && day<=_present;
 				if( day<today && file.Size && !file.Generation && file.Refused.empty() && (!from || day>=*from) )
 					_recover.insert( day );
@@ -256,7 +289,7 @@ namespace Jde::Opc::Hist{
 		return files.emplace( day, move(file) ).first->second;
 	}
 
-	α GroupFiles::Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart )Ι->HistoryRecord{
+	α GroupFiles::Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart )Ε->HistoryRecord{
 		HistoryRecord y;
 		auto& added = *y.mutable_node_added();
 		added.set_node_index( (uint32_t)index );
@@ -761,7 +794,19 @@ namespace Jde::Opc::Hist{
 	}
 
 	α GroupFiles::Serve( Day day, SL sl )Ε->optional<Served>{ return Serve( _files, File(day), day, sl ); }
-	α GroupFiles::ServeMods( Day day, SL sl )Ε->optional<Served>{ return Serve( _mods, ModsFile(day), day, sl ); }
+	α GroupFiles::ServeMods( Day day, SL sl )ε->optional<Served>{
+		std::error_code ec;
+		if( !_mods.contains(day) && (fs::exists(ModsFile(day), ec) || ec) ){
+			try{
+				Open( day, sl, {}, true );
+			}
+			catch( const IO::IOException& e ){
+				e.SetLevel( ELogLevel::Error );//as Serve says one it can't scan.
+				throw;
+			}
+		}
+		return Serve( _mods, ModsFile(day), day, sl );
+	}
 	α GroupFiles::Serve( const std::map<Day,DayFile>& files, const fs::path& path, Day day, SL sl )Ε->optional<Served>{
 		Served y;
 		if( auto p = files.find(day); p!=files.end() ){
@@ -801,19 +846,6 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 
-	//A member's preamble record for a file of day, with the start value a correction gives it.
-	Ω correction( NodeIndex index, const ExNodeId& node, Ticks start, const optional<Proto::DataValue>& value )ι->HistoryRecord{
-		HistoryRecord y;
-		auto& added = *y.mutable_node_added();
-		added.set_node_index( (uint32_t)index );
-		*added.mutable_node() = ProtoUtils::ToExNodeId( node );
-		added.set_ts( start );
-		if( value ){
-			*added.mutable_start() = *value;
-			added.mutable_start()->clear_node_index();
-		}
-		return y;
-	}
 	α GroupFiles::Corrections( const Membership& members, TimePoint now, SL sl )ι->vector<std::pair<Day,DayWrite>>{
 		auto touched = std::exchange( _touched, {} );
 		vector<std::pair<Day,DayWrite>> y;
@@ -822,6 +854,34 @@ namespace Jde::Opc::Hist{
 		std::ranges::stable_sort( touched, {}, &std::pair<NodeIndex,Ticks>::second );
 		optional<vector<Day>> all;//the directory walk, once, for a record older than the newest day the process knows of.
 		std::map<Day,absl::flat_hash_map<NodeIndex,HistoryRecord>> corrections;//each file's, the last per member.
+		//A later file's start values:  one the process holds, by its entry, an archive by its preamble alone, read once for
+		//this call and kept no longer, and a live file by its first-open scan, which its next append needs anyway.  None
+		//for one that can't be read, or that the historian won't write to:  it can't be corrected, nor say what the files
+		//after it copy.
+		std::map<Day,optional<Starts>> archives;
+		let startsOf = [&]( Day day )->const Starts*{
+			if( !_files.contains(day) ){
+				auto [p, inserted] = archives.try_emplace( day );
+				if( inserted ){
+					try{
+						p->second = archiveStarts( File(day), sl );
+					}
+					catch( const Exception& ){//said as it went.
+						archives.erase( p );
+						return nullptr;
+					}
+				}
+				if( p->second )
+					return &*p->second;
+			}
+			try{
+				let& file = Open( day, sl );
+				return file.Refused.empty() ? &file.Starts : nullptr;
+			}
+			catch( const Exception& ){//said as it went.
+				return nullptr;
+			}
+		};
 		for( let& [index,time] : touched ){
 			let day = DayOf( time, _tz );
 			if( day>=*_days.rbegin() )
@@ -837,17 +897,11 @@ namespace Jde::Opc::Hist{
 			optional<Proto::DataValue> value;
 			bool found{};
 			for( auto later = std::ranges::upper_bound(*all, day); later!=all->end(); ++later ){
-				DayFile* file{};
-				try{
-					file = &Open( *later, sl );
-				}
-				catch( const Exception& ){//said as it went:  one that can't be read can't be corrected, nor say what the files after it copy.
+				let starts = startsOf( *later );
+				if( !starts )
 					continue;
-				}
-				if( !file->Refused.empty() )
-					continue;
-				auto s = file->Starts.find( index );
-				if( s==file->Starts.end() )
+				auto s = starts->find( index );
+				if( s==starts->end() )
 					continue;//not a member there.
 				let& start = s->second;
 				let startTime = start ? PrimaryTime( *start ) : nullopt;
@@ -857,13 +911,26 @@ namespace Jde::Opc::Hist{
 					//The record itself when it is the node's newest; otherwise the last through its time, the edits applied.
 					if( auto p = _last.find(index); p!=_last.end() && *PrimaryTime(p->second.Value)==time )
 						value = p->second.Value;
-					else if( members.Last )
-						value = members.Last( index, time );
+					else if( members.Last ){
+						try{
+							value = members.Last( index, time );
+						}
+						catch( Exception& e ){//the files after it are left as they are, as one that can't be prepared is.
+							e.SetLevel( ELogLevel::Error );
+							break;
+						}
+					}
 				}
 				if( startTime && *startTime==time && (bool)start==(bool)value && (!value || Same(*start, *value)) )
 					continue;//copies the record itself:  made in this flush, after it was written.
-				if( let node = members.Find(index); node )
-					corrections[*later].insert_or_assign( index, correction(index, node->Id, StartOf(*later, _tz), value) );
+				if( let node = members.Find(index); node ){
+					auto record = Added( index, node->Id, StartOf(*later, _tz), members, false );
+					if( value ){
+						*record.mutable_node_added()->mutable_start() = *value;
+						record.mutable_node_added()->mutable_start()->clear_node_index();
+					}
+					corrections[*later].insert_or_assign( index, move(record) );
+				}
 			}
 		}
 		for( auto& [day,byNode] : corrections ){

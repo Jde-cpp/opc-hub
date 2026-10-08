@@ -252,6 +252,21 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isBound(v[1], Temp, 12, sys_days{March11}+3min) );
 	}
 
+	//A closing bound from the first file's start value, whose record's file was purged:  there is no file before it to
+	//look in.
+	TEST_F( Reads, ClosingBoundPastThePurgedDays ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		constexpr Day March2{ 2026y/March/2 }, March3{ 2026y/March/3 }, March4{ 2026y/March/4 };
+		DataChange( *Pump, Speed, 1, sys_days{March4}+1h );
+		EXPECT_TRUE( Flush(*Pump) );//the 4th, and the 7th, whose start value copies it.
+		ASSERT_TRUE( fs::remove(File(*Pump, March4)) );
+		let v = All( {.Nodes={Speed}, .Start=ticks(sys_days{March2}), .End=ticks(sys_days{March3}), .Bounds=true} );
+		ASSERT_EQ( v.size(), 2 );
+		EXPECT_TRUE( notFound(v[0], Speed, sys_days{March2}) );
+		EXPECT_TRUE( isBound(v[1], Speed, 1, sys_days{March4}+1h) );
+	}
+
 	//Reverse, the bounds at the later end open the read and those at the earlier end close it.
 	TEST_F( Reads, ReverseBounds ){
 		TwoDays();

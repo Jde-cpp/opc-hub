@@ -58,8 +58,6 @@ namespace Jde::Opc::Hist{
 		if( i>=edits.size() )
 			return nullopt;
 		auto& edit = *edits[i];
-		if( edit.Abandoned )
-			return vector<Job>{};
 		switch( phase ){
 		case 0: return Creations( edit, members, taken, sl );
 		case 1: return Modifications( edit, members, taken, sl );
@@ -162,6 +160,7 @@ namespace Jde::Opc::Hist{
 		for( let& [day,_] : edit.ByDay )
 			days.insert( day );
 		optional<vector<Day>> onDisk;//for a range delete:  each day with a file inside its range.
+		bool unlisted{};//the days couldn't be listed, so a range delete can't know where its records are.
 		for( uint e=0; e<edit.Details.size(); ++e ){
 			if( UA_StatusCode_isBad(edit.Results[e].Status) )
 				continue;
@@ -176,14 +175,25 @@ namespace Jde::Opc::Hist{
 				catch( Exception& x ){
 					x.SetLevel( ELogLevel::Error );
 					onDisk.emplace();
+					unlisted = true;
+				}
+			}
+			if( unlisted ){
+				edit.Results[e].Status = UA_STATUSCODE_BADUNEXPECTEDERROR;
+				continue;
+			}
+			let first = DayOf( erase->Start, tz ), last = DayOf( erase->End, tz );
+			//A day the flush before couldn't write fails it, whether or not its file is made yet.
+			for( let day : edit.Unflushed ){
+				if( day>=first && day<=last ){
+					edit.ByDay[day].emplace_back( e, nullopt );
+					edit.Fail( day );
 				}
 			}
 			for( let day : *onDisk ){
-				if( day>=DayOf(erase->Start, tz) && day<=DayOf(erase->End, tz) ){
+				if( day>=first && day<=last && !edit.Unflushed.contains(day) ){
 					days.insert( day );
 					edit.ByDay[day].emplace_back( e, nullopt );
-					if( edit.Unflushed.contains(day) )
-						edit.Fail( day );
 				}
 			}
 		}

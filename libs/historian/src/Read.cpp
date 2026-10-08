@@ -95,6 +95,7 @@ namespace Jde::Opc::Hist{
 			bool Bounds;
 			bool OneDay;
 			bool Modified;
+			bool Full{};//the page ends once it is full, with no file read after to say whether there is more:  the walk back's.
 			uint Limit;
 			uint32_t Crc;
 			optional<Proto::Continuation> From;
@@ -106,8 +107,6 @@ namespace Jde::Opc::Hist{
 			Stream( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ε:_applied{ move(file), move(runs), move(late), move(mods), sl }{ Advance(); }
 			α Peek()Ι->const HistoryRecord*{ return _has ? &_next : nullptr; }
 			α Time()Ι->optional<Ticks>{ return _has ? PrimaryTime( _next ) : nullopt; }
-			//Whether the next record is a preamble record of day:  a bare NodeAdded at its start.
-			α AtPreamble( Ticks start )Ι->bool{ return _has && _next.has_node_added() && Bare(_next.node_added()) && PrimaryTime(_next)==start; }
 			α Take( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{
 				if( !_has )
 					return false;
@@ -454,8 +453,8 @@ namespace Jde::Opc::Hist{
 						}
 					}
 					if( !changed.empty() ){//in the day before, whose first past `later` the start value needn't be.
-						if( let before = day-1; *before>lastDay ){
-							if( auto earlier = Open(*before, later, Latest, true, nullptr) )
+						if( day!=_files.OnDisk.begin() && *(day-1)>lastDay ){
+							if( auto earlier = Open(*(day-1), later, Latest, true, nullptr) )
 								scan( *earlier );
 						}
 						for( let index : changed )
@@ -805,6 +804,8 @@ namespace Jde::Opc::Hist{
 							atEarlier.insert( k.Item.Value.node_index() );
 						Emit( move(k.Item), _plan.Bounds && (k.LastAtLater || k.FirstAtEarlier) );
 					}
+					if( _plan.Full && _emitted>=_dataLimit )
+						break;
 				}
 				if( !opened )//no day held a record at `later`:  the opening bounds alone serve it.
 					Opening( LaterBounds(nullptr, lastDay, {}) );
@@ -904,7 +905,8 @@ namespace Jde::Opc::Hist{
 namespace Jde::Opc{
 	α Hist::Last( GroupFiles& files, const std::chrono::time_zone& tz, uint readLimit, NodeIndex index, Ticks through, SL sl )ε->optional<Proto::DataValue>{
 		const ReadRequest request{ .Nodes={index}, .End=through, .Limit=1 };
-		const Plan plan{ request, readLimit, sl };
+		Plan plan{ request, readLimit, sl };
+		plan.Full = true;
 		Files f;
 		f.OnDisk = Days( files.Root(), files.Name(), false, sl );
 		if( let newest = files.Newest(index) )

@@ -2,6 +2,7 @@
 #include <jde/fwk/io/crc.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/proto/opc.Common.h>
+#include <google/protobuf/util/field_comparator.h>
 #include <google/protobuf/util/message_differencer.h>
 
 #define let const auto
@@ -12,75 +13,75 @@ namespace Jde::Opc{
 	using Hist::Proto::HistoryRecord;
 }
 namespace Jde::Opc::Hist{
-	//Wrapping, so a garbled time read from disk can't overflow, and a delta always undoes exactly.
-	Ξ add( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a+(uint64_t)b ); }
-	Ξ sub( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a-(uint64_t)b ); }
+		//Wrapping, so a garbled time read from disk can't overflow, and a delta always undoes exactly.
+		Ξ add( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a+(uint64_t)b ); }
+		Ξ sub( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a-(uint64_t)b ); }
 
-	//One direction of the conversion.  After Primary, Last is the record's absolute primary time either way.
-	struct Convert final{
-		α Primary( Ticks stored )ι->Ticks{
-			if( !ToDisk )
-				return Last = add( Last, stored );
-			let delta = sub( stored, Last );
-			Last = stored;
-			return delta;
-		}
-		α Other( Ticks stored, Ticks primary )Ι->Ticks{ return ToDisk ? sub( stored, primary ) : add( stored, primary ); }
-		//Inside another record, every time is relative to that record's primary.
-		α Nested( Proto::DataValue& v )Ι->void{
-			if( v.has_source_ts() )
-				v.set_source_ts( Other(v.source_ts(), Last) );
-			if( v.has_server_ts() )
-				v.set_server_ts( Other(v.server_ts(), Last) );
-			if( v.has_heartbeat() )
-				v.set_heartbeat( Other(v.heartbeat(), Last) );
-		}
-		//A DataValue that is its own record.
-		α Top( Proto::DataValue& v )ι->void{
-			if( v.has_source_ts() ){
-				v.set_source_ts( Primary(v.source_ts()) );
+		//One direction of the conversion.  After Primary, Last is the record's absolute primary time either way.
+		struct Convert final{
+			α Primary( Ticks stored )ι->Ticks{
+				if( !ToDisk )
+					return Last = add( Last, stored );
+				let delta = sub( stored, Last );
+				Last = stored;
+				return delta;
+			}
+			α Other( Ticks stored, Ticks primary )Ι->Ticks{ return ToDisk ? sub( stored, primary ) : add( stored, primary ); }
+			//Inside another record, every time is relative to that record's primary.
+			α Nested( Proto::DataValue& v )Ι->void{
+				if( v.has_source_ts() )
+					v.set_source_ts( Other(v.source_ts(), Last) );
 				if( v.has_server_ts() )
 					v.set_server_ts( Other(v.server_ts(), Last) );
+				if( v.has_heartbeat() )
+					v.set_heartbeat( Other(v.heartbeat(), Last) );
 			}
-			else if( v.has_server_ts() )
-				v.set_server_ts( Primary(v.server_ts()) );
-			if( v.has_heartbeat() )
-				v.set_heartbeat( Other(v.heartbeat(), Last) );
-		}
-		α operator()( HistoryRecord& r )ι->void{
-			switch( r.record_case() ){
-			case HistoryRecord::kFileStart:
-				Last = r.file_start().ts();
-				break;
-			case HistoryRecord::kNodeAdded:{
-				auto& added = *r.mutable_node_added();
-				added.set_ts( Primary(added.ts()) );
-				if( added.has_start() )
-					Nested( *added.mutable_start() );
-				break;}
-			case HistoryRecord::kNodeRemoved:
-				r.mutable_node_removed()->set_ts( Primary(r.node_removed().ts()) );
-				break;
-			case HistoryRecord::kValue:
-				Top( *r.mutable_value() );
-				break;
-			case HistoryRecord::kModification:{
-				auto& m = *r.mutable_modification();
-				m.set_target_source_ts( Primary(m.target_source_ts()) );
-				m.set_ts( Other(m.ts(), Last) );
-				if( m.has_original() )
-					Nested( *m.mutable_original() );
-				if( m.has_new_value() )
-					Nested( *m.mutable_new_value() );
-				break;}
-			case HistoryRecord::kCheckpoint:
-			case HistoryRecord::RECORD_NOT_SET:
-				break;
+			//A DataValue that is its own record.
+			α Top( Proto::DataValue& v )ι->void{
+				if( v.has_source_ts() ){
+					v.set_source_ts( Primary(v.source_ts()) );
+					if( v.has_server_ts() )
+						v.set_server_ts( Other(v.server_ts(), Last) );
+				}
+				else if( v.has_server_ts() )
+					v.set_server_ts( Primary(v.server_ts()) );
+				if( v.has_heartbeat() )
+					v.set_heartbeat( Other(v.heartbeat(), Last) );
 			}
-		}
-		const bool ToDisk;
-		Ticks& Last;
-	};
+			α operator()( HistoryRecord& r )ι->void{
+				switch( r.record_case() ){
+				case HistoryRecord::kFileStart:
+					Last = r.file_start().ts();
+					break;
+				case HistoryRecord::kNodeAdded:{
+					auto& added = *r.mutable_node_added();
+					added.set_ts( Primary(added.ts()) );
+					if( added.has_start() )
+						Nested( *added.mutable_start() );
+					break;}
+				case HistoryRecord::kNodeRemoved:
+					r.mutable_node_removed()->set_ts( Primary(r.node_removed().ts()) );
+					break;
+				case HistoryRecord::kValue:
+					Top( *r.mutable_value() );
+					break;
+				case HistoryRecord::kModification:{
+					auto& m = *r.mutable_modification();
+					m.set_target_source_ts( Primary(m.target_source_ts()) );
+					m.set_ts( Other(m.ts(), Last) );
+					if( m.has_original() )
+						Nested( *m.mutable_original() );
+					if( m.has_new_value() )
+						Nested( *m.mutable_new_value() );
+					break;}
+				case HistoryRecord::kCheckpoint:
+				case HistoryRecord::RECORD_NOT_SET:
+					break;
+				}
+			}
+			const bool ToDisk;
+			Ticks& Last;
+		};
 
 	Ω setWriter( auto& record, const optional<Writer>& by )ι->void{
 		if( !by )
@@ -125,10 +126,17 @@ namespace Jde::Opc{
 	}
 	α Hist::SetWriter( Proto::Modification& m, const Writer& by )ι->void{ Hist::setWriter( m, optional<Writer>{by} ); }
 	α Hist::Same( const Proto::DataValue& a, const Proto::DataValue& b )ι->bool{
+		let sameValue = [&]{
+			google::protobuf::util::DefaultFieldComparator nanEqual;//MessageDifferencer's default takes NaN as unequal to itself.
+			nanEqual.set_treat_nan_as_equal( true );
+			google::protobuf::util::MessageDifferencer differencer;
+			differencer.set_field_comparator( &nanEqual );
+			return differencer.Compare( a.value(), b.value() );
+		};
 		return a.has_source_ts()==b.has_source_ts() && a.source_ts()==b.source_ts() && a.source_picoseconds()==b.source_picoseconds()
 			&& a.has_server_ts()==b.has_server_ts() && a.server_ts()==b.server_ts() && a.server_picoseconds()==b.server_picoseconds()
 			&& a.status()==b.status() && a.has_heartbeat()==b.has_heartbeat() && a.heartbeat()==b.heartbeat() && a.heartbeat_unsourced()==b.heartbeat_unsourced()
-			&& a.has_value()==b.has_value() && ( !a.has_value() || google::protobuf::util::MessageDifferencer::Equals(a.value(), b.value()) );
+			&& a.has_value()==b.has_value() && ( !a.has_value() || sameValue() );
 	}
 	α Hist::ToDisk( HistoryRecord& r, Ticks& last )ι->void{ Convert{ true, last }( r ); }
 	α Hist::ToMemory( HistoryRecord& r, Ticks& last )ι->void{ Convert{ false, last }( r ); }

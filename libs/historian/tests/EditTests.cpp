@@ -2,6 +2,7 @@
 //as Modification records to the day's modifications file once the buffer is flushed, fsynced before the caller is
 //answered, applied by raw reads and served by modified reads; and the start values that edits and late records keep
 //current:  each node's newest record, the walk back for a file made after its day, and the later files' preambles.
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/opc/UAException.h>
 #include "reads.h"
 
@@ -137,6 +138,37 @@ namespace Jde::Opc::Hist::Tests{
 		auto page = Pump->Read( {.Nodes={Speed, Temp}, .Start=ticks(T0), .End=ticks(Eighth+5min), .Modified=true, .Limit=1} );
 		ASSERT_FALSE( page.Continuation.empty() );
 		EXPECT_THROW( Pump->Read({.Nodes={Speed, Temp}, .Start=ticks(T0), .End=ticks(Eighth+5min), .Limit=1, .Continuation=page.Continuation}), UAException );
+	}
+
+	//A range delete over many records, with no other node's at their times, empties each time in turn:  a read over them,
+	//and the next edit's planner, step past each in one frame.
+	TEST_F( Edits, LongDelete ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		constexpr uint count{ 50'000 };
+		for( uint i=0; i<=count; ++i )
+			DataChange( *Pump, Speed, (double)i, T0+i*1ms );
+		EXPECT_TRUE( Flush(*Pump) );
+		let range = DeleteRaw{ Speed, ticks(T0+1ms), ticks(T0+(count-1)*1ms) };
+		EXPECT_EQ( Edit({range})[0].Status, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(T0+1h)})), (vector<double>{0, (double)count}) );
+		EXPECT_EQ( Edit({range})[0].Status, UA_STATUSCODE_BADNODATA );
+	}
+
+	//A stored NaN is the record its modification's original copies, so an edit of it applies.
+	TEST_F( Edits, NaN ){
+		TwoDays();
+		let nan = std::numeric_limits<double>::quiet_NaN();
+		DataChange( *Pump, Temp, nan, Eighth+3min );
+		DataChange( *Pump, Temp, nan, Eighth+4min );
+		EXPECT_EQ( statuses(Edit({UpdateData{Temp, UA_PERFORMUPDATETYPE_REPLACE, {Reading(11, Eighth+3min)}}})[0]), (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED}) );
+		EXPECT_EQ( statuses(Edit({DeleteAtTime{Temp, {ticks(Eighth+4min)}}})[0]), (vector<StatusCode>{UA_STATUSCODE_GOOD}) );
+		EXPECT_EQ( doubles(All({.Nodes={Speed, Temp}, .Start=ticks(Eighth), .End=ticks(Eighth+5min)})), (vector<double>{3, 4, 11}) );
+		let modified = All( {.Nodes={Temp}, .Start=ticks(Eighth), .End=ticks(Eighth+5min), .Modified=true} );
+		using enum Proto::UpdateType;
+		EXPECT_EQ( types(modified), (vector<Proto::UpdateType>{UPDATE_TYPE_REPLACE, UPDATE_TYPE_DELETE}) );
+		for( let v : doubles(modified) )
+			EXPECT_TRUE( std::isnan(v) ) << v;
 	}
 
 	//What an edit refuses outright:  a node that isn't a member, a value with no source timestamp or one no day holds, a
@@ -341,6 +373,148 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(sys_days{March3}), .End=ticks(Eighth+1h)})), (vector<double>{0.1, 0.25, 0.3, 2}) );
 	}
 
+	//A walk back that can't read a file through fails the day whose file it would start, as any other I/O error does:  an
+	//edit's value there, and a late record, which the next flush writes once the file reads.
+	TEST_F( Edits, UnreadableWalkBackFailsTheDay ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		constexpr Day March4{ 2026y/March/4 }, March5{ 2026y/March/5 };
+		DataChange( *Pump, Speed, 0.25, sys_days{March4}+1h );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		let fourth = File( *Pump, March4 );
+		let aside = fs::path{ fourth.string()+".aside" };
+		fs::rename( fourth, aside );
+		fs::create_directory( fourth );
+
+		EXPECT_EQ( statuses(Edit({UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(0.3, sys_days{March5}+2h)}}})[0]), (vector<StatusCode>{UA_STATUSCODE_BADUNEXPECTEDERROR}) );
+		DataChange( *Pump, Speed, 0.4, sys_days{March5}+1h );
+		EXPECT_FALSE( Flush(*Pump) );
+		EXPECT_FALSE( fs::exists(File(*Pump, March5)) );
+
+		fs::remove( fourth );
+		fs::rename( aside, fourth );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_EQ( Start(March5, Speed), StartValue{0.25} );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(sys_days{March4}), .End=ticks(T0+1min)})), (vector<double>{0.25, 0.4, 1}) );
+	}
+
+	//A correction whose walk back can't read a file through is left undone, as one whose file can't be prepared is:  the
+	//edit stands, and the next record or edit that reaches the start value corrects it.
+	TEST_F( Edits, UnreadableWalkBackLeavesTheCorrection ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		constexpr Day March4{ 2026y/March/4 };
+		DataChange( *Pump, Speed, 0.25, sys_days{March4}+1h );
+		DataChange( *Pump, Speed, 0.5, sys_days{March6}+1h );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_EQ( Start(March7, Speed), StartValue{0.5} );
+		let fourth = File( *Pump, March4 );
+		let aside = fs::path{ fourth.string()+".aside" };
+		fs::rename( fourth, aside );
+		fs::create_directory( fourth );
+
+		//The 7th copies the deleted record, and the walk back from it reads past the 6th to the 4th.
+		EXPECT_EQ( statuses(Edit({DeleteAtTime{Speed, {ticks(sys_days{March6}+1h)}}})[0]), (vector<StatusCode>{UA_STATUSCODE_GOOD}) );
+		EXPECT_EQ( Start(March7, Speed), StartValue{0.5} );
+
+		fs::remove( fourth );
+		fs::rename( aside, fourth );
+		EXPECT_EQ( statuses(Edit({UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(0.6, sys_days{March6}+2h)}}})[0]), (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( Start(March7, Speed), StartValue{0.6} );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(sys_days{March4}), .End=ticks(T0+1min)})), (vector<double>{0.25, 0.6, 1}) );
+	}
+
+	//A start that can't read the newest of a node an edit names keeps the newest the files fold for it, and the group
+	//starts:  the other nodes the edits name are read through.
+	TEST_F( Edits, UnreadableWalkBackAtStart ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		let flow = Join( *Pump, "Pump1.Flow" );//whose values bring the new day, so neither edited node gets the stop's marker.
+		constexpr Day March4{ 2026y/March/4 };
+		DataChange( *Pump, Speed, 0.25, sys_days{March4}+1h );
+		DataChange( *Pump, Speed, 0.5, T0+1s );
+		DataChange( *Pump, Temp, 10, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Edit( {DeleteAtTime{Speed, {ticks(T0+1s)}}, UpdateData{Temp, UA_PERFORMUPDATETYPE_REPLACE, {Reading(11, T0+1s)}}} );//a modifications file the start reads.
+		let members = vector<Member>{ {Node("Pump1.Speed"), {}, Speed}, {Node("Pump1.Temp"), {}, Temp}, {Node("Pump1.Flow"), {}, flow} };
+		let name = Pump->Name();
+		let fourth = File( *Pump, March4 );
+		let aside = fs::path{ fourth.string()+".aside" };
+		Restart();
+		fs::rename( fourth, aside );
+		fs::create_directory( fourth );
+		Pump = Rejoin( name, members );//Speed's walk back passes its deleted record for the 4th.
+
+		fs::remove( fourth );
+		fs::rename( aside, fourth );
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, flow, 100, Eighth+2min );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_EQ( Start(March8, Speed), StartValue{0.5} );//folded from the 7th's value file:  the edits unread.
+		EXPECT_EQ( Start(March8, Temp), StartValue{11} );
+	}
+
+	//A start reads through the edits only the newest of each node they name:  one they don't name keeps the newest the
+	//files fold.  Here that is Speed's start value in the 7th's preamble, which a walk back, reading records alone, would
+	//drop, since the 4th's file that held the record is purged.
+	TEST_F( Edits, StartWalksOnlyTheNodesEditsName ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		let flow = Join( *Pump, "Pump1.Flow" );//whose values bring the new day, so neither node gets the stop's marker.
+		constexpr Day March4{ 2026y/March/4 };
+		DataChange( *Pump, Speed, 0.25, sys_days{March4}+1h );
+		DataChange( *Pump, Temp, 10, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Edit( {UpdateData{Temp, UA_PERFORMUPDATETYPE_REPLACE, {Reading(11, T0+1s)}}} );
+		let members = vector<Member>{ {Node("Pump1.Speed"), {}, Speed}, {Node("Pump1.Temp"), {}, Temp}, {Node("Pump1.Flow"), {}, flow} };
+		let name = Pump->Name();
+		let fourth = File( *Pump, March4 );
+		Restart();
+		ASSERT_TRUE( fs::remove(fourth) );
+		Pump = Rejoin( name, members );
+
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, flow, 100, Eighth+2min );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_EQ( Start(March8, Speed), StartValue{0.25} );
+		EXPECT_EQ( Start(March8, Temp), StartValue{11} );
+	}
+
+	//The correction walk keeps no archive it reads only to stop at:  it reads that file's preamble alone, so a read of
+	//the day after scans the file as it is then, here an older copy put back.
+	TEST_F( Edits, WalkKeepsNoArchive ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		constexpr Day March3{ 2026y/March/3 }, March5{ 2026y/March/5 };
+		DataChange( *Pump, Speed, 0.25, sys_days{March3}+1h );
+		DataChange( *Pump, Speed, 0.5, sys_days{March5}+1h );
+		DataChange( *Pump, Temp, 9, sys_days{March6}+1h );
+		DataChange( *Pump, Temp, 10, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		let sixth = File( *Pump, March6 );
+		let older = fs::path{ sixth.string()+".older" };
+		fs::copy_file( sixth, older );
+		DataChange( *Pump, Temp, 9.5, sys_days{March6}+2h );//the 6th rewritten, longer.
+		EXPECT_TRUE( Flush(*Pump) );
+		let members = vector<Member>{ {Node("Pump1.Speed"), {}, Speed}, {Node("Pump1.Temp"), {}, Temp} };
+		let name = Pump->Name();
+		Restart();
+		Pump = Rejoin( name, members );
+
+		Edit( {UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(0.3, sys_days{March3}+2h)}}} );//corrects the 5th, and stops at the 6th.
+		EXPECT_EQ( Start(March5, Speed), StartValue{0.3} );
+		EXPECT_EQ( Start(March6, Speed), StartValue{0.5} );
+		fs::rename( older, sixth );
+		EXPECT_EQ( doubles(All({.Nodes={Temp}, .Start=ticks(sys_days{March6}), .End=ticks(sys_days{March7})})), (vector<double>{9}) );
+	}
+
 	//An edit's records end with a checkpoint, so one a crash cuts off is dropped whole by the next start, and the next
 	//edit's append cuts it from the file.
 	TEST_F( Edits, TornEditIsDropped ){
@@ -372,6 +546,76 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( results[1].Status, UA_STATUSCODE_BADNODATA );//no file holds the day.
 		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(sys_days{March10})})), (vector<double>{1, 1.5, 2, 3, 4}) );
 		fs::remove( Path()/"2026"/"3"/"9" );
+	}
+
+	//A range delete over a day the flush before couldn't write answers Bad_UnexpectedError, whether the day has a file or
+	//none yet, and whether or not another entry failed the day first:  the day's records wait in the buffer, out of its
+	//reach.
+	TEST_F( Edits, DeleteOverUnflushedDayFails ){
+		TwoDays();//the 8th's 4 is still in the buffer.
+		constexpr Day March5{ 2026y/March/5 };
+		let eighth = File( *Pump, March8 );
+		let aside = fs::path{ eighth.string()+".aside" };
+		fs::rename( eighth, aside );
+		fs::create_directory( eighth );//so the flush can't append the 4,
+		save( Path()/"2026"/"3"/"5", "in the way" );//nor make the 5th.
+		DataChange( *Pump, Speed, 0.5, sys_days{March5}+1h );
+		let results = Edit( {
+			UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(3.5, Eighth+150s)}},//fails the 8th first.
+			DeleteRaw{Speed, ticks(Eighth), ticks(Eighth+5min)},
+			DeleteRaw{Speed, ticks(sys_days{March5}), ticks(sys_days{March5}+2h)}
+		} );
+		ASSERT_EQ( results.size(), 3 );
+		EXPECT_EQ( statuses(results[0]), (vector<StatusCode>{UA_STATUSCODE_BADUNEXPECTEDERROR}) );
+		EXPECT_EQ( results[1].Status, UA_STATUSCODE_BADUNEXPECTEDERROR );
+		EXPECT_EQ( results[2].Status, UA_STATUSCODE_BADUNEXPECTEDERROR );
+
+		fs::remove( eighth );
+		fs::rename( aside, eighth );
+		fs::remove( Path()/"2026"/"3"/"5" );
+		EXPECT_TRUE( Flush(*Pump) );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(sys_days{March5}), .End=ticks(Eighth+5min)})), (vector<double>{0.5, 1, 2, 3, 4}) );
+	}
+
+	//A range delete when the days can't be listed answers Bad_UnexpectedError:  which of them hold its records isn't known.
+	TEST_F( Edits, UnlistableDaysFailTheDelete ){
+		TwoDays();
+		EXPECT_TRUE( Flush(*Pump) );//the 4, so the edit's flush writes nothing.
+		let year = Path()/"2026";
+		fs::permissions( year, fs::perms::none, fs::perm_options::replace );
+		std::error_code ec;
+		if( fs::directory_iterator{year, ec}; !ec ){
+			fs::permissions( year, fs::perms::owner_all, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can list a directory it can't read.";
+		}
+		let result = Edit( {DeleteRaw{Speed, ticks(T0), ticks(Eighth+5min)}} )[0];
+		fs::permissions( year, fs::perms::owner_all, fs::perm_options::replace );
+		EXPECT_EQ( result.Status, UA_STATUSCODE_BADUNEXPECTEDERROR );
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+5min)})), (vector<double>{1, 2, 3, 4}) );
+	}
+
+	//A day's modifications file is scanned once, by the first read that serves it, not by every page:  here its torn tail,
+	//which each scan says, is said once over a read of three pages.
+	TEST_F( Edits, ModsScannedOnce ){
+		TwoDays();
+		Edit( {UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(1.5, T0+1500ms)}}} );
+		let members = vector<Member>{ {Node("Pump1.Speed"), {}, Speed}, {Node("Pump1.Temp"), {}, Temp} };
+		let name = Pump->Name();
+		Restart();
+		{
+			std::ofstream f{ Mods(March7), std::ios::binary | std::ios::app };
+			f.write( "\0\0\0\0\0", 5 );
+		}
+		Pump = Rejoin( name, members );
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::ClearMemory();
+		vector<uint> pages;
+		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth), .Limit=1}, &pages)), (vector<double>{1, 1.5, 2}) );
+		EXPECT_GE( pages.size(), 3 );
+		let path = Mods( March7 ).string();
+		let said = Logging::Find( [&]( const Logging::Entry& e ){ return e.Message().contains(path) && e.Message().contains("reads serve only"); } );
+		EXPECT_EQ( said.size(), 1 );
 	}
 
 	//A removed group refuses an edit, and so does one whose historian has stopped.

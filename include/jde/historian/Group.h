@@ -251,7 +251,8 @@ namespace Jde::Opc::Hist{
 		//checkpoint per day, fsynced, keeps each node's newest record and the later files' start values current, and
 		//resumes with the result once the records are durable, so an edit a caller was told succeeded survives a crash.  A
 		//day whose file can't be written fails that day's values with Bad_UnexpectedError, as does one the flush before
-		//couldn't write, and the other days stand.  One result per entry, in order; a node that isn't a member answers
+		//couldn't write, and the other days stand.  A range delete that reaches such a day answers Bad_UnexpectedError, as
+		//does one when the days can't be listed.  One result per entry, in order; a node that isn't a member answers
 		//Bad_NodeIdUnknown, a value with no SourceTimestamp, or one no day holds, Bad_InvalidTimestampArgument, and one no
 		//file can hold the status it would be stored with.  Resumes with an exception for a group that was removed or
 		//has stopped, or when the historian ends before the edit is written.

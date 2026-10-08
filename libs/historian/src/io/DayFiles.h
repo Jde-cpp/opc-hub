@@ -144,9 +144,9 @@ namespace Jde::Opc::Hist{
 		//As an edit at or after the node's newest record leaves it:  Newest from here on, and the start value of the next
 		//file made.  None when the files hold nothing of the node now.
 		α Relast( NodeIndex index, optional<Proto::DataValue> newest )ι->void;
-		//A day the start read for the newest values has a modifications file:  those values may be edited, so the group reads
-		//each member's newest through the edits instead.
-		α Edited()Ι->bool{ return _edited; }
+		//Each day the start read for the newest values that has a modifications file, or may have:  the newest of each node
+		//its edits name may have moved, so the group reads those through the edits instead.
+		α Edited()Ι->const vector<Day>&{ return _edited; }
 		α Root()Ι->const fs::path&{ return _root; }
 		α Name()Ι->const string&{ return _name; }
 		//Whether day holds a value file:  one the process knows of with anything in it, or one on disk.
@@ -199,8 +199,8 @@ namespace Jde::Opc::Hist{
 		//record through that time, as members.Last gives it, as its start value, a live file by a preamble record appended
 		//and an archive by its rewrite, which the flush writes.  The walk ends at the first later file whose start value for
 		//the node is past the time, since the start values of the files after it are later still.  One they can't be
-		//prepared for is said and left as it is:  the next record or edit that reaches it corrects it.  The touched records
-		//are forgotten.
+		//prepared for, or whose start value members.Last can't read, is said and left as it is:  the next record or edit
+		//that reaches it corrects it.  The touched records are forgotten.
 		α Corrections( const Membership& members, TimePoint now, SRCE )ι->vector<std::pair<Day,DayWrite>>;
 		//A removed group's:  each live file is due at once, and each write after is a rewrite, so none is left live.
 		α Retire()ι->void;
@@ -230,8 +230,9 @@ namespace Jde::Opc::Hist{
 		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
 		α Serve( Day day, SL sl )Ε->optional<Served>;
 		//The day's modifications file the same way:  none for a day with none.  A read applies them to the day's values, and
-		//a modified read returns them.
-		α ServeMods( Day day, SL sl )Ε->optional<Served>;
+		//a modified read returns them.  The first serve opens it, as an append would, so it is scanned once:  a
+		//modifications file is live for good.
+		α ServeMods( Day day, SL sl )ε->optional<Served>;
 		α LastFlush()ι->Flushed&{ return _flushed; }
 	private:
 		//A value file's, or with mods the day's modifications file's.
@@ -250,8 +251,9 @@ namespace Jde::Opc::Hist{
 		α Fold( Proto::HistoryRecord& r, Day day )ι->void;
 		α Newer( Proto::DataValue&& stored, optional<Day> preamble={} )ι->void;
 		//A member's preamble record for a file of day:  with its start value, its last record before the day, from _last or
-		//the walk back, unless withStart is false, as a modifications file's take none.
-		α Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart=true )Ι->Proto::HistoryRecord;
+		//the walk back, unless withStart is false, as a modifications file's take none.  Throws when the walk back can't read
+		//a file through.
+		α Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart=true )Ε->Proto::HistoryRecord;
 
 		const fs::path _root;
 		const string _name;
@@ -262,7 +264,7 @@ namespace Jde::Opc::Hist{
 		std::map<Day,DayFile> _files;//an archive's only while _rewritten holds its day:  one merged into later is scanned again.
 		std::map<Day,DayFile> _mods;//each modifications file the process has opened.
 		vector<std::pair<NodeIndex,Ticks>> _touched;//each record written since Corrections last looked, by node and time.
-		bool _edited{};
+		vector<Day> _edited;
 		//Each day whose live file is due at once, not at its midnight, until it is rewritten:  each before today the start
 		//found, and each of a removed group's.
 		flat_set<Day> _recover;

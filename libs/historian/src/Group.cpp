@@ -4,6 +4,7 @@
 #include "Compress.h"
 #include "Reads.h"
 #include "Store.h"
+#include "io/Applied.h"
 #include "io/DayFiles.h"
 #include "io/Records.h"
 
@@ -77,9 +78,31 @@ namespace Jde::Opc::Hist{
 		let& tz = *_store->Config.TimeZone;
 		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, _store->Config.Delay, DayOf(now, tz), sl );
 		let restored = _files->TakeRestored();
-		if( _files->Edited() ){//a newest value may be edited, so each is read through the edits instead.
-			for( let& [_,index] : restored.Members )
-				_files->Relast( index, Last(*_files, tz, _store->Config.ReadLimit, index, std::numeric_limits<Ticks>::max(), sl) );
+		if( let& edited = _files->Edited(); !edited.empty() ){//the newest of a node an edit names may have moved:  read through the edits.
+			absl::flat_hash_set<NodeIndex> named;
+			for( let day : edited ){
+				try{
+					if( let served = _files->ServeMods(day, sl) ){
+						for( let& [_,mods] : DayMods::Read(*served, sl).ByTime ){
+							for( let& m : mods )
+								named.insert( m.node_index() );
+						}
+					}
+				}
+				catch( Exception& e ){//the newest the files folded stands for the nodes it names, as for one whose walk fails.
+					e.SetLevel( ELogLevel::Error );
+				}
+			}
+			for( let& [_,index] : restored.Members ){
+				if( !named.contains(index) )
+					continue;
+				try{
+					_files->Relast( index, Last(*_files, tz, _store->Config.ReadLimit, index, std::numeric_limits<Ticks>::max(), sl) );
+				}
+				catch( Exception& e ){//the newest the files folded stands, as Newest leaves it.
+					e.SetLevel( ELogLevel::Error );
+				}
+			}
 		}
 		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
 		restoredIndexes.reserve( restored.Members.size() );
