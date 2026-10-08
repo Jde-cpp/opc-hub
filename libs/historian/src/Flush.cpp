@@ -1,8 +1,8 @@
-#include <jde/historian/Group.h>
+#include "Edits.h"
 #include <boost/asio/io_context.hpp>
 #include <jde/fwk/process/execution.h>
+#include "Reads.h"
 #include "Store.h"
-#include "io/DayFiles.h"
 
 #define let const auto
 
@@ -147,6 +147,7 @@ namespace Jde::Opc::Hist{
 		bool out{};
 		Timers timers;
 		uint held;
+		vector<up<Editing>> edits;
 		for( ;; ){
 			{
 				ul _{ _mutex };
@@ -154,12 +155,14 @@ namespace Jde::Opc::Hist{
 					_ended = true;
 					timers = Disarm();
 					held = _changes.size()+_values.size();
+					edits = move( _edits );
 					break;
 				}
 			}
 			out = !settled( ms<FlushAwait>(shared_from_this(), false, SRCE_CUR), deadline );
 		}
 		Cancel( timers );
+		Failed( edits, Ƒ("Group '{}' ended before the edit was written.", Name()) );
 		if( out )
 			ERR( "Group '{}' stopped with a flush still out at hist's stop limit:  what it took may not be in its files.", Name() );
 		if( held )
@@ -198,11 +201,16 @@ namespace Jde::Opc::Hist{
 			auto p = _gone.find( index );
 			return p==_gone.end() ? optional<Membership::Node>{} : Membership::Node{ p->second, true };
 		};
+		members.Last = [this]( NodeIndex index, Ticks through )->optional<Proto::DataValue> {
+			_filesMutex.AssertHeld();//Prepare's, under the lock.
+			return Last( *_files, *_store->Config.TimeZone, _store->Config.ReadLimit, index, through, SRCE_CUR );
+		};
 		for( bool again{ true }; again; ){
 			TimePoint taken;
 			auto shared = ms<vector<Buffered>>();//the batch, which _taken shares with reads:  changed only under _mutex once it does.
 			auto& batch = *shared;
 			vector<FlushAwait*> waiters, settled;
+			vector<up<Editing>> edits;
 			bool stopping, over, closed;
 			vector<Day> due;//each day whose file becomes its archive, records for it or not:  the ending leaves them to the next start.
 			{
@@ -212,6 +220,7 @@ namespace Jde::Opc::Hist{
 				{
 					ul _{ _mutex };
 					waiters = std::exchange( _waiters, {} );
+					edits = std::exchange( _edits, {} );
 					_again = false;
 					taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
 					over = _store->Buffered()>_store->Config.MaxBuffer;
@@ -242,8 +251,8 @@ namespace Jde::Opc::Hist{
 				ul _{ _mutex };
 				Taking( shared );
 			}
-			//A host waiting on it, or the historian's end, tries every day again; the clock only those whose `delay` is up.
-			let retryAll = !waiters.empty() || stopping;
+			//A host waiting on it, an edit, or the historian's end, tries every day again; the clock only those whose `delay` is up.
+			let retryAll = !waiters.empty() || !edits.empty() || stopping;
 			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
 			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
 			let mergeNow = retryAll || over;
@@ -371,6 +380,10 @@ namespace Jde::Opc::Hist{
 			}
 
 			bool failed = !held.empty();
+			for( auto& edit : edits ){//the days whose records went back to the buffer:  their files lack what the edit would look at.
+				for( let i : held )
+					edit->Unflushed.insert( DayOf(PrimaryTime(batch[i].Item), tz) );
+			}
 			{
 				ul _{ _mutex };
 				_failing = failing && !progressed;
@@ -419,6 +432,64 @@ namespace Jde::Opc::Hist{
 				}
 			}
 
+			//After the batch:  the start-value corrections its records reach, then each edit, its value files, its
+			//modifications and its corrections.  Each step is planned under the files lock and written outside it, one write
+			//at a time, as the batch is.  A write that fails is said, and what it was for fails with it:  a correction waits
+			//for the next record or edit to reach the file, and an edit's day answers with the failure.
+			bool abandoned{};
+			for( uint step{}; !abandoned; ++step ){
+				auto jobs = Step( step, edits, members, taken, SRCE_CUR );
+				if( !jobs )
+					break;
+				for( auto& job : *jobs ){
+					bool ok{};
+					try{
+						if( auto run = get_if<Pending>(&job.Write) ){
+							if( Ended() )
+								throw Abandoned{};
+							co_await run->Write();
+							ul _{ _filesMutex };
+							_files->Commit( move(*run) );
+							ok = true;
+						}
+						else if( auto archive = get_if<Rewrite>(&job.Write) ){
+							while( archive->Next() ){
+								if( Ended() )
+									throw Abandoned{};
+								co_await archive->Write();
+							}
+							ul _{ _filesMutex };
+							if( Ended() )
+								throw Abandoned{};
+							_files->Commit( move(*archive), taken );
+							ok = true;
+						}
+					}
+					catch( Exception& e ){
+						e.SetLevel( ELogLevel::Error );
+					}
+					catch( const Abandoned& ){
+						abandoned = true;
+					}
+					catch( const std::exception& e ){
+						ERR( "Group '{}' could not write to its {} file:  {}", Name(), DayDirectory(job.Date).string(), e.what() );
+					}
+					if( !ok ){
+						ul _{ _filesMutex };
+						if( let archive = get_if<Rewrite>(&job.Write) )
+							_files->Abandon( *archive );
+					}
+					if( job.Done )
+						job.Done( ok );
+					if( abandoned )
+						break;
+				}
+			}
+			if( abandoned ){//said by Stopped:  none was acknowledged, so none can be taken as done.
+				for( auto& edit : edits )
+					edit->Abandoned = true;
+			}
+
 			Timers stale;
 			bool arm, archived;
 			{
@@ -441,7 +512,7 @@ namespace Jde::Opc::Hist{
 				ul _{ _mutex };
 				_taken.reset();//what wasn't written went back in Return, and the rest is in its files.
 				_written.clear();
-				again = _again || !_waiters.empty();
+				again = _again || !_waiters.empty() || !_edits.empty();
 				if( !again ){
 					_flushing = false;
 					settled = std::exchange( _settling, {} );
@@ -452,6 +523,12 @@ namespace Jde::Opc::Hist{
 				waiter->Resume( bool{wrote} );
 			for( auto waiter : settled )
 				waiter->Resume( bool{wrote} );
+			for( auto& edit : edits ){
+				if( edit->Abandoned )
+					edit->Waiter->ResumeExp( Exception{edit->Sl, {ELogLevel::Warning}, "Group '{}' ended before the edit was written.", Name()} );
+				else
+					edit->Waiter->Resume( move(edit->Results) );
+			}
 		}
 	}
 }

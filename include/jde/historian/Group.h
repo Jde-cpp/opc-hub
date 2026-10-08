@@ -78,6 +78,10 @@ namespace Jde::Opc::Hist{
 		//at the time itself serves as the bound, else the one before or after, else Bad_BoundNotFound at that time.  An
 		//open end has none.
 		bool Bounds{};
+		//The modified values with their ModificationInfo instead, as Part 11 §6.5.3 defines them:  for an INSERT the value
+		//inserted, for anything else the value it replaced, by the time they target.  No bounds:  a read that asks for both
+		//throws a UAException with Bad_InvalidArgument.
+		bool Modified{};
 		uint Limit{};//the most values a page holds; 0, or more than hist.readLimit, is readLimit.
 		string Continuation;//the page before's, empty for the first.
 		//Ends the page with the first day whose file it reads through while another is left to read, however few values it
@@ -85,9 +89,12 @@ namespace Jde::Opc::Hist{
 		//back a day a page, or jumps as it would.  The bounds still look where they must.
 		bool OneDay{};
 	};
+	//Part 11's ModificationInfo, as the Modification record stored it:  who made the edit, when, and what it did.
+	struct ModificationInfo{ UA_DateTime Time; Proto::UpdateType Type; string UserName; optional<uint32_t> IdentityId; };
 	struct ReadValue{
 		Proto::DataValue Value;//node_index set, and a heartbeat marked as the record marks it.
 		bool Bound{};//one of the Bounds asked for, which counts toward Limit.
+		optional<ModificationInfo> Modification;//a modified read's.
 	};
 	struct ReadResult{
 		vector<ReadValue> Values;//in source-time order, later first in a reverse read.
@@ -97,6 +104,23 @@ namespace Jde::Opc::Hist{
 	//A read's value as UA has it, for a host that serves HistoryRead.  What a record doesn't store, a Good status, zero
 	//picoseconds or a null value, comes back with its mask's bit clear.  Throws for a value this build can't decode.
 	α ToUA( const Proto::DataValue& v )ε->Value;
+
+	//Part 11's HistoryUpdate (spec *Edits*), one entry per node, as the service takes them.  Times are UA ticks.
+	//UpdateDataDetails:  each value is keyed by its SourceTimestamp, which it must carry.  INSERT refuses a time that holds
+	//a record of the node, REPLACE one that holds none, and UPDATE does either.  REMOVE belongs to annotations and is
+	//refused.
+	struct UpdateData{ NodeIndex Node; UA_PerformUpdateType Type; vector<Value> Values; };
+	//DeleteRawModifiedDetails with isDeleteModified false:  every record of the node from Start through End, both held, as
+	//a read's range holds them.  A Start after End is refused.
+	struct DeleteRaw{ NodeIndex Node; UA_DateTime Start; UA_DateTime End; };
+	//DeleteAtTimeDetails:  every record of the node at each time.
+	struct DeleteAtTime{ NodeIndex Node; vector<UA_DateTime> Times; };
+	using EditDetails = variant<UpdateData,DeleteRaw,DeleteAtTime>;
+	//Part 11's HistoryUpdateResult:  the entry's status, and one per value or time, in the request's order, for an
+	//UpdateData or a DeleteAtTime.  Good_EntryInserted and Good_EntryReplaced say what an UpdateData did, Bad_EntryExists
+	//and Bad_NoEntryExists what it refused; a DeleteRaw that found nothing in its range is Bad_NoData, and a DeleteAtTime
+	//time that holds nothing Bad_NoEntryExists.
+	struct EditResult{ StatusCode Status{ UA_STATUSCODE_GOOD }; vector<StatusCode> Results; };
 
 	struct Group;
 	struct GroupFiles;
@@ -116,6 +140,18 @@ namespace Jde::Opc::Hist{
 	private:
 		sp<Group> _group;
 		bool _flush;
+	};
+
+	//What Group::Edit returns:  resumes, on the thread that wrote the edit, once its records are durable.
+	struct EditAwait final : AnyAwait<vector<EditResult>>{
+		EditAwait( sp<Group> group, vector<EditDetails> details, Writer by, SL sl )ι:AnyAwait<vector<EditResult>>{ sl }, _group{ move(group) }, _details{ move(details) }, _by{ move(by) }{}
+		friend struct Group;
+	protected:
+		α Suspend()ι->void override;
+	private:
+		sp<Group> _group;
+		vector<EditDetails> _details;
+		Writer _by;
 	};
 
 	//One node group, written to its own files.  Enqueue is the collection path:  OpcServer calls it under open62541's
@@ -209,13 +245,27 @@ namespace Jde::Opc::Hist{
 		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
 		//the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
+		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked.  The next flush
+		//runs it, after writing the buffer, so every value it targets is in its day's file before it looks:  it writes a
+		//Modification record for each value it changes to the modifications file of that value's day, one append and
+		//checkpoint per day, fsynced, keeps each node's newest record and the later files' start values current, and
+		//resumes with the result once the records are durable, so an edit a caller was told succeeded survives a crash.  A
+		//day whose file can't be written fails that day's values with Bad_UnexpectedError, as does one the flush before
+		//couldn't write, and the other days stand.  One result per entry, in order; a node that isn't a member answers
+		//Bad_NodeIdUnknown, a value with no SourceTimestamp, or one no day holds, Bad_InvalidTimestampArgument, and one no
+		//file can hold the status it would be stored with.  Resumes with an exception for a group that was removed or
+		//has stopped, or when the historian ends before the edit is written.
+		α Edit( vector<EditDetails> details, Writer by, SRCE )ι->EditAwait;
 		//When the earliest day that holds a file of the group starts, in timeZone:  OpcServer's StartOfArchive.  None while
 		//it has no file.  Throws when hist.path can't be walked.
 		α Earliest( SRCE )Ε->optional<TimePoint>;
 	private:
 		friend struct FlushAwait;
+		friend struct EditAwait;
 		friend struct Historian;
 		friend struct Store;
+		struct Editing;//an edit as the flush runs it (Edit.cpp).
+		struct Job;//a write the flush does after its batch:  a correction's, or an edit's.
 		//A value as Enqueue took it:  what it takes in a file, and whether a file can hold it.  Kept is the copy its node
 		//keeps once it is stored, made before the lock unless the value goes over the node's last one in place.
 		struct Arrival{ Value Data; uint32_t Bytes; bool Unsupported; bool NotUtf8; optional<Value> Kept; };
@@ -339,6 +389,17 @@ namespace Jde::Opc::Hist{
 		α Return( vector<Buffered>& batch, vector<uint>&& held )ι->bool;
 		//A Flush or a Settled awaiter's:  waits for the next flush to start and end, or for none to be running.
 		α Request( FlushAwait& waiter )ι->void;
+		//An edit's:  queued for the next flush, which is started when none is running.  Resumes it with an exception at once
+		//for a group that was removed or has stopped.
+		α Request( EditAwait& waiter )ι->void;
+		//The flush's steps after its batch, each a list of writes it does in order:  the start-value corrections the batch's
+		//records reach, then each edit's value files, its modifications and its corrections.  None once every step is done.
+		α Step( uint step, vector<up<Editing>>& edits, const struct Membership& members, TimePoint taken, SL sl )ι->optional<vector<Job>>;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_filesMutex) α Corrections( const struct Membership& members, TimePoint taken, SL sl )ι->vector<Job>;
+		α Creations( Editing& edit, const struct Membership& members, TimePoint taken, SL sl )ι->vector<Job>;
+		α Modifications( Editing& edit, const struct Membership& members, TimePoint taken, SL sl )ι->vector<Job>;
+		α Newest( Editing& edit, SL sl )ι->void;//each node's newest record as the edit leaves it.
+		α Failed( vector<up<Editing>>& edits, string why )ι->void;//what the historian's end leaves unwritten.
 		//The clock's flush, which no one waits on, unless one is running:  that one then runs another after.  Each I/O step
 		//of a flush logs against its own line, which a clock-driven one has no caller's to give.
 		α Request()ι->void;
@@ -389,6 +450,7 @@ namespace Jde::Opc::Hist{
 		bool _again ABSL_GUARDED_BY(_mutex){};//the clock asked for another meanwhile.
 		vector<FlushAwait*> _waiters ABSL_GUARDED_BY(_mutex);//each waits on the next flush to start.
 		vector<FlushAwait*> _settling ABSL_GUARDED_BY(_mutex);//each waits for no flush to be running.
+		vector<up<Editing>> _edits ABSL_GUARDED_BY(_mutex);//each for the next flush to run, in order.
 		//In index order, so whatever walks it to write records writes them the same way every run, and a B-tree, so loading
 		//and Enqueue's lookup stay logarithmic.  The maps by NodeId are hashed:  nothing walks them.
 		absl::btree_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);

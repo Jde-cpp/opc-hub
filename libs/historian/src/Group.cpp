@@ -1,7 +1,8 @@
-#include <jde/historian/Group.h>
+#include "Edits.h"
 #include <absl/container/flat_hash_set.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "Compress.h"
+#include "Reads.h"
 #include "Store.h"
 #include "io/DayFiles.h"
 #include "io/Records.h"
@@ -76,6 +77,10 @@ namespace Jde::Opc::Hist{
 		let& tz = *_store->Config.TimeZone;
 		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, _store->Config.Delay, DayOf(now, tz), sl );
 		let restored = _files->TakeRestored();
+		if( _files->Edited() ){//a newest value may be edited, so each is read through the edits instead.
+			for( let& [_,index] : restored.Members )
+				_files->Relast( index, Last(*_files, tz, _store->Config.ReadLimit, index, std::numeric_limits<Ticks>::max(), sl) );
+		}
 		absl::flat_hash_set<NodeIndex> restoredIndexes, kept;
 		restoredIndexes.reserve( restored.Members.size() );
 		for( let& [_,index] : restored.Members )
@@ -771,7 +776,7 @@ namespace Jde::Opc::Hist{
 		return _store->Add( cost );
 	}
 	α Group::Written()Ι->bool{
-		return _closed && _archived && _changes.empty() && _values.empty() && _lost.empty();
+		return _closed && _archived && _changes.empty() && _values.empty() && _lost.empty() && _edits.empty();
 	}
 	α Group::EndIfWritten()ι->bool{
 		Timers timers;

@@ -20,10 +20,11 @@ namespace Jde::Opc::Hist{
 	Ξ Bare( const Proto::NodeAdded& added )ι->bool{ return !added.has_identity_id() && added.user_name().empty(); }
 	//<yyyy>/<m>/<d>, as the log's archive names a day.
 	α DayDirectory( Day day )ι->fs::path;
-	//Every day under root that holds the file of the group name, oldest first:  the directory walk, so a read asked for a
-	//range of days opens only those that are there.  A day whose file it can't tell of, in a directory it can't search
-	//say, is among them, so a read that reaches it fails as it opens it.
-	α Days( const fs::path& root, sv name, SRCE )ε->vector<Day>;
+	//Every day under root that holds the file of the group name, its value file or with mods its modifications file,
+	//oldest first:  the directory walk, so a read asked for a range of days opens only those that are there.  A day whose
+	//file it can't tell of, in a directory it can't search say, is among them, so a read that reaches it fails as it
+	//opens it.
+	α Days( const fs::path& root, sv name, bool mods=false, SRCE )ε->vector<Day>;
 
 	//What a group's files say of it at start:  each member's index, the index an Issued group issues next, and its last
 	//flush, which is its break when the process stopped or crashed.
@@ -39,6 +40,9 @@ namespace Jde::Opc::Hist{
 		struct Node final{ ExNodeId Id; bool Left; };
 		std::function<optional<Node>( NodeIndex )> Find;//a member's, or that of one that left.
 		NodeIndex NextIndex{};//what an Issued group issues next, which a new file's FileStart carries forward; else 0.
+		//The node's last record at or before through, as a read serves it, the edits applied:  the walk back, for a start
+		//value the group's newest records can't give.  Called under the files lock.
+		std::function<optional<Proto::DataValue>( NodeIndex, Ticks through )> Last;
 	};
 
 	//A file's size and last write, which tell that something changed it.
@@ -57,6 +61,9 @@ namespace Jde::Opc::Hist{
 		Ticks Chain{};//where its delta chain stands.
 		vector<Run> Runs;//each append that holds a record with a time, as the first-open scan would rebuild them.
 		absl::flat_hash_set<NodeIndex> Mapped;//the indexes its NodeAdded records name.
+		//Each member its preamble lists, with its start value, none for a member with none:  the last preamble record of the
+		//member, a correction included.  A value file's, for the corrections a late record or an edit reaches.
+		absl::flat_hash_map<NodeIndex,optional<Proto::DataValue>> Starts;
 		optional<Scanned> Unopened;//its scan, until the first append drops a torn tail by it.
 		bool Named{};//this process made it, or has fsynced its name into its directory:  one that crashed may have made it and not.
 		string Refused;//why the historian won't write to it; empty when it will.
@@ -70,9 +77,11 @@ namespace Jde::Opc::Hist{
 		optional<Append> Outstanding;
 	};
 
-	//One append to a day's file, a run, between GroupFiles::Prepare and Commit.
+	//One append to a day's file, a run, between GroupFiles::Prepare and Commit:  its value file's, or with Mods its
+	//modifications file's.
 	struct Pending final{
 		Day Date;
+		bool Mods{};
 		fs::path Path;
 		uint Offset{};//the file's bytes that stay, which the run follows.
 		string Bytes;
@@ -83,6 +92,7 @@ namespace Jde::Opc::Hist{
 		Ticks Chain{};
 		vector<Run> Runs;
 		absl::flat_hash_set<NodeIndex> Mapped;
+		vector<std::pair<NodeIndex,optional<Proto::DataValue>>> Starts;//each member's last preamble record in the run, with its start value.
 		vector<Proto::DataValue> Stored;//each node's newest in the run.
 		//Cuts the file to Offset, writes the run after it and fsyncs.  A file this makes has its directories fsynced too.
 		α Write( SRCE )ι->IO::WriteAwait;
@@ -128,8 +138,19 @@ namespace Jde::Opc::Hist{
 		//rewrite that a crash cut short left.  A file there it can't tell about is said, and taken as live for its rewrite.
 		GroupFiles( fs::path root, string name, const std::chrono::time_zone& tz, Duration delay, Day today, SRCE )ε;
 		α TakeRestored()ι->Restored{ return move( _restored ); }//once, for the group's start:  nothing keeps it after.
-		//A node's newest stored record in the files, a heartbeat or a marker included:  none when they hold nothing of it.
+		//A node's newest stored record in the files, a heartbeat or a marker included, as the edits leave it:  none when they
+		//hold nothing of it.
 		α Newest( NodeIndex index )Ι->const Proto::DataValue*;
+		//As an edit at or after the node's newest record leaves it:  Newest from here on, and the start value of the next
+		//file made.  None when the files hold nothing of the node now.
+		α Relast( NodeIndex index, optional<Proto::DataValue> newest )ι->void;
+		//A day the start read for the newest values has a modifications file:  those values may be edited, so the group reads
+		//each member's newest through the edits instead.
+		α Edited()Ι->bool{ return _edited; }
+		α Root()Ι->const fs::path&{ return _root; }
+		α Name()Ι->const string&{ return _name; }
+		//Whether day holds a value file:  one the process knows of with anything in it, or one on disk.
+		α HasFile( Day day )Ι->bool;
 		//How a flush at now writes records to day's file:  sorted by primary time, with their times absolute.
 		//
 		//A live file takes them as a run on its end, closed by a checkpoint.  A file that isn't there opens with its
@@ -145,7 +166,14 @@ namespace Jde::Opc::Hist{
 		//what the historian wrote and an outstanding append left, dropping what it knows of the file so the next write
 		//scans it again.  Otherwise what it knows of the file changes only in Commit, but for a torn tail it cuts and the
 		//append it hands out.
-		α Prepare( Day day, vector<Proto::HistoryRecord>&& records, const Membership& members, TimePoint now, SRCE )ε->DayWrite;
+		//
+		//A file that isn't there is made only for records, unless create:  an edit that targets a day with no value file
+		//makes it, with its preamble alone, before its modifications file.
+		α Prepare( Day day, vector<Proto::HistoryRecord>&& records, const Membership& members, TimePoint now, SRCE, bool create=false )ε->DayWrite;
+		//An edit's Modification records for day, in target-time order, as a run on the end of its modifications file,
+		//which is made with its preamble, with no start values, when it isn't there.  The file is live for good:  no
+		//rewrite puts an edit in time order, since a read applies them in the order they were made.  Throws as Prepare does.
+		α PrepareMods( Day day, vector<Proto::HistoryRecord>&& records, const Membership& members, SRCE )ε->Pending;
 		//Once the run's Write has returned.  The process's first append to a file fsyncs its directories
 		//first, and throws when it can't, with the run still to be written again.
 		α Commit( Pending&& run, SRCE )ε->void;
@@ -163,6 +191,17 @@ namespace Jde::Opc::Hist{
 		//the process knows whose day ended `delay` ago, and each the start found.
 		α Due( TimePoint now )ι->vector<Day>;
 		α Recovers()Ι->bool{ return !_recover.empty(); }//the start found live files that a midnight left behind.
+		//A record written at (index, time) that a later file's start value may copy:  what Corrections looks at.  Commit
+		//notes each value it writes; an edit notes each value it changes once its records are written.
+		α Touch( NodeIndex index, Ticks time )ι->void;
+		//The start-value corrections the records touched since reach (spec *Record format*):  for each, every later file
+		//that lists its node with a start value at or before its time, other than that record itself, gets the node's last
+		//record through that time, as members.Last gives it, as its start value, a live file by a preamble record appended
+		//and an archive by its rewrite, which the flush writes.  The walk ends at the first later file whose start value for
+		//the node is past the time, since the start values of the files after it are later still.  One they can't be
+		//prepared for is said and left as it is:  the next record or edit that reaches it corrects it.  The touched records
+		//are forgotten.
+		α Corrections( const Membership& members, TimePoint now, SRCE )ι->vector<std::pair<Day,DayWrite>>;
 		//A removed group's:  each live file is due at once, and each write after is a rewrite, so none is left live.
 		α Retire()ι->void;
 		α Archived()Ι->bool{ return _unarchived.empty(); }//no file it knows of is live.
@@ -190,16 +229,29 @@ namespace Jde::Opc::Hist{
 		//leaves the read the file they describe.  Throws, at Error, when the file can't be opened or scanned.
 		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
 		α Serve( Day day, SL sl )Ε->optional<Served>;
+		//The day's modifications file the same way:  none for a day with none.  A read applies them to the day's values, and
+		//a modified read returns them.
+		α ServeMods( Day day, SL sl )Ε->optional<Served>;
 		α LastFlush()ι->Flushed&{ return _flushed; }
 	private:
-		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={} )ε->DayFile&;
+		//A value file's, or with mods the day's modifications file's.
+		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={}, bool mods=false )ε->DayFile&;
+		α Serve( const std::map<Day,DayFile>& files, const fs::path& path, Day day, SL sl )Ε->optional<Served>;
+		//The run Prepare and PrepareMods hand out:  a file with nothing kept opens with its FileStart and preamble, then run
+		//follows, each sealed.  What Commit takes of it is on the Pending; the file notes the append as outstanding.
+		α Append( DayFile& file, Day day, bool mods, bool existed, bool restart, vector<Proto::HistoryRecord>&& preamble, vector<Proto::HistoryRecord>&& run, NodeIndex nextIndex )Ι->Pending;
 		α Past( Day day, TimePoint now )Ι->bool;//whether day's midnight rewrite is due:  it ended `delay` ago.
 		α File( Day day )Ι->fs::path;
+		α ModsFile( Day day )Ι->fs::path;
 		α Temp( Day day )Ι->fs::path;//what a rewrite of day's file writes, beside it.
-		α Restore( Proto::HistoryRecord& r, flat_map<NodeIndex,ExNodeId>& members )ι->void;
-		α Fold( Proto::HistoryRecord& r )ι->void;//a value, or a NodeAdded's start value, into _last.
-		α Newer( Proto::DataValue&& stored )ι->void;
-		α Added( NodeIndex index, const ExNodeId& node, Ticks start )Ι->Proto::HistoryRecord;
+		α Restore( Proto::HistoryRecord& r, flat_map<NodeIndex,ExNodeId>& members, Day day )ι->void;
+		//A value, or a NodeAdded's start value, into _last:  a start value stands in for one the same day's preamble gave,
+		//as a correction does, and otherwise only for an older one, as a value does.
+		α Fold( Proto::HistoryRecord& r, Day day )ι->void;
+		α Newer( Proto::DataValue&& stored, optional<Day> preamble={} )ι->void;
+		//A member's preamble record for a file of day:  with its start value, its last record before the day, from _last or
+		//the walk back, unless withStart is false, as a modifications file's take none.
+		α Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart=true )Ι->Proto::HistoryRecord;
 
 		const fs::path _root;
 		const string _name;
@@ -208,6 +260,9 @@ namespace Jde::Opc::Hist{
 		Flushed _flushed;
 		Restored _restored;
 		std::map<Day,DayFile> _files;//an archive's only while _rewritten holds its day:  one merged into later is scanned again.
+		std::map<Day,DayFile> _mods;//each modifications file the process has opened.
+		vector<std::pair<NodeIndex,Ticks>> _touched;//each record written since Corrections last looked, by node and time.
+		bool _edited{};
 		//Each day whose live file is due at once, not at its midnight, until it is rewritten:  each before today the start
 		//found, and each of a removed group's.
 		flat_set<Day> _recover;
@@ -220,8 +275,11 @@ namespace Jde::Opc::Hist{
 		flat_set<Day> _unsynced;//each day whose archive's rename its directory's fsync hasn't yet made durable.
 		flat_set<Day> _days;//each day known to hold a file:  from the newest back to the first that isn't after the present at start, and each made since.
 		Day _present;//the latest of the host clock's day and its last flush's:  a clock set back doesn't move it.
-		//Each node's newest stored value, a heartbeat or a marker included, which a new file's preamble takes as its start
-		//value when it is from before the file's day.
-		absl::flat_hash_map<NodeIndex,Proto::DataValue> _last;
+		//Each node's newest stored value, a heartbeat or a marker included, as the edits leave it, which a new file's
+		//preamble takes as its start value when it is from before the file's day.  Preamble is the day whose preamble gave
+		//it, while the start read folds files:  a later preamble record of that day replaces it, where a value only moves
+		//it on.
+		struct Last final{ Proto::DataValue Value; optional<Day> Preamble; };
+		absl::flat_hash_map<NodeIndex,Last> _last;
 	};
 }

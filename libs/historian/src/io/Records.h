@@ -25,6 +25,12 @@ namespace Jde::Opc::Hist{
 
 	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
+	//The edit's writer onto its record:  identity_id, UserPK::System as 4294967295, and user_name.
+	α SetWriter( Proto::Modification& m, const Writer& by )ι->void;
+	//Whether two stored values are one record:  the same times, status, value and heartbeat, whichever node_index each
+	//carries.  A Modification's original is matched to the record it changed this way, and a start value to the record
+	//it copies.
+	α Same( const Proto::DataValue& a, const Proto::DataValue& b )ι->bool;
 	//A value with no file form, a DataValue or a DiagnosticInfo from a node typed BaseDataType, is stored without it, as
 	//BadNotSupported, which ToProto( Record ) warns of once per node.  One with text that isn't UTF-8, which protobuf
 	//writes but won't read back, is stored without it as BadEncodingError, warned of the same way.  Any other value that
