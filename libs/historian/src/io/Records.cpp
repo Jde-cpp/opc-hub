@@ -2,6 +2,8 @@
 #include <jde/fwk/io/crc.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/proto/opc.Common.h>
+#include <google/protobuf/util/field_comparator.h>
+#include <google/protobuf/util/message_differencer.h>
 
 #define let const auto
 
@@ -11,7 +13,6 @@ namespace Jde::Opc{
 	using Hist::Proto::HistoryRecord;
 }
 namespace Jde::Opc::Hist{
-	namespace{
 		//Wrapping, so a garbled time read from disk can't overflow, and a delta always undoes exactly.
 		Ξ add( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a+(uint64_t)b ); }
 		Ξ sub( Ticks a, Ticks b )ι->Ticks{ return (Ticks)( (uint64_t)a-(uint64_t)b ); }
@@ -81,7 +82,6 @@ namespace Jde::Opc::Hist{
 			const bool ToDisk;
 			Ticks& Last;
 		};
-	}
 
 	Ω setWriter( auto& record, const optional<Writer>& by )ι->void{
 		if( !by )
@@ -123,6 +123,20 @@ namespace Jde::Opc{
 		p = CodedOutputStream::WriteLittleEndian32ToArray( start.generation(), p );
 		(void)CodedOutputStream::WriteLittleEndian32ToArray( start.next_node_index(), p );
 		return IO::Crc::Calc32c( sv{reinterpret_cast<const char*>(bytes), sizeof(bytes)} );
+	}
+	α Hist::SetWriter( Proto::Modification& m, const Writer& by )ι->void{ Hist::setWriter( m, optional<Writer>{by} ); }
+	α Hist::Same( const Proto::DataValue& a, const Proto::DataValue& b )ι->bool{
+		let sameValue = [&]{
+			google::protobuf::util::DefaultFieldComparator nanEqual;//MessageDifferencer's default takes NaN as unequal to itself.
+			nanEqual.set_treat_nan_as_equal( true );
+			google::protobuf::util::MessageDifferencer differencer;
+			differencer.set_field_comparator( &nanEqual );
+			return differencer.Compare( a.value(), b.value() );
+		};
+		return a.has_source_ts()==b.has_source_ts() && a.source_ts()==b.source_ts() && a.source_picoseconds()==b.source_picoseconds()
+			&& a.has_server_ts()==b.has_server_ts() && a.server_ts()==b.server_ts() && a.server_picoseconds()==b.server_picoseconds()
+			&& a.status()==b.status() && a.has_heartbeat()==b.has_heartbeat() && a.heartbeat()==b.heartbeat() && a.heartbeat_unsourced()==b.heartbeat_unsourced()
+			&& a.has_value()==b.has_value() && ( !a.has_value() || sameValue() );
 	}
 	α Hist::ToDisk( HistoryRecord& r, Ticks& last )ι->void{ Convert{ true, last }( r ); }
 	α Hist::ToMemory( HistoryRecord& r, Ticks& last )ι->void{ Convert{ false, last }( r ); }
