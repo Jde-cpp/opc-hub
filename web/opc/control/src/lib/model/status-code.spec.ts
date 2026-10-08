@@ -1,3 +1,4 @@
+import { computed } from '@angular/core';
 import { OpcError } from './opc-error';
 import { ELimit, ESeverity, flagsText, infoBits, isBad, nameKey, scHex, severity, statusIcon, statusText } from './status-code';
 
@@ -72,6 +73,14 @@ describe( 'status-code', ()=>{
 
 //the name cache is static, so each test here keeps to codes of its own.
 describe( 'OpcError status names', ()=>{
+	//A name that arrived after the first paint repainted nothing, so the History tab threaded a counter through three components
+	//to force it (historian-web-trend #14).  text() reads a version setMessages bumps.
+	it( 'repaints what shows a code when its name arrives', ()=>{
+		const shown = computed( ()=>OpcError.text(0x80EE0000) );
+		expect( shown() ).toBe( "Bad 0x80EE0000" );
+		OpcError.setMessages( [{sc: 0x80EE0000, message: "BadNamedForTheTest"}] );
+		expect( shown() ).toBe( "BadNamedForTheTest" );
+	} );
 	it( 'asks for one name however many flag variants of the code turn up', ()=>{
 		OpcError.text( 0x40920500 );
 		OpcError.text( 0x40920600 );

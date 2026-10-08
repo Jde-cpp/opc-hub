@@ -6,15 +6,16 @@ import { ActivatedRoute } from '@angular/router';
 import { ComponentPageTitle, RouteItem } from 'jde-spa';
 import { NodeRoute } from '../../model/node-route';
 import { NodeChildren } from './node-children/node-children';
-import { UaNode } from '../../model/node';
+import { UaNode, Variable } from '../../model/node';
 import { NodeAccess } from './node-access/node-access';
+import { NodeHistory } from './node-history/node-history';
 import { ProfileStore } from 'jde-spa';
 
 @Component( {
 	templateUrl: './node-detail.html',
 	styleUrls: ['./node-detail.scss'],
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, MatTabsModule, NodeChildren, NodeAccess]
+	imports: [CommonModule, MatTabsModule, NodeChildren, NodeAccess, NodeHistory]
 })
 export class NodeDetail implements OnDestroy, OnInit{
 	private activatedRoute:ActivatedRoute = inject( ActivatedRoute );
@@ -25,6 +26,7 @@ export class NodeDetail implements OnDestroy, OnInit{
 	ngOnInit(){
 		this.activatedRoute.data.subscribe( (data)=>{
 			this.pageData.set( data["pageData"] );
+			this.nodes.set( this.pageData().nodes );
 			this.sideNav.set( this.pageData().route );
 			this.componentPageTitle.title = this.server().connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
 		});
@@ -32,6 +34,10 @@ export class NodeDetail implements OnDestroy, OnInit{
 
 	node = computed( ()=>this.sideNav().node );
 	pageData = signal<NodePageData>( null as any );
+	nodes = signal<UaNode[]>( [] );//the page's, then each Children refresh's
+	//the History tab shows when a child is historized and this user may read its history - a Variable has no
+	//page of its own (NodeResolver.#showParent), so the history of its parent's children is where a node's history is seen
+	historizable = computed<Variable[]>( ()=>(<Variable[]>this.nodes().filter( n=>n.isVariable )).filter( v=>v.historyReadable ) );
 	//get profile(){ return this.pageData().route.profile; }
 	server = computed( ()=>this.pageData().server );
 	sideNav = model.required<NodeRoute>();

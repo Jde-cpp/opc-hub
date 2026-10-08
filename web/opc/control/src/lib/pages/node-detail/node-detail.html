@@ -4,9 +4,17 @@
 	<mat-tab>
 		<ng-template mat-tab-label>Children</ng-template>
 		<ng-template matTabContent>
-			<node-children [node]="node()"></node-children>
+			<node-children [node]="node()" (refreshed)="nodes.set($event)"></node-children>
 		</ng-template>
 	</mat-tab>
+	@if( historizable().length ){
+		<mat-tab>
+			<ng-template mat-tab-label>History</ng-template>
+			<ng-template matTabContent>
+				<node-history [pageData]="pageData()" [candidates]="historizable()"></node-history>
+			</ng-template>
+		</mat-tab>
+	}
 	@if( pageData().server.applicationName.startsWith("Jde-Cpp OpcServer") ){
 		<mat-tab>
 			<ng-template mat-tab-label>Permissions</ng-template>

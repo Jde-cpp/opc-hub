@@ -1,0 +1,33 @@
+<mat-toolbar>
+	<div class="bar-left">
+		<!--the nodes drawn:  one chip per historized child, up to the palette's eight-->
+		<mat-chip-listbox class="node-chips" aria-label="Nodes to trend" multiple>
+			@for( v of candidates(); track v.key ){
+				<mat-chip-option [selected]="selectedKeys().has(v.key)" [disabled]="!canSelect(v)" (selectionChange)="$event.isUserInput && toggle(v)" [matTooltip]="canSelect(v) ? '' : 'At most eight nodes at a time'">{{ v.name }}</mat-chip-option>
+			}
+		</mat-chip-listbox>
+	</div>
+	<div class="bar-right">
+		<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
+			<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
+			<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
+		</mat-button-toggle-group>
+		<mat-slide-toggle [checked]="live()" (change)="onLiveChange($event.checked)" matTooltip="Append values as the server publishes them">Live</mat-slide-toggle>
+		<button matButton (click)="loadEarlier()" [disabled]="loading() || !hasEarlier()" matTooltip="Read the page before the earliest value shown">
+			<mat-icon>history</mat-icon>Load earlier
+		</button>
+		<span class="row-count">{{ values().length }} {{ values().length==1 ? "value" : "values" }}</span>
+	</div>
+</mat-toolbar>
+<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+@for( r of refused(); track r.node.key ){
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: the server answered {{ statusText(r.status) }}.</p>
+}
+<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>
+<hist-table [values]="values()" [nodes]="selected()"></hist-table>
+@if( !loading() && !values().length ){
+	<div class="jde-empty" role="status">
+		<mat-icon aria-hidden="true">history</mat-icon>
+		<p class="title">{{ selected().length ? "No history." : "No node selected." }}</p>
+	</div>
+}

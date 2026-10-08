@@ -66,6 +66,14 @@ namespace Jde::Opc::Tests{
 	}
 
 	//The 64-bit integers use the protobufjs Long form so javascript clients keep full precision.
+	//A Float wrote its widened double, 21.3f as 21.299999237060547, which the History table and the Children tab showed
+	//(historian-web-trend, Tooltip decimals).  It writes the float's shortest, which narrows back to the same float.
+	TEST( ValueTests, AFloatWritesItsShortest ){
+		const UA_Float f{ 21.3f };
+		EXPECT_EQ( dataValue(&f, UA_TYPES[UA_TYPES_FLOAT]).ToJson().to_number<double>(), 21.3 );
+		for( const UA_Float x : {21.3f, 0.000123f, 16777216.f, -1.17549435e-38f, std::numeric_limits<UA_Float>::max(), std::numeric_limits<UA_Float>::denorm_min()} )
+			EXPECT_EQ( (UA_Float)dataValue(&x, UA_TYPES[UA_TYPES_FLOAT]).ToJson().to_number<double>(), x );
+	}
 	TEST( ValueTests, SixtyFourBitIntegersToJson ){
 		const UA_Int64 i64{ 0x0000000100000002ll };
 		let j = dataValue( &i64, UA_TYPES[UA_TYPES_INT64] ).ToJson();

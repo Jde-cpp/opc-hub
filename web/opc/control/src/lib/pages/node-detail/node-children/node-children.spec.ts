@@ -14,7 +14,7 @@ import { ComponentPageTitle } from 'jde-spa';
 import { SnackbarService } from 'jde-framework';
 import { GATEWAY_SERVICE, GatewayService, SubscriptionResult } from '../../../services/gateway-service';
 import { NodeId } from '../../../model/node-id';
-import { Variable } from '../../../model/node';
+import { UaNode, Variable } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
 import { EAccess } from '../../../model/types';
@@ -239,5 +239,27 @@ describe( 'NodeView.readDenied', ()=>{
 		expect( NodeView.readDenied(denied) ).toBe( true );
 		expect( NodeView.readDenied(readable) ).toBe( false );
 		expect( NodeView.readDenied(variable(5, "u")) ).toBe( false );//no level in the row
+	} );
+} );
+
+//A Refresh assigns pageData.nodes, which NodeDetail's History tab gate never saw (historian-web-trend #10):  it hands them up.
+describe( 'NodeChildren refresh', ()=>{
+	it( 'hands the refreshed nodes up', async ()=>{
+		const fresh = [ variable( 3, "z" ) ];
+		TestBed.configureTestingModule({ providers: [
+			{ provide: ActivatedRoute, useValue: {data: NEVER} },
+			{ provide: GATEWAY_SERVICE, useValue: {} },
+			{ provide: SnackbarService, useValue: {exception: ()=>{}} },
+			{ provide: ComponentPageTitle, useValue: {} }
+		]});
+		const fixture = TestBed.createComponent( NodeChildren );
+		fixture.componentRef.setInput( 'node', X );
+		const page = fixture.componentInstance;
+		page.pageData = { gateway: {browseObjectsFolder: async ()=>fresh}, route: {profileKey: 'k'}, server: {connection: {slug: 'local'}}, nodes: [] } as any;
+		page.profile = { subscriptions: [] } as any;
+		const handed:UaNode[][] = [];
+		page.refreshed.subscribe( nodes=>handed.push(nodes) );
+		await page.onRefresh();
+		expect( handed ).toEqual( [fresh] );
 	} );
 } );

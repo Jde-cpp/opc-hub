@@ -30,6 +30,19 @@ export function valueJson( value: Value ):any/*:NodeIdJson*/{
 		return value;
 }
 
+//A Float reading at the fewest digits that are still that float.  The proto's float decodes widened to a double, 21.3 as
+//21.299999237060547, which every screen showed;  the gateway's json writes a Float this way already (Value::ToJson).
+export function shortestFloat( x:number ):number{
+	if( !Number.isFinite(x) )
+		return x;
+	const f = Math.fround( x );
+	for( let digits=1; digits<9; ++digits ){
+		const y = Number( x.toPrecision(digits) );
+		if( Math.fround(y)===f )
+			return y;
+	}
+	return Number( x.toPrecision(9) );//always the float again
+}
 export function valueString( value: Value|undefined ):string{
 	if( value===undefined || value===null )
 		return "";//a Variable the browse could not read has no value, and the Object.hasOwn test below throws on null/undefined - so rendering that row crashed the page

@@ -65,7 +65,7 @@ export class OpcObject extends UaNode{
 }
 
 export class Variable extends UaNode{
-	constructor( json:{browseName?:Browse, dataType?:NodeIdJson, displayName:ILocalizedText, node?:NodeIdJson, nodeClass?:number, referenceType?:NodeIdJson, typeDefinition?:NodeIdJson, value?:any, valueRank?:number, accessLevel?:EAccess, userAccessLevel?:EAccess}, parent?:UaNode )	{
+	constructor( json:{browseName?:Browse, dataType?:NodeIdJson, displayName:ILocalizedText, node?:NodeIdJson, nodeClass?:number, referenceType?:NodeIdJson, typeDefinition?:NodeIdJson, value?:any, valueRank?:number, accessLevel?:EAccess, userAccessLevel?:EAccess, historizing?:boolean}, parent?:UaNode )	{
 		super( json, parent );
 		if( json.dataType?.ns ){
 			this.dataType = ETypes.None;
@@ -78,6 +78,7 @@ export class Variable extends UaNode{
 		this.valueRank = json.valueRank ?? -1;
 		this.accessLevel = Variable.accessLevelOf( json["accessLevel"] );
 		this.userAccessLevel = Variable.accessLevelOf( json["userAccessLevel"] );
+		this.historizing = Variable.flagOf( json["historizing"] );
 	}
 	//install-issues #35:  the gateway writes a key for every attribute it asked for, whatever came back - ReadResponse::SetJson
 	//loops the request, not the results - so a server that answers the AccessLevel read with an empty value sends
@@ -89,10 +90,20 @@ export class Variable extends UaNode{
 		const level = x!=null && typeof x=="object" ? x["v"] : x;//{v,sc}: a reading with a status rides along with it
 		return typeof level=="number" ? level as EAccess : undefined;
 	}
+	//the Historizing attribute as the browse answers it - a boolean, `{v,sc}` from a server that answers with a status, or null
+	//from one that doesn't say (accessLevelOf, above):  only a plain true means the server keeps this node's history.
+	private static flagOf( x:any ):boolean|undefined{
+		const v = x!=null && typeof x=="object" ? x["v"] : x;
+		return typeof v=="boolean" ? v : undefined;
+	}
 	override get nodeClass():ENodeClass{ return ENodeClass.Variable; }
+	//the History tab's gate:  the server historizes the node, and this user may read that history - a level
+	//the server didn't give is unknown, not a denial, the rule NodeView.readDenied applies to Read.
+	get historyReadable():boolean{ return this.historizing===true && (this.userAccessLevel==undefined || !!(this.userAccessLevel & EAccess.HistoryRead)); }
 
 	accessLevel?:EAccess;
 	userAccessLevel?:EAccess;
+	historizing?:boolean;
 	dataType?:ETypes;
 	customDataType?:NodeId|Enum;
 	override get displayed(){ return true; }

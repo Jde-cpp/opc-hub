@@ -1,0 +1,45 @@
+<mat-table [dataSource]="rows()" class="mat-elevation-z8">
+	<ng-container matColumnDef="node">
+		<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ nodeName(r.node) }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="source">
+		<mat-header-cell *matHeaderCellDef>Source time</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ r.source | date:'yyyy-MM-dd HH:mm:ss.SSS' }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="server">
+		<mat-header-cell *matHeaderCellDef>Server time</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ r.server | date:'yyyy-MM-dd HH:mm:ss.SSS' }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="status">
+		<mat-header-cell *matHeaderCellDef>Status</mat-header-cell>
+		<mat-cell *matCellDef="let r">
+			<!--the shape says the severity before the colour does, as the Children tab's Status cell has it-->
+			@if( qualityIcon(r); as icon ){
+				<mat-icon class="quality-icon" [class.quality-bad]="icon=='error'" [class.quality-uncertain]="icon=='warning'" aria-hidden="true" [fontIcon]="icon"></mat-icon>
+			}
+			<span class="status-text" [class.status-good]="!r.status" [matTooltip]="statusTooltip(r)">{{ status(r) }}</span>
+		</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="value">
+		<mat-header-cell *matHeaderCellDef>Value</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="value-text" [title]="valueText(r)">{{ valueText(r) }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="flags">
+		<mat-header-cell *matHeaderCellDef></mat-header-cell>
+		<mat-cell *matCellDef="let r">
+			@if( flags(r); as names ){
+				@if( names.length ){
+					<mat-chip-set aria-label="Record kind">
+						@for( name of names; track name ){
+							<mat-chip class="flag-chip">{{ name }}</mat-chip>
+						}
+					</mat-chip-set>
+				}
+			}
+		</mat-cell>
+	</ng-container>
+	<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
+	<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
+</mat-table>
+<mat-paginator [length]="ordered().length" [pageIndex]="pageIndex()" [pageSize]="pageSize()" [pageSizeOptions]="[50, 100, 500]" (page)="onPage($event)" aria-label="History pages" showFirstLastButtons></mat-paginator>

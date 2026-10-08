@@ -12,6 +12,7 @@ namespace Jde::Opc::Gateway{
 
 	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( flat_set<NodeId>&& nodes )ι{
 		UA_CreateMonitoredItemsRequest_init( this );
+		timestampsToReturn = UA_TIMESTAMPSTORETURN_BOTH;//init is SOURCE alone, and NodeValues carries the server's too
 		itemsToCreateSize = nodes.size();
 		itemsToCreate = (UA_MonitoredItemCreateRequest*)UA_Array_new( itemsToCreateSize, &UA_TYPES[UA_TYPES_MONITOREDITEMCREATEREQUEST] );
 		uint i=0;

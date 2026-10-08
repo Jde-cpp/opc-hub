@@ -10,6 +10,7 @@
 #include "utils/GatewayClientSocket.h"
 #include "../src/types/proto/opc.FromServer.h"
 #include <jde/opc/proto/opc.Common.h>
+#include <jde/opc/uatypes/DateTime.h>
 #include "utils/ITest.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/opc/ServerTrust.h>
@@ -21,6 +22,10 @@ namespace Jde::Opc::Gateway::Tests{
 	struct SubscribeTests : ITest{
 		struct Listener final : IListener{
 			Listener( SubscribeTests* tests )ι:_tests{ tests }{}
+			α OnPush( const FromServer::NodeValues& push )ι->void override{
+				_tests->_hasSource = push.has_source();
+				_tests->_hasServer = push.has_server();
+			}
 			α OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void override{
 				TRACE( "OnData: opcId: '{}', nodeId: {}, member: {}.", opcId, nodeId.ToString(), (int)value.of_case() );
 				let scalar = value.of_case()!=Proto::Value::OF_NOT_SET && !value.has_array();
@@ -59,6 +64,7 @@ namespace Jde::Opc::Gateway::Tests{
 		α WriteAndPush( const NodeId& nodeId, Duration timeout=10s )ε->uint;//write the next value through the gateway, check what it echoes back, and wait for the data change it must trigger; returns the value written.
 		α UnsubscribeAndDrain( const NodeId& nodeId, uint remaining=0, Duration timeout=10s )ε->void;//unsubscribe and wait until only `remaining` items are left on the client - the delete runs a DeleteMonitoring timer behind the ack.
 		atomic<uint> _value;
+		atomic<bool> _hasSource, _hasServer;//the last push's timestamps
 		sp<Listener> _listener;
 		static sp<GatewayClientSocket> _session;
 	};
@@ -121,6 +127,23 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( UnsubscribeAndDrain(nodeId) );
 		TRACE( "-------------------------------------------------------------" );
 		//teardown costs the gateway's 1s subscription wait + a 500ms poll tick, so poll rather than fixed-sleep.
+		Stopwatch sw;
+		while( _client->Processing() )
+			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
+	}
+
+	//NodeValues gained the reading's timestamps for the history trend, but no push carried the server's:  the monitored items
+	//asked for the source's alone (timestampsToReturn left at its init), and the read that sends the first push for neither
+	//(UA_Client_readValueAttribute_async's own) - historian-web-trend #9.  The first push's source time is the node's, which one
+	//never written may not have;  a write's data change has both.
+	TEST_F( SubscribeTests, APushCarriesBothTimestamps ){
+		const NodeId nodeId{ 4, 6017 };
+		ASSERT_NO_THROW( SubscribeAndPush(nodeId) );
+		EXPECT_TRUE( _hasServer ) << "the first push";
+		ASSERT_NO_THROW( WriteAndPush(nodeId, 6s) );
+		EXPECT_TRUE( _hasSource ) << "a data change";
+		EXPECT_TRUE( _hasServer ) << "a data change";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(nodeId) );
 		Stopwatch sw;
 		while( _client->Processing() )
 			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
@@ -1028,5 +1051,26 @@ namespace Jde::Opc::Gateway::Tests{
 		let ok = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(bad)}, 0 );
 		EXPECT_EQ( ok.node_values().value().int32(), 7 );
 		EXPECT_EQ( ok.node_values().sc(), UA_STATUSCODE_BADSENSORFAILURE );
+	}
+
+	//historian 4A #218:  the web joins a push to a history read by source time, so a push carries the timestamps the reading
+	//has, and none for one the server left out.
+	TEST( FromServerTests, APushCarriesTheReadingsTimestamps ){
+		UA_DataValue dv{};
+		dv.hasValue = true;
+		const UA_Int32 i{ 7 };
+		UA_Variant_setScalarCopy( &dv.value, &i, &UA_TYPES[UA_TYPES_INT32] );
+		let bare = FromServer::ToProto( "opc", NodeId{}, Opc::Value{dv}, 0 );
+		EXPECT_FALSE( bare.node_values().has_source() );
+		EXPECT_FALSE( bare.node_values().has_server() );
+
+		let source = UA_DateTime_now()-UA_DATETIME_SEC, server = source+UA_DATETIME_MSEC;
+		dv.hasSourceTimestamp = true; dv.sourceTimestamp = source;
+		dv.hasServerTimestamp = true; dv.serverTimestamp = server;
+		let stamped = FromServer::ToProto( "opc", NodeId{}, Opc::Value{move(dv)}, 0 );
+		ASSERT_TRUE( stamped.node_values().has_source() );
+		ASSERT_TRUE( stamped.node_values().has_server() );
+		EXPECT_EQ( UADateTime{stamped.node_values().source()}.UA(), source );
+		EXPECT_EQ( UADateTime{stamped.node_values().server()}.UA(), server );
 	}
 }

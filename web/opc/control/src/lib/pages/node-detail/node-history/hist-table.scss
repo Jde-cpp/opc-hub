@@ -1,0 +1,79 @@
+:host{
+	display: block;
+	width: 100%;
+}
+
+/* the same dense rows as the Children tab (node-children.scss), so the two tables on a node page read at one rhythm */
+mat-table{
+	--mat-table-row-item-container-height: 36px;
+	--mat-table-header-container-height: 44px;
+}
+mat-header-cell{
+	justify-content: flex-start;
+}
+.mat-column-node{
+	flex: 0 0 200px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+/* a timestamp with milliseconds is one width - 23 characters of tabular digits */
+.mat-column-source, .mat-column-server{
+	flex: 0 0 200px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-status{
+	flex: 0 0 200px;
+	min-width: 0;
+	gap: 4px;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-status > .status-text{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* numeric mostly, so right-aligned as a column of figures;  a long string or array ends in an ellipsis and its title has it whole */
+.mat-column-value{
+	flex: 1 1 160px;
+	min-width: 0;
+	padding-inline: 5px;
+	justify-content: flex-end;
+	text-align: end;
+	font-variant-numeric: tabular-nums;
+}
+mat-cell.mat-column-value > .value-text{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mat-column-flags{
+	flex: 0 0 220px;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-flags mat-chip-set{
+	--mat-chip-container-height: 20px;
+	--mat-chip-label-text-size: 11px;
+	--mat-chip-label-text-line-height: 20px;
+	--mat-chip-elevated-container-color: var(--mat-sys-surface-container-highest);
+	--mat-chip-label-text-color: var(--mat-sys-on-surface-variant);
+}
+.quality-icon{
+	flex: 0 0 auto;
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+	color: var(--mat-sys-on-surface-variant);
+}
+.quality-bad{
+	color: var(--mat-sys-error);
+}
+.quality-uncertain{
+	color: var(--mat-sys-tertiary);
+}
+.status-good{
+	color: var(--mat-sys-on-surface-variant);
+}

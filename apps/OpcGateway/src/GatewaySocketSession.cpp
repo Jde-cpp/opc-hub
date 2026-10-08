@@ -72,7 +72,7 @@ namespace Jde::Opc::Gateway{
 			session->Write( FromServer::SubscribeAckTrans(move(ack), requestId) );
 			[]( flat_set<NodeId>&& nodes, sp<UAClient> client, RequestId requestId, sp<GatewaySocketSession> session )->TAwait<flat_map<NodeId, Value>>::Task {
 				try{
-					auto values = co_await ReadValueAwait{ move(nodes), client };
+					auto values = co_await ReadValueAwait{ move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH };//the first push:  its timestamps as a data change's
 					session->Write( FromServer::ReadValuesTrans(client->Slug(), move(values), requestId) );
 				}
 				catch( runtime_error& e ){
