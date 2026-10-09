@@ -507,12 +507,26 @@ namespace Jde::Opc::Gateway::Tests{
 		refused( "createHistory( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"values", values}} );
 		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{}}} );
 		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"source", Time(When(20))}, {"value", 1}}}}} );
-		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
+		try{//a value that can't take its node's type refuses the call, naming the node and the value.
+			Edit( "createHistory( opc: $opc, values: $values ){ values{ status } nodes{ node status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
+			ADD_FAILURE() << "a value that can't be a Double was taken";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_NE( string{e.what()}.find(Ƒ("createHistory:  {}'s value \"not a number\" isn't a Double", Node(Rpm3).ToString())), string::npos ) << e.what();
+		}
 		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"status", "0x80340000"}, {"value", 1}}}}} );
 		refused( "purgeHistory( opc: $opc, nodes: $nodes, start: $start ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}} );
 		refused( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"times", jarray{}}} );
 		refused( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}, {"end", Time(When(21))}, {"times", jarray{Time(When(20))}}} );
 		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(20), .End=When(21), .Limit=100}).Values.empty() );
+	}
+
+	//A range purge's range is the server's (spec *Pass-through*):  OpcServer leaves out its end, and takes `start` equal to
+	//`end` as the one value there, as a group does.
+	TEST_F( HistEditTests, PurgesOneValueWithStartEqualToEnd ){
+		EXPECT_EQ( Update("createHistory", {{Rpm3, When(70), 1}, {Rpm3, When(71), 2}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( DeleteRaw(Rpm3, When(70), When(70)).Statuses.at(Node(Rpm3)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Values(Read({.Nodes={Rpm3}, .Start=When(70), .End=When(72), .Limit=100}).Values), (vector<jvalue>{2.0}) );
 	}
 
 	//A call that names both `opc` and `group`, or neither, is refused as such, before a client is opened for it:  an `opc`

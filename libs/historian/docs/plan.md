@@ -120,7 +120,7 @@ Split so that each PR is reviewable and most of 5a is useful before any history 
   - `access_resources` rows, and their QL.
   - Template resolution and `resolveHistory`.
   - Membership changes write `NodeAdded`/`NodeRemoved` and change monitored items.
-- **5c, collection, reads and edits** ([#224]). A hist QL hook beside `OpcQLHook`, and the collector feeding the library. Then the reads with `group`, then the edits. Also the `hist` block in [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet) and [`Opc.Hub.jsonnet`](../../../apps/OpcHub/config/Opc.Hub.jsonnet), and the lock-disabled path answering with an error.
+- **5c, collection, reads and edits** ([#224]). A hist QL hook beside `OpcQLHook`, and the collector feeding the library. Then the reads with `group`, then the edits, whose values need a type rule of their own: the type the historian stored for the node is the natural one, since a correction shouldn't need the server reachable (spec *Open questions*). Also the `hist` block in [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet) and [`Opc.Hub.jsonnet`](../../../apps/OpcHub/config/Opc.Hub.jsonnet), and the lock-disabled path answering with an error.
 - **5d, `/hist`** ([#225]). The snapshot under the lock, the read outside it, paging, live streaming and pushed modifications, on the gateway's listener and the hub's.
 - **Differential test.** A gateway group over OpcServer's historizing pump nodes stores the same values OpcServer stores itself (spec *Hosts*). With matching thresholds, a group read and a pass-through read of the same range should agree apart from sampling, which gives a cross-check neither host has alone. Connection drops in that setup exercise the gap markers.
 

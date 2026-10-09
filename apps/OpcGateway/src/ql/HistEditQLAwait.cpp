@@ -4,8 +4,21 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	Ω dataValue( const HistQL::EditValue& e, const UA_DataType* type, SL sl )ε->Value{
-		Value y = e.Data.is_null() ? Value{ e.Status.value_or(UA_STATUSCODE_GOOD) } : Value{ e.Data, type, sl };
+	//A value that can't take its node's type refuses the call, naming its node and value (spec *Pass-through*).
+	Ω dataValue( const HistQL::EditValue& e, const NodeId& node, const UA_DataType* type, sv command, SL sl )ε->Value{
+		let typed = [&]()ε->Value{
+			if( e.Data.is_null() )
+				return Value{ e.Status.value_or(UA_STATUSCODE_GOOD) };
+			try{
+				return Value{ e.Data, type, sl };
+			}
+			catch( const std::exception& x ){
+				if( type )
+					throw Exception{ sl, {}, "{}:  {}'s value {} isn't a {}:  {}", command, node.ToString(), serialize(e.Data), type->typeName, x.what() };
+				throw Exception{ sl, {}, "{}:  {}'s value {} implies no type:  {}", command, node.ToString(), serialize(e.Data), x.what() };
+			}
+		};
+		Value y = typed();
 		y.hasStatus = e.Status.has_value();
 		y.status = e.Status.value_or( UA_STATUSCODE_GOOD );
 		if( e.Source ){
@@ -37,7 +50,7 @@ namespace Jde::Opc::Gateway{
 				vector<vector<Value>> values( count );//each node's, in the order named.
 				for( let& v : args.Values ){
 					if( !UA_StatusCode_isBad(statuses[v.Slot]) )
-						values[v.Slot].push_back( dataValue(v, types[v.Slot], _sl) );
+						values[v.Slot].push_back( dataValue(v, args.Nodes[v.Slot], types[v.Slot], args.Command(), _sl) );
 				}
 				for( uint i=0; i<count; ++i ){
 					if( UA_StatusCode_isBad(statuses[i]) )
