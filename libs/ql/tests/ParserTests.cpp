@@ -252,6 +252,65 @@ namespace Jde::QL::Tests{
 		EXPECT_NE( what("{a: true").find("Expected '}'"), string::npos ) << what( "{a: true" ); //the literal parsed; the object is what is unterminated.
 	}
 
+	//GHSA-p7cm-772p-hhgr: the arg pre-scan recursed once per nesting level with no bound, and runs before any session check - one
+	//frame of a few tens of KB overflowed the stack.  The depths here are far past what crashed it; each must now be an Exception.
+	Ω nested( uint depth, sv open, sv close, sv leaf )ι->string{
+		string y;
+		for( uint i=0; i<depth; ++i )
+			y += open;
+		y += leaf;
+		for( uint i=0; i<depth; ++i )
+			y += close;
+		return y;
+	}
+	Ω expectThrows( function<void()> f, sv expected )ι->void{
+		try{
+			f();
+			ADD_FAILURE() << "parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find(expected), string::npos ) << e.what();
+		}
+	}
+	constexpr uint Deep{ 200'000 };
+	TEST( ParserTests, DeepArgObjectThrows ){
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Deep, "{a:", "}", "1")+"}" ); }, "nest deeper" );
+		EXPECT_NO_THROW( Parser::ParseArgs("{a:"+nested(Parser::MaxArgDepth-1, "{a:", "}", "1")+"}") );//the outer object is level 1.
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Parser::MaxArgDepth, "{a:", "}", "1")+"}" ); }, "nest deeper" );
+	}
+	TEST( ParserTests, DeepArgArrayThrows ){
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Deep, "[", "]", "1")+"}" ); }, "nest deeper" );
+		EXPECT_NO_THROW( Parser::ParseArgs("{a:"+nested(Parser::MaxArgDepth-1, "[", "]", "1")+"}") );
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Parser::MaxArgDepth, "[", "]", "1")+"}" ); }, "nest deeper" );
+	}
+	//members are siblings, not nesting - the old memberValueParse recursed once per member anyway.
+	TEST( ParserTests, ManyArgMembersParse ){
+		string args{ "{" };
+		for( uint i=0; i<Deep; ++i )
+			args += Ƒ( "{}a{}:1", i ? "," : "", i );
+		args += "}";
+		EXPECT_EQ( Parser::ParseArgs(args).size(), Deep );
+	}
+	//the websocket shape:  the args of a query, through QL::Parse.
+	TEST( ParserTests, DeepQueryArgsThrow ){
+		const vector<sp<DB::AppSchema>> noSchemas;
+		expectThrows( [&]{ QL::Parse( "logs(a:"+nested(Deep, "[", "]", "1")+"){ id }", {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( "logs(a:"+nested(Deep, "{a:", "}", "1")+"){ id }", {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( "unsubscribe{ id:"+nested(Deep, "[", "]", "1")+" }", {}, noSchemas ); }, "nest deeper" );
+	}
+	//LoadTable recursed once per selection level.  `logs` and `setting` are system tables (a `logCreated` subscription keys at `logs`), so their children resolve no view and need
+	//no schema.  `{ logs{ a{ a id }} }` is `depth` levels for depth opening braces.
+	Ω selection( sv head, uint depth, sv open="{ a" )ι->string{ return Ƒ( "{{ {}{} }}", head, nested(depth, open, "}", " id") ); }
+	TEST( ParserTests, DeepSelectionThrows ){
+		const vector<sp<DB::AppSchema>> noSchemas;
+		expectThrows( [&]{ QL::Parse( selection("logs", Deep), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("logs", Deep, "{ ... on a"), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("mutation createSetting(id:1)", Deep), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("subscription logCreated", Deep), {}, noSchemas ); }, "nest deeper" );
+		EXPECT_NO_THROW( QL::Parse(selection("logs", Parser::MaxSelectionDepth), {}, noSchemas) );
+		expectThrows( [&]{ QL::Parse( selection("logs", Parser::MaxSelectionDepth+1), {}, noSchemas ); }, "nest deeper" );
+	}
+
 	TEST( MutationQLTests, IsMutation ){
 		EXPECT_TRUE( MutationQL::IsMutation("mutation") );
 		EXPECT_TRUE( MutationQL::IsMutation("createUser") );

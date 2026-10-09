@@ -13,6 +13,8 @@ namespace Jde::QL{
 			std::to_string(i);
 	}
 	struct Parser{
+		constexpr static uint MaxArgDepth{ 32 };//boost.json's own max_depth: deeper args would fail Json::Parse anyway.
+		constexpr static uint MaxSelectionDepth{ 16 };
 		Parser( string text, sv delimiters )ι: _text{move(text)}, _delimiters{delimiters}{}
 		α Next()ι->string;
 		α Next( char end )ε->string;
@@ -27,7 +29,7 @@ namespace Jde::QL{
 		α LoadSubscriptions( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas )ε->vector<Subscription>;
 		α LoadUnsubscriptions()ε->vector<SubscriptionId>;
 	private:
-		α LoadTable( string jsonName, sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool system=false, SRCE )ε->TableQL;
+		α LoadTable( string jsonName, sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas, bool system=false, uint depth=0, SRCE )ε->TableQL;
 
 		α LoadSubscription( sp<jobject> variables, const vector<sp<DB::AppSchema>>& schemas )ε->Subscription;
 		α ParseArgs()ε->jobject;

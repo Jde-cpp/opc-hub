@@ -105,8 +105,14 @@ namespace Jde::QL{
 		}
 		return i;
 	}
-	Ω parseValue( sv json, string& y )ε->uint;
-	Ω parseArray( sv json, string& y )ε->uint{
+	//GHSA-p7cm-772p-hhgr: parseValue <-> parseArray/parseObject recurse once per nesting level, and args are parsed before any
+	//session check - so the depth is capped, or one deeply nested frame overflows the stack and takes the process down.
+	Ω checkDepth( uint depth )ε->void{
+		THROW_IF( depth>Parser::MaxArgDepth, "Arguments nest deeper than {} levels.", Parser::MaxArgDepth );
+	}
+	Ω parseValue( sv json, string& y, uint depth )ε->uint;
+	Ω parseArray( sv json, string& y, uint depth )ε->uint{
+		checkDepth( ++depth );
 		uint i=0;
 		char ch = json[i++];
 		ASSERT( ch=='[' );
@@ -114,7 +120,7 @@ namespace Jde::QL{
 		i += parseWhitespace( json.substr(i), y );
 		THROW_IF( i>=json.size(), "Expected ']' vs '{}' @ '{}'.", json, i );
 		for( char ch = json[i]; ch!=']'; ch = json[i] ){
-			i += parseValue( json.substr(i), y );
+			i += parseValue( json.substr(i), y, depth );
 			i += parseWhitespace( json.substr(i), y );
 			THROW_IF( i>=json.size(), "Expected ']' vs '{}' @ '{}'.", json, i );
 			if( json[i]==',' )
@@ -205,16 +211,16 @@ namespace Jde::QL{
 		y += found;
 		return literal.size();
 	}
-	Ω parseObject( sv json, string& y )ε->uint;
-	Ω parseValue( sv json, string& y )ε->uint{
+	Ω parseObject( sv json, string& y, uint depth=0 )ε->uint;
+	Ω parseValue( sv json, string& y, uint depth )ε->uint{
 		uint i=0;
 		i += parseWhitespace( json.substr(i), y );
 		THROW_IF( i>=json.size(), "Unexpected end vs '{}' @ '{}'.", json, i );
 		char ch=json[i];
 		if( ch=='{' )
-			i += parseObject( json.substr(i), y );
+			i += parseObject( json.substr(i), y, depth );
 		else if( ch=='[' )
-			i += parseArray( json.substr(i), y );
+			i += parseArray( json.substr(i), y, depth );
 		else if( ch=='"' )
 			i += parseString( json.substr(i), y );
 		else if ( ch=='$' )
@@ -234,37 +240,36 @@ namespace Jde::QL{
 		return i;
 	}
 
-	Ω parseObject( sv json, string& y )ε->uint{
+	Ω parseObject( sv json, string& y, uint depth )ε->uint{
+		checkDepth( ++depth );
 		uint i=0;
 		ASSERT( json[i]=='{' );
 		y += json[i++];
-		function<void()> memberValueParse = [&]()->void {
-			i += parseWhitespace( json.substr(i), y );
-			THROW_IF( i>=json.size(), "Expected object to end '{}' @ '{}'.", json, i );
-			char ch = json[i];
-			if( ch=='}' )
-				return;
-			else if( ch=='"' )
-				i += parseString( json.substr(i), y )+1;
-			else{
-				string name{'"'};
-				for( ++i; ch!=':' && i<json.size(); ch=json[i++] ){
-					name += ch;
-					THROW_IF( i==json.size(), "Could not find ':' in '{}' @ {}", json, i );
-				}
-				y += Str::RTrim( move(name) )+'"';
-			}
-			y += ":";
-			i += parseValue( json.substr(i), y );
-			i+=parseWhitespace( json.substr(i), y );
-			THROW_IF( i>=json.size(), "Expected '}}' in '{}' @ '{}'.", json, i );
-			if( json[i]==',' ){
-				y += json[i++];
-				memberValueParse();
-			}
-		};
 		try{
-			memberValueParse();
+			for( ;; ){//a loop, not the self-calling std::function it was:  that recursed once per member.
+				i += parseWhitespace( json.substr(i), y );
+				THROW_IF( i>=json.size(), "Expected object to end '{}' @ '{}'.", json, i );
+				char ch = json[i];
+				if( ch=='}' )
+					break;
+				else if( ch=='"' )
+					i += parseString( json.substr(i), y )+1;
+				else{
+					string name{'"'};
+					for( ++i; ch!=':' && i<json.size(); ch=json[i++] ){
+						name += ch;
+						THROW_IF( i==json.size(), "Could not find ':' in '{}' @ {}", json, i );
+					}
+					y += Str::RTrim( move(name) )+'"';
+				}
+				y += ":";
+				i += parseValue( json.substr(i), y, depth );
+				i+=parseWhitespace( json.substr(i), y );
+				THROW_IF( i>=json.size(), "Expected '}}' in '{}' @ '{}'.", json, i );
+				if( json[i]!=',' )
+					break;
+				y += json[i++];
+			}
 		}
 		catch( std::logic_error e ){
 			throw Exception( SRCE_CUR, {}, move(e), "Could not parse '{}' @ '{}'.", json, i );
@@ -305,7 +310,8 @@ namespace Jde::QL{
 		return y;
 	}
 
-	α Parser::LoadTable( string jsonName, sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas, bool system, SL sl )ε->TableQL{//__type(name: "Account") { fields { name type { name kind ofType{name kind} } } }
+	α Parser::LoadTable( string jsonName, sp<jobject> vars, const vector<sp<DB::AppSchema>>& schemas, bool system, uint depth, SL sl )ε->TableQL{//__type(name: "Account") { fields { name type { name kind ofType{name kind} } } }
+		THROW_IF( ++depth>MaxSelectionDepth, "Selections nest deeper than {} levels @ '{}'.", MaxSelectionDepth, Index() );//GHSA-p7cm-772p-hhgr: recurses once per level, before any session check.
 		let j = Peek()=="(" ? ParseArgs() : jobject{};
 
 		TableQL table{ move(jsonName), j, vars, schemas, system, sl };
@@ -318,7 +324,7 @@ namespace Jde::QL{
 					//await grafts them, so they must take the FindView path (null DBTable is fine).  A merely system-*shaped* name
 					//- the `status`/`__x` heuristics in isSystem() - under a real table ("roles{ id status{ x } }") is a bogus
 					//sub-table and stays non-system so it hits GetViewPtr and throws "Could not find view", naming what it missed.
-					table.Tables.push_back( LoadTable(token, vars, schemas, system || _systemTables.contains(token), sl) );
+					table.Tables.push_back( LoadTable(token, vars, schemas, system || _systemTables.contains(token), depth, sl) );
 				}else{
 					THROW_IF( token==",", "don't separate columns with: ',' '{}' @ '{}'.", _text, Index()-1 );
 					//#43: an argument list written where a column belongs was taken literally - `{ (schema:$schemas)id slug }` came back
@@ -327,7 +333,7 @@ namespace Jde::QL{
 					THROW_IF( token=="(" || token==")", "'{}' is an argument list where a column belongs in '{}' @ '{}' - arguments go on the table, before its '{{'.", token, _text, Index()-1 );
 					if( token=="..." ){
 						THROW_IF( "on"!=Next(), "Expected 'on' after '...' in '{}' @ '{}'.", _text, Index()-1 );
-						table.InlineFragments.push_back( LoadTable(Next(), vars, schemas, system, sl) );
+						table.InlineFragments.push_back( LoadTable(Next(), vars, schemas, system, depth, sl) );
 						continue;
 					}
 					table.Columns.emplace_back( ColumnQL{string{token}} );
@@ -343,7 +349,7 @@ namespace Jde::QL{
 			if( alias.size() )
 				jsonName = Next();
 			let system = isSystem(jsonName) ? jsonName : string{};
-			auto table = LoadTable( move(jsonName), vars, schemas, system.size(), sl );
+			auto table = LoadTable( move(jsonName), vars, schemas, system.size(), 0, sl );
 			table.Alias = move(alias);
 			if( system.size() ){
 				if( system=="__type" ){
