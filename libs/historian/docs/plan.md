@@ -70,7 +70,7 @@ Each item is its own PR, useful without the historian.
   - `HistoryServerCapabilities` with its `AggregateFunctions` folder, and Median in OpcServer's own namespace.
   - `StartOfArchive`/`StartOfOnlineArchive`, at start and at each midnight.
 - **node\_index.** Carried forward in `FileStart`. A node the nodesets no longer historize gets a `NodeRemoved`.
-- **Access.** Read callbacks check each node's Read. Implement the two `ASSERT(false)` stubs at [`UAAccess.cpp:566`](../../../apps/OpcServer/src/access/UAAccess.cpp#L566).
+- **Access.** Read callbacks check each node's Read. Implement the two `ASSERT(false)` stubs at [`UAAccess.cpp:571`](../../../apps/OpcServer/src/access/UAAccess.cpp#L571): they answer Update and Delete on the node's enforced governing resource and refuse where none governs it, and `HistoryWrite` is left out of an unprotected node's `UserAccessLevel` (the spec's *Authorization*, [#237]).
 - **Bounded callbacks.** Each node's read stops at `maxReturnDataValues` or one day file, then returns a continuation point. Measure how long a callback holds the service lock under emulator load.
 - **Config.** A `hist` block in [`Opc.Server.jsonnet`](../../../apps/OpcServer/config/Opc.Server.jsonnet); `path` defaults to `hist/opc-server`.
 - **Test data.** Mark a handful of variables in [`pumps.NodeSet2.xml`](../../../apps/OpcServer/config/nodesets/pumps.NodeSet2.xml) `Historizing`, with HA configurations that cover every deviation format, a `MinTimeInterval` and a heartbeat. The PLC emulator's signals (sine, ramp, random walk, toggle) then exercise compression live; soak with it.
@@ -183,3 +183,4 @@ Slice A is the long one, since it carries all of storage. Its payoff is the chec
 [#224]: https://github.com/Jde-cpp/opc-hub/issues/224
 [#225]: https://github.com/Jde-cpp/opc-hub/issues/225
 [#226]: https://github.com/Jde-cpp/opc-hub/issues/226
+[#237]: https://github.com/Jde-cpp/opc-hub/issues/237
