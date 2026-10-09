@@ -13,7 +13,7 @@ namespace Jde::QL{
 	//ops/SelectAwait.cpp - a db value as json, rendered through the column's enum/flags/DateTime/Bit type when a column is given.
 	α ValueToJson( DB::Value&& dbValue, const ColumnQL* pMember=nullptr )ι->jvalue;
 	//types/Introspection.cpp - the __type and __schema documents SelectAwait answers from await_ready.
-	α QueryType( const TableQL& typeTable )ε->jobject;
+	α QueryType( const TableQL& typeTable, UserPK executer, SL sl )ε->jobject;
 	α QuerySchema( const TableQL& schemaTable )ε->jobject;
 	//types/Parser.cpp - a command SetSystemMutations registered.
 	α IsSystemMutation( sv command )ι->bool;

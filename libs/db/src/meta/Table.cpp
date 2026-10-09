@@ -115,9 +115,15 @@ namespace Jde::DB{
 	}
 	α Table::Authorize( Access::ERights rights, UserPK userPK, SL sl )Ε->void{
 		if( let p=Schema->Authorizer; p ){
+			using enum Access::ERights;
 			let owner = Owner.lock();//a ql view has no resource of its own - ResourceLoadAwait creates one per table.
+			let name = Names::ToJson( owner ? owner->Name : Name );
 			if( !empty(rights & Operations) ) // only test if the requested rights intersect with the table's enforced operations
-				p->Test( Schema->Name, Names::ToJson(owner ? owner->Name : Name), rights, userPK, sl );
+				p->Test( Schema->Name, name, rights, userPK, sl );
+			else if( !empty(rights & (Create|Update|Delete|Purge)) )//no resource row can grant a write outside the ops, nor enforce a read.
+				p->TestSystem( Schema->Name, name, rights, userPK, sl );
+			else
+				p->TestUser( userPK, sl );
 		}
 	}
 

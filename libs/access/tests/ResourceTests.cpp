@@ -56,7 +56,7 @@ namespace Jde::Access::Tests{
 		PurgeAcl( root, PermissionPK{GetId(rootGrant)}, system ); //or the resource row cannot be purged.
 		auto row = SelectResource( slug, root, true );
 		ASSERT_FALSE( row.empty() );
-		Purge( "resource", GetId(row), root ); //un-sync it - the next sync has to create it.
+		Purge( "resource", GetId(row), UserPK{UserPK::System} ); //un-sync it - the next sync has to create it.
 
 		//what the next start would enforce:  the loader (Authorize::Load) puts every active row into SchemaResources.  CreateResource
 		//registers an active row the same way now (appserver-review3 #13) - it used to fill only Resources, so the lockout was a restart
@@ -90,7 +90,7 @@ namespace Jde::Access::Tests{
 		if( auto grant = SelectAcl(root, slug); !grant.empty() )
 			PurgeAcl( root, PermissionPK{GetId(grant)}, system );
 		if( auto row = SelectResource(slug, root, true); !row.empty() )
-			Purge( "resource", GetId(row), root );
+			Purge( "resource", GetId(row), UserPK{UserPK::System} );
 
 		//a role references it -> access_role_add creates it, and (criteria-null, install-issues #25) bare and unenforced.
 		const RolePK rolePK{ GetId(Get("role", "roleSyncOpsFill", root)) };
@@ -108,7 +108,7 @@ namespace Jde::Access::Tests{
 		//restore the shipped state:  drop the test role and resource, let the sync recreate it, and give root its grant back.
 		Purge( "role", rolePK, root );
 		if( auto r = SelectResource(slug, root, true); !r.empty() )
-			Purge( "resource", GetId(r), root );
+			Purge( "resource", GetId(r), UserPK{UserPK::System} );
 		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );
 		CreateAcl( root, ERights::All, ERights::None, slug, system );
 	}
@@ -145,14 +145,14 @@ namespace Jde::Access::Tests{
 		if( !resources.size() ){
 			let& userTable = *GetTable( "users" );
 			let create = Ƒ( "mutation createResource( schemaName:\"access\", name:\"creator\", slug:\"{}\", criteria:\"{}\", rights:{} )", slug, filter, underlying(userTable.Operations) );
-			let createJson = QL().QuerySync<jvalue>( create, {}, GetRoot() );
+			let createJson = QL().QuerySync<jvalue>( create, {}, UserPK{UserPK::System} );
 			resources = selectResources( slug, filter );
 			ASSERT_EQ( resources.size(), 1 );
 		}
 		let id = GetId( Json::AsObject(resources[0]) );
 
 		let update = Ƒ( "mutation updateResource( \"id\":{}, \"allowed\": [\"Read\"] )", id );
-		let updateJson = QL().QuerySync<jvalue>( update, {}, GetRoot() );
+		let updateJson = QL().QuerySync<jvalue>( update, {}, UserPK{UserPK::System} );
 		let rights = selectResources(slug, filter)[0].at("allowed").as_array();
 		ASSERT_TRUE( rights.size()==1 );
 		ASSERT_EQ( Json::AsSV(rights[0]), "Read" );
@@ -168,7 +168,7 @@ namespace Jde::Access::Tests{
 
 		//access-review3 #18:  the purge used to be built and never run, and the closing assertion was about GroupTests' group -
 		//true in every ordering - so purgeResource had no coverage and the criteria-scoped `members` row leaked into the shared db.
-		QL().QuerySync<jvalue>( Ƒ("mutation purgeResource( id:{} )", id), {}, GetRoot() );
+		QL().QuerySync<jvalue>( Ƒ("mutation purgeResource( id:{} )", id), {}, UserPK{UserPK::System} );
 		ASSERT_TRUE( selectResources(slug, filter, true).empty() ); //gone, deleted rows included.
 	}
 
@@ -179,40 +179,40 @@ namespace Jde::Access::Tests{
 		constexpr sv schema{ "qlFlagTests" };
 		constexpr sv slug{ "flagNumeric" };
 		let select = Ƒ( R"(resources( schemaName:"{}", slug:"{}" ){{ id allowed }})", schema, slug );
-		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:[1,2] ))", schema, slug), {}, GetRoot()), Exception );
+		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:[1,2] ))", schema, slug), {}, UserPK{UserPK::System}), Exception );
 		EXPECT_TRUE( QL().QuerySync<jarray>(select, {}, GetRoot()).empty() ) << "the row was created with allowed=0";
 
 		//and the same array through the update path, which has always refused it - the two now refuse it in the same words.
-		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read"] ))", schema, slug), {}, GetRoot() );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read"] ))", schema, slug), {}, UserPK{UserPK::System} );
 		auto rows = QL().QuerySync<jarray>( select, {}, GetRoot() );
 		ASSERT_EQ( rows.size(), 1u );
 		let id = GetId( Json::AsObject(rows[0]) );
-		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation updateResource( id:{}, allowed:[1,2] ))", id), {}, GetRoot()), Exception );
+		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation updateResource( id:{}, allowed:[1,2] ))", id), {}, UserPK{UserPK::System}), Exception );
 		EXPECT_EQ( serialize(Json::AsObject(QL().QuerySync<jarray>(select, {}, GetRoot())[0]).at("allowed")), R"(["Read"])" );
-		Purge( "resource", id, GetRoot() );
+		Purge( "resource", id, UserPK{UserPK::System} );
 	}
 	//the control:  a flags array of names still inserts, which is the shape everything in tree sends.
 	TEST_F( ResourceTests, NamedFlagsStillInsert ){
 		constexpr sv schema{ "qlFlagTests" };
 		constexpr sv slug{ "flagNamed" };
-		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read","Update"] ))", schema, slug), {}, GetRoot() );
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read","Update"] ))", schema, slug), {}, UserPK{UserPK::System} );
 		let rows = QL().QuerySync<jarray>( Ƒ(R"(resources( schemaName:"{}", slug:"{}" ){{ id allowed }})", schema, slug), {}, GetRoot() );
 		ASSERT_EQ( rows.size(), 1u );
 		EXPECT_EQ( Json::AsArray(Json::AsObject(rows[0]), "allowed").size(), 2u );
-		Purge( "resource", GetId(Json::AsObject(rows[0])), GetRoot() );
+		Purge( "resource", GetId(Json::AsObject(rows[0])), UserPK{UserPK::System} );
 	}
 	TEST_F( ResourceTests, UnknownFlagNameIsAnErrorNotAWipe ){
 		constexpr sv schema{ "qlFlagTests" };
 		constexpr sv slug{ "flagTypo" };
 		let select = Ƒ( R"(resources( schemaName:"{}", slug:"{}" ){{ id allowed }})", schema, slug );
 		if( QL().QuerySync<jarray>(select, {}, GetRoot()).empty() )
-			QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read"] ))", schema, slug), {}, GetRoot() );
+			QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", allowed:["Read"] ))", schema, slug), {}, UserPK{UserPK::System} );
 		auto rows = QL().QuerySync<jarray>( select, {}, GetRoot() );
 		ASSERT_EQ( rows.size(), 1u );
 		let id = GetId( Json::AsObject(rows[0]) );
 		let before = serialize( Json::AsObject(rows[0]).at("allowed") );
 
-		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation updateResource( "id":{}, "allowed":["Reed"] ))", id), {}, GetRoot()), Exception );
+		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation updateResource( "id":{}, "allowed":["Reed"] ))", id), {}, UserPK{UserPK::System}), Exception );
 		let after = QL().QuerySync<jarray>( select, {}, GetRoot() );
 		ASSERT_EQ( after.size(), 1u );
 		EXPECT_EQ( serialize(Json::AsObject(after[0]).at("allowed")), before ); //unchanged - the update never ran, rather than running with 0.

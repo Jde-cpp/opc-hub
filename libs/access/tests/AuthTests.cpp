@@ -18,7 +18,7 @@ namespace Jde::Access::Tests{
 			OpcProviderId = GetId( o );
 		else{
 			let createQL = Ƒ( "createProvider( slug:\"{}\", providerType:{} ){{id}}", OpcServer, underlying(EProviderType::OpcServer) );
-			OpcProviderId = GetId( QL().QuerySync(createQL, {}, GetRoot()) );
+			OpcProviderId = GetId( QL().QuerySync(createQL, {}, UserPK{UserPK::System}) );//providers declares no ops - a write on it is the system's.
 		}
 	}
 

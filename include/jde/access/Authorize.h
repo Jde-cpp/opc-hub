@@ -16,6 +16,8 @@ namespace Jde::Access{
 		virtual ~Authorize()=default;
 
 		α Test( str schemaName, str resourceName, ERights rights, UserPK userPK, SRCE )ε->void override;
+		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
+		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;
 		α UserName( UserPK userPK )ι->string override;
 
@@ -67,7 +69,8 @@ namespace Jde::Access{
 		α Load( Identities&& identities, ResourcePermissions&& resources, flat_map<RolePK,Role>&& roles, flat_multimap<IdentityPK,PermissionRole>&& acl )ι->void;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindResourceLocked( const Resource& resource )Ι->const Resource*;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindActiveResourcePKLocked( str schemaName, str resourceName, str criteria )Ι->optional<ResourcePK>;
-		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>;//System is granted everything; Unauthorized = an unknown user, Forbidden = a deleted one.
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindUserLocked( UserPK executer )Ι->std::expected<const User*,EHttpStatus>;//null for the System; Unauthorized = an unknown user, Forbidden = a deleted one.
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>;//System is granted everything; errors as FindUserLocked.
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void;
 
 		string _app;

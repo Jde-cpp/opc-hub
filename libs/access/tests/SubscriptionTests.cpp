@@ -39,7 +39,7 @@ namespace Jde::Access::Tests{
 	Ω listen()ε->sp<TestListener>{ return listenTo( "subscription ResourcesDeleted{ resourcesDeleted(subscriptionId:$id){id slug} }" ); }
 	Ω createResource( sv slug, sv extraArgs="" )ε->void{
 		let ql = Ƒ( R"(mutation createResource( schemaName:"{0}", name:"{1} - name", slug:"{1}", description:"{1} - description"{2} ))", Schema, slug, extraArgs );
-		QL().QuerySync<jvalue>( ql, {}, GetRoot() );
+		QL().QuerySync<jvalue>( ql, {}, UserPK{UserPK::System} );//the row is an enforced root nobody administers - a create or update by anyone but the system needs Administer on every one.
 	}
 	Ω deleteResource( sv slug, sv extraArgs="" )ε->void{
 		QL().QuerySync<jvalue>( Ƒ(R"(mutation deleteResource( slug:"{}"{} ))", slug, extraArgs), {}, GetRoot() );
@@ -379,10 +379,11 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		constexpr sv slug{ "subIdLessDelete" };
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}" ){{ id }})", slug );
+		const UserPK system{ UserPK::System };
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) ) //a previous run's rows.
-			Purge( "resource", GetId(Json::AsObject(v)), root );
+			Purge( "resource", GetId(Json::AsObject(v)), system );
 		for( sv criteria : {"a", "b"} )
-			QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}", description:"{0}", criteria:"{1}", allowed:255 ))", slug, criteria), {}, root );
+			QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}", description:"{0}", criteria:"{1}", allowed:255 ))", slug, criteria), {}, system );
 		vector<uint32> ids;
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
 			ids.push_back( Json::AsNumber<uint32>(Json::AsObject(v), "id") );
@@ -396,7 +397,7 @@ namespace Jde::Access::Tests{
 			EXPECT_NO_THROW( Authorizer()->TestAdminResource(ResourcePK{id}, nobody) ) << "deleted in the cache as well - a deleted resource fail-opens";
 
 		for( let id : ids )
-			Purge( "resource", id, root );
+			Purge( "resource", id, system );
 		PurgeUser( nobody, root );
 	}
 
@@ -408,14 +409,14 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		constexpr sv slug{ "subAllSchemas" };
 		for( let id : resourceIds(slug) )//a previous run's row.
-			Purge( "resource", id, root );
+			Purge( "resource", id, UserPK{UserPK::System} );
 		createResource( slug, ", allowed:255" );
 		let ids = resourceIds( slug ); ASSERT_EQ( ids.size(), 1u );
 		const UserPK nobody{ GetId(GetUser("subAllSchemasNobody", root)) };
 		EXPECT_THROW( Authorizer()->TestAdminResource(ResourcePK{ids[0]}, nobody), Exception ) << "created in the cache, so enforced";
 		deleteResource( slug );
 		EXPECT_NO_THROW( Authorizer()->TestAdminResource(ResourcePK{ids[0]}, nobody) ) << "deleted in the cache as well";
-		Purge( "resource", ids[0], root );
+		Purge( "resource", ids[0], UserPK{UserPK::System} );
 		PurgeUser( nobody, root );
 	}
 
@@ -427,7 +428,7 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		constexpr sv slug{ "subAllSchemasRole" };
 		for( let id : resourceIds(slug) )//a previous run's row.
-			Purge( "resource", id, root );
+			Purge( "resource", id, UserPK{UserPK::System} );
 		createResource( slug, ", allowed:255" );
 		let ids = resourceIds( slug ); ASSERT_EQ( ids.size(), 1u );
 		let resourcePK = ResourcePK{ids[0]};
@@ -442,7 +443,7 @@ namespace Jde::Access::Tests{
 		BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ("mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK.Value, Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")), {}, Schemas()), UserPK{UserPK::System}} );
 		QL().QuerySync<jvalue>( Ƒ("purgeAcl( identity:{{ id:{} }}, role:{{ id:{} }} )", holder.Value, rolePK.Value), {}, root );
 		Purge( "role", rolePK, root );
-		Purge( "resource", resourcePK, root );
+		Purge( "resource", resourcePK, UserPK{UserPK::System} );
 		PurgeUser( holder, root );
 	}
 
