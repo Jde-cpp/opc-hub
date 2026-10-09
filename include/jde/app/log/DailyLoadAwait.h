@@ -12,7 +12,6 @@ namespace Jde::App{
 		using base=TAwaitEx<vector<App::Log::Proto::FileEntry>,TAwait<CoLockGuard>::Task>;
 		DailyLoadAwait( fs::path file, EDailyLoad mode=EDailyLoad::Query, SRCE )ι:base{sl},_file{ move(file) },_mode{mode}{}
 		α Execute()ι->TAwait<CoLockGuard>::Task;
-		α Read( optional<CoLockGuard> )ι->TAwait<string>::Task;
 	private:
 		fs::path _file;
 		EDailyLoad _mode;

@@ -1,28 +1,16 @@
 #include <jde/app/log/ProtoLog.h>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/co/LockKey.h>
-#include <jde/fwk/co/Timer.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/fwk/io/FileAwait.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/app/proto/app.FromClient.h>
 #include <jde/app/proto/LogProto.h>
 #include "ArchiveAwait.h"
-#include <thread>
 
 #define let const auto
 
 namespace Jde::App{
 	using Protobuf::ToGuid;
-	//Held as a local by every ProtoLog coroutine that resumes into `this`, so the count falls when the frame is destroyed however it
-	//exits - return, co_return or an exception.  An atomic rather than a _mutex-guarded field: these frames drop and retake _mutex
-	//around their awaits, so a destructor that took the lock could deadlock against one of them.
-	struct Running final{
-		Running( atomic<uint>& n )ι:_n{n}{ ++_n; }
-		~Running(){ --_n; }
-	private:
-		atomic<uint>& _n;
-	};
 	//The day the daily file's *content* belongs to - not today's.  Seeding from now() meant a service that starts and stops
 	//within one day never saw a day change, so _needsArchive was never set and log.binpb accumulated across every restart
 	//cycle forever, with every logs() query deserializing the whole thing.  Only a process that happened to stay up across
@@ -41,16 +29,12 @@ namespace Jde::App{
 		return Chrono::LocalYMD( ec ? Clock::now() : Chrono::ToClock<Clock, fs::file_time_type::clock>(written), tz );
 	}
 	ProtoLog::ProtoLog( const jobject& settings )ε:
-		Logging::ILogger{ settings },
-		_delay{ Json::FindDuration(settings, "delay", ELogLevel::Error).value_or(1min) },
-		_maxBufferSize{ std::max<uint32>(Json::FindNumber<uint32>(settings, "maxBuffer").value_or(4*1024*1024), _delaySize*4u) },
+		BufferedLogger{ settings, std::max<uint32>(Json::FindNumber<uint32>(settings, "maxBuffer").value_or(4*1024*1024), _delaySize*4u) },
 		_root{ Json::FindString(settings, "path").value_or((Process::AppDataFolder()/"logs").string()) },
 		_tz{ Json::FindTimeZone(settings, "timeZone", *std::chrono::current_zone()) },
 		_today{ dailyFileDay(DailyFile(), _tz) }{//_root and _tz are declared before _today, so both are live here.
 		if( fs::exists(DailyFile()) )
 			_dailyFileStart = TimePoint::min();
-		Executor();//locks up if starts in StartTimer.
-		Execution::Run();
 		Process::AddShutdownFunction( [](bool /*terminate*/, SL){	//member Shutdown gets called after timer thread shutdown.
 			if( auto log = Logging::FindLogger<App::ProtoLog>(); log )
 				log->StopTimer();
@@ -63,11 +47,7 @@ namespace Jde::App{
 		}
 	}
 	ProtoLog::~ProtoLog(){
-		StopTimer();//_delay=min() first, so the cancelled timer's continuation re-arms nothing.
-		//Poll, as ~RemoteLog does.  The wait is unbounded for the same reason and with the same caveat (C10): a cancel completion
-		//posted to an io_context that has already stopped never runs, and then only the watchdog ends this.
-		while( _running )
-			std::this_thread::sleep_for( 1ms );
+		Stop();
 	}
 	α ProtoLog::Init()ι->void{
 		Logging::Add<ProtoLog>( "proto" );
@@ -99,30 +79,19 @@ namespace Jde::App{
 		}
 		ERR( "Shutdown could not take the daily file's lock - {} buffered bytes dropped rather than interleaved into it.", dropped );//outside _mutex: this reaches the loggers that are still alive.
 	}
-	α ProtoLog::Deserialize( sv bytes )ε->vector<App::Log::Proto::FileEntry>{
-		return Protobuf::DeserializeVector<App::Log::Proto::FileEntry>( bytes );
-	}
-
 	α ProtoLog::Write( const Logging::Entry& e )ι->void{
-		if( !empty(e.Tags & _tags) )//recursion guard
-			return;
-		auto proto = LogProto::LogEntryFile( e );
-		App::Log::Proto::FileEntry fileEntry;
-		*fileEntry.mutable_entry() = move( proto );
-		Write( e, move(fileEntry) );
+		if( empty(e.Tags & _tags) )//recursion guard
+			Write( e, LogProto::LogEntryFile(e) );
 	}
-
 	α ProtoLog::Write( const Logging::Entry& e, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{
 		if( !appPK || !instancePK || (appPK==_appPK && instancePK==_instancePK) )
-			return Write( e );
-		if( !empty(e.Tags & _tags) )//recursion guard
-			return;
-		auto proto = LogProto::LogEntryFile( e, appPK, instancePK );
-		App::Log::Proto::FileEntry fileEntry;
-		*fileEntry.mutable_external_entry() = move( proto );
-		Write( e, move(fileEntry) );
+			Write( e );
+		else if( empty(e.Tags & _tags) )//recursion guard
+			Write( e, LogProto::LogEntryFile(e, appPK, instancePK) );//the non-zero app_pk is what marks it forwarded.
 	}
-	α ProtoLog::Write( const Logging::Entry& e, App::Log::Proto::FileEntry&& fileEntry )ι->void{
+	α ProtoLog::Write( const Logging::Entry& e, App::Log::Proto::LogEntryFile&& entry )ι->void{
+		App::Log::Proto::FileEntry fileEntry;
+		*fileEntry.mutable_entry() = move( entry );
 		auto data = Protobuf::SizePrefixed( fileEntry );
 		_mutex.lock();
 		_dailyFileStart = std::min<TimePoint>( _dailyFileStart, e.Time );//inside the lock: read by the query coroutine, written by every logging thread.
@@ -133,40 +102,27 @@ namespace Jde::App{
 		AddString( e.Id(), e.Text );
 		AddString( e.FileId(), e.File() );
 		AddString( e.FunctionId(), e.Function() );
-		switch( fileEntry.value_case() ){
-			case App::Log::Proto::FileEntry::kEntry:
-				AddArguments( e.Arguments, fileEntry.entry().args() );
-			break;
-			case App::Log::Proto::FileEntry::kExternalEntry:
-				AddArguments( e.Arguments, fileEntry.external_entry().args() );
-			break;
-			default:
-				ASSERTX( false );
-		}
+		AddArguments( e.Arguments, fileEntry.entry().args() );
 
 		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );
-		let dropped = DropBufferUnlocked();//M5: the buffer grows between retries too, not only on the failures themselves.
+		let firstDrop = Cap();//M5: the buffer grows between retries too, not only on the failures themselves.
 		if( _toSave.size()>=_delaySize && !_flushFailed )
 			Save();//unlocks _mutex.
 		else{
-			if( !_timer )
-				StartTimer();
+			ArmTimer();
 			_mutex.unlock();
 		}
-		if( dropped )//outside the lock - this reaches the other loggers.
-			WARN( "The daily log buffer passed its {:L} byte cap while '{}' was unwritable - dropped {:L} buffered bytes.", _maxBufferSize, DailyFile().string(), dropped );
+		if( firstDrop )//outside the lock - this reaches the other loggers.
+			WARN( "The daily log buffer passed its {:L} byte cap while '{}' was unwritable - dropping the oldest.", MaxSize(), DailyFile().string() );
 	}
 
-	//M5: the one bound on a buffer that otherwise grows for as long as the daily file is unwritable (ENOSPC, EIO, a path made
-	//read-only).  Trims the oldest, down to half the cap - as RemoteLog does ([`RemoteLog.cpp:65-71`]) - so the newest entries, the
-	//ones describing whatever is going wrong, are the ones kept.
+	//M5: the daily file has been unwritable (ENOSPC, EIO, a path made read-only) for as long as it took to pass the cap.  Trims the
+	//oldest, down to half the cap.
 	//Whole records, never bytes: the buffer is a [4-byte big-endian length][body] stream (Protobuf::SizePrefixed), and cutting
 	//mid-record would leave a file DeserializeVector reads as garbage and silently stops at - #2, self-inflicted.
 	//_dailyFileStart is deliberately left where it is: it is a lower bound, and one that is too low only costs a read.
-	α ProtoLog::DropBufferUnlocked()ι->uint{
-		if( _toSave.size()<=_maxBufferSize )
-			return 0;
-		let target = (uint)_maxBufferSize/2;
+	α ProtoLog::Drop()ι->uint{
+		let target = MaxSize()/2;
 		uint offset{};
 		while( _toSave.size()-offset>target && offset+4<=_toSave.size() ){
 			uint32 length{};
@@ -179,10 +135,9 @@ namespace Jde::App{
 		_toSave.erase( _toSave.begin(), std::next(_toSave.begin(), (ptrdiff_t)offset) );
 		//AddString emits each id once and _cache remembers it, so the dropped prefix may have held the only copy of a string a
 		//surviving entry names - a repeated template, or the file/function pair emitted with the first entry from a call site.
-		//Clearing makes the next entry re-emit them, and that is enough: ArchiveFile::Append collects every string in a pass of its
+		//Clearing makes the next entry re-emit them, and that is enough: ArchiveQuery::Append collects every string in a pass of its
 		//own before resolving any entry, so a record written *after* the entry naming it still resolves it.
 		_cache.Clear();
-		_droppedBytes += offset;
 		return offset;
 	}
 	//L1: the buffer, plus every batch that has left it and not yet reached the file.  In flush order, and older than anything still
@@ -191,7 +146,7 @@ namespace Jde::App{
 		ul _{ _mutex };
 		vector<App::Log::Proto::FileEntry> y;
 		auto append = [&y]( const vector<byte>& bytes ){
-			auto parsed = Deserialize( sv{(char*)bytes.data(), bytes.size()} );
+			auto parsed = Protobuf::DeserializeVector<App::Log::Proto::FileEntry>( sv{(char*)bytes.data(), bytes.size()} );
 			y.insert( y.end(), make_move_iterator(parsed.begin()), make_move_iterator(parsed.end()) );
 		};
 		for( let& [_, batch] : _inFlight )
@@ -200,11 +155,11 @@ namespace Jde::App{
 		return y;
 	}
 	α ProtoLog::Save()ι->TAwait<CoLockGuard>::Task{
-		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
+		Running _{ *this };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		auto toSave = move( _toSave );
 		let flushId = ++_flushId;
 		_inFlight.emplace( flushId, toSave );//L1: visible here until it is durable - the copy is one batch, and IO::WriteAwait already takes one.
-		ResetTimerUnlocked();//_mutex is held on entry and released below.
+		ResetTimerUnlocked();//a size flush restarts the round's delay, or ends the round if nothing follows.  _mutex is held on entry and released below.
 		_toSave = {};
 		_toSave.reserve( toSave.size() );
 		_cache.Trim();
@@ -212,35 +167,34 @@ namespace Jde::App{
 		Save( move(toSave), flushId, co_await LockKeyAwait{DailyFile().string()} );
 	}
 	α ProtoLog::Save( vector<byte> toSave, uint flushId, CoLockGuard )ι->VoidAwait::Task{
-		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
+		Running _{ *this };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		try{
 			TRACE( "Saving {} bytes to {}", toSave.size(), DailyFile().string() );
 			//NOT _dailyFileStart = max() here.  A flush moves entries from the buffer into the daily file - both of which are
-			//"local" - so parking the bound at max() after every successful flush told LogAwait::ShouldReadLocal that nothing
+			//"local" - so parking the bound at max() after every successful flush told LogQLAwait's read-local check that nothing
 			//was local at all: `*_endTime > max` is false for any finite bound, so every time-bounded query silently skipped
 			//the whole of today's log and answered out of the archives alone.  The bound is only released when the round
 			//below actually takes the file away.
 			co_await IO::WriteAwait( DailyFile(), vector<byte>{toSave}, true, IO::EWriteMode::Append, _tags );
 		}
 		catch( const runtime_error& ){
-			bool firstFailure; uint dropped; Duration delay;
+			bool firstFailure, firstDrop; Duration delay;
 			{
 				ul _{ _mutex };
 				firstFailure = !_flushFailed;
 				_flushFailed = true;
 				_inFlight.erase( flushId );//back out of flight before it goes back in the buffer, or Entries() would report it twice.
 				_toSave.insert( _toSave.begin(), toSave.begin(), toSave.end() );//prepend: strings must precede the entries referencing them.
-				dropped = DropBufferUnlocked();
-				delay = _delay;
-				if( !_timer )
-					StartTimer();//the retry must not depend on another log line arriving - StartTimer returns at its first suspend with _mutex still held.
+				firstDrop = Cap();
+				delay = Delay();
+				ArmTimer();//the retry must not depend on another log line arriving.
 			}
 			//M5: the failure had no line of its own - only the IOException's, one per log line written, which said nothing about the
 			//buffer behind it.  Once per outage, not once per flush.
 			if( firstFailure )
 				WARN( "Could not write the daily log file '{}' - buffering, and retrying every {}.", DailyFile().string(), Chrono::ToString(delay) );
-			if( dropped )
-				WARN( "The daily log buffer passed its {:L} byte cap while '{}' was unwritable - dropped {:L} buffered bytes.", _maxBufferSize, DailyFile().string(), dropped );
+			if( firstDrop )
+				WARN( "The daily log buffer passed its {:L} byte cap while '{}' was unwritable - dropping the oldest.", MaxSize(), DailyFile().string() );
 			co_return;
 		}
 		{//recovered: say so, and account for what the outage cost.
@@ -250,7 +204,7 @@ namespace Jde::App{
 				_inFlight.erase( flushId );//durable now, and readable from the file - Entries() must stop reporting it.
 				if( (recovered = _flushFailed) ){
 					_flushFailed = false;
-					dropped = std::exchange( _droppedBytes, 0u );
+					dropped = TakeDropped();
 				}
 			}
 			if( recovered )
@@ -285,7 +239,7 @@ namespace Jde::App{
 		Archive();
 	}
 	α ProtoLog::Archive()ι->VoidAwait::Task{
-		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
+		Running _{ *this };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		try{
 			co_await ArchiveAwait{ DailyFile(), _root, _tz };
 			ul _{ _mutex };
@@ -310,7 +264,7 @@ namespace Jde::App{
 		App::Log::Proto::FileEntry fileEntry;
 		*fileEntry.mutable_str() = LogProto::ToString( id, string{str} );
 		auto data = Protobuf::SizePrefixed( fileEntry );
-		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );//TODO copy in SizePrefixed
+		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );
 	}
 	α ProtoLog::AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void{
 		ASSERTX( args.size()==(uint)ids.size() );
@@ -318,48 +272,6 @@ namespace Jde::App{
 			AddString( ToGuid(ids.Get((int)i)), args[i], _cache.Args );
 	}
 
-	//Not analyzed:  entered with _mutex held - the caller's - until the first suspend, then retakes it in the continuation.
-	ABSL_NO_THREAD_SAFETY_ANALYSIS α ProtoLog::StartTimer()ι->TimerAwait::Task{
-		Running _{ _running };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
-		if( _delay==Duration::min() )
-			co_return;
-		_timer = mu<DurationTimer>( _delay, SRCE_CUR );
-		let finished = co_await *_timer;
-		if( finished ){
-			_mutex.lock();
-			_timer = nullptr;//let Write restart the timer for subsequent entries.
-			if( !_toSave.empty() )
-				Save();//unlocks _mutex.
-			else
-				_mutex.unlock();
-		}
-		else{
-			ul _{ _mutex };
-			if( _toSave.size() )
-				StartTimer();
-			else
-				_timer = nullptr;
-		}
-	}
-
-	//StartTimer's continuation nulls _timer - destroying the DurationTimer - under this same lock, so
-	//an unguarded `if( _timer ) _timer->Cancel()` could pass the test on the shutdown thread and then call Cancel() on
-	//freed memory once the io thread ran the continuation.  Every other _timer access was already guarded; this one was
-	//not, only because Save() calls it with the lock already held.
-	//Safe to hold _mutex across Cancel(): it takes the DurationTimer's own lock and calls asio's cancel(), which *posts*
-	//the completion - the continuation that re-takes _mutex never runs on this stack, so there is no re-entry to deadlock
-	//on, and the lock order is only ever ProtoLog -> DurationTimer.
-	α ProtoLog::ResetTimerUnlocked()ι->void{
-		if( _timer )
-			_timer->Cancel();
-	}
-	//One locked operation, because it is two writes: _delay is read by StartTimer under _mutex, so setting it from the
-	//shutdown thread without the lock raced the very timer being cancelled.  min() is the sentinel StartTimer bails on.
-	α ProtoLog::StopTimer()ι->void{
-		ul _{ _mutex };
-		_delay = Duration::min();
-		ResetTimerUnlocked();
-	}
 	α ProtoLogCache::Touch( flat_map<uuid,uint>& cache, uuid id )ι->bool{
 		let added = cache.try_emplace( id, ++Sequence );
 		if( !added.second )

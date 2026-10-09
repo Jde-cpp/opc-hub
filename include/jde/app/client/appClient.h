@@ -1,33 +1,32 @@
 #pragma once
 #include <jde/fwk/co/Timer.h>
 #include <jde/web/Jwt.h>
-#include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/app/proto/App.FromServer.pb.h>
 #include <jde/app/client/usings.h>
-#include <jde/app/client/exports.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 
 namespace Jde::QL{ struct IQL; }
 namespace Jde::Access{ struct IAcl; struct Authorize;}
 namespace Jde::DB{ struct IDataSource; struct AppSchema; }
 namespace Jde::App::Client{
 	struct IAppClient;
-	α IsSsl()ι->bool;
-	α Host()ι->string;
-	α Port()ι->PortType;
+	//The /server/* settings - where this process's AppServer is.  Not the live session's IsSsl()/Host(), which describe its stream.
+	namespace ServerSettings{
+		α IsSsl()ι->bool;
+		α Host()ι->string;
+		α Port()ι->PortType;
+	}
 	α InstanceName()ι->string;//settings "/instanceName", else Debug/Release - the name the AppServer registers this process under
 
 	struct ConnectAwait final : VoidAwait{
 		ConnectAwait( sp<IAppClient> appClient, bool retry, SRCE )ι;
 	private:
-		α Suspend()ι->void{ HttpLogin(); }
-		α HttpLogin()ι->TAwait<SessionPK>::Task;
-		α RunSocket( SessionPK sessionId )ι->TAwait<Proto::FromServer::ConnectionInfo>::Task;
-		α Retry( const runtime_error& e )ι->DurationTimer::Task;//logs why, waits out /server/reconnectWait from the attempt's start, logs in again.
+		α Suspend()ι->void{ Execute(); }
+		//Logs in over http, opens the socket and handshakes.  With _retry a failure is logged, /server/reconnectWait is waited
+		//out from the attempt's start, and the whole attempt runs again.
+		α Execute()ι->VoidAwait::Task;
 
 		sp<IAppClient> _appClient;
 		bool _retry;
-		steady_clock::time_point _attemptStart{};//HttpLogin sets it: the wait is measured from here, so the cadence is the setting's whatever a refused connect costs.
 	};
 	α Connect( sp<IAppClient> appClient )ι->ConnectAwait::Task;
 }

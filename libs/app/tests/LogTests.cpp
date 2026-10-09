@@ -13,6 +13,7 @@
 #include <jde/fwk/io/protobuf.h>
 #include <jde/fwk/str.h>
 #include <jde/ql/ql.h>
+#include <jde/app/log/ArchiveQuery.h>
 #include <jde/app/log/DailyLoadAwait.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/log/ProtoLog.h>
@@ -25,8 +26,8 @@ namespace Jde::App::Tests{
 	struct LogTests : ::testing::Test{
 	protected:
 		α Log()ι->App::ProtoLog&{ return Logging::GetLogger<App::ProtoLog>(); }
-		//<root>/<year>/<month>/<day>/archive.binpb - one file per local day, so each test owns a date of its own.
-		α ArchiveFile( uint day )ι->fs::path{ return Log().Root()/"2025"/"1"/std::to_string(day)/"archive.binpb"; }
+		//One archive per local day, so each test owns a date of its own.
+		α DayArchivePath( uint day )ι->fs::path{ return App::ArchiveDayFile( Log().Root(), {std::chrono::year{2025}, std::chrono::month{1}, std::chrono::day{(unsigned)day}} ); }
 		//An entry dated other than today flags ProtoLog for archiving; today-dated filler flips the day back and fills
 		//the flush buffer, so the round runs without waiting out the delay.
 		//Poll, never sleep a fixed interval.  A round rewrites *today's* archive whole, and that file grows with every run
@@ -48,7 +49,7 @@ namespace Jde::App::Tests{
 				Log().Write( e );
 			for( uint i=0; i<filler; ++i ){
 				Log().Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("{} filler {}", text, i)} );
-				if( filler<=100 && fs::exists(ArchiveFile(day)) )
+				if( filler<=100 && fs::exists(DayArchivePath(day)) )
 					break;
 			}
 			return e.Id();
@@ -76,34 +77,35 @@ namespace Jde::App::Tests{
 		using enum Log::Proto::FileEntry::ValueCase;
 		bool found{};
 		//Query mode merges the unflushed buffer with the file, so this holds whether or not the write above happened to flush.
-		for( let& fe : BlockAwait<TAwait<vector<Log::Proto::FileEntry>>,vector<Log::Proto::FileEntry>>(App::DailyLoadAwait(Log().DailyFile())) )
+		for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log().DailyFile()) ) )
 			found = found || (fe.value_case()==kEntry && Protobuf::ToGuid(fe.entry().template_id())==e.Id());
 		EXPECT_TRUE( found ) << "the entry just written is not in the merged buffer+file view";
 	}
 
 	TEST_F( LogTests, Archive ){
-		let archiveFile = ArchiveFile( 1 );
+		let archiveFile = DayArchivePath( 1 );
 		if( fs::exists(archiveFile) )
 			fs::remove( archiveFile );
 		Round( 1, "Test message", 100 );
 		DBG( "archiveFile: {}", archiveFile.string() );
 		ASSERT_TRUE( WaitForFile(archiveFile) );
 		auto content = BlockTAwait<string>( IO::ReadAwait(archiveFile) );
-		ASSERT_NO_THROW( Protobuf::Deserialize<App::Log::Proto::ArchiveFile>(move(content)) );
+		ASSERT_NO_THROW( Protobuf::Deserialize<DayArchive>(move(content)) );
 	}
 
 	TEST_F( LogTests, ArchiveExternal ){
-		let archiveFile = ArchiveFile( 2 );
+		let archiveFile = DayArchivePath( 2 );
 		if( fs::exists(archiveFile) )
 			fs::remove( archiveFile );
 		let id = Round( 2, "External test message", 100, std::pair<uint32,uint32>{123,456} );
 		ASSERT_TRUE( WaitForFile(archiveFile) );
 		auto content = BlockTAwait<string>( IO::ReadAwait(archiveFile) );
-		App::Log::Proto::ArchiveFile archive;
-		ASSERT_NO_THROW( archive = Protobuf::Deserialize<App::Log::Proto::ArchiveFile>(move(content)) );
-		optional<App::Log::Proto::LogEntryFileExternal> external;
-		for( int i=0; i<archive.externalentries_size() && !external; ++i ){
-			if( let& x = archive.externalentries(i); x.app_pk()==123 && x.app_instance_pk()==456 )
+		DayArchive archive;
+		ASSERT_NO_THROW( archive = Protobuf::Deserialize<DayArchive>(move(content)) );
+		EXPECT_EQ( archive.externalentries_size(), 0 ) << "a forwarded entry is a LogEntryFile with its app_pk set";
+		optional<App::Log::Proto::LogEntryFile> external;
+		for( int i=0; i<archive.entries_size() && !external; ++i ){
+			if( let& x = archive.entries(i); x.app_pk()==123 && x.app_instance_pk()==456 )
 				external = x;
 		}
 		ASSERT_TRUE( external );
@@ -115,7 +117,7 @@ namespace Jde::App::Tests{
 	}
 
 	// Regression, two ways a round could write an entry it had already archived:
-	//   1. ArchiveFileAwait::Save appended the fully-merged archive to the very file it had just merged from, so every
+	//   1. the old ArchiveFileAwait::Save appended the fully-merged archive to the very file it had just merged from, so every
 	//      round wrote back everything already on disk - archive.binpb grew ~x3.7 per round until it no longer parsed
 	//      and aborted the suite.
 	//   2. the round archived ProtoLog's unflushed buffer as well as the daily file, but deleted only the file, so an
@@ -124,10 +126,10 @@ namespace Jde::App::Tests{
 	//      often than debug).
 	// Either way, a second round must not duplicate the first round's entries.
 	TEST_F( LogTests, ArchiveReplacesFile ){
-		let archiveFile = ArchiveFile( 3 );
+		let archiveFile = DayArchivePath( 3 );
 		if( fs::exists(archiveFile) )
 			fs::remove( archiveFile );
-		auto count = []( const App::Log::Proto::ArchiveFile& archive, const uuid& id )ι->uint{
+		auto count = []( const DayArchive& archive, const uuid& id )ι->uint{
 			uint y{};
 			for( int i=0; i<archive.entries_size(); ++i )
 				y += Protobuf::ToGuid( archive.entries(i).template_id() )==id;
@@ -136,12 +138,12 @@ namespace Jde::App::Tests{
 		//the archive is written asynchronously & rewritten in place, so a read can catch it mid-write - retry until
 		//`until` lands, then let the round quiesce: the round's remaining entries are still arriving (and a later flush
 		//can start another round), so a count sampled the instant an entry appears is still moving.
-		auto archived = [&archiveFile,&count]( const uuid& until )ι->App::Log::Proto::ArchiveFile{
-			App::Log::Proto::ArchiveFile y;
+		auto archived = [&archiveFile,&count]( const uuid& until )ι->DayArchive{
+			DayArchive y;
 			for( int i=0; i<100; ++i ){
 				try{
 					if( fs::exists(archiveFile) ){
-						auto archive = Protobuf::Deserialize<App::Log::Proto::ArchiveFile>( BlockTAwait<string>(IO::ReadAwait(archiveFile)) );
+						auto archive = Protobuf::Deserialize<DayArchive>( BlockTAwait<string>(IO::ReadAwait(archiveFile)) );
 						if( count(archive, until) ){
 							if( y.entries_size()==archive.entries_size() )//unchanged over the last interval - settled.
 								return archive;
@@ -166,21 +168,21 @@ namespace Jde::App::Tests{
 
 	//#4: the string-dedup cache used to outlive the daily file a round deletes.  AddString suppresses a kStr whose id is
 	//already cached, and a round builds its String table only from the kStr records still in the daily file - so a string
-	//first emitted before a round was silently absent from every later archive, ArchiveFile::find returned Str::Empty(),
+	//first emitted before a round was silently absent from every later archive, ArchiveQuery::find returned Str::Empty(),
 	//and the log page rendered a blank message/file/function for every historical entry.  Two rounds a day apart sharing
 	//one template text is the whole reproduction: the second round's id is cached, so its String never gets written.
 	TEST_F( LogTests, ArchiveStringsSurviveRound ){
 		constexpr sv text{ "ArchiveStringsSurviveRound shared template" };
 		for( let d : {10u, 11u} )
-			if( fs::exists(ArchiveFile(d)) )
-				fs::remove( ArchiveFile(d) );
-		//an entry and the strings it references are written in one ArchiveFile message, so an archive that parses and holds
+			if( fs::exists(DayArchivePath(d)) )
+				fs::remove( DayArchivePath(d) );
+		//an entry and the strings it references are written in one DayArchive message, so an archive that parses and holds
 		//the entry holds whatever strings that write carried - no settle loop needed, only a retry past a partial read.
-		auto archivedWith = []( const fs::path& file, const uuid& id )ι->optional<App::Log::Proto::ArchiveFile>{
+		auto archivedWith = []( const fs::path& file, const uuid& id )ι->optional<DayArchive>{
 			for( uint i=0; i<100; ++i ){
 				try{
 					if( fs::exists(file) ){
-						auto archive = Protobuf::Deserialize<App::Log::Proto::ArchiveFile>( BlockTAwait<string>(IO::ReadAwait(file)) );
+						auto archive = Protobuf::Deserialize<DayArchive>( BlockTAwait<string>(IO::ReadAwait(file)) );
 						for( int e=0; e<archive.entries_size(); ++e ){
 							if( Protobuf::ToGuid(archive.entries(e).template_id())==id )
 								return archive;
@@ -193,7 +195,7 @@ namespace Jde::App::Tests{
 			}
 			return nullopt;
 		};
-		auto templateValue = []( const App::Log::Proto::ArchiveFile& archive, const uuid& id )ι->optional<string>{
+		auto templateValue = []( const DayArchive& archive, const uuid& id )ι->optional<string>{
 			for( int i=0; i<archive.templates_size(); ++i ){
 				if( Protobuf::ToGuid(archive.templates(i).id())==id )
 					return archive.templates( i ).value();
@@ -202,12 +204,12 @@ namespace Jde::App::Tests{
 		};
 
 		let id = Round( 10, text, 200 );//both rounds share the text, so both share this md5 template id.
-		let first = archivedWith( ArchiveFile(10), id );
+		let first = archivedWith( DayArchivePath(10), id );
 		ASSERT_TRUE( first ) << "first round's entry never archived";
 		ASSERT_EQ( templateValue(*first, id), string{text} );//sanity: the first round was never the broken one.
 
 		ASSERT_EQ( Round(11, text, 200), id );
-		let second = archivedWith( ArchiveFile(11), id );
+		let second = archivedWith( DayArchivePath(11), id );
 		ASSERT_TRUE( second ) << "second round's entry never archived";
 		EXPECT_EQ( templateValue(*second, id), string{text} ) << "the second round archived the entry with no String for its template - the dedup cache outlived the daily file the first round deleted";
 	}
@@ -341,7 +343,7 @@ namespace Jde::App::Tests{
 		SUCCEED() << "20 build/write/tear-down cycles with a timer armed, clean under ASan";
 	}
 
-	//#7: _dailyFileStart is what LogAwait::ShouldReadLocal (`!_endTime || *_endTime > _dailyFileStart`) consults to decide
+	//#7: _dailyFileStart is what LogQLAwait's read-local check (`!end || *end > DailyFileStart()`) consults to decide
 	//whether today's log can hold anything in range.  It has to be a *lower* bound on everything reachable locally - the
 	//daily file and the unflushed buffer both - because reading a file with nothing in range costs one read, while skipping
 	//one that does costs the entries.  The seeding cases need no writes, so they reuse the scratch-logger harness.
@@ -396,42 +398,41 @@ namespace Jde::App::Tests{
 	}
 
 	//#9: the attribution check read ProgramPK/InstancePK, which nothing ever assigned - indeterminate, so any forwarded
-	//entry whose ids happened to match the garbage was silently downgraded from kExternalEntry to kEntry and lost its
-	//app_pk/app_instance_pk, differently on every process start.  They hold this process's own pks now.
+	//entry whose ids happened to match the garbage was silently written as one of ours, without its app_pk/app_instance_pk,
+	//differently on every process start.  They hold this process's own pks now.
 	TEST_F( LogTests, ForwardedEntryAttribution ){
 		constexpr App::ProgramPK app{ 4242 };
 		constexpr App::ProgInstPK inst{ 8484 };
 		//unique per run: the read below covers the daily file, which outlives the suite, and an earlier run's entry for the
 		//same text would answer for this one - including a run from before the fix, whose answers were the wrong ones.
 		let run = ToIsoString( Clock::now() );
-		using enum Log::Proto::FileEntry::ValueCase;
+		using Attribution = std::pair<int32,int32>;//app_pk, app_instance_pk:  {0,0} is one of our own entries.
 		//via DailyLoadAwait, not Log().Entries(): the buffer alone loses the entry whenever the write that added it crossed
 		//_delaySize and flushed, which is a coin toss depending on how full the earlier tests left the buffer.  Query mode
 		//merges the buffer with the file, so the entry is found either way.
-		auto write = [this,&run]( App::ProgramPK a, App::ProgInstPK i, sv what )ε->optional<Log::Proto::FileEntry::ValueCase>{
+		auto write = [this,&run]( App::ProgramPK a, App::ProgInstPK i, sv what )ε->optional<Attribution>{
 			Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("ForwardedEntryAttribution {} {}", what, run) };
 			Log().Write( e, a, i );
-			for( let& fe : BlockAwait<TAwait<vector<Log::Proto::FileEntry>>,vector<Log::Proto::FileEntry>>(App::DailyLoadAwait(Log().DailyFile())) ){
-				if( fe.value_case()==kEntry && Protobuf::ToGuid(fe.entry().template_id())==e.Id() )
-					return kEntry;
-				if( fe.value_case()==kExternalEntry && Protobuf::ToGuid(fe.external_entry().template_id())==e.Id() )
-					return kExternalEntry;
+			for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log().DailyFile()) ) ){
+				EXPECT_NE( fe.value_case(), Log::Proto::FileEntry::kExternalEntry ) << "nothing writes the older forwarded kind";
+				if( fe.has_entry() && Protobuf::ToGuid(fe.entry().template_id())==e.Id() )
+					return Attribution{ fe.entry().app_pk(), fe.entry().app_instance_pk() };
 			}
 			return nullopt;
 		};
-		EXPECT_EQ( write(app, inst, "unset"), kExternalEntry ) << "with our own pks unset nothing forwarded is ours";
+		EXPECT_EQ( write(app, inst, "unset"), (Attribution{app, inst}) ) << "with our own pks unset nothing forwarded is ours";
 		Log().SetAppPKs( app, inst );
-		EXPECT_EQ( write(app, inst, "self"), kEntry ) << "both pks match - one of our own entries coming back";
-		EXPECT_EQ( write(app, inst+1, "sibling"), kExternalEntry ) << "another instance of the same program is not us - matching the program pk alone must not drop attribution";
-		EXPECT_EQ( write(0, inst, "unattributed"), kEntry ) << "no app pk to preserve";
+		EXPECT_EQ( write(app, inst, "self"), (Attribution{0, 0}) ) << "both pks match - one of our own entries coming back";
+		EXPECT_EQ( write(app, inst+1, "sibling"), (Attribution{app, inst+1}) ) << "another instance of the same program is not us - matching the program pk alone must not drop attribution";
+		EXPECT_EQ( write(0, inst, "unattributed"), (Attribution{0, 0}) ) << "no app pk to preserve";
 		Log().SetAppPKs( 0, 0 );//the fixture shares the process-wide logger.
 	}
 
-	//#13(c): the archive-read lambda in ArchiveLoadAwait::LoadArchives was marked ι but calls Protobuf::Deserialize and
-	//ArchiveFile::Append, both ε.  One corrupt or truncated archive.binpb - a torn write, a file left half-written by a
+	//#13(c): the archive-read lambda in the old ArchiveLoadAwait::LoadArchives was marked ι but calls Protobuf::Deserialize and
+	//ArchiveQuery::Append, both ε.  One corrupt or truncated archive.binpb - a torn write, a file left half-written by a
 	//killed process - took the whole process down with std::terminate instead of failing the query that read it.
 	TEST_F( LogTests, CorruptArchiveFailsTheQueryNotTheProcess ){
-		let dir = CorruptDir();//a day of its own; ArchiveFiles() skips directories that are not a valid date.
+		let dir = CorruptDir();//a day of its own; ArchiveDayFiles() skips directories that are not a valid date.
 		fs::create_directories( dir );
 		{
 			std::ofstream os{ dir/"archive.binpb", std::ios::binary };
@@ -444,7 +445,7 @@ namespace Jde::App::Tests{
 		//- all of them are throws, and under any of them this reports green while the terminate it exists for goes unguarded.
 		//What it has to be is the deserialize of that file failing, and Deserialize names itself when it does.
 		try{
-			//no limit, so IsComplete() is false and ArchiveLoadAwait walks every archive file, this one included.
+			//no limit, so IsComplete() is false and LogQLAwait walks every archive file, this one included.
 			BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(string{"logs{ entries{templateId time} }"}, {}, {}).Queries()[0])} );
 			ADD_FAILURE() << "the corrupt archive was read without complaint";
 		}
@@ -479,7 +480,7 @@ namespace Jde::App::Tests{
 		ASSERT_TRUE( jNow );
 	}
 
-	//#5: the daily-file overload of ArchiveFile::Append filtered each entry before populating the string maps, but Test()
+	//#5: the daily-file overload of ArchiveQuery::Append filtered each entry before populating the string maps, but Test()
 	//resolves "text"/"message"/"args" through those very maps - so every entry was compared against "" and any such filter
 	//returned nothing from today's log.  Nothing surviving meant nothing was ever added, so it could not self-correct.
 	//The time filter in GraphQL above never caught it: time is read off the entry, not out of a map.
@@ -488,7 +489,7 @@ namespace Jde::App::Tests{
 		let marker = Ƒ( "DailyFileStringFilter {}", ToIsoString(Clock::now()) );
 		Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{marker} };
 		Log().Write( e );
-		//no time filter, so LogAwait reads the daily file (buffer included) - this is the ArchiveFile(Filter&,...) path.
+		//no time filter, so LogQLAwait reads the daily file (buffer included) - this is the ArchiveQuery(Filter&,...) path.
 		constexpr auto q = "logs( text: {eq: $text} ){ entries{templateId time} }";
 		jobject vars{ {"text", marker} };
 		let logs = BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );

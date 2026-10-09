@@ -1,3 +1,4 @@
+#pragma once
 #include <boost/beast.hpp>
 #include <boost/asio.hpp>
 #include <boost/beast/ssl/ssl_stream.hpp>

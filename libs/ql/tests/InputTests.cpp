@@ -157,7 +157,7 @@ namespace Jde::QL::Tests{
 
 	//OrderByJson is Ι - const *noexcept* - so a non-string member used to reach as_string() and take the process down with it
 	//(verified with EXPECT_DEATH against the old code: "terminating due to uncaught exception").  R2 fixed the same hazard in
-	//the caller, TableQL::OrderBy; this is the feeder, and its other callers (ArchiveFile::IsComplete/ToJson) are Ι too, so it
+	//the caller, TableQL::OrderBy; this is the feeder, and its other callers (ArchiveQuery::IsComplete/ToJson) are Ι too, so it
 	//drops the malformed entry rather than throwing.
 	TEST( InputTests, OrderByJsonSurvivesNonStringMembers ){
 		TestInput active{ R"({orderBy:{active:1, direction:"asc"}})" };

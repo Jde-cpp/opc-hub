@@ -6,9 +6,3 @@ message Execute{
 	bytes transmission = 2;
 }
 
-message StringMD5s{
-	repeated bytes messages = 1;
-	repeated bytes files = 2;
-	repeated bytes functions = 3;
-	repeated uint32 userPKs = 5; //slugs for web.
-}

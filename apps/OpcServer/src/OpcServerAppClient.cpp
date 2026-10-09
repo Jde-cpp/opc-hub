@@ -1,7 +1,6 @@
 #include "OpcServerAppClient.h"
 #include <jde/app/IApp.h>
 #include <jde/app/client/appClient.h>
-#include <jde/app/client/awaits/SocketAwait.h>
 #include <jde/app/log/LogSettingsAwait.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/QLAwait.h>

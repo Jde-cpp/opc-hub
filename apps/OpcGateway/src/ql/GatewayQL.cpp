@@ -1,6 +1,6 @@
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
-#include <jde/app/client/awaits/LogSettingsClientAwait.h>
+#include "../GatewayAppClient.h"
 #include "../UAClient.h"
 
 namespace Jde::Opc{
@@ -29,12 +29,9 @@ namespace Jde::Opc::Gateway{
 		return await;
 	}
 	α GatewayQL::CustomMutation( QL::MutationQL& m, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>>{
-		up<TAwait<jvalue>> await = GatewayQLMAwait::Test( m, executer, sl );
-		return await;
-	}
-	α GatewayQL::LogSettingsQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>>{
-		RequireAuthenticated( executer, "logSettings", sl );
-		return mu<App::Client::LogSettingsClientAwait>( move(ql), sl );
+		if( auto await = LogSettingsMutation(m, executer, AppClient(), sl); await )
+			return await;
+		return GatewayQLMAwait::Test( m, executer, sl );
 	}
 	α GatewayQL::StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject{
 		auto y = App::AppQL::StatusQuery( move(ql), executer, sl ); //the base gates it.

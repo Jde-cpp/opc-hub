@@ -1,5 +1,5 @@
-#include "jde/fwk/co/Await.h"
-#include "jde/fwk/process/process.h"
+#include <jde/fwk/co/Await.h>
+#include <jde/fwk/process/process.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/ql/IQL.h>
@@ -9,7 +9,7 @@
 #include <jde/app/log/ProtoLog.h>
 #include <jde/app/client/appClient.h>
 #include <jde/app/client/RemoteLog.h>
-#include <jde/app/client/awaits/SocketAwait.h>
+#include <jde/app/client/awaits/TaskAdapter.h>
 #include <jde/app/client/clientSubscriptions.h>
 
 #define let const auto
@@ -27,22 +27,6 @@ namespace Jde::App::Client{
 		App::ProtoLog::Init();
 		App::Client::RemoteLog::Init( move(client) );
 		Logging::Init();
-	}
-	α IAppClient::LoadLogSettings( SL sl )ι->void{
-		try{
-			auto settings = QuerySync( "instanceTagLevel(id:$id){ text binary appServer }", {{"id",InstancePK()}}, true, sl );
-			IApp::LoadLogSettings( settings, sl );
-			if( auto logger = Logging::FindLogger<App::Client::RemoteLog>(); logger )
-				logger->SetLevels( ToTagLevels(settings.at("appServer").as_object()) );
-			Logging::UpdateCumulative( Logging::Loggers() );
-			Logging::Log( ELogLevel::Trace, ELogTags::Settings, sl, "Loaded log settings." );
-		}
-		catch( Exception& e ){
-			e.SetLevel( ELogLevel::Critical );
-		}
-		catch( runtime_error& e ){
-			Exception{ move(e), {ELogLevel::Critical}, sl };
-		}
 	}
 
 	α IAppClient::Acl( string libName )ι->sp<Access::Authorize>{
@@ -76,31 +60,24 @@ namespace Jde::App::Client{
 	α IAppClient::QueryValue( string&& q, jobject variables, bool returnRaw, SL sl )ε->up<TAwait<jvalue>>{
 		return QLServer()->Query( move(q), move(variables), UserPK(), returnRaw, sl );
 	}
+	//The session's request adapted to TAwait, or - with no live session, or shutting down - one that fails without suspending.
+	Ω sessionRequest( sp<AppClientSocketSession> session, auto&& request, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>>{
+		using Info = Web::FromServer::SessionInfo;
+		if( !session || Process::ShuttingDown() )
+			return mu<ExceptionAwait<Info>>( mu<Exception>(Exception{sl, ELogLevel::Debug, "No connection to the AppServer."}), sl );//built in place: through mu the literal would not be a format string.
+		return mu<TaskAdapter<Info>>( request(*session), sl );
+	}
 	α IAppClient::SessionInfoAwait( SessionPK sessionPK, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>>{
-	 	return mu<Client::SessionInfoAwait>( sessionPK, LoadSession(), sl );
+		return sessionRequest( LoadSession(), [&](AppClientSocketSession& s){ return s.SessionInfo(sessionPK, sl); }, sl );
 	}
 
-	constexpr ELogTags _tags{ ELogTags::SocketClientWrite };
 	α IAppClient::AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SL sl )ε->up<TAwait<Web::FromServer::SessionInfo>>{
-		return mu<Client::AddSessionAwait>( domain, loginName, providerPK, userEndPoint, isSocket, LoadSession(), sl );//no session -> await_resume throws "No Connection to AppServer.", as SessionInfoAwait.
+		return sessionRequest( LoadSession(), [&](AppClientSocketSession& s){ return s.AddSession(domain, loginName, providerPK, userEndPoint, isSocket, sl); }, sl );
 	}
-	α IAppClient::Jwt( SL sl )ε->await<Web::Jwt>{
-		auto p = Session();
-		auto requestId = p->NextRequestId();
-		TRACESL( "Jwt requestId: {}", requestId );
-		return await<Web::Jwt>{ FromClient::Jwt(requestId), requestId, p, sl };
+	α IAppClient::Jwt( SL sl )ε->await<Web::Jwt>{ return Session()->Jwt( sl ); }
+	α IAppClient::Login( Web::Jwt&& jwt, SL sl )ε->up<TAwait<Web::FromServer::SessionInfo>>{
+		return sessionRequest( LoadSession(), [&](AppClientSocketSession& s){ return s.Login(move(jwt), sl); }, sl );
 	}
-	α IAppClient::Login( Web::Jwt&& jwt, SL sl )ε->await<Web::FromServer::SessionInfo>{
-		auto p = Session();
-		auto requestId = p->NextRequestId();
-		TRACESL( "[{}]Login via jwt: ...", hex(requestId) );
-		return await<Web::FromServer::SessionInfo>{ FromClient::Login(move(jwt), requestId), requestId, p, sl };
-	}
-
-/* α IAppClient::UpdateStatus()ι->void{
-		if( auto session = Process::ShuttingDown() ? nullptr : _session; session )
-			session->Write( FromClient::Status(StatusDetails()) );
-	}*/
 
 	α IAppClient::CloseSocketSession( bool terminate, SL sl )ι->void{
 		auto session = LoadSession();
@@ -108,7 +85,7 @@ namespace Jde::App::Client{
 			return;
 		let tags = ELogTags::Client | ELogTags::Socket;
 		LOGSL( ELogLevel::Trace, sl, tags, "ClosingSocketSession" );
-		BlockVoidAwait( session->Close(terminate, sl) ); //_session = nullptr;
+		BlockVoidAwait( session->Close(terminate, sl) );
 		session = nullptr;
 
 		LOGSL( ELogLevel::Information, sl, tags, "ClosedSocketSession" );

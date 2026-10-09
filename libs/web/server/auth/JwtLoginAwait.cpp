@@ -8,8 +8,10 @@ namespace Jde::Web::Server{
 	α JwtLoginAwait::Execute()ι->TAwait<UserPK>::Task{
 		try{
 			UserPK userPK{};
-			if( !_appClient->IsLocal() )
-				userPK = { (co_await Any(_appClient->Login(move(_jwt), _sl))).user_pk() };
+			if( !_appClient->IsLocal() ){
+				auto login = _appClient->Login( move(_jwt), _sl );
+				userPK = { (co_await Any(*login)).user_pk() };
+			}
 			else if( _jwt.Iss()=="https://accounts.google.com" )
 				userPK = co_await GoogleLoginAwait( move(_jwt) );
 			else{

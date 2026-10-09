@@ -1,8 +1,9 @@
 #include <jde/app/proto/app.FromServer.h>
+#include <jde/app/proto/common.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/ql/types/Subscription.h>
 #include <jde/web/Jwt.h>
-#include <jde/web/server/Web.FromServer.h>
+#include <jde/web/client/proto/Web.FromServer.pb.h>
 
 #define let const auto
 
@@ -19,37 +20,26 @@ namespace Jde::App::FromServer{
 	α IsResponse( Proto::FromServer::Message::ValueCase kind )ι->bool{
 		using enum Proto::FromServer::Message::ValueCase;
 		switch( kind ){
-		case kConnectionInfo: case kException: case kGeneric: case kJwt: case kProgress:
-		case kQueryResult: case kSessionInfo: case kStrings: case kSubscriptionAck:
+		case kConnectionInfo: case kException: case kJwt: case kQueryResult: case kSessionInfo: case kSubscriptionAck:
 			return true;
 		case kAck: case kClientQuery: case kExecute: case kExecuteAnonymous: case kExecuteResponse:
-		case kStringPks: case kSubscription: case kTraces: case VALUE_NOT_SET:
+		case kSubscription: case kTraces: case VALUE_NOT_SET:
 			return false;
 		}
 		return false;
 	}
 
-	Ω setMessage( RequestId requestId, function<void(Proto::FromServer::Message&)> set )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		auto& m = *t.add_messages();
-		m.set_request_id( requestId );
-		set( m );
-		return t;
-	}
+	Ω setMessage( RequestId requestId, auto&& set )ι->Proto::FromServer::Transmission{ return ProtoUtils::SingleMessage<Proto::FromServer::Transmission>( requestId, FWD(set) ); }
 }
 namespace Jde::App{
 	α FromServer::Ack( uint32 serverSocketId )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		t.add_messages()->set_ack( serverSocketId );
-		return t;
+		return setMessage( 0, [&](auto& m){ m.set_ack( serverSocketId ); } );//answers no request; a proto3 zero is the same bytes as unset.
 	}
 
 	α FromServer::Complete( RequestId requestId )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		t.add_messages()->set_request_id( requestId );
-		return t;
+		return setMessage( requestId, [](auto&){} );
 	}
-	α FromServer::ConnectionInfo( ProgramPK appPK, ProgInstPK instancePK, ConnectionPK connectionPK, RequestId clientRequestId, const Crypto::PublicKey& appServerPubKey, sp<Web::Server::SessionInfo> session, optional<bool> authResult )ι->Proto::FromServer::Transmission{
+	α FromServer::ConnectionInfo( ProgramPK appPK, ProgInstPK instancePK, ConnectionPK connectionPK, RequestId clientRequestId, const Crypto::PublicKey& appServerPubKey, Web::FromServer::SessionInfo&& session, optional<bool> authResult )ι->Proto::FromServer::Transmission{
 		return setMessage( clientRequestId, [&](auto& m){
 			auto& info = *m.mutable_connection_info();
 			info.set_app_pk( appPK );
@@ -59,27 +49,13 @@ namespace Jde::App{
 			info.set_certificate_exponent( {appServerPubKey.Exponent.begin(), appServerPubKey.Exponent.end()} );
 			if( authResult )
 				info.set_auth_result( *authResult );
-			*info.mutable_session_info() = move( Web::Server::ToProto(*session) );
+			*info.mutable_session_info() = move( session );
 			TRACET( ELogTags::Test, "Connected. UserPK='{}'", info.session_info().user_pk() );
 		});
 	}
 
 	α FromServer::Exception( const runtime_error& e, optional<RequestId> requestId )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		auto& m = *t.add_messages();
-		if( requestId )
-			m.set_request_id( *requestId );
-		auto& proto = *m.mutable_exception();
-		proto.set_what( e.what() );
-		if( let p = dynamic_cast<const Jde::Exception*>(&e); p ){
-			proto.set_code( p->Code() );
-			proto.set_status_code( p->HttpStatus() );//status & classification ride the base virtuals - the type can't cross the wire.
-			proto.set_category( (Jde::Proto::ECategory)p->Category() );
-			proto.set_category_code( p->CategoryCode() );
-		}
-		else
-			proto.set_status_code( 500 );//plain std::exception - unclassified server fault.
-		return t;
+		return setMessage( requestId.value_or(0), [&](auto& m){ *m.mutable_exception() = ProtoUtils::ToException( e ); } );
 	}
 	α FromServer::Exception( string&& e, optional<RequestId> requestId )ι->Proto::FromServer::Transmission{
 		return setMessage( requestId.value_or(0), [&](auto& m){
@@ -122,24 +98,6 @@ namespace Jde::App{
 				*clientQuery.mutable_variables() = serialize(*variables);
 		});
 	}
-/*
-	α FromServer::ToStatus( ProgramPK appId, ProgInstPK instanceId, str hostName, Proto::FromClient::Status&& input )ι->Proto::FromServer::Status{
-		Proto::FromServer::Status output;
-		output.set_application_id( (google::protobuf::uint32)appId );
-		output.set_instance_id( (google::protobuf::uint32)instanceId );
-		output.set_host_name( hostName );
-		*output.mutable_start_time() = input.start_time();
-		output.set_memory( input.memory() );
-		*output.mutable_values() = move( *input.mutable_values() );
-		return output;
-	}
-
-	α FromServer::StatusBroadcast( Proto::FromServer::Status status )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		*t.add_messages()->mutable_status() = move( status );
-		return t;
-	}
-*/
 	α FromServer::SubscriptionAck( flat_set<QL::SubscriptionId>&& subscriptionIds, RequestId requestId )ι->Proto::FromServer::Transmission{
 		return setMessage( requestId, [&](auto& m){
 			auto& ack = *m.mutable_subscription_ack();
@@ -153,25 +111,19 @@ namespace Jde::App{
 	}
 
 	α FromServer::ExecuteRequest( RequestId serverRequestId, UserPK userPK, string&& fromClient )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		auto toServer = t.add_messages();
-		toServer->set_request_id( serverRequestId );
-		if( userPK ){
-			auto customExecute = toServer->mutable_execute();
-			customExecute->set_user_pk( userPK.Value );//.Value: UserPK converts to bool implicitly, so the raw struct sets 1 for every non-zero user.
-			*customExecute->mutable_transmission() = move( fromClient );
-		}
-		else
-			toServer->set_execute_anonymous( move(fromClient) );
-		return t;
+		return setMessage( serverRequestId, [&](auto& m){
+			if( userPK ){
+				auto& customExecute = *m.mutable_execute();
+				customExecute.set_user_pk( userPK.Value );//.Value: UserPK converts to bool implicitly, so the raw struct sets 1 for every non-zero user.
+				*customExecute.mutable_transmission() = move( fromClient );
+			}
+			else
+				m.set_execute_anonymous( move(fromClient) );
+		});
 	}
 
 	α FromServer::Execute( string&& executionResult, RequestId clientRequestId )ι->Proto::FromServer::Transmission{
-		Proto::FromServer::Transmission t;
-		auto toServer = t.add_messages();
-		toServer->set_request_id( clientRequestId );
-		toServer->set_execute_response( move(executionResult) );
-		return t;
+		return setMessage( clientRequestId, [&](auto& m){ m.set_execute_response( move(executionResult) ); } );
 	}
 
 	α FromServer::GraphQL( string&& queryResults, RequestId requestId )ι->Proto::FromServer::Transmission{
@@ -179,9 +131,9 @@ namespace Jde::App{
 			m.set_query_result( move(queryResults) );
 		});
 	}
-	α FromServer::Session( const Web::Server::SessionInfo& session, RequestId requestId )->Proto::FromServer::Transmission{
+	α FromServer::Session( Web::FromServer::SessionInfo&& session, RequestId requestId )->Proto::FromServer::Transmission{
 		return setMessage( requestId, [&](auto& m){
-			*m.mutable_session_info() = Web::Server::ToProto( session );
+			*m.mutable_session_info() = move( session );
 		});
 	}
 }

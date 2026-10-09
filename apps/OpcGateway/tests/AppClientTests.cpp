@@ -57,7 +57,7 @@ namespace Jde::Opc::Gateway::Tests{
 				session = nullptr;
 			});
 		}
-		BlockVoidAwait( session->RunSession(App::Client::Host(), App::Client::Port()) );
+		BlockVoidAwait( session->RunSession(App::Client::ServerSettings::Host(), App::Client::ServerSettings::Port()) );
 		using ConnectionInfo = App::Proto::FromServer::ConnectionInfo;
 		try{
 			BlockAwait<Web::Client::ClientSocketAwait<ConnectionInfo>, ConnectionInfo>( session->Connect(0xBAD5E55) );
@@ -92,7 +92,7 @@ namespace Jde::Opc::Gateway::Tests{
 		if( !payload || payload->empty() )
 			GTEST_SKIP() << "JDE_GOOGLE_JWT not set.";
 		else{
-			let value = BlockAwait<Web::Client::ClientSocketAwait<SessionInfo>,SessionInfo>( AppClient()->Login(Web::Jwt{*payload}, SL{}) );
+			let value = BlockTAwait<SessionInfo>( move(*AppClient()->Login(Web::Jwt{*payload}, SL{})) );
 			ASSERT_TRUE( value.session_id()>0 );
 		}
 	}

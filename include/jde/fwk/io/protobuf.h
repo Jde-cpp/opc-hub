@@ -30,7 +30,7 @@ namespace Jde::Protobuf{
 	α SizePrefixed( const google::protobuf::MessageLite& m )ι->vector<byte>;
 	α ToTimestamp( TimePoint t )ι->google::protobuf::Timestamp;
 	Ξ ToBytes( const uuid& g )ι->sv{ return sv{(char*)g.data(), 16}; }
-	Ξ ToGuid( string g )ι->uuid{ uuid y{}; memcpy(&y, g.data(), std::min(sizeof(uuid), g.size())); return y; }//value-init: short input must zero-fill the tail, not leave it indeterminate.
+	Ξ ToGuid( sv g )ι->uuid{ uuid y{}; memcpy(&y, g.data(), std::min(sizeof(uuid), g.size())); return y; }//value-init: short input must zero-fill the tail, not leave it indeterminate.
 	α ToTimePoint( google::protobuf::Timestamp t )ι->TimePoint;
 	α ToTimePoint( const jobject& j )ε->TimePoint;
 	α ToTimestamp( const jobject& j, SRCE )ε->google::protobuf::Timestamp;

@@ -14,14 +14,6 @@ enum ELogLevel{
 	NoLog = -1;
 }
 
-enum EFields{
-	FieldsNone=0;
-	Template=0x1;
-	File=0x2;
-	Function=0x4;
-	Args=0x8;
-}
-
 message LogEntryClient{
 	string text=1;
 	repeated string args=2;
@@ -48,6 +40,8 @@ message LogEntryFile{
 	int32 app_instance_pk=11;
 }
 
+//Read only:  builds before 2026-10 wrote a forwarded entry as this.  A forwarded entry is now a LogEntryFile with a
+//non-zero app_pk, and readers fold this one in through LogProto::ToEntry.
 message LogEntryFileExternal{
 	google.protobuf.Timestamp time=1;
 	bytes template_id=2;
@@ -64,28 +58,11 @@ message LogEntryFileExternal{
 
 message ArchiveFile{
 	repeated LogEntryFile entries=1;
-	repeated LogEntryFileExternal externalEntries=2;
+	repeated LogEntryFileExternal externalEntries=2;//read only - see LogEntryFileExternal.
 	repeated String templates=3;
 	repeated String files=4;
 	repeated String functions=5;
 	repeated String args=6;
-}
-
-message Host{
-	int32 id=1;
-	string name=2;
-}
-
-message App{
-	int32 id=1;
-	string name=2;
-}
-
-message AppInstance{
-	int32 id=1;
-	int32 app_id=2;
-	int32 host_id=3;
-	int32 pid=4;
 }
 
 message String{
@@ -93,18 +70,10 @@ message String{
 	string value=2;
 }
 
-message StringField{
-	EFields field=1;
-	String value=2;
-}
-
 message FileEntry{
 	oneof value{
 		LogEntryFile entry=1; //normal entry
-		LogEntryFileExternal external_entry=2; //app server creates for gateway/opc.
+		LogEntryFileExternal external_entry=2; //read only - see LogEntryFileExternal.
 		String str=3;	//for templates, files, functions, args.
-		App app=4;
-		AppInstance app_instance=5;
-		Host host=6;
 	}
 }

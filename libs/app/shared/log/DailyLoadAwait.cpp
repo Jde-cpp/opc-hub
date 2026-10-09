@@ -1,5 +1,6 @@
-#include "jde/fwk/io/file.h"
+#include <jde/fwk/io/file.h>
 #include <jde/app/log/DailyLoadAwait.h>
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/protobuf.h>
@@ -9,13 +10,10 @@
 namespace Jde::App{
 	constexpr ELogTags _tags = ELogTags::ExternalLogger;
 	α DailyLoadAwait::Execute()ι->TAwait<CoLockGuard>::Task{
-		if( _mode==EDailyLoad::Archive )
-			Read( nullopt );//the caller's lock is ours & stays ours.
-		else
-			Read( co_await LockKeyAwait{_file.string()} );
-	}
-	α DailyLoadAwait::Read( optional<CoLockGuard> )ι->TAwait<string>::Task{
 		try{
+			optional<CoLockGuard> lock;//held to the end of the read;  Archive mode reads under the caller's - see EDailyLoad.
+			if( _mode==EDailyLoad::Query )
+				lock = co_await LockKeyAwait{ _file.string() };
 			vector<App::Log::Proto::FileEntry> y;
 			if( _mode==EDailyLoad::Query ){//Archive reads the file only - see EDailyLoad.
 				auto log = Logging::FindLogger<App::ProtoLog>();
@@ -23,8 +21,9 @@ namespace Jde::App{
 				TRACE( "Memory item count: {}", y.size() );
 			}
 			if( fs::exists(_file) ){
-				auto content = co_await IO::ReadAwait( _file );
-				auto fileContent = App::ProtoLog::Deserialize( move(content) );
+				IO::ReadAwait read{ _file };//by reference: a ReadAwait does not move.
+				auto content = co_await Any( read );
+				auto fileContent = Protobuf::DeserializeVector<App::Log::Proto::FileEntry>( content );
 				TRACE( "DailyFile item count: {}", fileContent.size() );
 				y.insert( y.end(), make_move_iterator(fileContent.begin()), make_move_iterator(fileContent.end()) );
 			}

@@ -2,13 +2,13 @@
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/crypto/OpenSsl.h>
-#include <jde/web/client/socket/ClientSocketAwait.h>
 #include <jde/web/Jwt.h>
 #include <jde/app/usings.h>
 #include <jde/app/log/ProtoLog.h>
 #include <jde/web/client/proto/Web.FromServer.pb.h>
 #include <jde/fwk/log/SpdLog.h>	//no longer reachable through <jde/fwk.h>
 
+namespace Jde::QL{ struct RequestQL; }
 namespace Jde::App{
 	struct IApp{
 		virtual ~IApp()=default;//msvc warning
@@ -20,7 +20,7 @@ namespace Jde::App{
 		α SetAppPKs( ProgInstPK instPK, App::ConnectionPK pk )ι->void{ _instancePK = instPK; _connectionPK = pk; }
 		β SessionInfoAwait( SessionPK sessionPK, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;
 		α Verify( const Web::Jwt& jwt )Ε->void;
-		β Login( Web::Jwt&& jwt, SRCE )ε->Web::Client::ClientSocketAwait<Web::FromServer::SessionInfo> = 0;
+		β Login( Web::Jwt&& jwt, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;//up<TAwait>, as SessionInfoAwait: the socket and the in-process implementations differ in type.
 		β ClientQuery( QL::RequestQL&& q, UserPK executer, SRCE )ε->up<TAwait<jvalue>> =0; //AppServer->[Gateway]|[OpcServer]
 		Ω Status()ι->jobject{
 			return jobject{
@@ -30,10 +30,9 @@ namespace Jde::App{
 			};
 		}
 
-		α LoadLogSettings( optional<jobject> clientSettings=nullopt, SRCE )ι->void;
+		α LoadLogSettings( SRCE )ι->void;//every log target's instanceTagLevel rows, applied to the loggers this process runs.
 		template<class T=jobject> [[nodiscard]] α Query( string&& q, jobject variables, bool returnRaw=true, SRCE )ε->up<TAwait<T>>;
 		template<class T=jobject> α QuerySync( string&& q, jobject variables, bool returnRaw=true, SRCE )ε->T;
-		template<class T=jobject> α QuerySyncSecure( string&& q, jobject vars, SRCE )ε->T{ return QuerySync<T>(move(q), vars, true, sl); }
 
 	protected:
 		β QueryArray( string&& q, jobject variables, bool returnRaw, SRCE )ε->up<TAwait<jarray>> = 0;
@@ -61,28 +60,5 @@ namespace Jde::App{
 	Ξ IApp::Verify( const Web::Jwt& jwt )Ε->void{
 		THROW_IF( PublicKey()!=jwt.PublicKey, "Signor not trusted" );
 		Crypto::Verify( PublicKey(), jwt.HeaderBodyEncoded, jwt.Signature );
-	}
-
-	Ξ IApp::LoadLogSettings( optional<jobject> clientSettings, SL sl )ι->void{
-		try{
-			const bool selfQuery = !clientSettings;//caller passed settings -> caller updates cumulative levels.
-			if( selfQuery )
-				clientSettings = QuerySync( "instanceTagLevel(id:$id){ text binary }", {{"id",InstancePK()}}, true, sl );
-			//instanceTagLevel groups the tags under their level; SetLevels keys on the tag.
-			if( auto logger = Logging::FindLogger<Logging::SpdLog>(); logger )
-				logger->SetLevels( ToTagLevels(clientSettings->at("text").as_object()) );
-			if( auto logger = Logging::FindLogger<App::ProtoLog>(); logger )
-				logger->SetLevels( ToTagLevels(clientSettings->at("binary").as_object()) );
-			if( selfQuery ){
-				Logging::UpdateCumulative( Logging::Loggers() );
-				Logging::Log( ELogLevel::Trace, ELogTags::Settings, sl, "Loaded log settings." );
-			}
-		}
-		catch( Exception& e ){
-			e.SetLevel( ELogLevel::Critical );
-		}
-		catch( runtime_error& e ){
-			Exception{ move(e), ExceptionArgs{ELogLevel::Critical}, sl };
-		}
 	}
 }

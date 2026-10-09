@@ -36,8 +36,7 @@ message Trace{
 	bytes function_id=7;
 	uint32 line=8;
 	uint32 user_pk=9;
-	uint64 thread_id=10;
-	repeated string args=11;
+	repeated string args=10;
 }
 
 message Traces{
@@ -45,13 +44,6 @@ message Traces{
 	repeated Trace values=2;
 }
 
-message Strings{
-	map<uint32,string> messages = 1;
-	map<uint32,string> files = 2;
-	map<uint32,string> functions = 3;
-	map<uint32,string> threads = 4;
-	map<uint32,string> user_slugs = 5; //slugs for web.
-}
 message SubscriptionAck{
 	repeated uint32 server_ids = 1;
 }
@@ -60,19 +52,15 @@ message Message{
 	uint32 request_id=1;
 	oneof value{
 		uint32 ack = 2; //sends on handshake
-		string generic = 3;
-		Jde.App.Proto.StringMD5s string_pks = 4; //pks stored in db.
-		double progress = 5;
-		Jde.Web.FromServer.SessionInfo session_info = 6;
-		string query_result = 7;
-		Jde.Proto.Exception exception = 8;
-		Traces traces = 9;
-		Strings strings = 10;
-		SubscriptionAck subscription_ack = 11;
-		string subscription= 12;
-		ConnectionInfo connection_info = 13;
-		string jwt = 14;
-		ClientQuery client_query = 15;
+		Jde.Web.FromServer.SessionInfo session_info = 3;
+		string query_result = 4;
+		Jde.Proto.Exception exception = 5;
+		Traces traces = 6;
+		SubscriptionAck subscription_ack = 7;
+		string subscription= 8;
+		ConnectionInfo connection_info = 9;
+		string jwt = 10;
+		ClientQuery client_query = 11;
 
 		bytes execute_anonymous = 33; //appServer->2ndServer, no user context.
 		Jde.App.Proto.Execute execute = 34; //execute with user context.

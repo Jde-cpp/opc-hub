@@ -31,7 +31,7 @@ namespace Jde::IO{
 		let append = Mode==EWriteMode::Append;
 		let replace = Mode==EWriteMode::Truncate && !Offset;
 		let keepsPrefix = Mode==EWriteMode::Truncate && Offset;
-		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (ArchiveFileAwait::Save): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
+		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (the log archive round, ArchiveAwait::Execute): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
 		//A write shares FILE_SHARE_WRITE, and FILE_SHARE_READ unless it replaces the file: a reader can hold a file that is appended to, written in place or cut to a prefix, but one replaced under it would size its buffer from one version and read the bytes of another.  No write shares delete, so the file isn't removed or renamed while it is written.
 		const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
 		const DWORD sharing = IsRead ? shareAll : replace ? FILE_SHARE_WRITE : FILE_SHARE_READ|FILE_SHARE_WRITE;

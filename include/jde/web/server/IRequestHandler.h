@@ -4,6 +4,7 @@
 #include <jde/app/IApp.h>
 
 namespace Jde::DB{ struct AppSchema; }
+namespace Jde::QL{ struct IQL; }
 namespace Jde::Web::Server{
 	struct HttpRequest; struct IHttpRequestAwait; struct IWebsocketSession;struct IRestStream;
 	struct IRequestHandler{

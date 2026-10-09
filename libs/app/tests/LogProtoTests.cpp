@@ -54,20 +54,21 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( Protobuf::ToTimePoint(proto.time()), tp(1) );
 	}
 
-	//An entry the app server logs on behalf of a gateway/opc instance carries who it came from…
-	TEST( LogProtoTests, ExternalEntryCarriesAttribution ){
+	//An entry the app server logs on behalf of a gateway/opc instance carries who it came from;  its own carry nothing.
+	TEST( LogProtoTests, ForwardedEntryCarriesAttribution ){
 		let e = entry( tp(1), ELogLevel::Error, 7, "boom" );
 		let proto = LogProto::LogEntryFile( e, 5, 6 );
 		EXPECT_EQ( proto.app_pk(), 5 );
 		EXPECT_EQ( proto.app_instance_pk(), 6 );
 		EXPECT_EQ( Protobuf::ToGuid(proto.template_id()), e.Id() );
+		EXPECT_EQ( LogProto::LogEntryFile(e).app_pk(), 0 );
 	}
 
-	//…and loses it when it is folded back into the plain entry stream - LogEntryFile has nowhere to put it.
-	TEST( LogProtoTests, ToEntryKeepsEverythingButAttribution ){
+	//An older build wrote a forwarded entry as LogEntryFileExternal;  ToEntry folds it in, attribution and all.
+	TEST( LogProtoTests, ToEntryFoldsAnOlderExternalEntry ){
 		let e = entry( tp(1), ELogLevel::Error, 7, "boom {}", {"9"} );
 		let external = LogProto::LogEntryFile( e, 5, 6 );
-		let plain = LogProto::ToEntry( Log::Proto::LogEntryFileExternal{external} );
+		let plain = LogProto::ToEntry( asOlderExternal(external) );
 		EXPECT_EQ( Protobuf::ToGuid(plain.template_id()), e.Id() );
 		EXPECT_EQ( Protobuf::ToGuid(plain.file_id()), e.FileId() );
 		EXPECT_EQ( Protobuf::ToGuid(plain.function_id()), e.FunctionId() );
@@ -78,6 +79,8 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( plain.line(), 7u );
 		EXPECT_EQ( plain.user_pk(), external.user_pk() );
 		EXPECT_EQ( Protobuf::ToTimePoint(plain.time()), tp(1) );
+		EXPECT_EQ( plain.app_pk(), 5 );
+		EXPECT_EQ( plain.app_instance_pk(), 6 );
 	}
 
 	TEST( LogProtoTests, StringMessageCarriesTheRawId ){
@@ -108,17 +111,7 @@ namespace Jde::App::Tests{
 		EXPECT_NE( s.find("4242"), string::npos ) << "the entry's user is missing from its debug string: " << s;
 	}
 
-	TEST( LogProtoTests, DebugStringOfTheOtherFileEntries ){
-		Log::Proto::FileEntry app;
-		app.mutable_app()->set_id( 3 );
-		app.mutable_app()->set_name( "OpcServer" );
-		EXPECT_EQ( LogProto::DebugString(app), "app: { id: 3, name: OpcServer }" );
-
-		Log::Proto::FileEntry host;
-		host.mutable_host()->set_id( 4 );
-		host.mutable_host()->set_name( "localhost" );
-		EXPECT_EQ( LogProto::DebugString(host), "host: { id: 4, name: localhost }" );
-
+	TEST( LogProtoTests, DebugStringOfAnEmptyFileEntry ){
 		EXPECT_EQ( LogProto::DebugString(Log::Proto::FileEntry{}), "Error" ); //nothing set.
 	}
 }

@@ -6,6 +6,7 @@
 #include <jde/app/proto/app.FromServer.h>
 #include <jde/app/proto/app.FromClient.h>
 #include <jde/app/proto/common.h>
+#include <jde/web/server/Web.FromServer.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/server/accessServer.h>
 #include "LocalClient.h" // !important
@@ -52,7 +53,7 @@ namespace Jde::App::Server{
 			//none of it.  The pks used to be three plain stores above this lock, so a forward could match on ProgramPK and
 			//read ConnectionPK 0 from before the write (appserver-review3 #14).
 			{ lg _{_registrationMutex}; _pks = Registration{appPK, instancePK, connectionPK}; _instance = move( instance ); }
-			Write( FromServer::ConnectionInfo(appPK, instancePK, connectionPK, requestId, AppClient()->PublicKey(), info, authResult) );
+			Write( FromServer::ConnectionInfo(appPK, instancePK, connectionPK, requestId, AppClient()->PublicKey(), Web::Server::ToProto(*info), authResult) );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -67,7 +68,7 @@ namespace Jde::App::Server{
 
 			auto info = Web::Server::Sessions::Add( userPK, move(*m.mutable_user_endpoint()), m.is_socket() );
 			LogWrite( Ƒ("AddSession id: {:x}", info->SessionId), requestId );
-			Write( FromServer::Session(*info, requestId) );
+			Write( FromServer::Session(Web::Server::ToProto(*info), requestId) );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -144,7 +145,7 @@ namespace Jde::App::Server{
 		auto info = InstancePK() ? Web::Server::Sessions::Extend( sessionId ) : Web::Server::Sessions::Find( sessionId );
 		if( info ){
 			LogWrite( Ƒ("SessionInfo userPK: {}, endpoint: {}, hasSocket: {}", info->UserPK.Value, info->UserEndpoint, info->HasSocket), requestId );
-			Write( FromServer::Session(*info, requestId) );
+			Write( FromServer::Session(Web::Server::ToProto(*info), requestId) );
 		}else//NotFound, not the default 500 - the status is the only thing that survives the wire to tell a caller "no such session" from "could not ask", and the gateway caches an anonymous user for the first but must not for the second.
 			WriteException( Exception{Ƒ("[{}] Session not found.", hex(sessionId)), ExceptionArgs{EHttpStatus::NotFound}}, requestId );
 	}
@@ -231,7 +232,7 @@ namespace Jde::App::Server{
 		let _ = shared_from_this();
 		try{
 			let session = co_await Sessions::UpsertAwait( "Bearer " + move(jwt), _userEndpoint.address().to_string(), true, Server::AppClient() );
-			Write( FromServer::Session(*session, requestId) );
+			Write( FromServer::Session(Web::Server::ToProto(*session), requestId) );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -239,7 +240,7 @@ namespace Jde::App::Server{
 	}
 
 	α ServerSocketSession::ProcessTransmission( Proto::FromClient::Transmission&& transmission, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void{
-		uint cLog{}, cString{};
+		uint cLog{};
 		if( transmission.messages_size()==0 )
 			LogRead( "No messages in transmission.", 0, ELogLevel::Error );
 
@@ -347,14 +348,12 @@ namespace Jde::App::Server{
 				for_each( v.request_ids(), [&](auto id){subIds.emplace_back(id);} );
 				RemoveSubscription( move(subIds), requestId );
 				break;}
-			[[likely]]case kStringKey:
-				break;
 			default:
 				LogRead( Ƒ("Unknown message type '{}'", underlying(m.value_case())), requestId, ELogLevel::Critical );
 			}
 		}
-		if( cLog || cString )
-			TRACET( ELogTags::SocketServerRead, "[{:x}] log entries recieved: {} strings received: {}.", Id(), cLog, cString );
+		if( cLog )
+			TRACET( ELogTags::SocketServerRead, "[{}]Log entries received: {}.", hex(Id()), cLog );
 	}
 
 	α ServerSocketSession::SendQueryClient( QL::TableQL&& query, Jde::UserPK executer, RequestId requestId )ι->void{

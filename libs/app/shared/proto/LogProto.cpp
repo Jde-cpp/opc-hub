@@ -1,6 +1,6 @@
 #include "Log.pb.h"
-#include "jde/fwk/usings.h"
-#include "jde/fwk/chrono.h"
+#include <jde/fwk/usings.h>
+#include <jde/fwk/chrono.h>
 #include <jde/app/proto/LogProto.h>
 #include <jde/fwk/io/protobuf.h>
 
@@ -53,7 +53,8 @@ namespace Jde::App{
 		return proto;
 	}
 
-	Ŧ logEntry( const Logging::Entry& m, T& proto )ι->void{
+	α LogProto::LogEntryFile( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->Log::Proto::LogEntryFile{
+		Log::Proto::LogEntryFile proto;
 		proto.set_template_id( ToBytes(m.Id()) );
 		for( auto& arg : m.Arguments )
 			*proto.add_args() = ToBytes( Logging::Entry::GenerateId(arg) );
@@ -64,17 +65,7 @@ namespace Jde::App{
 		proto.set_user_pk( m.UserPK.Value );
 		proto.set_file_id( ToBytes(m.FileId()) );
 		proto.set_function_id( ToBytes(m.FunctionId()) );
-	}
-
-	α LogProto::LogEntryFile( const Logging::Entry& m )ι->Log::Proto::LogEntryFile{
-		Log::Proto::LogEntryFile proto;
-		logEntry( m, proto );
-		return proto;
-	}
-	α LogProto::LogEntryFile( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->Log::Proto::LogEntryFileExternal{
-		Log::Proto::LogEntryFileExternal proto;
-		logEntry( m, proto );
-		proto.set_app_pk( appPK );
+		proto.set_app_pk( appPK );//0 for an entry this process wrote:  a proto3 zero is not even on the wire.
 		proto.set_app_instance_pk( instancePK );
 		return proto;
 	}
@@ -95,7 +86,7 @@ namespace Jde::App{
 	}
 
 	using namespace Log::Proto;
-	Ŧ debugStringLogEntry( const T& f )ι->string{
+	Ω debugStringLogEntry( const LogEntryFile& f )ι->string{
 		string result = Ƒ( "[{}.{}.{}] {} user_pk: {} {{",
 			guidToString( f.template_id() ),
 			ToString( (Jde::ELogLevel)f.level() ),
@@ -109,11 +100,8 @@ namespace Jde::App{
 		for( auto& arg : f.args() )
 			result += Ƒ( "{}, ", guidToString(arg) );
 		result += "}";
-		return result;
-	}
-	Ω debugStringExternal( const LogEntryFileExternal& f )ι->string{
-		string result = debugStringLogEntry( f );
-		result += Ƒ( ", app_pk: {}, app_instance_pk: {}", f.app_pk(), f.app_instance_pk() );
+		if( f.app_pk() )//forwarded
+			result += Ƒ( ", app_pk: {}, app_instance_pk: {}", f.app_pk(), f.app_instance_pk() );
 		return result;
 	}
 	α LogProto::DebugString( const FileEntry& f )ι->string{
@@ -123,16 +111,7 @@ namespace Jde::App{
 				return debugStringLogEntry( f.entry() );
 			break;
 			case Type::kExternalEntry:
-				return debugStringExternal( f.external_entry() );
-			break;
-			case Type::kApp:
-				return Ƒ( "app: {{ id: {}, name: {} }}", f.app().id(), f.app().name() );
-			break;
-			case Type::kAppInstance:
-				return Ƒ( "app_instance: {{ id: {}, app_id: {}, host_id: {}, pid: {} }}", f.app_instance().id(), f.app_instance().app_id(), f.app_instance().host_id(), f.app_instance().pid() );
-			break;
-			case Type::kHost:
-				return Ƒ( "host: {{ id: {}, name: {} }}", f.host().id(), f.host().name() );
+				return debugStringLogEntry( ToEntry(LogEntryFileExternal{f.external_entry()}) );
 			break;
 			case Type::kStr:
 				return Ƒ( "[{}]{}", guidToString(f.str().id()), f.str().value() );
@@ -143,8 +122,5 @@ namespace Jde::App{
 	}
 	α LogProto::DebugString( const Log::Proto::LogEntryFile& f )ι->string{
 		return debugStringLogEntry( f );
-	}
-	α LogProto::DebugString( const Log::Proto::LogEntryFileExternal& f )ι->string{
-		return debugStringExternal( f );
 	}
 }

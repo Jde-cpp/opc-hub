@@ -9,16 +9,16 @@
 #define let const auto
 
 namespace Jde::App::Tests{
-	//AppQL is abstract (CustomQuery/CustomMutation/LogSettingsQuery stay pure);  LogSettingsQuery mirrors what the three apps do.
+	//AppQL is abstract (CustomQuery/CustomMutation stay pure);  CustomMutation asks LogSettingsMutation first, as the four apps do.
 	struct QLStub final : AppQL{
 		QLStub()ι:AppQL{ {}, {} }{}
 		α CustomQuery( QL::TableQL&, QL::Creds, SL )ι->up<TAwait<jvalue>> override{ return nullptr; }
-		α CustomMutation( QL::MutationQL&, QL::Creds, SL )ι->up<TAwait<jvalue>> override{ return nullptr; }
-		α LogSettingsQuery( QL::TableQL&& , QL::Creds executer, SL sl )ε->up<TAwait<jvalue>> override{
-			RequireAuthenticated( executer, "logSettings", sl );
-			return nullptr;
-		}
+		α CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>> override{ return LogSettingsMutation( m, creds, nullptr, sl ); }
 	};
+	Ω mutation( string command )ι->QL::MutationQL{
+		static const vector<sp<DB::AppSchema>> noSchemas;
+		return QL::MutationQL{ move(command), jobject{}, ms<jobject>(), optional<QL::TableQL>{}, true, noSchemas, true };
+	}
 	Ω anonymous()ι->QL::Creds{ return QL::Creds{ UserPK{} }; } //what Sessions::CreateSession hands a request with no Authorization header.
 	Ω user()ι->QL::Creds{ return QL::Creds{ UserPK{7} }; }
 
@@ -44,6 +44,33 @@ namespace Jde::App::Tests{
 	TEST( AppQLTests, StatusQueryRefusesAnAnonymousCaller ){
 		auto ql = ms<QLStub>();
 		EXPECT_THROW( ql->StatusQuery(table("status"), anonymous(), SRCE_CUR), Exception );
+	}
+	//LogSettingsMutation:  every app's CustomMutation asks it first, so the anonymous refusal OpcQL alone had now covers all four.
+	TEST( AppQLTests, LogSettingsMutationRefusesAnAnonymousCaller ){
+		auto ql = ms<QLStub>();
+		for( let command : {"updateLogSetting", "updateLogSettings"} ){
+			auto m = mutation( command );
+			auto y = ql->CustomMutation( m, anonymous(), SRCE_CUR );
+			ASSERT_TRUE( y ) << command;
+			ASSERT_TRUE( y->await_ready() ) << "a refusal answers ready - CustomMutation is noexcept, so it cannot throw";
+			try{
+				y->await_resume();
+				FAIL() << "expected a throw";
+			}
+			catch( const Exception& e ){
+				EXPECT_EQ( e.HttpStatus(), EHttpStatus::Unauthorized ) << command;
+			}
+		}
+	}
+	TEST( AppQLTests, LogSettingsMutationRoutesAnAuthenticatedCaller ){
+		auto m = mutation( "updateLogSetting" );
+		auto y = ms<QLStub>()->CustomMutation( m, user(), SRCE_CUR );
+		ASSERT_TRUE( y );
+		EXPECT_FALSE( y->await_ready() ) << "LogSettingsMAwait suspends; only a refusal answers ready";
+	}
+	TEST( AppQLTests, LogSettingsMutationLeavesOtherMutations ){
+		auto m = mutation( "updateUser" );
+		EXPECT_FALSE( ms<QLStub>()->CustomMutation(m, anonymous(), SRCE_CUR) );
 	}
 	TEST( AppQLTests, LogSettingsQueryRefusesAnAnonymousCaller ){
 		auto ql = ms<QLStub>();
