@@ -92,6 +92,66 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( Is(sloped[1], Speed, T0+90s, 80, SubNormalInterpolated) );//stepped whatever the configuration says.
 	}
 
+	//The last DateTime, Int64's maximum, which Part 6 encodes 9999-12-31 and later as, is past the last record as any
+	//later time is.
+	TEST_F( AtTimes, TheLastDateTime ){
+		Load();
+		constexpr Ticks last{ std::numeric_limits<Ticks>::max() };
+		let v = All( {.Nodes={Speed, Flow}, .Times={last}} );
+		ASSERT_EQ( v.size(), 2 );
+		for( let& value : v ){
+			EXPECT_EQ( value.Value.source_ts(), last );
+			EXPECT_EQ( numberOf(value.Value), 80 );
+			EXPECT_EQ( value.Value.status(), SubNormalInterpolated );
+		}
+	}
+
+	//A node named twice is answered twice, each time as a read of it alone answers, paged or not:  here past its last
+	//record, where the value is extrapolated.
+	TEST_F( AtTimes, NodeNamedTwice ){
+		Load();
+		let times = At( {25s, 90s} );
+		let speed = All( {.Nodes={Speed}, .Times=times} ), flow = All( {.Nodes={Flow}, .Times=times} );
+		for( let limit : {0u, 1u, 2u, 4u} ){
+			let v = All( {.Nodes={Speed, Flow, Speed}, .Times=times, .Limit=limit} );
+			ASSERT_EQ( v.size(), 6 ) << limit;
+			for( uint i=0; i<times.size(); ++i ){
+				EXPECT_EQ( v[3*i].Value.ShortDebugString(), speed[i].Value.ShortDebugString() ) << limit << " " << i;
+				EXPECT_EQ( v[3*i+1].Value.ShortDebugString(), flow[i].Value.ShortDebugString() ) << limit << " " << i;
+				EXPECT_EQ( v[3*i+2].Value.ShortDebugString(), speed[i].Value.ShortDebugString() ) << limit << " " << i;
+			}
+		}
+		EXPECT_EQ( speed[1].Value.status(), SubNormalInterpolated );
+	}
+
+	//A Bad bound's search, either way, reads on past a run of Bad records in pages until it finds a non-Bad one, within
+	//readLimit records, past which it takes none to exist.  Flow's run of 40 is crossed, Temp's of 120 isn't.
+	TEST_F( AtTimes, BadRunWithinReadLimit ){
+		auto config = Config( 1min );
+		config.ReadLimit = 100;
+		Restart( move(config) );
+		Pump = AddGroup();
+		Flow = Join( *Pump, "Pump1.Flow", {.Stepped=false} );
+		let temp = Join( *Pump, "Pump1.Temp", {.Stepped=false} );
+		for( let& [index, bad] : {std::pair{Flow, 40u}, std::pair{temp, 120u}} ){
+			EXPECT_TRUE( Pump->Enqueue(index, Reading(10, T0+10s)) );
+			for( uint i=0; i<bad; ++i )
+				EXPECT_TRUE( Pump->Enqueue(index, Graded((double)i, Bad, T0+20s+i*100ms)) );
+			EXPECT_TRUE( Pump->Enqueue(index, Reading(70, T0+70s)) );
+		}
+		EXPECT_TRUE( Flush(*Pump) );
+		ASSERT_EQ( readAll(*Pump, {.Nodes={temp}, .Start=ticks(T0), .End=ticks(T0+80s)}).size(), 122 );
+		//One time a read, so the run lies outside the range its pass reads.
+		let ahead = All( {.Nodes={Flow, temp}, .Times=At({15s})} );
+		ASSERT_EQ( ahead.size(), 2 );
+		EXPECT_TRUE( Is(ahead[0], Flow, T0+15s, 15, SubNormalInterpolated) );//toward +70s, past the run.
+		EXPECT_TRUE( Is(ahead[1], temp, T0+15s, 10, SubNormalInterpolated) );//extrapolated:  nothing found past the run.
+		let behind = All( {.Nodes={Flow, temp}, .Times=At({35s})} );
+		ASSERT_EQ( behind.size(), 2 );
+		EXPECT_TRUE( Is(behind[0], Flow, T0+35s, 35, SubNormalInterpolated) );//from +10s, back past the run.
+		EXPECT_TRUE( Is(behind[1], temp, T0+35s, nullopt, NoData) );
+	}
+
 	//Simple bounds (Part 13 §3.1.9):  the nearest records whatever their status, so a Bad one before the time is
 	//Bad_NoData and a Bad one after it steps back to the one before, Uncertain.
 	TEST_F( AtTimes, SimpleBounds ){

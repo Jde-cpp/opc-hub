@@ -291,8 +291,8 @@ namespace Jde::Opc::Hist::Tests{
 				y = *b.Raw;
 				y.clear_heartbeat();
 				y.clear_heartbeat_unsourced();
-				if( bits & 0x4 )
-					y.set_status( y.status() | 0x400 | 0x4 );
+				if( let kept = bits & (0x4 | 0x10) )
+					y.set_status( y.status() | 0x400 | kept );
 			}
 			else{
 				y.set_source_ts( ts );
@@ -394,15 +394,16 @@ namespace Jde::Opc::Hist::Tests{
 						let minimum = r.Aggregate==EAggregate::Minimum;
 						let extreme = minimum ? *std::ranges::min_element( goods ) : *std::ranges::max_element( goods );
 						let matches = std::ranges::count( goods, extreme );
-						Ticks when{};
+						const Rec* first{};
 						for( let x : inside ){
 							if( cls(*x)==EClass::Good && *numberOf(x->Value)==extreme ){
-								when = x->Time;
+								first = x;
 								break;
 							}
 						}
-						b = { {}, extreme, bad ? SubNormal : UA_STATUSCODE_GOOD };
-						bits = ( b.Status==UA_STATUSCODE_GOOD && when==ts ? 0 : 0x1 ) | ( matches>1 ? 0x10 : 0 ) | partial;
+						let raw = !bad && first->Time==ts;//the record itself.
+						b = raw ? Bound{ first->Value } : Bound{ {}, extreme, bad ? SubNormal : UA_STATUSCODE_GOOD };
+						bits = ( raw ? 0 : 0x1 ) | ( matches>1 ? 0x10 : 0 ) | partial;
 						break;}
 					case EAggregate::Start:
 					case EAggregate::End:

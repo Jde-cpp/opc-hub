@@ -207,6 +207,22 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( rest.Continuation.empty() );
 	}
 
+	//A continuation resumes at an interval past 2^32, which a range of short intervals reaches:  the page starts there,
+	//and its own continuation goes on from it.
+	TEST_F( Processed, ResumesPastTwoToThe32 ){
+		Load();
+		ProcessedRequest r{ .Nodes={Nodes[1]}, .Start=ticks(Noon), .End=std::numeric_limits<Ticks>::max(), .Interval=1us, .Aggregate=EAggregate::Count, .Configuration=One(), .Limit=1 };
+		auto c = continuation( Read(r) );
+		EXPECT_EQ( c.next(), 1 );
+		constexpr uint64_t far{ (1ull<<32)+5 };
+		c.set_next( far );
+		r.Continuation = c.SerializeAsString();
+		let page = Read( r );
+		ASSERT_EQ( page.Values.size(), 1 );
+		EXPECT_EQ( page.Values[0].Value.source_ts(), ticks(Noon)+(Ticks)far*ticks(1us) );
+		EXPECT_EQ( continuation(page).next(), far+1 );
+	}
+
 	//With Start after End the intervals run back from Start, each (Lo, Hi] stamped Hi, so the later time is in and the
 	//earlier out, and the last holds the rest of the range.
 	TEST_F( Processed, ReversedIntervals ){
@@ -252,6 +268,43 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_THROW( Read({.Nodes={Nodes[1]}, .Start=ticks(Noon), .End=ticks(Noon+100s), .Interval=5s, .Configuration={.PercentDataBad=101}}), UAException );
 	}
 
+	//A range to the last DateTime, Int64's maximum, which Part 6 encodes 9999-12-31 and later as:  one interval over
+	//it, either way, holds what one over the data alone does, and a time average the last value held to it.  Intervals
+	//ending there stop at it, the last uneven.
+	TEST_F( Processed, ToTheLastDateTime ){
+		Load();
+		constexpr Ticks last{ std::numeric_limits<Ticks>::max() };
+		for( let aggregate : {EAggregate::Average, EAggregate::Count, EAggregate::Interpolative} ){
+			for( let reverse : {false, true} ){
+				SCOPED_TRACE( Ƒ("aggregate {}, reverse {}", (uint)aggregate, reverse) );
+				let request = [&]( Ticks end ){
+					let start = ticks( Noon );
+					return ProcessedRequest{ .Nodes={Nodes[1]}, .Start=reverse ? end : start, .End=reverse ? start : end, .Aggregate=aggregate, .Configuration=One() };
+				};
+				let v = All( request(last) ), expected = All( request(ticks(Noon+1h)) );
+				ASSERT_EQ( v.size(), 1 );
+				ASSERT_EQ( expected.size(), 1 );
+				EXPECT_EQ( v[0].Value.source_ts(), reverse ? last : ticks(Noon) );
+				EXPECT_EQ( numberOf(v[0].Value), numberOf(expected[0].Value) );
+				EXPECT_EQ( v[0].Value.status(), expected[0].Value.status() );
+			}
+		}
+		let average = All( {.Nodes={Nodes[1]}, .Start=ticks(Noon), .End=last, .Aggregate=EAggregate::TimeAverage, .Configuration=One()} );
+		ASSERT_EQ( average.size(), 1 );
+		EXPECT_NEAR( numberOf(average[0].Value).value_or(0), 90, 1e-6 );//12:01:30's 90, held to the end of time.
+		EXPECT_EQ( average[0].Value.status(), bits(SubNormal, Calculated|Partial) );
+
+		let width = ticks( duration_cast<Duration>(years{200}) );//the last interval short, so its end is the range's.
+		let v = All( {.Nodes={Nodes[1]}, .Start=ticks(Noon), .End=last, .Interval=duration_cast<Duration>(years{200}), .Aggregate=EAggregate::TimeAverage, .Configuration=One()} );
+		let count = (uint)( (last-ticks(Noon))/width+1 );
+		ASSERT_EQ( v.size(), count );
+		EXPECT_NEAR( numberOf(v[0].Value).value_or(0), 90, 1e-6 );
+		EXPECT_EQ( v[0].Value.status(), bits(SubNormal, Calculated|Partial) );
+		for( uint i=1; i<v.size(); ++i )
+			EXPECT_EQ( v[i].Value.status(), NoData ) << i;//after the end of the data.
+		EXPECT_EQ( v.back().Value.source_ts(), ticks(Noon)+(Ticks)(count-1)*width );
+	}
+
 	//Median takes the Good values as Average does, the middle one, or the mean of the two middle ones, and is Uncertain
 	//where any value was left out.
 	TEST_F( Processed, Median ){
@@ -284,6 +337,60 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( at[0].Value.status(), bits(SubNormal, Interpolated) );
 		EXPECT_EQ( *numberOf(at[1].Value), 45 );//sloped between 12:00:30 and 12:00:50, past the Bad 12:00:40.
 		EXPECT_EQ( at[1].Value.status(), bits(SubNormal, Interpolated) );
+	}
+
+	//A Minimum or Maximum at the interval's start is the record as it is, as a Start is:  its server time, picoseconds
+	//and status kept, with Partial and MultipleValues the bits it takes.  One later is computed, stamped with the start.
+	TEST_F( Processed, ExtremeAtTheStartIsTheRecord ){
+		Pump = AddGroup();
+		let speed = Join( *Pump, "Pump1.Speed" );
+		let t0 = Time->Now();
+		auto low = Graded( 1, UA_STATUSCODE_GOODLOCALOVERRIDE, t0 );
+		low.serverTimestamp = ticks( t0+5ms );
+		low.hasServerTimestamp = true;
+		low.sourcePicoseconds = 7;
+		low.hasSourcePicoseconds = true;
+		EXPECT_TRUE( Pump->Enqueue(speed, move(low)) );
+		EXPECT_TRUE( Pump->Enqueue(speed, Reading(3, t0+1s, t0+1s+5ms)) );
+		EXPECT_TRUE( Pump->Enqueue(speed, Reading(1, t0+2s, t0+2s+5ms)) );
+		EXPECT_TRUE( Flush(*Pump) );
+		let read = [&]( EAggregate aggregate ){
+			auto y = All( {.Nodes={speed}, .Start=ticks(t0), .End=ticks(t0+3s), .Aggregate=aggregate} );
+			EXPECT_EQ( y.size(), 1 );
+			return y.empty() ? Proto::DataValue{} : y[0].Value;
+		};
+		let start = read( EAggregate::Start ), min = read( EAggregate::Minimum ), max = read( EAggregate::Maximum );
+		EXPECT_EQ( start.status(), bits(UA_STATUSCODE_GOODLOCALOVERRIDE, Partial) );//nothing before t0 is known.
+		auto expected = start;
+		expected.set_status( bits(UA_STATUSCODE_GOODLOCALOVERRIDE, Partial|Multi) );//1 again at t0+2s.
+		EXPECT_EQ( min.ShortDebugString(), expected.ShortDebugString() );
+		EXPECT_EQ( min.server_ts(), ticks(t0+5ms) );
+		EXPECT_EQ( min.source_picoseconds(), 7 );
+
+		EXPECT_EQ( numberOf(max), 3 );
+		EXPECT_EQ( max.source_ts(), ticks(t0) );
+		EXPECT_FALSE( max.has_server_ts() );
+		EXPECT_EQ( max.status(), bits(0, Calculated|Partial) );
+	}
+
+	//A node named twice is answered twice, each time as a read of it alone answers:  here over the end of its data, where
+	//the bounds are extrapolated.
+	TEST_F( Processed, NodeNamedTwice ){
+		Load();
+		for( let aggregate : {EAggregate::TimeAverage, EAggregate::Interpolative, EAggregate::Count} ){
+			SCOPED_TRACE( Ƒ("aggregate {}", (uint)aggregate) );
+			let alone = [&]( uint historian ){ return All( Request(historian, aggregate, 16s, One()) ); };
+			let one = alone( 1 ), three = alone( 3 );
+			auto r = Request( 1, aggregate, 16s, One() );
+			r.Nodes = { Nodes[1], Nodes[3], Nodes[1] };
+			let v = All( r );
+			ASSERT_EQ( v.size(), 3*one.size() );
+			for( uint i=0; i<one.size(); ++i ){
+				EXPECT_EQ( v[3*i].Value.ShortDebugString(), one[i].Value.ShortDebugString() ) << i;
+				EXPECT_EQ( v[3*i+1].Value.ShortDebugString(), three[i].Value.ShortDebugString() ) << i;
+				EXPECT_EQ( v[3*i+2].Value.ShortDebugString(), one[i].Value.ShortDebugString() ) << i;
+			}
+		}
 	}
 
 	//A range over an archive, a live file and the buffer:  each record is counted once, the hours with none are
@@ -326,5 +433,65 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( average[0].Value.status(), bits(0, Calculated) );
 		EXPECT_EQ( *numberOf(average[1].Value), 4 );//extrapolated past the buffer's value.
 		EXPECT_EQ( average[1].Value.status(), bits(SubNormal, Calculated|Partial) );
+	}
+
+	//A probe is made only where the aggregate reads its answer:  with March 7's file unreadable, a Count whose opening
+	//bound is Bad and a TimeAverage starting on a record don't look before the range, and are served.
+	TEST_F( Processed, ProbesOnlyWhatItReads ){
+		Pump = AddGroup();
+		let speed = Join( *Pump, "Pump1.Speed" );
+		let eighth = sys_days{March8};
+		DataChange( *Pump, speed, 1, Time->Now()+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( eighth+1min );
+		Settle( *Pump );
+		EXPECT_TRUE( Pump->Enqueue(speed, Status(Bad, eighth+1min)) );
+		DataChange( *Pump, speed, 2, eighth+2min );
+		DataChange( *Pump, speed, 3, eighth+4min );
+		Time->Advance( 3min );
+		EXPECT_TRUE( Flush(*Pump) );//two `delay`s past March 7's rewrite, so it forgets the archive.
+		let file = File( *Pump, March7 );
+		fs::permissions( file, fs::perms::none, fs::perm_options::replace );
+		if( std::ifstream{file}.is_open() ){
+			fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can open a file it has no permission to read.";
+		}
+		let count = All( {.Nodes={speed}, .Start=ticks(eighth+90s), .End=ticks(eighth+3min), .Aggregate=EAggregate::Count} );
+		ASSERT_EQ( count.size(), 1 );
+		EXPECT_EQ( numberOf(count[0].Value), 1 );
+		EXPECT_EQ( count[0].Value.status(), bits(0, Calculated) );
+		let average = All( {.Nodes={speed}, .Start=ticks(eighth+2min), .End=ticks(eighth+3min), .Aggregate=EAggregate::TimeAverage} );
+		ASSERT_EQ( average.size(), 1 );
+		EXPECT_EQ( numberOf(average[0].Value), 2.25 );//2 rising to 2.5, the line toward 00:04's 3.
+		EXPECT_EQ( average[0].Value.status(), bits(0, Calculated) );
+		fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+	}
+
+	//A probe made while the page's values are emitted fails the read, as one from the pass does:  here Count's Partial
+	//asks whether data lies before the node's first record, on the range's start, which only March 7's file can say.
+	TEST_F( Processed, ProbeFailureFailsTheRead ){
+		Pump = AddGroup();
+		let speed = Join( *Pump, "Pump1.Speed" );
+		let eighth = sys_days{March8};
+		DataChange( *Pump, speed, 1, Time->Now()+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, speed, 2, eighth+2min );
+		DataChange( *Pump, speed, 3, eighth+4min );
+		Time->Advance( 3min );
+		EXPECT_TRUE( Flush(*Pump) );//two `delay`s past March 7's rewrite, so it forgets the archive.
+		let file = File( *Pump, March7 );
+		fs::permissions( file, fs::perms::none, fs::perm_options::replace );
+		if( std::ifstream{file}.is_open() ){
+			fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+			GTEST_SKIP() << "This user can open a file it has no permission to read.";
+		}
+		const ProcessedRequest request{ .Nodes={speed}, .Start=ticks(eighth+2min), .End=ticks(eighth+3min), .Interval=1min, .Aggregate=EAggregate::Count };
+		EXPECT_THROW( Read(request), IO::IOException );
+		fs::permissions( file, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace );
+		let v = All( request );
+		ASSERT_EQ( v.size(), 1 );
+		EXPECT_EQ( v[0].Value.status(), bits(0, Calculated) );//not Partial:  March 7 has data, and so does 00:04.
 	}
 }
