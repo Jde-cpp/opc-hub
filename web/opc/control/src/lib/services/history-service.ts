@@ -5,16 +5,16 @@ import { HistPage, HistReadArgs, HistSource, qlTime, toHistPage } from '../model
 //What a read is sent through:  a Gateway, or a stub in a spec.
 export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
 
-//The one history service:  `hist` with `opc` for a server's own history, `group` for a gateway group once there are any -
+//The one history service:  `history` with `opc` for a server's own history, `group` for a gateway group once there are any -
 //the same arguments, result and continuation either way (spec *Pass-through*), so the trend and table never ask which.
 @Service()
 export class HistoryService{
 	async read( reader:HistReader, source:HistSource, args:HistReadArgs, log:Log=()=>{} ):Promise<HistPage>{
 		const {ql, vars} = HistoryService.query( source, args );
 		const data = await reader.query<any>( ql, vars, log );
-		return toHistPage( data?.["hist"] );
+		return toHistPage( data?.["history"] );
 	}
-	//hist( opc|group, nodes, start, end, limit, returnBounds, modified, continuation ){ continuation values{…} nodes{…} }
+	//history( opc|group, nodes, start, end, limit, returnBounds, modified, continuation ){ continuation values{…} nodes{…} }
 	//(apps/OpcGateway/config/introspection/hist.jsonnet) - only the arguments given, since the gateway reads an absent start or
 	//end as an open end, and `modification` only with `modified`, the one mode that fills it.
 	static query( source:HistSource, args:HistReadArgs ):{ql:string; vars:Record<string,unknown>}{
@@ -29,7 +29,7 @@ export class HistoryService{
 		add( "modified", args.modified );
 		add( "continuation", args.continuation );
 		const modification = args.modified ? " modification{ time type user }" : "";
-		const ql = `hist( ${params.join(", ")} ){ continuation values{ node source server status value bound heartbeat${modification} } nodes{ node status } }`;
+		const ql = `history( ${params.join(", ")} ){ continuation values{ node source server status value bound heartbeat${modification} } nodes{ node status } }`;
 		return { ql, vars };
 	}
 }

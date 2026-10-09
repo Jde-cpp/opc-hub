@@ -6,11 +6,11 @@ DISABLE_WARNINGS
 ENABLE_WARNINGS
 
 namespace Jde::QL{ struct Input; struct TableQL; }
-//The `hist` QL field's arguments, continuation and result (spec *Reads*), which a read of a server's own history with
+//The `history` QL field's arguments, continuation and result (spec *Reads*), which a read of a server's own history with
 //`opc` (HistQLAwait, spec *Pass-through*) and a read of a group's with `group` (Phase 5) share:  one result shape, one
 //continuation form, so the web draws both with the same components.
 namespace Jde::Opc::Gateway::HistQL{
-	//hist( opc, nodes, start, end, modified, returnBounds, limit, continuation ), checked:  `opc` and not `group`, at
+	//history( opc, nodes, start, end, modified, returnBounds, limit, continuation ), checked:  `opc` and not `group`, at
 	//least one node, a start or an end, and limit at most readLimit.  Times are UA ticks.  Continuation is decoded and
 	//checked against the other arguments.
 	struct Args final{
@@ -50,21 +50,22 @@ namespace Jde::Opc::Gateway::HistQL{
 	//answered it, Good for a group's.  Only the columns the query names.
 	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue;
 
-	//The edit fields (spec *Edits*), mutations by their whole names (QL::SetSystemMutations), indexed by EEdit.
-	enum class EEdit : uint8{ Insert, Replace, Update, Delete, DeleteAtTime };
-	constexpr array<sv,5> EditCommands{ "histInsert", "histReplace", "histUpdate", "histDelete", "histDeleteAtTime" };
+	//The edit fields (spec *Edits*), mutations by their whole names (QL::SetSystemMutations), indexed by EEdit:  Part 11's
+	//Insert, Replace and Update, and a purge, by range or at times.
+	enum class EEdit : uint8{ Insert, Replace, Update, Purge };
+	constexpr array<sv,4> EditCommands{ "createHistory", "updateHistory", "upsertHistory", "purgeHistory" };
 	α FindEdit( sv command )ι->optional<EEdit>;
 	//Whose history an edit names:  the server's own with `opc` (spec *Pass-through*), or a group's with `group` (Phase 5).
 	//Neither is a call that names both, or neither, which TargetRefused refuses.  A null names nothing.
 	enum class ETarget : uint8{ Opc, Group, Neither };
 	α Target( const QL::Input& input )ι->ETarget;
 	α TargetRefused( EEdit edit, SRCE )ι->Exception;
-	//A value histInsert, histReplace or histUpdate writes:  its node's place in EditArgs::Nodes, and the DataValue's parts as
+	//A value createHistory, updateHistory or upsertHistory writes:  its node's place in EditArgs::Nodes, and the DataValue's parts as
 	//the caller gave them, the value to be typed by the node's DataType.
 	struct EditValue final{ uint Slot; jvalue Data; optional<UA_DateTime> Source; optional<UA_DateTime> Server; optional<StatusCode> Status; };
-	//histInsert|histReplace|histUpdate( opc, values:[{ node source server status value }] ), histDelete( opc, nodes, start,
-	//end ) and histDeleteAtTime( opc, nodes, times ), checked:  `opc` and not `group`, a value or a node, and a delete's
-	//times.  Nodes holds each node once, in the order named.  Times are UA ticks.
+	//createHistory|updateHistory|upsertHistory( opc, values:[{ node source server status value }] ) and purgeHistory( opc,
+	//nodes, start, end ) or purgeHistory( opc, nodes, times ), checked:  `opc` and not `group`, a value or a node, and a
+	//purge's range or times, not both.  Nodes holds each node once, in the order named.  Times are UA ticks.
 	struct EditArgs final{
 		EditArgs( EEdit edit, const QL::Input& input, SRCE )ε;
 		α Command()Ι->sv{ return EditCommands[(uint8)Edit]; }
@@ -72,14 +73,14 @@ namespace Jde::Opc::Gateway::HistQL{
 		string Opc;
 		vector<NodeId> Nodes;
 		vector<EditValue> Values;//the UpdateData's.
-		UA_DateTime Start{}, End{};//histDelete's.
-		vector<UA_DateTime> Times;//histDeleteAtTime's.
+		UA_DateTime Start{}, End{};//a range purge's.
+		vector<UA_DateTime> Times;//a purge at times', empty for a range.
 	private:
 		α Slot( NodeId&& node )ι->uint;
 	};
 	//An edited value's, or time's, result:  its node's place in EditArgs::Nodes, its source time, and its status.
 	struct EditResult final{ uint Slot; optional<UA_DateTime> Time; StatusCode Status; };
-	//values{ node source status } in the order the edit names them, a histDeleteAtTime's node by node, and nodes{ node status }
+	//values{ node source status } in the order the edit names them, a purge at times' node by node, and nodes{ node status }
 	//with each node's entry status.  Only the columns the request names.
 	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue;
 }

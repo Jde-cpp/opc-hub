@@ -85,7 +85,7 @@ namespace Jde::Opc::Gateway{
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName.starts_with("dataType") )
 				y = co_await DataTypeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName=="hist" )//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
+			else if( _query.JsonName=="history" )//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
 				y = co_await HistQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName=="serverDescription" )//connection attributes are sync UA services - run them on the client's strand.
 				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return ServerDescription( move(_query), _client ); }, _sl };

@@ -31,7 +31,7 @@ namespace Jde::Opc::Gateway{
 			vector<StatusCode> statuses( count, UA_STATUSCODE_GOOD );
 			HistoryUpdateRequest request;
 			vector<optional<uint>> entries( count );//each node's entry in the request, none for one refused before it.
-			if( _edit<Delete ){
+			if( _edit<Purge ){
 				auto [types, typeStatuses] = co_await ValueTypesAwait{ args.Nodes, _client, _sl };//a node it refuses isn't sent.
 				statuses = move( typeStatuses );
 				vector<vector<Value>> values( count );//each node's, in the order named.
@@ -49,7 +49,7 @@ namespace Jde::Opc::Gateway{
 			else{
 				for( uint i=0; i<count; ++i ){
 					entries[i] = request.Size();
-					if( _edit==Delete )
+					if( args.Times.empty() )
 						request.DeleteRaw( args.Nodes[i], args.Start, args.End );
 					else
 						request.DeleteAtTime( args.Nodes[i], args.Times );
@@ -58,7 +58,7 @@ namespace Jde::Opc::Gateway{
 			let response = co_await HistoryUpdateAwait{ move(request), _client, _sl };
 			//A node's k-th value or time takes the server's operation result for it, or the node's status where the entry
 			//carries none, refused whole, or wasn't sent.
-			vector<uint> expected( count, _edit==DeleteAtTime ? args.Times.size() : 0 );
+			vector<uint> expected( count, args.Times.size() );
 			for( let& v : args.Values )
 				++expected[v.Slot];
 			vector<const UA_StatusCode*> operations( count );
@@ -72,12 +72,12 @@ namespace Jde::Opc::Gateway{
 			}
 			vector<HistQL::EditResult> results;
 			let add = [&]( uint slot, uint k, optional<UA_DateTime> time ){ results.push_back( {slot, time, operations[slot] ? operations[slot][k] : statuses[slot]} ); };
-			if( _edit<Delete ){
+			if( _edit<Purge ){
 				vector<uint> at( count );
 				for( let& v : args.Values )
 					add( v.Slot, at[v.Slot]++, v.Source );
 			}
-			else if( _edit==DeleteAtTime ){
+			else if( args.Times.size() ){
 				for( uint i=0; i<count; ++i ){
 					for( uint k=0; k<args.Times.size(); ++k )
 						add( i, k, args.Times[k] );

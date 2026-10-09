@@ -297,8 +297,9 @@ namespace Jde::QL::Tests{
 		}
 	}
 
-	//A command SetSystemMutations registers is a mutation though it starts with no verb, bare or under the keyword:  an
-	//Execute named by the whole command, resolving no table, so a POST is still what may run it.
+	//A command SetSystemMutations registers is a mutation though it starts with no verb, bare or under the keyword, and is
+	//taken whole though it starts with one:  an Execute named by the whole command, resolving no table, so a POST is still
+	//what may run it.
 	TEST( MutationQLTests, ASystemMutationIsACommandOfItsOwn ){
 		static const vector<sp<DB::AppSchema>> noSchemas;
 		EXPECT_FALSE( MutationQL::IsMutation("histTestEdit") );
@@ -318,6 +319,12 @@ namespace Jde::QL::Tests{
 			EXPECT_TRUE( m.ResultRequest->FindTable("values") );
 		}
 		EXPECT_FALSE( MutationQL::IsMutation("histTestEdits") );
+		//Taken whole though it starts with a verb, as the gateway's createHistory is.
+		EXPECT_EQ( get<1>(MutationQL::ParseCommand("createTestEdit")), EMutationQL::Create );
+		QL::SetSystemMutations( {"createTestEdit"} );
+		let [verbName, verbType] = MutationQL::ParseCommand( "createTestEdit" );
+		EXPECT_EQ( verbName, "createTestEdit" );
+		EXPECT_EQ( verbType, EMutationQL::Execute );
 	}
 
 	TEST( MutationQLTests, ToStringRoundTripsArgs ){

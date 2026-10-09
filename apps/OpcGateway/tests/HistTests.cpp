@@ -1,6 +1,6 @@
-//Historian 3A (#214):  hist with `opc`, the gateway reading a server's own history for the caller (spec *Pass-through*)
+//Historian 3A (#214):  history with `opc`, the gateway reading a server's own history for the caller (spec *Pass-through*)
 //- here the embedded OpcServer's pump nodes, written on the server with source times on three past days, so a read
-//pages across its day files, and read back through the gateway's QL by time, as the web will.  3B (#215):  the hist
+//pages across its day files, and read back through the gateway's QL by time, as the web will.  3B (#215):  the history
 //edits with `opc`, each sent as a HistoryUpdate over the caller's session, and read back as modified values.
 #include <thread>
 #include <absl/cleanup/cleanup.h>
@@ -80,9 +80,9 @@ namespace Jde::Opc::Gateway::Tests{
 			let time = []( optional<TimePoint> t ){ return t ? jvalue{ UADateTime{*t}.ToJson() } : jvalue{}; };
 			jobject vars{ {"opc", OpcServerSlug}, {"nodes", move(nodes)}, {"start", time(request.Start)}, {"end", time(request.End)}, {"limit", request.Limit}, {"bounds", request.Bounds},
 				{"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} };
-			let q = "hist( opc: $opc, nodes: $nodes, start: $start, end: $end, limit: $limit, returnBounds: $bounds, continuation: $continuation ){ continuation values{ node source server status value bound } nodes{ node status } }";
+			let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, limit: $limit, returnBounds: $bounds, continuation: $continuation ){ continuation values{ node source server status value bound } nodes{ node status } }";
 			let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
-			TRACET( ELogTags::Test, "hist: {}", serialize(value) );
+			TRACET( ELogTags::Test, "history: {}", serialize(value) );
 			let& o = value.as_object();
 			Page y;
 			if( let c = o.if_contains("continuation"); c && c->is_string() )
@@ -274,7 +274,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(2, 0), .Limit=4}, first.Continuation), GatewayErrorResponse );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=4}, "not-a-continuation"), GatewayErrorResponse );
 		jobject vars{ {"opc", OpcServerSlug}, {"node", Node(Rpm4).ToJson()}, {"start", UADateTime{At(0, 0)}.ToJson()}, {"end", UADateTime{At(3, 0)}.ToJson()} };
-		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("hist( opc: $opc, group: 1, nodes: $node, start: $start, end: $end ){ values{ value } }", vars, true) )), GatewayErrorResponse );
+		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("history( opc: $opc, group: 1, nodes: $node, start: $start, end: $end ){ values{ value } }", vars, true) )), GatewayErrorResponse );
 	}
 
 	//A node the server refuses answers with the server's status beside the others' values, and a range with nothing in
@@ -295,7 +295,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( nothing.Statuses.at(Node(RpmManual)), UA_STATUSCODE_GOODNODATA );
 
 		jobject vars{ {"opc", OpcServerSlug}, {"node", Node(Rpm4).ToJson()}, {"start", UADateTime{At(0, 0)}.ToJson()}, {"end", UADateTime{At(3, 0)}.ToJson()} };
-		let modified = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("hist( opc: $opc, nodes: $node, start: $start, end: $end, modified: true ){ values{ value } nodes{ node status } }", vars, true) );
+		let modified = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("history( opc: $opc, nodes: $node, start: $start, end: $end, modified: true ){ values{ value } nodes{ node status } }", vars, true) );
 		let& o = modified.as_object();
 		EXPECT_TRUE( Json::AsArray(o, "values").empty() );
 		let& nodes = Json::AsArray( o, "nodes" );
@@ -382,7 +382,7 @@ namespace Jde::Opc::Gateway::Tests{
 				y.Statuses.emplace( NodeId{Json::AsObject(j.as_object(), "node")}, Json::AsNumber<StatusCode>(j.as_object(), "status") );
 			return y;
 		}
-		//histInsert, histReplace or histUpdate.
+		//createHistory, updateHistory or upsertHistory.
 		Ω Update( sv command, const vector<Sample>& samples )ε->Edited{
 			jarray values;
 			for( let& sample : samples )
@@ -390,13 +390,13 @@ namespace Jde::Opc::Gateway::Tests{
 			return Edit( Ƒ("{}( opc: $opc, values: $values ){{ values{{ node source status }} nodes{{ node status }} }}", command), {{"values", move(values)}} );
 		}
 		Ω DeleteRaw( UA_UInt32 node, TimePoint start, TimePoint end )ε->Edited{
-			return Edit( "histDelete( opc: $opc, nodes: $nodes, start: $start, end: $end ){ nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}} );
+			return Edit( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end ){ nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}} );
 		}
 		Ω DeleteAtTime( UA_UInt32 node, const vector<TimePoint>& times )ε->Edited{
 			jarray j;
 			for( let t : times )
 				j.push_back( Time(t) );
-			return Edit( "histDeleteAtTime( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"times", move(j)}} );
+			return Edit( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"times", move(j)}} );
 		}
 		Ω Values( const vector<Row>& rows )ι->vector<jvalue>{
 			vector<jvalue> y;
@@ -410,7 +410,7 @@ namespace Jde::Opc::Gateway::Tests{
 			jvalue continuation;
 			for( uint i=0; i<100; ++i ){
 				jobject vars{ {"opc", OpcServerSlug}, {"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}, {"limit", limit}, {"continuation", continuation} };
-				let q = "hist( opc: $opc, nodes: $nodes, start: $start, end: $end, modified: true, limit: $limit, continuation: $continuation ){ continuation values{ node source value modification{ time type user } } }";
+				let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, modified: true, limit: $limit, continuation: $continuation ){ continuation values{ node source value modification{ time type user } } }";
 				let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
 				TRACET( ELogTags::Test, "modified: {}", serialize(value) );
 				let& o = value.as_object();
@@ -437,11 +437,11 @@ namespace Jde::Opc::Gateway::Tests{
 		Write( Rpm3, 300, When(44) );
 		THROW_IF( !BlockAny(Server::GetUAServer().History().Group()->Flush()), "The flush didn't write all it took." );
 		let node = Node( Rpm3 );
-		let inserted = Update( "histInsert", {{Rpm3, When(41), 150}, {Rpm3, When(40), 1}} );
+		let inserted = Update( "createHistory", {{Rpm3, When(41), 150}, {Rpm3, When(40), 1}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS}) );
 		EXPECT_EQ( inserted.Statuses.at(node), UA_STATUSCODE_GOOD );
-		EXPECT_EQ( Update("histReplace", {{Rpm3, When(42), 250}, {Rpm3, When(43), 9}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_BADNOENTRYEXISTS}) );
-		EXPECT_EQ( Update("histUpdate", {{Rpm3, When(44), 350}, {Rpm3, When(46), 400}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( Update("updateHistory", {{Rpm3, When(42), 250}, {Rpm3, When(43), 9}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_BADNOENTRYEXISTS}) );
+		EXPECT_EQ( Update("upsertHistory", {{Rpm3, When(44), 350}, {Rpm3, When(46), 400}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_GOODENTRYINSERTED}) );
 		const Request range{ .Nodes={Rpm3}, .Start=When(40), .End=When(47), .Limit=100 };
 		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 150.0, 250.0, 350.0, 400.0}) );
 
@@ -488,7 +488,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//answer to the DataType read.  A value's status goes as given.  Arguments the call can't take, a status that isn't a
 	//number among them, are refused before anything is sent.
 	TEST_F( HistEditTests, AnswersEachNodeWithTheServersStatus ){
-		let edited = Update( "histInsert", {{Status1, When(10), true}, {Status2, When(10), true}, {Unknown, When(10), 1}, {Status1, When(11), false}} );
+		let edited = Update( "createHistory", {{Status1, When(10), true}, {Status2, When(10), true}, {Unknown, When(10), 1}, {Status1, When(11), false}} );
 		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED, UA_STATUSCODE_BADNODEIDUNKNOWN, UA_STATUSCODE_GOODENTRYINSERTED}) );
 		EXPECT_EQ( edited.Statuses.at(Node(Status1)), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( edited.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
@@ -497,20 +497,21 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( DeleteRaw(Status2, When(10), When(12)).Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
 		//A value's status goes as given, a number as a read answers it.
 		let uncertain = jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(22))}, {"status", UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE}, {"value", 2} };
-		EXPECT_EQ( Edit("histInsert( opc: $opc, values: $values ){ values{ status } nodes{ node status } }", {{"values", jarray{uncertain}}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( Edit("createHistory( opc: $opc, values: $values ){ values{ status } nodes{ node status } }", {{"values", jarray{uncertain}}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
 		let read = Read( {.Nodes={Rpm3}, .Start=When(22), .End=When(23), .Limit=100} ).Values;
 		ASSERT_EQ( read.size(), 1u );
 		EXPECT_EQ( read[0].Status, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE );
 
 		let refused = []( string q, jobject vars ){ EXPECT_THROW( Edit(q, vars), GatewayErrorResponse ) << q; };
 		jarray values{ jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", 1} } };
-		refused( "histInsert( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"values", values}} );
-		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{}}} );
-		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"source", Time(When(20))}, {"value", 1}}}}} );
-		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
-		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"status", "0x80340000"}, {"value", 1}}}}} );
-		refused( "histDelete( opc: $opc, nodes: $nodes, start: $start ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}} );
-		refused( "histDeleteAtTime( opc: $opc, nodes: $nodes, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"times", jarray{}}} );
+		refused( "createHistory( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"values", values}} );
+		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{}}} );
+		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"source", Time(When(20))}, {"value", 1}}}}} );
+		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
+		refused( "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"status", "0x80340000"}, {"value", 1}}}}} );
+		refused( "purgeHistory( opc: $opc, nodes: $nodes, start: $start ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}} );
+		refused( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"times", jarray{}}} );
+		refused( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}, {"end", Time(When(21))}, {"times", jarray{Time(When(20))}}} );
 		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(20), .End=When(21), .Limit=100}).Values.empty() );
 	}
 
@@ -520,10 +521,10 @@ namespace Jde::Opc::Gateway::Tests{
 		jarray values{ jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(25))}, {"value", 1} } };
 		struct Case final{ sv Command; string Query; jobject Vars; };
 		for( let& c : vector<Case>{
-			{"histInsert", "histInsert( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"opc", "noSuchConnection"}, {"values", values}}},
-			{"histInsert", "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"opc", nullptr}, {"values", values}}},
-			{"histInsert", "histInsert( values: $values ){ values{ status } }", {{"values", values}}},
-			{"histDelete", "histDelete( nodes: $nodes, start: $start, end: $end ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(25))}, {"end", Time(When(26))}}} } ){
+			{"createHistory", "createHistory( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"opc", "noSuchConnection"}, {"values", values}}},
+			{"createHistory", "createHistory( opc: $opc, values: $values ){ values{ status } }", {{"opc", nullptr}, {"values", values}}},
+			{"createHistory", "createHistory( values: $values ){ values{ status } }", {{"values", values}}},
+			{"purgeHistory", "purgeHistory( nodes: $nodes, start: $start, end: $end ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(25))}, {"end", Time(When(26))}}} } ){
 			try{
 				Socket().QuerySync( string{c.Query}, c.Vars );
 				ADD_FAILURE() << c.Query;
@@ -555,12 +556,12 @@ namespace Jde::Opc::Gateway::Tests{
 		UAε( UA_Variant_setScalarCopy(&down.value, &last, &UA_TYPES[UA_TYPES_DOUBLE]) );
 		down.hasValue = true;
 		UAε( UA_Server_writeDataValue(ua, node, down) );
-		let typed = Update( "histInsert", {{Rpm2, When(60), 7}} );
+		let typed = Update( "createHistory", {{Rpm2, When(60), 7}} );
 		EXPECT_EQ( typed.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
 		EXPECT_EQ( typed.Statuses.at(node), UA_STATUSCODE_GOOD );
 
 		UAε( UA_Server_writeDataValue(ua, node, Value{UA_STATUSCODE_BADWAITINGFORINITIALDATA}) );
-		let inferred = Update( "histInsert", {{Rpm2, When(61), 8.5}} );
+		let inferred = Update( "createHistory", {{Rpm2, When(61), 8.5}} );
 		EXPECT_EQ( inferred.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
 		EXPECT_EQ( inferred.Statuses.at(node), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(60), .End=When(62), .Limit=100}).Values), (vector<jvalue>{7.0, 8.5}) );
@@ -571,7 +572,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( HistEditTests, EditsNeedTheServersGrant ){
 		Enforce( false );
 		absl::Cleanup enforce = []{ try{ Enforce(true); }catch( const std::exception& e ){ ADD_FAILURE() << "nodeIds wasn't enforced again:  " << e.what(); } };
-		let edited = Update( "histInsert", {{Rpm3, When(30), 500}} );
+		let edited = Update( "createHistory", {{Rpm3, When(30), 500}} );
 		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_BADUSERACCESSDENIED}) );
 		EXPECT_EQ( DeleteRaw(Rpm3, When(0), When(50)).Statuses.at(Node(Rpm3)), UA_STATUSCODE_BADUSERACCESSDENIED );
 		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(30), .End=When(31), .Limit=100}).Values.empty() );

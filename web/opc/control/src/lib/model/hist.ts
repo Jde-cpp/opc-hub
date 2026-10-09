@@ -11,7 +11,7 @@ export type HistSource = { opc:CnnctnSlug; group?:undefined } | { group:number; 
 
 //ModificationInfo, with `modified: true`:  what an edit did, when and who (spec *Reads*).
 export type HistModification = { time:Date|null; type:string; user:string };
-//One value of a `hist` page (apps/OpcGateway/config/introspection/hist.jsonnet), its times as Dates.
+//One value of a `history` page (apps/OpcGateway/config/introspection/hist.jsonnet), its times as Dates.
 export type HistValue = {
 	node:NodeId;
 	source:Date|null;//with no source time the server's, as the gateway's merge orders it;  null with neither:  no place on a time axis

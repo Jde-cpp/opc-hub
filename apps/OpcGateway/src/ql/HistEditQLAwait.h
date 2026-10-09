@@ -5,7 +5,7 @@
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
-	//histInsert, histReplace, histUpdate, histDelete and histDeleteAtTime with `opc`:  a server's own history, edited for
+	//createHistory, updateHistory, upsertHistory and purgeHistory with `opc`:  a server's own history, edited for
 	//the caller over the caller's session (spec *Pass-through*), one HistoryUpdate entry per node.  An UpdateData's values
 	//take the type ValueTypesAwait reads for their node, as updateVariable's do.  The server keeps its own audit trail, so
 	//the gateway records nothing:  each value's result is the server's operation result, or, for an entry the server

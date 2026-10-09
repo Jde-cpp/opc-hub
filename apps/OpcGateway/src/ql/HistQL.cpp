@@ -34,20 +34,20 @@ namespace HistQL{
 	Args::Args( const QL::Input& input, SL sl )ε{
 		let opc = input.FindPtr<jstring>( "opc" );
 		let group = input.FindPtr<jvalue>( "group" );
-		THROW_IFSL( !opc || (group && !group->is_null()), "hist takes exactly one of 'opc' and 'group'." );
+		THROW_IFSL( !opc || (group && !group->is_null()), "history takes exactly one of 'opc' and 'group'." );
 		Opc = *opc;
 		let nodes = input.FindPtr<jvalue>( "nodes" );
-		THROW_IFSL( !nodes || nodes->is_null(), "hist names no nodes." );
+		THROW_IFSL( !nodes || nodes->is_null(), "history names no nodes." );
 		if( nodes->is_array() ){
 			for( let& j : nodes->get_array() )
 				Nodes.push_back( node(j) );
 		}
 		else
 			Nodes.push_back( node(*nodes) );
-		THROW_IFSL( Nodes.empty(), "hist names no nodes." );
+		THROW_IFSL( Nodes.empty(), "history names no nodes." );
 		Start = time( input, "start", sl );
 		End = time( input, "end", sl );
-		THROW_IFSL( !Start && !End, "hist needs a start or an end." );
+		THROW_IFSL( !Start && !End, "history needs a start or an end." );
 		Modified = input.Find<bool>( "modified" ).value_or( false );
 		Bounds = input.Find<bool>( "returnBounds" ).value_or( false );
 		let readLimit = ReadLimit();
@@ -94,7 +94,7 @@ namespace HistQL{
 		if( Target(input)!=ETarget::Opc )//a group's edit doesn't reach here until Phase 5.
 			throw TargetRefused( edit, sl );
 		Opc = *input.FindPtr<jstring>( "opc" );
-		if( edit<EEdit::Delete ){
+		if( edit<EEdit::Purge ){
 			let values = input.FindPtr<jvalue>( "values" );
 			THROW_IFSL( !values || !values->is_array() || values->get_array().empty(), "{} names no values.", Command() );
 			for( let& j : values->get_array() ){
@@ -115,16 +115,16 @@ namespace HistQL{
 		else
 			Slot( node(*nodes) );
 		THROW_IFSL( Nodes.empty(), "{} names no nodes.", Command() );
-		if( edit==EEdit::Delete ){
-			let start = time( input, "start", sl ), end = time( input, "end", sl );
-			THROW_IFSL( !start || !end, "histDelete needs a start and an end." );
-			Start = *start; End = *end;
-		}
-		else{
-			let times = input.FindPtr<jvalue>( "times" );
-			THROW_IFSL( !times || !times->is_array() || times->get_array().empty(), "histDeleteAtTime names no times." );
+		let start = time( input, "start", sl ), end = time( input, "end", sl );
+		if( let times = input.FindPtr<jvalue>("times"); times && !times->is_null() ){//DeleteAtTime, else DeleteRawModified.
+			THROW_IFSL( start || end, "{} takes a start and an end, or times, not both.", Command() );
+			THROW_IFSL( !times->is_array() || times->get_array().empty(), "{} names no times.", Command() );
 			for( let& j : times->get_array() )
 				Times.push_back( UADateTime{j, sl}.UA() );
+		}
+		else{
+			THROW_IFSL( !start || !end, "{} needs a start and an end, or times.", Command() );
+			Start = *start; End = *end;
 		}
 	}
 	α EditArgs::Slot( NodeId&& node )ι->uint{
