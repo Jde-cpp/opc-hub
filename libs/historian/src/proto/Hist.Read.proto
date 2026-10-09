@@ -1,15 +1,20 @@
 syntax = "proto3";
 package Jde.Opc.Hist.Proto;
 
-//A raw read's continuation, which Group::Read returns with a page that stops short and takes back for the next:
-//opaque to the host, which passes it as it is, and stateless, so a restart between pages loses nothing.
+//A read's continuation, which Group::Read, ReadAtTime and ReadProcessed return with a page that stops short and take
+//back for the next:  opaque to the host, which passes it as it is, and stateless, so a restart between pages loses
+//nothing.  A field keeps its number, since a continuation can cross an upgrade.
 message Continuation{
-	fixed32 crc=1;//the CRC-32C of the read's other arguments, which a continuation passed with others fails.
-	//The last primary time returned:  the earliest in a reverse read.  For a page that ended with its day, a ReadRequest's
-	//OneDay, where the next begins instead, with every count 0:  the start of the day a forward read goes on to, or the
-	//last tick of the one a reverse read goes back to.
+	//The CRC-32C of the read's other arguments, the mode among them, which a continuation passed with others, or to a
+	//read of another mode, fails.
+	fixed32 crc=1;
+	//A raw read's last primary time returned:  the earliest in a reverse read.  For a page that ended with its day, a
+	//ReadRequest's OneDay, where the next begins instead, with every count 0:  the start of the day a forward read goes
+	//on to, or the last tick of the one a reverse read goes back to.
 	sint64 time=2;
-	repeated uint32 counts=3;//per requested node, in the request's order:  its records at time already returned.
+	//Per requested node, in the request's order:  its records at time already returned, or for an at-time or a processed
+	//read whether its value at next was.
+	repeated uint32 counts=3;
 	//Where the page stopped in an archive, when its last record was the archive's:  the next page resumes there when the
 	//file's generation still matches, and by time otherwise.  In a reverse read, where its earliest record starts, which
 	//the next page reads up to.
@@ -18,4 +23,7 @@ message Continuation{
 	//No page so far has returned a value:  set only by a page that OneDay ended holding none, so a last page that holds
 	//none either ends a read that found no data.
 	bool no_values=6;
+	//An at-time read's next of the requested times, by its place among them, or a processed read's next interval, by
+	//its place from the start.
+	uint64 next=7;
 }
