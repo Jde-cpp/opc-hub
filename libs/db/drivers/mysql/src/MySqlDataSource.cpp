@@ -6,6 +6,7 @@
 #include "MySqlQueryAwait.h" //!important
 #include "MySqlRow.h" //!important
 #include "MySqlServerMeta.h"
+#include "MySqlSslMode.h"
 #include "../../../src/DBLog.h" //!important
 
 
@@ -25,7 +26,7 @@ namespace Jde::DB::MySql{
 			cs.database,
 			cs.password.empty() ? "<empty>" : "<set>",
 			cs.connection_collation,
-			underlying(cs.ssl),
+			SslModeName(cs.ssl),
 			cs.multi_queries
 		);
 	}
@@ -35,6 +36,9 @@ namespace Jde::DB::MySql{
 			Logging::LogOnce( SRCE_CUR, ELogTags::DBDriver, "mysql::connect_params: {}", toString(cs) );
 			try{
 				Conn.connect( cs );
+				Logging::LogOnce( SRCE_CUR, ELogTags::DBDriver, "mysql: tls {}", Conn.uses_ssl() ? "on" : "off" );
+				if( cs.ssl==mysql::ssl_mode::enable && !Conn.uses_ssl() && Logging::MarkLogged(Logging::GenerateId("mysql:plaintext")) )
+					WARNT( ELogTags::DBDriver, "mysql {}:{} offers no TLS - the user name, the SQL and the rows cross the network in the clear.  ssl:'require' refuses this, ssl:'disable' expects it.", cs.server_address.hostname(), cs.server_address.port() );
 				//Once per connection - a session variable survives, so a pooled session reused by AcquireSession keeps it.
 				mysql::results tz;
 				Conn.execute( UtcSession, tz );
@@ -108,7 +112,7 @@ namespace Jde::DB::MySql{
 		_cs.password = Json::AsSV( config, "password" );
 		_cs.database = Json::AsSV( config, "schema" );
 		_cs.connection_collation = 45; //utf8mb4_general_ci
-		_cs.ssl = mysql::ssl_mode::disable;
+		_cs.ssl = ToSslMode( Json::FindSV(config, "ssl").value_or("enable") );
 		_cs.multi_queries = true;
 	}
 
