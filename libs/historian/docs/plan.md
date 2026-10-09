@@ -84,7 +84,7 @@ Each item is its own PR, useful without the historian.
 The design is the spec's *Pass-through* section, whose five points were ruled and folded on 2026-10-07 ([#213]). The work:
 
 - **Awaits.** `HistoryReadAwait` and `HistoryUpdateAwait` go beside `ReadAwait`. They send through open62541's generic async service, [`__UA_Client_AsyncService`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel_async.h#L60), the gateway's first use of it; `ReadAwait` uses the typed `UA_Client_sendAsyncReadRequest` ([`ReadAwait.cpp:226`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L226)). The high-level helpers ([`UA_Client_HistoryRead_raw`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel.h#L166) and the rest) are synchronous and take one node, which would block the strand. The request and response wrappers are move-only and deep-copy their NodeIds, as `ReadRequest` does ([`ReadAwait.h:8`](../../../apps/OpcGateway/src/async/ReadAwait.h#L8)).
-- **Dispatch.** `GatewayQLAwait` routes the `hist*` fields that carry `opc`. `needsClient` already opens the caller's client for any query with `opc` ([`GatewayQLAwait.cpp:45`](../../../apps/OpcGateway/src/ql/GatewayQLAwait.cpp#L45)), the same way `updateVariable` gets it ([`VariableQLAwait.cpp:11`](../../../apps/OpcGateway/src/ql/VariableQLAwait.cpp#L11)).
+- **Dispatch.** `GatewayQLAwait` routes `history`, and `GatewayQLMAwait` the edits, when they carry `opc`. `needsClient` already opens the caller's client for any query with `opc` ([`GatewayQLAwait.cpp:45`](../../../apps/OpcGateway/src/ql/GatewayQLAwait.cpp#L45)), the same way `updateVariable` gets it ([`VariableQLAwait.cpp:11`](../../../apps/OpcGateway/src/ql/VariableQLAwait.cpp#L11)).
 - **Shared code.** The continuation codec (time, per-node counts at that time, argument hash) and the QL result serializer live where Phase 5 reuses them, not in the pass-through.
 - **Tests.** The gateway tests already embed OpcServer in-process ([`OpcGateway/tests/main.cpp:29`](../../../apps/OpcGateway/tests/main.cpp#L29)), so they read Phase 2's historizing pump nodes:
   - paging across day files, forward and reverse;
@@ -118,15 +118,15 @@ Split so that each PR is reviewable and most of 5a is useful before any history 
 - **5b, groups and templates** ([#223]).
   - The four tables, with `guid`, the `pkTable` foreign key on `server_connection_id`, and the unique (connection, node) index.
   - `access_resources` rows, and their QL.
-  - Template resolution and `histResolve`.
+  - Template resolution and `resolveHistory`.
   - Membership changes write `NodeAdded`/`NodeRemoved` and change monitored items.
-- **5c, collection, reads and edits** ([#224]). A hist QL hook beside `OpcQLHook`, and the collector feeding the library. Then the reads with `group`, then the edits. Also the `hist` block in [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet) and [`Opc.Hub.jsonnet`](../../../apps/OpcHub/config/Opc.Hub.jsonnet), and the lock-disabled path answering with an error.
+- **5c, collection, reads and edits** ([#224]). A hist QL hook beside `OpcQLHook`, and the collector feeding the library. Then the reads with `group`, then the edits, whose values need a type rule of their own: the type the historian stored for the node is the natural one, since a correction shouldn't need the server reachable (spec *Open questions*). Also the `hist` block in [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet) and [`Opc.Hub.jsonnet`](../../../apps/OpcHub/config/Opc.Hub.jsonnet), and the lock-disabled path answering with an error.
 - **5d, `/hist`** ([#225]). The snapshot under the lock, the read outside it, paging, live streaming and pushed modifications, on the gateway's listener and the hub's.
 - **Differential test.** A gateway group over OpcServer's historizing pump nodes stores the same values OpcServer stores itself (spec *Hosts*). With matching thresholds, a group read and a pass-through read of the same range should agree apart from sampling, which gives a cross-check neither host has alone. Connection drops in that setup exercise the gap markers.
 
 ## Phase 6 — web for gateway-only features, step 5 ([#226])
 
-- Group and template admin. The template editor picks browse paths from the tree; resolution status shows unresolved members, with a retry that calls `histResolve`.
+- Group and template admin. The template editor picks browse paths from the tree; resolution status shows unresolved members, with a retry that calls `resolveHistory`.
 - Per-node threshold overrides.
 - Group access through `access_resources`.
 - The live trend for group sources switches to `/hist`'s snapshot and stream, which has no gap.
@@ -138,9 +138,9 @@ Phases 1–4 are built in three passes, and each pass merges end to end before t
 
 | Slice | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
 | --- | --- | --- | --- | --- |
-| **A**, raw reads | steps 1–4 ([#200]) | collection, `readRaw`, load, read capability ([#209]) | `hist` with `opc` ([#214]) | trend, table, paging ([#218]) |
-| **B**, edits | step 5 ([#206]) | `updateData`, `deleteRawModified`, `readModified`, `UAAccess` stubs ([#210]) | `histInsert` … `histDeleteAtTime`, `modified` ([#215]) | edit dialogs, modified view ([#219]) |
-| **C**, at-time and aggregates | steps 6–7 ([#207]) | `readAtTime`, `readProcessed`, `AggregateFunctions`, Median ([#211]) | `histAtTime`, `histAggregate` ([#216]) | aggregate picker ([#220]) |
+| **A**, raw reads | steps 1–4 ([#200]) | collection, `readRaw`, load, read capability ([#209]) | `history` with `opc` ([#214]) | trend, table, paging ([#218]) |
+| **B**, edits | step 5 ([#206]) | `updateData`, `deleteRawModified`, `readModified`, `UAAccess` stubs ([#210]) | `createHistory` … `purgeHistory`, `modified` ([#215]) | edit dialogs, modified view ([#219]) |
+| **C**, at-time and aggregates | steps 6–7 ([#207]) | `readAtTime`, `readProcessed`, `AggregateFunctions`, Median ([#211]) | `history` at times and aggregated ([#216]) | aggregate picker ([#220]) |
 
 Slice A is the long one, since it carries all of storage. Its payoff is the check that matters most: the result shape, the continuation and the web components are proven against a real server before Phase 5 builds a second producer for them.
 

@@ -2,7 +2,6 @@
 #include <jde/fwk/utils/collections.h>
 #include <jde/ql/types/TableQL.h>
 #include <jde/opc/uatypes/Value.h>
-#include <jde/opc/uatypes/Variant.h>
 #include "../UAClient.h"
 #include "../uatypes/Browse.h"
 
@@ -109,6 +108,13 @@ namespace Jde::Opc::Gateway{
 		}
 		SetNodesToRead();
 	}
+	ReadRequest::ReadRequest( const vector<NodeId>& ids, UA_AttributeId attrib )ι:
+		UA_ReadRequest{}{
+		_readIds.reserve( ids.size() );
+		for( let& nodeId : ids )
+			Push( nodeId, attrib );
+		SetNodesToRead();
+	}
 	ReadRequest::ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι:
 		UA_ReadRequest{}{
 		_readIds.reserve( attribs.size() );
@@ -210,15 +216,6 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α ReadResponse::ScalerNodeId()ε->NodeId{
-		THROW_IF( resultsSize!=1, "Cannot get scalar NodeId for read response with no results." );
-		THROW_IF( !results[0].hasValue, "({})Cannot get scalar NodeId for read response with no value.", hex(results[0].status) );
-		THROW_IF( results[0].value.type!=&UA_TYPES[UA_TYPES_NODEID], "Cannot get scalar NodeId for type='{}'.", results[0].value.type->typeName );
-		return NodeId{ *(UA_NodeId*)results[0].value.data };
-	}
-	α ReadResponse::ScalerValue()ε->optional<Variant>{
-		return resultsSize==1 && results[0].hasValue  ? Variant{ move(results[0].value) } : optional<Variant>{};
-	}
 
 	α ReadAwait::Suspend()ι->void{
 		_client->PostUA( [this]{//UA submissions must run on the client's strand; `this` outlives suspension (resume only via OnComplete).

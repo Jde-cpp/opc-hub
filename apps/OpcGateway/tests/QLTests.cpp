@@ -307,9 +307,9 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 
-	TEST_F( QLTests, histIntrospection ){
+	TEST_F( QLTests, historyIntrospection ){
 		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
-		for( sv typeName : {"Hist"sv, "hist"sv} ){ //both spellings are declared in config/introspection/hist.jsonnet.
+		for( sv typeName : {"History"sv, "history"sv} ){ //both spellings are declared in config/introspection/hist.jsonnet.
 			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
 			let& fields = Json::AsArray( value.as_object(), "fields" );
 			auto find = [&]( sv name ){ return find_if( fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; } ); };
@@ -318,9 +318,15 @@ namespace Jde::Opc::Gateway::Tests{
 			auto values = find( "values" );
 			ASSERT_NE( values, fields.end() );
 			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/kind"), "LIST" );
-			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/ofType/name"), "HistValue" );
+			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/ofType/name"), "HistoryValue" );
 		}
-		let value = Socket().QuerySync( Ƒ("__type( name: \"HistValue\" ){}", fieldsQL), {} );
+		for( sv edit : {"createHistory"sv, "updateHistory"sv, "upsertHistory"sv, "purgeHistory"sv} ){
+			let answer = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", edit, fieldsQL), {} );
+			let& fields = Json::AsArray( answer.as_object(), "fields" );
+			for( sv name : {"values"sv, "nodes"sv} )
+				EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << edit << "." << name << ": " << serialize( answer );
+		}
+		let value = Socket().QuerySync( Ƒ("__type( name: \"HistoryValue\" ){}", fieldsQL), {} );
 		let& fields = Json::AsArray( value.as_object(), "fields" );
 		for( sv name : {"node"sv, "source"sv, "server"sv, "status"sv, "value"sv, "bound"sv, "heartbeat"sv, "modification"sv} )
 			EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << name << ": " << serialize( value );

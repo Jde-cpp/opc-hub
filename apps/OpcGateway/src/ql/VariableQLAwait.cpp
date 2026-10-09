@@ -1,6 +1,6 @@
 #include "VariableQLAwait.h"
 #include "../async/ConnectAwait.h" //!important
-#include <jde/opc/uatypes/Variant.h>
+#include "../async/ValueTypesAwait.h"
 
 #define let const auto
 
@@ -10,30 +10,14 @@ namespace Jde::Opc::Gateway{
 		try{
 			_client = co_await ConnectAwait{ string{opcId ? *opcId : sv{}}, _session->SessionId, _session->UserPK, _sl };
 			_nodeId = NodeId{ _mutation.As<>("id") };
-			if( _mutation.Type==QL::EMutationQL::Update )
-				ReadDataType( _mutation.As<>("value"), _nodeId );
+			if( _mutation.Type==QL::EMutationQL::Update ){
+				let resolved = co_await ValueTypesAwait{ {_nodeId}, _client, _sl };
+				if( let sc = resolved.Statuses[0]; UA_StatusCode_isBad(sc) )
+					throw UAException{ sc, "Could not read the node's DataType.", {}, _sl };
+				Write( Value{_mutation.As<>("value"), resolved.Types[0], _sl} );
+			}
 			else
 				ResumeExp( Exception("Only update is supported") );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-
-	α VariableQLAwait::ReadDataType( jvalue value, const NodeId& nodeId )ι->TAwait<ReadResponse>::Task{
-		try{
-			const UA_DataType* dt = nullptr;
-			auto dtId = co_await ReadAwait{ nodeId, UA_ATTRIBUTEID_DATATYPE, _client };
-			auto typeNodeId = dtId.ScalerNodeId();
-			if( !typeNodeId.namespaceIndex )
-				dt = FindDataType( typeNodeId );
-			else{
-				//see if we can get type from value
-				auto v = ( co_await ReadAwait{ nodeId, UA_ATTRIBUTEID_VALUE, _client } ).ScalerValue();
-				dt = v ? v->type : nullptr;
-			}
-
-			Write( Value{move(value), dt} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

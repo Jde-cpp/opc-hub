@@ -9,9 +9,19 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	Ω time( const QL::Input& input, sv name, SL sl )ε->optional<UA_DateTime>{
-		let p = input.FindPtr<jvalue>( name );
+	Ω time( const jvalue* p, SL sl )ε->optional<UA_DateTime>{
 		return p && !p->is_null() ? optional<UA_DateTime>{ UADateTime{*p, sl}.UA() } : nullopt;
+	}
+	Ω time( const QL::Input& input, sv name, SL sl )ε->optional<UA_DateTime>{
+		return time( input.FindPtr<jvalue>(name), sl );
+	}
+	//A value's status, a number as a read answers it;  none, so Good, when absent or null.
+	Ω status( const jvalue* p, sv command, SL sl )ε->optional<StatusCode>{
+		if( !p || p->is_null() )
+			return nullopt;
+		let y = p->try_to_number<StatusCode>();
+		THROW_IFSL( !y, "{}:  a value's status isn't a number - {}.", command, serialize(*p) );
+		return *y;
 	}
 	//{ns, i|s|g|b}, a bare numeric id, or the UA spelling, "ns=1;i=6012".
 	Ω node( const jvalue& j )ε->NodeId{
@@ -24,20 +34,20 @@ namespace HistQL{
 	Args::Args( const QL::Input& input, SL sl )ε{
 		let opc = input.FindPtr<jstring>( "opc" );
 		let group = input.FindPtr<jvalue>( "group" );
-		THROW_IFSL( !opc || (group && !group->is_null()), "hist takes exactly one of 'opc' and 'group'." );
+		THROW_IFSL( !opc || (group && !group->is_null()), "history takes exactly one of 'opc' and 'group'." );
 		Opc = *opc;
 		let nodes = input.FindPtr<jvalue>( "nodes" );
-		THROW_IFSL( !nodes || nodes->is_null(), "hist names no nodes." );
+		THROW_IFSL( !nodes || nodes->is_null(), "history names no nodes." );
 		if( nodes->is_array() ){
 			for( let& j : nodes->get_array() )
 				Nodes.push_back( node(j) );
 		}
 		else
 			Nodes.push_back( node(*nodes) );
-		THROW_IFSL( Nodes.empty(), "hist names no nodes." );
+		THROW_IFSL( Nodes.empty(), "history names no nodes." );
 		Start = time( input, "start", sl );
 		End = time( input, "end", sl );
-		THROW_IFSL( !Start && !End, "hist needs a start or an end." );
+		THROW_IFSL( !Start && !End, "history needs a start or an end." );
 		Modified = input.Find<bool>( "modified" ).value_or( false );
 		Bounds = input.Find<bool>( "returnBounds" ).value_or( false );
 		let readLimit = ReadLimit();
@@ -61,6 +71,68 @@ namespace HistQL{
 		bytes += Modified ? '\1' : '\0';
 		bytes += Bounds ? '\1' : '\0';
 		return IO::Crc::Calc32c( bytes );
+	}
+}
+	α HistQL::FindEdit( sv command )ι->optional<EEdit>{
+		for( uint8 i=0; i<EditCommands.size(); ++i ){
+			if( EditCommands[i]==command )
+				return (EEdit)i;
+		}
+		return nullopt;
+	}
+	α HistQL::Target( const QL::Input& input )ι->ETarget{
+		let group = input.FindPtr<jvalue>( "group" );
+		let opc = input.FindPtr<jstring>( "opc" )!=nullptr, named = group && !group->is_null();
+		return opc==named ? ETarget::Neither : opc ? ETarget::Opc : ETarget::Group;
+	}
+	α HistQL::TargetRefused( EEdit edit, SL sl )ι->Exception{
+		return Exception{ sl, {}, "{} takes exactly one of 'opc' and 'group'.", EditCommands[(uint8)edit] };
+	}
+namespace HistQL{
+	EditArgs::EditArgs( EEdit edit, const QL::Input& input, SL sl )ε:
+		Edit{ edit }{
+		if( Target(input)!=ETarget::Opc )//a group's edit doesn't reach here until Phase 5.
+			throw TargetRefused( edit, sl );
+		Opc = *input.FindPtr<jstring>( "opc" );
+		if( edit<EEdit::Purge ){
+			let values = input.FindPtr<jvalue>( "values" );
+			THROW_IFSL( !values || !values->is_array() || values->get_array().empty(), "{} names no values.", Command() );
+			for( let& j : values->get_array() ){
+				let& o = Json::AsObject( j, sl );
+				let n = o.if_contains( "node" );
+				THROW_IFSL( !n || n->is_null(), "{}:  a value names no node.", Command() );
+				let data = o.if_contains( "value" );
+				Values.push_back( {Slot(node(*n)), data ? *data : jvalue{}, time(o.if_contains("source"), sl), time(o.if_contains("server"), sl), status(o.if_contains("status"), Command(), sl)} );
+			}
+			return;
+		}
+		let nodes = input.FindPtr<jvalue>( "nodes" );
+		THROW_IFSL( !nodes || nodes->is_null(), "{} names no nodes.", Command() );
+		if( nodes->is_array() ){
+			for( let& j : nodes->get_array() )
+				Slot( node(j) );
+		}
+		else
+			Slot( node(*nodes) );
+		THROW_IFSL( Nodes.empty(), "{} names no nodes.", Command() );
+		let start = time( input, "start", sl ), end = time( input, "end", sl );
+		if( let times = input.FindPtr<jvalue>("times"); times && !times->is_null() ){//DeleteAtTime, else DeleteRawModified.
+			THROW_IFSL( start || end, "{} takes a start and an end, or times, not both.", Command() );
+			THROW_IFSL( !times->is_array() || times->get_array().empty(), "{} names no times.", Command() );
+			for( let& j : times->get_array() )
+				Times.push_back( UADateTime{j, sl}.UA() );
+		}
+		else{
+			THROW_IFSL( !start || !end, "{} needs a start and an end, or times.", Command() );
+			Start = *start; End = *end;
+		}
+	}
+	α EditArgs::Slot( NodeId&& node )ι->uint{
+		let p = std::ranges::find( Nodes, node );
+		if( p!=Nodes.end() )
+			return p-Nodes.begin();
+		Nodes.push_back( move(node) );
+		return Nodes.size()-1;
 	}
 }
 	α HistQL::ReadLimit()ι->uint{
@@ -87,6 +159,21 @@ namespace HistQL{
 	}
 
 	Ω timeJson( bool has, UA_DateTime t )ι->jvalue{ return has ? jvalue{ UADateTime{t}.ToJson() } : jvalue{}; }
+	//nodes{ node status }, each node's status as the server answered it, Good where none is given.
+	Ω nodesJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<StatusCode>& statuses )ι->jarray{
+		let wantNode = ql.FindColumn("node") || ql.FindTable("node");
+		let wantStatus = ql.FindColumn( "status" );
+		jarray rows; rows.reserve( nodes.size() );
+		for( uint i=0; i<nodes.size(); ++i ){
+			jobject row;
+			if( wantNode )
+				row["node"] = nodes[i].ToJson();
+			if( wantStatus )
+				row["status"] = i<statuses.size() ? statuses[i] : UA_STATUSCODE_GOOD;
+			rows.push_back( move(row) );
+		}
+		return rows;
+	}
 	Ω updateType( UA_HistoryUpdateType t )ι->sv{
 		switch( t ){
 		case UA_HISTORYUPDATETYPE_INSERT: return "Insert";
@@ -136,20 +223,30 @@ namespace HistQL{
 			}
 			y["values"] = move( rows );
 		}
-		if( let nodesQL = ql.FindTable("nodes"); nodesQL ){
-			let wantNode = nodesQL->FindColumn("node") || nodesQL->FindTable("node");
-			let wantStatus = nodesQL->FindColumn( "status" );
-			jarray rows; rows.reserve( nodes.size() );
-			for( uint i=0; i<nodes.size(); ++i ){
+		if( let nodesQL = ql.FindTable("nodes"); nodesQL )
+			y["nodes"] = nodesJson( *nodesQL, nodes, statuses );
+		return y;
+	}
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue{
+		jobject y;
+		if( let valuesQL = ql.FindTable("values"); valuesQL ){
+			let wantNode = valuesQL->FindColumn("node") || valuesQL->FindTable("node");
+			let wantSource = valuesQL->FindColumn( "source" ), wantStatus = valuesQL->FindColumn( "status" );
+			jarray rows; rows.reserve( values.size() );
+			for( let& v : values ){
 				jobject row;
 				if( wantNode )
-					row["node"] = nodes[i].ToJson();
+					row["node"] = nodes[v.Slot].ToJson();
+				if( wantSource )
+					row["source"] = timeJson( v.Time.has_value(), v.Time.value_or(0) );
 				if( wantStatus )
-					row["status"] = i<statuses.size() ? statuses[i] : UA_STATUSCODE_GOOD;
+					row["status"] = v.Status;
 				rows.push_back( move(row) );
 			}
-			y["nodes"] = move( rows );
+			y["values"] = move( rows );
 		}
+		if( let nodesQL = ql.FindTable("nodes"); nodesQL )
+			y["nodes"] = nodesJson( *nodesQL, nodes, statuses );
 		return y;
 	}
 }

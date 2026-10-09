@@ -9,6 +9,7 @@
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
 #include "DataTypeQLAwait.h"
+#include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
@@ -59,6 +60,17 @@ namespace Jde::Opc::Gateway{
 			await = mu<GatewayQLAwait>( move(q), move(executer), sl );
 		return await;
 	}
+	//A hist edit with `group` alone is the gateway historian's (Phase 5), which needs no client.  One that names both
+	//`opc` and `group`, or neither, is this await's to refuse.
+	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
+		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
+	}
+	α GatewayQLMAwait::Suspend()ι->void{
+		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
+			ResumeExp( HistQL::TargetRefused(*edit, _sl) );//before a client is opened for it.
+		else
+			GetClient( this );
+	}
 	α GatewayQLMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		if( IsApplicable(m) )
 			return mu<GatewayQLMAwait>( move(m), move(executer), sl );
@@ -73,7 +85,7 @@ namespace Jde::Opc::Gateway{
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName.starts_with("dataType") )
 				y = co_await DataTypeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName=="hist" )//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
+			else if( _query.JsonName=="history" )//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
 				y = co_await HistQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName=="serverDescription" )//connection attributes are sync UA services - run them on the client's strand.
 				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return ServerDescription( move(_query), _client ); }, _sl };
@@ -112,6 +124,8 @@ namespace Jde::Opc::Gateway{
 				THROW_IF( !session, "No Session for mutation" );
 				y = co_await VariableQLAwait{ move(_query), session, _sl };
 			}
+			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
+				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else
 				throw Exception{ _sl, {},	"Unknown query type: {}", _query.JsonTableName };
 			Resume( move(y) );

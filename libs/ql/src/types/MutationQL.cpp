@@ -5,11 +5,14 @@
 #include <jde/db/meta/DBSchema.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/types/Parser.h>
+#include "../qlInternal.h"
 
 #define let const auto
 
 namespace Jde::QL{
 	α MutationQL::ParseCommand( sv commandName, SL _sl )ε->tuple<string,EMutationQL>{
+		if( IsSystemMutation(commandName) )
+			return { string{commandName}, EMutationQL::Execute };
 		uint iType=0;
 		for( ;iType<MutationQLNames.size() && !commandName.starts_with(MutationQLNames[iType].Verb); ++iType );
 		if( iType==MutationQLNames.size() )
@@ -39,7 +42,7 @@ namespace Jde::QL{
 	}
 
 	α MutationQL::IsMutation( sv name )ι->bool{
-		bool isMutation{ name=="mutation" };
+		bool isMutation{ name=="mutation" || IsSystemMutation(name) };
 		for( uint i=0; !isMutation && i<MutationQLNames.size(); ++i ){
 			let& verb = MutationQLNames[i].Verb;
 			isMutation = name.size()>verb.size() && name.starts_with( verb ) && isupper( (unsigned char)name[verb.size()] );

@@ -18,6 +18,7 @@
 #include "UAClient.h"
 #include "WebServer.h"
 #include "ql/GatewayQL.h"
+#include "ql/HistQL.h"
 #include "ql/OpcQLHook.h"
 
 #define let const auto
@@ -37,7 +38,11 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "hist", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
+		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
+		flat_set<string> histEdits;
+		for( let command : HistQL::EditCommands )
+			histEdits.emplace( command );
+		QL::SetSystemMutations( move(histEdits) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
 		SetSchema( schema );
 		if( ql ){}//the host's QL owns the schema list, and synced it with the rest.
 		else if( Settings::FindBool("/testing/recreateDB").value_or(false) )

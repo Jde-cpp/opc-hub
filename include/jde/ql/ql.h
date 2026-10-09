@@ -16,6 +16,10 @@ namespace Jde::QL{
 	Ŧ AsId( const jobject& j, SRCE )ε->T;
 	Ŧ AsId( const jvalue& j, SRCE )ε->T;
 	α SetSystemTables( flat_set<string>&& jsonNames )ι->void;
+	//Mutations named by their whole command, whether or not it starts with a verb (the gateway's createHistory and
+	//upsertHistory):  parsed as Execute, with the command as their json name, and resolving no table, so only a
+	//CustomMutation answers them, and MutationsAwait hands back their results as their awaits shaped them.
+	α SetSystemMutations( flat_set<string>&& commands )ι->void;
 
 	α Configure( const vector<sp<DB::AppSchema>>& schemas )ε->void;
 	//Caches a lookup table's id->name map - what SelectAwait renders an enum/flags column from - with no expiry, so no
