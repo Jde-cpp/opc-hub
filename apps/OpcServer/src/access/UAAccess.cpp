@@ -568,6 +568,22 @@ namespace Jde::Opc::Server{
 		return authorizer().MayBrowse( *nodeId, ctx->UserPK );
 	}
 	α UAAccess::AllowTransferSubscription( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *oldSessionId, void *oldSessionContext, const UA_NodeId *newSessionId, void *newSessionContext )ι->UA_Boolean{ ASSERT(false); return false; }
-	α UAAccess::AllowHistoryUpdateUpdateData( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_PerformUpdateType performInsertReplace, const UA_DataValue *value )ι->UA_Boolean{ ASSERT(false); return false; }
-	α UAAccess::AllowHistoryUpdateDeleteRawModified( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_DateTime startTimestamp, UA_DateTime endTimestamp, bool isDeleteModified )ι->UA_Boolean{ ASSERT(false); return false; }
+	//An edit of a node's history needs Update on the node, and a delete of it Delete, granted on a resource that is
+	//enforced:  where none governs the node, reads answer All and these answer None (historian spec *Authorization*,
+	//#237).  open62541 doesn't call them itself - the history backend does, per value and per range, as its default
+	//plugin does.
+	α UAAccess::AllowHistoryUpdateUpdateData( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_PerformUpdateType performInsertReplace, const UA_DataValue *value )ι->UA_Boolean{
+		ASSERT( nodeId );
+		let ctx = static_cast<SessionContext*>( sessionContext ); ASSERT( ctx );
+		if( !nodeId || !ctx || expired(ctx) )
+			return false;
+		return !empty( authorizer().EditRights(*nodeId, ctx->UserPK) & Access::ERights::Update );
+	}
+	α UAAccess::AllowHistoryUpdateDeleteRawModified( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, UA_DateTime startTimestamp, UA_DateTime endTimestamp, bool isDeleteModified )ι->UA_Boolean{
+		ASSERT( nodeId );
+		let ctx = static_cast<SessionContext*>( sessionContext ); ASSERT( ctx );
+		if( !nodeId || !ctx || expired(ctx) )
+			return false;
+		return !empty( authorizer().EditRights(*nodeId, ctx->UserPK) & Access::ERights::Delete );
+	}
 }

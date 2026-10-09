@@ -2,16 +2,19 @@
 #include <span>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <jde/historian/Historian.h>
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Server{
 	//OpcServer's historian (historian spec, *OpcServer* and *UA backend*):  the history of the variables its nodesets mark
-	//Historizing, in one group, `server`, collected through open62541's setValue and served through its HistoryRead.
-	//open62541 calls the backend inside its service lock, on the server's one thread, so collecting only enqueues and
-	//a node's read ends at maxReturnDataValues values or one day file, with a continuation point.  That point is the
-	//library's stateless continuation, so the server holds nothing between calls and has none to release.
+	//Historizing, in one group, `server`, collected through open62541's setValue, served through its HistoryRead and
+	//edited through its HistoryUpdate.  open62541 calls the backend inside its service lock, on the server's one thread,
+	//so collecting only enqueues and a node's read ends at maxReturnDataValues values or one day file, with a
+	//continuation point.  That point is the library's stateless continuation, so the server holds nothing between calls
+	//and has none to release.  An edit is acknowledged once its records are durable, so its callback waits for the flush
+	//that writes them, holding the lock for the write and its fsync.
 	struct UAHistory final : noncopyable{
 		//Reads /opcServer/hist and takes the lock on its path.  With no such block OpcServer keeps no history, as when
 		//another process holds the lock:  no backend is installed and no node is changed.
@@ -37,11 +40,23 @@ namespace Jde::Opc::Server{
 		struct Timing final{ uint Count{}; steady_clock::duration Total{}; steady_clock::duration Longest{}; };
 		α Reads()Ι->Timing{ return _reads.Get(); }
 		α Collections()Ι->Timing{ return _collections.Get(); }
+		α Edits()Ι->Timing{ return _edits.Get(); }
 
 		//open62541's callbacks.
 		α Collect( UA_Server& ua, const UA_NodeId& node, const UA_DataValue& value )ι->void;
 		α ReadRaw( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void;
+		//The modified values with their ModificationInfo (spec *Reads*), over the range a raw read takes.
+		α ReadModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
+			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryModifiedData* const* data )ι->void;
+		//Part 11's HistoryUpdate on one node (spec *Edits*), by the session's user, who needs Update, or Delete, on the
+		//node granted on a resource that is enforced (spec *Authorization*):  the entry is refused with Bad_UserAccessDenied
+		//where none governs the node.  Each value of an UpdateData is asked for on its own, as the default plugin asks, and
+		//a refused one answers that in its place.  A DeleteRawModified's range holds its start and not its end, as a
+		//read's does, and startTime equal to endTime is that instant; deleting the modified values is refused, since they
+		//are the audit trail.
+		α UpdateData( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_UpdateDataDetails& details, UA_HistoryUpdateResult& result )ι->void;
+		α DeleteRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_DeleteRawModifiedDetails& details, UA_HistoryUpdateResult& result )ι->void;
 	private:
 		struct Timer final{
 			α Add( steady_clock::duration elapsed )ι->void;
@@ -58,9 +73,20 @@ namespace Jde::Opc::Server{
 			using is_transparent = void;
 			α operator()( const UA_NodeId& a, const UA_NodeId& b )Ι->bool{ return UA_NodeId_equal( &a, &b ); }
 		};
-		//One node's page.  Read on the node is the right, as the node-access page grants it.
+		//Every node's page, raw or modified, each put into its result by fill:  the node's position, its page and the part of
+		//an array its index range names.
+		α Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
+			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void;
+		//One node's page and continuation point, Good_NoData for a read none of whose pages held a value.  Read on the node
+		//is the right, as the node-access page grants it.  range is the node's index range, parsed, whose dimensions the
+		//caller frees.
 		α Read( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps,
-			const UA_HistoryReadValueId& node, UA_HistoryData& data, UA_ByteString& continuation )ι->UA_StatusCode;
+			const UA_HistoryReadValueId& node, UA_ByteString& continuation, Hist::ReadResult& page, UA_NumericRange& range )ι->UA_StatusCode;
+		//One entry's edit, once the session's user may write the node's history:  make builds the library's entry from the
+		//node's index, or none to leave result as it set it.  The edit runs in the group's next flush, which this waits for.
+		//None when result's status says why.
+		α Edit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId& node, UA_HistoryUpdateResult& result,
+			absl::FunctionRef<optional<Hist::EditDetails>( Hist::NodeIndex )> make )ι->optional<Hist::EditResult>;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
@@ -70,7 +96,7 @@ namespace Jde::Opc::Server{
 		absl::flat_hash_map<NodeId,Hist::NodeIndex,NodeHash,NodeEqual> _indexes;
 		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Load:  open62541 adds a node under its service lock.
 		vector<NodeId> _archiveStarts;//each HA Configuration's StartOfArchive and StartOfOnlineArchive.
-		Timer _reads, _collections;
+		Timer _reads, _collections, _edits;
 		//Held by the midnight timer's callback too, which the clock can start while Stop cancels it:  Stop nulls Ua under
 		//Mutex, and a callback that finds it null touches nothing of this.  Mutex goes before open62541's service lock,
 		//which no callback takes it under.

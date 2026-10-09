@@ -116,7 +116,7 @@ namespace Jde::Opc::Server{
 		//Which branch this took decides open-vs-enforcing for the process lifetime, and nothing said so: a run whose
 		//writes were authorized could not be told from one that was never enforcing (soak-findings #4).
 		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}, {} type node(s) outside namespace 0.", _app,
-			baseResources.empty() ? "OPEN, every node unprotected" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK.Value, typeNodeCount );
+			baseResources.empty() ? "OPEN, every node unprotected, history edits refused until a nodeIds resource is enforced" : "ENFORCING", baseResources.size(), nodeCount, rootResourcePK.Value, typeNodeCount );
 	}
 
 	α OpcAuthorize::CreateResource( Access::Resource&& resource )ε->void{
@@ -169,13 +169,23 @@ namespace Jde::Opc::Server{
 			TestAdminResource( pk, user, sl );//no-op on a deleted row, as UserRights opens a deleted resource.
 	}
 
-	α OpcAuthorize::NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{
+	α OpcAuthorize::NodeRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{ return Resolve( nodeId, executer ).Rights; }
+	α OpcAuthorize::EditRights( const NodeId& nodeId, UserPK executer )ι->Access::ERights{ return Resolve( nodeId, executer ).Edits; }
+	α OpcAuthorize::Resolve( const NodeId& nodeId, UserPK executer )ι->NodeAccess{
+		using enum Access::ERights;
 		optional<Governing> governing;
 		{
 			rl _{ _nodeResourcesMutex };
 			governing = GoverningLocked( nodeId );
 		}
-		return governing ? RightsOn( governing->Resource, executer ) : Access::ERights::All;
+		if( !governing )
+			return { All, None };
+		rl _{ Mutex };
+		let rights = RightsOnLocked( governing->Resource, executer );
+		//A row that has gone, or is deleted, opens its nodes, which RightsOnLocked answers All for:  an edit needs one that is enforced.
+		let resource = Resources.find( governing->Resource );
+		let enforced = resource!=Resources.end() && !resource->second.IsDeleted;
+		return { rights, enforced ? rights : None };
 	}
 	α OpcAuthorize::GoverningLocked( const NodeId& nodeId )Ι->optional<Governing>{
 		if( !_enabled )
@@ -185,10 +195,6 @@ namespace Jde::Opc::Server{
 		if( !_rootResourcePK )
 			return nullopt; //no root resource: nodes outside a configured branch stay open (protect-specific-branches config).
 		return Governing{ _rootResourcePK, false }; //unmapped node (e.g. created after startup) inherits the root resource instead of granting all access.
-	}
-	α OpcAuthorize::RightsOn( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights{
-		rl _{ Mutex };
-		return RightsOnLocked( resourcePK, executer );
 	}
 	α OpcAuthorize::RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights{
 		using enum Access::ERights;
@@ -242,6 +248,10 @@ namespace Jde::Opc::Server{
 	}
 
 	α OpcAuthorize::UserRights( NodeId nodeId, UserPK executer )ι->EAccess{
-		return ToAccess( NodeRights(nodeId, executer) );//generic rights in, UA access-level bits out - a cast put every right one bit off.
+		let [rights, edits] = Resolve( nodeId, executer );//generic rights in, UA access-level bits out - a cast put every right one bit off.
+		//HistoryWrite is an edit's bit, so it is the edit rights', and left out of an unprotected node's:  a client sees its
+		//history as read-only before it tries (historian spec *Authorization*).
+		constexpr uint8 historyWrite{ underlying(EAccess::HistoryWrite) };
+		return (EAccess)( (underlying(ToAccess(rights)) & ~historyWrite) | (underlying(ToAccess(edits)) & historyWrite) );
 	}
 }

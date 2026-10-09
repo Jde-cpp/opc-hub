@@ -12,7 +12,7 @@ namespace Jde::Opc::Server{
 		NodeId StartOfArchive, StartOfOnlineArchive;//its HA Configuration's, which the archive's first day is written to.
 
 		//Every such variable but a type's members, in NodeId order.  Each gets what a client needs to find its history and
-		//its nodeset left out:  HistoryRead in its AccessLevel, an HA Configuration object, and in that the thresholds'
+		//its nodeset left out:  HistoryRead and HistoryWrite in its AccessLevel, an HA Configuration object, and in that the thresholds'
 		//defaults, Stepped true and both intervals 0, ServerTimestampSupported, AggregateConfiguration at Part 13's
 		//defaults, and the two archive starts.  No ExceptionDeviation is added:  none stores every change.  An enumeration
 		//takes none, and a percent-of-range format takes the variable's InstrumentRange or EURange.  Throws for a setting
