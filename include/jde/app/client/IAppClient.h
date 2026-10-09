@@ -1,11 +1,10 @@
 #pragma once
-#include "../IApp.h"
+#include <jde/app/IApp.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/ql/IQL.h>
 #include <jde/web/Jwt.h>
-#include <jde/app/client/awaits/SocketAwait.h>
-#include "AppClientSocketSession.h"
-#include "jde/fwk/process/process.h"
+#include <jde/app/client/AppClientSocketSession.h>
+#include <jde/fwk/process/process.h>
 #include <jde/access/client/accessClient.h>
 
 namespace Jde::Access{ struct AccessListener; struct Authorize; }
@@ -29,9 +28,7 @@ namespace Jde::App::Client{
 		α ReloadAccess( SRCE )ε->Access::ConfigureAwait;//the same snapshot on the current session;  throws before ConfigureAccess.
 		α IsAccessConfigured()Ι->bool{ return _accessContext.has_value(); }//the reconnect path asks before reloading - not every app client has a snapshot to refresh.
 		α InitLogging( sp<App::Client::IAppClient> client )ι->void;
-		α LoadLogSettings( SRCE )ι->void;
 		β Connected()Ι->bool{ return LoadSession()!=nullptr; }
-		α IsLocal()Ι->bool override{ return false; }
 		α UserName()Ι->const jobject&{ return _userName; }
 		α SetUserName( jobject&& userName )ι->void{ _userName = move(userName); }
 		//Virtual with QLServer/AddSession so an embedded client (OpcHub: the gateway hosted beside the AppServer) can answer
@@ -43,9 +40,9 @@ namespace Jde::App::Client{
 		α SessionInfoAwait( SessionPK sessionPK, SRCE )ι->up<TAwait<Web::FromServer::SessionInfo>> override;
 		β AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>>;//up<TAwait>, as SessionInfoAwait: the socket and the in-process implementations differ in type.
 		α Jwt( SRCE )ε->await<Web::Jwt>;
-		α Login( Web::Jwt&& jwt, SRCE )ε->await<Web::FromServer::SessionInfo> override;
+		α Login( Web::Jwt&& jwt, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> override;
 		α CloseSocketSession( bool terminate, SL sl )ι->void;
-    α SessionId()Ι->SessionPK{ auto p=LoadSession(); return p ? p->SessionId() : SessionPK{}; }
+		α SessionId()Ι->SessionPK{ auto p=LoadSession(); return p ? p->SessionId() : SessionPK{}; }
 		α Subscribe( string&& query, jobject variables, sp<QL::IListener> listener, SRCE )ε->await<jarray>;
 		α Unsubscribe( sp<QL::IListener> listener, vector<QL::SubscriptionId> ids, SRCE )ε->void;
 
@@ -69,6 +66,6 @@ namespace Jde::App::Client{
 		sp<Access::AccessListener> _listener;
 		optional<Access::Client::Context> _accessContext;
 
-		friend struct AppClientSocketSession; friend struct StartSocketAwait;
+		friend struct AppClientSocketSession; friend struct ConnectAwait;
 	};
 }

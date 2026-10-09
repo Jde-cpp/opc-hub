@@ -6,7 +6,6 @@ import {Instance, resolveInstance} from './app-service-types'
 import { ETransport, ProtoService, RequestId } from '../proto-service';
 import * as FromServer from 'jde-proto/App.FromServer';
 import * as FromClient from 'jde-proto/App.FromClient';
-import * as App from 'jde-proto/App';
 import { ELogLevel } from 'jde-proto/Log';
 import { Exception as IException } from 'jde-proto/Common';
 import { IAuth, IENVIRONMENT, IEnvironment, User } from 'jde-spa';
@@ -99,14 +98,6 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 		this.send( {query:{text:q, variables:"", returnRaw:false}}, q );
 	}
 
-	//`requestStrings`, not `strings`:  App.FromClient.proto declares `StringMD5s request_strings = 10` and there is no
-	//`strings` field, so ts-proto's encode() dropped the payload and put a requestId-only message on the wire.  The server
-	//has nothing to answer, so the promise below never settled and the log rows kept their raw ids forever.
-	requestStrings( strings:App.StringMD5s ):Promise<FromServer.Strings>{
-		const requestId = this.send( {requestStrings:strings}, `AppService::requestStrings count='${strings.files.length+strings.functions.length+strings.messages.length+strings.userPKs.length}'` );
-		return new Promise<FromServer.Strings>( (resolve,reject)=>{ this.stringRequests.set(requestId,{resolve:resolve,reject:reject})} );
-	}
-
 	custom( appPk:number, bytes:Uint8Array ):Promise<Uint8Array>{
 		const requestId = this.send( {forwardExecution:{appPk:appPk, executionTransmission:bytes}}, `custom appPk: ${appPk}, bytes: ${bytes.length}` );
 		return new Promise<Uint8Array>( (resolve,reject)=>{ this.customCallbacks.set(requestId,{resolve:resolve,reject:reject})} );
@@ -142,9 +133,7 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	//the base settles _callbacks; these three maps are AppService's own pending work and would otherwise hang forever when the socket drops.
 	override handleConnectionError( err:unknown ):void{
 		const e = { message: "Connection to the application server was lost." };
-		const strings = [...this.stringRequests.values()]; this.stringRequests.clear();//drain-then-settle: a handler may issue a fresh request, and it must not land in the map being cleared
-		strings.forEach( p=>p.reject(e) );
-		const customs = [...this.customCallbacks.values()]; this.customCallbacks.clear();
+		const customs = [...this.customCallbacks.values()]; this.customCallbacks.clear();//drain-then-settle: a handler may issue a fresh request, and it must not land in the map being cleared
 		customs.forEach( p=>p.reject(e) );
 		const subscriptions = [...this.logsSubscriptions.values()]; this.logsSubscriptions.clear();//clear before error() so a resubscribe starts a fresh entry, per the gateway's clearOwner precedent
 		subscriptions.forEach( s=>s.error(e) );
@@ -189,13 +178,6 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 					this.customCallbacks.delete( requestId );//settled requests must be removed or the map grows for the socket's lifetime
 					promise.resolve( message.executeResponse );
 				}
-				else if( message.strings ){
-					const x = message.strings;
-					if( this.log.sockResults ) console.log( `[App.${requestId}]strings messageCount: ${Object.keys(x.messages as any).length}` );
-					let promise = this.stringRequests.get( requestId ); if( !promise ) throw `no promise for requestId=${requestId}`;
-					this.stringRequests.delete( requestId );
-					promise.resolve( x );
-				}
 				else if( message.traces ){
 					if( this.log.subResults )	console.log( `[App.${requestId}]traces count:${message.traces.values!.length}` );
 					let subject = this.logsSubscriptions.get( requestId ); if( !subject ) throw `no subscription for requestId=${requestId}`;
@@ -221,11 +203,7 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	}
 	iotProcessError( e:IException, requestId:RequestId ):boolean{
 		let processed = true;
-		if( this.stringRequests.has(requestId) ){
-			this.stringRequests.get( requestId )!.reject( e );
-			this.stringRequests.delete( requestId );
-		}
-		else if( this.customCallbacks.has(requestId) ){
+		if( this.customCallbacks.has(requestId) ){
 			this.customCallbacks.get( requestId )!.reject( e );
 			this.customCallbacks.delete( requestId );
 		}
@@ -233,7 +211,6 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 			processed = false;
 		return processed;
 	}
-	private stringRequests = new Map<number,{resolve:(strings:FromServer.Strings)=>void, reject:(e:unknown)=>void}>();
 	private customCallbacks = new Map<number,{resolve:(bytes:Uint8Array)=>void, reject:(e:unknown)=>void}>();
 }
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.

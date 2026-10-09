@@ -3,6 +3,7 @@
 #include <jde/fwk/str.h>
 #include "../client.h"
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/io/protobuf.h>
 
 namespace Jde::Web::Client{
 	struct IClientSocketSession;
@@ -45,6 +46,10 @@ namespace Jde::Web::Client{
 	struct ClientSocketAwait final : IClientSocketVoidAwait, TAwait<T,TTimedTask<T>>{
 		using base = TAwait<T,TTimedTask<T>>;
 		ClientSocketAwait( string&& request, RequestId requestId, sp<IClientSocketSession> session, SRCE )ι;
+		//The one place a request is serialised.  A template, so a bare `{}` first argument still picks the string overload.
+		template<std::derived_from<google::protobuf::MessageLite> TProto>
+		ClientSocketAwait( const TProto& request, RequestId requestId, sp<IClientSocketSession> session, SRCE )ι:
+			ClientSocketAwait{ Protobuf::ToString(request), requestId, move(session), sl }{}
 		ClientSocketAwait( ClientSocketAwait&& )=default;
 		α Suspend()ι->void override{ IClientSocketVoidAwait::Suspend( {base::_h, [h=base::_h]( Exception&& e ){ h.promise().SetExp( move(e) ); h.resume(); }} ); }
 		α await_resume()ε->T override;

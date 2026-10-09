@@ -14,11 +14,10 @@
 namespace Jde::App::Tests{
 	using CMessage = Proto::FromClient::Message;
 	using SMessage = Proto::FromServer::Message;
-	Ω fromClient( string&& transmission )ε->Proto::FromClient::Transmission{ return Protobuf::Deserialize<Proto::FromClient::Transmission>( move(transmission) ); }
 
 	TEST( FromClientTests, Query ){
 		let variables = jobject{ {"id", 42} };
-		let t = fromClient( FromClient::Query("{users{id}}", variables, 9, false) );
+		let t = FromClient::Query( "{users{id}}", variables, 9, false );
 		ASSERT_EQ( t.messages_size(), 1 );
 		let& m = t.messages( 0 );
 		EXPECT_EQ( m.request_id(), 9u );
@@ -31,7 +30,7 @@ namespace Jde::App::Tests{
 	//Same payload as a query, a different oneof member - that is all that tells the server to keep the query live.
 	TEST( FromClientTests, Subscription ){
 		let variables = jobject{ {"id", 42} };
-		let t = fromClient( FromClient::Subscription(string{"{users{id}}"}, variables, 10) );
+		let t = FromClient::Subscription( string{"{users{id}}"}, variables, 10 );
 		ASSERT_EQ( t.messages_size(), 1 );
 		let& m = t.messages( 0 );
 		EXPECT_EQ( m.request_id(), 10u );
@@ -55,7 +54,7 @@ namespace Jde::App::Tests{
 	}
 
 	TEST( FromClientTests, AddSession ){
-		let t = fromClient( FromClient::AddSession("jde.com", "bob", 3, "127.0.0.1", true, 11) );
+		let t = FromClient::AddSession( "jde.com", "bob", 3, "127.0.0.1", true, 11 );
 		ASSERT_EQ( t.messages_size(), 1 );
 		let& m = t.messages( 0 );
 		EXPECT_EQ( m.request_id(), 11u );
@@ -68,12 +67,12 @@ namespace Jde::App::Tests{
 	}
 
 	TEST( FromClientTests, SessionAndJwtAreBareRequests ){
-		let session = fromClient( FromClient::Session(12, 13) );
+		let session = FromClient::Session( 12, 13 );
 		ASSERT_EQ( session.messages(0).value_case(), CMessage::kSessionInfo );
 		EXPECT_EQ( session.messages(0).session_info(), 12u );
 		EXPECT_EQ( session.messages(0).request_id(), 13u );
 
-		let jwt = fromClient( FromClient::Jwt(14) );
+		let jwt = FromClient::Jwt( 14 );
 		ASSERT_EQ( jwt.messages(0).value_case(), CMessage::kRequestType );
 		EXPECT_EQ( jwt.messages(0).request_type(), Proto::FromClient::ERequestType::Jwt );
 		EXPECT_EQ( jwt.messages(0).request_id(), 14u );
@@ -237,9 +236,9 @@ namespace Jde::App::Tests{
 	//The builders above are what mint these kinds, which is why the classification is pinned next to them.
 	TEST( FromServerTests, IsResponse ){
 		using enum SMessage::ValueCase;
-		for( let kind : {kConnectionInfo, kException, kGeneric, kJwt, kProgress, kQueryResult, kSessionInfo, kStrings, kSubscriptionAck} )
+		for( let kind : {kConnectionInfo, kException, kJwt, kQueryResult, kSessionInfo, kSubscriptionAck} )
 			EXPECT_TRUE( FromServer::IsResponse(kind) ) << "value_case " << (int)kind << " answers a client request";
-		for( let kind : {kAck, kClientQuery, kExecute, kExecuteAnonymous, kExecuteResponse, kStringPks, kSubscription, kTraces, VALUE_NOT_SET} )
+		for( let kind : {kAck, kClientQuery, kExecute, kExecuteAnonymous, kExecuteResponse, kSubscription, kTraces, VALUE_NOT_SET} )
 			EXPECT_FALSE( FromServer::IsResponse(kind) ) << "value_case " << (int)kind << " is a server push - popping a task for it drops an unrelated await";
 	}
 

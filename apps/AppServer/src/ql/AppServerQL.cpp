@@ -2,7 +2,6 @@
 #include <jde/access/server/accessServer.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
-#include <jde/app/log/LogSettingsAwait.h>
 #include "../LocalClient.h"
 #include "AppQLAwait.h"
 #include "InstanceTagLevelAwait.h"
@@ -29,16 +28,12 @@ namespace Jde::App::Server{
 		return AppQLAwait::Test( q, creds, sl );
 	}
 	α AppServerQL::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
-		if( auto await = Access::Server::CustomMutation(m, creds, sl); await )
+		if( auto await = LogSettingsMutation(m, creds, AppClient(), sl); await )
 			return await;
-		if( auto await = App::LogSettingsMAwait::IsApplicable(m) ? mu<App::LogSettingsMAwait>(move(m), AppClient(), creds.UserPK(), sl) : nullptr; await )
+		if( auto await = Access::Server::CustomMutation(m, creds, sl); await )
 			return await;
 		if( auto await = InstanceTagLevelMAwait::IsApplicable(m) ? mu<InstanceTagLevelMAwait>(move(m), creds.UserPK(), sl) : nullptr; await )
 			return await;
 		return nullptr;
-	}
-	α AppServerQL::LogSettingsQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>>{
-		RequireAuthenticated( executer, "logSettings", sl ); //the live tag/level configuration of every instance.
-		return mu<LogSettingsAwait>( move(ql), sl );
 	}
 }

@@ -11,7 +11,6 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpClient } from '@angular/common/http';
 import * as FromClient from 'jde-proto/App.FromClient';
-import * as App from 'jde-proto/App';
 import { AUTH_STORE, AuthStore } from '../auth-store';
 import { IENVIRONMENT } from 'jde-spa';
 import { ETransport, RequestId } from '../proto-service';
@@ -62,16 +61,6 @@ describe( 'AppService host', ()=>{
 } );
 
 describe( 'AppService socket message field names', ()=>{
-
-	const md5 = new Uint8Array( 16 ).fill( 7 );
-
-	it( 'puts the StringMD5s payload on the wire', ()=>{
-		const service = create();
-		service.requestStrings( App.StringMD5s.fromPartial({messages:[md5], files:[], functions:[], userPKs:[42]}) );
-		const message = service.wire();
-		expect( message.requestStrings?.messages ).toEqual( [md5] );
-		expect( message.requestStrings?.userPKs ).toEqual( [42] );
-	} );
 
 	//review3 C11: `graphQl`/`graphQL` were not proto fields either, and `requestType:UnsubscribeLogs` is one the server answers
 	//with "not implemented".  The three now travel as the proto's subscription/unsubscription/query.

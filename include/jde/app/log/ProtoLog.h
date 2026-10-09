@@ -6,7 +6,7 @@
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/log/ILogger.h>
 #include <jde/app/proto/Log.pb.h>
-#include "../usings.h"
+#include <jde/app/usings.h>
 
 namespace Jde::App{
 	//L2: was two deques scanned linearly - up to 1000 uuid comparisons, three-plus times per line, on the path of every Debug+ line
@@ -31,7 +31,6 @@ namespace Jde::App{
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		α DailyFile()ι->fs::path{ return _root/"log.binpb"; }
 		α DailyFileStart()Ι->TimePoint{ ul _{_mutex}; return _dailyFileStart; }
-		Ω Deserialize( sv bytes )ε->vector<App::Log::Proto::FileEntry>;
 		α Entries()Ε->vector<App::Log::Proto::FileEntry>;//the buffer *and* whatever is in flight - see the definition (L1).
 		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSave.size(); }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
 		α Name()Ι->sv override{ return "ProtoLog"; }
@@ -45,7 +44,7 @@ namespace Jde::App{
 	private:
 		App::ProgramPK _appPK{};
 		App::ProgInstPK _instancePK{};
-		α Write( const Logging::Entry& m, App::Log::Proto::FileEntry&& entry )ι->void;
+		α Write( const Logging::Entry& m, App::Log::Proto::LogEntryFile&& entry )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str, flat_map<uuid,uint>& cache )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.

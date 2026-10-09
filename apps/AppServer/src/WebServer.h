@@ -24,7 +24,6 @@ namespace Jde::App::Server{
 	α StopWebServer( bool terminate, SL sl )ι->void;
 	α AddSocketSession( sp<ServerSocketSession> session )ι->void;//the app-protocol registry a handler adds its accepted sockets to.
 
-	α BroadcastLogEntry( LogPK id, ProgramPK logAppPK, ProgInstPK logInstancePK, const Logging::Entry& m, const vector<string>& args )ι->void;
 	α BroadcastAppStatus()ι->void;
 	α FindApplications( str name )ι->vector<Proto::FromClient::Instance>;
 	//An app role hosted in this process (OpcHub's gateway) registers here instead of over a socket, so /opcGateways and

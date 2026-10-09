@@ -1,5 +1,6 @@
 #include <jde/app/client/RemoteLog.h>
-#include "jde/fwk/process/process.h"
+#include <jde/app/log/LogSettingsAwait.h>
+#include <jde/fwk/process/process.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/app/client/IAppClient.h>
 
@@ -51,6 +52,7 @@ namespace Jde::App::Client{
 		_client = nullptr;
 	}
 	α RemoteLog::Init( sp<IAppClient> client )ι->void{
+		SetLogTarget( "appServer", []()ι->LogTags*{ return Logging::FindLogger<RemoteLog>(); } );
 		if( auto log = Logging::Add<RemoteLog>("remote", client); log )
 			log->Start( move(client) );
 	}

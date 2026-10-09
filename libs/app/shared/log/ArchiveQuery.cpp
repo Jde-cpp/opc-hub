@@ -1,4 +1,4 @@
-#include <jde/app/log/ArchiveFile.h>
+#include <jde/app/log/ArchiveQuery.h>
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/io/protobuf.h>
@@ -10,18 +10,18 @@ namespace Jde::App{
 	using App::Log::Proto::LogEntryFile;
 	using Protobuf::ToGuid;
 
-	ArchiveFile::ArchiveFile( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε{
+	ArchiveQuery::ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε{
 		Append( q, move(entries) );
 	}
 
-	α ArchiveFile::EntrySize()Ι->uint{
+	α ArchiveQuery::EntrySize()Ι->uint{
 		uint size{};
 		for( auto& [_,entries] : Entries )
 			size += ( uint )entries.size();
 		return size;
 	}
 
-	α ArchiveFile::IsComplete( const QL::Input& input )Ι->bool{
+	α ArchiveQuery::IsComplete( const QL::Input& input )Ι->bool{
 		let limit = input.Limit();
 		if( !limit )
 			return false;
@@ -30,52 +30,57 @@ namespace Jde::App{
 			return false;
 		return EntrySize()>=limit+input.Offset();
 	}
-	Ω find( const auto& map, string uuid )ι->str{
-		let it = map.find( ToGuid(uuid) );
+	α StringTable::Find( EStringKind kind, sv idBytes )Ι->str{
+		let& map = _maps[(uint8)kind];
+		let it = map.find( ToGuid(idBytes) );
 		return it==map.end() ? Str::Empty() : it->second;
 	}
+	α ArchiveStrings( DayArchive& af, EStringKind kind )ι->google::protobuf::RepeatedPtrField<App::Log::Proto::String>&{
+		switch( kind ){
+			using enum EStringKind;
+			case Template: return *af.mutable_templates();
+			case File: return *af.mutable_files();
+			case Function: return *af.mutable_functions();
+			case Arg: return *af.mutable_args();
+		}
+		return *af.mutable_args();//unreachable:  the switch names every kind.
+	}
 
-	α ArchiveFile::Message( const LogEntryFile& entry )Ι->string{
+	α ArchiveQuery::Message( const LogEntryFile& entry )Ι->string{
 		vector<string> args;
 		for( let& argId : entry.args() )
-			args.emplace_back( find(Args, argId) );
-		let fmt = find( Templates, entry.template_id() );
+			args.emplace_back( Strings.Find(EStringKind::Arg, argId) );
+		let fmt = Strings.Find( EStringKind::Template, entry.template_id() );
 		return Str::TryFormat( fmt, args );
 	}
 
-	α ArchiveFile::Test( const QL::Filter& filter, TimePoint time, const LogEntryFile& entry )Ι->bool{
-		bool valid{ true };
-		valid = valid && filter.Test( "time", time );
-		valid = valid && filter.TestF<string>( "text", [&](){return find(Templates, entry.template_id());} );
-		valid = valid && filter.Test( "level", (uint8)entry.level() );
-		valid = valid && filter.TestOr( "tags", entry.tags() );
-		valid = valid && filter.Test( "line", entry.line() );
-		valid = valid && filter.Test( "appId", entry.app_pk() );//L3: filterable as well as readable - one app's lines out of the AppServer's merged history.
-		valid = valid && filter.Test( "appInstanceId", entry.app_instance_pk() );
-		valid = valid && filter.TestF<uuid>( "templateId", [&](){return ToGuid(entry.template_id());} );
-		valid = valid && filter.TestF<string>( "message", [&](){return Message(entry);} );
-		if( valid && filter.ColumnFilters.contains("args") ){
-			//Any argument, not every one.  ANDing meant `args:"timeout"` rejected every entry that also had an unrelated
-			//argument, and an entry with *no* arguments passed outright - the loop that could have rejected it never ran.
-			//Starting false is what fixes the second half; each iteration is still ANDed across the operators on the
-			//column by TestF, so `args:{gt:"a", lt:"z"}` asks for one argument satisfying both.
-			valid = false;
-			for( let& argId : entry.args() ){
-				if( valid = filter.TestF<string>("args", [&](){return find(Args, argId);}); valid )
-					break;
-			}
-		}
-		return valid;
+	α ArchiveQuery::Test( const QL::Filter& filter, TimePoint time, const LogEntryFile& entry )Ι->bool{
+		if( !filter.Test( "time", time )
+			|| !filter.TestF<string>( "text", [&](){return Strings.Find(EStringKind::Template, entry.template_id());} )
+			|| !filter.Test( "level", (uint8)entry.level() )
+			|| !filter.TestOr( "tags", entry.tags() )
+			|| !filter.Test( "line", entry.line() )
+			|| !filter.Test( "appId", entry.app_pk() )//L3: filterable as well as readable - one app's lines out of the AppServer's merged history.
+			|| !filter.Test( "appInstanceId", entry.app_instance_pk() )
+			|| !filter.TestF<uuid>( "templateId", [&](){return ToGuid(entry.template_id());} )
+			|| !filter.TestF<string>( "message", [&](){return Message(entry);} ) )
+			return false;
+		if( !filter.ColumnFilters.contains("args") )
+			return true;
+		//Any argument, not every one.  ANDing meant `args:"timeout"` rejected every entry that also had an unrelated
+		//argument, and an entry with *no* arguments passed outright.  any_of fails an empty list; TestF still ANDs the
+		//operators on the column, so `args:{gt:"a", lt:"z"}` asks for one argument satisfying both.
+		return std::any_of( entry.args().begin(), entry.args().end(), [&](let& argId){ return filter.TestF<string>("args", [&](){return Strings.Find(EStringKind::Arg, argId);}); } );
 	}
-	α ArchiveFile::Test( const QL::TableQL& q, TimePoint time, const LogEntryFile& entry )Ε->bool{
+	α ArchiveQuery::Test( const QL::TableQL& q, TimePoint time, const LogEntryFile& entry )Ε->bool{
 		let& filter = q.Filter();
 		bool valid = filter.Empty() || Test( filter, time, entry );
 
 		if( valid ){
-			auto testFileFunction = [&]( const auto& filter, const auto& map, string id )ι->bool {
+			auto testFileFunction = [&]( const auto& filter, EStringKind kind, sv id )ι->bool {
 				if( auto valid = filter.template TestF<string>("id", [&](){return to_string(ToGuid(id));}); !valid )
 					return false;
-				if( auto valid = filter.template TestF<string>("name", [&](){return find(map, id);}); !valid )
+				if( auto valid = filter.template TestF<string>("name", [&](){return Strings.Find(kind, id);}); !valid )
 					return false;
 				return true;
 			};
@@ -84,28 +89,23 @@ namespace Jde::App{
 					if( valid = sub.Filter().Test("id", entry.user_pk()); !valid )
 						break;
 				}
-				else if( valid = sub.JsonName=="file" ? testFileFunction(sub.Filter(), Files, entry.file_id()) : true; !valid )
+				else if( valid = sub.JsonName=="file" ? testFileFunction(sub.Filter(), EStringKind::File, entry.file_id()) : true; !valid )
 					break;
-				else if( valid = sub.JsonName=="function" ? testFileFunction(sub.Filter(), Functions, entry.function_id()) : true; !valid )
+				else if( valid = sub.JsonName=="function" ? testFileFunction(sub.Filter(), EStringKind::Function, entry.function_id()) : true; !valid )
 					break;
 			}
 		}
 		return valid;
 	}
 
-	α ArchiveFile::Append( const QL::TableQL& q, App::Log::Proto::ArchiveFile&& af )ε->void{
-		auto addStrings = []( auto&& collection, auto& map ){
-			for( int i=0; i<collection.size(); ++i ){
-				auto& s = collection.at( i );
+	α ArchiveQuery::Append( const QL::TableQL& q, DayArchive&& af )ε->void{
+		for( let kind : StringKinds ){
+			for( auto& s : ArchiveStrings(af, kind) ){
 				let id = ToGuid( s.id() );
 				ASSERT_DESC( s.value().size() || id==EmptyStringMd5, "String with empty value must have empty md5." );
-				map[id] = move( *s.mutable_value() );
+				Strings.Add( kind, id, move(*s.mutable_value()) );
 			}
-		};
-		addStrings( move(*af.mutable_templates()), Templates );
-		addStrings( move(*af.mutable_files()), Files );
-		addStrings( move(*af.mutable_functions()), Functions );
-		addStrings( move(*af.mutable_args()), Args );
+		}
 		for( int i=0; i<af.entries_size(); ++i ){
 			auto entry = af.mutable_entries( i );
 			let time = Protobuf::ToTimePoint( entry->time() );
@@ -120,7 +120,7 @@ namespace Jde::App{
 		}
 	}
 	using App::Log::Proto::FileEntry;
-	α ArchiveFile::Append( const QL::Filter& filter, vector<FileEntry>&& entries )ε->void{
+	α ArchiveQuery::Append( const QL::Filter& filter, vector<FileEntry>&& entries )ε->void{
 		vector<LogEntryFile> logEntries;
 		flat_map<uuid, string> strings;
 		for( auto& fe : entries ){
@@ -135,20 +135,16 @@ namespace Jde::App{
 				strings[id] = move( value );
 			}
 		}
-		auto addString = [&]( auto& map, auto& id ){
-			map.try_emplace( ToGuid(id), move(strings[ToGuid(id)]) );
-		};
 		//Collect in a pass of its own, before any Test: the filter resolves "text", "message" and "args" through these very
 		//maps (Test/Message below), so populating them per surviving entry meant the first entry was compared against an
 		//empty map - and every one after it, since none ever survived.  Any text/message/args filter silently dropped the
 		//whole daily file.  The TableQL overload above has always collected first; this is the same order.
 		//No extra memory: each value is moved out of `strings`, which we already hold in full, rather than copied.
 		for( let& entry : logEntries ){
-			addString( Templates, entry.template_id() );
-			addString( Files, entry.file_id() );
-			addString( Functions, entry.function_id() );
-			for( let& argId : entry.args() )
-				addString( Args, argId );
+			ForEachStringId( entry, [&]( EStringKind kind, const string& idBytes ){
+				let id = ToGuid( idBytes );
+				Strings.Add( kind, id, move(strings[id]) );
+			});
 		}
 		for( auto& entry : logEntries ){
 			let time = Protobuf::ToTimePoint( entry.time() );
@@ -157,7 +153,7 @@ namespace Jde::App{
 		}
 	}
 
-	α ArchiveFile::Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<App::Log::Proto::LogEntryFile>{
+	α ArchiveQuery::Sort( const vector<std::pair<string,bool>>& orderBy )Ι->vector<App::Log::Proto::LogEntryFile>{
 		vector<App::Log::Proto::LogEntryFile> y;
 		for( let& [ts,entries] : Entries )
 			y.insert( y.end(), entries.begin(), entries.end() );
@@ -175,13 +171,13 @@ namespace Jde::App{
 						lessThan = aTime<bTime;
 				}
 				else if( field=="file" ){
-					let& aFile = find( Files, a.file_id() );
-					let& bFile = find( Files, b.file_id() );
+					let& aFile = Strings.Find( EStringKind::File, a.file_id() );
+					let& bFile = Strings.Find( EStringKind::File, b.file_id() );
 					lessThan = aFile==bFile ? nullopt : optional<bool>{ aFile<bFile };
 				}
 				else if( field=="function" ){
-					let& aFunction = find( Functions, a.function_id() );
-					let& bFunction = find( Functions, b.function_id() );
+					let& aFunction = Strings.Find( EStringKind::Function, a.function_id() );
+					let& bFunction = Strings.Find( EStringKind::Function, b.function_id() );
 					lessThan = aFunction==bFunction ? nullopt : optional<bool>{ aFunction<bFunction };
 				}
 				else if( field=="level" )
@@ -204,24 +200,23 @@ namespace Jde::App{
 		} );
 		return y;
 	}
-	α ArchiveFile::ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject{
+	α ArchiveQuery::ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject{
+		//An id column's value, recording the string it names when the query also asked for strings.
+		auto stringId = [&]( EStringKind kind, sv idBytes )->string{
+			let id = ToGuid( idBytes );
+			if( strings )
+				( *strings )[id] = Strings.Find( kind, idBytes );
+			return to_string( id );
+		};
 		jobject o;
 		for( let& col : table.Columns ){
 			let& name = col.JsonName;
-			if( name=="templateId" ){
-				let id = ToGuid( entry.template_id() );
-				o[name] = to_string( id );
-				if( strings )
-					( *strings )[id] = find( Templates, entry.template_id() );
-			}
+			if( name=="templateId" )
+				o[name] = stringId( EStringKind::Template, entry.template_id() );
 			else if( name=="argIds" ){
 				jarray args;
-				for( auto&& arg : entry.args() ){
-					let id = ToGuid( arg );
-					args.push_back( {to_string(id)} );
-					if( strings )
-						( *strings )[id] = find( Args, arg );
-				}
+				for( auto&& arg : entry.args() )
+					args.push_back( {stringId(EStringKind::Arg, arg)} );
 				o[name] = move( args );
 			}
 			else if( name=="level" )
@@ -241,50 +236,38 @@ namespace Jde::App{
 				o[name] = entry.app_pk();
 			else if( name=="appInstanceId" )
 				o[name] = entry.app_instance_pk();
-			else if( name=="fileId" ){
-				let id = ToGuid( entry.file_id() );
-				o[name] = to_string( id );
-				if( strings )
-					( *strings )[id] = find( Files, entry.file_id() );
-			}
-			else if( name=="functionId" ){
-				let id = ToGuid( entry.function_id() );
-				o[name] = to_string( id );
-				if( strings )
-					( *strings )[id] = find( Functions, entry.function_id() );
-			}
+			else if( name=="fileId" )
+				o[name] = stringId( EStringKind::File, entry.file_id() );
+			else if( name=="functionId" )
+				o[name] = stringId( EStringKind::Function, entry.function_id() );
 		}
 		return o;
 	}
 	//logs( limit: $limit, offset: $offset, orderBy: $orderBy ){ entries{templateId argIds level tags line time userId appId appInstanceId fileId functionId} strings{id value} }
-	α ArchiveFile::ToJson( const QL::TableQL& ql )Ι->jobject{
+	α ArchiveQuery::ToJson( const QL::TableQL& ql )Ι->jobject{
 		let entries = Sort( ql.OrderByJson() );
 		jobject o;
 		jarray jentries;
 		auto strings = ql.FindTable( "strings" ) ? flat_map<uuid,string>{} : optional<flat_map<uuid,string>>{};
 		let entriesTable = ql.FindTable( "entries" );
+		auto nameTable = [&]( const QL::TableQL& table, EStringKind kind, sv idBytes )->jobject {//file{ id name } / function{ id name }
+			jobject jt;
+			if( table.FindColumn("name") )
+				jt["name"] = Strings.Find( kind, idBytes );
+			if( table.FindColumn("id") )
+				jt["id"] = to_string( ToGuid(idBytes) );
+			return jt;
+		};
 		for( uint i=0; i<entries.size(); ++i ){
 			if( i<ql.Offset() || (ql.Limit() && i>=ql.Offset()+ql.Limit()) )
 				continue;
 			auto& entry = entries.at( i );
 			jobject jentry = entriesTable ? ToEntry( *entriesTable, entry, strings ) : jobject{};
 			for( auto&& table : ql.Tables ){
-				if( table.JsonName=="file" ){
-					jobject jt;
-					if( table.FindColumn("name") )
-						jt["name"] = find( Files, entry.file_id() );
-					if( table.FindColumn("id") )
-						jt["id"] = to_string( ToGuid(entry.file_id()) );
-					jentry[table.JsonName] = move( jt );
-				}
-				else if( table.JsonName=="function" ){
-					jobject jt;
-					if( table.FindColumn("name") )
-						jt["name"] = find( Functions, entry.function_id() );
-					if( table.FindColumn("id") )
-						jt["id"] = to_string( ToGuid(entry.function_id()) );
-					jentry[table.JsonName] = move( jt );
-				}
+				if( table.JsonName=="file" )
+					jentry[table.JsonName] = nameTable( table, EStringKind::File, entry.file_id() );
+				else if( table.JsonName=="function" )
+					jentry[table.JsonName] = nameTable( table, EStringKind::Function, entry.function_id() );
 				else if( table.JsonName=="user" ){
 					jobject jt;
 					if( table.FindColumn("id") )

@@ -7,14 +7,14 @@ set( targetName Jde.App.Client )
 add_library( ${targetName} )
 compileOptions( ${targetName} )
 file(GLOB sources CONFIGURE_DEPENDS *.cpp awaits/*.cpp )
-file(GLOB headers CONFIGURE_DEPENDS  */*.h )
+set( includeDir ${jdeRoot}/include/jde/app/client )
+file(GLOB headers CONFIGURE_DEPENDS *.h ${includeDir}/*.h ${includeDir}/awaits/*.h )
 target_sources( ${targetName}
     PRIVATE
         "${sources}"
         "${headers}")
 
-add_definitions( -DJde_App_Client_EXPORTS )
-target_link_libraries( ${targetName} PUBLIC Jde.Access Jde.App.Shared Jde.Web.Client )
+target_link_libraries( ${targetName} PUBLIC Jde.App.Shared )
 target_precompile_headers(${targetName}
   PRIVATE
 	pc.h

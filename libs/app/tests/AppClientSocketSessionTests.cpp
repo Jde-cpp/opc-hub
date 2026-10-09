@@ -127,4 +127,3 @@ namespace Jde::App::Tests{
 		EXPECT_TRUE( Executers().empty() );
 	}
 }
-#undef let

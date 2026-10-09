@@ -1,6 +1,6 @@
 #include <jde/web/client/ClientSsl.h>
-#include "jde/fwk/exceptions/Exception.h"
-#include "jde/fwk/log/logTags.h"
+#include <jde/fwk/exceptions/Exception.h>
+#include <jde/fwk/log/logTags.h>
 #include <jde/app/client/AppClientSocketSession.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/web/client/socket/ClientQL.h>
@@ -10,7 +10,6 @@
 #include <jde/app/proto/app.FromServer.h>
 #include <jde/app/proto/common.h>
 #include <jde/app/client/appClient.h>
-#include <jde/app/client/clientSubscriptions.h>
 #include <jde/app/client/IAppClient.h>
 
 #define let const auto
@@ -22,67 +21,31 @@ namespace Jde::App{
 namespace Client{
 	constexpr uint8 _maxExecuteDepth{ 4 };
 
-	StartSocketAwait::StartSocketAwait( SessionPK sessionId, sp<Access::Authorize> authorize, sp<IAppClient> appClient, SL sl )ι:
-		base{ sl },
-		_appClient{ appClient },
-		_sessionId{ sessionId },
-		_session{ ms<Client::AppClientSocketSession>(Executor(), IsSsl() ? Web::Client::Ssl::MakeContext() : optional<ssl::context>{}, move(authorize), move(appClient)) }
-	{}
-
-	Ω closeSession( sp<AppClientSocketSession> session, SL sl )ι->VoidTask{
-		try{
-			co_await session->Close( false, sl );
-		}
-		catch( Exception& e ){
-		}
-	}
-
-	α StartSocketAwait::Suspend()ι->void{
-		RunSession();
-	}
-	α StartSocketAwait::RunSession()ι->VoidTask{
-		try{
-			co_await _session->RunSession( Host(), Port() );//Web::Client
-			THROW_IF( Process::ShuttingDown(), "Shutting down." );
-			SendSessionId();
-		}
-		catch( runtime_error& e ){
-			closeSession( _session, _sl );
-			ResumeExp( move(e) );
-		}
-	}
-	α StartSocketAwait::SendSessionId()ι->ClientSocketAwait<Proto::FromServer::ConnectionInfo>::Task{
-		try{
-			auto info = co_await _session->Connect( _sessionId );//handshake
-			_session->SetInfo( move(*info.mutable_session_info()) );
-			_appClient->SetSession( move(_session) );
-			_appClient->ServerPublicKey = {
-				{ info.certificate_modulus().begin(), info.certificate_modulus().end() },
-				{ info.certificate_exponent().begin(), info.certificate_exponent().end() }
-			};
-			Resume( move(info) );
-		}
-		catch( runtime_error& e ){
-			if( _session )
-				closeSession( _session, _sl );
-			ResumeExp( move(e) );
-		}
-	}
-
 	AppClientSocketSession::AppClientSocketSession( sp<net::io_context> ioc, optional<ssl::context> ctx, sp<Access::Authorize> authorize, sp<IAppClient> appClient )ι:
 		base( ioc, ctx ),
 		_appClient{ appClient },
 		_authorize{ authorize }
 	{}
 
-	α AppClientSocketSession::Connect( SessionPK sessionId, SL sl )ι->ClientSocketAwait<Proto::FromServer::ConnectionInfo>{
-		let requestId = NextRequestId();
+	α AppClientSocketSession::AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SL sl )ι->await<Web::FromServer::SessionInfo>{
+		return Request<Web::FromServer::SessionInfo>( ELogLevel::Trace, ELogTags::SocketClientWrite, sl,
+			[&]( RequestId id ){ return FromClient::AddSession( domain, loginName, providerPK, userEndPoint, isSocket, id ); },
+			"[{}]AddSession domain: '{}', loginName: '{}', providerPK: {}, userEndPoint: '{}', isSocket: {}.", domain, loginName, providerPK, userEndPoint, isSocket );
+	}
+	α AppClientSocketSession::Connect( SessionPK sessionId, SL sl )ι->await<Proto::FromServer::ConnectionInfo>{
 		let instanceName = Client::InstanceName();
-		LOGSL( ELogLevel::Information, sl, ELogTags::SocketClientWrite, "[{}]Connect: '{}', authResource: '{}'.", hex(requestId), instanceName, _appClient->ResourceSchema );
 		//M10: ResourceSchema is what OpcServer sets to its `opc.*` schema (opcServerStartup, before this connect); the gateway leaves
 		//it empty and asks to authorize nothing.  Until this was passed, the AppServer's `if( instance.auth_resource().size() )` arm
 		//never ran and every delegated admin check fell back to the AppServer's own Authorize.
-		return ClientSocketAwait<Proto::FromServer::ConnectionInfo>{ ToString(FromClient::Instance(Process::AppName(), instanceName, sessionId, requestId, _appClient->ResourceSchema)), requestId, shared_from_this(), sl };
+		return Request<Proto::FromServer::ConnectionInfo>( ELogLevel::Information, ELogTags::SocketClientWrite, sl,
+			[&]( RequestId id ){ return FromClient::Instance( Process::AppName(), instanceName, sessionId, id, _appClient->ResourceSchema ); },
+			"[{}]Connect: '{}', authResource: '{}'.", instanceName, _appClient->ResourceSchema );
+	}
+	α AppClientSocketSession::Jwt( SL sl )ι->await<Web::Jwt>{
+		return Request<Web::Jwt>( ELogLevel::Trace, ELogTags::SocketClientWrite, sl, []( RequestId id ){ return FromClient::Jwt( id ); }, "[{}]Jwt." );
+	}
+	α AppClientSocketSession::Login( Web::Jwt&& jwt, SL sl )ι->await<Web::FromServer::SessionInfo>{
+		return Request<Web::FromServer::SessionInfo>( ELogLevel::Trace, ELogTags::SocketClientWrite, sl, [&]( RequestId id ){ return FromClient::Login( move(jwt), id ); }, "[{}]Login via jwt." );
 	}
 
 	α AppClientSocketSession::CloseTasks( beast::error_code ec )ι->void{
@@ -163,9 +126,8 @@ namespace Client{
 			e.SetLevel( ELogLevel::Error );
 		}
 	}
-	α AppClientSocketSession::SessionInfo( SessionPK sessionId, SL sl )ι->ClientSocketAwait<Web::FromServer::SessionInfo>{
-		let requestId = NextRequestId();
-		return ClientSocketAwait<Web::FromServer::SessionInfo>{ FromClient::Session(sessionId, requestId), requestId, shared_from_this(), sl };
+	α AppClientSocketSession::SessionInfo( SessionPK sessionId, SL sl )ι->await<Web::FromServer::SessionInfo>{
+		return Request<Web::FromServer::SessionInfo>( ELogLevel::Trace, ELogTags::SocketClientWrite, sl, [&]( RequestId id ){ return FromClient::Session( sessionId, id ); }, "[{}]SessionInfo." );//not the id itself: it is the bearer credential.
 	}
 	α AppClientSocketSession::ClientQuery( Proto::FromServer::ClientQuery proto, Jde::UserPK executer, RequestId requestId )ι->TAwait<jvalue>::Task{
 		DBG( "[{}.{}]ClientQuery: executer='{}', size='{}'.", hex(Id()), hex(requestId), executer.Value, proto.query().substr(0, Web::MaxLogLength()) );
@@ -178,18 +140,17 @@ namespace Client{
 			WriteException( move(e), requestId );
 		}
 	}
-	α AppClientSocketSession::Query( string&& q, jobject variables, bool returnRaw, SL sl )ι->ClientSocketAwait<jvalue>{
-		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWrite, "[{}]{}.", hex(requestId), q.substr(0, Web::MaxLogLength()) );
-
-		return ClientSocketAwait<jvalue>{ FromClient::Query(move(q), move(variables), requestId, returnRaw), requestId, shared_from_this(), sl };
+	α AppClientSocketSession::Query( string&& q, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
+		let text = sv{ q }.substr( 0, Web::MaxLogLength() );//logged before build moves q.
+		return Request<jvalue>( ELogLevel::Debug, ELogTags::SocketClientWrite, sl, [&]( RequestId id ){ return FromClient::Query( move(q), move(variables), id, returnRaw ); }, "[{}]{}.", text );
 	}
 	α AppClientSocketSession::Subscribe( string&& q, jobject vars, sp<QL::IListener> listener, SL sl )ε->await<jarray>{
-		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Debug, sl, ELogTags::SocketClientWriteSub, "[{}]{} {}.", hex(requestId), q.substr(0, Web::MaxLogLength()), serialize(vars) );
-		auto subscriptions = QL::ParseSubscriptions( q, vars, _appClient->SubscriptionSchemas, sl );
-		_subscriptionRequests.emplace( requestId, SubscriptionRequest{listener, move(subscriptions), q, vars} );
-		return ClientSocketAwait<jarray>{ FromClient::Subscription(move(q), move(vars), requestId), requestId, shared_from_this(), sl };
+		auto subscriptions = QL::ParseSubscriptions( q, vars, _appClient->SubscriptionSchemas, sl );//throws before an id is spent.
+		let text = sv{ q }.substr( 0, Web::MaxLogLength() );
+		return Request<jarray>( ELogLevel::Debug, ELogTags::SocketClientWriteSub, sl, [&]( RequestId id ){
+			_subscriptionRequests.emplace( id, SubscriptionRequest{listener, move(subscriptions), q, vars} );
+			return FromClient::Subscription( move(q), move(vars), id );
+		}, "[{}]{} {}.", text, serialize(vars) );
 	}
 
 	α AppClientSocketSession::Unsubscribe( vector<QL::SubscriptionId>&& ids, SL sl )ι->void{
@@ -200,32 +161,28 @@ namespace Client{
 		Write( FromClient::Unsubscription(ids, requestId) );
 	}
 
-	template<class T,class... Args> Ω resume( std::any&& hAny, T&& v/*, fmt::format_string<Args const&...>&& m="", const Args&... args*/ )ι->void{
-		auto h = std::any_cast<typename ClientSocketAwait<T>::Handle>( &hAny );
-		ASSERT_DESC( h, Ƒ("typeT={}, typeV={}", typeid(typename ClientSocketAwait<T>::Handle).name(), hAny.type().name()) );
+	template<class T> Ω resume( std::any&& hAny, T&& v )ι->void{
+		using Handle = ClientSocketAwait<std::remove_cvref_t<T>>::Handle;
+		auto h = std::any_cast<Handle>( &hAny );
+		ASSERT_DESC( h, Ƒ("typeT={}, typeV={}", typeid(Handle).name(), hAny.type().name()) );
 		if( h ){
-			h->promise().SetValue( move(v) );
+			h->promise().SetValue( FWD(v) );
 			h->resume();
 		}
 	}
-
-	template<class... Args> Ω resumeJValue( std::any&& hAny, string&& v )ι->void{
+	//Parses before resuming, so a malformed result fails this one request - and the handle is looked up once either way.
+	Ω resumeJValue( std::any&& hAny, string&& v )ι->void{
+		auto h = std::any_cast<ClientSocketAwait<jvalue>::Handle>( &hAny );
+		ASSERT_DESC( h, "hAny is null for jvalue." );
+		if( !h )
+			return;
 		try{
-			resume<jvalue>( move(hAny), Json::ParseValue(move(v)) );
+			h->promise().SetValue( Json::ParseValue(move(v)) );
 		}
 		catch( runtime_error& e ){
-			if( auto h = std::any_cast<typename ClientSocketAwait<jvalue>::Handle>(&hAny); h ){
-				h->promise().SetExp( move(e) );
-				h->resume();
-			}
-			else
-				ASSERT_DESC( false, "hAny is null for jvalue." );
+			h->promise().SetExp( move(e) );
 		}
-	}
-
-	template<class T,class... Args>
-	α resumeScaler( std::any&& h, T v )ι->void{
-		resume( move(h), move(v) );
+		h->resume();
 	}
 
 	α AppClientSocketSession::Execute( string&& bytes, optional<Jde::UserPK> userPK, RequestId clientRequestId, uint8 depth )ι->void{
@@ -273,22 +230,9 @@ namespace Client{
 				DBG( "[{}]ConnectionInfo: connection: '{}'.", hex(Id()), hex(m->connection_info().connection_pk()) );
 				resume( move(hAny), move(*m->mutable_connection_info()) );
 				break;
-			case kGeneric:
-				DBG( "[{}]Generic: '{}'.", hex(Id()), m->generic() );
-				resume( move(hAny), move(*m->mutable_generic()) );
-				break;
-			[[likely]] case kStrings:{
-				auto& res = *m->mutable_strings();
-				DBG( "[{}]Strings: count='{}'.", hex(Id()), res.messages().size()+res.files().size()+res.functions().size()+res.threads().size() );
-				resume( move(hAny), move(*m->mutable_strings()) );
-				}break;
 			case kJwt:
 				DBG( "[{}]Jwt: size='{}'.", hex(Id()), m->jwt().size() );
 				resume( move(hAny), Web::Jwt{move(*m->mutable_jwt())} );
-				break;
-			case kProgress://TODO not awaitable
-				DBG( "[{}]Progress: '{}'.", hex(Id()), m->progress() );
-				resumeScaler( move(hAny), m->progress() );
 				break;
 			case kSessionInfo:{
 				auto& res = *m->mutable_session_info();
@@ -340,16 +284,11 @@ namespace Client{
 				Execute( move(bytes), runAsPK, requestId, uint8(depth+1) );
 				break;}
 			case kExecuteResponse://wait for use case.
-			case kStringPks://strings already saved in db, no need to send.  not being requested by client yet.
 				CRITICAL( "[{}]No use case has been implemented on client app '{}'.", hex(Id()), underlying(m->value_case()) );
 				break;
 			case kTraces://a log subscription made from a C++ client.  Nothing consumes one since IListener::OnTraces went (ql-refactor B2) - the browser's logs page is the stream's consumer.
 				WARN( "[{}]Dropped {} log trace(s) for request {}: a C++ client has no trace listener.", hex(Id()), m->traces().values_size(), requestId );
 				break;
-			//[[unlikely]]
-			// case kStatus:
-			// 	CRITICAL( "[{:x}]Web only call not implemented on client app '{}'.", Id(), (uint)m->value_case() );
-			// break;
 			case VALUE_NOT_SET:
 				break;
 			}

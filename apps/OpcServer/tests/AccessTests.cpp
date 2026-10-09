@@ -313,7 +313,7 @@ namespace Jde::Opc::Server::Tests{
 		auto m = mutation( "updateLogSetting" );//the AppServer's push arrives this way, carrying the admin who made the change.
 		auto y = Server::QL().CustomMutation( m, QL::Creds{UserPK{7}}, SRCE_CUR );
 		ASSERT_TRUE( y );
-		EXPECT_FALSE( y->await_ready() ) << "LogSettingsClientMAwait suspends; only a refusal answers ready";
+		EXPECT_FALSE( y->await_ready() ) << "LogSettingsMAwait suspends; only a refusal answers ready";
 	}
 	TEST_F( CustomMutationTests, EveryOtherMutationStaysForbidden ){
 		auto m = mutation( "createObject" );

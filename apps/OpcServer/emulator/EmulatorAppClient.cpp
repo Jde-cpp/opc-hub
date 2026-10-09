@@ -1,6 +1,6 @@
 #include "EmulatorAppClient.h"
 #include <jde/app/IApp.h>
-#include <jde/app/client/awaits/LogSettingsClientAwait.h>
+#include <jde/app/log/LogSettingsAwait.h>
 #include <jde/ql/IQL.h>
 
 namespace Jde::Opc::Emulator{
@@ -45,9 +45,9 @@ namespace Jde::Opc::Emulator{
 		//to accept - which it did: the push carries the caller's UserPK, 0 for an anonymous one, and the levels then never
 		//moved, which is the very defect this route exists to fix.
 		if( isLogSettingsPush(q) )
-			return mu<App::Client::LogSettingsClientMAwait>( move(q.Mutations().front()), AppClient(), executer, sl );
+			return mu<App::LogSettingsMAwait>( move(q.Mutations().front()), AppClient(), executer, sl );
 		if( isLogSettingsRead(q) )
-			return mu<App::Client::LogSettingsClientAwait>( move(q.Queries().front()), sl );
+			return App::LogSettingsAwait( move(q.Queries().front()), sl );
 		return mu<EmulatorQL>( move(q), executer, sl );
 	}
 

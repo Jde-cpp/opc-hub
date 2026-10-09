@@ -1,6 +1,6 @@
 #include "ClientSocketSession.h"
 #include <jde/web/usings.h>
-#include <jde/app/proto/app.FromServer.h>
+#include <jde/web/server/Web.FromServer.h>
 #include "ServerMock.h"
 #include "jde/fwk/log/logTags.h"
 
@@ -20,8 +20,7 @@ namespace Jde::Web::Mock{
 		//LogRead( Ƒ("sessionId: '{}'", strSessionId), requestId );
 		try{
 			auto sessionInfo = co_await Server::Sessions::UpsertAwait( strSessionId, "127.0.0.1", true, AppClient() );
-			auto t = App::FromServer::Session( move(*sessionInfo), 0 );
-			base::SetInfo( move(*t.mutable_messages(0)->mutable_session_info()) );
+			base::SetInfo( Server::ToProto(*sessionInfo) );
 			//Write( FromServer::CompleteTrans(requestId) );
 		}
 		catch( runtime_error& e ){
@@ -67,7 +66,7 @@ namespace Jde::Web::Mock{
 		request->set_session_id( sessionId );
 		let requestId = NextRequestId();
 		request->set_request_id( requestId );
-		return ClientSocketAwait<SessionPK>{ Protobuf::ToString(t), requestId, shared_from_this(), sl };
+		return ClientSocketAwait<SessionPK>{ t, requestId, shared_from_this(), sl };
 	}
 	α ClientSocketSession::Echo( str x, SL sl )ι->ClientSocketAwait<string>{
 		Proto::FromClientTransmission t;
@@ -75,7 +74,7 @@ namespace Jde::Web::Mock{
 		request->set_echo( x );
 		let requestId = NextRequestId();
 		request->set_request_id( requestId );
-		return ClientSocketAwait<string>{ Protobuf::ToString(t), requestId, shared_from_this(), sl };
+		return ClientSocketAwait<string>{ t, requestId, shared_from_this(), sl };
 	}
 	α ClientSocketSession::CloseServerSide( SL sl )ι->ClientSocketAwait<string>{
 		Proto::FromClientTransmission t;
@@ -83,7 +82,7 @@ namespace Jde::Web::Mock{
 		request->mutable_close_server_side();
 		let requestId = NextRequestId();
 		request->set_request_id( requestId );
-		return ClientSocketAwait<string>{ Protobuf::ToString(t), requestId, shared_from_this(), sl };
+		return ClientSocketAwait<string>{ t, requestId, shared_from_this(), sl };
 	}
 	α ClientSocketSession::BadTransmissionClient( SL sl )ι->ClientSocketAwait<string>{
 		let requestId =  NextRequestId();
@@ -95,7 +94,7 @@ namespace Jde::Web::Mock{
 		request->mutable_bad_transmission_server();
 		let requestId = NextRequestId();
 		request->set_request_id( requestId );
-		return ClientSocketAwait<string>{ Protobuf::ToString(t), requestId, shared_from_this(), sl };
+		return ClientSocketAwait<string>{ t, requestId, shared_from_this(), sl };
 	}
 
 	α ClientSocketSession::OnClose( beast::error_code ec )ι->void{

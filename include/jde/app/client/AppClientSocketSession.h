@@ -7,30 +7,19 @@
 #include <jde/web/client/socket/ClientSocketAwait.h>
 #include <jde/web/client/socket/IClientSocketSession.h>
 #include <jde/app/proto/App.FromServer.pb.h>
-#include "exports.h"
 
-#define Φ ΓAC auto
 namespace Jde::QL{ struct IListener; }
 namespace Jde::App::Client{
 	struct AppClientSocketSession;
 	struct IAppClient;
-	struct StartSocketAwait : TAwait<Proto::FromServer::ConnectionInfo>{
-		using base = TAwait<Proto::FromServer::ConnectionInfo>;
-		StartSocketAwait( SessionPK sessionId, sp<Access::Authorize> authorize, sp<IAppClient> appClient, SL sl )ι;
-	private:
-		α Suspend()ι->void override;
-		α RunSession()ι->VoidTask;
-		α SendSessionId()ι->Web::Client::ClientSocketAwait<Proto::FromServer::ConnectionInfo>::Task;
-		sp<IAppClient> _appClient;
-		SessionPK _sessionId;
-		sp<Client::AppClientSocketSession> _session;
-	};
-
 	struct AppClientSocketSession final : Web::Client::TClientSocketSession<Jde::App::Proto::FromClient::Transmission,Jde::App::Proto::FromServer::Transmission>{
 		Τ using await = Web::Client::ClientSocketAwait<T>;
 		using base = Web::Client::TClientSocketSession<Proto::FromClient::Transmission,Proto::FromServer::Transmission>;
 		AppClientSocketSession( sp<net::io_context> ioc, optional<ssl::context> ctx, sp<Access::Authorize> authorize, sp<IAppClient> appClient )ι;
+		α AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SRCE )ι->await<Web::FromServer::SessionInfo>;
 		α Connect( SessionPK sessionId, SRCE )ι->await<Proto::FromServer::ConnectionInfo>;
+		α Jwt( SRCE )ι->await<Web::Jwt>;
+		α Login( Web::Jwt&& jwt, SRCE )ι->await<Web::FromServer::SessionInfo>;
 		α SessionInfo( SessionPK creds, SRCE )ι->await<Web::FromServer::SessionInfo>;
 		α Query( string&& q, jobject variables, bool returnRaw, SRCE )ι->await<jvalue> override;
 		α Subscribe( string&& query, jobject variables, sp<QL::IListener> listener, SRCE )ε->await<jarray> override;
@@ -42,6 +31,13 @@ namespace Jde::App::Client{
 		α ClearSubscriptions()ι->void;//what the close does: the ids died with the socket.  Remembered requests are untouched - that is what a reconnect replays.
 		α OnSubscription( const jobject& m, QL::SubscriptionId clientId )ι->void;
 	private:
+		//Every request this session makes: a fresh id, logged as the first argument of the caller's message, then the await.
+		template<class T, class... Args>
+		α Request( ELogLevel level, ELogTags tags, SL sl, auto&& build, fmt::format_string<string const&, Args const&...>&& m, const Args&... args )ι->await<T>{
+			const auto requestId = NextRequestId();
+			LOGSL( level, sl, tags, move(m), hex(requestId), args... );
+			return { build(requestId), requestId, shared_from_this(), sl };
+		}
 		α ListenersFor( QL::SubscriptionId id )Ι->flat_set<sp<QL::IListener>>;
 		α ClientQuery( Proto::FromServer::ClientQuery proto, Jde::UserPK executer, RequestId requestId )ι->TAwait<jvalue>::Task;
 		α Execute( string&& bytes, optional<Jde::UserPK> userPK, RequestId clientRequestId, uint8 depth )ι->void;
@@ -68,4 +64,3 @@ namespace Jde::App::Client{
 #endif
 	};
 }
-#undef Φ

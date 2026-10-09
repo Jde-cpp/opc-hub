@@ -27,7 +27,7 @@ file( GLOB headers CONFIGURE_DEPENDS *.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 target_compile_definitions( ${targetName} PRIVATE TESTS )
 target_link_libraries( ${targetName} GTest::gtest Threads::Threads )
-target_link_libraries( ${targetName} Jde.App.Client Jde.Web.Server ) # Jde.QL Jde.DB Jde
+target_link_libraries( ${targetName} Jde.App.Client Jde.Web.Server )
 
 if( WIN32 )
 	set_target_properties( ${targetName} PROPERTIES VS_DEBUGGER_COMMAND_ARGUMENTS "-tests -settings=${CMAKE_CURRENT_SOURCE_DIR}/config/App.Tests.jsonnet" )

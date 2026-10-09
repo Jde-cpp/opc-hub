@@ -1,7 +1,6 @@
 #pragma once
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/log/ILogger.h>
-#include "../log/ProtoLog.h"
 
 namespace Jde::App::Client{
 	struct IAppClient;

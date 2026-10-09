@@ -1,9 +1,12 @@
 #include <jde/app/client/appClient.h>
+#include <jde/fwk/co/AnyAwait.h>
+#include <jde/web/client/ClientSsl.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/client/accessClient.h>
+#include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/socket/ClientQL.h>
 #include <jde/app/client/usings.h>
 #include <jde/app/client/AppClientSocketSession.h>
@@ -14,10 +17,7 @@
 
 namespace Jde::App{
 	using Web::Client::ClientHttpAwait;
-	α reconnectWait()ι->Duration{ return Settings::FindDuration("/server/reconnectWait").value_or(5s); }
-	α Client::IsSsl()ι->bool{ return Settings::FindBool("/server/isSsl").value_or( false ); }
-	α Client::Host()ι->string{ return Settings::FindString("/server/host").value_or("localhost"); }
-	α Client::Port()ι->PortType{ return Settings::FindNumber<PortType>("/server/port").value_or(1967); }
+	Ω reconnectWait()ι->Duration{ return Settings::FindDuration("/server/reconnectWait").value_or(5s); }
 	α Client::InstanceName()ι->string{
 		auto instanceName = Settings::FindString( "/instanceName" ).value_or( "" );
 		return instanceName.empty() ? _debug ? "Debug" : "Release" : instanceName;
@@ -50,14 +50,9 @@ namespace Jde::App{
 	}
 }
 namespace Jde::App::Client{
-	struct LoginAwait final : TAwait<SessionPK>{
-		using base = TAwait<SessionPK>;
-		LoginAwait( const Crypto::CryptoSettings& cryptoSettings, SRCE )ε;
-		α Suspend()ι->void{ Execute(); };
-	private:
-		α Execute()ι->Web::Client::ClientHttpAwait::Task;
-		Web::Jwt _jwt;
-	};
+	α ServerSettings::IsSsl()ι->bool{ return Settings::FindBool("/server/isSsl").value_or( false ); }
+	α ServerSettings::Host()ι->string{ return Settings::FindString("/server/host").value_or("localhost"); }
+	α ServerSettings::Port()ι->PortType{ return Settings::FindNumber<PortType>("/server/port").value_or(1967); }
 
 	Ω getJwt( const Crypto::CryptoSettings& cryptoSettings )ε->Web::Jwt{
 		auto certificate = Crypto::ReadCertificate( cryptoSettings.Certificate.Path );//sole key material - the jwt derives the public key from it; the server's TrustStore chains it at enrollment.
@@ -68,22 +63,11 @@ namespace Jde::App::Client{
 		auto description = Ƒ( "{} '{}' on {}", Process::AppName(), InstanceName(), Process::HostName() );
 		return Web::Jwt{ {}, {0}, move(name), info.CommonName, 0, {}, TimePoint::min(), move(description), cryptoSettings.PrivateKey, move(certificate) };
 	}
-	LoginAwait::LoginAwait( const Crypto::CryptoSettings& cryptoSettings, SL sl )ε:
-		base{sl},
-		_jwt{ getJwt(cryptoSettings) }
-	{}
-
-	α LoginAwait::Execute()ι->ClientHttpAwait::Task{
+	Ω closeSession( sp<AppClientSocketSession> session, SL sl )ι->VoidTask{
 		try{
-			jobject j{ {"jwt", _jwt.Payload()} };
-			TRACET( ELogTags::App, "Logging in {}:{}", Host(), Port() );
-			auto res = co_await ClientHttpAwait{ Host(), "/login", {}, Port(), {.Authorization= Ƒ("Bearer {}", _jwt.Payload())} };
-			auto sessionPK = Str::TryTo<SessionPK,16>( res[http::field::authorization] );
-			THROW_IF( !sessionPK, "Invalid authorization: {}.", res[http::field::authorization] );
-			Resume( move(*sessionPK) );
+			co_await session->Close( false, sl );
 		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
+		catch( Exception& ){
 		}
 	}
 
@@ -93,53 +77,56 @@ namespace Jde::App::Client{
 		_retry{ retry }
 	{}
 
-	α ConnectAwait::Retry( const runtime_error& e )ι->DurationTimer::Task{
-		//Said, not silent: a product whose registry is not up yet - the OpcServer started beside a hub still on its first
-		//start (install-issues #12) - retries here for as long as it takes, and its console or log should show why it waits.
-		//The wait is what is left of reconnectWait since the attempt began, not reconnectWait on top of the attempt: a refused
-		//connect costs ~2 s per address on Windows, and `localhost` is two addresses, so "retrying in 5s" used to run at 9
-		//(the 09-15 rerun's retry table).  A floor of half a second keeps an attempt that outlasts the setting from spinning.
-		let elapsed = steady_clock::now() - _attemptStart;
-		let wait = std::max( duration_cast<Duration>(reconnectWait()-elapsed), duration_cast<Duration>(500ms) );
-		WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", Host(), Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
-		try{
-			(void)co_await DurationTimer{ wait };
-			THROW_IF( Process::ShuttingDown(), "Shutting down." );
-			HttpLogin();
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α ConnectAwait::RunSocket( SessionPK sessionId )ι->TAwait<Proto::FromServer::ConnectionInfo>::Task{
-		try{
-			THROW_IF( Process::ShuttingDown(), "Shutting down." );
-			TRACET( ELogTags::App, "[{}]Creating socket session", hex(sessionId) );
-			auto info = co_await StartSocketAwait{ sessionId, _appClient->Acl(), _appClient, _sl };//null for a client that never authorizes (emulator, soak).
-			if( _appClient->ResourceSchema.size() && !info.auth_result() )//the AppServer's TestSchemaAdmin gate on the auth_resource we sent
-				WARNT( ELogTags::Access, "AppServer declined to delegate '{}' admin checks to this instance - grant its user Administer on the schema's root resources and reconnect;  until then the AppServer applies its flat rule.", _appClient->ResourceSchema );
-			_appClient->SetAppPKs( info.instance_pk(), info.connection_pk() );
-			Post( _h );  //in OnRead, will block subsequent reads
-		}
-		catch( runtime_error& e ){
-			if( _retry && !Process::ShuttingDown() )
-				Retry( e );
-			else
-				ResumeExp( move(e) );
-		}
-	}
-	α ConnectAwait::HttpLogin()ι->LoginAwait::Task{
-		_attemptStart = steady_clock::now();
-		try{
-			let sessionId = co_await LoginAwait{ *_appClient->SslSettings };//http call
-			THROW_IF( Process::ShuttingDown(), "Shutting down." );
-			RunSocket( sessionId );
-		}
-		catch( runtime_error& e ){
-			if( _retry && !Process::ShuttingDown() )//a retry timer armed during teardown only delays the executor drain.
-				Retry( e );
-			else
-				ResumeExp( move(e) );
+	α ConnectAwait::Execute()ι->VoidAwait::Task{
+		for(;;){
+			let attemptStart = steady_clock::now();//the retry wait is measured from here, so the cadence is the setting's whatever a refused connect costs.
+			sp<AppClientSocketSession> session;
+			Duration wait{};//set by the catch:  co_await is not allowed inside a handler, so the timer runs after it.
+			try{
+				THROW_IF( Process::ShuttingDown(), "Shutting down." );
+				let jwt = getJwt( *_appClient->SslSettings );
+				TRACET( ELogTags::App, "Logging in {}:{}", ServerSettings::Host(), ServerSettings::Port() );
+				ClientHttpAwait login{ ServerSettings::Host(), "/login", {}, ServerSettings::Port(), {.Authorization= Ƒ("Bearer {}", jwt.Payload())} };
+				let res = co_await Any( login );
+				let sessionId = Str::TryTo<SessionPK,16>( res[http::field::authorization] );
+				THROW_IF( !sessionId, "Invalid authorization: {}.", res[http::field::authorization] );
+				THROW_IF( Process::ShuttingDown(), "Shutting down." );//a socket opened on a stopping executor may never complete.
+
+				TRACET( ELogTags::App, "[{}]Creating socket session", hex(*sessionId) );
+				session = ms<AppClientSocketSession>( Executor(), ServerSettings::IsSsl() ? Web::Client::Ssl::MakeContext() : optional<ssl::context>{}, _appClient->Acl(), _appClient );//Acl() is null for a client that never authorizes (emulator, soak).
+				auto run = session->RunSession( ServerSettings::Host(), ServerSettings::Port() );
+				co_await Any( run );
+				auto connect = session->Connect( *sessionId );//handshake
+				auto info = co_await Any( connect );
+				session->SetInfo( move(*info.mutable_session_info()) );
+				_appClient->SetSession( move(session) );
+				_appClient->ServerPublicKey = {
+					{ info.certificate_modulus().begin(), info.certificate_modulus().end() },
+					{ info.certificate_exponent().begin(), info.certificate_exponent().end() }
+				};
+				if( _appClient->ResourceSchema.size() && !info.auth_result() )//the AppServer's TestSchemaAdmin gate on the auth_resource we sent
+					WARNT( ELogTags::Access, "AppServer declined to delegate '{}' admin checks to this instance - grant its user Administer on the schema's root resources and reconnect;  until then the AppServer applies its flat rule.", _appClient->ResourceSchema );
+				_appClient->SetAppPKs( info.instance_pk(), info.connection_pk() );
+				Post( _h );//posted, not resumed:  this runs inside the socket's OnRead, and resuming inline would block subsequent reads.
+				co_return;
+			}
+			catch( runtime_error& e ){
+				if( session )
+					closeSession( session, _sl );
+				if( !_retry || Process::ShuttingDown() ){//a retry timer armed during teardown only delays the executor drain.
+					ResumeExp( move(e) );
+					co_return;
+				}
+				//Said, not silent: a product whose registry is not up yet - the OpcServer started beside a hub still on its first
+				//start (install-issues #12) - retries here for as long as it takes, and its console or log should show why it waits.
+				//The wait is what is left of reconnectWait since the attempt began, not reconnectWait on top of the attempt: a refused
+				//connect costs ~2 s per address on Windows, and `localhost` is two addresses, so "retrying in 5s" used to run at 9
+				//(the 09-15 rerun's retry table).  A floor of half a second keeps an attempt that outlasts the setting from spinning.
+				wait = std::max( duration_cast<Duration>(reconnectWait()-(steady_clock::now()-attemptStart)), duration_cast<Duration>(500ms) );
+				WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", ServerSettings::Host(), ServerSettings::Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
+			}
+			DurationTimer timer{ wait };
+			(void)co_await Any( timer );
 		}
 	}
 }

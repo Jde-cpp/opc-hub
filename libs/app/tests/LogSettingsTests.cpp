@@ -1,6 +1,6 @@
 //Ported from apps/OpcGateway/tests/LogSettingTests.cpp - the same "read the log settings, flip a default, read it back"
-//round trip, driven against the awaitables in Jde.App.Shared instead of a running gateway.  LogSettingsAwait resolves in
-//await_ready and LogSettingsMAwait's Resume/ResumeExp are synchronous, so BlockAwait runs both on this thread.
+//round trip, driven against the awaitables in Jde.App.Shared instead of a running gateway.  LogSettingsAwait's CompletedAwait resolves
+//in await_ready and LogSettingsMAwait's Resume/ResumeExp are synchronous, so BlockAwait runs both on this thread.
 #include <gtest/gtest.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <jde/ql/types/RequestQL.h>
@@ -12,21 +12,11 @@
 #define let const auto
 
 namespace Jde::App::Tests{
-	//Resolves in await_ready, so the mutation's forward to the app server never leaves this thread.
-	struct ValueAwait final : TAwait<jvalue>{
-		ValueAwait( jvalue value, SRCE )ι:TAwait<jvalue>{sl}, _value{move(value)}{}
-		α await_ready()ι->bool override{ return true; }
-		α Suspend()ι->void override{ ASSERT(false); }
-		α await_resume()ε->jvalue override{ return move(_value); }
-	private:
-		jvalue _value;
-	};
-
 	//Only the query hand-off is reachable from here;  every other IApp member is a hard error if the mutation ever calls it.
 	struct AppStub final : IApp{
 		α PublicKey()Ι->const Crypto::PublicKey& override{ static const Crypto::PublicKey y; return y; }
 		α SessionInfoAwait( SessionPK, SL )ε->up<TAwait<Web::FromServer::SessionInfo>> override{ throw Exception{"AppStub::SessionInfoAwait"}; }
-		α Login( Web::Jwt&&, SL )ε->Web::Client::ClientSocketAwait<Web::FromServer::SessionInfo> override{ throw Exception{"AppStub::Login"}; }
+		α Login( Web::Jwt&&, SL )ε->up<TAwait<Web::FromServer::SessionInfo>> override{ throw Exception{"AppStub::Login"}; }
 		α ClientQuery( QL::RequestQL&&, UserPK, SL )ε->up<TAwait<jvalue>> override{ throw Exception{"AppStub::ClientQuery"}; }
 
 		string Query;      //what the mutation forwarded to the app server.
@@ -39,7 +29,7 @@ namespace Jde::App::Tests{
 			Query = move( q );
 			Variables = move( variables );
 			++Queries;
-			return mu<ValueAwait>( jvalue{true} );
+			return mu<CompletedAwait<jvalue>>( []{ return jvalue{true}; } );//resolves in await_ready, so the mutation's forward to the app server never leaves this thread.
 		}
 	};
 
@@ -47,7 +37,7 @@ namespace Jde::App::Tests{
 	Ω logSettings( std::initializer_list<sv> columns={"text","binary","tags"} )ε->jobject{
 		auto ql = table( "logSetting" );
 		addColumns( ql, columns );
-		let y = BlockAwait<LogSettingsAwait,jvalue>( LogSettingsAwait{move(ql)} );
+		let y = BlockTAwait<jvalue>( move(*LogSettingsAwait(move(ql))) );
 		return y.as_object();
 	}
 	Ω defaultLevel( sv logger )ε->ELogLevel{ return ToLogLevel( logSettings().at(logger).at("default").as_string() ); }
@@ -56,7 +46,7 @@ namespace Jde::App::Tests{
 	Ω updateLogSettings( sv args, jobject variables, sp<AppStub> app )ε->jvalue{
 		static const vector<sp<DB::AppSchema>> noSchemas;
 		QL::MutationQL m{ "updateLogSetting", QL::Parser::ParseArgs(string{args}), ms<jobject>(move(variables)), optional<QL::TableQL>{}, true, noSchemas, true };
-		return BlockAwait<LogSettingsMAwait,jvalue>( LogSettingsMAwait{move(m), app, UserPK{}} );
+		return BlockTAwait<jvalue>( LogSettingsMAwait{move(m), app, UserPK{}} );
 	}
 
 	//T8: the per-tag overrides, which are as process-wide as the default level and were not being put back - `ql` at Critical

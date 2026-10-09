@@ -22,7 +22,7 @@ namespace Jde::App::Server::Tests{
 			FromServerTrans t;
 			auto& m = *t.add_messages();
 			m.set_request_id( requestId );
-			m.set_generic( text );
+			m.set_query_result( text );//any string member the raw client can read back; nothing interprets it.
 			return t;
 		}
 		vector<sp<RawClientSession>> _sessions;
@@ -45,9 +45,9 @@ namespace Jde::App::Server::Tests{
 		let pks = RegisterInstance( *client, "Tests.WriteTarget", "wt-1", "wt-host", 0 );
 		let delivered = Server::Write( pks.Program, pks.Instance, Ping("ping-targeted", 777) );
 		EXPECT_EQ( delivered, pks.Connection );//the pk a forward binds its response to must be the connection actually written to.
-		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kGeneric; } );
+		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kQueryResult; } );
 		ASSERT_TRUE( m );
-		EXPECT_EQ( m->generic(), "ping-targeted" );
+		EXPECT_EQ( m->query_result(), "ping-targeted" );
 		EXPECT_EQ( m->request_id(), 777u );
 	}
 
@@ -56,9 +56,9 @@ namespace Jde::App::Server::Tests{
 		let pks = RegisterInstance( *client, "Tests.WriteWild", "ww-1", "ww-host", 0 );
 		let delivered = Server::Write( pks.Program, nullopt, Ping("ping-wild", 778) );//instancePK nullopt = any instance of the app.
 		EXPECT_EQ( delivered, pks.Connection );
-		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kGeneric; } );
+		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kQueryResult; } );
 		ASSERT_TRUE( m );
-		EXPECT_EQ( m->generic(), "ping-wild" );
+		EXPECT_EQ( m->query_result(), "ping-wild" );
 	}
 
 	TEST_F( SessionMapTests, WriteWrongInstanceThrows ){

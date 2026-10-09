@@ -80,8 +80,8 @@ export class LogSettingsPanel implements OnInit, OnDestroy{
 				const sink = mergeSink( running?.[type], flatten(<LevelTags|undefined>levels?.[type]) );
 				this.sinks[type] = sink;
 				this.snapshot[type] = overridesOf( sink );
-				//an answer with no `default` is a logger the instance does not have - the hub has no remote log, a bare app server no
-				//appServer column at all (undefined: unknown, not absent).
+				//an answer with no `default` is a logger the instance does not have - neither the hub nor a bare app server runs a remote
+				//log.  An instance that leaves the column out (undefined) is unknown, not absent.
 				const reported = running?.[type];
 				this.sinkNote[type] = reported && !(LogTags.defaultTag in reported)
 					? `This instance runs no ${LogSettingsPanel.sinkNames[type]} log. The rows are overrides saved for it; they apply to nothing.`

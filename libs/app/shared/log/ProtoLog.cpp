@@ -99,30 +99,19 @@ namespace Jde::App{
 		}
 		ERR( "Shutdown could not take the daily file's lock - {} buffered bytes dropped rather than interleaved into it.", dropped );//outside _mutex: this reaches the loggers that are still alive.
 	}
-	α ProtoLog::Deserialize( sv bytes )ε->vector<App::Log::Proto::FileEntry>{
-		return Protobuf::DeserializeVector<App::Log::Proto::FileEntry>( bytes );
-	}
-
 	α ProtoLog::Write( const Logging::Entry& e )ι->void{
-		if( !empty(e.Tags & _tags) )//recursion guard
-			return;
-		auto proto = LogProto::LogEntryFile( e );
-		App::Log::Proto::FileEntry fileEntry;
-		*fileEntry.mutable_entry() = move( proto );
-		Write( e, move(fileEntry) );
+		if( empty(e.Tags & _tags) )//recursion guard
+			Write( e, LogProto::LogEntryFile(e) );
 	}
-
 	α ProtoLog::Write( const Logging::Entry& e, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void{
 		if( !appPK || !instancePK || (appPK==_appPK && instancePK==_instancePK) )
-			return Write( e );
-		if( !empty(e.Tags & _tags) )//recursion guard
-			return;
-		auto proto = LogProto::LogEntryFile( e, appPK, instancePK );
-		App::Log::Proto::FileEntry fileEntry;
-		*fileEntry.mutable_external_entry() = move( proto );
-		Write( e, move(fileEntry) );
+			Write( e );
+		else if( empty(e.Tags & _tags) )//recursion guard
+			Write( e, LogProto::LogEntryFile(e, appPK, instancePK) );//the non-zero app_pk is what marks it forwarded.
 	}
-	α ProtoLog::Write( const Logging::Entry& e, App::Log::Proto::FileEntry&& fileEntry )ι->void{
+	α ProtoLog::Write( const Logging::Entry& e, App::Log::Proto::LogEntryFile&& entry )ι->void{
+		App::Log::Proto::FileEntry fileEntry;
+		*fileEntry.mutable_entry() = move( entry );
 		auto data = Protobuf::SizePrefixed( fileEntry );
 		_mutex.lock();
 		_dailyFileStart = std::min<TimePoint>( _dailyFileStart, e.Time );//inside the lock: read by the query coroutine, written by every logging thread.
@@ -133,16 +122,7 @@ namespace Jde::App{
 		AddString( e.Id(), e.Text );
 		AddString( e.FileId(), e.File() );
 		AddString( e.FunctionId(), e.Function() );
-		switch( fileEntry.value_case() ){
-			case App::Log::Proto::FileEntry::kEntry:
-				AddArguments( e.Arguments, fileEntry.entry().args() );
-			break;
-			case App::Log::Proto::FileEntry::kExternalEntry:
-				AddArguments( e.Arguments, fileEntry.external_entry().args() );
-			break;
-			default:
-				ASSERTX( false );
-		}
+		AddArguments( e.Arguments, fileEntry.entry().args() );
 
 		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );
 		let dropped = DropBufferUnlocked();//M5: the buffer grows between retries too, not only on the failures themselves.
@@ -179,7 +159,7 @@ namespace Jde::App{
 		_toSave.erase( _toSave.begin(), std::next(_toSave.begin(), (ptrdiff_t)offset) );
 		//AddString emits each id once and _cache remembers it, so the dropped prefix may have held the only copy of a string a
 		//surviving entry names - a repeated template, or the file/function pair emitted with the first entry from a call site.
-		//Clearing makes the next entry re-emit them, and that is enough: ArchiveFile::Append collects every string in a pass of its
+		//Clearing makes the next entry re-emit them, and that is enough: ArchiveQuery::Append collects every string in a pass of its
 		//own before resolving any entry, so a record written *after* the entry naming it still resolves it.
 		_cache.Clear();
 		_droppedBytes += offset;
@@ -191,7 +171,7 @@ namespace Jde::App{
 		ul _{ _mutex };
 		vector<App::Log::Proto::FileEntry> y;
 		auto append = [&y]( const vector<byte>& bytes ){
-			auto parsed = Deserialize( sv{(char*)bytes.data(), bytes.size()} );
+			auto parsed = Protobuf::DeserializeVector<App::Log::Proto::FileEntry>( sv{(char*)bytes.data(), bytes.size()} );
 			y.insert( y.end(), make_move_iterator(parsed.begin()), make_move_iterator(parsed.end()) );
 		};
 		for( let& [_, batch] : _inFlight )
@@ -216,7 +196,7 @@ namespace Jde::App{
 		try{
 			TRACE( "Saving {} bytes to {}", toSave.size(), DailyFile().string() );
 			//NOT _dailyFileStart = max() here.  A flush moves entries from the buffer into the daily file - both of which are
-			//"local" - so parking the bound at max() after every successful flush told LogAwait::ShouldReadLocal that nothing
+			//"local" - so parking the bound at max() after every successful flush told LogQLAwait's read-local check that nothing
 			//was local at all: `*_endTime > max` is false for any finite bound, so every time-bounded query silently skipped
 			//the whole of today's log and answered out of the archives alone.  The bound is only released when the round
 			//below actually takes the file away.
@@ -310,7 +290,7 @@ namespace Jde::App{
 		App::Log::Proto::FileEntry fileEntry;
 		*fileEntry.mutable_str() = LogProto::ToString( id, string{str} );
 		auto data = Protobuf::SizePrefixed( fileEntry );
-		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );//TODO copy in SizePrefixed
+		std::copy( data.begin(), data.end(), std::back_inserter(_toSave) );
 	}
 	α ProtoLog::AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void{
 		ASSERTX( args.size()==(uint)ids.size() );
