@@ -10,6 +10,7 @@
 #include "jde/fwk/log/logTags.h"
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/log/SpdLog.h>	//no longer reachable through <jde/fwk.h>
+#include "AbseilSink.h"
 
 #define let const auto
 
@@ -43,6 +44,7 @@ namespace Jde{
 
 namespace Jde{
 	α Logging::DestroyLoggers( bool terminate )->void{
+		RemoveAbseilSink();//first: its thread logs into the loggers erased below.
 		for( auto p=_loggers.begin(); p!=_loggers.end(); ){
 			auto logger = move( *p );
 			p = _loggers.erase( p );
@@ -72,5 +74,6 @@ namespace Jde{
 		else
 		 	_loggers.front()->SetLevels( *memory, true );//settings, not overrides: what a cleared override on the memory logger falls back to.
 		Logging::UpdateCumulative( _loggers );
+		AddAbseilSink();
 	}
 }
