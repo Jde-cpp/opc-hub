@@ -88,7 +88,7 @@
 	@if( rows().length ){
 		<ul class="results" role="alert" aria-label="The server's answer">
 			@for( row of rows(); track $index ){
-				<li><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ row.node }}@if( row.time ){ at {{ row.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}}: {{ statusText(row.status) }}</li>
+				<li>@if( statusIcon(row.status); as icon ){<mat-icon aria-hidden="true" [class.uncertain]="icon=='warning'" [class.good]="icon=='info'" [fontIcon]="icon"></mat-icon>}{{ row.node }}@if( row.time ){ at {{ row.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}}: {{ statusText(row.status) }}</li>
 			}
 		</ul>
 	}

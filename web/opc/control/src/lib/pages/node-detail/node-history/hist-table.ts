@@ -63,7 +63,7 @@ export class HistTable{
 		return y;
 	}
 	//a stored value of a node this user may edit:  not a bound, which stands for a record outside the range, and not one
-	//with no time, which no edit could name
-	canEdit( v:HistValue ):boolean{ return !this.modified() && !v.bound && !!v.source && this.editableKeys().has( v.node.key ); }
+	//without its source time to the tick, which no edit could name - a push's, or one with no source time
+	canEdit( v:HistValue ):boolean{ return !this.modified() && !v.bound && !!v.sourceTime && this.editableKeys().has( v.node.key ); }
 	onPage( e:PageEvent ){ this.pageIndex.set( e.pageIndex ); this.pageSize.set( e.pageSize ); }
 }

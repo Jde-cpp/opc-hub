@@ -43,6 +43,8 @@ describe( 'HistoryService.mutation', ()=>{
 		expect( range.command ).toBe( 'purgeHistory' );
 		expect( range.ql ).toBe( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end ){ values{ node source status } nodes{ node status } }" );
 		expect( range.vars ).toEqual( {opc: 'local', nodes: [A.toJson(), B.toJson()], start: {seconds: 1, nanos: 0}, end: {seconds: 2, nanos: 0}} );
+		const tick = {seconds: 1, nanos: 123400};//a row's time to the tick (historian-web-edits #1)
+		expect( HistoryService.mutation( {opc: 'local'}, {kind: 'purgeRange', nodes: [A], start: tick, end: tick} ).vars ).toEqual( {opc: 'local', nodes: [A.toJson()], start: tick, end: tick} );
 		const times = HistoryService.mutation( {opc: 'local'}, {kind: 'purgeTimes', nodes: [A], times: [new Date(1000), new Date(2500)]} );
 		expect( times.ql ).toBe( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }" );
 		expect( times.vars ).toEqual( {opc: 'local', nodes: [A.toJson()], times: [{seconds: 1, nanos: 0}, {seconds: 2, nanos: 500000000}]} );

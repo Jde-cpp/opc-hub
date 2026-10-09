@@ -9,15 +9,18 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { errorText, ProtoUtils, Timestamp } from 'jde-framework';
-import { editRefused, HistEditArgs, HistEditKind, HistEditResult, qlTime } from '../../../model/hist';
+import { editRefusedAll, HistEditArgs, HistEditKind, HistEditResult, HistTime, qlTime } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
+import { statusIcon } from '../../../model/status-code';
 import { ETypes, StatusCode } from '../../../model/types';
 import { Value, valueString } from '../../../model/value';
 
-//what a dialog opens on:  a row's node, time, value and status for a Replace, a time for a purge
-export type HistEditPreset = { node?:Variable; time?:Date; end?:Date; value?:Value; status?:StatusCode };
+//what a dialog opens on:  a row's node, time and value for a Replace, a time for a purge.  Not the row's status:  a Replace
+//corrects a value, which a Bad status left in the field would store Bad again (historian-web-edits #9).  `sourceTime` is a
+//row's time to the tick, sent while the time field still shows the row's.
+export type HistEditPreset = { node?:Variable; time?:Date; sourceTime?:HistTime; end?:Date; value?:Value };
 export type HistEditDialogData = {
 	kind:HistEditKind;
 	nodes:Variable[];//the nodes this user may edit, the dialog's choice
@@ -49,7 +52,8 @@ export function parseStatus( text:string ):StatusCode|undefined|null{
 
 //One dialog for the five edits (spec *Edits*):  a node, the time, and for an UpdateData the value and its status;  a range
 //or a list of times for a purge.  It sends the edit itself, so a refusal - a value the time already holds, a right the
-//server withholds - shows beside the fields for another go, and only an edit the server took closes it.
+//server withholds - shows beside the fields for another go.  An edit the server took any of closes it:  the history changed,
+//and the tab reads it again and names what was refused.  Another go would send the part taken again.
 @Component({
 	templateUrl: './hist-edit-dialog.html',
 	styleUrls: ['./hist-edit-dialog.scss'],
@@ -67,7 +71,6 @@ export class HistEditDialog{
 		this.choice.set( typeof preset.value=="number" ? preset.value : undefined );
 		const presetDate = preset.value!=null && typeof preset.value=="object" && "seconds" in preset.value ? ProtoUtils.toDate( <Timestamp>preset.value ) : null;
 		this.text.set( presetDate ? toLocalInput( presetDate ) : preset.value!=undefined ? valueString( preset.value ) : "" );
-		this.status.set( preset.status ? `0x${preset.status.toString( 16 ).toUpperCase().padStart( 8, '0' )}` : "" );
 	}
 	dialogRef = inject<MatDialogRef<HistEditDialog,HistEditResult|undefined>>( MatDialogRef );
 	data = inject<HistEditDialogData>( MAT_DIALOG_DATA );
@@ -146,18 +149,24 @@ export class HistEditDialog{
 		if( this.kind=='purgeTimes' )
 			return { kind: this.kind, nodes, times: this.times().map( t=>fromLocalInput( t )! ) };
 		const status = parseStatus( this.status() );
-		return { kind: this.kind, values: [{ node: nodes[0], source: fromLocalInput( this.time() )!, value: this.value()!, ...(status ? {status} : {}) }] };
+		return { kind: this.kind, values: [{ node: nodes[0], source: this.#source(), value: this.value()!, ...(status ? {status} : {}) }] };
+	}
+	//the row's stored time while the field shows it unchanged:  the field holds milliseconds, and in the hour DST repeats, the earlier one
+	#source():Date|HistTime{
+		const p = this.data.preset;
+		return p?.sourceTime && p.time && this.time()==toLocalInput( p.time ) ? p.sourceTime : fromLocalInput( this.time() )!;
 	}
 	async apply(){
 		const args = this.args();
 		if( !args || this.busy() )
 			return;
 		this.busy.set( true );
+		this.dialogRef.disableClose = true;//Escape or the backdrop would close it on an edit the server may still take, with no refresh
 		this.error.set( undefined );
 		this.result.set( undefined );
 		try{
 			const result = await this.data.edit( args );
-			if( !editRefused( result ) )
+			if( !editRefusedAll( result ) )
 				return this.dialogRef.close( result );
 			this.result.set( result );
 			this.data.names?.( [...result.values.map( v=>v.status ), ...result.nodes.map( n=>n.status )] );
@@ -167,6 +176,7 @@ export class HistEditDialog{
 		}
 		finally{
 			this.busy.set( false );
+			this.dialogRef.disableClose = false;
 		}
 	}
 	//the server's answer, a line per value or, for a range purge, per node
@@ -178,6 +188,7 @@ export class HistEditDialog{
 		return r.values.length ? r.values.map( v=>({node: name( v.node ), time: v.source, status: v.status}) ) : r.nodes.map( n=>({node: name( n.node ), time: null, status: n.status}) );
 	} );
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
+	statusIcon( sc:StatusCode ){ return statusIcon( sc ); }
 	//Insert and Replace are Part 11's; Update is its insert-or-replace, which the spec names upsertHistory
 	static readonly titles:Record<HistEditKind,string> = { insert: "Insert a value", replace: "Replace a value", update: "Update a value", purgeRange: "Delete a range", purgeTimes: "Delete at times" };
 	static readonly actions:Record<HistEditKind,string> = { insert: "Insert", replace: "Replace", update: "Update", purgeRange: "Delete", purgeTimes: "Delete" };

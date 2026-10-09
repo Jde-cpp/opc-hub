@@ -34,6 +34,8 @@ mat-form-field{
 		width: 18px;
 		height: 18px;
 		color: var(--mat-sys-error);
+		&.uncertain{ color: var(--mat-sys-tertiary); }
+		&.good{ color: var(--mat-sys-on-surface-variant); }
 	}
 }
 .refused{

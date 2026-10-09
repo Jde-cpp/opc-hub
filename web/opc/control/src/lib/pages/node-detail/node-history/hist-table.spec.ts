@@ -15,7 +15,7 @@ import { HistTable } from './hist-table';
 
 const variable = ( i:number, name:string, level:EAccess )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}, historizing: true, userAccessLevel: level} );
 const A = variable( 1, 'A', EAccess.Read|EAccess.HistoryRead|EAccess.HistoryWrite ), B = variable( 2, 'B', EAccess.Read|EAccess.HistoryRead );
-const at = ( v:Variable, ms:number, value:number, extra:Partial<HistValue>={} ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, status: 0, value, bound: false, heartbeat: false, ...extra });
+const at = ( v:Variable, ms:number, value:number, extra:Partial<HistValue>={} ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, sourceTime: {seconds: Math.floor(ms/1000), nanos: ms%1000*1_000_000}, status: 0, value, bound: false, heartbeat: false, ...extra });
 const render = ( values:HistValue[], inputs:Record<string,unknown>={} )=>{
 	const fixture = TestBed.createComponent( HistTable );
 	fixture.componentRef.setInput( 'values', values );
@@ -44,16 +44,18 @@ describe( 'HistTable', ()=>{
 		expect( t.cells( 0 ).slice( 5 ) ).toEqual( ['Replace', '2026-10-09 12:00:00.000', 'jde'] );
 		expect( t.fixture.nativeElement.querySelector( '.row-action' ) ).toBeNull();
 	} );
-	//a Replace and a Delete on a value of a node this user may write, and none on another node's, a bound's or a timeless one's
+	//a Replace and a Delete on a value of a node this user may write, and none on another node's, a bound's or a timeless one's,
+	//nor on a push's, whose time a Date cut to the millisecond (historian-web-edits #1)
 	it( 'offers a Replace and a Delete on the values of the editable nodes alone', ()=>{
-		const t = render( [at(A, 1000, 1), at(B, 2000, 2), at(A, 3000, 3, {bound: true}), {...at(A, 0, 4), source: null}], {editable: [A]} );
+		const t = render( [at(A, 500, 5, {sourceTime: undefined}), at(A, 1000, 1), at(B, 2000, 2), at(A, 3000, 3, {bound: true}), {...at(A, 0, 4), source: null, sourceTime: undefined}], {editable: [A]} );
 		expect( t.headers().at( -1 ) ).toBe( '' );
 		expect( t.headers() ).toHaveLength( 7 );
 		const actions = ( row:number )=>[...t.fixture.nativeElement.querySelectorAll( 'mat-row' )[row].querySelectorAll( '.row-action' )].map( b=>b.getAttribute( 'aria-label' ) );
 		expect( actions( 0 ) ).toEqual( [] );//the bound at 3000
 		expect( actions( 1 ) ).toEqual( [] );//B's
 		expect( actions( 2 ) ).toEqual( ['Replace this value', 'Delete this value'] );//A at 1000
-		expect( actions( 3 ) ).toEqual( [] );//no time
+		expect( actions( 3 ) ).toEqual( [] );//a push
+		expect( actions( 4 ) ).toEqual( [] );//no time
 		const replaced:HistValue[] = [], removed:HistValue[] = [];
 		t.table.replace.subscribe( v=>replaced.push( v ) );
 		t.table.remove.subscribe( v=>removed.push( v ) );

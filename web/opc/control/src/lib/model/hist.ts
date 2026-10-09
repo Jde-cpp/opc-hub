@@ -12,11 +12,15 @@ export type HistSource = { opc:CnnctnSlug; group?:undefined } | { group:number; 
 
 //ModificationInfo, with `modified: true`:  what an edit did, when and who (spec *Reads*).
 export type HistModification = { time:Date|null; type:string; user:string };
+//A time as the gateway's json carries it, UADateTime's (libs/opc/src/uatypes/DateTime.cpp):  to the 100 ns tick, which a Date
+//cuts to the millisecond.  An edit names a stored record by it.
+export type HistTime = { seconds:number; nanos:number };
 //One value of a `history` page (apps/OpcGateway/config/introspection/hist.jsonnet), its times as Dates.
 export type HistValue = {
 	node:NodeId;
 	source:Date|null;//with no source time the server's, as the gateway's merge orders it;  null with neither:  no place on a time axis
 	server:Date|null;
+	sourceTime?:HistTime;//the source time to the tick, what an edit of the record names;  none for a push, which ts-proto cuts to a Date
 	status:StatusCode;//0 = Good
 	value?:Value;//the server sent none, or only its status:  a Bad reading's shape
 	bound:boolean;//one of the bounds returnBounds asked for
@@ -32,6 +36,7 @@ export type HistPage = { values:HistValue[]; continuation:string|null; nodes:His
 export type HistReadArgs = { nodes:NodeId[]; start?:Date; end?:Date; limit?:number; bounds?:boolean; modified?:boolean; continuation?:string };
 
 function toDate( json:any ):Date|null{ return json ? ProtoUtils.toDate( <Timestamp>json ) : null; }
+function toHistTime( json:any ):HistTime|undefined{ return json ? { seconds: Number( json.seconds ), nanos: Number( json.nanos ?? 0 ) } : undefined; }
 export function toHistValue( json:any ):HistValue{
 	const m = json.modification;
 	const value = json.value==null ? undefined : toValue( json.value );
@@ -39,6 +44,7 @@ export function toHistValue( json:any ):HistValue{
 		node: new NodeId( json.node ),
 		source: toDate( json.source ) ?? toDate( json.server ),
 		server: toDate( json.server ),
+		sourceTime: toHistTime( json.source ),
 		status: <StatusCode>( json.status ?? 0 ),
 		value: value instanceof OpcError ? undefined : value,//a Bad reading's value is its status alone (Value::ToJson), which `status` holds
 		bound: !!json.bound,
@@ -55,7 +61,9 @@ export function toHistPage( json:any ):HistPage{
 }
 //A time as hist's DateTime arguments take it, UADateTime's json (libs/opc/src/uatypes/DateTime.cpp):  plain numbers, not the
 //Long ProtoUtils.fromDate builds, which JSON would write as {low,high,unsigned}.
-export function qlTime( d:Date ):{seconds:number; nanos:number}{
+export function qlTime( d:Date|HistTime ):HistTime{
+	if( !(d instanceof Date) )
+		return { seconds: d.seconds, nanos: d.nanos };
 	const ms = d.getTime();
 	const seconds = Math.floor( ms/1000 );
 	return { seconds, nanos: (ms-seconds*1000)*1_000_000 };
@@ -66,8 +74,8 @@ const time = ( v:HistValue )=>v.source ? v.source.getTime() : Number.POSITIVE_IN
 function sameRecord( a:HistValue, b:HistValue ):boolean{
 	return a.node.key==b.node.key && a.modification?.type==b.modification?.type && a.modification?.time?.getTime()==b.modification?.time?.getTime();
 }
-//whether `values`, in time order, holds v's record:  a binary search to the time, then its few records
-function holds( values:HistValue[], v:HistValue ):boolean{
+//where `values`, in time order, holds v's record, or -1:  a binary search to the time, then its few records
+function find( values:HistValue[], v:HistValue ):number{
 	const t = time( v );
 	let lo = 0, hi = values.length;
 	while( lo<hi ){
@@ -76,24 +84,32 @@ function holds( values:HistValue[], v:HistValue ):boolean{
 	}
 	for( let i=lo; i<values.length && time(values[i])==t; ++i ){
 		if( sameRecord(values[i], v) )
-			return true;
+			return i;
 	}
-	return false;
+	return -1;
 }
 //`existing` with what `incoming` adds, in source-time order, values with no time last;  the same array back when nothing was
 //new, so a signal holding it stays quiet.  One record per node and source time:  a subscription's first push is the value the
 //read already holds.  Millisecond precision, a Date's:  two records of one node inside a millisecond fold, which no trend could
 //draw apart anyway.  `existing` must be in that order already, as every merge leaves it.  A live push, newest, is an append.
+//A read's record takes the place of its push, whose time is a Date's, so an edit can name it.
 export function mergeHistValues( existing:HistValue[], incoming:HistValue[] ):HistValue[]{
 	const added:HistValue[] = [];
+	let upgraded:HistValue[]|undefined;
 	for( const v of incoming.length>1 ? [...incoming].sort( (a,b)=>time(a)-time(b) ) : incoming ){
 		const t = time( v );
 		let twin = false;//the same record earlier in `incoming`:  sorted, so among the last added
 		for( let i=added.length-1; i>=0 && time(added[i])==t && !twin; --i )
 			twin = sameRecord( added[i], v );
-		if( !twin && !holds(existing, v) )
+		if( twin )
+			continue;
+		const at = find( existing, v );
+		if( at<0 )
 			added.push( v );
+		else if( v.sourceTime && !existing[at].sourceTime )
+			( upgraded ??= [...existing] )[at] = v;
 	}
+	existing = upgraded ?? existing;
 	if( !added.length )
 		return existing;
 	if( !existing.length || time(added[0])>=time(existing[existing.length-1]) )
@@ -121,10 +137,10 @@ export type HistEditKind = 'insert'|'replace'|'update'|'purgeRange'|'purgeTimes'
 export const histEditCommands:Record<HistEditKind,string> = { insert: 'createHistory', replace: 'updateHistory', update: 'upsertHistory', purgeRange: 'purgeHistory', purgeTimes: 'purgeHistory' };
 //A value an UpdateData writes, in the shape a read returns one.  No status is Good, and with no server time the server stamps
 //its own.  The gateway types the value by the node's DataType and refuses one that can't take it, naming the node and value.
-export type HistEditValue = { node:NodeId; source:Date; server?:Date; status?:StatusCode; value:Value };
+export type HistEditValue = { node:NodeId; source:Date|HistTime; server?:Date; status?:StatusCode; value:Value };
 export type HistEditArgs =
 	{ kind:'insert'|'replace'|'update'; values:HistEditValue[] } |
-	{ kind:'purgeRange'; nodes:NodeId[]; start:Date; end:Date } |//the range is the server's:  OpcServer leaves out its end, and start equal to end is the one value there
+	{ kind:'purgeRange'; nodes:NodeId[]; start:Date|HistTime; end:Date|HistTime } |//the range is the server's:  OpcServer leaves out its end, and start equal to end is the one value there
 	{ kind:'purgeTimes'; nodes:NodeId[]; times:Date[] };//DeleteAtTime, which OpcServer refuses with Bad_NotSupported
 //What an edit answers:  a row per value, or per node and time for a purge at times, with the server's operation result or
 //its node's entry status, beside each node's entry status.  A range purge answers per node alone.
@@ -139,6 +155,11 @@ export function toHistEditResult( json:any ):HistEditResult{
 //whether the server refused any of it:  a Bad operation result, or a Bad entry status, which a range purge answers with alone
 export function editRefused( r:HistEditResult ):boolean{
 	return r.values.some( v=>isBad(v.status) ) || r.nodes.some( n=>isBad(n.status) );
+}
+//whether it refused all of it:  every value Bad, or for a range purge, every node.  Any part taken changed the history.
+export function editRefusedAll( r:HistEditResult ):boolean{
+	const parts = r.values.length ? r.values : r.nodes;
+	return parts.length>0 && parts.every( p=>isBad(p.status) );
 }
 //an UpdateData's value as the mutation's `values` argument carries it:  only the parts given, as the read's arguments go
 export function editValueJson( v:HistEditValue ):Record<string,unknown>{
