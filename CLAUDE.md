@@ -8,7 +8,7 @@ This is a monorepo for the **Jde OpcGateway** system — an OPC-UA gateway with 
 
 ## Building (C++)
 
-See the **`cpp-build`** skill (`.claude/skills/cpp-build/SKILL.md`) for the full procedure — the build-dir layout and the `$REPO_DIR`/`$JDE_DIR` roles, the `buildFunctions.sh` helpers (`reconfig`/`build`/`compile`), the raw cmake equivalents and the mandatory `-B`, the OS-split presets with the `-jde`/`-repos` preset tables, and why there are no build or test presets.
+See the **`cpp-build-linux`** skill (`.claude/skills/cpp-build-linux/SKILL.md`) for the full Linux procedure, or **`cpp-build-win`** (`.claude/skills/cpp-build-win/SKILL.md`) on Windows — the build-dir layout and the `$REPO_DIR`/`$JDE_DIR` roles, the `buildFunctions.sh` helpers (`reconfig`/`build`/`compile`), the raw cmake equivalents and the mandatory `-B`, the OS-split presets with the `-jde`/`-repos` preset tables, and why there are no build or test presets.
 
 ## Running Tests (C++)
 
