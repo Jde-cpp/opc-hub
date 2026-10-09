@@ -69,7 +69,7 @@ function( sync=false )
 			password: args.dbServers.localhost.password,
 			schema: args.dbServers.localhost.schema,
 			catalogs: args.dbServers.localhost.catalogs
-		} + { [k]: args.dbServers.localhost[k] for k in ["host", "port"] if std.objectHas(args.dbServers.localhost, k) } //MySQL's server address (args/install-mysql); absent, the driver's localhost:3306
+		} + { [k]: args.dbServers.localhost[k] for k in ["host", "port", "ssl"] if std.objectHas(args.dbServers.localhost, k) } //MySQL's server address and TLS mode (args/install-mysql); absent, the driver's localhost:3306 and ssl "enable"
 	},
 	logging:{
 		spd:{

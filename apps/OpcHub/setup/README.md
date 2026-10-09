@@ -306,7 +306,8 @@ three together.
   imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names are that
   file's.
   1. Copy the profile to `config\apps\OpcHub\config\args\install-mysql\`.  Its `host` and `port` name the server -
-     `localhost` and 3306 as shipped.
+     `localhost` and 3306 as shipped - and `ssl` the transport: `enable` (as shipped) uses TLS when the server offers
+     it and plaintext when it does not, `require` refuses a server without TLS, `disable` never negotiates it.
   2. Create a database `jde` on that server and a login with all privileges on it.  Set that login as the system
      environment variables `JDE_MYSQL_USER` and `JDE_MYSQL_PWD`, as for `JDE_PASSCODE` above.
   3. Let the login create the gateway's trigger.  MySQL 8 turns binary logging on, and with it on, creating a trigger
@@ -321,7 +322,9 @@ three together.
      installer names the service after the release series - `MySQL84` for 8.4 LTS, `MySQL80` for 8.0 - and
      `sc query state= all | findstr /i mysql` shows it.  `sc config` accepts a name that does not exist, and every start
      then fails with error 1075.  For a MySQL on another machine, the same `sc failure` lines.
-  - The driver connects without TLS, so the user name, the SQL and the rows cross the network in the clear.  The
-    password does not: MySQL's login sends it RSA-encrypted or scrambled, though nothing authenticates the server's key.
-    A trusted network only.
+  - For a MySQL on another machine, set `ssl: "require"` and the session is encrypted end to end.  Under `enable` a
+    server without TLS still connects, and the user name, the SQL and the rows then cross the network in the clear
+    (the hub warns once in its log); the password does not: MySQL's login sends it RSA-encrypted or scrambled.  No
+    mode checks the server's certificate, so TLS hides the traffic from the network, not from an impostor on the port.
+    `enable` and `disable` are for a trusted network only.
   - A reinstall and an uninstall treat it as they treat the SQL Server switch.

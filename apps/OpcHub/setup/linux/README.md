@@ -269,7 +269,8 @@ to drop the 8071 site.
   profile imports `args/install` and replaces only the database, so the Web UI, its Google client id and the host names
   stay that file's.
   1. Copy the profile to `/etc/jde-cpp/apps/OpcHub/config/args/install-mysql/`.  Its `host` and `port` name the server -
-     `localhost` and 3306 as shipped.
+     `localhost` and 3306 as shipped - and `ssl` the transport: `enable` (as shipped) uses TLS when the server offers
+     it and plaintext when it does not, `require` refuses a server without TLS, `disable` never negotiates it.
   2. Create a database `jde` on that server and a login with all privileges on it.  Set that login as `JDE_MYSQL_USER`
      and `JDE_MYSQL_PWD` in `/etc/jde-cpp/env`.
   3. Let the login create the gateway's trigger.  MySQL 8 turns binary logging on, and with it on, creating a trigger
@@ -285,9 +286,11 @@ to drop the 8071 site.
      `After=mysql.service` under `[Unit]`; systemd ignores it in `[Service]`.
   6. `sudo systemctl restart jde-opchub`.  `systemctl edit` restarts nothing, and the hub stays on sqlite until it
      restarts.  It starts on MySQL, and its first `-sync` makes the tables in `jde`.
-  - The driver connects without TLS, so with a MySQL on another machine the user name, the SQL and the rows cross the
-    network in the clear.  The password does not: MySQL's login sends it RSA-encrypted or scrambled, though nothing
-    authenticates the server's key.  A trusted network only.
+  - For a MySQL on another machine, set `ssl: "require"` and the session is encrypted end to end.  Under `enable` a
+    server without TLS still connects, and the user name, the SQL and the rows then cross the network in the clear
+    (the hub warns once in its log); the password does not: MySQL's login sends it RSA-encrypted or scrambled.  No
+    mode checks the server's certificate, so TLS hides the traffic from the network, not from an impostor on the port.
+    `enable` and `disable` are for a trusted network only.
   - `apt reinstall` keeps the switch.  To go back to sqlite, `sudo systemctl revert jde-opchub` removes the drop-in, and
     `sudo systemctl restart jde-opchub` starts the hub on `-include=args/install` again.
 - Hardening in the units (`ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`): the process writes only

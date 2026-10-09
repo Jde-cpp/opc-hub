@@ -14,6 +14,7 @@
 			driver: "$(ExeDir)/$(LibPrefix)Jde.DB.MySql$(LibExt)", //Jde.DB.MySql.dll, libJde.DB.MySql.so - beside the exe
 			host: "localhost",
 			port: 3306,
+			ssl:: "enable", //disable | enable (TLS when the server offers it, plaintext when not) | require (refuse a server without TLS)
 			connectionString: null,
 			username: "$(JDE_MYSQL_USER)",
 			password: "$(JDE_MYSQL_PWD)",
