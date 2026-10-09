@@ -15,7 +15,6 @@ namespace Jde::Opc::Gateway{
 		{}
 		α Execute()ι->TAwait<sp<UAClient>>::Task override;
 	private:
-		α ReadDataType( jvalue value, const NodeId& nodeId )ι->TAwait<ReadResponse>::Task;
 		α Write( Value&& value )ι->TAwait<WriteResponse>::Task;
 		α Read( QL::TableQL&& query )ι->TAwait<ReadResponse>::Task;
 

@@ -304,8 +304,9 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	namespace{
-		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, and Status1 is a historized Boolean.
-		constexpr UA_UInt32 Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
+		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, Status1 is a historized Boolean, and
+		//Rpm2 a historized Double no read here uses.
+		constexpr UA_UInt32 Rpm2{ 6022 }, Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
 		struct Edited final{ vector<StatusCode> Values; flat_map<NodeId,StatusCode> Statuses; };
 		struct Sample final{ UA_UInt32 Node; TimePoint Source; jvalue Value; };
 		struct Modified final{ NodeId Node; TimePoint Source; jvalue Value; string Type; string User; TimePoint Time; };
@@ -342,11 +343,11 @@ namespace Jde::Opc::Gateway::Tests{
 		//admin check passes, through OpcServer's own app client, as its HistoryTests make theirs.
 		Ω Enforce( bool on )ε->void{
 			auto app = Server::AppClient();
-			constexpr sv schema{ "opc" };
+			let& schema = app->ResourceSchema;//"opc", or "opc.<resource>" with /opcServer/resource, as OpcServer's startup names it.
 			let nodeSlug = jobject{ {"slug","nodeIds"}, {"schema", schema} };
 			auto& authorizer = static_cast<Server::OpcAuthorize&>( *Server::GetSchema().Authorizer );
 			let reached = [&]( bool active, sv change ){
-				for( uint i=0; authorizer.FindActiveResourcePK(string{schema}, "nodeIds", "").has_value()!=active; ++i ){
+				for( uint i=0; authorizer.FindActiveResourcePK(schema, "nodeIds", "").has_value()!=active; ++i ){
 					THROW_IF( i==200, "The nodeIds resource's {} didn't reach OpcServer's authorizer.", change );
 					std::this_thread::sleep_for( 50ms );
 				}
@@ -484,7 +485,8 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//A value takes its node's DataType, so a Boolean node takes a Boolean, and the nodes of one call answer each on its own:
 	//a node the server doesn't historize with the server's refusal of its entry, one the server doesn't have with its
-	//answer to the DataType read.  Arguments the call can't take are refused before anything is sent.
+	//answer to the DataType read.  A value's status goes as given.  Arguments the call can't take, a status that isn't a
+	//number among them, are refused before anything is sent.
 	TEST_F( HistEditTests, AnswersEachNodeWithTheServersStatus ){
 		let edited = Update( "histInsert", {{Status1, When(10), true}, {Status2, When(10), true}, {Unknown, When(10), 1}, {Status1, When(11), false}} );
 		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED, UA_STATUSCODE_BADNODEIDUNKNOWN, UA_STATUSCODE_GOODENTRYINSERTED}) );
@@ -493,6 +495,12 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( edited.Statuses.at(Node(Unknown)), UA_STATUSCODE_BADNODEIDUNKNOWN );
 		EXPECT_EQ( Values(Read({.Nodes={Status1}, .Start=When(10), .End=When(12), .Limit=100}).Values), (vector<jvalue>{true, false}) );
 		EXPECT_EQ( DeleteRaw(Status2, When(10), When(12)).Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		//A value's status goes as given, a number as a read answers it.
+		let uncertain = jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(22))}, {"status", UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE}, {"value", 2} };
+		EXPECT_EQ( Edit("histInsert( opc: $opc, values: $values ){ values{ status } nodes{ node status } }", {{"values", jarray{uncertain}}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		let read = Read( {.Nodes={Rpm3}, .Start=When(22), .End=When(23), .Limit=100} ).Values;
+		ASSERT_EQ( read.size(), 1u );
+		EXPECT_EQ( read[0].Status, UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE );
 
 		let refused = []( string q, jobject vars ){ EXPECT_THROW( Edit(q, vars), GatewayErrorResponse ) << q; };
 		jarray values{ jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", 1} } };
@@ -500,9 +508,62 @@ namespace Jde::Opc::Gateway::Tests{
 		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{}}} );
 		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"source", Time(When(20))}, {"value", 1}}}}} );
 		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
+		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"status", "0x80340000"}, {"value", 1}}}}} );
 		refused( "histDelete( opc: $opc, nodes: $nodes, start: $start ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}} );
 		refused( "histDeleteAtTime( opc: $opc, nodes: $nodes, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"times", jarray{}}} );
 		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(20), .End=When(21), .Limit=100}).Values.empty() );
+	}
+
+	//A call that names both `opc` and `group`, or neither, is refused as such, before a client is opened for it:  an `opc`
+	//that names no connection gets the same answer, and a null `opc` names nothing.  `group` alone is a group's (Phase 5).
+	TEST_F( HistEditTests, RefusesBothOrNeitherOfOpcAndGroup ){
+		jarray values{ jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(25))}, {"value", 1} } };
+		struct Case final{ sv Command; string Query; jobject Vars; };
+		for( let& c : vector<Case>{
+			{"histInsert", "histInsert( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"opc", "noSuchConnection"}, {"values", values}}},
+			{"histInsert", "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"opc", nullptr}, {"values", values}}},
+			{"histInsert", "histInsert( values: $values ){ values{ status } }", {{"values", values}}},
+			{"histDelete", "histDelete( nodes: $nodes, start: $start, end: $end ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(25))}, {"end", Time(When(26))}}} } ){
+			try{
+				Socket().QuerySync( string{c.Query}, c.Vars );
+				ADD_FAILURE() << c.Query;
+			}
+			catch( const GatewayErrorResponse& e ){
+				EXPECT_NE( string{e.what()}.find(Ƒ("{} takes exactly one of 'opc' and 'group'.", c.Command)), string::npos ) << c.Query << ":  " << e.what();
+			}
+		}
+		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(25), .End=When(26), .Limit=100}).Values.empty() );
+	}
+
+	//A DataType the gateway has no built-in type for, here the abstract Number, takes the type of the node's value though
+	//its status is Bad, and with no value each value takes the type its json implies:  either way the edit goes to the
+	//server, which judges it.  7 goes as the live value's Double, so it reads back 7.0;  8.5 as the json's.
+	TEST_F( HistEditTests, TypesAValueByTheNodesValueOrItsJson ){
+		let ua = Server::GetUAServer().Ptr();
+		let node = Node( Rpm2 );
+		UA_ReadValueId id; UA_ReadValueId_init( &id );
+		id.nodeId = node;
+		id.attributeId = UA_ATTRIBUTEID_VALUE;
+		const Value original{ UA_Server_read(ua, &id, UA_TIMESTAMPSTORETURN_NEITHER) };
+		UAε( UA_Server_writeDataType(ua, node, UA_NODEID_NUMERIC(0, UA_NS0ID_NUMBER)) );
+		absl::Cleanup restore = [&]{//the value first:  Number takes an empty one, Double doesn't.
+			EXPECT_EQ( UA_Server_writeDataValue(ua, node, original), UA_STATUSCODE_GOOD );
+			EXPECT_EQ( UA_Server_writeDataType(ua, node, UA_NODEID_NUMERIC(0, UA_NS0ID_DOUBLE)), UA_STATUSCODE_GOOD );
+		};
+		Value down{ UA_STATUSCODE_BADCOMMUNICATIONERROR };
+		const UA_Double last{ 3 };
+		UAε( UA_Variant_setScalarCopy(&down.value, &last, &UA_TYPES[UA_TYPES_DOUBLE]) );
+		down.hasValue = true;
+		UAε( UA_Server_writeDataValue(ua, node, down) );
+		let typed = Update( "histInsert", {{Rpm2, When(60), 7}} );
+		EXPECT_EQ( typed.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( typed.Statuses.at(node), UA_STATUSCODE_GOOD );
+
+		UAε( UA_Server_writeDataValue(ua, node, Value{UA_STATUSCODE_BADWAITINGFORINITIALDATA}) );
+		let inferred = Update( "histInsert", {{Rpm2, When(61), 8.5}} );
+		EXPECT_EQ( inferred.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( inferred.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(60), .End=When(62), .Limit=100}).Values), (vector<jvalue>{7.0, 8.5}) );
 	}
 
 	//The server's access control decides, never the gateway's:  with nothing enforcing nodeIds, OpcServer refuses every

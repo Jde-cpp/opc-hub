@@ -1,7 +1,6 @@
 #pragma once
 
 namespace Jde::QL{ struct TableQL; }
-namespace Jde::Opc{ struct Variant; }
 namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Response; }
 	struct UAClient;
@@ -32,8 +31,6 @@ namespace Jde::Opc::Gateway{
 		~ReadResponse(){ UA_ReadResponse_clear(this); }
 		α operator=( ReadResponse&& rhs )ι->ReadResponse&;
 		α ScalerDataType()ι->UA_DataType*;
-		α ScalerNodeId()ε->NodeId;
-		α ScalerValue()ε->optional<Variant>;
 		α Validate( Handle uahandle, SL sl )ε->void;
 		α GetJson()ι{ flat_map<NodeId, jobject> nodes; SetJson(nodes); return nodes; }
 		α SetJson( flat_map<NodeId, jobject>& nodes )ι->void;

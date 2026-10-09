@@ -60,9 +60,16 @@ namespace Jde::Opc::Gateway{
 			await = mu<GatewayQLAwait>( move(q), move(executer), sl );
 		return await;
 	}
-	//A hist edit with `group` is the gateway historian's (Phase 5), which needs no client.
+	//A hist edit with `group` alone is the gateway historian's (Phase 5), which needs no client.  One that names both
+	//`opc` and `group`, or neither, is this await's to refuse.
 	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
-		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && m.Args.contains("opc") );
+		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
+	}
+	α GatewayQLMAwait::Suspend()ι->void{
+		if( let edit = HistQL::FindEdit(_query.CommandName); edit && HistQL::Target(_query)==HistQL::ETarget::Neither )
+			ResumeExp( HistQL::TargetRefused(*edit, _sl) );//before a client is opened for it.
+		else
+			GetClient( this );
 	}
 	α GatewayQLMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		if( IsApplicable(m) )

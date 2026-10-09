@@ -1,19 +1,9 @@
 #include "HistEditQLAwait.h"
-#include <jde/fwk/co/AnyAwait.h>
-#include <jde/opc/uatypes/opcHelpers.h>
 #include "../UAClient.h"
-#include "../async/ReadAwait.h"
+#include "../async/ValueTypesAwait.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	Ω bad( const UA_DataValue& v )ι->bool{ return v.hasStatus && UA_StatusCode_isBad( v.status ); }
-	//A built-in type for a DataType node of namespace 0, as updateVariable finds it;  null for any other, or an abstract one.
-	Ω builtIn( const UA_DataValue& dataType )ι->const UA_DataType*{
-		if( !dataType.hasValue || dataType.value.type!=&UA_TYPES[UA_TYPES_NODEID] )
-			return nullptr;
-		const NodeId id{ *(UA_NodeId*)dataType.value.data };
-		return id.namespaceIndex ? nullptr : FindDataType( id );
-	}
 	Ω dataValue( const HistQL::EditValue& e, const UA_DataType* type, SL sl )ε->Value{
 		Value y = e.Data.is_null() ? Value{ e.Status.value_or(UA_STATUSCODE_GOOD) } : Value{ e.Data, type, sl };
 		y.hasStatus = e.Status.has_value();
@@ -42,41 +32,18 @@ namespace Jde::Opc::Gateway{
 			HistoryUpdateRequest request;
 			vector<optional<uint>> entries( count );//each node's entry in the request, none for one refused before it.
 			if( _edit<Delete ){
-				vector<const UA_DataType*> types( count );
-				vector<NodeId> untyped; vector<uint> untypedSlots;
-				let dataTypes = co_await Any( ReadAwait{ReadRequest{args.Nodes, UA_ATTRIBUTEID_DATATYPE}, _client, false, _sl} );
-				for( uint i=0; i<count; ++i ){
-					if( i>=dataTypes.resultsSize )
-						statuses[i] = UA_STATUSCODE_BADUNEXPECTEDERROR;
-					else if( bad(dataTypes.results[i]) )
-						statuses[i] = dataTypes.results[i].status;
-					else if( !(types[i] = builtIn(dataTypes.results[i])) ){//the type the node's value has.
-						untyped.push_back( args.Nodes[i] );
-						untypedSlots.push_back( i );
-					}
-				}
-				if( untyped.size() ){
-					let values = co_await Any( ReadAwait{ReadRequest{untyped, UA_ATTRIBUTEID_VALUE}, _client, false, _sl} );
-					for( uint k=0; k<untyped.size(); ++k ){
-						let slot = untypedSlots[k];
-						if( k>=values.resultsSize )
-							statuses[slot] = UA_STATUSCODE_BADUNEXPECTEDERROR;
-						else if( bad(values.results[k]) )
-							statuses[slot] = values.results[k].status;
-						else if( !(types[slot] = values.results[k].hasValue ? values.results[k].value.type : nullptr) )
-							statuses[slot] = UA_STATUSCODE_BADDATATYPEIDUNKNOWN;
-					}
+				auto [types, typeStatuses] = co_await ValueTypesAwait{ args.Nodes, _client, _sl };//a node it refuses isn't sent.
+				statuses = move( typeStatuses );
+				vector<vector<Value>> values( count );//each node's, in the order named.
+				for( let& v : args.Values ){
+					if( !UA_StatusCode_isBad(statuses[v.Slot]) )
+						values[v.Slot].push_back( dataValue(v, types[v.Slot], _sl) );
 				}
 				for( uint i=0; i<count; ++i ){
-					if( !types[i] )
+					if( UA_StatusCode_isBad(statuses[i]) )
 						continue;
-					vector<Value> values;
-					for( let& v : args.Values ){
-						if( v.Slot==i )
-							values.push_back( dataValue(v, types[i], _sl) );
-					}
 					entries[i] = request.Size();
-					request.Update( args.Nodes[i], performType(_edit), move(values) );
+					request.Update( args.Nodes[i], performType(_edit), move(values[i]) );
 				}
 			}
 			else{

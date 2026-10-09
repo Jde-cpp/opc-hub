@@ -54,6 +54,11 @@ namespace Jde::Opc::Gateway::HistQL{
 	enum class EEdit : uint8{ Insert, Replace, Update, Delete, DeleteAtTime };
 	constexpr array<sv,5> EditCommands{ "histInsert", "histReplace", "histUpdate", "histDelete", "histDeleteAtTime" };
 	α FindEdit( sv command )ι->optional<EEdit>;
+	//Whose history an edit names:  the server's own with `opc` (spec *Pass-through*), or a group's with `group` (Phase 5).
+	//Neither is a call that names both, or neither, which TargetRefused refuses.  A null names nothing.
+	enum class ETarget : uint8{ Opc, Group, Neither };
+	α Target( const QL::Input& input )ι->ETarget;
+	α TargetRefused( EEdit edit, SRCE )ι->Exception;
 	//A value histInsert, histReplace or histUpdate writes:  its node's place in EditArgs::Nodes, and the DataValue's parts as
 	//the caller gave them, the value to be typed by the node's DataType.
 	struct EditValue final{ uint Slot; jvalue Data; optional<UA_DateTime> Source; optional<UA_DateTime> Server; optional<StatusCode> Status; };

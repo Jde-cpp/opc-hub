@@ -15,6 +15,14 @@ namespace Jde::Opc::Gateway{
 	Ω time( const QL::Input& input, sv name, SL sl )ε->optional<UA_DateTime>{
 		return time( input.FindPtr<jvalue>(name), sl );
 	}
+	//A value's status, a number as a read answers it;  none, so Good, when absent or null.
+	Ω status( const jvalue* p, sv command, SL sl )ε->optional<StatusCode>{
+		if( !p || p->is_null() )
+			return nullopt;
+		let y = p->try_to_number<StatusCode>();
+		THROW_IFSL( !y, "{}:  a value's status isn't a number - {}.", command, serialize(*p) );
+		return *y;
+	}
 	//{ns, i|s|g|b}, a bare numeric id, or the UA spelling, "ns=1;i=6012".
 	Ω node( const jvalue& j )ε->NodeId{
 		return j.is_string() ? NodeId::DecodeJson( string{j.get_string()} ) : NodeId{ j };
@@ -72,13 +80,20 @@ namespace HistQL{
 		}
 		return nullopt;
 	}
+	α HistQL::Target( const QL::Input& input )ι->ETarget{
+		let group = input.FindPtr<jvalue>( "group" );
+		let opc = input.FindPtr<jstring>( "opc" )!=nullptr, named = group && !group->is_null();
+		return opc==named ? ETarget::Neither : opc ? ETarget::Opc : ETarget::Group;
+	}
+	α HistQL::TargetRefused( EEdit edit, SL sl )ι->Exception{
+		return Exception{ sl, {}, "{} takes exactly one of 'opc' and 'group'.", EditCommands[(uint8)edit] };
+	}
 namespace HistQL{
 	EditArgs::EditArgs( EEdit edit, const QL::Input& input, SL sl )ε:
 		Edit{ edit }{
-		let opc = input.FindPtr<jstring>( "opc" );
-		let group = input.FindPtr<jvalue>( "group" );
-		THROW_IFSL( !opc || (group && !group->is_null()), "{} takes exactly one of 'opc' and 'group'.", Command() );
-		Opc = *opc;
+		if( Target(input)!=ETarget::Opc )//a group's edit doesn't reach here until Phase 5.
+			throw TargetRefused( edit, sl );
+		Opc = *input.FindPtr<jstring>( "opc" );
 		if( edit<EEdit::Delete ){
 			let values = input.FindPtr<jvalue>( "values" );
 			THROW_IFSL( !values || !values->is_array() || values->get_array().empty(), "{} names no values.", Command() );
@@ -87,7 +102,7 @@ namespace HistQL{
 				let n = o.if_contains( "node" );
 				THROW_IFSL( !n || n->is_null(), "{}:  a value names no node.", Command() );
 				let data = o.if_contains( "value" );
-				Values.push_back( {Slot(node(*n)), data ? *data : jvalue{}, time(o.if_contains("source"), sl), time(o.if_contains("server"), sl), Json::FindNumber<StatusCode>(o, "status")} );
+				Values.push_back( {Slot(node(*n)), data ? *data : jvalue{}, time(o.if_contains("source"), sl), time(o.if_contains("server"), sl), status(o.if_contains("status"), Command(), sl)} );
 			}
 			return;
 		}
