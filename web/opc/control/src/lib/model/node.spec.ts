@@ -28,3 +28,13 @@ describe( 'Variable.historyReadable', ()=>{
 		expect( variable( {historizing: true, userAccessLevel: null} ).historyReadable ).toBe( true );
 	} );
 } );
+
+describe( 'Variable.historyWritable', ()=>{
+	it( 'needs historizing and the HistoryWrite bit, which OpcServer withholds on an unprotected node, and takes no level as unknown', ()=>{
+		expect( variable( {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead|EAccess.HistoryWrite} ).historyWritable ).toBe( true );
+		expect( variable( {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead} ).historyWritable ).toBe( false );
+		expect( variable( {historizing: true, userAccessLevel: EAccess.HistoryWrite} ).historyWritable ).toBe( true );
+		expect( variable( {historizing: false, userAccessLevel: EAccess.All} ).historyWritable ).toBe( false );
+		expect( variable( {historizing: true} ).historyWritable ).toBe( true );
+	} );
+} );

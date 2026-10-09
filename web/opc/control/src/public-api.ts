@@ -7,7 +7,7 @@ export {NodeChildren} from './lib/pages/node-detail/node-children/node-children'
 export {OpcAuthService} from './lib/services/opc-auth-service';
 export {GATEWAY_SERVICE, GatewayService} from './lib/services/gateway-service';
 export {HistoryService} from './lib/services/history-service';
-export type {HistPage, HistReadArgs, HistSource, HistValue} from './lib/model/hist';
+export type {HistEditArgs, HistEditResult, HistPage, HistReadArgs, HistSource, HistValue} from './lib/model/hist';
 export {OpcServer, OpcServerService} from './lib/services/opc-server-service';
 export {GatewayResolver} from './lib/services/resolvers/gateway-resolver';
 export {NodeResolver} from './lib/services/resolvers/node-resolver';

@@ -74,4 +74,28 @@ describe( 'HistTrend', ()=>{
 		expect( plot.getAttribute('aria-label') ).toBe( 'History trend of A. Highcharts interactive chart.' );
 		fixture.destroy();
 	} );
+	//A read again after an edit, or a new selection, empties the values while the series stay:  the axis then had no data and
+	//Highcharts asked Intl for the time zone of a NaN, a RangeError thrown from its redraw.
+	it( 'draws an empty chart when the values go while the series stay', async ()=>{
+		const { A, fixture, chart } = await draw();
+		const uncaught:unknown[] = [];
+		const onError = ( e:ErrorEvent )=>{ uncaught.push( e.error ?? e.message ); e.preventDefault(); };
+		window.addEventListener( 'error', onError );
+		try{
+			fixture.componentRef.setInput( 'values', [] );
+			fixture.detectChanges();
+			await new Promise( r=>setTimeout( r, 50 ) );
+			expect( uncaught ).toEqual( [] );
+			expect( (<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( A.nodeId.uaString() )).options).data ).toEqual( [] );
+			fixture.componentRef.setInput( 'values', [at(A, 3000, 5)] );
+			fixture.detectChanges();
+			await new Promise( r=>setTimeout( r, 50 ) );
+			expect( uncaught ).toEqual( [] );
+			expect( (<any[]>(<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( A.nodeId.uaString() )).options).data).map( p=>p.y ) ).toEqual( [5] );
+		}
+		finally{
+			window.removeEventListener( 'error', onError );
+			fixture.destroy();
+		}
+	} );
 } );

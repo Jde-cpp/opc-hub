@@ -10,7 +10,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { HistValue, mergeHistValues, pushValue, qlTime, toHistPage } from './hist';
+import { editRefused, editRefusedAll, editValueJson, HistValue, mergeHistValues, pushValue, qlTime, toHistEditResult, toHistPage } from './hist';
 
 const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
@@ -50,6 +50,7 @@ describe( 'toHistPage', ()=>{
 			{ node: {ns:2, i:1} }//neither
 		]} );
 		expect( page.values.map( v=>v.source?.getTime() ?? null ) ).toEqual( [1700000000000, 1700000001000, null] );
+		expect( page.values.map( v=>v.sourceTime ) ).toEqual( [undefined, undefined, undefined] );//a stand-in, which no edit names
 		expect( page.values[0].server?.getTime() ).toBe( 1700000000000 );
 		expect( mergeHistValues( [], page.values ) ).toHaveLength( 3 );
 	} );
@@ -62,6 +63,12 @@ describe( 'toHistPage', ()=>{
 	it( 'is empty for a missing result', ()=>{
 		expect( toHistPage( undefined ) ).toEqual( {values: [], continuation: null, nodes: []} );
 	} );
+	//A row's Delete and Replace sent the Date, cut to the millisecond, so they named a time with no record (historian-web-edits #1).
+	it( 'keeps the source time to the tick, which the Date cuts to the millisecond', ()=>{
+		const page = toHistPage( {values: [{ node: {ns:2, i:1}, source: {seconds: 1700000000, nanos: 123400}, value: 1 }]} );
+		expect( page.values[0].source?.getTime() ).toBe( 1700000000000 );
+		expect( page.values[0].sourceTime ).toEqual( {seconds: 1700000000, nanos: 123400} );
+	} );
 } );
 
 describe( 'qlTime', ()=>{
@@ -70,6 +77,9 @@ describe( 'qlTime', ()=>{
 		expect( t ).toEqual( {seconds: 1700000000, nanos: 500000000} );
 		expect( typeof t.seconds ).toBe( 'number' );
 		expect( JSON.parse(JSON.stringify(t)) ).toEqual( t );
+	} );
+	it( 'passes a time to the tick through', ()=>{
+		expect( qlTime( {seconds: 1700000000, nanos: 123400} ) ).toEqual( {seconds: 1700000000, nanos: 123400} );
 	} );
 } );
 
@@ -108,9 +118,72 @@ describe( 'mergeHistValues', ()=>{
 		expect( mergeHistValues( existing, [at(A, 1000)] ) ).toBe( existing );
 		expect( mergeHistValues( existing, [] ) ).toBe( existing );
 	} );
+	//The live tail's first push is the newest value the opening read also holds.  Arriving first, it kept its place and its
+	//Date, so the row offered no edit (historian-web-edits #1).
+	it( "takes a read's record in place of its push, and keeps it over a later push", ()=>{
+		const pushed = at( A, 2000 ), read = { ...at(A, 2000), sourceTime: {seconds: 2, nanos: 123400} };
+		const existing = [ at(A, 1000), pushed ];
+		const merged = mergeHistValues( existing, [read] );
+		expect( merged ).not.toBe( existing );
+		expect( merged.map( v=>v.sourceTime ) ).toEqual( [undefined, read.sourceTime] );
+		expect( existing[1] ).toBe( pushed );//not touched:  a new array
+		expect( mergeHistValues( merged, [at(A, 2000)] ) ).toBe( merged );
+	} );
 	it( 'puts a value with no source time last', ()=>{
 		const merged = mergeHistValues( [at(A, null)], [at(A, 1000)] );
 		expect( merged.map(v=>v.source?.getTime() ?? null) ).toEqual( [1000, null] );
+	} );
+	//A modified read holds several records of one node at one source time - the Insert at it and the Delete that took it back -
+	//which the one-record-per-node-and-time rule folded into one.  They are told apart by the edit that made them.
+	it( 'keeps the modifications of one node at one time apart, and still folds a repeat', ()=>{
+		const mod = ( type:string, ms:number )=>({ ...at(A, 2000), modification: {time: new Date(ms), type, user: 'me'} });
+		const inserted = mod( 'Insert', 9000 ), deleted = mod( 'Delete', 9500 );
+		const merged = mergeHistValues( [inserted], [deleted, inserted] );
+		expect( merged.map( v=>v.modification!.type ) ).toEqual( ['Insert', 'Delete'] );
+		expect( mergeHistValues( merged, [mod( 'Delete', 9500 )] ) ).toBe( merged );
+		expect( mergeHistValues( [], [deleted, inserted, mod( 'Insert', 9000 )] ) ).toHaveLength( 2 );
+	} );
+} );
+
+describe( 'toHistEditResult', ()=>{
+	it( 'reads each value\'s result and each node\'s entry status', ()=>{
+		const r = toHistEditResult( { values: [{node: {ns:2, i:1}, source: {seconds: 1, nanos: 0}, status: 0x00A20000}, {node: {ns:2, i:1}, source: null}], nodes: [{node: {ns:2, i:1}, status: 0}] } );
+		expect( r.values ).toHaveLength( 2 );
+		expect( r.values[0].source?.getTime() ).toBe( 1000 );
+		expect( r.values[0].status ).toBe( 0x00A20000 );
+		expect( r.values[1].node.toString() ).toBe( A.toString() );//not toEqual on a NodeId:  its key is a Symbol of its own once asked for
+		expect( r.values[1] ).toMatchObject( {source: null, status: 0} );
+		expect( r.nodes.map( n=>[n.node.toString(), n.status] ) ).toEqual( [[A.toString(), 0]] );
+		expect( toHistEditResult( undefined ) ).toEqual( {values: [], nodes: []} );
+	} );
+} );
+
+describe( 'editRefused', ()=>{
+	it( 'is a Bad in any value or node, and not a Good_EntryInserted', ()=>{
+		expect( editRefused( {values: [{node: A, source: null, status: 0x00A20000}], nodes: [{node: A, status: 0}]} ) ).toBe( false );
+		expect( editRefused( {values: [{node: A, source: null, status: 0x809F0000}], nodes: [{node: A, status: 0}]} ) ).toBe( true );//Bad_EntryExists
+		expect( editRefused( {values: [], nodes: [{node: A, status: 0x809B0000}]} ) ).toBe( true );//a range purge's Bad_NoData, per node alone
+	} );
+} );
+
+//A range purge over two nodes, one with nothing in the range, deleted the other's values and was shown as refused, so the
+//dialog stayed open and the tab kept showing what was gone (historian-web-edits #2).
+describe( 'editRefusedAll', ()=>{
+	it( 'is every value Bad, or for a range purge every node, and nothing for no answer', ()=>{
+		expect( editRefusedAll( {values: [], nodes: [{node: A, status: 0}, {node: B, status: 0x809B0000}]} ) ).toBe( false );
+		expect( editRefusedAll( {values: [], nodes: [{node: A, status: 0x809B0000}, {node: B, status: 0x809B0000}]} ) ).toBe( true );
+		expect( editRefusedAll( {values: [{node: A, source: null, status: 0x00A20000}, {node: A, source: null, status: 0x809F0000}], nodes: [{node: A, status: 0}]} ) ).toBe( false );
+		expect( editRefusedAll( {values: [{node: A, source: null, status: 0x809F0000}], nodes: [{node: A, status: 0}]} ) ).toBe( true );//the values, not the node's entry
+		expect( editRefusedAll( {values: [], nodes: []} ) ).toBe( false );
+	} );
+} );
+
+describe( 'editValueJson', ()=>{
+	it( 'carries the node, the source time as plain seconds and nanos, the value, and the server time and status only when given', ()=>{
+		expect( editValueJson( {node: A, source: new Date(1700000000500), value: 2.5} ) ).toEqual( {node: A.toJson(), source: {seconds: 1700000000, nanos: 500000000}, value: 2.5} );
+		expect( editValueJson( {node: A, source: new Date(1000), server: new Date(2000), status: 0x40000000, value: true} ) ).toEqual( {node: A.toJson(), source: {seconds: 1, nanos: 0}, server: {seconds: 2, nanos: 0}, status: 0x40000000, value: true} );
+		expect( editValueJson( {node: A, source: new Date(1000), status: 0, value: 'x'} ) ).toHaveProperty( 'status', 0 );//Good given is still given
+		expect( editValueJson( {node: A, source: {seconds: 1, nanos: 123400}, value: 1} )['source'] ).toEqual( {seconds: 1, nanos: 123400} );
 	} );
 } );
 

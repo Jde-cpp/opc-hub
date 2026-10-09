@@ -54,6 +54,42 @@ mat-cell.mat-column-value > .value-text{
 	flex: 0 0 220px;
 	padding-inline: 5px;
 }
+/* the ModificationInfo columns, in modified mode:  the edit's kind, its time at the timestamps' width, and the user */
+.mat-column-modType{
+	flex: 0 0 90px;
+	padding-inline: 5px;
+}
+.mat-column-modTime{
+	flex: 0 0 200px;
+	padding-inline: 5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-modUser{
+	flex: 0 0 160px;
+	min-width: 0;
+	padding-inline: 5px;
+}
+mat-cell.mat-column-modUser > .user-text{
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* a value's own Replace and Delete, two icon buttons at the row's height */
+.mat-column-actions{
+	flex: 0 0 88px;
+	padding-inline: 0;
+	justify-content: flex-end;
+}
+.row-action{
+	--mat-icon-button-state-layer-size: 32px;
+	--mat-icon-button-icon-size: 18px;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	color: var(--mat-sys-on-surface-variant);
+}
 mat-cell.mat-column-flags mat-chip-set{
 	--mat-chip-container-height: 20px;
 	--mat-chip-label-text-size: 11px;

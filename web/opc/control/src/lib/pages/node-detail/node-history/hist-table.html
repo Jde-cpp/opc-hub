@@ -39,6 +39,28 @@
 			}
 		</mat-cell>
 	</ng-container>
+	<!--ModificationInfo:  what the edit did, when it was made, and by whom-->
+	<ng-container matColumnDef="modType">
+		<mat-header-cell *matHeaderCellDef>Edit</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ r.modification?.type }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="modTime">
+		<mat-header-cell *matHeaderCellDef>Edited</mat-header-cell>
+		<mat-cell *matCellDef="let r">{{ r.modification?.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}</mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="modUser">
+		<mat-header-cell *matHeaderCellDef>By</mat-header-cell>
+		<mat-cell *matCellDef="let r"><span class="user-text" [title]="r.modification?.user">{{ r.modification?.user }}</span></mat-cell>
+	</ng-container>
+	<ng-container matColumnDef="actions">
+		<mat-header-cell *matHeaderCellDef></mat-header-cell>
+		<mat-cell *matCellDef="let r">
+			@if( canEdit(r) ){
+				<button matIconButton class="row-action" type="button" (click)="replace.emit(r)" aria-label="Replace this value" matTooltip="Replace this value"><mat-icon>edit</mat-icon></button>
+				<button matIconButton class="row-action" type="button" (click)="remove.emit(r)" aria-label="Delete this value" matTooltip="Delete this value"><mat-icon>delete</mat-icon></button>
+			}
+		</mat-cell>
+	</ng-container>
 	<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
 	<mat-row *matRowDef="let row; columns: displayedColumns()"></mat-row>
 </mat-table>
