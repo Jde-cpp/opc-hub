@@ -56,6 +56,54 @@ namespace Jde::Opc::Hist::Tests{
 		}
 		return y;
 	}
+	//Every page of an at-time or a processed read, the same way.
+	Ξ readAllAtTime( Group& group, AtTimeRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
+		vector<ReadValue> y;
+		for( uint count{}; ; ++count ){
+			auto page = group.ReadAtTime( request );
+			if( pages )
+				pages->push_back( page.Values.size() );
+			std::ranges::move( page.Values, std::back_inserter(y) );
+			if( page.Continuation.empty() )
+				break;
+			THROW_IF( count>100'000, "A read that never ends." );
+			request.Continuation = move( page.Continuation );
+		}
+		return y;
+	}
+	Ξ readAllProcessed( Group& group, ProcessedRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{
+		vector<ReadValue> y;
+		for( uint count{}; ; ++count ){
+			auto page = group.ReadProcessed( request );
+			if( pages )
+				pages->push_back( page.Values.size() );
+			std::ranges::move( page.Values, std::back_inserter(y) );
+			if( page.Continuation.empty() )
+				break;
+			THROW_IF( count>100'000, "A read that never ends." );
+			request.Continuation = move( page.Continuation );
+		}
+		return y;
+	}
+	//A result's number, whatever numeric type it carries:  an aggregate's Double or Int32, or a raw value's.
+	Ξ numberOf( const Proto::DataValue& v )ι->optional<double>{
+		if( !v.has_value() )
+			return nullopt;
+		switch( v.value().of_case() ){
+		case Opc::Proto::Value::kDoubleValue: return v.value().double_value();
+		case Opc::Proto::Value::kFloatValue: return (double)v.value().float_value();
+		case Opc::Proto::Value::kInt32: return (double)v.value().int32();
+		case Opc::Proto::Value::kInt64: return (double)v.value().int64();
+		case Opc::Proto::Value::kUint32: return (double)v.value().uint32();
+		default: return nullopt;
+		}
+	}
+	Ξ statuses( const vector<ReadValue>& values )ι->vector<StatusCode>{
+		vector<StatusCode> y;
+		for( const auto& v : values )
+			y.push_back( v.Value.status() );
+		return y;
+	}
 	Ξ doubles( const vector<ReadValue>& values )ι->vector<double>{
 		vector<double> y;
 		for( const auto& v : values )

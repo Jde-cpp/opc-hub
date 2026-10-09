@@ -105,6 +105,47 @@ namespace Jde::Opc::Hist{
 	//picoseconds or a null value, comes back with its mask's bit clear.  Throws for a value this build can't decode.
 	α ToUA( const Proto::DataValue& v )ε->Value;
 
+	//Part 13's AggregateConfiguration, at the defaults the hosts publish (spec *UA backend*):  a host passes the node's,
+	//or the caller's override.
+	struct AggregateConfiguration{
+		bool TreatUncertainAsBad{ true };
+		uint8_t PercentDataBad{ 100 };
+		uint8_t PercentDataGood{ 100 };
+		bool UseSlopedExtrapolation{};
+	};
+	//Part 11's ReadAtTimeDetails (spec *Reads*):  each node's value at each of Times, the times in the request's order
+	//and a time's values in the nodes'.  A record at the time is returned as it is, the last there when the time holds
+	//several, and otherwise the value is interpolated from the node's bounding records as Part 13's Interpolative
+	//aggregate does, stepped unless the node's Stepped is false:  with SimpleBounds from the nearest record on either
+	//side, whatever its status, and otherwise from the nearest non-Bad ones, Part 13 §3.1.8 and §3.1.9.  The details
+	//carry no configuration, so Configuration is the node's, as the host publishes it:  its TreatUncertainAsBad and
+	//UseSlopedExtrapolation count.  Times are UA ticks.
+	struct AtTimeRequest{
+		vector<NodeIndex> Nodes;
+		vector<UA_DateTime> Times;
+		bool SimpleBounds{};
+		AggregateConfiguration Configuration;
+		uint Limit{};//as a ReadRequest's.
+		string Continuation;
+	};
+	//The aggregates the first cut supports (spec *Reads*):  Part 13's, and Median, the median of an interval's Good raw
+	//values, which Part 13 doesn't define.
+	enum class EAggregate : uint8{ Interpolative, Average, TimeAverage, Count, Minimum, Maximum, Start, End, StandardDeviationSample, Median };
+	//Part 11's ReadProcessedDetails:  one value per node for each Interval from Start to End, computed from the raw
+	//records under Configuration as Part 13 §5.4.3 says, timestamped at the interval's start.  A Start after End
+	//computes the intervals back from Start, later first, each holding its later end and not its earlier.  An Interval
+	//of 0, or not shorter than the range, is one interval over the whole range.  Times are UA ticks.
+	struct ProcessedRequest{
+		vector<NodeIndex> Nodes;
+		UA_DateTime Start{};
+		UA_DateTime End{};
+		Duration Interval{};
+		EAggregate Aggregate{ EAggregate::Average };
+		AggregateConfiguration Configuration;
+		uint Limit{};//as a ReadRequest's, in values:  intervals times nodes.
+		string Continuation;
+	};
+
 	//Part 11's HistoryUpdate (spec *Edits*), one entry per node, as the service takes them.  Times are UA ticks.
 	//UpdateDataDetails:  each value is keyed by its SourceTimestamp, which it must carry.  INSERT refuses a time that holds
 	//a record of the node, REPLACE one that holds none, and UPDATE does either.  REMOVE belongs to annotations and is
@@ -245,6 +286,19 @@ namespace Jde::Opc::Hist{
 		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
 		//the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
+		//A page of the values at the request's times (spec *Reads*), at most Limit, the times in the request's order and a
+		//time's values in the nodes', each a record at the time or one interpolated from the node's bounding records, read
+		//as Read reads them, the edits applied.  Only a raw read flags a value as a bound, a heartbeat or a modification.
+		//The continuation is stateless, as Read's:  the next of the requested times and how many of its values the pages
+		//before returned, with a CRC of the other arguments but Limit, the mode among them, so one of another read, or
+		//another mode, is refused.  Throws as Read does for a request with no nodes or no times.
+		α ReadAtTime( const AtTimeRequest& request, SRCE )ε->ReadResult;
+		//A page of the request's aggregate over its intervals (spec *Reads*), at most Limit values, interval by interval
+		//and an interval's values in the nodes' order, computed from the raw records as Read serves them.  The
+		//continuation resumes at the next interval, as ReadAtTime's at the next time.  Throws as Read does for a request
+		//with no nodes or a negative interval, and a UAException for a Start equal to End, Bad_InvalidArgument, or
+		//percentages Part 13 doesn't allow, Bad_AggregateInvalidInputs.
+		α ReadProcessed( const ProcessedRequest& request, SRCE )ε->ReadResult;
 		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked.  The next flush
 		//runs it, after writing the buffer, so every value it targets is in its day's file before it looks:  it writes a
 		//Modification record for each value it changes to the modifications file of that value's day, one append and

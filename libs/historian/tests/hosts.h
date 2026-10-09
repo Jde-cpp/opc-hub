@@ -28,6 +28,34 @@ namespace Jde::Opc::Hist::Tests{
 			}
 			return Value{ move(dv) };
 		}
+		//A value with a status a source sends, Uncertain or Bad, which the aggregates take by their rules.
+		static Value Graded( double v, UA_StatusCode status, TimePoint source )ι{
+			auto y = Reading( v, source );
+			y.status = status;
+			y.hasStatus = true;
+			return y;
+		}
+		//A status alone, as a Bad value with nothing to show comes:  Part 13's "Bad quality data received".
+		static Value Status( UA_StatusCode status, TimePoint source )ι{
+			UA_DataValue dv{};
+			dv.status = status;
+			dv.hasStatus = true;
+			dv.sourceTimestamp = UADateTime{ source }.UA();
+			dv.hasSourceTimestamp = true;
+			return Value{ move(dv) };
+		}
+		static Value Flag( bool v, TimePoint source, UA_StatusCode status=UA_STATUSCODE_GOOD )ι{
+			UA_DataValue dv{};
+			UA_Variant_setScalarCopy( &dv.value, &v, &UA_TYPES[UA_TYPES_BOOLEAN] );
+			dv.hasValue = true;
+			dv.sourceTimestamp = UADateTime{ source }.UA();
+			dv.hasSourceTimestamp = true;
+			if( status ){
+				dv.status = status;
+				dv.hasStatus = true;
+			}
+			return Value{ move(dv) };
+		}
 		//A String value, with no timestamp for Enqueue to stamp its server time.
 		static Value Text( sv text, optional<TimePoint> source={} )ι{
 			UA_DataValue dv{};
