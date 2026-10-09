@@ -96,17 +96,18 @@ namespace Jde::Access::Tests{
 	//and access_provider_purge, which deletes users and identities directly, takes the same children first.
 	TEST_F( ProfileTests, PurgeProviderWithUsersInUse ){
 		let root = GetRoot();
+		const UserPK system{ UserPK::System };//providers declares no ops - its writes are the system's.
 		constexpr sv providerSlug{ "purgeProviderTest" };
 		auto provider = QL().QuerySync( Ƒ("provider( name:\"{}\" ){{ id }}", providerSlug), {}, root ); //providers_ql has no slug column; the insert proc names it after the slug.
 		if( provider.empty() )
-			provider = QL().QuerySync( Ƒ("createProvider( slug:\"{}\", providerType:{} ){{ id }}", providerSlug, underlying(EProviderType::Key)), {}, root );
+			provider = QL().QuerySync( Ƒ("createProvider( slug:\"{}\", providerType:{} ){{ id }}", providerSlug, underlying(EProviderType::Key)), {}, system );
 		const ProviderPK providerPK{ (ProviderPK)GetId(provider) };
 		const UserPK user{ GetId(GetUser("purgeProviderUser", root, false, providerPK)) };
 		upsertProfile( "purgeKey", "\"v\"", user );
 		const GroupPK group{ GetId(GetGroup("purgeProviderGroup", root)) };
 		AddToGroup( group, {user}, root );
 		ASSERT_EQ( countRows("groups", "member_id", user.Value), 1u );
-		EXPECT_NO_THROW( Purge("provider", providerPK, root) );
+		EXPECT_NO_THROW( Purge("provider", providerPK, system) );
 		EXPECT_EQ( countRows("profiles", "identity_id", user.Value), 0u );
 		EXPECT_EQ( countRows("groups", "member_id", user.Value), 0u );
 		EXPECT_EQ( countRows("identities", "identity_id", user.Value), 0u );

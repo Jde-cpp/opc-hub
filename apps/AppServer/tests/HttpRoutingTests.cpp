@@ -165,4 +165,15 @@ namespace Jde::App::Server::Tests{
 	TEST_F( HttpRoutingTests, GraphQLRequiresQuery ){
 		EXPECT_EQ( FailureStatus([&]{ Post("/graphql", "{}"); }), http::status::bad_request );
 	}
+
+	//GHSA-g354-grf2-r8vh: the advisory's own vector - an anonymous post of a write on a table that defines rights.  identities
+	//declares no ops, so Table::Authorize tested nothing and the row landed; a write a table's ops do not declare is the system's
+	//alone now, and an executer nobody knows is a 401.
+	TEST_F( HttpRoutingTests, AnonymousMutationOnARightsTableIsRefused ){
+		constexpr sv slug{ "ghsa-g354-http" };
+		let body = serialize( jobject{{"query", Ƒ("mutation createIdentity( name:\"{0}\", slug:\"{0}\" ){{ id }}", slug)}} );
+		EXPECT_EQ( FailureStatus([&]{ Post("/graphql", body); }), http::status::unauthorized );
+		let rows = BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{Ƒ("identities( slug:\"{}\" ){{ id }}", slug), {}, Jde::UserPK{Jde::UserPK::System}, Server::QLPtr()} );
+		EXPECT_TRUE( rows.is_array() && rows.get_array().empty() ) << "the identity was created anyway: " << serialize( rows );
+	}
 }

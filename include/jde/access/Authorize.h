@@ -16,6 +16,8 @@ namespace Jde::Access{
 		virtual ~Authorize()=default;
 
 		α Test( str schemaName, str resourceName, ERights rights, UserPK userPK, SRCE )ε->void override;
+		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
+		α TestUser( UserPK executer, SRCE )Ε->void;//a live user, or the system:  Unauthorized for one nobody knows, Forbidden for a deleted one.
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;
 		α UserName( UserPK userPK )ι->string override;
 

@@ -18,6 +18,8 @@ local valuesColumns = common.valuesColumns;
 local valuesNK = common.valuesNK;
 local slugColumns = common.slugColumns;
 local slugNKs = common.slugNKs;
+// ops: the rights grantable on a table - its resource row's `allowed`.  ["None"] = no resource row at all.  A generic
+// create/update/delete/purge outside a table's ops is the system's alone (Table::Authorize); reads outside them stay open.
 local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"];
 {
 	local tables = self.tables,
@@ -133,7 +135,7 @@ local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"]
 				criteria: types.varchar+{ nullable: true, length:672, i:100 },
 				allowed: types.ulong+{ pkTable: "rights", i:101, nullable:true, comment: "available rights for this resource" }
 			},
-			ops: ["Delete", "Subscribe"],
+			ops: ["Delete", "Subscribe"], //Create/Update: an administrator of the row's schema (Server::CustomMutation, ResourceMAwait) - the instances' resource sync.  Purge: the system's.
 			naturalKeys: [["schema_name", "slug", "criteria"]],
 		},
 		permissions:{

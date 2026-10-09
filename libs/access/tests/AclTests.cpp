@@ -387,7 +387,7 @@ namespace Jde::Access::Tests{
 		let reloaded = BlockAwait<AclLoadAwait, flat_multimap<IdentityPK,PermissionRole>>( AclLoadAwait{QLPtr(), system} );
 		EXPECT_EQ( reloaded.count(IdentityPK{user}), 1u ) << "and after a reload"; //the user holds nothing else.
 		PurgeAcl( user, first, system );
-		Purge( "resource", resourcePK, root ); //leave no trace.
+		Purge( "resource", resourcePK, UserPK{UserPK::System} ); //leave no trace.
 	}
 	//access-review3 #14's sharper shape:  holding an acl grant or a group membership, purgeUser deleted access_users and then failed
 	//on access_identities - an orphan identity row no api could purge, committed on the autocommit dialects.  The users purgeProc

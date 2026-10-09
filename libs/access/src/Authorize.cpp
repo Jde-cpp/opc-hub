@@ -89,6 +89,21 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, resourceName, rights, executer, sl );
 	}
+	//The statuses TestRights uses:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
+	α Authorize::TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
+		if( executer.Value==UserPK::System )
+			return;
+		TestUser( executer, sl );
+		throw Access::AccessException{ sl, executer, "User does not have '{}' access to '{}.{}' - the table grants it to no one.", ToString(rights), schemaName, resourceName };
+	}
+	α Authorize::TestUser( UserPK executer, SL sl )Ε->void{
+		if( executer.Value==UserPK::System )
+			return;
+		rl _{ Mutex };
+		auto user = Users.find( executer );
+		THROW_IFX( user==Users.end(), Access::AccessException(sl, executer, EHttpStatus::Unauthorized, "User not found.") );
+		THROW_IFX( user->second.IsDeleted, Access::AccessException(sl, executer, "User is deleted.") );
+	}
 	α Authorize::ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>{
 		if( executer.Value==UserPK::System )
 			return AllowedDisallowed{ ERights::All, ERights::None };

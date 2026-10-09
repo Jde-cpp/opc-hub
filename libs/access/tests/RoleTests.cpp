@@ -447,7 +447,7 @@ namespace Jde::Access::Tests{
 		//criteria-scoped, so still created active (install-issues #25 ships only a criteria-null root resource unenforced).
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:"{}" ){{ id name }})", slug, criteria );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) ) //a previous run's row would make this a no-op.
-			Purge( "resource", GetId(Json::AsObject(v)), root );
+			Purge( "resource", GetId(Json::AsObject(v)), UserPK{UserPK::System} );
 		const RolePK rolePK{ GetId(getRole("roleParityNew", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
 		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
@@ -455,7 +455,7 @@ namespace Jde::Access::Tests{
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_EQ( Json::AsSV(Json::AsObject(resources[0]), "name"), slug ) << "name coalesced over the slug";
 		RemoveRolePermission( rolePK, PermissionPK{Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")}, system ); //root holds nothing over the new resource.
-		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
+		Purge( "resource", GetId(Json::AsObject(resources[0])), UserPK{UserPK::System} );
 		Purge( "role", rolePK, root );
 	}
 
@@ -469,7 +469,7 @@ namespace Jde::Access::Tests{
 		constexpr sv slug{ "parityRoot" };
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
-			Purge( "resource", GetId(Json::AsObject(v)), root );
+			Purge( "resource", GetId(Json::AsObject(v)), UserPK{UserPK::System} );
 		const RolePK rolePK{ GetId(getRole("roleParityRoot", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
 		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
@@ -477,7 +477,7 @@ namespace Jde::Access::Tests{
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() ) << "a role-referenced root resource should ship unenforced";
 		RemoveRolePermission( rolePK, PermissionPK{Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")}, system );
-		Purge( "resource", GetId(Json::AsObject(resources[0])), root );
+		Purge( "resource", GetId(Json::AsObject(resources[0])), UserPK{UserPK::System} );
 		Purge( "role", rolePK, root );
 	}
 
@@ -491,7 +491,7 @@ namespace Jde::Access::Tests{
 		constexpr sv slug{ "m3c11Seeded" };
 		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}", criteria:null ){{ id deleted }})", slug );
 		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
-			Purge( "resource", GetId(Json::AsObject(v)), root );
+			Purge( "resource", GetId(Json::AsObject(v)), UserPK{UserPK::System} );
 		const RolePK seeded{ GetId(getRole("roleM3c11Seeded", root)) }, granted{ GetId(getRole("roleM3c11Granted", root)) };
 		const UserPK holder{ GetId(GetUser("m3c11Holder", root)) };
 		CreateAcl( holder, granted, root );
@@ -513,7 +513,7 @@ namespace Jde::Access::Tests{
 		Purge( "role", seeded, root );
 		Purge( "role", granted, root );
 		PurgeUser( holder, root );
-		Purge( "resource", resourcePK, root );
+		Purge( "resource", resourcePK, UserPK{UserPK::System} );
 	}
 
 	TEST_F( RoleTests, DeletedLoad ){

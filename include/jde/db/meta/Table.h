@@ -48,7 +48,7 @@ namespace Jde::DB{
 		//alive.  Authorize tests the owner's name:  a resource exists per table ("users"), never per ql view ("usersQl").
 		wp<Table> Owner;
 		sp<DB::AppSchema> Schema;
-		Access::ERights Operations{}; //enforced operations.
+		Access::ERights Operations{}; //the grantable rights - the resource row's `allowed`; a write outside them is the system's alone (Authorize).
 		vector<sp<Table>> Children;
 		vector<vector<string>> NaturalKeys;
 		string PurgeProcName;

@@ -35,14 +35,15 @@ namespace Jde::Access::Tests{
 		let before = Json::AsArray( resource, "allowed" );
 		ASSERT_FALSE( before.empty() ) << "the fixture needs a resource that already has rights";
 
-		QL().QuerySync<jvalue>( "mutation updateResource( id:"+std::to_string(GetId(resource))+", allowed:$a )", jobject{{"a",jarray{"Read"}}}, root );
+		const UserPK system{ UserPK::System };//a resource write by anyone else needs Administer on every enforced root of its schema - this is about variables.
+		QL().QuerySync<jvalue>( "mutation updateResource( id:"+std::to_string(GetId(resource))+", allowed:$a )", jobject{{"a",jarray{"Read"}}}, system );
 		let after = Json::AsArray( SelectResource("groups", root, true), "allowed" );
 		ASSERT_EQ( after.size(), 1u ) << "the flags column was wiped: " << serialize( after );
 		EXPECT_EQ( after[0].as_string(), "Read" );
 
 		//put it back the way the suite found it.
 		string names; for( let& v : before ) names += (names.empty() ? "\"" : ",\"")+string{v.as_string()}+"\"";
-		QL().QuerySync<jvalue>( "mutation updateResource( id:"+std::to_string(GetId(resource))+", allowed:["+names+"] )", {}, root );
+		QL().QuerySync<jvalue>( "mutation updateResource( id:"+std::to_string(GetId(resource))+", allowed:["+names+"] )", {}, system );
 	}
 
 	//add/remove:  getChildParentParams read the raw args, so both ids arrived as marker strings.

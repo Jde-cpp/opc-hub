@@ -12,13 +12,14 @@ namespace Jde::Access::Tests{
 	//the write-up's own case, on the table it used.
 	TEST( KeyColumnUpdateTests, APkColumnCannotBeSetThroughTheGenericUpdate ){
 		let root = GetRoot();
+		const UserPK system{ UserPK::System };//the row it creates is an enforced root nobody administers, so only the system may update it - the refusal below has to be the column's.
 		const string slug{ "review46-resource" };
-		let id = Create( "resource", slug, root, "schemaName:\"review46\"" );
+		let id = Create( "resource", slug, system, "schemaName:\"review46\"" );
 
 		//and the request is refused rather than reported as a success that did nothing:  with the pk skipped there is no settable
 		//column left, which UpdateAwait already has a message for.
 		try{
-			QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, resourceId:{} )", id, id+5000), {}, root );
+			QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, resourceId:{} )", id, id+5000), {}, UserPK{UserPK::System} );
 			ADD_FAILURE() << "the renumber was accepted";
 		}
 		catch( const Exception& e ){
@@ -27,7 +28,7 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( GetId(Select("resource", id, root, "id slug", true)), id ) << "the row was renumbered";
 		EXPECT_TRUE( Select("resource", id+5000, root, "id", true).empty() ) << "and it is not at the new number either";
 
-		Purge( "resource", id, root );
+		Purge( "resource", id, system );
 	}
 
 	//the extension chain: the parent statement is built first, so `identityId` reached `update access_identities set
@@ -50,11 +51,11 @@ namespace Jde::Access::Tests{
 	TEST( KeyColumnUpdateTests, OrdinaryColumnsAreStillUpdateable ){
 		let root = GetRoot();
 		const string slug{ "review46-plain" };
-		let id = Create( "resource", slug, root, "schemaName:\"review46\"" );
+		let id = Create( "resource", slug, UserPK{UserPK::System}, "schemaName:\"review46\"" );
 
-		QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, description:\"review46-desc\" )", id), {}, root );
+		QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, description:\"review46-desc\" )", id), {}, UserPK{UserPK::System} );
 		EXPECT_EQ( Json::AsSV(Select("resource", id, root, "id description", true), "description"), "review46-desc" );
 
-		Purge( "resource", id, root );
+		Purge( "resource", id, UserPK{UserPK::System} );
 	}
 }
