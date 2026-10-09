@@ -89,7 +89,7 @@ The Windows presets set it themselves under `$JDE_BUILD_DIR`, and also read `VCP
 # the third-party tree, once - fmt, spdlog, gtest, absl, protobuf, jsonnet, ryml, open62541 + its nodeset loader;
 # the build dir is your choice, the install lands under $REPO_DIR/install
 cmake -B $REPO_DIR/build/debug -S . --preset linux-clang-debug-repos && cmake --build $REPO_DIR/build/debug -j 8
-# Boost and the sqlite amalgamation are built by build/libarary_commands.sh
+# Boost and the sqlite amalgamation are built by build/boost-sqlite.sh
 
 # the repo - `-B` is required: the Linux presets set no binaryDir
 B=$JDE_BUILD_DIR/$JDE_COMPILER/opc-hub/debug
