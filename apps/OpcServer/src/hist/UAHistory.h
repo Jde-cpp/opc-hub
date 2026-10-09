@@ -14,7 +14,7 @@ namespace Jde::Opc::Server{
 	//so collecting only enqueues and a node's read ends at maxReturnDataValues values or one day file, with a
 	//continuation point.  That point is the library's stateless continuation, so the server holds nothing between calls
 	//and has none to release.  An edit is acknowledged once its records are durable, so its callback waits for the flush
-	//that writes them, holding the lock for the write and its fsync.
+	//that writes them, holding the lock for the write and its fsync, up to hist.editTimeout.
 	struct UAHistory final : noncopyable{
 		//Reads /opcServer/hist and takes the lock on its path.  With no such block OpcServer keeps no history, as when
 		//another process holds the lock:  no backend is installed and no node is changed.
@@ -51,10 +51,12 @@ namespace Jde::Opc::Server{
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryModifiedData* const* data )ι->void;
 		//Part 11's HistoryUpdate on one node (spec *Edits*), by the session's user, who needs Update, or Delete, on the
 		//node granted on a resource that is enforced (spec *Authorization*):  the entry is refused with Bad_UserAccessDenied
-		//where none governs the node.  Each value of an UpdateData is asked for on its own, as the default plugin asks, and
-		//a refused one answers that in its place.  A DeleteRawModified's range holds its start and not its end, as a
-		//read's does, and startTime equal to endTime is that instant; deleting the modified values is refused, since they
-		//are the audit trail.
+		//where none governs the node, and where the node's own AccessLevel lacks HistoryWrite.  Each value of an UpdateData
+		//is asked for on its own, as the default plugin asks, and a refused one answers that in its place, as one a Write
+		//of the variable would refuse for its type or dimensions answers Bad_TypeMismatch.  A
+		//DeleteRawModified's range holds its start and not its end, as a read's does, startTime equal to endTime is that
+		//instant, and a time of 0 is one not given, which a delete needs both of; deleting the modified values is refused,
+		//since they are the audit trail.
 		α UpdateData( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_UpdateDataDetails& details, UA_HistoryUpdateResult& result )ι->void;
 		α DeleteRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_DeleteRawModifiedDetails& details, UA_HistoryUpdateResult& result )ι->void;
 	private:
@@ -83,14 +85,17 @@ namespace Jde::Opc::Server{
 		α Read( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps,
 			const UA_HistoryReadValueId& node, UA_ByteString& continuation, Hist::ReadResult& page, UA_NumericRange& range )ι->UA_StatusCode;
 		//One entry's edit, once the session's user may write the node's history:  make builds the library's entry from the
-		//node's index, or none to leave result as it set it.  The edit runs in the group's next flush, which this waits for.
-		//None when result's status says why.
+		//node's index, or none to leave result as it set it.  The edit runs in the group's next flush, which this waits for,
+		//up to _editTimeout:  then Bad_Timeout, the edit still queued.  None when result says why:  in its status, or, for
+		//an UpdateData whose every value make refused, in its operationResults, the status staying Good.
 		α Edit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId& node, UA_HistoryUpdateResult& result,
 			absl::FunctionRef<optional<Hist::EditDetails>( Hist::NodeIndex )> make )ι->optional<Hist::EditResult>;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
 		up<Hist::Historian> _historian;
+		//hist.editTimeout, an ISO 8601 duration:  the default is open62541's client timeout, past which the client has given up.
+		Duration _editTimeout{ 5s };
 		//Set by Load, before the server runs, and only read after:  the callbacks take no lock of the host's.
 		sp<Hist::Group> _group;
 		absl::flat_hash_map<NodeId,Hist::NodeIndex,NodeHash,NodeEqual> _indexes;

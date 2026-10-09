@@ -1,10 +1,10 @@
 #include "UAHistory.h"
+#include <absl/synchronization/notification.h>
 #include <open62541/plugin/nodestore.h>
 #include <jde/fwk/process/process.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "Historized.h"
 #include "../globals.h"
-#include "../access/OpcAuthorize.h"
 #include "../access/UAAccess.h"
 
 #define let const auto
@@ -80,34 +80,35 @@ namespace Jde::Opc::Server{
 			~IndexRange(){ UA_free( Value.dimensions ); }
 			UA_NumericRange Value{};
 		};
-		//A page's values into HistoryRead's result, as toUA has them.
-		Ω fill( UA_HistoryData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
+		//A page's values into HistoryRead's result, as toUA has them:  the dataValues a raw and a modified read both have.
+		Ω dataValues( UA_DataValue*& values, size_t& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
 			let size = page.Values.size();
 			if( !size )
 				return UA_STATUSCODE_GOOD;
-			data.dataValues = (UA_DataValue*)UA_Array_new( size, &UA_TYPES[UA_TYPES_DATAVALUE] );
-			if( !data.dataValues )
+			values = (UA_DataValue*)UA_Array_new( size, &UA_TYPES[UA_TYPES_DATAVALUE] );
+			if( !values )
 				return UA_STATUSCODE_BADOUTOFMEMORY;
-			data.dataValuesSize = size;
+			valuesSize = size;
 			for( uint i=0; i<size; ++i )
-				data.dataValues[i] = toUA( page.Values[i].Value, timestamps, range );
+				values[i] = toUA( page.Values[i].Value, timestamps, range );
 			return UA_STATUSCODE_GOOD;
+		}
+		Ω fill( UA_HistoryData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
+			return dataValues( data.dataValues, data.dataValuesSize, page, timestamps, range );
 		}
 		//A modified read's, each value with its ModificationInfo:  the record's type is Part 11's HistoryUpdateType.
 		static_assert( (int)Hist::Proto::UPDATE_TYPE_INSERT==UA_HISTORYUPDATETYPE_INSERT && (int)Hist::Proto::UPDATE_TYPE_REPLACE==UA_HISTORYUPDATETYPE_REPLACE
 			&& (int)Hist::Proto::UPDATE_TYPE_UPDATE==UA_HISTORYUPDATETYPE_UPDATE && (int)Hist::Proto::UPDATE_TYPE_DELETE==UA_HISTORYUPDATETYPE_DELETE );
 		Ω fill( UA_HistoryModifiedData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
+			if( let sc = dataValues(data.dataValues, data.dataValuesSize, page, timestamps, range); sc || !data.dataValuesSize )
+				return sc;
 			let size = page.Values.size();
-			if( !size )
-				return UA_STATUSCODE_GOOD;
-			data.dataValues = (UA_DataValue*)UA_Array_new( size, &UA_TYPES[UA_TYPES_DATAVALUE] );
 			data.modificationInfos = (UA_ModificationInfo*)UA_Array_new( size, &UA_TYPES[UA_TYPES_MODIFICATIONINFO] );
-			if( !data.dataValues || !data.modificationInfos )
+			if( !data.modificationInfos )
 				return UA_STATUSCODE_BADOUTOFMEMORY;
-			data.dataValuesSize = data.modificationInfosSize = size;
+			data.modificationInfosSize = size;
 			for( uint i=0; i<size; ++i ){
 				let& v = page.Values[i];
-				data.dataValues[i] = toUA( v.Value, timestamps, range );
 				ASSERT( v.Modification );//a modified read's values each carry one.
 				if( !v.Modification )
 					continue;
@@ -117,6 +118,43 @@ namespace Jde::Opc::Server{
 				info.userName = UA_String_fromChars( v.Modification->UserName.c_str() );
 			}
 			return UA_STATUSCODE_GOOD;
+		}
+		//Whether a value may be a variable's, as open62541 lets a Write of it:  of the DataType's built-in kind, which takes
+		//a UtcTime's DateTime, or an enumeration's Int32 for it, any enumeration for the abstract Enumeration, and with the
+		//dimensions the ValueRank allows.  An abstract or structured DataType's values are left as they come, open62541's
+		//subtype check being internal.
+		Ω typed( const UA_DataValue& value, const UA_DataType* type, UA_Int32 rank )ι->bool{
+			let& v = value.value;
+			if( !value.hasValue || UA_Variant_isEmpty(&v) )
+				return true;
+			if( type && type!=&UA_TYPES[UA_TYPES_VARIANT] && type!=&UA_TYPES[UA_TYPES_EXTENSIONOBJECT] ){
+				let ofKind = type->typeKind==UA_DATATYPEKIND_ENUM
+					? v.type==type || v.type==&UA_TYPES[UA_TYPES_INT32] || (type==&UA_TYPES[UA_TYPES_ENUMERATION] && v.type->typeKind==UA_DATATYPEKIND_ENUM)
+					: type->typeKind>UA_DATATYPEKIND_DIAGNOSTICINFO || v.type->typeKind==type->typeKind;
+				if( !ofKind )
+					return false;
+			}
+			if( !v.data || rank<UA_VALUERANK_SCALAR_OR_ONE_DIMENSION || rank==UA_VALUERANK_ANY )
+				return true;
+			let dimensions = UA_Variant_isScalar( &v ) ? 0 : std::max<size_t>( v.arrayDimensionsSize, 1 );
+			return rank==UA_VALUERANK_SCALAR_OR_ONE_DIMENSION ? dimensions<=1
+				: rank==UA_VALUERANK_SCALAR ? dimensions==0
+				: rank==UA_VALUERANK_ONE_OR_MORE_DIMENSIONS ? dimensions>=1
+				: dimensions==(size_t)rank;
+		}
+		//An edit's answer, shared with the coroutine that awaits it, which a wait that gave up leaves behind.
+		struct Edited final{
+			absl::Notification Done;
+			optional<Hist::EditResult> Result;//none when the edit failed.
+		};
+		Ω edit( sp<Hist::Group> group, Hist::EditDetails details, Hist::Writer by, sp<Edited> edited )ι->VoidTask{
+			try{
+				auto results = co_await group->Edit( {move(details)}, move(by) );
+				edited->Result = move( results.at(0) );//one per entry.
+			}
+			catch( const std::exception& )//the group removed or stopped, or the historian ended before the edit was written:  said where it was found.
+			{}
+			edited->Done.Notify();
 		}
 	}
 
@@ -133,6 +171,10 @@ namespace Jde::Opc::Server{
 		if( !hist ){
 			INFO( "No '/opcServer/hist':  this server keeps no history." );
 			return;
+		}
+		if( let timeout = Settings::FindDuration("/opcServer/hist/editTimeout"); timeout ){
+			THROW_IF( *timeout<=Duration::zero(), "hist.editTimeout must be positive, not {} ms.", duration_cast<milliseconds>(*timeout).count() );
+			_editTimeout = *timeout;
 		}
 		_historian = mu<Hist::Historian>( Hist::Settings{*hist, Process::AppDataFolder()/"logs"/"hist"/"opc-server"}, Hist::SystemClock() );
 	}
@@ -363,22 +405,32 @@ namespace Jde::Opc::Server{
 			result.statusCode = UA_Server_readNodeClass( &ua, node, &nodeClass ) ? UA_STATUSCODE_BADNODEIDUNKNOWN : UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
 			return nullopt;
 		}
+		//And the node's own, which a nodeset that gave it HistoryRead alone left out (Historized::load):  the default
+		//plugin masks the user's level by it.
+		UA_Byte accessLevel{};
+		if( UA_Server_readAccessLevel(&ua, node, &accessLevel) || !(accessLevel & UA_ACCESSLEVELMASK_HISTORYWRITE) ){
+			result.statusCode = UA_STATUSCODE_BADUSERACCESSDENIED;
+			return nullopt;
+		}
 		auto details = make( *index );
 		if( !details )
 			return nullopt;
-		try{
-			//The session's user, by the lookup UAAccess made at activation, and the name OpcAuthorize holds for it:  no round trip.
-			let& ctx = *static_cast<UAAccess::SessionContext*>( sessionContext );//the access check above refused a session without one.
-			Hist::Writer by{ ctx.UserPK, static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).UserName( ctx.UserPK ) };
-			//Runs in the group's next flush, on the executor, and resumes here once its records are durable:  the server's
-			//thread waits, holding the service lock, since nothing else may answer the client before then.
-			auto results = BlockAny( _group->Edit({move(*details)}, move(by)) );
-			return move( results.at(0) );//one per entry.
-		}
-		catch( const runtime_error& ){//the group removed or stopped, or the historian ended before the edit was written:  said where it was found.
-			result.statusCode = UA_STATUSCODE_BADINTERNALERROR;
+		//The session's user, by the lookup UAAccess made at activation, and the name OpcAuthorize holds for it:  no round trip.
+		let& ctx = *static_cast<UAAccess::SessionContext*>( sessionContext );//the access check above refused a session without one.
+		auto edited = ms<Edited>();
+		edit( _group, move(*details), Hist::Writer{ctx.UserPK, GetSchema().Authorizer->UserName(ctx.UserPK)}, edited );
+		//Runs in the group's next flush and answers once its records are durable:  the server's thread waits, holding the
+		//service lock, since nothing else may answer the client before then.  The flush's writes resume on the executor,
+		//where the midnight StartOfArchive write and a re-mapping of node rights wait on that lock, so with every executor
+		//thread waiting the flush never would:  the wait ends at editTimeout, and the edit, still queued, may yet be written.
+		if( !edited->Done.WaitForNotificationWithTimeout(absl::FromChrono(_editTimeout)) ){
+			ERR( "A history edit wasn't written within {} ms:  answered Bad_Timeout, it may still be written.", duration_cast<milliseconds>(_editTimeout).count() );
+			result.statusCode = UA_STATUSCODE_BADTIMEOUT;
 			return nullopt;
 		}
+		if( !edited->Result )
+			result.statusCode = UA_STATUSCODE_BADINTERNALERROR;
+		return move( edited->Result );
 	}
 	α UAHistory::UpdateData( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_UpdateDataDetails& details, UA_HistoryUpdateResult& result )ι->void{
 		let start = steady_clock::now();
@@ -392,10 +444,18 @@ namespace Jde::Opc::Server{
 			}
 			result.operationResultsSize = values.size();
 			auto& ac = UA_Server_getConfig( &ua )->accessControl;
+			NodeId dataType;
+			UA_Int32 rank{ UA_VALUERANK_ANY };
+			let type = UA_Server_readDataType( &ua, details.nodeId, &dataType ) ? nullptr : UA_Server_findDataType( &ua, &dataType );
+			UA_Server_readValueRank( &ua, details.nodeId, &rank );
 			Hist::UpdateData update{ index, details.performInsertReplace, {} };
 			for( uint i=0; i<values.size(); ++i ){
 				if( ac.allowHistoryUpdateUpdateData && !ac.allowHistoryUpdateUpdateData(&ua, &ac, sessionId, sessionContext, &details.nodeId, details.performInsertReplace, &values[i]) ){
 					result.operationResults[i] = UA_STATUSCODE_BADUSERACCESSDENIED;
+					continue;
+				}
+				if( !typed(values[i], type, rank) ){
+					result.operationResults[i] = UA_STATUSCODE_BADTYPEMISMATCH;
 					continue;
 				}
 				allowed.push_back( i );
@@ -408,6 +468,11 @@ namespace Jde::Opc::Server{
 			for( uint i=0; i<allowed.size() && i<r->Results.size(); ++i )
 				result.operationResults[allowed[i]] = r->Results[i];
 		}
+		//An entry refused whole wrote none of its values, and each says so, for a client that reads only theirs.
+		if( UA_StatusCode_isBad(result.statusCode) ){
+			for( let i : allowed )
+				result.operationResults[i] = result.statusCode;
+		}
 		let elapsed = steady_clock::now()-start;
 		_edits.Add( elapsed );
 		DBG( "A history update of {} values held the service lock for {} µs:  {}.", values.size(), duration_cast<microseconds>(elapsed).count(), UAException::Message(result.statusCode) );
@@ -419,6 +484,12 @@ namespace Jde::Opc::Server{
 			return;
 		}
 		let make = [&]( Hist::NodeIndex index )->optional<Hist::EditDetails> {
+			//DateTime's MinValue, 0 on the wire, is a time that isn't given, as a read takes it, and a delete needs both:  the
+			//library would take 0 as 1601.
+			if( details.startTime<=0 || details.endTime<=0 ){
+				result.statusCode = UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
+				return nullopt;
+			}
 			auto& ac = UA_Server_getConfig( &ua )->accessControl;
 			if( ac.allowHistoryUpdateDeleteRawModified && !ac.allowHistoryUpdateDeleteRawModified(&ua, &ac, sessionId, sessionContext, &details.nodeId, details.startTime, details.endTime, details.isDeleteModified) ){
 				result.statusCode = UA_STATUSCODE_BADUSERACCESSDENIED;

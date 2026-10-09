@@ -192,6 +192,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( results[1].Status, UA_STATUSCODE_GOOD );
 		EXPECT_EQ( statuses(results[1]), (vector<StatusCode>{UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT, UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT, UA_STATUSCODE_BADNOTSUPPORTED}) );
 		EXPECT_EQ( results[2].Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_TRUE( results[2].Results.empty() );//refused whole, so no value says Good.
 		EXPECT_EQ( results[3].Status, UA_STATUSCODE_BADINVALIDARGUMENT );
 		EXPECT_EQ( statuses(results[4]), (vector<StatusCode>{UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT}) );
 		EXPECT_FALSE( fs::exists(Mods(March7)) );

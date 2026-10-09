@@ -181,11 +181,7 @@ namespace Jde::Opc::Server{
 		if( !governing )
 			return { All, None };
 		rl _{ Mutex };
-		let rights = RightsOnLocked( governing->Resource, executer );
-		//A row that has gone, or is deleted, opens its nodes, which RightsOnLocked answers All for:  an edit needs one that is enforced.
-		let resource = Resources.find( governing->Resource );
-		let enforced = resource!=Resources.end() && !resource->second.IsDeleted;
-		return { rights, enforced ? rights : None };
+		return RightsOnLocked( governing->Resource, executer );
 	}
 	α OpcAuthorize::GoverningLocked( const NodeId& nodeId )Ι->optional<Governing>{
 		if( !_enabled )
@@ -196,7 +192,7 @@ namespace Jde::Opc::Server{
 			return nullopt; //no root resource: nodes outside a configured branch stay open (protect-specific-branches config).
 		return Governing{ _rootResourcePK, false }; //unmapped node (e.g. created after startup) inherits the root resource instead of granting all access.
 	}
-	α OpcAuthorize::RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights{
+	α OpcAuthorize::RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->NodeAccess{
 		using enum Access::ERights;
 		//Both resource checks precede the user lookup:  whether a node is protected is a property of the resource, not of
 		//who is asking.  The other way round, an unprotected tree answered None to a user with no acl row and All to one
@@ -211,14 +207,15 @@ namespace Jde::Opc::Server{
 			static std::atomic_flag logged;//once:  stable for the life of the process, and this runs per read and per browse.
 			if( !logged.test_and_set() )
 				WARNT( _tags, "Resource {} is no longer loaded - the nodes it covered are unprotected.  AssignRights took it as a base resource when it was still present.", resourcePK.Value );
-			return All;
+			return { All, None };//an edit needs a resource that is enforced.
 		}
 		if( resource->second.IsDeleted )
-			return All; //resource deleted: node no longer protected.
+			return { All, None }; //resource deleted: node no longer protected, and no edit.
 		auto user = Users.find( executer );
 		if( user==Users.end() || user->second.IsDeleted )
-			return None;
-		return user->second.ResourceRights( resourcePK ).Effective();
+			return { None, None };
+		let rights = user->second.ResourceRights( resourcePK ).Effective();
+		return { rights, rights };
 	}
 	α OpcAuthorize::MayBrowse( const NodeId& nodeId, UserPK executer )ι->bool{
 		optional<Governing> governing;
@@ -236,12 +233,12 @@ namespace Jde::Opc::Server{
 		}
 		using enum Access::ERights;
 		rl _{ Mutex };
-		if( !empty(RightsOnLocked(governing->Resource, executer) & Read) )
+		if( !empty(RightsOnLocked(governing->Resource, executer).Rights & Read) )
 			return true;
 		if( !governing->InTree )
 			return typeNode;
 		for( let pk : beneath ){
-			if( !empty(RightsOnLocked(pk, executer) & Read) )
+			if( !empty(RightsOnLocked(pk, executer).Rights & Read) )
 				return true;
 		}
 		return false;

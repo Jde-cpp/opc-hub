@@ -117,9 +117,9 @@ namespace Jde::Opc::Hist{
 	struct DeleteAtTime{ NodeIndex Node; vector<UA_DateTime> Times; };
 	using EditDetails = variant<UpdateData,DeleteRaw,DeleteAtTime>;
 	//Part 11's HistoryUpdateResult:  the entry's status, and one per value or time, in the request's order, for an
-	//UpdateData or a DeleteAtTime.  Good_EntryInserted and Good_EntryReplaced say what an UpdateData did, Bad_EntryExists
-	//and Bad_NoEntryExists what it refused; a DeleteRaw that found nothing in its range is Bad_NoData, and a DeleteAtTime
-	//time that holds nothing Bad_NoEntryExists.
+	//UpdateData or a DeleteAtTime the status doesn't refuse whole.  Good_EntryInserted and Good_EntryReplaced say what an
+	//UpdateData did, Bad_EntryExists and Bad_NoEntryExists what it refused; a DeleteRaw that found nothing in its range is
+	//Bad_NoData, and a DeleteAtTime time that holds nothing Bad_NoEntryExists.
 	struct EditResult{ StatusCode Status{ UA_STATUSCODE_GOOD }; vector<StatusCode> Results; };
 
 	struct Group;

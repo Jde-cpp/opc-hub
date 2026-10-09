@@ -71,7 +71,9 @@ namespace Jde::Opc::Server{
 		α AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited, vector<NodeId>& path, std::map<NodeId, vector<Access::ResourcePK>>& beneath )ι->void;
 		struct NodeAccess final{ Access::ERights Rights; Access::ERights Edits; };//NodeRights and EditRights, from one look at the governing resource.
 		α Resolve( const NodeId& nodeId, UserPK executer )ι->NodeAccess;
-		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->Access::ERights;
+		//The user's rights on the resource, All where it is gone or deleted, and the edit rights, None there:  an edit needs
+		//a resource that is enforced.
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α RightsOnLocked( Access::ResourcePK resourcePK, UserPK executer )ι->NodeAccess;
 		struct Governing final{ Access::ResourcePK Resource; bool InTree; };//InTree:  AssignRights' walk under Objects mapped the node.
 		//The resource governing the node - its own, the nearest configured ancestor's, else root - or nullopt when it is open:
 		//no base resources at all, or none over it and no root.
