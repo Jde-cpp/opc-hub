@@ -120,8 +120,10 @@ namespace Jde::DB{
 			let name = Names::ToJson( owner ? owner->Name : Name );
 			if( !empty(rights & Operations) ) // only test if the requested rights intersect with the table's enforced operations
 				p->Test( Schema->Name, name, rights, userPK, sl );
-			else if( !empty(rights & (Create|Update|Delete|Purge)) )//a write outside the ops has no resource row to grant it, so Test passed anyone - it is the system's alone (GHSA-g354-grf2-r8vh).  Reads outside them stay open:  the rights enum, the identities behind users.
+			else if( !empty(rights & (Create|Update|Delete|Purge)) )//no resource row can grant a write outside the ops, nor enforce a read.
 				p->TestSystem( Schema->Name, name, rights, userPK, sl );
+			else
+				p->TestUser( userPK, sl );
 		}
 	}
 

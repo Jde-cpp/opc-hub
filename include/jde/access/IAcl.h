@@ -13,10 +13,10 @@ namespace Jde::Access{
 	};
 	struct IAcl{
 		β Test( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void=0;
-		//A write the table's ops do not declare - a create on identities, an update on resources.  Nothing can grant it, and
-		//ResourceLoadAwait makes no row for it, so Test would read "no active resource" as not enforced and pass anyone;  it is
-		//the system's alone (GHSA-g354-grf2-r8vh).  Table::Authorize asks this instead of Test for such a write.
+		//A write the table's ops do not declare:  no resource row can grant it, and Test reads a missing row as not enforced and
+		//passes anyone, so only the system passes.
 		β TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void=0;
+		β TestUser( UserPK executer, SRCE )Ε->void=0;//a live user, or the system:  Unauthorized for one nobody knows, Forbidden for a deleted one.
 		β Rights( str schemaName, str resourceName, UserPK executer )ι->ERights=0;
 		β UserName( UserPK userPK )ι->string=0;
 	};

@@ -397,7 +397,7 @@ namespace Jde::Access::Tests{
 			EXPECT_NO_THROW( Authorizer()->TestAdminResource(ResourcePK{id}, nobody) ) << "deleted in the cache as well - a deleted resource fail-opens";
 
 		for( let id : ids )
-			Purge( "resource", id, UserPK{UserPK::System} );
+			Purge( "resource", id, system );
 		PurgeUser( nobody, root );
 	}
 

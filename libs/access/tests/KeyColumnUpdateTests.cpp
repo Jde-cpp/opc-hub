@@ -19,7 +19,7 @@ namespace Jde::Access::Tests{
 		//and the request is refused rather than reported as a success that did nothing:  with the pk skipped there is no settable
 		//column left, which UpdateAwait already has a message for.
 		try{
-			QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, resourceId:{} )", id, id+5000), {}, UserPK{UserPK::System} );
+			QL().QuerySync<jvalue>( Ƒ("mutation updateResource( id:{}, resourceId:{} )", id, id+5000), {}, system );
 			ADD_FAILURE() << "the renumber was accepted";
 		}
 		catch( const Exception& e ){

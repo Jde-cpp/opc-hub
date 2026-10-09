@@ -26,6 +26,10 @@ namespace Jde::QL::Tests{
 			if( executer.Value!=UserPK::System )
 				throw Exception{ sl, {ELogTags::Access}, "[{}]User does not have '{}' access to '{}'.", executer.Value, Access::ToString(rights), resourceName };
 		}
+		α TestUser( UserPK executer, SL sl )Ε->void override{
+			if( !executer.Value )
+				throw Exception{ sl, {ELogTags::Access}, "[{}]User not found.", executer.Value };
+		}
 		α Rights( str, str, UserPK )ι->Access::ERights override{ return Access::ERights::All; }
 		α UserName( UserPK )ι->string override{ return {}; }
 		vector<std::pair<string,Access::ERights>> Tested;

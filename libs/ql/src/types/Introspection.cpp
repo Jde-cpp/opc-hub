@@ -256,9 +256,9 @@ namespace QL{
 		auto dbTable = baseTable->QLView ? baseTable->QLView : baseTable;
 		DB::SelectClause select;
 		for_each( fieldTable.Columns, [&select, &dbTable](let& x){
-			if( let c = x.JsonName=="id" ? dbTable->GetPK() : dbTable->FindColumn( x.JsonName ); c )
+			if( let c = x.JsonName=="id" ? dbTable->GetPK() : x.JsonName=="name" ? dbTable->FindColumn( x.JsonName ) : nullptr; c )
 				select.TryAdd( {c} );
-		});//sb only id/name.
+		});
 		DB::Statement statement{
 			select,
 			{ {dbTable} },
@@ -282,7 +282,7 @@ namespace QL{
 		return jTable;
 	}
 
-	α QueryType( const TableQL& typeTable )ε->jobject{
+	α QueryType( const TableQL& typeTable, UserPK executer, SL sl )ε->jobject{
 		let& typeName = typeTable.As<jstring>( "name" ); //variable-aware: raw Args holds the '\b$var' marker when the caller binds name via $variables, which made Find miss the config types.
 		auto dbTable = typeTable.DBTable(); //null for a config-only type (Parser uses FindView when the name is pre-defined) - then preDefined answers everything.
 		let preDefined = _introspection.Find( typeName );
@@ -316,8 +316,12 @@ namespace QL{
 					}
 					y["enumValues"] = enumValues;
 				}
-				else
+				else{
+					THROW_IF( !dbTable, "__type '{}' has no table and no introspection entry.", typeName );
+					if( !dbTable->IsEnum() )//not a lookup table:  its rows are a read, authorized as one - through the view a select would use.
+						(dbTable->QLView ? dbTable->QLView : dbTable)->Authorize( Access::ERights::Read, executer, sl );
 					y = introspectEnum( dbTable, qlTable );
+				}
 			}
 			else
 				THROW( "__type data for '{}' not supported", qlTable.JsonName );

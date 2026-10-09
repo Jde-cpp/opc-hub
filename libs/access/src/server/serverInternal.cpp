@@ -152,11 +152,13 @@ namespace Jde::Access{
 			y = mu<Access::Server::RoleMAwait>( move(m), creds.UserPK(), sl );
 		else if( m.TableName()=="profiles" )//all types - stock UpdateAwait keys on id/name/slug, none of which profiles has - url is scoped to the executer here.
 			y = mu<Access::Server::ProfileAwait>( move(m), creds.UserPK(), sl );
-		else if( creds.UserPK().Value!=UserPK::System ){//writes the tables' ops do not declare, open to an admin (GHSA-g354-grf2-r8vh).  The awaits rerun them as the system, which skips this branch.
+		else if( creds.UserPK().Value!=UserPK::System ){//writes the tables' ops do not declare, open to an admin.  The awaits rerun them as the system, which skips this branch.
 			if( m.TableName()=="permission_rights" && m.Type==Update )//the Permissions tab's save.
 				y = mu<Access::Server::PermissionRightMAwait>( move(m), creds.UserPK(), sl );
 			else if( m.TableName()=="resources" && (m.Type==Create || m.Type==Update) )//the instances' resource sync.
 				y = mu<Access::Server::ResourceMAwait>( move(m), creds.UserPK(), sl );
+			else if( m.TableName()=="providers" && (m.Type==Create || m.Type==Purge) )//a standalone gateway's OpcServer connection.
+				y = mu<Access::Server::ProviderMAwait>( move(m), creds.UserPK(), sl );
 		}
 		return y;
 	}

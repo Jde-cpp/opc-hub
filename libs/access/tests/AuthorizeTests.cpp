@@ -263,6 +263,7 @@ namespace Jde::Access::Tests{
 		ASSERT_EQ( auth->Rights(_schema, _slug, system), All );//all three entry points must agree that System is all-access.
 		EXPECT_NO_THROW( auth->Test(_schema, _slug, All, system) );
 		EXPECT_NO_THROW( auth->TestAdminSlug(_slug, system) );
+		EXPECT_NO_THROW( auth->TestUser(system) );
 
 		const UserPK unknown{ 999 };//...and that an unknown non-System user is not.
 		ASSERT_EQ( auth->Rights(_schema, _slug, unknown), None );
@@ -270,7 +271,7 @@ namespace Jde::Access::Tests{
 		EXPECT_THROW( auth->TestAdminSlug(_slug, unknown), Exception );
 	}
 
-	//access-refactor A4:  Test, TestAdmin and Rights share one lookup, so each state answers alike through all three -
+	//access-refactor A4:  Test, TestAdmin, TestUser and Rights share one lookup, so each state answers alike through all four -
 	//Unauthorized only for who the user is, Forbidden for what they may do.
 	Ω status( function<void()> f )ι->EHttpStatus{
 		try{
@@ -285,16 +286,19 @@ namespace Jde::Access::Tests{
 		auto auth = createAuthorizer();
 		let test = [&]( UserPK user ){ return status( [&]{ auth->Test(_schema, _slug, Read, user); } ); };
 		let testAdmin = [&]( UserPK user ){ return status( [&]{ auth->TestAdminSlug(_slug, user); } ); };
+		let testUser = [&]( UserPK user ){ return status( [&]{ auth->TestUser(user); } ); };
 
 		const UserPK unknown{ 999 };
 		EXPECT_EQ( auth->Rights(_schema, _slug, unknown), None );
 		EXPECT_EQ( test(unknown), EHttpStatus::Unauthorized );
 		EXPECT_EQ( testAdmin(unknown), EHttpStatus::Unauthorized );
+		EXPECT_EQ( testUser(unknown), EHttpStatus::Unauthorized );
 
 		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read | Administer, None} );
 		EXPECT_EQ( rights(*auth), Read | Administer );
 		EXPECT_EQ( test(_user), EHttpStatus::None );
 		EXPECT_EQ( testAdmin(_user), EHttpStatus::None );
+		EXPECT_EQ( testUser(_user), EHttpStatus::None );
 
 		auth->UpdatePermission( PermissionPK{10}, {}, Administer );
 		EXPECT_EQ( rights(*auth), Read );
@@ -305,6 +309,7 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( rights(*auth), None );
 		EXPECT_EQ( test(_user), EHttpStatus::Forbidden );
 		EXPECT_EQ( testAdmin(_user), EHttpStatus::Forbidden );
+		EXPECT_EQ( testUser(_user), EHttpStatus::Forbidden );
 	}
 
 	//todo.md §12: with no remote registered for the schema, the schema overload returns a pre-completed awaitable any coroutine

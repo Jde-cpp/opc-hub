@@ -89,7 +89,12 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, resourceName, rights, executer, sl );
 	}
-	//The statuses TestRights uses:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
+	//FindUserLocked's error as the exception:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
+	[[noreturn]] Ω throwUserStatus( EHttpStatus status, UserPK executer, SL sl )ε->void{
+		if( status==EHttpStatus::Unauthorized )
+			throw Access::AccessException{ sl, executer, EHttpStatus::Unauthorized, "User not found." };
+		throw Access::AccessException{ sl, executer, "User is deleted." };
+	}
 	α Authorize::TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
 		if( executer.Value==UserPK::System )
 			return;
@@ -97,22 +102,25 @@ namespace Jde::Access{
 		throw Access::AccessException{ sl, executer, "User does not have '{}' access to '{}.{}' - the table grants it to no one.", ToString(rights), schemaName, resourceName };
 	}
 	α Authorize::TestUser( UserPK executer, SL sl )Ε->void{
-		if( executer.Value==UserPK::System )
-			return;
 		rl _{ Mutex };
-		auto user = Users.find( executer );
-		THROW_IFX( user==Users.end(), Access::AccessException(sl, executer, EHttpStatus::Unauthorized, "User not found.") );
-		THROW_IFX( user->second.IsDeleted, Access::AccessException(sl, executer, "User is deleted.") );
+		if( let user = FindUserLocked(executer); !user )
+			throwUserStatus( user.error(), executer, sl );
 	}
-	α Authorize::ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>{
+	α Authorize::FindUserLocked( UserPK executer )Ι->std::expected<const User*,EHttpStatus>{
 		if( executer.Value==UserPK::System )
-			return AllowedDisallowed{ ERights::All, ERights::None };
+			return nullptr;
 		auto user = Users.find( executer );
 		if( user==Users.end() )
 			return std::unexpected{ EHttpStatus::Unauthorized };//not a known user - anonymous or stale - the one case the client's 401 policy is for.
 		if( user->second.IsDeleted )
 			return std::unexpected{ EHttpStatus::Forbidden };
-		return user->second.ResourceRights( resourcePK );
+		return &user->second;
+	}
+	α Authorize::ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>{
+		let user = FindUserLocked( executer );
+		if( !user )
+			return std::unexpected{ user.error() };
+		return *user ? (*user)->ResourceRights( resourcePK ) : AllowedDisallowed{ ERights::All, ERights::None };
 	}
 	//AccessException:  a plain Exception carries no http status, so ServerImpl fell through to its InternalServerError branch and
 	//a denial reached the client as 500 "Query failed." - indistinguishable from a broken query.  Forbidden for what the executer
@@ -120,8 +128,8 @@ namespace Jde::Access{
 	//prefix:  ServerImpl formats it through UserName().
 	α Authorize::TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void{
 		let configured = ConfiguredRightsLocked( executer, resourcePK );
-		THROW_IFX( !configured && configured.error()==EHttpStatus::Unauthorized, Access::AccessException(sl, executer, EHttpStatus::Unauthorized, "User not found.") );
-		THROW_IFX( !configured, Access::AccessException(sl, executer, "User is deleted.") );
+		if( !configured )
+			throwUserStatus( configured.error(), executer, sl );
 		THROW_IFX( !empty(configured->Denied & rights), Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
 		THROW_IFX( empty(configured->Allowed & rights), Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
 	}
@@ -189,7 +197,7 @@ namespace Jde::Access{
 		{
 			rl _{ Mutex };
 			auto permission = Permissions.find( permissionPK );
-			THROW_IF( permission==Permissions.end(), "[{}]Permission not found.", permissionPK.Value );
+			THROW_IFX( permission==Permissions.end(), Exception(sl, ExceptionArgs{EHttpStatus::NotFound}, "Permission '{}' not found.", permissionPK.Value) );
 			resourcePK = permission->second.ResourcePK;
 		}
 		TestAdminResource( resourcePK, userPK, sl );

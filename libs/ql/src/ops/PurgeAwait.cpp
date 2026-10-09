@@ -27,7 +27,7 @@ namespace Jde::QL{
 	}
 	//An extension's purge proc checks the kind itself (access_user_purge, access_group_purge).  Only the mutation's own table is
 	//authorized (await_ready):  the row it extends is the same entity, and the extended tables - identities, permissions - declare
-	//no ops, so authorizing them here would refuse everyone but the system (GHSA-g354-grf2-r8vh).
+	//no ops, so authorizing them here would refuse everyone but the system.
 	α PurgeAwait::Statements( const DB::Table& table, const optional<DB::Criteria>& kind )ε->vector<DB::Sql>{
 		auto pk = table.Extends ? table.SurrogateKeys[0] : table.GetPK();
 		DB::Sql sql{
