@@ -274,7 +274,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//A node the server refuses answers with the server's status beside the others' values, and a range with nothing in
 	//it with its Good_NoData:  the gateway checks nothing of its own.  A modified read passes through as one, which
-	//OpcServer refuses until it serves edits (#210).
+	//OpcServer serves (#210):  nothing is edited here, so it holds no values, with the node's Good_NoData.
 	TEST_F( HistTests, AnswersWithTheServersStatus ){
 		let page = Read( {.Nodes={Status2, Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=100} );
 		EXPECT_EQ( page.Values.size(), 6u );
@@ -290,6 +290,11 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( nothing.Statuses.at(Node(RpmManual)), UA_STATUSCODE_GOODNODATA );
 
 		jobject vars{ {"opc", OpcServerSlug}, {"node", Node(Rpm4).ToJson()}, {"start", UADateTime{At(0, 0)}.ToJson()}, {"end", UADateTime{At(3, 0)}.ToJson()} };
-		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("hist( opc: $opc, nodes: $node, start: $start, end: $end, modified: true ){ values{ value } }", vars, true) )), GatewayErrorResponse );
+		let modified = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("hist( opc: $opc, nodes: $node, start: $start, end: $end, modified: true ){ values{ value } nodes{ node status } }", vars, true) );
+		let& o = modified.as_object();
+		EXPECT_TRUE( Json::AsArray(o, "values").empty() );
+		let& nodes = Json::AsArray( o, "nodes" );
+		ASSERT_EQ( nodes.size(), 1u );
+		EXPECT_EQ( Json::AsNumber<StatusCode>(nodes[0].as_object(), "status"), UA_STATUSCODE_GOODNODATA );
 	}
 }

@@ -93,11 +93,11 @@ namespace Jde::Opc::Hist{
 				continue;
 			}
 			if( let update = get_if<UpdateData>(&details) ){
-				result.Results.assign( update->Values.size(), UA_STATUSCODE_GOOD );
 				if( update->Type!=UA_PERFORMUPDATETYPE_INSERT && update->Type!=UA_PERFORMUPDATETYPE_REPLACE && update->Type!=UA_PERFORMUPDATETYPE_UPDATE ){
 					result.Status = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
 					continue;
 				}
+				result.Results.assign( update->Values.size(), UA_STATUSCODE_GOOD );
 				for( uint i=0; i<update->Values.size(); ++i ){
 					let& v = update->Values[i];
 					let day = v.hasSourceTimestamp ? dayOf( v.sourceTimestamp, tz ) : nullopt;

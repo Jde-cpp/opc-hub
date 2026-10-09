@@ -109,11 +109,13 @@ namespace Jde::Opc::Server{
 	Ω load( UA_Server& ua, NodeId id, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->Historized{
 		let label = id.ToString();
 		//UserAccessLevel is the node's AccessLevel masked by the user's rights, and a nodeset's often lacks the history
-		//bit, without which a client never offers the node's history.
+		//bits, without which a client never offers the node's history:  HistoryRead, and HistoryWrite since Insert,
+		//Replace, Update and DeleteRaw are served.  A nodeset that set HistoryRead set the history bits it meant, and with
+		//HistoryRead alone, as companion nodesets' 5 has it, made the history read-only, which it stays.
 		UA_Byte accessLevel{};
 		UAε( UA_Server_readAccessLevel(&ua, id, &accessLevel) );
 		if( !(accessLevel & UA_ACCESSLEVELMASK_HISTORYREAD) )
-			UAε( UA_Server_writeAccessLevel(&ua, id, accessLevel | UA_ACCESSLEVELMASK_HISTORYREAD) );
+			UAε( UA_Server_writeAccessLevel(&ua, id, accessLevel | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE) );
 
 		auto found = child( ua, id, Configuration );
 		let made = !found;

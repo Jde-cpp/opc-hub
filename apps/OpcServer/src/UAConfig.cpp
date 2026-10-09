@@ -39,12 +39,14 @@ namespace Jde::Opc::Server{
 		//The history backend, only with a historian:  open62541 answers every HistoryRead Bad_NotSupported while the
 		//database's context is null, which is the answer of a server with no hist block, or whose hist.path another
 		//process holds.  open62541 publishes HistoryServerCapabilities from these flags, each set only for what is
-		//served:  raw reads so far.
+		//served:  raw and modified reads, and the four edits the plugin has a callback for - it has none for
+		//DeleteAtTime, which stays QL-only (historian spec *UA backend*).
 		if( history && history->Enabled() ){
 			historyDatabase = history->Database();
 			nodeLifecycle = UAHistory::Lifecycle();
 			accessHistoryDataCapability = true;
 			maxReturnDataValues = history->ReadLimit();
+			insertDataCapability = replaceDataCapability = updateDataCapability = deleteRawCapability = true;
 		}
 	}
 

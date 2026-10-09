@@ -114,7 +114,8 @@ function( sync=false )
 		//The history of the variables a nodeset marks Historizing="true", each under its HA Configuration object
 		//(libs/historian/docs/spec.md, *OpcServer*).  Without this block the server keeps none and answers HistoryRead
 		//Bad_NotSupported.  The other keys, at their defaults:  delay "PT1M", maxBuffer 67108864, readLimit 10000 and
-		//timeZone "UTC", an IANA name that must not change once `path` holds files.
+		//timeZone "UTC", an IANA name that must not change once `path` holds files;  and OpcServer's own, editTimeout "PT5S",
+		//how long a HistoryUpdate waits, holding the service lock, for the flush that writes it before it answers Bad_Timeout.
 		hist:{
 			path: logsDir + "/hist/opc-server"
 		},

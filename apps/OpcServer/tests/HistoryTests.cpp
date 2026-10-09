@@ -1,7 +1,11 @@
 //Historian 2A (#209):  OpcServer collects the variables its nodesets mark Historizing through open62541's setValue and
 //serves them to a UA client's HistoryRead - here open62541's synchronous client helpers, over a session of this
-//program's own identity.
+//program's own identity.  2B (#210):  it edits them through HistoryUpdate, which needs a grant on an enforced resource,
+//and serves the modified values.
 #include <fstream>
+#include <thread>
+#include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/notification.h>
 #include <open62541/client.h>
 #include <open62541/client_config_default.h>
 #include <open62541/client_highlevel.h>
@@ -10,6 +14,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/process/execution.h>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/BrowsePath.h>
@@ -46,6 +51,15 @@ namespace Jde::Opc::Server::Tests{
 		}
 		struct Reading final{ UA_StatusCode Status; Pages Values; };
 		struct Request final{ optional<TimePoint> Start; optional<TimePoint> End; bool Bounds{}; UA_UInt32 Limit{}; UA_TimestampsToReturn Timestamps{ UA_TIMESTAMPSTORETURN_BOTH }; uint MaxPages{ std::numeric_limits<uint>::max() }; };
+		//A modified read's, every page's values and ModificationInfos together.
+		struct Info final{ UA_DateTime Time; UA_HistoryUpdateType Type; string User; };
+		struct Modified final{ UA_StatusCode Status; vector<Value> Values; vector<Info> Infos; };
+		Ω types( const vector<Info>& infos )ι->vector<UA_HistoryUpdateType>{
+			vector<UA_HistoryUpdateType> y;
+			for( let& i : infos )
+				y.push_back( i.Type );
+			return y;
+		}
 	}
 
 	struct HistoryTests : ::testing::Test{
@@ -56,6 +70,7 @@ namespace Jde::Opc::Server::Tests{
 			auto& ua = GetUAServer();
 			ua.Load( pumps );
 			AddArray( ua );
+			AddReadOnly( ua );
 			AddType( ua );
 			ua.History().Load( ua );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
@@ -81,6 +96,19 @@ namespace Jde::Opc::Server::Tests{
 		//A type with a member marked Historizing, as companion nodesets mark them, and another inside the type's object
 		//`part`, both Mandatory, and an instance of the type, which open62541 gives copies of both, mark and modelling rule
 		//included.
+		//A historizing Double whose AccessLevel is CurrentRead and HistoryRead, 5, as companion nodesets mark theirs:  history
+		//read-only.
+		Ω ReadOnly()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.ReadOnly") }; }
+		Ω AddReadOnly( UAServer& ua )ε->void{
+			UA_VariableAttributes attributes = UA_VariableAttributes_default;
+			UA_Double value{};
+			UA_Variant_setScalar( &attributes.value, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
+			attributes.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+			attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_HISTORYREAD;
+			attributes.historizing = true;
+			UAε( UA_Server_addVariableNode(ua.Ptr(), ReadOnly(), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(1, (char*)"HistoryTests.ReadOnly"),
+				UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
+		}
 		Ω TypeMember()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type.member") }; }
 		Ω PartMember()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Type.part.member") }; }
 		Ω Instance()ι->NodeId{ return NodeId{ UA_NODEID_STRING_ALLOC(1, "HistoryTests.Instance") }; }
@@ -105,6 +133,37 @@ namespace Jde::Opc::Server::Tests{
 			UAε( UA_Server_addObjectNode(server, Instance(), NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(1, (char*)"HistoryTests.Instance"), type,
 				UA_ObjectAttributes_default, nullptr, nullptr) );
 		}
+		//An edit needs Update, or Delete, granted on a resource that is enforced (spec *Authorization*):  the root nodeIds
+		//resource, enforced, with this program's user granted everything on it through a role of its own, find-or-create
+		//as AccessTests' are, since the suites share one db in a run.  The grant is made while the resource is unenforced,
+		//which is when the delegated admin check passes a user that administers nothing yet.
+		Ω Enforce()ε->void{
+			auto app = AppClient();
+			let schema = "opc."+Settings::FindString( "/opcServer/resource" ).value_or( "test" );
+			let nodeSlug = jobject{ {"slug","nodeIds"} };
+			//Each change reaches the authorizer as an event:  the delete's is waited for before the restore, or the wait for
+			//the restore could end on the state before the delete, and the delete's event reopen the nodes after it.
+			auto& authorizer = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+			let reached = [&]( bool active, sv change ){
+				for( uint i=0; authorizer.FindActiveResourcePK(schema, "nodeIds", "").has_value()!=active; ++i ){
+					THROW_IF( i==200, "The nodeIds resource's {} didn't reach the authorizer.", change );
+					std::this_thread::sleep_for( 50ms );
+				}
+			};
+			app->QuerySync<jvalue>( "deleteResource( slug:$slug, criteria:null )", nodeSlug );
+			reached( false, "delete" );
+			constexpr sv roleSlug{ "HistoryEditor" };
+			if( app->QuerySync("role(slug:$slug){id}", {{"slug", roleSlug}}).empty() ){
+				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "History editor"}} );
+				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
+				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}, {"schema", schema}} );
+				app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
+			}
+			app->QuerySync<jvalue>( "restoreResource( slug:$slug, criteria:null )", nodeSlug );
+			reached( true, "restore" );//then map the nodes under the resource.
+			authorizer.AssignRights( GetUAServer() );
+			THROW_IF( empty(authorizer.EditRights(Node(Rpm1), app->UserPK()) & Access::ERights::Update), "This program's user can't edit history." );
+		}
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );//lets go of the path, and takes it again:  what an earlier run left goes, but for the lock.
 			let path = Settings::FindPath( "/opcServer/hist/path" );
@@ -115,6 +174,7 @@ namespace Jde::Opc::Server::Tests{
 			}
 			_base = floor<seconds>( Clock::now() )-1min;
 			Start( nodeset() );
+			Enforce();
 			Connect();
 		}
 		Ω TearDownTestCase()ι->void{ Disconnect(); }
@@ -178,7 +238,7 @@ namespace Jde::Opc::Server::Tests{
 		Ω Read( const NodeId& node, Request request )ι->Reading{
 			struct Context final{ Pages Values; uint MaxPages; };
 			Context context{ {}, request.MaxPages };
-			let onPage = []( UA_Client*, const UA_NodeId*, UA_Boolean /*more*/, const UA_ExtensionObject* data, void* context )->UA_Boolean{
+			let onPage = []( UA_Client*, const UA_NodeId*, UA_Boolean /*more*/, const UA_ExtensionObject* data, void* context )->UA_Boolean {
 				auto& y = *static_cast<Context*>( context );
 				auto& page = y.Values.emplace_back();
 				if( data->encoding==UA_EXTENSIONOBJECT_DECODED && data->content.decoded.type==&UA_TYPES[UA_TYPES_HISTORYDATA] ){
@@ -193,6 +253,97 @@ namespace Jde::Opc::Server::Tests{
 			return { sc, move(context.Values) };
 		}
 		Ω Read( UA_UInt32 id, Request request )ι->Reading{ return Read( Node(id), move(request) ); }
+		//UA_Client_HistoryRead_modified, every page's values and ModificationInfos.
+		Ω ReadModified( UA_UInt32 id, Request request )ι->Modified{
+			let node = Node( id );
+			Modified y{};
+			let onPage = []( UA_Client*, const UA_NodeId*, UA_Boolean, const UA_ExtensionObject* data, void* context )->UA_Boolean {
+				auto& y = *static_cast<Modified*>( context );
+				if( data->encoding==UA_EXTENSIONOBJECT_DECODED && data->content.decoded.type==&UA_TYPES[UA_TYPES_HISTORYMODIFIEDDATA] ){
+					let& history = *static_cast<const UA_HistoryModifiedData*>( data->content.decoded.data );
+					for( uint i=0; i<history.dataValuesSize; ++i )
+						y.Values.emplace_back( history.dataValues[i] );
+					for( uint i=0; i<history.modificationInfosSize; ++i )
+						y.Infos.push_back( {history.modificationInfos[i].modificationTime, history.modificationInfos[i].updateType, ToString(history.modificationInfos[i].userName)} );
+				}
+				return true;
+			};
+			let ticks = []( optional<TimePoint> t ){ return t ? UADateTime{ *t }.UA() : UA_DateTime{}; };
+			y.Status = UA_Client_HistoryRead_modified( _client, &node, onPage, ticks(request.Start), ticks(request.End), UA_STRING_NULL, request.Bounds, request.Limit, request.Timestamps, &y );
+			return y;
+		}
+		//A value as a HistoryUpdate carries it, keyed by its SourceTimestamp.
+		Ω Sample( double value, TimePoint source )ι->Value{
+			UA_Variant v; UA_Variant_init( &v );
+			UA_Variant_setScalarCopy( &v, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
+			Value y{ move(v) };
+			y.sourceTimestamp = UADateTime{ source }.UA();
+			y.hasSourceTimestamp = true;
+			return y;
+		}
+		//open62541's client helpers:  the one value's result, or the entry's status when that isn't Good - and Bad_UnexpectedError
+		//for an entry refused whole, which carries no value results, so those go through HistoryUpdate below.
+		Ω Insert( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_insert( _client, &node, &v ); }
+		Ω Replace( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_replace( _client, &node, &v ); }
+		Ω Update( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_update( _client, &node, &v ); }
+		Ω DeleteRaw( UA_UInt32 id, TimePoint start, TimePoint end )ι->UA_StatusCode{ let node = Node( id ); return UA_Client_HistoryUpdate_deleteRaw( _client, &node, UADateTime{start}.UA(), UADateTime{end}.UA() ); }
+		//A HistoryUpdate of one entry the helpers don't send:  its result's status, and each value's.
+		struct Updated final{ UA_StatusCode Status; vector<UA_StatusCode> Results; };
+		Ω HistoryUpdate( void* details, uint type )ι->Updated{
+			UA_HistoryUpdateRequest request; UA_HistoryUpdateRequest_init( &request );
+			UA_ExtensionObject entry; UA_ExtensionObject_init( &entry );
+			entry.encoding = UA_EXTENSIONOBJECT_DECODED;
+			entry.content.decoded.type = &UA_TYPES[type];
+			entry.content.decoded.data = details;
+			request.historyUpdateDetailsSize = 1;
+			request.historyUpdateDetails = &entry;
+			auto response = UA_Client_Service_historyUpdate( _client, request );
+			Updated y{ response.responseHeader.serviceResult, {} };
+			if( !y.Status && response.resultsSize==1 ){
+				y.Status = response.results[0].statusCode;
+				y.Results.assign( response.results[0].operationResults, response.results[0].operationResults+response.results[0].operationResultsSize );
+			}
+			UA_HistoryUpdateResponse_clear( &response );
+			return y;
+		}
+		//One value's UpdateData as the service answers it:  the entry's status, and the value's when the entry is Good.
+		Ω InsertEntry( UA_UInt32 id, Value& value )ι->Updated{
+			let node = Node( id );
+			UA_UpdateDataDetails details; UA_UpdateDataDetails_init( &details );
+			details.nodeId = node;
+			details.performInsertReplace = UA_PERFORMUPDATETYPE_INSERT;
+			details.updateValuesSize = 1;
+			details.updateValues = &value;
+			return HistoryUpdate( &details, UA_TYPES_UPDATEDATADETAILS );
+		}
+		//The backend's edit callbacks themselves, for a session of user's:  an UpdateData's status and its value's result, as
+		//HistoryUpdate has them, since a value the grant refuses leaves the status Good, and a delete's status.
+		Ω UpdateCallback( UA_UInt32 id, UAAccess::SessionContext* session, double value, TimePoint source )ι->Updated{
+			let node = Node( id );
+			auto v = Sample( value, source );
+			UA_UpdateDataDetails details; UA_UpdateDataDetails_init( &details );
+			details.nodeId = node;
+			details.performInsertReplace = UA_PERFORMUPDATETYPE_INSERT;
+			details.updateValuesSize = 1;
+			details.updateValues = &v;
+			UA_HistoryUpdateResult result; UA_HistoryUpdateResult_init( &result );
+			History().UpdateData( GetUAServer(), nullptr, session, details, result );
+			Updated y{ result.statusCode, {result.operationResults, result.operationResults+result.operationResultsSize} };
+			UA_HistoryUpdateResult_clear( &result );
+			return y;
+		}
+		Ω DeleteCallback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint start, TimePoint end )ι->UA_StatusCode{
+			let node = Node( id );
+			UA_DeleteRawModifiedDetails details; UA_DeleteRawModifiedDetails_init( &details );
+			details.nodeId = node;
+			details.startTime = UADateTime{ start }.UA();
+			details.endTime = UADateTime{ end }.UA();
+			UA_HistoryUpdateResult result; UA_HistoryUpdateResult_init( &result );
+			History().DeleteRawModified( GetUAServer(), nullptr, session, details, result );
+			let status = result.statusCode;
+			UA_HistoryUpdateResult_clear( &result );
+			return status;
+		}
 		//The backend's callback itself, for a session of user's:  the result's status.
 		Ω Callback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint start, TimePoint end )ι->UA_StatusCode{
 			let node = Node( id );
@@ -287,7 +438,7 @@ namespace Jde::Opc::Server::Tests{
 		for( let id : {Status1, Rpm1, Rpm2, Rpm3, Rpm4, RpmManual} ){
 			UA_Byte level{};
 			ASSERT_EQ( UA_Server_readAccessLevel(ua, Node(id), &level), UA_STATUSCODE_GOOD ) << id;
-			EXPECT_EQ( level, UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE | UA_ACCESSLEVELMASK_HISTORYREAD ) << id;
+			EXPECT_EQ( level, UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE ) << id;
 			UA_Boolean historizing{};
 			EXPECT_EQ( UA_Server_readHistorizing(ua, Node(id), &historizing), UA_STATUSCODE_GOOD ) << id;
 			EXPECT_TRUE( historizing ) << id;//the loader keeps the attribute.
@@ -335,14 +486,16 @@ namespace Jde::Opc::Server::Tests{
 		}
 	}
 
-	//Only what is served is claimed:  raw reads, at most readLimit values a call.
+	//Only what is served is claimed:  raw and modified reads, at most readLimit values a call, and the four edits the
+	//plugin has a callback for.
 	TEST_F( HistoryTests, PublishesItsCapabilities ){
 		let capability = []( UA_UInt32 id ){ return Variant( NodeId{0, id} ); };
 		EXPECT_TRUE( capability(UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYDATACAPABILITY).Get<UA_Boolean>(0) );
 		EXPECT_EQ( capability(UA_NS0ID_HISTORYSERVERCAPABILITIES_MAXRETURNDATAVALUES).Get<UA_UInt32>(0), History().ReadLimit() );
 		EXPECT_EQ( History().ReadLimit(), 10'000u );
-		for( let id : {UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYEVENTSCAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTDATACAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEDATACAPABILITY,
-			UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEDATACAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETERAWCAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEATTIMECAPABILITY} )
+		for( let id : {UA_NS0ID_HISTORYSERVERCAPABILITIES_INSERTDATACAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_REPLACEDATACAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_UPDATEDATACAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETERAWCAPABILITY} )
+			EXPECT_TRUE( capability(id).Get<UA_Boolean>(0) ) << id;
+		for( let id : {UA_NS0ID_HISTORYSERVERCAPABILITIES_ACCESSHISTORYEVENTSCAPABILITY, UA_NS0ID_HISTORYSERVERCAPABILITIES_DELETEATTIMECAPABILITY} )
 			EXPECT_FALSE( capability(id).Get<UA_Boolean>(0) ) << id;
 	}
 
@@ -461,25 +614,229 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( Read(Node(999'999), {.Start=At(0), .End=At(10)}).Status, UA_STATUSCODE_BADNODEIDUNKNOWN );
 		EXPECT_EQ( Read(Rpm4, {.Start=At(0)}).Status, UA_STATUSCODE_BADHISTORYOPERATIONINVALID );//two of start, end and a count bound a read.
 		EXPECT_EQ( Read(Rpm4, {.Start=At(0), .End=At(10), .Timestamps=UA_TIMESTAMPSTORETURN_NEITHER}).Status, UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT );
+		EXPECT_EQ( ReadModified(Rpm4, {.Start=At(0), .End=At(10), .Bounds=true}).Status, UA_STATUSCODE_BADINVALIDARGUMENT );//the modified values have no bounds.
+
+		//The edits:  a node that isn't historized, one that isn't there, a value with no SourceTimestamp, a delete without
+		//both times, and what isn't served.
+		auto one = Sample( 1, At(0) );
+		EXPECT_EQ( InsertEntry(Status2, one).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( DeleteRaw(Status2, At(0), At(10)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( InsertEntry(999'999, one).Status, UA_STATUSCODE_BADNODEIDUNKNOWN );
+		EXPECT_EQ( Insert(Status2, 1, At(0)), UA_STATUSCODE_BADUNEXPECTEDERROR );//the helper's answer to an entry refused whole.
+		{
+			UA_Variant v; UA_Variant_init( &v );
+			const double one{ 1 };
+			UA_Variant_setScalarCopy( &v, &one, &UA_TYPES[UA_TYPES_DOUBLE] );
+			Value unstamped{ move(v) };
+			let node = Node( Rpm4 );
+			EXPECT_EQ( UA_Client_HistoryUpdate_insert(_client, &node, &unstamped), UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT );
+		}
 		let node = Node( Rpm4 );
-		let modified = UA_Client_HistoryRead_modified( _client, &node, []( UA_Client*, const UA_NodeId*, UA_Boolean, const UA_ExtensionObject*, void* )->UA_Boolean{ return true; },
-			UADateTime{At(0)}.UA(), UADateTime{At(10)}.UA(), UA_STRING_NULL, false, 0, UA_TIMESTAMPSTORETURN_BOTH, nullptr );
-		EXPECT_EQ( modified, UA_STATUSCODE_BADNOTSUPPORTED );//with the edits, #210.
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, 0, UADateTime{At(10)}.UA()), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );//not from 1601.
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, UADateTime{At(0)}.UA(), 0), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
+		UA_DeleteAtTimeDetails atTime; UA_DeleteAtTimeDetails_init( &atTime );
+		atTime.nodeId = node;
+		UA_DateTime time{ UADateTime{At(0)}.UA() };
+		atTime.reqTimesSize = 1;
+		atTime.reqTimes = &time;
+		EXPECT_EQ( HistoryUpdate(&atTime, UA_TYPES_DELETEATTIMEDETAILS).Status, UA_STATUSCODE_BADNOTSUPPORTED );//open62541 has no callback for it.
+		UA_DeleteRawModifiedDetails modified; UA_DeleteRawModifiedDetails_init( &modified );
+		modified.nodeId = node;
+		modified.isDeleteModified = true;
+		modified.startTime = time;
+		modified.endTime = UADateTime{ At(10) }.UA();
+		EXPECT_EQ( HistoryUpdate(&modified, UA_TYPES_DELETERAWMODIFIEDDETAILS).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );//the audit trail.
+		auto v = Sample( 1, At(0) );
+		UA_UpdateDataDetails remove; UA_UpdateDataDetails_init( &remove );
+		remove.nodeId = node;
+		remove.performInsertReplace = UA_PERFORMUPDATETYPE_REMOVE;//annotations'.
+		remove.updateValuesSize = 1;
+		remove.updateValues = &v;
+		let removed = HistoryUpdate( &remove, UA_TYPES_UPDATEDATADETAILS );
+		EXPECT_EQ( removed.Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( removed.Results, vector<UA_StatusCode>{UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED} );//refused whole, so its value is too.
+	}
+
+	//A value a Write of the variable would refuse answers Bad_TypeMismatch in its place, and the rest are written:  a
+	//String, an Int64 or an array for Rpm4's scalar Double, and a scalar for the array's.
+	TEST_F( HistoryTests, RefusesAValueOfTheWrongType ){
+		static_assert( sizeof(Value)==sizeof(UA_DataValue) );//an array of them is the request's.
+		let stamped = []( UA_Variant v, TimePoint source ){
+			Value y{ move(v) };
+			y.sourceTimestamp = UADateTime{ source }.UA();
+			y.hasSourceTimestamp = true;
+			return y;
+		};
+		let scalar = [&]( const void* p, uint type, TimePoint source ){
+			UA_Variant v; UA_Variant_init( &v );
+			UA_Variant_setScalarCopy( &v, p, &UA_TYPES[type] );
+			return stamped( v, source );
+		};
+		let array = [&]( std::initializer_list<UA_Double> values, TimePoint source ){
+			UA_Variant v; UA_Variant_init( &v );
+			UA_Variant_setArrayCopy( &v, values.begin(), values.size(), &UA_TYPES[UA_TYPES_DOUBLE] );
+			return stamped( v, source );
+		};
+		let update = []( const UA_NodeId& node, vector<Value>& values ){
+			UA_UpdateDataDetails details; UA_UpdateDataDetails_init( &details );
+			details.nodeId = node;
+			details.performInsertReplace = UA_PERFORMUPDATETYPE_INSERT;
+			details.updateValuesSize = values.size();
+			details.updateValues = values.data();
+			return HistoryUpdate( &details, UA_TYPES_UPDATEDATADETAILS );
+		};
+		const UA_String text{ UA_STRING((char*)"five") };
+		const UA_Int64 wide{ 5 };
+		vector<Value> rpm4{ Sample(5, At(57)), scalar(&text, UA_TYPES_STRING, At(58)), scalar(&wide, UA_TYPES_INT64, At(58)), array({5, 6}, At(58)) };
+		let updated = update( Node(Rpm4), rpm4 );
+		EXPECT_EQ( updated.Status, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( updated.Results, (vector<UA_StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADTYPEMISMATCH, UA_STATUSCODE_BADTYPEMISMATCH, UA_STATUSCODE_BADTYPEMISMATCH}) );
+		EXPECT_EQ( doubles(all(Read(Rpm4, {.Start=At(57), .End=At(59)}).Values)), vector<double>{5} );
+
+		const UA_Double one{ 1 };
+		vector<Value> arrays{ array({1, 2}, At(58)), scalar(&one, UA_TYPES_DOUBLE, At(59)) };
+		EXPECT_EQ( update(Array(), arrays).Results, (vector<UA_StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADTYPEMISMATCH}) );
+	}
+
+	//HistoryUpdate through open62541's client helpers, each value's result the library's:  a raw read then sees the
+	//series as edited, and a modified read the values the edits changed, by the time they target and in the order made,
+	//each with who made it and when.  A delete's range holds its start and not its end, as a read's does, and
+	//startTime equal to endTime is that instant.  Rpm4 stores each write here:  a node with a MinTimeInterval holds a
+	//write stamped before its last stored value as its pending value, which the next replaces.
+	TEST_F( HistoryTests, EditsHistory ){
+		Write( Rpm4, 100, At(40) );
+		Write( Rpm4, 200, At(42) );
+		Write( Rpm4, 300, At(44) );
+		EXPECT_EQ( Insert(Rpm4, 150, At(41)), UA_STATUSCODE_GOODENTRYINSERTED );//flushes the buffer first, so the 100 is on disk to refuse the next.
+		EXPECT_EQ( Insert(Rpm4, 1, At(40)), UA_STATUSCODE_BADENTRYEXISTS );
+		EXPECT_EQ( Replace(Rpm4, 250, At(42)), UA_STATUSCODE_GOODENTRYREPLACED );
+		EXPECT_EQ( Replace(Rpm4, 9, At(43)), UA_STATUSCODE_BADNOENTRYEXISTS );
+		EXPECT_EQ( Update(Rpm4, 350, At(44)), UA_STATUSCODE_GOODENTRYREPLACED );
+		EXPECT_EQ( Update(Rpm4, 400, At(46)), UA_STATUSCODE_GOODENTRYINSERTED );
+		EXPECT_EQ( doubles(all(Read(Rpm4, {.Start=At(40), .End=At(47)}).Values)), (vector<double>{100, 150, 250, 350, 400}) );
+		EXPECT_EQ( DeleteRaw(Rpm4, At(41), At(44)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( doubles(all(Read(Rpm4, {.Start=At(40), .End=At(47)}).Values)), (vector<double>{100, 350, 400}) );
+		EXPECT_EQ( DeleteRaw(Rpm4, At(41), At(44)), UA_STATUSCODE_BADNODATA );
+		EXPECT_EQ( DeleteRaw(Rpm4, At(46), At(46)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( DeleteRaw(Rpm4, At(44), At(41)), UA_STATUSCODE_BADINVALIDARGUMENT );
+		EXPECT_EQ( doubles(all(Read(Rpm4, {.Start=At(40), .End=At(47)}).Values)), (vector<double>{100, 350}) );
+
+		let before = UA_DateTime_now()-UA_DATETIME_SEC*60;
+		let modified = ReadModified( Rpm4, {.Start=At(40), .End=At(47)} );
+		EXPECT_TRUE( UA_StatusCode_isGood(modified.Status) ) << UA_StatusCode_name( modified.Status );
+		EXPECT_EQ( doubles(modified.Values), (vector<double>{150, 150, 200, 250, 300, 400, 400}) );//an INSERT's is the value inserted, the others' the one replaced.
+		EXPECT_EQ( types(modified.Infos), (vector<UA_HistoryUpdateType>{UA_HISTORYUPDATETYPE_INSERT, UA_HISTORYUPDATETYPE_DELETE, UA_HISTORYUPDATETYPE_REPLACE, UA_HISTORYUPDATETYPE_DELETE, UA_HISTORYUPDATETYPE_UPDATE, UA_HISTORYUPDATETYPE_UPDATE, UA_HISTORYUPDATETYPE_DELETE}) );
+		ASSERT_EQ( modified.Values.size(), 7u );
+		EXPECT_EQ( modified.Values[2].sourceTimestamp, UADateTime{At(42)}.UA() );
+		EXPECT_TRUE( modified.Values[2].hasServerTimestamp );//the original, as collected.
+		let user = GetSchema().Authorizer->UserName( AppClient()->UserPK() );
+		for( let& info : modified.Infos ){
+			EXPECT_EQ( info.User, user );
+			EXPECT_GE( info.Time, before );
+			EXPECT_LE( info.Time, UA_DateTime_now() );
+		}
+		EXPECT_EQ( ReadModified(Rpm4, {.Start=At(45), .End=At(46)}).Status, UA_STATUSCODE_GOODNODATA );
+		let paged = ReadModified( Rpm4, {.Start=At(47), .End=At(40), .Limit=3} );//in reverse, three a page.
+		EXPECT_EQ( doubles(paged.Values), (vector<double>{400, 400, 300, 250, 200, 150, 150}) );
+		EXPECT_GT( History().Edits().Count, 0u );
+	}
+
+	//An edit needs Update, a delete Delete, granted on a resource that is enforced:  a stranger is refused whichever way
+	//the node answers reads, and on an open server, where reads answer All, the edits answer None and UserAccessLevel
+	//leaves HistoryWrite out, so a client sees the history as read-only before it tries (spec *Authorization*, #237).
+	TEST_F( HistoryTests, EditsNeedAnEnforcedGrant ){
+		auto& authorizer = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+		let node = Node( Rpm1 );
+		const UserPK stranger{ 0x7FFF'FFF0 };
+		UAAccess::SessionContext session{ "", TimePoint::max(), 0, stranger };
+		EXPECT_EQ( UpdateCallback(Rpm1, &session, 1, At(50)).Status, UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( DeleteCallback(Rpm1, &session, At(40), At(50)), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( UpdateCallback(Rpm1, nullptr, 1, At(50)).Status, UA_STATUSCODE_BADUSERACCESSDENIED );//no session.
+		EXPECT_FALSE( UAAccess::GetUserAccessLevel(GetUAServer().Ptr(), nullptr, nullptr, &session, &node, nullptr) & UA_ACCESSLEVELMASK_HISTORYWRITE );
+		UAAccess::SessionContext own{ "", TimePoint::max(), 0, AppClient()->UserPK() };
+		EXPECT_TRUE( UAAccess::GetUserAccessLevel(GetUAServer().Ptr(), nullptr, nullptr, &own, &node, nullptr) & UA_ACCESSLEVELMASK_HISTORYWRITE );
+		let inserted = UpdateCallback( Rpm1, &own, 1, At(50) );
+		EXPECT_EQ( inserted.Status, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( inserted.Results, vector<UA_StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED} );//the value went through, not only the entry.
+		EXPECT_EQ( DeleteCallback(Rpm1, &own, At(50), At(51)), UA_STATUSCODE_GOOD );
+
+		//A server nothing enforces:  every node open to reads, and no edit.
+		OpcAuthorize open{ "opc.open" };
+		EXPECT_EQ( open.NodeRights(node, stranger), Access::ERights::All );
+		EXPECT_EQ( open.EditRights(node, stranger), Access::ERights::None );
+		EXPECT_EQ( underlying(open.UserRights(node, stranger)), underlying(EAccess::All) & ~underlying(EAccess::HistoryWrite) );
+		EXPECT_EQ( underlying(authorizer.UserRights(node, AppClient()->UserPK())), underlying(EAccess::All) );
+	}
+
+	//A nodeset that gives a historized variable HistoryRead without HistoryWrite made its history read-only:  load keeps
+	//it so, a client sees it so, and an edit of it is refused whatever the user holds.  Its history still reads.
+	TEST_F( HistoryTests, KeepsANodesetsReadOnlyHistory ){
+		let node = ReadOnly();
+		ASSERT_TRUE( History().Find(node) );
+		constexpr UA_Byte readOnly{ UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_HISTORYREAD };
+		UA_Byte level{};
+		ASSERT_EQ( UA_Server_readAccessLevel(GetUAServer().Ptr(), node, &level), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( level, readOnly );
+		UA_Byte userLevel{};
+		ASSERT_EQ( UA_Client_readUserAccessLevelAttribute(_client, node, &userLevel), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( userLevel, readOnly );//this program's user holds All on the enforced root.
+		auto v = Sample( 1, At(30) );
+		UA_UpdateDataDetails insert; UA_UpdateDataDetails_init( &insert );
+		insert.nodeId = node;
+		insert.performInsertReplace = UA_PERFORMUPDATETYPE_INSERT;
+		insert.updateValuesSize = 1;
+		insert.updateValues = &v;
+		EXPECT_EQ( HistoryUpdate(&insert, UA_TYPES_UPDATEDATADETAILS).Status, UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, UADateTime{At(0)}.UA(), UADateTime{At(60)}.UA()), UA_STATUSCODE_BADUSERACCESSDENIED );
+		let read = Read( node, {.Start=At(0), .End=Clock::now()} ).Status;
+		EXPECT_TRUE( UA_StatusCode_isGood(read) ) << UA_StatusCode_name( read );
+	}
+
+	//An edit's flush resumes on the executor, where work waiting on the service lock the edit holds can take every
+	//thread:  the edit answers Bad_Timeout at hist.editTimeout rather than hold the lock for good, and is written once a
+	//thread frees.
+	TEST_F( HistoryTests, EditGivesUpOnAStarvedExecutor ){
+		let timeout = Settings::FindDuration( "/opcServer/hist/editTimeout" );
+		ASSERT_TRUE( timeout );
+		let threads = Settings::FindNumber<uint>( "/workers/executor/threads" ).value_or( std::thread::hardware_concurrency() );
+		UAAccess::SessionContext own{ "", TimePoint::max(), 0, AppClient()->UserPK() };
+		Updated updated;
+		steady_clock::duration waited;
+		{
+			auto release = ms<absl::Notification>();
+			absl::Cleanup freed = [release]{ release->Notify(); };
+			auto taken = ms<std::atomic<uint>>( 0 );
+			for( uint i=0; i<threads; ++i )
+				Post( [release, taken]{ ++*taken; release->WaitForNotification(); } );
+			for( uint i=0; *taken<threads; ++i ){
+				ASSERT_LT( i, 500u ) << "The executor's threads weren't all taken.";
+				std::this_thread::sleep_for( 10ms );
+			}
+			let start = steady_clock::now();
+			updated = UpdateCallback( Rpm4, &own, 555, At(55) );
+			waited = steady_clock::now()-start;
+		}
+		EXPECT_EQ( updated.Status, UA_STATUSCODE_BADTIMEOUT ) << UA_StatusCode_name( updated.Status );
+		EXPECT_EQ( updated.Results, vector<UA_StatusCode>{UA_STATUSCODE_BADTIMEOUT} );//an entry refused whole, its value too (#3).
+		EXPECT_GE( waited, *timeout );
+		vector<double> written;
+		for( uint i=0; i<500 && written.empty(); ++i ){
+			written = doubles( all(Read(Rpm4, {.Start=At(55), .End=At(56)}).Values) );
+			if( written.empty() )
+				std::this_thread::sleep_for( 10ms );
+		}
+		EXPECT_EQ( written, vector<double>{555} );
 	}
 
 	//Read on the node is the right, asked of the session's user for each node:  never the collector's.
 	TEST_F( HistoryTests, ReadNeedsReadOnTheNode ){
-		auto& authorizer = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
-		let status = [&]( UserPK user ){
+		let status = []( UserPK user ){
 			UAAccess::SessionContext session{ "", TimePoint::max(), 0, user };
 			return Callback( Rpm4, &session, At(0), At(10) );
 		};
 		EXPECT_TRUE( UA_StatusCode_isGood(status(AppClient()->UserPK())) );
 		const UserPK stranger{ 0x7FFF'FFF0 };
-		let mayRead = !empty( authorizer.NodeRights(Node(Rpm4), stranger) & Access::ERights::Read );//every node is open until a resource is configured.
-		EXPECT_EQ( UA_StatusCode_isGood(status(stranger)), mayRead );
-		if( !mayRead )
-			EXPECT_EQ( status(stranger), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( status(stranger), UA_STATUSCODE_BADUSERACCESSDENIED );//on the root the fixture enforces.
 		EXPECT_EQ( Callback(Rpm4, nullptr, At(0), At(10)), UA_STATUSCODE_BADUSERACCESSDENIED );//no session.
 	}
 
