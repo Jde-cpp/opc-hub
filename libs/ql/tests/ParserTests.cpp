@@ -205,6 +205,32 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( args.at("name").as_string(), R"(a"b)" );
 	}
 
+	//a quoted key used to skip whatever followed its closing quote as if it were the ':'.
+	TEST( ParserTests, ParseArgsQuotedKeyNeedsColon ){
+		let args = Parser::ParseArgs( R"({"a" : 1, "b":2})" );
+		EXPECT_EQ( args.at("a").to_number<uint>(), 1u );
+		EXPECT_EQ( args.at("b").to_number<uint>(), 2u );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a"X1})"), Exception );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a"})"), Exception );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a")"), Exception );
+	}
+	//a bare key ran on to the next ':' wherever it was, through ',' and '}':  `{a, b:1}` became the one key "a, b", and `{id}`
+	//ate its own '}' and failed later as "Unexpected end".
+	TEST( ParserTests, ParseArgsBareKeyNeedsColon ){
+		EXPECT_EQ( Parser::ParseArgs("{a : 1}").at("a").to_number<uint>(), 1u );
+		EXPECT_THROW( Parser::ParseArgs("{a, b:1}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{a: 1, b}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{: 1}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{a"), Exception );
+		try{
+			Parser::ParseArgs( "{id}" );
+			ADD_FAILURE() << "parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find("Expected ':'"), string::npos ) << e.what();
+		}
+	}
+
 	TEST( ParserTests, ParseArgsEmptyObject ){
 		EXPECT_TRUE( Parser::ParseArgs("{}").empty() );
 	}
@@ -250,6 +276,84 @@ namespace Jde::QL::Tests{
 		for( let& [text, expected] : vector<std::pair<string,string>>{ {"{a: fals3}", "Expected 'false' vs 'fals3'"}, {"{a: nul1}", "Expected 'null' vs 'nul1'"}, {"{a: NaX}", "Expected 'NaN' vs 'NaX'"}, {"{a: tru3}", "Expected 'true' vs 'tru3'"}, {"{a: fal", "Unexpected end"}, {"{a: Na", "Unexpected end"} } )
 			EXPECT_NE( what(text).find(expected), string::npos ) << text << " -> '" << what(text) << "'";
 		EXPECT_NE( what("{a: true").find("Expected '}'"), string::npos ) << what( "{a: true" ); //the literal parsed; the object is what is unterminated.
+	}
+
+	//GHSA-p7cm-772p-hhgr: the arg pre-scan recursed once per nesting level with no bound, and runs before any session check - one
+	//frame of a few tens of KB overflowed the stack.  The depths here are far past what crashed it; each must now be an Exception.
+	Ω nested( uint depth, sv open, sv close, sv leaf )ι->string{
+		string y;
+		for( uint i=0; i<depth; ++i )
+			y += open;
+		y += leaf;
+		for( uint i=0; i<depth; ++i )
+			y += close;
+		return y;
+	}
+	Ω expectThrows( function<void()> f, sv expected )ι->void{
+		try{
+			f();
+			ADD_FAILURE() << "parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find(expected), string::npos ) << e.what();
+		}
+		catch( const runtime_error& e ){
+			ADD_FAILURE() << "not a Jde Exception: " << e.what();
+		}
+	}
+	constexpr uint Deep{ 200'000 };
+	TEST( ParserTests, DeepArgObjectThrows ){
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Deep, "{a:", "}", "1")+"}" ); }, "nest deeper" );
+		EXPECT_NO_THROW( Parser::ParseArgs("{a:"+nested(Parser::MaxArgDepth-1, "{a:", "}", "1")+"}") );//the outer object is level 1.
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Parser::MaxArgDepth, "{a:", "}", "1")+"}" ); }, "nest deeper" );
+	}
+	TEST( ParserTests, DeepArgArrayThrows ){
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Deep, "[", "]", "1")+"}" ); }, "nest deeper" );
+		EXPECT_NO_THROW( Parser::ParseArgs("{a:"+nested(Parser::MaxArgDepth-1, "[", "]", "1")+"}") );
+		expectThrows( []{ Parser::ParseArgs( "{a:"+nested(Parser::MaxArgDepth, "[", "]", "1")+"}" ); }, "nest deeper" );
+	}
+	//members are siblings, not nesting - the old memberValueParse recursed once per member anyway.
+	TEST( ParserTests, ManyArgMembersParse ){
+		string args{ "{" }; args.reserve( Deep*12 );
+		for( uint i=0; i<Deep; ++i ){
+			if( i )
+				args += ',';
+			args += 'a';
+			args += std::to_string( i );
+			args += ":1";
+		}
+		args += "}";
+		EXPECT_EQ( Parser::ParseArgs(args).size(), Deep );
+	}
+	//the websocket shape:  the args of a query, through QL::Parse.
+	TEST( ParserTests, DeepQueryArgsThrow ){
+		const vector<sp<DB::AppSchema>> noSchemas;
+		expectThrows( [&]{ QL::Parse( "logs(a:"+nested(Deep, "[", "]", "1")+"){ id }", {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( "logs(a:"+nested(Deep, "{a:", "}", "1")+"){ id }", {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( "unsubscribe{ id:"+nested(Deep, "[", "]", "1")+" }", {}, noSchemas ); }, "nest deeper" );
+	}
+	//LoadTable recursed once per selection level.  `logs` and `setting` are system tables (a `logCreated` subscription keys at `logs`), so their children resolve no view and need
+	//no schema.  `{ logs{ a{ a id }} }` is `depth` levels for depth opening braces.
+	Ω selection( sv head, uint depth, sv open="{ a" )ι->string{ return Ƒ( "{{ {}{} }}", head, nested(depth, open, "}", " id") ); }
+	TEST( ParserTests, DeepSelectionThrows ){
+		const vector<sp<DB::AppSchema>> noSchemas;
+		expectThrows( [&]{ QL::Parse( selection("logs", Deep), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("logs", Deep, "{ ... on a"), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("mutation createSetting(id:1)", Deep), {}, noSchemas ); }, "nest deeper" );
+		expectThrows( [&]{ QL::Parse( selection("subscription logCreated", Deep), {}, noSchemas ); }, "nest deeper" );
+		EXPECT_NO_THROW( QL::Parse(selection("logs", Parser::MaxSelectionDepth), {}, noSchemas) );
+		expectThrows( [&]{ QL::Parse( selection("logs", Parser::MaxSelectionDepth+1), {}, noSchemas ); }, "nest deeper" );
+	}
+	//a non-ASCII byte is a negative char, which <cctype>'s classifiers leave undefined (the MSVC debug CRT asserts), and the
+	//query text and its args reach them before any session check.
+	TEST( ParserTests, NonAsciiBytes ){
+		EXPECT_EQ( Parser::ParseArgs("{a: \"é\"}").at("a").as_string(), "é" );
+		expectThrows( []{ Parser::ParseArgs( "{a: é}" ); }, "Unexpected character" );
+		auto p = parser( "users { é }" );
+		EXPECT_EQ( p.Next(), "users" );
+		EXPECT_EQ( p.Next(), "{" );
+		EXPECT_EQ( p.Next(), "é" );
+		EXPECT_EQ( p.Next(), "}" );
 	}
 
 	TEST( MutationQLTests, IsMutation ){
