@@ -91,6 +91,27 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( s.value(), "some text" );
 	}
 
+	//Log.proto's text fields were proto3 strings, which refuse to parse invalid UTF-8.  ProtoLog wrote such an argument anyway, so
+	//from then on every read of the daily file threw and no archive round could run.  In memory here, not through ProtoLog:  a
+	//regression would otherwise poison the daily file every later run of the suite reads.
+	TEST( LogProtoTests, InvalidUtf8SurvivesTheFile ){
+		const string arg{ "\xff\xfe" };
+		Log::Proto::FileEntry fe;
+		*fe.mutable_str() = LogProto::ToString( Logging::Entry::GenerateId(arg), string{arg} );
+		let bytes = Protobuf::SizePrefixed( fe );
+		vector<Log::Proto::FileEntry> back;
+		ASSERT_NO_THROW( back = Protobuf::DeserializeVector<Log::Proto::FileEntry>(sv{(const char*)bytes.data(), bytes.size()}) );
+		ASSERT_EQ( back.size(), 1u );
+		EXPECT_EQ( back[0].str().value(), arg );
+	}
+	//The same, on the wire a client's remote log sends to the app server.
+	TEST( LogProtoTests, InvalidUtf8SurvivesTheClientWire ){
+		const string arg{ "\xff\xfe" };
+		Log::Proto::LogEntryClient parsed;
+		ASSERT_TRUE( parsed.ParseFromString(LogProto::LogEntryClient(entry(tp(5), ELogLevel::Warning, 99, "text {}", {arg})).SerializeAsString()) );
+		EXPECT_EQ( LogProto::FromLogEntry(move(parsed)).Arguments, vector<string>{arg} );
+	}
+
 	TEST( LogProtoTests, DebugStringOfAString ){
 		let id = Logging::Entry::GenerateId( "some text" );
 		Log::Proto::FileEntry fe;

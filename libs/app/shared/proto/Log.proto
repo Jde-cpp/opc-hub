@@ -14,16 +14,18 @@ enum ELogLevel{
 	NoLog = -1;
 }
 
+//The text fields are bytes, not string:  a log argument is whatever the code logged, and proto3 refuses to parse a string
+//field holding invalid UTF-8.  Same wire type, so what was written as string - a poisoned daily file included - parses.
 message LogEntryClient{
-	string text=1;
-	repeated string args=2;
+	bytes text=1;
+	repeated bytes args=2;
 	ELogLevel level=3;
 	uint64 tags=4;
 	uint32 line=5;
 	google.protobuf.Timestamp time=6;
 	uint32 user_pk=7;
-	string file=8;
-	string function=9;
+	bytes file=8;
+	bytes function=9;
 }
 
 message LogEntryFile{
@@ -67,7 +69,7 @@ message ArchiveFile{
 
 message String{
 	bytes id=1;
-	string value=2;
+	bytes value=2;//bytes for the reason LogEntryClient's are:  as a string, one invalid UTF-8 argument made the whole daily file unparseable.
 }
 
 message FileEntry{
