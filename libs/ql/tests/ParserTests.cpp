@@ -297,6 +297,29 @@ namespace Jde::QL::Tests{
 		}
 	}
 
+	//A command SetSystemMutations registers is a mutation though it starts with no verb, bare or under the keyword:  an
+	//Execute named by the whole command, resolving no table, so a POST is still what may run it.
+	TEST( MutationQLTests, ASystemMutationIsACommandOfItsOwn ){
+		static const vector<sp<DB::AppSchema>> noSchemas;
+		EXPECT_FALSE( MutationQL::IsMutation("histTestEdit") );
+		QL::SetSystemMutations( {"histTestEdit"} );
+		EXPECT_TRUE( MutationQL::IsMutation("histTestEdit") );
+		let [name,type] = MutationQL::ParseCommand( "histTestEdit" );
+		EXPECT_EQ( name, "histTestEdit" );
+		EXPECT_EQ( type, EMutationQL::Execute );
+		for( let text : {"histTestEdit( opc:\"x\", nodes:[1] ){ values{ status } }", "mutation histTestEdit( opc:\"x\", nodes:[1] ){ values{ status } }"} ){
+			auto request = QL::Parse( text, {}, noSchemas );
+			ASSERT_TRUE( request.IsMutation() ) << text;
+			ASSERT_EQ( request.Mutations().size(), 1u );
+			let& m = request.Mutations().front();
+			EXPECT_EQ( m.JsonTableName, "histTestEdit" );
+			EXPECT_FALSE( m.DBTable );
+			ASSERT_TRUE( m.ResultRequest );
+			EXPECT_TRUE( m.ResultRequest->FindTable("values") );
+		}
+		EXPECT_FALSE( MutationQL::IsMutation("histTestEdits") );
+	}
+
 	TEST( MutationQLTests, ToStringRoundTripsArgs ){
 		MutationQL m{ "createUser", Parser::ParseArgs(R"({slug: "bob"})"), ms<jobject>(), optional<TableQL>{}, true, vector<sp<DB::AppSchema>>{}, true };
 		EXPECT_EQ( m.ToString(), R"(createUser("slug":"bob"))" );

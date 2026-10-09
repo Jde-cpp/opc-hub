@@ -1,15 +1,20 @@
 //Historian 3A (#214):  hist with `opc`, the gateway reading a server's own history for the caller (spec *Pass-through*)
 //- here the embedded OpcServer's pump nodes, written on the server with source times on three past days, so a read
-//pages across its day files, and read back through the gateway's QL by time, as the web will.
+//pages across its day files, and read back through the gateway's QL by time, as the web will.  3B (#215):  the hist
+//edits with `opc`, each sent as a HistoryUpdate over the caller's session, and read back as modified values.
+#include <thread>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
+#include <jde/db/meta/AppSchema.h>
 #include <jde/historian/Historian.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
+#include "../src/GatewayAppClient.h"
 #include "../src/UAClient.h"
 #include "../../OpcServer/src/globals.h"
 #include "../../OpcServer/src/UAServer.h"
+#include "../../OpcServer/src/access/OpcAuthorize.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
@@ -296,5 +301,218 @@ namespace Jde::Opc::Gateway::Tests{
 		let& nodes = Json::AsArray( o, "nodes" );
 		ASSERT_EQ( nodes.size(), 1u );
 		EXPECT_EQ( Json::AsNumber<StatusCode>(nodes[0].as_object(), "status"), UA_STATUSCODE_GOODNODATA );
+	}
+
+	namespace{
+		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, and Status1 is a historized Boolean.
+		constexpr UA_UInt32 Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
+		struct Edited final{ vector<StatusCode> Values; flat_map<NodeId,StatusCode> Statuses; };
+		struct Sample final{ UA_UInt32 Node; TimePoint Source; jvalue Value; };
+		struct Modified final{ NodeId Node; TimePoint Source; jvalue Value; string Type; string User; TimePoint Time; };
+	}
+	//The edits on a day of their own, two before the reads', through the gateway's QL as the web will send them.  OpcServer
+	//edits history only for a user granted Update, or Delete, on an enforced resource (spec *Authorization*), so the suite
+	//enforces nodeIds with the gateway's user granted everything on it, and opens it again after.
+	struct HistEditTests : HistTests{
+	protected:
+		Ω SetUpTestCase()ε->void{
+			let ua = Server::FindUAServer();
+			if( !ua )
+				return;
+			if( !SelectServerCnnctn(OpcServerSlug) )
+				CreateServerCnnctn();
+			THROW_IF( !ua->History().Enabled(), "The embedded OpcServer keeps no history:  /opcServer/hist." );
+			size_t ns{};
+			UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) );
+			_ns = (NsIndex)ns;
+			_editDay = floor<days>( Clock::now() )-days{ 5 };
+			Enforce( true );
+		}
+		Ω TearDownTestCase()ι->void{
+			try{
+				if( Server::FindUAServer() )
+					Enforce( false );
+			}
+			catch( const std::exception& e ){
+				ERRT( ELogTags::Test, "HistEditTests left nodeIds enforced:  {}", e.what() );
+			}
+		}
+		//The root nodeIds resource, enforced with the gateway's user granted everything on it through a role of its own, or
+		//soft-deleted again, as it ships.  The grant is made while the resource is unenforced, which is when the delegated
+		//admin check passes, through OpcServer's own app client, as its HistoryTests make theirs.
+		Ω Enforce( bool on )ε->void{
+			auto app = Server::AppClient();
+			constexpr sv schema{ "opc" };
+			let nodeSlug = jobject{ {"slug","nodeIds"}, {"schema", schema} };
+			auto& authorizer = static_cast<Server::OpcAuthorize&>( *Server::GetSchema().Authorizer );
+			let reached = [&]( bool active, sv change ){
+				for( uint i=0; authorizer.FindActiveResourcePK(string{schema}, "nodeIds", "").has_value()!=active; ++i ){
+					THROW_IF( i==200, "The nodeIds resource's {} didn't reach OpcServer's authorizer.", change );
+					std::this_thread::sleep_for( 50ms );
+				}
+			};
+			app->QuerySync<jvalue>( "deleteResource( schemaName:$schema, slug:$slug, criteria:null )", nodeSlug );
+			reached( false, "delete" );
+			if( !on )
+				return;
+			constexpr sv roleSlug{ "GatewayHistoryEditor" };
+			if( app->QuerySync("role(slug:$slug){id}", {{"slug", roleSlug}}).empty() ){
+				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway history editor"}} );
+				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
+				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}, {"schema", schema}} );
+				app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", AppClient()->UserPK().Value}, {"roleId", roleId}} );
+			}
+			app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", nodeSlug );
+			reached( true, "restore" );
+			authorizer.AssignRights( Server::GetUAServer() );
+			THROW_IF( empty(authorizer.EditRights(Node(Rpm3), AppClient()->UserPK()) & Access::ERights::Update), "The gateway's user can't edit OpcServer's history." );
+		}
+		Ω When( uint second )ι->TimePoint{ return _editDay+seconds{ second }; }
+		Ω Time( TimePoint t )ι->jvalue{ return UADateTime{ t }.ToJson(); }
+		Ω Edit( string q, jobject vars )ε->Edited{
+			vars["opc"] = OpcServerSlug;
+			let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(move(q), move(vars), true) );
+			TRACET( ELogTags::Test, "edit: {}", serialize(value) );
+			let& o = value.as_object();
+			Edited y;
+			for( let& j : Json::FindDefaultArray(o, "values") )
+				y.Values.push_back( Json::AsNumber<StatusCode>(j.as_object(), "status") );
+			for( let& j : Json::AsArray(o, "nodes") )
+				y.Statuses.emplace( NodeId{Json::AsObject(j.as_object(), "node")}, Json::AsNumber<StatusCode>(j.as_object(), "status") );
+			return y;
+		}
+		//histInsert, histReplace or histUpdate.
+		Ω Update( sv command, const vector<Sample>& samples )ε->Edited{
+			jarray values;
+			for( let& sample : samples )
+				values.push_back( jobject{ {"node", Node(sample.Node).ToJson()}, {"source", Time(sample.Source)}, {"value", sample.Value} } );
+			return Edit( Ƒ("{}( opc: $opc, values: $values ){{ values{{ node source status }} nodes{{ node status }} }}", command), {{"values", move(values)}} );
+		}
+		Ω DeleteRaw( UA_UInt32 node, TimePoint start, TimePoint end )ε->Edited{
+			return Edit( "histDelete( opc: $opc, nodes: $nodes, start: $start, end: $end ){ nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}} );
+		}
+		Ω DeleteAtTime( UA_UInt32 node, const vector<TimePoint>& times )ε->Edited{
+			jarray j;
+			for( let t : times )
+				j.push_back( Time(t) );
+			return Edit( "histDeleteAtTime( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"times", move(j)}} );
+		}
+		Ω Values( const vector<Row>& rows )ι->vector<jvalue>{
+			vector<jvalue> y;
+			for( let& row : rows )
+				y.push_back( row.Value );
+			return y;
+		}
+		//Every page of a modified read, `limit` a page.
+		Ω ReadModified( UA_UInt32 node, TimePoint start, TimePoint end, uint limit )ε->vector<Modified>{
+			vector<Modified> y;
+			jvalue continuation;
+			for( uint i=0; i<100; ++i ){
+				jobject vars{ {"opc", OpcServerSlug}, {"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}, {"limit", limit}, {"continuation", continuation} };
+				let q = "hist( opc: $opc, nodes: $nodes, start: $start, end: $end, modified: true, limit: $limit, continuation: $continuation ){ continuation values{ node source value modification{ time type user } } }";
+				let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
+				TRACET( ELogTags::Test, "modified: {}", serialize(value) );
+				let& o = value.as_object();
+				for( let& j : Json::AsArray(o, "values") ){
+					let& row = j.as_object();
+					let& m = Json::AsObject( row, "modification" );
+					y.push_back( {NodeId{Json::AsObject(row, "node")}, UADateTime{row.at("source")}.Time(), row.at("value"), Json::AsString(m, "type"), Json::AsString(m, "user"), UADateTime{m.at("time")}.Time()} );
+				}
+				continuation = o.contains( "continuation" ) ? o.at( "continuation" ) : jvalue{};
+				if( !continuation.is_string() )
+					return y;
+			}
+			THROW( "100 pages and still a continuation." );
+		}
+		static inline TimePoint _editDay{};
+	};
+
+	//Every edit type over the caller's session, each value answered with the server's operation result, and the history
+	//read back raw and as modified values, by time and paged.  DeleteAtTime goes to the server too, which refuses it,
+	//OpcServer having no callback for it, so each time answers the server's refusal of the node's entry.
+	TEST_F( HistEditTests, EditsEveryTypeAndReadsItBackModified ){
+		Write( Rpm3, 100, When(40) );
+		Write( Rpm3, 200, When(42) );
+		Write( Rpm3, 300, When(44) );
+		THROW_IF( !BlockAny(Server::GetUAServer().History().Group()->Flush()), "The flush didn't write all it took." );
+		let node = Node( Rpm3 );
+		let inserted = Update( "histInsert", {{Rpm3, When(41), 150}, {Rpm3, When(40), 1}} );
+		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS}) );
+		EXPECT_EQ( inserted.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Update("histReplace", {{Rpm3, When(42), 250}, {Rpm3, When(43), 9}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_BADNOENTRYEXISTS}) );
+		EXPECT_EQ( Update("histUpdate", {{Rpm3, When(44), 350}, {Rpm3, When(46), 400}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_GOODENTRYINSERTED}) );
+		const Request range{ .Nodes={Rpm3}, .Start=When(40), .End=When(47), .Limit=100 };
+		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 150.0, 250.0, 350.0, 400.0}) );
+
+		let deleted = DeleteRaw( Rpm3, When(41), When(44) );//a UA range leaves out its end.
+		EXPECT_TRUE( deleted.Values.empty() );
+		EXPECT_EQ( deleted.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 350.0, 400.0}) );
+		EXPECT_EQ( DeleteRaw(Rpm3, When(41), When(44)).Statuses.at(node), UA_STATUSCODE_BADNODATA );
+
+		let atTime = DeleteAtTime( Rpm3, {When(46), When(44)} );
+		EXPECT_EQ( atTime.Values, (vector<StatusCode>{UA_STATUSCODE_BADNOTSUPPORTED, UA_STATUSCODE_BADNOTSUPPORTED}) );
+		EXPECT_EQ( atTime.Statuses.at(node), UA_STATUSCODE_BADNOTSUPPORTED );
+		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 350.0, 400.0}) );
+
+		//An INSERT's modified value is the value inserted, the others' the one replaced or deleted, by time, and at one
+		//time in the order the edits were made.
+		let user = Server::GetSchema().Authorizer->UserName( AppClient()->UserPK() );
+		let earliest = Clock::now()-1min;
+		for( let limit : {100u, 2u} ){
+			SCOPED_TRACE( Ƒ("limit {}", limit) );
+			let modified = ReadModified( Rpm3, When(40), When(47), limit );
+			vector<jvalue> values; vector<string> types; vector<TimePoint> sources;
+			for( let& m : modified ){
+				values.push_back( m.Value );
+				types.push_back( m.Type );
+				sources.push_back( m.Source );
+				EXPECT_EQ( m.Node, node );
+				EXPECT_EQ( m.User, user );
+				EXPECT_GE( m.Time, earliest );
+				EXPECT_LE( m.Time, Clock::now() );
+			}
+			EXPECT_EQ( values, (vector<jvalue>{150.0, 150.0, 200.0, 250.0, 300.0, 400.0}) );
+			EXPECT_EQ( types, (vector<string>{"Insert", "Delete", "Replace", "Delete", "Update", "Update"}) );
+			EXPECT_EQ( sources, (vector<TimePoint>{When(41), When(41), When(42), When(42), When(44), When(46)}) );
+		}
+		let reversed = ReadModified( Rpm3, When(47), When(40), 2 );
+		ASSERT_EQ( reversed.size(), 6u );
+		EXPECT_EQ( reversed.front().Value, 400.0 );
+		EXPECT_EQ( reversed.back().Source, When(41) );
+	}
+
+	//A value takes its node's DataType, so a Boolean node takes a Boolean, and the nodes of one call answer each on its own:
+	//a node the server doesn't historize with the server's refusal of its entry, one the server doesn't have with its
+	//answer to the DataType read.  Arguments the call can't take are refused before anything is sent.
+	TEST_F( HistEditTests, AnswersEachNodeWithTheServersStatus ){
+		let edited = Update( "histInsert", {{Status1, When(10), true}, {Status2, When(10), true}, {Unknown, When(10), 1}, {Status1, When(11), false}} );
+		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED, UA_STATUSCODE_BADNODEIDUNKNOWN, UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( edited.Statuses.at(Node(Status1)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( edited.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( edited.Statuses.at(Node(Unknown)), UA_STATUSCODE_BADNODEIDUNKNOWN );
+		EXPECT_EQ( Values(Read({.Nodes={Status1}, .Start=When(10), .End=When(12), .Limit=100}).Values), (vector<jvalue>{true, false}) );
+		EXPECT_EQ( DeleteRaw(Status2, When(10), When(12)).Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+
+		let refused = []( string q, jobject vars ){ EXPECT_THROW( Edit(q, vars), GatewayErrorResponse ) << q; };
+		jarray values{ jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", 1} } };
+		refused( "histInsert( opc: $opc, group: 1, values: $values ){ values{ status } }", {{"values", values}} );
+		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{}}} );
+		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"source", Time(When(20))}, {"value", 1}}}}} );
+		refused( "histInsert( opc: $opc, values: $values ){ values{ status } }", {{"values", jarray{jobject{{"node", Node(Rpm3).ToJson()}, {"source", Time(When(20))}, {"value", "not a number"}}}}} );
+		refused( "histDelete( opc: $opc, nodes: $nodes, start: $start ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"start", Time(When(20))}} );
+		refused( "histDeleteAtTime( opc: $opc, nodes: $nodes, times: $times ){ nodes{ status } }", {{"nodes", Node(Rpm3).ToJson()}, {"times", jarray{}}} );
+		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(20), .End=When(21), .Limit=100}).Values.empty() );
+	}
+
+	//The server's access control decides, never the gateway's:  with nothing enforcing nodeIds, OpcServer refuses every
+	//edit, whatever the gateway's user may do elsewhere, and each value answers that refusal.
+	TEST_F( HistEditTests, EditsNeedTheServersGrant ){
+		Enforce( false );
+		absl::Cleanup enforce = []{ try{ Enforce(true); }catch( const std::exception& e ){ ADD_FAILURE() << "nodeIds wasn't enforced again:  " << e.what(); } };
+		let edited = Update( "histInsert", {{Rpm3, When(30), 500}} );
+		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_BADUSERACCESSDENIED}) );
+		EXPECT_EQ( DeleteRaw(Rpm3, When(0), When(50)).Statuses.at(Node(Rpm3)), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(30), .End=When(31), .Limit=100}).Values.empty() );
 	}
 }

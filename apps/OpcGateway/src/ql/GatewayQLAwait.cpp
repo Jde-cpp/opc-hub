@@ -9,6 +9,7 @@
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
 #include "DataTypeQLAwait.h"
+#include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
@@ -58,6 +59,10 @@ namespace Jde::Opc::Gateway{
 		else if( needsClient(q) )
 			await = mu<GatewayQLAwait>( move(q), move(executer), sl );
 		return await;
+	}
+	//A hist edit with `group` is the gateway historian's (Phase 5), which needs no client.
+	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
+		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && m.Args.contains("opc") );
 	}
 	α GatewayQLMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		if( IsApplicable(m) )
@@ -112,6 +117,8 @@ namespace Jde::Opc::Gateway{
 				THROW_IF( !session, "No Session for mutation" );
 				y = co_await VariableQLAwait{ move(_query), session, _sl };
 			}
+			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
+				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else
 				throw Exception{ _sl, {},	"Unknown query type: {}", _query.JsonTableName };
 			Resume( move(y) );

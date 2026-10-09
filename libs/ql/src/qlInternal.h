@@ -15,4 +15,6 @@ namespace Jde::QL{
 	//types/Introspection.cpp - the __type and __schema documents SelectAwait answers from await_ready.
 	α QueryType( const TableQL& typeTable )ε->jobject;
 	α QuerySchema( const TableQL& schemaTable )ε->jobject;
+	//types/Parser.cpp - a command SetSystemMutations registered.
+	α IsSystemMutation( sv command )ι->bool;
 }

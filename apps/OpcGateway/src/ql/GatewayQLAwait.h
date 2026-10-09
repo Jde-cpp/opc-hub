@@ -29,7 +29,7 @@ namespace Jde::Opc::Gateway{
 	struct GatewayQLMAwait final : QL::IQLTableMutationExe, IGatewayQLAwait{
 		using base = QL::IQLTableMutationExe;
 		GatewayQLMAwait( QL::MutationQL&& q, QL::Creds creds, SRCE )ι:base{move(q), move(creds), sl}{}
-		Ω IsApplicable( const QL::MutationQL& m )ι->bool{ return m.JsonTableName=="variable"; }//the server-bound mutation; Test also routes updateLogSettings for the standalone gateway.
+		Ω IsApplicable( const QL::MutationQL& m )ι->bool;//the server-bound mutations, updateVariable and the hist edits with `opc`; Test also routes updateLogSettings for the standalone gateway.
 		Ω Test( QL::MutationQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
 		α Suspend()ι->void override{ GetClient( this ); }
 	private:

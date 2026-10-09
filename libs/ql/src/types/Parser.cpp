@@ -4,16 +4,23 @@
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/types/Introspection.h>
+#include "../qlInternal.h"
 
 #define let const auto
 namespace Jde{
 	flat_set<string> _systemTables{};
+	flat_set<string> _systemMutations{};
 	α QL::SetSystemTables( flat_set<string>&& jsonNames )ι->void{
 		for( auto&& name : jsonNames )
 			_systemTables.emplace( move(name) );
 	}
+	α QL::SetSystemMutations( flat_set<string>&& commands )ι->void{
+		for( auto&& command : commands )
+			_systemMutations.emplace( move(command) );
+	}
+	α QL::IsSystemMutation( sv command )ι->bool{ return _systemMutations.contains( string{command} ); }
 	Ω isSystem( str name )ι->bool{
-		return name.starts_with("__") || name.starts_with("setting") || name=="status" || name=="logs" || _systemTables.contains(name);
+		return name.starts_with("__") || name.starts_with("setting") || name=="status" || name=="logs" || _systemTables.contains(name) || _systemMutations.contains(name);
 	}
 
 	α QL::Parse( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw, SL /*sl*/ )ε->RequestQL{

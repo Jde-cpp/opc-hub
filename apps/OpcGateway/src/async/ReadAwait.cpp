@@ -109,6 +109,13 @@ namespace Jde::Opc::Gateway{
 		}
 		SetNodesToRead();
 	}
+	ReadRequest::ReadRequest( const vector<NodeId>& ids, UA_AttributeId attrib )ι:
+		UA_ReadRequest{}{
+		_readIds.reserve( ids.size() );
+		for( let& nodeId : ids )
+			Push( nodeId, attrib );
+		SetNodesToRead();
+	}
 	ReadRequest::ReadRequest( const NodeId& nodeId, std::initializer_list<UA_AttributeId> attribs )ι:
 		UA_ReadRequest{}{
 		_readIds.reserve( attribs.size() );

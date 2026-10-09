@@ -49,4 +49,32 @@ namespace Jde::Opc::Gateway::HistQL{
 	//continuation for the next page, null on the last, and nodes{ node status } with each node's status as the server
 	//answered it, Good for a group's.  Only the columns the query names.
 	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue;
+
+	//The edit fields (spec *Edits*), mutations by their whole names (QL::SetSystemMutations), indexed by EEdit.
+	enum class EEdit : uint8{ Insert, Replace, Update, Delete, DeleteAtTime };
+	constexpr array<sv,5> EditCommands{ "histInsert", "histReplace", "histUpdate", "histDelete", "histDeleteAtTime" };
+	α FindEdit( sv command )ι->optional<EEdit>;
+	//A value histInsert, histReplace or histUpdate writes:  its node's place in EditArgs::Nodes, and the DataValue's parts as
+	//the caller gave them, the value to be typed by the node's DataType.
+	struct EditValue final{ uint Slot; jvalue Data; optional<UA_DateTime> Source; optional<UA_DateTime> Server; optional<StatusCode> Status; };
+	//histInsert|histReplace|histUpdate( opc, values:[{ node source server status value }] ), histDelete( opc, nodes, start,
+	//end ) and histDeleteAtTime( opc, nodes, times ), checked:  `opc` and not `group`, a value or a node, and a delete's
+	//times.  Nodes holds each node once, in the order named.  Times are UA ticks.
+	struct EditArgs final{
+		EditArgs( EEdit edit, const QL::Input& input, SRCE )ε;
+		α Command()Ι->sv{ return EditCommands[(uint8)Edit]; }
+		EEdit Edit;
+		string Opc;
+		vector<NodeId> Nodes;
+		vector<EditValue> Values;//the UpdateData's.
+		UA_DateTime Start{}, End{};//histDelete's.
+		vector<UA_DateTime> Times;//histDeleteAtTime's.
+	private:
+		α Slot( NodeId&& node )ι->uint;
+	};
+	//An edited value's, or time's, result:  its node's place in EditArgs::Nodes, its source time, and its status.
+	struct EditResult final{ uint Slot; optional<UA_DateTime> Time; StatusCode Status; };
+	//values{ node source status } in the order the edit names them, a histDeleteAtTime's node by node, and nodes{ node status }
+	//with each node's entry status.  Only the columns the request names.
+	α ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue;
 }
