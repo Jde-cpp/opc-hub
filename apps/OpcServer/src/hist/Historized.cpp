@@ -161,21 +161,23 @@ namespace Jde::Opc::Server{
 			}
 		}
 		boolean( "ServerTimestampSupported", true );//both timestamps are stored.
-		//Part 13's defaults, for a ReadProcessed with useServerCapabilitiesDefaults, over whatever is there:  open62541
-		//fills a property the nodeset leaves out with false or 0, which can't be told from the nodeset's own.
+		//Part 13's defaults, which the library's are, for a ReadProcessed with useServerCapabilitiesDefaults and an at-time
+		//read, over whatever is there:  open62541 fills a property the nodeset leaves out with false or 0, which can't be
+		//told from the nodeset's own.
+		const Hist::AggregateConfiguration aggregates;
 		if( let aggregate = child(ua, configuration, "AggregateConfiguration") ){
-			const UA_Boolean yes{ true }, no{};
-			const UA_Byte all{ 100 };
-			publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &yes );
-			publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &all );
-			publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &all );
-			publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &no );
+			const UA_Boolean uncertainAsBad{ aggregates.TreatUncertainAsBad }, sloped{ aggregates.UseSlopedExtrapolation };
+			const UA_Byte bad{ aggregates.PercentDataBad }, good{ aggregates.PercentDataGood };
+			publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &uncertainAsBad );
+			publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &bad );
+			publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
+			publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
 		}
 		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
 		auto startOfArchive = publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		auto startOfOnlineArchive = publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		Hist::Member member{ expanded(ua, id), move(thresholds) };
-		return { move(id), move(member), move(startOfArchive), move(startOfOnlineArchive) };
+		return { move(id), move(member), aggregates, move(startOfArchive), move(startOfOnlineArchive) };
 	}
 
 	α Historized::Load( UA_Server& ua, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->vector<Historized>{
