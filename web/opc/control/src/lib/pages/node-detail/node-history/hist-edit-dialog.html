@@ -1,0 +1,102 @@
+<h2 mat-dialog-title>{{ title }}</h2>
+<mat-dialog-content>
+	<p class="hint">{{ hint }}</p>
+	<mat-form-field>
+		<mat-label>{{ purge ? "Nodes" : "Node" }}</mat-label>
+		<mat-select [value]="purge ? nodes() : node()" [multiple]="purge" (selectionChange)="onNodes($event.value)" [disabled]="busy()">
+			@for( n of data.nodes; track n.key ){
+				<mat-option [value]="n">{{ n.name }}</mat-option>
+			}
+		</mat-select>
+	</mat-form-field>
+	@switch( kind ){
+		@case( 'purgeRange' ){
+			<div class="pair">
+				<mat-form-field>
+					<mat-label>Start</mat-label>
+					<input matInput type="datetime-local" step="0.001" [value]="time()" (input)="time.set($any($event.target).value)" [disabled]="busy()">
+				</mat-form-field>
+				<mat-form-field>
+					<mat-label>End</mat-label>
+					<input matInput type="datetime-local" step="0.001" [value]="end()" (input)="end.set($any($event.target).value)" [disabled]="busy()">
+				</mat-form-field>
+			</div>
+		}
+		@case( 'purgeTimes' ){
+			@for( t of times(); track $index ){
+				<div class="time-row">
+					<mat-form-field>
+						<mat-label>Time {{ $index+1 }}</mat-label>
+						<input matInput type="datetime-local" step="0.001" [value]="t" (input)="setTime($index, $any($event.target).value)" [disabled]="busy()">
+					</mat-form-field>
+					<button matIconButton type="button" aria-label="Remove this time" (click)="removeTime($index)" [disabled]="busy() || times().length==1"><mat-icon>remove_circle_outline</mat-icon></button>
+				</div>
+			}
+			<button matButton type="button" (click)="addTime()" [disabled]="busy()"><mat-icon>add</mat-icon>Another time</button>
+		}
+		@default{
+			<mat-form-field>
+				<mat-label>Source time</mat-label>
+				<input matInput type="datetime-local" step="0.001" [value]="time()" (input)="time.set($any($event.target).value)" [disabled]="busy()">
+			</mat-form-field>
+			@switch( editor() ){
+				@case( 'boolean' ){
+					<mat-slide-toggle class="value-toggle" [checked]="flag()" (change)="flag.set($event.checked)" [disabled]="busy()">{{ flag() ? "true" : "false" }}</mat-slide-toggle>
+				}
+				@case( 'enum' ){
+					<mat-form-field>
+						<mat-label>Value</mat-label>
+						<mat-select [value]="choice()" (selectionChange)="choice.set($event.value)" [disabled]="busy()">
+							@for( option of enumValues(); track option.id ){
+								<mat-option [value]="option.id">{{ option.name }}</mat-option>
+							}
+						</mat-select>
+					</mat-form-field>
+				}
+				@case( 'number' ){
+					<mat-form-field>
+						<mat-label>Value</mat-label>
+						<input matInput type="number" step="any" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
+					</mat-form-field>
+				}
+				@case( 'datetime' ){
+					<mat-form-field>
+						<mat-label>Value</mat-label>
+						<input matInput type="datetime-local" step="0.001" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
+					</mat-form-field>
+				}
+				@default{
+					<mat-form-field>
+						<mat-label>Value</mat-label>
+						<input matInput type="text" [value]="text()" (input)="text.set($any($event.target).value)" [disabled]="busy()">
+					</mat-form-field>
+				}
+			}
+			<mat-form-field>
+				<mat-label>Status</mat-label>
+				<input matInput type="text" [value]="status()" (input)="status.set($any($event.target).value)" placeholder="Good" [disabled]="busy()">
+				<mat-hint>A status code, hex with 0x or decimal;  blank is Good.</mat-hint>
+			</mat-form-field>
+		}
+	}
+	@if( busy() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Sending the edit"></mat-progress-bar>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+	@if( rows().length ){
+		<ul class="results" role="alert" aria-label="The server's answer">
+			@for( row of rows(); track $index ){
+				<li><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ row.node }}@if( row.time ){ at {{ row.time | date:'yyyy-MM-dd HH:mm:ss.SSS' }}}: {{ statusText(row.status) }}</li>
+			}
+		</ul>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	@if( problem(); as p ){
+		<span class="problem">{{ p }}</span>
+	}
+	<button matButton="outlined" type="button" (click)="dialogRef.close()" [disabled]="busy()">Cancel</button>
+	<button [matButton]="purge ? 'filled' : 'tonal'" [class.destructive]="purge" type="button" [disabled]="busy() || !!problem()" (click)="apply()">{{ action }}</button>
+</mat-dialog-actions>

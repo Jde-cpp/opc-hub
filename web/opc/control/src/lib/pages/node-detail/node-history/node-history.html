@@ -8,26 +8,48 @@
 		</mat-chip-listbox>
 	</div>
 	<div class="bar-right">
-		<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
-			<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
-			<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
+		<!--the values, or the edits made to them with their ModificationInfo-->
+		<mat-button-toggle-group class="mode-group" hideSingleSelectionIndicator aria-label="What to show" [value]="mode()" (change)="mode.set($event.value)">
+			<mat-button-toggle value="values" matTooltip="The stored values">Values</mat-button-toggle>
+			<mat-button-toggle value="modified" matTooltip="The edits made:  what each put in or took out, when and by whom">Modifications</mat-button-toggle>
 		</mat-button-toggle-group>
-		<mat-slide-toggle [checked]="live()" (change)="onLiveChange($event.checked)" matTooltip="Append values as the server publishes them">Live</mat-slide-toggle>
+		@if( mode()=='values' ){
+			<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
+				<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
+				<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
+			</mat-button-toggle-group>
+		}
+		<mat-slide-toggle [checked]="live()" [disabled]="mode()!='values'" (change)="onLiveChange($event.checked)" [matTooltip]="mode()=='values' ? 'Append values as the server publishes them' : 'Modifications are not published live'">Live</mat-slide-toggle>
 		<button matButton (click)="loadEarlier()" [disabled]="loading() || !hasEarlier()" matTooltip="Read the page before the earliest value shown">
 			<mat-icon>history</mat-icon>Load earlier
 		</button>
-		<span class="row-count">{{ values().length }} {{ values().length==1 ? "value" : "values" }}</span>
+		@if( writable().length ){
+			<!--the edits, for the nodes whose history the server lets this user write-->
+			<button matButton [matMenuTriggerFor]="editMenu" aria-haspopup="menu" matTooltip="Edit the history of the nodes you may write">
+				<mat-icon>edit</mat-icon>Edit
+			</button>
+			<mat-menu #editMenu="matMenu">
+				<button mat-menu-item (click)="openEdit('insert')">Insert a value…</button>
+				<button mat-menu-item (click)="openEdit('replace')">Replace a value…</button>
+				<button mat-menu-item (click)="openEdit('update')">Update a value…</button>
+				<button mat-menu-item (click)="openEdit('purgeRange')">Delete a range…</button>
+				<button mat-menu-item (click)="openEdit('purgeTimes')">Delete at times…</button>
+			</mat-menu>
+		}
+		<span class="row-count">{{ values().length }} {{ mode()=='modified' ? (values().length==1 ? "modification" : "modifications") : (values().length==1 ? "value" : "values") }}</span>
 	</div>
 </mat-toolbar>
 <mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
 @for( r of refused(); track r.node.key ){
 	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: the server answered {{ statusText(r.status) }}.</p>
 }
-<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>
-<hist-table [values]="values()" [nodes]="selected()"></hist-table>
+@if( mode()=='values' ){
+	<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>
+}
+<hist-table [values]="values()" [nodes]="selected()" [modified]="mode()=='modified'" [editable]="writable()" (replace)="replaceValue($event)" (remove)="deleteValue($event)"></hist-table>
 @if( !loading() && !values().length ){
 	<div class="jde-empty" role="status">
 		<mat-icon aria-hidden="true">history</mat-icon>
-		<p class="title">{{ selected().length ? "No history." : "No node selected." }}</p>
+		<p class="title">{{ !selected().length ? "No node selected." : mode()=='modified' ? "No modifications." : "No history." }}</p>
 	</div>
 }

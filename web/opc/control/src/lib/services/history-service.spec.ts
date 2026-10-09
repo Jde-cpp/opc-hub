@@ -28,6 +28,42 @@ describe( 'HistoryService.query', ()=>{
 	} );
 } );
 
+describe( 'HistoryService.mutation', ()=>{
+	//the three UpdateData fields, each with values:[{node source server status value}] (spec *Edits*)
+	it( 'writes an UpdateData with its values, by its whole name', ()=>{
+		const {ql, vars, command} = HistoryService.mutation( {opc: 'local'}, {kind: 'insert', values: [{node: A, source: new Date(1700000000500), value: 2.5}, {node: B, source: new Date(1000), status: 0x40000000, value: true}]} );
+		expect( command ).toBe( 'createHistory' );
+		expect( ql ).toBe( "createHistory( opc: $opc, values: $values ){ values{ node source status } nodes{ node status } }" );
+		expect( vars ).toEqual( {opc: 'local', values: [{node: A.toJson(), source: {seconds: 1700000000, nanos: 500000000}, value: 2.5}, {node: B.toJson(), source: {seconds: 1, nanos: 0}, status: 0x40000000, value: true}]} );
+		expect( HistoryService.mutation( {opc: 'local'}, {kind: 'replace', values: []} ).ql ).toMatch( /^updateHistory\( opc: \$opc, values: \$values \)/ );
+		expect( HistoryService.mutation( {group: 3}, {kind: 'update', values: []} ).ql ).toMatch( /^upsertHistory\( group: \$group, values: \$values \)/ );
+	} );
+	it( 'purges a range with start and end, or at times, never both', ()=>{
+		const range = HistoryService.mutation( {opc: 'local'}, {kind: 'purgeRange', nodes: [A, B], start: new Date(1000), end: new Date(2000)} );
+		expect( range.command ).toBe( 'purgeHistory' );
+		expect( range.ql ).toBe( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end ){ values{ node source status } nodes{ node status } }" );
+		expect( range.vars ).toEqual( {opc: 'local', nodes: [A.toJson(), B.toJson()], start: {seconds: 1, nanos: 0}, end: {seconds: 2, nanos: 0}} );
+		const times = HistoryService.mutation( {opc: 'local'}, {kind: 'purgeTimes', nodes: [A], times: [new Date(1000), new Date(2500)]} );
+		expect( times.ql ).toBe( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }" );
+		expect( times.vars ).toEqual( {opc: 'local', nodes: [A.toJson()], times: [{seconds: 1, nanos: 0}, {seconds: 2, nanos: 500000000}]} );
+	} );
+} );
+
+describe( 'HistoryService.edit', ()=>{
+	it( 'posts the mutation and reads the result under the command\'s name', async ()=>{
+		let sent:{ql:string, vars:any}|undefined;
+		const editor = { postQL: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{purgeHistory: {values: [], nodes: [{node: {ns:2, i:1}, status: 0x80B00000}]}}; } };
+		const result = await new HistoryService().edit( editor, {opc: 'local'}, {kind: 'purgeRange', nodes: [A], start: new Date(1000), end: new Date(1000)} );
+		expect( sent?.ql ).toMatch( /^purgeHistory\( opc: \$opc, nodes: \$nodes, start: \$start, end: \$end \)/ );
+		expect( result.values ).toEqual( [] );
+		expect( result.nodes.map( n=>[n.node.toString(), n.status] ) ).toEqual( [[A.toString(), 0x80B00000]] );
+	} );
+	it( 'is an empty result when the gateway answers nothing', async ()=>{
+		const result = await new HistoryService().edit( {postQL: async <T>()=><T><unknown>null}, {opc: 'local'}, {kind: 'insert', values: [{node: A, source: new Date(1000), value: 1}]} );
+		expect( result ).toEqual( {values: [], nodes: []} );
+	} );
+} );
+
 describe( 'HistoryService.read', ()=>{
 	it( 'sends the query through the reader and parses the page', async ()=>{
 		let sent:{ql:string, vars:any}|undefined;

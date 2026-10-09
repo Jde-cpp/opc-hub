@@ -1,0 +1,61 @@
+mat-form-field{
+	display: block;
+	width: 100%;
+}
+.hint{
+	margin: 0 0 1rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.pair{
+	display: flex;
+	gap: .75rem;
+	mat-form-field{ flex: 1 1 0; }
+}
+.time-row{
+	display: flex;
+	align-items: center;
+	gap: .25rem;
+	mat-form-field{ flex: 1 1 0; }
+}
+.value-toggle{
+	display: block;
+	margin: .25rem 0 1.25rem;
+}
+/* the server's answer, with the Status cells' Bad icon */
+.refused, .results li{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--mat-sys-on-surface);
+	mat-icon{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-error);
+	}
+}
+.refused{
+	margin: .75rem 0 0;
+}
+.results{
+	list-style: none;
+	margin: .75rem 0 0;
+	padding: 0;
+	font-variant-numeric: tabular-nums;
+}
+mat-dialog-actions{
+	gap: 12px;
+	justify-content: flex-end;
+}
+.problem{
+	flex: 1 1 auto;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
+/* the deletes wear the error colour, as the house confirmation's destructive button does */
+.destructive{
+	background: var(--mat-sys-error);
+	color: var(--mat-sys-on-error);
+}

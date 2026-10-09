@@ -19,6 +19,8 @@ A node page has a **Children** tab, a **History** tab when the server keeps the 
 
 **History** trends the node's historized children and lists their values. The chips pick the nodes, up to eight. The trend is stepped by default - a value holds until the next - or interpolated; drag to zoom, shift-drag to pan, and the strip under it scrolls. A `Bad` reading is a gap in its line, flagged `!` with its status; an `Uncertain` one keeps its value under a triangle. Opening reads the latest values; **Load earlier** reads the page before them, as does panning to the left edge. **Live** appends values as the server publishes them. The table lists every value loaded, newest first, with both timestamps and the status.
 
+**Modifications** lists the edits made to the history instead of the values: for an insert the value put in, for anything else the value it replaced or deleted, each with the kind of edit, when it was made and by whom. When the server lets you write a node's history, **Edit** offers **Insert a value** at a time that holds none, **Replace a value** at a time that holds one, **Update a value**, which does either, **Delete a range** and **Delete at times**; a value's row has a replace and a delete of its own. The server applies its own rules and answers each value: the bundled OPC server leaves a range's end out, deletes the one value when the start equals the end, and refuses a delete at a time.
+
 **Status** is the quality the server gives a value: **Good**, **Uncertain** or **Bad**, as OPC UA defines them. It shows by name, such as `Good`, `UncertainSensorNotAccurate` or `BadSensorFailure`.
 
 A suffix adds what the server says about the reading itself:

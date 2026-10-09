@@ -100,6 +100,9 @@ export class Variable extends UaNode{
 	//the History tab's gate:  the server historizes the node, and this user may read that history - a level
 	//the server didn't give is unknown, not a denial, the rule NodeView.readDenied applies to Read.
 	get historyReadable():boolean{ return this.historizing===true && (this.userAccessLevel==undefined || !!(this.userAccessLevel & EAccess.HistoryRead)); }
+	//the edit controls' gate, the same rule on HistoryWrite.  OpcServer leaves the bit out of a node no enforced resource
+	//protects (spec *Authorization*), so a fresh install shows the history read-only, as it is.
+	get historyWritable():boolean{ return this.historizing===true && (this.userAccessLevel==undefined || !!(this.userAccessLevel & EAccess.HistoryWrite)); }
 
 	accessLevel?:EAccess;
 	userAccessLevel?:EAccess;
