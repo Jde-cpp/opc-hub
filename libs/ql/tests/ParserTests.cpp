@@ -205,6 +205,32 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( args.at("name").as_string(), R"(a"b)" );
 	}
 
+	//a quoted key used to skip whatever followed its closing quote as if it were the ':'.
+	TEST( ParserTests, ParseArgsQuotedKeyNeedsColon ){
+		let args = Parser::ParseArgs( R"({"a" : 1, "b":2})" );
+		EXPECT_EQ( args.at("a").to_number<uint>(), 1u );
+		EXPECT_EQ( args.at("b").to_number<uint>(), 2u );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a"X1})"), Exception );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a"})"), Exception );
+		EXPECT_THROW( Parser::ParseArgs(R"({"a")"), Exception );
+	}
+	//a bare key ran on to the next ':' wherever it was, through ',' and '}':  `{a, b:1}` became the one key "a, b", and `{id}`
+	//ate its own '}' and failed later as "Unexpected end".
+	TEST( ParserTests, ParseArgsBareKeyNeedsColon ){
+		EXPECT_EQ( Parser::ParseArgs("{a : 1}").at("a").to_number<uint>(), 1u );
+		EXPECT_THROW( Parser::ParseArgs("{a, b:1}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{a: 1, b}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{: 1}"), Exception );
+		EXPECT_THROW( Parser::ParseArgs("{a"), Exception );
+		try{
+			Parser::ParseArgs( "{id}" );
+			ADD_FAILURE() << "parsed";
+		}
+		catch( const Exception& e ){
+			EXPECT_NE( string{e.what()}.find("Expected ':'"), string::npos ) << e.what();
+		}
+	}
+
 	TEST( ParserTests, ParseArgsEmptyObject ){
 		EXPECT_TRUE( Parser::ParseArgs("{}").empty() );
 	}
@@ -271,6 +297,9 @@ namespace Jde::QL::Tests{
 		catch( const Exception& e ){
 			EXPECT_NE( string{e.what()}.find(expected), string::npos ) << e.what();
 		}
+		catch( const runtime_error& e ){
+			ADD_FAILURE() << "not a Jde Exception: " << e.what();
+		}
 	}
 	constexpr uint Deep{ 200'000 };
 	TEST( ParserTests, DeepArgObjectThrows ){
@@ -285,9 +314,14 @@ namespace Jde::QL::Tests{
 	}
 	//members are siblings, not nesting - the old memberValueParse recursed once per member anyway.
 	TEST( ParserTests, ManyArgMembersParse ){
-		string args{ "{" };
-		for( uint i=0; i<Deep; ++i )
-			args += Ƒ( "{}a{}:1", i ? "," : "", i );
+		string args{ "{" }; args.reserve( Deep*12 );
+		for( uint i=0; i<Deep; ++i ){
+			if( i )
+				args += ',';
+			args += 'a';
+			args += std::to_string( i );
+			args += ":1";
+		}
 		args += "}";
 		EXPECT_EQ( Parser::ParseArgs(args).size(), Deep );
 	}
@@ -309,6 +343,17 @@ namespace Jde::QL::Tests{
 		expectThrows( [&]{ QL::Parse( selection("subscription logCreated", Deep), {}, noSchemas ); }, "nest deeper" );
 		EXPECT_NO_THROW( QL::Parse(selection("logs", Parser::MaxSelectionDepth), {}, noSchemas) );
 		expectThrows( [&]{ QL::Parse( selection("logs", Parser::MaxSelectionDepth+1), {}, noSchemas ); }, "nest deeper" );
+	}
+	//a non-ASCII byte is a negative char, which <cctype>'s classifiers leave undefined (the MSVC debug CRT asserts), and the
+	//query text and its args reach them before any session check.
+	TEST( ParserTests, NonAsciiBytes ){
+		EXPECT_EQ( Parser::ParseArgs("{a: \"é\"}").at("a").as_string(), "é" );
+		expectThrows( []{ Parser::ParseArgs( "{a: é}" ); }, "Unexpected character" );
+		auto p = parser( "users { é }" );
+		EXPECT_EQ( p.Next(), "users" );
+		EXPECT_EQ( p.Next(), "{" );
+		EXPECT_EQ( p.Next(), "é" );
+		EXPECT_EQ( p.Next(), "}" );
 	}
 
 	TEST( MutationQLTests, IsMutation ){

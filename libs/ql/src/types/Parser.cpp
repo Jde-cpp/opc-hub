@@ -51,7 +51,7 @@ namespace Jde{
 }
 namespace Jde::QL{
 	α Parser::SkipWhitespace()ι->void{
-		while( _i<_text.size() && isspace(_text[_i]) )
+		while( _i<_text.size() && absl::ascii_isspace(_text[_i]) )
 			++_i;
 	}
 
@@ -61,7 +61,7 @@ namespace Jde::QL{
 			SkipWhitespace();
 			if( _i<_text.size() ){
 				let start = _i;
-				_i = std::distance( _text.begin(), std::find_if(_text.begin()+_i, _text.end(), [this]( char ch )ι{ return isspace(ch) || _delimiters.find(ch)!=sv::npos;}) );
+				_i = std::distance( _text.begin(), std::find_if(_text.begin()+_i, _text.end(), [this]( char ch )ι{ return absl::ascii_isspace(ch) || _delimiters.find(ch)!=sv::npos;}) );
 				result = _i==start ? _text.substr( _i++, 1 ) : _text.substr( start, _i-start );
 			}
 		}
@@ -98,7 +98,7 @@ namespace Jde::QL{
 		if( json.empty() )
 			return 0;
 		uint i{};
-		for( char ch=json[i]; isspace(ch) && i<json.size(); ch=json[++i] ){
+		for( char ch=json[i]; absl::ascii_isspace(ch) && i<json.size(); ch=json[++i] ){
 			y += ch;
 			if( i+1==json.size() )
 				break;
@@ -166,7 +166,7 @@ namespace Jde::QL{
 		ASSERT( ch=='$' );
 		y += "\"\\b";
 		y += ch;
-		for( ch=json[i]; (isalnum(ch) || ch=='_') && i<json.size(); ch = json[++i] )
+		for( ch=json[i]; (absl::ascii_isalnum(ch) || ch=='_') && i<json.size(); ch = json[++i] )
 			y += ch;
 		y += "\"";
 		return i;
@@ -175,11 +175,10 @@ namespace Jde::QL{
 	//run of digits, '-' and '.', so it stopped mid-token on `1e5` and left the caller to complain about the stray 'e', while
 	//`1.2.3-` went through verbatim for Json::Parse to reject: safe either way, but neither error named the real problem.
 	Ω parseNumber( sv json, string& y )ε->uint{
-		let isDigit = []( char c )ι->bool{ return c>='0' && c<='9'; }; //not isdigit(): a negative char is undefined there.
 		uint i{};
 		let digits = [&]( sv expected )->void{
 			let start = i;
-			for( ; i<json.size() && isDigit(json[i]); ++i );
+			for( ; i<json.size() && absl::ascii_isdigit(json[i]); ++i );
 			THROW_IF( i==start, "Expected {} vs '{}' in '{}' @ '{}'.", expected, i<json.size() ? json.substr(i,1) : sv{"end of input"}, json, i );
 		};
 		if( i<json.size() && json[i]=='-' )
@@ -233,7 +232,7 @@ namespace Jde::QL{
 			i += parseLiteral( json, i, "NaN", y );
 		else if( ch=='t' )
 			i += parseLiteral( json, i, "true", y );
-		else if( isdigit(ch) || ch=='-' || ch=='.' ) //'.' can't start a json number, but landing in parseNumber names it better than "unexpected character".
+		else if( absl::ascii_isdigit(ch) || ch=='-' || ch=='.' ) //'.' can't start a json number, but landing in parseNumber names it better than "unexpected character".
 			i += parseNumber( json.substr(i), y );
 		else if( ch!=',' )
 			THROW( "Unexpected character '{}' @ '{}'.", ch, i );
@@ -246,21 +245,26 @@ namespace Jde::QL{
 		ASSERT( json[i]=='{' );
 		y += json[i++];
 		try{
-			for( ;; ){//a loop, not the self-calling std::function it was:  that recursed once per member.
+			for( ;; ){
 				i += parseWhitespace( json.substr(i), y );
 				THROW_IF( i>=json.size(), "Expected object to end '{}' @ '{}'.", json, i );
 				char ch = json[i];
 				if( ch=='}' )
 					break;
-				else if( ch=='"' )
-					i += parseString( json.substr(i), y )+1;
+				else if( ch=='"' ){
+					i += parseString( json.substr(i), y );
+					i += parseWhitespace( json.substr(i), y );
+					THROW_IF( i>=json.size() || json[i]!=':', "Expected ':' after the key in '{}' @ '{}'.", json, i );
+					++i;
+				}
 				else{
-					string name{'"'};
-					for( ++i; ch!=':' && i<json.size(); ch=json[i++] ){
-						name += ch;
-						THROW_IF( i==json.size(), "Could not find ':' in '{}' @ {}", json, i );
-					}
-					y += Str::RTrim( move(name) )+'"';
+					let start = i;
+					for( ; i<json.size() && json[i]!=':' && json[i]!=',' && json[i]!='}'; ++i );
+					THROW_IF( i>=json.size() || json[i]!=':', "Expected ':' after the key '{}' in '{}' @ '{}'.", json.substr(start, i-start), json, i );
+					let name = Str::RTrim( json.substr(start, i-start) );
+					THROW_IF( name.empty(), "Expected a key before ':' in '{}' @ '{}'.", json, i );
+					y += '"'; y += name; y += '"';
+					++i;
 				}
 				y += ":";
 				i += parseValue( json.substr(i), y, depth );
@@ -367,8 +371,7 @@ namespace Jde::QL{
 			}
 			table.ReturnRaw = returnRaw;
 			results.push_back( move(table) );
-			if( Peek().size() )
-				jsonName = Next();
+			jsonName = Peek().size() ? Next() : string{};
 		}while( jsonName.size() );
 		return results;
 	}
