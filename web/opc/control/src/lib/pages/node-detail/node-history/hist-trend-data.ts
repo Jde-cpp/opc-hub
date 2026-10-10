@@ -1,6 +1,6 @@
 import type Highcharts from 'highcharts/esm/highstock';
 import Long from 'long';
-import { HistValue } from '../../../model/hist';
+import { HistValue, isNoData } from '../../../model/hist';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { ESeverity, isBad, severity } from '../../../model/status-code';
@@ -27,12 +27,14 @@ export function trendY( value:Value|undefined ):number|undefined{
 	return undefined;
 }
 //A node's values as Highcharts points.  Good is a plain point;  Uncertain keeps its value under a triangle marker;  Bad is a null,
-//which breaks the line into the gap the plan asks for, and a flag on the series at its time names the status.  Stepped, a value
-//holds until the next, so a Bad is preceded by a point holding the last value at the Bad's time - without it the step would end at
-//the last good reading and the gap would start early.  A value with no source time or no numeric value draws nothing.
+//which breaks the line into the gap the plan asks for, and a flag on the series where the gap opens names the status:  one a run
+//of Bad values with that status, since an aggregate read answers every interval of a failure, and none for Bad_NoData, an
+//interval with no record, which the gap says alone.  Stepped, a value holds until the next, so a Bad is preceded by a point
+//holding the last value at the Bad's time - without it the step would end at the last good reading and the gap would start
+//early.  A value with no source time or no numeric value draws nothing.
 export function toTrendPoints( values:HistValue[], node:NodeId, stepped:boolean ):{points:TrendPoint[]; flags:TrendFlag[]}{
 	const points:TrendPoint[] = [], flags:TrendFlag[] = [];
-	let lastY:number|undefined;
+	let lastY:number|undefined, lastBad:number|undefined;
 	for( const v of values ){
 		if( !v.source || v.node.key!=node.key )
 			continue;
@@ -41,10 +43,13 @@ export function toTrendPoints( values:HistValue[], node:NodeId, stepped:boolean 
 			if( stepped && lastY!==undefined )
 				points.push( {x, y: lastY, marker: {enabled: false}, custom: {status: v.status, hold: true}} );
 			points.push( {x, y: null, custom: {status: v.status}} );
-			flags.push( {x, title: '!', text: OpcError.text(v.status), custom: {status: v.status}} );
+			if( v.status!==lastBad && !isNoData(v.status) )
+				flags.push( {x, title: '!', text: OpcError.text(v.status), custom: {status: v.status}} );
+			lastBad = v.status;
 			lastY = undefined;
 			continue;
 		}
+		lastBad = undefined;
 		const y = trendY( v.value );
 		if( y===undefined )
 			continue;

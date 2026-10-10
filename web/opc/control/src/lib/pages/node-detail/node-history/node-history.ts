@@ -11,7 +11,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { confirm, SnackbarService } from 'jde-framework';
-import { editRefused, HistEditArgs, HistEditKind, HistEditResult, HistNodeStatus, HistReadArgs, HistValue, mergeHistValues, pushValue } from '../../../model/hist';
+import { alignUp, editRefused, HistAggregate, HistAggregation, HistEditArgs, HistEditKind, HistEditResult, HistNodeStatus, HistPage, HistReadArgs, HistValue, isNoData, mergeHistValues, pushValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId, NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -20,6 +20,7 @@ import { StatusCode } from '../../../model/types';
 import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
 import { HistoryService } from '../../../services/history-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
+import { HistAggregatePicker } from './hist-aggregate-picker';
 import { HistEditDialog, HistEditPreset } from './hist-edit-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
@@ -31,22 +32,28 @@ export type HistMode = 'values'|'modified';
 //the caller's own session (spec *Pass-through*), drawn as a trend and listed in a table.  It opens on the latest values - a reverse
 //read with only `end` - and Load earlier pages that read by its continuation.  The live tail is the node's /opc
 //subscription, joined to the read by source time with duplicates dropped (mergeHistValues).  Modifications is the same read
-//with `modified`, listed alone:  an edit isn't published live and isn't a series.  The edits (spec *Edits*) go through the
-//dialog, or a row's own Replace and Delete, and the tab reads again what it held once one is taken.
+//with `modified`, listed alone:  an edit isn't published live and isn't a series.  The picker reads an aggregate instead of the
+//values, one of those the server lists, over intervals of the length picked (spec *Reads*):  the last intervals up to now, and
+//Load earlier the intervals before, with no live tail, since a push is a reading, not an aggregate.  The edits (spec *Edits*)
+//go through the dialog, or a row's own Replace and Delete, and the tab reads again what it held once one is taken.
 @Component({
 	selector: 'node-history',
 	templateUrl: './node-history.html',
 	styleUrls: ['./node-history.scss'],
-	imports: [MatButtonModule, MatButtonToggleModule, MatChipsModule, MatIconModule, MatMenuModule, MatProgressBarModule, MatSlideToggleModule, MatToolbarModule, MatTooltipModule, HistTable, HistTrend]
+	imports: [MatButtonModule, MatButtonToggleModule, MatChipsModule, MatIconModule, MatMenuModule, MatProgressBarModule, MatSlideToggleModule, MatToolbarModule, MatTooltipModule, HistAggregatePicker, HistTable, HistTrend]
 })
 export class NodeHistory implements OnDestroy{
 	constructor(){
-		//a change of nodes or of mode is a new read:  the values of a node unticked go, and the live tail follows the selection
-		effect( ()=>{ const nodes = this.selected(), mode = this.mode(); untracked( ()=>this.#reload(nodes, mode) ); } );
+		//a change of nodes, of mode or of aggregate is a new read:  the values of a node unticked go, and the live tail follows the selection
+		effect( ()=>{ const nodes = this.selected(), mode = this.mode(), aggregation = this.aggregated(); untracked( ()=>this.#reload(nodes, mode, aggregation) ); } );
+		//the aggregates the server lists, for the picker:  once per connection
+		effect( ()=>{ const connection = this.connection(); untracked( ()=>this.#loadAggregates( connection ) ); } );
 	}
 	ngOnDestroy(){ ++this.#generation; this.#unsubscribe(); }//a read still out is stale:  its page is for a tab that is gone
 
 	pageData = input.required<NodePageData>();
+	//the gateway and connection read through:  what the aggregates listed, and the one picked, belong to
+	connection = computed<string>( ()=>`${this.pageData().gateway.slug}/${this.pageData().server.connection.slug}` );
 	//NodeDetail.historizable, the tab's own gate:  the children the server historizes and this user may read
 	candidates = input.required<Variable[]>();
 	//the first eight by default:  the trend's palette has eight slots, assigned in order and never cycled
@@ -75,13 +82,20 @@ export class NodeHistory implements OnDestroy{
 	stepped = signal( true );
 	live = signal( true );
 	mode = signal<HistMode>( 'values' );
+	aggregates = linkedSignal<string,HistAggregate[]>( {source: this.connection, computation: ()=>[]} );
+	//the picker's:  none reads the values.  None on another connection, which may not have the aggregate picked:  the read
+	//naming it there failed (historian-aggregate-picker #3).
+	aggregation = linkedSignal<string,HistAggregation|undefined>( {source: this.connection, computation: ()=>undefined} );
+	//what the read is of:  an aggregate in the Values mode alone, since the modifications are records
+	aggregated = computed<HistAggregation|undefined>( ()=>this.mode()=='values' ? this.aggregation() : undefined );
 
-	async #reload( nodes:Variable[], mode:HistMode ){
+	async #reload( nodes:Variable[], mode:HistMode, aggregation:HistAggregation|undefined ){
 		const generation = ++this.#generation;
 		this.#unsubscribe();
 		this.#next = undefined;
 		this.#pages = 0;
 		this.#tail = undefined;
+		this.#earliest = undefined;
 		this.values.set( [] );
 		this.nodeStatuses.set( [] );
 		this.hasEarlier.set( nodes.length>0 );
@@ -89,35 +103,86 @@ export class NodeHistory implements OnDestroy{
 		if( !nodes.length )
 			return;
 		//the tail first, and the read past it:  a value recorded after the read's end and before the subscription is in neither
-		if( this.live() && mode=='values' )
+		if( this.live() && mode=='values' && !aggregation )
 			this.#subscribe( nodes );
-		await this.#read( this.#opening( nodes, mode, NodeHistory.pageSize ), generation );
+		await this.#read( this.#opening( nodes, mode, aggregation, 1 ), generation );
 	}
 	//"last N":  a reverse read with only `end` (spec *Reads*), modified in the Modifications mode, which the gateway pages by
-	//time and count as it pages the values
-	#opening( nodes:Variable[], mode:HistMode, limit:number ):HistReadArgs{
-		return { nodes: nodes.map( n=>n.nodeId ), end: new Date( Date.now()+NodeHistory.endSlack ), limit, ...(mode=='modified' ? {modified: true} : {}) };
+	//time and count as it pages the values.  An aggregate read needs both ends and goes forward, since a reverse one stamps each
+	//interval at its later edge (spec *Reads*):  the last intervals a load holds, up to the interval boundary past now, so the
+	//intervals sit on the clock's and the interval holding now is the last - without the slack, which here would be whole
+	//intervals of Bad_NoData at the top of the table, and none before the floor.  `pages`:  how many a refresh reads in one - for
+	//an aggregate, the range from the earliest loaded, whatever its loads.
+	#opening( nodes:Variable[], mode:HistMode, aggregation:HistAggregation|undefined, pages:number ):HistReadArgs{
+		const ids = nodes.map( n=>n.nodeId ), now = Date.now();
+		if( !aggregation )
+			return { nodes: ids, end: new Date( now+NodeHistory.endSlack ), limit: pages*NodeHistory.pageSize, ...(mode=='modified' ? {modified: true} : {}) };
+		const interval = aggregation.interval, end = alignUp( now, interval );
+		const start = this.#earliest ?? NodeHistory.start( end, interval, nodes.length );
+		return { nodes: ids, start: new Date( start ), end: new Date( end ), interval, aggregate: aggregation.aggregate, limit: Math.ceil( (end-start)/interval )*nodes.length };
+	}
+	//the intervals a load holds:  one value a node each, within a page
+	static intervals( nodes:number ):number{ return Math.max( 1, Math.floor( NodeHistory.pageSize/nodes ) ); }
+	//an aggregate range's start:  as many whole intervals before `end` as a load holds and the floor leaves, or the floor when
+	//not one does - an interval longer than all the time since
+	static start( end:number, interval:number, nodes:number ):number{
+		const intervals = Math.min( NodeHistory.intervals( nodes ), Math.floor( (end-NodeHistory.floor)/interval ) );
+		return intervals>0 ? end-intervals*interval : NodeHistory.floor;
+	}
+	//the range before an aggregate read's, ending where it started, or at `end`
+	#before( args:HistReadArgs, end=args.start!.getTime() ):HistReadArgs{
+		const start = NodeHistory.start( end, args.interval!, args.nodes.length );
+		return { ...args, start: new Date( start ), end: new Date( end ), limit: Math.ceil( (end-start)/args.interval! )*args.nodes.length, continuation: undefined };
+	}
+	//the latest record of the nodes before an aggregate range, raw:  undefined at the start of their history
+	async #lastBefore( args:HistReadArgs ):Promise<number|undefined>{
+		const page = await this.#history.read( this.gateway, {opc: this.cnnctnSlug}, {nodes: args.nodes, end: args.start, limit: 1}, m=>console.log(m) );
+		return page.values.find( v=>v.source )?.source!.getTime();
 	}
 	//paged back by its continuation - the read's exact place, which neither the oldest value held (a live push can be older
 	//than the page) nor a Date (cut to the millisecond) can stand in for - a page at a time, whatever this read's limit.  A
 	//read for a selection since changed is dropped, not merged.  `pages`:  how many this read stands for, a refresh's several.
+	//An aggregate read is a range a load:  its pages, several only when the gateway capped the limit, are read here at the
+	//read's limit, which the gateway caps again - at a page's, a tenth of its cap a round trip (historian-aggregate-picker #6).
+	//They are taken in together, since it goes forward and its first page alone is the oldest intervals - a refresh's showed
+	//them in place of all held until the rest landed (#4).  Load earlier is the range before, while a whole interval fits
+	//above the floor.  Past a range of nothing but Bad_NoData, the answer for an interval with no record, it is the range
+	//ending with the interval of the latest record before - a gap, on a server that records on change - and there is none at
+	//the start of the history.
 	async #read( args:HistReadArgs, generation:number, pages=1 ){
 		this.loading.set( true );
 		try{
-			const page = await this.#history.read( this.gateway, {opc: this.cnnctnSlug}, args, m=>console.log(m) );
-			if( generation!=this.#generation )
+			let page = await this.#page( args, generation );
+			if( !page )
 				return;
 			this.#pages += pages;
-			this.nodeStatuses.set( page.nodes );
-			if( this.#tail ){//a refresh's page, in place of what was held
-				this.values.set( mergeHistValues( this.#tail, page.values ) );
-				this.#tail = undefined;
+			let next:HistReadArgs|undefined = page.continuation==null ? undefined : { ...args, limit: args.aggregate ? args.limit : NodeHistory.pageSize, continuation: page.continuation };
+			if( !args.aggregate )
+				this.#take( page );
+			else{
+				const values = [...page.values];
+				while( next ){
+					page = await this.#page( next, generation );
+					if( !page )
+						return;
+					values.push( ...page.values );
+					next = page.continuation==null ? undefined : { ...next, continuation: page.continuation };
+				}
+				this.#take( {...page, values} );
+				this.#earliest = args.start!.getTime();
+				if( this.#earliest-NodeHistory.floor<args.interval! )
+					next = undefined;
+				else if( values.some( v=>!isNoData(v.status) ) )
+					next = this.#before( args );
+				else{
+					const last = await this.#lastBefore( args );
+					if( generation!=this.#generation )
+						return;
+					next = last==undefined || last<NodeHistory.floor ? undefined : this.#before( args, Math.min( alignUp(last+1, args.interval!), this.#earliest ) );
+				}
 			}
-			else
-				this.values.update( v=>mergeHistValues( v, page.values ) );
-			this.#next = page.continuation==null ? undefined : { ...args, limit: NodeHistory.pageSize, continuation: page.continuation };
-			this.hasEarlier.set( this.#next!=undefined );
-			this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status )] );
+			this.#next = next;
+			this.hasEarlier.set( next!=undefined );
 		}
 		catch( e ){
 			if( generation!=this.#generation )
@@ -136,6 +201,24 @@ export class NodeHistory implements OnDestroy{
 				this.loading.set( false );
 		}
 	}
+	//one page, or undefined for a selection since changed, whose page is dropped
+	async #page( args:HistReadArgs, generation:number ):Promise<HistPage|undefined>{
+		const page = await this.#history.read( this.gateway, {opc: this.cnnctnSlug}, args, m=>console.log(m) );
+		if( generation!=this.#generation )
+			return undefined;
+		this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status )] );
+		return page;
+	}
+	//a page's values merged in, or a refresh's in place of what was held
+	#take( page:HistPage ){
+		this.nodeStatuses.set( page.nodes );
+		if( this.#tail ){
+			this.values.set( mergeHistValues( this.#tail, page.values ) );
+			this.#tail = undefined;
+		}
+		else
+			this.values.update( v=>mergeHistValues( v, page.values ) );
+	}
 	loadEarlier(){
 		if( this.#next && !this.loading() )
 			this.#read( this.#next, this.#generation );
@@ -153,7 +236,19 @@ export class NodeHistory implements OnDestroy{
 		const pages = Math.max( this.#pages, 1 );
 		this.#pages = 0;
 		this.#tail = [];
-		this.#read( this.#opening( nodes, this.mode(), pages*NodeHistory.pageSize ), generation, pages );
+		this.#read( this.#opening( nodes, this.mode(), this.aggregated(), pages ), generation, pages );
+	}
+	//a server that lists no aggregates, or refuses the browse of the folder, leaves the raw values alone to pick
+	async #loadAggregates( connection:string ){
+		let list:HistAggregate[] = [];
+		try{
+			list = await this.#history.aggregates( this.gateway, this.cnnctnSlug, m=>console.log(m) );
+		}
+		catch( e ){
+			console.warn( `Could not list the aggregates of ${connection}.`, e );
+		}
+		if( connection==this.connection() )
+			this.aggregates.set( list );
 	}
 	onLiveChange( on:boolean ){
 		this.live.set( on );
@@ -166,7 +261,7 @@ export class NodeHistory implements OnDestroy{
 	//Children tab's ticks and this tail share the server-side item and neither drops the other's.
 	#subscribe( nodes:Variable[] ){
 		this.#unsubscribe();
-		if( !nodes.length || this.mode()!='values' )
+		if( !nodes.length || this.aggregated() || this.mode()!='values' )
 			return;
 		const byKey = new Map( nodes.map( n=>[n.key, n] ) );
 		this.#subscription = this.gateway.subscribe( this.cnnctnSlug, nodes.map( n=>n.nodeId ), this.#owner ).subscribe({
@@ -252,6 +347,7 @@ export class NodeHistory implements OnDestroy{
 	get #owner():string{ return `${this.pageData().route.profileKey}/history`; }
 	static readonly pageSize = 1000;//values per read:  well under the gateway's readLimit, and a trend's worth at a time
 	static readonly endSlack = 60_000;//ms past the browser's now the opening read ends:  for a server clock ahead of the browser's
+	static readonly floor = 0;//the Unix epoch:  no store holds a value before it, so no aggregate range starts before it (historian-aggregate-picker #2)
 	static readonly maxSeries = 8;
 	static readonly refusalsShown = 3;
 	static readonly done:Record<HistEditKind,string> = { insert: "Inserted.", replace: "Replaced.", update: "Updated.", purgeRange: "Deleted.", purgeTimes: "Deleted." };
@@ -263,5 +359,6 @@ export class NodeHistory implements OnDestroy{
 	#generation = 0;//which selection the values belong to:  a read or push for an older one is dropped
 	#next:HistReadArgs|undefined;//the opening read's arguments with the last page's continuation:  the page before, if any
 	#pages = 0;//pages read into `values`, so a refresh reads as far
+	#earliest:number|undefined;//the start of the earliest aggregate range loaded, so a refresh reads from it
 	#tail:HistValue[]|undefined;//the pushes since a refresh's read went out, kept when its page replaces the values held;  undefined but while one is out
 }

@@ -62,6 +62,18 @@ describe( 'HistTrend', ()=>{
 		expect( flag() ).toBe( "BadNamedForTheTrend" );
 		fixture.destroy();
 	} );
+	//The tooltip hid a Good by its text;  it names a status where the table marks one, by the same rule (historian-aggregate-picker #13).
+	it( "names a point's status in the tooltip where the table marks it", async ()=>{
+		const { fixture, chart } = await draw();
+		const format = <Function>chart.options.tooltip!.pointFormatter;
+		const tip = ( status?:number )=><string>format.call( {options: {custom: status==undefined ? undefined : {status}}, color: '#000', series: {name: 'A'}, y: 1} );
+		expect( tip() ).toBe( '<span style="color:#000">●</span> A: <b>1</b><br/>' );
+		expect( tip( 0 ) ).not.toContain( '(' );
+		expect( tip( 0x401 ) ).not.toContain( '(' );//Good, Calculated:  every aggregate's
+		expect( tip( 0x405 ) ).toContain( ' (Good+Partial)' );
+		expect( tip( 0x80EF0000 ) ).toContain( ` (${OpcError.text( 0x80EF0000 )})` );//its name, if a test before set one
+		fixture.destroy();
+	} );
 	//The container was role="img" with an aria-label of Angular's, and the accessibility module sets a role and label of its own on
 	//the same element at each update:  the role became "region" and the label flipped between "Chart. Highcharts interactive
 	//chart." and Angular's (historian-web-trend #13).  The module owns them, named with the nodes.

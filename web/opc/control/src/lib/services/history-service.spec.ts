@@ -7,6 +7,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 		clear: ()=>backing.clear()
 	};
 }
+import { aggregateFunctionsFolder } from '../model/hist';
 import { NodeId } from '../model/node-id';
 import { HistoryService } from './history-service';
 
@@ -25,6 +26,53 @@ describe( 'HistoryService.query', ()=>{
 		expect( vars['opc'] ).toBeUndefined();
 		expect( vars['returnBounds'] ).toBe( false );//false is an argument, not an absence
 		expect( vars['continuation'] ).toBe( 'c' );
+	} );
+	//an aggregate read:  both ends, the interval in milliseconds and the aggregate by name, which choose the mode (spec *Reads*)
+	it( 'reads an aggregate over both ends with its interval', ()=>{
+		const {ql, vars} = HistoryService.query( {opc: 'local'}, {nodes: [A], start: new Date(60_000), end: new Date(180_000), interval: 60_000, aggregate: 'Average', limit: 2} );
+		expect( ql ).toBe( "history( opc: $opc, nodes: $nodes, start: $start, end: $end, interval: $interval, aggregate: $aggregate, limit: $limit ){ continuation values{ node source server status value bound heartbeat } nodes{ node status } }" );
+		expect( vars ).toEqual( {opc: 'local', nodes: [A.toJson()], start: {seconds: 60, nanos: 0}, end: {seconds: 180, nanos: 0}, interval: 60_000, aggregate: 'Average', limit: 2} );
+	} );
+} );
+
+describe( 'HistoryService.aggregates', ()=>{
+	it( 'browses the AggregateFunctions folder of the connection and lists its objects', async ()=>{
+		let sent:{ql:string, vars:any}|undefined;
+		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{node: {children: [
+			{ id: {i: 2342}, name: {locale: 'en', text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 },
+			{ id: {ns: 1, s: 'Median'}, name: {text: 'Median'}, browse: {ns: 1, name: 'Median'}, nodeClass: 1 }
+		]}}; } };
+		const list = await new HistoryService().aggregates( reader, 'local' );
+		expect( sent?.ql ).toBe( HistoryService.aggregatesQuery );
+		expect( sent?.vars ).toEqual( {opc: 'local', id: aggregateFunctionsFolder.toJson()} );
+		expect( list ).toEqual( [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}] );
+	} );
+	it( 'lists none when the gateway answers nothing', async ()=>{
+		expect( await new HistoryService().aggregates( {query: async <T>()=><T><unknown>null}, 'local' ) ).toEqual( [] );
+	} );
+	//a History tab is made again on each return to it, and asks again:  the service browses once per gateway and connection
+	it( 'browses once per gateway and connection, and again after a refusal', async ()=>{
+		const sent:string[] = [];
+		let refuse = true;
+		const reader = ( name:string )=>( {query: async <T>( _ql:string, vars?:any )=>{
+			sent.push( `${name}/${vars.opc}` );
+			if( vars.opc=='bare' && refuse )
+				throw new Error( 'BadNodeIdUnknown' );
+			return <T><unknown>{node: {children: [{ id: {i: 2342}, name: {text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 }]}};
+		} } );
+		const service = new HistoryService(), a = reader( 'a' ), b = reader( 'b' );
+		const [first, second] = await Promise.all( [service.aggregates( a, 'local' ), service.aggregates( a, 'local' )] );//one browse in flight, shared
+		expect( second ).toBe( first );
+		expect( await service.aggregates( a, 'local' ) ).toBe( first );
+		await service.aggregates( a, 'other' );
+		await service.aggregates( b, 'local' );//another gateway's connection of the same slug
+		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local'] );
+
+		await expect( service.aggregates( a, 'bare' ) ).rejects.toThrow( 'BadNodeIdUnknown' );
+		refuse = false;
+		expect( (await service.aggregates( a, 'bare' )).map( x=>x.browse ) ).toEqual( ['Average'] );
+		await service.aggregates( a, 'bare' );
+		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local', 'a/bare', 'a/bare'] );
 	} );
 } );
 

@@ -1,0 +1,22 @@
+<mat-form-field class="aggregate" subscriptSizing="dynamic">
+	<mat-label>Aggregate</mat-label>
+	<mat-select [value]="aggregate()" (valueChange)="onAggregate($event)" [disabled]="disabled()" matTooltip="The stored values, or one of the aggregates the server computes over each interval">
+		<mat-option value="">Raw values</mat-option>
+		@for( a of aggregates(); track a.browse ){
+			<mat-option [value]="a.browse">{{ a.name }}</mat-option>
+		}
+	</mat-select>
+</mat-form-field>
+@if( aggregate() ){
+	<mat-form-field class="amount" subscriptSizing="dynamic" [class.mat-form-field-invalid]="invalid()">
+		<mat-label>Interval</mat-label>
+		<input matInput type="number" min="0" step="any" [value]="amount()" (input)="amount.set($any($event.target).value)" (change)="onAmount($any($event.target).value)" [disabled]="disabled()" [matTooltip]="invalid() ? 'Enter a positive interval' : 'The length of each interval, read on Enter'">
+	</mat-form-field>
+	<mat-form-field class="unit" subscriptSizing="dynamic">
+		<mat-select [value]="unit()" (valueChange)="onUnit($event)" [disabled]="disabled()" aria-label="Interval unit">
+			@for( u of units; track u.value ){
+				<mat-option [value]="u.value">{{ u.name }}</mat-option>
+			}
+		</mat-select>
+	</mat-form-field>
+}

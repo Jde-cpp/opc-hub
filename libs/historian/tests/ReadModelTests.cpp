@@ -10,6 +10,7 @@
 #include <numeric>
 #include <random>
 #include <absl/container/flat_hash_set.h>
+#include <jde/fwk/process/process.h>
 #include "reads.h"
 
 #define let const auto
@@ -943,7 +944,7 @@ namespace Jde::Opc::Hist::Tests{
 		}
 
 		std::mt19937_64 Rng;
-		bool Trace{ std::getenv("HIST_MODEL_TRACE")!=nullptr };
+		bool Trace{ Process::GetEnv("HIST_MODEL_TRACE", false).has_value() };
 		Oracle Model;
 		sp<Group> Pump;
 		string Name;
