@@ -78,9 +78,11 @@ describe( 'toHistAggregates', ()=>{
 			{ id: {i: 2342}, name: {locale: 'en', text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 },
 			{ id: {ns: 1, s: 'Median'}, name: 'Median', browse: {ns: 1, name: 'Median'}, nodeClass: 1 },
 			{ id: {i: 3}, browse: {ns: 0, name: 'Count'}, nodeClass: 1 },//no display name:  the browse name stands in
+			{ id: {i: 5}, name: {locale: 'en', text: ''}, browse: {ns: 0, name: 'Range'}, nodeClass: 1 },//nor for one with no text (historian-aggregate-picker #10)
+			{ id: {i: 6}, name: {locale: 'en'}, browse: {ns: 0, name: 'Delta'}, nodeClass: 1 },
 			{ id: {i: 4}, name: {text: 'Icon'}, browse: {ns: 0, name: 'Icon'}, nodeClass: 2 }//a variable is no aggregate
 		]} );
-		expect( list ).toEqual( [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}, {name: 'Count', browse: 'Count'}] );
+		expect( list ).toEqual( [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}, {name: 'Count', browse: 'Count'}, {name: 'Range', browse: 'Range'}, {name: 'Delta', browse: 'Delta'}] );
 		expect( toHistAggregates( undefined ) ).toEqual( [] );
 	} );
 } );

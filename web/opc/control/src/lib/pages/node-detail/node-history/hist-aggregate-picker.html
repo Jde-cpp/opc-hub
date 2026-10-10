@@ -10,7 +10,7 @@
 @if( aggregate() ){
 	<mat-form-field class="amount" subscriptSizing="dynamic" [class.mat-form-field-invalid]="invalid()">
 		<mat-label>Interval</mat-label>
-		<input matInput type="number" min="0" step="any" [value]="amount()" (input)="onAmount($any($event.target).value)" [disabled]="disabled()" [matTooltip]="invalid() ? 'Enter a positive interval' : 'The length of each interval'">
+		<input matInput type="number" min="0" step="any" [value]="amount()" (input)="amount.set($any($event.target).value)" (change)="onAmount($any($event.target).value)" [disabled]="disabled()" [matTooltip]="invalid() ? 'Enter a positive interval' : 'The length of each interval, read on Enter'">
 	</mat-form-field>
 	<mat-form-field class="unit" subscriptSizing="dynamic">
 		<mat-select [value]="unit()" (valueChange)="onUnit($event)" [disabled]="disabled()" aria-label="Interval unit">

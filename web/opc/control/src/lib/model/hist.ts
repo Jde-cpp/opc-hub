@@ -4,7 +4,7 @@ import { OpcError } from './opc-error';
 import { ENodeClass } from './node';
 import { CnnctnSlug } from './server-cnnctn';
 import { isBad, nameKey } from './status-code';
-import { Browse, StatusCode } from './types';
+import { Browse, StatusCode, toLocalizedText } from './types';
 import { toValue, Value, valueJson } from './value';
 
 //Where a read comes from:  a server's own history over its connection, read through the gateway (spec *Pass-through*), or a
@@ -72,10 +72,11 @@ export function toHistPage( json:any ):HistPage{
 	};
 }
 //the folder's objects as node{ children{ name browse nodeClass } } lists them, in the server's order:  an aggregate is an
-//object, by Part 13's AggregateFunctionType, and nothing else there is one
+//object, by Part 13's AggregateFunctionType, and nothing else there is one.  Labelled by its display name, or its browse name
+//for one with no text.
 export function toHistAggregates( json:any ):HistAggregate[]{
 	return ( <any[]>(json?.children ?? []) ).filter( c=>c.nodeClass==ENodeClass.Object && (<Browse|undefined>c.browse)?.name )
-		.map( c=>({ name: String( c.name?.text ?? c.name ?? c.browse.name ), browse: String( c.browse.name ) }) );
+		.map( c=>({ name: String( toLocalizedText( c.name )?.text || c.browse.name ), browse: String( c.browse.name ) }) );
 }
 //`ms` rounded up to a multiple of `interval` on the local clock, so an aggregate read's intervals sit on its boundaries:  the
 //minute, the hour, local midnight.

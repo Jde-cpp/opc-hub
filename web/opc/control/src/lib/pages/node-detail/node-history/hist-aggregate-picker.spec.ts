@@ -67,6 +67,22 @@ describe( 'HistAggregatePicker', ()=>{
 		expect( p.set.at( -1 ) ).toEqual( {aggregate: 'Median', interval: 150_000} );
 		expect( p.picker.invalid() ).toBe( false );
 	} );
+	//Each keystroke set the aggregation, and each was a read:  365 days was read as 3, 36 and 365 (historian-aggregate-picker #5).
+	it( 'follows the typed interval and marks it, but sets it only on the change', ()=>{
+		const p = open();
+		p.picker.onAggregate( 'Average' );
+		p.fixture.detectChanges();
+		const input = <HTMLInputElement>p.field( 'amount' ).querySelector( 'input' );
+		const type = ( text:string )=>{ input.value = text; input.dispatchEvent( new Event('input') ); p.fixture.detectChanges(); };
+		type( '' );
+		expect( p.field( 'amount' ).classList.contains( 'mat-form-field-invalid' ) ).toBe( true );
+		type( '3' ); type( '36' ); type( '365' );
+		expect( p.picker.amount() ).toBe( '365' );
+		expect( p.picker.invalid() ).toBe( false );
+		expect( p.set ).toEqual( [{aggregate: 'Average', interval: 60_000}] );
+		input.dispatchEvent( new Event('change') );
+		expect( p.set.slice( 1 ) ).toEqual( [{aggregate: 'Average', interval: 365*60_000}] );
+	} );
 	//the tab keeps the aggregation across Modifications, where the picker is gone;  back in Values the picker shows it again
 	it( 'shows a value set from outside in its fields, in the largest unit', ()=>{
 		const p = open( {aggregate: 'Median', interval: 7_200_000} );

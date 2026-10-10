@@ -50,6 +50,30 @@ describe( 'HistoryService.aggregates', ()=>{
 	it( 'lists none when the gateway answers nothing', async ()=>{
 		expect( await new HistoryService().aggregates( {query: async <T>()=><T><unknown>null}, 'local' ) ).toEqual( [] );
 	} );
+	//a History tab is made again on each return to it, and asks again:  the service browses once per gateway and connection
+	it( 'browses once per gateway and connection, and again after a refusal', async ()=>{
+		const sent:string[] = [];
+		let refuse = true;
+		const reader = ( name:string )=>( {query: async <T>( _ql:string, vars?:any )=>{
+			sent.push( `${name}/${vars.opc}` );
+			if( vars.opc=='bare' && refuse )
+				throw new Error( 'BadNodeIdUnknown' );
+			return <T><unknown>{node: {children: [{ id: {i: 2342}, name: {text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 }]}};
+		} } );
+		const service = new HistoryService(), a = reader( 'a' ), b = reader( 'b' );
+		const [first, second] = await Promise.all( [service.aggregates( a, 'local' ), service.aggregates( a, 'local' )] );//one browse in flight, shared
+		expect( second ).toBe( first );
+		expect( await service.aggregates( a, 'local' ) ).toBe( first );
+		await service.aggregates( a, 'other' );
+		await service.aggregates( b, 'local' );//another gateway's connection of the same slug
+		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local'] );
+
+		await expect( service.aggregates( a, 'bare' ) ).rejects.toThrow( 'BadNodeIdUnknown' );
+		refuse = false;
+		expect( (await service.aggregates( a, 'bare' )).map( x=>x.browse ) ).toEqual( ['Average'] );
+		await service.aggregates( a, 'bare' );
+		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local', 'a/bare', 'a/bare'] );
+	} );
 } );
 
 describe( 'HistoryService.mutation', ()=>{

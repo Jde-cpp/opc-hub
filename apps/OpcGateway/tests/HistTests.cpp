@@ -338,7 +338,7 @@ namespace Jde::Opc::Gateway::Tests{
 				y.push_back( row.Status );
 			return y;
 		}
-		Ω near( const vector<double>& actual, const vector<double>& expected )ι->::testing::AssertionResult{
+		Ω nearly( const vector<double>& actual, const vector<double>& expected )ι->::testing::AssertionResult{
 			if( actual.size()!=expected.size() )
 				return ::testing::AssertionFailure() << actual.size() << " values, expected " << expected.size();
 			for( uint i=0; i<actual.size(); ++i ){
@@ -359,7 +359,7 @@ namespace Jde::Opc::Gateway::Tests{
 		const Request request{ .Nodes={Rpm4}, .Limit=100, .Times={At(0, 15), At(0, 20), At(1, 15), At(2, 65)} };
 		let page = Read( request );
 		EXPECT_TRUE( page.Continuation.empty() );
-		EXPECT_TRUE( near(values(page.Values), {100, 200, 700, 1800}) );
+		EXPECT_TRUE( nearly(values(page.Values), {100, 200, 700, 1800}) );
 		EXPECT_EQ( sources(page.Values), (vector<optional<TimePoint>>{At(0, 15), At(0, 20), At(1, 15), At(2, 65)}) );
 		EXPECT_EQ( statuses(page.Values), (vector<StatusCode>{Interpolated, UA_STATUSCODE_GOOD, Interpolated, Interpolated}) );
 		ASSERT_EQ( page.Values.size(), 4u );
@@ -370,14 +370,14 @@ namespace Jde::Opc::Gateway::Tests{
 		vector<uint> pages;
 		let paged = ReadAll( {.Nodes={Rpm4}, .Limit=3, .Times=request.Times}, &pages );
 		EXPECT_EQ( pages, (vector<uint>{3, 1}) );
-		EXPECT_TRUE( near(values(paged), {100, 200, 700, 1800}) );
+		EXPECT_TRUE( nearly(values(paged), {100, 200, 700, 1800}) );
 
 		let unordered = Read( {.Nodes={Rpm4}, .Limit=100, .Times={At(1, 15), At(0, 15)}} );
-		EXPECT_TRUE( near(values(unordered.Values), {700, 100}) );
+		EXPECT_TRUE( nearly(values(unordered.Values), {700, 100}) );
 
 		const Request two{ .Nodes={Rpm4, RpmManual, Status2}, .Limit=100, .Times={At(0, 15), At(1, 0)} };
 		let both = Read( two );
-		EXPECT_TRUE( near(values(both.Values), {100, 50, 600, 50}) );
+		EXPECT_TRUE( nearly(values(both.Values), {100, 50, 600, 50}) );
 		ASSERT_EQ( both.Values.size(), 4u );
 		EXPECT_EQ( both.Values[1].Node, Node(RpmManual) );
 		EXPECT_EQ( both.Values[1].Status, UA_STATUSCODE_GOOD );//the record at the time, as it is.
@@ -387,7 +387,7 @@ namespace Jde::Opc::Gateway::Tests{
 		pages.clear();
 		let cut = ReadAll( {.Nodes={Rpm4, RpmManual, Status2}, .Limit=3, .Times=two.Times}, &pages );
 		EXPECT_EQ( pages, (vector<uint>{3, 1}) );
-		EXPECT_TRUE( near(values(cut), {100, 50, 600, 50}) );
+		EXPECT_TRUE( nearly(values(cut), {100, 50, 600, 50}) );
 		ASSERT_EQ( cut.size(), 4u );
 		EXPECT_EQ( cut[3].Node, Node(RpmManual) );
 		EXPECT_EQ( cut[3].Source, At(1, 0) );
@@ -409,7 +409,7 @@ namespace Jde::Opc::Gateway::Tests{
 			SCOPED_TRACE( c.Aggregate );
 			let page = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate=string{c.Aggregate}} );
 			EXPECT_TRUE( page.Continuation.empty() );
-			EXPECT_TRUE( near(values(page.Values), c.Values) );
+			EXPECT_TRUE( nearly(values(page.Values), c.Values) );
 			vector<optional<TimePoint>> expected{ c.Sources.begin(), c.Sources.end() };
 			EXPECT_EQ( sources(page.Values), expected );
 			for( let& row : page.Values )
@@ -419,7 +419,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let average = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"} );
 		EXPECT_EQ( statuses(average.Values), (vector<StatusCode>{Calculated, Calculated}) );
 		let reversed = Read( {.Nodes={Rpm4}, .Start=At(0, 60), .End=At(0, 10), .Limit=100, .Interval=25'000, .Aggregate="Average"} );
-		EXPECT_TRUE( near(values(reversed.Values), {500, 250}) );
+		EXPECT_TRUE( nearly(values(reversed.Values), {500, 250}) );
 		EXPECT_EQ( sources(reversed.Values), (vector<optional<TimePoint>>{At(0, 60), At(0, 35)}) );
 		//The folder, read for Median, is the client's, listing what OpcServer serves.
 		uint listed{};
@@ -494,9 +494,9 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 		}
 		EXPECT_EQ( kept, 1u );
-		EXPECT_TRUE( near(values(Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"}).Values), {200, 450}) );
+		EXPECT_TRUE( nearly(values(Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"}).Values), {200, 450}) );
 		std::move( rebuild ).Invoke();
-		EXPECT_TRUE( near(values(Read(median).Values), {200, 450}) );
+		EXPECT_TRUE( nearly(values(Read(median).Values), {200, 450}) );
 	}
 
 	//An aggregate read across the three days:  the embedded OpcServer pages each node by the day its intervals are stamped
@@ -562,7 +562,7 @@ namespace Jde::Opc::Gateway::Tests{
 			auto whole = request; whole.Limit = 100;
 			let all = Read( whole );
 			EXPECT_TRUE( all.Continuation.empty() );
-			EXPECT_TRUE( near(values(rows), values(all.Values)) );
+			EXPECT_TRUE( nearly(values(rows), values(all.Values)) );
 			EXPECT_EQ( sources(rows), sources(all.Values) );
 			EXPECT_EQ( statuses(rows), statuses(all.Values) );
 		}
@@ -607,7 +607,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_FALSE( raw.Continuation.empty() );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(0, 20)}}, raw.Continuation), GatewayErrorResponse );
 		let rest = Read( {.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(0, 20)}}, atTime.Continuation );
-		EXPECT_TRUE( near(values(rest.Values), {200}) );
+		EXPECT_TRUE( nearly(values(rest.Values), {200}) );
 		EXPECT_TRUE( rest.Continuation.empty() );
 	}
 

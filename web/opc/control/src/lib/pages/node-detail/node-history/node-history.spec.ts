@@ -37,7 +37,7 @@ const settle = ()=>new Promise( r=>setTimeout(r) );
 const open = ()=>{
 	const reads:{ args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
 	const subscribers = new Set<Subscriber<SubscriptionResult>>();
-	const gateway = { subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ), updateErrorCodes: async ()=>{} };
+	const gateway = { subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ), updateErrorCodes: async ()=>{}, slug: 'gw' };
 	const edits:{ sent:HistEditArgs[]; answer:HistEditResult } = { sent: [], answer: {values: [], nodes: []} };
 	const dialogResult:{ answer:HistEditResult|undefined } = { answer: undefined };
 	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [];
@@ -332,6 +332,34 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.tab.aggregates() ).toEqual( [] );
 		tab.fixture.destroy();
 	} );
+	//NodeDetail keeps the tab from one connection's node to another's (Back, Forward), and a pick another server lacks - Median
+	//is OpcServer's own - failed the read there (historian-aggregate-picker #3):  the pick and the list belong to their
+	//connection.  Another node of the same one keeps them.
+	it( 'drops the aggregate picked on another connection, and keeps it on the same one', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Median', 60_000 );
+		await tab.answer( {values: [at(tab.node, tab.reads[1].args.start!.getTime())]} );
+		const sibling = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} );
+		tab.fixture.componentRef.setInput( 'pageData', {gateway: tab.gateway, server: {connection: {slug: 'opc'}}, route: {profileKey: 'p'}, nodes: []} );
+		tab.fixture.componentRef.setInput( 'candidates', [sibling] );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].args ).toMatchObject( {aggregate: 'Median', interval: 60_000} );
+		await tab.answer( {values: [at(sibling, tab.reads[2].args.start!.getTime())]} );
+		tab.aggregates = [{name: 'Average', browse: 'Average'}];
+		tab.fixture.componentRef.setInput( 'pageData', {gateway: tab.gateway, server: {connection: {slug: 'other'}}, route: {profileKey: 'p'}, nodes: []} );
+		tab.fixture.componentRef.setInput( 'candidates', [tab.node] );
+		tab.fixture.detectChanges();
+		expect( tab.tab.aggregation() ).toBeUndefined();
+		expect( tab.tab.aggregates() ).toEqual( [] );
+		await settle();
+		expect( tab.reads ).toHaveLength( 4 );
+		expect( tab.reads[3].args.aggregate ).toBeUndefined();
+		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Average'] );
+		tab.fixture.destroy();
+	} );
 	//An aggregate read goes forward over both ends (a reverse one stamps each interval at its later edge), the last intervals a
 	//page holds up to the boundary past now and none beyond, one value a node per interval;  a push is a reading, so there is no live tail, and
 	//an aggregate is no record, so no row has a Replace or a Delete, while the Edit menu stays.
@@ -371,7 +399,7 @@ describe( 'NodeHistory', ()=>{
 		const tab = open();
 		await tab.answer();
 		await tab.aggregate( 'Average', 60_000 );
-		await tab.answer();
+		await tab.answer( {values: [at(tab.node, tab.reads[1].args.start!.getTime())]} );//data:  no read for the record before
 		tab.tab.mode.set( 'modified' );
 		tab.fixture.detectChanges();
 		await settle();
@@ -403,8 +431,8 @@ describe( 'NodeHistory', ()=>{
 		tab.fixture.destroy();
 	} );
 	//Load earlier is the range before, as long as a load, until a range answers nothing but Bad_NoData - no record in any of
-	//its intervals, where the history begins
-	it( 'loads the range before an aggregate read, and stops at one with no data', async ()=>{
+	//its intervals - and no record comes before it:  where the history begins
+	it( 'loads the range before an aggregate read, and stops at one with no data and no record before it', async ()=>{
 		const tab = open();
 		await tab.answer();
 		await tab.aggregate( 'Average', 60_000 );
@@ -420,9 +448,81 @@ describe( 'NodeHistory', ()=>{
 		expect( earlier.continuation ).toBeUndefined();
 		await tab.answer( {values: [{...at(tab.node, earlier.start!.getTime()), status: 0x809B0000, value: undefined}, {...at(tab.node, earlier.start!.getTime()+60_000), status: 0x809B0404, value: undefined}]} );
 		expect( tab.tab.values() ).toHaveLength( 3 );
+		expect( tab.reads ).toHaveLength( 4 );
+		expect( tab.reads[3].args ).toEqual( {nodes: earlier.nodes, end: earlier.start, limit: 1} );
+		await tab.answer();
+		expect( tab.tab.values() ).toHaveLength( 3 );
 		expect( tab.tab.hasEarlier() ).toBe( false );
 		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 4 );
+		tab.fixture.destroy();
+	} );
+	//A server that records on change can leave a range, the opening one included, with nothing but Bad_NoData while the node has
+	//history before it (historian-aggregate-picker #1):  Load earlier goes on to the range ending with the interval of the latest
+	//record before, read raw and not listed.
+	it( 'reads past a range of nothing but Bad_NoData to the latest record before it', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		const first = tab.reads[1].args;
+		await tab.answer( {values: [{...at(tab.node, first.start!.getTime()), status: 0x809B0000, value: undefined}]} );
 		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].args ).toEqual( {nodes: first.nodes, end: first.start, limit: 1} );
+		expect( tab.tab.loading() ).toBe( true );
+		const record = first.start!.getTime()-20*3_600_000;//on a minute's boundary:  the interval it starts holds it
+		await tab.answer( {values: [at(tab.node, record)]} );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( tab.tab.values() ).toHaveLength( 1 );
+		expect( tab.tab.hasEarlier() ).toBe( true );
+		tab.tab.loadEarlier();
+		const earlier = tab.reads[3].args;
+		expect( earlier ).toMatchObject( {aggregate: 'Average', interval: 60_000, limit: NodeHistory.pageSize} );
+		expect( earlier.end!.getTime() ).toBe( record+60_000 );
+		expect( earlier.start!.getTime() ).toBe( record+60_000-NodeHistory.pageSize*60_000 );
+		tab.fixture.destroy();
+	} );
+	//No store holds a value before the Unix epoch, and 1000 intervals of a year went back to the year 1026, before UA's DateTime
+	//begins (historian-aggregate-picker #2):  a range is the whole intervals a load holds above the floor, or starts at the floor
+	//when not one fits.
+	it( 'starts an aggregate range no earlier than the floor', ()=>{
+		expect( NodeHistory.start( 1e9, 100, 1 ) ).toBe( 1e9-NodeHistory.pageSize*100 );
+		expect( NodeHistory.start( 1e9, 100, 8 ) ).toBe( 1e9-NodeHistory.intervals( 8 )*100 );
+		expect( NodeHistory.start( NodeHistory.floor+1050, 100, 1 ) ).toBe( NodeHistory.floor+50 );
+		expect( NodeHistory.start( NodeHistory.floor+10, 100, 1 ) ).toBe( NodeHistory.floor );
+	} );
+	it( 'reads an aggregate of long intervals from the floor, with Load earlier off', async ()=>{
+		const tab = open();
+		await tab.answer();
+		const year = 365*86_400_000;
+		await tab.aggregate( 'Average', year );
+		const args = tab.reads[1].args, start = args.start!.getTime(), end = args.end!.getTime();
+		expect( start ).toBeGreaterThanOrEqual( NodeHistory.floor );
+		expect( start ).toBeLessThan( NodeHistory.floor+year );
+		expect( (end-start)%year ).toBe( 0 );
+		expect( args.limit ).toBe( (end-start)/year );
+		await tab.answer( {values: [at(tab.node, start)]} );
+		expect( tab.tab.hasEarlier() ).toBe( false );
+		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 2 );
+		tab.fixture.destroy();
+	} );
+	it( 'loads earlier down to the last whole interval above the floor', async ()=>{
+		const tab = open();
+		await tab.answer();
+		const interval = 20*86_400_000;//a load reaches back to 1972
+		await tab.aggregate( 'Average', interval );
+		const first = tab.reads[1].args;
+		expect( first.limit ).toBe( NodeHistory.pageSize );
+		await tab.answer( {values: [at(tab.node, first.start!.getTime())]} );
+		expect( tab.tab.hasEarlier() ).toBe( true );
+		tab.tab.loadEarlier();
+		const earlier = tab.reads[2].args, start = earlier.start!.getTime();
+		expect( earlier.end ).toEqual( first.start );
+		expect( start ).toBeGreaterThanOrEqual( NodeHistory.floor );
+		expect( start ).toBeLessThan( NodeHistory.floor+interval );
+		expect( earlier.limit ).toBe( (first.start!.getTime()-start)/interval );
+		await tab.answer( {values: [at(tab.node, start)]} );
+		expect( tab.tab.hasEarlier() ).toBe( false );
 		tab.fixture.destroy();
 	} );
 	//the gateway caps `limit` at its readLimit and pages the rest of the range:  the rest is read within the load, and Load earlier
@@ -437,12 +537,31 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.reads[2].args ).toMatchObject( {aggregate: 'Average', continuation: 'rest'} );
 		expect( tab.reads[2].args.start!.getTime() ).toBe( first.start!.getTime() );
 		expect( tab.tab.loading() ).toBe( true );
+		expect( tab.tab.values() ).toHaveLength( 0 );//the range is taken in whole
 		await tab.answer( {values: [at(tab.node, first.start!.getTime()+60_000)]} );
 		expect( tab.tab.loading() ).toBe( false );
 		expect( tab.tab.values() ).toHaveLength( 2 );
 		tab.tab.loadEarlier();
 		expect( tab.reads[3].args.end!.getTime() ).toBe( first.start!.getTime() );
 		expect( tab.reads[3].args.continuation ).toBeUndefined();
+		tab.fixture.destroy();
+	} );
+	//A refresh's first page replaced what was held, and an aggregate read goes forward:  the tab showed the oldest intervals
+	//alone until the rest landed (historian-aggregate-picker #4).
+	it( 'keeps what an aggregate refresh replaces until its last page lands', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		const t0 = tab.reads[1].args.start!.getTime();
+		await tab.answer( {values: [at(tab.node, t0), at(tab.node, t0+60_000)]} );
+		tab.dialogResult.answer = { values: [{node: tab.node.nodeId, source: new Date(t0), status: 0}], nodes: [{node: tab.node.nodeId, status: 0}] };
+		await tab.tab.openEdit( 'insert' );
+		await tab.answer( {values: [{...at(tab.node, t0), value: 2}], continuation: 'rest'} );//the oldest interval
+		expect( tab.reads.at( -1 )!.args.continuation ).toBe( 'rest' );
+		expect( tab.tab.values().map( v=>v.value ) ).toEqual( [1, 1] );
+		await tab.answer( {values: [{...at(tab.node, t0+60_000), value: 3}]} );
+		expect( tab.tab.values().map( v=>v.value ) ).toEqual( [2, 3] );
+		expect( tab.tab.hasEarlier() ).toBe( true );
 		tab.fixture.destroy();
 	} );
 	//after an edit the tab reads the aggregates again, over the whole range loaded, up to the boundary past now
@@ -465,7 +584,11 @@ describe( 'NodeHistory', ()=>{
 		expect( again.limit ).toBe( (again.end!.getTime()-again.start!.getTime())/60_000 );
 		expect( again.continuation ).toBeUndefined();
 		expect( tab.tab.values() ).toHaveLength( 2 );//held until the page lands
-		await tab.answer( {values: [at(tab.node, earlier.start!.getTime()), {...at(tab.node, first.start!.getTime()), value: 2}]} );
+		await tab.answer( {values: [at(tab.node, earlier.start!.getTime()), {...at(tab.node, first.start!.getTime()), value: 2}], continuation: 'rest'} );
+		//the rest at the range's limit, which the gateway caps:  a page's was a tenth of its cap a round trip (historian-aggregate-picker #6)
+		expect( again.limit ).toBeGreaterThan( NodeHistory.pageSize );
+		expect( tab.reads[4].args ).toMatchObject( {continuation: 'rest', limit: again.limit} );
+		await tab.answer();
 		expect( tab.tab.values().map( v=>v.value ) ).toEqual( [1, 2] );
 		expect( tab.tab.hasEarlier() ).toBe( true );
 		tab.fixture.destroy();

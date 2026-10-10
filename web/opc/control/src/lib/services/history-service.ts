@@ -41,10 +41,24 @@ export class HistoryService{
 	//The aggregates a server lists, in its order:  the objects of its HistoryServerCapabilities/AggregateFunctions folder, which an
 	//aggregate read names one of by browse name (spec *Pass-through*).  A server's own, so `opc` alone:  a group's are the
 	//historian's, Phase 6's.  A server without the folder refuses the browse, which is the caller's to take as none listed.
-	async aggregates( reader:HistReader, opc:CnnctnSlug, log:Log=()=>{} ):Promise<HistAggregate[]>{
+	//Browsed once per gateway and connection - a reader is a gateway's one Gateway - since a History tab is made again on each
+	//return to it (historian-aggregate-picker #7).  A refusal isn't kept, so the next asks again, as the gateway's own cache does.
+	aggregates( reader:HistReader, opc:CnnctnSlug, log:Log=()=>{} ):Promise<HistAggregate[]>{
+		const lists = this.#aggregates.get( reader ) ?? new Map<CnnctnSlug, Promise<HistAggregate[]>>();
+		this.#aggregates.set( reader, lists );
+		const cached = lists.get( opc );
+		if( cached )
+			return cached;
+		const list = this.#browseAggregates( reader, opc, log );
+		lists.set( opc, list );
+		list.catch( ()=>lists.delete(opc) );
+		return list;
+	}
+	async #browseAggregates( reader:HistReader, opc:CnnctnSlug, log:Log ):Promise<HistAggregate[]>{
 		const data = await reader.query<any>( HistoryService.aggregatesQuery, {opc, id: aggregateFunctionsFolder.toJson()}, log );
 		return toHistAggregates( data?.["node"] );
 	}
+	#aggregates = new WeakMap<HistReader, Map<CnnctnSlug, Promise<HistAggregate[]>>>();//by gateway, then connection
 	//the Children tab's browse (Gateway.browseObjectsFolder), down to what names an aggregate
 	static readonly aggregatesQuery = "node( opc: $opc, id: $id ){ children{ id name browse nodeClass } }";
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is

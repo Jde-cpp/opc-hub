@@ -1,7 +1,7 @@
 //Processed reads (#207):  Part 13's aggregates over the example historians its Annex A publishes, every expected value
 //checked; then the read's own paging, reversed intervals, one interval over the range, Median, several nodes, and a
 //range over day files and the buffer.
-#include <cstdio>
+#include <charconv>
 #include <jde/opc/UAException.h>
 #include "reads.h"
 #include "Part13Examples.h"
@@ -36,7 +36,11 @@ namespace Jde::Opc::Hist::Tests{
 		//hh:mm:ss[.fff] on the example's day.
 		Ω timeOf( sv cell, TimePoint day )->TimePoint{
 			unsigned h{}, m{}, s{}, ms{};
-			std::sscanf( string{cell}.c_str(), "%u:%u:%u.%u", &h, &m, &s, &ms );
+			auto p = cell.data(), end = p+cell.size();
+			for( auto part : {&h, &m, &s, &ms} ){
+				p = std::from_chars( p, end, *part ).ptr;
+				if( p!=end ) ++p;
+			}
 			return day+hours{h}+minutes{m}+seconds{s}+milliseconds{ms};
 		}
 		//The CSV's status cell:  the severity, then the info bits it names.
@@ -214,13 +218,13 @@ namespace Jde::Opc::Hist::Tests{
 		ProcessedRequest r{ .Nodes={Nodes[1]}, .Start=ticks(Noon), .End=std::numeric_limits<Ticks>::max(), .Interval=1us, .Aggregate=EAggregate::Count, .Configuration=One(), .Limit=1 };
 		auto c = continuation( Read(r) );
 		EXPECT_EQ( c.next(), 1 );
-		constexpr uint64_t far{ (1ull<<32)+5 };
-		c.set_next( far );
+		constexpr uint64_t past{ (1ull<<32)+5 };
+		c.set_next( past );
 		r.Continuation = c.SerializeAsString();
 		let page = Read( r );
 		ASSERT_EQ( page.Values.size(), 1 );
-		EXPECT_EQ( page.Values[0].Value.source_ts(), ticks(Noon)+(Ticks)far*ticks(1us) );
-		EXPECT_EQ( continuation(page).next(), far+1 );
+		EXPECT_EQ( page.Values[0].Value.source_ts(), ticks(Noon)+(Ticks)past*ticks(1us) );
+		EXPECT_EQ( continuation(page).next(), past+1 );
 	}
 
 	//With Start after End the intervals run back from Start, each (Lo, Hi] stamped Hi, so the later time is in and the

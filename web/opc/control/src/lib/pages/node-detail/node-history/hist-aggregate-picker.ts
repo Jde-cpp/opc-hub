@@ -18,7 +18,8 @@ export function fromMs( interval:number ):{ amount:number; unit:IntervalUnit }{
 //The aggregate picker:  the raw values, or one of the aggregates the server lists over intervals of a length typed here, in
 //seconds, minutes, hours or days (spec *Reads*).  `aggregation` is what the tab reads by:  none for the raw values, else the
 //aggregate's browse name and the interval in milliseconds, set only when the interval is a positive number - an emptied or zero
-//field leaves the last read standing and is marked.
+//field leaves the last read standing and is marked.  A typed interval is set on the field's change - Enter, the spinner, or
+//leaving it - not each keystroke, each of which was a read (historian-aggregate-picker #5).
 @Component({
 	selector: 'hist-aggregate-picker',
 	templateUrl: './hist-aggregate-picker.html',

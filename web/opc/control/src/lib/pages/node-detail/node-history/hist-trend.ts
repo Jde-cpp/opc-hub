@@ -4,6 +4,7 @@ import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
+import { statusIcon } from '../../../model/status-code';
 import { badColor, toTrendPoints, TrendFlag, trendPalette, TrendPoint } from './hist-trend-data';
 
 type HC = typeof Highcharts;
@@ -148,8 +149,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 				backgroundColor: surface, borderColor: grid, style: {color: text}, xDateFormat: '%Y-%m-%d %H:%M:%S.%L', shared: false, split: false,
 				pointFormatter(){
 					const custom = <TrendPoint["custom"]|undefined>this.options.custom;
-					const text = custom?.status ? OpcError.text( custom.status ) : '';
-					const status = text && text!='Good' ? ` (${text})` : '';//an aggregate's Good carries its Calculated bit, which says nothing here
+					const status = statusIcon( custom?.status ) ? ` (${OpcError.text( custom!.status )})` : '';//the table's rule:  none for a Good with nothing to say, an aggregate's Calculated one too
 					const held = custom?.hold ? ', held' : '';
 					return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${this.y}</b>${status}${held}<br/>`;
 				}
