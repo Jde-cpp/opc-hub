@@ -1,9 +1,10 @@
 import { ProtoUtils, Timestamp } from 'jde-framework';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
+import { ENodeClass } from './node';
 import { CnnctnSlug } from './server-cnnctn';
-import { isBad } from './status-code';
-import { StatusCode } from './types';
+import { isBad, nameKey } from './status-code';
+import { Browse, StatusCode } from './types';
 import { toValue, Value, valueJson } from './value';
 
 //Where a read comes from:  a server's own history over its connection, read through the gateway (spec *Pass-through*), or a
@@ -32,8 +33,19 @@ export type HistNodeStatus = { node:NodeId; status:StatusCode };
 //last, and each node's status as the server answered it, Good_NoData for one with nothing in the range.
 export type HistPage = { values:HistValue[]; continuation:string|null; nodes:HistNodeStatus[] };
 //hist's arguments (spec *Reads*):  a start after end reads in reverse;  an end alone reads backward from it, the "last N"
-//query the trend opens with;  a continuation pages the read before.
-export type HistReadArgs = { nodes:NodeId[]; start?:Date; end?:Date; limit?:number; bounds?:boolean; modified?:boolean; continuation?:string };
+//query the trend opens with;  a continuation pages the read before.  `aggregate` with `interval` makes it an aggregate read,
+//of both ends:  one value a node per interval, Part 11's ReadProcessed.
+export type HistReadArgs = { nodes:NodeId[]; start?:Date; end?:Date; limit?:number; bounds?:boolean; modified?:boolean; interval?:number; aggregate?:string; continuation?:string };
+//An aggregate read's shape (spec *Reads*):  the function by the browse name of its AggregateFunction object, Part 13's or one
+//the server lists, over intervals of `interval` milliseconds, as Part 11's processingInterval is.
+export type HistAggregation = { aggregate:string; interval:number };
+//An aggregate the server lists:  an object of its HistoryServerCapabilities/AggregateFunctions folder, which an aggregate read
+//names by its browse name (spec *Pass-through*), shown by its display name.
+export type HistAggregate = { name:string; browse:string };
+export const aggregateFunctionsFolder = new NodeId( {ns: 0, i: 11201} );//HistoryServerCapabilities/AggregateFunctions
+//Bad_NoData:  Part 13's answer for an interval with no record, and a node's for a range with none.
+export const BadNoData:StatusCode = 0x809B0000;
+export function isNoData( sc:StatusCode ):boolean{ return nameKey( sc )==BadNoData; }
 
 function toDate( json:any ):Date|null{ return json ? ProtoUtils.toDate( <Timestamp>json ) : null; }
 function toHistTime( json:any ):HistTime|undefined{ return json ? { seconds: Number( json.seconds ), nanos: Number( json.nanos ?? 0 ) } : undefined; }
@@ -58,6 +70,18 @@ export function toHistPage( json:any ):HistPage{
 		continuation: json?.continuation ?? null,
 		nodes: ( <any[]>(json?.nodes ?? []) ).map( n=>({ node: new NodeId(n.node), status: <StatusCode>(n.status ?? 0) }) )
 	};
+}
+//the folder's objects as node{ children{ name browse nodeClass } } lists them, in the server's order:  an aggregate is an
+//object, by Part 13's AggregateFunctionType, and nothing else there is one
+export function toHistAggregates( json:any ):HistAggregate[]{
+	return ( <any[]>(json?.children ?? []) ).filter( c=>c.nodeClass==ENodeClass.Object && (<Browse|undefined>c.browse)?.name )
+		.map( c=>({ name: String( c.name?.text ?? c.name ?? c.browse.name ), browse: String( c.browse.name ) }) );
+}
+//`ms` rounded up to a multiple of `interval` on the local clock, so an aggregate read's intervals sit on its boundaries:  the
+//minute, the hour, local midnight.
+export function alignUp( ms:number, interval:number ):number{
+	const offset = new Date( ms ).getTimezoneOffset()*60_000;
+	return Math.ceil( (ms-offset)/interval )*interval+offset;
 }
 //A time as hist's DateTime arguments take it, UADateTime's json (libs/opc/src/uatypes/DateTime.cpp):  plain numbers, not the
 //Long ProtoUtils.fromDate builds, which JSON would write as {low,high,unsigned}.

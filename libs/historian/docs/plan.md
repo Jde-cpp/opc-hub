@@ -99,6 +99,7 @@ The design is the spec's *Pass-through* section, whose five points were ruled an
 - **Components.**
   - A trend: stepped by default, gaps drawn where status is Bad; "load earlier" is a reverse read with only `end`.
   - A table: both timestamps, status, and `ModificationInfo` in modified mode.
+  - An aggregate picker (4C, [#220]): the server's `HistoryServerCapabilities/AggregateFunctions` folder, browsed once per connection, and an interval; the read is `history` with `aggregate` and `interval`, forward, over the last intervals a page holds, with "load earlier" the range before.
   - Edit dialogs: insert, replace, update, delete range, delete at time.
   - A history tab on node-detail, shown when `historizing` ([`ReadAwait.cpp:25`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L25)) and `userAccessLevel`'s HistoryRead bit are set.
 - **Live tail.** Join the read to the node's existing `/opc` subscription by source time, dropping duplicates. For a group source, Phase 6 replaces this with `/hist`.

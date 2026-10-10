@@ -13,7 +13,7 @@ import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
 import { Observable, of, Subscriber } from 'rxjs';
 import { ConfirmData, ConfirmDialog, SnackbarService } from 'jde-framework';
-import { HistEditArgs, HistEditResult, HistPage, HistReadArgs, HistValue } from '../../../model/hist';
+import { alignUp, HistAggregate, HistEditArgs, HistEditResult, HistPage, HistReadArgs, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -44,6 +44,7 @@ const open = ()=>{
 	const errors:string[] = [], warnings:string[] = [];
 	const y = {
 		confirmed: true,
+		aggregates: <HistAggregate[]>[{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}],
 		dialog: { open: ( component:unknown, config?:{data?:HistEditDialogData|ConfirmData} )=>{
 			if( component===HistEditDialog )
 				presets.push( (<HistEditDialogData|undefined>config?.data)?.preset );
@@ -55,7 +56,8 @@ const open = ()=>{
 	TestBed.configureTestingModule({ providers: [
 		{ provide: HistoryService, useValue: {
 			read: ( _reader:unknown, _source:unknown, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({args, answer}) ),
-			edit: async ( _editor:unknown, _source:unknown, args:HistEditArgs )=>{ edits.sent.push( args ); return edits.answer; }
+			edit: async ( _editor:unknown, _source:unknown, args:HistEditArgs )=>{ edits.sent.push( args ); return edits.answer; },
+			aggregates: async ()=>{ await settle(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; }
 		} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}, info: ()=>{}, error: ( m:string )=>errors.push( m ), warn: ( m:string )=>warnings.push( m )} },
 		{ provide: MatDialog, useValue: y.dialog }
@@ -70,6 +72,8 @@ const open = ()=>{
 		fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings,
 		tab: fixture.componentInstance,
 		set confirmed( v:boolean ){ y.confirmed = v; },
+		set aggregates( v:HistAggregate[]|Error ){ y.aggregates = <HistAggregate[]>v; },
+		aggregate: async ( aggregate:string, interval:number )=>{ fixture.componentInstance.aggregation.set( {aggregate, interval} ); fixture.detectChanges(); await settle(); },
 		answer: async ( page:Partial<HistPage>={} )=>{ reads.at( -1 )!.answer( {values: [], continuation: null, nodes: [], ...page} ); await settle(); },
 		subscribed: ()=>subscribers.size,
 		push: ( source:Date )=>[...subscribers].at( -1 )!.next( {opcId: 'opc', node: node.nodeId, value: 1, sc: 0, source} ),
@@ -309,6 +313,161 @@ describe( 'NodeHistory', ()=>{
 		tab.fixture.detectChanges();
 		expect( tab.tab.loading() ).toBe( false );
 		expect( tab.fixture.nativeElement.querySelector('.jde-empty .title')?.textContent ).toBe( 'No node selected.' );
+		tab.fixture.destroy();
+	} );
+	//The picker's list is the server's AggregateFunctions folder, read once;  a server without one lists none, and the raw
+	//values stay to pick.  The picker is for the values:  a modification is a record.
+	it( "lists the server's aggregates for the picker, and none from a server that refuses", async ()=>{
+		const tab = open();
+		await tab.answer();
+		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Average', 'Median'] );
+		expect( tab.fixture.nativeElement.querySelector( 'hist-aggregate-picker' ) ).not.toBeNull();
+		tab.tab.mode.set( 'modified' );
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( 'hist-aggregate-picker' ) ).toBeNull();
+		tab.aggregates = new Error( 'BadNodeIdUnknown' );//another connection, without the folder
+		tab.fixture.componentRef.setInput( 'pageData', {gateway: tab.gateway, server: {connection: {slug: 'other'}}, route: {profileKey: 'p'}, nodes: []} );
+		tab.fixture.detectChanges();
+		await settle(); await settle();
+		expect( tab.tab.aggregates() ).toEqual( [] );
+		tab.fixture.destroy();
+	} );
+	//An aggregate read goes forward over both ends (a reverse one stamps each interval at its later edge), the last intervals a
+	//page holds up to the boundary past now and none beyond, one value a node per interval;  a push is a reading, so there is no live tail, and
+	//an aggregate is no record, so no row has a Replace or a Delete, while the Edit menu stays.
+	it( 'reads an aggregate forward over the last intervals, on the clock, with no live tail and no row actions', async ()=>{
+		const tab = open();
+		await tab.answer();
+		expect( tab.subscribed() ).toBe( 1 );
+		const before = Date.now();
+		await tab.aggregate( 'Average', 60_000 );
+		expect( tab.reads ).toHaveLength( 2 );
+		const args = tab.reads[1].args;
+		expect( args ).toMatchObject( {aggregate: 'Average', interval: 60_000, limit: NodeHistory.pageSize} );
+		expect( args.modified ).toBeUndefined();
+		expect( args.continuation ).toBeUndefined();
+		expect( args.end!.getTime() ).toBeGreaterThanOrEqual( before );//the interval holding now is the last:  no slack, which would be intervals of nothing
+		expect( args.end!.getTime() ).toBeLessThanOrEqual( before+60_000+1_000 );
+		expect( args.end!.getTime()%60_000 ).toBe( 0 );
+		expect( args.start!.getTime() ).toBe( args.end!.getTime()-NodeHistory.pageSize*60_000 );
+		expect( tab.subscribed() ).toBe( 0 );
+		expect( tab.fixture.nativeElement.querySelector( 'mat-slide-toggle button' )?.hasAttribute( 'disabled' ) ).toBe( true );
+		await tab.answer( {values: [{...at(tab.node, args.start!.getTime()), status: 0x00000401}]} );
+		tab.fixture.detectChanges();
+		expect( tab.tab.writable() ).toEqual( [tab.node] );
+		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).not.toBeNull();
+		expect( tab.fixture.nativeElement.querySelectorAll( '.row-action' ) ).toHaveLength( 0 );
+		expect( tab.fixture.nativeElement.querySelector( 'hist-trend' ) ).not.toBeNull();
+		tab.tab.aggregation.set( undefined );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].args.aggregate ).toBeUndefined();
+		expect( tab.subscribed() ).toBe( 1 );
+		tab.fixture.destroy();
+	} );
+	//Modifications are records:  an aggregate picked stays picked, and read again, on the way back, but the modified read is raw
+	it( 'reads the modifications raw with an aggregate picked, and the aggregate again on the way back', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		await tab.answer();
+		tab.tab.mode.set( 'modified' );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].args ).toMatchObject( {modified: true, limit: NodeHistory.pageSize} );
+		expect( tab.reads[2].args.aggregate ).toBeUndefined();
+		expect( tab.reads[2].args.start ).toBeUndefined();
+		tab.tab.mode.set( 'values' );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 4 );
+		expect( tab.reads[3].args ).toMatchObject( {aggregate: 'Average', interval: 60_000} );
+		expect( tab.tab.aggregation() ).toEqual( {aggregate: 'Average', interval: 60_000} );
+		expect( tab.subscribed() ).toBe( 0 );
+		tab.fixture.destroy();
+	} );
+	//the intervals a load holds share the page among the nodes, so every node's value for every interval comes in one page
+	it( 'shares the page among the nodes of an aggregate read', async ()=>{
+		const tab = open();
+		const b = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} ), c = new Variable( <any>{ns:2, i:3, name: 'C', browse: {ns:2, name: 'C'}, historizing: true} );
+		tab.fixture.componentRef.setInput( 'candidates', [tab.node, b, c] );
+		tab.fixture.detectChanges();
+		await tab.answer();
+		await tab.aggregate( 'Count', 1000 );
+		const args = tab.reads.at( -1 )!.args;
+		expect( NodeHistory.intervals( 3 ) ).toBe( 333 );
+		expect( args.limit ).toBe( 999 );
+		expect( args.end!.getTime()-args.start!.getTime() ).toBe( 333_000 );
+		tab.fixture.destroy();
+	} );
+	//Load earlier is the range before, as long as a load, until a range answers nothing but Bad_NoData - no record in any of
+	//its intervals, where the history begins
+	it( 'loads the range before an aggregate read, and stops at one with no data', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		const first = tab.reads[1].args;
+		await tab.answer( {values: [at(tab.node, first.start!.getTime())]} );
+		expect( tab.tab.hasEarlier() ).toBe( true );
+		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 3 );
+		const earlier = tab.reads[2].args;
+		expect( earlier ).toMatchObject( {aggregate: 'Average', interval: 60_000, limit: NodeHistory.pageSize} );
+		expect( earlier.end!.getTime() ).toBe( first.start!.getTime() );
+		expect( earlier.start!.getTime() ).toBe( first.start!.getTime()-NodeHistory.pageSize*60_000 );
+		expect( earlier.continuation ).toBeUndefined();
+		await tab.answer( {values: [{...at(tab.node, earlier.start!.getTime()), status: 0x809B0000, value: undefined}, {...at(tab.node, earlier.start!.getTime()+60_000), status: 0x809B0404, value: undefined}]} );
+		expect( tab.tab.values() ).toHaveLength( 3 );
+		expect( tab.tab.hasEarlier() ).toBe( false );
+		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 3 );
+		tab.fixture.destroy();
+	} );
+	//the gateway caps `limit` at its readLimit and pages the rest of the range:  the rest is read within the load, and Load earlier
+	//is still the range before
+	it( "follows a capped aggregate range's continuation within the load", async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		const first = tab.reads[1].args;
+		await tab.answer( {values: [at(tab.node, first.start!.getTime())], continuation: 'rest'} );
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].args ).toMatchObject( {aggregate: 'Average', continuation: 'rest'} );
+		expect( tab.reads[2].args.start!.getTime() ).toBe( first.start!.getTime() );
+		expect( tab.tab.loading() ).toBe( true );
+		await tab.answer( {values: [at(tab.node, first.start!.getTime()+60_000)]} );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( tab.tab.values() ).toHaveLength( 2 );
+		tab.tab.loadEarlier();
+		expect( tab.reads[3].args.end!.getTime() ).toBe( first.start!.getTime() );
+		expect( tab.reads[3].args.continuation ).toBeUndefined();
+		tab.fixture.destroy();
+	} );
+	//after an edit the tab reads the aggregates again, over the whole range loaded, up to the boundary past now
+	it( 'reads the aggregate range loaded again after an edit', async ()=>{
+		const tab = open();
+		await tab.answer();
+		await tab.aggregate( 'Average', 60_000 );
+		const first = tab.reads[1].args;
+		await tab.answer( {values: [at(tab.node, first.start!.getTime())]} );
+		tab.tab.loadEarlier();
+		const earlier = tab.reads[2].args;
+		await tab.answer( {values: [at(tab.node, earlier.start!.getTime())]} );
+		tab.dialogResult.answer = { values: [{node: tab.node.nodeId, source: new Date(first.start!.getTime()), status: 0}], nodes: [{node: tab.node.nodeId, status: 0}] };
+		await tab.tab.openEdit( 'insert' );
+		expect( tab.reads ).toHaveLength( 4 );
+		const again = tab.reads[3].args;
+		expect( again.start!.getTime() ).toBe( earlier.start!.getTime() );
+		expect( again.end!.getTime() ).toBe( alignUp( again.end!.getTime(), 60_000 ) );
+		expect( again.end!.getTime() ).toBeGreaterThanOrEqual( first.end!.getTime() );
+		expect( again.limit ).toBe( (again.end!.getTime()-again.start!.getTime())/60_000 );
+		expect( again.continuation ).toBeUndefined();
+		expect( tab.tab.values() ).toHaveLength( 2 );//held until the page lands
+		await tab.answer( {values: [at(tab.node, earlier.start!.getTime()), {...at(tab.node, first.start!.getTime()), value: 2}]} );
+		expect( tab.tab.values().map( v=>v.value ) ).toEqual( [1, 2] );
+		expect( tab.tab.hasEarlier() ).toBe( true );
 		tab.fixture.destroy();
 	} );
 } );

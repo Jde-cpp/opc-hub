@@ -148,7 +148,8 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 				backgroundColor: surface, borderColor: grid, style: {color: text}, xDateFormat: '%Y-%m-%d %H:%M:%S.%L', shared: false, split: false,
 				pointFormatter(){
 					const custom = <TrendPoint["custom"]|undefined>this.options.custom;
-					const status = custom?.status ? ` (${OpcError.text( custom.status )})` : '';
+					const text = custom?.status ? OpcError.text( custom.status ) : '';
+					const status = text && text!='Good' ? ` (${text})` : '';//an aggregate's Good carries its Calculated bit, which says nothing here
 					const held = custom?.hold ? ', held' : '';
 					return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${this.y}</b>${status}${held}<br/>`;
 				}

@@ -56,6 +56,14 @@ describe( 'toTrendPoints', ()=>{
 		expect( points[1].custom.hold ).toBe( true );
 		expect( points[1].marker ).toEqual( {enabled: false} );
 	} );
+	//an aggregate read answers every interval of a failure with the same Bad, and every interval before the history began with
+	//Bad_NoData:  a flag a run, where the gap opens, and none for no data, which the gap says alone
+	it( 'flags a run of one Bad status once, and Bad_NoData never', ()=>{
+		const NoData = 0x809B0000, Other = 0x808C0000;
+		const {points, flags} = toTrendPoints( [at(1000, 1), at(2000, undefined, Bad), at(3000, undefined, Bad), at(4000, undefined, Other), at(5000, 5), at(6000, undefined, Bad), at(7000, undefined, NoData), at(8000, undefined, Bad)], A, false );
+		expect( points.map(p=>p.y) ).toEqual( [1, null, null, null, 5, null, null, null] );
+		expect( flags.map(f=>[f.x, f.custom.status]) ).toEqual( [[2000, Bad], [4000, Other], [6000, Bad], [8000, Bad]] );
+	} );
 	it( 'stepped, a Bad with nothing before it has nothing to hold', ()=>{
 		const {points} = toTrendPoints( [at(1000, undefined, Bad), at(2000, undefined, Bad), at(3000, 3)], A, true );
 		expect( points.map(p=>[p.x, p.y]) ).toEqual( [[1000, null], [2000, null], [3000, 3]] );

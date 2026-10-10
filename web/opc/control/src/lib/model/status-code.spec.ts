@@ -1,6 +1,6 @@
 import { computed } from '@angular/core';
 import { OpcError } from './opc-error';
-import { ELimit, ESeverity, flagsText, infoBits, isBad, nameKey, scHex, severity, statusIcon, statusText } from './status-code';
+import { EHistorian, ELimit, ESeverity, flagsText, infoBits, isBad, nameKey, scHex, severity, statusIcon, statusText } from './status-code';
 
 //OPC 10000-4 7.38.  The codes are the stack's own:  0x40940000 UncertainEngineeringUnitsExceeded, 0x808C0000 BadSensorFailure,
 //0x00960000 GoodLocalOverride.  InfoType (11:10) = 01 is 0x0400 - the bit that gives the limit and overflow bits a meaning.
@@ -28,16 +28,30 @@ describe( 'status-code', ()=>{
 		expect( infoBits(0x40940500).limit ).toBe( ELimit.Low );
 		expect( infoBits(0x40940600).limit ).toBe( ELimit.High );
 		expect( infoBits(0x40940700).limit ).toBe( ELimit.Constant );
-		expect( infoBits(0x00000480) ).toEqual( {limit: ELimit.None, overflow: true, structureChanged: false, semanticsChanged: false} );
+		expect( infoBits(0x00000480) ).toEqual( {limit: ELimit.None, overflow: true, structureChanged: false, semanticsChanged: false, historian: EHistorian.Raw, partial: false, extraData: false, multiValue: false} );
 		expect( infoBits(0x40940200).limit ).toBe( ELimit.None );//the limit bits with no InfoType say nothing
 		expect( infoBits(0x40940080).overflow ).toBe( false );
 	} );
 
-	it( 'decodes StructureChanged and SemanticsChanged whatever the InfoType, and ignores the historian bits', ()=>{
+	it( 'decodes StructureChanged and SemanticsChanged whatever the InfoType, and the historian bits only with one', ()=>{
 		expect( infoBits(0x00008000).structureChanged ).toBe( true );
 		expect( infoBits(0x00004000).semanticsChanged ).toBe( true );
-		expect( flagsText(0x4094001F) ).toBe( "" );//4:0
-		expect( flagsText(0x4094041F) ).toBe( "" );
+		expect( flagsText(0x4094001F) ).toBe( "" );//4:0 with no InfoType say nothing
+		expect( flagsText(0x4094041F) ).toBe( "+Partial+ExtraData+MultiValue" );//1:0 = 3 is reserved
+	} );
+	//Part 11's historian bits (Table 20) on a history read's values:  Calculated, every aggregate's, says nothing on screen;
+	//Interpolated and Partial qualify the value, and ExtraData and MultiValue say a record hides others
+	it( 'decodes the historian bits and words those that qualify a value', ()=>{
+		expect( infoBits(0x00000401) ).toMatchObject( {historian: EHistorian.Calculated, partial: false, extraData: false, multiValue: false} );
+		expect( infoBits(0x00000402).historian ).toBe( EHistorian.Interpolated );
+		expect( infoBits(0x00000405) ).toMatchObject( {historian: EHistorian.Calculated, partial: true} );
+		expect( infoBits(0x00000418) ).toMatchObject( {historian: EHistorian.Raw, extraData: true, multiValue: true} );
+		expect( infoBits(0x00000001).historian ).toBe( EHistorian.Raw );//no InfoType
+		expect( flagsText(0x00000401) ).toBe( "" );
+		expect( flagsText(0x00000402) ).toBe( "+Interpolated" );
+		expect( flagsText(0x00000405) ).toBe( "+Partial" );
+		expect( statusText(0x00000401) ).toBe( "Good" );
+		expect( statusText(0x40B70406, "UncertainDataSubNormal") ).toBe( "UncertainDataSubNormal+Interpolated+Partial" );
 	} );
 
 	it( 'words the flags in the emulator\'s order', ()=>{
@@ -61,9 +75,11 @@ describe( 'status-code', ()=>{
 		expect( scHex(0x808C0000) ).toBe( "0x808C0000" );
 	} );
 
-	it( 'picks a shape per severity, and none for plain Good', ()=>{
+	it( 'picks a shape per severity, and none for plain Good, calculated or not', ()=>{
 		expect( statusIcon(0) ).toBeUndefined();
 		expect( statusIcon(undefined) ).toBeUndefined();
+		expect( statusIcon(0x00000401) ).toBeUndefined();//an aggregate's Good
+		expect( statusIcon(0x00000405) ).toBe( "info" );//a partial interval's
 		expect( statusIcon(0x00960000) ).toBe( "info" );
 		expect( statusIcon(0x00000480) ).toBe( "info" );
 		expect( statusIcon(0x40940600) ).toBe( "warning" );

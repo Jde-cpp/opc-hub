@@ -10,7 +10,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { editRefused, editRefusedAll, editValueJson, HistValue, mergeHistValues, pushValue, qlTime, toHistEditResult, toHistPage } from './hist';
+import { alignUp, editRefused, editRefusedAll, editValueJson, HistValue, isNoData, mergeHistValues, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage } from './hist';
 
 const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
@@ -68,6 +68,41 @@ describe( 'toHistPage', ()=>{
 		const page = toHistPage( {values: [{ node: {ns:2, i:1}, source: {seconds: 1700000000, nanos: 123400}, value: 1 }]} );
 		expect( page.values[0].source?.getTime() ).toBe( 1700000000000 );
 		expect( page.values[0].sourceTime ).toEqual( {seconds: 1700000000, nanos: 123400} );
+	} );
+} );
+
+describe( 'toHistAggregates', ()=>{
+	//the folder's objects by browse name, Part 13's and the server's own, in its order;  a name from the display name
+	it( 'lists the objects of the AggregateFunctions folder, by display and browse name', ()=>{
+		const list = toHistAggregates( {children: [
+			{ id: {i: 2342}, name: {locale: 'en', text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 },
+			{ id: {ns: 1, s: 'Median'}, name: 'Median', browse: {ns: 1, name: 'Median'}, nodeClass: 1 },
+			{ id: {i: 3}, browse: {ns: 0, name: 'Count'}, nodeClass: 1 },//no display name:  the browse name stands in
+			{ id: {i: 4}, name: {text: 'Icon'}, browse: {ns: 0, name: 'Icon'}, nodeClass: 2 }//a variable is no aggregate
+		]} );
+		expect( list ).toEqual( [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}, {name: 'Count', browse: 'Count'}] );
+		expect( toHistAggregates( undefined ) ).toEqual( [] );
+	} );
+} );
+
+describe( 'alignUp', ()=>{
+	it( 'rounds up to the interval boundary on the local clock, and leaves a boundary where it is', ()=>{
+		const t = new Date( 2026, 9, 10, 13, 4, 5, 6 ).getTime();
+		const minute = alignUp( t, 60_000 );
+		expect( minute ).toBe( new Date( 2026, 9, 10, 13, 5 ).getTime() );
+		expect( alignUp( minute, 60_000 ) ).toBe( minute );
+		expect( alignUp( t, 3_600_000 ) ).toBe( new Date( 2026, 9, 10, 14 ).getTime() );
+		expect( alignUp( t, 86_400_000 ) ).toBe( new Date( 2026, 9, 11 ).getTime() );//local midnight, whatever the zone's offset
+		expect( alignUp( t, 1000 ) ).toBe( new Date( 2026, 9, 10, 13, 4, 6 ).getTime() );
+	} );
+} );
+
+describe( 'isNoData', ()=>{
+	it( 'is Bad_NoData with any flags, and nothing else', ()=>{
+		expect( isNoData( 0x809B0000 ) ).toBe( true );
+		expect( isNoData( 0x809B0404 ) ).toBe( true );
+		expect( isNoData( 0x80000000 ) ).toBe( false );
+		expect( isNoData( 0 ) ).toBe( false );
 	} );
 } );
 

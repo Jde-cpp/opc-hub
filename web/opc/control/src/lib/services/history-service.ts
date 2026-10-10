@@ -1,6 +1,7 @@
 import { Service } from '@angular/core';
 import { Log } from 'jde-framework';
-import { editValueJson, HistEditArgs, HistEditResult, histEditCommands, HistPage, HistReadArgs, HistSource, qlTime, toHistEditResult, toHistPage } from '../model/hist';
+import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistEditArgs, HistEditResult, histEditCommands, HistPage, HistReadArgs, HistSource, qlTime, toHistAggregates, toHistEditResult, toHistPage } from '../model/hist';
+import { CnnctnSlug } from '../model/server-cnnctn';
 
 //What a read is sent through:  a Gateway, or a stub in a spec.
 export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
@@ -16,9 +17,10 @@ export class HistoryService{
 		const data = await reader.query<any>( ql, vars, log );
 		return toHistPage( data?.["history"] );
 	}
-	//history( opc|group, nodes, start, end, limit, returnBounds, modified, continuation ){ continuation values{…} nodes{…} }
-	//(apps/OpcGateway/config/introspection/hist.jsonnet) - only the arguments given, since the gateway reads an absent start or
-	//end as an open end, and `modification` only with `modified`, the one mode that fills it.
+	//history( opc|group, nodes, start, end, interval, aggregate, limit, returnBounds, modified, continuation ){ continuation values{…}
+	//nodes{…} } (apps/OpcGateway/config/introspection/hist.jsonnet) - only the arguments given, since the gateway reads an absent
+	//start or end as an open end and chooses the mode by the arguments, and `modification` only with `modified`, the one mode
+	//that fills it.
 	static query( source:HistSource, args:HistReadArgs ):{ql:string; vars:Record<string,unknown>}{
 		const vars:Record<string,unknown> = source.group!=undefined ? {group: source.group} : {opc: source.opc};
 		const params = [ source.group!=undefined ? "group: $group" : "opc: $opc", "nodes: $nodes" ];
@@ -26,6 +28,8 @@ export class HistoryService{
 		const add = ( name:string, value:unknown )=>{ if( value!==undefined ){ params.push( `${name}: $${name}` ); vars[name] = value; } };
 		add( "start", args.start ? qlTime(args.start) : undefined );
 		add( "end", args.end ? qlTime(args.end) : undefined );
+		add( "interval", args.interval );
+		add( "aggregate", args.aggregate );
 		add( "limit", args.limit );
 		add( "returnBounds", args.bounds );
 		add( "modified", args.modified );
@@ -34,6 +38,15 @@ export class HistoryService{
 		const ql = `history( ${params.join(", ")} ){ continuation values{ node source server status value bound heartbeat${modification} } nodes{ node status } }`;
 		return { ql, vars };
 	}
+	//The aggregates a server lists, in its order:  the objects of its HistoryServerCapabilities/AggregateFunctions folder, which an
+	//aggregate read names one of by browse name (spec *Pass-through*).  A server's own, so `opc` alone:  a group's are the
+	//historian's, Phase 6's.  A server without the folder refuses the browse, which is the caller's to take as none listed.
+	async aggregates( reader:HistReader, opc:CnnctnSlug, log:Log=()=>{} ):Promise<HistAggregate[]>{
+		const data = await reader.query<any>( HistoryService.aggregatesQuery, {opc, id: aggregateFunctionsFolder.toJson()}, log );
+		return toHistAggregates( data?.["node"] );
+	}
+	//the Children tab's browse (Gateway.browseObjectsFolder), down to what names an aggregate
+	static readonly aggregatesQuery = "node( opc: $opc, id: $id ){ children{ id name browse nodeClass } }";
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an
 	//argument it can't take, a value of the wrong type among them.
