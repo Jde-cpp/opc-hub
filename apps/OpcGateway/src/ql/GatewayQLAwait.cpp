@@ -11,6 +11,7 @@
 #include "DataTypeQLAwait.h"
 #include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
+#include "HistComputedQLAwait.h"
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
@@ -85,8 +86,12 @@ namespace Jde::Opc::Gateway{
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName.starts_with("dataType") )
 				y = co_await DataTypeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName=="history" )//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
-				y = co_await HistQLAwait{ move(_query), move(_client), _sl };
+			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
+				if( HistQL::Mode(_query)==HistQL::EMode::Raw )
+					y = co_await HistQLAwait{ move(_query), move(_client), _sl };
+				else//at times, or aggregated.
+					y = co_await HistComputedQLAwait{ move(_query), move(_client), _sl };
+			}
 			else if( _query.JsonName=="serverDescription" )//connection attributes are sync UA services - run them on the client's strand.
 				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return ServerDescription( move(_query), _client ); }, _sl };
 			else if( _query.JsonName=="namespaces" ){//an ordinary read of a standard node - see Namespaces below.

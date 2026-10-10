@@ -878,6 +878,17 @@ namespace Jde::Opc::Hist{
 		return paging.Emit( r.Times.size(), last, [&]( uint64_t i, uint slot ){ return byTime.at( r.Times[i] )[nodes.Of[slot]]; } );
 	}
 
+	α ToDuration( double ms )ι->optional<Duration>{
+		constexpr double longest{ 9e12 };
+		return ms>=0 && ms<longest ? std::chrono::duration_cast<Duration>( std::chrono::duration<double,std::milli>{ms} ) : optional<Duration>{};
+	}
+	Intervals::Intervals( uint64_t range, Duration interval )ι:
+		Range{ range }{
+		let t = ticks( interval );
+		Width = t<=0 || (uint64_t)t>=range ? range : (uint64_t)t;
+		Count = Width ? range/Width+( range%Width ? 1 : 0 ) : 1;
+	}
+
 	α Group::ReadProcessed( const ProcessedRequest& r, SL sl )ε->ReadResult{
 		THROW_IFSL( r.Nodes.empty(), "A read names no nodes." );
 		if( r.Start==r.End )
@@ -887,13 +898,12 @@ namespace Jde::Opc::Hist{
 		let readLimit = _store->Config.ReadLimit;
 		let reverse = r.Start>r.End;
 		let range = reverse ? ticksBetween( r.End, r.Start ) : ticksBetween( r.Start, r.End );
-		let interval = ticks( r.Interval );
-		let width = interval<=0 || (uint64_t)interval>=range ? range : (uint64_t)interval;
-		let count = range/width + ( range%width ? 1 : 0 );
+		const Intervals intervals{ range, r.Interval };
+		let width = intervals.Width, count = intervals.Count;
 		Paging paging{ EMode::Processed, r.Nodes, r.Continuation, crc(r), r.Limit, readLimit, count, sl };
 		auto last = paging.Last( count );
 		let intervalOf = [&]( uint64_t k ){
-			Interval y{ .Reverse=reverse, .Uneven=k+1==count && range%width!=0 };
+			Interval y{ .Reverse=reverse, .Uneven=k+1==count && intervals.Uneven() };
 			let offset = k*width, rest = range-offset;//from the range's start to the interval's, and on to the range's end.
 			if( reverse ){
 				y.Hi = (Ticks)( (uint64_t)r.Start-offset );

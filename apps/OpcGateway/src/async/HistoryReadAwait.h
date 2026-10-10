@@ -3,11 +3,17 @@
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
-	//A HistoryRead of raw values, Part 11's ReadRawModifiedDetails, for the nodes it names (spec *Pass-through*).  Owns
-	//its node ids and continuation points, deep-copied as ReadRequest copies its ids, and its details, a member the
-	//extension object points at:  move-only, since a copy would double-free the ids and point at the other's details.
+	//A HistoryRead for the nodes it names (spec *Pass-through*):  of raw values, Part 11's ReadRawModifiedDetails, at
+	//times, ReadAtTimeDetails, or processed, ReadProcessedDetails.  Owns its node ids and continuation points, deep-copied
+	//as ReadRequest copies its ids, and its details, a member the extension object points at:  move-only, since a copy
+	//would double-free the ids and point at the other's details.
 	struct HistoryReadRequest final : UA_HistoryReadRequest{
 		HistoryReadRequest( const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH, bool release=false )ι;
+		//At times, with useSimpleBounds as given.
+		HistoryReadRequest( vector<UA_DateTime>&& times, bool simpleBounds, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH, bool release=false )ι;
+		//Processed:  one aggregate, named for each node Add adds, under the server's defaults (useServerCapabilitiesDefaults).
+		//The interval is in milliseconds, as processingInterval is.
+		HistoryReadRequest( UA_DateTime start, UA_DateTime end, double interval, const UA_NodeId& aggregate, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH, bool release=false )ι;
 		HistoryReadRequest( HistoryReadRequest&& x )ι;
 		~HistoryReadRequest();
 		α operator=( HistoryReadRequest&& x )ι->HistoryReadRequest&;
@@ -15,8 +21,12 @@ namespace Jde::Opc::Gateway{
 		α Add( const UA_NodeId& node, sv continuationPoint={} )ι->void;
 		α Size()Ι->uint{ return _nodes.size(); }
 	private:
-		α SetNodes()ι->void{ nodesToReadSize=_nodes.size(); nodesToRead=_nodes.data(); historyReadDetails.content.decoded.data=&_details; }//_nodes may have reallocated, and _details moved.
-		UA_ReadRawModifiedDetails _details;
+		struct AtTime final{ UA_ReadAtTimeDetails Details; vector<UA_DateTime> Times; };
+		struct Processed final{ UA_ReadProcessedDetails Details; NodeId Aggregate; vector<UA_NodeId> Aggregates; };//Aggregates:  Aggregate once per node, deep copies the dtor clears.
+		HistoryReadRequest( UA_TimestampsToReturn timestamps, bool release, const UA_DataType& type )ι;
+		α SetNodes()ι->void;//_nodes may have reallocated, and _details moved.
+		α Clear()ι->void;
+		variant<UA_ReadRawModifiedDetails,AtTime,Processed> _details;
 		vector<UA_HistoryReadValueId> _nodes;
 	};
 	//The response:  results[i] answers the request's i-th node, its historyData decoded by the client to a HistoryData, or

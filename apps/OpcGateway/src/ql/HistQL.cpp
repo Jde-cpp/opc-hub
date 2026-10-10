@@ -1,4 +1,5 @@
 #include "HistQL.h"
+#include <bit>
 #include <jde/fwk/io/crc.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
@@ -30,8 +31,16 @@ namespace Jde::Opc::Gateway{
 	Ω invalid( string what, SL sl )ι->UAException{
 		return UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, move(what), {ELogLevel::Debug}, sl };//a caller's mistake:  said at Debug.
 	}
+	Ω given( const QL::Input& input, sv name )ι->bool{
+		let p = input.FindPtr<jvalue>( name );
+		return p && !p->is_null();
+	}
+	α HistQL::Mode( const QL::Input& input )ι->EMode{
+		return given( input, "times" ) ? EMode::AtTime : given( input, "aggregate" ) || given( input, "interval" ) ? EMode::Processed : EMode::Raw;
+	}
 namespace HistQL{
-	Args::Args( const QL::Input& input, SL sl )ε{
+	Args::Args( const QL::Input& input, SL sl )ε:
+		Mode{ HistQL::Mode(input) }{
 		let opc = input.FindPtr<jstring>( "opc" );
 		let group = input.FindPtr<jvalue>( "group" );
 		THROW_IFSL( !opc || (group && !group->is_null()), "history takes exactly one of 'opc' and 'group'." );
@@ -47,30 +56,71 @@ namespace HistQL{
 		THROW_IFSL( Nodes.empty(), "history names no nodes." );
 		Start = time( input, "start", sl );
 		End = time( input, "end", sl );
-		THROW_IFSL( !Start && !End, "history needs a start or an end." );
 		Modified = input.Find<bool>( "modified" ).value_or( false );
 		Bounds = input.Find<bool>( "returnBounds" ).value_or( false );
+		if( Mode==EMode::AtTime ){//each mode refuses the others' arguments (spec *Reads*).
+			THROW_IFSL( Start || End || Modified || Bounds || given(input, "aggregate") || given(input, "interval"), "An at-time history takes no start, end, modified, returnBounds, interval or aggregate." );
+			let& times = *input.FindPtr<jvalue>( "times" );
+			if( times.is_array() ){
+				for( let& j : times.get_array() )
+					Times.push_back( UADateTime{j, sl}.UA() );
+			}
+			else
+				Times.push_back( UADateTime{times, sl}.UA() );
+			THROW_IFSL( Times.empty(), "An at-time history names no times." );
+		}
+		else if( Mode==EMode::Processed ){
+			THROW_IFSL( Modified || Bounds, "An aggregate history takes no modified or returnBounds." );
+			THROW_IFSL( !Start || !End, "An aggregate history needs a start and an end." );
+			let aggregate = input.FindPtr<jstring>( "aggregate" );
+			let interval = input.TryNumber<double>( "interval" );
+			THROW_IFSL( !aggregate || aggregate->empty() || !interval, "An aggregate history needs an aggregate's name and an interval in milliseconds." );
+			THROW_IFSL( *interval<0, "An aggregate history's interval is negative - {}.", *interval );
+			Aggregate = *aggregate;
+			Interval = *interval;
+		}
+		else
+			THROW_IFSL( !Start && !End, "history needs a start or an end." );
 		let readLimit = ReadLimit();
 		let limit = input.TryNumber<uint>( "limit" ).value_or( 0 );
 		Limit = limit && limit<readLimit ? limit : readLimit;
-		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() )
+		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() ){
 			Continuation = Decode( *c, Crc(), Nodes.size(), sl );
+			if( Mode!=EMode::Raw && Continuation->next()>=Count() )
+				throw invalid( "The continuation isn't one of the gateway's.", sl );
+		}
 	}
 	α Args::Crc()Ι->uint32_t{
-		string bytes{ Opc };
+		string bytes{ (char)Mode };
+		bytes += Opc;
 		for( let& node : Nodes ){
 			bytes += '\0';
 			bytes += node.ToString();
 		}
+		let ticks = [&bytes]( uint64_t t ){
+			for( uint i=0; i<8; ++i )
+				bytes += (char)( t>>(i*8) );
+		};
 		for( let& t : {Start, End} ){
 			bytes += t ? '\1' : '\0';
-			let ticks = (uint64_t)t.value_or( 0 );
-			for( uint i=0; i<8; ++i )
-				bytes += (char)( ticks>>(i*8) );
+			ticks( (uint64_t)t.value_or(0) );
 		}
 		bytes += Modified ? '\1' : '\0';
 		bytes += Bounds ? '\1' : '\0';
+		for( let t : Times )
+			ticks( (uint64_t)t );
+		ticks( std::bit_cast<uint64_t>(Interval) );
+		bytes += Aggregate;
 		return IO::Crc::Calc32c( bytes );
+	}
+	//An interval Hist::ToDuration refuses, 9e12 ms or more, is one over the whole range, as 0 is.
+	Ω intervals( const Args& a )ι->Hist::Intervals{ return Hist::Intervals{ a.Range(), Hist::ToDuration(a.Interval).value_or(Duration::zero()) }; }
+	α Args::Width()Ι->uint64_t{ return intervals( *this ).Width; }
+	α Args::Uneven()Ι->bool{ return intervals( *this ).Uneven(); }
+	α Args::Count()Ι->uint64_t{
+		if( Mode==EMode::AtTime )
+			return Times.size();
+		return Mode==EMode::Processed && Start && End ? intervals( *this ).Count : 0;
 	}
 }
 	α HistQL::FindEdit( sv command )ι->optional<EEdit>{
