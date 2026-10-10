@@ -256,5 +256,16 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( Is(v[3], Speed, eighth+3min, 4, 0) );//the buffer's.
 		EXPECT_TRUE( Is(v[4], Speed, eighth+5min, 4, SubNormalInterpolated) );
 		EXPECT_TRUE( Is(v[5], Speed, T0, nullopt, NoData) );
+		//OneDay ends a page with the run of times on its first's day, in the request's order and under a Limit, each value
+		//as the read without has it.
+		for( let limit : {0u, 2u} ){
+			AtTimeRequest r{ .Nodes={Speed}, .Times={ticks(T0+1500ms), ticks(eighth+1min), ticks(eighth+2min+30s), ticks(eighth+3min), ticks(eighth+5min), ticks(T0)}, .Limit=limit, .OneDay=true };
+			vector<uint> pages;
+			let days = All( r, &pages );
+			EXPECT_EQ( pages, limit ? (vector<uint>{1, 2, 2, 1}) : (vector<uint>{1, 4, 1}) ) << limit;
+			ASSERT_EQ( days.size(), v.size() ) << limit;
+			for( uint i=0; i<days.size(); ++i )
+				EXPECT_EQ( days[i].Value.ShortDebugString(), v[i].Value.ShortDebugString() ) << limit << " " << i;
+		}
 	}
 }

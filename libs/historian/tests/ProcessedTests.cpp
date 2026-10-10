@@ -419,6 +419,28 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( *numberOf(v[7].Value), 2 );
 		EXPECT_EQ( v[7].Value.status(), bits(0, Calculated|Partial) );
 		EXPECT_EQ( v[7].Value.source_ts(), ticks(eighth) );
+		//OneDay ends a page with the intervals stamped on its first's day, either way and under a Limit, each value as
+		//the read without has it:  seven stamped on the 7th, one on the 8th.
+		for( let reverse : {false, true} ){
+			for( let limit : {0u, 3u} ){
+				ProcessedRequest r{ .Nodes={speed}, .Start=ticks(reverse ? eighth+4min : t0), .End=ticks(reverse ? t0 : eighth+4min), .Interval=1h, .Aggregate=EAggregate::Count, .Limit=limit };
+				let whole = All( r );
+				r.OneDay = true;
+				vector<uint> pages;
+				let days = All( r, &pages );
+				let expected = limit ? (reverse ? vector<uint>{1, 3, 3, 1} : vector<uint>{3, 3, 1, 1}) : (reverse ? vector<uint>{1, 7} : vector<uint>{7, 1});
+				EXPECT_EQ( pages, expected ) << reverse << " " << limit;
+				ASSERT_EQ( days.size(), whole.size() ) << reverse << " " << limit;
+				for( uint i=0; i<days.size(); ++i )
+					EXPECT_EQ( days[i].Value.ShortDebugString(), whole[i].Value.ShortDebugString() ) << reverse << " " << limit << " " << i;
+			}
+		}
+		let first = Read( {.Nodes={speed}, .Start=ticks(t0), .End=ticks(eighth+4min), .Interval=1h, .Aggregate=EAggregate::Count, .OneDay=true} );
+		ASSERT_EQ( first.Values.size(), 7 );
+		let c = continuation( first );
+		EXPECT_EQ( c.next(), 7 );
+		ASSERT_EQ( c.counts_size(), 1 );
+		EXPECT_EQ( c.counts(0), 0 );
 
 		let at = All( {.Nodes={speed}, .Start=ticks(t0), .End=ticks(eighth+4min), .Interval=1h, .Aggregate=EAggregate::Interpolative} );
 		ASSERT_EQ( at.size(), 8 );

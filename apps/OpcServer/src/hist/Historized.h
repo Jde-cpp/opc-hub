@@ -9,7 +9,6 @@ namespace Jde::Opc::Server{
 	struct Historized final{
 		NodeId Id;//by the server's own namespace index.
 		Hist::Member Member;//by namespace URI, with the thresholds of its HA Configuration.
-		Hist::AggregateConfiguration Aggregates;//its HA Configuration's, as published:  an at-time read's, and a processed read's that asks for the defaults.
 		NodeId StartOfArchive, StartOfOnlineArchive;//its HA Configuration's, which the archive's first day is written to.
 
 		//Every such variable but a type's members, in NodeId order.  Each gets what a client needs to find its history and
@@ -25,4 +24,10 @@ namespace Jde::Opc::Server{
 		//The node's Value attribute, with the timestamps asked for.
 		Ω Read( UA_Server& ua, const UA_NodeId& node, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_NEITHER )ι->Value;
 	};
+	//A UA Duration, in ms, as a Duration:  none for one that isn't a time interval, negative, NaN, or past what a
+	//Duration's nanoseconds hold.
+	Ξ ToDuration( UA_Duration ms )ι->optional<Duration>{
+		constexpr double longest{ 9e12 };
+		return ms>=0 && ms<longest ? std::chrono::duration_cast<Duration>( std::chrono::duration<double,std::milli>{ms} ) : optional<Duration>{};
+	}
 }

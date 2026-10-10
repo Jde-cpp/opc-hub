@@ -135,9 +135,9 @@ namespace Jde::Opc::Server{
 				publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_DURATION], &off );
 				return {};
 			}
-			constexpr double longest{ 9e12 };//what a Duration's nanoseconds hold, in ms.
-			THROW_IF( !( *ms>=0 && *ms<longest ), "'{}' has a {} of {} ms, not a time interval.", label, browseName, *ms );
-			return std::chrono::duration_cast<Duration>( std::chrono::duration<double,std::milli>{*ms} );
+			let duration = ToDuration( *ms );
+			THROW_IF( !duration, "'{}' has a {} of {} ms, not a time interval.", label, browseName, *ms );
+			return *duration;
 		};
 		thresholds.MinTimeInterval = interval( "MinTimeInterval" );
 		thresholds.MaxTimeInterval = interval( "MaxTimeInterval" );
@@ -177,7 +177,7 @@ namespace Jde::Opc::Server{
 		auto startOfArchive = publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		auto startOfOnlineArchive = publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		Hist::Member member{ expanded(ua, id), move(thresholds) };
-		return { move(id), move(member), aggregates, move(startOfArchive), move(startOfOnlineArchive) };
+		return { move(id), move(member), move(startOfArchive), move(startOfOnlineArchive) };
 	}
 
 	α Historized::Load( UA_Server& ua, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->vector<Historized>{
