@@ -507,12 +507,30 @@ namespace Jde::Opc::Hist{
 			}
 			return count-1;
 		}
+		//OneDay's last, no later than last:  the end of the run from Next whose times fall on Next's day.
+		α OneDay( uint64_t last, absl::FunctionRef<Ticks( uint64_t )> time, const std::chrono::time_zone& tz )Ι->uint64_t{
+			let day = DayOf( time(Next), tz );
+			let from = StartOf( day, tz ), to = StartOf( Day{std::chrono::sys_days{day}+std::chrono::days{1}}, tz );
+			for( uint64_t i=Next+1; i<=last; ++i ){
+				if( let t = time(i); t<from || t>=to )
+					return i-1;
+			}
+			return last;
+		}
 		//Emits the values of [Next, last] in order, the first's nodes but those had, until the page is full, with the
-		//continuation at the cut.  value gives the node's value at i by slot.
-		α Emit( uint64_t count, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value )ε->ReadResult{
+		//continuation at the cut, or after last when count goes on.  value gives the node's value at i by slot.
+		α Emit( uint64_t count, uint64_t last, absl::FunctionRef<Proto::DataValue( uint64_t, uint )> value )ε->ReadResult{
 			ReadResult y;
+			let cut = [&]( uint64_t i, const vector<bool>& done ){
+				Proto::Continuation next;
+				next.set_crc( Crc );
+				next.set_next( i );
+				for( uint j=0; j<Nodes; ++j )
+					next.add_counts( done[j] ? 1 : 0 );
+				y.Continuation = next.SerializeAsString();
+			};
 			uint emitted{};
-			for( uint64_t i=Next; i<count; ++i ){
+			for( uint64_t i=Next; i<=last; ++i ){
 				vector<bool> done( Nodes );
 				for( uint slot=0; slot<Nodes; ++slot ){
 					if( i==Next && Had[slot] ){
@@ -520,12 +538,7 @@ namespace Jde::Opc::Hist{
 						continue;
 					}
 					if( emitted==Limit ){
-						Proto::Continuation next;
-						next.set_crc( Crc );
-						next.set_next( i );
-						for( uint j=0; j<Nodes; ++j )
-							next.add_counts( done[j] ? 1 : 0 );
-						y.Continuation = next.SerializeAsString();
+						cut( i, done );
 						return y;
 					}
 					y.Values.push_back( {value(i, slot), false, {}} );
@@ -533,6 +546,8 @@ namespace Jde::Opc::Hist{
 					++emitted;
 				}
 			}
+			if( last+1<count )
+				cut( last+1, vector<bool>(Nodes) );
 			return y;
 		}
 		uint Nodes;
@@ -818,13 +833,15 @@ namespace Jde::Opc::Hist{
 		THROW_IFSL( r.Times.empty(), "An at-time read names no times." );
 		let readLimit = _store->Config.ReadLimit;
 		Paging paging{ EMode::AtTime, r.Nodes, r.Continuation, crc(r), r.Limit, readLimit, r.Times.size(), sl };
-		let last = paging.Last( r.Times.size() );
+		let& tz = *_store->Config.TimeZone;
+		auto last = paging.Last( r.Times.size() );
+		if( r.OneDay )
+			last = paging.OneDay( last, [&]( uint64_t i ){ return r.Times[i]; }, tz );
 		//The page's times, each once, in segments by day:  a segment's pass reads the day's records between its times and
 		//the bounds either side, not the days between segments.
 		vector<Ticks> times{ r.Times.begin()+paging.Next, r.Times.begin()+last+1 };
 		std::ranges::sort( times );
 		times.erase( std::ranges::unique(times).begin(), times.end() );
-		let& tz = *_store->Config.TimeZone;
 		Prober prober{ *this, readLimit, r.Configuration.TreatUncertainAsBad, sl };
 		const Distinct nodes{ r.Nodes };
 		vector<bool> stepped;
@@ -858,7 +875,7 @@ namespace Jde::Opc::Hist{
 			}
 			from = to;
 		}
-		return paging.Emit( r.Times.size(), [&]( uint64_t i, uint slot ){ return byTime.at( r.Times[i] )[nodes.Of[slot]]; } );
+		return paging.Emit( r.Times.size(), last, [&]( uint64_t i, uint slot ){ return byTime.at( r.Times[i] )[nodes.Of[slot]]; } );
 	}
 
 	α Group::ReadProcessed( const ProcessedRequest& r, SL sl )ε->ReadResult{
@@ -874,7 +891,7 @@ namespace Jde::Opc::Hist{
 		let width = interval<=0 || (uint64_t)interval>=range ? range : (uint64_t)interval;
 		let count = range/width + ( range%width ? 1 : 0 );
 		Paging paging{ EMode::Processed, r.Nodes, r.Continuation, crc(r), r.Limit, readLimit, count, sl };
-		let last = paging.Last( count );
+		auto last = paging.Last( count );
 		let intervalOf = [&]( uint64_t k ){
 			Interval y{ .Reverse=reverse, .Uneven=k+1==count && range%width!=0 };
 			let offset = k*width, rest = range-offset;//from the range's start to the interval's, and on to the range's end.
@@ -890,6 +907,8 @@ namespace Jde::Opc::Hist{
 			}
 			return y;
 		};
+		if( r.OneDay )
+			last = paging.OneDay( last, [&]( uint64_t k ){ return intervalOf( k ).Ts; }, *_store->Config.TimeZone );
 		let first = intervalOf( paging.Next ), lastInterval = intervalOf( last );
 		let a = std::min( first.Lo, lastInterval.Lo ), b = std::max( first.Hi, lastInterval.Hi );
 		let bounds = r.Aggregate==EAggregate::Interpolative || r.Aggregate==EAggregate::TimeAverage;
@@ -927,7 +946,7 @@ namespace Jde::Opc::Hist{
 		vector<Finishing> finishing;
 		for( uint slot=0; slot<tracks.size(); ++slot )
 			finishing.push_back( {r, tracks[slot], FindThresholds(nodes.Nodes[slot]).value_or(Thresholds{}).Stepped, prober} );
-		return paging.Emit( count, [&]( uint64_t k, uint slot ){
+		return paging.Emit( count, last, [&]( uint64_t k, uint slot ){
 			let node = nodes.Of[slot];
 			return finishing[node].Finish( intervalOf(k), buckets[node][k-paging.Next] );
 		});

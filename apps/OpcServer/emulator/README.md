@@ -3,32 +3,45 @@
 A stand-in for a UA-enabled PLC, feeding the OpcServer's pump tags.  Three things a real device does, in one process:
 
 - **its own OPC UA server** (`PlcServer`) holding the same NodeSet2 the OpcServer loads
-  (`apps/OpcServer/config/nodesets/pumps.NodeSet2.xml`), bound to loopback - headless, nothing is meant to connect to it;
+  (`apps/OpcServer/config/nodesets/pumps.NodeSet2.xml`), bound to loopback - headless, nothing is meant to connect
+  to it;
 - **a Part 14 publisher** (`PubSub::Writer`, UADP over UDP) sampling those local nodes and publishing the contract in
   `apps/OpcServer/config/pubsub/pumps.libsonnet` - the OpcServer's `DataSetReader` imports the same file, so the
   DataSetMetaData both ends build cannot drift;
-- **a client session on the OpcServer** (`EmulatorClient`) for the run commands the web UI writes (`status`), subscribed,
-  and for any tag the contract does not publish, written.
+- **a client session on the OpcServer** (`EmulatorClient`) for the run commands the web UI writes (`status`),
+  subscribed, and for any tag the contract does not publish, written.
 
-The process values are generated (`Signals`): `sine`, `ramp`, `randomWalk`, `counter`, `toggle`, and `follow` - a motor
-lagging towards `ratedRpm` while the device is commanded on and towards 0 when it is not.  Which tag does what is
-`/emulator/devices` in the config.  The device clock keeps running while the OpcServer session is down: a PLC does not
-freeze because a client left.
+The process values are generated (`Signals`).  The modes are:
+
+- `sine`, `ramp`, `randomWalk`, `counter`, `toggle`;
+- `follow`: a motor lagging towards `ratedRpm` while the device is commanded on, and towards 0 when it is not;
+- `command`: not generated, subscribed from the OpcServer.
+
+Which tag does what is `/emulator/devices` in the config.
+
+The device clock keeps running while the OpcServer session is down.  A PLC does not freeze because a client left.
 
 | | value |
 |---|---|
 | exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 44 units, no database or server) |
-| `Process::ProductName()` (`$(ProgramData)/Jde-Cpp/<product>`: certs) | `PlcEmulator` |
-| settings / log | [`Opc.PlcEmulator.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
+| settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
 | ports | none listening for HTTP; the PLC's UA endpoint on `127.0.0.1:4841`; UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator` |
 
 ## Run
 
-The OpcServer needs the emulator overlay for the default transport - `opcserver-emulator` in the run-services driver
-([`Opc.Server.Emulator.jsonnet`](../../../apps/OpcServer/config/Opc.Server.Emulator.jsonnet); `opcserver-emulator-hub` against a hub).  Started as plain `opcserver` everything looks
-healthy and the samples land nowhere: the stock config carries no reader (see *Security* below).  `-transport=write`
-needs no overlay.
+The OpcServer needs the emulator overlay for the default transport,
+[`Opc.Server.Emulator.jsonnet`](../config/Opc.Server.Emulator.jsonnet).  The
+[run-services driver](../../../.claude/skills/run-services/driver.sh) starts it as `opcserver-emulator`
+(`opcserver-emulator-hub` against a hub).
+
+Started as plain `opcserver`, everything looks healthy and the samples land nowhere.  The stock config carries no
+reader (see *Security* below).
+
+`-transport=write` needs no overlay.
+
+`$REPO_BUILD_DIR` is the parent of the build dir (`$JDE_BUILD_DIR/$JDE_COMPILER/opc-hub`), as the
+[root README](../../../README.md#building) exports it.
 
 ```bash
 D=$JDE_DIR/.claude/skills/run-services/driver.sh
@@ -75,7 +88,8 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 
 ## Config
 
-[`Opc.PlcEmulator.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.jsonnet); the keys under `/emulator` and the command-line overrides that beat them:
+[`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet): the keys under `/emulator`, and the command-line
+overrides that beat them.
 
 | key | override | meaning |
 |---|---|---|
@@ -95,20 +109,26 @@ so under `pubsub`, pump2's `status` toggle is still a session write.
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
 | `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another) and `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`) |
 
-Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`, and a
-non-positive `step` for `randomWalk`/`counter`, at startup, naming the tag.
+Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`,
+and a non-positive `step` for `randomWalk`/`counter`, at startup, naming the tag.
 
 ## Status codes
 
-Every reading carries a StatusCode - its data quality, [OPC 10000-4 §7.38](https://reference.opcfoundation.org/specs/OPC-10000-4/7.38).
-**The pubsub transport delivers it**: the PLC server's node holds the whole DataValue, the writer publishes it
-DataValue-encoded (`PubSub::Writer`'s `STATUSCODE` field content mask), and the OpcServer's reader writes value and status
-into the target variable.  A session write carries it too, but a server only takes a non-Good status from a session with
-`StatusWrite` on the node's AccessLevel *and* on the user's ([OPC 10000-3 §8.57](https://reference.opcfoundation.org/specs/OPC-10000-3/v1.05.06/8.57));
-the pumps nodeset is AccessLevel 3 and `-grant` stops at `Read|Update|Subscribe`, so the OpcServer answers
-`BadWriteNotSupported`, the emulator WARNs once per tag per session and writes the value alone from there - under
-`-transport=write` the quality shows in the emulator's status line and nowhere downstream.  A tag is Good unless its config says otherwise, and the stock config says nothing - [`Opc.PlcEmulator.Quality.jsonnet`](../../../apps/OpcServer/emulator/config/Opc.PlcEmulator.Quality.jsonnet)
-is the overlay that does - one example of every shape the UI decodes, on a 2 min cycle with one scheduled fault at a time:
+Every reading carries a StatusCode - its data quality,
+[OPC 10000-4 §7.38](https://reference.opcfoundation.org/specs/OPC-10000-4/7.38).  **The pubsub transport delivers it**:
+the PLC server's node holds the whole DataValue, the writer publishes it DataValue-encoded (`PubSub::Writer`'s
+`STATUSCODE` field content mask), and the OpcServer's reader writes value and status into the target variable.  A
+session write carries it too, but a server only takes a non-Good status from a session with `StatusWrite` on the node's
+AccessLevel *and* on the user's
+([OPC 10000-3 §8.57](https://reference.opcfoundation.org/specs/OPC-10000-3/v1.05.06/8.57)); the pumps nodeset is
+AccessLevel 3 and `-grant` stops at `Read|Update|Subscribe`, so the OpcServer answers `BadWriteNotSupported`, the
+emulator WARNs once per tag per session and writes the value alone from there - under `-transport=write` the quality
+shows in the emulator's status line and nowhere downstream.
+
+A tag is Good unless its config says otherwise, and the stock config says nothing.
+
+[`Opc.PlcEmulator.Quality.jsonnet`](config/Opc.PlcEmulator.Quality.jsonnet) is the overlay that schedules faults.  It
+shows one example of every shape the UI decodes, on a 2 min cycle with one scheduled fault at a time:
 
 ```bash
 $E -c -tests -settings=$JDE_DIR/apps/OpcServer/emulator/config/Opc.PlcEmulator.Quality.jsonnet   # …Quality.Hub.jsonnet against a hub
@@ -160,9 +180,14 @@ the code in place of the value (`Value::ToJson`); subscriptions carry `sc` besid
 non-Good tag: `motorRpm=1500.0(UncertainEngineeringUnitsExceeded+High)`.
 
 The web UI words it the same way.  A node's **Children** table marks a reading that is not plain Good with an icon
-beside the value (error / warning / info; the name, its flags and the numeric code in the tooltip), and has a **Status**
-column - hidden in the default view, switched on in the view editor - that spells it out and takes the icon over.  A Bad row keeps the last value it had, dimmed and locked, until a reading that is not Bad arrives
-(`Variable.setReading` in [`node.ts`](../../../web/opc/control/src/lib/model/node.ts), the decoding in [`status-code.ts`](../../../web/opc/control/src/lib/model/status-code.ts)).
+beside the value (error, warning or info).  The tooltip gives the name, its flags and the numeric code.
+
+The **Status** column spells it out and takes the icon over.  It is hidden in the default view; switch it on in the
+view editor.
+
+A Bad row keeps the last value it had, dimmed and locked, until a reading that is not Bad arrives.  See
+`Variable.setReading` in [`node.ts`](../../../web/opc/control/src/lib/model/node.ts), and the decoding in
+[`status-code.ts`](../../../web/opc/control/src/lib/model/status-code.ts).
 
 ## Trust
 
@@ -183,9 +208,9 @@ The Part 14 path is a **plaintext, unauthenticated write** into the OpcServer's 
 received fields through the server-internal write - no session, no `OpcAuthorize` - and its only filter is the
 `publisherId`/`writerGroupId`/`dataSetWriterId` triple in a tracked config file.  Anyone who can reach the url drives
 `pump*.motorRpm`, and the default url is a multicast group (`opc.udp://224.0.0.22:4840/`), i.e. the multicast domain.
-This open62541 build has no SKS.  That is why the reader lives in the `Opc.Server.Emulator*` overlays and not in the
-stock OpcServer config, and why `PubSub::Reader` WARNs at startup when it is present: a demo affordance, not a production
-one.  `-transport=write` has none of this - it is an authenticated session under the acl `-grant` wrote.
+This open62541 build has no SKS.  That is why the reader lives in the `Opc.Server.Emulator*` overlays and not in
+the stock OpcServer config, and why `PubSub::Reader` WARNs at startup when it is present: a demo affordance, not a
+production one.  `-transport=write` has none of this - it is an authenticated session under the acl `-grant` wrote.
 
 The PLC's own server is anonymous-full over a writable nodeset (open62541's `setMinimal`), which is why it binds
 loopback; `plc.bind: ""` opens it to the LAN deliberately, with a WARN.

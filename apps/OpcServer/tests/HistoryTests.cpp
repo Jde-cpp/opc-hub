@@ -1,8 +1,10 @@
 //Historian 2A (#209):  OpcServer collects the variables its nodesets mark Historizing through open62541's setValue and
 //serves them to a UA client's HistoryRead - here open62541's synchronous client helpers, over a session of this
 //program's own identity.  2B (#210):  it edits them through HistoryUpdate, which needs a grant on an enforced resource,
-//and serves the modified values.
+//and serves the modified values.  2C (#211):  it serves them at requested times and aggregated, Part 13's nine and
+//Median, listed in HistoryServerCapabilities' AggregateFunctions folder.
 #include <fstream>
+#include <numeric>
 #include <thread>
 #include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/notification.h>
@@ -41,6 +43,28 @@ namespace Jde::Opc::Server::Tests{
 				y.push_back( v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? v.Get<UA_Double>(0) : std::numeric_limits<double>::quiet_NaN() );
 			return y;
 		}
+		//Each value's number, whatever numeric type it carries:  an aggregate's Double, or a Count's Int32.
+		Ω numbers( const vector<Value>& values )ι->vector<double>{
+			vector<double> y;
+			for( let& v : values )
+				y.push_back( v.hasValue && !v.IsEmpty() && v.IsScalar() && UA_DataType_isNumeric(v.value.type) ? Value{v}.AsNumber<double>() : std::numeric_limits<double>::quiet_NaN() );
+			return y;
+		}
+		Ω sources( const vector<Value>& values )ι->vector<UA_DateTime>{
+			vector<UA_DateTime> y;
+			for( let& v : values )
+				y.push_back( v.sourceTimestamp );
+			return y;
+		}
+		Ω statuses( const vector<Value>& values )ι->vector<UA_StatusCode>{
+			vector<UA_StatusCode> y;
+			for( let& v : values )
+				y.push_back( v.status );
+			return y;
+		}
+		Ω ticks( TimePoint t )ι->UA_DateTime{ return UADateTime{ t }.UA(); }
+		//Part 4's info bits on a history value's status:  the InfoType, and what Part 13 sets with it.
+		constexpr UA_StatusCode Calculated{ 0x401 }, Interpolated{ 0x402 };
 		Ω all( const Pages& pages )ι->vector<Value>{
 			vector<Value> y;
 			for( let& page : pages ){
@@ -222,17 +246,19 @@ namespace Jde::Opc::Server::Tests{
 			return *History().Group()->FindThresholds( *index );
 		}
 		//A write as a client's or the PubSub reader's reaches the server, with the time the source gave it.
-		Ω Write( UA_UInt32 id, double value, TimePoint source )ε->void{
+		Ω Write( UA_UInt32 id, const void* scalar, uint type, TimePoint source )ε->void{
 			let node = Node( id );
 			UA_WriteValue write; UA_WriteValue_init( &write );
 			write.nodeId = node;
 			write.attributeId = UA_ATTRIBUTEID_VALUE;
-			UA_Variant_setScalar( &write.value.value, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
+			UA_Variant_setScalar( &write.value.value, const_cast<void*>(scalar), &UA_TYPES[type] );
 			write.value.hasValue = true;
 			write.value.sourceTimestamp = UADateTime{ source }.UA();
 			write.value.hasSourceTimestamp = true;
 			UAε( UA_Server_write(GetUAServer().Ptr(), &write) );
 		}
+		Ω Write( UA_UInt32 id, double value, TimePoint source )ε->void{ Write( id, &value, UA_TYPES_DOUBLE, source ); }
+		Ω WriteBoolean( UA_UInt32 id, bool value, TimePoint source )ε->void{ const UA_Boolean b{ value }; Write( id, &b, UA_TYPES_BOOLEAN, source ); }
 		//UA_Client_HistoryRead_raw, each page it fetched:  it follows the continuation points until none is left, or
 		//MaxPages are in, which releases the one it holds.
 		Ω Read( const NodeId& node, Request request )ι->Reading{
@@ -344,22 +370,146 @@ namespace Jde::Opc::Server::Tests{
 			UA_HistoryUpdateResult_clear( &result );
 			return status;
 		}
-		//The backend's callback itself, for a session of user's:  the result's status.
-		Ω Callback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint start, TimePoint end )ι->UA_StatusCode{
+		//The backend's callbacks themselves, for a session of user's:  the result's status of a raw read, and of an at-time read.
+		Ω Callback( UA_UInt32 id, absl::FunctionRef<void( UAHistory&, const UA_HistoryReadValueId&, UA_HistoryReadResult&, UA_HistoryData* const* )> read )ι->UA_StatusCode{
 			let node = Node( id );
-			UA_HistoryReadValueId read; UA_HistoryReadValueId_init( &read );
-			read.nodeId = node;
-			UA_ReadRawModifiedDetails details; UA_ReadRawModifiedDetails_init( &details );
-			details.startTime = UADateTime{ start }.UA();
-			details.endTime = UADateTime{ end }.UA();
+			UA_HistoryReadValueId value; UA_HistoryReadValueId_init( &value );
+			value.nodeId = node;
 			UA_HistoryReadResult result; UA_HistoryReadResult_init( &result );
 			UA_HistoryData data; UA_HistoryData_init( &data );
 			UA_HistoryData* p{ &data };
-			History().ReadRaw( GetUAServer(), nullptr, session, details, UA_TIMESTAMPSTORETURN_BOTH, false, {&read, 1}, &result, &p );
+			read( History(), value, result, &p );
 			let status = result.statusCode;
 			UA_HistoryData_clear( &data );
 			UA_HistoryReadResult_clear( &result );
 			return status;
+		}
+		Ω Callback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint start, TimePoint end )ι->UA_StatusCode{
+			UA_ReadRawModifiedDetails details; UA_ReadRawModifiedDetails_init( &details );
+			details.startTime = ticks( start );
+			details.endTime = ticks( end );
+			return Callback( id, [&]( UAHistory& history, const UA_HistoryReadValueId& value, UA_HistoryReadResult& result, UA_HistoryData* const* data ){
+				history.ReadRaw( GetUAServer(), nullptr, session, details, UA_TIMESTAMPSTORETURN_BOTH, false, {&value, 1}, &result, data );
+			});
+		}
+		Ω AtTimeCallback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint time )ι->UA_StatusCode{
+			UA_DateTime t{ ticks(time) };
+			UA_ReadAtTimeDetails details; UA_ReadAtTimeDetails_init( &details );
+			details.reqTimesSize = 1;
+			details.reqTimes = &t;
+			return Callback( id, [&]( UAHistory& history, const UA_HistoryReadValueId& value, UA_HistoryReadResult& result, UA_HistoryData* const* data ){
+				history.ReadAtTime( GetUAServer(), nullptr, session, details, UA_TIMESTAMPSTORETURN_BOTH, false, {&value, 1}, &result, data );
+			});
+		}
+		//A HistoryRead request of ids, sent as it is:  the response is the caller's to clear.
+		Ω Send( void* details, uint type, std::span<UA_HistoryReadValueId> ids, UA_TimestampsToReturn timestamps )ι->UA_HistoryReadResponse{
+			UA_HistoryReadRequest request; UA_HistoryReadRequest_init( &request );
+			request.historyReadDetails.encoding = UA_EXTENSIONOBJECT_DECODED;
+			request.historyReadDetails.content.decoded.type = &UA_TYPES[type];
+			request.historyReadDetails.content.decoded.data = details;
+			request.timestampsToReturn = timestamps;
+			request.nodesToReadSize = ids.size();
+			request.nodesToRead = ids.data();
+			return UA_Client_Service_historyRead( _client, request );
+		}
+		//A HistoryRead of one node's service result, and how many results came with it.
+		Ω Service( void* details, uint type, const NodeId& node, UA_TimestampsToReturn timestamps )ι->std::pair<UA_StatusCode,size_t>{
+			UA_HistoryReadValueId id; UA_HistoryReadValueId_init( &id );
+			id.nodeId = node;//shallow
+			auto response = Send( details, type, {&id, 1}, timestamps );
+			const std::pair y{ response.responseHeader.serviceResult, response.resultsSize };
+			UA_HistoryReadResponse_clear( &response );
+			return y;
+		}
+		//A HistoryRead the helpers don't send, at-time or processed:  each node's status and pages, the continuation
+		//points followed, each node's own, until none is left.  A processed read's later pages name the pending nodes'
+		//aggregates alone, one per node read, unless the list didn't match the nodes to begin with.
+		Ω HistoryRead( void* details, uint type, const vector<NodeId>& nodes, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ε->vector<Reading>{
+			auto processed = type==UA_TYPES_READPROCESSEDDETAILS ? static_cast<const UA_ReadProcessedDetails*>( details ) : nullptr;
+			if( processed && processed->aggregateTypeSize!=nodes.size() )
+				processed = nullptr;
+			vector<Reading> y( nodes.size(), Reading{UA_STATUSCODE_GOOD, {}} );
+			vector<uint> pending( nodes.size() );//each node still to read, by its position in nodes.
+			std::iota( pending.begin(), pending.end(), 0u );
+			vector<UA_HistoryReadValueId> ids( nodes.size() );
+			for( uint i=0; i<nodes.size(); ++i ){
+				UA_HistoryReadValueId_init( &ids[i] );
+				ids[i].nodeId = nodes[i];
+			}
+			absl::Cleanup freed = [&]{ for( auto& id : ids ) UA_ByteString_clear( &id.continuationPoint ); };
+			for( uint pages{}; pending.size(); ++pages ){
+				THROW_IF( pages==100, "A read that never ends." );
+				vector<UA_HistoryReadValueId> read;
+				vector<UA_NodeId> aggregates;//shallow, as read's.
+				for( let i : pending ){
+					read.push_back( ids[i] );//shallow:  freed through ids.
+					if( processed )
+						aggregates.push_back( processed->aggregateType[i] );
+				}
+				UA_ReadProcessedDetails subset{};
+				if( processed ){
+					subset = *processed;
+					subset.aggregateTypeSize = aggregates.size();
+					subset.aggregateType = aggregates.data();
+				}
+				auto response = Send( processed ? &subset : details, type, read, timestamps );
+				absl::Cleanup cleared = [&]{ UA_HistoryReadResponse_clear( &response ); };
+				if( response.responseHeader.serviceResult || response.resultsSize!=pending.size() ){
+					for( let i : pending )
+						y[i].Status = response.responseHeader.serviceResult ? response.responseHeader.serviceResult : UA_STATUSCODE_BADUNEXPECTEDERROR;
+					break;
+				}
+				vector<uint> next;
+				for( uint r=0; r<pending.size(); ++r ){
+					let i = pending[r];
+					let& result = response.results[r];
+					y[i].Status = result.statusCode;
+					auto& page = y[i].Values.emplace_back();
+					let& data = result.historyData;
+					if( data.encoding==UA_EXTENSIONOBJECT_DECODED && data.content.decoded.type==&UA_TYPES[UA_TYPES_HISTORYDATA] ){
+						let& history = *static_cast<const UA_HistoryData*>( data.content.decoded.data );
+						for( uint v=0; v<history.dataValuesSize; ++v )
+							page.emplace_back( history.dataValues[v] );
+					}
+					UA_ByteString_clear( &ids[i].continuationPoint );
+					if( result.continuationPoint.length ){
+						UA_ByteString_copy( &result.continuationPoint, &ids[i].continuationPoint );
+						next.push_back( i );
+					}
+				}
+				pending = move( next );
+			}
+			return y;
+		}
+		Ω AtTime( const NodeId& node, std::initializer_list<TimePoint> times, bool simpleBounds=false, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ε->Reading{
+			vector<UA_DateTime> at;
+			for( let t : times )
+				at.push_back( ticks(t) );
+			UA_ReadAtTimeDetails details; UA_ReadAtTimeDetails_init( &details );
+			details.reqTimesSize = at.size();
+			details.reqTimes = at.data();
+			details.useSimpleBounds = simpleBounds;
+			return HistoryRead( &details, UA_TYPES_READATTIMEDETAILS, {node}, timestamps ).at( 0 );
+		}
+		//A processed read of nodes, each by the function in its place, under the node's AggregateConfiguration unless one is given.
+		Ω Processed( const vector<NodeId>& nodes, const vector<NodeId>& functions, UA_DateTime start, UA_DateTime end, double intervalMs, optional<UA_AggregateConfiguration> configuration={}, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ε->vector<Reading>{
+			vector<UA_NodeId> types;//shallow:  each function's own, as the request's array.
+			for( let& function : functions )
+				types.push_back( function );
+			UA_ReadProcessedDetails details; UA_ReadProcessedDetails_init( &details );
+			details.startTime = start;
+			details.endTime = end;
+			details.processingInterval = intervalMs;
+			details.aggregateTypeSize = functions.size();
+			details.aggregateType = types.data();
+			details.aggregateConfiguration = configuration.value_or( UA_AggregateConfiguration{.useServerCapabilitiesDefaults=true} );
+			return HistoryRead( &details, UA_TYPES_READPROCESSEDDETAILS, nodes, timestamps );
+		}
+		Ω Aggregate( UA_UInt32 id, const NodeId& function, TimePoint start, TimePoint end, Duration interval, optional<UA_AggregateConfiguration> configuration={}, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ε->Reading{
+			return Processed( {Node(id)}, {function}, ticks(start), ticks(end), duration<double,std::milli>{interval}.count(), configuration, timestamps ).at( 0 );
+		}
+		Ω Aggregate( UA_UInt32 id, UA_UInt32 function, TimePoint start, TimePoint end, Duration interval, optional<UA_AggregateConfiguration> configuration={}, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ε->Reading{
+			return Aggregate( id, NodeId{0, function}, start, end, interval, configuration, timestamps );
 		}
 		Ω Property( const NodeId& parent, std::initializer_list<sv> path, UA_UInt16 ns=0 )ε->NodeId{
 			vector<UA_QualifiedName> names;
@@ -499,6 +649,49 @@ namespace Jde::Opc::Server::Tests{
 			EXPECT_FALSE( capability(id).Get<UA_Boolean>(0) ) << id;
 	}
 
+	//The aggregates served, listed in HistoryServerCapabilities' AggregateFunctions folder and ServerCapabilities':
+	//Part 13's nine objects of namespace 0, and Median, an AggregateFunctionType object of the server's own namespace,
+	//each the aggregate it is requested as.  What isn't served isn't listed, and isn't an aggregate.
+	TEST_F( HistoryTests, PublishesItsAggregates ){
+		const flat_map<UA_UInt32,Hist::EAggregate> part13{ {UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, Hist::EAggregate::Interpolative}, {UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, Hist::EAggregate::Average},
+			{UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, Hist::EAggregate::TimeAverage}, {UA_NS0ID_AGGREGATEFUNCTION_COUNT, Hist::EAggregate::Count}, {UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, Hist::EAggregate::Minimum},
+			{UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, Hist::EAggregate::Maximum}, {UA_NS0ID_AGGREGATEFUNCTION_START, Hist::EAggregate::Start}, {UA_NS0ID_AGGREGATEFUNCTION_END, Hist::EAggregate::End},
+			{UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, Hist::EAggregate::StandardDeviationSample} };
+		let median = UAHistory::Median();
+		for( let folder : {UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS, UA_NS0ID_SERVER_SERVERCAPABILITIES_AGGREGATEFUNCTIONS} ){
+			SCOPED_TRACE( folder );
+			UA_BrowseDescription browse; UA_BrowseDescription_init( &browse );
+			browse.nodeId = UA_NODEID_NUMERIC( 0, folder );
+			browse.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+			browse.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_ORGANIZES );
+			browse.includeSubtypes = true;
+			browse.resultMask = UA_BROWSERESULTMASK_BROWSENAME | UA_BROWSERESULTMASK_TYPEDEFINITION;
+			auto found = UA_Server_browse( GetUAServer().Ptr(), 0, &browse );
+			EXPECT_EQ( found.statusCode, UA_STATUSCODE_GOOD );
+			flat_set<NodeId> listed;
+			for( uint i=0; i<found.referencesSize; ++i ){
+				let& reference = found.references[i];
+				listed.emplace( reference.nodeId.nodeId );
+				EXPECT_EQ( reference.typeDefinition.nodeId.identifier.numeric, UA_NS0ID_AGGREGATEFUNCTIONTYPE ) << i;
+				if( UA_NodeId_equal(&reference.nodeId.nodeId, &median) ){
+					EXPECT_EQ( reference.browseName.namespaceIndex, 1 );
+					EXPECT_EQ( ToString(reference.browseName.name), "Median" );
+				}
+			}
+			UA_BrowseResult_clear( &found );
+			EXPECT_EQ( listed.size(), part13.size()+1 );
+			for( let& [function, _] : part13 )
+				EXPECT_TRUE( listed.contains(NodeId{0, function}) ) << function;
+			EXPECT_TRUE( listed.contains(median) );
+			EXPECT_FALSE( listed.contains(NodeId{0, UA_NS0ID_AGGREGATEFUNCTION_RANGE}) );
+		}
+		for( let& [function, aggregate] : part13 )
+			EXPECT_EQ( UAHistory::Aggregate(NodeId{0, function}), aggregate ) << function;
+		EXPECT_EQ( UAHistory::Aggregate(median), Hist::EAggregate::Median );
+		EXPECT_FALSE( UAHistory::Aggregate(NodeId{0, UA_NS0ID_AGGREGATEFUNCTION_RANGE}) );
+		EXPECT_FALSE( UAHistory::Aggregate(NodeId{UA_NODEID_STRING_ALLOC(2, "Median")}) );
+	}
+
 	//setValue to HistoryRead:  what passes the node's band is stored with both timestamps, and read back over Part 11's
 	//range, which holds its start and not its end, from the buffer and then from the day's file.
 	TEST_F( HistoryTests, ReadsRawHistory ){
@@ -547,7 +740,7 @@ namespace Jde::Opc::Server::Tests{
 	}
 
 	//Each call reads one day's file, so a read over two days comes in two pages, though neither is full.  Today's holds
-	//the 100 and, after it, the 0 the node took at the start.
+	//the 100 and, after it, the 0 the node took at the start.  At-time and processed reads page by day too.
 	TEST_F( HistoryTests, ReadsADayACall ){
 		let tomorrow = floor<days>( Clock::now() )+days{ 1 };
 		Write( Rpm3, 100, At(20) );
@@ -563,6 +756,20 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_EQ( back.Values.size(), 2u );
 		EXPECT_EQ( doubles(back.Values[0]), (vector<double>{300, 200}) );
 		EXPECT_EQ( doubles(back.Values[1]), (vector<double>{0, 100}) );
+		//The run of times on one day, in the request's order, and the intervals stamped on one day.
+		let atTimes = AtTime( Node(Rpm3), {At(20), tomorrow+10s, tomorrow+20s, At(20)} );
+		EXPECT_TRUE( UA_StatusCode_isGood(atTimes.Status) ) << UA_StatusCode_name( atTimes.Status );
+		ASSERT_EQ( atTimes.Values.size(), 3u );
+		EXPECT_EQ( doubles(atTimes.Values[0]), vector<double>{100} );
+		EXPECT_EQ( doubles(atTimes.Values[1]), (vector<double>{200, 300}) );
+		EXPECT_EQ( doubles(atTimes.Values[2]), vector<double>{100} );
+		let counts = Aggregate( Rpm3, UA_NS0ID_AGGREGATEFUNCTION_COUNT, At(20), tomorrow+1min, 1min );
+		EXPECT_TRUE( UA_StatusCode_isGood(counts.Status) ) << UA_StatusCode_name( counts.Status );
+		ASSERT_EQ( counts.Values.size(), 2u );
+		for( let& v : counts.Values[0] )
+			EXPECT_LT( v.sourceTimestamp, ticks(tomorrow) );
+		for( let& v : counts.Values[1] )
+			EXPECT_GE( v.sourceTimestamp, ticks(tomorrow) );
 
 		//Rpm1 has nothing after its start value on either day, each a file once flushed.  The helper hands over the first
 		//call's empty page, and stops at the second's Good_NoData.
@@ -613,8 +820,59 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( Read(Status2, {.Start=At(0), .End=At(10)}).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );//not historized.
 		EXPECT_EQ( Read(Node(999'999), {.Start=At(0), .End=At(10)}).Status, UA_STATUSCODE_BADNODEIDUNKNOWN );
 		EXPECT_EQ( Read(Rpm4, {.Start=At(0)}).Status, UA_STATUSCODE_BADHISTORYOPERATIONINVALID );//two of start, end and a count bound a read.
-		EXPECT_EQ( Read(Rpm4, {.Start=At(0), .End=At(10), .Timestamps=UA_TIMESTAMPSTORETURN_NEITHER}).Status, UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT );
+		EXPECT_EQ( Read(Rpm4, {.Start=At(0), .End=At(10), .Timestamps=UA_TIMESTAMPSTORETURN_NEITHER}).Status, UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID );
 		EXPECT_EQ( ReadModified(Rpm4, {.Start=At(0), .End=At(10), .Bounds=true}).Status, UA_STATUSCODE_BADINVALIDARGUMENT );//the modified values have no bounds.
+
+		//At-time and processed reads:  one aggregate per node, an aggregate that isn't served, a time or an interval not
+		//given, a start that is its end, server timestamps alone, and a node that isn't historized, or isn't there.
+		const NodeId average{ 0, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE };
+		let reads = History().Reads().Count;
+		let mismatch = Processed( {Node(Rpm4), Node(Rpm2)}, {average}, ticks(At(0)), ticks(At(10)), 5000 );
+		EXPECT_EQ( History().Reads().Count, reads+1 );//timed and said as any read is.
+		ASSERT_EQ( mismatch.size(), 2u );
+		EXPECT_EQ( mismatch[0].Status, UA_STATUSCODE_BADAGGREGATELISTMISMATCH );
+		EXPECT_EQ( mismatch[1].Status, UA_STATUSCODE_BADAGGREGATELISTMISMATCH );
+		let unknown = Processed( {Node(999'999), Node(Rpm4)}, {average}, ticks(At(0)), ticks(At(10)), 5000 );//a node the read can't serve says why.
+		ASSERT_EQ( unknown.size(), 2u );
+		EXPECT_EQ( unknown[0].Status, UA_STATUSCODE_BADNODEIDUNKNOWN );
+		EXPECT_EQ( unknown[1].Status, UA_STATUSCODE_BADAGGREGATELISTMISMATCH );
+		EXPECT_EQ( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_RANGE, At(0), At(10), 5s).Status, UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+		EXPECT_EQ( Processed({Node(Rpm4)}, {average}, 0, ticks(At(10)), 5000).at(0).Status, UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
+		EXPECT_EQ( Processed({Node(Rpm4)}, {average}, ticks(At(0)), 0, 5000).at(0).Status, UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
+		EXPECT_EQ( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(0), At(10), -5s).Status, UA_STATUSCODE_BADINVALIDARGUMENT );
+		EXPECT_EQ( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(5), At(5), 5s).Status, UA_STATUSCODE_BADINVALIDARGUMENT );
+		EXPECT_EQ( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(0), At(10), 5s, {}, UA_TIMESTAMPSTORETURN_SERVER).Status, UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID );
+		EXPECT_EQ( Aggregate(Status2, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(0), At(10), 5s).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( AtTime(Node(Rpm4), {}).Status, UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
+		EXPECT_EQ( AtTime(Node(Status2), {At(0)}).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( AtTime(Node(999'999), {At(0)}).Status, UA_STATUSCODE_BADNODEIDUNKNOWN );
+		//Timestamps a mode can't return are the service's refusal, with no results:  Neither in every mode, and Server
+		//alone in the computed ones.
+		{
+			UA_ReadRawModifiedDetails raw; UA_ReadRawModifiedDetails_init( &raw );
+			raw.startTime = ticks( At(0) );
+			raw.endTime = ticks( At(10) );
+			auto modified = raw;
+			modified.isReadModified = true;
+			UA_DateTime time{ ticks(At(25)) };
+			UA_ReadAtTimeDetails atTime; UA_ReadAtTimeDetails_init( &atTime );
+			atTime.reqTimesSize = 1;
+			atTime.reqTimes = &time;
+			UA_NodeId count = UA_NODEID_NUMERIC( 0, UA_NS0ID_AGGREGATEFUNCTION_COUNT );
+			UA_ReadProcessedDetails processed; UA_ReadProcessedDetails_init( &processed );
+			processed.startTime = ticks( At(0) );
+			processed.endTime = ticks( At(10) );
+			processed.processingInterval = 5000;
+			processed.aggregateTypeSize = 1;
+			processed.aggregateType = &count;
+			processed.aggregateConfiguration.useServerCapabilitiesDefaults = true;
+			struct Mode final{ void* Details; uint Type; bool Computed; };
+			for( let& mode : {Mode{&raw, UA_TYPES_READRAWMODIFIEDDETAILS, false}, Mode{&modified, UA_TYPES_READRAWMODIFIEDDETAILS, false}, Mode{&atTime, UA_TYPES_READATTIMEDETAILS, true}, Mode{&processed, UA_TYPES_READPROCESSEDDETAILS, true}} ){
+				const std::pair<UA_StatusCode,size_t> refused{ UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID, 0 }, served{ UA_STATUSCODE_GOOD, 1 };
+				EXPECT_EQ( Service(mode.Details, mode.Type, Node(Rpm4), UA_TIMESTAMPSTORETURN_NEITHER), refused ) << mode.Type;
+				EXPECT_EQ( Service(mode.Details, mode.Type, Node(Rpm4), UA_TIMESTAMPSTORETURN_SERVER), mode.Computed ? refused : served ) << mode.Type;
+			}
+		}
 
 		//The edits:  a node that isn't historized, one that isn't there, a value with no SourceTimestamp, a delete without
 		//both times, and what isn't served.
@@ -696,6 +954,106 @@ namespace Jde::Opc::Server::Tests{
 		const UA_Double one{ 1 };
 		vector<Value> arrays{ array({1, 2}, At(58)), scalar(&one, UA_TYPES_DOUBLE, At(59)) };
 		EXPECT_EQ( update(Array(), arrays).Results, (vector<UA_StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADTYPEMISMATCH}) );
+	}
+
+	//ReadProcessed:  each aggregate served, over Rpm4's records, three an interval, through a UA client by the
+	//AggregateFunction node that names it, as the library computes them (its tests replay Part 13's examples).  A
+	//computed value is stamped at its interval's start, with no server timestamp; Start, End and an Interpolative hit
+	//are the record as it is.  One interval over the range; reversed, each interval holds its later end and is stamped
+	//at it; the request's configuration over the node's; readLimit values a page, two nodes' each with its own aggregate;
+	//and a number of what isn't one refused.
+	TEST_F( HistoryTests, ReadsAggregates ){
+		for( uint i=0; i<7; ++i )
+			Write( Rpm4, 100.0*(i+1), At(11+2*i) );//100 at 11 through 700 at 23, each past the band.
+		struct Case final{ UA_UInt32 Function; vector<double> Values; };
+		const Case cases[]{ {UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, {200, 500}}, {UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, {250, 550}}, {UA_NS0ID_AGGREGATEFUNCTION_COUNT, {3, 3}},
+			{UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, {100, 400}}, {UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, {300, 600}}, {UA_NS0ID_AGGREGATEFUNCTION_START, {100, 400}}, {UA_NS0ID_AGGREGATEFUNCTION_END, {300, 600}},
+			{UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, {100, 100}}, {UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, {100, 400}} };
+		for( let& c : cases ){
+			SCOPED_TRACE( c.Function );
+			let read = Aggregate( Rpm4, c.Function, At(11), At(23), 6s );
+			EXPECT_TRUE( UA_StatusCode_isGood(read.Status) ) << UA_StatusCode_name( read.Status );
+			let values = all( read.Values );
+			EXPECT_EQ( numbers(values), c.Values );
+			let stamps = c.Function==UA_NS0ID_AGGREGATEFUNCTION_END ? vector<UA_DateTime>{ticks(At(15)), ticks(At(21))} : vector<UA_DateTime>{ticks(At(11)), ticks(At(17))};//End's records are the intervals' last.
+			EXPECT_EQ( sources(values), stamps );
+		}
+		let median = Processed( {Node(Rpm4)}, {UAHistory::Median()}, ticks(At(11)), ticks(At(23)), 6000 ).at( 0 );
+		EXPECT_TRUE( UA_StatusCode_isGood(median.Status) ) << UA_StatusCode_name( median.Status );
+		EXPECT_EQ( numbers(all(median.Values)), (vector<double>{200, 500}) );
+
+		let average = all( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(11), At(23), 6s).Values );
+		ASSERT_EQ( average.size(), 2u );
+		EXPECT_EQ( average[0].status, Calculated );
+		EXPECT_TRUE( average[0].hasSourceTimestamp );
+		EXPECT_FALSE( average[0].hasServerTimestamp );
+		let end = all( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_END, At(11), At(23), 6s).Values );
+		ASSERT_EQ( end.size(), 2u );
+		EXPECT_FALSE( end[0].hasStatus );
+		EXPECT_TRUE( end[0].hasServerTimestamp );
+
+		//One interval over the range, 100 through 600 and not the 700 at its end; reversed, (17,23] then (11,17].
+		EXPECT_EQ( numbers(all(Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(11), At(23), 0s).Values)), vector<double>{350} );
+		let reversed = all( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(23), At(11), 6s).Values );
+		EXPECT_EQ( numbers(reversed), (vector<double>{600, 300}) );
+		EXPECT_EQ( sources(reversed), (vector<UA_DateTime>{ticks(At(23)), ticks(At(17))}) );
+		//The request's configuration, or the node's with useServerCapabilitiesDefaults:  a pair of percentages Part 13
+		//doesn't allow refuses the read.
+		let own = Aggregate( Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(11), At(23), 6s, UA_AggregateConfiguration{.treatUncertainAsBad=true, .percentDataBad=100, .percentDataGood=100} );
+		EXPECT_EQ( numbers(all(own.Values)), (vector<double>{200, 500}) );
+		EXPECT_EQ( Aggregate(Rpm4, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(11), At(23), 6s, UA_AggregateConfiguration{.percentDataBad=50, .percentDataGood=20}).Status, UA_STATUSCODE_BADAGGREGATEINVALIDINPUTS );
+		//readLimit values a page:  1 ms intervals over the 12 s are 12,000 counts, most of nothing, in two pages.
+		let paged = Aggregate( Rpm4, UA_NS0ID_AGGREGATEFUNCTION_COUNT, At(11), At(23), 1ms );
+		EXPECT_TRUE( UA_StatusCode_isGood(paged.Status) ) << UA_StatusCode_name( paged.Status );
+		ASSERT_EQ( paged.Values.size(), 2u );
+		EXPECT_EQ( paged.Values[0].size(), History().ReadLimit() );
+		EXPECT_EQ( all(paged.Values).size(), 12'000u );
+		//Two nodes, each with its own aggregate:  Status2, which isn't historized, ends with the first page, and Rpm4's
+		//counts go on to a second, which names Rpm4 and its Count alone.
+		let mixed = Processed( {Node(Status2), Node(Rpm4)}, {NodeId{0, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE}, NodeId{0, UA_NS0ID_AGGREGATEFUNCTION_COUNT}}, ticks(At(11)), ticks(At(23)), 1 );
+		ASSERT_EQ( mixed.size(), 2u );
+		EXPECT_EQ( mixed[0].Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_TRUE( UA_StatusCode_isGood(mixed[1].Status) ) << UA_StatusCode_name( mixed[1].Status );
+		EXPECT_EQ( mixed[1].Values.size(), paged.Values.size() );
+		EXPECT_EQ( statuses(all(mixed[1].Values)), statuses(all(paged.Values)) );
+		EXPECT_EQ( sources(all(mixed[1].Values)), sources(all(paged.Values)) );
+		//A numeric aggregate of a Boolean is Bad_AggregateInvalidInputs, value by value.
+		WriteBoolean( Status1, true, At(11) );
+		let booleans = Aggregate( Status1, UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, At(11), At(17), 6s );
+		EXPECT_TRUE( UA_StatusCode_isGood(booleans.Status) ) << UA_StatusCode_name( booleans.Status );
+		EXPECT_EQ( statuses(all(booleans.Values)), vector<UA_StatusCode>{UA_STATUSCODE_BADAGGREGATEINVALIDINPUTS} );
+	}
+
+	//ReadAtTime:  a record at the time as it is, and otherwise the value interpolated from the node's bounding records,
+	//stepped on Rpm4 and sloped on Rpm2, whose Stepped is false, each marked Interpolated and stamped at the time with no
+	//server timestamp, in the request's order.  Simple bounds take the nearest records whatever their status:  the same
+	//here, where none is Bad.  A read for server timestamps alone is refused, and source alone gets them.
+	TEST_F( HistoryTests, ReadsAtTime ){
+		Write( Rpm4, 800, At(25) );
+		Write( Rpm4, 900, At(27) );
+		Write( Rpm2, 100, At(11) );
+		Write( Rpm2, 300, At(15) );
+		for( let simple : {false, true} ){
+			SCOPED_TRACE( simple ? "simple bounds" : "interpolated bounds" );
+			let read = AtTime( Node(Rpm4), {At(26), At(25), At(27)}, simple );
+			EXPECT_TRUE( UA_StatusCode_isGood(read.Status) ) << UA_StatusCode_name( read.Status );
+			let values = all( read.Values );
+			EXPECT_EQ( doubles(values), (vector<double>{800, 800, 900}) );
+			EXPECT_EQ( sources(values), (vector<UA_DateTime>{ticks(At(26)), ticks(At(25)), ticks(At(27))}) );
+			ASSERT_EQ( values.size(), 3u );
+			EXPECT_EQ( values[0].status, Interpolated );
+			EXPECT_FALSE( values[0].hasServerTimestamp );
+			EXPECT_FALSE( values[1].hasStatus );
+			EXPECT_TRUE( values[1].hasServerTimestamp );
+			let sloped = all( AtTime(Node(Rpm2), {At(13)}, simple).Values );
+			EXPECT_EQ( doubles(sloped), vector<double>{200} );
+			EXPECT_EQ( statuses(sloped), vector<UA_StatusCode>{Interpolated} );
+		}
+		let sourced = all( AtTime(Node(Rpm4), {At(25)}, false, UA_TIMESTAMPSTORETURN_SOURCE).Values );
+		ASSERT_EQ( sourced.size(), 1u );
+		EXPECT_TRUE( sourced[0].hasSourceTimestamp );
+		EXPECT_FALSE( sourced[0].hasServerTimestamp );
+		EXPECT_EQ( AtTime(Node(Rpm4), {At(25)}, false, UA_TIMESTAMPSTORETURN_SERVER).Status, UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID );
 	}
 
 	//HistoryUpdate through open62541's client helpers, each value's result the library's:  a raw read then sees the
@@ -828,16 +1186,19 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( written, vector<double>{555} );
 	}
 
-	//Read on the node is the right, asked of the session's user for each node:  never the collector's.
+	//Read on the node is the right, asked of the session's user for each node in every mode:  never the collector's.
 	TEST_F( HistoryTests, ReadNeedsReadOnTheNode ){
-		let status = []( UserPK user ){
+		let status = []( UserPK user, bool atTime ){
 			UAAccess::SessionContext session{ "", TimePoint::max(), 0, user };
-			return Callback( Rpm4, &session, At(0), At(10) );
+			return atTime ? AtTimeCallback( Rpm4, &session, At(0) ) : Callback( Rpm4, &session, At(0), At(10) );
 		};
-		EXPECT_TRUE( UA_StatusCode_isGood(status(AppClient()->UserPK())) );
 		const UserPK stranger{ 0x7FFF'FFF0 };
-		EXPECT_EQ( status(stranger), UA_STATUSCODE_BADUSERACCESSDENIED );//on the root the fixture enforces.
+		for( let atTime : {false, true} ){
+			EXPECT_TRUE( UA_StatusCode_isGood(status(AppClient()->UserPK(), atTime)) ) << atTime;
+			EXPECT_EQ( status(stranger, atTime), UA_STATUSCODE_BADUSERACCESSDENIED ) << atTime;//on the root the fixture enforces.
+		}
 		EXPECT_EQ( Callback(Rpm4, nullptr, At(0), At(10)), UA_STATUSCODE_BADUSERACCESSDENIED );//no session.
+		EXPECT_EQ( AtTimeCallback(Rpm4, nullptr, At(0)), UA_STATUSCODE_BADUSERACCESSDENIED );
 	}
 
 	//A start after a stop:  the files give each node its index back, a node the nodesets no longer historize is removed,

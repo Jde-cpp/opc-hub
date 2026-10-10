@@ -24,4 +24,10 @@ namespace Jde::Opc::Server{
 		//The node's Value attribute, with the timestamps asked for.
 		Ω Read( UA_Server& ua, const UA_NodeId& node, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_NEITHER )ι->Value;
 	};
+	//A UA Duration, in ms, as a Duration:  none for one that isn't a time interval, negative, NaN, or past what a
+	//Duration's nanoseconds hold.
+	Ξ ToDuration( UA_Duration ms )ι->optional<Duration>{
+		constexpr double longest{ 9e12 };
+		return ms>=0 && ms<longest ? std::chrono::duration_cast<Duration>( std::chrono::duration<double,std::milli>{ms} ) : optional<Duration>{};
+	}
 }

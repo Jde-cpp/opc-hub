@@ -127,6 +127,9 @@ namespace Jde::Opc::Hist{
 		AggregateConfiguration Configuration;
 		uint Limit{};//as a ReadRequest's.
 		string Continuation;
+		//Ends the page with the run of times, from its first in the request's order, that fall on that time's day, so a
+		//page reads one day's records:  OpcServer's, as a ReadRequest's OneDay is.  Times out of time order page one by one.
+		bool OneDay{};
 	};
 	//The aggregates the first cut supports (spec *Reads*):  Part 13's, and Median, the median of an interval's Good raw
 	//values, which Part 13 doesn't define.
@@ -144,6 +147,9 @@ namespace Jde::Opc::Hist{
 		AggregateConfiguration Configuration;
 		uint Limit{};//as a ReadRequest's, in values:  intervals times nodes.
 		string Continuation;
+		//Ends the page with the intervals stamped on the day its first is stamped on:  OpcServer's, as a ReadRequest's
+		//OneDay is.  An interval longer than a day is still read whole, since its value needs all of its records.
+		bool OneDay{};
 	};
 
 	//Part 11's HistoryUpdate (spec *Edits*), one entry per node, as the service takes them.  Times are UA ticks.
@@ -286,18 +292,19 @@ namespace Jde::Opc::Hist{
 		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
 		//the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
-		//A page of the values at the request's times (spec *Reads*), at most Limit, the times in the request's order and a
-		//time's values in the nodes', each a record at the time or one interpolated from the node's bounding records, read
-		//as Read reads them, the edits applied.  Only a raw read flags a value as a bound, a heartbeat or a modification.
-		//The continuation is stateless, as Read's:  the next of the requested times and how many of its values the pages
-		//before returned, with a CRC of the other arguments but Limit, the mode among them, so one of another read, or
-		//another mode, is refused.  Throws as Read does for a request with no nodes or no times.
+		//A page of the values at the request's times (spec *Reads*), at most Limit, and with OneDay one day's, the times in
+		//the request's order and a time's values in the nodes', each a record at the time or one interpolated from the
+		//node's bounding records, read as Read reads them, the edits applied.  Only a raw read flags a value as a bound, a
+		//heartbeat or a modification.  The continuation is stateless, as Read's:  the next of the requested times and how
+		//many of its values the pages before returned, with a CRC of the other arguments but Limit and OneDay, the mode
+		//among them, so one of another read, or another mode, is refused.  Throws as Read does for a request with no nodes
+		//or no times.
 		α ReadAtTime( const AtTimeRequest& request, SRCE )ε->ReadResult;
-		//A page of the request's aggregate over its intervals (spec *Reads*), at most Limit values, interval by interval
-		//and an interval's values in the nodes' order, computed from the raw records as Read serves them.  The
-		//continuation resumes at the next interval, as ReadAtTime's at the next time.  Throws as Read does for a request
-		//with no nodes or a negative interval, and a UAException for a Start equal to End, Bad_InvalidArgument, or
-		//percentages Part 13 doesn't allow, Bad_AggregateInvalidInputs.
+		//A page of the request's aggregate over its intervals (spec *Reads*), at most Limit values, and with OneDay one
+		//day's intervals, interval by interval and an interval's values in the nodes' order, computed from the raw records
+		//as Read serves them.  The continuation resumes at the next interval, as ReadAtTime's at the next time.  Throws as
+		//Read does for a request with no nodes or a negative interval, and a UAException for a Start equal to End,
+		//Bad_InvalidArgument, or percentages Part 13 doesn't allow, Bad_AggregateInvalidInputs.
 		α ReadProcessed( const ProcessedRequest& request, SRCE )ε->ReadResult;
 		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked.  The next flush
 		//runs it, after writing the buffer, so every value it targets is in its day's file before it looks:  it writes a

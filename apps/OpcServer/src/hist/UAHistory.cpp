@@ -18,13 +18,37 @@ namespace Jde::Opc::Server{
 		if( historizing && nodeId && value )
 			static_cast<UAHistory*>( context )->Collect( *server, *nodeId, *value );
 	}
+	//The service's answer to timestamps a mode can't return, with no results (Part 4 §5.11.3, Part 11 §4.5):  Neither, or
+	//a value that isn't one, and for a computed value, which has no server timestamp, Server alone (Part 13 §5.4.3.1).
+	//open62541 checks none and has allocated the results.
+	Ω refused( UA_HistoryReadResponse& response, UA_TimestampsToReturn timestamps, bool computed )ι->bool{
+		if( timestamps==UA_TIMESTAMPSTORETURN_SOURCE || timestamps==UA_TIMESTAMPSTORETURN_BOTH || (timestamps==UA_TIMESTAMPSTORETURN_SERVER && !computed) )
+			return false;
+		UA_Array_delete( response.results, response.resultsSize, &UA_TYPES[UA_TYPES_HISTORYREADRESULT] );
+		response.results = nullptr;
+		response.resultsSize = 0;
+		response.responseHeader.serviceResult = UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID;
+		return true;
+	}
 	Ω readRaw( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadRawModifiedDetails* details,
 		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
-		static_cast<UAHistory*>( context )->ReadRaw( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
+		if( !refused(*response, timestamps, false) )
+			static_cast<UAHistory*>( context )->ReadRaw( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
 	}
 	Ω readModified( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadRawModifiedDetails* details,
 		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryModifiedData* const* const data )ι->void{
-		static_cast<UAHistory*>( context )->ReadModified( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
+		if( !refused(*response, timestamps, false) )
+			static_cast<UAHistory*>( context )->ReadModified( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
+	}
+	Ω readAtTime( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadAtTimeDetails* details,
+		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
+		if( !refused(*response, timestamps, true) )
+			static_cast<UAHistory*>( context )->ReadAtTime( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
+	}
+	Ω readProcessed( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadProcessedDetails* details,
+		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
+		if( !refused(*response, timestamps, true) )
+			static_cast<UAHistory*>( context )->ReadProcessed( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
 	}
 	Ω updateData( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_UpdateDataDetails* details, UA_HistoryUpdateResult* result )ι->void{
 		static_cast<UAHistory*>( context )->UpdateData( *server, sessionId, sessionContext, *details, *result );
@@ -142,6 +166,55 @@ namespace Jde::Opc::Server{
 				: rank==UA_VALUERANK_ONE_OR_MORE_DIMENSIONS ? dimensions>=1
 				: dimensions==(size_t)rank;
 		}
+		//Why a node the group doesn't hold has no history to read or edit:  it isn't there, or it isn't historized.
+		Ω unhistorized( UA_Server& ua, const UA_NodeId& node )ι->UA_StatusCode{
+			UA_NodeClass nodeClass;
+			return UA_Server_readNodeClass( &ua, node, &nodeClass ) ? UA_STATUSCODE_BADNODEIDUNKNOWN : UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+		}
+		//A node's page in any mode, from the library, its continuation into the result's:  the status the read answers,
+		//the library's own for a request it refuses, and Bad_InternalError for a file that can't be read, said where it
+		//was found.
+		Ω paged( absl::FunctionRef<Hist::ReadResult()> read, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+			try{
+				page = read();
+				if( page.Continuation.size() ){
+					if( let sc = UA_ByteString_allocBuffer(&continuation, page.Continuation.size()) )
+						return sc;
+					memcpy( continuation.data, page.Continuation.data(), page.Continuation.size() );
+				}
+				return page.NoData ? UA_STATUSCODE_GOODNODATA : UA_STATUSCODE_GOOD;
+			}
+			catch( const UAException& e ){
+				return (UA_StatusCode)e.Code();
+			}
+			catch( const std::exception& ){
+				return UA_STATUSCODE_BADINTERNALERROR;
+			}
+		}
+		//Part 13's AggregateFunction objects, namespace 0's, for the aggregates served from it.
+		constexpr std::array<std::pair<UA_UInt32,Hist::EAggregate>,9> Part13Aggregates{{
+			{UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, Hist::EAggregate::Interpolative}, {UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, Hist::EAggregate::Average},
+			{UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, Hist::EAggregate::TimeAverage}, {UA_NS0ID_AGGREGATEFUNCTION_COUNT, Hist::EAggregate::Count},
+			{UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, Hist::EAggregate::Minimum}, {UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, Hist::EAggregate::Maximum},
+			{UA_NS0ID_AGGREGATEFUNCTION_START, Hist::EAggregate::Start}, {UA_NS0ID_AGGREGATEFUNCTION_END, Hist::EAggregate::End},
+			{UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, Hist::EAggregate::StandardDeviationSample} }};
+		//HistoryServerCapabilities' AggregateFunctions folder organizes what is served, and so does ServerCapabilities',
+		//which lists every aggregate a server supports (Part 5 §6.3.2):  Part 13's objects, which namespace 0 holds
+		//unreferenced, and Median, added as an AggregateFunctionType object of the server's own namespace.
+		Ω publishAggregates( UA_Server& ua )ε->void{
+			const UA_NodeId history = UA_NODEID_NUMERIC( 0, UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS ), server = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_SERVERCAPABILITIES_AGGREGATEFUNCTIONS );
+			const UA_NodeId organizes = UA_NODEID_NUMERIC( 0, UA_NS0ID_ORGANIZES );
+			for( let& folder : {history, server} ){
+				for( let& [function, _] : Part13Aggregates )
+					UAε( UA_Server_addReference(&ua, folder, organizes, UA_EXPANDEDNODEID_NUMERIC(0, function), true) );
+			}
+			UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)"Median" );
+			attributes.description = UA_LOCALIZEDTEXT( (char*)"en", (char*)"The median of the Good values in each interval, which Part 13 doesn't define:  Uncertain where a value that isn't Good was left out." );
+			let median = UAHistory::Median();
+			UAε( UA_Server_addObjectNode(&ua, median, history, organizes, UA_QUALIFIEDNAME(1, (char*)"Median"), UA_NODEID_NUMERIC(0, UA_NS0ID_AGGREGATEFUNCTIONTYPE), attributes, nullptr, nullptr) );
+			UAε( UA_Server_addReference(&ua, server, organizes, UA_ExpandedNodeId{.nodeId=median}, true) );
+		}
 		//An edit's answer, shared with the coroutine that awaits it, which a wait that gave up leaves behind.
 		struct Edited final{
 			absl::Notification Done;
@@ -197,6 +270,8 @@ namespace Jde::Opc::Server{
 		y.setValue = setValue;
 		y.readRaw = readRaw;
 		y.readModified = readModified;
+		y.readAtTime = readAtTime;
+		y.readProcessed = readProcessed;
 		y.updateData = updateData;
 		y.deleteRawModified = deleteRawModified;
 		return y;
@@ -215,6 +290,20 @@ namespace Jde::Opc::Server{
 	α UAHistory::Find( const UA_NodeId& node )Ι->optional<Hist::NodeIndex>{
 		auto p = _indexes.find( node );
 		return p==_indexes.end() ? optional<Hist::NodeIndex>{} : p->second;
+	}
+	α UAHistory::Median()ι->NodeId{
+		static const NodeId median{ UA_NODEID_STRING_ALLOC(1, "Median") };
+		return median;
+	}
+	α UAHistory::Aggregate( const UA_NodeId& function )ι->optional<Hist::EAggregate>{
+		if( function.namespaceIndex==0 && function.identifierType==UA_NODEIDTYPE_NUMERIC ){
+			for( let& [id, aggregate] : Part13Aggregates ){
+				if( id==function.identifier.numeric )
+					return aggregate;
+			}
+		}
+		let median = Median();
+		return UA_NodeId_equal( &function, &median ) ? optional<Hist::EAggregate>{ Hist::EAggregate::Median } : optional<Hist::EAggregate>{};
 	}
 
 	α UAHistory::Load( UA_Server& ua )ε->void{
@@ -245,6 +334,7 @@ namespace Jde::Opc::Server{
 			_indexes.emplace( move(node.Id), *index );
 		}
 		_group = move( group );
+		publishAggregates( ua );
 		ul _{ _publishing->Mutex };
 		_publishing->Ua = &ua;
 		PublishArchive();
@@ -316,14 +406,35 @@ namespace Jde::Opc::Server{
 
 	α UAHistory::ReadRaw( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
-		Serve( ua, sessionId, sessionContext, details, timestamps, release, nodes, results, [&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+		Serve( ua, sessionId, sessionContext, release, nodes, results, "raw",
+			[&]( uint, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( index, details, id, continuation, page ); },
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
 	}
 	α UAHistory::ReadModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryModifiedData* const* data )ι->void{
-		Serve( ua, sessionId, sessionContext, details, timestamps, release, nodes, results, [&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+		Serve( ua, sessionId, sessionContext, release, nodes, results, "modified",
+			[&]( uint, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( index, details, id, continuation, page ); },
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
 	}
-	α UAHistory::Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
-		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void{
+	α UAHistory::ReadAtTime( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadAtTimeDetails& details, UA_TimestampsToReturn timestamps, bool release,
+		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
+		Serve( ua, sessionId, sessionContext, release, nodes, results, "at-time",
+			[&]( uint, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return AtTime( index, details, id, continuation, page ); },
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+	}
+	α UAHistory::ReadProcessed( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadProcessedDetails& details, UA_TimestampsToReturn timestamps, bool release,
+		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
+		let mismatch = details.aggregateTypeSize!=nodes.size();//one aggregate per node, a node read with two named twice (Part 11 §6.5.4.2).
+		Serve( ua, sessionId, sessionContext, release, nodes, results, "processed",
+			[&]( uint i, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){
+				return mismatch ? UA_STATUSCODE_BADAGGREGATELISTMISMATCH : Processed( index, details, details.aggregateType[i], id, continuation, page );
+			},
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+	}
+	α UAHistory::Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, bool release,
+		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, sv what,
+		absl::FunctionRef<UA_StatusCode( uint, Hist::NodeIndex, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult& )> read,
+		absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void{
 		let start = steady_clock::now();
 		uint values{};
 		for( uint i=0; i<nodes.size(); ++i ){
@@ -332,9 +443,12 @@ namespace Jde::Opc::Server{
 				result.statusCode = UA_STATUSCODE_GOOD;
 				continue;
 			}
-			Hist::ReadResult page;
 			IndexRange range;
-			result.statusCode = Read( ua, sessionId, sessionContext, details, timestamps, nodes[i], result.continuationPoint, page, range.Value );
+			let index = Admit( ua, sessionId, sessionContext, nodes[i], range.Value, result.statusCode );
+			if( !index )
+				continue;
+			Hist::ReadResult page;
+			result.statusCode = read( i, *index, nodes[i], result.continuationPoint, page );
 			if( UA_StatusCode_isBad(result.statusCode) )
 				continue;
 			if( let sc = fill(i, page, nodes[i].indexRange.length ? &range.Value : nullptr) )
@@ -343,25 +457,30 @@ namespace Jde::Opc::Server{
 		}
 		let elapsed = steady_clock::now()-start;
 		_reads.Add( elapsed );
-		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} µs, returning {} {} values.", nodes.size(), duration_cast<microseconds>(elapsed).count(), values, details.isReadModified ? "modified" : "raw" );
+		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} µs, returning {} {} values.", nodes.size(), duration_cast<microseconds>(elapsed).count(), values, what );
 	}
-
-	α UAHistory::Read( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps,
-		const UA_HistoryReadValueId& node, UA_ByteString& continuation, Hist::ReadResult& page, UA_NumericRange& range )ι->UA_StatusCode{
-		if( timestamps!=UA_TIMESTAMPSTORETURN_SOURCE && timestamps!=UA_TIMESTAMPSTORETURN_SERVER && timestamps!=UA_TIMESTAMPSTORETURN_BOTH )
-			return UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT;
+	α UAHistory::Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Hist::NodeIndex>{
+		status = UA_STATUSCODE_GOOD;
 		if( !(UAAccess::GetUserAccessLevel(&ua, nullptr, sessionId, sessionContext, &node.nodeId, nullptr) & UA_ACCESSLEVELMASK_HISTORYREAD) )
-			return UA_STATUSCODE_BADUSERACCESSDENIED;
+			status = UA_STATUSCODE_BADUSERACCESSDENIED;
+		else if( node.indexRange.length )
+			status = UA_NumericRange_parse( &range, node.indexRange );
+		if( status )
+			return nullopt;
 		let index = Find( node.nodeId );
 		if( !index || !_group ){
-			UA_NodeClass nodeClass;
-			return UA_Server_readNodeClass( &ua, node.nodeId, &nodeClass ) ? UA_STATUSCODE_BADNODEIDUNKNOWN : UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+			status = unhistorized( ua, node.nodeId );
+			return nullopt;
 		}
+		return index;
+	}
+
+	α UAHistory::Read( Hist::NodeIndex index, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
 		//DateTime's MinValue, 0 on the wire, is a time that isn't given, and two of the three bound a read (Part 11 §6.5.3).
 		let hasStart = details.startTime>0, hasEnd = details.endTime>0;
 		if( hasStart+hasEnd+(details.numValuesPerNode!=0)<2 )
 			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
-		Hist::ReadRequest request{ .Nodes={*index}, .Bounds=details.returnBounds, .Modified=details.isReadModified, .Limit=details.numValuesPerNode, .OneDay=true };
+		Hist::ReadRequest request{ .Nodes={index}, .Bounds=details.returnBounds, .Modified=details.isReadModified, .Limit=details.numValuesPerNode, .Continuation=ToString(id.continuationPoint), .OneDay=true };
 		if( hasStart )
 			request.Start = details.startTime;
 		if( hasEnd ){
@@ -370,27 +489,29 @@ namespace Jde::Opc::Server{
 			let open = hasStart && !details.returnBounds && details.startTime!=details.endTime;
 			request.End = details.endTime+( !open ? 0 : details.startTime<details.endTime ? -1 : 1 );
 		}
-		if( node.continuationPoint.length )
-			request.Continuation.assign( (const char*)node.continuationPoint.data, node.continuationPoint.length );
-		if( node.indexRange.length ){
-			if( let sc = UA_NumericRange_parse(&range, node.indexRange) )
-				return sc;
-		}
-		try{
-			page = _group->Read( request );
-			if( page.Continuation.size() ){
-				if( let sc = UA_ByteString_allocBuffer(&continuation, page.Continuation.size()) )
-					return sc;
-				memcpy( continuation.data, page.Continuation.data(), page.Continuation.size() );
-			}
-			return page.NoData ? UA_STATUSCODE_GOODNODATA : UA_STATUSCODE_GOOD;
-		}
-		catch( const UAException& e ){
-			return (UA_StatusCode)e.Code();
-		}
-		catch( const std::exception& ){//a file that can't be read, said where it was found.
-			return UA_STATUSCODE_BADINTERNALERROR;
-		}
+		return paged( [&]{ return _group->Read( request ); }, continuation, page );
+	}
+	α UAHistory::AtTime( Hist::NodeIndex index, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+		if( !details.reqTimesSize )
+			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
+		//Every node's AggregateConfiguration is Part 13's defaults, which Historized::Load publishes over the nodeset's.
+		const Hist::AtTimeRequest request{ .Nodes={index}, .Times={details.reqTimes, details.reqTimes+details.reqTimesSize}, .SimpleBounds=details.useSimpleBounds!=0, .Configuration={}, .Continuation=ToString(id.continuationPoint), .OneDay=true };
+		return paged( [&]{ return _group->ReadAtTime( request ); }, continuation, page );
+	}
+	α UAHistory::Processed( Hist::NodeIndex index, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode{
+		let aggregate = Aggregate( function );
+		if( !aggregate )
+			return UA_STATUSCODE_BADAGGREGATENOTSUPPORTED;
+		if( details.startTime<=0 || details.endTime<=0 )//all three shall be specified (Part 11 §6.5.4.2), a time of 0 isn't.
+			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
+		let interval = ToDuration( details.processingInterval );
+		if( !interval )
+			return UA_STATUSCODE_BADINVALIDARGUMENT;
+		let& c = details.aggregateConfiguration;//or, with useServerCapabilitiesDefaults, the node's:  Part 13's, as AtTime's.
+		const Hist::ProcessedRequest request{ .Nodes={index}, .Start=details.startTime, .End=details.endTime, .Interval=*interval,
+			.Aggregate=*aggregate, .Configuration=c.useServerCapabilitiesDefaults ? Hist::AggregateConfiguration{} : Hist::AggregateConfiguration{ c.treatUncertainAsBad!=0, c.percentDataBad, c.percentDataGood, c.useSlopedExtrapolation!=0 },
+			.Continuation=ToString(id.continuationPoint), .OneDay=true };
+		return paged( [&]{ return _group->ReadProcessed( request ); }, continuation, page );
 	}
 
 	α UAHistory::Edit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId& node, UA_HistoryUpdateResult& result, absl::FunctionRef<optional<Hist::EditDetails>( Hist::NodeIndex )> make )ι->optional<Hist::EditResult>{
@@ -401,8 +522,7 @@ namespace Jde::Opc::Server{
 		}
 		let index = Find( node );
 		if( !index || !_group ){
-			UA_NodeClass nodeClass;
-			result.statusCode = UA_Server_readNodeClass( &ua, node, &nodeClass ) ? UA_STATUSCODE_BADNODEIDUNKNOWN : UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+			result.statusCode = unhistorized( ua, node );
 			return nullopt;
 		}
 		//And the node's own, which a nodeset that gave it HistoryRead alone left out (Historized::load):  the default
