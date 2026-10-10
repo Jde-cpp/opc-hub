@@ -1,7 +1,8 @@
 //Historian 3A (#214):  history with `opc`, the gateway reading a server's own history for the caller (spec *Pass-through*)
 //- here the embedded OpcServer's pump nodes, written on the server with source times on three past days, so a read
 //pages across its day files, and read back through the gateway's QL by time, as the web will.  3B (#215):  the history
-//edits with `opc`, each sent as a HistoryUpdate over the caller's session, and read back as modified values.
+//edits with `opc`, each sent as a HistoryUpdate over the caller's session, and read back as modified values.  3C (#216):
+//history at times and aggregated, ReadAtTime and ReadProcessed over the caller's session, each aggregate by name.
 #include <thread>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
@@ -25,7 +26,8 @@ namespace Jde::Opc::Gateway::Tests{
 		struct Written final{ UA_UInt32 Node; TimePoint Time; double Value; };
 		struct Row final{ NodeId Node; optional<TimePoint> Source; optional<TimePoint> Server; StatusCode Status; jvalue Value; bool Bound; };
 		struct Page final{ vector<Row> Values; string Continuation; flat_map<NodeId,StatusCode> Statuses; };
-		struct Request final{ vector<UA_UInt32> Nodes; optional<TimePoint> Start; optional<TimePoint> End; uint Limit{}; bool Bounds{}; };
+		//A raw read's arguments, or with Times an at-time read's, or with Interval, in milliseconds, and Aggregate an aggregate read's.
+		struct Request final{ vector<UA_UInt32> Nodes; optional<TimePoint> Start; optional<TimePoint> End; uint Limit{}; bool Bounds{}; vector<TimePoint> Times; optional<double> Interval; string Aggregate; };
 	}
 
 	struct HistTests : ::testing::Test{
@@ -78,9 +80,17 @@ namespace Jde::Opc::Gateway::Tests{
 			for( let id : request.Nodes )
 				nodes.push_back( Node(id).ToJson() );
 			let time = []( optional<TimePoint> t ){ return t ? jvalue{ UADateTime{*t}.ToJson() } : jvalue{}; };
+			jvalue times;//null, as the web sends an argument its mode doesn't take.
+			if( request.Times.size() ){
+				jarray j;
+				for( let t : request.Times )
+					j.push_back( UADateTime{t}.ToJson() );
+				times = move( j );
+			}
 			jobject vars{ {"opc", OpcServerSlug}, {"nodes", move(nodes)}, {"start", time(request.Start)}, {"end", time(request.End)}, {"limit", request.Limit}, {"bounds", request.Bounds},
+				{"times", move(times)}, {"interval", request.Interval ? jvalue{*request.Interval} : jvalue{}}, {"aggregate", request.Aggregate.size() ? jvalue{request.Aggregate} : jvalue{}},
 				{"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} };
-			let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, limit: $limit, returnBounds: $bounds, continuation: $continuation ){ continuation values{ node source server status value bound } nodes{ node status } }";
+			let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, limit: $limit, returnBounds: $bounds, times: $times, interval: $interval, aggregate: $aggregate, continuation: $continuation ){ continuation values{ node source server status value bound } nodes{ node status } }";
 			let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
 			TRACET( ELogTags::Test, "history: {}", serialize(value) );
 			let& o = value.as_object();
@@ -301,6 +311,177 @@ namespace Jde::Opc::Gateway::Tests{
 		let& nodes = Json::AsArray( o, "nodes" );
 		ASSERT_EQ( nodes.size(), 1u );
 		EXPECT_EQ( Json::AsNumber<StatusCode>(nodes[0].as_object(), "status"), UA_STATUSCODE_GOODNODATA );
+	}
+
+	namespace{
+		//Part 13's historian bits, which a computed value carries beside Good:  Calculated for an aggregate, Interpolated for a
+		//value between records.
+		constexpr StatusCode Calculated{ 0x401 }, Interpolated{ 0x402 }, Partial{ 0x404 };
+		//Each row's number:  as /opc carries it, in `v` with its status when the status isn't plain Good.
+		Ω values( const vector<Row>& rows )ι->vector<double>{
+			vector<double> y;
+			for( let& row : rows ){
+				let& j = row.Value.is_object() && row.Value.get_object().contains("v") ? row.Value.get_object().at("v") : row.Value;
+				y.push_back( j.is_number() ? j.to_number<double>() : std::numeric_limits<double>::quiet_NaN() );
+			}
+			return y;
+		}
+		Ω sources( const vector<Row>& rows )ι->vector<optional<TimePoint>>{
+			vector<optional<TimePoint>> y;
+			for( let& row : rows )
+				y.push_back( row.Source );
+			return y;
+		}
+		Ω statuses( const vector<Row>& rows )ι->vector<StatusCode>{
+			vector<StatusCode> y;
+			for( let& row : rows )
+				y.push_back( row.Status );
+			return y;
+		}
+		Ω near( const vector<double>& actual, const vector<double>& expected )ι->::testing::AssertionResult{
+			if( actual.size()!=expected.size() )
+				return ::testing::AssertionFailure() << actual.size() << " values, expected " << expected.size();
+			for( uint i=0; i<actual.size(); ++i ){
+				if( std::abs(actual[i]-expected[i])>1e-9 )
+					return ::testing::AssertionFailure() << "value " << i << ":  " << actual[i] << ", expected " << expected[i];
+			}
+			return ::testing::AssertionSuccess();
+		}
+	}
+	//ReadAtTime over the caller's session:  each requested time answered in the request's order, a time's values in the
+	//nodes' order, a record at the time as it is and otherwise the value interpolated from the node's records, stepped
+	//on Rpm4, marked Interpolated and stamped at the time.  The embedded OpcServer pages each node by the day of its
+	//times, so a read across the three days follows each node's continuation point within the call, and times out of
+	//order page one by one.  The gateway's limit cuts a page within a time, and the next page answers the time's other
+	//nodes.  A node the server refuses answers with the server's status, and a null start, end, interval or aggregate
+	//is none.
+	TEST_F( HistTests, ReadsAtTime ){
+		const Request request{ .Nodes={Rpm4}, .Limit=100, .Times={At(0, 15), At(0, 20), At(1, 15), At(2, 65)} };
+		let page = Read( request );
+		EXPECT_TRUE( page.Continuation.empty() );
+		EXPECT_TRUE( near(values(page.Values), {100, 200, 700, 1800}) );
+		EXPECT_EQ( sources(page.Values), (vector<optional<TimePoint>>{At(0, 15), At(0, 20), At(1, 15), At(2, 65)}) );
+		EXPECT_EQ( statuses(page.Values), (vector<StatusCode>{Interpolated, UA_STATUSCODE_GOOD, Interpolated, Interpolated}) );
+		ASSERT_EQ( page.Values.size(), 4u );
+		EXPECT_FALSE( page.Values[0].Server );
+		EXPECT_TRUE( page.Values[1].Server );
+		EXPECT_EQ( page.Statuses.at(Node(Rpm4)), UA_STATUSCODE_GOOD );
+
+		vector<uint> pages;
+		let paged = ReadAll( {.Nodes={Rpm4}, .Limit=3, .Times=request.Times}, &pages );
+		EXPECT_EQ( pages, (vector<uint>{3, 1}) );
+		EXPECT_TRUE( near(values(paged), {100, 200, 700, 1800}) );
+
+		let unordered = Read( {.Nodes={Rpm4}, .Limit=100, .Times={At(1, 15), At(0, 15)}} );
+		EXPECT_TRUE( near(values(unordered.Values), {700, 100}) );
+
+		const Request two{ .Nodes={Rpm4, RpmManual, Status2}, .Limit=100, .Times={At(0, 15), At(1, 0)} };
+		let both = Read( two );
+		EXPECT_TRUE( near(values(both.Values), {100, 50, 600, 50}) );
+		ASSERT_EQ( both.Values.size(), 4u );
+		EXPECT_EQ( both.Values[1].Node, Node(RpmManual) );
+		EXPECT_EQ( both.Values[1].Status, UA_STATUSCODE_GOOD );//the record at the time, as it is.
+		EXPECT_EQ( both.Values[3].Status, Interpolated );
+		EXPECT_EQ( both.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( both.Statuses.at(Node(RpmManual)), UA_STATUSCODE_GOOD );
+		pages.clear();
+		let cut = ReadAll( {.Nodes={Rpm4, RpmManual, Status2}, .Limit=3, .Times=two.Times}, &pages );
+		EXPECT_EQ( pages, (vector<uint>{3, 1}) );
+		EXPECT_TRUE( near(values(cut), {100, 50, 600, 50}) );
+		ASSERT_EQ( cut.size(), 4u );
+		EXPECT_EQ( cut[3].Node, Node(RpmManual) );
+		EXPECT_EQ( cut[3].Source, At(1, 0) );
+	}
+
+	//ReadProcessed over the caller's session, each of the aggregates the embedded OpcServer serves by name:  Part 13's by
+	//its standard NodeId, and Median, which Part 13 doesn't name, by the NodeId the server's AggregateFunctions folder lists
+	//under it, browsed once per client.  Rpm4's first day, 100 at 10 s through 600 at 60 s, in two 25 s intervals, each
+	//value stamped at its interval's start, where Start, End, and a Minimum or Maximum at the interval's start, are the
+	//record as it is.  Reversed, each interval holds its later end and is stamped at it.  A Part 13 aggregate the server doesn't
+	//serve answers with the server's status, and a name nothing lists is refused.
+	TEST_F( HistTests, ReadsEachAggregate ){
+		struct Case final{ sv Aggregate; vector<double> Values; vector<TimePoint> Sources; };
+		const vector<TimePoint> starts{ At(0, 10), At(0, 35) };
+		const Case cases[]{ {"Average", {200, 450}, starts}, {"TimeAverage", {225, 475}, starts}, {"Count", {3, 2}, starts}, {"Minimum", {100, 400}, starts},
+			{"Maximum", {300, 500}, starts}, {"Start", {100, 400}, {At(0, 10), At(0, 40)}}, {"End", {300, 500}, {At(0, 30), At(0, 50)}},
+			{"StandardDeviationSample", {100, std::sqrt(5000.0)}, starts}, {"Interpolative", {100, 300}, starts}, {"Median", {200, 450}, starts} };
+		for( let& c : cases ){
+			SCOPED_TRACE( c.Aggregate );
+			let page = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate=string{c.Aggregate}} );
+			EXPECT_TRUE( page.Continuation.empty() );
+			EXPECT_TRUE( near(values(page.Values), c.Values) );
+			vector<optional<TimePoint>> expected{ c.Sources.begin(), c.Sources.end() };
+			EXPECT_EQ( sources(page.Values), expected );
+			for( let& row : page.Values )
+				EXPECT_FALSE( UA_StatusCode_isBad(row.Status) ) << row.Status;
+			EXPECT_EQ( page.Statuses.at(Node(Rpm4)), UA_STATUSCODE_GOOD );
+		}
+		let average = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"} );
+		EXPECT_EQ( statuses(average.Values), (vector<StatusCode>{Calculated, Calculated}) );
+		let reversed = Read( {.Nodes={Rpm4}, .Start=At(0, 60), .End=At(0, 10), .Limit=100, .Interval=25'000, .Aggregate="Average"} );
+		EXPECT_TRUE( near(values(reversed.Values), {500, 250}) );
+		EXPECT_EQ( sources(reversed.Values), (vector<optional<TimePoint>>{At(0, 60), At(0, 35)}) );
+		//The folder, read for Median, is the client's, listing what OpcServer serves.
+		uint listed{};
+		for( let& client : UAClient::LiveClients() ){
+			if( client->Slug()!=OpcServerSlug )
+				continue;
+			let folder = client->Aggregates().Find();
+			ASSERT_TRUE( folder );
+			EXPECT_EQ( folder->size(), 10u );
+			EXPECT_TRUE( folder->contains("Median") );
+			EXPECT_TRUE( folder->contains("Average") );
+			EXPECT_FALSE( folder->contains("Range") );
+			++listed;
+		}
+		EXPECT_EQ( listed, 1u );
+		let range = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Range"} );
+		EXPECT_TRUE( range.Values.empty() );
+		EXPECT_EQ( range.Statuses.at(Node(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="NoSuchAggregate"}), GatewayErrorResponse );
+	}
+
+	//An aggregate read across the three days:  the embedded OpcServer pages each node by the day its intervals are stamped
+	//on, so the gateway follows each node's point within the call, and its own limit cuts a page within an interval,
+	//the next page answering the interval's other nodes from the interval's start.  An interval with nothing in it is the
+	//server's Bad_NoData, a value in its place, and the first with data, starting before the node's first record, is Partial.
+	TEST_F( HistTests, PagesAggregatesAcrossDays ){
+		const Request request{ .Nodes={Rpm4, RpmManual}, .Start=At(0, 0), .End=At(3, 0), .Limit=5, .Interval=12*3600*1000.0, .Aggregate="Count" };
+		vector<uint> pages;
+		let rows = ReadAll( request, &pages );
+		EXPECT_EQ( pages, (vector<uint>{5, 5, 2}) );
+		ASSERT_EQ( rows.size(), 12u );
+		for( uint i=0; i<rows.size(); ++i ){
+			EXPECT_EQ( rows[i].Node, Node(i%2 ? RpmManual : Rpm4) ) << i;
+			EXPECT_EQ( rows[i].Source, At(0, 0)+hours{12*(i/2)} ) << i;
+		}
+		vector<Row> rpm4;
+		for( uint i=0; i<rows.size(); i+=2 )
+			rpm4.push_back( rows[i] );
+		EXPECT_EQ( statuses(rpm4), (vector<StatusCode>{Calculated|Partial, UA_STATUSCODE_BADNODATA, Calculated, UA_STATUSCODE_BADNODATA, Calculated, UA_STATUSCODE_BADNODATA}) );
+		EXPECT_EQ( values({rpm4[0], rpm4[2], rpm4[4]}), (vector<double>{6, 6, 6}) );
+		let whole = Read( {.Nodes=request.Nodes, .Start=request.Start, .End=request.End, .Limit=100, .Interval=request.Interval, .Aggregate=request.Aggregate} );
+		EXPECT_TRUE( whole.Continuation.empty() );
+		EXPECT_EQ( whole.Values.size(), 12u );
+	}
+
+	//Each mode refuses the others' arguments, and a continuation resumes only its own mode's read.
+	TEST_F( HistTests, RefusesAnotherModesArguments ){
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .Limit=10, .Times={At(0, 15)}}), GatewayErrorResponse );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Limit=10, .Bounds=true, .Times={At(0, 15)}}), GatewayErrorResponse );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=10, .Interval=1000}), GatewayErrorResponse );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=10, .Aggregate="Average"}), GatewayErrorResponse );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .Limit=10, .Interval=1000, .Aggregate="Average"}), GatewayErrorResponse );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=10, .Bounds=true, .Interval=1000, .Aggregate="Average"}), GatewayErrorResponse );
+		let atTime = Read( {.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(0, 20)}} );
+		ASSERT_FALSE( atTime.Continuation.empty() );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=1}, atTime.Continuation), GatewayErrorResponse );
+		let raw = Read( {.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=1} );
+		ASSERT_FALSE( raw.Continuation.empty() );
+		EXPECT_THROW( Read({.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(0, 20)}}, raw.Continuation), GatewayErrorResponse );
+		let rest = Read( {.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(0, 20)}}, atTime.Continuation );
+		EXPECT_TRUE( near(values(rest.Values), {200}) );
+		EXPECT_TRUE( rest.Continuation.empty() );
 	}
 
 	namespace{

@@ -10,20 +10,36 @@ namespace Jde::QL{ struct Input; struct TableQL; }
 //`opc` (HistQLAwait, spec *Pass-through*) and a read of a group's with `group` (Phase 5) share:  one result shape, one
 //continuation form, so the web draws both with the same components.
 namespace Jde::Opc::Gateway::HistQL{
-	//history( opc, nodes, start, end, modified, returnBounds, limit, continuation ), checked:  `opc` and not `group`, at
-	//least one node, a start or an end, and limit at most readLimit.  Times are UA ticks.  Continuation is decoded and
+	//history's three modes (spec *Reads*), Part 11's ReadRawModified, ReadAtTime and ReadProcessed, chosen by the arguments:
+	//`times` makes an at-time read, and `aggregate` or `interval` an aggregate read.  A null argument is none.
+	enum class EMode : uint8{ Raw, AtTime, Processed };
+	α Mode( const QL::Input& input )ι->EMode;
+	//history( opc, nodes, start, end, modified, returnBounds, limit, continuation ), history( opc, nodes, times, limit,
+	//continuation ) or history( opc, nodes, start, end, interval, aggregate, limit, continuation ), checked:  `opc` and not
+	//`group`, at least one node, the mode's arguments and none of the others', and limit at most readLimit.  A raw read
+	//needs a start or an end, an at-time read a time, and an aggregate read both a start and an end, an interval, in
+	//milliseconds as processingInterval is, and an aggregate's name.  Times are UA ticks.  Continuation is decoded and
 	//checked against the other arguments.
 	struct Args final{
 		Args( const QL::Input& input, SRCE )ε;
 		α Reverse()Ι->bool{ return Start && End ? *Start>*End : !Start; }//an end alone reads backward from it.
-		//The CRC-32C of every argument but limit, which a continuation carries:  the same read pages at any size, and one
-		//passed with other arguments is refused.
+		//The CRC-32C of every argument but limit, the mode first, which a continuation carries:  the same read pages at any
+		//size, and one passed with other arguments, or to a read of another mode, is refused.
 		α Crc()Ι->uint32_t;
+		//An interval's ticks, as the server counts them:  the whole range for an interval of 0 or one not shorter than it.
+		α Width()Ι->uint64_t;
+		//The points a computed read answers, in the request's order:  an at-time read's times, or an aggregate read's
+		//intervals, the last holding the rest of the range.
+		α Count()Ι->uint64_t;
+		EMode Mode{ EMode::Raw };
 		string Opc;
 		vector<NodeId> Nodes;
 		optional<UA_DateTime> Start, End;
 		bool Modified{};
 		bool Bounds{};
+		vector<UA_DateTime> Times;//an at-time read's.
+		double Interval{};//an aggregate read's, in milliseconds.
+		string Aggregate;//an aggregate read's, by name:  Part 13's, or one the server lists (AggregateFunctions).
 		uint Limit{};
 		optional<Hist::Proto::Continuation> Continuation;//the page before's.
 	};

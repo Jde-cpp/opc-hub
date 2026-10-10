@@ -1,6 +1,8 @@
-//history( opc, nodes, start, end, modified, returnBounds, limit, continuation ){ continuation values{…} nodes{…} } (ql/HistQLAwait.cpp):
-//a server's own history, read for the caller (libs/historian/docs/spec.md, *Pass-through*).  Config-only types - no view
-//behind them, so __type(name:...) is answered from here alone.  A group's read (Phase 5) answers the same shape.
+//history( opc, nodes, start, end, modified, returnBounds, limit, continuation ){ continuation values{…} nodes{…} } (ql/HistQLAwait.cpp),
+//history( opc, nodes, times, limit, continuation ) and history( opc, nodes, start, end, interval, aggregate, limit, continuation )
+//(ql/HistComputedQLAwait.cpp):  a server's own history, raw, at times or aggregated, read for the caller (libs/historian/docs/spec.md,
+//*Pass-through*).  Config-only types - no view behind them, so __type(name:...) is answered from here alone.  A group's read
+//(Phase 5) answers the same shape.
 //NodeId is search.jsonnet's.
 //createHistory|updateHistory|upsertHistory( opc, values:[{ node source server status value }] ) and purgeHistory( opc, nodes,
 //start, end ) or purgeHistory( opc, nodes, times ){ values{…} nodes{…} } (ql/HistEditQLAwait.cpp):  the server's own
