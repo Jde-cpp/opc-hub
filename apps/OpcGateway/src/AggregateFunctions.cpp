@@ -81,14 +81,19 @@ namespace Jde::Opc::Gateway{
 			Browse::FoldersAwait browse{ Browse::Request::Hierarchical(NodeId{0, UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS}, UA_BROWSERESULTMASK_BROWSENAME), client };
 			auto refs = co_await Any( browse );
 			THROW_IF( refs.resultsSize!=1, "Browsing AggregateFunctions returned {} results for 1 node.", refs.resultsSize );
-			if( let sc = refs.results[0].statusCode; UA_StatusCode_isBad(sc) )
+			let sc = refs.results[0].statusCode;
+			if( UA_StatusCode_isBad(sc) && sc!=UA_STATUSCODE_BADNODEIDUNKNOWN )
 				throw UAClientException{ (StatusCode)sc, client->Handle(), "browse HistoryServerCapabilities/AggregateFunctions" };
 			auto y = ms<Folder>();
-			refs.VisitWhile( 0, [&]( const UA_ReferenceDescription& ref ){
-				y->try_emplace( Opc::ToString(ref.browseName.name), NodeId{ref.nodeId.nodeId} );
-				return true;
-			} );
-			INFO( "[{}]HistoryServerCapabilities/AggregateFunctions lists {} aggregates.", hex(client->Handle()), y->size() );
+			if( !UA_StatusCode_isBad(sc) ){
+				refs.VisitWhile( 0, [&]( const UA_ReferenceDescription& ref ){
+					y->try_emplace( Opc::ToString(ref.browseName.name), NodeId{ref.nodeId.nodeId} );
+					return true;
+				} );
+				INFO( "[{}]HistoryServerCapabilities/AggregateFunctions lists {} aggregates.", hex(client->Handle()), y->size() );
+			}
+			else//a server without the folder lists nothing, which is kept like any listing.
+				INFO( "[{}]The server has no HistoryServerCapabilities/AggregateFunctions, so it lists no aggregates.", hex(client->Handle()) );
 			folder = move( y );
 		}
 		catch( runtime_error& e ){

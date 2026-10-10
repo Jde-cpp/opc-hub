@@ -18,16 +18,19 @@ namespace Jde::Opc::Gateway::HistQL{
 	//continuation ) or history( opc, nodes, start, end, interval, aggregate, limit, continuation ), checked:  `opc` and not
 	//`group`, at least one node, the mode's arguments and none of the others', and limit at most readLimit.  A raw read
 	//needs a start or an end, an at-time read a time, and an aggregate read both a start and an end, an interval, in
-	//milliseconds as processingInterval is, and an aggregate's name.  Times are UA ticks.  Continuation is decoded and
-	//checked against the other arguments.
+	//milliseconds as processingInterval is and not negative, and an aggregate's name.  Times are UA ticks.  Continuation
+	//is decoded and checked against the other arguments.
 	struct Args final{
 		Args( const QL::Input& input, SRCE )ε;
 		α Reverse()Ι->bool{ return Start && End ? *Start>*End : !Start; }//an end alone reads backward from it.
 		//The CRC-32C of every argument but limit, the mode first, which a continuation carries:  the same read pages at any
 		//size, and one passed with other arguments, or to a read of another mode, is refused.
 		α Crc()Ι->uint32_t;
-		//An interval's ticks, as the server counts them:  the whole range for an interval of 0 or one not shorter than it.
+		α Range()Ι->uint64_t{ return Start && End ? (uint64_t)std::max(*Start, *End)-(uint64_t)std::min(*Start, *End) : 0; }//ticks, either way.
+		//An aggregate read's intervals as OpcServer counts them, by the historian's rule (Hist::Intervals):  an interval's
+		//ticks, the whole range for an interval of 0 or one not shorter than it, and whether the last is shorter.
 		α Width()Ι->uint64_t;
+		α Uneven()Ι->bool;
 		//The points a computed read answers, in the request's order:  an at-time read's times, or an aggregate read's
 		//intervals, the last holding the rest of the range.
 		α Count()Ι->uint64_t;

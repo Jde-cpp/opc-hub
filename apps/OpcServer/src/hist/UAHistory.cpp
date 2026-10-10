@@ -504,7 +504,7 @@ namespace Jde::Opc::Server{
 			return UA_STATUSCODE_BADAGGREGATENOTSUPPORTED;
 		if( details.startTime<=0 || details.endTime<=0 )//all three shall be specified (Part 11 §6.5.4.2), a time of 0 isn't.
 			return UA_STATUSCODE_BADHISTORYOPERATIONINVALID;
-		let interval = ToDuration( details.processingInterval );
+		let interval = Hist::ToDuration( details.processingInterval );
 		if( !interval )
 			return UA_STATUSCODE_BADINVALIDARGUMENT;
 		let& c = details.aggregateConfiguration;//or, with useServerCapabilitiesDefaults, the node's:  Part 13's, as AtTime's.

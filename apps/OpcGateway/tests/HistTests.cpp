@@ -441,6 +441,64 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="NoSuchAggregate"}), GatewayErrorResponse );
 	}
 
+	//A server without HistoryServerCapabilities/AggregateFunctions lists no aggregate:  a name Part 13 doesn't define is
+	//refused as one the folder doesn't list, the second time from the empty listing the client keeps, and Part 13's still
+	//read.  The embedded OpcServer's folder is deleted for the test and built again after, organizing what it did, with
+	//new clients each side, since a client browses the folder once.
+	TEST_F( HistTests, RefusesAnAggregateWithoutTheFolder ){
+		auto& ua = *Server::GetUAServer().Ptr();
+		const UA_NodeId folder = UA_NODEID_NUMERIC( 0, UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS ), organizes = UA_NODEID_NUMERIC( 0, UA_NS0ID_ORGANIZES );
+		UA_BrowseDescription browse; UA_BrowseDescription_init( &browse );
+		browse.nodeId = folder;
+		browse.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+		browse.referenceTypeId = organizes;
+		auto found = UA_Server_browse( &ua, 0, &browse );
+		vector<ExNodeId> organized;
+		for( uint i=0; i<found.referencesSize; ++i )
+			organized.emplace_back( found.references[i].nodeId );
+		UA_BrowseResult_clear( &found );
+		ASSERT_EQ( organized.size(), 10u );
+		let dropClients = []{
+			for( auto& client : UAClient::LiveClients() ){
+				if( client->Slug()==OpcServerSlug )
+					UAClient::RemoveClient( move(client) );
+			}
+		};
+		dropClients();
+		ASSERT_EQ( UA_Server_deleteNode(&ua, folder, true), UA_STATUSCODE_GOOD );//Median and Part 13's objects stay:  ServerCapabilities' folder organizes them too.
+		absl::Cleanup rebuild = [&]{
+			UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)"AggregateFunctions" );
+			EXPECT_EQ( UA_Server_addObjectNode(&ua, folder, UA_NODEID_NUMERIC(0, UA_NS0ID_HISTORYSERVERCAPABILITIES), UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+				UA_QUALIFIEDNAME(0, (char*)"AggregateFunctions"), UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+			for( let& id : organized )
+				EXPECT_EQ( UA_Server_addReference(&ua, folder, organizes, id, true), UA_STATUSCODE_GOOD );
+			dropClients();
+		};
+		const Request median{ .Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Median" };
+		for( uint i=0; i<2; ++i ){
+			SCOPED_TRACE( i );
+			try{
+				Read( median );
+				ADD_FAILURE() << "Median read without the folder.";
+			}
+			catch( const GatewayErrorResponse& e ){
+				EXPECT_NE( string{e.what()}.find("lists no aggregate 'Median'"), string::npos ) << e.what();
+			}
+		}
+		uint kept{};
+		for( let& client : UAClient::LiveClients() ){
+			if( let listing = client->Slug()==OpcServerSlug ? client->Aggregates().Find() : nullptr; listing ){
+				EXPECT_TRUE( listing->empty() );
+				++kept;
+			}
+		}
+		EXPECT_EQ( kept, 1u );
+		EXPECT_TRUE( near(values(Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"}).Values), {200, 450}) );
+		std::move( rebuild ).Invoke();
+		EXPECT_TRUE( near(values(Read(median).Values), {200, 450}) );
+	}
+
 	//An aggregate read across the three days:  the embedded OpcServer pages each node by the day its intervals are stamped
 	//on, so the gateway follows each node's point within the call, and its own limit cuts a page within an interval,
 	//the next page answering the interval's other nodes from the interval's start.  An interval with nothing in it is the
@@ -465,8 +523,77 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( whole.Values.size(), 12u );
 	}
 
-	//Each mode refuses the others' arguments, and a continuation resumes only its own mode's read.
+	//The last interval, shorter than the others, is Partial (Part 13) on a page of its own as on one page with the rest:
+	//the page resuming at it asks from the interval before, or the server would see one even interval.  Rpm4's first day
+	//in 20 s intervals, the last 10 s, either way.
+	TEST_F( HistTests, PagesTheUnevenLastInterval ){
+		for( let reverse : {false, true} ){
+			SCOPED_TRACE( reverse ? "reverse" : "forward" );
+			const Request request{ .Nodes={Rpm4}, .Start=reverse ? At(0, 60) : At(0, 10), .End=reverse ? At(0, 10) : At(0, 60), .Limit=2, .Interval=20'000, .Aggregate="Count" };
+			vector<uint> pages;
+			let rows = ReadAll( request, &pages );
+			EXPECT_EQ( pages, (vector<uint>{2, 1}) );
+			let whole = Read( {.Nodes=request.Nodes, .Start=request.Start, .End=request.End, .Limit=100, .Interval=request.Interval, .Aggregate=request.Aggregate} );
+			EXPECT_TRUE( whole.Continuation.empty() );
+			EXPECT_EQ( values(rows), values(whole.Values) );
+			EXPECT_EQ( sources(rows), sources(whole.Values) );
+			EXPECT_EQ( statuses(rows), statuses(whole.Values) );
+			ASSERT_EQ( rows.size(), 3u );
+			EXPECT_EQ( values(rows), (vector<double>{2, 2, 1}) );
+			EXPECT_EQ( rows[2].Status, Calculated|Partial );
+		}
+	}
+
+	//Part 11's at-time and processed details have no numValuesPerNode, so a page asks for no more than the `limit` points
+	//from its first:  the embedded OpcServer, which pages these by day, answers each page in one HistoryRead, holding no
+	//point for the gateway to release, and computes nothing the page leaves out.  Rpm4's three days, a value a page.
+	TEST_F( HistTests, AsksForAPagesPointsOnly ){
+		let& history = Server::FindUAServer()->History();
+		const Request requests[]{
+			{.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=1, .Interval=12*3600*1000.0, .Aggregate="Count"},
+			{.Nodes={Rpm4}, .Limit=1, .Times={At(0, 15), At(1, 15), At(2, 15)}} };
+		for( let& request : requests ){
+			SCOPED_TRACE( request.Times.empty() ? "processed" : "at-time" );
+			let reads = history.Reads().Count;
+			vector<uint> pages;
+			let rows = ReadAll( request, &pages );
+			EXPECT_EQ( pages, vector<uint>(request.Times.empty() ? 6 : 3, 1) );
+			EXPECT_EQ( history.Reads().Count-reads, pages.size() );
+			auto whole = request; whole.Limit = 100;
+			let all = Read( whole );
+			EXPECT_TRUE( all.Continuation.empty() );
+			EXPECT_TRUE( near(values(rows), values(all.Values)) );
+			EXPECT_EQ( sources(rows), sources(all.Values) );
+			EXPECT_EQ( statuses(rows), statuses(all.Values) );
+		}
+		//A read the server refuses for every node ends there, though its request left points out.
+		let refused = Read( {.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=1, .Interval=12*3600*1000.0, .Aggregate="Range"} );
+		EXPECT_TRUE( refused.Values.empty() );
+		EXPECT_TRUE( refused.Continuation.empty() );
+		EXPECT_EQ( refused.Statuses.at(Node(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+	}
+
+	//The gateway counts a processed read's intervals as OpcServer does, by the library's rule (Hist::Intervals):
+	//processingInterval as a Duration, then ticks.  1.0005 ms has a fraction of libc++'s Duration, a microsecond, which
+	//the rule drops, so over 10.001 ms the server computes 11 intervals of 1 ms there, and the page holds them all.
+	TEST_F( HistTests, CountsIntervalsAsTheServerDoes ){
+		const Request request{ .Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 10)+microseconds{10'001}, .Limit=100, .Interval=1.0005, .Aggregate="Count" };
+		const Hist::Intervals intervals{ (uint64_t)duration_cast<UATick>(*request.End-*request.Start).count(), *Hist::ToDuration(*request.Interval) };
+		let page = Read( request );
+		EXPECT_TRUE( page.Continuation.empty() );
+		EXPECT_EQ( page.Values.size(), intervals.Count );
+	}
+
+	//Each mode refuses the others' arguments, an aggregate read a negative interval, before the server sees it, and a
+	//continuation resumes only its own mode's read.
 	TEST_F( HistTests, RefusesAnotherModesArguments ){
+		try{
+			Read( {.Nodes={Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=10, .Interval=-1000, .Aggregate="Average"} );
+			ADD_FAILURE() << "A negative interval was taken.";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_NE( string{e.what()}.find("interval is negative"), string::npos ) << e.what();
+		}
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .Limit=10, .Times={At(0, 15)}}), GatewayErrorResponse );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Limit=10, .Bounds=true, .Times={At(0, 15)}}), GatewayErrorResponse );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=10, .Interval=1000}), GatewayErrorResponse );

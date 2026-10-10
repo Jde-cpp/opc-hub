@@ -151,6 +151,17 @@ namespace Jde::Opc::Hist{
 		//OneDay is.  An interval longer than a day is still read whole, since its value needs all of its records.
 		bool OneDay{};
 	};
+	//A UA Duration, in ms, as a Duration, ProcessedRequest's Interval among them:  none for one that is negative, NaN, or
+	//past what a Duration's nanoseconds hold.  The gateway converts processingInterval by it too, so both count alike.
+	α ToDuration( double ms )ι->optional<Duration>;
+	//A processed read's intervals over `range` ticks, as ReadProcessed counts them:  Width ticks each, the last holding
+	//what is left, and one over the whole range for an Interval of 0 or one not shorter than the range.  An empty range,
+	//which a read refuses, is one interval of none.
+	struct Intervals final{
+		Intervals( uint64_t range, Duration interval )ι;
+		α Uneven()Ι->bool{ return Width && Range%Width; }//the last is shorter than the others.
+		uint64_t Range, Width, Count;
+	};
 
 	//Part 11's HistoryUpdate (spec *Edits*), one entry per node, as the service takes them.  Times are UA ticks.
 	//UpdateDataDetails:  each value is keyed by its SourceTimestamp, which it must carry.  INSERT refuses a time that holds

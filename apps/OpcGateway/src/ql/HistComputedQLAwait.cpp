@@ -15,8 +15,11 @@ namespace Jde::Opc::Gateway{
 		try{
 			_args.emplace( _query, _sl );
 			_nodes.resize( _args->Nodes.size() );
-			for( uint i=0; _args->Continuation && i<_nodes.size(); ++i )
-				_nodes[i].Had = _args->Continuation->counts( i )!=0;
+			let back = Back();
+			for( uint i=0; i<_nodes.size(); ++i ){
+				_nodes[i].Had = _args->Continuation && _args->Continuation->counts( i )!=0;
+				_nodes[i].Skip = back;
+			}
 			if( _args->Mode==HistQL::EMode::Processed ){
 				_aggregate = AggregateFunctions::Part13( _args->Aggregate );
 				if( !_aggregate ){//AnyAwait - legal from this TAwait<HistoryReadResponse>::Task.
@@ -32,12 +35,12 @@ namespace Jde::Opc::Gateway{
 				for( uint i=0; i<_asked.size(); ++i )
 					Take( _asked[i], response.Result(i) );
 				let walked = Walk( nullptr );
-				if( walked.Values>=_args->Limit || !walked.Cut || !std::ranges::any_of(_nodes, &Node::More) )
+				if( walked.Values>=_args->Limit || !walked.At || !std::ranges::any_of(_nodes, &Node::More) )
 					break;
 			}
 			vector<HistQL::ReadValue> page;
 			let walked = Walk( &page );
-			let continuation = Continuation( walked.Cut );
+			let continuation = Continuation( walked.At );
 			vector<StatusCode> statuses; statuses.reserve( _nodes.size() );
 			for( let& node : _nodes )
 				statuses.push_back( node.Status );
@@ -67,14 +70,18 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α HistComputedQLAwait::Request( bool first, bool release )ι->HistoryReadRequest{
-		let from = First();
+		let from = First(), stop = Stop();
 		auto request = [&]{
 			if( _args->Mode==HistQL::EMode::AtTime )
-				return HistoryReadRequest{ vector<UA_DateTime>{_args->Times.begin()+from, _args->Times.end()}, true, UA_TIMESTAMPSTORETURN_BOTH, release };
-			//From the next interval's start:  the intervals from there are the read's own from it, the last uneven one included.
-			let offset = (UA_DateTime)( from*_args->Width() );
-			let start = _args->Reverse() ? *_args->Start-offset : *_args->Start+offset;
-			return HistoryReadRequest{ start, *_args->End, _args->Interval, *_aggregate, UA_TIMESTAMPSTORETURN_BOTH, release };
+				return HistoryReadRequest{ vector<UA_DateTime>{_args->Times.begin()+from, _args->Times.begin()+stop}, true, UA_TIMESTAMPSTORETURN_BOTH, release };
+			//From the next interval's start to Stop's:  the intervals between are the read's own, the last uneven one
+			//included while another comes before it in the request (Back), since only the read's end makes one.
+			let at = [&]( uint64_t point ){
+				let offset = (UA_DateTime)( point*_args->Width() );
+				return _args->Reverse() ? *_args->Start-offset : *_args->Start+offset;
+			};
+			let end = stop==_args->Count() ? *_args->End : at( stop );
+			return HistoryReadRequest{ at(from-(Back() ? 1 : 0)), end, _args->Interval, *_aggregate, UA_TIMESTAMPSTORETURN_BOTH, release };
 		}();
 		//Among the nodes the server has more for, the ones holding the merge back:  those with the fewest values.
 		optional<uint> fewest;
@@ -106,17 +113,29 @@ namespace Jde::Opc::Gateway{
 		if( !decoded || result.historyData.content.decoded.type!=&UA_TYPES[UA_TYPES_HISTORYDATA] )
 			return;
 		auto& history = *static_cast<UA_HistoryData*>( result.historyData.content.decoded.data );
-		for( uint i=0; i<history.dataValuesSize; ++i )
+		for( uint i=0; i<history.dataValuesSize; ++i ){
+			if( std::exchange(node.Skip, false) )
+				continue;
 			node.Values.push_back( {slot, Value{move(history.dataValues[i])}} );
+		}
+	}
+
+	α HistComputedQLAwait::Back()Ι->bool{
+		let from = First();
+		return _args->Mode==HistQL::EMode::Processed && from && from+1==_args->Count() && _args->Uneven();
+	}
+	α HistComputedQLAwait::Stop()Ι->uint64_t{
+		let from = First();
+		return from+std::min<uint64_t>( _args->Limit, _args->Count()-from );
 	}
 
 	α HistComputedQLAwait::Walk( vector<HistQL::ReadValue>* page )ι->Walked{
 		Walked y;
-		let from = First(), count = _args->Count();
+		let from = First(), stop = Stop();
 		uint64_t last{};//the points after the values, where a node with more cuts.
 		for( let& node : _nodes )
 			last = std::max<uint64_t>( last, node.Values.size() );
-		for( uint64_t p=0; p<=last && from+p<count; ++p ){
+		for( uint64_t p=0; p<=last && from+p<stop; ++p ){
 			vector<bool> done( _nodes.size() );
 			for( uint i=0; i<_nodes.size(); ++i ){
 				auto& node = _nodes[i];
@@ -126,7 +145,7 @@ namespace Jde::Opc::Gateway{
 				}
 				if( p<node.Values.size() ){
 					if( y.Values==_args->Limit ){
-						y.Cut = Cut{ from+p, move(done) };
+						y.At = Cut{ from+p, move(done) };
 						return y;
 					}
 					if( page )
@@ -135,11 +154,14 @@ namespace Jde::Opc::Gateway{
 					done[i] = true;
 				}
 				else if( node.More ){//the point waits for it.
-					y.Cut = Cut{ from+p, move(done) };
+					y.At = Cut{ from+p, move(done) };
 					return y;
 				}
 			}
 		}
+		//The request answered, with points past it:  the next page's, unless the server refused every node.
+		if( stop<_args->Count() && std::ranges::any_of(_nodes, []( let& node ){ return !UA_StatusCode_isBad(node.Status); }) )
+			y.At = Cut{ stop, vector<bool>(_nodes.size()) };
 		return y;
 	}
 

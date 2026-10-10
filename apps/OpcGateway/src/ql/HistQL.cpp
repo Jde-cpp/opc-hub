@@ -75,6 +75,7 @@ namespace HistQL{
 			let aggregate = input.FindPtr<jstring>( "aggregate" );
 			let interval = input.TryNumber<double>( "interval" );
 			THROW_IFSL( !aggregate || aggregate->empty() || !interval, "An aggregate history needs an aggregate's name and an interval in milliseconds." );
+			THROW_IFSL( *interval<0, "An aggregate history's interval is negative - {}.", *interval );
 			Aggregate = *aggregate;
 			Interval = *interval;
 		}
@@ -112,19 +113,14 @@ namespace HistQL{
 		bytes += Aggregate;
 		return IO::Crc::Calc32c( bytes );
 	}
-	α Args::Width()Ι->uint64_t{
-		let range = Start && End ? (uint64_t)std::max(*Start, *End)-(uint64_t)std::min(*Start, *End) : 0;
-		//As OpcServer takes processingInterval:  a Duration's nanoseconds, in ticks.
-		let interval = Interval>=0 && Interval<9e12 ? std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::duration<double,std::milli>{Interval} ).count()/100 : 0;
-		return interval<=0 || (uint64_t)interval>=range ? range : (uint64_t)interval;
-	}
+	//An interval Hist::ToDuration refuses, 9e12 ms or more, is one over the whole range, as 0 is.
+	Ω intervals( const Args& a )ι->Hist::Intervals{ return Hist::Intervals{ a.Range(), Hist::ToDuration(a.Interval).value_or(Duration::zero()) }; }
+	α Args::Width()Ι->uint64_t{ return intervals( *this ).Width; }
+	α Args::Uneven()Ι->bool{ return intervals( *this ).Uneven(); }
 	α Args::Count()Ι->uint64_t{
 		if( Mode==EMode::AtTime )
 			return Times.size();
-		if( Mode!=EMode::Processed || !Start || !End )
-			return 0;
-		let range = (uint64_t)std::max(*Start, *End)-(uint64_t)std::min(*Start, *End), width = Width();
-		return width ? range/width+( range%width ? 1 : 0 ) : 1;//a range of nothing is the server's to refuse.
+		return Mode==EMode::Processed && Start && End ? intervals( *this ).Count : 0;
 	}
 }
 	α HistQL::FindEdit( sv command )ι->optional<EEdit>{

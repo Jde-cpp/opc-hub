@@ -135,7 +135,7 @@ namespace Jde::Opc::Server{
 				publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_DURATION], &off );
 				return {};
 			}
-			let duration = ToDuration( *ms );
+			let duration = Hist::ToDuration( *ms );
 			THROW_IF( !duration, "'{}' has a {} of {} ms, not a time interval.", label, browseName, *ms );
 			return *duration;
 		};

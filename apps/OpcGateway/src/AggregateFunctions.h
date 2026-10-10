@@ -8,7 +8,8 @@ namespace Jde::Opc::Gateway{
 	//The aggregates an aggregate `history` names (spec *Pass-through*):  Part 13's by name, each mapped to its standard
 	//AggregateFunction object in namespace 0, and any other, OpcServer's Median, found by browse name in the server's
 	//HistoryServerCapabilities/AggregateFunctions folder, which is browsed on first use and kept for the connection's life,
-	//so each client reads it once.  Owned by the UAClient, so a disconnect/TTL drop discards it with the client.
+	//so each client reads it once.  A server without the folder lists none, which is kept the same way.  Owned by the
+	//UAClient, so a disconnect/TTL drop discards it with the client.
 	struct AggregateFunctions final : noncopyable{
 		using Folder = flat_map<string,NodeId>;//by browse name.
 		using Ptr = sp<const Folder>;
