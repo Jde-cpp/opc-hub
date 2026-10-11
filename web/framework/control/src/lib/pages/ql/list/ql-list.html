@@ -24,9 +24,6 @@
 				</div>
 				<div class="bar-right">
 					<span class="row-count">{{ data().length }} {{ data().length==1 ? "row" : "rows" }}</span>
-					@if( !selector() && !liveToggleField() ){
-						<mat-checkbox [checked]="showDeleted()" (change)="onToggleShowDeleted()">Show deleted</mat-checkbox>
-					}<!--a live-toggle page shows every row and switches them in place, so the checkbox has nothing left to offer-->
 				</div>
 			</mat-toolbar>
 			<mat-progress-bar class="refresh-bar" [mode]="isRefreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>

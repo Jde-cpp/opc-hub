@@ -11,17 +11,6 @@ function factory<T>(ctor: Constructor<T>, ...args: any[]): T {
 export class ProfileStore{
 	//optional so tests/apps without the provider stay on localStorage.
 	private profileService:IProfileService|null = inject( IPROFILE_SERVICE, {optional: true} );
-	static showDeleted( collectionName:string ):boolean{
-		const item = localStorage.getItem( `${collectionName}.showDeleted` );
-		let value = item ? item=="Y" : false;
-		return value;
-	}
-	static setShowDeleted( collectionName:string, showDeleted:boolean ):void{
-		if( showDeleted )
-			localStorage.setItem( `${collectionName}.showDeleted`, "Y" );
-		else
-			localStorage.removeItem( `${collectionName}.showDeleted` );
-	}
 	static local<T>( key:string, defaultValue:T ):T{
 		let index = key.indexOf( '/' );
 		let defaultKey = index==-1 ? key : key.substring( 0, index );

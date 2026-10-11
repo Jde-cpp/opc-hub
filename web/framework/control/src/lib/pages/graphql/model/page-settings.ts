@@ -7,7 +7,6 @@ import type { TableSettings } from '../../../services/ql-list-resolver';//type-o
 export class PageProfile{
 	constructor( args?:PageProfile ){
 		if( args ){
-			this.showDeleted = args.showDeleted;
 			this.currentViewIndex = args.currentViewIndex;
 			//copy the ARRAY: every caller builds `new PageProfile(current)` as a private working copy, mutates it through
 			//upsertView/updateView and only then swaps it in via refresh() - sharing the array wrote those edits straight
@@ -38,7 +37,6 @@ export class PageProfile{
 	updateView( view:View ){
 		this.views[this.views.findIndex( v=>v.name==view.name && view.type==v.type)] = view;
 	}
-	showDeleted!:boolean;
 	currentViewIndex:number=0;
 	get view():View{
 		if( this.currentViewIndex>=this.views.length ){

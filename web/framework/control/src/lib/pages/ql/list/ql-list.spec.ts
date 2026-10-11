@@ -42,12 +42,7 @@ describe( 'QLList.onRowActivate', ()=>{
 			{ provide: SnackbarService, useValue: {error, exception} }
 		]});
 		const page = TestBed.createComponent( QLList ).componentInstance;
-		//routing is what onRowActivate reads; schema/profile only keep ngOnDestroy's showDeleted save alive (ngOnInit never runs)
-		page.resolvedData.set( {
-			routing: new ListRoute( {path:'resources', data:{tableSettings} as any} ),
-			schema: {collectionName: 'resources'},
-			profile: {showDeleted: false}
-		} as QLListData );
+		page.resolvedData.set( {routing: new ListRoute( {path:'resources', data:{tableSettings} as any} )} as unknown as QLListData );//all onRowActivate reads (ngOnInit never runs)
 		return page;
 	};
 
@@ -80,7 +75,7 @@ describe( 'QLList.onRowActivate', ()=>{
 	} );
 } );
 
-//review3 L7: onViewShow/onChangeView/onToggleShowDeleted fired refresh() without awaiting it, and onViewSave/onViewDelete
+//review3 L7: onViewShow/onChangeView and the old Show deleted toggle fired refresh() without awaiting it, and onViewSave/onViewDelete
 //awaited reload() with no catch - so a failed re-query left the table empty or stale and said nothing, the rejection
 //going to the console as unhandled.  Every one now reports through #refresh/#reload.
 describe( 'QLList re-query failures reach the user', ()=>{
@@ -106,7 +101,6 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		const page = TestBed.createComponent( QLList ).componentInstance;
 		const view = new View( {name: "All", columns: ["name"], sort: "name"}, schema );
 		const profile = new PageProfile();
-		profile.showDeleted = false;
 		profile.views = [view];
 		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile} as unknown as QLListData );
 		page.view.set( view );
@@ -119,11 +113,6 @@ describe( 'QLList re-query failures reach the user', ()=>{
 
 	it( 'reports a failed view change', async ()=>{
 		await create().onChangeView( 0 );
-		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
-	} );
-
-	it( 'reports a failed show-deleted toggle', async ()=>{
-		await create().onToggleShowDeleted();
 		expect( exception ).toHaveBeenCalledWith( "Could not refresh data.", expect.any(Error) );
 	} );
 
@@ -161,7 +150,7 @@ describe( 'QLList empty and refused states', ()=>{
 			{ provide: HELP_TOPICS, useValue: [[{id: 'access', title: 'Access', url: 'a.md', routes: ['access']}], [{id: 'navigation', title: 'Navigation', url: 'n.md', routes: ['']}]] }
 		]});
 		const page = TestBed.createComponent( QLList ).componentInstance;
-		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: {showDeleted: false}} as unknown as QLListData );
+		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: {}} as unknown as QLListData );
 		page.data.set( rows );
 		page.error.set( error );
 		return page;
@@ -211,7 +200,7 @@ describe( 'QLList empty and refused states', ()=>{
 			{ provide: HELP_TOPICS, useValue: [[{id: 'navigation', title: 'Navigation', url: 'n.md', routes: ['']}]] }
 		]});
 		const page = TestBed.createComponent( QLList ).componentInstance;
-		page.resolvedData.set( {routing: new ListRoute('users'), schema: {collectionName: 'users'}, profile: {showDeleted: false}} as unknown as QLListData );//ngOnDestroy's showDeleted save reads it
+		page.resolvedData.set( {routing: new ListRoute('users'), schema: {collectionName: 'users'}, profile: {}} as unknown as QLListData );
 		expect( page.helpRoute() ).toBeUndefined();
 	} );
 } );
@@ -238,7 +227,7 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 			fixture.componentRef.setInput( 'selector', true );
 		const page = fixture.componentInstance;
 		const views = options.views ?? [view( [] )];
-		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: {showDeleted: false, views}, fixedFilters: options.fixedFilters} as unknown as QLListData );
+		page.resolvedData.set( {routing, schema: {collectionName: routing.collectionName}, profile: {views}, fixedFilters: options.fixedFilters} as unknown as QLListData );
 		page.view.set( options.current ?? views[0] );
 		return page;
 	};

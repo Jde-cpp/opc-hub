@@ -6,7 +6,6 @@ import { IGRAPHQL, IGraphQL } from './graphql';
 import { ListRoute, TableSettings } from './ql-list-resolver';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
-import { ProfileStore } from 'jde-spa';
 
 export type DetailPageSettings = {
 	excludedColumns:string[];
@@ -86,7 +85,7 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 		const schema = await ql.schemaWithEnums( MetaObject.toTypeFromCollection(collectionName), (m)=>console.log(m) );
 		let obj:any = {};
 		if( slug && slug!="$new" ){//`slug &&`: a missing route param must not query for the row named 'undefined'
-			obj = await ql.querySingle( ql.slugQuery(schema, slug, ProfileStore.showDeleted(collectionName), routing.tableSettings.excludedColumns), vars, (m)=>console.log(m) );
+			obj = await ql.querySingle( ql.slugQuery(schema, slug, routing.tableSettings.excludedColumns), vars, (m)=>console.log(m) );
 			if( obj==null )//{"data":{"<singular>":null}} - the row is not there.  Checked before the subQueries loop, whose obj["id"] would otherwise TypeError and hide every other failure behind the same message.
 				throw new SlugNotFoundError( slug );
 			for( let query of ql.subQueries(schema.type, obj["id"]) ){

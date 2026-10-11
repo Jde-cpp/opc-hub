@@ -14,14 +14,14 @@ The section opens on a card for each list: **Users**, **Groups**, **Roles** and 
 
 ## Lists
 
-The four lists work as every list on the site does - **Add**, the views, **Show deleted** - and so do the pages their rows open: see [Lists and records](/help/lists).
+The four lists work as every list on the site does - **Add**, the views, the **Deleted** view - and so do the pages their rows open: see [Lists and records](/help/lists).
 
 Two lists have no **Add**:
 
 - [Users](/access/users) come into being by signing in. A Google or OPC server account is added the first time it signs in, and a certificate identity when the app server enrolls it.
 - [Resources](/access/resources) are registered by the services themselves.
 
-Resource rows do not open, and the list has no **Show deleted**. The **Enforced** switch in each row takes its place. See [Resources](#resources).
+Resource rows do not open, and the list has no **Deleted** view: a resource that is not enforced is listed with the rest, and the **Enforced** switch in each row takes the place of Delete and Restore. See [Resources](#resources).
 
 Users, groups and roles are deleted and restored as any record is. A deleted group or role also offers **Purge**, which removes it for good.
 

@@ -68,8 +68,8 @@ export class AccessService extends AppService implements OnDestroy{
 	//excludedColumns is the collection's tableSettings list, forwarded by DetailResolver.  Hardcoding [] here dropped it:
 	//Role's introspected 'permissions' is the extends-base link (roles.role_id -> permissions.permission_id) and the
 	//permissions table has no name column, so the generated `permissions{id name}` failed the whole query with a 500.
-	override slugQuery( schema: TableSchema, slug: string, showDeleted:boolean, excludedColumns:string[]=[] ):string{
-		let fields = super.fieldColumns( schema, showDeleted, excludedColumns );
+	override slugQuery( schema: TableSchema, slug: string, excludedColumns:string[]=[] ):string{
+		let fields = super.fieldColumns( schema, excludedColumns );
 		switch( schema.collectionName ){
 			case "users":
 				fields.push( `groups{id}` );

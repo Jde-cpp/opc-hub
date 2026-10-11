@@ -82,7 +82,7 @@ export class LogEntries{
 	strings:Map<string,string> = new Map<string,string>();
 }
 export class LogView extends View{
-	override query( showDeleted:boolean|undefined, skip:number, level?:ELogLevel ):Query{
+	override query( skip:number, level?:ELogLevel ):Query{
 		const vars:Record<string,any> = {limit: this.limit!*3, skip: skip, orderBy: this.sort};
 		let args = "limit: $limit, skip: $skip, orderBy: $orderBy";
 		//Trace is every level, so send no filter at all; above it the minimum is expressed as gt the level below.

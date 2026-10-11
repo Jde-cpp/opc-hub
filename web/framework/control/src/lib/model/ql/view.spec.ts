@@ -20,19 +20,37 @@ const schema = new TableSchema( {
 describe( "View.query", ()=>{
 	it( "emits an explicit sub-selection for an OBJECT column", ()=>{
 		const view = new View( {columns: ["name", "url", {name:"opcSessions", displayName:"Sessions", selection:"count"}], sort: "name"}, schema );
-		const query = view.query( false, 0 );
+		const query = view.query( 0 );
 		expect( query.text ).toContain( "opcSessions{count}" );
 		expect( query.text ).toContain( "serverConnections(" );
 		expect( query.text ).not.toContain( "opcSessions " );//never the bare name - the server rejects a selection-less object field.
 	} );
 	it( "defaults an OBJECT column to the {id name} convention", ()=>{
 		const view = new View( {columns: ["name", "provider"], sort: "name"}, schema );
-		expect( view.query(false, 0).text ).toContain( "provider{id name}" );
+		expect( view.query( 0 ).text ).toContain( "provider{id name}" );
 	} );
 	it( "round-trips selection through toJson", ()=>{
 		const view = new View( {columns: [{name:"opcSessions", selection:"count"}], sort: "name"}, schema );
 		const field = view.fields.find( f=>f.name=="opcSessions" )!;
 		expect( field.toJson().selection ).toBe( "count" );
+	} );
+} );
+
+//Deleted rows used to sit behind a Show deleted checkbox.  They are a filter now, like the Resources page's Enforced:  hidden
+//unless the view filters on `deleted`, and never hidden on a live-toggle page, where `deleted` is the switch.
+describe( "View.query on deleted rows", ()=>{
+	const query = ( deleted:string|object="deleted" )=>new View( {columns: ["name", deleted], sort: "name"}, schema ).query( 0 );
+	it( "leaves them out of a view that does not filter on deleted", ()=>{
+		const q = query();
+		expect( q.text ).toContain( "deleted:$deleted" );
+		expect( q.vars["deleted"] ).toBeNull();
+	} );
+	it( "lists them on a live-toggle page", ()=>{
+		expect( query({name: "deleted", liveToggle: {enable: "Enforce", disable: "Stop enforcing"}}).text ).not.toContain( "deleted:" );
+	} );
+	it( "adds no filter to a collection without the column", ()=>{
+		const bare = new TableSchema( {name: "Thing", fields: [{ name: "name", type: { kind: "SCALAR", name: "String" } }]} );
+		expect( new View( {columns: ["name"], sort: "name"}, bare ).query( 0 ).text ).not.toContain( "deleted" );
 	} );
 } );
 
@@ -45,7 +63,7 @@ describe( "View.query on a live-toggle column's filter", ()=>{
 	const view = ( settings:{liveToggle?:typeof liveToggle}, value:any[], operator=Operator.Greater, column="deleted" )=>{
 		const v = new View( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
 		v.fieldFilters.push( {field: schema.fields.find( f=>f.name==column )!, filter: {operator, value}} );
-		return v.query( true, 0 );
+		return v.query( 0 );
 	};
 	it( 'sends "null" - the enforced rows - as is null', ()=>{
 		const q = view( {liveToggle}, ["<null>"] );
@@ -60,9 +78,10 @@ describe( "View.query on a live-toggle column's filter", ()=>{
 		expect( q.text ).toContain( "deleted:{gt:$deleted}" );
 		expect( q.vars["deleted"] ).toBeDefined();
 	} );
-	it( 'still lets Show deleted win where deleted is only the trash can', ()=>{//the checkbox is the way out there
-		const q = view( {}, ["<null>"] );
-		expect( q.text ).not.toContain( "deleted:" );
+	it( 'keeps a filter on deleted where it is only the trash can', ()=>{//the Deleted view is one
+		const q = view( {}, ["<not null>"] );
+		expect( q.text ).toContain( 'deleted:{"ne":null}' );
+		expect( q.text ).not.toContain( "deleted:$deleted" );
 	} );
 	it( 'leaves NotIn null as not null', ()=>{
 		const q = view( {}, ["<null>"], Operator.NotIn, "url" );
@@ -116,7 +135,7 @@ describe( "View revival against a changed schema", ()=>{
 	} );
 	it( "still builds a query afterwards", ()=>{
 		const view = new View( serialized(), schema, [] );
-		const query = view.query( false, 0 );
+		const query = view.query( 0 );
 		expect( query.text ).toContain( "serverConnections(" );
 		expect( query.text ).not.toContain( "groupings" );
 	} );

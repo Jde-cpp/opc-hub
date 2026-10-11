@@ -112,7 +112,7 @@ export class GatewayService implements IGraphQL{
 	}
 	async mutations():Promise<MutationSchema[]>{ return (await this.defaultGatewayAsync()).mutations(); }
 
-	slugQuery( schema:TableSchema, slug: string, showDeleted:boolean ):string{ return null as any; }
+	slugQuery( schema:TableSchema, slug: string ):string{ return null as any; }
 	subQueries( typeName: string, id: number ):string[]{ return []; }
 	excludedColumns( tableName:string ):string[]{ return []; }
 	toCollectionName( collectionDisplay:string ):string{ return collectionDisplay; }

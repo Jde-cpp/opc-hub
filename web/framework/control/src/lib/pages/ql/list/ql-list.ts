@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ViewChild, input, signal, model, computed, Injectable, inject } from '@angular/core';
+import { Component, OnInit, ViewChild, input, signal, model, computed, Injectable, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {ActivatedRoute, Route, Router, RouterLink, Routes, UrlSegment} from '@angular/router';
 import {Sort} from '@angular/material/sort';
@@ -14,7 +14,6 @@ import { ComponentPageTitle, RouteItem, RouteStore, IRouteService, RouteService,
 import { MatIcon } from '@angular/material/icon';
 import { MatIconButton, MatButton } from '@angular/material/button';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
-import { MatCheckbox } from '@angular/material/checkbox';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
@@ -35,23 +34,15 @@ import { verify } from '../../../utils/utils';
 	styleUrls: ['ql-list.scss'],
 	templateUrl: './ql-list.html',
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatCheckbox, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, QLListSettings, RouterLink]
+	imports: [CommonModule, GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, QLListSettings, RouterLink]
 })
-export class QLList implements OnInit, OnDestroy{
+export class QLList implements OnInit{
 	private route = inject( ActivatedRoute );
 	private router = inject( Router );
 	private componentPageTitle = inject( ComponentPageTitle );
 	private ql:IGraphQL = inject( IGRAPHQL );
 	private snackbar = inject( SnackbarService );
 	private dialog = inject( MatDialog );
-
-	ngOnDestroy(){
-		//this.profileStore.save(this.collectionName(), this.profile);
-		//The selector forces showDeleted off and a live-toggle page forces it on - both hide the checkbox, and saving either
-		//forced value would reset the collection's own list page to something the user never chose.
-		if( !this.selector() && !this.liveToggleField() )
-			ProfileStore.setShowDeleted( this.collectionName(), this.showDeleted() );
-	}
 
 	async ngOnInit(){
 		if( this.listData() )//embedded (QLSelector):  the host resolved the data itself, there is no route resolver to subscribe to
@@ -86,11 +77,6 @@ export class QLList implements OnInit, OnDestroy{
 		else if( this.route.component==QLList && data.routing?.title )//the routed page itself (/access/resources):  a ':collectionDisplay' route has no title of its own, which left the tab bare
 			this.componentPageTitle.title = data.routing.title;
 
-/*		const order = ["name", "created", "updated", "deleted", "slug", "description"];
-		this.displayedFields = Field.filterSort( this.schema().fields, order, [...this.excludedColumns(), "description"], this.showDeleted() );
-		if( !this.excludedColumns().find(x=>x=="description") )
-			this.displayedFields.push( this.schema().fields.find(x=>x.name=="description") );
-*/
 		this.isLoading.set( false );
 	};
 	onSortChange( sort:Sort ){
@@ -127,10 +113,6 @@ export class QLList implements OnInit, OnDestroy{
 		finally{
 			this.pendingLive.update( ids=>ids.filter(id=>id!=row.id) );
 		}
-	}
-
-	restore(){
-		this.ql.mutate( `restore${this.type()}(id:${this.selection().id})`, (m)=>console.log(m) ).then( ()=>this.selection().deleted=null ).catch( (e)=>console.log(e) );
 	}
 
 	//The try/catch was dead:  router.navigate is ASYNC, so a route that does not exist rejects the promise long after the
@@ -172,28 +154,6 @@ export class QLList implements OnInit, OnDestroy{
 		this.data.set( [] );
 	}
 
-	async delete(){
-		const purge = this.selection().deleted!=null;
-		const type = purge ? "purge" : "delete";
-		try{
-			await this.ql.mutate(`${type}${this.type()}(id:${this.selection().id})`, (m)=>console.log(m) );
-			if( !purge && this.showDeleted() )
-				this.selection().deleted = new Date();
-			else{
-				const values = this.data().slice();
-				const index = values.findIndex( (x)=>x["id"]==this.selection()["id"] );
-				values.splice( index, 1 );
-				this.selections.set( new SelectionModel<QLRow>(false, []) );
-				this.data.set( values );
-			}
-		}
-		catch( e ){
-			this.snackbar.exception( "Could not delete entry.", e );
-		}
-	}
-	selection = computed<any>( ()=>{
-		return this.selections().selected.length==1 ? this.selections().selected[0] : null;
-	});
 	async onViewSave(view:View){
 		this.data.set( [] );
 		let profile = this.resolvedData().profile;
@@ -252,17 +212,6 @@ export class QLList implements OnInit, OnDestroy{
 		this.isSettings.set( false );
 	}
 
-	async onToggleShowDeleted(){
-		const showDeleted = !this.showDeleted();
-		let view = new View( this.view() );
-		view.setDeletedDisplayed( showDeleted );
-		ProfileStore.setShowDeleted( this.collectionName(), showDeleted );
-		let profile = new PageProfile( this.resolvedData().profile );
-		profile.updateView( view );
-		profile.showDeleted = showDeleted;
-		await this.#refresh( profile );
-	}
-
 	colSuggestions():Record<string,any[]>{
 		let suggestions: Record<string, any[]> = {};
 		for( let field of this.view().fields ){
@@ -289,7 +238,7 @@ export class QLList implements OnInit, OnDestroy{
 
 	sideNav = model<RouteItem>();//optional:  embedded in a detail page's tab the host owns the sidenav
 	listData = input<QLListData>();//pre-resolved by the host instead of the route (QLSelector); `data` is the rows
-	selector = input<boolean>( false );//pick-rows mode:  always multi-select, no Add/show-deleted, a row click selects instead of navigating
+	selector = input<boolean>( false );//pick-rows mode:  always multi-select, no Add, a row click selects instead of navigating
 
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
@@ -299,8 +248,7 @@ export class QLList implements OnInit, OnDestroy{
 	displayedFields = computed<ViewField[]>( ()=>{
 		return this.view().fields.filter( v=>v.displayed );
 	});
-	//The one column the route declared as a switch, if any.  Its presence is also what hides Show-deleted:  the switch acts
-	//ON the deleted rows, so the resolver queries them unconditionally and the checkbox would only offer to hide half the work.
+	//The one column the route declared as a switch, if any.
 	liveToggleField = computed<ViewField|undefined>( ()=>this.view()?.fields.find(f=>f.liveToggle) );
 	pendingLive = signal<unknown[]>( [] );
 	@ViewChild('mainTable',{static: false}) _table!:MatTable<any>;
@@ -316,7 +264,6 @@ export class QLList implements OnInit, OnDestroy{
 	routeStore = inject( RouteStore );
 	schema = computed<TableSchema>( ()=>this.resolvedData().schema );
 	get sort():Sort{ return this.view().sort?.length ? this.view().sort[0] : {active: "", direction: ""}; }
-	showDeleted = computed<boolean>( ()=>this.resolvedData().profile.showDeleted );
 	canAdd = computed<boolean>( ()=>this.tableSettings().canAdd ?? true );//off the tableSettings, like canPurge - a route that set it anywhere else was silently ignored
 	canNavigate = computed<boolean>( ()=>this.tableSettings().canNavigate ?? true );
 	tableSettings = computed<TableSettings>( ()=>this.resolvedData().routing.tableSettings );

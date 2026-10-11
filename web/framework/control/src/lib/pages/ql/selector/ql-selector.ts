@@ -80,7 +80,9 @@ export class QLSelector{
 			const collections:CollectionItem[] = this.route.snapshot.parent?.routeConfig?.children?.find( x=>x.path==":collectionDisplay" )?.data?.["collections"] ?? [];
 			const collectionName = this.collectionName();
 			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.profileStore );
-			data.profile.showDeleted = false;//a deleted identity is not something to add to a group; the list hides the toggle in selector mode
+			const current = data.profile.view;//a deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted
+			data.profile.views = data.profile.views.filter( v=>!QLListResolver.isDeletedView(v) );
+			data.profile.currentViewIndex = Math.max( 0, data.profile.views.indexOf(current) );
 			if( excludedIds.length )
 				data.fixedFilters = [{ field: data.schema.fields.find(f=>f.name=="id")!, filter: {operator: Operator.NotIn, value: excludedIds} }];
 			data = await QLListResolver.load( this.ql(), data, null );
