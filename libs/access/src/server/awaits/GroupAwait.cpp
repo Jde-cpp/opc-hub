@@ -34,16 +34,24 @@ namespace Jde::Access::Server{
 			_query.SetDBTable( GetTablePtr("identities", _sl) );//the rename alone left _dbTable on access_groups - the member map, one row per member - so SelectStatement joined it to its identities base and fanned a group out into one row per member.
 			_query.AddFilter( "is_group", true );
 			_query.ReturnRaw = true;
-			let onlyHaveId = _query.Columns.size()==1 && _query.Columns[0].JsonName=="id";
-			const jobject groupArgs = _query.Args;//the members query's filter:  the QLAwait below moves _query.
-			//the shortcut serves one group's members - `group(id:5){ groupMembers{…} }` needs nothing from identities.  A list always
-			//queries:  `groups{ id }` used to come back {} whatever the table held, so a client counting groups read zero.
-			auto groups = _query.Columns.size() && (_query.IsPlural() || !onlyHaveId) ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
+			let keyOnly = std::ranges::all_of( _query.Args, [](let& arg){ return arg.key()=="id" || arg.key()=="slug" || arg.key()=="is_group"; } );
+			let plural = _query.IsPlural();
+			let addedId = !plural && !keyOnly && _query.Columns.empty() && _query.AddColumn( "id" );
+			auto groupWhere = QL::ToWhereClause( _query, GetTable("identities") );//the members query's filter:  the QLAwait below moves _query.
+			//the shortcut serves one group's members - `group(id:5){ groupMembers{…} }` needs nothing from identities.  Selecting id
+			//queries:  `groups{ id }` and `group(slug:"x"){ id }` used to come back empty whatever the table held.  So does a filter past
+			//the key:  `group(id:5, deleted:null)` has to find the group, or a deleted one's members came back under it.
+			let query = !_query.Columns.empty();
+			auto groups = query ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
+			if( query && !plural && (groups.is_null() || (groups.is_object() && groups.get_object().empty())) ){//no group, so no members to hang on it
+				Resume( move(groups) );
+				co_return;
+			}
 			if( membersQL ){
 				haveId = membersQL->FindColumn( "id" );
 				if( haveId )
 					membersQL->EraseColumn( "id" );
-				auto statement = MembersStatement( *membersQL, groupArgs );
+				auto statement = MembersStatement( *membersQL, move(groupWhere) );
 				auto membersResult = co_await QL::QLAwait( move(*membersQL), move(statement), _executer, _sl );
 				if( membersResult.is_array() )
 					members = move( membersResult.get_array() );
@@ -72,6 +80,8 @@ namespace Jde::Access::Server{
 			};
 			if( !groups.is_null() )
 				Json::Visit( groups, addMembers );
+			if( addedId )
+				groups.as_object().erase( "id" );
 			Resume( move(groups) );
 		}
 		catch( boost::system::system_error& e ){
@@ -82,7 +92,7 @@ namespace Jde::Access::Server{
 		}
 	}
 
-	α GroupAwait::MembersStatement( QL::TableQL& membersQL, const jobject& groupArgs )ε->DB::Statement{
+	α GroupAwait::MembersStatement( QL::TableQL& membersQL, DB::WhereClause groupWhere )ε->DB::Statement{
 		let& groupTable = GetTable( "group_members" );
 		membersQL.Columns.push_back( QL::ColumnQL{"groupId", groupTable.GetColumnPtr("group_id")} );
 		membersQL.Columns.push_back( QL::ColumnQL{"memberId", groupTable.GetColumnPtr("member_id")} );
@@ -93,15 +103,13 @@ namespace Jde::Access::Server{
 		}
 		membersQL.JsonName = "groupMembers";
 		auto statement = QL::SelectStatement( membersQL, false );
-		for( let& [name,value] : groupArgs ){
-			if( name=="is_group" || name=="deleted" )//the view's deleted is the member's:  `groups(deleted:null)` filters the groups, `groupMembers(deleted:null)` the members
-				continue;
-			string groupName = name=="id"
-				? "groupId"
-				: name=="slug" ? "group_slug" : name;
-			membersQL.Args[groupName] = value;
-		}
-		statement.Where = QL::ToWhereClause( membersQL, groupTable );
+		statement.Where = QL::ToWhereClause( membersQL, groupTable );//the view's deleted is the member's:  `groupMembers(deleted:null)` filters the members
+		//the groups the query asks for, as a subquery on their identities.  Copying the group's args onto group_members filtered the
+		//members by the members' own columns:  `groups(name:"ops")` kept only members named ops.
+		let& identities = GetTable( "identities" );
+		auto params = move( groupWhere.Params() );
+		statement.Where.Add( Ƒ("{} in (select {} from {} {})", groupTable.GetColumnPtr("group_id")->FQName(), identities.GetPK()->FQName(), identities.SqlName(), groupWhere.Move()) );
+		move( params.begin(), params.end(), back_inserter(statement.Where.Params()) );
 		return statement;
 	}
 

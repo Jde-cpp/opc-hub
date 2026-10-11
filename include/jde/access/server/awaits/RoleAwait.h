@@ -13,6 +13,7 @@ namespace Jde::Access::Server{
 		QL::TableQL Query;
 		Jde::UserPK UserPK;
 	private:
+		α ParentFilter( DB::Statement& statement )ε->void;
 		α PermissionsStatement( QL::TableQL& permissionQL )ε->DB::Statement;
 		α RoleStatement( QL::TableQL& roleQL )ε->DB::Statement;
 		α Select()ι->QL::QLAwait<>::Task;

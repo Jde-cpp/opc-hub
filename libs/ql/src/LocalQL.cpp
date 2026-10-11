@@ -78,11 +78,7 @@ namespace Jde::QL{
 			auto input = key->IsPK()
 				? "id:"+std::to_string(key->PK())
 				: "slug:\""+move(key->NK())+'"';
-			//a soft-deleted row is still a row - its keys keep their unique indexes - so it has to count as existing:  naming deleted
-			//drops the select's `deleted is null`.  Only where the column is, or the select throws (rights, providerTypes, logLevels).
-			//Without it a seeded role an admin deleted was re-created at the next -sync start and died on the index (reviews/m3-closing.md #1).
-			let columns = m.DBTable && m.DBTable->FindColumn("deleted") ? "id deleted" : "id";
-			auto ql = Ƒ( "{}({}){{ {} }}", DB::Names::ToSingular(m.JsonTableName), move(input), columns );
+			auto ql = Ƒ( "{}({}){{ id }}", DB::Names::ToSingular(m.JsonTableName), move(input) );
 			if( auto existing = BlockAwait<TAwait<jobject>,jobject>(move(*QueryObject(move(ql), variables, executer))); existing.empty() ){
 				if( auto name = m.Args.contains("name") ? nullptr : m.Args.if_contains("slug"); name )
 					m.Args["name"] = Json::AsString( *name );

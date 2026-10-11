@@ -4,6 +4,7 @@
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/QLAwait.h>
+#include <jde/ql/types/FilterQL.h>
 #include "../serverInternal.h"
 #define let const auto
 
@@ -18,20 +19,16 @@ namespace Jde::Access::Server{
 		let memberIdColumn = groupDBTable.GetColumnPtr( "member_id" );
 		groupTable.Columns.emplace_back( QL::ColumnQL{"memberId", memberIdColumn} );
 
-		statement.From+={ pk, memberIdColumn, true };
-		statement.From+={ groupDBTable.SurrogateKeys[0], {}, pk, "groups_", true };
+		//the user is the aliased identity, so the group's own row takes the `groups` child's filters - `groups(deleted:null)`
+		statement.From+={ pk, "users_", memberIdColumn, {}, true };
+		statement.From+={ groupDBTable.SurrogateKeys[0], pk, true };
 		if( let key = _query.FindKey(); key )
-			statement.Where.Add( key->IsPK() ? pk : identityTable.GetColumnPtr("slug"), DB::Value::FromKey(*key) );
+			statement.Where += DB::WhereClause{ {"users_", key->IsPK() ? pk : identityTable.GetColumnPtr("slug")}, DB::Value::FromKey(*key).Variant };
+		statement.Where += QL::ToWhereClause( groupTable, identityTable );
 		statement.Select.TryAdd( memberIdColumn );
-		for( auto& c : groupTable.Columns ){
-			if( c.JsonName=="memberId" ){
-				c.DBColumn = memberIdColumn;
-				statement.Select.TryAdd( c.DBColumn );
-			}
-			else{
-				let dbColumn = c.JsonName=="id" ? pk : identityTable.GetColumnPtr( DB::Names::FromJson(c.JsonName) );
-				statement.Select.TryAdd( {"groups_", dbColumn} );
-			}
+		for( auto& c : groupTable.Columns ){//DBColumn is what TableQL::SetResult maps a selected column back by - unset, `groups{ id }` came back [{}]
+			c.DBColumn = c.JsonName=="memberId" ? memberIdColumn : c.JsonName=="id" ? pk : identityTable.GetColumnPtr( DB::Names::FromJson(c.JsonName) );
+			statement.Select.TryAdd( c.DBColumn );
 		}
 		return statement;
 	}

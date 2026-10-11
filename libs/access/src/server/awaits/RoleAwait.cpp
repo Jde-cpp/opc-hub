@@ -272,21 +272,25 @@ namespace Jde::Access::Server{
 		UserPK{ userPK }
 	{}
 
+	//The child rows of only the roles the query asks for - its key, `deleted:null`, a name - not every role's, to be dropped later.  A
+	//subquery rather than a join:  the role child already has access_roles in its from, as the child role.  No limit/offset in it
+	//(mysql refuses LIMIT in an IN subquery), so Select still drops the roles past them.
+	α RoleAwait::ParentFilter( DB::Statement& statement )ε->void{
+		let& rolesTable = GetTable( "roles" );
+		auto where = QL::ToWhereClause( Query, rolesTable );
+		if( where.Empty() )
+			return;
+		auto params = move( where.Params() );
+		statement.Where.Add( Ƒ("{} in (select {} from {} {})", MemberTable->GetColumnPtr("role_id")->FQName(), rolesTable.GetPK()->FQName(), rolesTable.SqlName(), where.Move()) );
+		move( params.begin(), params.end(), back_inserter(statement.Where.Params()) );
+	}
+
 	α RoleAwait::RoleStatement( QL::TableQL& roleQL )ε->DB::Statement{ //role(id:11){role(id:13){id slug deleted}}
 		auto statement = QL::SelectStatement( roleQL );
 		let& roleTable = GetTable( "roles" );
 		statement.From = { {MemberTable->GetColumnPtr("member_id"), roleTable.GetPK(), true} };
 		let memberRoleIdCol = MemberTable->GetColumnPtr( "role_id" );
-		if( auto roleKey = Query.FindKey(); roleKey ){
-			if( roleKey->IsPK() )
-				statement.Where.Add( memberRoleIdCol, DB::Value::FromKey(*roleKey) );//role_members.role_id=?
-			else{
-				const string alias = "parent";
-				statement.Where.Add( Ƒ("{}.slug=?", alias) );
-				statement.Where.Params().push_back( DB::Value::FromKey(*roleKey) );
-				statement.From+={ MemberTable->GetSK0(), {}, roleTable.GetPK(), alias, true };
-			}
-		}
+		ParentFilter( statement );
 		statement.Select+=memberRoleIdCol;
 		roleQL.Columns.push_back( QL::ColumnQL{"parentRoleId", memberRoleIdCol} );
 		return statement;
@@ -298,15 +302,7 @@ namespace Jde::Access::Server{
 		permissionStatement.From = { {MemberTable->GetColumnPtr("member_id"), permissionsTable.GetPK(), true} };
 		permissionStatement.From +={ permissionsTable.GetColumnPtr("resource_id"), GetTable("resources").GetPK(), true };
 		let rolePKCol = MemberTable->GetColumnPtr( "role_id" );
-		if( auto roleKey = Query.FindKey(); roleKey ){
-			if( roleKey->IsPK() )
-				permissionStatement.Where.Add( rolePKCol, DB::Value::FromKey(*roleKey) );
-			else{
-				auto rolesTable = GetTable( "roles" );
-				permissionStatement.Where.Add( rolesTable.GetColumnPtr("slug"), DB::Value::FromKey(*roleKey) );
-				permissionStatement.From += { MemberTable->GetSK0(), rolesTable.GetPK() };
-			}
-		}
+		ParentFilter( permissionStatement );
 
 		if( !permissionQL.FindColumn("id") ){
 			permissionStatement.Select+=permissionsTable.GetPK();
@@ -328,7 +324,7 @@ namespace Jde::Access::Server{
 			if( auto permissionQL = Query.ExtractTable(permissionsKey); permissionQL ){
 				if( permissionsPlural = permissionQL->IsPlural(); !permissionsPlural ){
 					permissionQL->JsonName = permissionsKey;//bring back array could be single right for multiple roles.
-					permissionsKey = "permissionsRight";
+					permissionsKey = DB::Names::ToSingular( permissionsKey );//where createRolesFromMembers puts a singular member
 				}
 				auto statement = PermissionsStatement( *permissionQL );
 				auto rights = co_await QL::QLAwait<jvalue>{ move(*permissionQL), move(statement), UserPK };
@@ -377,12 +373,12 @@ namespace Jde::Access::Server{
 			let returnArray = Query.IsPlural();
 			Query.ReturnRaw = true;
 			auto qlRoles = co_await QL::QLAwait( move(Query), UserPK );
-			//The child rows above only seed a role to hang its members on.  A role the query itself filtered out (deleted:null, a
-			//name, a limit) came back anyway, as a bare id with children and no name - the node Access tab's sort threw on it.
-			flat_set<RolePK::Type> returned;
+			//The child rows above only seed a role to hang its members on.  ParentFilter keeps out a role the query filtered out, but
+			//not one past its limit/offset - which came back anyway, as a bare id with children and no name.
+			vector<RolePK::Type> returned;//in the query's order:  `roles` is keyed by pk, and walking it dropped orderBy
 			auto addRole = [&]( jobject&& roleProperties ){
 				let rolePK = Json::AsNumber<RolePK::Type>( roleProperties, "id" );
-				returned.emplace( rolePK );
+				returned.push_back( rolePK );
 				auto existing = roles.find( rolePK );
 				if( existing!=roles.end() ){
 					for( auto&& [key,value] : roleProperties )
@@ -399,14 +395,12 @@ namespace Jde::Access::Server{
 			jvalue y;
 			if( returnArray ){
 				jarray jRoles;
-				for( auto&& [pk,value] : roles ){
-					if( returned.contains(pk) )
-						jRoles.emplace_back( move(value) );
-				}
+				for( let pk : returned )
+					jRoles.emplace_back( move(roles.at(pk)) );
 				y = jRoles;
 			}
-			else if( auto p = find_if(roles.begin(), roles.end(), [&](let& r){ return returned.contains(r.first); }); p!=roles.end() )
-				y = move( p->second );
+			else if( returned.size() )
+				y = move( roles.at(returned.front()) );
 			Resume( move(y) );
 		}
 		catch( boost::system::system_error& e ){
