@@ -23,8 +23,8 @@ namespace Jde::QL::Tests{
 		flat_map<string,sp<DB::Table>> tables{
 			table( "provider_types", R"({"columns":{"provider_type_id":{"sk":0,"i":0},"name":{"i":1}}})" ),
 			table( "providers", R"({"columns":{"provider_id":{"sk":0,"i":0},"provider_type_id":{"pkTable":"provider_types","i":1},"name":{"i":2}}})" ),
-			//#40: guid and varbinary are the two kinds ColumnQL::QLType has no graphql spelling for - opcServer's nodeIds.guid
-			//and users.password respectively.  Both must be left out of __type rather than fail it.
+			//#40: varbinary has no graphql spelling (users.password) and must be left out of __type rather than fail it; a guid
+			//is a String (hist_groups.guid), there beside it.
 			table( "nodes", R"({"columns":{"node_id":{"sk":0,"i":0},"name":{"i":1},"guid":{"type":"guid","i":2},"secret":{"type":"varbinary","i":3}}})" ),
 			//#42: a table whose json name begins with a mutation verb ("start") - IsMutation used to claim it and the query was refused.
 			table( "startups", R"({"columns":{"startup_id":{"sk":0,"i":0},"name":{"i":1}}})" ),

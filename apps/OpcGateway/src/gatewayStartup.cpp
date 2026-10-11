@@ -18,6 +18,8 @@
 #include "UAClient.h"
 #include "WebServer.h"
 #include "ql/GatewayQL.h"
+#include "hist/HistHost.h"
+#include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
 #include "ql/OpcQLHook.h"
 
@@ -39,7 +41,7 @@ namespace Jde::Opc{
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
-		flat_set<string> histEdits;
+		flat_set<string> histEdits{ string{HistGroupMAwait::ResolveCommand} };//resolveHistory:  resolve is no verb either.
 		for( let command : HistQL::EditCommands )
 			histEdits.emplace( command );
 		QL::SetSystemMutations( move(histEdits) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
@@ -71,8 +73,10 @@ namespace Jde::Opc{
 
 		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, {move(schema)}, UserPK{UserPK::System}, {}) );
 		Process::AddShutdownFunction( [listener=appClient->Listener()](bool terminate, SL sl){ listener->Shutdown(terminate, sl); } ); //as the AppServer does - the subscriptions otherwise outlive everything they reference (access-review3 #25).
+		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );//before the UA clients go:  the collectors' items are dropped on live clients, and the groups' last flushes run while the executor still does.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		QL::Hook::Add( mu<OpcQLHook>() );
+		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 	}
 	α Gateway::Startup( jobject webServerSettings, jobject userName )ε->void{
 		auto schema = Configure( webServerSettings, move(userName) );

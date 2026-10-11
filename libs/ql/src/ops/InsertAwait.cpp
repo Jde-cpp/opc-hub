@@ -173,7 +173,9 @@ namespace Jde::QL{
 					}
 				}
 				else{
-					let id = y.size() ? Json::FindNumber<uint>(y[0], "id").value_or(0) : 0;
+					//The object overload:  the jvalue one takes a json pointer path, which "id" is not, so every InsertAfter hook was
+					//handed 0 (found building the historian's groups, #223).
+					let id = y.size() && y[0].is_object() ? Json::FindNumber<uint>(y[0].get_object(), "id").value_or(0) : 0;
 					co_await Hook::InsertAfter( id, _mutation, _userPK );
 				}
 			}

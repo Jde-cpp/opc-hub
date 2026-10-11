@@ -20,6 +20,16 @@ namespace Jde{
 #ifndef _MSC_VER
 	α Process::ProductName()ι->sv{ return "Tests.Opc"; }
 #endif
+	//Empties a historian's path.  The lock file stays, as OpcServer's HistoryTests leave it:  a process holding it keeps it
+	//whatever this does.
+	Ω emptyHist( sv settingsPath )ε->void{
+		if( let path = Settings::FindPath(settingsPath); path && fs::exists(*path) ){
+			for( let& entry : fs::directory_iterator{*path} ){
+				if( entry.path().filename()!="historian.lock" )
+					fs::remove_all( entry.path() );
+			}
+		}
+	}
 	Ω startup( int argc, char **argv )ε->void{
 		Logging::AddTagParser( mu<Opc::UALogParser>() );
 		Process::Startup( argc, argv, "Tests.Opc", "Opc tests", true );
@@ -33,16 +43,10 @@ namespace Jde{
 			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug );
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http/gateway"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
-			//The server's history starts empty every run, so HistTests reads what it wrote and nothing an earlier run left.
-			//The lock file stays, as OpcServer's HistoryTests leave it:  a process holding it keeps it whatever this does.
-			if( let path = Settings::FindPath("/opcServer/hist/path"); path && fs::exists(*path) ){
-				for( let& entry : fs::directory_iterator{*path} ){
-					if( entry.path().filename()!="historian.lock" )
-						fs::remove_all( entry.path() );
-				}
-			}
+			emptyHist( "/opcServer/hist/path" );//the server's history starts empty every run, so HistTests reads what it wrote and nothing an earlier run left.
 			Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") );
 		}
+		emptyHist( "/gateway/hist/path" );//the gateway's own groups' files (HistGroupTests):  a group is created afresh each run, so an older run's files are only clutter.
 		Opc::Gateway::Startup( Settings::AsObject("/http/gateway"), Settings::AsObject("/credentials/gateway") );
 	}
 }

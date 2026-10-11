@@ -6,7 +6,7 @@
 #include <jde/ql/IQLAwaitExe.h>
 
 namespace Jde::Opc::Gateway{
-	struct UAClient;
+	struct Namespaces; struct UAClient;
 	struct IGatewayQLAwait : noncopyable{
 	protected:
 		α GetClient( QL::IQLAwaitExe* await )ι->TAwait<sp<UAClient>>::Task;
@@ -22,7 +22,7 @@ namespace Jde::Opc::Gateway{
 		α Query()ι->TAwait<jvalue>::Task override;
 		α ConnectionAttributes( QL::TableQL&& q, sp<UAClient> client )ι->jvalue;
 		α ServerDescription( QL::TableQL&& q, sp<UAClient> client )ε->jobject;
-		α Namespaces( QL::TableQL&& q, sp<UAClient> client, flat_map<NodeId, Value>&& values )ε->jvalue;
+		α Namespaces( QL::TableQL&& q, const Gateway::Namespaces& namespaces )Ι->jvalue;
 		α SecurityPolicyUri( QL::TableQL&& q, sp<UAClient> client )ε->jvalue;
 		α SecurityMode( QL::TableQL&& q, sp<UAClient> client )ε->jvalue;
 	};

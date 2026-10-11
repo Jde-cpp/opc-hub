@@ -53,8 +53,17 @@ namespace Jde::DB::Tests{
 		for( let& type : {VarChar, Int, DateTime, Bit} )
 			EXPECT_EQ( alt(type, jvalue{}), EValue::Null ) << (uint)type;
 
+		//a guid's text is its 16 bytes in RFC 4122 order, which Value(uuid) holds; anything else is refused.
+		let guid = Value{ Guid, jvalue{"0f8fad5b-d9cb-469f-a165-70867728950e"}, SRCE_CUR };
+		ASSERT_EQ( guid.Type(), EValue::Bytes );
+		EXPECT_EQ( Jde::ToString(guid.get_guid()), "0f8fad5b-d9cb-469f-a165-70867728950e" );
+		EXPECT_EQ( guid.get_bytes().front(), 0x0f );
+		EXPECT_THROW( (Value{Guid, jvalue{"x"}, SRCE_CUR}), Exception );
+		EXPECT_THROW( (Value{Guid, jvalue{"0f8fad5b-d9cb-469f-a165-70867728950"}, SRCE_CUR}), Exception ) << "a digit short";
+		EXPECT_THROW( (Value{Guid, jvalue{42}, SRCE_CUR}), std::exception );
+
 		//the unimplemented families report rather than yielding something wrong.
-		for( let& type : {Binary, VarBinary, Guid, Cursor, RefCursor, Image, Blob, TimeSpan, None} )
+		for( let& type : {Binary, VarBinary, Cursor, RefCursor, Image, Blob, TimeSpan, None} )
 			EXPECT_THROW( (Value{type, jvalue{"x"}, SRCE_CUR}), Exception ) << (uint)type;
 		for( let& type : {Char, WChar} )
 			EXPECT_THROW( (Value{type, jvalue{"x"}, SRCE_CUR}), Exception ) << (uint)type;

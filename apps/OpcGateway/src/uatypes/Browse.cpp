@@ -1,5 +1,6 @@
 ﻿#include "Browse.h"
 #include <jde/fwk/process/execution.h>
+#include <jde/fwk/utils/collections.h>
 #include <jde/ql/types/TableQL.h>
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/LocalizedText.h>
@@ -11,7 +12,26 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
+	//Each segment `ns~name`, or a bare name in defaultNS.
+	Ω toSegments( std::span<const sv> segments, NsIndex defaultNS )ι->vector<BrowseSegment>{
+		auto y = Reserve<BrowseSegment>( segments.size() );
+		for( let segment : segments ){
+			BrowseSegment browse{ defaultNS, string{segment} };
+			if( let nsPath = Str::Split(segment, '~'); nsPath.size()>1 ){
+				if( let ns = Str::TryTo<NsIndex>(nsPath[0]); ns ){
+					browse.Ns = *ns;
+					browse.Name = Str::Join( std::span{nsPath}.subspan(1), "~" );
+				}
+			}
+			y.push_back( move(browse) );
+		}
+		return y;
+	}
 	UABrowsePath::UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start )ι:
+		UABrowsePath{ toSegments(segments, defaultNS), start }
+	{}
+
+	UABrowsePath::UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι:
 		UA_BrowsePath{
 			{},
 			{ segments.size(), (UA_RelativePathElement*)UA_Array_new(segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]) }
@@ -20,18 +40,9 @@ namespace Jde::Opc::Gateway{
 		for( size_t i=0; i<segments.size(); ++i ){
 			auto elem = &relativePath.elements[i];
 			elem->referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
-			auto ns = defaultNS;
-			string path{ segments[i] };
-			if( let nsPath = Str::Split(segments[i], '~'); nsPath.size()>1 ){
-				auto specifiedNs = Str::TryTo<NsIndex>( nsPath[0] );
-				if( specifiedNs ){
-					ns = *specifiedNs;
-					path = Str::Join( std::span{nsPath}.subspan(1), "~" );
-				}
-			}
 			elem->includeSubtypes = true;
 			elem->isInverse = false;
-			elem->targetName = { ns, AllocUAString(path) };
+			elem->targetName = { segments[i].Ns, AllocUAString(segments[i].Name) };
 		}
 	}
 

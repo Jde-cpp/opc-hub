@@ -48,10 +48,10 @@ namespace Jde::QL::Tests{
 		EXPECT_THROW( query(R"(__type(name:"notATable"){ fields{ name } })", ql), Exception );
 	}
 
-	//review3 #40: introspectFields skipped VarBinary by hand before calling QLType, but QLType throws for eight more types -
-	//Guid among them, which is what opcServer's nodeIds.guid is.  Every node table extends node_ids, so `__type(name:"NodeId")`
-	//and each of theirs answered "Query failed." for the whole document.  A column with no graphql spelling is left out of the
-	//schema now, which is what the VarBinary case already did and what QuerySchema does since #31.
+	//review3 #40: introspectFields skipped VarBinary by hand before calling QLType, but QLType threw for eight more types, so a
+	//Guid column failed the whole document with "Query failed.".  A column with no graphql spelling is left out of the schema
+	//now, which is what the VarBinary case already did and what QuerySchema does since #31.  A Guid has one since 5b (#223):
+	//String, its text.
 	TEST( IntrospectionTests, AColumnWithNoQLTypeIsOmittedRatherThanFailingTheType ){
 		auto ql = ms<NullQL>();
 		let schema = schemas();
@@ -63,7 +63,7 @@ namespace Jde::QL::Tests{
 			names.emplace( Json::AsSV(Json::AsObject(f), "name") );
 		EXPECT_TRUE( names.contains("id") ) << Str::Join( names, "," );   //the pk, still there.
 		EXPECT_TRUE( names.contains("name") ) << Str::Join( names, "," );
-		EXPECT_FALSE( names.contains("guid") ) << "a Guid column has no graphql spelling";
+		EXPECT_TRUE( names.contains("guid") ) << "a Guid column is a String";
 		EXPECT_FALSE( names.contains("secret") ) << "and VarBinary never had one";
 	}
 	//the control: a table whose columns all map is unaffected - the skip must not eat anything else.

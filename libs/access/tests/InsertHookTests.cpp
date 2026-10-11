@@ -76,10 +76,8 @@ namespace Jde::Access::Tests{
 
 	//ql-review3 #51: Hook::InsertAfter took its pk as an unnamed parameter and built the pk-less MutationAwaits, so the argument
 	//never reached the override.  That is fixed and pinned by QLHookTests.InsertAfterForwardsThePk.
-	//End to end it is still 0, for a *different* reason the finding assumed away: InsertAwait::InsertAfter derives the id from
-	//`result[0]["id"]`, and for these statements the payload carries only `{"rowCount":N}` - the id in the reply comes from the
-	//mutation's own `{ id }` result request, a separate select, not from the insert.  So the argument is forwarded faithfully
-	//and there is nothing to forward.  Pinned as it behaves, so whoever gives InsertAwait a real id sees this turn green.
+	//End to end the pk is `result[0]["id"]`, which createUser's identity insert, a proc, returns.  Until #223 InsertAwait read it
+	//with the json-pointer FindNumber, which "id" is not, so every hook was handed 0.
 	TEST( InsertHookTests, TheHookIsToldTheIdInsertAwaitHas ){
 		let root = GetRoot();
 		const string slug{ "review51-user" };
@@ -97,7 +95,7 @@ namespace Jde::Access::Tests{
 		hook().Armed = false;
 		ASSERT_GE( hook().Calls, 1u );
 		ASSERT_GT( id, 0u ) << "the reply's id, which comes from the result request rather than the insert";
-		EXPECT_EQ( hook().Pk, 0u ) << "InsertAwait now has an id to pass - assert it equals " << id << " instead";
+		EXPECT_EQ( hook().Pk, id );
 		PurgeUser( UserPK{id}, root );
 	}
 }

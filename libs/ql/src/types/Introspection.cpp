@@ -179,10 +179,10 @@ namespace QL{
 						continue;
 					fieldName = column.IsPK() ? "id" : ToJson( column.Name );
 					//#40: QLType throws for every type graphql has no spelling for, and that took the whole __type document with it -
-					//opcServer's nodeIds.guid is Guid, and every node table extends node_ids, so `__type(name:"NodeId"){fields{}}` and
-					//each of theirs answered "Query failed.".  A column that can not be named in the schema is left out of it, which is
-					//what the VarBinary case here (users.password) already did by hand and what QuerySchema does since #31.  Not mapped to
-					//String: DB::Value{Guid,json} throws too, so the field would advertise a filter the rest of the stack refuses.
+					//`__type(name:"NodeId"){fields{}}` answered "Query failed." for a Guid column.  A column that can not be named in the
+					//schema is left out of it, which is what the VarBinary case here (users.password) already did by hand and what
+					//QuerySchema does since #31.  A Guid is a String now (hist_groups.guid):  DB::Value parses its text, so the field
+					//advertises a filter the rest of the stack takes.
 					try{ qlTypeName = ColumnQL::QLType( column ); }
 					catch( const Exception& ){ continue; }
 				}

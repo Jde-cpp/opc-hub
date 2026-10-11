@@ -330,6 +330,21 @@ namespace Jde::Opc::Gateway::Tests{
 		let& fields = Json::AsArray( value.as_object(), "fields" );
 		for( sv name : {"node"sv, "source"sv, "server"sv, "status"sv, "value"sv, "bound"sv, "heartbeat"sv, "modification"sv} )
 			EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << name << ": " << serialize( value );
+		//Historian 5b (#223):  resolveHistory, and the group tables the schema introspects itself.
+		let resolve = Socket().QuerySync( Ƒ("__type( name: \"resolveHistory\" ){}", fieldsQL), {} );
+		let& resolveFields = Json::AsArray( resolve.as_object(), "fields" );
+		auto nodes = find_if( resolveFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")=="nodes"; } );
+		ASSERT_NE( nodes, resolveFields.end() ) << serialize( resolve );
+		EXPECT_EQ( Json::AsSVPath(nodes->as_object(), "type/ofType/name"), "HistoryResolvedNode" );
+		let resolved = Socket().QuerySync( Ƒ("__type( name: \"HistoryResolvedNode\" ){}", fieldsQL), {} );
+		let& resolvedFields = Json::AsArray( resolved.as_object(), "fields" );
+		for( sv name : {"templateNode"sv, "path"sv, "node"sv, "status"sv} )
+			EXPECT_NE( find_if(resolvedFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), resolvedFields.end() ) << name << ": " << serialize( resolved );
+		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"histGroup", "guid"}, {"histGroupNode", "node"}, {"histTemplate", "slug"}, {"histTemplateNode", "path"} } ){
+			let table = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
+			let& tableFields = Json::AsArray( table.as_object(), "fields" );
+			EXPECT_NE( find_if(tableFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==column; }), tableFields.end() ) << typeName << "." << column << ": " << serialize( table );
+		}
 	}
 
 	TEST_F( QLTests, serverConnectionIntrospection ){
