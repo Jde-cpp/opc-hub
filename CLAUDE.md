@@ -91,4 +91,4 @@ Awaitables inherit from `VoidAwait` or `IAwait<TResult, TTask>` in `co/Await.h`.
 - Never run an unscoped/filesystem-wide search (e.g. `find /`, or any search rooted above the repo). Always scope file searches to `C:\Users\duffyj\source\repos` or `$JDE_BUILD_DIR` (build outputs, e.g. `x:\build` on Windows) — or a narrower subdirectory of either. A full-drive search can run for tens of minutes burning CPU for no benefit. Prefer Glob/Grep over shelling out to `find`/`grep` in the first place.
 - Markdown docs that cite repo files (reviews, findings, design notes) must link them per the **`md-file-refs`** skill — `` [`DBException.h:37`](../opc-hub/include/jde/db/DBException.h#L37) ``, never `file://` (the VS Code preview blocks it) or root-relative. Run its `linkify.py` over the doc when finishing it; no need to ask first.
 - Keep code comments minimal; only comment non-obvious logic
-
+- Don't leave trailing empty lines in any file — it ends at its last character, with no final newline. No file type here needs one; when a tool appends one (Write, a heredoc, `print`), strip it.
