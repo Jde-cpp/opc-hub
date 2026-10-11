@@ -572,7 +572,8 @@ namespace Jde::Opc::Gateway{
 	α UAClient::StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void{
 		constexpr std::array<sv,6> sessionStates = { "Closed", "CreateRequested", "Created", "ActivateRequested", "Activated", "Closing" };
 		DBG( "[{}]channelState: '{}', sessionState: '{}', connectStatus: '({}){}'", hex((uint)ua), UAException::Message(channelState), FromEnum(sessionStates, sessionState), hex(connectStatus), UAException::Message(connectStatus) );
-		if( auto client = sessionState == UA_SESSIONSTATE_ACTIVATED ? UAClient::TryFind(ua) : sp<UAClient>{}; client ){
+		let activated = sessionState==UA_SESSIONSTATE_ACTIVATED;
+		if( auto client = activated || !Process::ShuttingDown() ? UAClient::TryFind(ua) : sp<UAClient>{}; client && activated ){
 			//a found client is a re-activation: no RequestDrain here - open62541 re-reads the namespace array only on
 			//a fresh client (haveNamespaces), so flagging would leave the drain waiting out its full limit for a read
 			//that never fires.
@@ -580,7 +581,10 @@ namespace Jde::Opc::Gateway{
 			client->ClearRequest( ConnectRequestId );
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
+			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
 		}
+		else if( client )
+			client->RecordBreak();
 
 		if( sessionState == UA_SESSIONSTATE_ACTIVATED || connectStatus ){
 			_awaitingActivation.erase_if( [ua, sessionState,connectStatus](sp<UAClient> client){
@@ -998,6 +1002,20 @@ namespace Jde::Opc::Gateway{
 					UAClient::UnsubscribePending( slug, dataChange, dropped );
 				}
 				let kept = restored.size()-dropped.size();
+				//The listener's connection-state callback (IDataChange::ConnectionRestored):  the nodes it still wants are on the new
+				//subscription.  Here, still inside the create's response callback - the ack resumed this frame inline on the strand
+				//(DataChangeAwait::OnComplete, through Any's glue), so the publish carrying the items' first values has not been read yet,
+				//which is the contract:  the historian judges that first value against the break.  Not once the client died:  its
+				//take has parked these nodes and told the listener Lost, or RemoveClient dropped them.
+				if( kept && !died ){
+					ASSERT( client->OnStrand() );
+					flat_set<NodeId> back;
+					for( let& node : restored ){
+						if( !dropped.contains(node) )
+							back.emplace( node );
+					}
+					dataChange->ConnectionRestored( slug, back );
+				}
 				let failed = wantedCount-kept;
 				let gone = nodes.size()-wantedCount;
 				//One call, not an if/else:  the log macros expand to a bare `if`, so an `else` after one does not parse.
@@ -1201,11 +1219,13 @@ namespace Jde::Opc::Gateway{
 		auto monitoredNodes = Process::ShuttingDown() ? nullptr : client->TryMonitoredNodes();//nothing reconnects on the way out, and the items stay put for Shutdown's MonitoredNodes::Shutdown to delete.
 		uint nodes{}, listenerCount{};
 		bool start{};
+		let when = client->TakeBreak();
+		Listeners listeners;
 		{//take and park under the one lock, as Resubscribe takes into _rebuilds:  between the two the listeners were in neither place, so
 			//UAClient::Unsubscribe's purge could miss a session closing at that instant, and the park then revived it (subscription-disconnect #14).
 			lg _{ _pendingMutex };
 			if( monitoredNodes ){
-				let listeners = monitoredNodes->TakeForResubscribe();
+				listeners = monitoredNodes->TakeForResubscribe();
 				nodes = nodeCount( listeners );
 				listenerCount = listeners.size();
 				start = parkLocked( client->Slug(), client->Credential, listeners );
@@ -1214,6 +1234,8 @@ namespace Jde::Opc::Gateway{
 		}
 		if( !listenerCount )
 			return;
+		for( let& [listener, lost] : listeners )//after the park and off every lock:  a listener may unsubscribe from here, which takes _pendingMutex (IDataChange::ConnectionLost).
+			listener->ConnectionLost( client->Slug(), lost, when );
 		WARN( "[{}]Connection to '{}' lost with {} monitored node(s) for {} listener(s) - reconnecting to restore them.", hex(client->Handle()), client->Slug(), nodes, listenerCount );
 		if( start )
 			startReconnect( client->Slug(), client->Credential );
@@ -1293,6 +1315,14 @@ namespace Jde::Opc::Gateway{
 		_sessionToken = move( token );
 		return changed;
 	}
+	α UAClient::RecordBreak()ι->void{
+		TimePoint none{};
+		_brokeAt.compare_exchange_strong( none, Clock::now() );
+	}
+	α UAClient::TakeBreak()ι->TimePoint{
+		let broke = _brokeAt.exchange( TimePoint{} );
+		return broke==TimePoint{} ? Clock::now() : broke;
+	}
 
 	α UAClient::Resubscribe()ι->void{
 		//First, and whether or not anything is rebuilt:  the cached id belongs to the session that went away - on a server restart it is
@@ -1304,6 +1334,8 @@ namespace Jde::Opc::Gateway{
 		if( !monitoredNodes )
 			return;
 		uint rebuild{}, nodes{}, listenerCount{};
+		let when = TakeBreak();
+		Listeners lost;
 		{//held across the take:  the listeners go straight off the client into _rebuilds, so an unsubscribe finds them in one or the other (#4).
 			lg _{ _pendingMutex };
 			auto listeners = monitoredNodes->TakeForResubscribe();
@@ -1311,8 +1343,11 @@ namespace Jde::Opc::Gateway{
 				return;
 			nodes = nodeCount( listeners );
 			listenerCount = listeners.size();
+			lost = listeners;
 			rebuild = rebuildStart( Slug(), move(listeners) );
 		}
+		for( let& [listener, lostNodes] : lost )//off the lock, as stashPending:  the session went, and its subscription with it (IDataChange::ConnectionLost).
+			listener->ConnectionLost( Slug(), lostNodes, when );
 		INFO( "[{}]Re-creating {} monitored node(s) for {} listener(s).", hex(Handle()), nodes, listenerCount );
 		//PostStrand, not PostUA:  this runs inside StateCallback, i.e. inside run_iterate on the strand, and PostUA's dispatch
 		//would submit re-entrantly on that stack.
@@ -1369,15 +1404,15 @@ namespace Jde::Opc::Gateway{
 		PurgePending( dataChange );
 	}
 
-	α UAClient::BrowsePathsToNodeIds( sv path, bool parents )Ε->flat_map<string,ExpectedNodeId>{
-		ASSERT( _asyncRequest.Strand().running_in_this_thread() );//sync UA service - must be serialized with run_iterate (route callers through PostUA/UAStrandAwait).
+	α UAClient::BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start )Ε->flat_map<string,ExpectedNodeId>{
+		ASSERT( OnStrand() );//sync UA service - must be serialized with run_iterate (route callers through PostUA/UAStrandAwait).
 		let segments = Str::Split( path, '/' );
-		auto args = Reserve<UABrowsePath>( parents ? segments.size()-1 : 1 );
+		auto args = Reserve<UABrowsePath>( parents ? segments.size() : 1 );//Split skips empty segments, so "" and "/" have none.
 		vector<string> paths;
 		for( uint i=0; i<(parents ? segments.size() : 1); ++i ){
 			std::span<const sv> nodePath{ segments.begin(), segments.end()-i };
 			paths.emplace_back( Str::Join(nodePath, "/") );
-			args.emplace_back( UABrowsePath{nodePath, _opcServer.DefaultBrowseNs} );
+			args.emplace_back( UABrowsePath{nodePath, _opcServer.DefaultBrowseNs, start} );
 		}
 		return BrowsePathsToNodeIdResponse{ UA_Client_Service_translateBrowsePathsToNodeIds(_ptr, {{}, args.size(), args.data()}), paths, Handle() };
 	}

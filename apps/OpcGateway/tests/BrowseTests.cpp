@@ -5,6 +5,7 @@
 #include "../src/UAClient.h"
 #include "../src/ql/GatewayQL.h"
 #include "../src/ql/NodeQLAwait.h"
+#include "../src/async/UAStrandAwait.h"
 #include "utils/helpers.h"
 #include "../src/types/UAClientException.h"
 #define let const auto
@@ -152,6 +153,49 @@ namespace Jde::Opc::Gateway::Tests{
 		auto type = QL::Parse( "node( opc: $opc, id:$id ){ path }", jobject{{"opc", OpcServerSlug}, {"id", NodeId{0, UA_NS0ID_BASEOBJECTTYPE}.ToJson()}}, Schemas(), true );
 		let typeValue = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(type.Queries().front()), _client} );
 		EXPECT_TRUE( typeValue.as_object().at("path").is_null() ) << "the Types tree has no page";
+	}
+
+	//Historian 5a (#222):  the translate follows HierarchicalReferences with subtypes, so a path through HasComponent resolves
+	//without the parents walk NodeId/PathFromId lean on, and it starts where the caller says - a template's root (spec *Templates*),
+	//the Objects folder by default.
+	TEST_F( BrowseTests, TranslateFollowsHierarchicalReferencesFromAStart ){
+		constexpr sv stacklight{ "4~Examples/4~Stacklights/4~ExampleStacklight" };
+		const string lampPath{ string{stacklight}+"/4~Lamp1" };
+		auto translate = [&]( string path, bool parents, NodeId start=NodeId::ObjectsFolder() ){
+			return BlockTAwait<BrowsePathResponse>( UAStrandAwait<BrowsePathResponse>{_client, [path, parents, start=move(start), client=_client]{ return client->BrowsePathsToNodeIds(path, parents, start); }} );
+		};
+		let direct = translate( lampPath, false );
+		ASSERT_EQ( direct.size(), 1u );
+		ASSERT_TRUE( direct.at(lampPath).has_value() ) << "the lamp hangs off a HasComponent - Organizes alone could not follow it:  " << UAException::Message( direct.at(lampPath).error() );
+		let lamp = NodeId{ direct.at(lampPath)->nodeId }.ToString();
+
+		let withParents = translate( lampPath, true );
+		ASSERT_EQ( withParents.size(), 4u ) << "every prefix of the path";
+		for( let& [path, node] : withParents )
+			EXPECT_TRUE( node.has_value() ) << path;
+		ASSERT_TRUE( withParents.at(string{stacklight}).has_value() );
+		const NodeId root{ withParents.at(string{stacklight})->nodeId };
+
+		let fromRoot = translate( "4~Lamp1", false, root );
+		ASSERT_TRUE( fromRoot.at("4~Lamp1").has_value() ) << "a path relative to a start node";
+		EXPECT_EQ( NodeId{fromRoot.at("4~Lamp1")->nodeId}.ToString(), lamp ) << "the same node the absolute path names";
+		let elsewhere = translate( "4~Examples", false, root );
+		EXPECT_FALSE( elsewhere.at("4~Examples").has_value() ) << "a name the start has no child by is no match, not the Objects folder's";
+	}
+
+	//A path with no segments - "" or "/" - names nothing to translate, with parents{} or without:  the query fails with the
+	//server's BadNothingToDo.
+	TEST_F( BrowseTests, EmptyPath ){
+		for( let& [query, path] : vector<tuple<string,string>>{ {"node( opc: $opc, path:$path ){ id parents{ path } }", "/"}, {"node( opc: $opc, path:$path ){ id parents{ path } }", ""}, {"node( opc: $opc, path:$path ){ id }", "/"} } ){
+			auto ql = QL::Parse( string{query}, jobject{{"opc", OpcServerSlug}, {"path", path}}, Schemas(), true );
+			try{
+				BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+				ADD_FAILURE() << query << " '" << path << "' answered";
+			}
+			catch( const Exception& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADNOTHINGTODO ) << query << " '" << path << "':  " << e.what();
+			}
+		}
 	}
 
 	//UserMessage() is the client-facing text.  Its combine branch tested _userMessage inside `if( _userMessage.empty() )`,

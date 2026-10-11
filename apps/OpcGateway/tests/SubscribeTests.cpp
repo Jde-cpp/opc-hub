@@ -4,6 +4,7 @@
 #include "../src/GatewayAppClient.h"
 #include "../src/async/ConnectAwait.h"
 #include "../src/async/Subscriptions.h"
+#include "../src/async/MonitoredItems.h"
 #include "../src/async/UAStrandAwait.h"
 #include "../src/UAClient.h"
 #include "../src/types/UAClientException.h"
@@ -404,6 +405,215 @@ namespace Jde::Opc::Gateway::Tests{
 			let dropped = UAClient::UnsubscribePending( OpcServerSlug, listener, {NodeId{4, 6017}} );
 			EXPECT_EQ( dropped.size(), 1u ) << "a node the rebuild still held was reported as a failed unsubscribe";
 		});
+	}
+
+	//Historian 5a (#222):  the connection-state callbacks the historian's gap rule needs (spec *Collection*, *Gaps*) - ConnectionLost
+	//with the time the subscription went, ConnectionRestored once the rebuild has the nodes back and before the new subscription
+	//delivers a value - and the per-node item parameters a listener answers (IDataChange::ItemParameters).
+	struct StateListener final : IDataChange{
+		α SendDataChange( const ServerCnnctnNK&, const NodeId&, const Value& )ι->void override{
+			if( Lost && !Restored )
+				++PushesWhileLost;//nothing was in flight at either staged loss, so one of these is the new item delivering before ConnectionRestored.
+			if( Restored )
+				++PushesAfterRestore;
+			++Pushes;
+		}
+		α ConnectionLost( const ServerCnnctnNK& opcId, const flat_set<NodeId>& nodes, TimePoint when )ι->void override{
+			lg _{ Mutex }; LostOpc = opcId; LostNodes = nodes; LostAt = when; ++Lost;
+		}
+		α ConnectionRestored( const ServerCnnctnNK& opcId, const flat_set<NodeId>& nodes )ι->void override{
+			lg _{ Mutex }; RestoredOpc = opcId; RestoredNodes = nodes; ++Restored;
+		}
+		α ItemParameters( const NodeId& )Ι->MonitoringParameters override{ return Parameters; }
+		α to_string()Ι->string override{ return "SubscribeTests.StateListener"; }
+		MonitoringParameters Parameters;
+		atomic<uint> Pushes, PushesWhileLost, PushesAfterRestore, Lost, Restored;
+		mutex Mutex; string LostOpc, RestoredOpc; flat_set<NodeId> LostNodes, RestoredNodes; TimePoint LostAt;
+	};
+	Ω subscribeListener( const sp<UAClient>& client, const sp<StateListener>& listener, const NodeId& nodeId )ε->FromServer::SubscriptionAck{
+		BlockVoidAwait( SubscribeAwait{client} );
+		auto ack = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{nodeId}, listener, client} );
+		Stopwatch sw;
+		while( !listener->Pushes )//the initial push - the item is live from here.
+			sw.CheckTimeout( 6s, 1ms );
+		return ack;
+	}
+	Ω drainListener( const sp<UAClient>& client, const sp<StateListener>& listener, uint remaining )->void{//off the client, and its item gone - the DeleteMonitoring timer runs a second behind the unsubscribe.
+		UAClient::Unsubscribe( listener );
+		Stopwatch sw;
+		while( client->MonitoredNodes().Count()!=remaining )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the listener's item never went";
+	}
+	//The server's half of a session loss, as ResubscribesAfterSubscriptionLoss stages it:  the take tells the listener, with the
+	//node and a time no earlier than the loss, and the rebuild tells it again once the node is back - before the first push the
+	//new item makes.  Nothing a first subscribe does is a restore.
+	TEST_F( SubscribeTests, ConnectionStateReachesTheListener ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		EXPECT_EQ( listener->Lost.load(), 0u );
+		EXPECT_EQ( listener->Restored.load(), 0u ) << "a first subscribe is not a restore";
+
+		let subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		let lostAfter = Clock::now();
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );
+		_client->Resubscribe();//the take and its ConnectionLost run here, before the rebuild is posted.
+		ASSERT_EQ( listener->Lost.load(), 1u ) << "the take did not tell the listener";
+		{
+			lg _{ listener->Mutex };
+			EXPECT_EQ( listener->LostOpc, OpcServerSlug );
+			EXPECT_EQ( listener->LostNodes, flat_set<NodeId>{nodeId} );
+			EXPECT_GE( listener->LostAt, lostAfter ) << "the break time predates the loss";
+			EXPECT_LE( listener->LostAt, Clock::now() );
+		}
+		Stopwatch sw;//the rebuild:  a subscribe and a create round trip, then the new item's initial push.
+		while( !listener->PushesAfterRestore )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "no push after the rebuild";
+		EXPECT_EQ( listener->Restored.load(), 1u );
+		EXPECT_EQ( listener->PushesWhileLost.load(), 0u ) << "the new subscription delivered a value before ConnectionRestored";
+		{
+			lg _{ listener->Mutex };
+			EXPECT_EQ( listener->RestoredOpc, OpcServerSlug );
+			EXPECT_EQ( listener->RestoredNodes, flat_set<NodeId>{nodeId} );
+		}
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 );
+		drainListener( _client, listener, before );
+	}
+	//historian-gateway-plumbing #3:  ConnectionLost reported when the loss was found - for a session loss, the new session's
+	//activation, after the outage - so the historian's late-report rule (spec *Compression*) kept the heartbeats written through
+	//it.  It reports the break StateCallback recorded instead:  the first state short of an activated session, here a round trip
+	//before the rebuild finds the session gone.  The take clears it, so the next loss is a break of its own.
+	TEST_F( SubscribeTests, ConnectionLostCarriesTheBreak ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		auto subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+
+		let brokeAfter = Clock::now();
+		_client->RecordBreak();//as StateCallback records the channel or session going...
+		let brokeBefore = Clock::now();
+		_client->RecordBreak();//...and a later state of the same outage keeps the first.
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );//a round trip, so the take runs well after the break.
+		_client->Resubscribe();
+		ASSERT_EQ( listener->Lost.load(), 1u );
+		{
+			lg _{ listener->Mutex };
+			EXPECT_GE( listener->LostAt, brokeAfter );
+			EXPECT_LE( listener->LostAt, brokeBefore ) << "the time the loss was found, not the break";
+		}
+		Stopwatch sw;
+		while( listener->Restored.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the first rebuild never restored the node";
+
+		subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		let secondAfter = Clock::now();
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );
+		_client->Resubscribe();
+		ASSERT_EQ( listener->Lost.load(), 2u );
+		{
+			lg _{ listener->Mutex };
+			EXPECT_GE( listener->LostAt, secondAfter ) << "the first loss's break was reported again";
+		}
+		sw.Reset();
+		while( listener->Restored.load()<2 )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the second rebuild never restored the node";
+		drainListener( _client, listener, before );
+	}
+	//historian-gateway-plumbing #10:  a server that drops a subscription while the session lives - its lifetime ran out in an
+	//outage the session outlived - says so with a StatusChangeNotification, which only traced:  the items stayed on the client,
+	//dead, and nothing rebuilt them.  OpcServer keeps sessions shorter than subscriptions, so the notification is delivered by
+	//hand, on the strand as open62541 delivers it.  One about another subscription, or with another status, changes nothing.
+	TEST_F( SubscribeTests, ASubscriptionTheServerDropsIsRebuilt ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		let subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		auto statusChange = [client=_client]( SubscriptionId id, StatusCode sc ){
+			BlockTAwait<bool>( UAStrandAwait<bool>{client, [client, id, sc]{ SubscriptionStatusChanged( client, id, sc ); return true; }} );
+		};
+		statusChange( subscriptionId+1, UA_STATUSCODE_BADTIMEOUT );
+		statusChange( subscriptionId, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( listener->Lost.load(), 0u ) << "another subscription's, or another status, was taken for a loss";
+		EXPECT_EQ( _client->SubscriptionId(), subscriptionId );
+
+		statusChange( subscriptionId, UA_STATUSCODE_BADTIMEOUT );
+		ASSERT_EQ( listener->Lost.load(), 1u ) << "the listener was not told its subscription went";
+		Stopwatch sw;
+		while( !listener->PushesAfterRestore )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "no push after the rebuild";
+		EXPECT_EQ( listener->Restored.load(), 1u );
+		EXPECT_NE( _client->SubscriptionId(), subscriptionId ) << "the items are still on the dropped subscription";
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 );
+		drainListener( _client, listener, before );
+	}
+	//The other way a subscription goes - the connection itself (ConnectionLost, as ResubscribesAfterClientLoss stages it):  the
+	//dying client's park tells the listener before ConnectionLost returns, and the reconnect's rebuild restores on a new client.
+	TEST_F( SubscribeTests, ConnectionLossReachesTheListener ){
+		const NodeId nodeId{ 4, 6017 };
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		let lost = _client->Handle();
+		let lostAfter = Clock::now();
+		UAClient::ConnectionLost( sp<UAClient>{_client} );
+		ASSERT_EQ( listener->Lost.load(), 1u ) << "the park did not tell the listener";
+		{
+			lg _{ listener->Mutex };
+			EXPECT_EQ( listener->LostNodes, flat_set<NodeId>{nodeId} );
+			EXPECT_GE( listener->LostAt, lostAfter );
+		}
+		sp<UAClient> revived;//the reconnect waits a second before its first attempt, then connects, subscribes and re-creates the item.
+		Stopwatch sw;
+		while( !listener->PushesAfterRestore ){
+			ASSERT_NO_THROW( sw.CheckTimeout(30s, 10ms) ) << "no push after the reconnect";
+		}
+		for( let& client : UAClient::LiveClients() ){//Try, as ResubscribesAfterClientLoss:  MonitoredNodes() would build one for every live client this walk touches.
+			let nodes = client->Handle()!=lost ? client->TryMonitoredNodes() : nullptr;
+			if( client->Slug()==OpcServerSlug && nodes && nodes->Count() )
+				revived = client;
+		}
+		ASSERT_TRUE( revived ) << "no replacement client holds the restored node";
+		_client = revived;//the suite shares it: later tests must not reach for the deregistered one.
+		EXPECT_EQ( listener->Restored.load(), 1u );
+		EXPECT_EQ( listener->PushesWhileLost.load(), 0u ) << "the new client's subscription delivered a value before ConnectionRestored";
+		drainListener( _client, listener, 0 );
+	}
+	//The listener's parameters reach the server at the create, the ack carries what it granted, and ModifyMonitoredItems changes
+	//them in place - the item count does not move, and a node with no item is refused without a round trip.
+	TEST_F( SubscribeTests, ItemParametersAreTheListenersAndModifiable ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		listener->Parameters = { .SamplingInterval=1000.0, .QueueSize=5 };
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = subscribeListener(_client, listener, nodeId) );
+		ASSERT_EQ( ack.results_size(), 1 );
+		EXPECT_EQ( ack.results(0).status_code(), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( ack.results(0).revised_sampling_interval(), 1000.0 ) << "the server did not take the listener's sampling interval";
+		EXPECT_EQ( ack.results(0).revised_queue_size(), 5u ) << "the server did not take the listener's queue size";
+
+		const NodeId unmonitored{ 4, 6018 };
+		auto results = BlockTAwait<flat_map<NodeId,MonitoredItemModifyResult>>( ModifyMonitoredItemsAwait{{{nodeId, {.SamplingInterval=250.0, .QueueSize=3}}, {unmonitored, {}}}, _client} );
+		ASSERT_EQ( results.size(), 2u ) << "every node asked about has a result";
+		EXPECT_EQ( results.at(nodeId).Status, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( results.at(nodeId).RevisedSamplingInterval, 250.0 );
+		EXPECT_EQ( results.at(nodeId).RevisedQueueSize, 3u );
+		EXPECT_EQ( results.at(unmonitored).Status, UA_STATUSCODE_BADMONITOREDITEMIDINVALID ) << "a node this client does not monitor";
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "a modify is in place - no item was deleted or created";
+		//A second listener joining the item sees the modified parameters in its ack (GetResult reads what Modified stored).
+		auto joiner = ms<StateListener>();
+		let joined = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{nodeId}, joiner, _client} );
+		ASSERT_EQ( joined.results_size(), 1 );
+		EXPECT_EQ( joined.results(0).revised_sampling_interval(), 250.0 );
+		EXPECT_EQ( joined.results(0).revised_queue_size(), 3u );
+		UAClient::Unsubscribe( joiner );
+		drainListener( _client, listener, before );
 	}
 
 	//subscription-disconnect #5: a client dying with a create in flight resumed that subscribe with an ack of zero results for its

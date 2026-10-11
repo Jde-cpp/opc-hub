@@ -34,7 +34,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α Credential::operator==( const Credential& other )Ι->bool{
-		bool equal{ Type() == other.Type() };
+		bool equal{ Type()==other.Type() && _collector==other._collector };
 		if( equal ){
 			switch( Type() ){
 				using enum ETokenType;
@@ -47,6 +47,8 @@ namespace Jde::Opc::Gateway{
 		return equal;
 	}
 	α Credential::operator<( const Credential& other )Ι->bool{
+		if( _collector!=other._collector )//the collector's after every session's, whatever the token.
+			return other._collector;
 		optional<bool> less{ Type() == other.Type() ? optional<bool>{} : Type() < other.Type() };
 		if( !less ){
 			switch( Type() ){
@@ -83,6 +85,8 @@ namespace Jde::Opc::Gateway{
 			case IssuedToken: _display = Ƒ( "token: {:x}", IO::Crc::Calc32c(get<Gateway::Token>(_value)) ); break;//stable across runs, unlike std::hash.
 			case Certificate: _display = Ƒ( "cert: {:x}", get<Crypto::PublicKey>(_value).Hash32() ); break;
 		}
+		if( _collector )
+			_display += " (collector)";
 		return _display;
 	}
 }

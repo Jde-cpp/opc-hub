@@ -11,14 +11,15 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	UABrowsePath::UABrowsePath( std::span<const sv> segments, NsIndex defaultNS )ι:
+	UABrowsePath::UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start )ι:
 		UA_BrowsePath{
-			UA_NODEID_NUMERIC( 0, UA_NS0ID_OBJECTSFOLDER ),
+			{},
 			{ segments.size(), (UA_RelativePathElement*)UA_Array_new(segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]) }
 		}{
+		UA_NodeId_copy( &start, &startingNode );//deep copy - clear() owns it.
 		for( size_t i=0; i<segments.size(); ++i ){
 			auto elem = &relativePath.elements[i];
-			elem->referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_ORGANIZES );
+			elem->referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
 			auto ns = defaultNS;
 			string path{ segments[i] };
 			if( let nsPath = Str::Split(segments[i], '~'); nsPath.size()>1 ){
@@ -28,7 +29,8 @@ namespace Jde::Opc::Gateway{
 					path = Str::Join( std::span{nsPath}.subspan(1), "~" );
 				}
 			}
-			elem->includeSubtypes = elem->isInverse = false;
+			elem->includeSubtypes = true;
+			elem->isInverse = false;
 			elem->targetName = { ns, AllocUAString(path) };
 		}
 	}
