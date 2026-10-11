@@ -56,7 +56,7 @@ export type ChipTones = Record<string,ChipTone>;
 //tooltip and aria-label read; the messages spell out the consequence, which is domain wording the framework cannot guess.
 export type LiveToggle = { enable:string, disable:string, enableMessage?:string, disableMessage?:string };
 export type ViewFieldSettings = {name?:string, displayName?:string, style?:Style, defaultView?:boolean/*=!hidden*/, hidden?:boolean, selection?:string/*OBJECT/UNION sub-selection, e.g. "count" -> `name{count}`; defaults to "id name"/"id"*/, chip?:ChipTones, liveToggle?:LiveToggle};
-type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones, liveToggle?:LiveToggle};
+type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones};
 export type Filter = { operator: Operator, value: DbScalar[] };
 export class Flex{
 	constructor( value:string|number ){
@@ -137,7 +137,6 @@ export class ViewField{
 			this.displayName = json.displayName ?? StringUtils.idToDisplay( this.name );
 			this.selection = json.selection;
 			this.chip = json.chip;
-			this.liveToggle = json.liveToggle;
 		}
 	}
 	toJson( customDisplay:boolean=false ):ViewFieldJson{
@@ -152,8 +151,6 @@ export class ViewField{
 			y["selection"] = this.selection;
 		if( this.chip )
 			y["chip"] = this.chip;
-		if( this.liveToggle )
-			y["liveToggle"] = this.liveToggle;//persisted like `chip`:  a user view saved off the resources list has to come back still holding its Enforced switch, not a bare timestamp
 		return y;
 	}
 	//what query() emits for this field: composite kinds need a sub-selection - an explicit one from settings, else the framework's {id name}/{id} convention (proto.service.fieldColumns).
@@ -190,13 +187,13 @@ export enum ViewType{
 	User
 }
 export class View{
-	constructor( value:ViewConfigArgs|ViewSerializedArgs|View|TableSettings, schema?:TableSchema, defaultSort?:Sort[] ){
+	constructor( value:ViewConfigArgs|ViewSerializedArgs|View|TableSettings, schema?:TableSchema, defaultView?:View ){
 		if( value instanceof View )
 			this.copyConstructor( value as View );
 		else if( (value as ViewConfigArgs).configColumns )
 			this.configConstructor( value as ViewConfigArgs, schema! );
 		else if( (value as ViewSerializedArgs).fields )
-			this.serializedConstructor( value as ViewSerializedArgs, schema!, defaultSort );
+			this.serializedConstructor( value as ViewSerializedArgs, schema!, defaultView );
 		else if( (value as TableSettings).columns )
 			this.tableConstructor( value as TableSettings, schema! );//the cast, as above: TableSettings.filters and ViewSerializedArgs.filters differ in shape, so the union no longer narrows by itself
 	}
@@ -226,7 +223,7 @@ export class View{
 		}
 		this.appendAlwaysQueried( schema );
 	}
-	private serializedConstructor( config:ViewSerializedArgs, schema:TableSchema, defaultSort:Sort[]|undefined ):void{
+	private serializedConstructor( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
 		this.collectionName = config.collectionName;
 		if( config.limit )
@@ -252,9 +249,13 @@ export class View{
 			console.warn( `View '${config.name}' (${config.collectionName}) references ${missing.join(", ")} - not in the schema, dropped.` );
 
 		this.showSelector = config.showSelector;
-		this.sort = config.sort ?? defaultSort ?? [];
+		this.sort = config.sort ?? defaultView?.sort ?? [];
 		this.type = ViewType.User;
 		this.appendAlwaysQueried( schema );//toJson only persists displayed fields, so a saved view arrives without id/slug
+		//The route owns the live toggle, not the saved view:  toJson drops a hidden Enforced column, and `deleted` re-added
+		//without it had query() filter every unenforced resource out.
+		for( const field of this.fields )
+			field.liveToggle = defaultView?.fields.find( f=>f.name==field.name )?.liveToggle;
 	}
 	private tableConstructor(config:TableSettings, schema:TableSchema){
 		this.collectionName = schema.collectionName;
@@ -282,18 +283,6 @@ export class View{
 			this.fields.push( field );
 		else
 			this.fields.splice( description, 0, field );
-	}
-	private columnsToQuery( excludedColumns:string[], includeDeleted:boolean ):ViewField[]{
-		return this.fields.filter( (x)=>
-			(x.displayed || x.name=="id")
-		&& !excludedColumns?.includes(x.name)
-		&& (includeDeleted || x.name!="deleted") );
-	}
-	private columnsToQuerySorted( orderedSpec:string[], excludedColumns:string[]=[], includeDeleted:boolean=false ):ViewField[]{
-		const notInSpec = this.fields.filter( f=>!orderedSpec.includes(f.name) ).map( f=>f.name );
-		let sort = [...orderedSpec, ...notInSpec ];
-		const f = ( x:ViewField,y:ViewField )=>{ return sort.indexOf( x.name )-sort.indexOf( y.name ); };
-		return this.columnsToQuery( excludedColumns, includeDeleted ).sort( f );
 	}
 	private columns( schema:TableSchema, configColumns:(string|ViewFieldSettings)[], defaultHidden:string[] ):ViewField[]{
 		let selectCols = [];

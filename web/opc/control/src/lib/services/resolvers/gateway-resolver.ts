@@ -52,7 +52,7 @@ export class GatewayResolver implements Resolve<GatewayData> {
 		const deleted = QLListResolver.deletedView( defaultView );
 		if( deleted )
 			profile.views.push( deleted );
-		await profile.loadViews( schema.collectionName, this.profileStore, schema, defaultView.sort );
+		await profile.loadViews( schema.collectionName, this.profileStore, schema, defaultView );
 		profile.currentViewIndex = ProfileStore.viewIndex( schema.collectionName );
 
 		return GatewayResolver.load( gateway, {columns: QLListResolver.columns(schema, [], []), pageSettings, profile, schema, results: undefined, routing}, this.routeStore, url );

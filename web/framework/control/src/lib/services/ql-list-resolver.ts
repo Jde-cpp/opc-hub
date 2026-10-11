@@ -128,7 +128,7 @@ export class QLListResolver implements Resolve<QLListData> {
 		const systemViews = QLListResolver.systemViews( schema, routing.tableSettings );
 		var profile = new PageProfile();
 		profile.views.push( ...systemViews );
-		await profile.loadViews( collectionName, profileStore, schema, systemViews[0].sort );
+		await profile.loadViews( collectionName, profileStore, schema, systemViews[0] );
 		profile.currentViewIndex = ProfileStore.viewIndex( collectionName );
 		return {pageSettings, profile, schema, results: null, routing, columns: QLListResolver.columns(schema, routing.tableSettings.columns!, routing.tableSettings.excludedColumns)};
 	}

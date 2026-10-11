@@ -9,7 +9,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { TestBed } from '@angular/core/testing';
 import { TableSchema } from '../../../../model/ql/schema/table-schema';
-import { View } from '../../../../model/ql/view';
+import { View, ViewType } from '../../../../model/ql/view';
 import { QLListSettings } from './ql-list-settings';
 
 const schema = new TableSchema( { name: "User", fields: [
@@ -57,5 +57,47 @@ describe( 'QLListSettings view name', ()=>{
 		el.dispatchEvent( new FocusEvent('focus') );
 		expect( el.selectionStart ).toBe( 0 );
 		expect( el.selectionEnd ).toBe( "Mine".length );
+	} );
+} );
+
+//reviews-issue/317-deleted-rows.md #10:  the Default view saved as "Deleted" stayed a System view, replaced the built-in Deleted
+//view for the session and was never persisted.  A host's system view names are reserved now.
+describe( 'QLListSettings reserved names', ()=>{
+	const create = ( name:string|undefined, type:ViewType )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( QLListSettings );
+		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		view.name = name;
+		view.type = type;
+		fixture.componentRef.setInput( 'view', view );
+		fixture.componentRef.setInput( 'schema', schema );
+		fixture.componentRef.setInput( 'columns', {name: "Name"} );
+		fixture.componentRef.setInput( 'suggestions', {} );
+		fixture.componentRef.setInput( 'reservedNames', ["Users", "Deleted"] );
+		fixture.componentInstance.ngOnInit();
+		fixture.detectChanges();
+		return fixture;
+	};
+	const rename = ( fixture:any, name:string )=>{
+		fixture.componentInstance.name.set( name );
+		fixture.detectChanges();
+		return fixture;
+	};
+	const hint = ( fixture:any ):string|undefined=>fixture.nativeElement.querySelector( 'mat-hint' )?.textContent.trim();
+
+	it( 'will not save under a system view\'s name, and says why', ()=>{
+		const fixture = rename( create(undefined, ViewType.System), "Deleted" );
+		expect( fixture.componentInstance.disableSave() ).toBe( true );
+		expect( hint(fixture) ).toBe( "Deleted is a built-in view" );
+	} );
+	it( 'saves under any other name', ()=>{
+		const fixture = rename( create(undefined, ViewType.System), "Mine" );
+		expect( fixture.componentInstance.disableSave() ).toBe( false );
+		expect( hint(fixture) ).toBeUndefined();
+	} );
+	it( 'still saves a user view under the name it already has', ()=>{
+		const fixture = rename( create("Deleted", ViewType.User), "Deleted" );
+		expect( fixture.componentInstance.reservedName() ).toBe( false );
 	} );
 } );

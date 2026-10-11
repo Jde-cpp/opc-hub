@@ -50,8 +50,12 @@ export class QLListSettings implements OnInit, OnDestroy{
 
 	disableSave():boolean{
 		return ( this.view().isSystem && this.originalName()==this.name() )
-			|| ( this.originalName()==this.name() && !this.view().name );
+			|| ( this.originalName()==this.name() && !this.view().name )
+			|| this.reservedName();
 	}
+	//A system view edited and saved under another system view's name stayed a System view (onViewSave), so it replaced that view
+	//for the session and was never persisted - with Deleted on every list, any list could hit it.
+	reservedName = computed( ()=>this.name()!=this.view().name && this.reservedNames().includes(this.name()) );
 	//Delete only ever removes a saved user view.  It used to share disableSave(), which left it ENABLED for an adhoc view —
 	//and logs' onViewDelete opens with an assertion on the type, so clicking it there threw (via a `debugger;` that freezes
 	//the page outright whenever DevTools/automation is attached).
@@ -60,6 +64,7 @@ export class QLListSettings implements OnInit, OnDestroy{
 	onNameFocus( event:FocusEvent ){ (<HTMLInputElement>event.target).select(); }//was `$event.target.select()` in the template, which type-checks only because EventTarget is loose there
 	onTabIndexChanged( index:number ){ this.tabIndex.set(index); }
 	excludedColumns = input<string[]>([]);
+	reservedNames = input<string[]>([]);//the host's system view names
 	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
 	view = input.required<View>();

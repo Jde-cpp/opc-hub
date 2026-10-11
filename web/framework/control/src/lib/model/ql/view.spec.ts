@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Flex, Operator, Style, View } from './view';
+import { Flex, Operator, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
 import { TableSchema } from './schema/table-schema';
 
 //Mirrors the gateway's ServerConnection: introspected DB columns plus the grafted opcSessions OBJECT (config/introspection/serverConnection.jsonnet).
@@ -51,6 +51,28 @@ describe( "View.query on deleted rows", ()=>{
 	it( "adds no filter to a collection without the column", ()=>{
 		const bare = new TableSchema( {name: "Thing", fields: [{ name: "name", type: { kind: "SCALAR", name: "String" } }]} );
 		expect( new View( {columns: ["name"], sort: "name"}, bare ).query( 0 ).text ).not.toContain( "deleted" );
+	} );
+	//reviews-issue/317-deleted-rows.md #1:  toJson drops a hidden Enforced column, so the saved view came back with a bare
+	//`deleted` and query() filtered every unenforced resource out.
+	describe( "on a saved view", ()=>{
+		const enforced:ViewFieldSettings = {name: "deleted", displayName: "Enforced", liveToggle: {enable: "Enforce", disable: "Stop enforcing"}};
+		const reload = ( columns:(string|ViewFieldSettings)[], hidden?:string )=>{
+			const route = new View( {configColumns: columns, sort: [{active: "name", direction: "asc"}]}, schema );
+			const mine = new View( route );
+			mine.name = "Mine";
+			mine.fields = mine.fields.map( f=>{ const copy = new ViewField( f ); if( f.name==hidden ) copy.displayed = false; return copy; } );
+			const saved:ViewSerializedArgs = JSON.parse( JSON.stringify(mine.toJson({columns, sort: "name"})) );
+			return new View( saved, schema, route ).query( 0 );
+		};
+		it( "lists them on a live-toggle page with the column hidden", ()=>{
+			expect( reload(["name", enforced], "deleted").text ).not.toContain( "deleted:" );
+		} );
+		it( "lists them on a live-toggle page with the column shown", ()=>{
+			expect( reload(["name", enforced]).text ).not.toContain( "deleted:" );
+		} );
+		it( "still leaves them out elsewhere", ()=>{
+			expect( reload(["name", "deleted"], "deleted").text ).toContain( "deleted:$deleted" );
+		} );
 	} );
 } );
 
@@ -124,17 +146,17 @@ describe( "View revival against a changed schema", ()=>{
 		sort: [ {active: "name", direction: "asc"} ]
 	});
 	it( "drops a displayed column the schema no longer has", ()=>{
-		const view = new View( serialized(), schema, [] );
+		const view = new View( serialized(), schema );
 		const names = view.fields.map( f=>f.name );
 		expect( names ).toContain( "name" );
 		expect( names ).not.toContain( "groupings" );
 	} );
 	it( "drops a filter on a column the schema no longer has", ()=>{
-		const view = new View( serialized(), schema, [] );
+		const view = new View( serialized(), schema );
 		expect( view.fieldFilters ).toHaveLength( 0 );
 	} );
 	it( "still builds a query afterwards", ()=>{
-		const view = new View( serialized(), schema, [] );
+		const view = new View( serialized(), schema );
 		const query = view.query( 0 );
 		expect( query.text ).toContain( "serverConnections(" );
 		expect( query.text ).not.toContain( "groupings" );
@@ -142,7 +164,7 @@ describe( "View revival against a changed schema", ()=>{
 	it( "keeps a filter whose column survives", ()=>{
 		const args = serialized();
 		args.filters = [ {name: "url", filter: {operator: Operator.In, value: ["a"]}} ];
-		const view = new View( args, schema, [] );
+		const view = new View( args, schema );
 		expect( view.fieldFilters.map(ff=>ff.field.name) ).toEqual( ["url"] );
 	} );
 } );

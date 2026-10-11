@@ -17,7 +17,7 @@ import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
 import { TableSchema } from '../../../model/ql/schema/table-schema';
-import { DbScalar, FieldFilter, Operator, View } from '../../../model/ql/view';
+import { DbScalar, FieldFilter, Operator, View, ViewType } from '../../../model/ql/view';
 import { Field } from '../../../model/ql/schema/field';
 import { PageProfile } from '../../graphql/model/page-settings';
 import { QLList } from './ql-list';
@@ -132,6 +132,26 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		const page = create();
 		await page.onChangeView( 0 );
 		expect( page.isRefreshing() ).toBe( false );
+	} );
+} );
+
+//reviews-issue/317-deleted-rows.md #10:  the names the settings dialog will not save under.
+describe( 'QLList system view names', ()=>{
+	it( 'lists the named system views, not the default or a user view', ()=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			{ provide: ActivatedRoute, useValue: {data: NEVER, routeConfig: {}} },
+			{ provide: Router, useValue: {navigate: vi.fn()} },
+			{ provide: ComponentPageTitle, useValue: {} },
+			{ provide: IGRAPHQL, useValue: {} },
+			{ provide: SnackbarService, useValue: {error: vi.fn(), exception: vi.fn()} }
+		]});
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		const named = ( name:string|undefined, type=ViewType.System )=>{ const v = new View( {} as any ); v.name = name; v.type = type; return v; };
+		const profile = new PageProfile();
+		profile.views = [named( undefined ), named( "Users" ), named( "Deleted" ), named( "Mine", ViewType.User )];
+		page.resolvedData.set( {profile} as unknown as QLListData );
+		expect( page.systemViewNames() ).toEqual( ["Users", "Deleted"] );
 	} );
 } );
 

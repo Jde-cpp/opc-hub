@@ -248,6 +248,7 @@ export class QLList implements OnInit{
 	displayedFields = computed<ViewField[]>( ()=>{
 		return this.view().fields.filter( v=>v.displayed );
 	});
+	systemViewNames = computed<string[]>( ()=>this.resolvedData().profile.views.filter( v=>v.isSystem && v.name ).map( v=>v.name! ) );
 	//The one column the route declared as a switch, if any.
 	liveToggleField = computed<ViewField|undefined>( ()=>this.view()?.fields.find(f=>f.liveToggle) );
 	pendingLive = signal<unknown[]>( [] );

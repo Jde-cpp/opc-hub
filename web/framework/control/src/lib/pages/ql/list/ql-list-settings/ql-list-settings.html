@@ -4,6 +4,7 @@
 			<!--`name` is already the signal every consumer here reads (disableSave, getView), so it binds natively:  one text
 			field does not need a FormControl on top of it, and [(ngModel)] made this the only template-driven form left.-->
 			<input matInput [value]="name()" (input)="onNameInput($event)" placeholder="View Name" (focus)="onNameFocus($event)">
+			@if( reservedName() ){ <mat-hint>{{ name() }} is a built-in view</mat-hint> }
 		</mat-form-field>
 		<button matButton="tonal" (click)="onSave.emit(getView(false))" [disabled]=disableSave()>Save</button>
 		<button matButton="tonal" (click)="onShow.emit(getView(true))">Show</button>
