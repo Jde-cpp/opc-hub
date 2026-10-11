@@ -377,8 +377,12 @@ namespace Jde::Access::Server{
 			let returnArray = Query.IsPlural();
 			Query.ReturnRaw = true;
 			auto qlRoles = co_await QL::QLAwait( move(Query), UserPK );
+			//The child rows above only seed a role to hang its members on.  A role the query itself filtered out (deleted:null, a
+			//name, a limit) came back anyway, as a bare id with children and no name - the node Access tab's sort threw on it.
+			flat_set<RolePK::Type> returned;
 			auto addRole = [&]( jobject&& roleProperties ){
 				let rolePK = Json::AsNumber<RolePK::Type>( roleProperties, "id" );
+				returned.emplace( rolePK );
 				auto existing = roles.find( rolePK );
 				if( existing!=roles.end() ){
 					for( auto&& [key,value] : roleProperties )
@@ -395,12 +399,14 @@ namespace Jde::Access::Server{
 			jvalue y;
 			if( returnArray ){
 				jarray jRoles;
-				for( auto&& [_,value] : roles )
-					jRoles.emplace_back( move(value) );
+				for( auto&& [pk,value] : roles ){
+					if( returned.contains(pk) )
+						jRoles.emplace_back( move(value) );
+				}
 				y = jRoles;
 			}
-			else if( roles.size() )
-				y = move( roles.begin()->second );
+			else if( auto p = find_if(roles.begin(), roles.end(), [&](let& r){ return returned.contains(r.first); }); p!=roles.end() )
+				y = move( p->second );
 			Resume( move(y) );
 		}
 		catch( boost::system::system_error& e ){

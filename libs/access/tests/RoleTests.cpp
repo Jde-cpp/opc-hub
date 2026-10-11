@@ -83,6 +83,22 @@ namespace Jde::Access::Tests{
 
 	Ω getRole( str slug, UserPK executer )ε->jobject{ return Get("role", slug, executer); }
 
+	//A role the query filters out (deleted:null) that still holds a matched permission was seeded from the permission rows and
+	//returned as a bare {id, permissionRight} - no name, and the node Access tab's sort on it threw.
+	TEST_F( RoleTests, FilteredOutRoleWithAPermissionIsNotReturned ){
+		const RolePK rolePK{ GetId( getRole("roleFilteredTest", GetRoot()) ) };
+		AddRolePermission( rolePK, "users", ERights::Read, ERights::None, GetRoot() );
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteRole( id:{} )", rolePK.Value), {}, GetRoot() );
+		let q = "roles( deleted:null ){ id name permissionRight{ id resource(slug:\"users\", criteria:null){ id } } }";
+		let roles = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
+		EXPECT_FALSE( roles.empty() );
+		for( let& role : roles ){
+			EXPECT_NE( GetId(role.as_object()), rolePK.Value ) << serialize( role );
+			EXPECT_TRUE( role.as_object().contains("name") ) << serialize( role );
+		}
+		QL().QuerySync<jvalue>( Ƒ("mutation restoreRole( id:{} )", rolePK.Value), {}, GetRoot() );
+	}
+
 	TEST_F( RoleTests, AddRemove ){
 		const RolePK rolePK{ GetId( getRole("rolePermissionsTest", GetRoot()) ) };
 		auto initial = AddRolePermission( rolePK, "users", ERights::All, ERights::None, GetRoot() );
