@@ -7,7 +7,6 @@ namespace Jde::Opc::Gateway{
 		//One item per node, in the map's order - the server answers by position, which is how UAMonitoringNodes reads the
 		//response.  `timestamps` is the request's:  BOTH by default - init is SOURCE alone, and NodeValues carries the server's too.
 		CreateMonitoredItemsRequest( const flat_map<NodeId,MonitoringParameters>& nodes, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ι;
-		CreateMonitoredItemsRequest( flat_set<NodeId>&& nodes, const MonitoringParameters& parameters={}, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ι;//every node alike
 		CreateMonitoredItemsRequest( CreateMonitoredItemsRequest&& x )ι;
 		~CreateMonitoredItemsRequest(){ UA_CreateMonitoredItemsRequest_clear( this ); }
 		α operator=( CreateMonitoredItemsRequest&& x )ι->CreateMonitoredItemsRequest&;
@@ -30,9 +29,6 @@ namespace Jde::Opc::Gateway{
 			item.requestedParameters.discardOldest = parameters.DiscardOldest;
 		}
 	}
-	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( flat_set<NodeId>&& nodes, const MonitoringParameters& parameters, UA_TimestampsToReturn timestamps )ι:
-		CreateMonitoredItemsRequest{ [&]{ flat_map<NodeId,MonitoringParameters> y; for( auto& n : nodes ) y.emplace( n, parameters ); return y; }(), timestamps }
-	{}
 	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( CreateMonitoredItemsRequest&& x )ι:
 		UA_CreateMonitoredItemsRequest{ x }{
 		UA_CreateMonitoredItemsRequest_init( &x );

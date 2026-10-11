@@ -183,6 +183,21 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( elsewhere.at("4~Examples").has_value() ) << "a name the start has no child by is no match, not the Objects folder's";
 	}
 
+	//A path with no segments - "" or "/" - names nothing to translate, with parents{} or without:  the query fails with the
+	//server's BadNothingToDo.
+	TEST_F( BrowseTests, EmptyPath ){
+		for( let& [query, path] : vector<tuple<string,string>>{ {"node( opc: $opc, path:$path ){ id parents{ path } }", "/"}, {"node( opc: $opc, path:$path ){ id parents{ path } }", ""}, {"node( opc: $opc, path:$path ){ id }", "/"} } ){
+			auto ql = QL::Parse( string{query}, jobject{{"opc", OpcServerSlug}, {"path", path}}, Schemas(), true );
+			try{
+				BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+				ADD_FAILURE() << query << " '" << path << "' answered";
+			}
+			catch( const Exception& e ){
+				EXPECT_EQ( e.Code(), UA_STATUSCODE_BADNOTHINGTODO ) << query << " '" << path << "':  " << e.what();
+			}
+		}
+	}
+
 	//UserMessage() is the client-facing text.  Its combine branch tested _userMessage inside `if( _userMessage.empty() )`,
 	//so it was dead and a 3-arg exception returned the bare description with the UA status stripped (review3 #14).  what()
 	//is checked alongside to pin down why reviving that branch was not the fix:  ExternalException has already folded the

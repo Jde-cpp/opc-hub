@@ -95,6 +95,8 @@ namespace Jde::Opc::Gateway{
 		α RecordSession()ι->bool;//records the current session's authentication token; true when it names a different session than the last one seen.
 		α ReadSessionToken()Ι->string;//what RecordSession would record, without recording it - empty when the token cannot be read.  Compare with SessionToken() to see whether the session changed, and leave the baseline alone.
 		α SessionToken()Ι->string{ lg _{_sessionTokenMutex}; return _sessionToken; }//the token RecordSession last read - empty means it could not be read, which turns the rebuild off (see there).
+		α RecordBreak()ι->void;//StateCallback, for any state short of an activated session:  the first since the last activation is when the connection broke.
+		α TakeBreak()ι->TimePoint;//when the connection broke, for IDataChange::ConnectionLost - RecordBreak's time, else now - and clears it, so the next loss is a new break.
 		α AddSessionAwait( VoidAwait::Handle h )ι->void;
 		α TriggerSessionAwaitables()ι->void;
 
@@ -172,6 +174,9 @@ namespace Jde::Opc::Gateway{
 		//thread) and read off it through SessionToken()/ReadSessionToken(), so the lock is what keeps a reader - a test, a status
 		//query - from racing a re-activation rather than a precaution against a future one.
 		string _sessionToken; mutable mutex _sessionTokenMutex;
+		//RecordBreak's time, TimePoint{} for none.  The session-loss rebuild only starts once the new session is activated, after the
+		//outage, and spec *Compression*'s late-report rule needs the break, not that.
+		std::atomic<TimePoint> _brokeAt{};
 
 		sp<UA_SetMonitoringModeResponse> _monitoringModeResponse;
 		sp<UA_CreateSubscriptionResponse> _createdSubscriptionResponse;

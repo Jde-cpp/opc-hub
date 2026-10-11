@@ -481,6 +481,49 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 );
 		drainListener( _client, listener, before );
 	}
+	//historian-gateway-plumbing #3:  ConnectionLost reported when the loss was found - for a session loss, the new session's
+	//activation, after the outage - so the historian's late-report rule (spec *Compression*) kept the heartbeats written through
+	//it.  It reports the break StateCallback recorded instead:  the first state short of an activated session, here a round trip
+	//before the rebuild finds the session gone.  The take clears it, so the next loss is a break of its own.
+	TEST_F( SubscribeTests, ConnectionLostCarriesTheBreak ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		auto subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+
+		let brokeAfter = Clock::now();
+		_client->RecordBreak();//as StateCallback records the channel or session going...
+		let brokeBefore = Clock::now();
+		_client->RecordBreak();//...and a later state of the same outage keeps the first.
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );//a round trip, so the take runs well after the break.
+		_client->Resubscribe();
+		ASSERT_EQ( listener->Lost.load(), 1u );
+		{
+			lg _{ listener->Mutex };
+			EXPECT_GE( listener->LostAt, brokeAfter );
+			EXPECT_LE( listener->LostAt, brokeBefore ) << "the time the loss was found, not the break";
+		}
+		Stopwatch sw;
+		while( listener->Restored.load()<1 )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the first rebuild never restored the node";
+
+		subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		let secondAfter = Clock::now();
+		ASSERT_NO_THROW( deleteSubscription(_client, subscriptionId) );
+		_client->Resubscribe();
+		ASSERT_EQ( listener->Lost.load(), 2u );
+		{
+			lg _{ listener->Mutex };
+			EXPECT_GE( listener->LostAt, secondAfter ) << "the first loss's break was reported again";
+		}
+		sw.Reset();
+		while( listener->Restored.load()<2 )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the second rebuild never restored the node";
+		drainListener( _client, listener, before );
+	}
 	//The other way a subscription goes - the connection itself (ConnectionLost, as ResubscribesAfterClientLoss stages it):  the
 	//dying client's park tells the listener before ConnectionLost returns, and the reconnect's rebuild restores on a new client.
 	TEST_F( SubscribeTests, ConnectionLossReachesTheListener ){
