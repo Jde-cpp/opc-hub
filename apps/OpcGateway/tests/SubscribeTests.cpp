@@ -524,6 +524,35 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the second rebuild never restored the node";
 		drainListener( _client, listener, before );
 	}
+	//historian-gateway-plumbing #10:  a server that drops a subscription while the session lives - its lifetime ran out in an
+	//outage the session outlived - says so with a StatusChangeNotification, which only traced:  the items stayed on the client,
+	//dead, and nothing rebuilt them.  OpcServer keeps sessions shorter than subscriptions, so the notification is delivered by
+	//hand, on the strand as open62541 delivers it.  One about another subscription, or with another status, changes nothing.
+	TEST_F( SubscribeTests, ASubscriptionTheServerDropsIsRebuilt ){
+		const NodeId nodeId{ 4, 6017 };
+		let before = _client->MonitoredNodes().Count();
+		auto listener = ms<StateListener>();
+		ASSERT_NO_THROW( subscribeListener(_client, listener, nodeId) );
+		let subscriptionId = _client->SubscriptionId();
+		ASSERT_TRUE( subscriptionId );
+		auto statusChange = [client=_client]( SubscriptionId id, StatusCode sc ){
+			BlockTAwait<bool>( UAStrandAwait<bool>{client, [client, id, sc]{ SubscriptionStatusChanged( client, id, sc ); return true; }} );
+		};
+		statusChange( subscriptionId+1, UA_STATUSCODE_BADTIMEOUT );
+		statusChange( subscriptionId, UA_STATUSCODE_GOOD );
+		EXPECT_EQ( listener->Lost.load(), 0u ) << "another subscription's, or another status, was taken for a loss";
+		EXPECT_EQ( _client->SubscriptionId(), subscriptionId );
+
+		statusChange( subscriptionId, UA_STATUSCODE_BADTIMEOUT );
+		ASSERT_EQ( listener->Lost.load(), 1u ) << "the listener was not told its subscription went";
+		Stopwatch sw;
+		while( !listener->PushesAfterRestore )
+			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "no push after the rebuild";
+		EXPECT_EQ( listener->Restored.load(), 1u );
+		EXPECT_NE( _client->SubscriptionId(), subscriptionId ) << "the items are still on the dropped subscription";
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 );
+		drainListener( _client, listener, before );
+	}
 	//The other way a subscription goes - the connection itself (ConnectionLost, as ResubscribesAfterClientLoss stages it):  the
 	//dying client's park tells the listener before ConnectionLost returns, and the reconnect's rebuild restores on a new client.
 	TEST_F( SubscribeTests, ConnectionLossReachesTheListener ){

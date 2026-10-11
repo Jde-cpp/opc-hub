@@ -12,6 +12,8 @@ namespace Jde::Opc::Gateway{
 		RequestId _requestId{};
 	};
 
+	α SubscriptionStatusChanged( const sp<UAClient>& client, SubscriptionId subscriptionId, StatusCode status )ι->void;//a StatusChangeNotification, on the strand:  the client's current subscription lost is rebuilt.
+
 	struct UnsubscribeAwait final : VoidAwait{
 		UnsubscribeAwait( flat_map<UA_UInt32,flat_set<MonitorId>>&& subscriptions, sp<UAClient> client, SRCE )ι;
 		α await_ready()ι->bool override{ return !_client; }

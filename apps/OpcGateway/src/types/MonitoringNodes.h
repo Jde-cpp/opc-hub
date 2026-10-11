@@ -17,11 +17,12 @@ namespace Jde::Opc::Gateway{
 
 	struct IDataChange{
 		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value )ι->void=0;
-		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session - broken at
-		//`when`, the gateway's clock:  when the client first saw its channel or session go (UAClient::RecordBreak), which can be
-		//well before the loss is found, else when it was found.  They are parked and put back (UAClient::ConnectionLost,
-		//Resubscribe), and ConnectionRestored says when;  a value that arrives between the two was in flight when it broke (spec
-		//*Gaps*).  Called off the monitoring lock, on whichever thread found the loss, after the nodes have left the client.
+		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session or the
+		//subscription (SubscriptionStatusChanged) - broken at `when`, the gateway's clock:  when the client first saw its channel
+		//or session go (UAClient::RecordBreak), which can be well before the loss is found, else when it was found.  They are
+		//parked and put back (UAClient::ConnectionLost, Resubscribe), and ConnectionRestored says when;  a value that arrives
+		//between the two was in flight when it broke (spec *Gaps*).  Called off the monitoring lock, on whichever thread found the
+		//loss, after the nodes have left the client.
 		β ConnectionLost( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/, TimePoint /*when*/ )ι->void{}
 		//The nodes a rebuild put back for this listener - on a live subscription again, called before it delivers their first
 		//value, which is what the historian's gap rule needs.  Never for a node the listener dropped meanwhile, and nothing for
