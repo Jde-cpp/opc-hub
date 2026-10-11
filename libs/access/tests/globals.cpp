@@ -131,21 +131,23 @@ namespace Tests{
 	α columns( sv cols, bool includeDeleted )ε->string{
 		return Ƒ( "id name attributes created updated slug description {} {}", cols, includeDeleted ? "deleted" : "" );
 	}
+	//ql returns deleted rows unless asked not to
+	Ω liveOnly( bool includeDeleted )ι->sv{ return includeDeleted ? "" : ", deleted:null"; }
 	Ω select( sv table, str filter, str cols, UserPK executer, SRCE )ε->jobject{
 		let ql = Ƒ( "{}({}){{ {} }}", table, filter, cols );
 		return QL().QuerySync( ql, {}, executer, true, sl );
 	}
 
 	α Tests::Select( sv table, uint id, UserPK executer, sv cols, bool includeDeleted, SL sl )ε->jobject{
-		return select( DB::Names::ToSingular(table), Ƒ("id:{} ", id), columns(cols, includeDeleted), executer, sl );
+		return select( DB::Names::ToSingular(table), Ƒ("id:{}{} ", id, liveOnly(includeDeleted)), columns(cols, includeDeleted), executer, sl );
 	}
 
 	α Tests::Select( sv table, str slug, UserPK executer, sv cols, bool includeDeleted, SL sl )ε->jobject{
-		return select( DB::Names::ToSingular(table), Ƒ("slug:\"{}\" ", slug), columns(cols, includeDeleted), executer, sl );
+		return select( DB::Names::ToSingular(table), Ƒ("slug:\"{}\"{} ", slug, liveOnly(includeDeleted)), columns(cols, includeDeleted), executer, sl );
 	}
 
 	α Tests::SelectGroup( str slug, UserPK executer, bool includeDeleted )ε->jobject{
-		let ql = Ƒ( "group(slug:\"{}\"){{ id name attributes created updated slug description {} groupMembers{{id name}} }}", slug, includeDeleted ? "deleted" : "" );
+		let ql = Ƒ( "group(slug:\"{}\"{}){{ id name attributes created updated slug description {} groupMembers(deleted:null){{id name}} }}", slug, liveOnly(includeDeleted), includeDeleted ? "deleted" : "" );
 		return QL().QuerySync( ql, {}, executer );
 	}
 	α Tests::SelectPermission( ResourcePK resourcePK, UserPK executer )ε->jobject{
@@ -154,7 +156,7 @@ namespace Tests{
 	}
 
 	α Tests::SelectResource( str slug, UserPK executer, bool includeDeleted, SL sl )ε->jobject{
-		let ql = Ƒ( "resource( schemaName:\"access\", slug:\"{}\", criteria:null ){{ id schemaName allowed name attributes created {} updated slug description }}", slug, includeDeleted ? "deleted" : "" );
+		let ql = Ƒ( "resource( schemaName:\"access\", slug:\"{}\", criteria:null{} ){{ id schemaName allowed name attributes created {} updated slug description }}", slug, liveOnly(includeDeleted), includeDeleted ? "deleted" : "" );
 		return QL().QuerySync( ql, {}, executer, true, sl );
 	}
 	α Tests::SelectUser( str slug, UserPK executer, optional<ProviderPK> provider, bool includeDeleted )->jobject{
@@ -164,7 +166,7 @@ namespace Tests{
 			vars["provider"] = *provider;
 			providerQL = ", provider_id:$provider";
 		}
-		auto selectAll = Ƒ( "user(slug:$slug {}){{ id name attributes created updated slug description provider {} }}", move(providerQL), includeDeleted ? "deleted" : "" );
+		auto selectAll = Ƒ( "user(slug:$slug {}{}){{ id name attributes created updated slug description provider {} }}", move(providerQL), liveOnly(includeDeleted), includeDeleted ? "deleted" : "" );
 		return QL().QuerySync( move(selectAll), vars, executer );
 	}
 

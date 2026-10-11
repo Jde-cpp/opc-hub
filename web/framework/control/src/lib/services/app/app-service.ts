@@ -63,7 +63,7 @@ export class AppService extends ProtoService<FromClient.Transmission,FromServer.
 	}
 
 	async instancePK( instanceName:string, programName?:string ):Promise<number|undefined>{
-		const connections = await this.queryArray<{id?:number, instanceId?:number, instanceName:string, programName:string}>( "connections{instanceId instanceName programName}", null, (m)=>console.log(m) );
+		const connections = await this.queryArray<{id?:number, instanceId?:number, instanceName:string, programName:string}>( "connections(deleted:null){instanceId instanceName programName}", null, (m)=>console.log(m) );
 		const strip = ( p:string )=> p?.startsWith("Jde.") ? p.substring(4) : p;
 		const match = connections.find( c=>c.instanceName==instanceName && (!programName || strip(c.programName)==strip(programName)) );//instance names are only unique per program — "Debug" exists for both the AppServer and the gateway
 		return match?.instanceId ?? match?.id;//servers whose connections view predates the instanceId column emit the instance pk under 'id'

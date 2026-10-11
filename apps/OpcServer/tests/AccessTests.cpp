@@ -37,7 +37,7 @@ namespace Jde::Opc::Server::Tests{
 		Ω addRole( const string& slug, ERights allowed, ERights denied, bool branch=false )ε->void{
 			let userSlug = Ƒ( "{}User", slug );
 
-			auto user = _app->QuerySync( "user(slug:$slug){id}", {{"slug", userSlug}} );
+			auto user = _app->QuerySync( "user(slug:$slug, deleted:null){id}", {{"slug", userSlug}} );
 			if( user.empty() )
 				user = _app->QuerySync<jobject>( "createUser( slug:$slug, name:$name ){id}", {{"slug", userSlug}, {"name", userSlug+" name"}} );
 			let userId = Json::AsNumber<uint>( user.at("id") );
@@ -47,7 +47,7 @@ namespace Jde::Opc::Server::Tests{
 			//Find-or-create, as the user above already is:  createRole on a persisted db trips the roles.slug unique index
 			//and takes the whole suite with it, which is what a non-ctest re-run (recreateDB=false, the documented way to run
 			//beside live services) does every time (opcserver-review3 L30).
-			auto role = _app->QuerySync( "role(slug:$slug){id}", {{"slug", slug_}} );
+			auto role = _app->QuerySync( "role(slug:$slug, deleted:null){id}", {{"slug", slug_}} );
 			let existed = !role.empty();
 			if( !existed )
 				role = _app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug",slug_}, {"name", slug_+" name"}} );
@@ -74,7 +74,7 @@ namespace Jde::Opc::Server::Tests{
 
 			let nodeSlug = jobject{ {"slug","nodeIds"} };
 			_app->QuerySync<jvalue>( "deleteResource( slug:$slug, criteria:null )", nodeSlug );
-			let jroles = _app->QuerySync<jarray>( "roles(){ id slug }", {} );
+			let jroles = _app->QuerySync<jarray>( "roles( deleted:null ){ id slug }", {} );
 			for( let& jrole : jroles )
 				_roles.emplace( jrole.at("slug").get_string(), jrole.at("id").to_number<Access::RolePK::Type>() );
 			if( !_roles.contains(roleSlug("reader")) )//this program's own acl, once - re-creating it trips the same indexes.

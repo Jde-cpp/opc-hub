@@ -22,7 +22,7 @@ namespace Jde::Opc::Gateway::Tests{
 			{ "programName", "Tests.Opc" },
 			{ "name", *Settings::FindString("/instanceName") }
 		};
-		auto q = "connections( programName: $programName, instanceName: $name ) { created }";
+		auto q = "connections( programName: $programName, instanceName: $name, deleted: null ) { created }";
 		auto await = AppClient()->Query<jarray>( move(q), move(vars) );
 		let connections = BlockTAwait<jarray>( move(*await) );
 		ASSERT_EQ( connections.size(), 1 );
@@ -32,7 +32,7 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( AppClientTests, Status ){
-		auto q = "connections{id programName instanceName hostName created status{ memory values } }";
+		auto q = "connections( deleted: null ){id programName instanceName hostName created status{ memory values } }";
 		auto await = AppClient()->Query<jarray>( move(q), {} );
 		let connections = BlockTAwait<jarray>( move(*await) );
 		TRACE( "Connections: {}", serialize(connections) );

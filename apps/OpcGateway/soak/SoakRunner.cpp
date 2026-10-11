@@ -241,7 +241,7 @@ namespace Jde::Opc::Gateway::Soak{
 
 	α SoakRunner::EnsureServerConnections()ε->void{
 		for( let& leg : _legs ){
-			let existing = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\" ){{ id url }}", leg.Slug) );
+			let existing = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\", deleted: null ){{ id url }}", leg.Slug) );
 			if( existing.is_object() && existing.get_object().contains("id") ){
 				INFO( "Server connection '{}' exists: {}.", leg.Slug, serialize(existing) );
 				continue;

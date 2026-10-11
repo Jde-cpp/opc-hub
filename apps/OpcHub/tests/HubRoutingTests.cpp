@@ -58,7 +58,7 @@ namespace Jde::Opc::Hub::Tests{
 
 	//one process, one registration: a Tests.OpcHub row and no separate gateway row.
 	TEST_F( HubRoutingTests, OneConnectionRow ){
-		let data = QL( AppPort(), "connections{ id programName instanceName instanceId }" ).as_object();
+		let data = QL( AppPort(), "connections( deleted:null ){ id programName instanceName instanceId }" ).as_object();
 		uint hub{}, gateway{};
 		for( let& c : Json::AsArray(data, "connections") ){
 			let program = Json::AsString( c.as_object(), "programName" );
@@ -141,7 +141,7 @@ namespace Jde::Opc::Hub::Tests{
 	TEST_F( HubRoutingTests, SecondCopyStopsBeforeTheDatabase ){
 		auto live = [&]{
 			vector<uint> ids;
-			for( let& c : Json::AsArray(QL(AppPort(), "connections{ id }").as_object(), "connections") )
+			for( let& c : Json::AsArray(QL(AppPort(), "connections( deleted:null ){ id }").as_object(), "connections") )
 				ids.push_back( Json::AsNumber<uint>(c.as_object(), "id") );
 			std::ranges::sort( ids );
 			return ids;

@@ -41,7 +41,7 @@ export class OpcNodeLinkResolver implements NodeLinkResolver{
 		for( const gateway of await this.#gateways.gateways() ){
 			let connections:{slug:string}[];
 			try{
-				connections = await gateway.queryArray<{slug:string}>( `serverConnections{ slug }` );
+				connections = await gateway.queryArray<{slug:string}>( `serverConnections(deleted:null){ slug }` );
 			}
 			catch( e ){//down, or refusing (serverConnections enforced, no Read):  a miss on this gateway, not the end of the search
 				console.warn( `node link: '${gateway.slug}' did not list its connections.`, e );

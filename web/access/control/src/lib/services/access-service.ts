@@ -79,7 +79,7 @@ export class AccessService extends AppService implements OnDestroy{
 				//It is in groupTableSettings.excludedColumns, so fieldColumns may not have emitted it at all - drop whatever
 				//is there and append, rather than assigning over a findIndex of -1.
 				fields = fields.filter( f=>!f.startsWith("members") );
-				fields.push( `groupMembers{id isGroup}` );
+				fields.push( `groupMembers(deleted:null){id isGroup}` );
 				fields.push( "id" ); //not in the introspected type (the map table has two surrogate keys, so no pk field) but the subQueries need it.
 				break;
 			case "roles":
@@ -102,7 +102,7 @@ export class AccessService extends AppService implements OnDestroy{
 		break;
 		case "Role":
 			queries = [
-				`acl( permissionId:${id} ){ identities{id isGroup} }`,
+				`acl( permissionId:${id} ){ identities(deleted:null){id isGroup} }`,
 			];
 		break;
 		}

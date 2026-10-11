@@ -11,7 +11,7 @@ export class GatewayCardStatus implements ICardStatus{
 	readonly url = '/gateways';
 	async status():Promise<CardStatusValue>{
 		const gateways = await this.#gateways.gateways();
-		const results = await Promise.allSettled( gateways.map(g=>countRows(g, 'serverConnections', 'slug')) );
+		const results = await Promise.allSettled( gateways.map(g=>countRows(g, 'serverConnections', 'slug', 'deleted:null')) );
 		const isRefusal = ( r:PromiseSettledResult<number> )=>r.status=='rejected' && [401, 403].includes( httpStatus(r.reason) ?? 0 );
 		const refusals = results.filter( isRefusal );
 		if( refusals.length && refusals.length==results.length )
@@ -35,7 +35,7 @@ export class GatewayConnectionsStatus implements ICardStatus{
 	async status( url:string ):Promise<CardStatusValue>{
 		const slug = decodeURIComponent( url.split('/').filter(s=>s.length)[1] );
 		const gateway = (await this.#gateways.gateways()).find( g=>g.slug==slug ) ?? await this.#gateways.gateway( slug );
-		const names = (await queryRows<{name:string}>( gateway, 'serverConnections', 'name' )).map( c=>c.name );
+		const names = (await queryRows<{name:string}>( gateway, 'serverConnections', 'name', 'deleted:null' )).map( c=>c.name );
 		const detail = names.length>2 ? `${names.slice(0, 2).join(', ')} +${names.length-2}` : names.join( ', ' ) || undefined;
 		return { label: plural(names.length, 'connection'), figure: names.length, detail, summary: counted(names.length, 'OPC connection') + (detail ? ` · ${detail}` : '') };
 	}

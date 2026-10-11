@@ -426,7 +426,7 @@ namespace Jde::Opc::Server{
 				UAε( config->sessionPKI.verifyCertificate(&config->sessionPKI, &userToken->certificateData) );
 				auto publicKey = Crypto::ExtractPublicKey( std::span<byte>{(byte*)userToken->certificateData.data, userToken->certificateData.length}, SRCE_CUR );
 				let exp = publicKey.ExponentInt();
-				let user = AppClient()->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {} ){{id slug name}}", publicKey.ModulusHex(), exp), {} );
+				let user = AppClient()->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id slug name}}", publicKey.ModulusHex(), exp), {} );
 				THROW_IF( user.empty(), "Certificate user not found: modulus: {}, exponent: {}", publicKey.ModulusHex(), exp );
 				ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, UserPK{QL::AsId<UserPK::Type>(user)} );
 			}
@@ -478,7 +478,7 @@ namespace Jde::Opc::Server{
 			flat_set<Access::ProviderPK> opcProviders;
 			for( let& p : providers )
 				opcProviders.insert( Json::AsNumber<Access::ProviderPK>(p.as_object(), "id") );
-			let users = AppClient()->QuerySync<jarray>( "users( loginName:$name ){ id providerId }", {{"name", string{loginName}}} );
+			let users = AppClient()->QuerySync<jarray>( "users( loginName:$name, deleted:null ){ id providerId }", {{"name", string{loginName}}} );
 			for( let& u : users ){
 				let& o = u.as_object();
 				if( !opcProviders.contains(Json::FindNumber<Access::ProviderPK>(o, "providerId").value_or(0)) )

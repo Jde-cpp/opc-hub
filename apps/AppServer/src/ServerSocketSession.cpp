@@ -215,7 +215,7 @@ namespace Jde::App::Server{
 		try{
 			THROW_IF( !Session(), "Not logged in to system." );
 			jobject vars{ {"id", UserPK().Value} };
-			let user = co_await QL::QLAwait<jobject>( "user(id:$id){name slug}", move(vars), {UserPK::System}, QLPtr() );
+			let user = co_await QL::QLAwait<jobject>( "user(id:$id, deleted:null){name slug}", move(vars), {UserPK::System}, QLPtr() );
 			let info = Web::Server::Sessions::Find( SessionId() );
 			THROW_IF( !info, "Session not found." );
 			let expiration = Chrono::ToClock<Clock,steady_clock>( info->Expiration );

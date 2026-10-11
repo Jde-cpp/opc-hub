@@ -37,7 +37,7 @@ export class GatewayCnnctnRouteService implements IRouteService{
 		let route = this._route.snapshot.children[0];
 		let gatewaySlug = route.paramMap.get("gateway")!;
 		let gateway = await this._gatewayService.gateway( gatewaySlug );
-		let connections = await gateway.queryArray<any>( `serverConnections{ name slug }`,  );
+		let connections = await gateway.queryArray<any>( `serverConnections(deleted:null){ name slug }`,  );
 		for( const c of connections )
 			y.push( new RouteItem({path: c.slug, title: c.name, icon: "lan"}) );
 

@@ -92,16 +92,16 @@ namespace Jde::Access::Server{
 			membersQL.Args.erase( "id" );
 		}
 		membersQL.JsonName = "groupMembers";
-		auto statement = QL::SelectStatement( membersQL, {}, false );
+		auto statement = QL::SelectStatement( membersQL, false );
 		for( let& [name,value] : groupArgs ){
-			if( name=="is_group" )
+			if( name=="is_group" || name=="deleted" )//the view's deleted is the member's:  `groups(deleted:null)` filters the groups, `groupMembers(deleted:null)` the members
 				continue;
 			string groupName = name=="id"
 				? "groupId"
 				: name=="slug" ? "group_slug" : name;
 			membersQL.Args[groupName] = value;
 		}
-		statement.Where = QL::ToWhereClause( membersQL, groupTable, membersQL.FindColumn("deleted")!=nullptr );
+		statement.Where = QL::ToWhereClause( membersQL, groupTable );
 		return statement;
 	}
 

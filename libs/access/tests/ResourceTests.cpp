@@ -17,7 +17,7 @@ namespace Jde::Access::Tests{
 		let slugFilter = slug.size() ? Ƒ( ", slug:\"{}\"", slug ) : "";
 		if( filter.size() )
 			filter = Ƒ( ", criteria:\"{}\"", filter );
-		let ql = Ƒ( "resources( schemaName:\"access\"{}{} ){{ id schemaName allowed name attributes created {} updated slug description }}", slugFilter, filter, includeDeleted ? "deleted" : "" );
+		let ql = Ƒ( "resources( schemaName:\"access\"{}{}{} ){{ id schemaName allowed name attributes created {} updated slug description }}", slugFilter, filter, includeDeleted ? "" : ", deleted:null", includeDeleted ? "deleted" : "" );
 		return QL().QuerySync<jarray>( ql, {}, GetRoot() );
 	}
 
