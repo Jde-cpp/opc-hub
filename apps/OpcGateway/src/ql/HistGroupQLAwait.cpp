@@ -8,7 +8,6 @@
 #include "../async/NamespacesAwait.h"
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
-#include "../types/ServerCnnctn.h"
 #include "../UAClient.h"
 
 #define let const auto
@@ -54,16 +53,21 @@ namespace Jde::Opc::Gateway{
 			return;
 		let table = m.TableName();
 		let args = m.ExtrapolateVariables();
-		HistThresholdColumns::FromJson( args ).Check( sl );
+		HistThresholdColumns::FromJson( args, sl ).Check( sl );
 		if( m.Type==Create ){
 			let require = [&]( sv name ){
 				if( let p = args.if_contains(name); !p || p->is_null() )
 					refuse( Ƒ("{} is required.", name), sl );
 			};
+			let requireId = [&]( sv name ){
+				require( name );
+				if( let& id = args.at(name); !id.try_to_number<uint32>() )
+					refuse( Ƒ("{} is a row's id, not {}.", name, serialize(id)), sl );
+			};
 			if( table==Groups )
-				require( "serverConnectionId" );
+				requireId( "serverConnectionId" );
 			else if( table==GroupNodes ){
-				require( "histGroupId" );
+				requireId( "histGroupId" );
 				require( "node" );
 			}
 			else if( table==TemplateNodes ){
@@ -145,10 +149,7 @@ namespace Jde::Opc::Gateway{
 	private:
 		α Execute()ι->VoidTask{
 			try{
-				auto connections = co_await Any( ServerCnnctnAwait{DB::Key{(uint)_connection}, true} );
-				if( connections.empty() )
-					throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Connection {} not found.", _connection };
-				let slug = connections.front().Slug;
+				let slug = co_await SlugAwait{ _connection, _sl };
 				ConnectAwait connect{ string{slug}, HistHost::Instance().Collector(slug) };//an lvalue:  ConnectAwait is neither copied nor moved.
 				auto client = co_await Any( connect );
 				let namespaces = co_await Any( NamespacesAwait{client} );
@@ -202,7 +203,7 @@ namespace Jde::Opc::Gateway{
 				check( _query, _sl );
 				jobject spelled;//the columns spelled here, which the result carries over what the caller sent.
 				if( _query.Type==EMutationQL::Create && _query.TableName()==Groups ){
-					let connection = *_query.TryNumber<ServerCnnctnPK>( "serverConnectionId" );
+					let connection = _query.AsNumber<ServerCnnctnPK>( "serverConnectionId", _sl );
 					spelled["guid"] = Jde::ToString( boost::uuids::random_generator{}() );
 					if( let root = _query.FindPtr("root"); root && !root->is_null() ){
 						auto node = ParseHistNode( *root, _sl );
@@ -221,6 +222,8 @@ namespace Jde::Opc::Gateway{
 					auto node = ParseHistNode( _query.As<jvalue>("node", _sl), _sl );
 					spelled["node"] = node.namespaceUri.length ? HistNodeText( node ) : co_await SpellAwait{ move(node), group.Connection, _sl };
 				}
+				else if( _query.Type==EMutationQL::Create && _query.TableName()==TemplateNodes )//one spelling, so (hist_template_id, path) is the member's key.
+					spelled["path"] = HistPathText( ParseHistPath(_query.As<jstring>("path", _sl), _sl) );
 				for( let& [key,value] : spelled )
 					_query.Args[key] = value;
 

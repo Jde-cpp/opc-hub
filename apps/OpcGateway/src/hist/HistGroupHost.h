@@ -26,9 +26,9 @@ namespace Jde::Opc::Gateway{
 		α Join( const HistGroupNodeRow& row, Opc::Hist::Thresholds thresholds, optional<Opc::Hist::Writer> by, SRCE )ε->void;
 		//The node leaves, its NodeRemoved by `by`, and its item goes.  Throws as Group::Remove does.
 		α Leave( HistGroupNodePK index, optional<Opc::Hist::Writer> by, SRCE )ε->void;
-		//A node's thresholds re-resolved:  the library's, and its item's sampling and queue changed in place (spec *Collector
-		//contract*).  Throws as Group::SetThresholds does.
-		α SetNodeThresholds( HistGroupNodePK index, Opc::Hist::Thresholds thresholds, SRCE )ε->void;
+		//Nodes' thresholds re-resolved:  the library's, and in one ModifyMonitoredItems the sampling and queue of each item whose
+		//parameters that changes, in place (spec *Collector contract*).  Throws as Group::SetThresholds does.
+		α SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SRCE )ε->void;
 		α FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
 		α Subscribed()Ι->uint;//the members the server has given items.
@@ -50,7 +50,9 @@ namespace Jde::Opc::Gateway{
 		static constexpr Duration PublishingInterval{ 500ms };//the subscription's default, which SubscribeAwait keeps.
 		static constexpr Duration RetryInterval{ 30s };
 	private:
-		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; };
+		//Warned:  its namespace or its item was refused, and logged as a warning once.  Stale:  its thresholds changed while a create
+		//was out, which asked for the old parameters, so the pass modifies the item.
+		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
 		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;

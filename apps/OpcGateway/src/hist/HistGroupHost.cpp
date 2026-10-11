@@ -49,20 +49,32 @@ namespace Jde::Opc::Gateway{
 		if( id )
 			Unsubscribe( {*id} );
 	}
-	α HistGroupHost::SetNodeThresholds( HistGroupNodePK index, Opc::Hist::Thresholds thresholds, SL sl )ε->void{
-		_group->SetThresholds( index, thresholds, sl );
-		optional<NodeId> id;
-		{
-			lg _{ _mutex };
-			auto p = _nodes.find( index );
-			if( p==_nodes.end() )
-				return;
-			p->second.Thresholds = thresholds;
-			if( p->second.Subscribed )
-				id = p->second.Id;
+	α HistGroupHost::SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SL sl )ε->void{
+		flat_map<NodeId,MonitoringParameters> modify;
+		try{
+			for( auto& [index,thresholds] : nodes ){
+				_group->SetThresholds( index, thresholds, sl );
+				lg _{ _mutex };
+				auto p = _nodes.find( index );
+				if( p==_nodes.end() )
+					continue;
+				auto& node = p->second;
+				let parameters = Parameters( thresholds );
+				let changed = parameters!=Parameters( node.Thresholds );//a deviation, or Stepped, or MaxTimeInterval:  the item has nothing to change.
+				node.Thresholds = move( thresholds );
+				if( changed && node.Subscribed )
+					modify.emplace( *node.Id, parameters );
+				else if( changed )
+					node.Stale = true;
+			}
 		}
-		if( id )
-			Modifying( {{*id, Parameters(thresholds)}} );
+		catch( const runtime_error& ){//the nodes before it are the library's already, so their items follow.
+			if( modify.size() )
+				Modifying( move(modify) );
+			throw;
+		}
+		if( modify.size() )
+			Modifying( move(modify) );
 	}
 	α HistGroupHost::FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>{
 		lg _{ _mutex };
@@ -71,7 +83,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		lg _{ _mutex };
-		vector<std::pair<HistGroupNodePK,ExNodeId>> y; y.reserve( _nodes.size() );
+		auto y = Reserve<std::pair<HistGroupNodePK,ExNodeId>>( _nodes.size() );
 		for( let& [index,node] : _nodes )
 			y.emplace_back( index, node.Ex );
 		return y;
@@ -130,26 +142,47 @@ namespace Jde::Opc::Gateway{
 						_byNode.insert_or_assign( *node.Id, index );
 					}
 					nodes.emplace( *node.Id );
+					node.Stale = false;//this create asks for the thresholds as they are now.
 				}
 			}
 			if( nodes.size() ){
 				co_await Any( SubscribeAwait{client} );
 				auto ack = co_await Any( DataChangeAwait{nodes, self, client} );
-				uint created{};
-				for( let& result : ack.results() ){
-					NodeId node{ ProtoUtils::ToNodeId(result.node()) };
-					if( result.status_code() ){
-						WARN( "[{}]'{}' refused an item for '{}':  {}.", _guid, _slug, node.ToString(), UAException::Message(result.status_code()) );
-						retry = true;
-						continue;
-					}
+				bool closed;
+				{
 					lg _{ _mutex };
-					if( auto p = _byNode.find(node); p!=_byNode.end() ){
-						if( auto n = _nodes.find(p->second); n!=_nodes.end() && !std::exchange(n->second.Subscribed, true) )
-							++created;
-					}
+					closed = _closed;
 				}
-				INFO( "[{}]{} of {} items created on '{}'.", _guid, created, nodes.size(), _slug );
+				if( closed )//Close ran while this pass was out:  before the create registered this host, its unsubscribe found nothing to drop.
+					UAClient::Unsubscribe( self );
+				else{
+					uint created{};
+					flat_map<NodeId,MonitoringParameters> stale;//edited while the create was out:  SetNodeThresholds left their items to this.
+					for( let& result : ack.results() ){
+						NodeId node{ ProtoUtils::ToNodeId(result.node()) };
+						lg _{ _mutex };
+						let p = _byNode.find( node );
+						let n = p==_byNode.end() ? _nodes.end() : _nodes.find( p->second );
+						if( result.status_code() ){
+							retry = true;
+							if( n==_nodes.end() || !std::exchange(n->second.Warned, true) ){//braced:  the log macros expand to a bare `if`.
+								WARN( "[{}]'{}' refused an item for '{}':  {}.", _guid, _slug, node.ToString(), UAException::Message(result.status_code()) );
+							}
+							else{
+								DBG( "[{}]'{}' refused an item for '{}' again:  {}.", _guid, _slug, node.ToString(), UAException::Message(result.status_code()) );
+							}
+							continue;
+						}
+						if( n!=_nodes.end() && !std::exchange(n->second.Subscribed, true) ){
+							++created;
+							if( std::exchange(n->second.Stale, false) )
+								stale.emplace( move(node), Parameters(n->second.Thresholds) );
+						}
+					}
+					INFO( "[{}]{} of {} items created on '{}'.", _guid, created, nodes.size(), _slug );
+					if( stale.size() )
+						Modifying( move(stale) );
+				}
 			}
 		}
 		catch( const runtime_error& e ){
@@ -162,10 +195,10 @@ namespace Jde::Opc::Gateway{
 			_subscribing = false;
 			again = std::exchange( _again, false );
 		}
-		if( retry )
-			Retry();
-		else if( again )
+		if( again )//a member that joined meanwhile is asked for now, not a RetryInterval on:  that pass schedules the retry itself.
 			Subscribe();
+		else if( retry )
+			Retry();
 	}
 	α HistGroupHost::Retry()ι->void{
 		auto self = shared_from_this();

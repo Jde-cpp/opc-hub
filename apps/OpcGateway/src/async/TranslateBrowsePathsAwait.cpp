@@ -14,7 +14,7 @@ namespace Jde::Opc::Gateway{
 		}
 		_client->PostUA( [this]{//UA submissions must run on the client's strand; `this` outlives suspension (resume only via OnComplete).
 			try{
-				const UA_TranslateBrowsePathsToNodeIdsRequest request{ {}, _paths.size(), _paths.data() };//borrows _paths:  the service encodes it before it returns.
+				UA_TranslateBrowsePathsToNodeIdsRequest request{ {}, _paths.size(), _paths.data() };//borrows _paths:  the service encodes it before it returns.  Not const:  sendRequest writes its header through a cast.
 				UACε( __UA_Client_AsyncService(*_client, &request, &UA_TYPES[UA_TYPES_TRANSLATEBROWSEPATHSTONODEIDSREQUEST], OnResponse, &UA_TYPES[UA_TYPES_TRANSLATEBROWSEPATHSTONODEIDSRESPONSE], this, &_requestId) );
 				_client->Process( _requestId, "translateBrowsePathsToNodeIds" );
 			}

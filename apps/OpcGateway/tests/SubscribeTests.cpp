@@ -1110,6 +1110,30 @@ namespace Jde::Opc::Gateway::Tests{
 		(void)_client->MonitoredNodes().Unsubscribe( {nodeId}, listener );//nothing of it may linger for later tests, whatever the outcome above.
 	}
 
+	//The close path's unsubscribe, a listener whole, inside the same round trip:  it erased the create's call, so the answer found
+	//none, the subscribe was acked with no results, and the item the server made was never deleted (historian-groups-templates #3).
+	TEST_F( SubscribeTests, CloseReachesACreateStillOut ){
+		const NodeId nodeId{ 4, 6017 };
+		if( _client->MonitoredNodes().Count() )
+			GTEST_SKIP() << "an earlier test left items monitored";
+		ASSERT_NO_THROW( BlockVoidAwait(SubscribeAwait{_client}) );
+		auto listener = ms<PushCount>();
+		HeldCreate create{ _client, nodeId, listener };
+		if( _client->MonitoredNodes().Count() )
+			GTEST_SKIP() << "the create answered before the strand was held - nothing was in flight to unsubscribe";
+
+		_client->MonitoredNodes().Unsubscribe( listener );
+
+		FromServer::SubscriptionAck ack;
+		ASSERT_NO_THROW( ack = create.Ack() );
+		ASSERT_EQ( ack.results_size(), 1 ) << "the answer found no call:  the item it made is left on the server";
+		EXPECT_EQ( ack.results(0).status_code(), UA_STATUSCODE_BADREQUESTCANCELLEDBYCLIENT );
+		std::this_thread::sleep_for( 1500ms );//an item the answer attached would have pushed its initial value by now.
+		EXPECT_EQ( listener->Pushes.load(), 0u ) << "the closed listener is being sent data changes";
+		EXPECT_EQ( _client->MonitoredNodes().Count(), 0u ) << "the answer attached the node its listener had closed";
+		EXPECT_EQ( listener.use_count(), 1 ) << "the client still holds the listener";
+	}
+
 	//And a rebuild's create, where both of the by-node unsubscribe's steps now find the node:  the create drops it, and the rebuild
 	//has to forget it as well (GatewaySocketSession::Unsubscribe asks _pending/_rebuilds for every node, not just what is left) -
 	//or it counts the node as refused, and parks it again should the client die.  The rebuild goes straight to its create, as in

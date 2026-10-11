@@ -17,12 +17,18 @@ namespace Jde::Opc::Gateway{
 			.Stepped = row.GetBitOpt( i+4 )
 		};
 	}
-	α HistThresholdColumns::FromJson( const jobject& args )ι->HistThresholdColumns{
-		let number = [&]( sv name )->optional<double>{ let p = args.if_contains( name ); return p && p->is_number() ? optional<double>{ p->to_number<double>() } : nullopt; };
-		let format = number( "exceptionDeviationFormat" );
+	α HistThresholdColumns::FromJson( const jobject& args, SL sl )ε->HistThresholdColumns{
+		let number = [&]( sv name )->optional<double> { let p = args.if_contains( name ); return p && p->is_number() ? optional<double>{ p->to_number<double>() } : nullopt; };
+		optional<uint8> format;
+		if( let p = args.if_contains("exceptionDeviationFormat"); p && !p->is_null() ){
+			let value = p->try_to_number<uint8>();//not a cast:  a double out of uint8's range is undefined, and 259 passed Check as 3.
+			if( !value )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "exceptionDeviationFormat must be 0 (AbsoluteValue) to 3 (PercentOfEURange), not {}.", serialize(*p) };
+			format = *value;
+		}
 		return {
 			.ExceptionDeviation = number( "exceptionDeviation" ),
-			.DeviationFormat = format ? optional<uint8>{ (uint8)*format } : nullopt,
+			.DeviationFormat = format,
 			.MinTimeInterval = number( "minTimeInterval" ),
 			.MaxTimeInterval = number( "maxTimeInterval" ),
 			.Stepped = Json::FindBool( args, "stepped" )
@@ -144,7 +150,7 @@ namespace Jde::Opc{
 		let array = parsed.if_array();
 		if( !array || array->empty() )
 			refuse( "a path is a json list of {nsu, name} segments, at least one." );
-		vector<HistPathSegment> y; y.reserve( array->size() );
+		auto y = Reserve<HistPathSegment>( array->size() );
 		for( let& segment : *array ){
 			let o = segment.if_object();
 			let uri = o ? Json::FindSV( *o, "nsu" ) : nullopt;
@@ -186,6 +192,10 @@ namespace Jde::Opc{
 			where.Add( view->GetColumnPtr("hist_group_id"), (uint)*filter.Group );
 		if( filter.TemplateNode )
 			where.Add( view->GetColumnPtr("hist_template_node_id"), (uint)*filter.TemplateNode );
+		if( filter.Connection )
+			where.Add( view->GetColumnPtr("server_connection_id"), (uint)*filter.Connection );
+		if( filter.Node )
+			where.Add( view->GetColumnPtr("node"), DB::Value{*filter.Node} );
 		auto columns = vector<string>{ "hist_group_node_id", "hist_group_id", "server_connection_id", "node", "hist_template_node_id" };
 		for( auto& name : HistThresholdColumns::Names() )
 			columns.push_back( move(name) );

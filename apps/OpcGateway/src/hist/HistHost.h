@@ -15,6 +15,15 @@ namespace Jde::Opc::Gateway{
 	private:
 		Work _work;
 	};
+	//A connection's slug, deleted or not:  what the collector's client is keyed by.  NotFound for a connection that doesn't exist.
+	struct SlugAwait final : AnyAwait<string>{
+		SlugAwait( ServerCnnctnPK connection, SRCE )ι:AnyAwait<string>{ sl }, _connection{ connection }{}
+	protected:
+		α Suspend()ι->void override{ Execute(); }
+	private:
+		α Execute()ι->VoidTask;
+		ServerCnnctnPK _connection;
+	};
 	//A template member as resolveHistory answers it (spec *Templates*):  its row and path, the node it resolved to, and
 	//Good once it has a hist_group_nodes row, else why it hasn't.
 	struct HistResolved final{ HistTemplateNodePK TemplateNode; string Path; optional<ExNodeId> Node; StatusCode Status; };
@@ -34,10 +43,11 @@ namespace Jde::Opc::Gateway{
 		Ω Instance()ι->HistHost&;
 		//The settings, the library, the groups the tables hold and their items.  Blocks on the load:  Gateway::Connect's thread.
 		α Start()ε->void;
-		//Every item goes and every group's last flush runs:  before the UA clients go, while the executor still runs.
+		//Every item goes and every group's last flush runs, here or once a load or remove in flight lets go of the historian:  before
+		//the UA clients go, while the executor still runs.
 		α Stop()ι->void;
-		α Enabled()Ι->bool{ return _historian && _historian->Enabled(); }
-		α Historian()Ι->Opc::Hist::Historian*{ return _historian.get(); }
+		α Enabled()Ι->bool{ auto historian = Historian(); return historian && historian->Enabled(); }
+		α Historian()Ι->sp<Opc::Hist::Historian>{ lg _{ _mutex }; return _historian; }
 		α Find( HistGroupPK id )Ι->sp<HistGroupHost>;
 		α Groups()Ι->vector<sp<HistGroupHost>>;
 		//The collector's credential for a connection (spec *Collector contract*):  /gateway/hist/credentials/<slug>'s user and
@@ -47,15 +57,16 @@ namespace Jde::Opc::Gateway{
 		//Resolves every member of the group's template that has no hist_group_nodes row yet:  each path that resolves on the
 		//group's connection, from its root, becomes a row through createHistGroupNode as `by`, whose hook joins the node.  One
 		//answer per member of the template.  A server that can't be reached fails every pending member with the connect's
-		//status, and a member whose node another group already holds answers Bad_NodeIdExists.  A group with no template has
-		//no members to answer.  Throws for a group that doesn't exist.
+		//status.  A member whose node another group holds, or this one as another member or an ad hoc node, answers Bad_NodeIdExists,
+		//one a concurrent resolve made the row for Good, one whose row `by` may not create Bad_UserAccessDenied, and one whose create
+		//failed otherwise Bad_InternalError.  A group with no template has no members to answer.  Throws for a group that doesn't exist.
 		α Resolve( HistGroupPK group, UserPK by, SRCE )ι->HistResolveAwait{ return { group, by, sl }; }
 
 		//HistGroupMAwait's:  the live side of each table edit, after the row is written, or before it goes.
 		α GroupCreated( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask;
 		α GroupEdited( DB::Key key, HistWork& await )ι->VoidTask;//its threshold columns:  every member's re-resolved.
 		α GroupDeleted( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//every member leaves, by the caller.
-		α GroupRestored( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//its rows join again.
+		α GroupRestored( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//its rows join again, and the members its template gained meanwhile resolve.
 		α GroupPurging( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask;//as deleted, then its hist_group_nodes rows go.
 		α NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask;
 		α NodeEdited( HistGroupNodePK id, HistWork& await )ι->VoidTask;
@@ -73,7 +84,7 @@ namespace Jde::Opc::Gateway{
 		//RemoveGroup and Close:  the host, for a caller to wait on its last flush, or null for a group that isn't live.
 		α Remove( HistGroupPK id, optional<Opc::Hist::Writer> by, SL sl )ι->sp<HistGroupHost>;
 
-		up<Opc::Hist::Historian> _historian;
+		sp<Opc::Hist::Historian> _historian;//an sp read under _mutex:  a load or remove in flight keeps the one Stop let go of.
 		mutable std::mutex _mutex;
 		flat_map<HistGroupPK,sp<HistGroupHost>> _groups;
 		bool _stopped{};

@@ -23,7 +23,7 @@ namespace Jde::Opc::Gateway{
 	struct HistThresholdColumns final{
 		Ω Names()ι->vector<string>{ return {"exception_deviation", "exception_deviation_format", "min_time_interval", "max_time_interval", "stepped"}; }
 		Ω Read( const DB::Row& row, uint first )ι->HistThresholdColumns;//the five cells from `first`, in Names' order.
-		Ω FromJson( const jobject& args )ι->HistThresholdColumns;//the QL names; a null is none.
+		Ω FromJson( const jobject& args, SRCE )ε->HistThresholdColumns;//the QL names; a null is none.  A format that isn't a whole number from 0 to 255 is a BadRequest, as Check's.
 		α Over( const HistThresholdColumns& fallback )Ι->HistThresholdColumns;//this, with fallback where this is null.
 		α Thresholds()Ι->Opc::Hist::Thresholds;//the library's, defaults where null.
 		//A value the library would refuse - a negative deviation or interval, an unknown format - as a BadRequest naming it, so
@@ -104,8 +104,9 @@ namespace Jde::Opc::Gateway{
 	//hist_groups:  by key, by template, or all; deleted rows only when asked.
 	struct HistGroupFilter final{ optional<DB::Key> Key; optional<HistTemplatePK> Template; bool IncludeDeleted{}; };
 	α SelectHistGroups( HistGroupFilter filter={}, SRCE )ι->HistRowsAwait<HistGroupRow>;
-	//hist_group_nodes:  by row, by group, by template member, or all.
-	struct HistGroupNodeFilter final{ optional<HistGroupNodePK> Id; optional<HistGroupPK> Group; optional<HistTemplateNodePK> TemplateNode; };
+	//hist_group_nodes:  by row, by group, by template member, by connection and node - the unique index, the node as HistNodeText
+	//spells it - or all.
+	struct HistGroupNodeFilter final{ optional<HistGroupNodePK> Id; optional<HistGroupPK> Group; optional<HistTemplateNodePK> TemplateNode; optional<ServerCnnctnPK> Connection; optional<string> Node; };
 	α SelectHistGroupNodes( HistGroupNodeFilter filter={}, SRCE )ι->HistRowsAwait<HistGroupNodeRow>;
 	//hist_template_nodes:  by row, by template, or all.
 	struct HistTemplateNodeFilter final{ optional<HistTemplateNodePK> Id; optional<HistTemplatePK> Template; };
