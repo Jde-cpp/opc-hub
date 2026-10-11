@@ -13,8 +13,5 @@ namespace Jde::DB{
 		α EmbedParams()Ι->string;
 	};
 
-	Φ SelectSql( vec<sp<Column>> columns, FromClause from, WhereClause where, SRCE )ε->Sql;
-	Φ SelectSql( vec<string> columns, FromClause from, WhereClause where, SRCE )ε->Sql;
-	Φ SelectSKsSql( sp<Table> table )ε->Sql;
 }
 #undef Φ

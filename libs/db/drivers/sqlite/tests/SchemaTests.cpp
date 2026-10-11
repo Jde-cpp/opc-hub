@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <jde/db/db.h>
 #include <jde/db/meta/Column.h>
+#include <jde/db/generators/Statement.h>
 #include "../../../src/meta/IServerMeta.h"
 #include "../../../src/meta/ddl/TableDdl.h" //complete type for LoadTable's sp<TableDdl>.
 #include "../../../src/meta/ddl/Index.h" //complete type for LoadIndexes' vector<Index>.
@@ -369,22 +370,9 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_EQ( placeholders(where.ToString()), where.Params().size() ) << where.ToString(); //#8: one '?' per bound param.
 
 		//and it parses - a clause reaching a real sqlite parser is what the old spelling could never survive.
-		auto sql = DB::SelectSql( vector<sp<Column>>{col}, FromClause{table}, move(where) );
+		auto sql = DB::Statement{ SelectClause{col}, FromClause{table}, move(where) }.Move();
 		let text = sql.Text;
 		EXPECT_NO_THROW( _ds->Select(move(sql)) ) << text;
-	}
-
-	//#40: SelectSql with empty columns overwrote the trailing space of "select " with '\n' ("select\nfrom..."). Guard the comma->newline replacement.
-	TEST_P( SchemaTests, SelectSqlEmptyColumns ){
-		auto schema = DB::GetCluster( GetParam(), ms<Access::Authorize>("SqliteTests") )->GetAppSchema( "access" );
-		auto table = schema->GetTablePtr( "identities" );
-		ASSERT_TRUE( table );
-		let empty = DB::SelectSql( vector<sp<Column>>{}, FromClause{table}, WhereClause{} );
-		EXPECT_TRUE( empty.Text.starts_with("select \n") ) << empty.Text; //space preserved, not clobbered to '\n'.
-		EXPECT_FALSE( empty.Text.starts_with("select\n") ) << empty.Text; //the bug.
-		let sks = DB::SelectSKsSql( table ); //non-empty columns still well-formed: trailing ',' -> newline, no dangling comma.
-		EXPECT_TRUE( sks.Text.starts_with("select ") ) << sks.Text;
-		EXPECT_EQ( sks.Text.find(",\n"), string::npos ) << sks.Text; //no comma left immediately before the from-newline.
 	}
 
 	//#15: Table::Initialize must be idempotent - SchemaDdl::SyncTables re-initializes every table after the ctor's Initialize, and re-init duplicated PKTable->Children.

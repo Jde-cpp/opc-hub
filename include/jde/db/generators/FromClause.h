@@ -28,7 +28,6 @@ namespace Jde::DB{
 		α Empty()Ι->bool;
 		α GetColumnPtr( sv name, SL sl )Ε->sp<Column>;
 		α GetFirstTable( SRCE )Ε->sp<Table>;
-		α SetActive( WhereClause& where, SRCE )ε->void;
 		α HasJoin()Ι->bool{ return Joins.size() && Joins[0].To; }
 		vector<Join> Joins;
 	};
