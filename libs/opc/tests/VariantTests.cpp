@@ -1,47 +1,21 @@
-//Variant is the persistence path:  ToUAJson() writes one UA-JSON string per element into the db, ToUAValues() reads
-//them back, ToArrayDims()/ArrayDimString() carry the shape alongside.  These are the round trips reviews/opc-review2.md
-//says would have caught most of the review.
+//Variant: ownership, construction from json, ToJson's per-element shapes, and the historian's protobuf round trip.
 #include <gtest/gtest.h>
-#include <jde/db/Value.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Variant.h>
 #include <jde/opc/proto/opc.Common.h>
+#include "helpers.h"
 
 #define let const auto
 
 namespace Jde::Opc::Tests{
-	Ω scalarVariant( const void* value, const UA_DataType& type )ι->UA_Variant{
-		UA_Variant v{};
-		UA_Variant_setScalarCopy( &v, value, &type );
-		return v;
-	}
-	Ω arrayVariant( const void* values, uint count, const UA_DataType& type )ι->UA_Variant{
-		UA_Variant v{};
-		UA_Variant_setArrayCopy( &v, values, count, &type );
-		return v;
-	}
-	Ω stored( const vector<string>& uaJson )ι->flat_map<uint,string>{
-		flat_map<uint,string> y;
-		for( uint i=0; i<uaJson.size(); ++i )
-			y.emplace( i, uaJson[i] );
-		return y;
-	}
-
 	TEST( VariantTests, EmptyAndScalar ){
 		EXPECT_TRUE( Variant( UA_Variant{} ).IsNull() );
-		EXPECT_TRUE( Variant( UA_Variant{} ).ToUAJson().empty() );
 
 		const UA_Int32 i{ 42 };
 		Variant scalar{ scalarVariant(&i, UA_TYPES[UA_TYPES_INT32]) };
 		EXPECT_FALSE( scalar.IsNull() );
 		EXPECT_TRUE( scalar.IsScalar() );
-		EXPECT_EQ( serialize(scalar.ToJson(true)), "42" );
-	}
-
-	TEST( VariantTests, StatusCodeScalar ){
-		Variant v{ (StatusCode)UA_STATUSCODE_BADNODEIDUNKNOWN };
-		EXPECT_TRUE( v.IsScalar() );
-		EXPECT_EQ( v.type, &UA_TYPES[UA_TYPES_STATUSCODE] );
+		EXPECT_EQ( serialize(scalar.ToJson()), "42" );
 	}
 
 	TEST( VariantTests, MoveEmptiesTheSource ){
@@ -60,7 +34,7 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( Variant( jvalue{1.5}, nullptr ).type, &UA_TYPES[UA_TYPES_DOUBLE] );
 		EXPECT_EQ( Variant( jvalue{5}, nullptr ).type, &UA_TYPES[UA_TYPES_INT64] );
 		EXPECT_EQ( Variant( jvalue{5u}, nullptr ).type, &UA_TYPES[UA_TYPES_UINT64] );
-		EXPECT_EQ( serialize(Variant( jvalue{"abc"}, nullptr ).ToJson(true)), R"("abc")" );
+		EXPECT_EQ( serialize(Variant( jvalue{"abc"}, nullptr ).ToJson()), R"("abc")" );
 		EXPECT_THROW( Variant( jvalue{}, nullptr ), Exception ); //nothing to infer from.
 	}
 
@@ -80,7 +54,7 @@ namespace Jde::Opc::Tests{
 		Variant i32{ jvalue{5}, &UA_TYPES[UA_TYPES_INT32] };
 		ASSERT_TRUE( i32.IsScalar() );
 		EXPECT_EQ( *(const UA_Int32*)i32.data, 5 );
-		EXPECT_EQ( serialize(i32.ToJson(true)), "5" );
+		EXPECT_EQ( serialize(i32.ToJson()), "5" );
 
 		Variant f{ jvalue{1.5}, &UA_TYPES[UA_TYPES_FLOAT] };
 		EXPECT_FLOAT_EQ( *(const UA_Float*)f.data, 1.5f );
@@ -91,8 +65,8 @@ namespace Jde::Opc::Tests{
 
 	TEST( VariantTests, ScalarToJsonUsesTheOpcShapeForNodeIds ){
 		let n = NodeId{ 2, 5002 };
-		Variant v{ scalarVariant(static_cast<const UA_NodeId*>(&n), UA_TYPES[UA_TYPES_NODEID]) };
-		let j = v.ToJson( true );
+		Variant v{ scalarVariant(&n, UA_TYPES[UA_TYPES_NODEID]) };
+		let j = v.ToJson();
 		EXPECT_EQ( j.at("ns").to_number<int>(), 2 );
 		EXPECT_EQ( j.at("i").to_number<int>(), 5002 );
 	}
@@ -103,17 +77,17 @@ namespace Jde::Opc::Tests{
 	//the descriptor address, so an alias took the vendor spelling here while Value::ToJson gave it {seconds,nanos}.
 	TEST( VariantTests, ArrayElementsUseTheSameShapeAsAScalar ){
 		const UA_NodeId ids[]{ {2, UA_NODEIDTYPE_NUMERIC, {5002}}, {3, UA_NODEIDTYPE_NUMERIC, {5003}} };
-		let arrayJson = Variant{ arrayVariant(ids, 2u, UA_TYPES[UA_TYPES_NODEID]) }.ToJson( true );
+		let arrayJson = Variant{ arrayVariant(ids, 2u, UA_TYPES[UA_TYPES_NODEID]) }.ToJson();
 		ASSERT_TRUE( arrayJson.is_array() );
 		EXPECT_EQ( arrayJson.as_array()[1].at("ns").to_number<int>(), 3 );
 		EXPECT_EQ( arrayJson.as_array()[1].at("i").to_number<int>(), 5003 );
 
-		let scalarJson = Variant{ scalarVariant(&ids[1], UA_TYPES[UA_TYPES_NODEID]) }.ToJson( true );
+		let scalarJson = Variant{ scalarVariant(&ids[1], UA_TYPES[UA_TYPES_NODEID]) }.ToJson();
 		EXPECT_EQ( serialize(arrayJson.as_array()[1]), serialize(scalarJson) ) << "one type, one shape, whatever the value rank";
 
 		//UtcTime is a DateTime by kind, so it takes the DateTime arm rather than the vendor's spelling.
 		const UA_DateTime utc{ UA_DateTime_fromUnixTime(1700000000) };
-		let utcJson = Variant{ scalarVariant(&utc, UA_TYPES[UA_TYPES_UTCTIME]) }.ToJson( true );
+		let utcJson = Variant{ scalarVariant(&utc, UA_TYPES[UA_TYPES_UTCTIME]) }.ToJson();
 		EXPECT_EQ( utcJson.at("seconds").to_number<int64_t>(), 1700000000 );
 	}
 
@@ -121,184 +95,39 @@ namespace Jde::Opc::Tests{
 		const UA_Int32 values[]{ 1, 2, 3 };
 		Variant v{ arrayVariant(values, 3u, UA_TYPES[UA_TYPES_INT32]) };
 		EXPECT_FALSE( v.IsScalar() );
-		EXPECT_EQ( serialize(v.ToJson(true)), "[1,2,3]" );
+		EXPECT_EQ( serialize(v.ToJson()), "[1,2,3]" );
 	}
 
-	TEST( VariantTests, ArrayDims ){
-		let dims = Variant::ToArrayDims( "2,3" );
-		ASSERT_EQ( get<1>(dims), 2u );
-		EXPECT_EQ( get<0>(dims)[0], 2u );
-		EXPECT_EQ( get<0>(dims)[1], 3u );
-
-		auto data = UA_Array_new( 6, &UA_TYPES[UA_TYPES_INT32] );
-		ASSERT_NE( data, nullptr );
-		Variant v{ 0, {6u, data}, dims, UA_TYPES[UA_TYPES_INT32] }; //takes ownership of both allocations.
-		EXPECT_EQ( v.ArrayDimString(), "2,3" );
-
-		let none = Variant::ToArrayDims( "" );
-		EXPECT_EQ( get<0>(none), nullptr );
-		EXPECT_EQ( get<1>(none), 0u );
-		EXPECT_TRUE( Variant( UA_Variant{} ).ArrayDimString().empty() );
-	}
-
-	//The persistence round trip.  ToUAJson emits one raw UA-JSON token per element and ToUAValues decodes them back;
-	//the strings have to reach the db unmodified.
-	TEST( VariantTests, UaJsonArrayRoundTrip ){
-		const UA_Int32 values[]{ 1, 2, 3 };
-		Variant original{ arrayVariant(values, 3u, UA_TYPES[UA_TYPES_INT32]) };
-		let json = original.ToUAJson();
-		ASSERT_EQ( json.size(), 3u );
-		EXPECT_EQ( json[0], "1" );
-		EXPECT_EQ( json[2], "3" );
-
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], stored(json), true );
-		ASSERT_NE( data, nullptr );
-		ASSERT_EQ( count, 3u );
-		Variant round{ 0, {count, data}, Variant::ToArrayDims("3"), UA_TYPES[UA_TYPES_INT32] };
-		EXPECT_EQ( serialize(round.ToJson(true)), "[1,2,3]" );
-		EXPECT_EQ( round.ArrayDimString(), "3" );
-	}
-
-	TEST( VariantTests, UaJsonScalarRoundTrip ){
-		let text = ToUV( "tag value" );
-		Variant original{ scalarVariant(&text, UA_TYPES[UA_TYPES_STRING]) };
-		let json = original.ToUAJson();
-		ASSERT_EQ( json.size(), 1u );
-		EXPECT_EQ( json[0], R"("tag value")" );
-
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_STRING], stored(json), false );
-		ASSERT_NE( data, nullptr );
-		EXPECT_EQ( count, 0u ); //a single value decodes as a scalar - arrayLength 0, data non-null.
-		Variant round{ 0, {count, data}, Variant::ToArrayDims(""), UA_TYPES[UA_TYPES_STRING] };
-		EXPECT_TRUE( round.IsScalar() );
-		EXPECT_EQ( serialize(round.ToJson(true)), R"("tag value")" );
-	}
-
-	TEST( VariantTests, ToUAValuesNeedsRawUaJson ){
-		flat_map<uint,string> raw;
-		raw.emplace( 0u, "5" );
-		let [rawCount, rawData] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], move(raw), false );
-		ASSERT_NE( rawData, nullptr );
-		EXPECT_EQ( rawCount, 0u );
-		EXPECT_EQ( *(const UA_Int32*)rawData, 5 );
-		UA_delete( rawData, &UA_TYPES[UA_TYPES_INT32] );
-
-		flat_map<uint,string> quoted;
-		quoted.emplace( 0u, serialize(jvalue{"5"}) ); //exactly what serialize(array[i]) writes today.
-		let [quotedCount, quotedData] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], move(quoted), false );
-		EXPECT_EQ( quotedCount, 0u );
-		EXPECT_EQ( quotedData, nullptr ) << R"(an Int32 column holding "5" must not decode)";
-	}
-
-
-	//#10 (fixed): a one-element array collapsed to a scalar ("size==1 would be an array") while the caller still applied
-	//the persisted arrayDimensions, producing scalar data with arrayDimensionsSize 1 - open62541 answers BadTypeMismatch,
-	//so one-element arrays did not survive a restart.  The stored dims, not the element count, decide.
-	TEST( VariantTests, OneElementArrayStaysAnArray ){
-		const UA_Int32 one[]{ 5 };
-		Variant original{ arrayVariant(one, 1u, UA_TYPES[UA_TYPES_INT32]) };
-		ASSERT_FALSE( original.IsScalar() );
-		let json = original.ToUAJson();
-		ASSERT_EQ( json.size(), 1u ); //indistinguishable from a scalar by count alone - hence the isArray argument.
-
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], stored(json), true );
-		ASSERT_NE( data, nullptr );
-		ASSERT_EQ( count, 1u );
-		Variant round{ 0, {count, data}, Variant::ToArrayDims("1"), UA_TYPES[UA_TYPES_INT32] };
-		EXPECT_FALSE( round.IsScalar() ) << "scalar data carrying arrayDimensions is what open62541 rejects";
-		EXPECT_EQ( serialize(round.ToJson(true)), "[5]" );
-		EXPECT_EQ( round.ArrayDimString(), "1" );
-	}
-
-	//...and the same single stored element still reloads as a scalar when no dims were persisted.
-	TEST( VariantTests, OneElementScalarStaysAScalar ){
-		flat_map<uint,string> one;
-		one.emplace( 0u, "5" );
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], move(one), false );
-		ASSERT_NE( data, nullptr );
-		EXPECT_EQ( count, 0u );
-		Variant round{ 0, {count, data}, Variant::ToArrayDims(""), UA_TYPES[UA_TYPES_INT32] };
-		EXPECT_TRUE( round.IsScalar() );
-		EXPECT_EQ( serialize(round.ToJson(true)), "5" );
-	}
-
-	//review3 #3: ArrayDimString() returns "" for a scalar and VariantInsertAwait bound that string, which sqlite, mysql
-	//and odbc all store as a *non-null* empty text - so VariantAwait's `isArray`, derived from the column, was true for
-	//every row and every persisted scalar reloaded as a one-element array.  UA_Server_writeValue then answers
-	//BadTypeMismatch for array data on a scalar-ranked member, i.e. every object instantiated after a restart failed.
-	//ArrayDimValue() owns the shape instead.  This walks the caller's contract in VariantAwait's order: bind the value,
-	//derive isArray from what came back, hand that to ToUAValues.
-	TEST( VariantTests, AScalarPersistsNullDimensions ){
-		const UA_Int32 i{ 5 };
-		Variant scalar{ scalarVariant(&i, UA_TYPES[UA_TYPES_INT32]) };
-		ASSERT_TRUE( scalar.IsScalar() );
-		EXPECT_TRUE( scalar.ArrayDimString().empty() );
-		EXPECT_FALSE( DB::Value{string{}}.is_null() ) << "the old binding: an empty dims string is a value, not NULL";
-		let dims = scalar.ArrayDimValue();
-		ASSERT_TRUE( dims.is_null() ) << "a non-null column is what made the reload call this an array";
-
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], stored(scalar.ToUAJson()), !dims.is_null() );
-		ASSERT_NE( data, nullptr );
-		EXPECT_EQ( count, 0u );
-		Variant round{ 0, {count, data}, Variant::ToArrayDims(""), UA_TYPES[UA_TYPES_INT32] };
-		EXPECT_TRUE( round.IsScalar() );
-		EXPECT_EQ( serialize(round.ToJson(true)), "5" );
-	}
-
-	//The other half, and review2 #10's residual: an array that declares no arrayDimensions - what UA_Variant_setArrayCopy
-	//leaves - would reload as a scalar if the column were NULL for it too, since one element cannot be told from a scalar
-	//by its count.  It persists its length instead, so the same walk keeps it an array.
-	TEST( VariantTests, AnArrayWithNoDimensionsPersistsItsLength ){
-		const UA_Int32 one[]{ 7 };
-		Variant array{ arrayVariant(one, 1, UA_TYPES[UA_TYPES_INT32]) };
-		ASSERT_FALSE( array.IsScalar() );
-		EXPECT_TRUE( array.ArrayDimString().empty() ) << "setArrayCopy sets arrayLength, not arrayDimensions";
-		let dims = array.ArrayDimValue();
-		ASSERT_FALSE( dims.is_null() );
-		EXPECT_EQ( dims.get_string(), "1" );
-
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], stored(array.ToUAJson()), !dims.is_null() );
-		ASSERT_NE( data, nullptr );
-		EXPECT_EQ( count, 1u );
-		Variant round{ 0, {count, data}, Variant::ToArrayDims(dims.get_string()), UA_TYPES[UA_TYPES_INT32] };
-		EXPECT_FALSE( round.IsScalar() );
-		EXPECT_EQ( serialize(round.ToJson(true)), "[7]" );
-		EXPECT_EQ( round.ArrayDimValue().get_string(), "1" ) << "write->read->write has to be stable";
-	}
-
-	//review3 #12: ToUAValues documents "the variant loads as null" and returns {0,nullptr} for a row it cannot decode,
-	//but the receiving ctor stamped `type` and the caller's arrayDimensions onto it anyway.  The result was a *typed*
-	//variant with data==NULL - UA_Variant_isEmpty looks at `type` alone, so IsNull() was false and ToJson() gave [] -
-	//and with stored dims the binary encoder answers BadEncodingError, which closes the channel on every Read that
-	//touches the node.  Logs one expected ERR, the same one ToUAValuesNeedsRawUaJson above provokes.
-	TEST( VariantTests, ADecodeFailureLoadsAsAGenuinelyNullVariant ){
-		flat_map<uint,string> quoted;
-		quoted.emplace( 0u, serialize(jvalue{"5"}) );//json-quoted: the pre-review2 column shape ToUAValues' comment names.
-		let [count, data] = Variant::ToUAValues( UA_TYPES[UA_TYPES_INT32], move(quoted), false );
-		ASSERT_EQ( data, nullptr );
-
-		Variant v{ 7, {count, data}, Variant::ToArrayDims("2,3"), UA_TYPES[UA_TYPES_INT32] };//dims the ctor now has to free.
-		EXPECT_TRUE( v.IsNull() );
-		EXPECT_EQ( v.type, nullptr );
-		EXPECT_EQ( v.arrayLength, 0u );
-		EXPECT_EQ( v.arrayDimensionsSize, 0u );
-		EXPECT_EQ( v.arrayDimensions, nullptr );
-		EXPECT_TRUE( v.ToUAJson().empty() );
-		EXPECT_EQ( v.VariantPK, 7u );//the pk still identifies the row that could not be read.
-	}
-
-	//#11 (fixed): open62541 uses a non-empty outBuf as a hard limit, so the fixed 2096-byte buffer in uaJsonString capped
-	//every value - a large but perfectly valid string/ByteString/ExtensionObject threw BadEncodingLimitsExceeded instead
-	//of encoding.  uaJsonString now passes an empty UA_String and lets the encoder size it, which also drops a 2 KB
-	//malloc per element.
+	//#11 (fixed): open62541 uses a non-empty outBuf as a hard limit, so a fixed 2096-byte buffer capped every value - a
+	//large but perfectly valid string/ByteString/ExtensionObject threw BadEncodingLimitsExceeded instead of encoding.
+	//The encoder now gets an empty UA_String and sizes it.  A String has its own arm, so the large one rides in a Variant,
+	//which has none and goes through the encoder.
 	TEST( VariantTests, LargeValueEncodes ){
 		let text = string( 4096, 'x' );
 		let ua = ToUV( text );
-		Variant v{ scalarVariant(&ua, UA_TYPES[UA_TYPES_STRING]) };
-		vector<string> json;
-		ASSERT_NO_THROW( json = v.ToUAJson() );
-		ASSERT_EQ( json.size(), 1u );
-		EXPECT_EQ( json[0].size(), text.size()+2 ); //the value plus its two quotes.
+		auto inner = scalarVariant( &ua, UA_TYPES[UA_TYPES_STRING] );
+		Variant v{ scalarVariant(&inner, UA_TYPES[UA_TYPES_VARIANT]) };
+		UA_Variant_clear( &inner );
+		jvalue json;
+		ASSERT_NO_THROW( json = v.ToJson() );
+		EXPECT_NE( serialize(json).find(text), string::npos );
+	}
+
+	//B3 (reviews/opc-refactor.md):  Variant::ToJson and Value::ToJson used to be two ladders, and an Int64, a Guid, a NaN
+	//and a ByteString came out of them in two shapes.  Both are ElementToJson now, so one value has one shape.
+	TEST( VariantTests, VariantAndValueAgree ){
+		let expectSame = []( const void* p, const UA_DataType& type ){
+			EXPECT_EQ( serialize(Variant{scalarVariant(p, type)}.ToJson()), serialize(dataValue(p, type).ToJson()) ) << type.typeName;
+		};
+		const UA_Int64 i64{ -5'000'000'000 };	expectSame( &i64, UA_TYPES[UA_TYPES_INT64] );
+		const UA_UInt64 u64{ 5'000'000'000 };	expectSame( &u64, UA_TYPES[UA_TYPES_UINT64] );
+		const UA_Guid guid{ 0x12345678, 0x1234, 0x5678, {0x12,0x34,0x56,0x78,0x12,0x34,0x56,0x78} };	expectSame( &guid, UA_TYPES[UA_TYPES_GUID] );
+		const UA_Double nan{ std::numeric_limits<double>::quiet_NaN() };	expectSame( &nan, UA_TYPES[UA_TYPES_DOUBLE] );
+		const UA_Float f{ 21.3f };	expectSame( &f, UA_TYPES[UA_TYPES_FLOAT] );
+		let bytes = ToUV( "\xde\xad" );	expectSame( &bytes, UA_TYPES[UA_TYPES_BYTESTRING] );
+		const UA_SByte sbyte{ -100 };	expectSame( &sbyte, UA_TYPES[UA_TYPES_SBYTE] );
+		const UA_DateTime utc{ UA_DateTime_fromUnixTime(1700000000) };	expectSame( &utc, UA_TYPES[UA_TYPES_UTCTIME] );
+		const UA_LocalizedText text{ "en"_uv, "Lamp"_uv };	expectSame( &text, UA_TYPES[UA_TYPES_LOCALIZEDTEXT] );
 	}
 
 	//#195, the historian's round trip:  Variant -> Proto::Value -> protobuf's own wire -> Variant.  "The same" is the UA
@@ -460,7 +289,10 @@ namespace Jde::Opc::Tests{
 		matrix.arrayDimensionsSize = 2;
 		Variant m{ move(matrix) };
 		expectRoundTrip( m, "2x3 Int32" );
-		EXPECT_EQ( roundTrip(m).ArrayDimString(), "2,3" );
+		let round = roundTrip( m );
+		ASSERT_EQ( round.arrayDimensionsSize, 2u );
+		EXPECT_EQ( round.arrayDimensions[0], 2u );
+		EXPECT_EQ( round.arrayDimensions[1], 3u );
 
 		for( let type : {UA_TYPES_STRING, UA_TYPES_DOUBLE, UA_TYPES_VARIANT} ){
 			UA_Variant empty{};

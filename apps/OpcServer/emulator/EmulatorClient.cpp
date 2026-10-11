@@ -151,7 +151,7 @@ namespace Jde::Opc::Emulator{
 	}
 	α EmulatorClient::Namespace( sv uri, SL sl )ε->NsIndex{
 		UA_UInt16 index{};
-		check( UA_Client_getNamespaceIndex(_ptr, UA_String{uri.size(), (UA_Byte*)uri.data()}, &index), Ƒ("namespace '{}' is not on the server", uri), sl );
+		check( UA_Client_getNamespaceIndex(_ptr, ToUV(uri), &index), Ƒ("namespace '{}' is not on the server", uri), sl );
 		return index;
 	}
 	α EmulatorClient::Resolve( sv path, NsIndex defaultNs, const flat_map<string,NsIndex>& nsAliases, SL sl )ε->NodeId{

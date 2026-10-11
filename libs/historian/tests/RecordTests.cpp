@@ -195,7 +195,7 @@ namespace Jde::Opc::Hist::Tests{
 		ASSERT_TRUE( read[1].has_node_added() );
 		let& joined = read[1].node_added();
 		EXPECT_EQ( joined.node_index(), speed );
-		EXPECT_EQ( ProtoUtils::ToExNodeId(joined.node()).to_string(), Node("Pump1.Speed").to_string() );
+		EXPECT_EQ( ProtoUtils::ToExNodeId(joined.node()).ToString(), Node("Pump1.Speed").ToString() );
 		EXPECT_EQ( joined.node().namespace_uri(), "urn:jde:pumps" );
 		EXPECT_EQ( joined.ts(), ticks(now) );
 		EXPECT_EQ( joined.identity_id(), Admin.IdentityId.Value );

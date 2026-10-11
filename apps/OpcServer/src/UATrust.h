@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/server.h>
 #include "jde/fwk/usings.h"
 #include <jde/opc/uatypes/Logger.h>
 

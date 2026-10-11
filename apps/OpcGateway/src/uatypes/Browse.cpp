@@ -266,11 +266,11 @@ namespace Browse{
 		VisitWhile( 0, [&, addId=addId](const UA_ReferenceDescription& ref){
 			jobject o;
 			if( Attribs & UA_BROWSERESULTMASK_BROWSENAME )
-				o["browse"] = BrowseName::ToJson( ref.browseName );
+				o["browse"] = Opc::ToJson( ref.browseName );
 			if( Attribs & UA_BROWSERESULTMASK_ISFORWARD )
 				o["isForward"] = ref.isForward;
 			if( Attribs & UA_BROWSERESULTMASK_DISPLAYNAME )
-				o["displayName"] = LocalizedText::ToJson( move(ref.displayName) );
+				o["displayName"] = Opc::ToJson( ref.displayName );
 			if( Attribs & UA_BROWSERESULTMASK_NODECLASS )
 				o["nodeClass"] = ref.nodeClass;
 			if( Attribs & UA_BROWSERESULTMASK_REFERENCETYPEID )

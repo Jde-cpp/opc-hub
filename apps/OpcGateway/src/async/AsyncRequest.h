@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/client.h>
 #include <jde/fwk/co/Timer.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Logger.h>

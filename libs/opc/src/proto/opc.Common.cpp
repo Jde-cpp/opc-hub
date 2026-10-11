@@ -405,7 +405,7 @@ namespace Jde::Opc{
 		case kInt64: return scalar<UA_Int64>( UA_TYPES[UA_TYPES_INT64], v.int64() );
 		case kNode:{
 			let x = ToNodeId( v.node() );
-			return scalar( static_cast<const UA_NodeId*>(&x), UA_TYPES[UA_TYPES_NODEID] );}//upcast, not &x: NodeId is polymorphic, so &x is the vptr.
+			return scalar( &x, UA_TYPES[UA_TYPES_NODEID] );}
 		case kSbyte: return scalar<UA_SByte>( UA_TYPES[UA_TYPES_SBYTE], (UA_SByte)v.sbyte() );
 		case kStatusCode: return scalar<UA_StatusCode>( UA_TYPES[UA_TYPES_STATUSCODE], v.status_code() );
 		case kStringValue: return scalar<UA_String>( UA_TYPES[UA_TYPES_STRING], ToUV(v.string_value()) );

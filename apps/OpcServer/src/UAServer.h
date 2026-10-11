@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/server.h>
 #include <atomic>
 #include "UAConfig.h"
 #include "hist/UAHistory.h"

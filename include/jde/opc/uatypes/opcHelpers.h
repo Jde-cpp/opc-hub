@@ -9,14 +9,46 @@
 #include "../usings.h"
 #include "UAString.h"
 
-#define let const auto
+struct UA_Server;
 namespace Jde::Opc{
-	struct NodeId;
-	α FindDataType( const NodeId& nodeId )ι->UA_DataType*;
+	//`uri`'s index in the server's namespace array; throws when no loaded nodeset declares it.
+	α NamespaceIndex( UA_Server& server, sv uri, SRCE )ε->NsIndex;
 	constexpr α operator ""_uv( const char* x, uint len )ι->UA_String{ return UA_String{ len, static_cast<UA_Byte*>((void*)x) }; } //(UA_Byte*) gcc error
-	Ξ IsKind( const UA_DataType* type, uint16 uaTypeIndex )ι->bool{ return type && type->typeKind==UA_TYPES[uaTypeIndex].typeKind; }
+	//Calls f.template operator()<N>() with the C type N of a numeric kind - Boolean through Double, StatusCode included - and
+	//returns its result; otherwise() for any other kind.  On typeKind, not the descriptor's address, so an alias (Duration,
+	//IntegerId, Counter…) takes its kind's arm.
+	template<class F, class O> α VisitNumeric( const UA_DataType& type, F&& f, O&& otherwise )->decltype(otherwise()){
+		switch( type.typeKind ){
+		case UA_DATATYPEKIND_BOOLEAN: return f.template operator()<UA_Boolean>();
+		case UA_DATATYPEKIND_SBYTE: return f.template operator()<UA_SByte>();
+		case UA_DATATYPEKIND_BYTE: return f.template operator()<UA_Byte>();
+		case UA_DATATYPEKIND_INT16: return f.template operator()<UA_Int16>();
+		case UA_DATATYPEKIND_UINT16: return f.template operator()<UA_UInt16>();
+		case UA_DATATYPEKIND_INT32: return f.template operator()<UA_Int32>();
+		case UA_DATATYPEKIND_UINT32: return f.template operator()<UA_UInt32>();
+		case UA_DATATYPEKIND_INT64: return f.template operator()<UA_Int64>();
+		case UA_DATATYPEKIND_UINT64: return f.template operator()<UA_UInt64>();
+		case UA_DATATYPEKIND_STATUSCODE: return f.template operator()<UA_StatusCode>();
+		case UA_DATATYPEKIND_FLOAT: return f.template operator()<UA_Float>();
+		case UA_DATATYPEKIND_DOUBLE: return f.template operator()<UA_Double>();
+		default: return otherwise();
+		}
+	}
 	Ξ ToJson( UA_UInt64 v )ι->jobject{ return jobject{ {"high", v>>32}, {"low", v&0xFFFFFFFF}, {"unsigned",true} }; };
 	Ξ ToJson( UA_Int64 v )ι->jobject{ return jobject{ {"high", v>>32}, {"low", v&0xFFFFFFFF}, {"unsigned",false} }; };
+	//The inverse:  the number a protobufjs Long {high,low,unsigned} stands for, an int64 or a uint64 per its flag.  Each half
+	//is read as int64 and narrowed to 32 bits - the two above write them unsigned, 0..2^32-1, while protobufjs writes
+	//*signed* int32s, and the cast reads either - then assembled unsigned, so a value past INT64_MAX does not overflow.
+	Ξ FromLong( const jobject& o, SRCE )ε->jvalue{
+		const auto half = [&]( sv key )ε->uint64_t{
+			const auto v = Json::AsNumber<int64_t>( o, key, sl );
+			if( v>0xFFFFFFFFLL || v<-0x80000000LL )
+				throw Exception{ sl, ELogLevel::Error, "Long '{}' is {}, not a 32-bit half - '{}'.", key, v, serialize(o) };
+			return (uint32_t)v;
+		};
+		const uint64_t bits = half("high")<<32 | half("low");
+		return Json::FindBool( o, "unsigned" ).value_or( false ) ? jvalue{ bits } : jvalue{ (int64_t)bits };
+	}
 	Ξ ToGuid( const UA_Guid& ua )ι->uuid{ //data1/2/3 are native-endian in UA_Guid, big-endian (RFC 4122) in uuid.
 		uuid y;
 		y.data[0]=(uint8_t)(ua.data1>>24); y.data[1]=(uint8_t)(ua.data1>>16); y.data[2]=(uint8_t)(ua.data1>>8); y.data[3]=(uint8_t)ua.data1;
@@ -53,15 +85,6 @@ namespace Jde::Opc{
 		return y;
 	};
 
-	Ξ FromByteString( const UA_ByteString& bytes )ι->vector<uint8_t>{
-		vector<uint8_t> y;
-		if( bytes.length ){
-			y.resize( bytes.length );
-			memcpy( y.data(), bytes.data, bytes.length );
-		}
-		return y;
-	};
-
 	//absl::Hash over the fields NodeId/ExNodeId's operator< compares, so it agrees with their equality (reviews/abseil.md D3).
 	//Reseeded every run:  for in-process containers only - never store, send or log one (Calc32c for that, D2).
 	Ŧ HashNodeId( T h, const UA_NodeId& n )ι->T{
@@ -75,4 +98,3 @@ namespace Jde::Opc{
 
 	Τ using Iterable = std::span<T>;
 }
-#undef let

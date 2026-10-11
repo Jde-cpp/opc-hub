@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/server.h>
 #include <jde/access/Authorize.h>
 
 namespace Jde::Opc::Server{ struct UAConfig; }

@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/server.h>
 #include <absl/functional/function_ref.h>
 #include <jde/historian/Group.h>
 #include <jde/opc/uatypes/NodeId.h>

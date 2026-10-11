@@ -1,4 +1,5 @@
 #pragma once
+#include "Owned.h"
 
 namespace Jde::Opc{
 	Ξ ToSV( UA_String s )ι->sv{ return sv{ (const char*)s.data, s.length }; }
@@ -14,11 +15,7 @@ namespace Jde::Opc{
 		return y;
 	}
 
-	struct UAString final : UA_String, noncopyable{
-		UAString()ι:UA_String{}{}
-		explicit UAString( uint size )ι;//a scratch buffer of `size` bytes.  Never as a UA_encodeJson outBuf - see above.
-		~UAString()ι;
-
+	struct UAString final : Owned<UA_String, UA_TYPES_STRING>, noncopyable{
 		α ToString()Ι->string{ return Opc::ToString( *this ); }
 	};
 }

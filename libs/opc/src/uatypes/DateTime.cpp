@@ -77,22 +77,13 @@ namespace Jde::Opc{
 		if( v.is_object() ){
 			let& o = v.get_object();
 			let* secondsPtr = o.if_contains( "seconds" );
-			if( secondsPtr && secondsPtr->is_object() ){ //protobufjs Long form {high,low}
-				//Through the same guard as the plain form below.  Protobuf::ToTimestamp only assembles the two halves;
-				//it was ToTimePoint - from_time_t - that took the result unchecked, so {high:2147483647,low:-1}, which is
-				//what protobufjs emits for INT64_MAX, wrapped to 1969-12-31T23:59:59Z and was written silently.  "nanos"
-				//defaults to 0 here too: that helper throws on a missing one, where the plain form treats it as 0.
-				jobject defaulted;
-				if( !o.contains("nanos") ){
-					defaulted = o;
-					defaulted["nanos"] = 0;
-				}
-				let ts = Protobuf::ToTimestamp( defaulted.empty() ? o : defaulted, sl );
-				_time = at( ts.seconds(), ts.nanos() );
-			}
-			else if( secondsPtr && secondsPtr->is_number() ){ //plain numbers, as ToJson emits
+			//The seconds are a plain number, as ToJson emits them, or the protobufjs Long {high,low} a client's int64 arrives
+			//as - both through `at`'s guard:  the Long form once skipped it, so {high:2147483647,low:-1}, what protobufjs
+			//emits for INT64_MAX, wrapped to 1969-12-31T23:59:59Z and was written silently.
+			if( secondsPtr && (secondsPtr->is_number() || secondsPtr->is_object()) ){
+				let seconds = Json::AsNumber<int64_t>( secondsPtr->is_object() ? FromLong(secondsPtr->get_object(), sl) : *secondsPtr, sl );
 				let* nanos = o.if_contains( "nanos" );
-				_time = at( Json::AsNumber<int64_t>(*secondsPtr, sl), nanos && nanos->is_number() ? Json::AsNumber<int64_t>(*nanos, sl) : 0 );
+				_time = at( seconds, nanos && nanos->is_number() ? Json::AsNumber<int64_t>(*nanos, sl) : 0 );
 			}
 			else
 				throw Exception{ sl, {(ELogTags)EOpcLogTags::Opc}, "Invalid DateTime object: {}", serialize(v) };

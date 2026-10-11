@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/client.h>
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Gateway{

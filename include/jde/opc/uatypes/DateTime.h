@@ -1,4 +1,6 @@
 #pragma once
+#include <google/protobuf/timestamp.pb.h>
+#include "../usings.h"
 
 namespace Jde::Opc{
 	using UATick = std::chrono::duration<UA_Int64,std::ratio<1,10'000'000>>;//UA_DateTime's own unit: 100ns ticks since 1601.

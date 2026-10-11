@@ -12,7 +12,7 @@ namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 	struct HostFixture : ::testing::Test{
 		static ExNodeId Node( sv id, sv uri="urn:jde:pumps" )ι{
-			return ExNodeId{ flat_map<string,string>{ {"nsu", string{uri}}, {"s", string{id}} } };
+			return ExNodeId{ jvalue{jobject{ {"nsu", uri}, {"s", id} }} };
 		}
 		static Value Reading( double v, optional<TimePoint> source={}, optional<TimePoint> server={} )ι{
 			UA_DataValue dv{};

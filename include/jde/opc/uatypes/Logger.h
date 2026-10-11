@@ -1,12 +1,10 @@
 ﻿#pragma once
-#ifndef OPC_LOGGER_H
-#define OPC_LOGGER_H
-#include <open62541/server.h>
+#include <open62541/plugin/log.h>
 
 namespace Jde::Opc{
 	//These extend fwk's ELogTags rather than colliding with it:  fwk uses bits 0-26 of the same 64-bit space, so ours
 	//start above the 32-bit line.  Opc takes the base bit and the vendor's UA_LogCategory values land in their own
-	//order immediately above it, which is what lets UA_Log_Stdout_log map a category to a tag by arithmetic.
+	//order immediately above it, which is what lets Logger::Log map a category to a tag by arithmetic.
 	constexpr uint OpcLogTagBase{ 32 };
 	constexpr uint UaLogTagBase{ OpcLogTagBase+1 };	//UA_LOGCATEGORY_NETWORK==0 lands here.
 	enum class EOpcLogTags : uint{
@@ -34,8 +32,6 @@ namespace Jde::Opc{
 	constexpr ELogTags MonitoringTag{ (ELogTags)EOpcLogTags::Monitoring };
 	constexpr ELogTags DataChangesTag{ MonitoringTag | ELogTags::Pedantic };
 	constexpr ELogTags BrowseTag{ (ELogTags)EOpcLogTags::Browse };
-	constexpr ELogTags BrowseTagPedantic{ (ELogTags)EOpcLogTags::Browse | ELogTags::Pedantic };
-	constexpr ELogTags ProcessingLoopTag{ (ELogTags)EOpcLogTags::ProcessingLoop };
 
 	α Format( const char* format, va_list args )->string;
 
@@ -46,6 +42,7 @@ namespace Jde::Opc{
 	};
 	struct Logger : UA_Logger{
 		Logger( Handle context=0 )ι;
+		Ω Log( void* context, UA_LogLevel level, UA_LogCategory category, const char* message, va_list args )ι->void;//to Logging::LogStack, tagged by category.
+		Ω Clear( UA_Logger* )ι->void{}
 	};
 }
-#endif

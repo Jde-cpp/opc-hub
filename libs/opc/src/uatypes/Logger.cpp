@@ -18,9 +18,7 @@ namespace Jde::Opc{
 		UA_String_clear( &str );
 		return y;
 	}
-	α Clear( UA_Logger* /*context*/ )ι->void{}
-
-	α UA_Log_Stdout_log( void *context, UA_LogLevel uaLevel, UA_LogCategory category, const char *m, va_list args )ι->void{
+	α Logger::Log( void *context, UA_LogLevel uaLevel, UA_LogCategory category, const char *m, va_list args )ι->void{
 		let level = (ELogLevel)( (int)uaLevel/100-1 ); //level==UA_LOGLEVEL_DEBUG=200
 		uint tag_ = 1ull << (UaLogTagBase+(uint)category);
 		const EOpcLogTags tag = (EOpcLogTags)( tag_ );
@@ -31,7 +29,7 @@ namespace Jde::Opc{
 	}
 
 	Logger::Logger( Handle uaHandle )ι:
-		UA_Logger{ UA_Log_Stdout_log, (void*)uaHandle, Clear }
+		UA_Logger{ Log, (void*)uaHandle, Clear }
 	{}
 	α UALogParser::ToString( ELogTags tags )Ι->string{
 		string y;

@@ -112,7 +112,7 @@ namespace Jde::Opc::Hist::Tests{
 
 	//The URI names the namespace; the index is OpcServer's own numbering, which the group ignores.
 	TEST_F( ServerHost, NamespaceByUri ){
-		ExNodeId noUri{ flat_map<string,string>{ {"ns", "2"}, {"s", "Pump1.Speed"} } };
+		ExNodeId noUri{ parse(R"({"ns":2,"s":"Pump1.Speed"})") };
 		EXPECT_THROW( Server->Add({noUri}), Exception );
 
 		auto indexed = Node( "Pump1.Speed" );

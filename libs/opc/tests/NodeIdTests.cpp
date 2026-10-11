@@ -1,9 +1,8 @@
-//NodeId: ownership, ordering, and the three round trips the review asks for - ToJson->FromJson, ToString->DecodeJson
-//and InsertParams (the shape the insert procs dispatch on) - across all four identifier kinds.
+//NodeId: ownership, ordering, and the two round trips the review asks for - ToJson->FromJson and ToString->DecodeJson -
+//across all four identifier kinds.
 #include <concepts>
 #include <gtest/gtest.h>
 #include <absl/hash/hash.h>
-#include <jde/db/Value.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/ql/types/TableQL.h>
 
@@ -44,14 +43,6 @@ namespace Jde::Opc::Tests{
 		EXPECT_FALSE( n.Guid() );
 		EXPECT_FALSE( n.Bytes() );
 		EXPECT_EQ( numeric(0, 7).namespaceIndex, 0 );
-	}
-
-	TEST( NodeIdTests, SystemNodes ){
-		EXPECT_TRUE( NodeId::ObjectsFolder().IsSystem() );
-		EXPECT_TRUE( numeric(0, 32750).IsSystem() );
-		EXPECT_FALSE( numeric(0, 32751).IsSystem() );
-		EXPECT_FALSE( numeric(2, 85).IsSystem() );  //a vendor namespace is never a system node...
-		EXPECT_FALSE( fromJson(R"({"s":"tag"})").IsSystem() ); //...and neither is a non-numeric identifier.
 	}
 
 	//Every wrapper owns its identifier:  a copy allocates its own, a move leaves the source as the null node id.
@@ -138,8 +129,8 @@ namespace Jde::Opc::Tests{
 
 	//L16: AllocUAString and the UA_String_fromChars( ….c_str() ) sites measured the source with strlen, so an identifier
 	//holding an embedded NUL was truncated at it - while the socket path (opc.Common.cpp) copies by size, so the same
-	//node id addressed two different nodes depending on which door it came in, and InsertParams stored more bytes than
-	//the Row constructor read back.  Nothing mainstream emits such an id; this pins the asymmetry, not a live bug.
+	//node id addressed two different nodes depending on which door it came in.  Nothing mainstream emits such an id;
+	//this pins the asymmetry, not a live bug.
 	TEST( NodeIdTests, EmbeddedNulSurvivesAStringIdentifier ){
 		const string identifier{ "a\0b", 3 };
 		ASSERT_EQ( identifier.size(), 3u );
@@ -150,11 +141,6 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( *fromObject.String(), identifier );
 
 		EXPECT_EQ( *NodeId{ jvalue{jstring{identifier}} }.String(), identifier );//the bare-string spelling too.
-
-		//What is persisted has to be what comes back: InsertParams binds String(), and the Row ctor reads that column.
-		let params = fromObject.InsertParams();
-		ASSERT_EQ( params.size(), 5u );
-		EXPECT_EQ( params[2].get_string(), identifier );
 
 		EXPECT_TRUE( NodeId{ jvalue{fromObject.ToJson()} }==fromObject );//and the json round trip.
 	}
@@ -232,41 +218,6 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( NodeId::ToString(ids), R"([{"ns":2,"i":5002},{"ns":2,"s":"tag"}])" );
 	}
 
-	TEST( NodeIdTests, InsertParamsNumeric ){
-		let params = numeric( 2, 5002 ).InsertParams();
-		ASSERT_EQ( params.size(), 5u );
-		EXPECT_EQ( params[0].ToUInt(), 2u );    //namespaceIndex
-		EXPECT_EQ( params[1].ToUInt(), 5002u ); //numeric
-		EXPECT_TRUE( params[2].is_null() );     //string
-	}
-
-	TEST( NodeIdTests, InsertParamsString ){
-		let params = fromJson( R"({"ns":2,"s":"tag.one"})" ).InsertParams();
-		ASSERT_EQ( params.size(), 5u );
-		EXPECT_EQ( params[0].ToUInt(), 2u );
-		EXPECT_TRUE( params[1].is_null() );
-		EXPECT_EQ( params[2].get_string(), "tag.one" );
-	}
-
-	TEST( NodeIdTests, InsertParamsGuid ){
-		let params = guidNode( 2, nodeGuid ).InsertParams();
-		ASSERT_EQ( params.size(), 5u );
-		EXPECT_TRUE( params[1].is_null() );
-		EXPECT_TRUE( params[2].is_null() );
-		ASSERT_EQ( params[3].get_bytes().size(), 16u );
-		EXPECT_EQ( params[3].get_guid(), ToGuid(nodeGuid) );
-	}
-
-	TEST( NodeIdTests, InsertParamsBytes ){
-		const vector<uint8_t> bytes{ 0xde, 0xad, 0xbe, 0xef };
-		let params = bytesNode( 2, bytes ).InsertParams();
-		ASSERT_EQ( params.size(), 5u );
-		EXPECT_TRUE( params[1].is_null() );
-		EXPECT_TRUE( params[2].is_null() );
-		EXPECT_EQ( params[4].get_bytes(), bytes );
-	}
-
-
 	//#2 (fixed):  NodeId converts implicitly to its owning UA_NodeId base but had no way to hand ownership over, so every
 	//`raw = move(wrapper)` in the consumers compiled as a shallow copy through the sliced base and the wrapper still freed
 	//the identifier the raw struct now points at.  Move() is the transfer, matching Variant::Move()/ExNodeId::Move().
@@ -293,10 +244,10 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( raw.identifier.string.data, id.identifier.string.data );
 	}
 
-	//#4 (fixed): DecodeJson handed UA_decodeJson a `NodeId*` where a `UA_NodeId*` was expected.  NodeId is polymorphic
-	//(virtual dtor), so the base sits behind the vptr and the implicit conversion to void* performed no adjustment - the
-	//decoder wrote its 24-byte image over the vptr and the returned node carried a bogus identifier.  ToString and
-	//DecodeJson are each other's inverse and must round trip.
+	//#4 (fixed): DecodeJson handed UA_decodeJson a `NodeId*` where a `UA_NodeId*` was expected.  NodeId was polymorphic
+	//then (virtual dtor), so the base sat behind the vptr and the implicit conversion to void* performed no adjustment -
+	//the decoder wrote its 24-byte image over the vptr and the returned node carried a bogus identifier.  It has no vptr
+	//now, which NodeId.h static_asserts.  ToString and DecodeJson are each other's inverse and must round trip.
 	TEST( NodeIdTests, DecodeJsonRoundTripsToString ){
 		for( let& n : { numeric(2, 5002), numeric(0, 85), fromJson(R"({"ns":2,"s":"tag.one"})"),
 				guidNode(2, nodeGuid), fromJson(R"({"ns":4,"s":"Examples/Stacklights"})"),
@@ -384,22 +335,6 @@ namespace Jde::Opc::Tests{
 		EXPECT_THROW( fromJson(R"({"ns":2,"b":"!!!not base64!!!"})"), Exception );
 	}
 
-	//#6 (fixed): the unused guid/bytes columns used to bind a *non-null* empty blob while the insert procs dispatch on
-	//IS NULL, so a byte-string id took the guid branch and died in toUuidString with "Guid blob is 0 bytes, expected 16."
-	TEST( NodeIdTests, UnusedIdentifierColumnsAreNull ){
-		let numericParams = numeric( 2, 5002 ).InsertParams();
-		EXPECT_TRUE( numericParams[3].is_null() ) << "guid column of a numeric id";
-		EXPECT_TRUE( numericParams[4].is_null() ) << "bytes column of a numeric id";
-
-		let bytesParams = bytesNode( 2, {0xde, 0xad} ).InsertParams();
-		EXPECT_TRUE( bytesParams[3].is_null() ) << "guid column of a byte-string id";
-		EXPECT_FALSE( bytesParams[4].is_null() );
-
-		let guidParams = guidNode( 2, nodeGuid ).InsertParams();
-		EXPECT_TRUE( guidParams[4].is_null() ) << "bytes column of a guid id";
-		EXPECT_FALSE( guidParams[3].is_null() );
-	}
-
 	//#11 (fixed): open62541 treats a non-empty outBuf as a hard limit ("if sufficient"), so ToString's 1024-byte buffer
 	//capped the identifier length - a 2048-char one silently fell back to the *other* textual format,
 	//serialize(ToJson()) - `{"ns":0,"s":"xxx..."}` - which a DecodeJson round trip then read back as a different node.
@@ -429,9 +364,10 @@ namespace Jde::Opc::Tests{
 			}
 		}
 	}
-	//Equal values held differently must hash the same - what absl::VerifyTypeImplementsAbslHashCorrectly checks, which needs gmock
-	//(the deps build googletest with BUILD_GMOCK=OFF).  A null and an empty identifier both read as "", so they compare equal.
-	TEST( NodeIdTests, AbslHashOfEqualRepresentations ){
+	//Equality is the vendor's UA_NodeId_order (reviews/opc-refactor.md A1), which sorts a null identifier before an empty one, so
+	//the two are distinct ids; HashNodeId reads both as "" and lets them collide, which a hash may.  Our own spellings never
+	//produce the null form:  AllocUAString, like the vendor's decoder, leaves an empty string as UA_EMPTY_ARRAY_SENTINEL.
+	TEST( NodeIdTests, NullAndEmptyIdentifiersAreDistinct ){
 		auto withString = []( UA_NodeIdType type, UA_String s ){
 			UA_NodeId ua{};
 			ua.namespaceIndex = 2;
@@ -442,8 +378,8 @@ namespace Jde::Opc::Tests{
 		for( let type : {UA_NODEIDTYPE_STRING, UA_NODEIDTYPE_BYTESTRING} ){
 			let null = withString( type, UA_STRING_NULL );
 			let empty = withString( type, UA_String_fromChars("") );
-			ASSERT_TRUE( null==empty ) << type;
-			EXPECT_EQ( absl::HashOf(null), absl::HashOf(empty) ) << type;
+			EXPECT_FALSE( null==empty ) << type;
+			EXPECT_TRUE( null<empty ) << type;
 		}
 	}
 }

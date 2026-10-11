@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <open62541/client.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include "jde/fwk/crypto/CryptoSettings.h"

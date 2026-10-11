@@ -1,12 +1,12 @@
 #include <jde/opc/uatypes/BrowsePath.h>
+#include <open62541/server.h>
 #include <jde/opc/UAException.h>
 
 #define let const auto
 namespace Jde::Opc{
 
 	BrowsePath::BrowsePath( sv path, NsIndex defaultNs, const flat_map<string,NsIndex>& nsAliases, SL sl )ε:
-		UA_BrowsePath{ UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), {} }{
-		//validate every segment before allocating: a throw out of a constructor skips the destructor, so nothing may be owned yet.
+		Owned{ UA_BrowsePath{UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), {}} }{
 		vector<std::pair<NsIndex,sv>> segments;
 		for( let segment : Str::Split(path, '/') ){
 			auto ns = defaultNs;
@@ -56,12 +56,5 @@ namespace Jde::Opc{
 		THROW_IFX( sc, UAException(sc, Ƒ("browse path '{}'", browsePath.ToString()), {}, sl) );
 		THROW_IFSL( UA_NodeId_isNull(&y), "No target for browse path '{}'", browsePath.ToString() );
 		return y;
-	}
-
-	α NamespaceIndex( UA_Server& server, sv uri, SL sl )ε->NsIndex{
-		size_t index{};
-		let sc = UA_Server_getNamespaceByName( &server, UA_String{uri.size(), (UA_Byte*)uri.data()}, &index );
-		THROW_IFX( sc, UAException(sc, Ƒ("namespace '{}' is not loaded", uri), {}, sl) );
-		return (NsIndex)index;
 	}
 }

@@ -36,16 +36,6 @@ namespace Jde::Opc::Tests{
 		UA_String_clear( &empty );//must not free the sentinel.
 	}
 
-	TEST( OpcHelperTests, UAStringOwnsItsBuffer ){
-		UAString sized{ 8u };
-		EXPECT_EQ( sized.length, 8u );
-		EXPECT_NE( sized.data, nullptr );
-
-		UAString empty{ 0u };
-		EXPECT_EQ( empty.length, 0u );
-		EXPECT_EQ( empty.data, nullptr );
-	}
-
 	TEST( OpcHelperTests, GuidConversions ){
 		let boostGuid = ToGuid( testGuid );
 		EXPECT_EQ( Jde::ToString(boostGuid), "12345678-1234-5678-1234-567812345678" );
@@ -86,7 +76,7 @@ namespace Jde::Opc::Tests{
 		const vector<uint8_t> bytes{ 0xde, 0xad, 0xbe, 0xef };
 		let ua = ToUAByteString( bytes );
 		ASSERT_EQ( ua->length, 4u );
-		EXPECT_EQ( FromByteString(*ua), bytes );
+		EXPECT_EQ( (vector<uint8_t>{ua->data, ua->data+ua->length}), bytes );
 		//Two encodings on purpose, for two audiences: hex for ByteString *values*, which have no parser, and base64 for a
 		//node id's "b", which has to survive FromJson (reviews/opc-review2.md #7).
 		EXPECT_EQ( ByteStringToJson(*ua), "deadbeef" );
@@ -95,7 +85,6 @@ namespace Jde::Opc::Tests{
 
 		let none = ToUAByteString( vector<uint8_t>{} );
 		EXPECT_EQ( none->length, 0u );
-		EXPECT_TRUE( FromByteString(*none).empty() );
 	}
 
 	//The protobufjs Long form the gateway's javascript clients expect:  {high,low,unsigned}, not a bare number.
@@ -115,11 +104,6 @@ namespace Jde::Opc::Tests{
 
 		Iterable<int> none{ values, 0u };
 		EXPECT_EQ( none.begin(), none.end() );
-	}
-
-	TEST( OpcHelperTests, FindDataTypeResolvesVendorTypeIds ){
-		EXPECT_EQ( FindDataType( NodeId{UA_TYPES[UA_TYPES_INT32].typeId} ), &UA_TYPES[UA_TYPES_INT32] );
-		EXPECT_EQ( FindDataType( NodeId{2, 5002} ), nullptr );
 	}
 
 	TEST( LocalizedTextTests, ToJson ){

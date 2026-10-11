@@ -4,6 +4,7 @@
 #include <open62541/server_config_default.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/Logger.h>
+#include <jde/opc/uatypes/UAString.h>
 
 namespace Jde::Opc::Gateway::Tests{
 	//A throwaway open62541 server on loopback, for the shapes neither the embedded OpcServer nor External offers:  a password in
@@ -20,7 +21,7 @@ namespace Jde::Opc::Gateway::Tests{
 				UA_Array_delete( config.serverUrls, config.serverUrlsSize, &UA_TYPES[UA_TYPES_STRING] );
 				config.serverUrls = nullptr;
 				config.serverUrlsSize = 0;
-				UA_String urls[1]{ UA_String{url.size(), (UA_Byte*)url.data()} };//a view: UA_Array_copy deep-copies.
+				UA_String urls[1]{ ToUV(url) };//a view: UA_Array_copy deep-copies.
 				if( const auto sc = UA_Array_copy(urls, 1, (void**)&config.serverUrls, &UA_TYPES[UA_TYPES_STRING]); sc ) throw UAException{ sc };
 				config.serverUrlsSize = 1;
 				configure( config );

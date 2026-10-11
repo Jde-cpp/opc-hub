@@ -1,5 +1,6 @@
 #pragma once
 #include <span>
+#include <open62541/server.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>

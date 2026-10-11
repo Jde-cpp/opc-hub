@@ -9,8 +9,8 @@ namespace Jde::Opc::Gateway{
 	Ω builtIn( const UA_DataValue& dataType )ι->const UA_DataType*{
 		if( !dataType.hasValue || dataType.value.type!=&UA_TYPES[UA_TYPES_NODEID] )
 			return nullptr;
-		const NodeId id{ *(UA_NodeId*)dataType.value.data };
-		return id.namespaceIndex ? nullptr : FindDataType( id );
+		let id = (const UA_NodeId*)dataType.value.data;
+		return id->namespaceIndex ? nullptr : UA_findDataType( id );
 	}
 
 	α ValueTypesAwait::Execute()ι->TAwait<ReadResponse>::Task{
