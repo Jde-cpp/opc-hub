@@ -144,7 +144,7 @@ describe( 'resourceTableSettings', ()=>{
 } );
 
 //The users list's three system views.  'Users' and 'Certs' began life as one user's saved views; they are declared on
-//the route now so every user gets them, and the default view is labelled 'All' instead of the framework's 'default'.
+//the route now so every user gets them, and the default view is labelled 'All' instead of the framework's 'Default'.
 describe( 'userTableSettings views', ()=>{
 	const scalar = ( name:string, type:string="String" )=>({ name, type: { kind: "SCALAR", name: type } });
 	const schema = new TableSchema( { name: "User", fields: [

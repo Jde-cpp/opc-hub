@@ -20,7 +20,7 @@ An empty list says so; a view whose filters match nothing says *No … match thi
 
 ## Views
 
-A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted. The buttons in the middle of the bar switch between a list's views: every list has a *default* view, some come with more, and the ones you save are added beside them. The view you were last on is remembered in this browser.
+A **view** is which rows are filtered out, which columns are shown and in what order, and how the rows are sorted. The buttons in the middle of the bar switch between a list's views: every list has a *Default* view, some come with more, and the ones you save are added beside them. The view you were last on is remembered in this browser.
 
 The tune button beside the views edits the current one, over three tabs.
 

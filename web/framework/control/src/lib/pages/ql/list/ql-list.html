@@ -15,7 +15,7 @@
 					</button>
 					<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="resolvedData().profile.currentViewIndex" (change)="onChangeView($event.value)">
 						@for (view of resolvedData().profile.views; track view; let i=$index) {
-							<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
+							<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
 						}
 					</mat-button-toggle-group>
 					<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="isSettings.set(true)">

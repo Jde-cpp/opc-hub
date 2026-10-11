@@ -12,7 +12,7 @@ import { FieldFilter, Operator, View, ViewField, ViewFieldSettings, ViewFilterSe
 import { Sort } from '@angular/material/sort';
 
 //canNavigate: a collection with no ':slug' detail route must not offer the row click-through
-//viewName: the toggle label of the default view ("default" when unset);  filters: the default view's, same vocabulary as a
+//viewName: the toggle label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
 //ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
