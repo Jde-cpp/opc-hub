@@ -325,7 +325,10 @@ namespace Jde::Opc::Gateway{
 			//await_ready) and creates its own instead of building on the one being deleted.  Still under _mutex, so it cannot
 			//interleave with the MonitoredItemsRequest that reads the id.
 			ua->SetCreatedSubscriptionResponse( nullptr );
-			[&]()->UnsubscribeAwait::Task { co_await UnsubscribeAwait( move(toDelete), move(ua) ); }();
+			//A copy of ua, not a move:  the delete fails without suspending on a client whose connection went meanwhile, and the
+			//moved-in sp was then the client's last, so it died - this and its _mutex with it - under the lock above (found by the
+			//historian's collector, whose items a connection drop took within the second).
+			[&]()->UnsubscribeAwait::Task { co_await UnsubscribeAwait( move(toDelete), sp<UAClient>{ua} ); }();
 		}
 		else{
 			//A kept subscription can end up with no items at all:  the subscribe it was kept for may then fail for every node, and with no

@@ -7,6 +7,8 @@
 //createHistory|updateHistory|upsertHistory( opc, values:[{ node source server status value }] ) and purgeHistory( opc, nodes,
 //start, end ) or purgeHistory( opc, nodes, times ){ values{…} nodes{…} } (ql/HistEditQLAwait.cpp):  the server's own
 //history, edited for the caller (*Pass-through*);  mutations by their whole names.
+//resolveHistory( group ){ nodes{ templateNode path node status } } (ql/HistGroupQLAwait.cpp):  retries a group's unresolved
+//template members (*Templates*), answering each member of the template, resolved before, now, or not.
 local String = { kind: "SCALAR", name: "String" };
 local UInt = { kind: "SCALAR", name: "UInt" };
 local Boolean = { kind: "SCALAR", name: "Boolean" };
@@ -18,6 +20,11 @@ local historyEdit = {
 	fields: [
 		{ name: "values", type: List({ kind: "OBJECT", name: "HistoryEditValue" }) }, //each value, or time, as the edit names it.
 		{ name: "nodes", type: List({ kind: "OBJECT", name: "HistoryNode" }) } //each node's entry status, as the server answered it.
+	]
+};
+local resolveHistory = {
+	fields: [
+		{ name: "nodes", type: List({ kind: "OBJECT", name: "HistoryResolvedNode" }) }
 	]
 };
 local history = {
@@ -65,6 +72,16 @@ local history = {
 		fields: [
 			{ name: "node", type: { kind: "OBJECT", name: "NodeId" } },
 			{ name: "status", type: NonNull(UInt) }
+		]
+	},
+	ResolveHistory: resolveHistory,
+	resolveHistory: resolveHistory,
+	HistoryResolvedNode: {
+		fields: [
+			{ name: "templateNode", type: NonNull(UInt) }, //the hist_template_nodes row.
+			{ name: "path", type: NonNull(String) }, //its browse path, as the row holds it.
+			{ name: "node", type: { kind: "OBJECT", name: "NodeId" } }, //with its namespace URI (nsu); null where the path didn't resolve.
+			{ name: "status", type: NonNull(UInt) } //Good once the member has a hist_group_nodes row, else why TranslateBrowsePaths refused it.
 		]
 	}
 }

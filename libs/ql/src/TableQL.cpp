@@ -86,7 +86,10 @@ namespace Jde::QL{
 			case SmallFloat: case Float: case Decimal: case Numeric: case Money:
 				qlTypeName = "Float";
 				break;
-			case None: case Binary: case VarBinary: case Guid: case Cursor: case RefCursor: case Image: case Blob: case TimeSpan:
+			case Guid://not ID, which the web reads as a number:  its text, as ValueToJson renders it and DB::Value parses it back.
+				qlTypeName = "String";
+				break;
+			case None: case Binary: case VarBinary: case Cursor: case RefCursor: case Image: case Blob: case TimeSpan:
 				throw Exception{ sl, ELogLevel::Debug, "EType {} is not implemented.", (uint)column.Type };
 			case VarWChar: case VarChar: case NText: case Text: case Uri:
 				qlTypeName = "String";

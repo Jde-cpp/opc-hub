@@ -5,4 +5,8 @@
 //Sql::IsProc calls to the twins registered here.
 void RegisterProcs( Jde::DB::Sqlite::IProcs& procs ){
 	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayServerConnectionInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayHistTemplateInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayHistTemplateNodeInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayHistGroupInsert( procs );
+	Jde::DB::Sqlite::GatewayProcs::RegisterGatewayHistGroupNodeInsert( procs );
 }

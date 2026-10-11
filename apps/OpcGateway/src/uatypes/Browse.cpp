@@ -35,6 +35,21 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
+	UABrowsePath::UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι:
+		UA_BrowsePath{
+			{},
+			{ segments.size(), (UA_RelativePathElement*)UA_Array_new(segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]) }
+		}{
+		UA_NodeId_copy( &start, &startingNode );
+		for( size_t i=0; i<segments.size(); ++i ){
+			auto elem = &relativePath.elements[i];
+			elem->referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
+			elem->includeSubtypes = true;
+			elem->isInverse = false;
+			elem->targetName = { segments[i].Ns, AllocUAString(segments[i].Name) };
+		}
+	}
+
 namespace Browse{
 	Ω onResponse( UA_Client* /*ua*/, void* userdata, RequestId /*requestId*/, UA_BrowseResponse* response )ι->void;
 	α FoldersAwait::Suspend()ι->void{

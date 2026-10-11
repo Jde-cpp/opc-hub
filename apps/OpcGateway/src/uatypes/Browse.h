@@ -7,8 +7,12 @@ namespace Jde::Opc::Gateway{
 	struct UAClient;
 	//One TranslateBrowsePaths path:  `segments` from `start`, each a browse name in `defaultNS` or its own `ns~name`, over
 	//HierarchicalReferences with subtypes - Organizes, HasComponent, HasProperty and the rest, as a browse walks them.
+	//A browse name already spelled by the server's namespace index:  a template path's segment once its URI is looked up, for
+	//TranslateBrowsePathsAwait (spec *Templates*), which the `ns~name` form can't carry - a URI holds '/' and a browse name may hold '~'.
+	struct BrowseSegment final{ NsIndex Ns; string Name; };
 	struct UABrowsePath : UA_BrowsePath, noncopyable{
 		UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start=NodeId::ObjectsFolder() )ι;
+		UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι;
 		UABrowsePath( UABrowsePath&& x )ι:UA_BrowsePath{ x }{ UA_BrowsePath_init( &x ); }
 		//UABrowsePath( const UABrowsePath& x )ι{ UA_BrowsePath_copy( &x, this ); }
 		~UABrowsePath(){ UA_BrowsePath_clear(this); }

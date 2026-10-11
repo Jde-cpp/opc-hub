@@ -75,6 +75,10 @@ Awaitables inherit from `VoidAwait` or `IAwait<TResult, TTask>` in `co/Await.h`.
 
 **The escape hatch — `co/AnyAwait.h`.** `AnyAwait<TResult>`/`AnyVoidAwait` carry their own result/exception storage and a type-erased `coroutine_handle<>`, so **any** coroutine can `co_await` them regardless of its return type; `Any( awaitable )` wraps an existing `IAwait`-family awaitable the same way (rvalue → owned, lvalue → referenced). Prefer these for new cross-type awaits instead of adding another hand-off chain. Because storage is local, a subclass may also pre-complete (set `_result`/`_error`, return `true` from `await_ready`) — impossible in the `IAwait` family. Discipline: `Resume`/`ResumeExp` may run the awaiter to completion inline and destroy the awaitable, so they must be the caller's last use of `this`.
 
+### Free-function definitions
+
+A function a header declares at namespace scope is defined in its `.cpp` by its qualified name, from an enclosing namespace — `namespace Jde::Opc{ α Gateway::ResolveThresholds( … )ι->Hist::Thresholds{ … } }`, as `gatewayStartup.cpp` and `GatewayQL.cpp` do — not by reopening `namespace Jde::Opc::Gateway` and writing the bare name. A qualified definition has to match a declaration, so a parameter or return type that drifts from the header is a compile error; a bare one silently declares a new overload, and fails only at link, or not at all. File-local helpers (`Ω`, declared in no header) stay unqualified in the namespace they serve, and members are already qualified by their class.
+
 ## Environment Variables
 
 | Variable | Purpose |

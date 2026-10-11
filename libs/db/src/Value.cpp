@@ -1,4 +1,5 @@
 ﻿#include <jde/db/Value.h>
+#include <boost/uuid/string_generator.hpp>
 #include <jde/fwk/chrono.h>
 #include <jde/db/usings.h>
 #include <jde/db/generators/Syntax.h>
@@ -31,7 +32,16 @@ namespace Jde::DB{
 			auto iso = AsString( j );
 			value = iso=="$now" ? Value::Underlying{move(iso)} : Value::Underlying{ DBTimePoint{Chrono::ToTimePoint(move(iso), sl)} };
 		} break;
-		case None: case Binary: case VarBinary: case Guid: case Cursor: case RefCursor: case Image: case Blob: case TimeSpan:
+		case Guid:{//its text, as ValueToJson renders it:  the 16 bytes in RFC 4122 order, which each driver stores (binary(16), blob, uniqueidentifier).
+			let text = AsString( j );
+			try{
+				value = Value{ boost::uuids::string_generator{}(text.begin(), text.end()) }.Variant;
+			}
+			catch( const std::runtime_error& ){
+				THROWSL( "'{}' is not a guid.", text );
+			}
+		} break;
+		case None: case Binary: case VarBinary: case Cursor: case RefCursor: case Image: case Blob: case TimeSpan:
 			THROW( "EValue {} is not implemented.", (uint)type );
 		case WChar: case Char: default:
 			THROW( "char EValue {} is not implemented.", (uint)type );

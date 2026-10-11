@@ -5,6 +5,7 @@
 #include "../../../AppServer/src/ql/InstanceTagLevelAwait.h"
 #include "../../../OpcGateway/src/ql/GatewayQL.h"
 #include "../../../OpcGateway/src/ql/GatewayQLAwait.h"
+#include "../../../OpcGateway/src/ql/HistGroupQLAwait.h"
 
 namespace Jde::Opc::Hub{
 	HubQL::HubQL( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> authorizer )ι:
@@ -22,6 +23,8 @@ namespace Jde::Opc::Hub{
 			return await;
 		if( App::Server::InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<App::Server::InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );
+		if( auto await = Gateway::HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory, as GatewayQL.
+			return await;
 		return Gateway::GatewayQLMAwait::IsApplicable(m) ? mu<Gateway::GatewayQLMAwait>( move(m), move(creds), sl ) : nullptr;
 	}
 	α HubQL::StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject{

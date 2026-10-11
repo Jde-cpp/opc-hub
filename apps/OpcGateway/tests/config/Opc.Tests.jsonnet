@@ -71,7 +71,8 @@ local logsDir = args.logsDir;
 		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded AppServer anchors enrollment on, but a list of its own (ServerTrust.h).
 		issuedCerts: instance.http.gateway.ssl,
 		allowPlaintextPassword: false, //the shipped default; PlaintextPasswordTests flips it for one test.
-		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false }
+		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
+		hist:{ path: logsDir + "/hist/opc-gateway-tests" } //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
 	},
 	opcServer:{
 		slug: "TestServer",

@@ -52,6 +52,20 @@ function( sync=false )
 		//anchors - every certificate under it may create a user - and a server the gateway talks to has no business among them
 		//(reviews/security-matrix.md #3).
 		trustedCertDirs: [ args.certsDir("OpcServer"), args.serversDir("$(PRODUCT_NAME)") ],
+		//The gateway's historian (libs/historian/docs/spec.md, *Placement*):  the groups defined on it.  No `hist` block, or another
+		//process holding the lock under `path`, runs the gateway without its historian.  A `::` key is its default, shown hidden:
+		//un-hide it to change it.
+		hist:{
+			path: logsDir + "/hist/opc-gateway", //where the group files and the lock go.  Set here, under this layout's logsDir:  the code's own fallback is <AppDataFolder>/logs/hist/opc-gateway.
+			delay:: "PT1M", //ISO 8601:  how often each group's buffer is written, and how long after midnight a day's file becomes its archive.
+			maxBuffer:: 67108864, //bytes, every group's buffer together (64 MB):  past it the oldest values are dropped with a gap marker.  At least 1048576.
+			timeZone:: "UTC", //the zone the day directories follow, an IANA name.  It must not change once `path` holds files:  a read opens a day's file by it.
+			readLimit:: 10000, //the most values one history read returns, a page;  a read's own `limit` can only lower it.  The pass-through reads take it too.
+			//What the collector logs in to each server with, by connection slug (*Collector contract*):  a user name and password for a
+			//server that takes no certificate token, as in { "<slug>": { user: "collector", password: "$(COLLECTOR_PASSWORD)" } }.  A
+			//connection with no entry uses the process's own certificate.
+			credentials:: {}
+		},
 		//A password or an issued token is sent encrypted wherever the server's token policy asks for that, certificateUri or not.
 		//Where a server offers it only under a token policy of None on a channel that is not Sign & Encrypt, it would cross the
 		//wire in the clear, and the gateway refuses the connection and says why.  true sends it anyway (open62541's

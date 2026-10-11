@@ -34,8 +34,9 @@ namespace Jde::Opc::Gateway{
 					request.monitoredItemIds[i++] = id;
 
 				RequestId _requestId{};//name required by the UACε macro (it references _requestId).
-				UACε( UA_Client_MonitoredItems_delete_async(_client->UAPointer(), request, monitoredItemsDeleteCallback, this, &_requestId) );
-				UA_DeleteMonitoredItemsRequest_clear( &request );
+				let submitted = UA_Client_MonitoredItems_delete_async( _client->UAPointer(), request, monitoredItemsDeleteCallback, this, &_requestId );
+				UA_DeleteMonitoredItemsRequest_clear( &request );//before the check:  a refused submit - a channel already closed - used to throw past it and leak the ids.
+				UACε( submitted );
 				TRACE( "[{}.{}]Deleting monitored items for subscriptionId={}, count={}", hex(_client->Handle()), hex(_requestId), subscriptionId, monitorIds.size() );
 				bool first;
 				{ lg l{ _mutex }; first = _submitted++==0; }

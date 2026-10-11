@@ -71,6 +71,12 @@ namespace Jde::QL{
 		jvalue json;
 		switch( dbValue.Type() ){
 			case UInt64: case Int32: case Int64: json = pMember && pMember->DBColumn ? numberToJson( dbValue, *pMember->DBColumn ) : dbValue.ToJson(); break;
+			case Bytes:
+				if( pMember && pMember->DBColumn && pMember->DBColumn->Type==DB::EType::Guid && dbValue.get_bytes().size()==boost::uuids::uuid::static_size() ){
+					json = Jde::ToString( dbValue.get_guid() );//its text, which a filter or an insert parses back (DB::Value), not base64.
+					break;
+				}
+				[[fallthrough]];
 			default: json = dbValue.Move();
 		}
 		return json;
