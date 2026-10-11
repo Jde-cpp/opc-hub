@@ -38,6 +38,7 @@ local common = import 'common-meta.libsonnet';
 				programId: tables.programs.columns.programId+{ pkTable: "programs", i:1, sk:null },
 				name: common.valuesColumns.name+{ i:2 },
 				hostId: tables.hosts.columns.hostId+{ pkTable: "hosts", i:3, sk:null },
+				resourceSchema: common.types.varchar+{ length:32, nullable:true, i:4, comment: "the instance's own access schema (opc.install), from its registration's auth_resource - its forwarded log lines and tag levels answer to <resourceSchema>/logs, not app/logs" }
 			},
 			customInsertProc: true,
 			naturalKeys:[["program_id", "name"]]
@@ -78,5 +79,11 @@ local common = import 'common-meta.libsonnet';
 			naturalKeys:[["name"]],
 			ops: ["None"]
 		},
+	},
+	//The AppServer's log - its own lines and every forwarded line whose instance has no resourceSchema - plus its log
+	//settings and the stored tag levels of those instances.  No table behind it, as the OpcServer's nodeIds:  each app
+	//declares its own `logs`, so an OpcServer's is `opc.<instance>/logs`.
+	resources:{
+		logs:{ ops:["Read","Update","Administer"] }
 	}
 }

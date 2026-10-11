@@ -307,6 +307,15 @@ namespace Jde::Opc::Hub::Tests{
 		for( let& r : Json::FindDefaultArray(perm, "allowed") )
 			administer |= r.is_string() && r.get_string()=="Administer";
 		EXPECT_TRUE( administer ) << "Administer - the delegation grant - " << serialize( perm );
+		//...and on its logs:  Administer, as every enforced root of the schema must have for the delegation to hold, plus Read and
+		//Update for its own log levels - LoadLogSettings reads them over the socket as this account, and a change saves the same way.
+		let logsRole = one( "role(slug:\"opc-server-instance\"){ permissionRight{ allowed resource(schemaName:\"opc.install\", slug:\"logs\"){ slug } } }", "role" );
+		let logs = Json::FindDefaultObject( logsRole, "permissionRight" );
+		EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(logs, "resource"), "slug"), "logs" ) << serialize( logsRole );
+		flat_set<string> logRights;
+		for( let& r : Json::FindDefaultArray(logs, "allowed") )
+			logRights.emplace( r.is_string() ? string{r.get_string()} : string{} );
+		EXPECT_EQ( logRights, (flat_set<string>{"Administer", "Read", "Update"}) ) << serialize( logs );
 		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 		Web::Server::Sessions::Remove( rootSession );

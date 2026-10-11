@@ -22,7 +22,7 @@ namespace Jde::Opc{
 }
 namespace Jde::Opc::Gateway{
 	GatewayQL::GatewayQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer )ι:
-		App::AppQL{ {move(schema)}, authorizer }
+		App::AppQL{ {move(schema)}, authorizer, {} }//no `logs` resource:  the hub mounts this schema too, and its log is `app/logs`.
 	{}
 	α GatewayQL::CustomQuery( QL::TableQL& q, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>>{
 		up<TAwait<jvalue>> await = GatewayQLAwait::Test( q, executer, sl );

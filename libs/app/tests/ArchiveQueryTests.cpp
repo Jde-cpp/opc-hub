@@ -312,6 +312,48 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( lines(filtered.Sort({})), (vector<uint32_t>{2}) ) << "appId did not select the forwarded entry";
 	}
 
+	//The AppServer's merged history, read by someone denied one instance's logs:  that instance's forwarded lines drop, while
+	//the AppServer's own and another instance's stay - from an archived day, an older build's externalEntries and the daily file.
+	TEST( ArchiveQueryTests, HiddenInstancesForwardedLinesAreLeftOut ){
+		let mine = entry( tp(0), ELogLevel::Information, 1, "mine" );
+		let hidden = entry( tp(1), ELogLevel::Information, 2, "hidden" );
+		let shown = entry( tp(2), ELogLevel::Information, 3, "shown" );
+		let olderHidden = entry( tp(3), ELogLevel::Information, 4, "older hidden" );
+		DayArchive proto;
+		*proto.add_entries() = LogProto::LogEntryFile( mine );
+		*proto.add_entries() = LogProto::LogEntryFile( hidden, 42, 84 );
+		*proto.add_entries() = LogProto::LogEntryFile( shown, 43, 85 );
+		*proto.add_externalentries() = asOlderExternal( LogProto::LogEntryFile(olderHidden, 42, 84) );
+		for( let& e : {mine, hidden, shown, olderHidden} )
+			addStrings( proto, e );
+
+		auto ql = table( "logs" );
+		ArchiveQuery archived{ flat_set<ProgInstPK>{84} };
+		archived.Append( ql, move(proto) );
+		EXPECT_EQ( lines(archived.Sort({})), (vector<uint32_t>{1,3}) );
+
+		auto stream = fileEntries( {mine, hidden, shown} );
+		for( auto& fe : stream ){
+			if( fe.has_entry() && fe.entry().line()==2 ){
+				fe.mutable_entry()->set_app_pk( 42 );
+				fe.mutable_entry()->set_app_instance_pk( 84 );
+			}
+			else if( fe.has_entry() && fe.entry().line()==3 ){
+				fe.mutable_entry()->set_app_pk( 43 );
+				fe.mutable_entry()->set_app_instance_pk( 85 );
+			}
+		}
+		ArchiveQuery daily{ ql.Filter(), move(stream), {84} };
+		EXPECT_EQ( lines(daily.Sort({})), (vector<uint32_t>{1,3}) );
+	}
+	//An own line carries no app_pk - its instance pk is not consulted, so hiding the AppServer's own instance hides nothing.
+	TEST( ArchiveQueryTests, HiddenInstancesNeverHideOwnLines ){
+		auto ql = table( "logs" );
+		ArchiveQuery archive{ flat_set<ProgInstPK>{0} };
+		archive.Append( ql, archiveProto({entry(tp(0), ELogLevel::Information, 1, "mine")}) );
+		EXPECT_EQ( archive.EntrySize(), 1u );
+	}
+
 	TEST( ArchiveQueryTests, ToJsonEntryColumns ){
 		let e = entry( tp(0), ELogLevel::Error, 42, "boom {}", {"9"}, "src/x.cpp", "Fn", ELogTags::Test, UserPK{7} );
 		let af = load( {e} );

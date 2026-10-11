@@ -98,7 +98,7 @@ export const userTableSettings:TableSettings = {
  //Authorize::Test bails on a deleted resource ("not enabled"), so a DELETED resource is an UNENFORCED one and the
  //installation ships every row deleted (ResourceSyncAwait creates each one and immediately deletes it) so a fresh system is
  //not locked down.  Hence the shape of this page:  no Add and no detail route (the natural key is schema+slug+criteria,
- //which `:slug` alone cannot address), no Purge - the resources table advertises only Delete and Subscribe as grantable
+ //which `:slug` alone cannot address), no Purge - the resources table advertises only Read, Delete and Subscribe as grantable
  //rights, so nobody can even hold Update on it - and the one action that matters, enforcement, as a switch in the row.
  //Enforced leads the columns because it is the only thing on the page that DOES anything;  schemaName ("access",
  //"opc.default", ...) still groups the list, so it leads the sort.

@@ -1,6 +1,7 @@
 #include "InstanceTagLevelAwait.h"
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/access/Authorize.h>
 #include <jde/app/usings.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
@@ -12,6 +13,11 @@
 
 #define let const auto
 namespace Jde::App::Server{
+	//The instance's logs resource - Read to see its levels, Update to change them.  Open to anyone while it is unenforced;
+	//an enforced one answers an anonymous caller 401.
+	Ω testLogs( ProgInstPK instanceId, Access::ERights rights, UserPK executer, SL sl )ε->void{
+		Authorizer()->Test( InstanceLogSchema(instanceId), "logs", rights, executer, sl );
+	}
 
 	//The levels the instance runs with: its own `logSetting{ text binary appServer }` answer - tag->level per sink, with
 	//`default` - fetched the way pushRuntime delivers a change: through the local ql for this process, over the socket for
@@ -56,6 +62,7 @@ namespace Jde::App::Server{
 		try{
 			auto schema = AppSchema();
 			let instanceId = _query.Id();
+			testLogs( (ProgInstPK)instanceId, Access::ERights::Read, _executer, _sl );
 			let& table = schema->GetView( "instance_tag_levels" );
 			DB::Sql sql{
 				Ƒ( "select type, tag, level_id from {} where instance_id=?", table.DBName ),
@@ -136,6 +143,7 @@ namespace Jde::App::Server{
 			auto vars = _mutation.ExtrapolateVariables();
 			let instanceId = vars.at("id").to_number<ProgInstPK>();
 			THROW_IF( !instanceId, "updateInstanceTagLevel needs an instance - 0 is what a session that has not registered reports, not one." );// the rows went in against instance 0, belonging to nothing, and the push then went looking for a session that matched.
+			testLogs( instanceId, Access::ERights::Update, _executer, _sl );
 			auto schema = AppSchema();
 			let& table = schema->GetView( "instance_tag_levels" );
 			auto sql = [&,instanceId]( str type, sv tag, jvalue level )->DB::Sql {

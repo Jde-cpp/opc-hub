@@ -22,27 +22,47 @@
 #include "ql/AppServerQL.h"
 
 #define let const auto
-namespace Jde::App{
+namespace Jde{
 	static sp<DB::AppSchema> _appSchema;
 	Ω ds()ι->DB::IDataSource&{ return *_appSchema->DS(); }
+	//app_instances.resource_schema by instance - loaded at startup, kept by AddConnection.  Instances are unique per (program,
+	//name), so two OpcServers sharing an instance name but not a /opcServer/resource share a row:  the last to register wins.
+	static absl::Mutex _instanceSchemasMutex;
+	using App::ProgInstPK;
+	static flat_map<ProgInstPK,string> _instanceSchemas ABSL_GUARDED_BY(_instanceSchemasMutex);
+	Ω loadInstanceSchemas()ε->void{
+		flat_map<ProgInstPK,string> schemas;
+		ds().Select( {Ƒ("select instance_id, resource_schema from {} where resource_schema is not null", _appSchema->GetTable("instances").SqlName())}, [&schemas]( DB::Row&& row ){
+			schemas.emplace( row.Get<uint32_t>(0), row.TakeString(1) );
+		} );
+		ul _{ _instanceSchemasMutex };
+		_instanceSchemas = move( schemas );
+	}
 	Ω connectionTableName()ε->string{ return _appSchema->GetView("connections").DBName; }
 	//ends every connection still open - the ones earlier runs left behind.  ConfigureDS calls it once, before AddConnection.
 	Ω endAppInstances()ε->void{
 		ds().ExecuteSync( {Ƒ("update {} set deleted={} where deleted is null", connectionTableName(), ds().Syntax().UtcNow())} );
 	}
 
-	α AddConnection( str appName, str instanceName, str hostName, uint pid, bool reloadHosts )ε->tuple<ProgramPK, ProgInstPK, ConnectionPK>{
+	α App::AddConnection( str appName, str instanceName, str hostName, uint pid, str resourceSchema, bool reloadHosts )ε->tuple<ProgramPK, ProgInstPK, ConnectionPK>{
 		ProgramPK appId{};
 		ProgInstPK appInstanceId{};
 		ConnectionPK appConnectionId{};
 		let rows = ds().Select( {
-			Ƒ("{}(?,?,?,?)", _appSchema->GetTable("connections").InsertProcName()),
-			{DB::Value{appName}, {instanceName}, DB::Value{hostName}, DB::Value{pid}},
+			Ƒ("{}(?,?,?,?,?)", _appSchema->GetTable("connections").InsertProcName()),
+			{DB::Value{appName}, {instanceName}, DB::Value{hostName}, DB::Value{pid}, resourceSchema.size() ? DB::Value{resourceSchema} : DB::Value{}},
 			true} );
 		for( auto&& row : rows ){
 			appId = row.Get<uint32_t>(0);
 			appInstanceId = row.Get<uint32_t>(1);
 			appConnectionId = row.Get<uint32_t>(2);
+		}
+		{
+			ul _{ _instanceSchemasMutex };
+			if( resourceSchema.size() )
+				_instanceSchemas.insert_or_assign( appInstanceId, resourceSchema );
+			else
+				_instanceSchemas.erase( appInstanceId );
 		}
 
 		//`hosts` has the enum shape (id + name) and is loaded like one, but unlike the real enumerations it grows - the proc
@@ -58,22 +78,62 @@ namespace Jde::App{
 			QL::LoadEnum( _appSchema->GetTable("hosts") );
 		return make_tuple( appId, appInstanceId, appConnectionId );
 	}
-	α ReloadHosts( SL sl )ε->DB::CacheAwait<flat_map<uint,string>>{
+	α App::ReloadHosts( SL sl )ε->DB::CacheAwait<flat_map<uint,string>>{
 		let& hosts = _appSchema->GetTable( "hosts" );
 		Cache::Clear( hosts.Name );//SelectEnum answers from the cache when it can - clear first so the select actually runs.
 		return ds().SelectEnum<uint,string>( hosts, nullopt, sl );//nullopt: no expiry, as LoadEnum caches it.
 	}
-	α EndConnection( ConnectionPK connectionId, SL sl )ι->DB::ExecuteAwait::Task{
+	α App::EndConnection( ConnectionPK connectionId, SL sl )ι->DB::ExecuteAwait::Task{
 		try{
 			co_await ds().Execute( {Ƒ("update {} set deleted={} where connection_id=? and deleted is null", connectionTableName(), ds().Syntax().UtcNow()), {DB::Value{connectionId}}}, sl );
 		}
 		catch( runtime_error& )
 		{}
 	}
+
+	α App::InstanceLogSchema( ProgInstPK instancePK )ι->string{
+		rl _{ _instanceSchemasMutex };
+		auto p = _instanceSchemas.find( instancePK );
+		return p==_instanceSchemas.end() ? _appSchema->Name : p->second;
+	}
+	//The instances with a resource schema, split by whether `user` may read their forwarded lines.
+	struct LogVisibility{ flat_set<ProgInstPK> Readable; flat_set<ProgInstPK> Hidden; };
+	Ω logVisibility( UserPK user )ι->LogVisibility{
+		flat_map<ProgInstPK,string> instanceSchemas;
+		{
+			rl _{ _instanceSchemasMutex };//released before the Authorize:  the subscription test takes this one from inside the logger.
+			instanceSchemas = _instanceSchemas;
+		}
+		auto& authorizer = *App::Server::Authorizer();
+		LogVisibility y;
+		flat_map<string,flat_set<ProgInstPK>*> bySchema;
+		for( let& [instancePK,schema] : instanceSchemas ){
+			auto p = bySchema.find( schema );
+			if( p==bySchema.end() )
+				p = bySchema.emplace( schema, empty(authorizer.Rights(schema, "logs", user) & Access::ERights::Read) ? &y.Hidden : &y.Readable ).first;
+			p->second->emplace( instancePK );
+		}
+		return y;
+	}
+	α App::HiddenLogInstances( UserPK user )ι->flat_set<ProgInstPK>{ return logVisibility( user ).Hidden; }
 }
 
 namespace Jde::App::Server{
 	static sp<Access::AccessListener> _listener;
+
+	//A `logs` subscription needs Read on app/logs;  its forwarded lines are then tested against a snapshot of the instances
+	//hidden from the subscriber, because the test runs inside the logger and the Authorize logs under its own lock.  Rights
+	//changed since, and an instance registering with a resource schema since (held back), apply from the next subscription.
+	Ω logGate( ProgInstPK self )ι->Web::Server::SubscribeLog::Gate{
+		return [self]( UserPK executer )->function<bool(ProgInstPK)>{
+			Authorizer()->Test( _appSchema->Name, "logs", Access::ERights::Read, executer );
+			return [self, visibility=logVisibility(executer)]( ProgInstPK instancePK ){
+				if( visibility.Hidden.contains(instancePK) )
+					return false;
+				return instancePK==self || visibility.Readable.contains(instancePK) || InstanceLogSchema(instancePK)==_appSchema->Name;
+			};
+		};
+	}
 
 	α InitLogging()ι->void{
 		AppClient()->InitLogging();
@@ -122,6 +182,7 @@ namespace Jde::App::Server{
 			}
 		}
 		endAppInstances();
+		loadInstanceSchemas();
 	}
 
 	α Configure( const jobject& webServerSettings, ConfigureOptions options )ε->void{
@@ -132,7 +193,7 @@ namespace Jde::App::Server{
 		configureDS( options );
 		str instanceName{ Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") };
 		let pks = AddConnection( Process::AppName(), instanceName, Process::HostName(), Process::ProcessId() );
-		Logging::Add<Web::Server::SubscribeLog>( "subscribe", get<0>(pks), get<1>(pks) );
+		Logging::Add<Web::Server::SubscribeLog>( "subscribe", get<0>(pks), get<1>(pks), logGate(get<1>(pks)) );
 		SetAppPKs( pks );
 
 		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting"} );

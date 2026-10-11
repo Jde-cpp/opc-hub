@@ -1,20 +1,29 @@
 #pragma once
 #include <jde/ql/LocalQL.h>
+#include <jde/app/usings.h>
 
 namespace Jde::App{
 	struct IApp;
+	//logSchema:  the schema of this process's `logs` resource - `app` for the AppServer, `opc.<instance>` for an OpcServer - or
+	//empty for a process that declares none (a standalone gateway), whose log routes stay authentication-only.
 	struct AppQL : QL::LocalQL{
-		AppQL(vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> authorizer)ι:QL::LocalQL{ move(schemas), authorizer }{};
+		AppQL( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> authorizer, string logSchema )ι:QL::LocalQL{ move(schemas), authorizer }, _logSchema{ move(logSchema) }{};
 		α LogQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>> override;
 		α LogSettingsQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>> override;
 		α StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject override;
 	protected:
-		//The log/logSettings/status routes bypass SelectAwait's Authorize, so this is the only gate they have.  Authentication,
-		//not authorization:  no acl resource exists for the log archive or the status document, and all three were anonymous.
+		//The log/logSettings/status routes bypass SelectAwait's Authorize, so these are the only gates they have.  status is
+		//authentication only;  TestLogs is `rights` on <logSchema>/logs - open to anyone, anonymous too, while the resource is
+		//unenforced - or authentication only without a logSchema.
 		Ω RequireAuthenticated( QL::Creds& executer, sv what, SL sl )ε->void;
-		//updateLogSetting(s), which every app's CustomMutation asks first:  null for any other mutation, a refusal for an anonymous
-		//caller, else the update on `app`.
-		Ω LogSettingsMutation( QL::MutationQL& m, QL::Creds& creds, sp<IApp> app, SL sl )ι->up<TAwait<jvalue>>;
+		α TestLogs( QL::Creds& executer, Access::ERights rights, sv what, SL sl )ε->void;
+		//The instances whose forwarded lines `user` may not read - only an AppServer's log holds any.
+		β HiddenLogInstances( UserPK /*user*/ )ι->flat_set<ProgInstPK>{ return {}; }
+		//updateLogSetting(s), which every app's CustomMutation asks first:  null for any other mutation, a refusal when TestLogs
+		//refuses Update, else the update on `app`.
+		α LogSettingsMutation( QL::MutationQL& m, QL::Creds& creds, sp<IApp> app, SL sl )ι->up<TAwait<jvalue>>;
+	private:
+		string _logSchema;
 	};
 
 	//CustomMutation is ι, so a refusal has to be an await that throws on resume, not a throw.

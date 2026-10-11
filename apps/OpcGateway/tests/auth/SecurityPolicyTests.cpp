@@ -66,7 +66,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	TEST_F( SecurityPolicyTests, TheStrongestSharedPolicyIsNegotiated ){
 		let urn = string{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
-		let url = string{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4840") };
+		let url = string{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
 		let row = GetConnection( SharedSlug, url, urn );
 		EXPECT_EQ( row.CertificateUri, urn );//security-matrix #7:  the row read back through the helper keeps its certificateUri.
 		EXPECT_FALSE( row.IsDefault );

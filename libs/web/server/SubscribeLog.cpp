@@ -44,9 +44,10 @@ namespace Jde::Web::Server{
 		ELogTags Tags{ ELogTags::All };
 	};
 	struct SessionSubscription{
-		SessionSubscription( sp<IWebsocketSession> session, QL::Subscription&& sub )ι:Session{ move(session) },Sub{ move(sub) }{}
+		SessionSubscription( sp<IWebsocketSession> session, QL::Subscription&& sub, function<bool(App::ProgInstPK)> mayRead )ι:Session{ move(session) },Sub{ move(sub) },MayRead{ move(mayRead) }{}
 		sp<IWebsocketSession> Session;
 		LogSubscription Sub;
+		function<bool(App::ProgInstPK)> MayRead;//the Gate's answer for this subscriber;  empty = every entry.
 	};
 
 	absl::Mutex _mutex;
@@ -114,10 +115,11 @@ namespace Jde::Web::Server{
 		applyRestores( restores );//outside _mutex - see takeRestores.
 	}
 
-	α SubscribeLog::Add( sp<Web::Server::IWebsocketSession> session, vector<QL::Subscription>&& subs )ι->void{
+	α SubscribeLog::Add( sp<Web::Server::IWebsocketSession> session, vector<QL::Subscription>&& subs, UserPK executer )ε->void{
+		auto mayRead = _gate ? _gate( executer ) : function<bool(App::ProgInstPK)>{};//before _mutex:  the gate asks the Authorize, which logs.
 		ul _{ _mutex };
 		for( auto& request : subs ){
-			auto s = ms<SessionSubscription>( session, move(request) );
+			auto s = ms<SessionSubscription>( session, move(request), mayRead );
 			if( let prior = MinLevel(s->Sub.Tags); s->Sub.MinLevel<prior ){
 				if( !_loweredTags.contains(s->Sub.Tags) ){//O1: remember what to put back, once, before the first lowering overwrites it.
 					optional<ELogLevel> priorOverride;
@@ -161,7 +163,9 @@ namespace Jde::Web::Server{
 					matches.push_back( s );
 			}
 		}
-		for( let& s : matches )//outside the lock - WriteSubscription logs, and that comes back through Logging::Log into this function.
-			s->Session->WriteSubscription( appPK, connectionPK, m, s->Sub );
+		for( let& s : matches ){//outside the lock - WriteSubscription logs, and that comes back through Logging::Log into this function.
+			if( !s->MayRead || s->MayRead(connectionPK) )//connectionPK:  the instance's pk, as Logging::Log passes it.
+				s->Session->WriteSubscription( appPK, connectionPK, m, s->Sub );
+		}
 	}
 }

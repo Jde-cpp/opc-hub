@@ -37,5 +37,5 @@ namespace Jde::Opc::Gateway::Tests{
 	α AvailableUserTokens( sv url )ε->ETokenType;
 	α Negotiated( const sp<UAClient>& client )ι->string;//"ok (<policy>/<mode>)" - what the client's session was opened with, read on its strand; "ok" when it cannot be read.
 	α Query( sv ql, jobject vars={}, bool raw=true )ε->jobject;
-	Ξ GatewayPort()ι{ return Settings::FindNumber<PortType>("/http/gateway/port").value_or(1968); }
+	Ξ GatewayPort()ι{ return Settings::FindNumber<PortType>("/http/gateway/port").value_or(2068); }
 }

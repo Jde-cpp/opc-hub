@@ -4,7 +4,7 @@ common + {
 	sqlType: "mysql",
 	opc:{
 		urn: "urn:open62541.server.application",
-		url: "opc.tcp://127.0.0.1:4840"
+		url: "opc.tcp://127.0.0.1:4940"
 	},
 	dbServers: {
 		localhost:{

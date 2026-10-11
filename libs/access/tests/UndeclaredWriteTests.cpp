@@ -1,5 +1,5 @@
 //GHSA-g354-grf2-r8vh:  the tables that define rights - identities, providers, permissions, permissionRights, roleMembers,
-//rights, seeds - declare ops:["None"], and resources declares Delete alone.  Table::Authorize tested only the rights a table
+//rights, seeds - declare ops:["None"], and resources declared Delete alone.  Table::Authorize tested only the rights a table
 //declares, so a generic create/update/delete/purge on them was refused to no one - the unauthenticated UserPK{0} included -
 //and ResourceLoadAwait makes no resource row for an undeclared op, so enforcing every resource could not close it.  Such a
 //write is the system's alone now (IAcl::TestSystem), a read outside the ops any known user's (IAcl::TestUser), and an
@@ -262,7 +262,7 @@ namespace Jde::Access::Tests{
 	//every login's email and the whole grant table even with users and acl enforced (review #8).
 	TEST_F( UndeclaredWriteTests, ReadsOutsideTheOpsNeedAKnownUser ){
 		let root = GetRoot();
-		const vector<string> reads{ "identities{ id name email }", "permissionRights{ id allowed resource{ slug } }", "rights{ id name }", "resources{ id }" };
+		const vector<string> reads{ "identities{ id name email }", "permissionRights{ id allowed resource{ slug } }", "rights{ id name }" };
 		const UserPK deleted{ GetId(GetUser("ghsa-g354-deleted", root)) };
 		Delete( "users", deleted.Value, root );
 		for( let& ql : reads ){
@@ -271,6 +271,32 @@ namespace Jde::Access::Tests{
 			EXPECT_NO_THROW( QL().QuerySync<jarray>(ql, {}, _intruder) ) << ql;
 		}
 		PurgeUser( deleted, root );
+	}
+
+	//Unenforced means unenforced:  a read of a resource whose switch is off is open to everyone, the anonymous caller included,
+	//through whatever tables back it - groups reads identities and group_members, roles its permissionRights, and neither
+	//declares Read.  Enforced, only a grant does.
+	TEST_F( UndeclaredWriteTests, AReadFollowsItsResourcesSwitch ){
+		let root = GetRoot();
+		const vector<std::pair<string,string>> reads{
+			{ "resources", "resources{ id }" },
+			{ "groups", "groups{ id name groupMembers{ id } }" },
+			{ "roles", "roles{ id name permissionRights{ id allowed resource{ slug } } }" }
+		};
+		for( let& [slug, ql] : reads ){
+			let resource = SelectResource( slug, root, true );
+			let id = GetId( resource );
+			let wasDeleted = !resource.at( "deleted" ).is_null();
+			if( !wasDeleted )
+				Delete( "resources", id, root );
+			EXPECT_NO_THROW( QL().QuerySync<jvalue>(ql, {}, UserPK{}) ) << ql;
+			Restore( "resources", id, root );
+			expectRefused( ql, UserPK{}, EHttpStatus::Unauthorized );
+			expectRefused( ql, _intruder, EHttpStatus::Forbidden );
+			EXPECT_NO_THROW( QL().QuerySync<jvalue>(ql, {}, root) ) << ql;
+			if( wasDeleted )
+				Delete( "resources", id, root );
+		}
 	}
 
 	//__type{ enumValues } read any column of any table unauthorized - every login's email to an anonymous caller (review #15).  A

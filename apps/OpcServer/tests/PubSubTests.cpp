@@ -19,7 +19,7 @@ namespace Jde::Opc::Server::Tests{
 		THROW( "pumps.NodeSet2.xml is not in /opcServer/configFiles." );
 	}
 	//An in-process Part 14 publisher: its own headless UA_Server holding the pumps nodeset, publishing the contract the
-	//OpcServer reads - what the PLC emulator does, minus the emulator.  Port 4850 keeps it off the OpcServer's 4840.
+	//OpcServer reads - what the PLC emulator does, minus the emulator.  Port 4850 keeps it off the embedded OpcServer's 4940 and a live one's 4840.
 	struct Publisher final : noncopyable{
 		Publisher( const jobject& settings, const fs::path& nodeset )ε:
 			Contract{ settings }{

@@ -38,9 +38,10 @@ local logsDir = args.logsDir;
 	iot: {
 		slug: "Default"
 	},
+	//the live services' ports +100 (1967/1968/1970/4840), so the suite runs beside a running AppServer, gateway and OpcServer.
 	http:{
 		app:{
-			port: 1967,
+			port: 2067,
 			ssl:{
 				certificate:{
 					subjectAltName: "DNS:localhost,IP:127.0.0.1",//TLS clients match the SAN - without it host_name_verification rejects the generated cert.
@@ -49,7 +50,7 @@ local logsDir = args.logsDir;
 			}
 		},
 		gateway:{
-			port: 1968,
+			port: 2068,
 			ssl:{
 				certificate:{
 					subjectAltName: "URI:urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME),DNS:localhost,IP:127.0.0.1", //the URI: the gateway's own applicationUri - gateway.issuedCerts, below, is this block - where the opcServer's, next, is the server's (security-matrix #8).
@@ -58,7 +59,7 @@ local logsDir = args.logsDir;
 			}
 		},
 		opcServer:{
-			port: 1970,
+			port: 2070,
 			ssl:{
 				certificate:{
 					subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,IP:127.0.0.1",
@@ -67,6 +68,7 @@ local logsDir = args.logsDir;
 			}
 		}
 	},
+	server:{ port: instance.http.app.port }, //the gateway's and embedded OpcServer's app client (default 1967).
 	gateway:{
 		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is issued into the test product's one ssl/certs - the same directory the embedded AppServer anchors enrollment on, but a list of its own (ServerTrust.h).
 		issuedCerts: instance.http.gateway.ssl,
@@ -83,7 +85,7 @@ local logsDir = args.logsDir;
 			args.repoSourceDir + "/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" //last, so the namespaces the other tests name keep their indexes:  the historized nodes HistTests reads through the gateway.
 		],
 		hist:{ path: logsDir + "/hist/opc-tests" },//the embedded server's own history, which main.cpp empties at the start.
-		port: 4840,
+		port: 4940,
 		ssl: instance.http.opcServer.ssl
 	},
 	credentials:{

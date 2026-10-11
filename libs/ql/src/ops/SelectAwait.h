@@ -16,7 +16,6 @@ namespace Jde::QL{
 	private:
 		α Suspend()ι->void override{ Execute(); }
 		α Execute()ι->VoidTask;//Hook::Select is an AnyAwait, so any task type serves; Query() then hands off to the DB::SelectAwait chain.
-		α Authorize( const TableQL& qlTable )ε->void;
 		α Query()ι->void;
 		α Query( DB::Statement statement, SubTables subTables )ε->DB::SelectAwait::Task;
 		α SelectSubTables( DB::Statement parentSql, vector<TableQL> tables, sp<DB::Table> parentTable, DB::WhereClause where )ε->DB::SelectAwait::Task;

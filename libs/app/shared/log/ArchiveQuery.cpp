@@ -10,7 +10,8 @@ namespace Jde::App{
 	using App::Log::Proto::LogEntryFile;
 	using Protobuf::ToGuid;
 
-	ArchiveQuery::ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε{
+	ArchiveQuery::ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden )ε:
+		_hidden{ move(hidden) }{
 		Append( q, move(entries) );
 	}
 
@@ -109,13 +110,13 @@ namespace Jde::App{
 		for( int i=0; i<af.entries_size(); ++i ){
 			auto entry = af.mutable_entries( i );
 			let time = Protobuf::ToTimePoint( entry->time() );
-			if( Test(q, time, *entry) )
+			if( Visible(*entry) && Test(q, time, *entry) )
 				Entries[time].emplace_back( move(*entry) );
 		}
 		for( int i=0; i<af.externalentries_size(); ++i ){
 			auto entry = LogProto::ToEntry( move(*af.mutable_externalentries(i)) );
 			let time = Protobuf::ToTimePoint( entry.time() );
-			if( Test(q, time, entry) )
+			if( Visible(entry) && Test(q, time, entry) )
 				Entries[time].emplace_back( move(entry) );
 		}
 	}
@@ -148,7 +149,7 @@ namespace Jde::App{
 		}
 		for( auto& entry : logEntries ){
 			let time = Protobuf::ToTimePoint( entry.time() );
-			if( Test(filter, time, entry) )
+			if( Visible(entry) && Test(filter, time, entry) )
 				Entries[time].emplace_back( move(entry) );
 		}
 	}

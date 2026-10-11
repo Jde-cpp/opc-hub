@@ -22,7 +22,7 @@ local logsDir = args.logsDir;
 		}
 	},
 	http:{
-		//1972: unique to this suite - 1967 collides with a running Jde.AppServer, 1968/1970 with the gateway/opcServer suites.
+		//1972: unique to this suite - 1967 collides with a running Jde.AppServer, 2067 with the gateway/opcServer suites.
 		app:{ port: 1972, ssl:{ certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1", commonName: args.instanceName + ".appServer.tests.web" } } },//TLS clients match the SAN - without it host_name_verification rejects the generated cert.
 		clientSettings:{
 			googleAuthClientId: "app-server-tests-google-client-id"//served by GET /GoogleAuthClientId and ql setting(target:"googleAuthClientId").

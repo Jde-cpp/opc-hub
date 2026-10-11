@@ -13,5 +13,7 @@ namespace Jde::App::Server{
 		AppServerQL( vector<sp<DB::AppSchema>>&& schemas, sp<Access::Authorize>&& authorizer )ι;
 		α CustomQuery( QL::TableQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override;
 		α CustomMutation( QL::MutationQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override;
+	protected:
+		α HiddenLogInstances( UserPK user )ι->flat_set<ProgInstPK> override;
 	};
 }

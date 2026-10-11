@@ -8,6 +8,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/DBSchema.h>
 #include <jde/db/meta/Column.h>
+#include <jde/db/meta/Table.h>
 #include "qlInternal.h"
 
 #define let const auto
@@ -51,6 +52,15 @@ namespace Jde::QL{
 			p = find_if( Tables, [&](let& t){return t.JsonName==singular;} );
 		}
 		return p==Tables.end() ? nullptr : &*p;
+	}
+	//Read on every table the query names.  A child whose table declares no Read - identities under groups, permissionRights
+	//under roles - is its parent's data, so the parent's check governs it:  an unenforced parent is open to everyone.  Only a
+	//root read of such a table falls to Table::Authorize's known-user rule.
+	α TableQL::AuthorizeRead( UserPK executer, SL sl, bool child )Ε->void{
+		if( let table = DBTable(); table && (!child || !empty(table->Operations & Access::ERights::Read)) )
+			table->Authorize( Access::ERights::Read, executer, sl );
+		for( let& t : Tables )
+			t.AuthorizeRead( executer, sl, true );
 	}
 	α TableQL::ExtractTable( sv jsonPluralName )ι->optional<TableQL>{
 		auto p = FindTable( jsonPluralName );

@@ -113,7 +113,7 @@ describe( 'resourceTableSettings', ()=>{
 		expect( enforced?.liveToggle?.enableMessage ).toMatch( /lose your own access/ );
 	} );
 
-	//Neither is grantable on this table - access-meta gives `resources` ops Delete and Subscribe only - so offering either
+	//Neither is grantable on this table - access-meta gives `resources` ops Read, Delete and Subscribe only - so offering either
 	//would be offering a button whose mutation the server must refuse.
 	it( 'offers neither Add nor Purge', ()=>{
 		expect( resourceTableSettings.canAdd ).toBe( false );

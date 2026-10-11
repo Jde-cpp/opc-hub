@@ -445,6 +445,7 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(sa, "users", root), "allowed")), ERights::Administer );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "users", root), "allowed")), ERights::Create|ERights::Update|ERights::Delete|ERights::Purge|ERights::Subscribe|ERights::Execute );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "resources", root), "allowed")), ERights::Delete|ERights::Subscribe );
+		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "resources", root), "allowed")), ERights::Read ) << "every page listing resources, once access.resources is enforced";
 		//reviews/m2-closing.md #8:  every resource the gateway gates on, not just the one with a table behind it - or enforcing
 		//gateway/sessions or gateway/search locks out every role this seed ships, the administrators included.
 		for( let slug : {"serverConnections", "sessions", "search"} )
@@ -469,6 +470,12 @@ namespace Jde::Access::Tests{
 				EXPECT_EQ( direct(role, resource), ERights::None ) << role << " on " << resource;
 			EXPECT_TRUE( description(role).contains("No configuration") ) << role << " grants nothing of its own, and its description has to say so: " << description( role );
 		}
+		//The logs resources, app/logs and opc.install/logs, with one grant on each:  what Maintenance Technician's "reads logs"
+		//and System Administrator's "log settings" say.  Every other job role sees no log once one is enforced.
+		EXPECT_EQ( direct("maint-tech", "logs"), ERights::Read );
+		EXPECT_EQ( direct("sa", "logs"), ERights::Read|ERights::Update|ERights::Administer );
+		for( let role : {"viewer", "engineer", "operator"} )
+			EXPECT_EQ( direct(role, "logs"), ERights::None ) << role;
 		for( let slug : {"owner", "engineer", "operator", "maint-tech", "sa", "viewer"} )//parents before children - a purge strips the parent's memberships, the children survive.
 			Purge( "role", RolePK{GetId(getRole(slug, root))}, root );
 	}

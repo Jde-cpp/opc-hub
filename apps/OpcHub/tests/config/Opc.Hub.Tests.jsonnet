@@ -1,6 +1,6 @@
 // Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) - plus an embedded OpcServer (1975, opc.tcp 4842),
 // in one process.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service (1967/1968/1970)
-// or the other suites (1972, 4840), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two
+// or the other suites (1972, 2067-2070, 4940), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two
 // apps' test helpers (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
