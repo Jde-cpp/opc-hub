@@ -358,6 +358,33 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, _slug, criteria, _user) ) << "a deleted criteria row falls back to the root";
 	}
 
+	//Historian 5a (#222):  Test with a criteria - a hist group by its id (spec *Authorization*) - resolves as TestAdminLocal does:
+	//the (schema, slug, criteria) row when active, else the slug's root, which an unmapped criteria inherits;  neither = not
+	//enforced.  The web's rights and the gateway's gates keep the criteria-less overload.
+	TEST( AuthorizeTests, TestBySchemaSlugCriteria ){
+		auto auth = createAuthorizer();
+		constexpr ResourcePK criteriaPK{ 2 };
+		const string criteria{ "7" };
+		auth->CreateResource( Resource{criteriaPK, jobject{{"schemaName",_schema},{"slug",_slug},{"criteria",criteria}}} );
+		auth->AddResource( criteriaPK, _schema, _slug, criteria );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );//Read on the root only.
+
+		EXPECT_NO_THROW( auth->Test(_schema, _slug, "", Read, _user) ) << "the root, as the criteria-less overload";
+		EXPECT_NO_THROW( auth->Test(_schema, _slug, "8", Read, _user) ) << "an unmapped criteria inherits the root";
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, criteria, Read, _user); }), EHttpStatus::Forbidden ) << "a mapped criteria is its own resource - the root's grant holds nothing over it";
+		EXPECT_NO_THROW( auth->Test(_schema, _slug, criteria, Read, UserPK{UserPK::System}) );
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, "8", Read, UserPK{999}); }), EHttpStatus::Unauthorized ) << "unknown user";
+		EXPECT_NO_THROW( auth->Test(_schema, "notEnabled", "7", Read, UserPK{999}) ) << "no active root - not enforced, as Test";
+
+		auth->AddAcl( _user.Value, {PermissionPK{11}, criteriaPK, Update, Read} );//the group's own row:  Update granted, Read denied.
+		EXPECT_NO_THROW( auth->Test(_schema, _slug, criteria, Update, _user) );
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, criteria, Read, _user); }), EHttpStatus::Forbidden ) << "denied on the row, whatever the root grants";
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, "", Update, _user); }), EHttpStatus::Forbidden ) << "the row's grant does not reach the root";
+
+		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, false );
+		EXPECT_NO_THROW( auth->Test(_schema, _slug, criteria, Read, _user) ) << "a deleted criteria row falls back to the root";
+	}
+
 	//access-refactor A2:  a delete unindexes its own row and nothing else, as a restart would load the cache.  The root still
 	//disables its slug (FindActiveResourcePKLocked), but deleting it used to erase the slug's criteria rows too, so restoring it
 	//left them unenforced until a restart;  and a deleted criteria row stayed indexed.

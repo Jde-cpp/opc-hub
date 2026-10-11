@@ -8,9 +8,28 @@
 
 namespace Jde::Opc::Gateway{
 	static ELogTags _tags{ (ELogTags)(EOpcLogTags::Monitoring) };
-	Ω statusChangeNotificationCallback( UA_Client* ua, UA_UInt32 subId, void* /*subContext*/, UA_StatusChangeNotification* /*notification*/ )ι->void{
-		BREAK;
-		TRACE( "[{}.{}]StatusChangeNotificationCallback", hex((uint)ua), subId );
+	//Bad_Timeout:  the server let the subscription's lifetime run out - no Publish reached it, as in an outage its session
+	//outlived.  Good_SubscriptionTransferred:  another session took it.  Either way its items push nothing more here, and nothing
+	//else notices - the session is the same one, so RecordSession sees no change - so it is rebuilt as a session loss is.
+	α SubscriptionStatusChanged( const sp<UAClient>& client, SubscriptionId subscriptionId, StatusCode status )ι->void{
+		if( (status!=UA_STATUSCODE_BADTIMEOUT && status!=UA_STATUSCODE_GOODSUBSCRIPTIONTRANSFERRED) || client->SubscriptionId()!=subscriptionId ){
+			DBG( "[{}.{}]Subscription status changed:  {}.", hex(client->Handle()), hex(subscriptionId), UAException::Message(status) );
+			return;
+		}
+		WARN( "[{}.{}]Subscription lost ({}) - re-creating its monitored items.", hex(client->Handle()), hex(subscriptionId), UAException::Message(status) );
+		//Deleted too, or open62541 keeps tracking it.  Posted ahead of Resubscribe's rebuild, so the server never sees this id
+		//after the new subscription's create, should it reuse ids.  Posted at all:  this runs inside run_iterate (see Resubscribe).
+		client->PostStrand( [client, subscriptionId]{
+			UA_UInt32 id{ subscriptionId };
+			RequestId requestId{};
+			if( let sc = UA_Client_Subscriptions_delete_async(client->UAPointer(), {.subscriptionIdsSize=1, .subscriptionIds=&id}, nullptr, nullptr, &requestId); sc )
+				DBG( "[{}.{}]Could not delete the lost subscription:  {}.", hex(client->Handle()), hex(subscriptionId), UAException::Message(sc) );
+		});
+		client->Resubscribe();
+	}
+	Ω statusChangeNotificationCallback( UA_Client* ua, UA_UInt32 subId, void* /*subContext*/, UA_StatusChangeNotification* notification )ι->void{
+		if( auto client = UAClient::TryFind(ua); client && notification )
+			SubscriptionStatusChanged( client, subId, notification->status );
 	}
 
 	Ω deleteSubscriptionCallback( UA_Client* ua, UA_UInt32 subId, void* /*subContext*/ )ι->void{

@@ -88,12 +88,15 @@ namespace Jde::Opc::Gateway{
 		α PostUA( absl::AnyInvocable<void()> f )ι->void;//runs f on this client's strand - the only place UA_Client_* calls are allowed once the processing loop can run. Holds shared_from_this until f runs.
 		α PostStrand( absl::AnyInvocable<void()> f )ι->void;//like PostUA but always defers (asio::post, not dispatch): use when a strand callback must not run re-entrantly inside the current strand handler. Holds shared_from_this until f runs.
 		α Processing()ι->bool{ return _asyncRequest.IsRunning(); }
+		α OnStrand()Ι->bool{ return _asyncRequest.Strand().running_in_this_thread(); }//inside run_iterate or a PostUA - where UA_Client_* calls, and the ordering a strand callback relies on, are safe.
 		α ProcessDataSubscriptions()ι->void;
 		α StopProcessDataSubscriptions()ι->void;
 		α Resubscribe()ι->void;//unconditional rebuild: re-create the subscription and the monitored items a dropped session took with it.  RecordSession is what decides when this is needed.
 		α RecordSession()ι->bool;//records the current session's authentication token; true when it names a different session than the last one seen.
 		α ReadSessionToken()Ι->string;//what RecordSession would record, without recording it - empty when the token cannot be read.  Compare with SessionToken() to see whether the session changed, and leave the baseline alone.
 		α SessionToken()Ι->string{ lg _{_sessionTokenMutex}; return _sessionToken; }//the token RecordSession last read - empty means it could not be read, which turns the rebuild off (see there).
+		α RecordBreak()ι->void;//StateCallback, for any state short of an activated session:  the first since the last activation is when the connection broke.
+		α TakeBreak()ι->TimePoint;//when the connection broke, for IDataChange::ConnectionLost - RecordBreak's time, else now - and clears it, so the next loss is a new break.
 		α AddSessionAwait( VoidAwait::Handle h )ι->void;
 		α TriggerSessionAwaitables()ι->void;
 
@@ -124,7 +127,11 @@ namespace Jde::Opc::Gateway{
 		α DefaultBrowseNs()Ι->NsIndex{ return _opcServer.DefaultBrowseNs; }
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
-		α BrowsePathsToNodeIds( sv path, bool parents )Ε->flat_map<string,ExpectedNodeId>;
+		//TranslateBrowsePathsToNodeIds for `path` - a/b/c, each segment `ns~name` or a bare name in DefaultBrowseNs - from `start`,
+		//the Objects folder unless a caller has a root (a template's, spec *Templates*), following HierarchicalReferences and their
+		//subtypes, so a path through HasComponent or HasProperty resolves as one through Organizes does.  `parents` asks for every
+		//prefix of the path as well.  Strand-only, as every sync service (UAStrandAwait).
+		α BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start=NodeId::ObjectsFolder() )Ε->flat_map<string,ExpectedNodeId>;
 		UA_ClientConfig _config{};//TODO move private.
 		Gateway::Credential Credential;
 
@@ -167,6 +174,9 @@ namespace Jde::Opc::Gateway{
 		//thread) and read off it through SessionToken()/ReadSessionToken(), so the lock is what keeps a reader - a test, a status
 		//query - from racing a re-activation rather than a precaution against a future one.
 		string _sessionToken; mutable mutex _sessionTokenMutex;
+		//RecordBreak's time, TimePoint{} for none.  The session-loss rebuild only starts once the new session is activated, after the
+		//outage, and spec *Compression*'s late-report rule needs the break, not that.
+		std::atomic<TimePoint> _brokeAt{};
 
 		sp<UA_SetMonitoringModeResponse> _monitoringModeResponse;
 		sp<UA_CreateSubscriptionResponse> _createdSubscriptionResponse;

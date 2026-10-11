@@ -16,6 +16,10 @@ namespace Jde::Access{
 		virtual ~Authorize()=default;
 
 		α Test( str schemaName, str resourceName, ERights rights, UserPK userPK, SRCE )ε->void override;
+		//Test on the resource a criteria scopes - a hist group by its id (spec *Authorization*):  the active (schema, slug, criteria)
+		//row when there is one, else the slug's root, which an unmapped criteria inherits, as TestAdminLocal resolves the admin
+		//check.  Neither active = not enforced, passes as Test does.
+		α Test( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SRCE )ε->void;
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;

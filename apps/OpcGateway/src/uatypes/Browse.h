@@ -5,8 +5,10 @@
 namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
+	//One TranslateBrowsePaths path:  `segments` from `start`, each a browse name in `defaultNS` or its own `ns~name`, over
+	//HierarchicalReferences with subtypes - Organizes, HasComponent, HasProperty and the rest, as a browse walks them.
 	struct UABrowsePath : UA_BrowsePath, noncopyable{
-		UABrowsePath( std::span<const sv> segments, NsIndex defaultNS )ι;
+		UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start=NodeId::ObjectsFolder() )ι;
 		UABrowsePath( UABrowsePath&& x )ι:UA_BrowsePath{ x }{ UA_BrowsePath_init( &x ); }
 		//UABrowsePath( const UABrowsePath& x )ι{ UA_BrowsePath_copy( &x, this ); }
 		~UABrowsePath(){ UA_BrowsePath_clear(this); }
