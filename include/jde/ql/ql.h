@@ -32,7 +32,7 @@ namespace Jde::QL{
 	α ParseM( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw=true, SRCE )ε->MutationQL;
 	α ParseQuery( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, bool returnRaw=true, SRCE )ε->TableQL;
 	α ParseSubscriptions( string query, jobject variables, const vector<sp<DB::AppSchema>>& schemas, SRCE )ε->vector<Subscription>;
-	α SelectStatement( const TableQL& qlTable, optional<bool> includeDeleted=nullopt, bool includeWhere=true )ε->DB::Statement;
+	α SelectStatement( const TableQL& qlTable, bool includeWhere=true )ε->DB::Statement;
 }
 namespace Jde{
 	Ŧ QL::AsId( const jobject& o, SL sl )ε->T{

@@ -46,7 +46,7 @@ namespace Jde::Access::Server{
 			if( _mutation.Type==QL::EMutationQL::Update ){
 				let id = Json::FindNumber<ResourcePK::Type>( args, "id" );
 				THROW_IFX( !id, Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "updateResource needs the row's id - a slug is not unique across schemas.") );
-				let row = co_await *LocalQL().Query( Ƒ("resource( id:{} ){{ schemaName deleted }}", *id), {}, UserPK{UserPK::System}, true, _sl );//deleted:  selecting it is what includes a deleted row.
+				let row = co_await *LocalQL().Query( Ƒ("resource( id:{} ){{ schemaName }}", *id), {}, UserPK{UserPK::System}, true, _sl );
 				let found = row.is_object() ? Json::FindString( row.get_object(), "schemaName" ) : optional<string>{};
 				THROW_IFX( !found, Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource '{}' not found.", *id) );
 				schemas.emplace( *found );

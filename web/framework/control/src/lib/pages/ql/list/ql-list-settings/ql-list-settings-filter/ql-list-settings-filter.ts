@@ -177,8 +177,8 @@ export class QLListSettingsFilter implements OnInit{
 	//A live-toggle column (the Resources page's Enforced) is a yes/no:  its null is the switch ON, so "null" read backwards under
 	//that header, and a date or an operator means nothing there.
 	liveToggle( col:ColumnFilter ):boolean{ return !!this.view().fields.find( f=>f.name==col.field.name )?.liveToggle; }
-	nullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? col.displayName : "null"; }
-	nonNullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? `Not ${col.displayName.toLowerCase()}` : "not null"; }
+	nullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? col.displayName : col.field.name=="deleted" ? "Not deleted" : "null"; }
+	nonNullLabel( col:ColumnFilter ):string{ return this.liveToggle(col) ? `Not ${col.displayName.toLowerCase()}` : col.field.name=="deleted" ? "Deleted" : "not null"; }
 	get columnNames(){ return ["name", "operation", "filter", "delete"] };//
 	get unFilteredColumns():Record<string,string>{
 		let columns:Record<string,string> = {};

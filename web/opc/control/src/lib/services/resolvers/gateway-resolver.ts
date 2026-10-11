@@ -49,9 +49,11 @@ export class GatewayResolver implements Resolve<GatewayData> {
 		var profile = new PageProfile();
 		const defaultView = new View( routing.tableSettings, schema );
 		profile.views.push( defaultView );
-		await profile.loadViews( schema.collectionName, this.profileStore, schema, defaultView.sort );
+		const deleted = QLListResolver.deletedView( defaultView );
+		if( deleted )
+			profile.views.push( deleted );
+		await profile.loadViews( schema.collectionName, this.profileStore, schema, defaultView );
 		profile.currentViewIndex = ProfileStore.viewIndex( schema.collectionName );
-		profile.showDeleted = ProfileStore.showDeleted( schema.collectionName );
 
 		return GatewayResolver.load( gateway, {columns: QLListResolver.columns(schema, [], []), pageSettings, profile, schema, results: undefined, routing}, this.routeStore, url );
 	}
@@ -59,7 +61,7 @@ export class GatewayResolver implements Resolve<GatewayData> {
 	//QLListResolver.loadOrFail makes it for a list page:  a user holding no role yet is the common case once
 	//gateway/serverConnections is enforced, and the tab has to open to tell them (reviews/m3-closing.md #6).
 	static async load( gateway:Gateway, data:GatewayData, routeStore:RouteStore, childrenKey:string|UrlSegment[] ):Promise<GatewayData>{
-		const query = data.profile.view.query( data.profile.showDeleted, 0 );//the toggle persists under the collection name (serverConnections), not "gateways"
+		const query = data.profile.view.query( 0 );
 		let results:any;
 		try{
 			results = await gateway.query<any>( query.text, query.vars, (m)=>console.log(m) );

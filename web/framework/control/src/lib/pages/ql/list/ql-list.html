@@ -1,6 +1,6 @@
 @if( !isLoading() ) {
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
+		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [reservedNames]=systemViewNames() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
 		<ng-container>
 			<mat-toolbar>
@@ -15,7 +15,7 @@
 					</button>
 					<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="resolvedData().profile.currentViewIndex" (change)="onChangeView($event.value)">
 						@for (view of resolvedData().profile.views; track view; let i=$index) {
-							<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
+							<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
 						}
 					</mat-button-toggle-group>
 					<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="isSettings.set(true)">
@@ -24,9 +24,6 @@
 				</div>
 				<div class="bar-right">
 					<span class="row-count">{{ data().length }} {{ data().length==1 ? "row" : "rows" }}</span>
-					@if( !selector() && !liveToggleField() ){
-						<mat-checkbox [checked]="showDeleted()" (change)="onToggleShowDeleted()">Show deleted</mat-checkbox>
-					}<!--a live-toggle page shows every row and switches them in place, so the checkbox has nothing left to offer-->
 				</div>
 			</mat-toolbar>
 			<mat-progress-bar class="refresh-bar" [mode]="isRefreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>

@@ -1,4 +1,3 @@
-import { Sort } from "@angular/material/sort";
 import { ProfileStore } from "jde-spa";
 import { View, ViewFieldSettings } from "../../../model/ql/view";
 import { TableSchema } from '../../../model/ql/schema/table-schema';
@@ -7,7 +6,6 @@ import type { TableSettings } from '../../../services/ql-list-resolver';//type-o
 export class PageProfile{
 	constructor( args?:PageProfile ){
 		if( args ){
-			this.showDeleted = args.showDeleted;
 			this.currentViewIndex = args.currentViewIndex;
 			//copy the ARRAY: every caller builds `new PageProfile(current)` as a private working copy, mutates it through
 			//upsertView/updateView and only then swaps it in via refresh() - sharing the array wrote those edits straight
@@ -27,8 +25,8 @@ export class PageProfile{
 			this.currentViewIndex = this.views.length - 1;
 		}
 	}
-	async loadViews( collectionName:string, profileStore:ProfileStore, schema:TableSchema, defaultSort:Sort[] ){
-		const views = await profileStore.loadClassArray<View>( `qlList/${collectionName}/views`, View, schema, defaultSort );
+	async loadViews( collectionName:string, profileStore:ProfileStore, schema:TableSchema, defaultView:View ){
+		const views = await profileStore.loadClassArray<View>( `qlList/${collectionName}/views`, View, schema, defaultView );
 		this.views.push( ...views );
 	}
 	async removeView( viewName:string, collectionName:string, profileStore:ProfileStore, defaultSettings:TableSettings|undefined ){
@@ -38,7 +36,6 @@ export class PageProfile{
 	updateView( view:View ){
 		this.views[this.views.findIndex( v=>v.name==view.name && view.type==v.type)] = view;
 	}
-	showDeleted!:boolean;
 	currentViewIndex:number=0;
 	get view():View{
 		if( this.currentViewIndex>=this.views.length ){

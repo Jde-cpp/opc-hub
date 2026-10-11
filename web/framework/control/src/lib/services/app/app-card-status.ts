@@ -7,7 +7,7 @@ import { APP_SERVICE } from './app-service';
 export class AppCardStatus implements ICardStatus{
 	readonly url = '/apps';
 	async status():Promise<CardStatusValue>{
-		const running = await countRows( this.#app, 'connections' );
+		const running = await countRows( this.#app, 'connections', 'id', 'deleted:null' )
 		return { label: 'Services', figure: running, detail: 'running', summary: `${running} running`, warn: running==0 };
 	}
 	#app = inject( APP_SERVICE );

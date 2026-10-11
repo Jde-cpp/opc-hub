@@ -34,7 +34,7 @@ namespace Jde::QL{
 	private:
 		template<class F> α TestWith( str columnName, const F& value )Ι->bool;
 	};
-	α ToWhereClause( const TableQL& table, const DB::Table& schemaTable, bool includeDeleted=false )ε->DB::WhereClause;
+	α ToWhereClause( const TableQL& table, const DB::Table& schemaTable )ε->DB::WhereClause;
 	//The column a filter or an order-by names, resolved the way addColumn resolves a *selected* column - the pk for "id", the
 	//column itself, or, for an enum's display name, the <name>_id it renders through (#20).  Throws naming the table if none.
 	α FilterColumn( const DB::Table& dbTable, sv jsonName, SRCE )ε->sp<DB::Column>;

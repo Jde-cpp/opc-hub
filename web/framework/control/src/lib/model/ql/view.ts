@@ -56,7 +56,7 @@ export type ChipTones = Record<string,ChipTone>;
 //tooltip and aria-label read; the messages spell out the consequence, which is domain wording the framework cannot guess.
 export type LiveToggle = { enable:string, disable:string, enableMessage?:string, disableMessage?:string };
 export type ViewFieldSettings = {name?:string, displayName?:string, style?:Style, defaultView?:boolean/*=!hidden*/, hidden?:boolean, selection?:string/*OBJECT/UNION sub-selection, e.g. "count" -> `name{count}`; defaults to "id name"/"id"*/, chip?:ChipTones, liveToggle?:LiveToggle};
-type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones, liveToggle?:LiveToggle};
+type ViewFieldJson = {name:string, hidden?:boolean, displayName?:string, style?:Style, selection?:string, chip?:ChipTones};
 export type Filter = { operator: Operator, value: DbScalar[] };
 export class Flex{
 	constructor( value:string|number ){
@@ -137,7 +137,6 @@ export class ViewField{
 			this.displayName = json.displayName ?? StringUtils.idToDisplay( this.name );
 			this.selection = json.selection;
 			this.chip = json.chip;
-			this.liveToggle = json.liveToggle;
 		}
 	}
 	toJson( customDisplay:boolean=false ):ViewFieldJson{
@@ -152,8 +151,6 @@ export class ViewField{
 			y["selection"] = this.selection;
 		if( this.chip )
 			y["chip"] = this.chip;
-		if( this.liveToggle )
-			y["liveToggle"] = this.liveToggle;//persisted like `chip`:  a user view saved off the resources list has to come back still holding its Enforced switch, not a bare timestamp
 		return y;
 	}
 	//what query() emits for this field: composite kinds need a sub-selection - an explicit one from settings, else the framework's {id name}/{id} convention (proto.service.fieldColumns).
@@ -190,13 +187,13 @@ export enum ViewType{
 	User
 }
 export class View{
-	constructor( value:ViewConfigArgs|ViewSerializedArgs|View|TableSettings, schema?:TableSchema, defaultSort?:Sort[] ){
+	constructor( value:ViewConfigArgs|ViewSerializedArgs|View|TableSettings, schema?:TableSchema, defaultView?:View ){
 		if( value instanceof View )
 			this.copyConstructor( value as View );
 		else if( (value as ViewConfigArgs).configColumns )
 			this.configConstructor( value as ViewConfigArgs, schema! );
 		else if( (value as ViewSerializedArgs).fields )
-			this.serializedConstructor( value as ViewSerializedArgs, schema!, defaultSort );
+			this.serializedConstructor( value as ViewSerializedArgs, schema!, defaultView );
 		else if( (value as TableSettings).columns )
 			this.tableConstructor( value as TableSettings, schema! );//the cast, as above: TableSettings.filters and ViewSerializedArgs.filters differ in shape, so the union no longer narrows by itself
 	}
@@ -226,7 +223,7 @@ export class View{
 		}
 		this.appendAlwaysQueried( schema );
 	}
-	private serializedConstructor( config:ViewSerializedArgs, schema:TableSchema, defaultSort:Sort[]|undefined ):void{
+	private serializedConstructor( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
 		this.collectionName = config.collectionName;
 		if( config.limit )
@@ -252,9 +249,13 @@ export class View{
 			console.warn( `View '${config.name}' (${config.collectionName}) references ${missing.join(", ")} - not in the schema, dropped.` );
 
 		this.showSelector = config.showSelector;
-		this.sort = config.sort ?? defaultSort ?? [];
+		this.sort = config.sort ?? defaultView?.sort ?? [];
 		this.type = ViewType.User;
 		this.appendAlwaysQueried( schema );//toJson only persists displayed fields, so a saved view arrives without id/slug
+		//The route owns the live toggle, not the saved view:  toJson drops a hidden Enforced column, and `deleted` re-added
+		//without it had query() filter every unenforced resource out.
+		for( const field of this.fields )
+			field.liveToggle = defaultView?.fields.find( f=>f.name==field.name )?.liveToggle;
 	}
 	private tableConstructor(config:TableSettings, schema:TableSchema){
 		this.collectionName = schema.collectionName;
@@ -266,14 +267,14 @@ export class View{
 	static toSort( sort:Sort[]|string|undefined ):Sort[]|undefined{
 		return typeof sort=="string" ? [{active: sort, direction: "asc"}] : sort;
 	}
-	//id is the mutation key, slug the navigation key (ql-list.onRowActivate) and deleted drives show-deleted - query() asks for them whether or not they are displayed, so every view must carry them
+	//id is the mutation key, slug the navigation key (ql-list.onRowActivate) and deleted is what query() hides rows on - so every view must carry them, displayed or not
 	private appendAlwaysQueried( schema:TableSchema ):void{
 		for( let field of schema.fields.filter( f=>["id","deleted","slug"].includes(f.name) && !this.fields.find(c=>c.name==f.name) ) ){
 			const viewField = new ViewField( {qlField:field, settings: {name: field.name, hidden: true}} );
 			if( field.name=="id" )
 				this.fields.unshift( viewField );
 			else
-				this.insertBeforeDescription( viewField );//deleted becomes visible with show-deleted, and columns() keeps description last
+				this.insertBeforeDescription( viewField );//the Deleted view shows it, and columns() keeps description last
 		}
 	}
 	private insertBeforeDescription( field:ViewField ):void{
@@ -282,18 +283,6 @@ export class View{
 			this.fields.push( field );
 		else
 			this.fields.splice( description, 0, field );
-	}
-	private columnsToQuery( excludedColumns:string[], includeDeleted:boolean ):ViewField[]{
-		return this.fields.filter( (x)=>
-			(x.displayed || x.name=="id")
-		&& !excludedColumns?.includes(x.name)
-		&& (includeDeleted || x.name!="deleted") );
-	}
-	private columnsToQuerySorted( orderedSpec:string[], excludedColumns:string[]=[], includeDeleted:boolean=false ):ViewField[]{
-		const notInSpec = this.fields.filter( f=>!orderedSpec.includes(f.name) ).map( f=>f.name );
-		let sort = [...orderedSpec, ...notInSpec ];
-		const f = ( x:ViewField,y:ViewField )=>{ return sort.indexOf( x.name )-sort.indexOf( y.name ); };
-		return this.columnsToQuery( excludedColumns, includeDeleted ).sort( f );
 	}
 	private columns( schema:TableSchema, configColumns:(string|ViewFieldSettings)[], defaultHidden:string[] ):ViewField[]{
 		let selectCols = [];
@@ -336,11 +325,7 @@ export class View{
 		}
 		return typeof v=="object" && "days" in (v as object) ? Days.fromJson( <{days:number}>v ) : v;
 	}
-	query( showDeleted:boolean, skip:number ):Query{
-		let deletedField = this.fields.find( f=>f.name=="deleted" );
-		if( deletedField )
-				deletedField.displayed = showDeleted;
-
+	query( skip:number ):Query{
 		let fieldStr = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" ).map( f=>f.queryText ).join(" ");//id/slug are queried even when hidden:  id is the mutation key, slug the navigation key
 		let args = [];
 		let vars:Record<string, DbScalar[]|DbScalar|null> = {};
@@ -388,16 +373,10 @@ export class View{
 				}
 			}
 		}
-		const iDeletedArg = args.findIndex( a=>a.startsWith("deleted:") );
-		//Show deleted wins over a filter on the trash-can column - the checkbox is the way out.  A live-toggle page has no checkbox:
-		//`deleted` is its switch (the Resources page's Enforced), it queries with showDeleted always on, and a filter on it is the
-		//point - it used to be spliced out, so "enforced only" listed everything (reviews/m3-closing.md #16).
-		const liveToggle = this.fields.some( f=>f.name=="deleted" && f.liveToggle );
-		if( showDeleted && iDeletedArg!=-1 && !liveToggle ){
-			args.splice( iDeletedArg, 1 );
-			delete vars["deleted"];
-		}
-		else if( !showDeleted && iDeletedArg==-1 ){
+		//Deleted rows stay out unless the view filters on `deleted` - the Deleted system view does, and so can any saved one.
+		//A live-toggle column (the Resources page's Enforced) lists every row:  `deleted` is its switch, not a trash can.
+		const deleted = this.fields.find( f=>f.name=="deleted" );
+		if( deleted && !deleted.liveToggle && !args.some(a=>a.startsWith("deleted:")) ){
 			args.push( `deleted:$deleted` );
 			vars["deleted"] = null;
 		}
@@ -413,7 +392,6 @@ export class View{
 		const keys = ( v:View )=>v.fieldFilters.map( ff=>JSON.stringify([ff.field.name, ff.filter.operator, ff.filter.value]) ).sort();
 		return arraysEqual( keys(a), keys(b) );
 	}
-	setDeletedDisplayed( show:boolean ){ this.fields.find(f=>f.name=="deleted")!.displayed = show; }
 	toJson( defaultSettings:TableSettings|undefined ):ViewJson{
 		let fields = [];
 		for( let field of this.fields ){

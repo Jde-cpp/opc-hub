@@ -309,15 +309,14 @@ namespace Jde{
 		return DB::Value{ column.Type, v };
 	}
 
-	α QL::ToWhereClause( const TableQL& table, const DB::Table& dbTable, bool includeDeleted )ε->DB::WhereClause{
+	//Exactly the filters the query sent:  no implicit `deleted is null` - a caller that wants the live rows asks for `deleted:null`.
+	α QL::ToWhereClause( const TableQL& table, const DB::Table& dbTable )ε->DB::WhereClause{
 		table.CheckVariables();
 		DB::WhereClause where;
 		for( let& [name,filters] : table.Filter().ColumnFilters ){
 			if( name=="orderBy" || name=="limit" || name=="offset" || name=="skip" )
 				continue;
 			auto column = FilterColumn( dbTable, name );
-			if( name=="deleted" )//an explicit filter on deleted is the whole predicate.  It set this false, which ANDed the implicit `deleted is null` onto it:  "not null" and a date could never match, only the null the implicit one already meant (reviews/m3-closing.md #16).
-				includeDeleted = true;
 			for( auto& filter : filters ){
 				auto& value = filter.Value;
 				const jvalue* json{};
@@ -348,8 +347,6 @@ namespace Jde{
 				}
 			}
 		}
-		if( auto deleted = includeDeleted ? nullptr : dbTable.FindColumn("deleted"); deleted )
-			where.Add( deleted, DB::Value{} );
 		return where;
 	}
 }

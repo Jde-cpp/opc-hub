@@ -144,12 +144,12 @@ namespace Jde::QL{
 		c.DBColumn = dbColumn;
 	}
 
-	Ω columnSql( const TableQL& qlTable, const DB::Table& dbTable, bool excludeId, DB::Statement& statement, optional<bool> includeDeleted=nullopt, bool includeWhere=true )ε->void{
+	Ω columnSql( const TableQL& qlTable, const DB::Table& dbTable, bool excludeId, DB::Statement& statement, bool includeWhere=true )ε->void{
 		for( let& c : qlTable.Columns )
 			addColumn( c, qlTable, dbTable, statement, excludeId );
 
 		if( includeWhere )
-			statement.Where += QL::ToWhereClause( qlTable, dbTable, includeDeleted.value_or(statement.Select.FindColumn("deleted")!=nullptr) );
+			statement.Where += QL::ToWhereClause( qlTable, dbTable );
 		for( let& qlChild : qlTable.Tables ){
 			THROW_IF( !qlChild.DBTable(), "[{}]Unknown sub-table '{}'.", dbTable.Name, qlChild.JsonName ); //only a system-named child of a system parent resolves to no view, and none of those reach here.
 			auto pFK = findFK( dbTable, qlChild.DBTable()->Name ); //members.
@@ -158,7 +158,7 @@ namespace Jde::QL{
 				if( pkTable->QLView )
 					pkTable = pkTable->QLView;
 				statement.From.TryAdd( {pFK, pkTable->GetPK(), !pFK->IsNullable} );
-				columnSql( qlChild, *pkTable, false, statement, includeDeleted, includeWhere );
+				columnSql( qlChild, *pkTable, false, statement, includeWhere );
 			}
 		}
 	}
@@ -310,10 +310,10 @@ namespace Jde::QL{
 	}
 }
 namespace Jde{
-	α QL::SelectStatement( const TableQL& qlTable, optional<bool> includeDeleted, bool includeWhere )ε->DB::Statement{
+	α QL::SelectStatement( const TableQL& qlTable, bool includeWhere )ε->DB::Statement{
 		let dbView = qlTable.DBTable();
 		DB::Statement statement;
-		columnSql( qlTable, *dbView, false, statement, includeDeleted, includeWhere );
+		columnSql( qlTable, *dbView, false, statement, includeWhere );
 		if( statement.From.Empty() )
 			statement.From += { dbView->Columns[0] };
 		if( optional<DB::Criteria> criteria = dbView->Extends ? dbView->SurrogateKeys[0]->Criteria : nullopt; criteria ) //identities is_group

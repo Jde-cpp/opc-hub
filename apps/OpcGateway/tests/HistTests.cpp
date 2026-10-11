@@ -665,7 +665,7 @@ namespace Jde::Opc::Gateway::Tests{
 			if( !on )
 				return;
 			constexpr sv roleSlug{ "GatewayHistoryEditor" };
-			if( app->QuerySync("role(slug:$slug){id}", {{"slug", roleSlug}}).empty() ){
+			if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
 				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway history editor"}} );
 				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
 				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}, {"schema", schema}} );

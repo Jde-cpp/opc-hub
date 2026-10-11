@@ -29,7 +29,6 @@ describe( 'GatewayResolver', ()=>{
 	const data = ():GatewayData=>{
 		const profile = new PageProfile();
 		profile.views = [ new View({columns: ["name"], sort: "name"}, schema) ];
-		profile.showDeleted = false;
 		return { schema, profile, routing: new AppInstanceRoute("gateways", "opchub", gatewayTableSettings), columns: {}, pageSettings: {} as any, results: undefined };
 	};
 	const routeStore = ()=>({ setChildren: vi.fn(), getChildren: ()=>[] }) as unknown as RouteStore;

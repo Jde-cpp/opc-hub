@@ -26,7 +26,7 @@ export class AppResolver implements Resolve<Connection[]> {
 	async resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<Connection[]>{
 		let connections:Connection[];
 		try{
-			connections = await this.appService.queryArray<Connection>( "connections{id instanceId programName instanceName hostName created status{memory values}}", null, (m)=>console.log(m) );
+			connections = await this.appService.queryArray<Connection>( "connections(deleted:null){id instanceId programName instanceName hostName created status{memory values}}", null, (m)=>console.log(m) );
 		}
 		catch( e ){//a rejected resolve reaches only the console - the Applications link would do nothing, silently (reviews/m3-closing.md #6)
 			this.#snackbar.exception( "Could not load the applications.", e );

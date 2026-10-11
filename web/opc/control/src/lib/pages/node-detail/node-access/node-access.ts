@@ -38,7 +38,7 @@ export class NodeAccess implements OnInit, OnDestroy{
 	private async load():Promise<void>{
 		const criteria = this.node().nodeId.uaString();//e.g. "ns=4;i=6020" — the server's resource criteria for this node
 		const vars = { schemaName: `opc.${this.accessResource()}`, slug: "nodeIds", criteria };
-		const q = 'roles{ id name permissionRight{ id allowed denied resource(schemaName:$schemaName, criteria:$criteria, slug:$slug){ id criteria } } }';
+		const q = 'roles(deleted:null){ id name permissionRight{ id allowed denied resource(schemaName:$schemaName, criteria:$criteria, slug:$slug){ id criteria } } }';
 		const db = await this.appService.queryArray<any>( q, vars, (m)=>console.log(m) );
 		const roles:RolePermission[] = db.map( (role:any)=>{
 			const pr = role.permissionRight;//present only where a permission exists for this exact node; allowed/denied are [Right] name arrays

@@ -137,14 +137,14 @@ describe( 'resourceTableSettings', ()=>{
 		] } );
 		const views = QLListResolver.systemViews( schema, resourceTableSettings );
 		expect( views.map(v=>v.name) ).toEqual( ["Tables"] );
-		const q = views[0].query( false, 0 );
+		const q = views[0].query( 0 );
 		expect( q.text ).toContain( "criteria:$criteria" );
 		expect( q.vars["criteria"] ).toEqual( [null] );
 	} );
 } );
 
 //The users list's three system views.  'Users' and 'Certs' began life as one user's saved views; they are declared on
-//the route now so every user gets them, and the default view is labelled 'All' instead of the framework's 'default'.
+//the route now so every user gets them, and the default view is labelled 'All' instead of the framework's 'Default'.
 describe( 'userTableSettings views', ()=>{
 	const scalar = ( name:string, type:string="String" )=>({ name, type: { kind: "SCALAR", name: type } });
 	const schema = new TableSchema( { name: "User", fields: [
@@ -159,14 +159,14 @@ describe( 'userTableSettings views', ()=>{
 	const views = QLListResolver.systemViews( schema, userTableSettings );
 	const byName = ( name:string )=>views.find( v=>v.name==name )!;
 
-	it( 'are All, Users and Certs - system views, in that order', ()=>{
-		expect( views.map(v=>v.name) ).toEqual( ["All", "Users", "Certs"] );
+	it( 'are All, Users and Certs - system views, in that order - then the framework\'s Deleted', ()=>{
+		expect( views.map(v=>v.name) ).toEqual( ["All", "Users", "Certs", "Deleted"] );
 		expect( views.every(v=>v.isSystem) ).toBe( true );
 	} );
 
 	it( 'Users lists the non-certificate identities with their login columns', ()=>{
 		expect( displayed(byName("Users")) ).toEqual( ["name", "provider", "email", "loginName", "description"] );
-		const q = byName( "Users" ).query( false, 0 );
+		const q = byName( "Users" ).query( 0 );
 		expect( q.text ).toContain( "issuer:$issuer" );
 		expect( q.vars["issuer"] ).toEqual( [null] );
 	} );

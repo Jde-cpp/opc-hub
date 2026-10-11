@@ -91,7 +91,7 @@ namespace Jde::Access::Tests{
 		QL::Subscriptions::StopListen( listener );
 	}
 
-	//access-enforce-toggle #1:  the rights load selected the nested resource by id alone, and a select naming no `deleted` column is
+	//access-enforce-toggle #1:  the rights load selected the nested resource by id alone, and a select naming no `deleted` column was then
 	//"active rows only" - so every grant on an unenforced resource was dropped at load.  Harmless until the Enforced toggle restored
 	//the row live:  enforcement then ran against a map that never held it, and every identity was denied until a restart.  The
 	//regression the review asked for, without OPC:  a soft-deleted resource with a direct grant, loaded, restored through the

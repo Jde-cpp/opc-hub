@@ -100,13 +100,4 @@ namespace Jde::DB{
 		THROW_IFSL( Joins.size()==0, "!SingleTable and Joins.size()==0" );
 		return Joins[0].From->Table;
 	}
-	//add 'deleted is null'
-	α FromClause::SetActive( WhereClause& where, SL sl )ε->void{
-		auto table = GetFirstTable( sl );
-		if( let pDeleted=table->FindColumn("deleted"); pDeleted ){
-			where.Add( pDeleted, nullptr );
-			if( pDeleted->Table->Name!=table->Name && table->SurrogateKeys.size()>1 )
-				TryAdd( {table->SurrogateKeys[0], pDeleted->Table->GetPK(), true} ); //table=members, pDeleted=identities.  Extension tables have extension_id first.
-		}
-	}
 }

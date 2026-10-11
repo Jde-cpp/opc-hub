@@ -4,14 +4,17 @@ import { AccessCardStatus, AccessCollectionStatus } from './access-card-status';
 
 describe( 'Access card statuses', ()=>{
 	//the rows each list query answers - groups as the server answered an empty `groups{ id }` before the GroupAwait fix.  The
-	//server's select leaves out deleted rows, so every resource here is an enforced one:  a table (no criteria) and the node row
-	//a per-node grant mints live (access_role_add), which /access/resources does not list.
-	const rows:Record<string,unknown> = { users: [{id: 1}, {id: 2}, {id: 3}], groups: {}, roles: [{id: 1}], resources: [{id: 1, criteria: null}, {id: 2, criteria: 'ns=2;i=10'}] };
+	//server returns deleted rows unless the query says deleted:null, so each list holds one:  a deleted user, and an unenforced
+	//(deleted) table beside the enforced one and the node row a per-node grant mints live (access_role_add), which
+	///access/resources does not list.
+	const deleted = '2026-10-01T00:00:00Z';
+	const rows:Record<string,unknown> = { users: [{id: 1}, {id: 2}, {id: 3}, {id: 4, deleted}], groups: {}, roles: [{id: 1}, {id: 2, deleted}], resources: [{id: 1, criteria: null}, {id: 2, criteria: 'ns=2;i=10'}, {id: 3, criteria: null, deleted}] };
 	beforeEach( ()=>TestBed.configureTestingModule( {providers: [
 		{provide: AccessService, useValue: {query: async ( ql:string )=>{
-			const [, c, args] = /^(\w+)(?:\((.*)\))?\s*\{/.exec( ql.trim() )!;
+			const [, c, args=''] = /^(\w+)(?:\((.*)\))?\s*\{/.exec( ql.trim() )!;
+			const filters = args.split( ',' ).map( a=>a.replace(/\s/g, '') );
 			const answer = rows[c];
-			return {[c]: args=='criteria:null' && Array.isArray(answer) ? answer.filter( r=>r.criteria==null ) : answer};//the server's filter
+			return {[c]: Array.isArray(answer) ? answer.filter( r=>filters.every( f=>!f.endsWith(':null') || r[f.slice(0, -5)]==null ) ) : answer};//the server's filter
 		}}}
 	]} ) );
 

@@ -50,7 +50,7 @@ export class AccessSearchProvider implements ISearchProvider{
 		return this.#entities = this.#query().catch( e=>{ this.#entities = undefined; throw e; } );//never cache a failure.
 	}
 	async #query():Promise<Entity[]>{
-		const list = async ( kind:Kind )=>(await this.#access.queryArray<Row>( `${collections[kind]}{ id name slug }` )).map( r=>({ kind, name: r.name, slug: r.slug }) as Entity );
+		const list = async ( kind:Kind )=>(await this.#access.queryArray<Row>( `${collections[kind]}(deleted:null){ id name slug }` )).map( r=>({ kind, name: r.name, slug: r.slug }) as Entity );
 		const [users, groups, roles, resources] = await Promise.all( [ list('user'), list('group'), list('role'), this.#access.loadResources() ] );
 		return [ ...users, ...groups, ...roles, ...resources.map( r=>({ kind: 'resource', name: r.name, slug: r.slug, summary: r.schema }) as Entity ) ];
 	}

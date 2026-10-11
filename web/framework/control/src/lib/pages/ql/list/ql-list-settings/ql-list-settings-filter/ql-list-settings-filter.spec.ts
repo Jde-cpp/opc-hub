@@ -32,10 +32,10 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 		dialog.ngOnInit();
 		const col = dialog.dataSource[0];
 		//what QLListSettings.getView does with the dialog's rows
-		const query = ( showDeleted=true )=>{
+		const query = ()=>{
 			const v = new View( view );
 			v.fieldFilters = dialog.dataSource.filter( c=>c.field ).map( c=>({field: c.field, filter: View.copyFilter(c.filter)}) );
-			return v.query( showDeleted, 0 );
+			return v.query( 0 );
 		};
 		return { dialog, col, query };
 	}
@@ -67,7 +67,7 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 		expect( col.filter.value.length ).toBe( 1 );
 		expect( col.filter.value[0] ).toBeInstanceOf( Days );
 		expect( dialog.nullSignal("deleted")() ).toBe( dialog.NullCriteria.None );
-		expect( query(false).text ).toContain( "deleted:{gt:$deleted}" );//Show deleted off:  on a trash-can column it wins over the filter
+		expect( query().text ).toContain( "deleted:{gt:$deleted}" );//on a trash-can column the filter replaces the implicit not-deleted
 	} );
 
 	it( 'labels the boxes by what they mean under a live-toggle column', ()=>{
@@ -75,8 +75,8 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 		expect( live.dialog.nullLabel(live.col) ).toBe( "Enforced" );
 		expect( live.dialog.nonNullLabel(live.col) ).toBe( "Not enforced" );
 		const plain = open( [], {} );
-		expect( plain.dialog.nullLabel(plain.col) ).toBe( "null" );
-		expect( plain.dialog.nonNullLabel(plain.col) ).toBe( "not null" );
+		expect( plain.dialog.nullLabel(plain.col) ).toBe( "Not deleted" );//and as a trash can, by the same words
+		expect( plain.dialog.nonNullLabel(plain.col) ).toBe( "Deleted" );
 	} );
 } );
 
@@ -85,7 +85,7 @@ describe( 'View.query on a DateTime filter the old dialog built', ()=>{
 	const query = ( value:any[] )=>{
 		const view = new View( {columns: ["name", {name: "deleted", liveToggle}], sort: "name"}, schema );
 		view.fieldFilters.push( {field: schema.fields.find( f=>f.name=="deleted" )!, filter: {operator: Operator.Greater, value}} );
-		return view.query( true, 0 );
+		return view.query( 0 );
 	};
 	it( 'reads a doubled marker as the marker', ()=>{
 		expect( query(["<null>", "<null>"]).vars["deleted"] ).toEqual( [null] );

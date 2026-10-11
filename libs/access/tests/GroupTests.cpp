@@ -97,6 +97,97 @@ namespace Jde::Access::Tests{
 		PurgeUser( manager, root );
 	}
 
+	//reviews-issue/317-deleted-rows.md #3:  UserAwait::GroupStatement filtered on the user's key alone, so
+	//`user{ groups(deleted:null){…} }` returned the user's deleted groups too.
+	TEST_F( GroupTests, UserGroupsTakeTheirOwnFilter ){
+		let root = GetRoot();
+		const GroupPK live{ GetId(GetGroup("user-groups-live", root)) }, gone{ GetId(GetGroup("user-groups-deleted", root)) };
+		const UserPK user{ GetId(GetUser("user-groups-user", root)) };
+		AddToGroup( live, {user}, root );
+		AddToGroup( gone, {user}, root );
+		Delete( "groups", gone.Value, root );
+
+		let groupIds = [&]( sv key, sv args ){
+			vector<uint> ids;
+			for( let& group : Json::AsArrayPath(QL().QuerySync(Ƒ("user( {} ){{ groups{}{{ id }} }}", key, args), {}, root), "groups") )
+				ids.push_back( GetId(AsObject(group)) );
+			std::ranges::sort( ids );
+			return ids;
+		};
+		auto both = vector<uint>{ live.Value, gone.Value }; std::ranges::sort( both );
+		for( let& key : {Ƒ("id:{}", user.Value), string{"slug:\"user-groups-user\""}} ){
+			EXPECT_EQ( groupIds(key, "(deleted:null)"), vector<uint>{live.Value} ) << key;
+			EXPECT_EQ( groupIds(key, R"((deleted:{"ne":null}))"), vector<uint>{gone.Value} ) << key;
+			EXPECT_EQ( groupIds(key, ""), both ) << key;
+		}
+
+		Restore( "groups", gone.Value, root );
+		RemoveFromGroup( live, {user}, root );
+		RemoveFromGroup( gone, {user}, root );
+		PurgeGroup( live, root );
+		PurgeGroup( gone, root );
+		PurgeUser( user, root );
+	}
+
+	//reviews-issue/317-deleted-rows.md #4:  `group(id:N, deleted:null){ id groupMembers{…} }` took the id-only shortcut, which never
+	//selects the group - so a deleted group's members came back under a group the query had excluded.
+	TEST_F( GroupTests, FilteredOutGroupHasNoMembers ){
+		let root = GetRoot();
+		const GroupPK group{ GetId(GetGroup("filtered-out-group", root)) };
+		const UserPK member{ GetId(GetUser("filtered-out-group-user", root)) };
+		AddToGroup( group, {member}, root );
+		Delete( "groups", group.Value, root );
+
+		let query = [&]( sv args, sv columns ){ return QL().QuerySync( Ƒ("group( id:{}{} ){{ {} groupMembers{{ id }} }}", group.Value, args, columns), {}, root ); };
+		for( let columns : {"id", ""} ){
+			EXPECT_TRUE( query(", deleted:null", columns).empty() ) << '"' << columns << '"';
+			let found = query( R"(, deleted:{"ne":null})", columns );
+			EXPECT_EQ( Json::AsArrayPath(found, "groupMembers").size(), 1 ) << serialize( found );
+			EXPECT_EQ( found.contains("id"), *columns!='\0' ) << serialize( found );
+			let byKey = query( "", columns );
+			EXPECT_EQ( Json::AsArrayPath(byKey, "groupMembers").size(), 1 ) << serialize( byKey );
+			EXPECT_EQ( byKey.contains("id"), *columns!='\0' ) << serialize( byKey );
+		}
+
+		Restore( "groups", group.Value, root );
+		RemoveFromGroup( group, {member}, root );
+		PurgeGroup( group, root );
+		PurgeUser( member, root );
+	}
+
+	//reviews-issue/317-deleted-rows.md #11:  `group(slug:"x"){ id }` took the members shortcut and came back {}, so Upsert's probe
+	//re-created a seeded group an admin had deleted, and died on the slug index.
+	TEST_F( GroupTests, KeyOnlyIdQueryFindsTheGroup ){
+		let root = GetRoot();
+		const GroupPK group{ GetId(GetGroup("key-only-group", root)) };
+		Delete( "groups", group.Value, root );
+		for( let& key : {Ƒ("id:{}", group.Value), string{R"(slug:"key-only-group")"}} ){
+			let row = QL().QuerySync( Ƒ("group( {} ){{ id }}", key), {}, root );
+			EXPECT_EQ( Json::FindNumber<uint32>(row, "id").value_or(0), group.Value ) << key << ' ' << serialize( row );
+		}
+		PurgeGroup( group, root );
+	}
+
+	//reviews-issue/317-deleted-rows.md #9:  MembersStatement copied every group arg onto group_members, so `groups(name:"ops")` kept
+	//only the members whose own name was ops.
+	TEST_F( GroupTests, GroupFilterIsNotTheMembers ){
+		let root = GetRoot();
+		let groupRow = GetGroup( "group-filter-group", root );
+		const GroupPK group{ GetId(groupRow) };
+		const UserPK member{ GetId(GetUser("group-filter-member", root)) };
+		AddToGroup( group, {member}, root );
+
+		let groups = QL().QuerySync<jarray>( Ƒ(R"(groups( name:"{}" ){{ id groupMembers{{ id }} }})", Json::AsString(groupRow, "name")), {}, root );
+		ASSERT_EQ( groups.size(), 1 ) << serialize( groups );
+		let members = Json::AsArray( groups[0].as_object(), "groupMembers" );
+		ASSERT_EQ( members.size(), 1 ) << serialize( groups );
+		EXPECT_EQ( GetId(members[0].as_object()), member.Value );
+
+		RemoveFromGroup( group, {member}, root );
+		PurgeGroup( group, root );
+		PurgeUser( member, root );
+	}
+
 	//ql-review3 #13: QL::getChildParentParams accepts the map parent column's json name as well as "id", but GroupHook read
 	//only "id", with AsNumber, inside a ι hook - and QL::MutationAwaits::await_ready is a second noexcept frame above it, so
 	//`addGroup( identityId:N, memberId:[M] )` from anyone holding Update on groups terminated the server.

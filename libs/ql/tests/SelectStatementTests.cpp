@@ -18,6 +18,13 @@ namespace Jde::QL::Tests{
 		return QL::SelectStatement( QL::ParseQuery(move(text), {}, schema) );
 	}
 
+	//The where clause is exactly the query's filters:  no implicit `deleted is null`, so a caller that wants the live rows says
+	//deleted:null (Access' delete/restore tests cover that half - a filter needs a syntax, which this schema has none of).
+	TEST( SelectStatementTests, DeletedRowsAreNotFilteredUnlessAsked ){
+		EXPECT_EQ( statement("widgets{ id name }").Where.ToString(), "" );
+		EXPECT_EQ( statement("widgets{ id name deleted }").Where.ToString(), "" );
+	}
+
 	//the control:  a real fk still joins, so none of the guards below cost a working query.
 	TEST( SelectStatementTests, NestedForeignKeyStillJoins ){
 		auto sql = statement( "providers{ id providerTypes{ id name } }" ); //not const: FromClause::Contains is non-const.

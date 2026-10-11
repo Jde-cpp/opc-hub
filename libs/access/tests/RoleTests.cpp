@@ -83,6 +83,83 @@ namespace Jde::Access::Tests{
 
 	Ω getRole( str slug, UserPK executer )ε->jobject{ return Get("role", slug, executer); }
 
+	//A role the query filters out (deleted:null) that still holds a matched permission was seeded from the permission rows and
+	//returned as a bare {id, permissionRight} - no name, and the node Access tab's sort on it threw.
+	TEST_F( RoleTests, FilteredOutRoleWithAPermissionIsNotReturned ){
+		//includeDeleted:  a run that threw before the purge below left the role deleted, and getRole's create then tripped roles.slug
+		const RolePK rolePK{ GetId( Get("role", "roleFilteredTest", GetRoot(), {}, true) ) };
+		AddRolePermission( rolePK, "users", ERights::Read, ERights::None, GetRoot() );
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteRole( id:{} )", rolePK.Value), {}, GetRoot() );
+		let q = "roles( deleted:null ){ id name permissionRight{ id resource(slug:\"users\", criteria:null){ id } } }";
+		let roles = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
+		EXPECT_FALSE( roles.empty() );
+		for( let& role : roles ){
+			EXPECT_NE( GetId(role.as_object()), rolePK.Value ) << serialize( role );
+			EXPECT_TRUE( role.as_object().contains("name") ) << serialize( role );
+		}
+		Purge( "role", rolePK, GetRoot() );//its permission with it
+	}
+
+	//reviews-issue/317-deleted-rows.md #5:  a singular permissionRight was looked for under "permissionsRight", so every role got a
+	//bogus empty `permissionsRight` and one with no matching grant never got `permissionRight` at all.
+	TEST_F( RoleTests, SingularPermissionKey ){
+		const RolePK granted{ GetId( getRole("rolePermissionKeyGranted", GetRoot()) ) };
+		const RolePK bare{ GetId( getRole("rolePermissionKeyBare", GetRoot()) ) };
+		let permission = AddRolePermission( granted, "users", ERights::Read, ERights::None, GetRoot() );
+		let q = Ƒ( "roles( id:[{},{}] ){{ id permissionRight{{ id resource(slug:\"users\", criteria:null){{ id }} }} }}", granted.Value, bare.Value );
+		let roles = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
+		ASSERT_EQ( roles.size(), 2 ) << serialize( roles );
+		for( let& role : roles ){
+			let& o = role.as_object();
+			EXPECT_FALSE( o.contains("permissionsRight") ) << serialize( role );
+			ASSERT_TRUE( o.contains("permissionRight") ) << serialize( role );
+			if( GetId(o)==granted.Value )
+				EXPECT_EQ( GetId(Json::AsObject(o, "permissionRight")), GetId(permission) ) << serialize( role );
+			else
+				EXPECT_TRUE( Json::AsObject(o, "permissionRight").empty() ) << serialize( role );
+		}
+		RemoveRolePermission( granted, PermissionPK{GetId(permission)}, GetRoot() );
+	}
+
+	//reviews-issue/317-deleted-rows.md #6:  the plural result was rebuilt from a map keyed by pk, so orderBy came back as pk order.
+	TEST_F( RoleTests, KeepsOrderBy ){
+		vector<RolePK::Type> pks;
+		for( let slug : {"roleOrderA", "roleOrderB", "roleOrderC"} )
+			pks.push_back( GetId(getRole(slug, GetRoot())) );
+		let q = Ƒ( R"(roles( id:[{},{},{}], orderBy:[{{slug:"desc"}}] ){{ id slug permissionRights{{ id }} }})", pks[0], pks[1], pks[2] );
+		vector<string> slugs;
+		for( let& role : BlockTAwait<jvalue>(Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()}).as_array() )
+			slugs.push_back( string{Json::AsString(role.as_object(), "slug")} );
+		EXPECT_EQ( slugs, (vector<string>{"roleOrderC", "roleOrderB", "roleOrderA"}) );
+	}
+
+	//reviews-issue/317-deleted-rows.md #8:  the child statements took only the role's key, so a filter past it (deleted:null) fetched
+	//every role's children.  They take the query's whole filter now - the slug key included, which had its own join.
+	TEST_F( RoleTests, ChildrenOfTheRolesAsked ){
+		let root = GetRoot();
+		const RolePK parent{ GetId( Get("role", "roleChildrenParent", root, {}, true) ) };
+		const RolePK child{ GetId( getRole("roleChildrenChild", root) ) };
+		let permission = AddRolePermission( parent, "users", ERights::Read, ERights::None, root );
+		AddRoleMember( parent, child, root );
+		let query = [&]( sv args )->jvalue{
+			let q = Ƒ( R"(role( slug:"roleChildrenParent"{} ){{ id permissionRight{{ id resource(slug:"users", criteria:null){{ id }} }} roles{{ id }} }})", args );
+			return BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), root} );
+		};
+		let found = query( "" ).as_object();
+		EXPECT_EQ( GetId(Json::AsObject(found, "permissionRight")), GetId(permission) ) << serialize( found );
+		let roles = Json::AsArray( found, "roles" );
+		ASSERT_EQ( roles.size(), 1 ) << serialize( found );
+		EXPECT_EQ( GetId(roles[0].as_object()), child.Value );
+
+		Delete( "roles", parent.Value, root );
+		let filtered = query( ", deleted:null" );
+		EXPECT_TRUE( filtered.is_null() || filtered.as_object().empty() ) << serialize( filtered );
+		EXPECT_EQ( Json::AsArray(query(R"(, deleted:{"ne":null})").as_object(), "roles").size(), 1 );
+
+		Purge( "role", parent, root );
+		Purge( "role", child, root );
+	}
+
 	TEST_F( RoleTests, AddRemove ){
 		const RolePK rolePK{ GetId( getRole("rolePermissionsTest", GetRoot()) ) };
 		auto initial = AddRolePermission( rolePK, "users", ERights::All, ERights::None, GetRoot() );

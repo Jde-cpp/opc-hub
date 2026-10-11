@@ -55,7 +55,7 @@ export class LogDetail implements OnInit, OnDestroy{
 
 	async load( startIndex:number=0 ){
 		try{
-			const entries = ( await this.service().ql<{logs: LogEntriesRest}>( this.view().query(undefined,startIndex,this.level), (m)=>console.log(m) ) ).logs;
+			const entries = ( await this.service().ql<{logs: LogEntriesRest}>( this.view().query(startIndex,this.level), (m)=>console.log(m) ) ).logs;
 			if( entries?.entries?.length )//was Object.keys(entries).length, always >=2 ({entries,strings}); check the actual entry count
 				this.push( new LogEntries(entries) );
 			this.data.setPage( startIndex );

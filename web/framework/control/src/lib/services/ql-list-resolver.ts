@@ -8,11 +8,11 @@ import { StringUtils } from '../utils/string-utils';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { Field } from '../model/ql/schema/field';
 import { RouteItem, ProfileStore, RouteStore } from 'jde-spa';
-import { FieldFilter, View, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
+import { FieldFilter, Operator, View, ViewField, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
 import { Sort } from '@angular/material/sort';
 
 //canNavigate: a collection with no ':slug' detail route must not offer the row click-through
-//viewName: the toggle label of the default view ("default" when unset);  filters: the default view's, same vocabulary as a
+//viewName: the toggle label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
 //ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
@@ -26,7 +26,7 @@ export class ListRoute extends RouteItem{
 		this.path = collection.path;
 		this.collectionName = collection.data?.collectionName ?? this.path;
 		//per-field defaults: routes pass partial settings (e.g. groups/roles set only excludedColumns) and columns must never be undefined.
-		this.tableSettings = { excludedColumns: [], columns: ["name", "created", "updated", "deleted", "slug"], sort: [{active:"name", direction:"asc"}], ...collection.data?.tableSettings };
+		this.tableSettings = { excludedColumns: [], columns: ["name", "created", "updated", "slug"], sort: [{active:"name", direction:"asc"}], ...collection.data?.tableSettings };
 		this.summary = collection?.data?.summary;
 		this.title = collection.title ?? StringUtils.capitalize( this.path );
 	}
@@ -128,26 +128,37 @@ export class QLListResolver implements Resolve<QLListData> {
 		const systemViews = QLListResolver.systemViews( schema, routing.tableSettings );
 		var profile = new PageProfile();
 		profile.views.push( ...systemViews );
-		await profile.loadViews( collectionName, profileStore, schema, systemViews[0].sort );
+		await profile.loadViews( collectionName, profileStore, schema, systemViews[0] );
 		profile.currentViewIndex = ProfileStore.viewIndex( collectionName );
-		//A live-toggle column IS the show-deleted control for its page:  the rows it switches are precisely the deleted ones,
-		//so the page queries them unconditionally rather than opening on a list that looks empty (every `resource` ships
-		//deleted, i.e. unenforced) with the rows hidden behind a checkbox called Show deleted.
-		profile.showDeleted = QLListResolver.hasLiveToggle( routing.tableSettings ) || ProfileStore.showDeleted( collectionName );
 		return {pageSettings, profile, schema, results: null, routing, columns: QLListResolver.columns(schema, routing.tableSettings.columns!, routing.tableSettings.excludedColumns)};
 	}
-	static hasLiveToggle( settings:TableSettings ):boolean{
-		const has = ( columns:(string|ViewFieldSettings)[]|undefined )=>(columns ?? []).some( c=>typeof c!="string" && !!c.liveToggle );
-		return has( settings.columns ) || (settings.views ?? []).some( v=>has(v.columns) );
-	}
-	//the default view first, then the route's declared ones - each falling back to the default's columns and sort for what it leaves unset
+	//the default view first, then the route's declared ones - each falling back to the default's columns and sort for what it leaves unset - then Deleted
 	static systemViews( schema:TableSchema, settings:TableSettings ):View[]{
 		const columns = settings.columns ?? [];
 		const defaultView = new View( {name: settings.viewName, configColumns: columns, sort: View.toSort(settings.sort) ?? [{active: "name", direction: "asc"}], filters: settings.filters}, schema );//settings.sort, not the name default:  a route that declares its own order (resources: schema then name) has to get it
 		const views = [defaultView];
 		for( const v of settings.views ?? [] )
 			views.push( new View({name: v.name, configColumns: v.columns ?? columns, sort: View.toSort(v.sort) ?? [...defaultView.sort], filters: v.filters}, schema) );
+		const deleted = QLListResolver.deletedView( defaultView );
+		if( deleted )
+			views.push( deleted );
 		return views;
+	}
+	static readonly deletedViewName = "Deleted";
+	static isDeletedView( view:View ):boolean{ return view.isSystem && view.name==QLListResolver.deletedViewName; }
+	//The default view's columns and filters, plus the deleted rows View.query otherwise leaves out - and their deleted date.
+	//None where `deleted` is a live toggle (the Resources page's Enforced):  that list shows every row already.
+	static deletedView( base:View ):View|undefined{
+		const deleted = base.fields.find( f=>f.name=="deleted" );
+		if( !deleted || deleted.liveToggle )
+			return undefined;
+		let view = new View( base );
+		view.name = QLListResolver.deletedViewName;
+		const shown = new ViewField( deleted );
+		shown.displayed = true;
+		view.fields = view.fields.map( f=>f===deleted ? shown : f );
+		view.fieldFilters = [...view.fieldFilters.filter( ff=>ff.field.name!="deleted" ), {field: deleted.qlField, filter: {operator: Operator.Greater, value: ["<not null>"]}}];//Greater: what the settings panel gives a DateTime filter
+		return view;
 	}
 	static columns( schema:TableSchema, configColumns:(string|ViewFieldSettings)[], excluded: string[] ):Record<string,string>{
 		let columns: Record<string,string> = {};
@@ -164,7 +175,7 @@ export class QLListResolver implements Resolve<QLListData> {
 			view = new View( view );
 			view.fieldFilters = [...view.fieldFilters, ...data.fixedFilters];
 		}
-		const q = view.query( data.profile.showDeleted, 0 );
+		const q = view.query( 0 );
 		data.results = await ql.query<any>( q.text, q.vars, (m)=>console.log(m) );
 		if( routeStore ){
 			const children = data.results[data.schema.collectionName].map( (r:any)=>({title:r.name, path:`${r.slug}`}) );//bare targets, like GatewayResolver — DetailResolver renders them under the absolute list url

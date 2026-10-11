@@ -11,17 +11,15 @@ import { TableSchema } from '../model/ql/schema/table-schema';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from './ql-list-resolver';
 import { PageProfile } from '../pages/graphql/model/page-settings';
 
-const schema = new TableSchema( {
-	name: "Thing",
-	fields: [
-		{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
-		{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "slug", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "kind", type: { kind: "SCALAR", name: "String" } },
-		{ name: "deleted", type: { kind: "SCALAR", name: "DateTime" } },
-		{ name: "description", type: { kind: "SCALAR", name: "String" } }
-	]
-} );
+const fields = [
+	{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
+	{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
+	{ name: "slug", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
+	{ name: "kind", type: { kind: "SCALAR", name: "String" } },
+	{ name: "description", type: { kind: "SCALAR", name: "String" } }
+];
+const schema = new TableSchema( { name: "Thing", fields } );//no deleted column, so no Deleted view to step around
+const deletable = new TableSchema( { name: "Thing", fields: [...fields, { name: "deleted", type: { kind: "SCALAR", name: "DateTime" } }] } );
 const displayed = ( v:View )=>v.fields.filter( f=>f.displayed ).map( f=>f.name );
 
 //A route declares its list page's system views in TableSettings:  the default one from columns/sort under `viewName`, and
@@ -59,7 +57,7 @@ describe( 'QLListResolver.systemViews', ()=>{
 		const sort = [{active: "kind", direction: "asc" as const}, {active: "name", direction: "asc" as const}];
 		const [all] = QLListResolver.systemViews( schema, { columns: ["kind", "name", "description"], sort } );
 		expect( all.sort ).toEqual( sort );
-		expect( all.query(false, 0).text ).toContain( 'orderBy:[{kind:"asc"},{name:"asc"}]' );
+		expect( all.query( 0 ).text ).toContain( 'orderBy:[{kind:"asc"},{name:"asc"}]' );
 	} );
 
 	it( 'falls back to an ascending name sort when the route declares none', ()=>{
@@ -67,14 +65,24 @@ describe( 'QLListResolver.systemViews', ()=>{
 		expect( all.sort ).toEqual( [{active: "name", direction: "asc"}] );
 	} );
 
-	//A live-toggle column switches the DELETED rows, so its page has to query them.  On `resources` every row ships deleted
-	//(unenforced), so without this the page opens empty with all the work hidden behind a checkbox called "Show deleted".
-	it( 'reports a live-toggle column wherever a route declares one', ()=>{
+	//The way to deleted rows, now there is no Show deleted:  a last system view, the default's columns and filters plus deleted.
+	it( 'ends with a Deleted view where the collection has a deleted column', ()=>{
+		const views = QLListResolver.systemViews( deletable, { columns: ["name"], filters: [{name: "kind", value: ["a"]}], views: [{name: "Kinds"}] } );
+		expect( views.map(v=>v.name) ).toEqual( [undefined, "Kinds", "Deleted"] );
+		const deleted = views[2];
+		expect( deleted.isSystem ).toBe( true );
+		expect( QLListResolver.isDeletedView(deleted) ).toBe( true );
+		expect( displayed(deleted) ).toEqual( ["name", "deleted"] );
+		const q = deleted.query( 0 );
+		expect( q.text ).toContain( 'deleted:{"ne":null}' );
+		expect( q.vars["kind"] ).toEqual( ["a"] );
+		expect( views[0].fields.find(f=>f.name=="deleted")!.displayed ).toBe( false );//on a copy:  the default view keeps it hidden
+	} );
+
+	it( 'adds no Deleted view where deleted is a live toggle, or missing', ()=>{
 		const toggle = {name:"deleted", displayName:"Enforced", liveToggle:{enable:"Enforce", disable:"Stop enforcing"}};
-		expect( QLListResolver.hasLiveToggle({ columns: ["name", toggle] }) ).toBe( true );
-		expect( QLListResolver.hasLiveToggle({ columns: ["name"], views: [{name:"All", columns: ["name", toggle]}] }) ).toBe( true );
-		expect( QLListResolver.hasLiveToggle({ columns: ["name", "deleted"] }) ).toBe( false );
-		expect( QLListResolver.hasLiveToggle({}) ).toBe( false );
+		expect( QLListResolver.systemViews(deletable, { columns: ["name", toggle] }).map(v=>v.name) ).toEqual( [undefined] );
+		expect( QLListResolver.systemViews(schema, { columns: ["name"] }).map(v=>v.name) ).toEqual( [undefined] );
 	} );
 
 	it( 'turns a declared filter into the query the settings panel would have built', ()=>{
@@ -84,7 +92,7 @@ describe( 'QLListResolver.systemViews', ()=>{
 		expect( kinds.fieldFilters ).toHaveLength( 1 );
 		expect( kinds.fieldFilters[0].field.name ).toBe( "kind" );
 		expect( kinds.fieldFilters[0].filter.operator ).toBe( Operator.In );
-		const q = kinds.query( false, 0 );
+		const q = kinds.query( 0 );
 		expect( q.text ).toContain( "kind:$kind" );
 		expect( q.vars["kind"] ).toEqual( ["a", null] );//"<null>" leaves as a JSON null, as the panel's does
 	} );
@@ -93,7 +101,7 @@ describe( 'QLListResolver.systemViews', ()=>{
 	it( 'filters the default view when the route declares filters, and not the views beside it', ()=>{
 		const [tables, all] = QLListResolver.systemViews( schema, { viewName: "Tables", columns: ["name"], filters: [{name: "kind", value: ["<null>"]}], views: [{name: "All"}] } );
 		expect( tables.name ).toBe( "Tables" );
-		expect( tables.query(false, 0).vars["kind"] ).toEqual( [null] );
+		expect( tables.query( 0 ).vars["kind"] ).toEqual( [null] );
 		expect( all.fieldFilters ).toHaveLength( 0 );
 		expect( displayed(all) ).toEqual( displayed(tables) );
 	} );
@@ -140,7 +148,6 @@ describe( 'QLListResolver.loadOrFail', ()=>{
 		const ql = { query: async ()=>{ throw refused; } } as any;
 		const profile = new PageProfile();
 		profile.views = [ new View({columns: ["name"], sort: "name"}, schema) ];
-		profile.showDeleted = false;
 		const data = { schema, profile, routing: new ListRoute("things"), columns: {}, pageSettings: {} } as unknown as QLListData;
 		const y = await QLListResolver.loadOrFail( ql, data, null );
 		expect( y.error ).toBe( refused );

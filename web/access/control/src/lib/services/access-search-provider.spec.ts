@@ -2,13 +2,16 @@ import { TestBed } from '@angular/core/testing';
 import { AccessService } from './access-service';
 import { AccessSearchProvider } from './access-search-provider';
 
-const rows:Record<string,{id:number,name:string,slug:string}[]> = {
-	users: [ {id:1, name:"John Duffy", slug:"Google-johnmduffy@gmail.com"}, {id:2, name:"alice", slug:"alice"} ],
+const rows:Record<string,{id:number,name:string,slug:string,deleted?:string}[]> = {
+	users: [ {id:1, name:"John Duffy", slug:"Google-johnmduffy@gmail.com"}, {id:2, name:"alice", slug:"alice"}, {id:6, name:"johnny", slug:"johnny", deleted:"2026-10-01T00:00:00Z"} ],
 	groups: [ {id:3, name:"ops", slug:"ops"} ],
 	roles: [ {id:4, name:"admin", slug:"admin"} ]
 };
 const access = {
-	queryArray: ( ql:string )=>Promise.resolve( rows[ql.split('{')[0].trim()] ?? [] ),
+	queryArray: ( ql:string )=>{//the server returns deleted rows unless asked for deleted:null
+		const [, collection, args=''] = /^(\w+)(?:\((.*)\))?\s*\{/.exec( ql.trim() )!;
+		return Promise.resolve( (rows[collection] ?? []).filter( r=>!args.includes('deleted:null') || r.deleted==null ) );
+	},
 	loadResources: ()=>Promise.resolve( [ {id:5, name:"nodes", slug:"nodeIds", schema:"opc.nodes"} ] )
 };
 
@@ -26,6 +29,10 @@ describe( 'AccessSearchProvider', ()=>{
 	it( 'hands the router raw segments, not a pre-encoded string', async ()=>{
 		const [hit] = await provider.search( 'john', 'user', 10 );//SearchService lowercases the query; searchRank only lowercases the title
 		expect( hit.route ).toEqual( ['/access', 'users', 'Google-johnmduffy@gmail.com'] );
+	} );
+
+	it( 'leaves deleted users out', async ()=>{
+		expect( (await provider.search('john', 'user', 10)).map(h=>h.title) ).toEqual( ["John Duffy"] );
 	} );
 
 	it( 'routes groups and roles the same way', async ()=>{

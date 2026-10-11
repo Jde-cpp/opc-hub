@@ -27,7 +27,9 @@ namespace Jde::QL::Tests{
 			//and users.password respectively.  Both must be left out of __type rather than fail it.
 			table( "nodes", R"({"columns":{"node_id":{"sk":0,"i":0},"name":{"i":1},"guid":{"type":"guid","i":2},"secret":{"type":"varbinary","i":3}}})" ),
 			//#42: a table whose json name begins with a mutation verb ("start") - IsMutation used to claim it and the query was refused.
-			table( "startups", R"({"columns":{"startup_id":{"sk":0,"i":0},"name":{"i":1}}})" )
+			table( "startups", R"({"columns":{"startup_id":{"sk":0,"i":0},"name":{"i":1}}})" ),
+			//soft-deleted rows, as every slugColumns table has
+			table( "widgets", R"({"columns":{"widget_id":{"sk":0,"i":0},"name":{"i":1},"deleted":{"type":"DateTime","nullable":true,"i":2}}})" )
 		};
 		auto db = ms<DB::DBSchema>( "_qlTests", move(tables), "" );
 		DB::DBSchema::Initialize( {}, db );

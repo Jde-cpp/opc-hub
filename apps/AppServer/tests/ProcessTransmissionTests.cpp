@@ -206,7 +206,7 @@ namespace Jde::App::Server::Tests{
 		return BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(query), move(vars), Jde::UserPK{Jde::UserPK::System}, Server::QLPtr()} );
 	}
 	Ω probeUser( sv slug )->Jde::UserPK{
-		auto existing = systemQL( Ƒ(R"(user( slug:"{0}" ){{id}})", slug) );
+		auto existing = systemQL( Ƒ(R"(user( slug:"{0}", deleted:null ){{id}})", slug) );
 		let found = existing.is_object() && existing.get_object().contains( "id" );
 		return Jde::UserPK{ QL::AsId<Jde::UserPK::Type>( found ? existing : systemQL(Ƒ(R"(mutation createUser( slug:"{0}", name:"{0}" ){{id}})", slug)) ) };
 	}
@@ -216,7 +216,7 @@ namespace Jde::App::Server::Tests{
 	TEST_F( ProcessTransmissionTests, ASchemaAdminIsDelegated ){
 		constexpr sv schema{ "opc.probe" };
 		let admin = probeUser( "probe-admin" ), nobody = probeUser( "probe-nobody" );
-		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds" ){{id}})", schema)).as_array().empty() )
+		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
 			systemQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"probe nodes", slug:"nodeIds", allowed:255 ))", schema) );
 		systemQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
 
@@ -229,7 +229,7 @@ namespace Jde::App::Server::Tests{
 	}
 
 	Ω probeRole( sv slug )->Access::RolePK{//find-or-create: roles.slug is uniquely indexed, so a persisted db would trip createRole on the second run.
-		auto existing = systemQL( Ƒ(R"(role( slug:"{0}" ){{id}})", slug) );
+		auto existing = systemQL( Ƒ(R"(role( slug:"{0}", deleted:null ){{id}})", slug) );
 		let found = existing.is_object() && existing.get_object().contains( "id" );
 		return Access::RolePK{ QL::AsId<Access::RolePK::Type>( found ? existing : systemQL(Ƒ(R"(mutation createRole( slug:"{0}", name:"{0}" ){{id}})", slug)) ) };
 	}
@@ -240,7 +240,7 @@ namespace Jde::App::Server::Tests{
 	TEST_F( ProcessTransmissionTests, ADelegatedAdminCheckReachesTheInstance ){
 		constexpr sv schema{ "opc.delegate" };
 		let admin = probeUser( "delegate-admin" );
-		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds" ){{id}})", schema)).as_array().empty() )
+		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
 			systemQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"delegate nodes", slug:"nodeIds", allowed:255 ))", schema) );
 		systemQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
 		let registered = RegisterInstance( *_session, "Tests.Delegate", "delegate", "auth-host", 0, 1234, string{schema}, admin );

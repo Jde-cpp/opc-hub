@@ -22,9 +22,9 @@ namespace Jde::Access{
 				y.Resources.emplace( resource.PK, move(resource) );
 			}
 
-			//`deleted` on the nested resource is load-bearing (access-enforce-toggle #1):  a select naming no deleted column is "active rows
-			//only", and the inner join then dropped every right on an unenforced resource - so the Enforced toggle restored the row live
-			//against a map that never held it, and everyone was denied until a restart.  The rights are inert while the row is deleted.
+			//Every right, unenforced resources' included (access-enforce-toggle #1):  ql once read a select naming no deleted column as
+			//"active rows only", the inner join dropped those rights, and the Enforced toggle then restored the row live against a map
+			//that never held it - everyone denied until a restart.  The rights are inert while the row is deleted.
 			let permissions = co_await *_qlServer->QueryArray( Ƒ("permissionRights{{ id allowed denied resource{}{{ id deleted }} }}", input), move(vars), _executer );
 			for( auto&& value : permissions ){
 				let permission = Permission{ Json::AsObject(move(value)) };

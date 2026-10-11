@@ -78,14 +78,13 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 
 	toCollectionName( collectionDisplay:string ):string{ return collectionDisplay; }
 	subQueries( typeName: string, id: number ):string[]{ return []; }
-	slugQuery( schema: TableSchema, slug: string, showDeleted:boolean, excludedColumns:string[] ):string{
-		let fields = this.fieldColumns( schema, showDeleted, excludedColumns );
+	slugQuery( schema: TableSchema, slug: string, excludedColumns:string[] ):string{
+		let fields = this.fieldColumns( schema, excludedColumns );
 		return `${schema.singular}( slug:${StringUtils.qlString(slug)} ){ ${fields.join(" ")} }`;
 	}
-	protected fieldColumns( schema: TableSchema, showDeleted:boolean, excludedColumns:string[] ):string[]{
+	protected fieldColumns( schema: TableSchema, excludedColumns:string[] ):string[]{
 		let columns = [];
-		let filtered = schema.fields.filter(
-			(x)=>!excludedColumns.includes(x.name) && (x.name!="deleted" || showDeleted) );
+		let filtered = schema.fields.filter( (x)=>!excludedColumns.includes(x.name) );//deleted included:  it is what turns Delete into Restore
 		for( const field of filtered ){
 			if( field.type.underlyingKind==FieldKind.UNION )
 				columns.push( `${field.name}{id}` );

@@ -41,7 +41,7 @@ export class OpcStore{
 		else if( gatewayConnections.has(cnnctn) )
 			return gatewayConnections.get(cnnctn)!;
 		let q = `\
-			connection: serverConnection( slug: $opc ){ id name slug url certificateUri defaultBrowseNs }
+			connection: serverConnection( slug: $opc, deleted: null ){ id name slug url certificateUri defaultBrowseNs }
 			desc: serverDescription( opc: $opc ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls }
 			policy: securityPolicyUri( opc: $opc )
 			mode: securityMode( opc: $opc )
