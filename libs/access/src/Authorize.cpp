@@ -89,6 +89,14 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, resourceName, rights, executer, sl );
 	}
+	α Authorize::Test( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+		rl _{ Mutex };
+		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, criteria );
+		if( !resourcePK && criteria.size() )
+			resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );//an unmapped criteria inherits the slug's root, as TestAdminLocal.
+		if( resourcePK )//else not enabled
+			TestRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, executer, sl );
+	}
 	//FindUserLocked's error as the exception:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
 	[[noreturn]] Ω throwUserStatus( EHttpStatus status, UserPK executer, SL sl )ε->void{
 		if( status==EHttpStatus::Unauthorized )

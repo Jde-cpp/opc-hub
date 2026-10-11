@@ -5,6 +5,7 @@
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/utils/HiLow.h>
 #include "../uatypes/MonitoredItemCreateResult.h"
+#include "../uatypes/MonitoringParameters.h"
 #include "../async/DataChanges.h"
 #include "../async/Subscriptions.h"
 #include "../usings.h"
@@ -16,6 +17,20 @@ namespace Jde::Opc::Gateway{
 
 	struct IDataChange{
 		β SendDataChange( const ServerCnnctnNK& opcId, const NodeId& node, const Value& value )ι->void=0;
+		//The subscription these nodes were on is gone - the connection failed, or the server dropped the session - found out at
+		//`when`, the gateway's clock.  They are parked and put back (UAClient::ConnectionLost, Resubscribe), and ConnectionRestored
+		//says when;  a value that arrives between the two was in flight when it broke (spec *Gaps*).  Called off the monitoring
+		//lock, on whichever thread found the loss, after the nodes have left the client.
+		β ConnectionLost( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/, TimePoint /*when*/ )ι->void{}
+		//The nodes a rebuild put back for this listener - on a live subscription again, called before it delivers their first
+		//value, which is what the historian's gap rule needs.  Never for a node the listener dropped meanwhile, and nothing for
+		//one the server refused:  the rebuild's log line says so, and the node stays lost.
+		β ConnectionRestored( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/ )ι->void{}
+		//What this listener's items are created with - per node, so the historian samples at each node's MinTimeInterval.  Asked
+		//at every create, a rebuild's included;  a change to an item that exists goes through ModifyMonitoredItemsAwait.  A node
+		//another listener already monitors keeps that item's parameters - the collector's clients are its own for that reason
+		//(Credential::Collector).
+		β ItemParameters( const NodeId& )Ι->MonitoringParameters{ return {}; }
 		β to_string()Ι->string=0;
 	};
 
@@ -37,6 +52,8 @@ namespace Jde::Opc::Gateway{
 		α SendDataChange( Handle h, const Value&& value )ι->uint;
 		α OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void;
 		α GetResult( Handle requestId, StatusCode status )ι->FromServer::SubscriptionAck;
+		α Handles( const flat_set<NodeId>& nodes )ι->flat_map<NodeId,MonitorHandle>;//the item each node is monitored on - none for a node that has none.  A snapshot:  good until the next change.
+		α Modified( const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void;//a ModifyMonitoredItems answer:  what GetResult reports as the item's parameters from here.
 		//What a session-loss rebuild has to re-create: the live node→listener map, taken *out* - every handle in here names a
 		//subscription the server dropped with the session, so nothing keyed by one can be reused.  See UAClient::Resubscribe.
 		//In-flight creates are not taken:  their requests stay, so each resumes with a per-node failure (see the definition).

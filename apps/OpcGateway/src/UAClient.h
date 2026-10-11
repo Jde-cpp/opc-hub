@@ -88,6 +88,7 @@ namespace Jde::Opc::Gateway{
 		α PostUA( absl::AnyInvocable<void()> f )ι->void;//runs f on this client's strand - the only place UA_Client_* calls are allowed once the processing loop can run. Holds shared_from_this until f runs.
 		α PostStrand( absl::AnyInvocable<void()> f )ι->void;//like PostUA but always defers (asio::post, not dispatch): use when a strand callback must not run re-entrantly inside the current strand handler. Holds shared_from_this until f runs.
 		α Processing()ι->bool{ return _asyncRequest.IsRunning(); }
+		α OnStrand()Ι->bool{ return _asyncRequest.Strand().running_in_this_thread(); }//inside run_iterate or a PostUA - where UA_Client_* calls, and the ordering a strand callback relies on, are safe.
 		α ProcessDataSubscriptions()ι->void;
 		α StopProcessDataSubscriptions()ι->void;
 		α Resubscribe()ι->void;//unconditional rebuild: re-create the subscription and the monitored items a dropped session took with it.  RecordSession is what decides when this is needed.
@@ -124,7 +125,11 @@ namespace Jde::Opc::Gateway{
 		α DefaultBrowseNs()Ι->NsIndex{ return _opcServer.DefaultBrowseNs; }
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
-		α BrowsePathsToNodeIds( sv path, bool parents )Ε->flat_map<string,ExpectedNodeId>;
+		//TranslateBrowsePathsToNodeIds for `path` - a/b/c, each segment `ns~name` or a bare name in DefaultBrowseNs - from `start`,
+		//the Objects folder unless a caller has a root (a template's, spec *Templates*), following HierarchicalReferences and their
+		//subtypes, so a path through HasComponent or HasProperty resolves as one through Organizes does.  `parents` asks for every
+		//prefix of the path as well.  Strand-only, as every sync service (UAStrandAwait).
+		α BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start=NodeId::ObjectsFolder() )Ε->flat_map<string,ExpectedNodeId>;
 		UA_ClientConfig _config{};//TODO move private.
 		Gateway::Credential Credential;
 

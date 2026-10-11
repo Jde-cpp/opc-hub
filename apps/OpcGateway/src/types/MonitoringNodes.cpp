@@ -69,9 +69,28 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		}
 		else{
-			_calls.emplace( requestId, make_tuple(newNodes,move(dataChange),flat_set<NodeId>{}) );
+			flat_map<NodeId,MonitoringParameters> parameters;//the listener's, per node - the same order as newNodes, which the answer is read by.
+			for( let& n : newNodes )
+				parameters.emplace( n, dataChange->ItemParameters(n) );
+			_calls.emplace( requestId, make_tuple(move(newNodes),move(dataChange),flat_set<NodeId>{}) );
 			lock.Release();
-			return CreateMonitoredItemsRequest{ move(newNodes) };
+			return CreateMonitoredItemsRequest{ parameters };
+		}
+	}
+	α UAMonitoringNodes::Handles( const flat_set<NodeId>& nodes )ι->flat_map<NodeId,MonitorHandle>{
+		flat_map<NodeId,MonitorHandle> y;
+		rl _{ _mutex };
+		for( let& node : nodes ){
+			if( auto [h,pSubscription] = FindNode( node ); pSubscription )
+				y.emplace( node, h );
+		}
+		return y;
+	}
+	α UAMonitoringNodes::Modified( const NodeId& node, double revisedSamplingInterval, uint32 revisedQueueSize )ι->void{
+		ul _{ _mutex };
+		if( auto pSubscription = get<1>(FindNode(node)); pSubscription ){
+			pSubscription->Result.revisedSamplingInterval = revisedSamplingInterval;
+			pSubscription->Result.revisedQueueSize = revisedQueueSize;
 		}
 	}
 	α UAMonitoringNodes::OnCreateResponse( UA_CreateMonitoredItemsResponse* response, Handle requestId )ι->void{
