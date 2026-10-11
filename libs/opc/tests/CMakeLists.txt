@@ -31,7 +31,7 @@ if( WIN32 )
 endif()
 
 target_link_libraries( ${targetName} GTest::gtest Threads::Threads )
-target_link_libraries( ${targetName} Jde.Opc Jde.QL Jde.DB Jde ) #Jde.QL: NodeId::DecodeJson/ParseQL parse through QL::Parser.  No driver - nothing here opens a data source.
+target_link_libraries( ${targetName} Jde.Opc Jde.QL Jde ) #Jde.QL: NodeId::DecodeJson/ParseQL parse through QL::Parser.  No driver - nothing here opens a data source.
 target_link_libraries( ${targetName} open62541::open62541 )
 target_link_libraries( ${targetName} fmt::fmt )
 

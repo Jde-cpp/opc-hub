@@ -4,19 +4,16 @@
 #include <jde/fwk/io/json.h>
 #include "Logger.h"
 #include "opcHelpers.h"
+#include "Owned.h"
 
 namespace Jde::Opc{
-	struct Value : UA_DataValue{
-		Value( StatusCode sc )ι:UA_DataValue{ .status=sc, .hasStatus=true }{}
-		Value( const UA_DataValue& x )ι{ UA_DataValue_copy( &x, this ); }
-		Value( UA_DataValue&& x )ι:UA_DataValue{x}{ UA_DataValue_init(&x); }
-		Value( const Value& x )ι{ UA_DataValue_copy( &x, this ); }
-		Value( Value&& x )ι:UA_DataValue{x}{ UA_DataValue_init(&x); }
-		Value( UA_Variant&& v )ι:UA_DataValue{ .value=v, .hasValue=true }{ UA_Variant_init(&v); }
-		Value( const jvalue& j, const UA_DataType* dt, SRCE )ε:UA_DataValue{ .value{.type=dt} }{ Set(j, sl); hasValue = true; }
-		~Value(){ UA_DataValue_clear(this); }
+	struct Value : Owned<UA_DataValue, UA_TYPES_DATAVALUE>{
+		Value( StatusCode sc )ι:Owned{ UA_DataValue{.status=sc, .hasStatus=true} }{}
+		Value( const UA_DataValue& x )ι:Owned{ x }{}
+		Value( UA_DataValue&& x )ι:Owned{ move(x) }{}
+		Value( UA_Variant&& v )ι:Owned{ UA_DataValue{.value=v, .hasValue=true} }{ UA_Variant_init(&v); }
+		Value( const jvalue& j, const UA_DataType* dt, SRCE )ε:Owned{ UA_DataValue{.value{.type=dt}} }{ Set(j, sl); hasValue = true; }
 
-		α operator=( Value&& x )ι->Value&;
 		α IsEmpty()Ι->bool{ return UA_Variant_isEmpty(&value); }
 		α IsScalar()Ι->bool{ return UA_Variant_isScalar( &value ); }
 		α ToJson()Ι->jvalue;
@@ -36,20 +33,8 @@ namespace Jde::Opc{
 	Ŧ Value::AsNumber( SL sl )ε->T{
 		THROW_IFSL( IsEmpty(), "Value is empty{}.", hasStatus ? Ƒ(" - status 0x{:x}", (uint32)status) : string{} );
 		THROW_IFSL( !IsScalar(), "AsNumber is not implemented for a '{}' array.", value.type->typeName );
-		const UA_DataType* type = value.type;//not `let`: that macro is defined per .cpp, not in headers.
-		if( IsKind(type, UA_TYPES_BOOLEAN) )		return Narrow<T>( Get<UA_Boolean>(0), sl );
-		if( IsKind(type, UA_TYPES_SBYTE) )			return Narrow<T>( Get<UA_SByte>(0), sl );
-		if( IsKind(type, UA_TYPES_BYTE) )				return Narrow<T>( Get<UA_Byte>(0), sl );
-		if( IsKind(type, UA_TYPES_INT16) )			return Narrow<T>( Get<UA_Int16>(0), sl );
-		if( IsKind(type, UA_TYPES_UINT16) )			return Narrow<T>( Get<UA_UInt16>(0), sl );
-		if( IsKind(type, UA_TYPES_INT32) )			return Narrow<T>( Get<UA_Int32>(0), sl );
-		if( IsKind(type, UA_TYPES_UINT32) )			return Narrow<T>( Get<UA_UInt32>(0), sl );//and every UInt32 alias: IntegerId, Counter, …
-		if( IsKind(type, UA_TYPES_INT64) )			return Narrow<T>( Get<UA_Int64>(0), sl );
-		if( IsKind(type, UA_TYPES_UINT64) )			return Narrow<T>( Get<UA_UInt64>(0), sl );
-		if( IsKind(type, UA_TYPES_STATUSCODE) )	return Narrow<T>( Get<UA_StatusCode>(0), sl );
-		if( IsKind(type, UA_TYPES_FLOAT) )			return Narrow<T>( Get<UA_Float>(0), sl );
-		if( IsKind(type, UA_TYPES_DOUBLE) )			return Narrow<T>( Get<UA_Double>(0), sl );//Duration is a Double by kind.
-		throw Exception{ sl, ELogLevel::Error, "'{}' is not a number.", type->typeName };
+		return VisitNumeric( *value.type, [&]<class N>(){ return Narrow<T>( Get<N>(0), sl ); },
+			[&]()->T{ throw Exception{ sl, ELogLevel::Error, "'{}' is not a number.", value.type->typeName }; } );
 	}
 
 	//The json path rejected a value too wide for T; keep that rather than truncating silently.  Convert back and compare

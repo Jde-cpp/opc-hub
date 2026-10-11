@@ -1,5 +1,5 @@
-//Jde.Opc's own unit suite:  the uatypes wrappers and their round trips - ToJson/FromJson, ToUAJson/ToUAValues,
-//ToString/DecodeJson - over every identifier kind and array shape.  Nothing here starts a server, opens a socket or
+//Jde.Opc's own unit suite:  the uatypes wrappers and their round trips - ToJson/FromJson, ToString/DecodeJson,
+//Variant<->Proto::Value - over every identifier kind and array shape.  Nothing here starts a server, opens a socket or
 //touches a data source; apps/OpcGateway/tests (confusingly, the target named Jde.Opc.Tests) is the integration suite.
 //
 //Every test here is enabled:  the DISABLED_R2_<n>_* convention this comment used to describe is gone, along with the

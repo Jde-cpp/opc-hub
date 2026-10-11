@@ -111,7 +111,7 @@ namespace Jde::Opc::Server::Tests{
 					continue;
 				let text = attribute( tag, "NodeId" );
 				UA_NodeId id;
-				THROW_IF( UA_NodeId_parse(&id, UA_String{text.size(), (UA_Byte*)text.data()}), "'{}' declares an unparsable NodeId '{}'.", file.filename().string(), text );
+				THROW_IF( UA_NodeId_parse(&id, ToUV(text)), "'{}' declares an unparsable NodeId '{}'.", file.filename().string(), text );
 				if( id.namespaceIndex ){
 					THROW_IF( id.namespaceIndex>uris.size(), "'{}' declares '{}' outside its namespace table.", file.filename().string(), text );
 					id.namespaceIndex = NamespaceIndex( ua, uris[id.namespaceIndex-1] );

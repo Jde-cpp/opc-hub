@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "jde/fwk/log/logTags.h"
+#include <jde/fwk/log/logTags.h>
 #include "usings.h"
 #include <jde/fwk/exceptions/ExternalException.h>
 #include "uatypes/Logger.h"
@@ -13,7 +13,6 @@ namespace Jde::Opc{
 		EOpcLogTags Tags{EOpcLogTags::Opc};
 	};
 	struct UAException : ExternalException{
-		//UAException( StatusCode sc, ELogLevel level=Exception::DefaultLogLevel, SRCE )ι:ExternalException{ Message(sc), {}, sc, sl, level, sl, {} }{}
 		UAException( StatusCode sc, string description={}, UAExParams params={}, SRCE ):ExternalException{ Message(sc), description, {params.Level, (ELogTags)params.Tags, (uint32)sc, params.HttpStatus}, sl }{}
 		UAException( UAException&& from )ι:ExternalException{ move(from) }{}
 		UAException( const UAException& from )ι:ExternalException{ from }{}

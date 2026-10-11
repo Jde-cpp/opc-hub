@@ -790,7 +790,7 @@ namespace Jde::Opc::Server::Tests{
 			UA_WriteValue w; UA_WriteValue_init( &w );
 			w.nodeId = node;
 			w.attributeId = UA_ATTRIBUTEID_VALUE;
-			w.indexRange = UA_String{ range.size(), (UA_Byte*)range.data() };
+			w.indexRange = ToUV(range);
 			w.value.value = part;
 			w.value.hasValue = true;
 			w.value.sourceTimestamp = UADateTime{ source }.UA();

@@ -6,26 +6,24 @@
 #define let const auto
 namespace Jde::Opc::PubSub{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::PubSub };
-	Ω uv( sv s )ι->UA_String{ return UA_String{ s.size(), (UA_Byte*)s.data() }; }//a view is enough: open62541 deep-copies every config it is handed.
 	Ω check( UA_StatusCode sc, string what, SL sl )ε->void{ THROW_IFX( sc, UAException(sc, move(what), {.Tags=EOpcLogTags::PubSub}, sl) ); }
 	Ω checkResolved( const Config& c, SL sl )ε->void{
 		for( let& f : c.Fields )
 			THROW_IFSL( UA_NodeId_isNull(&f.Node), "pubsub field '{}' ('{}') is unresolved - Config::Resolve first.", f.Name, f.Path );
 	}
+	//An allow-list, not every UA_TYPES name:  MetaData writes a field's builtInType as its type's ns0 id, which only a
+	//built-in type has.
 	Ω dataType( sv name, SL sl )ε->const UA_DataType*{
-		constexpr array<std::pair<sv,uint16>,12> types{{
-			{"Boolean",UA_TYPES_BOOLEAN}, {"Byte",UA_TYPES_BYTE}, {"Int16",UA_TYPES_INT16}, {"UInt16",UA_TYPES_UINT16}, {"Int32",UA_TYPES_INT32}, {"UInt32",UA_TYPES_UINT32},
-			{"Int64",UA_TYPES_INT64}, {"UInt64",UA_TYPES_UINT64}, {"Float",UA_TYPES_FLOAT}, {"Double",UA_TYPES_DOUBLE}, {"String",UA_TYPES_STRING}, {"DateTime",UA_TYPES_DATETIME} }};
-		let p = find_if( types, [name](let& t){ return t.first==name; } );
-		THROW_IFSL( p==types.end(), "Unsupported pubsub field type '{}'.", name );
-		return &UA_TYPES[p->second];
+		constexpr array<sv,12> types{ "Boolean", "Byte", "Int16", "UInt16", "Int32", "UInt32", "Int64", "UInt64", "Float", "Double", "String", "DateTime" };
+		THROW_IFSL( find(types, name)==types.end(), "Unsupported pubsub field type '{}'.", name );
+		return &*find_if( std::span{UA_TYPES, UA_TYPES_COUNT}, [name](let& t){ return t.typeName==name; } );
 	}
 	//UADP connection shared by both ends: the writer's carries the contract's PublisherId, a reader's any id (it filters on the writer's).
 	Ω addConnection( UA_Server& server, const Config& c, UA_PublisherId publisherId, str name, SL sl )ε->UA_NodeId{
 		UA_PubSubConnectionConfig cc{};
-		cc.name = uv( name );
-		cc.transportProfileUri = uv( c.TransportProfile );
-		UA_NetworkAddressUrlDataType address{ uv(c.NetworkInterface), uv(c.Url) };
+		cc.name = ToUV( name );//views throughout:  open62541 deep-copies every config it is handed.
+		cc.transportProfileUri = ToUV( c.TransportProfile );
+		UA_NetworkAddressUrlDataType address{ ToUV(c.NetworkInterface), ToUV(c.Url) };
 		UA_Variant_setScalar( &cc.address, &address, &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE] );
 		cc.publisherId = publisherId;
 		UA_NodeId id{};
@@ -90,12 +88,12 @@ namespace Jde::Opc::PubSub{
 
 		UA_PublishedDataSetConfig pds{};
 		pds.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
-		pds.name = uv( c.DataSetName );
+		pds.name = ToUV( c.DataSetName );
 		check( UA_Server_addPublishedDataSet(&server, &pds, &DataSet).addResult, "addPublishedDataSet", sl );
 		for( let& f : c.Fields ){
 			UA_DataSetFieldConfig fc{};
 			fc.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
-			fc.field.variable.fieldNameAlias = uv( f.Name );
+			fc.field.variable.fieldNameAlias = ToUV( f.Name );
 			fc.field.variable.promotedField = false;
 			fc.field.variable.publishParameters.publishedVariable = f.Node;//shallow - the server deep-copies the config.
 			fc.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
@@ -104,7 +102,7 @@ namespace Jde::Opc::PubSub{
 		}
 		let writerGroupName = Ƒ( "{} writers", c.DataSetName );
 		UA_WriterGroupConfig wg{};
-		wg.name = uv( writerGroupName );
+		wg.name = ToUV( writerGroupName );
 		wg.publishingInterval = (UA_Duration)std::chrono::duration<double,std::milli>( c.PublishingInterval ).count();
 		wg.writerGroupId = c.WriterGroupId;
 		wg.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
@@ -117,7 +115,7 @@ namespace Jde::Opc::PubSub{
 
 		let writerName = Ƒ( "{} writer", c.DataSetName );
 		UA_DataSetWriterConfig dsw{};
-		dsw.name = uv( writerName );
+		dsw.name = ToUV( writerName );
 		dsw.dataSetWriterId = c.DataSetWriterId;
 		dsw.keyFrameCount = 0;//every message a keyframe: open62541's reader discards anything else ("Only keyframes are supported", ua_pubsub_reader.c), so any other value silently drops samples.  0 - not 1 - is what suppresses delta frames: the writer emits a delta while `deltaFrameCounter>0 && deltaFrameCounter<=keyFrameCount` (ua_pubsub_writer.c), so 1 alternates key/delta and 10 sent nine deltas per keyframe.
 		//A reading travels with its quality (OPC 10000-4 7.38).  The writer samples each field's whole DataValue and then
@@ -140,12 +138,12 @@ namespace Jde::Opc::PubSub{
 
 		let readerGroupName = Ƒ( "{} readers", c.DataSetName );
 		UA_ReaderGroupConfig rg{};
-		rg.name = uv( readerGroupName );
+		rg.name = ToUV( readerGroupName );
 		check( UA_Server_addReaderGroup(&server, Connection, &rg, &ReaderGroup), "addReaderGroup", sl );
 
 		let readerName = Ƒ( "{} reader", c.DataSetName );
 		UA_DataSetReaderConfig rc{};
-		rc.name = uv( readerName );
+		rc.name = ToUV( readerName );
 		rc.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
 		rc.publisherId.id.uint16 = c.PublisherId;
 		rc.writerGroupId = c.WriterGroupId;

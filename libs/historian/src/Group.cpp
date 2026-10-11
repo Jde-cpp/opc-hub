@@ -51,15 +51,15 @@ namespace Jde::Opc::Hist{
 	//A percent-of-range format with no usable range stores every change, warned of when the node is added; anything else
 	//wrong is the host's config, named by its node.
 	Ω validate( const ExNodeId& node, Thresholds& t, SL sl )ε->void{
-		THROW_IFSL( t.MinTimeInterval<Duration::zero() || t.MaxTimeInterval<Duration::zero(), "'{}' has a negative MinTimeInterval or MaxTimeInterval.", node.to_string() );
+		THROW_IFSL( t.MinTimeInterval<Duration::zero() || t.MaxTimeInterval<Duration::zero(), "'{}' has a negative MinTimeInterval or MaxTimeInterval.", node.ToString() );
 		if( !t.ExceptionDeviation )
 			return;
 		let deviation = *t.ExceptionDeviation;
-		THROW_IFSL( !std::isfinite(deviation) || deviation<0, "'{}' has ExceptionDeviation {}, not a finite, non-negative number.", node.to_string(), deviation );
-		THROW_IFSL( t.DeviationFormat>UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE, "'{}' has an unknown ExceptionDeviationFormat, {}.", node.to_string(), underlying(t.DeviationFormat) );
+		THROW_IFSL( !std::isfinite(deviation) || deviation<0, "'{}' has ExceptionDeviation {}, not a finite, non-negative number.", node.ToString(), deviation );
+		THROW_IFSL( t.DeviationFormat>UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE, "'{}' has an unknown ExceptionDeviationFormat, {}.", node.ToString(), underlying(t.DeviationFormat) );
 		let ranged = t.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFRANGE || t.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE;
 		if( ranged && (!t.Range || !std::isfinite(t.Range->Low) || !std::isfinite(t.Range->High) || t.Range->High<=t.Range->Low) ){
-			WARN( "'{}' has no usable range for its percent-of-range ExceptionDeviation, so it stores every change.", node.to_string() );
+			WARN( "'{}' has no usable range for its percent-of-range ExceptionDeviation, so it stores every change.", node.ToString() );
 			t.ExceptionDeviation.reset();
 		}
 	}
@@ -153,7 +153,7 @@ namespace Jde::Opc::Hist{
 				}
 				else{
 					let index = Insert( node, move(member.Config), member.Index, sl );
-					THROW_IFSL( restoredIndexes.contains(index), "Group '{}' cannot give '{}' node_index {}: its files have it as another node's.", Name(), node.to_string(), index );
+					THROW_IFSL( restoredIndexes.contains(index), "Group '{}' cannot give '{}' node_index {}: its files have it as another node's.", Name(), node.ToString(), index );
 					added.push_back( {index, move(node), now, {}} );
 				}
 			}
@@ -180,16 +180,16 @@ namespace Jde::Opc::Hist{
 	//The URI names the namespace, so the index - the host's own numbering - is dropped and never compared.
 	α Group::Normalize( Member& member, SL sl )Ε->ExNodeId{
 		auto node = move( member.Node );
-		THROW_IFSL( !node.namespaceUri.length, "'{}' has no namespace URI - the historian keeps none by its index.", node.to_string() );
-		THROW_IFSL( !ProtoUtils::Utf8(node), "'{}' has a namespace URI or string identifier that isn't UTF-8, which a file can't hold.", node.to_string() );
+		THROW_IFSL( !node.namespaceUri.length, "'{}' has no namespace URI - the historian keeps none by its index.", node.ToString() );
+		THROW_IFSL( !ProtoUtils::Utf8(node), "'{}' has a namespace URI or string identifier that isn't UTF-8, which a file can't hold.", node.ToString() );
 		node.nodeId.namespaceIndex = 0;
-		THROW_IFSL( Issued()==(member.Index!=0), "Group '{}' {} node_index, but '{}' came with {}.", Name(), Issued() ? "issues its own" : "takes the host's", node.to_string(), member.Index );
-		THROW_IFSL( !std::in_range<uint32_t>(member.Index), "Group '{}' cannot give '{}' node_index {}: it doesn't fit a record's 32 bits.", Name(), node.to_string(), member.Index );
+		THROW_IFSL( Issued()==(member.Index!=0), "Group '{}' {} node_index, but '{}' came with {}.", Name(), Issued() ? "issues its own" : "takes the host's", node.ToString(), member.Index );
+		THROW_IFSL( !std::in_range<uint32_t>(member.Index), "Group '{}' cannot give '{}' node_index {}: it doesn't fit a record's 32 bits.", Name(), node.ToString(), member.Index );
 		validate( node, member.Config, sl );
 		return node;
 	}
 	α Group::Insert( ExNodeId node, Thresholds config, NodeIndex index, SL sl )ε->NodeIndex{
-		THROW_IFSL( _indexes.contains(node), "'{}' is already in group '{}'.", node.to_string(), Name() );
+		THROW_IFSL( _indexes.contains(node), "'{}' is already in group '{}'.", node.ToString(), Name() );
 		if( !index )
 			index = _nextIndex++;
 		THROW_IFSL( _nodes.contains(index), "node_index {} is already in group '{}'.", index, Name() );
@@ -372,7 +372,7 @@ namespace Jde::Opc::Hist{
 			Mark( index, node, earlier ? at : std::min(at, time), value, now, effects );
 			if( earlier ){
 				effects.Warning = Ƒ( "'{}' in group '{}' came back from the break at {} with a value sourced at {}, earlier than the {} it last delivered:  the value is not stored, and the node reads Bad_DataLost until its next change.",
-					node.Id.to_string(), Name(), ToIsoString(*broke), ToIsoString(UADateTime{*source}.Time()), ToIsoString(UADateTime{*last}.Time()) );
+					node.Id.ToString(), Name(), ToIsoString(*broke), ToIsoString(UADateTime{*source}.Time()), ToIsoString(UADateTime{*last}.Time()) );
 				return;
 			}
 			StoreValue( index, node, move(arrival), now, effects );

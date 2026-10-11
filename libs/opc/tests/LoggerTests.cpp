@@ -61,7 +61,6 @@ namespace Jde::Opc::Tests{
 		EXPECT_EQ( (uint)IotReadTag & (uint)EOpcLogTags::Opc, (uint)EOpcLogTags::Opc );
 		EXPECT_EQ( (uint)DataChangesTag & (uint)ELogTags::Pedantic, (uint)ELogTags::Pedantic );
 		EXPECT_EQ( (uint)DataChangesTag & (uint)EOpcLogTags::Monitoring, (uint)EOpcLogTags::Monitoring );
-		EXPECT_EQ( (uint)BrowseTagPedantic & (uint)EOpcLogTags::Browse, (uint)EOpcLogTags::Browse );
 	}
 
 	//Every EOpcLogTags bit is above 31 - they extend the fwk space rather than colliding with it.

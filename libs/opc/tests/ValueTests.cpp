@@ -7,23 +7,11 @@
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/uatypes/Variant.h>
 #include <jde/opc/proto/opc.Common.h>
+#include "helpers.h"
 
 #define let const auto
 
 namespace Jde::Opc::Tests{
-	Ω dataValue( const void* value, const UA_DataType& type )ι->Value{
-		UA_DataValue dv{};
-		UA_Variant_setScalarCopy( &dv.value, value, &type );
-		dv.hasValue = true;
-		return Value{ move(dv) };
-	}
-	Ω arrayDataValue( const void* values, uint count, const UA_DataType& type )ι->Value{
-		UA_DataValue dv{};
-		UA_Variant_setArrayCopy( &dv.value, values, count, &type );
-		dv.hasValue = true;
-		return Value{ move(dv) };
-	}
-
 	TEST( ValueTests, EmptyAndStatus ){
 		EXPECT_TRUE( Value( UA_DataValue{} ).IsEmpty() );
 		EXPECT_TRUE( Value( UA_DataValue{} ).ToJson().is_null() );
@@ -87,7 +75,7 @@ namespace Jde::Opc::Tests{
 
 	TEST( ValueTests, NodeIdAndGuidToJson ){
 		let n = NodeId{ 2, 5002 };
-		let j = dataValue( static_cast<const UA_NodeId*>(&n), UA_TYPES[UA_TYPES_NODEID] ).ToJson();
+		let j = dataValue( &n, UA_TYPES[UA_TYPES_NODEID] ).ToJson();
 		EXPECT_EQ( j.at("ns").to_number<int>(), 2 );
 		EXPECT_EQ( j.at("i").to_number<int>(), 5002 );
 

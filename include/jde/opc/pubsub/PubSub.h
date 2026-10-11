@@ -1,6 +1,8 @@
 #pragma once
 #include "../uatypes/NodeId.h"
 
+struct UA_Server;
+
 namespace Jde::Opc::PubSub{
 	//One DataSet field: `Path` under Objects (see BrowsePath), resolved to `Node` on whichever server publishes or
 	//receives it - a writer samples the node, a reader writes into it.

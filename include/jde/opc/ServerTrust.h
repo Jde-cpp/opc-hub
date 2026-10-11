@@ -1,6 +1,8 @@
 #pragma once
 #include <jde/opc/uatypes/Logger.h>
 
+struct UA_ClientConfig;
+
 //Server-certificate verification for this repo's UA clients - the gateway's (MVP "Gateway→OPC-server certificate
 //verification") and the PLC emulator's.  open62541 verifies the server's certificate through
 //UA_ClientConfig::certificateVerification in initSecurityPolicy, for every endpoint that carries one - None security

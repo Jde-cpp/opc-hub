@@ -24,7 +24,7 @@ namespace Jde::Opc::Emulator{
 		UA_Array_delete( config.serverUrls, config.serverUrlsSize, &UA_TYPES[UA_TYPES_STRING] );
 		config.serverUrls = nullptr;
 		config.serverUrlsSize = 0;
-		UA_String urls[1]{ UA_String{url.size(), (UA_Byte*)url.data()} };//a view: UA_Array_copy deep-copies.
+		UA_String urls[1]{ ToUV(url) };//a view: UA_Array_copy deep-copies.
 		let urlSc = UA_Array_copy( urls, 1, (void**)&config.serverUrls, &UA_TYPES[UA_TYPES_STRING] ); THROW_IFX( urlSc, UAException(urlSc, Ƒ("serverUrls '{}'", url), {}, sl) );
 		config.serverUrlsSize = 1;
 		_server = UA_Server_newWithConfig( &config );

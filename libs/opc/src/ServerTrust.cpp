@@ -1,4 +1,5 @@
 #include <jde/opc/ServerTrust.h>
+#include <open62541/client_config_default.h>
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/process.h>
@@ -21,6 +22,11 @@ namespace Jde::Opc{
 			string Rejection;//the last failure;  written by verifyCertificate and read by StateCallback, both on the client's strand.
 		};
 		α context( const UA_CertificateGroup& g )ι->Context*{ return (Context*)g.context; }
+		α anchorsNote( const Context& c )ι->string{ return Ƒ( "{} trusted certificate{}", c.Anchors, c.Anchors==1 ? "" : "s" ); }
+		//#33:  the directories are not empty, they hold files this build would not read - the one thing the operator cannot see.
+		α skippedNote( const Context& c )ι->string{
+			return Ƒ( "{} file{} skipped for {} extension - {} are read", c.Skipped, c.Skipped==1 ? " was" : "s were", c.Skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
+		}
 
 		//C shim in the group vtable (the UATrust::verifyCertificate pattern:  try/catch -> status).
 		Ω verifyCertificate( UA_CertificateGroup* g, const UA_ByteString* certificate )ι->UA_StatusCode{
@@ -34,8 +40,8 @@ namespace Jde::Opc{
 			catch( const std::exception& e ){
 				//"0 trusted certificates loaded" alone reads as "the directory is empty" - the operator who *did* copy the
 				//certificate in is then told to do the thing they just did (install-issues #33), so say what was passed over.
-				let skipped = c.Anchors || !c.Skipped ? string{} : Ƒ( ", {} file{} skipped for {} extension - {} are read", c.Skipped, c.Skipped==1 ? " was" : "s were", c.Skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
-				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} trusted certificate{} loaded from {}/trustedCertDirs{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), c.Anchors, c.Anchors==1 ? "" : "s", c.SettingsRoot, skipped, c.SettingsRoot );
+				let skipped = c.Anchors || !c.Skipped ? string{} : ", "+skippedNote( c );
+				c.Rejection = Ƒ( "server certificate for '{}' rejected: {} ({} loaded from {}/trustedCertDirs{}) - add the server's certificate to one of those directories, or set {}/verifyServerCertificate=false", c.Url, e.what(), anchorsNote(c), c.SettingsRoot, skipped, c.SettingsRoot );
 				ERRT( _tags, "[{}]{}", hex(c.Handle), c.Rejection );
 				return UA_STATUSCODE_BADCERTIFICATEUNTRUSTED;
 			}
@@ -81,6 +87,8 @@ namespace Jde::Opc{
 				}
 			}
 		}
+		std::mutex _overrideMutex;
+		optional<vector<fs::path>> _override;//the test seam - see the header.
 	}
 
 	α ServerTrust::Enabled( sv settingsRoot )ι->bool{ return Settings::FindBool( Ƒ("{}/verifyServerCertificate", settingsRoot) ).value_or(true); }
@@ -108,8 +116,6 @@ namespace Jde::Opc{
 		}
 	}
 
-	static std::mutex _overrideMutex;
-	static optional<vector<fs::path>> _override;//the test seam - see the header.
 	α ServerTrust::OverrideTrustedCertDirs( optional<vector<fs::path>> dirs )ι->void{
 		std::lock_guard _{ _overrideMutex };
 		_override = move( dirs );
@@ -142,11 +148,10 @@ namespace Jde::Opc{
 		g.clear = &clear;
 		g.getTrustList = nullptr; g.setTrustList = nullptr; g.addToTrustList = nullptr; g.removeFromTrustList = nullptr; g.getRejectedList = nullptr; g.getCertificateCrls = nullptr;//as UA_CertificateGroup_AcceptAll leaves them - the client only ever calls verifyCertificate and clear.
 		if( c->Anchors )
-			INFOT( _tags, "[{}]Verifying '{}'s certificate against {} trusted certificate{} from {}/trustedCertDirs.", hex(h), url, c->Anchors, c->Anchors==1 ? "" : "s", settingsRoot );
+			INFOT( _tags, "[{}]Verifying '{}'s certificate against {} from {}/trustedCertDirs.", hex(h), url, anchorsNote(*c), settingsRoot );
 		//A config from before the split (security-matrix #3) names its servers under /access/trustedCertDirs alone:  say where they belong now.
 		let moved = dirs.empty() && !Settings::FindStringArray( "/access/trustedCertDirs" ).empty();
-		//#33:  the directories are not empty, they hold files this build would not read - the one thing the operator cannot see.
-		let skipped = c->Skipped ? Ƒ( "  {} file{} passed over for {} extension - {} are read.", c->Skipped, c->Skipped==1 ? " was" : "s were", c->Skipped==1 ? "its" : "their", Crypto::CertificateExtensions ) : string{};
+		let skipped = c->Skipped ? "  "+skippedNote( *c )+"." : string{};
 		if( !c->Anchors )//not `else`: the log macros expand to their own `if`.
 			WARNT( _tags, "[{}]No trusted certificates under {}/trustedCertDirs ({} director{}) - every certificate '{}' presents will be rejected.{}{}", hex(h), settingsRoot, dirs.size(), dirs.size()==1 ? "y" : "ies", url, skipped, moved ? "  /access/trustedCertDirs is the enrollment anchors' list and is no longer read for this - name the directories under this setting." : "" );
 		g.context = c.release();

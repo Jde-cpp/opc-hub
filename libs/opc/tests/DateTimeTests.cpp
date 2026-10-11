@@ -119,7 +119,7 @@ namespace Jde::Opc::Tests{
 		EXPECT_THROW( UADateTime{longAt(std::numeric_limits<int64_t>::max())}, Exception );
 		EXPECT_THROW( UADateTime{longAt(std::numeric_limits<int64_t>::min())}, Exception );
 
-		//"nanos" is optional here too - Protobuf::ToTimestamp throws on a missing one, where the plain form defaults it.
+		//"nanos" is optional here too, as in the plain form.
 		let noNanos = jvalue{ jobject{ {"seconds", longSeconds(unixSeconds)} } };
 		EXPECT_NO_THROW( UADateTime{noNanos} );
 		EXPECT_EQ( UADateTime{noNanos}.UA(), UA_DateTime_fromUnixTime(unixSeconds) );

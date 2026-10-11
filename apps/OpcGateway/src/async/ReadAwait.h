@@ -1,4 +1,5 @@
 #pragma once
+#include <open62541/client.h>
 
 namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
