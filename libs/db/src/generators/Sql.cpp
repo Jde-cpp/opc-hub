@@ -1,10 +1,4 @@
 ﻿#include <jde/db/generators/Sql.h>
-#include <jde/db/generators/Functions.h>
-#include <jde/db/generators/Statement.h>
-#include <jde/db/generators/WhereClause.h>
-#include <jde/db/meta/Column.h>
-#include <jde/db/meta/Table.h>
-#include <jde/db/meta/Table.h>
 
 #define let const auto
 

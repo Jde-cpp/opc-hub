@@ -100,5 +100,4 @@ namespace Jde::DB{
 		THROW_IFSL( Joins.size()==0, "!SingleTable and Joins.size()==0" );
 		return Joins[0].From->Table;
 	}
-	//add 'deleted is null'
 }
