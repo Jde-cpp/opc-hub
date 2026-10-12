@@ -26,7 +26,8 @@ namespace Jde::Opc::Gateway{
 		β ConnectionLost( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/, TimePoint /*when*/ )ι->void{}
 		//The nodes a rebuild put back for this listener - on a live subscription again, called before it delivers their first
 		//value, which is what the historian's gap rule needs.  Never for a node the listener dropped meanwhile, and nothing for
-		//one the server refused:  the rebuild's log line says so, and the node stays lost.
+		//one the server refused:  the rebuild's log line says so, and the node stays lost.  A listener that has to keep its nodes
+		//asks for them again itself, as the historian's collector does once they have been lost too long (HistGroupHost::Check).
 		β ConnectionRestored( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/ )ι->void{}
 		//What this listener's items are created with - per node, so the historian samples at each node's MinTimeInterval.  Asked
 		//at every create, a rebuild's included;  a change to an item that exists goes through ModifyMonitoredItemsAwait.  A node

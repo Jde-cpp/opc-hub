@@ -222,6 +222,21 @@ namespace Jde::Opc{
 		return Value{ move(y) };
 	}
 
+	α Hist::BuiltIn( const UA_DataType* type )ι->uint32_t{
+		if( !type )
+			return 0;
+		let kind = type->typeKind;
+		if( kind<=UA_DATATYPEKIND_EXTENSIONOBJECT )
+			return kind+1;
+		if( kind==UA_DATATYPEKIND_ENUM )
+			return UA_DATATYPEKIND_INT32+1;
+		return kind==UA_DATATYPEKIND_STRUCTURE || kind==UA_DATATYPEKIND_OPTSTRUCT || kind==UA_DATATYPEKIND_UNION ? UA_DATATYPEKIND_EXTENSIONOBJECT+1 : 0;
+	}
+	α Hist::BuiltInType( uint32_t id )ι->const UA_DataType*{
+		static_assert( UA_TYPES_BOOLEAN==UA_DATATYPEKIND_BOOLEAN && UA_TYPES_DOUBLE==UA_DATATYPEKIND_DOUBLE && UA_TYPES_EXTENSIONOBJECT==UA_DATATYPEKIND_EXTENSIONOBJECT, "UA_TYPES opens with the built-in types, in id order." );
+		return id && id<=UA_DATATYPEKIND_EXTENSIONOBJECT+1 ? &UA_TYPES[id-1] : nullptr;
+	}
+
 	α Hist::ToProto( const Record& r )ε->HistoryRecord{
 		HistoryRecord y;
 		if( let added = get_if<NodeAdded>(&r) ){
@@ -230,6 +245,7 @@ namespace Jde::Opc{
 			*record.mutable_node() = ProtoUtils::ToExNodeId( added->Node );
 			record.set_ts( UADateTime{added->Ts}.UA() );
 			setWriter( record, added->By );
+			record.set_data_type( BuiltIn(added->DataType) );
 		}
 		else if( let removed = get_if<NodeRemoved>(&r) ){
 			auto& record = *y.mutable_node_removed();

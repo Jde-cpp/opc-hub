@@ -58,6 +58,22 @@ namespace Jde::Opc::Gateway{
 		for( auto& host : hosts )
 			host->Close();
 	}
+	α HistHost::TestEnabled( SL sl )Ε->void{
+		sp<Opc::Hist::Historian> historian; bool stopped;
+		{
+			lg _{ _mutex };
+			historian = _historian;
+			stopped = _stopped;
+		}
+		if( historian && historian->Enabled() )
+			return;
+		const ExceptionArgs args{ EHttpStatus::ServiceUnavailable };//at Debug:  the configuration's, which the start logged, not a fault.
+		if( stopped )
+			throw Exception{ sl, args, "The gateway's historian has stopped." };
+		if( !historian )
+			throw Exception{ sl, args, "This gateway keeps no history of its own:  it has no /gateway/hist block." };
+		throw Exception{ sl, args, "This gateway runs without its historian:  another process holds the lock on '{}', or it can't be made.", historian->Config().Path.string() };
+	}
 	α HistHost::Find( HistGroupPK id )Ι->sp<HistGroupHost>{
 		lg _{ _mutex };
 		auto p = _groups.find( id );
@@ -116,7 +132,7 @@ namespace Jde::Opc::Gateway{
 		auto hostMembers = Reserve<HistMember>( nodes.size() );
 		for( let& node : nodes ){
 			let thresholds = ResolveThresholds( node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds );
-			initial.push_back( {node.Node, thresholds, node.Id} );
+			initial.push_back( {node.Node, HistGroupHost::ForGroup(thresholds), node.Id} );
 			hostMembers.push_back( {node.Id, node.Node, thresholds} );
 		}
 		auto group = historian->AddGroup( {.Name=row.Guid, .Indexes=Opc::Hist::EIndexes::Host, .PublishingInterval=HistGroupHost::PublishingInterval}, move(initial), sl );

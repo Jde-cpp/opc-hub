@@ -44,6 +44,7 @@ namespace Jde::Opc::Hist{
 		ExNodeId Node;//with its namespace URI, which is what the group matches on.
 		Thresholds Config;
 		NodeIndex Index{};//the gateway's hist_group_nodes row id, 32 bits as a file's node_index is; 0 in a group that issues its own.
+		const UA_DataType* DataType{};//the type the node's DataType gives its values, when the host has it:  SetDataType's.
 	};
 
 	enum class EIndexes : uint8{
@@ -58,7 +59,7 @@ namespace Jde::Opc::Hist{
 		Duration PublishingInterval{};
 	};
 	//What a group holds until a flush writes it.  Each record's time is a source time:  Ts for a membership change.
-	struct NodeAdded{ NodeIndex Index; ExNodeId Node; TimePoint Ts; optional<Writer> By; };
+	struct NodeAdded{ NodeIndex Index; ExNodeId Node; TimePoint Ts; optional<Writer> By; const UA_DataType* DataType{}; };
 	struct NodeRemoved{ NodeIndex Index; TimePoint Ts; optional<Writer> By; };
 	//A value that passed the compression test, a Bad_DataLost marker, or a heartbeat, whose Heartbeat is the
 	//SourceTimestamp of the value it repeats, or with Unsourced that value's server timestamp:  it came with no
@@ -134,6 +135,21 @@ namespace Jde::Opc::Hist{
 	//The aggregates the first cut supports (spec *Reads*):  Part 13's, and Median, the median of an interval's Good raw
 	//values, which Part 13 doesn't define.
 	enum class EAggregate : uint8{ Interpolative, Average, TimeAverage, Count, Minimum, Maximum, Start, End, StandardDeviationSample, Median };
+	//An aggregate the library computes:  its name, the browse name of its Part 13 AggregateFunction object, and that object's
+	//id in namespace 0, 0 for Median, which Part 13 doesn't define and a host publishes itself.
+	struct NamedAggregate final{ sv Name; UA_UInt32 Function; EAggregate Aggregate; };
+	//Every EAggregate, in its order:  the gateway's group reads name them by Name, and OpcServer publishes and serves them by Function.
+	constexpr std::array<NamedAggregate,10> Aggregates{ {
+		{"Interpolative", UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, EAggregate::Interpolative}, {"Average", UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, EAggregate::Average},
+		{"TimeAverage", UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, EAggregate::TimeAverage}, {"Count", UA_NS0ID_AGGREGATEFUNCTION_COUNT, EAggregate::Count},
+		{"Minimum", UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, EAggregate::Minimum}, {"Maximum", UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, EAggregate::Maximum},
+		{"Start", UA_NS0ID_AGGREGATEFUNCTION_START, EAggregate::Start}, {"End", UA_NS0ID_AGGREGATEFUNCTION_END, EAggregate::End},
+		{"StandardDeviationSample", UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, EAggregate::StandardDeviationSample}, {"Median", 0, EAggregate::Median} } };
+	static_assert( Aggregates.size()==(uint8)EAggregate::Median+1 );
+	constexpr α FindAggregate( sv name )ι->optional<EAggregate>{
+		const auto p = std::ranges::find( Aggregates, name, &NamedAggregate::Name );
+		return p==Aggregates.end() ? nullopt : optional<EAggregate>{ p->Aggregate };
+	}
 	//Part 11's ReadProcessedDetails:  one value per node for each Interval from Start to End, computed from the raw
 	//records under Configuration as Part 13 §5.4.3 says, timestamped at the interval's start.  A Start after End
 	//computes the intervals back from Start, later first, each holding its later end and not its earlier.  An Interval
@@ -233,6 +249,15 @@ namespace Jde::Opc::Hist{
 		α SetThresholds( NodeIndex index, Thresholds thresholds, SRCE )ε->void;
 		α FindThresholds( NodeIndex index )Ι->optional<Thresholds>;
 		α Find( const ExNodeId& node )Ι->optional<NodeIndex>;
+		//The type the node's DataType gives its values, as the host read it, which each file's NodeAdded of it carries
+		//(Hist.Records.proto):  the built-in type, so an enumeration's Int32 and Duration's Double, and none for an abstract
+		//DataType, such as BaseDataType's Variant.  It also goes into the node's NodeAdded while a flush hasn't taken that, and
+		//otherwise into the next file's.  False for a node that isn't a member.
+		α SetDataType( NodeIndex index, const UA_DataType* type )ι->bool;
+		//The type an edit's values take (spec *Edits*):  the one SetDataType, Member or after a start the newest file's
+		//NodeAdded gave, else that of the values the node stored, its last value's that had one, kept past a marker, and after
+		//a start its newest record's.  Null for a node that isn't a member, or that has neither.
+		α DataType( NodeIndex index )Ι->const UA_DataType*;
 
 		//false for a node that isn't in the group, such as one a racing Remove took out.  A value with no server
 		//timestamp is stamped with the time it arrived.  A timestamp no day holds, before 1601 or past 9999 as DateTime's
@@ -348,6 +373,8 @@ namespace Jde::Opc::Hist{
 			//stored since.  Marked for a marker:  nothing to repeat, and whatever comes next is stored.
 			optional<Value> Stored;
 			bool Marked{};
+			const UA_DataType* Declared{};//SetDataType's built-in type:  DataType's first.
+			const UA_DataType* Type{};//of the last value it stored that had one:  DataType's after Declared.
 			optional<UA_DateTime> ValueTs;//the last stored value's primary time:  MinTimeInterval counts from it, and a heartbeat carries it.
 			UA_DateTime RecordTs{ std::numeric_limits<UA_DateTime>::min() };//the newest primary time it stored, a heartbeat's or a marker's included.
 			UA_DateTime KeptTs{ std::numeric_limits<UA_DateTime>::min() };//RecordTs, but for a heartbeat still buffered:  what dropping those leaves.
@@ -374,8 +401,8 @@ namespace Jde::Opc::Hist{
 
 		α Issued()Ι->bool{ return _config.Indexes==EIndexes::Issued; }
 		α Normalize( Member& member, SL sl )Ε->ExNodeId;
-		//index 0 issues the next one.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Insert( ExNodeId node, Thresholds config, NodeIndex index, SL sl )ε->NodeIndex;
+		//index 0 issues the next one.  The node declares type's built-in type.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Insert( ExNodeId node, Thresholds config, NodeIndex index, const UA_DataType* type, SL sl )ε->NodeIndex;
 		//Buffers record:  true once every group's buffer together is past maxBuffer.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Hold( Record&& record, uint32_t bytes )ι->bool;
 		//True when the buffer has reached 8 KB, or over, every group's together past maxBuffer, and no flush for that is on

@@ -331,4 +331,25 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 		Web::Server::Sessions::Remove( rootSession );
 	}
+	//A group's history fields reach the gateway's historian through HubQL, not the pass-through or the engine:  a read of a
+	//group the hub doesn't host answers that it doesn't, and an edit, with nothing enforcing hist_groups, is refused before
+	//anything else is looked at (Authorize::TestEnforced).
+	TEST_F( HubRoutingTests, GroupHistoryReachesTheHistorian ){
+		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
+		let root = Ƒ( "{:x}", rootSession );
+		let answer = [&]( string query )->string{
+			try{
+				return Post( AppPort(), "/graphql", serialize(jobject{{"query", move(query)}}), root ).Body();
+			}
+			catch( ClientHttpResException& e ){
+				return e.Res().Body();
+			}
+		};
+		constexpr sv args{ "group: 999999, nodes: {nsu:\"urn:jde:pumps\", i:6054}, start: {seconds:1767225600, nanos:0}, end: {seconds:1767312000, nanos:0}" };
+		let read = answer( Ƒ("history( {} ){{ values{{ value }} }}", args) );
+		EXPECT_NE( read.find("isn't one this gateway historizes"), string::npos ) << read;
+		let edit = answer( Ƒ("purgeHistory( {} ){{ nodes{{ status }} }}", args) );
+		EXPECT_NE( edit.find("needs a grant on an enforced resource"), string::npos ) << edit;
+		Web::Server::Sessions::Remove( rootSession );
+	}
 }

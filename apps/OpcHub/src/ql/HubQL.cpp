@@ -7,6 +7,7 @@
 #include "../../../AppServer/src/ql/InstanceTagLevelAwait.h"
 #include "../../../OpcGateway/src/ql/GatewayQL.h"
 #include "../../../OpcGateway/src/ql/GatewayQLAwait.h"
+#include "../../../OpcGateway/src/ql/HistGroupEditQLAwait.h"
 #include "../../../OpcGateway/src/ql/HistGroupQLAwait.h"
 
 namespace Jde::Opc::Hub{
@@ -26,6 +27,8 @@ namespace Jde::Opc::Hub{
 		if( App::Server::InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<App::Server::InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );
 		if( auto await = Gateway::HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory, as GatewayQL.
+			return await;
+		if( auto await = Gateway::HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits, as GatewayQL.
 			return await;
 		return Gateway::GatewayQLMAwait::IsApplicable(m) ? mu<Gateway::GatewayQLMAwait>( move(m), move(creds), sl ) : nullptr;
 	}

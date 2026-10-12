@@ -12,6 +12,7 @@
 #include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
 #include "HistComputedQLAwait.h"
+#include "HistGroupReadQLAwait.h"
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
@@ -47,11 +48,13 @@ namespace Jde::Opc::Gateway{
 		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!="search";//search must never ConnectAwait - it only reads clients already open.
 	}
 	α GatewayQLAwait::IsApplicable( const QL::TableQL& q )ι->bool{
-		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || needsClient(q);
+		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || needsClient(q);
 	}
 	α GatewayQLAwait::Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		up<TAwait<jvalue>> await;
-		if( q.JsonName=="opcSessions" )
+		if( HistGroupReadQLAwait::IsApplicable(q) )//before needsClient:  a null `opc` beside `group` names no server.
+			await = mu<HistGroupReadQLAwait>( move(q), move(executer), sl );
+		else if( q.JsonName=="opcSessions" )
 			await = mu<OpcSessionsQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="search" )
 			await = mu<SearchQLAwait>( move(q), move(executer), sl );
@@ -61,8 +64,8 @@ namespace Jde::Opc::Gateway{
 			await = mu<GatewayQLAwait>( move(q), move(executer), sl );
 		return await;
 	}
-	//A hist edit with `group` alone is the gateway historian's (Phase 5), which needs no client.  One that names both
-	//`opc` and `group`, or neither, is this await's to refuse.
+	//A hist edit with `group` alone is the gateway historian's (HistGroupEditQLAwait), which needs no client.  One that names
+	//both `opc` and `group`, or neither, is this await's to refuse.
 	α GatewayQLMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		return m.JsonTableName=="variable" || ( HistQL::FindEdit(m.CommandName) && HistQL::Target(m)!=HistQL::ETarget::Group );
 	}
@@ -86,7 +89,7 @@ namespace Jde::Opc::Gateway{
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName.starts_with("dataType") )
 				y = co_await DataTypeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here.
+			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here (HistGroupReadQLAwait).
 				if( HistQL::Mode(_query)==HistQL::EMode::Raw )
 					y = co_await HistQLAwait{ move(_query), move(_client), _sl };
 				else//at times, or aggregated.

@@ -23,6 +23,11 @@ namespace Jde::Opc::Hist{
 	α PrimaryTime( const UA_DataValue& v )ι->Ticks;//Enqueue stamps a server time on one that came with neither.
 	α PrimaryTime( const Record& r )ι->Ticks;
 
+	//The built-in type id (Part 6 5.1.2) a type's values take on the wire, which a NodeAdded's data_type holds:  an
+	//enumeration's Int32, a structure's ExtensionObject, and a subtype's its base's, as Duration's Double.  0 for none, and
+	//for the types no DataType's values are all of:  Variant, which BaseDataType finds, DataValue and DiagnosticInfo.
+	α BuiltIn( const UA_DataType* type )ι->uint32_t;
+	α BuiltInType( uint32_t id )ι->const UA_DataType*;//BuiltIn's type, null for 0 or an id it never gives.
 	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
 	//The edit's writer onto its record:  identity_id, UserPK::System as 4294967295, and user_name.

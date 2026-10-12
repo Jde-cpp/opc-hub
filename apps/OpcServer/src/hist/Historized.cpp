@@ -65,12 +65,13 @@ namespace Jde::Opc::Server{
 		UA_NodeId_copy( &id, &y.nodeId );
 		return ExNodeId{ move(y) };
 	}
-	Ω isEnumeration( UA_Server& ua, const UA_NodeId& variable )ε->bool{
+	//The variable's DataType, null for an abstract one or one the server has no type for.
+	Ω dataType( UA_Server& ua, const UA_NodeId& variable )ε->const UA_DataType*{
 		UA_NodeId dataType{};
 		UAε( UA_Server_readDataType(&ua, variable, &dataType) );
 		let type = UA_Server_findDataType( &ua, &dataType );
 		UA_NodeId_clear( &dataType );
-		return type && type->typeKind==UA_DATATYPEKIND_ENUM;
+		return type;
 	}
 
 	//An instance declaration, a type's member, is a template nothing writes, which a companion nodeset may still mark
@@ -142,7 +143,8 @@ namespace Jde::Opc::Server{
 		thresholds.MinTimeInterval = interval( "MinTimeInterval" );
 		thresholds.MaxTimeInterval = interval( "MaxTimeInterval" );
 		let deviation = setting( "ExceptionDeviation" );
-		let enumeration = deviation && isEnumeration( ua, id );
+		let type = dataType( ua, id );
+		let enumeration = deviation && type && type->typeKind==UA_DATATYPEKIND_ENUM;
 		if( enumeration )
 			INFO( "'{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", label );
 		if( deviation && !enumeration ){
@@ -176,7 +178,7 @@ namespace Jde::Opc::Server{
 		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
 		auto startOfArchive = publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		auto startOfOnlineArchive = publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
-		Hist::Member member{ expanded(ua, id), move(thresholds) };
+		Hist::Member member{ expanded(ua, id), move(thresholds), {}, type };
 		return { move(id), move(member), move(startOfArchive), move(startOfOnlineArchive) };
 	}
 

@@ -34,6 +34,10 @@ message NodeAdded{
 	optional uint32 identity_id=4;//unset for a change the historian made itself; 4294967295 for the System identity.
 	string user_name=5;
 	DataValue start=6;
+	//The built-in type (Part 6 5.1.2) the node's DataType gives its values, as the host read it, which an edit's values take:
+	//an enumeration's is Int32, 6, and a subtype's its base's, as Duration's is Double, 11.  0 when the host hadn't read it,
+	//or for an abstract DataType, whose values may be of any type.
+	uint32 data_type=7;
 }
 
 message NodeRemoved{

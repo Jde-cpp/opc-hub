@@ -5,18 +5,18 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	Ω bad( const UA_DataValue& v )ι->bool{ return v.hasStatus && UA_StatusCode_isBad( v.status ); }
+	Ω dataTypeId( const UA_DataValue& dataType )ι->const UA_NodeId*{
+		return dataType.hasValue && dataType.value.type==&UA_TYPES[UA_TYPES_NODEID] ? (const UA_NodeId*)dataType.value.data : nullptr;
+	}
 	//A built-in type for a DataType node of namespace 0;  null for any other, or an abstract one.
-	Ω builtIn( const UA_DataValue& dataType )ι->const UA_DataType*{
-		if( !dataType.hasValue || dataType.value.type!=&UA_TYPES[UA_TYPES_NODEID] )
-			return nullptr;
-		let id = (const UA_NodeId*)dataType.value.data;
-		return id->namespaceIndex ? nullptr : UA_findDataType( id );
+	Ω builtIn( const UA_NodeId* id )ι->const UA_DataType*{
+		return !id || id->namespaceIndex ? nullptr : UA_findDataType( id );
 	}
 
 	α ValueTypesAwait::Execute()ι->TAwait<ReadResponse>::Task{
 		try{
 			let count = _nodes.size();
-			ValueTypes y{ vector<const UA_DataType*>(count), vector<StatusCode>(count, UA_STATUSCODE_GOOD) };
+			ValueTypes y{ vector<const UA_DataType*>(count), vector<StatusCode>(count, UA_STATUSCODE_GOOD), vector<optional<NodeId>>(count) };
 			vector<NodeId> untyped; vector<uint> slots;
 			let dataTypes = co_await ReadAwait{ ReadRequest{_nodes, UA_ATTRIBUTEID_DATATYPE}, _client, false, _sl };
 			for( uint i=0; i<count; ++i ){
@@ -24,9 +24,14 @@ namespace Jde::Opc::Gateway{
 					y.Statuses[i] = UA_STATUSCODE_BADUNEXPECTEDERROR;
 				else if( bad(dataTypes.results[i]) )
 					y.Statuses[i] = dataTypes.results[i].status;
-				else if( !(y.Types[i] = builtIn(dataTypes.results[i])) ){
-					untyped.push_back( _nodes[i] );
-					slots.push_back( i );
+				else{
+					let id = dataTypeId( dataTypes.results[i] );
+					if( id )
+						y.DataTypes[i] = NodeId{ *id };
+					if( !(y.Types[i] = builtIn(id)) ){
+						untyped.push_back( _nodes[i] );
+						slots.push_back( i );
+					}
 				}
 			}
 			if( untyped.size() ){

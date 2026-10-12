@@ -57,6 +57,12 @@ namespace Jde::Opc::Gateway{
 		return p!=_slots.end() && p->second.State==EState::Ready ? p->second.Type : Ptr{};
 	}
 
+	α EnumTypeCache::Refused( const NodeId& id )Ι->bool{
+		rl _{ _mutex };
+		auto p = _slots.find( id );
+		return p!=_slots.end() && p->second.State==EState::Failed;
+	}
+
 	α EnumTypeCache::StartLocked( sp<UAClient>&& client, NodeId&& id, GetAwait* waiter )ι->void{
 		bool launch{}; Ptr ready; optional<Exception> failed;
 		{
