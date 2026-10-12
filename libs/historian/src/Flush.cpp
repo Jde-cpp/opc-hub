@@ -121,6 +121,7 @@ namespace Jde::Opc::Hist{
 		bool start{};
 		let now = _store->Time->Now();
 		Effects effects;
+		vector<sp<const Registration>> ended;
 		{
 			ul _{ _mutex };
 			_stopped = true;
@@ -129,6 +130,7 @@ namespace Jde::Opc::Hist{
 				if( node.Pending )
 					Settle( index, node, now, effects );
 			}
+			ended = std::exchange( _subscribers, {} );//after the settles, which stream:  nothing more is stored for them to hear of.
 			if( running() ){//marked here, so Stopped waits for it however late the executor starts it.
 				if( _flushing )
 					_again = true;
@@ -139,6 +141,8 @@ namespace Jde::Opc::Hist{
 		Cancel( timers );
 		effects.Pushed.Flush = false;//the last flush, started here, takes what the settles stored.
 		Finish( move(effects) );
+		for( let& registration : ended )
+			registration->Subscriber->OnEnded( ESubscriptionEnd::Stopped );
 		if( start )//on the executor, so every group's runs at once, and a write that never returns holds none of this thread.
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}
@@ -443,6 +447,13 @@ namespace Jde::Opc::Hist{
 					break;
 				for( auto& job : *jobs ){
 					bool ok{};
+					//Done runs under the files lock for a write that committed, with the commit, and outside it for one that failed.
+					let done = [&]{
+						_filesMutex.AssertHeld();
+						ok = true;
+						if( job.Done )
+							std::exchange( job.Done, nullptr )( true );
+					};
 					try{
 						if( auto run = get_if<Pending>(&job.Write) ){
 							if( Ended() )
@@ -450,7 +461,7 @@ namespace Jde::Opc::Hist{
 							co_await run->Write();
 							ul _{ _filesMutex };
 							_files->Commit( move(*run) );
-							ok = true;
+							done();
 						}
 						else if( auto archive = get_if<Rewrite>(&job.Write) ){
 							while( archive->Next() ){
@@ -462,7 +473,7 @@ namespace Jde::Opc::Hist{
 							if( Ended() )
 								throw Abandoned{};
 							_files->Commit( move(*archive), taken );
-							ok = true;
+							done();
 						}
 					}
 					catch( Exception& e ){

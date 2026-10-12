@@ -29,6 +29,45 @@ message UnsubscribeAck{
 	repeated Jde.Opc.Proto.NodeId failures=2;
 }
 
+//A historian record (spec *Record format*), as a subscription's pages and pushes carry it:  a value that passed the
+//compression test, a heartbeat, which repeats the value before it, or a Bad_DataLost marker, which holds none.  node is the
+//node's place in the HistSubscribe's nodes.
+message HistValue{
+	uint32 node=1;
+	Jde.Opc.Proto.Value value=2;//none for a marker, or a value its file couldn't hold, which sc says.
+	uint32 sc=3;//the record's status; 0 is Good.
+	google.protobuf.Timestamp source=4;//unset for a value its server sent without one, which is filed by server.
+	google.protobuf.Timestamp server=5;
+	bool heartbeat=6;
+	bool bound=7;//the snapshot's:  the node's value before from_time, or Bad_BoundNotFound at from_time with none.
+}
+//An edit of a node's history (spec *Edits*), as its modifications file holds it:  what it did at target, and the value it put
+//there, none for a delete.
+message HistModification{
+	uint32 node=1;
+	google.protobuf.Timestamp target=2;//the source time it changed.
+	uint32 type=3;//Part 11's HistoryUpdateType:  1 insert, 2 replace, 3 update, 4 delete.
+	HistValue value=4;
+	google.protobuf.Timestamp time=5;//when the edit was made.
+	string user=6;
+}
+//Per node of the HistSubscribe, in its order:  Good for a member, Bad_NodeIdUnknown for a node the group doesn't hold.
+message HistSubscribeAck{
+	repeated uint32 statuses=1;
+}
+//A page of the history from from_time to the subscription, in source-time order, each node's bound first, more until the
+//last:  the records stored since follow it.
+message HistSnapshot{
+	repeated HistValue values=1;
+	bool more=2;
+}
+//Stored since the snapshot, as they were stored:  a late record is among them, to be placed by its source time, and a
+//modification once it is durable.
+message HistRecords{
+	repeated HistValue values=1;
+	repeated HistModification modifications=2;
+}
+
 message Message{
 	uint32 request_id = 1;
 	oneof Value{
@@ -38,6 +77,9 @@ message Message{
 		Jde.Proto.Exception exception = 5;
 		SubscriptionAck subscription_ack = 6; //Subscription acknowledgement
 		UnsubscribeAck unsubscribe_ack = 7; //Unsubscribe acknowledgement
+		HistSubscribeAck hist_subscribe_ack = 8; //a HistSubscribe's, then its HistSnapshot pages and its HistRecords, every message under its request_id.  No Value completes a HistUnsubscribe, as it does a session_id.
+		HistSnapshot hist_snapshot = 9;
+		HistRecords hist_records = 10;
 	}
 }
 

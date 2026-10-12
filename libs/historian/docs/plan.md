@@ -102,7 +102,7 @@ The design is the spec's *Pass-through* section, whose five points were ruled an
   - An aggregate picker (4C, [#220]): the server's `HistoryServerCapabilities/AggregateFunctions` folder, browsed once per connection, and an interval; the read is `history` with `aggregate` and `interval`, forward, over the last intervals a page holds, with "load earlier" the range before.
   - Edit dialogs: insert, replace, update, delete range, delete at time.
   - A history tab on node-detail, shown when `historizing` ([`ReadAwait.cpp:25`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L25)) and `userAccessLevel`'s HistoryRead bit are set.
-- **Live tail.** Join the read to the node's existing `/opc` subscription by source time, dropping duplicates. For a group source, Phase 6 replaces this with `/hist`.
+- **Live tail.** Join the read to the node's existing `/opc` subscription by source time, dropping duplicates. For a group source, Phase 6 replaces this with `HistSubscribe`'s snapshot and stream.
 - **Where.** In `web/opc/control/src`, the current tree.
 
 ## Phase 5 — gateway historian, step 4 ([#221])
@@ -124,7 +124,8 @@ Split so that each PR is reviewable and most of 5a is useful before any history 
   - Built 2026-10-11: the historian tables' edits as a custom mutation `GatewayQL` routes (`HistGroupMAwait`), not a QL hook, and the host that owns the library and one listener per group (`src/hist`), with the `hist` block in [`Opc.Gateway.jsonnet`](../../../apps/OpcGateway/config/Opc.Gateway.jsonnet), which [`Opc.Hub.jsonnet`](../../../apps/OpcHub/config/Opc.Hub.jsonnet) takes with the gateway block, and the collector's `credentials` in it. The listener's `SendDataChange` is left for 5c.
 - **5c, collection, reads and edits** ([#224]). The collector feeding the library through the listener 5b made. Then the reads with `group`, then the edits, whose values need a type rule of their own: the type the historian stored for the node is the natural one, since a correction shouldn't need the server reachable (spec *Open questions*). Also the lock-disabled path answering with an error.
   - Built 2026-10-11: the listener's `SendDataChange` into the group, with the read after joining an item the collector's client already had, the rebuild's `NamespaceArray` check and the lost member asked for again (the reviews of [#222] and [#223] deferred both here); `history` with `group` ([`HistGroupReadQLAwait`](../../../apps/OpcGateway/src/ql/HistGroupReadQLAwait.h)) and the four edits with it ([`HistGroupEditQLAwait`](../../../apps/OpcGateway/src/ql/HistGroupEditQLAwait.h)), routed by `GatewayQL` and the hub's `HubQL` as custom queries and mutations, not a QL hook, the edits gated by `Authorize::TestEnforced` and typed by each node's `DataType`, which the collector reads once its item is made and each file's `NodeAdded` carries; and the differential test, [`HistCollectorTests`](../../../apps/OpcGateway/tests/HistCollectorTests.cpp). The `hist` block was 5b's.
-- **5d, `/hist`** ([#225]). The snapshot under the lock, the read outside it, paging, live streaming and pushed modifications, on the gateway's listener and the hub's.
+- **5d, subscriptions** ([#225]). The snapshot under the lock, the read outside it, paging, live streaming and pushed modifications, on the gateway's listener and the hub's.
+  - Built 2026-10-12: `Group::Subscribe` registers the subscriber and takes the snapshot under the group's locks, a copy of the buffer and each day and modifications file as served then, and the `Subscription` it returns pages that frozen view through the raw read, with bounds, outside them; values stream from `Finish` and modifications from the flush after their day's commit. `GatewaySocketSession::HistSubscribe` ([`HistSubscriber.h`](../../../apps/OpcGateway/src/hist/HistSubscriber.h)) serves them as messages of `/opc`, `HistSubscribe` and `HistUnsubscribe` in [`Opc.FromClient.proto`](../../../apps/OpcGateway/src/types/proto/Opc.FromClient.proto) and `HistSubscribeAck`, `HistSnapshot` and `HistRecords` in [`Opc.FromServer.proto`](../../../apps/OpcGateway/src/types/proto/Opc.FromServer.proto), so a client holds one socket for live values and history, on the gateway's listener and the hub's alike; a `/hist` socket of their own was built first and folded in the same day (spec *Open questions*). Tests: the library's `SubscribeTests`, the gateway's `HistSubscribeTests` over the embedded OpcServer, and the hub's `SocketTests.HistSubscribeReachesTheHistorian`.
 - **Differential test.** A gateway group over OpcServer's historizing pump nodes stores the same values OpcServer stores itself (spec *Hosts*). With matching thresholds, a group read and a pass-through read of the same range should agree apart from sampling, which gives a cross-check neither host has alone. Connection drops in that setup exercise the gap markers.
 
 ## Phase 6 — web for gateway-only features, step 5 ([#226])
@@ -132,7 +133,7 @@ Split so that each PR is reviewable and most of 5a is useful before any history 
 - Group and template admin. The template editor picks browse paths from the tree; resolution status shows unresolved members, with a retry that calls `resolveHistory`.
 - Per-node threshold overrides.
 - Group access through `access_resources`.
-- The live trend for group sources switches to `/hist`'s snapshot and stream, which has no gap.
+- The live trend for group sources switches to `HistSubscribe`'s snapshot and stream, which has no gap.
 - Heartbeats are marked on the trend.
 
 ## Slices
