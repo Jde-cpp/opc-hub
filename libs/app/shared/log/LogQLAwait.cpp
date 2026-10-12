@@ -37,9 +37,9 @@ namespace Jde::App{
 			bool readLocal = !end || *end > log.DailyFileStart();
 			let& ob = _ql.OrderByJson();
 			let timeAsc = ob.size() && ob[0].first=="time" && ob[0].second;
-			ArchiveQuery archive{ _hidden };
+			ArchiveQuery archive{ move(_hidden) };
 			if( readLocal && !timeAsc ){
-				archive = ArchiveQuery{ _ql.Filter(), co_await Any(DailyLoadAwait{log.DailyFile()}), move(_hidden) };
+				archive.Append( _ql.Filter(), co_await Any(DailyLoadAwait{log.DailyFile()}) );
 				readLocal = false;
 				TRACE( "Daily entries: {}, complete: {}", archive.EntrySize(), archive.IsComplete(_ql) );
 			}

@@ -316,6 +316,17 @@ namespace Jde::Opc::Hub::Tests{
 		for( let& r : Json::FindDefaultArray(logs, "allowed") )
 			logRights.emplace( r.is_string() ? string{r.get_string()} : string{} );
 		EXPECT_EQ( logRights, (flat_set<string>{"Administer", "Read", "Update"}) ) << serialize( logs );
+		//...and Read on the access tables its access load and event subscriptions read as this account (ConfigureAwait):  each
+		//declares Read, so enforcing one would otherwise stop the server starting (325-logs-resource review #3).
+		for( let slug : {"acl", "groups", "resources", "roles", "users"} ){
+			let accessRole = one( Ƒ("role(slug:\"opc-server-instance\"){{ permissionRight{{ allowed resource(schemaName:\"access\", slug:\"{}\"){{ slug }} }} }}", slug), "role" );
+			let grant = Json::FindDefaultObject( accessRole, "permissionRight" );
+			EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(grant, "resource"), "slug"), slug ) << serialize( accessRole );
+			flat_set<string> rights;
+			for( let& r : Json::FindDefaultArray(grant, "allowed") )
+				rights.emplace( r.is_string() ? string{r.get_string()} : string{} );
+			EXPECT_EQ( rights, (flat_set<string>{"Read"}) ) << slug << ": " << serialize( grant );
+		}
 		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 		Web::Server::Sessions::Remove( rootSession );

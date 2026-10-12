@@ -5,6 +5,7 @@
 //On sqlite (ctest) the select completes inline and this passes either way;  against MySQL (-include=args/mysql) it is
 //the wedge itself:  two ConnectionInfo replies, or two 10 s timeouts.
 #include "helpers.h"
+#include "../src/appStartup.h"
 
 #define let const auto
 namespace Jde::App::Server::Tests{
@@ -33,5 +34,31 @@ namespace Jde::App::Server::Tests{
 		for( uint i=0; i<count; ++i )
 			connections.emplace( AwaitInstance(*sessions[i], requests[i], Ƒ("burst{}", i)).Connection );
 		EXPECT_EQ( connections.size(), count ) << "every registration answered with its own connection";
+	}
+	//325-logs-resource review #4:  two live instances of one (program, name) with different resource schemas would share an
+	//instance row, the last to register deciding whose `logs` governs the other's lines - the second is refused instead.
+	TEST( RegistrationTests, ALiveNameRefusesAnotherSchema ){
+		constexpr sv plantA{ "opc.registrationPlantA" };
+		auto a = Connect();
+		let first = RegisterInstance( *a, "Tests.Registration", "shared", "plant-a", 4301, 4301, string{plantA} );
+		auto b = Connect();
+		let refused = b->WaitForException( SendInstance(*b, "Tests.Registration", "shared", "plant-b", 4302, 4302, "opc.registrationPlantB") );
+		ASSERT_TRUE( refused ) << "another endpoint, another schema";
+		EXPECT_TRUE( refused->exception().what().contains("/instanceName") ) << refused->exception().what();
+		EXPECT_EQ( App::InstanceLogSchema(first.Instance), plantA ) << "the live instance keeps its schema";
+
+		auto restarted = Connect();
+		let renamed = RegisterInstance( *restarted, "Tests.Registration", "shared", "plant-a", 4301, 4303, "opc.registrationPlantA2" );
+		EXPECT_EQ( renamed.Instance, first.Instance );
+		EXPECT_EQ( App::InstanceLogSchema(renamed.Instance), "opc.registrationPlantA2" ) << "the same endpoint is a restart, which RemoveExisting supersedes";
+		EXPECT_EQ( RegisterInstance(*b, "Tests.Registration", "shared", "plant-b", 4302, 4302, "opc.registrationPlantA2").Instance, first.Instance ) << "the same schema shares the row, as before";
+	}
+	//...but one process hosting two roles shares its identity knowingly:  Jde.Opc.Tests runs the gateway and an OpcServer under
+	//one application and instance name, registered with different schemas from the same host and pid.
+	TEST( RegistrationTests, OneProcessRegistersTwoRolesUnderOneName ){
+		auto gateway = Connect();
+		let first = RegisterInstance( *gateway, "Tests.Registration", "roles", "roles-host", 0, 4401 );
+		auto server = Connect();
+		EXPECT_EQ( RegisterInstance(*server, "Tests.Registration", "roles", "roles-host", 0, 4401, "opc.registrationRoles").Instance, first.Instance );
 	}
 }

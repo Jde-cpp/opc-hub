@@ -1,5 +1,6 @@
 #include "AppServerQL.h"
 #include <jde/access/server/accessServer.h>
+#include <jde/db/meta/AppSchema.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
 #include "../LocalClient.h"
@@ -20,9 +21,8 @@ namespace Jde::App{
 
 namespace Jde::App::Server{
 	AppServerQL::AppServerQL( vector<sp<DB::AppSchema>>&& schemas, sp<Access::Authorize>&& authorizer )ι:
-		AppQL{ move(schemas), move(authorizer), "app" }
+		AppQL{ move(schemas), move(authorizer), App::Server::AppSchema()->Name, App::HiddenLogInstances }//as logGate and InstanceLogSchema:  the app schema's own name.
 	{}
-	α AppServerQL::HiddenLogInstances( UserPK user )ι->flat_set<ProgInstPK>{ return App::HiddenLogInstances( user ); }
 
 	α AppServerQL::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = Access::Server::CustomQuery(q, creds, sl); await )

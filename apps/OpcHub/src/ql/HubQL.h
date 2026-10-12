@@ -12,7 +12,5 @@ namespace Jde::Opc::Hub{
 		α CustomQuery( QL::TableQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override;
 		α CustomMutation( QL::MutationQL& ql, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>> override;
 		α StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject override;
-	protected:
-		α HiddenLogInstances( UserPK user )ι->flat_set<App::ProgInstPK> override;
 	};
 }

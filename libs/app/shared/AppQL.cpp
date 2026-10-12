@@ -18,7 +18,7 @@ namespace Jde::App{
 	}
 	α AppQL::LogQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>>{
 		TestLogs( executer, Access::ERights::Read, "logs", sl ); //every process log line - query texts, user names, cert DNs, hostnames, session ids.
-		return mu<LogQLAwait>( move(ql), HiddenLogInstances(executer.UserPK()), sl );
+		return mu<LogQLAwait>( move(ql), _hiddenLogInstances ? _hiddenLogInstances(executer.UserPK()) : flat_set<ProgInstPK>{}, sl );
 	}
 	α AppQL::LogSettingsQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->up<TAwait<jvalue>>{
 		TestLogs( executer, Access::ERights::Read, "logSettings", sl ); //the live tag/level configuration.

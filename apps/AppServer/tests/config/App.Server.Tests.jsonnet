@@ -56,7 +56,8 @@ local logsDir = args.logsDir;
 		},
 		memory:{
 			tags:{ default: "Trace" }//Init() reads /logging/memory/tags - a bare `default` silently drops the memory logger and Logging::Find/ClearMemory throw.
-		}
+		},
+		subscribe:{}//as App.Server.jsonnet:  without it there is no SubscribeLog, and a `logs` subscription is refused (LogSubscriptionTests).
 	},
 	workers:{
 		executor: {threads: 2}

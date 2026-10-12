@@ -1,5 +1,6 @@
 #include "HubQL.h"
 #include <jde/access/server/accessServer.h>
+#include <jde/db/meta/AppSchema.h>
 #include "../../../AppServer/src/LocalClient.h"
 #include "../../../AppServer/src/appStartup.h"
 #include "../../../AppServer/src/ql/AppQLAwait.h"
@@ -9,9 +10,8 @@
 
 namespace Jde::Opc::Hub{
 	HubQL::HubQL( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> authorizer )ι:
-		App::AppQL{ move(schemas), move(authorizer), "app" }
+		App::AppQL{ move(schemas), move(authorizer), App::Server::AppSchema()->Name, App::HiddenLogInstances }//the AppServer's log, as AppServerQL
 	{}
-	α HubQL::HiddenLogInstances( UserPK user )ι->flat_set<App::ProgInstPK>{ return App::HiddenLogInstances( user ); }
 	α HubQL::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = App::Server::AppQLAwait::Test(q, creds, sl); await )//access custom, connections, settings, instanceTagLevel - nothing the gateway also names.
 			return await;

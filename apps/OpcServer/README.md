@@ -115,7 +115,8 @@ runs beside a live hub or service.  Under ctest it runs on in-memory sqlite:
   client's HistoryRead and HistoryUpdate; history under `<cwd>/logs/hist/opc-server-tests`, cleared at the start.
 - `HistoryRestartTests`: a restart keeps each node's history index and removes what the nodesets no longer historize.
 - `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, gated by Update on its `logs` resource.
-  Anonymous gets 401, and every other mutation 403.
+  While that resource is unenforced, anyone may send it, anonymous callers too; once it is enforced, anonymous gets 401.
+  Every other mutation gets 403.
 - `UALoadTests`: loads the companion-spec nodesets from `$UA_NODE_SETS`, which must be set.
 - `PubSubTests`: a unicast reader on udp 4849.
 - `TrustListTests`, `UAConfigTests`: the PKI setup.

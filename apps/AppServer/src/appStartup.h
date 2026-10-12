@@ -26,8 +26,12 @@ namespace Jde::App{
 	//is synchronous (QL::LoadEnum) - fine from startup and the tests, which are off the executor pool.  reloadHosts=false
 	//for the request path, which awaits ReloadHosts instead:  a BlockAwait on an executor thread over a query that needs
 	//that pool is the wedge of emulator-review W1 / db-review3 #1.
-	//resourceSchema:  the instance's own access schema (its registration's auth_resource), kept on the instance row - see InstanceLogSchema.
+	//resourceSchema:  the instance's own access schema, kept on the instance row as given - see RegistrationSchema, InstanceLogSchema.
 	α AddConnection( str applicationName, str instanceName, str hostName, uint pid, str resourceSchema={}, bool reloadHosts=true )ε->tuple<ProgramPK, ProgInstPK, ConnectionPK>;
+	//The schema a socket registration leaves on its (program, name) instance:  `claimed` (its auth_resource) when `registrant`
+	//administers both it and the schema the instance already has - TestSchemaAdmin on each, so one with no active root passes -
+	//else the one it has.  Otherwise any registrant decides whose `logs` governs another process's lines and tag levels.
+	α RegistrationSchema( str applicationName, str instanceName, str claimed, UserPK registrant )ε->string;
 	//The `hosts` re-load as an awaitable:  clears the cached map and returns the select that refills it.  co_await it through
 	//Any() from any coroutine on the pool - the thread goes back to the pool while the query runs.
 	α ReloadHosts( SRCE )ε->DB::CacheAwait<flat_map<uint,string>>;
