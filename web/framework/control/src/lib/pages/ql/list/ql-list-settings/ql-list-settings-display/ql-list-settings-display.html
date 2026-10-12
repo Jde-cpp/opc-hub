@@ -1,10 +1,12 @@
 <ng-container>
-	<div class="page-size">
-		<mat-form-field subscriptSizing="dynamic">
-			<mat-label>Page Size</mat-label>
-			<input matInput type="number" min="1" step="1" [value]="pageSize()" (focus)="$event.target.select()" (change)="updatePageSize(+$event.target.value)">
-		</mat-form-field>
-	</div>
+	@if( paged() ){
+		<div class="page-size">
+			<mat-form-field subscriptSizing="dynamic">
+				<mat-label>Page Size</mat-label>
+				<input matInput type="number" min="1" step="1" [value]="pageSize()" (focus)="$event.target.select()" (change)="updatePageSize(+$event.target.value)">
+			</mat-form-field>
+		</div>
+	}
 	<mat-table #table [dataSource]=dataSource class="mat-elevation-z8" cdkDropList (cdkDropListDropped)="drop($event)" cdkDropListData=dataSource()>
 		<ng-container matColumnDef="position" sticky>
 			<mat-header-cell *matHeaderCellDef></mat-header-cell>

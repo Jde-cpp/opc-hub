@@ -11,6 +11,7 @@ import { TestBed } from '@angular/core/testing';
 import { TableSchema } from '../../../../model/ql/schema/table-schema';
 import { View, ViewType } from '../../../../model/ql/view';
 import { QLListSettings } from './ql-list-settings';
+import { QLListSettingsDisplay } from './ql-list-settings-display/ql-list-settings-display';
 
 const schema = new TableSchema( { name: "User", fields: [
 	{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
@@ -99,5 +100,34 @@ describe( 'QLListSettings reserved names', ()=>{
 	it( 'still saves a user view under the name it already has', ()=>{
 		const fixture = rename( create("Deleted", ViewType.User), "Deleted" );
 		expect( fixture.componentInstance.reservedName() ).toBe( false );
+	} );
+} );
+
+//reviews-issue/231-paging.md #15:  a node's Children are not read a page at a time, so their Display tab offers no Page Size
+describe( 'QLListSettingsDisplay Page Size', ()=>{
+	const create = ( paged?:boolean )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( QLListSettingsDisplay );
+		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		view.limit = 40;
+		fixture.componentRef.setInput( 'view', view );
+		fixture.componentRef.setInput( 'schema', schema );
+		fixture.componentRef.setInput( 'columns', {name: "Name"} );
+		if( paged!==undefined )
+			fixture.componentRef.setInput( 'paged', paged );
+		fixture.detectChanges();
+		return fixture;
+	};
+	const pageSize = ( fixture:any ):HTMLInputElement|null=>fixture.nativeElement.querySelector( '.page-size input' );
+
+	it( 'is offered where the host pages', ()=>{
+		expect( pageSize(create())?.value ).toBe( "40" );
+	} );
+
+	it( 'is not offered where it does not, and the view keeps its limit', ()=>{
+		const fixture = create( false );
+		expect( pageSize(fixture) ).toBeNull();
+		expect( fixture.componentInstance.pageSize() ).toBe( 40 );//what QLListSettings.getView writes back
 	} );
 } );

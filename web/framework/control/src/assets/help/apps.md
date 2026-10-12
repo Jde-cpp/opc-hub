@@ -57,7 +57,7 @@ See [Views](/help/lists#views) for more on views.
 
 In the table, column headers sort as well, all but *Line*. The *Time* column shows the time of day; hover it for the full date, which matters once paging reaches an earlier day's entries.
 
-The pager under the table turns the pages; the view's **Page Size** sets how many entries each holds.
+The pager under the table turns the pages; the view's **Page Size** sets how many entries each holds, 21 unless the view says otherwise.
 
 ## Log Settings
 

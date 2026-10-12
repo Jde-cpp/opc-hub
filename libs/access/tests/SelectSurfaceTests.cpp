@@ -12,6 +12,7 @@
 #include <jde/db/IDataSource.h>
 #include <jde/db/generators/Syntax.h>
 #include <jde/ql/QLAwait.h>
+#include <jde/ql/ql.h>
 #include "globals.h"
 
 #define let const auto
@@ -139,9 +140,31 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( names(all+R"(, limit:1, skip:2 ){ id loginName })"), (vector<string>{"review60-page-3"}) ) << "'skip' is Input::Offset's other spelling";
 		//descending is an object, not the string form - OrderByJson reads "desc" out of the value, so the page comes off the other end.
 		EXPECT_EQ( names(R"(users( loginName:{glob:"review60-page-*"}, orderBy:{loginName:"desc"}, limit:1 ){ id loginName })"), (vector<string>{"review60-page-3"}) );
+		//no orderBy:  SelectStatement orders a page by the table's own key (users_ql.identity_id), which needs no join to
+		//identities - so a page that does not select id is fine too.  The users were created in order, so their ids are too.
+		EXPECT_EQ( names(R"(users( loginName:{glob:"review60-page-*"}, limit:2 ){ loginName })"), (vector<string>{"review60-page-1","review60-page-2"}) );
+		EXPECT_EQ( names(R"(users( loginName:{glob:"review60-page-*"}, limit:1, offset:2 ){ loginName })"), (vector<string>{"review60-page-3"}) );
 
 		for( let& id : created )
 			PurgeUser( UserPK{id}, root );
+	}
+
+	//A page with no orderBy is any rows at all, and T-SQL refuses offset/fetch without an order by:  SelectStatement orders it
+	//by the table's own keys.  users_ql's is identity_id - its own column, so no join to identities is needed - and a table
+	//keyed on two columns is ordered by both.  Each page also has to run.
+	TEST_F( SelectSurfaceTests, APageWithNoOrderIsOrderedByTheTablesKeys ){
+		let orderBy = []( string ql ){ return QL::SelectStatement( QL::ParseQuery(move(ql), {}, Schemas()) ).OrderBy; };
+		for( let ql : {"users( limit:1 ){ loginName }", "users( offset:1 ){ loginName }", "roles( limit:1 ){ name }", "groups( limit:1 ){ name }"} ){
+			let sql = orderBy( ql );
+			EXPECT_NE( sql, "" ) << ql;
+			EXPECT_NO_THROW( QL().QuerySync<jarray>(ql, {}, GetRoot()) ) << ql << " ordered by " << sql;
+		}
+		let users = orderBy( "users( limit:1 ){ loginName }" );
+		EXPECT_TRUE( users.ends_with(".identity_id") ) << users;
+		EXPECT_EQ( users.find("identities."), string::npos ) << users;
+		EXPECT_EQ( orderBy("users{ loginName }"), "" ) << "no page, no order";
+		let asked = orderBy( R"(users( orderBy:"loginName", limit:1 ){ loginName })" );
+		EXPECT_EQ( asked.find("identity_id"), string::npos ) << asked << " - an orderBy the client sent is left as it is";
 	}
 
 	//db-review3 #22: `eq:["a","b"]` rendered one '?' against two bound params.  sqlite answered SQLITE_RANGE and mysql

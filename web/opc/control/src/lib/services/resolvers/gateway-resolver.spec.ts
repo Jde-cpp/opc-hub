@@ -41,6 +41,7 @@ describe( 'GatewayResolver', ()=>{
 		expect( y.error ).toBe( refused );
 		expect( y.results.serverConnections ).toEqual( [] );
 		expect( store.setChildren ).not.toHaveBeenCalled();//no rows is not an empty sidenav to remember
+		expect( y.childrenKey ).toBe( "apps/gateways/opchub" );//for the tab's Retry
 	} );
 
 	it( 'loads the rows and the sidenav children otherwise', async ()=>{
@@ -50,6 +51,7 @@ describe( 'GatewayResolver', ()=>{
 		expect( y.error ).toBeUndefined();
 		expect( y.results.serverConnections ).toHaveLength( 1 );
 		expect( store.setChildren ).toHaveBeenCalledWith( "apps/gateways/opchub", [{title: "Line 1", path: "line1"}] );
+		expect( y.childrenKey ).toBe( "apps/gateways/opchub" );//reviews-issue/231-paging.md #5:  the tab's page turns write there too, not over routing.path - the browse tree's gateways/opchub
 	} );
 
 	//#231:  the tab pages through QLListResolver.load, which asks for a row past the page;  the first page the resolver loads
@@ -62,6 +64,22 @@ describe( 'GatewayResolver', ()=>{
 		expect( y.results.serverConnections ).toHaveLength( 25 );
 		expect( y.more ).toBe( true );
 		expect( y.skip ).toBe( 0 );
+	} );
+
+	//reviews-issue/231-paging.md #10:  the tab loads through QLListResolver.loadOrFail, so it opens on the page it was left on (#8)
+	it( 'opens the tab on the page it was left on', async ()=>{
+		vi.stubGlobal( 'sessionStorage', { getItem: (k:string)=>k=="apps/gateways/opchub/skip" ? "25" : null, setItem: vi.fn(), removeItem: vi.fn() } );
+		try{
+			const all = Array.from( {length: 30}, (_, i)=>({name: `Line ${i+1}`, slug: `line${i+1}`}) );
+			const query = vi.fn( async ( text:string )=>({serverConnections: all.slice( +(/skip:(\d+)/.exec(text)?.[1] ?? 0) )}) );
+			const y:any = await GatewayResolver.load( <unknown>{query} as Gateway, data(), routeStore(), "apps/gateways/opchub" );
+			expect( query.mock.calls[0][0] ).toContain( "skip:25" );
+			expect( y.skip ).toBe( 25 );
+			expect( y.results.serverConnections.map( (r:any)=>r.slug ) ).toEqual( ["line26", "line27", "line28", "line29", "line30"] );
+		}
+		finally{
+			vi.unstubAllGlobals();
+		}
 	} );
 
 	//no gateway of that name - a stale bookmark or Recently-visited tile - leaves no page to say it on

@@ -317,6 +317,12 @@ namespace Jde{
 		if( optional<DB::Criteria> criteria = dbView->Extends ? dbView->SurrogateKeys[0]->Criteria : nullopt; criteria ) //identities is_group
 			statement.Where.Add( *criteria );//group with no members.
 		statement.OrderBy = qlTable.OrderBy();
+		//a page of no order is any rows at all, and T-SQL refuses offset/fetch without an order by.  The table's own keys - an
+		//extension's is its base's id - are always in the from clause, and together they order totally.
+		if( statement.OrderBy.empty() && (qlTable.Limit() || qlTable.Offset()) ){
+			for( let& sk : dbView->SurrogateKeys )
+				statement.OrderBy += (statement.OrderBy.empty() ? "" : ", ")+sk->FQName();
+		}
 		statement.Limit( qlTable.Limit() );
 		statement.Skip( qlTable.Offset() );
 

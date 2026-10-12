@@ -106,8 +106,8 @@
 			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
 			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" (click)="cellClick(row)"></mat-row>
 		</mat-table>
-		<div class="pager"><!--under the table, as ql-list's (#231)-->
-			<paginator (onPageEvent)="onPagerChange($event)" [pageSize]="view().limit"></paginator>
+		<div class="pager">
+			<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
 		</div>
 	<!-- </ng-container> -->
 	}

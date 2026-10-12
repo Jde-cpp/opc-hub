@@ -59,7 +59,7 @@ mat-toolbar{
 	width: 130px;
 }
 
-//the pager, under the table in the toolbar's colours - the rules are ql-list.scss's, see there
+//as ql-list.scss's .pager
 .pager{
 	background: var(--mat-sys-surface-container);
 	color: var(--mat-sys-on-surface);

@@ -26,7 +26,7 @@ Click a row to open the record. Two kinds of list differ:
 
 Click a column header to sort by that column, which counts as an unsaved change to the view.
 
-A list longer than its view's **Page Size** is read a page at a time. The pager under the table steps through the pages - or through the rows one at a time, with the inner pair of buttons - and reads which rows are showing; the total is known once the last page has been reached, and then the last-page button works too. Switching or editing the view returns to the first page; the refresh button keeps the page you are on.
+A list longer than its view's **Page Size** is read a page at a time. The pager under the table steps through the pages - or through the rows one at a time, with the inner pair of buttons - and reads which rows are showing; the total is known, and shown, once the last page has been reached. Switching or editing the view returns to the first page; the refresh button keeps the page you are on, and so does opening a record and coming back, for as long as the browser tab stays open.
 
 Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them. It is the only way to reach one and restore it.
 
@@ -46,7 +46,7 @@ A **view** is which rows are filtered out, which columns are shown and in what o
 The tune button beside the views edits the current one, over three tabs.
 
 - **Filter** - add a column, then pick an operator and the values. *In* and *Not In* take one or more values, typed or picked from those already in the list, with `<null>` and `<not null>` offered where a column can be empty. `<` and `>` compare against one. A date column offers only `<` and `>`, with an **End Date** or **Start Date** to match. A date column that can be empty also has *null* and *not null* boxes, which on **Deleted** read *Not deleted* and *Deleted*.
-- **Display** - tick the columns to show and drag them into order. **Page Size** is how many rows a page holds, 25 unless the view says otherwise.
+- **Display** - tick the columns to show and drag them into order. **Page Size** is how many rows a page holds: 25 on a list and 21 on **Logs**, unless the view says otherwise. A node's **Children** are not read a page at a time, so their views have no Page Size.
 - **Sort** - the columns to sort by, in order, each ascending or descending.
 
 The bar above the tabs:

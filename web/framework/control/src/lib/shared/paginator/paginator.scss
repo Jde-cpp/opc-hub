@@ -24,10 +24,10 @@
 .mat-mdc-paginator-container {
     display: flex;
     align-items: center;
-    justify-content: center;//under a table, not in a toolbar's right zone, since #231
+    justify-content: center;
     padding: 0 8px;
     flex-wrap: wrap;
     width: 100%;
-    box-sizing: border-box;//or the padding puts the last button 16px past the host - clipped once the host is the full page width (#231)
+    box-sizing: border-box;//or the padding puts the last button 16px past the host - clipped once the host is the full page width
     min-height: var(--mat-paginator-container-size, 56px);
 }

@@ -67,6 +67,7 @@ export class QLListSettingsDisplay implements OnInit{
 	pageSize = signal<number>( 25 );//ngOnInit seeds it from view().limit; ql-list-settings.getView reads it back
 
 	view = input.required<View>();
+	paged = input<boolean>( true );//the host reads its rows a page at a time, so Page Size means something
 	columns = input.required<Record<string,string>>();
 	//excludedColumns = input.required<string[]>();
 	schema = input.required<TableSchema>();

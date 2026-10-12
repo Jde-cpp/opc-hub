@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, ViewChild, input, effect, Signal, signal, inject, computed, viewChild } from '@angular/core';
+import { Component, OnDestroy, OnInit, ViewChild, input, effect, Signal, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatTable, MatTableModule } from '@angular/material/table';
 import {MatSortModule, Sort} from '@angular/material/sort';
@@ -53,12 +53,17 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.profileStore.save<LogSettings>( "logs", this.profile ).catch( e=>console.warn("Could not save the log profile.", e) );
 	}
 
-	async load( startIndex:number=0 ){
+	//reads on from `skip`, an offset into everything loaded, and re-shows the page the pager is on
+	async load( skip:number=0 ){
 		try{
-			const entries = ( await this.service().ql<{logs: LogEntriesRest}>( this.view().query(startIndex,this.level), (m)=>console.log(m) ) ).logs;
-			if( entries?.entries?.length )//was Object.keys(entries).length, always >=2 ({entries,strings}); check the actual entry count
+			const query = this.view().query( skip, this.level );
+			const entries = ( await this.service().ql<{logs: LogEntriesRest}>( query, (m)=>console.log(m) ) ).logs;
+			const read = entries?.entries?.length ?? 0;
+			if( read )//was Object.keys(entries).length, always >=2 ({entries,strings}); check the actual entry count
 				this.push( new LogEntries(entries) );
-			this.data.setPage( startIndex );
+			if( read<query.vars.limit )
+				this.data.endReached();
+			this.data.setPage( this.data.startIndex() );
 			this.isLoading.set( false );
 		}
 		catch(e){
@@ -69,11 +74,9 @@ export class LogDetail implements OnInit, OnDestroy{
 	push( entries:LogEntries ){
 		this.data.addLoadedEntries( entries );
 	}
-	//re-read from the top.  the pager owns its own startIndex, so reset it too or its range keeps reading
-	//"49 - 72" over the first page.  set(), not onFirstPage(), which would emit and load a second time.
+	//re-read from the top.  clear() puts the data source - and the pager bound to it - back on the first page.
 	refresh(){
 		this.data.clear();
-		this.paginator()?.startIndex.set( 0 );
 		this.load();
 	}
 	//minimum level to show - the level goes into the query, so re-read instead of filtering what is loaded.
@@ -131,8 +134,8 @@ export class LogDetail implements OnInit, OnDestroy{
 		applySort();
 	}
 	onPagerChange( event:PageEvent ){
-		if(	this.data.setPage(event.startIndex) )
- 			this.load( this.data.allEntries.length );
+		if( this.data.turnTo(event.startIndex) )
+			this.load( this.data.allEntries.length );
 	}
 	onViewChange(index:number){
 		const selected = this.views()[index];
@@ -238,7 +241,7 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.filterData();
 	}
 	filterData(){
-		if( this.data.filterData({messageIds: this.profile.hiddenMessages, message: this.filter, level: this.level}) )
+		if( this.data.filterData({messageIds: this.profile.hiddenMessages, message: this.filter, level: this.level}) && this.data.length()===undefined )
 			this.load( this.data.allEntries.length );
 	}
 	//navigate to next message with same template id
@@ -262,7 +265,6 @@ export class LogDetail implements OnInit, OnDestroy{
 	} );
 	//configuration = { displayHeader:true }
 	@ViewChild('mainTable',{static: false}) _table!:MatTable<Entry>;
-	paginator = viewChild( Paginator );//absent while the settings pane is up
 
 	toLevel( level:ELogLevel ):string{
 		switch( level ){

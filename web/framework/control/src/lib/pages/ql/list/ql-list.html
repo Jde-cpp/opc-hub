@@ -55,7 +55,7 @@
 			}
 			@if( paged() ){
 				<div class="pager">
-					<paginator [(startIndex)]="skip" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
+					<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
 				</div>
 			}
 		</ng-container>

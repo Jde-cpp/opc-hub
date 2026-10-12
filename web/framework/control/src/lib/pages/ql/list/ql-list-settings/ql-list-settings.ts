@@ -65,6 +65,7 @@ export class QLListSettings implements OnInit, OnDestroy{
 	onTabIndexChanged( index:number ){ this.tabIndex.set(index); }
 	excludedColumns = input<string[]>([]);
 	reservedNames = input<string[]>([]);//the host's system view names
+	paged = input<boolean>( true );//false where the host does not page - a node's Children - so it offers no Page Size
 	suggestions = input.required<Record<string,any[]>>();
 	schema = input.required<TableSchema>();
 	view = input.required<View>();
