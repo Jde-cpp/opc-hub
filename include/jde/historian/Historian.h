@@ -33,7 +33,7 @@ namespace Jde::Opc::Hist{
 		//that isn't the executor's, which is warned of.  Once the executor is gone, or past the limit, what is left is lost,
 		//with an error.
 		~Historian();
-		//false for a host that runs without its historian:  it answers its history fields and /hist with an error, and
+		//false for a host that runs without its historian:  it answers its history fields and subscriptions with an error, and
 		//OpcServer installs no history backend.  AddGroup throws.
 		α Enabled()Ι->bool;
 		//members is the group's whole membership at start:  OpcServer's historized nodes, or a hist_groups row's

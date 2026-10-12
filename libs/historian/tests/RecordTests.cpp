@@ -257,6 +257,34 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( y.node_index(), 3 );
 	}
 
+	//A value ToValue can't encode, a decoded ExtensionObject with nothing decoded, is stored without it either way, but
+	//only the flush's conversion warns:  the subscribers' copy is taken under the group's lock, where Enqueue never logs.
+	TEST( RecordTests, OnlyTheFlushWarns ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		let warnings = []{
+			return Logging::Find( []( const Logging::Entry& e ){ return e.Level==ELogLevel::Warning && e.Message().contains("node_index 3's 'ExtensionObject' value is stored without it"); } ).size();
+		};
+		auto value = []{
+			UA_DataValue dv{};
+			auto eo = UA_ExtensionObject_new();
+			eo->encoding = UA_EXTENSIONOBJECT_DECODED_NODELETE;
+			UA_Variant_setScalar( &dv.value, eo, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT] );
+			dv.hasValue = true;
+			dv.sourceTimestamp = at( 1s );
+			dv.hasSourceTimestamp = true;
+			return Value{ move(dv) };
+		};
+		Logging::ClearMemory();
+		let copy = ToProto( DataValue{3, value()} );
+		EXPECT_EQ( copy.status(), UA_STATUSCODE_BADENCODINGERROR );
+		EXPECT_FALSE( copy.has_value() );
+		EXPECT_EQ( warnings(), 0u );
+		let flushed = ToProto( Record{DataValue{3, value()}} );
+		EXPECT_EQ( flushed.value().status(), UA_STATUSCODE_BADENCODINGERROR );
+		EXPECT_EQ( warnings(), 1u ) << "the flush's";
+	}
+
 	//A node typed BaseDataType sending DiagnosticInfo values:  each is stored without it, and only the node's first is
 	//flagged for the flush to warn of, so a steady stream of them doesn't flood the log.
 	TEST_F( GatewayHost, UnsupportedOncePerNode ){

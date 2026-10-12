@@ -56,6 +56,10 @@ namespace Jde::Web::Server{
 		if( auto stream = StreamPtr(); stream )
 			stream->Write( move(m), shared_from_this() );
 	}
+	α IWebsocketSession::Dispatch( function<void()>&& f )ι->void{
+		if( auto stream = StreamPtr(); stream )
+			net::dispatch( stream->Strand(), move(f) );
+	}
 
 	//Takes the text formatted, not a format and its args:  the caller's Ƒ keeps `{:x}`-style specs out of the entry's own text (a
 	//stored entry is re-rendered from string arguments - issue #268), and a variadic overload could not carry the caller's SRCE.

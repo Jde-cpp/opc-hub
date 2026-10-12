@@ -3,6 +3,7 @@
 #include <queue>
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/opc/uatypes/ExNodeId.h>
@@ -201,6 +202,48 @@ namespace Jde::Opc::Hist{
 	struct Run;
 	struct Store;
 
+	//A subscriber (spec *Subscriptions*):  from its registration on, every record stored for its nodes as it is
+	//buffered - a value that passed the compression test or a Bad_DataLost marker - every heartbeat once a flush takes it,
+	//out of a drop's reach, and every Modification of them once it is durable, each with its node_index and its times
+	//absolute.  Called outside the group's locks, on the
+	//thread that stored the record, the collection path among them, so an implementation only queues or posts, and never
+	//calls back into the group.  A late record comes as any other:  the receiver places it by source time.
+	enum class ESubscriptionEnd : uint8{ Removed, Stopped };//why the group ended a subscription (ISubscriber::OnEnded).
+	struct ISubscriber{
+		virtual ~ISubscriber()=default;
+		β OnRecords( vector<Proto::HistoryRecord>&& records )ι->void=0;
+		//The group ended the subscription, removed or stopping:  once, outside its locks, though a delivery already on its
+		//way may still follow, and it can come as the subscriber ends the subscription itself.
+		β OnEnded( ESubscriptionEnd why )ι->void=0;
+	};
+	//A subscription as the group holds it:  whom to deliver to, and which of the group's nodes.
+	struct Registration final{ sp<ISubscriber> Subscriber; absl::flat_hash_set<NodeIndex> Nodes; };
+	//What Group::Subscribe returns:  the registration, which its destructor ends, and the snapshot the subscriber reads
+	//first, the history from the subscription's time to its registration.  The group alone owns the registration, and
+	//through it the subscriber, so a subscriber that owns its Subscription makes no cycle:  this holds the registration
+	//weakly.  The snapshot was taken as the subscriber was registered, under the group's locks:  a copy of the buffer, a
+	//running flush's records among it, and each day file and modifications file as it then stood, so nothing stored after
+	//is in it, and nothing stored before is left to the stream, but a heartbeat no flush has taken, which streams when one
+	//does.  Next pages it outside the locks, raw with the modifications applied, each node's value before the time first,
+	//as a bound, at most `limit` values a page, the continuation empty on the last, which lets the files go;  a page after
+	//that is empty.  Throws when a file the page opens can't be read through.
+	struct Subscription final : noncopyable{
+		~Subscription();//End.
+		α Next( uint limit, SRCE )ε->ReadResult;
+		α OpenFiles()Ι->uint;//the day and modifications files the snapshot holds open:  none once Next reads its last page.
+		//Ends the registration:  nothing more is delivered, though a delivery already on its way may still arrive.  The
+		//snapshot stays for Next, but a page after reads no day before the subscription's, so a bound only such a day holds
+		//comes back Bad_BoundNotFound.  Idempotent.
+		α End()ι->void;
+	private:
+		friend struct Group;
+		struct State;
+		Subscription( wp<Group> group, wp<const Registration> registration, up<State> state )ι;
+		wp<Group> _group;
+		wp<const Registration> _registration;
+		up<State> _state;
+	};
+
 	//What Group::Flush and Settled return, which any coroutine can co_await, and BlockAny waits on from a thread that
 	//isn't the executor's.  It resumes on the thread that finished the flush.
 	struct FlushAwait final : AnyAwait<bool>{
@@ -230,7 +273,7 @@ namespace Jde::Opc::Hist{
 
 	//One node group, written to its own files.  Enqueue is the collection path:  OpcServer calls it under open62541's
 	//service lock, and the gateway on the connection's strand under the monitoring lock.  So it takes only the group's
-	//buffer lock - it never waits on I/O, a flush or a /hist snapshot - and never calls back into the host.  The rest is
+	//buffer lock - it never waits on I/O, a flush or a subscription's snapshot - and never calls back into the host.  The rest is
 	//the host telling the group about membership, thresholds and its connection.  A flush writes through IO::WriteAwait,
 	//so it holds no thread while a write or its fsync is out, and no lock.
 	struct Group final : noncopyable, std::enable_shared_from_this<Group>{
@@ -289,12 +332,12 @@ namespace Jde::Opc::Hist{
 		α IsConnected()Ι->bool;
 		α FindBreak( NodeIndex index )Ι->optional<TimePoint>;//the one the node's first value after it is judged against.
 
-		//A copy, as a /hist snapshot takes it:  what will be stored, a pending value not yet among it.  What a running
+		//A copy, as a subscription's snapshot takes it:  what will be stored, a pending value not yet among it.  What a running
 		//flush took is no longer here, and not yet in its files.
 		α Buffer()Ι->vector<Record>;
-		//Historian::RemoveGroup's:  every member leaves, and Add throws after.  The buffer stays for the flush, which also
-		//rewrites each live file the group has, today's included, as its archive:  no midnight comes for a group that is
-		//gone, and no start adds it again.
+		//Historian::RemoveGroup's:  every member leaves, each subscription ends (OnEnded), and Add throws after.  The buffer
+		//stays for the flush, which also rewrites each live file the group has, today's included, as its archive:  no
+		//midnight comes for a group that is gone, and no start adds it again.
 		α Close( optional<Writer> by )ι->void;
 
 		//Writes what the group buffered:  sorted by source time, each record to its own day's file, each file fsynced, and
@@ -357,9 +400,16 @@ namespace Jde::Opc::Hist{
 		//When the earliest day that holds a file of the group starts, in timeZone:  OpcServer's StartOfArchive.  None while
 		//it has no file.  Throws when hist.path can't be walked.
 		α Earliest( SRCE )Ε->optional<TimePoint>;
+		//A subscription to the group's nodes from `from`, UA ticks (spec *Subscriptions*):  registers the subscriber,
+		//which receives every record of the nodes stored from here on, and takes the snapshot it reads first, under the
+		//group's locks, so no record is in both or neither.  Throws for no nodes, a group that was removed or has stopped, or
+		//a file the snapshot opens that can't be read through.
+		α Subscribe( sp<ISubscriber> subscriber, vector<NodeIndex> nodes, UA_DateTime from, SRCE )ε->up<Subscription>;
+		α Subscribers()Ι->uint;//registered, each until its Subscription ends.
 	private:
 		friend struct FlushAwait;
 		friend struct EditAwait;
+		friend struct Subscription;
 		friend struct Historian;
 		friend struct Store;
 		struct Editing;//an edit as the flush runs it (Edit.cpp).
@@ -390,8 +440,9 @@ namespace Jde::Opc::Hist{
 			α Keep( UA_DateTime time )ι->void{ KeptTs = std::max( KeptTs, time ); RecordTs = std::max( RecordTs, time ); }//a record no drop takes back.
 		};
 		//Bytes is what the record takes in a file, near enough.  Copied is a membership change whose copies for later
-		//days' files are made, or one of those copies.
-		struct Buffered{ Record Item; uint Sequence; uint32_t Bytes; bool Copied{}; };
+		//days' files are made, or one of those copies.  Released is a heartbeat a flush has taken, so streamed:  out of a
+		//drop's reach, even once a failed write returns it.
+		struct Buffered{ Record Item; uint Sequence; uint32_t Bytes; bool Copied{}; bool Released{}; };
 		Ω Cost( const Buffered& b )ι->uint{ return b.Bytes+sizeof(Buffered); }//what a buffered record counts against maxBuffer.
 		//What a full buffer dropped of a node, until a flush marks it:  a Bad_DataLost at the earliest source time among
 		//them, then the one with the latest, written back.
@@ -423,8 +474,19 @@ namespace Jde::Opc::Hist{
 			Pushing Pushed{};
 			vector<IClock::TimerId> Stale;
 			string Warning;
+			//Each value stored under the lock, as its file will hold it, for the subscribers registered then:  delivered by
+			//Finish, outside it.  None is a heartbeat, which Take delivers.
+			vector<Proto::HistoryRecord> Stored;
+			vector<sp<const Registration>> To;
 		};
 		α Finish( Effects&& effects )ι->void;
+		//StoreValue's, Mark's and Beat's:  the record to the subscribers of its node, but a heartbeat, then Push.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α StoreRecord( DataValue&& value, uint32_t bytes, Effects& effects )ι->void;
+		//The day's Modification records, written and durable, to the subscribers of their nodes:  under the files lock, where
+		//the commit was, so a subscriber registered since has them in its snapshot and none is pushed twice or not at all.
+		//Delivered on the clock's hop, off the flush.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_filesMutex) α Modified( const vector<Proto::HistoryRecord>& records )ι->void;
+		α Unsubscribe( const sp<const Registration>& registration )ι->void;
 		//Enqueue's, for a member's value:  the gap comparison for its first after a break, else the compression test.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Collect( NodeIndex index, Node& node, Arrival&& arrival, TimePoint now, Effects& effects )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α StoreValue( NodeIndex index, Node& node, Arrival&& arrival, TimePoint now, Effects& effects )ι->void;
@@ -437,8 +499,8 @@ namespace Jde::Opc::Hist{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α ExpireAt( NodeIndex index, Node& node, TimePoint due, TimePoint now )ι->void;
 		//Drops the node's buffered heartbeats at or after `from`, the time of a change that passed:  each would replay
 		//the old value over it.  With made, those the timer made at or after `from`, a break reported late:  each repeats
-		//the value over a dead feed.  One the trim holds to write back goes as one in the buffer does.  The node's newest
-		//record is then the newest that is left.
+		//the value over a dead feed.  One the trim holds to write back goes as one in the buffer does, and one a flush
+		//released stays.  The node's newest record is then the newest that is left.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α DropBeats( NodeIndex index, Node& node, UA_DateTime from, bool made=false )ι->void;
 		//Whether the heartbeat repeats the node's last value:  it has one, and neither a break nor a pending value is
 		//waiting to say what follows it.
@@ -474,6 +536,7 @@ namespace Jde::Opc::Hist{
 		//The buffer, for a flush at taken:  each node's lost values first, as a marker and the one written back, then the
 		//rest as they arrived.  A heartbeat made less than the publishing interval before stays for the next flush, so a
 		//change sampled before it and still on its way finds it to drop:  none at the group's end, which no flush follows.
+		//Each heartbeat it takes is released, and goes to the subscribers of its node on the clock's hop, as Modified's do.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Take( TimePoint taken )ι->vector<Buffered>;
 		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
 		//written, then the buffer as the next Take has it, each node's lost values first.
@@ -509,10 +572,10 @@ namespace Jde::Opc::Hist{
 		//Arms `delay` and midnight, once the group is shared, and asks for a flush when its start found files that a
 		//midnight left live.
 		α Start()ι->void;
-		//The historian's end, in two steps so every group's last flush runs at once.  Stopping takes no more, disarms
-		//`delay` and starts the last flush on the executor.  Stopped waits for it, and any already running, until
-		//deadline, then flushes no more:  a flush still out starts no write after, a rename included, though one the OS
-		//already has finishes.  Neither waits on an executor that isn't running, where no write returns.
+		//The historian's end, in two steps so every group's last flush runs at once.  Stopping takes no more, ends each
+		//subscription (OnEnded), disarms `delay` and starts the last flush on the executor.  Stopped waits for it, and any
+		//already running, until deadline, then flushes no more:  a flush still out starts no write after, a rename included,
+		//though one the OS already has finishes.  Neither waits on an executor that isn't running, where no write returns.
 		α Stopping()ι->void;
 		α Stopped( std::chrono::steady_clock::time_point deadline )ι->void;
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α Written()Ι->bool;//removed, all it buffered taken by a flush, and its files archives.
@@ -555,6 +618,7 @@ namespace Jde::Opc::Hist{
 		//and Enqueue's lookup stay logarithmic.  The maps by NodeId are hashed:  nothing walks them.
 		absl::btree_map<NodeIndex,Node> _nodes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<ExNodeId,NodeIndex> _indexes ABSL_GUARDED_BY(_mutex);
+		vector<sp<const Registration>> _subscribers ABSL_GUARDED_BY(_mutex);//each subscription, until its Subscription goes, or the group is removed or stops.
 		absl::flat_hash_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
 		//Each index that left, which a file holding a value of it may yet need to map, until those values are written.
 		absl::flat_hash_map<NodeIndex,ExNodeId> _gone ABSL_GUARDED_BY(_mutex);
