@@ -6,6 +6,7 @@
 #include "WebServer.h"
 #include "async/Subscriptions.h"
 #include "async/DataChanges.h"
+#include "hist/HistSubscriber.h"
 #include "ql/GatewayQLAwait.h"
 #include <jde/opc/proto/opc.Common.h>
 #include "types/proto/opc.FromServer.h"
@@ -22,6 +23,14 @@ namespace Jde::Opc::Gateway{
 			return;
 		LogRead( "OnClose", 0 );
 		UAClient::Unsubscribe( SharedFromThis() );
+		flat_map<Jde::RequestId,sp<HistSubscriber>> histSubscriptions;
+		{
+			lg _{ _histMutex };
+			_closed = true;
+			histSubscriptions = move( _histSubscriptions );
+		}
+		for( auto&& [_,subscriber] : histSubscriptions )
+			subscriber->End();
 		Server::RemoveSession( Id() );
 		base::OnClose();
 	}
@@ -40,7 +49,7 @@ namespace Jde::Opc::Gateway{
 		try{
 			let sessionInfo = co_await Sessions::UpsertAwait( strSessionId, _userEndpoint.address().to_string(), true, AppClient() );
 			base::SetSessionInfo( move(sessionInfo) );
-			Write( FromServer::CompleteTrans(requestId) );
+			WriteComplete( requestId );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -156,8 +165,8 @@ namespace Jde::Opc::Gateway{
 	α GatewaySocketSession::WriteSubscriptionAck( flat_set<QL::SubscriptionId>&& /*subscriptionIds*/, Jde::RequestId /*requestId*/ )ι->void{
 		ASSERT_DESC( false, "Not Implemented" );
 	}
-	α GatewaySocketSession::WriteComplete( Jde::RequestId /*requestId*/ )ι->void{
-		ASSERT_DESC( false, "Not Implemented" );
+	α GatewaySocketSession::WriteComplete( Jde::RequestId requestId )ι->void{
+		Write( FromServer::CompleteTrans(requestId) );
 	}
 
 	α GatewaySocketSession::WriteException( runtime_error&& e, Jde::RequestId requestId, SL sl )ι->void{
@@ -190,6 +199,12 @@ namespace Jde::Opc::Gateway{
 				auto& u = *m.mutable_unsubscribe();
 				Unsubscribe( move(*u.mutable_opc_id()), ProtoUtils::ToNodeIds(move(*u.mutable_nodes())), requestId );
 				break;}
+			case kHistSubscribe:
+				HistSubscribe( move(*m.mutable_hist_subscribe()), requestId );
+				break;
+			case kHistUnsubscribe:
+				HistUnsubscribe( m.hist_unsubscribe().subscription(), requestId );
+				break;
 			default:
 				LogRead( Ƒ("Unknown message type '{}'", underlying(m.Value_case())), requestId, ELogLevel::Critical );
 				WriteException( Exception("({})Message not implemented.", m.Value_case()), requestId );

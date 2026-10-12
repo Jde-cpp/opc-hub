@@ -334,17 +334,19 @@ namespace Jde::Opc::Hist{
 				continue;
 			std::ranges::stable_sort( list, {}, []( let& r ){ return r.modification().target_source_ts(); } );
 			try{
+				auto records = list;//for the subscribers, once written.
 				auto write = _files->PrepareMods( day, move(list), members, sl );
-				y.push_back( {day, DayWrite{move(write)}, [this, &edit, day, changes=move(changed[day])]( bool ok ){
+				y.push_back( {day, DayWrite{move(write)}, [this, &edit, day, changes=move(changed[day]), records=move(records)]( bool ok ){
 					if( !ok ){
 						edit.Fail( day );
 						return;
 					}
-					ul _{ _filesMutex };
+					_filesMutex.AssertHeld();//the flush's, with the commit.
 					for( let& [index,time] : changes ){
 						_files->Touch( index, time );
 						edit.Changed.emplace_back( index, time );
 					}
+					Modified( records );
 				}} );
 			}
 			catch( Exception& x ){

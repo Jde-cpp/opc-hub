@@ -897,6 +897,108 @@ namespace Jde::Opc::Hist{
 		return page;
 	}
 
+	//The snapshot as Subscribe took it (spec *Subscriptions*):  the read's arguments, the buffer's records of its nodes, and
+	//each day file and modifications file from the subscription's day on as it stood, served under the files lock, so a
+	//page reads a live file through the runs it then had and an archive through the file then there, however the flushes
+	//move on.  A day before that, which only the opening bounds look at, is served as a page reaches it.
+	struct Subscription::State final{
+		sp<Hist::Store> Shared;
+		ReadRequest Request;
+		Day FromDay;
+		vector<Day> OnDisk;
+		std::map<Day,optional<GroupFiles::Served>> Taken;//each day's value file from FromDay:  none for a day with none.
+		std::map<Day,optional<GroupFiles::Served>> Mods;//each day's modifications file from FromDay the same way.
+		vector<HistoryRecord> Buffered;
+		string Continuation;
+		bool Done{};
+	};
+	Subscription::Subscription( wp<Group> group, wp<const Registration> registration, up<State> state )ι:
+		_group{ move(group) }, _registration{ move(registration) }, _state{ move(state) }{}
+	Subscription::~Subscription(){ End(); }
+	α Subscription::End()ι->void{
+		auto group = std::exchange( _group, {} ).lock();
+		auto registration = _registration.lock();//none once the group let it go.
+		if( group && registration )
+			group->Unsubscribe( registration );
+	}
+	α Subscription::Next( uint limit, SL sl )ε->ReadResult{
+		auto& state = *_state;
+		if( state.Done )
+			return {};
+		auto request = state.Request;
+		request.Limit = limit;
+		request.Continuation = state.Continuation;
+		const Plan plan{ request, state.Shared->Config.ReadLimit, sl };
+		Files files;
+		files.OnDisk = state.OnDisk;
+		files.Taken = state.Taken;
+		files.Serve = [&state, group=_group, sl]( Day day )->optional<GroupFiles::Served>{
+			if( day>=state.FromDay )//a file made since holds only records the subscriber was given.
+				return nullopt;
+			auto g = group.lock();
+			if( !g )
+				return nullopt;
+			ul _{ g->_filesMutex };
+			return g->_files->Serve( day, sl );
+		};
+		files.Mods = [&state, group=_group, sl]( Day day )->optional<GroupFiles::Served>{
+			if( day>=state.FromDay ){
+				auto p = state.Mods.find( day );
+				return p==state.Mods.end() ? optional<GroupFiles::Served>{} : p->second;
+			}
+			auto g = group.lock();
+			if( !g )
+				return nullopt;
+			ul _{ g->_filesMutex };
+			return g->_files->ServeMods( day, sl );
+		};
+		auto page = Reading{ plan, *state.Shared->Config.TimeZone, move(files), vector<HistoryRecord>{state.Buffered}, sl }.Page();
+		state.Continuation = page.Continuation;
+		state.Done = page.Continuation.empty();
+		page.NoData = page.Values.empty() && state.Done && plan.Empty();
+		return page;
+	}
+
+	α Group::Subscribe( sp<ISubscriber> subscriber, vector<NodeIndex> nodes, UA_DateTime from, SL sl )ε->up<Subscription>{
+		THROW_IFSL( !subscriber, "A subscription needs a subscriber." );
+		THROW_IFSL( nodes.empty(), "A subscription names no nodes." );
+		let& tz = *_store->Config.TimeZone;
+		auto state = mu<Subscription::State>();
+		state->Shared = _store;
+		state->Request = { .Nodes=nodes, .Start=from, .Bounds=true };
+		state->FromDay = DayOf( from, tz );
+		auto registration = ms<const Registration>( move(subscriber), absl::flat_hash_set<NodeIndex>{nodes.begin(), nodes.end()} );
+		vector<Buffered> snapshot;
+		{
+			ul _{ _filesMutex };
+			state->OnDisk = Days( _store->Config.Path, Name(), false, sl );
+			for( let day : state->OnDisk ){
+				if( day>=state->FromDay )
+					state->Taken.emplace( day, _files->Serve(day, sl) );
+			}
+			for( let day : Days(_store->Config.Path, Name(), true, sl) ){
+				if( day>=state->FromDay )
+					state->Mods.emplace( day, _files->ServeMods(day, sl) );
+			}
+			ul _{ _mutex };
+			THROW_IFSL( _closed || _stopped, "Group '{}' was removed or has stopped.", Name() );
+			snapshot = Snapshot( [&registration]( NodeIndex index ){ return registration->Nodes.contains( index ); } );
+			_subscribers.push_back( registration );
+		}
+		state->Buffered.reserve( snapshot.size() );
+		for( auto& b : snapshot ){
+			if( auto value = get_if<DataValue>(&b.Item) )
+				value->Unsupported = false;//warned of by the flush.
+			try{
+				state->Buffered.push_back( ToProto(b.Item) );
+			}
+			catch( const Exception& )//no file form:  the flush says so.
+			{}
+		}
+		std::ranges::stable_sort( state->Buffered, {}, []( let& r ){ return *PrimaryTime(r); } );
+		return up<Subscription>{ new Subscription{weak_from_this(), registration, move(state)} };
+	}
+
 	α Group::Earliest( SL sl )Ε->optional<TimePoint>{
 		let days = Days( _store->Config.Path, Name(), false, sl );
 		return days.empty() ? optional<TimePoint>{} : DayStart( days.front(), *_store->Config.TimeZone );

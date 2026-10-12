@@ -30,6 +30,9 @@ namespace Jde::Opc::Hist{
 	α BuiltInType( uint32_t id )ι->const UA_DataType*;//BuiltIn's type, null for 0 or an id it never gives.
 	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
+	//A buffered value the same way, its heartbeat marked:  what ToProto( Record ) makes of one, but for the warning of a
+	//value flagged Unsupported, which is the flush's to give.
+	α ToProto( const DataValue& value )ε->Proto::DataValue;
 	//The edit's writer onto its record:  identity_id, UserPK::System as 4294967295, and user_name.
 	α SetWriter( Proto::Modification& m, const Writer& by )ι->void;
 	//Whether two stored values are one record:  the same times, status, value and heartbeat, a NaN the same as a NaN,

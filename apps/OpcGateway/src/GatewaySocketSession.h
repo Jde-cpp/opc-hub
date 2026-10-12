@@ -8,6 +8,7 @@
 namespace Jde::Proto{ class Query; }
 namespace Jde::Opc{ struct NodeId; }
 namespace Jde::Opc::Gateway{
+	struct HistSubscriber;
 	using namespace Jde::Web::Server;
 	using namespace Jde::Web::Client;
 	struct GatewaySocketSession final: TWebsocketSession<FromServer::Transmission,FromClient::Transmission>, IDataChange{
@@ -30,6 +31,14 @@ namespace Jde::Opc::Gateway{
 		α GraphQL( Jde::Proto::Query&& q, uint requestId )ι->TAwait<jvalue>::Task;
 		α Subscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->TAwait<sp<UAClient>>::Task;
 		α Unsubscribe( ServerCnnctnNK&& opcId, flat_set<NodeId> nodes, uint32 requestId )ι->void;
+		//A historian subscription (spec *Subscriptions*), defined in hist/HistSubscriber.cpp:  the group's Read gate, the ack
+		//with each node's status, the snapshot's pages, then every record as it is stored, until HistUnsubscribe or the close.
+		α HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void;
+		//Registers the subscription and takes its snapshot on the executor, writes the ack and the snapshot's pages, then
+		//lets the pushes through.
+		α HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack )ι->VoidTask;
+		α HistUnsubscribe( Jde::RequestId subscription, Jde::RequestId requestId )ι->void;
+		α RemoveHist( Jde::RequestId subscription )ι->sp<HistSubscriber>;//out of the map, ended.
 
 		α WriteSubscription( const jvalue& j, Jde::RequestId requestId )ι->void override;
 		α WriteSubscription( uint32 /*appPK*/, uint32 /*appInstancePK*/, const Logging::Entry& /*e*/, const QL::Subscription& /*sub*/ )ι->void override{ ASSERT(false); }
@@ -39,5 +48,9 @@ namespace Jde::Opc::Gateway{
 		α WriteException( Exception&& e )ι->void{ WriteException( move(e), 0 ); }
 
 		α SendAck( uint32 id )ι->void override;
+
+		mutable std::mutex _histMutex;
+		flat_map<Jde::RequestId,sp<HistSubscriber>> _histSubscriptions;//by the HistSubscribe's request id.
+		bool _closed{};
 	};
 }

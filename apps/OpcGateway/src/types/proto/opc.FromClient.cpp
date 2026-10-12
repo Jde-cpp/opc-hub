@@ -1,6 +1,8 @@
 #include "opc.FromClient.h"
 #include <jde/fwk/io/protobuf.h>
 #include <jde/app/proto/common.h>
+#include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/proto/opc.Common.h>
 
@@ -40,5 +42,19 @@ namespace Jde::Opc::Gateway{
 			for( let& n : nodes )
 				*u.add_nodes() = ProtoUtils::ToNodeId( n );
 		});
+	}
+
+	α FromClientUtils::HistSubscription( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){
+			auto& s = *m.mutable_hist_subscribe();
+			s.set_group( group );
+			for( let& n : nodes )
+				*s.add_nodes() = ProtoUtils::ToExNodeId( n );
+			if( from )
+				*s.mutable_from_time() = UADateTime{ *from }.ToProto();
+		});
+	}
+	α FromClientUtils::HistUnsubscription( RequestId subscription, RequestId requestId )ι->string{
+		return setMessage( requestId, [&](FromClient::Message& m){ m.mutable_hist_unsubscribe()->set_subscription( subscription ); } );
 	}
 }

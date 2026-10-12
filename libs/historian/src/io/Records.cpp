@@ -255,17 +255,21 @@ namespace Jde::Opc{
 		}
 		else{
 			let& value = get<DataValue>( r );
-			auto& stored = *y.mutable_value() = ToProto( value.Data, value.Index );
-			if( value.Heartbeat )
-				stored.set_heartbeat( *value.Heartbeat );
-			if( value.Unsourced )
-				stored.set_heartbeat_unsourced( true );
+			auto& stored = *y.mutable_value() = ToProto( value );
 			if( value.Unsupported ){
 				let notUtf8 = stored.status()==UA_STATUSCODE_BADENCODINGERROR;
 				WARN( "node_index {}'s '{}' value {}, so it and later ones like it are stored without it, as {}.", value.Index, value.Data.value.type->typeName,
 					notUtf8 ? "has text that isn't UTF-8" : "has no file form", notUtf8 ? "BadEncodingError" : "BadNotSupported" );
 			}
 		}
+		return y;
+	}
+	α Hist::ToProto( const DataValue& value )ε->Proto::DataValue{
+		auto y = ToProto( value.Data, value.Index );
+		if( value.Heartbeat )
+			y.set_heartbeat( *value.Heartbeat );
+		if( value.Unsourced )
+			y.set_heartbeat_unsourced( true );
 		return y;
 	}
 }

@@ -124,6 +124,7 @@ namespace Jde::Opc::Hist{
 		{
 			ul _{ _mutex };
 			_stopped = true;
+			_subscribers.clear();//nothing more is stored for them to hear of.
 			timers = Disarm();
 			for( auto&& [index,node] : _nodes ){//the stop is a break, so each pending value is stored as at its interval's end.
 				if( node.Pending )
@@ -443,6 +444,13 @@ namespace Jde::Opc::Hist{
 					break;
 				for( auto& job : *jobs ){
 					bool ok{};
+					//Done runs under the files lock for a write that committed, with the commit, and outside it for one that failed.
+					let done = [&]{
+						_filesMutex.AssertHeld();
+						ok = true;
+						if( job.Done )
+							std::exchange( job.Done, nullptr )( true );
+					};
 					try{
 						if( auto run = get_if<Pending>(&job.Write) ){
 							if( Ended() )
@@ -450,7 +458,7 @@ namespace Jde::Opc::Hist{
 							co_await run->Write();
 							ul _{ _filesMutex };
 							_files->Commit( move(*run) );
-							ok = true;
+							done();
 						}
 						else if( auto archive = get_if<Rewrite>(&job.Write) ){
 							while( archive->Next() ){
@@ -462,7 +470,7 @@ namespace Jde::Opc::Hist{
 							if( Ended() )
 								throw Abandoned{};
 							_files->Commit( move(*archive), taken );
-							ok = true;
+							done();
 						}
 					}
 					catch( Exception& e ){

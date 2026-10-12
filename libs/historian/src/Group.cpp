@@ -449,7 +449,7 @@ namespace Jde::Opc::Hist{
 		node.ValueTs = time;
 		node.Keep( time );
 		node.StoredAt = now;
-		effects += Push( DataValue{index, move(arrival.Data), {}, first}, arrival.Bytes );
+		StoreRecord( DataValue{index, move(arrival.Data), {}, first}, arrival.Bytes, effects );
 		Arm( index, node, now, effects );
 	}
 	α Group::Mark( NodeIndex index, Node& node, UA_DateTime at, const UA_DataValue& ended, TimePoint now, Effects& effects )ι->void{
@@ -459,7 +459,7 @@ namespace Jde::Opc::Hist{
 		node.Marked = true;
 		node.Keep( at );
 		node.StoredAt = now;
-		effects += Push( DataValue{index, move(lost)}, size );
+		StoreRecord( DataValue{index, move(lost)}, size, effects );
 	}
 	α Group::Settle( NodeIndex index, Node& node, TimePoint now, Effects& effects )ι->void{
 		auto pending = move( *node.Pending );
@@ -594,7 +594,7 @@ namespace Jde::Opc::Hist{
 					node.StoredAt = now;
 					node.Beat = beat.sourceTimestamp;
 					let size = bytes( beat );
-					effects += Push( DataValue{index, move(beat), node.ValueTs, false, unsourced}, size );
+					StoreRecord( DataValue{index, move(beat), node.ValueTs, false, unsourced}, size, effects );
 				}
 				Watch( index, node, node.StoredAt+max );
 			}
@@ -603,12 +603,48 @@ namespace Jde::Opc::Hist{
 		}
 		Finish( move(effects) );
 	}
+	α Group::StoreRecord( DataValue&& value, uint32_t bytes, Effects& effects )ι->void{
+		if( !_subscribers.empty() ){
+			if( effects.To.empty() )//the same under one hold of the lock.
+				effects.To = _subscribers;
+			*effects.Stored.emplace_back().mutable_value() = ToProto( value );
+		}
+		effects += Push( move(value), bytes );
+	}
+	//Each subscriber's records among `records`, by node:  those of none are skipped.
+	Ω deliver( const vector<sp<const Registration>>& to, const vector<Proto::HistoryRecord>& records )ι->void{
+		for( let& registration : to ){
+			vector<Proto::HistoryRecord> mine;
+			for( let& r : records ){
+				if( registration->Nodes.contains(r.has_modification() ? r.modification().node_index() : r.value().node_index()) )
+					mine.push_back( r );
+			}
+			if( !mine.empty() )
+				registration->Subscriber->OnRecords( move(mine) );
+		}
+	}
 	α Group::Finish( Effects&& effects )ι->void{
 		Pushed( effects.Pushed );
 		for( let id : effects.Stale )
 			_store->Time->Cancel( id );
 		if( !effects.Warning.empty() )
 			_store->Time->Schedule( Duration::zero(), [warning=move(effects.Warning)]{ WARNT( ELogTags::IO, "{}", warning ); } );//IO, with the historian's other warnings about its records.
+		if( !effects.Stored.empty() )
+			deliver( effects.To, effects.Stored );
+	}
+	α Group::Modified( const vector<Proto::HistoryRecord>& records )ι->void{
+		vector<sp<const Registration>> to;
+		{
+			ul _{ _mutex };
+			to = _subscribers;
+		}
+		if( to.empty() )
+			return;
+		_store->Time->Schedule( Duration::zero(), [to=move(to), records]{ deliver( to, records ); } );
+	}
+	α Group::Unsubscribe( const sp<const Registration>& registration )ι->void{
+		ul _{ _mutex };
+		std::erase( _subscribers, registration );
 	}
 
 	α Group::Disconnected( TimePoint at )ι->void{
@@ -676,6 +712,7 @@ namespace Jde::Opc::Hist{
 			}
 			_nodes.clear();
 			_indexes.clear();
+			_subscribers.clear();//nothing more is stored for them to hear of.
 			_closed = true;
 			effects.Pushed = { .Flush=true, .Trim=(over || effects.Pushed.Trim) && _failing };//the flush asked for here takes the rest, if it can write.
 		}

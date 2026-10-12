@@ -2,6 +2,7 @@ syntax = "proto3";
 package Jde.Opc.FromClient;
 import "Opc.Common.proto";
 import "Common.proto";
+import "google/protobuf/timestamp.proto";
 
 message Subscribe{
 	string opc_id=1;
@@ -13,6 +14,19 @@ message Unsubscribe{
 	repeated Jde.Opc.Proto.NodeId nodes=2;
 }
 
+//A historian subscription (spec *Subscriptions*):  a group's nodes, each as hist_group_nodes spells it, with its namespace
+//URI, or by the index the group's server has for that URI, as a browsed node is, and from when.  The reply is the history
+//from from_time to now, paged, then every record stored after, as it is stored.  Without from_time the history is each
+//node's value now, as the bound, and what follows.  The message's request_id names the subscription from then on.
+message HistSubscribe{
+	uint32 group=1;//the hist_groups id.
+	repeated Jde.Opc.Proto.ExpandedNodeId nodes=2;
+	google.protobuf.Timestamp from_time=3;
+}
+//Ends a historian subscription, by the request_id of its HistSubscribe.
+message HistUnsubscribe{
+	uint32 subscription=1;
+}
 
 message Message{
 	uint32 request_id = 1;
@@ -21,6 +35,8 @@ message Message{
 		Jde.Proto.Query query=3;
 		Subscribe subscribe = 4;
 		Unsubscribe unsubscribe = 5;
+		HistSubscribe hist_subscribe = 6;
+		HistUnsubscribe hist_unsubscribe = 7;
 	}
 }
 

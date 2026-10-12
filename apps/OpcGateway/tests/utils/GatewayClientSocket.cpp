@@ -35,7 +35,31 @@ namespace Tests{
 	α forgetRequest( RequestId requestId )ι->void;
 	α onUnsubscribeAck( RequestId requestId )ι->void;
 	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
+	α GatewayClientSocket::HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]HistSubscribe: group {}.", requestId, group );
+		{
+			lg _{ _histMutex };
+			_histListeners.emplace( requestId, move(listener) );
+			_lastHistSubscription = requestId;
+		}
+		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, from, requestId), requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::HistUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]HistUnsubscribe: {:x}.", requestId, subscription );
+		{
+			lg _{ _histMutex };
+			_histListeners.erase( subscription );
+		}
+		return await<bool>{ FromClientUtils::HistUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
+	}
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
+		auto histListener = [this]( RequestId requestId )->sp<IHistListener>{
+			lg _{ _histMutex };
+			auto p = _histListeners.find( requestId );
+			return p==_histListeners.end() ? nullptr : p->second;
+		};
 		auto size = transmission.messages_size();
 		for( auto i=0; i<size; ++i ){
 			auto m = transmission.mutable_messages( i );
@@ -51,6 +75,7 @@ namespace Tests{
 			case kException:{
 				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
 				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
+				{ lg _{ _histMutex }; _histListeners.erase( requestId ); }
 				let& e = m->exception();
 				if( task.Fail )
 					task.Fail( GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives.
@@ -79,9 +104,27 @@ namespace Tests{
 				auto h = std::any_cast<await<FromServer::UnsubscribeAck>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
 				h.promise().Resume( move(*m->mutable_unsubscribe_ack()), h );
 				break;}
-			case VALUE_NOT_SET:{
-				auto h = std::any_cast<await<uint32>::Handle>( IClientSocketSession::PopTask(requestId).Handle ); //connect
-				h.promise().Resume( Id(), h );
+			case kHistSubscribeAck:{
+				vector<StatusCode> statuses;
+				for( let status : m->hist_subscribe_ack().statuses() )
+					statuses.push_back( status );
+				auto h = std::any_cast<await<vector<StatusCode>>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
+				h.promise().Resume( move(statuses), h );
+				break;}
+			case kHistSnapshot:
+				if( auto listener = histListener(requestId); listener )
+					listener->OnSnapshot( m->hist_snapshot() );
+				break;
+			case kHistRecords:
+				if( auto listener = histListener(requestId); listener )
+					listener->OnRecords( m->hist_records() );
+				break;
+			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's.
+				auto task = IClientSocketSession::PopTask( requestId );
+				if( auto h = std::any_cast<await<uint32>::Handle>(&task.Handle); h )
+					(*h).promise().Resume( Id(), *h );
+				else if( auto done = std::any_cast<await<bool>::Handle>(&task.Handle); done )
+					(*done).promise().Resume( true, *done );
 			break;}
 			default:
 				BREAK;

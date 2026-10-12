@@ -3,6 +3,7 @@
 #include <jde/web/usings.h>
 #include <jde/web/client/socket/IClientSocketSession.h>
 #include <jde/web/client/socket/ClientSocketAwait.h>
+#include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include "Opc.FromClient.pb.h"
 #include "Opc.FromServer.pb.h"
@@ -12,6 +13,13 @@ namespace Jde::Opc::Gateway::Tests{
 	struct IListener{
 		β OnData( string opcId, NodeId nodeId, const Proto::Value& value )ι->void=0;
 		β OnPush( const FromServer::NodeValues& /*push*/ )ι->void{}//the whole push, before OnData:  its quality and timestamps too
+	};
+	//A historian subscription's listener (spec *Subscriptions*), as the web's will be:  a HistSubscribe's ack resumes its
+	//await, and what follows it, the HistSnapshot pages and then the HistRecords pushes, comes here under the HistSubscribe's
+	//request id.
+	struct IHistListener{
+		β OnSnapshot( const FromServer::HistSnapshot& page )ι->void=0;
+		β OnRecords( const FromServer::HistRecords& records )ι->void=0;
 	};
 	//An error the gateway *answered* with - it came back over a working socket, unlike a transport failure.  Anything that reacts
 	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server
@@ -44,11 +52,18 @@ namespace Jde::Opc::Gateway::Tests{
 
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
 		Ω PendingSubscriptionRecords()ι->uint;//subscribe + unsubscribe requests still awaiting their ack, across every socket - a failed request may leave none (m2-closing #15).
+		//The ack's statuses, one per node.  The listener hears the subscription's pages and pushes until HistUnsubscribe's ack.
+		α HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<vector<StatusCode>>;
+		α HistUnsubscribe( RequestId subscription, SRCE )ι->await<bool>;
+		α LastHistSubscription()Ι->RequestId{ return _lastHistSubscription; }//the request id the last HistSubscribe sent, which names it to HistUnsubscribe.
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnClose( beast::error_code ec )ι->void override;
 		α OnAck( uint32 ack )ι->void;
+		mutable std::mutex _histMutex;
+		flat_map<RequestId,sp<IHistListener>> _histListeners;
+		RequestId _lastHistSubscription{};
 	};
 	α Socket()ι->GatewayClientSocket&;
 }

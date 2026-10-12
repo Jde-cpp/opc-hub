@@ -4,6 +4,9 @@
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/opc/proto/opc.Common.h>
+DISABLE_WARNINGS
+#include <jde/historian/proto/Hist.Records.pb.h>
+ENABLE_WARNINGS
 #define let const auto
 
 namespace Jde::Opc::Gateway{
@@ -22,22 +25,25 @@ namespace Jde::Opc::Gateway{
 		FromServer::Message m;
 		return MessageTrans( move(m), requestId );
 	}
+	α FromServer::ToProto( const runtime_error& e )ι->Jde::Proto::Exception{
+		Jde::Proto::Exception proto;
+		proto.set_what( string{e.what()} );
+		if( auto p = dynamic_cast<const Exception*>(&e) ){
+			proto.set_code( p->Code() );
+			proto.set_status_code( p->HttpStatus() );
+			proto.set_category( (Jde::Proto::ECategory)p->Category() );
+			proto.set_category_code( p->CategoryCode() );
+		}
+		else
+			proto.set_status_code( 500 );
+		return proto;
+	}
 	α FromServer::ExceptionTrans( const runtime_error& e, optional<RequestId> requestId )ι->FromServer::Transmission{
 		FromServer::Transmission t;
 		auto& m = *t.add_messages();
 		if( requestId )
 			m.set_request_id( *requestId );
-
-		auto& proto = *m.mutable_exception();
-		proto.set_what( string{e.what()} );
-		if( auto p = dynamic_cast<const Exception*>(&e) ){
-			proto.set_code( p->Code() );
-			proto.set_status_code( p->HttpStatus() );//status & classification ride the base virtuals - the type can't cross the wire.
-			proto.set_category( (Jde::Proto::ECategory)p->Category() );
-			proto.set_category_code( p->CategoryCode() );
-		}
-		else
-			proto.set_status_code( 500 );//plain std::exception - unclassified server fault.
+		*m.mutable_exception() = ToProto( e );
 		return t;
 	}
 	α FromServer::MessageTrans( FromServer::Message&& m, RequestId requestId )ι->FromServer::Transmission{
@@ -97,5 +103,40 @@ namespace Jde::Opc::Gateway{
 		m.set_request_id( requestId );
 		m.set_allocated_node_values( nv.release() );
 		return m;
+	}
+
+	α FromServer::HistSubscribeAckTrans( FromServer::HistSubscribeAck&& ack, RequestId requestId )ι->FromServer::Transmission{
+		return set( requestId, [&ack](FromServer::Message& m){ *m.mutable_hist_subscribe_ack() = move( ack ); } );
+	}
+	α FromServer::HistSnapshotTrans( FromServer::HistSnapshot&& page, RequestId requestId )ι->FromServer::Transmission{
+		return set( requestId, [&page](FromServer::Message& m){ *m.mutable_hist_snapshot() = move( page ); } );
+	}
+	α FromServer::HistRecordsTrans( FromServer::HistRecords&& records, RequestId requestId )ι->FromServer::Transmission{
+		return set( requestId, [&records](FromServer::Message& m){ *m.mutable_hist_records() = move( records ); } );
+	}
+	α FromServer::ToProto( const Hist::Proto::DataValue& v, uint32 slot, bool bound )ι->FromServer::HistValue{
+		FromServer::HistValue y;
+		y.set_node( slot );
+		if( v.has_value() )
+			*y.mutable_value() = v.value();
+		y.set_sc( v.status() );
+		if( v.has_source_ts() )
+			*y.mutable_source() = UADateTime{ (UA_DateTime)v.source_ts() }.ToProto();
+		if( v.has_server_ts() )
+			*y.mutable_server() = UADateTime{ (UA_DateTime)v.server_ts() }.ToProto();
+		y.set_heartbeat( v.has_heartbeat() );
+		y.set_bound( bound );
+		return y;
+	}
+	α FromServer::ToProto( const Hist::Proto::Modification& m, uint32 slot )ι->FromServer::HistModification{
+		FromServer::HistModification y;
+		y.set_node( slot );
+		*y.mutable_target() = UADateTime{ (UA_DateTime)m.target_source_ts() }.ToProto();
+		y.set_type( (uint32)m.update_type() );
+		if( m.has_new_value() )
+			*y.mutable_value() = ToProto( m.new_value(), slot, false );
+		*y.mutable_time() = UADateTime{ (UA_DateTime)m.ts() }.ToProto();
+		y.set_user( m.user_name() );
+		return y;
 	}
 }
