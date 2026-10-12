@@ -249,14 +249,6 @@ namespace Jde::QL{
 		}
 	}
 
-	//#10: every table the client named is a read, not just the root - columnSql joins the fk children into this statement and
-	//SelectSubTables selects the rest, and neither authorized anything.  One walk covers both, before the data source is touched.
-	α SelectAwait::Authorize( const TableQL& qlTable )ε->void{
-		if( let dbTable = qlTable.DBTable(); dbTable )
-			dbTable->Authorize( Access::ERights::Read, _executer, _sl );
-		for( let& child : qlTable.Tables )
-			Authorize( child );
-	}
 	//#22: sub-table rows are keyed by the parent's pk, and columnSql emits the select in the order the *client* asked for its
 	//columns - so the pk is at 0 only by luck.  Find it, and add it if the client did not ask for it at all: without a key
 	//there is nothing to attach the children to.  ToJson skips a column no ColumnQL claims, so the extra one does not surface.
@@ -273,7 +265,7 @@ namespace Jde::QL{
 		try{
 			let dbTable = _qlTable.DBTable();
 			THROW_IF( !dbTable, "No DB table for '{}'", _qlTable.JsonName );
-			Authorize( _qlTable );
+			_qlTable.AuthorizeRead( _executer, _sl );//#10: every table the client named, not just the root - columnSql joins the fk children into this statement and SelectSubTables selects the rest.
 			_ds = dbTable->Schema->DS();
 			auto statement = _statement ? move(*_statement) : SelectStatement( _qlTable );
 			if( _qlTable.Tables.size() )

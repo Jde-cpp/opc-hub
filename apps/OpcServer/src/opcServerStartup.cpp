@@ -13,15 +13,14 @@
 namespace Jde::Opc{
 	α Server::Startup( jobject webServerSettings, jobject userName )ε->void{
 		auto appClient = AppClient();
-		sp<OpcAuthorize> opcAuthorize;
-		{
-			auto schemaSuffix = Settings::FindString( "/opcServer/resource" );
-			appClient->SetAcl( opcAuthorize=ms<OpcAuthorize>(schemaSuffix ? "opc." + *move(schemaSuffix) : "opc") );
-		}
+		let resourceSuffix = Settings::FindString( "/opcServer/resource" ).value_or( "" );
+		let instanceSchema = resourceSuffix.size() ? Ƒ( "opc.{}", resourceSuffix ) : string{ "opc" };//as Access::InstanceSchemaName - an empty suffix is `opc`, not `opc.`
+		auto opcAuthorize = ms<OpcAuthorize>( instanceSchema );
+		appClient->SetAcl( opcAuthorize );
 		auto remoteAcl = appClient->Acl();
 		auto uaSchema = DB::GetAppSchema( "opc", remoteAcl );
 		uaSchema->Authorizer = opcAuthorize;// GetAppSchema returns a cached schema whose Authorizer is baked in when GetClusters first builds the cache. When another server (e.g. embedded AppServer) built it first with a base Access::Authorize, our SetAcl(OpcAuthorize) above is ignored here. Install it explicitly so UAAccess::GetUserAccessLevel's static_cast<OpcAuthorize&> is valid (and so UserRights reads the same _nodeResources that AssignRights populates).
-		ConfigureQL( uaSchema, remoteAcl );
+		ConfigureQL( uaSchema, remoteAcl, instanceSchema );
 		QL::SetSystemTables( {"logSetting", "adminCheck"} );//adminCheck: the AppServer's delegated admin check (OpcServerQL) - a name no schema owns, so QL::Parse admits it without a view; `permissionRight` would shadow the real table for an embedded AppServer.
 		if( Settings::FindBool("/testing/recreateDB").value_or(false) )
 			DB::NonProd::Recreate( *uaSchema, QLPtr() );
@@ -34,8 +33,7 @@ namespace Jde::Opc{
 		auto accessSchema = DB::GetAppSchema( "access", remoteAcl );
 		appClient->SubscriptionSchemas.push_back( accessSchema );
 
-		auto resourceSchema = Settings::FindString( "/opcServer/resource" ).value_or( "" );
-		appClient->ResourceSchema = resourceSchema.size() ? Ƒ( "opc.{}", resourceSchema ) : "opc";
+		appClient->ResourceSchema = instanceSchema;
 
 		appClient->SetUserName( move(userName) );
 		//retry: the hub is this process's registry, and a first start of the hub - schema sync, keys, then its certificate - can
@@ -47,7 +45,7 @@ namespace Jde::Opc{
 		BlockVoidAwait( App::Client::ConnectAwait{appClient, true}, ELogLevel::Information );
 		appClient->LoadLogSettings();
 
-		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, {uaSchema}, UserPK{UserPK::System}, resourceSchema) );
+		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, {uaSchema}, UserPK{UserPK::System}, resourceSuffix) );
 		Process::AddShutdownFunction( [listener=appClient->Listener()](bool terminate, SL sl){ listener->Shutdown(terminate, sl); } ); //as the AppServer does - the subscriptions otherwise outlive everything they reference (access-review3 #25).
 		Initialize( uaSchema );
 		auto& ua = GetUAServer();

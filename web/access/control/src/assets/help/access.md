@@ -104,7 +104,12 @@ The hub gates **its own** resources:
 - the tables behind these pages;
 - the server connection list, both reading it and opening a session on one of its connections.
 
-Log settings are not gated by a role. Any signed-in user can read and change them.
+Logs have one resource per application: `app/logs` for the hub, `opc.install/logs` for the bundled OPC server.
+
+- **Read** shows that application's log and its log settings.
+- **Update** changes its log settings and the levels the hub stores for it.
+
+Like every resource, these ship unenforced. Until you enforce one, anyone can read that application's log and read and change its log settings, even without signing in. The hub's log also holds the lines the OPC server sends it, and those need Read on the server's `logs` as well.
 
 The hub also gates the nodes of the **bundled** Jde OPC server, which enforces them itself. Delegation only lets that server answer who may grant rights on its nodes.
 

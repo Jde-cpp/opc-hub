@@ -60,6 +60,43 @@ namespace Jde::App{
 		for( auto& session : evicted )
 			session->Close();
 	}
+
+	static mutex _claimsMutex;
+	static flat_map<Server::SocketId,Proto::FromClient::Instance> _claims;//sockets between their ClaimInstance and publishing the registration
+	Server::InstanceClaim::~InstanceClaim(){
+		if( !Socket )
+			return;
+		lg _{ _claimsMutex };
+		_claims.erase( Socket );
+	}
+	α Server::ClaimInstance( Server::SocketId socketId, const Proto::FromClient::Instance& instance )ε->InstanceClaim{
+		auto conflicts = [&]( const Proto::FromClient::Instance& other ){
+			let sameProcess = other.host()==instance.host() && other.pid()==instance.pid();//one process hosting two roles (Jde.Opc.Tests) shares its identity knowingly.
+			let restart = instance.web_port() && other.host()==instance.host() && other.web_port()==instance.web_port();
+			return other.application()==instance.application() && other.instance_name()==instance.instance_name() && other.auth_resource()!=instance.auth_resource()
+				&& !sameProcess && !restart;
+		};
+		lg _{ _claimsMutex };
+		optional<Proto::FromClient::Instance> holder;
+		for( let& [id, claimed] : _claims ){
+			if( id!=socketId && conflicts(claimed) ){
+				holder = claimed;
+				break;
+			}
+		}
+		if( !holder ){
+			_sessions.cvisit_while( [&](let& kv){
+				if( kv.first!=socketId && kv.second->IsOpen() ){
+					if( auto other = kv.second->Instance(); conflicts(other) )
+						holder = move( other );
+				}
+				return !holder;
+			});
+		}
+		THROW_IF( holder, "{} instance '{}' is already registered from {}:{} with resource schema '{}', not '{}' - give each instance on this hub its own /instanceName.", instance.application(), instance.instance_name(), holder->host(), holder->web_port(), holder->auth_resource(), instance.auth_resource() );
+		_claims.emplace( socketId, instance );
+		return InstanceClaim{ socketId };
+	}
 	α Server::OnSessionDisconnect( sp<ServerSocketSession> session )ι->void{
 		_sessions.erase( session->Id() );
 		Authorizer()->RemoveAdminAuthorizer( std::dynamic_pointer_cast<Access::IAdminAcl>(session) );//else a restarted app's stale registration keeps answering admin checks on a dead stream.

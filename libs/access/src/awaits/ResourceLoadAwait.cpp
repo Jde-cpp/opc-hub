@@ -42,12 +42,14 @@ namespace Jde::Access{
 		try{
 			for( let& schema : _schemas ){
 				let schemaName = InstanceSchemaName( schema->Name, _opcServerInstance );
-				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug deleted description allowed}}", schemaName );
+				auto q = Ƒ( "resources( schemaName:[\"{}\"] ){{id slug criteria deleted description allowed}}", schemaName );
 				auto existing = Json::AsArray( co_await *_qlServer->Query(move(q), {}, _executer) );
 				flat_set<string> slugs;
 				flat_map<string,ResourcePK> bare;//install-issues #25: existing rows with no `allowed` - the ops-fill below keys off this.
 				for( auto& value : existing ){
 					let& resource = Json::AsObject( value );
+					if( Json::FindDefaultSV(resource, "criteria").size() )//a node row (`nodeIds[ns=5;i=5001]`), not the slug's root - the sync declares and fills roots only.
+						continue;
 					let slug = string{ Json::AsString(resource, "slug") };
 					slugs.emplace( slug );
 					//A row created by a role reference (the seed's `addRole(resource:{schemaName:"opc.install", slug:"nodeIds"})`,

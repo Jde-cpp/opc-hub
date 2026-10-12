@@ -5,11 +5,13 @@
 
 namespace Jde::App{
 	//logs{...}:  today's log - ProtoLog's buffer and daily file - and the day archives, read until the page is full.
+	//hidden:  instances whose forwarded lines are left out (ArchiveQuery).
 	struct LogQLAwait final : TAwaitEx<jvalue,TAwait<jvalue>::Task>{
 		using base = TAwaitEx<jvalue,TAwait<jvalue>::Task>;
-		LogQLAwait( QL::TableQL&& ql, SRCE )ι:base{sl}, _ql{move(ql)}{}
+		LogQLAwait( QL::TableQL&& ql, flat_set<ProgInstPK> hidden={}, SRCE )ι:base{sl}, _ql{move(ql)}, _hidden{move(hidden)}{}
 		α Execute()ι->TAwait<jvalue>::Task;
 	private:
 		QL::TableQL _ql;
+		flat_set<ProgInstPK> _hidden;
 	};
 }

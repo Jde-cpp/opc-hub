@@ -1,6 +1,7 @@
 #pragma once
 #include <jde/ql/types/TableQL.h>
 #include <jde/app/proto/Log.pb.h>
+#include <jde/app/usings.h>
 
 namespace Jde::App{
 	//One local day's archive file on disk (Log.proto).  ArchiveQuery, below, is a logs query's result read out of these.
@@ -36,7 +37,8 @@ namespace Jde::App{
 	struct ArchiveQuery{
 		ArchiveQuery()ι=default;
 		ArchiveQuery( ArchiveQuery&& x )ι=default;
-		ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε;
+		explicit ArchiveQuery( flat_set<ProgInstPK> hidden )ι:_hidden{ move(hidden) }{}
+		ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden={} )ε;
 		α operator=( ArchiveQuery&& x )ι->ArchiveQuery& = default;
 		α Append( const QL::TableQL& q, DayArchive&& af )ε->void;
 		α Append( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε->void;
@@ -47,9 +49,11 @@ namespace Jde::App{
 		std::map<TimePoint,vector<App::Log::Proto::LogEntryFile>> Entries;
 		StringTable Strings;
 	private:
+		α Visible( const App::Log::Proto::LogEntryFile& entry )Ι->bool{ return !entry.app_pk() || !_hidden.contains( (ProgInstPK)entry.app_instance_pk() ); }
 		α Message( const App::Log::Proto::LogEntryFile& entry )Ι->string;
 		α Test( const QL::TableQL& q, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ε->bool;
 		α Test( const QL::Filter& filter, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ι->bool;
 		α ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject;
+		flat_set<ProgInstPK> _hidden;//instances whose forwarded lines the reader may not see - the AppServer's merged history only.
 	};
 }

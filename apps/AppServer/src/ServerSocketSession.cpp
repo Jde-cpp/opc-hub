@@ -25,7 +25,9 @@ namespace Jde::App::Server{
 		try{
 			auto info = co_await Web::Server::Sessions::UpsertAwait( Ƒ("{:x}", instance.session_id()), _userEndpoint.address().to_string(), true, nullptr );
 			SetSessionInfo( info );
-			let [appPK,instancePK,connectionPK] = App::AddConnection( instance.application(), instance.instance_name(), instance.host(), instance.pid(), false );
+			let claim = Server::ClaimInstance( Id(), instance );//held to the end of this block, past the publish below
+			let schema = App::RegistrationSchema( instance.application(), instance.instance_name(), instance.auth_resource(), UserPK() );
+			let [appPK,instancePK,connectionPK] = App::AddConnection( instance.application(), instance.instance_name(), instance.host(), instance.pid(), schema, false );
 			//The `hosts` re-load after the insert, awaited:  it used to be AddConnection's synchronous LoadEnum - a BlockAwait on
 			//this executor thread over a MySQL query co_spawned onto the same pool.  With executor.threads:2, two instances
 			//re-registering in the same instant (every AppServer bounce with two apps alive) parked both threads with their

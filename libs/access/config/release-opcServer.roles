@@ -1,4 +1,10 @@
 mutation{
-	createRole( slug:"opc-server-instance", name:"OPC Server Instance", description:"The bundled OPC UA server's own account.  Administer on its node resource lets it delegate node-access checks to the hub - the grant the server's startup warning asks for.  Assign it to the OpcServer.web user on that user's Roles tab." )
+	createRole( slug:"opc-server-instance", name:"OPC Server Instance", description:"The bundled OPC UA server's own account.  Administer on its node and log resources lets it delegate node-access checks to the hub - the grant the server's startup warning asks for, on every enforced resource of its schema.  Read and Update on its log resource load and save its own log levels.  Read on the access acl, groups, resources, roles and users is its access load and event subscriptions - each declares Read, so enforcing any of them stops a server without this role from starting.  Assign it to the OpcServer.web user on that user's Roles tab." )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"acl" } } )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"groups" } } )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"resources" } } )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"roles" } } )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"users" } } )
 	addRole( slug:"opc-server-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
+	addRole( slug:"opc-server-instance", permissionRight:{ allowed:38, denied:0, resource:{ schemaName:"opc.install", slug:"logs" } } )
 }

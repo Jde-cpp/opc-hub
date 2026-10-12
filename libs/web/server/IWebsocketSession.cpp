@@ -148,7 +148,7 @@ namespace Jde::Web::Server{
 			sub = isLog ? subs.erase( sub ) : next( sub );
 		}
 		if( !logSubs.empty() )
-			Logging::GetLogger<SubscribeLog>().Add( shared_from_this(), move(logSubs) );
+			Logging::GetLogger<SubscribeLog>().Add( shared_from_this(), move(logSubs), executer );
 		if( _listener )
 			QL::Subscriptions::Listen( _listener, move(subs), executer, sl );//gated: the ungated overload is for in-process registration.
 		return subscriptionIds;

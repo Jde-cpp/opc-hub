@@ -187,16 +187,10 @@ namespace Jde::QL{
 	//change - so it takes the same Read.  Nothing on the subscribe path checked anything before this:  the ops are the only
 	//Authorize sites in ql, and a notification never goes through one.  Read rather than ERights::Subscribe because no acl
 	//grants Subscribe today, so requiring it would refuse every existing subscriber.
-	Ω authorize( const TableQL& table, UserPK executer, SL sl )ε->void{
-		if( let dbTable = table.DBTable(); dbTable )
-			dbTable->Authorize( Access::ERights::Read, executer, sl );
-		for( let& t : table.Tables )
-			authorize( t, executer, sl );
-	}
 	α Subscriptions::Listen( sp<IListener> listener, vector<Subscription>&& subs, UserPK executer, SL sl )ε->void{
 		if( executer.Value!=UserPK::System ){
 			for( let& s : subs )
-				authorize( s.Fields, executer, sl );
+				s.Fields.AuthorizeRead( executer, sl );
 		}
 		Listen( listener, move(subs) );
 	}

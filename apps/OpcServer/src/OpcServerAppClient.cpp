@@ -26,10 +26,13 @@ namespace Jde::Opc::Server{
 		QL::RequestQL _q;
 		Jde::UserPK _executer;
 	};
-	//The app server pushes log-level changes as updateLogSetting mutations; OpcServerQL below answers `status` and the
-	//AppServer's admin check and nothing else, so without this the push came back "Only queries are supported" and the levels
-	//never moved.  Only log settings get through to the ql - everything else stays as restricted as it was.
+	//The app server pushes log-level changes as updateLogSetting mutations, and reads the live levels with a logSetting query
+	//for instanceTagLevel's `running`; OpcServerQL below answers `status` and the AppServer's admin check and nothing else, so
+	//without this the push came back "Only queries are supported" and the read "Table logSetting not supported".  Only log
+	//settings get through to the ql - everything else stays as restricted as it was.
 	Ω isLogSettings( const QL::RequestQL& q )ι->bool{
+		if( q.IsQueries() )
+			return std::ranges::all_of( q.Queries(), [](const auto& t){return t.JsonName=="logSetting";} );
 		return q.IsMutation() && std::ranges::all_of( q.Mutations(), [](const auto& m){return App::LogSettingsMAwait::IsApplicable(m);} );
 	}
 	α OpcServerAppClient::ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>>{

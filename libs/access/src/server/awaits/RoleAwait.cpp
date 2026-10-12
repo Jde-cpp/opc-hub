@@ -316,6 +316,8 @@ namespace Jde::Access::Server{
 	//query{ role(id:42){permissionRights{id allowed denied resource(slug:"users",criteria:null)}} }
 	α RoleAwait::Select()ι->QL::QLAwait<>::Task{
 		try{
+			Query.AuthorizeRead( UserPK, _sl );//roles is the resource asked for:  its permissionRights are its own data, read below as the system.
+			const Jde::UserPK system{ Jde::UserPK::System };
 			optional<jvalue> permissions;
 			optional<jvalue> roleMembers;
 			string permissionsKey = "permissionRights";
@@ -327,7 +329,7 @@ namespace Jde::Access::Server{
 					permissionsKey = DB::Names::ToSingular( permissionsKey );//where createRolesFromMembers puts a singular member
 				}
 				auto statement = PermissionsStatement( *permissionQL );
-				auto rights = co_await QL::QLAwait<jvalue>{ move(*permissionQL), move(statement), UserPK };
+				auto rights = co_await QL::QLAwait<jvalue>{ move(*permissionQL), move(statement), system };
 				permissions = move( rights.get_array() );
 			}
 			string roleKey = "roles";
@@ -335,7 +337,7 @@ namespace Jde::Access::Server{
 			if( auto roleQL = Query.ExtractTable("roles"); roleQL ){
 				auto statement = RoleStatement( *roleQL );
 				rolePlural = roleQL->IsPlural();
-				auto dbMembers = co_await QL::QLAwait( move(*roleQL), move(statement), UserPK );
+				auto dbMembers = co_await QL::QLAwait( move(*roleQL), move(statement), system );
 				if( dbMembers.is_array() )
 					roleMembers = move( dbMembers.get_array() );
 				else if( dbMembers.is_object() ){
@@ -372,7 +374,7 @@ namespace Jde::Access::Server{
 				Query.Columns.push_back( QL::ColumnQL{"id", roleTable.GetPK()} );
 			let returnArray = Query.IsPlural();
 			Query.ReturnRaw = true;
-			auto qlRoles = co_await QL::QLAwait( move(Query), UserPK );
+			auto qlRoles = co_await QL::QLAwait( move(Query), system );
 			//The child rows above only seed a role to hang its members on.  ParentFilter keeps out a role the query filtered out, but
 			//not one past its limit/offset - which came back anyway, as a bare id with children and no name.
 			vector<RolePK::Type> returned;//in the query's order:  `roles` is keyed by pk, and walking it dropped orderBy

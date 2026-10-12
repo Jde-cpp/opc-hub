@@ -228,7 +228,7 @@ namespace Jde::Opc::Server::Tests{
 			UA_ExtensionObject_setValue( &config.userIdentityToken, token, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
 			_client = UA_Client_newWithConfig( &config );
 			THROW_IF( !_client, "UA_Client_newWithConfig failed." );
-			UAε( UA_Client_connect(_client, Ƒ("opc.tcp://127.0.0.1:{}", Settings::FindNumber<PortType>("/opcServer/port").value_or(4840)).c_str()) );
+			UAε( UA_Client_connect(_client, Ƒ("opc.tcp://127.0.0.1:{}", Settings::FindNumber<PortType>("/opcServer/port").value_or(4940)).c_str()) );
 		}
 		Ω Disconnect()ι->void{
 			if( auto client = std::exchange(_client, nullptr) ){

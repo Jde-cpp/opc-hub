@@ -18,6 +18,11 @@
 namespace Jde::Access::Server{
 	α GroupAwait::Select()ι->QL::QLAwait<>::Task{
 		try{
+			//groups is the resource asked for:  identities and group_members below are its own data, read as the system.
+			GetTable( "groups" ).Authorize( Access::ERights::Read, _executer, _sl );
+			for( let& t : _query.Tables )
+				t.AuthorizeRead( _executer, _sl, true );
+			const UserPK system{ UserPK::System };
 			//group_id, member_id & member columns.
 			optional<QL::TableQL> membersQL = [&]()->optional<QL::TableQL>{
 				auto p = find_if( _query.Tables, [](let& t){ return t.JsonName.starts_with("groupMember"); } );
@@ -27,7 +32,6 @@ namespace Jde::Access::Server{
 				_query.Tables.erase( p );
 				return ql;
 			}();
-			GetTable( "groups" ).Authorize( Access::ERights::Read, _executer, _sl );
 			optional<jarray> members;
 			bool haveId{};
 			_query.JsonName = _query.IsPlural() ? "identities" : "identity"; //from members, want distinct + nothing in members table except for members.
@@ -42,7 +46,7 @@ namespace Jde::Access::Server{
 			//queries:  `groups{ id }` and `group(slug:"x"){ id }` used to come back empty whatever the table held.  So does a filter past
 			//the key:  `group(id:5, deleted:null)` has to find the group, or a deleted one's members came back under it.
 			let query = !_query.Columns.empty();
-			auto groups = query ? co_await QL::QLAwait( move(_query), _executer, _sl ) : _query.DefaultResult();
+			auto groups = query ? co_await QL::QLAwait( move(_query), system, _sl ) : _query.DefaultResult();
 			if( query && !plural && (groups.is_null() || (groups.is_object() && groups.get_object().empty())) ){//no group, so no members to hang on it
 				Resume( move(groups) );
 				co_return;
@@ -52,7 +56,7 @@ namespace Jde::Access::Server{
 				if( haveId )
 					membersQL->EraseColumn( "id" );
 				auto statement = MembersStatement( *membersQL, move(groupWhere) );
-				auto membersResult = co_await QL::QLAwait( move(*membersQL), move(statement), _executer, _sl );
+				auto membersResult = co_await QL::QLAwait( move(*membersQL), move(statement), system, _sl );
 				if( membersResult.is_array() )
 					members = move( membersResult.get_array() );
 				else if( membersResult.is_object() )

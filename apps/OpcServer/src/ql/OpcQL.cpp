@@ -8,15 +8,15 @@ namespace Jde::Opc{
 	α Server::QLPtr()ι->sp<OpcQL>{ ASSERT(_ql); return _ql; }
 	α Server::QL()ι->OpcQL&{ return *QLPtr(); }
 	α Server::Schemas()ι->const vector<sp<DB::AppSchema>>&{ return QL().Schemas(); }
-	α Server::ConfigureQL( sp<DB::AppSchema> schema, sp<Access::Authorize> authorizer )ι->void{
+	α Server::ConfigureQL( sp<DB::AppSchema> schema, sp<Access::Authorize> authorizer, string logSchema )ι->void{
 		QL::Configure( {schema} );
-		_ql = ms<OpcQL>( move(schema), authorizer );
+		_ql = ms<OpcQL>( move(schema), authorizer, move(logSchema) );
 	}
 }
 
 namespace Jde::Opc::Server{
-	OpcQL::OpcQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer )ι:
-		App::AppQL{ {move(schema)}, move(authorizer) }{
+	OpcQL::OpcQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer, string logSchema )ι:
+		App::AppQL{ {move(schema)}, move(authorizer), move(logSchema) }{
 		//QL::Configure is done once by ConfigureQL (the only construction site) before this runs; calling it here again was redundant.
 	}
 
