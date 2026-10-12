@@ -97,6 +97,17 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, executer, sl );
 	}
+	α Authorize::TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+		if( executer.Value==UserPK::System )
+			return;
+		rl _{ Mutex };
+		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, criteria );
+		if( !resourcePK && criteria.size() )
+			resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );
+		let name = criteria.size() ? Ƒ( "{}[{}]", resourceName, criteria ) : resourceName;
+		THROW_IFX( !resourcePK, Access::AccessException(sl, executer, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name) );
+		TestRights( *resourcePK, name, rights, executer, sl );
+	}
 	//FindUserLocked's error as the exception:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
 	[[noreturn]] Ω throwUserStatus( EHttpStatus status, UserPK executer, SL sl )ε->void{
 		if( status==EHttpStatus::Unauthorized )

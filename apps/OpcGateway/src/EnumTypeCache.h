@@ -35,6 +35,7 @@ namespace Jde::Opc::Gateway{
 		};
 		α Get( sp<UAClient> client, NodeId id, SRCE )ι->GetAwait{ return GetAwait{*this, move(client), move(id), sl}; }
 		α Find( const NodeId& id )Ι->Ptr;	//a Ready entry, else null.
+		α Refused( const NodeId& id )Ι->bool;	//a Failed entry:  the server's own answer that id is no enumeration, which Get rethrows as it rethrows a lost one.
 		α Size()Ι->size_t{ rl _{_mutex}; return _slots.size(); }
 		Ω SourceName( ESource s )ι->sv;
 	private:

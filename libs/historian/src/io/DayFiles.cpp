@@ -202,10 +202,13 @@ namespace Jde::Opc::Hist{
 		case HistoryRecord::kNodeAdded:{
 			let index = r.node_added().node_index();
 			members.insert_or_assign( index, ProtoUtils::ToExNodeId(r.node_added().node()) );
+			if( let type = r.node_added().data_type() )//one with none, a later preamble record a correction wrote first, leaves it.
+				_restored.DataTypes.insert_or_assign( index, type );
 			next = std::max<NodeIndex>( next, (NodeIndex)index+1 );//one issued after the file's FileStart was written.
 			break;}
 		case HistoryRecord::kNodeRemoved:
 			members.erase( r.node_removed().node_index() );
+			_restored.DataTypes.erase( r.node_removed().node_index() );
 			break;
 		default:
 			break;
@@ -289,12 +292,13 @@ namespace Jde::Opc::Hist{
 		return files.emplace( day, move(file) ).first->second;
 	}
 
-	α GroupFiles::Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart )Ε->HistoryRecord{
+	α GroupFiles::Added( NodeIndex index, const Membership::Node& node, Ticks start, const Membership& members, bool withStart )Ε->HistoryRecord{
 		HistoryRecord y;
 		auto& added = *y.mutable_node_added();
 		added.set_node_index( (uint32_t)index );
-		*added.mutable_node() = ProtoUtils::ToExNodeId( node );
+		*added.mutable_node() = ProtoUtils::ToExNodeId( node.Id );
 		added.set_ts( start );
+		added.set_data_type( BuiltIn(node.DataType) );
 		if( !withStart )
 			return y;
 		//Its last record before the day:  the node's newest when that is before it, and otherwise, for a file made after
@@ -389,6 +393,8 @@ namespace Jde::Opc::Hist{
 					let [p, added] = members.try_emplace( r.node_added().node_index(), head.size() );
 					if( !added ){
 						auto& kept = *head[p->second].mutable_node_added();
+						if( let type = r.node_added().data_type() )
+							kept.set_data_type( type );
 						if( r.node_added().has_start() )
 							*kept.mutable_start() = move( *r.mutable_node_added()->mutable_start() );
 						else
@@ -501,7 +507,7 @@ namespace Jde::Opc::Hist{
 			if( known.Mapped.contains(index) || !mapped.insert(index).second )
 				continue;
 			if( let node = members.Find(index); node ){
-				run.push_back( Added(index, node->Id, start, members) );
+				run.push_back( Added(index, *node, start, members) );
 				if( node->Left ){//as a copy of its NodeRemoved goes to a later file there already was.
 					HistoryRecord removed;
 					removed.mutable_node_removed()->set_node_index( (uint32_t)index );
@@ -924,7 +930,7 @@ namespace Jde::Opc::Hist{
 				if( startTime && *startTime==time && (bool)start==(bool)value && (!value || Same(*start, *value)) )
 					continue;//copies the record itself:  made in this flush, after it was written.
 				if( let node = members.Find(index); node ){
-					auto record = Added( index, node->Id, StartOf(*later, _tz), members, false );
+					auto record = Added( index, *node, StartOf(*later, _tz), members, false );
 					if( value ){
 						*record.mutable_node_added()->mutable_start() = *value;
 						record.mutable_node_added()->mutable_start()->clear_node_index();

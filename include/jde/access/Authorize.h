@@ -20,6 +20,9 @@ namespace Jde::Access{
 		//row when there is one, else the slug's root, which an unmapped criteria inherits, as TestAdminLocal resolves the admin
 		//check.  Neither active = not enforced, passes as Test does.
 		α Test( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SRCE )ε->void;
+		//Its required form, for what an open install doesn't allow - a group's history edits (spec *Authorization*):  as Test, but
+		//Forbidden where neither row is active, which Test passes.  The system user passes.
+		α TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SRCE )ε->void;
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;

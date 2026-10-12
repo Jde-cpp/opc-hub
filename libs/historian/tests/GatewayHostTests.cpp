@@ -1,7 +1,7 @@
 //The gateway's shape:  many groups named by guid, node_indexes that are hist_group_nodes row ids, thresholds the host
 //resolves, a writer on every membership change, and connections that break.
 #include <thread>
-#include "hosts.h"
+#include "dayFiles.h"
 
 #define let const auto
 
@@ -259,6 +259,67 @@ namespace Jde::Opc::Hist::Tests{
 		group->Connected();
 		Time->Advance( 1h );
 		EXPECT_EQ( group->FindBreak(Join(*group, "Pump1.Flow")), broke );
+	}
+
+	//The type a group edit's json value takes (spec *Edits*):  that of the values the node stored, kept past a marker, and
+	//after a restart its newest record's.  None for a node that stored no value, or isn't a member.
+	TEST_F( GatewayHost, DataTypeOfStoredValues ){
+		auto group = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 102}} );
+		EXPECT_FALSE( group->DataType(101) );
+		EXPECT_FALSE( group->DataType(999) );
+		let delivered = Time->Now();
+		DataChange( *group, 101, 1750, delivered );
+		EXPECT_EQ( group->DataType(101), &UA_TYPES[UA_TYPES_DOUBLE] );
+		group->Disconnected( Time->Now() );
+		group->Connected();
+		Time->Advance( 1s );
+		DataChange( *group, 101, 1740, delivered-1min );//earlier than the last delivered:  the marker alone.
+		ASSERT_EQ( Records<DataValue>().back().Data.status, UA_STATUSCODE_BADDATALOST );
+		EXPECT_EQ( group->DataType(101), &UA_TYPES[UA_TYPES_DOUBLE] ) << "kept past the marker";
+		DataChange( *group, 102, 3, Time->Now() );
+
+		group.reset();
+		Restart();
+		auto restarted = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 101}, {Node("Pump1.Flow"), {}, 102}} );
+		EXPECT_EQ( restarted->DataType(102), &UA_TYPES[UA_TYPES_DOUBLE] ) << "its newest record's";
+		EXPECT_FALSE( restarted->DataType(101) ) << "a marker newest holds no type to restart from";
+	}
+
+	//The type the host read from a node's DataType goes before that of its stored values, and into each file's NodeAdded
+	//of the node, so a start has it whatever the node's newest record is, or with none.
+	TEST_F( GatewayHost, DeclaredDataType ){
+		auto group = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 201, &UA_TYPES[UA_TYPES_DURATION]}, {Node("Pump1.Flow"), {}, 202}} );
+		EXPECT_EQ( group->DataType(201), &UA_TYPES[UA_TYPES_DOUBLE] ) << "a subtype's base";
+		EXPECT_FALSE( group->DataType(202) );
+		EXPECT_TRUE( group->SetDataType(202, &UA_TYPES[UA_TYPES_NODECLASS]) );
+		EXPECT_EQ( group->DataType(202), &UA_TYPES[UA_TYPES_INT32] ) << "an enumeration's Int32";
+		EXPECT_FALSE( group->SetDataType(999, &UA_TYPES[UA_TYPES_DOUBLE]) );
+		DataChange( *group, 202, 3, Time->Now() );
+		EXPECT_EQ( group->DataType(202), &UA_TYPES[UA_TYPES_INT32] ) << "over the Double it stored";
+		let level = Join( *group, "Pump1.Level" );
+		EXPECT_TRUE( group->SetDataType(level, &UA_TYPES[UA_TYPES_FLOAT]) );
+		ASSERT_TRUE( Flush(*group) );
+		let typesIn = [&]( Day day ){
+			flat_map<NodeIndex,uint32_t> y;
+			for( let& r : readFile(Path()/DayDirectory(day)/"pump1.binpb") ){
+				if( r.has_node_added() )
+					y.emplace( r.node_added().node_index(), r.node_added().data_type() );
+			}
+			return y;
+		};
+		const flat_map<NodeIndex,uint32_t> expected{ {201, UA_TYPES_DOUBLE+1}, {202, UA_TYPES_INT32+1}, {level, UA_TYPES_FLOAT+1} };
+		EXPECT_EQ( typesIn(March7), expected ) << "each join's, a SetDataType before the flush included";
+		DataChange( *group, 202, 4, sys_days{March8}+12h );
+		ASSERT_TRUE( Flush(*group) );
+		EXPECT_EQ( typesIn(March8), expected ) << "the next file's preamble";
+
+		group.reset();
+		Restart();
+		auto restarted = _group = Library->AddGroup( {.Name="pump1"}, {{Node("Pump1.Speed"), {}, 201}, {Node("Pump1.Flow"), {}, 202}, {Node("Pump1.Level"), {}, level}} );
+		EXPECT_EQ( restarted->DataType(201), &UA_TYPES[UA_TYPES_DOUBLE] ) << "with no value stored";
+		EXPECT_EQ( restarted->DataType(202), &UA_TYPES[UA_TYPES_INT32] ) << "over its newest record's Double";
+		EXPECT_TRUE( restarted->SetDataType(level, &UA_TYPES[UA_TYPES_VARIANT]) );
+		EXPECT_FALSE( restarted->DataType(level) ) << "BaseDataType's, abstract, declares none";
 	}
 
 	//Each connection's strand enqueues into its own groups at once.

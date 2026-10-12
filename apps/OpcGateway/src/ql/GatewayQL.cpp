@@ -1,5 +1,6 @@
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
+#include "HistGroupEditQLAwait.h"
 #include "HistGroupQLAwait.h"
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"
@@ -33,6 +34,8 @@ namespace Jde::Opc::Gateway{
 		if( auto await = LogSettingsMutation(m, executer, AppClient(), sl); await )
 			return await;
 		if( auto await = HistGroupMAwait::Test(m, executer, sl); await )
+			return await;
+		if( auto await = HistGroupEditQLAwait::Test(m, executer, sl); await )
 			return await;
 		return GatewayQLMAwait::Test( m, executer, sl );
 	}

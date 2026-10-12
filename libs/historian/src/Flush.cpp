@@ -188,16 +188,16 @@ namespace Jde::Opc::Hist{
 		Membership members;
 		members.Current = [this]{
 			ul _{ _mutex };
-			vector<std::pair<NodeIndex,ExNodeId>> y;
+			vector<std::pair<NodeIndex,Membership::Node>> y;
 			y.reserve( _nodes.size() );
 			for( let& [index,node] : _nodes )
-				y.emplace_back( index, node.Id );
+				y.emplace_back( index, Membership::Node{node.Id, false, node.Declared} );
 			return y;
 		};
 		members.Find = [this]( NodeIndex index )->optional<Membership::Node> {
 			ul _{ _mutex };
 			if( auto p = _nodes.find(index); p!=_nodes.end() )
-				return Membership::Node{ p->second.Id, false };
+				return Membership::Node{ p->second.Id, false, p->second.Declared };
 			auto p = _gone.find( index );
 			return p==_gone.end() ? optional<Membership::Node>{} : Membership::Node{ p->second, true };
 		};

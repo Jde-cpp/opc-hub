@@ -128,6 +128,7 @@ namespace Jde::Opc::Hist{
 				e.SetLevel( ELogLevel::Warning );
 				return;
 			}
+			node.Type = node.Stored->value.type;
 			node.ValueTs = newest.has_heartbeat() ? newest.heartbeat() : primary;
 			if( newest.has_heartbeat() )//as the value it repeats came:  the record's own times are the timer's.
 				node.Stored->hasSourceTimestamp = !newest.heartbeat_unsourced();
@@ -143,7 +144,10 @@ namespace Jde::Opc::Hist{
 				auto node = Normalize( member, sl );
 				if( auto p = restored.Members.find(node); p!=restored.Members.end() && (Issued() || p->second==member.Index) ){
 					kept.emplace( p->second );
-					let index = Insert( move(node), move(member.Config), p->second, sl );
+					auto type = member.DataType;
+					if( auto t = restored.DataTypes.find(p->second); !type && t!=restored.DataTypes.end() )
+						type = BuiltInType( t->second );
+					let index = Insert( move(node), move(member.Config), p->second, type, sl );
 					//The stop or the crash is its break, unless the files hold nothing of it:  there was no value to lose.
 					if( let newest = _files->Newest(index) ){
 						auto& known = _nodes.find( index )->second;
@@ -152,9 +156,9 @@ namespace Jde::Opc::Hist{
 					}
 				}
 				else{
-					let index = Insert( node, move(member.Config), member.Index, sl );
+					let index = Insert( node, move(member.Config), member.Index, member.DataType, sl );
 					THROW_IFSL( restoredIndexes.contains(index), "Group '{}' cannot give '{}' node_index {}: its files have it as another node's.", Name(), node.ToString(), index );
-					added.push_back( {index, move(node), now, {}} );
+					added.push_back( {index, move(node), now, {}, _nodes.find(index)->second.Declared} );
 				}
 			}
 			//Nothing throws from here, so what is buffered is counted once.
@@ -188,7 +192,7 @@ namespace Jde::Opc::Hist{
 		validate( node, member.Config, sl );
 		return node;
 	}
-	α Group::Insert( ExNodeId node, Thresholds config, NodeIndex index, SL sl )ε->NodeIndex{
+	α Group::Insert( ExNodeId node, Thresholds config, NodeIndex index, const UA_DataType* type, SL sl )ε->NodeIndex{
 		THROW_IFSL( _indexes.contains(node), "'{}' is already in group '{}'.", node.ToString(), Name() );
 		if( !index )
 			index = _nextIndex++;
@@ -199,7 +203,7 @@ namespace Jde::Opc::Hist{
 			rejoin = p->second;
 			_left.erase( p );
 		}
-		_nodes.emplace( index, Node{move(node), move(config), rejoin} );
+		_nodes.emplace( index, Node{move(node), move(config), rejoin} ).first->second.Declared = BuiltInType( BuiltIn(type) );
 		return index;
 	}
 
@@ -249,8 +253,8 @@ namespace Jde::Opc::Hist{
 		{
 			ul _{ _mutex };
 			THROW_IFSL( _closed || _stopped, "Group '{}' was removed.", Name() );
-			index = Insert( node, move(member.Config), member.Index, sl );
-			pushing = Push( NodeAdded{index, move(node), now, move(by)}, size );
+			index = Insert( node, move(member.Config), member.Index, member.DataType, sl );
+			pushing = Push( NodeAdded{index, move(node), now, move(by), _nodes.find(index)->second.Declared}, size );
 		}
 		Pushed( pushing );
 		return index;
@@ -307,6 +311,27 @@ namespace Jde::Opc::Hist{
 		ul _{ _mutex };
 		auto p = _indexes.find( key );
 		return p==_indexes.end() ? optional<NodeIndex>{} : p->second;
+	}
+	α Group::SetDataType( NodeIndex index, const UA_DataType* type )ι->bool{
+		type = BuiltInType( BuiltIn(type) );
+		ul _{ _mutex };
+		auto p = _nodes.find( index );
+		if( p==_nodes.end() )
+			return false;
+		if( std::exchange(p->second.Declared, type)!=type ){
+			for( auto& change : _changes | std::views::reverse ){//its join, while no flush has taken it.
+				if( auto added = get_if<NodeAdded>(&change.Item); added && added->Index==index ){
+					added->DataType = type;
+					break;
+				}
+			}
+		}
+		return true;
+	}
+	α Group::DataType( NodeIndex index )Ι->const UA_DataType*{
+		ul _{ _mutex };
+		auto p = _nodes.find( index );
+		return p==_nodes.end() ? nullptr : p->second.Declared ? p->second.Declared : p->second.Type;
 	}
 
 	α Group::Enqueue( NodeIndex index, const UA_DataValue& value )ι->bool{
@@ -418,6 +443,8 @@ namespace Jde::Opc::Hist{
 			std::swap( node.Stored, arrival.Kept );
 		else
 			remember( node.Stored, arrival.Data );
+		if( node.Stored->value.type )
+			node.Type = node.Stored->value.type;
 		node.Marked = false;
 		node.ValueTs = time;
 		node.Keep( time );

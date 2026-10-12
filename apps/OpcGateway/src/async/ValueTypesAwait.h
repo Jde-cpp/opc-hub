@@ -11,6 +11,7 @@ namespace Jde::Opc::Gateway{
 	struct ValueTypes final{
 		vector<const UA_DataType*> Types;
 		vector<StatusCode> Statuses;
+		vector<optional<NodeId>> DataTypes;//each node's DataType attribute:  none where its read was refused.
 	};
 	struct ValueTypesAwait final : AnyAwait<ValueTypes>{
 		ValueTypesAwait( vector<NodeId> nodes, sp<UAClient> client, SRCE )ι:AnyAwait<ValueTypes>{sl}, _nodes{move(nodes)}, _client{move(client)}{}

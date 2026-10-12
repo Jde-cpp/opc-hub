@@ -7,6 +7,7 @@
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/ql/types/TableQL.h>
+#include "../hist/HistRows.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -38,22 +39,34 @@ namespace Jde::Opc::Gateway{
 	α HistQL::Mode( const QL::Input& input )ι->EMode{
 		return given( input, "times" ) ? EMode::AtTime : given( input, "aggregate" ) || given( input, "interval" ) ? EMode::Processed : EMode::Raw;
 	}
-namespace HistQL{
-	Args::Args( const QL::Input& input, SL sl )ε:
-		Mode{ HistQL::Mode(input) }{
-		let opc = input.FindPtr<jstring>( "opc" );
-		let group = input.FindPtr<jvalue>( "group" );
-		THROW_IFSL( !opc || (group && !group->is_null()), "history takes exactly one of 'opc' and 'group'." );
-		Opc = *opc;
+	α HistQL::Target( const QL::Input& input )ι->ETarget{
+		let opc = input.FindPtr<jstring>( "opc" )!=nullptr, group = given( input, "group" );
+		return opc==group ? ETarget::Neither : opc ? ETarget::Opc : ETarget::Group;
+	}
+	α HistQL::TargetRefused( sv command, SL sl )ι->Exception{
+		return Exception{ sl, {}, "{} takes exactly one of 'opc' and 'group'.", command };
+	}
+	//A group's hist_groups id.
+	Ω groupId( const QL::Input& input, sv command, SL sl )ε->uint32{
+		let id = input.FindPtr<jvalue>( "group" )->try_to_number<uint32>();
+		if( !id )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}:  'group' is a hist_groups id, not {}.", command, serialize(*input.FindPtr<jvalue>("group")) };
+		return *id;
+	}
+	//Each of `nodes`, an array or one.
+	Ω eachNode( const QL::Input& input, sv command, SL sl, auto&& add )ε->void{
 		let nodes = input.FindPtr<jvalue>( "nodes" );
-		THROW_IFSL( !nodes || nodes->is_null(), "history names no nodes." );
+		THROW_IFSL( !nodes || nodes->is_null(), "{} names no nodes.", command );
 		if( nodes->is_array() ){
 			for( let& j : nodes->get_array() )
-				Nodes.push_back( node(j) );
+				add( j );
 		}
 		else
-			Nodes.push_back( node(*nodes) );
-		THROW_IFSL( Nodes.empty(), "history names no nodes." );
+			add( *nodes );
+	}
+namespace HistQL{
+	ReadArgs::ReadArgs( const QL::Input& input, SL sl )ε:
+		Mode{ HistQL::Mode(input) }{
 		Start = time( input, "start", sl );
 		End = time( input, "end", sl );
 		Modified = input.Find<bool>( "modified" ).value_or( false );
@@ -84,10 +97,39 @@ namespace HistQL{
 		let readLimit = ReadLimit();
 		let limit = input.TryNumber<uint>( "limit" ).value_or( 0 );
 		Limit = limit && limit<readLimit ? limit : readLimit;
+	}
+	Args::Args( const QL::Input& input, SL sl )ε:
+		ReadArgs{ input, sl }{
+		if( Target(input)!=ETarget::Opc )
+			throw TargetRefused( "history", sl );
+		Opc = *input.FindPtr<jstring>( "opc" );
+		eachNode( input, "history", sl, [this]( const jvalue& j ){ Nodes.push_back( node(j) ); } );
+		THROW_IFSL( Nodes.empty(), "history names no nodes." );
 		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() ){
 			Continuation = Decode( *c, Crc(), Nodes.size(), sl );
 			if( Mode!=EMode::Raw && Continuation->next()>=Count() )
 				throw invalid( "The continuation isn't one of the gateway's.", sl );
+		}
+	}
+	GroupArgs::GroupArgs( const QL::Input& input, SL sl )ε:
+		ReadArgs{ input, sl }{
+		if( Target(input)!=ETarget::Group )
+			throw TargetRefused( "history", sl );
+		Group = groupId( input, "history", sl );
+		eachNode( input, "history", sl, [&]( const jvalue& j ){
+			auto node = ParseHistNode( j, sl );
+			if( std::ranges::find(Nodes, node)!=Nodes.end() )
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "history names '{}' twice.", node.ToString() };
+			Nodes.push_back( move(node) );
+		} );
+		THROW_IFSL( Nodes.empty(), "history names no nodes." );
+		if( let c = input.FindPtr<jstring>("continuation"); c && c->size() ){
+			try{
+				Continuation = Str::Decode64( *c, true, sl );
+			}
+			catch( const Exception& ){
+				throw invalid( "The continuation isn't one of the gateway's.", sl );
+			}
 		}
 	}
 	α Args::Crc()Ι->uint32_t{
@@ -114,15 +156,22 @@ namespace HistQL{
 		return IO::Crc::Calc32c( bytes );
 	}
 	//An interval Hist::ToDuration refuses, 9e12 ms or more, is one over the whole range, as 0 is.
-	Ω intervals( const Args& a )ι->Hist::Intervals{ return Hist::Intervals{ a.Range(), Hist::ToDuration(a.Interval).value_or(Duration::zero()) }; }
-	α Args::Width()Ι->uint64_t{ return intervals( *this ).Width; }
-	α Args::Uneven()Ι->bool{ return intervals( *this ).Uneven(); }
-	α Args::Count()Ι->uint64_t{
+	Ω intervals( const ReadArgs& a )ι->Hist::Intervals{ return Hist::Intervals{ a.Range(), Hist::ToDuration(a.Interval).value_or(Duration::zero()) }; }
+	α ReadArgs::Width()Ι->uint64_t{ return intervals( *this ).Width; }
+	α ReadArgs::Uneven()Ι->bool{ return intervals( *this ).Uneven(); }
+	α ReadArgs::Count()Ι->uint64_t{
 		if( Mode==EMode::AtTime )
 			return Times.size();
 		return Mode==EMode::Processed && Start && End ? intervals( *this ).Count : 0;
 	}
 }
+	α HistQL::FindAggregate( sv name )ι->optional<Hist::EAggregate>{
+		using enum Hist::EAggregate;
+		constexpr std::array<std::pair<sv,Hist::EAggregate>,10> names{ {{"Interpolative", Interpolative}, {"Average", Average}, {"TimeAverage", TimeAverage}, {"Count", Count},
+			{"Minimum", Minimum}, {"Maximum", Maximum}, {"Start", Start}, {"End", End}, {"StandardDeviationSample", StandardDeviationSample}, {"Median", Median}} };
+		let p = std::ranges::find( names, name, &std::pair<sv,Hist::EAggregate>::first );
+		return p==names.end() ? nullopt : optional<Hist::EAggregate>{ p->second };
+	}
 	α HistQL::FindEdit( sv command )ι->optional<EEdit>{
 		for( uint8 i=0; i<EditCommands.size(); ++i ){
 			if( EditCommands[i]==command )
@@ -130,20 +179,49 @@ namespace HistQL{
 		}
 		return nullopt;
 	}
-	α HistQL::Target( const QL::Input& input )ι->ETarget{
-		let group = input.FindPtr<jvalue>( "group" );
-		let opc = input.FindPtr<jstring>( "opc" )!=nullptr, named = group && !group->is_null();
-		return opc==named ? ETarget::Neither : opc ? ETarget::Opc : ETarget::Group;
+	α HistQL::PerformType( EEdit edit )ι->UA_PerformUpdateType{
+		return edit==EEdit::Insert ? UA_PERFORMUPDATETYPE_INSERT : edit==EEdit::Replace ? UA_PERFORMUPDATETYPE_REPLACE : UA_PERFORMUPDATETYPE_UPDATE;
 	}
 	α HistQL::TargetRefused( EEdit edit, SL sl )ι->Exception{
-		return Exception{ sl, {}, "{} takes exactly one of 'opc' and 'group'.", EditCommands[(uint8)edit] };
+		return TargetRefused( EditCommands[(uint8)edit], sl );
+	}
+	α HistQL::ToValue( const EditValue& e, sv node, const UA_DataType* type, sv command, SL sl )ε->Value{
+		let typed = [&]()ε->Value{
+			if( e.Data.is_null() )
+				return Value{ e.Status.value_or(UA_STATUSCODE_GOOD) };
+			try{
+				return Value{ e.Data, type, sl };
+			}
+			catch( const std::exception& x ){
+				if( type )
+					throw Exception{ sl, {}, "{}:  {}'s value {} isn't a {}:  {}", command, node, serialize(e.Data), type->typeName, x.what() };
+				throw Exception{ sl, {}, "{}:  {}'s value {} implies no type:  {}", command, node, serialize(e.Data), x.what() };
+			}
+		};
+		Value y = typed();
+		y.hasStatus = e.Status.has_value();
+		y.status = e.Status.value_or( UA_STATUSCODE_GOOD );
+		if( e.Source ){
+			y.sourceTimestamp = *e.Source;
+			y.hasSourceTimestamp = true;
+		}
+		if( e.Server ){
+			y.serverTimestamp = *e.Server;
+			y.hasServerTimestamp = true;
+		}
+		return y;
 	}
 namespace HistQL{
 	EditArgs::EditArgs( EEdit edit, const QL::Input& input, SL sl )ε:
-		Edit{ edit }{
-		if( Target(input)!=ETarget::Opc )//a group's edit doesn't reach here until Phase 5.
+		Edit{ edit },
+		Target{ HistQL::Target(input) }{
+		if( Target==ETarget::Neither )
 			throw TargetRefused( edit, sl );
-		Opc = *input.FindPtr<jstring>( "opc" );
+		if( Target==ETarget::Opc )
+			Opc = *input.FindPtr<jstring>( "opc" );
+		else
+			Group = groupId( input, Command(), sl );
+		let parse = [this, sl]( const jvalue& j ){ return Target==ETarget::Opc ? ExNodeId{ node(j) } : ParseHistNode( j, sl ); };
 		if( edit<EEdit::Purge ){
 			let values = input.FindPtr<jvalue>( "values" );
 			THROW_IFSL( !values || !values->is_array() || values->get_array().empty(), "{} names no values.", Command() );
@@ -152,18 +230,11 @@ namespace HistQL{
 				let n = o.if_contains( "node" );
 				THROW_IFSL( !n || n->is_null(), "{}:  a value names no node.", Command() );
 				let data = o.if_contains( "value" );
-				Values.push_back( {Slot(node(*n)), data ? *data : jvalue{}, time(o.if_contains("source"), sl), time(o.if_contains("server"), sl), status(o.if_contains("status"), Command(), sl)} );
+				Values.push_back( {Slot(parse(*n)), data ? *data : jvalue{}, time(o.if_contains("source"), sl), time(o.if_contains("server"), sl), status(o.if_contains("status"), Command(), sl)} );
 			}
 			return;
 		}
-		let nodes = input.FindPtr<jvalue>( "nodes" );
-		THROW_IFSL( !nodes || nodes->is_null(), "{} names no nodes.", Command() );
-		if( nodes->is_array() ){
-			for( let& j : nodes->get_array() )
-				Slot( node(j) );
-		}
-		else
-			Slot( node(*nodes) );
+		eachNode( input, Command(), sl, [&]( const jvalue& j ){ Slot( parse(j) ); } );
 		THROW_IFSL( Nodes.empty(), "{} names no nodes.", Command() );
 		let start = time( input, "start", sl ), end = time( input, "end", sl );
 		if( let times = input.FindPtr<jvalue>("times"); times && !times->is_null() ){//DeleteAtTime, else DeleteRawModified.
@@ -177,12 +248,18 @@ namespace HistQL{
 			Start = *start; End = *end;
 		}
 	}
-	α EditArgs::Slot( NodeId&& node )ι->uint{
+	α EditArgs::Slot( ExNodeId&& node )ι->uint{
 		let p = std::ranges::find( Nodes, node );
 		if( p!=Nodes.end() )
 			return p-Nodes.begin();
 		Nodes.push_back( move(node) );
 		return Nodes.size()-1;
+	}
+	α EditArgs::NodeIds()Ι->vector<NodeId>{
+		vector<NodeId> y; y.reserve( Nodes.size() );
+		for( let& node : Nodes )
+			y.emplace_back( node.nodeId );
+		return y;
 	}
 }
 	α HistQL::ReadLimit()ι->uint{
@@ -210,14 +287,14 @@ namespace HistQL{
 
 	Ω timeJson( bool has, UA_DateTime t )ι->jvalue{ return has ? jvalue{ UADateTime{t}.ToJson() } : jvalue{}; }
 	//nodes{ node status }, each node's status as the server answered it, Good where none is given.
-	Ω nodesJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<StatusCode>& statuses )ι->jarray{
+	Ω nodesJson( const QL::TableQL& ql, const vector<jvalue>& nodes, const vector<StatusCode>& statuses )ι->jarray{
 		let wantNode = ql.FindColumn("node") || ql.FindTable("node");
 		let wantStatus = ql.FindColumn( "status" );
 		jarray rows; rows.reserve( nodes.size() );
 		for( uint i=0; i<nodes.size(); ++i ){
 			jobject row;
 			if( wantNode )
-				row["node"] = nodes[i].ToJson();
+				row["node"] = nodes[i];
 			if( wantStatus )
 				row["status"] = i<statuses.size() ? statuses[i] : UA_STATUSCODE_GOOD;
 			rows.push_back( move(row) );
@@ -233,7 +310,7 @@ namespace HistQL{
 		default: return "Unknown";
 		}
 	}
-	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
 		jobject y;
 		if( ql.FindColumn("continuation") )
 			y["continuation"] = continuation.size() ? jvalue{ continuation } : jvalue{};
@@ -246,7 +323,7 @@ namespace HistQL{
 			for( auto& v : values ){
 				jobject row;
 				if( wantNode )
-					row["node"] = nodes[v.Slot].ToJson();
+					row["node"] = nodes[v.Slot];
 				if( wantSource )
 					row["source"] = timeJson( v.Data.hasSourceTimestamp, v.Data.sourceTimestamp );
 				if( wantServer )
@@ -277,7 +354,10 @@ namespace HistQL{
 			y["nodes"] = nodesJson( *nodesQL, nodes, statuses );
 		return y;
 	}
-	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue{
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
+		return ToJson( ql, NodesJson(nodes), move(values), continuation, statuses );
+	}
+	α HistQL::ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue{
 		jobject y;
 		if( let valuesQL = ql.FindTable("values"); valuesQL ){
 			let wantNode = valuesQL->FindColumn("node") || valuesQL->FindTable("node");
@@ -286,7 +366,7 @@ namespace HistQL{
 			for( let& v : values ){
 				jobject row;
 				if( wantNode )
-					row["node"] = nodes[v.Slot].ToJson();
+					row["node"] = nodes[v.Slot];
 				if( wantSource )
 					row["source"] = timeJson( v.Time.has_value(), v.Time.value_or(0) );
 				if( wantStatus )

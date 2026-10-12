@@ -30,14 +30,15 @@ namespace Jde::Opc::Hist{
 	//flush, which is its break when the process stopped or crashed.
 	struct Restored final{
 		flat_map<ExNodeId,NodeIndex> Members;
+		flat_map<NodeIndex,uint32_t> DataTypes;//each member's NodeAdded data_type that wasn't 0.
 		NodeIndex NextIndex{ 1 };
 		optional<TimePoint> Flushed;
 	};
 
 	//What a file asks of its group's membership as it is written.
 	struct Membership final{
-		std::function<vector<std::pair<NodeIndex,ExNodeId>>()> Current;//every member, in index order:  a new file's preamble.
-		struct Node final{ ExNodeId Id; bool Left; };
+		struct Node final{ ExNodeId Id; bool Left; const UA_DataType* DataType{}; };//none for one that left.
+		std::function<vector<std::pair<NodeIndex,Node>>()> Current;//every member, in index order:  a new file's preamble.
 		std::function<optional<Node>( NodeIndex )> Find;//a member's, or that of one that left.
 		NodeIndex NextIndex{};//what an Issued group issues next, which a new file's FileStart carries forward; else 0.
 		//The node's last record at or before through, as a read serves it, the edits applied:  the walk back, for a start
@@ -253,7 +254,7 @@ namespace Jde::Opc::Hist{
 		//A member's preamble record for a file of day:  with its start value, its last record before the day, from _last or
 		//the walk back, unless withStart is false, as a modifications file's take none.  Throws when the walk back can't read
 		//a file through.
-		α Added( NodeIndex index, const ExNodeId& node, Ticks start, const Membership& members, bool withStart=true )Ε->Proto::HistoryRecord;
+		α Added( NodeIndex index, const Membership::Node& node, Ticks start, const Membership& members, bool withStart=true )Ε->Proto::HistoryRecord;
 
 		const fs::path _root;
 		const string _name;

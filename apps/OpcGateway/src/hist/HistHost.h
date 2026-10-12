@@ -38,7 +38,7 @@ namespace Jde::Opc::Gateway{
 	//The gateway's historian (spec *Placement*, *Collection*, *Templates*):  the library over /gateway/hist, one HistGroupHost
 	//per hist_groups row, loaded at start and kept in step with the tables by HistGroupMAwait, whose live side runs here.  Without
 	//a hist block, or with another process holding the lock under its path, the tables still work and nothing is stored or
-	//monitored, as the host's reads and /hist then answer with an error (5c).
+	//monitored, as a group's reads and edits then answer with an error (TestEnabled).
 	struct HistHost final : noncopyable{
 		Ω Instance()ι->HistHost&;
 		//The settings, the library, the groups the tables hold and their items.  Blocks on the load:  Gateway::Connect's thread.
@@ -47,6 +47,9 @@ namespace Jde::Opc::Gateway{
 		//the UA clients go, while the executor still runs.
 		α Stop()ι->void;
 		α Enabled()Ι->bool{ auto historian = Historian(); return historian && historian->Enabled(); }
+		//What a group's history fields answer while the gateway runs without its historian (spec *Day files*):  ServiceUnavailable,
+		//saying why - no hist block, another process holding the lock, or the gateway's end.  The tables still answer.
+		α TestEnabled( SRCE )Ε->void;
 		α Historian()Ι->sp<Opc::Hist::Historian>{ lg _{ _mutex }; return _historian; }
 		α Find( HistGroupPK id )Ι->sp<HistGroupHost>;
 		α Groups()Ι->vector<sp<HistGroupHost>>;
