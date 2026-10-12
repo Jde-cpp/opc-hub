@@ -52,7 +52,7 @@ namespace Jde::Access::Tests{
 	//neither authorized anything, so a child table was readable through a parent the caller could read.
 	//providers{ providerType{} }, not users{ groups{} } or permissionRights{ resource{} }:  Access::Server::CustomQuery intercepts
 	//user*/group*/role*/acl/profiles before SelectAwait ever sees them, so those pairs prove nothing about this path;  and
-	//resources declares Delete/Subscribe alone, so any known user reads it.  providers (its view - the root lets the intruder past) reaches the stock select, and its
+	//resources' Read is open while its row is unenforced, as the suite leaves it.  providers (its view - the root lets the intruder past) reaches the stock select, and its
 	//`providerType` child is the fk join columnSql builds into the same statement, on a table with the default ops.
 	TEST_F( QlViewAuthorizeTests, ChildTableIsAuthorizedToo ){
 		let resource = SelectResource( "providerTypes", GetRoot(), true );

@@ -268,6 +268,14 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_FALSE( isAdmin("readerUser", "ns=4;i=6021") );
 	}
 
+	//The AppServer's read of the live levels for instanceTagLevel's `running` - it answered "Table logSetting not supported",
+	//so the column was always null for an OpcServer.
+	TEST_F( AccessTests, LogSettingQueryFromTheAppServer ){
+		auto q = QL::Parse( "logSetting{ text }", {}, {}, true );//as RunningLevelsAwait sends it:  raw.
+		let y = BlockTAwait<jvalue>( move(*_app->ClientQuery(move(q), Jde::UserPK{})) );
+		EXPECT_TRUE( Json::AsObject(y).contains("text") ) << serialize( y );
+	}
+
 	//the mapping on its own, without a server.
 	TEST( ToAccessTests, GenericRightsTranslateToAccessLevelBits ){
 		static_assert( ToAccess(ERights::All)==EAccess::All );
@@ -284,7 +292,8 @@ namespace Jde::Opc::Server::Tests{
 	//opcserver-review3 #9:  CustomMutation routed every updateLogSetting* straight to the client await with no credential
 	//check, while LogSettingsQuery beside it required a user - so an anonymous POST to /graphql on the web listener rewrote
 	//the live SpdLog/ProtoLog levels and, `persist` defaulting on, had the AppServer store them in instance_tag_levels under
-	//the OpcServer's own identity.  Nothing here resumes an await, so no level moves and no round trip is made.
+	//the OpcServer's own identity.  It is now the opc.<instance>/logs resource's Update, so open to anyone only while that is
+	//unenforced, as here.  Nothing here resumes an await, so no level moves and no round trip is made.
 	struct CustomMutationTests : ::testing::Test{
 	protected:
 		Ω mutation( string commandName )ε->QL::MutationQL{//system: a registered system table resolves against no schema, as QL::Parse admits it.
@@ -305,9 +314,11 @@ namespace Jde::Opc::Server::Tests{
 		}
 	};
 
-	TEST_F( CustomMutationTests, AnonymousLogSettingsIsRefused ){
+	TEST_F( CustomMutationTests, AnonymousLogSettingsRoutesWhileLogsIsUnenforced ){
 		auto m = mutation( "updateLogSetting" );
-		EXPECT_EQ( refusalStatus(m, UserPK{}), EHttpStatus::Unauthorized );//401, not 403: it is about who is asking.
+		auto y = Server::QL().CustomMutation( m, QL::Creds{UserPK{}}, SRCE_CUR );
+		ASSERT_TRUE( y );
+		EXPECT_FALSE( y->await_ready() ) << "an enforced resource refuses it 401 - AppQLTests";
 	}
 	TEST_F( CustomMutationTests, AuthenticatedLogSettingsStillRoutes ){
 		auto m = mutation( "updateLogSetting" );//the AppServer's push arrives this way, carrying the admin who made the change.

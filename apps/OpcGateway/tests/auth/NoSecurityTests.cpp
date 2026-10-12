@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway::Tests{
 	class NoSecurityTests : public ::testing::Test{
 	protected:
 		Ω SetUpTestSuite()->void{
-			let url = Settings::FindSV( "/opc/url" ).value_or( "opc.tcp://127.0.0.1:4840" );
+			let url = Settings::FindSV( "/opc/url" ).value_or( "opc.tcp://127.0.0.1:4940" );
 			_connection = GetConnection( NoSecuritySlug, string{url}, "" );
 			_jwt = BlockAwait<Web::Client::ClientSocketAwait<Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		}

@@ -1,5 +1,6 @@
 #include <jde/web/server/SubscribeLog.h>
 #include <absl/synchronization/mutex.h>
+#include <jde/fwk/process/thread.h>
 #include <jde/ql/types/Subscription.h>
 #include <jde/web/server/IWebsocketSession.h>
 
@@ -44,9 +45,10 @@ namespace Jde::Web::Server{
 		ELogTags Tags{ ELogTags::All };
 	};
 	struct SessionSubscription{
-		SessionSubscription( sp<IWebsocketSession> session, QL::Subscription&& sub )ι:Session{ move(session) },Sub{ move(sub) }{}
+		SessionSubscription( sp<IWebsocketSession> session, QL::Subscription&& sub, function<bool(App::ProgInstPK)> mayRead )ι:Session{ move(session) },Sub{ move(sub) },MayRead{ move(mayRead) }{}
 		sp<IWebsocketSession> Session;
 		LogSubscription Sub;
+		function<bool(App::ProgInstPK)> MayRead;//the Gate's answer for this subscriber;  empty = every entry.
 	};
 
 	absl::Mutex _mutex;
@@ -93,12 +95,31 @@ namespace Jde::Web::Server{
 		}
 	}
 
+	thread_local bool _writing{};
+	SubscribeLog::SubscribeLog( jobject settings, const uint32& appPK, const App::ConnectionPK& connectionPK, Gate gate )ε:
+		ILogger{ move(settings) },
+		_appPK( appPK ),
+		_connectionPK( connectionPK ),
+		_gate{ move(gate) },
+		_thread{ [this]( std::stop_token stop ){ Deliver(stop); } }
+	{}
+
 	α SubscribeLog::Shutdown( bool, SL )ι->void{
-		ul _{ _mutex };
-		_subs.clear();
-		//Deliberately no restoreLevels here: SetLevel/ClearLevel call Logging::UpdateCumulative over the logger list, which is
-		//itself being torn down around this call.  The process is ending, so the floor no longer matters.
-		_loweredTags.clear();
+		{
+			ul _{ _mutex };
+			_subs.clear();
+			//Deliberately no restoreLevels here: SetLevel/ClearLevel call Logging::UpdateCumulative over the logger list, which is
+			//itself being torn down around this call.  The process is ending, so the floor no longer matters.
+			_loweredTags.clear();
+		}
+		{
+			std::lock_guard _{ _queueMutex };
+			_queue.clear();
+		}
+		if( _thread.joinable() && _thread.get_id()!=std::this_thread::get_id() ){
+			_thread.request_stop();
+			_thread.join();
+		}
 	}
 
 	//O1: a `logs` subscription defaults to Trace (LogSubscription::MinLevel) and Add pushes that into the logger's tag threshold
@@ -114,10 +135,11 @@ namespace Jde::Web::Server{
 		applyRestores( restores );//outside _mutex - see takeRestores.
 	}
 
-	α SubscribeLog::Add( sp<Web::Server::IWebsocketSession> session, vector<QL::Subscription>&& subs )ι->void{
+	α SubscribeLog::Add( sp<Web::Server::IWebsocketSession> session, vector<QL::Subscription>&& subs, UserPK executer )ε->void{
+		auto mayRead = _gate ? _gate( executer ) : function<bool(App::ProgInstPK)>{};//before _mutex:  the gate asks the Authorize, which logs.
 		ul _{ _mutex };
 		for( auto& request : subs ){
-			auto s = ms<SessionSubscription>( session, move(request) );
+			auto s = ms<SessionSubscription>( session, move(request), mayRead );
 			if( let prior = MinLevel(s->Sub.Tags); s->Sub.MinLevel<prior ){
 				if( !_loweredTags.contains(s->Sub.Tags) ){//O1: remember what to put back, once, before the first lowering overwrites it.
 					optional<ELogLevel> priorOverride;
@@ -130,7 +152,6 @@ namespace Jde::Web::Server{
 		}
 	}
 
-	thread_local bool _writing{};
 	struct WriteGuard final : noncopyable{
 		WriteGuard()ι{ _writing = true; }
 		~WriteGuard(){ _writing = false; }
@@ -140,7 +161,7 @@ namespace Jde::Web::Server{
 	}
 	α SubscribeLog::Write( const Logging::Entry& m, uint32 appPK, App::ConnectionPK connectionPK )ι->void{
 		if( _writing )
-			return;//re-entered from a session's own WriteSubscription - the subscriber does not want its delivery echoed back to it, and dispatching it would not terminate.
+			return;//re-entered while matching, or logged on the delivery thread - by a session's WriteSubscription or a gate:  the subscriber does not want its delivery echoed back to it, and dispatching it would not terminate.
 		WriteGuard guard;
 		vector<sp<SessionSubscription>> matches;
 		{
@@ -161,7 +182,32 @@ namespace Jde::Web::Server{
 					matches.push_back( s );
 			}
 		}
-		for( let& s : matches )//outside the lock - WriteSubscription logs, and that comes back through Logging::Log into this function.
-			s->Session->WriteSubscription( appPK, connectionPK, m, s->Sub );
+		if( matches.empty() )
+			return;
+		{
+			std::lock_guard _{ _queueMutex };
+			_queue.push_back( {m, appPK, connectionPK, move(matches)} );
+		}
+		_cv.notify_one();
+	}
+	α SubscribeLog::Deliver( std::stop_token stop )ι->void{
+		Thread::SetName( "SubscribeLog" );
+		_writing = true;//for the thread's life:  what a delivery logs goes to the other loggers, not back into the queue.
+		vector<Delivery> batch;
+		while( true ){
+			{
+				std::unique_lock l{ _queueMutex };
+				if( !_cv.wait(l, stop, [this]{ return !_queue.empty(); }) )
+					return;
+				batch.swap( _queue );
+			}
+			for( let& d : batch ){
+				for( let& s : d.Matches ){
+					if( !s->MayRead || s->MayRead(d.ConnectionPK) )//ConnectionPK:  the instance's pk, as Logging::Log passes it.
+						s->Session->WriteSubscription( d.AppPK, d.ConnectionPK, d.Entry, s->Sub );
+				}
+			}
+			batch.clear();
+		}
 	}
 }

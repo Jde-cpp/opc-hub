@@ -31,7 +31,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	class PlaintextPasswordTests : public ::testing::Test{
 	protected:
-		static constexpr uint16_t Port{ 4855 };//4840 the embedded OpcServer, 4850-4852 the pubsub and emulator suites, 4856 SecurityPolicyTests.
+		static constexpr uint16_t Port{ 4855 };//4940 the embedded OpcServer, 4850-4852 the pubsub and emulator suites, 4856 SecurityPolicyTests.
 		Ω SetUpTestSuite()->void{
 			_server = plainPasswordServer( Port );
 			_connection = GetConnection( Slug, Ƒ("opc.tcp://127.0.0.1:{}", Port), "" );

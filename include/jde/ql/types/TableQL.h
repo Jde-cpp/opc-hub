@@ -19,6 +19,7 @@ namespace Jde::QL{
 
 		α AddColumn( sv jsonName )ι->bool;
 		α AddFilter( const string& column, const jvalue& value )ι->void;
+		α AuthorizeRead( UserPK executer, SL sl, bool child=false )Ε->void;
 		α DBTable()Ι->sp<DB::Table>{ return _dbTable && _dbTable->QLView ? _dbTable->QLView : _dbTable; }
 		α SetDBTable( sp<DB::Table> x )ι->void{ _dbTable = move(x); }
 		α DBTableName()Ι->str{ return DBTable() ? DBTable()->Name : Str::Empty(); }

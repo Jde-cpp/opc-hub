@@ -18,6 +18,19 @@ namespace Jde::App::Server{
 	α Schemas()ι->const vector<sp<DB::AppSchema>>&;
 	α GetJwt( UserPK userPK, string name, string slug, string endpoint, SessionPK sessionId, TimePoint expires, string description )ε->Web::Jwt;
 	α RemoveExisting( str host, PortType port )ι->void;
+	//A socket's hold on its registration's (application, instance name), from ClaimInstance until the guard ends - after the
+	//registration is published on the session, so a concurrent ClaimInstance always sees one or the other.
+	struct InstanceClaim final{
+		InstanceClaim( SocketId socketId )ι:Socket{ socketId }{}
+		InstanceClaim( InstanceClaim&& x )ι:Socket{ std::exchange(x.Socket, 0) }{}
+		~InstanceClaim();
+		SocketId Socket;
+	};
+	//Throws when another socket, live or mid-registration, holds `instance`'s (application, instance name) with a different
+	//auth_resource:  both would share one instance row, and the last to register would decide whose `logs` governs the other's
+	//lines (325-logs-resource review #4).  No conflict:  the same process (host and pid) registering a second role, or a socket
+	//on the same host:port - a restart, which RemoveExisting supersedes.
+	α ClaimInstance( SocketId socketId, const Proto::FromClient::Instance& instance )ε->InstanceClaim;
 	α GetRequestHandler()ι->sp<RequestHandler>;
 	α StartWebServer( jobject&& settings )ε->void;
 	α StartWebServer( sp<RequestHandler> handler )ε->void;//a host's own handler (OpcHub: routes both apps from one listener) - it must be an App::Server::RequestHandler, GetJwt signs through it.

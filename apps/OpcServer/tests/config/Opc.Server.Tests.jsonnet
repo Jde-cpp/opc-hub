@@ -1,6 +1,8 @@
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 local embeddedAppServer = true; //false = run against a live AppServer on localhost:1967.
+//the live services' ports +100 (1967/1970/4840), so the suite runs beside a running AppServer and OpcServer.
+local appPort = 2067;
 {
 	testing:{
 		tests:: "AccessTests.UserAccess",
@@ -12,6 +14,7 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 	//on the first login and the whole suite fails in Opc::Server::Startup.  Only for the live mode: the embedded server's
 	//just-generated cert is anchored programmatically in main.cpp, and an unconditional caFile would log a load error
 	//on every host with no deployed AppServer.
+	[if embeddedAppServer then "server"]: { port: appPort }, //the app client (default 1967) - the live mode keeps it.
 	[if !embeddedAppServer then "web"]: {
 		client:{ ssl:{ caFile: args.certsDir("AppServer")+"/AppServer.pem" } }
 	},
@@ -26,7 +29,7 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 		slug: "TestServer",
 		resource: "test",
 		description: "Test OPC",
-		port: 4840,
+		port: 4940,
 		configFiles: [ args.repoSourceDir + "/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" ],
 		hist:{ path: logsDir + "/hist/opc-server-tests", editTimeout: "PT1S" },//HistoryTests clears it, and starves an edit for editTimeout.
 		//unicast on a test port: multicast needs a route the CI container lacks, and 4840/udp would collide with a live server.
@@ -58,8 +61,8 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 		}
 	},
 	http:{
-		app:{ port: 1967, ssl:{productName: "AppServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} },//TLS clients match the SAN - without it host_name_verification rejects the generated cert.
-		opcServer:{ port: 1970, ssl:{productName: "OpcServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} }
+		app:{ port: appPort, ssl:{productName: "AppServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} },//TLS clients match the SAN - without it host_name_verification rejects the generated cert.
+		opcServer:{ port: 2070, ssl:{productName: "OpcServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} }
 	},
 	credentials:{
 		opcServer:{ name: "OpcTests" }

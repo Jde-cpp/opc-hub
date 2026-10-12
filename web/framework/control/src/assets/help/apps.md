@@ -42,7 +42,9 @@ A **PLC Emulator** card shows the same uptime, memory and host as the others. It
 
 ## Logs
 
-The entries this instance has sent, newest first, a page at a time. There is no narrowing by application, date or text: the page is one instance's log.
+The entries this instance has logged, newest first, a page at a time. There is no narrowing by application, date or text.
+
+The hub's log also holds the lines each connected application sends it. You see only those of applications whose log you may read: the `logs` resource on the Resources page, once it is enforced.
 
 The toolbar holds:
 

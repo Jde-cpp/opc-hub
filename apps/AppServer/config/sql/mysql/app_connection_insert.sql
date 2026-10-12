@@ -1,7 +1,7 @@
 drop procedure if exists app_connection_insert;
 GO
 #DELIMITER $$;
-CREATE PROCEDURE app_connection_insert( _program_name varchar(255), _instance_name varchar(255), _host_name varchar(255), _pid int unsigned )
+CREATE PROCEDURE app_connection_insert( _program_name varchar(255), _instance_name varchar(255), _host_name varchar(255), _pid int unsigned, _resource_schema varchar(32) )
 begin
 	declare _program_id int unsigned;
 	declare _instance_id int unsigned;
@@ -14,6 +14,7 @@ begin
 	if _instance_id is null then
 		call app_instance_insert( _program_id, _instance_name, _host_name, _instance_id );
 	end if;
+	update app_instances set resource_schema=_resource_schema where instance_id=_instance_id;
 
 	update app_connections set deleted=now() where instance_id=_instance_id and deleted is null;
 	insert into app_connections(instance_id, pid, created) values( _instance_id, _pid, now() );

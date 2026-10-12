@@ -26,8 +26,8 @@ values moving.  Without it every value in the shipped address space is static.
   examples, then [`config/nodesets/pumps.NodeSet2.xml`](config/nodesets/pumps.NodeSet2.xml), the emulator's tags
   (`urn:jde:pumps`).  The first three come from `$(UA_NODE_SETS)`, a clone of
   [OPCFoundation/UA-Nodeset](https://github.com/OPCFoundation/UA-Nodeset).  Nothing of the address space is in the
-  database: [`config/opcServer-meta.jsonnet`](config/opcServer-meta.jsonnet) declares only the `nodeIds` resource the
-  node acls hang off.
+  database: [`config/opcServer-meta.jsonnet`](config/opcServer-meta.jsonnet) declares only resources - `nodeIds`, which
+  the node acls hang off, and `logs`, which gates this instance's log and log settings.
 - **Login to the hub**: at startup it logs in to the hub's registry on 1967 with its `/http/ssl` certificate.
   - The login is a JWT signed with that key.  The hub admits it through its trust anchors, and the user is the one
     named by the certificate's CN.
@@ -105,8 +105,8 @@ and the Google login.
 
 ## Tests
 
-`Jde.Opc.Server.Tests` ([`tests/`](tests)) embeds an AppServer on 1967 and the server on 1970 / opc.tcp 4840, so it
-cannot run beside a live hub or AppServer.  Under ctest it runs on in-memory sqlite:
+`Jde.Opc.Server.Tests` ([`tests/`](tests)) embeds an AppServer on 2067 and the server on 2070 / opc.tcp 4940 - the live ports +100, so it
+runs beside a live hub or service.  Under ctest it runs on in-memory sqlite:
 `ctest --timeout 300 -R Jde.Opc.Server.Tests`.
 
 - `AccessTests`: sessions and node acls.
@@ -114,8 +114,9 @@ cannot run beside a live hub or AppServer.  Under ctest it runs on in-memory sql
 - `HistoryTests`: the pumps nodeset's historized variables, written through the server, then read and edited by a UA
   client's HistoryRead and HistoryUpdate; history under `<cwd>/logs/hist/opc-server-tests`, cleared at the start.
 - `HistoryRestartTests`: a restart keeps each node's history index and removes what the nodesets no longer historize.
-- `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, and only for a signed-in user.
-  Anonymous gets 401, and every other mutation 403.
+- `CustomMutationTests`: `updateLogSetting` is the only mutation the server answers, gated by Update on its `logs` resource.
+  While that resource is unenforced, anyone may send it, anonymous callers too; once it is enforced, anonymous gets 401.
+  Every other mutation gets 403.
 - `UALoadTests`: loads the companion-spec nodesets from `$UA_NODE_SETS`, which must be set.
 - `PubSubTests`: a unicast reader on udp 4849.
 - `TrustListTests`, `UAConfigTests`: the PKI setup.

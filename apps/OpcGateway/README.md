@@ -68,8 +68,8 @@ puts the log under the working directory's `logs/`, beside a split AppServer fro
 
 ## Tests
 
-`Jde.Opc.Tests` ([`tests/`](tests)) embeds an AppServer on 1967, an OpcServer on 1970 / opc.tcp 4840 and the gateway on
-1968 in one process, so it cannot run beside a live hub or AppServer.  The embedded server loads the DI and IA nodesets
+`Jde.Opc.Tests` ([`tests/`](tests)) embeds an AppServer on 2067, an OpcServer on 2070 / opc.tcp 4940 and the gateway on
+2068 in one process - the live ports +100, so it runs beside a live hub or service.  The embedded server loads the DI and IA nodesets
 from `$UA_NODE_SETS`, which must be set.  Under ctest it runs on in-memory sqlite:
 `ctest --timeout 300 -R Jde.Opc.Tests`.
 

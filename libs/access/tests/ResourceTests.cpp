@@ -125,12 +125,13 @@ namespace Jde::Access::Tests{
 			auto allowed = ToRights( Json::AsArray(o, "allowed") );
 			auto expected = base;
 			//Subscribe on users/roles/resources/acl since 71e94e8a - the tables the SPA subscribes to; groups and providerTypes keep the defaults.
+			//Read on resources:  its Enforced switch governs the read, as any table's.
 			if( slug=="users" )
 				expected = base | ERights::Execute | ERights::Subscribe;
 			else if( slug=="roles" )
 				expected = base | ERights::Subscribe;
 			else if( slug=="resources" )
-				expected = ERights::Delete | ERights::Subscribe;
+				expected = ERights::Read | ERights::Delete | ERights::Subscribe;
 			else if( slug=="acl" )
 				expected = ERights::Read | ERights::Administer | ERights::Subscribe;
 			ASSERT_EQ( expected, allowed ) << "slug=" << slug;
