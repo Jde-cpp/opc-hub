@@ -12,6 +12,8 @@ export type GatewayData = {
 	routing:AppInstanceRoute;
 	schema: TableSchema;
 	error?: unknown;//the rows query was refused or failed - QLList.init reads it, as it reads QLListData.error
+	skip?: number;//as QLListData's:  QLList pages the tab through QLListResolver.load, so the first page has to say what it is too
+	more?: boolean;
 };
 
 @Injectable()
@@ -61,7 +63,8 @@ export class GatewayResolver implements Resolve<GatewayData> {
 	//QLListResolver.loadOrFail makes it for a list page:  a user holding no role yet is the common case once
 	//gateway/serverConnections is enforced, and the tab has to open to tell them (reviews/m3-closing.md #6).
 	static async load( gateway:Gateway, data:GatewayData, routeStore:RouteStore, childrenKey:string|UrlSegment[] ):Promise<GatewayData>{
-		const query = data.profile.view.query( 0 );
+		const view = data.profile.view;
+		const query = QLListResolver.pageQuery( view, 0 );
 		let results:any;
 		try{
 			results = await gateway.query<any>( query.text, query.vars, (m)=>console.log(m) );
@@ -69,14 +72,18 @@ export class GatewayResolver implements Resolve<GatewayData> {
 		catch( e ){
 			return { ...data, results: {serverConnections: []}, error: e };
 		}
-		routeStore.setChildren( childrenKey, results[data.schema.collectionName].map( (r:any)=>{return {title:r.name, path: r.slug};}) );
+		const page = QLListResolver.page( results[data.schema.collectionName], view );
+		const children:any = page.rows.map( (r:any)=>{return {title:r.name, path: r.slug};} );//bare targets, as before paging:  not RouteItems
+		routeStore.setChildren( childrenKey, children );
 		return {
 			columns: data.columns,
 			pageSettings: data.pageSettings,
 			profile: data.profile,
-			results: results,
+			results: { ...results, [data.schema.collectionName]: page.rows },
 			routing: data.routing,
-			schema: data.schema
+			schema: data.schema,
+			skip: 0,
+			more: page.more
 		};
 	}
 	routeStore = inject( RouteStore );

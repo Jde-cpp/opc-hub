@@ -61,3 +61,13 @@ mat-toolbar{
 .refresh-bar{
 	flex: 0 0 100%;
 }
+
+//Under the table, not in the toolbar (#231):  the toolbar's right zone could not hold seven icon buttons beside the viewport-
+//centred view group, and below 1024px it would have wrapped to a third row.  Here it has a row of its own at any width, in
+//the toolbar's colours.  Not sticky:  the host's mat-drawer-container clips overflow, and a tab body's content scrolls on
+//its own, so a sticky pager - like the table's sticky header row - would pin to a box that never scrolls.
+.pager{
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	--mat-paginator-container-background-color: transparent;
+}

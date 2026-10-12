@@ -83,7 +83,7 @@ export class LogEntries{
 }
 export class LogView extends View{
 	override query( skip:number, level?:ELogLevel ):Query{
-		const vars:Record<string,any> = {limit: this.limit!*3, skip: skip, orderBy: this.sort};
+		const vars:Record<string,any> = {limit: this.limit!*2, skip: skip, orderBy: this.sort};//two pages a read:  the first page turn shows what is loaded, the second reads on (LogDetail.onPagerChange)
 		let args = "limit: $limit, skip: $skip, orderBy: $orderBy";
 		//Trace is every level, so send no filter at all; above it the minimum is expressed as gt the level below.
 		if( level!=undefined && level>ELogLevel.Trace ){
@@ -111,7 +111,7 @@ export class LogView extends View{
 		let args:ViewSerializedArgs = {
 			name: undefined,
 			collectionName: "logs",
-			limit: 24,
+			limit: 21,
 			showSelector: false,
 			sort: [ { active: 'time', direction: 'desc' } ],
 			fields: [

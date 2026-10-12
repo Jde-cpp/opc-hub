@@ -52,6 +52,18 @@ describe( 'GatewayResolver', ()=>{
 		expect( store.setChildren ).toHaveBeenCalledWith( "apps/gateways/opchub", [{title: "Line 1", path: "line1"}] );
 	} );
 
+	//#231:  the tab pages through QLListResolver.load, which asks for a row past the page;  the first page the resolver loads
+	//has to be cut the same way, or it would show 26 rows and then page to the 26th again
+	it( 'loads one page, and says whether there is another', async ()=>{
+		const all = Array.from( {length: 30}, (_, i)=>({name: `Line ${i+1}`, slug: `line${i+1}`}) );
+		const query = vi.fn( async ( text:string )=>({serverConnections: all.slice(0, +(/limit:(\d+)/.exec(text)![1]))}) );
+		const y:any = await GatewayResolver.load( <unknown>{query} as Gateway, data(), routeStore(), "apps/gateways/opchub" );
+		expect( query.mock.calls[0][0] ).toContain( "limit:26" );
+		expect( y.results.serverConnections ).toHaveLength( 25 );
+		expect( y.more ).toBe( true );
+		expect( y.skip ).toBe( 0 );
+	} );
+
 	//no gateway of that name - a stale bookmark or Recently-visited tile - leaves no page to say it on
 	it( 'says so and lands on Applications when the instance cannot be opened', async ()=>{
 		const exception = vi.fn(), navigateByUrl = vi.fn();

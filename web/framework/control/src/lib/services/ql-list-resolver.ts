@@ -2,7 +2,7 @@ import {ActivatedRoute, ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resol
 import { inject, Injectable } from '@angular/core';
 import {SnackbarService} from '../shared/snackbar/snackbar-service';
 import { TableSchema} from '../model/ql/schema/table-schema';
-import { IGRAPHQL, IGraphQL } from './graphql';
+import { IGRAPHQL, IGraphQL, Query } from './graphql';
 import { PageProfile, PageSettings } from '../pages/graphql/model/page-settings';
 import { StringUtils } from '../utils/string-utils';
 import { MetaObject } from '../model/ql/schema/meta-object';
@@ -47,6 +47,8 @@ export type QLListData = {
 	routing:ListRoute;
 	schema: TableSchema;
 	error?: unknown;//the rows query was refused (403) or failed:  results is then empty and the page says why instead of showing a bare grid
+	skip?: number;//the offset of the page in results - the first page when unset
+	more?: boolean;//a row past the page exists, so the pager offers a next page (QLListResolver.page)
 };
 
 @Injectable()
@@ -168,6 +170,19 @@ export class QLListResolver implements Resolve<QLListData> {
 		}
 		return columns;
 	}
+	//The page's query:  one row PAST the page, so the pager can say whether there is a next page without a count query
+	//the server does not offer.  page() takes the extra row off again.
+	static pageQuery( view:View, skip:number ):Query{
+		if( view.limit ){
+			view = new View( view );
+			view.limit += 1;
+		}
+		return view.query( skip );
+	}
+	static page( rows:any[], view:View ):{rows:any[], more:boolean}{
+		const more = !!view.limit && rows.length>view.limit;
+		return { rows: more ? rows.slice(0, view.limit) : rows, more };
+	}
 	//routeStore null:  the rows are a pick list (QLSelector - filtered, and never the page's own collection), not the collection's sidenav children
 	static async load( ql:IGraphQL, data:QLListData, routeStore:RouteStore|null ):Promise<QLListData>{
 		let view = data.profile.view;
@@ -175,10 +190,14 @@ export class QLListResolver implements Resolve<QLListData> {
 			view = new View( view );
 			view.fieldFilters = [...view.fieldFilters, ...data.fixedFilters];
 		}
-		const q = view.query( 0 );
-		data.results = await ql.query<any>( q.text, q.vars, (m)=>console.log(m) );
+		const skip = data.skip ?? 0;
+		const q = QLListResolver.pageQuery( view, skip );
+		const results = await ql.query<any>( q.text, q.vars, (m)=>console.log(m) );
+		const collectionName = data.schema.collectionName;
+		const page = QLListResolver.page( results[collectionName], view );
+		data.results = { ...results, [collectionName]: page.rows };
 		if( routeStore ){
-			const children = data.results[data.schema.collectionName].map( (r:any)=>({title:r.name, path:`${r.slug}`}) );//bare targets, like GatewayResolver — DetailResolver renders them under the absolute list url
+			const children:any = page.rows.map( (r:any)=>({title:r.name, path:`${r.slug}`}) );//bare targets, like GatewayResolver — DetailResolver renders them under the absolute list url
 			routeStore.setChildren( data.routing.path, children );
 		}
 		return {
@@ -188,7 +207,9 @@ export class QLListResolver implements Resolve<QLListData> {
 			results: data.results,
 			routing: data.routing,
 			profile: data.profile,
-			schema: data.schema
+			schema: data.schema,
+			skip,
+			more: page.more
 		};
 	}
 	routeStore = inject( RouteStore );

@@ -183,3 +183,60 @@ describe( 'QLListResolver on a list name the route does not declare', ()=>{
 		expect( TestBed.inject(Router).url ).toBe( '/access' );
 	} );
 } );
+
+//#231:  a list loads its view's Page Size and nothing after it, and the page has no count to page by - the server offers none.
+//load() asks for one row past the page instead:  its presence is `more`, and the row itself never reaches the table.
+describe( 'QLListResolver.load pages', ()=>{
+	const rows = ( n:number, from=0 )=>Array.from( {length: n}, (_, i)=>({id: from+i+1, name: `thing ${from+i+1}`, slug: `thing${from+i+1}`}) );
+	const data = ( limit:number, skip?:number )=>{
+		const profile = new PageProfile();
+		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		view.limit = limit;
+		profile.views = [view];
+		return { schema, profile, routing: new ListRoute("things"), columns: {}, pageSettings: {}, skip } as unknown as QLListData;
+	};
+	const ql = ( available:any[] )=>{
+		const query = vi.fn( async ( text:string )=>{
+			const limit = +( /limit:(\d+)/.exec(text)?.[1] ?? available.length );
+			const skip = +( /skip:(\d+)/.exec(text)?.[1] ?? 0 );
+			return { things: available.slice(skip, skip+limit) };
+		} );
+		return { ql: {query} as any, query };
+	};
+
+	it( 'asks for one row past the page, and hands the table only the page', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const y = await QLListResolver.load( q, data(25), null );
+		expect( query.mock.calls[0][0] ).toContain( "limit:26" );
+		expect( y.results.things ).toHaveLength( 25 );
+		expect( y.more ).toBe( true );
+		expect( y.skip ).toBe( 0 );
+	} );
+
+	it( 'reports no more on a short last page, and where the page is exactly full', async ()=>{
+		const last = await QLListResolver.load( ql(rows(40)).ql, data(25, 25), null );
+		expect( last.results.things.map( (r:any)=>r.id ) ).toEqual( rows(15, 25).map( r=>r.id ) );
+		expect( last.more ).toBe( false );
+		expect( last.skip ).toBe( 25 );
+		const full = await QLListResolver.load( ql(rows(25)).ql, data(25), null );
+		expect( full.results.things ).toHaveLength( 25 );
+		expect( full.more ).toBe( false );//the probe row is what tells a full page from a full list
+	} );
+
+	it( 'sends the offset, and the sidenav children are the page shown', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const setChildren = vi.fn();
+		const y = await QLListResolver.load( q, data(25, 25), {setChildren} as unknown as RouteStore );
+		expect( query.mock.calls[0][0] ).toContain( "skip:25" );
+		expect( setChildren ).toHaveBeenCalledWith( "things", rows(15, 25).map( r=>({title: r.name, path: r.slug}) ) );
+		expect( y.results.things ).toHaveLength( 15 );
+	} );
+
+	it( 'leaves an unlimited view alone', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const y = await QLListResolver.load( q, data(0), null );
+		expect( query.mock.calls[0][0] ).not.toContain( "limit:" );
+		expect( y.results.things ).toHaveLength( 40 );
+		expect( y.more ).toBe( false );
+	} );
+} );

@@ -28,13 +28,14 @@ import { confirm } from '../../../shared/confirm/confirm-dialog';
 import { QLRow } from '../../../model/ql/slug-row';
 import { PageProfile } from '../../graphql/model/page-settings';
 import { verify } from '../../../utils/utils';
+import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
 
 @Component({
 	selector: 'ql-list',//.main-content.mat-drawer-container.my-content
 	styleUrls: ['ql-list.scss'],
 	templateUrl: './ql-list.html',
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, QLListSettings, RouterLink]
+	imports: [CommonModule, GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, Paginator, QLListSettings, RouterLink]
 })
 export class QLList implements OnInit{
 	private route = inject( ActivatedRoute );
@@ -67,6 +68,8 @@ export class QLList implements OnInit{
 			selected = selected.slice( 0, 1 );//SelectionModel throws on multiple values in single-select mode
 		this.selections.set( new SelectionModel<QLRow>(multiple, selected) );
 		this.data.set( rows );
+		this.skip.set( data.skip ?? 0 );
+		this.more.set( data.more ?? false );
 		this.error.set( data.error );//a good load clears the last failure; a resolver that caught the rows query sets it
 		this.sideNav.set( data.routing );
 		let paths = [];
@@ -154,8 +157,14 @@ export class QLList implements OnInit{
 		this.data.set( [] );
 	}
 
+	//the pager:  its startIndex is two-way bound to `skip`, so by the time it emits the offset is already the new one
+	async onPage( _:PageEvent ){
+		await this.#reload();
+	}
+
 	async onViewSave(view:View){
 		this.data.set( [] );
+		this.skip.set( 0 );
 		let profile = this.resolvedData().profile;
 		if( view.isSystem && !profile.views.find(v=>v.name==view.name && v.isSystem) )
 			view.type = ViewType.User;
@@ -174,6 +183,7 @@ export class QLList implements OnInit{
 	}
 	async onViewShow(view:View){
 		this.data.set( [] );
+		this.skip.set( 0 );//a different filter or sort is a different set of pages
 		this.isSettings.set( false );
 		if( view.name?.endsWith("*") && view.isAdhoc )
 		 	view.name = view.name.substring( 0, view.name.length-1 );
@@ -183,6 +193,7 @@ export class QLList implements OnInit{
 		await this.#refresh( profile );
 	}
 	async onChangeView(index:number){
+		this.skip.set( 0 );
 		let profile = new PageProfile( this.resolvedData().profile );
 		profile.currentViewIndex = index;
 		ProfileStore.setViewIndex( this.collectionName(), index );
@@ -197,7 +208,12 @@ export class QLList implements OnInit{
 	async reload(){
 		this.isRefreshing.set( true );
 		try{
-			const reload = await QLListResolver.load( this.ql, this.resolvedData(), this.selector() ? null : this.routeStore );
+			const load = ()=>QLListResolver.load( this.ql, {...this.resolvedData(), skip: this.skip()}, this.selector() ? null : this.routeStore );
+			let reload = await load();
+			if( this.skip() && !reload.results[this.collectionName()].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
+				this.skip.set( 0 );
+				reload = await load();
+			}
 			this.init( {data:reload} );
 		}
 		finally{
@@ -208,6 +224,7 @@ export class QLList implements OnInit{
 		let profile = this.resolvedData().profile;
 		profile.removeView( view.name!, this.collectionName(), this.profileStore, this.tableSettings() ).catch( e=>this.snackbar.exception("Could not save view.", e) );
 		profile.currentViewIndex = 0;
+		this.skip.set( 0 );
 		await this.#reload();
 		this.isSettings.set( false );
 	}
@@ -257,6 +274,14 @@ export class QLList implements OnInit{
 	collectionName = computed<string>( ()=>this.schema().collectionName );
 	columns():Record<string,string>{ return this.resolvedData().columns; }
 	data = signal<any[]>([]);
+	//Paging (#231):  `skip` is the offset of the rows shown and `more` whether a row follows them (the resolver asks for one past
+	//the page).  The server gives no count, so the total is only known on the last page - that is when the pager's Last works
+	//and its range reads "of N";  until then Next is simply on.  A single page shows no pager:  the toolbar's row count is then
+	//the whole truth, and six disabled buttons under a three-row list would say nothing.
+	skip = signal<number>( 0 );
+	more = signal<boolean>( false );
+	paged = computed<boolean>( ()=>this.more() || this.skip()>0 );
+	length = computed<number|undefined>( ()=>this.more() ? undefined : this.skip()+this.data().length );
 	excludedColumns = computed<string[]>( ()=>this.tableSettings().excludedColumns ?? [] );
 	get name():string{ return <string>this.routeConfig.title; }
 	enums = computed<Map<string, EnumValue[]>>( ()=>this.schema().enums );

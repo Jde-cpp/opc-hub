@@ -295,3 +295,79 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 		expect( shown.addFilled() ).toBe( false );
 	} );
 } );
+
+//#231:  the list pages with `skip` through the shared resolver.  The pager is two-way bound to `skip`, so a page turn is just a
+//reload;  a view change is a new set of pages and starts over;  a page the rows have left behind falls back to the first.
+describe( 'QLList paging', ()=>{
+	const schema = new TableSchema( { name: "User", fields: [
+		{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
+		{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
+		{ name: "slug", type: { kind: "SCALAR", name: "String" } }
+	] } );
+	const rows = ( n:number, from=0 )=>Array.from( {length: n}, (_, i)=>({id: from+i+1, name: `user ${from+i+1}`, slug: `user${from+i+1}`}) );
+	let load:any;
+
+	const create = ( available:any[] )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			{ provide: ActivatedRoute, useValue: {data: NEVER, routeConfig: {}} },
+			{ provide: Router, useValue: {navigate: vi.fn().mockResolvedValue(true)} },
+			{ provide: ComponentPageTitle, useValue: {} },
+			{ provide: IGRAPHQL, useValue: {} },
+			{ provide: SnackbarService, useValue: {error: vi.fn(), exception: vi.fn()} }
+		]});
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		const view = new View( {name: "All", columns: ["name"], sort: "name"}, schema );
+		const profile = new PageProfile();
+		profile.views = [view];
+		load = vi.spyOn( QLListResolver, 'load' ).mockImplementation( async ( _ql:any, data:QLListData )=>{
+			const skip = data.skip ?? 0;
+			const page = available.slice( skip, skip+view.limit );
+			return { ...data, results: {users: page}, skip, more: available.length>skip+view.limit };
+		} );
+		page.init( {data: {routing: new ListRoute({path:'users'}), schema, profile, results: {users: available.slice(0, view.limit)}, more: available.length>view.limit} as unknown as QLListData} );
+		return page;
+	};
+
+	afterEach( ()=>vi.restoreAllMocks() );
+
+	it( 'shows the pager only when there is more than a page', ()=>{
+		expect( create( rows(3) ).paged() ).toBe( false );
+		expect( create( rows(40) ).paged() ).toBe( true );
+	} );
+
+	it( 'turns the page through the resolver, and knows the total on the last one', async ()=>{
+		const page = create( rows(40) );
+		expect( page.length() ).toBeUndefined();//Next is on; nothing says how many there are yet
+		page.skip.set( 25 );//what the pager's two-way binding does before it emits
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		expect( load.mock.calls[0][1].skip ).toBe( 25 );
+		expect( page.data().map( (r:any)=>r.id ) ).toEqual( rows(15, 25).map( r=>r.id ) );
+		expect( page.more() ).toBe( false );
+		expect( page.length() ).toBe( 40 );
+		expect( page.paged() ).toBe( true );
+	} );
+
+	it( 'starts over on a view change', async ()=>{
+		const page = create( rows(40) );
+		page.skip.set( 25 );
+		await page.onChangeView( 0 );
+		expect( load.mock.calls[0][1].skip ).toBe( 0 );
+		expect( page.skip() ).toBe( 0 );
+	} );
+
+	it( 'falls back to the first page when the one it was on has emptied', async ()=>{
+		const page = create( rows(40) );
+		page.skip.set( 25 );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		load.mockImplementation( async ( _ql:any, data:QLListData )=>{//the rows past the first page were deleted in the meantime
+			const skip = data.skip ?? 0;
+			return { ...data, results: {users: rows(10).slice(skip)}, skip, more: false };
+		} );
+		await page.onRefresh();
+		expect( load.mock.calls.map( (c:any)=>c[1].skip ) ).toEqual( [25, 25, 0] );
+		expect( page.skip() ).toBe( 0 );
+		expect( page.data() ).toHaveLength( 10 );
+		expect( page.paged() ).toBe( false );
+	} );
+} );

@@ -28,9 +28,7 @@
 					<mat-icon>tune</mat-icon>
 				</button>
 			</div>
-			<div class="bar-right">
-				<paginator (onPageEvent)="onPagerChange($event)" [pageSize]="view().limit"></paginator>
-			</div>
+			<div class="bar-right"></div>
 			<!--parked from the old toolbar - applications picker, pause, date range, filter and the hidden-message
 			buttons were never rebuilt, so the markup stays here rather than being lost to git history.  Their handlers
 			are GONE as of review3 C3:  subscribe()/unsubscribe() never subscribed to anything - `subscription` was never
@@ -108,6 +106,9 @@
 			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
 			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" (click)="cellClick(row)"></mat-row>
 		</mat-table>
+		<div class="pager"><!--under the table, as ql-list's (#231)-->
+			<paginator (onPageEvent)="onPagerChange($event)" [pageSize]="view().limit"></paginator>
+		</div>
 	<!-- </ng-container> -->
 	}
 }
