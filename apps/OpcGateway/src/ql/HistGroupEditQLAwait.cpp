@@ -32,9 +32,16 @@ namespace Jde::Opc::Gateway{
 			vector<Hist::EditDetails> details;
 			if( edit<Purge ){
 				vector<vector<Value>> values( count );//each node's, in the order named.
+				vector<string> names( count ); vector<const UA_DataType*> types( count );//each member's, once for all its values.
+				for( uint i=0; i<count; ++i ){
+					if( indexes[i] ){
+						names[i] = args.Nodes[i].ToString();
+						types[i] = group->DataType( *indexes[i] );
+					}
+				}
 				for( let& v : args.Values ){
-					if( let index = indexes[v.Slot]; index )
-						values[v.Slot].push_back( HistQL::ToValue(v, args.Nodes[v.Slot].ToString(), group->DataType(*index), args.Command(), _sl) );
+					if( indexes[v.Slot] )
+						values[v.Slot].push_back( HistQL::ToValue(v, names[v.Slot], types[v.Slot], args.Command(), _sl) );
 				}
 				for( uint i=0; i<count; ++i ){
 					if( indexes[i] ){

@@ -22,7 +22,8 @@ namespace Jde::Opc::Gateway{
 	//
 	//Each member is stored by namespace URI and monitored by the index its server has for it, so a rebuild that put the items
 	//back - by index - is checked against the server's NamespaceArray before its values count:  they wait meanwhile, and a
-	//server whose namespaces moved gets every item again by URI, its values through the gap rule.  Nor does a member stay lost
+	//server that moved a member's namespace to another index gets every item again by URI, its values through the gap rule;
+	//one appended moves none.  Nor does a member stay lost
 	//for good:  one the gateway lost and hasn't restored within AbandonAfter, which a refused rebuild, a rejected reconnect
 	//or a removed client leaves silent, is asked for again as a new member is.
 	struct HistGroupHost final : IDataChange, std::enable_shared_from_this<HistGroupHost>{
@@ -57,6 +58,9 @@ namespace Jde::Opc::Gateway{
 		//has there.  A connect or create that fails is logged and tried again after RetryInterval, until Close.  Also arms the
 		//watch that asks again for a member lost too long.
 		α Subscribe()ι->void;
+		//Describes again each member whose description Describe lost an answer for, rather than was refused:  the watch's, every
+		//RetryInterval.
+		α Redescribe()ι->void;
 
 		//Into the group, on the connection's strand:  Group::Enqueue only buffers.  Held while a rebuild's namespaces are checked.
 		α SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void override;
@@ -84,8 +88,8 @@ namespace Jde::Opc::Gateway{
 		//was out, which asked for the old parameters, so the pass modifies the item.  Lost:  since when its item has been gone, a
 		//ConnectionLost's or one the watch found, until a ConnectionRestored brings it back.  Fed:  a value arrived since its
 		//create, which the read after joining an existing item would repeat.  Thresholds are the rows', which ForGroup applies
-		//Described to.
-		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; };
+		//Described to.  Undescribed:  an answer Describe asked for was lost, which Redescribe asks for again.
+		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
 		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;
@@ -93,18 +97,20 @@ namespace Jde::Opc::Gateway{
 		//Joining an item the collector's client already had, which sends no initial value:  each node's value read instead.
 		α ReadJoined( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask;
 		//What the group takes from each new item's node:  its DataType, which the group's edits take (Group::SetDataType), as the
-		//pass-through types its edits, ValueTypesAwait;  whether that is an enumeration, by its built-in kind for one of
-		//namespace 0 open62541 has, else by the server's definition of it (EnumTypeCache);  and its InstrumentRange and EURange,
-		//which a percent-of-range band takes (ForGroup).  What it can't read keeps what the node had, its band waiting until its
-		//item is made again.
-		α Describe( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask;
-		//The rebuild's check (ConnectionRestored):  the server's namespaces read again and compared with those the items were made
-		//by.  The same:  the group is told the connection is back and takes what waited.  Moved, or unread:  every item goes, and
-		//the members are asked for again by URI.
+		//pass-through types its edits, ValueTypesAwait, but none for an abstract one of namespace 0, as Number, whose values may
+		//be any subtype's;  whether that is an enumeration, by its built-in kind for one of namespace 0 open62541 has, else by the
+		//server's definition of it (EnumTypeCache);  and its InstrumentRange and EURange, which a percent-of-range band takes
+		//(ForGroup).  What it can't read keeps what the node had:  where an answer was lost, not refused, the watch asks again
+		//(Redescribe), its band waiting meanwhile.  `again`:  the watch's, whose losses were warned of once already.
+		α Describe( sp<UAClient> client, flat_set<NodeId> nodes, bool again=false )ι->VoidTask;
+		//The rebuild's check (ConnectionRestored):  the server's namespaces read again, and each member's URI looked up in them.
+		//Each at the index its item was made by:  the group is told the connection is back and takes what waited.  One moved, or
+		//the array unread:  every item goes, and the members are asked for again by URI.
 		α Verify( uint epoch )ι->VoidTask;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Moved( const Namespaces& namespaces )Ι->bool;//a member's URI at another index than its item's.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Reset()ι->void;//every member unsubscribed and its index forgotten, for a pass to resolve again.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Watch()ι->void;//arms the watch, every RetryInterval until Close.
-		α Check()ι->void;//the watch's:  members whose items are gone without a word, and those lost past AbandonAfter.
+		α Check()ι->void;//the watch's:  members whose items are gone without a word, those lost past AbandonAfter, and Redescribe.
 
 		const HistGroupPK _id;
 		const string _guid;
@@ -116,7 +122,7 @@ namespace Jde::Opc::Gateway{
 		HistThresholdColumns _columns ABSL_GUARDED_BY(_mutex);
 		flat_map<HistGroupNodePK,Node> _nodes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<NodeId,HistGroupNodePK> _byNode ABSL_GUARDED_BY(_mutex);//by the server's index, once a connection gave it.
-		Namespaces _namespaces ABSL_GUARDED_BY(_mutex);//the NamespaceArray the indexes were resolved by.
+		Namespaces _namespaces ABSL_GUARDED_BY(_mutex);//the NamespaceArray as last read, where each member's URI is at its item's index.
 		uint _epoch ABSL_GUARDED_BY(_mutex){};//one per break and return, so a check that a later one overtook does nothing.
 		bool _verifying ABSL_GUARDED_BY(_mutex){};//a rebuild's check is out:  values wait in _held.
 		vector<std::pair<HistGroupNodePK,Value>> _held ABSL_GUARDED_BY(_mutex);

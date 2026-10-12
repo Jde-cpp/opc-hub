@@ -135,6 +135,21 @@ namespace Jde::Opc::Hist{
 	//The aggregates the first cut supports (spec *Reads*):  Part 13's, and Median, the median of an interval's Good raw
 	//values, which Part 13 doesn't define.
 	enum class EAggregate : uint8{ Interpolative, Average, TimeAverage, Count, Minimum, Maximum, Start, End, StandardDeviationSample, Median };
+	//An aggregate the library computes:  its name, the browse name of its Part 13 AggregateFunction object, and that object's
+	//id in namespace 0, 0 for Median, which Part 13 doesn't define and a host publishes itself.
+	struct NamedAggregate final{ sv Name; UA_UInt32 Function; EAggregate Aggregate; };
+	//Every EAggregate, in its order:  the gateway's group reads name them by Name, and OpcServer publishes and serves them by Function.
+	constexpr std::array<NamedAggregate,10> Aggregates{ {
+		{"Interpolative", UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, EAggregate::Interpolative}, {"Average", UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, EAggregate::Average},
+		{"TimeAverage", UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, EAggregate::TimeAverage}, {"Count", UA_NS0ID_AGGREGATEFUNCTION_COUNT, EAggregate::Count},
+		{"Minimum", UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, EAggregate::Minimum}, {"Maximum", UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, EAggregate::Maximum},
+		{"Start", UA_NS0ID_AGGREGATEFUNCTION_START, EAggregate::Start}, {"End", UA_NS0ID_AGGREGATEFUNCTION_END, EAggregate::End},
+		{"StandardDeviationSample", UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, EAggregate::StandardDeviationSample}, {"Median", 0, EAggregate::Median} } };
+	static_assert( Aggregates.size()==(uint8)EAggregate::Median+1 );
+	constexpr α FindAggregate( sv name )ι->optional<EAggregate>{
+		const auto p = std::ranges::find( Aggregates, name, &NamedAggregate::Name );
+		return p==Aggregates.end() ? nullopt : optional<EAggregate>{ p->Aggregate };
+	}
 	//Part 11's ReadProcessedDetails:  one value per node for each Interval from Start to End, computed from the raw
 	//records under Configuration as Part 13 §5.4.3 says, timestamped at the interval's start.  A Start after End
 	//computes the intervals back from Start, later first, each holding its later end and not its earlier.  An Interval

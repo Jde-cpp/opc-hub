@@ -1,5 +1,6 @@
 #include "HistGroupReadQLAwait.h"
 #include <jde/fwk/str.h>
+#include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/UAException.h>
 #include "../GatewayAppClient.h"
@@ -17,7 +18,7 @@ namespace Jde::Opc::Gateway{
 		if( args.Mode==AtTime )
 			return group.ReadAtTime( {.Nodes=move(nodes), .Times=args.Times, .SimpleBounds=true, .Limit=args.Limit, .Continuation=args.Continuation}, sl );
 		if( args.Mode==Processed ){
-			let aggregate = HistQL::FindAggregate( args.Aggregate );
+			let aggregate = Hist::FindAggregate( args.Aggregate );
 			if( !aggregate )
 				throw UAException{ UA_STATUSCODE_BADAGGREGATENOTSUPPORTED, Ƒ("A group's history has no aggregate '{}'.", args.Aggregate), {ELogLevel::Debug}, sl };
 			//An interval ToDuration refuses, 9e12 ms or more, is one over the whole range, as 0 is, as the pass-through counts it.
@@ -26,6 +27,25 @@ namespace Jde::Opc::Gateway{
 		}
 		return group.Read( {.Nodes=move(nodes), .Start=args.Start, .End=args.End, .Bounds=args.Bounds, .Modified=args.Modified, .Limit=args.Limit, .Continuation=args.Continuation}, sl );
 	}
+	//The library's reads parse the group's files synchronously, every member's records of each day they cover:  on the executor,
+	//as its flushes run, so the request's strand isn't held for the scan.
+	struct GroupReadAwait final : AnyAwait<Hist::ReadResult>{
+		GroupReadAwait( sp<Hist::Group> group, const HistQL::GroupArgs& args, vector<Hist::NodeIndex> nodes, SRCE )ι:AnyAwait<Hist::ReadResult>{ sl }, _group{ move(group) }, _args{ args }, _nodes{ move(nodes) }{}
+	private:
+		α Suspend()ι->void override{
+			Post( [this]{
+				try{
+					Resume( read(*_group, _args, move(_nodes), _sl) );
+				}
+				catch( runtime_error& e ){
+					ResumeExp( move(e) );
+				}
+			} );
+		}
+		sp<Hist::Group> _group;
+		const HistQL::GroupArgs& _args;//the awaiting frame's.
+		vector<Hist::NodeIndex> _nodes;
+	};
 
 	α HistGroupReadQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
@@ -51,7 +71,7 @@ namespace Jde::Opc::Gateway{
 			vector<HistQL::ReadValue> values;
 			string continuation;
 			if( nodes.size() ){
-				auto page = read( *host->Group(), args, move(nodes), _sl );
+				auto page = co_await GroupReadAwait{ host->Group(), args, move(nodes), _sl };
 				values.reserve( page.Values.size() );
 				for( auto& v : page.Values ){
 					HistQL::ReadValue value{ slots.at(v.Value.node_index()), Hist::ToUA(v.Value), v.Bound, v.Value.has_heartbeat() };
@@ -73,6 +93,5 @@ namespace Jde::Opc::Gateway{
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
-		co_return;
 	}
 }

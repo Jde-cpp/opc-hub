@@ -5,6 +5,7 @@
 //through a connection drop that the group marks as a gap and the server, which never lost a value, doesn't.
 #include <thread>
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include <jde/ql/LocalQL.h>
 #include <jde/access/Authorize.h>
@@ -441,8 +442,8 @@ namespace Jde::Opc::Gateway::Tests{
 
 		Enforce( false );
 		EXPECT_THROW( Update("createHistory", group, {{RpmManual, t0+10ms, 1}}), GatewayErrorResponse ) << "an edit nothing enforces";
+		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };//before:  an Enforce that throws can leave it restored.
 		Enforce( true );
-		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
 
 		let inserted = Update( "createHistory", group, {{RpmManual, t0+10ms, 1}, {RpmManual, t0, 2}, {Rpm2, t0+10ms, 3}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS, UA_STATUSCODE_BADNODEIDUNKNOWN}) );
@@ -498,6 +499,48 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Stored(host, again, joined).size(), 2u );
 		EXPECT_EQ( Items(), itemsBefore+1 ) << "the one item, joined, not a second";
 	}
+	//A namespace the server registers at the end moves no member's index:  neither the pass that sees it, here a member's join,
+	//nor a rebuild's check makes the group's items again (spec *Collector contract*).
+	TEST_F( HistCollectorTests, AnAppendedNamespaceMovesNothing ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		let itemsBefore = Items();
+		let group = CreateGroup( "appended" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let status = AddNode( group, Status1 );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		let logged = [&]( sv text ){
+			return Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( host->Guid() ) && m.contains( text ); } );
+		};
+		let passes = [&]( uint count ){//each create's INFO
+			Stopwatch sw;
+			while( logged("items created on").size()<count )
+				sw.CheckTimeout( 15s, 10ms );
+			return logged( "items created on" );
+		};
+		ASSERT_NO_THROW( passes(1) );
+		auto ua = Server::FindUAServer();
+		UA_Server_addNamespace( ua->Ptr(), "urn:jde:tests:appended:join" );
+		AddNode( group, RpmManual );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		vector<Logging::Entry> created;
+		ASSERT_NO_THROW( created = passes(2) );
+		ASSERT_EQ( created.size(), 2u );
+		EXPECT_TRUE( created[1].Message().contains("1 of 1 items") ) << created[1].Message();
+
+		//The rebuild's values wait for the check, so once the value written while down is stored, the check has decided.
+		UA_Server_addNamespace( ua->Ptr(), "urn:jde:tests:appended:rebuild" );
+		auto collector = Collector();
+		ASSERT_TRUE( collector );
+		let on = !*(const UA_Boolean*)Current( Status1 ).value.data;
+		UAClient::ConnectionLost( sp<UAClient>{collector} );
+		let missed = Ms( Clock::now() );
+		WriteStatus( on, missed );
+		ASSERT_NO_THROW( WaitStored(host, status, missed, 1) );
+		EXPECT_TRUE( logged("namespaces moved").empty() );
+		EXPECT_EQ( logged("items created on").size(), 2u ) << "the rebuild's items kept";
+	}
 	//Each member's DataType, read once its item is made, is the type the group's edits take, and goes into its join's NodeAdded
 	//while no flush has taken that (spec *Edits*).
 	TEST_F( HistCollectorTests, MembersTakeTheirDataType ){
@@ -521,6 +564,38 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( declared(rpm), &UA_TYPES[UA_TYPES_DOUBLE] );
 		EXPECT_EQ( declared(status), &UA_TYPES[UA_TYPES_BOOLEAN] );
 		EXPECT_EQ( host->Group()->DataType(status), &UA_TYPES[UA_TYPES_BOOLEAN] );
+	}
+	//An abstract DataType of namespace 0, as Number, declares none:  the group's edits take the type of the values it stored,
+	//which a Number's may change (spec *Record format*).
+	TEST_F( HistCollectorTests, AnAbstractDataTypeDeclaresNone ){
+		constexpr UA_UInt32 Count{ 9026 };//added here, holding an Int32.
+		auto attributes = UA_VariableAttributes_default;
+		UA_Int32 zero{};
+		UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+		attributes.dataType = UA_NODEID_NUMERIC( 0, UA_NS0ID_NUMBER );
+		attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+		ASSERT_EQ( UA_Server_addVariableNode(Server::GetUAServer().Ptr(), Node(Count), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+			UA_QUALIFIEDNAME(_ns, (char*)"Count"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [=]{ UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(Count), true ); };
+		let itemsBefore = Items();
+		let group = CreateGroup( "abstract" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let count = AddNode( group, Count );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		ASSERT_NO_THROW( WaitDescribed(host, count) );
+		let joined = Clock::now()-24h*365;
+		ASSERT_NO_THROW( WaitStored(host, count, joined, 1) );
+		let buffer = host->Group()->Buffer();
+		let join = std::ranges::find_if( buffer, [=]( let& r ){ let added = std::get_if<Opc::Hist::NodeAdded>( &r ); return added && added->Index==count; } );
+		ASSERT_NE( join, buffer.end() );
+		let declared = std::get<Opc::Hist::NodeAdded>( *join ).DataType;
+		EXPECT_EQ( declared, nullptr ) << declared->typeName;
+		EXPECT_EQ( host->Group()->DataType(count), &UA_TYPES[UA_TYPES_INT32] ) << "the type of the value it stored";
+		const UA_Double half{ 1.5 };
+		Write( Count, &half, UA_TYPES[UA_TYPES_DOUBLE], Since() );
+		ASSERT_NO_THROW( WaitStored(host, count, joined, 2) );
+		EXPECT_EQ( host->Group()->DataType(count), &UA_TYPES[UA_TYPES_DOUBLE] );
 	}
 	//A percent-of-range band takes the InstrumentRange or EURange the server gives the node, read once its item is made, and
 	//a format edit takes the other;  a node without the range its format needs stores every change (spec *Compression*).
@@ -548,21 +623,60 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( thresholds(pump4).Range->High, 3000 );
 		EXPECT_FALSE( host->FindThresholds(pump4)->Range ) << "the rows', which keep no range";
 	}
+	//A description Describe lost, rather than was refused, the watch asks for again (Redescribe):  here a percent-of-range band
+	//waits while the server refuses the translate of a node's two range properties, and takes the InstrumentRange once asked again.
+	TEST_F( HistCollectorTests, ALostDescriptionIsAskedAgain ){
+		constexpr UA_UInt32 Pump3Rpm{ 6032 };//its InstrumentRange is 0-1500.
+		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
+		let limit = config.maxNodesPerTranslateBrowsePathsToNodeIds;
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = 1;
+		absl::Cleanup restore = [&]{ config.maxNodesPerTranslateBrowsePathsToNodeIds = limit; };
+		let itemsBefore = Items();
+		let group = CreateGroup( "redescribe" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let pump3 = AddNode( group, Pump3Rpm, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		Stopwatch sw;
+		optional<HistDescription> described;
+		while( !(described = host->Description(pump3)) || !described->Enumeration )//its DataType, read in the same Describe.
+			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		EXPECT_FALSE( described->Ranged ) << "the translate was refused";
+		let thresholds = [&]{ return host->Group()->FindThresholds( pump3 ).value(); };
+		EXPECT_FALSE( thresholds().ExceptionDeviation ) << "its band waits";
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = limit;
+		host->Redescribe();
+		ASSERT_NO_THROW( WaitDescribed(host, pump3) );
+		EXPECT_EQ( thresholds().ExceptionDeviation, 1 );
+		ASSERT_TRUE( thresholds().Range );
+		EXPECT_EQ( thresholds().Range->High, 1500 ) << "its InstrumentRange";
+	}
 	//An enumeration's values arrive as Int32, which the library can't tell from a quantity, so its node takes no band
-	//(spec *Compression*):  ServerStatus.State, of namespace 0's ServerState, and the IA examples' DeviceHealth, whose
-	//DeviceHealthEnumeration only the server's definition of it says is one.
+	//(spec *Compression*):  ServerStatus.State, of namespace 0's ServerState, a variable of Enumeration itself, which
+	//open62541's kind for it says is one as well, and the IA examples' DeviceHealth, whose DeviceHealthEnumeration only the
+	//server's definition of it says is one.
 	TEST_F( HistCollectorTests, EnumerationsTakeNoBand ){
+		constexpr UA_UInt32 Mode{ 9029 };//added here:  of Enumeration itself, i=29, holding an Int32.
+		auto attributes = UA_VariableAttributes_default;
+		UA_Int32 one{ 1 };
+		UA_Variant_setScalar( &attributes.value, &one, &UA_TYPES[UA_TYPES_INT32] );
+		attributes.dataType = UA_NODEID_NUMERIC( 0, UA_NS0ID_ENUMERATION );
+		attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+		ASSERT_EQ( UA_Server_addVariableNode(Server::GetUAServer().Ptr(), Node(Mode), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+			UA_QUALIFIEDNAME(_ns, (char*)"Mode"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [=]{ UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(Mode), true ); };
 		let itemsBefore = Items();
 		let group = CreateGroup( "enumerations" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
 		const jobject band{ {"exceptionDeviation", 1}, {"exceptionDeviationFormat", 0} };
 		let state = AddNode( group, jobject{{"nsu", "http://opcfoundation.org/UA/"}, {"i", UA_NS0ID_SERVER_SERVERSTATUS_STATE}}, band );
 		let health = AddNode( group, jobject{{"nsu", "http://opcfoundation.org/UA/IA/Examples/"}, {"i", 6002}}, band );
+		let mode = AddNode( group, Mode, band );
 		let rpm = AddNode( group, RpmManual, band );
 		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 3) );
+		ASSERT_NO_THROW( WaitSubscribed(host, 4) );
 		let thresholds = [&]( uint32 index ){ return host->Group()->FindThresholds( index ).value(); };
-		for( let [index, enumeration] : {std::pair{state, true}, std::pair{health, true}, std::pair{rpm, false}} ){
+		for( let [index, enumeration] : {std::pair{state, true}, std::pair{health, true}, std::pair{mode, true}, std::pair{rpm, false}} ){
 			HistDescription described;
 			ASSERT_NO_THROW( described = WaitDescribed(host, index) );
 			EXPECT_EQ( described.Enumeration, enumeration ) << "member " << index;

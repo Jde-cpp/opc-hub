@@ -165,13 +165,6 @@ namespace HistQL{
 		return Mode==EMode::Processed && Start && End ? intervals( *this ).Count : 0;
 	}
 }
-	α HistQL::FindAggregate( sv name )ι->optional<Hist::EAggregate>{
-		using enum Hist::EAggregate;
-		constexpr std::array<std::pair<sv,Hist::EAggregate>,10> names{ {{"Interpolative", Interpolative}, {"Average", Average}, {"TimeAverage", TimeAverage}, {"Count", Count},
-			{"Minimum", Minimum}, {"Maximum", Maximum}, {"Start", Start}, {"End", End}, {"StandardDeviationSample", StandardDeviationSample}, {"Median", Median}} };
-		let p = std::ranges::find( names, name, &std::pair<sv,Hist::EAggregate>::first );
-		return p==names.end() ? nullopt : optional<Hist::EAggregate>{ p->second };
-	}
 	α HistQL::FindEdit( sv command )ι->optional<EEdit>{
 		for( uint8 i=0; i<EditCommands.size(); ++i ){
 			if( EditCommands[i]==command )

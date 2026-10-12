@@ -20,9 +20,12 @@ namespace Jde::Opc::Gateway{
 				statuses = move( typed.Statuses );
 				let& types = typed.Types;
 				vector<vector<Value>> values( count );//each node's, in the order named.
+				vector<string> names; names.reserve( count );//each node's, once for all its values.
+				for( let& node : nodes )
+					names.push_back( node.ToString() );
 				for( let& v : args.Values ){
 					if( !UA_StatusCode_isBad(statuses[v.Slot]) )
-						values[v.Slot].push_back( HistQL::ToValue(v, nodes[v.Slot].ToString(), types[v.Slot], args.Command(), _sl) );
+						values[v.Slot].push_back( HistQL::ToValue(v, names[v.Slot], types[v.Slot], args.Command(), _sl) );
 				}
 				for( uint i=0; i<count; ++i ){
 					if( UA_StatusCode_isBad(statuses[i]) )

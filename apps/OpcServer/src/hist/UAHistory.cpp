@@ -191,13 +191,6 @@ namespace Jde::Opc::Server{
 				return UA_STATUSCODE_BADINTERNALERROR;
 			}
 		}
-		//Part 13's AggregateFunction objects, namespace 0's, for the aggregates served from it.
-		constexpr std::array<std::pair<UA_UInt32,Hist::EAggregate>,9> Part13Aggregates{{
-			{UA_NS0ID_AGGREGATEFUNCTION_INTERPOLATIVE, Hist::EAggregate::Interpolative}, {UA_NS0ID_AGGREGATEFUNCTION_AVERAGE, Hist::EAggregate::Average},
-			{UA_NS0ID_AGGREGATEFUNCTION_TIMEAVERAGE, Hist::EAggregate::TimeAverage}, {UA_NS0ID_AGGREGATEFUNCTION_COUNT, Hist::EAggregate::Count},
-			{UA_NS0ID_AGGREGATEFUNCTION_MINIMUM, Hist::EAggregate::Minimum}, {UA_NS0ID_AGGREGATEFUNCTION_MAXIMUM, Hist::EAggregate::Maximum},
-			{UA_NS0ID_AGGREGATEFUNCTION_START, Hist::EAggregate::Start}, {UA_NS0ID_AGGREGATEFUNCTION_END, Hist::EAggregate::End},
-			{UA_NS0ID_AGGREGATEFUNCTION_STANDARDDEVIATIONSAMPLE, Hist::EAggregate::StandardDeviationSample} }};
 		//HistoryServerCapabilities' AggregateFunctions folder organizes what is served, and so does ServerCapabilities',
 		//which lists every aggregate a server supports (Part 5 §6.3.2):  Part 13's objects, which namespace 0 holds
 		//unreferenced, and Median, added as an AggregateFunctionType object of the server's own namespace.
@@ -205,8 +198,10 @@ namespace Jde::Opc::Server{
 			const UA_NodeId history = UA_NODEID_NUMERIC( 0, UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS ), server = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER_SERVERCAPABILITIES_AGGREGATEFUNCTIONS );
 			const UA_NodeId organizes = UA_NODEID_NUMERIC( 0, UA_NS0ID_ORGANIZES );
 			for( let& folder : {history, server} ){
-				for( let& [function, _] : Part13Aggregates )
-					UAε( UA_Server_addReference(&ua, folder, organizes, UA_EXPANDEDNODEID_NUMERIC(0, function), true) );
+				for( let& aggregate : Hist::Aggregates ){
+					if( aggregate.Function )
+						UAε( UA_Server_addReference(&ua, folder, organizes, UA_EXPANDEDNODEID_NUMERIC(0, aggregate.Function), true) );
+				}
 			}
 			UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
 			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)"Median" );
@@ -297,9 +292,9 @@ namespace Jde::Opc::Server{
 	}
 	α UAHistory::Aggregate( const UA_NodeId& function )ι->optional<Hist::EAggregate>{
 		if( function.namespaceIndex==0 && function.identifierType==UA_NODEIDTYPE_NUMERIC ){
-			for( let& [id, aggregate] : Part13Aggregates ){
-				if( id==function.identifier.numeric )
-					return aggregate;
+			for( let& aggregate : Hist::Aggregates ){
+				if( aggregate.Function && aggregate.Function==function.identifier.numeric )
+					return aggregate.Aggregate;
 			}
 		}
 		let median = Median();

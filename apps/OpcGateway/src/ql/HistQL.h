@@ -66,8 +66,6 @@ namespace Jde::Opc::Gateway::HistQL{
 		vector<ExNodeId> Nodes;
 		string Continuation;//decoded, empty for the first page.
 	};
-	//Part 13's aggregates and Median, by the names a pass-through read takes (AggregateFunctions::Part13):  the library's.
-	α FindAggregate( sv name )ι->optional<Hist::EAggregate>;
 	//The most values a page holds:  /gateway/hist/readLimit, 10,000 by default, and 0 for no limit.
 	α ReadLimit()ι->uint;
 	//The continuation as the caller carries it, base64url of the proto, and back.  Decode throws a UAException with

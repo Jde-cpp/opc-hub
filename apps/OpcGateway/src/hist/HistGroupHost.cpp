@@ -104,10 +104,8 @@ namespace Jde::Opc::Gateway{
 		if( node.namespaceUri.length )
 			return _group->Find( node );
 		ul _{ _mutex };
-		if( let ex = _namespaces.ToExNodeId(node.nodeId); ex )
-			return _group->Find( *ex );
-		let p = _byNode.find( NodeId{node.nodeId} );
-		return p==_byNode.end() ? nullopt : optional<HistGroupNodePK>{ p->second };
+		let ex = _namespaces.ToExNodeId( node.nodeId );
+		return ex ? _group->Find( *ex ) : nullopt;
 	}
 	α HistGroupHost::Indexes( const vector<ExNodeId>& nodes, SL sl )Ε->vector<optional<HistGroupNodePK>>{
 		vector<optional<HistGroupNodePK>> y; y.reserve( nodes.size() );
@@ -176,9 +174,9 @@ namespace Jde::Opc::Gateway{
 			bool moved{};
 			{
 				ul _{ _mutex };
-				//The server came back with its namespaces in another order:  every index is another node's now, the items' included,
-				//so all of them go and every member resolves again.  A rebuild's check still out decides nothing.
-				if( _namespaces.Uris.size() && namespaces.Uris!=_namespaces.Uris ){
+				//The server came back with a member's namespace at another index:  the item's index is another node's now, so every
+				//item goes and every member resolves again.  A rebuild's check still out decides nothing.
+				if( Moved(namespaces) ){
 					moved = true;
 					Reset();
 					++_epoch;
@@ -301,8 +299,9 @@ namespace Jde::Opc::Gateway{
 			WARN( "[{}]Could not read the {} nodes whose items '{}' already had - each is stored from its next change:  {}", _guid, count, _slug, e.what() );
 		}
 	}
-	α HistGroupHost::Describe( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask{
+	α HistGroupHost::Describe( sp<UAClient> client, flat_set<NodeId> nodes, bool again )ι->VoidTask{
 		auto self = shared_from_this();
+		let level = again ? ELogLevel::Debug : ELogLevel::Warning;
 		vector<NodeId> ids{ nodes.begin(), nodes.end() };
 		vector<HistDescription> described( ids.size() );
 		ValueTypes typed;
@@ -313,9 +312,7 @@ namespace Jde::Opc::Gateway{
 				if( !dataType || enumerations.contains(*dataType) )
 					continue;
 				optional<bool> enumeration;
-				if( !dataType->namespaceIndex && dataType->Numeric()==UA_NS0ID_ENUMERATION )//abstract:  open62541 has no type, and the server no definition.
-					enumeration = true;
-				else if( let type = dataType->namespaceIndex ? nullptr : UA_findDataType(&*dataType); type )
+				if( let type = dataType->namespaceIndex ? nullptr : UA_findDataType(&*dataType); type )
 					enumeration = type->typeKind==UA_DATATYPEKIND_ENUM;
 				else{
 					try{
@@ -335,7 +332,7 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		catch( const runtime_error& e ){
-			WARN( "[{}]Could not read the DataType of {} nodes on '{}' - an edit of each takes the type of its stored values, and a band waits:  {}", _guid, ids.size(), _slug, e.what() );
+			LOG( level, _tags, "[{}]Could not read the DataType of {} nodes on '{}' - an edit of each takes the type of its stored values, and a band waits:  {}", _guid, ids.size(), _slug, e.what() );
 		}
 		try{
 			constexpr sv properties[]{ "InstrumentRange", "EURange" };//a node's are paths 2i and 2i+1.
@@ -373,7 +370,7 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		catch( const runtime_error& e ){
-			WARN( "[{}]Could not read the InstrumentRange and EURange of {} nodes on '{}' - a percent-of-range band waits for them:  {}", _guid, ids.size(), _slug, e.what() );
+			LOG( level, _tags, "[{}]Could not read the InstrumentRange and EURange of {} nodes on '{}' - a percent-of-range band waits for them:  {}", _guid, ids.size(), _slug, e.what() );
 		}
 		ul _{ _mutex };
 		for( uint i=0; i<ids.size() && !_closed; ++i ){
@@ -382,9 +379,14 @@ namespace Jde::Opc::Gateway{
 			if( n==_nodes.end() )
 				continue;
 			auto& node = n->second;
-			if( i<typed.Types.size() && typed.Types[i] && !UA_StatusCode_isBad(typed.Statuses[i]) )
-				_group->SetDataType( p->second, typed.Types[i] );
+			if( i<typed.Types.size() && !UA_StatusCode_isBad(typed.Statuses[i]) ){
+				let& dataType = typed.DataTypes[i];
+				//None for one of namespace 0 open62541 has no type for:  abstract, as Number is, its values may be any subtype's.
+				if( let abstract = dataType && !dataType->namespaceIndex && !UA_findDataType(&*dataType); abstract || typed.Types[i] )
+					_group->SetDataType( p->second, abstract ? nullptr : typed.Types[i] );
+			}
 			let& d = described[i];
+			let known = node.Described.Enumeration.has_value();
 			if( d.Enumeration )
 				node.Described.Enumeration = d.Enumeration;
 			if( d.Ranged ){
@@ -392,9 +394,11 @@ namespace Jde::Opc::Gateway{
 				node.Described.EU = d.EU;
 				node.Described.Ranged = true;
 			}
+			//Lost:  the ranges, the DataType read, or the answer on a DataType it read.  A DataType the server refused isn't asked again.
+			node.Undescribed = !node.Described.Ranged || ( !node.Described.Enumeration && (i>=typed.DataTypes.size() || typed.DataTypes[i]) );
 			if( !node.Thresholds.ExceptionDeviation )
 				continue;
-			if( d.Enumeration.value_or(false) )
+			if( d.Enumeration.value_or(false) && !known )
 				INFO( "[{}]Node {} '{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", _guid, p->second, node.Ex.ToString() );
 			try{
 				_group->SetThresholds( p->second, ForGroup(node.Thresholds, node.Described) );//one whose range is missing the library warns of, and stores every change.
@@ -484,7 +488,9 @@ namespace Jde::Opc::Gateway{
 			if( _closed || epoch!=_epoch )//a later break or return overtook it, and decides what waited.
 				co_return;
 			_verifying = false;
-			moved = !read || read->Uris!=_namespaces.Uris;
+			moved = !read || Moved( *read );
+			if( read )
+				_namespaces = move( *read );
 			_group->Connected();
 			if( moved ){
 				_held.clear();
@@ -502,6 +508,9 @@ namespace Jde::Opc::Gateway{
 			UAClient::Unsubscribe( self );
 			Subscribe();
 		}
+	}
+	α HistGroupHost::Moved( const Namespaces& namespaces )Ι->bool{
+		return std::ranges::any_of( _nodes, [&]( let& n ){ return n.second.Id && namespaces.ToNodeId(n.second.Ex)!=n.second.Id; } );
 	}
 	α HistGroupHost::Watch()ι->void{
 		if( _closed || _watch )
@@ -554,11 +563,29 @@ namespace Jde::Opc::Gateway{
 			}
 			Watch();
 		}
-		if( abandoned.empty() )
+		if( abandoned.size() ){
+			WARN( "[{}]{} items on '{}' were lost {}s ago and never came back - asking for them again.", _guid, abandoned.size(), _slug, duration_cast<std::chrono::seconds>(AbandonAfter).count() );
+			Unsubscribe( move(abandoned) );
+			Subscribe();
+		}
+		Redescribe();
+	}
+	α HistGroupHost::Redescribe()ι->void{
+		auto client = UAClient::Find( _slug, _collector );
+		if( !client )
 			return;
-		WARN( "[{}]{} items on '{}' were lost {}s ago and never came back - asking for them again.", _guid, abandoned.size(), _slug, duration_cast<std::chrono::seconds>(AbandonAfter).count() );
-		Unsubscribe( move(abandoned) );
-		Subscribe();
+		flat_set<NodeId> nodes;
+		{
+			ul _{ _mutex };
+			if( _closed )
+				return;
+			for( auto&& [_,node] : _nodes ){
+				if( node.Subscribed && !node.Lost && std::exchange(node.Undescribed, false) )
+					nodes.emplace( *node.Id );
+			}
+		}
+		if( nodes.size() )
+			Describe( move(client), move(nodes), true );
 	}
 	α HistGroupHost::Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask{
 		auto self = shared_from_this();
