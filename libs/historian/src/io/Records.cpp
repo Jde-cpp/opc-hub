@@ -83,6 +83,14 @@ namespace Jde::Opc::Hist{
 			Ticks& Last;
 		};
 
+	Ω toProto( const DataValue& value, bool warn )ε->Proto::DataValue{
+		auto y = ToProto( value.Data, value.Index, warn );
+		if( value.Heartbeat )
+			y.set_heartbeat( *value.Heartbeat );
+		if( value.Unsourced )
+			y.set_heartbeat_unsourced( true );
+		return y;
+	}
 	Ω setWriter( auto& record, const optional<Writer>& by )ι->void{
 		if( !by )
 			return;
@@ -162,7 +170,7 @@ namespace Jde::Opc{
 		return UADateTime{ std::holds_alternative<NodeAdded>(r) ? get<NodeAdded>(r).Ts : get<NodeRemoved>(r).Ts }.UA();
 	}
 
-	α Hist::ToProto( const UA_DataValue& v, NodeIndex index )ε->Proto::DataValue{
+	α Hist::ToProto( const UA_DataValue& v, NodeIndex index, bool warn )ε->Proto::DataValue{
 		Proto::DataValue y;
 		y.set_node_index( index );
 		if( v.hasSourceTimestamp )
@@ -185,7 +193,8 @@ namespace Jde::Opc{
 					*y.mutable_value() = ProtoUtils::ToValue( v.value );
 				}
 				catch( const UAException& e ){
-					WARN( "node_index {}'s '{}' value is stored without it:  {}", index, v.value.type->typeName, e.what() );
+					if( warn )
+						WARN( "node_index {}'s '{}' value is stored without it:  {}", index, v.value.type->typeName, e.what() );
 					y.set_status( (StatusCode)e.Code() );
 				}
 			}
@@ -255,7 +264,7 @@ namespace Jde::Opc{
 		}
 		else{
 			let& value = get<DataValue>( r );
-			auto& stored = *y.mutable_value() = ToProto( value );
+			auto& stored = *y.mutable_value() = toProto( value, true );
 			if( value.Unsupported ){
 				let notUtf8 = stored.status()==UA_STATUSCODE_BADENCODINGERROR;
 				WARN( "node_index {}'s '{}' value {}, so it and later ones like it are stored without it, as {}.", value.Index, value.Data.value.type->typeName,
@@ -264,12 +273,5 @@ namespace Jde::Opc{
 		}
 		return y;
 	}
-	α Hist::ToProto( const DataValue& value )ε->Proto::DataValue{
-		auto y = ToProto( value.Data, value.Index );
-		if( value.Heartbeat )
-			y.set_heartbeat( *value.Heartbeat );
-		if( value.Unsourced )
-			y.set_heartbeat_unsourced( true );
-		return y;
-	}
+	α Hist::ToProto( const DataValue& value )ε->Proto::DataValue{ return toProto( value, false ); }
 }

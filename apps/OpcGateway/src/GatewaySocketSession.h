@@ -7,6 +7,7 @@
 
 namespace Jde::Proto{ class Query; }
 namespace Jde::Opc{ struct NodeId; }
+namespace Jde::Opc::Hist{ enum class ESubscriptionEnd : uint8; }
 namespace Jde::Opc::Gateway{
 	struct HistSubscriber;
 	using namespace Jde::Web::Server;
@@ -19,6 +20,12 @@ namespace Jde::Opc::Gateway{
 		α to_string()Ι->string override{ return Ƒ( "{:x}", Id() ); }
 		α UserPK()Ι->Jde::UserPK override{ return Session() ? Session()->UserPK : Jde::UserPK{}; }
 		α WriteException( runtime_error&& e, Jde::RequestId requestId, SRCE )ι->void override;
+		//A historian subscription's page or push, written on the strand unless it has ended by then:  HistUnsubscribe ends it
+		//there before writing its completion, so nothing of it follows that.
+		α WriteHist( sp<HistSubscriber> subscriber, FromServer::Transmission&& message )ι->void;
+		//The group ended a historian subscription, removed or stopping:  on the strand, out of the map and the client told
+		//under its id, unless a HistUnsubscribe or the close ended it first.
+		α HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void;
 	private:
 		α CreateSubscription( sp<UAClient> client, flat_set<NodeId> nodes, RequestId requestId )ι->VoidAwait::Task;
 		α LocalQL()Ι->sp<QL::IQL> override{ return QLPtr(); }
@@ -34,11 +41,11 @@ namespace Jde::Opc::Gateway{
 		//A historian subscription (spec *Subscriptions*), defined in hist/HistSubscriber.cpp:  the group's Read gate, the ack
 		//with each node's status, the snapshot's pages, then every record as it is stored, until HistUnsubscribe or the close.
 		α HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void;
-		//Registers the subscription and takes its snapshot on the executor, writes the ack and the snapshot's pages, then
-		//lets the pushes through.
-		α HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack )ι->VoidTask;
+		//Registers the subscription and takes its snapshot on the executor, writes the ack and the snapshot's pages, `limit`
+		//values a page, then lets the pushes through.
+		α HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack, uint limit )ι->VoidTask;
 		α HistUnsubscribe( Jde::RequestId subscription, Jde::RequestId requestId )ι->void;
-		α RemoveHist( Jde::RequestId subscription )ι->sp<HistSubscriber>;//out of the map, ended.
+		α RemoveHist( Jde::RequestId subscription, const HistSubscriber* only=nullptr )ι->sp<HistSubscriber>;//out of the map, ended:  if `only`, just when it is the one there.
 
 		α WriteSubscription( const jvalue& j, Jde::RequestId requestId )ι->void override;
 		α WriteSubscription( uint32 /*appPK*/, uint32 /*appInstancePK*/, const Logging::Entry& /*e*/, const QL::Subscription& /*sub*/ )ι->void override{ ASSERT(false); }

@@ -489,7 +489,7 @@ namespace Jde::Opc::Hist{
 		uint freed{}, fresh{};
 		std::erase_if( _values, [&]( const Buffered& b ){
 			let& value = get<DataValue>( b.Item );
-			if( value.Index!=index || !value.Heartbeat )
+			if( value.Index!=index || !value.Heartbeat || b.Released )
 				return false;
 			let time = PrimaryTime( value.Data );
 			if( (made ? value.Data.serverTimestamp : time)<from ){
@@ -504,7 +504,7 @@ namespace Jde::Opc::Hist{
 		_fresh -= std::min( _fresh, fresh );
 		_store->Subtract( freed );
 		//The trim's too, which the next flush would write back as the end of the node's gap.
-		if( auto p = _lost.find(index); p!=_lost.end() && p->second.Newest && get<DataValue>(p->second.Newest->Item).Heartbeat ){
+		if( auto p = _lost.find(index); p!=_lost.end() && p->second.Newest && !p->second.Newest->Released && get<DataValue>(p->second.Newest->Item).Heartbeat ){
 			auto& lost = p->second;
 			let& value = get<DataValue>( lost.Newest->Item );
 			let time = PrimaryTime( value.Data );
@@ -604,7 +604,7 @@ namespace Jde::Opc::Hist{
 		Finish( move(effects) );
 	}
 	α Group::StoreRecord( DataValue&& value, uint32_t bytes, Effects& effects )ι->void{
-		if( !_subscribers.empty() ){
+		if( !_subscribers.empty() && !value.Heartbeat ){//a drop can take a heartbeat back until a flush takes it.
 			if( effects.To.empty() )//the same under one hold of the lock.
 				effects.To = _subscribers;
 			*effects.Stored.emplace_back().mutable_value() = ToProto( value );
@@ -645,6 +645,10 @@ namespace Jde::Opc::Hist{
 	α Group::Unsubscribe( const sp<const Registration>& registration )ι->void{
 		ul _{ _mutex };
 		std::erase( _subscribers, registration );
+	}
+	α Group::Subscribers()Ι->uint{
+		ul _{ _mutex };
+		return _subscribers.size();
 	}
 
 	α Group::Disconnected( TimePoint at )ι->void{
@@ -702,6 +706,7 @@ namespace Jde::Opc::Hist{
 		let size = bytes( by );
 		bool over{};
 		Effects effects;
+		vector<sp<const Registration>> ended;
 		{
 			ul _{ _mutex };
 			for( auto&& [index,node] : _nodes ){
@@ -712,11 +717,13 @@ namespace Jde::Opc::Hist{
 			}
 			_nodes.clear();
 			_indexes.clear();
-			_subscribers.clear();//nothing more is stored for them to hear of.
+			ended = std::exchange( _subscribers, {} );//nothing more is stored for them to hear of.
 			_closed = true;
 			effects.Pushed = { .Flush=true, .Trim=(over || effects.Pushed.Trim) && _failing };//the flush asked for here takes the rest, if it can write.
 		}
 		Finish( move(effects) );
+		for( let& registration : ended )
+			registration->Subscriber->OnEnded( ESubscriptionEnd::Removed );
 	}
 
 	α Group::Oldest()Ι->optional<uint>{
@@ -795,11 +802,23 @@ namespace Jde::Opc::Hist{
 				return !value.Heartbeat || made<=from || made>now;//one after now is from before a clock set back, so it waits no longer.
 			});
 		}
+		vector<Proto::HistoryRecord> beats;
+		let subscribed = !_subscribers.empty();
+		let release = [&]( Buffered& b ){//once, however often a failed write returns it.
+			let& value = get<DataValue>( b.Item );
+			if( value.Heartbeat && !std::exchange(b.Released, true) && subscribed )
+				*beats.emplace_back().mutable_value() = ToProto( value );
+		};
+		for( auto& b : y )
+			release( b );
 		for( auto p = _values.begin(); p!=kept; ++p ){//a heartbeat the flush takes is out of a drop's reach.
 			let& value = get<DataValue>( p->Item );
 			if( auto node = value.Heartbeat ? _nodes.find(value.Index) : _nodes.end(); node!=_nodes.end() )
 				node->second.Keep( PrimaryTime(value.Data) );
+			release( *p );
 		}
+		if( !beats.empty() )
+			_store->Time->Schedule( Duration::zero(), [to=_subscribers, beats=move(beats)]{ deliver( to, beats ); } );
 		uint held{}, fresh{};
 		for( auto p = kept; p!=_values.end(); ++p ){
 			held += Cost( *p );

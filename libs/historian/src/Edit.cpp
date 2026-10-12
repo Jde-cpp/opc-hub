@@ -334,9 +334,9 @@ namespace Jde::Opc::Hist{
 				continue;
 			std::ranges::stable_sort( list, {}, []( let& r ){ return r.modification().target_source_ts(); } );
 			try{
-				auto records = list;//for the subscribers, once written.
+				auto delivered = list;//for the subscribers once written, the list going in its disk form:  copied though none subscribes now, since one may before the commit.
 				auto write = _files->PrepareMods( day, move(list), members, sl );
-				y.push_back( {day, DayWrite{move(write)}, [this, &edit, day, changes=move(changed[day]), records=move(records)]( bool ok ){
+				y.push_back( {day, DayWrite{move(write)}, [this, &edit, day, changes=move(changed[day]), delivered=move(delivered)]( bool ok ){
 					if( !ok ){
 						edit.Fail( day );
 						return;
@@ -346,7 +346,7 @@ namespace Jde::Opc::Hist{
 						_files->Touch( index, time );
 						edit.Changed.emplace_back( index, time );
 					}
-					Modified( records );
+					Modified( delivered );
 				}} );
 			}
 			catch( Exception& x ){

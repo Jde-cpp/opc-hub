@@ -1,7 +1,8 @@
 //A subscription (#225, spec *Subscriptions*):  registered under the group's locks with the snapshot it reads first,
 //so a record is in the snapshot or the stream and never both;  the snapshot frozen as the flushes move on;  every stored
-//value streamed as it is stored, a late record and a heartbeat included;  each edit's Modification records once durable;
-//and the registration ended by the Subscription, or the group's stop.
+//value streamed as it is stored, a late record included, and a heartbeat once a flush takes it;  each edit's Modification
+//records once durable;
+//and the registration ended by the Subscription, or by the group's removal or stop, which tells the subscriber.
 #include <jde/opc/UAException.h>
 #include "reads.h"
 
@@ -34,9 +35,12 @@ namespace Jde::Opc::Hist::Tests{
 			return y;
 		}
 		α Count()Ι->uint{ ul _{ _mutex }; return _records.size(); }
+		α OnEnded( ESubscriptionEnd why )ι->void override{ ul _{ _mutex }; _ended.push_back( why ); }
+		α Ended()Ι->vector<ESubscriptionEnd>{ ul _{ _mutex }; return _ended; }
 	private:
 		mutable absl::Mutex _mutex;
 		vector<Proto::HistoryRecord> _records ABSL_GUARDED_BY(_mutex);
+		vector<ESubscriptionEnd> _ended ABSL_GUARDED_BY(_mutex);
 	};
 
 	//March 7 archived, March 8 live with a record in its file and one in the buffer, as Reads::TwoDays has it.
@@ -121,6 +125,22 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( doubles({now.begin()+1, now.end()}), (vector<double>{1, 2, 2.5, 3, 4, 6}) );
 	}
 
+	//The snapshot holds its files open until Next reads the last page, which lets them go, and the stream goes on.
+	TEST_F( Subscriptions, TheLastPageLetsTheFilesGo ){
+		TwoDays();
+		Edit( {UpdateData{Speed, UA_PERFORMUPDATETYPE_REPLACE, {Reading(2.2, T0+2s)}}} );
+		EXPECT_TRUE( Settle(*Pump) );
+		auto subscription = Pump->Subscribe( Listener, {Speed}, ticks(T0) );
+		EXPECT_EQ( subscription->OpenFiles(), 3u ) << "March 7's archive and modifications, and March 8's live file";
+		EXPECT_FALSE( subscription->Next(2).Continuation.empty() );
+		EXPECT_EQ( subscription->OpenFiles(), 3u ) << "a page before the last";
+		All( *subscription, 2 );
+		EXPECT_EQ( subscription->OpenFiles(), 0u );
+		EXPECT_TRUE( subscription->Next(2).Values.empty() ) << "a page after the last";
+		DataChange( *Pump, Speed, 6, Eighth+4min );
+		EXPECT_EQ( Listener->Values(), vector<double>{6} );
+	}
+
 	//A time past every record snapshots the bound alone, each node's value now, and a subscription to a node no record
 	//holds yet starts with Bad_BoundNotFound at the time.
 	TEST_F( Subscriptions, FromNow ){
@@ -151,6 +171,10 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( speed->Values(), vector<double>{7} );
 		EXPECT_EQ( temp->Values(), vector<double>{12} );
 		Time->Advance( 61s );//Speed's heartbeat.
+		EXPECT_EQ( speed->Count(), 1u ) << "held until a flush takes it";
+		Time->Advance( 1s );//past the publishing interval.
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );//the clock's hop.
 		ASSERT_EQ( speed->Count(), 2u );
 		EXPECT_TRUE( speed->Records()[1].value().has_heartbeat() );
 		EXPECT_EQ( temp->Count(), 1u );
@@ -169,6 +193,75 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( temp->Count(), 1u );
 		EXPECT_THROW( Pump->Subscribe(Listener, {}, ticks(T0)), Exception );
 		EXPECT_THROW( Pump->Subscribe(nullptr, {Speed}, ticks(T0)), Exception );
+	}
+
+	//A heartbeat streams once a flush takes it, out of a drop's reach:  one that a change sampled before it drops never
+	//streams, so the stream holds what the file does.  A snapshot leaves out a heartbeat no flush has taken, which streams
+	//when one does.
+	TEST_F( Subscriptions, HeartbeatsStreamOnceTaken ){
+		TwoDays();
+		Pump->SetThresholds( Speed, {.MaxTimeInterval=10s} );
+		auto subscription = Pump->Subscribe( Listener, {Speed}, ticks(Time->Now()) );
+		All( *subscription );
+		Time->Advance( 1s );
+		let changed = Time->Now();
+		DataChange( *Pump, Speed, 5, changed );
+		Time->Advance( 10s );//its heartbeat, which a flush leaves for the publishing interval.
+		Time->Advance( 50ms );
+		DataChange( *Pump, Speed, 6, changed+10s-50ms );//sampled before the heartbeat, so it drops it.
+		Time->Advance( 1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		EXPECT_EQ( Listener->Values(), (vector<double>{5, 6}) ) << "no heartbeat of 5 after 6";
+		auto check = ms<Received>();
+		let filed = All( *Pump->Subscribe(check, {Speed}, ticks(changed)) );
+		EXPECT_EQ( doubles(filed), (vector<double>{5, 6}) ) << "nor in the file";
+
+		Time->AdvanceTo( changed+20s+100ms );//6's heartbeat, 50 ms ago.
+		auto late = ms<Received>();
+		auto second = Pump->Subscribe( late, {Speed}, ticks(changed) );
+		let snapshot = All( *second );
+		EXPECT_EQ( doubles(snapshot), (vector<double>{5, 6}) ) << "the heartbeat no flush has taken";
+		EXPECT_EQ( Listener->Count(), 2u );
+		Time->Advance( 1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		for( let& heard : {Listener, late} ){
+			let records = heard->Records();
+			ASSERT_FALSE( records.empty() );
+			EXPECT_TRUE( records.back().value().has_heartbeat() );
+			EXPECT_EQ( records.back().value().value().double_value(), 6 );
+			EXPECT_EQ( std::ranges::count_if(records, []( let& r ){ return r.value().has_heartbeat(); }), 1 );
+		}
+	}
+
+	//A heartbeat a failed write returns streamed as the flush took it:  the next flush doesn't stream it again, and a
+	//change sampled before it, too late to drop it, follows it into the file as into the stream.
+	TEST_F( Subscriptions, AReturnedHeartbeatStreamsOnce ){
+		TwoDays();
+		Pump->SetThresholds( Speed, {.MaxTimeInterval=10s} );
+		auto subscription = Pump->Subscribe( Listener, {Speed}, ticks(Time->Now()) );
+		All( *subscription );
+		Time->Advance( 1s );
+		let changed = Time->Now();
+		DataChange( *Pump, Speed, 5, changed );
+		Time->Advance( 11s );//its heartbeat at changed+10s, past the publishing interval.
+		let file = File( *Pump, March8 ), aside = file.parent_path()/"aside";
+		fs::rename( file, aside );
+		fs::create_directory( file );//nothing appends to a directory.
+		EXPECT_FALSE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		EXPECT_EQ( Listener->Values(), (vector<double>{5, 5}) ) << "streamed as the flush took it";
+		DataChange( *Pump, Speed, 6, changed+10s-50ms );
+		fs::remove( file );
+		fs::rename( aside, file );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		EXPECT_EQ( Listener->Values(), (vector<double>{5, 5, 6}) ) << "once";
+		auto check = ms<Received>();
+		let filed = All( *Pump->Subscribe(check, {Speed}, ticks(changed)) );
+		ASSERT_EQ( doubles(filed), (vector<double>{5, 6, 5}) );
+		EXPECT_TRUE( filed[2].Value.has_heartbeat() );
 	}
 
 	//An edit's Modification records are pushed once they are durable, to the subscribers of their nodes, and a subscription
@@ -203,25 +296,38 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( after->Count(), 0u );
 	}
 
-	//A removed or stopped group takes no subscription, and the historian's end drops those it has.
+	//A removed or stopped group takes no subscription, and ends those it has, telling each subscriber once why:  the
+	//removal its group's, the historian's end every group's, after the value it settles streams.  One its subscriber
+	//ended first hears nothing.
 	TEST_F( Subscriptions, RemovedAndStopped ){
+		using enum ESubscriptionEnd;
 		TwoDays();
 		auto subscription = Pump->Subscribe( Listener, {Speed}, ticks(T0) );
 		All( *subscription );
+		auto unsubscribed = ms<Received>();
+		Pump->Subscribe( unsubscribed, {Temp}, ticks(T0) )->End();
 		Library->RemoveGroup( Pump->Name(), Admin );
+		EXPECT_EQ( Listener->Ended(), vector{Removed} );
+		EXPECT_TRUE( unsubscribed->Ended().empty() );
 		EXPECT_THROW( Pump->Subscribe(Listener, {Speed}, ticks(T0)), Exception );
 		EXPECT_FALSE( DataChange(*Pump, Speed, 9, Time->Now()) );
 		EXPECT_EQ( Listener->Count(), 0u );
 		subscription.reset();
+		EXPECT_EQ( Listener->Ended().size(), 1u ) << "an End after:  harmless";
 		auto other = AddGroup();
-		let flow = Join( *other, "Pump2.Flow" );
+		let flow = Join( *other, "Pump2.Flow", {.MinTimeInterval=1s} );
 		auto flows = ms<Received>();
 		auto live = other->Subscribe( flows, {flow}, ticks(Time->Now()) );
 		DataChange( *other, flow, 1, Time->Now() );
+		Time->Advance( 100ms );
+		DataChange( *other, flow, 1.5, Time->Now() );//held:  inside MinTimeInterval.
 		EXPECT_EQ( flows->Count(), 1u );
-		Restart();//the historian's end:  Stopping clears the registrations.
+		Restart();//the historian's end:  Stopping settles the held value, then ends the registrations.
+		EXPECT_EQ( flows->Values(), (vector<double>{1, 1.5}) ) << "the value the stop settles streams";
+		EXPECT_EQ( flows->Ended(), vector{Stopped} );
 		EXPECT_FALSE( DataChange(*other, flow, 2, Time->Now()) );
-		EXPECT_EQ( flows->Count(), 1u );
+		EXPECT_EQ( flows->Count(), 2u );
 		live.reset();//after the group stopped:  harmless.
+		EXPECT_EQ( flows->Ended().size(), 1u );
 	}
 }

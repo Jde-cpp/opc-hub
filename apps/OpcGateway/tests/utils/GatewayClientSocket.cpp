@@ -37,7 +37,7 @@ namespace Tests{
 	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
 	α GatewayClientSocket::HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]HistSubscribe: group {}.", requestId, group );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}.", hex(requestId), group );
 		{
 			lg _{ _histMutex };
 			_histListeners.emplace( requestId, move(listener) );
@@ -45,20 +45,84 @@ namespace Tests{
 		}
 		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, from, requestId), requestId, shared_from_this(), sl };
 	}
-	α GatewayClientSocket::HistUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
+	α GatewayClientSocket::HistSubscribeTwice( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]HistUnsubscribe: {:x}.", requestId, subscription );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe twice: group {}.", hex(requestId), group );
+		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, requestId) );
+		t.add_messages()->CopyFrom( t.messages(0) );
 		{
 			lg _{ _histMutex };
-			_histListeners.erase( subscription );
+			_histListeners.emplace( requestId, move(listener) );
+			_histDuplicates.emplace( requestId );
+			_lastHistSubscription = requestId;
+		}
+		return await<vector<StatusCode>>{ t, requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<bool>{
+		let subscription = NextRequestId();
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}, and [{}]HistUnsubscribe.", hex(subscription), group, hex(requestId) );
+		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, subscription) );
+		t.add_messages()->CopyFrom( Protobuf::Deserialize<FromClient::Transmission>(FromClientUtils::HistUnsubscription(subscription, requestId)).messages(0) );
+		{
+			lg _{ _histMutex };
+			_histListeners.emplace( subscription, move(listener) );
+			_lastHistSubscription = subscription;
+		}
+		return await<bool>{ t, requestId, shared_from_this(), sl };
+	}
+	α GatewayClientSocket::HistUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
+		let requestId = NextRequestId();
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistUnsubscribe: {}.", hex(requestId), hex(subscription) );
+		{
+			lg _{ _histMutex };
+			_histUnsubscribes.emplace( requestId, subscription );
 		}
 		return await<bool>{ FromClientUtils::HistUnsubscription(subscription, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::OnRead( FromServer::Transmission&& transmission )ι->void{
-		auto histListener = [this]( RequestId requestId )->sp<IHistListener>{
+		auto histListener = [this]( RequestId requestId )->sp<IHistListener> {
 			lg _{ _histMutex };
 			auto p = _histListeners.find( requestId );
 			return p==_histListeners.end() ? nullptr : p->second;
+		};
+		auto stray = [this]( RequestId requestId ){//a page or push of a subscription its HistUnsubscribe's ack ended.
+			lg _{ _histMutex };
+			if( !_histEnded.contains(requestId) )
+				return;
+			++_histStrays;
+			WARNT( ELogTags::SocketClientRead, "[{}]A historian subscription's message after its HistUnsubscribe's ack.", hex(requestId) );
+		};
+		auto unsubscribed = [this]( RequestId requestId, bool ended ){//a HistUnsubscribe answered:  its subscription's listener goes.
+			lg _{ _histMutex };
+			if( auto p = _histUnsubscribes.find(requestId); p!=_histUnsubscribes.end() ){
+				_histListeners.erase( p->second );
+				if( ended )
+					_histEnded.emplace( p->second );
+				_histUnsubscribes.erase( p );
+			}
+		};
+		auto histEnded = [this]( RequestId requestId, string what )->bool{//a live subscription's exception:  the gateway ended it.
+			sp<IHistListener> listener;
+			{
+				lg _{ _histMutex };
+				if( auto p = _histListeners.find(requestId); p!=_histListeners.end() ){
+					listener = move( p->second );
+					_histListeners.erase( p );
+					_histEnded.emplace( requestId );
+				}
+			}
+			if( listener )
+				listener->OnError( move(what) );
+			return listener!=nullptr;
+		};
+		auto duplicateRefused = [this]( RequestId requestId, string what )->bool {
+			lg _{ _histMutex };
+			if( !_histDuplicates.erase(requestId) )
+				return false;
+			++_histRefusals;
+			_lastHistRefusal = move( what );
+			return true;
 		};
 		auto size = transmission.messages_size();
 		for( auto i=0; i<size; ++i ){
@@ -73,10 +137,15 @@ namespace Tests{
 				onNodeValues( move(*m->mutable_node_values()) );
 				break;
 			case kException:{
+				if( duplicateRefused(requestId, m->exception().what()) )
+					break;
 				auto task = requestId==0 ? Web::Client::PendingTask{} : PopTask( requestId );
 				forgetRequest( requestId );//answered with an error, so no ack is coming to take its record out.  An unsubscribe's listeners stay: the server still pushes.
-				{ lg _{ _histMutex }; _histListeners.erase( requestId ); }
 				let& e = m->exception();
+				if( !task.Fail && histEnded(requestId, e.what()) )
+					break;
+				{ lg _{ _histMutex }; _histListeners.erase( requestId ); }
+				unsubscribed( requestId, false );
 				if( task.Fail )
 					task.Fail( GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives.
 				else
@@ -105,21 +174,28 @@ namespace Tests{
 				h.promise().Resume( move(*m->mutable_unsubscribe_ack()), h );
 				break;}
 			case kHistSubscribeAck:{
-				vector<StatusCode> statuses;
-				for( let status : m->hist_subscribe_ack().statuses() )
-					statuses.push_back( status );
-				auto h = std::any_cast<await<vector<StatusCode>>::Handle>( IClientSocketSession::PopTask(requestId).Handle );
-				h.promise().Resume( move(statuses), h );
+				auto task = IClientSocketSession::PopTask( requestId );
+				if( auto h = std::any_cast<await<vector<StatusCode>>::Handle>(&task.Handle); h ){
+					vector<StatusCode> statuses;
+					for( let status : m->hist_subscribe_ack().statuses() )
+						statuses.push_back( status );
+					(*h).promise().Resume( move(statuses), *h );
+				}
+				else if( auto listener = histListener(requestId); listener )
+					listener->OnAck( m->hist_subscribe_ack() );
 				break;}
 			case kHistSnapshot:
+				stray( requestId );
 				if( auto listener = histListener(requestId); listener )
 					listener->OnSnapshot( m->hist_snapshot() );
 				break;
 			case kHistRecords:
+				stray( requestId );
 				if( auto listener = histListener(requestId); listener )
 					listener->OnRecords( m->hist_records() );
 				break;
 			case VALUE_NOT_SET:{//a connect's completion, or a HistUnsubscribe's.
+				unsubscribed( requestId, true );
 				auto task = IClientSocketSession::PopTask( requestId );
 				if( auto h = std::any_cast<await<uint32>::Handle>(&task.Handle); h )
 					(*h).promise().Resume( Id(), *h );

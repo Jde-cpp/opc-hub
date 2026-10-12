@@ -17,7 +17,10 @@ namespace Jde::Opc::Gateway{
 	α HistSubscriber::Register( const sp<HistSubscriber>& self, SL sl )ε->void{
 		auto subscription = Host( sl )->Group()->Subscribe( self, move(_members), _from, sl );
 		lg _{ _pageMutex };
-		_subscription = move( subscription );
+		if( _ended )//a HistUnsubscribe or the close came first, and End found nothing to end.
+			subscription->End();
+		else
+			_subscription = move( subscription );
 	}
 	α HistSubscriber::Next( uint limit, SL sl )ε->Hist::ReadResult{
 		lg _{ _pageMutex };
@@ -49,6 +52,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistSubscriber::Live()ι->void{
 		lg _{ _queueMutex };
+		if( _ended )
+			return;
 		_live = true;
 		if( !_queued.empty() )
 			Send( std::exchange(_queued, {}) );
@@ -61,6 +66,10 @@ namespace Jde::Opc::Gateway{
 			Send( move(records) );
 		else
 			std::ranges::move( records, std::back_inserter(_queued) );
+	}
+	α HistSubscriber::OnEnded( Hist::ESubscriptionEnd why )ι->void{
+		if( auto session = _session.lock(); session )
+			session->HistEnded( shared_from_this(), why );
 	}
 	α HistSubscriber::Send( vector<Hist::Proto::HistoryRecord>&& records )ι->void{
 		auto session = _session.lock();
@@ -75,7 +84,7 @@ namespace Jde::Opc::Gateway{
 			else if( let slot = Slot(r.value().node_index()); slot )
 				*y.add_values() = FromServer::ToProto( r.value(), *slot, false );
 		}
-		session->Write( FromServer::HistRecordsTrans(move(y), _requestId) );
+		session->WriteHist( shared_from_this(), FromServer::HistRecordsTrans(move(y), _requestId) );
 	}
 
 	//The registration and its snapshot, taken on the executor:  the group's locks, and the files the snapshot opens under
@@ -126,6 +135,9 @@ namespace Jde::Opc::Gateway{
 			AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(request.group()), Access::ERights::Read, UserPK(), SRCE_CUR );
 			auto& hist = HistHost::Instance();
 			hist.TestEnabled( SRCE_CUR );
+			let historian = hist.Historian();//once:  Stop takes it.
+			if( !historian )
+				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The gateway's historian has stopped." };
 			auto host = hist.Find( request.group() );
 			if( !host )
 				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", request.group() };
@@ -145,54 +157,63 @@ namespace Jde::Opc::Gateway{
 					members.push_back( *indexes[i] );
 				}
 			}
-			let from = request.has_from_time() ? UADateTime{ request.from_time() }.UA() : UADateTime{ hist.Historian()->Time().Now() }.UA();
-			{
+			let from = request.has_from_time() ? UADateTime{ request.from_time() }.UA() : UADateTime{ historian->Time().Now() }.UA();
+			auto subscriber = ms<HistSubscriber>( SharedFromThis(), requestId, move(host), move(slots), move(members), from );
+			{//claimed here, on the strand, so a second HistSubscribe with the id is refused before either registers.
 				lg _{ _histMutex };
-				if( _histSubscriptions.contains(requestId) )
-					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {:x} is live:  a HistSubscribe's request id names it.", requestId };
+				if( _closed )
+					return;
+				if( !_histSubscriptions.try_emplace(requestId, subscriber).second )
+					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {} is live:  a HistSubscribe's request id names it.", hex(requestId) };
 			}
-			HistSubscribing( ms<HistSubscriber>(SharedFromThis(), requestId, move(host), move(slots), move(members), from), move(ack) );
+			HistSubscribing( move(subscriber), move(ack), historian->Config().ReadLimit );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
 		}
 	}
-	α GatewaySocketSession::HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack )ι->VoidTask{
+	α GatewaySocketSession::HistSubscribing( sp<HistSubscriber> subscriber, FromServer::HistSubscribeAck ack, uint limit )ι->VoidTask{
 		auto self = SharedFromThis();//keep alive
 		let requestId = subscriber->Request();
 		try{
 			if( subscriber->HasMembers() )
 				co_await HistSubscribeAwait{ subscriber, SRCE_CUR };
-			{
-				lg _{ _histMutex };
-				if( _closed ){
-					subscriber->End();
-					co_return;
-				}
-				if( !_histSubscriptions.try_emplace(requestId, subscriber).second ){
-					subscriber->End();
-					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "Subscription {:x} is live:  a HistSubscribe's request id names it.", requestId };
-				}
-			}
-			Write( FromServer::HistSubscribeAckTrans(move(ack), requestId) );
-			let limit = HistHost::Instance().Historian()->Config().ReadLimit;
+			Write( FromServer::HistSubscribeAckTrans(move(ack), requestId) );//answers the HistSubscribe even once it has ended:  nothing follows it then.
 			for( bool more{ true }; more && !subscriber->Ended(); ){
 				auto page = co_await HistPageAwait{ subscriber, limit, SRCE_CUR };
 				more = !page.Continuation.empty();
-				Write( FromServer::HistSnapshotTrans(subscriber->Page(move(page), more), requestId) );
+				WriteHist( subscriber, FromServer::HistSnapshotTrans(subscriber->Page(move(page), more), requestId) );
 			}
 			subscriber->Live();
 		}
 		catch( runtime_error& e ){
-			WriteException( move(e), requestId );
-			RemoveHist( requestId );
+			RemoveHist( requestId, subscriber.get() );//a HistUnsubscribe may have ended it already, and a later HistSubscribe claimed the id.
+			WriteException( move(e), requestId );//after the end, so no page or push follows it.
 		}
 	}
-	α GatewaySocketSession::RemoveHist( Jde::RequestId subscription )ι->sp<HistSubscriber>{
+	α GatewaySocketSession::WriteHist( sp<HistSubscriber> subscriber, FromServer::Transmission&& message )ι->void{
+		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), message=move(message)]()mutable{
+			if( !subscriber->Ended() )
+				Write( move(message) );
+		} );
+	}
+	α GatewaySocketSession::HistEnded( sp<HistSubscriber> subscriber, Hist::ESubscriptionEnd why )ι->void{
+		Dispatch( [this, self=SharedFromThis(), subscriber=move(subscriber), why]{
+			if( subscriber->Ended() )
+				return;
+			let requestId = subscriber->Request();
+			RemoveHist( requestId, subscriber.get() );
+			if( why==Hist::ESubscriptionEnd::Removed )
+				WriteException( Exception{SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "The group was removed, which ends the subscription."}, requestId );
+			else
+				WriteException( Exception{SRCE_CUR, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The historian stopped, which ends the subscription."}, requestId );
+		} );
+	}
+	α GatewaySocketSession::RemoveHist( Jde::RequestId subscription, const HistSubscriber* only )ι->sp<HistSubscriber>{
 		sp<HistSubscriber> subscriber;
 		{
 			lg _{ _histMutex };
-			if( auto p = _histSubscriptions.find(subscription); p!=_histSubscriptions.end() ){
+			if( auto p = _histSubscriptions.find(subscription); p!=_histSubscriptions.end() && (!only || p->second.get()==only) ){
 				subscriber = move( p->second );
 				_histSubscriptions.erase( p );
 			}

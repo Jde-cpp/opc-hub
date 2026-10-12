@@ -20,6 +20,8 @@ namespace Jde::Opc::Gateway::Tests{
 	struct IHistListener{
 		β OnSnapshot( const FromServer::HistSnapshot& page )ι->void=0;
 		β OnRecords( const FromServer::HistRecords& records )ι->void=0;
+		β OnAck( const FromServer::HistSubscribeAck& /*ack*/ )ι->void{}//one no await took:  HistSubscribeUnsubscribe's.
+		β OnError( string /*what*/ )ι->void{}//the gateway ended the subscription:  its group removed, or the historian stopping.
 	};
 	//An error the gateway *answered* with - it came back over a working socket, unlike a transport failure.  Anything that reacts
 	//to a dead connection must not react to these: the gateway is fine and it is the thing behind it that failed (an OPC server
@@ -52,10 +54,20 @@ namespace Jde::Opc::Gateway::Tests{
 
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
 		Ω PendingSubscriptionRecords()ι->uint;//subscribe + unsubscribe requests still awaiting their ack, across every socket - a failed request may leave none (m2-closing #15).
-		//The ack's statuses, one per node.  The listener hears the subscription's pages and pushes until HistUnsubscribe's ack.
+		//The ack's statuses, one per node.  The listener hears the subscription's pages and pushes until HistUnsubscribe's ack,
+		//or the exception that ends it;  any after either is a stray, which HistStrays counts.
 		α HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<vector<StatusCode>>;
 		α HistUnsubscribe( RequestId subscription, SRCE )ι->await<bool>;
 		α LastHistSubscription()Ι->RequestId{ return _lastHistSubscription; }//the request id the last HistSubscribe sent, which names it to HistUnsubscribe.
+		//The HistSubscribe twice in one transmission, under one request id:  the gateway takes one and refuses the other, which
+		//HistRefusals counts instead of failing the await or dropping the listener.
+		α HistSubscribeTwice( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<vector<StatusCode>>;
+		α HistRefusals()Ι->uint{ lg _{ _histMutex }; return _histRefusals; }
+		α LastHistRefusal()Ι->string{ lg _{ _histMutex }; return _lastHistRefusal; }
+		α HistStrays()Ι->uint{ lg _{ _histMutex }; return _histStrays; }
+		//A HistSubscribe and its HistUnsubscribe in one transmission, so the unsubscribe lands while the subscription registers.
+		//The await is the unsubscribe's, and the HistSubscribe's ack goes to the listener's OnAck, which hears on after it.
+		α HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<bool>;
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
@@ -64,6 +76,12 @@ namespace Jde::Opc::Gateway::Tests{
 		mutable std::mutex _histMutex;
 		flat_map<RequestId,sp<IHistListener>> _histListeners;
 		RequestId _lastHistSubscription{};
+		flat_set<RequestId> _histDuplicates;
+		uint _histRefusals{};
+		string _lastHistRefusal;
+		flat_map<RequestId,RequestId> _histUnsubscribes;//a HistUnsubscribe's request id, to the subscription it ends.
+		flat_set<RequestId> _histEnded;
+		uint _histStrays{};
 	};
 	α Socket()ι->GatewayClientSocket&;
 }

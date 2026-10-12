@@ -12,6 +12,10 @@ namespace Jde::Opc::Gateway::Tests{
 	struct Heard final : IHistListener{
 		α OnSnapshot( const FromServer::HistSnapshot& page )ι->void override{ lg _{ _mutex }; _pages.push_back( page ); }
 		α OnRecords( const FromServer::HistRecords& records )ι->void override{ lg _{ _mutex }; _pushes.push_back( records ); }
+		α OnAck( const FromServer::HistSubscribeAck& ack )ι->void override{ lg _{ _mutex }; _acks.push_back( ack ); }
+		α OnError( string what )ι->void override{ lg _{ _mutex }; _errors.push_back( move(what) ); }
+		α Errors()Ι->vector<string>{ lg _{ _mutex }; return _errors; }
+		α Acks()Ι->vector<FromServer::HistSubscribeAck>{ lg _{ _mutex }; return _acks; }
 		α Complete()Ι->bool{ lg _{ _mutex }; return !_pages.empty() && !_pages.back().more(); }
 		α Values()Ι->vector<FromServer::HistValue>{//the snapshot's.
 			lg _{ _mutex };
@@ -41,6 +45,8 @@ namespace Jde::Opc::Gateway::Tests{
 		mutable std::mutex _mutex;
 		vector<FromServer::HistSnapshot> _pages;
 		vector<FromServer::HistRecords> _pushes;
+		vector<FromServer::HistSubscribeAck> _acks;
+		vector<string> _errors;
 	};
 
 	//Over the suite's own socket (Socket()), the one the opc subscriptions ride:  a historian subscription is a message of it, not a
@@ -112,11 +118,13 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( pushed[0].bound() );
 		EXPECT_EQ( heard->Values().size(), 3u ) << "a push isn't a page";
 
+		let strays = Socket().HistStrays();
 		EXPECT_TRUE( Unsubscribe(subscription) );
 		WriteRpm( base+400, t0+40ms );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 5) );
 		std::this_thread::sleep_for( 200ms );
 		EXPECT_EQ( heard->Pushed().size(), 1u ) << "nothing after the unsubscribe";
+		EXPECT_EQ( Socket().HistStrays(), strays );
 		EXPECT_THROW( Unsubscribe(subscription), GatewayErrorResponse ) << "ended already";
 		EXPECT_THROW( Unsubscribe(999'999), GatewayErrorResponse );
 	}
@@ -157,6 +165,123 @@ namespace Jde::Opc::Gateway::Tests{
 		auto unboundSubscribe = [&]{ return BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( unbound->HistSubscribe(group, {Ex(RpmManual)}, nullopt, ms<Heard>()) ); };
 		EXPECT_THROW( unboundSubscribe(), GatewayErrorResponse );
 		BlockVoidAwait( unbound->Close(false, SRCE_CUR) );
+	}
+
+	//Two HistSubscribe under one request id, back to back:  the one that claims the id streams, and the other is refused without
+	//touching it, however the two registrations finish.
+	TEST_F( HistSubscribeTests, ADuplicateIdIsRefusedAlone ){
+		let itemsBefore = Items();
+		let group = CreateGroup( "duplicate" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let rpm = AddNode( group, RpmManual );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let refusals = Socket().HistRefusals();
+		auto heard = ms<Heard>();
+		EXPECT_EQ( (BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>(Socket().HistSubscribeTwice(group, {Ex(RpmManual)}, nullopt, heard))), vector<StatusCode>{UA_STATUSCODE_GOOD} );
+		ASSERT_NO_THROW( WaitComplete(*heard) );
+		Stopwatch sw;
+		while( Socket().HistRefusals()==refusals )
+			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		EXPECT_EQ( Socket().HistRefusals(), refusals+1 );
+		EXPECT_EQ( Socket().LastHistRefusal(), Ƒ("Subscription {} is live:  a HistSubscribe's request id names it.", hex(Last())) );
+		EXPECT_EQ( heard->Values().size(), 1u ) << "one snapshot:  the refused copy wrote no pages";
+
+		let t0 = Since();
+		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		WriteRpm( base, t0 );
+		ASSERT_NO_THROW( WaitPushed(*heard, 1) );
+		EXPECT_EQ( heard->Pushed().back().value().double_value(), base );
+		EXPECT_TRUE( Unsubscribe(Last()) );
+	}
+
+	//A HistUnsubscribe that lands while the subscription registers ends it:  the unsubscribe completes, the HistSubscribe is
+	//still answered with its ack, and the group keeps no registration and pushes nothing.  The pages are left alone:  the
+	//rare registration that beats the unsubscribe writes one before it.
+	TEST_F( HistSubscribeTests, UnsubscribedWhileRegistering ){
+		let itemsBefore = Items();
+		let group = CreateGroup( "unsubscribed" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let rpm = AddNode( group, RpmManual );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		auto heard = ms<Heard>();
+		EXPECT_TRUE( (BlockAwait<ClientSocketAwait<bool>,bool>(Socket().HistSubscribeUnsubscribe(group, {Ex(RpmManual)}, nullopt, heard))) );
+		Stopwatch sw;
+		while( heard->Acks().empty() )
+			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		let acks = heard->Acks();
+		ASSERT_EQ( acks.size(), 1u );
+		ASSERT_EQ( acks[0].statuses_size(), 1 );
+		EXPECT_EQ( acks[0].statuses(0), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( host->Group()->Subscribers(), 0u ) << "the registration, made after the end, ended with it";
+
+		let t0 = Since();
+		WriteRpm( Current(RpmManual).AsNumber<double>()+1000, t0 );
+		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 1) );
+		std::this_thread::sleep_for( 200ms );
+		EXPECT_TRUE( heard->Pushed().empty() );
+	}
+
+	//No page or push of a subscription arrives after its unsubscribe's ack, though it lands while the snapshot pages:  10'001
+	//values are two pages of readLimit, and the unsubscribe goes as the ack arrives, while the first page is read.  They are
+	//inserted a thousand an edit, under the socket's 1 MB message cap.
+	TEST_F( HistSubscribeTests, NothingFollowsTheUnsubscribe ){
+		let itemsBefore = Items();
+		let group = CreateGroup( "paging" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let rpm = AddNode( group, RpmManual );
+		auto host = Host( group );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		Enforce( true );
+		let t0 = Since()-1h;
+		constexpr uint count{ Hist::Settings::DefaultReadLimit+1 };
+		for( uint i=0; i<count; ){
+			vector<Sample> samples;
+			for( ; i<count && samples.size()<1000; ++i )
+				samples.push_back( {RpmManual, t0+milliseconds{i}, (double)i} );
+			let inserted = Update( "createHistory", group, samples ).Values;
+			ASSERT_EQ( std::ranges::count(inserted, UA_STATUSCODE_GOODENTRYINSERTED), (long)samples.size() );
+		}
+
+		let strays = Socket().HistStrays();
+		auto heard = ms<Heard>();
+		EXPECT_EQ( Subscribe(group, {Ex(RpmManual)}, t0, heard), vector<StatusCode>{UA_STATUSCODE_GOOD} );
+		EXPECT_TRUE( Unsubscribe(Last()) );
+		let paged = heard->Values().size();
+		std::this_thread::sleep_for( 500ms );
+		EXPECT_EQ( Socket().HistStrays(), strays );
+		INFOT( ELogTags::Test, "Values paged before the unsubscribe's ack:  {} of {}.", paged, count+1 );
+	}
+
+	//Removing the group ends its subscription:  the client hears an exception under the subscription's id, and the id is
+	//free, so a HistUnsubscribe of it is refused.
+	TEST_F( HistSubscribeTests, ARemovedGroupEndsItsSubscription ){
+		let itemsBefore = Items();
+		let group = CreateGroup( "removed" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let rpm = AddNode( group, RpmManual );
+		{
+			auto host = Host( group );
+			ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+			ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		}
+		auto heard = ms<Heard>();
+		EXPECT_EQ( Subscribe(group, {Ex(RpmManual)}, nullopt, heard), vector<StatusCode>{UA_STATUSCODE_GOOD} );
+		let subscription = Last();
+		ASSERT_NO_THROW( WaitComplete(*heard) );
+		Mutate( "deleteHistGroup( id:$id )", {{"id", group}} );
+		Stopwatch sw;
+		while( heard->Errors().empty() )
+			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		let errors = heard->Errors();
+		ASSERT_EQ( errors.size(), 1u );
+		EXPECT_NE( errors[0].find("removed"), string::npos ) << errors[0];
+		EXPECT_THROW( Unsubscribe(subscription), GatewayErrorResponse ) << "the id is free";
 	}
 
 	//An edit's Modification records are pushed to a subscription of the node once they are durable, with the value put there.

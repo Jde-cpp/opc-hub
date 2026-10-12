@@ -10,7 +10,7 @@ namespace Jde::Opc::Gateway{
 	//take one lock, the queue another, so a push never waits on a page.  It holds neither the session nor the group's host:
 	//the group holds it through its registration, and an owning pointer back would make a cycle that outlived them both.
 	//The session's side, HistSubscribe to RemoveHist, is defined with it in HistSubscriber.cpp.
-	struct HistSubscriber final : Hist::ISubscriber{
+	struct HistSubscriber final : Hist::ISubscriber, std::enable_shared_from_this<HistSubscriber>{
 		HistSubscriber( wp<GatewaySocketSession> session, Jde::RequestId requestId, wp<HistGroupHost> host, flat_map<Hist::NodeIndex,uint32> slots, vector<Hist::NodeIndex> members, UA_DateTime from )ι;
 		α HasMembers()Ι->bool{ return !_members.empty(); }//a HistSubscribe naming only nodes the group doesn't hold registers nothing.
 		α Register( const sp<HistSubscriber>& self, SL sl )ε->void;//with the group, which takes the snapshot:  under its locks, so on the executor.
@@ -24,6 +24,7 @@ namespace Jde::Opc::Gateway{
 		α Page( Hist::ReadResult&& result, bool more )Ι->FromServer::HistSnapshot;
 		α Live()ι->void;//the snapshot is written:  what queued goes, and each push from here on goes as it comes.
 		α OnRecords( vector<Hist::Proto::HistoryRecord>&& records )ι->void override;
+		α OnEnded( Hist::ESubscriptionEnd why )ι->void override;
 	private:
 		α Send( vector<Hist::Proto::HistoryRecord>&& records )ι->void;
 		wp<GatewaySocketSession> _session;

@@ -30,8 +30,8 @@ namespace Jde::Opc::Hist{
 	α BuiltInType( uint32_t id )ι->const UA_DataType*;//BuiltIn's type, null for 0 or an id it never gives.
 	//What a group buffered, as the file holds it, with absolute times.
 	α ToProto( const Record& r )ε->Proto::HistoryRecord;
-	//A buffered value the same way, its heartbeat marked:  what ToProto( Record ) makes of one, but for the warning of a
-	//value flagged Unsupported, which is the flush's to give.
+	//A buffered value the same way, its heartbeat marked, for its subscribers:  what ToProto( Record ) makes of one, but
+	//with no warning, which is the flush's to give, so it can run under the group's lock (Enqueue never logs).
 	α ToProto( const DataValue& value )ε->Proto::DataValue;
 	//The edit's writer onto its record:  identity_id, UserPK::System as 4294967295, and user_name.
 	α SetWriter( Proto::Modification& m, const Writer& by )ι->void;
@@ -42,8 +42,8 @@ namespace Jde::Opc::Hist{
 	//A value with no file form, a DataValue or a DiagnosticInfo from a node typed BaseDataType, is stored without it, as
 	//BadNotSupported, which ToProto( Record ) warns of once per node.  One with text that isn't UTF-8, which protobuf
 	//writes but won't read back, is stored without it as BadEncodingError, warned of the same way.  Any other value that
-	//can't be encoded is stored without it, with the status that says why and a warning each time.
-	α ToProto( const UA_DataValue& v, NodeIndex index={} )ε->Proto::DataValue;
+	//can't be encoded is stored without it, with the status that says why and a warning each time, unless !warn.
+	α ToProto( const UA_DataValue& v, NodeIndex index={}, bool warn=true )ε->Proto::DataValue;
 
 	//One append to a file, a run:  each record serialized delimited straight onto the end of out, with no copy of its own,
 	//then a Checkpoint holding the CRC-32C of the run's bytes.

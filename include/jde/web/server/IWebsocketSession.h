@@ -55,6 +55,7 @@ namespace Jde::Web::Server{
 		α SetSessionId( SessionPK sessionId )ι->void;
 		α SetSessionInfo( sp<SessionInfo> sessionInfo )ι->void{ _sessionInfo = move(sessionInfo); }
 		α Write( string&& m )ι->void;
+		α Dispatch( function<void()>&& f )ι->void;//on the strand, inline when already there:  dropped once the socket has closed.
 
 	private:
 		α AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SRCE )ι->TimerAwait::Task;

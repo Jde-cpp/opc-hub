@@ -121,15 +121,16 @@ namespace Jde::Opc::Hist{
 		bool start{};
 		let now = _store->Time->Now();
 		Effects effects;
+		vector<sp<const Registration>> ended;
 		{
 			ul _{ _mutex };
 			_stopped = true;
-			_subscribers.clear();//nothing more is stored for them to hear of.
 			timers = Disarm();
 			for( auto&& [index,node] : _nodes ){//the stop is a break, so each pending value is stored as at its interval's end.
 				if( node.Pending )
 					Settle( index, node, now, effects );
 			}
+			ended = std::exchange( _subscribers, {} );//after the settles, which stream:  nothing more is stored for them to hear of.
 			if( running() ){//marked here, so Stopped waits for it however late the executor starts it.
 				if( _flushing )
 					_again = true;
@@ -140,6 +141,8 @@ namespace Jde::Opc::Hist{
 		Cancel( timers );
 		effects.Pushed.Flush = false;//the last flush, started here, takes what the settles stored.
 		Finish( move(effects) );
+		for( let& registration : ended )
+			registration->Subscriber->OnEnded( ESubscriptionEnd::Stopped );
 		if( start )//on the executor, so every group's runs at once, and a write that never returns holds none of this thread.
 			Post( [self=shared_from_this()]{ self->Flushing( self ); } );
 	}
