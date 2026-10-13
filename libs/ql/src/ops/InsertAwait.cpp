@@ -76,7 +76,10 @@ namespace Jde::QL{
 			let isExtensionKey = !_identityInsert && c->IsPK() && table.Extends;
 			if( isExtensionKey && (input.if_contains(memberName) || input.if_contains("id")) )
 				WARNT( ELogTags::QL, "[{}.{}]ignoring the supplied key - an extension row takes its pk from the row it extends.", table.Name, c->Name );
-			if( let jvalue = isExtensionKey ? nullptr : input.if_contains(memberName); jvalue ){// calling a stored proc, so need all columns.
+			//#238: `itemType:{ id:2 }` - the nested-key spelling on an enum column, whose member name is the nested table's singular, so the
+			//object lands here as the column's own value and Value refused it as "not a number".  CreateQuery has already read the key into
+			//_nestedIds;  an object is left to the missing-column fill below, as it is for any other fk.
+			if( let jvalue = isExtensionKey ? nullptr : input.if_contains(memberName); jvalue && !jvalue->is_object() ){// calling a stored proc, so need all columns.
 				++cNonDefaultArgs;
 				value = c->IsEnum() && (jvalue->is_string() || jvalue->is_array())
 					? getEnumValue( *c, qlCol, *jvalue )

@@ -12,6 +12,7 @@ namespace Jde::QL::Tests{
 				throw Exception{ Ƒ("{} refuses", Name) };
 		}
 		α Payload( uint index )Ι->const jobject&{ return Changes.at(index).second.as_object().at("status").as_object(); }//the `status` tests' notification body.
+		α Body( uint index )Ι->const jobject&{ return Changes.at(index).second.as_object().begin()->value().as_object(); }//the body under whatever table it is keyed by - {"items":{…}} (the op tests').
 
 		vector<std::pair<SubscriptionId,jvalue>> Changes;
 		bool Throws{};
