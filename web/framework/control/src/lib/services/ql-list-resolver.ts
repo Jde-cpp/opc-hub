@@ -2,7 +2,7 @@ import {ActivatedRoute, ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resol
 import { inject, Injectable } from '@angular/core';
 import {SnackbarService} from '../shared/snackbar/snackbar-service';
 import { TableSchema} from '../model/ql/schema/table-schema';
-import { IGRAPHQL, IGraphQL } from './graphql';
+import { IGRAPHQL, IGraphQL, Query } from './graphql';
 import { PageProfile, PageSettings } from '../pages/graphql/model/page-settings';
 import { StringUtils } from '../utils/string-utils';
 import { MetaObject } from '../model/ql/schema/meta-object';
@@ -10,6 +10,7 @@ import { Field } from '../model/ql/schema/field';
 import { RouteItem, ProfileStore, RouteStore } from 'jde-spa';
 import { FieldFilter, Operator, View, ViewField, ViewFieldSettings, ViewFilterSettings, ViewSettings } from '../model/ql/view';
 import { Sort } from '@angular/material/sort';
+import { QLRow } from '../model/ql/slug-row';
 
 //canNavigate: a collection with no ':slug' detail route must not offer the row click-through
 //viewName: the toggle label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
@@ -47,7 +48,12 @@ export type QLListData = {
 	routing:ListRoute;
 	schema: TableSchema;
 	error?: unknown;//the rows query was refused (403) or failed:  results is then empty and the page says why instead of showing a bare grid
+	skip?: number;//the offset of the page in results - the first page when unset
+	more?: boolean;//a row past the page exists, so the pager offers a next page (QLListResolver.page)
+	childrenKey?: string;//where the sidenav children go when it is not routing.path:  a gateway's Connections tab, whose routing.path is the browse tree's key
 };
+//what load() reads and hands back - a gateway's Connections tab (GatewayData) pages the same way, under an AppInstanceRoute
+export type PageData = Omit<QLListData, "routing"> & { routing:{path:string} };
 
 @Injectable()
 export class QLListResolver implements Resolve<QLListData> {
@@ -95,12 +101,13 @@ export class QLListResolver implements Resolve<QLListData> {
 		let data:QLListData;
 		try{ data = await QLListResolver.data( this.ql, routing, this.profileStore ); }
 		catch( e ){ this.cnsl.exception( `Could not open ${routing.title}.`, e ); throw e; }//no schema, so no page to say it on:  the navigation fails, and this is the only word the user gets
+		data.skip = QLListResolver.savedSkip( data );
 		return QLListResolver.loadOrFail( this.ql, data, this.routeStore );
 	}
 	//load() for a page:  a refused or failed rows query becomes the page's own state (QLListData.error, no rows) rather than a
 	//rejected resolve, which the router turns into a NavigationError nobody sees - the user stayed on the previous page with
 	//nothing said.  A user without Read on the collection is the common case, and the page has to open to say so.
-	static async loadOrFail( ql:IGraphQL, data:QLListData, routeStore:RouteStore|null ):Promise<QLListData>{
+	static async loadOrFail<T extends PageData>( ql:Pick<IGraphQL,"query">, data:T, routeStore:RouteStore|null ):Promise<T>{
 		try{ return await QLListResolver.load( ql, data, routeStore ); }
 		catch( e ){ return { ...data, results: {[data.schema.collectionName]: []}, error: e }; }
 	}
@@ -168,28 +175,67 @@ export class QLListResolver implements Resolve<QLListData> {
 		}
 		return columns;
 	}
+	//The page's query:  one row PAST the page, so the pager can say whether there is a next page without a count query
+	//the server does not offer.  page() takes the extra row off again.  `id` goes last in the sort:  without a total order, rows
+	//that tie on the view's sort can land on two pages or on none, and MSSQL refuses offset/fetch with no order by at all.
+	static pageQuery( view:View, skip:number ):Query{
+		if( view.limit ){
+			view = new View( view );
+			view.limit += 1;
+			if( view.fields.some(f=>f.name=="id") && !view.sort?.some(s=>s.active=="id") )
+				view.sort = [...view.sort ?? [], {active: "id", direction: "asc"}];
+		}
+		return view.query( skip );
+	}
+	static page( rows:any[], view:View ):{rows:any[], more:boolean}{
+		const more = !!view.limit && rows.length>view.limit;
+		return { rows: more ? rows.slice(0, view.limit) : rows, more };
+	}
 	//routeStore null:  the rows are a pick list (QLSelector - filtered, and never the page's own collection), not the collection's sidenav children
-	static async load( ql:IGraphQL, data:QLListData, routeStore:RouteStore|null ):Promise<QLListData>{
+	static async load<T extends PageData>( ql:Pick<IGraphQL,"query">, data:T, routeStore:RouteStore|null ):Promise<T>{
 		let view = data.profile.view;
 		if( data.fixedFilters?.length ){//on a copy:  the profile's view is what the settings panel edits and what a Save persists
 			view = new View( view );
 			view.fieldFilters = [...view.fieldFilters, ...data.fixedFilters];
 		}
-		const q = view.query( 0 );
-		data.results = await ql.query<any>( q.text, q.vars, (m)=>console.log(m) );
-		if( routeStore ){
-			const children = data.results[data.schema.collectionName].map( (r:any)=>({title:r.name, path:`${r.slug}`}) );//bare targets, like GatewayResolver — DetailResolver renders them under the absolute list url
-			routeStore.setChildren( data.routing.path, children );
-		}
-		return {
-			columns: data.columns,
-			fixedFilters: data.fixedFilters,
-			pageSettings: data.pageSettings,
-			results: data.results,
-			routing: data.routing,
-			profile: data.profile,
-			schema: data.schema
+		const collectionName = data.schema.collectionName;
+		const query = ( skip:number )=>{
+			const q = QLListResolver.pageQuery( view, skip );
+			return ql.query<any>( q.text, q.vars, (m)=>console.log(m) );
 		};
+		let skip = data.skip ?? 0;
+		let results = await query( skip );
+		if( skip && !results[collectionName].length ){//a page past the end - rows deleted since it was read:  the first page, not an empty "No … yet"
+			skip = 0;
+			results = await query( skip );
+		}
+		const page = QLListResolver.page( results[collectionName], view );
+		const y = { ...data, results: {...results, [collectionName]: page.rows}, skip, more: page.more, error: undefined };
+		if( routeStore )
+			QLListResolver.setChildren( routeStore, y );
+		return y;
+	}
+	//the page's rows as the collection's sidenav children
+	static setChildren( routeStore:RouteStore, data:PageData ){
+		const children = data.results[data.schema.collectionName].map( (r:QLRow)=>({title: r.name, path: `${r.slug}`}) );//bare targets - DetailResolver renders them under the absolute list url
+		routeStore.setChildren( QLListResolver.childrenKey(data), children );
+	}
+	static childrenKey( data:PageData ):string{ return data.childrenKey ?? data.routing.path; }
+	//The page a list was left on, so coming back from one of its records - the breadcrumb, Back - lands on it again.  Kept beside
+	//its sidenav children, which are that page's rows, and for this tab only:  a new visit starts on the first page.
+	static savedSkip( data:PageData ):number{
+		try{ return +( sessionStorage.getItem(`${QLListResolver.childrenKey(data)}/skip`) ?? 0 ) || 0; }
+		catch{ return 0; }
+	}
+	static saveSkip( data:PageData, skip:number ):void{
+		const key = `${QLListResolver.childrenKey(data)}/skip`;
+		try{
+			if( skip )
+				sessionStorage.setItem( key, `${skip}` );
+			else
+				sessionStorage.removeItem( key );
+		}
+		catch{}
 	}
 	routeStore = inject( RouteStore );
 	profileStore = inject( ProfileStore );

@@ -59,6 +59,13 @@ mat-toolbar{
 	width: 130px;
 }
 
+//as ql-list.scss's .pager
+.pager{
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	--mat-paginator-container-background-color: transparent;
+}
+
 div.table
 {
 	/* display: -webkit-box; */

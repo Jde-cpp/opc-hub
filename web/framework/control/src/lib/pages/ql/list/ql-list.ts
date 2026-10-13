@@ -1,5 +1,4 @@
 import { Component, OnInit, ViewChild, input, signal, model, computed, Injectable, inject } from '@angular/core';
-import { CommonModule } from '@angular/common';
 import {ActivatedRoute, Route, Router, RouterLink, Routes, UrlSegment} from '@angular/router';
 import {Sort} from '@angular/material/sort';
 import { MatTable } from '@angular/material/table';
@@ -28,13 +27,14 @@ import { confirm } from '../../../shared/confirm/confirm-dialog';
 import { QLRow } from '../../../model/ql/slug-row';
 import { PageProfile } from '../../graphql/model/page-settings';
 import { verify } from '../../../utils/utils';
+import { PageEvent, Paginator } from '../../../shared/paginator/paginator';
 
 @Component({
 	selector: 'ql-list',//.main-content.mat-drawer-container.my-content
 	styleUrls: ['ql-list.scss'],
 	templateUrl: './ql-list.html',
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, QLListSettings, RouterLink]
+	imports: [GraphQLTable, MatButton, MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, Paginator, QLListSettings, RouterLink]
 })
 export class QLList implements OnInit{
 	private route = inject( ActivatedRoute );
@@ -67,6 +67,10 @@ export class QLList implements OnInit{
 			selected = selected.slice( 0, 1 );//SelectionModel throws on multiple values in single-select mode
 		this.selections.set( new SelectionModel<QLRow>(multiple, selected) );
 		this.data.set( rows );
+		this.skip.set( data.skip ?? 0 );
+		if( !this.selector() )
+			QLListResolver.saveSkip( data, this.skip() );
+		this.more.set( data.more ?? false );
 		this.error.set( data.error );//a good load clears the last failure; a resolver that caught the rows query sets it
 		this.sideNav.set( data.routing );
 		let paths = [];
@@ -132,7 +136,7 @@ export class QLList implements OnInit{
 	}
 
 	async onRefresh(){
-		await this.#refresh( this.resolvedData().profile );//keep the current rows visible; the progress bar signals the reload
+		await this.#reload();//the same page; keep the current rows visible, the progress bar signals the reload
 	}
 
 	//refresh() and reload() are only ever driven from template event handlers, so a rejection has nowhere to go but the
@@ -154,6 +158,11 @@ export class QLList implements OnInit{
 		this.data.set( [] );
 	}
 
+	async onPage( e:PageEvent ){
+		this.skip.set( e.startIndex );
+		await this.#reload();
+	}
+
 	async onViewSave(view:View){
 		this.data.set( [] );
 		let profile = this.resolvedData().profile;
@@ -169,7 +178,7 @@ export class QLList implements OnInit{
 			}
 		}
 
-		await this.#reload();
+		await this.#refresh( profile );
 		this.isSettings.set( false );
 	}
 	async onViewShow(view:View){
@@ -188,27 +197,41 @@ export class QLList implements OnInit{
 		ProfileStore.setViewIndex( this.collectionName(), index );
 		await this.#refresh( profile );
 	}
+	//another view, or this one edited, is a different set of pages:  from the first
 	async refresh( profile: PageProfile ){
+		this.skip.set( 0 );
 		this.resolvedData().profile = profile;
 		this.resolvedData().schema = new TableSchema( this.resolvedData().schema ); //TODO just copy
 		await this.reload();
 	}
-	//every path that re-queries goes through here so isRefreshing covers the whole load, not just the Refresh button
+	//every path that re-queries goes through here so isRefreshing covers the whole load, not just the Refresh button.
+	//Only the latest call lands:  page turns and view changes don't wait for each other, and an older query finishing last
+	//would put back its own page, or the profile it was copied from.
 	async reload(){
+		const id = ++this.#reloadId;
 		this.isRefreshing.set( true );
 		try{
-			const reload = await QLListResolver.load( this.ql, this.resolvedData(), this.selector() ? null : this.routeStore );
+			const reload = await QLListResolver.load( this.ql, {...this.resolvedData(), skip: this.skip()}, null );
+			if( id!=this.#reloadId )
+				return;
+			if( !this.selector() )
+				QLListResolver.setChildren( this.routeStore, reload );
 			this.init( {data:reload} );
 		}
+		catch( e ){
+			if( id==this.#reloadId )
+				throw e;
+		}
 		finally{
-			this.isRefreshing.set( false );
+			if( id==this.#reloadId )
+				this.isRefreshing.set( false );
 		}
 	}
 	async onViewDelete(view:View){
 		let profile = this.resolvedData().profile;
 		profile.removeView( view.name!, this.collectionName(), this.profileStore, this.tableSettings() ).catch( e=>this.snackbar.exception("Could not save view.", e) );
 		profile.currentViewIndex = 0;
-		await this.#reload();
+		await this.#refresh( profile );
 		this.isSettings.set( false );
 	}
 
@@ -242,6 +265,7 @@ export class QLList implements OnInit{
 
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
+	#reloadId = 0;//reload()'s latest call
 	isSettings = signal<boolean>( false );
 	selections = model<SelectionModel<QLRow>>( null as any );//rows, not ids - QLSelector maps them to its callers' id selection
 
@@ -257,6 +281,14 @@ export class QLList implements OnInit{
 	collectionName = computed<string>( ()=>this.schema().collectionName );
 	columns():Record<string,string>{ return this.resolvedData().columns; }
 	data = signal<any[]>([]);
+	//Paging:  `skip` is the offset of the rows shown and `more` whether a row follows them (the resolver asks for one past
+	//the page).  The server gives no count, so the total is only known on the last page - only then does the pager's range read
+	//"of N", and only then does it show Last;  until then Next is simply on.  A single page shows no pager:  the toolbar's row count is then
+	//the whole truth, and six disabled buttons under a three-row list would say nothing.
+	skip = signal<number>( 0 );
+	more = signal<boolean>( false );
+	paged = computed<boolean>( ()=>this.more() || this.skip()>0 );
+	length = computed<number|undefined>( ()=>this.more() ? undefined : this.skip()+this.data().length );
 	excludedColumns = computed<string[]>( ()=>this.tableSettings().excludedColumns ?? [] );
 	get name():string{ return <string>this.routeConfig.title; }
 	enums = computed<Map<string, EnumValue[]>>( ()=>this.schema().enums );

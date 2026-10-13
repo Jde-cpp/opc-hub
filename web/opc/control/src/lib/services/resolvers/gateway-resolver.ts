@@ -1,18 +1,10 @@
 import { inject, Injectable } from '@angular/core';
 import {ActivatedRoute, ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot, UrlSegment} from '@angular/router';
-import { AppInstanceRoute, SnackbarService, PageProfile, PageSettings, QLListResolver, TableSchema, View } from 'jde-framework';
+import { AppInstanceRoute, SnackbarService, PageProfile, PageSettings, QLListData, QLListResolver, View } from 'jde-framework';
 import { Gateway, GATEWAY_SERVICE, GatewayService } from '../gateway-service';
 import { RouteItem, ProfileStore, RouteStore } from 'jde-spa';
 
-export type GatewayData = {
-	columns: Record<string,string>;
-	pageSettings:PageSettings;
-	profile: PageProfile;
-	results:{ serverConnections: any }|undefined; //{users:ISlugRow[]};
-	routing:AppInstanceRoute;
-	schema: TableSchema;
-	error?: unknown;//the rows query was refused or failed - QLList.init reads it, as it reads QLListData.error
-};
+export type GatewayData = Omit<QLListData, "routing"> & { routing:AppInstanceRoute };//the Connections tab is a QLList
 
 @Injectable()
 export class GatewayResolver implements Resolve<GatewayData> {
@@ -57,27 +49,14 @@ export class GatewayResolver implements Resolve<GatewayData> {
 
 		return GatewayResolver.load( gateway, {columns: QLListResolver.columns(schema, [], []), pageSettings, profile, schema, results: undefined, routing}, this.routeStore, url );
 	}
-	//A refused or failed rows query is the Connections tab's own state - no access, or could not load with Retry - as
-	//QLListResolver.loadOrFail makes it for a list page:  a user holding no role yet is the common case once
-	//gateway/serverConnections is enforced, and the tab has to open to tell them (reviews/m3-closing.md #6).
-	static async load( gateway:Gateway, data:GatewayData, routeStore:RouteStore, childrenKey:string|UrlSegment[] ):Promise<GatewayData>{
-		const query = data.profile.view.query( 0 );
-		let results:any;
-		try{
-			results = await gateway.query<any>( query.text, query.vars, (m)=>console.log(m) );
-		}
-		catch( e ){
-			return { ...data, results: {serverConnections: []}, error: e };
-		}
-		routeStore.setChildren( childrenKey, results[data.schema.collectionName].map( (r:any)=>{return {title:r.name, path: r.slug};}) );
-		return {
-			columns: data.columns,
-			pageSettings: data.pageSettings,
-			profile: data.profile,
-			results: results,
-			routing: data.routing,
-			schema: data.schema
-		};
+	//The tab's first page, loaded as a list page's is:  the page it was left on, and a refused or failed rows query as the
+	//tab's own state - no access, or could not load with Retry.  A user holding no role yet is the common case once
+	//gateway/serverConnections is enforced, and the tab has to open to tell them (reviews/m3-closing.md #6).  The children
+	//go under the url (apps/gateways/<instance>):  routing.path, gateways/<instance>, is the browse tree's key
+	//(GatewayCnnctnRouteService).
+	static async load( gateway:Gateway, data:GatewayData, routeStore:RouteStore, url:string|UrlSegment[] ):Promise<GatewayData>{
+		const paged = { ...data, childrenKey: typeof url=="string" ? url : url.map( s=>s.path ).join("/") };
+		return QLListResolver.loadOrFail( gateway, {...paged, skip: QLListResolver.savedSkip(paged)}, routeStore );
 	}
 	routeStore = inject( RouteStore );
 	profileStore = inject( ProfileStore );

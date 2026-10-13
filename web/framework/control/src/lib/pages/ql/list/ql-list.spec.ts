@@ -7,12 +7,12 @@ if( typeof globalThis.localStorage=="undefined" ){
 		clear: ()=>backing.clear()
 	};
 }
-import { TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NEVER } from 'rxjs';
 import { vi } from 'vitest';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ComponentPageTitle, HELP_TOPICS } from 'jde-spa';
+import { ComponentPageTitle, HELP_TOPICS, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
@@ -293,5 +293,198 @@ describe( 'QLList empty state on a narrowed list', ()=>{
 		const shown = create( users );
 		shown.data.set( [{id: 1}] );
 		expect( shown.addFilled() ).toBe( false );
+	} );
+} );
+
+//#231:  the list pages with `skip` through the shared resolver.  A page turn reloads at the pager's offset;  a view change is a
+//new set of pages and starts over;  a page the rows have left behind falls back to the first (QLListResolver.load).
+describe( 'QLList paging', ()=>{
+	const schema = new TableSchema( { name: "User", fields: [
+		{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
+		{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
+		{ name: "slug", type: { kind: "SCALAR", name: "String" } }
+	] } );
+	const rows = ( n:number, from=0 )=>Array.from( {length: n}, (_, i)=>({id: from+i+1, name: `user ${from+i+1}`, slug: `user${from+i+1}`}) );
+	let load:any;
+	let serve:( data:QLListData )=>QLListData;//what the resolver answers for a page of `available`
+	let exception:any;
+	let fixture:ComponentFixture<QLList>;
+
+	const create = ( available:any[] )=>{
+		exception = vi.fn();
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			{ provide: ActivatedRoute, useValue: {data: NEVER, routeConfig: {}} },
+			{ provide: Router, useValue: {navigate: vi.fn().mockResolvedValue(true)} },
+			{ provide: ComponentPageTitle, useValue: {} },
+			{ provide: IGRAPHQL, useValue: {} },
+			{ provide: SnackbarService, useValue: {error: vi.fn(), exception} }
+		]});
+		fixture = TestBed.createComponent( QLList );
+		const page = fixture.componentInstance;
+		const view = new View( {name: "All", columns: ["name"], sort: "name"}, schema );
+		const profile = new PageProfile();
+		profile.views = [view];
+		serve = ( data:QLListData )=>{
+			const skip = data.skip ?? 0;
+			const limit = data.profile.view.limit;
+			return { ...data, results: {users: available.slice( skip, skip+limit )}, skip, more: available.length>skip+limit };
+		};
+		load = vi.spyOn( QLListResolver, 'load' ).mockImplementation( async ( _ql:any, data:any )=>serve(data) );
+		page.init( {data: {routing: new ListRoute({path:'users'}), schema, profile, results: {users: available.slice(0, view.limit)}, more: available.length>view.limit} as unknown as QLListData} );
+		return page;
+	};
+
+	afterEach( ()=>vi.restoreAllMocks() );
+
+	it( 'shows the pager only when there is more than a page', ()=>{
+		expect( create( rows(3) ).paged() ).toBe( false );
+		expect( create( rows(40) ).paged() ).toBe( true );
+	} );
+
+	it( 'turns the page through the resolver, and knows the total on the last one', async ()=>{
+		const page = create( rows(40) );
+		expect( page.length() ).toBeUndefined();//Next is on; nothing says how many there are yet
+		await page.onPage( {startIndex: 25, pageSize: 25} );//the event's offset, not a binding written before it fired (#12)
+		expect( load.mock.calls[0][1].skip ).toBe( 25 );
+		expect( page.data().map( (r:any)=>r.id ) ).toEqual( rows(15, 25).map( r=>r.id ) );
+		expect( page.more() ).toBe( false );
+		expect( page.length() ).toBe( 40 );
+		expect( page.paged() ).toBe( true );
+	} );
+
+	//reviews-issue/231-paging.md #5:  a gateway's Connections tab - its routing.path is the browse tree's gateways/<instance>
+	it( "writes a page turn's sidenav children under the data's childrenKey", async ()=>{
+		const page = create( rows(40) );
+		page.resolvedData.set( {...page.resolvedData(), childrenKey: "apps/gateways/opchub"} );
+		const setChildren = vi.spyOn( TestBed.inject(RouteStore), 'setChildren' ).mockImplementation( ()=>{} );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		expect( setChildren ).toHaveBeenCalledWith( "apps/gateways/opchub", expect.any(Array) );
+		expect( page.resolvedData().childrenKey ).toBe( "apps/gateways/opchub" );//and still there for the next turn
+	} );
+
+	it( 'starts over on a view change', async ()=>{
+		const page = create( rows(40) );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		await page.onChangeView( 0 );
+		expect( load.mock.calls[1][1].skip ).toBe( 0 );
+		expect( page.skip() ).toBe( 0 );
+	} );
+
+	//reviews-issue/231-paging.md #12:  the reset to the first page is refresh()'s alone - Save and Delete go through it too
+	it( 'keeps the page on Refresh, and starts over on a saved or deleted view', async ()=>{
+		const page = create( rows(80) );
+		await page.onPage( {startIndex: 50, pageSize: 25} );
+		await page.onRefresh();
+		expect( load.mock.calls[1][1].skip ).toBe( 50 );
+		await page.onViewSave( page.view() );
+		expect( load.mock.calls[2][1].skip ).toBe( 0 );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		await page.onViewDelete( page.view() );
+		expect( load.mock.calls[4][1].skip ).toBe( 0 );
+		expect( page.skip() ).toBe( 0 );
+	} );
+
+	//reviews-issue/231-paging.md #8:  the resolver reads it back (QLListResolver.savedSkip), so a record's breadcrumb or Back
+	//returns to the page the record was opened from rather than the first
+	describe( 'remembers the page it is on', ()=>{
+		let stored:Map<string,string>;
+		beforeEach( ()=>{
+			stored = new Map();
+			vi.stubGlobal( 'sessionStorage', { getItem: (k:string)=>stored.get(k) ?? null, setItem: (k:string, v:string)=>{ stored.set(k, v); }, removeItem: (k:string)=>{ stored.delete(k); } } );
+		} );
+		afterEach( ()=>vi.unstubAllGlobals() );
+
+		it( 'for the resolver, and forgets it on a view change', async ()=>{
+			const page = create( rows(40) );
+			await page.onPage( {startIndex: 25, pageSize: 25} );
+			expect( stored.get('users/skip') ).toBe( '25' );
+			await page.onChangeView( 0 );
+			expect( stored.has('users/skip') ).toBe( false );
+		} );
+
+		it( 'but not as a selector, whose rows are a pick list', async ()=>{
+			const page = create( rows(40) );
+			fixture.componentRef.setInput( 'selector', true );
+			await page.onPage( {startIndex: 25, pageSize: 25} );
+			expect( stored.size ).toBe( 0 );
+		} );
+	} );
+
+	//reviews-issue/231-paging.md #2:  page turns and view changes don't wait for each other, so two reloads can overlap.  Only
+	//the latest lands - an older one finishing after it used to put back its own page, or the profile it was copied from.
+	describe( 'overlapping reloads', ()=>{
+		let pending:{ settle:( failure?:unknown )=>void }[];
+		const hold = ()=>{//each load waits until the test settles it
+			pending = [];
+			load.mockImplementation( ( _ql:any, data:QLListData )=>new Promise<QLListData>( (resolve, reject)=>
+				pending.push( {settle: failure=>failure ? reject(failure) : resolve(serve(data))} ) ) );
+		};
+		const ids = ( list:any[] )=>list.map( (r:any)=>r.id );
+		const turn = ( page:QLList, skip:number )=>page.onPage( {startIndex: skip, pageSize: 25} );
+
+		it( 'drops a page turn that finishes after a newer one', async ()=>{
+			const page = create( rows(80) );
+			hold();
+			const older = turn( page, 25 ), newer = turn( page, 50 );
+			pending[1].settle();
+			await newer;
+			pending[0].settle();
+			await older;
+			expect( ids(page.data()) ).toEqual( ids(rows(25, 50)) );
+			expect( page.skip() ).toBe( 50 );
+		} );
+
+		it( 'keeps refreshing until the latest reload lands', async ()=>{
+			const page = create( rows(80) );
+			hold();
+			const older = turn( page, 25 ), newer = turn( page, 50 );
+			pending[0].settle();
+			await older;
+			expect( page.isRefreshing() ).toBe( true );
+			expect( ids(page.data()) ).toEqual( ids(rows(25)) );//the older page is never shown on the way
+			pending[1].settle();
+			await newer;
+			expect( page.isRefreshing() ).toBe( false );
+		} );
+
+		it( 'does not bring back the view a page turn was copied from', async ()=>{
+			const page = create( rows(80) );
+			page.resolvedData().profile.views.push( new View( {columns: ["name"], sort: "slug"}, schema ) );
+			hold();
+			const older = turn( page, 25 ), newer = page.onChangeView( 1 );
+			pending[1].settle();
+			await newer;
+			pending[0].settle();
+			await older;
+			expect( page.view().sort[0].active ).toBe( "slug" );
+			expect( page.skip() ).toBe( 0 );
+		} );
+
+		it( 'ignores the failure of a reload already overtaken', async ()=>{
+			const page = create( rows(80) );
+			hold();
+			const older = turn( page, 25 ), newer = turn( page, 50 );
+			pending[1].settle();
+			await newer;
+			pending[0].settle( new Error("gateway down") );
+			await older;
+			expect( exception ).not.toHaveBeenCalled();
+			expect( page.error() ).toBeUndefined();
+			expect( ids(page.data()) ).toEqual( ids(rows(25, 50)) );
+		} );
+
+		it( 'gives the sidenav the page that lands, not the one overtaken', async ()=>{
+			const page = create( rows(80) );
+			const setChildren = vi.spyOn( TestBed.inject(RouteStore), 'setChildren' ).mockImplementation( ()=>{} );
+			hold();
+			const older = turn( page, 25 ), newer = turn( page, 50 );
+			pending[1].settle();
+			await newer;
+			pending[0].settle();
+			await older;
+			expect( setChildren ).toHaveBeenCalledTimes( 1 );
+			expect( setChildren ).toHaveBeenCalledWith( 'users', rows(25, 50).map( r=>({title: r.name, path: r.slug}) ) );
+		} );
 	} );
 } );

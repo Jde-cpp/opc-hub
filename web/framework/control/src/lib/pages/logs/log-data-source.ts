@@ -47,12 +47,26 @@ export class LogDataSource extends DataSource<Entry>{
 	* @returns true if end of data is reached
 	*/
 	setPage( start=0 ):boolean{
+		this.#startIndex.set( start );
 		let pageSize = this.view().limit;
 		if( start>this.allEntries.length )
 			return true;
 		let entries = this.getVisibleEntries( start );
 		this.subject.next( entries );
 		return entries.length<pageSize;
+	}
+	/**
+	* The pager's turn.  A page not all loaded yet is not shown until the read lands - LogDetail.load re-shows startIndex - so
+	* the table keeps its rows rather than blanking for the round trip.
+	* @returns true if the page needs a read
+	*/
+	turnTo( start:number ):boolean{
+		this.#startIndex.set( start );
+		const entries = this.getVisibleEntries( start );
+		if( entries.length<this.view().limit && this.#length()===undefined )
+			return true;
+		this.subject.next( entries );
+		return false;
 	}
 	//Insertion index for `entry` in the sorted `data`: the first position holding something that sorts AFTER it, so equal
 	//entries keep arrival order.  Plain upper-bound binary search — the previous version branched on `compare(...)` as a
@@ -111,7 +125,15 @@ export class LogDataSource extends DataSource<Entry>{
 	}
 	clear(){
 		this.allEntries.length=0;
+		this.#length.set( undefined );
 		this.setPage();
+	}
+	//a read came back short:  everything is loaded, so the visible total is known
+	endReached(){
+		this.#length.set( this.visibleCount() );
+	}
+	visibleCount():number{
+		return this.allEntries.filter( e=>!e.hidden ).length;
 	}
 	compare( a:Entry, b:Entry ){
 		let active = this.sort[0].active;
@@ -210,6 +232,8 @@ export class LogDataSource extends DataSource<Entry>{
 	*/
 	filterData( filter: Filter ):boolean{
 		this.filter = filter;
+		if( this.#length()!==undefined )
+			this.#length.set( this.visibleCount() );
 		let visibleIndex = 0, selectedVisibleIndex = -1;
 		for( const entry of this.allEntries ){
 			entry.hidden = this.isHidden( entry );
@@ -230,8 +254,10 @@ export class LogDataSource extends DataSource<Entry>{
 	filter: Filter = { messageIds: [], message: undefined, level: Log.ELogLevel.NoLog };
 	// get page(){return this._page;} set page(value){this._page=value;this.onPageChange.emit(value);} _page:number;
 	// onPageChange= new EventEmitter<number>();
-	get pageIndex(){ return this.#pageIndex.asReadonly(); }
-	#pageIndex = signal<number>( 0 );
+	get startIndex(){ return this.#startIndex.asReadonly(); }//the visible index the page starts at - the pager's too
+	#startIndex = signal<number>( 0 );
+	get length(){ return this.#length.asReadonly(); }//visible entries, once the end has been read - until then Next stays on
+	#length = signal<number|undefined>( undefined );
 	//get filter(){return _filter;} set filter( value){_filter=value; applyFilter(value);} string _filter;
 	get sort(){ return this.view().sort; }
   private subject = new BehaviorSubject<Entry[]>([]);

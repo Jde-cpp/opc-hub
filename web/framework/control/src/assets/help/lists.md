@@ -1,22 +1,43 @@
 # Lists and records
 
-Most of the site is a **list** of records that opens onto a page for one **record**: the users, groups and roles under [Access](/access), and a gateway's server connections, on the **Connections** tab of the gateway's page under [Applications](/apps). They all work the same way, which is described here; each section's own topic covers what is particular to it.
+Most of the site is a **list** of records that opens onto a page for one **record**. The lists are:
+
+- the users, groups, roles and resources under [Access](/access)
+- a gateway's server connections, on the **Connections** tab of the gateway's page under [Applications](/apps)
+
+They all work the same way, which is described here.
+
+Each section's own topic covers what is particular to it.
 
 A node's **Children** and an application server's **Logs** are not lists of records - nothing is added or deleted there - but they share the [views](#views).
 
 ## Lists
 
-The bar above a list carries **Add**, the refresh button, the views and the row count.
+The bar above a list carries **Add**, the refresh button, the views and, when the list fits on one page, the row count.
 
 **Add** starts a new record. A list whose rows are not created by hand has no **Add**.
 
 The refresh button re-reads the list; the rows stay on screen while it runs.
 
-Click a row to open the record. Click a column header to sort by that column, which counts as an unsaved change to the view.
+Click a row to open the record. Two kinds of list differ:
 
-Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them, which is the only way to reach one and restore it.
+- **Resources** under [Access](/access) has no record page, so a row click does nothing.
+- The pick lists on a record's tabs (a group's **Users**, say) have no **Add**. A click ticks the row, and the record's **Save** keeps the picks.
 
-An empty list says so; a view whose filters match nothing says *No … match this view* instead, since the rows may only be hidden - switch back to the default view to see them. A list you hold no right to read says **No access** rather than looking empty - ask an administrator for a role that can read it - and a list that could not be loaded gives the reason and a **Retry** button.
+Click a column header to sort by that column, which counts as an unsaved change to the view.
+
+A list longer than its view's **Page Size** is read a page at a time. The pager under the table steps through the pages - or through the rows one at a time, with the inner pair of buttons - and reads which rows are showing; the total is known, and shown, once the last page has been reached. Switching or editing the view returns to the first page; the refresh button keeps the page you are on, and so does opening a record and coming back, for as long as the browser tab stays open.
+
+Deleted records are left out of every view that does not filter on **Deleted**. The **Deleted** view, after a list's other built-in views, lists only them. It is the only way to reach one and restore it.
+
+**Resources** under [Access](/access) is the exception. Its **Enforced** switch in each row takes the place of delete, so every row is listed and there is no **Deleted** view. Flipping the switch asks first.
+
+A list with no rows says why:
+
+- An empty list says so.
+- A view whose filters match nothing says *No … match this view*. The rows may only be hidden, so switch back to the default view to see them.
+- A list you hold no right to read says **No access**. Ask an administrator for a role that can read it.
+- A list that could not be loaded gives the reason and a **Retry** button.
 
 ## Views
 
@@ -24,11 +45,16 @@ A **view** is which rows are filtered out, which columns are shown and in what o
 
 The tune button beside the views edits the current one, over three tabs.
 
-- **Filter** - add a column, then pick an operator and the values. *In* and *Not In* take one or more values, typed or picked from those already in the list, with `<null>` and `<not null>` offered where a column can be empty; `<` and `>` compare against one. A date column takes a start or an end date instead, and **Deleted** a choice of *Not deleted* or *Deleted*.
-- **Display** - tick the columns to show and drag them into order. **Page Size** is how many rows the list loads, 25 unless the view says otherwise; a list does not page beyond it, so raise it or filter when the row count stops there.
+- **Filter** - add a column, then pick an operator and the values. *In* and *Not In* take one or more values, typed or picked from those already in the list, with `<null>` and `<not null>` offered where a column can be empty. `<` and `>` compare against one. A date column offers only `<` and `>`, with an **End Date** or **Start Date** to match. A date column that can be empty also has *null* and *not null* boxes, which on **Deleted** read *Not deleted* and *Deleted*.
+- **Display** - tick the columns to show and drag them into order. **Page Size** is how many rows a page holds: 25 on a list and 21 on **Logs**, unless the view says otherwise. A node's **Children** are not read a page at a time, so their views have no Page Size.
 - **Sort** - the columns to sort by, in order, each ascending or descending.
 
-**Show** applies the changes without saving them, and the view's button reads *(edited)*. **Save** keeps the view under the name in the box. A view the list came with cannot be overwritten: give it a new name and it is saved as your own. **Delete** removes a view you saved, and **Cancel** returns to the list unchanged.
+The bar above the tabs:
+
+- **Save** keeps the view under the name in the box. A view the list came with cannot be overwritten: give it a new name and it is saved as your own.
+- **Show** applies the changes without saving them, and the view's button reads *(edited)*.
+- **Delete** removes a view you saved.
+- **Cancel** returns to the list unchanged.
 
 Saved views are kept with your profile, so they follow you between browsers.
 

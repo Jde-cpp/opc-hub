@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { Sort } from '@angular/material/sort';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { ProfileStore, RouteStore } from 'jde-spa';
@@ -181,5 +182,155 @@ describe( 'QLListResolver on a list name the route does not declare', ()=>{
 		expect( error ).toHaveBeenCalledWith( 'There is no nonsense list.' );
 		expect( schemaWithEnums ).not.toHaveBeenCalled();
 		expect( TestBed.inject(Router).url ).toBe( '/access' );
+	} );
+} );
+
+//reviews-issue/231-paging.md #8:  QLList keeps the page it is on beside its sidenav children, and a list the router opens
+//starts there - so a record's breadcrumb, or Back, returns to the page the record was opened from.
+describe( 'QLListResolver remembers the page', ()=>{
+	let stored:Map<string,string>;
+	beforeEach( ()=>{
+		stored = new Map();
+		vi.stubGlobal( 'sessionStorage', { getItem: (k:string)=>stored.get(k) ?? null, setItem: (k:string, v:string)=>{ stored.set(k, v); }, removeItem: (k:string)=>{ stored.delete(k); } } );
+	} );
+	afterEach( ()=>vi.unstubAllGlobals() );
+	const listData = ( childrenKey?:string )=>({ routing: new ListRoute("users"), childrenKey } as unknown as QLListData);
+
+	it( 'under the key its children go under, and forgets the first page', ()=>{
+		QLListResolver.saveSkip( listData(), 50 );
+		QLListResolver.saveSkip( listData("apps/gateways/opchub"), 25 );
+		expect( [...stored] ).toEqual( [["users/skip", "50"], ["apps/gateways/opchub/skip", "25"]] );
+		expect( QLListResolver.savedSkip( listData() ) ).toBe( 50 );
+		QLListResolver.saveSkip( listData(), 0 );
+		expect( QLListResolver.savedSkip( listData() ) ).toBe( 0 );
+		expect( stored.has("users/skip") ).toBe( false );
+	} );
+
+	it( 'reads nothing it cannot make sense of', ()=>{
+		stored.set( "users/skip", "x" );
+		expect( QLListResolver.savedSkip( listData() ) ).toBe( 0 );
+		vi.stubGlobal( 'sessionStorage', undefined );//storage off
+		expect( QLListResolver.savedSkip( listData() ) ).toBe( 0 );
+		expect( ()=>QLListResolver.saveSkip( listData(), 25 ) ).not.toThrow();
+	} );
+
+	it( 'opens a list on the page it was left on', async ()=>{
+		stored.set( "users/skip", "25" );
+		const things = Array.from( {length: 40}, (_, i)=>({id: i+1, name: `thing ${i+1}`, slug: `thing${i+1}`}) );
+		const query = vi.fn( async ( text:string )=>({things: things.slice( +(/skip:(\d+)/.exec(text)?.[1] ?? 0) )}) );
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule( {providers: [
+			provideRouter( [ { path: 'access', children: [
+				{ path: ':collectionDisplay', component: Dummy, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: [{path: 'users', data: {tableSettings: {columns: ["name"]}}}]} }
+			]} ] ),
+			{ provide: IGRAPHQL, useValue: {schemaWithEnums: async ()=>schema, query} },
+			{ provide: SnackbarService, useValue: {error: vi.fn(), exception: vi.fn()} },
+			{ provide: RouteStore, useValue: {setChildren: vi.fn()} },
+			{ provide: ProfileStore, useValue: {loadClassArray: async ()=>[]} }
+		]} );
+		const harness = await RouterTestingHarness.create();
+		await harness.navigateByUrl( '/access/users' );
+		expect( query.mock.calls[0][0] ).toContain( "skip:25" );
+	} );
+} );
+
+//#231:  a list loads its view's Page Size and nothing after it, and the page has no count to page by - the server offers none.
+//load() asks for one row past the page instead:  its presence is `more`, and the row itself never reaches the table.
+describe( 'QLListResolver.load pages', ()=>{
+	const rows = ( n:number, from=0 )=>Array.from( {length: n}, (_, i)=>({id: from+i+1, name: `thing ${from+i+1}`, slug: `thing${from+i+1}`}) );
+	const data = ( limit:number, skip?:number )=>{
+		const profile = new PageProfile();
+		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		view.limit = limit;
+		profile.views = [view];
+		return { schema, profile, routing: new ListRoute("things"), columns: {}, pageSettings: {}, skip } as unknown as QLListData;
+	};
+	const ql = ( available:any[] )=>{
+		const query = vi.fn( async ( text:string )=>{
+			const limit = +( /limit:(\d+)/.exec(text)?.[1] ?? available.length );
+			const skip = +( /skip:(\d+)/.exec(text)?.[1] ?? 0 );
+			return { things: available.slice(skip, skip+limit) };
+		} );
+		return { ql: {query} as any, query };
+	};
+
+	it( 'asks for one row past the page, and hands the table only the page', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const y = await QLListResolver.load( q, data(25), null );
+		expect( query.mock.calls[0][0] ).toContain( "limit:26" );
+		expect( y.results.things ).toHaveLength( 25 );
+		expect( y.more ).toBe( true );
+		expect( y.skip ).toBe( 0 );
+	} );
+
+	it( 'reports no more on a short last page, and where the page is exactly full', async ()=>{
+		const last = await QLListResolver.load( ql(rows(40)).ql, data(25, 25), null );
+		expect( last.results.things.map( (r:any)=>r.id ) ).toEqual( rows(15, 25).map( r=>r.id ) );
+		expect( last.more ).toBe( false );
+		expect( last.skip ).toBe( 25 );
+		const full = await QLListResolver.load( ql(rows(25)).ql, data(25), null );
+		expect( full.results.things ).toHaveLength( 25 );
+		expect( full.more ).toBe( false );//the probe row is what tells a full page from a full list
+	} );
+
+	it( 'sends the offset, and the sidenav children are the page shown', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const setChildren = vi.fn();
+		const y = await QLListResolver.load( q, data(25, 25), {setChildren} as unknown as RouteStore );
+		expect( query.mock.calls[0][0] ).toContain( "skip:25" );
+		expect( setChildren ).toHaveBeenCalledWith( "things", rows(15, 25).map( r=>({title: r.name, path: r.slug}) ) );
+		expect( y.results.things ).toHaveLength( 15 );
+	} );
+
+	//reviews-issue/231-paging.md #5:  a gateway's Connections tab has routing.path gateways/<instance>, the browse tree's key
+	it( 'writes the children under childrenKey where the data has one, and keeps it for the next page', async ()=>{
+		const { ql: q } = ql( rows(40) );
+		const setChildren = vi.fn();
+		const y = await QLListResolver.load( q, {...data(25, 25), childrenKey: "apps/gateways/opchub"}, {setChildren} as unknown as RouteStore );
+		expect( setChildren ).toHaveBeenCalledWith( "apps/gateways/opchub", rows(15, 25).map( r=>({title: r.name, path: r.slug}) ) );
+		expect( y.childrenKey ).toBe( "apps/gateways/opchub" );
+	} );
+
+	it( 'falls back to the first page when the one asked for has emptied', async ()=>{
+		const { ql: q, query } = ql( rows(10) );//rows deleted since the page was read - or since it was remembered (#8)
+		const y = await QLListResolver.load( q, data(25, 25), null );
+		expect( query.mock.calls.map( c=>/skip:(\d+)/.exec(c[0])?.[1] ?? "0" ) ).toEqual( ["25", "0"] );
+		expect( y.skip ).toBe( 0 );
+		expect( y.results.things ).toHaveLength( 10 );
+	} );
+
+	it( 'leaves an unlimited view alone', async ()=>{
+		const { ql: q, query } = ql( rows(40) );
+		const y = await QLListResolver.load( q, data(0), null );
+		expect( query.mock.calls[0][0] ).not.toContain( "limit:" );
+		expect( query.mock.calls[0][0] ).toContain( 'orderBy:[{name:"asc"}]' );
+		expect( y.results.things ).toHaveLength( 40 );
+		expect( y.more ).toBe( false );
+	} );
+
+	//reviews-issue/231-paging.md #3:  offset paging over a sort with ties - two rows with the same name either side of a page
+	//boundary - may show a row on both pages or on neither, and MSSQL refuses offset/fetch with no order by.
+	describe( 'orders every page totally', ()=>{
+		const sent = async ( sort:Sort[] )=>{
+			const { ql: q, query } = ql( rows(40) );
+			const d = data( 25, 25 );
+			d.profile.view.sort = sort;
+			await QLListResolver.load( q, d, null );
+			return { text: query.mock.calls[0][0] as string, view: d.profile.view };
+		};
+
+		it( "breaks ties on id after the view's own sort, on a copy", async ()=>{
+			const { text, view } = await sent( [{active: "name", direction: "asc"}] );
+			expect( text ).toContain( 'orderBy:[{name:"asc"},{id:"asc"}]' );
+			expect( view.sort ).toEqual( [{active: "name", direction: "asc"}] );//the profile's view is what the settings panel edits and a Save persists
+		} );
+
+		it( 'orders by id where the view has no sort', async ()=>{
+			expect( (await sent( [] )).text ).toContain( 'orderBy:[{id:"asc"}]' );
+		} );
+
+		it( 'leaves a sort that already has id', async ()=>{
+			expect( (await sent( [{active: "id", direction: "desc"}] )).text ).toContain( 'orderBy:[{id:"desc"}]' );
+		} );
 	} );
 } );

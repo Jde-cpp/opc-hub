@@ -10,7 +10,7 @@ export class RouteStore{
 		return this.#children.get( url ) ?? this.loadChildren( url );
 	}
 
-	setChildren( url:string | UrlSegment[], children:RouteItem[] ){
+	setChildren( url:string | UrlSegment[], children:readonly Partial<RouteItem>[] ){//copied into RouteItems:  a list's rows are passed as plain {title, path}
 		if( Array.isArray(url) )
 			url = url.map( x=>x.path ).join("/");
 		this.#children.set( url, children.map(s=>{return new RouteItem({title:s.title, path:s.path, icon:s.icon})}) );

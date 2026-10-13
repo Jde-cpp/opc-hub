@@ -1,6 +1,6 @@
 @if( !isLoading() ){
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
+		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [paged]=false (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
 	} @else {
 		<mat-toolbar>
 			<div class="bar-left"><!--empty: the browse carries every value, so Refresh is the only reader.  kept as the spacer `justify-content: space-between` needs to hold .bar-right at the right edge, as ql-list's is when Add is hidden-->

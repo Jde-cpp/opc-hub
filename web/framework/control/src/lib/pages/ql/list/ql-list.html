@@ -23,7 +23,9 @@
 					</button>
 				</div>
 				<div class="bar-right">
-					<span class="row-count">{{ data().length }} {{ data().length==1 ? "row" : "rows" }}</span>
+					@if( !paged() ){<!--one page:  the count is exact.  on more, the pager under the table carries the range instead-->
+						<span class="row-count">{{ data().length }} {{ data().length==1 ? "row" : "rows" }}</span>
+					}
 				</div>
 			</mat-toolbar>
 			<mat-progress-bar class="refresh-bar" [mode]="isRefreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
@@ -49,6 +51,11 @@
 					<p class="title">{{ emptyState().title }}</p>
 					@if( emptyState().detail ){ <p class="detail">{{ emptyState().detail }}</p> }
 					@if( helpRoute(); as help ){ <div class="actions"><a matButton [routerLink]="help">Help</a></div> }
+				</div>
+			}
+			@if( paged() ){
+				<div class="pager">
+					<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
 				</div>
 			}
 		</ng-container>
