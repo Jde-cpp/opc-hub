@@ -29,6 +29,9 @@ mat-toolbar{
 .node-chips{
 	--mat-chip-container-height: 28px;
 }
+.source-group{
+	flex: 0 0 auto;
+}
 .row-count{
 	font: var(--mat-sys-label-large);
 	color: var(--mat-sys-on-surface-variant);

@@ -40,7 +40,7 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
+		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
 		flat_set<string> histEdits{ string{HistGroupMAwait::ResolveCommand} };//resolveHistory:  resolve is no verb either.
 		for( let command : HistQL::EditCommands )
 			histEdits.emplace( command );

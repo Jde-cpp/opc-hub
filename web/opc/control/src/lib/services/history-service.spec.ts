@@ -76,6 +76,39 @@ describe( 'HistoryService.aggregates', ()=>{
 	} );
 } );
 
+//historyGroups( opc, nodes ){ groups{ id name nodes } }:  which group holds each of a page's nodes (#335)
+describe( 'HistoryService.groups', ()=>{
+	it( 'asks the gateway by POST for the groups that hold the nodes, and parses each with its members', async ()=>{
+		let sent:{ql:string, vars:any}|undefined;
+		const poster = { postQL: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{historyGroups: {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 1}]}]}}; } };
+		const groups = await new HistoryService().groups( poster, 'local', [A, B] );
+		expect( sent?.ql ).toBe( HistoryService.groupsQuery );
+		expect( sent?.vars ).toEqual( {opc: 'local', nodes: [A.toJson(), B.toJson()]} );
+		expect( groups.map( g=>[g.id, g.name, g.nodes.map( n=>n.key )] ) ).toEqual( [[3, 'Pumps', [A.key]]] );
+	} );
+	it( 'asks nothing for no nodes, and lists none when the gateway answers nothing', async ()=>{
+		let asked = 0;
+		const poster = { postQL: async <T>()=>{ ++asked; return <T><unknown>null; } };
+		expect( await new HistoryService().groups( poster, 'local', [] ) ).toEqual( [] );
+		expect( asked ).toBe( 0 );
+		expect( await new HistoryService().groups( poster, 'local', [A] ) ).toEqual( [] );
+	} );
+} );
+
+//historyCapabilities( group ){ aggregates update delete }:  a group's aggregates, named alone, and this user's edit rights
+describe( 'HistoryService.capabilities', ()=>{
+	it( 'asks the gateway each time, and parses the aggregates as the picker lists them', async ()=>{
+		const sent:any[] = [];
+		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent.push( {ql, vars} ); return <T><unknown>{historyCapabilities: {aggregates: ['Average', 'Median'], update: true, delete: false}}; } };
+		const service = new HistoryService();
+		const c = await service.capabilities( reader, 3 );
+		expect( c ).toEqual( {aggregates: [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}], update: true, delete: false} );
+		await service.capabilities( reader, 3 );
+		expect( sent ).toEqual( [{ql: HistoryService.capabilitiesQuery, vars: {group: 3}}, {ql: HistoryService.capabilitiesQuery, vars: {group: 3}}] );
+		expect( await service.capabilities( {query: async <T>()=><T><unknown>null}, 3 ) ).toEqual( {aggregates: [], update: false, delete: false} );
+	} );
+} );
+
 describe( 'HistoryService.mutation', ()=>{
 	//the three UpdateData fields, each with values:[{node source server status value}] (spec *Edits*)
 	it( 'writes an UpdateData with its values, by its whole name', ()=>{

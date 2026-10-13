@@ -1,8 +1,16 @@
 <mat-toolbar>
 	<div class="bar-left">
-		<!--the nodes drawn:  one chip per historized child, up to the palette's eight-->
+		@if( sources().length>1 ){
+			<!--whose history:  the server's own, or a group the gateway's historian keeps-->
+			<mat-button-toggle-group class="source-group" hideSingleSelectionIndicator aria-label="History source" [value]="picked()" (change)="pick($event.value)">
+				@for( s of sources(); track s.key ){
+					<mat-button-toggle [value]="s.key" [matTooltip]="s.source.group!=undefined ? 'The history the gateway keeps of the group ' + s.label : 'The history the server keeps itself'">{{ s.label }}</mat-button-toggle>
+				}
+			</mat-button-toggle-group>
+		}
+		<!--the nodes drawn:  one chip per child the source historizes, up to the palette's eight-->
 		<mat-chip-listbox class="node-chips" aria-label="Nodes to trend" multiple>
-			@for( v of candidates(); track v.key ){
+			@for( v of nodes(); track v.key ){
 				<mat-chip-option [selected]="selectedKeys().has(v.key)" [disabled]="!canSelect(v)" (selectionChange)="$event.isUserInput && toggle(v)" [matTooltip]="canSelect(v) ? '' : 'At most eight nodes at a time'">{{ v.name }}</mat-chip-option>
 			}
 		</mat-chip-listbox>
@@ -21,21 +29,25 @@
 				<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
 			</mat-button-toggle-group>
 		}
-		<mat-slide-toggle [checked]="live()" [disabled]="mode()!='values' || !!aggregated()" (change)="onLiveChange($event.checked)" [matTooltip]="mode()!='values' ? 'Modifications are not published live' : aggregated() ? 'Aggregates are computed on each read, not published' : 'Append values as the server publishes them'">Live</mat-slide-toggle>
+		<mat-slide-toggle [checked]="live()" [disabled]="!canLive()" (change)="onLiveChange($event.checked)" [matTooltip]="mode()!='values' ? 'Modifications are not published live' : aggregated() ? 'Aggregates are computed on each read, not published' : isGroup() ? 'A group\'s history has no live tail yet' : 'Append values as the server publishes them'">Live</mat-slide-toggle>
 		<button matButton (click)="loadEarlier()" [disabled]="loading() || !hasEarlier()" matTooltip="Read the page before the earliest value shown">
 			<mat-icon>history</mat-icon>Load earlier
 		</button>
 		@if( writable().length ){
-			<!--the edits, for the nodes whose history the server lets this user write-->
+			<!--the edits, for the nodes whose history the source lets this user write:  the UpdateData kinds under Update, the purges under Delete-->
 			<button matButton [matMenuTriggerFor]="editMenu" aria-haspopup="menu" matTooltip="Edit the history of the nodes you may write">
 				<mat-icon>edit</mat-icon>Edit
 			</button>
 			<mat-menu #editMenu="matMenu">
-				<button mat-menu-item (click)="openEdit('insert')">Insert a value…</button>
-				<button mat-menu-item (click)="openEdit('replace')">Replace a value…</button>
-				<button mat-menu-item (click)="openEdit('update')">Update a value…</button>
-				<button mat-menu-item (click)="openEdit('purgeRange')">Delete a range…</button>
-				<button mat-menu-item (click)="openEdit('purgeTimes')">Delete at times…</button>
+				@if( rights().update ){
+					<button mat-menu-item (click)="openEdit('insert')">Insert a value…</button>
+					<button mat-menu-item (click)="openEdit('replace')">Replace a value…</button>
+					<button mat-menu-item (click)="openEdit('update')">Update a value…</button>
+				}
+				@if( rights().delete ){
+					<button mat-menu-item (click)="openEdit('purgeRange')">Delete a range…</button>
+					<button mat-menu-item (click)="openEdit('purgeTimes')">Delete at times…</button>
+				}
 			</mat-menu>
 		}
 		<span class="row-count">{{ values().length }} {{ mode()=='modified' ? (values().length==1 ? "modification" : "modifications") : (values().length==1 ? "value" : "values") }}</span>
@@ -43,13 +55,13 @@
 </mat-toolbar>
 <mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
 @for( r of refused(); track r.node.key ){
-	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: the server answered {{ statusText(r.status) }}.</p>
+	<p class="refused" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ nodeName(r.node) }}: {{ answerer() }} answered {{ statusText(r.status) }}.</p>
 }
 @if( mode()=='values' ){
 	<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>
 }
 <!--an aggregate is computed, not a record:  no row has a Replace or a Delete-->
-<hist-table [values]="values()" [nodes]="selected()" [modified]="mode()=='modified'" [editable]="aggregated() ? [] : writable()" (replace)="replaceValue($event)" (remove)="deleteValue($event)"></hist-table>
+<hist-table [values]="values()" [nodes]="selected()" [modified]="mode()=='modified'" [editable]="aggregated() ? [] : writable()" [rights]="rights()" (replace)="replaceValue($event)" (remove)="deleteValue($event)"></hist-table>
 @if( !loading() && !values().length ){
 	<div class="jde-empty" role="status">
 		<mat-icon aria-hidden="true">history</mat-icon>

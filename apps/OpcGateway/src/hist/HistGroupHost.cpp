@@ -18,7 +18,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	HistGroupHost::HistGroupHost( const HistGroupRow& row, ServerCnnctnNK slug, sp<Opc::Hist::Group> group, vector<HistMember> members, Credential collector, Opc::Hist::IClock& clock )ι:
-		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _collector{ move(collector) }, _clock{ clock }, _columns{ row.Thresholds }{
+		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _collector{ move(collector) }, _clock{ clock }, _name{ row.Name }, _columns{ row.Thresholds }{
 		for( auto& member : members )
 			_nodes.emplace( member.Index, Node{move(member.Node), nullopt, member.Thresholds} );
 	}
@@ -28,6 +28,8 @@ namespace Jde::Opc::Gateway{
 				_clock.Cancel( timer );
 		}
 	}
+	α HistGroupHost::Name()Ι->string{ ul _{ _mutex }; return _name; }
+	α HistGroupHost::SetName( string name )ι->void{ ul _{ _mutex }; _name = move(name); }
 	α HistGroupHost::Columns()Ι->HistThresholdColumns{ ul _{ _mutex }; return _columns; }
 	α HistGroupHost::SetColumns( HistThresholdColumns columns )ι->void{ ul _{ _mutex }; _columns = move(columns); }
 

@@ -8,6 +8,8 @@ import { NodeRoute } from '../../model/node-route';
 import { OPC_STORE, OpcStore } from '../opc-store';
 import { Server } from '../../model/server';
 import { NodeView } from '../../model/node-view';
+import { HistGroup } from '../../model/hist';
+import { HistoryService } from '../history-service';
 
 //The server answered and the path is not there:  node( path ) put the TranslateBrowsePaths result's status in `sc`.  Told apart
 //from a gateway or an OPC server that did not answer - those reject, and the page may well be there once they are back.
@@ -18,6 +20,7 @@ export type NodePageData = {
 	nodes:UaNode[];
 	gateway: Gateway;
 	server:Server;
+	groups:HistGroup[];//the gateway's history groups that hold any of the nodes:  the History tab's other sources
 };
 @Injectable()
 export class NodeResolver implements Resolve<NodePageData> {
@@ -27,6 +30,7 @@ export class NodeResolver implements Resolve<NodePageData> {
 	private opcStore:OpcStore = inject( OPC_STORE );
 	private profileStore = inject( ProfileStore );
 	private recentVisits = inject( RecentVisits );
+	private history = inject( HistoryService );
 
 	async load( route:NodeRoute, url:string ):Promise<NodePageData>{
 		try{
@@ -52,13 +56,26 @@ export class NodeResolver implements Resolve<NodePageData> {
 				this.opcStore.nodeView.set( views[index] );
 			}
 			this.opcStore.setRoute( route, defaultBrowseNs );
-			return { route: route, nodes: displayed, gateway: gateway, server: server };
+			const groups = await this.#groups( gateway, route.cnnctnSlug, displayed );
+			return { route: route, nodes: displayed, gateway: gateway, server: server, groups };
 		}catch( e ){
 			this.snackbar.exception( "Not found.", e );
 			if( e instanceof NodeNotFoundError )//a removed or renamed node:  the redirect is a NavigationCancel, so RecentVisits never sees it (reviews/m3-closing.md #25).  Not on an outage, or every node tile would go.
 				this.recentVisits.forget( RecentVisits.bare(url) );
 			this.router.navigateByUrl( createUrlTreeFromSnapshot(route.route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  NodeRoute keeps this route's snapshot.
 			return undefined as unknown as NodePageData;
+		}
+	}
+	//The gateway's groups that hold any of the page's variables (HistoryService.groups), with the page rather than after it, so the
+	//History tab is there when the page shows.  None when the gateway can't say - one older than the field, or one that refuses -
+	//since the server's own history still shows.
+	async #groups( gateway:Gateway, cnnctn:string, nodes:UaNode[] ):Promise<HistGroup[]>{
+		try{
+			return await this.history.groups( gateway, cnnctn, nodes.filter( n=>n.isVariable ).map( n=>n.nodeId ), (m)=>console.log(m) );
+		}
+		catch( e ){
+			console.warn( `Could not list the gateway's history groups on ${cnnctn}.`, e );
+			return [];
 		}
 	}
 	//A node with no page of its own - a Variable is a row on its parent's page, with its value, status and subscribe box - reached

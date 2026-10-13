@@ -350,6 +350,8 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_NE( read.find("isn't one this gateway historizes"), string::npos ) << read;
 		let edit = answer( Ƒ("purgeHistory( {} ){{ nodes{{ status }} }}", args) );
 		EXPECT_NE( edit.find("needs a grant on an enforced resource"), string::npos ) << edit;
+		let capabilities = answer( "historyCapabilities( group: 999999 ){ update }" );
+		EXPECT_NE( capabilities.find("isn't one this gateway historizes"), string::npos ) << capabilities;
 		Web::Server::Sessions::Remove( rootSession );
 	}
 }

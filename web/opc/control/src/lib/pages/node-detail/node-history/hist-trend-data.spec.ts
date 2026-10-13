@@ -64,6 +64,18 @@ describe( 'toTrendPoints', ()=>{
 		expect( points.map(p=>p.y) ).toEqual( [1, null, null, null, 5, null, null, null] );
 		expect( flags.map(f=>[f.x, f.custom.status]) ).toEqual( [[2000, Bad], [4000, Other], [6000, Bad], [8000, Bad]] );
 	} );
+	//a group's heartbeat is a stored value, so it is a point, ringed in the line's colour so a flat line of them reads as a
+	//feed that is up;  an Uncertain one keeps the triangle, and either says so in the tooltip (plan Phase 6)
+	it( 'rings a heartbeat in the line\'s colour and keeps the triangle on an Uncertain one', ()=>{
+		const {points} = toTrendPoints( [at(1000, 1), {...at(2000, 1), heartbeat: true}, {...at(3000, 1, Uncertain), heartbeat: true}], A, true, '#2a78d6' );
+		expect( points.map( p=>[p.x, p.y] ) ).toEqual( [[1000, 1], [2000, 1], [3000, 1]] );
+		expect( points[0].marker ).toBeUndefined();
+		expect( points[0].custom.heartbeat ).toBeUndefined();
+		expect( points[1].marker ).toEqual( {enabled: true, symbol: 'circle', radius: 3, fillColor: 'transparent', lineColor: '#2a78d6', lineWidth: 1.5} );
+		expect( points[1].custom.heartbeat ).toBe( true );
+		expect( points[2].marker ).toMatchObject( {symbol: 'triangle', fillColor: uncertainColor} );
+		expect( points[2].custom.heartbeat ).toBe( true );
+	} );
 	it( 'stepped, a Bad with nothing before it has nothing to hold', ()=>{
 		const {points} = toTrendPoints( [at(1000, undefined, Bad), at(2000, undefined, Bad), at(3000, 3)], A, true );
 		expect( points.map(p=>[p.x, p.y]) ).toEqual( [[1000, null], [2000, null], [3000, 3]] );

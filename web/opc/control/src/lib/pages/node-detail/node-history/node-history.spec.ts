@@ -13,7 +13,7 @@ import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
 import { Observable, of, Subscriber } from 'rxjs';
 import { ConfirmData, ConfirmDialog, SnackbarService } from 'jde-framework';
-import { alignUp, HistAggregate, HistEditArgs, HistEditResult, HistPage, HistReadArgs, HistValue } from '../../../model/hist';
+import { alignUp, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, HistGroupMembers, HistPage, HistReadArgs, HistSource, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -31,20 +31,23 @@ import { NodeHistory } from './node-history';
 class TrendStub{ values = input<HistValue[]>(); series = input<Variable[]>(); stepped = input( true ); loading = input( false ); hasEarlier = input( true ); loadEarlier = output<void>(); }
 
 const settle = ()=>new Promise( r=>setTimeout(r) );
-//A History tab on one historized node.  Each read is held until `answer` gives it a page;  `subscribed` counts the live
-//tail's open subscriptions, and `push` sends the latest a value.  An edit sent directly lands in `edits.sent` and gets
-//`edits.answer`;  the edit dialog is a stub that closes at once with `dialogResult.answer`, and the confirmation with `confirmed`.
-const open = ()=>{
-	const reads:{ args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
+const A = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true} );
+//A History tab on one historized node, A, or on the `candidates` and `groups` given.  Each read is held until `answer` gives it a
+//page, and keeps the source it named;  `subscribed` counts the live tail's open subscriptions, and `push` sends the latest a value.
+//An edit sent directly lands in `edits.sent`, its source in `edits.sources`, and gets `edits.answer`;  the edit dialog is a stub
+//that closes at once with `dialogResult.answer`, and the confirmation with `confirmed`.  A group's capabilities are `capabilities`.
+const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )=>{
+	const reads:{ source:HistSource; args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
 	const subscribers = new Set<Subscriber<SubscriptionResult>>();
 	const gateway = { subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ), updateErrorCodes: async ()=>{}, slug: 'gw' };
-	const edits:{ sent:HistEditArgs[]; answer:HistEditResult } = { sent: [], answer: {values: [], nodes: []} };
+	const edits:{ sent:HistEditArgs[]; sources:HistSource[]; answer:HistEditResult } = { sent: [], sources: [], answer: {values: [], nodes: []} };
 	const dialogResult:{ answer:HistEditResult|undefined } = { answer: undefined };
 	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [];
 	const errors:string[] = [], warnings:string[] = [];
 	const y = {
 		confirmed: true,
 		aggregates: <HistAggregate[]>[{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}],
+		capabilities: <HistCapabilities>{aggregates: [{name: 'Median', browse: 'Median'}], update: false, delete: false},
 		dialog: { open: ( component:unknown, config?:{data?:HistEditDialogData|ConfirmData} )=>{
 			if( component===HistEditDialog )
 				presets.push( (<HistEditDialogData|undefined>config?.data)?.preset );
@@ -55,24 +58,28 @@ const open = ()=>{
 	};
 	TestBed.configureTestingModule({ providers: [
 		{ provide: HistoryService, useValue: {
-			read: ( _reader:unknown, _source:unknown, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({args, answer}) ),
-			edit: async ( _editor:unknown, _source:unknown, args:HistEditArgs )=>{ edits.sent.push( args ); return edits.answer; },
-			aggregates: async ()=>{ await settle(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; }
+			read: ( _reader:unknown, source:HistSource, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({source, args, answer}) ),
+			edit: async ( _editor:unknown, source:HistSource, args:HistEditArgs )=>{ edits.sent.push( args ); edits.sources.push( source ); return edits.answer; },
+			aggregates: async ()=>{ await settle(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; },
+			capabilities: async ()=>{ await settle(); if( y.capabilities instanceof Error ) throw y.capabilities; return y.capabilities; }
 		} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}, info: ()=>{}, error: ( m:string )=>errors.push( m ), warn: ( m:string )=>warnings.push( m )} },
 		{ provide: MatDialog, useValue: y.dialog }
 	]});
 	TestBed.overrideComponent( NodeHistory, {remove: {imports: [HistTrend]}, add: {imports: [TrendStub]}} );
-	const node = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true} );
+	const node = A;
 	const fixture = TestBed.createComponent( NodeHistory );
 	fixture.componentRef.setInput( 'pageData', {gateway, server: {connection: {slug: 'opc'}}, route: {profileKey: 'p'}, nodes: []} );//the chips are `candidates`, not these
-	fixture.componentRef.setInput( 'candidates', [node] );
+	fixture.componentRef.setInput( 'candidates', options.candidates ?? [node] );
+	fixture.componentRef.setInput( 'groups', options.groups ?? [] );
 	fixture.detectChanges();
 	return {
 		fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings,
 		tab: fixture.componentInstance,
 		set confirmed( v:boolean ){ y.confirmed = v; },
 		set aggregates( v:HistAggregate[]|Error ){ y.aggregates = <HistAggregate[]>v; },
+		set capabilities( v:HistCapabilities|Error ){ y.capabilities = <HistCapabilities>v; },
+		actions: ()=>[...fixture.nativeElement.querySelectorAll( '.row-action' )].map( ( b:Element )=>b.getAttribute( 'aria-label' ) ),
 		aggregate: async ( aggregate:string, interval:number )=>{ fixture.componentInstance.aggregation.set( {aggregate, interval} ); fixture.detectChanges(); await settle(); },
 		answer: async ( page:Partial<HistPage>={} )=>{ reads.at( -1 )!.answer( {values: [], continuation: null, nodes: [], ...page} ); await settle(); },
 		subscribed: ()=>subscribers.size,
@@ -301,6 +308,91 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.tab.writable() ).toEqual( [] );
 		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).toBeNull();
 		expect( tab.fixture.nativeElement.querySelectorAll( '.row-action' ) ).toHaveLength( 0 );
+		tab.fixture.destroy();
+	} );
+	//A group's history (#335):  the read names the group, there is no live tail yet (#336), the picker lists the historian's
+	//aggregates from the group's capabilities, and the edits are what the gateway granted - here nothing, hist_groups being
+	//unenforced, whatever the node's own bits say.
+	it( "reads a group's history with group, no live tail, its aggregates, and no edits the gateway didn't grant", async ()=>{
+		const tab = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		expect( tab.tab.sources().map( s=>s.label ) ).toEqual( ['Pumps'] );
+		expect( tab.fixture.nativeElement.querySelector( '.source-group' ) ).toBeNull();//one source:  nothing to pick
+		expect( tab.reads[0].source ).toEqual( {group: 3} );
+		expect( tab.reads[0].args.nodes.map( n=>n.key ) ).toEqual( [A.key] );
+		expect( tab.subscribed() ).toBe( 0 );
+		expect( tab.fixture.nativeElement.querySelector( 'mat-slide-toggle button' )?.hasAttribute( 'disabled' ) ).toBe( true );
+		await tab.answer( {values: [at(A, 5000)], nodes: [{node: A.nodeId, status: 0x80340000}]} );//Bad_NodeIdUnknown
+		tab.fixture.detectChanges();
+		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
+		expect( tab.tab.writable() ).toEqual( [] );
+		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).toBeNull();
+		expect( tab.actions() ).toEqual( [] );
+		expect( tab.fixture.nativeElement.querySelector( '.refused' )?.textContent ).toContain( 'the gateway answered' );
+		tab.tab.loadEarlier();
+		tab.tab.onLiveChange( true );
+		expect( tab.subscribed() ).toBe( 0 );
+		tab.fixture.destroy();
+	} );
+	//Update lets the UpdateData edits and a row's Replace, Delete the purges and a row's Delete:  a group's two rights come apart,
+	//where a server's HistoryWrite bit stands for both
+	it( "offers a group's UpdateData edits under Update alone", async ()=>{
+		const tab = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		tab.capabilities = {aggregates: [], update: true, delete: false};
+		await tab.answer( {values: [at(A, 5000)]} );
+		tab.fixture.detectChanges();
+		expect( tab.tab.rights() ).toEqual( {update: true, delete: false} );
+		expect( tab.tab.writable() ).toEqual( [A] );
+		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).not.toBeNull();
+		expect( tab.actions() ).toEqual( ['Replace this value'] );
+		await tab.tab.deleteValue( tab.tab.values()[0] );
+		expect( tab.confirmations ).toEqual( [] );
+		expect( tab.edits.sent ).toEqual( [] );
+		tab.fixture.destroy();
+	} );
+	it( "offers a group's purge under Delete alone, and sends it to the group", async ()=>{
+		const purger = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		purger.capabilities = {aggregates: [], update: false, delete: true};
+		await purger.answer( {values: [at(A, 5000)]} );
+		purger.fixture.detectChanges();
+		expect( purger.actions() ).toEqual( ['Delete this value'] );
+		purger.tab.replaceValue( purger.tab.values()[0] );
+		expect( purger.presets ).toEqual( [] );
+		purger.edits.answer = { values: [], nodes: [{node: A.nodeId, status: 0}] };
+		await purger.tab.deleteValue( purger.tab.values()[0] );
+		expect( purger.confirmations[0] ).toContain( "the gateway's history of the group" );
+		expect( purger.edits.sources ).toEqual( [{group: 3}] );
+		expect( purger.edits.sent.map( e=>e.kind ) ).toEqual( ['purgeRange'] );
+		expect( purger.reads ).toHaveLength( 2 );
+		expect( purger.reads[1].source ).toEqual( {group: 3} );
+		purger.fixture.destroy();
+	} );
+	//A child the server historizes and a group holds too:  the server's history opens, and the toggle reads the group's instead,
+	//with the aggregate picked on the server dropped, since the group may not list it, and the live tail off
+	it( "opens on the server's history and switches to a group's, dropping the aggregate picked", async ()=>{
+		const tab = open( {groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		expect( tab.tab.sources().map( s=>s.label ) ).toEqual( ['Server', 'Pumps'] );
+		expect( [...tab.fixture.nativeElement.querySelectorAll( '.source-group mat-button-toggle' )].map( ( b:Element )=>b.textContent?.trim() ) ).toEqual( ['Server', 'Pumps'] );
+		expect( tab.reads[0].source ).toEqual( {opc: 'opc'} );
+		expect( tab.subscribed() ).toBe( 1 );
+		await tab.answer();
+		await tab.aggregate( 'Median', 60_000 );
+		await tab.answer( {values: [at(A, tab.reads[1].args.start!.getTime())]} );
+		tab.tab.pick( 'group/3' );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.tab.aggregation() ).toBeUndefined();
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].source ).toEqual( {group: 3} );
+		expect( tab.reads[2].args.aggregate ).toBeUndefined();
+		expect( tab.subscribed() ).toBe( 0 );
+		await tab.answer();
+		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
+		tab.tab.pick( 'opc/opc' );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 4 );
+		expect( tab.reads[3].source ).toEqual( {opc: 'opc'} );
+		expect( tab.subscribed() ).toBe( 1 );
 		tab.fixture.destroy();
 	} );
 	//Unticking every node while the read was out left loading on:  the stale read skipped clearing it (historian-web-trend #7).

@@ -56,8 +56,12 @@
 		<mat-header-cell *matHeaderCellDef></mat-header-cell>
 		<mat-cell *matCellDef="let r">
 			@if( canEdit(r) ){
-				<button matIconButton class="row-action" type="button" (click)="replace.emit(r)" aria-label="Replace this value" matTooltip="Replace this value"><mat-icon>edit</mat-icon></button>
-				<button matIconButton class="row-action" type="button" (click)="remove.emit(r)" aria-label="Delete this value" matTooltip="Delete this value"><mat-icon>delete</mat-icon></button>
+				@if( rights().update ){
+					<button matIconButton class="row-action" type="button" (click)="replace.emit(r)" aria-label="Replace this value" matTooltip="Replace this value"><mat-icon>edit</mat-icon></button>
+				}
+				@if( rights().delete ){
+					<button matIconButton class="row-action" type="button" (click)="remove.emit(r)" aria-label="Delete this value" matTooltip="Delete this value"><mat-icon>delete</mat-icon></button>
+				}
 			}
 		</mat-cell>
 	</ng-container>

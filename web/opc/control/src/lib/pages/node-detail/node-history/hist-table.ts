@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { HistValue } from '../../../model/hist';
+import { HistRights, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -16,7 +16,8 @@ import { valueString } from '../../../model/value';
 //The table:  every value loaded, newest first, with both timestamps and the status, paged.  The read opens with
 //the newest values and Load earlier adds older ones below them, as a log reads.  In modified mode the rows are the edits
 //made - the value an Insert put in, or the one a Replace, Update or Delete took out - each with its ModificationInfo (spec
-//*Reads*).  A value of a node this user may edit has a Replace and a Delete of its own.
+//*Reads*).  A value of a node this user may edit has a Replace and a Delete of its own, each as `rights` allows:  both on a
+//server's node, whose HistoryWrite bit stands for both, and on a group what the gateway granted of Update and Delete.
 @Component({
 	selector: 'hist-table',
 	templateUrl: './hist-table.html',
@@ -32,6 +33,7 @@ export class HistTable{
 	nodes = input.required<Variable[]>();
 	modified = input( false );//the rows are modifications, with their ModificationInfo in place of the flags
 	editable = input<Variable[]>( [] );//the nodes whose values offer a Replace and a Delete
+	rights = input<HistRights>( {update: true, delete: true} );//which of the two the source lets this user do
 	replace = output<HistValue>();
 	remove = output<HistValue>();
 	pageIndex = signal( 0 );

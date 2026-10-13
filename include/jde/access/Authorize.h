@@ -1,6 +1,7 @@
 #pragma once
 #include <absl/synchronization/mutex.h>
 #include <jde/access/IAcl.h>
+#include "AccessException.h"
 #include "types/Resource.h"
 #include "types/Group.h"
 #include "types/Role.h"
@@ -23,6 +24,10 @@ namespace Jde::Access{
 		//Its required form, for what an open install doesn't allow - a group's history edits (spec *Authorization*):  as Test, but
 		//Forbidden where neither row is active, which Test passes.  The system user passes.
 		α TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SRCE )ε->void;
+		//TestEnforced's answer as a value, for a caller asking rather than gating (historyCapabilities):  a value where it would pass,
+		//enforced and granted, else the exception it would throw.
+		α CheckEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>;
+
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;
@@ -79,6 +84,7 @@ namespace Jde::Access{
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindUserLocked( UserPK executer )Ι->std::expected<const User*,EHttpStatus>;//null for the System; Unauthorized = an unknown user, Forbidden = a deleted one.
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>;//System is granted everything; errors as FindUserLocked.
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void;
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α HasRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ι->std::expected<void, Access::AccessException>;
 
 		string _app;
 		mutable absl::Mutex Mutex;

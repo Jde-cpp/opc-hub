@@ -65,4 +65,10 @@ describe( 'HistTable', ()=>{
 		expect( replaced.map( v=>v.source?.getTime() ) ).toEqual( [1000] );
 		expect( removed.map( v=>v.source?.getTime() ) ).toEqual( [1000] );
 	} );
+	//a group's rights come apart:  Update for a Replace, Delete for a Delete (#335)
+	it( 'offers each action as the rights allow', ()=>{
+		const actions = ( t:ReturnType<typeof render> )=>[...t.fixture.nativeElement.querySelectorAll( '.row-action' )].map( b=>b.getAttribute( 'aria-label' ) );
+		expect( actions( render( [at(A, 1000, 1)], {editable: [A], rights: {update: true, delete: false}} ) ) ).toEqual( ['Replace this value'] );
+		expect( actions( render( [at(A, 1000, 1)], {editable: [A], rights: {update: false, delete: true}} ) ) ).toEqual( ['Delete this value'] );
+	} );
 } );
