@@ -176,6 +176,47 @@ export function mergeHistValues( existing:HistValue[], incoming:HistValue[] ):Hi
 export function pushValue( node:NodeId, r:{value?:Value; sc?:StatusCode; source?:Date; server?:Date}, now:Date ):HistValue{
 	return { node, source: r.source ?? r.server ?? now, server: r.server ?? null, status: r.sc ?? 0, value: r.value instanceof OpcError ? undefined : r.value, bound: false, heartbeat: false };
 }
+//the latest source time among `values` - in source-time order, those with none last - where a group's subscription resumes from
+export function latestHistTime( values:HistValue[] ):Date|undefined{
+	for( let i=values.length-1; i>=0; --i ){
+		if( values[i].source )
+			return values[i].source!;
+	}
+	return undefined;
+}
+//A modification pushed on a group's subscription (spec *Subscriptions*):  what an edit did at `target`, the value it put there,
+//none for a delete, and when and who made it.  What it replaced isn't pushed:  the client holds it.
+export type HistPushKind = 'insert'|'replace'|'update'|'delete';
+export type HistPushedModification = { node:NodeId; target:Date; kind:HistPushKind; value?:HistValue; time:Date|null; user:string };
+//`values` with a pushed modification applied, in source-time order, so the trend redraws the point it targets:  a delete takes
+//every record of the node at the target, as the edit did (spec *Edits*), and the others put the value pushed in place of the
+//node's last record there, or among the values where it falls when none is.  One before the earliest value held is left to
+//Load earlier, which reads it.  The same array back when nothing changed.  A Date's millisecond, as the merge folds records.
+export function applyHistModification( values:HistValue[], m:HistPushedModification ):HistValue[]{
+	const t = m.target.getTime();
+	const put = m.kind=='delete' || !m.value ? undefined : {...m.value, source: m.target};
+	if( (m.kind!='delete' && !put) || !values.length || t<time(values[0]) )
+		return values;
+	let lo = 0, hi = values.length;
+	while( lo<hi ){
+		const mid = (lo+hi)>>>1;
+		if( time(values[mid])<t ) lo = mid+1; else hi = mid;
+	}
+	const mine:number[] = [];
+	let end = lo;
+	for( ; end<values.length && time(values[end])==t; ++end ){
+		if( values[end].node.key==m.node.key )
+			mine.push( end );
+	}
+	if( !put )
+		return mine.length ? values.filter( (_, i)=>!mine.includes(i) ) : values;
+	const y = [...values];
+	if( mine.length )
+		y[mine[mine.length-1]] = put;
+	else
+		y.splice( end, 0, put );
+	return y;
+}
 
 //The edits (spec *Edits*):  Part 11's UpdateData as Insert, a value at a time that holds none, Replace, one at a time that
 //holds one, and Update, either;  and a purge, of a range or at times.  Each is a QL mutation by its whole name.

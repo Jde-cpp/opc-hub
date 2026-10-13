@@ -17,7 +17,7 @@ import { alignUp, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult,
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
-import { SubscriptionResult } from '../../../services/gateway-service';
+import { HistEvent, HistSubscribeArgs, SubscriptionResult } from '../../../services/gateway-service';
 import { HistoryService } from '../../../services/history-service';
 import { HistEditDialog, HistEditDialogData, HistEditPreset } from './hist-edit-dialog';
 import { HistTable } from './hist-table';
@@ -34,12 +34,18 @@ const settle = ()=>new Promise( r=>setTimeout(r) );
 const A = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true} );
 //A History tab on one historized node, A, or on the `candidates` and `groups` given.  Each read is held until `answer` gives it a
 //page, and keeps the source it named;  `subscribed` counts the live tail's open subscriptions, and `push` sends the latest a value.
+//A group's subscription is `histSubscribed`, its arguments `histArgs`, and `emit` sends the latest an event, `histError` an end.
 //An edit sent directly lands in `edits.sent`, its source in `edits.sources`, and gets `edits.answer`;  the edit dialog is a stub
 //that closes at once with `dialogResult.answer`, and the confirmation with `confirmed`.  A group's capabilities are `capabilities`.
 const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )=>{
 	const reads:{ source:HistSource; args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
 	const subscribers = new Set<Subscriber<SubscriptionResult>>();
-	const gateway = { subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ), updateErrorCodes: async ()=>{}, slug: 'gw' };
+	const histSubscribers:{ args:HistSubscribeArgs; subscriber:Subscriber<HistEvent> }[] = [];
+	const gateway = {
+		subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ),
+		histSubscribe: ( args:HistSubscribeArgs )=>new Observable<HistEvent>( s=>{ const entry = {args, subscriber: s}; histSubscribers.push( entry ); return ()=>{ histSubscribers.splice( histSubscribers.indexOf(entry), 1 ); }; } ),
+		updateErrorCodes: async ()=>{}, slug: 'gw'
+	};
 	const edits:{ sent:HistEditArgs[]; sources:HistSource[]; answer:HistEditResult } = { sent: [], sources: [], answer: {values: [], nodes: []} };
 	const dialogResult:{ answer:HistEditResult|undefined } = { answer: undefined };
 	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [];
@@ -84,9 +90,14 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 		answer: async ( page:Partial<HistPage>={} )=>{ reads.at( -1 )!.answer( {values: [], continuation: null, nodes: [], ...page} ); await settle(); },
 		subscribed: ()=>subscribers.size,
 		push: ( source:Date )=>[...subscribers].at( -1 )!.next( {opcId: 'opc', node: node.nodeId, value: 1, sc: 0, source} ),
-		drop: ()=>[...subscribers].at( -1 )!.error( {message: "Connection to the gateway was lost."} )//as Gateway.handleConnectionError does
+		drop: ()=>[...subscribers].at( -1 )!.error( {message: "Connection to the gateway was lost."} ),//as Gateway.handleConnectionError does
+		histSubscribed: ()=>histSubscribers.length,
+		histArgs: ()=>histSubscribers.at( -1 )!.args,
+		emit: ( e:HistEvent )=>{ histSubscribers.at( -1 )!.subscriber.next( e ); fixture.detectChanges(); },
+		histError: ( e:unknown )=>{ histSubscribers.at( -1 )!.subscriber.error( e ); fixture.detectChanges(); }
 	};
 };
+const group = { id: 3, name: 'Pumps', nodes: [A] };
 const at = ( node:Variable, ms:number, nanos=ms%1000*1_000_000 ):HistValue=>({ node: node.nodeId, source: new Date(ms), server: null, sourceTime: {seconds: Math.floor(ms/1000), nanos}, status: 0, value: 1, bound: false, heartbeat: false });
 
 describe( 'NodeHistory', ()=>{
@@ -313,46 +324,154 @@ describe( 'NodeHistory', ()=>{
 	//A group's history (#335):  the read names the group, there is no live tail yet (#336), the picker lists the historian's
 	//aggregates from the group's capabilities, and the edits are what the gateway granted - here nothing, hist_groups being
 	//unenforced, whatever the node's own bits say.
-	it( "reads a group's history with group, no live tail, its aggregates, and no edits the gateway didn't grant", async ()=>{
-		const tab = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+	//A group's trend opens on HistSubscribe's snapshot (spec *Subscriptions*), the last snapshotWindow from each node's bound, not a
+	//read, with loading on until the last page;  the ack's statuses stand where a read's node statuses do;  Load earlier is a
+	//reverse read ending where the snapshot began.  Its aggregates are the group's, and no edits the gateway didn't grant.
+	it( "opens a group on its snapshot, no read, with its aggregates, and no edits the gateway didn't grant", async ()=>{
+		const before = Date.now();
+		const tab = open( {candidates: [], groups: [group]} );
 		expect( tab.tab.sources().map( s=>s.label ) ).toEqual( ['Pumps'] );
 		expect( tab.fixture.nativeElement.querySelector( '.source-group' ) ).toBeNull();//one source:  nothing to pick
-		expect( tab.reads[0].source ).toEqual( {group: 3} );
-		expect( tab.reads[0].args.nodes.map( n=>n.key ) ).toEqual( [A.key] );
+		expect( tab.reads ).toHaveLength( 0 );
 		expect( tab.subscribed() ).toBe( 0 );
-		expect( tab.fixture.nativeElement.querySelector( 'mat-slide-toggle button' )?.hasAttribute( 'disabled' ) ).toBe( true );
-		await tab.answer( {values: [at(A, 5000)], nodes: [{node: A.nodeId, status: 0x80340000}]} );//Bad_NodeIdUnknown
+		expect( tab.histSubscribed() ).toBe( 1 );
+		const args = tab.histArgs();
+		expect( args.group ).toBe( 3 );
+		expect( args.nodes.map( n=>n.key ) ).toEqual( [A.key] );
+		expect( args.from!.getTime() ).toBeGreaterThanOrEqual( before-NodeHistory.snapshotWindow );
+		expect( args.from!.getTime() ).toBeLessThanOrEqual( Date.now()-NodeHistory.snapshotWindow );
+		expect( tab.tab.loading() ).toBe( true );
+		expect( tab.fixture.nativeElement.querySelector( 'mat-slide-toggle button' )?.hasAttribute( 'disabled' ) ).toBe( false );
+		tab.emit( {kind: 'ack', statuses: [0x80340000]} );//Bad_NodeIdUnknown
+		expect( tab.fixture.nativeElement.querySelector( '.refused' )?.textContent ).toContain( 'the gateway answered' );
+		tab.emit( {kind: 'snapshot', values: [{...at(A, args.from!.getTime()-1000), bound: true}], more: true} );
+		expect( tab.tab.loading() ).toBe( true );
+		tab.emit( {kind: 'snapshot', values: [at(A, args.from!.getTime()+1000)], more: false} );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [args.from!.getTime()-1000, args.from!.getTime()+1000] );
+		await settle();
 		tab.fixture.detectChanges();
 		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
 		expect( tab.tab.writable() ).toEqual( [] );
 		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).toBeNull();
 		expect( tab.actions() ).toEqual( [] );
-		expect( tab.fixture.nativeElement.querySelector( '.refused' )?.textContent ).toContain( 'the gateway answered' );
 		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 1 );
+		expect( tab.reads[0].source ).toEqual( {group: 3} );
+		expect( tab.reads[0].args.nodes.map( n=>n.key ) ).toEqual( [A.key] );
+		expect( tab.reads[0].args ).toMatchObject( {end: args.from, limit: NodeHistory.pageSize} );
+		expect( tab.reads[0].args.start ).toBeUndefined();
+		expect( tab.reads[0].args.continuation ).toBeUndefined();
+		await tab.answer( {values: [at(A, args.from!.getTime()-5000)]} );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [args.from!.getTime()-5000, args.from!.getTime()-1000, args.from!.getTime()+1000] );
+		expect( tab.tab.hasEarlier() ).toBe( false );
+		tab.fixture.destroy();
+		expect( tab.histSubscribed() ).toBe( 0 );
+	} );
+	//the stream's values merge in as the tail's pushes do, and a modification pushed redraws the point it targets:  the value put
+	//there, or none for a delete
+	it( "merges a group's stream, and applies a pushed modification to the record it targets", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000), at(A, 7000)], more: false} );
+		tab.emit( {kind: 'records', values: [at(A, 6000), at(A, 8000)], modifications: []} );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000, 6000, 7000, 8000] );
+		tab.emit( {kind: 'records', values: [], modifications: [{node: A.nodeId, target: new Date(6000), kind: 'replace', value: {...at(A, 6000), value: 9}, time: new Date(9000), user: 'me'}]} );
+		expect( tab.tab.values()[1].value ).toBe( 9 );
+		tab.emit( {kind: 'records', values: [], modifications: [{node: A.nodeId, target: new Date(7000), kind: 'delete', time: new Date(9001), user: 'me'}]} );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000, 6000, 8000] );
+		expect( tab.fixture.nativeElement.querySelector( '.row-count' )?.textContent?.trim() ).toBe( '3 values' );
+		tab.fixture.destroy();
+	} );
+	//the gateway ends a subscription with an exception under its id:  the group removed, or the historian stopped.  Live turns off
+	//and the trend says why;  turning it on subscribes again from the latest value held
+	it( "turns Live off and says why when the gateway ends a group's subscription, and resumes from the latest value held", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000), at(A, 7000)], more: false} );
+		tab.histError( {error: {requestId: 1, message: "The group was removed, which ends the subscription.", httpStatus: 404}} );
+		expect( tab.tab.live() ).toBe( false );
+		expect( tab.histSubscribed() ).toBe( 0 );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' )?.textContent ).toContain( '(404)The group was removed' );
+		expect( tab.tab.values() ).toHaveLength( 2 );
 		tab.tab.onLiveChange( true );
-		expect( tab.subscribed() ).toBe( 0 );
+		tab.fixture.detectChanges();
+		expect( tab.histSubscribed() ).toBe( 1 );
+		expect( tab.histArgs().from ).toEqual( new Date(7000) );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
+		tab.fixture.destroy();
+	} );
+	//a dropped socket:  the gateway subscribes again when it is back, and the tab says so until the ack
+	it( "says a group's subscription was dropped until the gateway's next ack", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000)], more: true} );
+		tab.emit( {kind: 'dropped'} );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( tab.tab.live() ).toBe( true );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' )?.textContent ).toContain( 'Connection to the gateway lost' );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
+		expect( tab.tab.loading() ).toBe( true );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000), at(A, 6000)], more: false} );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000, 6000] );
+		tab.fixture.destroy();
+	} );
+	//with Live off a group opens on a read, as a server does, and an edit reads again;  Live on subscribes from the latest value held
+	it( 'opens a group on a read with Live off, and subscribes from the latest value held when it goes on', async ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.capabilities = {aggregates: [], update: true, delete: true};
+		tab.tab.onLiveChange( false );
+		expect( tab.histSubscribed() ).toBe( 0 );
+		tab.tab.toggle( A ); tab.tab.toggle( A );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads ).toHaveLength( 1 );
+		expect( tab.reads[0].source ).toEqual( {group: 3} );
+		await tab.answer( {values: [at(A, 5000)]} );
+		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(5000), status: 0}], nodes: [] };
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 2} );
+		expect( tab.reads ).toHaveLength( 2 );//the refresh
+		await tab.answer( {values: [at(A, 5000)]} );
+		tab.tab.onLiveChange( true );
+		expect( tab.histSubscribed() ).toBe( 1 );
+		expect( tab.histArgs().from ).toEqual( new Date(5000) );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [{...at(A, 5000), bound: true}], more: false} );
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 3} );
+		expect( tab.reads ).toHaveLength( 2 );//no refresh:  the stream pushes the modification
 		tab.fixture.destroy();
 	} );
 	//Update lets the UpdateData edits and a row's Replace, Delete the purges and a row's Delete:  a group's two rights come apart,
-	//where a server's HistoryWrite bit stands for both
+	//where a server's HistoryWrite bit stands for both.  A row of the snapshot has its time as a Date, which no edit can name, so
+	//the row actions come with a read.
 	it( "offers a group's UpdateData edits under Update alone", async ()=>{
-		const tab = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		const tab = open( {candidates: [], groups: [group]} );
 		tab.capabilities = {aggregates: [], update: true, delete: false};
-		await tab.answer( {values: [at(A, 5000)]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [{...at(A, 5000), sourceTime: undefined}], more: false} );
+		await settle();
 		tab.fixture.detectChanges();
 		expect( tab.tab.rights() ).toEqual( {update: true, delete: false} );
 		expect( tab.tab.writable() ).toEqual( [A] );
 		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).not.toBeNull();
+		expect( tab.actions() ).toEqual( [] );
+		tab.tab.loadEarlier();
+		await tab.answer( {values: [at(A, 5000)]} );
+		tab.fixture.detectChanges();
 		expect( tab.actions() ).toEqual( ['Replace this value'] );
 		await tab.tab.deleteValue( tab.tab.values()[0] );
 		expect( tab.confirmations ).toEqual( [] );
 		expect( tab.edits.sent ).toEqual( [] );
 		tab.fixture.destroy();
 	} );
-	it( "offers a group's purge under Delete alone, and sends it to the group", async ()=>{
-		const purger = open( {candidates: [], groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+	it( "offers a group's purge under Delete alone, and sends it to the group, which pushes the change", async ()=>{
+		const purger = open( {candidates: [], groups: [group]} );
 		purger.capabilities = {aggregates: [], update: false, delete: true};
-		await purger.answer( {values: [at(A, 5000)]} );
+		purger.emit( {kind: 'ack', statuses: [0]} );
+		purger.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
+		await settle();
 		purger.fixture.detectChanges();
 		expect( purger.actions() ).toEqual( ['Delete this value'] );
 		purger.tab.replaceValue( purger.tab.values()[0] );
@@ -362,14 +481,13 @@ describe( 'NodeHistory', ()=>{
 		expect( purger.confirmations[0] ).toContain( "the gateway's history of the group" );
 		expect( purger.edits.sources ).toEqual( [{group: 3}] );
 		expect( purger.edits.sent.map( e=>e.kind ) ).toEqual( ['purgeRange'] );
-		expect( purger.reads ).toHaveLength( 2 );
-		expect( purger.reads[1].source ).toEqual( {group: 3} );
+		expect( purger.reads ).toHaveLength( 0 );//no read after it:  the stream pushes the modification
 		purger.fixture.destroy();
 	} );
-	//A child the server historizes and a group holds too:  the server's history opens, and the toggle reads the group's instead,
-	//with the aggregate picked on the server dropped, since the group may not list it, and the live tail off
+	//A child the server historizes and a group holds too:  the server's history opens, and the toggle takes the group's instead,
+	//with the aggregate picked on the server dropped, since the group may not list it, and the /opc tail for the group's stream
 	it( "opens on the server's history and switches to a group's, dropping the aggregate picked", async ()=>{
-		const tab = open( {groups: [{id: 3, name: 'Pumps', nodes: [A]}]} );
+		const tab = open( {groups: [group]} );
 		expect( tab.tab.sources().map( s=>s.label ) ).toEqual( ['Server', 'Pumps'] );
 		expect( [...tab.fixture.nativeElement.querySelectorAll( '.source-group mat-button-toggle' )].map( ( b:Element )=>b.textContent?.trim() ) ).toEqual( ['Server', 'Pumps'] );
 		expect( tab.reads[0].source ).toEqual( {opc: 'opc'} );
@@ -381,18 +499,18 @@ describe( 'NodeHistory', ()=>{
 		tab.fixture.detectChanges();
 		await settle();
 		expect( tab.tab.aggregation() ).toBeUndefined();
-		expect( tab.reads ).toHaveLength( 3 );
-		expect( tab.reads[2].source ).toEqual( {group: 3} );
-		expect( tab.reads[2].args.aggregate ).toBeUndefined();
+		expect( tab.reads ).toHaveLength( 2 );
 		expect( tab.subscribed() ).toBe( 0 );
-		await tab.answer();
+		expect( tab.histSubscribed() ).toBe( 1 );
+		expect( tab.histArgs().group ).toBe( 3 );
 		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
 		tab.tab.pick( 'opc/opc' );
 		tab.fixture.detectChanges();
 		await settle();
-		expect( tab.reads ).toHaveLength( 4 );
-		expect( tab.reads[3].source ).toEqual( {opc: 'opc'} );
+		expect( tab.reads ).toHaveLength( 3 );
+		expect( tab.reads[2].source ).toEqual( {opc: 'opc'} );
 		expect( tab.subscribed() ).toBe( 1 );
+		expect( tab.histSubscribed() ).toBe( 0 );
 		tab.fixture.destroy();
 	} );
 	//Unticking every node while the read was out left loading on:  the stale read skipped clearing it (historian-web-trend #7).

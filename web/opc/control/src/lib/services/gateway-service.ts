@@ -1,7 +1,7 @@
 import { Injectable, InjectionToken, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Subject,Observable, finalize } from 'rxjs';
+import { Subject,Observable, finalize, Subscriber } from 'rxjs';
 import { AppService, AUTH_STORE, AuthStore, Duration, ETransport, GoogleAuthService, Guid, IGraphQL, Instance, Log, Mutation, MutationSchema, ProtoService, ProtoUtils, Query, StringUtils, TableSchema, Timestamp, Type } from 'jde-framework';
 import { EProvider, User } from 'jde-spa';
 import { errorText } from 'jde-framework';
@@ -20,6 +20,7 @@ import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
 import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
+import { HistPushedModification, HistPushKind, HistValue } from '../model/hist';
 
 interface IError{ requestId:number; message: string; }
 type Owner = any;
@@ -209,6 +210,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		this.#subscriptions.clear();
 		this.#nodes.clear();
 		subjects.forEach( s=>s.error(e) );
+		for( const live of [...this.#hist.values()] )//the socket carried the historian subscriptions too:  each subscribes again once the gateway is back
+			this.#histDropped( live );
 	};
 	protected processMessage( buffer:Uint8Array ){
 		try{
@@ -233,9 +236,15 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					this.subscriptionAck( requestId, message.subscriptionAck );
 				else if( message.unsubscribeAck )
 					this.onUnsubscriptionResult( requestId, message.unsubscribeAck );
+				else if( message.histSubscribeAck )
+					this.#histAck( requestId, message.histSubscribeAck );
+				else if( message.histSnapshot )
+					this.#histSnapshot( requestId, message.histSnapshot );
+				else if( message.histRecords )
+					this.#histRecords( requestId, message.histRecords );
 				else if( message.exception ){
 					const e = message.exception;
-					if( !this.processError( e, requestId ) )
+					if( !this.processError( e, requestId ) && !this.#histException( requestId, e ) )//a live subscription's id has no callback:  its exception ends it
 						throw e;
 				}
 				else
@@ -480,6 +489,115 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			}));
 	}
 
+	//A historian subscription (spec *Subscriptions*):  HistSubscribe on this socket, whose request id names it until the
+	//unsubscribe, the teardown, completes.  The stream delivers the ack, the snapshot's pages, then the records as the historian
+	//stores them, each record's node by its slot in `args.nodes`, which the ack's statuses follow too.  A dropped socket drops
+	//the subscription on the gateway, so after `dropped` this subscribes again, histRetryDelay later and again on each failure,
+	//from the last source time it delivered - the snapshot then fills the outage, and its bound is the value the caller holds -
+	//and the ack and pages follow on the stream, for the caller to merge.  An exception under the id ends it:  the gateway's
+	//NotFound for a group removed, ServiceUnavailable for a historian stopped, or a refusal of the HistSubscribe itself.
+	histSubscribe( args:HistSubscribeArgs ):Observable<HistEvent>{
+		return new Observable<HistEvent>( subscriber=>{
+			const live:HistLive = { args, subscriber, requestId: 0, acked: false };
+			this.#histSend( live, args.from );
+			return ()=>{
+				clearTimeout( live.retry );
+				if( this.#hist.delete( live.requestId ) )//still the gateway's:  not ended by it, nor waiting out a drop
+					this.sendPromise<void>( {histUnsubscribe: <FromClient.HistUnsubscribe>{subscription: live.requestId}}, `histUnsubscribe ${live.requestId}` ).catch( e=>console.warn( `histUnsubscribe ${live.requestId} - ${errorText(e)}` ) );
+			};
+		} );
+	}
+	#histSend( live:HistLive, from:Date|undefined ){
+		const requestId = this.getRequestId();
+		live.requestId = requestId;
+		live.acked = false;
+		live.retry = undefined;
+		this.#hist.set( requestId, live );
+		const request:FromClient.HistSubscribe = { group: live.args.group, nodes: live.args.nodes.map( n=>Gateway.toExProto(n) ), fromTime: from };
+		this.sendWithId( {histSubscribe: request}, requestId, `histSubscribe group: ${live.args.group}, nodeCount: ${live.args.nodes.length}, from: ${from?.toISOString() ?? "now"}` );
+	}
+	#histLive( requestId:number, what:string ):HistLive|undefined{
+		const live = this.#hist.get( requestId );
+		if( !live )
+			console.warn( `[${requestId}]${what} for no historian subscription.` );
+		return live;
+	}
+	#histAck( requestId:number, ack:FromServer.HistSubscribeAck ){
+		const live = this.#histLive( requestId, "HistSubscribeAck" );
+		if( !live )
+			return;
+		live.acked = true;
+		live.subscriber.next( {kind: 'ack', statuses: ack.statuses.map( sc=>sc>>>0 )} );
+	}
+	#histSnapshot( requestId:number, page:FromServer.HistSnapshot ){
+		const live = this.#histLive( requestId, "HistSnapshot" );
+		if( live )
+			live.subscriber.next( {kind: 'snapshot', values: this.#histValues( live, page.values ), more: page.more} );
+	}
+	#histRecords( requestId:number, records:FromServer.HistRecords ){
+		const live = this.#histLive( requestId, "HistRecords" );
+		if( !live )
+			return;
+		const modifications:HistPushedModification[] = [];
+		for( const m of records.modifications ){
+			const modification = Gateway.toHistModification( m, live.args.nodes );
+			if( modification )
+				modifications.push( modification );
+		}
+		live.subscriber.next( {kind: 'records', values: this.#histValues( live, records.values ), modifications} );
+	}
+	//the values as the model holds them, and the latest source time among them kept:  where a resubscribe starts from
+	#histValues( live:HistLive, protos:FromServer.HistValue[] ):HistValue[]{
+		const values:HistValue[] = [];
+		for( const proto of protos ){
+			const v = Gateway.toHistValue( proto, live.args.nodes );
+			if( !v )
+				continue;
+			values.push( v );
+			if( v.source && (!live.last || v.source>live.last) )
+				live.last = v.source;
+		}
+		return values;
+	}
+	#histException( requestId:number, e:{what:string; code:number; statusCode:number} ):boolean{
+		const live = this.#hist.get( requestId );
+		if( !live )
+			return false;
+		this.#hist.delete( requestId );
+		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
+		return true;
+	}
+	#histDropped( live:HistLive ){
+		this.#hist.delete( live.requestId );
+		if( live.acked ){
+			live.acked = false;
+			live.subscriber.next( {kind: 'dropped'} );
+		}
+		clearTimeout( live.retry );
+		live.retry = setTimeout( ()=>this.#histSend( live, live.last ?? live.args.from ), Gateway.histRetryDelay );
+	}
+	#hist = new Map<number,HistLive>();//by the HistSubscribe's request id, which names the subscription on the wire
+	static readonly histRetryDelay = 5_000;//ms after a drop before subscribing again, and between tries while the gateway is down
+	//a record of a subscription, its node by slot (spec *Subscriptions*);  one naming a slot the subscribe didn't is dropped
+	private static toHistValue( proto:FromServer.HistValue, nodes:NodeId[] ):HistValue|undefined{
+		const node = nodes[proto.node];
+		if( !node )
+			return void console.warn( `A historian record names slot ${proto.node} of ${nodes.length} nodes.` );
+		return { node, source: proto.source ?? proto.server ?? null, server: proto.server ?? null, status: proto.sc>>>0, value: proto.value ? Gateway.toValue( proto.value ) : undefined, bound: proto.bound, heartbeat: proto.heartbeat };
+	}
+	private static toHistModification( proto:FromServer.HistModification, nodes:NodeId[] ):HistPushedModification|undefined{
+		const node = nodes[proto.node], kind = Gateway.histPushKinds[proto.type];
+		if( !node || !kind || !proto.target )
+			return void console.warn( `A historian modification names slot ${proto.node} of ${nodes.length} nodes, type ${proto.type}${proto.target ? "" : ", and no target"}.` );
+		const value = proto.value ? Gateway.toHistValue( proto.value, nodes ) : undefined;
+		return { node, target: proto.target, kind, value, time: proto.time ?? null, user: proto.user };
+	}
+	private static readonly histPushKinds:Record<number,HistPushKind> = { 1: 'insert', 2: 'replace', 3: 'update', 4: 'delete' };//Part 11's HistoryUpdateType
+	//HistSubscribe.nodes are ExpandedNodeIds, as a read names them:  the server's index, as the page holds the node
+	private static toExProto( node:NodeId ):Common.ExpandedNodeId{
+		return { node: Gateway.toProto( [node] )[0], namespaceUri: "", serverIndex: 0 };
+	}
+
 	private static toGuid( proto:Uint8Array ):Guid{ let guid = new Guid(); guid.value = proto; return guid; }
 	private static toValue( proto:Common.Value ):Value{
 		//protobufjs exposed a virtual `of` getter naming the set oneof field; ts-proto emits plain optionals, so each arm
@@ -588,5 +706,18 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 //refused request, not a reading.  `source`/`server` are the reading's timestamps when the server sent them:  the history
 //trend places a push after its read by source time.
 export type SubscriptionResult = Reading & {opcId:string, node:NodeId, source?:Date, server?:Date};
+//A historian subscription's arguments (spec *Subscriptions*):  the group by its id, its nodes, and the time the snapshot starts
+//from - left out, it is now, and the snapshot is each node's value alone.
+export type HistSubscribeArgs = { group:number; nodes:NodeId[]; from?:Date };
+//What a historian subscription delivers, in order:  the ack, a status per node asked, Good or Bad_NodeIdUnknown for one the
+//group doesn't hold;  the snapshot's pages, `more` until the last, each node's bound first;  then the records as the historian
+//stores them, values and the modifications edits make, and `dropped` when the socket went, after which the ack and a snapshot
+//from the last source time delivered follow, once the gateway is back.
+export type HistEvent =
+	{ kind:'ack'; statuses:StatusCode[] } |
+	{ kind:'snapshot'; values:HistValue[]; more:boolean } |
+	{ kind:'records'; values:HistValue[]; modifications:HistPushedModification[] } |
+	{ kind:'dropped' };
+type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; acked:boolean; last?:Date; retry?:ReturnType<typeof setTimeout> };
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );

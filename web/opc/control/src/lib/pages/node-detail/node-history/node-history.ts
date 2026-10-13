@@ -10,14 +10,14 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
-import { confirm, SnackbarService } from 'jde-framework';
-import { alignUp, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, isNoData, mergeHistValues, pushValue } from '../../../model/hist';
+import { confirm, errorText, SnackbarService } from 'jde-framework';
+import { alignUp, applyHistModification, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistPushedModification, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, isNoData, latestHistTime, mergeHistValues, pushValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId, NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { isBad } from '../../../model/status-code';
 import { StatusCode } from '../../../model/types';
-import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
+import { Gateway, HistEvent, SubscriptionResult } from '../../../services/gateway-service';
 import { HistoryService } from '../../../services/history-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { HistAggregatePicker } from './hist-aggregate-picker';
@@ -34,10 +34,13 @@ export type HistSourceOption = { key:string; label:string; source:HistSource; no
 //The History tab:  the node's children the server historizes, read through the gateway over the caller's own session (spec
 //*Pass-through*), and those a group of the gateway's historian holds, read from the group - one source at a time, the server's
 //first and a toggle for the rest, since `history` reads one group a call and a node is in one group per connection at most -
-//drawn as a trend and listed in a table.  It opens on the latest values - a reverse
-//read with only `end` - and Load earlier pages that read by its continuation.  The live tail is the node's /opc
-//subscription, joined to the read by source time with duplicates dropped (mergeHistValues), a server source's alone:  a group's
-//compressed series would take the raw changes, until #336 gives it HistSubscribe's stream.  Modifications is the same read
+//drawn as a trend and listed in a table.  A server source opens on the latest values - a reverse
+//read with only `end` - and Load earlier pages that read by its continuation.  Its live tail is the node's /opc
+//subscription, joined to the read by source time with duplicates dropped (mergeHistValues).  A group source's compressed
+//series would take the raw changes, so its live trend is HistSubscribe's (spec *Subscriptions*):  it opens on the snapshot,
+//the last snapshotWindow of the group's history from each node's bound, which has no gap to the stream after it, the records
+//as the historian stores them, and a modification pushed redraws the point it targets;  Load earlier is a reverse read ending
+//where the snapshot began.  With Live off a group opens on a read, as a server does.  Modifications is the same read
 //with `modified`, listed alone:  an edit isn't published live and isn't a series.  The picker reads an aggregate instead of the
 //values, one of those the server lists, over intervals of the length picked (spec *Reads*):  the last intervals up to now, and
 //Load earlier the intervals before, with no live tail, since a push is a reading, not an aggregate.  The edits (spec *Edits*)
@@ -97,8 +100,12 @@ export class NodeHistory implements OnDestroy{
 		const rights = this.rights();
 		return this.selected().filter( v=>!v.isArray && ( this.isGroup() ? rights.update || rights.delete : v.historyWritable ) );
 	} );
-	//the live tail, the node's /opc subscription:  the values, raw, of a server source
-	canLive = computed( ()=>this.mode()=='values' && !this.aggregated() && !this.isGroup() );
+	//the live tail:  the node's /opc subscription, the raw values, on a server source;  the historian's stream on a group
+	canLive = computed( ()=>this.mode()=='values' && !this.aggregated() );
+	//a group's subscription ended by the gateway:  the group removed, or the historian stopped (spec *Subscriptions*)
+	ended = signal<string|undefined>( undefined );
+	//a group's subscription lost with the socket:  the gateway subscribes again once it is back, from the latest value held
+	dropped = signal( false );
 	answerer = computed( ()=>this.isGroup() ? "the gateway" : "the server" );
 	canSelect( v:Variable ):boolean{ return this.selectedKeys().has( v.key ) || this.selectedKeys().size<NodeHistory.maxSeries; }
 	toggle( v:Variable ){
@@ -140,9 +147,16 @@ export class NodeHistory implements OnDestroy{
 		this.loading.set( false );//a read still out is stale now, and leaves loading as it is
 		if( !nodes.length )
 			return;
-		//the tail first, and the read past it:  a value recorded after the read's end and before the subscription is in neither
-		if( this.live() && this.canLive() )
+		if( this.live() && this.canLive() ){
+			if( this.isGroup() ){//the snapshot is the opening, and Load earlier reads before it
+				const from = new Date( Date.now()-NodeHistory.snapshotWindow );
+				this.#next = { nodes: nodes.map( n=>n.nodeId ), end: from, limit: NodeHistory.pageSize };
+				this.#subscribeHist( nodes, from );
+				return;
+			}
+			//the tail first, and the read past it:  a value recorded after the read's end and before the subscription is in neither
 			this.#subscribe( nodes );
+		}
 		await this.#read( this.#opening( nodes, mode, aggregation, 1 ), generation );
 	}
 	//"last N":  a reverse read with only `end` (spec *Reads*), modified in the Modifications mode, which the gateway pages by
@@ -297,18 +311,22 @@ export class NodeHistory implements OnDestroy{
 		this.aggregates.set( list );
 		this.capabilities.set( capabilities );
 	}
+	//Live on again:  a server source's tail is the pushes from here;  a group's subscribes from the latest value held, so the
+	//snapshot fills what passed meanwhile, or from the opening's window when nothing is
 	onLiveChange( on:boolean ){
 		this.live.set( on );
-		if( on )
-			this.#subscribe( this.selected() );
-		else
+		if( !on )
 			this.#unsubscribe();
+		else if( this.isGroup() )
+			this.#subscribeHist( this.selected(), latestHistTime( this.values() ) ?? new Date( Date.now()-NodeHistory.snapshotWindow ) );
+		else
+			this.#subscribe( this.selected() );
 	}
 	//the node's /opc subscription, under an owner key of this tab's own:  the gateway service counts owners per node, so the
 	//Children tab's ticks and this tail share the server-side item and neither drops the other's.
 	#subscribe( nodes:Variable[] ){
 		this.#unsubscribe();
-		if( !nodes.length || !this.canLive() )
+		if( !nodes.length || !this.canLive() || this.isGroup() )
 			return;
 		const byKey = new Map( nodes.map( n=>[n.key, n] ) );
 		this.#subscription = this.gateway.subscribe( this.cnnctnSlug, nodes.map( n=>n.nodeId ), this.#owner ).subscribe({
@@ -329,6 +347,71 @@ export class NodeHistory implements OnDestroy{
 			complete: ()=>{ this.#subscription = undefined; }
 		});
 	}
+	//The group's subscription (spec *Subscriptions*), from `from`:  the ack's statuses stand where a read's node statuses do, the
+	//snapshot's pages merge in with loading on until the last, the stream's values merge in as the tail's pushes do, and a
+	//modification pushed is applied to the record it targets.  The gateway subscribes again after a drop, from the latest value it
+	//delivered, and says so here meanwhile;  an exception ends it, and Live turns off with the reason shown.
+	#subscribeHist( nodes:Variable[], from:Date ){
+		this.#unsubscribe();
+		const group = this.histSource().group;
+		if( !nodes.length || !this.canLive() || group==undefined )
+			return;
+		const ids = nodes.map( n=>n.nodeId );
+		this.ended.set( undefined );
+		this.dropped.set( false );
+		this.loading.set( true );
+		this.#subscription = this.gateway.histSubscribe( {group, nodes: ids, from} ).subscribe({
+			next: ( e:HistEvent )=>{
+				switch( e.kind ){
+					case 'ack':
+						this.dropped.set( false );
+						this.loading.set( true );
+						this.nodeStatuses.set( e.statuses.map( (status, i)=>({node: ids[i], status}) ) );
+						this.#fetchNames( e.statuses );
+						break;
+					case 'snapshot':
+						this.#takeLive( e.values );
+						if( !e.more )
+							this.loading.set( false );
+						break;
+					case 'records':
+						this.#takeLive( e.values );
+						for( const m of e.modifications )
+							this.#modify( m );
+						break;
+					case 'dropped':
+						this.dropped.set( true );
+						this.loading.set( false );//a snapshot cut short:  the rest comes with the next
+						break;
+				}
+			},
+			error: ( e:unknown )=>{
+				this.#subscription = undefined;
+				this.live.set( false );
+				this.loading.set( false );
+				this.dropped.set( false );
+				this.ended.set( `The subscription ended:  ${errorText( e ) ?? "unknown error"}` );
+			},
+			complete: ()=>{ this.#subscription = undefined; }
+		});
+	}
+	//whether a group's stream is on:  an edit then needs no read, its modification is pushed
+	get #liveGroup():boolean{ return this.isGroup() && this.#subscription!=undefined; }
+	#takeLive( values:HistValue[] ){
+		if( !values.length )
+			return;
+		this.values.update( v=>mergeHistValues( v, values ) );
+		if( this.#tail )
+			this.#tail = mergeHistValues( this.#tail, values );
+		this.#fetchNames( values.map( v=>v.status ) );
+	}
+	#modify( m:HistPushedModification ){
+		this.values.update( v=>applyHistModification( v, m ) );
+		if( this.#tail )
+			this.#tail = applyHistModification( this.#tail, m );
+		if( m.value?.status )
+			this.#fetchNames( [m.value.status] );
+	}
 	#unsubscribe(){ this.#subscription?.unsubscribe(); this.#subscription = undefined; }
 	//a code's name comes from the gateway on request - OpcError.statusCodeText registers it, updateErrorCodes fetches the lot - so
 	//one fetch per page, and a repaint when it lands.  Each code registered, not only up to the first unnamed.
@@ -336,12 +419,13 @@ export class NodeHistory implements OnDestroy{
 		return codes.filter( sc=>sc && !OpcError.statusCodeText(sc) ).length ? this.gateway.updateErrorCodes().catch( e=>console.warn(e) ) : Promise.resolve();
 	}
 	//An edit through the dialog, which sends it and closes on one the server took any of;  then the tab reads again what it held,
-	//and says what was refused.
+	//unless a group's stream pushes the modification, and says what was refused.
 	async openEdit( kind:HistEditKind, preset?:HistEditPreset ){
 		const result = await HistEditDialog.open( this.dialog, { kind, nodes: this.writable(), preset, edit: args=>this.#edit( args ), names: codes=>this.#fetchNames( codes ) } );
 		if( !result )
 			return;
-		this.#refresh();
+		if( !this.#liveGroup )
+			this.#refresh();
 		if( editRefused( result ) )
 			this.snackbar.warn( `${NodeHistory.done[kind]}  ${await this.#refusals( result )}` );
 		else
@@ -381,7 +465,8 @@ export class NodeHistory implements OnDestroy{
 				return this.snackbar.error( `Could not delete the value:  ${this.answerer()} answered ${OpcError.text( status )}.` );
 			}
 			this.snackbar.info( NodeHistory.done.purgeRange );
-			this.#refresh();
+			if( !this.#liveGroup )
+				this.#refresh();
 		}
 		catch( e ){
 			this.snackbar.exception( "Could not delete the value.", e );
@@ -394,6 +479,7 @@ export class NodeHistory implements OnDestroy{
 	get cnnctnSlug():string{ return this.pageData().server.connection.slug; }
 	get #owner():string{ return `${this.pageData().route.profileKey}/history`; }
 	static readonly pageSize = 1000;//values per read:  well under the gateway's readLimit, and a trend's worth at a time
+	static readonly snapshotWindow = 10*60_000;//ms of a group's history its opening snapshot holds, from the bounds before:  a trend's worth of a feed that changes every second, and Load earlier the rest
 	static readonly endSlack = 60_000;//ms past the browser's now the opening read ends:  for a server clock ahead of the browser's
 	static readonly floor = 0;//the Unix epoch:  no store holds a value before it, so no aggregate range starts before it (historian-aggregate-picker #2)
 	static readonly maxSeries = 8;
