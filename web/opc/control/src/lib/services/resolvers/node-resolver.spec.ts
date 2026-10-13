@@ -41,13 +41,14 @@ async function open( url:string, browsed:boolean, gatewayDown = false, groups:an
 	const gateway = { slug: 'gw', browseObjectsFolder, errorCodeText: async ()=>"", query: async ( ql:string, vars:any )=>{
 		if( ql.includes("serverDescription") )
 			return serverDescription;
-		if( ql.startsWith("historyGroups") ){
-			asked.push( vars );
-			if( groups instanceof Error )
-				throw groups;
-			return { historyGroups: groups };
-		}
 		return { node: nodes[vars.path] ?? {sc: 0x806f0000} };
+	}, postQL: async ( ql:string, vars:any )=>{
+		if( !ql.startsWith("historyGroups") )
+			throw new Error( `unexpected post: ${ql}` );
+		asked.push( vars );
+		if( groups instanceof Error )
+			throw groups;
+		return { historyGroups: groups };
 	} };
 	TestBed.configureTestingModule( {providers: [
 		provideRouter( [{ path: 'gateways/:gateway', component: Dummy }, { path: 'gateways/:gateway/:connection', children: [

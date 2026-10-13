@@ -53,10 +53,11 @@ namespace Jde::Opc::Gateway{
 			throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}:  'group' is a hist_groups id, not {}.", command, serialize(*input.FindPtr<jvalue>("group")) };
 		return *id;
 	}
-	//Each of `nodes`, an array or one.
+	//Each of `nodes`, an array or one.  None is the caller's mistake, BadRequest - a plain throw answered 500, a fault of the gateway's.
 	Ω eachNode( const QL::Input& input, sv command, SL sl, auto&& add )ε->void{
 		let nodes = input.FindPtr<jvalue>( "nodes" );
-		THROW_IFSL( !nodes || nodes->is_null(), "{} names no nodes.", command );
+		if( !nodes || nodes->is_null() )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{} names no nodes.", command };
 		if( nodes->is_array() ){
 			for( let& j : nodes->get_array() )
 				add( j );

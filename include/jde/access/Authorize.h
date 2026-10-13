@@ -24,7 +24,9 @@ namespace Jde::Access{
 		//Its required form, for what an open install doesn't allow - a group's history edits (spec *Authorization*):  as Test, but
 		//Forbidden where neither row is active, which Test passes.  The system user passes.
 		α TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SRCE )ε->void;
-		α IsEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>;
+		//TestEnforced's answer as a value, for a caller asking rather than gating (historyCapabilities):  a value where it would pass,
+		//enforced and granted, else the exception it would throw.
+		α CheckEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>;
 
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;

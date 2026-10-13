@@ -44,8 +44,10 @@ namespace Jde::Opc::Gateway{
 			try{
 				acl->Test( "gateway", "histGroups", std::to_string(host->Id()), Access::ERights::Read, UserPK(), _sl );
 			}
-			catch( Exception& e ){//a group the caller may not read is none of theirs:  an answer, not an error to log.
-				e.SetLevel( ELogLevel::NoLog );
+			catch( Exception& e ){
+				if( e.HttpStatus()==EHttpStatus::Unauthorized )//who the caller is, not what they may read:  the client's 401 is for this.
+					throw;
+				e.SetLevel( ELogLevel::NoLog );//a group the caller may not read is none of theirs:  an answer, not an error to log.
 				continue;
 			}
 			jobject group;
@@ -70,7 +72,10 @@ namespace Jde::Opc::Gateway{
 		if( !hist.Find(group) )
 			throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", group };
 		let may = [&]( Access::ERights rights )->bool {
-			return acl->IsEnforced( "gateway", "histGroups", std::to_string(group), rights, UserPK(), _sl ).has_value();
+			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), rights, UserPK(), _sl );
+			if( !allowed )
+				allowed.error().SetLevel( ELogLevel::NoLog );//a capability the caller lacks is an answer, as in Groups:  not a denial to log.
+			return allowed.has_value();
 		};
 		jobject y;
 		if( _query.FindColumn("aggregates") ){

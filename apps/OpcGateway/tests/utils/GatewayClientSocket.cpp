@@ -147,7 +147,7 @@ namespace Tests{
 				{ lg _{ _histMutex }; _histListeners.erase( requestId ); }
 				unsubscribed( requestId, false );
 				if( task.Fail )
-					task.Fail( GatewayErrorResponse{e.what(), e.code()} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives.
+					task.Fail( GatewayErrorResponse{e.what(), ExceptionArgs{DefaultExceptionLevel, ELogTags::Exception, e.code(), (EHttpStatus)e.status_code()}} );//the one place the gateway answered - see GatewayErrorResponse.  SetExp stores e.Move(), so the type survives, and the status with it.
 				else
 					WARNT( ELogTags::SocketClientRead, "Failed to process incoming exception '{}'.", e.what() );
 				break;}

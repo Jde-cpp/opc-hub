@@ -6,6 +6,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include "utils/HistGroupFixture.h"
+#include "../src/ql/HistGroupInfoQLAwait.h"
 
 namespace Jde::Opc::Gateway::Tests{
 	struct HistCollectorTests : HistGroupFixture{};
@@ -426,6 +427,20 @@ namespace Jde::Opc::Gateway::Tests{
 	//as a read spells it back, among the groups the caller may read, and historyCapabilities what the caller may do with one -
 	//the library's aggregates, and the edits, which need a grant on an enforced resource as the edits themselves do.
 	TEST_F( HistCollectorTests, GroupsAndCapabilities ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		//A capability the caller lacks used to log an AccessException, at Debug under Access|Exception, which the config's
+		//loggers leave out.  The memory logger takes that tag alone, Information otherwise:  at its own default, Trace, the
+		//recomputed filter would log every exception as it is made, before the code under test could silence it.
+		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		let denial = ELogTags::Access | ELogTags::Exception;
+		let memoryDefault = memory.DefaultLevel();
+		memory.SetDefaultLevel( ELogLevel::Information );
+		memory.SetLevel( denial, ELogLevel::Debug );
+		absl::Cleanup restoreMemory = [&]{//the clear recomputes the filter with the memory logger at Information, and its default goes back without one.
+			memory.ClearLevel( denial );
+			memory.SetDefaultLevel( memoryDefault );
+		};
 		let itemsBefore = Items();
 		let group = CreateGroup( "gate" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
@@ -448,7 +463,13 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsArray(o, "nodes"), (jarray{ id==group ? Node(RpmManual).ToJson() : Node(Status1).ToJson() }) ) << "spelled as asked, and none of Rpm2, which no group holds";
 		}
 		EXPECT_TRUE( Json::AsArray(query("historyGroups( opc:$opc, nodes:$nodes ){ groups{ id } }", {{"opc", OpcServerSlug}, {"nodes", Ex(Rpm2)}}).as_object(), "groups").empty() );
-		EXPECT_THROW( query("historyGroups( opc:$opc ){ groups{ id } }", {{"opc", OpcServerSlug}}), GatewayErrorResponse ) << "no nodes";
+		try{//no nodes is the caller's mistake, which answered 500, a fault of the gateway's (historian-group-history-web #9).
+			query( "historyGroups( opc:$opc ){ groups{ id } }", {{"opc", OpcServerSlug}} );
+			ADD_FAILURE() << "historyGroups without nodes was answered";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest ) << e.what();
+		}
 
 		let capabilities = [&]( uint32 g ){ return query( "historyCapabilities( group:$group ){ aggregates update delete }", {{"group", g}} ).as_object(); };
 		Enforce( false );
@@ -459,11 +480,24 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsArray(open, "aggregates"), names );
 		EXPECT_FALSE( Json::AsBool(open, "update") ) << "nothing enforces hist_groups";
 		EXPECT_FALSE( Json::AsBool(open, "delete") );
+		let denials = Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( Ƒ("histGroups[{}]", group) ) && m.contains( "nothing enforces it" ); } );
+		EXPECT_TRUE( denials.empty() ) << "a capability the caller lacks is an answer, not a denial to log:  " << denials.front().Message();
 		absl::Cleanup reopen = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
 		Enforce( true );
 		auto granted = capabilities( group );
 		EXPECT_TRUE( Json::AsBool(granted, "update") );
 		EXPECT_TRUE( Json::AsBool(granted, "delete") );
+		//A caller Authorize doesn't know, as a session whose user is gone, is refused with the 401 the web signs in again on, not
+		//answered with no groups as a caller without the grant is (historian-group-history-web #4).
+		constexpr Jde::UserPK unknown{ (Jde::UserPK::Type)0x08'0000 };
+		auto ql = QL::Parse( "historyGroups( opc:$opc, nodes:$nodes ){ groups{ id } }", {{"opc", OpcServerSlug}, {"nodes", jarray{Node(RpmManual).ToJson()}}}, Schemas(), true );
+		try{
+			BlockAwait<HistGroupInfoQLAwait,jvalue>( HistGroupInfoQLAwait{move(ql.Queries().front()), QL::Creds{unknown}} );
+			ADD_FAILURE() << "an unknown caller was answered";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::Unauthorized ) << e.what();
+		}
 		try{
 			capabilities( 999999 );
 			ADD_FAILURE() << "a group the gateway doesn't host";
@@ -471,5 +505,56 @@ namespace Jde::Opc::Gateway::Tests{
 		catch( const GatewayErrorResponse& e ){
 			EXPECT_NE( string{e.what()}.find("isn't one this gateway historizes"), string::npos ) << e.what();
 		}
+
+		//The rule historyGroups adds, and the two edit rights told apart (historian-group-history-web #10):  a group's own resource,
+		//its id the criteria, stands in for the slug's root.  The twin's grants the caller no Read, so it isn't listed;  the group's
+		//grants Read and Update, not Delete.  Each grants Administer too, which restoring - enforcing - a row takes.  Through a
+		//role, as Enforce grants:  a direct grant's acl event reaches every app's authorizer, the embedded OpcServer's among them,
+		//which never saw the gateway's row and asserts (the acl subscriptions' schema filter, reviews/soak-findings.md).
+		let acl = AppClient()->Acl();
+		let scope = [&]( uint32 g, Access::ERights allowed ){
+			let app = AppClient();
+			let criteria = std::to_string( g );
+			app->QuerySync<jvalue>( "createResource( schemaName:\"gateway\", name:$name, slug:\"histGroups\", criteria:$criteria, allowed:255 )", {{"name", Ƒ("histGroups[{}]", g)}, {"criteria", criteria}} );
+			let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", Ƒ("GatewayHistGroup{}", g)}, {"name", Ƒ("Gateway history group {}", g)}} );
+			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
+			app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria}} )", {{"roleId", roleId}, {"allowed", underlying(allowed | Access::ERights::Administer)}, {"criteria", criteria}} );
+			app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", User().Value}, {"roleId", roleId}} );
+			app->QuerySync<jvalue>( "restoreResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );//a row is created unenforced.
+		};
+		absl::Cleanup unscope = [=]{
+			for( let g : {group, twin} ){
+				try{
+					AppClient()->QuerySync<jvalue>( "deleteResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", std::to_string(g)}} );
+				}
+				catch( const std::exception& e ){
+					ADD_FAILURE() << "group " << g << "'s resource wasn't deleted:  " << e.what();
+				}
+			}
+		};
+		scope( twin, Access::ERights::None );
+		scope( group, Access::ERights::Read | Access::ERights::Update );
+		let reached = [&]( function<bool()> f, sv what ){//the gateway's authorizer hears of them over its subscription.
+			for( uint i=0; !f(); ++i ){
+				THROW_IF( i==200, "{} didn't reach the gateway's authorizer.", what );
+				std::this_thread::sleep_for( 50ms );
+			}
+		};
+		ASSERT_NO_THROW( reached([&]{ return acl->FindActiveResourcePK("gateway", "histGroups", std::to_string(twin)) && acl->FindActiveResourcePK("gateway", "histGroups", std::to_string(group)); }, "The groups' resources") );
+		ASSERT_NO_THROW( reached([&]{
+			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), Access::ERights::Update, User(), SRCE_CUR );
+			if( !allowed )
+				allowed.error().SetLevel( ELogLevel::NoLog );
+			return allowed.has_value();
+		}, "The group's grant") );
+
+		let listed = query( "historyGroups( opc:$opc, nodes:$nodes ){ groups{ id } }", {{"opc", OpcServerSlug}, {"nodes", jarray{Node(RpmManual).ToJson(), Node(Status1).ToJson()}}} );
+		vector<uint32> ids;
+		for( let& row : Json::AsArray(listed.as_object(), "groups") )
+			ids.push_back( Json::AsNumber<uint32>(row.as_object(), "id") );
+		EXPECT_EQ( ids, (vector<uint32>{group}) ) << "the twin, which the caller may not read, is none of theirs:  " << serialize( listed );
+		auto scoped = capabilities( group );
+		EXPECT_TRUE( Json::AsBool(scoped, "update") ) << serialize( scoped );
+		EXPECT_FALSE( Json::AsBool(scoped, "delete") ) << "Update granted alone:  " << serialize( scoped );
 	}
 }

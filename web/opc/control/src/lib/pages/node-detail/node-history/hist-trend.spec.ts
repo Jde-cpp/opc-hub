@@ -13,6 +13,7 @@ import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { HistTrend } from './hist-trend';
+import { TrendPoint, trendPalette } from './hist-trend-data';
 
 const variable = ( i:number, name:string )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}} );
 const at = ( v:Variable, ms:number, value:number ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, status: 0, value, bound: false, heartbeat: false });
@@ -47,6 +48,35 @@ describe( 'HistTrend', ()=>{
 		fixture.detectChanges();
 		expect( ids() ).toEqual( [a, `${a}/flags`] );
 		expect( chart!.options.legend?.enabled ).toBe( false );
+		fixture.destroy();
+	} );
+	//A heartbeat's ring is drawn in its line's colour, which is the node's palette slot:  unticking the node before it moved the
+	//line to the next colour while setData, finding the points' x, y and status unchanged, left the rings in the old one
+	//(historian-group-history-web #2).
+	const beat = ( v:Variable, ms:number, value:number )=>({...at( v, ms, value ), heartbeat: true});
+	const rings = ( chart:Highcharts.Chart, v:Variable )=>(<TrendPoint[]>(<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( v.nodeId.uaString() )).options).data).map( p=>p.marker?.lineColor );
+	it( "redraws a heartbeat's ring when its line changes colour", async ()=>{
+		const { A, B, fixture, chart } = await draw();
+		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), beat(B, 2000, 2)] );
+		fixture.detectChanges();
+		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[1]] );
+
+		fixture.componentRef.setInput( 'series', [B] );
+		fixture.detectChanges();
+		expect( (<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( B.nodeId.uaString() )).options).color ).toBe( trendPalette[0] );
+		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[0]] );
+		fixture.destroy();
+	} );
+	//The same check ignored the heartbeat flag, so a point whose flag alone changed kept or lacked its ring (#2 too).
+	it( "draws or drops a heartbeat's ring when its flag alone changes", async ()=>{
+		const { A, B, fixture, chart } = await draw();
+		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), beat(B, 2000, 4)] );
+		fixture.detectChanges();
+		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[1]] );
+
+		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), at(B, 2000, 4)] );
+		fixture.detectChanges();
+		expect( rings(chart, B) ).toEqual( [undefined, undefined] );
 		fixture.destroy();
 	} );
 	//A flag kept the text it was drawn with:  setData compared a flag's time and status, not its text, so a status name arriving

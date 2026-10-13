@@ -66,7 +66,7 @@ namespace Jde::Opc::Gateway::HistQL{
 		vector<ExNodeId> Nodes;
 		string Continuation;//decoded, empty for the first page.
 	};
-	//Each of a field's `nodes`, an array or one, as the caller gave them;  a field with none is refused.
+	//Each of a field's `nodes`, an array or one, as the caller gave them;  a field without `nodes` is refused, BadRequest.
 	α Nodes( const QL::Input& input, sv command, SL sl )ε->vector<jvalue>;
 	//The most values a page holds:  /gateway/hist/readLimit, 10,000 by default, and 0 for no limit.
 	α ReadLimit()ι->uint;

@@ -6,8 +6,9 @@ import { CnnctnSlug } from '../model/server-cnnctn';
 
 //What a read is sent through:  a Gateway, or a stub in a spec.
 export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
-//What an edit is sent through:  a POST, since the edits are mutations and the gateway takes a mutation on no GET.
-export type HistEditor = { postQL<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
+//What an edit, or a question too long for a url, is sent through:  a POST, since the gateway takes a mutation on no GET, and a
+//GET's url counts against the 8 KB its parser takes for the request line and headers.
+export type HistPoster = { postQL<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
 
 //The one history service:  `history` with `opc` for a server's own history, `group` for a gateway group - the same arguments,
 //result and continuation either way (spec *Pass-through*), so the trend and table never ask which.  What differs is asked here:
@@ -66,11 +67,12 @@ export class HistoryService{
 	static readonly aggregatesQuery = "node( opc: $opc, id: $id ){ children{ id name browse nodeClass } }";
 	//historyGroups( opc, nodes ){ groups{ id name nodes } } (hist.jsonnet):  which group on the connection holds each of the nodes,
 	//among the groups this user may read - where the gateway's own historian keeps a node's history, beside what its server keeps.
-	//A node page asks once, for its variables (NodeResolver).
-	async groups( reader:HistReader, opc:CnnctnSlug, nodes:NodeId[], log:Log=()=>{} ):Promise<HistGroup[]>{
+	//A node page asks once, for its variables (NodeResolver), by POST:  a folder's worth in a GET's url passed the gateway's 8 KB,
+	//which drops the request unanswered (reviews-issue/historian-group-history-web.md #1).
+	async groups( poster:HistPoster, opc:CnnctnSlug, nodes:NodeId[], log:Log=()=>{} ):Promise<HistGroup[]>{
 		if( !nodes.length )
 			return [];
-		const data = await reader.query<any>( HistoryService.groupsQuery, {opc, nodes: nodes.map( n=>n.toJson() )}, log );
+		const data = await poster.postQL<any>( HistoryService.groupsQuery, {opc, nodes: nodes.map( n=>n.toJson() )}, log );
 		return toHistGroups( data?.["historyGroups"] );
 	}
 	static readonly groupsQuery = "historyGroups( opc: $opc, nodes: $nodes ){ groups{ id name nodes } }";
@@ -84,7 +86,7 @@ export class HistoryService{
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an
 	//argument it can't take, a value of the wrong type among them.
-	async edit( editor:HistEditor, source:HistSource, args:HistEditArgs, log:Log=()=>{} ):Promise<HistEditResult>{
+	async edit( editor:HistPoster, source:HistSource, args:HistEditArgs, log:Log=()=>{} ):Promise<HistEditResult>{
 		const {ql, vars, command} = HistoryService.mutation( source, args );
 		const data = await editor.postQL<any>( ql, vars, log );
 		return toHistEditResult( data?.[command] );

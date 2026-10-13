@@ -99,7 +99,7 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, executer, sl );
 	}
-	α Authorize::IsEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>{
+	α Authorize::CheckEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>{
 		if( executer.Value==UserPK::System )
 			return {};
 		rl _{ Mutex };
@@ -112,8 +112,8 @@ namespace Jde::Access{
 		return std::unexpected(Access::AccessException{sl, executer, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name} );
 	}
 	α Authorize::TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
-		if( auto enforced = IsEnforced(schemaName, resourceName, criteria, rights, executer, sl); !enforced )
-			throw move(enforced.error());
+		if( auto allowed = CheckEnforced(schemaName, resourceName, criteria, rights, executer, sl); !allowed )
+			throw move(allowed.error());
 	}
 
 	Ω accessException( EHttpStatus status, UserPK executer, SL sl )ι->Access::AccessException{

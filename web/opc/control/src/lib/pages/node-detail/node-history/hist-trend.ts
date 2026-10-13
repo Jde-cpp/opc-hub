@@ -77,9 +77,12 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 				chart.addSeries( {type: 'line', id, name: node.name, color, step, data: points}, false );
 			else{
 				const options = <Highcharts.SeriesLineOptions>line.options;
-				if( options.step!=step || options.color!=color )
+				if( options.step!=step || options.color!=color ){//a rebuild:  a heartbeat's ring carries the line's colour in its own marker
 					line.update( {type: 'line', step, color}, false );
-				HistTrend.setData( line, points );
+					line.setData( points, false, false, false );
+				}
+				else
+					HistTrend.setData( line, points );
 			}
 			const flagSeries = <Highcharts.Series|undefined>chart.get( flagsId );
 			if( !flagSeries )
@@ -102,7 +105,8 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 	//middle, a line shape change - is a rebuild.
 	private static setData( s:Highcharts.Series, data:(TrendPoint|TrendFlag)[] ){
 		const prev = <(TrendPoint|TrendFlag)[]|undefined>(<Highcharts.SeriesLineOptions>s.options).data;
-		const same = ( a:TrendPoint|TrendFlag, b:TrendPoint|TrendFlag )=>a.x===b.x && (<TrendPoint>a).y===(<TrendPoint>b).y && a.custom?.status===b.custom?.status && (<TrendFlag>a).text===(<TrendFlag>b).text;
+		const same = ( a:TrendPoint|TrendFlag, b:TrendPoint|TrendFlag )=>a.x===b.x && (<TrendPoint>a).y===(<TrendPoint>b).y && a.custom?.status===b.custom?.status
+			&& (<TrendPoint>a).custom?.heartbeat===(<TrendPoint>b).custom?.heartbeat && (<TrendFlag>a).text===(<TrendFlag>b).text;
 		if( prev?.length && data.length>prev.length && same(prev[0], data[0]) && same(prev[prev.length-1], data[prev.length-1]) ){
 			for( let i=prev.length; i<data.length; ++i )
 				s.addPoint( data[i], false );
