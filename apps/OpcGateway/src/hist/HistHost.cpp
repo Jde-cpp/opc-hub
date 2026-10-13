@@ -370,6 +370,7 @@ namespace Jde::Opc::Gateway{
 			auto host = rows.size() ? Find( rows.front().Id ) : nullptr;
 			if( host ){
 				let& row = rows.front();
+				host->SetName( row.Name );
 				host->SetColumns( row.Thresholds );
 				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
 				auto members = row.Template ? byId( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};

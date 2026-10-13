@@ -10,6 +10,7 @@ import { UaNode, Variable } from '../../model/node';
 import { NodeAccess } from './node-access/node-access';
 import { NodeHistory } from './node-history/node-history';
 import { ProfileStore } from 'jde-spa';
+import { HistGroupMembers } from '../../model/hist';
 
 @Component( {
 	templateUrl: './node-detail.html',
@@ -38,6 +39,12 @@ export class NodeDetail implements OnDestroy, OnInit{
 	//the History tab shows when a child is historized and this user may read its history - a Variable has no
 	//page of its own (NodeResolver.#showParent), so the history of its parent's children is where a node's history is seen
 	historizable = computed<Variable[]>( ()=>(<Variable[]>this.nodes().filter( n=>n.isVariable )).filter( v=>v.historyReadable ) );
+	//the gateway's groups that hold any of the page's variables (NodePageData.groups), each with its members among them:  the
+	//History tab's sources beside the server's own, whatever the server historizes
+	groups = computed<HistGroupMembers[]>( ()=>{
+		const variables = <Variable[]>this.nodes().filter( n=>n.isVariable );
+		return ( this.pageData().groups ?? [] ).map( g=>({ id: g.id, name: g.name, nodes: variables.filter( v=>g.nodes.some( n=>n.key==v.key ) ) }) ).filter( g=>g.nodes.length );
+	} );
 	//get profile(){ return this.pageData().route.profile; }
 	server = computed( ()=>this.pageData().server );
 	sideNav = model.required<NodeRoute>();

@@ -135,6 +135,7 @@ Split so that each PR is reviewable and most of 5a is useful before any history 
 - Group access through `access_resources`.
 - The live trend for group sources switches to `HistSubscribe`'s snapshot and stream, which has no gap.
 - Heartbeats are marked on the trend.
+- Built 2026-10-12 (6a, [#335]): a group's history on node-detail's History tab, a source beside the server's own for the children a group holds, one source at a time with a toggle for several. Two gateway fields serve the gate ([`HistGroupInfoQLAwait.h`](../../../apps/OpcGateway/src/ql/HistGroupInfoQLAwait.h)): `historyGroups( opc, nodes )`, which groups on the connection hold the page's nodes, among those the caller may read, asked with the page; and `historyCapabilities( group )`, the historian's aggregates over `Hist::Aggregates` and whether the caller may edit the group, Update and Delete as *Authorization* gates the edits, asked when the tab opens on it. Reads, "load earlier", the Values|Modifications toggle, the aggregate picker and the edits take the source; a heartbeat is a ring on the trend; a group source has no live tail until 6b ([#336]).
 
 ## Slices
 
@@ -187,4 +188,6 @@ Slice A is the long one, since it carries all of storage. Its payoff is the chec
 [#224]: https://github.com/Jde-cpp/opc-hub/issues/224
 [#225]: https://github.com/Jde-cpp/opc-hub/issues/225
 [#226]: https://github.com/Jde-cpp/opc-hub/issues/226
+[#335]: https://github.com/Jde-cpp/opc-hub/issues/335
+[#336]: https://github.com/Jde-cpp/opc-hub/issues/336
 [#237]: https://github.com/Jde-cpp/opc-hub/issues/237

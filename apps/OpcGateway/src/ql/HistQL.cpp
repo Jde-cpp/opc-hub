@@ -64,6 +64,11 @@ namespace Jde::Opc::Gateway{
 		else
 			add( *nodes );
 	}
+	α HistQL::Nodes( const QL::Input& input, sv command, SL sl )ε->vector<jvalue>{
+		vector<jvalue> y;
+		eachNode( input, command, sl, [&]( const jvalue& j ){ y.push_back( j ); } );
+		return y;
+	}
 namespace HistQL{
 	ReadArgs::ReadArgs( const QL::Input& input, SL sl )ε:
 		Mode{ HistQL::Mode(input) }{

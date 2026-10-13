@@ -27,22 +27,30 @@ const nodes:Record<string, any> = {//the gateway's answer to node( path ){ … n
 	'2~pump1': { ns: 2, i: 10, name: 'pump1', nodeClass: ENodeClass.Object, parents: [] },
 	'2~pump1/2~flow': { ns: 2, i: 11, name: 'flow', nodeClass: ENodeClass.Variable, parents: [{ns: 2, i: 10, name: 'pump1', path: '2~pump1'}] }
 };
-//gatewayDown:  the gateway does not answer at all
-async function open( url:string, browsed:boolean, gatewayDown = false ){
+const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}} as any, pump1 );
+//gatewayDown:  the gateway does not answer at all.  groups:  the gateway's answer to historyGroups, or an error it throws for it.
+async function open( url:string, browsed:boolean, gatewayDown = false, groups:any = undefined ){
 	const exception = vi.fn();
 	const forget = vi.fn();
 	const browseObjectsFolder = vi.fn( async ( _cnnctn:string, parent:UaNode )=>{
 		if( parent.isVariable )
 			throw new EvalError( "Cannot browse children of variable node." );
-		return [];
+		return groups ? [flow()] : [];
 	} );
+	const asked:any[] = [];
 	const gateway = { slug: 'gw', browseObjectsFolder, errorCodeText: async ()=>"", query: async ( ql:string, vars:any )=>{
 		if( ql.includes("serverDescription") )
 			return serverDescription;
+		if( ql.startsWith("historyGroups") ){
+			asked.push( vars );
+			if( groups instanceof Error )
+				throw groups;
+			return { historyGroups: groups };
+		}
 		return { node: nodes[vars.path] ?? {sc: 0x806f0000} };
 	} };
 	TestBed.configureTestingModule( {providers: [
-		provideRouter( [{ path: 'gateways/:gateway/:connection', children: [
+		provideRouter( [{ path: 'gateways/:gateway', component: Dummy }, { path: 'gateways/:gateway/:connection', children: [
 			{ path: '**', component: Dummy, providers: [NodeResolver], resolve: {pageData: NodeResolver}, runGuardsAndResolvers: "pathParamsOrQueryParamsChange" }
 		]}] ),
 		{ provide: GATEWAY_SERVICE, useValue: {gateway: async ()=>{ if( gatewayDown ) throw new Error( "Failed to fetch" ); return gateway; }} },
@@ -60,7 +68,11 @@ async function open( url:string, browsed:boolean, gatewayDown = false ){
 	const harness = await RouterTestingHarness.create();
 	await harness.navigateByUrl( url );
 	await new Promise( r=>setTimeout(r, 20) );//the redirect is a second navigation
-	return { router: TestBed.inject(Router), exception, browseObjectsFolder, forget };
+	const router = TestBed.inject( Router );
+	let leaf = router.routerState.snapshot.root;
+	while( leaf.firstChild )
+		leaf = leaf.firstChild;
+	return { router, exception, browseObjectsFolder, forget, asked, pageData: leaf.data['pageData'] };
 }
 
 //reviews/m3-closing.md #9:  a Variable has no page of its own - its value, status and subscribe box are a row on its parent's -
@@ -86,6 +98,23 @@ describe( 'NodeResolver on a Variable', ()=>{
 //reviews/m3-closing.md #25:  a removed or renamed node's Recently visited tile stayed - the resolver redirects on failure, a
 //NavigationCancel, not the NavigationError RecentVisits drops a page on.  It forgets the page itself when the server says the
 //path is not there - not when the gateway or the OPC server is merely down, or an outage would empty every node tile.
+//The gateway's groups that hold the page's variables come with the page (#335), so the History tab is there when it shows;  a
+//gateway that can't say - one older than the field, or one that refuses - leaves the page with the server's history alone.
+describe( 'NodeResolver and the history groups', ()=>{
+	it( 'asks for the groups of the page\'s variables, and carries them', async ()=>{
+		const { exception, asked, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 11}]}]} );
+		expect( exception ).not.toHaveBeenCalled();
+		expect( asked ).toEqual( [{opc: 'cn', nodes: [{ns: 2, i: 11}]}] );
+		expect( pageData.groups.map( ( g:any )=>[g.id, g.name, g.nodes.length] ) ).toEqual( [[3, 'Pumps', 1]] );
+	} );
+	it( 'keeps the page, with no groups, when the gateway refuses the question', async ()=>{
+		const { exception, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, new Error( "Cannot query field historyGroups" ) );
+		expect( exception ).not.toHaveBeenCalled();
+		expect( pageData.nodes ).toHaveLength( 1 );
+		expect( pageData.groups ).toEqual( [] );
+	} );
+} );
+
 describe( 'NodeResolver on a node that is gone', ()=>{
 	it( "forgets the page of a path the server does not have, and still goes up a level", async ()=>{
 		const { router, exception, forget } = await open( '/gateways/gw/cn/2~pump1/2~gone', false );
@@ -95,8 +124,9 @@ describe( 'NodeResolver on a node that is gone', ()=>{
 	} );
 
 	it( 'keeps the page while the gateway is down', async ()=>{
-		const { exception, forget } = await open( '/gateways/gw/cn/2~pump1', false, true );
+		const { router, exception, forget } = await open( '/gateways/gw/cn/2~pump1', false, true );
 		expect( exception ).toHaveBeenCalled();
 		expect( forget ).not.toHaveBeenCalled();
+		expect( router.url ).toBe( '/gateways/gw' );//the level above, which the test's routes have to know of, or the redirect is an unhandled rejection
 	} );
 } );

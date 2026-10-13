@@ -10,6 +10,10 @@
 //(ql/HistGroupEditQLAwait.cpp, *Edits*).
 //resolveHistory( group ){ nodes{ templateNode path node status } } (ql/HistGroupQLAwait.cpp):  retries a group's unresolved
 //template members (*Templates*), answering each member of the template, resolved before, now, or not.
+//historyGroups( opc, nodes ){ groups{ id name nodes } } (ql/HistGroupInfoQLAwait.cpp):  the groups on the connection that hold
+//any of the nodes, each with those it holds, among the groups the caller may read - where the gateway keeps each node's history.
+//historyCapabilities( group ){ aggregates update delete }:  the aggregates a group computes, and whether the caller may edit
+//its history, Update and Delete granted on an enforced resource (*Authorization*).
 local String = { kind: "SCALAR", name: "String" };
 local UInt = { kind: "SCALAR", name: "UInt" };
 local Boolean = { kind: "SCALAR", name: "Boolean" };
@@ -26,6 +30,18 @@ local historyEdit = {
 local resolveHistory = {
 	fields: [
 		{ name: "nodes", type: List({ kind: "OBJECT", name: "HistoryResolvedNode" }) }
+	]
+};
+local historyGroups = {
+	fields: [
+		{ name: "groups", type: List({ kind: "OBJECT", name: "HistoryGroup" }) }
+	]
+};
+local historyCapabilities = {
+	fields: [
+		{ name: "aggregates", type: List(NonNull(String)) }, //the names an aggregate read with `group` takes, in the library's order.
+		{ name: "update", type: NonNull(Boolean) }, //createHistory, updateHistory and upsertHistory would pass the caller.
+		{ name: "delete", type: NonNull(Boolean) } //purgeHistory would.
 	]
 };
 local history = {
@@ -77,6 +93,17 @@ local history = {
 	},
 	ResolveHistory: resolveHistory,
 	resolveHistory: resolveHistory,
+	HistoryGroups: historyGroups,
+	historyGroups: historyGroups,
+	HistoryGroup: {
+		fields: [
+			{ name: "id", type: NonNull(UInt) }, //the hist_groups row.
+			{ name: "name", type: NonNull(String) },
+			{ name: "nodes", type: List({ kind: "OBJECT", name: "NodeId" }) } //those of the nodes asked that the group holds, spelled as a read spells them back.
+		]
+	},
+	HistoryCapabilities: historyCapabilities,
+	historyCapabilities: historyCapabilities,
 	HistoryResolvedNode: {
 		fields: [
 			{ name: "templateNode", type: NonNull(UInt) }, //the hist_template_nodes row.

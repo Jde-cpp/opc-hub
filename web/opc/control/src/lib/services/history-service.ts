@@ -1,6 +1,7 @@
 import { Service } from '@angular/core';
 import { Log } from 'jde-framework';
-import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistEditArgs, HistEditResult, histEditCommands, HistPage, HistReadArgs, HistSource, qlTime, toHistAggregates, toHistEditResult, toHistPage } from '../model/hist';
+import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage } from '../model/hist';
+import { NodeId } from '../model/node-id';
 import { CnnctnSlug } from '../model/server-cnnctn';
 
 //What a read is sent through:  a Gateway, or a stub in a spec.
@@ -8,8 +9,10 @@ export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T>
 //What an edit is sent through:  a POST, since the edits are mutations and the gateway takes a mutation on no GET.
 export type HistEditor = { postQL<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
 
-//The one history service:  `history` with `opc` for a server's own history, `group` for a gateway group once there are any -
-//the same arguments, result and continuation either way (spec *Pass-through*), so the trend and table never ask which.
+//The one history service:  `history` with `opc` for a server's own history, `group` for a gateway group - the same arguments,
+//result and continuation either way (spec *Pass-through*), so the trend and table never ask which.  What differs is asked here:
+//which group holds a page's nodes (groups), and what a group lists and lets this user do (capabilities), where a server's node
+//carries both in its own attributes.
 @Service()
 export class HistoryService{
 	async read( reader:HistReader, source:HistSource, args:HistReadArgs, log:Log=()=>{} ):Promise<HistPage>{
@@ -61,6 +64,23 @@ export class HistoryService{
 	#aggregates = new WeakMap<HistReader, Map<CnnctnSlug, Promise<HistAggregate[]>>>();//by gateway, then connection
 	//the Children tab's browse (Gateway.browseObjectsFolder), down to what names an aggregate
 	static readonly aggregatesQuery = "node( opc: $opc, id: $id ){ children{ id name browse nodeClass } }";
+	//historyGroups( opc, nodes ){ groups{ id name nodes } } (hist.jsonnet):  which group on the connection holds each of the nodes,
+	//among the groups this user may read - where the gateway's own historian keeps a node's history, beside what its server keeps.
+	//A node page asks once, for its variables (NodeResolver).
+	async groups( reader:HistReader, opc:CnnctnSlug, nodes:NodeId[], log:Log=()=>{} ):Promise<HistGroup[]>{
+		if( !nodes.length )
+			return [];
+		const data = await reader.query<any>( HistoryService.groupsQuery, {opc, nodes: nodes.map( n=>n.toJson() )}, log );
+		return toHistGroups( data?.["historyGroups"] );
+	}
+	static readonly groupsQuery = "historyGroups( opc: $opc, nodes: $nodes ){ groups{ id name nodes } }";
+	//historyCapabilities( group ){ aggregates update delete }:  a group's aggregates and this user's edit rights on it.  Asked each
+	//time, not kept as a server's list is:  a grant can land between two visits.
+	async capabilities( reader:HistReader, group:number, log:Log=()=>{} ):Promise<HistCapabilities>{
+		const data = await reader.query<any>( HistoryService.capabilitiesQuery, {group}, log );
+		return toHistCapabilities( data?.["historyCapabilities"] );
+	}
+	static readonly capabilitiesQuery = "historyCapabilities( group: $group ){ aggregates update delete }";
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an
 	//argument it can't take, a value of the wrong type among them.

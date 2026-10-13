@@ -31,6 +31,8 @@ namespace Jde::Opc::Gateway{
 		~HistGroupHost();
 		α Id()Ι->HistGroupPK{ return _id; }
 		α Guid()Ι->str{ return _guid; }
+		α Name()Ι->string;//the row's, as a group is shown (historyGroups).
+		α SetName( string name )ι->void;
 		α Slug()Ι->const ServerCnnctnNK&{ return _slug; }
 		α Group()Ι->const sp<Opc::Hist::Group>&{ return _group; }
 		α Columns()Ι->HistThresholdColumns;//the group's own threshold columns, the last fallback a member's resolution makes.
@@ -119,6 +121,7 @@ namespace Jde::Opc::Gateway{
 		const Credential _collector;
 		Opc::Hist::IClock& _clock;
 		mutable absl::Mutex _mutex;//before the group's own:  Enqueue runs under it, so values reach the group in the order they came.
+		string _name ABSL_GUARDED_BY(_mutex);
 		HistThresholdColumns _columns ABSL_GUARDED_BY(_mutex);
 		flat_map<HistGroupNodePK,Node> _nodes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<NodeId,HistGroupNodePK> _byNode ABSL_GUARDED_BY(_mutex);//by the server's index, once a connection gave it.

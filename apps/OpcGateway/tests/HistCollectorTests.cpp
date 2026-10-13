@@ -421,4 +421,55 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( host->FindThresholds(index)->ExceptionDeviation, 1 ) << "the row keeps it";
 		}
 	}
+
+	//The web's gate on a group's history (#335):  historyGroups says which group on the connection holds each node, spelled
+	//as a read spells it back, among the groups the caller may read, and historyCapabilities what the caller may do with one -
+	//the library's aggregates, and the edits, which need a grant on an enforced resource as the edits themselves do.
+	TEST_F( HistCollectorTests, GroupsAndCapabilities ){
+		let itemsBefore = Items();
+		let group = CreateGroup( "gate" );
+		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		AddNode( group, RpmManual );
+		let twin = CreateGroup( "gate-twin" );
+		absl::Cleanup purgeTwin = [=]{ Purge( twin, itemsBefore ); };
+		AddNode( twin, Status1 );
+		ASSERT_NO_THROW( WaitSubscribed(Host(group), 1) );//a node spelled by index resolves once the collector has the server's namespaces.
+		ASSERT_NO_THROW( WaitSubscribed(Host(twin), 1) );
+		let query = [&]( sv q, jobject vars ){ return BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(string{q}, move(vars), true) ); };
+
+		let groups = query( "historyGroups( opc:$opc, nodes:$nodes ){ groups{ id name nodes } }", {{"opc", OpcServerSlug}, {"nodes", jarray{Node(RpmManual).ToJson(), Ex(Rpm2), Node(Status1).ToJson()}}} );
+		let& rows = Json::AsArray( groups.as_object(), "groups" );
+		ASSERT_EQ( rows.size(), 2u ) << serialize( groups );
+		for( let& row : rows ){
+			let& o = row.as_object();
+			let id = Json::AsNumber<uint32>( o, "id" );
+			EXPECT_TRUE( id==group || id==twin ) << serialize( row );
+			EXPECT_EQ( Json::AsSV(o, "name"), id==group ? "Collector gate" : "Collector gate-twin" );
+			EXPECT_EQ( Json::AsArray(o, "nodes"), (jarray{ id==group ? Node(RpmManual).ToJson() : Node(Status1).ToJson() }) ) << "spelled as asked, and none of Rpm2, which no group holds";
+		}
+		EXPECT_TRUE( Json::AsArray(query("historyGroups( opc:$opc, nodes:$nodes ){ groups{ id } }", {{"opc", OpcServerSlug}, {"nodes", Ex(Rpm2)}}).as_object(), "groups").empty() );
+		EXPECT_THROW( query("historyGroups( opc:$opc ){ groups{ id } }", {{"opc", OpcServerSlug}}), GatewayErrorResponse ) << "no nodes";
+
+		let capabilities = [&]( uint32 g ){ return query( "historyCapabilities( group:$group ){ aggregates update delete }", {{"group", g}} ).as_object(); };
+		Enforce( false );
+		auto open = capabilities( group );
+		jarray names;
+		for( let& aggregate : Opc::Hist::Aggregates )
+			names.emplace_back( aggregate.Name );
+		EXPECT_EQ( Json::AsArray(open, "aggregates"), names );
+		EXPECT_FALSE( Json::AsBool(open, "update") ) << "nothing enforces hist_groups";
+		EXPECT_FALSE( Json::AsBool(open, "delete") );
+		absl::Cleanup reopen = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		Enforce( true );
+		auto granted = capabilities( group );
+		EXPECT_TRUE( Json::AsBool(granted, "update") );
+		EXPECT_TRUE( Json::AsBool(granted, "delete") );
+		try{
+			capabilities( 999999 );
+			ADD_FAILURE() << "a group the gateway doesn't host";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_NE( string{e.what()}.find("isn't one this gateway historizes"), string::npos ) << e.what();
+		}
+	}
 }

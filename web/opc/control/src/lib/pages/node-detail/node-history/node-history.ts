@@ -11,7 +11,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { confirm, SnackbarService } from 'jde-framework';
-import { alignUp, editRefused, HistAggregate, HistAggregation, HistEditArgs, HistEditKind, HistEditResult, HistNodeStatus, HistPage, HistReadArgs, HistValue, isNoData, mergeHistValues, pushValue } from '../../../model/hist';
+import { alignUp, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, isNoData, mergeHistValues, pushValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId, NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -27,15 +27,22 @@ import { HistTrend } from './hist-trend';
 
 //what the tab shows:  the values, trended and listed, or the modifications made to them, listed with their ModificationInfo
 export type HistMode = 'values'|'modified';
+//Where the tab's history comes from:  the server's own, over the connection (spec *Pass-through*), or a group the gateway's
+//historian keeps (spec *Reads*), with the children it offers.  `key` is histSourceKey's.
+export type HistSourceOption = { key:string; label:string; source:HistSource; nodes:Variable[] };
 
-//The History tab:  the node's children the server historizes, read through the gateway over
-//the caller's own session (spec *Pass-through*), drawn as a trend and listed in a table.  It opens on the latest values - a reverse
+//The History tab:  the node's children the server historizes, read through the gateway over the caller's own session (spec
+//*Pass-through*), and those a group of the gateway's historian holds, read from the group - one source at a time, the server's
+//first and a toggle for the rest, since `history` reads one group a call and a node is in one group per connection at most -
+//drawn as a trend and listed in a table.  It opens on the latest values - a reverse
 //read with only `end` - and Load earlier pages that read by its continuation.  The live tail is the node's /opc
-//subscription, joined to the read by source time with duplicates dropped (mergeHistValues).  Modifications is the same read
+//subscription, joined to the read by source time with duplicates dropped (mergeHistValues), a server source's alone:  a group's
+//compressed series would take the raw changes, until #336 gives it HistSubscribe's stream.  Modifications is the same read
 //with `modified`, listed alone:  an edit isn't published live and isn't a series.  The picker reads an aggregate instead of the
 //values, one of those the server lists, over intervals of the length picked (spec *Reads*):  the last intervals up to now, and
 //Load earlier the intervals before, with no live tail, since a push is a reading, not an aggregate.  The edits (spec *Edits*)
-//go through the dialog, or a row's own Replace and Delete, and the tab reads again what it held once one is taken.
+//go through the dialog, or a row's own Replace and Delete, and the tab reads again what it held once one is taken;  on a server
+//the node's HistoryWrite bit lets them, on a group the Update and Delete the gateway says it granted (historyCapabilities).
 @Component({
 	selector: 'node-history',
 	templateUrl: './node-history.html',
@@ -44,24 +51,55 @@ export type HistMode = 'values'|'modified';
 })
 export class NodeHistory implements OnDestroy{
 	constructor(){
-		//a change of nodes, of mode or of aggregate is a new read:  the values of a node unticked go, and the live tail follows the selection
-		effect( ()=>{ const nodes = this.selected(), mode = this.mode(), aggregation = this.aggregated(); untracked( ()=>this.#reload(nodes, mode, aggregation) ); } );
-		//the aggregates the server lists, for the picker:  once per connection
-		effect( ()=>{ const connection = this.connection(); untracked( ()=>this.#loadAggregates( connection ) ); } );
+		//a change of source, of nodes, of mode or of aggregate is a new read:  the values of a node unticked go, and the live tail follows the selection
+		effect( ()=>{ this.histSource(); const nodes = this.selected(), mode = this.mode(), aggregation = this.aggregated(); untracked( ()=>this.#reload(nodes, mode, aggregation) ); } );
+		//what the source lists for the picker, and on a group what this user may edit:  once per source
+		effect( ()=>{ const key = this.sourceKey(), source = this.histSource(); untracked( ()=>this.#loadSource( key, source ) ); } );
 	}
 	ngOnDestroy(){ ++this.#generation; this.#unsubscribe(); }//a read still out is stale:  its page is for a tab that is gone
 
 	pageData = input.required<NodePageData>();
 	//the gateway and connection read through:  what the aggregates listed, and the one picked, belong to
 	connection = computed<string>( ()=>`${this.pageData().gateway.slug}/${this.pageData().server.connection.slug}` );
-	//NodeDetail.historizable, the tab's own gate:  the children the server historizes and this user may read
+	//NodeDetail.historizable, the server source's nodes:  the children the server historizes and this user may read
 	candidates = input.required<Variable[]>();
+	//NodeDetail.groups:  the gateway's groups that hold any of the children, each with its members among them
+	groups = input<HistGroupMembers[]>( [] );
+	sources = computed<HistSourceOption[]>( ()=>{
+		const y:HistSourceOption[] = [];
+		if( this.candidates().length )
+			y.push( { key: histSourceKey( {opc: this.cnnctnSlug} ), label: 'Server', source: {opc: this.cnnctnSlug}, nodes: this.candidates()} );
+		for( const g of this.groups() )
+			y.push( { key: histSourceKey( {group: g.id} ), label: g.name, source: {group: g.id}, nodes: g.nodes} );
+		return y;
+	} );
+	//the source picked, while it is still offered - a Children refresh keeps it - else the first
+	picked = linkedSignal<HistSourceOption[], string|undefined>( {source: this.sources, computation: ( sources, previous )=>( sources.find( s=>s.key==previous?.value ) ?? sources[0] )?.key} );
+	source = computed<HistSourceOption|undefined>( ()=>this.sources().find( s=>s.key==this.picked() ) );
+	histSource = computed<HistSource>( ()=>this.source()?.source ?? {opc: this.cnnctnSlug} );
+	isGroup = computed( ()=>this.histSource().group!=undefined );
+	//what belongs to one source on one gateway and connection:  the aggregates listed, the aggregate picked, a group's capabilities
+	sourceKey = computed( ()=>`${this.connection()}/${histSourceKey( this.histSource() )}` );
+	pick( key:string ){ this.picked.set( key ); }
+	//the source's nodes, for the chips
+	nodes = computed<Variable[]>( ()=>this.source()?.nodes ?? [] );
 	//the first eight by default:  the trend's palette has eight slots, assigned in order and never cycled
-	selectedKeys = linkedSignal<Set<NodeKey>>( ()=>new Set( this.candidates().slice(0, NodeHistory.maxSeries).map(v=>v.key) ) );
-	selected = computed<Variable[]>( ()=>this.candidates().filter( v=>this.selectedKeys().has(v.key) ) );
-	//the nodes this user may edit, by the server's HistoryWrite bit:  the Edit menu's and the rows' gate.  Not an array, which the
-	//dialog has no editor for, as the Children tab has none.
-	writable = computed<Variable[]>( ()=>this.selected().filter( v=>v.historyWritable && !v.isArray ) );
+	selectedKeys = linkedSignal<Set<NodeKey>>( ()=>new Set( this.nodes().slice(0, NodeHistory.maxSeries).map(v=>v.key) ) );
+	selected = computed<Variable[]>( ()=>this.nodes().filter( v=>this.selectedKeys().has(v.key) ) );
+	//a group's capabilities, asked when the tab opens on it (historyCapabilities):  its aggregates, and whether this user may edit it
+	capabilities = linkedSignal<string, HistCapabilities|undefined>( {source: this.sourceKey, computation: ()=>undefined} );
+	//what the edits are gated by:  on a server each node's HistoryWrite bit stands for both (writable);  on a group, Update and
+	//Delete granted on an enforced resource, which the gateway refuses the edits without (spec *Authorization*)
+	rights = computed<HistRights>( ()=>this.isGroup() ? { update: !!this.capabilities()?.update, delete: !!this.capabilities()?.delete } : { update: true, delete: true } );
+	//the nodes this user may edit:  the Edit menu's and the rows' gate.  Not an array, which the dialog has no editor for, as the
+	//Children tab has none.
+	writable = computed<Variable[]>( ()=>{
+		const rights = this.rights();
+		return this.selected().filter( v=>!v.isArray && ( this.isGroup() ? rights.update || rights.delete : v.historyWritable ) );
+	} );
+	//the live tail, the node's /opc subscription:  the values, raw, of a server source
+	canLive = computed( ()=>this.mode()=='values' && !this.aggregated() && !this.isGroup() );
+	answerer = computed( ()=>this.isGroup() ? "the gateway" : "the server" );
 	canSelect( v:Variable ):boolean{ return this.selectedKeys().has( v.key ) || this.selectedKeys().size<NodeHistory.maxSeries; }
 	toggle( v:Variable ){
 		this.selectedKeys.update( keys=>{
@@ -82,10 +120,10 @@ export class NodeHistory implements OnDestroy{
 	stepped = signal( true );
 	live = signal( true );
 	mode = signal<HistMode>( 'values' );
-	aggregates = linkedSignal<string,HistAggregate[]>( {source: this.connection, computation: ()=>[]} );
-	//the picker's:  none reads the values.  None on another connection, which may not have the aggregate picked:  the read
+	aggregates = linkedSignal<string,HistAggregate[]>( {source: this.sourceKey, computation: ()=>[]} );
+	//the picker's:  none reads the values.  None on another source, which may not have the aggregate picked:  the read
 	//naming it there failed (historian-aggregate-picker #3).
-	aggregation = linkedSignal<string,HistAggregation|undefined>( {source: this.connection, computation: ()=>undefined} );
+	aggregation = linkedSignal<string,HistAggregation|undefined>( {source: this.sourceKey, computation: ()=>undefined} );
 	//what the read is of:  an aggregate in the Values mode alone, since the modifications are records
 	aggregated = computed<HistAggregation|undefined>( ()=>this.mode()=='values' ? this.aggregation() : undefined );
 
@@ -103,7 +141,7 @@ export class NodeHistory implements OnDestroy{
 		if( !nodes.length )
 			return;
 		//the tail first, and the read past it:  a value recorded after the read's end and before the subscription is in neither
-		if( this.live() && mode=='values' && !aggregation )
+		if( this.live() && this.canLive() )
 			this.#subscribe( nodes );
 		await this.#read( this.#opening( nodes, mode, aggregation, 1 ), generation );
 	}
@@ -136,7 +174,7 @@ export class NodeHistory implements OnDestroy{
 	}
 	//the latest record of the nodes before an aggregate range, raw:  undefined at the start of their history
 	async #lastBefore( args:HistReadArgs ):Promise<number|undefined>{
-		const page = await this.#history.read( this.gateway, {opc: this.cnnctnSlug}, {nodes: args.nodes, end: args.start, limit: 1}, m=>console.log(m) );
+		const page = await this.#history.read( this.gateway, this.histSource(), {nodes: args.nodes, end: args.start, limit: 1}, m=>console.log(m) );
 		return page.values.find( v=>v.source )?.source!.getTime();
 	}
 	//paged back by its continuation - the read's exact place, which neither the oldest value held (a live push can be older
@@ -203,7 +241,7 @@ export class NodeHistory implements OnDestroy{
 	}
 	//one page, or undefined for a selection since changed, whose page is dropped
 	async #page( args:HistReadArgs, generation:number ):Promise<HistPage|undefined>{
-		const page = await this.#history.read( this.gateway, {opc: this.cnnctnSlug}, args, m=>console.log(m) );
+		const page = await this.#history.read( this.gateway, this.histSource(), args, m=>console.log(m) );
 		if( generation!=this.#generation )
 			return undefined;
 		this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status )] );
@@ -238,17 +276,26 @@ export class NodeHistory implements OnDestroy{
 		this.#tail = [];
 		this.#read( this.#opening( nodes, this.mode(), this.aggregated(), pages ), generation, pages );
 	}
-	//a server that lists no aggregates, or refuses the browse of the folder, leaves the raw values alone to pick
-	async #loadAggregates( connection:string ){
-		let list:HistAggregate[] = [];
+	//what the source lists for the picker:  a server's AggregateFunctions folder, once per connection, or a group's capabilities,
+	//its aggregates with this user's rights on it, asked each time the tab opens on it.  A server that lists none, or refuses the
+	//browse, and a group the gateway won't describe leave the raw values alone to pick, and a group's edits off.
+	async #loadSource( key:string, source:HistSource ){
+		let list:HistAggregate[] = [], capabilities:HistCapabilities|undefined;
 		try{
-			list = await this.#history.aggregates( this.gateway, this.cnnctnSlug, m=>console.log(m) );
+			if( source.group!=undefined ){
+				capabilities = await this.#history.capabilities( this.gateway, source.group, m=>console.log(m) );
+				list = capabilities.aggregates;
+			}
+			else
+				list = await this.#history.aggregates( this.gateway, source.opc, m=>console.log(m) );
 		}
 		catch( e ){
-			console.warn( `Could not list the aggregates of ${connection}.`, e );
+			console.warn( `Could not describe the history of ${key}.`, e );
 		}
-		if( connection==this.connection() )
-			this.aggregates.set( list );
+		if( key!=this.sourceKey() )
+			return;
+		this.aggregates.set( list );
+		this.capabilities.set( capabilities );
 	}
 	onLiveChange( on:boolean ){
 		this.live.set( on );
@@ -261,7 +308,7 @@ export class NodeHistory implements OnDestroy{
 	//Children tab's ticks and this tail share the server-side item and neither drops the other's.
 	#subscribe( nodes:Variable[] ){
 		this.#unsubscribe();
-		if( !nodes.length || this.aggregated() || this.mode()!='values' )
+		if( !nodes.length || !this.canLive() )
 			return;
 		const byKey = new Map( nodes.map( n=>[n.key, n] ) );
 		this.#subscription = this.gateway.subscribe( this.cnnctnSlug, nodes.map( n=>n.nodeId ), this.#owner ).subscribe({
@@ -313,24 +360,25 @@ export class NodeHistory implements OnDestroy{
 	//a row's Replace:  the dialog on the value's node, time and value, with the status blank, which is Good
 	replaceValue( v:HistValue ){
 		const node = this.writable().find( n=>n.key==v.node.key );
-		if( node && v.source && v.sourceTime )
+		if( node && v.source && v.sourceTime && this.rights().update )
 			this.openEdit( 'replace', {node, time: v.source, sourceTime: v.sourceTime, value: v.value} );
 	}
 	//a row's Delete:  a range purge from the value's time to itself, the one value there on a group, OpcServer and open62541's
 	//backend alike (spec *Pass-through*), where a purge at the time is what OpcServer refuses.  The time to the tick:  a
 	//millisecond's range would miss a record stamped inside it.
 	async deleteValue( v:HistValue ){
-		if( !v.source || !v.sourceTime || !this.writable().some( n=>n.key==v.node.key ) )
+		if( !v.source || !v.sourceTime || !this.rights().delete || !this.writable().some( n=>n.key==v.node.key ) )
 			return;
 		const name = this.nodeName( v.node );
-		if( !await confirm( this.dialog, {title: "Delete this value?", message: `${name} at ${v.source.toLocaleString()} will be deleted from the server's history.  The bundled OPC server keeps the deleted value as a modification.  Another server may not.`, confirm: "Delete", destructive: true} ) )
+		const where = this.isGroup() ? "the gateway's history of the group, which keeps the deleted value as a modification." : "the server's history.  The bundled OPC server keeps the deleted value as a modification.  Another server may not.";
+		if( !await confirm( this.dialog, {title: "Delete this value?", message: `${name} at ${v.source.toLocaleString()} will be deleted from ${where}`, confirm: "Delete", destructive: true} ) )
 			return;
 		try{
 			const result = await this.#edit( {kind: 'purgeRange', nodes: [v.node], start: v.sourceTime, end: v.sourceTime} );
 			if( editRefused( result ) ){
 				const status = result.nodes.find( n=>isBad(n.status) )?.status ?? result.values.find( x=>isBad(x.status) )?.status ?? 0;
 				await this.#fetchNames( [status] );//a snackbar's text doesn't repaint when the name lands
-				return this.snackbar.error( `Could not delete the value:  the server answered ${OpcError.text( status )}.` );
+				return this.snackbar.error( `Could not delete the value:  ${this.answerer()} answered ${OpcError.text( status )}.` );
 			}
 			this.snackbar.info( NodeHistory.done.purgeRange );
 			this.#refresh();
@@ -339,8 +387,8 @@ export class NodeHistory implements OnDestroy{
 			this.snackbar.exception( "Could not delete the value.", e );
 		}
 	}
-	#edit( args:HistEditArgs ):Promise<HistEditResult>{ return this.#history.edit( this.gateway, {opc: this.cnnctnSlug}, args, m=>console.log(m) ); }
-	nodeName( id:NodeId ):string{ return this.candidates().find( c=>c.key==id.key )?.name ?? id.toString(); }
+	#edit( args:HistEditArgs ):Promise<HistEditResult>{ return this.#history.edit( this.gateway, this.histSource(), args, m=>console.log(m) ); }
+	nodeName( id:NodeId ):string{ return this.nodes().find( c=>c.key==id.key )?.name ?? id.toString(); }
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
 	get gateway():Gateway{ return this.pageData().gateway; }
 	get cnnctnSlug():string{ return this.pageData().server.connection.slug; }

@@ -13,6 +13,7 @@
 #include "HistQLAwait.h"
 #include "HistComputedQLAwait.h"
 #include "HistGroupReadQLAwait.h"
+#include "HistGroupInfoQLAwait.h"
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
@@ -48,12 +49,14 @@ namespace Jde::Opc::Gateway{
 		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!="search";//search must never ConnectAwait - it only reads clients already open.
 	}
 	α GatewayQLAwait::IsApplicable( const QL::TableQL& q )ι->bool{
-		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || needsClient(q);
+		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || HistGroupInfoQLAwait::IsApplicable(q) || needsClient(q);
 	}
 	α GatewayQLAwait::Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		up<TAwait<jvalue>> await;
 		if( HistGroupReadQLAwait::IsApplicable(q) )//before needsClient:  a null `opc` beside `group` names no server.
 			await = mu<HistGroupReadQLAwait>( move(q), move(executer), sl );
+		else if( HistGroupInfoQLAwait::IsApplicable(q) )//before needsClient too:  historyGroups names its connection with `opc` and opens no client for it.
+			await = mu<HistGroupInfoQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="opcSessions" )
 			await = mu<OpcSessionsQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="search" )

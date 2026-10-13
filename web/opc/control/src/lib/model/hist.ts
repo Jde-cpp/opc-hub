@@ -1,7 +1,7 @@
 import { ProtoUtils, Timestamp } from 'jde-framework';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { ENodeClass } from './node';
+import { ENodeClass, Variable } from './node';
 import { CnnctnSlug } from './server-cnnctn';
 import { isBad, nameKey } from './status-code';
 import { Browse, StatusCode, toLocalizedText } from './types';
@@ -10,6 +10,20 @@ import { toValue, Value, valueJson } from './value';
 //Where a read comes from:  a server's own history over its connection, read through the gateway (spec *Pass-through*), or a
 //group the gateway's historian keeps, once it keeps them.  One result shape for both.
 export type HistSource = { opc:CnnctnSlug; group?:undefined } | { group:number; opc?:undefined };
+//one key per source, for what belongs to one:  the aggregates listed, the aggregate picked, a group's capabilities
+export function histSourceKey( s:HistSource ):string{ return s.group!=undefined ? `group/${s.group}` : `opc/${s.opc}`; }
+//A group the gateway's historian keeps, as historyGroups answers it for a page's nodes (spec *Reads*):  its id, the name it is
+//shown by, and those of the nodes asked that it holds, spelled as a read spells them back.  A node is in one group per connection
+//at most, so this says where the gateway keeps each node's history, beside what its server keeps.
+export type HistGroup = { id:number; name:string; nodes:NodeId[] };
+//A group's members among a page's nodes:  a History tab's source beside the server's own history.
+export type HistGroupMembers = { id:number; name:string; nodes:Variable[] };
+//What this user may do with a group's history, as historyCapabilities answers it:  the aggregates the historian computes, which an
+//aggregate read with `group` names, and the edits - Update for an insert, replace or update, Delete for a purge, each a grant on
+//an enforced resource, which the gateway refuses the edits without (spec *Authorization*).  A server's node says both with
+//userAccessLevel's HistoryWrite bit;  a group has nothing like it, so the gateway is asked.
+export type HistRights = { update:boolean; delete:boolean };
+export type HistCapabilities = HistRights & { aggregates:HistAggregate[] };
 
 //ModificationInfo, with `modified: true`:  what an edit did, when and who (spec *Reads*).
 export type HistModification = { time:Date|null; type:string; user:string };
@@ -70,6 +84,13 @@ export function toHistPage( json:any ):HistPage{
 		continuation: json?.continuation ?? null,
 		nodes: ( <any[]>(json?.nodes ?? []) ).map( n=>({ node: new NodeId(n.node), status: <StatusCode>(n.status ?? 0) }) )
 	};
+}
+export function toHistGroups( json:any ):HistGroup[]{
+	return ( <any[]>(json?.groups ?? []) ).map( g=>({ id: Number( g.id ), name: String( g.name ?? '' ), nodes: ( <any[]>(g.nodes ?? []) ).map( n=>new NodeId( n ) ) }) );
+}
+//a group's aggregates are the library's, named alone:  the name is the browse name, as a read takes it
+export function toHistCapabilities( json:any ):HistCapabilities{
+	return { aggregates: ( <any[]>(json?.aggregates ?? []) ).map( a=>({ name: String( a ), browse: String( a ) }) ), update: !!json?.update, delete: !!json?.delete };
 }
 //the folder's objects as node{ children{ name browse nodeClass } } lists them, in the server's order:  an aggregate is an
 //object, by Part 13's AggregateFunctionType, and nothing else there is one.  Labelled by its display name, or its browse name

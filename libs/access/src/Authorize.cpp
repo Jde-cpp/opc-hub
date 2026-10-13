@@ -1,3 +1,4 @@
+#include <expected>
 #include <jde/access/Authorize.h>
 #include <jde/fwk/str.h>
 #include <jde/db/usings.h>
@@ -7,6 +8,7 @@
 #include <jde/access/AccessException.h>
 #include <jde/fwk/utils/collections.h>
 #include "awaits/ResourceLoadAwait.h"
+#include "jde/access/usings.h"
 
 #define let const auto
 namespace Jde::Access{
@@ -97,23 +99,34 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, executer, sl );
 	}
-	α Authorize::TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+	α Authorize::IsEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>{
 		if( executer.Value==UserPK::System )
-			return;
+			return {};
 		rl _{ Mutex };
 		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, criteria );
 		if( !resourcePK && criteria.size() )
 			resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );
 		let name = criteria.size() ? Ƒ( "{}[{}]", resourceName, criteria ) : resourceName;
-		THROW_IFX( !resourcePK, Access::AccessException(sl, executer, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name) );
-		TestRights( *resourcePK, name, rights, executer, sl );
+		if( resourcePK )
+			return HasRights( *resourcePK, name, rights, executer, sl );
+		return std::unexpected(Access::AccessException{sl, executer, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name} );
 	}
+	α Authorize::TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+		if( auto enforced = IsEnforced(schemaName, resourceName, criteria, rights, executer, sl); !enforced )
+			throw move(enforced.error());
+	}
+
+	Ω accessException( EHttpStatus status, UserPK executer, SL sl )ι->Access::AccessException{
+		return status==EHttpStatus::Unauthorized
+			? Access::AccessException{ sl, executer, EHttpStatus::Unauthorized, "User not found." }
+			: Access::AccessException{ sl, executer, "User is deleted." };
+	}
+
 	//FindUserLocked's error as the exception:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
 	[[noreturn]] Ω throwUserStatus( EHttpStatus status, UserPK executer, SL sl )ε->void{
-		if( status==EHttpStatus::Unauthorized )
-			throw Access::AccessException{ sl, executer, EHttpStatus::Unauthorized, "User not found." };
-		throw Access::AccessException{ sl, executer, "User is deleted." };
+		throw accessException( status, executer, sl );
 	}
+
 	α Authorize::TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
 		if( executer.Value==UserPK::System )
 			return;
@@ -146,12 +159,20 @@ namespace Jde::Access{
 	//may do, Unauthorized only for who they are (access-review3 #17).  The executer is the exception's own field, not a "[{}]"
 	//prefix:  ServerImpl formats it through UserName().
 	α Authorize::TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void{
+		if( auto hasRights = HasRights( resourcePK, resourceName, rights, executer, sl ); !hasRights )
+			throw move(hasRights.error());
+	}
+	α Authorize::HasRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ι->std::expected<void, Access::AccessException>{
 		let configured = ConfiguredRightsLocked( executer, resourcePK );
 		if( !configured )
-			throwUserStatus( configured.error(), executer, sl );
-		THROW_IFX( !empty(configured->Denied & rights), Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
-		THROW_IFX( empty(configured->Allowed & rights), Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
+			return std::unexpected( accessException(configured.error(), executer, sl) );
+		if( !empty(configured->Denied & rights) )
+			return std::unexpected( Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
+		if( empty(configured->Allowed & rights) )
+			return std::unexpected( Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
+		return {};
 	}
+
 	α Authorize::TestAdminResource( ResourcePK resourcePK, UserPK executer, SL sl )ε->void{
 		rl _{ Mutex };
 		auto resource=Resources.find( resourcePK );

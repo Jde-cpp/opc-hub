@@ -70,8 +70,8 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 		series.forEach( (node, i)=>{
 			const id = node.nodeId.uaString(), flagsId = `${id}/flags`;//Highcharts ids are strings;  NodeId.key is a Symbol
 			keep.add( id ); keep.add( flagsId );
-			const {points, flags} = toTrendPoints( byNode.get(node.key) ?? [], node.nodeId, stepped );
 			const color = trendPalette[Math.min( i, trendPalette.length-1 )];
+			const {points, flags} = toTrendPoints( byNode.get(node.key) ?? [], node.nodeId, stepped, color );
 			const line = <Highcharts.Series|undefined>chart.get( id );
 			if( !line )
 				chart.addSeries( {type: 'line', id, name: node.name, color, step, data: points}, false );
@@ -131,7 +131,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 		return {
 			chart: { backgroundColor: 'transparent', style: {fontFamily: 'inherit'}, animation: false, zooming: {type: 'x'}, panning: {enabled: true, type: 'x'}, panKey: 'shift', spacing: [8, 8, 8, 8] },
 			lang: { accessibility: {defaultChartTitle: HistTrend.title( this.series() )} },
-			accessibility: { description: 'Historical values of the selected nodes over time.  A Bad reading is a gap in its line, flagged with its status;  an Uncertain one keeps its value under a triangle.' },
+			accessibility: { description: 'Historical values of the selected nodes over time.  A Bad reading is a gap in its line, flagged with its status;  an Uncertain one keeps its value under a triangle;  a ring marks a heartbeat, a stored repeat of the value before it.' },
 			title: { text: undefined },
 			credits: { style: {color: muted} },
 			time: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
@@ -151,7 +151,8 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 					const custom = <TrendPoint["custom"]|undefined>this.options.custom;
 					const status = statusIcon( custom?.status ) ? ` (${OpcError.text( custom!.status )})` : '';//the table's rule:  none for a Good with nothing to say, an aggregate's Calculated one too
 					const held = custom?.hold ? ', held' : '';
-					return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${this.y}</b>${status}${held}<br/>`;
+					const heartbeat = custom?.heartbeat ? ', heartbeat' : '';
+					return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${this.y}</b>${status}${held}${heartbeat}<br/>`;
 				}
 			},
 			plotOptions: {
