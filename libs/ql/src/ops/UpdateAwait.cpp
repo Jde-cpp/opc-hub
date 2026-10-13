@@ -92,7 +92,7 @@ namespace Jde::QL{
 			if( !jvalue )
 				continue;
 			if( !c->IsFlags() )
-				update.Add( c, DB::Value{c->Type, *jvalue} );
+				update.Add( c, qlColumn.ToValue(*jvalue) );
 			else{
 				uint value = 0;
 				if( let flags = jvalue->if_array(); flags && flags->size() )

@@ -23,10 +23,12 @@ file( GLOB headers CONFIGURE_DEPENDS *.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 target_compile_definitions( ${targetName} PRIVATE TESTS )
 target_link_libraries( ${targetName} GTest::gtest Threads::Threads )
-target_link_libraries( ${targetName} Jde.QL Jde.DB Jde ) #no driver and no schema: these are parser/Input/filter tests, nothing opens a data source.
+target_link_libraries( ${targetName} Jde.QL Jde.DB Jde ) #no driver linked - the sqlite one is dlopen'd via config/args/sqlite - and no Jde.Access:  the schema is this suite's own (config/qlTests-meta.jsonnet, #238), authorized by nobody.
+add_subdirectory( config/sql/sqlite ) #the qlTests schema's insert twins - a MODULE the driver dlopens from the same args.
+sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.QLTests ) #the ctest run below dlopens these via config/args/sqlite
 
 if( WIN32 )
-	set_target_properties( ${targetName} PROPERTIES VS_DEBUGGER_COMMAND_ARGUMENTS "-tests -settings=${CMAKE_CURRENT_SOURCE_DIR}/config/QL.Tests.jsonnet" )
+	set_target_properties( ${targetName} PROPERTIES VS_DEBUGGER_COMMAND_ARGUMENTS "-tests -settings=${CMAKE_CURRENT_SOURCE_DIR}/config/QL.Tests.jsonnet -include=args/sqlite -arg path=:memory:" ) #args/sqlite is the only dialect here, so a direct run names it.
 	copyCommonDlls()
 else()
 	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )

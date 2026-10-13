@@ -3,8 +3,9 @@
 //cost *every* subscriber the notification.  These tests pin the reachable shapes.
 //Deletes are the no-id path here: UpdateAwait resumes with a bare rowCount, so `available` is the args alone (an insert on a
 //table with an insert proc - every access table - gets its id back from the proc's out row and never reaches the lookup).
-//This suite is the schema-backed one closest to QL (sqlite in-memory under ctest), so the coverage lives here rather than in
-//Jde.QL.Tests, which opens no data source.
+//This suite was the schema-backed one closest to QL (sqlite in-memory under ctest), so the coverage landed here while
+//Jde.QL.Tests opened no data source;  since #238 its own sqlite fixture pins the stock shapes too (CrudOpsTests), and what
+//stays here is what needs access's schema - extensions, procs, the AccessListener.
 #include "gtest/gtest.h"
 #include <jde/access/AccessListener.h>
 #include <jde/access/Authorize.h>

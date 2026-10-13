@@ -80,7 +80,7 @@ namespace Jde::QL{
 				++cNonDefaultArgs;
 				value = c->IsEnum() && (jvalue->is_string() || jvalue->is_array())
 					? getEnumValue( *c, qlCol, *jvalue )
-					: Value{ c->Type, *jvalue };
+					: qlCol.ToValue( *jvalue );
 			}
 			//#24: still ungated beyond the extension check above - the schema seed inserts its enum rows through this branch
 			//(`createRights( name:"None", id:0 )`, which LocalQL::Upsert routes here *without* _identityInsert), so gating it on
@@ -88,6 +88,12 @@ namespace Jde::QL{
 			//to someone else's identity, is handled by isExtensionKey.
 			else if( let id = !isExtensionKey && c->IsPK() ? input.if_contains("id") : nullptr; id )
 				value = Value{ c->Type, *id };
+			//#238: a key-spelled fk (`histTemplate:{ id:N }`) was read by CreateQuery, so it is an arg now - the missing-column fill
+			//below never reaches a nullable fk, whose default is null.
+			else if( auto nested = !isExtensionKey && c->PKTable ? _nestedIds.find(c->Name) : _nestedIds.end(); nested!=_nestedIds.end() ){
+				++cNonDefaultArgs;
+				value = nested->second;
+			}
 			else if( !c->Default && c->Insertable ){ //insertable=not populated by stored proc, may [not] be an extension record.
 				THROW_IF( !c->PKTable, "No default for '{}' in '{}'. mutation='{}'", c->Name, table.Name, _mutation.ToString() );
 				++cNonDefaultArgs;

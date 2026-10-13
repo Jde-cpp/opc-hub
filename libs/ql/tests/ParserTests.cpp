@@ -406,28 +406,31 @@ namespace Jde::QL::Tests{
 	//what may run it.
 	TEST( MutationQLTests, ASystemMutationIsACommandOfItsOwn ){
 		static const vector<sp<DB::AppSchema>> noSchemas;
-		EXPECT_FALSE( MutationQL::IsMutation("histTestEdit") );
-		QL::SetSystemMutations( {"histTestEdit"} );
-		EXPECT_TRUE( MutationQL::IsMutation("histTestEdit") );
-		let [name,type] = MutationQL::ParseCommand( "histTestEdit" );
-		EXPECT_EQ( name, "histTestEdit" );
+		static uint run{};//the registry only grows - SetSystemMutations merges and nothing clears it - so each run (--gtest_repeat) registers names of its own.
+		let command = Ƒ( "histTestEdit{}", ++run );
+		let verbCommand = Ƒ( "createTestEdit{}", run );
+		EXPECT_FALSE( MutationQL::IsMutation(command) );
+		QL::SetSystemMutations( {command} );
+		EXPECT_TRUE( MutationQL::IsMutation(command) );
+		let [name,type] = MutationQL::ParseCommand( command );
+		EXPECT_EQ( name, command );
 		EXPECT_EQ( type, EMutationQL::Execute );
-		for( let text : {"histTestEdit( opc:\"x\", nodes:[1] ){ values{ status } }", "mutation histTestEdit( opc:\"x\", nodes:[1] ){ values{ status } }"} ){
+		for( let& text : {Ƒ("{}( opc:\"x\", nodes:[1] ){{ values{{ status }} }}", command), Ƒ("mutation {}( opc:\"x\", nodes:[1] ){{ values{{ status }} }}", command)} ){
 			auto request = QL::Parse( text, {}, noSchemas );
 			ASSERT_TRUE( request.IsMutation() ) << text;
 			ASSERT_EQ( request.Mutations().size(), 1u );
 			let& m = request.Mutations().front();
-			EXPECT_EQ( m.JsonTableName, "histTestEdit" );
+			EXPECT_EQ( m.JsonTableName, command );
 			EXPECT_FALSE( m.DBTable );
 			ASSERT_TRUE( m.ResultRequest );
 			EXPECT_TRUE( m.ResultRequest->FindTable("values") );
 		}
-		EXPECT_FALSE( MutationQL::IsMutation("histTestEdits") );
+		EXPECT_FALSE( MutationQL::IsMutation(command+"s") );
 		//Taken whole though it starts with a verb, as the gateway's createHistory is.
-		EXPECT_EQ( get<1>(MutationQL::ParseCommand("createTestEdit")), EMutationQL::Create );
-		QL::SetSystemMutations( {"createTestEdit"} );
-		let [verbName, verbType] = MutationQL::ParseCommand( "createTestEdit" );
-		EXPECT_EQ( verbName, "createTestEdit" );
+		EXPECT_EQ( get<1>(MutationQL::ParseCommand(verbCommand)), EMutationQL::Create );
+		QL::SetSystemMutations( {verbCommand} );
+		let [verbName, verbType] = MutationQL::ParseCommand( verbCommand );
+		EXPECT_EQ( verbName, verbCommand );
 		EXPECT_EQ( verbType, EMutationQL::Execute );
 	}
 

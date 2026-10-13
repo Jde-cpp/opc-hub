@@ -117,8 +117,8 @@ and `copyCommonDlls()` stages `Jde.dll`, `Jde.DB.dll` and the fmt/zlib/abseil DL
 ctest needs no PATH changes.
 
 A direct run (debugger, by hand) is as on Linux: cwd `<buildDir>\runtime`, `REPO_SOURCE_DIR=$JDE_DIR`,
-`REPO_BUILD_DIR=` the build dir's **parent**. The `-tests` default import dir is `config/args/sqlServer` on Windows;
-use `-include=args/sqlite -arg path=<file>` without SQL Server.
+`REPO_BUILD_DIR=` the build dir's **parent**. `-tests` selects no import dir, so pass one:
+`-include=args/sqlServer`, or `-include=args/sqlite -arg path=<file>` without SQL Server.
 
 ## Targets
 

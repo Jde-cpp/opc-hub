@@ -9,7 +9,7 @@
 		"cmake.sourceDirectory": "${config:workspace}/../..",
 		"cmake.defaultActiveFolder": "${config:cmake.sourceDirectory}",
 		"cmake.buildDirectory": "${command:jde.repoBuildDir}",
-		"settings": "${workspaceFolder:tests}/config/Framework.Tests.jsonnet",
+		"settings": "${workspaceFolder:tests}/config/QL.Tests.jsonnet",
 		"testSettings": "${config:settings}",
 		"binDir": "${config:subDir}/tests",
 		"program": "${config:binDir}/${config:target}${config:targetExtension}"
@@ -37,9 +37,15 @@
 				"program": "${config:cmake.buildDirectory}/debug/${config:program}",
 				"args": [
 					"-tests",
-					"-settings=${config:settings}"
+					"-settings=${config:settings}",
+					"-include=args/sqlite",
+					"-arg=\"path=:memory:\""
 				],
 				"cwd": "${command:jde.repoBuildDir}/debug/runtime",
+				"env":{
+					"REPO_SOURCE_DIR": "${config:cmake.sourceDirectory}",
+					"REPO_BUILD_DIR": "${config:cmake.buildDirectory}"
+				},
 				"preLaunchTask": "build"
 			}
 		],
