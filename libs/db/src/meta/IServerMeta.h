@@ -2,7 +2,7 @@
 #include "../usings.h"
 
 namespace Jde::DB{
-	struct Cluster; struct ForeignKey; struct IDataSource;  struct Index; struct Procedure; struct AppSchema; struct SchemaDdl; struct Table; struct TableDdl;
+	struct Cluster; struct ColumnDdl; struct ForeignKey; struct IDataSource;  struct Index; struct Procedure; struct AppSchema; struct SchemaDdl; struct Table; struct TableDdl; struct Value;
 
 	struct IServerMeta{
 		//#52: a reference, not an sp.  The meta is a up<> member of the data source, so it strictly cannot outlive it -
@@ -16,6 +16,10 @@ namespace Jde::DB{
 		β LoadIndexes( sv schemaName, sv tablePrefix, sv tableName={} )Ε->vector<Index> = 0;
 		β LoadForeignKeys( str schemaName )Ε->flat_map<string,ForeignKey> = 0;
 		β LoadProcs( str schemaName )Ε->flat_map<string,Procedure> = 0;
+		//#241: `dflt` - a configured `default:` - onto `column` of the existing `table`, which SchemaDdl::SyncTables found
+		//spelled otherwise in the catalog.  Runs Syntax::SetDefault's statements; sqlite, which has none, overrides this
+		//to rewrite the table's stored CREATE TABLE text (SqliteServerMeta).
+		β SetDefault( const Table& table, const ColumnDdl& column, const Value& dflt )Ε->void;
 	private:
 		β ToType( sv typeName )Ι->EType=0;
 	protected:

@@ -6,7 +6,9 @@
 #include <jde/db/meta/Table.h>
 #include "../../../src/meta/ServerMetaFold.h"
 #include "../../../src/meta/ddl/Procedure.h"
+#include "SqliteDdl.h"
 #include "SqliteProcs.h"
+#include <jde/db/generators/Syntax.h>
 
 #define let const auto
 
@@ -49,7 +51,7 @@ namespace Jde::DB::Sqlite{
 			let type = meta.ToType( baseType );
 			//rowid alias: only a single-column integer pk auto-assigns - see SqliteSyntax::ToString/CreatePrimaryKey.
 			let isIdentity = pk==1 && pkCount==1 && absl::StrContainsIgnoreCase(baseType, "int");
-			FoldColumnRow( tables, table, ms<ColumnDdl>(name, BitDefault(dflt, type), isNullable, type, maxLength, isIdentity, pk ? optional<uint8>((uint8)(pk-1)) : optional<uint8>{}, precision, scale) );
+			FoldColumnRow( tables, table, ms<ColumnDdl>(name, StripParens(dflt), isNullable, type, maxLength, isIdentity, pk ? optional<uint8>((uint8)(pk-1)) : optional<uint8>{}, precision, scale) ); //dflt_value is the ddl text as written, its outer parens already gone - `'x'`, `1`, `unixepoch()`.
 		};
 		Sql sql{ Ƒ("select m.name, ti.name, ti.cid, coalesce(ti.dflt_value,''), ti.\"notnull\", ti.type, ti.pk,"
 			"\n\t(select count(*) from pragma_table_info(m.name) p where p.pk>0)"
@@ -138,6 +140,32 @@ namespace Jde::DB::Sqlite{
 			"\nwhere {}"
 			"\norder by m.name, fk.id, fk.seq", userTableFilter)}, onRow );
 		return fks;
+	}
+
+	//The manual's writable_schema procedure (SqliteDdl.h):  the rewritten text in place of the stored one, the schema
+	//cookie bumped so other connections reload, and `reset` so this one does too - the read-back then runs on the new
+	//text, inside the transaction, so a rewrite sqlite can't parse rolls back instead of leaving the file unreadable.
+	α SqliteServerMeta::SetDefault( const Table& table, const ColumnDdl& column, const Value& dflt )Ε->void{
+		let& name = table.DBName;
+		let literal = _ds.Syntax().DefaultLiteral( dflt );
+		let version = _ds.ScalerSync<uint>( {"pragma schema_version"} );
+		let sql = _ds.ScalerSync<string>( {"select sql from sqlite_master where type='table' and name=?", {Value{name}}} );
+		let rewritten = RewriteDefault( sql, column.Name, literal );
+		_ds.ExecuteSync( {"begin immediate"} );
+		try{
+			_ds.ExecuteSync( {"pragma writable_schema=on"} );
+			_ds.ExecuteSync( {"update sqlite_master set sql=? where type='table' and name=?", {Value{rewritten}, Value{name}}} );
+			_ds.ExecuteSync( {Ƒ("pragma schema_version={}", version+1)} );
+			_ds.ExecuteSync( {"pragma writable_schema=reset"} );
+			let applied = _ds.ScalerSyncOpt<string>( {"select dflt_value from pragma_table_info(?) where name=?", {Value{name}, Value{column.Name}}} );
+			THROW_IF( !applied || StripParens(*applied)!=StripParens(literal), "'{}.{}' reads back default '{}' after the rewrite, not '{}':\n{}", name, column.Name, applied.value_or("<null>"), literal, rewritten );
+			_ds.ExecuteSync( {"commit"} );
+		}
+		catch( ... ){
+			try{ _ds.ExecuteSync( {"rollback"} ); }
+			catch( const std::exception& e ){ ERR( "rollback after a failed rewrite of '{}' failed: {}", name, e.what() ); }
+			throw;
+		}
 	}
 
 	α SqliteServerMeta::LoadProcs( str /*schemaName*/ )Ε->flat_map<string,Procedure>{

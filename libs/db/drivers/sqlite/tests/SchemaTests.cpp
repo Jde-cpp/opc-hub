@@ -4,6 +4,7 @@
 #include <jde/db/generators/Statement.h>
 #include "../../../src/meta/IServerMeta.h"
 #include "../../../src/meta/ddl/TableDdl.h" //complete type for LoadTable's sp<TableDdl>.
+#include "../../../src/meta/ddl/ColumnDdl.h" //#241: the loaded default text.
 #include "../../../src/meta/ddl/Index.h" //complete type for LoadIndexes' vector<Index>.
 #include "../../../src/meta/ddl/ForeignKey.h" //complete type for LoadForeignKeys' flat_map<string,ForeignKey>.
 #include "../../../src/meta/ddl/Procedure.h" //complete type for LoadProcs' flat_map<string,Procedure>.
@@ -38,13 +39,16 @@ namespace Jde::DB::Sqlite::Tests{
 		ASSERT_TRUE( name );
 		EXPECT_EQ( name->Type, EType::VarChar );
 
-		let created = table->FindColumn( "created" );
+		let created = std::dynamic_pointer_cast<ColumnDdl>( table->FindColumn("created") );
 		ASSERT_TRUE( created );
 		EXPECT_EQ( created->Type, EType::DateTime );
+		EXPECT_EQ( created->DefaultSql, "unixepoch()" ); //#241: the catalog's default text, which pragma_table_info reads back without the ddl's outer parens.
+		EXPECT_FALSE( created->Default.has_value() );    //the typed default is the configuration's alone.
 
-		let description = table->FindColumn( "description" );
+		let description = std::dynamic_pointer_cast<ColumnDdl>( table->FindColumn("description") );
 		ASSERT_TRUE( description );
 		EXPECT_TRUE( description->IsNullable );
+		EXPECT_TRUE( description->DefaultSql.empty() );
 
 		//composite pk is not an identity.
 		let members = _ds->ServerMeta().LoadTable( "main", "access_role_members" );

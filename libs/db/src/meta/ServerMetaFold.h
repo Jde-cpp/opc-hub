@@ -12,17 +12,28 @@
 //
 //FoldForeignKeyRow is NOT for the sqlite loader.  It reads pragma_foreign_key_list, which is already one row per column
 //and *may legitimately repeat a column* - `foreign key(a,a) references p(x,y)` yields `a` twice, and the dedupe below
-//would collapse it to one.  FoldColumnRow, BitDefault, FoldIndexRow and AttachIndexes have no such dedupe and all three loaders use them.
+//would collapse it to one.  FoldColumnRow, StripParens, FoldIndexRow and AttachIndexes have no such dedupe and all three loaders use them.
 namespace Jde::DB{
 	//One row of a column listing into its table: the table is created on first sight - as a TableDdl, which is what the
 	//loaders answer and SchemaDdl dynamic_casts back to - and the column appended in row order.
 	Ξ FoldColumnRow( flat_map<string,sp<Table>>& tables, str tableName, sp<ColumnDdl> column )ι->void{
 		tables.emplace( tableName, ms<TableDdl>(tableName) ).first->second->Columns.push_back( move(column) );
 	}
-	//The one default the loaders read back: a bit's literal, which sqlite and mysql report as `1`/`0`.  SQL Server spells
-	//it `((1))` and reports ints too - MsSqlSchemaProc parses its own.
-	Ξ BitDefault( sv dflt, EType type )ι->optional<Value>{
-		return type==EType::Bit ? optional<Value>{ Value{dflt=="1"} } : optional<Value>{};
+	//#241: a default's text minus the parentheses a dialect wraps it in - SQL Server spells a number `((1))` and an
+	//expression `(getutcdate())`, and sqlite stores `(unixepoch())` but reads `unixepoch()` back - so a loader's
+	//DefaultSql and SchemaDdl's spelling of the configured default compare on one footing.  Only a pair that encloses
+	//the whole text goes: `(1)+(2)` keeps both.
+	Ξ StripParens( sv text )ι->sv{
+		for( ; text.size()>=2 && text.front()=='(' && text.back()==')'; text = text.substr(1, text.size()-2) ){
+			uint depth{};
+			for( uint i=0; i<text.size()-1; ++i ){ //the opening paren has to close at the last character, not before.
+				if( text[i]=='(' )
+					++depth;
+				else if( text[i]==')' && --depth==0 )
+					return text;
+			}
+		}
+		return text;
 	}
 
 	Ξ FoldForeignKeyRow( flat_map<string,ForeignKey>& fks, str name, str fkTable, str column, str pkTable )ι->void{

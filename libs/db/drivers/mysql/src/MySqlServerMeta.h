@@ -2,11 +2,17 @@
 #include "../../../src/meta/IServerMeta.h"
 
 namespace Jde::DB{
-	struct IDataSource; struct ForeignKey; struct Index; struct Procedure; struct Table;
+	struct IDataSource; struct ForeignKey; struct Index; struct Procedure; struct Syntax; struct Table;
 }
 
 namespace Jde::DB::MySql{
 	α ToDbType( sv columnType )ι->EType;
+	//#241: INFORMATION_SCHEMA.COLUMNS' COLUMN_DEFAULT in Syntax::DefaultLiteral's spelling: a string is reported bare and
+	//gets its quotes back, a bit as `b'1'`/`b'0'` (or `1`/`0` on a tinyint(1)) and becomes BoolLiteral, and an expression
+	//default (EXTRA has DEFAULT_GENERATED) is kept as is - except the now-expression, which the catalog spells
+	//`CURRENT_TIMESTAMP` when declared as that keyword and `now()` when declared as the parenthesized expression
+	//MySqlSyntax::SetDefault has to use; both read back as NowDefault.
+	α MySqlDefault( sv text, bool generated, EType type, const Syntax& syntax )ι->string;
 
 	struct MySqlServerMeta final : IServerMeta{
 		MySqlServerMeta( IDataSource& ds ):

@@ -9,13 +9,27 @@
 
 #define let const auto
 
-namespace Jde::DB::MySql{
+namespace Jde::DB{
+	α MySql::MySqlDefault( sv text, bool generated, EType type, const Syntax& syntax )ι->string{
+		using enum EType;
+		if( generated ){
+			let iv = ToIV( text );
+			return iv=="now()"_iv || iv=="current_timestamp"_iv || iv=="current_timestamp()"_iv ? string{ syntax.NowDefault() } : string{ text };
+		}
+		if( type==Bit )
+			return string{ syntax.BoolLiteral(text=="b'1'" || text=="1") };
+		return type==VarChar || type==Char || type==VarWChar || type==WChar || type==Text || type==NText || type==DateTime || type==SmallDateTime
+			? Syntax::QuoteLiteral( text )
+			: string{ text };
+	}
+namespace MySql{
 	Ω loadTables( IDataSource& ds, const MySqlServerMeta& meta, str schemaName, sv tablePrefix, bool like )ε->flat_map<string,sp<Table>>{
 		flat_map<string,sp<Table>> tables;
 		auto onRow = [&]( Row&& row ){ //ColumnSql's columns; [2] is ORDINAL_POSITION, which the statement orders by.
 			let type = meta.ToType( row.GetString(5) );
 			let isId = row.Get<_int>( 8 ); //ColumnSql's hard-coded `0 is_id`, so nullopt today - `isId!=0` once made it an engaged optional{0}, every column claiming to be pk column 0.
-			FoldColumnRow( tables, row.GetString(0), ms<ColumnDdl>(row.GetString(1), BitDefault(row.GetString(3), type), row.GetString(4)!="NO", type, row.GetOpt<_int>(6), row.Get<_int>(7)!=0, isId ? optional<uint8>{(uint8)(isId-1)} : optional<uint8>{}, row.GetOpt<_int>(9), row.GetOpt<_int>(10)) );
+			let dflt = row.IsNull( 3 ) ? string{} : MySqlDefault( row.GetString(3), row.GetString(11).find("DEFAULT_GENERATED")!=string::npos, type, ds.Syntax() ); //NULL is no default; '' is an empty-string one.
+			FoldColumnRow( tables, row.GetString(0), ms<ColumnDdl>(row.GetString(1), dflt, row.GetString(4)!="NO", type, row.GetOpt<_int>(6), row.Get<_int>(7)!=0, isId ? optional<uint8>{(uint8)(isId-1)} : optional<uint8>{}, row.GetOpt<_int>(9), row.GetOpt<_int>(10)) );
 		};
 		let exact = !like && tablePrefix.size();//LoadTable wants an exact match - LIKE treats '_' in names like role_member as a wildcard.
 		Sql sql{ Ddl::ColumnSql(tablePrefix, exact), {Value{schemaName}} };
@@ -109,4 +123,4 @@ namespace Jde::DB::MySql{
 			WARNT( ELogTags::Sql, "Unknown datatype({}).  need to implement, ok if not our table.", typeName );//WARNT, not WARN: `_tags` comes from the driver's usings.h, which this file no longer pulls in - see the include note above.
 		return type;
 	}
-}
+}}

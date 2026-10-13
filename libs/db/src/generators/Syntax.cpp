@@ -153,16 +153,31 @@ namespace Jde::DB{
 		return y+"$";
 	}
 
-	α Syntax::DefaultLiteral( const Value& dflt )Ι->string{
+	α Syntax::QuoteLiteral( sv text )ι->string{
+		return Ƒ( "'{}'", Str::Replace(text, "'", "''") );
+	}
+	α Syntax::DefaultLiteral( const Value& dflt )Ε->string{
+		if( dflt.is_null() )
+			return {};
 		if( dflt.is_bool() )
 			return string{ BoolLiteral(dflt.get_bool()) };
 		if( dflt.is_string() )
-			return dflt.get_string();
-		CRITICALT( ELogTags::Sql, "Default for '{}' not implemented.", dflt.TypeName() );
-		return {};
+			return dflt.get_string()=="$now" ? string{ NowDefault() } : QuoteLiteral( dflt.get_string() );
+		if( dflt.is_double() )
+			return Ƒ( "{}", dflt.get_double() );
+		if( dflt.is_number() )
+			return Ƒ( "{}", dflt.get_number<_int>() );
+		if( dflt.Type()==EValue::Bytes && dflt.get_bytes().empty() ) //Column's placeholder for a nullable binary column (getDefault) - no default.
+			return {};
+		THROW( "A '{}' default has no ddl spelling.", dflt.TypeName() );
 	}
-	α Syntax::AddDefault( sv tableName, sv columnName, Value dflt )Ι->string{
-		return Ƒ( "alter table {} add default {} for {}", tableName, DefaultLiteral(dflt), columnName );
+	//T-SQL: a column's default is a constraint of its own, so a change is a drop and an add.
+	α Syntax::SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->vector<string>{
+		vector<string> y;
+		if( constraintName.size() )
+			y.push_back( Ƒ("alter table {} drop constraint {}", tableName, constraintName) );
+		y.push_back( Ƒ("alter table {} add default {} for {}", tableName, DefaultLiteral(dflt), columnName) );
+		return y;
 	}
 
 	α Syntax::EscapeDdl( sv sql )Ι->string{

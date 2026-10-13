@@ -9,7 +9,12 @@ namespace Jde::DB::MySql{
 	//Header-only like Sqlite::SqliteSyntax: the tests include it directly, so no export from the MODULE is involved.
 	struct MySqlSyntax final: Syntax{
 		Ω Instance()->const MySqlSyntax&{ static const MySqlSyntax _instance; return _instance; }
-		α AddDefault( sv tableName, sv columnName, Value dflt )Ι->string override{ return Ƒ( "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, DefaultLiteral(dflt) ); }
+		//SET DEFAULT takes a literal or a parenthesized expression - the bare CURRENT_TIMESTAMP a create statement accepts
+		//is a syntax error here.  The catalog then reports the expression as `now()`, which MySqlDefault reads back as NowDefault.
+		α SetDefault( sv tableName, sv columnName, const Value& dflt, sv )Ε->vector<string> override{
+			const auto literal = dflt.is_string() && dflt.get_string()=="$now" ? Ƒ( "({})", NowDefault() ) : DefaultLiteral( dflt );
+			return { Ƒ("ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, literal) };
+		}
 		α BoolLiteral( bool v )Ι->sv override{ return v ? "true" : "false"; }
 		α CanSetDefaultSchema()Ι->bool override{ return true; }
 		α CatalogSelect()Ι->sv override{ return {}; }

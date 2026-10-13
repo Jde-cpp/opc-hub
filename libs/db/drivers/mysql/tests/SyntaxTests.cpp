@@ -155,6 +155,37 @@ namespace Jde::DB::MySql::Tests{
 		EXPECT_TRUE( base.UpsertSuffix({"a"}, {"b"}).empty() ); //SQL Server has no such form - the caller keeps update-then-insert.
 	}
 
+	//#241: a changed default on an existing column.  One statement - SET DEFAULT replaces whatever is there - but it takes
+	//a literal or a parenthesized expression, so `$now` goes in parens where the create statement writes the bare keyword.
+	TEST( SyntaxTests, SetDefault ){
+		const auto& my = MySqlSyntax::Instance();
+		EXPECT_EQ( my.SetDefault("widgets", "color", Value{"blue"}, {}), vector<string>{"ALTER TABLE widgets ALTER COLUMN color SET DEFAULT 'blue'"} );
+		EXPECT_EQ( my.SetDefault("widgets", "flag", Value{true}, {}), vector<string>{"ALTER TABLE widgets ALTER COLUMN flag SET DEFAULT true"} );
+		EXPECT_EQ( my.SetDefault("widgets", "created", Value{"$now"}, {}), vector<string>{"ALTER TABLE widgets ALTER COLUMN created SET DEFAULT (CURRENT_TIMESTAMP)"} );
+		EXPECT_EQ( my.DefaultLiteral(Value{true}), "true" ); //MySQL's own bit spelling - the base dialect's is 1.
+		EXPECT_EQ( my.DefaultLiteral(Value{"$now"}), "CURRENT_TIMESTAMP" );
+	}
+
+	//#241: INFORMATION_SCHEMA.COLUMNS reports a default without the quotes or spelling the ddl gave it (a live 8.4
+	//census: `abc`, `b'1'`, `5`, `CURRENT_TIMESTAMP`, and `now()` for the parenthesized form SET DEFAULT needs), so the
+	//loader restores DefaultLiteral's spelling - or the reconciliation would rewrite every string default at every start.
+	TEST( ServerMetaTests, MySqlDefaultReadsBackTheDdlSpelling ){
+		using enum EType;
+		const auto& my = MySqlSyntax::Instance();
+		EXPECT_EQ( MySqlDefault("abc", false, VarChar, my), "'abc'" );
+		EXPECT_EQ( MySqlDefault("it's", false, VarChar, my), "'it''s'" );
+		EXPECT_EQ( MySqlDefault("", false, Text, my), "''" );               //an empty-string default; NULL never reaches here.
+		EXPECT_EQ( MySqlDefault("b'1'", false, Bit, my), "true" );
+		EXPECT_EQ( MySqlDefault("b'0'", false, Bit, my), "false" );
+		EXPECT_EQ( MySqlDefault("1", false, Bit, my), "true" );              //tinyint(1)
+		EXPECT_EQ( MySqlDefault("5", false, Int, my), "5" );
+		EXPECT_EQ( MySqlDefault("1.5", false, Float, my), "1.5" );
+		EXPECT_EQ( MySqlDefault("CURRENT_TIMESTAMP", true, DateTime, my), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( MySqlDefault("now()", true, DateTime, my), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( MySqlDefault("2020-01-01 00:00:00", false, DateTime, my), "'2020-01-01 00:00:00'" ); //a literal datetime, not generated.
+		EXPECT_EQ( MySqlDefault("uuid()", true, VarChar, my), "uuid()" );    //any other expression, as reported.
+	}
+
 	TEST( SyntaxTests, EscapeDdl ){
 		EXPECT_EQ( MySqlSyntax::Instance().EscapeDdl("t"), "`t`" );          //backticks, where the base dialect uses [brackets].
 		EXPECT_EQ( MySqlSyntax::Instance().EscapeDdl("s.t"), "`s`.`t`" );    //each part quoted separately.
