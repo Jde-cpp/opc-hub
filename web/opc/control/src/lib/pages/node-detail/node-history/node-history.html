@@ -62,7 +62,7 @@
 	<p class="refused live-state" role="status"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ why }}</p>
 }
 @if( dropped() ){
-	<p class="refused live-state" role="status"><mat-icon aria-hidden="true" fontIcon="cloud_off"></mat-icon>Connection to the gateway lost.  The subscription resumes from the latest value shown once it is back.</p>
+	<p class="refused live-state" role="status"><mat-icon aria-hidden="true" fontIcon="cloud_off"></mat-icon>Connection to the gateway lost.  The subscription resumes once it is back, with the values stored meanwhile.</p>
 }
 @if( mode()=='values' ){
 	<hist-trend [values]="values()" [series]="selected()" [stepped]="stepped()" [loading]="loading()" [hasEarlier]="hasEarlier()" (loadEarlier)="loadEarlier()"></hist-trend>

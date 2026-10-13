@@ -20,7 +20,7 @@ import { OpcId, scBadUnexpectedError, StatusCode } from '../model/types';
 import { ExNodeId } from '../model/ex-node-id';
 import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } from '../model/value';
 import { Enum } from '../model/enum';
-import { HistPushedModification, HistPushKind, HistValue } from '../model/hist';
+import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound } from '../model/hist';
 
 interface IError{ requestId:number; message: string; }
 type Owner = any;
@@ -489,16 +489,20 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 			}));
 	}
 
-	//A historian subscription (spec *Subscriptions*):  HistSubscribe on this socket, whose request id names it until the
-	//unsubscribe, the teardown, completes.  The stream delivers the ack, the snapshot's pages, then the records as the historian
-	//stores them, each record's node by its slot in `args.nodes`, which the ack's statuses follow too.  A dropped socket drops
-	//the subscription on the gateway, so after `dropped` this subscribes again, histRetryDelay later and again on each failure,
-	//from the last source time it delivered - the snapshot then fills the outage, and its bound is the value the caller holds -
-	//and the ack and pages follow on the stream, for the caller to merge.  An exception under the id ends it:  the gateway's
-	//NotFound for a group removed, ServiceUnavailable for a historian stopped, or a refusal of the HistSubscribe itself.
+	//A historian subscription (spec *Subscriptions*):  HistSubscribe on this socket, whose request id names it on the wire.  The
+	//teardown forgets it as it sends HistUnsubscribe, so a page or push already on the wire, and the ack the gateway still sends
+	//for one unsubscribed while registering, find no subscription and are dropped:  the ids aren't reused, so one unknown is an
+	//ended subscription's (historian-live-trend #10).  The stream delivers the ack, the snapshot's pages, then the records as the
+	//historian stores them, each record's node by its slot in `args.nodes`, which the ack's statuses follow too.  A dropped socket
+	//drops the subscription on the gateway, so after `dropped` this subscribes again, histRetryDelay later and again on each
+	//failure, from where its nodes' records delivered leave off (histResumeTime) - the snapshot then fills the outage, and each
+	//node's bound is a value the caller holds - and the ack and pages follow on the stream, for the caller to merge.  An edit made
+	//meanwhile to a record before that isn't delivered:  a modification is pushed, and the snapshot is records.  An exception
+	//under the id ends it:  the gateway's NotFound for a group removed, ServiceUnavailable for a historian stopped, or a refusal
+	//of the HistSubscribe itself.
 	histSubscribe( args:HistSubscribeArgs ):Observable<HistEvent>{
 		return new Observable<HistEvent>( subscriber=>{
-			const live:HistLive = { args, subscriber, requestId: 0, acked: false };
+			const live:HistLive = { args, subscriber, requestId: 0, down: false, latest: new Map() };
 			this.#histSend( live, args.from );
 			return ()=>{
 				clearTimeout( live.retry );
@@ -510,32 +514,25 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	#histSend( live:HistLive, from:Date|undefined ){
 		const requestId = this.getRequestId();
 		live.requestId = requestId;
-		live.acked = false;
 		live.retry = undefined;
 		this.#hist.set( requestId, live );
 		const request:FromClient.HistSubscribe = { group: live.args.group, nodes: live.args.nodes.map( n=>Gateway.toExProto(n) ), fromTime: from };
 		this.sendWithId( {histSubscribe: request}, requestId, `histSubscribe group: ${live.args.group}, nodeCount: ${live.args.nodes.length}, from: ${from?.toISOString() ?? "now"}` );
 	}
-	#histLive( requestId:number, what:string ):HistLive|undefined{
+	#histAck( requestId:number, ack:FromServer.HistSubscribeAck ){
 		const live = this.#hist.get( requestId );
 		if( !live )
-			console.warn( `[${requestId}]${what} for no historian subscription.` );
-		return live;
-	}
-	#histAck( requestId:number, ack:FromServer.HistSubscribeAck ){
-		const live = this.#histLive( requestId, "HistSubscribeAck" );
-		if( !live )
 			return;
-		live.acked = true;
+		live.down = false;
 		live.subscriber.next( {kind: 'ack', statuses: ack.statuses.map( sc=>sc>>>0 )} );
 	}
 	#histSnapshot( requestId:number, page:FromServer.HistSnapshot ){
-		const live = this.#histLive( requestId, "HistSnapshot" );
+		const live = this.#hist.get( requestId );
 		if( live )
 			live.subscriber.next( {kind: 'snapshot', values: this.#histValues( live, page.values ), more: page.more} );
 	}
 	#histRecords( requestId:number, records:FromServer.HistRecords ){
-		const live = this.#histLive( requestId, "HistRecords" );
+		const live = this.#hist.get( requestId );
 		if( !live )
 			return;
 		const modifications:HistPushedModification[] = [];
@@ -546,16 +543,19 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		live.subscriber.next( {kind: 'records', values: this.#histValues( live, records.values ), modifications} );
 	}
-	//the values as the model holds them, and the latest source time among them kept:  where a resubscribe starts from
+	//the values as the model holds them, and each slot's latest source time kept:  where a resubscribe starts from.  A bound of
+	//Bad_BoundNotFound, the snapshot's stand-in at fromTime for a node with no record before, is no value:  merged, it drew a
+	//flagged gap and listed a row for a node that is only new (historian-live-trend #6).
 	#histValues( live:HistLive, protos:FromServer.HistValue[] ):HistValue[]{
 		const values:HistValue[] = [];
 		for( const proto of protos ){
 			const v = Gateway.toHistValue( proto, live.args.nodes );
-			if( !v )
+			if( !v || (v.bound && isBoundNotFound(v.status)) )
 				continue;
 			values.push( v );
-			if( v.source && (!live.last || v.source>live.last) )
-				live.last = v.source;
+			const held = live.latest.get( proto.node );
+			if( v.source && (!held || v.source>held) )
+				live.latest.set( proto.node, v.source );
 		}
 		return values;
 	}
@@ -567,14 +567,16 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		live.subscriber.error( {error: {requestId, message: e.what, sc: e.code, httpStatus: e.statusCode}} );
 		return true;
 	}
+	//`dropped` once an outage, from its first drop to the next ack:  gated by the ack, a drop before the first was silent, and the
+	//tab loaded with nothing said for as long as the gateway was down (historian-live-trend #8)
 	#histDropped( live:HistLive ){
 		this.#hist.delete( live.requestId );
-		if( live.acked ){
-			live.acked = false;
+		if( !live.down ){
+			live.down = true;
 			live.subscriber.next( {kind: 'dropped'} );
 		}
 		clearTimeout( live.retry );
-		live.retry = setTimeout( ()=>this.#histSend( live, live.last ?? live.args.from ), Gateway.histRetryDelay );
+		live.retry = setTimeout( ()=>this.#histSend( live, histResumeTime( live.latest.values() ) ?? live.args.from ), Gateway.histRetryDelay );
 	}
 	#hist = new Map<number,HistLive>();//by the HistSubscribe's request id, which names the subscription on the wire
 	static readonly histRetryDelay = 5_000;//ms after a drop before subscribing again, and between tries while the gateway is down
@@ -710,14 +712,15 @@ export type SubscriptionResult = Reading & {opcId:string, node:NodeId, source?:D
 //from - left out, it is now, and the snapshot is each node's value alone.
 export type HistSubscribeArgs = { group:number; nodes:NodeId[]; from?:Date };
 //What a historian subscription delivers, in order:  the ack, a status per node asked, Good or Bad_NodeIdUnknown for one the
-//group doesn't hold;  the snapshot's pages, `more` until the last, each node's bound first;  then the records as the historian
-//stores them, values and the modifications edits make, and `dropped` when the socket went, after which the ack and a snapshot
-//from the last source time delivered follow, once the gateway is back.
+//group doesn't hold;  the snapshot's pages, `more` until the last, each node's bound first - none for a node with no record
+//before `from`, whose Bad_BoundNotFound stand-in is dropped;  then the records as the historian stores them, values and the
+//modifications edits make, and `dropped` when the socket went, once until the next ack, whether or not one came before -
+//after which the ack and a snapshot from where the records delivered leave off follow, once the gateway is back.
 export type HistEvent =
 	{ kind:'ack'; statuses:StatusCode[] } |
 	{ kind:'snapshot'; values:HistValue[]; more:boolean } |
 	{ kind:'records'; values:HistValue[]; modifications:HistPushedModification[] } |
 	{ kind:'dropped' };
-type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; acked:boolean; last?:Date; retry?:ReturnType<typeof setTimeout> };
+type HistLive = { args:HistSubscribeArgs; subscriber:Subscriber<HistEvent>; requestId:number; down:boolean; latest:Map<number,Date>; retry?:ReturnType<typeof setTimeout> };//down:  dropped and not acked since;  latest:  by slot
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const GATEWAY_SERVICE = new InjectionToken<GatewayService>( 'GatewayService' );

@@ -12,6 +12,7 @@ import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
 import { Observable, of, Subscriber } from 'rxjs';
+import { vi } from 'vitest';
 import { ConfirmData, ConfirmDialog, SnackbarService } from 'jde-framework';
 import { alignUp, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, HistGroupMembers, HistPage, HistReadArgs, HistSource, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
@@ -241,6 +242,17 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.reads.at( -1 )!.args.limit ).toBe( 4*NodeHistory.pageSize );
 		tab.fixture.destroy();
 	} );
+	//the live tail's pushes count for no page:  a refresh read the opening's page and dropped the pushes before it (historian-live-trend #9)
+	it( 'reads again as many values as the live tail pushed after an edit', async ()=>{
+		const tab = open();
+		await tab.answer( {values: [at(tab.node, 1000)]} );
+		for( let i=0; i<1200; ++i )
+			tab.push( new Date(2000+1000*i) );
+		tab.dialogResult.answer = { values: [{node: tab.node.nodeId, source: new Date(1000), status: 0}], nodes: [{node: tab.node.nodeId, status: 0}] };
+		await tab.tab.openEdit( 'replace', {node: tab.node, time: new Date(1000), value: 2} );
+		expect( tab.reads.at( -1 )!.args.limit ).toBe( 2*NodeHistory.pageSize );
+		tab.fixture.destroy();
+	} );
 	//An edit the server took part of changed the history:  the tab reads it again, and names what was refused once the names
 	//arrive (historian-web-edits #2)
 	it( 'reads again after an edit the server took part of, and names what it refused', async ()=>{
@@ -383,12 +395,28 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.fixture.nativeElement.querySelector( '.row-count' )?.textContent?.trim() ).toBe( '3 values' );
 		tab.fixture.destroy();
 	} );
+	//A range purge pushes a delete per record it took, and each was a filter of all held and a write:  5000 held and purged were
+	//25M visits on the UI thread (historian-live-trend #12).  A records event's modifications are one write.
+	it( "applies a group's pushed purge in one write", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: Array.from( {length: 5000}, (_, i)=>at(A, 1000*(i+1)) ), more: false} );
+		const update = vi.spyOn( tab.tab.values, 'update' );
+		try{
+			tab.emit( {kind: 'records', values: [], modifications: Array.from( {length: 4999}, (_, i)=>({node: A.nodeId, target: new Date(1000*(i+1)), kind: 'delete' as const, time: new Date(9_000_000), user: 'me'}) )} );
+			expect( update ).toHaveBeenCalledTimes( 1 );
+			expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5_000_000] );
+		}
+		finally{ update.mockRestore(); }
+		tab.fixture.destroy();
+	} );
 	//the gateway ends a subscription with an exception under its id:  the group removed, or the historian stopped.  Live turns off
 	//and the trend says why;  turning it on subscribes again from the latest value held
 	it( "turns Live off and says why when the gateway ends a group's subscription, and resumes from the latest value held", ()=>{
+		const t = Date.now()-60_000;
 		const tab = open( {candidates: [], groups: [group]} );
 		tab.emit( {kind: 'ack', statuses: [0]} );
-		tab.emit( {kind: 'snapshot', values: [at(A, 5000), at(A, 7000)], more: false} );
+		tab.emit( {kind: 'snapshot', values: [at(A, t), at(A, t+2000)], more: false} );
 		tab.histError( {error: {requestId: 1, message: "The group was removed, which ends the subscription.", httpStatus: 404}} );
 		expect( tab.tab.live() ).toBe( false );
 		expect( tab.histSubscribed() ).toBe( 0 );
@@ -397,7 +425,7 @@ describe( 'NodeHistory', ()=>{
 		tab.tab.onLiveChange( true );
 		tab.fixture.detectChanges();
 		expect( tab.histSubscribed() ).toBe( 1 );
-		expect( tab.histArgs().from ).toEqual( new Date(7000) );
+		expect( tab.histArgs().from ).toEqual( new Date(t+2000) );
 		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
 		tab.fixture.destroy();
 	} );
@@ -418,8 +446,136 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000, 6000] );
 		tab.fixture.destroy();
 	} );
+	//Live off mid-snapshot lets the snapshot's loading go, so Load earlier reads before the window (historian-live-trend #1)
+	it( "stops loading when Live goes off before a group's snapshot is in", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		const loadEarlier = ()=>[...tab.fixture.nativeElement.querySelectorAll( 'button' )].find( ( b:Element )=>b.textContent?.includes( 'Load earlier' ) )!;
+		const from = tab.histArgs().from!;
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, from.getTime()+1000)], more: true} );
+		expect( loadEarlier().disabled ).toBe( true );
+		tab.tab.onLiveChange( false );
+		tab.fixture.detectChanges();
+		expect( tab.histSubscribed() ).toBe( 0 );
+		expect( tab.tab.loading() ).toBe( false );
+		expect( loadEarlier().disabled ).toBe( false );
+		tab.tab.loadEarlier();
+		expect( tab.reads[0].args ).toMatchObject( {end: from} );
+		tab.fixture.destroy();
+	} );
+	//a read's loading is the read's:  Live off leaves it on until the page lands
+	it( "leaves a Load earlier read loading when Live goes off on a group", async ()=>{
+		const reader = open( {candidates: [], groups: [group]} );
+		reader.emit( {kind: 'ack', statuses: [0]} );
+		reader.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
+		reader.tab.loadEarlier();
+		expect( reader.tab.loading() ).toBe( true );
+		reader.tab.onLiveChange( false );
+		expect( reader.tab.loading() ).toBe( true );
+		await reader.answer( {values: [at(A, 4000)]} );
+		expect( reader.tab.loading() ).toBe( false );
+		reader.fixture.destroy();
+	} );
+	//the lines saying a group's subscription ended or was dropped are that subscription's:  a change of source takes them away,
+	//as Live off does (historian-live-trend #2)
+	it( "drops a group's ended line with a change of source", async ()=>{
+		const tab = open( {groups: [group]} );
+		await tab.answer();
+		tab.tab.pick( 'group/3' );
+		tab.fixture.detectChanges();
+		await settle();
+		tab.histError( {error: {requestId: 1, message: "The group was removed, which ends the subscription.", httpStatus: 404}} );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' )?.textContent ).toContain( '(404)The group was removed' );
+		tab.tab.pick( 'opc/opc' );
+		tab.fixture.detectChanges();
+		await settle();
+		expect( tab.reads.at( -1 )!.source ).toEqual( {opc: 'opc'} );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
+		tab.fixture.destroy();
+	} );
+	it( "drops a group's dropped line when Live goes off", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'dropped'} );
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' )?.textContent ).toContain( 'Connection to the gateway lost' );
+		tab.tab.onLiveChange( false );
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
+		tab.fixture.destroy();
+	} );
+	//a dropped subscription pushes nothing:  an edit then reads again, as with Live off, until the ack (historian-live-trend #3)
+	it( "reads again after an edit while a group's subscription is dropped", async ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.capabilities = {aggregates: [], update: true, delete: true};
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
+		await settle();
+		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(5000), status: 0}], nodes: [] };
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 2} );
+		expect( tab.reads ).toHaveLength( 0 );//the stream pushes it
+		tab.emit( {kind: 'dropped'} );
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 3} );
+		expect( tab.reads ).toHaveLength( 1 );
+		expect( tab.reads[0].source ).toEqual( {group: 3} );
+		await tab.answer( {values: [at(A, 5000)]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 4} );
+		expect( tab.reads ).toHaveLength( 1 );
+		tab.fixture.destroy();
+	} );
+	//a pushed insert before the earliest value held is Load earlier's to read, until it has nothing left:  then it goes in
+	//(historian-live-trend #4)
+	it( "puts a pushed insert before the earliest value once Load earlier has nothing left", async ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		const insert = ( ms:number ):HistEvent=>({kind: 'records', values: [], modifications: [{node: A.nodeId, target: new Date(ms), kind: 'insert', value: {...at(A, ms), value: 9}, time: new Date(9000), user: 'me'}]});
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
+		tab.emit( insert(3000) );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000] );
+		tab.tab.loadEarlier();
+		await tab.answer( {values: [at(A, 3000), at(A, 4000)]} );
+		expect( tab.tab.hasEarlier() ).toBe( false );
+		tab.emit( insert(2000) );
+		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [2000, 3000, 4000, 5000] );
+		expect( tab.tab.values()[0].value ).toBe( 9 );
+		tab.fixture.destroy();
+	} );
+	//Live on again resumes from the oldest of the nodes' latest values held, not the newest of all:  a node whose clock runs behind
+	//would get only its bound (historian-live-trend #5)
+	it( "resumes a group from the oldest of its nodes' latest values when Live goes on again", ()=>{
+		const b = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} );
+		const t = Date.now()-60_000;
+		const tab = open( {candidates: [], groups: [{...group, nodes: [A, b]}]} );
+		tab.emit( {kind: 'ack', statuses: [0, 0]} );
+		tab.emit( {kind: 'snapshot', values: [at(b, t), at(A, t+1000), at(A, t+2000)], more: false} );
+		tab.tab.onLiveChange( false );
+		tab.tab.onLiveChange( true );
+		expect( tab.histArgs().from ).toEqual( new Date(t) );
+		tab.fixture.destroy();
+	} );
+	//The resume streamed all since the latest value held:  Live left off overnight, then on, streamed the night page by page
+	//(historian-live-trend #13).  With none held inside the opening's window, the tab opens again, and Load earlier reads before it.
+	it( "opens a group again when Live goes on with nothing held inside the opening's window", ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [at(A, 5000), at(A, 7000)], more: false} );
+		tab.tab.onLiveChange( false );
+		const before = Date.now();
+		tab.tab.onLiveChange( true );
+		expect( tab.histSubscribed() ).toBe( 1 );
+		const from = tab.histArgs().from!;
+		expect( from.getTime() ).toBeGreaterThanOrEqual( before-NodeHistory.snapshotWindow );
+		expect( tab.tab.values() ).toEqual( [] );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: [{...at(A, from.getTime()-1000), bound: true}], more: false} );
+		tab.tab.loadEarlier();
+		expect( tab.reads ).toHaveLength( 1 );
+		expect( tab.reads[0].args ).toMatchObject( {end: from, limit: NodeHistory.pageSize} );
+		tab.fixture.destroy();
+	} );
 	//with Live off a group opens on a read, as a server does, and an edit reads again;  Live on subscribes from the latest value held
 	it( 'opens a group on a read with Live off, and subscribes from the latest value held when it goes on', async ()=>{
+		const t = Date.now()-60_000;
 		const tab = open( {candidates: [], groups: [group]} );
 		tab.capabilities = {aggregates: [], update: true, delete: true};
 		tab.tab.onLiveChange( false );
@@ -429,18 +585,31 @@ describe( 'NodeHistory', ()=>{
 		await settle();
 		expect( tab.reads ).toHaveLength( 1 );
 		expect( tab.reads[0].source ).toEqual( {group: 3} );
-		await tab.answer( {values: [at(A, 5000)]} );
-		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(5000), status: 0}], nodes: [] };
-		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 2} );
+		await tab.answer( {values: [at(A, t)]} );
+		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(t), status: 0}], nodes: [] };
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(t), value: 2} );
 		expect( tab.reads ).toHaveLength( 2 );//the refresh
-		await tab.answer( {values: [at(A, 5000)]} );
+		await tab.answer( {values: [at(A, t)]} );
 		tab.tab.onLiveChange( true );
 		expect( tab.histSubscribed() ).toBe( 1 );
-		expect( tab.histArgs().from ).toEqual( new Date(5000) );
+		expect( tab.histArgs().from ).toEqual( new Date(t) );
 		tab.emit( {kind: 'ack', statuses: [0]} );
-		tab.emit( {kind: 'snapshot', values: [{...at(A, 5000), bound: true}], more: false} );
-		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 3} );
+		tab.emit( {kind: 'snapshot', values: [{...at(A, t), bound: true}], more: false} );
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(t), value: 3} );
 		expect( tab.reads ).toHaveLength( 2 );//no refresh:  the stream pushes the modification
+		tab.fixture.destroy();
+	} );
+	//The snapshot counted for no page:  Live off, an edit read the latest 1000 of the 2500 it held, and the trend lost the rest
+	//until Load earlier paged them back (historian-live-trend #9).
+	it( "reads again as many values as a group's snapshot held after an edit with Live off", async ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		tab.emit( {kind: 'ack', statuses: [0]} );
+		tab.emit( {kind: 'snapshot', values: Array.from( {length: 2500}, (_, i)=>at(A, 1000*(i+1)) ), more: false} );
+		tab.tab.onLiveChange( false );
+		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(5000), status: 0}], nodes: [] };
+		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 2} );
+		expect( tab.reads ).toHaveLength( 1 );
+		expect( tab.reads[0].args.limit ).toBe( 3*NodeHistory.pageSize );
 		tab.fixture.destroy();
 	} );
 	//Update lets the UpdateData edits and a row's Replace, Delete the purges and a row's Delete:  a group's two rights come apart,
@@ -466,12 +635,18 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.edits.sent ).toEqual( [] );
 		tab.fixture.destroy();
 	} );
+	//The test deleted a snapshot row, which has no Delete in the app:  a snapshot's time is a Date.  The row is one Load earlier
+	//read, and the push takes it (historian-live-trend #15).
 	it( "offers a group's purge under Delete alone, and sends it to the group, which pushes the change", async ()=>{
 		const purger = open( {candidates: [], groups: [group]} );
 		purger.capabilities = {aggregates: [], update: false, delete: true};
 		purger.emit( {kind: 'ack', statuses: [0]} );
-		purger.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
+		purger.emit( {kind: 'snapshot', values: [{...at(A, 5000), sourceTime: undefined}], more: false} );
 		await settle();
+		purger.fixture.detectChanges();
+		expect( purger.actions() ).toEqual( [] );
+		purger.tab.loadEarlier();
+		await purger.answer( {values: [at(A, 4000)]} );
 		purger.fixture.detectChanges();
 		expect( purger.actions() ).toEqual( ['Delete this value'] );
 		purger.tab.replaceValue( purger.tab.values()[0] );
@@ -481,7 +656,9 @@ describe( 'NodeHistory', ()=>{
 		expect( purger.confirmations[0] ).toContain( "the gateway's history of the group" );
 		expect( purger.edits.sources ).toEqual( [{group: 3}] );
 		expect( purger.edits.sent.map( e=>e.kind ) ).toEqual( ['purgeRange'] );
-		expect( purger.reads ).toHaveLength( 0 );//no read after it:  the stream pushes the modification
+		expect( purger.reads ).toHaveLength( 1 );//Load earlier's, and no read after the delete:  the stream pushes the modification
+		purger.emit( {kind: 'records', values: [], modifications: [{node: A.nodeId, target: new Date(4000), kind: 'delete', time: new Date(9000), user: 'me'}]} );
+		expect( purger.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [5000] );
 		purger.fixture.destroy();
 	} );
 	//A child the server historizes and a group holds too:  the server's history opens, and the toggle takes the group's instead,

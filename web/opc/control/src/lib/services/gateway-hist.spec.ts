@@ -11,6 +11,7 @@ import { HttpClient } from '@angular/common/http';
 import { vi } from 'vitest';
 import { AuthStore, ETransport } from 'jde-framework';
 import * as FromServer from 'jde-proto/Opc.FromServer';
+import { BadBoundNotFound, histResumeReach } from '../model/hist';
 import { NodeId } from '../model/node-id';
 import { Gateway, HistEvent } from './gateway-service';
 import { OpcStore } from './opc-store';
@@ -43,6 +44,7 @@ const value = ( node:number, ms:number, v?:number, extra:object={} )=>({ node, v
 describe( 'Gateway.histSubscribe', ()=>{
 	let gateway:TestGateway;
 	beforeEach( ()=>{ gateway = new TestGateway(); } );
+	afterEach( ()=>vi.restoreAllMocks() );//a spy restored after its assertions stayed mocked past one that failed (historian-live-trend #15)
 
 	it( 'sends HistSubscribe with the group, the nodes as expanded ids and the time, and the ack names a status per node in order', ()=>{
 		const s = listen( gateway, new Date(1000) );
@@ -77,7 +79,6 @@ describe( 'Gateway.histSubscribe', ()=>{
 		expect( page.values[2] ).toMatchObject( {value: 2, heartbeat: true} );
 		expect( page.values[3] ).toMatchObject( {source: new Date(7000), server: new Date(7000)} );
 		expect( warn ).toHaveBeenCalledTimes( 1 );
-		warn.mockRestore();
 		s.subscription.unsubscribe();
 	} );
 	it( 'delivers the records stored since, and a modification with the value put there, or none for a delete', ()=>{
@@ -108,6 +109,20 @@ describe( 'Gateway.histSubscribe', ()=>{
 		gateway.receive( {requestId: s.requestId, histRecords: {values: [value( 0, 8000, 8 )], modifications: []}} );//a stray:  nothing of it follows the completion, but a listener gone hears nothing either way
 		expect( s.events ).toHaveLength( 1 );
 	} );
+	//The teardown forgets the id at once:  a page or push already on the wire, and the ack the gateway sends after the
+	//unsubscribe of one still registering, each warned of no subscription (historian-live-trend #10).
+	it( 'drops a page, a push and the late ack under an ended subscription, without a warning', ()=>{
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		const s = listen( gateway );
+		s.subscription.unsubscribe();
+		gateway.receive(
+			{requestId: s.requestId, histSnapshot: {values: [value( 0, 5000, 7 )], more: true}},
+			{requestId: s.requestId, histRecords: {values: [value( 0, 8000, 8 )], modifications: []}},
+			{requestId: s.requestId, histSubscribeAck: {statuses: [0, 0]}}
+		);
+		expect( s.events ).toEqual( [] );
+		expect( warn ).not.toHaveBeenCalled();
+	} );
 	//the gateway ends a subscription with an exception under its id (spec *Subscriptions*):  NotFound for a group removed,
 	//ServiceUnavailable for a historian stopped - and the id has no callback by then
 	it( 'ends on an exception under the id after the ack, with its status, and unsubscribes nothing', ()=>{
@@ -128,9 +143,9 @@ describe( 'Gateway.histSubscribe', ()=>{
 	describe( 'after a drop', ()=>{
 		beforeEach( ()=>vi.useFakeTimers() );
 		afterEach( ()=>vi.useRealTimers() );
-		//the socket carried the subscription, so the gateway has forgotten it:  subscribe again from the last source time
-		//delivered, and the snapshot from there fills the outage
-		it( 'says so, and subscribes again from the last source time delivered', ()=>{
+		//the socket carried the subscription, so the gateway has forgotten it:  subscribe again from the oldest of the nodes'
+		//latest source times delivered, so the snapshot fills the outage for a node whose clock runs behind (historian-live-trend #5)
+		it( "says so, and subscribes again from the oldest of its nodes' latest source times", ()=>{
 			const s = listen( gateway, new Date(1000) );
 			gateway.receive( {requestId: s.requestId, histSubscribeAck: {statuses: [0, 0]}} );
 			gateway.receive( {requestId: s.requestId, histSnapshot: {values: [value( 0, 7000, 7 ), value( 1, 5000, 5 )], more: false}} );
@@ -141,11 +156,38 @@ describe( 'Gateway.histSubscribe', ()=>{
 			expect( gateway.subscribes ).toHaveLength( 2 );
 			const again = gateway.subscribes[1];
 			expect( again.requestId ).not.toBe( s.requestId );
-			expect( again.m.histSubscribe.fromTime ).toEqual( new Date(7000) );
+			expect( again.m.histSubscribe.fromTime ).toEqual( new Date(5000) );
 			gateway.receive( {requestId: again.requestId, histSubscribeAck: {statuses: [0, 0]}} );
 			expect( s.events.at( -1 ) ).toEqual( {kind: 'ack', statuses: [0, 0]} );
 			s.subscription.unsubscribe();
 			expect( gateway.unsubscribes[0].m.histUnsubscribe ).toEqual( {subscription: again.requestId} );
+		} );
+		//a node quiet longer than the reach has its value as the snapshot's bound:  the resubscribe goes no further back
+		it( "subscribes again from no further back than the reach before the newest source time", ()=>{
+			const s = listen( gateway, new Date(1000) );
+			const newest = 5000+histResumeReach+1000;
+			gateway.receive( {requestId: s.requestId, histSubscribeAck: {statuses: [0, 0]}} );
+			gateway.receive( {requestId: s.requestId, histSnapshot: {values: [value( 1, 5000, 5 ), value( 0, newest, 7 )], more: false}} );
+			gateway.drop();
+			vi.advanceTimersByTime( Gateway.histRetryDelay );
+			expect( gateway.subscribes[1].m.histSubscribe.fromTime ).toEqual( new Date(newest-histResumeReach) );
+			s.subscription.unsubscribe();
+		} );
+		//the snapshot's Bad_BoundNotFound stand-in for a node with no record before fromTime is no value:  not delivered, and no
+		//time to resume from (historian-live-trend #6)
+		it( "drops a node's Bad_BoundNotFound bound, which sets no time to resume from", ()=>{
+			const s = listen( gateway, new Date(1000) );
+			gateway.receive( {requestId: s.requestId, histSubscribeAck: {statuses: [0, 0]}} );
+			gateway.receive( {requestId: s.requestId, histSnapshot: {values: [
+				{ node: 1, sc: BadBoundNotFound, source: new Date(1000), heartbeat: false, bound: true },
+				value( 0, 5000, 5, {bound: true} )
+			], more: false}} );
+			const page = <Extract<HistEvent,{kind:'snapshot'}>>s.events[1];
+			expect( page.values.map( v=>v.node.key ) ).toEqual( [A.key] );
+			gateway.drop();
+			vi.advanceTimersByTime( Gateway.histRetryDelay );
+			expect( gateway.subscribes[1].m.histSubscribe.fromTime ).toEqual( new Date(5000) );
+			s.subscription.unsubscribe();
 		} );
 		it( 'keeps trying while the gateway is down, from the time it asked for, and says dropped once', ()=>{
 			const s = listen( gateway, new Date(1000) );
@@ -157,6 +199,20 @@ describe( 'Gateway.histSubscribe', ()=>{
 			expect( gateway.subscribes ).toHaveLength( 3 );
 			expect( gateway.subscribes.map( x=>x.m.histSubscribe.fromTime ) ).toEqual( [new Date(1000), new Date(1000), new Date(1000)] );
 			expect( s.events.filter( e=>e.kind=='dropped' ) ).toHaveLength( 1 );
+			s.subscription.unsubscribe();
+		} );
+		//a drop before the first ack says so too, once until an ack, and the next outage again (historian-live-trend #8)
+		it( 'says dropped for a drop before the first ack, once until an ack, and again for the next outage', ()=>{
+			const s = listen( gateway, new Date(1000) );
+			gateway.drop();
+			expect( s.events ).toEqual( [{kind: 'dropped'}] );
+			vi.advanceTimersByTime( Gateway.histRetryDelay );
+			gateway.drop();//the gateway is still down
+			vi.advanceTimersByTime( Gateway.histRetryDelay );
+			expect( s.events ).toEqual( [{kind: 'dropped'}] );
+			gateway.receive( {requestId: gateway.subscribes[2].requestId, histSubscribeAck: {statuses: [0, 0]}} );
+			gateway.drop();
+			expect( s.events.map( e=>e.kind ) ).toEqual( ['dropped', 'ack', 'dropped'] );
 			s.subscription.unsubscribe();
 		} );
 		it( 'sends nothing for a listener that goes while waiting, and tries no more', ()=>{

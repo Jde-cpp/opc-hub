@@ -11,7 +11,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
 import { confirm, errorText, SnackbarService } from 'jde-framework';
-import { alignUp, applyHistModification, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistPushedModification, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, isNoData, latestHistTime, mergeHistValues, pushValue } from '../../../model/hist';
+import { alignUp, applyHistModifications, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistPushedModification, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, histResumeTime, isNoData, latestHistTimes, mergeHistValues, pushValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId, NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
@@ -104,7 +104,7 @@ export class NodeHistory implements OnDestroy{
 	canLive = computed( ()=>this.mode()=='values' && !this.aggregated() );
 	//a group's subscription ended by the gateway:  the group removed, or the historian stopped (spec *Subscriptions*)
 	ended = signal<string|undefined>( undefined );
-	//a group's subscription lost with the socket:  the gateway subscribes again once it is back, from the latest value held
+	//a group's subscription lost with the socket:  the gateway subscribes again once it is back, from where the records it delivered leave off
 	dropped = signal( false );
 	answerer = computed( ()=>this.isGroup() ? "the gateway" : "the server" );
 	canSelect( v:Variable ):boolean{ return this.selectedKeys().has( v.key ) || this.selectedKeys().size<NodeHistory.maxSeries; }
@@ -276,16 +276,17 @@ export class NodeHistory implements OnDestroy{
 			this.#read( this.#next, this.#generation );
 	}
 	//what the tab holds, read again after an edit:  one read as long as the pages loaded, since `limit` is outside the
-	//continuation's hash, so Load earlier still pages before it.  A fresh list, not a merge - a merge keeps the record it
-	//holds at a time, which is the one the edit changed.  The live tail stays.  What is held stays shown until the page
-	//lands:  emptied, it sent the table to its first page and the trend blank (historian-web-edits #12).
+	//continuation's hash, so Load earlier still pages before it - or as the values held, where a group's snapshot or the live
+	//pushes, which count for no page, made them more (historian-live-trend #9).  A fresh list, not a merge - a merge keeps the
+	//record it holds at a time, which is the one the edit changed.  The live tail stays.  What is held stays shown until the
+	//page lands:  emptied, it sent the table to its first page and the trend blank (historian-web-edits #12).
 	#refresh(){
 		const nodes = this.selected();
 		if( !nodes.length )
 			return;
 		const generation = ++this.#generation;
 		this.#next = undefined;
-		const pages = Math.max( this.#pages, 1 );
+		const pages = Math.max( this.#pages, Math.ceil( this.values().length/NodeHistory.pageSize ), 1 );
 		this.#pages = 0;
 		this.#tail = [];
 		this.#read( this.#opening( nodes, this.mode(), this.aggregated(), pages ), generation, pages );
@@ -311,14 +312,21 @@ export class NodeHistory implements OnDestroy{
 		this.aggregates.set( list );
 		this.capabilities.set( capabilities );
 	}
-	//Live on again:  a server source's tail is the pushes from here;  a group's subscribes from the latest value held, so the
-	//snapshot fills what passed meanwhile, or from the opening's window when nothing is
+	//Live on again:  a server source's tail is the pushes from here;  a group's subscribes from where the values held leave off
+	//(histResumeTime), so the snapshot fills what passed meanwhile - unless none is inside the opening's window, when it opens
+	//again:  the resume streamed all since, a night's records page by page after Live was left off overnight (historian-live-trend
+	//#13), and a later start would leave a gap that reads as no data.
 	onLiveChange( on:boolean ){
 		this.live.set( on );
 		if( !on )
 			this.#unsubscribe();
-		else if( this.isGroup() )
-			this.#subscribeHist( this.selected(), latestHistTime( this.values() ) ?? new Date( Date.now()-NodeHistory.snapshotWindow ) );
+		else if( this.isGroup() ){
+			const latest = [...latestHistTimes( this.values() ).values()];
+			if( latest.some( t=>t.getTime()>=Date.now()-NodeHistory.snapshotWindow ) )
+				this.#subscribeHist( this.selected(), histResumeTime( latest )! );
+			else
+				this.#reload( this.selected(), this.mode(), this.aggregated() );
+		}
 		else
 			this.#subscribe( this.selected() );
 	}
@@ -357,46 +365,44 @@ export class NodeHistory implements OnDestroy{
 		if( !nodes.length || !this.canLive() || group==undefined )
 			return;
 		const ids = nodes.map( n=>n.nodeId );
-		this.ended.set( undefined );
-		this.dropped.set( false );
-		this.loading.set( true );
+		this.#paging( true );
 		this.#subscription = this.gateway.histSubscribe( {group, nodes: ids, from} ).subscribe({
 			next: ( e:HistEvent )=>{
 				switch( e.kind ){
 					case 'ack':
 						this.dropped.set( false );
-						this.loading.set( true );
+						this.#paging( true );
 						this.nodeStatuses.set( e.statuses.map( (status, i)=>({node: ids[i], status}) ) );
 						this.#fetchNames( e.statuses );
 						break;
 					case 'snapshot':
 						this.#takeLive( e.values );
 						if( !e.more )
-							this.loading.set( false );
+							this.#paging( false );
 						break;
 					case 'records':
 						this.#takeLive( e.values );
-						for( const m of e.modifications )
-							this.#modify( m );
+						this.#modify( e.modifications );
 						break;
 					case 'dropped':
 						this.dropped.set( true );
-						this.loading.set( false );//a snapshot cut short:  the rest comes with the next
+						this.#paging( false );//a snapshot cut short:  the rest comes with the next
 						break;
 				}
 			},
 			error: ( e:unknown )=>{
 				this.#subscription = undefined;
 				this.live.set( false );
-				this.loading.set( false );
+				this.#paging( false );
 				this.dropped.set( false );
 				this.ended.set( `The subscription ended:  ${errorText( e ) ?? "unknown error"}` );
 			},
 			complete: ()=>{ this.#subscription = undefined; }
 		});
 	}
-	//whether a group's stream is on:  an edit then needs no read, its modification is pushed
-	get #liveGroup():boolean{ return this.isGroup() && this.#subscription!=undefined; }
+	//whether a group's stream is on:  an edit then needs no read, its modification is pushed.  Not while it is dropped, until the
+	//ack:  no subscription is on the gateway to push it, and the snapshot after resumes past the record (historian-live-trend #3).
+	get #liveGroup():boolean{ return this.isGroup() && this.#subscription!=undefined && !this.dropped(); }
 	#takeLive( values:HistValue[] ){
 		if( !values.length )
 			return;
@@ -405,14 +411,27 @@ export class NodeHistory implements OnDestroy{
 			this.#tail = mergeHistValues( this.#tail, values );
 		this.#fetchNames( values.map( v=>v.status ) );
 	}
-	#modify( m:HistPushedModification ){
-		this.values.update( v=>applyHistModification( v, m ) );
+	//Load earlier done, or failed, leaves nothing to read before the values:  one targeted there goes in, not to a read
+	#modify( ms:HistPushedModification[] ){
+		const whole = !this.hasEarlier();
+		this.values.update( v=>applyHistModifications( v, ms, whole ) );
 		if( this.#tail )
-			this.#tail = applyHistModification( this.#tail, m );
-		if( m.value?.status )
-			this.#fetchNames( [m.value.status] );
+			this.#tail = applyHistModifications( this.#tail, ms, whole );
+		this.#fetchNames( ms.flatMap( m=>m.value ? [m.value.status] : [] ) );
 	}
-	#unsubscribe(){ this.#subscription?.unsubscribe(); this.#subscription = undefined; }
+	//a group's snapshot paging in holds `loading` until its last page, a drop or an end, and an unsubscribe lets it go:  Live
+	//turned off mid-snapshot left the tab loading (historian-live-trend #1).  A read's loading is the read's own.
+	#paging( on:boolean ){ this.#snapshotting = on; this.loading.set( on ); }
+	//the lines saying a group's subscription ended or was dropped go with it:  they stayed over another source's trend, or
+	//promised a resume Live off had cancelled (historian-live-trend #2)
+	#unsubscribe(){
+		this.#subscription?.unsubscribe();
+		this.#subscription = undefined;
+		this.ended.set( undefined );
+		this.dropped.set( false );
+		if( this.#snapshotting )
+			this.#paging( false );
+	}
 	//a code's name comes from the gateway on request - OpcError.statusCodeText registers it, updateErrorCodes fetches the lot - so
 	//one fetch per page, and a repaint when it lands.  Each code registered, not only up to the first unnamed.
 	#fetchNames( codes:StatusCode[] ):Promise<void>{
@@ -490,6 +509,7 @@ export class NodeHistory implements OnDestroy{
 	snackbar = inject( SnackbarService );
 	dialog = inject( MatDialog );
 	#subscription:Subscription|undefined;
+	#snapshotting = false;//whether #paging holds `loading`
 	#generation = 0;//which selection the values belong to:  a read or push for an older one is dropped
 	#next:HistReadArgs|undefined;//the opening read's arguments with the last page's continuation:  the page before, if any
 	#pages = 0;//pages read into `values`, so a refresh reads as far
