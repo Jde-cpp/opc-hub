@@ -10,7 +10,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { alignUp, editRefused, editRefusedAll, editValueJson, HistValue, isNoData, mergeHistValues, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage } from './hist';
+import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, HistPushedModification, histResumeReach, histResumeTime, HistValue, isNoData, latestHistTimes, mergeHistValues, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage } from './hist';
 
 const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
@@ -234,5 +234,71 @@ describe( 'pushValue', ()=>{
 	it( 'carries the quality and drops a refusal', ()=>{
 		expect( pushValue( A, {value: 2, sc: 0x40000000, source: new Date(1)}, now ).status ).toBe( 0x40000000 );
 		expect( pushValue( A, {value: new OpcError(0x80000000, 'OpcError', '', undefined), sc: 0x80000000, source: new Date(1)}, now ).value ).toBeUndefined();
+	} );
+} );
+
+describe( 'latestHistTimes', ()=>{
+	it( "is each node's last source time held, past values with none", ()=>{
+		expect( latestHistTimes( [] ).size ).toBe( 0 );
+		expect( latestHistTimes( [at(A, 1000), at(B, 2000), at(A, 3000), at(A, null)] ) ).toEqual( new Map([[A.key, new Date(3000)], [B.key, new Date(2000)]]) );
+	} );
+} );
+//the oldest of the nodes' latest, so a node whose clock runs behind keeps what was stored meanwhile, within the reach of the
+//newest (historian-live-trend #5)
+describe( 'histResumeTime', ()=>{
+	it( "is the oldest node's latest, no further back than the reach before the newest, and none for none", ()=>{
+		expect( histResumeTime( [] ) ).toBeUndefined();
+		expect( histResumeTime( [new Date(7000), new Date(5000)] ) ).toEqual( new Date(5000) );
+		const newest = 5000+histResumeReach+1000;
+		expect( histResumeTime( [new Date(newest), new Date(5000)] ) ).toEqual( new Date(newest-histResumeReach) );
+	} );
+} );
+
+describe( 'applyHistModification', ()=>{
+	const mod = ( kind:HistPushedModification["kind"], node:NodeId, ms:number, value?:number ):HistPushedModification=>({ node, target: new Date(ms), kind, value: value==undefined ? undefined : {...at(node, ms), value}, time: new Date(9000), user: 'me' });
+	const held = ()=>[ at(A, 1000), at(A, 2000), at(B, 2000), at(A, 3000) ];
+
+	it( 'puts a replacement in place of the node\'s record at the target, and leaves the others', ()=>{
+		const y = applyHistModification( held(), mod( 'replace', A, 2000, 7 ) );
+		expect( y.map( keyOf ) ).toEqual( held().map( keyOf ) );
+		expect( y[1].value ).toBe( 7 );
+		expect( y[2].value ).toBe( 2000 );
+	} );
+	it( 'takes every record of the node at the target for a delete, and only those', ()=>{
+		const y = applyHistModification( [at(A, 1000), at(A, 2000), {...at(A, 2000, 0x809D0000), value: undefined}, at(B, 2000), at(A, 3000)], mod( 'delete', A, 2000 ) );//a marker and the value ending its gap
+		expect( y.map( keyOf ) ).toEqual( [at(A, 1000), at(B, 2000), at(A, 3000)].map( keyOf ) );
+	} );
+	it( 'puts an insert where it falls, after the records at its time', ()=>{
+		const y = applyHistModification( held(), mod( 'insert', B, 2500, 5 ) );
+		expect( y.map( keyOf ) ).toEqual( [at(A, 1000), at(A, 2000), at(B, 2000), at(B, 2500), at(A, 3000)].map( keyOf ) );
+		const same = applyHistModification( held(), mod( 'insert', B, 3000, 5 ) );
+		expect( same.map( keyOf ) ).toEqual( [at(A, 1000), at(A, 2000), at(B, 2000), at(A, 3000), at(B, 3000)].map( keyOf ) );
+	} );
+	it( 'returns the same array when nothing changes:  a delete of nothing held, a value before the earliest, a replace with no value', ()=>{
+		const values = held();
+		expect( applyHistModification( values, mod( 'delete', B, 3000 ) ) ).toBe( values );
+		expect( applyHistModification( values, mod( 'insert', A, 500, 1 ) ) ).toBe( values );
+		expect( applyHistModification( values, mod( 'replace', A, 2000 ) ) ).toBe( values );
+		expect( applyHistModification( [], mod( 'insert', A, 500, 1 ) ) ).toEqual( [] );
+	} );
+	//the values back to the start of the history:  nothing will read one before the earliest, so it goes first (historian-live-trend #4)
+	it( 'puts a value before the earliest first when the values are whole, and one into none', ()=>{
+		const first = applyHistModification( held(), mod( 'insert', A, 500, 1 ), true );
+		expect( first.map( keyOf ) ).toEqual( [at(A, 500), ...held()].map( keyOf ) );
+		expect( first[0].value ).toBe( 1 );
+		expect( applyHistModification( [], mod( 'insert', A, 500, 1 ), true ).map( keyOf ) ).toEqual( [keyOf( at(A, 500) )] );
+		const values = held();
+		expect( applyHistModification( values, mod( 'delete', A, 500 ), true ) ).toBe( values );
+		expect( applyHistModification( [], mod( 'delete', A, 500 ), true ) ).toEqual( [] );
+	} );
+	//a range purge pushes a delete per record it took, and each was a filter of all held (historian-live-trend #12)
+	it( 'applies a run of deletes in one pass, in order with the puts around it', ()=>{
+		const y = applyHistModifications( held(), [mod( 'delete', A, 1000 ), mod( 'delete', A, 2000 ), mod( 'insert', A, 2000, 7 ), mod( 'delete', B, 2000 ), mod( 'delete', A, 3000 )] );
+		expect( y.map( keyOf ) ).toEqual( [keyOf( at(A, 2000) )] );
+		expect( y[0].value ).toBe( 7 );
+		expect( applyHistModifications( held(), [mod( 'insert', A, 500, 1 )], true ).map( keyOf ) ).toEqual( [at(A, 500), ...held()].map( keyOf ) );
+		const values = held();
+		expect( applyHistModifications( values, [mod( 'delete', B, 3000 ), mod( 'delete', A, 500 )] ) ).toBe( values );
+		expect( applyHistModifications( values, [] ) ).toBe( values );
 	} );
 } );

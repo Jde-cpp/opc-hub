@@ -1,5 +1,5 @@
 import { ProtoUtils, Timestamp } from 'jde-framework';
-import { NodeId } from './node-id';
+import { NodeId, NodeKey } from './node-id';
 import { OpcError } from './opc-error';
 import { ENodeClass, Variable } from './node';
 import { CnnctnSlug } from './server-cnnctn';
@@ -60,6 +60,9 @@ export const aggregateFunctionsFolder = new NodeId( {ns: 0, i: 11201} );//Histor
 //Bad_NoData:  Part 13's answer for an interval with no record, and a node's for a range with none.
 export const BadNoData:StatusCode = 0x809B0000;
 export function isNoData( sc:StatusCode ):boolean{ return nameKey( sc )==BadNoData; }
+//Bad_BoundNotFound:  a bound where the node has no record, as a subscription's snapshot opens a node with none before fromTime
+export const BadBoundNotFound:StatusCode = 0x80D70000;
+export function isBoundNotFound( sc:StatusCode ):boolean{ return nameKey( sc )==BadBoundNotFound; }
 
 function toDate( json:any ):Date|null{ return json ? ProtoUtils.toDate( <Timestamp>json ) : null; }
 function toHistTime( json:any ):HistTime|undefined{ return json ? { seconds: Number( json.seconds ), nanos: Number( json.nanos ?? 0 ) } : undefined; }
@@ -120,15 +123,19 @@ const time = ( v:HistValue )=>v.source ? v.source.getTime() : Number.POSITIVE_IN
 function sameRecord( a:HistValue, b:HistValue ):boolean{
 	return a.node.key==b.node.key && a.modification?.type==b.modification?.type && a.modification?.time?.getTime()==b.modification?.time?.getTime();
 }
-//where `values`, in time order, holds v's record, or -1:  a binary search to the time, then its few records
-function find( values:HistValue[], v:HistValue ):number{
-	const t = time( v );
+//the first of `values`, in time order, at `t` or after it:  values.length when none is
+function lowerBound( values:HistValue[], t:number ):number{
 	let lo = 0, hi = values.length;
 	while( lo<hi ){
 		const mid = (lo+hi)>>>1;
 		if( time(values[mid])<t ) lo = mid+1; else hi = mid;
 	}
-	for( let i=lo; i<values.length && time(values[i])==t; ++i ){
+	return lo;
+}
+//where `values`, in time order, holds v's record, or -1:  a binary search to the time, then its few records
+function find( values:HistValue[], v:HistValue ):number{
+	const t = time( v );
+	for( let i=lowerBound( values, t ); i<values.length && time(values[i])==t; ++i ){
 		if( sameRecord(values[i], v) )
 			return i;
 	}
@@ -175,6 +182,84 @@ export function mergeHistValues( existing:HistValue[], incoming:HistValue[] ):Hi
 //failed rides in as an OpcError value - a refusal, not a reading - and is not a value here.
 export function pushValue( node:NodeId, r:{value?:Value; sc?:StatusCode; source?:Date; server?:Date}, now:Date ):HistValue{
 	return { node, source: r.source ?? r.server ?? now, server: r.server ?? null, status: r.sc ?? 0, value: r.value instanceof OpcError ? undefined : r.value, bound: false, heartbeat: false };
+}
+//Where a group's subscription resumes after a break:  the oldest of its nodes' latest source times, so a node whose source clock
+//runs behind another's keeps what was stored meanwhile - from the newest of them, it got its bound alone (historian-live-trend
+//#5) - but no further back than histResumeReach before the newest, since a node quiet that long has its value as the bound.
+//`latest`:  each node's latest source time held.  Undefined for none.
+export function histResumeTime( latest:Iterable<Date> ):Date|undefined{
+	let oldest = Number.POSITIVE_INFINITY, newest = Number.NEGATIVE_INFINITY;
+	for( const t of latest ){
+		oldest = Math.min( oldest, t.getTime() );
+		newest = Math.max( newest, t.getTime() );
+	}
+	return newest==Number.NEGATIVE_INFINITY ? undefined : new Date( Math.max(oldest, newest-histResumeReach) );
+}
+export const histResumeReach = 10*60_000;//ms
+//each node's latest source time among `values`, for histResumeTime
+export function latestHistTimes( values:HistValue[] ):Map<NodeKey,Date>{
+	const y = new Map<NodeKey,Date>();
+	for( const v of values ){
+		const held = y.get( v.node.key );
+		if( v.source && (!held || v.source>held) )
+			y.set( v.node.key, v.source );
+	}
+	return y;
+}
+//A modification pushed on a group's subscription (spec *Subscriptions*):  what an edit did at `target`, the value it put there,
+//none for a delete, and when and who made it.  What it replaced isn't pushed:  the client holds it.
+export type HistPushKind = 'insert'|'replace'|'update'|'delete';
+export type HistPushedModification = { node:NodeId; target:Date; kind:HistPushKind; value?:HistValue; time:Date|null; user:string };
+//`values` with a pushed modification applied, in source-time order, so the trend redraws the point it targets:  a delete takes
+//every record of the node at the target, as the edit did (spec *Edits*), and the others put the value pushed in place of the
+//node's last record there, or among the values where it falls when none is.  One before the earliest value held is left to
+//Load earlier, which reads it - unless `whole`, the values back to the start of the history, when nothing will read it and it
+//goes first (historian-live-trend #4).  The same array back when nothing changed.  A Date's millisecond, as the merge folds
+//records.
+export function applyHistModification( values:HistValue[], m:HistPushedModification, whole=false ):HistValue[]{
+	const t = m.target.getTime();
+	const put = m.kind=='delete' || !m.value ? undefined : {...m.value, source: m.target};
+	if( (m.kind!='delete' && !put) || (!whole && (!values.length || t<time(values[0]))) )
+		return values;
+	const mine:number[] = [];
+	let end = lowerBound( values, t );
+	for( ; end<values.length && time(values[end])==t; ++end ){
+		if( values[end].node.key==m.node.key )
+			mine.push( end );
+	}
+	if( !put )
+		return mine.length ? values.filter( (_, i)=>!mine.includes(i) ) : values;
+	const y = [...values];
+	if( mine.length )
+		y[mine[mine.length-1]] = put;
+	else
+		y.splice( end, 0, put );
+	return y;
+}
+//A records event's modifications applied in order, as applyHistModification applies each, but a run of deletes in one pass:  a
+//range purge pushes a delete per record it took, and a filter of all held for each stalled the page (historian-live-trend #12).
+export function applyHistModifications( values:HistValue[], ms:HistPushedModification[], whole=false ):HistValue[]{
+	let deletes = new Map<number,Set<NodeKey>>();//target time -> nodes
+	const flush = ()=>{
+		if( !deletes.size )
+			return;
+		const kept = values.filter( v=>!deletes.get( time(v) )?.has( v.node.key ) );
+		if( kept.length<values.length )
+			values = kept;
+		deletes = new Map();
+	};
+	for( const m of ms ){
+		if( m.kind!='delete' ){
+			flush();
+			values = applyHistModification( values, m, whole );
+		}
+		else if( deletes.has( m.target.getTime() ) )
+			deletes.get( m.target.getTime() )!.add( m.node.key );
+		else
+			deletes.set( m.target.getTime(), new Set( [m.node.key] ) );
+	}
+	flush();
+	return values;
 }
 
 //The edits (spec *Edits*):  Part 11's UpdateData as Insert, a value at a time that holds none, Replace, one at a time that
