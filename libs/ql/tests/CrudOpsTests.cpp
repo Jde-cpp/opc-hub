@@ -4,44 +4,17 @@
 //rows it makes (`crud-…` slugs) and purges them in TearDown, so the suite stays green under --gtest_repeat/--gtest_shuffle.
 #include <gtest/gtest.h>
 #include <jde/db/DBException.h>
-#include <jde/db/IDataSource.h>
-#include <jde/ql/LocalSubscriptions.h>
 #include "globals.h"
-#include "RecordingListener.h"
 
 #define let const auto
 
 namespace Jde::QL::Tests{
 	using namespace Json;
 
-	struct CrudOpsTests : ::testing::Test{
-		α SetUp()->void override{ EnsureItemTypes(); }
-		α TearDown()->void override{
-			for( auto& listener : _listeners )
-				Subscriptions::StopListen( listener );
-			for( let id : _items )
-				DS().ExecuteSync( {"delete from qlt_items where item_id=?", {DB::Value{id}}} );
-		}
-		α Track( uint id )ι->uint{ return _items.emplace_back( id ); }//purged with the test.
-		α Item( sv slug, sv itemType=Gadget, sv extra={} )ε->uint{
-			return Track( Create(Ƒ(R"(mutation createItem( name:"{0}", slug:"{0}", itemType:"{1}"{2} ){{ id }})", slug, itemType, extra)) );
-		}
-		α Listen( sv text )ε->sp<RecordingListener>{
-			auto listener = _listeners.emplace_back( ms<RecordingListener>("CrudOpsTests") );
-			BlockTAwait<vector<SubscriptionId>>( move(*QLPtr()->Subscribe(string{text}, jobject{{"id",7717}}, listener, System)) );
-			return listener;
-		}
+	struct CrudOpsTests : OpsFixture{
 		Ω Select( uint id, sv columns="id name slug", bool includeDeleted=false )ε->jobject{
 			return QueryObject( Ƒ("item( id:{}{} ){{ {} }}", id, includeDeleted ? "" : ", deleted:null", columns) );
 		}
-		Ω WhatOf( string ql )ι->string{ //the refusal's message, or "" when nothing was refused.
-			try{ Query( move(ql) ); }
-			catch( const Exception& e ){ return e.what(); }
-			return {};
-		}
-	private:
-		vector<uint> _items;
-		vector<sp<RecordingListener>> _listeners;
 	};
 
 	//insert:  the new id comes back through the result request, the row is what was sent plus the server's defaults, and the
@@ -67,16 +40,25 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( AsSV(listener->Body(0), "name"), "crud-create" );
 		EXPECT_FALSE( listener->Body(0).contains("description") );//trimmed to what was subscribed.
 	}
-	//the nested-key spelling:  `itemType:{ id:2 }` names the fk's row, read into the insert ahead of it (CreateQuery/_nestedIds).
-	TEST_F( CrudOpsTests, CreateTakesANestedKeyRow ){
+	//the nested-key spelling:  `itemType:{ id:2 }` names the fk's row.  Its member is the enum's singular, so the object is the
+	//column's own value (JsonColumn::ToValue), on insert and update alike.
+	TEST_F( CrudOpsTests, ANestedKeyNamesTheEnumRow ){
 		let id = Track( Create(R"(mutation createItem( name:"crud-nested", slug:"crud-nested", itemType:{ id:2 } ){ id })") );
 		EXPECT_EQ( AsSV(Select(id, "id itemType"), "itemType"), Gizmo );
+		Query( Ƒ("mutation updateItem( id:{}, itemType:{{ id:1 }} )", id) );
+		EXPECT_EQ( AsSV(Select(id, "id itemType"), "itemType"), Gadget );
+		EXPECT_NE( WhatOf(Ƒ(R"(mutation updateItem( id:{}, itemType:{{ id:2, name:"Widget" }} ))", id)).find("not a row to create"), string::npos );
+		EXPECT_EQ( AsSV(Select(id, "id itemType"), "itemType"), Gadget );
 	}
 	//the refusals - ql's before anything is written, the database's by its constraints - and none reaches a subscriber (#47).
 	TEST_F( CrudOpsTests, CreateRefusals ){
 		auto listener = Listen( "subscription ItemCreated{ itemCreated(subscriptionId:$id){ id } }" );
 		EXPECT_NE( WhatOf(R"(mutation createItem( slug:"crud-noname", itemType:"Gadget" ){ id })").find("No default for 'name'"), string::npos );//not nullable, no default.
 		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-noenum", slug:"crud-noenum", itemType:"Doohickey" ){ id })").find("Doohickey"), string::npos );//no such enum name.
+		//an enum's object is a key, not a row to create - nothing reads the new enum row's id back, so the item would bind to 0.
+		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-nowidget", slug:"crud-nowidget", itemType:{ id:3, name:"Widget" } ){ id })").find("not a row to create"), string::npos );
+		EXPECT_EQ( Count("item_types", "where item_type_id=3"), 0u ) << "the nested enum row was written";
+		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-nodesc", slug:"crud-nodesc", itemType:"Gadget", description:{ x:1 } ){ id })").find("not an object"), string::npos );
 		try{
 			Query( R"(mutation createItem( name:"crud-nofk", slug:"crud-nofk", itemType:99 ){ id })" );//an id the enum table lacks - the fk's, not ql's.
 			ADD_FAILURE() << "the foreign key was not enforced";
@@ -92,7 +74,10 @@ namespace Jde::QL::Tests{
 		catch( const DB::DBException& e ){
 			EXPECT_EQ( e.Error, DB::EDbError::Duplicate ) << e.what();
 		}
-		EXPECT_EQ( Count("items", "where slug like ?", {DB::Value{string{"crud-no%"}}}), 0u );
+		vector<DB::Value> refused;//by name:  a pattern would also match other tests' rows, which a crashed run on a file db leaves behind.
+		for( sv slug : {"crud-noname", "crud-noenum", "crud-nowidget", "crud-nodesc", "crud-nofk", "crud-dup-2"} )
+			refused.emplace_back( string{slug} );
+		EXPECT_EQ( Count("items", "where slug in (?,?,?,?,?,?)", move(refused)), 0u ) << "a refused insert was written";
 		ASSERT_EQ( listener->Changes.size(), 1u ) << "a refused insert was published";//crud-dup's own, and no other.
 		EXPECT_EQ( AsNumber<uint>(listener->Body(0), "id"), id );
 	}

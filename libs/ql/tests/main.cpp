@@ -23,6 +23,7 @@ namespace Jde{
 		if( Settings::FindBool("/dbServers/sync").value_or(false) || schema->DS()->RequiresSync() )
 			DB::SyncSchema( *schema, ql );
 		QL::Tests::SetQL( ql );
+		QL::Tests::EnsureItemTypes();
 	}
 }
 

@@ -76,14 +76,11 @@ namespace Jde::QL{
 			let isExtensionKey = !_identityInsert && c->IsPK() && table.Extends;
 			if( isExtensionKey && (input.if_contains(memberName) || input.if_contains("id")) )
 				WARNT( ELogTags::QL, "[{}.{}]ignoring the supplied key - an extension row takes its pk from the row it extends.", table.Name, c->Name );
-			//#238: `itemType:{ id:2 }` - the nested-key spelling on an enum column, whose member name is the nested table's singular, so the
-			//object lands here as the column's own value and Value refused it as "not a number".  CreateQuery has already read the key into
-			//_nestedIds;  an object is left to the missing-column fill below, as it is for any other fk.
-			if( let jvalue = isExtensionKey ? nullptr : input.if_contains(memberName); jvalue && !jvalue->is_object() ){// calling a stored proc, so need all columns.
+			if( let jvalue = isExtensionKey ? nullptr : input.if_contains(memberName); jvalue ){// calling a stored proc, so need all columns.
 				++cNonDefaultArgs;
 				value = c->IsEnum() && (jvalue->is_string() || jvalue->is_array())
 					? getEnumValue( *c, qlCol, *jvalue )
-					: Value{ c->Type, *jvalue };
+					: qlCol.ToValue( *jvalue );
 			}
 			//#24: still ungated beyond the extension check above - the schema seed inserts its enum rows through this branch
 			//(`createRights( name:"None", id:0 )`, which LocalQL::Upsert routes here *without* _identityInsert), so gating it on
@@ -91,6 +88,12 @@ namespace Jde::QL{
 			//to someone else's identity, is handled by isExtensionKey.
 			else if( let id = !isExtensionKey && c->IsPK() ? input.if_contains("id") : nullptr; id )
 				value = Value{ c->Type, *id };
+			//#238: a key-spelled fk (`histTemplate:{ id:N }`) was read by CreateQuery, so it is an arg now - the missing-column fill
+			//below never reaches a nullable fk, whose default is null.
+			else if( auto nested = !isExtensionKey && c->PKTable ? _nestedIds.find(c->Name) : _nestedIds.end(); nested!=_nestedIds.end() ){
+				++cNonDefaultArgs;
+				value = nested->second;
+			}
 			else if( !c->Default && c->Insertable ){ //insertable=not populated by stored proc, may [not] be an extension record.
 				THROW_IF( !c->PKTable, "No default for '{}' in '{}'. mutation='{}'", c->Name, table.Name, _mutation.ToString() );
 				++cNonDefaultArgs;

@@ -3,35 +3,22 @@
 //(SelectAwait::findMap).  With them the purge the map's fk refuses.  Rows are this suite's (`map-…`), purged in TearDown.
 #include <gtest/gtest.h>
 #include <jde/db/DBException.h>
-#include <jde/db/IDataSource.h>
-#include <jde/ql/LocalSubscriptions.h>
 #include "globals.h"
-#include "RecordingListener.h"
 
 #define let const auto
 
 namespace Jde::QL::Tests{
 	using namespace Json;
 
-	struct AddRemoveOpsTests : ::testing::Test{
-		α SetUp()->void override{ EnsureItemTypes(); }
+	struct AddRemoveOpsTests : OpsFixture{
 		α TearDown()->void override{
-			for( auto& listener : _listeners )
-				Subscriptions::StopListen( listener );
-			for( let id : _items ){
-				DS().ExecuteSync( {"delete from qlt_item_labels where item_id=?", {DB::Value{id}}} );
-				DS().ExecuteSync( {"delete from qlt_items where item_id=?", {DB::Value{id}}} );
-			}
+			for( let id : _items )
+				Purge( "item_labels", "item_id", id );
+			OpsFixture::TearDown();
 			for( let id : _labels )
-				DS().ExecuteSync( {"delete from qlt_labels where label_id=?", {DB::Value{id}}} );
+				Purge( "labels", "label_id", id );
 		}
-		α Item( sv slug )ε->uint{ return _items.emplace_back( Create(Ƒ(R"(mutation createItem( name:"{0}", slug:"{0}", itemType:"{1}" ){{ id }})", slug, Gadget)) ); }
 		α Label( sv name )ε->uint{ return _labels.emplace_back( Create(Ƒ(R"(mutation createLabel( name:"{}", color:"red" ){{ id }})", name)) ); }
-		α Listen( sv text )ε->sp<RecordingListener>{
-			auto listener = _listeners.emplace_back( ms<RecordingListener>("AddRemoveOpsTests") );
-			BlockTAwait<vector<SubscriptionId>>( move(*QLPtr()->Subscribe(string{text}, jobject{{"id",7717}}, listener, System)) );
-			return listener;
-		}
 		//the membership as a client reads it:  the parent row with its labels nested, through the map.
 		Ω Labels( uint item )ε->vector<string>{
 			vector<string> y;
@@ -40,14 +27,8 @@ namespace Jde::QL::Tests{
 			std::ranges::sort( y );
 			return y;
 		}
-		Ω WhatOf( string ql )ι->string{ //the refusal's message, or "" when nothing was refused.
-			try{ Query( move(ql) ); }
-			catch( const Exception& e ){ return e.what(); }
-			return {};
-		}
 	private:
-		vector<uint> _items, _labels;
-		vector<sp<RecordingListener>> _listeners;
+		vector<uint> _labels;
 	};
 
 	//several children in one add, the parent by `id` or by its column name, and each op's event with what the mutation said.

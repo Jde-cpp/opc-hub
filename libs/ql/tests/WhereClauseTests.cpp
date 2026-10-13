@@ -1,7 +1,8 @@
 //#238:  ToWhereClause, the SQL half of QL::Filter - FilterTests covers the in-memory half and says in its own header that this
 //one needs a DB::Table behind a syntax.  The qlTests schema's items table on sqlite is both, so every filter shape the parser
 //produces (Input::Filter) is rendered here and read back as the clause and its bound params - the dialect's spellings
-//(SqliteSyntax), which are also what CrudOpsTests' selects run.  Nothing executes:  the clause is built from the parse alone.
+//(SqliteSyntax), which are also what CrudOpsTests' selects run.  The clause is built from the parse alone, except an enum name's:
+//that resolves to its id through item_types, so AnEnumFiltersByDisplayName needs the data source and EnsureItemTypes' rows.
 #include <gtest/gtest.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
@@ -15,11 +16,7 @@ namespace Jde::QL::Tests{
 		let table = ParseQuery( string{query}, move(vars), Schemas() );
 		return ToWhereClause( table, *table.DBTable() );
 	}
-	Ω whatOf( sv query )ε->string{ //the refusal's message, or "" when nothing was refused.
-		try{ where( query ); }
-		catch( const Exception& e ){ return e.what(); }
-		return {};
-	}
+	Ω whatOf( sv query )ι->string{ return WhatOf( [=]{ where(query); } ); }//the clause's refusal.
 
 	TEST( WhereClauseTests, NoFilterIsNoClause ){
 		let w = where( "items{ id name }" );
@@ -108,7 +105,6 @@ namespace Jde::QL::Tests{
 	//#20: an enum column filtered by its display name - the only spelling a client has - resolves to the id through the enum
 	//table, and the clause is on the id column;  the id spelling still works, and a name the enum lacks is refused by name.
 	TEST( WhereClauseTests, AnEnumFiltersByDisplayName ){
-		EnsureItemTypes();
 		let byName = where( Ƒ(R"(items( itemType:"{}" ){{ id }})", Gizmo) );
 		EXPECT_EQ( byName.ToString(), "where qlt_items.item_type_id=?" );
 		ASSERT_EQ( byName.Params().size(), 1u );
