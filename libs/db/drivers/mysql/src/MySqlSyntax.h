@@ -11,11 +11,13 @@ namespace Jde::DB::MySql{
 		Ω Instance()->const MySqlSyntax&{ static const MySqlSyntax _instance; return _instance; }
 		//SET DEFAULT takes a literal or a parenthesized expression - the bare CURRENT_TIMESTAMP a create statement accepts
 		//is a syntax error here.  The catalog then reports the expression as `now()`, which MySqlDefault reads back as NowDefault.
-		α SetDefault( sv tableName, sv columnName, const Value& dflt, sv )Ε->vector<string> override{
+		α SetDefault( sv tableName, sv columnName, const Value& dflt, sv )Ε->string override{
 			const auto literal = dflt.is_string() && dflt.get_string()=="$now" ? Ƒ( "({})", NowDefault() ) : DefaultLiteral( dflt );
-			return { Ƒ("ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, literal) };
+			return Ƒ( "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT {}", tableName, columnName, literal );
 		}
 		α BoolLiteral( bool v )Ι->sv override{ return v ? "true" : "false"; }
+		α DefaultConstraint( sv, sv )Ι->string override{ return {}; }
+		α QuoteLiteral( sv text )Ι->string override{ return Syntax::QuoteLiteral( Str::Replace(text, "\\", "\\\\") ); } //a backslash escapes unless sql_mode has NO_BACKSLASH_ESCAPES, which the driver never sets.
 		α CanSetDefaultSchema()Ι->bool override{ return true; }
 		α CatalogSelect()Ι->sv override{ return {}; }
 		α CreatePrimaryKey( str tableName, str columns )Ι->string override{ return Ƒ("CONSTRAINT {}_pk PRIMARY KEY( {} )", tableName, columns); } //columns: comma-separated for composite keys.

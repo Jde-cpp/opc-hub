@@ -98,20 +98,20 @@ namespace Jde::DB::Tests{
 		EXPECT_TRUE( s.DefaultLiteral(Value{vector<uint8_t>{}}).empty() );  //Column::getDefault's nullable-binary placeholder.
 		EXPECT_THROW( s.DefaultLiteral(Value{vector<uint8_t>{1}}), Exception );
 		EXPECT_THROW( s.DefaultLiteral(Value{DBTimePoint{}}), Exception );
-		EXPECT_EQ( Syntax::QuoteLiteral(""), "''" );
+		EXPECT_EQ( s.QuoteLiteral(""), "''" );
+		EXPECT_EQ( s.DefaultLiteral(Value{"C:\\temp"}), "'C:\\temp'" ); //a backslash is no escape here - MySQL's is.
 	}
 
 	//#241: a changed default on an existing column.  T-SQL keeps a column's default as a constraint of its own, so one
-	//already there is dropped by the name the loader read before the new one is added; a column with none just gets the add.
+	//already there is dropped by the name the loader read before the new one is added, in one transaction; a column with
+	//none just gets the add.  The add names its constraint, so a second change drops it by that name - not by the one
+	//just dropped.
 	TEST( SyntaxTests, SetDefault ){
 		const Syntax s;
-		const auto changed = s.SetDefault( "dbo.widgets", "color", Value{"blue"}, "DF__widgets__color__3B" );
-		ASSERT_EQ( changed.size(), 2u );
-		EXPECT_EQ( changed[0], "alter table dbo.widgets drop constraint DF__widgets__color__3B" );
-		EXPECT_EQ( changed[1], "alter table dbo.widgets add default 'blue' for color" );
-		const auto added = s.SetDefault( "dbo.widgets", "created", Value{"$now"}, {} );
-		ASSERT_EQ( added.size(), 1u );
-		EXPECT_EQ( added[0], "alter table dbo.widgets add default getutcdate() for created" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "color", Value{"blue"}, "DF__widgets__color__3B"), "set xact_abort on; begin tran; alter table dbo.widgets drop constraint DF__widgets__color__3B; alter table dbo.widgets add constraint DF_widgets_color default 'blue' for color; commit" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "color", Value{"red"}, s.DefaultConstraint("dbo.widgets", "color")), "set xact_abort on; begin tran; alter table dbo.widgets drop constraint DF_widgets_color; alter table dbo.widgets add constraint DF_widgets_color default 'red' for color; commit" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "created", Value{"$now"}, {}), "alter table dbo.widgets add constraint DF_widgets_created default getutcdate() for created" );
+		EXPECT_EQ( s.DefaultConstraint("widgets", "color"), "DF_widgets_color" ); //schema-scoped, so the same name with or without one.
 	}
 
 	//#241: the catalogs wrap a default in parentheses of their own - SQL Server a number twice - which the compare has to
@@ -126,6 +126,27 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( StripParens(""), "" );
 		EXPECT_EQ( StripParens("()"), "" );
 		EXPECT_EQ( StripParens("(x"), "(x" );
+		EXPECT_EQ( StripParens("(':)')"), "':)'" );               //a paren inside a string is the string's.
+		EXPECT_EQ( StripParens("('it''s )')"), "'it''s )'" );
+		EXPECT_EQ( StripParens("(')')+(')')"), "(')')+(')')" );
+	}
+
+	//#241: the compare SchemaDdl's syncDefault runs - true leaves the column alone.  #9: MySQL reports a decimal at its
+	//scale and a double its own way, so numbers compare as numbers, or the column was re-altered at every startup.
+	TEST( ServerMetaFoldTests, SameDefault ){
+		EXPECT_TRUE( SameDefault("1", "((1))") );
+		EXPECT_TRUE( SameDefault("getutcdate()", "(GETUTCDATE())") );
+		EXPECT_FALSE( SameDefault("'A'", "'a'") );
+		EXPECT_FALSE( SameDefault("'blue'", "") );                          //none yet.
+		EXPECT_TRUE( SameDefault("1.5", "1.50") );                          //decimal(10,2)
+		EXPECT_TRUE( SameDefault("0", "0.00") );
+		EXPECT_TRUE( SameDefault("-2.5", "(-2.50)") );
+		EXPECT_TRUE( SameDefault("1e+20", "1e20") );                        //std::format's double against MySQL's.
+		EXPECT_FALSE( SameDefault("1.5", "1.51") );
+		EXPECT_FALSE( SameDefault("1.5", "2") );                            //a decimal(10,0) rounds what it was given - a real difference.
+		EXPECT_FALSE( SameDefault("9007199254740993", "9007199254740992") ); //one double apart.
+		EXPECT_FALSE( SameDefault("'1.5'", "1.50") );                       //a string is no number.
+		EXPECT_FALSE( SameDefault("1.5", "1.5x") );
 	}
 
 	//db-refactor B1: the placeholder ctors - Column::Count, a criteria column, the pkTable/extends/qlView stand-ins, every

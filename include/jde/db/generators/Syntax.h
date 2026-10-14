@@ -37,11 +37,13 @@ namespace Jde::DB{
 		//column carries - and a throw for a type ddl has no spelling for.  The create statement and #241's reconciliation
 		//of an existing table both spell through here, so what one writes the other recognises.
 		α DefaultLiteral( const Value& dflt )Ε->string;
-		Ω QuoteLiteral( sv text )ι->string; //'text', its quotes doubled - the one string-literal form every dialect reads.
-		//#241: the statements that make `columnName`'s default `dflt` on an existing table - `constraintName` the default
-		//it has now where the dialect names them (SQL Server), which has to go first.  sqlite has no in-place form and
-		//answers none:  SqliteServerMeta::SetDefault rewrites the table's stored text instead.
-		β SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->vector<string>;
+		β QuoteLiteral( sv text )Ι->string; //'text', its quotes doubled - MySQL also doubles its escape character, the backslash.
+		//#241: the one batch that makes `columnName`'s default `dflt` on an existing table - one, so a change of several
+		//statements commits or fails whole.  `constraintName` is the default it has now where the dialect names them
+		//(SQL Server), which has to go first; the one added is named DefaultConstraint, so the next change knows what to
+		//drop.  sqlite has no in-place form and answers empty:  SqliteServerMeta::SetDefault rewrites the table's stored text instead.
+		β SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->string;
+		β DefaultConstraint( sv tableName, sv columnName )Ι->string; //the name SetDefault gives the default it adds - DF_<table>_<column> - where the dialect names them; empty elsewhere.
 		β CanAddForeignKeys()Ι->bool{ return true; } //false (sqlite): no 'alter table add constraint' - fks only enforced when inline in create table.
 		β CanSetDefaultSchema()Ι->bool{ return false; }
 		β CatalogSelect()Ι->sv{ return "select db_name();"; }

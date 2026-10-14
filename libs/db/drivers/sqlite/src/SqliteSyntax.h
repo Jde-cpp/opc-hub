@@ -49,6 +49,8 @@ namespace Jde::DB::Sqlite{
 		α ProcStart()Ι->sv override{ return {}; }
 		α SchemaExistsSql()Ι->sv override{ return "select name from pragma_database_list where name=?"; } //'main' always exists - schema creation is a no-op.
 		α SchemaSelect()Ι->sv override{ return {}; } //no schemas - SchemaName falls back to SysSchema ('main').
+		α SetDefault( sv, sv, const Value&, sv )Ε->string override{ return {}; } //#241: no in-place form - SqliteServerMeta::SetDefault rewrites the stored create text.
+		α DefaultConstraint( sv, sv )Ι->string override{ return {}; }
 		α SpecifyIndexCluster()Ι->bool override{ return false; }
 		α SysSchema()Ι->sv override{ return "main"; }
 		//rowid alias requires the declared type be exactly 'integer' - 'smallint'/'tinyint'/'bigint' pks don't auto-assign

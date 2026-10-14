@@ -6,7 +6,7 @@
 
 namespace Jde::DB{
 	α IServerMeta::SetDefault( const Table& table, const ColumnDdl& column, const Value& dflt )Ε->void{
-		for( auto&& statement : _ds.Syntax().SetDefault(table.SqlName(), column.Name, dflt, column.DefaultName) )
-			_ds.ExecuteSync( {move(statement)} );
+		if( auto batch = _ds.Syntax().SetDefault(table.SqlName(), column.Name, dflt, column.DefaultName); batch.size() )
+			_ds.ExecuteSync( {move(batch)} );
 	}
 }

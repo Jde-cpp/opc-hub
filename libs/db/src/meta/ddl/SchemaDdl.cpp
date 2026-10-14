@@ -15,7 +15,7 @@
 #include <jde/db/meta/Cluster.h>
 #include <jde/db/meta/Column.h>
 #include "../IServerMeta.h"
-#include "../ServerMetaFold.h" //StripParens
+#include "../ServerMetaFold.h" //SameDefault
 #include <jde/ql/IQL.h>
 #include "Index.h"
 #include "Procedure.h"
@@ -248,20 +248,17 @@ namespace Jde::DB{
 
 	//#241: a `default:` that changed since the table was created, or was added to a column that had none, reaches the
 	//database here - the create statement only ever runs once.  Both sides in the dialect's own spelling, the configured
-	//one through Syntax::DefaultLiteral and the catalog's through the loader (ColumnDdl::DefaultSql), outer parentheses
-	//aside; the compare is case-insensitive outside a quoted string, where `GETUTCDATE()` and `getutcdate()` are one
-	//default and `'A'` and `'a'` are not.  A default the configuration no longer has stays on the column, and a nullable
-	//column's implicit null is no default at all.
+	//one through Syntax::DefaultLiteral and the catalog's through the loader (ColumnDdl::DefaultSql), compared by
+	//SameDefault.  A default the configuration no longer has stays on the column, and a nullable column's implicit null
+	//is no default at all.
 	Ω syncDefault( IDataSource& ds, const Table& table, const Column& config, ColumnDdl& loaded )ε->void{
 		let configured = config.Default ? ds.Syntax().DefaultLiteral( *config.Default ) : string{};
-		if( configured.empty() )
-			return;
-		let a = StripParens( configured ), b = StripParens( loaded.DefaultSql );
-		if( a==b || (!a.starts_with('\'') && ToIV(a)==ToIV(b)) )
+		if( configured.empty() || SameDefault(configured, loaded.DefaultSql) )
 			return;
 		ds.ServerMeta().SetDefault( table, loaded, *config.Default );
 		INFO( "Set the default of '{}.{}' to {}{}.", table.DBName, config.Name, configured, loaded.DefaultSql.empty() ? string{} : Ƒ(" (was {})", loaded.DefaultSql) );
 		loaded.DefaultSql = configured;
+		loaded.DefaultName = ds.Syntax().DefaultConstraint( table.SqlName(), loaded.Name ); //the one just dropped is gone.
 	}
 
 	α SchemaDdl::SyncTables( const AppSchema& config )ε->void{

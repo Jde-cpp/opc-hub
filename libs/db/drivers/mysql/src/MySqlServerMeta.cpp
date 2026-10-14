@@ -10,8 +10,37 @@
 #define let const auto
 
 namespace Jde::DB{
-	α MySql::MySqlDefault( sv text, bool generated, EType type, const Syntax& syntax )ι->string{
+	//A string literal's value - MariaDB's `'it''s'`, `'a\\b'`, `'a\nb'` - by MySQL's escapes.
+	Ω unquote( sv literal )ι->string{
+		string y;
+		for( uint i=1; i+1<literal.size(); ++i ){
+			char c = literal[i];
+			if( c=='\'' )
+				++i; //doubled.
+			else if( c=='\\' && i+2<literal.size() ){
+				switch( c = literal[++i] ){
+					case '0': c = '\0'; break;
+					case 'b': c = '\b'; break;
+					case 'n': c = '\n'; break;
+					case 'r': c = '\r'; break;
+					case 't': c = '\t'; break;
+					case 'Z': c = '\x1a'; break;
+					case '%': case '_': y += '\\'; break; //kept, as MySQL keeps them.
+				}
+			}
+			y += c;
+		}
+		return y;
+	}
+	α MySql::MySqlDefault( sv text, bool generated, EType type, const Syntax& syntax, bool mariaDB )ι->string{
 		using enum EType;
+		if( mariaDB ){
+			if( text=="NULL" )
+				return {}; //a string default 'NULL' comes quoted.
+			if( text.starts_with('\'') )
+				return MySqlDefault( unquote(text), false, type, syntax );
+			generated = type!=Bit; //a number or an expression - kept as is, as a generated one is - or a bit's b'1'.
+		}
 		if( generated ){
 			let iv = ToIV( text );
 			return iv=="now()"_iv || iv=="current_timestamp"_iv || iv=="current_timestamp()"_iv ? string{ syntax.NowDefault() } : string{ text };
@@ -19,16 +48,17 @@ namespace Jde::DB{
 		if( type==Bit )
 			return string{ syntax.BoolLiteral(text=="b'1'" || text=="1") };
 		return type==VarChar || type==Char || type==VarWChar || type==WChar || type==Text || type==NText || type==DateTime || type==SmallDateTime
-			? Syntax::QuoteLiteral( text )
+			? syntax.QuoteLiteral( text )
 			: string{ text };
 	}
 namespace MySql{
 	Ω loadTables( IDataSource& ds, const MySqlServerMeta& meta, str schemaName, sv tablePrefix, bool like )ε->flat_map<string,sp<Table>>{
 		flat_map<string,sp<Table>> tables;
+		let mariaDB = meta.IsMariaDB();
 		auto onRow = [&]( Row&& row ){ //ColumnSql's columns; [2] is ORDINAL_POSITION, which the statement orders by.
 			let type = meta.ToType( row.GetString(5) );
 			let isId = row.Get<_int>( 8 ); //ColumnSql's hard-coded `0 is_id`, so nullopt today - `isId!=0` once made it an engaged optional{0}, every column claiming to be pk column 0.
-			let dflt = row.IsNull( 3 ) ? string{} : MySqlDefault( row.GetString(3), row.GetString(11).find("DEFAULT_GENERATED")!=string::npos, type, ds.Syntax() ); //NULL is no default; '' is an empty-string one.
+			let dflt = row.IsNull( 3 ) ? string{} : MySqlDefault( row.GetString(3), row.GetString(11).find("DEFAULT_GENERATED")!=string::npos, type, ds.Syntax(), mariaDB ); //NULL is no default; '' is an empty-string one.
 			FoldColumnRow( tables, row.GetString(0), ms<ColumnDdl>(row.GetString(1), dflt, row.GetString(4)!="NO", type, row.GetOpt<_int>(6), row.Get<_int>(7)!=0, isId ? optional<uint8>{(uint8)(isId-1)} : optional<uint8>{}, row.GetOpt<_int>(9), row.GetOpt<_int>(10)) );
 		};
 		let exact = !like && tablePrefix.size();//LoadTable wants an exact match - LIKE treats '_' in names like role_member as a wildcard.
@@ -38,6 +68,10 @@ namespace MySql{
 		ds.Select( move(sql), onRow );
 		AttachIndexes( tables, meta.LoadIndexes(schemaName, tablePrefix) );
 		return tables;
+	}
+	α MySqlServerMeta::IsMariaDB()Ε->bool{
+		std::call_once( _mariaDBOnce, [this]{ _mariaDB = _ds.ScalerSync<string>( Sql{"select version()"} ).find( "MariaDB" )!=string::npos; } );
+		return _mariaDB;
 	}
 	α MySqlServerMeta::LoadTables( sv schemaName, sv tablePrefix )Ε->flat_map<string,sp<Table>>{
 		return loadTables( _ds, *this, string{schemaName}, tablePrefix, true );

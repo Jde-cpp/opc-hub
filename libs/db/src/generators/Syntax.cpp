@@ -153,7 +153,7 @@ namespace Jde::DB{
 		return y+"$";
 	}
 
-	α Syntax::QuoteLiteral( sv text )ι->string{
+	α Syntax::QuoteLiteral( sv text )Ι->string{
 		return Ƒ( "'{}'", Str::Replace(text, "'", "''") );
 	}
 	α Syntax::DefaultLiteral( const Value& dflt )Ε->string{
@@ -171,13 +171,16 @@ namespace Jde::DB{
 			return {};
 		THROW( "A '{}' default has no ddl spelling.", dflt.TypeName() );
 	}
-	//T-SQL: a column's default is a constraint of its own, so a change is a drop and an add.
-	α Syntax::SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->vector<string>{
-		vector<string> y;
-		if( constraintName.size() )
-			y.push_back( Ƒ("alter table {} drop constraint {}", tableName, constraintName) );
-		y.push_back( Ƒ("alter table {} add default {} for {}", tableName, DefaultLiteral(dflt), columnName) );
-		return y;
+	//T-SQL: a column's default is a constraint of its own, so a change is a drop and an add - in one transaction, or a
+	//failed add leaves the column with no default.
+	α Syntax::SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->string{
+		auto add = Ƒ( "alter table {} add constraint {} default {} for {}", tableName, DefaultConstraint(tableName, columnName), DefaultLiteral(dflt), columnName );
+		if( constraintName.empty() )
+			return add;
+		return Ƒ( "set xact_abort on; begin tran; alter table {} drop constraint {}; {}; commit", tableName, constraintName, add );
+	}
+	α Syntax::DefaultConstraint( sv tableName, sv columnName )Ι->string{
+		return Ƒ( "DF_{}_{}", tableName.substr(tableName.rfind('.')+1), columnName ); //constraint names are schema-scoped - no schema in one.
 	}
 
 	α Syntax::EscapeDdl( sv sql )Ι->string{

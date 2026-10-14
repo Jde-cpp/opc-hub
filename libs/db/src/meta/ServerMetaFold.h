@@ -1,4 +1,5 @@
 #pragma once
+#include <charconv>
 #include <jde/db/meta/Table.h>
 #include "ddl/ColumnDdl.h"
 #include "ddl/ForeignKey.h"
@@ -22,18 +23,38 @@ namespace Jde::DB{
 	//#241: a default's text minus the parentheses a dialect wraps it in - SQL Server spells a number `((1))` and an
 	//expression `(getutcdate())`, and sqlite stores `(unixepoch())` but reads `unixepoch()` back - so a loader's
 	//DefaultSql and SchemaDdl's spelling of the configured default compare on one footing.  Only a pair that encloses
-	//the whole text goes: `(1)+(2)` keeps both.
+	//the whole text goes: `(1)+(2)` keeps both.  A paren inside a string literal doesn't count:  `(':)')` is `':)'`.
 	Ξ StripParens( sv text )ι->sv{
 		for( ; text.size()>=2 && text.front()=='(' && text.back()==')'; text = text.substr(1, text.size()-2) ){
 			uint depth{};
 			for( uint i=0; i<text.size()-1; ++i ){ //the opening paren has to close at the last character, not before.
-				if( text[i]=='(' )
+				if( text[i]=='\'' ) //a doubled quote reads as two strings back to back.
+					for( ++i; i<text.size()-1 && text[i]!='\''; ++i );
+				else if( text[i]=='(' )
 					++depth;
 				else if( text[i]==')' && --depth==0 )
 					return text;
 			}
 		}
 		return text;
+	}
+	//#241: a configured default and a loaded one, both in Syntax::DefaultLiteral's spelling, name the same default -
+	//SchemaDdl leaves the column alone.  Equal after StripParens, case-insensitive outside a quoted string (`GETUTCDATE()`
+	//and `getutcdate()` are one default, `'A'` and `'a'` are not), or equal as numbers:  MySQL reports a decimal at its
+	//scale (`1.50`) and a double its own way (`1e20` where std::format writes `1e+20`).  Integers compare exactly - as
+	//doubles, two large ones round together.
+	Ξ SameDefault( sv configured, sv loaded )ι->bool{
+		const auto a = StripParens( configured ), b = StripParens( loaded );
+		if( a==b || (!a.starts_with('\'') && ToIV(a)==ToIV(b)) )
+			return true;
+		const auto parse = []( sv text, auto& y ){
+			const auto [end, ec] = std::from_chars( text.data(), text.data()+text.size(), y );
+			return ec==std::errc{} && end==text.data()+text.size();
+		};
+		if( _int x, y; parse(a, x) && parse(b, y) )
+			return x==y;
+		double x, y;
+		return parse( a, x ) && parse( b, y ) && x==y;
 	}
 
 	Ξ FoldForeignKeyRow( flat_map<string,ForeignKey>& fks, str name, str fkTable, str column, str pkTable )ι->void{

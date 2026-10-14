@@ -282,6 +282,9 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_FALSE( syntax.HasProcs() );
 		EXPECT_FALSE( syntax.CanAddForeignKeys() );
 		EXPECT_EQ( syntax.GuidType(), "blob" );
+		EXPECT_EQ( syntax.SetDefault("tbl", "col", Value{1}, {}), "" ); //#241: none - not the base dialect's T-SQL `add default … for`.
+		EXPECT_TRUE( syntax.DefaultConstraint("tbl", "col").empty() );
+		EXPECT_EQ( syntax.DefaultLiteral(Value{"C:\\temp"}), "'C:\\temp'" ); //no backslash escapes.
 
 		//Limit(): OFFSET requires a LIMIT, so skip-only must use a negative (=unbounded) limit, not 'limit 0' which returns zero rows.
 		let sql = string{"select * from t"};
