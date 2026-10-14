@@ -109,6 +109,18 @@ namespace Jde::Opc{
 	α Gateway::ResolveThresholds( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->Opc::Hist::Thresholds{
 		return ( member ? row.Over(*member) : row ).Over( group ).Thresholds();
 	}
+	α Gateway::ResolveThresholdSources( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->vector<HistThresholdSource>{
+		let t = ResolveThresholds( row, member, group );
+		let source = [&]( auto HistThresholdColumns::*column )ι->sv{ return (row.*column) ? "node" : member && (member->*column) ? "template" : (group.*column) ? "group" : "default"; };
+		let ms = []( Duration d )ι->double{ return std::chrono::duration<double,std::milli>( d ).count(); };
+		return {
+			{ "exceptionDeviation", t.ExceptionDeviation ? jvalue{*t.ExceptionDeviation} : jvalue{}, source(&HistThresholdColumns::ExceptionDeviation) },
+			{ "exceptionDeviationFormat", jvalue{(uint64_t)t.DeviationFormat}, source(&HistThresholdColumns::DeviationFormat) },
+			{ "minTimeInterval", jvalue{ms(t.MinTimeInterval)}, source(&HistThresholdColumns::MinTimeInterval) },
+			{ "maxTimeInterval", jvalue{ms(t.MaxTimeInterval)}, source(&HistThresholdColumns::MaxTimeInterval) },
+			{ "stepped", jvalue{t.Stepped}, source(&HistThresholdColumns::Stepped) }
+		};
+	}
 
 	α Gateway::HistNodeText( const ExNodeId& node )ι->string{
 		ExNodeId canonical{ node };

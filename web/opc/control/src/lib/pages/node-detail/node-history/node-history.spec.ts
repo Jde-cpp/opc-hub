@@ -21,6 +21,7 @@ import { OpcError } from '../../../model/opc-error';
 import { HistEvent, HistSubscribeArgs, SubscriptionResult } from '../../../services/gateway-service';
 import { HistoryService } from '../../../services/history-service';
 import { HistEditDialog, HistEditDialogData, HistEditPreset } from './hist-edit-dialog';
+import { HistThresholdsDialog, HistThresholdsDialogData } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
 import { NodeHistory } from './node-history';
@@ -49,17 +50,20 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 	};
 	const edits:{ sent:HistEditArgs[]; sources:HistSource[]; answer:HistEditResult } = { sent: [], sources: [], answer: {values: [], nodes: []} };
 	const dialogResult:{ answer:HistEditResult|undefined } = { answer: undefined };
-	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [];
+	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [], thresholds:HistThresholdsDialogData[] = [];
 	const errors:string[] = [], warnings:string[] = [];
+	const thresholdReads:{reader:unknown; group:number}[] = [], overrides:{poster:unknown; id:number; changes:unknown}[] = [];
 	const y = {
 		confirmed: true,
 		aggregates: <HistAggregate[]>[{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}],
 		capabilities: <HistCapabilities>{aggregates: [{name: 'Median', browse: 'Median'}], update: false, delete: false},
-		dialog: { open: ( component:unknown, config?:{data?:HistEditDialogData|ConfirmData} )=>{
+		dialog: { open: ( component:unknown, config?:{data?:HistEditDialogData|ConfirmData|HistThresholdsDialogData} )=>{
 			if( component===HistEditDialog )
 				presets.push( (<HistEditDialogData|undefined>config?.data)?.preset );
 			else if( component===ConfirmDialog )
 				confirmations.push( (<ConfirmData>config!.data).message );
+			else if( component===HistThresholdsDialog )
+				thresholds.push( <HistThresholdsDialogData>config!.data );
 			return { afterClosed: ()=>of( component===ConfirmDialog ? y.confirmed : component===HistEditDialog ? dialogResult.answer : undefined ) };
 		} }
 	};
@@ -68,7 +72,9 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 			read: ( _reader:unknown, source:HistSource, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({source, args, answer}) ),
 			edit: async ( _editor:unknown, source:HistSource, args:HistEditArgs )=>{ edits.sent.push( args ); edits.sources.push( source ); return edits.answer; },
 			aggregates: async ()=>{ await settle(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; },
-			capabilities: async ()=>{ await settle(); if( y.capabilities instanceof Error ) throw y.capabilities; return y.capabilities; }
+			capabilities: async ()=>{ await settle(); if( y.capabilities instanceof Error ) throw y.capabilities; return y.capabilities; },
+			thresholds: async ( reader:unknown, group:number )=>{ thresholdReads.push( {reader, group} ); return {update: false, nodes: []}; },
+			override: async ( poster:unknown, id:number, changes:unknown )=>{ overrides.push( {poster, id, changes} ); }
 		} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}, info: ()=>{}, error: ( m:string )=>errors.push( m ), warn: ( m:string )=>warnings.push( m )} },
 		{ provide: MatDialog, useValue: y.dialog }
@@ -81,7 +87,7 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 	fixture.componentRef.setInput( 'groups', options.groups ?? [] );
 	fixture.detectChanges();
 	return {
-		fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings,
+		fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings, thresholds, thresholdReads, overrides,
 		tab: fixture.componentInstance,
 		set confirmed( v:boolean ){ y.confirmed = v; },
 		set aggregates( v:HistAggregate[]|Error ){ y.aggregates = <HistAggregate[]>v; },
@@ -978,6 +984,29 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer();
 		expect( tab.tab.values().map( v=>v.value ) ).toEqual( [1, 2] );
 		expect( tab.tab.hasEarlier() ).toBe( true );
+		tab.fixture.destroy();
+	} );
+	//The group's member list with its thresholds (#338):  a Thresholds button on a group source alone, which opens the dialog on
+	//the group with the page's members to name them, loading and saving through this gateway.
+	it( 'offers no thresholds on a server source', ()=>{
+		const server = open();
+		expect( [...server.fixture.nativeElement.querySelectorAll( 'mat-toolbar button' )].some( ( b:Element )=>b.textContent!.includes( 'Thresholds' ) ) ).toBe( false );
+		server.fixture.destroy();
+	} );
+	it( "opens a group's thresholds on the group, through this gateway", async ()=>{
+		const tab = open( {candidates: [], groups: [group]} );
+		const button = [...tab.fixture.nativeElement.querySelectorAll( 'mat-toolbar button' )].find( ( b:Element )=>b.textContent!.includes( 'Thresholds' ) );
+		expect( button ).toBeTruthy();
+		button.click();
+		expect( tab.thresholds ).toHaveLength( 1 );
+		const data = tab.thresholds[0];
+		expect( data.group ).toBe( 3 );
+		expect( data.name ).toBe( 'Pumps' );
+		expect( data.nodes.map( n=>n.key ) ).toEqual( [A.key] );
+		await data.load();
+		expect( tab.thresholdReads ).toEqual( [{reader: tab.gateway, group: 3}] );
+		await data.save( 7, {stepped: false} );
+		expect( tab.overrides ).toEqual( [{poster: tab.gateway, id: 7, changes: {stepped: false}}] );
 		tab.fixture.destroy();
 	} );
 } );

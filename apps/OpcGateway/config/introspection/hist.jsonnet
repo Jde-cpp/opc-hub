@@ -14,6 +14,9 @@
 //any of the nodes, each with those it holds, among the groups the caller may read - where the gateway keeps each node's history.
 //historyCapabilities( group ){ aggregates update delete }:  the aggregates a group computes, and whether the caller may edit
 //its history, Update and Delete granted on an enforced resource (*Authorization*).
+//historyThresholds( group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }:  the group's
+//member list - each member's thresholds as the group resolves them, with where each comes from, and whether the caller may
+//override them (updateHistGroupNode).
 local String = { kind: "SCALAR", name: "String" };
 local UInt = { kind: "SCALAR", name: "UInt" };
 local Boolean = { kind: "SCALAR", name: "Boolean" };
@@ -42,6 +45,12 @@ local historyCapabilities = {
 		{ name: "aggregates", type: List(NonNull(String)) }, //the names an aggregate read with `group` takes, in the library's order.
 		{ name: "update", type: NonNull(Boolean) }, //createHistory, updateHistory and upsertHistory would pass the caller.
 		{ name: "delete", type: NonNull(Boolean) } //purgeHistory would.
+	]
+};
+local historyThresholds = {
+	fields: [
+		{ name: "update", type: NonNull(Boolean) }, //updateHistGroupNode would pass the caller:  the table's Update right, which an unenforced resource passes.
+		{ name: "nodes", type: List({ kind: "OBJECT", name: "HistoryThresholdNode" }) }
 	]
 };
 local history = {
@@ -104,6 +113,25 @@ local history = {
 	},
 	HistoryCapabilities: historyCapabilities,
 	historyCapabilities: historyCapabilities,
+	HistoryThresholds: historyThresholds,
+	historyThresholds: historyThresholds,
+	HistoryThresholdNode: {
+		fields: [
+			{ name: "id", type: NonNull(UInt) }, //the hist_group_nodes row, which updateHistGroupNode names.
+			{ name: "node", type: { kind: "OBJECT", name: "NodeId" } }, //with its namespace URI (nsu), and the server's index (ns) once the collector has it.
+			{ name: "templateNode", type: UInt }, //the hist_template_nodes row it was resolved from;  null for a node added by hand.
+			{ name: "path", type: String }, //that member's browse path, as the row holds it;  null for a node added by hand.
+			{ name: "enumeration", type: Boolean }, //whether the server said its DataType is an enumeration, which takes no deviation band;  null until it has.
+			{ name: "thresholds", type: List({ kind: "OBJECT", name: "HistoryThreshold" }) } //the five, in the columns' order.
+		]
+	},
+	HistoryThreshold: {
+		fields: [
+			{ name: "name", type: NonNull(String) }, //the column's name:  exceptionDeviation, exceptionDeviationFormat, minTimeInterval, maxTimeInterval or stepped.
+			{ name: "value", type: Json }, //the effective value:  a number, the intervals in milliseconds, stepped a boolean;  null for a deviation none sets.
+			{ name: "source", type: NonNull(String) } //where it comes from:  node (the row's own), template (its member's), group or default.
+		]
+	},
 	HistoryResolvedNode: {
 		fields: [
 			{ name: "templateNode", type: NonNull(UInt) }, //the hist_template_nodes row.

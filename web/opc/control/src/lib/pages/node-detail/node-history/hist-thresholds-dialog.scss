@@ -1,0 +1,124 @@
+:host{
+	display: block;
+}
+.hint{
+	margin: 0 0 .75rem;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-medium);
+}
+.refresh-bar{
+	--mat-progress-bar-track-height: 2px;
+	--mat-progress-bar-active-indicator-height: 2px;
+}
+/* the dense rows of the history table (hist-table.scss) */
+mat-table{
+	--mat-table-row-item-container-height: 40px;
+	--mat-table-header-container-height: 44px;
+	width: 100%;
+}
+mat-header-cell{
+	justify-content: flex-start;
+	.unit{
+		margin-left: .25rem;
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.mat-column-member{
+	flex: 1 1 200px;
+	min-width: 0;
+	gap: 4px;
+	padding-inline: 5px;
+	.member-name{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.member-flag{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+.mat-column-exceptionDeviation, .mat-column-exceptionDeviationFormat, .mat-column-minTimeInterval, .mat-column-maxTimeInterval, .mat-column-stepped{
+	flex: 0 0 130px;
+	padding-inline: 5px;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.mat-column-actions{
+	flex: 0 0 48px;
+	padding-inline: 0;
+}
+.cell-value.moot{
+	color: var(--mat-sys-on-surface-variant);
+	font-style: italic;
+}
+/* where the value comes from:  the member's own row stands out, the rest are muted */
+.source{
+	font: var(--mat-sys-label-small);
+	padding: 1px 6px;
+	border-radius: 8px;
+	background: var(--mat-sys-surface-container-high);
+	color: var(--mat-sys-on-surface-variant);
+	&.source-node{
+		background: var(--mat-sys-primary-container);
+		color: var(--mat-sys-on-primary-container);
+	}
+}
+mat-row.editing{
+	background: var(--mat-sys-surface-container);
+}
+.empty{
+	margin: .75rem 0 0;
+	color: var(--mat-sys-on-surface-variant);
+}
+.editor{
+	margin-top: 1rem;
+	padding: .75rem;
+	border-radius: 8px;
+	background: var(--mat-sys-surface-container-low);
+	h3{
+		margin: 0 0 .5rem;
+		font: var(--mat-sys-title-small);
+	}
+}
+.fields{
+	display: grid;
+	grid-template-columns: repeat( auto-fit, minmax(160px, 1fr) );
+	gap: .5rem .75rem;
+	mat-form-field{
+		width: 100%;
+	}
+}
+.editor-actions{
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 12px;
+	margin-top: .25rem;
+}
+.problem{
+	flex: 1 1 auto;
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
+.refused{
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: .75rem 0 0;
+	color: var(--mat-sys-on-surface);
+	mat-icon{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+		color: var(--mat-sys-error);
+	}
+}
+mat-dialog-actions{
+	justify-content: flex-end;
+}

@@ -1,0 +1,181 @@
+import { Component, computed, inject, signal } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
+import { MatTableModule } from '@angular/material/table';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { errorText } from 'jde-framework';
+import { deviationFormats, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdName, histThresholdNames, HistThresholdOverride, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
+import { Variable } from '../../../model/node';
+import { NodeId } from '../../../model/node-id';
+
+export type HistThresholdsDialogData = {
+	group:number;
+	name:string;//the group's, for the title
+	nodes:Variable[];//the page's variables, which name the members among them
+	load:()=>Promise<HistThresholds>;//historyThresholds, asked on opening and again after each override
+	save:( id:number, changes:HistThresholdOverride )=>Promise<void>;//updateHistGroupNode;  a throw is the gateway's refusal
+};
+//The edit form's fields, by column:  what the member's own row says, as text, and blank where it inherits.
+export type HistThresholdFields = Record<HistThresholdName,string>;
+export function ownFields( m:HistMemberThresholds ):HistThresholdFields{
+	const y = <HistThresholdFields>{};
+	for( const name of histThresholdNames ){
+		const t = m.thresholds.find( t=>t.name==name );
+		y[name] = t && t.source=='node' && t.value!=null ? String( t.value ) : '';
+	}
+	return y;
+}
+//a field as a value:  a number, a format's value, a boolean, null for blank, undefined for text that is none of them
+function fieldValue( name:HistThresholdName, text:string ):number|boolean|null|undefined{
+	const t = text.trim();
+	if( !t )
+		return null;
+	if( name=='stepped' )
+		return t=='true' ? true : t=='false' ? false : undefined;
+	const n = Number( t );
+	if( !Number.isFinite( n ) || n<0 )
+		return undefined;
+	return name=='exceptionDeviationFormat' ? ( Number.isInteger( n ) && n<deviationFormats.length ? n : undefined ) : n;
+}
+//What an edit changes:  each column whose field differs from what the member's own row says - a value, or null for one cleared
+//back to inheriting.  A column left as it was isn't sent, so the row keeps inheriting where it did.
+export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFields ):HistThresholdOverride{
+	const own = ownFields( m );
+	const y:HistThresholdOverride = {};
+	for( const name of histThresholdNames ){
+		const value = fieldValue( name, fields[name] );
+		if( value===undefined || fields[name].trim()==own[name] )
+			continue;
+		if( value===null && own[name]=='' )
+			continue;
+		y[name] = value;
+	}
+	return y;
+}
+//why the fields can't be sent, or nothing
+export function thresholdProblem( fields:HistThresholdFields ):string|undefined{
+	for( const column of histThresholdColumns ){
+		if( fieldValue( column.name, fields[column.name] )===undefined )
+			return column.kind=='number' ? `${column.label} is a number, 0 or more.` : column.kind=='format' ? "The format is one of the four." : "Stepped is true or false.";
+	}
+	return undefined;
+}
+
+//A group's member list with its thresholds (#338):  each member's effective Deviation, Format, Min interval, Max interval and
+//Stepped, marked with where each comes from - the member's own row, its template member, the group, or the default - and, for
+//a user who may update the rows, an edit of any of them:  a value typed overrides what it inherits, and a field cleared puts the
+//row back to inheriting.  An enumeration's deviation isn't applied whatever the row says, and its two cells say so.  The list is
+//asked again after each override, so a cell shows what the gateway resolved, not what was typed.
+@Component({
+	templateUrl: './hist-thresholds-dialog.html',
+	styleUrls: ['./hist-thresholds-dialog.scss'],
+	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTooltipModule]
+})
+export class HistThresholdsDialog{
+	constructor(){ this.reload(); }
+	dialogRef = inject<MatDialogRef<HistThresholdsDialog,void>>( MatDialogRef );
+	data = inject<HistThresholdsDialogData>( MAT_DIALOG_DATA );
+	readonly columns = histThresholdColumns;
+	readonly formats = deviationFormats;
+	rows = signal<HistMemberThresholds[]>( [] );
+	canUpdate = signal( false );
+	loading = signal( false );
+	error = signal<string|undefined>( undefined );//the gateway's refusal of the list, or of an override
+	editing = signal<HistMemberThresholds|undefined>( undefined );
+	fields = signal<HistThresholdFields>( <HistThresholdFields>{} );
+	busy = signal( false );
+	displayedColumns = computed<string[]>( ()=>['member', ...histThresholdNames, ...(this.canUpdate() ? ['actions'] : [])] );
+	problem = computed<string|undefined>( ()=>this.editing() ? thresholdProblem( this.fields() ) : undefined );
+	changes = computed<HistThresholdOverride>( ()=>{ const m = this.editing(); return m && !this.problem() ? thresholdChanges( m, this.fields() ) : {}; } );
+	changed = computed( ()=>Object.keys( this.changes() ).length>0 );
+
+	async reload(){
+		this.loading.set( true );
+		this.error.set( undefined );
+		try{
+			const list = await this.data.load();
+			this.rows.set( list.nodes );
+			this.canUpdate.set( list.update );
+			const editing = this.editing();
+			if( editing )
+				this.editing.set( list.nodes.find( n=>n.id==editing.id ) );
+		}
+		catch( e ){
+			this.error.set( errorText( e ) ?? "Unknown error" );
+		}
+		finally{
+			this.loading.set( false );
+		}
+	}
+	//a member by its name on the page where it is one of the page's variables, else its template path, else its node
+	memberName( m:HistMemberThresholds ):string{
+		return this.data.nodes.find( v=>v.key==m.node.key )?.name ?? ( m.path ? histPathText( m.path ) : m.node.toString() );
+	}
+	memberDetail( m:HistMemberThresholds ):string{
+		const where = m.path ? `Template path ${histPathText( m.path )}` : "Added by hand";
+		return `${where}.  Node ${this.nodeText( m.node )}.  Row ${m.id}.`;
+	}
+	nodeText( id:NodeId ):string{ return id.toString(); }
+	threshold( m:HistMemberThresholds, name:HistThresholdName ):HistThreshold|undefined{ return m.thresholds.find( t=>t.name==name ); }
+	//the deviation and its format are moot for an enumeration:  its Int32 values aren't a quantity (spec *Thresholds*)
+	moot( m:HistMemberThresholds, name:HistThresholdName ):boolean{ return m.enumeration===true && ( name=='exceptionDeviation' || name=='exceptionDeviationFormat' ); }
+	cellText( m:HistMemberThresholds, name:HistThresholdName ):string{
+		const t = this.threshold( m, name );
+		return !t ? '' : this.moot( m, name ) ? 'n/a' : histThresholdText( t );
+	}
+	cellTooltip( m:HistMemberThresholds, name:HistThresholdName ):string{
+		const t = this.threshold( m, name );
+		if( !t )
+			return '';
+		const from = `From ${histThresholdSources[t.source]}`;
+		if( this.moot( m, name ) )
+			return `${from}, ${histThresholdText( t )}:  not applied - an enumeration stores every change.`;
+		return m.enumeration===undefined && name=='exceptionDeviation' ? `${from}.  The band waits until the server has described the node.` : `${from}.`;
+	}
+	sourceText( m:HistMemberThresholds, name:HistThresholdName ):string{ return this.threshold( m, name )?.source ?? ''; }
+	edit( m:HistMemberThresholds ){
+		this.editing.set( m );
+		this.fields.set( ownFields( m ) );
+		this.error.set( undefined );
+	}
+	cancel(){ this.editing.set( undefined ); }
+	setField( name:HistThresholdName, text:string ){ this.fields.update( f=>({...f, [name]: text}) ); }
+	//what the field inherits while blank:  the effective value and its source, unless the row's own is what is shown
+	inheritsHint( name:HistThresholdName ):string{
+		const m = this.editing();
+		const t = m ? this.threshold( m, name ) : undefined;
+		if( !t )
+			return '';
+		return t.source=='node' ? "Blank inherits from the template, the group or the default." : `Inherits ${histThresholdText( t ) || 'none'} from ${histThresholdSources[t.source]}.`;
+	}
+	async apply(){
+		const m = this.editing();
+		const changes = this.changes();
+		if( !m || !Object.keys( changes ).length || this.busy() )
+			return;
+		this.busy.set( true );
+		this.dialogRef.disableClose = true;
+		this.error.set( undefined );
+		try{
+			await this.data.save( m.id, changes );
+			this.editing.set( undefined );
+			await this.reload();
+		}
+		catch( e ){
+			this.error.set( errorText( e ) ?? "Unknown error" );
+		}
+		finally{
+			this.busy.set( false );
+			this.dialogRef.disableClose = false;
+		}
+	}
+	static open( dialog:MatDialog, data:HistThresholdsDialogData ):Promise<void>{
+		const ref = dialog.open<HistThresholdsDialog,HistThresholdsDialogData,void>( HistThresholdsDialog, {data, width: '960px', maxWidth: '95vw', ariaModal: true} );
+		return new Promise( resolve=>ref.afterClosed().subscribe( ()=>resolve() ) );
+	}
+}

@@ -50,6 +50,12 @@
 				}
 			</mat-menu>
 		}
+		@if( isGroup() ){
+			<!--the group's members and their thresholds, overridable per member where this user may update the rows-->
+			<button matButton (click)="openThresholds()" matTooltip="The group's members and their thresholds">
+				<mat-icon>tune</mat-icon>Thresholds
+			</button>
+		}
 		<span class="row-count">{{ values().length }} {{ mode()=='modified' ? (values().length==1 ? "modification" : "modifications") : (values().length==1 ? "value" : "values") }}</span>
 	</div>
 </mat-toolbar>

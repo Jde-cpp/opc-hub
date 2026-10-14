@@ -37,6 +37,11 @@ namespace Jde::Opc::Gateway{
 	};
 	//row, then template member, then group (spec *Templates*).
 	α ResolveThresholds( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->Opc::Hist::Thresholds;
+	//Each threshold as ResolveThresholds resolves it, with where it comes from, for a group's member list (#338):  the column's QL
+	//name, the library's value - null for a deviation none sets, the intervals in milliseconds - and whether it is the row's own
+	//(node), its template member's (template), its group's (group) or the library's (default).
+	struct HistThresholdSource final{ sv Name; jvalue Value; sv Source; };
+	α ResolveThresholdSources( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->vector<HistThresholdSource>;
 
 	//The node columns' spelling, hist_group_nodes.node and hist_groups.root:  ExNodeId::ToJson with the namespace URI set and
 	//the index 0, `{"nsu":"urn:jde:pumps","i":6042}`, so equal nodes spell alike for the unique index.

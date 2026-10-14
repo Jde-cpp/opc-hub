@@ -95,6 +95,11 @@ namespace Jde::Opc::Gateway{
 		auto p = _nodes.find( index );
 		return p==_nodes.end() ? nullopt : optional<HistDescription>{ p->second.Described };
 	}
+	α HistGroupHost::ServerId( HistGroupNodePK index )Ι->optional<NodeId>{
+		ul _{ _mutex };
+		auto p = _nodes.find( index );
+		return p==_nodes.end() ? nullopt : p->second.Id;
+	}
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		ul _{ _mutex };
 		auto y = Reserve<std::pair<HistGroupNodePK,ExNodeId>>( _nodes.size() );

@@ -22,6 +22,7 @@ import { HistoryService } from '../../../services/history-service';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { HistAggregatePicker } from './hist-aggregate-picker';
 import { HistEditDialog, HistEditPreset } from './hist-edit-dialog';
+import { HistThresholdsDialog } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
 
@@ -494,6 +495,18 @@ export class NodeHistory implements OnDestroy{
 	#edit( args:HistEditArgs ):Promise<HistEditResult>{ return this.#history.edit( this.gateway, this.histSource(), args, m=>console.log(m) ); }
 	nodeName( id:NodeId ):string{ return this.nodes().find( c=>c.key==id.key )?.name ?? id.toString(); }
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
+	//A group's member list with its thresholds (#338), each overridable where the gateway lets this user update the rows:  the
+	//dialog loads and saves through this gateway.  Nothing is read again after:  a threshold changes what is stored from here on.
+	openThresholds(){
+		const source = this.source();
+		if( !source || source.source.group==undefined )
+			return;
+		const group = source.source.group;
+		HistThresholdsDialog.open( this.dialog, { group, name: source.label, nodes: source.nodes,
+			load: ()=>this.#history.thresholds( this.gateway, group, m=>console.log(m) ),
+			save: ( id, changes )=>this.#history.override( this.gateway, id, changes, m=>console.log(m) )
+		} );
+	}
 	get gateway():Gateway{ return this.pageData().gateway; }
 	get cnnctnSlug():string{ return this.pageData().server.connection.slug; }
 	get #owner():string{ return `${this.pageData().route.profileKey}/history`; }

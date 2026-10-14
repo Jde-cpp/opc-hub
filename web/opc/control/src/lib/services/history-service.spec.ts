@@ -163,3 +163,26 @@ describe( 'HistoryService.read', ()=>{
 		expect( page ).toEqual( {values: [], continuation: null, nodes: []} );
 	} );
 } );
+
+describe( 'HistoryService.thresholds', ()=>{
+	it( 'asks historyThresholds for the group, with each threshold\'s source', async ()=>{
+		let sent:{ql:string, vars:any}|undefined;
+		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{historyThresholds: {update: true, nodes: [{id: 7, node: {ns: 2, i: 1}, thresholds: [{name: 'stepped', value: true, source: 'default'}]}]}}; } };
+		const t = await new HistoryService().thresholds( reader, 3 );
+		expect( sent?.ql ).toBe( HistoryService.thresholdsQuery );
+		expect( sent?.vars ).toEqual( {group: 3} );
+		expect( t.update ).toBe( true );
+		expect( t.nodes.map( n=>n.id ) ).toEqual( [7] );
+	} );
+	//updateHistGroupNode on the row, spelled as a mutation since the gateway takes no bare table verb:  only the columns changed,
+	//in the columns' order, and null for one cleared back to inheriting
+	it( 'overrides with the columns given and null for a clear', async ()=>{
+		const {ql, vars} = HistoryService.overrideMutation( 7, {stepped: false, exceptionDeviation: null, minTimeInterval: 250} );
+		expect( ql ).toBe( "mutation updateHistGroupNode( id: $id, exceptionDeviation: $exceptionDeviation, minTimeInterval: $minTimeInterval, stepped: $stepped )" );
+		expect( vars ).toEqual( {id: 7, exceptionDeviation: null, minTimeInterval: 250, stepped: false} );
+		let posted:{ql:string, vars:any}|undefined;
+		const poster = { postQL: async <T>( ql:string, vars?:any )=>{ posted = {ql, vars}; return <T><unknown>{}; } };
+		await new HistoryService().override( poster, 7, {exceptionDeviationFormat: 2} );
+		expect( posted ).toEqual( {ql: "mutation updateHistGroupNode( id: $id, exceptionDeviationFormat: $exceptionDeviationFormat )", vars: {id: 7, exceptionDeviationFormat: 2}} );
+	} );
+} );

@@ -649,4 +649,92 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( Rows("histTemplateNodes( histTemplateId:$t ){ id }", {{"t", templateId}}).empty() );
 		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:999999, node:$node ){ id }", {{"node", Node(Pump1Rpm)}}), std::exception ) << "no such group";
 	}
+
+	//A group's member list for the web (#338):  historyThresholds answers each member with its node by the server's index, its
+	//template member and path, each threshold's effective value with where it comes from - the row's own, its template member's,
+	//its group's or the default - and whether the caller may override them.  An override cleared back to null, by a literal or a
+	//variable bound to null as the web sends it, inherits again, which the live group follows;  and the server's word on an
+	//enumeration comes with the member once its item is in.
+	TEST_F( HistGroupTests, ThresholdsAnswerWithSources ){
+		let templateId = CreateTemplate( "threshold-sources" );
+		absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
+		let rpmMember = CreateMember( templateId, "motorRpm", {{"minTimeInterval", 1000}} );
+		let groupId = Id( CreateGroup("pump2-thresholds", templateId, Pump2, {{"maxTimeInterval", 60000}}) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_EQ( GroupNodes(groupId).size(), 1u );
+		let rpmRow = Id( *Row(groupId, Pump2Rpm) );
+		Mutate( "updateHistGroupNode( id:$id, exceptionDeviation:5, exceptionDeviationFormat:1 )", {{"id", rpmRow}} );
+		let thresholds = []( uint32 group ){ return QL().QuerySync<jobject>( "historyThresholds( group:$group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }", {{"group", group}}, User() ); };
+		//A member's answer by its row, and a threshold's value and source by its name.
+		let member = []( const jobject& answer, uint32 id )->jobject{
+			for( let& node : Json::AsArray(answer, "nodes") ){
+				if( Json::AsNumber<uint32>(node.as_object(), "id")==id )
+					return node.as_object();
+			}
+			return {};
+		};
+		let threshold = []( const jobject& node, sv name )->const jobject&{
+			for( let& t : Json::AsArray(node, "thresholds") ){
+				if( Json::AsSV(t.as_object(), "name")==name )
+					return t.as_object();
+			}
+			THROW( "{} isn't answered:  {}", name, serialize(node) );
+		};
+		let number = [&]( const jobject& node, sv name )->optional<double>{ let& v = threshold( node, name ).at( "value" ); return v.is_null() ? nullopt : optional<double>{ v.to_number<double>() }; };
+		let source = [&]( const jobject& node, sv name )->string{ return string{ Json::AsSV(threshold(node, name), "source") }; };
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		auto answer = thresholds( groupId );
+		EXPECT_TRUE( Json::AsBool(answer, "update") ) << "nothing enforces hist_group_nodes";
+		auto rpm = member( answer, rpmRow );
+		ASSERT_FALSE( rpm.empty() ) << serialize( answer );
+		EXPECT_EQ( Json::AsNumber<uint32>(rpm, "templateNode"), rpmMember );
+		EXPECT_EQ( Json::AsSV(rpm, "path"), Path("motorRpm") );
+		let& node = Json::AsObject( rpm, "node" );
+		EXPECT_EQ( Json::AsSV(node, "nsu"), PumpsUri );
+		EXPECT_EQ( Json::FindNumber<NsIndex>(node, "ns").value_or(0), _ns ) << "by the server's index, as a page keys its variables";
+		EXPECT_EQ( Json::AsNumber<UA_UInt32>(node, "i"), Pump2Rpm );
+		EXPECT_EQ( number(rpm, "exceptionDeviation"), 5 ); EXPECT_EQ( source(rpm, "exceptionDeviation"), "node" );
+		EXPECT_EQ( number(rpm, "exceptionDeviationFormat"), 1 ); EXPECT_EQ( source(rpm, "exceptionDeviationFormat"), "node" );
+		EXPECT_EQ( number(rpm, "minTimeInterval"), 1000 ); EXPECT_EQ( source(rpm, "minTimeInterval"), "template" );
+		EXPECT_EQ( number(rpm, "maxTimeInterval"), 60000 ); EXPECT_EQ( source(rpm, "maxTimeInterval"), "group" );
+		EXPECT_EQ( threshold(rpm, "stepped").at("value"), jvalue{true} ); EXPECT_EQ( source(rpm, "stepped"), "default" );
+
+		Mutate( "updateHistGroupNode( id:$id, exceptionDeviation:$deviation, exceptionDeviationFormat:null )", {{"id", rpmRow}, {"deviation", jvalue{}}} );
+		rpm = member( thresholds(groupId), rpmRow );
+		EXPECT_FALSE( number(rpm, "exceptionDeviation") ) << "cleared, it inherits the default:  no band";
+		EXPECT_EQ( source(rpm, "exceptionDeviation"), "default" );
+		EXPECT_EQ( number(rpm, "exceptionDeviationFormat"), 0 ); EXPECT_EQ( source(rpm, "exceptionDeviationFormat"), "default" );
+		EXPECT_FALSE( host->FindThresholds(rpmRow)->ExceptionDeviation ) << "the live group follows";
+		Mutate( "updateHistGroup( id:$id, exceptionDeviation:2 )", {{"id", groupId}} );
+		rpm = member( thresholds(groupId), rpmRow );
+		EXPECT_EQ( number(rpm, "exceptionDeviation"), 2 ); EXPECT_EQ( source(rpm, "exceptionDeviation"), "group" );
+		EXPECT_EQ( host->FindThresholds(rpmRow)->ExceptionDeviation, 2 );
+
+		//The server's word on each member's DataType, once its item is in:  motorRpm is a Double, ServerStatus.State an enumeration.
+		let state = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", serialize(jobject{{"nsu", "http://opcfoundation.org/UA/"}, {"i", UA_NS0ID_SERVER_SERVERSTATUS_STATE}})}}) );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		Stopwatch sw;
+		while( !host->Description(rpmRow).value_or(HistDescription{}).Enumeration || !host->Description(state).value_or(HistDescription{}).Enumeration )
+			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		answer = thresholds( groupId );
+		EXPECT_EQ( member(answer, rpmRow).at("enumeration"), jvalue{false} );
+		EXPECT_EQ( member(answer, state).at("enumeration"), jvalue{true} );
+		EXPECT_TRUE( member(answer, state).at("templateNode").is_null() ) << "added by hand";
+		EXPECT_TRUE( member(answer, state).at("path").is_null() );
+
+		//`update` is the table's right:  enforced with the suite's user granted nothing on it, the overrides are refused, and it says so.
+		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", on ? "restore" : "delete"), {} ); };
+		enforce( true );
+		absl::Cleanup open = [enforce]{ try{ enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } };
+		for( uint i=0; !AppClient()->Acl()->FindActiveResourcePK("gateway", "histGroupNodes", "").has_value(); ++i ){
+			ASSERT_LT( i, 200u ) << "the resource's restore didn't reach the authorizer";
+			std::this_thread::sleep_for( 50ms );
+		}
+		EXPECT_FALSE( Json::AsBool(thresholds(groupId), "update") );
+		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, stepped:false )", {{"id", rpmRow}}), std::exception );
+		std::move( open ).Invoke();
+		EXPECT_THROW( thresholds(999999), std::exception ) << "a group the gateway doesn't host";
+	}
 }

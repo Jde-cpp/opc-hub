@@ -46,6 +46,8 @@ namespace Jde::Opc::Gateway{
 		α SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SRCE )ε->void;
 		α FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>;
 		α Description( HistGroupNodePK index )Ι->optional<HistDescription>;
+		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
+		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
 		//The member a read or an edit names:  by URI, or by the index the server had for it when the collector last read the
 		//server's namespaces.  None for a node that isn't a member, or one by an index the collector hasn't seen.

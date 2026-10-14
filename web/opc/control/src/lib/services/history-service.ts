@@ -1,6 +1,6 @@
 import { Service } from '@angular/core';
 import { Log } from 'jde-framework';
-import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage } from '../model/hist';
+import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, histThresholdNames, HistThresholdOverride, HistThresholds, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage, toHistThresholds } from '../model/hist';
 import { NodeId } from '../model/node-id';
 import { CnnctnSlug } from '../model/server-cnnctn';
 
@@ -83,6 +83,33 @@ export class HistoryService{
 		return toHistCapabilities( data?.["historyCapabilities"] );
 	}
 	static readonly capabilitiesQuery = "historyCapabilities( group: $group ){ aggregates update delete }";
+	//historyThresholds( group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } } (hist.jsonnet):
+	//a group's member list, each threshold's effective value with where it comes from, and whether this user may override them.
+	//Asked each time the dialog opens:  an override lands between two.
+	async thresholds( reader:HistReader, group:number, log:Log=()=>{} ):Promise<HistThresholds>{
+		const data = await reader.query<any>( HistoryService.thresholdsQuery, {group}, log );
+		return toHistThresholds( data?.["historyThresholds"] );
+	}
+	static readonly thresholdsQuery = "historyThresholds( group: $group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }";
+	//A member's override (spec *Templates*):  updateHistGroupNode on its row with the columns given, null clearing one back to
+	//inheriting, which the gateway applies to the running group before it answers.  A throw is the gateway's refusal:  a value the
+	//library would refuse, or a right withheld.
+	async override( poster:HistPoster, id:number, changes:HistThresholdOverride, log:Log=()=>{} ):Promise<void>{
+		const {ql, vars} = HistoryService.overrideMutation( id, changes );
+		await poster.postQL<any>( ql, vars, log );
+	}
+	//`mutation` spelled out:  updateHistGroupNode is a table's verb, not a system mutation the gateway takes bare as createHistory is
+	static overrideMutation( id:number, changes:HistThresholdOverride ):{ql:string; vars:Record<string,unknown>}{
+		const vars:Record<string,unknown> = { id };
+		const params = [ "id: $id" ];
+		for( const name of histThresholdNames ){
+			if( name in changes ){
+				params.push( `${name}: $${name}` );
+				vars[name] = changes[name] ?? null;
+			}
+		}
+		return { ql: `mutation updateHistGroupNode( ${params.join( ", " )} )`, vars };
+	}
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an
 	//argument it can't take, a value of the wrong type among them.
