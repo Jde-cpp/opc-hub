@@ -83,14 +83,14 @@ export class HistoryService{
 		return toHistCapabilities( data?.["historyCapabilities"] );
 	}
 	static readonly capabilitiesQuery = "historyCapabilities( group: $group ){ aggregates update delete }";
-	//historyThresholds( group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } } (hist.jsonnet):
+	//historyThresholds( group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } } (hist.jsonnet):
 	//a group's member list, each threshold's effective value with where it comes from, and whether this user may override them.
 	//Asked each time the dialog opens:  an override lands between two.
 	async thresholds( reader:HistReader, group:number, log:Log=()=>{} ):Promise<HistThresholds>{
 		const data = await reader.query<any>( HistoryService.thresholdsQuery, {group}, log );
 		return toHistThresholds( data?.["historyThresholds"] );
 	}
-	static readonly thresholdsQuery = "historyThresholds( group: $group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }";
+	static readonly thresholdsQuery = "historyThresholds( group: $group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }";
 	//A member's override (spec *Templates*):  updateHistGroupNode on its row with the columns given, null clearing one back to
 	//inheriting, which the gateway applies to the running group before it answers.  A throw is the gateway's refusal:  a value the
 	//library would refuse, or a right withheld.

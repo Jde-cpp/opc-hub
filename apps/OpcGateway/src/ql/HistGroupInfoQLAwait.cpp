@@ -21,11 +21,7 @@ namespace Jde::Opc::Gateway{
 				if( groups.empty() )
 					throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} not found.", groupId };
 				auto rows = co_await Any( SelectHistGroupNodes({.Group=groupId}) );
-				flat_map<HistTemplateNodePK,HistTemplateNodeRow> members;
-				if( groups.front().Template ){
-					for( auto& row : co_await Any(SelectHistTemplateNodes({.Template=groups.front().Template})) )
-						members.emplace( row.Id, move(row) );
-				}
+				let members = groups.front().Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=groups.front().Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				y = Thresholds( groups.front(), rows, members, *host );
 			}
 			Resume( move(y) );
@@ -137,13 +133,13 @@ namespace Jde::Opc::Gateway{
 		let nodesQL = _query.FindTable( "nodes" );
 		if( !nodesQL )
 			return y;
-		let wantId = nodesQL->FindColumn( "id" ), wantMember = nodesQL->FindColumn( "templateNode" ), wantPath = nodesQL->FindColumn( "path" ), wantEnumeration = nodesQL->FindColumn( "enumeration" );
+		let wantId = nodesQL->FindColumn( "id" ), wantMember = nodesQL->FindColumn( "templateNode" ), wantPath = nodesQL->FindColumn( "path" ), wantEnumeration = nodesQL->FindColumn( "enumeration" ), wantBand = nodesQL->FindColumn( "band" );
 		let wantNode = nodesQL->FindColumn( "node" ) || nodesQL->FindTable( "node" );
 		let thresholdsQL = nodesQL->FindTable( "thresholds" );
+		let wantName = thresholdsQL && thresholdsQL->FindColumn( "name" ), wantValue = thresholdsQL && thresholdsQL->FindColumn( "value" ), wantSource = thresholdsQL && thresholdsQL->FindColumn( "source" );
 		jarray nodes; nodes.reserve( rows.size() );
 		for( let& row : rows ){
-			let p = row.TemplateNode ? members.find( *row.TemplateNode ) : members.end();
-			let member = p==members.end() ? nullptr : &p->second;
+			let member = FindHistTemplateNode( members, row.TemplateNode );
 			jobject node;
 			if( wantId )
 				node["id"] = row.Id;
@@ -161,8 +157,12 @@ namespace Jde::Opc::Gateway{
 				let described = host.Description( row.Id );
 				node["enumeration"] = described && described->Enumeration ? jvalue{*described->Enumeration} : jvalue{};
 			}
+			if( wantBand ){
+				constexpr std::array<sv,5> names{ "none", "applied", "enumeration", "waiting", "noRange" };//EHistBand's order.
+				let band = host.Band( row.Id );
+				node["band"] = band ? jvalue{ names[underlying(*band)] } : jvalue{};
+			}
 			if( thresholdsQL ){
-				let wantName = thresholdsQL->FindColumn( "name" ), wantValue = thresholdsQL->FindColumn( "value" ), wantSource = thresholdsQL->FindColumn( "source" );
 				jarray thresholds;
 				for( auto& t : ResolveThresholdSources(row.Thresholds, member ? &member->Thresholds : nullptr, group.Thresholds) ){
 					jobject j;

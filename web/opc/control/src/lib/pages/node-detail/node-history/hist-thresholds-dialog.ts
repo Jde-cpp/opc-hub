@@ -9,9 +9,9 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorText } from 'jde-framework';
-import { deviationFormats, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdName, histThresholdNames, HistThresholdOverride, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
+import { deviationFormats, histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdName, histThresholdNames, HistThresholdOverride, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
 import { Variable } from '../../../model/node';
-import { NodeId } from '../../../model/node-id';
+import { ExNodeId } from '../../../model/ex-node-id';
 
 export type HistThresholdsDialogData = {
 	group:number;
@@ -101,9 +101,6 @@ export class HistThresholdsDialog{
 			const list = await this.data.load();
 			this.rows.set( list.nodes );
 			this.canUpdate.set( list.update );
-			const editing = this.editing();
-			if( editing )
-				this.editing.set( list.nodes.find( n=>n.id==editing.id ) );
 		}
 		catch( e ){
 			this.error.set( errorText( e ) ?? "Unknown error" );
@@ -114,16 +111,25 @@ export class HistThresholdsDialog{
 	}
 	//a member by its name on the page where it is one of the page's variables, else its template path, else its node
 	memberName( m:HistMemberThresholds ):string{
-		return this.data.nodes.find( v=>v.key==m.node.key )?.name ?? ( m.path ? histPathText( m.path ) : m.node.toString() );
+		const variable = histMemberIndexed( m.node ) ? this.data.nodes.find( v=>v.key==m.node.key ) : undefined;
+		return variable?.name ?? ( m.path ? histPathText( m.path ) : this.nodeText( m.node ) );
 	}
 	memberDetail( m:HistMemberThresholds ):string{
 		const where = m.path ? `Template path ${histPathText( m.path )}` : "Added by hand";
 		return `${where}.  Node ${this.nodeText( m.node )}.  Row ${m.id}.`;
 	}
-	nodeText( id:NodeId ):string{ return id.toString(); }
+	//by the server's index, or as the row spells it until the collector has that:  the URI, its index left out
+	nodeText( id:ExNodeId ):string{ return histMemberIndexed( id ) ? id.toString() : JSON.stringify( {nsu: id.nsu, ...id.toJson(), ns: undefined} ); }
 	threshold( m:HistMemberThresholds, name:HistThresholdName ):HistThreshold|undefined{ return m.thresholds.find( t=>t.name==name ); }
 	//the deviation and its format are moot for an enumeration:  its Int32 values aren't a quantity (spec *Thresholds*)
 	moot( m:HistMemberThresholds, name:HistThresholdName ):boolean{ return m.enumeration===true && ( name=='exceptionDeviation' || name=='exceptionDeviationFormat' ); }
+	//the deviation and its format where the group doesn't apply them:  moot, or a percent format the node has no usable range for,
+	//which an edit of either can still put right
+	unapplied( m:HistMemberThresholds, name:HistThresholdName ):boolean{
+		return this.moot( m, name ) || ( m.band=='noRange' && ( name=='exceptionDeviation' || name=='exceptionDeviationFormat' ) );
+	}
+	//the range a percent format takes, which a noRange member lacks
+	rangeName( m:HistMemberThresholds ):string{ return this.threshold( m, 'exceptionDeviationFormat' )?.value==2 ? 'InstrumentRange' : 'EURange'; }
 	cellText( m:HistMemberThresholds, name:HistThresholdName ):string{
 		const t = this.threshold( m, name );
 		return !t ? '' : this.moot( m, name ) ? 'n/a' : histThresholdText( t );
@@ -135,7 +141,9 @@ export class HistThresholdsDialog{
 		const from = `From ${histThresholdSources[t.source]}`;
 		if( this.moot( m, name ) )
 			return `${from}, ${histThresholdText( t )}:  not applied - an enumeration stores every change.`;
-		return m.enumeration===undefined && name=='exceptionDeviation' ? `${from}.  The band waits until the server has described the node.` : `${from}.`;
+		if( this.unapplied( m, name ) )
+			return `${from}.  Not applied - the node has no usable ${this.rangeName( m )}, so every change is stored.`;
+		return m.band=='waiting' && name=='exceptionDeviation' ? `${from}.  The band waits until the server has described the node.` : `${from}.`;
 	}
 	sourceText( m:HistMemberThresholds, name:HistThresholdName ):string{ return this.threshold( m, name )?.source ?? ''; }
 	edit( m:HistMemberThresholds ){

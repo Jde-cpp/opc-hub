@@ -26,8 +26,8 @@ namespace Jde::Opc::Gateway{
 		Ω FromJson( const jobject& args, SRCE )ε->HistThresholdColumns;//the QL names; a null is none.  A format that isn't a whole number from 0 to 255 is a BadRequest, as Check's.
 		α Over( const HistThresholdColumns& fallback )Ι->HistThresholdColumns;//this, with fallback where this is null.
 		α Thresholds()Ι->Opc::Hist::Thresholds;//the library's, defaults where null.
-		//A value the library would refuse - a negative deviation or interval, an unknown format - as a BadRequest naming it, so
-		//the row never holds one.
+		//A value the library would refuse - a negative or infinite deviation, a negative interval, an unknown format - as a
+		//BadRequest naming it, so the row never holds one.
 		α Check( SL sl )Ε->void;
 		optional<double> ExceptionDeviation;
 		optional<uint8> DeviationFormat;//UA_ExceptionDeviationFormat's value.
@@ -116,4 +116,8 @@ namespace Jde::Opc::Gateway{
 	//hist_template_nodes:  by row, by template, or all.
 	struct HistTemplateNodeFilter final{ optional<HistTemplateNodePK> Id; optional<HistTemplatePK> Template; };
 	α SelectHistTemplateNodes( HistTemplateNodeFilter filter={}, SRCE )ι->HistRowsAwait<HistTemplateNodeRow>;
+	//Template members by row, as a group node's TemplateNode names them, and the one a group node was resolved from:  null for a
+	//node added by hand, or one whose member isn't among them.
+	α HistTemplateNodesById( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>;
+	α FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*;
 }

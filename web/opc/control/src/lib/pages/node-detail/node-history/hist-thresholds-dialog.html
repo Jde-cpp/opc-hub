@@ -10,13 +10,16 @@
 				@if( m.enumeration===true ){
 					<mat-icon class="member-flag" aria-label="An enumeration" matTooltip="An enumeration:  every change is stored, so its deviation isn't applied.">category</mat-icon>
 				}
+				@else if( m.band=='noRange' ){
+					<mat-icon class="member-flag" aria-label="No range for its band" [matTooltip]="'No usable ' + rangeName(m) + ' for its percent format:  every change is stored, so its deviation is not applied.'">warning</mat-icon>
+				}
 			</mat-cell>
 		</ng-container>
 		@for( column of columns; track column.name ){
 			<ng-container [matColumnDef]="column.name">
 				<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
 				<mat-cell *matCellDef="let m" [matTooltip]="cellTooltip(m, column.name)">
-					<span class="cell-value" [class.moot]="moot(m, column.name)">{{ cellText(m, column.name) }}</span>
+					<span class="cell-value" [class.moot]="unapplied(m, column.name)">{{ cellText(m, column.name) }}</span>
 					<!--where the value comes from, as the issue asks:  the member, the template, the group or the default-->
 					<span class="source" [class.source-node]="sourceText(m, column.name)=='node'">{{ sourceText(m, column.name) }}</span>
 				</mat-cell>
@@ -59,7 +62,8 @@
 								</mat-select>
 							}
 							@default{
-								<input matInput type="number" min="0" step="any" [value]="fields()[column.name]" (input)="setField(column.name, $any($event.target).value)" placeholder="Inherit" [disabled]="busy() || moot(m, column.name)">
+								<!--text, not number:  a number input reports a partial entry as blank, which the binding would write back over it-->
+								<input matInput type="text" inputmode="decimal" [value]="fields()[column.name]" (input)="setField(column.name, $any($event.target).value)" placeholder="Inherit" [disabled]="busy() || moot(m, column.name)">
 							}
 						}
 						<mat-hint>{{ moot(m, column.name) ? "Not applied to an enumeration." : inheritsHint(column.name) }}</mat-hint>

@@ -1,4 +1,5 @@
 import { ProtoUtils, Timestamp } from 'jde-framework';
+import { ExNodeId } from './ex-node-id';
 import { NodeId, NodeKey } from './node-id';
 import { OpcError } from './opc-error';
 import { ENodeClass, Variable } from './node';
@@ -25,14 +26,19 @@ export type HistGroupMembers = { id:number; name:string; nodes:Variable[] };
 export type HistRights = { update:boolean; delete:boolean };
 export type HistCapabilities = HistRights & { aggregates:HistAggregate[] };
 //A group's member list with its thresholds, as historyThresholds answers it (#338):  each hist_group_nodes row, its node by the
-//server's index once the collector has it, so it keys as a page's variables do, its template member and path, whether the
+//server's index once the collector has it, so it keys as a page's variables do - until then by its namespace URI alone, which
+//histMemberIndexed tells - its template member and path, whether the
 //server said its DataType is an enumeration - which takes no deviation band whatever its row says (spec *Thresholds*), undefined
-//until the server has said - and each threshold's effective value with where it comes from:  the row's own (node), its template
-//member's, its group's, or the default.  `update`:  whether this user may override them (updateHistGroupNode).
+//until the server has said - whether its deviation band is in force, `band`, and each threshold's effective value with where it
+//comes from:  the row's own (node), its template member's, its group's, or the default.  `update`:  whether this user may override
+//them (updateHistGroupNode).
 export type HistThresholdName = 'exceptionDeviation'|'exceptionDeviationFormat'|'minTimeInterval'|'maxTimeInterval'|'stepped';
 export type HistThresholdSource = 'node'|'template'|'group'|'default';
 export type HistThreshold = { name:HistThresholdName; value:number|boolean|null; source:HistThresholdSource };
-export type HistMemberThresholds = { id:number; node:NodeId; templateNode?:number; path?:HistPathSegment[]; enumeration?:boolean; thresholds:HistThreshold[] };
+//As the group has it:  no deviation set, applied, dropped for an enumeration or for a percent format the node has no usable range
+//for - either stores every change - or waiting for the server to describe the node.  Undefined for a member the group doesn't hold.
+export type HistBand = 'none'|'applied'|'enumeration'|'noRange'|'waiting';
+export type HistMemberThresholds = { id:number; node:ExNodeId; templateNode?:number; path?:HistPathSegment[]; enumeration?:boolean; band?:HistBand; thresholds:HistThreshold[] };
 export type HistThresholds = { update:boolean; nodes:HistMemberThresholds[] };
 //A template member's path, as hist_template_nodes holds it (spec *Templates*):  browse names by namespace URI.
 export type HistPathSegment = { nsu:string; name:string };
@@ -143,14 +149,19 @@ export function toHistGroups( json:any ):HistGroup[]{
 export function toHistCapabilities( json:any ):HistCapabilities{
 	return { aggregates: ( <any[]>(json?.aggregates ?? []) ).map( a=>({ name: String( a ), browse: String( a ) }) ), update: !!json?.update, delete: !!json?.delete };
 }
+const uaNamespace = 'http://opcfoundation.org/UA/';//namespace 0's, index 0 on every server
+//Whether a member's node carries the server's index, as a page's variables do:  without it the URI's index is 0, which keys as
+//namespace 0 does.
+export function histMemberIndexed( node:ExNodeId ):boolean{ return !node.nsu || node.ns!=0 || node.nsu==uaNamespace; }
 export function toHistThresholds( json:any ):HistThresholds{
 	const threshold = ( t:any ):HistThreshold=>({ name: <HistThresholdName>String( t?.name ), value: t?.value==null ? null : typeof t.value=='boolean' ? t.value : Number( t.value ), source: <HistThresholdSource>String( t?.source ?? 'default' ) });
 	const member = ( n:any ):HistMemberThresholds=>({
 		id: Number( n.id ),
-		node: new NodeId( n.node ),
+		node: new ExNodeId( n.node ),
 		templateNode: n.templateNode==null ? undefined : Number( n.templateNode ),
 		path: parseHistPath( n.path ),
 		enumeration: n.enumeration==null ? undefined : !!n.enumeration,
+		band: n.band==null ? undefined : <HistBand>String( n.band ),
 		thresholds: ( <any[]>(n.thresholds ?? []) ).map( threshold )
 	});
 	return { update: !!json?.update, nodes: ( <any[]>(json?.nodes ?? []) ).map( member ) };

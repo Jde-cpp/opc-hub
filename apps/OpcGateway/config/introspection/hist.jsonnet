@@ -14,9 +14,9 @@
 //any of the nodes, each with those it holds, among the groups the caller may read - where the gateway keeps each node's history.
 //historyCapabilities( group ){ aggregates update delete }:  the aggregates a group computes, and whether the caller may edit
 //its history, Update and Delete granted on an enforced resource (*Authorization*).
-//historyThresholds( group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }:  the group's
-//member list - each member's thresholds as the group resolves them, with where each comes from, and whether the caller may
-//override them (updateHistGroupNode).
+//historyThresholds( group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }:  the
+//group's member list - each member's thresholds as the group resolves them, with where each comes from, whether its deviation
+//band is in force, and whether the caller may override them (updateHistGroupNode).
 local String = { kind: "SCALAR", name: "String" };
 local UInt = { kind: "SCALAR", name: "UInt" };
 local Boolean = { kind: "SCALAR", name: "Boolean" };
@@ -122,6 +122,7 @@ local history = {
 			{ name: "templateNode", type: UInt }, //the hist_template_nodes row it was resolved from;  null for a node added by hand.
 			{ name: "path", type: String }, //that member's browse path, as the row holds it;  null for a node added by hand.
 			{ name: "enumeration", type: Boolean }, //whether the server said its DataType is an enumeration, which takes no deviation band;  null until it has.
+			{ name: "band", type: String }, //whether its deviation band is in force:  none (no deviation), applied, enumeration, noRange (a percent format the node has no usable range for, so every change is stored) or waiting (until the server has described the node);  null for a member the group doesn't hold.
 			{ name: "thresholds", type: List({ kind: "OBJECT", name: "HistoryThreshold" }) } //the five, in the columns' order.
 		]
 	},

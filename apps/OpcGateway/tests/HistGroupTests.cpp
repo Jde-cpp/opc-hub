@@ -101,6 +101,14 @@ namespace Jde::Opc::Gateway::Tests{
 			while( Items()!=count )
 				sw.CheckTimeout( 15s, 10ms );
 		}
+		//histGroupNodes enforced, as an admin may set it, with the suite's user granted nothing on it, until the cleanup returned runs
+		//or is invoked.  `deleted` is the enforcement switch, so restore = enforce, as BrowseTests'
+		//EnforcedConnectionResourceRefusesAnUngrantedSession has it.  Each way waits for the gateway's authorizer, which hears of the
+		//change after the mutation returns:  what follows is judged under it, the test's purges and the next suite's writes included.
+		Ω EnforceGroupNodes()ε{
+			enforceGroupNodes( true );
+			return absl::Cleanup{ []{ try{ enforceGroupNodes( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } } };
+		}
 		Ŧ Records( const sp<HistGroupHost>& host )ε->vector<T>{
 			vector<T> y;
 			for( auto& record : host->Group()->Buffer() ){
@@ -111,6 +119,15 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		static ServerCnnctnPK _connection;
 		static NsIndex _ns;
+	private:
+		Ω enforceGroupNodes( bool on )ε->void{
+			let change = on ? "restore" : "delete";
+			AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", change), {} );
+			for( uint i=0; AppClient()->Acl()->FindActiveResourcePK("gateway", "histGroupNodes", "").has_value()!=on; ++i ){
+				THROW_IF( i==200, "histGroupNodes' {} didn't reach the gateway's authorizer.", change );
+				std::this_thread::sleep_for( 50ms );
+			}
+		}
 	};
 	ServerCnnctnPK HistGroupTests::_connection{};
 	NsIndex HistGroupTests::_ns{};
@@ -225,10 +242,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let templateId = CreateTemplate( "refused-template" );
 		absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
 		CreateMember( templateId, "motorRpm" );
-		//`deleted` is the enforcement switch, so restore = enforce, as BrowseTests' EnforcedConnectionResourceRefusesAnUngrantedSession has it.
-		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", on ? "restore" : "delete"), {} ); };
-		enforce( true );
-		absl::Cleanup open = [enforce]{ try{ enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } };
+		auto open = EnforceGroupNodes();
 
 		let [groupId, failure] = tryCreateGroup( "refused", templateId, Pump1, _connection );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
@@ -266,9 +280,7 @@ namespace Jde::Opc::Gateway::Tests{
 			let templateId = CreateTemplate( "concurrent-template" );
 			absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
 			CreateMember( templateId, "motorRpm" );
-			let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", on ? "restore" : "delete"), {} ); };
-			enforce( true );
-			absl::Cleanup open = [enforce]{ try{ enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } };
+			auto open = EnforceGroupNodes();
 			let [groupId, failure] = tryCreateGroup( "concurrent", templateId, Pump2, _connection );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 			ASSERT_FALSE( failure ) << *failure;
@@ -324,6 +336,12 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( host->Group()->FindThresholds(nodeId)->MinTimeInterval, 250ms );
 		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, node:$node )", {{"id", nodeId}, {"node", Node(Pump4Rpm)}}), std::exception ) << "a node's node never changes";
 		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:$g, node:$node, exceptionDeviation:-1 ){ id }", {{"g", groupId}, {"node", Node(Pump4Rpm)}}), std::exception ) << "a threshold the library would refuse";
+		//historian-threshold-overrides #3:  an infinite deviation passed Check, so the row held it before the library refused it.
+		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, exceptionDeviation:$d )", {{"id", nodeId}, {"d", std::numeric_limits<double>::infinity()}}), std::exception );
+		for( let& row : Rows("histGroupNodes( histGroupId:$g ){ id exceptionDeviation }", {{"g", groupId}}) ){
+			if( Json::AsNumber<uint32>(row.as_object(), "id")==nodeId )
+				EXPECT_TRUE( row.as_object().at("exceptionDeviation").is_null() ) << "refused before the row:  " << serialize( row );
+		}
 		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", "not a node"}}), std::exception );
 
 		let twinId = Id( CreateGroup("pump2-twin", nullopt, nullopt) );
@@ -666,7 +684,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( GroupNodes(groupId).size(), 1u );
 		let rpmRow = Id( *Row(groupId, Pump2Rpm) );
 		Mutate( "updateHistGroupNode( id:$id, exceptionDeviation:5, exceptionDeviationFormat:1 )", {{"id", rpmRow}} );
-		let thresholds = []( uint32 group ){ return QL().QuerySync<jobject>( "historyThresholds( group:$group ){ update nodes{ id node templateNode path enumeration thresholds{ name value source } } }", {{"group", group}}, User() ); };
+		let thresholds = []( uint32 group ){ return QL().QuerySync<jobject>( "historyThresholds( group:$group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }", {{"group", group}}, User() ); };
 		//A member's answer by its row, and a threshold's value and source by its name.
 		let member = []( const jobject& answer, uint32 id )->jobject{
 			for( let& node : Json::AsArray(answer, "nodes") ){
@@ -707,6 +725,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( source(rpm, "exceptionDeviation"), "default" );
 		EXPECT_EQ( number(rpm, "exceptionDeviationFormat"), 0 ); EXPECT_EQ( source(rpm, "exceptionDeviationFormat"), "default" );
 		EXPECT_FALSE( host->FindThresholds(rpmRow)->ExceptionDeviation ) << "the live group follows";
+		EXPECT_EQ( rpm.at("band"), jvalue{"none"} );
 		Mutate( "updateHistGroup( id:$id, exceptionDeviation:2 )", {{"id", groupId}} );
 		rpm = member( thresholds(groupId), rpmRow );
 		EXPECT_EQ( number(rpm, "exceptionDeviation"), 2 ); EXPECT_EQ( source(rpm, "exceptionDeviation"), "group" );
@@ -716,22 +735,22 @@ namespace Jde::Opc::Gateway::Tests{
 		let state = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", serialize(jobject{{"nsu", "http://opcfoundation.org/UA/"}, {"i", UA_NS0ID_SERVER_SERVERSTATUS_STATE}})}}) );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		Stopwatch sw;
-		while( !host->Description(rpmRow).value_or(HistDescription{}).Enumeration || !host->Description(state).value_or(HistDescription{}).Enumeration )
+		while( !host->Description(rpmRow).value_or(HistDescription{}).Enumeration || !host->Description(rpmRow)->Ranged || !host->Description(state).value_or(HistDescription{}).Enumeration )
 			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
 		answer = thresholds( groupId );
 		EXPECT_EQ( member(answer, rpmRow).at("enumeration"), jvalue{false} );
 		EXPECT_EQ( member(answer, state).at("enumeration"), jvalue{true} );
+		EXPECT_EQ( member(answer, rpmRow).at("band"), jvalue{"applied"} ) << "the group's 2, absolute";
+		EXPECT_EQ( member(answer, state).at("band"), jvalue{"enumeration"} );
+		//historian-threshold-overrides #4:  a percent format whose range the node lacks stores every change, which the member says
+		//where its thresholds can't.
+		Mutate( "updateHistGroupNode( id:$id, exceptionDeviationFormat:3 )", {{"id", rpmRow}} );
+		EXPECT_EQ( member(thresholds(groupId), rpmRow).at("band"), jvalue{"noRange"} ) << "motorRpm has no EURange";
 		EXPECT_TRUE( member(answer, state).at("templateNode").is_null() ) << "added by hand";
 		EXPECT_TRUE( member(answer, state).at("path").is_null() );
 
 		//`update` is the table's right:  enforced with the suite's user granted nothing on it, the overrides are refused, and it says so.
-		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", on ? "restore" : "delete"), {} ); };
-		enforce( true );
-		absl::Cleanup open = [enforce]{ try{ enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } };
-		for( uint i=0; !AppClient()->Acl()->FindActiveResourcePK("gateway", "histGroupNodes", "").has_value(); ++i ){
-			ASSERT_LT( i, 200u ) << "the resource's restore didn't reach the authorizer";
-			std::this_thread::sleep_for( 50ms );
-		}
+		auto open = EnforceGroupNodes();
 		EXPECT_FALSE( Json::AsBool(thresholds(groupId), "update") );
 		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, stepped:false )", {{"id", rpmRow}}), std::exception );
 		std::move( open ).Invoke();

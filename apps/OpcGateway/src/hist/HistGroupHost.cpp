@@ -95,6 +95,22 @@ namespace Jde::Opc::Gateway{
 		auto p = _nodes.find( index );
 		return p==_nodes.end() ? nullopt : optional<HistDescription>{ p->second.Described };
 	}
+	α HistGroupHost::Band( HistGroupNodePK index )Ι->optional<EHistBand>{
+		ul _{ _mutex };
+		auto p = _nodes.find( index );
+		if( p==_nodes.end() )
+			return nullopt;
+		let& node = p->second;
+		if( !node.Thresholds.ExceptionDeviation )
+			return EHistBand::None;
+		if( !node.Described.Enumeration )
+			return EHistBand::Waiting;
+		if( *node.Described.Enumeration )
+			return EHistBand::Enumeration;
+		if( let applied = _group->FindThresholds(index); applied && applied->ExceptionDeviation )
+			return EHistBand::Applied;
+		return ranged( node.Thresholds ) && !node.Described.Ranged ? EHistBand::Waiting : EHistBand::NoRange;
+	}
 	α HistGroupHost::ServerId( HistGroupNodePK index )Ι->optional<NodeId>{
 		ul _{ _mutex };
 		auto p = _nodes.find( index );

@@ -110,15 +110,9 @@ namespace Jde::Opc::Gateway{
 			ResumeExp( move(e) );
 		}
 	}
-	Ω byId( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>{
-		flat_map<HistTemplateNodePK,HistTemplateNodeRow> y;
-		for( auto& row : rows )
-			y.emplace( row.Id, move(row) );
-		return y;
-	}
 	Ω memberOf( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistThresholdColumns*{
-		auto p = id ? members.find( *id ) : members.end();
-		return p==members.end() ? nullptr : &p->second.Thresholds;
+		let row = FindHistTemplateNode( members, id );
+		return row ? &row->Thresholds : nullptr;
 	}
 
 	α HistHost::Load( const HistGroupRow& row, const vector<HistGroupNodeRow>& nodes, const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, str slug, SL sl )ε->sp<HistGroupHost>{
@@ -168,7 +162,7 @@ namespace Jde::Opc::Gateway{
 		try{
 			auto groups = co_await Any( SelectHistGroups() );
 			auto nodes = co_await Any( SelectHistGroupNodes() );
-			auto members = byId( co_await Any(SelectHistTemplateNodes()) );
+			auto members = HistTemplateNodesById( co_await Any(SelectHistTemplateNodes()) );
 			auto connections = co_await Any( ServerCnnctnAwait{nullopt, true} );
 			flat_map<ServerCnnctnPK,string> slugs;
 			for( auto& connection : connections )
@@ -373,7 +367,7 @@ namespace Jde::Opc::Gateway{
 				host->SetName( row.Name );
 				host->SetColumns( row.Thresholds );
 				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? byId( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				auto thresholds = Reserve<std::pair<HistGroupNodePK,Thresholds>>( nodes.size() );
 				for( let& node : nodes )
 					thresholds.emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds) );
@@ -405,7 +399,7 @@ namespace Jde::Opc::Gateway{
 			let& row = rows.front();
 			if( Enabled() ){
 				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? byId( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				let slug = co_await SlugAwait{ row.Connection };
 				Load( row, nodes, members, slug, SRCE_CUR )->Subscribe();
 				INFO( "[{}]Group '{}' restored with {} nodes.", row.Guid, row.Name, nodes.size() );
@@ -435,7 +429,7 @@ namespace Jde::Opc::Gateway{
 			THROW_IF( rows.empty(), "hist_group_nodes row {} not found.", id );
 			let& row = rows.front();
 			if( auto host = Find(row.Group); host ){
-				auto members = row.TemplateNode ? byId( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				host->Join( row, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns()), Writer(by), SRCE_CUR );
 			}
 			await.Done();
@@ -449,7 +443,7 @@ namespace Jde::Opc::Gateway{
 			auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
 			if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host ){
 				let& row = rows.front();
-				auto members = row.TemplateNode ? byId( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				host->SetNodeThresholds( {{row.Id, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns())}}, SRCE_CUR );
 			}
 			await.Done();
@@ -484,7 +478,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistHost::TemplateNodeEdited( HistTemplateNodePK id, HistWork& await )ι->VoidTask{
 		try{
-			auto members = byId( co_await Any(SelectHistTemplateNodes({.Id=id})) );
+			auto members = HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=id})) );
 			auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
 			flat_map<sp<HistGroupHost>,vector<std::pair<HistGroupNodePK,Thresholds>>> byHost;//one modify per group.
 			for( let& node : nodes ){
