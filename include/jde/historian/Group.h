@@ -199,6 +199,7 @@ namespace Jde::Opc::Hist{
 
 	struct Group;
 	struct GroupFiles;
+	struct Joined;
 	struct Run;
 	struct Store;
 
@@ -286,7 +287,8 @@ namespace Jde::Opc::Hist{
 		α Name()Ι->const string&{ return _config.Name; }
 
 		//Returns the node's index:  issued here when the group issues its own, otherwise member.Index.  A node that left
-		//rejoins with a break at its removal time, or at the break it left with.
+		//rejoins with a break at its removal time, or at the break it left with, and a new index:  a read of it joins the
+		//indexes it has had (spec *Reads*).
 		α Add( Member member, optional<Writer> by={}, SRCE )ε->NodeIndex;
 		α Remove( NodeIndex index, optional<Writer> by={}, SRCE )ε->void;
 		α SetThresholds( NodeIndex index, Thresholds thresholds, SRCE )ε->void;
@@ -363,13 +365,14 @@ namespace Jde::Opc::Hist{
 
 		//A page of the raw records the request asks for:  those of its nodes inside its range, from the day files the
 		//range touches, a live file's runs merged by source time, and from the buffer, a running flush's records among
-		//it.  At most Limit values, the bounds counted, but for a first page whose bounds alone pass it, which holds them,
-		//and a last page's closing bounds, which follow its values.  The continuation is stateless:  where to resume by
-		//time, how many records at that time each node has had, an archive's byte offset and generation, and a CRC of the
-		//other arguments but Limit, so one passed with different nodes, times or bounds is refused.  A record that lands
-		//behind the resume point between pages isn't in the rest of the read.  Throws for a request with neither time,
-		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
-		//the read opens can't be opened or read through.
+		//it.  A node is read by every index it has had, each file's preamble saying which of its are the node's, and its
+		//values come back under the index asked for (spec *Reads*).  At most Limit values, the bounds counted, but for a
+		//first page whose bounds alone pass it, which holds them, and a last page's closing bounds, which follow its
+		//values.  The continuation is stateless:  where to resume by time, how many records at that time each node has
+		//had, an archive's byte offset and generation, and a CRC of the other arguments but Limit, so one passed with
+		//different nodes, times or bounds is refused.  A record that lands behind the resume point between pages isn't in
+		//the rest of the read.  Throws for a request with neither time, no nodes or a continuation that isn't this read's,
+		//a UAException with Bad_ContinuationPointInvalid, and when a file the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
 		//A page of the values at the request's times (spec *Reads*), at most Limit, and with OneDay one day's, the times in
 		//the request's order and a time's values in the nodes', each a record at the time or one interpolated from the
@@ -385,11 +388,12 @@ namespace Jde::Opc::Hist{
 		//Read does for a request with no nodes or a negative interval, and a UAException for a Start equal to End,
 		//Bad_InvalidArgument, or percentages Part 13 doesn't allow, Bad_AggregateInvalidInputs.
 		α ReadProcessed( const ProcessedRequest& request, SRCE )ε->ReadResult;
-		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked.  The next flush
-		//runs it, after writing the buffer, so every value it targets is in its day's file before it looks:  it writes a
-		//Modification record for each value it changes to the modifications file of that value's day, one append and
-		//checkpoint per day, fsynced, keeps each node's newest record and the later files' start values current, and
-		//resumes with the result once the records are durable, so an edit a caller was told succeeded survives a crash.  A
+		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked, on the node's
+		//records under every index it has had, as a read serves them.  The next flush runs it, after writing the buffer, so
+		//every value it targets is in its day's file before it looks:  it writes a Modification record for each value it
+		//changes to the modifications file of that value's day, one append and checkpoint per day, fsynced, keeps each
+		//node's newest record and the later files' start values current, and resumes with the result once the records are
+		//durable, so an edit a caller was told succeeded survives a crash.  A
 		//day whose file can't be written fails that day's values with Bad_UnexpectedError, as does one the flush before
 		//couldn't write, and the other days stand.  A range delete that reaches such a day answers Bad_UnexpectedError, as
 		//does one when the days can't be listed.  One result per entry, in order; a node that isn't a member answers
@@ -541,6 +545,9 @@ namespace Jde::Opc::Hist{
 		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
 		//written, then the buffer as the next Take has it, each node's lost values first.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>;
+		//A read's or an edit's nodes with the indexes the group knows each has had (Joined):  the NodeId of each that is a
+		//member or has left with values still buffered, and under it every other index the group knows of the node.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Join( vector<NodeIndex> nodes )Ι->Joined;
 		//The flush's batch, as it stands, which Read serves until each record is in a file.  Set under _filesMutex, which a
 		//read holds through its look at the buffer, so no record is in neither.  Shared, not copied:  the flush reads it
 		//outside _mutex and changes it only under it.
