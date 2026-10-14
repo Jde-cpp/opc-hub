@@ -23,13 +23,11 @@ namespace Jde{
 
 α main( int argc, char **argv )->int{
 	using namespace Jde;
-	let filterSet = Process::Args().find( "--gtest_filter" )!=Process::Args().end();
 	::testing::InitGoogleTest( &argc, argv );
 	int exitCode{ EXIT_FAILURE };
 	try{
 		startup( argc, argv );
-		if( !filterSet )
-			::testing::GTEST_FLAG( filter ) = Settings::FindSV( "/testing/tests" ).value_or( "*" );
+		ApplyTestsFilter();
 		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
 		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
 	}

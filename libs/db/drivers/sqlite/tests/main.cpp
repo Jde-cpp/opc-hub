@@ -36,15 +36,13 @@ namespace Jde{
 
 α main( int argc, char **argv )->int{
 	using namespace Jde;
-	let filterSet = Process::Args().find( "--gtest_filter" )!=Process::Args().end();
 	::testing::InitGoogleTest( &argc, argv );
 	int exitCode{ EXIT_FAILURE };
 	optional<string> fileDb;
 	try{
 		startup( argc, argv );
 		fileDb = Settings::FindString( "/dbServers/file/catalogs/testDb/path" );
-		if( !filterSet )
-			::testing::GTEST_FLAG( filter ) = Settings::FindSV( "/testing/tests" ).value_or( "*" );
+		ApplyTestsFilter();
 		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
 	}
 	catch( runtime_error& e ){

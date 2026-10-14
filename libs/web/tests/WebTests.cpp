@@ -65,7 +65,8 @@ namespace Jde::Web{
 		ASSERT_TRUE( res[http::field::server].contains("SSL") );
 	}
 
-	TEST_F( WebTests, GoogleCerts ){
+	//#247: a third party's live host, so offline it fails - run it with --gtest_also_run_disabled_tests.
+	TEST_F( WebTests, DISABLED_GoogleCerts ){
 		auto await = ClientHttpAwait{ "www.googleapis.com", "/oauth2/v3/certs", 443, {.ContentType="", .Verb=http::verb::get} };
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
 		let certs = res.Json();
@@ -74,10 +75,14 @@ namespace Jde::Web{
 		ASSERT_GT( keys.size(), 0 );
 		ASSERT_TRUE( keys[0].is_object() );
 	}
+	//#247: the mock gzips only when asked, so this covers the client's Accept-Encoding and its inflate.  64k of one byte deflates
+	//to about a hundred bytes, so the inflate buffer - sized from the compressed body, 512 at least - has to grow several times.
 	TEST_F( WebTests, GZip ){
-		auto await = ClientHttpAwait{ "en.wikipedia.org", string{"/wiki/Madden_NFL_26"}, 443, {.ContentType="", .Verb=http::verb::get} };
-		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( move(await) );
-		ASSERT_TRUE( res[http::field::content_encoding].contains("gzip") );
+		constexpr uint size{ 1<<16 };
+		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, Ƒ("/gzip?size={}", size), Port} );
+		ASSERT_EQ( "gzip", res[http::field::content_encoding] );
+		EXPECT_EQ( size, res.Body().size() );
+		EXPECT_EQ( string::npos, res.Body().find_first_not_of('x') );
 	}
 
 	TEST_F( WebTests, IsPlain ){

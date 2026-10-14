@@ -8,9 +8,20 @@
 #include "jde/fwk/log/log.h"
 #include "jde/fwk/log/logTags.h"
 #include "jde/fwk/process/cpu.h" // IWYU pragma: keep - its linux start-up check, for every test exe:  only a test's main.cpp includes this header.
+#include "jde/fwk/process/process.h"
+#include "jde/fwk/settings.h"
 #define let const auto
 
 namespace Jde{
+	//'/testing/tests' is the suite's default filter, so it yields to one chosen any other way - --gtest_filter, GTEST_FILTER
+	//or a --gtest_flagfile all set the flag before this runs, off gtest's own "*".  The argv check keeps an explicit
+	//--gtest_filter=* from losing to the setting.  Call after InitGoogleTest, once Settings are loaded.
+	Ξ ApplyTestsFilter()ι->void{
+		let& args = Process::Args();
+		if( ::testing::GTEST_FLAG(filter)=="*" && args.find("--gtest_filter")==args.end() )
+			::testing::GTEST_FLAG( filter ) = Settings::FindSV( "/testing/tests" ).value_or( "*" );
+	}
+
 	//A gtest filter that matches nothing is not an error to gtest - RUN_ALL_TESTS() runs no test and returns 0,
 	//so a suite that was renamed out from under its '/testing/tests' setting (or never written) reports green
 	//having tested nothing.  Wrap the RUN_ALL_TESTS() call:  result = CheckTestsRan( RUN_ALL_TESTS() );
