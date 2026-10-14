@@ -15,6 +15,7 @@
 #include <jde/db/meta/Cluster.h>
 #include <jde/db/meta/Column.h>
 #include "../IServerMeta.h"
+#include "../ServerMetaFold.h" //SameDefault
 #include <jde/ql/IQL.h>
 #include "Index.h"
 #include "Procedure.h"
@@ -245,6 +246,21 @@ namespace Jde::DB{
 		});
 	}
 
+	//#241: a `default:` that changed since the table was created, or was added to a column that had none, reaches the
+	//database here - the create statement only ever runs once.  Both sides in the dialect's own spelling, the configured
+	//one through Syntax::DefaultLiteral and the catalog's through the loader (ColumnDdl::DefaultSql), compared by
+	//SameDefault.  A default the configuration no longer has stays on the column, and a nullable column's implicit null
+	//is no default at all.
+	Ω syncDefault( IDataSource& ds, const Table& table, const Column& config, ColumnDdl& loaded )ε->void{
+		let configured = config.Default ? ds.Syntax().DefaultLiteral( *config.Default ) : string{};
+		if( configured.empty() || SameDefault(configured, loaded.DefaultSql) )
+			return;
+		ds.ServerMeta().SetDefault( table, loaded, *config.Default );
+		INFO( "Set the default of '{}.{}' to {}{}.", table.DBName, config.Name, configured, loaded.DefaultSql.empty() ? string{} : Ƒ(" (was {})", loaded.DefaultSql) );
+		loaded.DefaultSql = configured;
+		loaded.DefaultName = ds.Syntax().DefaultConstraint( table.SqlName(), loaded.Name ); //the one just dropped is gone.
+	}
+
 	α SchemaDdl::SyncTables( const AppSchema& config )ε->void{
 		const DB::Syntax& syntax = config.DS()->Syntax();
 		IDataSource& ds = *DS();
@@ -257,10 +273,9 @@ namespace Jde::DB{
 				dbTable = std::dynamic_pointer_cast<TableDdl>( kv->second );
 				ASSERT( dbTable );
 				for( auto& column : table->Columns ){
-					auto pDBColumn = dbTable->FindColumn( column->Name ); if( !pDBColumn ){ CRITICAL("Could not find db column {}.{}", tableName, column->Name); continue; }
+					auto pDBColumn = std::dynamic_pointer_cast<ColumnDdl>( dbTable->FindColumn(column->Name) ); if( !pDBColumn ){ CRITICAL("Could not find db column {}.{}", tableName, column->Name); continue; }
 					pDBColumn->Insertable = column->Insertable;
-					if( pDBColumn->Default && pDBColumn->Default->is_string() && pDBColumn->Default->get_string()!="$now" )
-						ds.ExecuteSync( {syntax.AddDefault(table->SqlName(), column->Name, *pDBColumn->Default)} );
+					syncDefault( ds, *table, *column, *pDBColumn );
 				}
 			}
 			else{

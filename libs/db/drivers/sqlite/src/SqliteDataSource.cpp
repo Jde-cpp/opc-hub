@@ -160,6 +160,11 @@ namespace Jde::DB::Sqlite{
 		}
 	}
 
+	α SqliteDataSource::WithConnection( function<void(sqlite3&)> f, SL sl )ε->void{
+		lg _{ _connMutex };
+		f( Connection(sl) );
+	}
+
 	α SqliteDataSource::Execute( Sql&& sql, SL sl, Params exeParams )ε->uint{
 		if( exeParams.Log )
 			DB::Log( sql, sl );

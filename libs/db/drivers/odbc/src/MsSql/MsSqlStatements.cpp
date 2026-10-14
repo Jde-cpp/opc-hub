@@ -6,7 +6,7 @@ namespace Jde::DB::MsSql::Sql
 	using std::endl;
 	α ColumnSql( bool addTable )ι->string{
 		std::ostringstream os;
-		os << "select tables.name table_name, columns.name column_name, columns.column_id, constraints.definition, columns.is_nullable, types.name, columns.max_length, is_identity, case when pk_columns.column_id is null then 0 else 1 end, columns.precision, columns.scale" << endl
+		os << "select tables.name table_name, columns.name column_name, columns.column_id, constraints.definition, columns.is_nullable, types.name, columns.max_length, is_identity, case when pk_columns.column_id is null then 0 else 1 end, columns.precision, columns.scale, constraints.name" << endl //constraints.name last (#241): what a changed default drops first.
 			<< "from sys.schemas" << endl
 			<< "join sys.objects tables on tables.schema_id=schemas.schema_id and tables.type in ('U','V') and tables.is_ms_shipped=0" << endl
 			<< "join sys.columns on tables.object_id=columns.object_id" << endl

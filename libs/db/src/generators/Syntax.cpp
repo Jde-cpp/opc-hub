@@ -153,16 +153,34 @@ namespace Jde::DB{
 		return y+"$";
 	}
 
-	α Syntax::DefaultLiteral( const Value& dflt )Ι->string{
+	α Syntax::QuoteLiteral( sv text )Ι->string{
+		return Ƒ( "'{}'", Str::Replace(text, "'", "''") );
+	}
+	α Syntax::DefaultLiteral( const Value& dflt )Ε->string{
+		if( dflt.is_null() )
+			return {};
 		if( dflt.is_bool() )
 			return string{ BoolLiteral(dflt.get_bool()) };
 		if( dflt.is_string() )
-			return dflt.get_string();
-		CRITICALT( ELogTags::Sql, "Default for '{}' not implemented.", dflt.TypeName() );
-		return {};
+			return dflt.get_string()=="$now" ? string{ NowDefault() } : QuoteLiteral( dflt.get_string() );
+		if( dflt.is_double() )
+			return Ƒ( "{}", dflt.get_double() );
+		if( dflt.is_number() )
+			return Ƒ( "{}", dflt.get_number<_int>() );
+		if( dflt.Type()==EValue::Bytes && dflt.get_bytes().empty() ) //Column's placeholder for a nullable binary column (getDefault) - no default.
+			return {};
+		THROW( "A '{}' default has no ddl spelling.", dflt.TypeName() );
 	}
-	α Syntax::AddDefault( sv tableName, sv columnName, Value dflt )Ι->string{
-		return Ƒ( "alter table {} add default {} for {}", tableName, DefaultLiteral(dflt), columnName );
+	//T-SQL: a column's default is a constraint of its own, so a change is a drop and an add - in one transaction, or a
+	//failed add leaves the column with no default.
+	α Syntax::SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->string{
+		auto add = Ƒ( "alter table {} add constraint {} default {} for {}", tableName, DefaultConstraint(tableName, columnName), DefaultLiteral(dflt), columnName );
+		if( constraintName.empty() )
+			return add;
+		return Ƒ( "set xact_abort on; begin tran; alter table {} drop constraint {}; {}; commit", tableName, constraintName, add );
+	}
+	α Syntax::DefaultConstraint( sv tableName, sv columnName )Ι->string{
+		return Ƒ( "DF_{}_{}", tableName.substr(tableName.rfind('.')+1), columnName ); //constraint names are schema-scoped - no schema in one.
 	}
 
 	α Syntax::EscapeDdl( sv sql )Ι->string{

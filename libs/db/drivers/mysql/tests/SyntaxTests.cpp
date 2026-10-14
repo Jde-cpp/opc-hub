@@ -155,6 +155,65 @@ namespace Jde::DB::MySql::Tests{
 		EXPECT_TRUE( base.UpsertSuffix({"a"}, {"b"}).empty() ); //SQL Server has no such form - the caller keeps update-then-insert.
 	}
 
+	//#241: a changed default on an existing column.  One statement - SET DEFAULT replaces whatever is there - but it takes
+	//a literal or a parenthesized expression, so `$now` goes in parens where the create statement writes the bare keyword.
+	TEST( SyntaxTests, SetDefault ){
+		const auto& my = MySqlSyntax::Instance();
+		EXPECT_EQ( my.SetDefault("widgets", "color", Value{"blue"}, {}), "ALTER TABLE widgets ALTER COLUMN color SET DEFAULT 'blue'" );
+		EXPECT_EQ( my.SetDefault("widgets", "flag", Value{true}, {}), "ALTER TABLE widgets ALTER COLUMN flag SET DEFAULT true" );
+		EXPECT_EQ( my.SetDefault("widgets", "created", Value{"$now"}, {}), "ALTER TABLE widgets ALTER COLUMN created SET DEFAULT (CURRENT_TIMESTAMP)" );
+		EXPECT_EQ( my.DefaultLiteral(Value{true}), "true" ); //MySQL's own bit spelling - the base dialect's is 1.
+		EXPECT_EQ( my.DefaultLiteral(Value{"$now"}), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( my.DefaultLiteral(Value{"C:\\temp"}), "'C:\\\\temp'" ); //a backslash is MySQL's escape - `\t` would be a tab.
+		EXPECT_EQ( my.DefaultLiteral(Value{"a\\"}), "'a\\\\'" );          //`'a\'` would not end.
+		EXPECT_EQ( my.DefaultLiteral(Value{"it\\'s"}), "'it\\\\''s'" );
+		EXPECT_TRUE( my.DefaultConstraint("widgets", "color").empty() ); //no named defaults.
+	}
+
+	//#241: INFORMATION_SCHEMA.COLUMNS reports a default without the quotes or spelling the ddl gave it (a live 8.4
+	//census: `abc`, `b'1'`, `5`, `CURRENT_TIMESTAMP`, and `now()` for the parenthesized form SET DEFAULT needs), so the
+	//loader restores DefaultLiteral's spelling - or the reconciliation would rewrite every string default at every start.
+	TEST( ServerMetaTests, MySqlDefaultReadsBackTheDdlSpelling ){
+		using enum EType;
+		const auto& my = MySqlSyntax::Instance();
+		EXPECT_EQ( MySqlDefault("abc", false, VarChar, my), "'abc'" );
+		EXPECT_EQ( MySqlDefault("it's", false, VarChar, my), "'it''s'" );
+		EXPECT_EQ( MySqlDefault("C:\\temp", false, VarChar, my), "'C:\\\\temp'" ); //the value, unescaped - quoted as DefaultLiteral quotes it.
+		EXPECT_EQ( MySqlDefault("", false, Text, my), "''" );               //an empty-string default; NULL never reaches here.
+		EXPECT_EQ( MySqlDefault("b'1'", false, Bit, my), "true" );
+		EXPECT_EQ( MySqlDefault("b'0'", false, Bit, my), "false" );
+		EXPECT_EQ( MySqlDefault("1", false, Bit, my), "true" );              //tinyint(1)
+		EXPECT_EQ( MySqlDefault("5", false, Int, my), "5" );
+		EXPECT_EQ( MySqlDefault("1.5", false, Float, my), "1.5" );
+		EXPECT_EQ( MySqlDefault("CURRENT_TIMESTAMP", true, DateTime, my), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( MySqlDefault("now()", true, DateTime, my), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( MySqlDefault("2020-01-01 00:00:00", false, DateTime, my), "'2020-01-01 00:00:00'" ); //a literal datetime, not generated.
+		EXPECT_EQ( MySqlDefault("uuid()", true, VarChar, my), "uuid()" );    //any other expression, as reported.
+	}
+	//#10: MariaDB (a live 11.4 census) reports the ddl's spelling - literals quoted, `''` for a quote, `\\` and `\n` escaped
+	//but a tab raw - flags no expression DEFAULT_GENERATED, and spells a nullable column's implicit null `NULL`.  The same
+	//defaults have to read back as MySQL 8's do, or every string and `created` column is re-altered at every start.
+	TEST( ServerMetaTests, MySqlDefaultReadsMariaDB ){
+		using enum EType;
+		const auto& my = MySqlSyntax::Instance();
+		EXPECT_EQ( MySqlDefault("'abc'", false, VarChar, my, true), "'abc'" );
+		EXPECT_EQ( MySqlDefault("'it''s'", false, VarChar, my, true), "'it''s'" );
+		EXPECT_EQ( MySqlDefault(R"('a\\b')", false, VarChar, my, true), R"('a\\b')" );
+		EXPECT_EQ( MySqlDefault(R"('a\nb')", false, VarChar, my, true), "'a\nb'" );        //a newline, as DefaultLiteral writes it.
+		EXPECT_EQ( MySqlDefault("'a\tb'", false, VarChar, my, true), "'a\tb'" );         //a tab comes raw.
+		EXPECT_EQ( MySqlDefault(R"('a\%')", false, VarChar, my, true), R"('a\\%')" );     //MySQL keeps the backslash of \%.
+		EXPECT_EQ( MySqlDefault("''", false, Text, my, true), "''" );
+		EXPECT_EQ( MySqlDefault("'NULL'", false, VarChar, my, true), "'NULL'" );          //the string.
+		EXPECT_TRUE( MySqlDefault("NULL", false, VarChar, my, true).empty() );            //no default.
+		EXPECT_EQ( MySqlDefault("b'1'", false, Bit, my, true), "true" );
+		EXPECT_EQ( MySqlDefault("1", false, Bit, my, true), "true" );                      //tinyint(1)
+		EXPECT_EQ( MySqlDefault("5", false, Int, my, true), "5" );
+		EXPECT_EQ( MySqlDefault("1e20", false, Float, my, true), "1e20" );
+		EXPECT_EQ( MySqlDefault("current_timestamp()", false, DateTime, my, true), "CURRENT_TIMESTAMP" );
+		EXPECT_EQ( MySqlDefault("'2020-01-01 00:00:00'", false, DateTime, my, true), "'2020-01-01 00:00:00'" );
+		EXPECT_EQ( MySqlDefault("uuid()", false, VarChar, my, true), "uuid()" );
+	}
+
 	TEST( SyntaxTests, EscapeDdl ){
 		EXPECT_EQ( MySqlSyntax::Instance().EscapeDdl("t"), "`t`" );          //backticks, where the base dialect uses [brackets].
 		EXPECT_EQ( MySqlSyntax::Instance().EscapeDdl("s.t"), "`s`.`t`" );    //each part quoted separately.

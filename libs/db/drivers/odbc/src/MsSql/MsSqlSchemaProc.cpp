@@ -9,22 +9,12 @@
 #define let const auto
 
 namespace Jde::DB::MsSql{
-	//sys.default_constraints' definition: SQL Server wraps a numeric default in parens, `((100))`, a bit's as `((0))`/`((1))`.
-	//Strip them all, then parse; an expression default (`((1)+(2))`) fails TryTo and is no default, which is fine.
-	Ω msSqlDefault( sv dflt, EType type )ι->optional<Value>{
-		optional<Value> y;
-		if( dflt.empty() )
-			return y;
-		if( type==EType::Int ){
-			sv v = dflt;
-			while( v.size()>=2 && v.front()=='(' && v.back()==')' )
-				v = v.substr( 1, v.size()-2 );
-			if( let value = Str::TryTo<_int>(v); value )
-				y = Value{ *value };
-		}
-		else if( type==EType::Bit )
-			y = Value{ dflt!="((0))" };
-		return y;
+	//sys.default_constraints' definition, in Syntax::DefaultLiteral's spelling (#241): SQL Server wraps what it was given
+	//in parens - a number twice, `((100))`, a bit `((1))`, a string `('x')`, an expression `(getutcdate())` - so those go;
+	//a national literal's `N'x'` prefix too, which the base dialect never writes but a hand-made default might.
+	Ω msSqlDefault( sv definition )ι->sv{
+		let y = StripParens( definition );
+		return y.size()>1 && (y.front()=='N' || y.front()=='n') && y[1]=='\'' ? y.substr( 1 ) : y;
 	}
 
 	α MsSqlSchemaProc::LoadColumns( DB::Sql&& sql )Ε->flat_map<string,sp<Table>>{
@@ -32,7 +22,7 @@ namespace Jde::DB::MsSql{
 		flat_map<string,sp<Table>> tables;
 		for( auto&& row : rows ){ //ColumnSql's columns; [2] is column_id, which the statement orders by, and [8] a 0/1 pk-membership flag, not the key ordinal, so it is not an SKIndex.
 			let type = ToType( row.GetString(5) );
-			FoldColumnRow( tables, row.GetString(0), ms<ColumnDdl>(row.GetString(1), msSqlDefault(row.GetString(3), type), row.GetBit(4), type, row.GetOpt<_int>(6), row.Get<_int>(7)!=0, optional<uint8>{}, row.GetOpt<_int>(9), row.GetOpt<_int>(10)) );
+			FoldColumnRow( tables, row.GetString(0), ms<ColumnDdl>(row.GetString(1), msSqlDefault(row.GetString(3)), row.GetBit(4), type, row.GetOpt<_int>(6), row.Get<_int>(7)!=0, optional<uint8>{}, row.GetOpt<_int>(9), row.GetOpt<_int>(10), row.GetString(11)) );
 		}
 		return tables;
 	}

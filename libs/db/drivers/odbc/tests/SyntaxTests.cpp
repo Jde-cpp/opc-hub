@@ -24,6 +24,16 @@ namespace Jde::DB::Odbc::Tests{
 		EXPECT_EQ( s.ToString(EType::ULong), "bigint" );
 	}
 
+	//#241: a default is a constraint of its own on SQL Server, so changing one is a drop by the name the loader read
+	//(sys.default_constraints.name) and an add, in one transaction; a column with none skips the drop.  The add names its
+	//constraint, which is what a second change drops.
+	TEST( SyntaxTests, SetDefault ){
+		const auto& s = Syntax::Instance();
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "color", Value{"blue"}, "DF__widgets__color__3B"), "set xact_abort on; begin tran; alter table dbo.widgets drop constraint DF__widgets__color__3B; alter table dbo.widgets add constraint DF_widgets_color default 'blue' for color; commit" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "created", Value{"$now"}, {}), "alter table dbo.widgets add constraint DF_widgets_created default getutcdate() for created" );
+		EXPECT_EQ( s.DefaultConstraint("dbo.widgets", "color"), "DF_widgets_color" );
+	}
+
 	TEST( SyntaxTests, EscapeDdl ){
 		EXPECT_EQ( Syntax::Instance().EscapeDdl("t"), "[t]" );        //bracket quoting, where mysql uses `backticks`.
 		EXPECT_EQ( Syntax::Instance().EscapeDdl("s.t"), "[s].[t]" );  //each part quoted separately.

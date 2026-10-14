@@ -5,7 +5,7 @@ namespace Jde::DB::MySql{
 	using std::endl;
 	α Ddl::ColumnSql( sv tablePrefix, bool addTable )ι->string{
 		std::ostringstream os;
-		os << "select	t.TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE, COLUMN_TYPE, CHARACTER_MAXIMUM_LENGTH, EXTRA='auto_increment' is_identity, 0 is_id, NUMERIC_PRECISION, NUMERIC_SCALE" << endl
+		os << "select	t.TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE, COLUMN_TYPE, CHARACTER_MAXIMUM_LENGTH, EXTRA='auto_increment' is_identity, 0 is_id, NUMERIC_PRECISION, NUMERIC_SCALE, EXTRA" << endl //EXTRA last (#241): DEFAULT_GENERATED marks an expression default.
 			<< "from		INFORMATION_SCHEMA.TABLES t" << endl
 			<< "\tjoin INFORMATION_SCHEMA.COLUMNS c using(TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME)" << endl
 			<< "\twhere t.TABLE_SCHEMA=?" << endl

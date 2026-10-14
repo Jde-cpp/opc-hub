@@ -4,10 +4,11 @@
 
 #define let const auto
 namespace Jde::DB{
-	ColumnDdl::ColumnDdl( sv name, optional<Value> dflt, bool isNullable, EType type, optional<uint> maxLength, bool isSequence, optional<uint8> skIndex, optional<uint> numericPrecision, optional<uint> numericScale )ι:
-		Column{ name }
+	ColumnDdl::ColumnDdl( sv name, sv defaultSql, bool isNullable, EType type, optional<uint> maxLength, bool isSequence, optional<uint8> skIndex, optional<uint> numericPrecision, optional<uint> numericScale, sv defaultName )ι:
+		Column{ name },
+		DefaultSql{ defaultSql },
+		DefaultName{ defaultName }
 	{
-		Default = move( dflt );
 		IsNullable = isNullable;
 		Type = type;
 		MaxLength = maxLength;
@@ -18,6 +19,7 @@ namespace Jde::DB{
 		Insertable = !isSequence; //the configured column's defaults (Column's json ctor); SyncTables copies the configured Insertable over this anyway.
 		Updateable = true;
 	}
+	ColumnDdl::~ColumnDdl()=default;
 
 	α ColumnDdl::DataTypeString( const Column& config )ι->string{
 		let& syntax = config.Table->Syntax();
@@ -34,18 +36,8 @@ namespace Jde::DB{
 		let& syntax = config.Table->Syntax();
 		let null = config.IsNullable ? "null"sv : "not null"sv;
 		const string sequence = config.IsSequence && ( DeclaresKey(config) || !syntax.IdentityIsPrimaryKey() ) ? " "+string{syntax.IdentityColumnSyntax()} : string{};
-		string defaultClause;
-		let& dflt = config.Default;
-		if( dflt && !dflt->is_null() ){
-			if( dflt->is_bool() )
-				defaultClause = Ƒ( " default {}", dflt->get_bool() ? 1 : 0 );
-			else if( string s = dflt->is_string() ? dflt->get_string() : string{}; s.size() )
-				defaultClause = Ƒ( " default {}", s=="$now" ? syntax.NowDefault() : Ƒ("'{}'", s) );
-			else if( dflt->is_number() )
-				defaultClause = Ƒ( " default {}", dflt->get_number<int>() );
-			else if( config.Type!=EType::VarBinary )
-				THROW( "({})Default type not implemented.", dflt->TypeName() );
-		}
+		let defaultLiteral = config.Default ? syntax.DefaultLiteral( *config.Default ) : string{};
+		let defaultClause = defaultLiteral.size() ? " default "+defaultLiteral : string{};
 		return Ƒ( "{} {} {}{}{}", config.Name, DataTypeString(config), null, sequence, defaultClause );
 	}
 }

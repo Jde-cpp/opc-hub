@@ -9,6 +9,7 @@
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
 #include "../src/meta/ddl/ColumnDdl.h" //#39: the deleted-overload guard.
+#include "../src/meta/ServerMetaFold.h" //#241: StripParens.
 
 namespace Jde::DB::Tests{
 	//#10: SchemaDdl::Sync now delegates to ObjectPrefix (was a swapped-ternary duplicate that yielded "" for a "db.um_" prefix). Lock in ObjectPrefix.
@@ -48,9 +49,9 @@ namespace Jde::DB::Tests{
 	//to be the first pk column.  It sat next to `isIdentity!=0`, which is spelled identically and is genuinely a bool.
 	//The all-bool spelling is now deleted, so getting it wrong is a compile error rather than a wrong answer.
 	TEST( ColumnDdlTests, SkIndexRejectsBool ){
-		static_assert( std::is_constructible_v<ColumnDdl, sv, optional<Value>, bool, EType, optional<uint>, bool, optional<uint8>, optional<uint>, optional<uint>>,
+		static_assert( std::is_constructible_v<ColumnDdl, sv, sv, bool, EType, optional<uint>, bool, optional<uint8>, optional<uint>, optional<uint>>,
 			"the real signature has to stay callable." );
-		static_assert( !std::is_constructible_v<ColumnDdl, sv, optional<Value>, bool, EType, optional<uint>, bool, bool, optional<uint>, optional<uint>>,
+		static_assert( !std::is_constructible_v<ColumnDdl, sv, sv, bool, EType, optional<uint>, bool, bool, optional<uint>, optional<uint>>,
 			"a bool in skIndex's place must not compile - it means optional{0}, which is a pk claim." );
 
 		const ColumnDdl noKey{ "c", {}, true, EType::Int, {}, false, optional<uint8>{}, {}, {} };
@@ -62,10 +63,12 @@ namespace Jde::DB::Tests{
 
 	//db-refactor A8: one ctor for every loader, and it keeps everything the server reported - the precision/scale pair
 	//used to be discarded on the way in, the length defaulted to an engaged 0 on one dialect, and the two bools the
-	//configured column initialises were left indeterminate.
+	//configured column initialises were left indeterminate.  #241: the default is the catalog's text, kept beside the
+	//constraint name SQL Server gives it; the typed Column::Default is the configuration's alone.
 	TEST( ColumnDdlTests, KeepsWhatTheLoaderPassed ){
-		const ColumnDdl c{ "amount", Value{true}, false, EType::Decimal, optional<uint>{}, false, optional<uint8>{}, optional<uint>{10}, optional<uint>{2} };
-		ASSERT_TRUE( c.Default.has_value() ); EXPECT_TRUE( c.Default->get_bool() );
+		const ColumnDdl c{ "amount", "1", false, EType::Decimal, optional<uint>{}, false, optional<uint8>{}, optional<uint>{10}, optional<uint>{2}, "DF__t__amount__1" };
+		EXPECT_EQ( c.DefaultSql, "1" ); EXPECT_EQ( c.DefaultName, "DF__t__amount__1" );
+		EXPECT_FALSE( c.Default.has_value() );
 		EXPECT_FALSE( c.IsNullable );
 		EXPECT_EQ( c.Type, EType::Decimal );
 		EXPECT_FALSE( c.MaxLength.has_value() ); //no length stays no length, not 0.
@@ -75,7 +78,75 @@ namespace Jde::DB::Tests{
 		EXPECT_TRUE( c.Insertable ); EXPECT_TRUE( c.Updateable ); //the configured column's defaults.
 		const ColumnDdl seq{ "id", {}, false, EType::UInt, {}, true, optional<uint8>{0}, {}, {} };
 		EXPECT_FALSE( seq.Insertable ); //a sequence is not inserted, as Column's json ctor decides.
-		EXPECT_FALSE( seq.Default.has_value() );
+		EXPECT_TRUE( seq.DefaultSql.empty() ); EXPECT_TRUE( seq.DefaultName.empty() );
+	}
+
+	//#241: one spelling of a configured `default:` for the create statement and for the reconciliation of an existing
+	//table, so what the one writes the other recognises when the loader reads it back.  Strings used to go in verbatim -
+	//`default abc` - which only ever parsed by luck; `'` doubles.  The base dialect is SQL Server's.
+	TEST( SyntaxTests, DefaultLiteral ){
+		const Syntax s;
+		EXPECT_EQ( s.DefaultLiteral(Value{true}), "1" );
+		EXPECT_EQ( s.DefaultLiteral(Value{false}), "0" );
+		EXPECT_EQ( s.DefaultLiteral(Value{"abc"}), "'abc'" );
+		EXPECT_EQ( s.DefaultLiteral(Value{"it's"}), "'it''s'" );
+		EXPECT_EQ( s.DefaultLiteral(Value{"$now"}), "getutcdate()" );      //NowDefault, not a string.
+		EXPECT_EQ( s.DefaultLiteral(Value{5}), "5" );
+		EXPECT_EQ( s.DefaultLiteral(Value{(int8_t)-2}), "-2" );
+		EXPECT_EQ( s.DefaultLiteral(Value{1.5}), "1.5" );
+		EXPECT_TRUE( s.DefaultLiteral(Value{}).empty() );                    //a nullable column's implicit null: no default.
+		EXPECT_TRUE( s.DefaultLiteral(Value{vector<uint8_t>{}}).empty() );  //Column::getDefault's nullable-binary placeholder.
+		EXPECT_THROW( s.DefaultLiteral(Value{vector<uint8_t>{1}}), Exception );
+		EXPECT_THROW( s.DefaultLiteral(Value{DBTimePoint{}}), Exception );
+		EXPECT_EQ( s.QuoteLiteral(""), "''" );
+		EXPECT_EQ( s.DefaultLiteral(Value{"C:\\temp"}), "'C:\\temp'" ); //a backslash is no escape here - MySQL's is.
+	}
+
+	//#241: a changed default on an existing column.  T-SQL keeps a column's default as a constraint of its own, so one
+	//already there is dropped by the name the loader read before the new one is added, in one transaction; a column with
+	//none just gets the add.  The add names its constraint, so a second change drops it by that name - not by the one
+	//just dropped.
+	TEST( SyntaxTests, SetDefault ){
+		const Syntax s;
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "color", Value{"blue"}, "DF__widgets__color__3B"), "set xact_abort on; begin tran; alter table dbo.widgets drop constraint DF__widgets__color__3B; alter table dbo.widgets add constraint DF_widgets_color default 'blue' for color; commit" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "color", Value{"red"}, s.DefaultConstraint("dbo.widgets", "color")), "set xact_abort on; begin tran; alter table dbo.widgets drop constraint DF_widgets_color; alter table dbo.widgets add constraint DF_widgets_color default 'red' for color; commit" );
+		EXPECT_EQ( s.SetDefault("dbo.widgets", "created", Value{"$now"}, {}), "alter table dbo.widgets add constraint DF_widgets_created default getutcdate() for created" );
+		EXPECT_EQ( s.DefaultConstraint("widgets", "color"), "DF_widgets_color" ); //schema-scoped, so the same name with or without one.
+	}
+
+	//#241: the catalogs wrap a default in parentheses of their own - SQL Server a number twice - which the compare has to
+	//see through without unwrapping an expression whose first paren closes early.
+	TEST( ServerMetaFoldTests, StripParens ){
+		EXPECT_EQ( StripParens("((1))"), "1" );
+		EXPECT_EQ( StripParens("('abc')"), "'abc'" );
+		EXPECT_EQ( StripParens("(getutcdate())"), "getutcdate()" );
+		EXPECT_EQ( StripParens("getutcdate()"), "getutcdate()" ); //its own parens are not a wrapper.
+		EXPECT_EQ( StripParens("(1)+(2)"), "(1)+(2)" );           //the first paren closes before the end.
+		EXPECT_EQ( StripParens("((1)+(2))"), "(1)+(2)" );
+		EXPECT_EQ( StripParens(""), "" );
+		EXPECT_EQ( StripParens("()"), "" );
+		EXPECT_EQ( StripParens("(x"), "(x" );
+		EXPECT_EQ( StripParens("(':)')"), "':)'" );               //a paren inside a string is the string's.
+		EXPECT_EQ( StripParens("('it''s )')"), "'it''s )'" );
+		EXPECT_EQ( StripParens("(')')+(')')"), "(')')+(')')" );
+	}
+
+	//#241: the compare SchemaDdl's syncDefault runs - true leaves the column alone.  #9: MySQL reports a decimal at its
+	//scale and a double its own way, so numbers compare as numbers, or the column was re-altered at every startup.
+	TEST( ServerMetaFoldTests, SameDefault ){
+		EXPECT_TRUE( SameDefault("1", "((1))") );
+		EXPECT_TRUE( SameDefault("getutcdate()", "(GETUTCDATE())") );
+		EXPECT_FALSE( SameDefault("'A'", "'a'") );
+		EXPECT_FALSE( SameDefault("'blue'", "") );                          //none yet.
+		EXPECT_TRUE( SameDefault("1.5", "1.50") );                          //decimal(10,2)
+		EXPECT_TRUE( SameDefault("0", "0.00") );
+		EXPECT_TRUE( SameDefault("-2.5", "(-2.50)") );
+		EXPECT_TRUE( SameDefault("1e+20", "1e20") );                        //std::format's double against MySQL's.
+		EXPECT_FALSE( SameDefault("1.5", "1.51") );
+		EXPECT_FALSE( SameDefault("1.5", "2") );                            //a decimal(10,0) rounds what it was given - a real difference.
+		EXPECT_FALSE( SameDefault("9007199254740993", "9007199254740992") ); //one double apart.
+		EXPECT_FALSE( SameDefault("'1.5'", "1.50") );                       //a string is no number.
+		EXPECT_FALSE( SameDefault("1.5", "1.5x") );
 	}
 
 	//db-refactor B1: the placeholder ctors - Column::Count, a criteria column, the pkTable/extends/qlView stand-ins, every

@@ -22,5 +22,6 @@ namespace Jde::DB::Sqlite{
 		α LoadIndexes( sv schemaName, sv tablePrefix, sv tableName={} )Ε->vector<Index> override;
 		α LoadForeignKeys( str schemaName )Ε->flat_map<string,ForeignKey> override;
 		α LoadProcs( str schemaName )Ε->flat_map<string,Procedure> override;
+		α SetDefault( const Table& table, const ColumnDdl& column, const Value& dflt )Ε->void override; //#241: rewrites the stored create statement - see SqliteDdl.h.
 	};
 }

@@ -27,6 +27,7 @@ namespace Jde::DB::Sqlite{
 		α SchemaNameConfig( SL=SRCE_CUR )ι->string override{ return "main"; }
 		α SetConfig( const jobject& config )ε->void override;
 		α Disconnect()ε->void override;
+		α WithConnection( function<void(sqlite3&)> f, SRCE )ε->void; //f on the connection under _connMutex, so no other statement comes between its own.  f mustn't call back into this data source - the mutex isn't recursive.
 	private:
 		α Execute( Sql&& sql, SL sl, Params exeParams )ε->uint override; //C1: the one primitive; IDataSource implements the sync wrappers over it.
 		α InsertSeqSyncUInt( DB::InsertClause&& insert, SL sl )ε->uint override;

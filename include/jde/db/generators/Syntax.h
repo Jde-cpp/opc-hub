@@ -31,9 +31,19 @@ namespace Jde::DB{
 		Ω IsPatternOperator( EOperator op )ι->bool{ return op==EOperator::Regex || op==EOperator::Glob; }
 		β PatternOperator( EOperator op, SRCE )Ε->sv;              //SQL Server: LIKE, but no regex before 2025.
 		β PatternParam( EOperator op, str pattern, SRCE )Ε->string;
-		β AddDefault( sv tableName, sv columnName, Value dflt )Ι->string;
 		β BoolLiteral( bool v )Ι->sv{ return v ? "1" : "0"; } //how a bit default is spelled in ddl.
-		α DefaultLiteral( const Value& dflt )Ι->string;       //AddDefault's value: a bool through BoolLiteral, a string verbatim; anything else is CRITICAL and empty.
+		//A configured `default:` as this dialect's ddl spells it:  a bool through BoolLiteral, "$now" through NowDefault, a
+		//string quoted (QuoteLiteral), a number as is.  Empty for no default - null, or the empty bytes a nullable binary
+		//column carries - and a throw for a type ddl has no spelling for.  The create statement and #241's reconciliation
+		//of an existing table both spell through here, so what one writes the other recognises.
+		α DefaultLiteral( const Value& dflt )Ε->string;
+		β QuoteLiteral( sv text )Ι->string; //'text', its quotes doubled - MySQL also doubles its escape character, the backslash.
+		//#241: the one batch that makes `columnName`'s default `dflt` on an existing table - one, so a change of several
+		//statements commits or fails whole.  `constraintName` is the default it has now where the dialect names them
+		//(SQL Server), which has to go first; the one added is named DefaultConstraint, so the next change knows what to
+		//drop.  sqlite has no in-place form and answers empty:  SqliteServerMeta::SetDefault rewrites the table's stored text instead.
+		β SetDefault( sv tableName, sv columnName, const Value& dflt, sv constraintName )Ε->string;
+		β DefaultConstraint( sv tableName, sv columnName )Ι->string; //the name SetDefault gives the default it adds - DF_<table>_<column> - where the dialect names them; empty elsewhere.
 		β CanAddForeignKeys()Ι->bool{ return true; } //false (sqlite): no 'alter table add constraint' - fks only enforced when inline in create table.
 		β CanSetDefaultSchema()Ι->bool{ return false; }
 		β CatalogSelect()Ι->sv{ return "select db_name();"; }
