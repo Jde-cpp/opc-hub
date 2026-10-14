@@ -396,6 +396,14 @@ namespace Server{
 }
 	α Server::HandleRequest( HttpRequest req, sp<IRestStream> stream, IRequestHandler* reqHandler )ι->TAwait<sp<SessionInfo>>::Task{
 		try{
+			req.DecodeBody();
+		}
+		catch( Exception& e ){
+			let status = e.HttpStatus();
+			send( RestException{status, move(e), move(req)}, move(stream) );//no format: the body is DecodeBody's own message.
+			co_return;
+		}
+		try{
 			req.SessionInfo = co_await Sessions::UpsertAwait( req.Header("authorization"), req.UserEndpoint.address().to_string(), false, reqHandler->AppServer() );
 		}
 		catch( runtime_error& e ){
@@ -419,7 +427,7 @@ namespace Server{
 	α Server::SendOptions( const HttpRequest&& req )ι->http::message_generator{
 		auto res = req.Response<http::empty_body>( http::status::no_content );
 		res.set( http::field::access_control_allow_methods, allowMethods() );
-		res.set( http::field::accept_encoding, "gzip" );
+		res.set( http::field::accept_encoding, "gzip" );//request bodies - HandleRequest inflates them.
 		res.set( http::field::access_control_allow_headers, allowHeaders() );
 		res.set( http::field::access_control_expose_headers, "Authorization" );
 		res.set( http::field::access_control_max_age, "7200" ); //2 hours chrome max

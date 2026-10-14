@@ -1,5 +1,6 @@
 #include <jde/web/server/HttpRequest.h>
 #include <absl/strings/match.h>
+#include <jde/web/Gzip.h>
 #include <jde/web/server/Server.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/chrono.h>
@@ -65,6 +66,27 @@ namespace Jde::Web::Server{
 				_body.emplace();
 		}
 		return *_body;
+	}
+	//BodyLimit capped the compressed bytes the parser read; the inflated body gets the same cap, so a handler sees no more either way.
+	α HttpRequest::DecodeBody()ε->void{
+		let encoding = Header( "content-encoding" );
+		if( encoding.empty() || absl::EqualsIgnoreCase(encoding, "identity") )
+			return;
+		if( !absl::EqualsIgnoreCase(encoding, "gzip") && !absl::EqualsIgnoreCase(encoding, "x-gzip") ){
+			ResponseHeaders.emplace( "Accept-Encoding", "gzip" );//RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted.
+			throw Exception{ SRCE_CUR, {EHttpStatus::UnsupportedMediaType}, "Content-Encoding '{}' is not supported.", encoding };
+		}
+		optional<string> body;
+		try{
+			body = Gunzip( _request.body(), BodyLimit() );
+		}
+		catch( Exception& e ){
+			throw Exception{ SRCE_CUR, {EHttpStatus::BadRequest}, move(e), "Malformed gzip body." };
+		}
+		THROW_IFX( !body, Exception(SRCE_CUR, {EHttpStatus::PayloadTooLarge}, "The body inflates past the {} byte limit.", BodyLimit()) );
+		_request.body() = move( *body );
+		_request.erase( http::field::content_encoding );
+		_request.content_length( _request.body().size() );
 	}
 	α HttpRequest::GraphQLQuery()ε->std::pair<string,jobject>{
 		string query; jobject vars;

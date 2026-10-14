@@ -23,6 +23,7 @@ namespace Jde::Web::Server{
 		α Body()Ε->const jobject&{ return const_cast<HttpRequest*>(this)->Body(); }
 		α GraphQLQuery()ε->std::pair<string,jobject>;//{query, variables} - from the params of a GET, the json body otherwise.
 		α Contains( str param )Ι->bool{ return _params.contains( param ); }
+		α DecodeBody()ε->void;//undoes a Content-Encoding: gzip, the one SendOptions advertises.  Throws with the status to answer.
 		α Header( sv header )Ι->string{ return _request.base()[header]; }
 		α IsGet()Ι->bool{ return _request.method() == http::verb::get; }
 		α IsGet( str target)Ι->bool{ return _request.method() == http::verb::get && Target()==target; }

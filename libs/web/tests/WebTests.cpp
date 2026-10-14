@@ -9,6 +9,7 @@
 #include <jde/app/proto/app.FromServer.h>
 #include <jde/app/proto/common.h>
 #include <jde/access/AccessException.h>
+#include <jde/web/server/Server.h>
 #include "jde/fwk/exceptions/Exception.h"
 #include "mocks/ServerMock.h"
 
@@ -40,6 +41,33 @@ namespace Jde::Web{
 	}
 	Ω hasException()ι->bool{ lg _{ _exceptionMutex }; return _exception!=nullptr; }
 	Ω takeException()ι->up<Exception>{ lg _{ _exceptionMutex }; return move(_exception); }
+
+	//A plain connection of the test's own, for what ClientHttpAwait does not do:  several requests on one connection, or a
+	//Content-Encoding on the request.  Reads are bounded, so a server that stops answering fails the test instead of hanging it.
+	struct RawConnection final{
+		RawConnection()ε{ _stream.connect( tcp::resolver{_ioc}.resolve(Host, std::to_string(Port)) ); }
+		α Read()ι->std::pair<http::response<http::string_body>,beast::error_code>{
+			http::response<http::string_body> res;
+			beast::error_code ec;
+			_stream.expires_after( 5s );
+			http::async_read( _stream, _buffer, res, [&ec]( beast::error_code e, uint ){ ec = e; } );
+			_ioc.restart();
+			_ioc.run();
+			return { move(res), ec };
+		}
+		α Exchange( http::request<http::string_body> req )ε->http::response<http::string_body>{
+			req.set( http::field::host, Host );
+			req.prepare_payload();
+			http::write( _stream, req );
+			auto [res, ec] = Read();
+			THROW_IF( ec, "{} {}: {}", string{http::to_string(req.method())}, string{req.target()}, ec.message() );
+			return move( res );
+		}
+	private:
+		net::io_context _ioc;
+		beast::tcp_stream _stream{ _ioc };
+		beast::flat_buffer _buffer;
+	};
 
 	α WebTests::SetUpTestCase()->void{
 		Stopwatch _{ "WebTests::SetUpTestCase", _tags };
@@ -83,6 +111,40 @@ namespace Jde::Web{
 		ASSERT_EQ( "gzip", res[http::field::content_encoding] );
 		EXPECT_EQ( size, res.Body().size() );
 		EXPECT_EQ( string::npos, res.Body().find_first_not_of('x') );
+	}
+	//#248: the other direction.  SendOptions advertises Accept-Encoding: gzip, so a gzip request body reaches the handler inflated,
+	//and BodyLimit holds for what it inflates to - the parser only ever saw the compressed bytes.
+	TEST_F( WebTests, GzipRequestBody ){
+		let options = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/echoBody", Port, {.Verb=http::verb::options}} );
+		ASSERT_EQ( "gzip", options[http::field::accept_encoding] ) << "the advertisement this test holds the server to";
+
+		let post = []( string body, sv encoding ){
+			http::request<http::string_body> req{ http::verb::post, "/echoBody", 11 };
+			req.set( http::field::content_type, "application/json" );
+			req.set( http::field::content_encoding, encoding );
+			req.body() = move( body );
+			return RawConnection{}.Exchange( move(req) );
+		};
+		let json = serialize( jobject{{"text", string(1000, 'x')}} );
+		let res = post( Mock::Gzip(json), "gzip" );
+		ASSERT_EQ( http::status::ok, res.result() ) << res.body();
+		let echo = Json::Parse( res.body() );
+		EXPECT_EQ( json, serialize(echo.at("body")) );
+		EXPECT_EQ( "", Json::AsString(echo, "contentEncoding") ) << "the handler gets an identity body, and must not be told otherwise";
+
+		let limit = Server::BodyLimit();
+		let bomb = Mock::Gzip( serialize(jobject{{"text", string(limit, 'x')}}) );
+		ASSERT_LT( bomb.size(), limit ) << "under the cap on the wire, or the parser is what refuses it";
+		EXPECT_EQ( http::status::payload_too_large, post(bomb, "gzip").result() );
+
+		EXPECT_EQ( http::status::bad_request, post(json, "gzip").result() ) << "not gzip at all";
+		let gz = Mock::Gzip( json );
+		EXPECT_EQ( http::status::bad_request, post(gz.substr(0, gz.size()/2), "gzip").result() ) << "truncated";
+
+		let unsupported = post( json, "br" );
+		EXPECT_EQ( http::status::unsupported_media_type, unsupported.result() );
+		EXPECT_EQ( "gzip", unsupported[http::field::accept_encoding] ) << "RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted";
+		EXPECT_EQ( http::status::ok, post(json, "identity").result() );
 	}
 
 	TEST_F( WebTests, IsPlain ){
@@ -202,6 +264,82 @@ namespace Jde::Web{
 	TEST_F( WebTests, HandledResponseClosesTheConnection ){
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} );
 		EXPECT_EQ( "close", res[http::field::connection] );
+	}
+	//#248: the same, pinned on one connection.  RunSession's own loop answers OPTIONS and /ping and reads on; a request it hands to
+	//a handler takes the socket with it, so the read after that response finds the end of the stream rather than a hang.
+	TEST_F( WebTests, KeepAlive ){
+		RawConnection connection;
+		let request = []( http::verb verb, sv target ){ return http::request<http::string_body>{ verb, target, 11 }; };
+		for( uint i=0; i<2; ++i ){
+			let ping = connection.Exchange( request(http::verb::post, "/ping") );
+			EXPECT_EQ( http::status::ok, ping.result() ) << "ping #" << i;
+			EXPECT_TRUE( ping.keep_alive() ) << "ping #" << i;
+		}
+		let options = connection.Exchange( request(http::verb::options, "/echo") );
+		EXPECT_EQ( http::status::no_content, options.result() );
+		EXPECT_TRUE( options.keep_alive() );
+
+		let handled = connection.Exchange( request(http::verb::get, "/echo?keepAlive") );
+		EXPECT_EQ( http::status::ok, handled.result() ) << handled.body();
+		EXPECT_FALSE( handled.keep_alive() );
+		EXPECT_EQ( http::error::end_of_stream, connection.Read().second ) << "the server closes after a handled response";
+	}
+
+	//#248: /graphql end to end, against the mock's EchoQL - the query and its variables from either transport, and the shape of
+	//what comes back.  The query-string parsing alone is HttpRequestTests.ParamValueMayContainEquals.
+	Ω encodeUri( sv text )ι->string{
+		constexpr sv hex{ "0123456789ABCDEF" };
+		string y;
+		for( let c : text ){
+			let u = (unsigned char)c;
+			if( std::isalnum(u) || c=='-' || c=='_' || c=='.' || c=='~' )
+				y += c;
+			else
+				y.append( {'%', hex[u>>4], hex[u&15]} );
+		}
+		return y;
+	}
+	Ω graphQL( string target )ε->jobject{
+		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, move(target), Port} );
+		EXPECT_EQ( "application/graphql-response+json", res[http::field::content_type] );
+		return res.Json();
+	}
+	Ω graphQL( jobject body )ε->jobject{
+		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/graphql", serialize(body), Port, {.ContentType="application/json"}} );
+		EXPECT_EQ( "application/graphql-response+json", res[http::field::content_type] );
+		return res.Json();
+	}
+	Ω expectEcho( const jobject& res )ι->void{
+		let echo = res.at( "data" ).at( "echo" ).as_object();
+		EXPECT_EQ( 7, echo.at("args").at("id").to_number<int>() ) << serialize( res );
+		EXPECT_EQ( "x", echo.at("args").at("name").as_string() ) << serialize( res );
+		EXPECT_EQ( (jarray{"a", "b"}), echo.at("columns").as_array() ) << serialize( res );
+	}
+	constexpr sv EchoQuery{ R"({ echo(id:$id, name:"x"){ a b } })" };
+	TEST_F( WebTests, GraphQLGet ){
+		expectEcho( graphQL(Ƒ("/graphql?query={}&variables={}", encodeUri(EchoQuery), encodeUri(R"({"id":7})"))) );
+	}
+	TEST_F( WebTests, GraphQLPost ){
+		expectEcho( graphQL(jobject{ {"query", EchoQuery}, {"variables", jobject{{"id", 7}}} }) );
+
+		let mutation = graphQL( jobject{ {"query", "mutation createEcho( name:$name ){ command args }"}, {"variables", jobject{{"name", "y"}}} } );
+		let created = mutation.at( "data" ).at( "createEcho" ).as_object();
+		EXPECT_EQ( "createEcho", created.at("command").as_string() ) << serialize( mutation );
+		EXPECT_EQ( "y", created.at("args").at("name").as_string() ) << serialize( mutation );
+	}
+	TEST_F( WebTests, GraphQLBadRequests ){
+		let status = []( string target ){
+			try{
+				BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, move(target), Port} );
+				return http::status::ok;
+			}
+			catch( const ClientHttpResException& e ){
+				return e.Status();
+			}
+		};
+		EXPECT_EQ( http::status::bad_request, status("/graphql") ) << "no query";
+		EXPECT_EQ( http::status::bad_request, status("/graphql?query="+encodeUri("{ noSuchTable{ a } }")) ) << "parse fails on the unknown table";
+		EXPECT_EQ( http::status::bad_request, status("/graphql?query="+encodeUri(R"(mutation createEcho( name:"y" ){ command })")) ) << "a GET must not mutate";
 	}
 	TEST_F( WebTests, BadTarget ){
 		try{

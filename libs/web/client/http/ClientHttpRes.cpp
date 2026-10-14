@@ -1,30 +1,11 @@
 #include <jde/web/client/http/ClientHttpRes.h>
-#include <zlib.h>
+#include <jde/web/Gzip.h>
 #include <jde/web/client/usings.h>
 #define let const auto
 
 namespace Jde::Web::Client{
 	α GetBody( const http::response<http::string_body>& res )ε->string{
-		string body{ res.body() };
-		if( res.base()[http::field::content_encoding]=="gzip" ){
-			z_stream zs{ (Bytef*)body.data(), (uInt)body.size() }; //zs.zalloc = Z_NULL; zs.zfree = Z_NULL; zs.opaque = Z_NULL;
-			string unziped;
-			auto hr = inflateInit2( &zs, MAX_WBITS | 16 ); CHECK(hr==Z_OK);
-			hr = Z_BUF_ERROR;
-			for( auto nextOutSize = std::max<size_t>(body.size(), 512); hr==Z_BUF_ERROR && zs.avail_out==0; nextOutSize*=2 ){//Z_BUF_ERROR with unused output space means truncated input, not a full buffer - stop instead of growing forever.
-				let start = unziped.size();
-				unziped.resize( start+nextOutSize );
-				zs.next_out = (Bytef*)unziped.data()+start;
-				zs.avail_out = nextOutSize;
-				hr = inflate( &zs, Z_FINISH );
-			}
-			let totalOut = zs.total_out;
-			inflateEnd( &zs );
-			CHECK( hr==Z_STREAM_END );
-			unziped.resize( totalOut );
-			body = move( unziped );
-		}
-		return body;
+		return res.base()[http::field::content_encoding]=="gzip" ? *Gunzip( res.body() ) : res.body();//no limit, so never nullopt.
 	}
 	ClientHttpRes::ClientHttpRes( const http::response<http::string_body>& res )ε:
 		_body{ GetBody(res) },
