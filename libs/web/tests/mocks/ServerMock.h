@@ -17,11 +17,12 @@ namespace Jde::Web::Mock{
 	//#10: a 3rd party whose SessionInfoAwait *fails*, with a caller-chosen status - NotFound is "no such session", anything else is
 	//"could not ask".  The gateway must cache anonymous only for the first.
 	α FailingAppClient( EHttpStatus status )ι->sp<App::IApp>;
+	α Gzip( sv text )ι->string;
 
 	struct RequestHandler final : IRequestHandler{
 		RequestHandler( jobject settings )ι: IRequestHandler{ settings, AppClient() }{}
 		α HandleRequest( HttpRequest&& req, SRCE )ι->up<IHttpRequestAwait> override{ return mu<HttpRequestAwait>( move(req), sl ); }
-		α QLServer()ι->sp<QL::IQL> override{ ASSERT(false); return {}; }
+		α QLServer()ι->sp<QL::IQL> override;
 		α Schemas()ι->const vector<sp<DB::AppSchema>>& override{ return _schemas; }
 		α WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<Server::IWebsocketSession> override;
 

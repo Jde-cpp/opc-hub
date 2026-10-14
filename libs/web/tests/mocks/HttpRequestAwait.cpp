@@ -10,11 +10,8 @@
 
 #define let const auto
 
-namespace Jde::Web::Mock{
-	HttpRequestAwait::HttpRequestAwait( HttpRequest&& req, SL sl )ι:
-		base{ move(req), sl }
-	{}
-	α CertificateLogin( const HttpRequest& req )ι->jobject{
+namespace Jde::Web{
+	Ω certificateLogin( const Mock::HttpRequest& req )ι->jobject{
 		try{
 			req.LogRead();
 			Web::Jwt jwt{ Json::AsString(req.Body(), "jwt") };
@@ -33,7 +30,7 @@ namespace Jde::Web::Mock{
 		}
 	}
 
-	α EchoResult( const flat_map<string,string>& params )ι->jobject{
+	Ω echoResult( const flat_map<string,string>& params )ι->jobject{
 		jarray echo;
 		for( let& [key,value] : params ){
 			if( value.empty() )
@@ -47,7 +44,7 @@ namespace Jde::Web::Mock{
 		return jobject{ {"params", echo} };
 	}
 
-	Ω gzip( sv text )ι->string{
+	α Mock::Gzip( sv text )ι->string{
 		z_stream zs{};
 		auto hr = deflateInit2( &zs, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS | 16, 8, Z_DEFAULT_STRATEGY ); ASSERT( hr==Z_OK );
 		string y( deflateBound(&zs, text.size()), '\0' );//after init, so the bound covers the gzip wrapper.
@@ -58,11 +55,16 @@ namespace Jde::Web::Mock{
 		deflateEnd( &zs );
 		return y;
 	}
+}
+namespace Jde::Web::Mock{
+	HttpRequestAwait::HttpRequestAwait( HttpRequest&& req, SL sl )ι:
+		base{ move(req), sl }
+	{}
 
 	α HttpRequestAwait::await_ready()ι->bool{
 		optional<jobject> result;
 		if( _request.IsGet("/echo") )
-			result = EchoResult( _request.Params() );
+			result = echoResult( _request.Params() );
 		else if( _request.IsGet("/Authorization") ){
 			_request.ResponseHeaders.emplace( "Authorization", Jde::format("{:x}", _request.SessionInfo->SessionId) );
 			result = jobject{};
@@ -76,7 +78,7 @@ namespace Jde::Web::Mock{
 			result = j;
 		}
 		else if( _request.IsPost("/login") ){
-			result = CertificateLogin( _request );
+			result = certificateLogin( _request );
 		}
 		if( result ){
 			_result = HttpTaskResult{ move(*result), move(_request) };
@@ -84,8 +86,8 @@ namespace Jde::Web::Mock{
 		else if( _request.IsGet("/gzip") ){//#247: compressed only when the client asks, as a real server would.
 			string body( To<uint>(_request["size"]), 'x' );
 			if( _request.Header("accept-encoding").contains("gzip") ){
-				_request.ResponseHeaders.emplace( "Content-Encoding", "gzip" );
-				body = gzip( body );
+				_request.ResponseHeaders.emplace( "Content-Encoding", _request.Contains("coding") ? _request["coding"] : string{"gzip"} );//#248: ?coding= spells it another valid way.
+				body = Gzip( body );
 			}
 			_result = HttpTaskResult{ move(body), "text/plain", move(_request) };
 		}
@@ -94,7 +96,18 @@ namespace Jde::Web::Mock{
 		return _result.has_value();
 	}
 	α HttpRequestAwait::Suspend()ι->void{
-		if( _request.Target()=="/delay" ){
+		if( _request.IsPost("/echoBody") ){//#248: the body as the handler receives it - after the server's DecodeBody.  here, not in the noexcept await_ready, so a body that won't parse is a 400 rather than std::terminate.
+			optional<jobject> echo;
+			try{
+				echo = jobject{ {"body", _request.Body()}, {"contentEncoding", _request.Header("content-encoding")} };
+			}
+			catch( Exception& e ){
+				ResumeExp( RestException{EHttpStatus::BadRequest, move(e), move(_request), "Body is not json."} );
+			}
+			if( echo )
+				Resume( HttpTaskResult{move(*echo), move(_request)} );
+		}
+		else if( _request.Target()=="/delay" ){
 			_thread = std::jthread( [this,h=_h]()mutable->void {
 				Thread::SetName( "DelayHandler" );
 				uint seconds = To<uint>( _request["seconds"] );

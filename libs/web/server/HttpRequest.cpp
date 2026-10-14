@@ -1,5 +1,6 @@
 #include <jde/web/server/HttpRequest.h>
 #include <absl/strings/match.h>
+#include <jde/web/Gzip.h>
 #include <jde/web/server/Server.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/chrono.h>
@@ -65,6 +66,34 @@ namespace Jde::Web::Server{
 				_body.emplace();
 		}
 		return *_body;
+	}
+	//BodyLimit capped the compressed bytes the parser read; the inflated body gets the same cap, so a handler sees no more either way.
+	α HttpRequest::DecodeBody()ε->void{
+		string encoding;//repeated lines are one list (RFC 9110 §5.3) - gzip on two lines is a stacked coding, as "gzip, gzip" is.
+		for( auto [p, end] = _request.equal_range(http::field::content_encoding); p!=end; ++p ){
+			if( encoding.size() )
+				encoding += ", ";
+			encoding += p->value();
+		}
+		if( encoding.empty() )
+			return;
+		if( auto& body = _request.body(); body.size() && !absl::EqualsIgnoreCase(encoding, "identity") ){//an empty body has nothing to decode, whatever it claims.
+			if( !IsGzip(encoding) ){
+				ResponseHeaders.emplace( "Accept-Encoding", "gzip" );//RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted.
+				throw Exception{ SRCE_CUR, {EHttpStatus::UnsupportedMediaType}, "Content-Encoding '{}' is not supported.", encoding };
+			}
+			optional<string> inflated;
+			try{
+				inflated = Gunzip( body, BodyLimit() );
+			}
+			catch( Exception& e ){
+				throw Exception{ SRCE_CUR, {EHttpStatus::BadRequest}, move(e), "Malformed gzip body." };
+			}
+			THROW_IFX( !inflated, Exception(SRCE_CUR, {EHttpStatus::PayloadTooLarge}, "The body inflates past the {} byte limit.", BodyLimit()) );
+			body = move( *inflated );
+			_request.content_length( body.size() );
+		}
+		_request.erase( http::field::content_encoding );//the handler gets an identity body either way, labelled as one.
 	}
 	α HttpRequest::GraphQLQuery()ε->std::pair<string,jobject>{
 		string query; jobject vars;

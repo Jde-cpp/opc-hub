@@ -21,7 +21,7 @@ function( sync=false )
 		accessControl:{
 			allowOrigin: "sameHost",
 			allowMethods: "GET, POST, OPTIONS",
-			allowHeaders: "Content-Type, Authorization"
+			allowHeaders:: "Content-Type, Authorization, Content-Encoding"
 		},
 		clientSettings:{
 			googleAuthClientId:"445012155442-1v8ntaa22konm0boge6hj5mfs15o9lvd.apps.googleusercontent.com"

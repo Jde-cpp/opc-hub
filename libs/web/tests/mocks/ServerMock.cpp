@@ -5,6 +5,12 @@
 #include <jde/web/server/Server.h>
 #include <jde/web/server/Web.FromServer.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/ql/IQL.h>
+#include <jde/ql/ql.h>
+#include <jde/ql/types/MutationQL.h>
+#include <jde/ql/types/TableQL.h>
+
+#define let const auto
 
 namespace Jde::Web{
 	optional<std::jthread> _webThread;
@@ -63,8 +69,43 @@ namespace Jde::Web{
 	};
 	α Mock::FailingAppClient( EHttpStatus status )ι->sp<App::IApp>{ return ms<FailingAppClientImpl>( status ); }
 
+	//#248: /graphql end to end with no database.  `echo` is a system table, so the parser resolves no view for it, and the query
+	//`echo` and the mutation `createEcho` answer with what reached them - the parse, the variables and the response shape are
+	//what is under test.  Anything else falls through to the select, which has no data source here.
+	struct EchoQL final : QL::IQL{
+		α Authorizer()ε->Access::Authorize& override{ throw Exception{"noImpl"}; }
+		α AuthorizerPtr()ε->sp<Access::Authorize> override{ return {}; }
+		α CustomQuery( QL::TableQL& ql, QL::Creds, SL sl )ι->up<TAwait<jvalue>> override{
+			if( ql.JsonName!="echo" )
+				return {};
+			jarray columns;
+			for( let& c : ql.Columns )
+				columns.emplace_back( c.JsonName );
+			return mu<CompletedAwait<jvalue>>( [y=jobject{ {"args", ql.ExtrapolateVariables()}, {"columns", move(columns)} }]()->jvalue{ return y; }, sl );
+		}
+		α CustomMutation( QL::MutationQL& m, QL::Creds, SL sl )ι->up<TAwait<jvalue>> override{
+			if( m.JsonTableName!="echo" )
+				return {};
+			return mu<CompletedAwait<jvalue>>( [y=jobject{ {"command", m.CommandName}, {"args", m.ExtrapolateVariables()} }]()->jvalue{ return y; }, sl );
+		}
+		α LogQuery( QL::TableQL&&, QL::Creds, SL )ε->up<TAwait<jvalue>> override{ throw Exception{"noImpl"}; }
+		α LogSettingsQuery( QL::TableQL&&, QL::Creds, SL )ε->up<TAwait<jvalue>> override{ throw Exception{"noImpl"}; }
+		α StatusQuery( QL::TableQL&&, QL::Creds, SL )ε->jobject override{ throw Exception{"noImpl"}; }
+		α Query( string, jobject, UserPK, bool, SL )ε->up<TAwait<jvalue>> override{ throw Exception{"noImpl"}; }
+		α QueryObject( string, jobject, UserPK, bool, SL )ε->up<TAwait<jobject>> override{ throw Exception{"noImpl"}; }
+		α QueryArray( string, jobject, UserPK, bool, SL )ε->up<TAwait<jarray>> override{ throw Exception{"noImpl"}; }
+		α Upsert( string, jobject, UserPK )ε->jarray override{ throw Exception{"noImpl"}; }
+		α Schemas()Ι->const vector<sp<DB::AppSchema>>& override{ return _schemas; }
+		α Subscribe( string&&, jobject, sp<QL::IListener>, UserPK, SL )ε->up<TAwait<vector<QL::SubscriptionId>>> override{ throw Exception{"noImpl"}; }
+	private:
+		vector<sp<DB::AppSchema>> _schemas;
+	};
+	sp<QL::IQL> _ql = ms<EchoQL>();
+	α Mock::RequestHandler::QLServer()ι->sp<QL::IQL>{ return _ql; }
+
 	sp<Mock::RequestHandler> _requestHandler;
 	α Mock::Start( jobject settings )ε->void{
+		QL::SetSystemTables( {"echo"} );
 		_requestHandler = ms<RequestHandler>( move(settings) );
 		Server::Start( _requestHandler );//generates the self-signed cert if needed and self-anchors it (C1) - in-process clients trust the mock with no incantation here.
 	}
