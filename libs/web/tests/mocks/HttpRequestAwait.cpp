@@ -80,15 +80,13 @@ namespace Jde::Web::Mock{
 		else if( _request.IsPost("/login") ){
 			result = certificateLogin( _request );
 		}
-		else if( _request.IsPost("/echoBody") )//#248: the body as the handler receives it - after the server's DecodeBody.
-			result = jobject{ {"body", _request.Body()}, {"contentEncoding", _request.Header("content-encoding")} };
 		if( result ){
 			_result = HttpTaskResult{ move(*result), move(_request) };
 		}
 		else if( _request.IsGet("/gzip") ){//#247: compressed only when the client asks, as a real server would.
 			string body( To<uint>(_request["size"]), 'x' );
 			if( _request.Header("accept-encoding").contains("gzip") ){
-				_request.ResponseHeaders.emplace( "Content-Encoding", "gzip" );
+				_request.ResponseHeaders.emplace( "Content-Encoding", _request.Contains("coding") ? _request["coding"] : string{"gzip"} );//#248: ?coding= spells it another valid way.
 				body = Gzip( body );
 			}
 			_result = HttpTaskResult{ move(body), "text/plain", move(_request) };
@@ -98,7 +96,18 @@ namespace Jde::Web::Mock{
 		return _result.has_value();
 	}
 	α HttpRequestAwait::Suspend()ι->void{
-		if( _request.Target()=="/delay" ){
+		if( _request.IsPost("/echoBody") ){//#248: the body as the handler receives it - after the server's DecodeBody.  here, not in the noexcept await_ready, so a body that won't parse is a 400 rather than std::terminate.
+			optional<jobject> echo;
+			try{
+				echo = jobject{ {"body", _request.Body()}, {"contentEncoding", _request.Header("content-encoding")} };
+			}
+			catch( Exception& e ){
+				ResumeExp( RestException{EHttpStatus::BadRequest, move(e), move(_request), "Body is not json."} );
+			}
+			if( echo )
+				Resume( HttpTaskResult{move(*echo), move(_request)} );
+		}
+		else if( _request.Target()=="/delay" ){
 			_thread = std::jthread( [this,h=_h]()mutable->void {
 				Thread::SetName( "DelayHandler" );
 				uint seconds = To<uint>( _request["seconds"] );

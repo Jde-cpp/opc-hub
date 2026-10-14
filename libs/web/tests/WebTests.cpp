@@ -111,26 +111,37 @@ namespace Jde::Web{
 		ASSERT_EQ( "gzip", res[http::field::content_encoding] );
 		EXPECT_EQ( size, res.Body().size() );
 		EXPECT_EQ( string::npos, res.Body().find_first_not_of('x') );
+		for( let coding : {"GZIP", "x-gzip"} ){//#248: RFC 9110 §8.4.1.3 - any case, and the legacy alias.
+			let spelled = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, Ƒ("/gzip?size={}&coding={}", size, coding), Port} );
+			ASSERT_EQ( coding, spelled[http::field::content_encoding] );
+			EXPECT_EQ( size, spelled.Body().size() ) << coding;
+		}
 	}
 	//#248: the other direction.  SendOptions advertises Accept-Encoding: gzip, so a gzip request body reaches the handler inflated,
 	//and BodyLimit holds for what it inflates to - the parser only ever saw the compressed bytes.
 	TEST_F( WebTests, GzipRequestBody ){
 		let options = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/echoBody", Port, {.Verb=http::verb::options}} );
 		ASSERT_EQ( "gzip", options[http::field::accept_encoding] ) << "the advertisement this test holds the server to";
+		EXPECT_TRUE( options[http::field::access_control_allow_headers].contains("Content-Encoding") ) << "not CORS-safelisted, so a cross-origin browser sends it only once the preflight allows it";
 
-		let post = []( string body, sv encoding ){
+		let post = []( string body, sv encoding, sv secondLine={} ){
 			http::request<http::string_body> req{ http::verb::post, "/echoBody", 11 };
 			req.set( http::field::content_type, "application/json" );
 			req.set( http::field::content_encoding, encoding );
+			if( secondLine.size() )
+				req.insert( http::field::content_encoding, secondLine );
 			req.body() = move( body );
 			return RawConnection{}.Exchange( move(req) );
 		};
+		let echoedEncoding = []( const http::response<http::string_body>& res ){ return Json::AsString( Json::Parse(res.body()), "contentEncoding" ); };
 		let json = serialize( jobject{{"text", string(1000, 'x')}} );
 		let res = post( Mock::Gzip(json), "gzip" );
 		ASSERT_EQ( http::status::ok, res.result() ) << res.body();
 		let echo = Json::Parse( res.body() );
 		EXPECT_EQ( json, serialize(echo.at("body")) );
 		EXPECT_EQ( "", Json::AsString(echo, "contentEncoding") ) << "the handler gets an identity body, and must not be told otherwise";
+		for( let coding : {"GZIP", "x-gzip"} )
+			EXPECT_EQ( http::status::ok, post(Mock::Gzip(json), coding).result() ) << coding;
 
 		let limit = Server::BodyLimit();
 		let bomb = Mock::Gzip( serialize(jobject{{"text", string(limit, 'x')}}) );
@@ -140,11 +151,24 @@ namespace Jde::Web{
 		EXPECT_EQ( http::status::bad_request, post(json, "gzip").result() ) << "not gzip at all";
 		let gz = Mock::Gzip( json );
 		EXPECT_EQ( http::status::bad_request, post(gz.substr(0, gz.size()/2), "gzip").result() ) << "truncated";
+		EXPECT_EQ( http::status::bad_request, post(gz+"JUNK", "gzip").result() ) << "trailing garbage";
+		EXPECT_EQ( http::status::bad_request, post(gz+gz, "gzip").result() ) << "a second member";
 
 		let unsupported = post( json, "br" );
 		EXPECT_EQ( http::status::unsupported_media_type, unsupported.result() );
 		EXPECT_EQ( "gzip", unsupported[http::field::accept_encoding] ) << "RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted";
-		EXPECT_EQ( http::status::ok, post(json, "identity").result() );
+		EXPECT_EQ( http::status::unsupported_media_type, post(Mock::Gzip(gz), "gzip", "gzip").result() ) << "two lines are one list - a stacked coding";
+		EXPECT_EQ( http::status::unsupported_media_type, post(gz, "identity", "gzip").result() ) << "the first line alone is not the coding";
+
+		let identity = post( json, "identity" );
+		ASSERT_EQ( http::status::ok, identity.result() ) << identity.body();
+		EXPECT_EQ( "", echoedEncoding(identity) ) << "no coding, so none passed on";
+		EXPECT_EQ( http::status::bad_request, post("not json", "identity").result() ) << "the mock answers a body it can't parse, instead of ending the test run";
+		for( let encoding : {"gzip", "br"} ){
+			let empty = post( {}, encoding );
+			ASSERT_EQ( http::status::ok, empty.result() ) << encoding << ": an empty body has nothing to decode - " << empty.body();
+			EXPECT_EQ( "", echoedEncoding(empty) ) << encoding;
+		}
 	}
 
 	TEST_F( WebTests, IsPlain ){
@@ -532,11 +556,11 @@ namespace Jde::Web{
 	//wildcard by browsers once a request carries credentials, which an authorized request here does, so it was both lax and
 	//ineffective.
 	TEST_F( WebTests, CorsPreflightUsesConfiguredHeaders ){
-		let headers = Settings::FindString( "/http/accessControl/allowHeaders" );
+		let headers = Settings::FindString( "/http/accessControl/allowHeaders" ).value_or( "Content-Type, Authorization, Content-Encoding" );//the configs leave allowHeaders hidden, to the default.
 		let methods = Settings::FindString( "/http/accessControl/allowMethods" );
-		ASSERT_TRUE( headers && methods ) << "Web.Tests.jsonnet declares both; without them this proves nothing";
+		ASSERT_TRUE( methods ) << "Web.Tests.jsonnet declares it; without it this proves nothing";
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/echo?cors", Port, {.Verb=http::verb::options}} );
-		EXPECT_EQ( *headers, res[http::field::access_control_allow_headers] ) << "the preflight must answer what the deployment configured";
+		EXPECT_EQ( headers, res[http::field::access_control_allow_headers] ) << "the preflight must answer what the deployment configured, or the default";
 		EXPECT_NE( "*", res[http::field::access_control_allow_headers] ) << "and never the wide-open value #14 set out to close";
 		EXPECT_EQ( *methods, res[http::field::access_control_allow_methods] );
 	}

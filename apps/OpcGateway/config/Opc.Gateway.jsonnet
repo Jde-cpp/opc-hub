@@ -163,7 +163,7 @@ function( sync=false )
 		accessControl: {
 			allowOrigin: "sameHost",
 			allowMethods: "GET, POST, OPTIONS",
-			allowHeaders: "Content-Type, Authorization"
+			allowHeaders:: "Content-Type, Authorization, Content-Encoding"
 		},
 		ssl: {
 			certificate:{

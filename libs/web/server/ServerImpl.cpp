@@ -399,8 +399,7 @@ namespace Server{
 			req.DecodeBody();
 		}
 		catch( Exception& e ){
-			let status = e.HttpStatus();
-			send( RestException{status, move(e), move(req)}, move(stream) );//no format: the body is DecodeBody's own message.
+			send( RestException{move(e), move(req)}, move(stream) );//keeps DecodeBody's status and message.
 			co_return;
 		}
 		try{
@@ -421,7 +420,7 @@ namespace Server{
 		return y;
 	}
 	Ω allowHeaders()ι->str{
-		static const string y = Settings::FindString( "/http/accessControl/allowHeaders" ).value_or( "Content-Type, Authorization" );
+		static const string y = Settings::FindString( "/http/accessControl/allowHeaders" ).value_or( "Content-Type, Authorization, Content-Encoding" );//Content-Encoding is not CORS-safelisted, and SendOptions advertises gzip bodies.
 		return y;
 	}
 	α Server::SendOptions( const HttpRequest&& req )ι->http::message_generator{

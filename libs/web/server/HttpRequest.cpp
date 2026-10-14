@@ -69,24 +69,31 @@ namespace Jde::Web::Server{
 	}
 	//BodyLimit capped the compressed bytes the parser read; the inflated body gets the same cap, so a handler sees no more either way.
 	α HttpRequest::DecodeBody()ε->void{
-		let encoding = Header( "content-encoding" );
-		if( encoding.empty() || absl::EqualsIgnoreCase(encoding, "identity") )
+		string encoding;//repeated lines are one list (RFC 9110 §5.3) - gzip on two lines is a stacked coding, as "gzip, gzip" is.
+		for( auto [p, end] = _request.equal_range(http::field::content_encoding); p!=end; ++p ){
+			if( encoding.size() )
+				encoding += ", ";
+			encoding += p->value();
+		}
+		if( encoding.empty() )
 			return;
-		if( !absl::EqualsIgnoreCase(encoding, "gzip") && !absl::EqualsIgnoreCase(encoding, "x-gzip") ){
-			ResponseHeaders.emplace( "Accept-Encoding", "gzip" );//RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted.
-			throw Exception{ SRCE_CUR, {EHttpStatus::UnsupportedMediaType}, "Content-Encoding '{}' is not supported.", encoding };
+		if( auto& body = _request.body(); body.size() && !absl::EqualsIgnoreCase(encoding, "identity") ){//an empty body has nothing to decode, whatever it claims.
+			if( !IsGzip(encoding) ){
+				ResponseHeaders.emplace( "Accept-Encoding", "gzip" );//RFC 9110 §12.5.3: a 415 for a content coding names the ones accepted.
+				throw Exception{ SRCE_CUR, {EHttpStatus::UnsupportedMediaType}, "Content-Encoding '{}' is not supported.", encoding };
+			}
+			optional<string> inflated;
+			try{
+				inflated = Gunzip( body, BodyLimit() );
+			}
+			catch( Exception& e ){
+				throw Exception{ SRCE_CUR, {EHttpStatus::BadRequest}, move(e), "Malformed gzip body." };
+			}
+			THROW_IFX( !inflated, Exception(SRCE_CUR, {EHttpStatus::PayloadTooLarge}, "The body inflates past the {} byte limit.", BodyLimit()) );
+			body = move( *inflated );
+			_request.content_length( body.size() );
 		}
-		optional<string> body;
-		try{
-			body = Gunzip( _request.body(), BodyLimit() );
-		}
-		catch( Exception& e ){
-			throw Exception{ SRCE_CUR, {EHttpStatus::BadRequest}, move(e), "Malformed gzip body." };
-		}
-		THROW_IFX( !body, Exception(SRCE_CUR, {EHttpStatus::PayloadTooLarge}, "The body inflates past the {} byte limit.", BodyLimit()) );
-		_request.body() = move( *body );
-		_request.erase( http::field::content_encoding );
-		_request.content_length( _request.body().size() );
+		_request.erase( http::field::content_encoding );//the handler gets an identity body either way, labelled as one.
 	}
 	α HttpRequest::GraphQLQuery()ε->std::pair<string,jobject>{
 		string query; jobject vars;

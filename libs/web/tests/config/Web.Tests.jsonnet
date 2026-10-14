@@ -55,7 +55,7 @@ local logsDir = std.extVar("logsDir");
 		accessControl: {
 			allowOrigin: "sameHost",//any port on the host the client reached us by; "*" restores the wide-open default.
 			allowMethods: "GET, POST, OPTIONS",
-			allowHeaders: "Content-Type, Authorization"
+			allowHeaders:: "Content-Type, Authorization, Content-Encoding"
 		},
 		ssl: {
 			certificate:{

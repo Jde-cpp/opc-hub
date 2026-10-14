@@ -5,7 +5,9 @@
 
 namespace Jde::Web::Client{
 	α GetBody( const http::response<http::string_body>& res )ε->string{
-		return res.base()[http::field::content_encoding]=="gzip" ? *Gunzip( res.body() ) : res.body();//no limit, so never nullopt.
+		if( IsGzip(res.base()[http::field::content_encoding]) )
+			return *Gunzip( res.body() );//no limit, so never nullopt.  not a ternary: mixed with the const& branch it would copy the inflated body.
+		return res.body();
 	}
 	ClientHttpRes::ClientHttpRes( const http::response<http::string_body>& res )ε:
 		_body{ GetBody(res) },
