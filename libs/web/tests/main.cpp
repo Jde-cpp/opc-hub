@@ -10,7 +10,7 @@ namespace Jde{
 	α Process::ProductName()ι->sv{ return "Tests.Web"; }
 #endif
 
-	α Startup( int argc, char **argv )ι->void{
+	Ω startup( int argc, char **argv )ε->void{
 		Thread::SetName( "Main" );
 		Process::Startup( argc, argv, "Tests.Web", "Web tests", true );
 		Logging::Init();
@@ -20,14 +20,16 @@ namespace Jde{
 α main( int argc, char **argv )->int{
 	using namespace Jde;
 	::testing::InitGoogleTest( &argc, argv );
-	Startup( argc, argv );
-	auto result = EXIT_FAILURE;
-	{
-		let filter=Settings::FindSV( "/testing/tests" ).value_or( "*" );
-		::testing::GTEST_FLAG( filter ) = filter;
+	int exitCode{ EXIT_FAILURE };
+	try{
+		startup( argc, argv );
+		ApplyTestsFilter();
 		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
-		result = CheckTestsRan( RUN_ALL_TESTS() );
-		Process::Shutdown( result );
+		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
 	}
-	return result;
+	catch( runtime_error& e ){
+		exitCode = StartupFailed( e );//never the exception's code:  main's status keeps only its low 8 bits.
+	}
+	Process::Shutdown( exitCode );
+	return exitCode;
 }

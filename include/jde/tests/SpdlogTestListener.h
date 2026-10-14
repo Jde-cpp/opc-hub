@@ -36,6 +36,10 @@ namespace Jde{
 				Logging::Entry entry{ ELogLevel::Error, ELogTags::Test, (uint32_t)result.line_number(), Clock::now(), {0}, string{result.message()}, result.file_name() ? result.file_name() : "unknown file", _currentTest.empty() ? "unknown" : _currentTest, {} };
 				Logging::Log( entry );
 			}
+			else if( result.skipped() && *result.message() ){//a GTEST_SKIP's reason - the default printer shows it, so this one has to.
+				Logging::Entry entry{ ELogLevel::Warning, ELogTags::Test, (uint32_t)result.line_number(), Clock::now(), {0}, string{result.message()}, result.file_name() ? result.file_name() : "unknown file", _currentTest.empty() ? "unknown" : _currentTest, {} };
+				Logging::Log( entry );
+			}
 		}
 		α OnTestEnd( const ::testing::TestInfo& info )->void override{
 			_currentTest.clear();
@@ -71,6 +75,8 @@ namespace Jde{
 					}
 				}
 			}
+			if( let disabled = unit.reportable_disabled_test_count(); disabled && !::testing::GTEST_FLAG(also_run_disabled_tests) )//as the default printer does - the only sign a DISABLED_ test exists.
+				WARNT( ELogTags::Test, "  YOU HAVE {} DISABLED TEST{}", disabled, disabled==1 ? "" : "S" );
 		}
 	private:
 		string _currentTest;//benign race if an assertion fires off the main thread - logging only.

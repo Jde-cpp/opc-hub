@@ -1,5 +1,6 @@
 #include "HttpRequestAwait.h"
 #include "ServerMock.h"//Mock::Port, for the redirect Location.
+#include <zlib.h>
 #include <jde/web/Jwt.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/chrono.h>
@@ -46,6 +47,18 @@ namespace Jde::Web::Mock{
 		return jobject{ {"params", echo} };
 	}
 
+	Ω gzip( sv text )ι->string{
+		z_stream zs{};
+		auto hr = deflateInit2( &zs, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS | 16, 8, Z_DEFAULT_STRATEGY ); ASSERT( hr==Z_OK );
+		string y( deflateBound(&zs, text.size()), '\0' );//after init, so the bound covers the gzip wrapper.
+		zs.next_in = (Bytef*)text.data(); zs.avail_in = (uInt)text.size();
+		zs.next_out = (Bytef*)y.data(); zs.avail_out = (uInt)y.size();
+		hr = deflate( &zs, Z_FINISH ); ASSERT( hr==Z_STREAM_END );
+		y.resize( zs.total_out );
+		deflateEnd( &zs );
+		return y;
+	}
+
 	α HttpRequestAwait::await_ready()ι->bool{
 		optional<jobject> result;
 		if( _request.IsGet("/echo") )
@@ -67,6 +80,14 @@ namespace Jde::Web::Mock{
 		}
 		if( result ){
 			_result = HttpTaskResult{ move(*result), move(_request) };
+		}
+		else if( _request.IsGet("/gzip") ){//#247: compressed only when the client asks, as a real server would.
+			string body( To<uint>(_request["size"]), 'x' );
+			if( _request.Header("accept-encoding").contains("gzip") ){
+				_request.ResponseHeaders.emplace( "Content-Encoding", "gzip" );
+				body = gzip( body );
+			}
+			_result = HttpTaskResult{ move(body), "text/plain", move(_request) };
 		}
 		else if( _request.IsGet("/NoResult") )//#3: a result with no request drops ServerImpl into catch( const runtime_error& ).  leave _request with the await - that is what the error response has to be built from.
 			_result = HttpTaskResult{};

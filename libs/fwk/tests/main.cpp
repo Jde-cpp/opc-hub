@@ -7,7 +7,7 @@ namespace Jde{
 #ifndef _MSC_VER
 	α Process::ProductName()ι->sv{ return "Tests.Framework"; }
 #endif
- 	Ω startup( int argc, char **argv )ι->void{
+ 	Ω startup( int argc, char **argv )ε->void{
 		Process::Startup( argc, argv, "Tests.Framework", "Unit Tests description", true );
 		Logging::Init();
 	}
@@ -15,19 +15,17 @@ namespace Jde{
 
  α main( int argc, char **argv )->int{
 	using namespace Jde;
-	let filterSet = Process::Args().find("--gtest_filter") != Process::Args().end();
 	::testing::InitGoogleTest( &argc, argv );
-	startup( argc, argv );
-	auto result = EXIT_FAILURE;
-	{
-		let p=Settings::FindSV( "/testing/tests" );
-		let filter = p ? *p : "*";
-		if( !filterSet ){
-			INFOT( ELogTags::App, "filter:'{}'", filter );
-			::testing::GTEST_FLAG( filter ) = filter;
-		}
-		result = CheckTestsRan( RUN_ALL_TESTS() );
-		Process::Shutdown( result );
+	int exitCode{ EXIT_FAILURE };
+	try{
+		startup( argc, argv );
+		ApplyTestsFilter();
+		INFOT( ELogTags::App, "filter:'{}'", ::testing::GTEST_FLAG(filter) );
+		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
 	}
-	return result;
+	catch( runtime_error& e ){
+		exitCode = StartupFailed( e );//never the exception's code:  main's status keeps only its low 8 bits.
+	}
+	Process::Shutdown( exitCode );
+	return exitCode;
 }

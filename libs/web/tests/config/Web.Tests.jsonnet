@@ -5,7 +5,6 @@
 local logsDir = std.extVar("logsDir");
 {
 	testing:{
-		tests:: "SocketTests.*",
 		certDir: logsDir+'/web-tests/ssl'
 	},
 	logging:{

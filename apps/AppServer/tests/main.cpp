@@ -22,7 +22,7 @@ namespace Jde{
 	int result{ EXIT_FAILURE };
 	try{
 		startup( argc, argv );
-		::testing::GTEST_FLAG( filter ) = Settings::FindString( "/testing/tests" ).value_or( "*" );
+		ApplyTestsFilter();
 		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
 		result = CheckTestsRan( RUN_ALL_TESTS() );
 	}
