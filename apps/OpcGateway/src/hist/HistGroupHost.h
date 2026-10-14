@@ -13,6 +13,10 @@ namespace Jde::Opc::Gateway{
 	//enumeration, none until the server has said, and its InstrumentRange and EURange properties, each none where it has
 	//none, once Ranged.
 	struct HistDescription final{ optional<bool> Enumeration; optional<Opc::Hist::Range> Instrument; optional<Opc::Hist::Range> EU; bool Ranged{}; };
+	//Whether a member's ExceptionDeviation band is in force (#338):  none set, applied, or dropped - for an enumeration, or for a
+	//percent format whose range the node lacks or can't use, either of which stores every change - or waiting for the server to
+	//describe the node, as ForGroup waits.
+	enum class EHistBand : uint8{ None, Applied, Enumeration, Waiting, NoRange };
 
 	//One hist_groups row as the gateway hosts it (spec *Collection*, *Collector contract*):  the library's group, the
 	//collector's monitored items on the group's connection, and the listener that joins the two.  Membership and thresholds
@@ -46,6 +50,9 @@ namespace Jde::Opc::Gateway{
 		α SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SRCE )ε->void;
 		α FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>;
 		α Description( HistGroupNodePK index )Ι->optional<HistDescription>;
+		α Band( HistGroupNodePK index )Ι->optional<EHistBand>;//as ForGroup and the library's range check leave it;  none for a node it doesn't hold.
+		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
+		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
 		//The member a read or an edit names:  by URI, or by the index the server had for it when the collector last read the
 		//server's namespaces.  None for a node that isn't a member, or one by an index the collector hasn't seen.

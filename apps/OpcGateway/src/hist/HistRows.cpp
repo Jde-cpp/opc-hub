@@ -58,8 +58,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistThresholdColumns::Check( SL sl )Ε->void{
 		let refuse = [&]( string what ){ throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}", move(what) }; };
-		if( ExceptionDeviation && !(*ExceptionDeviation>=0) )
-			refuse( Ƒ("exceptionDeviation must be 0 or more, not {}.", *ExceptionDeviation) );
+		if( ExceptionDeviation && (!std::isfinite(*ExceptionDeviation) || *ExceptionDeviation<0) )
+			refuse( Ƒ("exceptionDeviation must be a finite number, 0 or more, not {}.", *ExceptionDeviation) );
 		if( DeviationFormat && *DeviationFormat>UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE )
 			refuse( Ƒ("exceptionDeviationFormat must be 0 (AbsoluteValue) to 3 (PercentOfEURange), not {}.", *DeviationFormat) );
 		if( MinTimeInterval && !Opc::Hist::ToDuration(*MinTimeInterval) )
@@ -108,6 +108,18 @@ namespace Jde::Opc::Gateway{
 namespace Jde::Opc{
 	α Gateway::ResolveThresholds( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->Opc::Hist::Thresholds{
 		return ( member ? row.Over(*member) : row ).Over( group ).Thresholds();
+	}
+	α Gateway::ResolveThresholdSources( const HistThresholdColumns& row, const HistThresholdColumns* member, const HistThresholdColumns& group )ι->vector<HistThresholdSource>{
+		let t = ResolveThresholds( row, member, group );
+		let source = [&]( auto HistThresholdColumns::*column )ι->sv{ return (row.*column) ? "node" : member && (member->*column) ? "template" : (group.*column) ? "group" : "default"; };
+		let ms = []( Duration d )ι->double{ return std::chrono::duration<double,std::milli>( d ).count(); };
+		return {
+			{ "exceptionDeviation", t.ExceptionDeviation ? jvalue{*t.ExceptionDeviation} : jvalue{}, source(&HistThresholdColumns::ExceptionDeviation) },
+			{ "exceptionDeviationFormat", jvalue{(uint64_t)t.DeviationFormat}, source(&HistThresholdColumns::DeviationFormat) },
+			{ "minTimeInterval", jvalue{ms(t.MinTimeInterval)}, source(&HistThresholdColumns::MinTimeInterval) },
+			{ "maxTimeInterval", jvalue{ms(t.MaxTimeInterval)}, source(&HistThresholdColumns::MaxTimeInterval) },
+			{ "stepped", jvalue{t.Stepped}, source(&HistThresholdColumns::Stepped) }
+		};
 	}
 
 	α Gateway::HistNodeText( const ExNodeId& node )ι->string{
@@ -213,5 +225,15 @@ namespace Jde::Opc{
 		for( auto& name : HistThresholdColumns::Names() )
 			columns.push_back( move(name) );
 		return { select("hist_template_nodes", move(columns), move(where), sl), templateNodeRow, sl };
+	}
+	α Gateway::HistTemplateNodesById( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>{
+		flat_map<HistTemplateNodePK,HistTemplateNodeRow> y;
+		for( auto& row : rows )
+			y.emplace( row.Id, move(row) );
+		return y;
+	}
+	α Gateway::FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*{
+		auto p = id ? members.find( *id ) : members.end();
+		return p==members.end() ? nullptr : &p->second;
 	}
 }

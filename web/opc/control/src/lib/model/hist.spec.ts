@@ -10,7 +10,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, HistPushedModification, histResumeReach, histResumeTime, HistValue, isNoData, latestHistTimes, mergeHistValues, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage } from './hist';
+import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, histMemberIndexed, histPathText, HistPushedModification, histResumeReach, histResumeTime, histThresholdText, HistValue, isNoData, latestHistTimes, mergeHistValues, parseHistPath, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage, toHistThresholds } from './hist';
 
 const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
@@ -300,5 +300,57 @@ describe( 'applyHistModification', ()=>{
 		const values = held();
 		expect( applyHistModifications( values, [mod( 'delete', B, 3000 ), mod( 'delete', A, 500 )] ) ).toBe( values );
 		expect( applyHistModifications( values, [] ) ).toBe( values );
+	} );
+} );
+
+describe( 'toHistThresholds', ()=>{
+	//historyThresholds' answer (hist.jsonnet):  a member by its row, its node with the server's index and its URI, the template
+	//member's row and path, the server's word on an enumeration, and the five thresholds with their sources
+	it( 'reads each member with its thresholds and their sources', ()=>{
+		const t = toHistThresholds( {update: true, nodes: [
+			{ id: 7, node: {ns: 2, i: 6022, nsu: 'urn:jde:pumps'}, templateNode: 3, path: '[{"nsu":"urn:jde:pumps","name":"motor"},{"nsu":"urn:jde:pumps","name":"rpm"}]', enumeration: false, band: 'noRange', thresholds: [
+				{ name: 'exceptionDeviation', value: 5, source: 'node' }, { name: 'exceptionDeviationFormat', value: 1, source: 'node' }, { name: 'minTimeInterval', value: 1000, source: 'template' },
+				{ name: 'maxTimeInterval', value: 60000, source: 'group' }, { name: 'stepped', value: true, source: 'default' }
+			] },
+			{ id: 8, node: {i: 2259, nsu: 'http://opcfoundation.org/UA/'}, templateNode: null, path: null, enumeration: null, band: null, thresholds: [{ name: 'exceptionDeviation', value: null, source: 'default' }] }
+		]} );
+		expect( t.update ).toBe( true );
+		expect( t.nodes ).toHaveLength( 2 );
+		const [rpm, state] = t.nodes;
+		expect( rpm.id ).toBe( 7 );
+		expect( rpm.node.key ).toBe( new NodeId( {ns: 2, i: 6022} ).key );//keyed as a page's variables are, by the server's index
+		expect( rpm.templateNode ).toBe( 3 );
+		expect( rpm.path ).toEqual( [{nsu: 'urn:jde:pumps', name: 'motor'}, {nsu: 'urn:jde:pumps', name: 'rpm'}] );
+		expect( histPathText( rpm.path! ) ).toBe( 'motor/rpm' );
+		expect( rpm.enumeration ).toBe( false );
+		expect( rpm.band ).toBe( 'noRange' );
+		expect( rpm.thresholds.map( t=>[t.name, t.value, t.source] ) ).toEqual( [['exceptionDeviation', 5, 'node'], ['exceptionDeviationFormat', 1, 'node'], ['minTimeInterval', 1000, 'template'], ['maxTimeInterval', 60000, 'group'], ['stepped', true, 'default']] );
+		expect( state.templateNode ).toBeUndefined();
+		expect( state.path ).toBeUndefined();
+		expect( state.enumeration ).toBeUndefined();//the server hasn't said
+		expect( state.band ).toBeUndefined();//a member the group doesn't hold
+		expect( state.thresholds[0].value ).toBeNull();
+		expect( histMemberIndexed( rpm.node ) ).toBe( true );
+		expect( histMemberIndexed( state.node ) ).toBe( true );//namespace 0's index is 0 on every server
+	} );
+	//historian-threshold-overrides #2:  before the collector has a member's index, the gateway sends the row's node, its URI alone
+	it( "keeps the URI of a member the collector hasn't indexed", ()=>{
+		const [member] = toHistThresholds( {update: false, nodes: [{ id: 9, node: {i: 6022, nsu: 'urn:jde:pumps'}, thresholds: [] }]} ).nodes;
+		expect( member.node.nsu ).toBe( 'urn:jde:pumps' );
+		expect( histMemberIndexed( member.node ) ).toBe( false );
+	} );
+	it( 'reads nothing from no answer', ()=>{
+		expect( toHistThresholds( undefined ) ).toEqual( {update: false, nodes: []} );
+		expect( parseHistPath( 'not json' ) ).toBeUndefined();
+		expect( parseHistPath( null ) ).toBeUndefined();
+	} );
+	//a cell's text:  a deviation none sets is 'none', a format its name, stepped a word, the rest the number
+	it( 'shows a threshold by its kind', ()=>{
+		expect( histThresholdText( {name: 'exceptionDeviation', value: null, source: 'default'} ) ).toBe( 'none' );
+		expect( histThresholdText( {name: 'exceptionDeviation', value: 2.5, source: 'group'} ) ).toBe( '2.5' );
+		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 3, source: 'node'} ) ).toBe( 'PercentOfEURange' );
+		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 9, source: 'node'} ) ).toBe( '9' );
+		expect( histThresholdText( {name: 'minTimeInterval', value: 0, source: 'default'} ) ).toBe( '0' );
+		expect( histThresholdText( {name: 'stepped', value: false, source: 'node'} ) ).toBe( 'false' );
 	} );
 } );

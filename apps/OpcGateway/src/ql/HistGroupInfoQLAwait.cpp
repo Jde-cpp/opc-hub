@@ -1,5 +1,6 @@
 #include "HistGroupInfoQLAwait.h"
 #include <jde/access/Authorize.h>
+#include <jde/db/meta/Table.h>
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "HistQL.h"
@@ -8,12 +9,35 @@
 namespace Jde::Opc::Gateway{
 	α HistGroupInfoQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
-			Resume( _query.JsonName==GroupsCommand ? Groups() : Capabilities() );
+			jvalue y;
+			if( _query.JsonName==GroupsCommand )
+				y = Groups();
+			else if( _query.JsonName==CapabilitiesCommand )
+				y = Capabilities();
+			else{
+				let groupId = _query.AsNumber<HistGroupPK>( "group", _sl );
+				auto host = Host( groupId );
+				auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)groupId}}) );
+				if( groups.empty() )
+					throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} not found.", groupId };
+				auto rows = co_await Any( SelectHistGroupNodes({.Group=groupId}) );
+				let members = groups.front().Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=groups.front().Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				y = Thresholds( groups.front(), rows, members, *host );
+			}
+			Resume( move(y) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
-		co_return;
+	}
+	α HistGroupInfoQLAwait::Host( HistGroupPK group )ε->sp<HistGroupHost>{
+		AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(group), Access::ERights::Read, UserPK(), _sl );
+		auto& hist = HistHost::Instance();
+		hist.TestEnabled( _sl );
+		auto host = hist.Find( group );
+		if( !host )
+			throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", group };
+		return host;
 	}
 
 	α HistGroupInfoQLAwait::Groups()ε->jvalue{
@@ -65,12 +89,8 @@ namespace Jde::Opc::Gateway{
 
 	α HistGroupInfoQLAwait::Capabilities()ε->jvalue{
 		let group = _query.AsNumber<HistGroupPK>( "group", _sl );
+		Host( group );
 		let acl = AppClient()->Acl();
-		acl->Test( "gateway", "histGroups", std::to_string(group), Access::ERights::Read, UserPK(), _sl );
-		auto& hist = HistHost::Instance();
-		hist.TestEnabled( _sl );
-		if( !hist.Find(group) )
-			throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", group };
 		let may = [&]( Access::ERights rights )->bool {
 			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), rights, UserPK(), _sl );
 			if( !allowed )
@@ -88,6 +108,77 @@ namespace Jde::Opc::Gateway{
 			y["update"] = may( Access::ERights::Update );
 		if( _query.FindColumn("delete") )
 			y["delete"] = may( Access::ERights::Delete );
+		return y;
+	}
+
+	//Whether updateHistGroupNode would pass the caller:  the table's Update right, as Table::Authorize tests it for the stock op,
+	//which an unenforced resource passes.  A lack is an answer, not a denial to log, as in Groups;  a caller Authorize doesn't
+	//know is refused, as there.
+	Ω mayUpdate( UserPK user, SL sl )ε->bool{
+		try{
+			GetViewPtr( "hist_group_nodes" )->Authorize( Access::ERights::Update, user, sl );
+			return true;
+		}
+		catch( Exception& e ){
+			if( e.HttpStatus()==EHttpStatus::Unauthorized )
+				throw;
+			e.SetLevel( ELogLevel::NoLog );
+			return false;
+		}
+	}
+	α HistGroupInfoQLAwait::Thresholds( const HistGroupRow& group, const vector<HistGroupNodeRow>& rows, const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, const HistGroupHost& host )ε->jvalue{
+		jobject y;
+		if( _query.FindColumn("update") )
+			y["update"] = mayUpdate( UserPK(), _sl );
+		let nodesQL = _query.FindTable( "nodes" );
+		if( !nodesQL )
+			return y;
+		let wantId = nodesQL->FindColumn( "id" ), wantMember = nodesQL->FindColumn( "templateNode" ), wantPath = nodesQL->FindColumn( "path" ), wantEnumeration = nodesQL->FindColumn( "enumeration" ), wantBand = nodesQL->FindColumn( "band" );
+		let wantNode = nodesQL->FindColumn( "node" ) || nodesQL->FindTable( "node" );
+		let thresholdsQL = nodesQL->FindTable( "thresholds" );
+		let wantName = thresholdsQL && thresholdsQL->FindColumn( "name" ), wantValue = thresholdsQL && thresholdsQL->FindColumn( "value" ), wantSource = thresholdsQL && thresholdsQL->FindColumn( "source" );
+		jarray nodes; nodes.reserve( rows.size() );
+		for( let& row : rows ){
+			let member = FindHistTemplateNode( members, row.TemplateNode );
+			jobject node;
+			if( wantId )
+				node["id"] = row.Id;
+			if( wantNode ){
+				ExNodeId ex{ row.Node };
+				if( let id = host.ServerId(row.Id); id )
+					ex.nodeId.namespaceIndex = id->namespaceIndex;
+				node["node"] = ex.ToJson();
+			}
+			if( wantMember )
+				node["templateNode"] = row.TemplateNode ? jvalue{*row.TemplateNode} : jvalue{};
+			if( wantPath )
+				node["path"] = member ? jvalue{member->Path} : jvalue{};
+			if( wantEnumeration ){
+				let described = host.Description( row.Id );
+				node["enumeration"] = described && described->Enumeration ? jvalue{*described->Enumeration} : jvalue{};
+			}
+			if( wantBand ){
+				constexpr std::array<sv,5> names{ "none", "applied", "enumeration", "waiting", "noRange" };//EHistBand's order.
+				let band = host.Band( row.Id );
+				node["band"] = band ? jvalue{ names[underlying(*band)] } : jvalue{};
+			}
+			if( thresholdsQL ){
+				jarray thresholds;
+				for( auto& t : ResolveThresholdSources(row.Thresholds, member ? &member->Thresholds : nullptr, group.Thresholds) ){
+					jobject j;
+					if( wantName )
+						j["name"] = t.Name;
+					if( wantValue )
+						j["value"] = move( t.Value );
+					if( wantSource )
+						j["source"] = t.Source;
+					thresholds.push_back( move(j) );
+				}
+				node["thresholds"] = move( thresholds );
+			}
+			nodes.push_back( move(node) );
+		}
+		y["nodes"] = move( nodes );
 		return y;
 	}
 }

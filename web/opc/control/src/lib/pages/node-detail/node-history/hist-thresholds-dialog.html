@@ -1,0 +1,91 @@
+<h2 mat-dialog-title>Thresholds of {{ data.name }}</h2>
+<mat-dialog-content>
+	<p class="hint">Each member's effective thresholds, and where each comes from:  the member's own row, its template member, the group, or the default.{{ canUpdate() ? "  Edit a member to override a column, or to clear an override so it inherits again." : "" }}</p>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
+	<mat-table [dataSource]="rows()" class="mat-elevation-z2">
+		<ng-container matColumnDef="member">
+			<mat-header-cell *matHeaderCellDef>Member</mat-header-cell>
+			<mat-cell *matCellDef="let m" [matTooltip]="memberDetail(m)">
+				<span class="member-name">{{ memberName(m) }}</span>
+				@if( m.enumeration===true ){
+					<mat-icon class="member-flag" aria-label="An enumeration" matTooltip="An enumeration:  every change is stored, so its deviation isn't applied.">category</mat-icon>
+				}
+				@else if( m.band=='noRange' ){
+					<mat-icon class="member-flag" aria-label="No range for its band" [matTooltip]="'No usable ' + rangeName(m) + ' for its percent format:  every change is stored, so its deviation is not applied.'">warning</mat-icon>
+				}
+			</mat-cell>
+		</ng-container>
+		@for( column of columns; track column.name ){
+			<ng-container [matColumnDef]="column.name">
+				<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
+				<mat-cell *matCellDef="let m" [matTooltip]="cellTooltip(m, column.name)">
+					<span class="cell-value" [class.moot]="unapplied(m, column.name)">{{ cellText(m, column.name) }}</span>
+					<!--where the value comes from, as the issue asks:  the member, the template, the group or the default-->
+					<span class="source" [class.source-node]="sourceText(m, column.name)=='node'">{{ sourceText(m, column.name) }}</span>
+				</mat-cell>
+			</ng-container>
+		}
+		<ng-container matColumnDef="actions">
+			<mat-header-cell *matHeaderCellDef></mat-header-cell>
+			<mat-cell *matCellDef="let m">
+				<button matIconButton type="button" aria-label="Edit this member's thresholds" matTooltip="Override or clear this member's thresholds" (click)="edit(m)" [disabled]="busy()"><mat-icon>edit</mat-icon></button>
+			</mat-cell>
+		</ng-container>
+		<mat-header-row *matHeaderRowDef="displayedColumns()"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: displayedColumns()" [class.editing]="editing()?.id==row.id"></mat-row>
+	</mat-table>
+	@if( !loading() && !rows().length && !error() ){
+		<p class="empty" role="status">The group has no members.</p>
+	}
+	@if( editing(); as m ){
+		<!--the override:  a field typed overrides the column, a field blank inherits-->
+		<section class="editor" aria-label="Override">
+			<h3>{{ memberName(m) }}</h3>
+			<div class="fields">
+				@for( column of columns; track column.name ){
+					<mat-form-field>
+						<mat-label>{{ column.label }}@if( column.unit ){ ({{ column.unit }})}</mat-label>
+						@switch( column.kind ){
+							@case( 'format' ){
+								<mat-select [value]="fields()[column.name]" (selectionChange)="setField(column.name, $event.value)" [disabled]="busy() || moot(m, column.name)">
+									<mat-option value="">Inherit</mat-option>
+									@for( format of formats; track $index ){
+										<mat-option [value]="$index + ''">{{ format }}</mat-option>
+									}
+								</mat-select>
+							}
+							@case( 'boolean' ){
+								<mat-select [value]="fields()[column.name]" (selectionChange)="setField(column.name, $event.value)" [disabled]="busy()">
+									<mat-option value="">Inherit</mat-option>
+									<mat-option value="true">true</mat-option>
+									<mat-option value="false">false</mat-option>
+								</mat-select>
+							}
+							@default{
+								<!--text, not number:  a number input reports a partial entry as blank, which the binding would write back over it-->
+								<input matInput type="text" inputmode="decimal" [value]="fields()[column.name]" (input)="setField(column.name, $any($event.target).value)" placeholder="Inherit" [disabled]="busy() || moot(m, column.name)">
+							}
+						}
+						<mat-hint>{{ moot(m, column.name) ? "Not applied to an enumeration." : inheritsHint(column.name) }}</mat-hint>
+					</mat-form-field>
+				}
+			</div>
+			<div class="editor-actions">
+				@if( problem(); as p ){
+					<span class="problem">{{ p }}</span>
+				}
+				<button matButton="outlined" type="button" (click)="cancel()" [disabled]="busy()">Cancel</button>
+				<button matButton="tonal" type="button" (click)="apply()" [disabled]="busy() || !changed()">Save</button>
+			</div>
+		</section>
+	}
+	@if( busy() ){
+		<mat-progress-bar mode="indeterminate" aria-label="Sending the override"></mat-progress-bar>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	<button matButton="outlined" type="button" (click)="dialogRef.close()" [disabled]="busy()">Close</button>
+</mat-dialog-actions>

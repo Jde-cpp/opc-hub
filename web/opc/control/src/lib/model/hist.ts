@@ -1,4 +1,5 @@
 import { ProtoUtils, Timestamp } from 'jde-framework';
+import { ExNodeId } from './ex-node-id';
 import { NodeId, NodeKey } from './node-id';
 import { OpcError } from './opc-error';
 import { ENodeClass, Variable } from './node';
@@ -24,6 +25,59 @@ export type HistGroupMembers = { id:number; name:string; nodes:Variable[] };
 //userAccessLevel's HistoryWrite bit;  a group has nothing like it, so the gateway is asked.
 export type HistRights = { update:boolean; delete:boolean };
 export type HistCapabilities = HistRights & { aggregates:HistAggregate[] };
+//A group's member list with its thresholds, as historyThresholds answers it (#338):  each hist_group_nodes row, its node by the
+//server's index once the collector has it, so it keys as a page's variables do - until then by its namespace URI alone, which
+//histMemberIndexed tells - its template member and path, whether the
+//server said its DataType is an enumeration - which takes no deviation band whatever its row says (spec *Thresholds*), undefined
+//until the server has said - whether its deviation band is in force, `band`, and each threshold's effective value with where it
+//comes from:  the row's own (node), its template member's, its group's, or the default.  `update`:  whether this user may override
+//them (updateHistGroupNode).
+export type HistThresholdName = 'exceptionDeviation'|'exceptionDeviationFormat'|'minTimeInterval'|'maxTimeInterval'|'stepped';
+export type HistThresholdSource = 'node'|'template'|'group'|'default';
+export type HistThreshold = { name:HistThresholdName; value:number|boolean|null; source:HistThresholdSource };
+//As the group has it:  no deviation set, applied, dropped for an enumeration or for a percent format the node has no usable range
+//for - either stores every change - or waiting for the server to describe the node.  Undefined for a member the group doesn't hold.
+export type HistBand = 'none'|'applied'|'enumeration'|'noRange'|'waiting';
+export type HistMemberThresholds = { id:number; node:ExNodeId; templateNode?:number; path?:HistPathSegment[]; enumeration?:boolean; band?:HistBand; thresholds:HistThreshold[] };
+export type HistThresholds = { update:boolean; nodes:HistMemberThresholds[] };
+//A template member's path, as hist_template_nodes holds it (spec *Templates*):  browse names by namespace URI.
+export type HistPathSegment = { nsu:string; name:string };
+//An override of a member's thresholds, as updateHistGroupNode takes it:  each column given, null clearing it back to inheriting.
+export type HistThresholdOverride = Partial<Record<HistThresholdName,number|boolean|null>>;
+export const histThresholdNames:HistThresholdName[] = ['exceptionDeviation', 'exceptionDeviationFormat', 'minTimeInterval', 'maxTimeInterval', 'stepped'];
+//What each column is, for a member list's headers and editors:  Part 11's HistoricalDataConfiguration (spec *Thresholds*).  The
+//intervals are milliseconds, as UA's Duration is;  a format is UA_ExceptionDeviationFormat's value, one of deviationFormats.
+export type HistThresholdColumn = { name:HistThresholdName; label:string; kind:'number'|'format'|'boolean'; unit?:string; hint:string };
+export const histThresholdColumns:HistThresholdColumn[] = [
+	{ name: 'exceptionDeviation', label: 'Deviation', kind: 'number', hint: "A change inside this band of the last stored value isn't stored.  None stores every change." },
+	{ name: 'exceptionDeviationFormat', label: 'Format', kind: 'format', hint: "What the deviation is in:  the value's units, or a percentage of the value, of its InstrumentRange or of its EURange." },
+	{ name: 'minTimeInterval', label: 'Min interval', kind: 'number', unit: 'ms', hint: "The least time between stored values, and the item's sampling interval.  0 samples as fast as the server can." },
+	{ name: 'maxTimeInterval', label: 'Max interval', kind: 'number', unit: 'ms', hint: "The heartbeat:  the last value is stored again when this passes without a change.  0 turns it off." },
+	{ name: 'stepped', label: 'Stepped', kind: 'boolean', hint: "Whether a stored value holds until the next, or a value between two is interpolated." }
+];
+export const deviationFormats = ['AbsoluteValue', 'PercentOfValue', 'PercentOfRange', 'PercentOfEURange'];
+export const histThresholdSources:Record<HistThresholdSource,string> = { node: "this member's own", template: "its template member's", group: "the group's", default: "the default" };
+//a threshold's effective value as a cell shows it
+export function histThresholdText( t:HistThreshold ):string{
+	if( t.value==null )
+		return t.name=='exceptionDeviation' ? 'none' : '';
+	if( t.name=='exceptionDeviationFormat' )
+		return deviationFormats[Number( t.value )] ?? String( t.value );
+	return typeof t.value=='boolean' ? ( t.value ? 'true' : 'false' ) : String( t.value );
+}
+//a path's segments from the row's json, or none for a node added by hand;  and its text, the browse names joined
+export function parseHistPath( json:unknown ):HistPathSegment[]|undefined{
+	if( json==null )
+		return undefined;
+	try{
+		const segments = typeof json=='string' ? JSON.parse( json ) : json;
+		return Array.isArray( segments ) ? segments.map( s=>({ nsu: String( s?.nsu ?? '' ), name: String( s?.name ?? '' ) }) ) : undefined;
+	}
+	catch{
+		return undefined;
+	}
+}
+export function histPathText( path:HistPathSegment[] ):string{ return path.map( s=>s.name ).join( '/' ); }
 
 //ModificationInfo, with `modified: true`:  what an edit did, when and who (spec *Reads*).
 export type HistModification = { time:Date|null; type:string; user:string };
@@ -94,6 +148,23 @@ export function toHistGroups( json:any ):HistGroup[]{
 //a group's aggregates are the library's, named alone:  the name is the browse name, as a read takes it
 export function toHistCapabilities( json:any ):HistCapabilities{
 	return { aggregates: ( <any[]>(json?.aggregates ?? []) ).map( a=>({ name: String( a ), browse: String( a ) }) ), update: !!json?.update, delete: !!json?.delete };
+}
+const uaNamespace = 'http://opcfoundation.org/UA/';//namespace 0's, index 0 on every server
+//Whether a member's node carries the server's index, as a page's variables do:  without it the URI's index is 0, which keys as
+//namespace 0 does.
+export function histMemberIndexed( node:ExNodeId ):boolean{ return !node.nsu || node.ns!=0 || node.nsu==uaNamespace; }
+export function toHistThresholds( json:any ):HistThresholds{
+	const threshold = ( t:any ):HistThreshold=>({ name: <HistThresholdName>String( t?.name ), value: t?.value==null ? null : typeof t.value=='boolean' ? t.value : Number( t.value ), source: <HistThresholdSource>String( t?.source ?? 'default' ) });
+	const member = ( n:any ):HistMemberThresholds=>({
+		id: Number( n.id ),
+		node: new ExNodeId( n.node ),
+		templateNode: n.templateNode==null ? undefined : Number( n.templateNode ),
+		path: parseHistPath( n.path ),
+		enumeration: n.enumeration==null ? undefined : !!n.enumeration,
+		band: n.band==null ? undefined : <HistBand>String( n.band ),
+		thresholds: ( <any[]>(n.thresholds ?? []) ).map( threshold )
+	});
+	return { update: !!json?.update, nodes: ( <any[]>(json?.nodes ?? []) ).map( member ) };
 }
 //the folder's objects as node{ children{ name browse nodeClass } } lists them, in the server's order:  an aggregate is an
 //object, by Part 13's AggregateFunctionType, and nothing else there is one.  Labelled by its display name, or its browse name
