@@ -171,6 +171,8 @@ namespace Jde::Opc::Gateway{
 		if( let nodesQL = request ? request->FindTable("nodes") : nullptr; nodesQL ){
 			let wantMember = nodesQL->FindColumn( "templateNode" ), wantPath = nodesQL->FindColumn( "path" ), wantStatus = nodesQL->FindColumn( "status" );
 			let wantNode = nodesQL->FindColumn( "node" ) || nodesQL->FindTable( "node" );
+			let holderQL = nodesQL->FindTable( "holder" );
+			let wantHolder = holderQL || nodesQL->FindColumn( "holder" );
 			jarray rows; rows.reserve( resolved.size() );
 			for( let& r : resolved ){
 				jobject row;
@@ -182,6 +184,18 @@ namespace Jde::Opc::Gateway{
 					row["node"] = r.Node ? jvalue{ r.Node->ToJson() } : jvalue{};
 				if( wantStatus )
 					row["status"] = r.Status;
+				if( wantHolder ){
+					jvalue holder;
+					if( r.Holder ){
+						jobject h;
+						if( !holderQL || holderQL->FindColumn("id") )
+							h["id"] = *r.Holder;
+						if( !holderQL || holderQL->FindColumn("name") )
+							h["name"] = r.HolderName;
+						holder = move( h );
+					}
+					row["holder"] = move( holder );
+				}
 				rows.push_back( move(row) );
 			}
 			y["nodes"] = move( rows );
@@ -221,6 +235,18 @@ namespace Jde::Opc::Gateway{
 					spelled["serverConnectionId"] = group.Connection;
 					auto node = ParseHistNode( _query.As<jvalue>("node", _sl), _sl );
 					spelled["node"] = node.namespaceUri.length ? HistNodeText( node ) : co_await SpellAwait{ move(node), group.Connection, _sl };
+					//The unique (connection, node) index, asked first so the refusal names the group that holds the node (spec *Templates*):  the
+					//database's Conflict names the index.  A row a concurrent create makes between here and the insert still gets the database's.
+					let text = Json::AsSV( spelled, "node" );
+					if( auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=string{text}}) ); holders.size() ){
+						let& holder = holders.front();
+						if( holder.Group==group.Id )
+							throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group, '{}' ({}), as {} (row {}).", text, group.Name, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
+						auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );
+						let name = holderGroups.empty() ? string{} : holderGroups.front().Name;
+						let deleted = holderGroups.size() && holderGroups.front().Deleted;
+						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, name, holder.Group, deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
+					}
 				}
 				else if( _query.Type==EMutationQL::Create && _query.TableName()==TemplateNodes )//one spelling, so (hist_template_id, path) is the member's key.
 					spelled["path"] = HistPathText( ParseHistPath(_query.As<jstring>("path", _sl), _sl) );

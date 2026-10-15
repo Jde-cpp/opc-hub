@@ -9,7 +9,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorText } from 'jde-framework';
-import { deviationFormats, histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdName, histThresholdNames, HistThresholdOverride, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
+import { deviationFormats, histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdFields, HistThresholdName, histThresholdNames, HistThresholdOverride, histThresholdProblem, HistThresholds, histThresholdSources, histThresholdText, histThresholdValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { ExNodeId } from '../../../model/ex-node-id';
 
@@ -20,8 +20,7 @@ export type HistThresholdsDialogData = {
 	load:()=>Promise<HistThresholds>;//historyThresholds, asked on opening and again after each override
 	save:( id:number, changes:HistThresholdOverride )=>Promise<void>;//updateHistGroupNode;  a throw is the gateway's refusal
 };
-//The edit form's fields, by column:  what the member's own row says, as text, and blank where it inherits.
-export type HistThresholdFields = Record<HistThresholdName,string>;
+//The edit form's fields, by column (model/hist.ts HistThresholdFields):  what the member's own row says, as text, and blank where it inherits.
 export function ownFields( m:HistMemberThresholds ):HistThresholdFields{
 	const y = <HistThresholdFields>{};
 	for( const name of histThresholdNames ){
@@ -30,18 +29,7 @@ export function ownFields( m:HistMemberThresholds ):HistThresholdFields{
 	}
 	return y;
 }
-//a field as a value:  a number, a format's value, a boolean, null for blank, undefined for text that is none of them
-function fieldValue( name:HistThresholdName, text:string ):number|boolean|null|undefined{
-	const t = text.trim();
-	if( !t )
-		return null;
-	if( name=='stepped' )
-		return t=='true' ? true : t=='false' ? false : undefined;
-	const n = Number( t );
-	if( !Number.isFinite( n ) || n<0 )
-		return undefined;
-	return name=='exceptionDeviationFormat' ? ( Number.isInteger( n ) && n<deviationFormats.length ? n : undefined ) : n;
-}
+const fieldValue = histThresholdValue;//shared with the group and template pages since #337
 //What an edit changes:  each column whose field differs from what the member's own row says - a value, or null for one cleared
 //back to inheriting.  A column left as it was isn't sent, so the row keeps inheriting where it did.
 export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFields ):HistThresholdOverride{
@@ -58,13 +46,7 @@ export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFi
 	return y;
 }
 //why the fields can't be sent, or nothing
-export function thresholdProblem( fields:HistThresholdFields ):string|undefined{
-	for( const column of histThresholdColumns ){
-		if( fieldValue( column.name, fields[column.name] )===undefined )
-			return column.kind=='number' ? `${column.label} is a number, 0 or more.` : column.kind=='format' ? "The format is one of the four." : "Stepped is true or false.";
-	}
-	return undefined;
-}
+export const thresholdProblem = histThresholdProblem;
 
 //A group's member list with its thresholds (#338):  each member's effective Deviation, Format, Min interval, Max interval and
 //Stepped, marked with where each comes from - the member's own row, its template member, the group, or the default - and, for

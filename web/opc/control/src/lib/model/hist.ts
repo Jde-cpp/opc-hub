@@ -65,6 +65,54 @@ export function histThresholdText( t:HistThreshold ):string{
 		return deviationFormats[Number( t.value )] ?? String( t.value );
 	return typeof t.value=='boolean' ? ( t.value ? 'true' : 'false' ) : String( t.value );
 }
+//The five columns as a form holds them, by their QL names:  text, blank where the row inherits.  One shape for a member's override
+//(hist-thresholds-dialog), a template member's own values and a group's defaults.
+export type HistThresholdFields = Record<HistThresholdName,string>;
+export const histThresholdBlank:HistThresholdFields = { exceptionDeviation: '', exceptionDeviationFormat: '', minTimeInterval: '', maxTimeInterval: '', stepped: '' };
+//the fields from a row's own columns, as a QL row carries them:  blank for null
+export function histThresholdFields( row:Record<string,unknown>|undefined ):HistThresholdFields{
+	const y = {...histThresholdBlank};
+	for( const name of histThresholdNames ){
+		const v = row?.[name];
+		y[name] = v==null ? '' : String( v );
+	}
+	return y;
+}
+//a field as a value:  a number, a format's value, a boolean, null for blank, undefined for text that is none of them
+export function histThresholdValue( name:HistThresholdName, text:string ):number|boolean|null|undefined{
+	const t = text.trim();
+	if( !t )
+		return null;
+	if( name=='stepped' )
+		return t=='true' ? true : t=='false' ? false : undefined;
+	const n = Number( t );
+	if( !Number.isFinite( n ) || n<0 )
+		return undefined;
+	return name=='exceptionDeviationFormat' ? ( Number.isInteger( n ) && n<deviationFormats.length ? n : undefined ) : n;
+}
+//why the fields can't be sent, or nothing
+export function histThresholdProblem( fields:HistThresholdFields ):string|undefined{
+	for( const column of histThresholdColumns ){
+		if( histThresholdValue( column.name, fields[column.name] )===undefined )
+			return column.kind=='number' ? `${column.label} is a number, 0 or more.` : column.kind=='format' ? "The format is one of the four." : "Stepped is true or false.";
+	}
+	return undefined;
+}
+//the columns an edit sends:  each field that differs from `original` - a value, or null for one cleared back to inheriting - or, with
+//no original, each field set, as a create sends them.  A field left as it was isn't sent.
+export function histThresholdArgs( fields:HistThresholdFields, original?:HistThresholdFields ):HistThresholdOverride{
+	const y:HistThresholdOverride = {};
+	for( const name of histThresholdNames ){
+		const value = histThresholdValue( name, fields[name] );
+		if( value===undefined )
+			continue;
+		if( original ? fields[name].trim()==original[name].trim() : value===null )
+			continue;
+		y[name] = value;
+	}
+	return y;
+}
+export function histThresholdFieldsEqual( a:HistThresholdFields, b:HistThresholdFields ):boolean{ return histThresholdNames.every( n=>a[n].trim()==b[n].trim() ); }
 //a path's segments from the row's json, or none for a node added by hand;  and its text, the browse names joined
 export function parseHistPath( json:unknown ):HistPathSegment[]|undefined{
 	if( json==null )

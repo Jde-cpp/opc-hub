@@ -9,12 +9,13 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { Component, input, model, OnInit } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { AppService, LogDetail, LogSettingsPanel, QLList } from 'jde-framework';
 import { GatewayService } from '../../services/gateway-service';
 import { GatewayDetail } from './gateway-detail';
+import { GatewayHistList } from './hist-admin/gateway-hist-list';
 
 //the three tabs' components, standing in for the real ones:  the log tabs record what they were created for.
 @Component( {selector: 'log-settings', template: ''} )
@@ -31,6 +32,12 @@ class LogsStub implements OnInit{
 }
 @Component( {selector: 'ql-list', template: ''} )
 class ListStub{ sideNav = model<unknown>(); }
+@Component( {selector: 'gateway-hist-list', template: ''} )
+class HistListStub implements OnInit{
+	gateway = input<unknown>(); kind = input<string>(); url = input<string>();
+	static created:{gateway:unknown; kind:string|undefined; url:string|undefined}[] = [];
+	ngOnInit(){ HistListStub.created.push( {gateway: this.gateway(), kind: this.kind(), url: this.url()} ); }
+}
 
 //reviews/m3-closing.md #31:  the router reuses this page from one gateway to the next, and the log tabs loaded once - after a
 //switch they kept A's levels and entries under B's title, and a Save sent the edits, diffed against A's, to B's id.
@@ -43,16 +50,17 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		for( let i=0; i<3; ++i ){ fixture.detectChanges(); await fixture.whenStable(); await new Promise( r=>setTimeout(r, 0) ); }
 	};
 	const open = async ( tab:number )=>{
-		SettingsStub.created = []; LogsStub.created = [];
+		SettingsStub.created = []; LogsStub.created = []; HistListStub.created = [];
 		data = new BehaviorSubject<object>( routeData('A') );
 		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({ providers: [
 			{ provide: ActivatedRoute, useValue: {data} },
+			{ provide: Router, useValue: {url: '/apps/gateways/A'} },
 			{ provide: ComponentPageTitle, useValue: {} },
 			{ provide: AppService, useValue: {instancePK: async ( name:string, program:string )=>program=="OpcGateway" ? ids[name] : undefined} },
 			{ provide: GatewayService, useValue: {gateway: async ( name:string )=>gateways[name]} }
 		]});
-		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [LogDetail, LogSettingsPanel, QLList]}, add: {imports: [SettingsStub, LogsStub, ListStub]}} );
+		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [LogDetail, LogSettingsPanel, QLList, GatewayHistList]}, add: {imports: [SettingsStub, LogsStub, ListStub, HistListStub]}} );
 		const fixture = TestBed.createComponent( GatewayDetail );
 		fixture.componentInstance.tabIndex = tab;
 		await settle( fixture );
@@ -60,15 +68,30 @@ describe( 'GatewayDetail switching gateway', ()=>{
 	};
 	const go = async ( fixture:Parameters<typeof settle>[0], instance:string )=>{ data.next( routeData(instance) ); await settle( fixture ); };
 
+	//the tabs:  Connections, Templates, Groups, Logs, Log Settings (#337 put the two historian tabs beside Connections)
 	it( 'builds Log Settings again for the gateway it switched to', async ()=>{
-		const fixture = await open( 2 );
+		const fixture = await open( 4 );
 		await go( fixture, 'B' );
 		expect( SettingsStub.created ).toEqual( [1, 2] );
 	} );
 
 	it( 'and Logs', async ()=>{
-		const fixture = await open( 1 );
+		const fixture = await open( 3 );
 		await go( fixture, 'B' );
 		expect( LogsStub.created ).toEqual( [gateways['A'], gateways['B']] );
+	} );
+
+	//#337:  the Templates and Groups lists are the gateway's own tables, so a switch builds them again too, under the page's url
+	it( 'and the Templates list, keyed under the page url', async ()=>{
+		const fixture = await open( 1 );
+		await go( fixture, 'B' );
+		expect( HistListStub.created.map( c=>c.gateway ) ).toEqual( [gateways['A'], gateways['B']] );
+		expect( HistListStub.created[0] ).toEqual( {gateway: gateways['A'], kind: 'templates', url: 'apps/gateways/A'} );
+	} );
+
+	it( 'and the Groups list', async ()=>{
+		const fixture = await open( 2 );
+		await go( fixture, 'B' );
+		expect( HistListStub.created.map( c=>c.kind ) ).toEqual( ['groups', 'groups'] );
 	} );
 } );

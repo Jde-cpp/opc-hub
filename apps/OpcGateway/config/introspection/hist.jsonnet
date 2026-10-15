@@ -8,8 +8,9 @@
 //start, end ) or purgeHistory( opc, nodes, times ){ values{…} nodes{…} } (ql/HistEditQLAwait.cpp):  the server's own
 //history, edited for the caller (*Pass-through*);  mutations by their whole names.  With `group`, a gateway group's history
 //(ql/HistGroupEditQLAwait.cpp, *Edits*).
-//resolveHistory( group ){ nodes{ templateNode path node status } } (ql/HistGroupQLAwait.cpp):  retries a group's unresolved
-//template members (*Templates*), answering each member of the template, resolved before, now, or not.
+//resolveHistory( group ){ nodes{ templateNode path node status holder{ id name } } } (ql/HistGroupQLAwait.cpp):  retries a group's
+//unresolved template members (*Templates*), answering each member of the template, resolved before, now, or not - and for one
+//whose node another group holds, which.
 //historyGroups( opc, nodes ){ groups{ id name nodes } } (ql/HistGroupInfoQLAwait.cpp):  the groups on the connection that hold
 //any of the nodes, each with those it holds, among the groups the caller may read - where the gateway keeps each node's history.
 //historyCapabilities( group ){ aggregates update delete }:  the aggregates a group computes, and whether the caller may edit
@@ -138,7 +139,14 @@ local history = {
 			{ name: "templateNode", type: NonNull(UInt) }, //the hist_template_nodes row.
 			{ name: "path", type: NonNull(String) }, //its browse path, as the row holds it.
 			{ name: "node", type: { kind: "OBJECT", name: "NodeId" } }, //with its namespace URI (nsu); null where the path didn't resolve.
-			{ name: "status", type: NonNull(UInt) } //Good once the member has a hist_group_nodes row, else why TranslateBrowsePaths refused it.
+			{ name: "status", type: NonNull(UInt) }, //Good once the member has a hist_group_nodes row, else why TranslateBrowsePaths refused it, or Bad_NodeIdExists for a node a group holds already.
+			{ name: "holder", type: { kind: "OBJECT", name: "HistoryGroupRef" } } //with Bad_NodeIdExists:  the group that holds the node - another on the connection, or this one as another member or an ad hoc node.  Null otherwise.
+		]
+	},
+	HistoryGroupRef: {
+		fields: [
+			{ name: "id", type: NonNull(UInt) }, //the hist_groups row.
+			{ name: "name", type: NonNull(String) }
 		]
 	}
 }

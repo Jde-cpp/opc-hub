@@ -24,9 +24,10 @@ namespace Jde::Opc::Gateway{
 		α Execute()ι->VoidTask;
 		ServerCnnctnPK _connection;
 	};
-	//A template member as resolveHistory answers it (spec *Templates*):  its row and path, the node it resolved to, and
-	//Good once it has a hist_group_nodes row, else why it hasn't.
-	struct HistResolved final{ HistTemplateNodePK TemplateNode; string Path; optional<ExNodeId> Node; StatusCode Status; };
+	//A template member as resolveHistory answers it (spec *Templates*):  its row and path, the node it resolved to, Good once it
+	//has a hist_group_nodes row, else why it hasn't, and for Bad_NodeIdExists the group that holds the node - another on the
+	//connection, or this one as another member or an ad hoc node - by its row and name, so a page can say which.
+	struct HistResolved final{ HistTemplateNodePK TemplateNode; string Path; optional<ExNodeId> Node; StatusCode Status; optional<HistGroupPK> Holder; string HolderName; };
 	struct HistResolveAwait final : AnyAwait<vector<HistResolved>>{
 		HistResolveAwait( HistGroupPK group, UserPK by, SRCE )ι:AnyAwait<vector<HistResolved>>{ sl }, Group{ group }, By{ by }{}
 		const HistGroupPK Group;

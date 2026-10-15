@@ -53,15 +53,28 @@ The navbar search finds nodes by name in every connection this session has opene
 
 ## Instances
 
-Under [Applications](/apps), a gateway instance's page has three tabs:
+Under [Applications](/apps), a gateway instance's page has five tabs:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
+- **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](#historian-groups-and-templates).
 - **Logs** shows the running service's log.
 - **Log Settings** changes the running service's log levels.
 
 A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. Once the connection is saved, its **Connection** tab shows the server's details.
 
 An OPC server instance's page has **Logs** and **Log Settings**.
+
+## Historian groups and templates
+
+The gateway keeps the history of the nodes in its **groups**. A group is on one connection, and holds either the nodes of a **template** applied to a root there, or a list of nodes of its own. A template is a named node set, as browse paths from a root - `Motor/Speed`, say - so one template makes a group for each pump, on whichever connection hosts it. Both are edited from the gateway's page under [Applications](/apps), on its **Templates** and **Groups** tabs; a group's history shows on the node pages' **History** tab, as above.
+
+**Templates.** Press **Add** on the Templates tab, name the template and save it; its tabs then open. **Members** lists its paths with the thresholds each sets - a column left blank leaves a group's node to inherit the group's. **Add members** browses a connection's tree, a page per folder, from a root of your choosing: pick the connection, type the root or open a folder and press **Use as root**, then tick the variables. Each ticked variable's path from that root becomes a member, named by namespace URI rather than index, so the template applies on any server that hosts the same model. Adding a member resolves it in every group made from the template at once; removing one takes its node out of each. The edit button on a member changes the thresholds it sets. **Groups** lists the groups made from it.
+
+**Groups.** Press **Add** on the Groups tab. A group's **Source** is fixed once it is saved: the connection, the template, or none for a node list of the group's own, and the root the template's paths start from - a NodeId typed, or browsed for with the folder button; blank is the Objects folder. To change the source, purge the group and make it again. Its **Thresholds** are the group's defaults, for members that set none; blank leaves the historian's own default. Once saved, **Members** lists the group's nodes, each with the template member it came from or *added by hand*, and the columns its own row sets. **Add nodes** picks nodes on the connection, from the root; a node already in another group on the connection is refused, and the refusal names that group, since a node belongs to one group per server. Removing a node takes it out of the group - its history stays on disk, and another group may take it. **Thresholds** opens the dialog described under the History tab: every member's effective values, where each comes from, and the overrides.
+
+**Resolution**, on a group with a template, lists each of the template's members with the node it resolved to, or why it has none. **Resolve** retries the members without a node - a path the server did not have, a server that was down - and answers each: *Resolved*, a status such as `BadNoMatch` for a path the server does not have, or `BadNodeIdExists` naming the group that already holds the node, this one included when a member and a node added by hand resolve to the same node. Resolve needs Update on the group.
+
+A deleted group keeps its rows, so its nodes stay held until it is restored or purged; a template a group uses cannot be purged.
 
 ## Security
 

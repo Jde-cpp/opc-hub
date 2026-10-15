@@ -313,6 +313,7 @@ namespace Jde::Opc::Gateway{
 							}
 							else if( let& holder = holders.front(); holder.Group!=group.Id ){
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
+								result.Holder = holder.Group;
 								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Group );
 							}
 							else if( holder.TemplateNode==result.TemplateNode ){//a concurrent resolve made the row.
@@ -321,10 +322,18 @@ namespace Jde::Opc::Gateway{
 							}
 							else{
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
+								result.Holder = group.Id;
 								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.TemplateNode ? Ƒ("member {}", *holder.TemplateNode) : string{"an ad hoc node"} );
 							}
 						}
 					}
+				}
+			}
+			if( std::ranges::any_of(y, []( let& r ){ return r.Holder.has_value(); }) ){//the holders' names, deleted groups among them:  a deleted group keeps its rows.
+				auto all = co_await Any( SelectHistGroups({.IncludeDeleted=true}) );
+				for( auto& r : y ){
+					if( let p = r.Holder ? find_if( all, [&r]( let& g ){ return g.Id==*r.Holder; } ) : all.end(); p!=all.end() )
+						r.HolderName = p->Name;
 				}
 			}
 			await.Resume( move(y) );

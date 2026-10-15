@@ -1,6 +1,9 @@
 
 export {GatewayDetail, gatewayTableSettings} from './lib/pages/gateway-detail/gateway-detail';
 export {ClientDetail} from './lib/pages/gateway-detail/client-detail/client-detail';
+export {HistTemplateDetail} from './lib/pages/gateway-detail/hist-admin/hist-template-detail';
+export {HistGroupDetail} from './lib/pages/gateway-detail/hist-admin/hist-group-detail';
+export {HistAdminResolver} from './lib/services/resolvers/hist-admin-resolver';
 export {OpcServerDetail} from './lib/pages/opc-server-detail/opc-server-detail';
 export {NodeDetail} from './lib/pages/node-detail/node-detail';
 export {NodeChildren} from './lib/pages/node-detail/node-children/node-children';

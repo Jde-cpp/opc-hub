@@ -3,7 +3,7 @@ import {Routes} from '@angular/router';
 import{ DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService,GatewayService, NodeResolver, OpcNodeRouteService, GatewayResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService,GatewayService, HistAdminResolver, NodeResolver, OpcNodeRouteService, GatewayResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const gatewayProvider = { provide: IGRAPHQL, useExisting: GatewayService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
@@ -105,6 +105,28 @@ export const routes: Routes = [
 				resolve: {data: GatewayResolver},
 				canActivate: [AuthGuard],
 				data: { tableSettings: gatewayTableSettings }
+			},
+			//The historian's templates and groups (#337):  their lists are tabs of the gateway's page, so the bare list urls - Back and
+			//Cancel from a detail land on them - redirect to it, ahead of ':connection', which would take the segment for a connection.
+			{ path: 'templates', pathMatch: 'full', redirectTo: '' },
+			{ path: 'groups', pathMatch: 'full', redirectTo: '' },
+			{
+				path: 'templates/:slug',
+				loadComponent: ()=>import('jde-opc').then( m=>m.HistTemplateDetail ),
+				providers: [ HistAdminResolver, gatewayProvider ],
+				canActivate: [AuthGuard],
+				data: { summary: "History template", kind: "templates" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
+			},
+			{
+				path: 'groups/:slug',
+				loadComponent: ()=>import('jde-opc').then( m=>m.HistGroupDetail ),
+				providers: [ HistAdminResolver, gatewayProvider ],
+				canActivate: [AuthGuard],
+				data: { summary: "History group", kind: "groups" },
+				resolve: { pageData: HistAdminResolver },
+				runGuardsAndResolvers: "paramsChange"
 			},
 			{
 				path: ':connection',

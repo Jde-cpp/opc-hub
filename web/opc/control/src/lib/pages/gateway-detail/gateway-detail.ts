@@ -1,20 +1,22 @@
 import { Component, OnInit, OnDestroy, Inject, ViewChild, input, signal, model, computed, Injectable, inject } from '@angular/core';
 import { MatTabsModule } from '@angular/material/tabs';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ComponentPageTitle, ProfileStore } from 'jde-spa';
 import { AppService, Flex, LogDetail, LogSettingsPanel, QLList, QLListData, Style, TableSettings } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
+import { GatewayHistList } from './hist-admin/gateway-hist-list';
 
 @Component( {
 		styleUrls: ['gateway-detail.scss'],
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content mat-drawer-container my-content'},
-		imports: [MatTabsModule, QLList, LogDetail, LogSettingsPanel]
+		imports: [MatTabsModule, QLList, LogDetail, LogSettingsPanel, GatewayHistList]
 })
 export class GatewayDetail implements OnInit, OnDestroy{
 	private route:ActivatedRoute = inject( ActivatedRoute );
+	private router = inject( Router );
 	private componentPageTitle:ComponentPageTitle = inject( ComponentPageTitle );
 
 	ngOnInit(): void {
@@ -37,6 +39,9 @@ export class GatewayDetail implements OnInit, OnDestroy{
 
 	pageData!:QLListData;
 	get connections(){ return this.pageData?.results["serverConnections"]; }
+	//the page's url, apps/gateways/<instance>:  what the Connections tab's rows are keyed by in the RouteStore (GatewayResolver), and
+	//with `/templates` or `/groups` the two historian tabs' rows, where their detail pages find their siblings (HistAdminResolver)
+	get url():string{ return this.router.url.split( '?' )[0].replace( /^\//, '' ); }
 	tabIndex:number = ProfileStore.tabIndex( 'gateway-detail' );
 	sideNav = model.required<RouteItem>();
 
