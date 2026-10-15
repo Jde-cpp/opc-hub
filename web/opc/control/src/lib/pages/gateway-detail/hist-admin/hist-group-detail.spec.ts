@@ -10,14 +10,13 @@ if( typeof globalThis.localStorage=="undefined" ){
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { ActivatedRoute, Router } from '@angular/router';
-import { of } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { vi } from 'vitest';
 import { ComponentPageTitle } from 'jde-spa';
 import { Mutation, SnackbarService } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { histThresholdBlank } from '../../../model/hist';
 import { HistGroup, HistPick } from '../../../model/hist-admin';
-import { GatewayService } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { HistoryService } from '../../../services/history-service';
 import { OpcStore } from '../../../services/opc-store';
@@ -48,13 +47,13 @@ const create = async ( pageRow:any )=>{
 		resolve: vi.fn( async ()=>[{templateNode: 3, path: [{nsu: Pumps, name: 'motorRpm'}], node: new ExNodeId( {i: 6012, nsu: Pumps} ), status: 0}, {templateNode: 4, path: [{nsu: Pumps, name: 'status'}], status: BadNodeIdExists, holder: {id: 9, name: 'Other'}}] )
 	};
 	const dialog = { confirmed: true, picks: <HistPick[]|undefined>undefined, open: ( cmp:unknown )=>({ afterClosed: ()=>({ subscribe: ( f:( y:unknown )=>void )=>f( cmp===HistNodePickerDialog ? dialog.picks : dialog.confirmed ) }) }) };
+	const data = new BehaviorSubject<any>( {pageData: {row: pageRow, routing: {}, schema: {enums: new Map()}, gateway}} );//the route's data, the gateway with the row:  next() opens another row on the page, as the router reusing it does
 	TestBed.configureTestingModule({ providers: [
 		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the zoneless fixture's own first change detection would run ngOnInit a second time, onto the row #load nulled
-		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row: pageRow, routing: {}, schema: {enums: new Map()}}})} },
-		{ provide: Router, useValue: {navigate: vi.fn(), url: '/apps/gateways/g/groups/' + (pageRow.slug ?? '$new')} },
+		{ provide: ActivatedRoute, useValue: {data} },
+		{ provide: Router, useValue: {navigate: vi.fn()} },
 		{ provide: ComponentPageTitle, useValue: {} },
 		{ provide: SnackbarService, useValue: snackbar },
-		{ provide: GatewayService, useValue: {gateway: async ()=>gateway} },
 		{ provide: HistAdminService, useValue: admin },
 		{ provide: HistoryService, useValue: {} },
 		{ provide: OpcStore, useValue: {getConnection: async ()=>server} },
@@ -63,7 +62,7 @@ const create = async ( pageRow:any )=>{
 	const page = TestBed.createComponent( HistGroupDetail ).componentInstance;
 	page.ngOnInit();
 	await settle();
-	return { page, mutations, admin, snackbar, dialog };
+	return { page, mutations, admin, snackbar, dialog, data };
 };
 
 describe( 'HistGroupDetail', ()=>{
@@ -72,7 +71,9 @@ describe( 'HistGroupDetail', ()=>{
 	it( 'saves a new group with its source and thresholds', async ()=>{
 		const d = await create( {} );
 		expect( d.page.isNew ).toBe( true );
-		expect( d.page.instance ).toBe( 'g' );
+		expect( d.page.excludedFields ).toBe( d.page.excludedFields );//one array, not a new one for Properties each check
+		expect( d.page.excludedFields ).toContain( 'guid' );
+		expect( d.page.gateway.slug ).toBe( 'g' );
 		expect( d.page.connections() ).toHaveLength( 2 );
 		expect( d.page.group.canSave ).toBe( false );
 		d.page.properties.set( new HistGroup( {...d.page.properties(), name: 'Pumps', slug: 'pumps'} ) );
@@ -95,13 +96,15 @@ describe( 'HistGroupDetail', ()=>{
 	it( 'lists the members and the resolution, and saves the thresholds changed', async ()=>{
 		const d = await create( row );
 		expect( d.page.isNew ).toBe( false );
+		expect( d.page.excludedFields ).toBe( d.page.excludedFields );
+		expect( d.page.excludedFields ).not.toContain( 'guid' );
 		expect( d.admin.groupMembers ).toHaveBeenCalledWith( expect.anything(), 5 );
 		expect( d.admin.templateMembers ).toHaveBeenCalledWith( expect.anything(), 2 );
 		expect( d.page.members() ).toHaveLength( 2 );
 		expect( d.page.nodeLabel( d.page.members()[0].node ) ).toBe( 'ns=2;i=6012' );
 		expect( d.page.memberText( d.page.members()[0] ) ).toBe( 'motorRpm' );
 		expect( d.page.memberText( d.page.members()[1] ) ).toBe( 'added by hand' );
-		expect( d.page.cellText( d.page.members()[0], 'minTimeInterval' ) ).toBe( '1000' );
+		expect( d.page.cellText( d.page.members()[0].thresholds, 'minTimeInterval' ) ).toBe( '1000' );
 		const rows = d.page.resolution();
 		expect( rows.map( r=>[r.path, r.status] ) ).toEqual( [['motorRpm', 0], ['status', undefined]] );
 		expect( d.page.unresolved() ).toBe( 1 );
@@ -120,7 +123,22 @@ describe( 'HistGroupDetail', ()=>{
 		expect( rows[1].status ).toBe( BadNodeIdExists );
 		expect( d.page.statusText( rows[1] ) ).toContain( "group 'Other' holds the node" );
 		expect( d.page.statusText( {...rows[1], holder: {id: 5, name: 'Pumps'}} ) ).toContain( 'this group holds the node already' );
+		expect( d.page.statusText( {...rows[1], holder: {id: 9, name: ''}} ) ).toContain( 'group 9 holds the node' );//the gateway names no group the caller may not read
 		expect( d.snackbar.info ).toHaveBeenCalledWith( '1 of 2 members resolved.' );
+	} );
+	//the rows say which members resolved:  a success the last resolve reported doesn't outlive its row, while a refusal's reason
+	//stays until a node is removed or added, after which it may not hold
+	it( 'keeps the resolution to the rows', async ()=>{
+		const d = await create( row );
+		await d.page.resolve();
+		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [0, BadNodeIdExists] );
+		d.admin.groupMembers.mockResolvedValue( <any>d.page.members().slice( 1 ) );//member 3's node removed, from another page say
+		await d.page.refresh();
+		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [undefined, BadNodeIdExists] );
+		expect( d.page.statusText( d.page.resolution()[0] ) ).toContain( 'Not resolved' );
+		expect( d.page.unresolved() ).toBe( 2 );
+		await d.page.removeNode( d.page.members()[0] );
+		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [undefined, undefined] );
 	} );
 	//Add nodes:  each pick is its own create, from the group's root on its connection;  one refused doesn't stop the rest, and the
 	//refusal - the gateway's, naming the holder - is said
@@ -140,6 +158,25 @@ describe( 'HistGroupDetail', ()=>{
 		expect( d.snackbar.error.mock.calls[0][0] ).toContain( "group 'Other' (9)" );
 		expect( d.admin.groupMembers ).toHaveBeenCalledTimes( 2 );
 		open.mockRestore();
+	} );
+	//the router reuses the page when another gateway's group opens, from Recently visited say:  the page then reads and writes the
+	//gateway that row came from, and drops what the first gateway answers after - though the two rows share an id
+	it( 'works on the gateway of the row it was given', async ()=>{
+		const d = await create( row );
+		let late!:( members:any[] )=>void;
+		d.admin.groupMembers.mockImplementationOnce( ()=>new Promise<any[]>( r=>late = r ) );
+		const refreshed = d.page.refresh();
+		const other = { slug: 'h', mutate: async ()=>{} };
+		d.data.next( {pageData: {row: {...row, slug: 'line1'}, routing: {}, schema: {enums: new Map()}, gateway: other}} );
+		await settle();
+		expect( d.page.gateway ).toBe( other );
+		expect( d.admin.groupMembers ).toHaveBeenLastCalledWith( other, 5 );
+		expect( d.admin.connections ).toHaveBeenLastCalledWith( other );
+		late( [] );
+		await refreshed;
+		expect( d.page.members() ).toHaveLength( 2 );
+		await d.page.resolve();
+		expect( d.admin.resolve ).toHaveBeenCalledWith( other, 5, expect.any( Function ) );
 	} );
 	it( 'removes a node once confirmed, and not otherwise', async ()=>{
 		const d = await create( row );

@@ -18,8 +18,9 @@ describe( 'HistAdminService', ()=>{
 		const g = stub( {histTemplateNodes: [{id: 3, histTemplateId: 2, path: '[{"nsu":"u","name":"a"}]'}]} );
 		expect( (await service.templateMembers( g, 2 ))[0].path ).toEqual( [{nsu: 'u', name: 'a'}] );
 		expect( g.query ).toHaveBeenCalledWith( 'histTemplateNodes( histTemplateId: $templateId ){ id histTemplateId path exceptionDeviation exceptionDeviationFormat minTimeInterval maxTimeInterval stepped }', {templateId: 2}, expect.any( Function ) );
-		const groups = stub( {histGroups: [{id: 5, name: 'Pumps', slug: 'pumps', root: null, serverConnection: {id: 1, name: 'Local'}}]} );
-		expect( await service.templateGroups( groups, 2 ) ).toEqual( [{id: 5, name: 'Pumps', slug: 'pumps', connection: {id: 1, name: 'Local'}, root: undefined}] );
+		const groups = stub( {histGroups: [{id: 5, name: 'Pumps', slug: 'pumps', root: null, deleted: null, serverConnection: {id: 1, name: 'Local'}}, {id: 6, name: 'Old', slug: 'old', root: null, deleted: '2026-10-01T00:00:00Z', serverConnection: {id: 1, name: 'Local'}}]} );
+		expect( await service.templateGroups( groups, 2 ) ).toEqual( [{id: 5, name: 'Pumps', slug: 'pumps', connection: {id: 1, name: 'Local'}, root: undefined, deleted: false}, {id: 6, name: 'Old', slug: 'old', connection: {id: 1, name: 'Local'}, root: undefined, deleted: true}] );
+		expect( groups.query ).toHaveBeenCalledWith( 'histGroups( histTemplateId: $templateId ){ id name slug root deleted serverConnection{ id name } }', {templateId: 2}, expect.any( Function ) );//deleted ones too:  a member's purge reaches them
 		const nodes = stub( {histGroupNodes: [{id: 7, node: '{"nsu":"u","i":1}', histTemplateNodeId: 3}]} );
 		expect( (await service.groupMembers( nodes, 5 ))[0].templateNodeId ).toBe( 3 );
 		expect( nodes.query ).toHaveBeenCalledWith( HistAdminService.groupMembersQuery, {groupId: 5}, expect.any( Function ) );

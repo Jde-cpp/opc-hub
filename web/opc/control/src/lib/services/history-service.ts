@@ -1,6 +1,6 @@
 import { Service } from '@angular/core';
 import { Log } from 'jde-framework';
-import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, histThresholdNames, HistThresholdOverride, HistThresholds, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage, toHistThresholds } from '../model/hist';
+import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, histThresholdParams, HistThresholdOverride, HistThresholds, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage, toHistThresholds } from '../model/hist';
 import { NodeId } from '../model/node-id';
 import { CnnctnSlug } from '../model/server-cnnctn';
 
@@ -100,15 +100,8 @@ export class HistoryService{
 	}
 	//`mutation` spelled out:  updateHistGroupNode is a table's verb, not a system mutation the gateway takes bare as createHistory is
 	static overrideMutation( id:number, changes:HistThresholdOverride ):{ql:string; vars:Record<string,unknown>}{
-		const vars:Record<string,unknown> = { id };
-		const params = [ "id: $id" ];
-		for( const name of histThresholdNames ){
-			if( name in changes ){
-				params.push( `${name}: $${name}` );
-				vars[name] = changes[name] ?? null;
-			}
-		}
-		return { ql: `mutation updateHistGroupNode( ${params.join( ", " )} )`, vars };
+		const t = histThresholdParams( changes );
+		return { ql: `mutation updateHistGroupNode( id: $id${t.params} )`, vars: { id, ...t.vars } };
 	}
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an

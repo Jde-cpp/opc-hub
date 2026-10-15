@@ -236,8 +236,8 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
 		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
-		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		Enforce( true );
+		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		EnforceHistGroups( true );
 		let t0 = Since()-1h;
 		constexpr uint count{ Hist::Settings::DefaultReadLimit+1 };
 		for( uint i=0; i<count; ){
@@ -303,8 +303,8 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WaitComplete(*heard) );
 		EXPECT_EQ( heard->Values().size(), 2u );
 
-		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		Enforce( true );
+		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		EnforceHistGroups( true );
 		EXPECT_EQ( Update("createHistory", group, {{RpmManual, t0+10ms, 7}}).Values, vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED} );
 		EXPECT_EQ( Update("updateHistory", group, {{RpmManual, t0+20ms, 8}}).Values, vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED} );
 		ASSERT_NO_THROW( WaitPushed(*heard, 0, 2) );

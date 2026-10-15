@@ -329,12 +329,18 @@ namespace Jde::Opc::Gateway{
 					}
 				}
 			}
-			if( std::ranges::any_of(y, []( let& r ){ return r.Holder.has_value(); }) ){//the holders' names, deleted groups among them:  a deleted group keeps its rows.
-				auto all = co_await Any( SelectHistGroups({.IncludeDeleted=true}) );
-				for( auto& r : y ){
-					if( let p = r.Holder ? find_if( all, [&r]( let& g ){ return g.Id==*r.Holder; } ) : all.end(); p!=all.end() )
-						r.HolderName = p->Name;
+			//The holders' names, deleted groups among them:  a deleted group keeps its rows.  This group's is its row's;  another's is
+			//asked once, by its id, rather than every group on the gateway read for one or two.
+			flat_map<HistGroupPK,string> names{ {group.Id, group.Name} };
+			for( auto& r : y ){
+				if( !r.Holder )
+					continue;
+				auto name = names.find( *r.Holder );
+				if( name==names.end() ){
+					auto holders = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)*r.Holder}, .IncludeDeleted=true}) );
+					name = names.emplace( *r.Holder, holders.size() ? holders.front().Name : string{} ).first;
 				}
+				r.HolderName = name->second;
 			}
 			await.Resume( move(y) );
 		}

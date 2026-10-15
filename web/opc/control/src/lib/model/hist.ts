@@ -78,6 +78,11 @@ export function histThresholdFields( row:Record<string,unknown>|undefined ):Hist
 	}
 	return y;
 }
+//a row's own column as a cell shows it:  a format by its name, blank where the row inherits
+export function histThresholdFieldText( fields:HistThresholdFields, name:HistThresholdName ):string{
+	const t = fields[name];
+	return t==='' ? '' : name=='exceptionDeviationFormat' ? deviationFormats[Number( t )] ?? t : t;
+}
 //a field as a value:  a number, a format's value, a boolean, null for blank, undefined for text that is none of them
 export function histThresholdValue( name:HistThresholdName, text:string ):number|boolean|null|undefined{
 	const t = text.trim();
@@ -111,6 +116,19 @@ export function histThresholdArgs( fields:HistThresholdFields, original?:HistThr
 		y[name] = value;
 	}
 	return y;
+}
+//the threshold columns an edit names, as `, name: $name` parameters and their variables, null for a clear:  for the mutations of a
+//group node and a template member (HistoryService.overrideMutation, HistAdminService)
+export function histThresholdParams( changes:HistThresholdOverride ):{params:string; vars:Record<string,unknown>}{
+	let params = '';
+	const vars:Record<string,unknown> = {};
+	for( const name of histThresholdNames ){
+		if( name in changes ){
+			params += `, ${name}: $${name}`;
+			vars[name] = changes[name] ?? null;
+		}
+	}
+	return { params, vars };
 }
 export function histThresholdFieldsEqual( a:HistThresholdFields, b:HistThresholdFields ):boolean{ return histThresholdNames.every( n=>a[n].trim()==b[n].trim() ); }
 //a path's segments from the row's json, or none for a node added by hand;  and its text, the browse names joined

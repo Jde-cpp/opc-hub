@@ -8,7 +8,8 @@ import { DetailPage, Properties} from 'jde-framework';
 
 import { ServerProperties } from './server-properties/server-properties';
 import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
-import { Gateway, GatewayService } from '../../../services/gateway-service';
+import { Gateway } from '../../../services/gateway-service';
+import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { Server } from '../../../model/server';
 import { OpcStore } from '../../../services/opc-store';
 
@@ -23,14 +24,8 @@ import { OpcStore } from '../../../services/opc-store';
 export class ClientDetail extends DetailPage<ServerCnnctn>{
 	constructor(){ super( 'client-detail' ); }
 
-	override async ngOnInit(){
-		super.ngOnInit();
-		const segments = this.router.url.split( "/" );
-		this.gateway = await this.gatewayService.gateway( segments[segments.length-2] );
-	}
-
 	protected override get ctor(){ return ServerCnnctn; }
-	protected override onRow(){}//no child collections - the connection is its properties
+	protected override onRow(){ this.gateway = (<GatewayDetailData<ServerCnnctn>>this.pageData).gateway; }//no child collections - the connection is its properties
 	protected override upsert():ServerCnnctn{
 		return new ServerCnnctn( {
 			...this.properties(),
@@ -41,7 +36,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			this.opcStore.forget( this.gateway.slug, this.row.slug );
 	}
 	protected override get title(){ return this.row.name ? `${this.row.name} - Connection` : "New Connection"; }
-	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - resolved in ngOnInit
+	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - the row's, from ClientResolver
 
 	//what a user reads first, then the connection, then the two technical fields - the alphabetical default buried Description between them and put Url last
 	readonly fieldOrder = ["slug", "name", "description", "url", "certificateUri", "defaultBrowseNs"];
@@ -53,7 +48,6 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	//gateway meta refuses to update it, so the form does not offer it.
 	get server(): Server|undefined{ return this.row?.server; }
 	get serverError(): string|undefined{ return this.row?.serverError; }
-	gatewayService:GatewayService = inject( GatewayService );
 	private opcStore = inject( OpcStore );
 	gateway!:Gateway;
 }

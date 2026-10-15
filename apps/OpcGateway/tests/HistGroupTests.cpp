@@ -274,8 +274,70 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_TRUE( holder ) << serialize( member );
 			EXPECT_EQ( Json::AsNumber<uint32>(*holder, "id"), holderId );
 			EXPECT_EQ( Json::AsSV(*holder, "name"), "Group holder" );
+			try{
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				ADD_FAILURE() << "a node another group holds";
+			}
+			catch( const std::exception& e ){
+				EXPECT_NE( string{e.what()}.find("already in group 'Group holder'"), string::npos ) << e.what();
+			}
+
+			//historian-group-template-admin #3:  a group the caller may not read is named to them nowhere - its own resource enforced and
+			//granted nothing, under the root enforced and granted everything, which the held group inherits.  The answer keeps its id,
+			//and the refusal says it by id.
+			absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+			EnforceHistGroups( true );
+			ScopeHistGroup( holderId, Access::ERights::None );
+			absl::Cleanup unscope = [=]{//before the purges, which the holder's resource would refuse
+				try{ UnscopeHistGroup( holderId ); }catch( const std::exception& e ){ ADD_FAILURE() << "the holder's resource wasn't deleted:  " << e.what(); }
+			};
+			let unnamed = memberResolved( groupId );
+			EXPECT_EQ( Json::AsNumber<StatusCode>(unnamed, "status"), UA_STATUSCODE_BADNODEIDEXISTS );
+			let ref = unnamed.if_contains( "holder" ) ? unnamed.at( "holder" ).if_object() : nullptr;
+			ASSERT_TRUE( ref ) << serialize( unnamed );
+			EXPECT_EQ( Json::AsNumber<uint32>(*ref, "id"), holderId );
+			EXPECT_TRUE( ref->contains("name") && ref->at("name").is_null() ) << serialize( unnamed );
+			try{
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				ADD_FAILURE() << "a node another group holds";
+			}
+			catch( const std::exception& e ){
+				let what = string{ e.what() };
+				EXPECT_NE( what.find(Ƒ("already in group {} on this connection", holderId)), string::npos ) << what;
+				EXPECT_EQ( what.find("Group holder"), string::npos ) << what;
+			}
 		}
 		ASSERT_NO_THROW( WaitItems(itemsBefore) ) << "the holder's item, which the next test would count";
+	}
+
+	//A member whose node this group holds already, added by hand before the template had the member:  the answer names this group,
+	//from its own row (historian-group-template-admin #7).  Adding the node by hand again is refused as this group's, once the
+	//insert has hit the index (#6).
+	TEST_F( HistGroupTests, AMemberThisGroupHoldsNamesIt ){
+		let itemsBefore = Items();
+		{
+			let templateId = CreateTemplate( "self-template" );
+			absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
+			let [groupId, failure] = tryCreateGroup( "self", templateId, Pump3, _connection );
+			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+			ASSERT_FALSE( failure ) << failure.value_or( "" );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+			CreateMember( templateId, "motorRpm" );
+			let member = memberResolved( groupId );
+			EXPECT_EQ( Json::AsNumber<StatusCode>(member, "status"), UA_STATUSCODE_BADNODEIDEXISTS );
+			let holder = member.if_contains( "holder" ) ? member.at( "holder" ).if_object() : nullptr;
+			ASSERT_TRUE( holder ) << serialize( member );
+			EXPECT_EQ( Json::AsNumber<uint32>(*holder, "id"), groupId );
+			EXPECT_EQ( Json::AsSV(*holder, "name"), "Group self" );
+			try{
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				ADD_FAILURE() << "a node the group holds";
+			}
+			catch( const std::exception& e ){
+				EXPECT_NE( string{e.what()}.find(Ƒ("is already in this group, 'Group self' ({}), as an ad hoc node", groupId)), string::npos ) << e.what();
+			}
+		}
+		ASSERT_NO_THROW( WaitItems(itemsBefore) ) << "the node's item, which the next test would count";
 	}
 
 	//historian-groups-templates #10:  every Conflict was answered as another group's.  Two resolves of one group at once both ask
@@ -290,7 +352,7 @@ namespace Jde::Opc::Gateway::Tests{
 			auto open = EnforceGroupNodes();
 			let [groupId, failure] = tryCreateGroup( "concurrent", templateId, Pump2, _connection );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
-			ASSERT_FALSE( failure ) << *failure;
+			ASSERT_FALSE( failure ) << failure.value_or( "" );
 			std::move( open ).Invoke();
 			ASSERT_TRUE( GroupNodes(groupId).empty() ) << "the member isn't pending";
 

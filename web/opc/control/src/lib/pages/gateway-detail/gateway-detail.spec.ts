@@ -9,7 +9,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { Component, input, model, OnInit } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, DefaultUrlSerializer, PRIMARY_OUTLET } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { AppService, LogDetail, LogSettingsPanel, QLList } from 'jde-framework';
@@ -42,20 +42,23 @@ class HistListStub implements OnInit{
 //reviews/m3-closing.md #31:  the router reuses this page from one gateway to the next, and the log tabs loaded once - after a
 //switch they kept A's levels and entries under B's title, and a Save sent the edits, diffed against A's, to B's id.
 describe( 'GatewayDetail switching gateway', ()=>{
-	const gateways:Record<string, object> = { A: {slug: 'A'}, B: {slug: 'B'} };
-	const ids:Record<string, number> = { A: 1, B: 2 };
+	const gateways:Record<string, object> = { A: {slug: 'A'}, B: {slug: 'B'}, 'My Hub': {slug: 'My Hub'} };
+	const ids:Record<string, number> = { A: 1, B: 2, 'My Hub': 3 };
 	let data:BehaviorSubject<object>;
+	let instance:string;
+	//the sidenav route's segments, as the router parses them from the url it shows, which percent-encodes the instance
+	const parent = { get snapshot(){ return {url: new DefaultUrlSerializer().parse( `/apps/gateways/${encodeURIComponent( instance )}` ).root.children[PRIMARY_OUTLET].segments}; } };
 	const routeData = ( instance:string )=>({ data: {routing: {path: `gateways/${instance}`}} });
 	const settle = async ( fixture:{ detectChanges():void, whenStable():Promise<unknown> } )=>{
 		for( let i=0; i<3; ++i ){ fixture.detectChanges(); await fixture.whenStable(); await new Promise( r=>setTimeout(r, 0) ); }
 	};
 	const open = async ( tab:number )=>{
 		SettingsStub.created = []; LogsStub.created = []; HistListStub.created = [];
+		instance = 'A';
 		data = new BehaviorSubject<object>( routeData('A') );
 		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {data} },
-			{ provide: Router, useValue: {url: '/apps/gateways/A'} },
+			{ provide: ActivatedRoute, useValue: {data, parent} },
 			{ provide: ComponentPageTitle, useValue: {} },
 			{ provide: AppService, useValue: {instancePK: async ( name:string, program:string )=>program=="OpcGateway" ? ids[name] : undefined} },
 			{ provide: GatewayService, useValue: {gateway: async ( name:string )=>gateways[name]} }
@@ -66,7 +69,7 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		await settle( fixture );
 		return fixture;
 	};
-	const go = async ( fixture:Parameters<typeof settle>[0], instance:string )=>{ data.next( routeData(instance) ); await settle( fixture ); };
+	const go = async ( fixture:Parameters<typeof settle>[0], to:string )=>{ instance = to; data.next( routeData(to) ); await settle( fixture ); };
 
 	//the tabs:  Connections, Templates, Groups, Logs, Log Settings (#337 put the two historian tabs beside Connections)
 	it( 'builds Log Settings again for the gateway it switched to', async ()=>{
@@ -93,5 +96,11 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		const fixture = await open( 2 );
 		await go( fixture, 'B' );
 		expect( HistListStub.created.map( c=>c.kind ) ).toEqual( ['groups', 'groups'] );
+	} );
+	//the key is the one the resolvers read the rows back under:  the route's segments, decoded, not router.url's percent-encoding
+	it( 'keys the lists under the instance decoded', async ()=>{
+		const fixture = await open( 1 );
+		await go( fixture, 'My Hub' );
+		expect( HistListStub.created[1].url ).toBe( 'apps/gateways/My Hub' );
 	} );
 } );

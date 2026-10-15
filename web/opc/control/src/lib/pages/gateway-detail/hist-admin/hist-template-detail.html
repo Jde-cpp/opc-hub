@@ -27,7 +27,7 @@
 						@for( column of columns; track column.name ){
 							<ng-container [matColumnDef]="column.name">
 								<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
-								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m, column.name)">{{ cellText(m, column.name) || "group's" }}</span></mat-cell>
+								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m.thresholds, column.name)">{{ cellText(m.thresholds, column.name) || "group's" }}</span></mat-cell>
 							</ng-container>
 						}
 						<ng-container matColumnDef="actions">
@@ -63,11 +63,11 @@
 			<ng-template mat-tab-label>Groups</ng-template>
 			<ng-template matTabContent>
 				<div class="tab-body">
-					<p class="hint">The groups made from this template, each applying its paths from a root on a connection.  A group is made on the gateway's Groups tab.</p>
+					<p class="hint">The groups made from this template, each applying its paths from a root on a connection, the deleted ones too.  A group is made on the gateway's Groups tab.</p>
 					@if( groups().length ){
 						<ul class="group-list">
 							@for( g of groups(); track g.id ){
-								<li><a [routerLink]="groupLink(g)">{{ g.name }}</a><span class="where">{{ g.connection?.name ?? '' }}{{ g.root ? ', from ' + g.root : ', from the Objects folder' }}</span></li>
+								<li><a [routerLink]="groupLink(g)">{{ g.name }}</a><span class="where">{{ g.connection?.name ?? '' }}{{ g.root ? ', from ' + g.root : ', from the Objects folder' }}{{ g.deleted ? ', deleted' : '' }}</span></li>
 							}
 						</ul>
 					}

@@ -12,7 +12,7 @@
 			<ng-template mat-tab-label>Templates</ng-template>
 			<ng-template matTabContent>
 				@for( g of [gateway()]; track g ){
-					<gateway-hist-list [gateway]=g! kind="templates" [url]=url></gateway-hist-list>
+					<gateway-hist-list [gateway]=g! kind="templates" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
 		</mat-tab>
@@ -20,7 +20,7 @@
 			<ng-template mat-tab-label>Groups</ng-template>
 			<ng-template matTabContent>
 				@for( g of [gateway()]; track g ){
-					<gateway-hist-list [gateway]=g! kind="groups" [url]=url></gateway-hist-list>
+					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
 		</mat-tab>

@@ -5,9 +5,9 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { deviationFormats, histThresholdColumns, HistThresholdFields, HistThresholdName, histThresholdProblem } from '../../../model/hist';
 
-//The five threshold columns as a form (spec *Templates*):  a group's defaults, a template member's own values, a node's on its
-//way in.  Text, blank where the row inherits (model/hist.ts HistThresholdFields) - the thresholds dialog's editor, as a control the
-//pages share.  `hints` says what a blank field means per column;  `blank` is the selects' word for it.
+//The five threshold columns as a form (spec *Templates*):  a group's defaults, a template member's own values, a node's override in
+//the Thresholds dialog.  Text, blank where the row inherits (model/hist.ts HistThresholdFields).  `hints` says what a blank field
+//means per column;  `blank` is the selects' word for it;  `disabledFields` are off on their own, as an enumeration's deviation is.
 @Component({
 	selector: 'hist-threshold-fields',
 	template: `
@@ -17,7 +17,7 @@ import { deviationFormats, histThresholdColumns, HistThresholdFields, HistThresh
 					<mat-label>{{ column.label }}@if( column.unit ){ ({{ column.unit }})}</mat-label>
 					@switch( column.kind ){
 						@case( 'format' ){
-							<mat-select [value]="fields()[column.name]" (selectionChange)="set(column.name, $event.value)" [disabled]="disabled()">
+							<mat-select [value]="fields()[column.name]" (selectionChange)="set(column.name, $event.value)" [disabled]="off(column.name)">
 								<mat-option value="">{{ blank() }}</mat-option>
 								@for( format of formats; track $index ){
 									<mat-option [value]="$index + ''">{{ format }}</mat-option>
@@ -25,7 +25,7 @@ import { deviationFormats, histThresholdColumns, HistThresholdFields, HistThresh
 							</mat-select>
 						}
 						@case( 'boolean' ){
-							<mat-select [value]="fields()[column.name]" (selectionChange)="set(column.name, $event.value)" [disabled]="disabled()">
+							<mat-select [value]="fields()[column.name]" (selectionChange)="set(column.name, $event.value)" [disabled]="off(column.name)">
 								<mat-option value="">{{ blank() }}</mat-option>
 								<mat-option value="true">true</mat-option>
 								<mat-option value="false">false</mat-option>
@@ -33,7 +33,7 @@ import { deviationFormats, histThresholdColumns, HistThresholdFields, HistThresh
 						}
 						@default{
 							<!--text, not number:  a number input reports a partial entry as blank, which the binding would write back over it-->
-							<input matInput type="text" inputmode="decimal" [value]="fields()[column.name]" (input)="set(column.name, $any($event.target).value)" [placeholder]="blank()" [disabled]="disabled()">
+							<input matInput type="text" inputmode="decimal" [value]="fields()[column.name]" (input)="set(column.name, $any($event.target).value)" [placeholder]="blank()" [disabled]="off(column.name)">
 						}
 					}
 					<mat-hint [matTooltip]="column.hint">{{ hints()[column.name] ?? column.hint }}</mat-hint>
@@ -61,10 +61,12 @@ import { deviationFormats, histThresholdColumns, HistThresholdFields, HistThresh
 export class HistThresholdFieldsEditor{
 	fields = model.required<HistThresholdFields>();
 	disabled = input( false );
+	disabledFields = input<readonly HistThresholdName[]>( [] );
 	hints = input<Partial<Record<HistThresholdName,string>>>( {} );
 	blank = input( 'Inherit' );
 	readonly columns = histThresholdColumns;
 	readonly formats = deviationFormats;
 	problem = computed( ()=>histThresholdProblem( this.fields() ) );
 	set( name:HistThresholdName, text:string ){ this.fields.update( f=>({...f, [name]: text}) ); }
+	off( name:HistThresholdName ):boolean{ return this.disabled() || this.disabledFields().includes( name ); }
 }

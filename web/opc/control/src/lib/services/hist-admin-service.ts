@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Log } from 'jde-framework';
-import { HistPathSegment, histThresholdNames, HistThresholdOverride } from '../model/hist';
+import { HistPathSegment, histThresholdNames, HistThresholdOverride, histThresholdParams } from '../model/hist';
 import { HistConnection, HistGroupMember, histNodeJson, HistRef, HistResolvedMember, HistTemplateGroup, HistTemplateMember, toHistGroupMember, toHistRef, toHistResolved, toHistTemplateMember } from '../model/hist-admin';
 import { ExNodeId } from '../model/ex-node-id';
 import { HistPoster, HistReader } from './history-service';
@@ -27,12 +27,13 @@ export class HistAdminService{
 	}
 	static readonly thresholdColumns = histThresholdNames.join( ' ' );
 	static readonly templateMembersQuery = `histTemplateNodes( histTemplateId: $templateId ){ id histTemplateId path ${HistAdminService.thresholdColumns} }`;
-	//the groups made from a template, live ones, each with the connection and root the template is applied to
+	//the groups made from a template, each with the connection and root the template is applied to.  Deleted ones too:  a member's
+	//purge takes its node out of them as well, so a restore brings them back without it.
 	async templateGroups( reader:HistReader, templateId:number, log:Log=()=>{} ):Promise<HistTemplateGroup[]>{
 		const data = await reader.query<any>( HistAdminService.templateGroupsQuery, {templateId}, log );
-		return ( <any[]>(data?.histGroups ?? []) ).map( g=>({ id: Number( g.id ), name: String( g.name ?? '' ), slug: String( g.slug ?? '' ), connection: toHistRef( g.serverConnection ), root: g.root ?? undefined }) );
+		return ( <any[]>(data?.histGroups ?? []) ).map( g=>({ id: Number( g.id ), name: String( g.name ?? '' ), slug: String( g.slug ?? '' ), connection: toHistRef( g.serverConnection ), root: g.root ?? undefined, deleted: g.deleted!=null }) );
 	}
-	static readonly templateGroupsQuery = 'histGroups( histTemplateId: $templateId, deleted: null ){ id name slug root serverConnection{ id name } }';
+	static readonly templateGroupsQuery = 'histGroups( histTemplateId: $templateId ){ id name slug root deleted serverConnection{ id name } }';
 	async groupMembers( reader:HistReader, groupId:number, log:Log=()=>{} ):Promise<HistGroupMember[]>{
 		const data = await reader.query<any>( HistAdminService.groupMembersQuery, {groupId}, log );
 		return ( <any[]>(data?.histGroupNodes ?? []) ).map( toHistGroupMember );
@@ -47,12 +48,12 @@ export class HistAdminService{
 		return HistAdminService.createdId( await poster.postQL<any>( ql, vars, log ), 'createHistTemplateNode' );
 	}
 	static createTemplateMemberMutation( templateId:number, path:HistPathSegment[], thresholds:HistThresholdOverride ):{ql:string; vars:Record<string,unknown>}{
-		const t = HistAdminService.thresholdParams( thresholds );
+		const t = histThresholdParams( thresholds );
 		return { ql: `mutation createHistTemplateNode( histTemplateId: $templateId, path: $path${t.params} ){ id }`, vars: { templateId, path: JSON.stringify( path ), ...t.vars } };
 	}
 	//a member's own thresholds changed:  each column given, null clearing it so the group nodes inherit their group's again
 	async updateTemplateMember( poster:HistPoster, id:number, changes:HistThresholdOverride, log:Log=()=>{} ):Promise<void>{
-		const t = HistAdminService.thresholdParams( changes );
+		const t = histThresholdParams( changes );
 		await poster.postQL<any>( `mutation updateHistTemplateNode( id: $id${t.params} )`, { id, ...t.vars }, log );
 	}
 	//a member removed:  a purge, since a member has no soft delete - each group node made from it goes first
@@ -66,7 +67,7 @@ export class HistAdminService{
 		return HistAdminService.createdId( await poster.postQL<any>( ql, vars, log ), 'createHistGroupNode' );
 	}
 	static createGroupMemberMutation( groupId:number, node:ExNodeId, thresholds:HistThresholdOverride ):{ql:string; vars:Record<string,unknown>}{
-		const t = HistAdminService.thresholdParams( thresholds );
+		const t = histThresholdParams( thresholds );
 		return { ql: `mutation createHistGroupNode( histGroupId: $groupId, node: $node${t.params} ){ id }`, vars: { groupId, node: histNodeJson( node ), ...t.vars } };
 	}
 	//a node removed from its group:  a purge, which writes its NodeRemoved and frees the (connection, node) index for another group
@@ -81,18 +82,6 @@ export class HistAdminService{
 	}
 	static readonly resolveMutation = 'mutation resolveHistory( group: $group ){ nodes{ templateNode path node status holder{ id name } } }';
 
-	//the threshold columns an edit names, as `, name: $name` parameters and their variables, null for a clear
-	static thresholdParams( changes:HistThresholdOverride ):{params:string; vars:Record<string,unknown>}{
-		let params = '';
-		const vars:Record<string,unknown> = {};
-		for( const name of histThresholdNames ){
-			if( name in changes ){
-				params += `, ${name}: $${name}`;
-				vars[name] = changes[name] ?? null;
-			}
-		}
-		return { params, vars };
-	}
 	//a create's new id, from the row it answers - the stock op's list, or the object the hub answers
 	static createdId( data:any, command:string ):number{
 		const r = data?.[command];

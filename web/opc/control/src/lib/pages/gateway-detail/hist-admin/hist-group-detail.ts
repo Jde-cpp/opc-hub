@@ -9,29 +9,35 @@ import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { confirm, DetailPage, errorText, Properties } from 'jde-framework';
-import { deviationFormats, histPathText, histThresholdColumns, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
+import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
 import { HistConnection, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { OpcError } from '../../../model/opc-error';
 import { Server } from '../../../model/server';
 import { StatusCode } from '../../../model/types';
-import { Gateway, GatewayService } from '../../../services/gateway-service';
+import { Gateway } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { HistoryService } from '../../../services/history-service';
+import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { HistThresholdsDialog } from '../../node-detail/node-history/hist-thresholds-dialog';
+import { histAddEach } from './hist-add-each';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
 import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 
 //A template member's resolution as the page shows it:  resolved to a node, or not and why, from the rows and the last resolve
 export type HistResolutionRow = { templateNode:number; path:string; node?:ExNodeId; status?:StatusCode; holder?:HistRef };
+//The fields the form leaves out:  the source and the thresholds have controls of their own below it, and the guid is read, never
+//typed, so a new row hides it.  Constants, as the binding is read each check and a new array has Properties rebuild its fields.
+const excluded = ['root', ...histThresholdNames];
+const excludedNew = [...excluded, 'guid'];
 
 //A group's page (#337, spec *Templates*):  on Properties its row - the name, slug and description, its source, one connection with a
 //template applied from a root or none for an ad hoc node list, fixed once created, and its thresholds, the defaults for members
 //that set none - saved as a connection's is.  Members lists the group's nodes, each with its template member and the columns
 //of its own, adds nodes picked from the connection's tree and removes one, each its own mutation, and opens the Thresholds dialog
 //for the effective values and overrides (#338).  Resolution, on a group with a template, shows each member's node or why it has
-//none, with Resolve, which retries the unresolved through resolveHistory.  The gateway is the url's, apps/gateways/<instance>/groups/<slug>.
+//none, with Resolve, which retries the unresolved through resolveHistory.  The gateway is the row's, from HistAdminResolver.
 @Component({
 	templateUrl: './hist-group-detail.html',
 	styleUrls: ['./hist-admin-shared.scss', './hist-group-detail.scss'],
@@ -41,15 +47,11 @@ export type HistResolutionRow = { templateNode:number; path:string; node?:ExNode
 	imports: [MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistThresholdFieldsEditor]
 })
 export class HistGroupDetail extends DetailPage<HistGroup>{
-	constructor(){
-		super( 'hist-group-detail' );
-		const segments = this.router.url.split( '?' )[0].split( '/' );
-		this.instance = decodeURIComponent( segments[segments.length-3] ?? '' );
-		this.#gateway = this.gatewayService.gateway( this.instance ).then( g=>this.gateway = g );
-	}
+	constructor(){ super( 'hist-group-detail' ); }
 
 	protected override get ctor(){ return HistGroup; }
 	protected override onRow(){
+		this.gateway = (<GatewayDetailData<HistGroup>>this.pageData).gateway;
 		this.members.set( [] );
 		this.templateMembers.set( [] );
 		this.resolved.set( undefined );
@@ -64,8 +66,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 
 	readonly fieldOrder = ['slug', 'name', 'description', 'guid'];
 	readonly fieldLabels = { guid: 'Guid' };
-	//the source and the thresholds have controls of their own below the form;  the guid is read, never typed, so a new row hides it
-	get excludedFields():string[]{ return ['root', ...histThresholdNames, ...(this.isNew ? ['guid'] : [])]; }
+	get excludedFields():string[]{ return this.isNew ? excludedNew : excluded; }
 	readonly columns = histThresholdColumns;
 	readonly memberColumns = ['node', 'member', ...histThresholdNames, 'actions'];
 	readonly resolutionColumns = ['path', 'node', 'status'];
@@ -84,9 +85,11 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 
 	//the selects' lists, and the server behind the group's connection
 	async #loadLists():Promise<void>{
+		const gateway = this.gateway;
 		try{
-			const gateway = await this.#gateway;
 			const [connections, templates] = await Promise.all( [this.admin.connections( gateway ), this.admin.templates( gateway )] );
+			if( gateway!=this.gateway )//the router reused the page for another gateway's group meanwhile
+				return;
 			this.connections.set( connections );
 			this.templates.set( templates );
 			this.#loadServer();
@@ -99,8 +102,11 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const slug = this.connectionSlug();
 		if( !slug )
 			return;
+		const gateway = this.gateway;
 		try{
-			this.server.set( await this.opcStore.getConnection( await this.#gateway, slug ) );
+			const server = await this.opcStore.getConnection( gateway, slug );
+			if( gateway==this.gateway )
+				this.server.set( server );
 		}
 		catch( e ){//the nodes show by URI then
 			console.warn( `Could not describe '${slug}'.`, e );
@@ -116,11 +122,11 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 			return;
 		this.loading.set( true );
 		this.error.set( undefined );
+		const gateway = this.gateway;
 		try{
-			const gateway = await this.#gateway;
 			const templateId = this.row.histTemplateId;
 			const [members, templateMembers] = await Promise.all( [this.admin.groupMembers( gateway, id ), templateId ? this.admin.templateMembers( gateway, templateId ) : Promise.resolve( [] )] );
-			if( this.row?.id!=id )//the router reused the page for another group meanwhile
+			if( this.row?.id!=id || gateway!=this.gateway )//the router reused the page for another group meanwhile, maybe another gateway's with the same id
 				return;
 			this.members.set( members );
 			this.templateMembers.set( templateMembers );
@@ -147,40 +153,20 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const t = this.templateMembers().find( t=>t.id==m.templateNodeId );
 		return t ? histPathText( t.path ) : `member ${m.templateNodeId}`;
 	}
-	//a node's own column, or blank where it inherits its template member's, then the group's
-	cellText( m:HistGroupMember, name:HistThresholdName ):string{
-		const t = m.thresholds[name];
-		return t==='' ? '' : name=='exceptionDeviationFormat' ? deviationFormats[Number( t )] ?? t : t;
-	}
-	//Nodes picked from the connection's tree, from the group's root, each joining by its URI.  One refused doesn't stop the rest:  a
-	//node another group on the connection holds is refused naming that group (spec *Templates*), and the refusals are said together.
+	readonly cellText = histThresholdFieldText;//blank where a node inherits its template member's, then the group's
+	//Nodes picked from the connection's tree, from the group's root, each joining by its URI.  A node another group on the connection
+	//holds is refused naming that group (spec *Templates*).
 	async addNodes():Promise<void>{
-		const gateway = await this.#gateway;
+		const gateway = this.gateway;
 		const slug = this.connectionSlug();
 		if( !slug )
 			return this.snackbar.error( "The group's connection isn't among the gateway's." );
 		const picks = await HistNodePickerDialog.open( this.dialog, { gateway, title: `Add nodes to ${this.row.name}`, mode: 'nodes', connections: this.connections(), connection: slug, root: this.row.rootNode } );
 		if( !picks?.length )
 			return;
-		this.busy.set( true );
-		const refusals:string[] = [];
-		try{
-			for( const p of picks ){
-				try{
-					await this.admin.createGroupMember( gateway, this.row.id, p.node, {}, msg=>console.log( msg ) );
-				}
-				catch( e ){
-					refusals.push( `${p.name}:  ${errorText( e ) ?? 'Unknown error'}` );
-				}
-			}
-		}
-		finally{
-			this.busy.set( false );
-		}
-		if( refusals.length )
-			this.snackbar.error( `${picks.length-refusals.length} of ${picks.length} added.  ${refusals.slice( 0, HistGroupDetail.refusalsShown ).join( '  ' )}` );
-		else
-			this.snackbar.info( `${picks.length} ${picks.length==1 ? 'node' : 'nodes'} added.` );
+		await histAddEach( picks, { noun: 'node', label: p=>p.name, busy: this.busy, snackbar: this.snackbar,
+			add: p=>this.admin.createGroupMember( gateway, this.row.id, p.node, {}, msg=>console.log( msg ) ) } );
+		this.resolved.set( undefined );//the rows changed under it:  a member's reason may not hold now
 		await this.refresh();
 	}
 	async removeNode( m:HistGroupMember ):Promise<void>{
@@ -190,7 +176,8 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 			return;
 		this.busy.set( true );
 		try{
-			await this.admin.purgeGroupMember( await this.#gateway, m.id, msg=>console.log( msg ) );
+			await this.admin.purgeGroupMember( this.gateway, m.id, msg=>console.log( msg ) );
+			this.resolved.set( undefined );
 			await this.refresh();
 		}
 		catch( e ){
@@ -210,7 +197,8 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		} ).then( ()=>this.refresh() );
 	}
 
-	//Resolution:  the template's members against the group's rows, overlaid with the last resolve's answer
+	//Resolution:  the template's members against the group's rows.  A member with a row is resolved;  the last resolve's answer
+	//only says why one without a row has none, so a success it reported for a row since removed can't outrank the rows.
 	resolution = computed<HistResolutionRow[]>( ()=>{
 		const byMember = new Map<number,HistGroupMember>();
 		for( const m of this.members() ){
@@ -219,9 +207,10 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		}
 		const last = this.resolved();
 		return this.templateMembers().map( t=>{
-			const r = last?.get( t.id );
 			const m = byMember.get( t.id );
-			return { templateNode: t.id, path: histPathText( t.path ), node: r?.node ?? m?.node, status: r ? r.status : m ? 0 : undefined, holder: r?.holder };
+			const answer = m ? undefined : last?.get( t.id );
+			const r = answer?.status!==0 ? answer : undefined;
+			return { templateNode: t.id, path: histPathText( t.path ), node: m?.node ?? r?.node, status: m ? 0 : r?.status, holder: r?.holder };
 		} );
 	} );
 	unresolved = computed( ()=>this.resolution().filter( r=>r.status!==0 ).length );
@@ -233,14 +222,14 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 			return 'Resolved';
 		const why = OpcError.text( r.status );
 		if( r.holder )
-			return r.holder.id==this.row.id ? `${why}:  this group holds the node already, as another member or a node added by hand.` : `${why}:  group '${r.holder.name}' holds the node.`;
+			return r.holder.id==this.row.id ? `${why}:  this group holds the node already, as another member or a node added by hand.` : r.holder.name ? `${why}:  group '${r.holder.name}' holds the node.` : `${why}:  group ${r.holder.id} holds the node.`;//no name:  a group the caller may not read
 		return why;
 	}
 	//resolveHistory:  the members with no row are tried again on the connection, and every member answers
 	async resolve():Promise<void>{
 		this.busy.set( true );
 		try{
-			const answer = await this.admin.resolve( await this.#gateway, this.row.id, m=>console.log( m ) );
+			const answer = await this.admin.resolve( this.gateway, this.row.id, m=>console.log( m ) );
 			this.resolved.set( new Map( answer.map( a=>[a.templateNode, a] ) ) );
 			await this.refresh();
 			await this.gateway.updateErrorCodes?.();//the statuses' names, before the rows render:  a code the page hasn't met shows as hex until its name is fetched
@@ -277,16 +266,12 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const slug = this.connectionSlug();
 		if( !slug )
 			return;
-		const picks = await HistNodePickerDialog.open( this.dialog, { gateway: await this.#gateway, title: 'Choose the root', mode: 'object', connections: this.connections(), connection: slug } );
+		const picks = await HistNodePickerDialog.open( this.dialog, { gateway: this.gateway, title: 'Choose the root', mode: 'object', connections: this.connections(), connection: slug } );
 		if( picks?.length )
 			this.setRoot( histNodeText( picks[0].node ) );
 	}
-	static readonly refusalsShown = 3;
-	gatewayService = inject( GatewayService );
 	admin = inject( HistAdminService );
 	history = inject( HistoryService );
 	opcStore = inject( OpcStore );
 	gateway!:Gateway;
-	instance:string;
-	#gateway:Promise<Gateway>;
 }

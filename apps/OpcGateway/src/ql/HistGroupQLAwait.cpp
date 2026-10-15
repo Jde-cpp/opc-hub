@@ -28,6 +28,12 @@ namespace Jde::Opc::Gateway{
 	}
 
 	[[noreturn]] Ω refuse( string what, SL sl )ε->void{ throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}", move(what) }; }
+	//Whether `by` may read the group, as historyGroups asks before it lists one (HistGroupInfoQLAwait):  a refusal or an answer names
+	//the group that holds a node only to a caller who may read it.  The rest learn its id, which says nothing of the group.
+	Ω mayRead( HistGroupPK group, UserPK by, SL sl )ε->bool{
+		return AppClient()->Acl()->Check( "gateway", "histGroups", std::to_string(group), Access::ERights::Read, by, sl ).has_value();
+	}
+
 	//The right the stock op asks, which this asks first:  a create spells its node through the server, and a purge's live side
 	//runs before the statement.
 	Ω rights( EMutationQL type )ι->Access::ERights{
@@ -191,7 +197,7 @@ namespace Jde::Opc::Gateway{
 						if( !holderQL || holderQL->FindColumn("id") )
 							h["id"] = *r.Holder;
 						if( !holderQL || holderQL->FindColumn("name") )
-							h["name"] = r.HolderName;
+							h["name"] = r.HolderName.size() ? jvalue{ r.HolderName } : jvalue{};
 						holder = move( h );
 					}
 					row["holder"] = move( holder );
@@ -209,13 +215,18 @@ namespace Jde::Opc::Gateway{
 			if( _query.CommandName==ResolveCommand ){
 				let group = _query.AsNumber<HistGroupPK>( "group", _sl );
 				AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(group), Access::ERights::Update, UserPK(), _sl );
-				let resolved = co_await HistHost::Instance().Resolve( group, UserPK(), _sl );
+				auto resolved = co_await HistHost::Instance().Resolve( group, UserPK(), _sl );
+				for( auto& r : resolved ){
+					if( r.Holder && !mayRead(*r.Holder, UserPK(), _sl) )
+						r.HolderName.clear();
+				}
 				y = toJson( _query.ResultRequest, resolved );
 			}
 			else{
 				_query.DBTable->Authorize( rights(_query.Type), UserPK(), _sl );
 				check( _query, _sl );
 				jobject spelled;//the columns spelled here, which the result carries over what the caller sent.
+				optional<HistGroupRow> nodeGroup;//a hist_group_nodes create's group, for a refusal to say which group holds the node.
 				if( _query.Type==EMutationQL::Create && _query.TableName()==Groups ){
 					let connection = _query.AsNumber<ServerCnnctnPK>( "serverConnectionId", _sl );
 					spelled["guid"] = Jde::ToString( boost::uuids::random_generator{}() );
@@ -235,18 +246,7 @@ namespace Jde::Opc::Gateway{
 					spelled["serverConnectionId"] = group.Connection;
 					auto node = ParseHistNode( _query.As<jvalue>("node", _sl), _sl );
 					spelled["node"] = node.namespaceUri.length ? HistNodeText( node ) : co_await SpellAwait{ move(node), group.Connection, _sl };
-					//The unique (connection, node) index, asked first so the refusal names the group that holds the node (spec *Templates*):  the
-					//database's Conflict names the index.  A row a concurrent create makes between here and the insert still gets the database's.
-					let text = Json::AsSV( spelled, "node" );
-					if( auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=string{text}}) ); holders.size() ){
-						let& holder = holders.front();
-						if( holder.Group==group.Id )
-							throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group, '{}' ({}), as {} (row {}).", text, group.Name, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
-						auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );
-						let name = holderGroups.empty() ? string{} : holderGroups.front().Name;
-						let deleted = holderGroups.size() && holderGroups.front().Deleted;
-						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, name, holder.Group, deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
-					}
+					nodeGroup = group;
 				}
 				else if( _query.Type==EMutationQL::Create && _query.TableName()==TemplateNodes )//one spelling, so (hist_template_id, path) is the member's key.
 					spelled["path"] = HistPathText( ParseHistPath(_query.As<jstring>("path", _sl), _sl) );
@@ -255,7 +255,36 @@ namespace Jde::Opc::Gateway{
 
 				if( auto work = before(_query, UserPK(), _sl); work )
 					co_await HistWork{ std::move(*work), _sl };
-				y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
+				std::exception_ptr conflict;//a hist_group_nodes create's 409, for the row that holds the node to explain:  no co_await in a handler.
+				try{
+					y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
+				}
+				catch( const runtime_error& e ){
+					let p = dynamic_cast<const Exception*>( &e );
+					if( !nodeGroup || !p || p->HttpStatus()!=EHttpStatus::Conflict )//HttpStatus, not _statusCode:  a DBException derives its 409.
+						throw;
+					conflict = std::current_exception();
+				}
+				//The unique (connection, node) index, asked once it has refused the row, so the refusal names the group that holds the node
+				//(spec *Templates*) where the database's names the index - a create that succeeds asks nothing, and one that lost a race to a
+				//concurrent create is explained too.  A Conflict no row explains, a foreign key or another constraint, is the database's.
+				if( conflict ){
+					let& group = *nodeGroup;
+					let text = Json::AsSV( spelled, "node" );
+					auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=string{text}}) );
+					if( holders.empty() )
+						std::rethrow_exception( conflict );
+					let& holder = holders.front();
+					let named = mayRead( holder.Group, UserPK(), _sl );
+					if( holder.Group==group.Id )
+						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group{} ({}), as {} (row {}).", text, named ? Ƒ(", '{}'", group.Name) : string{}, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
+					if( !named )
+						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group {} on this connection:  a node belongs to one group per server.", text, holder.Group };
+					auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );
+					let name = holderGroups.empty() ? string{} : holderGroups.front().Name;
+					let deleted = holderGroups.size() && holderGroups.front().Deleted;
+					throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, name, holder.Group, deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
+				}
 				if( auto work = after(_query, y, UserPK(), _sl); work )
 					co_await HistWork{ std::move(*work), _sl };
 				if( auto row = spelled.size() && y.is_array() && y.get_array().size() ? y.get_array()[0].if_object() : nullptr; row ){

@@ -143,7 +143,7 @@ export function toHistResolved( json:any ):HistResolvedMember[]{
 }
 //a connection a group can be made on
 export type HistConnection = { id:number; slug:string; name:string };
-//a group as a template's page lists those made from it
-export type HistTemplateGroup = { id:number; name:string; slug:string; connection?:HistRef; root?:string };
+//a group as a template's page lists those made from it, deleted ones too:  a member's purge reaches them
+export type HistTemplateGroup = { id:number; name:string; slug:string; connection?:HistRef; root?:string; deleted:boolean };
 //what the node picker answers for each node picked:  the node by its URI, its path from the start as browse names by URI, and its name
 export type HistPick = { node:ExNodeId; path:HistPathSegment[]; name:string };

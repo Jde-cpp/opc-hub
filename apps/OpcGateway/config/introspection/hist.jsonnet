@@ -146,7 +146,7 @@ local history = {
 	HistoryGroupRef: {
 		fields: [
 			{ name: "id", type: NonNull(UInt) }, //the hist_groups row.
-			{ name: "name", type: NonNull(String) }
+			{ name: "name", type: String } //null for a group the caller may not read, which historyGroups wouldn't list.
 		]
 	}
 }

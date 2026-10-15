@@ -52,14 +52,13 @@ export class HistNodePickerDialog{
 	server = signal<Server|undefined>( undefined );
 	trail = signal<UaNode[]>( [] );//from the start node to the one shown
 	children = signal<UaNode[]>( [] );
-	picked = signal<UaNode[]>( [] );
+	picks = signal<HistPick[]>( [] );//each spelled when ticked:  its path is the trail it was ticked under, which open and up go on to change
 	loading = signal( false );
 	error = signal<string|undefined>( undefined );
 	readonly displayedColumns = this.data.mode=='object' ? ['name', 'browse', 'node', 'choose'] : ['pick', 'name', 'browse', 'node'];
 	get mode():HistPickerMode{ return this.data.mode; }
 	get current():UaNode|undefined{ const t = this.trail(); return t[t.length-1]; }
 	rootError = computed<string|undefined>( ()=>{ const t = this.rootText().trim(); return t && !parseHistNodeText( t ) ? 'A NodeId:  ns=2;i=5001, or {"nsu":"urn:…","i":5001}.' : undefined; } );
-	picks = computed<HistPick[]>( ()=>this.picked().map( n=>this.pick( n ) ).filter( p=>!!p ).map( p=>p! ) );
 	//the start, by the root's text or as the Objects folder
 	startName():string{ const t = this.rootText().trim(); return t ? t : 'Objects'; }
 	currentName():string{ const c = this.current; return !c ? '' : this.trail().length>1 ? c.name ?? this.browseText( c ) : this.startName(); }
@@ -67,7 +66,7 @@ export class HistNodePickerDialog{
 	//the connection's server for its namespaces, then the start node's children.  Again on another connection or root.
 	async start():Promise<void>{
 		const slug = this.connection();
-		this.picked.set( [] );
+		this.picks.set( [] );
 		this.children.set( [] );
 		this.trail.set( [] );
 		this.error.set( undefined );
@@ -129,8 +128,14 @@ export class HistNodePickerDialog{
 		await this.#browse( t[index] );
 	}
 	selectable( node:UaNode ):boolean{ return node.isVariable && this.mode!='object'; }
-	isPicked( node:UaNode ):boolean{ return this.picked().some( n=>n.key==node.key ); }
-	toggle( node:UaNode ):void{ this.picked.update( p=>p.some( n=>n.key==node.key ) ? p.filter( n=>n.key!=node.key ) : [...p, node] ); }
+	isPicked( node:UaNode ):boolean{ const p = this.pick( node ); return !!p && this.picks().some( x=>this.#same( x, p ) ); }
+	toggle( node:UaNode ):void{
+		const p = this.pick( node );
+		if( p )
+			this.picks.update( picks=>picks.some( x=>this.#same( x, p ) ) ? picks.filter( x=>!this.#same( x, p ) ) : [...picks, p] );
+	}
+	//a template member is its path, so the same node under another folder is another pick;  a group's node is the node, wherever it shows
+	#same( a:HistPick, b:HistPick ):boolean{ return this.mode=='paths' ? JSON.stringify( a.path )==JSON.stringify( b.path ) : histNodeText( a.node )==histNodeText( b.node ); }
 	//the node's path from the start:  the trail past it, then the node - or the trail alone for the node shown, which ends it - each a
 	//browse name by its namespace URI;  none where the server lists no URI for a namespace
 	path( node:UaNode ):HistPathSegment[]|undefined{

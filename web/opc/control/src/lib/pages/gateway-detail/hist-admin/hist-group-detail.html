@@ -70,7 +70,7 @@
 						@for( column of columns; track column.name ){
 							<ng-container [matColumnDef]="column.name">
 								<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
-								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m, column.name)">{{ cellText(m, column.name) || 'inherits' }}</span></mat-cell>
+								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m.thresholds, column.name)">{{ cellText(m.thresholds, column.name) || 'inherits' }}</span></mat-cell>
 							</ng-container>
 						}
 						<ng-container matColumnDef="actions">

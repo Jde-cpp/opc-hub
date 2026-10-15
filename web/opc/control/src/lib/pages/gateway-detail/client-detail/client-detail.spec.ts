@@ -12,7 +12,6 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { of } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { SnackbarService } from 'jde-framework';
-import { GatewayService } from '../../../services/gateway-service';
 import { MatDialog } from '@angular/material/dialog';
 import { OpcStore } from '../../../services/opc-store';
 import { ClientDetail } from './client-detail';
@@ -23,10 +22,9 @@ import { ClientDetail } from './client-detail';
 const create = ( row:any )=>{
 	TestBed.configureTestingModule({ providers: [
 		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}}})} },
-		{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/$new"} },
+		{ provide: Router, useValue: {navigate: ()=>{}} },
 		{ provide: ComponentPageTitle, useValue: {} },
-		{ provide: SnackbarService, useValue: {exception: ()=>{}} },
-		{ provide: GatewayService, useValue: {gateway: async ()=>({})} }
+		{ provide: SnackbarService, useValue: {exception: ()=>{}} }
 	]});
 	const page = TestBed.createComponent( ClientDetail ).componentInstance;
 	page.ngOnInit();//the route.data subscription lives in ngOnInit since C2 - createComponent alone does not call it
@@ -50,15 +48,14 @@ describe( 'ClientDetail tab index', ()=>{
 	} );
 } );
 //reviews/install-issues.md #53:  a deleted connection keeps its slug, and #51's refusal says to restore or purge it - but
-//the page had no Purge.  group-detail's button and DetailPage's confirmation, on the per-gateway ql ngOnInit resolves.
+//the page had no Purge.  group-detail's button and DetailPage's confirmation, on the per-gateway ql the row comes with.
 let confirmed = true;//what the stubbed confirmation dialog answers
 const createWithQl = async ( row:any, mutations:string[] )=>{
 	TestBed.configureTestingModule({ providers: [
-		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}}})} },
-		{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/eng-test"} },
+		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}, gateway: {slug: "g", mutate: async ( ql:string )=>{ mutations.push( ql ); }}}})} },
+		{ provide: Router, useValue: {navigate: ()=>{}} },
 		{ provide: ComponentPageTitle, useValue: {} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}} },
-		{ provide: GatewayService, useValue: {gateway: async ()=>({slug: "g", mutate: async ( ql:string )=>{ mutations.push( ql ); }})} },
 		{ provide: OpcStore, useValue: {forget: ()=>{}} },
 		{ provide: MatDialog, useValue: {open: ()=>({afterClosed: ()=>({subscribe: ( f:( y:boolean )=>void )=>f( confirmed )})})} }
 	]});
