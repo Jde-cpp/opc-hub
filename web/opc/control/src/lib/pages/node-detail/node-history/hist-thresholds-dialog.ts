@@ -1,17 +1,15 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
-import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorText } from 'jde-framework';
-import { deviationFormats, histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdColumns, HistThresholdName, histThresholdNames, HistThresholdOverride, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
+import { histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdArgs, histThresholdColumns, HistThresholdFields, HistThresholdName, histThresholdNames, HistThresholdOverride, histThresholdProblem, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { ExNodeId } from '../../../model/ex-node-id';
+import { HistThresholdFieldsEditor } from '../../gateway-detail/hist-admin/hist-threshold-fields';
 
 export type HistThresholdsDialogData = {
 	group:number;
@@ -20,8 +18,7 @@ export type HistThresholdsDialogData = {
 	load:()=>Promise<HistThresholds>;//historyThresholds, asked on opening and again after each override
 	save:( id:number, changes:HistThresholdOverride )=>Promise<void>;//updateHistGroupNode;  a throw is the gateway's refusal
 };
-//The edit form's fields, by column:  what the member's own row says, as text, and blank where it inherits.
-export type HistThresholdFields = Record<HistThresholdName,string>;
+//The edit form's fields, by column (model/hist.ts HistThresholdFields):  what the member's own row says, as text, and blank where it inherits.
 export function ownFields( m:HistMemberThresholds ):HistThresholdFields{
 	const y = <HistThresholdFields>{};
 	for( const name of histThresholdNames ){
@@ -30,41 +27,9 @@ export function ownFields( m:HistMemberThresholds ):HistThresholdFields{
 	}
 	return y;
 }
-//a field as a value:  a number, a format's value, a boolean, null for blank, undefined for text that is none of them
-function fieldValue( name:HistThresholdName, text:string ):number|boolean|null|undefined{
-	const t = text.trim();
-	if( !t )
-		return null;
-	if( name=='stepped' )
-		return t=='true' ? true : t=='false' ? false : undefined;
-	const n = Number( t );
-	if( !Number.isFinite( n ) || n<0 )
-		return undefined;
-	return name=='exceptionDeviationFormat' ? ( Number.isInteger( n ) && n<deviationFormats.length ? n : undefined ) : n;
-}
 //What an edit changes:  each column whose field differs from what the member's own row says - a value, or null for one cleared
 //back to inheriting.  A column left as it was isn't sent, so the row keeps inheriting where it did.
-export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFields ):HistThresholdOverride{
-	const own = ownFields( m );
-	const y:HistThresholdOverride = {};
-	for( const name of histThresholdNames ){
-		const value = fieldValue( name, fields[name] );
-		if( value===undefined || fields[name].trim()==own[name] )
-			continue;
-		if( value===null && own[name]=='' )
-			continue;
-		y[name] = value;
-	}
-	return y;
-}
-//why the fields can't be sent, or nothing
-export function thresholdProblem( fields:HistThresholdFields ):string|undefined{
-	for( const column of histThresholdColumns ){
-		if( fieldValue( column.name, fields[column.name] )===undefined )
-			return column.kind=='number' ? `${column.label} is a number, 0 or more.` : column.kind=='format' ? "The format is one of the four." : "Stepped is true or false.";
-	}
-	return undefined;
-}
+export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFields ):HistThresholdOverride{ return histThresholdArgs( fields, ownFields( m ) ); }
 
 //A group's member list with its thresholds (#338):  each member's effective Deviation, Format, Min interval, Max interval and
 //Stepped, marked with where each comes from - the member's own row, its template member, the group, or the default - and, for
@@ -74,14 +39,13 @@ export function thresholdProblem( fields:HistThresholdFields ):string|undefined{
 @Component({
 	templateUrl: './hist-thresholds-dialog.html',
 	styleUrls: ['./hist-thresholds-dialog.scss'],
-	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTooltipModule]
+	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatIconModule, MatProgressBarModule, MatTableModule, MatTooltipModule, HistThresholdFieldsEditor]
 })
 export class HistThresholdsDialog{
 	constructor(){ this.reload(); }
 	dialogRef = inject<MatDialogRef<HistThresholdsDialog,void>>( MatDialogRef );
 	data = inject<HistThresholdsDialogData>( MAT_DIALOG_DATA );
 	readonly columns = histThresholdColumns;
-	readonly formats = deviationFormats;
 	rows = signal<HistMemberThresholds[]>( [] );
 	canUpdate = signal( false );
 	loading = signal( false );
@@ -90,7 +54,7 @@ export class HistThresholdsDialog{
 	fields = signal<HistThresholdFields>( <HistThresholdFields>{} );
 	busy = signal( false );
 	displayedColumns = computed<string[]>( ()=>['member', ...histThresholdNames, ...(this.canUpdate() ? ['actions'] : [])] );
-	problem = computed<string|undefined>( ()=>this.editing() ? thresholdProblem( this.fields() ) : undefined );
+	problem = computed<string|undefined>( ()=>this.editing() ? histThresholdProblem( this.fields() ) : undefined );
 	changes = computed<HistThresholdOverride>( ()=>{ const m = this.editing(); return m && !this.problem() ? thresholdChanges( m, this.fields() ) : {}; } );
 	changed = computed( ()=>Object.keys( this.changes() ).length>0 );
 
@@ -152,7 +116,12 @@ export class HistThresholdsDialog{
 		this.error.set( undefined );
 	}
 	cancel(){ this.editing.set( undefined ); }
-	setField( name:HistThresholdName, text:string ){ this.fields.update( f=>({...f, [name]: text}) ); }
+	//the member's fields that are off, and what each blank one inherits, for the editor
+	mootFields = computed<HistThresholdName[]>( ()=>{ const m = this.editing(); return m ? histThresholdNames.filter( n=>this.moot( m, n ) ) : []; } );
+	hints = computed<Partial<Record<HistThresholdName,string>>>( ()=>{
+		const m = this.editing();
+		return Object.fromEntries( histThresholdNames.map( n=>[n, m && this.moot( m, n ) ? 'Not applied to an enumeration.' : this.inheritsHint( n )] ) );
+	} );
 	//what the field inherits while blank:  the effective value and its source, unless the row's own is what is shown
 	inheritsHint( name:HistThresholdName ):string{
 		const m = this.editing();

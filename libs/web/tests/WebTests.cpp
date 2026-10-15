@@ -684,7 +684,7 @@ namespace Jde::Web{
 	//access-review3 #17:  a denial is Forbidden, not Unauthorized - the client's 401 policy is "the credential is stale" and logged
 	//a merely-unprivileged user out.  Only the unknown-executer case still says 401, and says so explicitly.
 	TEST( AppExceptionProtoTests, StatusSurvivesRoundTrip ){
-		Access::AccessException source{ SRCE_CUR, UserPK{1}, "denied" };
+		Access::AccessException source{ SRCE_CUR, UserPK{1}, ELogLevel::Trace, "denied" };
 		source.SetLevel( ELogLevel::NoLog );
 		EXPECT_EQ( EHttpStatus::Forbidden, source.HttpStatus() );
 		let t = App::FromServer::Exception( source, RequestId{1} );
@@ -694,8 +694,7 @@ namespace Jde::Web{
 		EXPECT_EQ( nullptr, dynamic_cast<Access::AccessException*>(e.get()) );
 		EXPECT_EQ( 403u, e->HttpStatus() );
 
-		Access::AccessException unknown{ SRCE_CUR, UserPK{0}, EHttpStatus::Unauthorized, "User not found." };
-		unknown.SetLevel( ELogLevel::NoLog );
+		Access::AccessException unknown{ SRCE_CUR, UserPK{0}, ELogLevel::NoLog, EHttpStatus::Unauthorized, "User not found." };
 		EXPECT_EQ( 401u, App::FromServer::Exception( unknown, RequestId{2} ).messages(0).exception().status_code() );
 	}
 

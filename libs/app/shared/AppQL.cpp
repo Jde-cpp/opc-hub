@@ -42,7 +42,7 @@ namespace Jde::App{
 		return mu<LogSettingsMAwait>( move(m), move(app), creds.UserPK(), sl );
 	}
 	α RefusedMutation::await_resume()ε->jvalue{
-		throw Access::AccessException{ Source(), _executer, _status, "{}", _reason };
+		throw Access::AccessException{ Source(), _executer, ELogLevel::Debug, _status, "{}", _reason };
 	}
 	α AppQL::StatusQuery( QL::TableQL&&, QL::Creds executer, SL sl )ε->jobject{
 		RequireAuthenticated( executer, "status", sl );

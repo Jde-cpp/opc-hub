@@ -178,10 +178,10 @@ namespace Jde::Opc::Gateway::Tests{
 		WriteRpm( base+100, t0+20ms );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 2) );
 
-		Enforce( false );
+		EnforceHistGroups( false );
 		EXPECT_THROW( Update("createHistory", group, {{RpmManual, t0+10ms, 1}}), GatewayErrorResponse ) << "an edit nothing enforces";
-		absl::Cleanup open = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };//before:  an Enforce that throws can leave it restored.
-		Enforce( true );
+		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };//before:  an EnforceHistGroups that throws can leave it restored.
+		EnforceHistGroups( true );
 
 		let inserted = Update( "createHistory", group, {{RpmManual, t0+10ms, 1}, {RpmManual, t0, 2}, {Rpm2, t0+10ms, 3}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS, UA_STATUSCODE_BADNODEIDUNKNOWN}) );
@@ -475,7 +475,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 
 		let capabilities = [&]( uint32 g ){ return query( "historyCapabilities( group:$group ){ aggregates update delete }", {{"group", g}} ).as_object(); };
-		Enforce( false );
+		EnforceHistGroups( false );
 		auto open = capabilities( group );
 		jarray names;
 		for( let& aggregate : Opc::Hist::Aggregates )
@@ -485,8 +485,8 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( Json::AsBool(open, "delete") );
 		let denials = Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( Ƒ("histGroups[{}]", group) ) && m.contains( "nothing enforces it" ); } );
 		EXPECT_TRUE( denials.empty() ) << "a capability the caller lacks is an answer, not a denial to log:  " << denials.front().Message();
-		absl::Cleanup reopen = []{ try{ Enforce(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		Enforce( true );
+		absl::Cleanup reopen = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		EnforceHistGroups( true );
 		auto granted = capabilities( group );
 		EXPECT_TRUE( Json::AsBool(granted, "update") );
 		EXPECT_TRUE( Json::AsBool(granted, "delete") );
@@ -509,41 +509,28 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_NE( string{e.what()}.find("isn't one this gateway historizes"), string::npos ) << e.what();
 		}
 
-		//The rule historyGroups adds, and the two edit rights told apart (historian-group-history-web #10):  a group's own resource,
-		//its id the criteria, stands in for the slug's root.  The twin's grants the caller no Read, so it isn't listed;  the group's
-		//grants Read and Update, not Delete.  Each grants Administer too, which restoring - enforcing - a row takes.  Through a
-		//role, as Enforce grants:  a direct grant's acl event reaches every app's authorizer, the embedded OpcServer's among them,
-		//which never saw the gateway's row and asserts (the acl subscriptions' schema filter, reviews/soak-findings.md).
+		//The rule historyGroups adds, and the two edit rights told apart (historian-group-history-web #10):  a group's own resource
+		//stands in for the slug's root (ScopeHistGroup).  The twin's grants the caller no Read, so it isn't listed;  the group's grants
+		//Read and Update, not Delete.
 		let acl = AppClient()->Acl();
-		let scope = [&]( uint32 g, Access::ERights allowed ){
-			let app = AppClient();
-			let criteria = std::to_string( g );
-			app->QuerySync<jvalue>( "createResource( schemaName:\"gateway\", name:$name, slug:\"histGroups\", criteria:$criteria, allowed:255 )", {{"name", Ƒ("histGroups[{}]", g)}, {"criteria", criteria}} );
-			let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", Ƒ("GatewayHistGroup{}", g)}, {"name", Ƒ("Gateway history group {}", g)}} );
-			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-			app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria}} )", {{"roleId", roleId}, {"allowed", underlying(allowed | Access::ERights::Administer)}, {"criteria", criteria}} );
-			app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", User().Value}, {"roleId", roleId}} );
-			app->QuerySync<jvalue>( "restoreResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );//a row is created unenforced.
-		};
 		absl::Cleanup unscope = [=]{
 			for( let g : {group, twin} ){
 				try{
-					AppClient()->QuerySync<jvalue>( "deleteResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", std::to_string(g)}} );
+					UnscopeHistGroup( g );
 				}
 				catch( const std::exception& e ){
 					ADD_FAILURE() << "group " << g << "'s resource wasn't deleted:  " << e.what();
 				}
 			}
 		};
-		scope( twin, Access::ERights::None );
-		scope( group, Access::ERights::Read | Access::ERights::Update );
-		let reached = [&]( function<bool()> f, sv what ){//the gateway's authorizer hears of them over its subscription.
+		ScopeHistGroup( twin, Access::ERights::None );
+		ScopeHistGroup( group, Access::ERights::Read | Access::ERights::Update );
+		let reached = [&]( function<bool()> f, sv what ){//the gateway's authorizer hears of it over its subscription.
 			for( uint i=0; !f(); ++i ){
 				THROW_IF( i==200, "{} didn't reach the gateway's authorizer.", what );
 				std::this_thread::sleep_for( 50ms );
 			}
 		};
-		ASSERT_NO_THROW( reached([&]{ return acl->FindActiveResourcePK("gateway", "histGroups", std::to_string(twin)) && acl->FindActiveResourcePK("gateway", "histGroups", std::to_string(group)); }, "The groups' resources") );
 		ASSERT_NO_THROW( reached([&]{
 			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), Access::ERights::Update, User(), SRCE_CUR );
 			if( !allowed )

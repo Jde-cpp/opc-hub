@@ -1,0 +1,93 @@
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
+	[selectedIndex]="tabIndex()"
+	(selectedIndexChange)="onTabIndexChanged($event)">
+	<mat-tab>
+		<ng-template mat-tab-label>Properties</ng-template>
+		<ng-template matTabContent>
+			<properties [ctor]=ctor [(record)]=properties type="histTemplate" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']"></properties>
+		</ng-template>
+	</mat-tab>
+	@if( !isNew ){<!--a member is a row of its own, under the template's id:  nothing to add until the template is saved-->
+		<mat-tab>
+			<ng-template mat-tab-label>Members</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">Each member is a browse path from a group's root, with the thresholds it sets;  a column left blank leaves a group's node to inherit the group's.  A member added resolves in every group made from the template, and one removed takes its node out of each.</p>
+					<div class="tab-toolbar">
+						<button matButton="tonal" type="button" (click)="add()" [disabled]="busy()"><mat-icon>add</mat-icon>Add members</button>
+						<button matIconButton type="button" (click)="refresh()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+						<span class="count">{{ members().length }} {{ members().length==1 ? 'member' : 'members' }}</span>
+					</div>
+					<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
+					<mat-table [dataSource]="members()" class="mat-elevation-z2">
+						<ng-container matColumnDef="path">
+							<mat-header-cell *matHeaderCellDef>Path</mat-header-cell>
+							<mat-cell *matCellDef="let m" [matTooltip]="'Row ' + m.id"><span>{{ pathText(m) }}</span></mat-cell>
+						</ng-container>
+						@for( column of columns; track column.name ){
+							<ng-container [matColumnDef]="column.name">
+								<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
+								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m.thresholds, column.name)">{{ cellText(m.thresholds, column.name) || "group's" }}</span></mat-cell>
+							</ng-container>
+						}
+						<ng-container matColumnDef="actions">
+							<mat-header-cell *matHeaderCellDef></mat-header-cell>
+							<mat-cell *matCellDef="let m">
+								<button matIconButton type="button" (click)="edit(m)" [disabled]="busy()" aria-label="Edit this member's thresholds" matTooltip="Edit thresholds"><mat-icon>edit</mat-icon></button>
+								<button matIconButton type="button" (click)="remove(m)" [disabled]="busy()" aria-label="Remove this member" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
+							</mat-cell>
+						</ng-container>
+						<mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
+						<mat-row *matRowDef="let row; columns: displayedColumns" [class.editing]="editing()?.id==row.id"></mat-row>
+					</mat-table>
+					@if( !loading() && !members().length && !error() ){
+						<p class="empty" role="status">The template has no members.  Use Add members to pick nodes under a root on a connection.</p>
+					}
+					@if( editing(); as m ){
+						<section class="editor" aria-label="Edit thresholds">
+							<h3>{{ pathText(m) }}</h3>
+							<hist-threshold-fields [(fields)]="fields" blank="Group's" [hints]=memberHints></hist-threshold-fields>
+							<div class="editor-actions">
+								<button matButton="outlined" type="button" (click)="cancelEdit()" [disabled]="busy()">Cancel</button>
+								<button matButton="tonal" type="button" (click)="saveEdit()" [disabled]="busy() || !changed()">Save</button>
+							</div>
+						</section>
+					}
+					@if( error(); as e ){
+						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+					}
+				</div>
+			</ng-template>
+		</mat-tab>
+		<mat-tab>
+			<ng-template mat-tab-label>Groups</ng-template>
+			<ng-template matTabContent>
+				<div class="tab-body">
+					<p class="hint">The groups made from this template, each applying its paths from a root on a connection, the deleted ones too.  A group is made on the gateway's Groups tab.</p>
+					@if( groups().length ){
+						<ul class="group-list">
+							@for( g of groups(); track g.id ){
+								<li><a [routerLink]="groupLink(g)">{{ g.name }}</a><span class="where">{{ g.connection?.name ?? '' }}{{ g.root ? ', from ' + g.root : ', from the Objects folder' }}{{ g.deleted ? ', deleted' : '' }}</span></li>
+							}
+						</ul>
+					}
+					@else if( !loading() ){
+						<p class="empty" role="status">No group uses this template yet.</p>
+					}
+				</div>
+			</ng-template>
+		</mat-tab>
+	}
+</mat-tab-group>
+<div class="jde-detail-actions"><!--as client-detail's:  only Save filled, the trash can at the far side-->
+	<button tabindex="100" matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
+	<button tabindex="101" matButton="outlined" (click)="onCancelClick()">Cancel</button>
+	@if( isDeleted ){
+		<button tabindex="103" matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
+			<mat-icon>delete_forever</mat-icon>Purge
+		</button>
+	}
+	<button tabindex="102" matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
+		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
+	</button>
+</div>

@@ -41,39 +41,8 @@
 		<!--the override:  a field typed overrides the column, a field blank inherits-->
 		<section class="editor" aria-label="Override">
 			<h3>{{ memberName(m) }}</h3>
-			<div class="fields">
-				@for( column of columns; track column.name ){
-					<mat-form-field>
-						<mat-label>{{ column.label }}@if( column.unit ){ ({{ column.unit }})}</mat-label>
-						@switch( column.kind ){
-							@case( 'format' ){
-								<mat-select [value]="fields()[column.name]" (selectionChange)="setField(column.name, $event.value)" [disabled]="busy() || moot(m, column.name)">
-									<mat-option value="">Inherit</mat-option>
-									@for( format of formats; track $index ){
-										<mat-option [value]="$index + ''">{{ format }}</mat-option>
-									}
-								</mat-select>
-							}
-							@case( 'boolean' ){
-								<mat-select [value]="fields()[column.name]" (selectionChange)="setField(column.name, $event.value)" [disabled]="busy()">
-									<mat-option value="">Inherit</mat-option>
-									<mat-option value="true">true</mat-option>
-									<mat-option value="false">false</mat-option>
-								</mat-select>
-							}
-							@default{
-								<!--text, not number:  a number input reports a partial entry as blank, which the binding would write back over it-->
-								<input matInput type="text" inputmode="decimal" [value]="fields()[column.name]" (input)="setField(column.name, $any($event.target).value)" placeholder="Inherit" [disabled]="busy() || moot(m, column.name)">
-							}
-						}
-						<mat-hint>{{ moot(m, column.name) ? "Not applied to an enumeration." : inheritsHint(column.name) }}</mat-hint>
-					</mat-form-field>
-				}
-			</div>
+			<hist-threshold-fields [(fields)]="fields" [disabled]="busy()" [disabledFields]="mootFields()" [hints]="hints()"></hist-threshold-fields>
 			<div class="editor-actions">
-				@if( problem(); as p ){
-					<span class="problem">{{ p }}</span>
-				}
 				<button matButton="outlined" type="button" (click)="cancel()" [disabled]="busy()">Cancel</button>
 				<button matButton="tonal" type="button" (click)="apply()" [disabled]="busy() || !changed()">Save</button>
 			</div>

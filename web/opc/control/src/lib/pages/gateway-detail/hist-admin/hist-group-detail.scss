@@ -1,0 +1,26 @@
+.resolution-status{
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	mat-icon{
+		flex: 0 0 auto;
+		font-size: 18px;
+		width: 18px;
+		height: 18px;
+	}
+	.ok{
+		color: var(--mat-sys-primary);
+	}
+	.bad{
+		color: var(--mat-sys-error);
+	}
+	.pending{
+		color: var(--mat-sys-on-surface-variant);
+	}
+	span{
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+}

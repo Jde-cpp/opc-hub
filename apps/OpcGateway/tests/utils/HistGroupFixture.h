@@ -240,32 +240,6 @@ namespace Jde::Opc::Gateway::Tests{
 				j.push_back( UADateTime{t}.ToJson() );
 			return Edit( "purgeHistory( group: $group, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }", {{"group", group}, {"nodes", Ex(node)}, {"times", move(j)}} );
 		}
-		//The hist_groups resource enforced, with the gateway's user granted everything on it through a role of its own, or
-		//soft-deleted again, as it ships:  a group's history edits need a grant on an enforced resource (spec *Authorization*).
-		Ω Enforce( bool on )ε->void{
-			auto app = AppClient();
-			let slug = jobject{ {"slug", "histGroups"}, {"schema", "gateway"} };
-			let acl = app->Acl();
-			let reached = [&]( bool active, sv change ){
-				for( uint i=0; acl->FindActiveResourcePK("gateway", "histGroups", "").has_value()!=active; ++i ){
-					THROW_IF( i==200, "The histGroups resource's {} didn't reach the gateway's authorizer.", change );
-					std::this_thread::sleep_for( 50ms );
-				}
-			};
-			app->QuerySync<jvalue>( "deleteResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
-			reached( false, "delete" );
-			if( !on )
-				return;
-			constexpr sv roleSlug{ "GatewayHistGroupEditor" };
-			if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
-				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway group history editor"}} );
-				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}} );
-				app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", User().Value}, {"roleId", roleId}} );
-			}
-			app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
-			reached( true, "restore" );
-		}
 		inline static ServerCnnctnPK _connection{};
 		inline static NsIndex _ns{};
 	};
