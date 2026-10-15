@@ -80,14 +80,14 @@
 	}
 </mat-tab-group>
 <div class="jde-detail-actions"><!--as client-detail's:  only Save filled, the trash can at the far side-->
-	<button tabindex="100" matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-	<button tabindex="101" matButton="outlined" (click)="onCancelClick()">Cancel</button>
+	<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
+	<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
 	@if( isDeleted ){
-		<button tabindex="103" matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
+		<button matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
 			<mat-icon>delete_forever</mat-icon>Purge
 		</button>
 	}
-	<button tabindex="102" matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
+	<button matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
 		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
 	</button>
 </div>

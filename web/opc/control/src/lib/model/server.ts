@@ -21,6 +21,9 @@ export class ServerDesc{
 	get accessResource():string{ return `${this.applicationName.substring(this.applicationName.indexOf('[')+1,this.applicationName.indexOf(']'))}`; }
 }
 export type ServerDescProps = Pick<ServerDesc, PropertyNames<ServerDesc>>;
+//what the resolver's describe (OpcStore.getConnection) and Test Connection both select, so a ServerDesc field reaches both
+export const serverDescColumns = "applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls";
+export const namespaceColumns = "index uri";
 
 /** An entry of the server's namespace array;  `index` is the `ns` of every NodeId in it. */
 export type Namespace = {
@@ -50,3 +53,6 @@ export type ServerProps = {
 	mode: string;
 	namespaces: Namespace[];
 };
+/** What the gateway's `testConnection` answers for settings that are not saved:  the description, the policy and mode the
+ * session was opened with, and the namespaces - a Server without its connection row (client-detail's Test Connection). */
+export type TestConnectionResult = ServerDescProps & { securityPolicyUri: string; securityMode: string; namespaces: Namespace[] };

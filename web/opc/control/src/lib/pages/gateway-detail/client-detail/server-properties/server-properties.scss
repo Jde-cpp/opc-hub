@@ -55,24 +55,32 @@ table.list td{
 	font-style: italic;
 }
 
-/* the not-connected state:  icon beside a title and the reason, on the same inset as the rows it replaces */
-.not-connected{
+/* the states - connecting, not tested, not connected, and the stale notice above a result:  icon beside a title and the
+   detail, on the same inset as the rows they replace.  Only Not connected is an error. */
+.state{
 	display: flex;
 	gap: 1rem;
 	align-items: flex-start;
 	padding: .5rem 1rem;
 }
-.not-connected mat-icon{
+.state mat-icon{
 	flex: none;
+	color: var(--mat-sys-on-surface-variant);
+}
+.not-connected mat-icon{
 	color: var(--mat-sys-error);
 }
-.not-connected p{
+/* the connecting state swaps the icon for a spinner of the same footprint, so the title and the url sit where the result's will */
+.state mat-progress-spinner{
+	flex: none;
+}
+.state p{
 	margin: 0;
 }
-.not-connected .title{
+.state .title{
 	font: var(--mat-sys-title-small);
 }
-.not-connected .detail{
+.state .detail{
 	margin-block-start: .25rem;
 	color: var(--mat-sys-on-surface-variant);
 	overflow-wrap: anywhere;

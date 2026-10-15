@@ -17,7 +17,7 @@ namespace Jde::Opc::Gateway{
 	//The server's NamespaceArray, ns=0;i=2255, read as a value rather than taken from open62541's client copy
 	//(UA_Client_getNamespaceUri), which a read it fires after the session activates fills:  a lookup right behind the connect can
 	//find that empty.  The two index alike - the client appends the server's uris in order, and the gateway predefines none of
-	//its own.  The namespaces query (GatewayQLAwait::Namespaces) and the historian's node spelling both read it here.
+	//its own.  The namespaces query, testConnection and the historian's node spelling all read it here.
 	struct NamespacesAwait final : TAwaitEx<Namespaces,TAwait<flat_map<NodeId,Value>>::Task>{
 		using base = TAwaitEx<Namespaces,TAwait<flat_map<NodeId,Value>>::Task>;
 		NamespacesAwait( sp<UAClient> client, SRCE )ι:base{ sl }, _client{ move(client) }{}

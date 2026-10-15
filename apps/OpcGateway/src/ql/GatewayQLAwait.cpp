@@ -99,10 +99,10 @@ namespace Jde::Opc::Gateway{
 					y = co_await HistComputedQLAwait{ move(_query), move(_client), _sl };
 			}
 			else if( _query.JsonName=="serverDescription" )//connection attributes are sync UA services - run them on the client's strand.
-				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return ServerDescription( move(_query), _client ); }, _sl };
+				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return _query.TransformResult( ServerDescription(_query, _client) ); }, _sl };
 			else if( _query.JsonName=="namespaces" ){
 				let namespaces = co_await Any( NamespacesAwait{_client, _sl} );
-				y = Namespaces( move(_query), namespaces );
+				y = _query.TransformResult( NamespaceRows(_query, namespaces) );
 			}
 			else if( _query.JsonName=="__type" ){//an enumeration DataType's definition, read from the server on first use and cached with the client.
 				NodeId id{ _query.Args };//ns/i|s|g|b;  `opc` is ignored.
@@ -110,9 +110,9 @@ namespace Jde::Opc::Gateway{
 				y = type->ToJson( _query );
 			}
 			else if( _query.JsonName=="securityPolicyUri" )
-				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return SecurityPolicyUri( move(_query), _client ); }, _sl };
+				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return _query.TransformResult( SecurityPolicyUri(_client) ); }, _sl };
 			else if( _query.JsonName=="securityMode" )
-				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return SecurityMode( move(_query), _client ); }, _sl };
+				y = co_await UAStrandAwait<jvalue>{ _client, [this]()->jvalue { return _query.TransformResult( SecurityMode(_client) ); }, _sl };
 			else
 				throw Exception{ _sl, {}, "Unknown query type: {}", _query.JsonName };
 			Resume( move(y) );
@@ -146,7 +146,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α GatewayQLAwait::ServerDescription( QL::TableQL&& q, sp<UAClient> client )ε->jobject{
+	α GatewayQLAwait::ServerDescription( const QL::TableQL& q, const sp<UAClient>& client )ε->jobject{
 		UA_Variant uaAttrib = connectionAttribute( client, "serverDescription" );
 		let desc = ( UA_ApplicationDescription* )uaAttrib.data;
 		jobject j;
@@ -188,10 +188,9 @@ namespace Jde::Opc::Gateway{
 			j["discoveryUrls"] = discoveryUrls;
 		}
 		UA_Variant_clear( &uaAttrib );
-		return q.TransformResult( move(j) );
+		return j;
 	}
-	//namespaces( opc ){ index uri }:  the server's NamespaceArray as NamespacesAwait reads it, index by index.
-	α GatewayQLAwait::Namespaces( QL::TableQL&& q, const Gateway::Namespaces& namespaces )Ι->jvalue{
+	α GatewayQLAwait::NamespaceRows( const QL::TableQL& q, const Gateway::Namespaces& namespaces )ι->jarray{
 		let wantIndex = q.FindColumn( "index" );
 		let wantUri = q.FindColumn( "uri" );
 		jarray y; y.reserve( namespaces.Uris.size() );
@@ -203,15 +202,15 @@ namespace Jde::Opc::Gateway{
 				o["uri"] = namespaces.Uris[i];
 			y.emplace_back( move(o) );
 		}
-		return q.TransformResult( move(y) );
+		return y;
 	}
-	α GatewayQLAwait::SecurityPolicyUri( QL::TableQL&& q, sp<UAClient> client )ε->jvalue{
+	α GatewayQLAwait::SecurityPolicyUri( const sp<UAClient>& client )ε->string{
 		UA_Variant uaAttrib = connectionAttribute( client, "securityPolicyUri" );
 		string uri = ToString( *(UA_String*)uaAttrib.data );
 		UA_Variant_clear( &uaAttrib );
-		return q.TransformResult( move(uri) );
+		return uri;
 	}
-	α GatewayQLAwait::SecurityMode( QL::TableQL&& q, sp<UAClient> client )ε->jvalue{
+	α GatewayQLAwait::SecurityMode( const sp<UAClient>& client )ε->string{
 		UA_Variant uaAttrib = connectionAttribute( client, "securityMode" );
 		UA_MessageSecurityMode emode = *( UA_MessageSecurityMode* )uaAttrib.data;
 		sv mode;
@@ -233,6 +232,6 @@ namespace Jde::Opc::Gateway{
 			break;
 		}
 		UA_Variant_clear( &uaAttrib );
-		return q.TransformResult( string{mode} );
+		return string{ mode };
 	}
 }

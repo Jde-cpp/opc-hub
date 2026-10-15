@@ -22,6 +22,7 @@
 #include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
 #include "ql/OpcQLHook.h"
+#include "ql/TestConnectionQLAwait.h"
 
 #define let const auto
 namespace Jde::Opc{
@@ -41,10 +42,10 @@ namespace Jde::Opc{
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
-		flat_set<string> histEdits{ string{HistGroupMAwait::ResolveCommand} };//resolveHistory:  resolve is no verb either.
+		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command} };//resolveHistory, testConnection:  resolve and test are no verbs either.
 		for( let command : HistQL::EditCommands )
-			histEdits.emplace( command );
-		QL::SetSystemMutations( move(histEdits) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
+			mutations.emplace( command );
+		QL::SetSystemMutations( move(mutations) );//createHistory…, taken whole:  upsert is no verb, and their results keep their shape.
 		SetSchema( schema );
 		if( ql ){}//the host's QL owns the schema list, and synced it with the rest.
 		else if( Settings::FindBool("/testing/recreateDB").value_or(false) )

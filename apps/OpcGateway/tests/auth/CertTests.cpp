@@ -1,3 +1,4 @@
+#include <latch>
 #include <jde/fwk/io/json.h>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/io/file.h>
@@ -59,6 +60,36 @@ namespace Jde::Opc::Gateway::Tests{
 
 		std::error_code ec;
 		fs::remove( settings.Certificate.Path, ec );//the key is per CN and shared with the rest of the suite - leave it.
+	}
+
+	//#250 review #13:  a Test Connection and a connect - or two tests - for a slug with no certificate both issued it, writing the PEM
+	//in place, and one read the other's half-written file.
+	TEST_F( CertFileTests, ConcurrentIssuesShareOneCertificate ){
+		constexpr sv slug{ "certRaceTest" };
+		constexpr sv uri{ "urn:race.application" };
+		let path = UAClient::CryptoSettings( ServerCnnctnNK{slug}, uri ).Certificate.Path;
+		std::error_code ec;
+		constexpr uint count{ 8 };
+		std::atomic<uint> failures{};
+		for( uint round=0; round<200; ++round ){//a torn read is rare per round:  unlocked, 200 rounds tore 10 to 19
+			fs::remove( path, ec );
+			std::latch start{ count };
+			vector<std::jthread> threads;
+			for( uint i=0; i<count; ++i )
+				threads.emplace_back( [&]{
+					start.arrive_and_wait();
+					try{
+						UAClient::EnsureCertificate( ServerCnnctnNK{slug}, uri );
+						if( Crypto::Certificate{Crypto::ReadCertificate(path)}.SanUri()!=uri )
+							++failures;
+					}
+					catch( ... ){
+						++failures;
+					}
+				} );
+		}
+		EXPECT_EQ( failures, 0u );
+		fs::remove( path, ec );
 	}
 
 	//web-certs3 #9: the passcode has to travel from /gateway/issuedCerts/privateKey/passcode into the key file.  It once sat a

@@ -4,6 +4,8 @@
 #include "utils/helpers.h"
 #include <jde/fwk/str.h>
 #include <jde/web/client/proto/Web.FromServer.pb.h>
+#include <jde/web/client/http/ClientHttpAwait.h>
+#include <jde/web/client/http/ClientHttpResException.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/web/server/Sessions.h>
@@ -15,6 +17,7 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
+	using Web::Client::ClientHttpAwait; using Web::Client::ClientHttpRes; using Web::Client::ClientHttpResException;
 	constexpr ELogTags _tags{ ELogTags::Test };
 
 	//A real web session, not a fabricated id:  SessionCounts sweeps out entries whose session Web::Server no longer knows, so a
@@ -417,6 +420,75 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_ANY_THROW( Socket().QuerySync("__type( opc: $opc, ns:2, i:6244 ){ enumValues{ id name } }", jobject{{"opc", "no-such-connection"}}) );//the definition is per connection.
 		let logTags = Socket().QuerySync( "__type( name: \"logTags\" ){ enumValues{ id name } }", {} );//no opc:  still the generic QueryType path.
 		EXPECT_FALSE( Json::AsArray(logTags.as_object(), "enumValues").empty() ) << serialize( logTags );
+	}
+
+	//testConnection( opc, url, certificateUri ):  the connection page's Test Connection - settings that are not saved, connected as the
+	//saved row would be and described in one object, with nothing left registered for the slug;  a wrong url is the mutation's error,
+	//not the slug's connectionStatus;  and the slug names the certificate file, so it is held to the insert's rule.
+	TEST_F( QLTests, testConnection ){
+		const string slug{ "qlTestsTestConnection" };//no such row:  the point is a connection that is not saved.
+		ASSERT_FALSE( SelectServerCnnctn({slug}) );
+		const string url{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
+		const string urn{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
+		const string q{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls securityPolicyUri securityMode namespaces{ index uri } }" };
+		let value = Socket().QuerySync( string{q}, {{"opc", slug}, {"url", url}, {"certificateUri", urn}} );
+		TRACE( "testConnection: {}.", serialize(value) );
+		let& o = value.as_object();
+		EXPECT_EQ( Json::AsSV(o, "applicationUri"), urn ) << serialize( value );
+		for( sv field : {"productUri", "applicationName", "applicationType", "gatewayServerUri", "discoveryProfileUri"} )
+			EXPECT_TRUE( o.contains(field) ) << field << ": " << serialize( value );
+		EXPECT_FALSE( Json::AsArray(o, "discoveryUrls").empty() ) << serialize( value );
+		EXPECT_EQ( Json::AsSV(o, "securityMode"), "SignAndEncrypt" ) << "a certificateUri means Sign & Encrypt: " << serialize( value );
+		EXPECT_TRUE( Json::AsSV(o, "securityPolicyUri").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << serialize( value );
+		let& namespaces = Json::AsArray( o, "namespaces" );
+		ASSERT_GE( namespaces.size(), 2u ) << serialize( value );
+		EXPECT_EQ( Json::AsNumber<uint16>(namespaces[0].as_object(), "index"), 0 );
+		EXPECT_EQ( Json::AsSV(namespaces[0].as_object(), "uri"), "http://opcfoundation.org/UA/" );
+		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) ) << "a test connect leaves no client registered.";
+		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) );
+		{//#250 review #10:  the namespace array is read only when selected.
+			let narrow = Socket().QuerySync( "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ applicationUri }", {{"opc", slug}, {"url", url}, {"certificateUri", urn}} );
+			EXPECT_EQ( Json::AsSV(narrow.as_object(), "applicationUri"), urn ) << serialize( narrow );
+			EXPECT_FALSE( narrow.as_object().contains("namespaces") ) << serialize( narrow );
+		}
+
+		try{
+			Socket().QuerySync( string{q}, {{"opc", slug}, {"url", "opc.tcp://127.0.0.1:1"}, {"certificateUri", urn}} );
+			ADD_FAILURE() << "a connect to a closed port succeeded";
+		}
+		catch( const GatewayErrorResponse& e ){
+			TRACE( "testConnection refused: {}.", e.what() );
+			EXPECT_TRUE( sv{e.what()}.size() ) << "the failure carries its reason";
+		}
+		{//never accepted, so the kernel completes the handshake and nothing reads the HEL - open62541 gives that no deadline of its own.
+			boost::asio::io_context ctx;
+			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
+			let start = steady_clock::now();
+			//over http, as the page sends it:  BadTimeout answers 500, whose body carried the status alone and not the reason.
+			jobject body{ {"query", q}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}}} };
+			try{
+				BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"localhost", "/graphql", serialize(body), GatewayPort(), {.Authorization=Ƒ("{:x}", AppClient()->SessionId()), .IsSsl=false}} );
+				ADD_FAILURE() << "a connect to a silent listener succeeded";
+			}
+			catch( const ClientHttpResException& e ){
+				TRACE( "testConnection unanswered: {}.", e.Res().Body() );
+				EXPECT_EQ( e.Status(), boost::beast::http::status::internal_server_error ) << e.Res().Body();
+				EXPECT_NE( e.Res().Body().find("(800a0000)BadTimeout - "), string::npos ) << e.Res().Body();
+				EXPECT_NE( e.Res().Body().find("did not complete the connection"), string::npos ) << e.Res().Body();
+			}
+			EXPECT_LT( steady_clock::now()-start, std::chrono::seconds{20} ) << "the client's request timeout, 10s, is the deadline.";
+		}
+		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "a failed test is not the slug's connectionStatus.";
+		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );
+		EXPECT_THROW( Socket().QuerySync(string{q}, {{"opc", "../" + slug}, {"url", url}, {"certificateUri", urn}}), GatewayErrorResponse ) << "the slug names the certificate file.";
+		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere or issue a certificate.
+			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"localhost", "/graphql?query=testConnection(opc:%22qlTestsTestConnection%22,url:%22opc.tcp://127.0.0.1:1%22)%7BapplicationUri%7D", GatewayPort(), {.IsSsl=false}} );
+			ADD_FAILURE() << "testConnection ran over GET";
+		}
+		catch( const ClientHttpResException& e ){
+			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();
+			EXPECT_TRUE( e.Res().Body().contains("Mutations must use post.") ) << e.Res().Body();
+		}
 	}
 
 	TEST_F( QLTests, multipleQueries ){

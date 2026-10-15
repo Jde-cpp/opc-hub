@@ -1,17 +1,21 @@
-import { Component, inject } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { LiveAnnouncer } from '@angular/cdk/a11y';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 
-import { DetailPage, Properties} from 'jde-framework';
+import { DetailPage, errorText, httpStatus, Properties} from 'jde-framework';
 
 import { ServerProperties } from './server-properties/server-properties';
 import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
-import { Server } from '../../../model/server';
+import { namespaceColumns, Server, serverDescColumns, TestConnectionResult } from '../../../model/server';
 import { OpcStore } from '../../../services/opc-store';
+
+//what a connect depends on, as the test and the save send it
+type ConnectSettings = { slug:string; url:string; certificateUri:string };
+const connectSettings = ( p:Partial<ServerCnnctn> ):ConnectSettings=>({ slug: p.slug?.trim() ?? "", url: p.url?.trim() ?? "", certificateUri: p.certificateUri?.trim() ?? "" });
 
 @Component( {
 	templateUrl: './client-detail.html',
@@ -19,13 +23,20 @@ import { OpcStore } from '../../../services/opc-store';
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
 		host: {class:'main-content mat-drawer-container my-content client-detail'},
-	imports: [CommonModule, MatButtonModule, MatIcon, MatTabsModule, Properties, ServerProperties],
+	imports: [MatButtonModule, MatIcon, MatTabsModule, Properties, ServerProperties],
 })
 export class ClientDetail extends DetailPage<ServerCnnctn>{
 	constructor(){ super( 'client-detail' ); }
 
 	protected override get ctor(){ return ServerCnnctn; }
-	protected override onRow(){ this.gateway = (<GatewayDetailData<ServerCnnctn>>this.pageData).gateway; }//no child collections - the connection is its properties
+	protected override onRow(){//no child collections - the connection is its properties;  the Connection tab opens on the resolver's describe, until a test replaces it
+		this.gateway = (<GatewayDetailData<ServerCnnctn>>this.pageData).gateway;
+		this.server.set( this.row.server );
+		this.serverError.set( this.row.serverError );
+		this.#resultFor.set( this.row.server || this.row.serverError ? connectSettings(this.row) : undefined );
+		this.testing.set( undefined );
+		++this.#rowLoads;
+	}
 	protected override upsert():ServerCnnctn{
 		return new ServerCnnctn( {
 			...this.properties(),
@@ -42,12 +53,78 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	readonly fieldOrder = ["slug", "name", "description", "url", "certificateUri", "defaultBrowseNs"];
 	readonly fieldLabels = { url: "URL", certificateUri: "Certificate URI", defaultBrowseNs: "Default Namespace" };//the camelCase split gives "Url", "Certificate Uri", "Default Browse Ns"
 	get serverCnnctn(){ return this.row; }//the template's name for it
-	//`isNew` (the base's) gates the Connection tab as well as the Id field.  The tab used to be gated on `server`, so an
-	//unreachable server had no tab at all;  it now shows its not-connected state, and the base's `!id` clamp (review3 L2)
-	//covers the one case left.  The Slug field is hidden on a new row because slug is the connection's identity and the
-	//gateway meta refuses to update it, so the form does not offer it.
-	get server(): Server|undefined{ return this.row?.server; }
-	get serverError(): string|undefined{ return this.row?.serverError; }
+
+	//Test Connection:  the form's values, saved or not, connected by the gateway as the saved row would be (testConnection) and
+	//shown in the Connection tab's states - a wrong url or an untrusted certificate says why there, and a saved connection whose
+	//page loaded Not connected is retried without a reload.  The base's `!id` clamp still lands a new row on Properties.
+	//Enabled on what the gateway needs - a url, and a slug that passes the insert's rule, since the slug names the certificate the
+	//gateway presents and the credential this session holds - and never twice at once.
+	readonly canTest = computed( ()=>{
+		const p = this.properties() as ServerCnnctn|null;
+		return !this.testing() && !!p?.url?.trim() && !!p?.slug?.trim() && !p.fieldError( "slug" );
+	} );
+	async onTestClick(){
+		if( !this.canTest() )
+			return;//disabledInteractive:  the disabled button still takes clicks.
+		const p = this.properties() as ServerCnnctn;
+		const settings = connectSettings( p );
+		const rowLoad = this.#rowLoads;
+		this.testing.set( settings.url );
+		this.tabIndex.set( 1 );//the result lands on the Connection tab, and it shows the connect in flight
+		this.#announcer.announce( `Connecting to ${settings.url}.` );
+		let server:Server|undefined, error:string|undefined, refused:unknown;
+		try{
+			const data = await this.gateway.postQL<{testConnection:TestConnectionResult}>( ClientDetail.testMutation, {opc: settings.slug, url: settings.url, certificateUri: settings.certificateUri}, (m)=>console.log(m) );
+			const result = data.testConnection;
+			server = new Server({ connection: {...p, ...settings} as ServerCnnctnProps, desc: result, policy: result.securityPolicyUri, mode: result.securityMode, namespaces: result.namespaces });
+		}
+		catch( e ){//the tab's not-connected state carries the reason - no toast over it
+			if( [401, 403].includes(httpStatus(e) ?? 0) )
+				refused = e;
+			else
+				error = errorText(e) ?? "Unknown error";
+		}
+		if( rowLoad!=this.#rowLoads )
+			return;//the router reuses this page:  the answer is for a connection no longer shown.
+		this.testing.set( undefined );
+		//testConnection needs Update, which a viewer lacks:  a refusal says nothing about the server, so the tab keeps what it showed
+		//and the denial is a toast, as Save's is.
+		if( refused ){
+			this.snackbar.exception( "Test Connection was refused.", refused );
+			return;
+		}
+		this.server.set( server );
+		this.serverError.set( error );
+		this.#resultFor.set( settings );
+		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : `Not connected:  ${error}` );
+	}
+	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.
+	static readonly testMutation = `mutation testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } }`;
+	//what the Connection tab shows:  the resolver's describe or its failure (onRow), then the last test's.  A new connection has
+	//neither until it is tested, and the tab says what the button does rather than why a session that was never tried is missing.
+	server = signal<Server|undefined>( undefined );
+	serverError = signal<string|undefined>( undefined );
+	get untested():boolean{ return this.isNew && !this.server() && !this.serverError(); }//a getter, not a computed:  `row` is no signal, and the router reuses this page across connections
+	testing = signal<string|undefined>( undefined );//the url under test while a Test Connection is in flight
+	//the settings the shown result was for, where the form no longer holds them;  unset while the form matches
+	readonly staleFor = computed( ()=>{
+		const was = this.#resultFor(), p = this.properties();
+		if( !was || !p )
+			return undefined;
+		const now = connectSettings( p );
+		const changed = [
+			was.url==now.url ? "" : `URL ${was.url}`,
+			was.certificateUri==now.certificateUri ? "" : was.certificateUri ? `Certificate URI ${was.certificateUri}` : "an empty Certificate URI",
+			was.slug==now.slug ? "" : `slug ${was.slug}`
+		].filter( (x)=>x );
+		return changed.length ? changed.join( ", " ) : undefined;
+	} );
+	#resultFor = signal<ConnectSettings|undefined>( undefined );
+	#rowLoads = 0;//onRow's count:  a test answers only for the row it started on.
 	private opcStore = inject( OpcStore );
+	//the test's start and end, for a screen reader:  a region inserted with its text may go unannounced, and the tab's content -
+	//a live region there included - is created with its text when the press switches to it.
+	#announcer = inject( LiveAnnouncer );
+	//the row's, set in onRow:  the router reuses this page across gateways
 	gateway!:Gateway;
 }

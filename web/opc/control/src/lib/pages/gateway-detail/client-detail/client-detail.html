@@ -7,27 +7,29 @@
 			<properties [ctor]=ctor [(record)]=properties type=role [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="isNew ? [] : ['slug']"></properties>
 		</ng-template>
 	</mat-tab>
-	@if( !isNew ){<!--every saved connection, live or not:  the tab says "Not connected" and why, where a missing tab said nothing-->
-		<mat-tab>
-			<ng-template mat-tab-label>Connection</ng-template>
-			<ng-template matTabContent>
-					<server-properties [server]="server" [error]="serverError"></server-properties>
-			</ng-template>
-		</mat-tab>
-	}
+	<!--every connection, saved or not, live or not:  the tab says why one is not connected, and is where Test Connection answers-->
+	<mat-tab>
+		<ng-template mat-tab-label>Connection</ng-template>
+		<ng-template matTabContent>
+				<server-properties [server]="server()" [error]="serverError()" [untested]="untested" [connecting]="testing()" [staleFor]="staleFor()"></server-properties>
+		</ng-template>
+	</mat-tab>
 </mat-tab-group>
 <div class="jde-detail-actions"><!--only Save is filled: three extended fabs gave the destructive Delete the same weight as the primary action, and the tonal it had next was a grey pill that read as disabled even with a dirty form-->
-	<button tabindex="100" matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-	<button tabindex="101" matButton="outlined" (click)="onCancelClick()">Cancel</button>
+	<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
+	<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
+	<!--beside the two safe actions, outlined like Cancel:  it saves nothing - at most it issues the slug's certificate, as the saved connection's first connect would.
+		disabledInteractive, so pressing it keeps the focus there (WCAG 2.4.3) instead of dropping it to the body;  onTestClick checks canTest itself-->
+	<button matButton="outlined" (click)="onTestClick()" [disabled]="!canTest()" disabledInteractive>{{ testing() ? "Testing…" : "Test Connection" }}</button>
 	<!--the only icon in the row, so the trash can still reads as a warning; it also carries the delete/restore state.
 		Pushed to the far side of the row: it sat one gap from Cancel, in the click path of the two safe actions-->
 	@if( isDeleted ){
 		<!--group-detail's Purge:  only on an already-deleted row.  A deleted connection keeps its slug, and the create refusal says to restore or purge it (reviews/install-issues.md #51, #53)-->
-		<button tabindex="103" matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
+		<button matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
 			<mat-icon>delete_forever</mat-icon>Purge
 		</button>
 	}
-	<button tabindex="102" matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
+	<button matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
 		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
 	</button>
 </div>

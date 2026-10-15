@@ -18,6 +18,7 @@ namespace Jde::Opc::Gateway{
 		α IsBadSession()Ι->bool{ return Code()==UA_STATUSCODE_BADSESSIONIDINVALID; }
 		//status plus the throw-site reason; the description names an operation or a configuration mismatch, never internals.
 		α UserMessage()Ι->const string& override;
+		α ClientDetail()Ι->string override{ return UserMessage(); }//a 500 body otherwise carries the status alone, and a failed connect's reason is the fix.
 		α what()const noexcept->const char* override;
 		[[noreturn]] α ThrowRest( UAClientException&& e, Web::Server::HttpRequest&& request )ε->void;
 	private:

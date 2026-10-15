@@ -13,12 +13,16 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctn( DB::Row&& r )ε;
 		ServerCnnctn( jobject&& o )ε;
 		α ToJson()Ι->jobject;
-		ServerCnnctnPK Id;
+		//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
+		//url segment - the one rule the insert (OpcQLHook) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
+		//Null for a valid slug.
+		Ω SlugError( sv slug, SL sl )ι->up<Exception>;
+		ServerCnnctnPK Id{};//0 for a connection not saved - createHandle keys the log handle on the url then.
 		string Url;
 		string CertificateUri;
 		NsIndex DefaultBrowseNs{1};
 		string Description;
-		bool IsDefault;
+		bool IsDefault{};
 		string Name;
 		optional<TimePoint> Deleted;
 		ServerCnnctnNK Slug;

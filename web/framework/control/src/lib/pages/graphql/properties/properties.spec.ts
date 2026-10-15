@@ -156,3 +156,14 @@ describe( 'Properties readonly fields', ()=>{
 		expect( fixture.nativeElement.querySelector('textarea').readOnly ).toBe( false );
 	} );
 } );
+
+//#250 review L2:  the fields carried tabindex 1..n, which axe fails and which put them ahead of everything else on the page -
+//once a page's buttons lost their 100+, Tab from the last field went to the navbar instead of Save.  Page order instead.
+describe( 'Properties tab order', ()=>{
+	it( 'sets no positive tabindex', ()=>{
+		const root = create().nativeElement as HTMLElement;
+		expect( root.querySelectorAll('input, textarea').length ).toBeGreaterThan( 0 );
+		const positive = Array.from( root.querySelectorAll('[tabindex]') ).filter( (e)=>+e.getAttribute('tabindex')!>0 );
+		expect( positive.map((e)=>e.outerHTML.slice(0, 60)) ).toEqual( [] );
+	} );
+} );

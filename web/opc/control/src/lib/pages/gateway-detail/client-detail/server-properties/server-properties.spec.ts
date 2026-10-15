@@ -100,7 +100,52 @@ describe( 'ServerProperties without a server', ()=>{
 		expect( texts(root, '.not-connected .detail') ).toEqual( ["The gateway has no session with this server."] );
 	} );
 
+	it( 'is no live region:  inserted with its text it may go unannounced, so ClientDetail announces (#250 review #15)', ()=>{
+		expect( create(undefined, "no route to host").querySelector('[role=status]') ).toBeNull();
+	} );
+
+	//#250 review L1:  a new connection never tried was Not connected under the error icon, and read as a failure.
+	it( 'says a new connection is not tested yet, without the error state', ()=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( ServerProperties );
+		fixture.componentRef.setInput( 'untested', true );
+		fixture.detectChanges();
+		const root = fixture.nativeElement as HTMLElement;
+		expect( root.querySelector('.not-connected') ).toBeNull();
+		expect( texts(root, '.untested .title') ).toEqual( ["Not tested yet"] );
+		expect( texts(root, '.untested .detail')[0] ).toContain( "Test Connection checks" );
+	} );
+
 	it( 'shows no not-connected state when there is a server', ()=>{
 		expect( create(new Server(props())).querySelector('.not-connected') ).toBeNull();
+	} );
+} );
+//#250 review #9:  a passing test of one url stayed under a form edited to another, and read as a check of the new one.
+describe( 'ServerProperties for settings the form no longer holds', ()=>{
+	const render = ( inputs:Record<string,unknown> )=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( ServerProperties );
+		for( const [name, value] of Object.entries(inputs) )
+			fixture.componentRef.setInput( name, value );
+		fixture.detectChanges();
+		return fixture.nativeElement as HTMLElement;
+	};
+	it( 'says what the result was for, above it, and keeps the result', ()=>{
+		const root = render( {server: new Server(props()), staleFor: "URL opc.tcp://a:4840"} );
+		expect( texts(root, '.stale .title') ).toEqual( ["The form has changed"] );
+		expect( texts(root, '.stale .detail')[0] ).toContain( "This result was for URL opc.tcp://a:4840." );
+		const fields = root.querySelector( 'dl.fields' )!;
+		expect( root.querySelector('.stale')!.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING ).toBeTruthy();
+	} );
+	it( 'marks a failure too', ()=>{
+		const root = render( {error: "no route to host", staleFor: "URL opc.tcp://a:4840"} );
+		expect( root.querySelector('.stale') ).not.toBeNull();
+		expect( texts(root, '.not-connected .detail') ).toEqual( ["no route to host"] );
+	} );
+	it( 'is not shown while a test connects, or when the form matches', ()=>{
+		expect( render({connecting: "opc.tcp://b:4840", staleFor: "URL opc.tcp://a:4840"}).querySelector('.stale') ).toBeNull();
+		expect( render({server: new Server(props())}).querySelector('.stale') ).toBeNull();
 	} );
 } );

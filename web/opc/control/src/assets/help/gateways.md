@@ -60,7 +60,7 @@ Under [Applications](/apps), a gateway instance's page has five tabs:
 - **Logs** shows the running service's log.
 - **Log Settings** changes the running service's log levels.
 
-A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. Once the connection is saved, its **Connection** tab shows the server's details.
+A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
 
 An OPC server instance's page has **Logs** and **Log Settings**.
 
@@ -86,11 +86,11 @@ Leave it empty and the gateway connects with **no security** (policy None). The 
 
 The user's credential is still encrypted. The gateway encrypts it to the server's certificate wherever the server asks for that, as the bundled OPC server and most others do. So a sign-in works on any server that publishes an unsecured endpoint at the connection's URL. Where it publishes none, the connection shows *Error* and says to set the URI.
 
-The URI is the *Application URI* on the connection's **Connection** tab, or whatever the server's own configuration calls its URI. That tab shows the server's details, with the policy and mode the session negotiated, only while the gateway holds a session with it; otherwise it says *Not connected* and why. So on a new connection:
+The URI is the *Application URI* on the connection's **Connection** tab, or whatever the server's own configuration calls its URI. That tab shows the server's details, with the policy and mode the session negotiated, while the gateway holds a session with it or after a **Test Connection** that reached it; otherwise it says *Not connected* and why. So on a new connection:
 
-1. Save it with the Certificate URI empty.
-2. Read the *Application URI* on its **Connection** tab - or, from a server with no unsecured endpoint, in the error the connection shows, which names it.
-3. Set the Certificate URI to it and save again.
+1. Enter the slug and URL, leave the Certificate URI empty, and press **Test Connection**.
+2. Read the *Application URI* on the **Connection** tab - or, from a server with no unsecured endpoint, in the error the tab shows, which names it.
+3. Set the Certificate URI to it, test again, and save.
 
 The credential is the user's: the session's sign-in token for the bundled OPC server, or the name and password entered for the connection. A password travels encrypted on a secured session, and on an unsecured one wherever the server's sign-in policy asks for encryption. A server that would take it only in the clear is refused, and the connection's *Error* says so; the gateway's `allowPlaintextPassword` setting permits it, for a server that can do no better on a network you trust.
 

@@ -251,6 +251,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	concurrent_flat_set<sp<UAClient>> _awaitingActivation;
+	concurrent_flat_set<sp<UAClient>> _testConnects;//armed and unanswered:  in no registry Shutdown reads, so it reads this one.
 
 	UAClient::UAClient( str address, Gateway::Credential cred )ε:
 		UAClient{ ServerCnnctn{address}, move(cred) }
@@ -279,6 +280,10 @@ namespace Jde::Opc::Gateway{
 		//Before the first co_await:  this runs fire-and-forget from Process::Shutdown, so everything after that suspends runs late,
 		//and a chain waking in the gap built a client after the snapshot below that nothing ever stopped (subscription-disconnect #3).
 		StopReconnects();
+		vector<sp<UAClient>> tests;
+		_testConnects.visit_all( [&tests](let& client){ tests.push_back(client); } );
+		for( let& client : tests )
+			client->PostUA( [p=client.get()]{ p->ExpireTest(UA_STATUSCODE_BADSHUTDOWN); } );
 		vector<sp<UAClient>> clients;
 		{
 			rl _1{ _clientsMutex };
@@ -317,7 +322,11 @@ namespace Jde::Opc::Gateway{
 	//cert this config describes; a changed uri would otherwise be rejected as BadCertificateUriInvalid forever with
 	//nothing naming the file to delete.  ReissueReason compares only the SAN entry types that round-trip byte-for-byte
 	//through the der ctor (URI among them; otherName is excluded on both sides), so a lossy rendering cannot re-issue in a loop.
+	//a test and a connect, or two tests, for a slug with no certificate would both issue it, and IssueCertificate writes the PEM in
+	//place.  One lock for every slug:  only an issue is slow.
+	mutex _certificateMutex;
 	α UAClient::EnsureCertificate( const ServerCnnctnNK& slug, sv uri, SL sl )ε->void{
+		lg _{ _certificateMutex };
 		let& settings = CryptoSettings( slug, uri );
 		//EnsureKeyCertificate's guard, which came across with neither of this path's rewrites:  certificate.managed:false is the
 		//operator's pair, used as found - the expiry and SAN checks below re-issue only what this product issued, and a
@@ -680,7 +689,18 @@ namespace Jde::Opc::Gateway{
 				}
 
 				client->ClearRequest( ConnectRequestId );//previous clear didn't have client
-				if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
+				if( auto onResult = client->TakeTestResult(); onResult ){//a test connect reports to its caller alone - see ConnectForTest:  no registry entry, no ConnectErrors, no waiter drained.
+					client->Connected = sessionState == UA_SESSIONSTATE_ACTIVATED;
+					up<UAClientException> error;
+					if( !client->Connected ){
+						error = mu<UAClientException>( connectStatus, client->Handle(), detail.size() ? move(detail) : string{"Connection Failed"} );
+						client->StopProcessing();//as the failure branch below:  the client never enters _clients, so nothing else would Stop() it.
+					}
+					Post( [client, onResult=std::move(onResult), error=move(error)]()mutable ι->void {
+						onResult( client, move(error) );
+					});
+				}
+				else if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
 					client->RecordSession();//the baseline the re-activation branch above compares against; nothing to rebuild on a first activation.
 					ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
 					client->_asyncRequest.RequestDrain();//open62541 fires its namespace-array read right after this callback returns; ProcessingLoop must keep pumping until the reply is serviced (OnServiceBegin).
@@ -871,6 +891,50 @@ namespace Jde::Opc::Gateway{
 		_awaitingActivation.emplace( shared_from_this() );
 		_asyncRequest.SetClient( p );
 		Process( ConnectRequestId, "Connect" );
+	}
+
+	α UAClient::ConnectForTest( ConnectCallback onResult )ε->void{
+		ASSERT( onResult );
+		_onTestResult = std::move( onResult );//std::, as PostUA:  absl::AnyInvocable makes the unqualified call ambiguous
+		Connect();
+		PostUA( [this]{ TestDeadline(shared_from_this()); } );
+	}
+	α UAClient::TestDeadline( sp<UAClient> self )ι->DurationTimer::Task{
+		if( !_onTestResult )
+			co_return;//answered before the deadline was armed.
+		_testConnects.emplace( self );//then the ShuttingDown check:  a Shutdown either finds it there or is found here.
+		if( Process::ShuttingDown() ){
+			ExpireTest( UA_STATUSCODE_BADSHUTDOWN );
+			co_return;
+		}
+		_testDeadline.emplace( std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR );
+		(void)co_await *_testDeadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
+		_testDeadline.reset();
+		ExpireTest( UA_STATUSCODE_BADTIMEOUT );
+	}
+	α UAClient::TakeTestResult()ι->ConnectCallback{
+		if( !_onTestResult )
+			return {};
+		if( _testDeadline )
+			_testDeadline->Cancel();
+		_testConnects.erase( shared_from_this() );
+		auto onResult = std::move( _onTestResult );
+		_onTestResult = nullptr;//a moved-from AnyInvocable need not be empty.
+		return onResult;
+	}
+	α UAClient::ExpireTest( StatusCode sc )ι->void{
+		auto onResult = TakeTestResult();
+		if( !onResult )
+			return;
+		_awaitingActivation.erase( shared_from_this() );//before StopProcessing:  FailPending's disconnect fires StateCallback, which must not find it.
+		ClearRequest( ConnectRequestId );
+		StopProcessing();
+		let reason = sc==UA_STATUSCODE_BADSHUTDOWN
+			? string{ "The gateway is shutting down." }
+			: Ƒ( "'{}' did not complete the connection within {} seconds.", ConnectUrl(), UA_Client_getConfig(UAPointer())->timeout/1000 );
+		Post( [self=shared_from_this(), onResult=std::move(onResult), error=mu<UAClientException>(sc, Handle(), reason)]()mutable ι->void {
+			onResult( self, move(error) );
+		});
 	}
 
 	α UAClient::PostUA( absl::AnyInvocable<void()> f )ι->void{

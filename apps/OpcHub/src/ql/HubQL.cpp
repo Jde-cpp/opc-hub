@@ -9,6 +9,7 @@
 #include "../../../OpcGateway/src/ql/GatewayQLAwait.h"
 #include "../../../OpcGateway/src/ql/HistGroupEditQLAwait.h"
 #include "../../../OpcGateway/src/ql/HistGroupQLAwait.h"
+#include "../../../OpcGateway/src/ql/TestConnectionQLAwait.h"
 
 namespace Jde::Opc::Hub{
 	HubQL::HubQL( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> authorizer )ι:
@@ -29,6 +30,8 @@ namespace Jde::Opc::Hub{
 		if( auto await = Gateway::HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory, as GatewayQL.
 			return await;
 		if( auto await = Gateway::HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits, as GatewayQL.
+			return await;
+		if( auto await = Gateway::TestConnectionQLAwait::Test(m, creds, sl); await )
 			return await;
 		return Gateway::GatewayQLMAwait::IsApplicable(m) ? mu<Gateway::GatewayQLMAwait>( move(m), move(creds), sl ) : nullptr;
 	}
