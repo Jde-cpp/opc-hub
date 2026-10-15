@@ -14,7 +14,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		this.serverError = obj.serverError;
 	}
 
-	override get canSave():boolean{ return super.canSave && this.url?.length>0 && !!this.slug.trim() && !this.fieldError("slug"); }//url is non-null in the gateway meta - the base only knows name/slug
+	override get canSave():boolean{ return super.canSave && !!this.url?.trim() && !!this.slug.trim() && !this.fieldError("slug"); }//url is non-null in the gateway meta - the base only knows name/slug
 	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
 	//url segment, and " eng-test" went into all three.  Trimmed on the way out (mutation); what is left must match the gateway's
 	//own rule, which refuses anything else (OpcQLHook::InsertBefore).
@@ -28,7 +28,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 
 	override equals( row:ISlugRow ):boolean{
 		let other = row as ServerCnnctn;
-		return super.equals(row) && this.url==other.url && this.certificateUri==other.certificateUri && ServerCnnctn.toNs(this.defaultBrowseNs)==ServerCnnctn.toNs(other.defaultBrowseNs);//the edited copy still holds the input's raw string
+		return super.equals(row) && this.url?.trim()==other.url?.trim() && this.certificateUri?.trim()==other.certificateUri?.trim() && ServerCnnctn.toNs(this.defaultBrowseNs)==ServerCnnctn.toNs(other.defaultBrowseNs);//the edited copy still holds the input's raw string
 	}
 
 	override mutation( original:ServerCnnctn ):Mutation[]{
@@ -36,10 +36,12 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		let args = super.mutationArgs( original );
 		if( args.slug!==undefined )
 			args.slug = args.slug.trim();
-		if( this.url!=original?.url )
-			args["url"] = this.url;
-		if( this.certificateUri!=original?.certificateUri )
-			args["certificateUri"] = this.certificateUri;
+		//trimmed, as Test Connection sends them:  `urn:plc ` passed the test and was saved as is, which the gateway's endpoint filter reads as urn:plc%20.
+		const url = this.url?.trim(), certificateUri = this.certificateUri?.trim();
+		if( url!=original?.url )
+			args["url"] = url;
+		if( certificateUri!=original?.certificateUri )
+			args["certificateUri"] = certificateUri;
 		//A create always states it:  left at the default the form shows, it used to send nothing and store NULL, which the gateway
 		//read as another namespace (reviews/m3-closing.md #3) - a connection should not depend on what NULL means.  Through toNs,
 		//as equals() compares:  Properties.onChange leaves the input's raw string on the record.

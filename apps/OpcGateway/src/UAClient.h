@@ -74,7 +74,8 @@ namespace Jde::Opc::Gateway{
 		//and credential, keyed on its slug - but is registered nowhere:  not in the client registry, so no query, search or status
 		//ever finds it;  not in ConnectErrors, so a failed test is not the slug's connectionStatus;  and no ConnectAwait waiter is
 		//drained with it, which matters when the saved row of the same slug is connecting at the same time.  The result goes to
-		//`onResult`, off the strand, and the caller discards the client (StopProcessing) once it has read what it wanted.
+		//`onResult`, off the strand - BadTimeout past the request timeout, BadShutdown when Shutdown comes first - and the caller
+		//discards the client (StopProcessing) once it has read what it wanted.
 		α ConnectForTest( ConnectCallback onResult )ε->void;
 
 		α SubscriptionId()Ι->SubscriptionId{ auto p = CreatedSubscriptionResponse(); return p ? p->subscriptionId : 0; }
@@ -173,10 +174,16 @@ namespace Jde::Opc::Gateway{
 		α PresentedCertificate()Ι->optional<Crypto::CryptoSettings>;
 
 		α CryptoSettings()Ι->Crypto::CryptoSettings{ return CryptoSettings(Slug()); }
+		//The test connect's deadline, the client's request timeout:  open62541 gives an async connect none - a dropped SYN waits out
+		//the kernel's retries, and a server that closes after HEL is reconnected to forever.  Strand-only, as the three below.
+		α TestDeadline( sp<UAClient> self )ι->DurationTimer::Task;
+		α TakeTestResult()ι->ConnectCallback;//_onTestResult, once:  whichever of StateCallback, the deadline and Shutdown reports first.
+		α ExpireTest( StatusCode sc )ι->void;//reports `sc` for a test connect still unanswered, and stops the client.
 
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
-		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  StateCallback takes it on the client's activation or failure.
+		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
+		optional<DurationTimer> _testDeadline;//strand-confined.
 
 		vector<VoidAwait::Handle> _sessionAwaitables; mutable mutex _sessionAwaitableMutex;
 

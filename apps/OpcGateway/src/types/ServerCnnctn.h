@@ -17,7 +17,7 @@ namespace Jde::Opc::Gateway{
 		//url segment - the one rule the insert (OpcQLHook) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
 		//Null for a valid slug.
 		Ω SlugError( sv slug, SL sl )ι->up<Exception>;
-		ServerCnnctnPK Id;
+		ServerCnnctnPK Id{};//0 for a connection not saved - createHandle keys the log handle on the url then.
 		string Url;
 		string CertificateUri;
 		NsIndex DefaultBrowseNs{1};

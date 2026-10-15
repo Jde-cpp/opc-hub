@@ -20,7 +20,7 @@ namespace Jde::Opc::Gateway{
 		UAException{ sc, description, {.HttpStatus=httpStatus(sc)}, sl },
 		_handle{ uaHandle },
 		_requestId{ 0 }{
-		_userMessage = description.size() ? Ƒ( "{} - {}", ClientDetail(), move(description) ) : string{};
+		_userMessage = description.size() ? Ƒ( "{} - {}", UAException::ClientDetail(), move(description) ) : string{};
 	}
 
 	α UAClientException::what()const noexcept->const char*{
@@ -34,7 +34,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α UAClientException::UserMessage()Ι->const string&{
 		if( _userMessage.empty() )
-			_userMessage = ClientDetail();
+			_userMessage = UAException::ClientDetail();
 		return _userMessage;
 	}
 }

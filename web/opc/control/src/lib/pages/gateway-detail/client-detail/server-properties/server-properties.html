@@ -1,6 +1,17 @@
+@if( !connecting() && staleFor() ){
+<!--above the result it qualifies, whichever state that is;  no live region - the form is edited on the other tab, so this is read on arrival-->
+<div class="state stale">
+	<mat-icon aria-hidden="true">history</mat-icon>
+	<div>
+		<p class="title">The form has changed</p>
+		<p class="detail">This result was for {{staleFor()}}.  Test Connection checks the form as it is now.</p>
+	</div>
+</div>
+}
 @if( connecting(); as url ){
-<!--a Test Connection in flight:  the url, so a typo is caught while the gateway is still trying it-->
-<div class="not-connected connecting" role="status">
+<!--a Test Connection in flight:  the url, so a typo is caught while the gateway is still trying it.  No role=status here or below:
+inserted with its text, a region may go unannounced - ClientDetail announces the test through LiveAnnouncer-->
+<div class="state connecting">
 	<mat-progress-spinner mode="indeterminate" diameter="24" aria-hidden="true"></mat-progress-spinner>
 	<div>
 		<p class="title">Connecting</p>
@@ -39,9 +50,18 @@ row per field like the list above - a nodeset-loaded server reports a dozen.-->
 		}
 	</tbody>
 </table>
+} @else if( untested() ){
+<!--a new connection never tried:  not a failure, so not the error icon and Not connected - what the button does instead-->
+<div class="state untested">
+	<mat-icon aria-hidden="true">info</mat-icon>
+	<div>
+		<p class="title">Not tested yet</p>
+		<p class="detail">Test Connection checks the URL and Certificate URI with the gateway before the first save.</p>
+	</div>
+</div>
 } @else {
 <!--no session:  the state and the gateway's reason, in place of the description it would otherwise show-->
-<div class="not-connected" role="status">
+<div class="state not-connected">
 	<mat-icon aria-hidden="true">link_off</mat-icon>
 	<div>
 		<p class="title">Not connected</p>

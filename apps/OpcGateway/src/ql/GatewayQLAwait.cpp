@@ -17,7 +17,6 @@
 #include "NodeQLAwait.h"
 #include "OpcSessionsQLAwait.h"
 #include "SearchQLAwait.h"
-#include "TestConnectionQLAwait.h"
 #include "VariableQLAwait.h"
 #define let const auto
 
@@ -47,10 +46,10 @@ namespace Jde::Opc::Gateway{
 	//generic QueryType; __type(opc:…) is an OPC enum DataType whose definition lives on that server (EnumTypeCache).
 	Ω needsClient( const QL::Input& q )ι->bool{
 		let tableName = q.JTableName();
-		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!="search" && tableName!="testConnection";//search must never ConnectAwait - it only reads clients already open;  testConnection's `opc` is a slug with no row behind it yet.
+		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!="search";//search must never ConnectAwait - it only reads clients already open.
 	}
 	α GatewayQLAwait::IsApplicable( const QL::TableQL& q )ι->bool{
-		return q.JsonName=="opcSessions" || q.JsonName=="search" || TestConnectionQLAwait::IsApplicable(q) || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || HistGroupInfoQLAwait::IsApplicable(q) || needsClient(q);
+		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || HistGroupInfoQLAwait::IsApplicable(q) || needsClient(q);
 	}
 	α GatewayQLAwait::Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		up<TAwait<jvalue>> await;
@@ -62,8 +61,6 @@ namespace Jde::Opc::Gateway{
 			await = mu<OpcSessionsQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="search" )
 			await = mu<SearchQLAwait>( move(q), move(executer), sl );
-		else if( TestConnectionQLAwait::IsApplicable(q) )
-			await = mu<TestConnectionQLAwait>( move(q), move(executer), sl );
 		else if( ServerCnnctnSessionsQLAwait::IsApplicable(q) )
 			await = mu<ServerCnnctnSessionsQLAwait>( move(q), move(executer), sl );
 		else if( needsClient(q) )

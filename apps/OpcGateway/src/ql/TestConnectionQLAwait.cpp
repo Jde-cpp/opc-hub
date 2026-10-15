@@ -28,10 +28,14 @@ namespace Jde::Opc::Gateway{
 				cnnctn.CertificateUri = Str::Trim( sv{*p} );
 			let cred = SessionCredential( session->SessionId, session->UserPK, slug ).value_or( Credential{} );//what a connect to the saved row would present (ConnectAwait).
 			client = co_await TestConnectAwait{ move(cnnctn), move(cred), _sl };
-			let namespaces = co_await Any( NamespacesAwait{client, _sl} );
-			_query.ReturnRaw = true;//TablesAwait re-wraps under ReturnName().
-			auto y = co_await UAStrandAwait<jvalue>{ client, [this, client, &namespaces]()->jvalue { return Describe( client, namespaces ); }, _sl };
-			client->StopProcessing();//read what was wanted - let the client go.
+			jvalue y = jobject{};//MutationsAwait keys it under the command name.
+			if( _query.ResultRequest ){
+				optional<Namespaces> namespaces;
+				if( _query.ResultRequest->FindTable("namespaces") )//a round trip - only when selected.
+					namespaces = co_await Any( NamespacesAwait{client, _sl} );
+				y = co_await UAStrandAwait<jvalue>{ client, [this, client, &namespaces]()->jvalue { return Describe( *_query.ResultRequest, client, namespaces ? &*namespaces : nullptr ); }, _sl };
+			}
+			client->StopProcessing();
 			Resume( move(y) );
 		}
 		catch( runtime_error& e ){
@@ -41,14 +45,14 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α TestConnectionQLAwait::Describe( const sp<UAClient>& client, const Namespaces& namespaces )ε->jobject{
-		jobject y = GatewayQLAwait::ServerDescription( _query, client );
-		if( _query.FindColumn("securityPolicyUri") )
+	α TestConnectionQLAwait::Describe( const QL::TableQL& q, const sp<UAClient>& client, const Namespaces* namespaces )ε->jobject{
+		jobject y = GatewayQLAwait::ServerDescription( q, client );
+		if( q.FindColumn("securityPolicyUri") )
 			y["securityPolicyUri"] = GatewayQLAwait::SecurityPolicyUri( client );
-		if( _query.FindColumn("securityMode") )
+		if( q.FindColumn("securityMode") )
 			y["securityMode"] = GatewayQLAwait::SecurityMode( client );
-		if( let nsQL = _query.FindTable("namespaces"); nsQL )
-			y["namespaces"] = GatewayQLAwait::NamespaceRows( *nsQL, namespaces );
+		if( let nsQL = q.FindTable("namespaces"); nsQL && namespaces )
+			y["namespaces"] = GatewayQLAwait::NamespaceRows( *nsQL, *namespaces );
 		return y;
 	}
 }

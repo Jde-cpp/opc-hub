@@ -97,3 +97,21 @@ describe( 'ServerCnnctn.slug', ()=>{
 		expect( create("eng test").fieldError("name") ).toBeUndefined();
 	} );
 } );
+
+//#250 review #4:  Test Connection trimmed the url and certificateUri and the save sent them as typed, so `urn:plc ` passed the test
+//and was saved with its space - which the gateway's endpoint filter reads as urn:plc%20, matching nothing.  The save sends what the test tried.
+describe( 'ServerCnnctn.url and certificateUri', ()=>{
+	it( 'are trimmed on the way out', ()=>{
+		const [mutation] = new ServerCnnctn( props({url: " opc.tcp://plc:4840 ", certificateUri: "urn:plc "}) ).mutation( new ServerCnnctn(props()) );
+		expect( mutation.args ).toEqual( {url: "opc.tcp://plc:4840", certificateUri: "urn:plc"} );
+	} );
+	it( 'are unchanged when only whitespace was added', ()=>{
+		const original = new ServerCnnctn( props() );
+		const edited = new ServerCnnctn( props({url: original.url + " ", certificateUri: " " + original.certificateUri}) );
+		expect( edited.equals(original) ).toBe( true );
+		expect( edited.mutation(original) ).toEqual( [] );
+	} );
+	it( 'will not save a blank url', ()=>{
+		expect( new ServerCnnctn(props({url: "   "})).canSave ).toBe( false );
+	} );
+} );

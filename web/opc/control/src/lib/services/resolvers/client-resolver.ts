@@ -6,19 +6,22 @@ import { Gateway, GatewayService } from '../gateway-service';
 import { ServerCnnctn } from '../../model/server-cnnctn';
 import { OpcStore } from '../opc-store';
 
+//the gateway the row came from:  the router reuses ClientDetail across gateways, so the page takes it with each row
+export type ClientResolverData = DetailResolverData<ServerCnnctn> & { gateway:Gateway };
+
 @Injectable()
-export class ClientResolver implements Resolve<DetailResolverData<ServerCnnctn>> {
+export class ClientResolver implements Resolve<ClientResolverData> {
 	private router:Router = inject( Router );
 	private gatewayService = inject( IGRAPHQL ) as GatewayService;//the gateway routes alias IGRAPHQL to the one GatewayService instance (app.routes.ts gatewayProvider)
 
-	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<DetailResolverData<ServerCnnctn>>{
+	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<ClientResolverData>{
 		return this.loadProfile( route, state.url, route.paramMap.get("connection")! );
 	}
 
 	//The route is the only input:  everything user-facing calls one of these rows a connection ("Connections" tab,
 	//"<name> - Connection" title, the serverConnections collection), and the sibling titles come from the RouteStore, so
 	//there was nothing for the collection-display name this used to carry to feed.  `url` is only for Recently visited.
-	private async loadProfile( route: ActivatedRouteSnapshot, url:string, slug:string ):Promise<DetailResolverData<ServerCnnctn>>{
+	private async loadProfile( route: ActivatedRouteSnapshot, url:string, slug:string ):Promise<ClientResolverData>{
 		const parent = route.parent!;
 		let gatewaySlug = parent.url[parent.url.length-1].path;
 		const ql = await this.gatewayService.gateway( gatewaySlug );
@@ -43,14 +46,14 @@ export class ClientResolver implements Resolve<DetailResolverData<ServerCnnctn>>
 			else
 				this.snackbar.exception( `Could not load '${slug}'`, e );
 			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
-			return null as unknown as DetailResolverData<ServerCnnctn>;
+			return null as unknown as ClientResolverData;
 		}
 	}
 
 	//Delegates to DetailResolver.load instead of copying it (review3 C1).  The copy had already drifted - L14's null guard
 	//had to be written here a second time - and the opcStore fetch below is the only part that was ever Client-specific.
 	//`null` vars, not the default {}: that is what this query has always sent to the gateway.
-	static async load( ql:Gateway, opcStore:OpcStore, slug:string, routing:DetailRoute, snackbar:SnackbarService ):Promise<DetailResolverData<ServerCnnctn>>{//snackbar is passed in:  inject() needs an injection context, which a static method never has.
+	static async load( ql:Gateway, opcStore:OpcStore, slug:string, routing:DetailRoute, snackbar:SnackbarService ):Promise<ClientResolverData>{//snackbar is passed in:  inject() needs an injection context, which a static method never has.
 		const y = await DetailResolver.load<ServerCnnctn>( ql, "serverConnections", slug, routing, null );
 		if( slug && slug!="$new" ){
 			try{
@@ -61,7 +64,7 @@ export class ClientResolver implements Resolve<DetailResolverData<ServerCnnctn>>
 				snackbar.exception( "Could not connect to server.", e );
 			}
 		}
-		return y;
+		return { ...y, gateway: ql };
 	}
 	opcStore:OpcStore = inject( OpcStore );
 	recentVisits = inject( RecentVisits );

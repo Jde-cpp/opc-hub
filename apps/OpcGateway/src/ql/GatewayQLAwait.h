@@ -21,9 +21,9 @@ namespace Jde::Opc::Gateway{
 		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers
 		//all of them in one object for a connection that is not saved.  Strand-only:  connection attributes are sync UA services.
 		Ω ServerDescription( const QL::TableQL& q, const sp<UAClient>& client )ε->jobject;
-		Ω NamespaceRows( const QL::TableQL& q, const Gateway::Namespaces& namespaces )ι->jarray;//namespaces{ index uri }:  the server's NamespaceArray as NamespacesAwait reads it, index by index.
 		Ω SecurityPolicyUri( const sp<UAClient>& client )ε->string;
 		Ω SecurityMode( const sp<UAClient>& client )ε->string;
+		Ω NamespaceRows( const QL::TableQL& q, const Gateway::Namespaces& namespaces )ι->jarray;//namespaces{ index uri }:  the server's NamespaceArray as NamespacesAwait read it, index by index - no UA call.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};

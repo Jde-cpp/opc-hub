@@ -26,9 +26,13 @@ export class ServerProperties{
 	//gateway's own reason - a missing tab told the user nothing about why.
 	server = input<Server|undefined>();
 	error = input<string|undefined>();
+	//a new connection never tried:  not a failure, so not the Not connected state
+	untested = input( false );
 	//the url a Test Connection is trying right now:  shown in place of the last result while the gateway connects, since a
 	//connect can take the gateway's full timeout and the stale description or error would otherwise sit there as if it were the answer.
 	connecting = input<string|undefined>();
+	//the settings the result was for, when the form has changed since:  the result is marked, not cleared, since it may be the saved row's own describe.
+	staleFor = input<string|undefined>();
 	//Not a form:  nothing here is editable - the gateway reports what the server told it - and a disabled input dims the
 	//text and will not let it be selected, when the URIs and the policy are exactly what gets copied out of this page.
 	//Read order:  what the server is, then how this gateway talks to it, then how it was found - the discovery URLs list

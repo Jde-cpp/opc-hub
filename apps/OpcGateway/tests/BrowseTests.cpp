@@ -210,6 +210,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 		const UAClientException described{ (StatusCode)UA_STATUSCODE_BADNODEIDUNKNOWN, Jde::Handle{0xABC}, string{"applicationUri mismatch"} };
 		ASSERT_EQ( described.UserMessage(), "(80340000)BadNodeIdUnknown - applicationUri mismatch" ) << "the status must survive alongside the description";
+		ASSERT_EQ( described.ClientDetail(), described.UserMessage() ) << "what a 500 body appends - the status alone lost the reason";
 		ASSERT_EQ( string{described.what()}, "(80340000)BadNodeIdUnknown - applicationUri mismatch" );
 	}
 

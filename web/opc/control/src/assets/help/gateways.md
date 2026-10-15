@@ -59,7 +59,7 @@ Under [Applications](/apps), a gateway instance's page has three tabs:
 - **Logs** shows the running service's log.
 - **Log Settings** changes the running service's log levels.
 
-A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test opens no lasting session and changes nothing; a connection that passes still has to be saved.
+A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
 
 An OPC server instance's page has **Logs** and **Log Settings**.
 

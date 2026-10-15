@@ -6,7 +6,7 @@ import { OpcObject, UaNode, ENodeClass } from "../model/node";
 import { NodeId, NodeKey } from "../model/node-id";
 import { RouteItem } from "jde-spa";
 import { Gateway, GatewaySlug } from "./gateway-service";
-import { Server, ServerProps } from "../model/server";
+import { namespaceColumns, Server, serverDescColumns, ServerProps } from "../model/server";
 import { NodeView } from "../model/node-view";
 
 class StoreNode{
@@ -42,10 +42,10 @@ export class OpcStore{
 			return gatewayConnections.get(cnnctn)!;
 		let q = `\
 			connection: serverConnection( slug: $opc, deleted: null ){ id name slug url certificateUri defaultBrowseNs }
-			desc: serverDescription( opc: $opc ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls }
+			desc: serverDescription( opc: $opc ){ ${serverDescColumns} }
 			policy: securityPolicyUri( opc: $opc )
 			mode: securityMode( opc: $opc )
-			namespaces( opc: $opc ){ index uri }`;
+			namespaces( opc: $opc ){ ${namespaceColumns} }`;
 		let props = await gatewayService.query<ServerProps>(q, {opc:cnnctn}, (m)=>console.log(m));
 		let server = new Server( props );
 		gatewayConnections.set( cnnctn, server );

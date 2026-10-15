@@ -101,7 +101,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected abstract upsert():T;//the edited row to save - the one thing every page assembles differently
 	protected abstract onRow():void;//per-page state off the freshly loaded `row`
 	protected afterMutate():void{}//a save, delete, restore or purge landed - for a page whose row something else caches (ClientDetail, reviews/m3-closing.md #5)
-	protected get onlyPropertiesTab():boolean{ return !this.row.id; }//client-detail gates its extra tab on `server`, not on the id
+	protected get onlyPropertiesTab():boolean{ return !this.row.id; }
 	protected get title():string{ return this.row.name; }
 
 	row!:T;
