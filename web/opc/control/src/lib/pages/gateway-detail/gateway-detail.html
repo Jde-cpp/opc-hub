@@ -8,6 +8,22 @@
 				<ql-list [(sideNav)]=sideNav></ql-list>
 			</ng-template>
 		</mat-tab>
+		<mat-tab><!--the historian's templates and groups (#337):  lists the tab resolves itself, each keyed on the gateway as Logs is-->
+			<ng-template mat-tab-label>Templates</ng-template>
+			<ng-template matTabContent>
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="templates" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
+		</mat-tab>
+		<mat-tab>
+			<ng-template mat-tab-label>Groups</ng-template>
+			<ng-template matTabContent>
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
+		</mat-tab>
 		<mat-tab>
 			<ng-template mat-tab-label>Logs</ng-template>
 			<ng-template matTabContent>

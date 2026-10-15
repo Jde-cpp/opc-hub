@@ -91,13 +91,19 @@ namespace Jde::Access{
 		if( resourcePK )//else not enabled
 			TestRights( *resourcePK, resourceName, rights, executer, sl );
 	}
-	α Authorize::Test( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+	α Authorize::Check( str schemaName, str resourceName, str criteria, ERights rights, UserPK userPK, SL sl )ι->std::expected<void, Access::AccessException>{
 		rl _{ Mutex };
 		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, criteria );
 		if( !resourcePK && criteria.size() )
 			resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );//an unmapped criteria inherits the slug's root, as TestAdminLocal.
-		if( resourcePK )//else not enabled
-			TestRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, executer, sl );
+		return resourcePK
+			? HasRights( *resourcePK, criteria.size() ? Ƒ("{}[{}]", resourceName, criteria) : resourceName, rights, userPK, sl )
+			: std::expected<void, Access::AccessException>{};
+	}
+	α Authorize::Test( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
+		auto y = Check( schemaName, resourceName, criteria, rights, executer, sl );
+		if( !y )
+			throw move(y.error());
 	}
 	α Authorize::CheckEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ι->std::expected<void, Access::AccessException>{
 		if( executer.Value==UserPK::System )
@@ -109,7 +115,7 @@ namespace Jde::Access{
 		let name = criteria.size() ? Ƒ( "{}[{}]", resourceName, criteria ) : resourceName;
 		if( resourcePK )
 			return HasRights( *resourcePK, name, rights, executer, sl );
-		return std::unexpected(Access::AccessException{sl, executer, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name} );
+		return std::unexpected(Access::AccessException{sl, executer, ELogLevel::Trace, "'{}' access to '{}' needs a grant on an enforced resource, and nothing enforces it.", ToString(rights), name} );
 	}
 	α Authorize::TestEnforced( str schemaName, str resourceName, str criteria, ERights rights, UserPK executer, SL sl )ε->void{
 		if( auto allowed = CheckEnforced(schemaName, resourceName, criteria, rights, executer, sl); !allowed )
@@ -118,8 +124,8 @@ namespace Jde::Access{
 
 	Ω accessException( EHttpStatus status, UserPK executer, SL sl )ι->Access::AccessException{
 		return status==EHttpStatus::Unauthorized
-			? Access::AccessException{ sl, executer, EHttpStatus::Unauthorized, "User not found." }
-			: Access::AccessException{ sl, executer, "User is deleted." };
+			? Access::AccessException{ sl, executer, ELogLevel::Debug, EHttpStatus::Unauthorized, "User not found." }
+			: Access::AccessException{ sl, executer, ELogLevel::Debug, "User is deleted." };
 	}
 
 	//FindUserLocked's error as the exception:  Unauthorized for an executer nobody knows, Forbidden for one who may not.
@@ -131,7 +137,7 @@ namespace Jde::Access{
 		if( executer.Value==UserPK::System )
 			return;
 		TestUser( executer, sl );
-		throw Access::AccessException{ sl, executer, "User does not have '{}' access to '{}.{}' - the table grants it to no one.", ToString(rights), schemaName, resourceName };
+		throw Access::AccessException{ sl, executer, ELogLevel::Debug, "User does not have '{}' access to '{}.{}' - the table grants it to no one.", ToString(rights), schemaName, resourceName };
 	}
 	α Authorize::TestUser( UserPK executer, SL sl )Ε->void{
 		rl _{ Mutex };
@@ -167,9 +173,9 @@ namespace Jde::Access{
 		if( !configured )
 			return std::unexpected( accessException(configured.error(), executer, sl) );
 		if( !empty(configured->Denied & rights) )
-			return std::unexpected( Access::AccessException(sl, executer, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
+			return std::unexpected( Access::AccessException(sl, executer, ELogLevel::Trace, "User denied '{}' access to '{}'.", ToString(rights), resourceName) );
 		if( empty(configured->Allowed & rights) )
-			return std::unexpected( Access::AccessException(sl, executer, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
+			return std::unexpected( Access::AccessException(sl, executer, ELogLevel::Trace, "User does not have '{}' access to '{}'.", ToString(rights), resourceName) );
 		return {};
 	}
 

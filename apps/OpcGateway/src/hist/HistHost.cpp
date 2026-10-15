@@ -313,6 +313,7 @@ namespace Jde::Opc::Gateway{
 							}
 							else if( let& holder = holders.front(); holder.Group!=group.Id ){
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
+								result.Holder = holder.Group;
 								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Group );
 							}
 							else if( holder.TemplateNode==result.TemplateNode ){//a concurrent resolve made the row.
@@ -321,11 +322,25 @@ namespace Jde::Opc::Gateway{
 							}
 							else{
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
+								result.Holder = group.Id;
 								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.TemplateNode ? Ƒ("member {}", *holder.TemplateNode) : string{"an ad hoc node"} );
 							}
 						}
 					}
 				}
+			}
+			//The holders' names, deleted groups among them:  a deleted group keeps its rows.  This group's is its row's;  another's is
+			//asked once, by its id, rather than every group on the gateway read for one or two.
+			flat_map<HistGroupPK,string> names{ {group.Id, group.Name} };
+			for( auto& r : y ){
+				if( !r.Holder )
+					continue;
+				auto name = names.find( *r.Holder );
+				if( name==names.end() ){
+					auto holders = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)*r.Holder}, .IncludeDeleted=true}) );
+					name = names.emplace( *r.Holder, holders.size() ? holders.front().Name : string{} ).first;
+				}
+				r.HolderName = name->second;
 			}
 			await.Resume( move(y) );
 		}

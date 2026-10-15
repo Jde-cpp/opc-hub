@@ -10,7 +10,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
-import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, histMemberIndexed, histPathText, HistPushedModification, histResumeReach, histResumeTime, histThresholdText, HistValue, isNoData, latestHistTimes, mergeHistValues, parseHistPath, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage, toHistThresholds } from './hist';
+import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, histMemberIndexed, histPathText, HistPushedModification, histResumeReach, histResumeTime, histThresholdBlank, histThresholdFieldText, histThresholdText, HistValue, isNoData, latestHistTimes, mergeHistValues, parseHistPath, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage, toHistThresholds } from './hist';
 
 const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
@@ -352,5 +352,13 @@ describe( 'toHistThresholds', ()=>{
 		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 9, source: 'node'} ) ).toBe( '9' );
 		expect( histThresholdText( {name: 'minTimeInterval', value: 0, source: 'default'} ) ).toBe( '0' );
 		expect( histThresholdText( {name: 'stepped', value: false, source: 'node'} ) ).toBe( 'false' );
+	} );
+	//a row's own column:  blank stays blank, for the row inherits;  a format by its name, or as stored when it names none
+	it( "shows a row's own column", ()=>{
+		const fields = {...histThresholdBlank, exceptionDeviationFormat: '1', minTimeInterval: '1000'};
+		expect( histThresholdFieldText( fields, 'exceptionDeviation' ) ).toBe( '' );
+		expect( histThresholdFieldText( fields, 'exceptionDeviationFormat' ) ).toBe( 'PercentOfValue' );
+		expect( histThresholdFieldText( {...fields, exceptionDeviationFormat: '9'}, 'exceptionDeviationFormat' ) ).toBe( '9' );
+		expect( histThresholdFieldText( fields, 'minTimeInterval' ) ).toBe( '1000' );
 	} );
 } );

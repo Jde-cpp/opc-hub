@@ -1,5 +1,7 @@
 #include "helpers.h"
+#include <thread>
 #include <jde/fwk/settings.h>
+#include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/UAException.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
@@ -96,6 +98,55 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//the policy and mode the session was opened with, read on the client's strand - the only place UA_Client_* calls may run.
+	α Tests::EnforceHistGroups( bool on )ε->void{
+		auto app = AppClient();
+		let slug = jobject{ {"slug", "histGroups"}, {"schema", "gateway"} };
+		let acl = app->Acl();
+		let reached = [&]( bool active, sv change ){
+			for( uint i=0; acl->FindActiveResourcePK("gateway", "histGroups", "").has_value()!=active; ++i ){
+				THROW_IF( i==200, "The histGroups resource's {} didn't reach the gateway's authorizer.", change );
+				std::this_thread::sleep_for( std::chrono::milliseconds{50} );
+			}
+		};
+		app->QuerySync<jvalue>( "deleteResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
+		reached( false, "delete" );
+		if( !on )
+			return;
+		constexpr sv roleSlug{ "GatewayHistGroupEditor" };
+		if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
+			let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway group history editor"}} );
+			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
+			app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}} );
+			app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
+		}
+		app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
+		reached( true, "restore" );
+	}
+	α Tests::ScopeHistGroup( uint32 group, Access::ERights allowed )ε->void{
+		let app = AppClient();
+		THROW_IF( !app->Acl()->FindActiveResourcePK("gateway", "histGroups", ""), "Group {}'s resource would count for nothing:  histGroups' root isn't enforced (EnforceHistGroups).", group );
+		let criteria = std::to_string( group );
+		app->QuerySync<jvalue>( "createResource( schemaName:\"gateway\", name:$name, slug:\"histGroups\", criteria:$criteria, allowed:255 )", {{"name", Ƒ("histGroups[{}]", group)}, {"criteria", criteria}} );
+		let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", Ƒ("GatewayHistGroup{}", group)}, {"name", Ƒ("Gateway history group {}", group)}} );
+		let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
+		app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria}} )", {{"roleId", roleId}, {"allowed", underlying(allowed | Access::ERights::Administer)}, {"criteria", criteria}} );
+		app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
+		app->QuerySync<jvalue>( "restoreResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );//a row is created unenforced.
+		for( uint i=0; !app->Acl()->FindActiveResourcePK("gateway", "histGroups", criteria); ++i ){//the gateway's authorizer hears of it over its subscription.
+			THROW_IF( i==200, "Group {}'s resource didn't reach the gateway's authorizer.", group );
+			std::this_thread::sleep_for( std::chrono::milliseconds{50} );
+		}
+	}
+	α Tests::UnscopeHistGroup( uint32 group )ε->void{
+		let app = AppClient();
+		let criteria = std::to_string( group );
+		app->QuerySync<jvalue>( "deleteResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );
+		for( uint i=0; app->Acl()->FindActiveResourcePK("gateway", "histGroups", criteria); ++i ){//until then it still refuses what it grants no one, a purge of the group included
+			THROW_IF( i==200, "Group {}'s resource deletion didn't reach the gateway's authorizer.", group );
+			std::this_thread::sleep_for( std::chrono::milliseconds{50} );
+		}
+	}
+
 	α Tests::Negotiated( const sp<UAClient>& client )ι->string{
 		if( !client )
 			return "ok";

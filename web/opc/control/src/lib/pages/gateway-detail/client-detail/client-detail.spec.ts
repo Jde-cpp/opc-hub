@@ -28,7 +28,7 @@ import { ClientDetail } from './client-detail';
 const create = ( row:any )=>{
 	TestBed.configureTestingModule({ providers: [
 		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}, gateway: {}}})} },
-		{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/$new"} },
+		{ provide: Router, useValue: {navigate: ()=>{}} },
 		{ provide: ComponentPageTitle, useValue: {} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}} }
 	]});
@@ -54,12 +54,12 @@ describe( 'ClientDetail tab index', ()=>{
 	} );
 } );
 //reviews/install-issues.md #53:  a deleted connection keeps its slug, and #51's refusal says to restore or purge it - but
-//the page had no Purge.  group-detail's button and DetailPage's confirmation, on the per-gateway ql the resolver passes with the row.
+//the page had no Purge.  group-detail's button and DetailPage's confirmation, on the per-gateway ql the row comes with.
 let confirmed = true;//what the stubbed confirmation dialog answers
 const createWithQl = async ( row:any, mutations:string[] )=>{
 	TestBed.configureTestingModule({ providers: [
 		{ provide: ActivatedRoute, useValue: {data: of({pageData: {row, routing: {}, schema: {enums: new Map()}, gateway: {slug: "g", mutate: async ( ql:string )=>{ mutations.push( ql ); }}}})} },
-		{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/eng-test"} },
+		{ provide: Router, useValue: {navigate: ()=>{}} },
 		{ provide: ComponentPageTitle, useValue: {} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}} },
 		{ provide: OpcStore, useValue: {forget: ()=>{}} },
@@ -105,7 +105,7 @@ describe( 'ClientDetail test connection', ()=>{
 		TestBed.configureTestingModule({ providers: [
 			{ provide: LiveAnnouncer, useValue: {announce: async ( m:string )=>{ announced.push( m ); }} },
 			{ provide: ActivatedRoute, useValue: {data} },
-			{ provide: Router, useValue: {navigate: ()=>{}, url: "/gateways/g/clients/" + (row.slug ?? "$new")} },
+			{ provide: Router, useValue: {navigate: ()=>{}} },
 			{ provide: ComponentPageTitle, useValue: {} },
 			{ provide: SnackbarService, useValue: snackbar },
 			{ provide: OpcStore, useValue: {forget: ()=>{}} }

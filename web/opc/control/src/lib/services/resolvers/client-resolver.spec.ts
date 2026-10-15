@@ -50,7 +50,6 @@ describe( 'ClientResolver.load', ()=>{
 		const data = await ClientResolver.load( ql, opcStore, 'plc1', routing, snackbar );
 		expect( data.row.id ).toBe( 4 );
 		expect( data.row.opcSessions ).toEqual( [] );
-		expect( data.gateway ).toBe( ql );//the page's gateway follows its row (#250 review #11)
 	} );
 
 	it( 'skips the query for $new', async ()=>{

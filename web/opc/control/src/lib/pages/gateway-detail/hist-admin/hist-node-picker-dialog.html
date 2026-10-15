@@ -1,0 +1,100 @@
+<h2 mat-dialog-title>{{ data.title }}</h2>
+<mat-dialog-content>
+	@if( !data.connection || data.rootEditable ){
+		<div class="where">
+			@if( !data.connection ){
+				<mat-form-field class="connection">
+					<mat-label>Connection</mat-label>
+					<mat-select [value]="connection()" (selectionChange)="connection.set($event.value); start()" [disabled]="loading()">
+						@for( c of data.connections; track c.id ){
+							<mat-option [value]="c.slug">{{ c.name }}</mat-option>
+						}
+					</mat-select>
+					<mat-hint>{{ mode=='paths' ? "A template names no server:  browse one its groups will be made on." : "Where the node is." }}</mat-hint>
+				</mat-form-field>
+			}
+			@if( data.rootEditable ){
+				<mat-form-field class="root">
+					<mat-label>Root</mat-label>
+					<input matInput [value]="rootText()" (input)="rootText.set($any($event.target).value)" (keydown.enter)="start()" placeholder="Objects folder" [disabled]="loading()">
+					<button matSuffix matIconButton type="button" (click)="start()" [disabled]="loading() || !!rootError()" aria-label="Browse from the root" matTooltip="Browse from this root"><mat-icon>arrow_forward</mat-icon></button>
+					<mat-hint [class.error]="!!rootError()">{{ rootError() ?? "Where the paths start:  a group applies them from its own root.  Blank is the Objects folder;  a folder opened below can be made the root." }}</mat-hint>
+				</mat-form-field>
+			}
+		</div>
+	}
+	<nav class="trail" aria-label="Where you are">
+		@for( node of trail(); track node.key; let i = $index; let last = $last ){
+			@if( i ){ <mat-icon class="sep" aria-hidden="true">chevron_right</mat-icon> }
+			<button matButton type="button" class="crumb" [class.current]="last" (click)="up(i)" [disabled]="last || loading()">{{ i ? node.name : startName() }}</button>
+		}
+		<span class="spacer"></span>
+		@if( data.rootEditable && trail().length>1 ){
+			<button matButton="outlined" type="button" (click)="useAsRoot()" [disabled]="loading()" matTooltip="Make this folder the root the paths start from"><mat-icon>anchor</mat-icon>Use as root</button>
+		}
+		@if( mode=='object' && current ){
+			<button matButton="tonal" type="button" (click)="chooseCurrent()" [disabled]="loading() || unspelled(current)">Choose {{ currentName() }}</button>
+		}
+	</nav>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Browsing"></mat-progress-bar>
+	@if( connection() ){
+		<mat-table [dataSource]="children()" class="mat-elevation-z2">
+			<ng-container matColumnDef="pick">
+				<mat-header-cell *matHeaderCellDef></mat-header-cell>
+				<mat-cell *matCellDef="let node">
+					@if( selectable(node) ){
+						<mat-checkbox [checked]="isPicked(node)" (change)="toggle(node)" [disabled]="unspelled(node)" [matTooltip]="unspelled(node) ? 'The server lists no URI for this namespace, so the historian cannot name the node.' : ''" [aria-label]="'Pick ' + node.name"></mat-checkbox>
+					}
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="name">
+				<mat-header-cell *matHeaderCellDef>Name</mat-header-cell>
+				<mat-cell *matCellDef="let node">
+					<mat-icon class="kind" aria-hidden="true">{{ icon(node) }}</mat-icon>
+					@if( node.isObject ){
+						<button matButton type="button" class="open" (click)="open(node)" [disabled]="loading()">{{ node.name }}</button>
+					}
+					@else{
+						<span class="leaf">{{ node.name }}</span>
+					}
+				</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="browse">
+				<mat-header-cell *matHeaderCellDef>Browse name</mat-header-cell>
+				<mat-cell *matCellDef="let node">{{ browseText(node) }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="node">
+				<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
+				<mat-cell *matCellDef="let node">{{ node.nodeId.uaString() }}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="choose">
+				<mat-header-cell *matHeaderCellDef></mat-header-cell>
+				<mat-cell *matCellDef="let node">
+					@if( node.isObject ){
+						<button matIconButton type="button" (click)="choose(node)" [disabled]="unspelled(node)" aria-label="Choose this node" matTooltip="Choose"><mat-icon>check_circle</mat-icon></button>
+					}
+				</mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: displayedColumns" [class.picked]="isPicked(row)"></mat-row>
+		</mat-table>
+		@if( !loading() && !children().length && !error() && trail().length ){
+			<p class="empty" role="status">Nothing under {{ currentName() }}.</p>
+		}
+	}
+	@else{
+		<p class="empty" role="status">Pick a connection to browse.</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</mat-dialog-content>
+<mat-dialog-actions>
+	@if( mode!='object' ){
+		<span class="picked-count">{{ picks().length ? picks().length + (picks().length==1 ? ' node picked' : ' nodes picked') : '' }}</span>
+	}
+	<button matButton="outlined" type="button" (click)="dialogRef.close()">Cancel</button>
+	@if( mode!='object' ){
+		<button matButton="filled" type="button" (click)="done()" [disabled]="!picks().length">Add</button>
+	}
+</mat-dialog-actions>

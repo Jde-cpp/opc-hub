@@ -9,11 +9,11 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { HistBand, HistMemberThresholds, HistThresholdOverride, HistThresholds } from '../../../model/hist';
+import { HistBand, HistMemberThresholds, HistThresholdOverride, histThresholdProblem, HistThresholds } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { EAccess, ETypes } from '../../../model/types';
-import { HistThresholdsDialog, HistThresholdsDialogData, ownFields, thresholdChanges, thresholdProblem } from './hist-thresholds-dialog';
+import { HistThresholdsDialog, HistThresholdsDialogData, ownFields, thresholdChanges } from './hist-thresholds-dialog';
 
 const settle = ()=>new Promise( r=>setTimeout(r) );
 const Rpm = new Variable( <any>{ns:2, i:6022, name: 'rpm', browse: {ns:2, name: 'rpm'}, dataType: {i: ETypes.Double}, historizing: true, userAccessLevel: EAccess.All} );
@@ -64,10 +64,10 @@ describe( 'threshold fields', ()=>{
 		expect( thresholdChanges( rpm(), {...ownFields( rpm() ), exceptionDeviationFormat: '3'} ) ).toEqual( {exceptionDeviationFormat: 3} );
 	} );
 	it( 'refuses a negative, a format out of range, and stepped that is neither word', ()=>{
-		expect( thresholdProblem( ownFields( rpm() ) ) ).toBeUndefined();
-		expect( thresholdProblem( {...ownFields( rpm() ), minTimeInterval: '-1'} ) ).toBe( 'Min interval is a number, 0 or more.' );
-		expect( thresholdProblem( {...ownFields( rpm() ), exceptionDeviationFormat: '4'} ) ).toBe( 'The format is one of the four.' );
-		expect( thresholdProblem( {...ownFields( rpm() ), stepped: 'yes'} ) ).toBe( 'Stepped is true or false.' );
+		expect( histThresholdProblem( ownFields( rpm() ) ) ).toBeUndefined();
+		expect( histThresholdProblem( {...ownFields( rpm() ), minTimeInterval: '-1'} ) ).toBe( 'Min interval is a number, 0 or more.' );
+		expect( histThresholdProblem( {...ownFields( rpm() ), exceptionDeviationFormat: '4'} ) ).toBe( 'The format is one of the four.' );
+		expect( histThresholdProblem( {...ownFields( rpm() ), stepped: 'yes'} ) ).toBe( 'Stepped is true or false.' );
 		expect( thresholdChanges( rpm(), {...ownFields( rpm() ), minTimeInterval: '-1'} ) ).toEqual( {} );
 	} );
 } );
@@ -117,6 +117,20 @@ describe( 'HistThresholdsDialog', ()=>{
 		expect( d.dialog.cellTooltip( percent( 'waiting', 3 ), 'exceptionDeviation' ) ).toContain( 'The band waits' );
 		expect( d.dialog.cellTooltip( {...percent( 'none', 1 ), enumeration: undefined}, 'exceptionDeviation' ) ).not.toContain( 'waits' );
 	} );
+	//the editor is the pages' shared one (historian-group-template-admin #8), given the member's moot fields and what each blank one
+	//inherits:  an enumeration's deviation and its format are off, and say why
+	it( "edits through the shared editor, an enumeration's deviation off", async ()=>{
+		const d = open( {update: true, nodes: [state()]} );
+		await d.settle();
+		d.dialog.edit( state() );
+		d.fixture.detectChanges();
+		expect( d.dialog.mootFields() ).toEqual( ['exceptionDeviation', 'exceptionDeviationFormat'] );
+		const editor = <HTMLElement>d.fixture.nativeElement.querySelector( 'section.editor hist-threshold-fields' );
+		expect( editor ).not.toBeNull();
+		const inputs = [...editor.querySelectorAll( 'input' )];//the deviation and the two intervals
+		expect( inputs.map( i=>i.disabled ) ).toEqual( [true, false, false] );
+		expect( editor.querySelector( 'mat-hint' )?.textContent ).toContain( 'Not applied to an enumeration.' );
+	} );
 	it( 'offers no edit to a user who may not update the rows', async ()=>{
 		const d = open( {update: false, nodes: [rpm()]} );
 		await d.settle();
@@ -130,8 +144,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		await d.settle();
 		d.dialog.edit( rpm() );
 		expect( d.dialog.changed() ).toBe( false );
-		d.dialog.setField( 'exceptionDeviation', '' );
-		d.dialog.setField( 'maxTimeInterval', '30000' );
+		d.dialog.fields.update( f=>({...f, exceptionDeviation: '', maxTimeInterval: '30000'}) );
 		expect( d.dialog.changes() ).toEqual( {exceptionDeviation: null, maxTimeInterval: 30000} );
 		expect( d.dialog.inheritsHint( 'maxTimeInterval' ) ).toBe( "Inherits 60000 from the group's." );
 		d.list = {update: true, nodes: [{...rpm(), thresholds: rpm().thresholds.map( t=>t.name=='maxTimeInterval' ? {...t, value: 30000, source: 'node'} : t.name=='exceptionDeviation' ? {...t, value: 2, source: 'group'} : t )}]};
@@ -164,7 +177,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		const d = open( {update: true, nodes: [rpm()]} );
 		await d.settle();
 		d.dialog.edit( rpm() );
-		d.dialog.setField( 'minTimeInterval', '250' );
+		d.dialog.fields.update( f=>({...f, minTimeInterval: '250'}) );
 		d.fail = new Error( 'minTimeInterval must be milliseconds, 0 or more, not -1.' );
 		await d.dialog.apply();
 		await d.settle();

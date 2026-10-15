@@ -126,13 +126,13 @@ export class QLList implements OnInit{
 	onRowActivate( row:QLRow ){
 		if( this.selector() || !this.canNavigate() )//ql-table already toggled the row; a selector has nowhere to navigate to
 			return;
-		this.router.navigate( [row.slug], {relativeTo: this.route} )
+		this.router.navigate( [...this.linkPrefix(), row.slug], {relativeTo: this.route} )
 			.then( ok=>{ if( !ok ) this.snackbar.error( `Could not navigate to '${row.slug}'.` ); } )
 			.catch( e=>this.snackbar.exception("Could not navigate to properties", e) );
 	}
 
 	onAdd(){
-		this.router.navigate( ['$new'], {relativeTo: this.route} );
+		this.router.navigate( [...this.linkPrefix(), '$new'], {relativeTo: this.route} );
 	}
 
 	async onRefresh(){
@@ -261,6 +261,7 @@ export class QLList implements OnInit{
 
 	sideNav = model<RouteItem>();//optional:  embedded in a detail page's tab the host owns the sidenav
 	listData = input<QLListData>();//pre-resolved by the host instead of the route (QLSelector); `data` is the rows
+	linkPrefix = input<string[]>( [] );//the segments between the host's route and a row's slug - a list in a page's tab whose detail route is `templates/:slug`, not `:slug` (gateway-detail's Templates and Groups tabs)
 	selector = input<boolean>( false );//pick-rows mode:  always multi-select, no Add, a row click selects instead of navigating
 
 	isLoading = signal<boolean>( true );

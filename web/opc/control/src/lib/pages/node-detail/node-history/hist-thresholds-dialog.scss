@@ -85,25 +85,12 @@ mat-row.editing{
 		font: var(--mat-sys-title-small);
 	}
 }
-.fields{
-	display: grid;
-	grid-template-columns: repeat( auto-fit, minmax(160px, 1fr) );
-	gap: .5rem .75rem;
-	mat-form-field{
-		width: 100%;
-	}
-}
 .editor-actions{
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
 	gap: 12px;
 	margin-top: .25rem;
-}
-.problem{
-	flex: 1 1 auto;
-	color: var(--mat-sys-on-surface-variant);
-	font: var(--mat-sys-body-small);
 }
 .refused{
 	display: flex;

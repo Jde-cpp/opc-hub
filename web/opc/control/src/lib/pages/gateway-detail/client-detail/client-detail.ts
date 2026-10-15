@@ -9,7 +9,7 @@ import { DetailPage, errorText, httpStatus, Properties} from 'jde-framework';
 import { ServerProperties } from './server-properties/server-properties';
 import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
 import { Gateway } from '../../../services/gateway-service';
-import { ClientResolverData } from '../../../services/resolvers/client-resolver';
+import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { namespaceColumns, Server, serverDescColumns, TestConnectionResult } from '../../../model/server';
 import { OpcStore } from '../../../services/opc-store';
 
@@ -30,7 +30,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 
 	protected override get ctor(){ return ServerCnnctn; }
 	protected override onRow(){//no child collections - the connection is its properties;  the Connection tab opens on the resolver's describe, until a test replaces it
-		this.gateway = (this.pageData as ClientResolverData).gateway;
+		this.gateway = (<GatewayDetailData<ServerCnnctn>>this.pageData).gateway;
 		this.server.set( this.row.server );
 		this.serverError.set( this.row.serverError );
 		this.#resultFor.set( this.row.server || this.row.serverError ? connectSettings(this.row) : undefined );
@@ -47,7 +47,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			this.opcStore.forget( this.gateway.slug, this.row.slug );
 	}
 	protected override get title(){ return this.row.name ? `${this.row.name} - Connection` : "New Connection"; }
-	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - the row's, from the resolver
+	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - the row's, from ClientResolver
 
 	//what a user reads first, then the connection, then the two technical fields - the alphabetical default buried Description between them and put Url last
 	readonly fieldOrder = ["slug", "name", "description", "url", "certificateUri", "defaultBrowseNs"];
