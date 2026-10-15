@@ -29,14 +29,14 @@ export class Mutation{
 			}
 			return addRemove;
 		};
-		if( this.type==MutationType.Remove ){
-			query = `remove${StringUtils.capitalize(this.typeName)}`;
-			if( this.id )
-				query += `( id:${this.id} )`;
+		const hasArgs = this.args && Object.keys(this.args).length;
+		//a row named by its id alone - deleteUser( id:3 ).  was Remove only, so a Delete or Purge by id came back null.
+		if( !hasArgs && this.id && [MutationType.Delete, MutationType.Purge, MutationType.Remove].includes(this.type) ){
+			query = `${getEnumName(MutationType,this.type).toLowerCase()}${StringUtils.capitalize(this.typeName)}( id:${this.id} )`;
 			if( this.#children.size )
 				query += addRemoveQuery();
 		}
-		if( this.args && Object.keys(this.args).length ){
+		else if( hasArgs ){
 			let args = this.args;
 			if( this.type==MutationType.Create && this.#children.size ){
 				args = JSON.parse(JSON.stringify(this.args));
@@ -91,13 +91,8 @@ export class Mutation{
 				query += addRemoveQuery();
 			}
 		}
-		else if( this.#children.size ){
-			query = '';
-			for( let [key, keyItems] of this.#children ){
-				for( let item of keyItems )
-					query += item.toString();
-			}
-		}
+		else if( this.#children.size )
+			query = addRemoveQuery();
 		return query;
 	}
 

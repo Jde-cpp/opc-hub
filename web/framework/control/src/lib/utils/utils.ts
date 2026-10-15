@@ -27,7 +27,9 @@ export function cloneClassArray<T>( from:Array<T>, ctor: new (item: T) => T ):T[
 	return clone;
 }
 
-//Temporal.Duration
+//The inverse of Chrono::ToString (include/jde/fwk/chrono.h), which writes a year and a month as std::chrono's average
+//Gregorian ones - 365.2425 days, not 365.25 - and a sub-minute remainder as decimal seconds (PT1.5S).
+const daysPerYear = 365.2425;
 export function fromIsoDuration( str:string ):number{
 	if( str.length==0 )
 		return 0;
@@ -40,9 +42,12 @@ export function fromIsoDuration( str:string ):number{
 			parsingTime = true;
 			continue;
 		}
-		let value = 0;
-		while( i<str.length && str[i]>='0' && str[i]<='9' )
-			value = value*10 + (+str[i++]);
+		const start = i;
+		while( i<str.length && ((str[i]>='0' && str[i]<='9') || str[i]=='.') )
+			++i;
+		const value = +str.substring( start, i );
+		if( isNaN(value) )
+			throw `Bad number '${str.substring(start, i)}' in duration. '${str}'`;
 		let type = str[i];//the for's i++ advances past the designator
 		let multiplier;
 		if( type=='S' && parsingTime )
@@ -56,9 +61,9 @@ export function fromIsoDuration( str:string ):number{
 		else if( type=='W' && !parsingTime )
 			multiplier = 7*86400;
 		else if( type=='M' && !parsingTime )
-			multiplier = 86400*365.25/12;
+			multiplier = 86400*daysPerYear/12;
 		else if( type=='Y' && !parsingTime )
-			multiplier = 86400*365.25;
+			multiplier = 86400*daysPerYear;
 		else
 			throw `Unknown type '${type}' in duration. '${str}'`;
 		seconds += multiplier*value;

@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { ELogLevel } from 'jde-proto/Log';
 import { Guid } from '../../model/guid';
 import { LogDataSource } from './log-data-source';
-import { Entry, LogView } from './log-entry';
+import { Entry, LogEntries, LogView } from './log-entry';
 
 const guid = ( n:number )=>new Guid( n.toString(16).padStart(32, '0') );
 const entry = ( line:number, template:number ):Entry=>( {templateId: guid(template), argIds: [], level: ELogLevel.Information, tags: [], line, time: new Date(0), userId: 0, fileId: guid(1), functionId: guid(1), hidden: false} );
@@ -41,5 +41,66 @@ describe( 'LogDataSource.filterData', ()=>{
 		ds.allEntries[1].hidden = true;//a stale flag from an earlier filter is recomputed, not trusted
 		ds.filterData( noFilter );
 		expect( pages.at(-1) ).toEqual( [0, 1] );
+	} );
+} );
+
+//A read is skip/limit against a log that grows while it is paged, so the next page can repeat the tail of the last one -
+//by as many rows as were written in between.  Each read is a fresh copy off the wire: equal entries, never the same object.
+describe( 'LogDataSource.addLoadedEntries', ()=>{
+	const at = ( line:number, second:number ):Entry=>( {...entry(line, 10), time: new Date(second*1000)} );
+	const read = ( rows:[number,number][], strings:[string,string][]=[] ):LogEntries=>( {entries: rows.map( ([line, second])=>at(line, second) ), strings: new Map(strings)} );
+	const create = ( direction:'asc'|'desc', ...first:[number,number][] )=>{
+		const ds = new LogDataSource( signal({limit: 10, sort: [{active: 'time', direction}]} as unknown as LogView) );
+		ds.addLoadedEntries( read(first) );
+		return ds;
+	};
+	const lines = ( ds:LogDataSource )=>ds.allEntries.map( e=>e.line );
+
+	it( 'drops the rows a descending page repeats', ()=>{
+		const ds = create( 'desc', [5,50], [4,40], [3,30] );
+		ds.addLoadedEntries( read([[4,40], [3,30], [2,20], [1,10]]) );//two rows written since the last read
+		expect( lines(ds) ).toEqual( [5, 4, 3, 2, 1] );
+	} );
+
+	it( 'drops the rows an ascending page repeats', ()=>{
+		const ds = create( 'asc', [1,10], [2,20], [3,30] );
+		ds.addLoadedEntries( read([[3,30], [4,40], [5,50]]) );
+		expect( lines(ds) ).toEqual( [1, 2, 3, 4, 5] );
+	} );
+
+	it( 'keeps a row that shares a time with a loaded one but is not it', ()=>{
+		const ds = create( 'desc', [5,50], [4,40], [3,30] );
+		ds.addLoadedEntries( read([[3,30], [9,30], [2,20]]) );
+		expect( lines(ds) ).toEqual( [5, 4, 3, 9, 2] );
+	} );
+
+	it( 'adds a page with no overlap whole', ()=>{
+		const ds = create( 'desc', [5,50], [4,40] );
+		ds.addLoadedEntries( read([[3,30], [2,20]]) );
+		expect( lines(ds) ).toEqual( [5, 4, 3, 2] );
+	} );
+
+	it( 'takes an empty page, keeping its strings', ()=>{
+		const ds = create( 'desc', [5,50], [4,40] );
+		ds.addLoadedEntries( read([], [["a", "disk full"]]) );
+		expect( lines(ds) ).toEqual( [5, 4] );
+		expect( ds.strings.get("a") ).toBe( "disk full" );
+	} );
+
+	it( 'adds nothing from a page that is all duplicates', ()=>{
+		for( const direction of ['asc', 'desc'] as const ){
+			const ds = create( direction, [1,10], [2,20], [3,30] );
+			const page = read( direction=='asc' ? [[2,20], [3,30]] : [[2,20], [1,10]] );
+			ds.addLoadedEntries( page );
+			expect( ds.allEntries ).toHaveLength( 3 );
+			expect( page.entries ).toEqual( [] );
+		}
+	} );
+
+	it( 'merges the page\'s strings before it filters the page', ()=>{
+		const ds = new LogDataSource( signal({limit: 10, sort: [{active: 'time', direction: 'desc'}]} as unknown as LogView) );
+		ds.filter = {...noFilter, message: "disk"};
+		ds.addLoadedEntries( read([[1,10]], [[guid(10).toString(), "disk full"]]) );
+		expect( ds.allEntries[0].hidden ).toBe( false );
 	} );
 } );
