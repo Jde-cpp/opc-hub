@@ -23,23 +23,21 @@ addHard favicon.svg $sitePath;
 cd ../src/app;
 #`ng new` scaffolds a hello-world root component (app.ts/app.html/app.scss/app.spec.ts) that this site replaces.
 #addHard rm's its target first, so the three linked names overwrite themselves; the orphan spec has no link to
-#overwrite it and would otherwise keep running against the deleted scaffold under `ng test`.
-rm -f app.spec.ts;
+#overwrite it and would otherwise keep running against the deleted scaffold under `ng test`.  Every workspace spec goes,
+#not just that one:  the site's are linked back below, and one whose site file was deleted would run on otherwise.
+rm -f *.spec.ts;
 addHard app.routes.ts $sitePath/app;
 addHard app.html $sitePath/app;
 addHard app.scss $sitePath/app;
 addHard app.ts $sitePath/app;
 rm -f app.config.ts;
 addHard app.config.ts $sitePath/app;
-addHard google-relogin.spec.ts $sitePath/app;
-addHard profile-store.spec.ts $sitePath/app;
-addHard profile-service.spec.ts $sitePath/app;
-#app-project specs for jde-spa services (library specs themselves live beside the code since the buildTarget fix in create-workspace.sh).
-addHard search-service.spec.ts $sitePath/app;
-addHard route-search-provider.spec.ts $sitePath/app;
-addHard node-search-provider.spec.ts $sitePath/app;
-addHard environment-keys.spec.ts $sitePath/app;
-addHard not-found.spec.ts $sitePath/app;
+#every site spec, by glob:  named one by one here, a new one never ran - under `ng test` or in CI - until someone added it.
+#(The jde-spa service specs among them are app-project specs from before create-workspace.sh's buildTarget fix let library
+#specs live beside the code.)
+for spec in $sitePath/app/*.spec.ts; do
+	if [ -f $spec ]; then addHard $(basename $spec) $sitePath/app; fi;
+done;
 moveToDir services;
 addHard environment-service.ts $sitePath/app/services;
 cd ../..;

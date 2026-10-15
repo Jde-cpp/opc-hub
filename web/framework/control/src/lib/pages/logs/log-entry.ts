@@ -38,6 +38,8 @@ export class LogEntries{
 		});
 		queryResult.strings.forEach( s=>this.strings.set(s.id, s.value) );
 	}
+	//the arguments too:  without them, rows one line logs in a loop within one millisecond were all one row, and paging
+	//dropped all but the first as repeats.
 	static equals( a:Entry, b:Entry ):boolean{
 		return a.time.getTime() === b.time.getTime()
 			&& a.userId === b.userId
@@ -45,7 +47,9 @@ export class LogEntries{
 			&& a.level === b.level
 			&& a.templateId.equals(b.templateId)
 			&& a.fileId.equals(b.fileId)
-			&& a.functionId.equals(b.functionId);
+			&& a.functionId.equals(b.functionId)
+			&& a.argIds.length === b.argIds.length
+			&& a.argIds.every( (id, i)=>id.equals(b.argIds[i]) );
 	}
 	//a combined tag reaches us in ELogTags bit order, which is alphabetical - "read.server.socket".  logTags.h spells
 	//that same tag "socket.client.read": transport, then role, then direction, which is the order that reads.  ranked
