@@ -87,25 +87,26 @@ export class LogDataSource extends DataSource<Entry>{
 
 	addLoadedEntries( data:LogEntries ){
 		//before the push loop, which resolves each entry's text to filter and to sort it - a template that has not
-		//been merged yet reads as "".  the dedup loop below compares only ids and times, so it is unaffected.
+		//been merged yet reads as "".  the dedup below compares only ids and times, so it is unaffected.
 		data.strings.forEach( (value,key)=>this.strings.set( key, value ) );
-		//remove duplicates
-		let loaded = data.entries[0];
-		for( let i=this.allEntries.length-1; loaded && i>=0; --i ){//loaded is undefined for an empty batch or once shift() exhausts it — stop before dereferencing it
-			let existing = this.allEntries[i];
-			if( LogEntries.equals(loaded, existing) ){
-				data.entries.shift();
-				loaded = data.entries[0];
-				i=this.allEntries.length;
-			}
-			else if( this.sort[0].active=='time' ){
-				if( this.sort[0].direction=='desc' && loaded.time.getTime()<existing.time.getTime() )
-					break;
-				else if( this.sort[0].direction=='asc' && loaded.time.getTime()>existing.time.getTime() )
-					break;
-			}
+		//A read is skip/limit against a log that grows while it is paged, so a page can repeat rows already loaded.  Every row
+		//is checked, not just the page's first ones:  the old loop stopped at the first that matched nothing, so a repeat
+		//behind a new row with the same time - tied rows read back in another order - was added twice.  Filtered before any
+		//push, so a row is only ever matched against what was loaded before this page.
+		data.entries.filter( entry=>!this.isLoaded(entry) ).forEach( entry=>this.push(entry) );
+	}
+	//scanned from the end, where a repeated row lands.  Sorted by time, the scan stops at the first loaded row that sorts
+	//before `entry`:  nothing earlier can be equal to it.
+	private isLoaded( entry:Entry ):boolean{
+		const byTime = this.sort[0].active=='time';
+		for( let i=this.allEntries.length-1; i>=0; --i ){
+			const existing = this.allEntries[i];
+			if( LogEntries.equals(entry, existing) )
+				return true;
+			if( byTime && this.compare(existing, entry)<0 )
+				return false;
 		}
-		data.entries.forEach( (x)=>this.push(x) );
+		return false;
 	}
 
 	push( entry:Entry ):void{

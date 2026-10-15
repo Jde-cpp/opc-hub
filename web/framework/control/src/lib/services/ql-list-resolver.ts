@@ -74,7 +74,7 @@ export class QLListResolver implements Resolve<QLListData> {
 		}
 		if( !routing && collectionDisplay ){//a typed or bookmarked name the route does not list opened the first list under that name (reviews/m3-closing.md #38)
 			this.cnsl.error( `There is no ${collectionDisplay} list.` );
-			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );
+			QLListResolver.redirectUp( this.router, route );
 			return Promise.resolve( null as unknown as QLListData );
 		}
 		if( !routing )
@@ -84,6 +84,12 @@ export class QLListResolver implements Resolve<QLListData> {
 		if( routing.parent )
 			this.routeStore.setChildren( routing.parent.path, siblings );//the breadcrumb resolves a ':collectionDisplay' segment through RouteStore;  unregistered, it fell back to the raw url segment ('users' instead of 'Users')
 		return this.load( routing );
+	}
+
+	//a refusal's way back to the page above.  Fired and forgotten, so a failure there is logged here:  unhandled, the rejection
+	//was an uncaught error on top of whatever the page above's own resolver had already said about it.
+	static redirectUp( router:Router, route:ActivatedRouteSnapshot ):void{
+		router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) ).catch( e=>console.warn("The redirect failed.", e) );
 	}
 
 	//the sidenav header link back to the collection's landing page ('/access' for access/users).  ComponentNav renders the

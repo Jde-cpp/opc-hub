@@ -1,0 +1,55 @@
+name: Web Tests
+
+# The Angular specs (Vitest, `ng test`) on every pull request that can change them. GitHub-hosted, so unlike linux-ci.yml a
+# fork's PR is safe to run: nothing here reaches the self-hosted runner, and the token is read-only. The scaffold is the
+# release workflows' `web` job - web/opc/scripts/setup.sh builds the workspace from npm, links the tracked sources in and
+# runs `ng build`, so a PR that breaks the build fails here too - and then `ng test` runs every project: the four libraries
+# and the site's own specs (web/opc/site/app/*.spec.ts).
+on:
+  pull_request:
+    paths: &paths
+      - web/**
+      - '**/*.proto' # generated into jde-proto (web/framework/scripts/jde-framework-proto.sh, web/opc/scripts/jde-opc-proto.sh)
+      - build/common.sh
+      - build/common-error.sh
+      - CMakePresets.common.json # JDE_VERSION, stamped onto the workspace by setup.sh
+      - .github/workflows/web-tests.yml
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+# A newer push supersedes a pull request's run. A push to main gets a group of its own, so no merge loses its result:
+# cancel-in-progress: false alone would only queue it, and GitHub cancels a queued run once a third arrives in the group.
+concurrency:
+  group: web-tests-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # the scaffold takes ~5 min; a hung npm install or a prompt would otherwise hold the runner for 6 h
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26 # as the release workflows' web job: @angular/cli 22 takes ^22.22 || ^24.15 || >=26
+
+      # Pinned to the major the libraries' peer ranges name (web/*/control/package.json), as in the release workflows.
+      - name: Scaffold and build the site
+        env:
+          JDE_BASH: ${{ github.workspace }}
+        run: |
+          npm install -g @angular/cli@22
+          bash web/opc/scripts/setup.sh
+
+      - name: Test
+        working-directory: web/opc/my-workspace
+        run: ng test --watch=false
