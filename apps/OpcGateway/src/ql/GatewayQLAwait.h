@@ -18,13 +18,14 @@ namespace Jde::Opc::Gateway{
 		Ω IsApplicable( const QL::TableQL& q )ι->bool;//a gateway custom query: opcSessions, search, serverConnection{opcSessions|opcConnections}, or anything keyed by `opc` - the queries a server-bound await answers.  A host QL (OpcHub) asks before handing the query over, so app/access tables never reach ConnectAwait.
 		Ω Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
 		α Suspend()ι->void override{ GetClient( this ); }
+		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers
+		//all of them in one object for a connection that is not saved.  Strand-only:  connection attributes are sync UA services.
+		Ω ServerDescription( const QL::TableQL& q, const sp<UAClient>& client )ε->jobject;
+		Ω NamespaceRows( const QL::TableQL& q, const Gateway::Namespaces& namespaces )ι->jarray;//namespaces{ index uri }:  the server's NamespaceArray as NamespacesAwait reads it, index by index.
+		Ω SecurityPolicyUri( const sp<UAClient>& client )ε->string;
+		Ω SecurityMode( const sp<UAClient>& client )ε->string;
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
-		α ConnectionAttributes( QL::TableQL&& q, sp<UAClient> client )ι->jvalue;
-		α ServerDescription( QL::TableQL&& q, sp<UAClient> client )ε->jobject;
-		α Namespaces( QL::TableQL&& q, const Gateway::Namespaces& namespaces )Ι->jvalue;
-		α SecurityPolicyUri( QL::TableQL&& q, sp<UAClient> client )ε->jvalue;
-		α SecurityMode( QL::TableQL&& q, sp<UAClient> client )ε->jvalue;
 	};
 	struct GatewayQLMAwait final : QL::IQLTableMutationExe, IGatewayQLAwait{
 		using base = QL::IQLTableMutationExe;

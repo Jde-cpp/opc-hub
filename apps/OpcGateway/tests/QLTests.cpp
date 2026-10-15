@@ -419,6 +419,44 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( Json::AsArray(logTags.as_object(), "enumValues").empty() ) << serialize( logTags );
 	}
 
+	//testConnection( opc, url, certificateUri ):  the connection page's Test Connection - settings that are not saved, connected as the
+	//saved row would be and described in one object, with nothing left registered for the slug;  a wrong url is the query's error,
+	//not the slug's connectionStatus;  and the slug names the certificate file, so it is held to the insert's rule.
+	TEST_F( QLTests, testConnection ){
+		const string slug{ "qlTestsTestConnection" };//no such row:  the point is a connection that is not saved.
+		ASSERT_FALSE( SelectServerCnnctn({slug}) );
+		const string url{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
+		const string urn{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
+		const string q{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls securityPolicyUri securityMode namespaces{ index uri } }" };
+		let value = Socket().QuerySync( string{q}, {{"opc", slug}, {"url", url}, {"certificateUri", urn}} );
+		TRACE( "testConnection: {}.", serialize(value) );
+		let& o = value.as_object();
+		EXPECT_EQ( Json::AsSV(o, "applicationUri"), urn ) << serialize( value );
+		for( sv field : {"productUri", "applicationName", "applicationType", "gatewayServerUri", "discoveryProfileUri"} )
+			EXPECT_TRUE( o.contains(field) ) << field << ": " << serialize( value );
+		EXPECT_FALSE( Json::AsArray(o, "discoveryUrls").empty() ) << serialize( value );
+		EXPECT_EQ( Json::AsSV(o, "securityMode"), "SignAndEncrypt" ) << "a certificateUri means Sign & Encrypt: " << serialize( value );
+		EXPECT_TRUE( Json::AsSV(o, "securityPolicyUri").starts_with("http://opcfoundation.org/UA/SecurityPolicy#") ) << serialize( value );
+		let& namespaces = Json::AsArray( o, "namespaces" );
+		ASSERT_GE( namespaces.size(), 2u ) << serialize( value );
+		EXPECT_EQ( Json::AsNumber<uint16>(namespaces[0].as_object(), "index"), 0 );
+		EXPECT_EQ( Json::AsSV(namespaces[0].as_object(), "uri"), "http://opcfoundation.org/UA/" );
+		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) ) << "a test connect leaves no client registered.";
+		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) );
+
+		try{
+			Socket().QuerySync( string{q}, {{"opc", slug}, {"url", "opc.tcp://127.0.0.1:1"}, {"certificateUri", urn}} );
+			ADD_FAILURE() << "a connect to a closed port succeeded";
+		}
+		catch( const GatewayErrorResponse& e ){
+			TRACE( "testConnection refused: {}.", e.what() );
+			EXPECT_TRUE( sv{e.what()}.size() ) << "the failure carries its reason";
+		}
+		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "a failed test is not the slug's connectionStatus.";
+		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );
+		EXPECT_THROW( Socket().QuerySync(string{q}, {{"opc", "../" + slug}, {"url", url}, {"certificateUri", urn}}), GatewayErrorResponse ) << "the slug names the certificate file.";
+	}
+
 	TEST_F( QLTests, multipleQueries ){
 		let q =
 			"connection: serverConnection( slug: $opc ){ id name slug url certificateUri defaultBrowseNs }"

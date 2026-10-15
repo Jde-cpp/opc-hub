@@ -680,7 +680,19 @@ namespace Jde::Opc::Gateway{
 				}
 
 				client->ClearRequest( ConnectRequestId );//previous clear didn't have client
-				if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
+				if( client->_onTestResult ){//a test connect reports to its caller alone - see ConnectForTest:  no registry entry, no ConnectErrors, no waiter drained.
+					client->Connected = sessionState == UA_SESSIONSTATE_ACTIVATED;
+					up<UAClientException> error;
+					if( !client->Connected ){
+						error = mu<UAClientException>( connectStatus, client->Handle(), detail.size() ? move(detail) : string{"Connection Failed"} );
+						client->StopProcessing();//as the failure branch below:  the client never enters _clients, so nothing else would Stop() it.
+					}
+					Post( [client, error=move(error)]()mutable ι->void {
+						auto onResult = std::move( client->_onTestResult );
+						onResult( client, move(error) );
+					});
+				}
+				else if( sessionState == UA_SESSIONSTATE_ACTIVATED ){
 					client->RecordSession();//the baseline the re-activation branch above compares against; nothing to rebuild on a first activation.
 					ClearConnectError( client->Slug() );//a reachable slug - whatever the previous attempt failed on no longer applies.
 					client->_asyncRequest.RequestDrain();//open62541 fires its namespace-array read right after this callback returns; ProcessingLoop must keep pumping until the reply is serviced (OnServiceBegin).
@@ -871,6 +883,12 @@ namespace Jde::Opc::Gateway{
 		_awaitingActivation.emplace( shared_from_this() );
 		_asyncRequest.SetClient( p );
 		Process( ConnectRequestId, "Connect" );
+	}
+
+	α UAClient::ConnectForTest( ConnectCallback onResult )ε->void{
+		ASSERT( onResult );
+		_onTestResult = std::move( onResult );//std::, as PostUA:  absl::AnyInvocable makes the unqualified call ambiguous
+		Connect();
 	}
 
 	α UAClient::PostUA( absl::AnyInvocable<void()> f )ι->void{

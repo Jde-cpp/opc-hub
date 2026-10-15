@@ -1,4 +1,13 @@
-@if( server(); as s ){
+@if( connecting(); as url ){
+<!--a Test Connection in flight:  the url, so a typo is caught while the gateway is still trying it-->
+<div class="not-connected connecting" role="status">
+	<mat-progress-spinner mode="indeterminate" diameter="24" aria-hidden="true"></mat-progress-spinner>
+	<div>
+		<p class="title">Connecting</p>
+		<p class="detail">{{url}}</p>
+	</div>
+</div>
+} @else if( server(); as s ){
 <!--the server's ApplicationDescription plus the endpoint this gateway negotiated;  a blank value is shown, not skipped,
 so the reader can tell a field the server left empty from one this page does not report-->
 <dl class="fields">

@@ -25,6 +25,8 @@ namespace Jde::Opc::Gateway{
 	namespace Attributes{ α OnResponse(UA_Client* ua, void* userdata, RequestId requestId, StatusCode status, UA_NodeId* dataType)ι->void; }
 
 	struct CreateMonitoredItemsRequest;
+	//What a test connect (UAClient::ConnectForTest) reports:  the client with its session activated, or why the connect failed.
+	using ConnectCallback = absl::AnyInvocable<void(sp<UAClient>, up<UAClientException>)>;
 	//The connection error for a server that refused the certificate this gateway presented.  `sanUri` is the certificate's
 	//subjectAltName URI:  empty when it carries none, nullopt when the file could not be read.
 	α RefusedCertificateDetail( StatusCode sc, sv url, const fs::path& certificate, const optional<string>& sanUri, sv advertisedUri )ι->string;
@@ -68,6 +70,12 @@ namespace Jde::Opc::Gateway{
 		//built a client nothing stopped (subscription-disconnect #3).  Shutdown's first step; returns how many waits it cancelled.
 		Ω StopReconnects()ι->uint;
 		Ω ReconnectsWaiting()ι->uint;//chains in their backoff wait right now - for tests and diagnostics.
+		//Connect once to report, not to serve:  testConnection's.  The client connects as ConnectAwait's would - the same certificate
+		//and credential, keyed on its slug - but is registered nowhere:  not in the client registry, so no query, search or status
+		//ever finds it;  not in ConnectErrors, so a failed test is not the slug's connectionStatus;  and no ConnectAwait waiter is
+		//drained with it, which matters when the saved row of the same slug is connecting at the same time.  The result goes to
+		//`onResult`, off the strand, and the caller discards the client (StopProcessing) once it has read what it wanted.
+		α ConnectForTest( ConnectCallback onResult )ε->void;
 
 		α SubscriptionId()Ι->SubscriptionId{ auto p = CreatedSubscriptionResponse(); return p ? p->subscriptionId : 0; }
 		//Responses are written on the strand but read by await_ready/await_resume on arbitrary threads - guard the shared_ptrs themselves.
@@ -168,6 +176,7 @@ namespace Jde::Opc::Gateway{
 
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
+		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  StateCallback takes it on the client's activation or failure.
 
 		vector<VoidAwait::Handle> _sessionAwaitables; mutable mutex _sessionAwaitableMutex;
 

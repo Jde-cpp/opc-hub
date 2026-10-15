@@ -50,3 +50,6 @@ export type ServerProps = {
 	mode: string;
 	namespaces: Namespace[];
 };
+/** What the gateway's `testConnection` answers for settings that are not saved:  the description, the policy and mode the
+ * session was opened with, and the namespaces - a Server without its connection row (client-detail's Test Connection). */
+export type TestConnectionResult = ServerDescProps & { securityPolicyUri: string; securityMode: string; namespaces: Namespace[] };

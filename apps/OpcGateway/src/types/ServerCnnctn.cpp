@@ -30,6 +30,11 @@ namespace Jde::Opc::Gateway{
 		Deleted{ Json::FindTimePoint(o, "deleted") },
 		Slug{ Json::FindDefaultSV(o, "slug") }
 	{}
+	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
+		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
+		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
+		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+	}
 	α ServerCnnctn::ToJson()Ι->jobject{
 		jobject o;
 		o.emplace( "id", Id );

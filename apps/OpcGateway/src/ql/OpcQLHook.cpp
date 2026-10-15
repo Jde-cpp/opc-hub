@@ -56,16 +56,12 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
-	//url segment, and " eng-test" was accepted into all three.  Not updateable (opcGateway-meta), so the insert is the one door.
-	//The web form trims and checks the same rule (ServerCnnctn.slugPattern).
+	//reviews/install-issues.md #48:  " eng-test" was accepted as a slug, into the login prefix, the certificate file name and the
+	//url.  Not updateable (opcGateway-meta), so the insert is the one door;  the rule itself is ServerCnnctn::SlugError, which
+	//testConnection applies to a slug that is not saved yet.
 	Ω slugError( const QL::MutationQL& m, SL sl )ι->up<Exception>{
 		let slug = Json::FindString( m.Args, "slug" );
-		if( !slug )
-			return {};//the column is NOT NULL - the insert says so
-		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
-		let valid = !slug->empty() && alnum( slug->front() ) && std::ranges::all_of( *slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
-		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", *slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+		return slug ? ServerCnnctn::SlugError( *slug, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
 	α OpcQLHook::InsertBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		if( m.TableName()!="server_connections" /*&& m.TableName()!="opc_clients"*/ )

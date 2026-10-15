@@ -66,6 +66,10 @@ table.list td{
 	flex: none;
 	color: var(--mat-sys-error);
 }
+/* the connecting state swaps the icon for a spinner of the same footprint, so the title and the url sit where the result's will */
+.not-connected mat-progress-spinner{
+	flex: none;
+}
 .not-connected p{
 	margin: 0;
 }
