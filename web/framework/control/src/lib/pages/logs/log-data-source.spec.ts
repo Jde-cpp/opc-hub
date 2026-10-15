@@ -74,6 +74,30 @@ describe( 'LogDataSource.addLoadedEntries', ()=>{
 		expect( lines(ds) ).toEqual( [5, 4, 3, 9, 2] );
 	} );
 
+	it( 'drops a repeat that comes behind a new row with the same time', ()=>{//tied rows read back in another order
+		const desc = create( 'desc', [5,50], [4,40], [3,30] );
+		desc.addLoadedEntries( read([[9,30], [3,30], [2,20]]) );
+		expect( lines(desc) ).toEqual( [5, 4, 3, 9, 2] );
+		const asc = create( 'asc', [1,10], [2,20], [3,30] );
+		asc.addLoadedEntries( read([[9,30], [3,30], [4,40]]) );
+		expect( lines(asc) ).toEqual( [1, 2, 3, 9, 4] );
+	} );
+
+	it( 'keeps rows one line logs in the same millisecond with other arguments', ()=>{
+		const withArg = ( line:number, second:number, arg:number ):Entry=>( {...at(line, second), argIds: [guid(arg)]} );
+		const ds = create( 'desc' );
+		ds.addLoadedEntries( {entries: [withArg(1, 30, 100)], strings: new Map()} );
+		ds.addLoadedEntries( {entries: [withArg(1, 30, 100), withArg(1, 30, 101), withArg(1, 30, 102)], strings: new Map()} );
+		expect( ds.allEntries.map(e=>e.argIds[0].toString()) ).toEqual( [100, 101, 102].map(n=>guid(n).toString()) );
+	} );
+
+	it( 'drops repeats under a sort other than time', ()=>{
+		const ds = new LogDataSource( signal({limit: 10, sort: [{active: 'level', direction: 'asc'}]} as unknown as LogView) );
+		ds.addLoadedEntries( read([[1,10], [2,20], [3,30]]) );
+		ds.addLoadedEntries( read([[2,20], [4,40]]) );
+		expect( lines(ds) ).toEqual( [1, 2, 3, 4] );
+	} );
+
 	it( 'adds a page with no overlap whole', ()=>{
 		const ds = create( 'desc', [5,50], [4,40] );
 		ds.addLoadedEntries( read([[3,30], [2,20]]) );
@@ -90,10 +114,8 @@ describe( 'LogDataSource.addLoadedEntries', ()=>{
 	it( 'adds nothing from a page that is all duplicates', ()=>{
 		for( const direction of ['asc', 'desc'] as const ){
 			const ds = create( direction, [1,10], [2,20], [3,30] );
-			const page = read( direction=='asc' ? [[2,20], [3,30]] : [[2,20], [1,10]] );
-			ds.addLoadedEntries( page );
-			expect( ds.allEntries ).toHaveLength( 3 );
-			expect( page.entries ).toEqual( [] );
+			ds.addLoadedEntries( read(direction=='asc' ? [[2,20], [3,30]] : [[2,20], [1,10]]) );
+			expect( lines(ds) ).toEqual( direction=='asc' ? [1, 2, 3] : [3, 2, 1] );
 		}
 	} );
 

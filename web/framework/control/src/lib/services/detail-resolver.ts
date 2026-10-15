@@ -1,9 +1,9 @@
-import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
+import { ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
 import { inject, Injectable } from '@angular/core';
 import { SnackbarService } from '../shared/snackbar/snackbar-service';
 import { TableSchema } from '../model/ql/schema/table-schema';
 import { IGRAPHQL, IGraphQL } from './graphql';
-import { ListRoute, TableSettings } from './ql-list-resolver';
+import { ListRoute, QLListResolver, TableSettings } from './ql-list-resolver';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 
@@ -60,7 +60,7 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 		const routing = new DetailRoute( slug, siblings.find(s=>s.path==slug)?.title, siblings, parent );
 		if( slug=="$new" && routing.tableSettings.canAdd===false ){//a typed or bookmarked '$new' on a list with no Add
 			this.snackbar.error( `There is no Add for ${collectionDisplay}.` );
-			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );
+			QLListResolver.redirectUp( this.router, route );
 			return null as unknown as DetailResolverData<T>;
 		}
 		try{
@@ -73,7 +73,7 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 			}
 			else
 				this.snackbar.exception( `Could not load '${slug}'`, e );//whatever actually failed - a 500 from a malformed query used to be indistinguishable from a missing row
-			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
+			QLListResolver.redirectUp( this.router, route );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
 			return null as unknown as DetailResolverData<T>;
 		}
 	}

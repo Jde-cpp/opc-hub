@@ -30,6 +30,8 @@ describe( 'Mutation.toString', ()=>{
 		} );
 		it( 'appends the result selection', ()=>{
 			expect( new Mutation('user', 0, {name: "Ann"}, MutationType.Create, ["id", "name"]).toString() ).toBe( `createUser( name:"Ann" ){id,name}` );
+			expect( new Mutation('user', 3, null, MutationType.Delete, ["id", "deleted"]).toString() ).toBe( `deleteUser( id:3 ){id,deleted}` );
+			expect( new Mutation('role', 5, null, MutationType.Remove, ["id"]).toString() ).toBe( `removeRole( id:5 ){id}` );
 		} );
 		it( 'is null with nothing to send', ()=>{
 			expect( new Mutation('user', 3, null, MutationType.Update).toString() ).toBeNull();
@@ -63,6 +65,19 @@ describe( 'Mutation.toString', ()=>{
 			role.add( new Mutation('role', 5, {identity: {id: [1, 2]}}, MutationType.Add) );//SlugRow.childMutations' shape
 			role.add( new Mutation('role', 5, {identity: {id: [3]}}, MutationType.Remove) );
 			expect( role.toString() ).toBe( `addRole( id:5, identity:{id:[1,2]} )removeRole( id:5, identity:{id:[3]} )` );
+		} );
+
+		it( 'skips a child with nothing to send', ()=>{
+			const role = new Mutation( 'role', 5, {name: "ops"}, MutationType.Update );
+			role.add( new Mutation('role', 5, null, MutationType.Update) );
+			expect( role.toString() ).toBe( `updateRole( id:5, name:"ops" )` );
+		} );
+
+		it( 'is null when no child has anything to send', ()=>{
+			const role = new Mutation( 'role', 5, null, MutationType.Update );
+			role.add( new Mutation('role', 5, null, MutationType.Update) );
+			role.add( new Mutation('role', 0, null, MutationType.Delete) );
+			expect( role.toString() ).toBeNull();
 		} );
 
 		it( 'keeps an id-only remove ahead of its children', ()=>{
@@ -100,6 +115,18 @@ describe( 'Mutation.toString', ()=>{
 
 		it( 'nests objects', ()=>{
 			expect( args({a: {b: "c", d: null}, e: [1]}) ).toBe( `createUser( value:{a:{b:"c", d:null}, e:[1]} )` );
+		} );
+
+		it( 'writes undefined as null, as an argument, a nested field or an array item', ()=>{
+			expect( args(undefined) ).toBe( `createUser( value:null )` );
+			expect( args({a: {b: undefined}}) ).toBe( `createUser( value:{a:{b:null}} )` );
+			expect( args([undefined]) ).toBe( `createUser( value:[null] )` );
+			expect( new Mutation('user', 3, {name: "Ann", description: undefined}, MutationType.Update).toString() ).toBe( `updateUser( id:3, name:"Ann", description:null )` );//SlugRow.mutationArgs' shape
+		} );
+
+		it( 'refuses a value with no GraphQL spelling', ()=>{
+			expect( ()=>args(()=>0) ).toThrow( "Assertion failed" );
+			expect( ()=>args(1n) ).toThrow( "Assertion failed" );
 		} );
 	} );
 } );

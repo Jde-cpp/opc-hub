@@ -11,7 +11,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 }
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { NavigationStart, provideRouter, Route, Router, withRouterConfig } from '@angular/router';
+import { NavigationStart, provideRouter, Route, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { filter } from 'rxjs';
 import { vi } from 'vitest';
@@ -31,9 +31,7 @@ describe( 'the site routes for a url that names no page', ()=>{
 		const error = vi.fn();
 		const schemaWithEnums = vi.fn( async ()=>{ throw new Error( 'no list in this test' ); } );
 		TestBed.configureTestingModule( {providers: [
-			//a refusal's redirect onto a list fails on the schemaWithEnums above, and the resolvers fire that navigation and forget
-			//it - so its promise resolves false rather than rejecting with no one to catch it, which fails the whole vitest run.
-			provideRouter( routes.map(stub), withRouterConfig({resolveNavigationPromiseOnError: true}) ),
+			provideRouter( routes.map(stub) ),
 			{ provide: AuthGuard, useValue: {canActivate: ()=>true, canActivateChild: ()=>true} },
 			{ provide: AccessService, useValue: {toCollectionName: ( s:string )=>s, schemaWithEnums} },
 			{ provide: SnackbarService, useValue: {error, exception: vi.fn()} },

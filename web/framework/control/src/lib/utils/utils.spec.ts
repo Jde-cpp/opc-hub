@@ -54,6 +54,13 @@ describe( 'fromIsoDuration', ()=>{
 		expect( fromIsoDuration("PT0.001S") ).toBeCloseTo( 0.001, 9 );
 	} );
 
+	it( 'reads the sign Chrono::ToString writes on each component of a negative duration', ()=>{
+		expect( fromIsoDuration("PT-30M") ).toBe( -1800 );
+		expect( fromIsoDuration("PT-1H-30M") ).toBe( -5400 );//minus 90 minutes:  `d %= hours{1}` keeps the remainder's sign
+		expect( fromIsoDuration("P-1DT-1.5S") ).toBe( -86401.5 );
+		expect( fromIsoDuration("PT+5S") ).toBe( 5 );
+	} );
+
 	it( 'throws on a string without the leading P', ()=>{
 		expect( thrown("T30S") ).toContain( "Expected 'P'" );
 		expect( thrown("30S") ).toContain( "Expected 'P'" );
@@ -73,5 +80,16 @@ describe( 'fromIsoDuration', ()=>{
 	it( 'throws on a malformed number', ()=>{
 		expect( thrown("PT1.2.3S") ).toContain( "Bad number '1.2.3'" );
 		expect( thrown("PT.S") ).toContain( "Bad number '.'" );
+		expect( thrown("PT-.S") ).toContain( "Bad number '-.'" );
+	} );
+
+	it( 'throws on a designator with no number, as ToDuration does - not a zero', ()=>{
+		expect( thrown("PTS") ).toContain( "Missing number before 'S'" );
+		expect( thrown("PT1HM") ).toContain( "Missing number before 'M'" );
+		expect( thrown("P-D") ).toContain( "Missing number before 'D'" );
+	} );
+
+	it( 'throws on a second T', ()=>{
+		expect( thrown("PT1HT1M") ).toContain( "Missing number before 'T'" );
 	} );
 } );

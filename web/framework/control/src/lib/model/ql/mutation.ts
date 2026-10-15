@@ -25,14 +25,16 @@ export class Mutation{
 			let addRemove = '';
 			for( let [key, keyItems] of this.#children ){
 				for( let item of keyItems )
-					addRemove += item.toString();
+					addRemove += item.toString() ?? '';//a child with nothing to send - an Update with no args - adds nothing, not the text "null"
 			}
 			return addRemove;
 		};
 		const hasArgs = this.args && Object.keys(this.args).length;
+		const name = `${getEnumName(MutationType,this.type).toLowerCase()}${StringUtils.capitalize(this.typeName)}`;
+		const selection = this.result?.length ? `{${this.result.join(",")}}` : "";
 		//a row named by its id alone - deleteUser( id:3 ).  was Remove only, so a Delete or Purge by id came back null.
 		if( !hasArgs && this.id && [MutationType.Delete, MutationType.Purge, MutationType.Remove].includes(this.type) ){
-			query = `${getEnumName(MutationType,this.type).toLowerCase()}${StringUtils.capitalize(this.typeName)}( id:${this.id} )`;
+			query = `${name}( id:${this.id} )${selection}`;
 			if( this.#children.size )
 				query += addRemoveQuery();
 		}
@@ -46,7 +48,7 @@ export class Mutation{
 						args[key].push( item.args );
 				}
 			}
-			query = `${getEnumName(MutationType,this.type).toLowerCase()}${StringUtils.capitalize(this.typeName)}( `;
+			query = `${name}( `;
 			if( this.id )
 				query += `id:${this.id}`;
 			let itemClause = ( value:any ):string=>{
@@ -57,48 +59,36 @@ export class Mutation{
 				if( typeof value == "number" || typeof value == "boolean" )
 					return `${value}`;
 				if( Array.isArray(value) )
-					return `[${value.map( item=>itemClause(item) ).join(",")}]`;
+					return `[${value.map( item=>itemClause(item) ).join(",")}]`;//join() alone stringifies an object as [object Object] and drops the quotes off a string.
+				verify( typeof value == "object" );
 				return `{${argClause(value, false)}}`;
 			};
+			//every value goes through itemClause:  argClause kept its own copy of the rules, which had drifted - an undefined
+			//arg failed the verify there while itemClause wrote it as null.
 			let argClause = ( itemArgs:any, continuation:boolean=true )=>{
 				let clause = "";
 				for( let key in itemArgs ){
-					let value = itemArgs[key];
 					if( continuation )
 						clause+=", ";
 					else
 						continuation = true;
-					if( value===null )
-						clause += `${key}:null`;
-					else if( typeof value == "string" )
-						clause += `${key}:${StringUtils.qlString(value)}`;
-					else if( typeof value == "number" || typeof value=="boolean" )
-						clause += `${key}:${value}`;
-					else if( Array.isArray(value) )
-						clause += `${key}:[${value.map( item=>itemClause(item) ).join(",")}]`;//join() alone stringifies an object as [object Object] and drops the quotes off a string.
-					else{
-						verify( typeof value == "object" );
-						clause += `${key}:{${argClause(value, false)}}`;
-					}
+					clause += `${key}:${itemClause(itemArgs[key])}`;
 				}
 				return clause;
 			}
 			query+=argClause( args, this.id>0 );
-			query += ` )`;
-			if( this.result?.length )
-				query += `{${this.result.join(",")}}`;
+			query += ` )${selection}`;
 			if( this.type!=MutationType.Create && this.#children.size ){
 				query += addRemoveQuery();
 			}
 		}
 		else if( this.#children.size )
-			query = addRemoveQuery();
+			query = addRemoveQuery() || null;//null when no child has anything to send, which ProtoService.mutate's verify refuses
 		return query;
 	}
 
 	get id(){ return this._id; }
 	#children:Map<TypeName,Mutation[]> = new Map<TypeName,Mutation[]>();
-	get isEmpty():boolean{ return this.type!=MutationType.Remove && !this.args && !this.#children.size; }
 	get typeName(){ return this._typeName; }
 	get type(){ return this._type ?? (this.id ? MutationType.Update : MutationType.Create); }
 	get variables():any{ return {}; }

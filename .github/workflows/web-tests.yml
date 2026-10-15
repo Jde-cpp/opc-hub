@@ -19,8 +19,10 @@ on:
     paths: *paths
   workflow_dispatch:
 
+# A newer push supersedes a pull request's run. A push to main gets a group of its own, so no merge loses its result:
+# cancel-in-progress: false alone would only queue it, and GitHub cancels a queued run once a third arrives in the group.
 concurrency:
-  group: web-tests-${{ github.ref }}
+  group: web-tests-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -30,6 +32,7 @@ jobs:
   test:
     name: Web Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # the scaffold takes ~5 min; a hung npm install or a prompt would otherwise hold the runner for 6 h
     steps:
       - name: Checkout
         uses: actions/checkout@v4

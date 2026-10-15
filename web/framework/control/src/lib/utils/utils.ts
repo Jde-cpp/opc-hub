@@ -28,7 +28,9 @@ export function cloneClassArray<T>( from:Array<T>, ctor: new (item: T) => T ):T[
 }
 
 //The inverse of Chrono::ToString (include/jde/fwk/chrono.h), which writes a year and a month as std::chrono's average
-//Gregorian ones - 365.2425 days, not 365.25 - and a sub-minute remainder as decimal seconds (PT1.5S).
+//Gregorian ones - 365.2425 days, not 365.25 - a sub-minute remainder as decimal seconds (PT1.5S), and a negative duration
+//with a sign on each component (P-1DT-1.5S).  As strict as Chrono::ToDuration:  a designator with no number before it,
+//or a second T, is an error rather than a zero.
 const daysPerYear = 365.2425;
 export function fromIsoDuration( str:string ):number{
 	if( str.length==0 )
@@ -38,13 +40,18 @@ export function fromIsoDuration( str:string ):number{
 	let parsingTime = false;
 	let seconds = 0;
 	for( let i=1; i<str.length; i++ ){
-		if( str[i]=='T' ){
+		if( str[i]=='T' && !parsingTime ){
 			parsingTime = true;
 			continue;
 		}
 		const start = i;
+		if( str[i]=='+' || str[i]=='-' )
+			++i;
+		const digits = i;
 		while( i<str.length && ((str[i]>='0' && str[i]<='9') || str[i]=='.') )
 			++i;
+		if( i==digits )
+			throw `Missing number before '${str[i]}' in duration. '${str}'`;
 		const value = +str.substring( start, i );
 		if( isNaN(value) )
 			throw `Bad number '${str.substring(start, i)}' in duration. '${str}'`;
