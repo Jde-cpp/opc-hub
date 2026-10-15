@@ -1314,10 +1314,16 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( Time->Advance(0s), 1 );
 		Settle( *group );
 		let records = readFile( File(*group, March7) );
-		ASSERT_EQ( records.size(), 4 );//no member is left for a preamble.
-		EXPECT_EQ( records[1].node_added().node_index(), speed );
-		EXPECT_TRUE( isValue(records[2], speed, 1, Time->Now()) );
-		EXPECT_EQ( records[3].node_removed().user_name(), "admin" );
+		//No member is left for a preamble, but the file lists the node it holds a value of, as one that left (spec *Record
+		//format*), before the join, the value and the removal.
+		ASSERT_EQ( records.size(), 6 );
+		EXPECT_TRUE( isPreamble(records[1], speed, March7) );
+		EXPECT_EQ( records[2].node_removed().node_index(), speed );
+		EXPECT_EQ( records[2].node_removed().ts(), StartOf(March7, utc()) );
+		EXPECT_EQ( records[3].node_added().node_index(), speed );
+		EXPECT_EQ( records[3].node_added().user_name(), "admin" );
+		EXPECT_TRUE( isValue(records[4], speed, 1, Time->Now()) );
+		EXPECT_EQ( records[5].node_removed().user_name(), "admin" );
 		EXPECT_EQ( Time->Pending(), 0 );
 
 		let again = Library->AddGroup( {.Name=name} );//its files say that every member left.

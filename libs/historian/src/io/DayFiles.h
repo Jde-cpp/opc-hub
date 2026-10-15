@@ -35,6 +35,13 @@ namespace Jde::Opc::Hist{
 		optional<TimePoint> Flushed;
 	};
 
+	//A member a file lists at its day's start, by a Bare NodeAdded there:  its NodeId, and its start value, none for a
+	//member with none.  The last preamble record of the member counts, a correction included.
+	struct Listed final{ ExNodeId Node; optional<Proto::DataValue> Start; };
+	//A file's map of its indexes (spec *Record format*):  every index the file holds a value of is listed, so a read
+	//joins a node's indexes by it, and a file that lists none of a node's holds nothing of the node.
+	using Preamble = absl::flat_hash_map<NodeIndex,Listed>;
+
 	//What a file asks of its group's membership as it is written.
 	struct Membership final{
 		struct Node final{ ExNodeId Id; bool Left; const UA_DataType* DataType{}; };//none for one that left.
@@ -61,10 +68,7 @@ namespace Jde::Opc::Hist{
 		uint Size{};//through its last checkpoint, where the next append goes.  At 0 that append opens with the preamble.
 		Ticks Chain{};//where its delta chain stands.
 		vector<Run> Runs;//each append that holds a record with a time, as the first-open scan would rebuild them.
-		absl::flat_hash_set<NodeIndex> Mapped;//the indexes its NodeAdded records name.
-		//Each member its preamble lists, with its start value, none for a member with none:  the last preamble record of the
-		//member, a correction included.  A value file's, for the corrections a late record or an edit reaches.
-		absl::flat_hash_map<NodeIndex,optional<Proto::DataValue>> Starts;
+		Hist::Preamble Preamble;//a value file's start values are what the corrections a late record or an edit reaches look at.
 		optional<Scanned> Unopened;//its scan, until the first append drops a torn tail by it.
 		bool Named{};//this process made it, or has fsynced its name into its directory:  one that crashed may have made it and not.
 		string Refused;//why the historian won't write to it; empty when it will.
@@ -92,8 +96,7 @@ namespace Jde::Opc::Hist{
 		uint End{};
 		Ticks Chain{};
 		vector<Run> Runs;
-		absl::flat_hash_set<NodeIndex> Mapped;
-		vector<std::pair<NodeIndex,optional<Proto::DataValue>>> Starts;//each member's last preamble record in the run, with its start value.
+		vector<std::pair<NodeIndex,Listed>> Preamble;//each member's last preamble record in the run.
 		vector<Proto::DataValue> Stored;//each node's newest in the run.
 		//Cuts the file to Offset, writes the run after it and fsyncs.  A file this makes has its directories fsynced too.
 		α Write( SRCE )ι->IO::WriteAwait;
@@ -155,8 +158,9 @@ namespace Jde::Opc::Hist{
 		//How a flush at now writes records to day's file:  sorted by primary time, with their times absolute.
 		//
 		//A live file takes them as a run on its end, closed by a checkpoint.  A file that isn't there opens with its
-		//preamble.  A node the file holds a value of and doesn't map gets a preamble record in the run, and one that has
-		//left the group a NodeRemoved after it, so the file's membership stays the group's.
+		//preamble.  A node the file holds a value of and doesn't list gets a preamble record in the run, one that joined
+		//mid-day included, so the file's map holds every index it has a value of, and one that has left the group a
+		//NodeRemoved after it, so the file's membership stays the group's.
 		//
 		//An archive is rewritten with them merged in, and so is the file of a day whose midnight rewrite is due:  `delay`
 		//after the day's end, or at once for one the start found.  That one takes no records to become its archive, and a
@@ -203,6 +207,9 @@ namespace Jde::Opc::Hist{
 		//prepared for, or whose start value members.Last can't read, is said and left as it is:  the next record or edit
 		//that reaches it corrects it.  The touched records are forgotten.
 		α Corrections( const Membership& members, TimePoint now, SRCE )ι->vector<std::pair<Day,DayWrite>>;
+		//Of a node's indexes, those the first file after day that lists one lists:  none when no later file does.  One that
+		//can't be read is passed over, as Corrections passes it.  Throws when the days can't be listed.
+		α ListedAfter( Day day, const vector<NodeIndex>& indexes, SRCE )ε->vector<NodeIndex>;
 		//A removed group's:  each live file is due at once, and each write after is a rewrite, so none is left live.
 		α Retire()ι->void;
 		α Archived()Ι->bool{ return _unarchived.empty(); }//no file it knows of is live.
@@ -223,12 +230,12 @@ namespace Jde::Opc::Hist{
 		α Present( Day today )ι->void;//a flush's day by the host clock, which moves the present on, never back.
 		α Present()Ι->Day{ return _present; }
 		α Find( Day day )Ι->const DayFile*;//none until the process opens it.
-		//What a read serves of a day's file:  an archive whole, a live file through its runs, and the file, open.  As the
-		//process knows it once it has opened the file, else as a scan of it finds it, which is a read of the FileStart alone
-		//for an archive.  None for a day with no file, one the process knew of that has since gone included, or with nothing
+		//What a read serves of a day's file:  an archive whole, a live file through its runs, its preamble, and the file,
+		//open.  As the process knows it once it has opened the file, else as a scan of it finds it, which is a read of the
+		//preamble alone for an archive.  None for a day with no file, one the process knew of that has since gone included, or with nothing
 		//kept, which a scan logs.  Opened under the files lock with the rest, so a rewrite that renames over the day after
 		//leaves the read the file they describe.  Throws, at Error, when the file can't be opened or scanned.
-		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; };
+		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; Hist::Preamble Preamble; };
 		α Serve( Day day, SL sl )Ε->optional<Served>;
 		//The day's modifications file the same way:  none for a day with none.  A read applies them to the day's values, and
 		//a modified read returns them.  The first serve opens it, as an append would, so it is scanned once:  a
@@ -255,6 +262,10 @@ namespace Jde::Opc::Hist{
 		//the walk back, unless withStart is false, as a modifications file's take none.  Throws when the walk back can't read
 		//a file through.
 		α Added( NodeIndex index, const Membership::Node& node, Ticks start, const Membership& members, bool withStart=true )Ε->Proto::HistoryRecord;
+		//A later file's start values:  one the process holds, by its entry, an archive by its preamble alone, read once into
+		//archives, and a live file by its first-open scan, which its next append needs anyway.  None for one that can't be
+		//read, or that the historian won't write to:  it can't be corrected, nor say what the files after it copy.
+		α StartsOf( Day day, std::map<Day,optional<Hist::Preamble>>& archives, SL sl )ι->const Hist::Preamble*;
 
 		const fs::path _root;
 		const string _name;

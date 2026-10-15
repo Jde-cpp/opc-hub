@@ -7,6 +7,7 @@
 #include <absl/container/flat_hash_set.h>
 #include <jde/fwk/io/crc.h>
 #include <jde/opc/UAException.h>
+#include "Joined.h"
 #include "Reads.h"
 #include "Store.h"
 #include "io/Applied.h"
@@ -95,8 +96,6 @@ namespace Jde::Opc::Hist{
 					Later = r.End;
 				}
 				Limit = r.Limit && r.Limit<readLimit ? r.Limit : readLimit;
-				for( uint i=0; i<Nodes.size(); ++i )
-					Slots.try_emplace( Nodes[i], i );
 				if( r.Continuation.empty() )
 					return;
 				Proto::Continuation from;
@@ -107,18 +106,12 @@ namespace Jde::Opc::Hist{
 					throw UAException{ UA_STATUSCODE_BADCONTINUATIONPOINTINVALID, "The continuation is for a read with other arguments.", {ELogLevel::Debug}, sl };
 				From = move( from );
 			}
-			α Slot( NodeIndex index )Ι->optional<uint>{
-				auto p = Slots.find( index );
-				return p==Slots.end() ? optional<uint>{} : p->second;
-			}
 			α Resume()Ι->optional<Ticks>{ return From ? optional<Ticks>{ From->time() } : nullopt; }
 			//How many of the node's records at time the pages before returned:  those at the resume time.
 			α Had( uint slot, Ticks time )Ι->uint32_t{ return From && From->time()==time ? From->counts(slot) : 0; }
-			α HadOf( NodeIndex index, Ticks time )Ι->uint32_t{ return Had( *Slot(index), time ); }
 			α Empty()Ι->bool{ return !From || From->no_values(); }//no page before this one returned a value.
 
-			vector<NodeIndex> Nodes;
-			absl::flat_hash_map<NodeIndex,uint> Slots;//each node's place in Nodes, which the continuation counts by.
+			vector<NodeIndex> Nodes;//each node's place here is its slot, which the continuation counts by, and its values go out under its index here.
 			optional<Ticks> Earlier, Later;//the ends of the range, whichever way it flows:  Earlier is set in a forward read, Later in a reverse one.
 			bool Reverse{};
 			bool Bounds;
@@ -153,13 +146,16 @@ namespace Jde::Opc::Hist{
 		};
 
 		//Each node's value at the earlier end of the range, as the records before it say:  its latest, a preamble's start
-		//value among them, and none past a NodeRemoved.  Of a day's preamble records for a member only the last counts, a
-		//correction replacing the first's, so a day's are kept apart from the records and weighed by time only in Find.
+		//value among them, and none past a NodeRemoved, by each of the node's indexes, a NodeRemoved ending only its own
+		//index's (spec *Reads*).  Of a day's preamble records for a member only the last counts, a correction replacing the
+		//first's, so a day's are kept apart from the records and weighed by time only in Find, where of two at one time the
+		//later taken decides.
 		struct Before final{
-			struct Found{ Proto::DataValue Value; Ticks Time; };
-			Before( const Plan& plan, const time_zone& tz )ι:_plan{ plan }, _tz{ tz }{}
+			struct Found{ Proto::DataValue Value; Ticks Time; uint Seq; };
+			Before( const Plan& plan, const Joined& joined, const time_zone& tz )ι:_plan{ plan }, _joined{ joined }, _tz{ tz }{}
 			α Take( const HistoryRecord& r, Ticks t )ι->void{
 				let earlier = *_plan.Earlier;
+				++_seq;
 				switch( r.record_case() ){
 				case HistoryRecord::kValue:
 					if( t<earlier )
@@ -168,13 +164,13 @@ namespace Jde::Opc::Hist{
 				case HistoryRecord::kNodeAdded:{
 					let& added = r.node_added();
 					let day = DayOf( t, _tz );
-					if( !Bare(added) || t!=StartOf(day, _tz) || !_plan.Slot(added.node_index()) )
+					if( !Bare(added) || t!=StartOf(day, _tz) || !_joined.Slot(added.node_index()) )
 						break;
 					auto& starts = _starts[day];
 					if( let start = added.has_start() ? PrimaryTime(added.start()) : nullopt; start && *start<earlier ){
 						auto value = added.start();
 						value.set_node_index( added.node_index() );
-						starts.insert_or_assign( added.node_index(), Found{move(value), *start} );
+						starts.insert_or_assign( added.node_index(), Found{move(value), *start, _seq} );
 					}
 					else
 						starts.erase( added.node_index() );
@@ -192,33 +188,43 @@ namespace Jde::Opc::Hist{
 					break;
 				}
 			}
-			α Find( NodeIndex index )Ι->optional<Proto::DataValue>{
+			//The slot's node's, under the index named for it.
+			α Find( uint slot )Ι->optional<Proto::DataValue>{
 				const Found* best{};
-				if( auto p = _values.find(index); p!=_values.end() )
-					best = &p->second;
-				for( let& [day,starts] : _starts ){
-					auto p = starts.find( index );
-					if( p==starts.end() )
-						continue;
-					if( auto r = _removed.find(index); r!=_removed.end() && p->second.Time<=r->second )
-						continue;
-					if( !best || p->second.Time>=best->Time )
+				let better = [&]( const Found& f ){ return !best || f.Time>best->Time || (f.Time==best->Time && f.Seq>best->Seq); };
+				for( let index : _joined.Indexes(slot) ){
+					if( auto p = _values.find(index); p!=_values.end() && better(p->second) )
 						best = &p->second;
+					for( let& [day,starts] : _starts ){
+						auto p = starts.find( index );
+						if( p==starts.end() )
+							continue;
+						if( auto r = _removed.find(index); r!=_removed.end() && p->second.Time<=r->second )
+							continue;
+						if( better(p->second) )
+							best = &p->second;
+					}
 				}
-				return best ? optional<Proto::DataValue>{ best->Value } : nullopt;
+				if( !best )
+					return nullopt;
+				auto y = best->Value;
+				y.set_node_index( _joined.Index(slot) );
+				return y;
 			}
 		private:
 			α Offer( NodeIndex index, const Proto::DataValue& value, Ticks time )ι->void{
-				if( !_plan.Slot(index) )
+				if( !_joined.Slot(index) )
 					return;
 				if( auto r = _removed.find(index); r!=_removed.end() && time<=r->second )
 					return;
 				auto p = _values.find( index );
 				if( p==_values.end() || time>=p->second.Time )
-					_values.insert_or_assign( index, Found{value, time} );
+					_values.insert_or_assign( index, Found{value, time, _seq} );
 			}
 			const Plan& _plan;
+			const Joined& _joined;
 			const time_zone& _tz;
+			uint _seq{};
 			absl::flat_hash_map<NodeIndex,Found> _values;//from the records.
 			std::map<Day,absl::flat_hash_map<NodeIndex,Found>> _starts;//each day's last preamble record per member, with a start value before the range.
 			absl::flat_hash_map<NodeIndex,Ticks> _removed;
@@ -232,13 +238,14 @@ namespace Jde::Opc::Hist{
 			return y;
 		}
 		//A separate bound per node not served by a record at the time itself, in the order the page lists them:  by time,
-		//forward or back, then node.
-		Ω bounds( const Plan& plan, const absl::flat_hash_set<NodeIndex>& served, const std::function<optional<Proto::DataValue>( NodeIndex )>& find, Ticks at, bool reverse )->vector<ReadValue>{
+		//forward or back, then node.  served and find go by the node's index named, as the page's values do.
+		Ω bounds( const Plan& plan, const absl::flat_hash_set<NodeIndex>& served, const std::function<optional<Proto::DataValue>( uint slot )>& find, Ticks at, bool reverse )->vector<ReadValue>{
 			vector<std::pair<Ticks,ReadValue>> y;
-			for( let index : plan.Nodes ){
+			for( uint slot=0; slot<plan.Nodes.size(); ++slot ){
+				let index = plan.Nodes[slot];
 				if( served.contains(index) )
 					continue;
-				auto value = find( index ).value_or( notFound(index, at) );
+				auto value = find( slot ).value_or( notFound(index, at) );
 				let t = PrimaryTime( value ).value_or( at );
 				y.emplace_back( t, ReadValue{move(value), true} );
 			}
@@ -256,7 +263,7 @@ namespace Jde::Opc::Hist{
 		struct Files final{
 			vector<Day> OnDisk;//each day with a value file, or for a modified read a modifications file.
 			std::map<Day,optional<GroupFiles::Served>> Taken;
-			//Each node's newest stored record, as the process knows it, which says where one a preamble doesn't list ends.
+			//Each index's newest stored record, as the process knows it, which says where one a preamble doesn't list ends.
 			//None for one it doesn't know:  after a restart, a node that left before the newest files.
 			absl::flat_hash_map<NodeIndex,Ticks> Newest;
 			std::function<optional<GroupFiles::Served>( Day )> Serve;
@@ -271,12 +278,13 @@ namespace Jde::Opc::Hist{
 			}
 		};
 
-		//One page.
+		//One page.  Its nodes' indexes are joined (spec *Reads*):  each is read by every index it has had, its records
+		//counted to its slot, and its values go out under the index named for it.
 		struct Reading final{
-			Reading( const Plan& plan, const time_zone& tz, Files&& files, vector<HistoryRecord>&& buffered, SL sl )ε:
-				Reading{ plan, tz, move(files), byDay(move(buffered), tz), sl }{}
-			Reading( const Plan& plan, const time_zone& tz, Files&& files, std::map<Day,vector<HistoryRecord>>&& buffered, SL sl )ε:
-				_plan{ plan }, _tz{ tz }, _files{ move(files) }, _sl{ sl }, _buffered{ move(buffered) }{
+			Reading( const Plan& plan, const time_zone& tz, Files&& files, Joined joined, vector<HistoryRecord>&& buffered, SL sl )ε:
+				Reading{ plan, tz, move(files), move(joined), byDay(move(buffered), tz), sl }{}
+			Reading( const Plan& plan, const time_zone& tz, Files&& files, Joined joined, std::map<Day,vector<HistoryRecord>>&& buffered, SL sl )ε:
+				_plan{ plan }, _tz{ tz }, _files{ move(files) }, _joined{ move(joined) }, _sl{ sl }, _buffered{ move(buffered) }{
 				flat_set<Day> days{ _files.OnDisk.begin(), _files.OnDisk.end() };
 				for( let& [day,_] : _buffered )
 					days.insert( day );
@@ -296,23 +304,43 @@ namespace Jde::Opc::Hist{
 			//A record on its way out:  where it lies in its file, when the file is an archive, and for a modified read what the
 			//edit did.
 			struct Picked{ Proto::DataValue Value; Ticks Time; optional<Merge::Position> Where; bool Archive; uint32_t Generation; optional<ModificationInfo> Modification; };
+			//Under the index named for its node.
 			α Pick( HistoryRecord& r, Ticks t, optional<Merge::Position> where )Ι->Picked{
 				if( r.has_modification() ){//for an INSERT the value inserted, for anything else the value it replaced.
 					auto& m = *r.mutable_modification();
 					let inserted = m.update_type()==Proto::UPDATE_TYPE_INSERT || !m.has_original();
 					auto value = inserted ? move( *m.mutable_new_value() ) : move( *m.mutable_original() );
-					value.set_node_index( m.node_index() );
+					value.set_node_index( _joined.Canonical(m.node_index()) );
 					ModificationInfo info{ m.ts(), m.update_type(), move(*m.mutable_user_name()), m.has_identity_id() ? optional<uint32_t>{ m.identity_id() } : nullopt };
 					return { move(value), t, nullopt, false, 0, move(info) };
 				}
-				return { move(*r.mutable_value()), t, where, _generation!=0, _generation, nullopt };
+				auto& value = *r.mutable_value();
+				value.set_node_index( _joined.Canonical(value.node_index()) );
+				return { move(value), t, where, _generation!=0, _generation, nullopt };
 			}
 			α Day0( Ticks t )Ι->Day{ return DayOf( t, _tz ); }
-			α Wants( const HistoryRecord& r )Ι->bool{ return ( _plan.Modified ? r.has_modification() : r.has_value() ) && _plan.Slot( index(r) ); }
+			α Wants( const HistoryRecord& r )Ι->bool{ return ( _plan.Modified ? r.has_modification() : r.has_value() ) && _joined.Slot( index(r) ); }
+			α Canonical( const HistoryRecord& r )Ι->NodeIndex{ return _joined.Canonical( index(r) ); }
+			α HadOf( NodeIndex index, Ticks time )Ι->uint32_t{ return _plan.Had( *_joined.Slot(index), time ); }
+			//Whether the day may hold a record of its nodes:  a file that lists none of their indexes holds none (spec
+			//*Record format*), but its modifications or the buffer may.
+			α Holds( Day day, const optional<GroupFiles::Served>& served )ε->bool{
+				if( (served && _joined.Lists(served->Preamble)) || _buffered.contains(day) )
+					return true;
+				for( let& [_,mods] : _files.ModsOf(day, _sl).ByTime ){
+					if( std::ranges::any_of(mods, [&]( let& m ){ return _joined.Slot( m.node_index() ).has_value(); }) )
+						return true;
+				}
+				return false;
+			}
 
 			//The day's stream.  A resume's archive position narrows the run, and the buffer's records with it; a live file's
 			//runs are those that overlap [from, to], or all of them for a day the bounds look through.
 			α Open( Day day, Ticks from, Ticks to, bool all, const Proto::Continuation* at )ε->up<Stream>{
+				return Open( day, _plan.Modified ? nullopt : _files.Of(day), from, to, all, at );
+			}
+			//With the day's value file as served:  a modified read serves the modifications instead.
+			α Open( Day day, optional<GroupFiles::Served>&& served, Ticks from, Ticks to, bool all, const Proto::Continuation* at )ε->up<Stream>{
 				_generation = 0;
 				_atOffset = false;
 				if( _plan.Modified ){//the day's modifications, in target-time order, resumed by time.
@@ -321,7 +349,6 @@ namespace Jde::Opc::Hist{
 				}
 				auto late = _buffered.find( day );
 				vector<HistoryRecord> buffered = late==_buffered.end() ? vector<HistoryRecord>{} : late->second;
-				auto served = _files.Of( day );
 				if( !served && buffered.empty() )
 					return nullptr;
 				vector<Run> runs;
@@ -351,7 +378,7 @@ namespace Jde::Opc::Hist{
 					_hasLast = true;
 					std::ranges::fill( _counts, 0 );
 				}
-				++_counts[*_plan.Slot(picked.Value.node_index())];
+				++_counts[*_joined.Slot(picked.Value.node_index())];
 				_where = picked.Where;
 				_lastArchive = picked.Archive;
 				_lastGeneration = picked.Generation;
@@ -399,16 +426,54 @@ namespace Jde::Opc::Hist{
 					for( let& r : records )
 						before.Take( r, time(r) );
 				}
+				_walkFrom = firstDay;
 				if( _files.Of(firstDay) )
 					return;
 				auto previous = std::ranges::lower_bound( _files.OnDisk, firstDay );
 				if( previous==_files.OnDisk.begin() )
 					return;
-				auto stream = Open( *std::prev(previous), Earliest, Latest, true, nullptr );
+				_walkFrom = *std::prev( previous );
+				Through( before, _walkFrom, _files.Of(_walkFrom) );
+			}
+			//The open day's generation and resume stay its own:  WalkBack reads through mid-stream.
+			α Through( Before& before, Day day, optional<GroupFiles::Served>&& served )ε->void{
+				let generation = _generation;
+				let atOffset = _atOffset;
+				auto stream = Open( day, move(served), Earliest, Latest, true, nullptr );
 				HistoryRecord r;
 				optional<Merge::Position> where;
 				while( stream && stream->Take(r, where) )
 					before.Take( r, time(r) );
+				_generation = generation;
+				_atOffset = atOffset;
+			}
+			//For each node with an earlier index whose value at the earlier end the days read so far don't give, and no
+			//record at it serves (spec *Reads*):  the files before, from the earliest read, back through their preambles,
+			//each that lists an index of such a node, or whose modifications hold one, read through, until each has its value
+			//or the files run out.  A node's index listed with no start value has nothing before, but another of the node's
+			//may, which only an earlier file can say.  A node with one index has its value from the first day's preamble.
+			α WalkBack( Before& before, const absl::flat_hash_set<NodeIndex>& served )ε->void{
+				vector<uint> missing;
+				for( uint slot=0; slot<_plan.Nodes.size(); ++slot ){
+					if( _joined.Indexes(slot).size()>1 && !served.contains(_plan.Nodes[slot]) && !before.Find(slot) )
+						missing.push_back( slot );
+				}
+				for( auto p = std::ranges::lower_bound(_files.OnDisk, _walkFrom); !missing.empty() && p!=_files.OnDisk.begin(); ){
+					--p;
+					auto day = _files.Of( *p );
+					let lists = [&]( uint slot ){ return day && std::ranges::any_of( _joined.Indexes(slot), [&]( NodeIndex index ){ return day->Preamble.contains( index ); } ); };
+					let edited = [&]{//an insert under an index the day doesn't list.
+						for( let& [_,mods] : _files.ModsOf(*p, _sl).ByTime ){
+							if( std::ranges::any_of(mods, [&]( let& m ){ let slot = _joined.Slot( m.node_index() ); return slot && std::ranges::contains( missing, *slot ); }) )
+								return true;
+						}
+						return false;
+					};
+					if( !std::ranges::any_of(missing, lists) && !edited() )
+						continue;
+					Through( before, *p, move(day) );
+					std::erase_if( missing, [&]( uint slot ){ return before.Find( slot ).has_value(); } );
+				}
 			}
 			//The first record past `later` of each node in need, the earliest of:  the rest of the range's last day; the
 			//later days' preambles, each read until its first record isn't at its start, where a start value past `later`
@@ -417,15 +482,24 @@ namespace Jde::Opc::Hist{
 			//buffer's, which can hold a late record earlier than any a file gave.  A start value is a day's last record
 			//before the next, so a record read at its time comes first.
 			α After( Stream* rest, Day lastDay, absl::flat_hash_set<NodeIndex> need )ε->absl::flat_hash_map<NodeIndex,Proto::DataValue>{
-				absl::flat_hash_map<NodeIndex,std::pair<Proto::DataValue,bool>> found;//each with whether it is a start value.
+				absl::flat_hash_map<NodeIndex,std::pair<Proto::DataValue,bool>> found;//each with whether it is a start value, by the index named.
 				const absl::flat_hash_set<NodeIndex> wanted{ need };//need is what the files are still read for.
 				let later = *_plan.Later;
+				//The index named for v's node:  none for a node not asked for.
+				let named = [&]( const Proto::DataValue& v )->optional<NodeIndex>{
+					let slot = _joined.Slot( v.node_index() );
+					return slot ? optional<NodeIndex>{ _joined.Index(*slot) } : nullopt;
+				};
 				let offer = [&]( const Proto::DataValue& v, Ticks t, bool start=false, bool buffered=false ){
-					if( t<=later || !(buffered ? wanted : need).contains(v.node_index()) )
+					let index = named( v );
+					if( t<=later || !index || !(buffered ? wanted : need).contains(*index) )
 						return;
-					auto p = found.find( v.node_index() );
-					if( p==found.end() || t<*PrimaryTime(p->second.first) || (t==*PrimaryTime(p->second.first) && p->second.second && !start) )
-						found.insert_or_assign( v.node_index(), std::pair{v, start} );
+					auto p = found.find( *index );
+					if( p==found.end() || t<*PrimaryTime(p->second.first) || (t==*PrimaryTime(p->second.first) && p->second.second && !start) ){
+						auto value = v;
+						value.set_node_index( *index );
+						found.insert_or_assign( *index, std::pair{move(value), start} );
+					}
 				};
 				let scan = [&]( Stream& stream ){//through the stream, until each node in need has a record past `later`.
 					HistoryRecord r;
@@ -434,8 +508,8 @@ namespace Jde::Opc::Hist{
 						let t = time( r );
 						if( r.has_value() ){
 							offer( r.value(), t );
-							if( t>later )
-								need.erase( r.value().node_index() );//in time order:  the day holds none earlier.
+							if( let index = named(r.value()); t>later && index )
+								need.erase( *index );//in time order:  the day holds none earlier.
 						}
 						else if( r.has_node_added() && Bare(r.node_added()) && r.node_added().has_start() ){
 							auto value = r.node_added().start();
@@ -468,9 +542,10 @@ namespace Jde::Opc::Hist{
 						if( !r.has_node_added() || !Bare(r.node_added()) )
 							continue;
 						auto& added = *r.mutable_node_added();
-						if( !need.contains(added.node_index()) )
+						let slot = _joined.Slot( added.node_index() );
+						if( !slot || !need.contains(_joined.Index(*slot)) )
 							continue;
-						listed.insert( added.node_index() );
+						listed.insert( _joined.Index(*slot) );
 						if( added.has_start() )
 							starts.insert_or_assign( added.node_index(), move(*added.mutable_start()) );
 						else
@@ -480,7 +555,7 @@ namespace Jde::Opc::Hist{
 						if( let t = PrimaryTime(value); t && *t>later ){
 							value.set_node_index( index );
 							offer( value, *t, true );
-							changed.push_back( index );
+							changed.push_back( _joined.Canonical(index) );
 						}
 					}
 					if( !changed.empty() ){//in the day before, whose first past `later` the start value needn't be.
@@ -493,7 +568,7 @@ namespace Jde::Opc::Hist{
 					}
 					for( let& v : atStart ){
 						offer( v, start );
-						need.erase( v.node_index() );
+						need.erase( _joined.Canonical(v.node_index()) );
 					}
 					//A node no preamble lists may have rejoined, and the newest day's records are in no later preamble.
 					if( day+1==_files.OnDisk.end() || std::ranges::any_of(need, [&]( NodeIndex index ){ return !listed.contains(index); }) )
@@ -518,13 +593,15 @@ namespace Jde::Opc::Hist{
 						need.insert( index );
 				}
 				auto found = After( rest, lastDay, std::move(need) );
-				return bounds( _plan, served, [&]( NodeIndex index )->optional<Proto::DataValue> {
-					auto p = found.find( index );
+				return bounds( _plan, served, [&]( uint slot )->optional<Proto::DataValue> {
+					auto p = found.find( _plan.Nodes[slot] );
 					return p==found.end() ? optional<Proto::DataValue>{} : optional<Proto::DataValue>{ p->second };
 				}, *_plan.Later, _plan.Reverse );
 			}
-			α EarlierBounds( const Before& before, const absl::flat_hash_set<NodeIndex>& served )ε->vector<ReadValue>{
-				return bounds( _plan, served, [&]( NodeIndex index ){ return before.Find( index ); }, *_plan.Earlier, _plan.Reverse );
+			//The earlier end's, the walk back first for a node the records so far don't give.
+			α EarlierBounds( Before& before, const absl::flat_hash_set<NodeIndex>& served )ε->vector<ReadValue>{
+				WalkBack( before, served );
+				return bounds( _plan, served, [&]( uint slot ){ return before.Find( slot ); }, *_plan.Earlier, _plan.Reverse );
 			}
 			//Each node's last record at `later` among the page's values is its bound there, unless more of its follow:
 			//flagged, and counted as served.  A page before can't have had the node's last, since this one holds more.
@@ -550,7 +627,7 @@ namespace Jde::Opc::Hist{
 				let lastDay = _plan.Later ? optional<Day>{ Day0(*_plan.Later) } : nullopt;
 				let first = !_plan.From;
 				let opening = first && _plan.Bounds;//the opening bounds are this page's to decide, from the records at `earlier`.
-				Before before{ _plan, _tz };
+				Before before{ _plan, _joined, _tz };
 				if( opening )
 					Seed( before, firstDay );
 				bool opened = !opening;//decided, and values may follow.
@@ -575,7 +652,7 @@ namespace Jde::Opc::Hist{
 					return false;
 				};
 				let emit = [&]( Picked&& picked ){
-					let bound = _plan.Bounds && picked.Time==earlier && !_plan.HadOf(picked.Value.node_index(), earlier) && atEarlier.insert( picked.Value.node_index() ).second;
+					let bound = _plan.Bounds && picked.Time==earlier && !HadOf(picked.Value.node_index(), earlier) && atEarlier.insert( picked.Value.node_index() ).second;
 					Emit( move(picked), bound );
 				};
 				let decide = [&]{//the opening bounds, then the records at `earlier`.
@@ -619,7 +696,7 @@ namespace Jde::Opc::Hist{
 					if( !Wants(r) || *t<from )
 						continue;
 					if( resume && *t==*resume && !_atOffset ){
-						if( auto& left = skip[*_plan.Slot(index(r))]; left ){
+						if( auto& left = skip[*_joined.Slot(index(r))]; left ){
 							--left;
 							continue;
 						}
@@ -646,11 +723,11 @@ namespace Jde::Opc::Hist{
 					//`later` are seen, which the next page returns again.
 					if( _plan.Bounds && _plan.Later && _hasLast && _last==*_plan.Later ){
 						if( Wants(r) && time(r)==*_plan.Later )
-							following.insert( r.value().node_index() );
+							following.insert( Canonical(r) );
 						while( stream && stream->Time()==*_plan.Later ){
 							stream->Take( r, where );
 							if( Wants(r) )
-								following.insert( r.value().node_index() );
+								following.insert( Canonical(r) );
 						}
 						FlagLastAtLater( atLater, following );
 					}
@@ -665,7 +742,7 @@ namespace Jde::Opc::Hist{
 					return;
 				//The last page:  each node's last record at `later` is its closing bound, on this page or one before.
 				for( let index : _plan.Nodes ){
-					if( _plan.HadOf(index, *_plan.Later) )
+					if( HadOf(index, *_plan.Later) )
 						atLater.insert( index );
 				}
 				if( _hasLast && _last==*_plan.Later )
@@ -686,7 +763,7 @@ namespace Jde::Opc::Hist{
 				for( uint i=0; i<skip.size(); ++i )
 					skip[i] = _plan.Had( i, to );
 				absl::flat_hash_set<NodeIndex> atLater, atEarlier;
-				Before before{ _plan, _tz };
+				Before before{ _plan, _joined, _tz };
 				//Seeded once the walk reaches the range's first day, or ends short of it, so a page that ends with more, which
 				//returns no closing bounds, reads no older file for them.  A later day's preamble records, all of its that
 				//Before takes, wait for the seed, so Before takes everything in the order it always has:  of two at one time,
@@ -709,6 +786,13 @@ namespace Jde::Opc::Hist{
 				optional<Day> jump;//a day that held nothing jumps to the day of the latest start value.
 				bool read{};//a day's file is read:  OneDay's.
 				optional<Ticks> previousDay;//where OneDay ended the page.
+				absl::flat_hash_set<NodeIndex> exhausted;//each index a preamble listed with no start value:  nothing of it before that day.
+				//Every index of every node has nothing before the day, and the buffer nothing earlier:  nothing earlier is left.
+				let ended = [&]( Day d ){
+					return _buffered.lower_bound( d )==_buffered.begin() && std::ranges::all_of( std::views::iota(0u, (uint)_plan.Nodes.size()), [&]( uint slot ){
+						return std::ranges::all_of( _joined.Indexes(slot), [&]( NodeIndex index ){ return exhausted.contains( index ); } );
+					});
+				};
 				while( day!=_days.begin() && !more ){
 					--day;
 					if( jump && *day>*jump )
@@ -723,7 +807,11 @@ namespace Jde::Opc::Hist{
 					if( firstDay && *day==*firstDay )
 						seed();
 					let isLast = *day==lastDay;
-					auto stream = Open( *day, _plan.Earlier.value_or(Earliest), to, _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast), isLast && _plan.From ? &*_plan.From : nullptr );
+					//A day that can hold nothing of the nodes is passed over unread.
+					auto served = _files.Of( *day );
+					if( !Holds(*day, served) )
+						continue;
+					auto stream = Open( *day, move(served), _plan.Earlier.value_or(Earliest), to, _plan.Bounds && (day==_days.begin() || (firstDay && *day==*firstDay) || isLast), isLast && _plan.From ? &*_plan.From : nullptr );
 					if( !stream )
 						continue;
 					read = true;
@@ -731,16 +819,17 @@ namespace Jde::Opc::Hist{
 					let room = [&]{ return _dataLimit-_emitted+1; };//one past what the page can take, which says there is more.
 					vector<Kept> atTo;//the records at the resume time, of which each node's first (all - skip) stay.
 					absl::flat_hash_map<NodeIndex,uint32_t> countAtTo;
-					absl::flat_hash_set<NodeIndex> seenAtEarlier, listed;
+					absl::flat_hash_set<NodeIndex> seenAtEarlier;
+					absl::flat_hash_set<NodeIndex> listed;//each index of a node the preamble lists.
 					absl::flat_hash_set<NodeIndex> servedAtLater;//each node with a record at `later`, kept or not.
-					absl::flat_hash_map<NodeIndex,Ticks> starts;
+					absl::flat_hash_map<NodeIndex,Ticks> starts;//by index.
 					HistoryRecord r;
 					optional<Merge::Position> where;
 					while( let t = stream->Time() ){
 						if( *t>to )
 							break;
 						stream->Take( r, where );
-						let preamble = r.has_node_added() && Bare( r.node_added() ) && *t==StartOf( *day, _tz ) && _plan.Slot( r.node_added().node_index() );
+						let preamble = r.has_node_added() && Bare( r.node_added() ) && *t==StartOf( *day, _tz ) && _joined.Slot( r.node_added().node_index() );
 						if( preamble ){
 							listed.insert( r.node_added().node_index() );
 							if( r.node_added().has_start() )
@@ -752,7 +841,7 @@ namespace Jde::Opc::Hist{
 							preambles.emplace_back( r, *t );
 						if( !Wants(r) || (_plan.Earlier && *t<*_plan.Earlier) )
 							continue;
-						let node = index( r );
+						let node = Canonical( r );
 						if( isLast && *t==later )
 							servedAtLater.insert( node );
 						Kept k{ Pick(r, *t, where), _plan.Earlier && *t==*_plan.Earlier && seenAtEarlier.insert(node).second, false };
@@ -765,9 +854,13 @@ namespace Jde::Opc::Hist{
 						if( kept.size()>room() )
 							kept.pop_front();
 					}
+					for( let index : listed ){
+						if( !starts.contains(index) )
+							exhausted.insert( index );
+					}
 					for( auto& k : atTo ){
 						let index = k.Item.Value.node_index();
-						if( auto& left = countAtTo[index]; left>skip[*_plan.Slot(index)] ){
+						if( auto& left = countAtTo[index]; left>skip[*_joined.Slot(index)] ){
 							--left;
 							kept.push_back( move(k) );
 							if( kept.size()>room() )
@@ -792,29 +885,31 @@ namespace Jde::Opc::Hist{
 						for( auto& k : kept | std::views::reverse ){
 							if( k.Item.Time!=later )
 								break;
-							k.LastAtLater = !_plan.HadOf( k.Item.Value.node_index(), later ) && flagged.insert( k.Item.Value.node_index() ).second;
+							k.LastAtLater = !HadOf( k.Item.Value.node_index(), later ) && flagged.insert( k.Item.Value.node_index() ).second;
 						}
 					}
 					if( kept.empty() ){
 						optional<Day> target;
 						if( auto late = _buffered.lower_bound(*day); late!=_buffered.begin() )
 							target = std::prev( late )->first;
-						//Each node's last record before the day:  a listed node's start value, and the newest of one that left, or
-						//joined later, when that is before the day.  One with neither may have records in the days between.
+						//Each node's last record before the day, by each of its indexes:  a listed one's start value, none of one
+						//with nothing before, and the newest of one that left, or joined later, when that is before the day.  One
+						//with neither may have records in the days between.
 						optional<Ticks> latest;
 						let dayStart = StartOf( *day, _tz );
-						let ends = std::ranges::all_of( _plan.Nodes, [&]( NodeIndex index ){
-							optional<Ticks> last;
-							if( listed.contains(index) ){
-								if( auto p = starts.find(index); p!=starts.end() )
+						let ends = std::ranges::all_of( std::views::iota(0u, (uint)_plan.Nodes.size()), [&]( uint slot ){
+							for( let index : _joined.Indexes(slot) ){
+								optional<Ticks> last;
+								if( exhausted.contains(index) )
+									continue;
+								else if( auto p = starts.find(index); p!=starts.end() )
 									last = p->second;
-							}
-							else if( auto p = _files.Newest.find(index); p!=_files.Newest.end() && p->second<dayStart )
-								last = p->second;
-							else
-								return false;
-							if( last )
+								else if( auto p = _files.Newest.find(index); p!=_files.Newest.end() && p->second<dayStart )
+									last = p->second;
+								else
+									return false;
 								latest = std::max( latest.value_or(*last), *last );
+							}
 							return true;
 						});
 						if( ends ){
@@ -835,7 +930,7 @@ namespace Jde::Opc::Hist{
 							atEarlier.insert( k.Item.Value.node_index() );
 						Emit( move(k.Item), _plan.Bounds && (k.LastAtLater || k.FirstAtEarlier) );
 					}
-					if( _plan.Full && _emitted>=_dataLimit )
+					if( (_plan.Full && _emitted>=_dataLimit) || (!more && ended(*day)) )
 						break;
 				}
 				if( !opened )//no day held a record at `later`:  the opening bounds alone serve it.
@@ -852,7 +947,7 @@ namespace Jde::Opc::Hist{
 					return;
 				seed();
 				for( let index : _plan.Nodes ){
-					if( _plan.HadOf(index, *_plan.Earlier) )
+					if( HadOf(index, *_plan.Earlier) )
 						atEarlier.insert( index );
 				}
 				auto ending = EarlierBounds( before, atEarlier );
@@ -862,9 +957,11 @@ namespace Jde::Opc::Hist{
 			const Plan& _plan;
 			const time_zone& _tz;
 			Files _files;
+			Joined _joined;
 			SL _sl;
 			std::map<Day,vector<HistoryRecord>> _buffered;
 			vector<Day> _days;//each with a file or buffered records.
+			Day _walkFrom{};//the earliest day the opening bounds have looked at:  where the walk back goes on from.
 			ReadResult _result;
 			uint _opened{};//the opening bounds, which lead _result.Values.
 			uint _dataLimit{ _plan.Limit };//what the page's values may come to, the opening bounds taken out.
@@ -880,26 +977,80 @@ namespace Jde::Opc::Hist{
 		};
 	}
 
+	α Group::Remember( NodeIndex index, const ExNodeId& node )ι->void{
+		if( _nodeOf.try_emplace(index, node).second )
+			_byNode[node].push_back( index );
+	}
+	α Group::Index( SL sl )ε->void{
+		ul _{ _indexing };
+		if( _indexed )
+			return;
+		vector<std::pair<NodeIndex,ExNodeId>> listed;
+		for( let day : Days(_store->Config.Path, Name(), false, sl) ){
+			optional<GroupFiles::Served> served;
+			try{
+				ul _{ _filesMutex };
+				served = _files->Serve( day, sl );
+			}
+			catch( Exception& e ){
+				e.SetLevel( ELogLevel::Error );
+				continue;
+			}
+			if( !served )
+				continue;
+			for( auto& [index,member] : served->Preamble )
+				listed.emplace_back( index, move(member.Node) );
+		}
+		ul _{ _mutex };
+		for( let& [index,node] : listed )
+			Remember( index, node );
+		_indexed = true;
+	}
+	α Group::Join( vector<NodeIndex> nodes )Ι->Joined{
+		vector<optional<ExNodeId>> ids;
+		ids.reserve( nodes.size() );
+		for( let index : nodes ){
+			auto p = _nodeOf.find( index );
+			ids.emplace_back( p==_nodeOf.end() ? optional<ExNodeId>{} : p->second );
+		}
+		Joined y{ move(nodes), ids };
+		for( let& id : ids ){
+			if( !id )
+				continue;
+			for( let index : _byNode.find(*id)->second )
+				y.Seed( index, *id );
+		}
+		return y;
+	}
 	α Group::Read( const ReadRequest& request, SL sl )ε->ReadResult{
 		let& tz = *_store->Config.TimeZone;
+		Index( sl );
 		const Plan plan{ request, _store->Config.ReadLimit, sl };
 		vector<Buffered> snapshot;
 		Files files;
+		optional<Joined> joined;
 		if( !plan.Modified ){//a modified read serves the modifications files alone, which hold no buffered record and jump nowhere.
 			ul _{ _filesMutex };
 			{
 				ul _{ _mutex };
-				snapshot = Snapshot( [&plan]( NodeIndex index ){ return plan.Slot( index ).has_value(); } );
+				joined.emplace( Join(plan.Nodes) );
+				snapshot = Snapshot( [&joined]( NodeIndex index ){ return joined->Slot( index ).has_value(); } );
 			}
 			flat_set<Day> days;//whose files a flush may write the snapshot's records to once the lock is let go.
 			for( let& b : snapshot )
 				days.insert( DayOf(PrimaryTime(b.Item), tz) );
 			for( let day : days )
 				files.Taken.emplace( day, _files->Serve(day, sl) );
-			for( let index : plan.Nodes ){
-				if( let newest = _files->Newest(index) )
-					files.Newest.try_emplace( index, *PrimaryTime(*newest) );
+			for( uint slot=0; slot<joined->Count(); ++slot ){
+				for( let index : joined->Indexes(slot) ){
+					if( let newest = _files->Newest(index) )
+						files.Newest.try_emplace( index, *PrimaryTime(*newest) );
+				}
 			}
+		}
+		else{
+			ul _{ _mutex };
+			joined.emplace( Join(plan.Nodes) );
 		}
 		//After the lock:  a file made or gone meanwhile holds none of the snapshot's records.
 		files.OnDisk = Days( _store->Config.Path, Name(), plan.Modified, sl );
@@ -911,7 +1062,7 @@ namespace Jde::Opc::Hist{
 			ul _{ _filesMutex };
 			return _files->ServeMods( day, sl );
 		};
-		auto page = Reading{ plan, tz, move(files), fileRecords(snapshot, false), sl }.Page();
+		auto page = Reading{ plan, tz, move(files), move(*joined), fileRecords(snapshot, false), sl }.Page();
 		page.NoData = page.Values.empty() && page.Continuation.empty() && plan.Empty();
 		return page;
 	}
@@ -924,6 +1075,7 @@ namespace Jde::Opc::Hist{
 	struct Subscription::State final{
 		sp<Hist::Store> Shared;
 		ReadRequest Request;
+		Joined Join;//the nodes' indexes at the subscription.
 		Day FromDay;
 		vector<Day> OnDisk;
 		std::map<Day,optional<GroupFiles::Served>> Taken;//each day's value file from FromDay:  none for a day with none.
@@ -974,7 +1126,7 @@ namespace Jde::Opc::Hist{
 		};
 		ReadResult page;
 		{//the snapshot lent to the page, not copied for it, and taken back however the page ends.
-			Reading reading{ plan, *state.Shared->Config.TimeZone, move(files), move(state.Buffered), sl };
+			Reading reading{ plan, *state.Shared->Config.TimeZone, move(files), state.Join, move(state.Buffered), sl };
 			absl::Cleanup back = [&]{
 				auto [read, buffered] = reading.Release();
 				state.OnDisk = move( read.OnDisk );
@@ -1002,12 +1154,10 @@ namespace Jde::Opc::Hist{
 	α Group::Subscribe( sp<ISubscriber> subscriber, vector<NodeIndex> nodes, UA_DateTime from, SL sl )ε->up<Subscription>{
 		THROW_IFSL( !subscriber, "A subscription needs a subscriber." );
 		THROW_IFSL( nodes.empty(), "A subscription names no nodes." );
+		Index( sl );
 		let& tz = *_store->Config.TimeZone;
-		auto state = mu<Subscription::State>();
-		state->Shared = _store;
-		state->Request = { .Nodes=nodes, .Start=from, .Bounds=true };
-		state->FromDay = DayOf( from, tz );
-		auto registration = ms<const Registration>( move(subscriber), absl::flat_hash_set<NodeIndex>{nodes.begin(), nodes.end()} );
+		auto state = mu<Subscription::State>( Subscription::State{.Shared=_store, .Request={ .Nodes=nodes, .Start=from, .Bounds=true }, .FromDay=DayOf( from, tz )} );
+		sp<const Registration> registration;
 		vector<Buffered> snapshot;
 		{
 			ul _{ _filesMutex };
@@ -1022,7 +1172,9 @@ namespace Jde::Opc::Hist{
 			}
 			ul _{ _mutex };
 			THROW_IFSL( _closed || _stopped, "Group '{}' was removed or has stopped.", Name() );
-			snapshot = Snapshot( [&registration]( NodeIndex index ){ return registration->Nodes.contains( index ); } );
+			state->Join = Join( move(nodes) );
+			registration = ms<const Registration>( move(subscriber), state->Join.Named() );
+			snapshot = Snapshot( [&state]( NodeIndex index ){ return state->Join.Slot( index ).has_value(); } );
 			_subscribers.push_back( registration );
 		}
 		state->Buffered = byDay( fileRecords(snapshot, true), tz );
@@ -1045,7 +1197,7 @@ namespace Jde::Opc{
 			f.Newest.try_emplace( index, *PrimaryTime(*newest) );
 		f.Serve = [&files, sl]( Day day ){ return files.Serve( day, sl ); };
 		f.Mods = [&files, sl]( Day day ){ return files.ServeMods( day, sl ); };
-		auto page = Reading{ plan, tz, move(f), vector<HistoryRecord>{}, sl }.Page();
+		auto page = Reading{ plan, tz, move(f), Joined{request.Nodes}, vector<HistoryRecord>{}, sl }.Page();//by the index alone:  a start value is its own index's.
 		if( page.Values.empty() )
 			return nullopt;
 		return move( page.Values.front().Value );

@@ -199,6 +199,7 @@ namespace Jde::Opc::Hist{
 
 	struct Group;
 	struct GroupFiles;
+	struct Joined;
 	struct Run;
 	struct Store;
 
@@ -216,8 +217,9 @@ namespace Jde::Opc::Hist{
 		//way may still follow, and it can come as the subscriber ends the subscription itself.
 		β OnEnded( ESubscriptionEnd why )ι->void=0;
 	};
-	//A subscription as the group holds it:  whom to deliver to, and which of the group's nodes.
-	struct Registration final{ sp<ISubscriber> Subscriber; absl::flat_hash_set<NodeIndex> Nodes; };
+	//A subscription as the group holds it:  whom to deliver to, and each index of the nodes it named, to the one named,
+	//which that index's records go out under.
+	struct Registration final{ sp<ISubscriber> Subscriber; absl::flat_hash_map<NodeIndex,NodeIndex> Nodes; };
 	//What Group::Subscribe returns:  the registration, which its destructor ends, and the snapshot the subscriber reads
 	//first, the history from the subscription's time to its registration.  The group alone owns the registration, and
 	//through it the subscriber, so a subscriber that owns its Subscription makes no cycle:  this holds the registration
@@ -286,7 +288,8 @@ namespace Jde::Opc::Hist{
 		α Name()Ι->const string&{ return _config.Name; }
 
 		//Returns the node's index:  issued here when the group issues its own, otherwise member.Index.  A node that left
-		//rejoins with a break at its removal time, or at the break it left with.
+		//rejoins with a break at its removal time, or at the break it left with, and a new index:  a read of it joins the
+		//indexes it has had (spec *Reads*).
 		α Add( Member member, optional<Writer> by={}, SRCE )ε->NodeIndex;
 		α Remove( NodeIndex index, optional<Writer> by={}, SRCE )ε->void;
 		α SetThresholds( NodeIndex index, Thresholds thresholds, SRCE )ε->void;
@@ -363,13 +366,14 @@ namespace Jde::Opc::Hist{
 
 		//A page of the raw records the request asks for:  those of its nodes inside its range, from the day files the
 		//range touches, a live file's runs merged by source time, and from the buffer, a running flush's records among
-		//it.  At most Limit values, the bounds counted, but for a first page whose bounds alone pass it, which holds them,
-		//and a last page's closing bounds, which follow its values.  The continuation is stateless:  where to resume by
-		//time, how many records at that time each node has had, an archive's byte offset and generation, and a CRC of the
-		//other arguments but Limit, so one passed with different nodes, times or bounds is refused.  A record that lands
-		//behind the resume point between pages isn't in the rest of the read.  Throws for a request with neither time,
-		//no nodes or a continuation that isn't this read's, a UAException with Bad_ContinuationPointInvalid, and when a file
-		//the read opens can't be opened or read through.
+		//it.  A node is read by every index it has had, each file's preamble saying which of its are the node's, and its
+		//values come back under the index asked for (spec *Reads*).  At most Limit values, the bounds counted, but for a
+		//first page whose bounds alone pass it, which holds them, and a last page's closing bounds, which follow its
+		//values.  The continuation is stateless:  where to resume by time, how many records at that time each node has
+		//had, an archive's byte offset and generation, and a CRC of the other arguments but Limit, so one passed with
+		//different nodes, times or bounds is refused.  A record that lands behind the resume point between pages isn't in
+		//the rest of the read.  Throws for a request with neither time, no nodes or a continuation that isn't this read's,
+		//a UAException with Bad_ContinuationPointInvalid, and when a file the read opens can't be opened or read through.
 		α Read( const ReadRequest& request, SRCE )ε->ReadResult;
 		//A page of the values at the request's times (spec *Reads*), at most Limit, and with OneDay one day's, the times in
 		//the request's order and a time's values in the nodes', each a record at the time or one interpolated from the
@@ -385,11 +389,12 @@ namespace Jde::Opc::Hist{
 		//Read does for a request with no nodes or a negative interval, and a UAException for a Start equal to End,
 		//Bad_InvalidArgument, or percentages Part 13 doesn't allow, Bad_AggregateInvalidInputs.
 		α ReadProcessed( const ProcessedRequest& request, SRCE )ε->ReadResult;
-		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked.  The next flush
-		//runs it, after writing the buffer, so every value it targets is in its day's file before it looks:  it writes a
-		//Modification record for each value it changes to the modifications file of that value's day, one append and
-		//checkpoint per day, fsynced, keeps each node's newest record and the later files' start values current, and
-		//resumes with the result once the records are durable, so an edit a caller was told succeeded survives a crash.  A
+		//Part 11's HistoryUpdate on the group's history (spec *Edits*), by a caller the host has checked, on the node's
+		//records under every index it has had, as a read serves them.  The next flush runs it, after writing the buffer, so
+		//every value it targets is in its day's file before it looks:  it writes a Modification record for each value it
+		//changes to the modifications file of that value's day, one append and checkpoint per day, fsynced, keeps each
+		//node's newest record and the later files' start values current, and resumes with the result once the records are
+		//durable, so an edit a caller was told succeeded survives a crash.  A
 		//day whose file can't be written fails that day's values with Bad_UnexpectedError, as does one the flush before
 		//couldn't write, and the other days stand.  A range delete that reaches such a day answers Bad_UnexpectedError, as
 		//does one when the days can't be listed.  One result per entry, in order; a node that isn't a member answers
@@ -541,6 +546,12 @@ namespace Jde::Opc::Hist{
 		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
 		//written, then the buffer as the next Take has it, each node's lost values first.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>;
+		//A read's or an edit's nodes, each with every index it has had (Joined), from _byNode:  complete once Index has run.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Join( vector<NodeIndex> nodes )Ι->Joined;
+		//Every index the group's files list, read from their preambles once, before the first read, edit or subscription
+		//joins a node's indexes (spec *Reads*).  A file that can't be read is passed over, since a read of it fails anyway.
+		α Index( SRCE )ε->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Remember( NodeIndex index, const ExNodeId& node )ι->void;
 		//The flush's batch, as it stands, which Read serves until each record is in a file.  Set under _filesMutex, which a
 		//read holds through its look at the buffer, so no record is in neither.  Shared, not copied:  the flush reads it
 		//outside _mutex and changes it only under it.
@@ -622,6 +633,12 @@ namespace Jde::Opc::Hist{
 		absl::flat_hash_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
 		//Each index that left, which a file holding a value of it may yet need to map, until those values are written.
 		absl::flat_hash_map<NodeIndex,ExNodeId> _gone ABSL_GUARDED_BY(_mutex);
+		//Every index the group has given or its files list, and each node's, so a read joins a node's indexes at the start
+		//rather than finding them in the files it opens.  It only grows.
+		absl::flat_hash_map<NodeIndex,ExNodeId> _nodeOf ABSL_GUARDED_BY(_mutex);
+		absl::flat_hash_map<ExNodeId,vector<NodeIndex>> _byNode ABSL_GUARDED_BY(_mutex);
+		absl::Mutex _indexing;//Index's, before _filesMutex and _mutex, so that one reads the files and the rest wait for it.
+		bool _indexed ABSL_GUARDED_BY(_indexing){};
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
 		optional<TimePoint> _down ABSL_GUARDED_BY(_mutex);//when the connection broke, while it is down.
 		bool _closed ABSL_GUARDED_BY(_mutex){};

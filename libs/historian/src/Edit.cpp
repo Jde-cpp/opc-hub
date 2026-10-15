@@ -1,6 +1,7 @@
 #include "Edits.h"
 #include <jde/opc/UAException.h>
 #include <jde/opc/proto/opc.Common.h>
+#include "Joined.h"
 #include "Reads.h"
 #include "Store.h"
 #include "io/Applied.h"
@@ -151,11 +152,12 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 
-	//Each day's records of the edit's nodes, the modifications applied, then each entry against them in order, which
-	//says what each value does and writes its Modification record, one append per day.
+	//Each day's records of the edit's nodes, the modifications applied, under every index each node has had, as a read
+	//joins them (spec *Reads*), then each entry against them in order, which says what each value does and writes its
+	//Modification record, under the index of the record it changes or the one an insert takes, one append per day.
 	α Group::Modifications( Editing& edit, const Membership& members, TimePoint taken, SL sl )ι->vector<Job>{
 		let& tz = *_store->Config.TimeZone;
-		absl::flat_hash_set<NodeIndex> wanted;
+		vector<NodeIndex> wanted;
 		flat_set<Day> days;
 		for( let& [day,_] : edit.ByDay )
 			days.insert( day );
@@ -164,7 +166,7 @@ namespace Jde::Opc::Hist{
 		for( uint e=0; e<edit.Details.size(); ++e ){
 			if( UA_StatusCode_isBad(edit.Results[e].Status) )
 				continue;
-			wanted.insert( nodeOf(edit.Details[e]) );
+			wanted.push_back( nodeOf(edit.Details[e]) );
 			let erase = get_if<DeleteRaw>( &edit.Details[e] );
 			if( !erase )
 				continue;
@@ -214,7 +216,38 @@ namespace Jde::Opc::Hist{
 				}
 			}
 		}
-		using Key = std::pair<NodeIndex,Ticks>;
+		try{
+			Index( sl );
+		}
+		catch( Exception& x ){//the files couldn't be listed:  the edit reaches the indexes the group gave.
+			x.SetLevel( ELogLevel::Error );
+		}
+		optional<Joined> joined;
+		{
+			ul _{ _mutex };
+			joined.emplace( Join(move(wanted)) );
+		}
+		//An inserted value's index (spec *Edits*):  of a node with more than one, the earliest the next file that lists the
+		//node lists, whose start value the value may move;  the one named when no later file lists it.
+		std::map<std::pair<NodeIndex,Day>,NodeIndex> inserting;
+		let insertIndex = [&]( NodeIndex index, Ticks target )->NodeIndex{
+			let& indexes = joined->Indexes( *joined->Slot(index) );
+			if( indexes.size()==1 )
+				return index;
+			let [p, inserted] = inserting.try_emplace( {index, DayOf(target, tz)}, index );
+			if( inserted ){
+				try{
+					ul _{ _filesMutex };
+					if( let listed = _files->ListedAfter(p->first.second, indexes, sl); !listed.empty() )
+						p->second = std::ranges::min( listed );
+				}
+				catch( Exception& x ){//the days couldn't be listed:  the index named.
+					x.SetLevel( ELogLevel::Error );
+				}
+			}
+			return p->second;
+		};
+		using Key = std::pair<NodeIndex,Ticks>;//by the index named, each record under its own.
 		std::map<Key,vector<Proto::DataValue>> series;//the edit's nodes' records, each time's in order.
 		for( auto& [day,s] : served ){
 			try{
@@ -222,10 +255,13 @@ namespace Jde::Opc::Hist{
 				HistoryRecord r;
 				optional<Merge::Position> where;
 				while( stream.Next(r, where) ){
-					if( !r.has_value() || !wanted.contains(r.value().node_index()) )
+					if( !r.has_value() )
+						continue;
+					let slot = joined->Slot( r.value().node_index() );
+					if( !slot )
 						continue;
 					if( let t = PrimaryTime(r.value()); t )
-						series[{r.value().node_index(), *t}].push_back( move(*r.mutable_value()) );
+						series[{joined->Index(*slot), *t}].push_back( move(*r.mutable_value()) );
 				}
 			}
 			catch( Exception& x ){
@@ -292,7 +328,8 @@ namespace Jde::Opc::Hist{
 						continue;
 					}
 					let replacing = !at.empty() && update->Type!=UA_PERFORMUPDATETYPE_INSERT;
-					modify( index, v.sourceTimestamp, updateType(update->Type), replacing ? &at.back() : nullptr, &stored );
+					stored.set_node_index( replacing ? at.back().node_index() : insertIndex(index, v.sourceTimestamp) );//which the modification goes under.
+					modify( stored.node_index(), v.sourceTimestamp, updateType(update->Type), replacing ? &at.back() : nullptr, &stored );
 					if( replacing )
 						at.back() = stored;
 					else
@@ -304,7 +341,7 @@ namespace Jde::Opc::Hist{
 				uint count{};
 				for( auto p = series.lower_bound({index, erase->Start}); p!=series.end() && p->first.first==index && p->first.second<=erase->End; ++p ){
 					for( let& original : p->second )
-						modify( index, p->first.second, Proto::UPDATE_TYPE_DELETE, &original, nullptr );
+						modify( original.node_index(), p->first.second, Proto::UPDATE_TYPE_DELETE, &original, nullptr );
 					count += p->second.size();
 					p->second.clear();
 				}
@@ -322,7 +359,7 @@ namespace Jde::Opc::Hist{
 						continue;
 					}
 					for( let& original : at )
-						modify( index, atTime.Times[i], Proto::UPDATE_TYPE_DELETE, &original, nullptr );
+						modify( original.node_index(), atTime.Times[i], Proto::UPDATE_TYPE_DELETE, &original, nullptr );
 					at.clear();
 				}
 			}

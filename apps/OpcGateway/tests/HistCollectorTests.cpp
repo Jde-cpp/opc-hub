@@ -213,8 +213,9 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 	//A node that leaves and joins again within the second its item outlives it (DeleteMonitoring) joins that item, which sends
-	//no initial value:  the collector reads the node's value instead, and the new member's history starts with it, once,
-	//after the Bad_DataLost a rejoin's break writes (spec *Gaps*).
+	//no initial value:  the collector reads the node's value instead, and the new member's history goes on with it, once,
+	//after the Bad_DataLost a rejoin's break writes (spec *Gaps*), the first membership's value before them, since a read
+	//of the node joins its indexes (#326, spec *Reads*).
 	TEST_F( HistCollectorTests, ARejoinReadsTheItemsValue ){
 		let itemsBefore = Items();
 		let group = CreateGroup( "rejoin" );
@@ -228,13 +229,15 @@ namespace Jde::Opc::Gateway::Tests{
 		let again = AddNode( group, RpmManual );
 		ASSERT_NE( again, first ) << "a rejoin is a new row, and a new index";
 		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		let stored = WaitStored( host, again, joined, 2 );
-		ASSERT_EQ( stored.size(), 2u );
-		EXPECT_EQ( stored[0].Value.status(), UA_STATUSCODE_BADDATALOST );
-		EXPECT_FALSE( stored[0].Value.has_value() );
-		EXPECT_TRUE( stored[1].Value.has_value() );
+		let stored = WaitStored( host, again, joined, 3 );
+		ASSERT_EQ( stored.size(), 3u );
+		EXPECT_TRUE( stored[0].Value.has_value() ) << "the first membership's value, under the current index";
+		EXPECT_EQ( stored[0].Value.node_index(), again );
+		EXPECT_EQ( stored[1].Value.status(), UA_STATUSCODE_BADDATALOST );
+		EXPECT_FALSE( stored[1].Value.has_value() );
+		EXPECT_TRUE( stored[2].Value.has_value() );
 		std::this_thread::sleep_for( 1s );//a publishing interval or two:  the item's next value is a change, not its value now again.
-		EXPECT_EQ( Stored(host, again, joined).size(), 2u );
+		EXPECT_EQ( Stored(host, again, joined).size(), 3u );
 		EXPECT_EQ( Items(), itemsBefore+1 ) << "the one item, joined, not a second";
 	}
 	//A namespace the server registers at the end moves no member's index:  neither the pass that sees it, here a member's join,
