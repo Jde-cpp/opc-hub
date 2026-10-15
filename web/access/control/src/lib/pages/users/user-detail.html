@@ -42,12 +42,12 @@
 		mistake rather than as hierarchy, and Material has no outlined extended fab to match them with - the only way to equalise
 		was a third fab, which is the weight Delete must NOT have.  So the whole row drops to matButton: only Save is filled.-->
 	<div class="jde-detail-actions">
-		<button tabindex="100" matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-		<button tabindex="101" matButton="outlined" (click)="onCancelClick()">Cancel</button>
+		<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
+		<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
 		<!--the only icon in the row, so the trash can still reads as a warning - the done/cancel icons Save and Cancel used to
 			carry drowned it out.  It also carries the delete/restore state, and Restore is only reachable from the show-deleted
 			view that returns the column.  Pushed to the far side: it sat in the click path of the two safe actions.-->
-		<button tabindex="102" matButton="outlined" style="margin-left: auto;" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
+		<button matButton="outlined" style="margin-left: auto;" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
 			<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
 		</button>
 	</div>
