@@ -65,6 +65,8 @@ namespace Jde::Opc::Hist{
 		}
 		constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
 
+		//Whether r is a preamble record of the day that starts at start.
+		Ω preambled( const HistoryRecord& r, Ticks start )ι->bool{ return r.has_node_added() && Bare( r.node_added() ) && r.node_added().ts()==start; }
 		//A preamble record, as the file's map lists it.
 		Ω listed( const Proto::NodeAdded& added )ι->Listed{
 			return { ProtoUtils::ToExNodeId(added.node()), added.has_start() ? optional<Proto::DataValue>{ added.start() } : nullopt };
@@ -223,7 +225,7 @@ namespace Jde::Opc::Hist{
 	α GroupFiles::Fold( HistoryRecord& r, Day day )ι->void{
 		if( r.has_value() )
 			Newer( move(*r.mutable_value()) );
-		else if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==StartOf(day, _tz) ){
+		else if( preambled(r, StartOf(day, _tz)) ){
 			auto& added = *r.mutable_node_added();
 			if( added.has_start() ){
 				added.mutable_start()->set_node_index( added.node_index() );
@@ -265,7 +267,7 @@ namespace Jde::Opc::Hist{
 			let start = StartOf( day, _tz );
 			//One read:  the scan hands over each record it keeps, for the preamble and the restore.
 			auto scanned = Scan( file.Path, [&]( HistoryRecord& r ){
-				if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==start )
+				if( preambled(r, start) )
 					file.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 				if( restore )
 					restore( r );
@@ -324,7 +326,7 @@ namespace Jde::Opc::Hist{
 		//Onto the part.  One too large for a file is left out, as an append leaves it.
 		α Add( HistoryRecord&& r )ε->void{
 			optional<std::pair<NodeIndex,Listed>> member;
-			if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==Start.ts() )
+			if( preambled(r, Start.ts()) )
 				member.emplace( r.node_added().node_index(), listed(r.node_added()) );
 			try{
 				Writer.Add( move(r) );
@@ -489,7 +491,7 @@ namespace Jde::Opc::Hist{
 		vector<HistoryRecord> run;
 		run.reserve( records.size() );
 		for( let& r : records ){
-			if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==start )
+			if( preambled(r, start) )
 				listed.insert( r.node_added().node_index() );
 		}
 		//Sorted, so a node's last is its newest.
@@ -590,7 +592,7 @@ namespace Jde::Opc::Hist{
 		let start = StartOf( day, _tz );
 		Pending y{ .Date=day, .Mods=mods, .Path=file.Path, .Offset=known.Size, .Existed=existed, .Restart=restart };
 		let note = [&]( const HistoryRecord& r ){
-			if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==start )
+			if( preambled(r, start) )
 				y.Preamble.emplace_back( r.node_added().node_index(), listed(r.node_added()) );
 		};
 		string bytes;
@@ -824,7 +826,7 @@ namespace Jde::Opc::Hist{
 				else{//a live file's scan reads it through, so its preamble comes with its runs.
 					let start = StartOf( day, _tz );
 					auto scanned = Scan( path, [&]( HistoryRecord& r ){
-						if( r.has_node_added() && Bare(r.node_added()) && r.node_added().ts()==start )
+						if( preambled(r, start) )
 							y.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 					}, sl );
 					y.Size = scanned.Size;
@@ -860,34 +862,8 @@ namespace Jde::Opc::Hist{
 		std::ranges::stable_sort( touched, {}, &std::pair<NodeIndex,Ticks>::second );
 		optional<vector<Day>> all;//the directory walk, once, for a record older than the newest day the process knows of.
 		std::map<Day,absl::flat_hash_map<NodeIndex,HistoryRecord>> corrections;//each file's, the last per member.
-		//A later file's start values:  one the process holds, by its entry, an archive by its preamble alone, read once for
-		//this call and kept no longer, and a live file by its first-open scan, which its next append needs anyway.  None
-		//for one that can't be read, or that the historian won't write to:  it can't be corrected, nor say what the files
-		//after it copy.
-		std::map<Day,optional<ArchiveHead>> archives;
-		let startsOf = [&]( Day day )->const Preamble* {
-			if( !_files.contains(day) ){
-				auto [p, inserted] = archives.try_emplace( day );
-				if( inserted ){
-					try{
-						p->second = archivePreamble( File(day), sl );
-					}
-					catch( const Exception& ){//said as it went.
-						archives.erase( p );
-						return nullptr;
-					}
-				}
-				if( p->second )
-					return &p->second->Preamble;
-			}
-			try{
-				let& file = Open( day, sl );
-				return file.Refused.empty() ? &file.Preamble : nullptr;
-			}
-			catch( const Exception& ){//said as it went.
-				return nullptr;
-			}
-		};
+		std::map<Day,optional<Preamble>> archives;//read once for this call and kept no longer.
+		let startsOf = [&]( Day day ){ return StartsOf( day, archives, sl ); };
 		for( let& [index,time] : touched ){
 			let day = DayOf( time, _tz );
 			if( day>=*_days.rbegin() )
@@ -929,14 +905,14 @@ namespace Jde::Opc::Hist{
 				}
 				if( startTime && *startTime==time && (bool)start==(bool)value && (!value || Same(*start, *value)) )
 					continue;//copies the record itself:  made in this flush, after it was written.
-				if( let node = members.Find(index); node ){
-					auto record = Added( index, *node, StartOf(*later, _tz), members, false );
-					if( value ){
-						*record.mutable_node_added()->mutable_start() = *value;
-						record.mutable_node_added()->mutable_start()->clear_node_index();
-					}
-					corrections[*later].insert_or_assign( index, move(record) );
+				//One the group no longer knows, a rejoined node's earlier index an edit reached, as the file lists it.
+				let node = members.Find( index ).value_or( Membership::Node{s->second.Node, true} );
+				auto record = Added( index, node, StartOf(*later, _tz), members, false );
+				if( value ){
+					*record.mutable_node_added()->mutable_start() = *value;
+					record.mutable_node_added()->mutable_start()->clear_node_index();
 				}
+				corrections[*later].insert_or_assign( index, move(record) );
 			}
 		}
 		for( auto& [day,byNode] : corrections ){
@@ -954,6 +930,43 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		return y;
+	}
+
+	α GroupFiles::ListedAfter( Day day, const vector<NodeIndex>& indexes, SL sl )ε->vector<NodeIndex>{
+		vector<NodeIndex> y;
+		if( _days.empty() || day>=*_days.rbegin() )
+			return y;//no file is later.
+		std::map<Day,optional<Preamble>> archives;
+		let all = Days( _root, _name, false, sl );
+		for( auto later = std::ranges::upper_bound(all, day); later!=all.end() && y.empty(); ++later ){
+			if( let starts = StartsOf(*later, archives, sl) )
+				std::ranges::copy_if( indexes, std::back_inserter(y), [starts]( NodeIndex index ){ return starts->contains( index ); } );
+		}
+		return y;
+	}
+	α GroupFiles::StartsOf( Day day, std::map<Day,optional<Preamble>>& archives, SL sl )ι->const Preamble*{
+		if( !_files.contains(day) ){
+			auto [p, inserted] = archives.try_emplace( day );
+			if( inserted ){
+				try{
+					if( auto head = archivePreamble(File(day), sl) )
+						p->second = std::move( head->Preamble );
+				}
+				catch( const Exception& ){//said as it went.
+					archives.erase( p );
+					return nullptr;
+				}
+			}
+			if( p->second )
+				return &*p->second;
+		}
+		try{
+			let& file = Open( day, sl );
+			return file.Refused.empty() ? &file.Preamble : nullptr;
+		}
+		catch( const Exception& ){//said as it went.
+			return nullptr;
+		}
 	}
 
 	α Days( const fs::path& root, sv name, bool mods, SL sl )ε->vector<Day>{

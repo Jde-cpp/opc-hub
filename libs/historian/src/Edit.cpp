@@ -154,7 +154,7 @@ namespace Jde::Opc::Hist{
 
 	//Each day's records of the edit's nodes, the modifications applied, under every index each node has had, as a read
 	//joins them (spec *Reads*), then each entry against them in order, which says what each value does and writes its
-	//Modification record, under the index of the record it changes, one append per day.
+	//Modification record, under the index of the record it changes or the one an insert takes, one append per day.
 	α Group::Modifications( Editing& edit, const Membership& members, TimePoint taken, SL sl )ι->vector<Job>{
 		let& tz = *_store->Config.TimeZone;
 		vector<NodeIndex> wanted;
@@ -216,17 +216,41 @@ namespace Jde::Opc::Hist{
 				}
 			}
 		}
+		try{
+			Index( sl );
+		}
+		catch( Exception& x ){//the files couldn't be listed:  the edit reaches the indexes the group gave.
+			x.SetLevel( ELogLevel::Error );
+		}
 		optional<Joined> joined;
 		{
 			ul _{ _mutex };
 			joined.emplace( Join(move(wanted)) );
 		}
+		//An inserted value's index (spec *Edits*):  of a node with more than one, the earliest the next file that lists the
+		//node lists, whose start value the value may move;  the one named when no later file lists it.
+		std::map<std::pair<NodeIndex,Day>,NodeIndex> inserting;
+		let insertIndex = [&]( NodeIndex index, Ticks target )->NodeIndex{
+			let& indexes = joined->Indexes( *joined->Slot(index) );
+			if( indexes.size()==1 )
+				return index;
+			let [p, inserted] = inserting.try_emplace( {index, DayOf(target, tz)}, index );
+			if( inserted ){
+				try{
+					ul _{ _filesMutex };
+					if( let listed = _files->ListedAfter(p->first.second, indexes, sl); !listed.empty() )
+						p->second = std::ranges::min( listed );
+				}
+				catch( Exception& x ){//the days couldn't be listed:  the index named.
+					x.SetLevel( ELogLevel::Error );
+				}
+			}
+			return p->second;
+		};
 		using Key = std::pair<NodeIndex,Ticks>;//by the index named, each record under its own.
 		std::map<Key,vector<Proto::DataValue>> series;//the edit's nodes' records, each time's in order.
 		for( auto& [day,s] : served ){
 			try{
-				if( s.Values )
-					joined->Learn( s.Values->Preamble );
 				Applied stream{ s.Values ? s.Values->File : nullptr, s.Values ? s.Values->Runs : vector<Run>{}, {}, s.Mods ? DayMods::Read(*s.Mods, sl) : DayMods{}, sl };
 				HistoryRecord r;
 				optional<Merge::Position> where;
@@ -304,8 +328,7 @@ namespace Jde::Opc::Hist{
 						continue;
 					}
 					let replacing = !at.empty() && update->Type!=UA_PERFORMUPDATETYPE_INSERT;
-					if( replacing )
-						stored.set_node_index( at.back().node_index() );//the record's own index, which the modification goes under.
+					stored.set_node_index( replacing ? at.back().node_index() : insertIndex(index, v.sourceTimestamp) );//which the modification goes under.
 					modify( stored.node_index(), v.sourceTimestamp, updateType(update->Type), replacing ? &at.back() : nullptr, &stored );
 					if( replacing )
 						at.back() = stored;

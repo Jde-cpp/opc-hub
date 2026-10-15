@@ -166,6 +166,7 @@ namespace Jde::Opc::Hist{
 				if( kept.contains(index) )
 					continue;
 				_gone.emplace( index, node );
+				Remember( index, node );
 				Hold( NodeRemoved{index, now, {}}, bytes(optional<Writer>{}) );
 			}
 			for( auto& record : added ){
@@ -198,6 +199,7 @@ namespace Jde::Opc::Hist{
 			index = _nextIndex++;
 		THROW_IFSL( _nodes.contains(index), "node_index {} is already in group '{}'.", index, Name() );
 		_indexes.emplace( node, index );
+		Remember( index, node );
 		optional<TimePoint> rejoin;
 		if( auto p = _left.find(node); p!=_left.end() ){
 			rejoin = p->second;
@@ -611,13 +613,19 @@ namespace Jde::Opc::Hist{
 		}
 		effects += Push( move(value), bytes );
 	}
-	//Each subscriber's records among `records`, by node:  those of none are skipped.
+	//Each subscriber's records among `records`, by node, under the index it named:  those of none are skipped.
 	Ω deliver( const vector<sp<const Registration>>& to, const vector<Proto::HistoryRecord>& records )ι->void{
 		for( let& registration : to ){
 			vector<Proto::HistoryRecord> mine;
 			for( let& r : records ){
-				if( registration->Nodes.contains(r.has_modification() ? r.modification().node_index() : r.value().node_index()) )
-					mine.push_back( r );
+				let p = registration->Nodes.find( r.has_modification() ? r.modification().node_index() : r.value().node_index() );
+				if( p==registration->Nodes.end() )
+					continue;
+				auto& y = mine.emplace_back( r );
+				if( y.has_modification() )
+					y.mutable_modification()->set_node_index( p->second );
+				else
+					y.mutable_value()->set_node_index( p->second );
 			}
 			if( !mine.empty() )
 				registration->Subscriber->OnRecords( move(mine) );

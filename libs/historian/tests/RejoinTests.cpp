@@ -1,8 +1,9 @@
-//A node that left its group and joined again (#326):  a new index, but one series.  A read of the node by its current
-//index takes every index the group's files map to its NodeId, each file's preamble saying which of its indexes are the
-//node's - the earlier index's values, the Bad_DataLost its rejoin wrote at the removal time, then the current index's -
-//under the index asked for, forward, backward, paged, with bounds, at times, aggregated, after a restart, across days
-//that list none of its indexes, and in a subscription's snapshot;  and an edit reaches the earlier index's records.
+//A node that left its group and joined again (#326):  a new index, but one series.  A read of the node by any of its
+//indexes takes every index the group gave its NodeId or its files' preambles map to it - the earlier index's values,
+//the Bad_DataLost its rejoin wrote at the removal time, then the current index's - under the index asked for, forward,
+//backward, paged, with bounds, at times, aggregated, after a restart, across days that list none of its indexes, and in
+//a subscription's snapshot and stream;  and an edit reaches the earlier index's records, an insert going under the index
+//whose start value it may move.
 #include "reads.h"
 
 #define let const auto
@@ -97,7 +98,7 @@ namespace Jde::Opc::Hist::Tests{
 	};
 
 	//Forward, backward and paged, the earlier index's values come under the current one, with the marker between, from the
-	//archive, the live file and the buffer alike; the earlier index alone, once the group has forgotten it, reads its own.
+	//archive, the live file and the buffer alike; the earlier index, named, reads the same series under its own.
 	TEST_F( Rejoins, OneSeries ){
 		TwoDays();
 		let all = All( {.Nodes={Again}, .Start=ticks(T0), .End=ticks(Eighth+4min)} );
@@ -113,7 +114,9 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( sources(paged), (vector<Ticks>{ticks(T0+1s), ticks(T0+2s), ticks(T0+2s), ticks(Removed), ticks(Eighth+2min), ticks(Eighth+3min)}) );
 		EXPECT_EQ( indexes(paged), (vector<NodeIndex>{Again, Again, Temp, Again, Again, Again}) );
 		EXPECT_EQ( pages, (vector<uint>{2, 2, 2}) );
-		EXPECT_EQ( doubles(All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+4min)})), (vector<double>{1, 2}) ) << "an index the group has no node for reads alone";
+		let earlier = All( {.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+4min)} );
+		EXPECT_EQ( values(earlier), (vector<optional<double>>{1, 2, nullopt, 3, 4}) );
+		EXPECT_EQ( indexes(earlier), vector<NodeIndex>(5, Speed) );
 	}
 
 	//The bounds go by the series:  before a range in the earlier membership its last value there, before one in the gap
@@ -134,6 +137,24 @@ namespace Jde::Opc::Hist::Tests{
 		ASSERT_EQ( reverse.size(), 5u );
 		EXPECT_TRUE( isBound(reverse[0], Again, 4, Eighth+3min) );
 		EXPECT_TRUE( isBound(reverse[4], Again, 1, T0+1s) );
+	}
+
+	//The walk back for an opening bound reads the 7th's archive while the 8th's live file is open:  the page's records
+	//after it keep the live file's place, so a page resumed once the 8th is archived reads on by time.
+	TEST_F( Rejoins, WalkBackKeepsTheOpenDaysPlace ){
+		TwoDays();
+		ReadRequest request{ .Nodes={Again}, .Start=ticks(Eighth+30s), .End=ticks(Eighth+4min), .Bounds=true, .Limit=2 };
+		auto page = Pump->Read( request );
+		ASSERT_EQ( page.Values.size(), 2u );
+		EXPECT_TRUE( isBound(page.Values[0], Again, 2, T0+2s) );
+		EXPECT_TRUE( isMarker(page.Values[1], Again, Removed) );
+		EXPECT_FALSE( continuation(page).has_generation() );
+		Time->AdvanceTo( sys_days{March9}+1min );
+		Settle( *Pump );//the 8th archived, generation 1 as the 7th is.
+		request.Continuation = move( page.Continuation );
+		let rest = All( move(request) );
+		EXPECT_EQ( values(rest), (vector<optional<double>>{3, 4, nullopt}) );
+		EXPECT_EQ( bounds(rest), (vector<bool>{false, false, true}) );
 	}
 
 	//At-time and processed reads compute from the joined series.
@@ -190,8 +211,63 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
-	//An edit of the node reaches its earlier index's records, written under that index, and an insert goes under the
-	//current one;  the modified read returns them under the index asked for.
+	//A rejoin after a restart writes no marker, the process having forgotten the break, and the restart left the earlier
+	//index's newest record unknown, since the newest file doesn't list it.  A backward read of the node beside one whose
+	//latest is older reads the earlier index's last day rather than jumping past it to the other's.
+	TEST_F( Rejoins, RestartedBeforeTheRejoin ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		let flow = Join( *Pump, "Pump1.Flow" );
+		DataChange( *Pump, Temp, 10, T0+1s );
+		DataChange( *Pump, Speed, 1, T0+2s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, Speed, 2, Eighth+1min );
+		Time->AdvanceTo( Eighth+2min );
+		Pump->Remove( Speed );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( sys_days{March9}+1min );
+		Settle( *Pump );
+		DataChange( *Pump, flow, 5, Time->Now() );
+		EXPECT_TRUE( Flush(*Pump) );
+		let name = Pump->Name();
+		Restart();
+		Pump = Rejoin( name, {{Node("Pump1.Temp"), {}, Temp}, {Node("Pump1.Flow"), {}, flow}} );
+		Time->AdvanceTo( Tenth+1min );
+		Settle( *Pump );
+		Again = Join( *Pump, "Pump1.Speed" );
+		Time->AdvanceTo( Tenth+2min );
+		DataChange( *Pump, Again, 3, Tenth+2min );
+		EXPECT_TRUE( Flush(*Pump) );
+		let back = All( {.Nodes={Temp, Again}, .End=ticks(Tenth+1min+30s), .Limit=100} );
+		EXPECT_EQ( sources(back), (vector<Ticks>{ticks(Eighth+1min), ticks(T0+2s), ticks(T0+1s)}) );
+		EXPECT_EQ( indexes(back), (vector<NodeIndex>{Again, Again, Temp}) );
+	}
+
+	//A backward read of a node with fewer values than it asks for ends at the day each of its indexes was first listed:
+	//it opens no older file, so one that can't be read doesn't fail it.
+	TEST_F( Rejoins, LastValuesStopAtTheFirstDay ){
+		Pump = AddGroup();
+		Temp = Join( *Pump, "Pump1.Temp" );
+		DataChange( *Pump, Temp, 10, T0+1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Time->AdvanceTo( Eighth+2min );
+		DataChange( *Pump, Speed, 1, Eighth+2min );
+		Time->AdvanceTo( Eighth+3min );
+		DataChange( *Pump, Speed, 2, Eighth+3min );
+		EXPECT_TRUE( Flush(*Pump) );
+		fs::permissions( File(*Pump, March7), fs::perms::none );
+		EXPECT_EQ( sources(All({.Nodes={Speed}, .End=ticks(Eighth+4min), .Limit=100})), (vector<Ticks>{ticks(Eighth+3min), ticks(Eighth+2min)}) );
+		fs::permissions( File(*Pump, March7), fs::perms::owner_read | fs::perms::owner_write );
+	}
+
+	//An edit of the node reaches its earlier index's records, written under that index, and an insert here goes under the
+	//current one, which the 8th's file lists;  the modified read returns them under the index asked for.
 	TEST_F( Rejoins, EditsReachTheEarlierIndex ){
 		TwoDays();
 		let replaced = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_REPLACE, {Reading(1.5, T0+1s)}}, UpdateData{Again, UA_PERFORMUPDATETYPE_INSERT, {Reading(1.7, T0+1700ms)}}} );
@@ -209,6 +285,88 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( deleted[0].Status, UA_STATUSCODE_GOOD );
 		EXPECT_TRUE( All({.Nodes={Again}, .Start=ticks(T0), .End=ticks(Eighth+4min)}).empty() ) << "every record of the series, under both indexes";
 		EXPECT_TRUE( All({.Nodes={Speed}, .Start=ticks(T0), .End=ticks(Eighth+4min)}).empty() );
+	}
+
+	//An edit of the earlier index's last value, after the group has forgotten that index, corrects the start value a
+	//later day's preamble copied:  a bound or an at-time value there is the edited one, after a delete the one before,
+	//and after an insert later than it, which goes under the index that day lists, the one inserted.
+	TEST_F( Rejoins, EditCorrectsLaterStartValues ){
+		Pump = AddGroup();
+		Speed = Join( *Pump, "Pump1.Speed" );
+		Temp = Join( *Pump, "Pump1.Temp" );
+		DataChange( *Pump, Speed, 1, T0+1s );
+		DataChange( *Pump, Speed, 2, T0+2s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->AdvanceTo( Eighth+1min );
+		Settle( *Pump );
+		DataChange( *Pump, Temp, 10, Eighth+1min );
+		EXPECT_TRUE( Flush(*Pump) );//the 8th's file, whose preamble lists Speed with its start value, 2.
+		Time->AdvanceTo( Eighth+2min );
+		Pump->Remove( Speed );
+		EXPECT_TRUE( Flush(*Pump) );//and the group forgets the index.
+		Time->AdvanceTo( Eighth+3min );
+		Again = Join( *Pump, "Pump1.Speed" );
+		let opening = [&]{
+			let bounded = All( {.Nodes={Again}, .Start=ticks(Eighth+30s), .End=ticks(Eighth+4min), .Bounds=true} );
+			return bounded.empty() ? optional<double>{} : numberOf( bounded.front().Value );
+		};
+		let atTime = [&]{
+			let at = readAllAtTime( *Pump, {.Nodes={Again}, .Times={ticks(Eighth+30s)}} );
+			return at.empty() ? optional<double>{} : numberOf( at.front().Value );
+		};
+		ASSERT_EQ( opening(), 2 );
+		let replaced = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_REPLACE, {Reading(20, T0+2s)}}} );
+		ASSERT_EQ( replaced.size(), 1u );
+		EXPECT_EQ( replaced[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED}) );
+		EXPECT_EQ( opening(), 20 );
+		EXPECT_EQ( atTime(), 20 );
+		let deleted = Edit( {DeleteAtTime{Again, {ticks(T0+2s)}}} );
+		ASSERT_EQ( deleted.size(), 1u );
+		EXPECT_EQ( deleted[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOOD}) );
+		EXPECT_EQ( opening(), 1 );
+		EXPECT_EQ( atTime(), 1 );
+		let inserted = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_INSERT, {Reading(5, T0+5s)}}} );
+		ASSERT_EQ( inserted.size(), 1u );
+		EXPECT_EQ( inserted[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		EXPECT_EQ( opening(), 5 );
+		EXPECT_EQ( atTime(), 5 );
+	}
+
+	//An insert before the node's first membership goes under its first index, the one the next file lists:  that file's
+	//start value takes it, and the later membership's file, which listed no start value, still lists none.
+	TEST_F( Rejoins, InsertBeforeTheFirstMembership ){
+		TwoDays();
+		let inserted = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_INSERT, {Reading(0.5, sys_days{March6}+12h)}}} );
+		ASSERT_EQ( inserted.size(), 1u );
+		EXPECT_EQ( inserted[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		let bounded = All( {.Nodes={Again}, .Start=ticks(Eighth+30s), .End=ticks(Eighth+4min), .Bounds=true} );
+		ASSERT_FALSE( bounded.empty() );
+		EXPECT_TRUE( isBound(bounded[0], Again, 2, T0+2s) );
+		EXPECT_EQ( sources(All({.Nodes={Again}, .End=ticks(Eighth+4min), .Limit=100})), (vector<Ticks>{ticks(Eighth+3min), ticks(Eighth+2min), ticks(Removed), ticks(T0+2s), ticks(T0+1s), ticks(sys_days{March6}+12h)}) );
+	}
+
+	//An insert on a day between the memberships, whose file lists neither index:  the bound of a range that ends before
+	//any later file lists the node walks back to it by the day's modifications.
+	TEST_F( Rejoins, WalkBackFindsAnInsertBetween ){
+		GapDays();
+		let inserted = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_INSERT, {Reading(7, sys_days{March8}+12h)}}} );
+		ASSERT_EQ( inserted.size(), 1u );
+		EXPECT_EQ( inserted[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+		let bounded = All( {.Nodes={Again}, .Start=ticks(sys_days{March9}+12h), .End=ticks(sys_days{March9}+18h), .Bounds=true} );
+		ASSERT_FALSE( bounded.empty() );
+		EXPECT_TRUE( isBound(bounded[0], Again, 7, sys_days{March8}+12h) );
+	}
+
+	//A node named twice gets its bounds in each slot, a rejoined one's from the walk back, as the first does.
+	TEST_F( Rejoins, NamedTwice ){
+		TwoDays();
+		let temp = All( {.Nodes={Temp, Temp}, .Start=ticks(T0+3s), .End=ticks(Eighth+4min), .Bounds=true} );
+		EXPECT_EQ( values(temp), (vector<optional<double>>{10, 10, nullopt, nullopt}) );
+		EXPECT_EQ( bounds(temp), (vector<bool>(4, true)) );
+		let again = All( {.Nodes={Again, Again}, .Start=ticks(Eighth+30s), .End=ticks(Eighth+4min), .Bounds=true} );
+		EXPECT_EQ( values(again), (vector<optional<double>>{2, 2, nullopt, 3, 4, nullopt, nullopt}) );
+		EXPECT_EQ( bounds(again), (vector<bool>{true, true, false, false, false, true, true}) );
+		EXPECT_EQ( indexes(again), vector<NodeIndex>(7, Again) );
 	}
 
 	//A subscription's snapshot joins the series as a read does.
@@ -230,6 +388,36 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isBound(snapshot[0], Again, 1, T0+1s) );
 		EXPECT_EQ( values(snapshot), (vector<optional<double>>{1, 2, nullopt, 3, 4}) );
 		EXPECT_EQ( indexes(snapshot), vector<NodeIndex>(5, Again) );
+	}
+
+	//The stream delivers a record of any of the node's indexes under the one the subscription named:  an edit's
+	//Modification of the earlier index's value, and the current index's values to one that named the earlier.
+	TEST_F( Rejoins, StreamUnderTheIndexNamed ){
+		TwoDays();
+		struct Listener final : ISubscriber{
+			α OnRecords( vector<Proto::HistoryRecord>&& records )ι->void override{ ul _{ Mutex }; std::ranges::move( records, std::back_inserter(Records) ); }
+			α OnEnded( ESubscriptionEnd )ι->void override{}
+			α Indexes()ι->vector<NodeIndex>{
+				ul _{ Mutex };
+				vector<NodeIndex> y;
+				for( let& r : Records )
+					y.push_back( r.has_modification() ? r.modification().node_index() : r.value().node_index() );
+				return y;
+			}
+			absl::Mutex Mutex;
+			vector<Proto::HistoryRecord> Records ABSL_GUARDED_BY(Mutex);
+		};
+		auto current = ms<Listener>(), earlier = ms<Listener>();
+		auto byCurrent = Pump->Subscribe( current, {Again}, ticks(Eighth+4min) );
+		auto byEarlier = Pump->Subscribe( earlier, {Speed}, ticks(Eighth+4min) );
+		let replaced = Edit( {UpdateData{Again, UA_PERFORMUPDATETYPE_REPLACE, {Reading(1.5, T0+1s)}}} );
+		ASSERT_EQ( replaced.size(), 1u );
+		EXPECT_EQ( replaced[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED}) );
+		EXPECT_TRUE( Settle(*Pump) );
+		Time->Advance( 1ms );//Modifications go on the clock's hop.
+		DataChange( *Pump, Again, 5, Eighth+5min );
+		EXPECT_EQ( current->Indexes(), (vector<NodeIndex>{Again, Again}) ) << "the Modification, then the value";
+		EXPECT_EQ( earlier->Indexes(), (vector<NodeIndex>{Speed, Speed}) );
 	}
 
 	//OpcServer's shape, whose indexes the historian issues:  a node historized again takes the next, and reads as one.

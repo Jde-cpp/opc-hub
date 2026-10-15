@@ -217,8 +217,9 @@ namespace Jde::Opc::Hist{
 		//way may still follow, and it can come as the subscriber ends the subscription itself.
 		β OnEnded( ESubscriptionEnd why )ι->void=0;
 	};
-	//A subscription as the group holds it:  whom to deliver to, and which of the group's nodes.
-	struct Registration final{ sp<ISubscriber> Subscriber; absl::flat_hash_set<NodeIndex> Nodes; };
+	//A subscription as the group holds it:  whom to deliver to, and each index of the nodes it named, to the one named,
+	//which that index's records go out under.
+	struct Registration final{ sp<ISubscriber> Subscriber; absl::flat_hash_map<NodeIndex,NodeIndex> Nodes; };
 	//What Group::Subscribe returns:  the registration, which its destructor ends, and the snapshot the subscriber reads
 	//first, the history from the subscription's time to its registration.  The group alone owns the registration, and
 	//through it the subscriber, so a subscriber that owns its Subscription makes no cycle:  this holds the registration
@@ -545,9 +546,12 @@ namespace Jde::Opc::Hist{
 		//What a read sees of the buffer, the records of the nodes it wants:  what a running flush took and hasn't yet
 		//written, then the buffer as the next Take has it, each node's lost values first.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Snapshot( absl::FunctionRef<bool( NodeIndex )> wanted )Ι->vector<Buffered>;
-		//A read's or an edit's nodes with the indexes the group knows each has had (Joined):  the NodeId of each that is a
-		//member or has left with values still buffered, and under it every other index the group knows of the node.
+		//A read's or an edit's nodes, each with every index it has had (Joined), from _byNode:  complete once Index has run.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Join( vector<NodeIndex> nodes )Ι->Joined;
+		//Every index the group's files list, read from their preambles once, before the first read, edit or subscription
+		//joins a node's indexes (spec *Reads*).  A file that can't be read is passed over, since a read of it fails anyway.
+		α Index( SRCE )ε->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Remember( NodeIndex index, const ExNodeId& node )ι->void;
 		//The flush's batch, as it stands, which Read serves until each record is in a file.  Set under _filesMutex, which a
 		//read holds through its look at the buffer, so no record is in neither.  Shared, not copied:  the flush reads it
 		//outside _mutex and changes it only under it.
@@ -629,6 +633,12 @@ namespace Jde::Opc::Hist{
 		absl::flat_hash_map<ExNodeId,TimePoint> _left ABSL_GUARDED_BY(_mutex);//each removed node's break, which a rejoin takes.
 		//Each index that left, which a file holding a value of it may yet need to map, until those values are written.
 		absl::flat_hash_map<NodeIndex,ExNodeId> _gone ABSL_GUARDED_BY(_mutex);
+		//Every index the group has given or its files list, and each node's, so a read joins a node's indexes at the start
+		//rather than finding them in the files it opens.  It only grows.
+		absl::flat_hash_map<NodeIndex,ExNodeId> _nodeOf ABSL_GUARDED_BY(_mutex);
+		absl::flat_hash_map<ExNodeId,vector<NodeIndex>> _byNode ABSL_GUARDED_BY(_mutex);
+		absl::Mutex _indexing;//Index's, before _filesMutex and _mutex, so that one reads the files and the rest wait for it.
+		bool _indexed ABSL_GUARDED_BY(_indexing){};
 		NodeIndex _nextIndex ABSL_GUARDED_BY(_mutex){ 1 };
 		optional<TimePoint> _down ABSL_GUARDED_BY(_mutex);//when the connection broke, while it is down.
 		bool _closed ABSL_GUARDED_BY(_mutex){};
