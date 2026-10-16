@@ -22,6 +22,7 @@ import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { HistThresholdsDialog } from '../../node-detail/node-history/hist-thresholds-dialog';
 import { histAddEach } from './hist-add-each';
+import { HistGroupAccess } from './hist-group-access';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
 import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 
@@ -36,15 +37,16 @@ const excludedNew = [...excluded, 'guid'];
 //template applied from a root or none for an ad hoc node list, fixed once created, and its thresholds, the defaults for members
 //that set none - saved as a connection's is.  Members lists the group's nodes, each with its template member and the columns
 //of its own, adds nodes picked from the connection's tree and removes one, each its own mutation, and opens the Thresholds dialog
-//for the effective values and overrides (#338).  Resolution, on a group with a template, shows each member's node or why it has
-//none, with Resolve, which retries the unresolved through resolveHistory.  The gateway is the row's, from HistAdminResolver.
+//for the effective values and overrides (#338).  Access (#339) grants roles on the group's own resource and says which row governs
+//it.  Resolution, last as only a group with a template has it, shows each member's node or why it has none, with Resolve, which
+//retries the unresolved through resolveHistory.  The gateway is the row's, from HistAdminResolver.
 @Component({
 	templateUrl: './hist-group-detail.html',
 	styleUrls: ['./hist-admin-shared.scss', './hist-group-detail.scss'],
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content mat-drawer-container my-content hist-group-detail'},
-	imports: [MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistThresholdFieldsEditor]
+	imports: [MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
 })
 export class HistGroupDetail extends DetailPage<HistGroup>{
 	constructor(){ super( 'hist-group-detail' ); }

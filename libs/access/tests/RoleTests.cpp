@@ -576,6 +576,46 @@ namespace Jde::Access::Tests{
 		Purge( "role", rolePK, root );
 	}
 
+	//reviews-issue/historian-group-access.md #1:  removeRole asked Administer of the permission's own row (TestAdminResource), not the
+	//gate AddPermission takes.  A criteria row whose slug has no enforced root, which the flat rule doesn't consult, refused every
+	//remove while the add passed - a historian group's grants froze from the first one - and a criteria row stopped from enforcing
+	//let anyone remove what only the root's administrator may grant.
+	TEST_F( RoleTests, RevokeAsGranted ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		constexpr sv slug{ "revokeAsGranted" }, criteria{ "x" };
+		let select = Ƒ( R"(resources( schemaName:"access", slug:"{}" ){{ id criteria }})", slug );
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )//a previous run's rows.
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		const RolePK rolePK{ GetId(getRole("roleRevokeAsGranted", root)) };
+		const UserPK nobody{ GetId(GetUser("revokeAsGrantedNobody", root)) };
+		let grant = [&]( UserPK executer ){
+			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
+			let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), executer} ).as_object();
+			return PermissionPK{ Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id") };
+		};
+		EXPECT_NO_THROW( RemoveRolePermission(rolePK, grant(nobody), nobody) ) << "no root:  the add passed nobody, so the remove does";
+
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ))", slug), {}, system );//the root, enforced
+		let permission = grant( system );
+		EXPECT_THROW( RemoveRolePermission(rolePK, permission, nobody), Exception ) << "an enforced root:  the criteria row governs, and nobody administers it";
+
+		uint rowId{};
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) ){
+			if( let& row = Json::AsObject(v); row.contains("criteria") && !row.at("criteria").is_null() )
+				rowId = GetId( row );
+		}
+		ASSERT_NE( rowId, 0u );
+		QL().QuerySync<jvalue>( Ƒ("mutation deleteResource( id:{} )", rowId), {}, system );
+		EXPECT_THROW( RemoveRolePermission(rolePK, permission, nobody), Exception ) << "the criteria row unenforced:  the root governs, as it does the add";
+
+		RemoveRolePermission( rolePK, permission, system );
+		for( let& v : QL().QuerySync<jarray>(select, {}, root) )
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		Purge( "role", rolePK, root );
+		PurgeUser( nobody, root );
+	}
+
 	//reviews/m3-closing.md #11:  the resource the grant above creates never reached the running authorizer.  The lookup that
 	//registers it asked for `deleted is null` and missed the row it had just made unenforced, so the published grant carried no
 	//resource id and the cache dropped it - until a restart.  Meanwhile a grant on it by id (the Permissions tab) was refused

@@ -7,7 +7,7 @@
 	<ng-container matColumnDef="inherited">
 		<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header>Inherited</mat-header-cell>
 		<mat-cell *matCellDef="let role">
-			<mat-checkbox disabled=true [checked]=role.inherited></mat-checkbox>
+			<mat-checkbox disabled=true [checked]="!!role.inherited" [matTooltip]="role.inherited ?? ''"></mat-checkbox>
 		</mat-cell>
 	</ng-container>
 	@for( kv of available; track kv.key; let i = $index; ){
@@ -20,7 +20,7 @@
 					@else if( self.isAvailable(row, kv.key) ){
 						<mat-checkbox
 							(change)="toggle(row, kv.key)"
-							[disabled]="kv.key==0 && self.isAllowed(row, kv.key)"
+							[disabled]="disabled() || (kv.key==0 && self.isAllowed(row, kv.key))"
 							[checked]="self.isAllowed(row, kv.key)"></mat-checkbox>
 					}
 				</mat-cell>

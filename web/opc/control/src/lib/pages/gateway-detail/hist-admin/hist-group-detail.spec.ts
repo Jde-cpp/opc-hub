@@ -7,19 +7,22 @@ if( typeof globalThis.localStorage=="undefined" ){
 		clear: ()=>backing.clear()
 	};
 }
+import { Component, input, model } from '@angular/core';
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
+import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { ActivatedRoute, Router } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { vi } from 'vitest';
 import { ComponentPageTitle } from 'jde-spa';
-import { Mutation, SnackbarService } from 'jde-framework';
+import { Mutation, Properties, SnackbarService } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { histThresholdBlank } from '../../../model/hist';
 import { HistGroup, HistPick } from '../../../model/hist-admin';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { HistoryService } from '../../../services/history-service';
 import { OpcStore } from '../../../services/opc-store';
+import { HistGroupAccess } from './hist-group-access';
 import { HistGroupDetail } from './hist-group-detail';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
 
@@ -28,9 +31,23 @@ const Pumps = 'urn:jde:pumps';
 const BadNodeIdExists = 0x805E0000;
 const server = { namespaces: [{index: 0, uri: 'http://opcfoundation.org/UA/'}, {index: 2, uri: Pumps}] };
 const row = { id: 5, name: 'Pumps', slug: 'pumps', guid: '0f8fad5b-d9cb-469f-a165-70867728950e', serverConnection: {id: 1, name: 'Local'}, histTemplate: {id: 2, name: 'Pump'}, root: '{"nsu":"urn:jde:pumps","i":5001}', maxTimeInterval: 60000 };
+//The form a rendered page draws on its first tab, which reads a whole schema
+@Component( {selector: 'properties', template: ''} )
+class PropertiesStub{
+	ctor = input<unknown>(); record = model<unknown>(); type = input<string>(); schema = input<unknown>(); order = input<unknown>();
+	displayNames = input<unknown>(); readonlyFields = input<unknown>(); excludedColumns = input<unknown>();
+}
+//The Access tab, counted:  each one made, which a tab kept alive behind another makes once
+@Component( {selector: 'hist-group-access', template: ''} )
+class AccessStub{
+	static made = 0;
+	group = input<unknown>();
+	constructor(){ ++AccessStub.made; }
+}
 //The page over stubs:  the gateway records the mutations Save sends, the admin service what the tabs ask and send, and the dialog
-//answers a confirmation or the picker's picks.
-const create = async ( pageRow:any )=>{
+//answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the page,
+//where the rest drive the page by hand.
+const create = async ( pageRow:any, render=false )=>{
 	const mutations:string[] = [];
 	const gateway = { slug: 'g', mutate: async ( m:Mutation[]|string )=>{ mutations.push( ...(Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m]) ); } };
 	const snackbar = { exception: vi.fn(), error: vi.fn(), info: vi.fn() };
@@ -57,15 +74,53 @@ const create = async ( pageRow:any )=>{
 		{ provide: HistAdminService, useValue: admin },
 		{ provide: HistoryService, useValue: {} },
 		{ provide: OpcStore, useValue: {getConnection: async ()=>server} },
-		{ provide: MatDialog, useValue: dialog }
+		{ provide: MatDialog, useValue: dialog },
+		{ provide: MAT_TABS_CONFIG, useValue: {animationDuration: '0ms'} }//a tab switch completes in its pass, not on a 100 ms fallback timer
 	]});
-	const page = TestBed.createComponent( HistGroupDetail ).componentInstance;
-	page.ngOnInit();
+	if( render )
+		TestBed.overrideComponent( HistGroupDetail, {remove: {imports: [Properties, HistGroupAccess]}, add: {imports: [PropertiesStub, AccessStub]}} );
+	const fixture = TestBed.createComponent( HistGroupDetail );
+	const page = fixture.componentInstance;
+	if( render )
+		fixture.detectChanges();
+	else
+		page.ngOnInit();
 	await settle();
-	return { page, mutations, admin, snackbar, dialog, data };
+	return { page, fixture, mutations, admin, snackbar, dialog, data };
 };
 
 describe( 'HistGroupDetail', ()=>{
+	//reviews-issue/historian-group-access.md #10:  one ProfileStore index serves every group, so Resolution, which only a group with a
+	//template has, goes last, and Access is the third tab either way - before, a group left on Access opened another on Resolution
+	const tabs = async ( pageRow:any )=>{
+		const d = await create( pageRow, true );
+		return [...d.fixture.nativeElement.querySelectorAll( '.mdc-tab__text-label' )].map( ( e:Element )=>e.textContent!.trim() );
+	};
+	it( 'keeps Access the third tab on a group with a template', async ()=>{
+		expect( await tabs( row ) ).toEqual( ['Properties', 'Members', 'Access', 'Resolution'] );
+	} );
+	it( 'keeps Access the third tab on a group without one', async ()=>{
+		expect( await tabs( {...row, histTemplate: null} ) ).toEqual( ['Properties', 'Members', 'Access'] );
+	} );
+	//#6:  the Access tab was lazy content the tab group destroyed on leaving, and its unsaved ticks with it
+	it( 'keeps a tab alive behind another, so a switch away keeps its unsaved state', async ()=>{
+		AccessStub.made = 0;
+		const d = await create( row, true );
+		//through the page's tabIndex, which the group's selectedIndex is bound to;  false skips the fixture's no-changes pass, which reads
+		//the tab header the switch updates during the pass as a change made after the check
+		const show = async ( index:number )=>{
+			d.page.tabIndex.set( index );
+			d.fixture.detectChanges( false );
+			await settle();
+			d.fixture.detectChanges( false );
+			expect( d.fixture.nativeElement.querySelector( '.mdc-tab--active' ).textContent.trim() ).toBe( ['Properties', 'Members', 'Access'][index] );
+		};
+		await show( 2 );
+		expect( AccessStub.made ).toBe( 1 );
+		await show( 1 );
+		await show( 2 );
+		expect( AccessStub.made ).toBe( 1 );
+	} );
 	//a new group:  the connection is the one field the form can't leave, the template and root are optional, and Save sends the
 	//source with the thresholds set
 	it( 'saves a new group with its source and thresholds', async ()=>{

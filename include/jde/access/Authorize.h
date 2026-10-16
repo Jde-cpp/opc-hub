@@ -53,6 +53,11 @@ namespace Jde::Access{
 		α TestAdminLocal( str schema, str resource, str criteria, UserPK userPK, SRCE )ε->void;
 		α TestAdminResource( ResourcePK resourcePK, UserPK userPK, SRCE )ε->void;
 		α TestAdminPermission( PermissionPK permissionPK, UserPK userPK, SRCE )ε->void;
+		//The gate on revoking a grant (removeRole):  TestAdminGrant on its resource's (schema, slug, criteria), so who may revoke is who
+		//may grant - TestAdminResource asked Administer of the row itself, and a criteria row the flat rule doesn't consult, its root
+		//unenforced, refused every remove while the add passed.  NotFound for a permission the cache doesn't hold;  a resource row it
+		//doesn't hold passes, as TestAdminResource passes one.
+		α TestAdminRevoke( PermissionPK permissionPK, UserPK userPK, SRCE )ι->up<AnyVoidAwait>;
 		//May userPK stand in for the schema and answer its admin checks (AddAdminAuthorizer)?  Administer on every active
 		//criteria-less resource of the schema.  A schema with no active root passes:  unknown, or every root deleted, is a
 		//no-op rather than a denial, so an instance may register before its resources exist (appserver-review3 #4, rejected -

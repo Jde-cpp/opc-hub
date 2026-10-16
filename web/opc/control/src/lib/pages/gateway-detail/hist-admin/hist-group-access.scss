@@ -1,0 +1,38 @@
+/* which resource governs the group:  a card above the grid, coloured by the answer */
+.governs{
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	margin: 0 0 .75rem;
+	padding: .75rem;
+	border-radius: 8px;
+	background: var(--mat-sys-surface-container-low);
+	mat-icon{
+		flex: 0 0 auto;
+		margin-top: 2px;
+	}
+	p{
+		margin: 0;
+	}
+	.title{
+		font: var(--mat-sys-title-small);
+	}
+	.detail{
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-body-medium);
+	}
+	&.own mat-icon{
+		color: var(--mat-sys-primary);
+	}
+	&.table mat-icon{
+		color: var(--mat-sys-tertiary);
+	}
+	&.none mat-icon{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+/* the node page's grid, which sizes itself as a page's content:  here a block under the toolbar */
+node-rights{
+	display: block;
+	height: auto;
+}
