@@ -1,0 +1,32 @@
+<div class="tab-body">
+	<p class="hint">Who may read the group's history and edit it:  Read for the trend, the table and a live subscription, Update for inserts, replacements and corrections and for Resolve, Delete for purges.  The hist_groups table's resource, switched on the Resources page, turns checking on;  under it the group answers to its own resource once it has one that is enforced, else to the table's.</p>
+	<section class="governs" [class]="status().kind" role="status" aria-label="Governing resource">
+		<mat-icon aria-hidden="true">{{ status().icon }}</mat-icon>
+		<div>
+			<p class="title">{{ status().title }}</p>
+			<p class="detail">{{ status().detail }}</p>
+		</div>
+	</section>
+	<div class="tab-toolbar">
+		<button matButton="filled" type="button" (click)="save()" [disabled]="!mutations().length || busy()">Save</button>
+		@if( own(); as o ){
+			<button matButton="outlined" type="button" (click)="setEnforced( !o.enforced )" [disabled]="busy()" [matTooltip]="o.enforced ? 'The hist_groups table\'s resource governs the group again' : 'Only the roles granted here get through'">
+				<mat-icon>{{ o.enforced ? 'lock_open' : 'lock' }}</mat-icon>{{ o.enforced ? 'Stop enforcing' : 'Enforce' }}
+			</button>
+		}
+		@else{
+			<button matButton="outlined" type="button" (click)="makeResource()" [disabled]="busy()" matTooltip="A resource of the group's own, not enforced until you enforce it or save a grant"><mat-icon>add_moderator</mat-icon>Make own resource</button>
+		}
+		<a matButton type="button" routerLink="/access/resources" matTooltip="The tables' resources, the hist_groups table's among them, each with its Enforced switch">Resources</a>
+		<button matIconButton type="button" (click)="load()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+		<span class="count">{{ roles().length }} {{ roles().length==1 ? 'role' : 'roles' }}</span>
+	</div>
+	<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the roles"></mat-progress-bar>
+	<node-rights [rights]="rights" [roles]="roles()" (toggleEmitter)="onToggle($event)"></node-rights>
+	@if( !loading() && !roles().length && !error() ){
+		<p class="empty" role="status">No roles to grant on.  Make one on the Roles page.</p>
+	}
+	@if( error(); as e ){
+		<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
+	}
+</div>

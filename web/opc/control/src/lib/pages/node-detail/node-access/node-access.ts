@@ -80,54 +80,15 @@ export class NodeAccess implements OnInit, OnDestroy{
 	}
 	onTabIndexChanged( index:number ){ this.tabIndex = index; }
 	onToggle( event:{ role: RolePermission, rights:number } ):void{
-		let role = event.role;
-		let rights = event.rights;
-				if( NodeRights.isAllowed(role, rights) ){//allowed->denied
-			role.allowed &= ~rights;
-			role.denied |= rights;
-		}else if( NodeRights.isDenied(role, rights) ){//denied->none
-			role.denied &= ~rights;
-		}else{//none->allowed
-			if( rights==0 ){
-				role.allowed = 0;
-				role.denied = 0;
-			}
-			else
-				role.allowed |= rights;
-		}
-
-		let original = this.original.find( x=>x.roleId==role.roleId )!;
-		let args:{allowed?: number, denied?: number} = {};
-		if( role.allowed != original.allowed )
-			args.allowed = role.allowed;
-		if( role.denied != original.denied )
-			args.denied = role.denied;
-		let index = this.mutations().findIndex( x=>x.id==role.roleId );
-		let mutation:Mutation|undefined = undefined;
-		if( Object.keys(args).length>0 ){
-			//Remove-vs-Add is decided from the role's RESULTING rights, never from `args` - `args` only carries the side that
-			//CHANGED, so clearing one half of a two-sided permission (allowed=Read, denied=Write -> clear the denied Write)
-			//gave args={denied:0}, made `!args.allowed && !args.denied` true, and removed the whole permissionRight, silently
-			//dropping the still-wanted allowed=Read.  Permission.roleMutations evaluates the resulting row; match it.
-			if( !role.allowed && !role.denied )
-				mutation = role.permissionId ? new Mutation(Role.typeName, role.roleId, {permissionRight:{id: role.permissionId}}, MutationType.Remove ) : undefined;//permissionId 0 = nothing on the server to remove (a pending Add is dropped by falling through with no mutation)
-			else{
-				let resource:any = role.resourceId ? { id: role.resourceId } : { schemaName: `opc.${this.accessResource()}`, slug: "nodeIds" };//was `schema:` — server ignored it and stored schemaName as "opc", putting the permission on the wrong resource
-				resource["criteria"] = role.criteria ? role.criteria : null;
-				mutation = new Mutation( Role.typeName, role.roleId, { permissionRight: {allowed: role.allowed, denied: role.denied, resource: resource} }, MutationType.Add );
-			}
-		}
-
-		let mutations = [];
-		this.mutations().forEach( (m,i)=>{
-			if( i!=index )
-				mutations.push( m );
-			else if( mutation )
-				mutations.push( mutation );
+		const role = event.role;
+		toggleRights( role, event.rights );
+		const original = this.original.find( x=>x.roleId==role.roleId )!;
+		const mutation = roleMutation( role, original, ()=>{
+			const resource:Record<string,unknown> = role.resourceId ? { id: role.resourceId } : { schemaName: `opc.${this.accessResource()}`, slug: "nodeIds" };//was `schema:` — server ignored it and stored schemaName as "opc", putting the permission on the wrong resource
+			resource["criteria"] = role.criteria ? role.criteria : null;
+			return resource;
 		} );
-		if( index==-1 && mutation )
-			mutations.push( mutation );
-		this.mutations.set( mutations );
+		this.mutations.set( withMutation( this.mutations(), role.roleId, mutation ) );
 		if( mutation )
 			console.log( mutation.toString() );
 	}
@@ -144,4 +105,44 @@ export class NodeAccess implements OnInit, OnDestroy{
 	roles: RolePermission[]=[];
 	appService = inject(AppService);
 	snackbar = inject(SnackbarService);
+}
+
+//A click on a right's cell, as the grid cycles it:  allowed to denied, denied to none, none to allowed;  the None column (rights 0)
+//clears both sides.  Shared with a historian group's Access tab (hist-group-access.ts), which grants on the same grid.
+export function toggleRights( role:RolePermission, rights:number ):void{
+	if( NodeRights.isAllowed(role, rights) ){//allowed->denied
+		role.allowed &= ~rights;
+		role.denied |= rights;
+	}
+	else if( NodeRights.isDenied(role, rights) )//denied->none
+		role.denied &= ~rights;
+	else if( rights==0 ){//none->allowed
+		role.allowed = 0;
+		role.denied = 0;
+	}
+	else
+		role.allowed |= rights;
+}
+//The mutation that takes a role from the server's row to its edited one, or none where the row is the server's again.  Remove-vs-Add is
+//decided from the role's RESULTING rights, never from the side that changed:  clearing one half of a two-sided permission (allowed=Read,
+//denied=Write -> clear the denied Write) used to look like "no rights left" and removed the whole permissionRight, silently dropping the
+//still-wanted allowed=Read.  Permission.roleMutations evaluates the resulting row; match it.  `resource` names the row an Add grants on.
+export function roleMutation( role:RolePermission, original:RolePermission, resource:()=>Record<string,unknown> ):Mutation|undefined{
+	if( role.allowed==original.allowed && role.denied==original.denied )
+		return undefined;
+	if( !role.allowed && !role.denied )
+		return role.permissionId ? new Mutation( Role.typeName, role.roleId, {permissionRight: {id: role.permissionId}}, MutationType.Remove ) : undefined;//permissionId 0 = nothing on the server to remove (a pending Add is dropped by returning none)
+	return new Mutation( Role.typeName, role.roleId, {permissionRight: {allowed: role.allowed, denied: role.denied, resource: resource()}}, MutationType.Add );
+}
+//the pending batch with `mutation` in the place of the role's earlier one, or without one where the role is back to the server's row
+export function withMutation( mutations:Mutation[], roleId:number, mutation:Mutation|undefined ):Mutation[]{
+	const index = mutations.findIndex( m=>m.id==roleId );
+	if( index<0 )
+		return mutation ? [...mutations, mutation] : mutations;
+	const y = mutations.slice();
+	if( mutation )
+		y[index] = mutation;
+	else
+		y.splice( index, 1 );
+	return y;
 }

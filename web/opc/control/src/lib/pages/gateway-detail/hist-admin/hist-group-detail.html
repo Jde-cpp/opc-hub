@@ -130,6 +130,12 @@
 				</ng-template>
 			</mat-tab>
 		}
+		<mat-tab><!--who may read the group's history and edit it (#339):  the group's own resource row, by the hub's access schema-->
+			<ng-template mat-tab-label>Access</ng-template>
+			<ng-template matTabContent>
+				<hist-group-access [group]="row"></hist-group-access>
+			</ng-template>
+		</mat-tab>
 	}
 </mat-tab-group>
 <div class="jde-detail-actions"><!--as client-detail's:  only Save filled, the trash can at the far side-->
