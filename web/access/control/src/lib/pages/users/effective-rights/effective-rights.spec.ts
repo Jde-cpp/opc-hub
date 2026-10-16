@@ -18,15 +18,18 @@ const groups = new EffectiveRight( {
 } );
 const users = new EffectiveRight( { resource: new Resource({id: 13, schemaName: "access", name: "users", slug: "users", allowed: Rights.All}) } );//enforced, nothing granted
 
-const create = ( rights:EffectiveRight[], failWith?:Error, nodeLinks?:NodeLinkResolver )=>{
+let asked:string[];//the service calls the component made
+const create = ( rights:EffectiveRight[], failWith?:Error, nodeLinks?:NodeLinkResolver, input:"userId"|"groupId"="userId" )=>{
+	asked = [];
+	const answer = ( call:string )=>async ( id:number )=>{ asked.push( `${call}(${id})` ); if( failWith ) throw failWith; return rights; };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ),//a resolved link renders as routerLink
-		{ provide: ACCESS_SERVICE, useValue: { effectiveRights: async ()=>{ if( failWith ) throw failWith; return rights; } } },
+		{ provide: ACCESS_SERVICE, useValue: { effectiveRights: answer("effectiveRights"), groupRights: answer("groupRights") } },
 		{ provide: SnackbarService, useValue: { exception: ()=>{} } },
 		...(nodeLinks ? [{ provide: NODE_LINK_RESOLVER, useValue: nodeLinks }] : [])
 	]});
 	const fixture = TestBed.createComponent( EffectiveRights );
-	fixture.componentRef.setInput( 'userId', 7 );
+	fixture.componentRef.setInput( input, 7 );
 	return fixture;
 };
 
@@ -36,6 +39,7 @@ describe( 'EffectiveRights', ()=>{
 		fixture.detectChanges();
 		await fixture.whenStable();
 		const page = fixture.componentInstance;
+		expect( asked ).toEqual( ["effectiveRights(7)"] );
 		expect( page.isLoading() ).toBe( false );
 		expect( page.rows() ).toHaveLength( 2 );
 		expect( page.isEffective(groups, Rights.Read) ).toBe( true );
@@ -43,6 +47,16 @@ describe( 'EffectiveRights', ()=>{
 		expect( page.isDenied(groups, Rights.Update) ).toBe( true );
 		expect( page.tooltip(groups, Rights.Update) ).toBe( "Allowed - role Viewer\nDenied - direct grant" );
 		expect( page.tooltip(users, Rights.Read) ).toContain( "every action is denied" );
+	} );
+
+	it( 'loads a group\'s rows through groupRights, with its own empty text', async ()=>{
+		const fixture = create( [], undefined, undefined, "groupId" );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect( asked ).toEqual( ["groupRights(7)"] );
+		expect( fixture.componentInstance.isGroup() ).toBe( true );
+		expect( (fixture.nativeElement as HTMLElement).querySelector(".empty")?.textContent ).toContain( "its members get nothing through it" );
 	} );
 
 	it( 'shows one column per right, without the editable grid\'s None and All shortcuts', ()=>{

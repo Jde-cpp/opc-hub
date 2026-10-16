@@ -118,6 +118,44 @@ describe( 'AccessService resources', ()=>{
 	} );
 } );
 
+//#252:  the group page's Effective rights - groupRights in userRights' shape, joined the same way, but no lockout rows:  a
+//resource the group gives nothing on may be one its members hold elsewhere.
+describe( 'AccessService.groupRights', ()=>{
+	let service:AccessService;
+	beforeEach( ()=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			provideHttpClient(),
+			{ provide: IENVIRONMENT, useValue: {get: ()=>undefined} },
+			{ provide: AUTH_STORE, useValue: {user: ()=>undefined, logout: ()=>{}} as unknown as AuthStore }
+		]});
+		service = TestBed.inject( AccessService );
+		const grant = {resource: {id: 7, schemaName: "access", slug: "users", criteria: "", deleted: null}, allowed: 1, denied: 0, effective: 1, sources: [{permissionId: 5, allowed: 1, denied: 0, path: [{id: 21, type: "group"}, {id: 11, type: "role"}]}]};
+		vi.spyOn( service, 'queryArray' ).mockImplementation( (async ( ql:string )=>{
+			if( ql.startsWith("resources") )
+				return [{id: 7, schemaName: "access", slug: "users", name: "users", allowed: 255, deleted: null}, {id: 8, schemaName: "access", slug: "roles", name: "roles", allowed: 255, deleted: null}];//both enforced
+			if( ql.startsWith("groups") )
+				return [{id: 21, name: "Ops"}];
+			if( ql.startsWith("roles") )
+				return [{id: 11, name: "Viewer"}];
+			return ql.startsWith( "groupRights" ) ? [grant] : [];
+		}) as any );
+	} );
+
+	it( 'asks groupRights for the group and names the path', async ()=>{
+		const rights = await service.groupRights( 6 );
+		const [ql, vars] = vi.mocked( service.queryArray ).mock.calls.find( c=>(c[0] as string).startsWith("groupRights") )!;
+		expect( ql ).toMatch( /^groupRights\( id:\$id \)/ );
+		expect( vars ).toEqual( {id: 6} );
+		expect( rights.map(r=>[r.resource.slug, EffectiveRight.describe(r.sources[0])]) ).toEqual( [["users", "role Viewer via group Ops"]] );
+	} );
+
+	it( 'adds no lockout row for an enforced resource the group gives nothing on', async ()=>{
+		expect( (await service.groupRights( 6 )).map(r=>r.resource.slug) ).toEqual( ["users"] );
+		expect( (await service.effectiveRights( 2 )).map(r=>[r.resource.slug, r.isLockout]) ).toEqual( [["roles", true], ["users", true]] );//userRights answers nothing here - a user's tab keeps them
+	} );
+} );
+
 //#251:  the resource page's holders - the server's resourceRights joined to the three lists' names and slugs, which only label
 //and link the rows, so a list the user may not read leaves ids rather than failing the page.
 describe( 'AccessService.resourceRights', ()=>{

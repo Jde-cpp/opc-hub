@@ -21,6 +21,9 @@ import { ACCESS_SERVICE, AccessService } from "../../../services/access-service"
 //from a node's Access tab mints one, so a maintenance user can hold dozens, and the table-level story is what the page is
 //for.  The root row carries the toggle and a count; a child row shows only its node, indented - the node's name linking to
 //its page when the app can place it (NODE_LINK_RESOLVER, resolved when the root is first expanded), else the criteria as text.
+//On a group's page (`groupId` in place of `userId`) the rows are what a member gets through the group (groupRights,
+//Authorize::GroupRights) - each path relative to the group - and there are no lockout rows:  the members may hold elsewhere
+//what the group does not give.
 @Component({
 	selector: 'effective-rights',
 	templateUrl: 'effective-rights.html',
@@ -34,18 +37,20 @@ export class EffectiveRights{
 
 	constructor(){
 		effect( ()=>{
-			const userId = this.userId();
-			untracked( ()=>this.#load(userId) );
+			const userId = this.userId(), groupId = this.groupId();
+			untracked( ()=>this.#load(userId, groupId) );
 		});
 	}
 
-	async #load( userId:number ):Promise<void>{
+	async #load( userId:number|undefined, groupId:number|undefined ):Promise<void>{
+		if( userId===undefined && groupId===undefined )
+			return;
 		const load = ++this.#loadId;
 		this.isLoading.set( true );
 		try{
-			const rows = await this.accessService.effectiveRights( userId );
+			const rows = groupId!==undefined ? await this.accessService.groupRights( groupId ) : await this.accessService.effectiveRights( userId! );
 			if( load!=this.#loadId )
-				return;//a newer user overtook this one
+				return;//a newer user or group overtook this one
 			this.rows.set( rows );
 			this.isLoading.set( false );
 		}
@@ -84,7 +89,9 @@ export class EffectiveRights{
 	isAvailable( row:EffectiveRight, right:Rights ):boolean{ return (row.resource.availableRights & right)!=0; }
 	tooltip( row:EffectiveRight, right:Rights ):string{ return EffectiveRight.tooltip( row, right ); }
 
-	userId = input.required<number>();
+	userId = input<number>();//one or the other
+	groupId = input<number>();
+	isGroup = computed<boolean>( ()=>this.groupId()!==undefined );
 	rows = signal<EffectiveRight[]>( [] );//the roots, children nested
 	expanded = signal<Set<number>>( new Set() );//resource ids of the roots showing their children
 	links = signal<Map<number, NodeLink|null>>( new Map() );//child resource id -> its node page, null while unresolved or unplaceable

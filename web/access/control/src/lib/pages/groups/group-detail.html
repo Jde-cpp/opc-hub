@@ -28,7 +28,20 @@
 			</ng-template>
 		</mat-tab>
 		<!--no Permissions tab (MVP) - user-detail's reason, verbatim:  a direct acl grant bypasses roles;  grant through Roles.
-			The rows still round-trip (`permissions` in upsert) so an existing grant is never dropped by Save.-->
+			The rows still round-trip (`permissions` in upsert) so an existing grant is never dropped by Save.
+			What a member gets through the group, its parents' grants included, is the read-only tab below.-->
+		<mat-tab>
+			<ng-template mat-tab-label>Effective rights</ng-template>
+			<ng-template matTabContent>
+				@if( isDeleted ){
+					<!--the server answers nothing for a deleted group, which the tab would word as "no grant"-->
+					<p class="no-rights">A deleted group passes nothing on - restore it to see what its members would get.</p>
+				}
+				@else{
+					<effective-rights [groupId]="group.id"></effective-rights>
+				}
+			</ng-template>
+		</mat-tab>
 	}
 </mat-tab-group>
 <!--user-detail's row.  Two extended fabs gave Cancel the weight of a primary action and the done/cancel icons only

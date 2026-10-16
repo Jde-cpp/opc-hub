@@ -82,6 +82,11 @@ namespace Jde::Access{
 			vector<RightsSource> Sources;
 		};
 		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for an unknown user; by PK.
+		//What a member gets through one group (the SPA's group Effective rights tab, GroupRightsAwait):  UserRights' walk ending at
+		//the group, so its own grants and those of the groups containing it.  Groups run from the granted group to the one holding
+		//this one (empty = granted to it), as Holders paths a group.  Empty for a deleted group - it passes nothing on, as
+		//enforcement has it - and, having no grant, for an unknown one.
+		α GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>;
 		//UserRights turned around:  everyone one resource's grants reach, source by source (the SPA's resource page,
 		//ResourceRightsAwait).  Roles - every live role holding a permission on it, itself or through member roles:  Sources'
 		//Roles run from the member below it to the role holding Permission, empty = held directly.  Groups and Users - every live
@@ -102,6 +107,7 @@ namespace Jde::Access{
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindActiveResourcePKLocked( str schemaName, str resourceName, str criteria )Ι->optional<ResourcePK>;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α FindUserLocked( UserPK executer )Ι->std::expected<const User*,EHttpStatus>;//null for the System; Unauthorized = an unknown user, Forbidden = a deleted one.
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α ConfiguredRightsLocked( UserPK executer, ResourcePK resourcePK )Ι->std::expected<AllowedDisallowed,EHttpStatus>;//System is granted everything; errors as FindUserLocked.
+		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α IdentityRightsLocked( IdentityPK identity )Ι->vector<ResourceRights>;//UserRights' and GroupRights' walk.
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α TestRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ε->void;
 		ABSL_SHARED_LOCKS_REQUIRED(Mutex) α HasRights( ResourcePK resourcePK, sv resourceName, ERights rights, UserPK executer, SL sl )Ι->std::expected<void, Access::AccessException>;
 

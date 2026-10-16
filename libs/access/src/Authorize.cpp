@@ -493,7 +493,11 @@ namespace Jde::Access{
 	α Authorize::DeleteGroup( GroupPK groupPK )ι->void{
 		ul _{ Mutex };
 		auto p = Groups.find( groupPK );
-		if( p==Groups.end() || p->second.IsDeleted )
+		if( p==Groups.end() ){//a group enters Groups with its first member;  cached deleted, as a reload has it, so GroupRights sees it gone.
+			Groups.emplace( groupPK, Group{groupPK, true} );
+			return;
+		}
+		if( p->second.IsDeleted )
 			return;
 		auto users = RecursiveUsers( groupPK );//collect+clear while still active, RecursiveUsers early-outs on a deleted group.
 		p->second.IsDeleted = true;//soft delete, symmetric with DeleteUser - RestoreGroup needs the row.
@@ -680,8 +684,14 @@ namespace Jde::Access{
 	//AddUserPermissions do;  a deleted resource stays in the result - unenforced is what the reader is trying to see.
 	α Authorize::UserRights( UserPK userPK )Ι->vector<ResourceRights>{
 		rl _{ Mutex };
-		if( !Users.contains(userPK) )
-			return {};
+		return Users.contains( userPK ) ? IdentityRightsLocked( userPK ) : vector<ResourceRights>{};
+	}
+	α Authorize::GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>{
+		rl _{ Mutex };
+		auto group = Groups.find( groupPK );//absent = no member yet, not unknown:  its grants are what a first member will get.
+		return group==Groups.end() || !group->second.IsDeleted ? IdentityRightsLocked( groupPK ) : vector<ResourceRights>{};
+	}
+	α Authorize::IdentityRightsLocked( IdentityPK target )Ι->vector<ResourceRights>{
 		flat_map<ResourcePK,ResourceRights> byResource;
 		vector<GroupPK> groups; vector<RolePK> roles;//the path so far
 		auto expand = [&]( this auto&& self, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
@@ -705,13 +715,15 @@ namespace Jde::Access{
 				roles.pop_back();
 			}
 		};
-		//does the acl identity reach the user - itself, or a live group whose members do - expanding the grant along each way in.
+		//does the acl identity reach the target - itself, or a live group whose members do - expanding the grant along each way in.
+		//A target group is not descended into:  its members' grants are not its own.
 		auto reach = [&]( this auto&& self, IdentityPK identity, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
-			if( identity.IsUser() ){
-				if( identity.UserPK()==userPK )
-					expand( permissionRole );
+			if( identity.Value==target.Value ){
+				expand( permissionRole );
 				return;
 			}
+			if( identity.IsUser() )
+				return;
 			let groupPK = identity.GroupPK();
 			auto group = Groups.find( groupPK );
 			if( group==Groups.end() || group->second.IsDeleted || std::ranges::find(groups, groupPK)!=groups.end() )

@@ -49,17 +49,26 @@ export class AccessService extends AppService implements OnDestroy{
 	//rather than failing the tab - the one place that would tell them why (reviews/m3-closing.md #28).  The rights and the
 	//resources stay fatal:  a grid without them would read as "no rights".
 	async effectiveRights( userId:number ):Promise<EffectiveRight[]>{
-		const q = `userRights( id:$id ){ resource{ id schemaName slug criteria deleted } allowed denied effective sources{ permissionId allowed denied path{ id type } } }`;
+		return this.#rights( "userRights", userId, true );
+	}
+	//What a member gets through one group - the server's answer (groupRights, Authorize::GroupRights), in userRights' shape and
+	//joined the same way, but with no lockout rows:  a resource the group gives nothing on is not a lockout for its members,
+	//who may hold it elsewhere.  Takes Read on acl.
+	async groupRights( groupId:number ):Promise<EffectiveRight[]>{
+		return this.#rights( "groupRights", groupId, false );
+	}
+	async #rights( query:"userRights"|"groupRights", id:number, lockouts:boolean ):Promise<EffectiveRight[]>{
+		const q = `${query}( id:$id ){ resource{ id schemaName slug criteria deleted } allowed denied effective sources{ permissionId allowed denied path{ id type } } }`;
 		const nameList = ( collection:string ):Promise<{id:number, name:string}[]>=>this.queryArray<{id:number, name:string}>( `${collection}{ id name }` )
 			.catch( e=>{ console.warn( `Effective rights:  no ${collection} names - the paths show ids.`, e ); return []; } );
 		const [rows, resources, groups, roles] = await Promise.all( [
-			this.queryArray<UserRightsRow>( q, {id: userId} ),
+			this.queryArray<UserRightsRow>( q, {id} ),
 			this.#queryAllResources(),//fresh - the tab is a diagnostic, the server's current enforcement whoever changed it - and the node rows too (#14)
 			nameList( "groups" ),
 			nameList( "roles" )
 		] );
 		const names:Names = { groups: new Map( groups.map(g=>[g.id, g.name]) ), roles: new Map( roles.map(r=>[r.id, r.name]) ) };
-		return EffectiveRight.fromRows( rows, resources, names );
+		return EffectiveRight.fromRows( rows, resources, names, lockouts );
 	}
 	//Everyone a resource's grants reach - the server's answer (resourceRights, Authorize::Holders) joined to the names and slugs
 	//its cache does not hold.  The three lists only label the rows and link them, so one the user may not read leaves `#id`, as

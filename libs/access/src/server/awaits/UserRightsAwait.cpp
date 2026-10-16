@@ -19,6 +19,26 @@ namespace Jde::Access{
 		}
 		return y;
 	}
+	α Server::RightsJson( const vector<Authorize::ResourceRights>& resources )ι->jarray{
+		jarray y;
+		for( let& resource : resources ){
+			jobject jresource{ {"id", resource.PK.Value} };
+			if( resource.Cached ){
+				jresource["schemaName"] = resource.Cached->Schema;
+				jresource["slug"] = resource.Cached->Slug;
+				jresource["criteria"] = resource.Cached->Criteria;
+				jresource["deleted"] = resource.Cached->IsDeleted ? jvalue{ ToIsoString(*resource.Cached->IsDeleted) } : jvalue{ nullptr };
+			}
+			y.push_back( jobject{
+				{"resource", move(jresource)},
+				{"allowed", underlying(resource.Rights.Allowed)},
+				{"denied", underlying(resource.Rights.Denied)},
+				{"effective", underlying(resource.Rights.Effective())},
+				{"sources", SourcesJson(resource.Sources)}
+			} );
+		}
+		return y;
+	}
 }
 namespace Jde::Access::Server{
 	//Synchronous:  the walk is in-memory, so the value is resumed from Suspend itself (await_suspend has stored the handle by
@@ -32,22 +52,7 @@ namespace Jde::Access::Server{
 			Authorizer().TestUser( _executer, _sl );//the acl check passes anyone, the anonymous included, while acl is unenforced.
 			if( _executer!=userPK )//one's own rights are always readable - "why am I denied" should not itself need a grant.
 				GetTable( "acl" ).Authorize( ERights::Read, _executer, _sl );
-			for( let& resource : Authorizer().UserRights(userPK) ){
-				jobject jresource{ {"id", resource.PK.Value} };
-				if( resource.Cached ){
-					jresource["schemaName"] = resource.Cached->Schema;
-					jresource["slug"] = resource.Cached->Slug;
-					jresource["criteria"] = resource.Cached->Criteria;
-					jresource["deleted"] = resource.Cached->IsDeleted ? jvalue{ ToIsoString(*resource.Cached->IsDeleted) } : jvalue{ nullptr };
-				}
-				y.push_back( jobject{
-					{"resource", move(jresource)},
-					{"allowed", underlying(resource.Rights.Allowed)},
-					{"denied", underlying(resource.Rights.Denied)},
-					{"effective", underlying(resource.Rights.Effective())},
-					{"sources", SourcesJson(resource.Sources)}
-				} );
-			}
+			y = RightsJson( Authorizer().UserRights(userPK) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

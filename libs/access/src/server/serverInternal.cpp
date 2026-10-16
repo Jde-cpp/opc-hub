@@ -14,6 +14,7 @@
 #include "jde/access/server/awaits/RoleAwait.h"
 #include "jde/access/server/awaits/AdminWriteAwait.h"
 #include "jde/access/server/awaits/ProfileAwait.h"
+#include "jde/access/server/awaits/GroupRightsAwait.h"
 #include "jde/access/server/awaits/ResourceRightsAwait.h"
 #include "jde/access/server/awaits/UserRightsAwait.h"
 #include "awaits/GroupAwait.h"
@@ -125,7 +126,7 @@ namespace Jde::Access{
 		SetSchema( *accessSchema );
 		_ql = localQL;
 		QL::Hook::Add( mu<GroupHook>() );//add before
-		QL::SetSystemTables( {"resourceRights", "userRights"} );//no view of their own - the parser admits the names and CustomQuery answers them (ResourceRightsAwait, UserRightsAwait); here so the AppServer, the hub and the tests all get them.
+		QL::SetSystemTables( {"groupRights", "resourceRights", "userRights"} );//no view of their own - the parser admits the names and CustomQuery answers them (GroupRightsAwait, ResourceRightsAwait, UserRightsAwait); here so the AppServer, the hub and the tests all get them.
 		return ConfigureAwait{ localQL, move(schemas), authorizer, executer, move(listener), {}, false, true };//allSchemas: the server's cache is everyone's authority.
 	}
 	α Server::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
@@ -134,6 +135,8 @@ namespace Jde::Access{
 			y = mu<UserRightsAwait>( q, creds.UserPK(), sl );
 		else if( q.JsonName=="resourceRights" )
 			y = mu<ResourceRightsAwait>( q, creds.UserPK(), sl );
+		else if( q.JsonName=="groupRights" )//before the group/groups branch below.
+			y = mu<GroupRightsAwait>( q, creds.UserPK(), sl );
 		else if( q.DBTableName()=="acl" )
 			y = mu<AclQLSelectAwait>( q, creds.UserPK(), sl );
 		else if( q.JsonName.starts_with("role") && (q.FindTable("roles") || q.FindTable("permissionRights")) )

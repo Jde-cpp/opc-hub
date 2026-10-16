@@ -3,6 +3,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/str.h>
 #include <jde/access/server/awaits/AclAwait.h>
+#include <jde/access/server/awaits/GroupRightsAwait.h>
 #include <jde/access/server/awaits/ResourceRightsAwait.h>
 #include <jde/access/server/awaits/UserRightsAwait.h>
 #include <jde/access/Authorize.h>
@@ -651,6 +652,127 @@ namespace Jde::Access::Tests{
 		Delete( "resources", GetId(resource), GetRoot() );
 		EXPECT_NO_THROW( resourceRights(_resourcePK, intruder) );//fail-open when disabled, as the acl read is.
 		EXPECT_THROW( resourceRights(_resourcePK, UserPK{}), Exception ) << "but not to a caller who never signed in";//reviews-issue/251-resource-page.md #3
+		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
+	}
+	//groupRights( id: ) - GroupRightsAwait, the group page's Effective rights tab:  UserRightsProvenance's walk ending at a group -
+	//its own grants and its parents', none of its members' - each path relative to it, as resourceRights paths the group's row.
+	Ω groupRights( GroupPK group, UserPK executer )ε->jarray{
+		jobject vars{ {"id", group.Value} };
+		let q = "groupRights( id:$id ){ resource{id} allowed denied effective sources{ permissionId allowed denied path{id type} } }";
+		return BlockTAwait<jvalue>( Server::GroupRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
+	}
+	TEST_F( AclTests, GroupRightsProvenance ){
+		let root = GetRoot();
+		RestoreResource( "groups", root );
+		const UserPK user{ GetId(GetUser("groupRightsUser", root)) };
+		let group = GetGroup( "groupRightsGroup", root );
+		const GroupPK groupPK{ GetId(group) };
+		let parent = GetGroup( "groupRightsParent", root );
+		const GroupPK parentPK{ GetId(parent) };
+		let child = GetGroup( "groupRightsChild", root );
+		const GroupPK childPK{ GetId(child) };
+		auto addMember = [&]( const jobject& g, GroupPK gPK, IdentityPK member ){
+			let members = AsArray( g, "groupMembers" );
+			if( find_if(members, [=](const jvalue& m){ return GetId(Json::AsObject(m))==member.Underlying(); })==members.end() )
+				AddToGroup( gPK, {member}, root );
+		};
+		addMember( group, groupPK, user );
+		addMember( group, groupPK, childPK );
+		addMember( parent, parentPK, groupPK );
+		const RolePK parentRolePK{ GetId( Get("role", "groupRightsParentRole", root) ) };
+		const RolePK childRolePK{ GetId( Get("role", "groupRightsChildRole", root) ) };
+		const PermissionPK permissionPK{ GetId(AddRolePermission(childRolePK, "groups", ERights::Read|ERights::Update, ERights::None, root)) };
+		AddRoleMember( parentRolePK, childRolePK, root );
+		CreateAcl( parentPK, parentRolePK, root );
+		const PermissionPK denyPK{ GetId(GetAcl(groupPK, "groups", ERights::None, ERights::Update)) };
+		const PermissionPK childGrantPK{ GetId(GetAcl(childPK, "groups", ERights::Delete, ERights::None)) };//a member's own grant - not the group's.
+		using Path = vector<std::pair<uint32,string>>;
+		using Sources = std::multiset<std::pair<PermissionPK::Type,Path>>;
+		auto sourcesOf = []( const jobject& row ){
+			Sources y;
+			for( let& source : AsArray(row, "sources") )
+				y.emplace( AsNumber<PermissionPK::Type>(Json::AsObject(source), "permissionId"), pathOf(Json::AsObject(source)) );
+			return y;
+		};
+		const Path viaRole{ {parentRolePK.Value, "role"}, {childRolePK.Value, "role"} };
+		auto prepend = []( Path groups, const Path& rest ){ groups.insert( groups.end(), rest.begin(), rest.end() ); return groups; };
+
+		let row = findResourceRights( groupRights(groupPK, root), _resourcePK );
+		ASSERT_FALSE( row.empty() );
+		EXPECT_EQ( AsNumber<uint8>(row, "allowed"), underlying(ERights::Read|ERights::Update) );
+		EXPECT_EQ( AsNumber<uint8>(row, "denied"), underlying(ERights::Update) );
+		EXPECT_EQ( AsNumber<uint8>(row, "effective"), underlying(ERights::Read) );
+		EXPECT_EQ( Authorizer()->Rights("access", "groups", user), ERights::Read ) << "what a member holding nothing else gets";
+		EXPECT_EQ( sourcesOf(row), (Sources{ {permissionPK.Value, prepend({{parentPK.Value, "group"}}, viaRole)}, {denyPK.Value, Path{}} }) ) << "the parent's role, the group's own deny - not the child's grant";
+		{
+			let holder = findHolder( resourceRights(_resourcePK, root), "groups", groupPK.Value );
+			ASSERT_FALSE( holder.empty() );
+			EXPECT_EQ( AsNumber<uint8>(holder, "allowed"), AsNumber<uint8>(row, "allowed") );
+			EXPECT_EQ( AsNumber<uint8>(holder, "denied"), AsNumber<uint8>(row, "denied") );
+			EXPECT_EQ( sourcesOf(holder), sourcesOf(row) ) << "the resource page's answer for the group";
+		}
+		{
+			let parentRow = findResourceRights( groupRights(parentPK, root), _resourcePK );
+			ASSERT_FALSE( parentRow.empty() );
+			EXPECT_EQ( sourcesOf(parentRow), (Sources{ {permissionPK.Value, viaRole} }) ) << "granted to the group itself";
+		}
+		{
+			let childRow = findResourceRights( groupRights(childPK, root), _resourcePK );
+			ASSERT_FALSE( childRow.empty() );
+			EXPECT_EQ( sourcesOf(childRow), (Sources{ {permissionPK.Value, prepend({{parentPK.Value, "group"}, {groupPK.Value, "group"}}, viaRole)}, {denyPK.Value, Path{{groupPK.Value, "group"}}}, {childGrantPK.Value, Path{}} }) );
+			EXPECT_EQ( AsNumber<uint8>(childRow, "effective"), underlying(ERights::Read|ERights::Delete) );
+		}
+
+		Delete( "groups", parentPK.Value, root );//a deleted group stops the walk, as it stops enforcement.
+		{
+			absl::Cleanup restore = [&]{//on the way out of an ASSERT too - the group is looked up by slug next run.
+				try{ Restore( "groups", parentPK.Value, root ); }
+				catch( const std::exception& e ){ ADD_FAILURE() << e.what(); }
+			};
+			let row = findResourceRights( groupRights(groupPK, root), _resourcePK );
+			ASSERT_FALSE( row.empty() );
+			EXPECT_EQ( sourcesOf(row), (Sources{ {denyPK.Value, Path{}} }) ) << "only the direct deny";
+			EXPECT_EQ( AsNumber<uint8>(row, "effective"), 0u );
+		}
+		Delete( "groups", groupPK.Value, root );
+		{
+			absl::Cleanup restore = [&]{
+				try{ Restore( "groups", groupPK.Value, root ); }
+				catch( const std::exception& e ){ ADD_FAILURE() << e.what(); }
+			};
+			EXPECT_TRUE( groupRights(groupPK, root).empty() ) << "a deleted group passes nothing on";
+			let childRow = findResourceRights( groupRights(childPK, root), _resourcePK );
+			ASSERT_FALSE( childRow.empty() );
+			EXPECT_EQ( sourcesOf(childRow), (Sources{ {childGrantPK.Value, Path{}} }) );
+		}
+		Delete( "groups", childPK.Value, root );//memberless, so never in Authorize's Groups before the delete.
+		{
+			absl::Cleanup restore = [&]{
+				try{ Restore( "groups", childPK.Value, root ); }
+				catch( const std::exception& e ){ ADD_FAILURE() << e.what(); }
+			};
+			EXPECT_TRUE( groupRights(childPK, root).empty() );
+		}
+		EXPECT_FALSE( findResourceRights(groupRights(childPK, root), _resourcePK).empty() ) << "restored";
+		EXPECT_TRUE( groupRights(GroupPK{std::numeric_limits<GroupPK::Type>::max()}, root).empty() );
+
+		PurgeAcl( groupPK, denyPK, root );
+		PurgeAcl( childPK, childGrantPK, root );
+		RemoveRoleMember( parentRolePK, childRolePK, root );
+	}
+	//resourceRights' gate - Read on the acl resource - with no exemption:  a group has no "own row".
+	TEST_F( AclTests, GroupRightsGate ){
+		auto resource = SelectResource( "acl", GetRoot(), true );
+		ASSERT_FALSE( resource.at("deleted").is_null() ) << "created disabled, like every synced resource";
+		let permissionPK = CreateAcl( GetRoot(), ERights::All, ERights::None, "acl", {UserPK::System} );
+		RestoreResource( "acl", GetRoot() );
+		const GroupPK groupPK{ GetId(GetGroup("groupRightsGate", GetRoot())) };
+		let intruder = _usersPKs["intruder"];
+		EXPECT_THROW( groupRights(groupPK, intruder), Exception );
+		EXPECT_NO_THROW( groupRights(groupPK, GetRoot()) );
+		Delete( "resources", GetId(resource), GetRoot() );
+		EXPECT_NO_THROW( groupRights(groupPK, intruder) );//fail-open when disabled, as the acl read is.
+		EXPECT_THROW( groupRights(groupPK, UserPK{}), Exception ) << "but not to a caller who never signed in";
 		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
 	}
 	//access-review3 #21:  acl was ops:["None"], so ResourceSync never created its resource row and the read gate below had nothing

@@ -11,7 +11,7 @@ export type RightsSource = { permissionId:number; allowed:Rights; denied:Rights;
 export type Names = { groups:Map<number,string>; roles:Map<number,string> };
 //A RightsSource as the server sends it - Server::SourcesJson, RightsSourceJson.h.
 export type SourceRow = { permissionId:number; allowed:number; denied:number; path:{id:number; type:"group"|"role"}[] };
-//The server's userRights row - Authorize::UserRights, UserRightsAwait.cpp.
+//The server's userRights row, and groupRights' - Authorize::UserRights/GroupRights, Server::RightsJson in UserRightsAwait.cpp.
 export type UserRightsRow = { resource:{ id:number; schemaName?:string; slug?:string; criteria?:string; deleted?:string|null }; allowed:number; denied:number; effective:number; sources:SourceRow[] };
 
 //What a user ends up with on one resource through every path - the read-only twin of Permission for the Effective rights tab.
@@ -32,7 +32,8 @@ export class EffectiveRight{
 	//criteria-less row of the same schema+slug, its `parent` - OpcAuthorize resolves a node to the nearest configured
 	//ancestor's resource, else that root, so the node row replaces its root for its subtree rather than adding to it.  One
 	//without a root in the list stays top-level.
-	static fromRows( rows:UserRightsRow[], resources:Resource[], names:Names ):EffectiveRight[]{
+	//`lockouts` false leaves the lockout rows out - a group's tab:  what a group does not give, its members may hold elsewhere.
+	static fromRows( rows:UserRightsRow[], resources:Resource[], names:Names, lockouts=true ):EffectiveRight[]{
 		const byId = new Map( resources.map( r=>[r.id, r] ) );
 		const roots = new Map( resources.filter( r=>!r.criteria ).map( r=>[EffectiveRight.key(r.schema, r.slug), r] ) );
 		//A node resource shows as its table:  its own name is the slug access_role_add coalesced ("nodeIds" under the synced
@@ -55,7 +56,7 @@ export class EffectiveRight{
 		//A node resource is here too (reviews/m3-closing.md #14):  granting a role on a node mints it enforced, and the OpcServer
 		//resolves the node's subtree to it alone, so a user holding nothing on it is locked out there whatever they hold on the
 		//table.  With the table unenforced and ungranted (a fresh install's default) the row has no parent and stays top-level.
-		for( const resource of resources ){
+		for( const resource of lockouts ? resources : [] ){
 			if( !resource.deleted && !granted.has(resource.id) )
 				y.push( new EffectiveRight({ resource: resource.criteria ? new Resource( {...resource, schemaName: resource.schema, ...asTable(resource.schema, resource.slug, resource.criteria, resource)} ) : resource }) );
 		}

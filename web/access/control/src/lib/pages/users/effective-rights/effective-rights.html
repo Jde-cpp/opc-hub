@@ -1,6 +1,11 @@
 @if( !isLoading() ){
 	@if( !rows().length ){
-		<p class="empty">No resource is enforced and the user holds no grant - nothing restricts this user.</p>
+		@if( isGroup() ){
+			<p class="empty">Neither this group nor a group it is nested in holds a grant - its members get nothing through it.</p>
+		}
+		@else{
+			<p class="empty">No resource is enforced and the user holds no grant - nothing restricts this user.</p>
+		}
 	}
 	@else{
 		<mat-table [dataSource]="displayRows()" class="mat-elevation-z8">

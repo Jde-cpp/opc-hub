@@ -45,7 +45,9 @@ When the list has no row for the node's table (the table is not enforced and the
 
 ## Groups
 
-A group's page has **Properties**, its **Users**, the child **Groups** nested in it and the **Roles** granted to it. A user in a group holds everything that group's roles carry, and everything carried by the groups it is nested in.
+A group's page has **Properties**, its **Users**, the child **Groups** nested in it, the **Roles** granted to it, and **Effective rights**. A user in a group holds everything that group's roles carry, and everything carried by the groups it is nested in.
+
+**Effective rights** is what a member gets through the group: its own grants and those of the groups it is nested in, not its child groups'. It reads as a user's does - hover a mark to read the grants behind it: a role, a role via a parent group, or a direct grant. Only resources the group gives something on are listed; one it gives nothing on is not a lockout, since a member may hold it elsewhere. A deleted group passes nothing on. Reading the tab needs **Read** on `acl`.
 
 ## Roles
 
