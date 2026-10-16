@@ -291,6 +291,16 @@ describe( 'QLListResolver.load pages', ()=>{
 		expect( y.childrenKey ).toBe( "apps/gateways/opchub" );
 	} );
 
+	//#251:  a child's path is where its row opens - a resource's is schema/slug
+	it( "writes each child's path from the route's rowLink", async ()=>{
+		const { ql: q } = ql( rows(2) );
+		const setChildren = vi.fn();
+		const things = data( 25 );
+		things.routing = new ListRoute( {path: "things", data: {tableSettings: {rowLink: (r)=>["schema", `${r.slug}`]}} as any} );
+		await QLListResolver.load( q, things, {setChildren} as unknown as RouteStore );
+		expect( setChildren ).toHaveBeenCalledWith( "things", rows(2).map( r=>({title: r.name, path: `schema/${r.slug}`}) ) );
+	} );
+
 	it( 'falls back to the first page when the one asked for has emptied', async ()=>{
 		const { ql: q, query } = ql( rows(10) );//rows deleted since the page was read - or since it was remembered (#8)
 		const y = await QLListResolver.load( q, data(25, 25), null );

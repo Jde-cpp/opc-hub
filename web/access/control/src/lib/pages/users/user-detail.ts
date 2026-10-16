@@ -97,9 +97,10 @@ export const userTableSettings:TableSettings = {
  //A resource row is the authorizer's per-table switch, not an editable record.  `deleted` is what the switch reads:
  //Authorize::Test bails on a deleted resource ("not enabled"), so a DELETED resource is an UNENFORCED one and the
  //installation ships every row deleted (ResourceSyncAwait creates each one and immediately deletes it) so a fresh system is
- //not locked down.  Hence the shape of this page:  no Add and no detail route (the natural key is schema+slug+criteria,
- //which `:slug` alone cannot address), no Purge - the resources table advertises only Read, Delete and Subscribe as grantable
- //rights, so nobody can even hold Update on it - and the one action that matters, enforcement, as a switch in the row.
+ //not locked down.  Hence the shape of this page:  no Add, no Purge - the resources table advertises only Read, Delete and
+ //Subscribe as grantable rights, so nobody can even hold Update on it - and the one action that matters, enforcement, as a
+ //switch in the row.  A row opens its read-only page of who holds rights on it, at schema/slug:  the natural key is
+ //schema+slug+criteria and a slug repeats across schemas (`logs`), so `:slug` alone cannot address it.
  //Enforced leads the columns because it is the only thing on the page that DOES anything;  schemaName ("access",
  //"opc.default", ...) still groups the list, so it leads the sort.
  //One system view, 'Tables':  the rows with no criteria - the per-table switches the page exists for.  A criteria row is a
@@ -110,7 +111,7 @@ export const userTableSettings:TableSettings = {
 	empty: { title: "No resources registered.", detail: "Every service registers its tables here when it starts - start the hub or the app server against this database.", icon: "lock" },
 	canAdd: false,
 	canPurge: false,
-	canNavigate: false,//there is no 'resources/:slug' route - resources are server-defined rows with no detail page
+	rowLink: (row)=>[`${row["schemaName"]}`, `${row.slug}`],//ResourceResolver's 'resources/:schema/:slug'
 	viewName: "Tables",
 	filters: [ {name: "criteria", value: ["<null>"]} ],
 	columns: [

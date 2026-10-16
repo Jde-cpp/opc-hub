@@ -1,0 +1,51 @@
+@if( resource(); as resource ){
+	<div class="summary">
+		@if( resource.description ){
+			<p class="description">{{resource.description}}</p>
+		}
+		@if( holders(); as holders ){
+			<!--the server's enforcement, not the cached list's:  it says what the Users tab means-->
+			<p class="state" [class.enforced]="holders.enforced">
+				<mat-icon aria-hidden="true">{{holders.enforced ? "lock" : "lock_open"}}</mat-icon>
+				@if( holders.enforced ){
+					<span><strong>Enforced.</strong> Only the users listed here get through - every other user is denied.</span>
+				}
+				@else{
+					<span><strong>Not enforced.</strong> Every signed-in user has full access. These grants take effect once it is enforced, from the <a [routerLink]="listUrl()">Resources</a> list.</span>
+				}
+			</p>
+		}
+	</div>
+	@if( failure(); as f ){
+		<div class="jde-empty" role="alert">
+			<mat-icon aria-hidden="true">{{ f.forbidden ? 'lock' : 'error_outline' }}</mat-icon>
+			<p class="title">{{ f.title }}</p>
+			@if( f.detail ){ <p class="detail">{{ f.detail }}</p> }
+		</div>
+	}
+	@else if( holders(); as holders ){
+		<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
+			[selectedIndex]="tabIndex()"
+			(selectedIndexChange)="onTabIndexChanged($event)">
+			<mat-tab>
+				<ng-template mat-tab-label>Roles ({{holders.roles.length}})</ng-template>
+				<ng-template matTabContent>
+					<holder-table kind="role" [rows]="holders.roles" [rights]="rights()" [link]="accessUrl() + '/roles'" empty="No role holds a permission on this resource."></holder-table>
+				</ng-template>
+			</mat-tab>
+			<mat-tab>
+				<ng-template mat-tab-label>Groups ({{holders.groups.length}})</ng-template>
+				<ng-template matTabContent>
+					<holder-table kind="group" [rows]="holders.groups" [rights]="rights()" [link]="accessUrl() + '/groups'" empty="No group holds a role or a grant on this resource."></holder-table>
+				</ng-template>
+			</mat-tab>
+			<mat-tab>
+				<ng-template mat-tab-label>Users ({{holders.users.length}})</ng-template>
+				<ng-template matTabContent>
+					<holder-table kind="user" [rows]="holders.users" [rights]="rights()" [link]="accessUrl() + '/users'"
+						[empty]="holders.enforced ? 'No user holds a grant on this resource, so nobody gets through.' : 'No user holds a grant on this resource.'"></holder-table>
+				</ng-template>
+			</mat-tab>
+		</mat-tab-group>
+	}
+}

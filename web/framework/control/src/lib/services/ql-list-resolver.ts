@@ -12,12 +12,13 @@ import { FieldFilter, Operator, View, ViewField, ViewFieldSettings, ViewFilterSe
 import { Sort } from '@angular/material/sort';
 import { QLRow } from '../model/ql/slug-row';
 
-//canNavigate: a collection with no ':slug' detail route must not offer the row click-through
+//canNavigate: a collection with no ':slug' detail route must not offer the row click-through;  rowLink: the segments below the
+//list to a row's page where they are not its slug alone - a resource's slug repeats across schemas, so its page is schema/slug
 //viewName: the toggle label of the default view ("Default" when unset);  filters: the default view's, same vocabulary as a
 //ViewSettings filter (resources opens on the table rows, criteria null);  views: further system views, see ViewSettings
 //empty: what the page says when the query returns no rows - the default names the collection and, where Add is offered, points at it
 export type EmptyState = { title?:string, detail?:string, add?:string/*the sentence pointing at Add, appended to detail only where Add is shown*/, icon?:string };
-export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filters?:ViewFilterSettings[], views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
+export type TableSettings = {canPurge?:boolean,canAdd?:boolean, canNavigate?:boolean, rowLink?:(row:QLRow)=>string[], excludedColumns?:string[], columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, viewName?:string, filters?:ViewFilterSettings[], views?:ViewSettings[], empty?:EmptyState, noun?:string};//noun:  what the rows are, lower case and plural, where the route title is not - a list in a detail page's tab (reviews/m3-closing.md #6)
 export type CollectionItem = string | { path:string, title?:string, data?:{summary:string, collectionName:string, tableSettings:TableSettings} };
 export class ListRoute extends RouteItem{
 	constructor( collection:string|CollectionItem ){
@@ -223,7 +224,8 @@ export class QLListResolver implements Resolve<QLListData> {
 	}
 	//the page's rows as the collection's sidenav children
 	static setChildren( routeStore:RouteStore, data:PageData ){
-		const children = data.results[data.schema.collectionName].map( (r:QLRow)=>({title: r.name, path: `${r.slug}`}) );//bare targets - DetailResolver renders them under the absolute list url
+		const rowLink = (data.routing as Partial<ListRoute>).tableSettings?.rowLink ?? ( (r:QLRow)=>[`${r.slug}`] );
+		const children = data.results[data.schema.collectionName].map( (r:QLRow)=>({title: r.name, path: rowLink(r).join('/')}) );//bare targets - DetailResolver renders them under the absolute list url
 		routeStore.setChildren( QLListResolver.childrenKey(data), children );
 	}
 	static childrenKey( data:PageData ):string{ return data.childrenKey ?? data.routing.path; }

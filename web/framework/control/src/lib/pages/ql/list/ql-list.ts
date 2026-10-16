@@ -126,8 +126,9 @@ export class QLList implements OnInit{
 	onRowActivate( row:QLRow ){
 		if( this.selector() || !this.canNavigate() )//ql-table already toggled the row; a selector has nowhere to navigate to
 			return;
-		this.router.navigate( [...this.linkPrefix(), row.slug], {relativeTo: this.route} )
-			.then( ok=>{ if( !ok ) this.snackbar.error( `Could not navigate to '${row.slug}'.` ); } )
+		const link = this.tableSettings().rowLink?.( row ) ?? [`${row.slug}`];
+		this.router.navigate( [...this.linkPrefix(), ...link], {relativeTo: this.route} )
+			.then( ok=>{ if( !ok ) this.snackbar.error( `Could not navigate to '${link.join('/')}'.` ); } )
 			.catch( e=>this.snackbar.exception("Could not navigate to properties", e) );
 	}
 

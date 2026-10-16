@@ -51,6 +51,16 @@ describe( 'QLList.onRowActivate', ()=>{
 		expect( navigate ).toHaveBeenCalledWith( ['someone'], expect.anything() );
 	} );
 
+	//#251:  a resource's slug repeats across schemas, so its page is at schema/slug
+	it( "navigates to the route's rowLink where it has one", async ()=>{
+		const page = create( {rowLink: (row)=>[`${row["schemaName"]}`, `${row.slug}`]} );
+		navigate.mockResolvedValue( false );
+		page.onRowActivate( {slug: 'logs', schemaName: 'opc.debug'} );
+		expect( navigate ).toHaveBeenCalledWith( ['opc.debug', 'logs'], expect.anything() );
+		await Promise.resolve();
+		expect( error ).toHaveBeenCalledWith( "Could not navigate to 'opc.debug/logs'." );
+	} );
+
 	it( 'does not navigate where canNavigate is off', ()=>{
 		create( {canNavigate: false} ).onRowActivate( {slug: 'nodes'} );
 		expect( navigate ).not.toHaveBeenCalled();

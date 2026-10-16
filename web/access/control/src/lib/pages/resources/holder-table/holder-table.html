@@ -1,0 +1,33 @@
+@if( !rows().length ){
+	<p class="empty">{{empty()}}</p>
+}
+@else{
+	<mat-table [dataSource]="rows()" class="mat-elevation-z8">
+		<ng-container matColumnDef="name">
+			<mat-header-cell *matHeaderCellDef>{{nameHeader()}}</mat-header-cell>
+			<mat-cell *matCellDef="let row">
+				@if( row.slug ){
+					<a [routerLink]="[link(), row.slug]">{{row.name}}</a>
+				}
+				@else{
+					{{row.name}}
+				}
+			</mat-cell>
+		</ng-container>
+		@for( kv of rights(); track kv.key; let i = $index ){
+			<ng-container [matColumnDef]="kv.value">
+				<mat-header-cell *matHeaderCellDef class="mat-column-permission" [class.mat-column-alt]="i%2==0">{{kv.value}}</mat-header-cell>
+				<mat-cell *matCellDef="let row" class="mat-column-permission" [class.mat-column-alt]="i%2==0">
+					@if( row.isDenied(kv.key) ){
+						<mat-icon class="denied" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="effective-rights-tooltip">cancel</mat-icon>
+					}
+					@else if( row.isAllowed(kv.key) ){
+						<mat-icon class="allowed" role="img" tabindex="0" [attr.aria-label]="kv.value + ' allowed'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="effective-rights-tooltip">check</mat-icon>
+					}
+				</mat-cell>
+			</ng-container>
+		}
+		<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
+		<mat-row *matRowDef="let row; columns: displayedColumns();"></mat-row>
+	</mat-table>
+}

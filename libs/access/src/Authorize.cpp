@@ -716,4 +716,90 @@ namespace Jde::Access{
 		}
 		return y;
 	}
+	α Authorize::Holders( ResourcePK resourcePK )Ι->optional<ResourceHolders>{
+		rl _{ Mutex };
+		auto resource = Resources.find( resourcePK );
+		if( resource==Resources.end() )
+			return {};
+		ResourceHolders y{ resource->second };
+		auto add = []( HolderRights& holder, RightsSource source ){
+			holder.Rights.Allowed |= source.Allowed;
+			holder.Rights.Denied |= source.Denied;
+			holder.Sources.push_back( move(source) );
+		};
+		auto onResource = [&]( PermissionPK permissionPK ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->const Permission* {
+			auto p = Permissions.find( permissionPK );
+			return p!=Permissions.end() && p->second.ResourcePK==resourcePK ? &p->second : nullptr;
+		};
+		vector<RolePK> roles;//the path so far, the role being expanded first - on-path cycle guard, as UserRights has.
+		auto expand = [&]( this auto&& self, const Role& role, vector<RightsSource>& sources ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
+			for( let& member : role.Members ){
+				if( let permissionPK = get_if<PermissionPK>(&member) ){
+					if( let permission = onResource(*permissionPK) )
+						sources.emplace_back( RightsSource{*permissionPK, permission->Allowed, permission->Denied, {}, {roles.begin()+1, roles.end()}} );
+					continue;
+				}
+				let childPK = get<RolePK>( member );
+				auto child = Roles.find( childPK );
+				if( child==Roles.end() || child->second.IsDeleted || std::ranges::find(roles, childPK)!=roles.end() )
+					continue;
+				roles.push_back( childPK );
+				self( child->second, sources );
+				roles.pop_back();
+			}
+		};
+		flat_map<RolePK,vector<RightsSource>> roleSources;
+		for( let& [rolePK, role] : Roles ){
+			if( role.IsDeleted )
+				continue;
+			vector<RightsSource> sources;
+			roles = { rolePK };
+			expand( role, sources );
+			if( sources.empty() )
+				continue;
+			auto& holder = y.Roles[rolePK];
+			for( let& source : sources )
+				add( holder, source );
+			roleSources.emplace( rolePK, move(sources) );
+		}
+		vector<GroupPK> groups;//the path so far
+		auto reach = [&]( this auto&& self, IdentityPK identity, const vector<RightsSource>& sources ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
+			auto addAll = [&]( HolderRights& holder ){
+				for( auto source : sources ){
+					source.Groups = groups;
+					add( holder, move(source) );
+				}
+			};
+			if( identity.IsUser() ){
+				if( auto user = Users.find(identity.UserPK()); user!=Users.end() && !user->second.IsDeleted )//a deleted user is refused everything (FindUserLocked).
+					addAll( y.Users[user->first] );
+				return;
+			}
+			let groupPK = identity.GroupPK();
+			auto group = Groups.find( groupPK );
+			if( group==Groups.end() || group->second.IsDeleted || std::ranges::find(groups, groupPK)!=groups.end() )
+				return;
+			addAll( y.Groups[groupPK] );
+			groups.push_back( groupPK );
+			for( let& member : group->second.Members )
+				self( member, sources );
+			groups.pop_back();
+		};
+		for( let& [identity, permissionRole] : Acl ){
+			vector<RightsSource> sources;
+			if( let permissionPK = get_if<PermissionPK>(&permissionRole) ){
+				if( let permission = onResource(*permissionPK) )
+					sources.emplace_back( RightsSource{*permissionPK, permission->Allowed, permission->Denied, {}, {}} );
+			}
+			else if( auto role = roleSources.find(get<RolePK>(permissionRole)); role!=roleSources.end() ){
+				for( auto source : role->second ){
+					source.Roles.insert( source.Roles.begin(), role->first );
+					sources.push_back( move(source) );
+				}
+			}
+			if( sources.size() )
+				reach( identity, sources );
+		}
+		return y;
+	}
 }

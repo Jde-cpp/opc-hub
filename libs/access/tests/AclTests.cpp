@@ -2,6 +2,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/str.h>
 #include <jde/access/server/awaits/AclAwait.h>
+#include <jde/access/server/awaits/ResourceRightsAwait.h>
 #include <jde/access/server/awaits/UserRightsAwait.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/AccessListener.h>
@@ -524,6 +525,126 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( userRights(intruder, intruder) );
 		Delete( "resources", GetId(resource), GetRoot() );
 		EXPECT_NO_THROW( userRights(reader, intruder) );//fail-open when disabled, as the acl read is.
+		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
+	}
+	//resourceRights( id: ) - ResourceRightsAwait, the resource page's query:  UserRightsProvenance's grants read from the resource's
+	//side.  Every row's path is relative to it, and a user's numbers are what Rights() enforces.
+	Ω resourceRights( ResourcePK resourcePK, UserPK executer )ε->jobject{
+		jobject vars{ {"id", resourcePK.Value} };
+		let q = "resourceRights( id:$id ){ resource{id} roles{ id allowed denied sources{ permissionId allowed denied path{id type} } } groups{ id allowed denied sources{ permissionId allowed denied path{id type} } } users{ id allowed denied effective sources{ permissionId allowed denied path{id type} } } }";
+		return BlockTAwait<jvalue>( Server::ResourceRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
+	}
+	Ω findHolder( const jobject& rights, sv list, uint32 id )ε->jobject{
+		let rows = AsArray( rights, list );
+		auto p = find_if( rows, [=](const jvalue& row){ return GetId(Json::AsObject(row))==id; } );
+		return p==rows.end() ? jobject{} : p->as_object();
+	}
+	Ω pathOf( const jobject& source )ε->vector<std::pair<uint32,string>>{
+		vector<std::pair<uint32,string>> y;
+		for( let& step : AsArray(source, "path") )
+			y.emplace_back( GetId(Json::AsObject(step)), AsString(Json::AsObject(step), "type") );
+		return y;
+	}
+	TEST_F( AclTests, ResourceRightsHolders ){
+		let root = GetRoot();
+		RestoreResource( "groups", root );
+		const UserPK user{ GetId(GetUser("resourceRightsUser", root)) };
+		let goneJson = GetUser( "resourceRightsGone", root, true );
+		const UserPK gone{ GetId(goneJson) };
+		let group = GetGroup( "resourceRightsGroup", root );
+		const GroupPK groupPK{ GetId(group) };
+		let parent = GetGroup( "resourceRightsParent", root );
+		const GroupPK parentPK{ GetId(parent) };
+		auto addMember = [&]( const jobject& g, GroupPK gPK, IdentityPK member ){
+			let members = AsArray( g, "groupMembers" );
+			if( find_if(members, [=](const jvalue& m){ return GetId(Json::AsObject(m))==member.Underlying(); })==members.end() )
+				AddToGroup( gPK, {member}, root );
+		};
+		addMember( group, groupPK, user );
+		addMember( parent, parentPK, groupPK );
+		const RolePK parentRolePK{ GetId( Get("role", "resourceRightsParentRole", root) ) };
+		const RolePK childRolePK{ GetId( Get("role", "resourceRightsChildRole", root) ) };
+		const PermissionPK permissionPK{ GetId(AddRolePermission(childRolePK, "groups", ERights::Read|ERights::Update, ERights::None, root)) };
+		AddRoleMember( parentRolePK, childRolePK, root );
+		CreateAcl( parentPK, parentRolePK, root );
+		const PermissionPK denyPK{ GetId(GetAcl(user, "groups", ERights::None, ERights::Update)) };
+		GetAcl( gone, "groups", ERights::All, ERights::None );
+		if( !Json::FindTimePoint(goneJson, "deleted") )
+			Delete( "users", gone.Value, root );
+		using Path = vector<std::pair<uint32,string>>;
+		auto onlySource = [&]( const jobject& holder )->jobject{
+			let sources = AsArray( holder, "sources" );
+			EXPECT_EQ( sources.size(), 1u );
+			return sources.empty() ? jobject{} : Json::AsObject( sources[0] );
+		};
+
+		let rights = resourceRights( _resourcePK, root );
+		EXPECT_EQ( ResourcePK{AsNumber<ResourcePK::Type>(rights, "resource/id")}, _resourcePK );
+		let child = findHolder( rights, "roles", childRolePK.Value );
+		ASSERT_FALSE( child.empty() );
+		EXPECT_EQ( AsNumber<uint8>(child, "allowed"), underlying(ERights::Read|ERights::Update) );
+		EXPECT_EQ( pathOf(onlySource(child)), Path{} ) << "held directly";
+		let parentRole = findHolder( rights, "roles", parentRolePK.Value );
+		ASSERT_FALSE( parentRole.empty() ) << "a role holding the permission through a member role";
+		EXPECT_EQ( AsNumber<uint8>(parentRole, "allowed"), underlying(ERights::Read|ERights::Update) );
+		EXPECT_EQ( pathOf(onlySource(parentRole)), (Path{{childRolePK.Value, "role"}}) );
+
+		let parentGroup = findHolder( rights, "groups", parentPK.Value );
+		ASSERT_FALSE( parentGroup.empty() );
+		EXPECT_EQ( pathOf(onlySource(parentGroup)), (Path{{parentRolePK.Value, "role"}, {childRolePK.Value, "role"}}) ) << "granted to the group itself";
+		let memberGroup = findHolder( rights, "groups", groupPK.Value );
+		ASSERT_FALSE( memberGroup.empty() ) << "a group holding the role through its parent";
+		EXPECT_EQ( pathOf(onlySource(memberGroup)), (Path{{parentPK.Value, "group"}, {parentRolePK.Value, "role"}, {childRolePK.Value, "role"}}) );
+
+		let row = findHolder( rights, "users", user.Value );
+		ASSERT_FALSE( row.empty() );
+		EXPECT_EQ( AsNumber<uint8>(row, "allowed"), underlying(ERights::Read|ERights::Update) );
+		EXPECT_EQ( AsNumber<uint8>(row, "denied"), underlying(ERights::Update) );
+		EXPECT_EQ( AsNumber<uint8>(row, "effective"), underlying(ERights::Read) );
+		EXPECT_EQ( Authorizer()->Rights("access", "groups", user), ERights::Read );
+		let sources = AsArray( row, "sources" );
+		ASSERT_EQ( sources.size(), 2u );
+		auto viaGroup = find_if( sources, [=](const jvalue& s){ return PermissionPK{AsNumber<PermissionPK::Type>(Json::AsObject(s), "permissionId")}==permissionPK; } );
+		ASSERT_NE( viaGroup, sources.end() );
+		EXPECT_EQ( pathOf(viaGroup->as_object()), (Path{{parentPK.Value, "group"}, {groupPK.Value, "group"}, {parentRolePK.Value, "role"}, {childRolePK.Value, "role"}}) );
+		EXPECT_TRUE( findHolder(rights, "users", gone.Value).empty() ) << "a deleted user is refused everything";
+		for( let& user : AsArray(rights, "users") ){
+			let& juser = Json::AsObject( user );
+			EXPECT_EQ( AsNumber<uint8>(juser, "effective"), underlying(Authorizer()->Rights("access", "groups", UserPK{GetId(juser)})) ) << GetId(juser);
+		}
+
+		Delete( "groups", groupPK.Value, root );//a deleted group stops the walk, as it stops enforcement.
+		{
+			let rights = resourceRights( _resourcePK, root );
+			EXPECT_TRUE( findHolder(rights, "groups", groupPK.Value).empty() );
+			EXPECT_FALSE( findHolder(rights, "groups", parentPK.Value).empty() );
+			let row = findHolder( rights, "users", user.Value );
+			ASSERT_FALSE( row.empty() );
+			EXPECT_EQ( pathOf(onlySource(row)), Path{} ) << "only the direct deny";
+			EXPECT_EQ( AsNumber<uint8>(row, "effective"), 0u );
+		}
+		Restore( "groups", groupPK.Value, root );
+
+		PurgeAcl( user, denyPK, root );
+		RemoveRoleMember( parentRolePK, childRolePK, root );
+		{
+			let rights = resourceRights( _resourcePK, root );
+			EXPECT_TRUE( findHolder(rights, "roles", parentRolePK.Value).empty() ) << "no member role holds it any more";
+			EXPECT_TRUE( findHolder(rights, "users", user.Value).empty() );
+		}
+		EXPECT_THROW( resourceRights(ResourcePK{std::numeric_limits<ResourcePK::Type>::max()}, root), Exception );
+	}
+	//acl( identityId: )'s gate - Read on the acl resource - with no exemption:  a resource has no "own row".
+	TEST_F( AclTests, ResourceRightsGate ){
+		auto resource = SelectResource( "acl", GetRoot(), true );
+		ASSERT_FALSE( resource.at("deleted").is_null() ) << "created disabled, like every synced resource";
+		let permissionPK = CreateAcl( GetRoot(), ERights::All, ERights::None, "acl", {UserPK::System} );
+		RestoreResource( "acl", GetRoot() );
+		let intruder = _usersPKs["intruder"];
+		EXPECT_THROW( resourceRights(_resourcePK, intruder), Exception );
+		EXPECT_NO_THROW( resourceRights(_resourcePK, GetRoot()) );
+		Delete( "resources", GetId(resource), GetRoot() );
+		EXPECT_NO_THROW( resourceRights(_resourcePK, intruder) );//fail-open when disabled, as the acl read is.
 		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
 	}
 	//access-review3 #21:  acl was ops:["None"], so ResourceSync never created its resource row and the read gate below had nothing
