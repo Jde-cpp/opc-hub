@@ -120,14 +120,18 @@ export class QLList implements OnInit{
 	}
 
 	//The try/catch was dead:  router.navigate is ASYNC, so a route that does not exist rejects the promise long after the
-	//block has returned.  /access/resources has no 'resources/:slug' route, so every row click there dead-ended in a
-	//NavigationError the user never saw - hence both halves here:  don't offer the click where there is nowhere to go, and
-	//report it through the returned promise where the navigation still fails.
+	//block has returned.  A row click on a list with no detail route dead-ended in a NavigationError the user never saw -
+	//hence both halves here:  don't offer the click where there is nowhere to go (canNavigate off, a rowLink with no segments),
+	//and report it through the returned promise where the navigation still fails.
 	onRowActivate( row:QLRow ){
 		if( this.selector() || !this.canNavigate() )//ql-table already toggled the row; a selector has nowhere to navigate to
 			return;
-		this.router.navigate( [...this.linkPrefix(), row.slug], {relativeTo: this.route} )
-			.then( ok=>{ if( !ok ) this.snackbar.error( `Could not navigate to '${row.slug}'.` ); } )
+		const rowLink = this.tableSettings().rowLink;
+		const link = rowLink ? rowLink.segments( row ) : [`${row.slug}`];
+		if( !link )//a row with no page of its own
+			return;
+		this.router.navigate( [...this.linkPrefix(), ...link], {relativeTo: this.route} )
+			.then( ok=>{ if( !ok ) this.snackbar.error( `Could not navigate to '${link.join('/')}'.` ); } )
 			.catch( e=>this.snackbar.exception("Could not navigate to properties", e) );
 	}
 

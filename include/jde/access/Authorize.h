@@ -82,6 +82,19 @@ namespace Jde::Access{
 			vector<RightsSource> Sources;
 		};
 		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for an unknown user; by PK.
+		//UserRights turned around:  everyone one resource's grants reach, source by source (the SPA's resource page,
+		//ResourceRightsAwait).  Roles - every live role holding a permission on it, itself or through member roles:  Sources'
+		//Roles run from the member below it to the role holding Permission, empty = held directly.  Groups and Users - every live
+		//group and user an acl grant reaches, pathed as UserRights paths them:  Groups from the granted group to the one holding
+		//the row's identity (empty = granted to it), Roles from the assigned role to the one holding Permission.
+		struct HolderRights final{ AllowedDisallowed Rights{}; vector<RightsSource> Sources; };
+		struct ResourceHolders final{
+			Access::Resource Resource;//the Resources row, copied under the lock.
+			flat_map<RolePK,HolderRights> Roles;
+			flat_map<GroupPK,HolderRights> Groups;
+			flat_map<UserPK,HolderRights> Users;
+		};
+		α Holders( ResourcePK resourcePK )Ι->optional<ResourceHolders>;//nullopt for a pk the cache never saw.
 		α IsRoleMember( RolePK parent, RolePK child )Ι->bool;//a direct member, as the cache holds it - RoleMAwait::AddRole's no-op check for a re-add (the seed reruns on every -sync start).
 	protected:
 		α Load( Identities&& identities, ResourcePermissions&& resources, flat_map<RolePK,Role>&& roles, flat_multimap<IdentityPK,PermissionRole>&& acl )ι->void;

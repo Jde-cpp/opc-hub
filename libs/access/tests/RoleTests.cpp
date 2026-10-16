@@ -450,6 +450,7 @@ namespace Jde::Access::Tests{
 			EXPECT_FALSE( GetRoleChild(RolePK{GetId(getRole(slug, root))}, viewer, root).empty() ) << slug;
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "users", root), "allowed")), ERights::Read );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(sa, "users", root), "allowed")), ERights::Administer );
+		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(sa, "resources", root), "allowed")), ERights::Administer ) << "TestSchemaAdmin(\"access\") once access.resources is enforced";
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "users", root), "allowed")), ERights::Create|ERights::Update|ERights::Delete|ERights::Purge|ERights::Subscribe|ERights::Execute );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "resources", root), "allowed")), ERights::Delete|ERights::Subscribe );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "resources", root), "allowed")), ERights::Read ) << "every page listing resources, once access.resources is enforced";

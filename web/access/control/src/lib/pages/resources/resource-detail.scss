@@ -1,0 +1,19 @@
+.my-content{
+	flex: 1 1 100%;
+}
+
+.summary{
+	padding: 12px 24px 0;
+	p{ margin: 0 0 8px; }
+}
+.description{
+	opacity: .8;
+}
+.state{
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	mat-icon{ flex: none; }
+	&.enforced mat-icon{ color: var(--mat-sys-primary); }
+	a{ color: var(--mat-sys-primary); }
+}

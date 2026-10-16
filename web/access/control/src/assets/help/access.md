@@ -21,7 +21,7 @@ Two lists have no **Add**:
 - [Users](/access/users) come into being by signing in. A Google or OPC server account is added the first time it signs in, and a certificate identity when the app server enrolls it.
 - [Resources](/access/resources) are registered by the services themselves.
 
-Resource rows do not open, and the list has no **Deleted** view: a resource that is not enforced is listed with the rest, and the **Enforced** switch in each row takes the place of Delete and Restore. See [Resources](#resources).
+The resources list has no **Deleted** view: a resource that is not enforced is listed with the rest, and the **Enforced** switch in each row takes the place of Delete and Restore. A resource row opens a read-only page of who holds rights on it. See [Resources](#resources).
 
 Users, groups and roles are deleted and restored as any record is. A deleted group or role also offers **Purge**, which removes it for good.
 
@@ -80,7 +80,7 @@ Most record types offer the six above, but not all:
 
 - users add **Execute** and **Subscribe**;
 - roles add **Subscribe**;
-- the resources table offers only **Delete** and **Subscribe**;
+- the resources table offers only **Read**, **Delete**, **Administer** and **Subscribe**;
 - the `acl` table offers only **Read**, **Administer** and **Subscribe**.
 
 ## Resources
@@ -91,11 +91,25 @@ Granting a role on an OPC node mints a resource scoped to that node.
 
 The [Resources](/access/resources) list is the registered ones, a row each, with an **Enforced** toggle. Node-scoped resources and a historian group's are not listed here - they are granted from the node's own page and the group's **Access** tab, see [Gateways](/help/gateways), and appear under a user's **Effective rights**.
 
-A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it, and every signed-in user has full access to it. The OPC server still applies its own limits on what the signed-in user may read and write.
+A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it, and everyone, signed in or not, has full access to it. The OPC server still applies its own limits on what the signed-in user may read and write.
 
 One exception: the bundled OPC server refuses history edits and deletes on its nodes until a node resource is enforced.
 
 Once a resource is enforced, only a user holding a grant gets through.
+
+### A resource's page
+
+Clicking a row opens the resource's own page, which answers who can reach it. It says whether the resource is enforced, and has three tabs:
+
+- **Roles** - each role holding a permission on it, itself or through a child role.
+- **Groups** - each group a grant reaches: a role or a permission granted to it, or to a group it is nested in.
+- **Users** - each user a grant reaches, directly or through a group, with the rights the server enforces for them.
+
+A tick is an allowed right and a red mark a denied one. Each right the resource offers has a column, as does any other a listed grant holds. Hover a mark to read the grants behind it, as on a user's **Effective rights**. Each name links to its own page.
+
+A user not on the **Users** tab holds nothing on the resource: denied while it is enforced, unchecked while it is not. Reading the page needs **Read** on `acl`, as a user's **Effective rights** does for anyone but yourself. While `resources` is enforced, it needs **Read** on that too.
+
+The page is the resource's own row. Rights granted on its individual OPC nodes are on each node's page.
 
 ### What the hub gates, and what it does not
 

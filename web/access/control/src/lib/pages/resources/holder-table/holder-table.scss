@@ -1,0 +1,42 @@
+/* effective-rights.scss's grid:  the same inset, row heights and marks */
+:host{
+	display: block;
+	padding: 16px 24px 0;
+}
+
+mat-table{
+	--mat-table-row-item-container-height: 40px;
+	--mat-table-header-container-height: 44px;
+}
+
+.mat-mdc-header-cell{
+	text-align: center;
+}
+
+.mat-column-name{
+	flex: 0 0 16em;
+	a{
+		color: var(--mat-sys-primary);
+		text-decoration: none;
+		&:hover{ text-decoration: underline; }
+	}
+}
+
+.mat-column-permission{
+	display: flex;
+	justify-content: center;
+}
+
+.mat-column-alt{
+	background-color: var(--mat-sys-secondary-container);
+}
+
+mat-icon{
+	cursor: help;
+	&.allowed{ color: var(--mat-sys-primary); }
+	&.denied{ color: var(--mat-sys-error); }
+}
+
+.empty{
+	opacity: .7;
+}

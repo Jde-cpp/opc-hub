@@ -18,6 +18,7 @@ mutation{
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"acl" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"groups" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"providerTypes" } } )
+	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"resources" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"roles" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"access", slug:"users" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"app", slug:"instances" } } )

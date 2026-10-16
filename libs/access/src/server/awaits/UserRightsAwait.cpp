@@ -3,8 +3,23 @@
 #include <jde/fwk/chrono.h>
 #include <jde/access/Authorize.h>
 #include "../serverInternal.h"
+#include "RightsSourceJson.h"
 
 #define let const auto
+namespace Jde::Access{
+	α Server::SourcesJson( const vector<Authorize::RightsSource>& sources )ι->jarray{
+		jarray y;
+		for( let& source : sources ){
+			jarray path;
+			for( let group : source.Groups )
+				path.push_back( jobject{ {"id", group.Value}, {"type", "group"} } );
+			for( let role : source.Roles )
+				path.push_back( jobject{ {"id", role.Value}, {"type", "role"} } );
+			y.push_back( jobject{ {"permissionId", source.Permission.Value}, {"allowed", underlying(source.Allowed)}, {"denied", underlying(source.Denied)}, {"path", move(path)} } );
+		}
+		return y;
+	}
+}
 namespace Jde::Access::Server{
 	//Synchronous:  the walk is in-memory, so the value is resumed from Suspend itself (await_suspend has stored the handle by
 	//then, as AclQLSelectAwait's ResumeExp relies on).  Authorize's shared lock is taken and released inside UserRights, before
@@ -14,6 +29,7 @@ namespace Jde::Access::Server{
 		try{
 			const UserPK userPK{ _query.AsNumber<UserPK::Type>("id", _sl) };
 			THROW_IFX( !userPK.Value, Exception(_sl, ELogLevel::Debug, "userRights needs a user id.") );
+			Authorizer().TestUser( _executer, _sl );//the acl check passes anyone, the anonymous included, while acl is unenforced.
 			if( _executer!=userPK )//one's own rights are always readable - "why am I denied" should not itself need a grant.
 				GetTable( "acl" ).Authorize( ERights::Read, _executer, _sl );
 			for( let& resource : Authorizer().UserRights(userPK) ){
@@ -24,21 +40,12 @@ namespace Jde::Access::Server{
 					jresource["criteria"] = resource.Cached->Criteria;
 					jresource["deleted"] = resource.Cached->IsDeleted ? jvalue{ ToIsoString(*resource.Cached->IsDeleted) } : jvalue{ nullptr };
 				}
-				jarray sources;
-				for( let& source : resource.Sources ){
-					jarray path;
-					for( let group : source.Groups )
-						path.push_back( jobject{ {"id", group.Value}, {"type", "group"} } );
-					for( let role : source.Roles )
-						path.push_back( jobject{ {"id", role.Value}, {"type", "role"} } );
-					sources.push_back( jobject{ {"permissionId", source.Permission.Value}, {"allowed", underlying(source.Allowed)}, {"denied", underlying(source.Denied)}, {"path", move(path)} } );
-				}
 				y.push_back( jobject{
 					{"resource", move(jresource)},
 					{"allowed", underlying(resource.Rights.Allowed)},
 					{"denied", underlying(resource.Rights.Denied)},
 					{"effective", underlying(resource.Rights.Effective())},
-					{"sources", move(sources)}
+					{"sources", SourcesJson(resource.Sources)}
 				} );
 			}
 		}

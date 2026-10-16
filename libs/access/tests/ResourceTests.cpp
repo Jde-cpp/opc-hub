@@ -131,7 +131,7 @@ namespace Jde::Access::Tests{
 			else if( slug=="roles" )
 				expected = base | ERights::Subscribe;
 			else if( slug=="resources" )
-				expected = ERights::Read | ERights::Delete | ERights::Subscribe;
+				expected = ERights::Read | ERights::Delete | ERights::Administer | ERights::Subscribe;
 			else if( slug=="acl" )
 				expected = ERights::Read | ERights::Administer | ERights::Subscribe;
 			ASSERT_EQ( expected, allowed ) << "slug=" << slug;
