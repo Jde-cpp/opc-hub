@@ -440,26 +440,12 @@ namespace Jde::Opc::Gateway{
 			await.ResumeExp( move(e) );
 		}
 	}
-	α HistHost::GroupPurging( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask{
+	α HistHost::GroupPurging( HistGroupPK id, UserPK by, string& guid, HistWork& await )ι->VoidTask{
 		try{
-			//Its own access row and the grants on it go first, through the AppServer as the resource sync writes its rows (#357):  keyed by
-			//the guid, nothing else would ever purge them - the Resources page lists no criteria row - and nothing of the group goes until
-			//the AppServer has answered.  A deleted group is purged too, so the guid is the row's, not a host's;  most groups have no row
-			//of their own, which the AppServer answers NotFound.  No purged event exists, so the authorizers keep the row until their next
-			//load:  nothing asks with its guid again.
+			//The key of its access row, which GroupPurged purges once the row is gone.  A deleted group is purged too, so the row's, not a host's.
 			auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
-			if( rows.size() ){
-				let& guid = rows.front().Guid;
-				auto purge = AppClient()->Query<jvalue>( "purgeResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", guid}} );
-				try{
-					co_await Any( *purge );
-					INFO( "[{}]The group's access row purged with it.", guid );
-				}
-				catch( const Exception& e ){
-					if( e.HttpStatus()!=EHttpStatus::NotFound )
-						throw;
-				}
-			}
+			if( rows.size() )
+				guid = rows.front().Guid;
 			if( auto host = Remove(id, Writer(by), SRCE_CUR); host )
 				co_await host->Group()->Settled();
 			let view = GetViewPtr( "hist_group_nodes" );
@@ -469,6 +455,22 @@ namespace Jde::Opc::Gateway{
 		catch( runtime_error& e ){
 			await.ResumeExp( move(e) );
 		}
+	}
+	α HistHost::GroupPurged( string guid, HistWork& await )ι->VoidTask{
+		//Its own access row and the grants on it, through the AppServer as the resource sync writes its rows (#357):  keyed by the guid,
+		//nothing else would ever purge them - the Resources page lists no criteria row.  After the group's purge has landed, so a local
+		//failure leaves the group its row, and best effort:  a refusal - the gateway's login not administering an enforced `gateway`
+		//root - or an AppServer out of reach leaves the row, inert, since no later group takes its guid.  Most groups have no row of
+		//their own, which the AppServer answers NotFound.  No purged event exists, so the authorizers keep the row until their next load.
+		try{
+			co_await Any( *AppClient()->Query<jvalue>("purgeResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", guid}}) );
+			INFO( "[{}]The group's access row purged with it.", guid );
+		}
+		catch( const runtime_error& e ){
+			if( let p = dynamic_cast<const Exception*>(&e); !p || p->HttpStatus()!=EHttpStatus::NotFound )
+				WARN( "[{}]The group's access row wasn't purged with it, and stays, inert:  {}", guid, e.what() );
+		}
+		await.Done();
 	}
 	α HistHost::NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask{
 		try{

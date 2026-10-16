@@ -60,7 +60,7 @@ namespace Jde::Opc::Gateway{
 		//hist_groups table's, as Authorize::Test resolves a criteria - `enforced` asks TestEnforced, as a history edit does - then
 		//TestEnabled, and NotFound for a group the gateway doesn't host.  The guid, not the id (#357):  every gateway's schema is
 		//`gateway`, so gateways on one AppServer would share a row keyed by id, and a database recreated starts its ids again under an
-		//older group's row;  a guid is never reused, and a purged group's row goes with it (GroupPurging).  A group that isn't hosted
+		//older group's row;  a guid is never reused, and a purged group's row goes with it (GroupPurged).  A group that isn't hosted
 		//is gated by the table's row alone, as one with no row of its own is, so a caller learns nothing of an id before the gate.
 		α Gate( HistGroupPK id, Access::ERights rights, bool enforced, UserPK by, SRCE )ε->sp<HistGroupHost>;
 		//The collector's credential for a connection (spec *Collector contract*):  /gateway/hist/credentials/<slug>'s user and
@@ -80,7 +80,8 @@ namespace Jde::Opc::Gateway{
 		α GroupEdited( DB::Key key, HistWork& await )ι->VoidTask;//its threshold columns:  every member's re-resolved.
 		α GroupDeleted( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//every member leaves, by the caller.
 		α GroupRestored( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//its rows join again, and the members its template gained meanwhile resolve.
-		α GroupPurging( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask;//as deleted, then its hist_group_nodes rows go.
+		α GroupPurging( HistGroupPK id, UserPK by, string& guid, HistWork& await )ι->VoidTask;//as deleted, then its hist_group_nodes rows go;  guid:  the row's, for GroupPurged.
+		α GroupPurged( string guid, HistWork& await )ι->VoidTask;//its access row and the grants on it, best effort.
 		α NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask;
 		α NodeEdited( HistGroupNodePK id, HistWork& await )ι->VoidTask;
 		α NodePurging( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask;

@@ -9,9 +9,9 @@ import { AppService, confirm, errorText, Mutation, MutationType, SnackbarService
 import { RolePermission, RolePermissionRow, roleMutation, toggleRights, toRolePermissions, withMutation } from '../../node-detail/node-access/node-rights/role-permission';
 import { NodeRights } from '../../node-detail/node-access/node-rights/node-rights';
 
-//The group as the tab needs it:  its id, which the page keys it by;  its guid, the criteria of its own resource (#357) - a saved
-//group's, so set wherever the tab shows, and a row without one is refused, never keyed by the table's root;  and its name, what
-//that resource is called
+//The group as the tab needs it:  its id, which the route keys it by;  its guid, the criteria of its own resource (#357) and what the tab
+//tells groups apart by - a saved group's, so set wherever the tab shows, and a row without one is refused, never keyed by the table's
+//root;  and its name, what that resource is called
 export type HistGroupRef = { id:number; guid?:string; name:string };
 //A resource row as the tab reads it, the group's own or the table's;  `enforced` is `deleted` null, the Resources page's switch
 export type HistGroupResource = { id:number; enforced:boolean };
@@ -74,11 +74,14 @@ export class HistGroupAccess{
 	loading = signal( false );
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
-	shown = signal<number|undefined>( undefined );//the group whose rows are on screen, from a read that landed;  undefined until one has
+	//The guid of the group whose rows are on screen, from a read that landed;  undefined until one has.  Its guid, not its id, which
+	//another gateway's group shares when the router reuses the page for it (reviews-issue/historian-group-access-row.md #6).
+	shown = signal<string|undefined>( undefined );
+	onScreen = computed( ()=>!!this.shown() && this.shown()==this.group().guid );
 	//The rows on screen are a finished read of the group the tab is given, and nothing is on the wire:  the grid and every action wait
 	//for it, so none acts on another group's rows (reviews-issue/historian-group-access.md #2), on rows a read is about to replace (#9),
 	//or on a baseline a failed read left behind (#4).
-	ready = computed( ()=>this.shown()==this.group().id && !this.loading() && !this.error() && !this.busy() );
+	ready = computed( ()=>this.onScreen() && !this.loading() && !this.error() && !this.busy() );
 	#reads = 0;//numbers each read, so only the latest lands
 
 	static readonly resourcesQuery = 'resources( schemaName:$schemaName, slug:$slug ){ id criteria deleted }';
@@ -89,7 +92,7 @@ export class HistGroupAccess{
 	//and on the table's
 	async load( group:HistGroupRef=this.group() ):Promise<void>{
 		const read = ++this.#reads;
-		if( group.id!=this.shown() ){//another group:  nothing of the last one's stays on screen to act on while this one is read, or after it fails
+		if( group.guid!=this.shown() ){//another group:  nothing of the last one's stays on screen to act on while this one is read, or after it fails
 			this.shown.set( undefined );
 			this.own.set( undefined );
 			this.table.set( undefined );
@@ -118,7 +121,7 @@ export class HistGroupAccess{
 			this.original = permissions;
 			this.roles.set( permissions.map( r=>({...r}) ) );
 			this.mutations.set( [] );
-			this.shown.set( group.id );
+			this.shown.set( criteria );
 		}
 		catch( e ){
 			if( read==this.#reads )

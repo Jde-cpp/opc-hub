@@ -58,16 +58,21 @@ namespace Jde::Access::Server{
 			for( let& schema : schemas )
 				auth.TestSchemaAdmin( schema, _executer, _sl );
 			if( _mutation.Type==Purge ){
-				//By its key, the schema's administrator tested first, so a caller who isn't one learns nothing of its rows.  The row's own
-				//administrators aren't asked, as an update's are:  the row goes with what it governed, a hist group purged by its gateway (#357),
-				//and its grants with it (access_resource_purge).  The stock purge takes an id, so the key becomes one here.
+				//By its key, a criteria row's:  a root's purge takes every grant on its slug, and stays the system's, by id (review #4).  Each
+				//admin check comes before the lookup, so a caller who fails one learns nothing of its rows.  Under an active root the schema's
+				//administrator is enough, as an update's;  under an open one a criteria row can still govern - an OPC branch (OpcAuthorize) - so
+				//the purge, which takes its grants (access_resource_purge), asks what revoking one does (review #1).
 				let slug = Json::FindString( args, "slug" );
-				THROW_IFX( !slug, Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "purgeResource takes the row's key:  schemaName, slug and criteria.") );
-				let criteria = args.if_contains( "criteria" );
+				let criteria = Json::FindString( args, "criteria" );
+				THROW_IFX( !slug || !criteria || criteria->empty(), Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "purgeResource takes a criteria row's key:  schemaName, slug and criteria.  A root's purge is the system's, by id.") );
 				let& schema = *schemas.begin();
-				let rows = co_await *LocalQL().Query( "resources( schemaName:$schemaName, slug:$slug, criteria:$criteria ){ id }", jobject{ {"schemaName", schema}, {"slug", *slug}, {"criteria", criteria ? *criteria : jvalue{}} }, UserPK{UserPK::System}, true, _sl );
+				if( !auth.FindActiveResourcePK(schema, *slug, {}) ){
+					auto adminCheck = auth.TestAdminGrant( schema, *slug, *criteria, _executer, _sl );
+					co_await *adminCheck;
+				}
+				let rows = co_await *LocalQL().Query( "resources( schemaName:$schemaName, slug:$slug, criteria:$criteria ){ id }", jobject{ {"schemaName", schema}, {"slug", *slug}, {"criteria", *criteria} }, UserPK{UserPK::System}, true, _sl );
 				let& found = Json::AsArray( rows, _sl );
-				THROW_IFX( found.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource ({}, {}, {}) not found.", schema, *slug, criteria ? serialize(*criteria) : "null") );
+				THROW_IFX( found.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource ({}, {}, {}) not found.", schema, *slug, *criteria) );
 				_mutation.Args = jobject{ {"id", QL::AsId<ResourcePK::Type>(found[0], _sl)} };
 			}
 			let create = _mutation.Type==Create;

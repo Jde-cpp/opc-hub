@@ -221,6 +221,29 @@ describe( 'HistGroupAccess', ()=>{
 		await d.page.save();
 		expect( d.mutations ).toEqual( [] );
 	} );
+	//historian-group-access-row.md #6:  another gateway's group 5 kept this one's card, roles and unsaved ticks on screen while its read
+	//ran, and beside the error when it failed - the tab told groups apart by id, which every gateway numbers from 1
+	it( "tells another gateway's group of the same id apart by its guid", async ()=>{
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
+		d.page.onToggle( {role: d.page.roles()[0], rights: Rights.Update} );
+		expect( d.page.mutations() ).toHaveLength( 1 );
+		let late!:( rows:any[] )=>void;
+		d.appService.queryArray.mockImplementationOnce( ()=>new Promise<any[]>( r=>late = r ) );
+		d.fixture.componentRef.setInput( 'group', {id: 5, guid: fansGuid, name: 'Fans'} );
+		d.fixture.detectChanges();
+		expect( d.fixture.nativeElement.querySelector( 'section.governs' ) ).toBeNull();
+		await settle();
+		expect( d.page.own() ).toBeUndefined();
+		expect( d.page.roles() ).toEqual( [] );
+		expect( d.page.mutations() ).toEqual( [] );
+		expect( d.page.ready() ).toBe( false );
+		late( [table] );
+		await settle();
+		expect( d.calls.filter( c=>c.vars.criteria ).at( -1 )!.vars.criteria ).toBe( fansGuid );
+		expect( d.page.shown() ).toBe( fansGuid );
+		expect( d.page.own() ).toBeUndefined();
+		expect( d.page.ready() ).toBe( true );
+	} );
 	//#4:  a save that landed, then a read that failed, left the applied batch in Save, which resent removes already gone
 	it( 'clears an applied batch when the read after it fails, and waits for a good read', async ()=>{
 		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
