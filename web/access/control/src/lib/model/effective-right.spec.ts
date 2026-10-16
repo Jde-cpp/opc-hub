@@ -77,10 +77,18 @@ describe( 'EffectiveRight.fromRows on node resources', ()=>{
 	const nodeRow = ( id:number, criteria:string )=>new Resource( {id, schemaName: "opc.install", slug: "nodeIds", name: "nodeIds", criteria, deleted: undefined} );
 	const onTable:UserRightsRow = { resource: {id: 20, schemaName: "opc.install", slug: "nodeIds", criteria: "", deleted: null}, allowed: Rights.Read, denied: Rights.None, effective: Rights.Read, sources: [ {permissionId: 5, allowed: Rights.Read, denied: Rights.None, path: [{id: 11, type: "role"}]} ] };
 
-	it( 'marks a node the user holds nothing on as a lockout under its table, named and offering what the table offers', ()=>{
+	//reviews-issue/252-effective-rights-group.md #1:  OpcAuthorize adds a node's grants to its table's, so the table's Read holds there.
+	it( 'adds no row for a node the user holds nothing on under a table that gives them something', ()=>{
 		const rights = EffectiveRight.fromRows( [onTable], [table(), nodeRow(32, "ns=4;i=6030")], names );
 		const root = rights.find( r=>r.resource.id==20 )!;
 		expect( root.effective ).toBe( Rights.Read );
+		expect( root.children ).toEqual( [] );
+	} );
+
+	it( 'marks a node the user holds nothing on as a lockout under a table that gives them nothing, named and offering what the table offers', ()=>{
+		const rights = EffectiveRight.fromRows( [], [table(), nodeRow(32, "ns=4;i=6030")], names );
+		const root = rights.find( r=>r.resource.id==20 )!;
+		expect( root.isLockout ).toBe( true );
 		expect( root.children.map(c=>c.resource.id) ).toEqual( [32] );
 		const node = root.children[0];
 		expect( node.isLockout ).toBe( true );
@@ -101,6 +109,18 @@ describe( 'EffectiveRight.fromRows on node resources', ()=>{
 		expect( node.isLockout ).toBe( false );
 		expect( node.resource.name ).toBe( "node_ids" );
 		expect( node.resource.availableRights ).toBe( Rights.Read|Rights.Update );
+	} );
+
+	it( 'adds the table\'s grants to a granted node\'s, a deny on either winning', ()=>{
+		const granted:UserRightsRow = { resource: {id: 32, schemaName: "opc.install", slug: "nodeIds", criteria: "ns=4;i=6030", deleted: null}, allowed: Rights.Update, denied: Rights.Delete, effective: Rights.Update, sources: [ {permissionId: 6, allowed: Rights.Update, denied: Rights.Delete, path: []} ] };
+		const table_:UserRightsRow = { ...onTable, allowed: Rights.Read|Rights.Delete, effective: Rights.Read|Rights.Delete, sources: [ {permissionId: 5, allowed: Rights.Read|Rights.Delete, denied: Rights.None, path: [{id: 11, type: "role"}]} ] };
+		const root = EffectiveRight.fromRows( [table_, granted], [table(), nodeRow(32, "ns=4;i=6030")], names ).find( r=>r.resource.id==20 )!;
+		expect( root.effective ).toBe( Rights.Read|Rights.Delete );
+		const node = root.children[0];
+		expect( node.effective ).toBe( Rights.Read|Rights.Update );
+		expect( node.denied ).toBe( Rights.Delete );
+		expect( EffectiveRight.tooltip(node, Rights.Read) ).toBe( "Allowed - role Viewer, on the table" );
+		expect( EffectiveRight.tooltip(node, Rights.Delete) ).toBe( "Allowed - role Viewer, on the table\nDenied - direct grant" );
 	} );
 } );
 

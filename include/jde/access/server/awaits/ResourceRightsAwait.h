@@ -5,7 +5,7 @@
 namespace Jde::Access::Server{
 	//resourceRights( id: ){ resource{id schemaName slug criteria deleted} roles{id allowed denied sources{…}} groups{…} users{… effective …} }
 	//where sources{ permissionId allowed denied path{id type} }.  Everyone a resource's grants reach, from the server's cache
-	//(Authorize::Holders) - so a user's numbers are the ones Test and Rights enforce.  UserRightsAwait's twin:  a system table,
+	//(Authorize::Holders) - so a user's numbers are the ones Test and Rights enforce.  IdentityRightsAwait's twin:  a system table,
 	//its fixed shape emitted whole, rights numeric, names left to the client.  A path is relative to its row - see Holders.
 	//Gate:  Read on `acl`, the gate acl( identityId: ) and another user's userRights have.
 	struct ResourceRightsAwait final : TAwait<jvalue>, noncopyable{

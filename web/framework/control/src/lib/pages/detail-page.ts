@@ -104,7 +104,12 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	protected get onlyPropertiesTab():boolean{ return !this.row.id; }
 	protected get title():string{ return this.row.name; }
 
-	row!:T;
+	//A signal behind the accessor:  the router reuses a page across ':slug', and in this zoneless app a tab's template that
+	//reads a plain field - Effective rights' [holder]="{groupId: group.id}" - was never checked again, so a sibling's page
+	//kept the last record's rights (found walking reviews-issue/252-effective-rights-group.md #6).
+	get row():T{ return this.#row(); }
+	set row( row:T ){ this.#row.set( row ); }
+	#row = signal<T>( undefined as any );
 	pageData!:DetailResolverData<T>;
 	get schema(){ return this.pageData.schema; }
 	get id(){ return this.row.id; }

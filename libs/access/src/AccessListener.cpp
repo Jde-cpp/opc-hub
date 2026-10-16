@@ -61,6 +61,9 @@ namespace Jde::Access{
 	α AccessListener::GroupChanged( GroupPK groupPK, ESubscription event, const jobject& o )ε->void{
 		using enum ESubscription;
 		switch( event ){
+			case Created:
+				Authorizer().CreateGroup( groupPK );
+				break;
 			case Added:
 			case Removed:{
 				flat_set<IdentityPK::Type> members;
