@@ -6,6 +6,7 @@
 #include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/io/records/Framing.h>
 #include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include "Clock.h"
@@ -200,7 +201,7 @@ namespace Jde::Opc::Hist{
 	struct Group;
 	struct GroupFiles;
 	struct Joined;
-	struct Run;
+	using Run = IO::Records::Run;//an append to a day file, as the record layer has it.
 	struct Store;
 
 	//A subscriber (spec *Subscriptions*):  from its registration on, every record stored for its nodes as it is

@@ -1,4 +1,4 @@
-//Day files and durability (#228):  the lock on hist.path, the two-slot .flushed file, the buffer's flush at 8 KB and at
+//Day files and durability (#228):  the lock on hist.path, the buffer's flush at 8 KB and at
 //`delay`, what a full buffer drops and how its gap is marked, and each live file's runs.
 #include "dayFiles.h"
 #include <fstream>
@@ -62,125 +62,6 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
-	struct FlushedTests : ::testing::Test{
-		α SetUp()->void override{ fs::create_directories( File.parent_path() ); }
-		α TearDown()->void override{
-			fs::remove_all( File.parent_path() );
-			std::error_code ec;
-			fs::remove( File.parent_path().parent_path(), ec );
-		}
-		Ω Slot( TimePoint time, uint32_t sequence, Day recover=March6 )ι->string{
-			string y( Flushed::SlotSize, '\0' );
-			let t = (uint64_t)ticks( time );
-			for( uint i=0; i<8; ++i )
-				y[i] = (char)( t>>(8*i) );
-			for( uint i=0; i<4; ++i )
-				y[8+i] = (char)( sequence>>(8*i) );
-			let day = (uint32_t)sys_days{ recover }.time_since_epoch().count();
-			for( uint i=0; i<4; ++i )
-				y[12+i] = (char)( day>>(8*i) );
-			let crc = IO::Crc::Calc32c( sv{y}.substr(0, 16) );
-			for( uint i=0; i<4; ++i )
-				y[16+i] = (char)( crc>>(8*i) );
-			return y;
-		}
-		//As a flush writes it.
-		Ω Write( Flushed& flushed, TimePoint time, Day recover=March6 )ε->void{
-			let slot = flushed.Next( time, recover );
-			BlockVoidAwait( slot.Write() );
-			flushed.Wrote( slot );
-		}
-		const TimePoint Time{ sys_days{2026y/March/7}+17h };
-		const fs::path File{ fs::current_path()/"hist-tests"/::testing::UnitTest::GetInstance()->current_test_info()->name()/"group.flushed" };
-	};
-
-	//Two 20-byte slots, written alternately in place:  the time in UA ticks, a sequence, the day a start looks for live
-	//files from, in days since 1970-01-01, and a CRC-32C, little-endian.
-	TEST_F( FlushedTests, AlternatesSlots ){
-		{
-			Flushed flushed{ File };
-			EXPECT_FALSE( flushed.Time() );//no file:  never flushed.
-			EXPECT_FALSE( flushed.Recover() );
-			EXPECT_FALSE( fs::exists(File) );
-			Write( flushed, Time );
-			EXPECT_EQ( flushed.Time(), Time );
-			EXPECT_EQ( contents(File), Slot(Time, 1) );
-			Write( flushed, Time+1min );
-			EXPECT_EQ( contents(File), Slot(Time, 1)+Slot(Time+1min, 2) );
-			Write( flushed, Time+2min, March7 );
-			EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+1min, 2) );
-			EXPECT_EQ( flushed.Time(), Time+2min );
-			EXPECT_EQ( flushed.Recover(), March7 );
-		}
-		Flushed read{ File };
-		EXPECT_EQ( read.Time(), Time+2min );
-		EXPECT_EQ( read.Recover(), March7 );
-		constexpr Day first{ 1601y/January/1 };//before 1970, so negative.
-		Write( read, Time+3min, first );//over the older slot.
-		EXPECT_EQ( contents(File), Slot(Time+2min, 3, March7)+Slot(Time+3min, 4, first) );
-		EXPECT_EQ( Flushed{File}.Recover(), first );
-	}
-
-	//A write torn at any byte loses that flush's time, not the file:  the reader falls back to the other slot, and the
-	//next write goes over the torn one.
-	TEST_F( FlushedTests, TornSlotFallsBack ){
-		let before = Slot( Time, 1 )+Slot( Time+1min, 2 );
-		let written = Slot( Time+2min, 3 );
-		for( uint torn=0; torn<Flushed::SlotSize; ++torn ){
-			SCOPED_TRACE( Ƒ("{} bytes of the slot written", torn) );
-			save( File, written.substr(0, torn)+before.substr(torn) );
-			Flushed flushed{ File };
-			EXPECT_EQ( flushed.Time(), Time+1min );
-			Write( flushed, Time+3min );
-			EXPECT_EQ( contents(File), Slot(Time+3min, 3)+Slot(Time+1min, 2) );
-		}
-		save( File, written+before.substr(Flushed::SlotSize) );
-		EXPECT_EQ( Flushed{File}.Time(), Time+2min );//whole.
-
-		for( uint torn=0; torn<Flushed::SlotSize; ++torn ){//the second slot's first write, which grows the file.
-			save( File, Slot(Time, 1)+Slot(Time+1min, 2).substr(0, torn) );
-			EXPECT_EQ( Flushed{File}.Time(), Time ) << torn;
-		}
-	}
-
-	TEST_F( FlushedTests, NoValidSlot ){
-		if( !Logging::FindLogger<Logging::MemoryLog>() )
-			Logging::AddLogger( mu<Logging::MemoryLog>() );
-		for( let& bytes : {string{}, string(32, '\0'), string(32, 'x'), Slot(Time, 1).substr(0, 9)} ){
-			save( File, bytes );
-			Logging::ClearMemory();
-			Flushed flushed{ File };
-			EXPECT_FALSE( flushed.Time() );
-			let warned = Logging::Find( [this]( const Logging::Entry& e ){ return e.Message().contains(File.string()); } );
-			ASSERT_EQ( warned.size(), 1 );
-			EXPECT_EQ( warned[0].Level, ELogLevel::Warning );
-			Write( flushed, Time );
-			EXPECT_EQ( Flushed{File}.Time(), Time );
-		}
-	}
-
-	//A file that opens but can't be read, here a directory, is an error, not a group that never flushed:  libc++ reports
-	//the failed read as the end of the file.
-	TEST_F( FlushedTests, UnreadableThrows ){
-		fs::create_directories( File );
-		EXPECT_THROW( Flushed{File}, Exception );
-		fs::remove( File );
-	}
-
-	//The sequence wraps, so the later slot is the one ahead by less than half its range.
-	TEST_F( FlushedTests, SequenceWraps ){
-		let last = std::numeric_limits<uint32_t>::max();
-		save( File, Slot(Time+1min, 0)+Slot(Time, last) );
-		Flushed flushed{ File };
-		EXPECT_EQ( flushed.Time(), Time+1min );
-		Write( flushed, Time+2min );
-		EXPECT_EQ( contents(File), Slot(Time+1min, 0)+Slot(Time+2min, 1) );
-		save( File, Slot(Time, last-1)+Slot(Time+1min, last) );
-		Flushed wrapped{ File };
-		Write( wrapped, Time+2min );
-		EXPECT_EQ( contents(File), Slot(Time+2min, 0)+Slot(Time+1min, last) );
-	}
-
 	//Another historian on the same hist.path, a second gateway or an OpcServer whose path collides:  it runs without its
 	//historian, saying so at Critical, and the one that holds the lock is untouched.
 	TEST_F( GatewayFiles, HeldLockDisables ){
@@ -237,13 +118,15 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( Library->Buffered(), 0 );
 		EXPECT_EQ( group->Flushed(), joined+1min );
-		EXPECT_EQ( Flushed{Path()/(group->Name()+".flushed")}.Time(), joined+1min );
+		let flushed = IO::Records::Flushed::Load( Path()/(group->Name()+".flushed") ).Time();
+		ASSERT_TRUE( flushed );
+		EXPECT_EQ( UADateTime{(UA_DateTime)*flushed}.Time(), joined+1min );
 		let records = readFile( file );
 		ASSERT_EQ( records.size(), 4 );
 		ASSERT_TRUE( records[0].has_file_start() );
 		EXPECT_EQ( records[0].file_start().ts(), StartOf(March7, utc()) );
 		EXPECT_EQ( records[0].file_start().generation(), 0 );
-		EXPECT_EQ( records[0].file_start().next_node_index(), 0 );//the host's indexes.
+		EXPECT_TRUE( std::ranges::none_of(records, &HistoryRecord::has_issued) );//the host's indexes:  no Issued record.
 		EXPECT_TRUE( isPreamble(records[1], speed, March7) );
 		EXPECT_FALSE( records[1].node_added().has_start() );
 		EXPECT_TRUE( isValue(records[2], speed, 1750, joined-2s) );
@@ -344,17 +227,17 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 2 );
 		EXPECT_TRUE( Flush(*Server) );
 		auto records = readFile( File(March8) );
-		ASSERT_EQ( records.size(), 4 );
-		EXPECT_EQ( records[0].file_start().next_node_index(), 3 );
-		EXPECT_TRUE( isPreamble(records[1], speed, March8) );
-		let& start = records[1].node_added().start();
+		ASSERT_EQ( records.size(), 5 );
+		EXPECT_EQ( records[1].issued().next_node_index(), 3 );//right after the FileStart.
+		EXPECT_TRUE( isPreamble(records[2], speed, March8) );
+		let& start = records[2].node_added().start();
 		EXPECT_EQ( start.node_index(), 0 );//its record's.
 		EXPECT_EQ( start.source_ts(), ticks(first) );
 		EXPECT_EQ( start.server_ts(), ticks(first) );
 		EXPECT_EQ( start.value().double_value(), 1 );
-		EXPECT_TRUE( isPreamble(records[2], flow, March8) );
-		EXPECT_FALSE( records[2].node_added().has_start() );//nothing stored yet.
-		EXPECT_TRUE( isValue(records[3], speed, 2, second) );
+		EXPECT_TRUE( isPreamble(records[3], flow, March8) );
+		EXPECT_FALSE( records[3].node_added().has_start() );//nothing stored yet.
+		EXPECT_TRUE( isValue(records[4], speed, 2, second) );
 
 		Start( {{Node("Pump1.Speed")}, {Node("Pump1.Flow")}} );
 		EXPECT_TRUE( Server->Buffer().empty() );//both are in the newest file's preamble.
@@ -363,11 +246,12 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( flow, 5 );
 		EXPECT_TRUE( Flush(*Server) );
 		records = readFile( File(March9) );
-		ASSERT_EQ( records.size(), 4 );
-		EXPECT_EQ( records[1].node_added().start().source_ts(), ticks(second) );
-		EXPECT_EQ( records[1].node_added().start().value().double_value(), 2 );
-		EXPECT_FALSE( records[2].node_added().has_start() );
-		EXPECT_TRUE( isValue(records[3], flow, 5, Time->Now()) );
+		ASSERT_EQ( records.size(), 5 );
+		EXPECT_EQ( records[1].issued().next_node_index(), 3 );
+		EXPECT_EQ( records[2].node_added().start().source_ts(), ticks(second) );
+		EXPECT_EQ( records[2].node_added().start().value().double_value(), 2 );
+		EXPECT_FALSE( records[3].node_added().has_start() );
+		EXPECT_TRUE( isValue(records[4], flow, 5, Time->Now()) );
 	}
 
 	//A day file a restart can't tell is there may be the newest, and say an index is taken:  adding the group throws
@@ -401,7 +285,7 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 1 );
 		Server->Enqueue( flow, Reading(9, Time->Now()+days{2}) );//a writer's clock two days ahead.
 		EXPECT_TRUE( Flush(*Server) );
-		EXPECT_EQ( readFile(File(March9))[1].node_added().start().value().double_value(), 1 );
+		EXPECT_EQ( readFile(File(March9))[2].node_added().start().value().double_value(), 1 );//after the FileStart and the Issued.
 		Time->Advance( 1h );
 		let second = Time->Now();
 		SetValue( speed, 2 );
@@ -412,14 +296,14 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 3 );
 		EXPECT_TRUE( Flush(*Server) );
 		let records = readFile( File(March8) );
-		ASSERT_GE( records.size(), 3 );
-		ASSERT_TRUE( isPreamble(records[1], speed, March8) );
-		let& start = records[1].node_added().start();//the stop's marker, which the value of March 8 ends:  until then the node reads Bad.
+		ASSERT_GE( records.size(), 4 );
+		ASSERT_TRUE( isPreamble(records[2], speed, March8) );
+		let& start = records[2].node_added().start();//the stop's marker, which the value of March 8 ends:  until then the node reads Bad.
 		EXPECT_EQ( start.status(), UA_STATUSCODE_BADDATALOST );
 		EXPECT_FALSE( start.has_value() );
 		EXPECT_EQ( start.source_ts(), ticks(second) );
-		ASSERT_TRUE( isPreamble(records[2], flow, March8) );
-		EXPECT_FALSE( records[2].node_added().has_start() );//its newest is after the day, which step 5's walk back covers.
+		ASSERT_TRUE( isPreamble(records[3], flow, March8) );
+		EXPECT_FALSE( records[3].node_added().has_start() );//its newest is after the day, which step 5's walk back covers.
 	}
 
 	//A later day purged under a running host is forgotten:  a membership change after doesn't make its file again.
@@ -521,21 +405,21 @@ namespace Jde::Opc::Hist::Tests{
 		let speed = Historize( "Pump1.Speed" );
 		Server->Enqueue( speed, Reading(1, Time->Now()+days{1}) );//a writer's clock a day ahead.
 		EXPECT_TRUE( Flush(*Server) );
-		EXPECT_EQ( readFile(File(March8)).size(), 3 );
+		EXPECT_EQ( readFile(File(March8)).size(), 4 );//the FileStart, the Issued, the preamble and the value.
 		let flow = Historize( "Pump1.Flow" );
 		Server->Remove( speed );
 		EXPECT_TRUE( Flush(*Server) );
 
 		let today = readFile( File(March7) );
-		ASSERT_EQ( today.size(), 5 );
-		EXPECT_EQ( today[3].node_added().node_index(), flow );
-		EXPECT_EQ( today[3].node_added().ts(), ticks(Time->Now()) );
-		EXPECT_EQ( today[4].node_removed().node_index(), speed );
+		ASSERT_EQ( today.size(), 6 );
+		EXPECT_EQ( today[4].node_added().node_index(), flow );
+		EXPECT_EQ( today[4].node_added().ts(), ticks(Time->Now()) );
+		EXPECT_EQ( today[5].node_removed().node_index(), speed );
 		let tomorrow = readFile( File(March8) );
-		ASSERT_EQ( tomorrow.size(), 5 );
-		EXPECT_TRUE( isPreamble(tomorrow[3], flow, March8) );
-		EXPECT_EQ( tomorrow[4].node_removed().node_index(), speed );
-		EXPECT_EQ( tomorrow[4].node_removed().ts(), StartOf(March8, utc()) );
+		ASSERT_EQ( tomorrow.size(), 6 );
+		EXPECT_TRUE( isPreamble(tomorrow[4], flow, March8) );
+		EXPECT_EQ( tomorrow[5].node_removed().node_index(), speed );
+		EXPECT_EQ( tomorrow[5].node_removed().ts(), StartOf(March8, utc()) );
 
 		Start( {{Node("Pump1.Flow")}, {Node("Tank1.Level")}} );
 		EXPECT_EQ( Server->Find(Node("Pump1.Flow")), flow );
@@ -553,12 +437,12 @@ namespace Jde::Opc::Hist::Tests{
 		Server->Remove( speed );
 		EXPECT_TRUE( Flush(*Server) );
 		let tomorrow = readFile( File(March8) );
-		ASSERT_EQ( tomorrow.size(), 5 );
-		EXPECT_TRUE( isPreamble(tomorrow[1], flow, March8) );
-		EXPECT_TRUE( isPreamble(tomorrow[2], speed, March8) );
-		EXPECT_EQ( tomorrow[3].node_removed().node_index(), speed );
-		EXPECT_EQ( tomorrow[3].node_removed().ts(), StartOf(March8, utc()) );
-		EXPECT_TRUE( isValue(tomorrow[4], speed, 1, Time->Now()+days{1}) );
+		ASSERT_EQ( tomorrow.size(), 6 );
+		EXPECT_TRUE( isPreamble(tomorrow[2], flow, March8) );
+		EXPECT_TRUE( isPreamble(tomorrow[3], speed, March8) );
+		EXPECT_EQ( tomorrow[4].node_removed().node_index(), speed );
+		EXPECT_EQ( tomorrow[4].node_removed().ts(), StartOf(March8, utc()) );
+		EXPECT_TRUE( isValue(tomorrow[5], speed, 1, Time->Now()+days{1}) );
 
 		Start( {{Node("Pump1.Flow")}} );
 		EXPECT_EQ( Server->Find(Node("Pump1.Flow")), flow );

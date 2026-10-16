@@ -2,6 +2,7 @@
 //archive it belongs to, and what a start recovers - the temp file of a rewrite cut short, and the live files a midnight
 //left behind.  The injected clock runs midnight, in UTC and in a zone across its DST change.
 #include "dayFiles.h"
+#include <thread>
 #include <jde/opc/proto/opc.Common.h>
 
 #define let const auto
@@ -11,22 +12,23 @@ namespace Jde::Opc::Hist::Tests{
 	using Proto::HistoryRecord;
 
 	namespace{
-		//An archive's records after its FileStart:  in time order, with no checkpoint among them.
+		//An archive's records after its FileStart, an Issued group's index aside:  in time order, with no checkpoint among them.
 		Ω archived( const fs::path& file, uint32_t generation, Day day, const time_zone& tz=utc() )ε->vector<HistoryRecord>{
-			let bytes = contents( file );
-			google::protobuf::io::ArrayInputStream in{ bytes.data(), (int)bytes.size() };
-			Reader reader{ in, 0, bytes.size(), 0 };
+			auto open = ms<IO::OpenFile>( file );
+			Reader reader{ Run{.Offset=0, .End=open->Size(), .Chain=0, .First=0, .Last=0} };
 			vector<HistoryRecord> y;
 			HistoryRecord r;
-			if( !reader.Next(r) || !r.has_file_start() ){
+			if( !IO::Records::NextNow(reader, open, r) || !r.has_file_start() ){
 				ADD_FAILURE() << file << " opens with no FileStart.";
 				return y;
 			}
 			EXPECT_EQ( r.file_start().generation(), generation ) << file;
 			EXPECT_EQ( r.file_start().ts(), StartOf(day, tz) );
-			EXPECT_EQ( r.file_start().crc(), StartCrc(r.file_start()) );
+			EXPECT_EQ( r.file_start().crc(), IO::Records::StartCrc(r.file_start()) );
 			auto last = r.file_start().ts();
-			while( reader.Next(r) ){
+			while( IO::Records::NextNow(reader, open, r) ){
+				if( r.has_issued() )
+					continue;
 				let t = PrimaryTime( r );
 				EXPECT_TRUE( t && *t>=last ) << r.ShortDebugString();
 				last = t.value_or( last );
@@ -35,13 +37,6 @@ namespace Jde::Opc::Hist::Tests{
 			EXPECT_EQ( reader.Stop(), EStop::End ) << file;
 			EXPECT_TRUE( std::ranges::none_of(y, &HistoryRecord::has_checkpoint) ) << file;
 			return y;
-		}
-		//A live file's is 0.
-		Ω generation( const fs::path& file )ε->uint32_t{
-			let start = ReadStart( file );
-			if( !start )
-				ADD_FAILURE() << file << " opens with no FileStart.";
-			return start ? start->generation() : std::numeric_limits<uint32_t>::max();
 		}
 		Ω temp( const fs::path& file )ι->fs::path{ return fs::path{ file }+=".tmp"; }
 	}
@@ -372,8 +367,8 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
-	//A merge closes the file at its end, while its Rewrite still holds it, so the rewrite's temp file can be renamed over
-	//it:  Windows opened it without FILE_SHARE_DELETE.
+	//A merge lets its file go at its end, while its Rewrite still holds it, so the rewrite's temp file can be renamed over
+	//it:  Windows may refuse a rename over an open file.
 	TEST_F( GatewayFiles, MergeClosesItsFileAtItsEnd ){
 		auto group = AddGroup();
 		let speed = Join( *group, "Pump1.Speed" );
@@ -384,17 +379,25 @@ namespace Jde::Opc::Hist::Tests{
 		}
 		let file = Path()/"merged.binpb";
 		fs::copy_file( File(*group, March7), file );
-		Merge merge{ ms<ReadHandle>(file), Scan(file).Runs, {} };
+		Merge merge{ ms<IO::OpenFile>(file), scan(file).Runs, {} };
 		HistoryRecord r;
 		uint values{};
-		while( merge.Next(r) )
+		while( IO::Records::NextNow(merge, r) )
 			values += r.has_value();
 		EXPECT_EQ( values, 2 );
+		EXPECT_FALSE( merge.File() );
 #ifndef _WIN32
-		for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
-			std::error_code ec;
-			EXPECT_NE( fs::read_symlink(fd.path(), ec), file );
-		}
+		let open = [&]{//the last read's completion holds its handle a moment past the resume.
+			for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
+				std::error_code ec;
+				if( fs::read_symlink(fd.path(), ec)==file )
+					return true;
+			}
+			return false;
+		};
+		for( let deadline = steady_clock::now()+2s; open() && steady_clock::now()<deadline; )
+			std::this_thread::sleep_for( 5ms );
+		EXPECT_FALSE( open() );
 #endif
 		let temp = Path()/"merged.tmp";
 		save( temp, "rewritten" );
@@ -522,10 +525,10 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 3 );
 		EXPECT_TRUE( Flush(*Server) );
 		let today = readFile( File(March9) );
-		ASSERT_EQ( today.size(), 4 );
-		EXPECT_EQ( today[1].node_added().start().value().double_value(), 2 );
-		EXPECT_EQ( today[2].value().status(), UA_STATUSCODE_BADDATALOST );//the stop's marker.
-		EXPECT_EQ( today[3].value().value().double_value(), 3 );
+		ASSERT_EQ( today.size(), 5 );//the FileStart, the Issued, the preamble, the marker and the value.
+		EXPECT_EQ( today[2].node_added().start().value().double_value(), 2 );
+		EXPECT_EQ( today[3].value().status(), UA_STATUSCODE_BADDATALOST );//the stop's marker.
+		EXPECT_EQ( today[4].value().value().double_value(), 3 );
 		EXPECT_EQ( generation(file), 1 );
 	}
 
@@ -568,9 +571,9 @@ namespace Jde::Opc::Hist::Tests{
 		};
 		string bytes;
 		Appender opening{ bytes, 0 };
-		HistoryRecord first;
-		first.mutable_file_start()->set_ts( start );
-		opening.Add( move(first) );
+		Proto::FileStart first;
+		first.set_ts( start );
+		opening.Start( first );
 		opening.Add( preamble(101, "Pump1.Speed", 1) );
 		opening.Add( preamble(102, "Pump1.Flow", 5) );
 		auto chain = opening.Seal();

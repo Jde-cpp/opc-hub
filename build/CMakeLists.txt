@@ -369,6 +369,7 @@ ExternalProject_Add(protobuf
 		-Dprotobuf_ABSL_PROVIDER=package
 		-Dprotobuf_LOCAL_DEPENDENCIES_ONLY=ON
 		-Dprotobuf_MSVC_STATIC_RUNTIME=OFF
+		-Dprotobuf_BUILD_SHARED_LIBS=ON #one shared protobuf for Jde and every exe, as abseil:  Jde links it for the record layer's proto (libs/fwk/src/io/records), and a static copy in it beside the exes' would register every descriptor twice.
 )
 # protoc links the shared abseil, but protobuf pins its install RPATH to its own lib dir ($ORIGIN/../lib) and Windows
 # loads from beside the exe - so the build's protobuf_generate steps die on a missing abseil_dll.  Put it where protoc

@@ -34,7 +34,8 @@ endif()
 get_filename_component(thread_cpp ${CMAKE_CURRENT_SOURCE_DIR}/process/thread.cpp ABSOLUTE)
 list(REMOVE_ITEM sources "${thread_cpp}")
 
-target_sources( ${targetName} PRIVATE ${sources} ${headers} )
+file( GLOB protos CONFIGURE_DEPENDS io/records/proto/*.proto )
+target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 
 target_link_libraries( ${targetName} PUBLIC fmt::fmt )
 target_link_libraries( ${targetName} PUBLIC Boost::json )
@@ -42,6 +43,20 @@ target_link_libraries( ${targetName} PUBLIC Boost::json )
 #io/crc.h's inline Calc32c calls absl.  It also hands every target abseil_dll's ABSL_CONSUME_DLL - the ones that only reach
 #absl through protobuf's headers included.
 target_link_libraries( ${targetName} PUBLIC absl::abseil_dll )
+#PUBLIC too:  the record layer's headers (io/records) include its generated proto, and the imported target carries
+#PROTOBUF_USE_DLLS and the absl/utf8_range chain protobuf 35's generated code needs, as libs/opc links it.
+target_link_libraries( ${targetName} PUBLIC protobuf::libprotobuf )
+#Out-of-source, as libs/opc does:  <jde/fwk/proto/X.pb.h> resolves through the exported root, and ${protoOutDir} too, so a
+#proto importing Jde.IO.Records.proto finds its header by bare name.
+set( protoOutDir ${jdeGeneratedIncludeDir}/jde/fwk/proto )
+file( MAKE_DIRECTORY ${protoOutDir} )
+protobuf_generate(
+	TARGET ${targetName}
+	IMPORT_DIRS io/records/proto
+	PROTOC_OUT_DIR ${protoOutDir}
+)
+suppressProtoWarnings( "${protos}" ${protoOutDir} )
+target_include_directories( ${targetName} PUBLIC ${jdeGeneratedIncludeDir} ${protoOutDir} )
 if( WIN32 )
 	#Jde.dll is the Boost.JSON dll (see boost() in functions.cmake): io/json.cpp compiles <boost/json/src.hpp> in, so
 	#BOOST_JSON_DECL must be dllexport throughout this target.  Target-wide rather than in json.cpp alone because the PCH

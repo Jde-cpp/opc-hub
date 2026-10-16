@@ -126,7 +126,7 @@ namespace Jde::Opc::Hist{
 		//A day's records in primary-time order, one ahead:  the file's, through the runs that matter, and the buffer's for
 		//the day, merged, with the day's modifications applied; or, for a modified read, the modifications themselves.
 		struct Stream final{
-			Stream( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ε:_applied{ move(file), move(runs), move(late), move(mods), sl }{ Advance(); }
+			Stream( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ε:_applied{ move(file), move(runs), move(late), move(mods), sl }{ Advance(); }
 			α Peek()Ι->const HistoryRecord*{ return _has ? &_next : nullptr; }
 			α Time()Ι->optional<Ticks>{ return _has ? PrimaryTime( _next ) : nullopt; }
 			α Take( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{

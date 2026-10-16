@@ -1,6 +1,9 @@
 #include "HistGroupReadQLAwait.h"
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/post.hpp>
 #include <jde/fwk/str.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/fwk/process/thread.h>
 #include <jde/opc/UAException.h>
 #include "../hist/HistHost.h"
 #include "HistQL.h"
@@ -25,13 +28,42 @@ namespace Jde::Opc::Gateway{
 		}
 		return group.Read( {.Nodes=move(nodes), .Start=args.Start, .End=args.End, .Bounds=args.Bounds, .Modified=args.Modified, .Limit=args.Limit, .Continuation=args.Continuation}, sl );
 	}
-	//The library's reads parse the group's files synchronously, every member's records of each day they cover:  on the executor,
-	//as its flushes run, so the request's strand isn't held for the scan.
+	//The library's reads parse the group's files synchronously, every member's records of each day they cover, each window
+	//of a file read through the file awaitables and waited for.  Those waits need an executor thread free to run the read's
+	//completion, so the reads run on threads of their own, not the executor's:  a pool, which ends with the process.
+	struct ReadThreads final : IShutdown{
+		α Post( absl::AnyInvocable<void()> f )ι->void{
+			bool created{};
+			{
+				lg _{ _mutex };
+				if( !_pool ){
+					_pool = mu<boost::asio::thread_pool>( std::max(2u, std::thread::hardware_concurrency()/2) );
+					created = true;
+				}
+				boost::asio::post( *_pool, [f=std::move(f)]() mutable { Thread::SetName( "HistRead" ); f(); } );
+			}
+			if( created )//outside the lock:  Shutdown takes it while the shutdown list is being walked.
+				Execution::AddShutdown( this );
+		}
+		α Shutdown( bool /*terminate*/, SL )ι->void override{//the reads queued finish first:  each has an awaiter waiting on it.
+			up<boost::asio::thread_pool> pool;
+			{
+				lg _{ _mutex };
+				pool = move( _pool );
+			}
+			if( pool )
+				pool->join();
+		}
+	private:
+		up<boost::asio::thread_pool> _pool; mutex _mutex;
+	};
+	ReadThreads _readThreads;
+
 	struct GroupReadAwait final : AnyAwait<Hist::ReadResult>{
 		GroupReadAwait( sp<Hist::Group> group, const HistQL::GroupArgs& args, vector<Hist::NodeIndex> nodes, SRCE )ι:AnyAwait<Hist::ReadResult>{ sl }, _group{ move(group) }, _args{ args }, _nodes{ move(nodes) }{}
 	private:
 		α Suspend()ι->void override{
-			Post( [this]{
+			_readThreads.Post( [this]{
 				try{
 					Resume( read(*_group, _args, move(_nodes), _sl) );
 				}

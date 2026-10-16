@@ -1,9 +1,8 @@
 #include "DayFiles.h"
-#include <charconv>
 #include <fstream>
 #include <jde/fwk/exceptions/IOException.h>
+#include <jde/fwk/io/durable.h>
 #include <jde/opc/proto/opc.Common.h>
-#include "File.h"
 #include "Records.h"
 
 #define let const auto
@@ -18,52 +17,6 @@ namespace Jde::Opc::Hist{
 		constexpr int64_t EpochSeconds{ UA_DATETIME_UNIX_EPOCH/PerSecond };//1601 to 1970.
 		constexpr Ticks Latest{ (sys_days{year{9999}/December/31}.time_since_epoch()/1s+86'399+EpochSeconds)*PerSecond };
 
-		//A rewrite's temp file, but nothing else at its path:  a directory or a link there isn't one a rewrite left, and
-		//stays, for the rewrite's open to fail on and say.
-		Ω removeTemp( const fs::path& temp )ι->bool{
-			std::error_code ec;
-			return fs::symlink_status( temp, ec ).type()==fs::file_type::regular && fs::remove( temp, ec );
-		}
-		//None for a file that isn't there, or can't be stat'ed.
-		Ω stamp( const fs::path& path )ι->optional<Stamp>{
-			std::error_code ec;
-			let size = fs::file_size( path, ec );
-			if( ec )
-				return nullopt;
-			let written = fs::last_write_time( path, ec );
-			return ec ? nullopt : optional<Stamp>{ Stamp{size, written} };
-		}
-		//dir's subdirectories named as DayDirectory names them, a number from min to max with no padding, largest first:  so
-		//the path the walk rebuilds from one is the directory's, and the number fits chrono's year, month or day.
-		Ω numbered( const fs::path& dir, unsigned min, unsigned max, SL sl )ε->vector<unsigned>{
-			vector<unsigned> y;
-			std::error_code ec;
-			for( fs::directory_iterator p{dir, ec}, end; !ec && p!=end; p.increment(ec) ){
-				let name = p->path().filename().string();
-				unsigned n{};
-				let [last, error] = std::from_chars( name.data(), name.data()+name.size(), n );
-				if( error==std::errc{} && last==name.data()+name.size() && n>=min && n<=max && std::to_string(n)==name && p->is_directory(ec) )
-					y.push_back( n );
-			}
-			if( ec )
-				throw Failed( dir, ec, sl );
-			std::ranges::sort( y, std::greater{} );
-			return y;
-		}
-		//Each day that has a directory under root, newest first, until visit returns true.
-		Ω walk( const fs::path& root, SL sl, const std::function<bool( Day )>& visit )ε->void{
-			for( let y : numbered(root, 1601, 9999, sl) ){//DayOf's range.
-				let yearDir = root/std::to_string( y );
-				for( let m : numbered(yearDir, 1, 12, sl) ){
-					for( let d : numbered(yearDir/std::to_string(m), 1, 31, sl) ){
-						const Day day{ year{(int)y}, month{m}, std::chrono::day{d} };
-						if( day.ok() && visit(day) )
-							return;
-					}
-				}
-			}
-		}
-		constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
 
 		//Whether r is a preamble record of the day that starts at start.
 		Ω preambled( const HistoryRecord& r, Ticks start )ι->bool{ return r.has_node_added() && Bare( r.node_added() ) && r.node_added().ts()==start; }
@@ -72,35 +25,27 @@ namespace Jde::Opc::Hist{
 			return { ProtoUtils::ToExNodeId(added.node()), added.has_start() ? optional<Proto::DataValue>{ added.start() } : nullopt };
 		}
 		//An archive's head:  its FileStart, its size, and its preamble from the records at its day's start alone, into which
-		//its rewrite folded every correction:  without the first-open scan, which reads an archive through.  Empty, with no
-		//size, when the file isn't there, and none when it isn't an archive.  Throws when it can't be opened or its preamble
-		//read through.
+		//its rewrite folded every correction:  without the first-open scan, which reads an archive through.  None when the
+		//file isn't an archive.  Throws when its preamble can't be read through.
 		struct ArchiveHead final{ Proto::FileStart Start; uint Size{}; Hist::Preamble Preamble; };
-		Ω archivePreamble( const fs::path& path, SL sl )ε->optional<ArchiveHead>{
-			std::error_code ec;
-			if( !fs::exists(path, ec) && !ec )
-				return ArchiveHead{};
-			std::ifstream file{ path, std::ios::binary | std::ios::ate };
-			if( !file )
-				throw IO::IOException{ path, "could not be opened to read its preamble", sl };
-			let end = file.tellg();
-			if( end<0 || !file.seekg(0) )
-				throw IO::IOException{ sl, path, ELogLevel::Error, "could not be sized to read its preamble" };
-			google::protobuf::io::IstreamInputStream in{ &file };
-			Reader reader{ in, 0, (uint)end, 0 };
+		Ω archivePreamble( const sp<IO::OpenFile>& file, SL sl )ε->optional<ArchiveHead>{
+			let size = file->Size( sl );
+			Reader reader{ Run{.Offset=0, .End=size, .Chain=0, .First=0, .Last=0} };
 			HistoryRecord r;
-			if( !reader.Next(r) || !r.has_file_start() || r.file_start().crc()!=StartCrc(r.file_start()) || !r.file_start().generation() )
+			if( !IO::Records::NextNow(reader, file, r, sl) || !r.has_file_start() || r.file_start().crc()!=IO::Records::StartCrc(r.file_start()) || !r.file_start().generation() )
 				return nullopt;
-			ArchiveHead y{ r.file_start(), (uint)end };
+			ArchiveHead y{ r.file_start(), size };
 			let start = y.Start.ts();
-			while( reader.Next(r) ){
+			while( IO::Records::NextNow(reader, file, r, sl) ){
+				if( r.has_issued() )
+					continue;
 				if( PrimaryTime(r)!=start )
 					return y;
 				if( r.has_node_added() && Bare(r.node_added()) )
 					y.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 			}
 			if( reader.Stop()!=EStop::End )
-				throw IO::IOException{ sl, path, ELogLevel::Error, "{} in its preamble, at byte {}", ToString(*reader.Stop()), reader.Offset() };
+				throw IO::IOException{ sl, file->Path(), ELogLevel::Error, "{} in its preamble, at byte {}", ToString(*reader.Stop()), reader.Offset() };
 			return y;
 		}
 	}
@@ -113,18 +58,16 @@ namespace Jde::Opc::Hist{
 	α StartOf( Day day, const time_zone& tz )ι->Ticks{
 		return ( duration_cast<seconds>(DayStart(day, tz).time_since_epoch()).count()+EpochSeconds )*PerSecond;
 	}
-	α DayDirectory( Day day )ι->fs::path{
-		return fs::path{ std::to_string((int)day.year()) }/std::to_string( (unsigned)day.month() )/std::to_string( (unsigned)day.day() );
-	}
 
 	GroupFiles::GroupFiles( fs::path root, string name, const time_zone& tz, Duration delay, Day today, SL sl )ε:
 		_root{ move(root) },
 		_name{ move(name) },
 		_tz{ tz },
 		_delay{ delay },
-		_flushed{ _root/(_name+".flushed"), sl },
+		_flushed{ IO::Records::Flushed::Load( _root/(_name+".flushed"), sl ) },
 		_present{ today }{
-		_restored.Flushed = _flushed.Time();
+		if( let t = _flushed.Time(); t )
+			_restored.Flushed = UADateTime{ (UA_DateTime)*t }.Time();
 		//The midnight before the last flush may have had its rewrite cut short, in the `delay` after it, and none since has
 		//had one, and an older one's rewrite may have kept failing:  so each file still live from the day .flushed names
 		//on is rewritten, but for today's.
@@ -138,16 +81,16 @@ namespace Jde::Opc::Hist{
 		//preamble holds the start values of when it was made.  Nothing older is read, once those are:  settled.
 		bool restored{}, settled{};
 		flat_map<NodeIndex,ExNodeId> members;
-		walk( _root, sl, [&]( Day day ){
+		IO::Records::Walk( _root, sl, [&]( Day day ){
 			if( settled && (!from || day<*from) )
 				return true;
 			std::error_code ec;
-			if( removeTemp(Temp(day)) )
+			if( IO::RemoveTemp(Temp(day)) )
 				WARN( "Removed '{}', which a rewrite that didn't finish left.", Temp(day).string() );
 			let path = File( day );
 			let there = fs::exists( path, ec );
 			if( ec && !settled )//it may be the newest.
-				throw Failed( path, ec, sl );
+				throw IO::Failed( path, ec, sl );
 			if( !there && !ec )
 				return false;
 			if( !settled ){
@@ -166,8 +109,8 @@ namespace Jde::Opc::Hist{
 				bool live{ true };
 				try{
 					if( ec )
-						throw Failed( path, ec, sl );
-					let start = ReadStart( path, sl );
+						throw IO::Failed( path, ec, sl );
+					let start = IO::Records::Head( ms<IO::OpenFile>(path, sl), StartField, sl );
 					live = start && !start->generation();
 				}
 				catch( const IO::IOException& ){}//said as it goes.
@@ -177,7 +120,7 @@ namespace Jde::Opc::Hist{
 				}
 			}
 			else if( ec )
-				Failed( path, ec, sl ).Log();
+				IO::Failed( path, ec, sl ).Log();
 			return false;
 		});
 		std::erase_if( _files, []( let& file ){ return file.second.Generation!=0; } );
@@ -203,8 +146,8 @@ namespace Jde::Opc::Hist{
 	α GroupFiles::Restore( HistoryRecord& r, flat_map<NodeIndex,ExNodeId>& members, Day day )ι->void{
 		auto& next = _restored.NextIndex;
 		switch( r.record_case() ){
-		case HistoryRecord::kFileStart:
-			next = std::max<NodeIndex>( next, r.file_start().next_node_index() );
+		case HistoryRecord::kIssued:
+			next = std::max<NodeIndex>( next, r.issued().next_node_index() );
 			break;
 		case HistoryRecord::kNodeAdded:{
 			let index = r.node_added().node_index();
@@ -254,42 +197,133 @@ namespace Jde::Opc::Hist{
 		_touched.emplace_back( index, time );
 	}
 
-	//The first time the process opens the file:  its scan, and one pass over what the scan kept for its preamble and the
-	//restore.
+	//What a scan makes of the file:  its size, chain and runs, or why the historian won't write to it.  A damaged archive
+	//throws when restoring, which must read it through, and is refused otherwise.
+	Ω fill( DayFile& file, Scanned&& scanned, bool restoring, SL sl )ε->void{
+		file.Size = scanned.Size;
+		file.Chain = scanned.Chain;
+		file.Runs = move( scanned.Runs );
+		if( scanned.Keep() )
+			file.Refused = "holds damage a truncation would lose, or is another program's";
+		else if( scanned.Start && scanned.Start->generation() ){
+			file.Generation = scanned.Start->generation();
+			if( scanned.Stop!=EStop::End ){//an archive is whole, so one that can't be read through is damaged.
+				if( restoring )
+					throw IO::IOException{ sl, file.Path, ELogLevel::Error, "reads {} at byte {}, short of the {} bytes its archive holds", ToString(scanned.Stop), scanned.StopOffset, scanned.Size };
+				file.Refused = Ƒ( "is an archive that reads {} at byte {}", ToString(scanned.Stop), scanned.StopOffset );
+			}
+		}
+		if( scanned.Size<scanned.FileSize )
+			file.Unopened = move( scanned );
+	}
+
+	Opening::Opening( fs::path path, Ticks start, SL sl )ε:
+		_opened{ .Path=move(path) },
+		_decoder{ [this, start]( HistoryRecord& r ){
+			if( preambled(r, start) )
+				_opened.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
+		} }{
+		try{
+			_file = ms<IO::OpenFile>( _opened.Path, sl );
+		}
+		catch( IO::IOException& e ){
+			if( e.Error!=IO::EIOError::NotFound ){
+				e.SetLevel( ELogLevel::Error );
+				throw;
+			}
+			return;
+		}
+		_opened.Stamped = IO::Records::StampOf( _opened.Path );//before the scan, so a change during it shows next time.
+		_scanner.emplace( _file, StartField, CheckpointField, _decoder, sl );
+	}
+	α Opening::Next()ε->ENext{
+		if( !_scanner || _opened.Scan )
+			return ENext::End;
+		let next = _scanner->Next();
+		if( next==ENext::End )
+			_opened.Scan = _scanner->Result();
+		return next;
+	}
+	α Opening::Wants()Ι->optional<Window>{ return _scanner ? _scanner->Wants() : nullopt; }
+	α Opening::Feed( string&& bytes )ι->void{
+		if( _scanner )
+			_scanner->Feed( move(bytes) );
+	}
+
+	α GroupFiles::ToScan( const vector<Day>& days )Ι->vector<std::pair<Day,fs::path>>{
+		vector<std::pair<Day,fs::path>> y;
+		for( let day : days ){
+			auto p = _files.find( day );
+			bool open = p==_files.end();
+			if( !open && (p->second.Generation || !p->second.Refused.empty()) ){//as Prepare opens again:  changed since its scan, or its rewrite, repaired perhaps.
+				let changed = IO::Records::StampOf( p->second.Path );
+				open = changed && changed!=p->second.Stamped;
+			}
+			if( open )
+				y.emplace_back( day, File(day) );
+		}
+		return y;
+	}
+	α GroupFiles::Adopt( Day day, Opened&& opened )ι->void{
+		std::error_code ec;
+		if( auto p = _files.find(day); p!=_files.end() ){
+			if( !(p->second.Generation || !p->second.Refused.empty()) || !opened.Stamped || IO::Records::StampOf(p->second.Path)!=opened.Stamped )
+				return;
+			_files.erase( p );
+		}
+		else if( opened.Stamped ? IO::Records::StampOf(opened.Path)!=opened.Stamped : fs::exists(opened.Path, ec) || ec )
+			return;//changed since the open, or made since:  Prepare opens it.
+		DayFile file{ {.Path=move(opened.Path)}, std::move(opened.Preamble) };//std::, as absl::move is found for the map.
+		file.Stamped = opened.Stamped;
+		if( opened.Scan )
+			fill( file, move(*opened.Scan), false, SRCE_CUR );
+		if( file.Size && !file.Generation && file.Refused.empty() )
+			_unarchived.insert( day );
+		_files.emplace( day, move(file) );
+	}
+
+	α GroupFiles::Adopt( Day day, up<Exception> failed )ι->void{
+		if( !_files.contains(day) )
+			_failedOpenings.insert_or_assign( day, move(failed) );
+	}
+
+	//The first time the process opens the file:  its scan, read now, and one pass over what the scan kept for its preamble
+	//and the restore.  The flush opens its days' files first, outside the lock (Opening, Adopt), and one it couldn't read
+	//throws here as its own open would have.
 	α GroupFiles::Open( Day day, SL sl, const std::function<void( HistoryRecord& )>& restore, bool mods )ε->DayFile&{
 		auto& files = mods ? _mods : _files;
 		if( auto p = files.find(day); p!=files.end() )
 			return p->second;
-		DayFile file{ .Path=mods ? ModsFile(day) : File(day) };
-		std::error_code ec;
-		if( fs::exists(file.Path, ec) ){
-			file.Scanned = stamp( file.Path );//before the scan, so a change during it shows next time.
+		if( !mods ){
+			if( auto p = _failedOpenings.find(day); p!=_failedOpenings.end() ){
+				auto failed = move( p->second );
+				_failedOpenings.erase( p );
+				failed->Throw();
+			}
+		}
+		DayFile file{ {.Path=mods ? ModsFile(day) : File(day)}, {} };
+		sp<IO::OpenFile> open;
+		try{
+			open = ms<IO::OpenFile>( file.Path, sl );
+		}
+		catch( IO::IOException& e ){
+			if( e.Error!=IO::EIOError::NotFound ){
+				e.SetLevel( ELogLevel::Error );
+				throw;
+			}
+		}
+		if( open ){
+			file.Stamped = IO::Records::StampOf( file.Path );//before the scan, so a change during it shows next time.
 			let start = StartOf( day, _tz );
 			//One read:  the scan hands over each record it keeps, for the preamble and the restore.
-			auto scanned = Scan( file.Path, [&]( HistoryRecord& r ){
+			Decoder decoder{ [&]( HistoryRecord& r ){
 				if( preambled(r, start) )
 					file.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 				if( restore )
 					restore( r );
-			}, sl );
-			file.Size = scanned.Size;
-			file.Chain = scanned.Chain;
-			file.Runs = move( scanned.Runs );
-			if( scanned.Keep() )
-				file.Refused = "holds damage a truncation would lose, or is another program's";
-			else if( scanned.Start && scanned.Start->generation() ){
-				file.Generation = scanned.Start->generation();
-				if( scanned.Stop!=EStop::End ){//an archive is whole, so one that can't be read through is damaged.
-					if( restore )
-						throw IO::IOException{ sl, file.Path, ELogLevel::Error, "reads {} at byte {}, short of the {} bytes its archive holds", ToString(scanned.Stop), scanned.StopOffset, scanned.Size };
-					file.Refused = Ƒ( "is an archive that reads {} at byte {}", ToString(scanned.Stop), scanned.StopOffset );
-				}
-			}
-			if( scanned.Size<scanned.FileSize )
-				file.Unopened = move( scanned );
+			} };
+			fill( file, IO::Records::ScanNow(open, StartField, CheckpointField, decoder, sl), restore!=nullptr, sl );
 		}
-		else if( ec )
-			throw Failed( file.Path, ec, sl );
 		if( !mods && file.Size && !file.Generation && file.Refused.empty() )
 			_unarchived.insert( day );
 		return files.emplace( day, move(file) ).first->second;
@@ -318,36 +352,59 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 
+	//The layer's rewrite with the historian's head:  the records at the day's start, and a stale Issued, which the fresh one
+	//in the prologue replaces.  A member's later preamble record there is a corrected start value, which a reader of the
+	//live file took in its place:  it goes into the first.  One after the member's NodeRemoved there is a re-add, which
+	//stays.  The fold notes the archive's map.
 	struct Rewrite::State final{
-		State( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, SL sl )ε:
-			Records{ move(file), move(runs), move(late), sl },
-			Start{ move(start) }
+		State( fs::path path, fs::path temp, sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, NodeIndex nextIndex, SL sl )ι:
+			Start{ start },
+			Records{ move(path), move(temp), move(file), move(runs), move(late), start, Prologue(nextIndex), Hooks(start.ts()), IO::Records::PartBytes, sl }
 		{}
-		//Onto the part.  One too large for a file is left out, as an append leaves it.
-		α Add( HistoryRecord&& r )ε->void{
-			optional<std::pair<NodeIndex,Listed>> member;
-			if( preambled(r, Start.ts()) )
-				member.emplace( r.node_added().node_index(), listed(r.node_added()) );
-			try{
-				Writer.Add( move(r) );
-			}
-			catch( Exception& e ){
-				e.SetLevel( ELogLevel::Error );
-				return;
-			}
-			if( member )
-				Preamble.insert_or_assign( member->first, move(member->second) );
+		Ω Prologue( NodeIndex nextIndex )ι->vector<HistoryRecord>{
+			vector<HistoryRecord> y;
+			if( nextIndex )
+				y.emplace_back().mutable_issued()->set_next_node_index( (uint32_t)nextIndex );
+			return y;
 		}
-		Merge Records;
+		α Hooks( Ticks start )ι->IO::Records::Rewrite<HistoryRecord>::Hooks{
+			return {
+				.IsHead=[start]( const HistoryRecord& r ){ return r.has_issued() || PrimaryTime(r)==start; },
+				.FoldHead=[this]( vector<HistoryRecord>& head ){ Fold( head ); }
+			};
+		}
+		α Fold( vector<HistoryRecord>& head )ι->void{
+			vector<HistoryRecord> folded;
+			absl::flat_hash_map<NodeIndex,uint> members;
+			for( auto& r : head ){
+				if( r.has_issued() )
+					continue;
+				if( r.has_node_removed() )
+					members.erase( r.node_removed().node_index() );
+				else if( r.has_node_added() && Bare(r.node_added()) ){
+					let [p, added] = members.try_emplace( r.node_added().node_index(), folded.size() );
+					if( !added ){
+						auto& kept = *folded[p->second].mutable_node_added();
+						if( let type = r.node_added().data_type() )
+							kept.set_data_type( type );
+						if( r.node_added().has_start() )
+							*kept.mutable_start() = move( *r.mutable_node_added()->mutable_start() );
+						else
+							kept.clear_start();
+						continue;
+					}
+				}
+				folded.push_back( move(r) );
+			}
+			for( let& r : folded ){
+				if( preambled(r, Start.ts()) )
+					Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
+			}
+			head = move( folded );
+		}
 		Proto::FileStart Start;
+		IO::Records::Rewrite<HistoryRecord> Records;
 		Hist::Preamble Preamble;//as the archive has it, once it is written.
-		uint Size{};//written so far.
-		string Part;
-		Appender Writer{ Part, 0 };//never sealed:  an archive carries no checkpoint.
-		optional<HistoryRecord> Ahead;//the record after the part's last, so the last part is known as it is made.
-		bool Opened{};
-		bool Written{};//the temp file is made.
-		bool Last{};
 	};
 	Rewrite::Rewrite( Day date, fs::path path, fs::path temp, vector<Proto::DataValue> stored, up<State> state )ι:
 		Date{ date },
@@ -359,73 +416,19 @@ namespace Jde::Opc::Hist{
 	Rewrite::Rewrite( Rewrite&& )ι=default;
 	α Rewrite::operator=( Rewrite&& )ι->Rewrite& =default;
 	Rewrite::~Rewrite()=default;
+	α Rewrite::Next()ε->IO::Records::EPart{ return _state->Records.Next(); }
+	α Rewrite::Wants()Ι->optional<Window>{ return _state->Records.Wants(); }
+	α Rewrite::Feed( string&& bytes )ι->void{ _state->Records.Feed( move(bytes) ); }
+	α Rewrite::File()Ι->const sp<IO::OpenFile>&{ return _state->Records.File(); }
+	α Rewrite::Write( SL sl )ι->IO::WriteAwait{ return _state->Records.Write( sl ); }
 	α Rewrite::Unreadable()Ι->bool{ return _state && _state->Records.Unreadable(); }
 	α Rewrite::Archive()ι->DayFile{
-		return DayFile{ .Path=Path, .Generation=_state->Start.generation(), .Size=_state->Size, .Preamble=std::move(_state->Preamble), .Named=true };
-	}
-
-	α Rewrite::Next()ε->bool{
-		auto& s = *_state;
-		if( s.Last )
-			return false;
-		HistoryRecord r;
-		if( !std::exchange(s.Opened, true) ){
-			let start = s.Start.ts();
-			HistoryRecord first;
-			*first.mutable_file_start() = s.Start;
-			s.Add( move(first) );
-			//The preamble is every record at the day's start.  A member's later preamble record there is a corrected start
-			//value, which a reader of the live file took in its place:  it goes into the first.  One after the member's
-			//NodeRemoved there is a re-add, which stays.
-			vector<HistoryRecord> head;
-			absl::flat_hash_map<NodeIndex,uint> members;
-			while( s.Records.Next(r) ){
-				if( PrimaryTime(r)!=start ){
-					s.Ahead = move( r );
-					break;
-				}
-				if( r.has_node_removed() )
-					members.erase( r.node_removed().node_index() );
-				else if( r.has_node_added() && Bare(r.node_added()) ){
-					let [p, added] = members.try_emplace( r.node_added().node_index(), head.size() );
-					if( !added ){
-						auto& kept = *head[p->second].mutable_node_added();
-						if( let type = r.node_added().data_type() )
-							kept.set_data_type( type );
-						if( r.node_added().has_start() )
-							*kept.mutable_start() = move( *r.mutable_node_added()->mutable_start() );
-						else
-							kept.clear_start();
-						continue;
-					}
-				}
-				head.push_back( move(r) );
-			}
-			for( auto& record : head )
-				s.Add( move(record) );
-		}
-		while( s.Ahead ){
-			s.Add( move(*s.Ahead) );
-			if( s.Records.Next(r) )
-				s.Ahead = move( r );
-			else
-				s.Ahead.reset();
-			if( s.Part.size()>=PartBytes && s.Ahead )
-				break;
-		}
-		s.Last = !s.Ahead;
-		return true;
-	}
-	α Rewrite::Write( SL sl )ι->IO::WriteAwait{
-		auto& s = *_state;
-		let first = !std::exchange( s.Written, true );
-		s.Size += s.Part.size();
-		return IO::WriteAwait{ Temp, std::exchange(s.Part, {}), IO::WriteOptions{.Create=first, .Mode=first ? IO::EWriteMode::Truncate : IO::EWriteMode::Append, .Sync=s.Last}, sl };
+		return DayFile{ IO::Records::FileState{ .Path=Path, .Generation=_state->Records.Start().generation(), .Size=_state->Records.Size(), .Named=true }, std::move(_state->Preamble) };
 	}
 
 	α GroupFiles::Prepare( Day day, vector<HistoryRecord>&& records, const Membership& members, TimePoint now, SL sl, bool create )ε->DayWrite{
 		if( auto p = _files.find(day); p!=_files.end() && (p->second.Generation || !p->second.Refused.empty()) ){
-			if( let changed = stamp(p->second.Path); changed && changed!=p->second.Scanned )
+			if( let changed = IO::Records::StampOf(p->second.Path); changed && changed!=p->second.Stamped )
 				_files.erase( p );//changed since its scan, or its rewrite, repaired perhaps, so Open scans it again.
 		}
 		auto& file = Open( day, sl );
@@ -441,11 +444,11 @@ namespace Jde::Opc::Hist{
 			}
 			restart = true;//removed since.
 		}
-		MakeDirectories( file.Path.parent_path(), sl );
+		IO::MakeDirectories( file.Path.parent_path(), sl );
 		let rewrite = ( file.Generation && !restart ) || Past( day, now ) || _recover.contains( day ) || _retired;
 		if( file.Unopened && !restart && !rewrite ){
 			try{
-				Truncate( file.Path, *file.Unopened, sl );
+				IO::Records::Truncate( file.Path, *file.Unopened, sl );
 			}
 			catch( ... ){//no longer the file that was scanned, perhaps, so the next append scans it again.
 				_files.erase( day );
@@ -453,22 +456,15 @@ namespace Jde::Opc::Hist{
 			}
 			file.Unopened.reset();
 		}
-		let existed = fs::exists( file.Path, ec );
-		let actual = existed && !ec ? fs::file_size( file.Path, ec ) : 0;
-		if( ec )
-			throw Failed( file.Path, ec, sl );
-		let size = restart ? 0 : file.Size;
-		let& outstanding = file.Outstanding;
-		//A rewrite cuts no torn tail:  the file its scan found goes whole, under the rename.
-		let scanned = rewrite && !restart && file.Unopened ? file.Unopened->FileSize : size;
-		if( !actual && size )
-			restart = true;//purged since, or a parent no longer resolves.
-		//More than Size is what an append of this process's left when it failed part-way, which the run's write cuts off.  A
-		//file no append has gone to may be one restored or remade since, which only a scan can tell from what that left.
-		else if( actual<size || (actual>size && actual!=scanned && (!size || !outstanding || outstanding->Offset!=size || actual>outstanding->End)) ){
-			IO::IOException e{ sl, file.Path, ELogLevel::Error, "holds {} bytes, not the {} the historian wrote, so its next write scans it again", actual, size };
+		bool existed;
+		try{
+			let verified = IO::Records::Verify( file, rewrite, restart, sl );
+			existed = verified.Existed;
+			restart = verified.Restart;
+		}
+		catch( ... ){//other bytes than the historian wrote, so its next write scans it again.
 			_files.erase( day );
-			throw move( e );
+			throw;
 		}
 		const DayFile fresh;
 		let& known = restart ? fresh : file;
@@ -522,15 +518,14 @@ namespace Jde::Opc::Hist{
 		std::ranges::move( records, std::back_inserter(run) );
 
 		if( rewrite ){
-			HistoryRecord first;
-			first.mutable_file_start()->set_ts( start );
-			first.mutable_file_start()->set_next_node_index( (uint32_t)members.NextIndex );
+			Proto::FileStart first;
+			first.set_ts( start );
+			first.set_generation( known.Generation+1 );
 			//An archive is one run, read from its start.  The preamble and the flush's records follow the file's at any one time.
 			auto runs = known.Generation ? vector<Run>{ Run{.Offset=0, .End=known.Size, .Chain=0, .First=std::numeric_limits<Ticks>::min(), .Last=start} } : known.Runs;
 			std::ranges::move( run, std::back_inserter(preamble) );
-			first.mutable_file_start()->set_generation( known.Generation+1 );
-			auto opened = runs.empty() ? nullptr : ms<ReadHandle>( file.Path, sl );
-			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(move(opened), move(runs), move(preamble), first.file_start(), sl) };
+			auto opened = runs.empty() ? nullptr : ms<IO::OpenFile>( file.Path, sl );
+			Rewrite y{ day, file.Path, Temp(day), move(stored), mu<Rewrite::State>(file.Path, Temp(day), move(opened), move(runs), move(preamble), first, members.NextIndex, sl) };
 			if( file.Generation )
 				_files.erase( day );
 			return DayWrite{ move(y) };
@@ -542,7 +537,7 @@ namespace Jde::Opc::Hist{
 
 	α GroupFiles::PrepareMods( Day day, vector<HistoryRecord>&& records, const Membership& members, SL sl )ε->Pending{
 		if( auto p = _mods.find(day); p!=_mods.end() && !p->second.Refused.empty() ){
-			if( let changed = stamp(p->second.Path); changed && changed!=p->second.Scanned )
+			if( let changed = IO::Records::StampOf(p->second.Path); changed && changed!=p->second.Stamped )
 				_mods.erase( p );//changed since its scan, repaired perhaps, so Open scans it again.
 		}
 		auto& file = Open( day, sl, {}, true );
@@ -553,10 +548,10 @@ namespace Jde::Opc::Hist{
 				throw IO::IOException{ sl, file.Path, ELogLevel::Error, "{}, so the historian won't write to it", file.Refused };
 			restart = true;//removed since.
 		}
-		MakeDirectories( file.Path.parent_path(), sl );
+		IO::MakeDirectories( file.Path.parent_path(), sl );
 		if( file.Unopened && !restart ){
 			try{
-				Truncate( file.Path, *file.Unopened, sl );
+				IO::Records::Truncate( file.Path, *file.Unopened, sl );
 			}
 			catch( ... ){
 				_mods.erase( day );
@@ -564,18 +559,15 @@ namespace Jde::Opc::Hist{
 			}
 			file.Unopened.reset();
 		}
-		let existed = fs::exists( file.Path, ec );
-		let actual = existed && !ec ? fs::file_size( file.Path, ec ) : 0;
-		if( ec )
-			throw Failed( file.Path, ec, sl );
-		let size = restart ? 0 : file.Size;
-		let& outstanding = file.Outstanding;
-		if( !actual && size )
-			restart = true;
-		else if( actual<size || (actual>size && (!size || !outstanding || outstanding->Offset!=size || actual>outstanding->End)) ){
-			IO::IOException e{ sl, file.Path, ELogLevel::Error, "holds {} bytes, not the {} the historian wrote, so its next write scans it again", actual, size };
+		bool existed;
+		try{
+			let verified = IO::Records::Verify( file, false, restart, sl );
+			existed = verified.Existed;
+			restart = verified.Restart;
+		}
+		catch( ... ){
 			_mods.erase( day );
-			throw move( e );
+			throw;
 		}
 		vector<HistoryRecord> preamble;
 		if( restart || !file.Size ){
@@ -586,68 +578,37 @@ namespace Jde::Opc::Hist{
 		return Append( file, day, true, existed, restart, move(preamble), move(records), members.NextIndex );
 	}
 
+	//The run Prepare and PrepareMods hand out, built by the record layer:  a file with nothing kept opens with its FileStart,
+	//an Issued group's next index, and the preamble, sealed on its own; then run, sealed.  The file notes the append as
+	//outstanding.
 	α GroupFiles::Append( DayFile& file, Day day, bool mods, bool existed, bool restart, vector<HistoryRecord>&& preamble, vector<HistoryRecord>&& run, NodeIndex nextIndex )Ι->Pending{
 		const DayFile fresh;
 		let& known = restart ? fresh : file;
 		let start = StartOf( day, _tz );
 		Pending y{ .Date=day, .Mods=mods, .Path=file.Path, .Offset=known.Size, .Existed=existed, .Restart=restart };
-		let note = [&]( const HistoryRecord& r ){
+		optional<IO::Records::Opening<HistoryRecord>> opening;
+		if( !known.Size ){
+			Proto::FileStart first;
+			first.set_ts( start );
+			vector<HistoryRecord> prologue;
+			if( nextIndex && !mods )//a modifications file's index is its value file's.
+				prologue.emplace_back().mutable_issued()->set_next_node_index( (uint32_t)nextIndex );
+			opening.emplace( first, move(prologue), move(preamble) );
+		}
+		auto built = IO::Records::BuildAppend<HistoryRecord>( known.Size, known.Chain, move(opening), move(run), [&]( const HistoryRecord& r ){
 			if( preambled(r, start) )
 				y.Preamble.emplace_back( r.node_added().node_index(), listed(r.node_added()) );
-		};
-		string bytes;
-		auto chain = known.Chain;
-		if( !known.Size ){
-			HistoryRecord first;
-			first.mutable_file_start()->set_ts( start );
-			first.mutable_file_start()->set_next_node_index( (uint32_t)nextIndex );
-			Appender opening{ bytes, 0 };
-			opening.Add( move(first) );
-			for( auto& added : preamble ){
-				note( added );
-				opening.Add( move(added) );
-			}
-			chain = opening.Seal();
-			if( !preamble.empty() )
-				y.Runs.push_back( {.Offset=0, .End=bytes.size(), .Chain=0, .First=start, .Last=start} );
-		}
-
-		Run appended{ .Offset=known.Size+bytes.size(), .Chain=chain };
-		bool timed{};
-		Appender appender{ bytes, chain };
-		for( auto& r : run ){
-			let t = PrimaryTime( r );
-			note( r );
-			try{
-				appender.Add( move(r) );
-			}
-			catch( Exception& e ){//one record too large for a file, which the run goes on without.
-				e.SetLevel( ELogLevel::Error );
-				continue;
-			}
-			if( !t )
-				continue;
-			appended.First = timed ? std::min( appended.First, *t ) : *t;
-			appended.Last = timed ? std::max( appended.Last, *t ) : *t;
-			timed = true;
-		}
-		y.Chain = appender.Seal();
-		y.End = known.Size+bytes.size();
-		if( timed ){
-			appended.End = y.End;
-			y.Runs.push_back( appended );
-		}
-		y.Bytes = move( bytes );
-		//One that failed before cutting the file to Offset leaves what an earlier one did.
-		if( auto& o = file.Outstanding; o && o->Offset==y.Offset )
-			o->End = std::max( o->End, y.End );
-		else
-			o = DayFile::Append{ y.Offset, y.End };
+		} );
+		y.Chain = built.Chain;
+		y.End = built.End;
+		y.Runs = move( built.Runs );
+		y.Bytes = move( built.Bytes );
+		file.Hand( y.Offset, y.End );
 		return y;
 	}
 
 	α Pending::Write( SL sl )ι->IO::WriteAwait{
-		return IO::WriteAwait{ Path, move(Bytes), IO::WriteOptions{.Create=true, .Mode=IO::EWriteMode::Truncate, .Offset=Offset, .Sync=true}, sl };
+		return IO::Records::AppendWrite( Path, Offset, move(Bytes), sl );
 	}
 
 	α GroupFiles::Commit( Pending&& run, SL sl )ε->void{
@@ -655,14 +616,10 @@ namespace Jde::Opc::Hist{
 		//Every directory to the root, on a file's first append here:  a new file's write syncs only the names it added,
 		//and another group's write, or an earlier one that failed, may have made the rest.
 		if( run.Restart || !file.Named )
-			SyncDirectories( _root, DayDirectory(run.Date), sl );
+			IO::SyncDirectories( _root, DayDirectory(run.Date), sl );
 		if( run.Restart )
-			file = DayFile{ .Path=move(file.Path) };
-		file.Named = true;
-		file.Outstanding.reset();
-		file.Size = run.End;
-		file.Chain = run.Chain;
-		std::ranges::move( run.Runs, std::back_inserter(file.Runs) );
+			file = DayFile{ {.Path=move(file.Path)}, {} };
+		file.Committed( run.End, run.Chain, move(run.Runs) );
 		for( auto& [index,member] : run.Preamble )
 			file.Preamble.insert_or_assign( index, move(member) );
 		if( run.Mods )
@@ -676,9 +633,9 @@ namespace Jde::Opc::Hist{
 	}
 
 	α GroupFiles::Commit( Rewrite&& rewrite, TimePoint now, SL sl )ε->void{
-		Replace( rewrite.Temp, rewrite.Path, sl );
+		IO::Replace( rewrite.Temp, rewrite.Path, sl );
 		auto archive = rewrite.Archive();
-		archive.Scanned = stamp( archive.Path );
+		archive.Stamped = IO::Records::StampOf( archive.Path );
 		_files.insert_or_assign( rewrite.Date, move(archive) );
 		_recover.erase( rewrite.Date );
 		_unarchived.erase( rewrite.Date );
@@ -690,7 +647,7 @@ namespace Jde::Opc::Hist{
 		}
 		_unsynced.insert( rewrite.Date );
 		try{
-			SyncDirectories( _root, DayDirectory(rewrite.Date), sl );
+			IO::SyncDirectories( _root, DayDirectory(rewrite.Date), sl );
 			_unsynced.erase( rewrite.Date );
 		}
 		catch( const IO::IOException& ){}//said as it goes.
@@ -701,7 +658,7 @@ namespace Jde::Opc::Hist{
 			std::error_code ec;
 			if( fs::exists(File(day), ec) || ec ){//one purged since has no name to keep.
 				try{
-					SyncDirectories( _root, DayDirectory(day), sl );
+					IO::SyncDirectories( _root, DayDirectory(day), sl );
 				}
 				catch( const IO::IOException& e ){
 					e.SetLevel( ELogLevel::Debug );//said at Error by its Commit.
@@ -713,7 +670,7 @@ namespace Jde::Opc::Hist{
 		return true;
 	}
 	α GroupFiles::Abandon( const Rewrite& rewrite )ι->void{
-		removeTemp( rewrite.Temp );
+		IO::RemoveTemp( rewrite.Temp );
 		if( rewrite.Unreadable() )
 			_files.erase( rewrite.Date );
 	}
@@ -805,30 +762,40 @@ namespace Jde::Opc::Hist{
 		return Serve( _mods, ModsFile(day), day, sl );
 	}
 	α GroupFiles::Serve( const std::map<Day,DayFile>& files, const fs::path& path, Day day, SL sl )Ε->optional<Served>{
+		sp<IO::OpenFile> file;
+		try{
+			file = ms<IO::OpenFile>( path, sl );
+		}
+		catch( IO::IOException& e ){
+			if( e.Error!=IO::EIOError::NotFound ){//history a read can't serve, which an operator must see.
+				e.SetLevel( ELogLevel::Error );
+				throw;
+			}
+			e.SetLevel( ELogLevel::Debug );//never there, or removed since the process last knew it:  purged, which a read sees as no records.
+			return nullopt;
+		}
 		Served y;
 		if( auto p = files.find(day); p!=files.end() ){
-			let& file = p->second;
-			y.Generation = file.Generation;
-			y.Size = file.Size;
-			y.Runs = file.Runs;
-			y.Preamble = file.Preamble;
+			let& known = p->second;
+			y.Generation = known.Generation;
+			y.Size = known.Size;
+			y.Runs = known.Runs;
+			y.Preamble = known.Preamble;
 		}
 		else{
-			std::error_code ec;
-			if( !fs::exists(path, ec) && !ec )
-				return nullopt;
 			try{
-				if( auto head = archivePreamble(path, sl) ){
+				if( auto head = archivePreamble(file, sl) ){
 					y.Generation = head->Start.generation();
 					y.Size = head->Size;
 					y.Preamble = std::move( head->Preamble );
 				}
 				else{//a live file's scan reads it through, so its preamble comes with its runs.
 					let start = StartOf( day, _tz );
-					auto scanned = Scan( path, [&]( HistoryRecord& r ){
+					Decoder decoder{ [&]( HistoryRecord& r ){
 						if( preambled(r, start) )
 							y.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
-					}, sl );
+					} };
+					auto scanned = IO::Records::ScanNow( file, StartField, CheckpointField, decoder, sl );
 					y.Size = scanned.Size;
 					y.Runs = move( scanned.Runs );
 				}
@@ -842,15 +809,7 @@ namespace Jde::Opc::Hist{
 			return nullopt;
 		if( y.Generation )
 			y.Runs = { Run{.Offset=0, .End=y.Size, .Chain=0, .First=std::numeric_limits<Ticks>::min(), .Last=std::numeric_limits<Ticks>::max()} };
-		try{
-			y.File = ms<ReadHandle>( path, sl );
-		}
-		catch( const IO::IOException& e ){
-			if( e.Error!=IO::EIOError::NotFound )
-				throw;
-			e.SetLevel( ELogLevel::Debug );//removed since the process last knew it:  purged, which a read sees as no records.
-			return nullopt;
-		}
+		y.File = move( file );
 		return y;
 	}
 
@@ -949,7 +908,17 @@ namespace Jde::Opc::Hist{
 			auto [p, inserted] = archives.try_emplace( day );
 			if( inserted ){
 				try{
-					if( auto head = archivePreamble(File(day), sl) )
+					sp<IO::OpenFile> file;
+					try{
+						file = ms<IO::OpenFile>( File(day), sl );
+					}
+					catch( const IO::IOException& e ){
+						if( e.Error!=IO::EIOError::NotFound )
+							throw;
+					}
+					if( !file )
+						p->second.emplace();//no file lists nothing.
+					else if( auto head = archivePreamble(file, sl) )
 						p->second = std::move( head->Preamble );
 				}
 				catch( const Exception& ){//said as it went.
@@ -970,15 +939,6 @@ namespace Jde::Opc::Hist{
 	}
 
 	α Days( const fs::path& root, sv name, bool mods, SL sl )ε->vector<Day>{
-		let file = string{ name }+( mods ? ".mods.binpb" : ".binpb" );
-		vector<Day> y;
-		walk( root, sl, [&]( Day day ){
-			std::error_code ec;
-			if( fs::exists(root/DayDirectory(day)/file, ec) || ec )//one it can't tell of fails the read that opens it.
-				y.push_back( day );
-			return false;
-		});
-		std::ranges::reverse( y );
-		return y;
+		return IO::Records::Days( root, string{name}+(mods ? ".mods.binpb" : ".binpb"), sl );
 	}
 }

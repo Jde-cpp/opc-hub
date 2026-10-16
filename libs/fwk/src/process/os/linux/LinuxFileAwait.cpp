@@ -52,7 +52,57 @@ namespace Jde::IO{
 	};
 
 
+	OpenFile::OpenFile( fs::path path, SL sl )ε:
+		_path{ move(path) }{
+		_fd = ::open( _path.c_str(), O_RDONLY | O_CLOEXEC );
+		if( _fd==-1 )
+			throw IOException{ _path, (uint32)errno, "open", sl };
+		struct stat st;
+		if( ::fstat(_fd, &st)==-1 ){
+			let code = errno;
+			::close( _fd );
+			_fd = -1;
+			throw IOException{ _path, (uint32)code, "fstat", sl };
+		}
+		if( !S_ISREG(st.st_mode) ){//a FIFO or a directory has no size to read at offsets.
+			::close( _fd );
+			_fd = -1;
+			IOException e{ _path, "is not a regular file", sl };
+			e.Error = EIOError::Invalid;
+			throw e;
+		}
+	}
+	OpenFile::~OpenFile(){
+		if( _fd!=-1 )
+			::close( _fd );
+	}
+	α OpenFile::Size( SL sl )Ε->uint{
+		struct stat st;
+		THROW_IFX( ::fstat(_fd, &st)==-1, IOException(_path, (uint32)errno, "fstat", sl) );
+		return (uint)st.st_size;
+	}
+	α OpenFile::Read( uint offset, char* buffer, uint size, SL sl )Ε->uint{
+		uint y{};
+		while( y<size ){
+			let read = ::pread( _fd, buffer+y, size-y, (off_t)(offset+y) );
+			if( read==-1 ){
+				if( errno==EINTR )
+					continue;
+				throw IOException{ _path, (uint32)errno, "pread", sl };
+			}
+			if( !read )
+				break;//the end of the file.
+			y += (uint)read;
+		}
+		return y;
+	}
+
 	α FileIOArg::Open( bool create )ε->void{
+		if( Shared ){//the open file's descriptor, borrowed:  ~FileIOArg leaves it open.
+			Handle = Shared->Native();
+			SizeBuffer( Shared->Size(_sl) );
+			return;
+		}
 		auto flags = O_NONBLOCK | O_CLOEXEC | ( IsRead ? O_RDONLY : O_WRONLY );
 		let keepsPrefix = Mode==EWriteMode::Truncate && Offset;
 		if( !IsRead ){
@@ -129,11 +179,11 @@ namespace Jde::IO{
 	FileIOArg::~FileIOArg(){
 		for( let fd : NameDirs )
 			::close( fd );
-		if( Handle>=0 ){//fd -1 is invalid
+		if( Handle>=0 && !Shared ){//fd -1 is invalid; a shared file's descriptor is its OpenFile's to close.
 			::close( Handle );
 			TRACE( "[{}]Closed file handle for {}", hex(Handle), Path.string() );
-			Handle = -1;
 		}
+		Handle = -1;
 	}
 
 	Ω markFinished( const sp<FileIOArg>& op )ι->void{//balance Send's ++_requestCount exactly once per op - a multi-chunk read can error on more than one in-flight chunk.

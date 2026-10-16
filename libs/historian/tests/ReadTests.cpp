@@ -575,7 +575,13 @@ namespace Jde::Opc::Hist::Tests{
 			Time->Advance( 1min );
 			ASSERT_TRUE( held.RunUntil([this]{ return !Pump->Runs(March7).empty(); }) ) << "the day's commit";
 			EXPECT_FALSE( Pump->Flushed() ) << "the flush has ended";
-			EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
+			//The read's windows go through the file awaitables, whose completions run on the executor:  it reads beside this
+			//thread, which pumps the executor until it is done.
+			std::atomic<bool> done{};
+			vector<double> values;
+			std::jthread reading{ [&]{ values = doubles( All(request) ); done = true; } };
+			ASSERT_TRUE( held.RunUntil([&]{ return done.load(); }) ) << "the read";
+			EXPECT_EQ( values, (vector<double>{1, 2, 3}) );
 		}
 		Settle( *Pump );
 		EXPECT_TRUE( Pump->Flushed() );
@@ -624,17 +630,17 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( served->Generation, 0 ) << "a live file, read through its runs";
 		let temp = root/"rewritten.tmp";
 		save( temp, "rewritten" );
-		Replace( temp, file );
+		IO::Replace( temp, file );
 		Merge merge{ served->File, served->Runs, {} };
 		vector<double> values;
-		for( Proto::HistoryRecord r; merge.Next(r); ){
+		for( Proto::HistoryRecord r; IO::Records::NextNow(merge, r); ){
 			if( r.has_value() )
 				values.push_back( r.value().value().double_value() );
 		}
 		EXPECT_EQ( values, (vector<double>{1, 2}) );
-		Merge reopened{ ms<ReadHandle>(file), served->Runs, {} };//as the path opens now
+		Merge reopened{ ms<IO::OpenFile>(file), served->Runs, {} };//as the path opens now
 		Proto::HistoryRecord r;
-		EXPECT_THROW( while(reopened.Next(r)){}, IO::IOException );
+		EXPECT_THROW( while(IO::Records::NextNow(reopened, r)){}, IO::IOException );
 	}
 
 	//A heartbeat is a stored value, returned as its record marks it, and a Bad_DataLost marker a value with none.

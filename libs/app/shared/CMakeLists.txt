@@ -18,9 +18,8 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 if( WIN32 )
 	find_package( OpenSSL REQUIRED )
 	target_link_libraries( ${targetName} OpenSSL::SSL )
-	target_link_libraries( ${targetName} absl::abseil_dll )#every absl:: target aliases it; this library links neither Jde nor protobuf::libprotobuf, which would bring it.
-	target_link_libraries( ${targetName} ${CMAKE_INSTALL_PREFIX}/protobuf/lib/protobuf$<IF:$<CONFIG:Debug>,d,>.lib )
 endif()
+#absl and protobuf arrive through Jde (via Jde.QL), which links the shared protobuf PUBLIC.
 
 #######################################################
 target_precompile_headers(${targetName}

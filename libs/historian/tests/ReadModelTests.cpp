@@ -815,7 +815,7 @@ namespace Jde::Opc::Hist::Tests{
 				y += "preambles:\n";
 				for( let day : Days(Path(), Name) ){
 					let file = File( *Pump, day );
-					let start = ReadStart( file );
+					let start = head( file );
 					y += Ƒ( "{} generation {}:", DayDirectory(day).string(), start ? start->generation() : 999 );
 					for( let& record : readFile(file) ){
 						if( record.has_node_added() && isPreamble(record, record.node_added().node_index(), day) && std::ranges::contains(r.Nodes, record.node_added().node_index()) )

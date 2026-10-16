@@ -9,7 +9,7 @@ namespace Jde::Opc::Hist{
 		Config{ move(settings) },
 		Time{ move(clock) }{
 		try{
-			if( auto lock = PathLock::TryLock(Config.Path); lock )
+			if( auto lock = IO::PathLock::TryLock(Config.Path, "historian.lock"); lock )
 				Lock.emplace( move(*lock) );
 			else
 				Disabled = Ƒ( "another historian holds the lock on '{}'", Config.Path.string() );

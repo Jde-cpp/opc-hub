@@ -12,12 +12,6 @@ namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 	using Proto::HistoryRecord;
 
-	Ω generation( const fs::path& file )ε->uint32_t{
-		let start = ReadStart( file );
-		if( !start )
-			ADD_FAILURE() << file << " opens with no FileStart.";
-		return start ? start->generation() : std::numeric_limits<uint32_t>::max();
-	}
 	Ω types( const vector<ReadValue>& values )ι->vector<Proto::UpdateType>{
 		vector<Proto::UpdateType> y;
 		for( let& v : values )
@@ -651,7 +645,10 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( modified[0].Modification->IdentityId, 9 );
 		let mods = readFile( Path()/DayDirectory(March7)/"server.mods.binpb" );
 		ASSERT_EQ( mods.size(), 4 );
-		EXPECT_EQ( mods[0].file_start().next_node_index(), 2 );
+		EXPECT_TRUE( mods[0].has_file_start() );//a modifications file carries no Issued:  its index is the value file's.
+		let values = readFile( Path()/DayDirectory(March7)/"server.binpb" );
+		ASSERT_GE( values.size(), 2 );
+		EXPECT_EQ( values[1].issued().next_node_index(), 2 );
 		EXPECT_TRUE( isPreamble(mods[1], speed, March7) );
 		EXPECT_FALSE( mods[1].node_added().has_start() );
 	}

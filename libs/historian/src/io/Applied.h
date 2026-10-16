@@ -20,7 +20,7 @@ namespace Jde::Opc::Hist{
 	//that record; one whose original isn't there changes nothing.  A record's place in its file is kept only where no
 	//modification targets its time:  a page resumed at its offset would apply them to part of the time's records.
 	struct Applied final : noncopyable{
-		Applied( sp<ReadHandle> file, vector<Run> runs, vector<Proto::HistoryRecord> late, DayMods mods, SL sl )ι;
+		Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<Proto::HistoryRecord> late, DayMods mods, SL sl )ι;
 		//False at the end.  Throws when a run can't be read through.
 		α Next( Proto::HistoryRecord& r, optional<Merge::Position>& where )ε->bool;
 	private:
@@ -31,6 +31,7 @@ namespace Jde::Opc::Hist{
 		std::map<Ticks,vector<Proto::Modification>>::const_iterator _nextMod;
 		std::deque<Placed> _queue;//the records at one time, applied.
 		optional<Placed> _ahead;
+		SL _sl;
 	};
 	//Applies mods, one time's, to the records there, as above.
 	α Apply( vector<Proto::HistoryRecord>& at, vector<optional<Merge::Position>>* where, const vector<Proto::Modification>& mods )ι->void;

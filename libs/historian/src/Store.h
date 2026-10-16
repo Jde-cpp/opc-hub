@@ -1,6 +1,6 @@
 #pragma once
 #include <jde/historian/Historian.h>
-#include "io/File.h"
+#include <jde/fwk/io/durable.h>
 
 namespace Jde::Opc::Hist{
 	//What a historian's groups share:  its settings and clock, its lock on hist.path, and the cap on what they buffer
@@ -10,7 +10,7 @@ namespace Jde::Opc::Hist{
 		Store( Settings settings, sp<IClock> clock )ι;
 		const Settings Config;
 		const sp<IClock> Time;
-		optional<PathLock> Lock;//until the historian is destroyed.
+		optional<IO::PathLock> Lock;//until the historian is destroyed.
 		string Disabled;//why there was no lock to take.
 
 		//The order records arrived in, across every group, which is the order a full buffer drops them in.

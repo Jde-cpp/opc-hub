@@ -34,7 +34,7 @@ Each item is its own PR, useful without the historian.
 | Concern | OpcServer | Gateway |
 | --- | --- | --- |
 | Thresholds | the nodeset's HA Configuration, plus defaults | `hist_group_nodes` → template member → group |
-| node\_index | issued by the historian, carried in `FileStart` | the `hist_group_nodes` row id |
+| node\_index | issued by the historian, carried in an `Issued` record after each value file's `FileStart` | the `hist_group_nodes` row id |
 | Groups | one, `server` | many, named by `guid` |
 | Break | stop or crash | also the connection-state callback |
 | Identity | `OpcAuthorize` | `Authorize` through QL creds |
@@ -43,7 +43,7 @@ Each item is its own PR, useful without the historian.
 
 **Build order.** Each step merges with its own tests. Steps 1–4 are [#202]–[#205] under [#200], step 5 is [#206], and steps 6–7 are [#207].
 
-1. **Records and I/O.** The `HistoryRecord` oneof, delimited writes straight into the buffer, a `CodedInputStream` reader over offset and limit, delta times, checkpoints, the first-open scan through the last good checkpoint, and the first append's truncation there. Tests truncate a live file at every byte offset, append a zero-filled tail, and garble a body with its length intact.
+1. **Records and I/O.** The `HistoryRecord` oneof, writes straight into the buffer, a reader over offset and limit, delta times, checkpoints, the first-open scan through the last good checkpoint, and the first append's truncation there - since #308 the framework's record layer ([`include/jde/fwk/io/records`](../../../include/jde/fwk/io/records/Framing.h)), with the historian's record traits over it. Tests truncate a live file at every byte offset, append a zero-filled tail, and garble a body with its length intact.
 2. **Day files and durability.**
    - Layout: the `hist.path` lock, which disables the historian instead of exiting, and the two-slot `.flushed` file.
    - fsync of files and directories.
@@ -69,7 +69,7 @@ Each item is its own PR, useful without the historian.
   - `AggregateConfiguration` and `ServerTimestampSupported`.
   - `HistoryServerCapabilities` with its `AggregateFunctions` folder, and Median in OpcServer's own namespace.
   - `StartOfArchive`/`StartOfOnlineArchive`, at start and at each midnight.
-- **node\_index.** Carried forward in `FileStart`. A node the nodesets no longer historize gets a `NodeRemoved`.
+- **node\_index.** Carried forward in an `Issued` record after each value file's `FileStart`. A node the nodesets no longer historize gets a `NodeRemoved`.
 - **Access.** Read callbacks check each node's Read. The two history-update callbacks at [`UAAccess.cpp:575`](../../../apps/OpcServer/src/access/UAAccess.cpp#L575) answer Update and Delete on the node's enforced governing resource and refuse where none governs it, and `HistoryWrite` is left out of an unprotected node's `UserAccessLevel` (the spec's *Authorization*, [#237]).
 - **Bounded callbacks.** Each node's read stops at `maxReturnDataValues` or one day file, then returns a continuation point. Measure how long a callback holds the service lock under emulator load.
 - **Config.** A `hist` block in [`Opc.Server.jsonnet`](../../../apps/OpcServer/config/Opc.Server.jsonnet); `path` defaults to `hist/opc-server`.

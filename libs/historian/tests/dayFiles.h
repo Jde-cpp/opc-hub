@@ -9,7 +9,7 @@ namespace Jde::Opc::Hist::Tests{
 	Ξ utc()ι->const time_zone&{ return *locate_zone( "UTC" ); }
 	//The runs a group holds for a file are those a scan of it rebuilds.
 	Ξ expectRuns( const vector<Run>& actual, const fs::path& file )ε->void{
-		const auto expected = Scan( file ).Runs;
+		const auto expected = scan( file ).Runs;
 		ASSERT_EQ( actual.size(), expected.size() ) << file;
 		for( uint i=0; i<actual.size(); ++i ){
 			SCOPED_TRACE( Ƒ("run {} of {}", i, actual.size()) );

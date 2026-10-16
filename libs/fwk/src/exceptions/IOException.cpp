@@ -12,12 +12,12 @@ namespace Jde{
 		case ERROR_INVALID_PARAMETER: case ERROR_INVALID_NAME: case ERROR_DIRECTORY: case ERROR_FILENAME_EXCED_RANGE: return EIOError::Invalid;
 		case ERROR_READ_FAULT: case ERROR_WRITE_FAULT: case ERROR_CRC: case ERROR_IO_DEVICE: return EIOError::Device;
 #else
-		case ENOENT: return EIOError::NotFound;
+		case ENOENT: case ENOTDIR: return EIOError::NotFound;
 		case EEXIST: return EIOError::Exists;
 		case EACCES: case EPERM: case EROFS: return EIOError::Permission;
 		case EBUSY: case EAGAIN: case ETXTBSY: case ENOLCK: return EIOError::Busy;
 		case ENOSPC: case EDQUOT: return EIOError::NoSpace;
-		case EINVAL: case EISDIR: case ENOTDIR: case ENAMETOOLONG: return EIOError::Invalid;
+		case EINVAL: case EISDIR: case ENAMETOOLONG: return EIOError::Invalid;
 		case EIO: return EIOError::Device;
 #endif
 		default: return EIOError::None;

@@ -1,29 +1,29 @@
 syntax = "proto3";
 package Jde.Opc.Hist.Proto;
 import "Opc.Common.proto";
+import "Jde.IO.Records.proto";
 
-//A history file is HistoryRecords in protobuf's delimited form, a varint length then the body, so any language's
-//parseDelimitedFrom reads it.  Times are UA ticks, 100 ns since 1601.  Only FileStart's is absolute:  every other
-//record's primary time is a delta from the previous record's, and its other times are deltas from its own primary time.
-//A body is only ever its oneof member, one field filling it, which a reader checks before buffering it, so HistoryRecord
-//never gains a field outside the oneof:  a build before it would read that as damage.
+//A history file is the framework record layer's (include/jde/fwk/io/records):  each record its oneof member's field, tag,
+//length and body, so the file parses as one HistoryRecord with every field repeated.  Times are UA ticks, 100 ns since
+//1601.  Only the FileStart's is absolute:  every other record's primary time is a delta from the previous record's, and its
+//other times are deltas from its own primary time.  Issued and Checkpoint have no time, so the chain passes over them.
+//HistoryRecord never gains a field outside the oneof:  a build before it would read that as damage.
 message HistoryRecord{
 	oneof record{
-		FileStart file_start=1;
+		Jde.IO.Proto.FileStart file_start=1;//first in every file:  the start of its day in timeZone, which the first record's delta counts from.
 		NodeAdded node_added=2;
 		NodeRemoved node_removed=3;
 		DataValue value=4;
 		Modification modification=5;
-		Checkpoint checkpoint=6;
+		Jde.IO.Proto.Checkpoint checkpoint=6;//the end of every append to a live or modifications file.
+		Issued issued=7;
 	}
 }
 
-//First in every file:  the start of its day in timeZone, which the first record's delta counts from.
-message FileStart{
-	int64 ts=1;
-	uint32 generation=2;//0 for a live file; each archive rewrite increments it.
-	uint32 next_node_index=3;//OpcServer's only:  the node_index it issues next.
-	fixed32 crc=4;//the CRC-32C of ts, generation and next_node_index, each little-endian:  a reader checks it before it trusts them.
+//An Issued group's, OpcServer's, right after the FileStart of each value file it makes:  the node_index it issues next.
+//Absent from a gateway group's files, which take the host's indexes, and from modifications files.  It has no time.
+message Issued{
+	uint32 next_node_index=1;
 }
 
 //A node joining the group, or a current member at the start of a file, which alone carries a start value.  Primary time ts.
@@ -82,11 +82,4 @@ message Modification{
 	sint64 ts=6;//when the edit was made.
 	optional uint32 identity_id=7;
 	string user_name=8;
-}
-
-//The end of every append to a live or modifications file:  the CRC-32C of the bytes since the file's previous
-//checkpoint, or since its start.  It has no time, so the delta chain passes over it.  A scan past damage finds one by
-//its bytes alone, 07 32 05 0D then crc, so Checkpoint only ever holds crc.
-message Checkpoint{
-	fixed32 crc=1;
 }

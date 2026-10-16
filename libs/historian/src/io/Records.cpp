@@ -1,5 +1,4 @@
 #include "Records.h"
-#include <jde/fwk/io/crc.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/proto/opc.Common.h>
 #include <google/protobuf/util/field_comparator.h>
@@ -9,7 +8,6 @@
 
 namespace Jde::Opc{
 	constexpr ELogTags _tags{ ELogTags::IO };
-	using google::protobuf::io::CodedOutputStream;
 	using Hist::Proto::HistoryRecord;
 }
 namespace Jde::Opc::Hist{
@@ -75,6 +73,7 @@ namespace Jde::Opc::Hist{
 						Nested( *m.mutable_new_value() );
 					break;}
 				case HistoryRecord::kCheckpoint:
+				case HistoryRecord::kIssued:
 				case HistoryRecord::RECORD_NOT_SET:
 					break;
 				}
@@ -98,40 +97,8 @@ namespace Jde::Opc::Hist{
 		record.set_identity_id( id==UserPK::System ? std::numeric_limits<uint32_t>::max() : (uint32_t)id );//Writer's constructor checked it fits.
 		record.set_user_name( by->UserName );
 	}
-
-	α Appender::Add( HistoryRecord&& r )ε->void{
-		if( r.has_file_start() )
-			r.mutable_file_start()->set_crc( StartCrc(r.file_start()) );
-		auto chain = _chain;//moved on only once r is in out, so a record Write refuses leaves the chain where the bytes end.
-		ToDisk( r, chain );
-		Write( r );
-		_chain = chain;
-	}
-	α Appender::Write( const HistoryRecord& r )ε->void{
-		let size = r.ByteSizeLong();
-		THROW_IF( size>(uint)std::numeric_limits<int>::max(), "A {} byte record exceeds protobuf's limit.", size );
-		let offset = _out.size();
-		_out.resize( offset+CodedOutputStream::VarintSize32((uint32_t)size)+size );
-		auto p = reinterpret_cast<uint8_t*>( _out.data()+offset );
-		p = CodedOutputStream::WriteVarint32ToArray( (uint32_t)size, p );
-		(void)r.SerializeWithCachedSizesToArray( p );
-	}
-	α Appender::Seal()ε->Ticks{
-		HistoryRecord checkpoint;
-		checkpoint.mutable_checkpoint()->set_crc( IO::Crc::Calc32c(sv{_out}.substr(_start)) );
-		Write( checkpoint );
-		_start = _out.size();
-		return _chain;
-	}
 }
 namespace Jde::Opc{
-	α Hist::StartCrc( const Proto::FileStart& start )ι->uint32_t{
-		uint8_t bytes[16];
-		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)start.ts(), bytes );
-		p = CodedOutputStream::WriteLittleEndian32ToArray( start.generation(), p );
-		(void)CodedOutputStream::WriteLittleEndian32ToArray( start.next_node_index(), p );
-		return IO::Crc::Calc32c( sv{reinterpret_cast<const char*>(bytes), sizeof(bytes)} );
-	}
 	α Hist::SetWriter( Proto::Modification& m, const Writer& by )ι->void{ Hist::setWriter( m, optional<Writer>{by} ); }
 	α Hist::Same( const Proto::DataValue& a, const Proto::DataValue& b )ι->bool{
 		let sameValue = [&]{

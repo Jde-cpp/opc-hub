@@ -1,8 +1,16 @@
 #pragma once
 #include <jde/historian/Group.h>
+#include <jde/fwk/io/records/Appender.h>
+#include <jde/fwk/io/records/Scan.h>
+#include <jde/fwk/io/records/Merge.h>
 
+namespace Jde::Opc::Hist::Proto{//the record layer's two records, as the oneof embeds them.
+	using FileStart = IO::Proto::FileStart;
+	using Checkpoint = IO::Proto::Checkpoint;
+}
 namespace Jde::Opc::Hist{
 	using Ticks = UA_DateTime;//a record's time:  100 ns since 1601.
+	static_assert( std::is_same_v<Ticks,IO::Records::Time>, "The record layer's time is the historian's ticks." );
 	Ξ ticks( Duration d )ι->Ticks{ return std::chrono::duration_cast<UATick>( d ).count(); }//a span in them.
 	Ξ ticks( TimePoint t )ι->Ticks{ return UADateTime{ t }.UA(); }//a time in them.
 
@@ -11,11 +19,6 @@ namespace Jde::Opc::Hist{
 	//A FileStart sets last, and a Checkpoint leaves it.
 	α ToDisk( Proto::HistoryRecord& r, Ticks& last )ι->void;
 	α ToMemory( Proto::HistoryRecord& r, Ticks& last )ι->void;
-	//A FileStart's crc:  the CRC-32C of its ts, generation and next_node_index, each little-endian.  Appender::Add sets it,
-	//and the scan checks it before it trusts the time or the generation.
-	α StartCrc( const Proto::FileStart& start )ι->uint32_t;
-	//The longest a FileStart record's body can be, every field at its widest:  a first length past it is no torn preamble.
-	constexpr uint32_t MaxFileStartBody{ 30 };
 	//The filing rule, what a record is filed and read by:  a value's source time, or its server's when it came with none,
 	//and a membership change's time.  None for a FileStart, a Checkpoint, or a stored value with neither timestamp.
 	α PrimaryTime( const Proto::HistoryRecord& r )ι->optional<Ticks>;
@@ -45,21 +48,32 @@ namespace Jde::Opc::Hist{
 	//can't be encoded is stored without it, with the status that says why and a warning each time, unless !warn.
 	α ToProto( const UA_DataValue& v, NodeIndex index={}, bool warn=true )ε->Proto::DataValue;
 
-	//One append to a file, a run:  each record serialized delimited straight onto the end of out, with no copy of its own,
-	//then a Checkpoint holding the CRC-32C of the run's bytes.
-	struct Appender final{
-		//chain is where the file's delta chain stands, from its first-open scan; a new file's FileStart sets it.
-		Appender( string& out, Ticks chain )ι:_out{ out }, _start{ out.size() }, _chain{ chain }{}
-		//Throws for a record over protobuf's 2 GB limit, or when out can't grow, leaving out and the chain as they were, so
-		//the run can go on without r.
-		α Add( Proto::HistoryRecord&& r )ε->void;
-		//Ends the run, and returns where the chain stands for the file's next.  Throws only when out can't grow, changing
-		//nothing.
-		α Seal()ε->Ticks;
-	private:
-		α Write( const Proto::HistoryRecord& r )ε->void;
-		string& _out;
-		uint _start;
-		Ticks _chain;
+	//The framework's record layer (include/jde/fwk/io/records) over the historian's record:  its FileStart is the oneof's
+	//field 1 and its Checkpoint field 6.  The layer frames, scans, merges and rewrites; what is the historian's own stays
+	//here:  membership, start values, the delta times and the HistoryRecord oneof.
+	constexpr uint32_t StartField{ 1 };
+	constexpr uint32_t CheckpointField{ 6 };
+	using IO::Records::Run;
+	using IO::Records::Scanned;
+	using IO::Records::EStop;
+	using IO::Records::ENext;
+	using IO::Records::Window;
+}
+namespace Jde::IO::Records{
+	template<> struct Traits<Opc::Hist::Proto::HistoryRecord>{
+		using R = Opc::Hist::Proto::HistoryRecord;
+		static constexpr uint32_t StartField{ Opc::Hist::StartField };
+		static constexpr uint32_t CheckpointField{ Opc::Hist::CheckpointField };
+		Ω Known( uint32_t field )ι->bool{ return field>=R::kFileStart && field<=R::kIssued; }
+		Ω Time( const R& r )ι->optional<Records::Time>{ return Opc::Hist::PrimaryTime( r ); }
+		Ω ToDisk( R& r, State& chain )ι->void{ Opc::Hist::ToDisk( r, chain ); }
+		Ω ToMemory( R& r, State& chain )ι->void{ Opc::Hist::ToMemory( r, chain ); }
+		Ω SetStart( R& r, const Proto::FileStart& start )ι->void{ *r.mutable_file_start() = start; }
 	};
+}
+namespace Jde::Opc::Hist{//after the traits, which the layer's templates are constrained on.
+	using Appender = IO::Records::Appender<Proto::HistoryRecord>;
+	using Reader = IO::Records::Reader<Proto::HistoryRecord>;
+	using Decoder = IO::Records::Decoder<Proto::HistoryRecord>;
+	using Merge = IO::Records::Merge<Proto::HistoryRecord>;
 }
