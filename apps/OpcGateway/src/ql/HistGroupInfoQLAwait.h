@@ -29,7 +29,7 @@ namespace Jde::Opc::Gateway{
 		α Query()ι->TAwait<jvalue>::Task override;
 		α Groups()ε->jvalue;
 		α Capabilities()ε->jvalue;
-		//The group the caller may read, as this gateway hosts it:  ServiceUnavailable without the historian, NotFound for one it doesn't host.
+		//The group the caller may read, as this gateway hosts it (HistHost::Gate):  ServiceUnavailable without the historian, NotFound for one it doesn't host.
 		α Host( HistGroupPK group )ε->sp<HistGroupHost>;
 		α Thresholds( const HistGroupRow& group, const vector<HistGroupNodeRow>& rows, const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, const HistGroupHost& host )ε->jvalue;
 	};

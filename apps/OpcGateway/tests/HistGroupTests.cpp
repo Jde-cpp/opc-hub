@@ -215,6 +215,56 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( Rows("histTemplateNodes( histTemplateId:$t ){ id }", {{"t", templateId}}).empty() ) << "a purge takes the template's members";
 	}
 
+	//A purge takes the group's own access row and the grants on it (#357), through the AppServer:  keyed by the guid no later group
+	//takes, and nothing else would ever purge them - the Resources page lists no criteria row.  The gateway's authorizer isn't told,
+	//resource purges aren't subscribed, which costs nothing:  no gate asks for the guid again.
+	TEST_F( HistGroupTests, APurgeTakesTheGroupsAccessRow ){
+		let created = CreateGroup( "purged-access", nullopt, nullopt );
+		let groupId = Id( created );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let guid = Json::AsString( Json::AsObject(created), "guid" );
+		absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		EnforceHistGroups( true );
+		ScopeHistGroup( groupId, Access::ERights::Read );
+		let app = AppClient();
+		let resources = [&]{ return app->QuerySync<jarray>( "resources( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria ){ id }", {{"criteria", guid}} ); };
+		let rows = resources();
+		ASSERT_EQ( rows.size(), 1u ) << serialize( rows );
+		let resourceId = Id( rows[0] );
+		let grants = [&]{ return app->QuerySync<jarray>( "permissionRights( resourceId:$id ){ id }", {{"id", resourceId}} ); };
+		ASSERT_FALSE( grants().empty() ) << "ScopeHistGroup grants the suite's user";
+
+		Mutate( "purgeHistGroup( id:$id )", {{"id", groupId}} );
+		std::move( purgeGroup ).Cancel();
+		EXPECT_TRUE( Rows("histGroups( id:$id ){ id }", {{"id", groupId}}).empty() );
+		EXPECT_TRUE( resources().empty() ) << "the group's access row went with it";
+		EXPECT_TRUE( grants().empty() ) << "and the grants on it";
+	}
+	//The access row goes after the group, best effort:  a refusal - here an enforced histGroupNodes, a `gateway` root the gateway's
+	//login doesn't administer - or an AppServer out of reach used to fail the group's purge.  The row stays, inert:  no later group
+	//takes its guid (#357 review #2).
+	TEST_F( HistGroupTests, ARefusedAccessPurgeStillPurgesTheGroup ){
+		let created = CreateGroup( "refused-access", nullopt, nullopt );
+		let groupId = Id( created );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let guid = Json::AsString( Json::AsObject(created), "guid" );
+		absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
+		EnforceHistGroups( true );
+		ScopeHistGroup( groupId, Access::ERights::Read );
+		let app = AppClient();
+		absl::Cleanup purgeRow = [&]{//once histGroupNodes is open again, the gateway's login administers the schema.
+			try{ app->QuerySync<jvalue>( "purgeResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", guid}} ); }
+			catch( const std::exception& e ){ WARNT( ELogTags::Test, "group {}'s access row:  {}", groupId, e.what() ); }
+		};
+		{
+			auto open = EnforceGroupNodes();
+			Mutate( "purgeHistGroup( id:$id )", {{"id", groupId}} );
+		}
+		std::move( purgeGroup ).Cancel();
+		EXPECT_TRUE( Rows("histGroups( id:$id ){ id }", {{"id", groupId}}).empty() );
+		EXPECT_EQ( app->QuerySync<jarray>("resources( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria ){ id }", {{"criteria", guid}}).size(), 1u ) << "the access row stays";
+	}
+
 	//A member whose create fails answers its own status, and the group's create succeeds without it:  the failure used to fail
 	//the create whose hist_groups row was already written (historian-groups-templates #5).  The group's id comes by its slug, so
 	//the row is purged either way;  the second is the create's failure, if any.

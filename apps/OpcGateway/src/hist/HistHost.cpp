@@ -86,6 +86,19 @@ namespace Jde::Opc::Gateway{
 			y.push_back( host );
 		return y;
 	}
+	α HistHost::Gate( HistGroupPK id, Access::ERights rights, bool enforced, UserPK by, SL sl )ε->sp<HistGroupHost>{
+		auto host = Find( id );
+		let criteria = host ? host->Guid() : string{};//none names the table's row, as Test falls back to it for a group with no row of its own.
+		let acl = AppClient()->Acl();
+		if( enforced )
+			acl->TestEnforced( "gateway", "histGroups", criteria, rights, by, sl );
+		else
+			acl->Test( "gateway", "histGroups", criteria, rights, by, sl );
+		TestEnabled( sl );
+		if( !host )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", id };
+		return host;
+	}
 	α HistHost::Collector( const ServerCnnctnNK& slug )Ι->Credential{
 		Credential cred{ Crypto::PublicKey{} };
 		if( let credentials = Settings::FindObject(Ƒ("/gateway/hist/credentials/{}", slug)); credentials ){
@@ -329,18 +342,19 @@ namespace Jde::Opc::Gateway{
 					}
 				}
 			}
-			//The holders' names, deleted groups among them:  a deleted group keeps its rows.  This group's is its row's;  another's is
-			//asked once, by its id, rather than every group on the gateway read for one or two.
-			flat_map<HistGroupPK,string> names{ {group.Id, group.Name} };
+			//The holders' names and guids, deleted groups among them:  a deleted group keeps its rows.  This group's are its row's;
+			//another's are asked once, by its id, rather than every group on the gateway read for one or two.
+			flat_map<HistGroupPK,std::pair<string,string>> holderRows{ {group.Id, {group.Name, group.Guid}} };
 			for( auto& r : y ){
 				if( !r.Holder )
 					continue;
-				auto name = names.find( *r.Holder );
-				if( name==names.end() ){
+				auto holder = holderRows.find( *r.Holder );
+				if( holder==holderRows.end() ){
 					auto holders = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)*r.Holder}, .IncludeDeleted=true}) );
-					name = names.emplace( *r.Holder, holders.size() ? holders.front().Name : string{} ).first;
+					holder = holderRows.emplace( *r.Holder, holders.size() ? std::pair{holders.front().Name, holders.front().Guid} : std::pair<string,string>{} ).first;
 				}
-				r.HolderName = name->second;
+				r.HolderName = holder->second.first;
+				r.HolderGuid = holder->second.second;
 			}
 			await.Resume( move(y) );
 		}
@@ -426,8 +440,12 @@ namespace Jde::Opc::Gateway{
 			await.ResumeExp( move(e) );
 		}
 	}
-	α HistHost::GroupPurging( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask{
+	α HistHost::GroupPurging( HistGroupPK id, UserPK by, string& guid, HistWork& await )ι->VoidTask{
 		try{
+			//The key of its access row, which GroupPurged purges once the row is gone.  A deleted group is purged too, so the row's, not a host's.
+			auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
+			if( rows.size() )
+				guid = rows.front().Guid;
 			if( auto host = Remove(id, Writer(by), SRCE_CUR); host )
 				co_await host->Group()->Settled();
 			let view = GetViewPtr( "hist_group_nodes" );
@@ -437,6 +455,22 @@ namespace Jde::Opc::Gateway{
 		catch( runtime_error& e ){
 			await.ResumeExp( move(e) );
 		}
+	}
+	α HistHost::GroupPurged( string guid, HistWork& await )ι->VoidTask{
+		//Its own access row and the grants on it, through the AppServer as the resource sync writes its rows (#357):  keyed by the guid,
+		//nothing else would ever purge them - the Resources page lists no criteria row.  After the group's purge has landed, so a local
+		//failure leaves the group its row, and best effort:  a refusal - the gateway's login not administering an enforced `gateway`
+		//root - or an AppServer out of reach leaves the row, inert, since no later group takes its guid.  Most groups have no row of
+		//their own, which the AppServer answers NotFound.  No purged event exists, so the authorizers keep the row until their next load.
+		try{
+			co_await Any( *AppClient()->Query<jvalue>("purgeResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", guid}}) );
+			INFO( "[{}]The group's access row purged with it.", guid );
+		}
+		catch( const runtime_error& e ){
+			if( let p = dynamic_cast<const Exception*>(&e); !p || p->HttpStatus()!=EHttpStatus::NotFound )
+				WARN( "[{}]The group's access row wasn't purged with it, and stays, inert:  {}", guid, e.what() );
+		}
+		await.Done();
 	}
 	α HistHost::NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask{
 		try{

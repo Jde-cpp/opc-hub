@@ -1,6 +1,6 @@
 <div class="tab-body">
 	<p class="hint">Who may read the group's history and edit it:  Read for the trend, the table and a live subscription, Update for inserts, replacements and corrections and for Resolve, Delete for purges, and Administer to change these grants once the group's own resource governs it.  The hist_groups table's resource, switched on the Resources page, turns checking on;  under it the group answers to its own resource once it has one that is enforced, else to the table's.</p>
-	@if( shown()==group().id ){<!--says nothing of a group whose rows haven't been read-->
+	@if( onScreen() ){<!--says nothing of a group whose rows haven't been read-->
 		<section class="governs" [class]="status().kind" role="status" aria-label="Governing resource">
 			<mat-icon aria-hidden="true">{{ status().icon }}</mat-icon>
 			<div>
@@ -11,7 +11,7 @@
 	}
 	<div class="tab-toolbar">
 		<button matButton="filled" type="button" (click)="save()" [disabled]="!mutations().length || !ready()">Save</button>
-		@if( shown()==group().id ){
+		@if( onScreen() ){
 			@if( own(); as o ){
 				<button matButton="outlined" type="button" (click)="setEnforced( !o.enforced )" [disabled]="!ready()" [matTooltip]="o.enforced ? 'The hist_groups table\'s resource governs the group again' : 'Only the roles granted here get through'">
 					<mat-icon>{{ o.enforced ? 'lock_open' : 'lock' }}</mat-icon>{{ o.enforced ? 'Stop enforcing' : 'Enforce' }}

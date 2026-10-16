@@ -41,8 +41,8 @@ namespace Jde::Opc::Gateway::Tests{
 	//The hist_groups resource enforced, with the gateway's user granted everything on it through a role of its own, or
 	//soft-deleted again, as it ships:  a group's history edits need a grant on an enforced resource (spec *Authorization*).
 	α EnforceHistGroups( bool on )ε->void;
-	//A group's own access resource, its id the criteria, enforced with `allowed` granted the suite's user:  it stands in for histGroups'
-	//root for that group alone (Authorize::Test), and counts only while the root is enforced (EnforceHistGroups).  The grant takes Administer too, which enforcing - restoring - the row needs.  Through
+	//A group's own access resource, its guid the criteria (#357), enforced with `allowed` granted the suite's user:  it stands in for
+	//histGroups' root for that group alone (Authorize::Test), and counts only while the root is enforced (EnforceHistGroups).  The grant takes Administer too, which enforcing - restoring - the row needs.  Through
 	//a role:  a direct grant's acl event reaches every app's authorizer, the embedded OpcServer's among them, which never saw the
 	//gateway's row and asserts (the acl subscriptions' schema filter, reviews/soak-findings.md).  Returns once the gateway's authorizer
 	//has the resource;  the grant can reach it after.

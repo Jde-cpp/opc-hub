@@ -132,15 +132,11 @@ namespace Jde::Opc::Gateway{
 				WriteException( Exception{"Send sessionId before subscribing."}, requestId );
 				return;
 			}
-			AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(request.group()), Access::ERights::Read, UserPK(), SRCE_CUR );
 			auto& hist = HistHost::Instance();
-			hist.TestEnabled( SRCE_CUR );
+			auto host = hist.Gate( request.group(), Access::ERights::Read, false, UserPK(), SRCE_CUR );
 			let historian = hist.Historian();//once:  Stop takes it.
 			if( !historian )
 				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::ServiceUnavailable}, "The gateway's historian has stopped." };
-			auto host = hist.Find( request.group() );
-			if( !host )
-				throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", request.group() };
 			vector<ExNodeId> nodes; nodes.reserve( request.nodes_size() );
 			for( let& node : request.nodes() )
 				nodes.push_back( ProtoUtils::ToExNodeId(node) );

@@ -16,7 +16,8 @@ import { AppService, SnackbarService } from 'jde-framework';
 import { HistGroupAccess, histGroupResourceName } from './hist-group-access';
 
 const settle = async ()=>{ for( let i=0; i<3; ++i ) await new Promise( r=>setTimeout( r ) ); };
-const own = { id: 9, criteria: '5', deleted: null };//as resourcesQuery answers:  no name, which the tab never shows (#13)
+const guid = '0f8fad5b-d9cb-469f-a165-70867728950e', fansGuid = '7c9e6679-7425-40de-944b-e07fc1f90ae7';//the groups' guids, the criteria of their own rows (#357)
+const own = { id: 9, criteria: guid, deleted: null };//as resourcesQuery answers:  no name, which the tab never shows (#13)
 const table = { id: 2, criteria: null, deleted: null };
 const unenforced = ( r:any )=>({...r, deleted: '2026-10-15T00:00:00Z'});
 const ops = { id: 7, name: 'ops' };
@@ -40,23 +41,24 @@ const create = async ( rows:any[], roles:any[]=[ops], tableRoles:any[]=[] )=>{
 		{ provide: MatDialog, useValue: dialog }
 	]});
 	const fixture = TestBed.createComponent( HistGroupAccess );
-	fixture.componentRef.setInput( 'group', {id: 5, name: 'Pumps'} );
+	fixture.componentRef.setInput( 'group', {id: 5, guid, name: 'Pumps'} );
 	fixture.detectChanges();//runs the effect that loads
 	await settle();
 	return { page: fixture.componentInstance, fixture, appService, calls, mutations, snackbar, dialog, state };
 };
 
 describe( 'HistGroupAccess', ()=>{
-	//the rows are asked under the gateway schema's histGroups slug, the roles with the group's id as the criteria, and an enforced row of
-	//the group's own governs it under the table's
+	//the rows are asked under the gateway schema's histGroups slug, the roles with the group's guid as the criteria - never its id, which a
+	//second gateway's group shares and a recreated database hands out again (#357) - and an enforced row of the group's own governs it under
+	//the table's
 	it( "reads the group's own row and the table's, and says which governs", async ()=>{
-		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read', 'Update'], denied: [], resource: {id: 9, criteria: '5'}}}] );
-		expect( d.calls.map( c=>c.vars ) ).toEqual( [{schemaName: 'gateway', slug: 'histGroups'}, {schemaName: 'gateway', slug: 'histGroups', criteria: '5'}, {schemaName: 'gateway', slug: 'histGroups'}] );
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read', 'Update'], denied: [], resource: {id: 9, criteria: guid}}}] );
+		expect( d.calls.map( c=>c.vars ) ).toEqual( [{schemaName: 'gateway', slug: 'histGroups'}, {schemaName: 'gateway', slug: 'histGroups', criteria: guid}, {schemaName: 'gateway', slug: 'histGroups'}] );
 		expect( d.calls[0].ql ).not.toContain( 'name' );
 		expect( d.page.own() ).toEqual( {id: 9, enforced: true} );
 		expect( d.page.table() ).toEqual( {id: 2, enforced: true} );
 		expect( d.page.status().kind ).toBe( 'own' );
-		expect( d.page.roles() ).toEqual( [{roleId: 7, roleName: 'ops', permissionId: 3, allowed: Rights.Read|Rights.Update, denied: Rights.None, resourceId: 9, criteria: '5'}] );
+		expect( d.page.roles() ).toEqual( [{roleId: 7, roleName: 'ops', permissionId: 3, allowed: Rights.Read|Rights.Update, denied: Rights.None, resourceId: 9, criteria: guid}] );
 	} );
 	//an own row that isn't enforced leaves the table's in charge where that is;  the table's row unenforced is nothing enforced - open reads
 	//and refused edits - whatever the group's own row says, since the hub consults a slug's criteria rows only while its root is active
@@ -86,7 +88,7 @@ describe( 'HistGroupAccess', ()=>{
 		expect( d.page.mutations() ).toHaveLength( 1 );
 		d.state.rows = [own, table];
 		await d.page.save();
-		expect( d.mutations ).toEqual( ['addRole( id:7, permissionRight:{allowed:10, denied:0, resource:{schemaName:"gateway", slug:"histGroups", criteria:"5", name:"Pumps"}} )'] );
+		expect( d.mutations ).toEqual( [`addRole( id:7, permissionRight:{allowed:10, denied:0, resource:{schemaName:"gateway", slug:"histGroups", criteria:"${guid}", name:"Pumps"}} )`] );
 		expect( d.page.mutations() ).toEqual( [] );
 		expect( d.calls ).toHaveLength( 6 );
 		expect( d.page.status().kind ).toBe( 'own' );
@@ -98,7 +100,7 @@ describe( 'HistGroupAccess', ()=>{
 		expect( d.fixture.nativeElement.querySelector( 'mat-header-cell.mat-column-Administer' ) ).not.toBeNull();
 		expect( d.page.status().detail ).toContain( 'tick Administer for a role you hold' );
 		d.page.onToggle( {role: d.page.roles()[0], rights: Rights.Administer} );
-		expect( d.page.mutations()[0].toString() ).toBe( 'addRole( id:7, permissionRight:{allowed:32, denied:0, resource:{schemaName:"gateway", slug:"histGroups", criteria:"5", name:"Pumps"}} )' );
+		expect( d.page.mutations()[0].toString() ).toBe( `addRole( id:7, permissionRight:{allowed:32, denied:0, resource:{schemaName:"gateway", slug:"histGroups", criteria:"${guid}", name:"Pumps"}} )` );
 		d.state.rows = [own, table];
 		await d.page.load();
 		expect( d.page.status().detail ).toContain( 'only those granted Administer here change these grants' );
@@ -110,13 +112,13 @@ describe( 'HistGroupAccess', ()=>{
 		expect( histGroupResourceName( cut+'xyz' ) ).toBe( cut );
 		expect( histGroupResourceName( 'Pumps' ) ).toBe( 'Pumps' );
 		const d = await create( [table] );
-		d.fixture.componentRef.setInput( 'group', {id: 5, name: cut+' and the rest of a long name'} );
+		d.fixture.componentRef.setInput( 'group', {id: 5, guid, name: cut+' and the rest of a long name'} );
 		d.fixture.detectChanges();
 		await settle();
 		d.page.onToggle( {role: d.page.roles()[0], rights: Rights.Read} );
-		expect( d.page.mutations()[0].toString() ).toContain( `criteria:"5", name:"${cut}"}` );
+		expect( d.page.mutations()[0].toString() ).toContain( `criteria:"${guid}", name:"${cut}"}` );
 		await d.page.makeResource();
-		expect( d.mutations ).toEqual( [`createResource( schemaName:"gateway", slug:"histGroups", criteria:"5", name:"${cut}" ){id}`] );
+		expect( d.mutations ).toEqual( [`createResource( schemaName:"gateway", slug:"histGroups", criteria:"${guid}", name:"${cut}" ){id}`] );
 	} );
 	//#11:  while the table's row governs the group, what a role holds there is what it holds on the group - the Inherited column, the rights
 	//its tooltip;  once the group's own row governs, or nothing does, the table's grants are none of the group's
@@ -138,7 +140,7 @@ describe( 'HistGroupAccess', ()=>{
 	} );
 	//a role's permission cleared is a Remove of it;  a failed save keeps the batch for a retry
 	it( 'removes a cleared permission, and keeps the batch when the save fails', async ()=>{
-		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: '5'}}}] );
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
 		const role = d.page.roles()[0];
 		d.page.onToggle( {role, rights: 0} );
 		expect( d.page.mutations()[0].toString() ).toBe( 'removeRole( id:7, permissionRight:{id:3} )' );
@@ -148,11 +150,24 @@ describe( 'HistGroupAccess', ()=>{
 		expect( d.page.mutations() ).toHaveLength( 1 );
 		expect( d.calls ).toHaveLength( 3 );
 	} );
+	//#357:  a group without a guid - none a saved row lacks - is refused rather than keyed by the table's root, whose grants every group
+	//without a row of its own answers to
+	it( 'refuses a group without a guid', async ()=>{
+		const d = await create( [own, table] );
+		d.fixture.componentRef.setInput( 'group', {id: 7, name: 'Unsaved'} );
+		d.fixture.detectChanges();
+		await settle();
+		expect( d.page.error() ).toContain( 'has no guid' );
+		expect( d.page.ready() ).toBe( false );
+		expect( d.calls.filter( c=>c.vars.criteria!==undefined ).every( c=>c.vars.criteria==guid ) ).toBe( true );
+		await d.page.makeResource();
+		expect( d.mutations ).toEqual( [] );
+	} );
 	//Make own resource:  a createResource with the group's key and name, which the server leaves unenforced
 	it( 'makes the own resource', async ()=>{
 		const d = await create( [table] );
 		await d.page.makeResource();
-		expect( d.mutations ).toEqual( ['createResource( schemaName:"gateway", slug:"histGroups", criteria:"5", name:"Pumps" ){id}'] );
+		expect( d.mutations ).toEqual( [`createResource( schemaName:"gateway", slug:"histGroups", criteria:"${guid}", name:"Pumps" ){id}`] );
 		expect( d.snackbar.info ).toHaveBeenCalledWith( 'Pumps has a resource of its own, not enforced yet.' );
 		expect( d.calls ).toHaveLength( 6 );
 	} );
@@ -176,10 +191,10 @@ describe( 'HistGroupAccess', ()=>{
 		let late!:( rows:any[] )=>void;
 		d.appService.queryArray.mockImplementationOnce( ()=>new Promise<any[]>( r=>late = r ) );
 		const first = d.page.load();
-		d.fixture.componentRef.setInput( 'group', {id: 6, name: 'Fans'} );
+		d.fixture.componentRef.setInput( 'group', {id: 6, guid: fansGuid, name: 'Fans'} );
 		d.fixture.detectChanges();
 		await settle();
-		expect( d.calls.filter( c=>c.vars.criteria ).at( -1 )!.vars ).toEqual( {schemaName: 'gateway', slug: 'histGroups', criteria: '6'} );
+		expect( d.calls.filter( c=>c.vars.criteria ).at( -1 )!.vars ).toEqual( {schemaName: 'gateway', slug: 'histGroups', criteria: fansGuid} );
 		expect( d.page.own() ).toBeUndefined();//group 6 has no row of its own
 		late( [own, table] );
 		await first;
@@ -188,11 +203,11 @@ describe( 'HistGroupAccess', ()=>{
 	//reviews-issue/historian-group-access.md #2:  group 5's rows, its row's id among them, used to stay until group 6's read landed, and for
 	//good when it failed - Stop enforcing un-enforced group 5, and a tick granted on '5' under group 6's name
 	it( "clears the last group's rows, and acts on nothing until the next group's are read", async ()=>{
-		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: '5'}}}] );
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
 		d.page.onToggle( {role: d.page.roles()[0], rights: Rights.Update} );
 		expect( d.page.mutations() ).toHaveLength( 1 );
 		d.appService.queryArray.mockRejectedValue( new Error( 'Forbidden' ) );
-		d.fixture.componentRef.setInput( 'group', {id: 6, name: 'Fans'} );
+		d.fixture.componentRef.setInput( 'group', {id: 6, guid: fansGuid, name: 'Fans'} );
 		d.fixture.detectChanges();
 		expect( d.fixture.nativeElement.querySelector( 'section.governs' ) ).toBeNull();
 		await settle();
@@ -206,9 +221,32 @@ describe( 'HistGroupAccess', ()=>{
 		await d.page.save();
 		expect( d.mutations ).toEqual( [] );
 	} );
+	//historian-group-access-row.md #6:  another gateway's group 5 kept this one's card, roles and unsaved ticks on screen while its read
+	//ran, and beside the error when it failed - the tab told groups apart by id, which every gateway numbers from 1
+	it( "tells another gateway's group of the same id apart by its guid", async ()=>{
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
+		d.page.onToggle( {role: d.page.roles()[0], rights: Rights.Update} );
+		expect( d.page.mutations() ).toHaveLength( 1 );
+		let late!:( rows:any[] )=>void;
+		d.appService.queryArray.mockImplementationOnce( ()=>new Promise<any[]>( r=>late = r ) );
+		d.fixture.componentRef.setInput( 'group', {id: 5, guid: fansGuid, name: 'Fans'} );
+		d.fixture.detectChanges();
+		expect( d.fixture.nativeElement.querySelector( 'section.governs' ) ).toBeNull();
+		await settle();
+		expect( d.page.own() ).toBeUndefined();
+		expect( d.page.roles() ).toEqual( [] );
+		expect( d.page.mutations() ).toEqual( [] );
+		expect( d.page.ready() ).toBe( false );
+		late( [table] );
+		await settle();
+		expect( d.calls.filter( c=>c.vars.criteria ).at( -1 )!.vars.criteria ).toBe( fansGuid );
+		expect( d.page.shown() ).toBe( fansGuid );
+		expect( d.page.own() ).toBeUndefined();
+		expect( d.page.ready() ).toBe( true );
+	} );
 	//#4:  a save that landed, then a read that failed, left the applied batch in Save, which resent removes already gone
 	it( 'clears an applied batch when the read after it fails, and waits for a good read', async ()=>{
-		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: '5'}}}] );
+		const d = await create( [own, table], [{...ops, permissionRight: {id: 3, allowed: ['Read'], denied: [], resource: {id: 9, criteria: guid}}}] );
 		d.page.onToggle( {role: d.page.roles()[0], rights: 0} );
 		d.appService.queryArray.mockRejectedValueOnce( new Error( 'offline' ) );
 		await d.page.save();

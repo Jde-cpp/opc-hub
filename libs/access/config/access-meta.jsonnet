@@ -136,7 +136,8 @@ local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"]
 				criteria: types.varchar+{ nullable: true, length:672, i:100 },
 				allowed: types.ulong+{ pkTable: "rights", i:101, nullable:true, comment: "available rights for this resource" }
 			},
-			ops: ["Read", "Delete", "Administer", "Subscribe"], //Create/Update: an administrator of the row's schema (Server::CustomMutation, ResourceMAwait) - the instances' resource sync.  Purge: the system's.
+			ops: ["Read", "Delete", "Administer", "Subscribe"], //Create/Update, and Purge by the row's key: an administrator of the row's schema (Server::CustomMutation, ResourceMAwait) - the instances' resource sync, and a gateway purging a hist group's own row with the group (#357).  Purge by id: the system's.
+			purgeProc: "resource_purge", //the grants on the row go with it - its permission_rights rows, the permissions they belong to and their acl and role_members rows - which reference it with no cascade, so a bare delete failed while any grant stood (ResourceTests).
 			naturalKeys: [["schema_name", "slug", "criteria"]],
 		},
 		permissions:{

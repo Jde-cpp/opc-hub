@@ -24,8 +24,11 @@ namespace Jde::Access::Server{
 	};
 
 	//createResource / updateResource - every instance's resource sync (ResourceSyncAwait), which reaches the AppServer as the
-	//instance's own login.  A known user who administers the row's schema (Authorize::TestSchemaAdmin) - on an update, the schema
-	//it is in, any it moves to, and the row itself when it is enforced.  A schema with no enforced root passes, so a fresh install syncs.
+	//instance's own login - and purgeResource by a criteria row's key, schemaName, slug and criteria:  a gateway purging a hist group's
+	//own row with the group (#357);  by id alone, a root's included, a purge stays the system's.  A known user who administers the row's
+	//schema (Authorize::TestSchemaAdmin) - on an update, the schema it is in, any it moves to, and the row itself when it is enforced;  on a
+	//purge under an open root, who may grant on the row (Authorize::TestAdminGrant), as its grants go with it (access_resource_purge).  A
+	//schema with no enforced root passes, so a fresh install syncs.
 	struct ResourceMAwait final : AdminWriteAwait{
 		using AdminWriteAwait::AdminWriteAwait;
 	private:

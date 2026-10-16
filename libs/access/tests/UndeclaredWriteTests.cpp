@@ -113,7 +113,8 @@ namespace Jde::Access::Tests{
 		let groups = GetId( SelectResource("groups", root) );
 		let createInAccess = Ƒ( R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ))", "ghsa-g354-r" );
 		let updateGroups = Ƒ( "mutation updateResource( id:{}, description:\"ghsa-g354\" )", groups );
-		for( let& ql : {createInAccess, updateGroups} ){
+		const string purgeGroups{ R"(mutation purgeResource( schemaName:"access", slug:"groups", criteria:null ))" };//the schema's admin check before a root's key is refused to everyone (review #4); by id, the system's (AnonymousAndNonAdminAreRefused).
+		for( let& ql : {createInAccess, updateGroups, purgeGroups} ){
 			expectRefused( ql, UserPK{}, EHttpStatus::Unauthorized );
 			expectRefused( ql, _intruder, EHttpStatus::Forbidden );
 		}
@@ -121,9 +122,10 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( Json::AsString(Select("resource", groups, root, "description", true), "description"), "From installation" );
 
 		//the sync's own shape, in a schema nobody enforces:  create, then disable;  a later update to the disabled row.
-		constexpr sv schema{ "ghsa-g354-schema" };
-		for( let& v : QL().QuerySync<jarray>(Ƒ("resources( schemaName:\"{}\" ){{ id deleted }}", schema), {}, root) )//a previous run's.
-			Purge( "resource", GetId(Json::AsObject(v)), system );
+		constexpr sv schema{ "ghsa-g354-schema" }, other{ "ghsa-g354-other" };
+		for( let s : {schema, other} )//a previous run's, which ends in other (review #8).
+			for( let& v : QL().QuerySync<jarray>(Ƒ("resources( schemaName:\"{}\" ){{ id deleted }}", s), {}, root) )
+				Purge( "resource", GetId(Json::AsObject(v)), system );
 		let id = GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{0}", slug:"{0}" ){{ id }})", schema), {}, _intruder) );
 		Delete( "resources", id, root );
 		EXPECT_NO_THROW( QL().QuerySync<jvalue>(Ƒ("mutation updateResource( id:{}, description:\"ghsa-g354\" )", id), {}, _intruder) );
@@ -133,14 +135,37 @@ namespace Jde::Access::Tests{
 		//into access for the positive half:  the suite's other tests leave enforced access roots root holds nothing on.)
 		expectRefused( Ƒ("mutation updateResource( id:{}, schemaName:\"access\" )", id), _intruder, EHttpStatus::Forbidden );
 		EXPECT_EQ( Json::AsString(Select("resource", id, root, "schemaName", true), "schemaName"), schema );
-		constexpr sv other{ "ghsa-g354-other" };
 		EXPECT_NO_THROW( QL().QuerySync<jvalue>(Ƒ("mutation updateResource( id:{}, schemaName:\"{}\" )", id, other), {}, _intruder) );
 		EXPECT_EQ( Json::AsString(Select("resource", id, root, "schemaName", true), "schemaName"), other );
+		//and a criteria row purged by its key there, as a gateway purges a hist group's own row (#357);  a key no row has is NotFound, once
+		//the admin check passes, and a root's key - its criteria missing, null or empty - is refused (review #4).
+		let row = GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{0}", name:"{1}", slug:"{1}", criteria:"row" ){{ id }})", other, schema), {}, _intruder) );
+		let purge = [&]( sv criteria ){ return Ƒ( R"(mutation purgeResource( schemaName:"{}", slug:"{}"{} ))", other, schema, criteria ); };
+		for( let criteria : {"", ", criteria:null", ", criteria:\"\""} )
+			expectRefused( purge(criteria), _intruder, EHttpStatus::BadRequest );
+		EXPECT_FALSE( Select("resource", id, root, "id", true).empty() ) << "a root's key purged nothing";
+		expectRefused( purge(", criteria:\"none\""), _intruder, EHttpStatus::NotFound );
+		EXPECT_NO_THROW( QL().QuerySync<jvalue>(purge(", criteria:\"row\""), {}, _intruder) );
+		EXPECT_TRUE( Select("resource", row, root, "id", true).empty() );
 		Purge( "resource", id, system );
 	}
 
+	//The OpcServer's answer for its schema (OpcAuthorize::TestAdminNode):  Administer of the row governing the node, a branch's own
+	//while its root is open.
+	struct BranchAdminAcl final : IAdminAcl{
+		BranchAdminAcl( ResourcePK branch )ι:Branch{ branch }{}
+		α TestAdmin( str, str, UserPK userPK, SL sl )ι->up<AnyVoidAwait> override{
+			up<Exception> error;
+			try{
+				Authorizer()->TestAdminResource( Branch, userPK, sl );
+			}
+			catch( Exception& e ){ error = e.Move(); }
+			return mu<AnyCompletedAwait>( move(error), sl );
+		}
+		const ResourcePK Branch;
+	};
 	//An enforced criteria row - an OPC branch protected while its slug's root stays open - is no root, so TestSchemaAdmin never
-	//saw it:  retargeting it, or moving it to another schema, opened the branch (review #3).
+	//saw it:  retargeting it, moving it to another schema (review #3), or purging it by its key (#357 review #1), opened the branch.
 	TEST_F( UndeclaredWriteTests, AnEnforcedCriteriaRowNeedsItsOwnAdmin ){
 		let root = GetRoot();
 		const UserPK system{ UserPK::System };
@@ -150,14 +175,19 @@ namespace Jde::Access::Tests{
 		let rootRow = GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{}", name:"nodes", slug:"nodes" ){{ id }})", schema), {}, system) );
 		Delete( "resources", rootRow, root );
 		let branch = GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{}", name:"nodes", slug:"nodes", criteria:"branch" ){{ id }})", schema), {}, system) );
-		for( let& ql : {Ƒ("mutation updateResource( id:{}, criteria:\"other\" )", branch), Ƒ("mutation updateResource( id:{}, schemaName:\"junk\" )", branch)} )
+		auto opcServer = ms<BranchAdminAcl>( ResourcePK{branch} );
+		Authorizer()->AddAdminAuthorizer( string{schema}, opcServer, system );
+		let purge = Ƒ( R"(mutation purgeResource( schemaName:"{}", slug:"nodes", criteria:"branch" ))", schema );
+		for( let& ql : {Ƒ("mutation updateResource( id:{}, criteria:\"other\" )", branch), Ƒ("mutation updateResource( id:{}, schemaName:\"junk\" )", branch), purge} )
 			expectRefused( ql, _intruder, EHttpStatus::Forbidden );
 		let row = Select( "resource", branch, root, "schemaName criteria", true );
 		EXPECT_EQ( Json::AsString(row, "schemaName"), schema );
 		EXPECT_EQ( Json::AsString(row, "criteria"), "branch" );
 		Delete( "resources", branch, root );//unenforced, it is as open as any other row.
 		EXPECT_NO_THROW( QL().QuerySync<jvalue>(Ƒ("mutation updateResource( id:{}, description:\"ghsa-g354\" )", branch), {}, _intruder) );
-		Purge( "resource", branch, system );
+		EXPECT_NO_THROW( QL().QuerySync<jvalue>(purge, {}, _intruder) );
+		EXPECT_TRUE( Select("resource", branch, root, "id", true).empty() );
+		Authorizer()->RemoveAdminAuthorizer( opcServer );
 		Purge( "resource", rootRow, system );
 	}
 
