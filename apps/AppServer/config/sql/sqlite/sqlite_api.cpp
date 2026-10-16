@@ -20,6 +20,7 @@ void RegisterProcs( Jde::DB::Sqlite::IProcs& procs ){
 	AccessProcs::RegisterAccessProviderInsert( procs );
 	AccessProcs::RegisterAccessProviderPurge( procs );
 	AccessProcs::RegisterAccessResourceInsert( procs );
+	AccessProcs::RegisterAccessResourcePurge( procs );
 	AccessProcs::RegisterAccessRoleAdd( procs );
 	AccessProcs::RegisterAccessRoleInsert( procs );
 	AccessProcs::RegisterAccessRolePurge( procs );

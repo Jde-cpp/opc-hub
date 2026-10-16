@@ -113,7 +113,8 @@ namespace Jde::Access::Tests{
 		let groups = GetId( SelectResource("groups", root) );
 		let createInAccess = Ƒ( R"(mutation createResource( schemaName:"access", name:"{0}", slug:"{0}" ))", "ghsa-g354-r" );
 		let updateGroups = Ƒ( "mutation updateResource( id:{}, description:\"ghsa-g354\" )", groups );
-		for( let& ql : {createInAccess, updateGroups} ){
+		const string purgeGroups{ R"(mutation purgeResource( schemaName:"access", slug:"groups", criteria:null ))" };//by its key, the schema's administrator's (#357); by id, the system's (AnonymousAndNonAdminAreRefused).
+		for( let& ql : {createInAccess, updateGroups, purgeGroups} ){
 			expectRefused( ql, UserPK{}, EHttpStatus::Unauthorized );
 			expectRefused( ql, _intruder, EHttpStatus::Forbidden );
 		}
@@ -136,7 +137,10 @@ namespace Jde::Access::Tests{
 		constexpr sv other{ "ghsa-g354-other" };
 		EXPECT_NO_THROW( QL().QuerySync<jvalue>(Ƒ("mutation updateResource( id:{}, schemaName:\"{}\" )", id, other), {}, _intruder) );
 		EXPECT_EQ( Json::AsString(Select("resource", id, root, "schemaName", true), "schemaName"), other );
-		Purge( "resource", id, system );
+		//and purged by its key there, as a gateway purges a hist group's own row (#357);  a key no row has is NotFound, once the admin check passes.
+		expectRefused( Ƒ(R"(mutation purgeResource( schemaName:"{}", slug:"{}", criteria:"none" ))", other, schema), _intruder, EHttpStatus::NotFound );
+		EXPECT_NO_THROW( QL().QuerySync<jvalue>(Ƒ(R"(mutation purgeResource( schemaName:"{}", slug:"{}", criteria:null ))", other, schema), {}, _intruder) );
+		EXPECT_TRUE( QL().QuerySync<jarray>(Ƒ("resources( schemaName:\"{}\" ){{ id }}", other), {}, root).empty() );
 	}
 
 	//An enforced criteria row - an OPC branch protected while its slug's root stays open - is no root, so TestSchemaAdmin never

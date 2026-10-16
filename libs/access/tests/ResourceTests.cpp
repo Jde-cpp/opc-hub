@@ -173,6 +173,38 @@ namespace Jde::Access::Tests{
 		ASSERT_TRUE( selectResources(slug, filter, true).empty() ); //gone, deleted rows included.
 	}
 
+	//#357:  a purge takes the row's grants with it (access_resource_purge) - the role's membership row, the rights and the permission -
+	//where the fk refused it while any stood (SyncHealsARowLeftActiveByAnInterruptedInstall purges the grant first), and the role,
+	//shared, keeps its grants on other rows.  By the row's key, as a gateway purges a hist group's own row with the group.
+	TEST_F( ResourceTests, APurgeByKeyTakesTheGrants ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System };
+		constexpr sv schema{ "resourceTests-357" };
+		for( let& v : QL().QuerySync<jarray>(Ƒ("resources( schemaName:\"{}\" ){{ id }}", schema), {}, root) )//a previous run's.
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		for( let& v : QL().QuerySync<jarray>("roles( slug:\"resourceTests-357\" ){ id }", {}, root) )
+			Purge( "role", GetId(Json::AsObject(v)), system );
+		let create = [&]( sv criteria ){ return GetId( QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{}", name:"{}", slug:"groups", criteria:"{}", allowed:255 ){{ id }})", schema, criteria, criteria), {}, system) ); };
+		let purged = create( "guid-purged" ), kept = create( "guid-kept" );
+		let roleId = GetId( QL().QuerySync(R"(mutation createRole( slug:"resourceTests-357", name:"357" ){ id })", {}, system) );
+		for( let criteria : {"guid-purged", "guid-kept"} )
+			QL().QuerySync<jvalue>( Ƒ(R"(mutation addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"{}", slug:"groups", criteria:"{}" }} }} ))", roleId, schema, criteria), {}, system );
+		let grants = [&]( uint resource ){ return QL().QuerySync<jarray>( Ƒ("permissionRights( resourceId:{} ){{ id }}", resource), {}, root ); };
+		ASSERT_EQ( grants(purged).size(), 1u );
+		ASSERT_EQ( grants(kept).size(), 1u );
+
+		QL().QuerySync<jvalue>( Ƒ(R"(mutation purgeResource( schemaName:"{}", slug:"groups", criteria:"guid-purged" ))", schema), {}, root );//root administers a schema nobody enforces, as anyone does.
+		let rows = QL().QuerySync<jarray>( Ƒ("resources( schemaName:\"{}\" ){{ id }}", schema), {}, root );
+		ASSERT_EQ( rows.size(), 1u ) << serialize( rows );
+		EXPECT_EQ( GetId(Json::AsObject(rows[0])), kept );
+		EXPECT_TRUE( grants(purged).empty() ) << "the grant went with the row";
+		EXPECT_EQ( grants(kept).size(), 1u ) << "the role keeps its grant on the other row";
+		EXPECT_FALSE( Select("role", roleId, root, "id").empty() ) << "the role itself stays";
+
+		Purge( "role", roleId, system );
+		Purge( "resource", kept, system );
+	}
+
 	//ql-review3 #48: the insert-side twin.  getEnumValue had its own flags loop that `continue`d past a non-string element, so
 	//an all-numeric array - which no name lookup could ever match - wrote flags==0 with no error, and the resource was silently
 	//unusable (allowed=0 hides it from the permission table).  Both paths share one parser now.

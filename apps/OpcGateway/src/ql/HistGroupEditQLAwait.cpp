@@ -1,6 +1,4 @@
 #include "HistGroupEditQLAwait.h"
-#include <jde/access/Authorize.h>
-#include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "HistQL.h"
 
@@ -18,12 +16,8 @@ namespace Jde::Opc::Gateway{
 			using enum HistQL::EEdit;
 			let edit = *HistQL::FindEdit( _query.CommandName );
 			const HistQL::EditArgs args{ edit, _query, _sl };
-			AppClient()->Acl()->TestEnforced( "gateway", "histGroups", std::to_string(args.Group), edit==Purge ? Access::ERights::Delete : Access::ERights::Update, UserPK(), _sl );
 			auto& hist = HistHost::Instance();
-			hist.TestEnabled( _sl );
-			let host = hist.Find( args.Group );
-			if( !host )
-				throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", args.Group };
+			let host = hist.Gate( args.Group, edit==Purge ? Access::ERights::Delete : Access::ERights::Update, true, UserPK(), _sl );
 			let& group = host->Group();
 			let indexes = host->Indexes( args.Nodes, _sl );
 			let count = indexes.size();

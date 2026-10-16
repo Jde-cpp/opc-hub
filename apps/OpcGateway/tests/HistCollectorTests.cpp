@@ -483,7 +483,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsArray(open, "aggregates"), names );
 		EXPECT_FALSE( Json::AsBool(open, "update") ) << "nothing enforces hist_groups";
 		EXPECT_FALSE( Json::AsBool(open, "delete") );
-		let denials = Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( Ƒ("histGroups[{}]", group) ) && m.contains( "nothing enforces it" ); } );
+		let denials = Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( Ƒ("histGroups[{}]", Host(group)->Guid()) ) && m.contains( "nothing enforces it" ); } );//the row is keyed by the guid (#357).
 		EXPECT_TRUE( denials.empty() ) << "a capability the caller lacks is an answer, not a denial to log:  " << denials.front().Message();
 		absl::Cleanup reopen = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
 		EnforceHistGroups( true );
@@ -532,7 +532,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 		};
 		ASSERT_NO_THROW( reached([&]{
-			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), Access::ERights::Update, User(), SRCE_CUR );
+			auto allowed = acl->CheckEnforced( "gateway", "histGroups", Host(group)->Guid(), Access::ERights::Update, User(), SRCE_CUR );
 			if( !allowed )
 				allowed.error().SetLevel( ELogLevel::NoLog );
 			return allowed.has_value();

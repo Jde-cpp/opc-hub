@@ -31,13 +31,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	α HistGroupInfoQLAwait::Host( HistGroupPK group )ε->sp<HistGroupHost>{
-		AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(group), Access::ERights::Read, UserPK(), _sl );
-		auto& hist = HistHost::Instance();
-		hist.TestEnabled( _sl );
-		auto host = hist.Find( group );
-		if( !host )
-			throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", group };
-		return host;
+		return HistHost::Instance().Gate( group, Access::ERights::Read, false, UserPK(), _sl );
 	}
 
 	α HistGroupInfoQLAwait::Groups()ε->jvalue{
@@ -66,7 +60,7 @@ namespace Jde::Opc::Gateway{
 			if( members.empty() )
 				continue;
 			try{
-				acl->Test( "gateway", "histGroups", std::to_string(host->Id()), Access::ERights::Read, UserPK(), _sl );
+				acl->Test( "gateway", "histGroups", host->Guid(), Access::ERights::Read, UserPK(), _sl );
 			}
 			catch( Exception& e ){
 				if( e.HttpStatus()==EHttpStatus::Unauthorized )//who the caller is, not what they may read:  the client's 401 is for this.
@@ -88,11 +82,10 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α HistGroupInfoQLAwait::Capabilities()ε->jvalue{
-		let group = _query.AsNumber<HistGroupPK>( "group", _sl );
-		Host( group );
+		let host = Host( _query.AsNumber<HistGroupPK>("group", _sl) );
 		let acl = AppClient()->Acl();
 		let may = [&]( Access::ERights rights )->bool {
-			auto allowed = acl->CheckEnforced( "gateway", "histGroups", std::to_string(group), rights, UserPK(), _sl );
+			auto allowed = acl->CheckEnforced( "gateway", "histGroups", host->Guid(), rights, UserPK(), _sl );
 			if( !allowed )
 				allowed.error().SetLevel( ELogLevel::NoLog );//a capability the caller lacks is an answer, as in Groups:  not a denial to log.
 			return allowed.has_value();

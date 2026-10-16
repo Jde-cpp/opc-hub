@@ -43,7 +43,8 @@ namespace Jde::Access::Server{
 			flat_set<string> schemas;
 			if( let schema = Json::FindString(args, "schemaName"); schema )
 				schemas.emplace( *schema );
-			if( _mutation.Type==QL::EMutationQL::Update ){
+			using enum QL::EMutationQL;
+			if( _mutation.Type==Update ){
 				let id = Json::FindNumber<ResourcePK::Type>( args, "id" );
 				THROW_IFX( !id, Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "updateResource needs the row's id - a slug is not unique across schemas.") );
 				let row = co_await *LocalQL().Query( Ƒ("resource( id:{} ){{ schemaName }}", *id), {}, UserPK{UserPK::System}, true, _sl );
@@ -53,10 +54,23 @@ namespace Jde::Access::Server{
 				auth.TestAdminResource( ResourcePK{*id}, _executer, _sl );//TestSchemaAdmin tests the roots only - not an enforced criteria row.
 			}
 			else
-				THROW_IFX( schemas.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "createResource needs a schemaName.") );
+				THROW_IFX( schemas.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "{} needs a schemaName.", _mutation.CommandName) );
 			for( let& schema : schemas )
 				auth.TestSchemaAdmin( schema, _executer, _sl );
-			let create = _mutation.Type==QL::EMutationQL::Create;
+			if( _mutation.Type==Purge ){
+				//By its key, the schema's administrator tested first, so a caller who isn't one learns nothing of its rows.  The row's own
+				//administrators aren't asked, as an update's are:  the row goes with what it governed, a hist group purged by its gateway (#357),
+				//and its grants with it (access_resource_purge).  The stock purge takes an id, so the key becomes one here.
+				let slug = Json::FindString( args, "slug" );
+				THROW_IFX( !slug, Exception(_sl, ExceptionArgs{EHttpStatus::BadRequest}, "purgeResource takes the row's key:  schemaName, slug and criteria.") );
+				let criteria = args.if_contains( "criteria" );
+				let& schema = *schemas.begin();
+				let rows = co_await *LocalQL().Query( "resources( schemaName:$schemaName, slug:$slug, criteria:$criteria ){ id }", jobject{ {"schemaName", schema}, {"slug", *slug}, {"criteria", criteria ? *criteria : jvalue{}} }, UserPK{UserPK::System}, true, _sl );
+				let& found = Json::AsArray( rows, _sl );
+				THROW_IFX( found.empty(), Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource ({}, {}, {}) not found.", schema, *slug, criteria ? serialize(*criteria) : "null") );
+				_mutation.Args = jobject{ {"id", QL::AsId<ResourcePK::Type>(found[0], _sl)} };
+			}
+			let create = _mutation.Type==Create;
 			auto result = co_await asSystem( move(_mutation), _sl );
 			if( create ){//unenforced, as the sync leaves it:  an enforced row nobody administers locks its creator out of the schema.
 				let& rows = Json::AsArray( result, _sl );

@@ -15,6 +15,7 @@ namespace Jde::DB::Sqlite::AccessProcs{
 	α RegisterAccessProviderInsert( IProcs& procs )ι->void;
 	α RegisterAccessProviderPurge( IProcs& procs )ι->void;
 	α RegisterAccessResourceInsert( IProcs& procs )ι->void;
+	α RegisterAccessResourcePurge( IProcs& procs )ι->void;
 	α RegisterAccessRoleAdd( IProcs& procs )ι->void;
 	α RegisterAccessRoleInsert( IProcs& procs )ι->void;
 	α RegisterAccessRolePurge( IProcs& procs )ι->void;

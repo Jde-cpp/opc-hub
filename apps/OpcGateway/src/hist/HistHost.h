@@ -1,6 +1,7 @@
 #pragma once
 #include <absl/functional/any_invocable.h>
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/access/usings.h>
 #include "HistGroupHost.h"
 
 namespace Jde::Opc::Gateway{
@@ -26,8 +27,9 @@ namespace Jde::Opc::Gateway{
 	};
 	//A template member as resolveHistory answers it (spec *Templates*):  its row and path, the node it resolved to, Good once it
 	//has a hist_group_nodes row, else why it hasn't, and for Bad_NodeIdExists the group that holds the node - another on the
-	//connection, or this one as another member or an ad hoc node - by its row and name, so a page can say which.
-	struct HistResolved final{ HistTemplateNodePK TemplateNode; string Path; optional<ExNodeId> Node; StatusCode Status; optional<HistGroupPK> Holder; string HolderName; };
+	//connection, or this one as another member or an ad hoc node - by its row and name, so a page can say which, and by its guid,
+	//the key of its access row, which says whether the caller may learn the name (HistGroupMAwait).
+	struct HistResolved final{ HistTemplateNodePK TemplateNode; string Path; optional<ExNodeId> Node; StatusCode Status; optional<HistGroupPK> Holder; string HolderName; string HolderGuid; };
 	struct HistResolveAwait final : AnyAwait<vector<HistResolved>>{
 		HistResolveAwait( HistGroupPK group, UserPK by, SRCE )ι:AnyAwait<vector<HistResolved>>{ sl }, Group{ group }, By{ by }{}
 		const HistGroupPK Group;
@@ -54,6 +56,13 @@ namespace Jde::Opc::Gateway{
 		α Historian()Ι->sp<Opc::Hist::Historian>{ lg _{ _mutex }; return _historian; }
 		α Find( HistGroupPK id )Ι->sp<HistGroupHost>;
 		α Groups()Ι->vector<sp<HistGroupHost>>;
+		//A group's host, past its gate (spec *Authorization*):  `rights` tested on the group's own access row, keyed by its guid, else the
+		//hist_groups table's, as Authorize::Test resolves a criteria - `enforced` asks TestEnforced, as a history edit does - then
+		//TestEnabled, and NotFound for a group the gateway doesn't host.  The guid, not the id (#357):  every gateway's schema is
+		//`gateway`, so gateways on one AppServer would share a row keyed by id, and a database recreated starts its ids again under an
+		//older group's row;  a guid is never reused, and a purged group's row goes with it (GroupPurging).  A group that isn't hosted
+		//is gated by the table's row alone, as one with no row of its own is, so a caller learns nothing of an id before the gate.
+		α Gate( HistGroupPK id, Access::ERights rights, bool enforced, UserPK by, SRCE )ε->sp<HistGroupHost>;
 		//The collector's credential for a connection (spec *Collector contract*):  /gateway/hist/credentials/<slug>'s user and
 		//password, else the process's own certificate.
 		α Collector( const ServerCnnctnNK& slug )Ι->Credential;

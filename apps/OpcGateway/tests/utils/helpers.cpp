@@ -122,10 +122,16 @@ namespace Jde::Opc::Gateway{
 		app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
 		reached( true, "restore" );
 	}
+	//The guid of a group's row, the criteria of its own access resource (spec *Authorization*):  the gateway's table, as the system.
+	Ω groupGuid( uint32 group )ε->string{
+		let rows = QL().QuerySync<jarray>( "histGroups( id:$id ){ guid }", {{"id", group}}, UserPK{UserPK::System} );
+		THROW_IF( rows.size()!=1, "Group {} has {} hist_groups rows.", group, rows.size() );
+		return Json::AsString( rows[0].as_object(), "guid" );
+	}
 	α Tests::ScopeHistGroup( uint32 group, Access::ERights allowed )ε->void{
 		let app = AppClient();
 		THROW_IF( !app->Acl()->FindActiveResourcePK("gateway", "histGroups", ""), "Group {}'s resource would count for nothing:  histGroups' root isn't enforced (EnforceHistGroups).", group );
-		let criteria = std::to_string( group );
+		let criteria = groupGuid( group );
 		app->QuerySync<jvalue>( "createResource( schemaName:\"gateway\", name:$name, slug:\"histGroups\", criteria:$criteria, allowed:255 )", {{"name", Ƒ("histGroups[{}]", group)}, {"criteria", criteria}} );
 		let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", Ƒ("GatewayHistGroup{}", group)}, {"name", Ƒ("Gateway history group {}", group)}} );
 		let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
@@ -139,7 +145,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α Tests::UnscopeHistGroup( uint32 group )ε->void{
 		let app = AppClient();
-		let criteria = std::to_string( group );
+		let criteria = groupGuid( group );
 		app->QuerySync<jvalue>( "deleteResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );
 		for( uint i=0; app->Acl()->FindActiveResourcePK("gateway", "histGroups", criteria); ++i ){//until then it still refuses what it grants no one, a purge of the group included
 			THROW_IF( i==200, "Group {}'s resource deletion didn't reach the gateway's authorizer.", group );

@@ -1,9 +1,7 @@
 #include "HistGroupReadQLAwait.h"
 #include <jde/fwk/str.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/access/Authorize.h>
 #include <jde/opc/UAException.h>
-#include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "HistQL.h"
 
@@ -50,12 +48,7 @@ namespace Jde::Opc::Gateway{
 	α HistGroupReadQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			const HistQL::GroupArgs args{ _query, _sl };
-			AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(args.Group), Access::ERights::Read, UserPK(), _sl );
-			auto& hist = HistHost::Instance();
-			hist.TestEnabled( _sl );
-			let host = hist.Find( args.Group );
-			if( !host )
-				throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} isn't one this gateway historizes.", args.Group };
+			let host = HistHost::Instance().Gate( args.Group, Access::ERights::Read, false, UserPK(), _sl );
 			let indexes = host->Indexes( args.Nodes, _sl );
 			vector<StatusCode> statuses( indexes.size(), UA_STATUSCODE_GOOD );
 			vector<Hist::NodeIndex> nodes;

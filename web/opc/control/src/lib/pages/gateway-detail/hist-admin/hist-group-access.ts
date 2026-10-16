@@ -9,8 +9,10 @@ import { AppService, confirm, errorText, Mutation, MutationType, SnackbarService
 import { RolePermission, RolePermissionRow, roleMutation, toggleRights, toRolePermissions, withMutation } from '../../node-detail/node-access/node-rights/role-permission';
 import { NodeRights } from '../../node-detail/node-access/node-rights/node-rights';
 
-//The group as the tab needs it:  its id, the criteria of its own resource, and its name, what that resource is called
-export type HistGroupRef = { id:number; name:string };
+//The group as the tab needs it:  its id, which the page keys it by;  its guid, the criteria of its own resource (#357) - a saved
+//group's, so set wherever the tab shows, and a row without one is refused, never keyed by the table's root;  and its name, what
+//that resource is called
+export type HistGroupRef = { id:number; guid?:string; name:string };
 //A resource row as the tab reads it, the group's own or the table's;  `enforced` is `deleted` null, the Resources page's switch
 export type HistGroupResource = { id:number; enforced:boolean };
 //a resource row as resourcesQuery answers it (#14)
@@ -24,9 +26,15 @@ export type HistGroupHeldRow = { id:number; permissionRight?:{ allowed:string[];
 //what a role holds through the table's row, as the Inherited column's tooltip says it
 export const histGroupHeldText = ( held:{ allowed:string[]; denied:string[] } ):string=>
 	[held.allowed.join( ', ' ), held.denied.length ? `denied ${held.denied.join( ', ' )}` : ''].filter( x=>x ).join( ';  ' )+", through the hist_groups table's resource";
-//the hist_groups table's resource, as the gateway tests it:  Acl()->Test( "gateway", "histGroups", <group id>, … ), the schema shared by
-//every gateway instance
+//the hist_groups table's resource, as the gateway tests it:  Acl()->Test( "gateway", "histGroups", <group guid>, … ) (HistHost::Gate),
+//the schema shared by every gateway instance - which is why the criteria is the guid, never the id a second gateway's group shares
 export const histGroupResourceKey = { schemaName: 'gateway', slug: 'histGroups' };
+//the criteria of the group's own row:  its guid, which no later group takes (#357)
+export const histGroupCriteria = ( group:HistGroupRef ):string=>{
+	if( !group.guid )
+		throw new Error( `${group.name} has no guid, so no resource of its own:  save it first.` );
+	return group.guid;
+};
 //The name the group's own row takes:  access_resources.name and access_role_add's _resourceName are varchar(64) (access-meta.jsonnet), a
 //group's name varchar(256), and MySQL's strict mode refuses a longer one outright - so its first 64 characters, counted in code points as
 //the column counts them, never splitting a surrogate pair (reviews-issue/historian-group-access.md #3)
@@ -37,7 +45,7 @@ export const histGroupResourceName = ( name:string ):string=>Array.from( name ).
 //node grid's does
 export const histGroupRights = { 0: 'None', 2: 'Read', 4: 'Update', 8: 'Delete', 32: 'Administer' };
 
-//A group's Access tab (#339):  the node page's grid of roles against rights on the group's own access_resources row, criteria its id, with
+//A group's Access tab (#339):  the node page's grid of roles against rights on the group's own access_resources row, criteria its guid, with
 //which row governs it - the hist_groups table's row is the slug's switch, then the group's own where it has one enforced, else the
 //table's (status below) - and the row's making and enforcement.  A grant saved on a group with no row of
 //its own mints one, enforced, as a node's first grant does (access_role_add);  Make own resource makes one unenforced, for grants to go
@@ -81,7 +89,6 @@ export class HistGroupAccess{
 	//and on the table's
 	async load( group:HistGroupRef=this.group() ):Promise<void>{
 		const read = ++this.#reads;
-		const criteria = String( group.id );
 		if( group.id!=this.shown() ){//another group:  nothing of the last one's stays on screen to act on while this one is read, or after it fails
 			this.shown.set( undefined );
 			this.own.set( undefined );
@@ -93,6 +100,7 @@ export class HistGroupAccess{
 		this.loading.set( true );
 		this.error.set( undefined );
 		try{
+			const criteria = histGroupCriteria( group );
 			const [rows, roles, tableRoles] = await Promise.all( [
 				this.appService.queryArray<HistGroupResourceRow>( HistGroupAccess.resourcesQuery, histGroupResourceKey, m=>console.log( m ) ),
 				this.appService.queryArray<RolePermissionRow>( HistGroupAccess.rolesQuery, {...histGroupResourceKey, criteria}, m=>console.log( m ) ),
@@ -179,7 +187,7 @@ export class HistGroupAccess{
 			return;
 		this.busy.set( true );
 		try{
-			await this.appService.mutate( new Mutation( 'Resource', 0, {...histGroupResourceKey, criteria: String( group.id ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ), m=>console.log( m ) );
+			await this.appService.mutate( new Mutation( 'Resource', 0, {...histGroupResourceKey, criteria: histGroupCriteria( group ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ), m=>console.log( m ) );
 			this.snackbar.info( `${group.name} has a resource of its own, not enforced yet.` );
 		}
 		catch( e ){

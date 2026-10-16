@@ -152,6 +152,8 @@ namespace Jde::Access{
 			y = mu<Access::Server::RoleMAwait>( move(m), creds.UserPK(), sl );
 		else if( m.TableName()=="profiles" )//all types - stock UpdateAwait keys on id/name/slug, none of which profiles has - url is scoped to the executer here.
 			y = mu<Access::Server::ProfileAwait>( move(m), creds.UserPK(), sl );
+		else if( m.TableName()=="resources" && m.Type==Purge && m.Args.contains("schemaName") )//by its key - a gateway purging a hist group's own row with the group (#357), the hub's as the system too.  ResourceMAwait resolves the key to the id the stock purge takes, and reruns it so:  a purge by id alone is the system's.
+			y = mu<Access::Server::ResourceMAwait>( move(m), creds.UserPK(), sl );
 		else if( creds.UserPK().Value!=UserPK::System ){//writes the tables' ops do not declare, open to an admin.  The awaits rerun them as the system, which skips this branch.
 			if( m.TableName()=="permission_rights" && m.Type==Update )//the Permissions tab's save.
 				y = mu<Access::Server::PermissionRightMAwait>( move(m), creds.UserPK(), sl );

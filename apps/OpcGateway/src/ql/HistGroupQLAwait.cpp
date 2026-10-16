@@ -28,10 +28,11 @@ namespace Jde::Opc::Gateway{
 	}
 
 	[[noreturn]] Ω refuse( string what, SL sl )ε->void{ throw Exception{ sl, ExceptionArgs{EHttpStatus::BadRequest}, "{}", move(what) }; }
-	//Whether `by` may read the group, as historyGroups asks before it lists one (HistGroupInfoQLAwait):  a refusal or an answer names
-	//the group that holds a node only to a caller who may read it.  The rest learn its id, which says nothing of the group.
-	Ω mayRead( HistGroupPK group, UserPK by, SL sl )ε->bool{
-		return AppClient()->Acl()->Check( "gateway", "histGroups", std::to_string(group), Access::ERights::Read, by, sl ).has_value();
+	//Whether `by` may read the group its guid keys (spec *Authorization*), as historyGroups asks before it lists one
+	//(HistGroupInfoQLAwait):  a refusal or an answer names the group that holds a node only to a caller who may read it.  The rest
+	//learn its id, which says nothing of the group.
+	Ω mayRead( str guid, UserPK by, SL sl )ε->bool{
+		return AppClient()->Acl()->Check( "gateway", "histGroups", guid, Access::ERights::Read, by, sl ).has_value();
 	}
 
 	//The right the stock op asks, which this asks first:  a create spells its node through the server, and a purge's live side
@@ -214,10 +215,13 @@ namespace Jde::Opc::Gateway{
 			jvalue y;
 			if( _query.CommandName==ResolveCommand ){
 				let group = _query.AsNumber<HistGroupPK>( "group", _sl );
-				AppClient()->Acl()->Test( "gateway", "histGroups", std::to_string(group), Access::ERights::Update, UserPK(), _sl );
+				//The gate, as HistHost::Gate keys it, by the row rather than a host:  a deleted group resolves too, as does one without the
+				//historian.  A group that doesn't exist is gated by the table's row, as one with no row of its own is, and Resolve then refuses it.
+				auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)group}, .IncludeDeleted=true}) );
+				AppClient()->Acl()->Test( "gateway", "histGroups", groups.empty() ? string{} : groups.front().Guid, Access::ERights::Update, UserPK(), _sl );
 				auto resolved = co_await HistHost::Instance().Resolve( group, UserPK(), _sl );
 				for( auto& r : resolved ){
-					if( r.Holder && !mayRead(*r.Holder, UserPK(), _sl) )
+					if( r.Holder && !mayRead(r.HolderGuid, UserPK(), _sl) )
 						r.HolderName.clear();
 				}
 				y = toJson( _query.ResultRequest, resolved );
@@ -275,15 +279,12 @@ namespace Jde::Opc::Gateway{
 					if( holders.empty() )
 						std::rethrow_exception( conflict );
 					let& holder = holders.front();
-					let named = mayRead( holder.Group, UserPK(), _sl );
 					if( holder.Group==group.Id )
-						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group{} ({}), as {} (row {}).", text, named ? Ƒ(", '{}'", group.Name) : string{}, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
-					if( !named )
+						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group{} ({}), as {} (row {}).", text, mayRead(group.Guid, UserPK(), _sl) ? Ƒ(", '{}'", group.Name) : string{}, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
+					auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );//its guid keys its access row;  one purged meanwhile has no row, and no name to give.
+					if( holderGroups.empty() || !mayRead(holderGroups.front().Guid, UserPK(), _sl) )
 						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group {} on this connection:  a node belongs to one group per server.", text, holder.Group };
-					auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );
-					let name = holderGroups.empty() ? string{} : holderGroups.front().Name;
-					let deleted = holderGroups.size() && holderGroups.front().Deleted;
-					throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, name, holder.Group, deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
+					throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, holderGroups.front().Name, holder.Group, holderGroups.front().Deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
 				}
 				if( auto work = after(_query, y, UserPK(), _sl); work )
 					co_await HistWork{ std::move(*work), _sl };
