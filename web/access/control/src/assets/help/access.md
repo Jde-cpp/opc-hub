@@ -31,21 +31,27 @@ A user's page has four tabs: **Properties**, the **Groups** the user belongs to,
 
 **Properties** describes the account. A user that signs in with a certificate gets the key instead - subject, issuer, fingerprint and modulus, each with a copy button. The provider and the login name are fixed once the user exists.
 
-**Effective rights** is what the user can actually do on each resource through every group and role, the same answer the server enforces. A tick is an allowed right and a red mark a denied one; hover either to read the grants behind it - a role, a role via a group, or a direct grant, which these pages do not create but the server may still hold. The **Enforced** column says whether the resource is checked at all.
+**Effective rights** is what the user can actually do on each resource through every group and role, the same answer the server enforces. A tick is an allowed right and a red mark a denied one; hover either to read the grants behind it - a role, a role via a group, or a direct grant, which these pages do not create but the server may still hold. The **Enforced** column says whether the resource is checked at all. A deleted user is refused everything, so the tab shows nothing until the user is restored.
 
 A resource that is enforced and that the user holds no grant on is a lockout: every right it offers is marked, and the mark says so. That is the row to look for after turning **Enforced** on.
 
 Rights granted on individual OPC nodes are folded under the row of the resource they belong to. Expand it to see them. Each is named, and links to its node page where the node can be resolved.
 
-A node is enforced from the moment any role is granted on it. The OPC server checks that node and everything under it against the node's own grants alone, whatever the user holds on the table above it.
+A node is enforced from the moment any role is granted on it. Under it, the OPC server adds the node's grants to what the user holds on the table above it, and a deny on either wins. A grant on a node never takes away what the table gives, whether or not the table is enforced.
 
-So a user with no grant on the node is locked out of that part of the tree, and the node's row shows the lockout.
+So a node's row shows the table's grants as well as its own; hover a mark to see which. A node configured inside another also gets that node's grants, which its row does not show.
+
+A user who holds nothing on the node or on its table is locked out of that part of the tree, and the node's row shows the lockout.
 
 When the list has no row for the node's table (the table is not enforced and the user holds no grant on it), the node row stands on its own in the list instead of under the table.
 
+Reading another user's **Effective rights** needs **Read** on `acl`; your own needs none. While `resources` is enforced, either needs **Read** on that too.
+
 ## Groups
 
-A group's page has **Properties**, its **Users**, the child **Groups** nested in it and the **Roles** granted to it. A user in a group holds everything that group's roles carry, and everything carried by the groups it is nested in.
+A group's page has **Properties**, its **Users**, the child **Groups** nested in it, the **Roles** granted to it, and **Effective rights**. A user in a group holds everything that group's roles carry, and everything carried by the groups it is nested in.
+
+**Effective rights** is what a member gets through the group: its own grants and those of the groups it is nested in, not its child groups'. It reads as a user's does - hover a mark to read the grants behind it: a role, a role via a parent group, or a direct grant. Only resources the group gives something on are listed; one it gives nothing on is not a lockout, since a member may hold it elsewhere. A deleted group passes nothing on, and neither does a grant that reaches it through a deleted parent group or a deleted role. Reading the tab needs **Read** on `acl`, and while `resources` is enforced, **Read** on that too.
 
 ## Roles
 

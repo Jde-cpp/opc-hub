@@ -19,7 +19,7 @@ namespace Jde::Access::Server{
 		return y;
 	}
 
-	//Synchronous, as UserRightsAwait is:  the walk is in-memory, and Holders takes and releases the shared lock before the resume.
+	//Synchronous, as IdentityRightsAwait is:  the walk is in-memory, and Holders takes and releases the shared lock before the resume.
 	α ResourceRightsAwait::Suspend()ι->void{
 		jobject y;
 		try{

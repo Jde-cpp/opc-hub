@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { SnackbarService } from 'jde-framework';
 import { ACCESS_SERVICE } from '../../../services/access-service';
-import { EffectiveRight } from '../../../model/effective-right';
+import { EffectiveRight, RightsAnswer } from '../../../model/effective-right';
 import { NODE_LINK_RESOLVER, NodeLinkResolver } from '../../../model/node-link';
 import { Rights } from '../../../model/permission';
 import { Resource } from '../../../model/resource';
@@ -18,15 +18,21 @@ const groups = new EffectiveRight( {
 } );
 const users = new EffectiveRight( { resource: new Resource({id: 13, schemaName: "access", name: "users", slug: "users", allowed: Rights.All}) } );//enforced, nothing granted
 
-const create = ( rights:EffectiveRight[], failWith?:Error, nodeLinks?:NodeLinkResolver )=>{
+let asked:string[];//the service calls the component made
+let handed:unknown[];//the lists each call was handed
+const pathLists = { groups: [{id: 21, name: "Ops"}], roles: [] };
+const create = ( rights:EffectiveRight[], failWith?:Error, nodeLinks?:NodeLinkResolver, input:"userId"|"groupId"="userId" )=>{
+	asked = [];
+	handed = [];
+	const answer = ( call:string )=>async ( id:number, lists?:unknown )=>{ asked.push( `${call}(${id})` ); handed.push( lists ); if( failWith ) throw failWith; return { rights, lists: pathLists }; };
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ),//a resolved link renders as routerLink
-		{ provide: ACCESS_SERVICE, useValue: { effectiveRights: async ()=>{ if( failWith ) throw failWith; return rights; } } },
+		{ provide: ACCESS_SERVICE, useValue: { effectiveRights: answer("effectiveRights"), groupRights: answer("groupRights") } },
 		{ provide: SnackbarService, useValue: { exception: ()=>{} } },
 		...(nodeLinks ? [{ provide: NODE_LINK_RESOLVER, useValue: nodeLinks }] : [])
 	]});
 	const fixture = TestBed.createComponent( EffectiveRights );
-	fixture.componentRef.setInput( 'userId', 7 );
+	fixture.componentRef.setInput( "holder", input=="groupId" ? {groupId: 7} : {userId: 7} );
 	return fixture;
 };
 
@@ -36,6 +42,7 @@ describe( 'EffectiveRights', ()=>{
 		fixture.detectChanges();
 		await fixture.whenStable();
 		const page = fixture.componentInstance;
+		expect( asked ).toEqual( ["effectiveRights(7)"] );
 		expect( page.isLoading() ).toBe( false );
 		expect( page.rows() ).toHaveLength( 2 );
 		expect( page.isEffective(groups, Rights.Read) ).toBe( true );
@@ -43,6 +50,25 @@ describe( 'EffectiveRights', ()=>{
 		expect( page.isDenied(groups, Rights.Update) ).toBe( true );
 		expect( page.tooltip(groups, Rights.Update) ).toBe( "Allowed - role Viewer\nDenied - direct grant" );
 		expect( page.tooltip(users, Rights.Read) ).toContain( "every action is denied" );
+	} );
+
+	it( 'loads a group\'s rows through groupRights, with its own empty text', async ()=>{
+		const fixture = create( [], undefined, undefined, "groupId" );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect( asked ).toEqual( ["groupRights(7)"] );
+		expect( fixture.componentInstance.isGroup() ).toBe( true );
+		expect( (fixture.nativeElement as HTMLElement).querySelector(".empty")?.textContent ).toContain( "Its members get nothing through this group" );
+	} );
+
+	//reviews-issue/252-effective-rights-group.md #5:  an empty answer is also a deleted identity's, so neither text gives a reason only a live one has
+	it( 'says a user with no rows has nothing enforced and no grant', async ()=>{
+		const fixture = create( [] );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.detectChanges();
+		expect( (fixture.nativeElement as HTMLElement).querySelector(".empty")?.textContent ).toContain( "No resource is enforced and no grant reaches this user" );
 	} );
 
 	it( 'shows one column per right, without the editable grid\'s None and All shortcuts', ()=>{
@@ -102,6 +128,74 @@ describe( 'EffectiveRights', ()=>{
 		fixture.componentInstance.toggle( table );
 		await fixture.whenStable();
 		expect( fixture.componentInstance.link(node) ).toBeUndefined();
+	} );
+
+	//reviews-issue/252-effective-rights-group.md #6:  the router reuses the page for a sibling record, so one instance loads several.
+	it( 'collapses its rows when the record changes', async ()=>{
+		const fixture = create( [groups, users], undefined, undefined, "groupId" );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		const page = fixture.componentInstance;
+		page.toggle( groups );
+		expect( page.isExpanded(groups) ).toBe( true );
+		fixture.componentRef.setInput( "holder", {groupId: 8} );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		expect( asked ).toEqual( ["groupRights(7)", "groupRights(8)"] );
+		expect( page.isExpanded(groups) ).toBe( false );
+	} );
+
+	//reviews-issue/252-effective-rights-group.md #15:  the note lives in the tab's own empty slot, and the server is not asked
+	it( 'says why a deleted group shows nothing, and asks the server nothing', async ()=>{
+		const fixture = create( [groups], undefined, undefined, "groupId" );
+		fixture.componentRef.setInput( "deleted", true );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		expect( asked ).toEqual( [] );
+		expect( (fixture.nativeElement as HTMLElement).querySelector(".empty")?.textContent ).toContain( "A deleted group passes nothing on" );
+	} );
+
+	it( 'says why a deleted user shows nothing, and asks the server nothing', async ()=>{
+		const fixture = create( [groups] );
+		fixture.componentRef.setInput( "deleted", true );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		expect( asked ).toEqual( [] );
+		expect( (fixture.nativeElement as HTMLElement).querySelector(".empty")?.textContent ).toContain( "A deleted user is refused everything" );
+	} );
+
+	//reviews-issue/252-effective-rights-group.md #12:  the name lists are read once, not per record
+	it( 'hands the next record the names the last one read', async ()=>{
+		const fixture = create( [groups], undefined, undefined, "groupId" );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		fixture.componentRef.setInput( "holder", {userId: 8} );
+		fixture.detectChanges();
+		await fixture.whenStable();
+		expect( asked ).toEqual( ["groupRights(7)", "effectiveRights(8)"] );
+		expect( handed ).toEqual( [undefined, pathLists] );
+	} );
+
+	it( 'drops the failure of a load a newer one overtook', async ()=>{
+		const pending = new Map<number, {resolve:( answer:RightsAnswer )=>void, reject:( e:unknown )=>void}>();
+		const toasts:string[] = [];
+		TestBed.configureTestingModule({ providers: [
+			provideRouter( [] ),
+			{ provide: ACCESS_SERVICE, useValue: { groupRights: ( id:number )=>new Promise<RightsAnswer>( (resolve, reject)=>pending.set(id, {resolve, reject}) ) } },
+			{ provide: SnackbarService, useValue: { exception: ( message:string )=>{ toasts.push( message ); } } }
+		]});
+		const fixture = TestBed.createComponent( EffectiveRights );
+		fixture.componentRef.setInput( "holder", {groupId: 7} );
+		fixture.detectChanges();
+		fixture.componentRef.setInput( "holder", {groupId: 8} );
+		fixture.detectChanges();
+		pending.get( 8 )!.resolve( {rights: [groups], lists: {}} );
+		await fixture.whenStable();
+		pending.get( 7 )!.reject( new Error("slow, and failed") );
+		await fixture.whenStable();
+		expect( toasts ).toEqual( [] );
+		expect( fixture.componentInstance.isLoading() ).toBe( false );
+		expect( fixture.componentInstance.rows() ).toEqual( [groups] );
 	} );
 
 	it( 'keeps the table hidden when the load fails', async ()=>{

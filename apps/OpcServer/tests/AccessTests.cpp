@@ -24,7 +24,8 @@ namespace Jde::Opc::Server::Tests{
 		constexpr static ERights _readerDenied = ERights::Update | ERights::Delete | ERights::Administer;
 		constexpr static ERights _writerDenied = ERights::Administer;
 		constexpr static ERights _adminDenied = ERights::None;
-		//The criteria resource withholds everything, so a node it governs answers None whatever the role allows on the root.
+		//The criteria resource withholds everything, so a node it governs answers None whatever the role allows on the root:  a
+		//node's grants add to the root's, and a deny on either wins.
 		//It used to grant the *same* rights as the root, on `ns=4;i=6020` - a node no nodeset here loads - so UserAccess
 		//passed identically whether _nodeResources worked or not (opcserver-review3 L30).  ServerStatus is in ns0, so the
 		//browse actually reaches it, and it is not a node the other tests assert on.
@@ -119,7 +120,7 @@ namespace Jde::Opc::Server::Tests{
 			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, {(UserPK::Type)_users.at(user)} };
 			return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &statusNode, nullptr );
 		};
-		EXPECT_EQ( statusAccess("readerUser"), EAccess::None ) << "governed by its own resource, not the root";
+		EXPECT_EQ( statusAccess("readerUser"), EAccess::None ) << "its own resource's deny wins over the root's grant";
 		EXPECT_EQ( statusAccess("adminUser"), EAccess::None );
 	}
 
@@ -691,10 +692,49 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_EQ( auth.NodeRights(serverNode, reader), _readerAllowed ) << "before: the node inherits the root resource";
 
 		auth.CreateResource( Access::Resource{scratchPK, jobject{ {"schemaName",_resource}, {"slug","nodeIds"}, {"criteria",serverNode.ToString()} }} );
-		EXPECT_EQ( auth.NodeRights(serverNode, reader), Access::ERights::None ) << "after: its own resource governs it, and the reader holds nothing on that one";
+		EXPECT_EQ( auth.NodeRights(serverNode, reader), _readerAllowed ) << "a node resource the reader holds nothing on takes nothing from the root's grant (reviews-issue/252-effective-rights-group.md #1)";
+		{//mapped, which shows with the root unenforced:  the rest of the tree is open, and the node's own resource protects it.
+			const Access::ResourcePK rootPK{ Json::AsNumber<Access::ResourcePK::Type>(_app->QuerySync("resource( schemaName:$schema, slug:\"nodeIds\", criteria:null ){id}", {{"schema", _resource}}), "id") };
+			auth.UpdateResourceDeleted( rootPK, _resource, jobject{{"id",rootPK.Value}}, false );
+			absl::Cleanup restore = [&]{ auth.UpdateResourceDeleted( rootPK, _resource, jobject{{"id",rootPK.Value}}, true ); };
+			let stranger = UserPK{ std::numeric_limits<UserPK::Type>::max() };
+			EXPECT_EQ( auth.NodeRights(NodeId::ObjectsFolder(), stranger), Access::ERights::All ) << "the root unenforced, the tree is open";
+			EXPECT_EQ( auth.NodeRights(serverNode, stranger), Access::ERights::None ) << "after: its own resource protects the node";
+			EXPECT_EQ( auth.NodeRights(serverNode, reader), _readerAllowed ) << "and the unenforced root's grant still counts under it";
+		}
 		EXPECT_EQ( auth.NodeRights(NodeId::ObjectsFolder(), reader), _readerAllowed ) << "the root is untouched";
 
 		auth.UpdateResourceDeleted( scratchPK, _resource, jobject{{"id",scratchPK.Value}}, false );
 		EXPECT_EQ( auth.NodeRights(serverNode, reader), _readerAllowed ) << "deleting it hands the node back to the root, also without a restart";
+	}
+
+	//reviews-issue/252-effective-rights-group.md #1:  a grant on a node adds to the root's and takes nothing from it.  Another
+	//role's grant there leaves the reader's root Read standing, and a role holding Read on the root and Update on the node has
+	//both there.  ServerCapabilities, which no other test grants on;  the grants arrive through the AccessListener, so waited for.
+	TEST_F( AccessTests, ANodeGrantAddsToTheRoot ){
+		auto& auth = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
+		const NodeId node{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES) };
+		const string slug{ "additiveUser" };
+		auto user = _app->QuerySync( "user(slug:$slug, deleted:null){id}", {{"slug", slug}} );
+		if( user.empty() )
+			user = _app->QuerySync<jobject>( "createUser( slug:$slug, name:$name ){id}", {{"slug", slug}, {"name", slug+" name"}} );
+		const UserPK userPK{ Json::AsNumber<UserPK::Type>(user, "id") };
+		const string roleSlug_{ roleSlug("additive") };
+		if( _app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug_}}).empty() ){//find-or-create, as addRole is.
+			let role = _app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug_}, {"name", roleSlug_+" name"}} );
+			let roleId = Json::AsNumber<Access::RolePK::Type>( role, "id" );
+			_app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )",
+				{{"roleId", roleId}, {"allowed", underlying(ERights::Read)}, {"schema", _resource}} );
+			_app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\", criteria:$criteria, name:\"ServerCapabilities\"}} )",
+				{{"roleId", roleId}, {"allowed", underlying(ERights::Update)}, {"schema", _resource}, {"criteria", node.ToString()}} );
+			_app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", userPK.Value}, {"roleId", roleId}} );
+		}
+		constexpr ERights both = ERights::Read | ERights::Update;
+		for( uint i=0; i<100 && auth.NodeRights(node, userPK)!=both; ++i )
+			std::this_thread::sleep_for( 50ms );
+		EXPECT_EQ( auth.NodeRights(node, userPK), both ) << "the node's Update on top of the root's Read";
+		EXPECT_EQ( auth.NodeRights(NodeId::ObjectsFolder(), userPK), ERights::Read ) << "the node's grant stays on the node";
+		let reader = UserPK{ (UserPK::Type)_users.at("readerUser") };
+		EXPECT_EQ( auth.NodeRights(node, reader), _readerAllowed ) << "another role's grant on the node leaves the reader's root grant standing";
 	}
 }

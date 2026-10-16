@@ -326,6 +326,10 @@ namespace Jde::Access{
 		if( users.size() )
 			SetUserPermissions( users );
 	}
+	α Authorize::CreateGroup( GroupPK groupPK )ι->void{
+		ul _{ Mutex };
+		Groups.try_emplace( groupPK, Group{groupPK, false} );
+	}
 	α Authorize::RemoveFromGroup( GroupPK groupPK, flat_set<IdentityPK::Type> members )ι->void{
 		ul _{ Mutex };
 		flat_set<UserPK> users;
@@ -503,8 +507,7 @@ namespace Jde::Access{
 	//TODO test on deleted members.
 	α Authorize::TestAddGroupMember( GroupPK parentGroupPK/*groupD*/, flat_set<IdentityPK::Type>&& memberPKs, SL sl )ε->void{
 		rl _{ Mutex };
-		//access_groups' fk is to access_identities, so the insert alone would give a user members (access-refactor B5).  Users, not
-		//Groups:  a group enters Groups with its first member, while every user is cached from its creation.
+		//access_groups' fk is to access_identities, so the insert alone would give a user members (access-refactor B5).
 		THROW_IFX( Users.contains({parentGroupPK.Value}), Exception(sl, ELogLevel::Debug, "Identity '{}' is a user - only a group has members.", parentGroupPK.Value) );
 		for( let memberPK : memberPKs ){
 			if( Users.contains({memberPK}) )
@@ -680,8 +683,15 @@ namespace Jde::Access{
 	//AddUserPermissions do;  a deleted resource stays in the result - unenforced is what the reader is trying to see.
 	α Authorize::UserRights( UserPK userPK )Ι->vector<ResourceRights>{
 		rl _{ Mutex };
-		if( !Users.contains(userPK) )
-			return {};
+		auto user = Users.find( userPK );
+		return user!=Users.end() && !user->second.IsDeleted ? IdentityRightsLocked( userPK ) : vector<ResourceRights>{};
+	}
+	α Authorize::GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>{
+		rl _{ Mutex };
+		auto group = Groups.find( groupPK );
+		return group!=Groups.end() && !group->second.IsDeleted ? IdentityRightsLocked( groupPK ) : vector<ResourceRights>{};
+	}
+	α Authorize::IdentityRightsLocked( IdentityPK target )Ι->vector<ResourceRights>{
 		flat_map<ResourcePK,ResourceRights> byResource;
 		vector<GroupPK> groups; vector<RolePK> roles;//the path so far
 		auto expand = [&]( this auto&& self, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
@@ -705,13 +715,14 @@ namespace Jde::Access{
 				roles.pop_back();
 			}
 		};
-		//does the acl identity reach the user - itself, or a live group whose members do - expanding the grant along each way in.
+		//does the acl identity reach the target - itself, or a live group whose members do - expanding the grant along each way in.
 		auto reach = [&]( this auto&& self, IdentityPK identity, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
-			if( identity.IsUser() ){
-				if( identity.UserPK()==userPK )
-					expand( permissionRole );
+			if( identity.Value==target.Value ){
+				expand( permissionRole );
 				return;
 			}
+			if( identity.IsUser() )
+				return;
 			let groupPK = identity.GroupPK();
 			auto group = Groups.find( groupPK );
 			if( group==Groups.end() || group->second.IsDeleted || std::ranges::find(groups, groupPK)!=groups.end() )
