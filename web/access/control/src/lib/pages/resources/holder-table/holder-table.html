@@ -19,10 +19,10 @@
 				<mat-header-cell *matHeaderCellDef class="mat-column-permission" [class.mat-column-alt]="i%2==0">{{kv.value}}</mat-header-cell>
 				<mat-cell *matCellDef="let row" class="mat-column-permission" [class.mat-column-alt]="i%2==0">
 					@if( row.isDenied(kv.key) ){
-						<mat-icon class="denied" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="effective-rights-tooltip">cancel</mat-icon>
+						<mat-icon class="denied" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="jde-multiline-tooltip">cancel</mat-icon>
 					}
 					@else if( row.isAllowed(kv.key) ){
-						<mat-icon class="allowed" role="img" tabindex="0" [attr.aria-label]="kv.value + ' allowed'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="effective-rights-tooltip">check</mat-icon>
+						<mat-icon class="allowed" role="img" tabindex="0" [attr.aria-label]="kv.value + ' allowed'" [matTooltip]="row.tooltip(kv.key)" matTooltipClass="jde-multiline-tooltip">check</mat-icon>
 					}
 				</mat-cell>
 			</ng-container>

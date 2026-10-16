@@ -40,11 +40,3 @@ mat-icon{
 .empty{
 	opacity: .7;
 }
-
-/* effective-rights.scss's tooltip rule, repeated:  ::ng-deep styles exist only once their component has rendered, and this
-   page can open without that tab ever having been shown. */
-::ng-deep .effective-rights-tooltip .mdc-tooltip__surface{
-	white-space: pre-line;
-	max-width: 36em;
-	text-align: left;
-}

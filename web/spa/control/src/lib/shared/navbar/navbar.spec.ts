@@ -17,6 +17,7 @@ import { SearchResult } from '../../services/search/search-provider';
 import { Favorite, NavBar } from './navbar';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
 import { RecentVisits } from '../../services/recent-visits';
+import { RouteStore } from '../../services/route-store';
 
 //review3 L9: onSearch called event.preventDefault() and THEN tested event.defaultPrevented - the flag it had just set - so
 //the Enter fallback below it was unreachable and Enter with nothing highlighted did nothing.
@@ -188,5 +189,43 @@ describe( 'NavBar and the not-found route', ()=>{
 		await router.navigateByUrl( '/no/such/page' );
 		expect( visit ).toHaveBeenCalledTimes( 1 );
 		expect( navbar.crumbs().slice(1).every(c=>!c.path) ).toBe( true );//no crumb links to the catch-all
+	} );
+} );
+
+//reviews-issue/251-resource-page.md #13:  a crumb is named from the children RouteStore keeps under its parent url, and the bare
+//last segment was tried too - so the access schema's `roles` resource took the section's Roles list's name.
+describe( 'NavBar crumbs', ()=>{
+	const create = ()=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			provideRouter( [{path: 'access', children: [
+				{path: 'users/:slug', component: Page},
+				{path: 'resources/:schema/:slug', component: Page},
+				{path: ':collectionDisplay', component: Page}
+			]}] ),
+			{ provide: NavigationFocusService, useValue: {} },
+			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
+			{ provide: RecentVisits, useValue: {visit: vi.fn( async ()=>{} )} }
+		]});
+		const store = TestBed.inject( RouteStore );
+		store.setChildren( "access", [{path: "users", title: "Users"}, {path: "roles", title: "Roles"}] );
+		store.setChildren( "users", [{path: "alice", title: "Alice Ng"}] );
+		store.setChildren( "access/resources", [{path: "access/roles", title: "role table"}] );
+		const navbar = TestBed.runInInjectionContext( ()=>new NavBar() );
+		navbar.ngOnInit();
+		return navbar;
+	};
+	const titles = ( navbar:NavBar )=>navbar.crumbs().map( c=>c.title );
+
+	it( "names a ':param' segment from a farther parent, not a bare key spelled the same", async ()=>{
+		const navbar = create();
+		await TestBed.inject( Router ).navigateByUrl( '/access/resources/access/roles' );
+		expect( titles(navbar).at(-1) ).toBe( "role table" );
+	} );
+
+	it( 'still names a row from its list kept under the bare key', async ()=>{
+		const navbar = create();
+		await TestBed.inject( Router ).navigateByUrl( '/access/users/alice' );
+		expect( titles(navbar).slice(-2) ).toEqual( ["Users", "Alice Ng"] );
 	} );
 } );

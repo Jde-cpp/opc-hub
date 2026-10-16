@@ -4,7 +4,7 @@ import { IEnvironment } from 'jde-spa';
 import { AppService, AuthStore, IGraphQL, StringUtils, TableSchema } from 'jde-framework';
 import { Resource } from '../model/resource';
 import { EffectiveRight, Names, UserRightsRow } from '../model/effective-right';
-import { NamedRow, ResourceHolders, ResourceRightsRow } from '../model/resource-holder';
+import { HolderLists, NamedRow, ResourceHolders, ResourceRightsRow } from '../model/resource-holder';
 
 
 
@@ -64,18 +64,20 @@ export class AccessService extends AppService implements OnDestroy{
 	//Everyone a resource's grants reach - the server's answer (resourceRights, Authorize::Holders) joined to the names and slugs
 	//its cache does not hold.  The three lists only label the rows and link them, so one the user may not read leaves `#id`, as
 	//effectiveRights' names do;  the answer itself stays fatal - an empty tab would read as "nobody".  Takes Read on acl.
-	async resourceRights( resourceId:number ):Promise<ResourceHolders>{
+	//The page passes the last answer's `lists`, read again only for a row they lack - one created since - not per resource.
+	async resourceRights( resourceId:number, lists?:HolderLists ):Promise<ResourceHolders>{
 		const sources = `sources{ permissionId allowed denied path{ id type } }`;
 		const q = `resourceRights( id:$id ){ resource{ id deleted } roles{ id allowed denied ${sources} } groups{ id allowed denied ${sources} } users{ id allowed denied effective ${sources} } }`;
-		const list = ( collection:string ):Promise<NamedRow[]>=>this.queryArray<NamedRow>( `${collection}{ id name slug }` )
-			.catch( e=>{ console.warn( `Resource rights:  no ${collection} names - the rows show ids.`, e ); return []; } );
-		const [row, roles, groups, users] = await Promise.all( [
-			this.querySingle<ResourceRightsRow>( q, {id: resourceId} ),
-			list( "roles" ),
-			list( "groups" ),
-			list( "users" )
-		] );
-		return new ResourceHolders( row, {roles, groups, users} );
+		let [row, named] = await Promise.all( [this.querySingle<ResourceRightsRow>( q, {id: resourceId} ), lists ?? this.#holderLists()] );
+		if( lists && !ResourceHolders.covers(row, lists) )
+			named = await this.#holderLists();
+		return new ResourceHolders( row, named );
+	}
+	async #holderLists():Promise<HolderLists>{
+		const list = ( collection:string ):Promise<NamedRow[]|undefined>=>this.queryArray<NamedRow>( `${collection}{ id name slug }` )
+			.catch( e=>{ console.warn( `Resource rights:  no ${collection} names - the rows show ids.`, e ); return undefined; } );
+		const [roles, groups, users] = await Promise.all( [list( "roles" ), list( "groups" ), list( "users" )] );
+		return { roles, groups, users };
 	}
 	async getResource( slug:string ):Promise<Resource|undefined>{
 		const resources = await this.loadResources();//was `await this.#resources` - the field, not the loader, so this threw on `.find` unless something else had already loaded

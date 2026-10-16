@@ -3,28 +3,17 @@
 #include <jde/fwk/chrono.h>
 #include <jde/access/Authorize.h>
 #include "../serverInternal.h"
+#include "RightsSourceJson.h"
 
 #define let const auto
 namespace Jde::Access::Server{
-	Ω toJson( const vector<Authorize::RightsSource>& sources )ι->jarray{
-		jarray y;
-		for( let& source : sources ){
-			jarray path;
-			for( let group : source.Groups )
-				path.push_back( jobject{ {"id", group.Value}, {"type", "group"} } );
-			for( let role : source.Roles )
-				path.push_back( jobject{ {"id", role.Value}, {"type", "role"} } );
-			y.push_back( jobject{ {"permissionId", source.Permission.Value}, {"allowed", underlying(source.Allowed)}, {"denied", underlying(source.Denied)}, {"path", move(path)} } );
-		}
-		return y;
-	}
 	template<class T> Ω toJson( const flat_map<T,Authorize::HolderRights>& holders, bool effective )ι->jarray{
 		jarray y;
 		for( let& [pk, holder] : holders ){
 			jobject row{ {"id", pk.Value}, {"allowed", underlying(holder.Rights.Allowed)}, {"denied", underlying(holder.Rights.Denied)} };
 			if( effective )
 				row["effective"] = underlying( holder.Rights.Effective() );
-			row["sources"] = toJson( holder.Sources );
+			row["sources"] = SourcesJson( holder.Sources );
 			y.push_back( move(row) );
 		}
 		return y;
@@ -36,6 +25,7 @@ namespace Jde::Access::Server{
 		try{
 			const ResourcePK resourcePK{ _query.AsNumber<ResourcePK::Type>("id", _sl) };
 			THROW_IFX( !resourcePK.Value, Exception(_sl, ELogLevel::Debug, "resourceRights needs a resource id.") );
+			Authorizer().TestUser( _executer, _sl );//the acl check passes anyone, the anonymous included, while acl is unenforced.
 			GetTable( "acl" ).Authorize( ERights::Read, _executer, _sl );
 			let holders = Authorizer().Holders( resourcePK );
 			THROW_IFX( !holders, Exception(_sl, ExceptionArgs{EHttpStatus::NotFound}, "Resource '{}' not found.", resourcePK.Value) );

@@ -28,24 +28,26 @@ export class ResourceResolver implements Resolve<ResourcePageData>{
 			this.#router.navigateByUrl( listUrl ).catch( e=>console.warn("The redirect failed.", e) );
 			return null as unknown as ResourcePageData;
 		};
-		let resources:Resource[];
+		const find = ( list:Resource[] )=>list.find( r=>r.schema==schema && r.slug==slug );
+		let resources:Resource[], resource:Resource|undefined;
 		try{
 			resources = await this.#access.loadResources();
+			if( !(resource = find(resources)) ){//the list is cached for the session:  a resource registered since - a new OpcServer instance's - is not in it
+				resources = await this.#access.loadResources( true );
+				resource = find( resources );
+			}
 		}
 		catch( e ){
 			this.#snackbar.exception( `Could not load '${schema}/${slug}'.`, e );
 			return back();
 		}
-		const resource = resources.find( r=>r.schema==schema && r.slug==slug );
 		if( !resource ){
 			this.#snackbar.error( `There is no resource '${schema}/${slug}'.` );
 			this.#recentVisits.forget( RecentVisits.bare(state.url) );//the redirect is a NavigationCancel, so RecentVisits never sees the failure
 			return back();
 		}
-		//the last crumb is named from the children kept under the url before it - without this entry .../access/roles was named
-		//"Roles" by the children kept under `access` (the section's lists), since its schema segment is `access` too
-		this.#routeStore.setChildren( `${listUrl.slice(1)}/${schema}`, [{title: resource.name, path: slug}] );
 		const siblings = ResourceResolver.siblings( resources );
+		this.#routeStore.setChildren( listUrl.slice(1), siblings );//the crumb's name - the list's own entry holds only the page it showed
 		const routing = new RouteItem( {path: ResourceResolver.path(resource), title: resource.name, siblings, parent: new RouteItem({path: listUrl, title: "Resources"})} );
 		return { resource, routing, accessUrl };
 	}

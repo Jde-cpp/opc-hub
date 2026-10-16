@@ -8,10 +8,10 @@
 			<p class="state" [class.enforced]="holders.enforced">
 				<mat-icon aria-hidden="true">{{holders.enforced ? "lock" : "lock_open"}}</mat-icon>
 				@if( holders.enforced ){
-					<span><strong>Enforced.</strong> Only the users listed here get through - every other user is denied.</span>
+					<span><strong>Enforced.</strong> Only the rights ticked on the Users tab get through - everything else is denied.</span>
 				}
 				@else{
-					<span><strong>Not enforced.</strong> Every signed-in user has full access. These grants take effect once it is enforced, from the <a [routerLink]="listUrl()">Resources</a> list.</span>
+					<span><strong>Not enforced.</strong> Everyone has full access, signed in or not. These grants take effect once it is enforced, from the <a [routerLink]="listUrl()">Resources</a> list.</span>
 				}
 			</p>
 		}

@@ -111,7 +111,7 @@ export const userTableSettings:TableSettings = {
 	empty: { title: "No resources registered.", detail: "Every service registers its tables here when it starts - start the hub or the app server against this database.", icon: "lock" },
 	canAdd: false,
 	canPurge: false,
-	rowLink: (row)=>[`${row["schemaName"]}`, `${row.slug}`],//ResourceResolver's 'resources/:schema/:slug'
+	rowLink: { fields: ["schemaName", "criteria"], segments: (row)=>row["criteria"] ? undefined : [`${row["schemaName"]}`, `${row.slug}`] },//ResourceResolver's 'resources/:schema/:slug'.  A criteria row, which a saved view without the criteria filter lists, shares its table's schema and slug - its grants are on its node's Access tab.
 	viewName: "Tables",
 	filters: [ {name: "criteria", value: ["<null>"]} ],
 	columns: [
@@ -119,7 +119,7 @@ export const userTableSettings:TableSettings = {
 			enable: "Enforce",
 			disable: "Stop enforcing",
 			enableMessage: "Access to this table will be restricted to users and roles holding an explicit permission on it. Grant yourself one first, or you may lose your own access.",
-			disableMessage: "Permissions on this table will stop being checked and every signed-in user will have full access to it."
+			disableMessage: "Permissions on this table will stop being checked and everyone, signed in or not, will have full access to it."
 		} },
 		{ name:"schemaName", displayName:"Schema", style: new Style(150) },
 		{ name:"name", style: new Style(300) },

@@ -150,7 +150,7 @@ export class NavBar implements OnInit {
 			const config = NavBar.matchConfig( this.router.config, segments.slice(0, i+1) );
 			let title = config?.title as string|undefined, icon:string|undefined;
 			if( !title || title.startsWith(':') ){//no title, or the ':param' substitute-the-segment convention
-				const child = this.#segmentItem( segments.slice(0,i).join('/'), segments[i] );
+				const child = this.#segmentItem( segments, i, NavBar.paramIndexes(config, i) );
 				title = child?.title ?? this.#segmentName?.( segments, i ) ?? segmentDisplay( segments[i] );
 				icon = child?.icon;//the recently visited row draws it;  the crumb itself does not
 			}
@@ -158,14 +158,24 @@ export class NavBar implements OnInit {
 		}
 		return crumbs;
 	}
-	#segmentItem( parentUrl:string, segment:string ):RouteItem|undefined{//RouteStore writers key inconsistently: "gateways/gw1" (UrlSegments join), '/apps', bare "users"
-		const last = parentUrl.split('/').pop() ?? '';
-		for( const key of [parentUrl, '/'+parentUrl, last] ){
-			const child = this.#routeStore.getChildren( key ).find( c=>c.path==segment || c.path?.endsWith('/'+segment) );//child paths are bare slugs or parent-prefixed
-			if( child?.title )
-				return child;
+	//The child RouteStore keeps for segments[i], under the nearest parent url holding it:  its path is the rest of the url from
+	//there, bare or parent-prefixed.  Writers key inconsistently: "gateways/gw1" (UrlSegments join), '/apps', bare "users".  A
+	//bare key is not tried for a ':param' value - in access/resources/access/roles, `access` is a schema, not the section.
+	#segmentItem( segments:string[], i:number, params:Set<number> ):RouteItem|undefined{
+		for( let k=i-1; k>=0; --k ){
+			const parentUrl = segments.slice( 0, k+1 ).join( '/' ), rest = segments.slice( k+1, i+1 ).join( '/' );
+			for( const key of params.has(k) ? [parentUrl, '/'+parentUrl] : [parentUrl, '/'+parentUrl, segments[k]] ){
+				const child = this.#routeStore.getChildren( key ).find( c=>c.path==rest || c.path?.endsWith('/'+rest) );
+				if( child?.title )
+					return child;
+			}
 		}
 		return undefined;
+	}
+	//the url indexes a ':param' of `config` holds - config matched segments 0..i, so its path spells the url's tail
+	static paramIndexes( config:Route|undefined, i:number ):Set<number>{
+		const path = (config?.path ?? '').split( '/' ).filter( s=>s.length );
+		return new Set( path.flatMap( (s,j)=>s.startsWith(':') ? [i-path.length+1+j] : [] ) );
 	}
 	#endsOnNotFound():boolean{
 		let route = this.router.routerState.snapshot.root;

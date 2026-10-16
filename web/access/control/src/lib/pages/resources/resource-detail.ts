@@ -6,7 +6,7 @@ import { ComponentPageTitle, ProfileStore, RouteItem } from 'jde-spa';
 import { EnumKeysPipe, errorText, httpStatus } from 'jde-framework';
 import { Rights } from '../../model/permission';
 import { Resource } from '../../model/resource';
-import { ResourceHolders } from '../../model/resource-holder';
+import { HolderLists, ResourceHolders } from '../../model/resource-holder';
 import { AccessService } from '../../services/access-service';
 import { ResourcePageData } from '../../services/resource-resolver';
 import { HolderTable } from './holder-table/holder-table';
@@ -39,7 +39,8 @@ export class ResourceDetail implements OnInit, OnDestroy{
 		this.holders.set( undefined );
 		this.error.set( undefined );
 		try{
-			const holders = await this.#access.resourceRights( data.resource.id );
+			const holders = await this.#access.resourceRights( data.resource.id, this.#lists );
+			this.#lists = holders.lists;
 			if( load==this.#loadId )//not overtaken by the next resource
 				this.holders.set( holders );
 		}
@@ -64,11 +65,15 @@ export class ResourceDetail implements OnInit, OnDestroy{
 			? { forbidden: true, title: "No access to who holds rights here.", detail: `${what}  Reading the grants takes Read on acl.`.trim() }
 			: { forbidden: false, title: "Could not load who holds rights here.", detail: what };
 	});
-	//the rights the resource offers - a grant's others mean nothing here.  All of them for a row that does not say.
+	//the rights the resource offers - all of them for a row that does not say - and any other a listed grant holds:  the server
+	//enforces whatever a grant holds, and a QL mutation can grant what the checkboxes do not offer.
 	rights = computed( ()=>{
-		const available = this.resource()?.availableRights || Rights.All;
-		return EnumKeysPipe.prototype.transform( Rights ).filter( kv=>kv.key!=Rights.None && kv.key!=Rights.All && (available & kv.key) );
+		const holders = this.holders();
+		const held = holders ? [...holders.roles, ...holders.groups, ...holders.users].reduce( (bits,h)=>bits | h.allowed | h.denied, 0 ) : 0;
+		const shown = (this.resource()?.availableRights || Rights.All) | held;
+		return EnumKeysPipe.prototype.transform( Rights ).filter( kv=>kv.key!=Rights.None && kv.key!=Rights.All && (shown & kv.key) );
 	});
 	tabIndex = signal<number>( ProfileStore.tabIndex('resourceDetail') );
 	#loadId = 0;
+	#lists:HolderLists|undefined;//kept across the sidenav's resources - reviews-issue/251-resource-page.md #9
 }

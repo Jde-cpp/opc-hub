@@ -80,7 +80,7 @@ Most record types offer the six above, but not all:
 
 - users add **Execute** and **Subscribe**;
 - roles add **Subscribe**;
-- the resources table offers only **Delete** and **Subscribe**;
+- the resources table offers only **Read**, **Delete**, **Administer** and **Subscribe**;
 - the `acl` table offers only **Read**, **Administer** and **Subscribe**.
 
 ## Resources
@@ -91,7 +91,7 @@ Granting a role on an OPC node mints a resource scoped to that node.
 
 The [Resources](/access/resources) list is the registered ones, a row each, with an **Enforced** toggle. Node-scoped resources are not listed here - they are granted from the node's own page, see [Gateways](/help/gateways), and appear under a user's **Effective rights**.
 
-A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it, and every signed-in user has full access to it. The OPC server still applies its own limits on what the signed-in user may read and write.
+A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it, and everyone, signed in or not, has full access to it. The OPC server still applies its own limits on what the signed-in user may read and write.
 
 One exception: the bundled OPC server refuses history edits and deletes on its nodes until a node resource is enforced.
 
@@ -105,9 +105,9 @@ Clicking a row opens the resource's own page, which answers who can reach it. It
 - **Groups** - each group a grant reaches: a role or a permission granted to it, or to a group it is nested in.
 - **Users** - each user a grant reaches, directly or through a group, with the rights the server enforces for them.
 
-A tick is an allowed right and a red mark a denied one, and only the rights the resource offers have a column. Hover a mark to read the grants behind it, as on a user's **Effective rights**. Each name links to its own page.
+A tick is an allowed right and a red mark a denied one. Each right the resource offers has a column, as does any other a listed grant holds. Hover a mark to read the grants behind it, as on a user's **Effective rights**. Each name links to its own page.
 
-A user not on the **Users** tab holds nothing on the resource: denied while it is enforced, unchecked while it is not. Reading the page needs **Read** on `acl`, as a user's **Effective rights** does for anyone but yourself.
+A user not on the **Users** tab holds nothing on the resource: denied while it is enforced, unchecked while it is not. Reading the page needs **Read** on `acl`, as a user's **Effective rights** does for anyone but yourself. While `resources` is enforced, it needs **Read** on that too.
 
 The page is the resource's own row. Rights granted on its individual OPC nodes are on each node's page.
 

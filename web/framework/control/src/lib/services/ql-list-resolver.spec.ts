@@ -86,6 +86,28 @@ describe( 'QLListResolver.systemViews', ()=>{
 		expect( QLListResolver.systemViews(schema, { columns: ["name"] }).map(v=>v.name) ).toEqual( [undefined] );
 	} );
 
+	//reviews-issue/251-resource-page.md #1:  the resources link reads schemaName, and with its column hidden the query left it
+	//out - every row opened 'undefined/<slug>'
+	describe( "with a rowLink's fields", ()=>{
+		const settings:TableSettings = { columns: ["name", {name: "kind", hidden: true}], views: [{name: "Bare", columns: ["name"]}], rowLink: {fields: ["kind"], segments: r=>[`${r["kind"]}`, `${r.slug}`]} };
+		const selects = ( view:View )=>/\{ (.*) \}$/.exec( view.query(0).text )![1].split( " " );
+		it( 'queries them in every system view, shown or not', ()=>{
+			const views = QLListResolver.systemViews( schema, settings );
+			expect( views.map(v=>displayed(v).includes("kind")) ).toEqual( [false, false] );
+			expect( views.map(v=>selects(v).includes("kind")) ).toEqual( [true, true] );
+		} );
+		it( "queries them in a saved view, which persists only what it shows", ()=>{
+			const [route] = QLListResolver.systemViews( schema, settings );
+			const saved = JSON.parse( JSON.stringify(new View(route).toJson(settings)) );
+			expect( saved.fields.map( (f:{name:string})=>f.name ) ).not.toContain( "kind" );
+			expect( selects(new View(saved, schema, route)) ).toContain( "kind" );
+		} );
+		it( 'leaves a hidden column out where no rowLink names it', ()=>{
+			const [route] = QLListResolver.systemViews( schema, {...settings, rowLink: undefined} );
+			expect( selects(route) ).not.toContain( "kind" );
+		} );
+	} );
+
 	it( 'turns a declared filter into the query the settings panel would have built', ()=>{
 		const [, kinds] = QLListResolver.systemViews( schema, { columns: ["name"], views: [
 			{ name: "Kinds", filters: [{name: "kind", value: ["a", "<null>"]}] }
@@ -296,9 +318,18 @@ describe( 'QLListResolver.load pages', ()=>{
 		const { ql: q } = ql( rows(2) );
 		const setChildren = vi.fn();
 		const things = data( 25 );
-		things.routing = new ListRoute( {path: "things", data: {tableSettings: {rowLink: (r)=>["schema", `${r.slug}`]}} as any} );
+		things.routing = new ListRoute( {path: "things", data: {tableSettings: {rowLink: {fields: [], segments: (r)=>["schema", `${r.slug}`]}}} as any} );
 		await QLListResolver.load( q, things, {setChildren} as unknown as RouteStore );
 		expect( setChildren ).toHaveBeenCalledWith( "things", rows(2).map( r=>({title: r.name, path: `schema/${r.slug}`}) ) );
+	} );
+	it( "leaves a row its rowLink gives no page out of the children", async ()=>{
+		const { ql: q } = ql( rows(3) );
+		const setChildren = vi.fn();
+		const things = data( 25 );
+		const second = rows(3)[1].slug;
+		things.routing = new ListRoute( {path: "things", data: {tableSettings: {rowLink: {fields: [], segments: (r)=>r.slug==second ? undefined : [`${r.slug}`]}}} as any} );
+		await QLListResolver.load( q, things, {setChildren} as unknown as RouteStore );
+		expect( setChildren ).toHaveBeenCalledWith( "things", rows(3).filter( r=>r.slug!=second ).map( r=>({title: r.name, path: r.slug}) ) );
 	} );
 
 	it( 'falls back to the first page when the one asked for has emptied', async ()=>{

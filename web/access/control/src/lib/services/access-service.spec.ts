@@ -171,4 +171,22 @@ describe( 'AccessService.resourceRights', ()=>{
 		vi.mocked( service.querySingle ).mockRejectedValue( new HttpErrorResponse({status: 403}) );
 		await expect( service.resourceRights(7) ).rejects.toBeInstanceOf( HttpErrorResponse );
 	} );
+	//reviews-issue/251-resource-page.md #9:  each resource the sidenav opened read the three full lists again
+	it( 'reuses the lists it is handed', async ()=>{
+		const first = await service.resourceRights( 7 );
+		vi.mocked( service.queryArray ).mockClear();
+		const second = await service.resourceRights( 7, first.lists );
+		expect( service.queryArray ).not.toHaveBeenCalled();
+		expect( second.users[0].name ).toBe( "alice" );
+	} );
+	it( 'reads the lists again for a row they lack', async ()=>{
+		const holders = await service.resourceRights( 7, {roles: [{id: 11, name: "Viewer", slug: "viewer"}], groups: [{id: 21, name: "Ops", slug: "ops"}], users: []} );
+		expect( vi.mocked(service.queryArray).mock.calls.map( c=>c[0] ) ).toEqual( ["roles{ id name slug }", "groups{ id name slug }", "users{ id name slug }"] );
+		expect( holders.users[0].name ).toBe( "alice" );
+	} );
+	it( 'does not read a refused list again', async ()=>{
+		const holders = await service.resourceRights( 7, {roles: [{id: 11, name: "Viewer", slug: "viewer"}], groups: [{id: 21, name: "Ops", slug: "ops"}]} );
+		expect( service.queryArray ).not.toHaveBeenCalled();
+		expect( holders.users[0].name ).toBe( "#31" );
+	} );
 } );

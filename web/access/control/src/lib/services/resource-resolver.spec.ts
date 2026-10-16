@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRouteSnapshot, convertToParamMap, Router, RouterStateSnapshot, UrlSegment } from '@angular/router';
 import { vi } from 'vitest';
-import { RecentVisits, RouteStore } from 'jde-spa';
+import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { SnackbarService } from 'jde-framework';
 import { Resource } from '../model/resource';
 import { AccessService } from './access-service';
@@ -19,17 +19,18 @@ const snapshot = ( schema:string, slug:string )=>({
 }) as unknown as ActivatedRouteSnapshot;
 
 describe( 'ResourceResolver', ()=>{
-	let navigateByUrl:any, error:any, forget:any, setChildren:any;
+	let navigateByUrl:any, error:any, forget:any, setChildren:any, loadResources:any;
 	let resolver:ResourceResolver;
 	beforeEach( ()=>{
 		navigateByUrl = vi.fn().mockResolvedValue( true );
 		error = vi.fn();
 		forget = vi.fn();
 		setChildren = vi.fn();
+		loadResources = vi.fn().mockResolvedValue( resources );
 		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({ providers: [
 			ResourceResolver,
-			{ provide: AccessService, useValue: {loadResources: async ()=>resources} },
+			{ provide: AccessService, useValue: {loadResources} },
 			{ provide: Router, useValue: {navigateByUrl} },
 			{ provide: SnackbarService, useValue: {error, exception: vi.fn()} },
 			{ provide: RecentVisits, useValue: {forget} },
@@ -44,7 +45,10 @@ describe( 'ResourceResolver', ()=>{
 		expect( data.accessUrl ).toBe( "/access" );
 		expect( data.routing.parent!.path ).toBe( "/access/resources" );
 		expect( data.routing.path ).toBe( "opc.debug/logs" );
-		expect( setChildren ).toHaveBeenCalledWith( "access/resources/opc.debug", [{title: "logs", path: "logs"}] );//the last crumb's name
+		//reviews-issue/251-resource-page.md #13:  one entry under the list's url, not one per schema
+		expect( setChildren ).toHaveBeenCalledTimes( 1 );
+		expect( setChildren.mock.calls[0][0] ).toBe( "access/resources" );
+		expect( setChildren.mock.calls[0][1].map( (c:RouteItem)=>[c.path, c.title] ) ).toContainEqual( ["opc.debug/logs", "logs (opc.debug)"] );
 	} );
 
 	it( "lists the table resources in the list's order, a shared name with its schema", async ()=>{
@@ -55,8 +59,25 @@ describe( 'ResourceResolver', ()=>{
 	it( 'sends an unknown resource back to the list, and forgets the visit', async ()=>{
 		const data = await resolver.resolve( snapshot("access", "logs"), {url: "/access/resources/access/logs"} as RouterStateSnapshot );
 		expect( data ).toBeNull();
+		expect( loadResources.mock.calls ).toEqual( [[], [true]] );//asked the server before saying so
 		expect( error ).toHaveBeenCalledWith( "There is no resource 'access/logs'." );
 		expect( navigateByUrl ).toHaveBeenCalledWith( "/access/resources" );
 		expect( forget ).toHaveBeenCalled();
+	} );
+
+	//reviews-issue/251-resource-page.md #2:  the cached list predates a resource registered since - the Resources list, which
+	//queries fresh, showed the row, and clicking it said there was no such resource.
+	it( 'refreshes the cached list for a resource registered since', async ()=>{
+		const added = new Resource( {id: 30, schemaName: "opc.new", slug: "nodeIds", name: "nodeIds"} );
+		loadResources.mockImplementation( async ( refresh?:boolean )=>refresh ? [...resources, added] : resources );
+		const data = await resolver.resolve( snapshot("opc.new", "nodeIds"), {url: "/access/resources/opc.new/nodeIds"} as RouterStateSnapshot );
+		expect( data.resource.id ).toBe( 30 );
+		expect( data.routing.siblings!.map( s=>s.path ) ).toContain( "opc.new/nodeIds" );
+		expect( error ).not.toHaveBeenCalled();
+	} );
+
+	it( 'keeps the cached list for a resource it holds', async ()=>{
+		await resolver.resolve( snapshot("access", "acl"), {url: "/access/resources/access/acl"} as RouterStateSnapshot );
+		expect( loadResources.mock.calls ).toEqual( [[]] );
 	} );
 } );

@@ -1,4 +1,5 @@
 #include "gtest/gtest.h"
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/str.h>
 #include <jde/access/server/awaits/AclAwait.h>
@@ -525,6 +526,7 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( userRights(intruder, intruder) );
 		Delete( "resources", GetId(resource), GetRoot() );
 		EXPECT_NO_THROW( userRights(reader, intruder) );//fail-open when disabled, as the acl read is.
+		EXPECT_THROW( userRights(reader, UserPK{}), Exception ) << "but not to a caller who never signed in";//reviews-issue/251-resource-page.md #3
 		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
 	}
 	//resourceRights( id: ) - ResourceRightsAwait, the resource page's query:  UserRightsProvenance's grants read from the resource's
@@ -615,6 +617,10 @@ namespace Jde::Access::Tests{
 
 		Delete( "groups", groupPK.Value, root );//a deleted group stops the walk, as it stops enforcement.
 		{
+			absl::Cleanup restore = [&]{//on the way out of an ASSERT too - the group is looked up by slug next run.  A destructor:  nothing may leave it.
+				try{ Restore( "groups", groupPK.Value, root ); }
+				catch( const std::exception& e ){ ADD_FAILURE() << e.what(); }
+			};
 			let rights = resourceRights( _resourcePK, root );
 			EXPECT_TRUE( findHolder(rights, "groups", groupPK.Value).empty() );
 			EXPECT_FALSE( findHolder(rights, "groups", parentPK.Value).empty() );
@@ -623,7 +629,6 @@ namespace Jde::Access::Tests{
 			EXPECT_EQ( pathOf(onlySource(row)), Path{} ) << "only the direct deny";
 			EXPECT_EQ( AsNumber<uint8>(row, "effective"), 0u );
 		}
-		Restore( "groups", groupPK.Value, root );
 
 		PurgeAcl( user, denyPK, root );
 		RemoveRoleMember( parentRolePK, childRolePK, root );
@@ -645,6 +650,7 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( resourceRights(_resourcePK, GetRoot()) );
 		Delete( "resources", GetId(resource), GetRoot() );
 		EXPECT_NO_THROW( resourceRights(_resourcePK, intruder) );//fail-open when disabled, as the acl read is.
+		EXPECT_THROW( resourceRights(_resourcePK, UserPK{}), Exception ) << "but not to a caller who never signed in";//reviews-issue/251-resource-page.md #3
 		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
 	}
 	//access-review3 #21:  acl was ops:["None"], so ResourceSync never created its resource row and the read gate below had nothing

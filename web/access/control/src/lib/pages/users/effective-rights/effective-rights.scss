@@ -70,11 +70,3 @@ mat-icon{
 .empty{
 	opacity: .7;
 }
-
-/* the tooltip renders in the cdk overlay, outside this view - the class matTooltipClass sets has to be reachable from there.
-   One line per source, so the surface keeps the newlines and gets room for a nested path. */
-::ng-deep .effective-rights-tooltip .mdc-tooltip__surface{
-	white-space: pre-line;
-	max-width: 36em;
-	text-align: left;
-}

@@ -95,7 +95,17 @@ describe( 'resourceTableSettings', ()=>{
 	//alone (QLList's default link) would not say which.
 	it( 'opens a row at its schema and slug', ()=>{
 		expect( resourceTableSettings.canNavigate ?? true ).toBe( true );
-		expect( resourceTableSettings.rowLink!( {slug: "logs", schemaName: "opc.debug"} ) ).toEqual( ["opc.debug", "logs"] );
+		expect( resourceTableSettings.rowLink!.segments( {slug: "logs", schemaName: "opc.debug"} ) ).toEqual( ["opc.debug", "logs"] );
+	} );
+	//reviews-issue/251-resource-page.md #1:  with the Schema column hidden the link read an unqueried field, 'undefined/logs'
+	it( 'queries the schema for the link, shown or not', ()=>{
+		expect( resourceTableSettings.rowLink!.fields ).toContain( "schemaName" );
+	} );
+	//reviews-issue/251-resource-page.md #4:  a node row shares its table's schema and slug, so its link opened the table's page
+	it( 'gives a criteria row no link', ()=>{
+		expect( resourceTableSettings.rowLink!.fields ).toContain( "criteria" );
+		expect( resourceTableSettings.rowLink!.segments( {slug: "nodeIds", schemaName: "opc.x", criteria: "ns=2;s=Boiler"} ) ).toBeUndefined();
+		expect( resourceTableSettings.rowLink!.segments( {slug: "nodeIds", schemaName: "opc.x", criteria: null} ) ).toEqual( ["opc.x", "nodeIds"] );
 	} );
 
 	it( 'orders by schema then name, and shows the schema', ()=>{

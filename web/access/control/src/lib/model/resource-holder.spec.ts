@@ -47,6 +47,16 @@ describe( 'ResourceHolders', ()=>{
 		expect( eu.tooltip(Rights.Read) ).toBe( "Allowed - role Owner › Viewer via group Ops" );
 	} );
 
+	//reviews-issue/251-resource-page.md #12:  `effective` was requested and never read - the page recomputed it
+	it( "ticks what the server enforces for a user, not the page's own sum", ()=>{
+		const user = {...row.users[0], allowed: Rights.Read|Rights.Update, denied: 0, effective: Rights.Read};
+		const [alice] = new ResourceHolders( {...row, users: [user]}, lists ).users;
+		expect( alice.isAllowed(Rights.Read) ).toBe( true );
+		expect( alice.isAllowed(Rights.Update) ).toBe( false );
+		const [viewer] = holders.roles.filter( r=>r.name=="Viewer" );//a role's is not sent - what it passes on
+		expect( viewer.isAllowed(Rights.Update) ).toBe( true );
+	} );
+
 	it( "marks a user's denied right as denied, whatever else allows it", ()=>{
 		const [alice] = holders.users;
 		expect( alice.isAllowed(Rights.Read) ).toBe( true );
@@ -60,5 +70,11 @@ describe( 'ResourceHolders', ()=>{
 		expect( unnamed.users[0].name ).toBe( "#31" );
 		expect( unnamed.users[0].slug ).toBeUndefined();
 		expect( unnamed.roles.map( r=>r.tooltip(Rights.Read) ) ).toEqual( ["Allowed - held directly", "Allowed - via role #11"] );
+	} );
+	//reviews-issue/251-resource-page.md #6:  an empty name was kept - a blank cell holding an empty, invisible link, sorted first
+	it( 'shows an id for a row named ""', ()=>{
+		const blank = new ResourceHolders( row, {...lists, users: [{id: 31, name: "", slug: "u31"}]} );
+		expect( blank.users[0].name ).toBe( "#31" );
+		expect( blank.users[0].slug ).toBe( "u31" );
 	} );
 } );
