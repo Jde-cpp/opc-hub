@@ -98,3 +98,11 @@ pre {
   .detail { margin: 0; max-width: 48em; font: var(--mat-sys-body-medium); }
   .actions { display: flex; gap: 12px; margin-top: 12px; }
 }
+
+// A tooltip of several lines - one per grant behind an Effective rights or resource page mark.  Global:  the tooltip renders in
+// the cdk overlay, outside any view, and a component's ::ng-deep rule exists only once that component has rendered.
+.jde-multiline-tooltip .mdc-tooltip__surface {
+  white-space: pre-line;
+  max-width: 36em;
+  text-align: left;
+}

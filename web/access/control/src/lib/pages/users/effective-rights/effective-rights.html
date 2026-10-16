@@ -51,13 +51,13 @@
 					<mat-cell *matCellDef="let row" class="mat-column-permission" [class.mat-column-alt]="i%2==0">
 						<!--a denied mark wins, as the server's deny does; a lockout row marks every available right it has nothing for-->
 						@if( isDenied(row, kv.key) ){
-							<mat-icon class="denied" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="effective-rights-tooltip">cancel</mat-icon>
+							<mat-icon class="denied" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="jde-multiline-tooltip">cancel</mat-icon>
 						}
 						@else if( isEffective(row, kv.key) ){
-							<mat-icon class="allowed" role="img" tabindex="0" [attr.aria-label]="kv.value + ' allowed'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="effective-rights-tooltip">check</mat-icon>
+							<mat-icon class="allowed" role="img" tabindex="0" [attr.aria-label]="kv.value + ' allowed'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="jde-multiline-tooltip">check</mat-icon>
 						}
 						@else if( row.isLockout && isAvailable(row, kv.key) ){
-							<mat-icon class="lockout" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied, no grant'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="effective-rights-tooltip">block</mat-icon>
+							<mat-icon class="lockout" role="img" tabindex="0" [attr.aria-label]="kv.value + ' denied, no grant'" [matTooltip]="tooltip(row, kv.key)" matTooltipClass="jde-multiline-tooltip">block</mat-icon>
 						}
 					</mat-cell>
 				</ng-container>

@@ -14,6 +14,7 @@ import { IENVIRONMENT } from 'jde-spa';
 import { AUTH_STORE, AuthStore } from 'jde-framework';
 import { AccessService } from './access-service';
 import { EffectiveRight } from '../model/effective-right';
+import { Rights } from '../model/permission';
 
 //reviews/m3-closing.md #13:  the resources list was cached for the page's life, and it carries each resource's enforcement
 //(`deleted`).  Effective rights builds its lockout rows from it, so after the Enforced toggle the tab said "nothing
@@ -114,5 +115,78 @@ describe( 'AccessService resources', ()=>{
 			return answer( ql, vars );
 		}) as any );
 		await expect( service.effectiveRights(2) ).rejects.toBeInstanceOf( HttpErrorResponse );
+	} );
+} );
+
+//#251:  the resource page's holders - the server's resourceRights joined to the three lists' names and slugs, which only label
+//and link the rows, so a list the user may not read leaves ids rather than failing the page.
+describe( 'AccessService.resourceRights', ()=>{
+	let service:AccessService;
+	const answer = {
+		resource: {id: 7, deleted: null},
+		roles: [{id: 11, allowed: 2, denied: 0, sources: [{permissionId: 5, allowed: 2, denied: 0, path: []}]}],
+		groups: [{id: 21, allowed: 2, denied: 0, sources: [{permissionId: 5, allowed: 2, denied: 0, path: [{id: 11, type: "role"}]}]}],
+		users: [{id: 31, allowed: 2, denied: 0, effective: 2, sources: [{permissionId: 5, allowed: 2, denied: 0, path: [{id: 21, type: "group"}, {id: 11, type: "role"}]}]}]
+	};
+	beforeEach( ()=>{
+		TestBed.resetTestingModule();
+		TestBed.configureTestingModule({ providers: [
+			provideHttpClient(),
+			{ provide: IENVIRONMENT, useValue: {get: ()=>undefined} },
+			{ provide: AUTH_STORE, useValue: {user: ()=>undefined, logout: ()=>{}} as unknown as AuthStore }
+		]});
+		service = TestBed.inject( AccessService );
+		vi.spyOn( service, 'querySingle' ).mockResolvedValue( answer );
+		vi.spyOn( service, 'queryArray' ).mockImplementation( (async ( ql:string )=>({
+			roles: [{id: 11, name: "Viewer", slug: "viewer"}],
+			groups: [{id: 21, name: "Ops", slug: "ops"}],
+			users: [{id: 31, name: "alice", slug: "alice"}]
+		} as Record<string,unknown[]>)[ql.split('{')[0].trim()] ?? []) as any );
+	} );
+
+	it( 'asks for the one resource, and names and links every row', async ()=>{
+		const holders = await service.resourceRights( 7 );
+		expect( vi.mocked(service.querySingle).mock.calls[0][0] ).toMatch( /^resourceRights\( id:\$id \)/ );
+		expect( vi.mocked(service.querySingle).mock.calls[0][1] ).toEqual( {id: 7} );
+		expect( holders.enforced ).toBe( true );
+		expect( [...holders.roles, ...holders.groups, ...holders.users].map( h=>`${h.kind}:${h.name}:${h.slug}` ) ).toEqual( ["role:Viewer:viewer", "group:Ops:ops", "user:alice:alice"] );
+		expect( holders.users[0].tooltip(Rights.Read) ).toBe( "Allowed - role Viewer via group Ops" );
+	} );
+
+	it( 'shows ids where a list is refused', async ()=>{
+		const lists = vi.mocked( service.queryArray ).getMockImplementation()!;
+		vi.mocked( service.queryArray ).mockImplementation( (async ( ql:string, vars:any )=>{
+			if( ql.startsWith("users") )
+				throw new HttpErrorResponse( {status: 403, error: "[bob]User does not have 'Read' access to 'users'."} );
+			return lists( ql, vars );
+		}) as any );
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+		const holders = await service.resourceRights( 7 );
+		expect( holders.users.map( u=>[u.name, u.slug] ) ).toEqual( [["#31", undefined]] );
+		expect( warn ).toHaveBeenCalled();
+		warn.mockRestore();
+	} );
+
+	it( 'fails when the rights themselves cannot be read', async ()=>{
+		vi.mocked( service.querySingle ).mockRejectedValue( new HttpErrorResponse({status: 403}) );
+		await expect( service.resourceRights(7) ).rejects.toBeInstanceOf( HttpErrorResponse );
+	} );
+	//reviews-issue/251-resource-page.md #9:  each resource the sidenav opened read the three full lists again
+	it( 'reuses the lists it is handed', async ()=>{
+		const first = await service.resourceRights( 7 );
+		vi.mocked( service.queryArray ).mockClear();
+		const second = await service.resourceRights( 7, first.lists );
+		expect( service.queryArray ).not.toHaveBeenCalled();
+		expect( second.users[0].name ).toBe( "alice" );
+	} );
+	it( 'reads the lists again for a row they lack', async ()=>{
+		const holders = await service.resourceRights( 7, {roles: [{id: 11, name: "Viewer", slug: "viewer"}], groups: [{id: 21, name: "Ops", slug: "ops"}], users: []} );
+		expect( vi.mocked(service.queryArray).mock.calls.map( c=>c[0] ) ).toEqual( ["roles{ id name slug }", "groups{ id name slug }", "users{ id name slug }"] );
+		expect( holders.users[0].name ).toBe( "alice" );
+	} );
+	it( 'does not read a refused list again', async ()=>{
+		const holders = await service.resourceRights( 7, {roles: [{id: 11, name: "Viewer", slug: "viewer"}], groups: [{id: 21, name: "Ops", slug: "ops"}]} );
+		expect( service.queryArray ).not.toHaveBeenCalled();
+		expect( holders.users[0].name ).toBe( "#31" );
 	} );
 } );

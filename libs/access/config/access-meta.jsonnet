@@ -136,7 +136,7 @@ local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"]
 				criteria: types.varchar+{ nullable: true, length:672, i:100 },
 				allowed: types.ulong+{ pkTable: "rights", i:101, nullable:true, comment: "available rights for this resource" }
 			},
-			ops: ["Read", "Delete", "Subscribe"], //Create/Update: an administrator of the row's schema (Server::CustomMutation, ResourceMAwait) - the instances' resource sync.  Purge: the system's.
+			ops: ["Read", "Delete", "Administer", "Subscribe"], //Create/Update: an administrator of the row's schema (Server::CustomMutation, ResourceMAwait) - the instances' resource sync.  Purge: the system's.
 			naturalKeys: [["schema_name", "slug", "criteria"]],
 		},
 		permissions:{

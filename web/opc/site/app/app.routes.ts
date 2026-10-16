@@ -2,7 +2,7 @@ import {Routes} from '@angular/router';
 
 import{ DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE } from 'jde-spa';
-import { AccessService, AuthGuard, Group, groupTableSettings, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
+import { AccessService, AuthGuard, Group, groupTableSettings, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
 import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService,GatewayService, HistAdminResolver, loadHistGroupDetail, loadHistTemplateDetail, NodeResolver, OpcNodeRouteService, GatewayResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
@@ -67,6 +67,14 @@ export const routes: Routes = [
 					providers: [ DetailResolver<Role>, accessProvider ],
 					data: { summary: "Role Detail" },
 					resolve: { pageData: DetailResolver<Role> },
+					canActivate: [AuthGuard],
+					runGuardsAndResolvers: "paramsChange"
+				},
+				{ path: 'resources/:schema/:slug',//a slug repeats across schemas (`logs`) - ResourceResolver
+					loadComponent: ()=>import('jde-access').then( m=>m.ResourceDetail ),
+					providers: [ ResourceResolver, accessProvider ],
+					data: { summary: "Resource Detail" },
+					resolve: { pageData: ResourceResolver },
 					canActivate: [AuthGuard],
 					runGuardsAndResolvers: "paramsChange"
 				},

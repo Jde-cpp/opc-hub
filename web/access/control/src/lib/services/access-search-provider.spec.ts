@@ -40,8 +40,8 @@ describe( 'AccessSearchProvider', ()=>{
 		expect( (await provider.search('admin', 'role', 10))[0].route ).toEqual( ['/access', 'roles', 'admin'] );
 	} );
 
-	//resources have no detail page - the hit opens the list, and that url carries no user data.
-	it( 'sends a resource hit to the list as a plain url', async ()=>{
-		expect( (await provider.search('nodes', 'resource', 10))[0].route ).toBe( '/access/resources' );
+	//#251:  a resource's page is at its schema and slug - the slug alone repeats across schemas.
+	it( 'sends a resource hit to its page', async ()=>{
+		expect( (await provider.search('nodes', 'resource', 10))[0].route ).toEqual( ['/access', 'resources', 'opc.nodes', 'nodeIds'] );
 	} );
 } );

@@ -177,7 +177,7 @@ export type ViewFilterSettings = { name:string, operator?:Operator, value:DbScal
 //A further system view a route declares beside the default one.  Whatever it leaves unset comes from the default view:  the
 //table's columns and its sort.  The default view itself is the TableSettings' own columns/sort under `viewName`.
 export type ViewSettings = { name:string, columns?:(string|ViewFieldSettings)[], sort?:Sort[]|string, filters?:ViewFilterSettings[] };
-type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filters?:ViewFilterSettings[] };
+type ViewConfigArgs = { name?:string, configColumns:(string|ViewFieldSettings)[], sort:Sort[], filters?:ViewFilterSettings[], queried?:string[] };
 type ViewJson = { name:string|undefined, collectionName:string, fields:ViewFieldJson[], filters:{ field?: Field, name:string, filter: Filter }[], limit?:number, showSelector:boolean|undefined, sort:Sort[]|undefined };
 export type ViewSerializedArgs = { name:string|undefined, collectionName:string, fields:ViewField[], limit?:number, showSelector:boolean, sort?:Sort[], filters?:{name: string, filter: Filter}[] };//sort optional:  toJson omits one that matched the default view's
 export type FieldFilter = { field: Field, filter: Filter };
@@ -211,10 +211,12 @@ export class View{
 		this.showSelector = view.showSelector;
 		this.sort = structuredClone( view.sort );
 		this.type = view.type;
+		this.queried = view.queried;
 	}
 	private configConstructor( config:ViewConfigArgs, schema:TableSchema ):void{
 		this.name = config.name;
 		this.sort = config.sort;
+		this.queried = config.queried ?? [];
 		this.collectionName = schema.collectionName;
 		this.fields = this.columns( schema, config.configColumns, ["id", "attributes"] );
 		for( const f of config.filters ?? [] ){//a route's filter names a column that must exist - unlike a saved view's, which is dropped with a warning, this is a config error
@@ -251,6 +253,7 @@ export class View{
 		this.showSelector = config.showSelector;
 		this.sort = config.sort ?? defaultView?.sort ?? [];
 		this.type = ViewType.User;
+		this.queried = defaultView?.queried ?? [];//the route's, as the live toggle below
 		this.appendAlwaysQueried( schema );//toJson only persists displayed fields, so a saved view arrives without id/slug
 		//The route owns the live toggle, not the saved view:  toJson drops a hidden Enforced column, and `deleted` re-added
 		//without it had query() filter every unenforced resource out.
@@ -261,15 +264,17 @@ export class View{
 		this.collectionName = schema.collectionName;
 		this.fields = this.columns( schema, config.columns!, config.excludedColumns ?? ["id", "attributes"] );
 		this.sort = View.toSort( config.sort ) ?? [];
+		this.queried = config.rowLink?.fields ?? [];
 		this.appendAlwaysQueried( schema );
 	}
 	//TableSettings/ViewSettings accept a bare column name as shorthand for an ascending sort on it
 	static toSort( sort:Sort[]|string|undefined ):Sort[]|undefined{
 		return typeof sort=="string" ? [{active: sort, direction: "asc"}] : sort;
 	}
-	//id is the mutation key, slug the navigation key (ql-list.onRowActivate) and deleted is what query() hides rows on - so every view must carry them, displayed or not
+	//id is the mutation key, slug the navigation key (ql-list.onRowActivate), deleted is what query() hides rows on and `queried`
+	//what a route's rowLink builds the link from - so every view must carry them, displayed or not
 	private appendAlwaysQueried( schema:TableSchema ):void{
-		for( let field of schema.fields.filter( f=>["id","deleted","slug"].includes(f.name) && !this.fields.find(c=>c.name==f.name) ) ){
+		for( let field of schema.fields.filter( f=>["id","deleted","slug",...this.queried].includes(f.name) && !this.fields.find(c=>c.name==f.name) ) ){
 			const viewField = new ViewField( {qlField:field, settings: {name: field.name, hidden: true}} );
 			if( field.name=="id" )
 				this.fields.unshift( viewField );
@@ -326,7 +331,7 @@ export class View{
 		return typeof v=="object" && "days" in (v as object) ? Days.fromJson( <{days:number}>v ) : v;
 	}
 	query( skip:number ):Query{
-		let fieldStr = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" ).map( f=>f.queryText ).join(" ");//id/slug are queried even when hidden:  id is the mutation key, slug the navigation key
+		let fieldStr = this.fields.filter( f=>f.displayed || f.name=="id" || f.name=="slug" || this.queried.includes(f.name) ).map( f=>f.queryText ).join(" ");//id/slug/queried are queried even when hidden:  id is the mutation key, slug and queried the navigation key
 		let args = [];
 		let vars:Record<string, DbScalar[]|DbScalar|null> = {};
 		if( this.limit )
@@ -425,4 +430,5 @@ export class View{
 	showSelector:boolean=false;
 	sort:Sort[] = [];
 	type=ViewType.System;
+	queried:string[] = [];//TableSettings.rowLink's fields
 };

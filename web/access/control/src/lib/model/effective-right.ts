@@ -9,8 +9,10 @@ export type PathStep = { id:number; type:"group"|"role"; name?:string };
 //Empty = a bare grant on the user.
 export type RightsSource = { permissionId:number; allowed:Rights; denied:Rights; path:PathStep[] };
 export type Names = { groups:Map<number,string>; roles:Map<number,string> };
+//A RightsSource as the server sends it - Server::SourcesJson, RightsSourceJson.h.
+export type SourceRow = { permissionId:number; allowed:number; denied:number; path:{id:number; type:"group"|"role"}[] };
 //The server's userRights row - Authorize::UserRights, UserRightsAwait.cpp.
-export type UserRightsRow = { resource:{ id:number; schemaName?:string; slug?:string; criteria?:string; deleted?:string|null }; allowed:number; denied:number; effective:number; sources:{ permissionId:number; allowed:number; denied:number; path:{id:number; type:"group"|"role"}[] }[] };
+export type UserRightsRow = { resource:{ id:number; schemaName?:string; slug?:string; criteria?:string; deleted?:string|null }; allowed:number; denied:number; effective:number; sources:SourceRow[] };
 
 //What a user ends up with on one resource through every path - the read-only twin of Permission for the Effective rights tab.
 export class EffectiveRight{
@@ -47,13 +49,7 @@ export class EffectiveRight{
 			//from here - and takes its root's name, since its own is the QL slug access_role_add coalesced ("nodeIds" under "node_ids")
 			const schema = row.resource.schemaName ?? cached?.schema, slug = row.resource.slug ?? cached?.slug, criteria = row.resource.criteria || undefined;
 			const resource = new Resource( { ...(cached ?? {}), id: row.resource.id, schemaName: schema, slug, criteria, deleted: row.resource.deleted ?? undefined, ...asTable(schema, slug, criteria, cached) } );
-			const sources:RightsSource[] = row.sources.map( s=>({
-				permissionId: s.permissionId,
-				allowed: s.allowed as Rights,
-				denied: s.denied as Rights,
-				path: s.path.map( step=>({ ...step, name: (step.type=="group" ? names.groups : names.roles).get(step.id) }) )
-			}) );
-			return new EffectiveRight( { resource, allowed: row.allowed as Rights, denied: row.denied as Rights, effective: row.effective as Rights, sources } );
+			return new EffectiveRight( { resource, allowed: row.allowed as Rights, denied: row.denied as Rights, effective: row.effective as Rights, sources: EffectiveRight.toSources(row.sources, names) } );
 		});
 		const granted = new Set( rows.map( r=>r.resource.id ) );
 		//A node resource is here too (reviews/m3-closing.md #14):  granting a role on a node mints it enforced, and the OpcServer
@@ -67,6 +63,15 @@ export class EffectiveRight{
 		return EffectiveRight.nest( y );
 	}
 	static key( schema:string|undefined, slug:string|undefined ):string{ return `${schema ?? ''}/${slug ?? ''}`; }
+	//The server's sources with each path step named from the lists - the resource page's holders' too.
+	static toSources( rows:SourceRow[], names:Names ):RightsSource[]{
+		return rows.map( s=>({
+			permissionId: s.permissionId,
+			allowed: s.allowed as Rights,
+			denied: s.denied as Rights,
+			path: s.path.map( step=>({ ...step, name: (step.type=="group" ? names.groups : names.roles).get(step.id) }) )
+		}) );
+	}
 	//criteria rows under the criteria-less row of the same schema+slug; the order of `rows` is kept, so children stay sorted
 	static nest( rows:EffectiveRight[] ):EffectiveRight[]{
 		const roots = new Map( rows.filter( r=>!r.resource.criteria ).map( r=>[EffectiveRight.key(r.resource.schema, r.resource.slug), r] ) );
@@ -107,16 +112,13 @@ export class EffectiveRight{
 	static tooltip( row:EffectiveRight, right:Rights ):string{
 		if( row.isLockout )
 			return "No grant on an enforced resource - every action is denied.";
-		const lines:string[] = [];
-		for( const source of row.sources ){
-			if( source.allowed & right )
-				lines.push( `Allowed - ${EffectiveRight.describe(source)}` );
-		}
-		for( const source of row.sources ){
-			if( source.denied & right )
-				lines.push( `Denied - ${EffectiveRight.describe(source)}` );
-		}
-		return lines.join( "\n" );
+		return EffectiveRight.sourcesTooltip( row.sources, right, EffectiveRight.describe );
+	}
+	//One line per source that touches `right`, allows before denies - `describe` words each, as the resource page's role rows
+	//do their own way.
+	static sourcesTooltip( sources:RightsSource[], right:Rights, describe:( source:RightsSource )=>string ):string{
+		const lines = ( bits:"allowed"|"denied", label:string )=>sources.filter( s=>s[bits] & right ).map( s=>`${label} - ${describe(s)}` );
+		return [...lines( "allowed", "Allowed" ), ...lines( "denied", "Denied" )].join( "\n" );
 	}
 
 	resource:Resource;
