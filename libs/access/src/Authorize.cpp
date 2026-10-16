@@ -248,6 +248,21 @@ namespace Jde::Access{
 		}
 		TestAdminResource( resourcePK, userPK, sl );
 	}
+	α Authorize::TestAdminRevoke( PermissionPK permissionPK, UserPK userPK, SL sl )ι->up<AnyVoidAwait>{
+		optional<Resource> resource;
+		up<Exception> error;
+		try{
+			rl _{ Mutex };
+			auto permission = Permissions.find( permissionPK );
+			THROW_IFX( permission==Permissions.end(), Exception(sl, ExceptionArgs{EHttpStatus::NotFound}, "Permission '{}' not found.", permissionPK.Value) );
+			if( auto p = Resources.find(permission->second.ResourcePK); p!=Resources.end() )
+				resource = p->second;
+		}
+		catch( Exception& e ){ error = e.Move(); }
+		return resource
+			? TestAdminGrant( resource->Schema, resource->Slug, resource->Criteria, userPK, sl )
+			: mu<AnyCompletedAwait>( move(error), sl );
+	}
 
 	α Authorize::Rights( str schemaName, str resourceName, UserPK executer )ι->ERights{
 		rl _{ Mutex };

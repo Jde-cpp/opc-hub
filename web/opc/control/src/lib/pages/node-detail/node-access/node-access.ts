@@ -8,19 +8,11 @@ import { NodeRights } from './node-rights/node-rights';
 //import { Gateway } from '../../../../services/gateway.service';
 import { NodeRoute } from '../../../model/node-route';
 import { ProfileStore } from 'jde-spa';
-import { AppService, Mutation, MutationType, SnackbarService } from 'jde-framework';
+import { AppService, Mutation, SnackbarService } from 'jde-framework';
 import { ActivatedRoute } from '@angular/router';
-import { Permission, Rights, Role } from 'jde-access';
+import { Rights } from 'jde-access';
+import { RolePermission, RolePermissionRow, roleMutation, toggleRights, toRolePermissions, withMutation } from './node-rights/role-permission';
 
-export type RolePermission = {
-	roleId: number;
-	roleName: string;
-	permissionId: number;
-	allowed:number;
-	denied:number;
-	resourceId: number;
-	criteria: string;
-};
 @Component( {
 	selector: 'node-access',
 	templateUrl: './node-access.html',
@@ -39,19 +31,7 @@ export class NodeAccess implements OnInit, OnDestroy{
 		const criteria = this.node().nodeId.uaString();//e.g. "ns=4;i=6020" — the server's resource criteria for this node
 		const vars = { schemaName: `opc.${this.accessResource()}`, slug: "nodeIds", criteria };
 		const q = 'roles(deleted:null){ id name permissionRight{ id allowed denied resource(schemaName:$schemaName, criteria:$criteria, slug:$slug){ id criteria } } }';
-		const db = await this.appService.queryArray<any>( q, vars, (m)=>console.log(m) );
-		const roles:RolePermission[] = db.map( (role:any)=>{
-			const pr = role.permissionRight;//present only where a permission exists for this exact node; allowed/denied are [Right] name arrays
-			return {
-				roleId: role.id,
-				roleName: role.name,
-				permissionId: pr?.id ?? 0,
-				allowed: Permission.toRights( pr?.allowed ?? [] ),
-				denied: Permission.toRights( pr?.denied ?? [] ),
-				resourceId: pr?.resource?.id ?? 0,
-				criteria: pr?.resource?.criteria ?? criteria,
-			};
-		}).sort( (a,b)=>a.roleName.localeCompare(b.roleName) );
+		const roles = toRolePermissions( await this.appService.queryArray<RolePermissionRow>( q, vars, (m)=>console.log(m) ), criteria );//a permission only where one exists for this exact node
 		this.original = roles;
 		this.roles = roles.map( r=>({...r}) );
 		this.isLoading.set( false );
@@ -105,44 +85,4 @@ export class NodeAccess implements OnInit, OnDestroy{
 	roles: RolePermission[]=[];
 	appService = inject(AppService);
 	snackbar = inject(SnackbarService);
-}
-
-//A click on a right's cell, as the grid cycles it:  allowed to denied, denied to none, none to allowed;  the None column (rights 0)
-//clears both sides.  Shared with a historian group's Access tab (hist-group-access.ts), which grants on the same grid.
-export function toggleRights( role:RolePermission, rights:number ):void{
-	if( NodeRights.isAllowed(role, rights) ){//allowed->denied
-		role.allowed &= ~rights;
-		role.denied |= rights;
-	}
-	else if( NodeRights.isDenied(role, rights) )//denied->none
-		role.denied &= ~rights;
-	else if( rights==0 ){//none->allowed
-		role.allowed = 0;
-		role.denied = 0;
-	}
-	else
-		role.allowed |= rights;
-}
-//The mutation that takes a role from the server's row to its edited one, or none where the row is the server's again.  Remove-vs-Add is
-//decided from the role's RESULTING rights, never from the side that changed:  clearing one half of a two-sided permission (allowed=Read,
-//denied=Write -> clear the denied Write) used to look like "no rights left" and removed the whole permissionRight, silently dropping the
-//still-wanted allowed=Read.  Permission.roleMutations evaluates the resulting row; match it.  `resource` names the row an Add grants on.
-export function roleMutation( role:RolePermission, original:RolePermission, resource:()=>Record<string,unknown> ):Mutation|undefined{
-	if( role.allowed==original.allowed && role.denied==original.denied )
-		return undefined;
-	if( !role.allowed && !role.denied )
-		return role.permissionId ? new Mutation( Role.typeName, role.roleId, {permissionRight: {id: role.permissionId}}, MutationType.Remove ) : undefined;//permissionId 0 = nothing on the server to remove (a pending Add is dropped by returning none)
-	return new Mutation( Role.typeName, role.roleId, {permissionRight: {allowed: role.allowed, denied: role.denied, resource: resource()}}, MutationType.Add );
-}
-//the pending batch with `mutation` in the place of the role's earlier one, or without one where the role is back to the server's row
-export function withMutation( mutations:Mutation[], roleId:number, mutation:Mutation|undefined ):Mutation[]{
-	const index = mutations.findIndex( m=>m.id==roleId );
-	if( index<0 )
-		return mutation ? [...mutations, mutation] : mutations;
-	const y = mutations.slice();
-	if( mutation )
-		y[index] = mutation;
-	else
-		y.splice( index, 1 );
-	return y;
 }

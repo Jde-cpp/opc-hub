@@ -12,7 +12,8 @@ import { ActivatedRoute } from '@angular/router';
 import { NEVER } from 'rxjs';
 import { AppService, MutationType, SnackbarService } from 'jde-framework';
 import { Rights } from 'jde-access';
-import { NodeAccess, RolePermission } from './node-access';
+import { NodeAccess } from './node-access';
+import { RolePermission } from './node-rights/role-permission';
 
 const row = ( allowed:number, denied:number, permissionId=3 ):RolePermission =>
 	({roleId: 5, roleName: "ops", permissionId, allowed, denied, resourceId: 9, criteria: "ns=4;i=6020"});

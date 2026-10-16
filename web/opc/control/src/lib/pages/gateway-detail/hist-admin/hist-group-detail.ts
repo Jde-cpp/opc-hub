@@ -37,9 +37,9 @@ const excludedNew = [...excluded, 'guid'];
 //template applied from a root or none for an ad hoc node list, fixed once created, and its thresholds, the defaults for members
 //that set none - saved as a connection's is.  Members lists the group's nodes, each with its template member and the columns
 //of its own, adds nodes picked from the connection's tree and removes one, each its own mutation, and opens the Thresholds dialog
-//for the effective values and overrides (#338).  Resolution, on a group with a template, shows each member's node or why it has
-//none, with Resolve, which retries the unresolved through resolveHistory.  Access (#339) grants roles on the group's own resource
-//and says which row governs it.  The gateway is the row's, from HistAdminResolver.
+//for the effective values and overrides (#338).  Access (#339) grants roles on the group's own resource and says which row governs
+//it.  Resolution, last as only a group with a template has it, shows each member's node or why it has none, with Resolve, which
+//retries the unresolved through resolveHistory.  The gateway is the row's, from HistAdminResolver.
 @Component({
 	templateUrl: './hist-group-detail.html',
 	styleUrls: ['./hist-admin-shared.scss', './hist-group-detail.scss'],

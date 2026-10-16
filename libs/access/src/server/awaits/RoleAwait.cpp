@@ -251,7 +251,8 @@ namespace Jde::Access::Server{
 	α RoleMAwait::RemovePermission( RolePK parentRolePK )ι->DB::ExecuteAwait::Task{
 		try{
 			const PermissionPK permissionPK{ _mutation.AsPathNumber<PermissionPK::Type>("permissionRight/id") };
-			Authorizer().TestAdminPermission( permissionPK, _userPK, _sl );//admin of the permission's resource, the same right AddPermission requires to grant it.
+			auto adminCheck = Authorizer().TestAdminRevoke( permissionPK, _userPK, _sl );//the gate AddPermission takes to grant it, on the permission's resource.
+			co_await *adminCheck;
 			let& table = GetTable( "roles" );
 			DB::InsertClause remove{ DB::Names::ToSingular(table.DBName)+"_remove" };
 			remove.Add( parentRolePK.Value );
