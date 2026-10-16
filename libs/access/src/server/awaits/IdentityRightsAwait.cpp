@@ -1,4 +1,4 @@
-#include <jde/access/server/awaits/UserRightsAwait.h>
+#include <jde/access/server/awaits/IdentityRightsAwait.h>
 #include <jde/db/meta/Table.h>
 #include <jde/fwk/chrono.h>
 #include <jde/access/Authorize.h>
@@ -19,7 +19,10 @@ namespace Jde::Access{
 		}
 		return y;
 	}
-	α Server::RightsJson( const vector<Authorize::ResourceRights>& resources )ι->jarray{
+}
+namespace Jde::Access::Server{
+	//userRights' and groupRights' rows - one shape, which EffectiveRight.fromRows reads for both.
+	Ω RightsJson( const vector<Authorize::ResourceRights>& resources )ι->jarray{
 		jarray y;
 		for( let& resource : resources ){
 			jobject jresource{ {"id", resource.PK.Value} };
@@ -39,20 +42,20 @@ namespace Jde::Access{
 		}
 		return y;
 	}
-}
-namespace Jde::Access::Server{
+
 	//Synchronous:  the walk is in-memory, so the value is resumed from Suspend itself (await_suspend has stored the handle by
-	//then, as AclQLSelectAwait's ResumeExp relies on).  Authorize's shared lock is taken and released inside UserRights, before
-	//the resume - the continuation may run the request's next table inline and take it again on this thread.
-	α UserRightsAwait::Suspend()ι->void{
+	//then, as AclQLSelectAwait's ResumeExp relies on).  Authorize's shared lock is taken and released inside UserRights and
+	//GroupRights, before the resume - the continuation may run the request's next table inline and take it again on this thread.
+	α IdentityRightsAwait::Suspend()ι->void{
 		jarray y;
 		try{
-			const UserPK userPK{ _query.AsNumber<UserPK::Type>("id", _sl) };
-			THROW_IFX( !userPK.Value, Exception(_sl, ELogLevel::Debug, "userRights needs a user id.") );
+			let isGroup = _query.JsonName=="groupRights";
+			let id = _query.AsNumber<IdentityPK::Type>( "id", _sl );
+			THROW_IFX( !id, Exception(_sl, ELogLevel::Debug, "{} needs a {} id.", _query.JsonName, isGroup ? "group" : "user") );
 			Authorizer().TestUser( _executer, _sl );//the acl check passes anyone, the anonymous included, while acl is unenforced.
-			if( _executer!=userPK )//one's own rights are always readable - "why am I denied" should not itself need a grant.
+			if( isGroup || _executer.Value!=id )//one's own rights are always readable - "why am I denied" should not itself need a grant.
 				GetTable( "acl" ).Authorize( ERights::Read, _executer, _sl );
-			y = RightsJson( Authorizer().UserRights(userPK) );
+			y = RightsJson( isGroup ? Authorizer().GroupRights(GroupPK{id}) : Authorizer().UserRights(UserPK{id}) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

@@ -33,13 +33,7 @@
 		<mat-tab>
 			<ng-template mat-tab-label>Effective rights</ng-template>
 			<ng-template matTabContent>
-				@if( isDeleted ){
-					<!--the server answers nothing for a deleted group, which the tab would word as "no grant"-->
-					<p class="no-rights">A deleted group passes nothing on - restore it to see what its members would get.</p>
-				}
-				@else{
-					<effective-rights [groupId]="group.id"></effective-rights>
-				}
+				<effective-rights [holder]="{groupId: group.id}" [deleted]="isDeleted"></effective-rights>
 			</ng-template>
 		</mat-tab>
 	}

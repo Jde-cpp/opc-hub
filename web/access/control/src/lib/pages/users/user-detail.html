@@ -33,7 +33,7 @@
 			<mat-tab>
 				<ng-template mat-tab-label>Effective rights</ng-template>
 				<ng-template matTabContent>
-					<effective-rights [userId]="user.id"></effective-rights>
+					<effective-rights [holder]="{userId: user.id}" [deleted]="isDeleted"></effective-rights>
 				</ng-template>
 			</mat-tab>
 		}

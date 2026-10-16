@@ -7,12 +7,6 @@
 
 // The Save/Cancel/Delete row is `.jde-detail-actions` in jde-spa's _general.scss - one rule for every detail page.
 
-// effective-rights' inset and empty-state text, for the deleted group the tab does not query
-.no-rights{
-	padding: 16px 24px 0;
-	opacity: .7;
-}
-
 // the one destructive control in the row - the error colour is what separates it from Restore beside it
 .purge{
 	color: var(--mat-sys-error);

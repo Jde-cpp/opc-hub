@@ -71,7 +71,7 @@ namespace Jde::Access{
 		α TestAddRoleMember( RolePK parent, RolePK child, SRCE )ε->void;
 
 		//One user's rights source by source - the walk SetUserPermissions makes for everyone, run for one user and kept apart
-		//instead of OR'd into User::Rights (the SPA's Effective rights tab, UserRightsAwait).  Paths run top-down from the acl
+		//instead of OR'd into User::Rights (the SPA's Effective rights tab, IdentityRightsAwait).  Paths run top-down from the acl
 		//identity:  Groups from the granted group to the one holding the user (empty = granted to the user), Roles from the
 		//assigned role to the one holding Permission (empty = a bare acl grant).
 		struct RightsSource final{ PermissionPK Permission; ERights Allowed; ERights Denied; vector<GroupPK> Groups; vector<RolePK> Roles; };
@@ -81,11 +81,11 @@ namespace Jde::Access{
 			AllowedDisallowed Rights{};//the OR over Sources - the same OR User::operator+= makes, so Effective() is what Test/Rights answer.
 			vector<RightsSource> Sources;
 		};
-		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for an unknown user; by PK.
-		//What a member gets through one group (the SPA's group Effective rights tab, GroupRightsAwait):  UserRights' walk ending at
+		α UserRights( UserPK userPK )Ι->vector<ResourceRights>;//empty for a deleted user - refused everything (FindUserLocked) - and for an unknown one; by PK.
+		//What a member gets through one group (the SPA's group Effective rights tab, IdentityRightsAwait):  UserRights' walk ending at
 		//the group, so its own grants and those of the groups containing it.  Groups run from the granted group to the one holding
 		//this one (empty = granted to it), as Holders paths a group.  Empty for a deleted group - it passes nothing on, as
-		//enforcement has it - and, having no grant, for an unknown one.
+		//enforcement has it - and for an unknown one.
 		α GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>;
 		//UserRights turned around:  everyone one resource's grants reach, source by source (the SPA's resource page,
 		//ResourceRightsAwait).  Roles - every live role holding a permission on it, itself or through member roles:  Sources'
@@ -132,6 +132,7 @@ namespace Jde::Access{
 		α AddAcl( IdentityPK::Type userGroupPK, RolePK rolePK )ι->void;
 		α RemoveAcl( IdentityPK::Type userGroupPK, PermissionRole rolePK )ι->void;
 
+		α CreateGroup( GroupPK groupPK )ι->void;
 		α AddToGroup( GroupPK groupPK, flat_set<IdentityPK::Type> members )ι->void;
 		α DeleteGroup( GroupPK identityPK )ι->void;
 		α RestoreGroup( GroupPK groupPK )ι->void;
@@ -148,7 +149,7 @@ namespace Jde::Access{
 
 		α DeleteRestoreRole( RolePK rolePK, bool deleted )ι->void;
 		α PurgeRole( RolePK rolePK )ι->void;
-		α AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& resource )ι->void;
+		β AddRolePermission( RolePK rolePK, const Permission& permission, const jobject& resource )ι->void;
 		α AddRoleChild( RolePK parentRolePK, vector<RolePK>&& childRolePK )ι->void;
 		α RemoveRoleChildren( RolePK rolePK, const flat_set<PermissionRole>& toRemove )ι->void;
 

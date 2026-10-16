@@ -1,10 +1,19 @@
-@if( !isLoading() ){
+@if( deleted() ){
+	<!--the server answers nothing for a deleted user or group, which the empty texts below could only word as no grant-->
+	@if( isGroup() ){
+		<p class="empty">A deleted group passes nothing on - restore it to see what its members would get.</p>
+	}
+	@else{
+		<p class="empty">A deleted user is refused everything - restore the user to see what they would get.</p>
+	}
+}
+@else if( !isLoading() ){
 	@if( !rows().length ){
 		@if( isGroup() ){
-			<p class="empty">Neither this group nor a group it is nested in holds a grant - its members get nothing through it.</p>
+			<p class="empty">Its members get nothing through this group: no grant reaches it, or a deleted group or role cuts it off.</p>
 		}
 		@else{
-			<p class="empty">No resource is enforced and the user holds no grant - nothing restricts this user.</p>
+			<p class="empty">No resource is enforced and no grant reaches this user.</p>
 		}
 	}
 	@else{

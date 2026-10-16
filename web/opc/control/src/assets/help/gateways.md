@@ -45,7 +45,7 @@ A value cell is also locked when the server reports the node read-only for the s
 
 A value cell reads *no read access* when the server will not let the signed-in user read the node. Its Status is blank. Its tooltip says to ask an administrator for a role that can read it.
 
-**Permissions** shows who may read and write the node. It is offered for the bundled Jde OPC server only: that server enforces the hub's node rights itself, where a third-party server decides what its own users may do in its own configuration - see [What the hub gates](/help/access#what-the-hub-gates-and-what-it-does-not).
+**Permissions** shows who may read and write the node. A grant here adds to what a user holds on the server's `nodeIds` table, and a deny here wins over it. It is offered for the bundled Jde OPC server only: that server enforces the hub's node rights itself, where a third-party server decides what its own users may do in its own configuration - see [What the hub gates](/help/access#what-the-hub-gates-and-what-it-does-not).
 
 The address of a node is in the page's url, so a node page can be bookmarked or made a favorite.
 

@@ -326,6 +326,10 @@ namespace Jde::Access{
 		if( users.size() )
 			SetUserPermissions( users );
 	}
+	α Authorize::CreateGroup( GroupPK groupPK )ι->void{
+		ul _{ Mutex };
+		Groups.try_emplace( groupPK, Group{groupPK, false} );
+	}
 	α Authorize::RemoveFromGroup( GroupPK groupPK, flat_set<IdentityPK::Type> members )ι->void{
 		ul _{ Mutex };
 		flat_set<UserPK> users;
@@ -493,11 +497,7 @@ namespace Jde::Access{
 	α Authorize::DeleteGroup( GroupPK groupPK )ι->void{
 		ul _{ Mutex };
 		auto p = Groups.find( groupPK );
-		if( p==Groups.end() ){//a group enters Groups with its first member;  cached deleted, as a reload has it, so GroupRights sees it gone.
-			Groups.emplace( groupPK, Group{groupPK, true} );
-			return;
-		}
-		if( p->second.IsDeleted )
+		if( p==Groups.end() || p->second.IsDeleted )
 			return;
 		auto users = RecursiveUsers( groupPK );//collect+clear while still active, RecursiveUsers early-outs on a deleted group.
 		p->second.IsDeleted = true;//soft delete, symmetric with DeleteUser - RestoreGroup needs the row.
@@ -507,8 +507,7 @@ namespace Jde::Access{
 	//TODO test on deleted members.
 	α Authorize::TestAddGroupMember( GroupPK parentGroupPK/*groupD*/, flat_set<IdentityPK::Type>&& memberPKs, SL sl )ε->void{
 		rl _{ Mutex };
-		//access_groups' fk is to access_identities, so the insert alone would give a user members (access-refactor B5).  Users, not
-		//Groups:  a group enters Groups with its first member, while every user is cached from its creation.
+		//access_groups' fk is to access_identities, so the insert alone would give a user members (access-refactor B5).
 		THROW_IFX( Users.contains({parentGroupPK.Value}), Exception(sl, ELogLevel::Debug, "Identity '{}' is a user - only a group has members.", parentGroupPK.Value) );
 		for( let memberPK : memberPKs ){
 			if( Users.contains({memberPK}) )
@@ -684,12 +683,13 @@ namespace Jde::Access{
 	//AddUserPermissions do;  a deleted resource stays in the result - unenforced is what the reader is trying to see.
 	α Authorize::UserRights( UserPK userPK )Ι->vector<ResourceRights>{
 		rl _{ Mutex };
-		return Users.contains( userPK ) ? IdentityRightsLocked( userPK ) : vector<ResourceRights>{};
+		auto user = Users.find( userPK );
+		return user!=Users.end() && !user->second.IsDeleted ? IdentityRightsLocked( userPK ) : vector<ResourceRights>{};
 	}
 	α Authorize::GroupRights( GroupPK groupPK )Ι->vector<ResourceRights>{
 		rl _{ Mutex };
-		auto group = Groups.find( groupPK );//absent = no member yet, not unknown:  its grants are what a first member will get.
-		return group==Groups.end() || !group->second.IsDeleted ? IdentityRightsLocked( groupPK ) : vector<ResourceRights>{};
+		auto group = Groups.find( groupPK );
+		return group!=Groups.end() && !group->second.IsDeleted ? IdentityRightsLocked( groupPK ) : vector<ResourceRights>{};
 	}
 	α Authorize::IdentityRightsLocked( IdentityPK target )Ι->vector<ResourceRights>{
 		flat_map<ResourcePK,ResourceRights> byResource;
@@ -716,7 +716,6 @@ namespace Jde::Access{
 			}
 		};
 		//does the acl identity reach the target - itself, or a live group whose members do - expanding the grant along each way in.
-		//A target group is not descended into:  its members' grants are not its own.
 		auto reach = [&]( this auto&& self, IdentityPK identity, PermissionRole permissionRole ) ABSL_SHARED_LOCKS_REQUIRED(Mutex) ι->void {
 			if( identity.Value==target.Value ){
 				expand( permissionRole );

@@ -48,7 +48,7 @@ describe( 'AccessService resources', ()=>{
 			return {};
 		}) as any );
 	} );
-	const lockouts = async ()=>(await service.effectiveRights( 2 )).map( r=>r.resource.slug );//the user holds no grant, so every row is a lockout row
+	const lockouts = async ()=>(await service.effectiveRights( 2 )).rights.map( r=>r.resource.slug );//the user holds no grant, so every row is a lockout row
 
 	it( 'shows a lockout once a resource is enforced, in the same session', async ()=>{
 		expect( await lockouts() ).toEqual( [] );//unenforced:  nothing restricts the user
@@ -85,7 +85,7 @@ describe( 'AccessService resources', ()=>{
 	//of never showed - "nothing restricts this user" while the OpcServer denied the subtree.
 	it( 'shows a lockout on a node resource the user holds nothing on', async ()=>{
 		nodes = [{id: 32, schemaName: "opc.install", slug: "nodeIds", name: "nodeIds", criteria: "ns=4;i=6030", deleted: null}];
-		expect( (await service.effectiveRights(2)).map(r=>[r.resource.slug, r.resource.criteria, r.isLockout]) ).toEqual( [["nodeIds", "ns=4;i=6030", true]] );
+		expect( (await service.effectiveRights(2)).rights.map(r=>[r.resource.slug, r.resource.criteria, r.isLockout]) ).toEqual( [["nodeIds", "ns=4;i=6030", true]] );
 	} );
 
 	//reviews/m3-closing.md #28:  the server lets a user read their own rights whatever they hold, but the tab also asked for the
@@ -101,7 +101,7 @@ describe( 'AccessService resources', ()=>{
 			return ql.startsWith( "userRights" ) ? [grant] : answer( ql, vars );
 		}) as any );
 		const warn = vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
-		const rights = await service.effectiveRights( 2 );
+		const {rights} = await service.effectiveRights( 2 );
 		expect( rights.map(r=>EffectiveRight.describe(r.sources[0])) ).toEqual( ["role #11"] );
 		expect( warn ).toHaveBeenCalled();//said, not swallowed
 		warn.mockRestore();
@@ -143,7 +143,7 @@ describe( 'AccessService.groupRights', ()=>{
 	} );
 
 	it( 'asks groupRights for the group and names the path', async ()=>{
-		const rights = await service.groupRights( 6 );
+		const {rights} = await service.groupRights( 6 );
 		const [ql, vars] = vi.mocked( service.queryArray ).mock.calls.find( c=>(c[0] as string).startsWith("groupRights") )!;
 		expect( ql ).toMatch( /^groupRights\( id:\$id \)/ );
 		expect( vars ).toEqual( {id: 6} );
@@ -151,8 +151,34 @@ describe( 'AccessService.groupRights', ()=>{
 	} );
 
 	it( 'adds no lockout row for an enforced resource the group gives nothing on', async ()=>{
-		expect( (await service.groupRights( 6 )).map(r=>r.resource.slug) ).toEqual( ["users"] );
-		expect( (await service.effectiveRights( 2 )).map(r=>[r.resource.slug, r.isLockout]) ).toEqual( [["roles", true], ["users", true]] );//userRights answers nothing here - a user's tab keeps them
+		expect( (await service.groupRights( 6 )).rights.map(r=>r.resource.slug) ).toEqual( ["users"] );
+		expect( (await service.effectiveRights( 2 )).rights.map(r=>[r.resource.slug, r.isLockout]) ).toEqual( [["roles", true], ["users", true]] );//userRights answers nothing here - a user's tab keeps them
+	} );
+
+	//reviews-issue/252-effective-rights-group.md #12:  each record the sidenav opened read every resource and both name lists again
+	const asked = ()=>vi.mocked( service.queryArray ).mock.calls.map( c=>(c[0] as string).split(/[({]/)[0].trim() + ((c[0] as string).includes("criteria:null") ? "(criteria:null)" : "") );
+	it( 'reads only the tables the pages share - each row carries its own enforcement', async ()=>{
+		await service.groupRights( 6 );
+		expect( asked() ).toContain( "resources(criteria:null)" );
+		expect( asked() ).not.toContain( "resources" );
+	} );
+	it( 'reuses the names it is handed', async ()=>{
+		const first = await service.groupRights( 6 );
+		vi.mocked( service.queryArray ).mockClear();
+		const second = await service.groupRights( 6, first.lists );
+		expect( asked() ).toEqual( ["groupRights"] );//the tables are the cached list's
+		expect( EffectiveRight.describe(second.rights[0].sources[0]) ).toBe( "role Viewer via group Ops" );
+	} );
+	it( 'reads the names again for a path step they lack', async ()=>{
+		const {rights, lists} = await service.groupRights( 6, {groups: [], roles: [{id: 11, name: "Viewer"}]} );
+		expect( asked().filter( q=>q=="groups" || q=="roles" ) ).toEqual( ["groups", "roles"] );
+		expect( lists.groups ).toEqual( [{id: 21, name: "Ops"}] );
+		expect( EffectiveRight.describe(rights[0].sources[0]) ).toBe( "role Viewer via group Ops" );
+	} );
+	it( 'does not read a refused list again', async ()=>{
+		const {rights} = await service.groupRights( 6, {roles: [{id: 11, name: "Viewer"}]} );
+		expect( asked() ).toEqual( ["groupRights", "resources(criteria:null)"] );
+		expect( EffectiveRight.describe(rights[0].sources[0]) ).toBe( "role Viewer via group #21" );
 	} );
 } );
 

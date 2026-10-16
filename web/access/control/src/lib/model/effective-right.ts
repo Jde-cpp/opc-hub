@@ -6,12 +6,17 @@ import { Resource } from "./resource";
 export type PathStep = { id:number; type:"group"|"role"; name?:string };
 //One acl grant reaching the user, with that grant's own rights.  `path` runs top-down from the acl identity:  the groups
 //from the granted one to the one holding the user, then the roles from the assigned one to the one holding the permission.
-//Empty = a bare grant on the user.
-export type RightsSource = { permissionId:number; allowed:Rights; denied:Rights; path:PathStep[] };
+//Empty = a bare grant on the user.  `onTable`:  a node row's copy of a grant on its table, which holds under the node too.
+export type RightsSource = { permissionId:number; allowed:Rights; denied:Rights; path:PathStep[]; onTable?:boolean };
 export type Names = { groups:Map<number,string>; roles:Map<number,string> };
+//The lists the names come from, kept by the tab across its records (reviews-issue/252-effective-rights-group.md #12) - undefined:
+//a list the user may not read.
+export type PathLists = { groups?:{id:number; name?:string}[]; roles?:{id:number; name?:string}[] };
+//A tab's answer:  its rows, and the lists that named them, for the next record.
+export type RightsAnswer = { rights:EffectiveRight[]; lists:PathLists };
 //A RightsSource as the server sends it - Server::SourcesJson, RightsSourceJson.h.
 export type SourceRow = { permissionId:number; allowed:number; denied:number; path:{id:number; type:"group"|"role"}[] };
-//The server's userRights row, and groupRights' - Authorize::UserRights/GroupRights, Server::RightsJson in UserRightsAwait.cpp.
+//The server's userRights row, and groupRights' - Authorize::UserRights/GroupRights, RightsJson in IdentityRightsAwait.cpp.
 export type UserRightsRow = { resource:{ id:number; schemaName?:string; slug?:string; criteria?:string; deleted?:string|null }; allowed:number; denied:number; effective:number; sources:SourceRow[] };
 
 //What a user ends up with on one resource through every path - the read-only twin of Permission for the Effective rights tab.
@@ -29,9 +34,11 @@ export class EffectiveRight{
 	//is a lockout, which is what the first-run admin is looking for, and a silent absence would hide it.  Unenforced
 	//resources without a grant are left out - they are open to everyone, there is nothing to say.
 	//The result is nested:  a criteria row (a node-scoped resource, minted when a role is granted on a node) sits under the
-	//criteria-less row of the same schema+slug, its `parent` - OpcAuthorize resolves a node to the nearest configured
-	//ancestor's resource, else that root, so the node row replaces its root for its subtree rather than adding to it.  One
-	//without a root in the list stays top-level.
+	//criteria-less row of the same schema+slug, its `parent`.  OpcAuthorize adds a node's grants to its table's, a deny on
+	//either winning (reviews-issue/252-effective-rights-group.md #1), so a granted node row carries its table's grants too, and
+	//a node is a lockout only where the table gives the user nothing.  A node configured inside another also gets that one's
+	//grants on the server, which this list - folding every node under its table - cannot show.  One without a root in the
+	//list stays top-level.
 	//`lockouts` false leaves the lockout rows out - a group's tab:  what a group does not give, its members may hold elsewhere.
 	static fromRows( rows:UserRightsRow[], resources:Resource[], names:Names, lockouts=true ):EffectiveRight[]{
 		const byId = new Map( resources.map( r=>[r.id, r] ) );
@@ -53,17 +60,30 @@ export class EffectiveRight{
 			return new EffectiveRight( { resource, allowed: row.allowed as Rights, denied: row.denied as Rights, effective: row.effective as Rights, sources: EffectiveRight.toSources(row.sources, names) } );
 		});
 		const granted = new Set( rows.map( r=>r.resource.id ) );
-		//A node resource is here too (reviews/m3-closing.md #14):  granting a role on a node mints it enforced, and the OpcServer
-		//resolves the node's subtree to it alone, so a user holding nothing on it is locked out there whatever they hold on the
-		//table.  With the table unenforced and ungranted (a fresh install's default) the row has no parent and stays top-level.
+		const onTables = new Map( y.filter( r=>!r.resource.criteria ).map( r=>[EffectiveRight.key(r.resource.schema, r.resource.slug), r.effective] ) );
+		//A node resource is here too (reviews/m3-closing.md #14):  granting a role on a node mints it enforced, so a user holding
+		//nothing on it or on its table is locked out of its subtree.  What the table gives holds there, enforced or not.  With
+		//the table unenforced and ungranted (a fresh install's default) the row has no parent and stays top-level.
 		for( const resource of lockouts ? resources : [] ){
+			if( resource.criteria && onTables.get(EffectiveRight.key(resource.schema, resource.slug)) )
+				continue;
 			if( !resource.deleted && !granted.has(resource.id) )
 				y.push( new EffectiveRight({ resource: resource.criteria ? new Resource( {...resource, schemaName: resource.schema, ...asTable(resource.schema, resource.slug, resource.criteria, resource)} ) : resource }) );
 		}
 		y.sort( (a,b)=>(a.resource.schema ?? '').localeCompare(b.resource.schema ?? '') || (a.resource.name ?? '').localeCompare(b.resource.name ?? '') || (a.resource.criteria ?? '').localeCompare(b.resource.criteria ?? '') );
-		return EffectiveRight.nest( y );
+		const nested = EffectiveRight.nest( y );
+		for( const root of nested )
+			root.children.filter( child=>child.sources.length ).forEach( child=>child.inherit(root) );
+		return nested;
 	}
 	static key( schema:string|undefined, slug:string|undefined ):string{ return `${schema ?? ''}/${slug ?? ''}`; }
+	//Whether `lists` names every group and role the rows' paths step through.  A list the user may not read names none, and
+	//reading it again would not change that.
+	static covers( rows:UserRightsRow[], lists:PathLists ):boolean{
+		const ids = ( named?:{id:number}[] )=>named && new Set( named.map( n=>n.id ) );
+		const groups = ids( lists.groups ), roles = ids( lists.roles );
+		return rows.every( r=>r.sources.every( s=>s.path.every( step=>{ const known = step.type=="group" ? groups : roles; return !known || known.has( step.id ); } ) ) );
+	}
 	//The server's sources with each path step named from the lists - the resource page's holders' too.
 	static toSources( rows:SourceRow[], names:Names ):RightsSource[]{
 		return rows.map( s=>({
@@ -87,6 +107,14 @@ export class EffectiveRight{
 				y.push( row );
 		}
 		return y;
+	}
+
+	//The table's grants added to a granted node row's, as OpcAuthorize adds them, a deny on either winning.
+	inherit( table:EffectiveRight ):void{
+		this.allowed |= table.allowed;
+		this.denied |= table.denied;
+		this.effective = this.allowed & ~this.denied;
+		this.sources = [...this.sources, ...table.sources.map( s=>({ ...s, onTable: true }) )];
 	}
 
 	get enforced():boolean{ return !this.resource.deleted; }
@@ -113,7 +141,7 @@ export class EffectiveRight{
 	static tooltip( row:EffectiveRight, right:Rights ):string{
 		if( row.isLockout )
 			return "No grant on an enforced resource - every action is denied.";
-		return EffectiveRight.sourcesTooltip( row.sources, right, EffectiveRight.describe );
+		return EffectiveRight.sourcesTooltip( row.sources, right, s=>s.onTable ? `${EffectiveRight.describe(s)}, on the table` : EffectiveRight.describe(s) );
 	}
 	//One line per source that touches `right`, allows before denies - `describe` words each, as the resource page's role rows
 	//do their own way.

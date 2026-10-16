@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { IEnvironment } from 'jde-spa';
 import { AppService, AuthStore, IGraphQL, StringUtils, TableSchema } from 'jde-framework';
 import { Resource } from '../model/resource';
-import { EffectiveRight, Names, UserRightsRow } from '../model/effective-right';
+import { EffectiveRight, Names, PathLists, RightsAnswer, UserRightsRow } from '../model/effective-right';
 import { HolderLists, NamedRow, ResourceHolders, ResourceRightsRow } from '../model/resource-holder';
 
 
@@ -47,28 +47,35 @@ export class AccessService extends AppService implements OnDestroy{
 	//names the paths need, from the two lists.  The executer reads their own freely; another user's takes Read on acl.
 	//The names only label the paths, so a list the user may not read (`roles` enforced, no Read on it) leaves them as `#id`
 	//rather than failing the tab - the one place that would tell them why (reviews/m3-closing.md #28).  The rights and the
-	//resources stay fatal:  a grid without them would read as "no rights".
-	async effectiveRights( userId:number ):Promise<EffectiveRight[]>{
-		return this.#rights( "userRights", userId, true );
+	//resources stay fatal:  a grid without them would read as "no rights".  The tab passes the last answer's `lists`, read
+	//again only for a path step they lack - a group or role created since - not per record.
+	async effectiveRights( userId:number, lists?:PathLists ):Promise<RightsAnswer>{
+		return this.#rights( "userRights", userId, true, lists );
 	}
 	//What a member gets through one group - the server's answer (groupRights, Authorize::GroupRights), in userRights' shape and
 	//joined the same way, but with no lockout rows:  a resource the group gives nothing on is not a lockout for its members,
 	//who may hold it elsewhere.  Takes Read on acl.
-	async groupRights( groupId:number ):Promise<EffectiveRight[]>{
-		return this.#rights( "groupRights", groupId, false );
+	async groupRights( groupId:number, lists?:PathLists ):Promise<RightsAnswer>{
+		return this.#rights( "groupRights", groupId, false, lists );
 	}
-	async #rights( query:"userRights"|"groupRights", id:number, lockouts:boolean ):Promise<EffectiveRight[]>{
+	async #rights( query:"userRights"|"groupRights", id:number, lockouts:boolean, lists:PathLists|undefined ):Promise<RightsAnswer>{
 		const q = `${query}( id:$id ){ resource{ id schemaName slug criteria deleted } allowed denied effective sources{ permissionId allowed denied path{ id type } } }`;
-		const nameList = ( collection:string ):Promise<{id:number, name:string}[]>=>this.queryArray<{id:number, name:string}>( `${collection}{ id name }` )
-			.catch( e=>{ console.warn( `Effective rights:  no ${collection} names - the paths show ids.`, e ); return []; } );
-		const [rows, resources, groups, roles] = await Promise.all( [
+		const [rows, resources, read] = await Promise.all( [
 			this.queryArray<UserRightsRow>( q, {id} ),
-			this.#queryAllResources(),//fresh - the tab is a diagnostic, the server's current enforcement whoever changed it - and the node rows too (#14)
-			nameList( "groups" ),
-			nameList( "roles" )
+			//The lockout rows need every resource fresh - the server's current enforcement whoever changed it - node rows too (#14).
+			//Without them only the tables' names are read:  each row carries its own enforcement and node fields.
+			lockouts ? this.#queryAllResources() : this.loadResources(),
+			lists ?? this.#pathLists()
 		] );
-		const names:Names = { groups: new Map( groups.map(g=>[g.id, g.name]) ), roles: new Map( roles.map(r=>[r.id, r.name]) ) };
-		return EffectiveRight.fromRows( rows, resources, names, lockouts );
+		const named = lists && !EffectiveRight.covers( rows, lists ) ? await this.#pathLists() : read;
+		const names:Names = { groups: ResourceHolders.names( named.groups ), roles: ResourceHolders.names( named.roles ) };
+		return { rights: EffectiveRight.fromRows( rows, resources, names, lockouts ), lists: named };
+	}
+	async #pathLists():Promise<PathLists>{
+		const list = ( collection:string )=>this.queryArray<NamedRow>( `${collection}{ id name }` )
+			.catch( e=>{ console.warn( `Effective rights:  no ${collection} names - the paths show ids.`, e ); return undefined; } );
+		const [groups, roles] = await Promise.all( [list( "groups" ), list( "roles" )] );
+		return { groups, roles };
 	}
 	//Everyone a resource's grants reach - the server's answer (resourceRights, Authorize::Holders) joined to the names and slugs
 	//its cache does not hold.  The three lists only label the rows and link them, so one the user may not read leaves `#id`, as
