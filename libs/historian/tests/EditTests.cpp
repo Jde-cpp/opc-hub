@@ -319,6 +319,25 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isBound(v[1], Speed, 2.5, T0+2500ms) );
 	}
 
+	//An edit of many values into an earlier day corrects a later file's start value once, to the node's newest of them:
+	//one before the start the file has moves nothing, and each node's is its own.
+	TEST_F( Edits, ManyLateRecordsCorrectToTheNewest ){
+		TwoDays();
+		vector<Value> speeds{ Reading(1.5, T0+1500ms), Reading(2.2, T0+2200ms), Reading(2.6, T0+2600ms), Reading(2.4, T0+2400ms) };
+		vector<Value> temps{ Reading(12, T0+2300ms), Reading(11, T0+2100ms) };
+		let results = Edit( {UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, speeds}, UpdateData{Temp, UA_PERFORMUPDATETYPE_INSERT, temps}} );
+		ASSERT_EQ( results.size(), 2 );
+		EXPECT_EQ( statuses(results[0]), (vector<StatusCode>(4, UA_STATUSCODE_GOODENTRYINSERTED)) );
+		EXPECT_EQ( statuses(results[1]), (vector<StatusCode>(2, UA_STATUSCODE_GOODENTRYINSERTED)) );
+		EXPECT_EQ( Start(March8, Speed), StartValue{2.6} );
+		EXPECT_EQ( Start(March8, Temp), StartValue{12} );
+		EXPECT_EQ( readFile(File(*Pump, March8)).size(), 7 );//FileStart, two preamble records, 3 and 4, and the two corrections.
+		auto v = All( {.Nodes={Speed, Temp}, .Start=ticks(Eighth+1min), .End=ticks(Eighth+1min+30s), .Bounds=true} );
+		ASSERT_EQ( v.size(), 4 );
+		EXPECT_TRUE( isBound(v[0], Temp, 12, T0+2300ms) );
+		EXPECT_TRUE( isBound(v[1], Speed, 2.6, T0+2600ms) );
+	}
+
 	//A file made after its day, by a late record, takes its start values from the walk back through the files, the edits
 	//applied, since the node's newest record is after the day; and the record corrects the later files whose start value
 	//it is now, an archive's by its rewrite, stopping at the first whose start value is after it.

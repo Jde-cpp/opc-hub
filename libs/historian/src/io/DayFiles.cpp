@@ -818,13 +818,19 @@ namespace Jde::Opc::Hist{
 		vector<std::pair<Day,DayWrite>> y;
 		if( touched.empty() || _days.empty() )
 			return y;
-		std::ranges::stable_sort( touched, {}, &std::pair<NodeIndex,Ticks>::second );
+		//One look per node and day, from its last record there, since an earlier record's walk reaches no file the last's
+		//doesn't and the last correction per member is the one kept:  a look per record read the day once per record.
+		std::map<std::pair<NodeIndex,Day>,Ticks> looks;//by node then day, so a node's later days overwrite its earlier days' corrections.
+		for( let& [index,time] : touched ){
+			auto [p, inserted] = looks.try_emplace( {index, DayOf(time, _tz)}, time );
+			p->second = std::max( p->second, time );
+		}
 		optional<vector<Day>> all;//the directory walk, once, for a record older than the newest day the process knows of.
 		std::map<Day,absl::flat_hash_map<NodeIndex,HistoryRecord>> corrections;//each file's, the last per member.
 		std::map<Day,optional<Preamble>> archives;//read once for this call and kept no longer.
 		let startsOf = [&]( Day day ){ return StartsOf( day, archives, sl ); };
-		for( let& [index,time] : touched ){
-			let day = DayOf( time, _tz );
+		for( let& [key,time] : looks ){
+			let& [index,day] = key;
 			if( day>=*_days.rbegin() )
 				continue;//no file is later.
 			if( !all ){

@@ -219,13 +219,13 @@ namespace Jde::Opc::Hist{
 		//A record written at (index, time) that a later file's start value may copy:  what Corrections looks at.  Commit
 		//notes each value it writes; an edit notes each value it changes once its records are written.
 		α Touch( NodeIndex index, Ticks time )ι->void;
-		//The start-value corrections the records touched since reach (spec *Record format*):  for each, every later file
-		//that lists its node with a start value at or before its time, other than that record itself, gets the node's last
-		//record through that time, as members.Last gives it, as its start value, a live file by a preamble record appended
-		//and an archive by its rewrite, which the flush writes.  The walk ends at the first later file whose start value for
-		//the node is past the time, since the start values of the files after it are later still.  One they can't be
-		//prepared for, or whose start value members.Last can't read, is said and left as it is:  the next record or edit
-		//that reaches it corrects it.  The touched records are forgotten.
+		//The start-value corrections the records touched since reach (spec *Record format*):  for each node and day touched,
+		//from its last record there, every later file that lists the node with a start value at or before its time, other
+		//than that record itself, gets the node's last record through that time, as members.Last gives it, as its start
+		//value, a live file by a preamble record appended and an archive by its rewrite, which the flush writes.  The walk
+		//ends at the first later file whose start value for the node is past the time, since the start values of the files
+		//after it are later still.  One they can't be prepared for, or whose start value members.Last can't read, is said
+		//and left as it is:  the next record or edit that reaches it corrects it.  The touched records are forgotten.
 		α Corrections( const Membership& members, TimePoint now, SRCE )ι->vector<std::pair<Day,DayWrite>>;
 		//Of a node's indexes, those the first file after day that lists one lists:  none when no later file does.  One that
 		//can't be read is passed over, as Corrections passes it.  Throws when the days can't be listed.
