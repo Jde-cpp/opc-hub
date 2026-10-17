@@ -27,6 +27,19 @@
 					}
 				</ng-template>
 			</mat-tab>
+			<mat-tab><!--asked of the application server, which forwards to the server over its socket:  the server's own /graphql does not answer sessions-->
+				<ng-template mat-tab-label>Web Sessions</ng-template>
+				<ng-template matTabContent>
+					@if( instanceId() !== undefined ){
+						@for( id of [instanceId()]; track id ){<!--keyed, as Logs-->
+							<web-sessions [service]=appService [instanceId]=id!></web-sessions>
+						}
+					}
+					@else{
+						<p>No application instance registered for this server — web sessions are unavailable.</p>
+					}
+				</ng-template>
+			</mat-tab>
 		</mat-tab-group>
 	}
 }

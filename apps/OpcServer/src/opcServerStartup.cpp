@@ -21,7 +21,7 @@ namespace Jde::Opc{
 		auto uaSchema = DB::GetAppSchema( "opc", remoteAcl );
 		uaSchema->Authorizer = opcAuthorize;// GetAppSchema returns a cached schema whose Authorizer is baked in when GetClusters first builds the cache. When another server (e.g. embedded AppServer) built it first with a base Access::Authorize, our SetAcl(OpcAuthorize) above is ignored here. Install it explicitly so UAAccess::GetUserAccessLevel's static_cast<OpcAuthorize&> is valid (and so UserRights reads the same _nodeResources that AssignRights populates).
 		ConfigureQL( uaSchema, remoteAcl, instanceSchema );
-		QL::SetSystemTables( {"logSetting", "adminCheck"} );//adminCheck: the AppServer's delegated admin check (OpcServerQL) - a name no schema owns, so QL::Parse admits it without a view; `permissionRight` would shadow the real table for an embedded AppServer.
+		QL::SetSystemTables( {"logSetting", "adminCheck", "sessions"} );//sessions:  the AppServer's ask for this process's web sessions, answered only over its socket (OpcServerAppClient::ClientQuery).  adminCheck: the AppServer's delegated admin check (OpcServerQL) - a name no schema owns, so QL::Parse admits it without a view; `permissionRight` would shadow the real table for an embedded AppServer.
 		if( Settings::FindBool("/testing/recreateDB").value_or(false) )
 			DB::NonProd::Recreate( *uaSchema, QLPtr() );
 		else if( Settings::FindBool("/dbServers/sync").value_or(false) || uaSchema->DS()->RequiresSync() )

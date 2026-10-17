@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, Inject, ViewChild, input, signal, model, 
 import { MatTabsModule } from '@angular/material/tabs';
 import { ActivatedRoute } from '@angular/router';
 import { ComponentPageTitle, ProfileStore } from 'jde-spa';
-import { AppService, Flex, LogDetail, LogSettingsPanel, QLList, QLListData, Style, TableSettings } from 'jde-framework';
+import { AppService, Flex, LogDetail, LogSettingsPanel, QLList, QLListData, Style, TableSettings, WebSessions } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
@@ -12,7 +12,7 @@ import { GatewayHistList } from './hist-admin/gateway-hist-list';
 		styleUrls: ['gateway-detail.scss'],
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content mat-drawer-container my-content'},
-		imports: [MatTabsModule, QLList, LogDetail, LogSettingsPanel, GatewayHistList]
+		imports: [MatTabsModule, QLList, LogDetail, LogSettingsPanel, GatewayHistList, WebSessions]
 })
 export class GatewayDetail implements OnInit, OnDestroy{
 	private route:ActivatedRoute = inject( ActivatedRoute );

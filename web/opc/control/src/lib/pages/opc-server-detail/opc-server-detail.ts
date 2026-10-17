@@ -1,7 +1,7 @@
 import { Component, OnDestroy, OnInit, inject, model, signal } from '@angular/core';
 import { MatTabsModule } from '@angular/material/tabs';
 import { ActivatedRoute } from '@angular/router';
-import { AppService, errorMessage, LogDetail, LogSettingsPanel } from 'jde-framework';
+import { AppService, errorMessage, LogDetail, LogSettingsPanel, WebSessions } from 'jde-framework';
 import { ComponentPageTitle, ProfileStore, RouteItem, RouteStore } from 'jde-spa';
 import { OpcServer, OpcServerService } from '../../services/opc-server-service';
 
@@ -11,7 +11,7 @@ import { OpcServer, OpcServerService } from '../../services/opc-server-service';
 		//prototype members, template decls) into its style-encapsulation id and deliberately leaves the class name out,
 		//so this page and its app-server-detail twin - identical in every one of those - collided with NG0912.
 		host: {class:'main-content mat-drawer-container my-content opc-server-detail'},
-		imports: [MatTabsModule, LogDetail, LogSettingsPanel]
+		imports: [MatTabsModule, LogDetail, LogSettingsPanel, WebSessions]
 })
 export class OpcServerDetail implements OnInit, OnDestroy{
 	private route:ActivatedRoute = inject( ActivatedRoute );
