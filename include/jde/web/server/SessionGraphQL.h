@@ -9,7 +9,7 @@ namespace Jde::Web::Server{
 	//them from its own CustomQuery/CustomMutation (AppQLAwait, AppServerQL, HubQL), so a binary hosting two roles - the hub, the
 	//suites that embed an AppServer - answers once, with the authorizer of the role whose QL was asked.  The gate is the app schema's
 	//`sessions` resource (app-meta.jsonnet), by (schema, slug) - the hub also holds the gateway's `sessions`:  Read lists, Administer
-	//purges.  An instance - an OpcServer, a stand-alone gateway - answers only the AppServer's socket (Forwarded).
+	//purges another's (Purge).  An instance - an OpcServer, a stand-alone gateway - answers only the AppServer's socket (Forwarded).
 	struct SessionGraphQL{
 		SessionGraphQL( sp<App::IApp> appClient, sp<Access::Authorize> authorizer, string schema )ι: _appClient{move(appClient)}, _authorizer{move(authorizer)}, _schema{move(schema)}{}
 		//An instance's answer to the AppServer's ask, ungated:  InstanceSessionsAwait gated the caller there, and an instance's acl

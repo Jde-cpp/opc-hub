@@ -117,6 +117,31 @@ namespace Jde::App::Server::Tests{
 		EXPECT_FALSE( Web::Server::Sessions::Find(session->SessionId) ) << serialize( y );
 	}
 
+	//364-sessions-resource review #2:  a session a socket asks for on its user's behalf - a stand-alone gateway's AddSession - records
+	//the socket's account, which may then end it without a grant (SessionGraphQL::Purge).
+	TEST_F( WebSessionTests, AddSessionRecordsWhoMintedIt ){
+		auto client = Connect();
+		absl::Cleanup close{ [&]{ BlockVoidAwait( client->Close(true, SRCE_CUR) ); } };
+		const Jde::UserPK gateway{ 1 };
+		RegisterInstance( *client, "Tests.WebSessions", "minting", "websession-host", 0, 1234, "", gateway );//the socket adopts gateway's session
+		FromClientTrans t;
+		auto& m = *t.add_messages();
+		let requestId = client->NextRequestId();
+		m.set_request_id( requestId );
+		auto& add = *m.mutable_add_session();
+		add.set_login_name( "webSessionMinted" );
+		add.set_provider_pk( underlying(Access::EProviderType::Google) );
+		add.set_user_endpoint( "10.255.0.19" );
+		client->Write( move(t) );
+		let reply = client->WaitFor( [requestId](const FromServerMessage& m){ return m.request_id()==requestId && m.value_case()==FromServerMessage::kSessionInfo; } );
+		ASSERT_TRUE( reply ) << "no SessionInfo for the AddSession";
+		let session = Web::Server::Sessions::Find( reply->session_info().session_id() );
+		absl::Cleanup remove{ [&]{ if( session ) Web::Server::Sessions::Remove( session->SessionId ); } };
+		ASSERT_TRUE( session );
+		EXPECT_NE( session->UserPK.Value, gateway.Value ) << "the session is its user's";
+		EXPECT_EQ( session->MintedBy.Value, gateway.Value ) << "and the socket's account began it";
+	}
+
 	//an instance with no socket has no map to ask:  the query fails rather than answering an empty list for a live instance.
 	TEST_F( WebSessionTests, ADisconnectedInstanceFails ){
 		let [program, instance, connection] = App::AddConnection( "Tests.WebSessions", "offline", "websession-host", 116 );
@@ -132,8 +157,8 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Status([&]{ RunQL(Ƒ("session( instanceId:{}, id:\"{:x}\" ){{ endpoint }}", instanceId, session->SessionId)); }), EHttpStatus::BadRequest );
 	}
 
-	//The gate, enforced:  the app schema's `sessions` (#364) - Read lists, Administer purges.  Enforced for the suite and unenforced
-	//after, so other suites see it as it ships.
+	//The gate, enforced:  the app schema's `sessions` (#364) - Read lists, Administer purges.  Enforced for the suite, then left as it
+	//was found and the suite's grants purged (364-sessions-resource review #9):  a persistent dev database keeps both.
 	struct WebSessionGateTests : WebSessionTests{
 		static constexpr sv OtherSchema{ "webSessionTests" };
 		Ω Id( const jvalue& v )->uint{ return Json::AsNumber<uint>( Json::AsObject(v), "id" ); }
@@ -142,6 +167,10 @@ namespace Jde::App::Server::Tests{
 			if( user.is_null() || (user.is_object() && user.get_object().empty()) )
 				user = RunQL( Ƒ("createUser( slug:\"{0}\", name:\"{0}\" ){{ id }}", slug) );
 			return Jde::UserPK{ (Jde::UserPK::Type)Id(user) };
+		}
+		Ω Enforced( str schema )->bool{
+			let rows = Json::AsArray( RunQL(Ƒ("resources( schemaName:\"{}\", slug:\"sessions\", criteria:null ){{ deleted }}", schema)) );
+			return rows.size() && rows[0].as_object().at("deleted").is_null();
 		}
 		//schema's `sessions` row, enforced or not - restore/delete only on a change:  a no-op update publishes nothing.
 		Ω Enforce( str schema, bool on )->void{
@@ -162,17 +191,24 @@ namespace Jde::App::Server::Tests{
 			_reader = User( "webSessionReader" );
 			_admin = User( "webSessionAdmin" );
 			let grant = [&]( Jde::UserPK user, Access::ERights rights ){
-				RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} )", user.Value, underlying(rights), schema) );
+				let y = RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} ){{ permissionRight{{id}} }}", user.Value, underlying(rights), schema) );
+				_grants.emplace_back( user, Json::AsNumber<uint>(Json::AsObject(y), "permissionRight/id") );
 			};
 			grant( _reader, Access::ERights::Read );
 			grant( _admin, Access::ERights::Read | Access::ERights::Administer );
+			_wasEnforced = Enforced( schema );
 			Enforce( schema, true );
 		}
 		Ω TearDownTestSuite()->void{
-			Enforce( AppSchema()->Name, false );
+			Enforce( AppSchema()->Name, _wasEnforced );
+			for( let& [user, permission] : _grants )
+				RunQL( Ƒ("purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", user.Value, permission) );
+			_grants.clear();
 			PurgeOthers();
 		}
 		static inline Jde::UserPK _stranger, _reader, _admin;
+		static inline vector<std::pair<Jde::UserPK,uint>> _grants;
+		static inline bool _wasEnforced{};
 	};
 
 	TEST_F( WebSessionGateTests, TheListingTakesRead ){
@@ -216,6 +252,22 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( Web::Server::Sessions::Find(session->SessionId) );
 		EXPECT_EQ( Status([&]{ RunQL(purge, _admin); }), EHttpStatus::None );
 		EXPECT_FALSE( Web::Server::Sessions::Find(session->SessionId) );
+	}
+
+	//364-sessions-resource review #2:  ending your own session, or one you signed its user in to - a stand-alone gateway's sign-out -
+	//needs no grant.  Anyone else's still takes Administer.
+	TEST_F( WebSessionGateTests, TheirOwnAndTheOnesTheyMintedNeedNoGrant ){
+		let own = Web::Server::Sessions::Add( _stranger, "10.255.0.17", false );
+		let minted = Web::Server::Sessions::Add( _admin, "10.255.0.18", false, _stranger );//as AddSession records the gateway's account
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( own->SessionId ); Web::Server::Sessions::Remove( minted->SessionId ); } };
+		let purge = []( SessionPK id ){ return Ƒ( "purgeSession( id:\"{:x}\" )", id ); };
+		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), _reader); }), EHttpStatus::Forbidden ) << "neither theirs nor begun by them";
+		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
+		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), _stranger); }), EHttpStatus::None );
+		EXPECT_FALSE( Web::Server::Sessions::Find(own->SessionId) );
+		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), _stranger); }), EHttpStatus::None ) << "the account that signed its user in";
+		EXPECT_FALSE( Web::Server::Sessions::Find(minted->SessionId) );
+		EXPECT_EQ( Status([&]{ RunQL(purge(0xdeadbeef), _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused as the listing refuses it";
 	}
 
 	//#364:  the hub holds the gateway's `sessions` beside the app schema's, and the gate that asked by slug alone answered with

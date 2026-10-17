@@ -61,28 +61,32 @@ namespace Jde::Access{
 		}
 	}
 
-	//A bare slug names a schema only when one schema carries it.  An app schema wins outright; an opc schema ("opc.<server>")
-	//answers only when it is the sole live one with the slug, since every OpcServer registers the same `nodeIds`.  Callers that
-	//can be specific (the acl/role mutations, which have the resource's PK) should be - this is the fallback for those that cannot.
+	//A bare slug names a schema only when one schema carries it.  An app schema wins over the opc ones ("opc.<server>"), which
+	//answer only when one live one has the slug, since every OpcServer registers the same `nodeIds`.  Two app schemas with the slug
+	//are as ambiguous as two opc ones - the hub's app/sessions and gateway/sessions, where the first by pk used to answer
+	//(364-sessions-resource review #3).  Callers that can be specific (the acl/role mutations, which have the resource's PK) should
+	//be - this is the fallback for those that cannot.
 	α Authorize::GetSchema( str resourceSlug, SL sl )ε->string{
 		rl _{ Mutex };
-		optional<string> qualified;
-		bool ambiguous{};
+		optional<string> app, opc;
+		bool appAmbiguous{}, opcAmbiguous{};
 		for( let& [_,resource] : Resources ){
 			if( resource.Slug!=resourceSlug )
 				continue;
-			if( !resource.Schema.contains('.') ) //an app schema's slug is unique by construction
-				return resource.Schema;
-			if( resource.IsDeleted )
+			let isApp = !resource.Schema.contains('.');
+			if( !isApp && resource.IsDeleted )
 				continue;
-			if( qualified && *qualified!=resource.Schema )
-				ambiguous = true;
+			auto& found = isApp ? app : opc;
+			if( found && *found!=resource.Schema )
+				( isApp ? appAmbiguous : opcAmbiguous ) = true;
 			else
-				qualified = resource.Schema;
+				found = resource.Schema;
 		}
-		THROW_IFSL( ambiguous, "Resource slug '{}' exists in more than one schema; send the resource 'id' or a 'schemaName'.", resourceSlug );
-		if( qualified )
-			return *qualified;
+		THROW_IFSL( appAmbiguous || (!app && opcAmbiguous), "Resource slug '{}' exists in more than one schema; send the resource 'id' or a 'schemaName'.", resourceSlug );
+		if( app )
+			return *app;
+		if( opc )
+			return *opc;
 		THROWSL( "Schema not found for resource slug '{}'.", resourceSlug );
 	}
 	α Authorize::Test( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
@@ -433,29 +437,35 @@ namespace Jde::Access{
 	}
 	α Authorize::PurgeResource( ResourcePK pk )ι->void{
 		ul _{ Mutex };
-		auto resource = Resources.find( pk );
-		if( resource==Resources.end() )
-			return;
-		Unindex( resource->second );
-		Resources.erase( resource );
-		flat_set<PermissionRole> purged;
-		for( auto p = Permissions.begin(); p!=Permissions.end(); ){
-			if( p->second.ResourcePK==pk ){
-				purged.emplace( p->first );
-				p = Permissions.erase( p );
+		Resources.erase( pk );
+		//By pk, not through the row:  AddResource indexes a live row it never caches (RoleAwait's resourceRow), and that pk left
+		//indexed kept its slug enforced, with nothing granted on it, until a restart (364-sessions-resource review #1).
+		for( auto schema = SchemaResources.begin(); schema!=SchemaResources.end(); ){
+			for( auto slug = schema->second.begin(); slug!=schema->second.end(); ){
+				for( auto criteria = slug->second.begin(); criteria!=slug->second.end(); )
+					criteria = criteria->second==pk ? slug->second.erase( criteria ) : std::next( criteria );
+				slug = slug->second.empty() ? schema->second.erase( slug ) : std::next( slug );
 			}
-			else
-				++p;
+			schema = schema->second.empty() ? SchemaResources.erase( schema ) : std::next( schema );
 		}
+		//std::erase_if, one remove_if pass:  an erase per row shifted each container's tail, O(n·k) under the write lock (review #8).
+		flat_set<PermissionRole> purged;
+		std::erase_if( Permissions, [&]( let& p ){
+			if( p.second.ResourcePK!=pk )
+				return false;
+			purged.emplace( p.first );
+			return true;
+		} );
 		if( purged.empty() )
 			return;
-		for( auto acl=Acl.begin(); acl!=Acl.end(); )
-			acl = purged.contains( acl->second ) ? Acl.erase( acl ) : std::next( acl );
-		for( auto&& [_,role] : Roles ){ //&&: flat_map iterates a proxy pair.
-			for( let& member : purged )
-				role.Members.erase( member );
+		std::erase_if( Acl, [&]( let& acl ){ return purged.contains( acl.second ); } );
+		for( auto&& [_,role] : Roles ) //&&: flat_map iterates a proxy pair.
+			std::erase_if( role.Members, [&]( let& member ){ return purged.contains( member ); } );
+		//Recalc's answer, without rebuilding everyone:  the purged permissions were all on this resource, so only its rights change.
+		for( auto&& [_,user] : Users ){
+			if( user.Rights.erase(pk) ) //operator+= enters a resource's rights with each permission on it.
+				std::erase_if( user.Permissions, [pk]( let& p ){ return p.second.ResourcePK==pk; } );
 		}
-		Recalc();
 	}
 	//A pk names one row.  No pk - the fan-out could not pick one, because a by-slug delete hit several - names every row of that
 	//schema+slug, and the db changed all of them, so the cache does too (access-review3 #22).

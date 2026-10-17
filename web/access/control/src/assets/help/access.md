@@ -134,7 +134,9 @@ Like every resource, these ship unenforced. Until you enforce one, anyone can re
 Web sessions have one resource, `app/sessions`, for every instance's **Web Sessions** tab.
 
 - **Read** lists them.
-- **Administer** ends one. Only a stand-alone gateway's sign-out does that, as the gateway's own user: give that user the *Gateway Instance* role before you enforce it. The hub's own gateway needs nothing.
+- **Administer** ends someone else's. Nothing on these pages does that.
+
+Signing out needs no grant. A user may end their own session, and a stand-alone gateway may end the sessions it signed users in to.
 
 `gateway/sessions` is another resource. It gates the gateway's OPC sessions.
 

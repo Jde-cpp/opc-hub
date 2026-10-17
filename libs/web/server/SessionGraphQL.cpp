@@ -124,14 +124,18 @@ namespace Jde::Web::Server{
 
 	α SessionGraphQL::Purge( const QL::MutationQL& m, UserPK executer, SL sl )ι->up<TAwait<jvalue>>{
 		return mu<CompletedAwait<jvalue>>( [m, executer, authorizer=_authorizer, schema=_schema, sl]()->jvalue{
-			//the acl is the only gate available here - ownership can't be one.  OpcGateway logs a user out by purging *their*
-			//session as its own service identity (HttpRequestAwait::Logout), so a legitimate purge is routinely cross-user and
-			//"you may only purge your own" would break logout.  Administer on `sessions` is what separates that from an attacker.
+			//A signed-in caller may end their own session, and one they signed its user in to:  a stand-alone gateway logs a user out
+			//by purging the session it began for them (AddSession, Login - MintedBy) as its own identity (HttpRequestAwait::Logout),
+			//so its sign-out needs no grant (364-sessions-resource review #2).  Anyone else's takes Administer on `sessions`.  Not the
+			//id alone:  it is 32 bits, so holding one would let a guesser sign anyone out.  An id not found takes the gate, as the listing's.
 			THROW_IF( !authorizer, "No authorizer - refusing to purge session." );
-			authorizer->Test( schema, "sessions", Access::ERights::Administer, executer, sl );
-			uint rows{};
-			if( auto sessionId = m.FindPtr("id"); sessionId )
-				rows = Sessions::Remove( Str::TryTo<SessionPK,16>(Json::AsString(*sessionId)).value_or(0) ) ? 1 : 0;
+			let id = m.FindPtr( "id" );
+			let sessionId = id ? Str::TryTo<SessionPK,16>( Json::AsString(*id) ) : nullopt;
+			let session = sessionId ? Sessions::Find( *sessionId ) : sp<SessionInfo>{};
+			let theirs = session && executer.Value && (session->UserPK.Value==executer.Value || session->MintedBy.Value==executer.Value);
+			if( !theirs )
+				authorizer->Test( schema, "sessions", Access::ERights::Administer, executer, sl );
+			let rows = session && Sessions::Remove( session->SessionId ) ? 1 : 0;
 			return jobject{ {"complete", true}, {"rowCount", rows} };
 		}, sl );
 	}

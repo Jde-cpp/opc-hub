@@ -1,4 +1,5 @@
 #include "gtest/gtest.h"
+#include <jde/fwk/chrono.h>
 #include <jde/fwk/io/json.h>
 #include <jde/access/Authorize.h>
 
@@ -451,9 +452,55 @@ namespace Jde::Access::Tests{
 		EXPECT_TRUE( kept.size()==1 && kept.contains(PermissionRole{PermissionPK{12}}) ) << "the role keeps only its grant on the other row";
 		EXPECT_EQ( auth->Rights(_schema, "gadgets", _user), Read );
 
+		//review #8:  the users' rights on the row go without a Recalc - a pk sqlite reuses must not find them.
+		auth->CreateResource( Resource{_resourcePK, jobject{{"schemaName",_schema},{"slug","reused"}}} );
+		EXPECT_EQ( auth->Rights(_schema, "reused", _user), None ) << "nothing granted on the reused pk";
+		auth->PurgeResource( _resourcePK );
+
 		auth->CreateResource( Resource{ResourcePK{3}, jobject{{"schemaName",_schema},{"slug",_slug}}} );//the key again, enforced
 		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, ""), ResourcePK{3} );
 		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, Read, _user); }), EHttpStatus::Forbidden ) << "the new row, which grants nothing, answers";
+	}
+	//364-sessions-resource review #3:  a grant naming a slug and no schema (RoleAwait's key resolution) - the hub carries `sessions` in
+	//two app schemas, and the first by pk answered.  An app schema still wins over the opc ones, unenforced or not.
+	TEST( AuthorizeTests, GetSchemaOfABareSlug ){
+		auto auth = createAuthorizer();
+		let create = [&]( ResourcePK pk, str schema, str slug, bool deleted=false ){
+			jobject j{ {"schemaName",schema}, {"slug",slug} };
+			if( deleted )
+				j["deleted"] = ToIsoString( DB::DBClock::now() );
+			auth->CreateResource( Resource{pk, j} );
+		};
+		create( ResourcePK{2}, "opc.a", "nodeIds" );
+		EXPECT_EQ( auth->GetSchema("nodeIds", SRCE_CUR), "opc.a" ) << "the one opc schema";
+		create( ResourcePK{3}, "opc.b", "nodeIds" );
+		EXPECT_THROW( auth->GetSchema("nodeIds", SRCE_CUR), Exception ) << "two live opc schemas";
+		create( ResourcePK{4}, "opc.a", "logs" );
+		create( ResourcePK{5}, "app", "logs", true );
+		EXPECT_EQ( auth->GetSchema("logs", SRCE_CUR), "app" ) << "an app schema wins over an opc one, unenforced too";
+		EXPECT_EQ( auth->GetSchema(_slug, SRCE_CUR), _schema );
+		create( ResourcePK{6}, "app", _slug );
+		EXPECT_THROW( auth->GetSchema(_slug, SRCE_CUR), Exception ) << "two app schemas - app/sessions beside gateway/sessions";
+		EXPECT_THROW( auth->GetSchema("unknown", SRCE_CUR), Exception );
+	}
+	//364-sessions-resource review #1:  a pk AddResource indexed without caching its row - RoleAwait's resourceRow, for a live row the
+	//cache never saw - was left indexed by a purge that looked for the row first:  enforced, with nothing granted on it, until a restart.
+	TEST( AuthorizeTests, PurgeResourceUnindexesAnUncachedRow ){
+		auto auth = createAuthorizer();
+		constexpr ResourcePK indexedPK{ 2 };
+		auth->AddResource( indexedPK, _schema, "gadgets", {} );
+		auth->Permissions().emplace( PermissionPK{10}, Permission{PermissionPK{10}, indexedPK, Read, None} );
+		auth->Acl().emplace( IdentityPK{_user}, PermissionRole{PermissionPK{10}} );
+		ASSERT_FALSE( auth->FindResource(indexedPK) ) << "indexed, not cached";
+		ASSERT_EQ( auth->FindActiveResourcePK(_schema, "gadgets", ""), indexedPK );
+		ASSERT_EQ( status([&]{ auth->Test(_schema, "gadgets", Read, UserPK{999}); }), EHttpStatus::Unauthorized ) << "enforced";
+
+		auth->PurgeResource( indexedPK );
+		EXPECT_FALSE( auth->FindActiveResourcePK(_schema, "gadgets", "") ) << "unindexed by its pk";
+		EXPECT_NO_THROW( auth->Test(_schema, "gadgets", Read, UserPK{999}) );
+		EXPECT_FALSE( auth->Permissions().contains(PermissionPK{10}) );
+		EXPECT_EQ( auth->Acl().count(IdentityPK{_user}), 0u );
+		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, ""), _resourcePK ) << "and nothing else";
 	}
 
 	//The gate on standing in for a schema (AddAdminAuthorizer):  Administer on every active criteria-less resource of the

@@ -101,8 +101,11 @@ namespace Jde::Opc::Hub::Tests{
 	//gate is app/sessions, unenforced here, so a user the gateway's grants nothing still lists and purges.
 	TEST_F( HubRoutingTests, TheGatewaysSessionsDoNotGateWebSessions ){
 		let enforce = []( bool on ){ App::Server::AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"sessions\", criteria:null )", on ? "restore" : "delete"), {} ); };
-		enforce( true );
-		absl::Cleanup unenforce{ [&]{ enforce( false ); } };
+		let rows = Json::AsArray( App::Server::AppClient()->QuerySync<jvalue>("resources( schemaName:\"gateway\", slug:\"sessions\", criteria:null ){ deleted }", {}) );
+		let wasEnforced = rows.size() && rows[0].as_object().at("deleted").is_null();
+		if( !wasEnforced )
+			enforce( true );
+		absl::Cleanup restore{ [&]{ if( !wasEnforced ) enforce( false ); } };//as it was found (364-sessions-resource review #9).
 		let caller = Web::Server::Sessions::Add( Jde::UserPK{999'999}, string{Host}, false )->SessionId;//no user:  no grant anywhere.
 		let other = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.16", false )->SessionId;
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( caller ); Web::Server::Sessions::Remove( other ); } };

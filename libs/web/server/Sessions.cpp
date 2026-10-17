@@ -54,8 +54,9 @@ namespace	Sessions{
 		return y;
 	}
 }
-	α Sessions::Add( UserPK userPK, string&& endpoint, bool isSocket )ι->sp<SessionInfo>{
+	α Sessions::Add( UserPK userPK, string&& endpoint, bool isSocket, UserPK mintedBy )ι->sp<SessionInfo>{
 		auto newSession = Internal::CreateSession( userPK, move(endpoint), isSocket, false );
+		newSession->MintedBy = mintedBy;
 		upsert( newSession );
 		return newSession;
 	}

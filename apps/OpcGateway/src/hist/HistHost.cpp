@@ -461,7 +461,8 @@ namespace Jde::Opc::Gateway{
 		//nothing else would ever purge them - the Resources page lists no criteria row.  After the group's purge has landed, so a local
 		//failure leaves the group its row, and best effort:  a refusal - the gateway's login not administering an enforced `gateway`
 		//root - or an AppServer out of reach leaves the row, inert, since no later group takes its guid.  Most groups have no row of
-		//their own, which the AppServer answers NotFound.  No purged event exists, so the authorizers keep the row until their next load.
+		//their own, which the AppServer answers NotFound.  The purge is published, so every subscribed authorizer drops the row and its
+		//grants as it lands (Authorize::PurgeResource, #364).
 		try{
 			co_await Any( *AppClient()->Query<jvalue>("purgeResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", guid}}) );
 			INFO( "[{}]The group's access row purged with it.", guid );

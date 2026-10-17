@@ -28,7 +28,7 @@ namespace Jde::Opc::Hub{
 			return await;
 		if( App::Server::InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<App::Server::InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );
-		if( Web::Server::SessionGraphQL::IsPurge(m) )//the gateway role's logout purges here too, as the system:  one map, the AppServer's authorizer.
+		if( Web::Server::SessionGraphQL::IsPurge(m) )//as AppServerQL:  a stand-alone gateway's logout, as its own account.  The hub's own gateway sends none - HubLogout removes from the one map.
 			return Web::Server::SessionGraphQL{ App::Server::AppClient(), App::Server::Authorizer(), App::Server::AppSchema()->Name }.Purge( m, creds.UserPK(), sl );
 		if( auto await = Gateway::HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory, as GatewayQL.
 			return await;

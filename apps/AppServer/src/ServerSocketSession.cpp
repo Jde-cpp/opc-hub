@@ -68,7 +68,7 @@ namespace Jde::App::Server{
 			LogRead( Ƒ("AddSession user: '{}', endpoint: '{}', provider: {}, is_socket: {}", m.domain()+"/"+m.login_name(), m.user_endpoint(), m.provider_pk(), m.is_socket()), requestId );
 			let userPK = co_await Access::Server::Authenticate( m.login_name(), m.provider_pk(), m.domain() );
 
-			auto info = Web::Server::Sessions::Add( userPK, move(*m.mutable_user_endpoint()), m.is_socket() );
+			auto info = Web::Server::Sessions::Add( userPK, move(*m.mutable_user_endpoint()), m.is_socket(), UserPK() );//this socket's account may end what it began (SessionGraphQL::Purge).
 			LogWrite( Ƒ("AddSession id: {:x}", info->SessionId), requestId );
 			Write( FromServer::Session(Web::Server::ToProto(*info), requestId) );
 		}
@@ -234,6 +234,7 @@ namespace Jde::App::Server{
 		let _ = shared_from_this();
 		try{
 			let session = co_await Sessions::UpsertAwait( "Bearer " + move(jwt), _userEndpoint.address().to_string(), true, Server::AppClient() );
+			session->MintedBy = UserPK();//a Bearer upsert always mints, and the id has gone to no one yet - as AddSession.
 			Write( FromServer::Session(Web::Server::ToProto(*session), requestId) );
 		}
 		catch( runtime_error& e ){
