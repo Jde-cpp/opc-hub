@@ -80,10 +80,13 @@ local common = import 'common-meta.libsonnet';
 			ops: ["None"]
 		},
 	},
-	//The AppServer's log - its own lines and every forwarded line whose instance has no resourceSchema - plus its log
-	//settings and the stored tag levels of those instances.  No table behind it, as the OpcServer's nodeIds:  each app
-	//declares its own `logs`, so an OpcServer's is `opc.<instance>/logs`.
+	//No table behind either, as the OpcServer's nodeIds.  `logs`:  the AppServer's log - its own lines and every forwarded line
+	//whose instance has no resourceSchema - plus its log settings and the stored tag levels of those instances;  each app declares
+	//its own, so an OpcServer's is `opc.<instance>/logs`.  `sessions`:  the web sessions of this process and of every instance
+	//(sessions{…}, session(id:…), sessions(instanceId:…) - SessionGraphQL, InstanceSessionsAwait) take Read, and purgeSession -
+	//a stand-alone gateway's logout, as its own identity - Administer.  Not the gateway's `sessions`, its OPC UA sessions.
 	resources:{
-		logs:{ ops:["Read","Update","Administer"] }
+		logs:{ ops:["Read","Update","Administer"] },
+		sessions:{ ops:["Read","Administer"] }
 	}
 }

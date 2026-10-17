@@ -39,7 +39,7 @@ namespace Jde::Access::Server{
 			let isRole = co_await DS().ScalerOpt<uint>( DB::Sql{Ƒ("select is_role from {} where permission_id=?", GetTable("permissions").DBName), vector<DB::Value>{{*permissionPK}}} );
 			THROW_IF( !isRole, "[{}]Permission not found.", *permissionPK );
 			if( *isRole )
-				Authorizer().TestAdminSlug( "roles", _executer, _sl );
+				TestAccessAdmin( "roles", _executer, _sl );
 			else
 				Authorizer().TestAdminPermission( PermissionPK{*permissionPK}, _executer, _sl );
 			//the listener - and any subscriber - branches on the key, so the notification has to carry the one the pk is.
@@ -82,7 +82,7 @@ namespace Jde::Access::Server{
 	α AclQLAwait::InsertRole()ι->DB::ExecuteAwait::Task{
 		jobject y;
 		try{
-			Authorizer().TestAdminSlug( "roles", _executer, _sl );
+			TestAccessAdmin( "roles", _executer, _sl );
 			DB::InsertClause insert{ Table().InsertProcName()+"_role" };
 			let args = _mutation.ExtrapolateVariables();
 			let identityPK = Json::AsNumber<IdentityPK::Type>( args, "identity/id" );

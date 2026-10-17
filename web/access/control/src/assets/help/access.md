@@ -131,6 +131,13 @@ Logs have one resource per application: `app/logs` for the hub, `opc.install/log
 
 Like every resource, these ship unenforced. Until you enforce one, anyone can read that application's log and read and change its log settings, even without signing in. The hub's log also holds the lines the OPC server sends it, and those need Read on the server's `logs` as well.
 
+Web sessions have one resource, `app/sessions`, for every instance's **Web Sessions** tab.
+
+- **Read** lists them.
+- **Administer** ends one. Only a stand-alone gateway's sign-out does that, as the gateway's own user: give that user the *Gateway Instance* role before you enforce it. The hub's own gateway needs nothing.
+
+`gateway/sessions` is another resource. It gates the gateway's OPC sessions.
+
 The hub also gates the nodes of the **bundled** Jde OPC server, which enforces them itself. Delegation only lets that server answer who may grant rights on its nodes.
 
 The hub does **not** gate the nodes of a third-party OPC server. You sign in to such a server as one of *its* users (`slug\user`), the hub opens the session as that user, and what you may then read or write is that server's own decision, taken in its own configuration tool. No role here grants or withholds it, and the node page's **Permissions** tab is not offered for one.

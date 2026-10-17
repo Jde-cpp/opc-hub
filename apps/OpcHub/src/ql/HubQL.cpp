@@ -28,8 +28,8 @@ namespace Jde::Opc::Hub{
 			return await;
 		if( App::Server::InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<App::Server::InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );
-		if( Web::Server::SessionGraphQL::IsPurge(m) )//the gateway role's logout purges here too:  one map, the AppServer's authorizer.
-			return Web::Server::SessionGraphQL{ App::Server::AppClient(), App::Server::Authorizer() }.Purge( m, creds.UserPK(), sl );
+		if( Web::Server::SessionGraphQL::IsPurge(m) )//the gateway role's logout purges here too, as the system:  one map, the AppServer's authorizer.
+			return Web::Server::SessionGraphQL{ App::Server::AppClient(), App::Server::Authorizer(), App::Server::AppSchema()->Name }.Purge( m, creds.UserPK(), sl );
 		if( auto await = Gateway::HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory, as GatewayQL.
 			return await;
 		if( auto await = Gateway::HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits, as GatewayQL.

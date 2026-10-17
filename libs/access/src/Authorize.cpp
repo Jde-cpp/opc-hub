@@ -186,12 +186,6 @@ namespace Jde::Access{
 			TestAdmin( resource->second, executer, sl );
 	}
 
-	α Authorize::TestAdminSlug( str resourceSlug, UserPK executer, SL sl )ε->void{
-		rl _{ Mutex };
-		auto resource = find_if( Resources, [&](let& r){return r.second.Slug==resourceSlug && !r.second.Schema.contains('.');} );//exclude opc schemas which can have same slug
-		if( resource!=Resources.end() && !resource->second.IsDeleted )
-			TestAdmin( resource->second, executer, sl );
-	}
 	α Authorize::TestAdminGrant( str schema, str resource, str criteria, UserPK userPK, SL sl )ι->up<AnyVoidAwait>{
 		if( auto remote = FindAdminAuthorizer(schema); remote ){
 			try{
@@ -435,7 +429,33 @@ namespace Jde::Access{
 	α Authorize::CreateResource( Resource&& resource )ε->void{
 		ul _{ Mutex };
 		Index( resource );//as Load registers every active row:  a row created active is enforced - and found by TestSchemaAdmin - now, not at the next start (appserver-review3 #13).
-		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and resource purges are not subscribed, so the entry may be a stale deleted row.
+		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and a purge this cache missed - one before it subscribed (#364), or another process's - leaves a stale row there.
+	}
+	α Authorize::PurgeResource( ResourcePK pk )ι->void{
+		ul _{ Mutex };
+		auto resource = Resources.find( pk );
+		if( resource==Resources.end() )
+			return;
+		Unindex( resource->second );
+		Resources.erase( resource );
+		flat_set<PermissionRole> purged;
+		for( auto p = Permissions.begin(); p!=Permissions.end(); ){
+			if( p->second.ResourcePK==pk ){
+				purged.emplace( p->first );
+				p = Permissions.erase( p );
+			}
+			else
+				++p;
+		}
+		if( purged.empty() )
+			return;
+		for( auto acl=Acl.begin(); acl!=Acl.end(); )
+			acl = purged.contains( acl->second ) ? Acl.erase( acl ) : std::next( acl );
+		for( auto&& [_,role] : Roles ){ //&&: flat_map iterates a proxy pair.
+			for( let& member : purged )
+				role.Members.erase( member );
+		}
+		Recalc();
 	}
 	//A pk names one row.  No pk - the fan-out could not pick one, because a by-slug delete hit several - names every row of that
 	//schema+slug, and the db changed all of them, so the cache does too (access-review3 #22).
@@ -558,7 +578,7 @@ namespace Jde::Access{
 		optional<ResourcePK> resourcePK;
 		auto found = FindResourceLocked( resource );
 		//The grant names its row - pk, schema and slug - and the entry cached under that pk is another resource:  sqlite reuses a
-		//purged pk and resource purges are not subscribed (CreateResource), so it is a stale row.  Taken as this one, the grant -
+		//purged pk and this cache can miss a purge (CreateResource), so it is a stale row.  Taken as this one, the grant -
 		//and every later grant on the new row by id - landed on the old row's slug (reviews/m3-closing.md #11).  Replace it.
 		let names = [&]( const Resource& cached )->bool{//what the payload says, where it says it - a grant by slug alone names no schema
 			return cached.Slug!=resource.Slug || (resource.Schema.size() && cached.Schema!=resource.Schema) || (jResource.contains("criteria") && cached.Criteria!=resource.Criteria);

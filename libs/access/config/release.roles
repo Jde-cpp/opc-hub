@@ -8,6 +8,7 @@ mutation{
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"users" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"instances" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"instanceTagLevels" } } )
+	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"sessions" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"sessions" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"search" } } )
@@ -24,6 +25,7 @@ mutation{
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"app", slug:"instances" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"app", slug:"instanceTagLevels" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:38, denied:0, resource:{ schemaName:"app", slug:"logs" } } )
+	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"app", slug:"sessions" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
 	addRole( slug:"sa", permissionRight:{ allowed:38, denied:0, resource:{ schemaName:"opc.install", slug:"logs" } } )
@@ -52,4 +54,12 @@ mutation{
 	addRole( slug:"maint-tech", role:{ slug:"viewer" } )
 	addRole( slug:"maint-tech", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"app", slug:"logs" } } )
 	addRole( slug:"maint-tech", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"opc.install", slug:"logs" } } )
+
+	createRole( slug:"gateway-instance", name:"Gateway Instance", description:"A stand-alone OPC gateway's own account - the hub's built-in gateway needs none.  Administer on the application server's web sessions lets its logout end the user's session there.  Read on the access acl, groups, resources, roles and users is its access load and event subscriptions - each declares Read, so enforcing any of them stops a gateway without this role from starting.  Assign it to the gateway's user on that user's Roles tab." )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"acl" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"groups" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"resources" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"roles" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"access", slug:"users" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"app", slug:"sessions" } } )
 }

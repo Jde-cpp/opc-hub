@@ -1,4 +1,5 @@
 #include <absl/cleanup/cleanup.h>
+#include <jde/db/meta/AppSchema.h>
 #include <jde/ql/QLAwait.h>
 #include "helpers.h"
 #include "../src/LocalClient.h"
@@ -131,12 +132,10 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Status([&]{ RunQL(Ƒ("session( instanceId:{}, id:\"{:x}\" ){{ endpoint }}", instanceId, session->SessionId)); }), EHttpStatus::BadRequest );
 	}
 
-	//The gate, enforced:  admin over `sessions`.  A stand-alone AppServer declares no such resource (#364), so this creates one in
-	//an undotted schema of its own, which TestAdminSlug takes, and purges it after - a previous (mysql) run's too.  Once a suite:
-	//resource purges are not subscribed, so a purged row stays cached as deleted, and TestAdminSlug, finding it first by slug,
-	//would pass everyone despite a second, enforced one.
+	//The gate, enforced:  the app schema's `sessions` (#364) - Read lists, Administer purges.  Enforced for the suite and unenforced
+	//after, so other suites see it as it ships.
 	struct WebSessionGateTests : WebSessionTests{
-		static constexpr sv Schema{ "webSessionTests" };
+		static constexpr sv OtherSchema{ "webSessionTests" };
 		Ω Id( const jvalue& v )->uint{ return Json::AsNumber<uint>( Json::AsObject(v), "id" ); }
 		Ω User( str slug )->Jde::UserPK{
 			auto user = RunQL( Ƒ("user( slug:\"{}\", deleted:null ){{ id }}", slug) );
@@ -144,35 +143,46 @@ namespace Jde::App::Server::Tests{
 				user = RunQL( Ƒ("createUser( slug:\"{0}\", name:\"{0}\" ){{ id }}", slug) );
 			return Jde::UserPK{ (Jde::UserPK::Type)Id(user) };
 		}
-		Ω PurgeResources()->void{
-			for( let& r : Json::AsArray(RunQL(Ƒ("resources( schemaName:[\"{}\"] ){{ id deleted }}", Schema))) ){
-				let id = Id( r );
-				if( r.as_object().at("deleted").is_null() )
-					RunQL( Ƒ("deleteResource( id:{} )", id) );//resource purges are not subscribed:  unenforce the cached row first.
-				RunQL( Ƒ("purgeResource( id:{} )", id) );
+		//schema's `sessions` row, enforced or not - restore/delete only on a change:  a no-op update publishes nothing.
+		Ω Enforce( str schema, bool on )->void{
+			for( let& r : Json::AsArray(RunQL(Ƒ("resources( schemaName:\"{}\", slug:\"sessions\", criteria:null ){{ id deleted }}", schema))) ){
+				if( r.as_object().at("deleted").is_null()!=on )
+					RunQL( Ƒ("{}Resource( id:{} )", on ? "restore" : "delete", Id(r)) );
 			}
 		}
-		Ω SetUpTestSuite()->void{
-			PurgeResources();
-			_stranger = User( "webSessionStranger" );
-			_admin = User( "webSessionAdmin" );
-			let id = Id( RunQL(Ƒ("createResource( schemaName:\"{}\", name:\"sessions\", slug:\"sessions\", allowed:{} ){{ id }}", Schema, underlying(Access::ERights::Read | Access::ERights::Administer))) );
-			if( !Json::AsArray(RunQL(Ƒ("resources( id:{} ){{ id deleted }}", id)))[0].at("deleted").is_null() )
-				RunQL( Ƒ("restoreResource( id:{} )", id) );
-			RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} )", _admin.Value, underlying(Access::ERights::Administer), Schema) );
+		Ω PurgeOthers()->void{
+			for( let& r : Json::AsArray(RunQL(Ƒ("resources( schemaName:[\"{}\"] ){{ id }}", OtherSchema))) )
+				RunQL( Ƒ("purgeResource( id:{} )", Id(r)) );
 		}
-		Ω TearDownTestSuite()->void{ PurgeResources(); }
-		static inline Jde::UserPK _stranger, _admin;
+		Ω SetUpTestSuite()->void{
+			let schema = AppSchema()->Name;
+			ASSERT_EQ( Json::AsArray(RunQL(Ƒ("resources( schemaName:\"{}\", slug:\"sessions\", criteria:null ){{ id }}", schema))).size(), 1u ) << "app-meta.jsonnet declares it, so the sync makes it";
+			PurgeOthers();
+			_stranger = User( "webSessionStranger" );
+			_reader = User( "webSessionReader" );
+			_admin = User( "webSessionAdmin" );
+			let grant = [&]( Jde::UserPK user, Access::ERights rights ){
+				RunQL( Ƒ("createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:\"{}\", slug:\"sessions\" }} }} )", user.Value, underlying(rights), schema) );
+			};
+			grant( _reader, Access::ERights::Read );
+			grant( _admin, Access::ERights::Read | Access::ERights::Administer );
+			Enforce( schema, true );
+		}
+		Ω TearDownTestSuite()->void{
+			Enforce( AppSchema()->Name, false );
+			PurgeOthers();
+		}
+		static inline Jde::UserPK _stranger, _reader, _admin;
 	};
 
-	TEST_F( WebSessionGateTests, TheListingTakesAdmin ){
+	TEST_F( WebSessionGateTests, TheListingTakesRead ){
 		let session = Web::Server::Sessions::Add( _stranger, "10.255.0.6", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		constexpr sv listing{ "sessions{ endpoint }" };
 		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _stranger); }), EHttpStatus::Forbidden ) << "a session of their own does not open the listing";
 		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}); }), EHttpStatus::Unauthorized );
 		jvalue y;
-		EXPECT_EQ( Status([&]{ y = RunQL(string{listing}, _admin); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ y = RunQL(string{listing}, _reader); }), EHttpStatus::None );
 		ASSERT_TRUE( y.is_array() ) << serialize( y );
 		EXPECT_TRUE( Endpoints(y).contains("10.255.0.6") ) << serialize( y );
 
@@ -180,7 +190,7 @@ namespace Jde::App::Server::Tests{
 		ASSERT_TRUE( instanceId );
 		let forwarded = Ƒ( "sessions( instanceId:{} ){{ endpoint }}", instanceId );//InstanceSessionsAwait's own gate, before the local leg runs as the system user.
 		EXPECT_EQ( Status([&]{ RunQL(forwarded, _stranger); }), EHttpStatus::Forbidden );
-		EXPECT_EQ( Status([&]{ RunQL(forwarded, _admin); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ RunQL(forwarded, _reader); }), EHttpStatus::None );
 	}
 
 	TEST_F( WebSessionGateTests, OnlyTheirOwnSessionIsExempt ){
@@ -194,15 +204,34 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), _stranger); }), EHttpStatus::Forbidden );
 		EXPECT_EQ( Status([&]{ RunQL(byId(0xdeadbeef), _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused alike";
 		EXPECT_EQ( Status([&]{ RunQL(byId(own->SessionId), {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
+		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), _reader); }), EHttpStatus::None ) << "another's takes the listing's Read";
 	}
 
-	TEST_F( WebSessionGateTests, ThePurgeTakesAdmin ){
+	TEST_F( WebSessionGateTests, ThePurgeTakesAdminister ){
 		let session = Web::Server::Sessions::Add( _admin, "10.255.0.13", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		let purge = Ƒ( "purgeSession( id:\"{:x}\" )", session->SessionId );
 		EXPECT_EQ( Status([&]{ RunQL(purge, _stranger); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ RunQL(purge, _reader); }), EHttpStatus::Forbidden ) << "Read lists, it does not purge";
 		EXPECT_TRUE( Web::Server::Sessions::Find(session->SessionId) );
 		EXPECT_EQ( Status([&]{ RunQL(purge, _admin); }), EHttpStatus::None );
 		EXPECT_FALSE( Web::Server::Sessions::Find(session->SessionId) );
+	}
+
+	//#364:  the hub holds the gateway's `sessions` beside the app schema's, and the gate that asked by slug alone answered with
+	//either - enforcing the gateway's locked the listing out.  Another schema's `sessions`, enforced and granting nothing, gates nothing here.
+	TEST_F( WebSessionGateTests, AnotherSchemasSessionsDoNotGate ){
+		RunQL( Ƒ("createResource( schemaName:\"{}\", name:\"sessions\", slug:\"sessions\", allowed:{} ){{ id }}", OtherSchema, underlying(Access::ERights::Read | Access::ERights::Administer)) );
+		Enforce( string{OtherSchema}, true );
+		absl::Cleanup purge{ []{ PurgeOthers(); } };
+		let session = Web::Server::Sessions::Add( _stranger, "10.255.0.15", false );
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
+		constexpr sv listing{ "sessions{ endpoint }" };
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _reader); }), EHttpStatus::None ) << "the reader's grant is on app's, and app's answers";
+
+		let app = AppSchema()->Name;
+		Enforce( app, false );
+		absl::Cleanup enforce{ [&]{ Enforce( app, true ); } };
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _stranger); }), EHttpStatus::None ) << "app's unenforced:  open, whatever the other schema enforces";
 	}
 }

@@ -1,5 +1,6 @@
 #include "InstanceSessionsAwait.h"
 #include <jde/access/Authorize.h>
+#include <jde/db/meta/AppSchema.h>
 #include <jde/app/usings.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
@@ -11,9 +12,9 @@ namespace Jde::App::Server{
 		try{
 			_query.Args = _query.ExtrapolateVariables();//bound, so the text sent on carries the values and not the names.
 			let instanceId = Json::AsNumber<ProgInstPK>( _query.Args, "instanceId" );
-			//SessionGraphQL's gate, asked here as well:  the local leg runs as the system user, and the remote one as whoever this process
-			//vouches for - neither may pass what the caller would not.
-			Authorizer()->TestAdminSlug( "sessions", _executer, _sl );
+			//SessionGraphQL's gate, asked here:  the local leg runs as the system user, and an instance answers ungated (Forwarded) -
+			//neither may pass what the caller would not.
+			Authorizer()->Test( AppSchema()->Name, "sessions", Access::ERights::Read, _executer, _sl );
 			_query.Args.erase( "instanceId" );//the instance lists its own map, and refuses an instanceId.
 			_query.ReturnRaw = true;//the bare list - TablesAwait files it under `sessions` for the caller.
 			if( auto y = co_await QueryInstanceAwait{instanceId, move(_query), _executer, _sl}; y )

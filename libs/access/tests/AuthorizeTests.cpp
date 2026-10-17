@@ -20,6 +20,7 @@ namespace Jde::Access::Tests{
 		using Authorize::DeleteGroup;
 		using Authorize::DeleteUser;
 		using Authorize::PurgeGroup;
+		using Authorize::PurgeResource;
 		using Authorize::PurgeRole;
 		using Authorize::PurgeUser;
 		using Authorize::RemoveAcl;
@@ -262,13 +263,13 @@ namespace Jde::Access::Tests{
 		const UserPK system{ UserPK::System };
 		ASSERT_EQ( auth->Rights(_schema, _slug, system), All );//all three entry points must agree that System is all-access.
 		EXPECT_NO_THROW( auth->Test(_schema, _slug, All, system) );
-		EXPECT_NO_THROW( auth->TestAdminSlug(_slug, system) );
+		EXPECT_NO_THROW( auth->TestAdminLocal(_schema, _slug, "", system) );
 		EXPECT_NO_THROW( auth->TestUser(system) );
 
 		const UserPK unknown{ 999 };//...and that an unknown non-System user is not.
 		ASSERT_EQ( auth->Rights(_schema, _slug, unknown), None );
 		EXPECT_THROW( auth->Test(_schema, _slug, Read, unknown), Exception );
-		EXPECT_THROW( auth->TestAdminSlug(_slug, unknown), Exception );
+		EXPECT_THROW( auth->TestAdminLocal(_schema, _slug, "", unknown), Exception );
 	}
 
 	//access-refactor A4:  Test, TestAdmin, TestUser and Rights share one lookup, so each state answers alike through all four -
@@ -285,7 +286,7 @@ namespace Jde::Access::Tests{
 	TEST( AuthorizeTests, EntryPointsAgree ){
 		auto auth = createAuthorizer();
 		let test = [&]( UserPK user ){ return status( [&]{ auth->Test(_schema, _slug, Read, user); } ); };
-		let testAdmin = [&]( UserPK user ){ return status( [&]{ auth->TestAdminSlug(_slug, user); } ); };
+		let testAdmin = [&]( UserPK user ){ return status( [&]{ auth->TestAdminLocal(_schema, _slug, "", user); } ); };
 		let testUser = [&]( UserPK user ){ return status( [&]{ auth->TestUser(user); } ); };
 
 		const UserPK unknown{ 999 };
@@ -405,6 +406,54 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, ""), _resourcePK ) << "and only that row";
 		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, true );
 		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, criteria), criteriaPK );
+	}
+
+	//#364:  the hub holds two `sessions` - the app schema's and the gateway's - and the gate that asked by slug alone answered with
+	//whichever row had the lower pk.  By (schema, slug), each row answers for its own schema only.
+	TEST( AuthorizeTests, ASlugAnswersForItsOwnSchema ){
+		auto auth = createAuthorizer();//_schema's row, pk 1:  enforced, nothing granted on it.
+		constexpr ResourcePK appPK{ 2 };
+		const string app{ "app" };
+		auth->CreateResource( Resource{appPK, jobject{{"schemaName",app},{"slug",_slug}}} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, appPK, Read | Administer, None} );
+		EXPECT_NO_THROW( auth->Test(app, _slug, Read, _user) );
+		EXPECT_NO_THROW( auth->TestAdminLocal(app, _slug, "", _user) ) << "the lower pk is another schema's";
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, Read, _user); }), EHttpStatus::Forbidden ) << "and app's grant does not reach it";
+		auth->UpdateResourceDeleted( appPK, app, jobject{{"id",appPK.Value}}, false );
+		EXPECT_NO_THROW( auth->Test(app, _slug, Read, UserPK{999}) ) << "app's unenforced - another schema's enforced row does not gate it";
+	}
+
+	//#364:  resource purges are subscribed (AccessListener).  Left cached as deleted, a purged row was what a by-slug lookup could
+	//reach first, and one purged while enforced kept its slug enforced and its grants counted until a restart.  A purge takes
+	//what access_resource_purge takes:  the permissions on the row, and the acl rows and role members naming them.
+	TEST( AuthorizeTests, PurgeResourceSweepsItsGrants ){
+		auto auth = createAuthorizer();
+		constexpr ResourcePK otherPK{ 2 };
+		auth->CreateResource( Resource{otherPK, jobject{{"schemaName",_schema},{"slug","gadgets"}}} );
+		const RolePK role{ 70 };
+		auth->Permissions().emplace( PermissionPK{11}, Permission{PermissionPK{11}, _resourcePK, Read, None} );
+		auth->Permissions().emplace( PermissionPK{12}, Permission{PermissionPK{12}, otherPK, Read, None} );
+		auto& members = auth->Roles().try_emplace( role, Role{role,false} ).first->second.Members;
+		members.emplace( PermissionPK{11} );
+		members.emplace( PermissionPK{12} );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Update, None} );
+		auth->AddAcl( _user.Value, role );
+		ASSERT_EQ( rights(*auth), Read | Update );
+		ASSERT_EQ( auth->Rights(_schema, "gadgets", _user), Read );
+
+		auth->PurgeResource( _resourcePK );
+		EXPECT_FALSE( auth->FindResource(_resourcePK) );
+		EXPECT_FALSE( auth->FindActiveResourcePK(_schema, _slug, "") ) << "no longer enforced";
+		EXPECT_EQ( rights(*auth), All ) << "not enforced, as a slug nothing declares";
+		EXPECT_FALSE( auth->Permissions().contains(PermissionPK{10}) || auth->Permissions().contains(PermissionPK{11}) );
+		EXPECT_EQ( auth->Acl().count(IdentityPK{_user}), 1u ) << "the direct grant went, the role assignment stays";
+		let& kept = auth->Roles().find( role )->second.Members;
+		EXPECT_TRUE( kept.size()==1 && kept.contains(PermissionRole{PermissionPK{12}}) ) << "the role keeps only its grant on the other row";
+		EXPECT_EQ( auth->Rights(_schema, "gadgets", _user), Read );
+
+		auth->CreateResource( Resource{ResourcePK{3}, jobject{{"schemaName",_schema},{"slug",_slug}}} );//the key again, enforced
+		EXPECT_EQ( auth->FindActiveResourcePK(_schema, _slug, ""), ResourcePK{3} );
+		EXPECT_EQ( status([&]{ auth->Test(_schema, _slug, Read, _user); }), EHttpStatus::Forbidden ) << "the new row, which grants nothing, answers";
 	}
 
 	//The gate on standing in for a schema (AddAdminAuthorizer):  Administer on every active criteria-less resource of the

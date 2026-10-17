@@ -235,7 +235,8 @@ three together.
   elevated, say - Setup stops and names what to close, rather than lay new settings over files it could not replace.
 - Roles are seeded by a second pass: `<schema>.roles` files under `dataPaths` are upserted after the access server is
   configured (`createRole`/`addRole` run through its mutations, which the `.mutation` pass runs too early for).
-  `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician; `addRole` names
+  `release.roles` ships Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician, and Gateway
+  Instance - a stand-alone gateway's own account, which the hub's built-in gateway does not need; `addRole` names
   roles by `slug`.  Each file is recorded (`access_seeds`, by content) once it applies, and a later `-sync` start skips it
   while it is unchanged, so an administrator's edits to a seeded role - a changed right, a deny, a removed permission or
   child role - survive restarts.  A release whose seed changed applies it again and adds only what a role is missing: it

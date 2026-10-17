@@ -140,6 +140,12 @@ namespace Jde::Opc::Server{
 		if( mine )
 			ReassignRights( restored ? "a nodeIds resource was restored" : "a nodeIds resource was deleted" );
 	}
+	α OpcAuthorize::PurgeResource( Access::ResourcePK pk )ι->void{
+		let mine = IsNodeResource( pk, {}, {} );
+		Access::Authorize::PurgeResource( pk );
+		if( mine )
+			ReassignRights( "a nodeIds resource was purged" );
+	}
 
 	α OpcAuthorize::AddRolePermission( Access::RolePK rolePK, const Access::Permission& permission, const jobject& jResource )ι->void{
 		const Access::Resource resource{ jResource };

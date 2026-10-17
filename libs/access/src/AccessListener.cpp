@@ -132,6 +132,10 @@ namespace Jde::Access{
 			case Restored:
 				Authorizer().UpdateResourceDeleted( resourcePK, Json::FindDefaultSV(o, "schemaName"), o, event==Restored ); //schemaName - the column is called that (access-review3 #23); "schema" read empty and the by-name fallback could never match.
 				break;
+			case Purged:
+				if( resourcePK )//by id - the stock purge's only key;  ResourceMAwait resolves a by-key purge to it.
+					Authorizer().PurgeResource( resourcePK );
+				break;
 			default: break;
 		}
 	}

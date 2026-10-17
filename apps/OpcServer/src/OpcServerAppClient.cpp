@@ -37,14 +37,11 @@ namespace Jde::Opc::Server{
 		return q.IsMutation() && std::ranges::all_of( q.Mutations(), [](const auto& m){return App::LogSettingsMAwait::IsApplicable(m);} );
 	}
 	//The page's Web Sessions tab:  InstanceSessionsAwait gates the caller on the AppServer, then asks raw for the bare list.  This
-	//socket is the only way in - OpcQL routes no sessions query, since opcAuthorize holds no `sessions` resource and SessionGraphQL's
-	//gate could never refuse a caller of this server's own /graphql.
-	Ω isSessions( const QL::RequestQL& q )ι->bool{
-		return q.IsQueries() && q.Queries().size()==1 && q.Queries().front().JsonName=="sessions" && q.Queries().front().ReturnRaw;
-	}
+	//socket is the only way in - OpcQL routes no sessions query, since opcAuthorize holds no app schema and so no `sessions`
+	//resource a gate on this server's own /graphql could refuse with.
 	α OpcServerAppClient::ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>>{
-		if( isSessions(q) )
-			return Web::Server::SessionGraphQL{ AppClient(), Acl() }.Select( q.Queries().front(), executer, sl );
+		if( Web::Server::SessionGraphQL::IsForwarded(q) )
+			return Web::Server::SessionGraphQL::Forwarded( AppClient() ).Select( q.Queries().front(), executer, sl );
 		return isLogSettings( q )
 			? mu<QL::QLAwait<>>( move(q), QL::Creds{executer}, Server::QLPtr(), sl )
 			: up<TAwait<jvalue>>{ mu<OpcServerQL>(move(q), executer, sl) };

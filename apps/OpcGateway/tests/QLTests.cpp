@@ -57,11 +57,18 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( obj.contains("discoveryUrls") );
 	}
 
-	//#255:  a stand-alone gateway answers sessions{…} over its own map - the socket this test queries on holds one of them.
+	//#255:  a stand-alone gateway's web sessions, for its page's Web Sessions tab - asked by the AppServer as InstanceSessionsAwait
+	//forwards it:  raw, over the AppServer socket.  The socket this test queries on holds one of them.
 	TEST_F( QLTests, sessions ){
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("sessions{ endpoint lastUpdate expiration }", {}, true) );
+		auto q = QL::Parse( "sessions{ endpoint lastUpdate expiration }", {}, {}, true );
+		let value = BlockTAwait<jvalue>( move(*AppClient()->ClientQuery(move(q), AppClient()->UserPK())) );
 		ASSERT_TRUE( value.is_array() ) << serialize( value );
 		EXPECT_FALSE( value.as_array().empty() ) << "the querying socket's own session is one of them";
+	}
+	//#364:  and only so - the gateway's acl holds no app schema, so it has no `sessions` to refuse a caller of its own ql with.
+	TEST_F( QLTests, sessionsAreNotThisGatewaysQuery ){
+		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(Socket().Query("sessions{ endpoint }", {}, true))), std::exception );
+		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(Socket().Query("mutation purgeSession( id:\"1\" )", {}, true))), std::exception );
 	}
 
 	TEST_F( QLTests, namespaces ){
