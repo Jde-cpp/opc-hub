@@ -12,12 +12,6 @@ namespace Jde::Opc::Hist::Tests{
 	using namespace std::chrono;
 	using Proto::HistoryRecord;
 
-	Ω generation( const fs::path& file )ε->uint32_t{
-		let start = ReadStart( file );
-		if( !start )
-			ADD_FAILURE() << file << " opens with no FileStart.";
-		return start ? start->generation() : std::numeric_limits<uint32_t>::max();
-	}
 	Ω types( const vector<ReadValue>& values )ι->vector<Proto::UpdateType>{
 		vector<Proto::UpdateType> y;
 		for( let& v : values )
@@ -323,6 +317,25 @@ namespace Jde::Opc::Hist::Tests{
 		ASSERT_EQ( v.size(), 4 );
 		EXPECT_TRUE( isBound(v[0], Temp, 10, T0+2s) );
 		EXPECT_TRUE( isBound(v[1], Speed, 2.5, T0+2500ms) );
+	}
+
+	//An edit of many values into an earlier day corrects a later file's start value once, to the node's newest of them:
+	//one before the start the file has moves nothing, and each node's is its own.
+	TEST_F( Edits, ManyLateRecordsCorrectToTheNewest ){
+		TwoDays();
+		vector<Value> speeds{ Reading(1.5, T0+1500ms), Reading(2.2, T0+2200ms), Reading(2.6, T0+2600ms), Reading(2.4, T0+2400ms) };
+		vector<Value> temps{ Reading(12, T0+2300ms), Reading(11, T0+2100ms) };
+		let results = Edit( {UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, speeds}, UpdateData{Temp, UA_PERFORMUPDATETYPE_INSERT, temps}} );
+		ASSERT_EQ( results.size(), 2 );
+		EXPECT_EQ( statuses(results[0]), (vector<StatusCode>(4, UA_STATUSCODE_GOODENTRYINSERTED)) );
+		EXPECT_EQ( statuses(results[1]), (vector<StatusCode>(2, UA_STATUSCODE_GOODENTRYINSERTED)) );
+		EXPECT_EQ( Start(March8, Speed), StartValue{2.6} );
+		EXPECT_EQ( Start(March8, Temp), StartValue{12} );
+		EXPECT_EQ( readFile(File(*Pump, March8)).size(), 7 );//FileStart, two preamble records, 3 and 4, and the two corrections.
+		auto v = All( {.Nodes={Speed, Temp}, .Start=ticks(Eighth+1min), .End=ticks(Eighth+1min+30s), .Bounds=true} );
+		ASSERT_EQ( v.size(), 4 );
+		EXPECT_TRUE( isBound(v[0], Temp, 12, T0+2300ms) );
+		EXPECT_TRUE( isBound(v[1], Speed, 2.6, T0+2600ms) );
 	}
 
 	//A file made after its day, by a late record, takes its start values from the walk back through the files, the edits
@@ -651,7 +664,10 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( modified[0].Modification->IdentityId, 9 );
 		let mods = readFile( Path()/DayDirectory(March7)/"server.mods.binpb" );
 		ASSERT_EQ( mods.size(), 4 );
-		EXPECT_EQ( mods[0].file_start().next_node_index(), 2 );
+		EXPECT_TRUE( mods[0].has_file_start() );//a modifications file carries no Issued:  its index is the value file's.
+		let values = readFile( Path()/DayDirectory(March7)/"server.binpb" );
+		ASSERT_GE( values.size(), 2 );
+		EXPECT_EQ( values[1].issued().next_node_index(), 2 );
 		EXPECT_TRUE( isPreamble(mods[1], speed, March7) );
 		EXPECT_FALSE( mods[1].node_added().has_start() );
 	}

@@ -14,7 +14,7 @@ namespace Jde::Opc::Hist{
 		//edit's, so merging them would put the edits in target-time order instead.
 		Merge all{ served.File, {Run{.Offset=0, .End=served.Size, .Chain=0, .First=Earliest, .Last=std::numeric_limits<Ticks>::max()}}, {}, sl };
 		HistoryRecord r;
-		while( all.Next(r) ){
+		while( IO::Records::NextNow(all, r, sl) ){
 			if( r.has_modification() )
 				y.ByTime[r.modification().target_source_ts()].push_back( move(*r.mutable_modification()) );
 		}
@@ -74,20 +74,24 @@ namespace Jde::Opc{
 		}
 	}
 namespace Hist{
-	Applied::Applied( sp<ReadHandle> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ι:
+	Applied::Applied( sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, DayMods mods, SL sl )ι:
 		_merge{ move(file), move(runs), move(late), sl },
 		_mods{ move(mods) },
-		_nextMod{ _mods.ByTime.begin() }
+		_nextMod{ _mods.ByTime.begin() },
+		_sl{ sl }
 	{}
 
+	//The merge's next into _ahead, its windows read now:  an Issued record, timeless and the file's own, is passed over.
 	α Applied::Advance()ε->void{
 		Placed next;
-		if( _merge.Next(next.Record) ){
-			next.Where = _merge.Where();
-			_ahead = move( next );
-		}
-		else
-			_ahead.reset();
+		do{
+			if( !IO::Records::NextNow(_merge, next.Record, _sl) ){
+				_ahead.reset();
+				return;
+			}
+		}while( next.Record.has_issued() );
+		next.Where = _merge.Where();
+		_ahead = move( next );
 	}
 
 	α Applied::Next( HistoryRecord& r, optional<Merge::Position>& where )ε->bool{

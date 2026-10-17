@@ -178,7 +178,8 @@ namespace Jde::Opc::Hist{
 	}
 	α Group::Flushed()Ι->optional<TimePoint>{
 		ul _{ _filesMutex };
-		return _files->LastFlush().Time();
+		let t = _files->LastFlush().Time();
+		return t ? optional<TimePoint>{ UADateTime{(UA_DateTime)*t}.Time() } : nullopt;
 	}
 	α Group::Runs( year_month_day day )Ι->vector<Run>{
 		ul _{ _filesMutex };
@@ -257,8 +258,50 @@ namespace Jde::Opc::Hist{
 			}
 			//A host waiting on it, an edit, or the historian's end, tries every day again; the clock only those whose `delay` is up.
 			let retryAll = !waiters.empty() || !edits.empty() || stopping;
-			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
-			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
+			//A failing day whose `delay` isn't up.  One more than `delay` off was set before a clock set back since:  due, so the
+			//wait is never longer.
+			let waiting = [&]( optional<TimePoint> retry ){ return retry && !retryAll && taken<*retry && *retry-taken<=_store->Config.Delay; };
+			//Each day's file the flush may write is opened first here, outside the files lock:  its first-open scan reads the
+			//file through the file awaitables, which the flush awaits rather than blocks an executor thread for under the lock
+			//in Prepare.  A day Prepare still finds unopened, or an opening that fails, it opens there as before.  One still
+			//waiting isn't opened, as Prepare won't open it, so a failure stored for Prepare is always its to throw.
+			{
+				vector<Day> days{ due };
+				for( let& buffered : batch )
+					days.push_back( DayOf(PrimaryTime(buffered.Item), tz) );
+				std::ranges::sort( days );
+				let [dup, end] = std::ranges::unique( days );
+				days.erase( dup, end );
+				vector<std::pair<Day,fs::path>> toScan;
+				{
+					ul _{ _filesMutex };
+					for( auto p = days.begin(); p!=days.end(); ){
+						let failing = _failingDays.find( *p );
+						p = failing!=_failingDays.end() && waiting( failing->second ) ? days.erase( p ) : std::next( p );
+					}
+					toScan = _files->ToScan( days );
+				}
+				for( auto& [day,path] : toScan ){
+					if( Ended() )
+						break;//Prepare's to abandon.
+					try{
+						Opening opening{ move(path), StartOf(day, tz) };
+						for( auto next = opening.Next(); next==ENext::More && !Ended(); next = opening.Next() ){
+							let w = *opening.Wants();
+							IO::ReadAwait read{ opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
+							opening.Feed( co_await Any(read) );
+						}
+						ul _{ _filesMutex };
+						_files->Adopt( day, opening.Take() );
+					}
+					catch( Exception& e ){//Prepare throws it for the day, as its own open would have, rather than open the file again.
+						ul _{ _filesMutex };
+						_files->Adopt( day, e.Move() );
+					}
+				}
+			}
+			//An archive too, on retryAll's terms:  the clock's flushes rewrite one at most once per `delay`, holding its records
+			//meanwhile, unless the buffers are past maxBuffer:  those are flushed, not trimmed.
 			let mergeNow = retryAll || over;
 
 			//Each day on its own, so one that stays unwritable holds back only its own records.  A later day's file made
@@ -286,8 +329,7 @@ namespace Jde::Opc::Hist{
 						retry = p->second;
 					deferred = done<end && !mergeNow && _files->Deferred( day, taken );
 				}
-				//One more than `delay` off was set before a clock set back since:  due, so the wait is never longer.
-				bool failed = retry && !retryAll && taken<*retry && *retry-taken<=_store->Config.Delay;
+				bool failed = waiting( retry );
 				if( !failed && !deferred && retry && done<end ){//one that failed is opened first, before its backlog is converted for a write that fails the same way.
 					ul _{ _filesMutex };
 					if( !_files->Openable(day) ){
@@ -333,10 +375,16 @@ namespace Jde::Opc::Hist{
 								Wrote( done, end );
 							}
 							else if( auto archive = get_if<Rewrite>(&write) ){
-								while( archive->Next() ){
+								for( auto part = archive->Next(); part!=IO::Records::EPart::Done; part = archive->Next() ){
 									if( Ended() )
 										throw Abandoned{};
-									co_await archive->Write();
+									if( part==IO::Records::EPart::More ){//the rewrite's merge wants bytes of the file it merges.
+										let w = *archive->Wants();
+										IO::ReadAwait read{ archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
+										archive->Feed( co_await Any(read) );
+									}
+									else
+										co_await archive->Write();
 								}
 								ul _{ _filesMutex };
 								if( Ended() )//the rename, above all, which would replace the day's file outside the lock.
@@ -416,10 +464,10 @@ namespace Jde::Opc::Hist{
 				failed = failed || Ended();
 				if( !discarded && !failed ){
 					try{
-						Flushed::Slot slot;
+						IO::Records::Flushed::Slot slot;
 						{
 							ul _{ _filesMutex };
-							slot = _files->LastFlush().Next( taken, _files->RecoverFrom(taken) );
+							slot = _files->LastFlush().Next( ticks(taken), _files->RecoverFrom(taken) );
 						}
 						co_await slot.Write();
 						{
@@ -464,10 +512,16 @@ namespace Jde::Opc::Hist{
 							done();
 						}
 						else if( auto archive = get_if<Rewrite>(&job.Write) ){
-							while( archive->Next() ){
+							for( auto part = archive->Next(); part!=IO::Records::EPart::Done; part = archive->Next() ){
 								if( Ended() )
 									throw Abandoned{};
-								co_await archive->Write();
+								if( part==IO::Records::EPart::More ){//the rewrite's merge wants bytes of the file it merges.
+									let w = *archive->Wants();
+									IO::ReadAwait read{ archive->File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
+									archive->Feed( co_await Any(read) );
+								}
+								else
+									co_await archive->Write();
 							}
 							ul _{ _filesMutex };
 							if( Ended() )

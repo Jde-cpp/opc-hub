@@ -21,6 +21,7 @@ file( GLOB protos CONFIGURE_DEPENDS proto/*.proto )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 
 target_link_libraries( ${targetName} PUBLIC ZLIB::ZLIB Boost::json OpenSSL::SSL fmt::fmt )
+target_link_libraries( ${targetName} PUBLIC protobuf::libprotobuf ) #its PROTOBUF_USE_DLLS:  without it Web.FromServer.pb.cc defines protobuf's inlines that protobufd.dll exports.
 
 target_precompile_headers(${targetName}
   PUBLIC

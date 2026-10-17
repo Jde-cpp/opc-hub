@@ -1,0 +1,16 @@
+syntax = "proto3";
+package Jde.IO.RecordsTests.Proto;
+import "Jde.IO.Records.proto";
+
+//The record layer's tests' record:  the layer's two members and a sample with a time.
+message TestRecord{
+	oneof record{
+		Jde.IO.Proto.FileStart file_start=1;
+		Sample sample=2;
+		Jde.IO.Proto.Checkpoint checkpoint=3;
+	}
+}
+message Sample{
+	sint64 ts=1;//absolute in memory, a delta from the record before on disk, as the historian's times are.
+	string text=2;
+}

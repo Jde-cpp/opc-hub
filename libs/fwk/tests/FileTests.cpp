@@ -1,6 +1,7 @@
 ﻿#include <fstream>
 #include <latch>
 #include <jde/fwk/io/Cache.h>
+#include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/io/FileAwait.h>
@@ -731,25 +732,21 @@ namespace Jde::IO::Tests{
 	}
 
 #ifdef _MSC_VER
-	// Windows share modes:  a reader can hold a file that is appended to, written in place or cut to a prefix, but not one
-	// that is replaced - it would size its buffer from one version and read the bytes of another.
-	TEST_F( FileTests, ReplaceExcludesReader ){
+	// Windows share modes:  every write shares read, as linux locks nothing, so a reader holding the file fails none of them -
+	// a replace (a Truncate at 0, as a live day's first append is) included.
+	TEST_F( FileTests, WritesShareWithReader ){
 		let file = Tests::file( 1008 );
 		fs::remove( file );
 		let content = string{ "0123456789" };
 		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
-		{
-			const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;//what ReadAwait's open shares.
-			HandlePtr reader{ WinHandle{::CreateFileA(file.string().c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, 0, nullptr)} };
-			ASSERT_TRUE( static_cast<bool>(reader.get()) ) << "the reader's open failed: " << ::GetLastError();
-			EXPECT_NE( writeNow(file, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a replace went ahead under a reader";
-			EXPECT_EQ( IO::Load(file), content ) << "the replace that failed changed the file";
-			EXPECT_EQ( writeNow(file, "a", {}), "" ) << "an append under a reader";
-			EXPECT_EQ( writeNow(file, "Z", {.Mode=IO::EWriteMode::At}), "" ) << "a write in place under a reader";
-			EXPECT_EQ( writeNow(file, "b", {.Mode=IO::EWriteMode::Truncate, .Offset=content.size()+1}), "" ) << "a cut to a prefix under a reader";
-			EXPECT_EQ( IO::Load(file), "Z123456789ab" );
-		}
-		EXPECT_EQ( writeNow(file, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a replace once the reader has closed";
+		const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;//what ReadAwait's open shares.
+		HandlePtr reader{ WinHandle{::CreateFileA(file.string().c_str(), GENERIC_READ, shareAll, nullptr, OPEN_EXISTING, 0, nullptr)} };
+		ASSERT_TRUE( static_cast<bool>(reader.get()) ) << "the reader's open failed: " << ::GetLastError();
+		EXPECT_EQ( writeNow(file, "a", {}), "" ) << "an append under a reader";
+		EXPECT_EQ( writeNow(file, "Z", {.Mode=IO::EWriteMode::At}), "" ) << "a write in place under a reader";
+		EXPECT_EQ( writeNow(file, "b", {.Mode=IO::EWriteMode::Truncate, .Offset=content.size()+1}), "" ) << "a cut to a prefix under a reader";
+		EXPECT_EQ( IO::Load(file), "Z123456789ab" );
+		EXPECT_EQ( writeNow(file, "x", {.Mode=IO::EWriteMode::Truncate}), "" ) << "a replace under a reader";
 		EXPECT_EQ( IO::Load(file), "x" );
 	}
 #endif
@@ -1004,6 +1001,150 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( read({.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
 		EXPECT_EQ( read({.Offset=content.size()+7}), "" ) << "a range that starts past the end";
 		EXPECT_EQ( read({}), content ) << "no range is the whole file";
+	}
+
+	//A read over an open file:  readRaw's shape, the handle in place of the path.
+	Ω readShared( sp<IO::OpenFile> file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->TAwait<string>::Task{
+		try{
+			*content = co_await IO::ReadAwait{ move(file), options, sl };
+		}
+		catch( Exception& e ){
+			if( error )
+				*error = e.Move();
+		}
+		*done = true;
+	}
+	//The bytes, or "failed: " and why.
+	Ω readNow( sp<IO::OpenFile> file, IO::ReadOptions options={} )->string{
+		auto y = ms<string>( "sentinel" );
+		auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+		readShared( move(file), y, done, error, options );
+		let failure = waitError( done, error );
+		return failure.empty() ? *y : "failed: "+failure;
+	}
+
+	TEST_F( FileTests, OpenFileRangeRead ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1100 );
+		fs::remove( file );
+		let content = pattern( chunk*4+chunk/2 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		EXPECT_EQ( open->Size(), content.size() );
+		EXPECT_EQ( readNow(open, {.Offset=chunk/2+1, .Size=chunk*2+chunk/4}), content.substr(chunk/2+1, chunk*2+chunk/4) ) << "mid-chunk to mid-chunk";
+		EXPECT_EQ( readNow(open, {.Size=3}), content.substr(0, 3) );
+		EXPECT_EQ( readNow(open, {.Offset=chunk+1}), content.substr(chunk+1) ) << "no Size reads to the end";
+		EXPECT_EQ( readNow(open, {.Offset=chunk*4, .Size=chunk*3}), content.substr(chunk*4) ) << "a Size past the end is clamped";
+		EXPECT_EQ( readNow(open, {.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
+		EXPECT_EQ( readNow(open, {.Offset=content.size()+7}), "" ) << "a range that starts past the end";
+		EXPECT_EQ( readNow(open, {}), content ) << "no range is the whole file";
+		EXPECT_EQ( readNow(open, {.Cache=true}), content ) << "the cache is ignored";
+	}
+	//The handle reads the file it opened after a rename over its path, where a read by path finds the new file.
+	TEST_F( FileTests, OpenFileOutlivesARename ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1101 ); let temp = Tests::file( 1102 );
+		fs::remove( file ); fs::remove( temp );
+		let original = pattern( chunk*2+3 );
+		ASSERT_EQ( writeNow(file, original, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		ASSERT_EQ( writeNow(temp, "rewritten", {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		IO::Replace( temp, file );//not fs::rename:  MoveFileEx on Windows, refused an open target.
+		EXPECT_EQ( readNow(open, {.Offset=chunk}), original.substr(chunk) );
+		EXPECT_EQ( IO::Load(file), "rewritten" );
+	}
+	//Two reads in flight on one handle at once, each at its own offset.
+	TEST_F( FileTests, OpenFileConcurrentReads ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1103 );
+		fs::remove( file );
+		let content = pattern( chunk*6 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		auto a = ms<string>(); auto b = ms<string>();
+		auto doneA = ms<std::atomic<bool>>(); auto doneB = ms<std::atomic<bool>>();
+		auto errorA = ms<up<Exception>>(); auto errorB = ms<up<Exception>>();
+		readShared( open, a, doneA, errorA, {.Offset=1, .Size=chunk*3} );
+		readShared( open, b, doneB, errorB, {.Offset=chunk*2+5} );
+		EXPECT_EQ( waitError(doneA, errorA), "" );
+		EXPECT_EQ( waitError(doneB, errorB), "" );
+		EXPECT_EQ( *a, content.substr(1, chunk*3) );
+		EXPECT_EQ( *b, content.substr(chunk*2+5) );
+	}
+	//The read holds the file through its OpenFile:  the caller may let go, and the descriptor closes once the read has.
+	TEST_F( FileTests, OpenFileHeldByTheAwait ){
+		let file = Tests::file( 1104 );
+		fs::remove( file );
+		let content = pattern( IO::ChunkByteSize()*3 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto y = ms<string>(); auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
+		readShared( ms<IO::OpenFile>(file), y, done, error, {} );
+		EXPECT_EQ( waitError(done, error), "" );
+		EXPECT_EQ( *y, content );
+#ifndef _WIN32
+		let open = [&file]{//the drain loop holds the last FileIOArg a moment past the resume.
+			for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
+				std::error_code ec;
+				if( fs::read_symlink(fd.path(), ec)==file )
+					return true;
+			}
+			return false;
+		};
+		EXPECT_TRUE( waitFor([&]{ return !open(); }) ) << "the descriptor is still open";
+#endif
+	}
+	TEST_F( FileTests, OpenFileMissingThrows ){
+		let file = Tests::file( 1105 );
+		fs::remove( file );
+		try{
+			IO::OpenFile open{ file };
+			FAIL() << "opened a file that isn't there";
+		}
+		catch( const IOException& e ){
+			EXPECT_EQ( e.Error, IO::EIOError::NotFound );
+		}
+	}
+	//The positioned read, on the calling thread:  the bytes at an offset, fewer at the end, none past it.
+	TEST_F( FileTests, OpenFileReadNow ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1107 );
+		fs::remove( file );
+		let content = pattern( chunk*3+5 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		IO::OpenFile open{ file };
+		string y( chunk*2, '\0' );
+		EXPECT_EQ( open.Read(chunk+1, y.data(), y.size()), chunk*2 );
+		EXPECT_EQ( y, content.substr(chunk+1, chunk*2) );
+		EXPECT_EQ( open.Read(chunk*3, y.data(), y.size()), 5u );
+		EXPECT_EQ( y.substr(0, 5), content.substr(chunk*3) );
+		EXPECT_EQ( open.Read(content.size()+3, y.data(), y.size()), 0u );
+	}
+	//Positioned reads on a file a ReadAwait has put on asio's iocp, then a ReadAwait again:  on Windows each Read waits on an
+	//event of its own, which keeps its completion off the iocp, where asio would take it for an operation of its own.
+	TEST_F( FileTests, OpenFileReadNowAfterAwait ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1108 );
+		fs::remove( file );
+		let content = pattern( chunk*3+5 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		EXPECT_EQ( readNow(open, {.Size=chunk}), content.substr(0, chunk) );
+		string y( chunk*2, '\0' );
+		for( uint i=0; i<20; ++i ){
+			EXPECT_EQ( open->Read(chunk+1, y.data(), y.size()), chunk*2 );
+			EXPECT_EQ( y, content.substr(chunk+1, chunk*2) );
+		}
+		EXPECT_EQ( readNow(open, {.Offset=chunk}), content.substr(chunk) );
+	}
+	//Size is the file's now, so a read after an append sees the new tail.
+	TEST_F( FileTests, OpenFileGrownSinceOpen ){
+		let file = Tests::file( 1106 );
+		fs::remove( file );
+		ASSERT_EQ( writeNow(file, "first", {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		ASSERT_EQ( writeNow(file, "+second", {.Mode=IO::EWriteMode::Append}), "" );
+		EXPECT_EQ( open->Size(), 12u );
+		EXPECT_EQ( readNow(open, {.Offset=5}), "+second" );
 	}
 
 	constexpr uint _fileSize{ 5 };

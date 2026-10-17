@@ -31,6 +31,15 @@ namespace IO{
 		if( vec )
 			Buffer = vector<byte>{};
 	}
+	FileIOArg::FileIOArg( sp<OpenFile> file, ReadOptions options, SL sl )ι:
+		Offset{ options.Offset },
+		Limit{ options.Size },
+		IsRead{ true },
+		Path{ file->Path() },
+		Shared{ move(file) },
+		_sl{ sl },
+		_tags{ options.Tags }
+	{}
 	FileIOArg::FileIOArg( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SL sl )ι:
 		Buffer{ move(data) },
 		Offset{ options.Offset },

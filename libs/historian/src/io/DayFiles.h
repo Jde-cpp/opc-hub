@@ -3,10 +3,15 @@
 #include <map>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
-#include "Flushed.h"
-#include "Merge.h"
+#include <jde/fwk/io/durable.h>
+#include <jde/fwk/io/records/Days.h>
+#include <jde/fwk/io/records/FileState.h>
+#include <jde/fwk/io/records/Flushed.h>
+#include <jde/fwk/io/records/Rewrite.h>
+#include "Records.h"
 
 namespace Jde::Opc::Hist{
+	using Day = IO::Records::Day;
 	//The day a record with primary time t is filed under.  A time outside 1601 through 9999, which UA has no date for,
 	//takes the nearest day inside.
 	α DayOf( Ticks t, const std::chrono::time_zone& tz )ι->Day;
@@ -18,8 +23,7 @@ namespace Jde::Opc::Hist{
 	//A NodeAdded with no writer:  at its day's start, a preamble record, and otherwise a membership change that came with
 	//none.
 	Ξ Bare( const Proto::NodeAdded& added )ι->bool{ return !added.has_identity_id() && added.user_name().empty(); }
-	//<yyyy>/<m>/<d>, as the log's archive names a day.
-	α DayDirectory( Day day )ι->fs::path;
+	using IO::Records::DayDirectory;//<yyyy>/<m>/<d>, as the log's archive names a day.
 	//Every day under root that holds the file of the group name, its value file or with mods its modifications file,
 	//oldest first:  the directory walk, so a read asked for a range of days opens only those that are there.  A day whose
 	//file it can't tell of, in a directory it can't search say, is among them, so a read that reaches it fails as it
@@ -53,33 +57,13 @@ namespace Jde::Opc::Hist{
 		std::function<optional<Proto::DataValue>( NodeIndex, Ticks through )> Last;
 	};
 
-	//A file's size and last write, which tell that something changed it.
-	struct Stamp final{
-		uint Size;
-		fs::file_time_type Written;
-		α operator==( const Stamp& )Ι->bool = default;
-	};
+	using Stamp = IO::Records::Stamp;
 
-	//A day's file as the process knows it:  from its first-open scan, and from its own appends since.  A live file's, or
-	//one the historian leaves alone:  an archive's only while its day is merged into, so each merge needn't scan it.
-	struct DayFile final{
-		fs::path Path;
-		uint32_t Generation{};//past 0, an archive, with no runs:  Size is all of it.
-		uint Size{};//through its last checkpoint, where the next append goes.  At 0 that append opens with the preamble.
-		Ticks Chain{};//where its delta chain stands.
-		vector<Run> Runs;//each append that holds a record with a time, as the first-open scan would rebuild them.
+	//A day's file as the process knows it:  the record layer's state of it - from its first-open scan, and from its own
+	//appends since - and its map.  A live file's, or one the historian leaves alone:  an archive's only while its day is
+	//merged into, so each merge needn't scan it.
+	struct DayFile final : IO::Records::FileState{
 		Hist::Preamble Preamble;//a value file's start values are what the corrections a late record or an edit reaches look at.
-		optional<Scanned> Unopened;//its scan, until the first append drops a torn tail by it.
-		bool Named{};//this process made it, or has fsynced its name into its directory:  one that crashed may have made it and not.
-		string Refused;//why the historian won't write to it; empty when it will.
-		//As its first-open scan began, or its rewrite left it:  a refused file or an archive changed since, repaired perhaps,
-		//is scanned again.
-		optional<Stamp> Scanned;
-		uint Discarded{};//the appends refused so far.
-		//The append Prepare handed out and Commit hasn't taken, which may have failed part-way:  the Size it went at, and the
-		//farthest it could have written.  The bytes past that Size, up to End, are its own, which the next append cuts.
-		struct Append{ uint Offset; uint End; };
-		optional<Append> Outstanding;
 	};
 
 	//One append to a day's file, a run, between GroupFiles::Prepare and Commit:  its value file's, or with Mods its
@@ -102,11 +86,11 @@ namespace Jde::Opc::Hist{
 		α Write( SRCE )ι->IO::WriteAwait;
 	};
 
-	//A day's file written whole as its archive, between GroupFiles::Prepare and Commit:  the runs of the live file it was,
-	//or the archive it already is, merged in primary-time order with a flush's records for the day.  The FileStart's
-	//generation is one past the file's, the preamble comes first, with a corrected start value folded into its member's
-	//first preamble record, and no checkpoint is carried over.  It goes to a temp file beside the day's in parts, so
-	//neither the day nor the file is ever held whole, and Commit renames that over the day's.
+	//A day's file written whole as its archive, between GroupFiles::Prepare and Commit:  the record layer's rewrite - the
+	//runs of the live file it was, or the archive it already is, merged in primary-time order with a flush's records for
+	//the day, under a FileStart one generation on, in parts to a temp file beside the day's, with no checkpoint carried
+	//over - with the historian's head:  an Issued group's next index, then the preamble, a corrected start value folded
+	//into its member's first preamble record.  Commit renames the temp file over the day's.
 	struct Rewrite final{
 		struct State;
 		Rewrite( Day date, fs::path path, fs::path temp, vector<Proto::DataValue> stored, up<State> state )ι;
@@ -117,9 +101,12 @@ namespace Jde::Opc::Hist{
 		fs::path Path;
 		fs::path Temp;
 		vector<Proto::DataValue> Stored;//each node's newest among the flush's.
-		//Makes the temp file's next part:  false once Write has written them all.  Throws when the file it merges can't be
-		//read through.
-		α Next()ε->bool;
+		//Makes the temp file's next part:  Ready to Write, More when it wants bytes of the file it merges (Wants, Feed), Done
+		//once Write has written the last.  Throws when the file can't be read through.
+		α Next()ε->IO::Records::EPart;
+		α Wants()Ι->optional<Window>;
+		α Feed( string&& bytes )ι->void;
+		α File()Ι->const sp<IO::OpenFile>&;
 		//Writes the part.  The first makes the temp file, or cuts one a crash left, and the last fsyncs it.
 		α Write( SRCE )ι->IO::WriteAwait;
 		α Unreadable()Ι->bool;//the file no longer reads as its scan did.
@@ -131,6 +118,30 @@ namespace Jde::Opc::Hist{
 	//How a flush writes a day's records:  not at all, to a file the historian leaves alone or when there are none to
 	//write; as a run on the end of its live file; or by rewriting its archive whole.
 	using DayWrite = variant<std::monostate,Pending,Rewrite>;
+
+	//A day file as an Opening read it.
+	struct Opened final{
+		fs::path Path;
+		optional<Stamp> Stamped;//none for a file that wasn't there.
+		optional<Scanned> Scan;
+		Hist::Preamble Preamble;
+	};
+	//A day file's first open:  the record layer's scan and the map it builds, restore handed each record the scan keeps.  The
+	//flush feeds it a window at a time through the file awaitables (Wants, Feed, Next), outside the files lock; Open reads
+	//its windows now.  Nothing to read when the file isn't there.  Throws when it is there and can't be opened or read through.
+	struct Opening final : noncopyable{
+		Opening( fs::path path, Ticks start, std::function<void( Proto::HistoryRecord& )> restore={}, SRCE )ε;
+		α Next()ε->ENext;//More:  Wants/Feed.  End:  Take.
+		α Wants()Ι->optional<Window>;
+		α Feed( string&& bytes )ι->void;
+		α File()Ι->const sp<IO::OpenFile>&{ return _file; }
+		α Take()ι->Opened{ return move( _opened ); }
+	private:
+		Opened _opened;
+		sp<IO::OpenFile> _file;
+		Decoder _decoder;
+		optional<IO::Records::Scanner> _scanner;
+	};
 
 	//One group's files under hist.path.  Only its group's flush changes them, one flush at a time, under the group's
 	//files lock.
@@ -155,6 +166,15 @@ namespace Jde::Opc::Hist{
 		α Name()Ι->const string&{ return _name; }
 		//Whether day holds a value file:  one the process knows of with anything in it, or one on disk.
 		α HasFile( Day day )Ι->bool;
+		//The flush's first opens, outside the files lock:  of days, each whose value file the process hasn't opened, or holds as
+		//refused or as an archive and that has changed since, with the file's path for an Opening.
+		α ToScan( const vector<Day>& days )Ι->vector<std::pair<Day,fs::path>>;
+		//What an Opening read, taken under the lock as Open would have:  nothing when the process opened the day meanwhile, or
+		//the file changed since the open, which Prepare then opens itself.
+		α Adopt( Day day, Opened&& opened )ι->void;
+		//An Opening that failed:  the day's next Open throws it, once, rather than open the file again, as the one open did
+		//before.  The flush after tries the file again.
+		α Adopt( Day day, up<Exception> failed )ι->void;
 		//How a flush at now writes records to day's file:  sorted by primary time, with their times absolute.
 		//
 		//A live file takes them as a run on its end, closed by a checkpoint.  A file that isn't there opens with its
@@ -199,13 +219,13 @@ namespace Jde::Opc::Hist{
 		//A record written at (index, time) that a later file's start value may copy:  what Corrections looks at.  Commit
 		//notes each value it writes; an edit notes each value it changes once its records are written.
 		α Touch( NodeIndex index, Ticks time )ι->void;
-		//The start-value corrections the records touched since reach (spec *Record format*):  for each, every later file
-		//that lists its node with a start value at or before its time, other than that record itself, gets the node's last
-		//record through that time, as members.Last gives it, as its start value, a live file by a preamble record appended
-		//and an archive by its rewrite, which the flush writes.  The walk ends at the first later file whose start value for
-		//the node is past the time, since the start values of the files after it are later still.  One they can't be
-		//prepared for, or whose start value members.Last can't read, is said and left as it is:  the next record or edit
-		//that reaches it corrects it.  The touched records are forgotten.
+		//The start-value corrections the records touched since reach (spec *Record format*):  for each node and day touched,
+		//from its last record there, every later file that lists the node with a start value at or before its time, other
+		//than that record itself, gets the node's last record through that time, as members.Last gives it, as its start
+		//value, a live file by a preamble record appended and an archive by its rewrite, which the flush writes.  The walk
+		//ends at the first later file whose start value for the node is past the time, since the start values of the files
+		//after it are later still.  One they can't be prepared for, or whose start value members.Last can't read, is said
+		//and left as it is:  the next record or edit that reaches it corrects it.  The touched records are forgotten.
 		α Corrections( const Membership& members, TimePoint now, SRCE )ι->vector<std::pair<Day,DayWrite>>;
 		//Of a node's indexes, those the first file after day that lists one lists:  none when no later file does.  One that
 		//can't be read is passed over, as Corrections passes it.  Throws when the days can't be listed.
@@ -235,16 +255,19 @@ namespace Jde::Opc::Hist{
 		//preamble alone for an archive.  None for a day with no file, one the process knew of that has since gone included, or with nothing
 		//kept, which a scan logs.  Opened under the files lock with the rest, so a rewrite that renames over the day after
 		//leaves the read the file they describe.  Throws, at Error, when the file can't be opened or scanned.
-		struct Served final{ sp<ReadHandle> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; Hist::Preamble Preamble; };
+		struct Served final{ sp<IO::OpenFile> File; uint32_t Generation{}; uint Size{}; vector<Run> Runs; Hist::Preamble Preamble; };
 		α Serve( Day day, SL sl )Ε->optional<Served>;
 		//The day's modifications file the same way:  none for a day with none.  A read applies them to the day's values, and
 		//a modified read returns them.  The first serve opens it, as an append would, so it is scanned once:  a
 		//modifications file is live for good.
 		α ServeMods( Day day, SL sl )ε->optional<Served>;
-		α LastFlush()ι->Flushed&{ return _flushed; }
+		α LastFlush()ι->IO::Records::Flushed&{ return _flushed; }
 	private:
 		//A value file's, or with mods the day's modifications file's.
 		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={}, bool mods=false )ε->DayFile&;
+		//What an Opening read, as the files hold it:  a value file with appends to archive is marked so.  Throws only when
+		//restoring, at a damaged archive.
+		α Known( Day day, Opened&& opened, bool restoring, bool mods, SL sl )ε->DayFile;
 		α Serve( const std::map<Day,DayFile>& files, const fs::path& path, Day day, SL sl )Ε->optional<Served>;
 		//The run Prepare and PrepareMods hand out:  a file with nothing kept opens with its FileStart and preamble, then run
 		//follows, each sealed.  What Commit takes of it is on the Pending; the file notes the append as outstanding.
@@ -271,10 +294,11 @@ namespace Jde::Opc::Hist{
 		const string _name;
 		const std::chrono::time_zone& _tz;
 		const Duration _delay;
-		Flushed _flushed;
+		IO::Records::Flushed _flushed;
 		Restored _restored;
 		std::map<Day,DayFile> _files;//an archive's only while _rewritten holds its day:  one merged into later is scanned again.
 		std::map<Day,DayFile> _mods;//each modifications file the process has opened.
+		std::map<Day,up<Exception>> _failedOpenings;//each the flush's Opening couldn't read, for the day's next Open to throw.
 		vector<std::pair<NodeIndex,Ticks>> _touched;//each record written since Corrections last looked, by node and time.
 		vector<Day> _edited;
 		//Each day whose live file is due at once, not at its midnight, until it is rewritten:  each before today the start

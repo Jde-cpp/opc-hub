@@ -1,0 +1,20 @@
+syntax = "proto3";
+package Jde.IO.Proto;
+
+//The record layer's two records (include/jde/fwk/io/records), which an owner's record oneof embeds at field numbers of its
+//own, 15 at most so their tags are one byte.  A file is that oneof's members one after another, each its field's tag,
+//length and body, so the file parses as one message of the owner's type with every field repeated.
+
+//First in every file.  Written with every field present, so its frame is at most 24 bytes:  a first frame longer than
+//that is no torn FileStart.
+message FileStart{
+	int64 ts=1;//the start of the file's day in the owner's time:  UA ticks for the historian.
+	uint32 generation=2;//0 for a live file, appended to; each rewrite as an archive adds 1.
+	fixed32 crc=3;//the CRC-32C of ts and generation, each little-endian:  a reader trusts neither until it matches.
+}
+
+//The end of every append to a live file:  the CRC-32C of the bytes since the file's previous checkpoint, or since its
+//start.  Written as 7 bytes whatever crc is, [tag][05][0D][crc LE32], so a scan past damage finds one by its bytes alone.
+message Checkpoint{
+	fixed32 crc=1;
+}

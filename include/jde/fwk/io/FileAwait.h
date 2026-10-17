@@ -38,6 +38,35 @@ namespace Jde::IO{
 		ELogTags Tags{ ELogTags::IO };
 	};
 
+	//A file open to read at any offset, shared by the reads of it:  they read the file it opened whatever is renamed over
+	//its path after, where a read by path would open the new file.  Linux O_RDONLY|O_CLOEXEC, blocking (a FIFO's open waits
+	//for its writer, as an ifstream's does); Windows GENERIC_READ sharing read, write and delete, overlapped, with one asio
+	//handle for every read of it.
+	struct Γ OpenFile final : noncopyable{
+		OpenFile( fs::path path, SRCE )ε;//IOException, Error NotFound for a file that isn't there.
+		~OpenFile();
+		α Path()Ι->const fs::path&{ return _path; }
+		α Size( SRCE )Ε->uint;//now:  the file may have grown since the open, and a read is clamped to it.
+		//Up to size bytes at offset, read now on the calling thread, fewer at the end of the file and none past it:  the
+		//synchronous counterpart of a ReadAwait over the file, for a caller that can't await, such as one on an executor thread.
+		α Read( uint offset, char* buffer, uint size, SRCE )Ε->uint;
+#ifdef _MSC_VER
+		α Native()Ι->void*{ return _handle.get(); }//HANDLE
+		struct Asio;//the random_access_handle the reads share, over a duplicate of the HANDLE:  made on the first read, owned here.
+		α Shared( SRCE )ε->sp<Asio>;
+#else
+		α Native()Ι->int{ return _fd; }
+#endif
+	private:
+		const fs::path _path;
+#ifdef _MSC_VER
+		HandlePtr _handle;
+		sp<Asio> _asio; std::mutex _mutex;
+#else
+		int _fd{ -1 };
+#endif
+	};
+
 	struct FileIOArg;
 	struct IFileChunkArg{
 		IFileChunkArg( sp<FileIOArg>& arg, uint index ):
@@ -58,6 +87,7 @@ namespace Jde::IO{
 	struct FileIOArg final : std::enable_shared_from_this<FileIOArg>, noncopyable{
 		using HCo=variant<StringAwait::Handle,VoidAwait::Handle>;
 		FileIOArg( fs::path path, ReadOptions options, bool vec, SRCE )ι;
+		FileIOArg( sp<OpenFile> file, ReadOptions options, SRCE )ι;//a read of an open file:  Handle borrows its descriptor on linux, Send its asio handle on windows, and neither is closed here.
 		FileIOArg( fs::path path, variant<string,vector<byte>> data, WriteOptions options, SRCE )ι;
 		~FileIOArg();
 		α Open( bool create )ε->void;
@@ -90,6 +120,7 @@ namespace Jde::IO{
 		vector<HFile> NameDirs;//Sync: the directories Open added a name to, the file's own first - each is synced after the data.  Raw fds on linux, which ~FileIOArg closes; windows only ever adds the file's name.
 		bool IsRead;
 		fs::path Path;
+		sp<OpenFile> Shared;//the open file a read is of, when it is of one.
 		SL _sl;
 		ELogTags _tags{ ELogTags::IO };
 		HCo _coHandle; mutex _coHandleMutex;
@@ -97,6 +128,7 @@ namespace Jde::IO{
 
 	struct Γ IFileAwait{
 		IFileAwait( fs::path&& path, ReadOptions options, bool vec, SL sl )ι:_arg{ ms<FileIOArg>(move(path), options, vec, sl) }{}
+		IFileAwait( sp<OpenFile>&& file, ReadOptions options, SL sl )ι:_arg{ ms<FileIOArg>(move(file), options, sl) }{}
 		IFileAwait( fs::path&& path, variant<string,vector<byte>>&& data, WriteOptions options, SL sl )ι:_arg{ ms<FileIOArg>(move(path), move(data), options, sl) }{}
 		up<Exception> ExceptionPtr;
 		sp<FileIOArg> _arg;
@@ -106,6 +138,8 @@ namespace Jde::IO{
 		template<class T> requires( std::is_arithmetic_v<T> && !std::is_same_v<T,bool> )
 		ReadAwait( fs::path, T, SL=SRCE_CUR )=delete;//a size or an offset would convert to cache - ReadOptions takes those.
 		ReadAwait( fs::path path, ReadOptions options, SRCE )ι:IFileAwait{ move(path), options, false, sl }, StringAwait{ sl }, _cache{ options.Cache && !options.Offset && !options.Size }{}
+		//Over an open file:  its bytes at Offset, whatever is at its path now.  Cache is ignored, the cache being keyed by path.
+		ReadAwait( sp<OpenFile> file, ReadOptions options={}, SRCE )ι:IFileAwait{ move(file), options, sl }, StringAwait{ sl }, _cache{}{}
 		α Suspend()ι->void override;
 		α await_ready()ι->bool override;
 		α await_resume()ε->string override;

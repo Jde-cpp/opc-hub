@@ -24,17 +24,92 @@ namespace Jde::IO{
 		uint FileOffset;//explicit file offset - the op's Offset + StartIndex; an append's Offset is the EOF at Open. Never eof (offset -1) semantics: chunks past the first would land at the wrong offset & parallel chunks would interleave.
 	};
 
-	FileIOArg::~FileIOArg(){}//HandlePtr self-closes when Send never ran (cache hit / open failure); after Send the asio handle owns the close.
+	FileIOArg::~FileIOArg(){}//HandlePtr self-closes when Send never ran (cache hit / open failure); after Send the asio handle owns the close.  A shared file's handle is its OpenFile's.
+
+	//The io_context first, so the handle deregisters from a live one however long the OpenFile outlives the executor.
+	struct OpenFile::Asio final{
+		Asio( sp<asio::io_context> ioc, HANDLE h )ι:Ioc{ move(ioc) }, Handle{ *Ioc, h }{}
+		sp<asio::io_context> Ioc;
+		RandomAccessHandle Handle;
+	};
+	OpenFile::OpenFile( fs::path path, SL sl )ε:
+		_path{ move(path) }{
+		let native = string{"\\\\?\\"}+Str::Replace( _path.string(), '/', '\\' );
+		const HANDLE file = ::CreateFile( native.c_str(), GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr );
+		const DWORD openError = ::GetLastError();
+		_handle = HandlePtr( WinHandle(file, [&](){ return IOException( _path, openError, "CreateFile", sl ); }) );
+		if( ::GetFileType(_handle.get())!=FILE_TYPE_DISK ){//a pipe or a device has no size to read at offsets.
+			IOException e{ _path, "is not a regular file", sl };
+			e.Error = EIOError::Invalid;
+			throw e;
+		}
+	}
+	OpenFile::~OpenFile()=default;//_asio, then _handle.
+	α OpenFile::Size( SL sl )Ε->uint{
+		LARGE_INTEGER size;
+		THROW_IFX( !::GetFileSizeEx(_handle.get(), &size), IOException(_path, ::GetLastError(), "GetFileSizeEx", sl) );
+		return (uint)size.QuadPart;
+	}
+	α OpenFile::Read( uint offset, char* buffer, uint size, SL sl )Ε->uint{
+		//An event of its own, its low-order bit set:  once Shared has put the file on asio's iocp, a read without one queues a
+		//packet there for an OVERLAPPED gone by the time asio takes it, and waits on the file, which any read on it signals.
+		let event = ManualResetEvent();
+		THROW_IFX( !event, IOException(_path, ::GetLastError(), "CreateEvent", sl) );
+		uint y{};
+		while( y<size ){//the handle is overlapped, so each read names its offset and is waited for.
+			OVERLAPPED at{};
+			at.Offset = (DWORD)( offset+y );
+			at.OffsetHigh = (DWORD)( (offset+y)>>32 );
+			at.hEvent = reinterpret_cast<HANDLE>( reinterpret_cast<uintptr_t>((HANDLE)event.get()) | 1 );
+			DWORD read{};
+			if( !::ReadFile(_handle.get(), buffer+y, (DWORD)(size-y), nullptr, &at) && ::GetLastError()!=ERROR_IO_PENDING ){
+				if( ::GetLastError()==ERROR_HANDLE_EOF )
+					break;
+				throw IOException{ _path, ::GetLastError(), "ReadFile", sl };
+			}
+			if( !::GetOverlappedResult(_handle.get(), &at, &read, TRUE) ){
+				if( ::GetLastError()==ERROR_HANDLE_EOF )
+					break;
+				throw IOException{ _path, ::GetLastError(), "GetOverlappedResult", sl };
+			}
+			if( !read )
+				break;
+			y += read;
+		}
+		return y;
+	}
+	//A duplicate, so the OpenFile keeps a HANDLE of its own for Size while asio owns the one on the iocp:  a file object
+	//registers with an iocp once, so there is one asio handle, and every read shares it.
+	α OpenFile::Shared( SL sl )ε->sp<Asio>{
+		lg _{ _mutex };
+		if( !_asio ){
+			auto executor = Executor();
+			THROW_IFX( !executor, IOException(_path, "no executor to read on", sl) );
+			HANDLE dup;
+			THROW_IFX( !::DuplicateHandle(::GetCurrentProcess(), _handle.get(), ::GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS), IOException(_path, ::GetLastError(), "DuplicateHandle", sl) );
+			try{
+				_asio = ms<Asio>( move(executor), dup );
+			}
+			catch( const boost::system::system_error& e ){
+				::CloseHandle( dup );
+				throw IOException{ _path, (uint32)e.code().value(), Ƒ("iocp registration failed: {}", e.what()), sl };
+			}
+		}
+		return _asio;
+	}
 
 	α FileIOArg::Open( bool create )ε->void{
+		if( Shared ){//the open file's:  Send takes its asio handle.
+			SizeBuffer( Shared->Size(_sl) );
+			return;
+		}
 		const DWORD access = IsRead ? GENERIC_READ : GENERIC_WRITE;
 		let append = Mode==EWriteMode::Append;
-		let replace = Mode==EWriteMode::Truncate && !Offset;
 		let keepsPrefix = Mode==EWriteMode::Truncate && Offset;
-		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (the log archive round, ArchiveAwait::Execute): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
-		//A write shares FILE_SHARE_WRITE, and FILE_SHARE_READ unless it replaces the file: a reader can hold a file that is appended to, written in place or cut to a prefix, but one replaced under it would size its buffer from one version and read the bytes of another.  No write shares delete, so the file isn't removed or renamed while it is written.
+		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (IO::Replace, as the log archive round and the record layer's rewrite do): without it the rename cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
+		//A write shares read and write in every mode, as linux locks nothing:  a reader of the file, a live day's file at its first append (a Truncate at 0) among them, would otherwise fail the write or be failed by it.  A file that must change whole for its readers goes to a temp renamed over it.  No write shares delete, so the file isn't removed or renamed while it is written.
 		const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
-		const DWORD sharing = IsRead ? shareAll : replace ? FILE_SHARE_WRITE : FILE_SHARE_READ|FILE_SHARE_WRITE;
+		const DWORD sharing = IsRead ? shareAll : FILE_SHARE_READ|FILE_SHARE_WRITE;
 		//create picks whether a missing file is an error in every mode, matching linux's O_CREAT - except for a Truncate that keeps a prefix, since a file made here would have none to keep.  No disposition truncates: a Truncate sets the end of the file below, whatever its Offset.
 		const DWORD creationDisposition = !IsRead && create && !keepsPrefix ? OPEN_ALWAYS : OPEN_EXISTING;
 		const DWORD dwFlagsAndAttributes = IsRead ? FILE_FLAG_SEQUENTIAL_SCAN : FILE_ATTRIBUTE_ARCHIVE;
@@ -133,10 +208,12 @@ namespace Jde::IO{
 	}
 
 	Ω finish( const sp<RandomAccessHandle>& h, const sp<FileIOArg>& op, SyncError syncError )ι->void{
-		boost::system::error_code ec;
-		h->close( ec );//before the resume posts, so the coroutine never finds its own handle still open.  Nothing races it: every chunk has completed, so no initiation is queued.
-		if( ec )
-			WARN( "[{}]close failed: {}", op->Path.string(), ec.message() );
+		if( !op->Shared ){//a shared handle is its OpenFile's, with other reads on it.
+			boost::system::error_code ec;
+			h->close( ec );//before the resume posts, so the coroutine never finds its own handle still open.  Nothing races it: every chunk has completed, so no initiation is queued.
+			if( ec )
+				WARN( "[{}]close failed: {}", op->Path.string(), ec.message() );
+		}
 		if( syncError.Code )
 			op->PostExp( up<IFileChunkArg>{}, (uint32)syncError.Code, string{syncError.Message}, true );
 		else
@@ -165,8 +242,9 @@ namespace Jde::IO{
 			wchunk.Bytes -= bytes;
 			start( h, sp<IFileChunkArg>{chunk} );
 		}
-		else{//error or zero progress - resume with the exception; the close cancels the op's other in-flight chunks (they land here with operation_aborted & no-op: the queue is cleared & the handle nulled).
-			PostIO( [h](){ boost::system::error_code closeEc; h->close(closeEc); } );//via the strand - a close may not race an initiation.
+		else{//error or zero progress - resume with the exception; the close cancels the op's other in-flight chunks (they land here with operation_aborted & no-op: the queue is cleared & the handle nulled).  A shared handle stays open for its other reads, and this op's in-flight chunks land as silent completions (ResumeComplete).
+			if( !op->Shared )
+				PostIO( [h](){ boost::system::error_code closeEc; h->close(closeEc); } );//via the strand - a close may not race an initiation.
 			op->PostExp( up<IFileChunkArg>{}, ec ? (uint32)ec.value() : (uint32)ERROR_IO_DEVICE, Ƒ("{} index: {} failed with {} bytes remaining: {}\n", chunk->IsRead() ? "read" : "write", chunk->Index, wchunk.Bytes, ec ? ec.message() : "no progress") );
 		}
 	}
@@ -220,15 +298,27 @@ namespace Jde::IO{
 			WARN( "[{}]Send after executor teardown - dropping file io.", Path.string() );
 			return;
 		}
-		HANDLE raw = Handle.release();
 		sp<RandomAccessHandle> handle;
-		try{
-			handle = ms<RandomAccessHandle>( *executor, raw );
+		if( Shared ){//the OpenFile's handle, kept alive by the aliasing pointer through the chunks' copies.
+			try{
+				auto asio = Shared->Shared( _sl );
+				handle = sp<RandomAccessHandle>{ asio, &asio->Handle };
+			}
+			catch( IOException& e ){
+				PostExp( up<IFileChunkArg>{}, (uint32)e.Code(), string{e.what()} );
+				return;
+			}
 		}
-		catch( const boost::system::system_error& e ){
-			::CloseHandle( raw );
-			PostExp( up<IFileChunkArg>{}, (uint32)e.code().value(), Ƒ("iocp registration failed: {}", e.what()) );
-			return;
+		else{
+			HANDLE raw = Handle.release();
+			try{
+				handle = ms<RandomAccessHandle>( *executor, raw );
+			}
+			catch( const boost::system::system_error& e ){
+				::CloseHandle( raw );
+				PostExp( up<IFileChunkArg>{}, (uint32)e.code().value(), Ƒ("iocp registration failed: {}", e.what()) );
+				return;
+			}
 		}
 		//explicit offsets make parallel chunks order-independent for reads & writes both - the append base is fixed in Open.
 		let window = std::min<uint>( ChunksToSend, ThreadSize() );

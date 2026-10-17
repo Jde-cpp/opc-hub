@@ -20,13 +20,13 @@ endif()
 target_link_libraries( ${targetName} Jde.Opc open62541::open62541 fmt::fmt protobuf::libprotobuf )
 target_precompile_headers( ${targetName} PRIVATE pc.h )
 
-#Out-of-source, as libs/opc does.  The generated Hist.Records.pb.h includes Opc.Common.pb.h by bare name, which Jde.Opc's
-#PUBLIC include of its own proto dir resolves.
+#Out-of-source, as libs/opc does.  The generated Hist.Records.pb.h includes Opc.Common.pb.h and Jde.IO.Records.pb.h by bare
+#name, which Jde.Opc's and Jde's PUBLIC includes of their proto dirs resolve.
 set( protoOutDir ${jdeGeneratedIncludeDir}/jde/historian/proto )
 file( MAKE_DIRECTORY ${protoOutDir} )
 protobuf_generate(
 	TARGET ${targetName}
-	IMPORT_DIRS proto ${jdeRoot}/libs/opc/src/proto
+	IMPORT_DIRS proto ${jdeRoot}/libs/opc/src/proto ${jdeRoot}/libs/fwk/src/io/records/proto
 	PROTOC_OUT_DIR ${protoOutDir}
 )
 suppressProtoWarnings( "${protos}" ${protoOutDir} )

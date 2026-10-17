@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/app/log/DailyLoadAwait.h>
@@ -115,10 +116,13 @@ namespace Jde::App{
 				let temp = fs::path{ file }.concat( ".tmp" );
 				IO::WriteAwait write{ temp, Protobuf::ToString(archive), true, IO::EWriteMode::Truncate, _tags };
 				co_await Any( write );
-				if( fs::rename(temp, file, ec); ec ){
+				try{
+					IO::Replace( temp, file, _sl );//not fs::rename:  MoveFileEx on Windows, refused an archive a reader has open.
+				}
+				catch( IO::IOException& ){
 					std::error_code removeEc;
 					fs::remove( temp, removeEc );//the target still holds the previous archive; a stray temp would only mislead whoever looks at the directory next.
-					throw IO::IOException{ file, (uint32)ec.value(), Ƒ("Could not rename '{}' onto the archive: {}", temp.string(), ec.message()), _sl };
+					throw;
 				}
 			}
 			std::error_code ec;
