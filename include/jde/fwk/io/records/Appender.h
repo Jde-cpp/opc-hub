@@ -35,7 +35,7 @@ namespace Jde::IO::Records{
 	private:
 		α Write( const T& r )ε->void{
 			const auto size = r.ByteSizeLong();
-			THROW_IF( size>(size_t)std::numeric_limits<int>::max(), "A record of {} bytes is past protobuf's limit.", size );
+			THROW_IF( size>MaxFrameBytes, "A record of {} bytes is past the {} a frame may hold.", size, MaxFrameBytes );
 			THROW_IF( !size, "A record with no member has no frame." );
 			const auto offset = _out.size();
 			_out.resize( offset+size );

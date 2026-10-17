@@ -256,9 +256,15 @@ namespace Jde::Opc::Hist{
 				ul _{ _mutex };
 				Taking( shared );
 			}
+			//A host waiting on it, an edit, or the historian's end, tries every day again; the clock only those whose `delay` is up.
+			let retryAll = !waiters.empty() || !edits.empty() || stopping;
+			//A failing day whose `delay` isn't up.  One more than `delay` off was set before a clock set back since:  due, so the
+			//wait is never longer.
+			let waiting = [&]( optional<TimePoint> retry ){ return retry && !retryAll && taken<*retry && *retry-taken<=_store->Config.Delay; };
 			//Each day's file the flush may write is opened first here, outside the files lock:  its first-open scan reads the
 			//file through the file awaitables, which the flush awaits rather than blocks an executor thread for under the lock
-			//in Prepare.  A day Prepare still finds unopened, or an opening that fails, it opens there as before.
+			//in Prepare.  A day Prepare still finds unopened, or an opening that fails, it opens there as before.  One still
+			//waiting isn't opened, as Prepare won't open it, so a failure stored for Prepare is always its to throw.
 			{
 				vector<Day> days{ due };
 				for( let& buffered : batch )
@@ -269,6 +275,10 @@ namespace Jde::Opc::Hist{
 				vector<std::pair<Day,fs::path>> toScan;
 				{
 					ul _{ _filesMutex };
+					for( auto p = days.begin(); p!=days.end(); ){
+						let failing = _failingDays.find( *p );
+						p = failing!=_failingDays.end() && waiting( failing->second ) ? days.erase( p ) : std::next( p );
+					}
 					toScan = _files->ToScan( days );
 				}
 				for( auto& [day,path] : toScan ){
@@ -290,10 +300,8 @@ namespace Jde::Opc::Hist{
 					}
 				}
 			}
-			//A host waiting on it, an edit, or the historian's end, tries every day again; the clock only those whose `delay` is up.
-			let retryAll = !waiters.empty() || !edits.empty() || stopping;
-			//So too for an archive, which the clock's flushes rewrite at most once per `delay`, holding its records meanwhile,
-			//unless the buffers are past maxBuffer:  those are flushed, not trimmed.
+			//An archive too, on retryAll's terms:  the clock's flushes rewrite one at most once per `delay`, holding its records
+			//meanwhile, unless the buffers are past maxBuffer:  those are flushed, not trimmed.
 			let mergeNow = retryAll || over;
 
 			//Each day on its own, so one that stays unwritable holds back only its own records.  A later day's file made
@@ -321,8 +329,7 @@ namespace Jde::Opc::Hist{
 						retry = p->second;
 					deferred = done<end && !mergeNow && _files->Deferred( day, taken );
 				}
-				//One more than `delay` off was set before a clock set back since:  due, so the wait is never longer.
-				bool failed = retry && !retryAll && taken<*retry && *retry-taken<=_store->Config.Delay;
+				bool failed = waiting( retry );
 				if( !failed && !deferred && retry && done<end ){//one that failed is opened first, before its backlog is converted for a write that fails the same way.
 					ul _{ _filesMutex };
 					if( !_files->Openable(day) ){

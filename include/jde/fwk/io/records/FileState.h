@@ -13,7 +13,7 @@ namespace Jde::IO::Records{
 
 	//A file as the process knows it:  from its first-open scan, and from its own appends since.  A live file's, or one its
 	//owner leaves alone.
-	struct FileState{//an owner adds its own, as the historian does its map.
+	struct Γ FileState{//an owner adds its own, as the historian does its map.
 		fs::path Path;
 		uint32_t Generation{};//past 0, an archive, with no runs:  Size is all of it.
 		uint Size{};//through its last checkpoint, where the next append goes.  At 0 that append opens with the FileStart.

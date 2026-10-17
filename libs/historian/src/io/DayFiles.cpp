@@ -217,11 +217,13 @@ namespace Jde::Opc::Hist{
 			file.Unopened = move( scanned );
 	}
 
-	Opening::Opening( fs::path path, Ticks start, SL sl )ε:
+	Opening::Opening( fs::path path, Ticks start, std::function<void( HistoryRecord& )> restore, SL sl )ε:
 		_opened{ .Path=move(path) },
-		_decoder{ [this, start]( HistoryRecord& r ){
+		_decoder{ [this, start, restore=move(restore)]( HistoryRecord& r ){
 			if( preambled(r, start) )
 				_opened.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
+			if( restore )
+				restore( r );
 		} }{
 		try{
 			_file = ms<IO::OpenFile>( _opened.Path, sl );
@@ -265,6 +267,7 @@ namespace Jde::Opc::Hist{
 		return y;
 	}
 	α GroupFiles::Adopt( Day day, Opened&& opened )ι->void{
+		_failedOpenings.erase( day );//an earlier flush's, which this opening supersedes, adopted or left for Prepare.
 		std::error_code ec;
 		if( auto p = _files.find(day); p!=_files.end() ){
 			if( !(p->second.Generation || !p->second.Refused.empty()) || !opened.Stamped || IO::Records::StampOf(p->second.Path)!=opened.Stamped )
@@ -273,13 +276,16 @@ namespace Jde::Opc::Hist{
 		}
 		else if( opened.Stamped ? IO::Records::StampOf(opened.Path)!=opened.Stamped : fs::exists(opened.Path, ec) || ec )
 			return;//changed since the open, or made since:  Prepare opens it.
+		_files.emplace( day, Known(day, move(opened), false, false, SRCE_CUR) );
+	}
+	α GroupFiles::Known( Day day, Opened&& opened, bool restoring, bool mods, SL sl )ε->DayFile{
 		DayFile file{ {.Path=move(opened.Path)}, std::move(opened.Preamble) };//std::, as absl::move is found for the map.
 		file.Stamped = opened.Stamped;
 		if( opened.Scan )
-			fill( file, move(*opened.Scan), false, SRCE_CUR );
-		if( file.Size && !file.Generation && file.Refused.empty() )
+			fill( file, move(*opened.Scan), restoring, sl );
+		if( !mods && file.Size && !file.Generation && file.Refused.empty() )
 			_unarchived.insert( day );
-		_files.emplace( day, move(file) );
+		return file;
 	}
 
 	α GroupFiles::Adopt( Day day, up<Exception> failed )ι->void{
@@ -301,32 +307,11 @@ namespace Jde::Opc::Hist{
 				failed->Throw();
 			}
 		}
-		DayFile file{ {.Path=mods ? ModsFile(day) : File(day)}, {} };
-		sp<IO::OpenFile> open;
-		try{
-			open = ms<IO::OpenFile>( file.Path, sl );
-		}
-		catch( IO::IOException& e ){
-			if( e.Error!=IO::EIOError::NotFound ){
-				e.SetLevel( ELogLevel::Error );
-				throw;
-			}
-		}
-		if( open ){
-			file.Stamped = IO::Records::StampOf( file.Path );//before the scan, so a change during it shows next time.
-			let start = StartOf( day, _tz );
-			//One read:  the scan hands over each record it keeps, for the preamble and the restore.
-			Decoder decoder{ [&]( HistoryRecord& r ){
-				if( preambled(r, start) )
-					file.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
-				if( restore )
-					restore( r );
-			} };
-			fill( file, IO::Records::ScanNow(open, StartField, CheckpointField, decoder, sl), restore!=nullptr, sl );
-		}
-		if( !mods && file.Size && !file.Generation && file.Refused.empty() )
-			_unarchived.insert( day );
-		return files.emplace( day, move(file) ).first->second;
+		//One read:  the scan hands over each record it keeps, for the preamble and the restore.
+		Opening opening{ mods ? ModsFile(day) : File(day), StartOf(day, _tz), restore, sl };
+		while( opening.Next()==ENext::More )
+			IO::Records::FeedNow( opening, sl );
+		return files.emplace( day, Known(day, opening.Take(), restore!=nullptr, mods, sl) ).first->second;
 	}
 
 	α GroupFiles::Added( NodeIndex index, const Membership::Node& node, Ticks start, const Membership& members, bool withStart )Ε->HistoryRecord{

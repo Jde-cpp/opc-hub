@@ -51,11 +51,16 @@ namespace Jde::IO{
 		return (uint)size.QuadPart;
 	}
 	α OpenFile::Read( uint offset, char* buffer, uint size, SL sl )Ε->uint{
+		//An event of its own, its low-order bit set:  once Shared has put the file on asio's iocp, a read without one queues a
+		//packet there for an OVERLAPPED gone by the time asio takes it, and waits on the file, which any read on it signals.
+		let event = ManualResetEvent();
+		THROW_IFX( !event, IOException(_path, ::GetLastError(), "CreateEvent", sl) );
 		uint y{};
 		while( y<size ){//the handle is overlapped, so each read names its offset and is waited for.
 			OVERLAPPED at{};
 			at.Offset = (DWORD)( offset+y );
 			at.OffsetHigh = (DWORD)( (offset+y)>>32 );
+			at.hEvent = reinterpret_cast<HANDLE>( reinterpret_cast<uintptr_t>((HANDLE)event.get()) | 1 );
 			DWORD read{};
 			if( !::ReadFile(_handle.get(), buffer+y, (DWORD)(size-y), nullptr, &at) && ::GetLastError()!=ERROR_IO_PENDING ){
 				if( ::GetLastError()==ERROR_HANDLE_EOF )
@@ -100,12 +105,11 @@ namespace Jde::IO{
 		}
 		const DWORD access = IsRead ? GENERIC_READ : GENERIC_WRITE;
 		let append = Mode==EWriteMode::Append;
-		let replace = Mode==EWriteMode::Truncate && !Offset;
 		let keepsPrefix = Mode==EWriteMode::Truncate && Offset;
-		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (the log archive round, ArchiveAwait::Execute): without it MoveFileEx cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
-		//A write shares FILE_SHARE_WRITE, and FILE_SHARE_READ unless it replaces the file: a reader can hold a file that is appended to, written in place or cut to a prefix, but one replaced under it would size its buffer from one version and read the bytes of another.  No write shares delete, so the file isn't removed or renamed while it is written.
+		//A read shares all three.  FILE_SHARE_WRITE so an appender can hold the file it reads: each open has to admit the access the other already has.  FILE_SHARE_DELETE so a whole-file rewrite can rename its temp over a file being read (IO::Replace, as the log archive round and the record layer's rewrite do): without it the rename cannot take DELETE on the target and the replace fails, which would only move the sharing violation from the reader to the writer.  The open handle goes on reading the version it opened, as it would on linux.
+		//A write shares read and write in every mode, as linux locks nothing:  a reader of the file, a live day's file at its first append (a Truncate at 0) among them, would otherwise fail the write or be failed by it.  A file that must change whole for its readers goes to a temp renamed over it.  No write shares delete, so the file isn't removed or renamed while it is written.
 		const DWORD shareAll = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
-		const DWORD sharing = IsRead ? shareAll : replace ? FILE_SHARE_WRITE : FILE_SHARE_READ|FILE_SHARE_WRITE;
+		const DWORD sharing = IsRead ? shareAll : FILE_SHARE_READ|FILE_SHARE_WRITE;
 		//create picks whether a missing file is an error in every mode, matching linux's O_CREAT - except for a Truncate that keeps a prefix, since a file made here would have none to keep.  No disposition truncates: a Truncate sets the end of the file below, whatever its Offset.
 		const DWORD creationDisposition = !IsRead && create && !keepsPrefix ? OPEN_ALWAYS : OPEN_EXISTING;
 		const DWORD dwFlagsAndAttributes = IsRead ? FILE_FLAG_SEQUENTIAL_SCAN : FILE_ATTRIBUTE_ARCHIVE;

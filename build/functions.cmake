@@ -105,8 +105,8 @@ if( WIN32 )
 		add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/fmt/bin/fmt$<IF:$<CONFIG:Debug>,d,>.dll" $<TARGET_FILE_DIR:${targetName}>  COMMENT "fmtd.dll" )
 		add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/zlib/bin/z$<IF:$<CONFIG:Debug>,d,>.dll" $<TARGET_FILE_DIR:${targetName}> COMMENT "copy z.dll" )
 		add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/absl/bin/abseil_dll.dll" $<TARGET_FILE_DIR:${targetName}> COMMENT "copy abseil_dll.dll" )
-		#The shared protobuf Jde links (build/CMakeLists.txt):  protobuf's OUTPUT_NAME plus its debug postfix - confirm the name on the first Windows deps build.
-		add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/protobuf/bin/libprotobuf$<IF:$<CONFIG:Debug>,d,>.dll" $<TARGET_FILE_DIR:${targetName}> COMMENT "copy libprotobuf.dll" )
+		#The shared protobuf Jde links (build/CMakeLists.txt), and the utf8_validity it loads.
+		add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/protobuf/bin/protobuf$<IF:$<CONFIG:Debug>,d,>.dll" "${CMAKE_INSTALL_PREFIX}/protobuf/bin/utf8_validity.dll" $<TARGET_FILE_DIR:${targetName}> COMMENT "copy protobuf.dll" )
 	endfunction()
 	#Stages the shared-library targets named in ARGN (+their pdbs) next to ${targetName}, for the targets whose
 	#RUNTIME_OUTPUT_DIRECTORY is not <buildDir>/bin.  Defaults to `Jde Jde.DB` - the pair nearly every consumer needs -

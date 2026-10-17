@@ -11,7 +11,7 @@ namespace Jde::IO::Records{
 	struct Γ Flushed final{
 		static constexpr uint SlotSize{ 20 };
 		//One write of the file, into the slot the last one isn't in.
-		struct Slot final{
+		struct Γ Slot final{
 			fs::path File;
 			uint8 Index{};
 			uint32_t Sequence{};

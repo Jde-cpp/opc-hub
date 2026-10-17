@@ -5,7 +5,7 @@
 #define Φ Γ auto
 namespace Jde::IO::Records{
 	//What the first-open scan keeps of a file.
-	struct Scanned final{
+	struct Γ Scanned final{
 		//None when nothing was kept.  Only once Truncate succeeds is the file then empty, needing its FileStart again:  one
 		//that Keep() holds onto, foreign or with a newer build's records, takes none.
 		optional<Proto::FileStart> Start;

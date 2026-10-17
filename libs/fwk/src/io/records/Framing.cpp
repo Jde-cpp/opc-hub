@@ -124,7 +124,7 @@ namespace Jde::IO{
 			return nullopt;
 		}
 		let prefix = (uint)in.CurrentPosition();
-		if( prefix-tagSize!=CodedOutputStream::VarintSize32(size) || size>(uint32_t)std::numeric_limits<int>::max() ){
+		if( prefix-tagSize!=CodedOutputStream::VarintSize32(size) || prefix+size>MaxFrameBytes ){
 			_stop = EStop::BadLength;
 			return nullopt;
 		}

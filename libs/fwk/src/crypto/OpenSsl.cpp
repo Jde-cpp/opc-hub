@@ -7,6 +7,7 @@
 #include <openssl/x509v3.h>
 #include "OpenSslInternal.h"
 #include "jde/fwk/io/file.h"
+#include <jde/fwk/io/durable.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 
@@ -113,7 +114,7 @@ namespace Jde{
 			return;
 		//read with a callback that supplies no passphrase:  an encrypted key fails on it - the case on every start once this has
 		//run, so it neither throws nor logs - and a clear one never calls it.
-		EVP_PKEY* clear = ::PEM_read_bio_PrivateKey( Internal::ReadFile(path, sl).get(), nullptr, [](char*, int, int, void*)->int{ return -1; }, nullptr );
+		EVP_PKEY* clear = ::PEM_read_bio_PrivateKey( Internal::ReadFile(path, sl).get(), nullptr, [](char*, int, int, void*)->int { return -1; }, nullptr );
 		if( !clear ){
 			::ERR_clear_error();
 			return;
@@ -121,7 +122,7 @@ namespace Jde{
 		//written beside it and renamed over it:  a crash mid-write must not cost the only copy of the key the certificates were issued on.
 		let temp = fs::path{ path.string()+".encrypting" };
 		Internal::WritePrivateKey( temp, Internal::KeyPtr{clear, ::EVP_PKEY_free}, settings.PrivateKey.Passcode, sl );
-		fs::rename( temp, path );
+		IO::Replace( temp, path, sl );
 		INFO( "Encrypted the private key at {} with privateKey.passcode - it was written in the clear, before the passcode was set.", path.string() );
 	}
 

@@ -50,8 +50,22 @@ namespace IO{
 	}
 	α IO::SyncDirectories( const fs::path&, const fs::path&, SL )ε->void{}
 	α IO::Replace( const fs::path& from, const fs::path& to, SL sl )ε->void{
-		if( !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) )
-			throw failed( to, "MoveFileEx", sl );
+		//POSIX semantics:  MoveFileEx is refused a target someone has open, even one opened FILE_SHARE_DELETE.
+		let handle = ::CreateFileW( from.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
+		if( handle==INVALID_HANDLE_VALUE )
+			throw failed( from, "CreateFile", sl );
+		let& target = to.native();
+		let size = sizeof( FILE_RENAME_INFO )+target.size()*sizeof( wchar_t );//FileName[1] holds the terminator.
+		vector<std::byte> buffer( size );
+		auto& info = *reinterpret_cast<FILE_RENAME_INFO*>( buffer.data() );
+		info.Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+		info.FileNameLength = (DWORD)( target.size()*sizeof(wchar_t) );
+		std::copy( target.begin(), target.end(), info.FileName );
+		let renamed = ::SetFileInformationByHandle( handle, FileRenameInfoEx, &info, (DWORD)size );
+		let code = lastError();
+		::CloseHandle( handle );
+		if( !renamed )
+			throw Failed( to, code, "SetFileInformationByHandle", sl );
 	}
 namespace IO{
 	α PathLock::TryLock( const fs::path& dir, sv lockFileName, SL sl )ε->optional<PathLock>{

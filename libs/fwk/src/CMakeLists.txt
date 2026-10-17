@@ -50,10 +50,18 @@ target_link_libraries( ${targetName} PUBLIC protobuf::libprotobuf )
 #proto importing Jde.IO.Records.proto finds its header by bare name.
 set( protoOutDir ${jdeGeneratedIncludeDir}/jde/fwk/proto )
 file( MAKE_DIRECTORY ${protoOutDir} )
+#Jde.dll is the one shared library holding generated protos:  protoc marks their classes and globals with JDE_PROTO_EXPORT,
+#exported here and imported by every consumer.  Linux exports everything already.
+if( WIN32 )
+	target_compile_definitions( ${targetName} PRIVATE "JDE_PROTO_EXPORT=__declspec(dllexport)" INTERFACE "JDE_PROTO_EXPORT=__declspec(dllimport)" )
+else()
+	target_compile_definitions( ${targetName} PUBLIC JDE_PROTO_EXPORT= )
+endif()
 protobuf_generate(
 	TARGET ${targetName}
 	IMPORT_DIRS io/records/proto
 	PROTOC_OUT_DIR ${protoOutDir}
+	EXPORT_MACRO JDE_PROTO_EXPORT
 )
 suppressProtoWarnings( "${protos}" ${protoOutDir} )
 target_include_directories( ${targetName} PUBLIC ${jdeGeneratedIncludeDir} ${protoOutDir} )

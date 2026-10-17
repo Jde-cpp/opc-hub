@@ -794,6 +794,42 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( group->Buffer().empty() );
 	}
 
+	//A day whose file couldn't be opened isn't opened again until its `delay` is up, as Prepare doesn't open it:  the flushes
+	//at 8 KB meanwhile, which today's file lets run, leave it alone, and the one at `delay` opens and writes it.
+	TEST_F( GatewayFiles, FailingDayWaitsOutItsDelay ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let file = File( *group, March8 );
+		fs::create_directories( file );//no day file opens.
+		Logging::ClearMemory();
+		let opens = []{//each day file the flush opens itself, whose IOException, found or not, logs as it is made:  exceptions at Trace.
+			return Logging::Find( []( const Logging::Entry& e ){ return e.File().ends_with("Flush.cpp") && ((uint)e.Tags & (uint)ELogTags::IO); } ).size();
+		};
+		DataChange( *group, speed, 1, sys_days{March8}+1h );
+		DataChange( *group, speed, 2, Time->Now() );
+		EXPECT_FALSE( Flush(*group) );//today's written, March 8's held.
+		let opened = opens();
+		ASSERT_GT( opened, 0u ) << "the opens aren't logged";
+		let pending = Time->Pending();
+		for( uint flush=0; flush<2; ++flush ){
+			uint count{};
+			for( ; Time->Pending()==pending && count<10'000; ++count )//to the flush at 8 KB, for today.
+				DataChange( *group, speed, count, Time->Now()+count*1ms );
+			ASSERT_EQ( Time->Pending(), pending+1 );
+			EXPECT_EQ( Time->Advance(0s), 1 );
+			Settle( *group );
+			EXPECT_EQ( group->Buffer().size(), 1 );
+		}
+		EXPECT_EQ( opens(), opened ) << "opened again inside its `delay`";
+		fs::remove( file );
+		EXPECT_EQ( Time->Advance(1min), 1 );
+		Settle( *group );
+		EXPECT_TRUE( group->Buffer().empty() );
+		EXPECT_EQ( opens(), opened+1 );
+	}
+
 	//A flush the end gave up on starts no write once the lock is let go:  here an archive's merge, queued behind a day
 	//whose scan a FIFO holds past StopLimit, is never renamed over the archive, and its records stay unwritten.
 	TEST_F( GatewayFiles, GivenUpFlushWritesNoMore ){

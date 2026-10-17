@@ -27,7 +27,7 @@ namespace Jde::IO::Records{
 	enum class EStop : uint8{
 		End,
 		Length,//a frame the end of the bytes cuts short:  torn.
-		BadLength,//a varint the layer never writes - padded, over 5 bytes, or a length past protobuf's limit:  not torn.
+		BadLength,//a varint the layer never writes - padded, over 5 bytes, or a frame past MaxFrameBytes:  not torn.
 		Tag,//a field that isn't length-delimited, or field 0:  nothing the layer writes.
 		Body,//a frame that doesn't parse as the owner's record.
 		Empty,//a zero byte where a tag should be:  what a zero-filled tail reads as.
@@ -41,6 +41,8 @@ namespace Jde::IO::Records{
 	Φ ToString( EStop stop )ι->sv;
 
 	constexpr uint WindowBytes{ 1<<20 };//what a scan reads at a time.
+	//The longest frame the layer writes or reads:  a length past it is damage, so a garbled one is never read for.
+	constexpr uint MaxFrameBytes{ 16<<20 };
 	constexpr uint MergeWindowBytes{ 64<<10 };//what a read of a run reads at a time:  one window for a small run.
 	constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
 	//The widest FileStart body, every field at its widest:  a first frame past it is no torn FileStart.

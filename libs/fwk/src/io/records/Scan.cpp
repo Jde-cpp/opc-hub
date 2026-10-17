@@ -82,6 +82,18 @@ namespace Records{
 			auto raw = cursor.Next();
 			if( !raw ){
 				let stop = *cursor.Stop();
+				//A first frame cut short is a FileStart only when a FileStart could fill it, judged before reading on for it.
+				if( stop==EStop::Length && !_offset ){
+					let tag = (char)( (_startField<<3)|2 );
+					if( _buffer.empty() || _buffer[0]!=tag ){
+						_y.Stop = EStop::NoFileStart;
+						return true;
+					}
+					if( cursor.Needed()>MaxStartFrame ){
+						_y.Stop = EStop::BadLength;
+						return true;
+					}
+				}
 				let have = _base+_buffer.size();
 				if( (stop==EStop::Length || stop==EStop::End) && have<_y.FileSize ){//more of the file to read:  the first window, or the rest of a frame.
 					let needed = stop==EStop::Length ? _offset+cursor.Needed()-have : 1;
@@ -89,13 +101,6 @@ namespace Records{
 					return false;
 				}
 				_y.Stop = stop;
-				if( stop==EStop::Length && !_offset ){//a torn first frame is a torn FileStart only when a FileStart could fill it.
-					let tag = (char)( (_startField<<3)|2 );
-					if( _buffer.empty() || _buffer[0]!=tag )
-						_y.Stop = EStop::NoFileStart;
-					else if( cursor.Needed()>MaxStartFrame )
-						_y.Stop = EStop::BadLength;
-				}
 				return true;
 			}
 			if( !_start ){

@@ -126,11 +126,11 @@ namespace Jde::Opc::Hist{
 		optional<Scanned> Scan;
 		Hist::Preamble Preamble;
 	};
-	//A value file's first open for the flush, outside the files lock:  the record layer's scan, which the flush feeds a window
-	//at a time through the file awaitables (Wants, Feed, Next), and the map it builds.  Nothing to read when the file isn't
-	//there.  Throws when it is there and can't be opened or read through.
+	//A day file's first open:  the record layer's scan and the map it builds, restore handed each record the scan keeps.  The
+	//flush feeds it a window at a time through the file awaitables (Wants, Feed, Next), outside the files lock; Open reads
+	//its windows now.  Nothing to read when the file isn't there.  Throws when it is there and can't be opened or read through.
 	struct Opening final : noncopyable{
-		Opening( fs::path path, Ticks start, SRCE )ε;
+		Opening( fs::path path, Ticks start, std::function<void( Proto::HistoryRecord& )> restore={}, SRCE )ε;
 		α Next()ε->ENext;//More:  Wants/Feed.  End:  Take.
 		α Wants()Ι->optional<Window>;
 		α Feed( string&& bytes )ι->void;
@@ -265,6 +265,9 @@ namespace Jde::Opc::Hist{
 	private:
 		//A value file's, or with mods the day's modifications file's.
 		α Open( Day day, SL sl, const std::function<void( Proto::HistoryRecord& )>& restore={}, bool mods=false )ε->DayFile&;
+		//What an Opening read, as the files hold it:  a value file with appends to archive is marked so.  Throws only when
+		//restoring, at a damaged archive.
+		α Known( Day day, Opened&& opened, bool restoring, bool mods, SL sl )ε->DayFile;
 		α Serve( const std::map<Day,DayFile>& files, const fs::path& path, Day day, SL sl )Ε->optional<Served>;
 		//The run Prepare and PrepareMods hand out:  a file with nothing kept opens with its FileStart and preamble, then run
 		//follows, each sealed.  What Commit takes of it is on the Pending; the file notes the append as outstanding.

@@ -30,7 +30,9 @@ namespace Jde::DB{
 		DBException( DB::Sql&& sql, string what, SRCE )ι:DBException{ 0, move(sql), move(what), sl }{}
 		DBException( EDbError error, DB::Sql&& sql, string what, ExceptionArgs args, SRCE )ι; //, ELogTags tags=ELogTags::Sql
 		DBException( DBException&& from )ι:ExternalException{move(from)}, Sql{move(from.Sql)}, Error{from.Error}, _message{move(from._message)}{}
-		DBException( const DBException& from )ι=delete;
+		//What std::current_exception makes on Windows, where the thrown object lives on the thrower's stack:  with this deleted
+		//the runtime copied the bytes, and the copy freed the original's buffers again.  Silent, as ExternalException's copy is.
+		DBException( const DBException& from )ι:ExternalException{from}, Sql{from.Sql}, Error{from.Error}, _message{from._message}{}
 		~DBException(){ Log(); SetLevel( ELogLevel::NoLog ); };
 
 		α Log()Ι->void override;

@@ -449,6 +449,32 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_EQ( scanned.StopOffset, start );
 		EXPECT_EQ( scanned.Size, start );
 	}
+	//A length garbled past MaxFrameBytes is damage where it stands, not a frame the file cuts short:  the reader and the
+	//scan stop at it without reading on for what it claims, and the runs after it are kept.
+	TEST_F( ScanTests, GarbledPastMaxFrame ){
+		let& record = Records[Runs[0].size()+1];//the second run's first record.
+		let start = record.Start;
+		let rest = Bytes.substr( BodyStart(record) );
+		uint8_t prefix[5];
+		let prefixEnd = google::protobuf::io::CodedOutputStream::WriteVarint32ToArray( (uint32_t)MaxFrameBytes, prefix );
+		let garbled = Bytes.substr( 0, start+1 )+string{ reinterpret_cast<char*>(prefix), (uint)(prefixEnd-prefix) }+rest;
+
+		Reader<TestRecord> reader{ Records::Run{.Offset=0, .End=(uint)garbled.size(), .Chain=0, .First=0, .Last=0} };
+		TestRecord r;
+		for( auto n = reader.Next(r); n!=ENext::End; n = reader.Next(r) ){
+			if( n==ENext::More ){
+				let w = *reader.Wants();
+				reader.Feed( string{sv{garbled}.substr(w.Offset, w.Size)} );
+			}
+		}
+		EXPECT_EQ( reader.Stop(), EStop::BadLength );
+		EXPECT_EQ( reader.Offset(), start );
+
+		let scanned = Damaged( garbled );
+		EXPECT_EQ( scanned.Stop, EStop::BadLength );
+		EXPECT_EQ( scanned.StopOffset, start );
+		EXPECT_EQ( scanned.Size, start );
+	}
 
 	//A frame that straddles two windows is read whole, the window grown to it:  every window size reads the same records.
 	TEST_F( ScanTests, WindowBoundaries ){
@@ -555,6 +581,11 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_EQ( Refused("\x80\x00"sv).Stop, EStop::BadLength );//0, padded.
 		EXPECT_EQ( Refused("\x80"sv).Stop, EStop::NoFileStart );//a tag past 15, cut short.
 		EXPECT_EQ( Refused("\x0A\x40 claims 64 bytes"sv).Stop, EStop::BadLength );//cut short, but longer than any FileStart.
+		string claims{ "\x0A" };//a FileStart's tag claiming two windows, all there:  judged before the second is read.
+		uint8_t prefix[5];
+		claims.append( reinterpret_cast<char*>(prefix), (uint)(google::protobuf::io::CodedOutputStream::WriteVarint32ToArray((uint32_t)WindowBytes*2, prefix)-prefix) );
+		claims.resize( claims.size()+WindowBytes*2, 'x' );
+		EXPECT_EQ( Refused(claims).Stop, EStop::BadLength );
 		EXPECT_EQ( Refused("\x08\x01"sv).Stop, EStop::Tag );//field 1 as a varint.
 
 		string archive;
