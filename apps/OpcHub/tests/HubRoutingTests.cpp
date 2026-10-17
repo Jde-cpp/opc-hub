@@ -1,3 +1,4 @@
+#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
@@ -82,6 +83,17 @@ namespace Jde::Opc::Hub::Tests{
 		let type = QL( AppPort(), "__type(name:\"ServerConnection\"){ name fields{ name } }" ).as_object();
 		EXPECT_TRUE( type.contains("__type") ) << serialize( type );
 		Web::Server::Sessions::Remove( sessionId );
+	}
+
+	//#255:  the instance pages' Web Sessions tab - the hub's own instance lists this process's map, over the one /graphql.
+	TEST_F( HubRoutingTests, WebSessionsOfTheHub ){
+		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( sessionId ); } };
+		let authorization = Ƒ( "{:x}", sessionId );
+		let instanceId = App::Server::AppClient()->InstancePK();
+		ASSERT_TRUE( instanceId );
+		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint lastUpdate expiration }}", instanceId), authorization).as_object(), "sessions" );
+		EXPECT_TRUE( std::ranges::any_of(sessions, [](let& s){ return Json::AsString(s.as_object(), "endpoint")==Host; }) ) << serialize( sessions );
 	}
 
 	//POST /login by shape: a Bearer JWT is the app's, a JSON body with `opc` the gateway's OPC login, neither is the app's 401.

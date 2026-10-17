@@ -57,6 +57,13 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( obj.contains("discoveryUrls") );
 	}
 
+	//#255:  a stand-alone gateway answers sessions{…} over its own map - the socket this test queries on holds one of them.
+	TEST_F( QLTests, sessions ){
+		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("sessions{ endpoint lastUpdate expiration }", {}, true) );
+		ASSERT_TRUE( value.is_array() ) << serialize( value );
+		EXPECT_FALSE( value.as_array().empty() ) << "the querying socket's own session is one of them";
+	}
+
 	TEST_F( QLTests, namespaces ){
 		let q = "namespaces( opc: $opc ){ index uri }";
 		const jobject vars{ {"opc", OpcServerSlug} };

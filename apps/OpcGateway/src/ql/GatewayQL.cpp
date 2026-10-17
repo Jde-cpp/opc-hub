@@ -1,4 +1,5 @@
 #include "GatewayQL.h"
+#include <jde/web/server/SessionGraphQL.h>
 #include "GatewayQLAwait.h"
 #include "HistGroupEditQLAwait.h"
 #include "HistGroupQLAwait.h"
@@ -28,6 +29,8 @@ namespace Jde::Opc::Gateway{
 		App::AppQL{ {move(schema)}, authorizer, {} }//no `logs` resource:  the hub mounts this schema too, and its log is `app/logs`.
 	{}
 	α GatewayQL::CustomQuery( QL::TableQL& q, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>>{
+		if( Web::Server::SessionGraphQL::IsApplicable(q) )
+			return Web::Server::SessionGraphQL{ AppClient(), AppClient()->Acl() }.Select( q, executer.UserPK(), sl );
 		up<TAwait<jvalue>> await = GatewayQLAwait::Test( q, executer, sl );
 		return await;
 	}
@@ -40,6 +43,8 @@ namespace Jde::Opc::Gateway{
 			return await;
 		if( auto await = TestConnectionQLAwait::Test(m, executer, sl); await )
 			return await;
+		if( Web::Server::SessionGraphQL::IsPurge(m) )
+			return Web::Server::SessionGraphQL{ AppClient(), AppClient()->Acl() }.Purge( m, executer.UserPK(), sl );
 		return GatewayQLMAwait::Test( m, executer, sl );
 	}
 	α GatewayQL::StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject{
