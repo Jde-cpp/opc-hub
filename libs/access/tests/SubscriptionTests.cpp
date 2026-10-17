@@ -458,7 +458,7 @@ namespace Jde::Access::Tests{
 			ids.push_back( id.to_number<uint>() );
 		vector<uint> expected;
 		for( let e : {User|Created, User|Updated, User|Deleted, User|Restored, User|Purged, Group|Created, Group|Deleted, Group|Restored, Group|Purged, Group|Added, Group|Removed,
-			Role|Deleted, Role|Restored, Role|Purged, Role|Added, Role|Removed, Resources|Created, Resources|Deleted, Resources|Restored, Permission|Updated, Acl|Created, Acl|Purged} )
+			Role|Deleted, Role|Restored, Role|Purged, Role|Added, Role|Removed, Resources|Created, Resources|Deleted, Resources|Restored, Resources|Purged, Permission|Updated, Acl|Created, Acl|Purged} )
 			expected.push_back( underlying(e) );
 		std::ranges::sort( ids );
 		std::ranges::sort( expected );

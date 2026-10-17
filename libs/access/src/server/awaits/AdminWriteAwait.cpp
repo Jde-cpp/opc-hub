@@ -90,8 +90,7 @@ namespace Jde::Access::Server{
 	}
 
 	α ProviderMAwait::Test()ε->void{
-		auto& auth = Authorizer();
-		auth.TestUser( _executer, _sl );
-		auth.TestAdminSlug( "users", _executer, _sl );
+		Authorizer().TestUser( _executer, _sl );
+		TestAccessAdmin( "users", _executer, _sl );
 	}
 }

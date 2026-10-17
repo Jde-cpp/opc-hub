@@ -38,7 +38,7 @@ namespace Jde::App::Server{
 		if( auto await = InstanceTagLevelMAwait::IsApplicable(m) ? mu<InstanceTagLevelMAwait>(move(m), creds.UserPK(), sl) : nullptr; await )
 			return await;
 		if( Web::Server::SessionGraphQL::IsPurge(m) )
-			return Web::Server::SessionGraphQL{ AppClient(), App::Server::Authorizer() }.Purge( m, creds.UserPK(), sl );//the free function:  the member is the ql's.
+			return Web::Server::SessionGraphQL{ AppClient(), App::Server::Authorizer(), App::Server::AppSchema()->Name }.Purge( m, creds.UserPK(), sl );//the free function:  the member is the ql's.
 		return nullptr;
 	}
 }

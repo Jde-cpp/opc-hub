@@ -457,14 +457,37 @@ namespace Jde::Access::Tests{
 		//reviews/m2-closing.md #8:  every resource the gateway gates on, not just the one with a table behind it - or enforcing
 		//gateway/sessions or gateway/search locks out every role this seed ships, the administrators included.
 		for( let slug : {"serverConnections", "sessions", "search"} )
-			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, slug, root), "allowed")), ERights::Read ) << slug;
+			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "gateway", slug, root), "allowed")), ERights::Read ) << slug;
+		//#364:  the web sessions, app/sessions - beside the gateway's, so by schema.  Viewer lists them and the administrator purges.  A
+		//stand-alone gateway's sign-out purges a session it began, which needs no grant (364-sessions-resource review #2).
+		let sessions = [&]( str role, sv schema ){ let p = GetRolePermission( RolePK{GetId(getRole(role, root))}, schema, "sessions", root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
+		EXPECT_EQ( sessions("viewer", "app"), ERights::Read );
+		EXPECT_EQ( sessions("sa", "app"), ERights::Administer );
+		EXPECT_EQ( sessions("gateway-instance", "app"), ERights::None ) << "its sign-out ends a session it began";
+		for( let role : {"owner", "engineer", "operator", "maint-tech"} ){
+			EXPECT_EQ( sessions(role, "app"), ERights::None ) << role;
+			EXPECT_EQ( sessions(role, "gateway"), ERights::None ) << role;
+		}
+		//364-sessions-resource review #4:  and everything else the gateway's own account asks of the AppServer, as OPC Server Instance
+		//covers its server's - its access load reads the five access tables, its provider rows (ProviderMAwait) want Administer on
+		//users, its resource sync and a historian group's own-row purge (ResourceMAwait) want Administer on every gateway root
+		//(TestSchemaAdmin), and its log levels answer to app/logs, since it registers no schema of its own (InstanceLogSchema).
+		const RolePK gatewayInstance{ GetId(getRole("gateway-instance", root)) };
+		let gatewayInstanceOn = [&]( sv schema, sv slug ){ let p = GetRolePermission( gatewayInstance, schema, slug, root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
+		for( let slug : {"acl", "groups", "resources", "roles"} )
+			EXPECT_EQ( gatewayInstanceOn("access", slug), ERights::Read ) << slug;
+		EXPECT_EQ( gatewayInstanceOn("access", "users"), ERights::Read|ERights::Administer );
+		for( let slug : {"serverConnections", "histTemplates", "histTemplateNodes", "histGroups", "histGroupNodes", "sessions", "search"} )//opcGateway-meta.jsonnet's tables and resources
+			EXPECT_EQ( gatewayInstanceOn("gateway", slug), ERights::Administer ) << slug;
+		EXPECT_EQ( gatewayInstanceOn("app", "logs"), ERights::Read|ERights::Update );
+		EXPECT_TRUE( GetRoleChild(gatewayInstance, viewer, root).empty() ) << "a machine account, not a person:  no Viewer";
 		//reviews/m2-closing.md #9 - the role->grant table install-issues #34's fix shape asked for:  what each of the three job
 		//roles grants *itself*, beside what its description says it is for.  Engineer's said "Configures server connections"
 		//over nothing but Viewer's Read - the defect PR #174 reworded out of Operator and Maintenance Technician and left
 		//standing here.  It carries that right now, and that one only;  the other two are Viewer by another name, carry
 		//nothing of their own, and say so.  The provider row a new connection brings is written under the gateway's own
 		//identity (ProviderMAwait), so gateway/serverConnections is all that configuring one asks of its user.
-		constexpr array gated{ "acl", "groups", "providerTypes", "roles", "users", "instances", "instanceTagLevels", "serverConnections", "sessions", "search", "nodeIds" };
+		constexpr array gated{ "acl", "groups", "providerTypes", "roles", "users", "instances", "instanceTagLevels", "serverConnections", "search", "nodeIds" };//sessions above, by schema
 		let direct = [&]( str role, sv resource ){ let p = GetRolePermission( RolePK{GetId(getRole(role, root))}, resource, root ); return p.empty() ? ERights::None : ToRights( Json::AsArray(p, "allowed") ); };
 		let description = [&]( sv role )->string{//from the file - what an operator reads on the Roles page.
 			let start = seed.find( Ƒ("createRole( slug:\"{}\"", role) );
@@ -488,7 +511,7 @@ namespace Jde::Access::Tests{
 			for( let role : {"viewer", "engineer", "operator"} )
 				EXPECT_EQ( directOn(role), ERights::None ) << role << " on " << schema;
 		}
-		for( let slug : {"owner", "engineer", "operator", "maint-tech", "sa", "viewer"} )//parents before children - a purge strips the parent's memberships, the children survive.
+		for( let slug : {"owner", "engineer", "operator", "maint-tech", "gateway-instance", "sa", "viewer"} )//parents before children - a purge strips the parent's memberships, the children survive.
 			Purge( "role", RolePK{GetId(getRole(slug, root))}, root );
 	}
 

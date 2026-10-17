@@ -64,6 +64,7 @@ namespace Jde::Opc::Server{
 
 		β CreateResource( Access::Resource&& resource )ε->void override;
 		β UpdateResourceDeleted( Access::ResourcePK pk, sv schemaName, const jobject& args, bool restored )ε->void override;
+		β PurgeResource( Access::ResourcePK pk )ι->void override;//#364:  purges are heard now, so the node map follows - a purged row no longer governs its node.
 		//A grant on a node mints its resource in the db, and the roleAdded event is all the cache hears of it - no resourcesCreated,
 		//so CreateResource's re-map never ran and the grant waited for a restart (reviews/m3-closing.md #14's open end).
 		β AddRolePermission( Access::RolePK rolePK, const Access::Permission& permission, const jobject& resource )ι->void override;

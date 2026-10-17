@@ -205,6 +205,36 @@ namespace Jde::Access::Tests{
 		Purge( "resource", kept, system );
 	}
 
+	//#364:  the cache follows a purge - EventsSubscribeAwait subscribes it.  It never did, so a row purged while enforced kept its
+	//slug enforced until a restart, and a purged row stayed cached as deleted, where a lookup by slug alone could reach it ahead of
+	//a live row with its key.
+	TEST_F( ResourceTests, APurgeLeavesTheCache ){
+		let root = GetRoot();
+		const UserPK system{ UserPK::System }, unknown{ 999'999 };
+		const string schema{ "resourceTests-364" };
+		for( let& v : QL().QuerySync<jarray>(Ƒ("resources( schemaName:\"{}\" ){{ id }}", schema), {}, root) )//a previous run's.
+			Purge( "resource", GetId(Json::AsObject(v)), system );
+		let createEnforced = [&]{
+			const ResourcePK pk{ (ResourcePK::Type)GetId(QL().QuerySync(Ƒ(R"(mutation createResource( schemaName:"{}", name:"sessions", slug:"sessions", allowed:34 ){{ id }})", schema), {}, system)) };
+			if( let cached = Authorizer()->FindResource(pk); cached && cached->IsDeleted )
+				QL().QuerySync<jvalue>( Ƒ("mutation restoreResource( id:{} )", pk.Value), {}, system );
+			return pk;
+		};
+		let first = createEnforced();
+		ASSERT_EQ( Authorizer()->FindActiveResourcePK(schema, "sessions", ""), first );
+		EXPECT_THROW( Authorizer()->Test(schema, "sessions", ERights::Read, unknown), Exception ) << "enforced";
+
+		Purge( "resource", first.Value, system );
+		EXPECT_FALSE( Authorizer()->FindResource(first) ) << "the row left the cache with the db";
+		EXPECT_FALSE( Authorizer()->FindActiveResourcePK(schema, "sessions", "") );
+		EXPECT_NO_THROW( Authorizer()->Test(schema, "sessions", ERights::Read, unknown) ) << "nothing enforces the slug now";
+
+		let second = createEnforced();
+		EXPECT_EQ( Authorizer()->FindActiveResourcePK(schema, "sessions", ""), second ) << "the key again - its new row answers";
+		EXPECT_THROW( Authorizer()->Test(schema, "sessions", ERights::Read, unknown), Exception );
+		Purge( "resource", second.Value, system );
+	}
+
 	//ql-review3 #48: the insert-side twin.  getEnumValue had its own flags loop that `continue`d past a non-string element, so
 	//an all-numeric array - which no name lookup could ever match - wrote flags==0 with no error, and the resource was silently
 	//unusable (allowed=0 hides it from the permission table).  Both paths share one parser now.

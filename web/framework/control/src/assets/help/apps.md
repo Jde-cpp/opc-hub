@@ -83,6 +83,8 @@ An instance that is not connected cannot report what it runs with, so only its s
 
 The web sessions the instance holds: one for each signed-in browser or service, and one for each address that has called it without signing in. A row shows the user, or *anonymous*, the address the session came from, when it last made a request and when it expires if it makes no more. The refresh button reloads the list.
 
-Every page asks the application server, which answers for its own instance and asks a stand-alone gateway or an OPC server over the socket it registered on; an instance that is not connected cannot be listed. Listing is gated as ending a session is: administer rights over the `sessions` resource, once it is enforced.
+Every page asks the application server, which answers for its own instance and asks a stand-alone gateway or an OPC server over the socket it registered on; an instance that is not connected cannot be listed.
+
+Once the `app/sessions` resource is enforced, listing needs **Read** on it. It is not the gateway's `gateway/sessions`, which gates the gateway's OPC sessions.
 
 A session cannot be ended from this page. The id that ends one is the session's own credential, which the page never shows.

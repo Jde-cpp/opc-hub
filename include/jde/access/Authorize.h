@@ -42,7 +42,6 @@ namespace Jde::Access{
 		α FindActiveResourcePK( string schema, str resourceName, str criteria )ι->optional<ResourcePK>{ rl _{Mutex}; return FindActiveResourcePKLocked(schema, resourceName, criteria); }
 		α GetSchema( str resourceSlug, SL sl )ε->string;
 
-		α TestAdminSlug( str slug, UserPK userPK, SRCE )ε->void;//an app schema's slug:  opc schemas reuse slugs across instances, so they are not searched.
 		//The gate on a role/acl grant for (schema, slug, criteria).  Remote - the schema's registered IAdminAcl, the OpcServer,
 		//which alone knows which resource governs a node - when one is registered and its registrant still passes TestSchemaAdmin;
 		//else TestAdminLocal, pre-completed (appserver-review3 #13).
@@ -146,6 +145,7 @@ namespace Jde::Access{
 
 		β CreateResource( Resource&& resource )ε->void;
 		β UpdateResourceDeleted( ResourcePK pk, sv schemaName, const jobject& args, bool restored )ε->void;
+		β PurgeResource( ResourcePK pk )ι->void;//the row and what access_resource_purge takes with it:  the permissions on it, and the acl rows and role members naming them.
 
 		α DeleteRestoreRole( RolePK rolePK, bool deleted )ι->void;
 		α PurgeRole( RolePK rolePK )ι->void;

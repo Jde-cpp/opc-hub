@@ -61,28 +61,32 @@ namespace Jde::Access{
 		}
 	}
 
-	//A bare slug names a schema only when one schema carries it.  An app schema wins outright; an opc schema ("opc.<server>")
-	//answers only when it is the sole live one with the slug, since every OpcServer registers the same `nodeIds`.  Callers that
-	//can be specific (the acl/role mutations, which have the resource's PK) should be - this is the fallback for those that cannot.
+	//A bare slug names a schema only when one schema carries it.  An app schema wins over the opc ones ("opc.<server>"), which
+	//answer only when one live one has the slug, since every OpcServer registers the same `nodeIds`.  Two app schemas with the slug
+	//are as ambiguous as two opc ones - the hub's app/sessions and gateway/sessions, where the first by pk used to answer
+	//(364-sessions-resource review #3).  Callers that can be specific (the acl/role mutations, which have the resource's PK) should
+	//be - this is the fallback for those that cannot.
 	α Authorize::GetSchema( str resourceSlug, SL sl )ε->string{
 		rl _{ Mutex };
-		optional<string> qualified;
-		bool ambiguous{};
+		optional<string> app, opc;
+		bool appAmbiguous{}, opcAmbiguous{};
 		for( let& [_,resource] : Resources ){
 			if( resource.Slug!=resourceSlug )
 				continue;
-			if( !resource.Schema.contains('.') ) //an app schema's slug is unique by construction
-				return resource.Schema;
-			if( resource.IsDeleted )
+			let isApp = !resource.Schema.contains('.');
+			if( !isApp && resource.IsDeleted )
 				continue;
-			if( qualified && *qualified!=resource.Schema )
-				ambiguous = true;
+			auto& found = isApp ? app : opc;
+			if( found && *found!=resource.Schema )
+				( isApp ? appAmbiguous : opcAmbiguous ) = true;
 			else
-				qualified = resource.Schema;
+				found = resource.Schema;
 		}
-		THROW_IFSL( ambiguous, "Resource slug '{}' exists in more than one schema; send the resource 'id' or a 'schemaName'.", resourceSlug );
-		if( qualified )
-			return *qualified;
+		THROW_IFSL( appAmbiguous || (!app && opcAmbiguous), "Resource slug '{}' exists in more than one schema; send the resource 'id' or a 'schemaName'.", resourceSlug );
+		if( app )
+			return *app;
+		if( opc )
+			return *opc;
 		THROWSL( "Schema not found for resource slug '{}'.", resourceSlug );
 	}
 	α Authorize::Test( str schemaName, str resourceName, ERights rights, UserPK executer, SL sl )ε->void{
@@ -186,12 +190,6 @@ namespace Jde::Access{
 			TestAdmin( resource->second, executer, sl );
 	}
 
-	α Authorize::TestAdminSlug( str resourceSlug, UserPK executer, SL sl )ε->void{
-		rl _{ Mutex };
-		auto resource = find_if( Resources, [&](let& r){return r.second.Slug==resourceSlug && !r.second.Schema.contains('.');} );//exclude opc schemas which can have same slug
-		if( resource!=Resources.end() && !resource->second.IsDeleted )
-			TestAdmin( resource->second, executer, sl );
-	}
 	α Authorize::TestAdminGrant( str schema, str resource, str criteria, UserPK userPK, SL sl )ι->up<AnyVoidAwait>{
 		if( auto remote = FindAdminAuthorizer(schema); remote ){
 			try{
@@ -435,7 +433,39 @@ namespace Jde::Access{
 	α Authorize::CreateResource( Resource&& resource )ε->void{
 		ul _{ Mutex };
 		Index( resource );//as Load registers every active row:  a row created active is enforced - and found by TestSchemaAdmin - now, not at the next start (appserver-review3 #13).
-		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and resource purges are not subscribed, so the entry may be a stale deleted row.
+		Resources[resource.PK] = move( resource );//assignment, not emplace:  a sqlite file from before its keys were autoincrement reuses a purged pk, and a purge this cache missed - one before it subscribed (#364), or another process's - leaves a stale row there.
+	}
+	α Authorize::PurgeResource( ResourcePK pk )ι->void{
+		ul _{ Mutex };
+		Resources.erase( pk );
+		//By pk, not through the row:  AddResource indexes a live row it never caches (RoleAwait's resourceRow), and that pk left
+		//indexed kept its slug enforced, with nothing granted on it, until a restart (364-sessions-resource review #1).
+		for( auto schema = SchemaResources.begin(); schema!=SchemaResources.end(); ){
+			for( auto slug = schema->second.begin(); slug!=schema->second.end(); ){
+				for( auto criteria = slug->second.begin(); criteria!=slug->second.end(); )
+					criteria = criteria->second==pk ? slug->second.erase( criteria ) : std::next( criteria );
+				slug = slug->second.empty() ? schema->second.erase( slug ) : std::next( slug );
+			}
+			schema = schema->second.empty() ? SchemaResources.erase( schema ) : std::next( schema );
+		}
+		//std::erase_if, one remove_if pass:  an erase per row shifted each container's tail, O(n·k) under the write lock (review #8).
+		flat_set<PermissionRole> purged;
+		std::erase_if( Permissions, [&]( let& p ){
+			if( p.second.ResourcePK!=pk )
+				return false;
+			purged.emplace( p.first );
+			return true;
+		} );
+		if( purged.empty() )
+			return;
+		std::erase_if( Acl, [&]( let& acl ){ return purged.contains( acl.second ); } );
+		for( auto&& [_,role] : Roles ) //&&: flat_map iterates a proxy pair.
+			std::erase_if( role.Members, [&]( let& member ){ return purged.contains( member ); } );
+		//Recalc's answer, without rebuilding everyone:  the purged permissions were all on this resource, so only its rights change.
+		for( auto&& [_,user] : Users ){
+			if( user.Rights.erase(pk) ) //operator+= enters a resource's rights with each permission on it.
+				std::erase_if( user.Permissions, [pk]( let& p ){ return p.second.ResourcePK==pk; } );
+		}
 	}
 	//A pk names one row.  No pk - the fan-out could not pick one, because a by-slug delete hit several - names every row of that
 	//schema+slug, and the db changed all of them, so the cache does too (access-review3 #22).
@@ -558,7 +588,7 @@ namespace Jde::Access{
 		optional<ResourcePK> resourcePK;
 		auto found = FindResourceLocked( resource );
 		//The grant names its row - pk, schema and slug - and the entry cached under that pk is another resource:  sqlite reuses a
-		//purged pk and resource purges are not subscribed (CreateResource), so it is a stale row.  Taken as this one, the grant -
+		//purged pk and this cache can miss a purge (CreateResource), so it is a stale row.  Taken as this one, the grant -
 		//and every later grant on the new row by id - landed on the old row's slug (reviews/m3-closing.md #11).  Replace it.
 		let names = [&]( const Resource& cached )->bool{//what the payload says, where it says it - a grant by slug alone names no schema
 			return cached.Slug!=resource.Slug || (resource.Schema.size() && cached.Schema!=resource.Schema) || (jResource.contains("criteria") && cached.Criteria!=resource.Criteria);

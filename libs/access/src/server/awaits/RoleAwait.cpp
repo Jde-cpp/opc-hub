@@ -72,7 +72,7 @@ namespace Jde::Access::Server{
 	}
 	α RoleMAwait::Members( RolePK parentRolePK, const jobject& childRole )ι->void{
 		try{
-			Authorizer().TestAdminSlug( "roles", _userPK, _sl );//TestAddRoleMember in AddMembers is only the cycle check - the executer gate is here, as in AclQLAwait::InsertRole.
+			TestAccessAdmin( "roles", _userPK, _sl );//TestAddRoleMember in AddMembers is only the cycle check - the executer gate is here, as in AclQLAwait::InsertRole.
 			_children.clear();
 			if( let ids = childRole.if_contains("id"); ids )
 				Json::Visit( *ids, [&](const jvalue& v){ _children.push_back( RolePK{Json::AsNumber<RolePK::Type>(v)} ); } );

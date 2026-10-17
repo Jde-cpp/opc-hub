@@ -41,7 +41,7 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "session", "sessions", "variable", "variables"} );//session(s):  SessionGraphQL (GatewayQL) over this process's web sessions - the AppServer forwards an instance page's listing here.
+		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "sessions", "variable", "variables"} );//sessions:  the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
 		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command} };//resolveHistory, testConnection:  resolve and test are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );

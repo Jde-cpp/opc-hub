@@ -17,6 +17,7 @@ namespace Jde::Web::Server{
 
 		SessionPK SessionId;
 		string UserEndpoint;
+		Jde::UserPK MintedBy;//the account that signed UserPK in - a stand-alone gateway, over the AppServer socket (AddSession, Login) - which may end it (SessionGraphQL::Purge).
 		bool HasSocket;//before Expiration
 		steady_clock::time_point Expiration;
 		steady_clock::time_point LastServerUpdate;
@@ -29,7 +30,7 @@ namespace Jde::Web::Server{
 
 	//TODO - change to GraphQL.
 	namespace Sessions{
-		α Add( UserPK userPK, string&& endpoint, bool isSocket )ι->sp<SessionInfo>;
+		α Add( UserPK userPK, string&& endpoint, bool isSocket, UserPK mintedBy={} )ι->sp<SessionInfo>;
 		α Find( SessionPK sessionId )ι->sp<SessionInfo>;
 		//Find, and slide a still-live session's expiration to NewExpiration() - a day for a socket-backed one.  No endpoint
 		//check:  the caller vouches for the asker (the AppServer's SessionInfo handler, for a registered app instance).  An

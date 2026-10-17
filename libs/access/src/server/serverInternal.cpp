@@ -8,6 +8,7 @@
 #include <jde/ql/LocalSubscriptions.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/types/MutationQL.h>
+#include <jde/access/Authorize.h>
 #include <jde/access/awaits/ConfigureAwait.h>
 #include "serverInternal.h"
 #include "jde/access/server/awaits/AclAwait.h"
@@ -92,6 +93,7 @@ namespace Jde::Access{
 		}
 	}
 	α Server::Authorizer()ι->Access::Authorize&{ return LocalQL().Authorizer(); }
+	α Server::TestAccessAdmin( str slug, UserPK executer, SL sl )ε->void{ Authorizer().TestAdminLocal( AccessSchema().Name, slug, {}, executer, sl ); }
 
 	α Server::Authenticate( str loginName, uint providerId, str opcServer, SL sl )ι->AuthenticateAwait{
 		return AuthenticateAwait{ loginName, providerId, opcServer, sl };

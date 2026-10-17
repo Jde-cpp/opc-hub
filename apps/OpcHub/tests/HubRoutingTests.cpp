@@ -96,6 +96,28 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_TRUE( std::ranges::any_of(sessions, [](let& s){ return Json::AsString(s.as_object(), "endpoint")==Host; }) ) << serialize( sessions );
 	}
 
+	//#364:  the hub holds the gateway's `sessions` - its OPC UA sessions, Read only - beside the app schema's, and the gate that asked
+	//by slug alone answered with the gateway's:  enforcing it refused the listing and every purge, a gateway logout's included.  The
+	//gate is app/sessions, unenforced here, so a user the gateway's grants nothing still lists and purges.
+	TEST_F( HubRoutingTests, TheGatewaysSessionsDoNotGateWebSessions ){
+		let enforce = []( bool on ){ App::Server::AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"sessions\", criteria:null )", on ? "restore" : "delete"), {} ); };
+		let rows = Json::AsArray( App::Server::AppClient()->QuerySync<jvalue>("resources( schemaName:\"gateway\", slug:\"sessions\", criteria:null ){ deleted }", {}) );
+		let wasEnforced = rows.size() && rows[0].as_object().at("deleted").is_null();
+		if( !wasEnforced )
+			enforce( true );
+		absl::Cleanup restore{ [&]{ if( !wasEnforced ) enforce( false ); } };//as it was found (364-sessions-resource review #9).
+		let caller = Web::Server::Sessions::Add( Jde::UserPK{999'999}, string{Host}, false )->SessionId;//no user:  no grant anywhere.
+		let other = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.16", false )->SessionId;
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( caller ); Web::Server::Sessions::Remove( other ); } };
+		let authorization = Ƒ( "{:x}", caller );
+		let instanceId = App::Server::AppClient()->InstancePK();
+		ASSERT_TRUE( instanceId );
+		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId), authorization).as_object(), "sessions" );
+		EXPECT_TRUE( std::ranges::any_of(sessions, [](let& s){ return Json::AsString(s.as_object(), "endpoint")=="10.255.0.16"; }) ) << serialize( sessions );
+		QL( AppPort(), Ƒ("mutation purgeSession( id:\"{:x}\" )", other), authorization );
+		EXPECT_FALSE( Web::Server::Sessions::Find(other) );
+	}
+
 	//POST /login by shape: a Bearer JWT is the app's, a JSON body with `opc` the gateway's OPC login, neither is the app's 401.
 	TEST_F( HubRoutingTests, LoginByShape ){
 		auto failure = [&]( function<void()> call )->optional<http::status>{

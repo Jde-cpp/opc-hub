@@ -4,6 +4,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/types/MutationQL.h>
+#include <jde/ql/types/RequestQL.h>
 #include <jde/ql/types/TableQL.h>
 #include <jde/web/server/Sessions.h>
 #include <jde/app/IApp.h>
@@ -14,12 +15,14 @@
 namespace Jde::Web::Server{
 	constexpr ELogTags _tags{ ELogTags::Sessions };
 	struct SessionGraphQLAwait final: TAwait<jvalue>{
-		SessionGraphQLAwait( const QL::TableQL& query, UserPK userPK, sp<App::IApp> appClient, sp<Access::Authorize> authorizer, SRCE )ι:
-			TAwait<jvalue>{ sl }, _appClient{ move(appClient) }, _authorizer{ move(authorizer) }, Query{ query }, UserPK{ userPK }{}
+		SessionGraphQLAwait( const QL::TableQL& query, UserPK userPK, sp<App::IApp> appClient, sp<Access::Authorize> authorizer, string schema, bool forwarded, SRCE )ι:
+			TAwait<jvalue>{ sl }, _appClient{ move(appClient) }, _authorizer{ move(authorizer) }, _schema{ move(schema) }, _forwarded{ forwarded }, Query{ query }, UserPK{ userPK }{}
 		α Suspend()ι->void override{ Select(); }
 		α Select()ι->TAwait<jvalue>::Task;
 		sp<App::IApp> _appClient;
 		sp<Access::Authorize> _authorizer;
+		string _schema;
+		bool _forwarded;
 		QL::TableQL Query;
 		Jde::UserPK UserPK;
 	};
@@ -37,14 +40,14 @@ namespace Jde::Web::Server{
 				if( auto p = Sessions::Find(*sessionId); p )
 					sessions.push_back( p );
 			}
-			//The listing, and another's session, are gated as the purge is (PurgeBefore):  admin over `sessions`.  A signed-in
-			//caller's own session is theirs to read - the spa confirms its sign-in with session(id:<its own>) (app-service.ts
-			//validateSessionId), which can not wait on a grant.  An id that is nobody's, or not found, takes the gate too:  a
-			//refusal is the same answer either way, so a probe learns nothing.
+			//The listing, and another's session, take Read on the app schema's `sessions`.  A signed-in caller's own session is
+			//theirs to read - the spa confirms its sign-in with session(id:<its own>) (app-service.ts validateSessionId), which can
+			//not wait on a grant.  An id that is nobody's, or not found, takes the gate too:  a refusal is the same answer either
+			//way, so a probe learns nothing.
 			let own = sessionString && UserPK.Value && sessions.size()==1 && sessions.front()->UserPK.Value==UserPK.Value;
-			if( !own ){
+			if( !own && !_forwarded ){
 				THROW_IF( !_authorizer, "No authorizer - refusing to list sessions." );
-				_authorizer->TestAdminSlug( "sessions", UserPK, _sl );
+				_authorizer->Test( _schema, "sessions", Access::ERights::Read, UserPK, _sl );
 			}
 			if( !sessionString )
 				sessions = Sessions::Get();//after the gate:  a refused caller copies no map.
@@ -110,22 +113,29 @@ namespace Jde::Web::Server{
 	}
 
 	α SessionGraphQL::IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName=="session" || q.JsonName=="sessions"; }
+	α SessionGraphQL::IsForwarded( const QL::RequestQL& q )ι->bool{
+		return q.IsQueries() && q.Queries().size()==1 && q.Queries().front().JsonName=="sessions" && q.Queries().front().ReturnRaw;
+	}
 	α SessionGraphQL::IsPurge( const QL::MutationQL& m )ι->bool{ return m.Type==QL::EMutationQL::Purge && m.JsonTableName=="session"; }//purgeSession(id:…).  Not TableName():  no view, so no DBTable to name it.
 
 	α SessionGraphQL::Select( const QL::TableQL& query, UserPK userPK, SL sl )ι->up<TAwait<jvalue>>{
-		return mu<SessionGraphQLAwait>( query, userPK, _appClient, _authorizer, sl );
+		return mu<SessionGraphQLAwait>( query, userPK, _appClient, _authorizer, _schema, _forwarded, sl );
 	}
 
 	α SessionGraphQL::Purge( const QL::MutationQL& m, UserPK executer, SL sl )ι->up<TAwait<jvalue>>{
-		return mu<CompletedAwait<jvalue>>( [m, executer, authorizer=_authorizer, sl]()->jvalue{
-			//the acl is the only gate available here - ownership can't be one.  OpcGateway logs a user out by purging *their*
-			//session as its own service identity (HttpRequestAwait::Logout), so a legitimate purge is routinely cross-user and
-			//"you may only purge your own" would break logout.  admin over "sessions" is what separates that from an attacker.
+		return mu<CompletedAwait<jvalue>>( [m, executer, authorizer=_authorizer, schema=_schema, sl]()->jvalue{
+			//A signed-in caller may end their own session, and one they signed its user in to:  a stand-alone gateway logs a user out
+			//by purging the session it began for them (AddSession, Login - MintedBy) as its own identity (HttpRequestAwait::Logout),
+			//so its sign-out needs no grant (364-sessions-resource review #2).  Anyone else's takes Administer on `sessions`.  Not the
+			//id alone:  it is 32 bits, so holding one would let a guesser sign anyone out.  An id not found takes the gate, as the listing's.
 			THROW_IF( !authorizer, "No authorizer - refusing to purge session." );
-			authorizer->TestAdminSlug( "sessions", executer, sl );
-			uint rows{};
-			if( auto sessionId = m.FindPtr("id"); sessionId )
-				rows = Sessions::Remove( Str::TryTo<SessionPK,16>(Json::AsString(*sessionId)).value_or(0) ) ? 1 : 0;
+			let id = m.FindPtr( "id" );
+			let sessionId = id ? Str::TryTo<SessionPK,16>( Json::AsString(*id) ) : nullopt;
+			let session = sessionId ? Sessions::Find( *sessionId ) : sp<SessionInfo>{};
+			let theirs = session && executer.Value && (session->UserPK.Value==executer.Value || session->MintedBy.Value==executer.Value);
+			if( !theirs )
+				authorizer->Test( schema, "sessions", Access::ERights::Administer, executer, sl );
+			let rows = session && Sessions::Remove( session->SessionId ) ? 1 : 0;
 			return jobject{ {"complete", true}, {"rowCount", rows} };
 		}, sl );
 	}
