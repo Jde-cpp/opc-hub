@@ -56,11 +56,9 @@ namespace Jde::Crypto{
 		return dir;
 	}
 
-	//EnsureKeyCertificate re-issues on the key that is there, but reissueReason only weighs existence, expiry and
-	//subjectAltName - never whether the certificate on disk was issued for that key - so it heals a missing or stale
-	//certificate and leaves a mismatched one standing.  With clear:false a fixture left mismatched by an older build
-	//would therefore stay mismatched forever, so the check has to happen here.  (The library has the same blind spot
-	//for a real damaged install - see the note on #26.)
+	//The fixture's certificate against its public key file.  ReissueReason re-issues a certificate not issued on the private
+	//key (EnsureKeyCertificate_ReissuesAMismatchedPair), but nothing in the library compares either with public.pem, so a
+	//fixture left with a stale one by an older build (clear:false) has to be caught here.
 	Ω matchesKey( str certificateFile, str publicKeyFile )ι->bool{
 		try{
 			auto der = Crypto::ReadCertificate( certificateFile );
@@ -433,6 +431,28 @@ namespace Jde::Crypto{
 		EXPECT_TRUE( Crypto::ReissueReason(settings).empty() );
 		Crypto::EnsureKeyCertificate( settings );
 		EXPECT_TRUE( ReadCertificate(certFile)==fresh );//a year out - no churn.
+		fs::remove_all( dir );
+	}
+
+	//a certificate issued on another key - two checkouts sharing a certificate path, each with its own key - is unusable:  nothing
+	//encrypted to it can be decrypted (HistoryTests' issued token, 2026-10).  A managed one is re-issued on the key that is there.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_ReissuesAMismatchedPair ){
+		let dir = ScratchDir( "mismatchedPair" );
+		let mine = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "mismatched-pair" );
+		let other = SslSettings( (dir/"other-public.pem").string(), (dir/"other-private.pem").string(), (dir/"cert.pem").string(), "mismatched-pair" );//the same certificate path
+		mine.CreateDirectories();
+		Crypto::CreateKeyCertificate( mine );
+		Crypto::CreateKeyCertificate( other );//re-issues the shared certificate on the other key
+		let key = Crypto::ReadPublicKey( mine.PublicKey.Path );
+		auto stolenDer = ReadCertificate( mine.Certificate.Path );
+		ASSERT_FALSE( Crypto::ExtractPublicKey(stolenDer, SRCE_CUR)==key ) << "the setup did not leave the certificate on the other key";
+
+		EXPECT_TRUE( Crypto::ReissueReason(mine).starts_with("not issued on the private key") ) << Crypto::ReissueReason( mine );
+		Crypto::EnsureKeyCertificate( mine );
+		auto healedDer = ReadCertificate( mine.Certificate.Path );
+		EXPECT_TRUE( Crypto::ExtractPublicKey(healedDer, SRCE_CUR)==key ) << "re-issued on the key that is there";
+		EXPECT_TRUE( Crypto::ReissueReason(mine).empty() );
+		EXPECT_TRUE( Crypto::ReadPublicKey(mine.PublicKey.Path)==key ) << "and the pair itself left alone";
 		fs::remove_all( dir );
 	}
 

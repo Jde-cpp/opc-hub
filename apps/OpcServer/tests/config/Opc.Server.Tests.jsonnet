@@ -36,12 +36,16 @@ local appPort = 2067;
 		//The test host keeps a reader where the stock Opc.Server.jsonnet has none (it is opt-in - an unauthenticated write
 		//path, see config/Opc.Server.Emulator.jsonnet); PubSubTests is what covers it, and loopback is not a domain.
 		pubsub: (import '../../config/pubsub/pumps.libsonnet') + { url: "opc.udp://127.0.0.1:4849/" },
+		//The whole pair in the build dir, so each checkout has its own:  the certificate's default path is the one ProgramData tree
+		//every checkout shares, and a certificate issued there on another checkout's key failed every token encrypted to it.
 		ssl:{
 			certificate:{
+				path: args.repoBuildDir + "/OpcServer/ssl/certs/OpcServer.Tests.pem",
 				subjectAltName: "URI:urn:open62541.server.application,DNS:localhost,IP:127.0.0.1",
 				commonName: args.instanceName + ".opcServer.tests.web",
 			},
-			privateKey: {path: args.repoBuildDir + "/OpcServer/ssl/private/OpcServer.Tests.pem", passcode: ""}
+			privateKey: {path: args.repoBuildDir + "/OpcServer/ssl/private/OpcServer.Tests.pem", passcode: ""},
+			publicKey: {path: args.repoBuildDir + "/OpcServer/ssl/public/OpcServer.Tests.pem"}
 		}
 	},
 	dbServers: {

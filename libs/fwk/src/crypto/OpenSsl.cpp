@@ -89,6 +89,15 @@ namespace Jde{
 		return y;
 	}
 
+	//X509_check_private_key:  the certificate carries the key's public half.
+	Ω issuedOnKey( std::span<byte> der, const Crypto::CryptoSettings& settings, SL sl )ε->bool{
+		X509Ptr cert{ ::d2i_X509_bio(ToBio(der, sl).get(), nullptr), ::X509_free }; CHECK_NULL( cert.get() );
+		let key = ReadPrivateKey( settings.PrivateKey.Path, settings.PrivateKey.Passcode, sl );
+		let y = ::X509_check_private_key( cert.get(), key.get() )==1;
+		::ERR_clear_error();//a mismatch queues "key values mismatch" - it would ride along on a later, unrelated exception.
+		return y;
+	}
+
 	//why the on-disk certificate can no longer stand for `settings`, empty if it can.  It used to stand forever: a cert
 	//issued before its config gained a subjectAltName kept failing host_name_verification until an operator hand-deleted
 	//the pems.  A re-issue keeps the key pair, so modulus-keyed enrollment and public-key trust survive; only anchors
@@ -97,7 +106,12 @@ namespace Jde{
 	α Crypto::ReissueReason( const Crypto::CryptoSettings& settings, SL sl )ε->string{
 		if( !fs::exists(settings.Certificate.Path) )
 			return "no certificate";
-		let onDisk = Crypto::Certificate{ Crypto::ReadCertificate(settings.Certificate.Path, sl), sl };//unreadable throws - a damaged install, not something to paper over by minting a replacement.
+		auto der = Crypto::ReadCertificate( settings.Certificate.Path, sl );//unreadable throws - a damaged install, not something to paper over by minting a replacement.
+		//Issued on another key - another checkout's sharing the path, a key replaced and the certificate kept - it is presented, and
+		//nothing encrypted to it can be decrypted:  every UA token encrypted to the test OpcServer's failed (2026-10).
+		if( !issuedOnKey(der, settings, sl) )
+			return Ƒ( "not issued on the private key '{}'", settings.PrivateKey.Path.string() );
+		let onDisk = Crypto::Certificate{ der, sl };
 		//a day's margin:  a certificate that outlives the check by an hour is presented, trusted, and then rejected mid-session
 		//by the peer's own clock - re-issuing at the last start that sees it coming costs nothing, the key pair survives.
 		if( let now = Clock::now(); onDisk.Expiration<=now+24h )
