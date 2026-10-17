@@ -1,8 +1,5 @@
 ﻿#pragma once
 #include <jde/db/generators/Syntax.h>
-#include <jde/db/generators/FromClause.h> //complete Join for UsingClause.
-#include <jde/db/meta/Column.h>
-#include <jde/db/meta/Table.h>
 
 namespace Jde::DB::MySql{
 	//Driver-local dialect - resolved dynamically through IDataSource::Syntax(), so nothing in Jde.DB needs to know about it.
@@ -66,13 +63,6 @@ namespace Jde::DB::MySql{
 		α SchemaSelect()Ι->sv override{ return "select database() from dual;"; }
 		α SpecifyIndexCluster()Ι->bool override{ return false; }
 		α SysSchema()Ι->sv override{ return "sys"; }
-		//`using(col)` only when both sides name the same unaliased column; anything else falls back to the base `on a.x=b.y`.
-		α UsingClause( const Join& join )Ι->string override{
-			const auto& c1 = *join.To;
-			return join.From->Name==c1.Name && join.ToAlias.empty() && join.FromAlias.empty()
-				? Ƒ( "\n\t{}join {} using({})", join.Inner ? "" : "left ", c1.Table->SqlName(), c1.Name )
-				: Syntax::UsingClause( join );
-		}
 		α UtcNow()Ι->sv override{ return "CURRENT_TIMESTAMP()"; }
 	};
 }
