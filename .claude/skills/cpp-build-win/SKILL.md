@@ -104,7 +104,7 @@ clean $B
 |--------|-------------------|
 | `compile <buildDir> <file>` | Ninja has no per-directory Makefiles, so it looks the `.obj` up in `compile_commands.json` (via `jq`) and runs `ninja -C <buildDir> <obj>`. A file with no entry fails "no compile command" — a header, or a new source the glob has not picked up yet |
 | `buildProject <buildDir> <file>` | `ninja <dir>/all` for the nearest dir with its own CMakeLists. Two arguments, where Linux takes `<buildDir> <workspaceFolder> <relativeFile>` |
-| `clean <buildDir>` | `--target clean`, then deletes **every** `*.obj *.lib *.exe *.pdb *.pcm *.json *.xml *.yml *.yaml …` under the build dir, `compile_commands.json` and CMake's file-api replies included: reconfigure afterwards |
+| `clean <buildDir>` | `--target clean`, then deletes **every** `*.obj *.lib *.exe *.pdb *.pcm *.json *.xml *.yml *.yaml …` under the build dir, `compile_commands.json` and CMake's file-api replies included: reconfigure afterwards. It skips `repos/`, the superbuild's git checkouts, whose `.pack`/`.idx` and source `.xml`/`.json` the patterns would otherwise take |
 
 The `msbuild.exe` branches are legacy; no preset generates Visual Studio projects.
 

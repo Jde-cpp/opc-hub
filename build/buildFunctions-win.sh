@@ -146,18 +146,10 @@ function clean() (
 	repoBuildDir=$1; #scope to this checkout's build dir - a find from $1 would sweep every checkout's PCHs.
 	cd $repoBuildDir || return 1;
 	cmake --build . --target clean;
-	find . -name 'cmake_pch.hxx.pch' -print -delete;
-	find . -name '*.obj' -print -delete;
-	find . -name '*.pack' -print -delete;
-	find . -name '*.lib' -print -delete;
-	find . -name '*.xml' -print -delete;
-	find . -name '*.srcjar' -print -delete;
-	find . -name '*.yml' -print -delete;
-	find . -name '*.exe' -print -delete;
-	find . -name '*.pcm' -print -delete;
-	find . -name '*.idx' -print -delete;
-	find . -name '*.yaml' -print -delete;
-	find . -name '*.pdb' -print -delete;
-	find . -name '*.pdf' -print -delete;
-	find . -name '*.json' -print -delete;
+	#repos holds the superbuild's git checkouts - these patterns would take their .pack/.idx and source .xml/.json.
+	#-exec rm, not -delete: -delete implies -depth, which disables -prune.
+	local pattern;
+	for pattern in 'cmake_pch.hxx.pch' '*.obj' '*.pack' '*.lib' '*.xml' '*.srcjar' '*.yml' '*.exe' '*.pcm' '*.idx' '*.yaml' '*.pdb' '*.pdf' '*.json'; do
+		find . -path ./repos -prune -o -name "$pattern" -print -exec rm -f {} +;
+	done
 )
