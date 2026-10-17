@@ -8,7 +8,7 @@
 #include "../ServerSocketSession.h"
 #include "../WebServer.h"
 #include "jde/fwk/log/break.h"
-#include <jde/fwk/co/AnyAwait.h>
+#include "QueryInstanceAwait.h"
 
 
 #define let const auto
@@ -17,39 +17,6 @@ namespace Jde::App::Server{
 	//an enforced one answers an anonymous caller 401.
 	Ω testLogs( ProgInstPK instanceId, Access::ERights rights, UserPK executer, SL sl )ε->void{
 		Authorizer()->Test( InstanceLogSchema(instanceId), "logs", rights, executer, sl );
-	}
-
-	//The levels the instance runs with: its own `logSetting{ text binary appServer }` answer - tag->level per sink, with
-	//`default` - fetched the way pushRuntime delivers a change: through the local ql for this process, over the socket for
-	//a connected instance.  Null when it is not connected or does not answer: the rows are the record and are still
-	//returned; what runs is best-effort, and a wedged instance must fail this column, not the query (install-issues #19).
-	//An AnyAwait so InstanceTagLevelAwait::Execute, whose task type is the row query's, can co_await it (AnyAwait.h).
-	struct RunningLevelsAwait final : AnyAwait<jvalue>{
-		RunningLevelsAwait( ProgInstPK instanceId, QL::TableQL&& ql, UserPK executer, SRCE )ι:
-			AnyAwait<jvalue>{sl}, _instanceId{instanceId}, _ql{move(ql)}, _executer{executer}{}
-	protected:
-		α Suspend()ι->void override{ Execute(); }
-	private:
-		α Execute()ι->TAwait<jvalue>::Task;
-		ProgInstPK _instanceId;
-		QL::TableQL _ql;
-		UserPK _executer;
-	};
-	α RunningLevelsAwait::Execute()ι->TAwait<jvalue>::Task{
-		try{
-			if( _instanceId==AppClient()->InstancePK() )
-				Resume( co_await *AppClient()->Query<jvalue>(_ql.ToString(), {}, true, _sl) );
-			else if( auto session = FindInstance(_instanceId); session ){
-				IWebsocketSession& base = *session;//ServerSocketSession's own QueryClient override hides the awaitable-returning overloads.
-				Resume( co_await base.QueryClient(move(_ql), _executer, _sl) );
-			}
-			else
-				Resume( jvalue{} );//not connected: nothing is running to report.
-		}
-		catch( runtime_error& e ){
-			Exception{ move(e), ExceptionArgs{ELogLevel::Warning, ELogTags::Settings}, _sl };
-			Resume( jvalue{} );
-		}
 	}
 
 	//instanceTagLevel( id:42 ){ text binary appServer running } -> { "text": {"Debug":["sql",["socket","client","read"]], "Information":["default"]}, "running": {"text":{"default":"Trace","sql":"Debug",…}, "binary":{…}} }
@@ -106,7 +73,16 @@ namespace Jde::App::Server{
 					if( _query.FindColumn(sink) )
 						ql.Columns.push_back( QL::ColumnQL{string{sink}, nullptr} );//not AddColumn: that resolves against a db table, and logSetting has none.
 				}
-				y["running"] = co_await RunningLevelsAwait{ (ProgInstPK)instanceId, move(ql), _executer, _sl };
+				//asked the way pushRuntime delivers a change.  Null when it is not connected or does not answer:  the rows are the
+				//record and are still returned;  what runs is best-effort, and a wedged instance must fail this column, not the query
+				//(install-issues #19).
+				try{
+					y["running"] = (co_await QueryInstanceAwait{ (ProgInstPK)instanceId, move(ql), _executer, _sl }).value_or( jvalue{} );
+				}
+				catch( runtime_error& e ){
+					Exception{ move(e), ExceptionArgs{ELogLevel::Warning, ELogTags::Settings}, _sl };
+					y["running"] = nullptr;
+				}
 			}
 			Resume( y );
 		}

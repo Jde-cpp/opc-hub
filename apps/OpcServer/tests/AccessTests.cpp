@@ -9,6 +9,8 @@
 #include "../src/ql/OpcQL.h"
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/ql/ql.h>
+#include <jde/ql/QLAwait.h>
+#include <jde/web/server/Sessions.h>
 #define let const auto
 
 namespace Jde::Opc::Server::Tests{
@@ -272,9 +274,25 @@ namespace Jde::Opc::Server::Tests{
 	//The AppServer's read of the live levels for instanceTagLevel's `running` - it answered "Table logSetting not supported",
 	//so the column was always null for an OpcServer.
 	TEST_F( AccessTests, LogSettingQueryFromTheAppServer ){
-		auto q = QL::Parse( "logSetting{ text }", {}, {}, true );//as RunningLevelsAwait sends it:  raw.
+		auto q = QL::Parse( "logSetting{ text }", {}, {}, true );//as instanceTagLevel's `running` sends it (QueryInstanceAwait):  raw.
 		let y = BlockTAwait<jvalue>( move(*_app->ClientQuery(move(q), Jde::UserPK{})) );
 		EXPECT_TRUE( Json::AsObject(y).contains("text") ) << serialize( y );
+	}
+
+	//#255:  the instance page's Web Sessions tab, as InstanceSessionsAwait forwards it - raw, over the socket.
+	TEST_F( AccessTests, SessionsQueryFromTheAppServer ){
+		let session = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.5", false );
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
+		auto q = QL::Parse( "sessions{ endpoint }", {}, {}, true );
+		let y = BlockTAwait<jvalue>( move(*_app->ClientQuery(move(q), _app->UserPK())) );
+		ASSERT_TRUE( y.is_array() ) << serialize( y );
+		EXPECT_TRUE( std::ranges::any_of(y.as_array(), [](let& s){ return Json::AsString(s.as_object(), "endpoint")=="10.255.0.5"; }) ) << serialize( y );
+	}
+	//and this server's own ql answers no sessions query:  opcAuthorize holds no `sessions` resource, so a gate here would pass anyone.
+	TEST_F( AccessTests, SessionsAreNotThisServersQuery ){
+		let session = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.14", false );
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
+		EXPECT_THROW( (BlockAwait<QL::QLAwait<jvalue>,jvalue>(QL::QLAwait<jvalue>{"sessions{ endpoint }", {}, Jde::UserPK{}, Server::QLPtr()})), std::exception );
 	}
 
 	//the mapping on its own, without a server.

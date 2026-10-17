@@ -3,6 +3,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/app/log/LogQLAwait.h>
 #include <jde/app/IApp.h>
+#include <jde/web/server/SessionGraphQL.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
 #include "AppQLAwait.h"
@@ -36,6 +37,8 @@ namespace Jde::App::Server{
 			return await;
 		if( auto await = InstanceTagLevelMAwait::IsApplicable(m) ? mu<InstanceTagLevelMAwait>(move(m), creds.UserPK(), sl) : nullptr; await )
 			return await;
+		if( Web::Server::SessionGraphQL::IsPurge(m) )
+			return Web::Server::SessionGraphQL{ AppClient(), App::Server::Authorizer() }.Purge( m, creds.UserPK(), sl );//the free function:  the member is the ql's.
 		return nullptr;
 	}
 }

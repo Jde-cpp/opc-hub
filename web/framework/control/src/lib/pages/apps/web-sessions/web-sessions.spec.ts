@@ -7,15 +7,17 @@ const session = ( endpoint:string, lastUpdate:string, user?:{loginName:string, d
 
 let asked:string[];//the queries the component sent
 let toasted:number;
-const create = ( rows:WebSession[], failWith?:unknown )=>{
+//answer(n):  the n-th query's answer (0-based);  a rejection fails it.
+const createWith = ( answer:( n:number )=>Promise<{sessions:WebSession[]}> )=>{
 	asked = [];
 	toasted = 0;
 	TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: { exception: ()=>{ ++toasted; } } }] });
 	const fixture = TestBed.createComponent( WebSessions );
-	fixture.componentRef.setInput( "service", { query: async ( ql:string )=>{ asked.push( ql ); if( failWith ) throw failWith; return { sessions: rows }; } } );
+	fixture.componentRef.setInput( "service", { query: ( ql:string )=>{ asked.push( ql ); return answer( asked.length-1 ); } } );
 	fixture.componentRef.setInput( "instanceId", 42 );
 	return fixture;
 };
+const create = ( rows:WebSession[], failWith?:unknown )=>createWith( async ()=>{ if( failWith ) throw failWith; return { sessions: rows }; } );
 const render = async ( fixture:ReturnType<typeof create> )=>{
 	fixture.detectChanges();
 	await fixture.whenStable();
@@ -50,6 +52,32 @@ describe( 'WebSessions', ()=>{
 		expect( asked ).toHaveLength( 2 );
 	} );
 
+	//#255 review #6:  the toolbar was inside the loaded state, so a failure left no Refresh, and every refresh blanked the table.
+	it( 'keeps Refresh after a failure, as the retry', async ()=>{
+		const fixture = createWith( async n=>{ if( n==0 ) throw new Error( "The instance is not connected" ); return { sessions: [session("10.0.0.1", "2026-10-17T12:00:00Z")] }; } );
+		const page = await render( fixture );
+		expect( page.querySelector(".load-error") ).not.toBeNull();
+		page.querySelector<HTMLButtonElement>( "button[aria-label=Refresh]" )!.click();
+		await render( fixture );
+		expect( page.querySelector(".load-error") ).toBeNull();
+		expect( cells(page).map(r=>r[1]) ).toEqual( ["10.0.0.1"] );
+	} );
+
+	it( 'keeps the rows while a refresh runs', async ()=>{
+		let finish!:( y:{sessions:WebSession[]} )=>void;
+		const fixture = createWith( n=>n==0 ? Promise.resolve( {sessions: [session("10.0.0.1", "2026-10-17T12:00:00Z")]} ) : new Promise( resolve=>finish = resolve ) );
+		const page = await render( fixture );
+		const refresh = page.querySelector<HTMLButtonElement>( "button[aria-label=Refresh]" )!;
+		refresh.click();
+		fixture.detectChanges();
+		expect( cells(page).map(r=>r[1]) ).toEqual( ["10.0.0.1"] );
+		expect( refresh.disabled ).toBe( true );
+		finish( {sessions: [session("10.0.0.2", "2026-10-17T12:30:00Z")]} );
+		await render( fixture );
+		expect( cells(page).map(r=>r[1]) ).toEqual( ["10.0.0.2"] );
+		expect( refresh.disabled ).toBe( false );
+	} );
+
 	//listing is gated as the purge is (admin over `sessions`):  a refusal is a state the tab reports in place, not an error to toast.
 	it( 'reports a refusal as a permission, without a toast', async ()=>{
 		const page = await render( create([], {status: 403}) );
@@ -65,10 +93,11 @@ describe( 'WebSessions', ()=>{
 } );
 
 describe( 'sessionUser', ()=>{
-	it( 'is domain\\login for a signed-in session, the login alone without a domain, and anonymous otherwise', ()=>{
+	it( 'is domain\\login for a signed-in session, the login alone without a domain, unknown when the lookup did not name it, and anonymous otherwise', ()=>{
 		expect( sessionUser(session("h", "t", {loginName: "duffyj", domain: "google"})) ).toBe( "google\\duffyj" );
 		expect( sessionUser(session("h", "t", {loginName: "duffyj"})) ).toBe( "duffyj" );
 		expect( sessionUser(session("h", "t")) ).toBe( "anonymous" );
+		expect( sessionUser({...session("h", "t"), loginName: null}) ).toBe( "unknown user" );
 	} );
 } );
 

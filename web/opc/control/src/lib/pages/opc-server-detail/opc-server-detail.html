@@ -27,7 +27,7 @@
 					}
 				</ng-template>
 			</mat-tab>
-			<mat-tab><!--asked of the application server, which forwards to the server over its socket:  an OPC server has no web api of its own-->
+			<mat-tab><!--asked of the application server, which forwards to the server over its socket:  the server's own /graphql does not answer sessions-->
 				<ng-template mat-tab-label>Web Sessions</ng-template>
 				<ng-template matTabContent>
 					@if( instanceId() !== undefined ){
