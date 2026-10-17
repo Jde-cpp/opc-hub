@@ -3,6 +3,7 @@
 //senders compute.
 #include <gtest/gtest.h>
 #include <jde/fwk/str.h>
+#include <jde/app/log/Records.h>
 #include <jde/app/proto/LogProto.h>
 #include "helpers.h"
 
@@ -64,25 +65,6 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( LogProto::LogEntryFile(e).app_pk(), 0 );
 	}
 
-	//An older build wrote a forwarded entry as LogEntryFileExternal;  ToEntry folds it in, attribution and all.
-	TEST( LogProtoTests, ToEntryFoldsAnOlderExternalEntry ){
-		let e = entry( tp(1), ELogLevel::Error, 7, "boom {}", {"9"} );
-		let external = LogProto::LogEntryFile( e, 5, 6 );
-		let plain = LogProto::ToEntry( asOlderExternal(external) );
-		EXPECT_EQ( Protobuf::ToGuid(plain.template_id()), e.Id() );
-		EXPECT_EQ( Protobuf::ToGuid(plain.file_id()), e.FileId() );
-		EXPECT_EQ( Protobuf::ToGuid(plain.function_id()), e.FunctionId() );
-		ASSERT_EQ( plain.args_size(), 1 );
-		EXPECT_EQ( Protobuf::ToGuid(plain.args(0)), Logging::Entry::GenerateId("9") );
-		EXPECT_EQ( plain.level(), external.level() );
-		EXPECT_EQ( plain.tags(), external.tags() );
-		EXPECT_EQ( plain.line(), 7u );
-		EXPECT_EQ( plain.user_pk(), external.user_pk() );
-		EXPECT_EQ( Protobuf::ToTimePoint(plain.time()), tp(1) );
-		EXPECT_EQ( plain.app_pk(), 5 );
-		EXPECT_EQ( plain.app_instance_pk(), 6 );
-	}
-
 	TEST( LogProtoTests, StringMessageCarriesTheRawId ){
 		let id = Logging::Entry::GenerateId( "some text" );
 		let s = LogProto::ToString( id, string{"some text"} );
@@ -98,9 +80,12 @@ namespace Jde::App::Tests{
 		const string arg{ "\xff\xfe" };
 		Log::Proto::FileEntry fe;
 		*fe.mutable_str() = LogProto::ToString( Logging::Entry::GenerateId(arg), string{arg} );
-		let bytes = Protobuf::SizePrefixed( fe );
+		string bytes;//a run of the daily file, as the record layer frames it.
+		Log::Appender appender{ bytes, 0 };
+		appender.Add( Log::Proto::FileEntry{fe} );
+		appender.Seal();
 		vector<Log::Proto::FileEntry> back;
-		ASSERT_NO_THROW( back = Protobuf::DeserializeVector<Log::Proto::FileEntry>(sv{(const char*)bytes.data(), bytes.size()}) );
+		ASSERT_NO_THROW( back = Log::ParseRecords(bytes, "LogProtoTests") );
 		ASSERT_EQ( back.size(), 1u );
 		EXPECT_EQ( back[0].str().value(), arg );
 	}

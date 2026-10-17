@@ -12,7 +12,7 @@
 namespace Jde::App::Tests{
 	Ω load( const vector<Logging::Entry>& entries, QL::TableQL& ql )ε->ArchiveQuery{
 		ArchiveQuery y;
-		y.Append( ql, archiveProto(entries) );
+		y.Append( ql, archiveRecords(entries) );
 		return y;
 	}
 	Ω load( const vector<Logging::Entry>& entries )ε->ArchiveQuery{
@@ -129,172 +129,19 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( lines(load(entries, ql).Sort({})), (vector<uint32_t>{1}) ) << "1 has alpha among its args; 2 does not; 3 has no args to match with";
 	}
 
-	//An archive an older build wrote keeps forwarded entries in externalEntries;  they are read back as entries.
-	TEST( ArchiveQueryTests, OlderExternalEntriesAreAppended ){
-		let e = entry( tp(0), ELogLevel::Warning, 7, "external" );
-		DayArchive proto;
-		*proto.add_externalentries() = asOlderExternal( LogProto::LogEntryFile(e, 3, 4) );
-		addStrings( proto, e );
-
-		ArchiveQuery af;
-		auto ql = table( "logs" );
-		af.Append( ql, move(proto) );
-		ASSERT_EQ( af.EntrySize(), 1u );
-		EXPECT_EQ( af.Entries.begin()->second.front().line(), 7u );
-		EXPECT_EQ( af.Entries.begin()->second.front().app_pk(), 3 );
-	}
-
-	//IsComplete is what stops the reader walking further back through the archived days.  It can only answer for a
-	//time-ordered page:  any other order needs every entry before the first one can be named.
-	TEST( ArchiveQueryTests, IsComplete ){
-		let af = load( {entry(tp(0), ELogLevel::Information, 1, "a"), entry(tp(1), ELogLevel::Information, 2, "b"), entry(tp(2), ELogLevel::Information, 3, "c")} );
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({orderBy: "time"})")) );              //no limit -> read it all.
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({limit: 2})")) );                     //no orderBy.
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({limit: 2, orderBy: "level"})")) );
-		EXPECT_TRUE( af.IsComplete(table("logs", R"({limit: 2, orderBy: "time"})")) );
-		EXPECT_TRUE( af.IsComplete(table("logs", R"({limit: 3, orderBy: "time"})")) );
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({limit: 3, offset: 1, orderBy: "time"})")) ); //offset counts against the limit.
-	}
-
-	//T10: descending time was never asserted, and it is the order the page actually asks for (web log-entry.ts) - the one
-	//IsComplete has to answer for, since LoadArchives' *reverse* walk is the branch every non-ascending order takes and
-	//the early stop is the only thing that keeps a limited page off the whole history.  Direction is not read at all: the
-	//check is on the first key's name, which is right for both walks - a day's entries never outrank another day's on
-	//time, so once a page is full nothing further back can displace it either way round.
-	TEST( ArchiveQueryTests, IsCompleteForDescendingTime ){
-		let af = load( {entry(tp(0), ELogLevel::Information, 1, "a"), entry(tp(1), ELogLevel::Information, 2, "b"), entry(tp(2), ELogLevel::Information, 3, "c")} );
-		EXPECT_TRUE( af.IsComplete(table("logs", R"({limit: 2, orderBy: {time: "desc"}})")) );
-		EXPECT_TRUE( af.IsComplete(table("logs", R"({limit: 2, orderBy: {time: "asc"}})")) ) << "the explicit spelling of the bare string above";
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({orderBy: {time: "desc"}})")) ) << "no limit - read it all, whichever way round";
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({limit: 4, orderBy: {time: "desc"}})")) ) << "the page is not full yet";
-		EXPECT_FALSE( af.IsComplete(table("logs", R"({limit: 2, orderBy: {level: "desc"}})")) ) << "a non-time first key needs every entry before the first can be named";
-		//A secondary key only breaks ties within one timestamp, and two days cannot share one, so time-first still stops.
-		EXPECT_TRUE( af.IsComplete(table("logs", R"({limit: 2, orderBy: [{time: "desc"}, {level: "asc"}]})")) );
-	}
-
-	TEST( ArchiveQueryTests, SortDefaultsToTimeAscending ){
-		let af = load( {entry(tp(2), ELogLevel::Information, 3, "c"), entry(tp(0), ELogLevel::Information, 1, "a"), entry(tp(1), ELogLevel::Information, 2, "b")} );
-		EXPECT_EQ( lines(af.Sort({})), (vector<uint32_t>{1,2,3}) );
-	}
-
-	TEST( ArchiveQueryTests, SortByLevelDescending ){
-		let af = load( {entry(tp(0), ELogLevel::Debug, 1, "a"), entry(tp(1), ELogLevel::Critical, 2, "b"), entry(tp(2), ELogLevel::Information, 3, "c")} );
-		auto ql = table( "logs", R"({orderBy: {level: "desc"}})" );
-		EXPECT_EQ( lines(af.Sort(ql.OrderByJson())), (vector<uint32_t>{2,3,1}) );
-	}
-
-	TEST( ArchiveQueryTests, SortByFileAndFunctionUsesTheName ){
-		let entries = vector<Logging::Entry>{
-			entry( tp(0), ELogLevel::Information, 1, "a", {}, "d.cpp", "Dd" ),
-			entry( tp(1), ELogLevel::Information, 2, "b", {}, "b.cpp", "Bb" ),
-			entry( tp(2), ELogLevel::Information, 3, "c", {}, "a.cpp", "Aa" ),
-			entry( tp(3), ELogLevel::Information, 4, "d", {}, "c.cpp", "Cc" ) };
-		let af = load( entries );
-
-		auto byFile = table( "logs", R"({orderBy: "file"})" );
-		EXPECT_EQ( lines(af.Sort(byFile.OrderByJson())), (vector<uint32_t>{3,2,4,1}) ) << "a.cpp, b.cpp, c.cpp, d.cpp";
-
-		auto byFunction = table( "logs", R"({orderBy: {function: "desc"}})" );
-		EXPECT_EQ( lines(af.Sort(byFunction.OrderByJson())), (vector<uint32_t>{1,4,2,3}) ) << "Dd, Cc, Bb, Aa";
-	}
-
-	//M3: the fast path returned early whenever the *first* key was time-ascending, discarding every key after it.  Skipping
-	//the sort is right when time-ascending is the whole ordering - Entries is a std::map keyed on time, so the flatten is
-	//already in that order - but only then.  Both entries share a timestamp, so they land in one bucket in insertion order
-	//and the secondary key is the only thing that can separate them.
-	TEST( ArchiveQueryTests, SecondaryOrderByKeyIsApplied ){
-		let af = load( {entry(tp(0), ELogLevel::Information, 1, "a", {}, "b.cpp"), entry(tp(0), ELogLevel::Information, 2, "b", {}, "a.cpp")} );
-		auto ql = table( "logs", R"({orderBy: ["time", {file: "asc"}]})" );
-		EXPECT_EQ( lines(af.Sort(ql.OrderByJson())), (vector<uint32_t>{2,1}) ) << "a.cpp before b.cpp within the same timestamp";
-	}
-
-	//The sort is stable, so entries tied on every requested key keep the source's time order rather than an arbitrary one -
-	//which is what the fast path above does too, so the two agree.
-	//Two interleaved levels rather than one, and 64 of them: libc++ insertion-sorts short ranges and short-circuits a range
-	//whose elements all compare equivalent, so neither a handful of entries nor a single level would tell the two sorts
-	//apart.  Real partitioning across two groups is what moves tied elements past each other.
-	TEST( ArchiveQueryTests, TiedEntriesKeepTimeOrder ){
-		vector<Logging::Entry> entries;
-		vector<uint32_t> information, critical;
-		for( uint32_t i=0; i<64; ++i ){
-			let isInformation = i%2==0;
-			entries.push_back( entry(tp(i), isInformation ? ELogLevel::Information : ELogLevel::Critical, i+1, "same") );
-			(isInformation ? information : critical).push_back( i+1 );
-		}
-		auto expected = information;//Information sorts below Critical; within each, time order has to survive.
-		expected.insert( expected.end(), critical.begin(), critical.end() );
-
-		let af = load( entries );
-		auto ql = table( "logs", R"({orderBy: {level: "asc"}})" );
-		EXPECT_EQ( lines(af.Sort(ql.OrderByJson())), expected );
-	}
-
-	//"message" is the formatted text, not the template:  sorting by it has to expand the args first.
-	TEST( ArchiveQueryTests, SortByMessageFormatsTheTemplate ){
-		let af = load( {entry(tp(0), ELogLevel::Information, 1, "zeta"), entry(tp(1), ELogLevel::Information, 2, "alpha {}", {"9"})} );
-		auto ql = table( "logs", R"({orderBy: "message"})" );
-		EXPECT_EQ( lines(af.Sort(ql.OrderByJson())), (vector<uint32_t>{2,1}) ); //"alpha 9" < "zeta".
-	}
-
-	TEST( ArchiveQueryTests, FilterOnMessageFormatsTheTemplate ){
-		auto ql = table( "logs", R"({message: "alpha 9"})" );
-		let af = load( {entry(tp(0), ELogLevel::Information, 1, "zeta"), entry(tp(1), ELogLevel::Information, 2, "alpha {}", {"9"})}, ql );
-		ASSERT_EQ( af.EntrySize(), 1u );
-		EXPECT_EQ( af.Entries.begin()->second.front().line(), 2u );
-	}
-
-	//#6: the time filter compared the *rendered* ISO strings, and ToIsoString is variable width - a whole second drops the
-	//fraction.  So "…T22:13:25.250000Z" is lexicographically below "…T22:13:25Z" ('.'=0x2E < 'Z'=0x5A at index 19) and each
-	//comparison came out backwards for entries sharing a second with the bound.  The coarse day window in LogQLAwait uses
-	//real TimePoints, so the right archive was loaded and the entries were then silently discarded one at a time.
-	TEST( ArchiveQueryTests, TimeFilterIsChronologicalNotLexicographic ){
-		let boundary = tp( 5 );                                     //whole second -> renders with no fraction.
-		let sub = boundary+std::chrono::milliseconds{ 250 };        //renders "…:25.250000Z", which sorts *before* "…:25Z".
-		let entries = vector<Logging::Entry>{ entry(boundary, ELogLevel::Information, 1, "boundary"), entry(sub, ELogLevel::Information, 2, "sub") };
-		let filtered = [&entries]( sv op, TimePoint bound )ε->vector<uint32_t>{
-			auto ql = table( "logs", Ƒ(R"({{time: {{{}: "{}"}}}})", op, ToIsoString(bound)) );
-			return lines( load(entries, ql).Sort({}) );
-		};
-		EXPECT_EQ( filtered("gt", boundary), (vector<uint32_t>{2}) ) << "250ms after the boundary is after it";
-		EXPECT_EQ( filtered("lt", boundary), (vector<uint32_t>{}) ) << "nothing precedes the boundary";
-		//the symmetric case: a whole-second entry is lexicographically *above* a sub-second bound in the same second.
-		EXPECT_EQ( filtered("lt", boundary+std::chrono::milliseconds{100}), (vector<uint32_t>{1}) );
-		EXPECT_EQ( filtered("gte", boundary), (vector<uint32_t>{1,2}) );
-		EXPECT_EQ( filtered("lte", sub), (vector<uint32_t>{1,2}) );
-		EXPECT_EQ( filtered("eq", sub), (vector<uint32_t>{2}) ) << "a sub-second literal must match its own entry";
-	}
-
-	TEST( ArchiveQueryTests, SubTableFiltersFileNameAndUser ){
-		let entries = vector<Logging::Entry>{
-			entry( tp(0), ELogLevel::Information, 1, "a", {}, "keep.cpp", "Fn", ELogTags::Test, UserPK{7} ),
-			entry( tp(1), ELogLevel::Information, 2, "b", {}, "drop.cpp", "Fn", ELogTags::Test, UserPK{7} ),
-			entry( tp(2), ELogLevel::Information, 3, "c", {}, "keep.cpp", "Fn", ELogTags::Test, UserPK{8} ) };
-
-		auto byFile = table( "logs" );
-		addTable( byFile, "file", {"name"}, R"({name: "keep.cpp"})" );
-		EXPECT_EQ( lines(load(entries, byFile).Sort({})), (vector<uint32_t>{1,3}) );
-
-		auto byUser = table( "logs" );
-		addTable( byUser, "user", {"id"}, "{id: 8}" );
-		EXPECT_EQ( lines(load(entries, byUser).Sort({})), (vector<uint32_t>{3}) );
-	}
-
-	//L3: ToEntry folds an external entry into LogEntryFile for everything downstream and used to drop app_pk/app_instance_pk there,
-	//so the attribution the pipeline stores so carefully (review 1 #2, review 2 #9) could not be read back through logs() - the
-	//AppServer's history view was an unattributed merge of every app's lines.
+	//L3: a forwarded entry's app_pk/app_instance_pk used to be dropped on the way to logs(), so the attribution the pipeline
+	//stores so carefully (review 1 #2, review 2 #9) could not be read back - the AppServer's history view was an unattributed
+	//merge of every app's lines.
 	TEST( ArchiveQueryTests, ForwardedEntriesKeepTheirAttribution ){
 		let mine = entry( tp(0), ELogLevel::Information, 1, "mine" );
 		let theirs = entry( tp(1), ELogLevel::Information, 2, "theirs" );
-		DayArchive proto;
-		*proto.add_entries() = LogProto::LogEntryFile( mine );
-		*proto.add_entries() = LogProto::LogEntryFile( theirs, 42, 84 );
-		addStrings( proto, mine );
-		addStrings( proto, theirs );
+		auto records = archiveRecords( {mine, theirs} );
+		*records.back().mutable_entry() = LogProto::LogEntryFile( theirs, 42, 84 );
 
 		auto ql = table( "logs" );
 		addTable( ql, "entries", {"line","appId","appInstanceId"} );
 		ArchiveQuery af;
-		af.Append( ql, DayArchive{proto} );
+		af.Append( ql, vector<Log::Proto::FileEntry>{records} );
 		let jentries = af.ToJson( ql ).at( "entries" ).as_array();
 		ASSERT_EQ( jentries.size(), 2u );
 		for( let& je : jentries ){
@@ -308,28 +155,24 @@ namespace Jde::App::Tests{
 		auto byApp = table( "logs", "{appId: 42}" );
 		addTable( byApp, "entries", {"line"} );
 		ArchiveQuery filtered;
-		filtered.Append( byApp, move(proto) );
+		filtered.Append( byApp, move(records) );
 		EXPECT_EQ( lines(filtered.Sort({})), (vector<uint32_t>{2}) ) << "appId did not select the forwarded entry";
 	}
 
 	//The AppServer's merged history, read by someone denied one instance's logs:  that instance's forwarded lines drop, while
-	//the AppServer's own and another instance's stay - from an archived day, an older build's externalEntries and the daily file.
+	//the AppServer's own and another instance's stay - from an archived day and the daily file.
 	TEST( ArchiveQueryTests, HiddenInstancesForwardedLinesAreLeftOut ){
 		let mine = entry( tp(0), ELogLevel::Information, 1, "mine" );
 		let hidden = entry( tp(1), ELogLevel::Information, 2, "hidden" );
 		let shown = entry( tp(2), ELogLevel::Information, 3, "shown" );
-		let olderHidden = entry( tp(3), ELogLevel::Information, 4, "older hidden" );
-		DayArchive proto;
-		*proto.add_entries() = LogProto::LogEntryFile( mine );
-		*proto.add_entries() = LogProto::LogEntryFile( hidden, 42, 84 );
-		*proto.add_entries() = LogProto::LogEntryFile( shown, 43, 85 );
-		*proto.add_externalentries() = asOlderExternal( LogProto::LogEntryFile(olderHidden, 42, 84) );
-		for( let& e : {mine, hidden, shown, olderHidden} )
-			addStrings( proto, e );
+		auto records = archiveRecords( {mine, hidden, shown} );
+		let n = records.size();
+		*records[n-2].mutable_entry() = LogProto::LogEntryFile( hidden, 42, 84 );
+		*records[n-1].mutable_entry() = LogProto::LogEntryFile( shown, 43, 85 );
 
 		auto ql = table( "logs" );
 		ArchiveQuery archived{ flat_set<ProgInstPK>{84} };
-		archived.Append( ql, move(proto) );
+		archived.Append( ql, move(records) );
 		EXPECT_EQ( lines(archived.Sort({})), (vector<uint32_t>{1,3}) );
 
 		auto stream = fileEntries( {mine, hidden, shown} );
@@ -350,7 +193,7 @@ namespace Jde::App::Tests{
 	TEST( ArchiveQueryTests, HiddenInstancesNeverHideOwnLines ){
 		auto ql = table( "logs" );
 		ArchiveQuery archive{ flat_set<ProgInstPK>{0} };
-		archive.Append( ql, archiveProto({entry(tp(0), ELogLevel::Information, 1, "mine")}) );
+		archive.Append( ql, archiveRecords({entry(tp(0), ELogLevel::Information, 1, "mine")}) );
 		EXPECT_EQ( archive.EntrySize(), 1u );
 	}
 

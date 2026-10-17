@@ -3,22 +3,19 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/LockKey.h>
 #include <jde/app/log/BufferedLogger.h>
-#include <jde/app/proto/Log.pb.h>
+#include <jde/app/log/Records.h>
 #include <jde/app/usings.h>
 
 namespace Jde::App{
-	//L2: was two deques scanned linearly - up to 1000 uuid comparisons, three-plus times per line, on the path of every Debug+ line
-	//of every thread and under ProtoLog's one mutex.  Worse, a hit did not reorder (the standing `//TODO update position`), so the
-	//hottest strings drifted to the back and Trim evicted precisely the ones about to be used again, which then had to be re-emitted.
-	//Now a map keyed by id with the last-use sequence as its value: the lookup is a binary search, a hit is a store, and Trim keeps
-	//the most recently used.
+	//The strings the buffer holds a record of, by id:  Touch says whether one is still to be emitted.  Cleared with every
+	//flush, so each run of the daily file carries every string its entries name and a read of one run resolves its
+	//entries on its own (Log.proto's FileEntry), and when Drop trims the buffer, since the dropped prefix may have held
+	//the only copy of a string a surviving entry names.
 	struct ProtoLogCache{
 		α Clear()ι->void;
-		α Trim()ι->void;
-		α Touch( flat_map<uuid,uint>& cache, uuid id )ι->bool;//true when the id was not cached - the caller emits the string record only then.
-		flat_map<uuid,uint> Args;
-		flat_map<uuid,uint> Strings;
-		uint Sequence{};
+		α Touch( flat_set<uuid>& cache, uuid id )ι->bool;//true when the id was not cached - the caller emits the string record only then.
+		flat_set<uuid> Args;
+		flat_set<uuid> Strings;
 	};
 	struct ProtoLog final : BufferedLogger{
 		ProtoLog( const jobject& settings )ε;
@@ -30,7 +27,7 @@ namespace Jde::App{
 		α DailyFile()ι->fs::path{ return _root/"log.binpb"; }
 		α DailyFileStart()Ι->TimePoint{ ul _{_mutex}; return _dailyFileStart; }
 		α Entries()Ε->vector<App::Log::Proto::FileEntry>;//the buffer *and* whatever is in flight - see the definition (L1).
-		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSave.size(); }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
+		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSaveBytes; }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
 		α Name()Ι->sv override{ return "ProtoLog"; }
 		α Root()Ι->const fs::path&{ return _root; }
 		α SetMinLevel( ELogLevel /*level*/ )ι->void override{}
@@ -40,28 +37,36 @@ namespace Jde::App{
 		α Write( const Logging::Entry& m )ι->void override;
 		α Write( const Logging::Entry& m, App::ProgramPK appPK, App::ProgInstPK instancePK )ι->void override;
 	private:
+		friend struct ArchiveAwait;
+		friend struct DailyLoadAwait;
 		App::ProgramPK _appPK{};
 		App::ProgInstPK _instancePK{};
 		α Write( const Logging::Entry& m, App::Log::Proto::LogEntryFile&& entry )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Add( App::Log::FileEntry&& record )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str )ι->void;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str, flat_map<uuid,uint>& cache )ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddString( uuid id, sv str, flat_set<uuid>& cache )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Drop()ι->uint override;//whole records, down to half the cap; returns the bytes dropped.
 		ABSL_UNLOCK_FUNCTION(_mutex) α Flush()ι->void override{ Save(); }
 		ABSL_UNLOCK_FUNCTION(_mutex) α Save()ι->TAwait<CoLockGuard>::Task;//releases _mutex before its first suspend.
-		α Save( vector<byte> toSave, uint flushId, CoLockGuard l )ι->VoidAwait::Task;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Size()Ι->uint override{ return _toSave.size(); }
+		α Save( vector<App::Log::FileEntry> toSave, uint flushId, CoLockGuard l )ι->VoidAwait::Task;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Return( vector<App::Log::FileEntry>&& batch )ι->void;//back into the buffer, ahead of what came since:  its strings precede its entries still.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Size()Ι->uint override{ return _toSaveBytes; }
 
 		ProtoLogCache _cache ABSL_GUARDED_BY(_mutex);
 		TimePoint _dailyFileStart ABSL_GUARDED_BY(_mutex){ TimePoint::max() };//re-seeded in the ctor when a daily file already exists.
 		static constexpr uint16 _delaySize{8096};
 		bool _flushFailed ABSL_GUARDED_BY(_mutex){};//M5: a flush that failed suppresses the size trigger, so the timer retries instead of every log line starting a fresh Save.
+		bool _archiveFailed ABSL_GUARDED_BY(_mutex){};//the last round failed:  said at Error once, and the next flush tries again.
 		bool _needsArchive ABSL_GUARDED_BY(_mutex){false};
 		fs::path _root;
 		const std::chrono::time_zone& _tz;
 		std::chrono::year_month_day _today ABSL_GUARDED_BY(_mutex);
-		vector<byte> _toSave ABSL_GUARDED_BY(_mutex);
-		flat_map<uint,vector<byte>> _inFlight ABSL_GUARDED_BY(_mutex);
+		//Each record as the daily file will hold it, in order:  every string a run's entries name, then the entry.
+		vector<App::Log::FileEntry> _toSave ABSL_GUARDED_BY(_mutex);
+		uint _toSaveBytes ABSL_GUARDED_BY(_mutex){};//what _toSave takes in the file, which the cap bounds.
+		flat_map<uint,vector<App::Log::FileEntry>> _inFlight ABSL_GUARDED_BY(_mutex);
 		uint _flushId ABSL_GUARDED_BY(_mutex){};
+		App::Log::DailyFile _file;//as the process knows it:  under the daily file's LockKey, not _mutex.
 	};
 }

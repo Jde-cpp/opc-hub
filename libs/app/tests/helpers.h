@@ -1,5 +1,5 @@
 #pragma once
-//Builders shared by the suites:  log entries, the two archive wire shapes ArchiveQuery is fed, and schema-free TableQLs.
+//Builders shared by the suites:  log entries, the record streams ArchiveQuery is fed, and schema-free TableQLs.
 #include <jde/fwk/log/Entry.h>
 #include <jde/app/proto/Log.pb.h>
 #include <jde/app/proto/LogProto.h>
@@ -16,12 +16,6 @@ namespace Jde::App::Tests{
 		return Logging::Entry{ level, tags, line, time, user, move(text), move(file), move(function), move(args) };
 	}
 
-	//A forwarded entry as builds before 2026-10 wrote it.  The two messages share their field numbers, so the bytes parse as either.
-	Ξ asOlderExternal( const Log::Proto::LogEntryFile& e )ι->Log::Proto::LogEntryFileExternal{
-		Log::Proto::LogEntryFileExternal y;
-		[[maybe_unused]] let parsed = y.ParseFromString( e.SerializeAsString() );//shared field numbers - it cannot fail.
-		return y;
-	}
 	//The strings an entry references:  (kind, id, text) for its template, file, function and each argument.
 	Ξ entryStrings( const Logging::Entry& e )ι->vector<std::tuple<EStringKind,uuid,string>>{
 		vector<std::tuple<EStringKind,uuid,string>> y{
@@ -30,20 +24,19 @@ namespace Jde::App::Tests{
 			y.emplace_back( EStringKind::Arg, Logging::Entry::GenerateId(arg), arg );
 		return y;
 	}
-	//...in the archive file's per-kind tables.
-	Ξ addStrings( DayArchive& af, const Logging::Entry& e )ι->void{
-		for( auto&& [kind, id, text] : entryStrings(e) )
-			*ArchiveStrings( af, kind ).Add() = LogProto::ToString( id, move(text) );
-	}
-
-	//What ArchiveAwait reads back out of an archived day:  entries plus the whole string table.
-	Ξ archiveProto( const vector<Logging::Entry>& entries )ι->DayArchive{
-		DayArchive af;
+	//An archived day's records, as a round writes them:  each string once, then the entries.
+	Ξ archiveRecords( const vector<Logging::Entry>& entries )ι->vector<Log::Proto::FileEntry>{
+		vector<Log::Proto::FileEntry> y;
+		flat_set<uuid> seen;
 		for( let& e : entries ){
-			*af.add_entries() = LogProto::LogEntryFile( e );
-			addStrings( af, e );
+			for( auto&& [_, id, text] : entryStrings(e) ){
+				if( seen.emplace(id).second )
+					*y.emplace_back().mutable_str() = LogProto::ToString( id, move(text) );
+			}
 		}
-		return af;
+		for( let& e : entries )
+			*y.emplace_back().mutable_entry() = LogProto::LogEntryFile( e );
+		return y;
 	}
 
 	//What the daily file/ProtoLog buffer holds:  a flat FileEntry stream, each string once, ahead of the entry naming it.

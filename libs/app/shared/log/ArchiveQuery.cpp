@@ -2,7 +2,6 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/io/protobuf.h>
-#include <jde/app/proto/LogProto.h>
 
 #define let const auto
 
@@ -36,17 +35,6 @@ namespace Jde::App{
 		let it = map.find( ToGuid(idBytes) );
 		return it==map.end() ? Str::Empty() : it->second;
 	}
-	α ArchiveStrings( DayArchive& af, EStringKind kind )ι->google::protobuf::RepeatedPtrField<App::Log::Proto::String>&{
-		switch( kind ){
-			using enum EStringKind;
-			case Template: return *af.mutable_templates();
-			case File: return *af.mutable_files();
-			case Function: return *af.mutable_functions();
-			case Arg: return *af.mutable_args();
-		}
-		return *af.mutable_args();//unreachable:  the switch names every kind.
-	}
-
 	α ArchiveQuery::Message( const LogEntryFile& entry )Ι->string{
 		vector<string> args;
 		for( let& argId : entry.args() )
@@ -99,36 +87,19 @@ namespace Jde::App{
 		return valid;
 	}
 
-	α ArchiveQuery::Append( const QL::TableQL& q, DayArchive&& af )ε->void{
-		for( let kind : StringKinds ){
-			for( auto& s : ArchiveStrings(af, kind) ){
-				let id = ToGuid( s.id() );
-				ASSERT_DESC( s.value().size() || id==EmptyStringMd5, "String with empty value must have empty md5." );
-				Strings.Add( kind, id, move(*s.mutable_value()) );
-			}
-		}
-		for( int i=0; i<af.entries_size(); ++i ){
-			auto entry = af.mutable_entries( i );
-			let time = Protobuf::ToTimePoint( entry->time() );
-			if( Visible(*entry) && Test(q, time, *entry) )
-				Entries[time].emplace_back( move(*entry) );
-		}
-		for( int i=0; i<af.externalentries_size(); ++i ){
-			auto entry = LogProto::ToEntry( move(*af.mutable_externalentries(i)) );
-			let time = Protobuf::ToTimePoint( entry.time() );
-			if( Visible(entry) && Test(q, time, entry) )
-				Entries[time].emplace_back( move(entry) );
-		}
-	}
 	using App::Log::Proto::FileEntry;
 	α ArchiveQuery::Append( const QL::Filter& filter, vector<FileEntry>&& entries )ε->void{
+		Fold( move(entries), [&]( TimePoint time, const LogEntryFile& entry ){ return Test( filter, time, entry ); } );
+	}
+	α ArchiveQuery::Append( const QL::TableQL& q, vector<FileEntry>&& entries )ε->void{
+		Fold( move(entries), [&]( TimePoint time, const LogEntryFile& entry ){ return Test( q, time, entry ); } );
+	}
+	α ArchiveQuery::Fold( vector<FileEntry>&& entries, const std::function<bool( TimePoint, const LogEntryFile& )>& test )ε->void{
 		vector<LogEntryFile> logEntries;
 		flat_map<uuid, string> strings;
 		for( auto& fe : entries ){
 			if( fe.value_case()==FileEntry::ValueCase::kEntry )
 				logEntries.emplace_back( move(*fe.mutable_entry()) );
-			else if( fe.value_case()==FileEntry::ValueCase::kExternalEntry )
-				logEntries.emplace_back( LogProto::ToEntry(move(*fe.mutable_external_entry())) );
 			else if( fe.value_case()==FileEntry::ValueCase::kStr ){
 				let id = ToGuid( fe.str().id() );
 				auto& value = *fe.mutable_str()->mutable_value();
@@ -139,7 +110,7 @@ namespace Jde::App{
 		//Collect in a pass of its own, before any Test: the filter resolves "text", "message" and "args" through these very
 		//maps (Test/Message below), so populating them per surviving entry meant the first entry was compared against an
 		//empty map - and every one after it, since none ever survived.  Any text/message/args filter silently dropped the
-		//whole daily file.  The TableQL overload above has always collected first; this is the same order.
+		//whole daily file.
 		//No extra memory: each value is moved out of `strings`, which we already hold in full, rather than copied.
 		for( let& entry : logEntries ){
 			ForEachStringId( entry, [&]( EStringKind kind, const string& idBytes ){
@@ -149,7 +120,7 @@ namespace Jde::App{
 		}
 		for( auto& entry : logEntries ){
 			let time = Protobuf::ToTimePoint( entry.time() );
-			if( Visible(entry) && Test(filter, time, entry) )
+			if( Visible(entry) && test(time, entry) )
 				Entries[time].emplace_back( move(entry) );
 		}
 	}
@@ -291,5 +262,19 @@ namespace Jde::App{
 			o["strings"] = move( jstrings );
 		}
 		return o;
+	}
+}
+namespace Jde{
+	α App::TimeBounds( const QL::Filter& filter )ε->Bounds{
+		Bounds y;
+		if( auto time = filter.ColumnFilters.find("time"); time!=filter.ColumnFilters.end() ){
+			for( let& crit : time->second ){
+				if( crit.Operator==DB::EOperator::Greater )
+					y.Start = Chrono::ToTimePoint( string{crit.Value.as_string()} );
+				else if( crit.Operator==DB::EOperator::Less )
+					y.End = Chrono::ToTimePoint( string{crit.Value.as_string()} );
+			}
+		}
+		return y;
 	}
 }

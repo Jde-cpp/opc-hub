@@ -38,7 +38,7 @@ set( protoOutDir ${jdeGeneratedIncludeDir}/jde/app/proto )
 file( MAKE_DIRECTORY ${protoOutDir} )
 protobuf_generate(
 	TARGET ${targetName}
-	IMPORT_DIRS proto ../../web/client/proto
+	IMPORT_DIRS proto ../../web/client/proto ${jdeRoot}/libs/fwk/src/io/records/proto
 	PROTOC_OUT_DIR ${protoOutDir}
 )
 suppressProtoWarnings( "${protos}" ${protoOutDir} )
