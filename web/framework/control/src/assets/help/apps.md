@@ -18,7 +18,7 @@ The installer's layout: the application server and the gateway run as one proces
 
 ### OpcHub
 
-The **OpcHub** card comes first. It is the process this site is served by. Its page has three tabs: **Connections**, the OPC UA servers the hub talks to, described under [Gateways](/help/gateways), then [Logs](#logs) and [Log Settings](#log-settings). There is no application server card beside it: the hub's log and log levels are the application server's as well.
+The **OpcHub** card comes first. It is the process this site is served by. Its page has four tabs: **Connections**, the OPC UA servers the hub talks to, described under [Gateways](/help/gateways), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions). There is no application server card beside it: the hub's log and log levels are the application server's as well.
 
 ## Distributed
 
@@ -26,15 +26,15 @@ The application server and the gateways run apart, and each registers on its own
 
 ### Application server
 
-An application server instance's page has two tabs, [Logs](#logs) and [Log Settings](#log-settings).
+An application server instance's page has three tabs, [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
 
 ### Gateways
 
-A gateway instance's page has the hub's three tabs: **Connections**, described under [Gateways](/help/gateways), then [Logs](#logs) and [Log Settings](#log-settings).
+A gateway instance's page has the hub's four tabs: **Connections**, described under [Gateways](/help/gateways), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
 
 ### OPC servers
 
-An OPC server instance's page has [Logs](#logs) and [Log Settings](#log-settings).
+An OPC server instance's page has [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
 
 The installer can add an OPC server of its own. On Windows it is the optional **OPC UA Server** component, off by default. On Linux the `.deb` ships it but leaves it stopped until `sudo systemctl enable --now jde-opcserver`, and the tarball's `install.sh` starts it only with `--opcserver`. Once it runs, its card shows beside the hub's.
 
@@ -78,3 +78,11 @@ To set a level for a tag that is not listed, pick the tag in the blank last row,
 Changes wait until you press **Save**; **Cancel** drops them and reloads what is saved. A saved change is pushed to the running service at once and kept, so the service applies it again at every start.
 
 An instance that is not connected cannot report what it runs with, so only its saved overrides are listed; a change made then is picked up when the service next starts.
+
+## Web Sessions
+
+The web sessions the instance holds: one for each signed-in browser or service, and one for each address that has called it without signing in. A row shows the user, or *anonymous*, the address the session came from, when it last made a request and when it expires if it makes no more. The refresh button reloads the list.
+
+Every page asks the application server, which answers for its own instance and asks a stand-alone gateway or an OPC server over the socket it registered on; an instance that is not connected cannot be listed. Listing is gated as ending a session is: administer rights over the `sessions` resource, once it is enforced.
+
+A session cannot be ended from this page. The id that ends one is the session's own credential, which the page never shows.

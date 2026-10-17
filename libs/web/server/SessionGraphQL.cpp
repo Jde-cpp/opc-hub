@@ -13,11 +13,12 @@
 namespace Jde::Web::Server{
 	constexpr ELogTags _tags{ ELogTags::Sessions };
 	struct SessionGraphQLAwait final: TAwait<jvalue>{
-		SessionGraphQLAwait( const QL::TableQL& query, UserPK userPK, sp<App::IApp> appClient, SRCE )ι:
-			TAwait<jvalue>{ sl }, _appClient{ move(appClient) }, Query{ query }, UserPK{ userPK }{}
+		SessionGraphQLAwait( const QL::TableQL& query, UserPK userPK, sp<App::IApp> appClient, sp<Access::Authorize> authorizer, SRCE )ι:
+			TAwait<jvalue>{ sl }, _appClient{ move(appClient) }, _authorizer{ move(authorizer) }, Query{ query }, UserPK{ userPK }{}
 		α Suspend()ι->void override{ Select(); }
 		α Select()ι->TAwait<jvalue>::Task;
 		sp<App::IApp> _appClient;
+		sp<Access::Authorize> _authorizer;
 		QL::TableQL Query;
 		Jde::UserPK UserPK;
 	};
@@ -33,20 +34,30 @@ namespace Jde::Web::Server{
 				sessions = Sessions::Get();
 			else if( auto p = Sessions::Find(*sessionId); p )
 				sessions.push_back( p );
+			//The listing, and another's session, are gated as the purge is (PurgeBefore):  admin over `sessions`.  A signed-in
+			//caller's own session is theirs to read - the spa confirms its sign-in with session(id:<its own>) (app-service.ts
+			//validateSessionId), which can not wait on a grant.  An id that is nobody's, or not found, takes the gate too:  a
+			//refusal is the same answer either way, so a probe learns nothing.
+			let own = sessionString && UserPK.Value && sessions.size()==1 && sessions.front()->UserPK.Value==UserPK.Value;
+			if( !own ){
+				THROW_IF( !_authorizer, "No authorizer - refusing to list sessions." );
+				_authorizer->TestAdminSlug( "sessions", UserPK, _sl );
+			}
 			if( sessions.empty() )
-				co_return Resume( jobject{} );
+				co_return Resume( Query.DefaultResult() );//[] for the listing, {} for one - the shape the caller indexes.
 			flat_map<Jde::UserPK, tuple<string,string>> userDomainLoginNames;
-			jobject users;
 			if( Query.FindColumn("domain") || Query.FindColumn("loginName") ){
 				auto ids = Reserve<Jde::UserPK::Type>( sessions.size() );
 				for( let& session : sessions )
 					ids.push_back( session->UserPK.Value );
-				auto q = Ƒ( "query{{ users(id:[{}]){{id loginName provider{{id name}}}} }}", Str::Join(ids) );
-				users = Json::AsObject( co_await (*_appClient->Query<jvalue>(move(q), {})) );
+				auto q = Ƒ( "query{{ users(id:[{}]){{id loginName name provider}} }}", Str::Join(ids) );//provider as the scalar:  the enum's name (Google, Key);  the nested provider{{name}} form answers nothing.
+				auto users = co_await (*_appClient->Query<jvalue>(move(q), {}, true, _sl));//raw - the bare rows, as OpcSessionsQLAwait reads the same query (query{…} is raw whatever is asked).
 				TRACET( _tags | ELogTags::Pedantic, "users={}"sv, serialize(users) );
-				for( let& vuser : Json::AsArrayPath(users, "data/users") ){
-					let& user = Json::AsObject(vuser);
-					userDomainLoginNames[{Json::AsNumber<Jde::UserPK::Type>(user,"id")}] = make_tuple( Json::AsSVPath(user, "provider/name"), Json::AsString(user, "loginName") );
+				for( let& vuser : Json::AsArray(users) ){
+					let& user = Json::AsObject( vuser );
+					let domain = Json::FindString( user, "provider" ).value_or( string{} );//null for a user without one.
+					let loginName = Json::FindString( user, "loginName" ).value_or( Json::FindString(user, "name").value_or(string{}) );//the name, for a user with no login of their own.
+					userDomainLoginNames[{Json::AsNumber<Jde::UserPK::Type>(user,"id")}] = make_tuple( domain, loginName );
 				}
 			}
 			auto array = Query.IsPlural() ? jarray{} : optional<jarray>{};
@@ -84,7 +95,12 @@ namespace Jde::Web::Server{
 	}
 
 	α SessionGraphQL::Select( const QL::TableQL& query, UserPK userPK, SL sl )ι->up<TAwait<jvalue>>{
-		return query.JsonName.starts_with( "session" ) ? mu<SessionGraphQLAwait>( query, userPK, _appClient, sl ) : nullptr;
+		return query.JsonName.starts_with( "session" ) ? mu<SessionGraphQLAwait>( query, userPK, _appClient, _authorizer, sl ) : nullptr;
+	}
+	α SessionGraphQL::Install( sp<App::IApp> appClient, sp<Access::Authorize> authorizer )ι->void{
+		static std::atomic<bool> installed{};
+		if( !installed.exchange(true) )
+			QL::Hook::Add( mu<SessionGraphQL>(move(appClient), move(authorizer)) );
 	}
 
 	α SessionGraphQL::PurgeBefore( const QL::MutationQL& m, UserPK executer, SL sl )ι->HookResult{

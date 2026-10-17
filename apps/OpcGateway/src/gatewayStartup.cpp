@@ -12,6 +12,7 @@
 #include <jde/app/client/appClient.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/ServerTrust.h>
+#include <jde/web/server/SessionGraphQL.h>
 #include "jde/fwk/settings.h"
 #include "GatewayAppClient.h"
 #include "opcInternal.h"
@@ -41,7 +42,7 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables"} );
+		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "session", "sessions", "variable", "variables"} );//session(s):  SessionGraphQL's hook over this process's web sessions - the AppServer forwards an instance page's listing here.
 		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command} };//resolveHistory, testConnection:  resolve and test are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );
@@ -77,6 +78,8 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );//before the UA clients go:  the collectors' items are dropped on live clients, and the groups' last flushes run while the executor still does.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		QL::Hook::Add( mu<OpcQLHook>() );
+		if( !appClient->IsLocal() )//the hub installed it beside the AppServer's, over the one map.
+			Web::Server::SessionGraphQL::Install( appClient, appClient->Acl() );
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 	}
 	α Gateway::Startup( jobject webServerSettings, jobject userName )ε->void{

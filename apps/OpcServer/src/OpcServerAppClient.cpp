@@ -35,8 +35,12 @@ namespace Jde::Opc::Server{
 			return std::ranges::all_of( q.Queries(), [](const auto& t){return t.JsonName=="logSetting";} );
 		return q.IsMutation() && std::ranges::all_of( q.Mutations(), [](const auto& m){return App::LogSettingsMAwait::IsApplicable(m);} );
 	}
+	//The page's Web Sessions tab (InstanceSessionsAwait):  answered by SessionGraphQL's hook over this process's own web sessions.
+	Ω isSessions( const QL::RequestQL& q )ι->bool{
+		return q.IsQueries() && std::ranges::all_of( q.Queries(), [](const auto& t){return t.JsonName=="sessions";} );
+	}
 	α OpcServerAppClient::ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>>{
-		return isLogSettings( q )
+		return isLogSettings( q ) || isSessions( q )
 			? mu<QL::QLAwait<>>( move(q), QL::Creds{executer}, Server::QLPtr(), sl )
 			: up<TAwait<jvalue>>{ mu<OpcServerQL>(move(q), executer, sl) };
 	}

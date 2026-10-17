@@ -6,8 +6,9 @@ import { AppService } from '../../../services/app/app-service';
 import { errorMessage } from '../../../utils/errors';
 import { LogDetail } from '../../logs/detail/log-detail';
 import { LogSettingsPanel } from '../../logs/settings/log-settings-panel';
+import { WebSessions } from '../web-sessions/web-sessions';
 
-//Both tabs talk to AppService itself.  Unlike the gateway/opc-server pages there is no per-instance service to build:
+//All three tabs talk to AppService itself.  Unlike the gateway/opc-server pages there is no per-instance service to build:
 //the AppServer publishes no /appServers discovery endpoint (only /opcGateways and /opcServers), and the environment's
 //`applicationServer` names exactly one - so the connection AppService already holds IS this page's instance.  The
 //instancePK lookup is what proves the routed name is that instance rather than some other registration.
@@ -17,7 +18,7 @@ import { LogSettingsPanel } from '../../logs/settings/log-settings-panel';
 		//prototype members, template decls) into its style-encapsulation id and deliberately leaves the class name out,
 		//so this page and its opc-server-detail twin - identical in every one of those - collided with NG0912.
 		host: {class:'main-content mat-drawer-container my-content app-server-detail'},
-		imports: [MatTabsModule, LogDetail, LogSettingsPanel]
+		imports: [MatTabsModule, LogDetail, LogSettingsPanel, WebSessions]
 })
 export class AppServerDetail implements OnInit, OnDestroy{
 	private route:ActivatedRoute = inject( ActivatedRoute );

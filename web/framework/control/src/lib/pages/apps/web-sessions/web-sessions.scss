@@ -1,0 +1,18 @@
+mat-toolbar{
+	gap: 8px;
+}
+.count{
+	font-size: 14px;
+	opacity: 0.7;
+}
+mat-table{
+	width: 100%;
+}
+.load-error{
+	margin: 16px;
+	color: var(--mat-sys-error, #b3261e);
+}
+.empty{
+	margin: 16px;
+	opacity: 0.7;
+}

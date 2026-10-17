@@ -220,13 +220,13 @@ namespace Jde::App::Server{
 		Logging::Add<Web::Server::SubscribeLog>( "subscribe", get<0>(pks), get<1>(pks), logGate(get<1>(pks)) );
 		SetAppPKs( pks );
 
-		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting"} );
+		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting", "session", "sessions"} );//session(s):  SessionGraphQL's hook and InstanceSessionsAwait, over no view.
 		auto appClient = AppClient();
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );//the listener used to create the key as a side effect, which is why SetPublicKey had to wait for it.
 		appClient->SetPublicKey( sslSettings.PublicKey.Value(SRCE_CUR) );
 		QL::Hook::Add( mu<AppInstanceHook>(appClient) );
-		QL::Hook::Add( mu<Web::Server::SessionGraphQL>(appClient, Authorizer()) );
+		Web::Server::SessionGraphQL::Install( appClient, Authorizer() );
 	}
 
 	α AppStartup( jobject webServerSettings )ε->void{

@@ -25,6 +25,7 @@ export * from './lib/utils/errors';
 export * from './lib/pages/detail-page';
 export * from './lib/pages/apps/apps';
 export * from './lib/pages/apps/app-server-detail/app-server-detail';
+export * from './lib/pages/apps/web-sessions/web-sessions';
 export * from './lib/pages/logs/detail/log-detail';
 export * from './lib/pages/logs/settings/log-settings-panel';
 export * from './lib/pages/logs/tags/log-tags';

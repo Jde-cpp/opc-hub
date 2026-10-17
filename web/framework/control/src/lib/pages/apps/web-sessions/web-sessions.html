@@ -1,0 +1,36 @@
+@if( error() ){
+	<p class="load-error">{{error()}}</p>
+}
+@else if( !isLoading() ){
+	<mat-toolbar>
+		<span class="count">{{rows().length}} {{rows().length==1 ? 'session' : 'sessions'}}</span>
+		<button matIconButton aria-label="Refresh" matTooltip="Refresh" (click)="load()">
+			<mat-icon>refresh</mat-icon>
+		</button>
+	</mat-toolbar>
+	@if( rows().length ){
+		<mat-table [dataSource]="rows()">
+			<ng-container matColumnDef="user">
+				<mat-header-cell *matHeaderCellDef>User</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{user(s)}}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="endpoint">
+				<mat-header-cell *matHeaderCellDef>Endpoint</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{s.endpoint}}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="lastUpdate">
+				<mat-header-cell *matHeaderCellDef>Last update</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{s.lastUpdate | date:'medium'}}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="expiration">
+				<mat-header-cell *matHeaderCellDef>Expires</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{s.expiration | date:'medium'}}</mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: columns"></mat-row>
+		</mat-table>
+	}
+	@else{
+		<p class="empty">No web sessions.</p>
+	}
+}

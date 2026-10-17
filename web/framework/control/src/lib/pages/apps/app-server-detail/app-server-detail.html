@@ -20,6 +20,14 @@
 					}
 				</ng-template>
 			</mat-tab>
+			<mat-tab>
+				<ng-template mat-tab-label>Web Sessions</ng-template>
+				<ng-template matTabContent>
+					@for( id of [instanceId()]; track id ){<!--keyed on the instance, as Log Settings-->
+						<web-sessions [service]=appService [instanceId]=id!></web-sessions>
+					}
+				</ng-template>
+			</mat-tab>
 		</mat-tab-group>
 	}
 }

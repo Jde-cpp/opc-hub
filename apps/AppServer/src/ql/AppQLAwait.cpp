@@ -4,6 +4,7 @@
 #include <jde/web/server/SettingQL.h>
 #include "../LocalClient.h"
 #include "ConnectionQLAwait.h"
+#include "InstanceSessionsAwait.h"
 #include "InstanceTagLevelAwait.h"
 #define let const auto
 
@@ -18,6 +19,8 @@ namespace Jde::App::Server{
 			y = Web::Server::SettingQL( move(q), AppClient(), sl );
 		else if( InstanceTagLevelAwait::IsApplicable(q) )
 			y = mu<InstanceTagLevelAwait>( move(q), executer.UserPK(), sl );
+		else if( InstanceSessionsAwait::IsApplicable(q) )//sessions without an instance stays with SessionGraphQL's hook.
+			y = mu<InstanceSessionsAwait>( move(q), executer.UserPK(), sl );
 		return y;
 	}
 }
