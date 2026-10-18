@@ -52,10 +52,11 @@ message String{
 //record on disk is its oneof member's field, tag, length and body, with no length prefix of its own, so a file parses
 //as one FileEntry with every field repeated.  The daily file, log.binpb, is a live file:  its FileStart's ts is the
 //time it was made, ns since the epoch, which names it to the archives (Merged), and each flush appends a run ending in
-//a Checkpoint, every String a run's entries name written in that run, so a read of a run resolves its entries on its
-//own.  A day's archive, <yyyy>/<m>/<d>/archive.binpb, is rewritten whole by each round that merges into it, generation
-//1 up:  its FileStart's ts is the day's start, then its Merged, then each String once, then the day's entries in time
-//order, with no Checkpoint.  FileEntry never gains a field outside the oneof:  a build before it would read that as damage.
+//a Checkpoint, with the Strings its entries name that the file doesn't hold yet, so a read of the whole file resolves
+//its entries:  a String the writer has forgotten it wrote, or one a torn append held, can be written again.  A day's
+//archive, <yyyy>/<m>/<d>/archive.binpb, is rewritten whole by each round that merges into it, generation 1 up:  its
+//FileStart's ts is the day's start, then its Merged, then each String once, then the day's entries in time order, with
+//no Checkpoint.  FileEntry never gains a field outside the oneof:  a build before it would read that as damage.
 message FileEntry{
 	oneof value{
 		LogEntryFile entry=1; //normal entry, forwarded when app_pk is set.

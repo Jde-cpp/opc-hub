@@ -93,8 +93,8 @@ namespace Jde::App{
 		}
 		//Read and written now:  the executor that the file awaitables complete on may be gone.
 		try{
-			if( !_file.Opened ){
-				Log::Opening opening{ DailyFile(), sl };
+			if( !_file.Current() ){
+				Log::Opening opening{ DailyFile(), _file, sl };
 				while( opening.Next()==Log::ENext::More )
 					IO::Records::FeedNow( opening, sl );
 				_file = opening.Take();
@@ -190,7 +190,7 @@ namespace Jde::App{
 		_toSave = {};
 		_toSave.reserve( toSave.size() );
 		_toSaveBytes = 0;
-		_cache.Clear();//the batch is a run of its own, so the next run carries its strings again.
+		_cache.Clear();//each batch carries its entries' strings:  the append leaves out those the file holds.
 		_mutex.unlock();
 		Save( move(toSave), flushId, co_await LockKeyAwait{DailyFile().string()} );
 	}
@@ -203,8 +203,8 @@ namespace Jde::App{
 			//was local at all: `*_endTime > max` is false for any finite bound, so every time-bounded query silently skipped
 			//the whole of today's log and answered out of the archives alone.  The bound is only released when the round
 			//below actually takes the file away.
-			if( !_file.Opened )//the first open:  its scan.
-				_file = co_await Log::DailyOpenAwait{ DailyFile() };
+			if( !_file.Current() )//the first open, or a refused file changed since:  its scan.
+				_file = co_await Log::DailyOpenAwait{ DailyFile(), _file };
 			auto run = _file.Prepare( toSave, SRCE_CUR );//a copy:  a write that fails puts toSave back.
 			co_await run.Write();
 			_file.Commit( move(run) );
@@ -249,7 +249,7 @@ namespace Jde::App{
 		vector<FileEntry> pending;
 		{
 			ul _{ _mutex };
-			if( !_needsArchive )
+			if( !_needsArchive || Clock::now()<_archiveRetry )//backing off a failed round:  the batch waits in the buffer.
 				co_return;
 			pending = move( _toSave );
 			_toSave = {};
@@ -290,13 +290,16 @@ namespace Jde::App{
 				INFO( "The archive round of '{}' succeeded again.", DailyFile().string() );
 		}
 		catch( const runtime_error& e ){
-			//#235: the round is tried again by the next flush, and adds no archived day twice - each archive says what it
-			//took (Log.proto's Merged).  Said at Error once, until a round succeeds.
+			//#235: the round is tried again by the first flush past its backoff, and adds no archived day twice - each archive
+			//says what it took (Log.proto's Merged).  Said at Error once, until a round succeeds.
 			ul _{ _mutex };//the round failed, so the daily file survives with everything the drain wrote into it - keep the widest bound.
 			_dailyFileStart = TimePoint::min();
 			_needsArchive = true;
+			let failedBefore = std::exchange( _archiveFailed, true );
+			_archiveBackoff = failedBefore ? std::min<Duration>( _archiveBackoff*2, 1h ) : Delay();
+			_archiveRetry = Clock::now()+_archiveBackoff;
 			if( let x = dynamic_cast<const Exception*>(&e); x )
-				x->SetLevel( std::exchange(_archiveFailed, true) ? ELogLevel::Debug : ELogLevel::Error );
+				x->SetLevel( failedBefore ? ELogLevel::Debug : ELogLevel::Error );
 		}
 	}
 

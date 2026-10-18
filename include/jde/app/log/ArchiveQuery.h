@@ -27,7 +27,7 @@ namespace Jde::App{
 	//The strings of each kind, by id.  std::map, not flat_map:  the Arg table grows with every distinct value logged, and a
 	//sorted vector's insert is linear.
 	struct StringTable{
-		α Add( EStringKind kind, uuid id, string&& value )ι->void{ _maps[(uint8)kind].try_emplace( id, move(value) ); }//moves only when it inserts.
+		α Add( EStringKind kind, uuid id, const string& value )ι->void{ _maps[(uint8)kind].try_emplace( id, value ); }//copies only when it inserts.
 		α Find( EStringKind kind, sv idBytes )Ι->str;
 		α operator[]( EStringKind kind )Ι->const std::map<uuid,string>&{ return _maps[(uint8)kind]; }
 	private:

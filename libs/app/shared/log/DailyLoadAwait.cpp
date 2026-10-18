@@ -12,17 +12,10 @@ namespace Jde::App{
 			auto y = _log.Entries();
 			TRACE( "Memory item count: {}", y.size() );
 			auto& file = _log._file;
-			if( !file.Opened )
-				file = co_await Log::DailyOpenAwait{ _log.DailyFile() };
+			if( !file.Current() )
+				file = co_await Log::DailyOpenAwait{ _log.DailyFile(), file };
 			std::ranges::copy( file.Salvaged, std::back_inserter(y) );
-			let start = _bounds.Start ? Log::Ns( *_bounds.Start ) : std::numeric_limits<int64_t>::min();
-			let end = _bounds.End ? Log::Ns( *_bounds.End ) : std::numeric_limits<int64_t>::max();
-			vector<Log::Run> runs;
-			for( let& run : file.Runs ){
-				if( run.Last>=start && run.First<=end )
-					runs.push_back( run );
-			}
-			if( runs.size() ){
+			if( file.Runs.size() ){
 				sp<IO::OpenFile> open;
 				try{
 					open = ms<IO::OpenFile>( file.Path );
@@ -33,7 +26,7 @@ namespace Jde::App{
 					e.SetLevel( ELogLevel::Debug );//removed since the process last wrote it:  the next flush finds out.
 				}
 				if( open ){
-					auto records = co_await Log::RunsReadAwait{ move(open), move(runs) };
+					auto records = co_await Log::RunsReadAwait{ move(open), file.Runs };
 					TRACE( "DailyFile item count: {}", records.size() );
 					std::ranges::move( records, std::back_inserter(y) );
 				}

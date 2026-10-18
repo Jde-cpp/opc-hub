@@ -31,8 +31,11 @@ moveToDir src;
 
 declare -A webFiles=( [Web.FromServer]=1 );
 declare -A appFiles=( [Log]=1 [App.FromClient]=1 [App.FromServer]=1 [App]=1 [Common]=1 );
+#Log.proto imports the record layer's framing for FileEntry.  The web reads none of it, but buf generates a file whole.
+declare -A recordFiles=( [Jde.IO.Records]=1 );
 linkProtos $JDE_BASH/libs/web/client/proto webFiles;
 linkProtos $JDE_BASH/libs/app/shared/proto appFiles;
+linkProtos $JDE_BASH/libs/fwk/src/io/records/proto recordFiles;
 
 stale=$clean;
 for name in "${!webFiles[@]}" "${!appFiles[@]}"; do

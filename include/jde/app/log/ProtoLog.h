@@ -8,9 +8,9 @@
 
 namespace Jde::App{
 	//The strings the buffer holds a record of, by id:  Touch says whether one is still to be emitted.  Cleared with every
-	//flush, so each run of the daily file carries every string its entries name and a read of one run resolves its
-	//entries on its own (Log.proto's FileEntry), and when Drop trims the buffer, since the dropped prefix may have held
-	//the only copy of a string a surviving entry names.
+	//flush, so each batch carries every string its entries name and the append leaves out those the daily file holds
+	//(Log::DailyFile::Strings), which only it knows, and when Drop trims the buffer, since the dropped prefix may have
+	//held the only copy of a string a surviving entry names.
 	struct ProtoLogCache{
 		α Clear()ι->void;
 		α Touch( flat_set<uuid>& cache, uuid id )ι->bool;//true when the id was not cached - the caller emits the string record only then.
@@ -57,7 +57,11 @@ namespace Jde::App{
 		TimePoint _dailyFileStart ABSL_GUARDED_BY(_mutex){ TimePoint::max() };//re-seeded in the ctor when a daily file already exists.
 		static constexpr uint16 _delaySize{8096};
 		bool _flushFailed ABSL_GUARDED_BY(_mutex){};//M5: a flush that failed suppresses the size trigger, so the timer retries instead of every log line starting a fresh Save.
-		bool _archiveFailed ABSL_GUARDED_BY(_mutex){};//the last round failed:  said at Error once, and the next flush tries again.
+		bool _archiveFailed ABSL_GUARDED_BY(_mutex){};//the last round failed:  said at Error once, and the first flush past _archiveRetry tries again.
+		//A failed round's wait before the next, so a cause that lasts isn't paid for at every flush:  Delay() at the first
+		//failure, doubled per failure up to an hour.
+		Duration _archiveBackoff ABSL_GUARDED_BY(_mutex){};
+		TimePoint _archiveRetry ABSL_GUARDED_BY(_mutex){};
 		bool _needsArchive ABSL_GUARDED_BY(_mutex){false};
 		fs::path _root;
 		const std::chrono::time_zone& _tz;

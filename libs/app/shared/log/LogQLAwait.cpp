@@ -14,7 +14,7 @@ namespace Jde::App{
 	using namespace std::chrono;
 	//Newest first reads today's log, then the archives back from the end bound;  oldest first reads the archives forward
 	//from the start bound, then today's log.  Either way the read stops once the page is full.  Today's log is skipped when
-	//the end bound falls before the daily file starts, and read only for the runs the bounds overlap.
+	//the end bound falls before the daily file starts.
 	α LogQLAwait::Execute()ι->TAwait<jvalue>::Task{
 		try{
 			auto& log = Logging::GetLogger<ProtoLog>();
@@ -25,7 +25,7 @@ namespace Jde::App{
 			let timeAsc = ob.size() && ob[0].first=="time" && ob[0].second;
 			ArchiveQuery archive{ move(_hidden) };
 			if( readLocal && !timeAsc ){
-				archive.Append( _ql, co_await Any(DailyLoadAwait{log, bounds}) );
+				archive.Append( _ql, co_await Any(DailyLoadAwait{log}) );
 				readLocal = false;
 				TRACE( "Daily entries: {}, complete: {}", archive.EntrySize(), archive.IsComplete(_ql) );
 			}
@@ -51,7 +51,7 @@ namespace Jde::App{
 				}
 			}
 			if( readLocal && !archive.IsComplete(_ql) )
-				archive.Append( _ql, co_await Any(DailyLoadAwait{log, bounds}) );
+				archive.Append( _ql, co_await Any(DailyLoadAwait{log}) );
 			Resume( archive.ToJson(_ql) );
 		}
 		catch( runtime_error& e ){

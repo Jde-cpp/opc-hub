@@ -111,11 +111,13 @@ namespace Jde::App{
 		//maps (Test/Message below), so populating them per surviving entry meant the first entry was compared against an
 		//empty map - and every one after it, since none ever survived.  Any text/message/args filter silently dropped the
 		//whole daily file.
-		//No extra memory: each value is moved out of `strings`, which we already hold in full, rather than copied.
+		//Copied, not moved:  an id is its text's md5, so one string can be several kinds - an exception's what() is its own
+		//template and its catch's argument.
 		for( let& entry : logEntries ){
 			ForEachStringId( entry, [&]( EStringKind kind, const string& idBytes ){
 				let id = ToGuid( idBytes );
-				Strings.Add( kind, id, move(strings[id]) );
+				if( auto p = strings.find(id); p!=strings.end() )
+					Strings.Add( kind, id, p->second );
 			});
 		}
 		for( auto& entry : logEntries ){

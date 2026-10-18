@@ -47,6 +47,13 @@ namespace Jde::App::Tests{
 			y += r.has_entry() && Protobuf::ToGuid( r.entry().template_id() )==id;
 		return y;
 	}
+	//How many string records hold the id:  a file holds each once.
+	Ω stringCount( const vector<FileEntry>& records, const uuid& id )ι->uint{
+		uint y{};
+		for( let& r : records )
+			y += r.has_str() && Protobuf::ToGuid( r.str().id() )==id;
+		return y;
+	}
 	//The string record with the id, which an archive holds once.
 	Ω stringValue( const vector<FileEntry>& records, const uuid& id )ι->optional<string>{
 		for( let& r : records ){
@@ -520,7 +527,7 @@ namespace Jde::App::Tests{
 
 
 	//#309: the daily file is the record layer's - a FileStart, then a run per flush ending in a checkpoint, no length before
-	//any record - and each run carries every string its entries name, so a read of a run resolves its entries on its own.
+	//any record - and holds each string its entries name once, so a read of the whole file resolves its entries.
 	//Scratch loggers over a root of their own, as DailyFileDayTests, with a short delay so the timer flushes.
 	struct DailyFileLayerTests : DailyFileDayTests{
 	protected:
@@ -561,44 +568,72 @@ namespace Jde::App::Tests{
 		ASSERT_TRUE( Flush(*log, b) );
 		let bytes = contents( File() );
 		EXPECT_NE( (uint8_t)bytes[0], 0u ) << "a length precedes the first record";
-		EXPECT_EQ( (uint8_t)bytes[0], (Log::StartField<<3)|2 ) << "the file doesn't open with the FileStart's tag";
+		let first = IO::Records::Cursor{ bytes, 0 }.Next();
+		FileEntry start;
+		ASSERT_TRUE( first && start.ParseFromArray(first->Frame.data(), (int)first->Frame.size()) );
+		EXPECT_TRUE( start.has_file_start() ) << "the file doesn't open with Log.proto's file_start";
 		let scanned = Scan();
 		EXPECT_EQ( scanned.Stop, EStop::End );
 		EXPECT_EQ( scanned.Size, bytes.size() );
 		ASSERT_EQ( scanned.Runs.size(), 2u ) << "a flush is a run";
-		for( let& run : scanned.Runs ){
-			let records = Log::ParseRecords( sv{bytes}.substr(run.Offset, run.End-run.Offset), File() );
-			EXPECT_TRUE( SelfContained(records) ) << "a run's entry names a string the run doesn't hold";
-			EXPECT_EQ( stringValue(records, a.Id()), "layer {}" ) << "the second run relied on the first for the template";
-		}
-		EXPECT_EQ( count(Log::ParseRecords(bytes, File()), a.Id()), 2u );
+		let all = Log::ParseRecords( bytes, File() );
+		EXPECT_TRUE( SelfContained(all) ) << "an entry names a string the file doesn't hold";
+		EXPECT_EQ( stringCount(all, a.Id()), 1u ) << "the second run wrote the template the first holds";
+		EXPECT_EQ( count(all, a.Id()), 2u );
+		let loaded = BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log) );
+		EXPECT_EQ( count(loaded, a.Id()), 2u );
+		EXPECT_EQ( stringValue(loaded, a.Id()), "layer {}" ) << "a query doesn't resolve the second run's entry";
 	}
 
-	//A bounded query reads the runs its bounds overlap and no other, and what it reads resolves on its own.
-	TEST_F( DailyFileLayerTests, AQueryReadsOnlyTheRunsInRange ){
-		let log = Make( "PT0.2S" );
-		let a = entry( Clock::now()-1h, ELogLevel::Information, 1, "range {}", {"a"} );
-		let b = entry( a.Time+1s, ELogLevel::Information, 2, "range {}", {"b"} );
-		ASSERT_TRUE( Flush(*log, a) );
-		ASSERT_TRUE( Flush(*log, b) );
-		let read = [&]( Bounds bounds ){ return BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log, bounds) ); };
-		let later = read( Bounds{.Start=a.Time+500ms} );
-		EXPECT_EQ( count(later, a.Id()), 1u ) << "the second run, with b, is in range";
-		bool bRead{}, aRead{};
-		for( let& r : later ){
-			if( r.has_entry() ){
-				bRead = bRead || r.entry().line()==2;
-				aRead = aRead || r.entry().line()==1;
-			}
+	//A process that opens a daily file another left knows its strings from the scan, and doesn't write them again.
+	TEST_F( DailyFileLayerTests, AProcessRestartDoesntWriteTheFilesStringsAgain ){
+		let a = entry( Clock::now(), ELogLevel::Information, 1, "restart {}", {"a"} );
+		let b = entry( a.Time+1s, ELogLevel::Information, 2, "restart {}", {"b"} );
+		{
+			let log = Make( "PT0.2S" );
+			ASSERT_TRUE( Flush(*log, a) );
 		}
-		EXPECT_TRUE( bRead );
-		EXPECT_FALSE( aRead ) << "the first run, out of range, was read";
-		EXPECT_EQ( stringValue(later, a.Id()), "range {}" ) << "the run read doesn't resolve its entry";
-		EXPECT_EQ( stringValue(later, Logging::Entry::GenerateId("b")), "b" );
-		let earlier = read( Bounds{.End=a.Time+500ms} );
-		EXPECT_EQ( count(earlier, a.Id()), 1u );
-		EXPECT_EQ( stringValue(earlier, Logging::Entry::GenerateId("a")), "a" );
-		EXPECT_EQ( count(read({}), a.Id()), 2u );
+		let log = Make( "PT0.2S" );
+		ASSERT_TRUE( Flush(*log, b) );
+		let all = records( File() );
+		EXPECT_EQ( stringCount(all, a.Id()), 1u ) << "the template was written again after the restart";
+		EXPECT_EQ( count(all, a.Id()), 2u );
+	}
+
+	//A daily file removed under the process starts over:  its runs write the strings the old file held, the first's and
+	//the ones after it.
+	TEST_F( DailyFileLayerTests, ARemovedDailyFileStartsOverWithItsStrings ){
+		let log = Make( "PT0.2S" );
+		let a = entry( Clock::now(), ELogLevel::Information, 1, "removed {}", {"a"} );
+		let x = entry( a.Time+1s, ELogLevel::Information, 2, "only the old file at first {}", {"x"} );
+		let b = entry( a.Time+2s, ELogLevel::Information, 3, "removed {}", {"b"} );
+		let c = entry( a.Time+3s, ELogLevel::Information, 4, "only the old file at first {}", {"c"} );
+		ASSERT_TRUE( Flush(*log, a) );
+		ASSERT_TRUE( Flush(*log, x) );
+		fs::remove( File() );
+		ASSERT_TRUE( Flush(*log, b) );
+		ASSERT_TRUE( Flush(*log, c) );
+		let all = records( File() );
+		EXPECT_EQ( count(all, a.Id()), 1u );
+		EXPECT_EQ( stringValue(all, a.Id()), "removed {}" ) << "the new file's first run lacks the template the removed one held";
+		EXPECT_EQ( stringValue(all, x.Id()), "only the old file at first {}" ) << "a later run lacks a template only the removed file held";
+		EXPECT_TRUE( SelfContained(all) );
+	}
+
+	//The ids a file holds are bounded:  past its cap the least recently used half goes, and is written again if named.
+	TEST( FileStringsTests, KeepsTheMostRecentlyUsedUpToItsCap ){
+		let id = []( uint i ){ return Logging::Entry::GenerateId( std::to_string(i) ); };
+		Log::FileStrings strings;
+		strings.Add( id(0) );
+		for( uint i=1; i<=Log::FileStrings::Cap; ++i ){
+			strings.Add( id(i) );
+			if( i%1000==0 )
+				EXPECT_TRUE( strings.Holds(id(0)) );
+		}
+		EXPECT_LE( strings.Size(), Log::FileStrings::Cap );
+		EXPECT_TRUE( strings.Holds(id(0)) ) << "the most recently used was forgotten";
+		EXPECT_FALSE( strings.Holds(id(1)) ) << "the least recently used was kept";
+		EXPECT_TRUE( strings.Holds(id(Log::FileStrings::Cap)) );
 	}
 
 	//A daily file torn inside its last append:  a query serves the whole records before the tear, the tear is reported,
@@ -641,7 +676,7 @@ namespace Jde::App::Tests{
 
 		let e4 = entry( Clock::now(), ELogLevel::Information, 4, "torn {}", {"four"} );
 		log->Write( e4 );
-		ASSERT_TRUE( waitUntil([&]{ return Size()!=torn.size(); }) ) << "no append landed";
+		ASSERT_TRUE( waitUntil([&]{ return Scan().Runs.size()==2; }) ) << "no append landed";//not the size:  the torn tail is cut before the append is written.
 		let scanned = Scan();
 		EXPECT_EQ( scanned.Stop, EStop::End ) << "the append left the torn bytes";
 		EXPECT_EQ( scanned.Size, Size() );
@@ -655,6 +690,38 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( after4[2], 1u ) << "the salvaged record wasn't written again";
 		EXPECT_EQ( after4[3], 0u );
 		EXPECT_EQ( after4[4], 1u );
+	}
+
+	//The first append to a new daily file fails part-way, its records whole and its checkpoint cut.  Nothing was committed
+	//at 0, so the retry's Verify refuses the bytes and the file is scanned again.  The records it finds torn are the batch
+	//the flush put back in the buffer:  salvaging them as well wrote each twice.
+	TEST_F( DailyFileLayerTests, AFailedFirstAppendIsWrittenOnceByItsRetry ){
+		let e1 = entry( Clock::now()-2s, ELogLevel::Information, 1, "failed {}", {"one"} );
+		let e2 = entry( Clock::now()-1s, ELogLevel::Information, 2, "failed {}", {"two"} );
+		auto open = [this]( const Log::DailyFile& was ){
+			Log::Opening opening{ File(), was };
+			while( opening.Next()==Log::ENext::More )
+				IO::Records::FeedNow( opening );
+			return opening.Take();
+		};
+		auto file = open( {} );
+		let failed = file.Prepare( fileEntries({e1, e2}) );
+		save( File(), sv{failed.Bytes}.substr(0, failed.Bytes.size()-3) );//inside the run's checkpoint.
+		EXPECT_THROW( file.Prepare(fileEntries({e1, e2})), IO::IOException );
+		ASSERT_FALSE( file.Opened );
+
+		file = open( file );
+		EXPECT_TRUE( file.Salvaged.empty() ) << "the failed append's records were salvaged, though the buffer holds them again";
+		auto retry = file.Prepare( fileEntries({e1, e2}) );
+		save( File(), contents(File()).substr(0, retry.Offset)+retry.Bytes );
+		file.Commit( move(retry) );
+		uint lines[3]{};
+		for( let& r : records(File()) ){
+			if( r.has_entry() && r.entry().line()<3 )
+				++lines[r.entry().line()];
+		}
+		EXPECT_EQ( lines[1], 1u );
+		EXPECT_EQ( lines[2], 1u );
 	}
 
 	//#235: a round that fails at day k is tried again by the next flush, and doesn't write days before k a second time.
@@ -688,6 +755,51 @@ namespace Jde::App::Tests{
 		let sixth = records( six );
 		EXPECT_EQ( count(sixth, e6.Id()), 1u );
 		EXPECT_EQ( count(sixth, again.Id()), 1u );
+		//the file the round removed held the template:  the next file writes it again.
+		let after = entry( Chrono::ToTimePoint(2025, 3, 6, 14), ELogLevel::Information, 8, "day six again" );
+		ASSERT_TRUE( Flush(*log, after) );
+		EXPECT_EQ( stringValue(records(File()), after.Id()), "day six again" ) << "the new daily file lacks the template the archived one held";
+	}
+
+	//A round that fails waits out its backoff, Delay() the first time:  a flush before then leaves it alone, so a cause
+	//that lasts doesn't have every flush read the daily file again.  With the timer an hour off, only the size trigger
+	//flushes.
+	TEST_F( DailyFileLayerTests, AFailedRoundWaitsOutItsBackoff ){
+		let log = Make( "PT1H" );
+		let five = App::ArchiveDayFile( _root, {std::chrono::year{2025}, std::chrono::month{3}, std::chrono::day{5}} );
+		let six = App::ArchiveDayFile( _root, {std::chrono::year{2025}, std::chrono::month{3}, std::chrono::day{6}} );
+		let obstruction = fs::path{ six }.concat( ".tmp" );
+		fs::create_directories( obstruction );//a directory where day 6's temp file goes:  its write fails.
+		auto fill = [&]( uint32_t from ){//past the size trigger, on day 6.
+			for( uint32_t i=from; i<from+400; ++i )
+				log->Write( entry(Chrono::ToTimePoint(2025, 3, 6, 12)+std::chrono::milliseconds{i}, ELogLevel::Information, i, "backoff {}", {std::to_string(i)}) );
+		};
+		log->Write( entry(Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five") );
+		fill( 1000 );
+		ASSERT_TRUE( waitUntil([&]{ return fs::exists(five); }) );
+		ASSERT_TRUE( waitUntil([&]{ return TryLockKey(log->DailyFile().string()).has_value(); }) );
+		ASSERT_FALSE( fs::exists(six) );
+		fs::remove_all( obstruction );
+
+		let before = Size();
+		fill( 2000 );
+		ASSERT_TRUE( waitUntil([&]{ return Size()>before; }) ) << "no flush landed";
+		EXPECT_FALSE( waitUntil([&]{ return fs::exists(six); }, 1s) ) << "a flush inside the backoff ran the round again";
+		EXPECT_TRUE( fs::exists(File()) );
+	}
+
+	//A refused daily file that is repaired in place, emptied here, is scanned again by the next flush, which writes to it.
+	TEST_F( DailyFileLayerTests, ARefusedDailyFileRepairedInPlaceIsWrittenAgain ){
+		save( File(), "not a protobuf" );//another program's:  the scan refuses it.
+		let log = Make( "PT0.2S" );
+		EXPECT_TRUE( BlockTAwait<vector<FileEntry>>(App::DailyLoadAwait(*log)).empty() );//its open:  the process holds the file refused.
+		fs::resize_file( File(), 0 );
+		let e = entry( Clock::now(), ELogLevel::Information, 1, "written once repaired" );
+		log->Write( e );
+		ASSERT_TRUE( waitUntil([&]{ return Size()>0 && TryLockKey(log->DailyFile().string()).has_value(); }) ) << "the repaired file is still refused";
+		let all = records( File() );
+		EXPECT_EQ( count(all, e.Id()), 1u );
+		EXPECT_EQ( stringValue(all, e.Id()), "written once repaired" ) << "the rescan left the strings the refused file held";
 	}
 
 	//A day's archive that isn't the record layer's, any garbage file, is left as it is:  the round drops the day's
@@ -712,5 +824,34 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( count(records(six), e6.Id()), 1u );
 		let said = Logging::Find( [&]( const Logging::Entry& e ){ return e.Level==ELogLevel::Error && e.Message().contains(five.string()); } );
 		EXPECT_EQ( said.size(), 1u ) << "the dropped day went unsaid";
+	}
+
+	//A day's archive whose head is the layer's but which can't be read through past it:  the round drops the day's entries,
+	//and its error says how many.  It counted them after they had gone into the rewrite, so it always said 0.
+	TEST_F( DailyFileLayerTests, AnUnreadableArchiveSaysHowManyEntriesItDrops ){
+		let five = App::ArchiveDayFile( _root, {std::chrono::year{2025}, std::chrono::month{3}, std::chrono::day{5}} );
+		let six = App::ArchiveDayFile( _root, {std::chrono::year{2025}, std::chrono::month{3}, std::chrono::day{6}} );
+		fs::create_directories( five.parent_path() );
+		string bytes;
+		Log::Appender archive{ bytes, 0 };
+		IO::Proto::FileStart start;
+		start.set_ts( 1 );
+		start.set_generation( 1 );
+		archive.Start( start );
+		FileEntry merged;
+		merged.mutable_merged()->set_daily( 1 );
+		archive.Add( move(merged) );
+		save( five, bytes+"not a protobuf" );
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		Logging::ClearMemory();
+		let log = Make( "PT0.2S" );
+		log->Write( entry(Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five") );
+		log->Write( entry(Chrono::ToTimePoint(2025, 3, 6, 12), ELogLevel::Information, 6, "day six") );
+		ASSERT_TRUE( waitUntil([&]{ return fs::exists(six); }) );
+		ASSERT_TRUE( waitUntil([&]{ return !fs::exists(File()); }) ) << "the round didn't remove the daily file";
+		let said = Logging::Find( [&]( const Logging::Entry& e ){ return e.Level==ELogLevel::Error && e.Message().contains(five.string()) && e.Message().contains("entries for"); } );
+		ASSERT_EQ( said.size(), 1u ) << "the dropped day went unsaid";
+		EXPECT_TRUE( said.front().Message().contains("its 1 entries") ) << said.front().Message();
 	}
 }

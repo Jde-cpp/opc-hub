@@ -21,8 +21,8 @@ namespace Jde::App{
 	using namespace std::chrono;
 	namespace{
 		//What a round takes of the daily file:  its identity and size, which each archive it writes notes, every string
-		//record, and each day's entries, each with the end of the run that holds it, so a day whose archive took the
-		//run already passes over it.
+		//record, and each day's entries, each with its end in the file, so a day whose archive took the file through there
+		//already passes over it.  The size is a run's end, so an entry ends at or before it just when its run does.
 		struct Snapshot final{
 			int64_t Identity{};
 			uint Through{};
@@ -61,24 +61,24 @@ namespace Jde::App{
 			lock = co_await LockKeyAwait{ dailyPath.string() };
 			//the lock is ours & stays ours; the daily file is read, ProtoLog's buffer is not.
 			auto& file = _log._file;
-			if( !file.Opened )
-				file = co_await Log::DailyOpenAwait{ dailyPath };
+			if( !file.Current() )
+				file = co_await Log::DailyOpenAwait{ dailyPath, file };
 			if( !file.Refused.empty() )
 				throw IO::IOException{ _sl, file.Path, ELogLevel::Error, "{}, so it can't be archived", file.Refused };
 			Snapshot snapshot{ .Identity=file.Identity, .Through=file.Size };
 			if( file.Runs.size() ){
-				auto open = ms<IO::OpenFile>( file.Path, _sl );
-				for( let& run : file.Runs ){
-					for( auto& r : co_await Log::RunsReadAwait{open, {run}} ){
-						if( r.has_str() )
-							snapshot.Strings.try_emplace( ToGuid(r.str().id()), move(r) );
-						else if( r.has_entry() ){
-							let day = Chrono::LocalYMD( Protobuf::ToTimePoint(r.entry().time()), _log.TimeZone() );
-							snapshot.Days[day].emplace_back( run.End, move(r) );
-						}
-						else
-							WARN( "Unhandled FileEntry case '{}' - not archived.", underlying(r.value_case()) );
+				vector<uint> ends;
+				auto records = co_await Log::RunsReadAwait{ ms<IO::OpenFile>(file.Path, _sl), file.Runs, &ends };
+				for( uint i=0; i<records.size(); ++i ){
+					auto& r = records[i];
+					if( r.has_str() )
+						snapshot.Strings.try_emplace( ToGuid(r.str().id()), move(r) );
+					else if( r.has_entry() ){
+						let day = Chrono::LocalYMD( Protobuf::ToTimePoint(r.entry().time()), _log.TimeZone() );
+						snapshot.Days[day].emplace_back( ends[i], move(r) );
 					}
+					else
+						WARN( "Unhandled FileEntry case '{}' - not archived.", underlying(r.value_case()) );
 				}
 			}
 			for( auto& [day,entries] : snapshot.Days ){
@@ -103,7 +103,7 @@ namespace Jde::App{
 					IO::ReadAwait read{ existing, IO::ReadOptions{.Offset=0, .Size=std::min<uint>(size, Log::ArchiveHeadBytes), .Tags=_tags} };//by reference: a ReadAwait does not move.
 					head = Log::HeadOf( co_await Any(read) );
 					if( !head ){//as the historian leaves a file that isn't its own:  with the records for it dropped.
-						ERR( "'{}' isn't an archive the record layer wrote, so the log won't write to it:  its {} entries for {} are dropped until it is repaired or removed.", path.string(), entries.size(), IO::Records::DayDirectory(day).string() );
+						ERR( "'{}' isn't an archive the record layer wrote:  its {} entries for {} are dropped, and the log won't write to it until it is repaired or removed.", path.string(), entries.size(), IO::Records::DayDirectory(day).string() );
 						continue;
 					}
 					//an archive is one run, read from its start, before the day's new entries at any one time.
@@ -147,7 +147,7 @@ namespace Jde::App{
 					IO::RemoveTemp( temp );//the target still holds the previous archive; a stray temp would only mislead whoever looks at the directory next.
 					if( !rewrite.Unreadable() )
 						throw;
-					ERR( "'{}' can't be read through, so the log won't write to it:  its {} entries for {} are dropped until it is repaired or removed.", path.string(), late.size(), IO::Records::DayDirectory(day).string() );
+					ERR( "'{}' can't be read through:  its {} entries for {} are dropped, and the log won't write to it until it is repaired or removed.", path.string(), entries.size(), IO::Records::DayDirectory(day).string() );
 				}
 			}
 			std::error_code ec;
