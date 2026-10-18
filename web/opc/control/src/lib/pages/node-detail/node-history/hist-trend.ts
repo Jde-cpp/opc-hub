@@ -1,4 +1,6 @@
-import { AfterViewInit, Component, effect, ElementRef, inject, input, OnDestroy, output, untracked, viewChild } from '@angular/core';
+import { AfterViewInit, Component, effect, ElementRef, inject, input, OnDestroy, output, signal, untracked, viewChild } from '@angular/core';
+import { MatIconModule } from '@angular/material/icon';
+import { RouterLink } from '@angular/router';
 import type Highcharts from 'highcharts/esm/highstock';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
@@ -6,23 +8,26 @@ import { NodeKey } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { statusIcon } from '../../../model/status-code';
 import { badColor, toTrendPoints, TrendFlag, trendPalette, TrendPoint } from './hist-trend-data';
-
-type HC = typeof Highcharts;
-let highcharts:Promise<HC>|undefined;
-//Highcharts Stock and its accessibility module, loaded on first use and once:  the libraries are not lazy (web/CLAUDE.md), so a
-//static import would put the whole of Highcharts in the initial bundle for every page.
-function loadHighcharts():Promise<HC>{
-	return highcharts ??= Promise.all( [import('highcharts/esm/highstock'), import('highcharts/esm/modules/accessibility')] ).then( ([m])=>m.default );
-}
+import { HighchartsLoader } from './highcharts-loader';
 
 //The trend:  one line per node, stepped by default, a gap where a reading is Bad and a flag naming its status, a
 //triangle on an Uncertain one.  A time axis that pans into more pages:  reaching the left edge asks the owner for the page before.
 //The chart is Highcharts' own object, driven directly:  points arrive one a second per node on the live tail, which is addPoint
-//work, not a rebuild of an options object.
+//work, not a rebuild of an options object.  Highcharts itself is an add-on the install never carries, imported by URL on first use
+//(HighchartsLoader, #302):  absent, a notice stands in the plot's place and the tab works from the table.
 @Component({
 	selector: 'hist-trend',
-	template: `<div #plot class="plot"></div>`,//its role and label are the accessibility module's:  it sets them on every update
-	styles: [`:host{ display:block; width:100%; } .plot{ width:100%; height:360px; }`]
+	imports: [MatIconModule, RouterLink],
+	template: `
+		@if( absent() ){
+			<p class="absent" role="status"><mat-icon aria-hidden="true" fontIcon="show_chart"></mat-icon>The trend draws with Highcharts Stock, which the install does not include.  <a [routerLink]="['/help/gateways']" fragment="trend-chart">How to add it</a></p>
+		}
+		<div #plot class="plot" [class.absent]="absent()"></div>`,//its role and label are the accessibility module's:  it sets them on every update
+	styles: [`
+		:host{ display:block; width:100%; }
+		.plot{ width:100%; height:360px; } .plot.absent{ height:0; }
+		p.absent{ display:flex; align-items:center; gap:4px; margin:.5rem 1rem; color:var(--mat-sys-on-surface-variant); } p.absent mat-icon{ flex:none; }
+	`]
 })
 export class HistTrend implements AfterViewInit, OnDestroy{
 	constructor(){
@@ -33,9 +38,13 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 		} );
 	}
 	async ngAfterViewInit(){
-		const H = await loadHighcharts();
+		const H = await this.#loader.load();
 		if( this.#destroyed )
 			return;
+		if( !H ){
+			this.absent.set( true );
+			return;
+		}
 		this.#chart = H.stockChart( this.plot().nativeElement, this.#options() );
 		this.#draw( this.values(), this.series(), this.stepped() );
 	}
@@ -52,6 +61,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 	hasEarlier = input( true );
 	loadEarlier = output<void>();
 	plot = viewChild.required<ElementRef<HTMLDivElement>>( 'plot' );
+	absent = signal( false );//no Highcharts at the add-on folder:  the notice shows in the plot's place
 
 	#draw( values:HistValue[], series:Variable[], stepped:boolean ){
 		const chart = this.#chart;
@@ -167,6 +177,7 @@ export class HistTrend implements AfterViewInit, OnDestroy{
 		};
 	}
 	#host = inject<ElementRef<HTMLElement>>( ElementRef );
+	#loader = inject( HighchartsLoader );
 	#chart:Highcharts.Chart|undefined;
 	#destroyed = false;
 }

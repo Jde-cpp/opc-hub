@@ -25,6 +25,7 @@ import { HistEditDialog, HistEditPreset } from './hist-edit-dialog';
 import { HistThresholdsDialog } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
+import { HighchartsLoader } from './highcharts-loader';
 
 //what the tab shows:  the values, trended and listed, or the modifications made to them, listed with their ModificationInfo
 export type HistMode = 'values'|'modified';
@@ -59,6 +60,7 @@ export class NodeHistory implements OnDestroy{
 		effect( ()=>{ this.histSource(); const nodes = this.selected(), mode = this.mode(), aggregation = this.aggregated(); untracked( ()=>this.#reload(nodes, mode, aggregation) ); } );
 		//what the source lists for the picker, and on a group what this user may edit:  once per source
 		effect( ()=>{ const key = this.sourceKey(), source = this.histSource(); untracked( ()=>this.#loadSource( key, source ) ); } );
+		this.#highcharts.load().then( H=>this.chart.set( !!H ) );
 	}
 	ngOnDestroy(){ ++this.#generation; this.#unsubscribe(); }//a read still out is stale:  its page is for a tab that is gone
 
@@ -126,6 +128,7 @@ export class NodeHistory implements OnDestroy{
 	loading = signal( false );
 	hasEarlier = signal( true );
 	stepped = signal( true );
+	chart = signal( true );//whether the trend draws:  Highcharts is an add-on the install never carries (#302), and without it the line shape has nothing to shape
 	live = signal( true );
 	mode = signal<HistMode>( 'values' );
 	aggregates = linkedSignal<string,HistAggregate[]>( {source: this.sourceKey, computation: ()=>[]} );
@@ -519,6 +522,7 @@ export class NodeHistory implements OnDestroy{
 	static readonly done:Record<HistEditKind,string> = { insert: "Inserted.", replace: "Replaced.", update: "Updated.", purgeRange: "Deleted.", purgeTimes: "Deleted." };
 
 	#history = inject( HistoryService );
+	#highcharts = inject( HighchartsLoader );
 	snackbar = inject( SnackbarService );
 	dialog = inject( MatDialog );
 	#subscription:Subscription|undefined;

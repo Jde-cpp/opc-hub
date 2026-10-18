@@ -13,10 +13,12 @@
     "jde-spa": "0.0.1",
     "jde-framework": "0.0.1",
     "jde-access": "0.0.1",
-    "jde-proto": "0.0.1",
-    "highcharts": "^13.1.1"
+    "jde-proto": "0.0.1"
   },
   "dependencies": {
     "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "highcharts": "^13.1.1"
   }
 }

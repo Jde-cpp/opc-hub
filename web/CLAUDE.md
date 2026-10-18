@@ -46,6 +46,18 @@ button matches the current url against. `marked` renders the page and must only 
 `{{version}}` in the markdown is the `JDE_VERSION` constant setup.sh passes through the builder's `define` option, read via
 `IEnvironment.get('version')`.
 
+## Add-ons load by URL
+
+Highcharts Stock (the History trend) is an add-on the install never carries (#302): its licence is a commercial one. `highcharts` is a
+`devDependency` of jde-opc for the typings and `hist-trend.spec.ts` alone (`jde-opc.sh` installs it `--save-dev`); the runtime is
+imported by URL, `addons/highcharts/esm/{highstock,modules/accessibility}.js` under the site's base href, by `HighchartsLoader`
+(`node-history/highcharts-loader.ts`), which resolves `undefined` when the folder is absent - the trend then shows a notice and
+the tab works from the table. A dev `setup.sh` fills `my-workspace/public/addons/highcharts/esm/` from node_modules, which `ng
+serve` and `ng build` serve at the root; `setup.sh --release` never does, and fails if anything under `browser/` contains
+`Highsoft` (every Highcharts file header carries it, so never write that word in a source). `build-deb.sh` and the NSIS script
+exclude `addons/` besides. Specs stub `HighchartsLoader`: the real chart with literal `import('highcharts/esm/…')` specifiers,
+which esbuild bundles into the test only, or `load: async ()=>undefined` for the absent case.
+
 ## Libraries
 
 Four libraries plus the `my-workspace` application. Dependencies run one way:

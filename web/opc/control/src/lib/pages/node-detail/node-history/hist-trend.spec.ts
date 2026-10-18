@@ -8,12 +8,14 @@ if( typeof globalThis.localStorage=="undefined" ){
 	};
 }
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import type Highcharts from 'highcharts/esm/highstock';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { HistTrend } from './hist-trend';
 import { TrendPoint, trendPalette } from './hist-trend-data';
+import { HighchartsLoader } from './highcharts-loader';
 
 const variable = ( i:number, name:string )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}} );
 const at = ( v:Variable, ms:number, value:number ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, status: 0, value, bound: false, heartbeat: false });
@@ -32,6 +34,8 @@ const draw = async ()=>{
 };
 
 describe( 'HistTrend', ()=>{
+	//the add-on the installed site serves by URL, here the package itself:  bundled into the test alone;  the router is the notice's link's
+	beforeEach( ()=>TestBed.configureTestingModule({ providers: [provideRouter( [] ), { provide: HighchartsLoader, useValue: {load: ()=>Promise.all( [import('highcharts/esm/highstock'), import('highcharts/esm/modules/accessibility')] ).then( ([m])=>m.default )} }] }) );
 	//Removing a line destroys its navigator series, which Highcharts keeps last in chart.series:  a walk that removed as it
 	//went read the destroyed series' options and threw, before the legend update and the redraw (historian-web-trend #1).
 	it( 'drops an unticked node with its series', async ()=>{
@@ -139,5 +143,20 @@ describe( 'HistTrend', ()=>{
 			window.removeEventListener( 'error', onError );
 			fixture.destroy();
 		}
+	} );
+	//The install carries no Highcharts (#302):  where the site has no add-on the loader finds none, and the trend says so in the
+	//plot's place, linking the help, with no chart made.
+	it( 'says so and draws nothing when Highcharts is not installed', async ()=>{
+		TestBed.overrideProvider( HighchartsLoader, {useValue: {load: async ()=>undefined}} );
+		const fixture = TestBed.createComponent( HistTrend );
+		fixture.componentRef.setInput( 'values', [] );
+		fixture.componentRef.setInput( 'series', [] );
+		fixture.detectChanges();
+		await vi.waitFor( ()=>{ fixture.detectChanges(); expect( fixture.nativeElement.querySelector( 'p.absent' ) ).not.toBeNull(); } );
+		expect( fixture.nativeElement.querySelector( 'p.absent a' ).getAttribute( 'href' ) ).toBe( '/help/gateways#trend-chart' );
+		const H = <typeof Highcharts>(await import('highcharts/esm/highstock')).default;
+		const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
+		expect( H.charts.find( c=>c?.container.parentElement==plot ) ).toBeUndefined();
+		fixture.destroy();
 	} );
 } );
