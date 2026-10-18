@@ -1,4 +1,5 @@
 #include "ResourceLoadAwait.h"
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
@@ -8,7 +9,7 @@
 
 #define let const auto
 namespace Jde::Access{
-	α ResourceLoadAwait::Load()ι->QL::QLAwait<jarray>::Task{
+	α ResourceLoadAwait::Load()ι->VoidTask{
 		ResourcePermissions y;
 		try{
 			jarray schemaNames;
@@ -16,16 +17,16 @@ namespace Jde::Access{
 				schemaNames.push_back( {InstanceSchemaName(schema->Name, _opcServerInstance)} );
 			auto vars = _allSchemas ? jobject{} : jobject{ {"schemaNames", move(schemaNames)} };//explicit now - "app" in the list used to mean this.
 			auto input = _allSchemas ? "" : "(schemaName:$schemaNames)";
-			let resources = co_await *_qlServer->QueryArray( Ƒ("resources{}{{ id schemaName slug criteria deleted }}", input), vars, _executer );
+			auto resourcesQuery = _qlServer->QueryArray( Ƒ("resources{}{{ id schemaName slug criteria deleted }}", input), vars, _executer );
+			//Every right, unenforced resources' included (access-enforce-toggle #1):  ql once read a select naming no deleted column as
+			//"active rows only", the inner join dropped those rights, and the Enforced toggle then restored the row live against a map
+			//that never held it - everyone denied until a restart.  The rights are inert while the row is deleted.
+			auto permissionsQuery = _qlServer->QueryArray( Ƒ("permissionRights{{ id allowed denied resource{}{{ id deleted }} }}", input), move(vars), _executer );
+			let [resources, permissions] = co_await All( *resourcesQuery, *permissionsQuery );//at once (#345):  neither needs the other's rows.
 			for( auto&& value : resources ){
 				auto resource = Resource{ Json::AsObject(move(value)) };
 				y.Resources.emplace( resource.PK, move(resource) );
 			}
-
-			//Every right, unenforced resources' included (access-enforce-toggle #1):  ql once read a select naming no deleted column as
-			//"active rows only", the inner join dropped those rights, and the Enforced toggle then restored the row live against a map
-			//that never held it - everyone denied until a restart.  The rights are inert while the row is deleted.
-			let permissions = co_await *_qlServer->QueryArray( Ƒ("permissionRights{{ id allowed denied resource{}{{ id deleted }} }}", input), move(vars), _executer );
 			for( auto&& value : permissions ){
 				let permission = Permission{ Json::AsObject(move(value)) };
 				ASSERT(permission.ResourcePK);

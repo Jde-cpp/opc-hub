@@ -1,4 +1,5 @@
 #include "IdentityLoadAwait.h"
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/access/types/Group.h>
 #include <jde/access/types/User.h>
 #include <jde/ql/IQL.h>
@@ -6,10 +7,11 @@
 #define let const auto
 
 namespace Jde::Access{
-	α IdentityLoadAwait::Load()ι->QL::QLAwait<jarray>::Task{
+	α IdentityLoadAwait::Load()ι->VoidTask{
 		try{
-			auto await = _ql->QueryArray( "identities{ id deleted name is_group }", {}, _executer, true, _sl );
-			let values = co_await *await;
+			auto identitiesQuery = _ql->QueryArray( "identities{ id deleted name is_group }", {}, _executer, true, _sl );
+			auto groupsQuery = _ql->QueryArray( "groups{ id deleted groupMembers{id} }", {}, _executer, true, _sl );
+			let [values, jgroups] = co_await All( *identitiesQuery, *groupsQuery );//at once (#345):  the groups are matched to the identities once both are in.
 			Identities identities;
 			for( let& value : values ){
 				let& identity = Json::AsObject( value );
@@ -22,7 +24,6 @@ namespace Jde::Access{
 				else
 					identities.Users.emplace( UserPK{pk}, User{UserPK{pk}, name, deleted} );
 			}
-			let jgroups = co_await *_ql->QueryArray( "groups{ id deleted groupMembers{id} }", {}, _executer, true, _sl );
 			for( let& value : jgroups ){
 				let& group = Json::AsObject(value);
 				const GroupPK groupPK{ Json::AsNumber<GroupPK::Type>(group, "id") };

@@ -10,11 +10,12 @@ namespace Jde{
 	//awaitables whose ::Task is its own return type - mixing types forces the one-coroutine-per-awaitable
 	//hand-off chain. These awaitables carry their own result/exception and hold a type-erased continuation, so
 	//any coroutine can co_await them regardless of its return type; Any() wraps an existing awaitable for the
-	//same purpose. Prefer these for new cross-type awaits instead of adding another chain.
+	//same purpose, and All() (AllAwait.h) awaits several at once. Prefer these for new cross-type awaits instead of adding another chain.
 	//What the void and typed awaitables share: the erased continuation, the error slot, the source location, and every
 	//method that does not touch a result.  Non-template, so one definition serves AnyAwait<T> for every T.
 	struct AnyAwaitBase{
 		AnyAwaitBase( SRCE )ι:_sl{sl}{}
+		AnyAwaitBase( AnyAwaitBase&& )ι=default;//before it suspends only - All() owns its rvalue slots so;  suspended, its continuation holds it and it never moves.  No copy:  the error slot is unique.
 		virtual ~AnyAwaitBase()=default;
 		β await_ready()ι->bool{ return false; }
 		α await_suspend( coroutine_handle<> h )ι->void{ _h=h; Suspend(); }	//any promise's handle converts.
@@ -72,6 +73,8 @@ namespace Jde{
 		optional<TResult> _result;
 	};
 
+	Τ using AwaitResult = decltype( std::declval<std::remove_reference_t<T>&>().await_resume() );//what a co_await of T gives;  T may be a reference.
+	Τ using AwaitValue = std::conditional_t<std::is_void_v<AwaitResult<T>>, std::monostate, AwaitResult<T>>;//storable:  void as std::monostate.
 	template<class R> using AnyAwaitFor = std::conditional_t<std::is_void_v<R>, AnyVoidAwait, AnyAwait<R>>;
 
 	Τ struct AnyAdapter;
@@ -81,9 +84,9 @@ namespace Jde{
 	//the inner's own task type (BlockAwaitExecute reshaped - the thread block replaced by resuming the erased
 	//continuation). T is the inner's value type when Any() is given an rvalue, a reference type when given an
 	//lvalue - the lvalue must outlive the co_await, which it does when it lives in the awaiting frame.
-	Τ struct AnyAdapter final : AnyAwaitFor<decltype(std::declval<std::remove_reference_t<T>&>().await_resume())>{
+	Τ struct AnyAdapter final : AnyAwaitFor<AwaitResult<T>>{
 		using TInner = std::remove_reference_t<T>;
-		using R = decltype(std::declval<TInner&>().await_resume());
+		using R = AwaitResult<T>;
 		using base = AnyAwaitFor<R>;
 		AnyAdapter( T&& inner, SRCE )ι: base{sl}, _inner{ FWD(inner) }{}
 		α Inner()ι->TInner&{ return _inner; }
@@ -111,9 +114,9 @@ namespace Jde{
 		s->Signal();
 	}
 	template<class TAwait>
-	α BlockAny( TAwait&& a )ε->decltype(std::declval<std::remove_reference_t<TAwait>&>().await_resume()){
-		using R = decltype(std::declval<std::remove_reference_t<TAwait>&>().await_resume());
-		using S = std::conditional_t<std::is_void_v<R>, std::monostate, R>;
+	α BlockAny( TAwait&& a )ε->AwaitResult<TAwait>{
+		using R = AwaitResult<TAwait>;
+		using S = AwaitValue<TAwait>;
 		BlockAwaitState<S> s;
 		const auto sl = a.Source();
 		BlockAnyExecute<std::remove_reference_t<TAwait>,S>( a, &s );

@@ -10,7 +10,7 @@ namespace Jde::Access{
 		RoleLoadAwait( sp<QL::IQL> qlServer, UserPK executer )ι:_executer{executer}, _qlServer{qlServer}{};
 	private:
 		α Suspend()ι->void override{ Load();}
-		α Load()ι->QL::QLAwait<jarray>::Task;
+		α Load()ι->VoidTask;
 		UserPK _executer;
 		sp<QL::IQL> _qlServer;
 	};

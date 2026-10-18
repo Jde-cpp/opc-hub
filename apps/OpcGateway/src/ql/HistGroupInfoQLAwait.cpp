@@ -1,6 +1,7 @@
 #include "HistGroupInfoQLAwait.h"
 #include <jde/access/Authorize.h>
 #include <jde/db/meta/Table.h>
+#include <jde/fwk/co/AllAwait.h>
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "HistQL.h"
@@ -17,10 +18,9 @@ namespace Jde::Opc::Gateway{
 			else{
 				let groupId = _query.AsNumber<HistGroupPK>( "group", _sl );
 				auto host = Host( groupId );
-				auto groups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)groupId}}) );
+				auto [groups, rows] = co_await All( SelectHistGroups({.Key=DB::Key{(uint)groupId}}), SelectHistGroupNodes({.Group=groupId}) );//at once (#345):  the nodes need no group row.
 				if( groups.empty() )
 					throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} not found.", groupId };
-				auto rows = co_await Any( SelectHistGroupNodes({.Group=groupId}) );
 				let members = groups.front().Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=groups.front().Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
 				y = Thresholds( groups.front(), rows, members, *host );
 			}
