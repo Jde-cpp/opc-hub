@@ -8,9 +8,11 @@ namespace Jde::Opc::Gateway{
 	Ω dataTypeId( const UA_DataValue& dataType )ι->const UA_NodeId*{
 		return dataType.hasValue && dataType.value.type==&UA_TYPES[UA_TYPES_NODEID] ? (const UA_NodeId*)dataType.value.data : nullptr;
 	}
-	//A built-in type for a DataType node of namespace 0;  null for any other, or an abstract one.
-	Ω builtIn( const UA_NodeId* id )ι->const UA_DataType*{
-		return !id || id->namespaceIndex ? nullptr : UA_findDataType( id );
+	α ValueTypes::BuiltIn( const UA_NodeId* dataType )ι->const UA_DataType*{
+		let type = !dataType || dataType->namespaceIndex ? nullptr : UA_findDataType( dataType );
+		return !type || type->typeKind==UA_DATATYPEKIND_VARIANT ? nullptr
+			: type->typeKind==UA_DATATYPEKIND_ENUM ? &UA_TYPES[UA_TYPES_INT32]
+			: type;
 	}
 
 	α ValueTypesAwait::Execute()ι->TAwait<ReadResponse>::Task{
@@ -28,7 +30,7 @@ namespace Jde::Opc::Gateway{
 					let id = dataTypeId( dataTypes.results[i] );
 					if( id )
 						y.DataTypes[i] = NodeId{ *id };
-					if( !(y.Types[i] = builtIn(id)) ){
+					if( !(y.Types[i] = ValueTypes::BuiltIn(id)) ){
 						untyped.push_back( _nodes[i] );
 						slots.push_back( i );
 					}

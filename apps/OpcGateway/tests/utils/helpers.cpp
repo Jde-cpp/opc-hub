@@ -196,4 +196,34 @@ namespace Jde::Opc::Gateway{
     UA_Client_delete( client );
 		return tokens->second;
 	}
+
+	Ω read( UA_Server* ua, const NodeId& node )ι->Value{
+		UA_ReadValueId id; UA_ReadValueId_init( &id );
+		id.nodeId = node;
+		id.attributeId = UA_ATTRIBUTEID_VALUE;
+		return Value{ UA_Server_read(ua, &id, UA_TIMESTAMPSTORETURN_NEITHER) };
+	}
+	//By way of BaseDataType, which any value fits and which may hold none:  open62541 retypes a node only to a DataType its value
+	//fits, and clears the value of a nullable one alone.
+	Ω retype( UA_Server* ua, const NodeId& node, const UA_NodeId& dataType )ι->StatusCode{
+		auto sc = UA_Server_writeDataType( ua, node, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATATYPE) );
+		if( !sc )
+			sc = UA_Server_writeDataValue( ua, node, Value{UA_STATUSCODE_BADWAITINGFORINITIALDATA} );
+		return sc ? sc : UA_Server_writeDataType( ua, node, dataType );
+	}
+	Tests::RetypedNode::RetypedNode( UA_Server* ua, NodeId node, UA_UInt32 dataType )ε:
+		_ua{ ua },
+		_node{ move(node) },
+		_value{ read(ua, _node) }{
+		UAε( UA_Server_readDataType(ua, _node, &_dataType) );
+		if( let sc = retype(ua, _node, UA_NODEID_NUMERIC(0, dataType)); sc ){
+			retype( ua, _node, _dataType );
+			UA_Server_writeDataValue( ua, _node, _value );
+			throw UAException{ sc };
+		}
+	}
+	Tests::RetypedNode::~RetypedNode(){
+		EXPECT_EQ( retype(_ua, _node, _dataType), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( UA_Server_writeDataValue(_ua, _node, _value), UA_STATUSCODE_GOOD );
+	}
 }

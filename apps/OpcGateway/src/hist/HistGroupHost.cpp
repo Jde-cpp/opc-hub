@@ -404,8 +404,8 @@ namespace Jde::Opc::Gateway{
 			auto& node = n->second;
 			if( i<typed.Types.size() && !UA_StatusCode_isBad(typed.Statuses[i]) ){
 				let& dataType = typed.DataTypes[i];
-				//None for one of namespace 0 open62541 has no type for:  abstract, as Number is, its values may be any subtype's.
-				if( let abstract = dataType && !dataType->namespaceIndex && !UA_findDataType(&*dataType); abstract || typed.Types[i] )
+				//None for one of namespace 0 with no built-in type:  abstract, as Number is, or BaseDataType, its values may be any subtype's.
+				if( let abstract = dataType && !dataType->namespaceIndex && !ValueTypes::BuiltIn(&*dataType); abstract || typed.Types[i] )
 					_group->SetDataType( p->second, abstract ? nullptr : typed.Types[i] );
 			}
 			let& d = described[i];

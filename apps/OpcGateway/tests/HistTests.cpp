@@ -864,15 +864,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( HistEditTests, TypesAValueByTheNodesValueOrItsJson ){
 		let ua = Server::GetUAServer().Ptr();
 		let node = Node( Rpm2 );
-		UA_ReadValueId id; UA_ReadValueId_init( &id );
-		id.nodeId = node;
-		id.attributeId = UA_ATTRIBUTEID_VALUE;
-		const Value original{ UA_Server_read(ua, &id, UA_TIMESTAMPSTORETURN_NEITHER) };
-		UAε( UA_Server_writeDataType(ua, node, UA_NODEID_NUMERIC(0, UA_NS0ID_NUMBER)) );
-		absl::Cleanup restore = [&]{//the value first:  Number takes an empty one, Double doesn't.
-			EXPECT_EQ( UA_Server_writeDataValue(ua, node, original), UA_STATUSCODE_GOOD );
-			EXPECT_EQ( UA_Server_writeDataType(ua, node, UA_NODEID_NUMERIC(0, UA_NS0ID_DOUBLE)), UA_STATUSCODE_GOOD );
-		};
+		const RetypedNode retyped{ ua, node, UA_NS0ID_NUMBER };
 		Value down{ UA_STATUSCODE_BADCOMMUNICATIONERROR };
 		const UA_Double last{ 3 };
 		UAε( UA_Variant_setScalarCopy(&down.value, &last, &UA_TYPES[UA_TYPES_DOUBLE]) );
@@ -887,6 +879,30 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( inferred.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
 		EXPECT_EQ( inferred.Statuses.at(node), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(60), .End=When(62), .Limit=100}).Values), (vector<jvalue>{7.0, 8.5}) );
+	}
+
+	//An enumeration of namespace 0 goes as the Int32 it is encoded as, which OpcServer takes for one, and BaseDataType, whose
+	//built-in type, Variant, says nothing of a value's, as the node's value:  each reads back 2, not the Long form of the
+	//json's Int64.
+	TEST_F( HistEditTests, TypesAnEnumerationAndBaseDataType ){
+		let ua = Server::GetUAServer().Ptr();
+		let node = Node( Rpm2 );
+		{
+			const RetypedNode retyped{ ua, node, UA_NS0ID_SERVERSTATE };
+			let edited = Update( "createHistory", {{Rpm2, When(70), 2}} );
+			EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+			EXPECT_EQ( edited.Statuses.at(node), UA_STATUSCODE_GOOD );
+		}
+		{
+			const RetypedNode retyped{ ua, node, UA_NS0ID_BASEDATATYPE };
+			UA_Int32 held{ 7 };
+			UA_Variant v; UA_Variant_setScalar( &v, &held, &UA_TYPES[UA_TYPES_INT32] );
+			UAε( UA_Server_writeValue(ua, node, v) );
+			let edited = Update( "createHistory", {{Rpm2, When(71), 2}} );
+			EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
+			EXPECT_EQ( edited.Statuses.at(node), UA_STATUSCODE_GOOD );
+		}
+		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(70), .End=When(72), .Limit=100}).Values), (vector<jvalue>{2, 2}) );
 	}
 
 	//The server's access control decides, never the gateway's:  with nothing enforcing nodeIds, OpcServer refuses every

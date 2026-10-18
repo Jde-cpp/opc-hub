@@ -1,10 +1,13 @@
 #pragma once
+#include <open62541/server.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/access/usings.h>
 #include <jde/db/db.h>
 #include <jde/db/Key.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/QLAwait.h>
+#include <jde/opc/uatypes/NodeId.h>
+#include <jde/opc/uatypes/Value.h>
 #include "../../src/usings.h"
 #include "../../src/types/ServerCnnctn.h"
 
@@ -49,4 +52,17 @@ namespace Jde::Opc::Gateway::Tests{
 	α ScopeHistGroup( uint32 group, Access::ERights allowed )ε->void;
 	α UnscopeHistGroup( uint32 group )ε->void;//its resource deleted, so the group inherits the root again;  returns once the gateway's authorizer has heard.
 	Ξ GatewayPort()ι{ return Settings::FindNumber<PortType>("/http/gateway/port").value_or(2068); }
+	//A node of the embedded OpcServer given a DataType of namespace 0 for a test, holding no value, and given its own DataType
+	//and value back when this goes.
+	struct RetypedNode final{
+		RetypedNode( UA_Server* ua, NodeId node, UA_UInt32 dataType )ε;
+		~RetypedNode();
+		RetypedNode( const RetypedNode& )=delete;
+		RetypedNode& operator=( const RetypedNode& )=delete;
+	private:
+		UA_Server* _ua;
+		NodeId _node;
+		Value _value;
+		NodeId _dataType;
+	};
 }
