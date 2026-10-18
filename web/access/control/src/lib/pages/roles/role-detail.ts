@@ -5,7 +5,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 
-import { arraysEqual, cloneClassArray, DetailPage, IGraphQL, Properties, QLSelector, TableSettings, SlugRow, toIdArray, Style} from 'jde-framework';
+import { arraysEqual, cloneClassArray, DetailPage, IGraphQL, Properties, QLSelector, SlugRow, toIdArray } from 'jde-framework';
 import { Role, RolePK } from '../../model/role';
 import { PermissionTable } from '../../shared/permissions/permission-table';
 import { Permission } from '../../model/permission';
@@ -70,12 +70,4 @@ export class RoleDetail extends DetailPage<Role>{
 	groups = signal<SelectionModel<RolePK>>( null as any );
 	users = signal<SelectionModel<RolePK>>( null as any );
 	override ql:IGraphQL = inject( AccessService );
-}
-export const roleTableSettings:TableSettings = {
-	empty: { title: "No roles yet.", detail: "An install seeds Viewer, System Administrator, Owner, Engineer, Operator and Maintenance Technician - an empty list means that seed has not run against this database.", add: "Use Add to create one." },
-	excludedColumns:["permissions"],
-	columns: [
-		{ name:"name", style: new Style(300) },
-		"description"
-	]
 }

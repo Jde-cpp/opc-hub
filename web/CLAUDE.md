@@ -58,6 +58,33 @@ with `jde-proto` (generated, `web/proto`) consumed by `jde-framework` and `jde-o
 specifier (`jde-proto/App.FromServer`) so ng-packagr externalizes it, and must never be copied
 back inside a library.
 
+## Routed pages are loaders, not barrel exports
+
+`app.routes.ts` imports every library barrel statically (resolvers, services, table settings), so
+`loadComponent: ()=>import('jde-opc').then( m=>m.Page )` splits nothing off: a dynamic import of a barrel needs its whole
+namespace, and every page the barrel exports lands in the initial bundle (#351 - the production budget errors at 2 MB). Each
+library instead exports its routed pages as loaders from one file, `lib/pages/<lib>-pages.ts`
+(`opc-pages.ts`, `access-pages.ts`, `framework-pages.ts`, `spa-pages.ts`), and the barrel does not export the page class:
+
+```ts
+export const loadNodeDetail = ()=>import( './node-detail/node-detail' ).then( m=>m.NodeDetail );
+```
+
+The route then says `loadComponent: loadNodeDetail`. A page stays out of the initial bundle only while nothing in that bundle
+imports the page's *file*, so:
+
+- what the site or a resolver needs by name - a `tableSettings` constant, a route service, a list route - lives in a file of
+  its own beside the page (`gateway-table-settings.ts`, `cards/home-route-service.ts`, `hist-admin/hist-admin-list-route.ts`),
+  never in the page's;
+- an unused component is not exported from the barrel - that alone kept `node-children.ts` in `main`;
+- a component another library embeds by name (`QLList`, in jde-opc's gateway page) keeps its export, and still splits as long as
+  every importer is itself lazy.
+
+Check with the metafile: `ng build my-workspace --stats-json` writes `dist/my-workspace/browser-stats.json`; a page's `.ts`
+must be an input of a lazy output, not of `main` or of a chunk `main` imports statically (`imports[].kind ==
+"import-statement"`). A build that fails the budget writes no metafile - raise `maximumError` in the generated `angular.json`
+from a backup and restore it afterwards.
+
 ## Commands
 
 Run `ng` from `web/opc/my-workspace`.

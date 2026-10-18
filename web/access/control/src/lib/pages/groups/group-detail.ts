@@ -6,7 +6,7 @@ import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltip } from '@angular/material/tooltip';
 
-import { arraysEqual, cloneClassArray, DetailPage, Properties, IGraphQL, QLSelector, Style, toIdArray, SlugRow} from 'jde-framework';
+import { arraysEqual, cloneClassArray, DetailPage, Properties, IGraphQL, QLSelector, toIdArray, SlugRow} from 'jde-framework';
 
 import { RolePK } from '../../model/role';
 import { Permission } from '../../model/permission';
@@ -14,6 +14,7 @@ import { AccessService } from '../../services/access-service';
 import { Group, GroupPK } from '../../model/group';
 import { UserPK } from '../../model/user';
 import { EffectiveRights } from '../users/effective-rights/effective-rights';
+import { groupTableSettings } from './group-table-settings';
 
 @Component( {
     templateUrl: './group-detail.html',
@@ -58,14 +59,4 @@ export class GroupDetail extends DetailPage<Group>{
 	permissions = signal<Permission[]>( null as any );//the row's direct acl grants, carried through upsert unedited - the Permissions tab is hidden for MVP (see the template)
 	excludedColumns = [...groupTableSettings.excludedColumns, "provider"];//a group has no login provider - the column exists only because groups share the identity view with users.
 	override ql:IGraphQL = inject( AccessService );
-}
-export const groupTableSettings = {
-	empty: { title: "No groups yet.", detail: "A group collects users so a role is granted once for all of them.", add: "Use Add to create one." },
-	excludedColumns: ["isGroup", "members"],
-	columns: [ //without this the list falls back to ListRoute's name/created/updated/slug default.
-		{ name:"name", style: new Style(300) },
-		"slug",
-		"description"
-	],
-	collectionName: "groups"
 }

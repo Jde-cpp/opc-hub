@@ -1,6 +1,6 @@
 export * from './lib/pages/component-page-title/component-page-title';
 export * from './lib/pages/component-page-header/component-page-header';
-export * from './lib/pages/component-sidenav/component-sidenav';
+export * from './lib/pages/spa-pages';
 export * from './lib/pages/component-sidenav/component-nav';
 export * from './lib/pages/component-sidenav/route-item';
 export * from './lib/pages/component-sidenav/can-activate-component-sidenav';
@@ -11,8 +11,6 @@ export * from './lib/services/recent-visits';
 export * from './lib/services/help/help-topic';
 export * from './lib/services/help/help-route-service';
 export * from './lib/services/help/spa-help-topics';
-export * from './lib/pages/help/help-page';
-export * from './lib/pages/not-found/not-found';
 export * from './lib/services/route-store';
 export * from './lib/services/route-utils';
 export * from './lib/services/search/search-provider';
