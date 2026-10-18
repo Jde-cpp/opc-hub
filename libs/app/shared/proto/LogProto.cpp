@@ -22,22 +22,6 @@ namespace Jde::App{
 		};
 	}
 
-	α LogProto::ToEntry( Log::Proto::LogEntryFileExternal&& x )ι->Log::Proto::LogEntryFile{
-		Log::Proto::LogEntryFile y;
-		*y.mutable_time() = x.time();
-		y.set_template_id( move(*x.mutable_template_id()) );
-		*y.mutable_args() = move( *x.mutable_args() );
-		y.set_level( x.level() );
-		y.set_tags( x.tags() );
-		y.set_line( x.line() );
-		y.set_user_pk( x.user_pk() );
-		y.set_file_id( move(*x.mutable_file_id()) );
-		y.set_function_id( move(*x.mutable_function_id()) );
-		y.set_app_pk( x.app_pk() );//L3: carried, not dropped - this is the only place a forwarded entry's attribution could survive.
-		y.set_app_instance_pk( x.app_instance_pk() );
-		return y;
-	}
-
 	α LogProto::LogEntryClient( Logging::Entry&& e )ι->Log::Proto::LogEntryClient{
 		Log::Proto::LogEntryClient proto;
 		proto.set_text( move(e.Text) );
@@ -109,9 +93,6 @@ namespace Jde::App{
 			using Type = FileEntry::ValueCase;
 			case Type::kEntry:
 				return debugStringLogEntry( f.entry() );
-			break;
-			case Type::kExternalEntry:
-				return debugStringLogEntry( ToEntry(LogEntryFileExternal{f.external_entry()}) );
 			break;
 			case Type::kStr:
 				return Ƒ( "[{}]{}", guidToString(f.str().id()), f.str().value() );

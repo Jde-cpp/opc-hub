@@ -12,7 +12,7 @@
 namespace Jde::App::Tests{
 	Ω load( const vector<Logging::Entry>& entries, QL::TableQL& ql )ε->ArchiveQuery{
 		ArchiveQuery y;
-		y.Append( ql, archiveProto(entries) );
+		y.Append( ql, archiveRecords(entries) );
 		return y;
 	}
 	Ω load( const vector<Logging::Entry>& entries )ε->ArchiveQuery{
@@ -127,21 +127,6 @@ namespace Jde::App::Tests{
 			entry( tp(2), ELogLevel::Information, 3, "none" ) };
 		auto ql = table( "logs", R"({args: "alpha"})" );
 		EXPECT_EQ( lines(load(entries, ql).Sort({})), (vector<uint32_t>{1}) ) << "1 has alpha among its args; 2 does not; 3 has no args to match with";
-	}
-
-	//An archive an older build wrote keeps forwarded entries in externalEntries;  they are read back as entries.
-	TEST( ArchiveQueryTests, OlderExternalEntriesAreAppended ){
-		let e = entry( tp(0), ELogLevel::Warning, 7, "external" );
-		DayArchive proto;
-		*proto.add_externalentries() = asOlderExternal( LogProto::LogEntryFile(e, 3, 4) );
-		addStrings( proto, e );
-
-		ArchiveQuery af;
-		auto ql = table( "logs" );
-		af.Append( ql, move(proto) );
-		ASSERT_EQ( af.EntrySize(), 1u );
-		EXPECT_EQ( af.Entries.begin()->second.front().line(), 7u );
-		EXPECT_EQ( af.Entries.begin()->second.front().app_pk(), 3 );
 	}
 
 	//IsComplete is what stops the reader walking further back through the archived days.  It can only answer for a
@@ -279,22 +264,34 @@ namespace Jde::App::Tests{
 		EXPECT_EQ( lines(load(entries, byUser).Sort({})), (vector<uint32_t>{3}) );
 	}
 
-	//L3: ToEntry folds an external entry into LogEntryFile for everything downstream and used to drop app_pk/app_instance_pk there,
-	//so the attribution the pipeline stores so carefully (review 1 #2, review 2 #9) could not be read back through logs() - the
-	//AppServer's history view was an unattributed merge of every app's lines.
+	//A text that is both a template and an argument has one id, and one String in the archive.  Fold moved it into the first
+	//kind that named it, so the second resolved to "":  the args filter missed it here, or the text filter in the other order.
+	TEST( ArchiveQueryTests, ATextThatIsATemplateAndAnArgumentResolvesAsBoth ){
+		let thrown = entry( tp(0), ELogLevel::Error, 1, "boom" );
+		let caught = entry( tp(1), ELogLevel::Error, 2, "caught: {}", {"boom"} );
+		for( let& entries : {vector{thrown, caught}, vector{caught, thrown}} ){
+			auto text = table( "logs", R"({text: "boom"})" );
+			EXPECT_EQ( lines(load(entries, text).Sort({})), (vector<uint32_t>{1}) );
+			auto args = table( "logs", R"({args: "boom"})" );
+			EXPECT_EQ( lines(load(entries, args).Sort({})), (vector<uint32_t>{2}) );
+			auto message = table( "logs", R"({message: "caught: boom"})" );
+			EXPECT_EQ( lines(load(entries, message).Sort({})), (vector<uint32_t>{2}) );
+		}
+	}
+
+	//L3: a forwarded entry's app_pk/app_instance_pk used to be dropped on the way to logs(), so the attribution the pipeline
+	//stores so carefully (review 1 #2, review 2 #9) could not be read back - the AppServer's history view was an unattributed
+	//merge of every app's lines.
 	TEST( ArchiveQueryTests, ForwardedEntriesKeepTheirAttribution ){
 		let mine = entry( tp(0), ELogLevel::Information, 1, "mine" );
 		let theirs = entry( tp(1), ELogLevel::Information, 2, "theirs" );
-		DayArchive proto;
-		*proto.add_entries() = LogProto::LogEntryFile( mine );
-		*proto.add_entries() = LogProto::LogEntryFile( theirs, 42, 84 );
-		addStrings( proto, mine );
-		addStrings( proto, theirs );
+		auto records = archiveRecords( {mine, theirs} );
+		*records.back().mutable_entry() = LogProto::LogEntryFile( theirs, 42, 84 );
 
 		auto ql = table( "logs" );
 		addTable( ql, "entries", {"line","appId","appInstanceId"} );
 		ArchiveQuery af;
-		af.Append( ql, DayArchive{proto} );
+		af.Append( ql, vector<Log::Proto::FileEntry>{records} );
 		let jentries = af.ToJson( ql ).at( "entries" ).as_array();
 		ASSERT_EQ( jentries.size(), 2u );
 		for( let& je : jentries ){
@@ -308,28 +305,24 @@ namespace Jde::App::Tests{
 		auto byApp = table( "logs", "{appId: 42}" );
 		addTable( byApp, "entries", {"line"} );
 		ArchiveQuery filtered;
-		filtered.Append( byApp, move(proto) );
+		filtered.Append( byApp, move(records) );
 		EXPECT_EQ( lines(filtered.Sort({})), (vector<uint32_t>{2}) ) << "appId did not select the forwarded entry";
 	}
 
 	//The AppServer's merged history, read by someone denied one instance's logs:  that instance's forwarded lines drop, while
-	//the AppServer's own and another instance's stay - from an archived day, an older build's externalEntries and the daily file.
+	//the AppServer's own and another instance's stay - from an archived day and the daily file.
 	TEST( ArchiveQueryTests, HiddenInstancesForwardedLinesAreLeftOut ){
 		let mine = entry( tp(0), ELogLevel::Information, 1, "mine" );
 		let hidden = entry( tp(1), ELogLevel::Information, 2, "hidden" );
 		let shown = entry( tp(2), ELogLevel::Information, 3, "shown" );
-		let olderHidden = entry( tp(3), ELogLevel::Information, 4, "older hidden" );
-		DayArchive proto;
-		*proto.add_entries() = LogProto::LogEntryFile( mine );
-		*proto.add_entries() = LogProto::LogEntryFile( hidden, 42, 84 );
-		*proto.add_entries() = LogProto::LogEntryFile( shown, 43, 85 );
-		*proto.add_externalentries() = asOlderExternal( LogProto::LogEntryFile(olderHidden, 42, 84) );
-		for( let& e : {mine, hidden, shown, olderHidden} )
-			addStrings( proto, e );
+		auto records = archiveRecords( {mine, hidden, shown} );
+		let n = records.size();
+		*records[n-2].mutable_entry() = LogProto::LogEntryFile( hidden, 42, 84 );
+		*records[n-1].mutable_entry() = LogProto::LogEntryFile( shown, 43, 85 );
 
 		auto ql = table( "logs" );
 		ArchiveQuery archived{ flat_set<ProgInstPK>{84} };
-		archived.Append( ql, move(proto) );
+		archived.Append( ql, move(records) );
 		EXPECT_EQ( lines(archived.Sort({})), (vector<uint32_t>{1,3}) );
 
 		auto stream = fileEntries( {mine, hidden, shown} );
@@ -350,7 +343,7 @@ namespace Jde::App::Tests{
 	TEST( ArchiveQueryTests, HiddenInstancesNeverHideOwnLines ){
 		auto ql = table( "logs" );
 		ArchiveQuery archive{ flat_set<ProgInstPK>{0} };
-		archive.Append( ql, archiveProto({entry(tp(0), ELogLevel::Information, 1, "mine")}) );
+		archive.Append( ql, archiveRecords({entry(tp(0), ELogLevel::Information, 1, "mine")}) );
 		EXPECT_EQ( archive.EntrySize(), 1u );
 	}
 

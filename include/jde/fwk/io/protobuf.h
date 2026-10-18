@@ -20,14 +20,12 @@ namespace Jde::Protobuf{
 	Ŧ Deserialize( const vector<char>& data )ε->up<T>;
 	Ŧ Deserialize( const google::protobuf::uint8* p, uint size )ε->T;
 	Ŧ Deserialize( string&& x )ε->T;
-	Ŧ DeserializeVector( sv x )ε->vector<T>;
 	Ŧ FromVector( vector<T>&& x )ι->google::protobuf::RepeatedPtrField<T>;
 	Ŧ ToVector( google::protobuf::RepeatedPtrField<T>&& x )ι->vector<T>;
 	Ŧ ToVector( const google::protobuf::RepeatedField<T>& x )ι->vector<T>;
 
 	α Save( const google::protobuf::MessageLite& msg, fs::path path, SL )ε->void;
 	α ToString( const google::protobuf::MessageLite& msg )ε->string;
-	α SizePrefixed( const google::protobuf::MessageLite& m )ι->vector<byte>;
 	α ToTimestamp( TimePoint t )ι->google::protobuf::Timestamp;
 	Ξ ToBytes( const uuid& g )ι->sv{ return sv{(char*)g.data(), 16}; }
 	Ξ ToGuid( sv g )ι->uuid{ uuid y{}; memcpy(&y, g.data(), std::min(sizeof(uuid), g.size())); return y; }//value-init: short input must zero-fill the tail, not leave it indeterminate.
@@ -50,20 +48,6 @@ namespace Jde{
 		return output;
 	}
 
-	Ξ Protobuf::SizePrefixed( const google::protobuf::MessageLite& m )ι->vector<byte>{
-		const uint32_t length = ( uint32_t )m.ByteSizeLong();
-		let size = length+4;
-		vector<byte> bytes( size );
-		auto dest = bytes.data();
-		const char* pLength = reinterpret_cast<const char*>( &length )+3;
-		for( auto i=0; i<4; ++i )
-			*dest++ = ( byte )*pLength--;
-
-		if( let success = m.SerializeToArray(dest, (int)length); !success )
-			CRITICALT( Jde::ELogTags::IO, "Could not serialize to an array:{:x}", success );
-		return bytes;
-	}
-
 	Ŧ Protobuf::Deserialize( const vector<char>& data )ε->up<T>{
 		auto p = mu<T>();
 		Internal::Deserialize<T>( (google::protobuf::uint8*)data.data(), data.size(), *p );
@@ -80,22 +64,6 @@ namespace Jde{
 		x.clear();
 		return y;
 	}
-	Ŧ Protobuf::DeserializeVector( sv content )ε->vector<T>{
-		vector<T> y;
-		for( auto p = content.data(), end = content.data() + content.size(); p+4<end; ){
-			uint32 length{};
-			for( auto i=3; i>=0; --i ){
-				const byte b = ( byte )*p++;
-				length = ( length<<8 ) | ( uint32 )b;
-			}
-			ASSERT( p+length<=end );
-			if( p+length<=end )
-				y.push_back( Deserialize<T>((google::protobuf::uint8*)p, length) );
-			p += length;
-		}
-		return y;
-	}
-
 	Ŧ Protobuf::Load( const fs::path& path, T& proto, SL sl )ε->void{
 		vector<char> bytes;
 		try{

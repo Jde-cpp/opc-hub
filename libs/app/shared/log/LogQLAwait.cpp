@@ -12,34 +12,20 @@
 namespace Jde::App{
 	constexpr ELogTags _tags{ ELogTags::ExternalLogger };
 	using namespace std::chrono;
-	namespace{
-		struct Bounds{ optional<TimePoint> Start; optional<TimePoint> End; };
-		α timeBounds( const QL::Filter& filter )ε->Bounds{
-			Bounds y;
-			if( auto time = filter.ColumnFilters.find("time"); time!=filter.ColumnFilters.end() ){
-				for( let& crit : time->second ){
-					if( crit.Operator==DB::EOperator::Greater )
-						y.Start = Chrono::ToTimePoint( string{crit.Value.as_string()} );
-					else if( crit.Operator==DB::EOperator::Less )
-						y.End = Chrono::ToTimePoint( string{crit.Value.as_string()} );
-				}
-			}
-			return y;
-		}
-	}
 	//Newest first reads today's log, then the archives back from the end bound;  oldest first reads the archives forward
 	//from the start bound, then today's log.  Either way the read stops once the page is full.  Today's log is skipped when
 	//the end bound falls before the daily file starts.
 	α LogQLAwait::Execute()ι->TAwait<jvalue>::Task{
 		try{
 			auto& log = Logging::GetLogger<ProtoLog>();
-			let [start, end] = timeBounds( _ql.Filter() );
+			let bounds = TimeBounds( _ql.Filter() );
+			let& [start, end] = bounds;
 			bool readLocal = !end || *end > log.DailyFileStart();
 			let& ob = _ql.OrderByJson();
 			let timeAsc = ob.size() && ob[0].first=="time" && ob[0].second;
 			ArchiveQuery archive{ move(_hidden) };
 			if( readLocal && !timeAsc ){
-				archive.Append( _ql.Filter(), co_await Any(DailyLoadAwait{log.DailyFile()}) );
+				archive.Append( _ql, co_await Any(DailyLoadAwait{log}) );
 				readLocal = false;
 				TRACE( "Daily entries: {}, complete: {}", archive.EntrySize(), archive.IsComplete(_ql) );
 			}
@@ -56,13 +42,16 @@ namespace Jde::App{
 					std::ranges::reverse( days );
 				for( let& file : days ){
 					IO::ReadAwait read{ file };//by reference: a ReadAwait does not move.
-					archive.Append( _ql, Protobuf::Deserialize<DayArchive>(co_await Any(read)) );
+					auto bytes = co_await Any( read );
+					if( !Log::HeadOf(bytes) )
+						throw IO::IOException{ _sl, file, ELogLevel::Error, "isn't an archive the record layer wrote" };
+					archive.Append( _ql, Log::ParseRecords(bytes, file) );
 					if( archive.IsComplete(_ql) )
 						break;
 				}
 			}
 			if( readLocal && !archive.IsComplete(_ql) )
-				archive.Append( _ql.Filter(), co_await Any(DailyLoadAwait{log.DailyFile()}) );
+				archive.Append( _ql, co_await Any(DailyLoadAwait{log}) );
 			Resume( archive.ToJson(_ql) );
 		}
 		catch( runtime_error& e ){

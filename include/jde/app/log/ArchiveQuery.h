@@ -4,13 +4,16 @@
 #include <jde/app/usings.h>
 
 namespace Jde::App{
-	//One local day's archive file on disk (Log.proto).  ArchiveQuery, below, is a logs query's result read out of these.
-	using DayArchive = Log::Proto::ArchiveFile;
+	//ArchiveQuery, below, is a logs query's result read out of the daily file and the day archives, both files of
+	//FileEntry records (Log.proto).
 	//The on-disk layout - <root>/<year>/<month>/<day>/archive.binpb, one file per local day - and its inverse: every day that has one.
 	α ArchiveDayFile( const fs::path& root, std::chrono::year_month_day ymd )ι->fs::path;
 	α ArchiveDayFiles( const fs::path& root )ε->flat_map<std::chrono::year_month_day, fs::path>;
+	//A logs query's time bounds, from its filter's `time` criteria:  what today's log is read for.
+	struct Bounds final{ optional<TimePoint> Start; optional<TimePoint> End; };
+	α TimeBounds( const QL::Filter& filter )ε->Bounds;
 
-	//The four kinds of string a log entry names by md5;  an archive keeps one table of each (Log.proto's ArchiveQuery).
+	//The four kinds of string a log entry names by md5, which the query's string table keeps apart.
 	enum class EStringKind : uint8{ Template, File, Function, Arg };
 	constexpr std::array<EStringKind,4> StringKinds{ EStringKind::Template, EStringKind::File, EStringKind::Function, EStringKind::Arg };
 	//Every (kind, id bytes) an entry names:  its template, file, function and each argument.
@@ -21,13 +24,10 @@ namespace Jde::App{
 		for( const auto& arg : e.args() )
 			f( EStringKind::Arg, arg );
 	}
-	//An archive proto's table of `kind`.
-	α ArchiveStrings( DayArchive& af, EStringKind kind )ι->google::protobuf::RepeatedPtrField<App::Log::Proto::String>&;
-
 	//The strings of each kind, by id.  std::map, not flat_map:  the Arg table grows with every distinct value logged, and a
 	//sorted vector's insert is linear.
 	struct StringTable{
-		α Add( EStringKind kind, uuid id, string&& value )ι->void{ _maps[(uint8)kind].try_emplace( id, move(value) ); }//moves only when it inserts.
+		α Add( EStringKind kind, uuid id, const string& value )ι->void{ _maps[(uint8)kind].try_emplace( id, value ); }//copies only when it inserts.
 		α Find( EStringKind kind, sv idBytes )Ι->str;
 		α operator[]( EStringKind kind )Ι->const std::map<uuid,string>&{ return _maps[(uint8)kind]; }
 	private:
@@ -40,7 +40,9 @@ namespace Jde::App{
 		explicit ArchiveQuery( flat_set<ProgInstPK> hidden )ι:_hidden{ move(hidden) }{}
 		ArchiveQuery( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries, flat_set<ProgInstPK> hidden={} )ε;
 		α operator=( ArchiveQuery&& x )ι->ArchiveQuery& = default;
-		α Append( const QL::TableQL& q, DayArchive&& af )ε->void;
+		//The daily file's records, or an archive's:  every string first, then each entry the query keeps.  With the TableQL,
+		//its sub-tables' filters apply too.
+		α Append( const QL::TableQL& q, vector<App::Log::Proto::FileEntry>&& entries )ε->void;
 		α Append( const QL::Filter& q, vector<App::Log::Proto::FileEntry>&& entries )ε->void;
 		α ToJson( const QL::TableQL& ql )Ι->jobject;
 		α IsComplete( const QL::Input& input )Ι->bool;
@@ -53,6 +55,7 @@ namespace Jde::App{
 		α Message( const App::Log::Proto::LogEntryFile& entry )Ι->string;
 		α Test( const QL::TableQL& q, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ε->bool;
 		α Test( const QL::Filter& filter, TimePoint time, const App::Log::Proto::LogEntryFile& entry )Ι->bool;
+		α Fold( vector<App::Log::Proto::FileEntry>&& entries, const std::function<bool( TimePoint, const App::Log::Proto::LogEntryFile& )>& test )ε->void;
 		α ToEntry( const QL::TableQL& table, const App::Log::Proto::LogEntryFile& entry, optional<flat_map<uuid,string>>& strings )Ι->jobject;
 		flat_set<ProgInstPK> _hidden;//instances whose forwarded lines the reader may not see - the AppServer's merged history only.
 	};

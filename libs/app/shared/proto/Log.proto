@@ -2,6 +2,7 @@ syntax = "proto3";
 package Jde.App.Log.Proto;
 
 import "google/protobuf/timestamp.proto";
+import "Jde.IO.Records.proto";
 
 enum ELogLevel{
 	Trace = 0;
@@ -42,40 +43,34 @@ message LogEntryFile{
 	int32 app_instance_pk=11;
 }
 
-//Read only:  builds before 2026-10 wrote a forwarded entry as this.  A forwarded entry is now a LogEntryFile with a
-//non-zero app_pk, and readers fold this one in through LogProto::ToEntry.
-message LogEntryFileExternal{
-	google.protobuf.Timestamp time=1;
-	bytes template_id=2;
-	repeated bytes args=3;
-	ELogLevel level=4;
-	uint64 tags=5;
-	uint32 line=6;
-	uint32 user_pk=7;
-	bytes file_id=8;
-	bytes function_id=9;
-	int32 app_pk=10;
-	int32 app_instance_pk=11;
-}
-
-message ArchiveFile{
-	repeated LogEntryFile entries=1;
-	repeated LogEntryFileExternal externalEntries=2;//read only - see LogEntryFileExternal.
-	repeated String templates=3;
-	repeated String files=4;
-	repeated String functions=5;
-	repeated String args=6;
-}
-
 message String{
 	bytes id=1;
 	bytes value=2;//bytes for the reason LogEntryClient's are:  as a string, one invalid UTF-8 argument made the whole daily file unparseable.
 }
 
+//The log's record, which its two files hold through the framework's record layer (include/jde/fwk/io/records):  each
+//record on disk is its oneof member's field, tag, length and body, with no length prefix of its own, so a file parses
+//as one FileEntry with every field repeated.  The daily file, log.binpb, is a live file:  its FileStart's ts is the
+//time it was made, ns since the epoch, which names it to the archives (Merged), and each flush appends a run ending in
+//a Checkpoint, with the Strings its entries name that the file doesn't hold yet, so a read of the whole file resolves
+//its entries:  a String the writer has forgotten it wrote, or one a torn append held, can be written again.  A day's
+//archive, <yyyy>/<m>/<d>/archive.binpb, is rewritten whole by each round that merges into it, generation 1 up:  its
+//FileStart's ts is the day's start, then its Merged, then each String once, then the day's entries in time order, with
+//no Checkpoint.  FileEntry never gains a field outside the oneof:  a build before it would read that as damage.
 message FileEntry{
 	oneof value{
-		LogEntryFile entry=1; //normal entry
-		LogEntryFileExternal external_entry=2; //read only - see LogEntryFileExternal.
-		String str=3;	//for templates, files, functions, args.
+		LogEntryFile entry=1; //normal entry, forwarded when app_pk is set.
+		String str=2;	//for templates, files, functions, args.
+		Jde.IO.Proto.FileStart file_start=3;//first in every file.
+		Jde.IO.Proto.Checkpoint checkpoint=4;//the end of every append to the daily file.
+		Merged merged=5;//an archive's second record.
 	}
+}
+
+//Which daily file an archive has taken its entries from, by the FileStart ts that names it, and through which byte of
+//it:  a round that is tried again, or runs again after a crash before the daily file's removal, adds none of those a
+//second time.
+message Merged{
+	int64 daily=1;
+	uint64 through=2;
 }
