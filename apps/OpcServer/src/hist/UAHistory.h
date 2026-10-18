@@ -47,6 +47,7 @@ namespace Jde::Opc::Server{
 		//How long open62541's callbacks ran, which is how long each held the service lock.
 		struct Timing final{ uint Count{}; steady_clock::duration Total{}; steady_clock::duration Longest{}; };
 		α Reads()Ι->Timing{ return _reads.Get(); }
+		α Returned()Ι->uint{ return _returned.load(); }//the values the reads returned.
 		α Collections()Ι->Timing{ return _collections.Get(); }
 		α Edits()Ι->Timing{ return _edits.Get(); }
 
@@ -123,6 +124,7 @@ namespace Jde::Opc::Server{
 		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Load:  open62541 adds a node under its service lock.
 		vector<NodeId> _archiveStarts;//each HA Configuration's StartOfArchive and StartOfOnlineArchive.
 		Timer _reads, _collections, _edits;
+		std::atomic<uint> _returned{};
 		//Held by the midnight timer's callback too, which the clock can start while Stop cancels it:  Stop nulls Ua under
 		//Mutex, and a callback that finds it null touches nothing of this.  Mutex goes before open62541's service lock,
 		//which no callback takes it under.

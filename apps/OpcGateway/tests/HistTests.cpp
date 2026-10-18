@@ -21,8 +21,9 @@
 namespace Jde::Opc::Gateway::Tests{
 	using namespace std::chrono;
 	namespace{
-		//pumps.NodeSet2.xml:  Rpm4 stores a change of 15 rpm, RpmManual one of 10, and Status2 isn't historized.
-		constexpr UA_UInt32 Rpm4{ 6042 }, RpmManual{ 6054 }, Status2{ 6021 };
+		//pumps.NodeSet2.xml:  Rpm4 stores a change of 15 rpm, RpmManual one of 10, Rpm2 is a historized Double the reads'
+		//days hold nothing of, and Status2 isn't historized.
+		constexpr UA_UInt32 Rpm4{ 6042 }, RpmManual{ 6054 }, Rpm2{ 6022 }, Status2{ 6021 };
 		struct Written final{ UA_UInt32 Node; TimePoint Time; double Value; };
 		struct Row final{ NodeId Node; optional<TimePoint> Source; optional<TimePoint> Server; StatusCode Status; jvalue Value; bool Bound; };
 		struct Page final{ vector<Row> Values; string Continuation; flat_map<NodeId,StatusCode> Statuses; };
@@ -525,8 +526,10 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//The last interval, shorter than the others, is Partial (Part 13) on a page of its own as on one page with the rest:
 	//the page resuming at it asks from the interval before, or the server would see one even interval.  Rpm4's first day
-	//in 20 s intervals, the last 10 s, either way.
+	//in 20 s intervals, the last 10 s, either way.  So does the round filling a page that Status2, which the server
+	//refuses, leaves short, when it starts at the last.
 	TEST_F( HistTests, PagesTheUnevenLastInterval ){
+		let& history = Server::FindUAServer()->History();
 		for( let reverse : {false, true} ){
 			SCOPED_TRACE( reverse ? "reverse" : "forward" );
 			const Request request{ .Nodes={Rpm4}, .Start=reverse ? At(0, 60) : At(0, 10), .End=reverse ? At(0, 10) : At(0, 60), .Limit=2, .Interval=20'000, .Aggregate="Count" };
@@ -541,6 +544,16 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_EQ( rows.size(), 3u );
 			EXPECT_EQ( values(rows), (vector<double>{2, 2, 1}) );
 			EXPECT_EQ( rows[2].Status, Calculated|Partial );
+
+			auto refused = request; refused.Nodes.push_back( Status2 ); refused.Limit = 3;
+			let reads = history.Reads().Count;
+			let filled = Read( refused );
+			EXPECT_EQ( history.Reads().Count-reads, 2u );//the first two intervals, then the last from the one before.
+			EXPECT_TRUE( filled.Continuation.empty() );
+			EXPECT_EQ( values(filled.Values), values(whole.Values) );
+			EXPECT_EQ( sources(filled.Values), sources(whole.Values) );
+			EXPECT_EQ( statuses(filled.Values), statuses(whole.Values) );
+			EXPECT_EQ( filled.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
 		}
 	}
 
@@ -571,6 +584,54 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( refused.Values.empty() );
 		EXPECT_TRUE( refused.Continuation.empty() );
 		EXPECT_EQ( refused.Statuses.at(Node(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+	}
+
+	//The nodes share a page's `limit`:  two at 2 ask the server for one point of each a page, so it computes no value the
+	//page leaves out, in one HistoryRead a page.  Three at 2 cut a point between pages, and the page resuming there, two of
+	//whose values came on the page before, asks a point more in the same HistoryRead.  A node the server refuses leaves a
+	//page short, so the call asks the others for the points that fill it.
+	TEST_F( HistTests, SharesAPagesLimitAmongItsNodes ){
+		let& history = Server::FindUAServer()->History();
+		const Request requests[]{
+			{.Nodes={Rpm4, RpmManual}, .Start=At(0, 0), .End=At(3, 0), .Limit=2, .Interval=12*3600*1000.0, .Aggregate="Count"},
+			{.Nodes={Rpm4, RpmManual}, .Limit=2, .Times={At(0, 15), At(1, 15), At(2, 15)}} };
+		for( let& request : requests ){
+			SCOPED_TRACE( request.Times.empty() ? "processed" : "at-time" );
+			let reads = history.Reads().Count, returned = history.Returned();
+			vector<uint> pages;
+			let rows = ReadAll( request, &pages );
+			EXPECT_EQ( pages, vector<uint>(request.Times.empty() ? 6 : 3, 2) );
+			EXPECT_EQ( history.Reads().Count-reads, pages.size() );
+			EXPECT_EQ( history.Returned()-returned, rows.size() );
+			auto whole = request; whole.Limit = 100;
+			let all = Read( whole );
+			EXPECT_TRUE( all.Continuation.empty() );
+			EXPECT_TRUE( nearly(values(rows), values(all.Values)) );
+			EXPECT_EQ( sources(rows), sources(all.Values) );
+			EXPECT_EQ( statuses(rows), statuses(all.Values) );
+		}
+		const vector<TimePoint> times{ At(0, 15), At(0, 25), At(0, 35) };
+		let reads = history.Reads().Count;
+		vector<uint> pages;
+		ReadAll( {.Nodes={Rpm4, RpmManual, Rpm2}, .Limit=2, .Times=times}, &pages );
+		EXPECT_EQ( pages, (vector<uint>{2, 2, 2, 2, 1}) );
+		EXPECT_EQ( history.Reads().Count-reads, pages.size() );
+		const Request refused{ .Nodes={Rpm4, Status2}, .Limit=2, .Times=times };
+		let before = history.Reads().Count;
+		let first = Read( refused );
+		EXPECT_EQ( history.Reads().Count-before, 2u );//the first time, then the second, which Extend asks of Rpm4 alone.
+		EXPECT_EQ( first.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		pages.clear();
+		let paged = history.Reads().Count;
+		let filled = ReadAll( refused, &pages );
+		EXPECT_EQ( pages, (vector<uint>{2, 1}) );
+		EXPECT_EQ( history.Reads().Count-paged, 3u );//two on the first page, one on the second.
+		EXPECT_TRUE( nearly(values(filled), {100, 200, 300}) );
+		auto whole = refused; whole.Limit = 100;
+		let all = Read( whole );
+		EXPECT_TRUE( nearly(values(filled), values(all.Values)) );
+		EXPECT_EQ( sources(filled), sources(all.Values) );
+		EXPECT_EQ( statuses(filled), statuses(all.Values) );
 	}
 
 	//The gateway counts a processed read's intervals as OpcServer does, by the library's rule (Hist::Intervals):
@@ -612,9 +673,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	namespace{
-		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, Status1 is a historized Boolean, and
-		//Rpm2 a historized Double no read here uses.
-		constexpr UA_UInt32 Rpm2{ 6022 }, Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
+		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, and Status1 is a historized Boolean.
+		constexpr UA_UInt32 Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
 		struct Edited final{ vector<StatusCode> Values; flat_map<NodeId,StatusCode> Statuses; };
 		struct Sample final{ UA_UInt32 Node; TimePoint Source; jvalue Value; };
 		struct Modified final{ NodeId Node; TimePoint Source; jvalue Value; string Type; string User; TimePoint Time; };
