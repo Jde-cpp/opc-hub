@@ -106,11 +106,11 @@ namespace Jde::Opc::Gateway{
 		//Joining an item the collector's client already had, which sends no initial value:  each node's value read instead.
 		α ReadJoined( sp<UAClient> client, flat_set<NodeId> nodes )ι->VoidTask;
 		//What the group takes from each new item's node:  its DataType, which the group's edits take (Group::SetDataType), as the
-		//pass-through types its edits, ValueTypesAwait, but none for an abstract one of namespace 0, as Number, whose values may
-		//be any subtype's;  whether that is an enumeration, by its built-in kind for one of namespace 0 open62541 has, else by the
-		//server's definition of it (EnumTypeCache);  and its InstrumentRange and EURange, which a percent-of-range band takes
-		//(ForGroup).  What it can't read keeps what the node had:  where an answer was lost, not refused, the watch asks again
-		//(Redescribe), its band waiting meanwhile.  `again`:  the watch's, whose losses were warned of once already.
+		//pass-through types its edits, ValueTypesAwait, but none for an abstract one of namespace 0, as Number or BaseDataType,
+		//whose values may be any subtype's;  whether that is an enumeration, by its built-in kind for one of namespace 0 open62541
+		//has, else by the server's definition of it (EnumTypeCache);  and its InstrumentRange and EURange, which a percent-of-range
+		//band takes (ForGroup).  What it can't read keeps what the node had:  where an answer was lost, not refused, the watch asks
+		//again (Redescribe), its band waiting meanwhile.  `again`:  the watch's, whose losses were warned of once already.
 		α Describe( sp<UAClient> client, flat_set<NodeId> nodes, bool again=false )ι->VoidTask;
 		//The rebuild's check (ConnectionRestored):  the server's namespaces read again, and each member's URI looked up in them.
 		//Each at the index its item was made by:  the group is told the connection is back and takes what waited.  One moved, or

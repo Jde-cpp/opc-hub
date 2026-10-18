@@ -306,37 +306,46 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( declared(status), &UA_TYPES[UA_TYPES_BOOLEAN] );
 		EXPECT_EQ( host->Group()->DataType(status), &UA_TYPES[UA_TYPES_BOOLEAN] );
 	}
-	//An abstract DataType of namespace 0, as Number, declares none:  the group's edits take the type of the values it stored,
-	//which a Number's may change (spec *Record format*).
+	//An abstract DataType of namespace 0, as Number, declares none, and so does BaseDataType, whose built-in type, Variant,
+	//says nothing of a value's:  the group's edits take the type of the values it stored, which either's may change (spec
+	//*Record format*).
 	TEST_F( HistCollectorTests, AnAbstractDataTypeDeclaresNone ){
-		constexpr UA_UInt32 Count{ 9026 };//added here, holding an Int32.
-		auto attributes = UA_VariableAttributes_default;
-		UA_Int32 zero{};
-		UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
-		attributes.dataType = UA_NODEID_NUMERIC( 0, UA_NS0ID_NUMBER );
-		attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-		ASSERT_EQ( UA_Server_addVariableNode(Server::GetUAServer().Ptr(), Node(Count), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
-			UA_QUALIFIEDNAME(_ns, (char*)"Count"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
-		absl::Cleanup remove = [=]{ UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(Count), true ); };
+		constexpr UA_UInt32 Any{ 9024 }, Count{ 9026 };//added here, of BaseDataType and Number, each holding an Int32.
+		for( let [id, dataType, name] : {std::tuple{Any, UA_NS0ID_BASEDATATYPE, "Any"}, std::tuple{Count, UA_NS0ID_NUMBER, "Count"}} ){
+			auto attributes = UA_VariableAttributes_default;
+			UA_Int32 zero{};
+			UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+			attributes.dataType = UA_NODEID_NUMERIC( 0, dataType );
+			attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+			ASSERT_EQ( UA_Server_addVariableNode(Server::GetUAServer().Ptr(), Node(id), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+				UA_QUALIFIEDNAME(_ns, (char*)name), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD ) << name;
+		}
+		absl::Cleanup remove = [=]{
+			for( let id : {Any, Count} )
+				UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(id), true );
+		};
 		let itemsBefore = Items();
 		let group = CreateGroup( "abstract" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
+		let any = AddNode( group, Any );
 		let count = AddNode( group, Count );
 		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitDescribed(host, count) );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		let joined = Clock::now()-24h*365;
-		ASSERT_NO_THROW( WaitStored(host, count, joined, 1) );
-		let buffer = host->Group()->Buffer();
-		let join = std::ranges::find_if( buffer, [=]( let& r ){ let added = std::get_if<Opc::Hist::NodeAdded>( &r ); return added && added->Index==count; } );
-		ASSERT_NE( join, buffer.end() );
-		let declared = std::get<Opc::Hist::NodeAdded>( *join ).DataType;
-		EXPECT_EQ( declared, nullptr ) << declared->typeName;
-		EXPECT_EQ( host->Group()->DataType(count), &UA_TYPES[UA_TYPES_INT32] ) << "the type of the value it stored";
-		const UA_Double half{ 1.5 };
-		Write( Count, &half, UA_TYPES[UA_TYPES_DOUBLE], Since() );
-		ASSERT_NO_THROW( WaitStored(host, count, joined, 2) );
-		EXPECT_EQ( host->Group()->DataType(count), &UA_TYPES[UA_TYPES_DOUBLE] );
+		for( let [id, index] : {std::pair{Any, any}, std::pair{Count, count}} ){
+			ASSERT_NO_THROW( WaitDescribed(host, index) );
+			ASSERT_NO_THROW( WaitStored(host, index, joined, 1) );
+			let buffer = host->Group()->Buffer();
+			let join = std::ranges::find_if( buffer, [=]( let& r ){ let added = std::get_if<Opc::Hist::NodeAdded>( &r ); return added && added->Index==index; } );
+			ASSERT_NE( join, buffer.end() );
+			let declared = std::get<Opc::Hist::NodeAdded>( *join ).DataType;
+			EXPECT_EQ( declared, nullptr ) << "member " << index << " " << declared->typeName;
+			EXPECT_EQ( host->Group()->DataType(index), &UA_TYPES[UA_TYPES_INT32] ) << "member " << index << ":  the type of the value it stored";
+			const UA_Double half{ 1.5 };
+			Write( id, &half, UA_TYPES[UA_TYPES_DOUBLE], Since() );
+			ASSERT_NO_THROW( WaitStored(host, index, joined, 2) );
+			EXPECT_EQ( host->Group()->DataType(index), &UA_TYPES[UA_TYPES_DOUBLE] ) << "member " << index;
+		}
 	}
 	//A percent-of-range band takes the InstrumentRange or EURange the server gives the node, read once its item is made, and
 	//a format edit takes the other;  a node without the range its format needs stores every change (spec *Compression*).
