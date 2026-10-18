@@ -5,7 +5,7 @@ import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { RouteItem, RouteStore } from 'jde-spa';
 import { Connection } from '../../services/resolvers/app-resolver';
-import { pageHeading } from '../cards/cards';
+import { pageHeading } from '../page-heading';
 import { SectionHeader } from '../cards/section-header/section-header';
 
 @Component({

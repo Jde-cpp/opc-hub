@@ -2,6 +2,7 @@ import { inject, Injectable, InjectionToken, signal } from '@angular/core';
 import { NavigationError, Router } from '@angular/router';
 import { filter } from 'rxjs';
 import { RouteItem } from '../pages/component-sidenav/route-item';
+import { isChunkLoadError } from './chunk-load-error';
 import { IPROFILE_SERVICE } from './profile/profile-service';
 import { ProfileStore } from './profile/profile-store';
 
@@ -16,7 +17,7 @@ export type RecentVisit = { url:string; title:string; path:string; section:strin
 
 //The pages the user opened below the top-level sections - a node, a connection, a role, a service, a help topic - newest
 //first, no repeats, for the home page's Recently visited row.  Kept in the user's profile like the favorites, so it follows
-//them to another browser;  a page that fails to open (deleted since) drops off.
+//them to another browser;  a page that fails to open (deleted since) drops off, one whose chunk fails to load does not.
 @Injectable( {providedIn: 'root'} )
 export class RecentVisits{
 	static readonly max = 6;
@@ -25,7 +26,7 @@ export class RecentVisits{
 	readonly visits = signal<RecentVisit[]>( [] );
 
 	constructor(){
-		this.#router.events.pipe( filter((e):e is NavigationError=>e instanceof NavigationError) ).subscribe( e=>this.forget(RecentVisits.bare(e.url)) );
+		this.#router.events.pipe( filter((e):e is NavigationError=>e instanceof NavigationError && !isChunkLoadError(e.error)) ).subscribe( e=>this.forget(RecentVisits.bare(e.url)) );
 	}
 	//the saved history for whoever is signed in now;  the home page awaits it before drawing the row
 	load():Promise<void>{ return this.#ready(); }

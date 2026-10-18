@@ -4,7 +4,7 @@ import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 import { DetailResolver, DetailRoute, IGRAPHQL, SlugNotFoundError, SnackbarService } from 'jde-framework';
 import { GatewayService } from '../gateway-service';
 import { GatewayDetailData } from './client-resolver';
-import { HistAdminKind, histAdminListRoute } from '../../pages/gateway-detail/hist-admin/gateway-hist-list';
+import { HistAdminKind, histAdminListRoute } from '../../pages/gateway-detail/hist-admin/hist-admin-list-route';
 
 //A template's or a group's row for its page (#337), under the gateway page's `templates/:slug` and `groups/:slug` routes, as
 //ClientResolver resolves a connection's:  the gateway is the url's, the row is DetailResolver's query of the gateway's table, and

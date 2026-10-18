@@ -10,7 +10,7 @@ import { HELP_TOPICS, HelpTopic, helpTopics } from '../../services/help/help-top
 
 //Renders one help topic's markdown.  The markdown is the app's own shipped asset - the same trust as the bundle - so the html
 //bypasses Angular's sanitizer, which would otherwise strip the heading ids the in-page anchors need.  marked is imported
-//dynamically and nowhere else:  a static import anywhere would hoist it into the initial bundle (see web/CLAUDE.md).
+//dynamically and nowhere else:  statically it would join this page's chunk, which every tab preloads (see web/CLAUDE.md).
 @Component({
 	selector: 'help-page',
 	templateUrl: './help-page.html',

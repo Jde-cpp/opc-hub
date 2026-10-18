@@ -2,10 +2,10 @@ import { provideHttpClient } from "@angular/common/http";
 import { ApplicationConfig } from '@angular/core';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { MAT_NATIVE_DATE_FORMATS, MatDateFormats, provideNativeDateAdapter } from '@angular/material/core';
-import { provideRouter, TitleStrategy } from '@angular/router';
+import { PreloadAllModules, provideRouter, TitleStrategy, withNavigationErrorHandler, withPreloading } from '@angular/router';
 import { APP_SERVICE, AppCardStatus, AppService, AUTH_STORE, AuthStore, CARD_STATUS, frameworkHelpTopics, HelpCardStatus, listHelpTopics, ProfileService } from 'jde-framework'
 import { GATEWAY_SERVICE, GatewayCardStatus, GatewayConnectionsStatus, GatewayService, nodeSegmentName, NodeSearchProvider, OPC_STORE, OpcAuthService, opcHelpTopics, OpcNodeLinkResolver, OpcStore} from 'jde-opc';
-import { APP_LOGO, APP_NAME, AppTitleStrategy, HELP_LINKS, HELP_TOPICS, HelpLink, HelpTopic, IAUTH, IENVIRONMENT, IPROFILE_SERVICE, RouteSearchProvider, SEARCH_PROVIDERS, SEGMENT_NAME, spaHelpTopics } from 'jde-spa';
+import { APP_LOGO, APP_NAME, AppTitleStrategy, HELP_LINKS, HELP_TOPICS, HelpLink, HelpTopic, IAUTH, IENVIRONMENT, IPROFILE_SERVICE, reloadOnChunkLoadError, RouteSearchProvider, SEARCH_PROVIDERS, SEGMENT_NAME, spaHelpTopics } from 'jde-spa';
 import {EnvironmentService} from './services/environment-service';
 import { routes } from './app.routes';
 import { ACCESS_SERVICE, AccessCardStatus, AccessCollectionStatus, accessHelpTopics, AccessSearchProvider, AccessService, NODE_LINK_RESOLVER } from "jde-access";
@@ -27,7 +27,9 @@ const dateFormats:MatDateFormats = {
 export const appConfig: ApplicationConfig = {
   providers: [
 		provideHttpClient(),
-		provideRouter(routes),
+		//every page is its own chunk (#351):  once the first page is up the rest load in the background, so a click doesn't wait on
+		//one, and a page whose chunk still fails to load - a tab from before an upgrade - reloads (reviews-issue/lazy-routes.md #2, #3)
+		provideRouter( routes, withPreloading(PreloadAllModules), withNavigationErrorHandler(reloadOnChunkLoadError()) ),
 		{provide: TitleStrategy, useExisting: AppTitleStrategy},//tabs read "<page> · OPC Hub"
 		{provide: APP_NAME, useValue: 'OPC Hub'},//also the navbar's home link, with the mark below
 		{provide: APP_LOGO, useValue: 'assets/site/logo.svg'},

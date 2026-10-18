@@ -14,7 +14,7 @@ import { vi } from 'vitest';
 import { ProfileStore, RouteStore } from 'jde-spa';
 import { AppInstanceRoute, PageProfile, SnackbarService, TableSchema, View } from 'jde-framework';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
-import { gatewayTableSettings } from '../../pages/gateway-detail/gateway-detail';
+import { gatewayTableSettings } from '../../pages/gateway-detail/gateway-table-settings';
 import { GatewayData, GatewayResolver } from './gateway-resolver';
 
 //reviews/m3-closing.md #6:  the resolver never adopted QLListResolver.loadOrFail.  A refused or failed serverConnections query

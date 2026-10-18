@@ -13,7 +13,9 @@ import { of } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { Operator, QLListResolver, SnackbarService, TableSchema, View, ViewFieldSettings } from 'jde-framework';
 import { AccessService } from '../../services/access-service';
-import { resourceTableSettings, UserDetail, userTableSettings } from './user-detail';
+import { UserDetail } from './user-detail';
+import { userTableSettings } from './user-table-settings';
+import { resourceTableSettings } from '../resources/resource-table-settings';
 
 //angular-review3 L2: only group-detail clamped the stored tab index on $new.  The other detail pages restored an index
 //that names a tab the @if drops for a new record, and mat-tab-group hard-loops on a selectedIndex it cannot resolve.
