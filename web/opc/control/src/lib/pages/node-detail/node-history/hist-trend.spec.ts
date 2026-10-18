@@ -17,6 +17,14 @@ import { HistTrend } from './hist-trend';
 import { TrendPoint, trendPalette } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
 
+//The add-on the installed site serves by URL, here the package itself:  bundled into the test alone
+class BundledHighcharts extends HighchartsLoader{
+	protected override importFile( file:string ){ return file=='highstock.js' ? import('highcharts/esm/highstock') : import('highcharts/esm/modules/accessibility'); }
+}
+//No add-on to import:  the answer to the fetch the loader makes then, stubbed, says why
+class UnloadedHighcharts extends HighchartsLoader{
+	protected override importFile():Promise<any>{ return Promise.reject( new TypeError( 'Failed to fetch dynamically imported module' ) ); }
+}
 const variable = ( i:number, name:string )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}} );
 const at = ( v:Variable, ms:number, value:number ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, status: 0, value, bound: false, heartbeat: false });
 //A and B drawn, once Highcharts has loaded and made the chart
@@ -27,15 +35,28 @@ const draw = async ()=>{
 	fixture.componentRef.setInput( 'series', [A, B] );
 	fixture.detectChanges();
 	const H = <typeof Highcharts>(await import('highcharts/esm/highstock')).default;
-	const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
-	let chart:Highcharts.Chart|undefined;
-	await vi.waitFor( ()=>{ chart = H.charts.find( c=>c?.container.parentElement==plot ); expect( chart ).toBeDefined(); } );
+	let plot!:HTMLElement, chart:Highcharts.Chart|undefined;
+	await vi.waitFor( ()=>{ fixture.detectChanges(); plot = fixture.nativeElement.querySelector( '.plot' ); chart = H.charts.find( c=>c && c.container.parentElement==plot ); expect( chart ).toBeDefined(); } );
 	return { A, B, fixture, plot, chart: chart! };
+};
+//A trend whose loader finds no add-on to import, the fetch it makes then answering `status`, once its notice shows
+const unloaded = async ( status:number )=>{
+	TestBed.overrideProvider( HighchartsLoader, {useValue: new UnloadedHighcharts()} );
+	vi.stubGlobal( 'fetch', async ()=>({ status, ok: false, headers: {get: ()=>'text/plain'} }) );
+	vi.spyOn( console, 'info' ).mockImplementation( ()=>{} );
+	vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+	const fixture = TestBed.createComponent( HistTrend );
+	fixture.componentRef.setInput( 'values', [] );
+	fixture.componentRef.setInput( 'series', [] );
+	fixture.detectChanges();
+	await vi.waitFor( ()=>{ fixture.detectChanges(); expect( fixture.nativeElement.querySelector( 'p.absent' ) ).not.toBeNull(); } );
+	return fixture;
 };
 
 describe( 'HistTrend', ()=>{
-	//the add-on the installed site serves by URL, here the package itself:  bundled into the test alone;  the router is the notice's link's
-	beforeEach( ()=>TestBed.configureTestingModule({ providers: [provideRouter( [] ), { provide: HighchartsLoader, useValue: {load: ()=>Promise.all( [import('highcharts/esm/highstock'), import('highcharts/esm/modules/accessibility')] ).then( ([m])=>m.default )} }] }) );
+	//the router is the notice's link's
+	beforeEach( ()=>TestBed.configureTestingModule({ providers: [provideRouter( [] ), { provide: HighchartsLoader, useClass: BundledHighcharts }] }) );
+	afterEach( ()=>{ vi.unstubAllGlobals(); vi.restoreAllMocks(); } );
 	//Removing a line destroys its navigator series, which Highcharts keeps last in chart.series:  a walk that removed as it
 	//went read the destroyed series' options and threw, before the legend update and the redraw (historian-web-trend #1).
 	it( 'drops an unticked node with its series', async ()=>{
@@ -120,6 +141,13 @@ describe( 'HistTrend', ()=>{
 		expect( plot.getAttribute('aria-label') ).toBe( 'History trend of A. Highcharts interactive chart.' );
 		fixture.destroy();
 	} );
+	//The accessibility module composes the range selector's keyboard handling only when the RangeSelector is defined as it runs
+	//(highcharts-addon #3):  the loader imports it after highstock.
+	it( 'gives the range selector buttons their keyboard handling', async ()=>{
+		const { fixture, chart } = await draw();
+		expect( typeof (<any>chart).highlightRangeSelectorButton ).toBe( 'function' );
+		fixture.destroy();
+	} );
 	//A read again after an edit, or a new selection, empties the values while the series stay:  the axis then had no data and
 	//Highcharts asked Intl for the time zone of a NaN, a RangeError thrown from its redraw.
 	it( 'draws an empty chart when the values go while the series stay', async ()=>{
@@ -147,16 +175,35 @@ describe( 'HistTrend', ()=>{
 	//The install carries no Highcharts (#302):  where the site has no add-on the loader finds none, and the trend says so in the
 	//plot's place, linking the help, with no chart made.
 	it( 'says so and draws nothing when Highcharts is not installed', async ()=>{
-		TestBed.overrideProvider( HighchartsLoader, {useValue: {load: async ()=>undefined}} );
+		const fixture = await unloaded( 404 );
+		expect( fixture.nativeElement.querySelector( 'p.absent' ).textContent ).toContain( 'does not include' );
+		expect( fixture.nativeElement.querySelector( 'p.absent a' ).getAttribute( 'href' ) ).toBe( '/help/gateways#trend-chart' );
+		expect( fixture.nativeElement.querySelector( '.plot' ) ).toBeNull();
+		fixture.destroy();
+	} );
+	//There, and failed to load - the hub restarting as the tab opened, a partial copy:  not "not included", which would send the
+	//user to install what is there (highcharts-addon #4).
+	it( 'says to reload when Highcharts is there and failed to load', async ()=>{
+		const fixture = await unloaded( 503 );
+		const notice = fixture.nativeElement.querySelector( 'p.absent' ).textContent;
+		expect( notice ).toContain( 'Reload the page' );
+		expect( notice ).not.toContain( 'does not include' );
+		expect( fixture.nativeElement.querySelector( 'p.absent a' ).getAttribute( 'href' ) ).toBe( '/help/gateways#trend-chart' );
+		expect( fixture.nativeElement.querySelector( '.plot' ) ).toBeNull();
+		fixture.destroy();
+	} );
+	//Until the load settles there is nothing to show:  a blank plot there would collapse into the notice on a site without the
+	//add-on, moving the table under it (highcharts-addon #6).
+	it( 'shows neither a plot nor a notice until the load settles', async ()=>{
+		TestBed.overrideProvider( HighchartsLoader, {useValue: new (class extends HighchartsLoader{ protected override importFile(){ return new Promise<any>( ()=>{} ); } })()} );
 		const fixture = TestBed.createComponent( HistTrend );
 		fixture.componentRef.setInput( 'values', [] );
 		fixture.componentRef.setInput( 'series', [] );
 		fixture.detectChanges();
-		await vi.waitFor( ()=>{ fixture.detectChanges(); expect( fixture.nativeElement.querySelector( 'p.absent' ) ).not.toBeNull(); } );
-		expect( fixture.nativeElement.querySelector( 'p.absent a' ).getAttribute( 'href' ) ).toBe( '/help/gateways#trend-chart' );
-		const H = <typeof Highcharts>(await import('highcharts/esm/highstock')).default;
-		const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
-		expect( H.charts.find( c=>c?.container.parentElement==plot ) ).toBeUndefined();
+		await new Promise( r=>setTimeout( r, 50 ) );
+		fixture.detectChanges();
+		expect( fixture.nativeElement.querySelector( '.plot' ) ).toBeNull();
+		expect( fixture.nativeElement.querySelector( 'p.absent' ) ).toBeNull();
 		fixture.destroy();
 	} );
 } );

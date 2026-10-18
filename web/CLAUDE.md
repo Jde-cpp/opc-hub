@@ -48,15 +48,20 @@ button matches the current url against. `marked` renders the page and must only 
 
 ## Add-ons load by URL
 
-Highcharts Stock (the History trend) is an add-on the install never carries (#302): its licence is a commercial one. `highcharts` is a
-`devDependency` of jde-opc for the typings and `hist-trend.spec.ts` alone (`jde-opc.sh` installs it `--save-dev`); the runtime is
-imported by URL, `addons/highcharts/esm/{highstock,modules/accessibility}.js` under the site's base href, by `HighchartsLoader`
-(`node-history/highcharts-loader.ts`), which resolves `undefined` when the folder is absent - the trend then shows a notice and
-the tab works from the table. A dev `setup.sh` fills `my-workspace/public/addons/highcharts/esm/` from node_modules, which `ng
-serve` and `ng build` serve at the root; `setup.sh --release` never does, and fails if anything under `browser/` contains
-`Highsoft` (every Highcharts file header carries it, so never write that word in a source). `build-deb.sh` and the NSIS script
-exclude `addons/` besides. Specs stub `HighchartsLoader`: the real chart with literal `import('highcharts/esm/…')` specifiers,
-which esbuild bundles into the test only, or `load: async ()=>undefined` for the absent case.
+Highcharts Stock (the History trend) is an add-on the install never carries (#302): its licence is a commercial one. `highcharts`
+is a `devDependency` of jde-opc for the typings and `hist-trend.spec.ts` alone (`jde-opc.sh` installs it `--save-dev`); the
+runtime is imported by URL, `addons/highcharts/esm/{highstock,modules/accessibility}.js` under the site's base href, by
+`HighchartsLoader` (`node-history/highcharts-loader.ts`), which resolves `undefined` when the folder is absent - the trend then
+shows a notice and the tab works from the table - and rejects, uncached, when it is there and failed to load. A fetch of
+`highstock.js` after the failed import tells the two apart: a 404 or a page in its place is absent. A dev `setup.sh` fills
+`my-workspace/public/addons/highcharts/esm/` from node_modules, which `ng serve` and `ng build` serve at the root. It skips this
+when `$CI` is set, since a release workflow run by hand builds without `--release` and uploads the dist as a public artifact.
+`setup.sh --release` never fills it. Every build fails if anything under `browser/` but `addons/` contains `Highsoft` (every
+Highcharts file header carries it, so never write that word in a source), so a pull request's CI run catches Highcharts bundled by
+mistake. `build-deb.sh` and the NSIS script exclude `addons/` besides. The trend alone calls `load()`, and how the load settled is
+the loader's `state` signal, which the History toolbar reads too. Specs subclass `HighchartsLoader` and override `importFile`, its
+URL import: with literal `import('highcharts/esm/…')` specifiers, which esbuild bundles into the test only, or with a rejection
+and `fetch` stubbed for the absent and failed cases. A component that only reads the state gets `{state: signal(…)}`.
 
 ## Libraries
 

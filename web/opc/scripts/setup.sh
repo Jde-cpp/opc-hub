@@ -66,9 +66,10 @@ jqEdit angular.json '.projects."my-workspace".architect.build.options.assets |= 
 #Highcharts is an add-on the install never carries (#302 - web/CLAUDE.md, "Add-ons load by URL"):  the history trend imports it
 #by URL from addons/highcharts/esm/ under the site, where a licensed site copies the package's esm folder.  A dev build gets the
 #same from node_modules (the typings' devDependency) under public/, the folder the build copies to the output root;  a release
-#never does, and is checked below.
+#never does, and is checked below.  Nor does a CI run:  a release workflow run by hand builds without --release and uploads the
+#dist as an artifact of a public repo.
 rm -rf public/addons;
-if [ $release = 0 ] && [ -d node_modules/highcharts/esm ]; then
+if [ $release = 0 ] && [ -z "$CI" ] && [ -d node_modules/highcharts/esm ]; then
 	mkdir -p public/addons/highcharts && cp -r node_modules/highcharts/esm public/addons/highcharts/ && find public/addons -type f \( ! -name '*.js' -o -name '*.src.js' \) -delete || { echo copying the Highcharts add-on failed; exit 1; };
 fi;
 echo ------------------- Starting Build -------------------;
@@ -85,5 +86,6 @@ ng build --output-hashing=$hashing --source-map=true || { echo `pwd`; echo ng bu
 dist=dist/my-workspace;
 cp $dist/3rdpartylicenses.txt $JDE_BASH/THIRD-PARTY-NOTICES.txt $dist/browser/ || { echo `pwd`; echo copying the license lists into $dist/browser failed; exit 1; };
 #the "done when" of #302:  no Highcharts in what the installers pack - its files carry the vendor's name in their headers, as
-#the licence list would;  our sources never use it.
-if [ $release = 1 ] && grep -rlq Highsoft $dist/browser; then echo "Highcharts is in the release build: $(grep -rl Highsoft $dist/browser)"; exit 1; fi;
+#the licence list would;  our sources never use it.  On every build, a dev build's own add-on folder aside, so a pull request's
+#CI run finds it rather than a release's tag.
+if grep -rlq --exclude-dir=addons Highsoft $dist/browser; then echo "Highcharts is in the build: $(grep -rl --exclude-dir=addons Highsoft $dist/browser)"; exit 1; fi;

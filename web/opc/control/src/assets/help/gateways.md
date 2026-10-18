@@ -53,7 +53,7 @@ The navbar search finds nodes by name in every connection this session has opene
 
 ### Trend chart
 
-The trend draws with Highcharts Stock, which the install does not include: its licence is a commercial one. A site that holds one copies the `esm` folder of Highcharts Stock 13 - the one in the `highcharts` npm package - to `addons/highcharts/esm` under the Web UI's folder, `/opt/jde-cpp/web` for the package, `~/.local/share/jde-cpp/web` for the per-user install and `<program dir>\Web` on Windows, and reloads the page: the hub serves it from there, with no restart. Without it the History tab lists the values in the table alone and shows no line-shape toggle. Uninstalling on Windows, or `install.sh --uninstall`, removes the folder with the site; the package leaves it.
+The trend draws with Highcharts Stock, which the install does not include: its licence is a commercial one. A site that holds one copies the `esm` folder of Highcharts Stock 13 - the one in the `highcharts` npm package - to `addons/highcharts/esm` under the Web UI's folder, `/opt/jde-cpp/web` for the package, `~/.local/share/jde-cpp/web` for the per-user install and `<program dir>\Web` on Windows, and reloads the page: the hub serves it from there, with no restart. Without it the History tab lists the values in the table alone and shows no line-shape toggle. If the folder is there and the trend says it could not load Highcharts Stock, reload the page; if it says so again, copy the whole `esm` folder again, since the trend needs every file it imports. An upgrade keeps the folder, on Windows whether or not Setup uninstalls the earlier version first. Uninstalling on Windows, or `install.sh --uninstall`, removes the folder with the site; the package leaves it.
 
 ## Instances
 

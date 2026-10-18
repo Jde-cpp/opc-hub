@@ -108,7 +108,7 @@ machine by itself.
               Jde.DB.Sqlite.dll sqlite3.dll Jde.DB.Sqlite.AppServer.dll Jde.DB.Sqlite.OpcGateway.dll
               Jde.DB.Odbc.dll Jde.DB.MySql.dll
   OpcServer\  Jde.Opc.Server.exe + the same + libxml2.dll, Jde.DB.Sqlite.dll sqlite3.dll
-  Web\        the Angular site, served by the hub at http://<host>:1967/ (+ web.config for IIS, optional);  Web\addons\ is a site's own - the History trend's Highcharts, never packed (the help's "Trend chart")
+  Web\        the Angular site, served by the hub at http://<host>:1967/ (+ web.config for IIS, optional);  Web\addons\ is a site's own - the History trend's Highcharts, never packed (the help's "Trend chart"), and kept by an upgrade:  a Yes to Setup's "Uninstall it first?" parks it as addons.kept beside Web\ until the Web UI component moves it back
   LICENSE.txt THIRD-PARTY-NOTICES.txt                     ours (Apache-2.0), and the notices of the third-party code inside the exes and dlls
   Uninstall.exe
 C:\ProgramData\Jde-Cpp
