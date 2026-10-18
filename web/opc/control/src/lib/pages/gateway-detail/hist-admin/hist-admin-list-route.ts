@@ -3,8 +3,7 @@ import { ListRoute, Style, TableSettings } from 'jde-framework';
 export type HistAdminKind = 'templates'|'groups';
 
 //The lists' settings and routing, shared by the list (GatewayHistList) and the detail pages' resolver (HistAdminResolver), which
-//adopts the collection and its settings for the row query and the breadcrumb.  Its own file, not the list's (#351):  the resolver is
-//in the initial bundle, so what it imports is too - the list and the gateway page it sits in should load with their route.
+//adopts the collection and its settings for the row query and the breadcrumb.
 export const histTemplateTableSettings:TableSettings = {
 	noun: 'templates',
 	empty: { title: 'No templates yet.', detail: 'A template is a node set, as browse paths from a root, that a group applies to one root on one server.', add: 'Use Add to create one.' },

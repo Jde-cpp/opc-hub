@@ -2,8 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import { Router, Routes } from '@angular/router';
 import { RouteService, isNotFound } from 'jde-spa';
 
-//The home page's tiles, one per top-level section.  Its own file, not cards.ts (#351):  app.routes.ts provides it by name, which
-//puts the file it lives in into the initial bundle - with the Cards page, had they shared one.
+//The home page's tiles, one per top-level section.
 @Injectable( {providedIn: 'root'} )
 export class HomeRouteService extends RouteService{
 	private router:Router = inject( Router );

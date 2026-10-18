@@ -1,7 +1,6 @@
 import { Flex, Style, TableSettings } from 'jde-framework';
 
-//The Connections tab's list, the gateway route's data.tableSettings.  Its own file, not gateway-detail.ts (#351):  app.routes.ts
-//imports it by name, which puts the file it lives in into the initial bundle - with the page, had they shared one.
+//The Connections tab's list, the gateway route's data.tableSettings.
 export const gatewayTableSettings:TableSettings = {
 	empty: { title: "No server connections.", add: "Use Add to connect this gateway to an OPC server." },
 	noun: "server connections",//the route title is the instance path - "No access to gateways/opchub.debug" named nothing to ask for

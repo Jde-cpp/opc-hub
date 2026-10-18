@@ -1,6 +1,6 @@
 import { Style } from 'jde-framework';
 
-//The groups list, the 'groups' collection's tableSettings in app.routes.ts - its own file, not group-detail.ts (#351).
+//The groups list, the 'groups' collection's tableSettings in app.routes.ts.
 export const groupTableSettings = {
 	empty: { title: "No groups yet.", detail: "A group collects users so a role is granted once for all of them.", add: "Use Add to create one." },
 	excludedColumns: ["isGroup", "members"],

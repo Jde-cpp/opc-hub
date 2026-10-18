@@ -11,13 +11,8 @@ const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService }
 const opcNodeRouteProvider = { provide: IROUTE_SERVICE, useExisting: OpcNodeRouteService };//NodeChildren injects the class token, so the route binding must alias that instance rather than build a second one
 const helpProvider = { provide: IROUTE_SERVICE, useClass: HelpRouteService };
 
-//Pages are loadComponent through the loaders each library exports - opc-pages.ts, access-pages.ts, framework-pages.ts, spa-pages.ts -
-//which import the page's file by path, and that is what splits it off.  `()=>import('jde-…').then( m=>m.Page )` split nothing:  this file
-//imports every barrel statically, so a dynamic import of one needs the whole namespace, and every page sat in the initial bundle - 1.99 MB
-//against the 2 MB budget, 1.11 MB with the loaders (#351).  A page stays split only while nothing in the initial bundle imports its file:
-//what this file or a resolver needs by name (a tableSettings constant, HomeRouteService, the hist lists' route) sits in a file of its
-//own beside the page, and a barrel export of an unused component can hold its file in main by itself (NodeChildren's did).  The sidenav
-//and the cards are under nearly every route, so their chunks arrive with the first one;  only /login is spared them.
+//Pages load through each library's <lib>-pages.ts loaders, never `import('jde-…')`:  this file imports every barrel statically,
+//so a dynamic import of one splits nothing off.  What else keeps a page in main:  web/CLAUDE.md, "Routed pages are loaders".
 
 export const routes: Routes = [
 	{ path: '', title: "Home", loadComponent: loadCards,

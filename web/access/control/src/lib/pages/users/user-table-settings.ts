@@ -1,7 +1,6 @@
 import { ChipTones, Style, TableSettings, ViewFieldSettings } from 'jde-framework';
 
-//The users list, the 'users' collection's tableSettings in app.routes.ts.  Its own file, not user-detail.ts (#351):  the site imports it
-//by name, which puts the file it lives in into the initial bundle - with the page, had they shared one.
+//The users list, the 'users' collection's tableSettings in app.routes.ts.
 //the provider as a chip:  the sign-in providers (access_provider_types) in the primary tone, a certificate identity in the
 //resting one;  an OpcServer-provided identity shows its server's slug, which no list can name, and gets the default chip
 const providerTones:ChipTones = { Google:"ok", Facebook:"ok", Amazon:"ok", Microsoft:"ok", VK:"ok", Key:"neutral" };

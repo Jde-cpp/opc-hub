@@ -41,9 +41,10 @@ for the site (`src/assets` → `assets/site`), so a file is served at `assets/<j
 described by `HelpTopic` constants each library exports (`spaHelpTopics`, `frameworkHelpTopics`, …) and registered in
 `app.config.ts` under the `HELP_TOPICS` multi token, in display order; a topic's `routes` patterns are what the navbar's `?`
 button matches the current url against. `marked` renders the page and must only ever be imported dynamically
-(`await import('marked')`): the libraries are not lazy — `app.config.ts` imports every barrel — so a static import anywhere
-would hoist it into the initial bundle. `{{version}}` in the markdown is the `JDE_VERSION` constant setup.sh passes through
-the builder's `define` option, read via `IEnvironment.get('version')`.
+(`await import('marked')`): a static import in a file `main` reaches would put it in the initial bundle, and even in
+`help-page.ts` it would join that page's chunk, which every tab preloads (`PreloadAllModules`) whether or not it opens help.
+`{{version}}` in the markdown is the `JDE_VERSION` constant setup.sh passes through the builder's `define` option, read via
+`IEnvironment.get('version')`.
 
 ## Libraries
 
@@ -62,9 +63,10 @@ back inside a library.
 
 `app.routes.ts` imports every library barrel statically (resolvers, services, table settings), so
 `loadComponent: ()=>import('jde-opc').then( m=>m.Page )` splits nothing off: a dynamic import of a barrel needs its whole
-namespace, and every page the barrel exports lands in the initial bundle (#351 - the production budget errors at 2 MB). Each
-library instead exports its routed pages as loaders from one file, `lib/pages/<lib>-pages.ts`
-(`opc-pages.ts`, `access-pages.ts`, `framework-pages.ts`, `spa-pages.ts`), and the barrel does not export the page class:
+namespace, and every page the barrel exports lands in the initial bundle (#351 - 1.99 MB against a 2 MB budget; the
+budget now errors at 1.4 MB, so a page sliding back into `main` fails the build). Each library instead exports its routed
+pages as loaders from one file, `lib/pages/<lib>-pages.ts` (`opc-pages.ts`, `access-pages.ts`, `framework-pages.ts`,
+`spa-pages.ts`), and the barrel does not export the page class:
 
 ```ts
 export const loadNodeDetail = ()=>import( './node-detail/node-detail' ).then( m=>m.NodeDetail );

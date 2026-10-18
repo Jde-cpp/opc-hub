@@ -30,7 +30,8 @@ describe( 'RecentVisits', ()=>{
 			provideRouter( [
 				{ path: 'gateways', data: {icon: 'hub'}, component: Blank },
 				{ path: 'gateways/:gateway', component: Blank },
-				{ path: 'gateways/:gateway/broken', component: Blank, resolve: {x: ()=>{ throw new Error('deleted'); }} }
+				{ path: 'gateways/:gateway/broken', component: Blank, resolve: {x: ()=>{ throw new Error('deleted'); }} },
+				{ path: 'gateways/:gateway/unloaded', loadComponent: ()=>Promise.reject( new TypeError('Failed to fetch dynamically imported module: http://localhost/chunk-AB12cd34.js') ) }
 			] ),
 			{provide: ProfileStore, useValue: store},
 			{provide: IPROFILE_SERVICE, useValue: {userKey: user, load: async ()=>null, save: async ()=>{}}},
@@ -77,6 +78,15 @@ describe( 'RecentVisits', ()=>{
 		await recent.visit( '/gateways/gw1', crumbs('Gateways', 'gw1') );
 		await TestBed.inject( Router ).navigateByUrl( '/gateways/gw1/broken' ).catch( ()=>{} );
 		expect( urls() ).toEqual( ['/gateways/gw1'] );
+	});
+
+	//reviews-issue/lazy-routes.md #1
+	it( 'keeps a page whose chunk fails to load', async ()=>{
+		const recent = TestBed.inject( RecentVisits );
+		await recent.visit( '/gateways/gw1/unloaded', crumbs('Gateways', 'gw1', 'Unloaded') );
+		await TestBed.inject( Router ).navigateByUrl( '/gateways/gw1/unloaded' ).catch( ()=>{} );
+		await recent.load();
+		expect( urls() ).toEqual( ['/gateways/gw1/unloaded'] );
 	});
 
 	//reviews/m3-closing.md #25:  a deep link to a deleted page fails in its resolver, before anything has loaded the history;

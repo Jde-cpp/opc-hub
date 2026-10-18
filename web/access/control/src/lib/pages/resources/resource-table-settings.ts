@@ -1,6 +1,6 @@
 import { Flex, Style, TableSettings } from 'jde-framework';
 
-//The resources list, the 'resources' collection's tableSettings in app.routes.ts - beside its page, as the others are (#351).
+//The resources list, the 'resources' collection's tableSettings in app.routes.ts.
 //A resource row is the authorizer's per-table switch, not an editable record.  `deleted` is what the switch reads:
 //Authorize::Test bails on a deleted resource ("not enabled"), so a DELETED resource is an UNENFORCED one and the
 //installation ships every row deleted (ResourceSyncAwait creates each one and immediately deletes it) so a fresh system is

@@ -53,8 +53,9 @@ if [ ! -d $workspace ]; then
 	}
 	EOF
 	if [ $? -ne 0 ]; then echo `pwd`; echo could not write .mcp.json; exit 1; fi;
-	jqEdit angular.json ".projects.\"$workspace\".architect.build.configurations.production.budgets[0].maximumError = \"2mb\"";
-	jqEdit angular.json ".projects.\"$workspace\".architect.build.configurations.production.budgets[0].maximumWarning = \"1mb\"";
+	#the initial bundle is 1.11 MB with the pages split off (#351):  low enough that a page sliding back into main fails the build
+	jqEdit angular.json ".projects.\"$workspace\".architect.build.configurations.production.budgets[0].maximumError = \"1.4mb\"";
+	jqEdit angular.json ".projects.\"$workspace\".architect.build.configurations.production.budgets[0].maximumWarning = \"1.2mb\"";
 	#was a sed on '"strict": true,' - Angular 22's --defaults template emits the individual noImplicit* flags and no
 	#"strict" key at all, so it matched nothing and exited 0.  These are the tsc defaults today (strict unset), but
 	#state them so the libraries keep building if a future template turns strict on.
