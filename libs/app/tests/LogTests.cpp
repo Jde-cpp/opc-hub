@@ -394,17 +394,25 @@ namespace Jde::App::Tests{
 		//after which the filler still to come lowers it past `when`.  That is the fix working, not failing.  A retry is
 		//sound rather than a way of hiding flakiness: the bug it guards is deterministic per flush, so before the fix every
 		//attempt fails, and the round can only intervene once because the drain clears the flag.
+		//The same round, or one still running from the test before, removes the daily file, and the filler's flushes then
+		//make another, which can stay smaller than the one removed:  a flush is told by the file's FileStart as well as its size.
+		auto mark = [this]{//the daily file's size, and its FileStart's ts, which names it:  0 until it has a whole FileStart.
+			let bytes = contents( Log().DailyFile() );
+			let head = Log::HeadOf( bytes );
+			return std::pair<uint,int64_t>{ bytes.size(), head ? head->Start.ts() : 0 };
+		};
 		bool held{};
 		for( uint attempt=0; attempt<5 && !held; ++attempt ){
 			let when = Clock::now();
-			let before = fs::exists( Log().DailyFile() ) ? fs::file_size( Log().DailyFile() ) : 0;
+			let before = mark();
 			//by size, not by waiting out /logging/proto/delay (PT1M in App.Tests.jsonnet); _delaySize is 8096 bytes.  All
 			//dated now, so nothing here arms a round of its own.
 			for( uint i=0; i<400; ++i )
 				Log().Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("DailyFileStartSurvivesFlush {} filler {}", attempt, i)} );
 			bool flushed{};
 			for( uint i=0; i<100 && !flushed; ++i ){
-				flushed = fs::exists( Log().DailyFile() ) && fs::file_size( Log().DailyFile() )>before;
+				let now = mark();
+				flushed = now.second && (now.second!=before.second || now.first>before.first);
 				if( !flushed )
 					std::this_thread::sleep_for( 50ms );
 			}
