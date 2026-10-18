@@ -25,6 +25,7 @@ import { HistEditDialog, HistEditPreset } from './hist-edit-dialog';
 import { HistThresholdsDialog } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
+import { HighchartsLoader } from './highcharts-loader';
 
 //what the tab shows:  the values, trended and listed, or the modifications made to them, listed with their ModificationInfo
 export type HistMode = 'values'|'modified';
@@ -126,6 +127,9 @@ export class NodeHistory implements OnDestroy{
 	loading = signal( false );
 	hasEarlier = signal( true );
 	stepped = signal( true );
+	//whether the trend draws:  Highcharts is an add-on the install never carries (#302), and without it the line shape has nothing
+	//to shape.  The trend loads it:  false until that settles.
+	chart = computed<boolean>( ()=>this.#highcharts.state()=='loaded' );
 	live = signal( true );
 	mode = signal<HistMode>( 'values' );
 	aggregates = linkedSignal<string,HistAggregate[]>( {source: this.sourceKey, computation: ()=>[]} );
@@ -519,6 +523,7 @@ export class NodeHistory implements OnDestroy{
 	static readonly done:Record<HistEditKind,string> = { insert: "Inserted.", replace: "Replaced.", update: "Updated.", purgeRange: "Deleted.", purgeTimes: "Deleted." };
 
 	#history = inject( HistoryService );
+	#highcharts = inject( HighchartsLoader );
 	snackbar = inject( SnackbarService );
 	dialog = inject( MatDialog );
 	#subscription:Subscription|undefined;

@@ -95,6 +95,7 @@ Var RuntimeOld ;current-user mode: the VC++ runtime is still below the build's a
 Var UserClosed ;current-user mode: a running hub/OpcServer of this user's was closed to reinstall over it (#37) - the finish page says to start it again
 Var DataDirOwner ;CheckDataDir's refusal, named:  "<account> owns <path>" - empty when it has no one to name
 Var UserSid    ;current-user mode: this account's SID, read by CheckDataDirOwner - SEC_HUB writes it to the .current-user mark
+Var KeptAddons ;the earlier install's Web\addons, parked by .onInit out of the reach of the uninstaller it runs - SEC_WEB moves it back
 
 ;.onInit's CPU check, ahead of every other file:  a solid archive unpacks in script order, and .onInit sits below the sections.
 ReserveFile "${BIN}\Jde.CheckCpu.exe"
@@ -651,8 +652,15 @@ SectionEnd
 !ifndef SKIP_WEB
 Section "Web UI" SEC_WEB
 	SetOutPath "$INSTDIR\Web"
-	File /r /x *.map "${WEB_DIST}\*.*" ;not the source maps - ~7 MB a browser never asks for unless devtools are open (reviews/install-issues.md, "Shipped weight")
+	File /r /x *.map /x addons "${WEB_DIST}\*.*" ;not the source maps - ~7 MB a browser never asks for unless devtools are open (reviews/install-issues.md, "Shipped weight") - nor a site's own add-ons, the trend's Highcharts the install never carries (#302; the help's "Trend chart")
 	File "${SRC_DIR}\web\opc\scripts\web.config"
+	${If} $KeptAddons != ""
+		ClearErrors
+		Rename "$KeptAddons" "$INSTDIR\Web\addons"
+		${If} ${Errors} ;another volume, or an addons folder already there
+			DetailPrint "The Highcharts add-on is kept in $KeptAddons:  move it to $INSTDIR\Web\addons for the History trend."
+		${EndIf}
+	${EndIf}
 SectionEnd
 !endif
 
@@ -970,8 +978,18 @@ Function .onInit
 		ReadRegStr $1 HKCU "${REG_UNINST}" "InstallLocation"
 	${EndIf}
 	${If} $0 != ""
-		MessageBox MB_YESNO|MB_ICONQUESTION "${PRODUCT} is already installed in $1.$\r$\n$\r$\nUninstall it first?  (No installs over it; the data under $DataDir is kept either way.)" /SD IDNO IDNO +2
+		MessageBox MB_YESNO|MB_ICONQUESTION "${PRODUCT} is already installed in $1.$\r$\n$\r$\nUninstall it first?  (No installs over it; the data under $DataDir is kept either way.)" /SD IDNO IDNO uninstallDeclined
+		;its RMDir /r takes Web\ whole, and Web\addons is the site's own, the trend's Highcharts (#302):  parked beside Web\, where
+		;the uninstaller's RMDir of the program dir leaves it, for the Web UI section to move back
+		${If} ${FileExists} "$1\Web\addons\*.*"
+			ClearErrors
+			Rename "$1\Web\addons" "$1\addons.kept"
+			${IfNot} ${Errors}
+				StrCpy $KeptAddons "$1\addons.kept"
+			${EndIf}
+		${EndIf}
 		ExecWait '$0 /S _?=$1'
+		uninstallDeclined:
 	${EndIf}
 FunctionEnd
 

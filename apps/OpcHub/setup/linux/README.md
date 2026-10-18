@@ -122,7 +122,7 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
               libJde.DB.MySql.so libfmt.so.12 libboost_json.so.1.92.0 libboost_container.so.1.92.0 libboost_charconv.so.1.92.0
               libjsonnet.so.0 libjsonnet++.so.0 libabseil_dll.so.2605.0.0 libc++.so.1 libc++abi.so.1
   opcserver/  Jde.Opc.Server + the same, without the proc modules or the MySQL driver
-  web/        the Angular site
+  web/        the Angular site;  web/addons/ is a site's own - the History trend's Highcharts, never packed (the help's "Trend chart")
 /etc/jde-cpp                                             settings mirror - repo layout, so the configs' relative imports keep working (dpkg conffiles)
   apps/OpcHub/config/Opc.Hub.jsonnet                     (imports ../../AppServer/config/App.Server.jsonnet, ../../OpcGateway/config/Opc.Gateway.jsonnet)
   apps/OpcHub/config/args/install/args.libsonnet         sqlite; the driver/proc modules by $(ExeDir), the data by $(ProgramData)

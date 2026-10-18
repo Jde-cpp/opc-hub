@@ -24,10 +24,12 @@
 		@if( mode()=='values' ){
 			<!--the values themselves, or an aggregate of them over each interval, one of those the server lists-->
 			<hist-aggregate-picker [aggregates]="aggregates()" [(aggregation)]="aggregation"></hist-aggregate-picker>
-			<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
-				<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
-				<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
-			</mat-button-toggle-group>
+			@if( chart() ){
+				<mat-button-toggle-group class="shape-group" hideSingleSelectionIndicator aria-label="Line shape" [value]="stepped()" (change)="stepped.set($event.value)">
+					<mat-button-toggle [value]="true" matTooltip="A value holds until the next">Stepped</mat-button-toggle>
+					<mat-button-toggle [value]="false" matTooltip="A straight line between values">Interpolated</mat-button-toggle>
+				</mat-button-toggle-group>
+			}
 		}
 		<mat-slide-toggle [checked]="live()" [disabled]="!canLive()" (change)="onLiveChange($event.checked)" [matTooltip]="mode()!='values' ? 'Modifications are not published live' : aggregated() ? 'Aggregates are computed on each read, not published' : isGroup() ? 'Append values as the gateway\'s historian stores them' : 'Append values as the server publishes them'">Live</mat-slide-toggle>
 		<button matButton (click)="loadEarlier()" [disabled]="loading() || !hasEarlier()" matTooltip="Read the page before the earliest value shown">

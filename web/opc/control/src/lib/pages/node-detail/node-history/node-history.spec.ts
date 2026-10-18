@@ -7,7 +7,7 @@ if( typeof globalThis.localStorage=="undefined" ){
 		clear: ()=>backing.clear()
 	};
 }
-import { Component, input, output } from '@angular/core';
+import { Component, input, output, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
@@ -24,6 +24,7 @@ import { HistEditDialog, HistEditDialogData, HistEditPreset } from './hist-edit-
 import { HistThresholdsDialog, HistThresholdsDialogData } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
+import { HighchartsLoader } from './highcharts-loader';
 import { NodeHistory } from './node-history';
 
 //The trend stands in for itself:  hist-trend.spec drives the real chart, and under jsdom, which lays nothing out, a chart's
@@ -39,7 +40,7 @@ const A = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, h
 //A group's subscription is `histSubscribed`, its arguments `histArgs`, and `emit` sends the latest an event, `histError` an end.
 //An edit sent directly lands in `edits.sent`, its source in `edits.sources`, and gets `edits.answer`;  the edit dialog is a stub
 //that closes at once with `dialogResult.answer`, and the confirmation with `confirmed`.  A group's capabilities are `capabilities`.
-const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )=>{
+const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]; highcharts?:'loaded'|'absent'|'failed'|'unsettled'}={} )=>{
 	const reads:{ source:HistSource; args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
 	const subscribers = new Set<Subscriber<SubscriptionResult>>();
 	const histSubscribers:{ args:HistSubscribeArgs; subscriber:Subscriber<HistEvent> }[] = [];
@@ -67,6 +68,7 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 			return { afterClosed: ()=>of( component===ConfirmDialog ? y.confirmed : component===HistEditDialog ? dialogResult.answer : undefined ) };
 		} }
 	};
+	const highcharts = signal<'loaded'|'absent'|'failed'|undefined>( options.highcharts=='unsettled' ? undefined : options.highcharts ?? 'loaded' ), loads = vi.fn();
 	TestBed.configureTestingModule({ providers: [
 		{ provide: HistoryService, useValue: {
 			read: ( _reader:unknown, source:HistSource, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({source, args, answer}) ),
@@ -77,7 +79,8 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 			override: async ( poster:unknown, id:number, changes:unknown )=>{ overrides.push( {poster, id, changes} ); }
 		} },
 		{ provide: SnackbarService, useValue: {exception: ()=>{}, info: ()=>{}, error: ( m:string )=>errors.push( m ), warn: ( m:string )=>warnings.push( m )} },
-		{ provide: MatDialog, useValue: y.dialog }
+		{ provide: MatDialog, useValue: y.dialog },
+		{ provide: HighchartsLoader, useValue: {state: highcharts, load: loads} }//the trend's add-on:  loaded, unless `highcharts` says otherwise
 	]});
 	TestBed.overrideComponent( NodeHistory, {remove: {imports: [HistTrend]}, add: {imports: [TrendStub]}} );
 	const node = A;
@@ -87,7 +90,7 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]}={} )
 	fixture.componentRef.setInput( 'groups', options.groups ?? [] );
 	fixture.detectChanges();
 	return {
-		fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings, thresholds, thresholdReads, overrides,
+		highcharts, loads, fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings, thresholds, thresholdReads, overrides,
 		tab: fixture.componentInstance,
 		set confirmed( v:boolean ){ y.confirmed = v; },
 		set aggregates( v:HistAggregate[]|Error ){ y.aggregates = <HistAggregate[]>v; },
@@ -183,6 +186,35 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.reads[2].args.modified ).toBeUndefined();
 		expect( tab.subscribed() ).toBe( 1 );
 		tab.fixture.destroy();
+	} );
+	//The trend's add-on, Highcharts, is what the install never carries (#302):  a site without it has no line to shape, so the
+	//Stepped|Interpolated toggle goes with the chart;  the picker and the table stay.
+	it( 'hides the line-shape toggle when Highcharts is not installed', async ()=>{
+		const tab = open( {highcharts: 'absent'} );
+		await settle();
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
+		expect( tab.fixture.nativeElement.querySelector( 'hist-aggregate-picker' ) ).not.toBeNull();
+		expect( tab.fixture.nativeElement.querySelector( 'hist-table' ) ).not.toBeNull();
+	} );
+	it( 'hides the line-shape toggle when Highcharts failed to load', async ()=>{
+		const tab = open( {highcharts: 'failed'} );
+		await settle();
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
+		expect( tab.fixture.nativeElement.querySelector( 'hist-table' ) ).not.toBeNull();
+	} );
+	//The toggle waits for the trend's load to settle with Highcharts, rather than showing and then going (highcharts-addon #6);  the
+	//tab never loads it itself - the trend does, so the Modifications mode, which has none, fetches nothing (#8).
+	it( 'shows the line-shape toggle once Highcharts has loaded', async ()=>{
+		const tab = open( {highcharts: 'unsettled'} );
+		await settle();
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
+		tab.highcharts.set( 'loaded' );
+		tab.fixture.detectChanges();
+		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).not.toBeNull();
+		expect( tab.loads ).not.toHaveBeenCalled();
 	} );
 	//After an edit the tab reads again what it held, a fresh list as long as the pages loaded:  a merge would have kept the
 	//record the edit changed, and a plain reload would have dropped the pages Load earlier brought.

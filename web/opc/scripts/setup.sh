@@ -63,6 +63,15 @@ jqEdit angular.json ".projects.\"my-workspace\".architect.build.options.define =
 jqEdit angular.json '.projects."my-workspace".architect.build.configurations.development.fileReplacements = [{"replace":"src/environments/environment.ts","with":"src/environments/environment.development.ts"}]';
 #src/assets (linked above) ships as assets/site - the same shape create-workspace.sh writes for each library's assets dir.
 jqEdit angular.json '.projects."my-workspace".architect.build.options.assets |= ((. // []) | map(select((type=="object" and .input=="src/assets") | not)) + [{"glob":"**/*","input":"src/assets","output":"assets/site","followSymlinks":true}])';
+#Highcharts is an add-on the install never carries (#302 - web/CLAUDE.md, "Add-ons load by URL"):  the history trend imports it
+#by URL from addons/highcharts/esm/ under the site, where a licensed site copies the package's esm folder.  A dev build gets the
+#same from node_modules (the typings' devDependency) under public/, the folder the build copies to the output root;  a release
+#never does, and is checked below.  Nor does a CI run:  a release workflow run by hand builds without --release and uploads the
+#dist as an artifact of a public repo.
+rm -rf public/addons;
+if [ $release = 0 ] && [ -z "$CI" ] && [ -d node_modules/highcharts/esm ]; then
+	mkdir -p public/addons/highcharts && cp -r node_modules/highcharts/esm public/addons/highcharts/ && find public/addons -type f \( ! -name '*.js' -o -name '*.src.js' \) -delete || { echo copying the Highcharts add-on failed; exit 1; };
+fi;
 echo ------------------- Starting Build -------------------;
 #Output hashing: none for a dev build - the dist keeps main.js/styles.css, stable names for whatever points at them and
 #no churn - and `all` for a release (--release: the workflows' tag runs), main-<8 chars>.js, which the hub serves as
@@ -76,3 +85,7 @@ ng build --output-hashing=$hashing --source-map=true || { echo `pwd`; echo ng bu
 #services' notices (build/third-party-notices.sh) next to it.
 dist=dist/my-workspace;
 cp $dist/3rdpartylicenses.txt $JDE_BASH/THIRD-PARTY-NOTICES.txt $dist/browser/ || { echo `pwd`; echo copying the license lists into $dist/browser failed; exit 1; };
+#the "done when" of #302:  no Highcharts in what the installers pack - its files carry the vendor's name in their headers, as
+#the licence list would;  our sources never use it.  On every build, a dev build's own add-on folder aside, so a pull request's
+#CI run finds it rather than a release's tag.
+if grep -rlq --exclude-dir=addons Highsoft $dist/browser; then echo "Highcharts is in the build: $(grep -rl --exclude-dir=addons Highsoft $dist/browser)"; exit 1; fi;
