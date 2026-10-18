@@ -37,14 +37,16 @@ namespace Jde::Tests{
 	};
 	template<class T>
 	struct ThreadedAny final : AnyAwait<T>{
-		ThreadedAny( T v, SRCE )ι:AnyAwait<T>{sl},_v{move(v)}{}
+		ThreadedAny( T v, steady_clock::duration delay=1ms, std::atomic<bool>* done=nullptr, SRCE )ι:AnyAwait<T>{sl},_v{move(v)},_delay{delay},_done{done}{}
 		α Suspend()ι->void override{
 			std::thread{ [this]{
-				std::this_thread::sleep_for( 1ms );	//force a real suspension before the resume.
+				std::this_thread::sleep_for( _delay );	//force a real suspension before the resume.
+				if( _done )
+					*_done = true;
 				this->Resume( move(_v) );
 			} }.detach();
 		}
-		T _v;
+		T _v; steady_clock::duration _delay; std::atomic<bool>* _done;
 	};
 	struct ReadyAny final : AnyAwait<int>{
 		ReadyAny( int v, SRCE )ι:AnyAwait<int>{sl}{ _result = v; }
@@ -252,18 +254,12 @@ namespace Jde::Tests{
 	static_assert( std::is_same_v<decltype(All(std::declval<OldInt>(), std::declval<InlineAny<string>&>(), std::declval<OldVoid>())), AllAwait<OldInt,InlineAny<string>&,OldVoid>> );//rvalues owned, the lvalue referenced.
 	static_assert( std::is_same_v<AllAwait<OldInt,InlineAny<string>&,OldVoid>::TResult, tuple<int,string,std::monostate>> );//a void slot keeps its position.
 
-	//All() slots:  one that fails from its own thread after `delay`;  one that succeeds after `delay` and says so first;  one that cannot
-	//finish until every slot sharing its latch has started.  The latch is shared so the last thread out destroys it, not the test frame.
+	//All() slots:  one that fails from its own thread after `delay`;  one that cannot finish until every slot sharing its latch has started.
+	//The latch is shared so the last thread out destroys it, not the test frame.
 	struct DelayedThrowAny final : AnyVoidAwait{
 		DelayedThrowAny( string what, steady_clock::duration delay, SRCE )ι:AnyVoidAwait{sl},_what{move(what)},_delay{delay}{}
 		α Suspend()ι->void override{ std::thread{ [this]{ std::this_thread::sleep_for( _delay ); ResumeExp( TestException{_what} ); } }.detach(); }
 		string _what; steady_clock::duration _delay;
-	};
-	template<class T>
-	struct DelayedAny final : AnyAwait<T>{
-		DelayedAny( T v, steady_clock::duration delay, std::atomic<bool>* done=nullptr, SRCE )ι:AnyAwait<T>{sl},_v{move(v)},_delay{delay},_done{done}{}
-		α Suspend()ι->void override{ std::thread{ [this]{ std::this_thread::sleep_for( _delay ); if( _done ) *_done = true; this->Resume( move(_v) ); } }.detach(); }
-		T _v; steady_clock::duration _delay; std::atomic<bool>* _done;
 	};
 	struct GatedAny final : AnyAwait<int>{
 		GatedAny( int v, sp<std::latch> started, SRCE )ι:AnyAwait<int>{sl},_v{v},_started{move(started)}{}
@@ -293,7 +289,7 @@ namespace Jde::Tests{
 	Ω allWaitsForTheSlower( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
 		std::atomic<bool> slowDone{};
 		try{
-			co_await All( DelayedThrowAny{"fast boom", 1ms}, DelayedAny<int>{5, 50ms, &slowDone} );
+			co_await All( DelayedThrowAny{"fast boom", 1ms}, ThreadedAny<int>{5, 50ms, &slowDone} );
 			ok = false;
 		}
 		catch( TestException& e ){ ok = slowDone.load() && string{e.what()}.contains("fast boom"); }//resumed only once the slower slot had settled too.
@@ -337,7 +333,7 @@ namespace Jde::Tests{
 	}
 
 	Ω allInline( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
-		auto [i, j, _, __] = co_await All( InlineAny<int>{4}, ReadyAny{5}, InlineVoidAny{}, OldVoid{} );//every slot completes inside its own launch.
+		auto [i, j, _, _] = co_await All( InlineAny<int>{4}, ReadyAny{5}, InlineVoidAny{}, OldVoid{} );//every slot completes inside its own launch.
 		ok = i==4 && j==5;
 		++completed;
 	}
@@ -371,25 +367,32 @@ namespace Jde::Tests{
 		EXPECT_TRUE( ok.load() );
 	}
 
-	//the glue's own ladder, not AnyAdapterExecute's:  raw IAwait slots.
-	Ω allWraps( std::atomic<uint>& completed, std::atomic<bool>& plain, std::atomic<bool>& unknown )->VoidTask{
+	//the glue's own catch, not AnyAdapterExecute's:  raw IAwait slots whose await_resume throws a foreign exception.  A ResumeExp( runtime_error )
+	//can't reach it - IPromise::SetExp has made it an Exception by then.
+	struct OldRawThrower final : VoidAwait{
+		OldRawThrower( SRCE )ι:VoidAwait{sl}{}
+		α Suspend()ι->void override{ Resume(); }
+		α await_resume()ε->void override{ throw std::runtime_error{"raw runtime_error"}; }
+	};
+	Ω allWraps( std::atomic<uint>& completed, std::atomic<bool>& plain, std::atomic<bool>& logic )->VoidTask{
 		try{
-			co_await All( OldPlainThrower{}, InlineAny<int>{1} );
+			co_await All( OldRawThrower{}, InlineAny<int>{1} );
 		}
-		catch( const Exception& e ){ plain = string{e.what()}.contains("plain runtime_error"); }
+		catch( const Exception& e ){ plain = string{e.what()}.contains("raw runtime_error"); }
 		catch( ... ){ plain = false; }
+		OldLogicThrower thrower;
 		try{
-			co_await All( InlineAny<int>{1}, OldLogicThrower{} );
+			co_await All( InlineAny<int>{1}, thrower );
 		}
-		catch( const Exception& e ){ unknown = string{e.what()}.contains("Unknown exception"); }
-		catch( ... ){ unknown = false; }
+		catch( const Exception& e ){ logic = string{e.what()}.contains("a logic_error is not a runtime_error") && e.Source().line()==thrower.Source().line(); }//the failing slot's line, not the first slot's.
+		catch( ... ){ logic = false; }
 		++completed;
 	}
-	TEST_F( AllAwaitTests, WrapsRuntimeErrorAndUnknownFromASlot ){
-		std::atomic<uint> completed{}; std::atomic<bool> plain{}, unknown{};
-		allWraps( completed, plain, unknown );
+	TEST_F( AllAwaitTests, WrapsAForeignExceptionFromASlot ){
+		std::atomic<uint> completed{}; std::atomic<bool> plain{}, logic{};
+		allWraps( completed, plain, logic );
 		ASSERT_TRUE( settle(completed, 1) ) << "a slot's exception stranded the awaiter";
-		EXPECT_TRUE( plain.load() ) << "a runtime_error from a slot must be wrapped, not dropped";
-		EXPECT_TRUE( unknown.load() ) << "and a non-runtime_error must still settle the slot";
+		EXPECT_TRUE( plain.load() ) << "a runtime_error thrown from a slot's await_resume must keep its text";
+		EXPECT_TRUE( logic.load() ) << "and so must a non-runtime_error, with the failing slot's source";
 	}
 }

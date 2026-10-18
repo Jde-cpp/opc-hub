@@ -73,6 +73,8 @@ namespace Jde{
 		optional<TResult> _result;
 	};
 
+	Τ using AwaitResult = decltype( std::declval<std::remove_reference_t<T>&>().await_resume() );//what a co_await of T gives;  T may be a reference.
+	Τ using AwaitValue = std::conditional_t<std::is_void_v<AwaitResult<T>>, std::monostate, AwaitResult<T>>;//storable:  void as std::monostate.
 	template<class R> using AnyAwaitFor = std::conditional_t<std::is_void_v<R>, AnyVoidAwait, AnyAwait<R>>;
 
 	Τ struct AnyAdapter;
@@ -82,9 +84,9 @@ namespace Jde{
 	//the inner's own task type (BlockAwaitExecute reshaped - the thread block replaced by resuming the erased
 	//continuation). T is the inner's value type when Any() is given an rvalue, a reference type when given an
 	//lvalue - the lvalue must outlive the co_await, which it does when it lives in the awaiting frame.
-	Τ struct AnyAdapter final : AnyAwaitFor<decltype(std::declval<std::remove_reference_t<T>&>().await_resume())>{
+	Τ struct AnyAdapter final : AnyAwaitFor<AwaitResult<T>>{
 		using TInner = std::remove_reference_t<T>;
-		using R = decltype(std::declval<TInner&>().await_resume());
+		using R = AwaitResult<T>;
 		using base = AnyAwaitFor<R>;
 		AnyAdapter( T&& inner, SRCE )ι: base{sl}, _inner{ FWD(inner) }{}
 		α Inner()ι->TInner&{ return _inner; }
@@ -112,9 +114,9 @@ namespace Jde{
 		s->Signal();
 	}
 	template<class TAwait>
-	α BlockAny( TAwait&& a )ε->decltype(std::declval<std::remove_reference_t<TAwait>&>().await_resume()){
-		using R = decltype(std::declval<std::remove_reference_t<TAwait>&>().await_resume());
-		using S = std::conditional_t<std::is_void_v<R>, std::monostate, R>;
+	α BlockAny( TAwait&& a )ε->AwaitResult<TAwait>{
+		using R = AwaitResult<TAwait>;
+		using S = AwaitValue<TAwait>;
 		BlockAwaitState<S> s;
 		const auto sl = a.Source();
 		BlockAnyExecute<std::remove_reference_t<TAwait>,S>( a, &s );
