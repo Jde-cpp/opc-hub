@@ -1,5 +1,6 @@
 #include "HistHost.h"
 #include <jde/fwk/settings.h>
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/access/Authorize.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
@@ -173,10 +174,8 @@ namespace Jde::Opc::Gateway{
 
 	α HistHost::Loading( AnyVoidAwait& await )ι->VoidTask{
 		try{
-			auto groups = co_await Any( SelectHistGroups() );
-			auto nodes = co_await Any( SelectHistGroupNodes() );
-			auto members = HistTemplateNodesById( co_await Any(SelectHistTemplateNodes()) );
-			auto connections = co_await Any( ServerCnnctnAwait{nullopt, true} );
+			auto [groups, nodes, memberRows, connections] = co_await All( SelectHistGroups(), SelectHistGroupNodes(), SelectHistTemplateNodes(), ServerCnnctnAwait{nullopt, true} );//at once (#345):  none needs another's rows.
+			auto members = HistTemplateNodesById( move(memberRows) );
 			flat_map<ServerCnnctnPK,string> slugs;
 			for( auto& connection : connections )
 				slugs.emplace( connection.Id, move(connection.Slug) );

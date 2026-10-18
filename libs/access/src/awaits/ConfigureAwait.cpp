@@ -1,6 +1,7 @@
 #include <jde/access/awaits/ConfigureAwait.h>
 
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/co/AllAwait.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/awaits/EventsSubscribeAwait.h>
@@ -23,11 +24,10 @@ namespace Jde::Access{
 					co_return;
 				}
 			}
-			auto identities = co_await Any( IdentityLoadAwait{QlServer, Executer} );
-			ResourceLoadAwait resourceLoad{ QlServer, Schemas, OpcServerInstance, Executer, AllSchemas };
-			auto resources = co_await Any( resourceLoad );
-			auto roles = co_await Any( RoleLoadAwait{QlServer, Executer} );
-			auto acl = co_await Any( AclLoadAwait{QlServer, Executer} );
+			ResourceLoadAwait resourceLoad{ QlServer, Schemas, OpcServerInstance, Executer, AllSchemas };//noncopyable, so All references it;  the other three it owns.
+			//The four at once (#345):  each only reads, none needs another's rows, and the snapshot still swaps once below - on a client they are
+			//round trips to the AppServer, so a startup or reconnect waits for the slowest instead of the sum.
+			auto [identities, resources, roles, acl] = co_await All( IdentityLoadAwait{QlServer, Executer}, resourceLoad, RoleLoadAwait{QlServer, Executer}, AclLoadAwait{QlServer, Executer} );
 			Authorizer->Load( move(identities), move(resources), move(roles), move(acl) );
 			if( !Reload ){//a reload's subscriptions are still live (Replay re-issued them) - it was only ever about the snapshot.
 				vector<string> schemaNames;//empty = every schema:  the await then sends no predicate at all - an empty array would be an In filter matching nothing.

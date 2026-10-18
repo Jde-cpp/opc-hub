@@ -62,8 +62,8 @@ namespace Jde::Access::Tests{
 		reload( authorizer, listener );
 		ASSERT_EQ( authorizer->Rights("access", slug, user), ERights::Read );
 
-		vector<ERights> seen;
-		auto probing = ms<ProbingQL>( QLPtr(), [&]{ seen.push_back( authorizer->Rights("access", slug, user) ); } );
+		vector<ERights> seen; std::mutex seenMutex;//the loaders run at once (#345):  on a dialect that answers off-thread, so does the probe.
+		auto probing = ms<ProbingQL>( QLPtr(), [&]{ let rights = authorizer->Rights( "access", slug, user ); std::lock_guard _{seenMutex}; seen.push_back( rights ); } );
 		BlockVoidAwait( ConfigureAwait{probing, Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
 		EXPECT_GE( seen.size(), 5u ) << "the probe did not see the loaders' queries";
 		EXPECT_TRUE( std::ranges::all_of(seen, [](ERights r){ return r==ERights::Read; }) ) << "a query ran while the authorizer held a half-loaded snapshot";

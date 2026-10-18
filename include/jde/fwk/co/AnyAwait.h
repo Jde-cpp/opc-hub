@@ -10,11 +10,12 @@ namespace Jde{
 	//awaitables whose ::Task is its own return type - mixing types forces the one-coroutine-per-awaitable
 	//hand-off chain. These awaitables carry their own result/exception and hold a type-erased continuation, so
 	//any coroutine can co_await them regardless of its return type; Any() wraps an existing awaitable for the
-	//same purpose. Prefer these for new cross-type awaits instead of adding another chain.
+	//same purpose, and All() (AllAwait.h) awaits several at once. Prefer these for new cross-type awaits instead of adding another chain.
 	//What the void and typed awaitables share: the erased continuation, the error slot, the source location, and every
 	//method that does not touch a result.  Non-template, so one definition serves AnyAwait<T> for every T.
 	struct AnyAwaitBase{
 		AnyAwaitBase( SRCE )ι:_sl{sl}{}
+		AnyAwaitBase( AnyAwaitBase&& )ι=default;//before it suspends only - All() owns its rvalue slots so;  suspended, its continuation holds it and it never moves.  No copy:  the error slot is unique.
 		virtual ~AnyAwaitBase()=default;
 		β await_ready()ι->bool{ return false; }
 		α await_suspend( coroutine_handle<> h )ι->void{ _h=h; Suspend(); }	//any promise's handle converts.
