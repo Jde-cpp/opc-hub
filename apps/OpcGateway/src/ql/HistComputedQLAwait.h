@@ -12,8 +12,9 @@ namespace Jde::Opc::Gateway{
 	//within the call, and answers the points every node has reached, a point's values in the nodes' order, up to `limit`.
 	//It releases every point still held before it answers, as the raw read does.  The continuation is the next point,
 	//by its place among them, and which of its nodes were answered, as a group's is:  the next page is a new HistoryRead
-	//from there, for at most `limit` of the times or intervals left (Stop).  An aggregate Part 13 names goes by its
-	//standard NodeId, and any other by the one the server's AggregateFunctions folder lists under that name
+	//from there, for the times or intervals left that fill `limit` across the nodes, and further points of the nodes the
+	//server answered when those it refused leave the page short (Extend).  An aggregate Part 13 names goes by
+	//its standard NodeId, and any other by the one the server's AggregateFunctions folder lists under that name
 	//(AggregateFunctions).
 	struct HistComputedQLAwait final : TAwaitEx<jvalue,TAwait<HistoryReadResponse>::Task>{
 		using base = TAwaitEx<jvalue,TAwait<HistoryReadResponse>::Task>;
@@ -24,16 +25,17 @@ namespace Jde::Opc::Gateway{
 			string Point;//the continuation point its last page returned.
 			bool More{};//the server has more:  Point is held.
 			bool Had{};//its value at the call's first point came on a page before.
-			bool Skip{};//its next value is the interval before the call's first (Back).
+			bool Skip{};//its next value is the interval before the round's first (Back).
 			vector<HistQL::ReadValue> Values;//received this call, by point from the call's first.
 			StatusCode Status{ UA_STATUSCODE_GOOD };//the server's last answer for it.
 		};
 		//Where the merge stopped short:  the point, by its place among them all, and which of its nodes were answered.
 		struct Cut final{ uint64_t Point; vector<bool> Done; };
 		struct Walked final{ uint Values{}; optional<Cut> At; };
-		//The request for a round:  every node on the first, then those the server has more for that hold the merge back,
-		//with their points, and for a release every node still holding one.
-		α Request( bool first, bool release )ι->HistoryReadRequest;
+		//The request for a round, of the points [_from, _stop):  a fresh one, the first or one Extend makes, names the nodes
+		//Caught, then those the server has more for that hold the merge back, with their points, and for a release every
+		//node still holding one.
+		α Request( bool fresh, bool release )ι->HistoryReadRequest;
 		α Take( uint slot, UA_HistoryReadResult& result )ι->void;//a node's page into its Values.
 		//The merge, from the call's first point:  each point's values in the nodes' order, but those a page before answered,
 		//until the page holds `limit`, a node the server has more for hasn't reached the point, or the request's points are
@@ -41,11 +43,17 @@ namespace Jde::Opc::Gateway{
 		α Walk( vector<HistQL::ReadValue>* page )ι->Walked;
 		α Continuation( const optional<Cut>& cut )Ι->string;//empty on the last page.
 		α First()Ι->uint64_t{ return _args->Continuation ? _args->Continuation->next() : 0; }//the call's first point.
-		//The point after the request's last:  at most `limit` from the call's first, since Part 11's at-time and processed
-		//details have no numValuesPerNode, and every point the server answers is one value a node.
-		α Stop()Ι->uint64_t;
-		//Whether the call asks from the interval before its first:  an aggregate read resuming at its last interval, when
-		//uneven, which the server would take alone as one even interval, not Part 13's Partial uneven last one.
+		//A fresh round's points, after the last round's:  `missing` values over the nodes Caught, rounded up, since Part 11's
+		//at-time and processed details have no numValuesPerNode, and every point the server answers is one value a node.
+		//The first round's fill `limit` from the call's first, where every node is Caught, counting the `had` values its Had
+		//nodes took there on the page before, which this page leaves out.  A later one fills the page once the server has
+		//answered every point asked and a node it refused leaves the page short.  False when no node is Caught.
+		α Extend( uint missing, uint had=0 )ι->bool;
+		//Whether the node answered every point before _from, which a fresh request asks it from there.
+		α Caught( const Node& node )Ι->bool{ return node.Values.size()==_from-First() && !UA_StatusCode_isBad( node.Status ); }
+		//Whether the round asks from the interval before its first:  one of an aggregate read starting at its last interval,
+		//when uneven, as a page resuming there or Extend reaching it does, which the server would take alone as one even
+		//interval, not Part 13's Partial uneven last one.  A fresh request skips that value of each node it names.
 		α Back()Ι->bool;
 
 		sp<UAClient> _client;
@@ -54,5 +62,6 @@ namespace Jde::Opc::Gateway{
 		optional<NodeId> _aggregate;//an aggregate read's function.
 		vector<Node> _nodes;//by Args::Nodes' slot.
 		vector<uint> _asked;//the slots the round's request names, in its order.
+		uint64_t _from{}, _stop{};//the points the round's request asks, by their places among them all.
 	};
 }
