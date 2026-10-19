@@ -88,7 +88,10 @@ suites:
   delegated admin check;
 - `RegistrationTests`: concurrent registrations;
 - `InstanceTagLevelTests`: the log-level push;
-- `LogDataTests`: the connection rows.
+- `LogAccessTests`: the `logs` resource an instance's lines and tag levels answer to;
+- `LogSubscriptionTests`: a `logs` subscription over the socket;
+- `WebSessionTests`: the Sessions tab's queries, local and forwarded to an instance;
+- `ConnectionTests`: the connection rows.
 
 Under ctest it runs on in-memory sqlite:
 

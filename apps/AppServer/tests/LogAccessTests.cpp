@@ -3,6 +3,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/QLAwait.h>
+#include "helpers.h"
 #include "../src/appStartup.h"
 #include "../src/ql/AppServerQL.h"
 #define let const auto
@@ -12,26 +13,7 @@
 namespace Jde::App::Server::Tests{
 	struct LogAccessTests : ::testing::Test{
 		static constexpr sv Schema{ "opc.logAccessTests" };
-		Ω RunQL( string query, jobject vars={}, Jde::UserPK executer=Jde::UserPK{Jde::UserPK::System} )->jvalue{
-			return BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(query), move(vars), executer, Server::QLPtr()} );
-		}
-		Ω Status( function<void()> f )->EHttpStatus{
-			try{
-				f();
-			}
-			catch( const Exception& e ){
-				return e.HttpStatus();
-			}
-			return EHttpStatus::None;
-		}
-		Ω Id( const jvalue& v )->uint{ return Json::AsNumber<uint>( Json::AsObject(v), "id" ); }
-		//Find-or-create throughout:  the default (mysql) run keeps its db, and a second create trips the unique indexes.
-		Ω User( str slug )->Jde::UserPK{
-			auto user = RunQL( "user( slug:$slug, deleted:null ){ id }", {{"slug", slug}} );
-			if( user.is_null() || (user.is_object() && user.get_object().empty()) )
-				user = RunQL( "createUser( slug:$slug, name:$slug ){ id }", {{"slug", slug}} );
-			return Jde::UserPK{ (Jde::UserPK::Type)Id(user) };
-		}
+		//Find-or-create throughout (FindOrCreate):  the default (mysql) run keeps its db, and a second create trips the unique indexes.
 		//Schema/logs, enforced.
 		Ω EnforceLogs()->uint{
 			auto resources = Json::AsArray( RunQL(Ƒ("resources( schemaName:[\"{}\"] ){{ id slug criteria deleted }}", Schema)) );
@@ -70,7 +52,7 @@ namespace Jde::App::Server::Tests{
 	};
 
 	TEST_F( LogAccessTests, TheRegisteredSchemaIsKeptOnTheInstance ){
-		let instance = get<1>( App::AddConnection("Tests.LogAccess", "kept", "logaccess-host", 117, string{Schema}) );
+		let instance = App::AddConnection( "Tests.LogAccess", "kept", "logaccess-host", 117, string{Schema} ).Instance;
 		EXPECT_EQ( App::InstanceLogSchema(instance), Schema );
 		let rows = Server::AppSchema()->DS()->Select( {Ƒ("select resource_schema from {} where instance_id=?", Server::AppSchema()->GetTable("instances").DBName), {DB::Value{instance}}} );
 		ASSERT_EQ( rows.size(), 1u );
@@ -100,7 +82,7 @@ namespace Jde::App::Server::Tests{
 	//#13:  the old GrantRead returned once the role existed, so a reader after the first - or a run that died after createRole -
 	//never got its acl.
 	TEST_F( LogAccessTests, GrantReadCompletesForASecondReader ){
-		let instance = get<1>( App::AddConnection("Tests.LogAccess", "second", "logaccess-host", 120, string{Schema}) );
+		let instance = App::AddConnection( "Tests.LogAccess", "second", "logaccess-host", 120, string{Schema} ).Instance;
 		GrantRead( User("logAccessReader") );
 		let second = User( "logAccessSecondReader" );
 		GrantRead( second );
@@ -112,7 +94,7 @@ namespace Jde::App::Server::Tests{
 	}
 
 	TEST_F( LogAccessTests, AnInstancesLogsGateItsLinesAndTagLevels ){
-		let instance = get<1>( App::AddConnection("Tests.LogAccess", "gated", "logaccess-host", 118, string{Schema}) );
+		let instance = App::AddConnection( "Tests.LogAccess", "gated", "logaccess-host", 118, string{Schema} ).Instance;
 		let nobody = User( "logAccessNobody" );
 		let reader = User( "logAccessReader" );
 		GrantRead( reader );

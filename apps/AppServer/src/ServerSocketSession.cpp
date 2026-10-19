@@ -8,9 +8,8 @@
 #include <jde/app/proto/common.h>
 #include <jde/web/server/Web.FromServer.h>
 #include <jde/access/Authorize.h>
-#include <jde/access/server/accessServer.h>
-#include "LocalClient.h" // !important
-#include "appStartup.h" // !important
+#include "LocalClient.h"
+#include "appStartup.h"
 #include "WebServer.h"
 #define let const auto
 
@@ -23,7 +22,7 @@ namespace Jde::App::Server{
 	α ServerSocketSession::AddInstance( Proto::FromClient::Instance instance, RequestId requestId )ι->TAwait<sp<Web::Server::SessionInfo>>::Task{
 		let _ = shared_from_this();
 		try{
-			auto info = co_await Web::Server::Sessions::UpsertAwait( Ƒ("{:x}", instance.session_id()), _userEndpoint.address().to_string(), true, nullptr );
+			auto info = co_await Adopt( instance.session_id() );
 			SetSessionInfo( info );
 			let claim = Server::ClaimInstance( Id(), instance );//held to the end of this block, past the publish below
 			let schema = App::RegistrationSchema( instance.application(), instance.instance_name(), instance.auth_resource(), UserPK() );
@@ -54,23 +53,20 @@ namespace Jde::App::Server{
 			//Publish the whole registration in one critical section: a _sessions visitor on another thread sees all of it or
 			//none of it.  The pks used to be three plain stores above this lock, so a forward could match on ProgramPK and
 			//read ConnectionPK 0 from before the write (appserver-review3 #14).
-			{ lg _{_registrationMutex}; _pks = Registration{appPK, instancePK, connectionPK}; _instance = move( instance ); }
+			{ lg _{_registrationMutex}; _pks = {appPK, instancePK, connectionPK}; _instance = move( instance ); }
 			Write( FromServer::ConnectionInfo(appPK, instancePK, connectionPK, requestId, AppClient()->PublicKey(), Web::Server::ToProto(*info), authResult) );
 		}
 		catch( runtime_error& e ){
-			WriteException( move(e), requestId );
-			NoteFailedAdoption();
+			WriteFailedAdoption( move(e), requestId );
 		}
 	}
-	α ServerSocketSession::AddSession( Proto::FromClient::AddSession m, RequestId requestId, SL /*sl*/ )ι->TAwait<Jde::UserPK>::Task{
+	α ServerSocketSession::AddSession( Proto::FromClient::AddSession m, RequestId requestId, SL sl )ι->AddSessionAwait::Task{
 		let _ = shared_from_this();
 		try{
 			LogRead( Ƒ("AddSession user: '{}', endpoint: '{}', provider: {}, is_socket: {}", m.domain()+"/"+m.login_name(), m.user_endpoint(), m.provider_pk(), m.is_socket()), requestId );
-			let userPK = co_await Access::Server::Authenticate( m.login_name(), m.provider_pk(), m.domain() );
-
-			auto info = Web::Server::Sessions::Add( userPK, move(*m.mutable_user_endpoint()), m.is_socket(), UserPK() );//this socket's account may end what it began (SessionGraphQL::Purge).
-			LogWrite( Ƒ("AddSession id: {:x}", info->SessionId), requestId );
-			Write( FromServer::Session(Web::Server::ToProto(*info), requestId) );
+			auto info = co_await AddSessionAwait{ move(*m.mutable_domain()), move(*m.mutable_login_name()), m.provider_pk(), move(*m.mutable_user_endpoint()), m.is_socket(), UserPK(), sl };
+			LogWrite( Ƒ("AddSession id: {:x}", info.session_id()), requestId );
+			Write( FromServer::Session(move(info), requestId) );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -155,16 +151,18 @@ namespace Jde::App::Server{
 		let _ = shared_from_this();
 		try{
 			LogRead( Ƒ("SetSessionId={:x}", sessionId), requestId );
-			auto info = co_await Web::Server::Sessions::UpsertAwait( Ƒ("{:x}", sessionId), _userEndpoint.address().to_string(), true, nullptr );
-			SetSessionInfo( move(info) );
+			SetSessionInfo( co_await Adopt(sessionId) );
 			Write( FromServer::Complete(requestId) );
 		}
 		catch( runtime_error& e ){
-			WriteException( move(e), requestId );
-			NoteFailedAdoption();
+			WriteFailedAdoption( move(e), requestId );
 		}
 	}
-	α ServerSocketSession::NoteFailedAdoption()ι->void{
+	α ServerSocketSession::Adopt( SessionPK sessionId, SL sl )ι->Web::Server::Sessions::UpsertAwait{
+		return Web::Server::Sessions::UpsertAwait{ Ƒ("{:x}", sessionId), _userEndpoint.address().to_string(), true, nullptr, true, sl };
+	}
+	α ServerSocketSession::WriteFailedAdoption( runtime_error&& e, RequestId requestId )ι->void{
+		WriteException( move(e), requestId );
 		if( Session() || ++_failedAdoptions<_maxFailedAdoptions )//an authenticated socket, or still under the limit - a legitimate client adopts once, so only unauthenticated guessing accumulates.
 			return;
 		WARNT( ELogTags::SocketServerRead, "[{}]Closing socket after {} failed session-id adoptions.", hex(Id()), _failedAdoptions );
@@ -197,9 +195,6 @@ namespace Jde::App::Server{
 			else
 				ResumeExp( Exception{Source(), {}, "User {:x} is not admin for resource '{}' with criteria '{}'.", _userPK.Value, _resource, _criteria} );
 		}
-		catch( Exception& e ){
-			ResumeExp( move(e) );
-		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
@@ -221,7 +216,7 @@ namespace Jde::App::Server{
 			let info = Web::Server::Sessions::Find( SessionId() );
 			THROW_IF( !info, "Session not found." );
 			let expiration = Chrono::ToClock<Clock,steady_clock>( info->Expiration );
-			Write( FromServer::Jwt(Server::GetJwt(UserPK(), string{user.at("name").as_string()}, string{user.at("slug").as_string()}, _userEndpoint.address().to_string(), SessionId(), expiration, {}), requestId) );
+			Write( FromServer::Jwt(MintJwt(UserPK(), string{user.at("name").as_string()}, string{user.at("slug").as_string()}, _userEndpoint.address().to_string(), SessionId(), expiration, {}), requestId) );
 		}
 		catch( runtime_error& e ){
 			WriteException( move(e), requestId );
@@ -242,6 +237,7 @@ namespace Jde::App::Server{
 		}
 	}
 
+	Ω parseVariables( string&& variables )ε->jobject{ return variables.empty() ? jobject{} : Json::Parse( move(variables) ); }
 	α ServerSocketSession::ProcessTransmission( Proto::FromClient::Transmission&& transmission, optional<Jde::UserPK> userPK, optional<RequestId> clientRequestId, uint8 depth )ι->void{
 		uint cLog{};
 		if( transmission.messages_size()==0 )
@@ -251,108 +247,94 @@ namespace Jde::App::Server{
 			auto& m = *transmission.mutable_messages( i );
 			using enum Proto::FromClient::Message::ValueCase;
 			let requestId = clientRequestId.value_or( m.request_id() );
-			switch( m.value_case() ){
-			[[unlikely]]case kInstance:
-				AddInstance( move(*m.mutable_instance()), requestId );
+			try{
+				switch( m.value_case() ){
+				[[unlikely]]case kInstance:
+					AddInstance( move(*m.mutable_instance()), requestId );
+					break;
+				[[likely]] case kAddSession:{
+					AddSession( move(*m.mutable_add_session()), requestId, SRCE_CUR );
+					break;}
+				case kException:
+					if( !requestId ){
+						DBGT( ELogTags::SocketServerRead | ELogTags::Exception, "[{:x}.{:x}]Exception - {}", Id(), 0, m.exception().what() );
+					}else{
+						auto e = ProtoUtils::ToException( move(*m.mutable_exception()) );//keeps status/category - Exception{what} dropped them.
+						auto what = e->What();
+						//Both routers key on an id this session was given, and both draw from its NextRequestId counter, so an id can
+						//only be pending in one of them (finding #12).  QueryClient first: its map is this session's own.
+						if( !ResumeQueryException(requestId, move(*e)) && !ForwardExecutionAwait::ResumeExp(move(*e), requestId, ConnectionPK()) )
+							LogRead( Ƒ("Exception not handled - {}", what), requestId, ELogLevel::Critical );
+					}
+					break;
+				case kExecute:
+				case kExecuteAnonymous:{
+					bool isAnonymous = m.value_case()==kExecuteAnonymous;
+					auto bytes = isAnonymous ? move( *m.mutable_execute_anonymous() ) : move( *m.mutable_execute()->mutable_transmission() );
+					optional<Jde::UserPK> executor = m.value_case()==kExecuteAnonymous ? nullopt : optional<Jde::UserPK>( {m.execute().user_pk()} );
+					LogRead( Ƒ("Execute{} size: {:10L}", isAnonymous ? "Anonymous" : "", bytes.size()), requestId );
+					Execute( move(bytes), executor, requestId, uint8(depth+1) );
+					break;}
+				case kExecuteResponse:
+					if( !ForwardExecutionAwait::Resume(move(*m.mutable_execute_response()), requestId, ConnectionPK()) )
+						LogRead( Ƒ("ExecuteResponse requestId:{} not found.", requestId), requestId, ELogLevel::Critical );
+					break;
+				case kForwardExecution:
+				case kForwardExecutionAnonymous:{
+					let anonymous = m.value_case()==kForwardExecutionAnonymous;
+					auto forward = anonymous ? m.mutable_forward_execution_anonymous() : m.mutable_forward_execution();
+					ForwardExecution( move(*forward), anonymous, requestId );
+					break;}
+				case kJwt:
+					Login( move(*m.mutable_jwt()), requestId );
+					break;
+				[[likely]]case kQuery:{
+					auto& query = *m.mutable_query();
+					GraphQL( move(*query.mutable_text()), parseVariables(move(*query.mutable_variables())), query.return_raw(), requestId, userPK );
+					break;}
+				case kQueryResult:
+					QueryClientResults( move(*m.mutable_query_result()), requestId );
+					break;
+				[[likely]]case kLogEntry:
+					++cLog;
+					SaveLogEntry( move(*m.mutable_log_entry()), requestId );
+					break;
+				case kRequestType:
+					if( m.request_type()==Proto::FromClient::ERequestType::Jwt )
+						GetJwt( requestId );
+					else
+						WriteException( Exception{"RequestType: '{}' not implemented.", (uint32)m.request_type()}, requestId );
+					break;
+				case kSessionId:
+					if( !m.session_id() )
+						WriteException( Exception{"SessionId not set."}, requestId );
+					else
+						SetSessionId( m.session_id(), requestId );
 				break;
-			[[likely]] case kAddSession:{
-				AddSession( move(*m.mutable_add_session()), requestId, SRCE_CUR );
-				break;}
-			case kException:
-				if( !requestId ){
-					DBGT( ELogTags::SocketServerRead | ELogTags::Exception, "[{:x}.{:x}]Exception - {}", Id(), 0, m.exception().what() );
-				}else{
-					auto e = ProtoUtils::ToException( move(*m.mutable_exception()) );//keeps status/category - Exception{what} dropped them.
-					auto what = e->What();
-					//Both routers key on an id this session was given, and both draw from its NextRequestId counter, so an id can
-					//only be pending in one of them (finding #12).  QueryClient first: its map is this session's own.
-					if( !ResumeQueryException(requestId, move(*e)) && !ForwardExecutionAwait::ResumeExp(move(*e), requestId, ConnectionPK()) )
-						LogRead( Ƒ("Exception not handled - {}", what), requestId, ELogLevel::Critical );
-				}
-				break;
-			case kExecute:
-			case kExecuteAnonymous:{
-				bool isAnonymous = m.value_case()==kExecuteAnonymous;
-				auto bytes = isAnonymous ? move( *m.mutable_execute_anonymous() ) : move( *m.mutable_execute()->mutable_transmission() );
-				optional<Jde::UserPK> executor = m.value_case()==kExecuteAnonymous ? nullopt : optional<Jde::UserPK>( {m.execute().user_pk()} );
-				LogRead( Ƒ("Execute{} size: {:10L}", isAnonymous ? "Anonymous" : "", bytes.size()), requestId );
-				Execute( move(bytes), executor, requestId, uint8(depth+1) );
-				break;}
-			case kExecuteResponse:
-				if( !ForwardExecutionAwait::Resume(move(*m.mutable_execute_response()), requestId, ConnectionPK()) )
-					LogRead( Ƒ("ExecuteResponse requestId:{} not found.", requestId), requestId, ELogLevel::Critical );
-				break;
-			case kForwardExecution:
-			case kForwardExecutionAnonymous:{
-				let anonymous = m.value_case()==kForwardExecutionAnonymous;
-				auto forward = anonymous ? m.mutable_forward_execution_anonymous() : m.mutable_forward_execution();
-				ForwardExecution( move(*forward), anonymous, requestId );
-				break;}
-			case kJwt:
-				Login( move(*m.mutable_jwt()), requestId );
-				break;
-			[[likely]]case kQuery:{
-				auto& query = *m.mutable_query();
-				auto& variableString = *query.mutable_variables();
-				try{
-					jobject variables = variableString.empty() ? jobject{} : Json::Parse( variableString );
-					GraphQL( move(*query.mutable_text()), move(variables), query.return_raw(), requestId, userPK );
-				}
-				catch( runtime_error& e ){
-					WriteException( move(e), requestId );
-				}
-				break;}
-			case kQueryResult:
-				QueryClientResults( move(*m.mutable_query_result()), requestId );
-				break;
-			[[likely]]case kLogEntry:
-				++cLog;
-				SaveLogEntry( move(*m.mutable_log_entry()), requestId );
-				break;
-			case kRequestType:
-				if( m.request_type()==Proto::FromClient::ERequestType::Jwt )
-					GetJwt( requestId );
-				else
-					WriteException( Exception{"RequestType: '{}' not implemented.", (uint32)m.request_type()}, requestId );
-				break;
-			case kSessionId:
-				if( !m.session_id() )
-					WriteException( Exception{"SessionId not set."}, requestId );
-				else
-					SetSessionId( m.session_id(), requestId );
-			break;
-			case kSessionInfo:
-				SessionInfo( m.session_info(), requestId );
-				break;
-/*			[[likely]]case kStatus:{
-				auto& status = *m.mutable_status();
-				//:10L
-				LogRead( "Status", requestId );
-				let pks = Pks(); Server::BroadcastStatus( pks.Program, pks.Instance, Instance().host(), move(status) );
-				break;}*/
-			case kSubscription:{
-				auto& s = *m.mutable_subscription();
-				auto& ql = *s.mutable_text();
-				auto& variablesString = *s.mutable_variables();
-				try{
-					auto vars = variablesString.empty() ? jobject{} : Json::Parse( move(variablesString) );
+				case kSessionInfo:
+					SessionInfo( m.session_info(), requestId );
+					break;
+				case kSubscription:{
+					auto& s = *m.mutable_subscription();
+					auto& ql = *s.mutable_text();
+					auto vars = parseVariables( move(*s.mutable_variables()) );
 					LogRead( Ƒ("Subscription - {}", ql.substr(0, Web::MaxLogLength())), requestId, ELogLevel::Trace, ELogTags::SocketClientReadSub );
 					THROW_IF( !userPK, "A subscription requires an authenticated session." );
 					Write( FromServer::SubscriptionAck(AddSubscription(move(ql), move(vars), requestId, *userPK), requestId) );
+					break;}
+				case kUnsubscription:{
+					auto& v = *m.mutable_unsubscription();
+					LogRead( Ƒ("Unsubscription - {}", v.request_ids().size()), requestId );
+					vector<QL::SubscriptionId> subIds;
+					for_each( v.request_ids(), [&](auto id){subIds.emplace_back(id);} );
+					RemoveSubscription( move(subIds), requestId );
+					break;}
+				default:
+					LogRead( Ƒ("Unknown message type '{}'", underlying(m.value_case())), requestId, ELogLevel::Critical );
 				}
-				catch( runtime_error& e ){
-					WriteException( move(e), requestId );
-				}
-				break;}
-			case kUnsubscription:{
-				auto& v = *m.mutable_unsubscription();
-				LogRead( Ƒ("Unsubscription - {}", v.request_ids().size()), requestId );
-				vector<QL::SubscriptionId> subIds;
-				for_each( v.request_ids(), [&](auto id){subIds.emplace_back(id);} );
-				RemoveSubscription( move(subIds), requestId );
-				break;}
-			default:
-				LogRead( Ƒ("Unknown message type '{}'", underlying(m.value_case())), requestId, ELogLevel::Critical );
+			}
+			catch( runtime_error& e ){
+				WriteException( move(e), requestId );
 			}
 		}
 		if( cLog )

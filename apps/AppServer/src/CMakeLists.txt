@@ -10,7 +10,7 @@ compileOptions( ${targetName} )
 file(GLOB sources CONFIGURE_DEPENDS *.cpp */*.cpp )
 get_filename_component( main_cpp ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ABSOLUTE )
 list( REMOVE_ITEM sources ${main_cpp} )
-file( GLOB headers CONFIGURE_DEPENDS */*.h )
+file( GLOB headers CONFIGURE_DEPENDS *.h */*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
 add_dependencies( ${targetName} Jde.DB.MySql ) #built on every platform; odbc only exists on windows.
@@ -21,7 +21,6 @@ sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer ) #config/args/sql
 
 target_link_libraries( ${targetName} Jde.Access Jde.Web.Server Jde.App.Shared )
 
-message( CMAKE_CURRENT_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR} )
 target_precompile_headers( ${targetName} PRIVATE
 	<jde/fwk.h>
 	<jde/fwk/io/protobuf.h>

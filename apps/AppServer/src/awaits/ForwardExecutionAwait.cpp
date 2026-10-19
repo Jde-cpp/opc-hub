@@ -49,7 +49,7 @@ namespace Jde::App::Server{
 		target->Write( move(msg) );
 	}
 
-	α ForwardExecutionAwait::OnCloseConnection( uint32 requesterId, ConnectionPK targetConnectionPK )ι->void{
+	α ForwardExecutionAwait::OnCloseConnection( Web::Server::SocketId requesterId, ConnectionPK targetConnectionPK )ι->void{
 		_forwardExecutionMessages.erase_if( [=](auto&& kv){
 			let requesterDied = kv.second.RequestSocketSession->Id()==requesterId;//match the requester by its unique socket id, not ConnectionPK - that is 0 for every unregistered web client, so one disconnect would cancel them all.
 			let targetDied = targetConnectionPK && kv.second.TargetConnectionPK==targetConnectionPK;//the instance we forwarded to is gone; its reply will never arrive, so fail the forward instead of leaking it (there is no timeout on this path).

@@ -8,12 +8,7 @@ namespace Jde::App::Server::Tests{
 		constexpr sv marker{ "LogSubscriptionTests delivery marker" };
 		auto client = Connect();
 		RegisterInstance( *client, "Tests.LogSubscription", "subscriber", "logsub-host", 0 );//adopts a session - a subscription needs one.
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		let requestId = client->NextRequestId();
-		m.set_request_id( requestId );
-		m.mutable_subscription()->set_text( Ƒ(R"(subscription LogCreated{{ logCreated(level:"Information", text:"{}"){{ id }} }})", marker) );
-		client->Write( move(t) );
+		let requestId = Send( *client, [&](auto& m){ m.mutable_subscription()->set_text( Ƒ(R"(subscription LogCreated{{ logCreated(level:"Information", text:"{}"){{ id }} }})", marker) ); } );
 		let ack = client->WaitFor( [=](const FromServerMessage& r){ return r.request_id()==requestId && (r.value_case()==FromServerMessage::kSubscriptionAck || r.value_case()==FromServerMessage::kException); } );
 		ASSERT_TRUE( ack );
 		ASSERT_EQ( ack->value_case(), FromServerMessage::kSubscriptionAck ) << ack->exception().what();

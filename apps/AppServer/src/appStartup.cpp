@@ -44,13 +44,13 @@ namespace Jde{
 		ds().ExecuteSync( {Ƒ("update {} set deleted={} where deleted is null", connectionTableName(), ds().Syntax().UtcNow())} );
 	}
 
-	α App::AddConnection( str appName, str instanceName, str hostName, uint pid, str resourceSchema, bool reloadHosts )ε->tuple<ProgramPK, ProgInstPK, ConnectionPK>{
+	α App::AddConnection( str appName, str instanceName, str hostName, uint pid, str resourceSchema, bool reloadHosts )ε->ConnectionPks{
 		ProgramPK appId{};
 		ProgInstPK appInstanceId{};
 		ConnectionPK appConnectionId{};
 		let rows = ds().Select( {
 			Ƒ( "{}(?,?,?,?,?)", _appSchema->GetTable("connections").InsertProcName() ),
-			{ DB::Value{appName}, {instanceName}, DB::Value{hostName}, DB::Value{pid}, resourceSchema.size() ? DB::Value{resourceSchema} : DB::Value{} },
+			{ {appName}, {instanceName}, {hostName}, {pid}, resourceSchema.size() ? DB::Value{resourceSchema} : DB::Value{} },
 			true} );
 		for( auto&& row : rows ){
 			appId = row.Get<uint32_t>( 0 );
@@ -76,7 +76,7 @@ namespace Jde{
 		//(emulator-review W1 - the threads:2 case db-review3 #1 predicted).
 		if( reloadHosts )
 			QL::LoadEnum( _appSchema->GetTable("hosts") );
-		return make_tuple( appId, appInstanceId, appConnectionId );
+		return { appId, appInstanceId, appConnectionId };
 	}
 	α App::RegistrationSchema( str appName, str instanceName, str claimed, UserPK registrant )ε->string{
 		let rows = ds().Select( {Ƒ("select i.resource_schema from {} i join {} p on p.program_id=i.program_id where p.name=? and i.name=?", _appSchema->GetTable("instances").SqlName(), _appSchema->GetTable("programs").SqlName()), {DB::Value{appName}, DB::Value{instanceName}}} );
@@ -214,12 +214,12 @@ namespace Jde::App::Server{
 		Web::Server::IRequestHandler::WebServerSettings listener{ webServerSettings };
 		Web::Server::ThrowIfPortTaken( listener.Address(), listener.Port() );
 		configureDS( options );
-		str instanceName{ Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") };
+		let instanceName{ Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") };
 		let pks = AddConnection( Process::AppName(), instanceName, Process::HostName(), Process::ProcessId() );
-		Logging::Add<Web::Server::SubscribeLog>( "subscribe", get<0>(pks), get<1>(pks), logGate(get<1>(pks)) );
+		Logging::Add<Web::Server::SubscribeLog>( "subscribe", pks.Program, pks.Instance, logGate(pks.Instance) );
 		SetAppPKs( pks );
 
-		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting", "session", "sessions"} );//session(s):  SessionGraphQL (AppQLAwait) and InstanceSessionsAwait, over no view.
+		QL::SetSystemTables( {"adminCheck", "apps", "connections", "logSetting", "session", "sessions"} );//session(s):  SessionGraphQL (Server::CustomQuery) and InstanceSessionsAwait, over no view.
 		auto appClient = AppClient();
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );//the listener used to create the key as a side effect, which is why SetPublicKey had to wait for it.

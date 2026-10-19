@@ -5,14 +5,17 @@
 #include <jde/app/usings.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
-#include "../ServerSocketSession.h"
-#include "../WebServer.h"
 #include "jde/fwk/log/break.h"
 #include "QueryInstanceAwait.h"
 
 
 #define let const auto
 namespace Jde::App::Server{
+	constexpr array<sv,3> _sinks{ "text", "binary", "appServer" };//instance_tag_levels.type - and the query's columns and the mutation's arguments.
+	//tag 0 is spelled "default" by the mutation, the logSetting query and the ui catalogue; ToValue spells it "none".
+	Ω tagName( ELogTags tag )ι->jvalue{ return tag==ELogTags::None ? jvalue(jstring{"default"}) : ToValue(tag); }
+	Ω tagValue( sv tag )ι->DB::Value{ return tag=="default" ? DB::Value{0} : DB::Value{ underlying(ToLogTags(tag)) }; }
+
 	//The instance's logs resource - Read to see its levels, Update to change them.  Open to anyone while it is unenforced;
 	//an enforced one answers an anonymous caller 401.
 	Ω testLogs( ProgInstPK instanceId, Access::ERights rights, UserPK executer, SL sl )ε->void{
@@ -37,39 +40,28 @@ namespace Jde::App::Server{
 			};
 			auto rows = co_await schema->DS()->SelectAsync( move(sql), _sl );
 
-			auto text = _query.FindColumn("text") ? jobject{} : optional<jobject>{};
-			auto binary = _query.FindColumn("binary") ? jobject{} : optional<jobject>{};
-			auto appServer = _query.FindColumn("appServer") ? jobject{} : optional<jobject>{};
-			auto add = []( optional<jobject>& group, ELogTags tag, ELogLevel level ){
-				if( !group )
-					return;
-				auto& tags = (*group)[ ToString(level) ];
+			flat_map<sv,jobject> groups;//the sinks asked for
+			for( let sink : _sinks ){
+				if( _query.FindColumn(sink) )
+					groups.emplace( sink, jobject{} );
+			}
+			for( auto&& row : rows ){
+				let group = groups.find( row.GetString(0) );
+				if( group==groups.end() )
+					continue;
+				auto& tags = group->second[ ToString((ELogLevel)row.Get<uint8>(2)) ];
 				if( !tags.is_array() )
 					tags.emplace_array();
-				//tag 0 is spelled "default" by the mutation, the logSetting query and the ui catalogue; ToValue spells it "none".
-				tags.get_array().push_back( tag==ELogTags::None ? jvalue(jstring{"default"}) : ToValue(tag) );
-			};
-			for( auto&& row : rows ){
-				let type = row.GetString( 0 );
-				let tag = (ELogTags)row.Get<uint>( 1 );
-				let level = (ELogLevel)row.Get<uint8>( 2 );
-				if( type=="text" )
-					add( text, tag, level );
-				else if( type=="binary" )
-					add( binary, tag, level );
-				else if( type=="appServer" )
-					add( appServer, tag, level );
+				tags.get_array().push_back( tagName((ELogTags)row.Get<uint>(1)) );
 			}
 			jobject y;
-			if( text )
-				y["text"] = move(*text);
-			if( binary )
-				y["binary"] = move(*binary);
-			if( appServer )
-				y["appServer"] = move(*appServer);
+			for( let sink : _sinks ){
+				if( let group = groups.find(sink); group!=groups.end() )
+					y[sink] = move( group->second );
+			}
 			if( _query.FindColumn("running") ){
 				QL::TableQL ql{ "logSetting", {}, ms<jobject>(), {}, true, _sl };
-				for( let sink : {"text", "binary", "appServer"} ){//the sinks asked for here, from the instance.
+				for( let sink : _sinks ){//the sinks asked for here, from the instance.
 					if( _query.FindColumn(sink) )
 						ql.Columns.push_back( QL::ColumnQL{string{sink}, nullptr} );//not AddColumn: that resolves against a db table, and logSetting has none.
 				}
@@ -97,13 +89,7 @@ namespace Jde::App::Server{
 		try{
 			args["persist"] = false;
 			QL::TableQL ql{ "updateLogSetting", move(args), ms<jobject>(), {}, true, sl };
-			if( instanceId==AppClient()->InstancePK() ) //our own levels: there is no socket back to this process.
-				co_await *AppClient()->Query<jvalue>( ql.ToString(), {}, true, sl );
-			else if( auto session = FindInstance(instanceId); session ){
-				IWebsocketSession& base = *session;//ServerSocketSession's own QueryClient override hides the awaitable-returning overloads.
-				co_await base.QueryClient( move(ql), executer, sl );
-			}
-			else
+			if( !co_await QueryInstanceAwait{instanceId, move(ql), executer, sl} )
 				TRACET( ELogTags::Settings, "[{}]Instance is not connected - the levels take effect when it next starts.", instanceId );
 		}
 		catch( runtime_error& e ){
@@ -114,7 +100,7 @@ namespace Jde::App::Server{
 	//updateInstanceTagLevel( id:42, text:[{tags:["settings"],level:"Warning"},{tags:["crypto"],level:null}], binary:[...] )
 	//A record per override rather than tag→level: a combined tag is only spellable as an array, and an array is no object
 	//key - the same reason the query answers grouped by level.  `level:null` (or no level at all) deletes the row.
-	α InstanceTagLevelMAwait::Update()ι->TAwait<uint32>::Task{
+	α InstanceTagLevelMAwait::Execute()ι->TAwait<uint32>::Task{
 		try{
 			auto vars = _mutation.ExtrapolateVariables();
 			let instanceId = vars.at("id").to_number<ProgInstPK>();
@@ -123,19 +109,17 @@ namespace Jde::App::Server{
 			auto schema = AppSchema();
 			let& table = schema->GetView( "instance_tag_levels" );
 			auto sql = [&,instanceId]( str type, sv tag, jvalue level )->DB::Sql {
-				DB::Value dbTag = tag=="default" ? DB::Value{0} : DB::Value{ underlying(ToLogTags(tag)) };
 				if( level.is_null() )
-					return { Ƒ("delete from {} where instance_id=? and type=? and tag=?", table.DBName), {{instanceId}, {type}, dbTag} };
+					return { Ƒ("delete from {} where instance_id=? and type=? and tag=?", table.DBName), {{instanceId}, {type}, tagValue(tag)} };
 				return {
 					Ƒ("{}(?,?,?,?)", table.UpsertProcName()),
-					{ {instanceId}, {type}, dbTag, {underlying(ToLogLevel(level.as_string()))} },
+					{ {instanceId}, {type}, tagValue(tag), {underlying(ToLogLevel(level.as_string()))} },
 					true
 				};
 			};
 			uint rowCount{};
 			jobject runtime;//what pushRuntime hands the instance: the persisted tags only.
-			constexpr array<sv,3> types{ "text", "binary", "appServer" };
-			for( let type : types ){
+			for( let type : _sinks ){
 				let values = vars.if_contains( type );
 				if( !values )
 					continue;

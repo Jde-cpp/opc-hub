@@ -8,16 +8,7 @@
 
 namespace Jde::Opc::Hub{
 	α HttpRequestAwait::await_ready()ι->bool{
-		if( _request.Method()==http::verb::get ){
-			if( _request.Target()=="/GoogleAuthClientId" ){
-				_request.LogRead();
-				_readyResult = mu<jvalue>( App::Server::Routes::GoogleAuthClientId() );
-			}
-			else if( _request.Target()=="/opcGateways" || _request.Target()=="/opcServers" ){
-				_request.LogRead();
-				_readyResult = mu<jvalue>( App::Server::Routes::Instances(_request.Target()=="/opcServers", _request.UserPK()!=Jde::UserPK{}) );
-			}
-		}
+		_readyResult = App::Server::Routes::Ready( _request );
 		return _readyResult!=nullptr || base::await_ready();
 	}
 	α HttpRequestAwait::HasOpcBody()ι->bool{
@@ -64,7 +55,7 @@ namespace Jde::Opc::Hub{
 	α HttpRequestAwait::Suspend()ι->void{
 		if( _request.IsPost("/login") ){
 			if( _request.Header("Authorization").starts_with("Bearer ") )
-				App::Server::Routes::LoginJwt( _request, _h );
+				App::Server::Routes::LoginJwt( move(_request), _h );
 			else if( HasOpcBody() )
 				Login( _request.UserEndpoint.address().to_string() );
 			else

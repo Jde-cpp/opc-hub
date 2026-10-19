@@ -2,7 +2,6 @@
 #include <jde/fwk/process/execution.h>
 #include "LocalClient.h"
 #include "WebServer.h"
-#include "ql/AppQLAwait.h"
 #include "types/rest/json.h"
 #define let const auto
 
@@ -13,17 +12,28 @@ namespace Jde::App::Server{
 
 	α ValueJson( string&& value )ι->jvalue{ return jobject{{"value", move(value)}}; }//build directly so quotes/backslashes are escaped (Ƒ+Parse threw on unescaped input).
 
-	α Routes::GoogleAuthClientId()ι->jvalue{
+	Ω googleAuthClientId()ι->jvalue{
 		return ValueJson( Settings::FindString("/http/clientSettings/googleAuthClientId").value_or("GoogleAuthClientId Not Configured.") );//same pointer SettingQLAwait serves the ql `setting(target:"googleAuthClientId")` from - the old "GoogleAuthClientId" was both unrooted and a key no config defines, so this endpoint always answered "Not Configured".
 	}
-	α Routes::Instances( bool opcServers, bool identified )ι->jvalue{
+	Ω instances( bool opcServers, bool identified )ι->jvalue{//what discovery needs anonymously, the rest to a caller with a user.
 		let apps = Server::FindApplications( opcServers ? "Jde.OpcServer" : "Jde.OpcGateway" );
 		jarray japps;
 		for( auto& app : apps )
 			japps.push_back( identified ? ToJson(app) : ToDiscoveryJson(app) );
 		return jobject{ {"servers", japps} };
 	}
-	α Routes::LoginJwt( HttpRequest& req, IHttpRequestAwait::Handle h )ι->void{
+	α Routes::Ready( HttpRequest& req )ι->up<jvalue>{
+		if( req.IsGet("/GoogleAuthClientId") ){
+			req.LogRead();
+			return mu<jvalue>( googleAuthClientId() );
+		}
+		if( req.IsGet("/opcGateways") || req.IsGet("/opcServers") ){
+			req.LogRead();
+			return mu<jvalue>( instances(req.Target()=="/opcServers", req.UserPK()!=Jde::UserPK{}) );//every http caller is minted a session; only a logged-in one has a user.
+		}
+		return {};
+	}
+	α Routes::LoginJwt( HttpRequest&& req, IHttpRequestAwait::Handle h )ι->void{
 		try{
 			req.LogRead();
 			let authorization = req.Header( "Authorization" );
@@ -51,29 +61,15 @@ namespace Jde::App::Server{
 	}
 
 	α HttpRequestAwait::await_ready()ι->bool{
-		if( _request.Method() == http::verb::get ){
-			if( _request.Target()=="/GoogleAuthClientId" ){
-				_request.LogRead();
-				_readyResult = mu<jvalue>( Routes::GoogleAuthClientId() );
-			}
-			else if( _request.Target()=="/opcGateways" || _request.Target()=="/opcServers" ){
-				_request.LogRead();
-				_readyResult = mu<jvalue>( Routes::Instances(_request.Target()=="/opcServers", _request.UserPK()!=Jde::UserPK{}) );//every http caller is minted a session; only a logged-in one has a user.
-			}
-		}
+		_readyResult = Routes::Ready( _request );
 		return _readyResult!=nullptr;
 	}
 	α HttpRequestAwait::Suspend()ι->void{
-		bool processed{ _request.Method() == http::verb::post };
-		if( _request.Method() == http::verb::post ){
-			if( _request.Target()=="/login" )
-				Routes::LoginJwt( _request, _h );
-			else if( _request.Target()=="/logout" )
-				Routes::Logout( move(_request), _h );
-			else
-				processed = false;
-		}
-		if( !processed ){
+		if( _request.IsPost("/login") )
+			Routes::LoginJwt( move(_request), _h );
+		else if( _request.IsPost("/logout") )
+			Routes::Logout( move(_request), _h );
+		else{
 			_request.LogRead();
 			auto target = _request.Target();
 			ResumeExp( RestException{EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown target '{}'", move(target)} );

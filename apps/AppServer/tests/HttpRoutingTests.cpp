@@ -173,7 +173,7 @@ namespace Jde::App::Server::Tests{
 		constexpr sv slug{ "ghsa-g354-http" };
 		let body = serialize( jobject{{"query", Ƒ("mutation createIdentity( name:\"{0}\", slug:\"{0}\" ){{ id }}", slug)}} );
 		EXPECT_EQ( FailureStatus([&]{ Post("/graphql", body); }), http::status::unauthorized );
-		let rows = BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{Ƒ("identities( slug:\"{}\" ){{ id }}", slug), {}, Jde::UserPK{Jde::UserPK::System}, Server::QLPtr()} );
+		let rows = RunQL( Ƒ("identities( slug:\"{}\" ){{ id }}", slug) );
 		EXPECT_TRUE( rows.is_array() && rows.get_array().empty() ) << "the identity was created anyway: " << serialize( rows );
 	}
 }

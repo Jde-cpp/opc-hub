@@ -6,25 +6,14 @@
 #define let const auto
 
 namespace Jde::App::Server{
-	struct StartAwait : TAwait<jvalue>{
-		StartAwait( QL::MutationQL /*mutation*/, UserPK, SL sl )ι:
-			TAwait<jvalue>{ sl }
-		{}
-		//Resume with the exception rather than leaving Suspend empty: an empty Suspend never resumes _h, so the caller's
-		//`co_await *awaitable` hangs forever and the frame leaks.  The base await_resume then rethrows this (see TODO #11).
-		α Suspend()ι->void override{ ResumeExp( Exception{_sl, Jde::ELogLevel::Critical, "Start instance not implemented."} ); }
-	};
-
-	α AppInstanceHook::Start( const QL::MutationQL& m, UserPK userPK, SL sl )ι->up<TAwait<jvalue>>{
-		//StartAwait( m, userPK, sl );
-		return m.JsonTableName=="applicationInstance" ? mu<StartAwait>( m, userPK, sl ) : nullptr;
+	α AppInstanceHook::Start( const QL::MutationQL& m, UserPK, SL sl )ι->HookResult{
+		return m.JsonTableName=="applicationInstance" ? mu<ExceptionAwait<jvalue>>( mu<Exception>(Exception{sl, ELogLevel::Critical, "Start instance not implemented."}), sl ) : nullptr;
 	}
 
 	struct StopAwait : TAwait<jvalue>{
-		StopAwait( QL::MutationQL mutation, UserPK userPK, sp<IApp> appClient, SL sl )ι:
+		StopAwait( QL::MutationQL mutation, sp<IApp> appClient, SL sl )ι:
 			TAwait<jvalue>{ sl },
 			_mutation{ mutation },
-			_userPK{ userPK },
 			_appClient{ move(appClient) }
 		{}
 		α Suspend()ι->void override{
@@ -52,11 +41,10 @@ namespace Jde::App::Server{
 				ResumeExp( Exception{_sl, {ELogTags::SocketServerRead}, "Instance not found."} );
 		}
 		QL::MutationQL _mutation;
-		UserPK _userPK;
 		sp<IApp> _appClient;
 	};
 
-	α AppInstanceHook::Stop( const QL::MutationQL& m, UserPK userPK, SL sl )ι->up<TAwait<jvalue>>{
-		return m.JsonTableName=="applicationInstance" ? mu<StopAwait>( m, userPK, _appClient, sl ) : nullptr;
+	α AppInstanceHook::Stop( const QL::MutationQL& m, UserPK, SL sl )ι->HookResult{
+		return m.JsonTableName=="applicationInstance" ? mu<StopAwait>( m, _appClient, sl ) : nullptr;
 	}
 }

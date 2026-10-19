@@ -3,7 +3,7 @@
 #include "../src/ServerSocketSession.h"
 #define let const auto
 
-//the _sessions registry in WebServer.cpp: Server::Write targeting, FindConnection/FindApplications lookups, and the
+//the _sessions registry in WebServer.cpp: FindApp targeting, FindConnection/FindApplications lookups, and the
 //RemoveExisting host:port eviction - driven through real websocket registrations (kInstance).
 namespace Jde::App::Server::Tests{
 
@@ -40,39 +40,41 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( Server::FindApplications("Tests.NoSuchApp").empty() );
 	}
 
-	TEST_F( SessionMapTests, WriteTargetsInstance ){
+	TEST_F( SessionMapTests, FindAppTargetsInstance ){
 		auto client = Connect();
 		let pks = RegisterInstance( *client, "Tests.WriteTarget", "wt-1", "wt-host", 0 );
-		let delivered = Server::Write( pks.Program, pks.Instance, Ping("ping-targeted", 777) );
-		EXPECT_EQ( delivered, pks.Connection );//the pk a forward binds its response to must be the connection actually written to.
+		let session = Server::FindApp( pks.Program, pks.Instance );
+		EXPECT_EQ( session->ConnectionPK(), pks.Connection );//the pk a forward binds its response to must be the connection actually written to.
+		session->Write( Ping("ping-targeted", 777) );
 		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kQueryResult; } );
 		ASSERT_TRUE( m );
 		EXPECT_EQ( m->query_result(), "ping-targeted" );
 		EXPECT_EQ( m->request_id(), 777u );
 	}
 
-	TEST_F( SessionMapTests, WriteWildcardInstance ){
+	TEST_F( SessionMapTests, FindAppWildcardInstance ){
 		auto client = Connect();
 		let pks = RegisterInstance( *client, "Tests.WriteWild", "ww-1", "ww-host", 0 );
-		let delivered = Server::Write( pks.Program, nullopt, Ping("ping-wild", 778) );//instancePK nullopt = any instance of the app.
-		EXPECT_EQ( delivered, pks.Connection );
+		let session = Server::FindApp( pks.Program, nullopt );//instancePK nullopt = any instance of the app.
+		EXPECT_EQ( session->ConnectionPK(), pks.Connection );
+		session->Write( Ping("ping-wild", 778) );
 		auto m = client->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kQueryResult; } );
 		ASSERT_TRUE( m );
 		EXPECT_EQ( m->query_result(), "ping-wild" );
 	}
 
-	TEST_F( SessionMapTests, WriteWrongInstanceThrows ){
+	TEST_F( SessionMapTests, FindAppWrongInstanceThrows ){
 		auto client = Connect();
 		let pks = RegisterInstance( *client, "Tests.WriteWrongInst", "wwi-1", "wwi-host", 0 );
-		EXPECT_THROW( Server::Write(pks.Program, pks.Instance+999, Ping("never", 1)), runtime_error );
+		EXPECT_THROW( Server::FindApp(pks.Program, pks.Instance+999), runtime_error );
 	}
 
 	//an unregistered session's ProgramPK is 0 - appPK 0 must not match it, else a forward addressed to "app 0" lands on
 	//an arbitrary connecting socket.
-	TEST_F( SessionMapTests, WriteZeroAppThrows ){
+	TEST_F( SessionMapTests, FindAppZeroAppThrows ){
 		auto unregistered = Connect();
-		EXPECT_THROW( Server::Write(0, nullopt, Ping("never", 2)), runtime_error );
-		EXPECT_THROW( Server::Write(0xFFFFF0, nullopt, Ping("never", 3)), runtime_error );
+		EXPECT_THROW( Server::FindApp(0, nullopt), runtime_error );
+		EXPECT_THROW( Server::FindApp(0xFFFFF0, nullopt), runtime_error );
 	}
 
 	TEST_F( SessionMapTests, FindConnection ){
@@ -95,12 +97,8 @@ namespace Jde::App::Server::Tests{
 		auto second = Connect();
 		RegisterInstance( *second, "Tests.Evict", "evict-new", "evict-host", 7777 );
 		EXPECT_TRUE( first->WaitForClose() ) << "superseded socket must be closed";
-		vector<Proto::FromClient::Instance> instances;
-		for( let expiration = steady_clock::now()+std::chrono::seconds{5};; std::this_thread::sleep_for(std::chrono::milliseconds{50}) ){//eviction erase runs on the closing session's strand.
-			instances = Server::FindApplications( "Tests.Evict" );
-			if( instances.size()==1 || steady_clock::now()>expiration )
-				break;
-		}
+		WaitUntil( []{ return Server::FindApplications("Tests.Evict").size()==1; } );//eviction erase runs on the closing session's strand.
+		let instances = Server::FindApplications( "Tests.Evict" );
 		ASSERT_EQ( instances.size(), 1u );
 		EXPECT_EQ( instances[0].instance_name(), "evict-new" );
 	}
@@ -122,12 +120,7 @@ namespace Jde::App::Server::Tests{
 	//through nothing but the gateway outlives /http/socketTimeout.  An unregistered socket gets a read only - it has not
 	//proven possession of the id - and an expired session is not revived.
 	Ω sessionInfo( RawClientSession& session, SessionPK id )->optional<FromServerMessage>{
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		let requestId = session.NextRequestId();
-		m.set_request_id( requestId );
-		m.set_session_info( id );
-		session.Write( move(t) );
+		let requestId = Send( session, [id](auto& m){ m.set_session_info( id ); } );
 		return session.WaitFor( [requestId](const FromServerMessage& m){ return m.request_id()==requestId && (m.value_case()==FromServerMessage::kSessionInfo || m.value_case()==FromServerMessage::kException); } );
 	}
 

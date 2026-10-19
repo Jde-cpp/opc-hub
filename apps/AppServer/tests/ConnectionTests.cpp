@@ -14,7 +14,7 @@
 namespace Jde::App::Server::Tests{
 	using EnumMap = flat_map<uint,string>;//aliased: the comma in the template args would split the EXPECT_ macro's arguments.
 
-	struct LogDataTests : ::testing::Test{
+	struct ConnectionTests : ::testing::Test{
 		Ω ConnectionsTable()->string{ return Server::AppSchema()->GetView("connections").DBName; }
 		Ω LiveCount( App::ConnectionPK connectionId )->uint{
 			auto rows = Server::AppSchema()->DS()->Select( {Ƒ("select count(*) from {} where connection_id=? and deleted is null", ConnectionsTable()), {DB::Value{connectionId}}} );
@@ -24,7 +24,7 @@ namespace Jde::App::Server::Tests{
 
 	//appserver-review2 r2.24: every enum/flags lookup is loaded before the server starts, so no request path takes
 	//SelectEnumSync's blocking cache miss - on MySQL that miss parks the caller on the very pool that has to answer it.
-	TEST_F( LogDataTests, EnumsAreLoadedAtStartup ){
+	TEST_F( ConnectionTests, EnumsAreLoadedAtStartup ){
 		uint checked{};
 		for( let& schema : Server::Schemas() ){
 			for( let& [name, table] : schema->Tables ){
@@ -38,16 +38,16 @@ namespace Jde::App::Server::Tests{
 	}
 
 	//`hosts` has the enum shape but grows, and loading it with no expiry means nothing else would ever refresh it.
-	TEST_F( LogDataTests, ANewHostReachesTheLoadedMap ){
+	TEST_F( ConnectionTests, ANewHostReachesTheLoadedMap ){
 		let host = Ƒ( "load-host-{}", steady_clock::now().time_since_epoch().count() );
-		App::AddConnection( "Tests.LogData", "loads-host", host, 116 );
+		App::AddConnection( "Tests.Connections", "loads-host", host, 116 );
 		auto hosts = Cache::Get<EnumMap>( "hosts" );
 		ASSERT_TRUE( hosts );
 		EXPECT_TRUE( std::ranges::any_of(*hosts, [&](let& kv){ return kv.second==host; }) ) << "a host added after startup never reaches the map the renderer reads";
 	}
 
-	TEST_F( LogDataTests, AddConnectionMintsPks ){
-		let [program, instance, connection] = App::AddConnection( "Tests.LogData", "mints", "logdata-host", 111 );
+	TEST_F( ConnectionTests, AddConnectionMintsPks ){
+		let [program, instance, connection] = App::AddConnection( "Tests.Connections", "mints", "connection-host", 111 );
 		EXPECT_NE( program, 0u );
 		EXPECT_NE( instance, 0u );
 		EXPECT_NE( connection, 0u );
@@ -56,29 +56,28 @@ namespace Jde::App::Server::Tests{
 
 	//same program+instance+host reuses the program/instance rows; every call is a fresh connection row and - a
 	//reconnect implies the old socket died - the insert proc stamps the instance's prior live connections deleted.
-	TEST_F( LogDataTests, AddConnectionReusesProgramAndInstance ){
-		let [program1, instance1, connection1] = App::AddConnection( "Tests.LogData", "reuses", "logdata-host", 112 );
-		let [program2, instance2, connection2] = App::AddConnection( "Tests.LogData", "reuses", "logdata-host", 112 );
+	TEST_F( ConnectionTests, AddConnectionReusesProgramAndInstance ){
+		let [program1, instance1, connection1] = App::AddConnection( "Tests.Connections", "reuses", "connection-host", 112 );
+		let [program2, instance2, connection2] = App::AddConnection( "Tests.Connections", "reuses", "connection-host", 112 );
 		EXPECT_EQ( program1, program2 );
 		EXPECT_EQ( instance1, instance2 );
 		EXPECT_NE( connection1, connection2 );
 		EXPECT_EQ( LiveCount(connection1), 0u ) << "a reconnect supersedes the instance's previous connection";
 		EXPECT_EQ( LiveCount(connection2), 1u );
 
-		let [program3, instance3, connection3] = App::AddConnection( "Tests.LogData", "reuses-other", "logdata-host", 113 );
+		let [program3, instance3, connection3] = App::AddConnection( "Tests.Connections", "reuses-other", "connection-host", 113 );
 		EXPECT_EQ( program1, program3 );
 		EXPECT_NE( instance1, instance3 );
 		EXPECT_NE( connection2, connection3 );
 	}
 
 	//EndConnection ends one *connection* - another instance's live connection must not be stamped.
-	TEST_F( LogDataTests, EndConnectionStampsDeleted ){
-		let [program, instance, connection] = App::AddConnection( "Tests.LogData", "ends", "logdata-host", 114 );
-		let [program2, instance2, survivor] = App::AddConnection( "Tests.LogData", "ends-other", "logdata-host", 115 );
+	TEST_F( ConnectionTests, EndConnectionStampsDeleted ){
+		let [program, instance, connection] = App::AddConnection( "Tests.Connections", "ends", "connection-host", 114 );
+		let [program2, instance2, survivor] = App::AddConnection( "Tests.Connections", "ends-other", "connection-host", 115 );
 		ASSERT_EQ( LiveCount(connection), 1u );
 		App::EndConnection( connection );//fire-and-forget task - poll for the stamp.
-		for( let expiration = steady_clock::now()+std::chrono::seconds{5}; LiveCount(connection) && steady_clock::now()<expiration; )
-			std::this_thread::sleep_for( std::chrono::milliseconds{50} );
+		WaitUntil( [=]{ return !LiveCount(connection); } );
 		EXPECT_EQ( LiveCount(connection), 0u );
 		EXPECT_EQ( LiveCount(survivor), 1u ) << "only the ended connection may be stamped";
 	}
