@@ -48,6 +48,11 @@ namespace Jde::App::Client{
 
 		string ResourceSchema;
 		optional<Crypto::CryptoSettings> SslSettings;
+		//SslSettings from `http`'s ssl block, the key and certificate made or re-issued as needed (Crypto::EnsureKeyCertificate):
+		//what the AppServer login signs with.  `certInstance` names the files and doubles as the subject CN.
+		α Enroll( const jobject& http, sv certInstance={} )ε->void;
+		//`user` given `allowed` on `schema`'s `slug` resource - its root - by a direct acl.
+		α GrantRights( Jde::UserPK user, Access::ERights allowed, sv schema, sv slug )ε->void;
 		Crypto::PublicKey ServerPublicKey;
 		vector<sp<DB::AppSchema>> SubscriptionSchemas;
 		β Write( vector<Logging::Entry>&& entries )ι->bool;

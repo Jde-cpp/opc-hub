@@ -26,9 +26,7 @@ namespace Jde::Opc{
 			DB::NonProd::Recreate( *uaSchema, QLPtr() );
 		else if( Settings::FindBool("/dbServers/sync").value_or(false) || uaSchema->DS()->RequiresSync() )
 			DB::SyncSchema( *uaSchema, QLPtr() );
-		Crypto::CryptoSettings settings{ Json::FindDefaultObject(webServerSettings,"ssl") };
-		Crypto::EnsureKeyCertificate( settings );
-		appClient->SslSettings = settings;
+		appClient->Enroll( webServerSettings );
 		StartWebServer( move(webServerSettings) ); //TODO take out.
 		auto accessSchema = DB::GetAppSchema( "access", remoteAcl );
 		appClient->SubscriptionSchemas.push_back( accessSchema );

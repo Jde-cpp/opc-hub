@@ -28,7 +28,7 @@ namespace Jde::Opc::Server{
 		Jde::UserPK _executer;
 	};
 	//The app server pushes log-level changes as updateLogSetting mutations, and reads the live levels with a logSetting query
-	//for instanceTagLevel's `running`; OpcServerQL below answers `status` and the AppServer's admin check and nothing else, so
+	//for instanceTagLevel's `running`; OpcServerQL below answers the AppServer's admin check and IApp `status`, and nothing else, so
 	//without this the push came back "Only queries are supported" and the read "Table logSetting not supported".  Only log
 	//settings get through to the ql - everything else stays as restricted as it was.
 	Ω isLogSettings( const QL::RequestQL& q )ι->bool{
@@ -42,9 +42,11 @@ namespace Jde::Opc::Server{
 	α OpcServerAppClient::ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>>{
 		if( Web::Server::SessionGraphQL::IsForwarded(q) )
 			return Web::Server::SessionGraphQL::Forwarded( AppClient() ).Select( q.Queries().front(), executer, sl );
-		return isLogSettings( q )
-			? mu<QL::QLAwait<>>( move(q), QL::Creds{executer}, Server::QLPtr(), sl )
-			: up<TAwait<jvalue>>{ mu<OpcServerQL>(move(q), executer, sl) };
+		if( isLogSettings(q) )
+			return mu<QL::QLAwait<>>( move(q), QL::Creds{executer}, Server::QLPtr(), sl );
+		if( q.IsQueries() && std::ranges::all_of(q.Queries(), [](const auto& t){ return t.JsonName=="adminCheck"; }) )
+			return mu<OpcServerQL>( move(q), executer, sl );
+		return IAppClient::ClientQuery( move(q), executer, sl );
 	}
 
 	//The AppServer's delegated admin check (ServerSocketSession::TestAdminAwait, appserver-review3 #13):  who may grant on a node
@@ -72,16 +74,9 @@ namespace Jde::Opc::Server{
 		return jobject{ {"adminCheck", jobject{{"isAdmin", isAdmin}}} };
 	}
 	α OpcServerQL::await_resume()ε->jvalue{
-		THROW_IF( !_q.IsQueries(), "Only queries are supported." );
 		jvalue y;
-		for( const auto& table : _q.Queries() ){
-			if( table.JsonName=="status" )
-				y = App::IApp::Status();
-			else if( table.JsonName=="adminCheck" )
-				y = adminCheck( table, Source() );
-			else
-				THROW( "Table {} not supported.", table.JsonName );
-		}
+		for( const auto& table : _q.Queries() )//adminCheck alone:  ClientQuery routes nothing else here.
+			y = adminCheck( table, Source() );
 		return y;
 	}
 }

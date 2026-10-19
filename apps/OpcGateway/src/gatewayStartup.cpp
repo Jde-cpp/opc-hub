@@ -57,9 +57,7 @@ namespace Jde::Opc{
 		_pingInterval = Settings::FindDuration("/gateway/pingInterval").value_or( 30s );
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
-		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
-		Crypto::EnsureKeyCertificate( sslSettings );
-		appClient->SslSettings = move(sslSettings);//the AppServer login's JWT and the OPC certificate authentication both sign with it.
+		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		appClient->SetUserName( move(userName) );
 		return schema;
 	}

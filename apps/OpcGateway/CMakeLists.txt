@@ -4,15 +4,7 @@ include( ${CMAKE_CURRENT_LIST_DIR}/../../build/functions.cmake )
 project( Jde.Opc.Gateway VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 find_package( open62541 REQUIRED )
-if( WIN32 )
-	add_definitions( -DZLIB_USE_STATIC_LIBS )
-	set( ZLIB_ROOT ${CMAKE_INSTALL_PREFIX}/zlib )
-else()
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		link_directories( ${JSONNET_DIR}/lib )
-	endif()
-endif()
-find_package( ZLIB REQUIRED )
+findZlibAndJsonnet()
 
 if( NOT jde_Superbuild )
 	add_subdirectory( config/sql/sqlite )
@@ -51,15 +43,8 @@ if( WIN32 )
 endif()
 target_sources( ${targetName} PRIVATE ${sources} )
 
-if( WIN32 )
-	target_link_libraries( ${targetName} Iphlpapi.lib )
-else()
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		target_link_libraries( ${targetName} libjsonnet++.so libjsonnet.so )
-	endif()
-endif()
-target_link_libraries( ${targetName} OpenSSL::SSL )
 target_link_libraries( ${targetName} Jde.Opc.GatewayLib )
+linkAppRuntime( ${targetName} )
 
 #Single TU (src/main.cpp), but the PUBLIC pc.h of Jde.Web.Client et al. propagates a ~116MB PCH into
 #this target - a PCH that costs more to build than the one file it serves.  Jde.App.Server inherits the
@@ -70,7 +55,6 @@ if( TARGET Jde.App.Server )
 	target_precompile_headers( ${targetName} REUSE_FROM Jde.App.Server )
 endif()
 
-linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${CMAKE_CURRENT_SOURCE_DIR}/config/common-meta.libsonnet" )
 if( WIN32 )
 	set( appOutDir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${targetName}" )
 	set_target_properties( ${targetName} PROPERTIES
@@ -78,5 +62,4 @@ if( WIN32 )
 		RUNTIME_OUTPUT_DIRECTORY "${appOutDir}"
 		PDB_OUTPUT_DIRECTORY "${appOutDir}"
 	)
-	copyCommonDlls()
 endif()

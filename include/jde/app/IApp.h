@@ -21,7 +21,7 @@ namespace Jde::App{
 		β SessionInfoAwait( SessionPK sessionPK, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;
 		α Verify( const Web::Jwt& jwt )Ε->void;
 		β Login( Web::Jwt&& jwt, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;//up<TAwait>, as SessionInfoAwait: the socket and the in-process implementations differ in type.
-		β ClientQuery( QL::RequestQL&& q, UserPK executer, SRCE )ε->up<TAwait<jvalue>> =0; //AppServer->[Gateway]|[OpcServer]
+		β ClientQuery( QL::RequestQL&& q, UserPK executer, SRCE )ε->up<TAwait<jvalue>>; //AppServer->[Gateway]|[OpcServer]:  `status` alone, unless an app serves more.
 		Ω Status()ι->jobject{
 			return jobject{
 				{"memory", Process::MemorySize()},

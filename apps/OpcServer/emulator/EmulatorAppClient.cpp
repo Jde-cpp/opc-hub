@@ -7,20 +7,6 @@ namespace Jde::Opc::Emulator{
 	static sp<App::Client::IAppClient> _appClient = ms<EmulatorAppClient>();
 	α AppClient()ι->sp<App::Client::IAppClient>{ return _appClient; }
 
-	struct EmulatorQL : TAwait<jvalue>{
-		using base = TAwait<jvalue>;
-		EmulatorQL( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ι:
-			base{ sl },
-			_q{ move(q) },
-			_executer{ executer }
-		{}
-		α await_ready()ι->bool override{ return true; }
-		α await_resume()ε->jvalue override;
-	private:
-		α Suspend()ι->void override{ ASSERT(false); }
-		QL::RequestQL _q;
-		Jde::UserPK _executer;
-	};
 	//The AppServer pushes log-level changes as an `updateLogSetting` mutation when its instance_tag_levels rows change
 	//(InstanceTagLevelAwait::pushRuntime -> QueryClient), and reads them back as a `logSetting` table.  The emulator
 	//registers as an instance, so the log-settings page offers it those knobs;  without these two routes the push came
@@ -48,16 +34,6 @@ namespace Jde::Opc::Emulator{
 			return mu<App::LogSettingsMAwait>( move(q.Mutations().front()), AppClient(), executer, sl );
 		if( isLogSettingsRead(q) )
 			return App::LogSettingsAwait( move(q.Queries().front()), sl );
-		return mu<EmulatorQL>( move(q), executer, sl );
-	}
-
-	α EmulatorQL::await_resume()ε->jvalue{
-		THROW_IF( !_q.IsQueries(), "Only `status` queries and log settings are supported;  got {}.", _q.ToString() );
-		jvalue y;
-		for( const auto& table : _q.Queries() ){
-			THROW_IF( table.JsonName!="status", "Table {} not supported.", table.JsonName );
-			y = App::IApp::Status();
-		}
-		return y;
+		return IAppClient::ClientQuery( move(q), executer, sl );
 	}
 }
