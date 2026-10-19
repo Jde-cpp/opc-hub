@@ -42,10 +42,14 @@ namespace Jde::Opc::Hist{
 	//whichever node_index each carries.  A Modification's original is matched to the record it changed this way, and a
 	//start value to the record it copies.
 	α Same( const Proto::DataValue& a, const Proto::DataValue& b )ι->bool;
+	//The most a record's member may take in memory, a DataValue or a NodeAdded:  the rest of the frame holds its tag and
+	//length, and what its times can grow by as deltas, 9 bytes each at most.
+	constexpr uint MaxMemberBytes{ IO::Records::MaxFrameBytes-64 };
 	//A value with no file form, a DataValue or a DiagnosticInfo from a node typed BaseDataType, is stored without it, as
 	//BadNotSupported, which ToProto( Record ) warns of once per node.  One with text that isn't UTF-8, which protobuf
 	//writes but won't read back, is stored without it as BadEncodingError, warned of the same way.  Any other value that
-	//can't be encoded is stored without it, with the status that says why and a warning each time, unless !warn.
+	//can't be encoded is stored without it, with the status that says why and a warning each time, unless !warn, as is
+	//one past MaxMemberBytes, as BadEncodingLimitsExceeded.
 	α ToProto( const UA_DataValue& v, NodeIndex index={}, bool warn=true )ε->Proto::DataValue;
 
 	//The framework's record layer (include/jde/fwk/io/records) over the historian's record:  its FileStart is the oneof's

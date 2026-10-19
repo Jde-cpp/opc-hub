@@ -387,7 +387,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( values, 2 );
 		EXPECT_FALSE( merge.File() );
 #ifndef _WIN32
-		let open = [&]{//the last read's completion holds its handle a moment past the resume.
+		let open = [&]{//its reads were positioned, on this thread, so nothing holds the descriptor past the merge.
 			for( let& fd : fs::directory_iterator{"/proc/self/fd"} ){
 				std::error_code ec;
 				if( fs::read_symlink(fd.path(), ec)==file )
@@ -395,8 +395,6 @@ namespace Jde::Opc::Hist::Tests{
 			}
 			return false;
 		};
-		for( let deadline = steady_clock::now()+2s; open() && steady_clock::now()<deadline; )
-			std::this_thread::sleep_for( 5ms );
 		EXPECT_FALSE( open() );
 #endif
 		let temp = Path()/"merged.tmp";
@@ -645,12 +643,33 @@ namespace Jde::Opc::Hist::Tests{
 		let file = File( *group, March6 );
 		auto bytes = contents( file );
 		ASSERT_EQ( archived(file, 1, March6).size(), 3 );
-		std::fill_n( bytes.end()-40, 16, '\xFF' );//over a length or a tag, wherever it falls.
+		std::fill_n( bytes.end()-40, 16, '\xFF' );//over a length or a tag in what its open reads:  its head, and the record after.
 		save( file, bytes );
 
 		DataChange( *group, speed, 3, late+2s );
 		EXPECT_FALSE( Flush(*group) );
 		EXPECT_TRUE( group->Buffer().empty() );
+		EXPECT_EQ( contents(file), bytes );
+		EXPECT_FALSE( fs::exists(temp(file)) );
+	}
+	//An archive's open reads its head alone, so damage past it is its merge's to find:  that flush fails and holds its
+	//records, and the next reads the archive through, which refuses it.
+	TEST_F( GatewayFiles, ArchiveDamagedPastItsHead ){
+		auto group = AddGroup();
+		let speed = Join( *group, "Pump1.Speed" );
+		let late = sys_days{March6}+12h;
+		for( uint i=0; i<3; ++i )
+			DataChange( *group, speed, i, late+i*1s );
+		EXPECT_TRUE( Flush(*group) );
+		let file = File( *group, March6 );
+		let bytes = contents( file )+string( 4, '\xFF' );
+		save( file, bytes );
+
+		DataChange( *group, speed, 3, late+3s );
+		EXPECT_FALSE( Flush(*group) );
+		EXPECT_EQ( group->Buffer().size(), 1 ) << "held, as for any rewrite that fails";
+		EXPECT_FALSE( Flush(*group) );
+		EXPECT_TRUE( group->Buffer().empty() ) << "dropped, the archive refused";
 		EXPECT_EQ( contents(file), bytes );
 		EXPECT_FALSE( fs::exists(temp(file)) );
 	}

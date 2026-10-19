@@ -27,21 +27,12 @@ namespace Jde::IO::Records{
 	};
 	//The bytes of one append to a file holding size bytes, the owner's state at chain:  with opening, the file's first run,
 	//then run, sealed.  A record Add refuses, one too large for a file, is said at Error and left out, and the run goes on
-	//without it.  note sees each record as it goes in.
+	//without it.  note sees each record once it is in, as it was given.
 	template<Record T> α BuildAppend( uint size, State chain, optional<Opening<T>>&& opening, vector<T>&& run, const std::function<void( const T& )>& note )ε->Appended{
 		Appended y;
 		auto add = [&]( Appender<T>& appender, Run& span, bool& timed, T&& r ){
 			const auto t = Traits<T>::Time( r );
-			if( note )
-				note( r );
-			try{
-				appender.Add( move(r) );
-			}
-			catch( Exception& e ){
-				e.SetLevel( ELogLevel::Error );
-				return;
-			}
-			if( !t )
+			if( !appender.TryAdd(move(r), note) || !t )
 				return;
 			span.First = timed ? std::min( span.First, *t ) : *t;
 			span.Last = timed ? std::max( span.Last, *t ) : *t;
@@ -86,6 +77,7 @@ namespace Jde::IO::Records{
 		struct Hooks final{
 			std::function<bool( const T& )> IsHead;//a record of the head, consumed into it:  the first that isn't begins the body.
 			std::function<void( vector<T>& )> FoldHead;//the owner's fold of the head, once it is whole.
+			std::function<void( const T& )> NoteHead;//sees each record of the folded head once it is written, as it was folded.
 		};
 		//start is the FileStart to write, its generation the file's +1.  file is open when there are runs.
 		Rewrite( fs::path path, fs::path temp, sp<OpenFile> file, vector<Run> runs, vector<T> late, Proto::FileStart start, vector<T> prologue, Hooks hooks, uint partBytes=PartBytes, SRCE )ι:
@@ -107,15 +99,6 @@ namespace Jde::IO::Records{
 		α Path()Ι->const fs::path&{ return _path; }
 		α Temp()Ι->const fs::path&{ return _temp; }
 	private:
-		//Onto the part.  One too large for a file is left out, as an append leaves it.
-		α Add( T&& r )ι->void{
-			try{
-				_writer.Add( move(r) );
-			}
-			catch( Exception& e ){
-				e.SetLevel( ELogLevel::Error );
-			}
-		}
 		fs::path _path;
 		fs::path _temp;
 		Merge<T> _records;
@@ -141,7 +124,7 @@ namespace Jde::IO::Records{
 		if( !std::exchange(_opened, true) ){
 			_writer.Start( _start );
 			for( auto& r : _prologue )
-				Add( move(r) );
+				_writer.TryAdd( move(r) );//one too large for a file is left out, as an append leaves it.
 			_prologue.clear();
 		}
 		T r;
@@ -161,13 +144,13 @@ namespace Jde::IO::Records{
 			if( _hooks.FoldHead )
 				_hooks.FoldHead( _head );
 			for( auto& h : _head )
-				Add( move(h) );
+				_writer.TryAdd( move(h), _hooks.NoteHead );
 			_head.clear();
 			_headDone = true;
 		}
 		for( ;; ){
 			if( _ahead && !_reading ){
-				Add( move(*_ahead) );
+				_writer.TryAdd( move(*_ahead) );
 				_ahead.reset();
 				_reading = true;
 			}

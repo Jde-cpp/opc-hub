@@ -35,6 +35,9 @@ namespace Jde::IO::Records{
 		α Hand( uint offset, uint end )ι->void;
 		//Its write has returned:  the file holds end bytes, the owner's state stands at chain, and runs are its new runs.
 		α Committed( uint end, State chain, vector<Run>&& runs )ι->void;
+		//A refused file or an archive the disk no longer holds as Stamped, to scan again.  Never a live file, which its own
+		//appends change.
+		α Changed()Ι->bool;
 	};
 	struct Verified final{
 		bool Existed;

@@ -575,13 +575,8 @@ namespace Jde::Opc::Hist::Tests{
 			Time->Advance( 1min );
 			ASSERT_TRUE( held.RunUntil([this]{ return !Pump->Runs(March7).empty(); }) ) << "the day's commit";
 			EXPECT_FALSE( Pump->Flushed() ) << "the flush has ended";
-			//The read's windows go through the file awaitables, whose completions run on the executor:  it reads beside this
-			//thread, which pumps the executor until it is done.
-			std::atomic<bool> done{};
-			vector<double> values;
-			std::jthread reading{ [&]{ values = doubles( All(request) ); done = true; } };
-			ASSERT_TRUE( held.RunUntil([&]{ return done.load(); }) ) << "the read";
-			EXPECT_EQ( values, (vector<double>{1, 2, 3}) );
+			//The read's windows are positioned reads on this thread, so it needs nothing of the held executor.
+			EXPECT_EQ( doubles(All(request)), (vector<double>{1, 2, 3}) );
 		}
 		Settle( *Pump );
 		EXPECT_TRUE( Pump->Flushed() );

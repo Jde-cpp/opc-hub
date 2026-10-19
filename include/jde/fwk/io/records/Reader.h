@@ -51,11 +51,12 @@ namespace Jde::IO::Records{
 		β Chain()Ι->State = 0;//where the owner's state stands:  a run's Chain, and Scanned's.
 		β Sealed()ι->void = 0;//the records since the last Sealed or Dropped are proved.
 		β Dropped()ι->void = 0;//and aren't.
-		β Consumes()Ι->bool = 0;//whether it wants the records at all:  an archive is read through only for one that does.
+		β Consumes()Ι->bool = 0;//whether it wants an archive's records:  an archive is read through only for one that does.
 	};
-	//The owner's records parsed once, held until their checkpoint proves them, then handed to sealed in file order.
+	//The owner's records parsed once, held until their checkpoint proves them, then handed to sealed in file order:  an
+	//archive's only when archives says so.
 	template<Record T> struct Decoder final : IDecoder{
-		Decoder( std::function<void( T& )> sealed={} )ι:_sealed{ move(sealed) }{}
+		Decoder( std::function<void( T& )> sealed={}, bool archives=true )ι:_sealed{ move(sealed) }, _archives{ archives }{}
 		α Decode( const Raw& raw )ι->std::expected<optional<Time>,EStop> override{
 			T r;
 			if( const auto stop = Parse(raw, r); stop )
@@ -73,9 +74,10 @@ namespace Jde::IO::Records{
 			_pending.clear();
 		}
 		α Dropped()ι->void override{ _pending.clear(); }
-		α Consumes()Ι->bool override{ return _sealed!=nullptr; }
+		α Consumes()Ι->bool override{ return _sealed && _archives; }
 	private:
 		std::function<void( T& )> _sealed;
+		bool _archives;
 		vector<T> _pending;
 		State _state{};
 	};

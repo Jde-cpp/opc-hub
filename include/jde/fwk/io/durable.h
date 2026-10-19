@@ -18,7 +18,8 @@ namespace Jde::IO{
 	Φ SyncDirectories( const fs::path& root, const fs::path& relative={}, SRCE )ε->void;
 	//Renames from over to, which is then what from was whatever stops the process:  a POSIX-semantics rename on Windows, so a
 	//handle open on to goes on reading the file it opened, as with rename on Linux, where the name is durable once
-	//SyncDirectories has fsynced to's directory.
+	//SyncDirectories has fsynced to's directory.  Where Windows has no POSIX rename, MoveFileExW with MOVEFILE_WRITE_THROUGH,
+	//which fails while anyone has to open.
 	Φ Replace( const fs::path& from, const fs::path& to, SRCE )ε->void;
 	//Removes a temp file a rewrite left, but nothing else at its path:  a directory or a link there isn't one, and stays,
 	//for the next open to fail on and say.  Whether it removed one.

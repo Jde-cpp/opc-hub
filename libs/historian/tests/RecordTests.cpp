@@ -207,6 +207,37 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_EQ( y.node_index(), 3 );
 	}
 
+	//A value whose record no frame holds is stored without it, as BadEncodingLimitsExceeded:  one byte past MaxMemberBytes.
+	//One at it is kept, and its record fits a frame even with times that grow the most as deltas.
+	TEST( RecordTests, TooLargeValue ){
+		let text = []( uint size, Ticks source ){
+			UA_DataValue dv{};
+			const string s( size, 'x' );
+			const UA_String us{ s.size(), (UA_Byte*)s.data() };
+			UA_Variant_setScalarCopy( &dv.value, &us, &UA_TYPES[UA_TYPES_STRING] );
+			dv.hasValue = true;
+			dv.sourceTimestamp = source;
+			dv.hasSourceTimestamp = true;
+			return Value{ move(dv) };
+		};
+		let probe = MaxMemberBytes-1024;
+		let overhead = ToProto( text(probe, 1), 3 ).ByteSizeLong()-probe;
+		let fits = ToProto( text(MaxMemberBytes-overhead, 1), 3 );
+		ASSERT_EQ( fits.ByteSizeLong(), MaxMemberBytes );
+		EXPECT_TRUE( fits.has_value() );
+		HistoryRecord r;
+		*r.mutable_value() = fits;
+		Ticks last{ std::numeric_limits<Ticks>::max() };//a 1-byte source time becomes a 10-byte delta.
+		ToDisk( r, last );
+		EXPECT_LE( r.ByteSizeLong(), IO::Records::MaxFrameBytes );
+
+		let refused = ToProto( text(MaxMemberBytes-overhead+1, at(1s)), 3 );
+		EXPECT_FALSE( refused.has_value() );
+		EXPECT_EQ( refused.status(), UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED );
+		EXPECT_EQ( refused.source_ts(), at(1s) );
+		EXPECT_EQ( refused.node_index(), 3 );
+	}
+
 	//A value ToValue can't encode, a decoded ExtensionObject with nothing decoded, is stored without it either way, but
 	//only the flush's conversion warns:  the subscribers' copy is taken under the group's lock, where Enqueue never logs.
 	TEST( RecordTests, OnlyTheFlushWarns ){

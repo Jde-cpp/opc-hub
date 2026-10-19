@@ -164,6 +164,12 @@ namespace Jde::Opc{
 						WARN( "node_index {}'s '{}' value is stored without it:  {}", index, v.value.type->typeName, e.what() );
 					y.set_status( (StatusCode)e.Code() );
 				}
+				if( let size = y.ByteSizeLong(); y.has_value() && size>MaxMemberBytes ){//no frame holds its record.
+					if( warn )
+						WARN( "node_index {}'s '{}' value is stored without it:  its {} bytes are past the {} a record holds.", index, v.value.type->typeName, size, MaxMemberBytes );
+					y.clear_value();
+					y.set_status( UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED );
+				}
 			}
 		}
 		return y;

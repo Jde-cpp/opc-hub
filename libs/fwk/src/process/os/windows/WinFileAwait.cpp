@@ -28,7 +28,7 @@ namespace Jde::IO{
 
 	//The io_context first, so the handle deregisters from a live one however long the OpenFile outlives the executor.
 	struct OpenFile::Asio final{
-		Asio( sp<asio::io_context> ioc, HANDLE h )ι:Ioc{ move(ioc) }, Handle{ *Ioc, h }{}
+		Asio( sp<asio::io_context> ioc, HANDLE h )ε:Ioc{ move(ioc) }, Handle{ *Ioc, h }{}//system_error when the iocp refuses h.
 		sp<asio::io_context> Ioc;
 		RandomAccessHandle Handle;
 	};
@@ -53,7 +53,10 @@ namespace Jde::IO{
 	α OpenFile::Read( uint offset, char* buffer, uint size, SL sl )Ε->uint{
 		//An event of its own, its low-order bit set:  once Shared has put the file on asio's iocp, a read without one queues a
 		//packet there for an OVERLAPPED gone by the time asio takes it, and waits on the file, which any read on it signals.
-		let event = ManualResetEvent();
+		//The thread's, since it waits on one read at a time, and ReadFile resets it.
+		thread_local HandlePtr event;
+		if( !event )
+			event = ManualResetEvent();
 		THROW_IFX( !event, IOException(_path, ::GetLastError(), "CreateEvent", sl) );
 		uint y{};
 		while( y<size ){//the handle is overlapped, so each read names its offset and is waited for.

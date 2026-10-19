@@ -64,8 +64,13 @@ namespace IO{
 		let renamed = ::SetFileInformationByHandle( handle, FileRenameInfoEx, &info, (DWORD)size );
 		let code = lastError();
 		::CloseHandle( handle );
-		if( !renamed )
+		if( renamed )
+			return;
+		//No POSIX rename:  FAT32, exFAT, a share without it, or Windows before 1607.  MoveFileEx, refused a target someone has open.
+		if( code!=ERROR_INVALID_PARAMETER && code!=ERROR_NOT_SUPPORTED && code!=ERROR_INVALID_FUNCTION )
 			throw Failed( to, code, "SetFileInformationByHandle", sl );
+		if( !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) )
+			throw failed( to, "MoveFileEx", sl );
 	}
 namespace IO{
 	α PathLock::TryLock( const fs::path& dir, sv lockFileName, SL sl )ε->optional<PathLock>{

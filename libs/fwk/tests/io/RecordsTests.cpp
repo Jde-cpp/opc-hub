@@ -819,6 +819,32 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_EQ( archive.Size, archive.FileSize );
 	}
 
+	//The note of the head hears only of what the rewrite writes:  a head record too large for a frame is left out, and
+	//never noted, so an owner's map kept from the note lists only what the archive holds.
+	TEST_F( ScanTests, RewriteNotesWhatItWrites ){
+		Proto::FileStart start;
+		start.set_ts( DayStart );
+		start.set_generation( 1 );
+		vector<TestRecord> noted;
+		Rewrite<TestRecord>::Hooks hooks{
+			.IsHead=[]( const TestRecord& r ){ return r.sample().ts()==DayStart; },
+			.NoteHead=[&]( const TestRecord& r ){ noted.push_back( r ); }
+		};
+		let temp = Dir/"group.binpb.tmp";
+		vector<TestRecord> late{ sample(DayStart, "Pump1.Speed"), sample(DayStart, string(MaxFrameBytes, 'x')), sample(at(1000), "a") };
+		Rewrite<TestRecord> rewrite{ File, temp, nullptr, {}, move(late), start, {}, move(hooks) };
+		for( auto p = rewrite.Next(); p!=EPart::Done; p = rewrite.Next() ){
+			ASSERT_EQ( p, EPart::Ready );
+			BlockVoidAwait( rewrite.Write() );
+		}
+		ASSERT_EQ( noted.size(), 1 );
+		expectEqual( noted[0], sample(DayStart, "Pump1.Speed") );
+		let records = readWhole( contents(temp) );
+		ASSERT_EQ( records.size(), 3 );
+		expectEqual( records[1], sample(DayStart, "Pump1.Speed") );
+		expectEqual( records[2], sample(at(1000), "a") );
+	}
+
 	//An append built for a file:  with an opening, the file's first run, sealed on its own, then the run; each run that holds
 	//a record with a time is reported, and the bytes scan as those runs.
 	TEST_F( ScanTests, BuildsAnAppend ){
@@ -843,6 +869,23 @@ namespace Jde::IO::Records::Tests{
 		auto more = BuildAppend<TestRecord>( y.End, y.Chain, nullopt, {sample(at(4000), "d")}, {} );
 		Write( y.Bytes+more.Bytes );
 		EXPECT_EQ( scan(File).Runs.size(), 3 );
+	}
+
+	//The note hears only of what an append writes, as it was given, times absolute:  a record too large for a frame is
+	//left out, the opening's and the run's alike, and never noted.
+	TEST_F( ScanTests, AppendNotesWhatItWrites ){
+		let tooLarge = string( MaxFrameBytes, 'x' );
+		vector<TestRecord> noted;
+		Opening<TestRecord> opening{ fileStart().file_start(), {}, {sample(DayStart, "Pump1.Speed"), sample(DayStart, tooLarge)} };
+		auto y = BuildAppend<TestRecord>( 0, 0, move(opening), {sample(at(1000), "a"), sample(at(2000), tooLarge), sample(at(3000), "c")}, [&]( const TestRecord& r ){ noted.push_back( r ); } );
+		const vector<TestRecord> expected{ sample(DayStart, "Pump1.Speed"), sample(at(1000), "a"), sample(at(3000), "c") };
+		ASSERT_EQ( noted.size(), expected.size() );
+		let written = readWhole( y.Bytes );
+		ASSERT_EQ( written.size(), expected.size()+1 );//after its FileStart.
+		for( uint i=0; i<expected.size(); ++i ){
+			expectEqual( noted[i], expected[i] );
+			expectEqual( written[i+1], expected[i] );
+		}
 	}
 
 	//The file's state:  an append handed out and committed, and the check that the file on disk is the one known.
@@ -964,11 +1007,29 @@ namespace Jde::IO::Records::Tests{
 		}
 	}
 
-	//A file that opens but can't be read, here a directory, is an error, not an owner that never flushed.
+	//A file there that can't be read is an error, at Error, not an owner that never flushed:  a directory, and on windows a
+	//file that opens but whose slots another handle has locked, which fails the read.
 	TEST_F( FlushedTests, UnreadableThrows ){
+		let level = [this]()->optional<ELogLevel>{
+			try{
+				Flushed::Load( File );
+			}
+			catch( const IOException& e ){
+				return e.Level();
+			}
+			return nullopt;
+		};
 		fs::create_directories( File );
-		EXPECT_THROW( Flushed::Load(File), Exception );
+		EXPECT_EQ( level(), ELogLevel::Error ) << "a directory";
 		fs::remove( File );
+#ifdef _MSC_VER
+		save( File, Slot(Time, 1) );
+		HandlePtr locker{ WinHandle{::CreateFileW(File.c_str(), GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr)} };
+		ASSERT_TRUE( static_cast<bool>(locker.get()) ) << ::GetLastError();
+		OVERLAPPED at{};
+		ASSERT_TRUE( ::LockFileEx(locker.get(), LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY, 0, 2*Flushed::SlotSize, 0, &at) ) << ::GetLastError();
+		EXPECT_EQ( level(), ELogLevel::Error ) << "a read that fails";
+#endif
 	}
 
 	//The sequence wraps, so the later slot is the one ahead by less than half its range.

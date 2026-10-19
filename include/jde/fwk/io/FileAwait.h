@@ -23,6 +23,7 @@ namespace Jde::IO{
 	Φ ThreadSize()ι->uint8;
 
 	//Truncate replaces the file - required whenever data is the whole file, otherwise a shorter write leaves the previous version's tail behind.  At writes over what is there and leaves the rest of the file alone.
+	//Every mode shares the file with its readers, on windows as on linux, so a read by path under a Truncate can return bytes of both versions:  a file read while it is replaced whole goes to a temp, which IO::Replace puts over the name.
 	enum class EWriteMode : uint8{ Append, Truncate, At };
 	struct WriteOptions{
 		bool Create{};//makes the file when it isn't there, and on linux the directories on its path.

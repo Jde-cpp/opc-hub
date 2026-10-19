@@ -1136,6 +1136,31 @@ namespace Jde::IO::Tests{
 		}
 		EXPECT_EQ( readNow(open, {.Offset=chunk}), content.substr(chunk) );
 	}
+	//Positioned reads of one file on several threads at once, each its own window.
+	TEST_F( FileTests, OpenFileReadNowOnManyThreads ){
+		let chunk = IO::ChunkByteSize();
+		let file = Tests::file( 1110 );
+		fs::remove( file );
+		let content = pattern( chunk*8 );
+		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		EXPECT_EQ( readNow(open, {.Size=chunk}), content.substr(0, chunk) );//on asio's iocp, as a flush's reads leave it.
+		std::atomic<uint> wrong{};
+		{
+			vector<std::jthread> threads;
+			for( uint t=0; t<4; ++t ){
+				threads.emplace_back( [&, t]{
+					string y( chunk, '\0' );
+					for( uint i=0; i<50; ++i ){
+						let offset = ( t*2+i%2 )*chunk;
+						if( open->Read(offset, y.data(), y.size())!=chunk || y!=content.substr(offset, chunk) )
+							++wrong;
+					}
+				} );
+			}
+		}
+		EXPECT_EQ( wrong, 0u );
+	}
 	//Size is the file's now, so a read after an append sees the new tail.
 	TEST_F( FileTests, OpenFileGrownSinceOpen ){
 		let file = Tests::file( 1106 );
@@ -1146,6 +1171,20 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( open->Size(), 12u );
 		EXPECT_EQ( readNow(open, {.Offset=5}), "+second" );
 	}
+#ifdef _MSC_VER
+	//A file object joins one iocp:  bound to another first, the shared handle's registration fails the read, not the process.
+	TEST_F( FileTests, OpenFileIocpRefused ){
+		let file = Tests::file( 1109 );
+		fs::remove( file );
+		ASSERT_EQ( writeNow(file, "content", {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
+		auto open = ms<IO::OpenFile>( file );
+		HandlePtr port{ WinHandle{::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1)} };
+		ASSERT_EQ( ::CreateIoCompletionPort(open->Native(), port.get(), 0, 0), port.get() ) << ::GetLastError();
+		EXPECT_TRUE( readNow(open).starts_with("failed: ") );
+		EXPECT_TRUE( readNow(open).starts_with("failed: ") ) << "a later read tries again, and fails the same";
+		EXPECT_EQ( open->Size(), 7u );
+	}
+#endif
 
 	constexpr uint _fileSize{ 5 };
 	TEST_F( FileTests, WriteRead ){

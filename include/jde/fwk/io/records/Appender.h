@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <jde/fwk/io/crc.h>
 #include "Traits.h"
 
@@ -17,13 +18,30 @@ namespace Jde::IO::Records{
 			EncodeStart( _out, Traits<T>::StartField, move(start) );
 			_chain = chain;
 		}
-		//Throws for a record over protobuf's limit, or with no member, or when out can't grow, leaving out and the chain as
+		//Throws for a record over MaxFrameBytes, or with no member, or when out can't grow, leaving out and the chain as
 		//they were, so the run can go on without r.
 		α Add( T&& r )ε->void{
 			auto chain = _chain;
 			Traits<T>::ToDisk( r, chain );
 			Write( r );
 			_chain = chain;
+		}
+		//Add, for a run that goes on without a record Add refuses:  that one is said at Error and left out, and note never
+		//sees it.  note sees a record once it is written, as it was given.  Whether r was written.
+		α TryAdd( T&& r, const std::function<void( const T& )>& note={} )ε->bool{
+			auto before = _chain;
+			try{
+				Add( move(r) );
+			}
+			catch( Exception& e ){
+				e.SetLevel( ELogLevel::Error );
+				return false;
+			}
+			if( note ){
+				Traits<T>::ToMemory( r, before );//Add left it as it went to disk.
+				note( r );
+			}
+			return true;
 		}
 		//Ends the run, and returns where the owner's state stands for the file's next.  Throws only when out can't grow,
 		//changing nothing.

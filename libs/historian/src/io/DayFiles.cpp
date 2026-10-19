@@ -24,6 +24,16 @@ namespace Jde::Opc::Hist{
 		Ω listed( const Proto::NodeAdded& added )ι->Listed{
 			return { ProtoUtils::ToExNodeId(added.node()), added.has_start() ? optional<Proto::DataValue>{ added.start() } : nullopt };
 		}
+		//Whether r is of an archive's head, the records at its day's start:  its map's go into preamble.
+		Ω headed( const HistoryRecord& r, Ticks start, Hist::Preamble& preamble )ι->bool{
+			if( r.has_issued() )
+				return true;
+			if( PrimaryTime(r)!=start )
+				return false;
+			if( preambled(r, start) )
+				preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
+			return true;
+		}
 		//An archive's head:  its FileStart, its size, and its preamble from the records at its day's start alone, into which
 		//its rewrite folded every correction:  without the first-open scan, which reads an archive through.  None when the
 		//file isn't an archive.  Throws when its preamble can't be read through.
@@ -35,14 +45,9 @@ namespace Jde::Opc::Hist{
 			if( !IO::Records::NextNow(reader, file, r, sl) || !r.has_file_start() || r.file_start().crc()!=IO::Records::StartCrc(r.file_start()) || !r.file_start().generation() )
 				return nullopt;
 			ArchiveHead y{ r.file_start(), size };
-			let start = y.Start.ts();
 			while( IO::Records::NextNow(reader, file, r, sl) ){
-				if( r.has_issued() )
-					continue;
-				if( PrimaryTime(r)!=start )
+				if( !headed(r, y.Start.ts(), y.Preamble) )
 					return y;
-				if( r.has_node_added() && Bare(r.node_added()) )
-					y.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 			}
 			if( reader.Stop()!=EStop::End )
 				throw IO::IOException{ sl, file->Path(), ELogLevel::Error, "{} in its preamble, at byte {}", ToString(*reader.Stop()), reader.Offset() };
@@ -217,14 +222,15 @@ namespace Jde::Opc::Hist{
 			file.Unopened = move( scanned );
 	}
 
-	Opening::Opening( fs::path path, Ticks start, std::function<void( HistoryRecord& )> restore, SL sl )ε:
+	Opening::Opening( fs::path path, Ticks start, bool through, std::function<void( HistoryRecord& )> restore, SL sl )ε:
 		_opened{ .Path=move(path) },
+		_start{ start },
 		_decoder{ [this, start, restore=move(restore)]( HistoryRecord& r ){
 			if( preambled(r, start) )
 				_opened.Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 			if( restore )
 				restore( r );
-		} }{
+		}, through }{
 		try{
 			_file = ms<IO::OpenFile>( _opened.Path, sl );
 		}
@@ -239,30 +245,47 @@ namespace Jde::Opc::Hist{
 		_scanner.emplace( _file, StartField, CheckpointField, _decoder, sl );
 	}
 	α Opening::Next()ε->ENext{
+		if( _head )
+			return Head();
 		if( !_scanner || _opened.Scan )
 			return ENext::End;
 		let next = _scanner->Next();
-		if( next==ENext::End )
-			_opened.Scan = _scanner->Result();
-		return next;
+		if( next!=ENext::End )
+			return next;
+		_opened.Scan = _scanner->Result();
+		if( let& start = _opened.Scan->Start; start && start->generation() && !_decoder.Consumes() ){//the scan stopped at its FileStart.
+			_head.emplace( Run{.Offset=0, .End=_opened.Scan->Size, .Chain=0, .First=0, .Last=0} );
+			return Head();
+		}
+		return ENext::End;
 	}
-	α Opening::Wants()Ι->optional<Window>{ return _scanner ? _scanner->Wants() : nullopt; }
+	α Opening::Head()ι->ENext{
+		HistoryRecord r;
+		for( auto next = _head->Next(r); next!=ENext::More; next = _head->Next(r) ){
+			if( next==ENext::Record && (r.has_file_start() || headed(r, _start, _opened.Preamble)) )
+				continue;
+			if( next==ENext::End && *_head->Stop()!=EStop::End ){//damage in its preamble, which refuses it as a scan through would.
+				_opened.Scan->Stop = *_head->Stop();
+				_opened.Scan->StopOffset = _head->Offset();
+			}
+			_head.reset();
+			return ENext::End;
+		}
+		return ENext::More;
+	}
+	α Opening::Wants()Ι->optional<Window>{ return _head ? _head->Wants() : _scanner ? _scanner->Wants() : nullopt; }
 	α Opening::Feed( string&& bytes )ι->void{
-		if( _scanner )
+		if( _head )
+			_head->Feed( move(bytes) );
+		else if( _scanner )
 			_scanner->Feed( move(bytes) );
 	}
 
-	α GroupFiles::ToScan( const vector<Day>& days )Ι->vector<std::pair<Day,fs::path>>{
-		vector<std::pair<Day,fs::path>> y;
+	α GroupFiles::ToScan( const vector<Day>& days )Ι->vector<std::tuple<Day,fs::path,bool>>{
+		vector<std::tuple<Day,fs::path,bool>> y;
 		for( let day : days ){
-			auto p = _files.find( day );
-			bool open = p==_files.end();
-			if( !open && (p->second.Generation || !p->second.Refused.empty()) ){//as Prepare opens again:  changed since its scan, or its rewrite, repaired perhaps.
-				let changed = IO::Records::StampOf( p->second.Path );
-				open = changed && changed!=p->second.Stamped;
-			}
-			if( open )
-				y.emplace_back( day, File(day) );
+			if( auto p = _files.find(day); p==_files.end() || p->second.Changed() )//as Prepare opens again.
+				y.emplace_back( day, File(day), _readThrough.contains(day) );
 		}
 		return y;
 	}
@@ -270,13 +293,14 @@ namespace Jde::Opc::Hist{
 		_failedOpenings.erase( day );//an earlier flush's, which this opening supersedes, adopted or left for Prepare.
 		std::error_code ec;
 		if( auto p = _files.find(day); p!=_files.end() ){
-			if( !(p->second.Generation || !p->second.Refused.empty()) || !opened.Stamped || IO::Records::StampOf(p->second.Path)!=opened.Stamped )
+			if( !p->second.Changed() || IO::Records::StampOf(p->second.Path)!=opened.Stamped )
 				return;
 			_files.erase( p );
 		}
 		else if( opened.Stamped ? IO::Records::StampOf(opened.Path)!=opened.Stamped : fs::exists(opened.Path, ec) || ec )
 			return;//changed since the open, or made since:  Prepare opens it.
 		_files.emplace( day, Known(day, move(opened), false, false, SRCE_CUR) );
+		_readThrough.erase( day );
 	}
 	α GroupFiles::Known( Day day, Opened&& opened, bool restoring, bool mods, SL sl )ε->DayFile{
 		DayFile file{ {.Path=move(opened.Path)}, std::move(opened.Preamble) };//std::, as absl::move is found for the map.
@@ -308,10 +332,13 @@ namespace Jde::Opc::Hist{
 			}
 		}
 		//One read:  the scan hands over each record it keeps, for the preamble and the restore.
-		Opening opening{ mods ? ModsFile(day) : File(day), StartOf(day, _tz), restore, sl };
+		Opening opening{ mods ? ModsFile(day) : File(day), StartOf(day, _tz), restore || (!mods && _readThrough.contains(day)), restore, sl };
 		while( opening.Next()==ENext::More )
 			IO::Records::FeedNow( opening, sl );
-		return files.emplace( day, Known(day, opening.Take(), restore!=nullptr, mods, sl) ).first->second;
+		auto& y = files.emplace( day, Known(day, opening.Take(), restore!=nullptr, mods, sl) ).first->second;
+		if( !mods )
+			_readThrough.erase( day );
+		return y;
 	}
 
 	α GroupFiles::Added( NodeIndex index, const Membership::Node& node, Ticks start, const Membership& members, bool withStart )Ε->HistoryRecord{
@@ -333,6 +360,10 @@ namespace Jde::Opc::Hist{
 		if( value ){
 			*added.mutable_start() = move( *value );
 			added.mutable_start()->clear_node_index();
+			if( let size = added.ByteSizeLong(); size>MaxMemberBytes ){//the map entry over the bound:  no frame holds both.
+				WARN( "'{}', node_index {}, opens a file without its start value:  with its id, its NodeAdded's {} bytes are past the {} a record holds.", node.Id.ToString(), index, size, MaxMemberBytes );
+				added.clear_start();
+			}
 		}
 		return y;
 	}
@@ -340,7 +371,7 @@ namespace Jde::Opc::Hist{
 	//The layer's rewrite with the historian's head:  the records at the day's start, and a stale Issued, which the fresh one
 	//in the prologue replaces.  A member's later preamble record there is a corrected start value, which a reader of the
 	//live file took in its place:  it goes into the first.  One after the member's NodeRemoved there is a re-add, which
-	//stays.  The fold notes the archive's map.
+	//stays.  The head's note keeps the archive's map, of the records written.
 	struct Rewrite::State final{
 		State( fs::path path, fs::path temp, sp<IO::OpenFile> file, vector<Run> runs, vector<HistoryRecord> late, Proto::FileStart start, NodeIndex nextIndex, SL sl )ι:
 			Start{ start },
@@ -355,7 +386,11 @@ namespace Jde::Opc::Hist{
 		α Hooks( Ticks start )ι->IO::Records::Rewrite<HistoryRecord>::Hooks{
 			return {
 				.IsHead=[start]( const HistoryRecord& r ){ return r.has_issued() || PrimaryTime(r)==start; },
-				.FoldHead=[this]( vector<HistoryRecord>& head ){ Fold( head ); }
+				.FoldHead=[this]( vector<HistoryRecord>& head ){ Fold( head ); },
+				.NoteHead=[this, start]( const HistoryRecord& r ){
+					if( preambled(r, start) )
+						Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
+				}
 			};
 		}
 		α Fold( vector<HistoryRecord>& head )ι->void{
@@ -380,10 +415,6 @@ namespace Jde::Opc::Hist{
 					}
 				}
 				folded.push_back( move(r) );
-			}
-			for( let& r : folded ){
-				if( preambled(r, Start.ts()) )
-					Preamble.insert_or_assign( r.node_added().node_index(), listed(r.node_added()) );
 			}
 			head = move( folded );
 		}
@@ -412,10 +443,8 @@ namespace Jde::Opc::Hist{
 	}
 
 	α GroupFiles::Prepare( Day day, vector<HistoryRecord>&& records, const Membership& members, TimePoint now, SL sl, bool create )ε->DayWrite{
-		if( auto p = _files.find(day); p!=_files.end() && (p->second.Generation || !p->second.Refused.empty()) ){
-			if( let changed = IO::Records::StampOf(p->second.Path); changed && changed!=p->second.Stamped )
-				_files.erase( p );//changed since its scan, or its rewrite, repaired perhaps, so Open scans it again.
-		}
+		if( auto p = _files.find(day); p!=_files.end() && p->second.Changed() )
+			_files.erase( p );//repaired perhaps, so Open scans it again.
 		auto& file = Open( day, sl );
 		std::error_code ec;
 		bool restart{};//Commit's to apply, so a write that fails leaves what is known of the file.
@@ -521,10 +550,8 @@ namespace Jde::Opc::Hist{
 	}
 
 	α GroupFiles::PrepareMods( Day day, vector<HistoryRecord>&& records, const Membership& members, SL sl )ε->Pending{
-		if( auto p = _mods.find(day); p!=_mods.end() && !p->second.Refused.empty() ){
-			if( let changed = IO::Records::StampOf(p->second.Path); changed && changed!=p->second.Stamped )
-				_mods.erase( p );//changed since its scan, repaired perhaps, so Open scans it again.
-		}
+		if( auto p = _mods.find(day); p!=_mods.end() && p->second.Changed() )
+			_mods.erase( p );//repaired perhaps, so Open scans it again.
 		auto& file = Open( day, sl, {}, true );
 		std::error_code ec;
 		bool restart{};
@@ -656,8 +683,10 @@ namespace Jde::Opc::Hist{
 	}
 	α GroupFiles::Abandon( const Rewrite& rewrite )ι->void{
 		IO::RemoveTemp( rewrite.Temp );
-		if( rewrite.Unreadable() )
+		if( rewrite.Unreadable() ){
 			_files.erase( rewrite.Date );
+			_readThrough.insert( rewrite.Date );//an archive's head alone didn't show what its merge found.
+		}
 	}
 
 	α GroupFiles::Past( Day day, TimePoint now )Ι->bool{

@@ -272,7 +272,7 @@ namespace Jde::Opc::Hist{
 				std::ranges::sort( days );
 				let [dup, end] = std::ranges::unique( days );
 				days.erase( dup, end );
-				vector<std::pair<Day,fs::path>> toScan;
+				vector<std::tuple<Day,fs::path,bool>> toScan;
 				{
 					ul _{ _filesMutex };
 					for( auto p = days.begin(); p!=days.end(); ){
@@ -281,22 +281,26 @@ namespace Jde::Opc::Hist{
 					}
 					toScan = _files->ToScan( days );
 				}
-				for( auto& [day,path] : toScan ){
+				for( auto& [day,path,through] : toScan ){
 					if( Ended() )
 						break;//Prepare's to abandon.
 					try{
-						Opening opening{ move(path), StartOf(day, tz) };
-						for( auto next = opening.Next(); next==ENext::More && !Ended(); next = opening.Next() ){
+						Opening opening{ move(path), StartOf(day, tz), through };
+						auto next = opening.Next();
+						for( ; next==ENext::More && !Ended(); next = opening.Next() ){
 							let w = *opening.Wants();
 							IO::ReadAwait read{ opening.File(), IO::ReadOptions{.Offset=w.Offset, .Size=w.Size} };
 							opening.Feed( co_await Any(read) );
 						}
+						if( next==ENext::More )
+							break;//the end gave up on the flush mid-scan (Stopped):  a file read in part is no file to adopt.
 						ul _{ _filesMutex };
 						_files->Adopt( day, opening.Take() );
 					}
-					catch( Exception& e ){//Prepare throws it for the day, as its own open would have, rather than open the file again.
+					catch( runtime_error& e ){//Prepare throws it for the day, as its own open would have, rather than open the file again.
+						let p = dynamic_cast<Exception*>( &e );
 						ul _{ _filesMutex };
-						_files->Adopt( day, e.Move() );
+						_files->Adopt( day, p ? p->Move() : mu<Exception>(move(e)) );
 					}
 				}
 			}
