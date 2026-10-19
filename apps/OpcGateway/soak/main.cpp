@@ -61,8 +61,8 @@ namespace Jde::Opc::Gateway::Soak{
 			client->SetUserName( jobject{Settings::AsObject("/credentials")} );
 			Execution::Run();//without proto/remote logging or a web server, nothing else starts the executor thread the socket/http awaitables need.
 			BlockVoidAwait( App::Client::ConnectAwait{client, false} );
-			if( Process::FindArg("-grant") ){//soak.sh runs this after OpcServer's first boot (which registers the nodeIds resource), then restarts OpcServer to load the acl.
-				Soak::GrantWriteRights( client );
+			if( Process::FindArg("-grant") ){//soak.sh runs this after OpcServer's first boot declared the nodeIds resource (soft-deleted), then by default restarts OpcServer to load the enforced row and the acl at startup.
+				Soak::EnforceWriteRights( client );
 				exitCode = EXIT_SUCCESS;
 			}
 			else

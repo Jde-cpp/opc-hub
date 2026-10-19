@@ -1,5 +1,6 @@
 #include "SoakRunner.h"
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <fstream>
 #include <numeric>
@@ -7,6 +8,8 @@
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
+#include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
@@ -102,6 +105,38 @@ namespace Jde::Opc::Gateway::Soak{
 		return v[i];
 	}
 
+	//The gateway group's listener (spec *Subscriptions*):  the snapshot's bounds, then every record the group pushes as a
+	//write lands - counted on the socket's read thread, so atomics.  A non-empty Error is the gateway ending it (its group
+	//removed, or the historian stopping), which fails the verdict.
+	struct SoakHistListener final : Tests::IHistListener{
+		α OnSnapshot( const FromServer::HistSnapshot& page )ι->void override{ Snapshot += (uint)page.values_size(); }
+		α OnRecords( const FromServer::HistRecords& records )ι->void override{ Records += (uint)records.values_size(); }
+		α OnError( string what )ι->void override{ std::lock_guard _{ _mutex }; _error = move(what); }
+		α Error()ι->string{ std::lock_guard _{ _mutex }; return _error; }
+		std::atomic<uint> Snapshot{}, Records{};
+	private:
+		std::mutex _mutex;
+		string _error;
+	};
+
+	//The gateway's own AppServer user, read from its status:  the identity its historian collector presents to an OPC
+	//server (a Certificate token, the gateway's app-client cert), which an enforcing OpcServer must grant before a group
+	//fills.  None when the gateway can't be reached or reports no user.  A short socket of its own on the grant client's
+	//session - the gateway is up and logged in by the time soak.sh runs -grant (it waited on its HTTP port first).
+	Ω gatewayHistorianUser( const sp<App::Client::IAppClient>& client )ι->optional<uint64_t>{
+		try{
+			let host = argString( "-gatewayHost", "/soak/gatewayHost", "localhost" );
+			let port = Settings::FindNumber<PortType>( "/soak/gatewayPort" ).value_or( 1968 );
+			let status = GatewayClientSocket::Open( host, port, client->SessionId() )->QuerySync( "status{ historianUser }" );
+			let user = status.is_object() ? Json::FindNumber<uint64_t>( status.as_object(), "historianUser" ) : nullopt;
+			return user && *user ? user : nullopt;
+		}
+		catch( const std::exception& e ){
+			WARN( "Could not read the gateway's collector user: {}", e.what() );
+			return nullopt;
+		}
+	}
+
 	struct SoakRunner final : Tests::IListener, std::enable_shared_from_this<SoakRunner>{
 		SoakRunner( sp<App::Client::IAppClient> client )ε;
 		α Run()ε->int;
@@ -120,6 +155,9 @@ namespace Jde::Opc::Gateway::Soak{
 		α Total( uint ServerLeg::* counter )Ι->uint;
 		α AllLatencies()Ι->vector<uint32>;
 		α WriteSummary( sv verdict )ι->void;
+		α SetupHistorian()ε->void;//a gateway group on the primary leg, over the node the soak writes, and a HistSubscribe to it.
+		α ReadBackHistorian()ι->void;//reads the group's stored values over the run and ends the subscription.
+		α RunPassthrough()ι->void;//-passthrough:  one aggregate read of the OpcServer's pump history and one history edit, timed.
 
 		sp<App::Client::IAppClient> _client;
 		sp<GatewayClientSocket> _socket;//the main session's socket - User legs hold their own in ServerLeg::Socket.
@@ -129,6 +167,7 @@ namespace Jde::Opc::Gateway::Soak{
 		Duration _duration, _writePeriod, _pushTimeout, _statusPeriod, _quietInterval, _quietPeriod, _retryDelay;
 		uint _writeRetries, _missRetries;//extra attempts per write / extra rounds per missed push before they count as a WriteFailure / Miss.
 		bool _readBack;//ask the mutation for { value } and check what it echoes - soak-findings #6, off by default.  See Write().
+		bool _passthrough;//-passthrough (soak.sh --emulator):  each quiet window, an aggregate read of the OpcServer's own pump history over a long span and a small history edit, through the gateway - the day-page round trips and edit-lock holds #210/#211/#220 deferred to the soak.  Measured, never fails the run.
 		fs::path _csvPath, _summaryPath;
 		std::ofstream _csv;
 
@@ -137,6 +176,28 @@ namespace Jde::Opc::Gateway::Soak{
 		uint _socketDrops{}, _statusFailures{}, _quietWindows{};
 		bool _completed{};
 		bool _mainReconnecting{};//ServerLeg::Reconnecting for the shared main-session socket - one drop for all of its legs.
+
+		//The historian leg:  one gateway group on the primary (local, no-User) leg, collecting the same node the soak writes,
+		//so every write is stored and read back at the end.  A 24h run crosses one midnight in timeZone, whose day-file archive
+		//rewrite nothing else exercises on a wall clock.  Unset when setup failed - the run then skips the historian criteria
+		//rather than fail on an immature add.  The subscription rides the main socket, so a drop (which already fails the run)
+		//also ends it;  no hist re-subscribe on reconnect.
+		ServerLeg* _histLeg{};
+		optional<uint32> _histGroup;
+		uint _histConnectionId{};
+		TimePoint _histFrom{};
+		uint _histStored{};
+		sp<SoakHistListener> _histListener;
+		vector<jvalue> _histReadNodes;//the group's nodes spelled by namespace URI (nsu), as the subscription and the read-back name them.
+
+		//The pass-through measurement (-passthrough):  pump nodes on the primary connection, the OpcServer's own history,
+		//read as an aggregate and edited through the gateway.  _pumpResolved stays true after the namespace lookup, whether
+		//or not the pumps namespace was found; a miss disables it for the run.  Counts and worst-case holds go to the summary.
+		bool _pumpResolved{};
+		optional<NodeId> _pumpRead, _pumpEdit;
+		uint _passReads{}, _passReadValues{}, _passEdits{}, _passEditValues{};
+		uint64_t _passReadMsMax{}, _passEditMsMax{};
+		string _passError;
 	};
 
 	SoakRunner::SoakRunner( sp<App::Client::IAppClient> client )ε:
@@ -154,6 +215,7 @@ namespace Jde::Opc::Gateway::Soak{
 		_writeRetries{ argNumber("-writeRetries", "/soak/writeRetries", 2) },
 		_missRetries{ argNumber("-missRetries", "/soak/missRetries", 2) },
 		_readBack{ argFlag("-readBack", "/soak/readBack") },
+		_passthrough{ argFlag("-passthrough", "/soak/passthrough") },
 		_csvPath{ argString("-csv", "/soak/csv", "soak.csv") },
 		_summaryPath{ argString("-summary", "/soak/summary", "summary.json") }
 	{
@@ -161,17 +223,41 @@ namespace Jde::Opc::Gateway::Soak{
 			leg.LatenciesMs.reserve( 1'000 );
 	}
 
-	α GrantWriteRights( const sp<App::Client::IAppClient>& client )ι->void{
+	//Grant first, then enforce:  createAcl's admin check passes anyone while the row is deleted (TestAdminResource), and the
+	//restore's TestSchemaAdmin finds no active root to test.  The other way round the grant is refused - a user who
+	//administers nothing on an enforced resource - which is why HistoryTests::Enforce grants before it restores too.  The
+	//restore reaches a running OpcServer as an event and re-maps its node rights (OpcAuthorize::UpdateResourceDeleted);
+	//a restart loads the same rows at startup.  Throws:  the db is fresh per run, so nothing is "already granted", and
+	//a run on an OPEN server measures nothing of authorization - soak.sh fails early on either.
+	α EnforceWriteRights( const sp<App::Client::IAppClient>& client )ε->void{
+		let schema = argString( "-opcSchema", "/soak/opcSchema", _debug ? "opc.debug" : "opc.release" );
+		//ERights, not the UA access byte the old 0x7F was labelled as:  OpcAuthorize translates (ToAccess), and All carries
+		//Administer, so this user can still grant on the row once it is enforced.
+		client->QuerySync<jvalue>(
+			"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
+			{{"userId", client->UserPK().Value}, {"allowed", underlying(Access::ERights::All)}, {"schemaName", schema}} );
+		INFO( "Granted user {} every right on '{}' nodeIds.", client->UserPK().Value, schema );
+		client->QuerySync<jvalue>( "restoreResource( schemaName:$schemaName, slug:\"nodeIds\", criteria:null )", {{"schemaName", schema}} );
+		INFO( "Enforced '{}' nodeIds - the OpcServer re-maps its node rights on the event.", schema );
+		//The collector's grant (spec *Collector contract*).  The gateway historizes under its OWN OPC credential, a
+		//Certificate token the OpcServer maps to the gateway's AppServer user - not the soak user granted above - so on an
+		//enforcing server that user needs Read and Subscribe or a group never fills, a path no soak has run (the gateway
+		//suite's embedded server is OPEN).  Best effort:  the soak's writes/pushes/RSS still stand without it, and a
+		//collector the grant missed shows as a historian group that stored nothing, not as a run that never started.  The
+		//soak user, holding All, administers the row and may grant it;  made after the enforce, as the restore above is.
 		try{
-			let schema = argString( "-opcSchema", "/soak/opcSchema", _debug ? "opc.debug" : "opc.release" );
-			constexpr uint allAccess{ 0x7F };//the UA access-level byte: read|write|historyRead|historyWrite|semanticChange|statusWrite|timestampWrite.
-			client->QuerySync<jvalue>(
-				"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
-				{{"userId", client->UserPK().Value}, {"allowed", allAccess}, {"schemaName", schema}} );
-			INFO( "Granted OPC node access for user {} on '{}'.", client->UserPK().Value, schema );
+			if( let collector = gatewayHistorianUser(client); collector && *collector!=(uint64_t)client->UserPK().Value ){
+				using enum Access::ERights;
+				client->QuerySync<jvalue>(
+					"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
+					{{"userId", *collector}, {"allowed", underlying(Read | Subscribe)}, {"schemaName", schema}} );
+				INFO( "Granted the gateway's collector (user {}) Read+Subscribe on '{}' nodeIds.", *collector, schema );
+			}
+			else
+				WARN( "The gateway reported no distinct collector user - a historian group may not fill under enforcement." );
 		}
 		catch( const std::exception& e ){
-			INFO( "createAcl failed (already granted on a previous run?): {}", e.what() );
+			WARN( "Could not grant the gateway's collector: {}", e.what() );
 		}
 	}
 
@@ -425,13 +511,13 @@ namespace Jde::Opc::Gateway::Soak{
 
 	α SoakRunner::SampleStatus()ι->void{
 		try{
-			string q{ "status{ memory startTime uptimeSeconds clients monitoredItems pendingItems }" };
+			string q{ "status{ memory startTime uptimeSeconds clients monitoredItems pendingItems historianGroups historianBytes }" };
 			let j = _socket->QuerySync( move(q) );
 			let& o = j.as_object();
 			let num = [&o]( sv name )->int64_t { auto p = o.find(name); return p==o.end() ? -1 : p->value().to_number<int64_t>(); };
 			let all = AllLatencies();
 			_csv << ToIsoString( Clock::now() )
-				<< ',' << num("memory") << ',' << num("uptimeSeconds") << ',' << num("clients") << ',' << num("monitoredItems") << ',' << num("pendingItems")
+				<< ',' << num("memory") << ',' << num("uptimeSeconds") << ',' << num("clients") << ',' << num("monitoredItems") << ',' << num("pendingItems") << ',' << num("historianGroups") << ',' << num("historianBytes")
 				<< ',' << Total(&ServerLeg::Writes) << ',' << Total(&ServerLeg::Pushes) << ',' << Total(&ServerLeg::Misses) << ',' << Total(&ServerLeg::WriteFailures) << ',' << Total(&ServerLeg::WriteRetries) << ',' << Total(&ServerLeg::MissRetries) << ',' << _socketDrops << ',' << _statusFailures
 				<< ',' << percentile(all, .5) << ',' << percentile(all, .99);
 			for( let& l : _legs )
@@ -462,6 +548,20 @@ namespace Jde::Opc::Gateway::Soak{
 				{"maxMs", all.empty() ? 0 : *std::ranges::max_element(all)},
 				{"servers", servers}
 			};
+			if( _histGroup ){//what collection stored against what the live stream carried - the counts a human weighs on the first runs.
+				y["historian"] = jobject{
+					{"group", *_histGroup}, {"leg", _histLeg ? _histLeg->Slug : string{}},
+					{"stored", _histStored}, {"snapshot", _histListener ? _histListener->Snapshot.load() : 0}, {"stream", _histListener ? _histListener->Records.load() : 0},
+					{"legPushes", _histLeg ? _histLeg->Pushes : 0}, {"ended", _histListener ? _histListener->Error() : string{}}
+				};
+			}
+			if( _passthrough ){//the pass-through measurements (#210/#211/#220):  worst-case holds a human reads against the 100ms budget.
+				y["passthrough"] = jobject{
+					{"reads", _passReads}, {"readValues", _passReadValues}, {"readMsMax", _passReadMsMax},
+					{"edits", _passEdits}, {"editValues", _passEditValues}, {"editMsMax", _passEditMsMax},
+					{"error", _passError}
+				};
+			}
 			std::ofstream f{ _summaryPath };
 			f << serialize( y );
 			INFO( "Summary written to '{}'.", _summaryPath.string() );
@@ -471,11 +571,162 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 	}
 
+	//A gateway group over the primary leg's node, created through the socket as the web does (HistGroupFixture), then a
+	//HistSubscribe from now on:  the snapshot's bound, then a record per write.  The collector, under the gateway's own
+	//credential, subscribes the node on its own client and stores every change (the group sets no thresholds).  Throws on
+	//any step - Run catches it and leaves the historian out of the run rather than fail it.
+	α SoakRunner::SetupHistorian()ε->void{
+		for( auto& leg : _legs ){//the primary leg shares the main socket, which the subscription rides.
+			if( leg.User.empty() && !leg.Nodes.empty() ){ _histLeg = &leg; break; }
+		}
+		THROW_IF( !_histLeg, "No local leg with nodes to historize - skipping the historian." );
+		let conn = _socket->QuerySync( Ƒ("serverConnection( slug: \"{}\", deleted: null ){{ id }}", _histLeg->Slug) );
+		THROW_IF( !conn.is_object() || !conn.as_object().contains("id"), "[{}]no connection id for the historian group.", _histLeg->Slug );
+		_histConnectionId = Json::AsNumber<uint>( conn.as_object(), "id" );
+		let created = _socket->QuerySync( "mutation createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }",
+			jobject{ {"name", "Soak"}, {"slug", "soak"}, {"connection", _histConnectionId} } );
+		_histGroup = Json::AsNumber<uint32>( created.as_object(), "id" );
+		for( let& node : _histLeg->Nodes )
+			_socket->QuerySync( "mutation createHistGroupNode( histGroupId: $g, node: $node ){ id }", jobject{ {"g", *_histGroup}, {"node", node.ToJson()} } );
+		//Subscribe and read by namespace URI, not the server index:  the group holds each member by its URI (createHistGroupNode
+		//spells it so, HistNodeText), and right after the create the collector hasn't read the server's NamespaceArray, so an
+		//index-form node answers Bad_NodeIdUnknown.  Resolve the connection's namespaces once and spell each node with its nsu.
+		let nsRows = _socket->QuerySync( "namespaces( opc: $opc ){ index uri }", jobject{ {"opc", _histLeg->Slug} } );
+		flat_map<uint16,string> nsUri;
+		if( nsRows.is_array() ){
+			for( let& r : nsRows.as_array() ){
+				if( let u = Json::FindSV(r.as_object(), "uri"); u && u->size() )
+					nsUri.emplace( Json::AsNumber<uint16>(r.as_object(), "index"), string{*u} );
+			}
+		}
+		_histReadNodes.clear();
+		vector<ExNodeId> nodes; nodes.reserve( _histLeg->Nodes.size() );
+		for( let& n : _histLeg->Nodes ){
+			auto o = n.ToJson();
+			let ns = Json::FindNumber<uint16>( o, "ns" );
+			let uri = ns ? nsUri.find(*ns) : nsUri.end();
+			THROW_IF( !ns || uri==nsUri.end(), "[{}]can't resolve the namespace of '{}' for the historian subscription.", _histLeg->Slug, n.ToString() );
+			o.erase( "ns" );
+			o["nsu"] = uri->second;
+			nodes.emplace_back( jvalue{o} );
+			_histReadNodes.push_back( jvalue{o} );
+		}
+		_histListener = ms<SoakHistListener>();
+		_histFrom = Clock::now();
+		let ack = BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( _socket->HistSubscribe(*_histGroup, nodes, _histFrom, _histListener) );
+		THROW_IF( ack.size()!=_histLeg->Nodes.size(), "HistSubscribe ack has {} statuses for {} nodes.", ack.size(), _histLeg->Nodes.size() );
+		for( uint i=0; i<ack.size(); ++i )
+			THROW_IF( ack[i], "[{}]HistSubscribe for node '{}' failed: {}.", _histLeg->Slug, _histLeg->Nodes[i].ToString(), ack[i] );//StatusCode has a name formatter; {:x} would be rejected.
+		INFO( "Historian group {} on '{}' subscribed over {} node(s) from {}.", *_histGroup, _histLeg->Slug, nodes.size(), ToIsoString(_histFrom) );
+	}
+
+	//The group's history over the run, paged to the end, the count the verdict checks against the live pushes - it reads
+	//across the midnight boundary a 24h run crosses, so the archived day's file is read too.  Then the HistUnsubscribe.
+	α SoakRunner::ReadBackHistorian()ι->void{
+		if( !_histGroup || !_histLeg )
+			return;
+		try{
+			jarray nodes;
+			for( let& n : _histLeg->Nodes )
+				nodes.push_back( n.ToJson() );
+			let end = Clock::now();
+			string continuation;
+			uint stored{};
+			for( uint page=0; !Process::ShuttingDown(); ++page ){
+				THROW_IF( page>100'000, "Historian read-back is still paging after 100,000 pages." );
+				let result = _socket->QuerySync(
+					"history( group: $group, nodes: $nodes, start: $start, end: $end, limit: $limit, continuation: $continuation ){ continuation values{ status } }",
+					jobject{ {"group", *_histGroup}, {"nodes", nodes}, {"start", UADateTime{_histFrom}.ToJson()}, {"end", UADateTime{end}.ToJson()}, {"limit", 10'000}, {"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} } );
+				let& o = result.as_object();
+				stored += (uint)Json::FindDefaultArray( o, "values" ).size();
+				let c = o.if_contains( "continuation" );
+				continuation = c && c->is_string() ? string{c->get_string()} : string{};
+				if( continuation.empty() )
+					break;
+			}
+			_histStored = stored;
+			INFO( "Historian group {} stored {} value(s) over the run; snapshot {}, stream {}.", *_histGroup, _histStored, _histListener->Snapshot.load(), _histListener->Records.load() );
+		}
+		catch( const std::exception& e ){
+			WARN( "Historian read-back failed: {}", e.what() );
+		}
+		try{
+			BlockAwait<ClientSocketAwait<bool>,bool>( _socket->HistUnsubscribe(_socket->LastHistSubscription()) );
+		}
+		catch( const std::exception& e ){
+			WARN( "HistUnsubscribe failed: {}", e.what() );
+		}
+	}
+
+	//Resolves the pump nodes once (urn:jde:pumps on the primary connection), then times two pass-throughs through the
+	//gateway, under the soak user's session:  an aggregate read over a long span, one interval a day - so a day-file pass
+	//and a round trip each (#211/#220) - and a small history edit, one flush and fsync an entry (#210).  Never throws:  the
+	//emulator and these grants are newer than the rest, so a failure is logged and carried in the summary, not a FAIL.  It
+	//reads one pump and edits another, so the synthetic edit never skews the read.
+	α SoakRunner::RunPassthrough()ι->void{
+		if( !_histLeg )
+			return;
+		try{
+			if( !_pumpResolved ){
+				_pumpResolved = true;
+				let ns = _socket->QuerySync( "namespaces( opc: $opc ){ index uri }", jobject{ {"opc", _histLeg->Slug} } );
+				optional<uint16_t> index;
+				if( ns.is_array() ){
+					for( let& row : ns.get_array() ){
+						if( Json::FindSV(row.as_object(), "uri").value_or("")=="urn:jde:pumps" )
+							index = Json::AsNumber<uint16>( row.as_object(), "index" );
+					}
+				}
+				if( !index ){
+					WARN( "Pass-through disabled: the OpcServer has no 'urn:jde:pumps' namespace - is the emulator running?" );
+					return;
+				}
+				_pumpRead = NodeId{ *index, 6022 };//pump2.motorRpm, the sine signal - read as an aggregate.
+				_pumpEdit = NodeId{ *index, 6042 };//pump4.motorRpm - edited, apart from the node read.
+			}
+			if( !_pumpRead )
+				return;//resolution failed earlier this run.
+			let days = argNumber( "-passthroughDays", "/soak/passthroughDays", 1000 );//#220's realistic worst load: a day interval a page.
+			let end = Clock::now();
+			let start = end-std::chrono::hours{ 24*(int64_t)days };
+			let readStart = steady_clock::now();
+			string continuation; uint values{}, pages{};
+			for( ; !Process::ShuttingDown(); ++pages ){
+				if( pages>days+16 ){ WARN( "Pass-through read still paging after {} pages.", pages ); break; }
+				let page = _socket->QuerySync(
+					"history( opc: $opc, nodes: $nodes, start: $start, end: $end, interval: $interval, aggregate: $aggregate, continuation: $continuation ){ continuation values{ status } }",
+					jobject{ {"opc", _histLeg->Slug}, {"nodes", _pumpRead->ToJson()}, {"start", UADateTime{start}.ToJson()}, {"end", UADateTime{end}.ToJson()}, {"interval", 86'400'000.0}, {"aggregate", "Average"}, {"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} } );
+				let& o = page.as_object();
+				values += (uint)Json::FindDefaultArray( o, "values" ).size();
+				let c = o.if_contains( "continuation" );
+				continuation = c && c->is_string() ? string{c->get_string()} : string{};
+				if( continuation.empty() )
+					break;
+			}
+			let readMs = (uint64_t)duration_cast<milliseconds>( steady_clock::now()-readStart ).count();
+			++_passReads; _passReadValues += values; _passReadMsMax = std::max( _passReadMsMax, readMs );
+			INFO( "Pass-through aggregate read: {} day-interval page(s) over {} day(s), {} value(s), {} ms.", pages, days, values, readMs );
+			constexpr uint entries{ 100 };
+			jarray vals;
+			for( uint i=0; i<entries; ++i )
+				vals.push_back( jobject{ {"node", _pumpEdit->ToJson()}, {"source", UADateTime{end-std::chrono::seconds{(int)i+1}}.ToJson()}, {"value", 1000.0+i} } );
+			let editStart = steady_clock::now();
+			let edited = _socket->QuerySync( "upsertHistory( opc: $opc, values: $values ){ values{ status } nodes{ status } }", jobject{ {"opc", _histLeg->Slug}, {"values", move(vals)} } );
+			let editMs = (uint64_t)duration_cast<milliseconds>( steady_clock::now()-editStart ).count();
+			++_passEdits; _passEditValues += (uint)Json::FindDefaultArray( edited.as_object(), "values" ).size(); _passEditMsMax = std::max( _passEditMsMax, editMs );
+			INFO( "Pass-through history edit: {} entr(ies) upserted, {} ms.", entries, editMs );
+		}
+		catch( const std::exception& e ){
+			_passError = e.what();
+			WARN( "Pass-through measurement failed: {}", e.what() );
+		}
+	}
+
 	α SoakRunner::Run()ε->int{
 		_csv.open( _csvPath, std::ios::app );
 		THROW_IF( !_csv.is_open(), "Could not open csv '{}'.", _csvPath.string() );
 		if( _csv.tellp()==0 ){
-			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,pendingItems,writes,pushes,misses,writeFailures,writeRetries,missRetries,socketDrops,statusFailures,p50Ms,p99Ms";
+			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,pendingItems,historianGroups,historianBytes,writes,pushes,misses,writeFailures,writeRetries,missRetries,socketDrops,statusFailures,p50Ms,p99Ms";
 			for( let& l : _legs )
 				_csv << Ƒ( ",writes_{0},pushes_{0},misses_{0},writeFailures_{0},writeRetries_{0},missRetries_{0},p50Ms_{0},p99Ms_{0}", l.Slug );
 			_csv << std::endl;
@@ -500,6 +751,13 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		if( let d = argDuration("-startDelay", "/soak/startDelay", 0s); d>Duration::zero() )
 			std::this_thread::sleep_for( d );//see if a settle delay after the subscription ack avoids the first-write hang.
+		try{
+			SetupHistorian();
+		}
+		catch( const std::exception& e ){
+			_histGroup = nullopt;//the run proceeds without the historian criteria rather than fail on them.
+			WARN( "Historian group setup failed - this run will not exercise collection: {}", e.what() );
+		}
 		let start = Clock::now();
 		let deadline = start+_duration;
 		auto nextStatus = start;
@@ -515,6 +773,8 @@ namespace Jde::Opc::Gateway::Soak{
 				++_quietWindows;
 				let quietEnd = std::min( cycleStart+_quietPeriod, deadline );
 				INFO( "Quiet window #{} until {} - subscriptions stay open, no writes.", _quietWindows, ToIsoString(quietEnd) );
+				if( _passthrough )//the window is writeless, so a long aggregate read's service-lock hold stalls nothing of the soak's own.
+					RunPassthrough();
 				while( Clock::now()<quietEnd && !Process::ShuttingDown() ){
 					if( Clock::now()>=nextStatus ){
 						SampleStatus();
@@ -546,11 +806,22 @@ namespace Jde::Opc::Gateway::Soak{
 				WARN( "[{}]Unsubscribe failed: {}", leg.Slug, e.what() );
 			}
 		}
+		ReadBackHistorian();
 		SampleStatus();
-		let pass = _completed && !_socketDrops && !_statusFailures && std::ranges::all_of( _legs, [](let& l){ return !l.Misses && !l.WriteFailures; } );
+		//The historian criteria, scored only when a group was set up (else the historian is simply left out of this run):  the
+		//live stream delivered records and the gateway never ended the subscription.  The gate is the stream, not the end-of-run
+		//read-back:  the stream is a direct count of pushed records, where the read-back adds QL paging a parse bug could skew,
+		//and a stream with zero records is the real defect (the collector never subscribed or stored).  The stored count and the
+		//exact stream/push relationship - bounds, the collector's own sampling and the snapshot make them differ a little - are
+		//reported for a human to weigh, not asserted.
+		let histErr = _histListener ? _histListener->Error() : string{};
+		let histOk = !_histGroup || (_histListener && _histListener->Records.load()>0 && histErr.empty());
+		let pass = _completed && !_socketDrops && !_statusFailures && histOk && std::ranges::all_of( _legs, [](let& l){ return !l.Misses && !l.WriteFailures; } );
 		WriteSummary( pass ? "PASS" : "FAIL" );
 		INFO( "Soak {}: completed={}, writes={}, pushes={}, misses={}, writeFailures={}, writeRetries={}, missRetries={}, socketDrops={}, statusFailures={}, p50={}ms, p99={}ms.",
 			pass ? "PASS" : "FAIL", _completed, Total(&ServerLeg::Writes), Total(&ServerLeg::Pushes), Total(&ServerLeg::Misses), Total(&ServerLeg::WriteFailures), Total(&ServerLeg::WriteRetries), Total(&ServerLeg::MissRetries), _socketDrops, _statusFailures, percentile(AllLatencies(), .5), percentile(AllLatencies(), .99) );
+		if( _histGroup )
+			INFO( "  [historian]group={}, stored={}, snapshot={}, stream={}{}.", *_histGroup, _histStored, _histListener->Snapshot.load(), _histListener->Records.load(), histErr.empty() ? string{} : Ƒ(", ended: {}", histErr) );
 		for( let& l : _legs )
 			INFO( "  [{}]writes={}, pushes={}, misses={}, writeFailures={}, writeRetries={}, missRetries={}, p50={}ms, p99={}ms.", l.Slug, l.Writes, l.Pushes, l.Misses, l.WriteFailures, l.WriteRetries, l.MissRetries, percentile(l.LatenciesMs, .5), percentile(l.LatenciesMs, .99) );
 		return pass ? EXIT_SUCCESS : EXIT_FAILURE;

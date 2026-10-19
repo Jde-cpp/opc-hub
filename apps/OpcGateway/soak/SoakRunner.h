@@ -24,8 +24,9 @@ namespace Jde::Opc::Gateway::Soak{
 	α CertPath( sv slug )ι->string;
 
 	α Run( sp<App::Client::IAppClient> client )ε->int;//blocks for the configured duration; returns the process exit code.
-	//createAcl granting this user AllAccess on the opc nodeIds resource. The resource must already exist (OpcServer's
-	//first boot registers it) and OpcServer must be RESTARTED afterwards to load the acl - live acl events reach a
-	//split-process OpcServer but never update its in-memory rights (see soak findings).
-	α GrantWriteRights( const sp<App::Client::IAppClient>& client )ι->void;
+	//Grants this user every right on the OpcServer's root nodeIds resource, then restores it - enforced.  The row ships
+	//soft-deleted (ResourceSyncAwait) and the first boot declares it, so this runs after that boot;  a grant alone left
+	//every boot OPEN and no soak write ever authorized (#236).  Both reach a running OpcServer as events;  soak.sh waits
+	//for its ENFORCING line before the client runs, restarting it first by default.  Throws on a refusal.
+	α EnforceWriteRights( const sp<App::Client::IAppClient>& client )ε->void;
 }

@@ -5,6 +5,7 @@
 #include "TestConnectionQLAwait.h"
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"
+#include "../hist/HistHost.h"
 
 namespace Jde::Opc{
 	namespace Gateway{ sp<QL::LocalQL> _ql; }
@@ -21,6 +22,15 @@ namespace Jde::Opc{
 		status["clients"] = clients;
 		status["monitoredItems"] = monitoredItems;
 		status["pendingItems"] = pendingItems;//subscriptions a lost connection parked for its reconnect - monitoredItems counts only what is on a client.
+		//The historian, for the soak (apps/OpcGateway/soak):  how many groups are hosted, the memory every group's buffer
+		//holds together (maxBuffer caps it), and the gateway's own AppServer user - the identity its collector presents to
+		//an OPC server (a Certificate token, the app client's own cert), which an enforcing OpcServer must grant Read and
+		//Subscribe before a group fills.  0 groups with a hist block says the historian is off (its lock is held elsewhere).
+		auto& hist = HistHost::Instance();
+		status["historianGroups"] = hist.Groups().size();
+		auto historian = hist.Historian();
+		status["historianBytes"] = historian ? historian->Buffered() : 0;
+		status["historianUser"] = AppClient()->UserPK().Value;
 	}
 	α Gateway::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		return GatewayQLAwait::Test( q, move(creds), sl );
@@ -52,5 +62,4 @@ namespace Jde::Opc::Gateway{
 		AddStatusCounts( y );
 		return y;
 	}
-
 }
