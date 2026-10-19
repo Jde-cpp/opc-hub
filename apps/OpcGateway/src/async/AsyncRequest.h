@@ -9,15 +9,6 @@ namespace Jde::Opc::Gateway{
 	constexpr RequestId ConnectRequestId = std::numeric_limits<RequestId>::max();
 	constexpr RequestId SubscriptionRequestId = ConnectRequestId - 1;
 	struct UAClient;
-	struct UARequest{
-		UARequest( std::any&& h )ι:CoHandle{ move(h) }{ h=nullptr; }
-		std::any CoHandle;
-	};
-	Τ struct UARequestMulti{
-		flat_map<UA_UInt32, NodeId> Requests;
-		sp<UAClient> ClientPtr;
-		flat_map<NodeId, T> Results;
-	};
 
 	//Serializes all UA_Client access for one client: open62541 clients are not thread-safe, so every UA_Client_* call
 	//(run_iterate here, submissions/sync services via UAClient::PostUA) runs on _strand. Process/Clear/Stop are

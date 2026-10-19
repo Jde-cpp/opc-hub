@@ -50,7 +50,6 @@ namespace Jde::Opc::Gateway::Tests{
 		α Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SRCE )ε->await<FromServer::SubscriptionAck>;
 		α Subscribe( string&& /*query*/, jobject /*variables*/, sp<QL::IListener> /*listener*/, SL )ε->await<jarray> override{ ASSERT(false); throw "noimpl"; }
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
-		α LogSubscribe( jobject&& ql, jobject vars, sp<IListener> listener, SRCE )ε->await<jarray>;
 
 		α Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SRCE )ε->await<FromServer::UnsubscribeAck>;
 		Ω PendingSubscriptionRecords()ι->uint;//subscribe + unsubscribe requests still awaiting their ack, across every socket - a failed request may leave none (m2-closing #15).
@@ -71,7 +70,6 @@ namespace Jde::Opc::Gateway::Tests{
 	private:
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
-		α OnClose( beast::error_code ec )ι->void override;
 		α OnAck( uint32 ack )ι->void;
 		mutable std::mutex _histMutex;
 		flat_map<RequestId,sp<IHistListener>> _histListeners;
@@ -83,5 +81,4 @@ namespace Jde::Opc::Gateway::Tests{
 		flat_set<RequestId> _histEnded;
 		uint _histStrays{};
 	};
-	α Socket()ι->GatewayClientSocket&;
 }

@@ -6,11 +6,8 @@ namespace Jde::Opc::Gateway{
 namespace Tests{
 	struct ITest : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void;
-		Ω TearDownTestCase()ι->void;
-		β SetUp()ι->void{}
-		constexpr static ELogTags _tags{ ELogTags::Test };
-
+		Ω SetUpTestSuite()ε->void;
+		Ω TearDownTestSuite()ι->void;
 		static optional<Web::Jwt> _jwt;
 		static sp<UAClient> _client;
 	};

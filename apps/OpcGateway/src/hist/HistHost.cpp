@@ -447,7 +447,7 @@ namespace Jde::Opc::Gateway{
 				guid = rows.front().Guid;
 			if( auto host = Remove(id, Writer(by), SRCE_CUR); host )
 				co_await host->Group()->Settled();
-			let view = GetViewPtr( "hist_group_nodes" );
+			let view = GetViewPtr( HistTable::GroupNodes );
 			co_await Any( DS()->Execute(DB::Sql{Ƒ("delete from {} where hist_group_id=?", view->SqlName()), {DB::Value{(uint)id}}}) );
 			await.Done();
 		}

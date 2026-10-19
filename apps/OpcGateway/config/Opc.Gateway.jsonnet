@@ -16,7 +16,6 @@ local logsDir = args.logsDir;
 local applicationUri = "urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME)";
 function( sync=false )
 {
-	local instance = self,
 	gateway:{
 		pingInterval: "PT30S",
 		ttl: "PT2M",
@@ -128,14 +127,7 @@ function( sync=false )
 	dbServers: {
 		scriptPaths: args.dbServers.scriptPaths,
 		sync: sync,
-		localhost:{
-			driver: args.dbServers.localhost.driver,
-			connectionString: args.dbServers.localhost.connectionString,
-			username: args.dbServers.localhost.username,
-			password: args.dbServers.localhost.password,
-			schema: args.dbServers.localhost.schema,
-			catalogs: args.dbServers.localhost.catalogs
-		}
+		localhost: args.dbServers.localhost
 	},
 	ql:{
 		introspection: [
@@ -145,8 +137,7 @@ function( sync=false )
 		]
 	},
 	credentials:{
-		name: "OpcGateway",
-		slug:: "OpcGateway"
+		name: "OpcGateway"
 	},
 	web:{
 		client:{ ssl:{ caFile: args.certsDir("AppServer")+"/AppServer.pem" } }//the AppServer is its own root - without an anchor the client rejects localhost:1967's self-signed cert.  The stem is App.Server.jsonnet's visible commonName; if that or its `path::` un-hides, this anchor must follow.

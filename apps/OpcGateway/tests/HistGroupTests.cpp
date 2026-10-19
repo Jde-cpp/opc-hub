@@ -27,7 +27,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	struct HistGroupTests : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			if( !SelectServerCnnctn(OpcServerSlug) )
 				CreateServerCnnctn();
 			_connection = SelectServerCnnctn( OpcServerSlug )->Id;

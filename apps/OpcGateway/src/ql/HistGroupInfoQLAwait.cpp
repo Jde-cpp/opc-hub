@@ -109,7 +109,7 @@ namespace Jde::Opc::Gateway{
 	//know is refused, as there.
 	Ω mayUpdate( UserPK user, SL sl )ε->bool{
 		try{
-			GetViewPtr( "hist_group_nodes" )->Authorize( Access::ERights::Update, user, sl );
+			GetViewPtr( HistTable::GroupNodes )->Authorize( Access::ERights::Update, user, sl );
 			return true;
 		}
 		catch( Exception& e ){

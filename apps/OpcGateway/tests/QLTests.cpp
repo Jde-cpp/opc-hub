@@ -35,7 +35,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	struct QLTests : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void{ //ε: CreateServerCnnctn throws - under ι gtest never sees it and the whole binary terminates.
+		Ω SetUpTestSuite()ε->void{ //ε: CreateServerCnnctn throws - under ι gtest never sees it and the whole binary terminates.
 			if( !SelectServerCnnctn( OpcServerSlug ) )
 				CreateServerCnnctn();
 		};

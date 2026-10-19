@@ -4,7 +4,6 @@
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/Variant.h>
 #include "../GatewayAppClient.h"
-#include "../async/CallAwait.h"
 #include "../async/NamespacesAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
@@ -30,7 +29,7 @@ namespace Jde::Opc::Gateway{
 
 	α IGatewayQLAwait::GetClient( QL::IQLAwaitExe* await )ι->TAwait<sp<UAClient>>::Task{
 		try{
-			auto session = await->Session(); THROW_IF( !session, "No Session for query" );
+			auto session = await->RequireSession();
 			auto opcId = await->Input().As<jstring>( "opc" );
 			_client = co_await ConnectAwait{ string{opcId}, *session };
 			await->Query();
@@ -126,15 +125,10 @@ namespace Jde::Opc::Gateway{
 	α GatewayQLMAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			jvalue y;
-			// if( m.Type==QL::EMutationQL::Execute )
-			// 	results.push_back( co_await JCallAwait(move(m), _request.SessionInfo, _sl) );
 			if( _query.DBTable && _query.TableName()=="server_connections" )
 				y = co_await QL::QLAwait<>( move(_query), UserPK(), _sl );
-			else if( _query.JsonTableName=="variable" ){
-				auto session = Session();
-				THROW_IF( !session, "No Session for mutation" );
-				y = co_await VariableQLAwait{ move(_query), session, _sl };
-			}
+			else if( _query.JsonTableName=="variable" )
+				y = co_await VariableQLAwait{ move(_query), RequireSession(), _sl };
 			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
 				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else
@@ -212,26 +206,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α GatewayQLAwait::SecurityMode( const sp<UAClient>& client )ε->string{
 		UA_Variant uaAttrib = connectionAttribute( client, "securityMode" );
-		UA_MessageSecurityMode emode = *( UA_MessageSecurityMode* )uaAttrib.data;
-		sv mode;
-		switch( emode ){
-		case UA_MESSAGESECURITYMODE_INVALID:
-			mode = "Invalid";
-			break;
-		case UA_MESSAGESECURITYMODE_NONE:
-			mode = "None";
-			break;
-		case UA_MESSAGESECURITYMODE_SIGN:
-			mode = "Sign";
-			break;
-		case UA_MESSAGESECURITYMODE_SIGNANDENCRYPT:
-			mode = "SignAndEncrypt";
-			break;
-		case __UA_MESSAGESECURITYMODE_FORCE32BIT:
-			ASSERT( false );
-			break;
-		}
+		let mode = SecurityModeName( *(UA_MessageSecurityMode*)uaAttrib.data );
 		UA_Variant_clear( &uaAttrib );
-		return string{ mode };
+		return mode;
 	}
 }

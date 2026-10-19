@@ -3,7 +3,7 @@
 #include "jde/opc/uatypes/Logger.h"
 
 namespace Jde::Opc::Gateway{
-	α httpStatus( StatusCode sc )ι->Jde::EHttpStatus{
+	Ω httpStatus( StatusCode sc )ι->Jde::EHttpStatus{
 		switch( sc ){
 			case UA_STATUSCODE_BADIDENTITYTOKENREJECTED: return EHttpStatus::Forbidden;
 			case UA_STATUSCODE_BADCONNECTIONREJECTED: return EHttpStatus::BadGateway;

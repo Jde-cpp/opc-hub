@@ -22,7 +22,6 @@ namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Request; }
 	namespace Read{ α OnResponse(UA_Client *client, void *userdata, RequestId requestId, StatusCode status, UA_DataValue *value)ι->void; }
 	namespace Write{ α OnResponse(UA_Client *ua, void *userdata, RequestId requestId, UA_WriteResponse *response)ι->void; }
-	namespace Attributes{ α OnResponse(UA_Client* ua, void* userdata, RequestId requestId, StatusCode status, UA_NodeId* dataType)ι->void; }
 
 	struct CreateMonitoredItemsRequest;
 	//What a test connect (UAClient::ConnectForTest) reports:  the client with its session activated, or why the connect failed.
@@ -52,8 +51,8 @@ namespace Jde::Opc::Gateway{
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
 		Ω ConnectionLost( sp<UAClient>&& client )ι->bool;//RemoveClient for a client whose connection failed:  what it was monitoring is parked and reconnected first.
-		//The statuses that say the connection went, not that the server turned the request down - the one definition Retry, RetryVoid,
-		//RemoveIfDisconnected and the rebuild read (reviews/m2-closing.md #2).  BadServerNotConnected:  the submit found the channel
+		//The statuses that say the connection went, not that the server turned the request down - the one definition RemoveIfDisconnected
+		//and the rebuild read (reviews/m2-closing.md #2).  BadServerNotConnected:  the submit found the channel
 		//already down.  BadConnectionClosed:  it went under the submit - sendRequest hands back connectStatus, or the send failed.
 		//BadSecureChannelClosed:  the same, and what open62541 answers every call in flight with when the channel closes.
 		Ω IsConnectionLoss( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADSERVERNOTCONNECTED || sc==UA_STATUSCODE_BADCONNECTIONCLOSED || sc==UA_STATUSCODE_BADSECURECHANNELCLOSED; }
@@ -82,17 +81,11 @@ namespace Jde::Opc::Gateway{
 		//Responses are written on the strand but read by await_ready/await_resume on arbitrary threads - guard the shared_ptrs themselves.
 		α CreatedSubscriptionResponse()Ι->sp<UA_CreateSubscriptionResponse>{ lg _{_responseMutex}; return _createdSubscriptionResponse; }
 		α SetCreatedSubscriptionResponse( sp<UA_CreateSubscriptionResponse> p )ι->void{ lg _{_responseMutex}; _createdSubscriptionResponse = move(p); }
-		α MonitoringModeResponse()Ι->sp<UA_SetMonitoringModeResponse>{ lg _{_responseMutex}; return _monitoringModeResponse; }
-		α SetMonitoringModeResponse( sp<UA_SetMonitoringModeResponse> p )ι->void{ lg _{_responseMutex}; _monitoringModeResponse = move(p); }
 
 		Ω ClearRequest( UA_Client* ua, RequestId requestId )ι->void;
-		Ṫ ClearRequestH( UA_Client* ua , RequestId requestId )ι->T;
 		α ClearRequest( RequestId requestId )ι->void;
-		Ŧ ClearRequestH( RequestId requestId )ι->T;//{ return ClearRequest<UARequest<T>>( requestId )->CoHandle; }
 		α MonitoredNodes()ι->UAMonitoringNodes&{ std::call_once(_monitoredNodesOnce, [this]{_monitoredNodes = mu<UAMonitoringNodes>(shared_from_this());}); return *_monitoredNodes; }//lazy but thread-safe: callers run on the loop thread (data-change callbacks) and pool threads (subscribe/unsubscribe) concurrently. Can't build eagerly in the ctor — shared_from_this() isn't valid until make_shared finishes wiring the weak ref.
 		α TryMonitoredNodes()ι->UAMonitoringNodes*{ return _monitoredNodes.get(); }//never constructs: null means "no subscriptions", which for a query or an unsubscribe is simply nothing to do. Nothing clears the member once set - Shutdown used to move it out, which left this and MonitoredNodes() racing a still-pumping strand.
-		Ŧ Retry( function<void(sp<UAClient>&&, T)> f, UAException&& e, sp<UAClient> pClient, T h )ι->ConnectAwait::Task;
-		α RetryVoid( function<void(sp<UAClient>&&) > f, UAException&& e, sp<UAClient>&& pClient )ι->ConnectAwait::Task;
 		α Process( RequestId requestId, sv what, bool keepAlive=false )ι->void;
 		α StopProcessing()ι->void;//dispatches AsyncRequest::Stop onto the strand with a keep-alive.
 		α PostUA( absl::AnyInvocable<void()> f )ι->void;//runs f on this client's strand - the only place UA_Client_* calls are allowed once the processing loop can run. Holds shared_from_this until f runs.
@@ -107,8 +100,6 @@ namespace Jde::Opc::Gateway{
 		α SessionToken()Ι->string{ lg _{_sessionTokenMutex}; return _sessionToken; }//the token RecordSession last read - empty means it could not be read, which turns the rebuild off (see there).
 		α RecordBreak()ι->void;//StateCallback, for any state short of an activated session:  the first since the last activation is when the connection broke.
 		α TakeBreak()ι->TimePoint;//when the connection broke, for IDataChange::ConnectionLost - RecordBreak's time, else now - and clears it, so the next loss is a new break.
-		α AddSessionAwait( VoidAwait::Handle h )ι->void;
-		α TriggerSessionAwaitables()ι->void;
 
 		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
 		//does - then that address in the name's place.  open62541 connects to the first address a name resolves to and never tries
@@ -185,8 +176,6 @@ namespace Jde::Opc::Gateway{
 		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
 		optional<DurationTimer> _testDeadline;//strand-confined.
 
-		vector<VoidAwait::Handle> _sessionAwaitables; mutable mutex _sessionAwaitableMutex;
-
 		//The authentication token of the session last seen activated - see RecordSession.  Written from StateCallback (the loop
 		//thread) and read off it through SessionToken()/ReadSessionToken(), so the lock is what keeps a reader - a test, a status
 		//query - from racing a re-activation rather than a precaution against a future one.
@@ -195,7 +184,6 @@ namespace Jde::Opc::Gateway{
 		//outage, and spec *Compression*'s late-report rule needs the break, not that.
 		std::atomic<TimePoint> _brokeAt{};
 
-		sp<UA_SetMonitoringModeResponse> _monitoringModeResponse;
 		sp<UA_CreateSubscriptionResponse> _createdSubscriptionResponse;
 		mutable mutex _responseMutex;
 
@@ -206,7 +194,6 @@ namespace Jde::Opc::Gateway{
 		friend ConnectAwait;
 		friend α Read::OnResponse( UA_Client *client, void *userdata, RequestId requestId, StatusCode status, UA_DataValue *value )ι->void;
 		friend α Write::OnResponse( UA_Client *ua, void *userdata, RequestId requestId, UA_WriteResponse *response )ι->void;
-		friend α Attributes::OnResponse( UA_Client* ua, void* userdata, RequestId requestId, StatusCode status, UA_NodeId* dataType )ι->void;
 
 		NodeIndex _nodeIndex;
 		EnumTypeCache _enumTypes;
@@ -214,28 +201,4 @@ namespace Jde::Opc::Gateway{
 		std::once_flag _monitoredNodesOnce;
 		up<UAMonitoringNodes> _monitoredNodes;//destroy first
 	};
-
-#define let const auto
-	Ŧ UAClient::Retry( function<void(sp<UAClient>&&, T)> f, UAException&& e, sp<UAClient> client, T h )ι->ConnectAwait::Task{
-		//TODO limit retry attempts.
-		let slug = client->Slug();
-		let credential = client->Credential;
-		let lost = IsConnectionLoss( (StatusCode)e.Code() );
-		if( lost )//a failed connection keeps what the client monitored; any other failure removes it as before.
-			ConnectionLost( move(client) );
-		else
-			RemoveClient( move(client) );
-		if( lost ){
-			try{
-				client = co_await GetClient( move(slug), move(credential) );
-				f( move(client), h );
-			}
-			catch( runtime_error& e ){
-				h.promise().ResumeExp( move(e), h );
-			}
-		}
-		else
-			h.promise().ResumeExp( move(e), h );
-	}
 }
-#undef let

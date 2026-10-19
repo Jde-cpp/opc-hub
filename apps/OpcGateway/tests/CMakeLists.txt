@@ -22,6 +22,7 @@ file( GLOB sources CONFIGURE_DEPENDS *.cpp */*.cpp )
 add_dependencies( ${targetName} Jde.DB.MySql ) #built on every platform; odbc only exists on windows.
 if( WIN32 )
 	list( APPEND sources OpcTests.rc )
+	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
 	add_dependencies( ${targetName} Jde.DB.Odbc )
 endif()
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway ) #the ctest run below dlopens these via config/args/sqlite

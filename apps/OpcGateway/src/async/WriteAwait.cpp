@@ -1,5 +1,5 @@
 ﻿#include "WriteAwait.h"
-#include "../UAClient.h" //!important
+#include "../UAClient.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway{
@@ -11,7 +11,7 @@ namespace Jde::Opc::Gateway{
 		}
 		return *this;
 	}
-	α onResponse( UA_Client*, void* userdata, RequestId requestId, UA_WriteResponse* response )ι->void{
+	Ω onResponse( UA_Client*, void* userdata, RequestId requestId, UA_WriteResponse* response )ι->void{
 		auto& await = *( WriteAwait* )userdata;
 		await.AddResponse( requestId, move(*response) );
 	}

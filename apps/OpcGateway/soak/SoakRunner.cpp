@@ -7,7 +7,6 @@
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
-#include <jde/opc/uatypes/ExNodeId.h>
 #include <jde/opc/uatypes/Value.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
@@ -84,19 +83,13 @@ namespace Jde::Opc::Gateway::Soak{
 				}
 			}
 		}
-		if( legs.empty() ){
-			auto& leg = legs.emplace_back();
-			leg.Slug = "OpcSoak"; leg.Name = "Soak test server"; leg.Description = "Soak test connection";
-			leg.CertificateUri = "urn:open62541.server.application"; leg.Url = "opc.tcp://127.0.0.1:4840";
-		}
-		if( legs.front().Nodes.empty() )
-			legs.front().Nodes.push_back( NodeId{4, 6017} );
+		THROW_IF( legs.empty(), "/soak/servers has no active leg - Opc.Soak.jsonnet lists them." );
+		for( let& leg : legs )
+			THROW_IF( leg.Nodes.empty(), "/soak/servers '{}' lists no nodes.", leg.Slug );
 		return legs;
 	}
 
-	//Where -createCert wrote the leg's client certificate - the file an external server has to trust.  Asks UAClient
-	//rather than re-deriving the layout; the SAN doesn't affect the path, so the uri is not needed here.
-	Ω CertPath( sv slug )ι->string{
+	α CertPath( sv slug )ι->string{
 		return UAClient::CryptoSettings( ServerCnnctnNK{slug} ).Certificate.Path.string();
 	}
 
@@ -130,7 +123,6 @@ namespace Jde::Opc::Gateway::Soak{
 
 		sp<App::Client::IAppClient> _client;
 		sp<GatewayClientSocket> _socket;//the main session's socket - User legs hold their own in ServerLeg::Socket.
-		vector<sp<GatewayClientSocket>> _retiredSockets;//dropped sockets stay alive - Connect() registered them with Process::AddShutdown.
 		vector<ServerLeg> _legs;
 		string _host;
 		PortType _port;
@@ -185,15 +177,14 @@ namespace Jde::Opc::Gateway::Soak{
 
 	//Built aside and swapped in only once it is up, so a failed attempt throws before it touches anything.  It used to replace _socket
 	//first:  a failure left _socket a never-handshaken socket - the next status query on it blocked for the full request timeout - and
-	//the legs on the retired one (subscription-disconnect #8).  A failed attempt's socket is simply released:  its destructor takes
-	//back the shutdown registration its Connect made, and a long outage would otherwise pile one up per attempt.
+	//the legs on the retired one (subscription-disconnect #8).  The replaced socket and a failed attempt's are simply released:  a
+	//request in flight and the read loop each hold their own reference, and the destructor takes back the shutdown registration
+	//its Connect made.
 	α SoakRunner::Connect()ε->void{
 		optional<ssl::context> ctx;
 		auto socket = ms<GatewayClientSocket>( Executor(), ctx );
 		BlockVoidAwait( socket->RunSession(_host, _port) );
 		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(_client->SessionId()) );
-		if( _socket )
-			_retiredSockets.push_back( move(_socket) );
 		_socket = move( socket );
 		for( auto& leg : _legs ){
 			if( leg.User.empty() ){
@@ -231,12 +222,10 @@ namespace Jde::Opc::Gateway::Soak{
 		auto socket = ms<GatewayClientSocket>( Executor(), ctx );//built aside and swapped in only once it is up, as in Connect (#8).
 		BlockVoidAwait( socket->RunSession(_host, _port) );
 		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(*sessionId) );
-		if( leg.Socket )
-			_retiredSockets.push_back( move(leg.Socket) );
 		leg.Socket = move( socket );
 		leg.SessionId = *sessionId;
 		leg.Subscribed = false;//a new socket carries no subscription.
-		INFO( "[{}]Logged in as '{}' - session {:x}.", leg.Slug, leg.User, leg.SessionId );
+		INFO( "[{}]Logged in as '{}' - session {}.", leg.Slug, leg.User, hex(leg.SessionId) );
 	}
 
 	α SoakRunner::EnsureServerConnections()ε->void{
@@ -258,7 +247,7 @@ namespace Jde::Opc::Gateway::Soak{
 		let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( leg.Socket->Subscribe(leg.Slug, leg.Nodes, shared_from_this()) );
 		THROW_IF( (uint)ack.results_size()!=leg.Nodes.size(), "Subscription ack has {} results for {} nodes.", ack.results_size(), leg.Nodes.size() );
 		for( int i=0; i<ack.results_size(); ++i )
-			THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {:x}.", leg.Nodes[i].ToString(), ack.results(i).status_code() );
+			THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {}.", leg.Nodes[i].ToString(), hex(ack.results(i).status_code()) );
 		leg.Subscribed = true;
 		INFO( "Subscribed to {} node(s) on '{}'.", leg.Nodes.size(), leg.Slug );
 	}

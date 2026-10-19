@@ -1,16 +1,18 @@
 #include "helpers.h"
 #include <thread>
+#include <open62541/client_config_default.h>
 #include <jde/fwk/settings.h>
+#include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/UAException.h>
-#include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/app/client/IAppClient.h>
 #include "../../src/GatewayAppClient.h"
 #include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
 #include "../../src/auth/UM.h"
 #include "../../src/ql/GatewayQL.h"
+#include "GatewayClientSocket.h"
 
 #define let const auto
 
@@ -76,28 +78,17 @@ namespace Jde::Opc::Gateway{
 		return *con;
 	}
 
-	using Web::Client::ClientHttpAwait;
-	using Web::Client::ClientHttpRes;
-	α Tests::Query( sv ql, jobject vars, bool raw )ε->jobject{
-		try{
-			jobject body{ {"query", ql} };
-			if( !vars.empty() )
-				body["variables"] = vars;
-			auto res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{
-				"localhost",
-				Ƒ("/graphql?{}", raw ? "raw" : "" ),
-				serialize(body),
-				GatewayPort(),
-				{ .Authorization=Ƒ("{:x}", AppClient()->SessionId()), .IsSsl=false }
-			});
-			return res.Json();
+	static sp<Tests::GatewayClientSocket> _session;
+	α Tests::Socket()ι->Tests::GatewayClientSocket&{
+		if( !_session ){
+			optional<ssl::context> ctx;
+			_session = ms<Tests::GatewayClientSocket>( Executor(), ctx );
+			BlockVoidAwait( _session->RunSession("localhost", GatewayPort(), "/opc") );//the gateway protocol's path on a hub; the standalone gateway ignores it.
+			BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( _session->Connect(AppClient()->SessionId()) );
 		}
-		catch( runtime_error& e ){
-		}
-		return {};
+		return *_session;
 	}
 
-	//the policy and mode the session was opened with, read on the client's strand - the only place UA_Client_* calls may run.
 	α Tests::EnforceHistGroups( bool on )ε->void{
 		auto app = AppClient();
 		let slug = jobject{ {"slug", "histGroups"}, {"schema", "gateway"} };
@@ -153,6 +144,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
+	//the policy and mode the session was opened with, read on the client's strand - the only place UA_Client_* calls may run.
 	α Tests::Negotiated( const sp<UAClient>& client )ι->string{
 		if( !client )
 			return "ok";
@@ -171,7 +163,7 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
-	flat_map<string,ETokenType> _userTokens;
+	static flat_map<string,ETokenType> _userTokens;
 	α Tests::AvailableUserTokens( sv url_ )ε->ETokenType{
 		str url{url_};
 		if( _userTokens.contains(url) )
@@ -181,19 +173,19 @@ namespace Jde::Opc::Gateway{
 		config.logging = &logger;
 		config.tcpReuseAddr = true;
 		UA_ClientConfig_setDefault( &config );
-		auto UA_DateTime_now_fake = []( UA_EventLoop* ) -> UA_DateTime{ return 0x5C8F735D; };
+		auto UA_DateTime_now_fake = []( UA_EventLoop* )->UA_DateTime { return 0x5C8F735D; };
 		config.eventLoop->dateTime_now = UA_DateTime_now_fake;
 		config.eventLoop->dateTime_nowMonotonic = UA_DateTime_now_fake;
 		UA_Client *client = UA_Client_newWithConfig( &config );
-    UA_EndpointDescription* endpointArray{}; uint endpointArraySize{};
+		UA_EndpointDescription* endpointArray{}; uint endpointArraySize{};
 		auto tokens = _userTokens.try_emplace( url ).first;
-    UAε( UA_Client_getEndpoints(client, url.c_str(), &endpointArraySize, &endpointArray) ) ;
+		UAε( UA_Client_getEndpoints(client, url.c_str(), &endpointArraySize, &endpointArray) );
 		for( auto ep : Iterable<UA_EndpointDescription>(endpointArray, endpointArraySize) ){
 			for( auto token : Iterable<UA_UserTokenPolicy>(ep.userIdentityTokens, ep.userIdentityTokensSize) )
 				tokens->second |= ToTokenType( token.tokenType );
 		}
-    UA_Array_delete( endpointArray, endpointArraySize, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION] );
-    UA_Client_delete( client );
+		UA_Array_delete( endpointArray, endpointArraySize, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION] );
+		UA_Client_delete( client );
 		return tokens->second;
 	}
 

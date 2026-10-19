@@ -1,6 +1,5 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
 include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
-message( "Jde.Opc.GatewayLib" )
 project( Jde.Opc.GatewayLib VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 

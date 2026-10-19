@@ -7,7 +7,7 @@
 
 namespace Jde::Opc::Gateway::Tests{
 	struct WriteTests : ::testing::Test{
-		Ω SetUpTestCase()->void{
+		Ω SetUpTestSuite()->void{
 			if( !SelectServerCnnctn( OpcServerSlug ) )
 				CreateServerCnnctn();
 		};

@@ -13,7 +13,7 @@
 #     shells and CI runners start commands with Ctrl-C *disabled* for the whole process tree: the attach still succeeds, the
 #     servers silently ignore the event, every stop is a 60s wait and a hard kill, and the verdict is FAIL on "unclean stop"
 #     even when the client passed.  Such a launch is refused at startup; detach a console instead:
-#       Start-Process 'C:\Program Files\Gitinash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
+#       Start-Process 'C:\Program Files\Git\bin\bash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
 #   - no idle sleep.  The guest's AC standby timeout is 5h and a sleep ends the run; this script holds ES_SYSTEM_REQUIRED for
 #     its own lifetime and reads it back.  It cannot stop a VM *host* from suspending the guest (H3) - that is a host setting.
 #
@@ -248,10 +248,7 @@ soakExe="$(findExe apps/OpcGateway/soak/Jde.Opc.Soak)" || exit 1
 
 export REPO_SOURCE_DIR="$(np "$repo")"
 export REPO_BUILD_DIR="$(np "$(dirname "$buildDir")")"
-if [[ -z "${UA_NODE_SETS:-}" ]]; then
-	if [[ $isWindows -eq 1 ]]; then export UA_NODE_SETS="C:/Users/duffyj/source/repos/libs/UA-Nodeset";
-	else export UA_NODE_SETS="$HOME/code/libs/UA-Nodeset"; fi
-fi
+[[ -n "${UA_NODE_SETS:-}" ]] || { echo "ERROR: UA_NODE_SETS is not set - the OpcServer loads the DI and IA nodesets from it (a UA-Nodeset checkout)." >&2; exit 1; }
 
 runRoot="${JDE_SOAK_DIR:-$HOME/soak-runs}"
 [[ -n "$runDir" ]] || runDir="$runRoot/$(date +%Y%m%d-%H%M%S)"
@@ -386,7 +383,11 @@ waitHttp(){ # <name> <url>
 
 # ---------------------------------------------------------------- crash + rss verdict helpers
 crashEvents(){ # crash records since start touching our binaries -> stdout (empty = none)
-	local names='Jde.App.Server|Jde.Opc.Server|Jde.Opc.Gateway|Jde.Opc.Soak'
+	local e names=""
+	for e in "$appServerExe" "$opcServerExe" "$gatewayExe" "$soakExe"; do
+		e=${e##*/}
+		names+="${names:+|}${e%"$exeSuffix"}"
+	done
 	if [[ $isWindows -eq 1 ]]; then
 		local ageMs=$(( ($(date +%s)-startEpoch+60)*1000 ))
 		wevtutil qe Application "//q:*[System[(EventID=1000 or EventID=1001) and TimeCreated[timediff(@SystemTime) <= $ageMs]]]" //f:text 2>/dev/null | grep -E "$names"

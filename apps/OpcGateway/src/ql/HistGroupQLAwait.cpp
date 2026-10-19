@@ -13,7 +13,7 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	using QL::EMutationQL;
-	constexpr sv Groups{ "hist_groups" }, GroupNodes{ "hist_group_nodes" }, Templates{ "hist_templates" }, TemplateNodes{ "hist_template_nodes" };
+	using namespace HistTable;
 
 	Ω histTable( const QL::MutationQL& m )ι->bool{
 		let table = m.TableName();

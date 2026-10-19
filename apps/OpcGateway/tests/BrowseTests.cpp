@@ -14,11 +14,11 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 	struct BrowseTests : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			try{
 				_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 				auto sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
-				TRACE( "UserPK: {:x}, SessionId: {:x}", _jwt->UserPK.Value, sessionId );
+				TRACE( "UserPK: {}, SessionId: {}", hex(_jwt->UserPK.Value), hex(sessionId) );
 				auto con = GetConnection( OpcServerSlug );
 				Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
 				_client = BlockAwait<TAwait<sp<UAClient>>,sp<UAClient>>( ConnectAwait{move(con.Slug), cred} );
@@ -29,12 +29,10 @@ namespace Jde::Opc::Gateway::Tests{
 				THROW( "Failed to connect to gateway: {}", e.what() );
 			}
 		};
-		Ω TearDownTestCase()ι->void{
+		Ω TearDownTestSuite()ι->void{
 			if( _client )
 				UAClient::RemoveClient( move(_client) );
 		}
-		α SetUp()ι->void{}
-
 		static optional<Web::Jwt> _jwt;
 		static sp<UAClient> _client;
 	};

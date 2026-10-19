@@ -128,7 +128,7 @@ The log is the journal - `journalctl -u jde-opchub -f` - and the files under the
   apps/OpcHub/config/args/install/args.libsonnet         sqlite; the driver/proc modules by $(ExeDir), the data by $(ProgramData)
   apps/AppServer/config/App.Server.jsonnet
   apps/OpcGateway/config/Opc.Gateway.jsonnet
-  apps/OpcGateway/config/introspection/*.jsonnet
+  apps/OpcGateway/config/introspection/*.jsonnet + scalars.libsonnet
   apps/OpcServer/config/Opc.Server.jsonnet + Opc.Server.Install.jsonnet (the overlay the service loads)
   apps/OpcServer/config/args/install/args.libsonnet
   apps/OpcServer/config/pubsub/pumps.libsonnet

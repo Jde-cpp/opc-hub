@@ -4,7 +4,7 @@
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include "Auth.h"
-#include "../../src/auth/CertAwait.h"
+#include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
 #include "../../src/GatewayAppClient.h"
 
@@ -15,10 +15,10 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//no connection needed - EnsureCertificate is a static that only touches the cert tree.
 	struct CertFileTests : ::testing::Test{
-		static constexpr sv Slug{ "certUriChangeTest" };
+		inline static const string Slug{ "certUriChangeTest" };
 		α TearDown()ι->void override{
 			std::error_code ec;
-			fs::remove( UAClient::CryptoSettings(ServerCnnctnNK{Slug}).Certificate.Path, ec );
+			fs::remove( UAClient::CryptoSettings(Slug).Certificate.Path, ec );
 		}
 	};
 	//the cert file name keys on the slug, its SAN on the gateway's applicationUri (/gateway/issuedCerts - security-matrix #8;
@@ -26,19 +26,19 @@ namespace Jde::Opc::Gateway::Tests{
 	//SAN forever and every session is refused BadCertificateUriInvalid.  It is also how the certificates issued before #8,
 	//their SAN the server's uri, replace themselves.
 	TEST_F( CertFileTests, ReissuesWhenApplicationUriChanges ){
-		let path = UAClient::CryptoSettings( ServerCnnctnNK{Slug} ).Certificate.Path;
+		let path = UAClient::CryptoSettings( Slug ).Certificate.Path;
 		let sanUri = [&]{ return Crypto::Certificate{ Crypto::ReadCertificate(path) }.SanUri(); };
 
-		UAClient::EnsureCertificate( ServerCnnctnNK{Slug}, "urn:first.application" );
+		UAClient::EnsureCertificate( Slug, "urn:first.application" );
 		ASSERT_TRUE( fs::exists(path) );
 		EXPECT_EQ( sanUri(), "urn:first.application" );
 
-		UAClient::EnsureCertificate( ServerCnnctnNK{Slug}, "urn:second.application" );//same file name, different uri.
+		UAClient::EnsureCertificate( Slug, "urn:second.application" );//same file name, different uri.
 		EXPECT_EQ( sanUri(), "urn:second.application" );
 
 		//and it must NOT churn when nothing changed - re-issuing every connect would rotate a cert peers have trusted.
 		let before = Crypto::ReadCertificate( path );
-		UAClient::EnsureCertificate( ServerCnnctnNK{Slug}, "urn:second.application" );
+		UAClient::EnsureCertificate( Slug, "urn:second.application" );
 		EXPECT_EQ( Crypto::ReadCertificate(path), before );
 	}
 
@@ -126,16 +126,16 @@ namespace Jde::Opc::Gateway::Tests{
 	//that is not there is the operator's to supply - said with the file's name, since it carries the slug.
 	TEST_F( CertFileTests, AnUnmanagedPairIsLeftAsFound ){
 		constexpr sv missing{ "unmanagedMissingTest" };
-		let path = UAClient::CryptoSettings( ServerCnnctnNK{Slug} ).Certificate.Path;
-		UAClient::EnsureCertificate( ServerCnnctnNK{Slug}, "urn:operator.supplied" );//stands in for the pair the operator brought.
+		let path = UAClient::CryptoSettings( Slug ).Certificate.Path;
+		UAClient::EnsureCertificate( Slug, "urn:operator.supplied" );//stands in for the pair the operator brought.
 		let before = Crypto::ReadCertificate( path );
 
 		let saved = Settings::FindDefaultObject( "/gateway/issuedCerts" );
 		absl::Cleanup restore = [&saved]{ try{ Settings::Set("/gateway/issuedCerts", saved); }catch( const std::exception& ){} };//every later client in the process reads it.
 		Settings::Set( "/gateway/issuedCerts/certificate/managed", false );
-		ASSERT_FALSE( UAClient::CryptoSettings(ServerCnnctnNK{Slug}).Certificate.Managed );
+		ASSERT_FALSE( UAClient::CryptoSettings(Slug).Certificate.Managed );
 
-		EXPECT_NO_THROW( UAClient::EnsureCertificate(ServerCnnctnNK{Slug}, "urn:what.the.config.says") );
+		EXPECT_NO_THROW( UAClient::EnsureCertificate(Slug, "urn:what.the.config.says") );
 		EXPECT_EQ( Crypto::ReadCertificate(path), before ) << "the operator's certificate was replaced";
 		EXPECT_EQ( Crypto::Certificate{Crypto::ReadCertificate(path)}.SanUri(), "urn:operator.supplied" );
 
@@ -161,7 +161,7 @@ namespace Jde::Opc::Gateway::Tests{
 	class TrustReloadTests : public Auth{
 	protected:
 		TrustReloadTests()ι:Auth{ETokenType::IssuedToken}{}
-		Ω SetUpTestCase()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
+		Ω SetUpTestSuite()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
 		α TearDown()ι->void override{
 			if( _client )
 				UAClient::RemoveClient( move(_client) );
@@ -209,35 +209,23 @@ namespace Jde::Opc::Gateway::Tests{
 	class CertTests : public Auth{
 	protected:
 		CertTests()ι:Auth{ETokenType::Certificate}{}
-		~CertTests()override{}
-		Ω SetUpTestCase()ε->void;
 		α TearDown()ι->void override{
 			if( _client ){
 				UAClient::RemoveClient( move(_client) );
 				_client = nullptr;
 			}
 		}
-		Ω TearDownTestSuite();
-
 		α Connect( atomic_flag& flag, char id )ι->ConnectAwait::Task;
 		optional<Credential> _cred;
 		up<Exception> _exception;
 		sp<UAClient> _client;
 	};
 
-	α CertTests::SetUpTestCase()ε->void{
-
-	}
-	α CertTests::TearDownTestSuite(){
-		Auth::TearDownTestSuite();
-	}
-
 	α CertTests::Connect( atomic_flag& flag, char id )ι->ConnectAwait::Task{
 		try{
 			TRACE( "Call {}", id );
 			_client = co_await UAClient::GetClient( Connection->Slug, Credential{Crypto::PublicKey{}} );
 			ASSERT( _client );
-			//co_await CertAwait{ Client->Slug, "localhost", true };
 			TRACE( "{} returned", id );
 		}
 		catch( Exception& e ){

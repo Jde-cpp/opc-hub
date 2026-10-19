@@ -29,10 +29,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//	} }
 	//The secured cells take the two-way trust the doc describes:  the server's certificate under /gateway/trustedCertDirs, and
 	//the gateway's issued certificate (<product>/ssl/certs/<instance>.opcTestsExternalSecure.pem) trusted by the server.
-	str ExternalNoneSlug{ "opcTestsExternalNone" };
-	str ExternalSecureSlug{ "opcTestsExternalSecure" };
-	str ExternalSecureOnlySlug{ "opcTestsExternalSecureOnly" };
-	str ExternalByNameSlug{ "opcTestsExternalByName" };
+	const string ExternalNoneSlug{ "opcTestsExternalNone" };
+	const string ExternalSecureSlug{ "opcTestsExternalSecure" };
+	const string ExternalSecureOnlySlug{ "opcTestsExternalSecureOnly" };
+	const string ExternalByNameSlug{ "opcTestsExternalByName" };
 	class ExternalServerTests : public ::testing::Test{
 	protected:
 		α SetUp()ε->void override{

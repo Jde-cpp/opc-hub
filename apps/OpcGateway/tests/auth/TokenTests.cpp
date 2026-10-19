@@ -1,7 +1,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include "Auth.h"
-#include "../../src/auth/TokenAwait.h"
+#include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
 #include "../../src/GatewayAppClient.h"
 
@@ -13,38 +13,28 @@ namespace Jde::Opc::Gateway::Tests{
 	class TokenTests : public Auth{
 	protected:
 		TokenTests()ι:Auth{ETokenType::IssuedToken}{}
-		~TokenTests()override{}
-		Ω SetUpTestCase()ε->void;
-		α TearDown()ι->void override{}
-		Ω TearDownTestSuite();
+		Ω SetUpTestSuite()ε->void;
 		static optional<Web::Jwt> _jwt;
 	};
 	optional<Web::Jwt> TokenTests::_jwt;
 
-	α TokenTests::SetUpTestCase()ε->void{
+	α TokenTests::SetUpTestSuite()ε->void{
 		_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 	}
 
-	α TokenTests::TearDownTestSuite(){
-		Auth::TearDownTestSuite();
-	}
-
-	up<Exception> _exception;
+	static up<Exception> _exception;
 	Ω authenticateTest( const Web::Jwt& jwt, ServerCnnctnNK opcId, atomic_flag& flag, bool bad=false )ι->TAwait<sp<UAClient>>::Task{
 		try{
 			auto text = jwt.Payload();
 			if( bad )
 				text[42] = text[42]-1;
 			auto client = co_await UAClient::GetClient( move(opcId), Credential{text} );
-			//co_await TokenAwait{ text, move(opcId), "localhost", true };
-			//_sessionIds.push_back( sessionInfo.session_id() );
 		}
 		catch( Exception& e ){
 			_exception = e.Move();
 		}
 		flag.test_and_set();
 		flag.notify_all();
-		TRACE( "notify_all" );
 	}
 
 	TEST_F( TokenTests, Authenticate ){
@@ -52,16 +42,12 @@ namespace Jde::Opc::Gateway::Tests{
 		atomic_flag a,b,c;
 		authenticateTest( *_jwt, opcId, a );
 		a.wait( false );
-		TRACE( "Call b" );
 		authenticateTest( *_jwt, opcId, b );
-		TRACE( "Call c" );
 		authenticateTest( *_jwt, opcId, c );
 		b.wait( false );
-		TRACE( "b returned" );
 		c.wait( false );
-		TRACE( "c returned" );
 		EXPECT_FALSE( _exception );
-		std::this_thread::sleep_for( 100ms );
+		std::this_thread::sleep_for( 100ms );//a wait returns once its flag is set, while the coroutine may still be in notify_all on these locals.
 	}
 
 	TEST_F( TokenTests, Authenticate_Bad ){

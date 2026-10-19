@@ -4,7 +4,6 @@ local logsDir = args.logsDir;
 	local instance = self,
 	instanceName: args.instanceName,
 	testing:{
-		tests:: "QLTests.ServerDescriptionTest",
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedAppServer:: false,
 		embeddedOpcServer:: false
@@ -144,11 +143,7 @@ local logsDir = args.logsDir;
 			path: logsDir + "/opc-tests",
 			timeZone: "America/New_York",
 			delay: "PT1M"
-		},
-		// subscribe:{},
-		// remote:{
-		// 	delay: "PT0.1S"
-		// }
+		}
 	},
 	workers:{
 		executor: {threads: 2},

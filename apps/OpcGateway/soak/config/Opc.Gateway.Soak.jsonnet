@@ -3,6 +3,7 @@
 // gateway.pingInterval/ttl stay at production values - the idle-teardown path is under test.
 // Launch with -include=../../config/args/sqlite (relative to this file) and -arg path=<run>/db/gateway.db.
 local base = (import '../../config/Opc.Gateway.jsonnet')(sync=true);
+local soakLogging = import 'soak-logging.libsonnet';
 base + {
 	gateway+: {
 		//The soak's servers are whatever is to hand - the Jde OpcServer overlay one run, External the next - and a rung
@@ -16,20 +17,7 @@ base + {
 	},
 	logging+: {
 		spd+: {
-			tags: {
-				default: "Information",
-				monitoring: "Information",
-				processingLoop: "Information",
-				uaNet: "Warning",
-				uaClient: "Warning",
-				uaSecure: "Warning",
-				uaSession: "Warning",
-				uaServer: "Warning",
-				uaUser: "Warning",
-				uaSecurity: "Warning",
-				uaPubSub: "Warning",
-				uaDiscovery: "Warning"
-			}
+			tags: soakLogging.ua + { monitoring: "Information", processingLoop: "Information" }
 		}
 	}
 }

@@ -175,8 +175,8 @@ namespace Jde::Crypto{
 		CryptoSettings{ Settings::FindDefaultObject(settingsPath) }
 	{}
 
-	//ssl-level productName is the default tree for every path derived from the block; a sub-object's own still wins
-	//(the soak's issuedCerts block sets all three explicitly).  Without this only `dh` honored the ssl level, so
+	//ssl-level productName is the default tree for every path derived from the block (the soak's issuedCerts block sets it
+	//once for all three); a sub-object's own still wins.  Without this only `dh` honored the ssl level, so
 	//sibling servers configured with different productNames derived one shared cert path from Process::ProductName().
 	Ω withDefaultProductName( jobject sub, const jobject& parent )ι->jobject{
 		if( let p = parent.if_contains("productName"); p && !sub.contains("productName") )

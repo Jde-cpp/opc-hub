@@ -2,7 +2,6 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/str.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
@@ -32,10 +31,10 @@ namespace Jde::Opc::Gateway::Soak{
 				continue;
 			}
 			UAClient::EnsureCertificate( leg.Slug );//its SAN is the gateway's own applicationUri (/gateway/issuedCerts), not the leg's certificateUri - security-matrix #8.
-			let certificateFile = UAClient::CryptoSettings( leg.Slug ).Certificate.Path;
-			INFO( "Gateway certificate ready: {}.", certificateFile.string() );
+			let certificateFile = CertPath( leg.Slug );
+			INFO( "Gateway certificate ready: {}.", certificateFile );
 			if( leg.User.size() )
-				INFO( "External server '{}': trust {} in its server configuration before the run.", leg.Slug, certificateFile.string() );
+				INFO( "External server '{}': trust {} in its server configuration before the run.", leg.Slug, certificateFile );
 		}
 	}
 }

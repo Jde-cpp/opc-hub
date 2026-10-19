@@ -33,7 +33,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 	struct HistTests : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			let ua = Server::FindUAServer();
 			if( !ua )//SetUp skips each test.
 				return;
@@ -684,7 +684,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//enforces nodeIds with the gateway's user granted everything on it, and opens it again after.
 	struct HistEditTests : HistTests{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			let ua = Server::FindUAServer();
 			if( !ua )
 				return;
@@ -697,7 +697,7 @@ namespace Jde::Opc::Gateway::Tests{
 			_editDay = floor<days>( Clock::now() )-days{ 5 };
 			Enforce( true );
 		}
-		Ω TearDownTestCase()ι->void{
+		Ω TearDownTestSuite()ι->void{
 			try{
 				if( Server::FindUAServer() )
 					Enforce( false );

@@ -19,7 +19,7 @@ namespace Jde::Opc::Gateway{
 		~ReadRequest();
 		α operator=( ReadRequest&& x )ι->ReadRequest&;
 		α Add( const QL::TableQL& ql, const flat_map<NodeId, jobject>& nodes )ι->void;
-		Ω AtribString( UA_AttributeId id )->const string&;
+		Ω AttribName( UA_AttributeId id )ι->const string&;
 	private:
 		α Push( const UA_NodeId& nodeId, UA_AttributeId attrib )ι->void;//deep-copies nodeId into a new _readIds entry.
 		α SetNodesToRead()ι->void{ nodesToReadSize=_readIds.size(); nodesToRead=_readIds.data(); }//_readIds may have reallocated.

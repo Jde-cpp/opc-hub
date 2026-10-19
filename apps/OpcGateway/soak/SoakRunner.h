@@ -19,6 +19,9 @@ namespace Jde::Opc::Gateway::Soak{
 	};
 	//Legs from /soak/servers whose `flag` is absent or present on the command line; -<flag>Url/Uri/User/Pwd= args override flagged entries.
 	α ActiveServers()ε->vector<ServerLeg>;
+	//Where -createCert wrote the leg's client certificate - the file an external server has to trust.  Asks UAClient
+	//rather than re-deriving the layout; the SAN doesn't affect the path, so the uri is not needed here.
+	α CertPath( sv slug )ι->string;
 
 	α Run( sp<App::Client::IAppClient> client )ε->int;//blocks for the configured duration; returns the process exit code.
 	//createAcl granting this user AllAccess on the opc nodeIds resource. The resource must already exist (OpcServer's

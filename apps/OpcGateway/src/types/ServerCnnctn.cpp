@@ -38,7 +38,6 @@ namespace Jde::Opc::Gateway{
 	α ServerCnnctn::ToJson()Ι->jobject{
 		jobject o;
 		o.emplace( "id", Id );
-		//o.emplace("client_id", Id);
 		o.emplace("url", Url);
 		o.emplace("certificateUri", CertificateUri);
 		o.emplace("isDefault", IsDefault);
@@ -50,7 +49,7 @@ namespace Jde::Opc::Gateway{
 		return o;
 	}
 
-	α ServerCnnctnAwait::Select()ι->DB::SelectAwait::Task{
+	α ServerCnnctnAwait::Execute()ι->DB::SelectAwait::Task{
 		let view = GetViewPtr( "server_connections" );
 		DB::WhereClause where;
 		if( !_includeDeleted )

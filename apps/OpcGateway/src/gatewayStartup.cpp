@@ -6,7 +6,7 @@
 #include <jde/ql/ql.h>
 #include <jde/ql/LocalQL.h>
 #include <jde/ql/types/Introspection.h>
-#include <jde/access/Authorize.h> //!important
+#include <jde/access/Authorize.h>
 #include <jde/access/AccessListener.h>
 #include <jde/access/client/accessClient.h>
 #include <jde/app/client/appClient.h>

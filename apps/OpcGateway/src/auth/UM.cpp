@@ -1,7 +1,6 @@
 #include "UM.h"
 #include <jde/ql/IQL.h>
 #include <jde/app/client/AppClientSocketSession.h>
-//#include <jde/app/client/appClient.h>
 #include <jde/app/client/IAppClient.h>
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"

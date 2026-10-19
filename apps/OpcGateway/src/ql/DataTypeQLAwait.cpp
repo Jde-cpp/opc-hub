@@ -4,7 +4,7 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	α toJson( const UA_DataType& dt, const QL::TableQL& q )ι->jobject{
+	Ω toJson( const UA_DataType& dt, const QL::TableQL& q )ι->jobject{
 		jobject j;
 		if( q.FindColumn("typeId") )
 			j["typeId"] = NodeId{ dt.typeId }.ToJson();

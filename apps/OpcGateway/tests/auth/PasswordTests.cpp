@@ -1,4 +1,4 @@
-﻿#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/server/Sessions.h>
 #include "../../src/auth/PasswordAwait.h"
 #include "Auth.h"
@@ -12,18 +12,7 @@ namespace Jde::Opc::Gateway::Tests{
 	class PasswordTests : public Auth{
 	protected:
 		PasswordTests()ι:Auth{ETokenType::Username}{}
-		~PasswordTests()override{}
-
-		//Ω SetUpTestCase()ε->void;
-		//Ω CheckPasswordsAllowed()ε->void;
-		//α SetUp()ι->void override;
-		α TearDown()ι->void override{}
-		Ω TearDownTestSuite();
 	};
-
-	α PasswordTests::TearDownTestSuite(){
-		Auth::TearDownTestSuite();
-	}
 	//A counter and a predicate, not a bare wait:  a login that hits the AuthCache completes synchronously
 	//(PasswordAwait::await_resume), so its notify landed before the test thread reached its wait and the suite hung there
 	//- unseen for as long as the fixture skipped these tests (the embedded server offered no username token until
@@ -68,7 +57,6 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( PasswordTests, Authenticate ){
-		INFO( "PasswordTests.Authenticate" );
 		string opcId{ Connection->Slug };
 		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
 		AuthenticateTest( opcId, session() );//the UA login; AddSession mints the session the credential is stored under
@@ -91,7 +79,6 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( _sessionIds[0], _sessionIds[2] );
 		EXPECT_NE( _sessionIds[1], _sessionIds[2] );
 		EXPECT_TRUE( find(_sessionIds, 0)==_sessionIds.end() );
-		INFO( "~PasswordTests.Authenticate" );
 	}
 
 	//install-issues #47:  a login page with no session sends 0.  With user1's credential already cached, the AuthCache used to
@@ -164,13 +151,11 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( PasswordTests, Authenticate_BadPassword ){
-		INFO( "PasswordTests.Authenticate_BadPassword" );
 		{ std::lock_guard l{ mtx }; _completed = 0; _exception = nullptr; }
 		AuthenticateTest( Connection->Slug, session(), true );
 		waitFor( 1 );
 		EXPECT_TRUE( _exception );
 		EXPECT_TRUE( _exception && string{_exception->what()}.contains("BadUserAccessDenied") );
 		DBG( "{}", _exception ? _exception->what() : "Error no exception." );
-		INFO( "~PasswordTests.Authenticate_BadPassword" );
 	}
 }

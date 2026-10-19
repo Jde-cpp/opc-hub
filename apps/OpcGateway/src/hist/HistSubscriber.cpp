@@ -1,7 +1,7 @@
 #include "HistSubscriber.h"
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
-#include <jde/app/client/IAppClient.h> //!important
+#include <jde/app/client/IAppClient.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../GatewayAppClient.h"

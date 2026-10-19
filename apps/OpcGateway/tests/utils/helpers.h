@@ -40,7 +40,6 @@ namespace Jde::Opc::Gateway::Tests{
 
 	α AvailableUserTokens( sv url )ε->ETokenType;
 	α Negotiated( const sp<UAClient>& client )ι->string;//"ok (<policy>/<mode>)" - what the client's session was opened with, read on its strand; "ok" when it cannot be read.
-	α Query( sv ql, jobject vars={}, bool raw=true )ε->jobject;
 	//The hist_groups resource enforced, with the gateway's user granted everything on it through a role of its own, or
 	//soft-deleted again, as it ships:  a group's history edits need a grant on an enforced resource (spec *Authorization*).
 	α EnforceHistGroups( bool on )ε->void;
@@ -52,6 +51,8 @@ namespace Jde::Opc::Gateway::Tests{
 	α ScopeHistGroup( uint32 group, Access::ERights allowed )ε->void;
 	α UnscopeHistGroup( uint32 group )ε->void;//its resource deleted, so the group inherits the root again;  returns once the gateway's authorizer has heard.
 	Ξ GatewayPort()ι{ return Settings::FindNumber<PortType>("/http/gateway/port").value_or(2068); }
+	struct GatewayClientSocket;
+	α Socket()ι->GatewayClientSocket&;//the suites' shared socket to the gateway, connected on first use as the AppClient's session.
 	//A node of the embedded OpcServer given a DataType of namespace 0 for a test, holding no value, and given its own DataType
 	//and value back when this goes.
 	struct RetypedNode final{

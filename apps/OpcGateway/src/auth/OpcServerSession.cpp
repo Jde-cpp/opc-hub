@@ -5,8 +5,8 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway{
-	absl::Mutex _sessionsMutex;
-	flat_map<SessionPK,flat_map<ServerCnnctnNK,Credential>> _sessions ABSL_GUARDED_BY(_sessionsMutex);
+	static absl::Mutex _sessionsMutex;
+	static flat_map<SessionPK,flat_map<ServerCnnctnNK,Credential>> _sessions ABSL_GUARDED_BY(_sessionsMutex);
 	//Nothing but an explicit /logout ever removed an entry, so this was a high-water mark:  every web session that had touched
 	//a slug since startup, counted by opcSessions long after the session itself was gone.  (opcConnections never drifted the
 	//same way - its _clients drain on the idle ttl.)  Web::Server's store is the authority and trims itself on expiry, so an id

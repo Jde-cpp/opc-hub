@@ -7,16 +7,17 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	α ITest::SetUpTestCase()ε->void{
+	constexpr ELogTags _tags{ ELogTags::Test };
+	α ITest::SetUpTestSuite()ε->void{
 		_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		let sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
-		TRACE( "UserPK: {:x}, SessionId: {:x}", _jwt->UserPK.Value, sessionId );
+		TRACE( "UserPK: {}, SessionId: {}", hex(_jwt->UserPK.Value), hex(sessionId) );
 		auto con = GetConnection( OpcServerSlug );
 		Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
 		_client = BlockTAwait<sp<UAClient>>( ConnectAwait{move(con.Slug), cred} );
 		AddSession( sessionId, OpcServerSlug, move(cred) );
 	}
-	α ITest::TearDownTestCase()ι->void{
+	α ITest::TearDownTestSuite()ι->void{
 		if( _client )
 			UAClient::RemoveClient( move(_client) );
 	}

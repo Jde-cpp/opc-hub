@@ -1,27 +1,14 @@
 #include "GatewayClientSocket.h"
 #include <absl/synchronization/mutex.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/app/proto/common.h>
-#include "../../src/GatewayAppClient.h"
 #include <jde/opc/proto/opc.Common.h>
+#include <jde/opc/UAException.h>
 #include "../../src/types/proto/opc.FromClient.h"
-#include "helpers.h"
 #include "jde/fwk/process/process.h"
 
 #define let const auto
 
-namespace Jde::Opc::Gateway{
-	sp<Tests::GatewayClientSocket> _session;
-	α Tests::Socket()ι->Tests::GatewayClientSocket&{
-		if( !_session ){
-			optional<ssl::context> ctx;
-			_session = ms<Tests::GatewayClientSocket>( Executor(), ctx );
-			BlockVoidAwait( _session->RunSession("localhost", GatewayPort(), "/opc") );//the gateway protocol's path on a hub; the standalone gateway ignores it.
-			BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( _session->Connect(AppClient()->SessionId()) );
-		}
-		return *_session;
-	}
-namespace Tests{
+namespace Jde::Opc::Gateway::Tests{
 	GatewayClientSocket::GatewayClientSocket( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι:
 		base{ ioc, ctx }
 	{}
@@ -238,7 +225,7 @@ namespace Tests{
 	}
 	α GatewayClientSocket::Query( string&& query, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]'{}', variables: {}.", requestId, query, serialize(variables) );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]'{}', variables: {}.", hex(requestId), query, serialize(variables) );
 		return await<jvalue>{ FromClientUtils::Query(move(query), move(variables), returnRaw, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::QuerySync( string&& query, jobject variables )ε->jvalue{
@@ -246,26 +233,15 @@ namespace Tests{
 	}
 	α GatewayClientSocket::Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, slug );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]Subscribe: '{}'.", hex(requestId), slug );
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.emplace( requestId, make_tuple(slug, nodes, move(listener)) );
 		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId), requestId, shared_from_this(), sl };
 	}
 
-	absl::Mutex _logSubscriptionsMutex;
-	flat_map<SubscriptionId, sp<IListener>> _logSubscriptions ABSL_GUARDED_BY(_logSubscriptionsMutex);
-	α GatewayClientSocket::LogSubscribe( jobject&& ql, jobject vars, sp<IListener> listener, SL sl )ε->await<jarray>{
-		let requestId = NextRequestId();
-		ql["id"] = requestId;
-		ul _{ _logSubscriptionsMutex };
-		_logSubscriptions.emplace( (uint32)requestId, move(listener) );
-		auto query = serialize( ql );
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::MaxLogLength()) );
-		return await<jarray>{ FromClientUtils::Query(move(query), move(vars), true, requestId), requestId, shared_from_this(), sl };
-	}
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Unsubscribe: '{}'.", requestId, slug );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]Unsubscribe: '{}'.", hex(requestId), slug );
 		{ ul _{ _subscriptionRequestMutex }; _unsubscribeRequests.emplace( requestId, make_tuple(slug, nodeIds) ); }
 		return await<FromServer::UnsubscribeAck>{ FromClientUtils::Unsubscription(move(slug), nodeIds, requestId), requestId, shared_from_this(), sl };
 	}
@@ -274,7 +250,7 @@ namespace Tests{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _unsubscribeRequests.find( requestId );
 		if( it==_unsubscribeRequests.end() ){
-			CRITICALT( ELogTags::SocketClientRead, "[{:x}]No unsubscribe request found.", requestId );
+			CRITICALT( ELogTags::SocketClientRead, "[{}]No unsubscribe request found.", hex(requestId) );
 			return;
 		}
 		auto& [slug, nodes] = it->second;
@@ -292,7 +268,7 @@ namespace Tests{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _subscriptionRequests.find( requestId );
 		if( it==_subscriptionRequests.end() ){
-			CRITICALT( ELogTags::SocketClientRead, "[{:x}]No subscription request found.", requestId );
+			CRITICALT( ELogTags::SocketClientRead, "[{}]No subscription request found.", hex(requestId) );
 			return UA_STATUSCODE_BADINTERNALERROR;
 		}
 		auto& [slug, nodes, listener] = it->second;
@@ -307,7 +283,7 @@ namespace Tests{
 			auto& nodeId = nodes[i];
 			if( res.status_code() ){
 				sc = res.status_code();
-				DBGT( ELogTags::SocketClientRead, "[{:x}]Subscription for node '{}' failed with status code {}.", requestId, nodeId.ToString(), sc );
+				DBGT( ELogTags::SocketClientRead, "[{}]Subscription for node '{}' failed with status code {}.", hex(requestId), nodeId.ToString(), sc );
 			}
 			else{
 				slugNodes[nodeId].emplace( listener );
@@ -351,7 +327,4 @@ namespace Tests{
 		}
 		base::CloseTasks( ec );
 	}
-	α GatewayClientSocket::OnClose( beast::error_code ec )ι->void{
-		base::OnClose( ec );
-	}
-}}
+}

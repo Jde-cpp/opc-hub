@@ -1,3 +1,4 @@
+#include <open62541/client_subscriptions.h>
 #include <jde/fwk/process/execution.h>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/utils/Stopwatch.h>
@@ -9,6 +10,7 @@
 #include "../src/UAClient.h"
 #include "../src/types/UAClientException.h"
 #include "utils/GatewayClientSocket.h"
+#include "utils/helpers.h"
 #include "../src/types/proto/opc.FromServer.h"
 #include <jde/opc/proto/opc.Common.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -19,6 +21,7 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
+	constexpr ELogTags _tags{ ELogTags::Test };
 	using Jde::Web::Client::ClientSocketAwait;
 	struct SubscribeTests : ITest{
 		struct Listener final : IListener{
@@ -45,8 +48,8 @@ namespace Jde::Opc::Gateway::Tests{
 		private:
 			SubscribeTests* _tests;
 		};
-		Ω SetUpTestCase()ε->void{
-			ITest::SetUpTestCase();
+		Ω SetUpTestSuite()ε->void{
+			ITest::SetUpTestSuite();
 			optional<ssl::context> ctx;
 			_session = ms<GatewayClientSocket>( Executor(), ctx );
 			BlockVoidAwait( _session->RunSession("localhost", GatewayPort()) );
@@ -75,7 +78,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto v = BlockTAwait<flat_map<NodeId, Value>>( ReadValueAwait{{nodeId}, client} ).at( nodeId );
 		THROW_IFX( v.status, UAClientException(v.status, client->Handle()) );
 		auto j = v.ToJson();
-		TRACET( ELogTags::Test, "Initial value: {}.", serialize(j) );
+		TRACE( "Initial value: {}.", serialize(j) );
 		if( j.is_object() && j.as_object().contains("value") )
 			j = j.as_object().at("value");
 		let expected = v.ToJson().to_number<uint>();
@@ -1260,7 +1263,7 @@ namespace Jde::Opc::Gateway::Tests{
 		while( results->Done<count )
 			ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) );
 		for( uint i=0; i<count; ++i )
-			TRACET( ELogTags::Test, "waiter {}: '{}'", i, results->What[i] );//not TRACE: _tags here is ITest's, and this is not a fixture test.
+			TRACE( "waiter {}: '{}'", i, results->What[i] );
 		for( uint i=0; i<count; ++i ){
 			ASSERT_FALSE( results->What[i].empty() ) << "waiter " << i << " got a message-less exception.";
 			ASSERT_EQ( results->What[i], results->What[0] ) << "waiter " << i << " got a different exception than waiter 0.";

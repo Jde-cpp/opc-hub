@@ -13,7 +13,7 @@ namespace Jde::Opc::Gateway{
 	α SearchQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			QL().Authorizer().Test( "gateway", "search", Access::ERights::Read, UserPK(), _sl ); //gateway/search - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced;  enforced once an admin says so.
-			auto session = Session(); THROW_IF( !session, "No Session for query" );
+			auto session = RequireSession();
 			let textPtr = _query.FindPtr<jstring>( "text" );
 			let text = textPtr ? Str::ToLower( Str::Trim(sv{*textPtr}) ) : string{};
 			let limit = _query.TryNumber<uint>( "limit" ).value_or( Settings::FindNumber<uint>("/gateway/search/limit").value_or(20) );//value_or mirrors config/Opc.Gateway.jsonnet.

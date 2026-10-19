@@ -1,6 +1,5 @@
 #include "SoakAppClient.h"
 #include <jde/app/IApp.h>
-#include <jde/ql/IQL.h>
 
 namespace Jde::Opc::Gateway::Soak{
 	static sp<App::Client::IAppClient> _appClient = ms<SoakAppClient>();

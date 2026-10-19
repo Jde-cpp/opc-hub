@@ -35,7 +35,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//made through the group mutations, fed by the server's writes, read through the socket's QL, edited under an enforced grant.
 	struct HistGroupFixture : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			if( !SelectServerCnnctn(OpcServerSlug) )
 				CreateServerCnnctn();
 			_connection = SelectServerCnnctn( OpcServerSlug )->Id;

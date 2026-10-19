@@ -179,7 +179,7 @@ namespace Jde::Opc::Gateway::Tests{
 	class ServerTrustLiveTests : public Auth{
 	protected:
 		ServerTrustLiveTests()ι:Auth{ETokenType::IssuedToken}{}
-		Ω SetUpTestCase()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
+		Ω SetUpTestSuite()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
 		α TearDown()ι->void override{
 			ServerTrust::OverrideTrustedCertDirs( nullopt );//whatever the assertions did.
 			if( _client )

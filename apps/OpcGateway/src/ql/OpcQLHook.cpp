@@ -10,11 +10,10 @@
 namespace Jde::Opc::Gateway{
 	using Jde::QL::Hook::Operation;
 
-	struct HookAwait final: TAwait<jvalue>{
-		HookAwait( const QL::MutationQL& m, UserPK executer, Operation op, SL sl )ι: TAwait<jvalue>{sl}, _mutation{m}, _executer{executer}, _op{op}{}
-		α Suspend()ι->void override{ Execute(); }
+	struct HookAwait final: TAwaitEx<jvalue,ServerCnnctnAwait::Task>{
+		HookAwait( const QL::MutationQL& m, UserPK executer, Operation op, SL sl )ι: TAwaitEx{sl}, _mutation{m}, _executer{executer}, _op{op}{}
 	private:
-		α Execute()ι->TAwait<vector<ServerCnnctn>>::Task;
+		α Execute()ι->ServerCnnctnAwait::Task override;
 		α Fix( DB::Key id )ι->TAwait<Access::ProviderPK>::Task;
 		const QL::MutationQL& _mutation;
 		UserPK _executer;
@@ -64,20 +63,20 @@ namespace Jde::Opc::Gateway{
 		return slug ? ServerCnnctn::SlugError( *slug, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
 	α OpcQLHook::InsertBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
-		if( m.TableName()!="server_connections" /*&& m.TableName()!="opc_clients"*/ )
+		if( m.TableName()!="server_connections" )
 			return nullptr;
 		if( auto e = slugError(m, sl); e )
 			return mu<ExceptionAwait<jvalue>>( move(e) );
 		return mu<HookAwait>( m, userPK, Operation::Insert | Operation::Before, sl );
 	}
 	α OpcQLHook::InsertFailure( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
-		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Insert | Operation::Failure, sl ) : nullptr;
+		return m.TableName()=="server_connections" ? mu<HookAwait>( m, userPK, Operation::Insert | Operation::Failure, sl ) : nullptr;
 	}
 	α OpcQLHook::PurgeBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
-		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Before, sl ) : nullptr;
+		return m.TableName()=="server_connections" ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Before, sl ) : nullptr;
 	}
 	α OpcQLHook::PurgeFailure( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
-		return m.TableName()=="server_connections" /*|| m.TableName()=="opc_clients"*/ ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Failure, sl ) : nullptr;
+		return m.TableName()=="server_connections" ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Failure, sl ) : nullptr;
 	}
 
 	//reviews/m3-closing.md #4:  a live client holds the copy of its row it was built from.  What it reads from the copy that

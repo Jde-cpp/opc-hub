@@ -76,6 +76,11 @@ from `$UA_NODE_SETS`, which must be set.  Under ctest it runs on in-memory sqlit
 - `SubscribeTests`, `BrowseTests`, `ReadRequestTests`, `WriteTests`: the OPC operations end to end.
 - `QLTests`: the GraphQL surface, the introspection extensions included.
 - `HistTests`, `HistEditTests`: a server's own history, read and edited through the gateway's QL.
+- The gateway's historian:
+  - `CredentialTests`, `CollectorTests`: the collector's own credential, and the client of its own it gets.
+  - `HistGroupTests`: groups and templates - the tables, each edit's live side and `resolveHistory`.
+  - `HistCollectorTests`: a group collecting, read and edited with `group`, beside a pass-through read of the same range.
+  - `HistSubscribeTests`: historian subscriptions over the socket - snapshot pages, then the records as stored.
 - `AppClientTests`, `ConnectCoalesceTests`, `RemoveClientTests`, `KeepAliveTests`: the AppServer link and the client
   life cycle.
 - [`auth/`](tests/auth): credentials, certificates and server trust.  `TokenTests`, `PasswordTests`,
@@ -85,6 +90,21 @@ from `$UA_NODE_SETS`, which must be set.  Under ctest it runs on in-memory sqlit
 - `ServerCnnctnDBTests`, `HostNameTests`, `LogTests`, `UAClientExceptionTests`, `BrowseResponseTests`,
   `FromServerTests`: the rest.
 
-[`soak/`](soak) is `Jde.Opc.Soak` and `soak.sh`, the 24-hour soak harness: it launches the split AppServer, OpcServer
+## Soak
+
+[`soak/`](soak) is `Jde.Opc.Soak` and `soak.sh`, the 24-hour soak harness.  It launches the split AppServer, OpcServer
 and gateway plus the soak client against fresh sqlite files, watches liveness and memory, and writes a verdict.  It is
 shaped around the three split exes, not the hub.
+
+`soak.sh` is the entry point; it runs `Jde.Opc.Soak` three ways, each with `-settings=soak/config/Opc.Soak.jsonnet`:
+
+- `-createCert`: issues the gateway's client certificate for each leg with a certificateUri, into the gateway's own
+  cert tree, and prints the file an external server has to trust.
+- `-grant`: grants the soak user AllAccess on the OpcServer's `nodeIds` resource.  `soak.sh` runs it after the
+  OpcServer's first boot, then restarts the OpcServer to load it.
+- No mode flag: the run itself - writes on every leg, a check that each push comes back, status samples, and the
+  summary the verdict reads.
+
+`soak.sh --smoke` is a 10-minute validation run.  `--duration`, `--external*`, `--session-timeout` and the rest are
+documented at the top of [`soak.sh`](soak/soak.sh), with the verdict criteria.  `UA_NODE_SETS` must be set, as for the
+tests.

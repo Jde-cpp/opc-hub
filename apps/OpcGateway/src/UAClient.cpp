@@ -240,7 +240,7 @@ namespace Jde::Opc::Gateway{
 		return { clients.size(), monitored, parked };
 	}
 	concurrent_flat_map<uint32_t, uint32_t> _handles;
-	α createHandle( const ServerCnnctn& slug )ι->Jde::Handle{
+	Ω createHandle( const ServerCnnctn& slug )ι->Jde::Handle{
 		//Handle packs the server id into its top 32 bits.  CRC-32C rather than std::hash:  the same on every run and standard library, so a
 		//handle names the same server in every log.  A collision only merges two servers' connection-index counters, which are purely for log correlation - benign.
 		uint32_t serverHash = slug.Id ? slug.Id : IO::Crc::Calc32c( slug.Url );
@@ -353,12 +353,27 @@ namespace Jde::Opc::Gateway{
 			Crypto::CreateKey( settings, sl );
 		Crypto::IssueCertificate( settings, std::chrono::days{365}, sl );
 	}
+	//The secured policies Configuration() carries - for the channel with a certificateUri, for the user token always.
+	struct SecuredPolicy final{ UA_StatusCode(*Ctor)( UA_SecurityPolicy*, const UA_ByteString, const UA_ByteString, const UA_Logger* ); sv Uri; };
+	static const array<SecuredPolicy,3> _securedPolicies{{
+		{ &UA_SecurityPolicy_Basic256Sha256, "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" },
+		{ &UA_SecurityPolicy_Aes128Sha256RsaOaep, "http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep" },
+		{ &UA_SecurityPolicy_Aes256Sha256RsaPss, "http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss" }
+	}};
+	Ω carried( sv policyUri )ι->bool{ return std::ranges::any_of( _securedPolicies, [policyUri]( let& p ){ return p.Uri==policyUri; } ); }
+	Ω policyName( sv uri )ι->string{ let i = uri.rfind( '#' ); return string{ i==sv::npos ? uri : uri.substr(i+1) }; }//"…/SecurityPolicy#Basic256Sha256" -> "Basic256Sha256": the fragment is the part that says anything.
+	Ω securedPolicyNames()ι->string{//"Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss"
+		string y;
+		for( uint i=0; i<_securedPolicies.size(); ++i )
+			y += Ƒ( "{}{}", i==0 ? "" : i+1==_securedPolicies.size() ? " and " : ", ", policyName(_securedPolicies[i].Uri) );
+		return y;
+	}
 	α UAClient::Configuration()ε->UA_ClientConfig*{
 		let serverUri = Str::Replace( _opcServer.CertificateUri, " ", "%20" );//the server's applicationUri:  the endpoint filter, and since security-matrix #8 nothing else.
 		bool addSecurity = !serverUri.empty();
 		let certAuth = Credential.Type()==ETokenType::Certificate && AppClient()->SslSettings.has_value();//Create() already threw for a certificate credential with no ssl settings.
 		//One certificate, two jobs.  With a certificateUri it is the channel's identity, under whichever secured policy the server
-		//shares (securedPolicies, below).  With or without one, it is what the *auth* policies - the ones that encrypt the user
+		//shares (_securedPolicies).  With or without one, it is what the *auth* policies - the ones that encrypt the user
 		//token - are built from:  open62541 builds an auth
 		//policy only from a local certificate, though the token itself is encrypted to the server's, which every endpoint
 		//description carries.  So a connection with no certificateUri stays on SecurityPolicy None - its data in the clear - and
@@ -377,9 +392,7 @@ namespace Jde::Opc::Gateway{
 		//The deprecated ones (Basic128Rsa15, Basic256) are not carried, and a server that offers nothing else is told so (StateCallback).
 		//securityLevel is the *server's* claim, read off the unauthenticated discovery channel, so it only ever ranks endpoints
 		//that already meet the floor pinned below (config->securityMode) - it never chooses the mode (reviews/m2-closing.md #1).
-		using PolicyCtor = UA_StatusCode(*)( UA_SecurityPolicy*, const UA_ByteString, const UA_ByteString, const UA_Logger* );
-		const array<PolicyCtor,3> securedPolicies{ &UA_SecurityPolicy_Basic256Sha256, &UA_SecurityPolicy_Aes128Sha256RsaOaep, &UA_SecurityPolicy_Aes256Sha256RsaPss };//_securedPolicyUris, below, names the same three.
-		const uint size = addSecurity ? 1+securedPolicies.size() : 1; ASSERT( !config->securityPoliciesSize );
+		const uint size = addSecurity ? 1+_securedPolicies.size() : 1; ASSERT( !config->securityPoliciesSize );
 		uint initialized = 0;//policies actually constructed; on an exception before ownership transfers to config, the deleter clears these — UA_free alone would leak each policy's internals (policyUri, contexts, ...).
 		auto clearPolicies = [&initialized]( UA_SecurityPolicy* p )ι{ for(uint i=0; i<initialized; ++i) p[i].clear(&p[i]); UA_free(p); };
 		up<UA_SecurityPolicy, decltype( clearPolicies )> securityPolicies{ (UA_SecurityPolicy*)UA_malloc(sizeof(UA_SecurityPolicy)*size), clearPolicies };
@@ -411,9 +424,9 @@ namespace Jde::Opc::Gateway{
 			//on it, with the real server's public certificate passing ServerTrust (reviews/m2-closing.md #1; SecurityPolicyTests).
 			//The discovery channel is untouched - it opens on None before any endpoint is matched (initSecurityPolicy).
 			config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-			INFO( "[{}]Offering Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss, Sign & Encrypt only, with certificate '{}'", hex(Handle()), settings.Certificate.Path.string() );
-			for( let ctor : securedPolicies ){
-				sc = ctor( &securityPolicies.get()[initialized], *certificate, *privateKey, &_logger ); THROW_IFX( sc, UAClientException(sc, Handle()) );
+			INFO( "[{}]Offering {}, Sign & Encrypt only, with certificate '{}'", hex(Handle()), securedPolicyNames(), settings.Certificate.Path.string() );
+			for( let& policy : _securedPolicies ){
+				sc = policy.Ctor( &securityPolicies.get()[initialized], *certificate, *privateKey, &_logger ); THROW_IFX( sc, UAClientException(sc, Handle()) );
 				++initialized;
 			}
 		}
@@ -421,11 +434,11 @@ namespace Jde::Opc::Gateway{
 			//No endpoint filter - there is no uri to hold the server's against.
 			INFO( "[{}]Using SecurityPolicy None - '{}' has no certificateUri; user tokens are encrypted, under the policy the server names, with certificate '{}'", hex(Handle()), Slug(), settings.Certificate.Path.string() );
 		}
-		auto grown = ( UA_SecurityPolicy* )UA_realloc( config->authSecurityPolicies, sizeof(UA_SecurityPolicy) *(config->authSecurityPoliciesSize + securedPolicies.size()) );
+		auto grown = ( UA_SecurityPolicy* )UA_realloc( config->authSecurityPolicies, sizeof(UA_SecurityPolicy) *(config->authSecurityPoliciesSize + _securedPolicies.size()) );
 		THROW_IFX( !grown, UAClientException(UA_STATUSCODE_BADOUTOFMEMORY, Handle()) );//realloc failure leaves the original block valid; don't overwrite the pointer with null (would leak it and null-deref below).
 		config->authSecurityPolicies = grown;
-		for( let ctor : securedPolicies ){
-			sc = ctor( &config->authSecurityPolicies[config->authSecurityPoliciesSize], *certificate.get(), *privateKey.get(), config->logging ); THROW_IFX( sc, UAClientException(sc, Handle()) );
+		for( let& policy : _securedPolicies ){
+			sc = policy.Ctor( &config->authSecurityPolicies[config->authSecurityPoliciesSize], *certificate.get(), *privateKey.get(), config->logging ); THROW_IFX( sc, UAClientException(sc, Handle()) );
 			config->authSecurityPoliciesSize++;//one at a time:  what is constructed is the config's to clear, whatever throws next.
 		}
 		//A secret in the clear - a password or an issued token under a token policy of None, on any channel that is not
@@ -443,23 +456,6 @@ namespace Jde::Opc::Gateway{
 
 		return config;
 	}
-	α UAClient::AddSessionAwait( VoidAwait::Handle h )ι->void{
-		{
-			lg _{ _sessionAwaitableMutex };
-			_sessionAwaitables.emplace_back( move(h) );
-		}
-		Process( ConnectRequestId, "Connect" );
-	}
-	α UAClient::TriggerSessionAwaitables()ι->void{
-		vector<VoidAwait::Handle> handles;
-		{
-			lg _{ _sessionAwaitableMutex };
-			for_each( _sessionAwaitables, [&handles](auto&& h){handles.emplace_back(h);} );
-			_sessionAwaitables.clear();
-		}
-		for_each( handles, [](auto&& h){h.resume();} );
-	}
-
 	α UAClient::PresentedCertificate()Ι->optional<Crypto::CryptoSettings>{
 		if( Credential.Type()==ETokenType::Certificate && AppClient()->SslSettings )
 			return AppClient()->SslSettings;
@@ -519,11 +515,6 @@ namespace Jde::Opc::Gateway{
 		//rejects every endpoint - and clientDescription's is what we advertise:  the gateway's own, from the SAN of the certificate it presents (Configuration()).
 		INFO( "[{}]Client Security Policies: {}, applicationUri filter: '{}', advertised applicationUri: '{}'", hex(Handle()), Str::Join(policyUris), ToString(config->applicationUri), ToString(config->clientDescription.applicationUri) );
 	}
-	//The secured policies Configuration() carries - for the channel with a certificateUri, for the user token always.
-	constexpr array<sv,3> _securedPolicyUris{ "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", "http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep", "http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss" };
-	constexpr sv _securedPolicyNames{ "Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss" };
-	Ω carried( str policyUri )ι->bool{ return find( _securedPolicyUris, policyUri )!=_securedPolicyUris.end(); }
-	Ω policyName( str uri )ι->string{ let i = uri.rfind( '#' ); return i==string::npos ? uri : uri.substr( i+1 ); }//"…/SecurityPolicy#Basic256Sha256" -> "Basic256Sha256": the fragment is the part that says anything.
 	//What GetEndpoints on `url` answers - logged one line per endpoint, its policy and mode and every token policy with the policy
 	//that encrypts the token (`Username@Basic256Sha256`; `@None` is a token sent in the clear) - and summarized for the caller.
 	α UAClient::LogServerEndpoints( str url, Jde::Handle h )ι->EndpointSummary{
@@ -557,8 +548,7 @@ namespace Jde::Opc::Gateway{
 		else{
 			for( auto&& ep : Iterable<UA_EndpointDescription>(endpointArray, endpointArraySize) ){
 				endpoints.NoneEndpoint = endpoints.NoneEndpoint || ep.securityMode==UA_MESSAGESECURITYMODE_NONE;
-				constexpr array<sv,4> securityModeNames = { "Invalid", "None", "Sign", "SignAndEncrypt" };
-				let securityMode = FromEnum( securityModeNames, ep.securityMode );
+				let securityMode = SecurityModeName( ep.securityMode );
 				let policyUri = ToString( ep.securityPolicyUri );
 				vector<string> tokenPolicies;
 				for( let& utp : Iterable<UA_UserTokenPolicy>(ep.userIdentityTokens, ep.userIdentityTokensSize) ){
@@ -586,7 +576,6 @@ namespace Jde::Opc::Gateway{
 			//a found client is a re-activation: no RequestDrain here - open62541 re-reads the namespace array only on
 			//a fresh client (haveNamespaces), so flagging would leave the drain waiting out its full limit for a read
 			//that never fires.
-			client->TriggerSessionAwaitables();
 			client->ClearRequest( ConnectRequestId );
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
@@ -660,9 +649,9 @@ namespace Jde::Opc::Gateway{
 					else if( noUri && !endpoints.NoneEndpoint )
 						detail = Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None, and '{}' has no unsecured endpoint - set the connection's certificateUri to the server's applicationUri '{}' to connect secured", client->Slug(), client->Url(), endpoints.ServerUri );
 					else if( noUri )
-						detail = Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None, and the unsecured endpoint of '{}' takes {} authentication only under a security policy the gateway does not carry ([{}]; it carries {}) - try the connection with its certificateUri set to the server's applicationUri '{}'", client->Slug(), client->Url(), TokenTypeName(type), foreignNames, _securedPolicyNames, endpoints.ServerUri );
+						detail = Ƒ( "'{}' has no certificateUri, so the gateway connects with SecurityPolicy None, and the unsecured endpoint of '{}' takes {} authentication only under a security policy the gateway does not carry ([{}]; it carries {}) - try the connection with its certificateUri set to the server's applicationUri '{}'", client->Slug(), client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames(), endpoints.ServerUri );
 					else if( foreign.size() )
-						detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, _securedPolicyNames );
+						detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames() );
 					else if( belowFloor )
 						detail = Ƒ( "'{}' has a certificateUri, which means Sign & Encrypt, and '{}' offers {} authentication only on endpoints that are not (None or Sign) - refused rather than downgraded.  Enable a Sign & Encrypt endpoint on the server, or clear the connection's certificateUri to connect unsecured", client->Slug(), client->Url(), TokenTypeName(type) );
 					if( let clientUri = client->ApplicationUri(); detail.empty() && clientUri.size() && !endpoints.ServerUri.empty() && clientUri!=endpoints.ServerUri )
@@ -709,7 +698,7 @@ namespace Jde::Opc::Gateway{
 						client->Connected = true;
 						auto& opcCreds = _clients.try_emplace( client->Slug() ).first->second;
 						let inserted = opcCreds.try_emplace( client->Credential, client ).second;
-						ASSERT( inserted ); // not sure why we would already have a record.
+						ASSERT( inserted );//ConnectAwait::Start creates one client per slug and credential:  the first waiter, re-checked under its _requestMutex.
 					}
 					Post( [client]()ι->void {
 						ConnectAwait::Resume( move(client) );
@@ -749,10 +738,10 @@ namespace Jde::Opc::Gateway{
 			client->_asyncRequest.OnServiceBegin( *requestId );
 	}
 
-	α inactivityCallback( UA_Client* /*client*/ )->void{
+	Ω inactivityCallback( UA_Client* /*client*/ )->void{
 		BREAK;
 	}
-	α subscriptionInactivityCallback( UA_Client *client, SubscriptionId subscriptionId, void* /*subContext*/ ){
+	Ω subscriptionInactivityCallback( UA_Client *client, SubscriptionId subscriptionId, void* /*subContext*/ ){
 		DBG( "[{}.{}]subscriptionInactivityCallback", hex((uint)client), hex(subscriptionId) );
 	}
 	α UAClient::Create()ε->UA_Client*{
@@ -797,7 +786,6 @@ namespace Jde::Opc::Gateway{
 		else
 			WARN( "[{}]Using anonymous authentication.", hex(Handle()) );
 
-		//	UA_ClientConfig_setAuthenticationCert( &_config, Credential.Certificate().c_str(), Credential.PrivateKey().c_str() );
 		UA_ConnectionManager *udpCM = UA_ConnectionManager_new_POSIX_UDP( "udp connection manager"_uv );
 		_config.eventLoop->registerEventSource( _config.eventLoop, (UA_EventSource*)udpCM );
 		auto ua = UA_Client_newWithConfig( &_config );
@@ -1131,7 +1119,7 @@ namespace Jde::Opc::Gateway{
 	//
 	//Two coroutines, not one loop:  this is the house hand-off chain, because the two awaitables have different task types.
 	//An earlier version bridged ConnectAwait through Any() so one frame could do both, and that is not safe here - take the
-	//awaitable as your own task type, the way UAClient::Retry does.
+	//awaitable as your own task type, as this chain does.
 	constexpr auto MaxReconnectDelay{ 15s };//capped, not given up on:  an industrial server can be down for a maintenance window and the live view is expected back with it.
 	constexpr uint MaxRejections{ 3 };//in a row, ~7s apart at most:  one could be a server still loading its users; three is the credential or the certificate.
 
@@ -1425,26 +1413,6 @@ namespace Jde::Opc::Gateway{
 	α UAClient::ClearRequest( UA_Client* ua, RequestId requestId )ι->void{
 		if( auto p = TryFind(ua); p )
 			p->ClearRequest( requestId );
-	}
-
-	α UAClient::RetryVoid( function<void(sp<UAClient>&&) > f, UAException&& e, sp<UAClient>&& client )ι->ConnectAwait::Task{
-		let slug = client->Slug();
-		let credential = client->Credential;
-		let lost = IsConnectionLoss( (StatusCode)e.Code() );
-		if( lost )//a failed connection keeps what the client monitored; any other failure removes it as before.
-			ConnectionLost( move(client) );
-		else
-			RemoveClient( move(client) );
-		if( lost ){
-			try{
-				client = co_await GetClient( move(slug), move(credential) );
-				f( move(client) );
-			}
-			catch( UAException& retryEx ){
-				retryEx.PrependWhat( "Retry failed" );
-				retryEx.SetLevel( ELogLevel::Warning );
-			}
-		}
 	}
 
 	α UAClient::Unsubscribe( const sp<IDataChange>& dataChange )ι->void{

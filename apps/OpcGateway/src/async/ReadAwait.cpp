@@ -7,25 +7,24 @@
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	flat_map<string,UA_AttributeId> _attributes{
-    { "invalid", UA_ATTRIBUTEID_INVALID },
-//		{ "id", UA_ATTRIBUTEID_NODEID },
+	static const flat_map<string,UA_AttributeId> _attributes{
+		{ "invalid", UA_ATTRIBUTEID_INVALID },
 		{ "accessLevel", UA_ATTRIBUTEID_ACCESSLEVEL },
 		{ "accessLevelEx", UA_ATTRIBUTEID_ACCESSLEVELEX },
 		{ "accessRestrictions", UA_ATTRIBUTEID_ACCESSRESTRICTIONS },
 		{ "arrayDimensions", UA_ATTRIBUTEID_ARRAYDIMENSIONS },
-    { "browse", UA_ATTRIBUTEID_BROWSENAME },
+		{ "browse", UA_ATTRIBUTEID_BROWSENAME },
 		{ "containsNoLoops", UA_ATTRIBUTEID_CONTAINSNOLOOPS },
-    { "dataType", UA_ATTRIBUTEID_DATATYPE },
+		{ "dataType", UA_ATTRIBUTEID_DATATYPE },
 		{ "dataTypeDefinition", UA_ATTRIBUTEID_DATATYPEDEFINITION },
-    { "description", UA_ATTRIBUTEID_DESCRIPTION },
+		{ "description", UA_ATTRIBUTEID_DESCRIPTION },
 		{ "eventNotifier", UA_ATTRIBUTEID_EVENTNOTIFIER },
-    { "executable", UA_ATTRIBUTEID_EXECUTABLE },
+		{ "executable", UA_ATTRIBUTEID_EXECUTABLE },
 		{ "historizing", UA_ATTRIBUTEID_HISTORIZING },
 		{ "inverseName", UA_ATTRIBUTEID_INVERSENAME },
 		{ "isAbstract", UA_ATTRIBUTEID_ISABSTRACT },
 		{ "minimumSamplingInterval", UA_ATTRIBUTEID_MINIMUMSAMPLINGINTERVAL },
-    { "name", UA_ATTRIBUTEID_DISPLAYNAME },
+		{ "name", UA_ATTRIBUTEID_DISPLAYNAME },
 		{ "nodeClass", UA_ATTRIBUTEID_NODECLASS },
 		{ "rolePermissions", UA_ATTRIBUTEID_ROLEPERMISSIONS },
 		{ "userAccessLevel", UA_ATTRIBUTEID_USERACCESSLEVEL },
@@ -34,9 +33,10 @@ namespace Jde::Opc::Gateway{
 		{ "userWriteMask", UA_ATTRIBUTEID_USERWRITEMASK },
 		{ "writeMask", UA_ATTRIBUTEID_WRITEMASK },
 		{ "symmetric", UA_ATTRIBUTEID_SYMMETRIC },
-    { "value", UA_ATTRIBUTEID_VALUE },
+		{ "value", UA_ATTRIBUTEID_VALUE },
 		{ "valueRank", UA_ATTRIBUTEID_VALUERANK },
 	};
+	static const flat_map<UA_AttributeId,string> _attributeNames = []{ flat_map<UA_AttributeId,string> y; for( let& [name,id] : _attributes ) y.emplace( id, name ); return y; }();
 
 	Ω attributes( const QL::TableQL& ql )ι->flat_map<UA_NodeClass, vector<UA_AttributeId>>{
 		auto y = ReserveMap<UA_NodeClass, vector<UA_AttributeId>>( ql.Columns.size() );
@@ -158,11 +158,9 @@ namespace Jde::Opc::Gateway{
 		SetNodesToRead();
 	}
 
-	α ReadRequest::AtribString( UA_AttributeId id )->const string&{
-		for( let& [k,v] : _attributes )
-			if( v==id )
-				return k;
-		return _attributes.find("invalid")->first;
+	α ReadRequest::AttribName( UA_AttributeId id )ι->const string&{
+		let p = _attributeNames.find( id );
+		return p==_attributeNames.end() ? _attributeNames.at( UA_ATTRIBUTEID_INVALID ) : p->second;
 	}
 
 	ReadResponse::ReadResponse( UA_ReadResponse&& x, ReadRequest&& request )ι:
@@ -212,7 +210,7 @@ namespace Jde::Opc::Gateway{
 			//non-zero status - #15's bug, alive on this path - and serialized a Bad code as a bare number posing as a value.
 			//Now Bad → {"sc":…}, a non-zero code with a reading → {"v":…,"sc":…}, and Int64s go out in the Long form
 			//the SPA's toValue() was written for.
-			j[ReadRequest::AtribString( attrib )] = Value{ move(results[i]) }.ToJson();
+			j[ReadRequest::AttribName( attrib )] = Value{ move(results[i]) }.ToJson();
 		}
 	}
 
