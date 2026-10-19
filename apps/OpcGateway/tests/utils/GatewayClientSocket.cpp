@@ -5,6 +5,7 @@
 #include <jde/opc/UAException.h>
 #include "../../src/types/proto/opc.FromClient.h"
 #include "jde/fwk/process/process.h"
+#include <jde/fwk/process/execution.h>
 
 #define let const auto
 
@@ -22,14 +23,17 @@ namespace Jde::Opc::Gateway::Tests{
 	α forgetRequest( RequestId requestId )ι->void;
 	α onUnsubscribeAck( RequestId requestId )ι->void;
 	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
+	α GatewayClientSocket::registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate )ι->void{
+		lg _{ _histMutex };
+		_histListeners.emplace( subscription, move(listener) );
+		if( duplicate )
+			_histDuplicates.emplace( subscription );
+		_lastHistSubscription = subscription;
+	}
 	α GatewayClientSocket::HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}.", hex(requestId), group );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( requestId, move(listener) );
-			_lastHistSubscription = requestId;
-		}
+		registerHist( requestId, move(listener) );
 		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, from, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistSubscribeTwice( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
@@ -37,12 +41,7 @@ namespace Jde::Opc::Gateway::Tests{
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe twice: group {}.", hex(requestId), group );
 		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, requestId) );
 		t.add_messages()->CopyFrom( t.messages(0) );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( requestId, move(listener) );
-			_histDuplicates.emplace( requestId );
-			_lastHistSubscription = requestId;
-		}
+		registerHist( requestId, move(listener), true );
 		return await<vector<StatusCode>>{ t, requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<bool>{
@@ -51,11 +50,7 @@ namespace Jde::Opc::Gateway::Tests{
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}, and [{}]HistUnsubscribe.", hex(subscription), group, hex(requestId) );
 		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, subscription) );
 		t.add_messages()->CopyFrom( Protobuf::Deserialize<FromClient::Transmission>(FromClientUtils::HistUnsubscription(subscription, requestId)).messages(0) );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( subscription, move(listener) );
-			_lastHistSubscription = subscription;
-		}
+		registerHist( subscription, move(listener) );
 		return await<bool>{ t, requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
@@ -223,13 +218,21 @@ namespace Jde::Opc::Gateway::Tests{
 		rl _{ _subscriptionRequestMutex };
 		return _subscriptionRequests.size()+_unsubscribeRequests.size();
 	}
+	α GatewayClientSocket::Open( string host, PortType port, optional<SessionPK> session, string path )ε->sp<GatewayClientSocket>{
+		optional<ssl::context> ctx;
+		auto y = ms<GatewayClientSocket>( Executor(), ctx );
+		BlockVoidAwait( y->RunSession(move(host), port, move(path)) );
+		if( session )
+			BlockAwait<await<uint32>,uint32>( y->Connect(*session) );
+		return y;
+	}
 	α GatewayClientSocket::Query( string&& query, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]'{}', variables: {}.", hex(requestId), query, serialize(variables) );
 		return await<jvalue>{ FromClientUtils::Query(move(query), move(variables), returnRaw, requestId), requestId, shared_from_this(), sl };
 	}
-	α GatewayClientSocket::QuerySync( string&& query, jobject variables )ε->jvalue{
-		return BlockAwait<await<jvalue>,jvalue>( Query(move(query), move(variables), true) );
+	α GatewayClientSocket::QuerySync( string&& query, jobject variables, bool returnRaw )ε->jvalue{
+		return BlockAwait<await<jvalue>,jvalue>( Query(move(query), move(variables), returnRaw) );
 	}
 	α GatewayClientSocket::Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
 		let requestId = NextRequestId();

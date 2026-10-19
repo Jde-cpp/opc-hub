@@ -281,11 +281,11 @@ namespace Jde::Opc::Gateway{
 				if( conflict ){
 					let& group = *nodeGroup;
 					let text = Json::AsSV( spelled, "node" );
-					auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=string{text}}) );
-					if( holders.empty() )
+					let found = co_await SelectNodeHolder( group, string{text} );
+					if( found.Kind==NodeHolder::EKind::None )
 						std::rethrow_exception( conflict );
-					let& holder = holders.front();
-					if( holder.Group==group.Id )
+					let& holder = *found.Row;
+					if( found.Kind!=NodeHolder::EKind::OtherGroup )
 						throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in this group{} ({}), as {} (row {}).", text, mayRead(group.Guid, UserPK(), _sl) ? Ƒ(", '{}'", group.Name) : string{}, group.Id, holder.TemplateNode ? Ƒ("template member {}", *holder.TemplateNode) : string{"an ad hoc node"}, holder.Id };
 					auto holderGroups = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)holder.Group}, .IncludeDeleted=true}) );//its guid keys its access row;  one purged meanwhile has no row, and no name to give.
 					if( holderGroups.empty() || !mayRead(holderGroups.front().Guid, UserPK(), _sl) )

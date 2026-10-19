@@ -21,7 +21,7 @@ namespace Jde::Opc::Gateway{
 				auto [groups, rows] = co_await All( SelectHistGroups({.Key=DB::Key{(uint)groupId}}), SelectHistGroupNodes({.Group=groupId}) );//at once (#345):  the nodes need no group row.
 				if( groups.empty() )
 					throw Exception{ _sl, ExceptionArgs{EHttpStatus::NotFound}, "Group {} not found.", groupId };
-				let members = groups.front().Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=groups.front().Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				let members = co_await SelectHistTemplateMembers( {.Template=groups.front().Template} );
 				y = Thresholds( groups.front(), rows, members, *host );
 			}
 			Resume( move(y) );

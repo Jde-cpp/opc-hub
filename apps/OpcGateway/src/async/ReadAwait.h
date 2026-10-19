@@ -1,5 +1,7 @@
 #pragma once
 #include <open62541/client.h>
+#include <jde/opc/uatypes/Owned.h>
+#include "UAAwait.h"
 
 namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
@@ -25,12 +27,9 @@ namespace Jde::Opc::Gateway{
 		α SetNodesToRead()ι->void{ nodesToReadSize=_readIds.size(); nodesToRead=_readIds.data(); }//_readIds may have reallocated.
 		vector<UA_ReadValueId> _readIds;
 	};
-	struct ReadResponse final : UA_ReadResponse{
-		ReadResponse():UA_ReadResponse{}{}
-		ReadResponse( ReadResponse&& rhs )ι;
-		ReadResponse( UA_ReadResponse&& rhs, ReadRequest&& request )ι;
-		~ReadResponse(){ UA_ReadResponse_clear(this); }
-		α operator=( ReadResponse&& rhs )ι->ReadResponse&;
+	struct ReadResponse final : Owned<UA_ReadResponse, UA_TYPES_READRESPONSE>{
+		ReadResponse()ι=default;
+		ReadResponse( UA_ReadResponse&& x, ReadRequest&& request )ι:Owned{ move(x) }, Request{ move(request) }{}
 		α ScalerDataType()ι->UA_DataType*;
 		α Validate( Handle uahandle, SL sl )ε->void;
 		α GetJson()ι{ flat_map<NodeId, jobject> nodes; SetJson(nodes); return nodes; }
@@ -40,8 +39,8 @@ namespace Jde::Opc::Gateway{
 		optional<ReadRequest> Request;
 	};
 
-	struct ReadAwait final : TAwait<ReadResponse>{
-		ReadAwait( ReadRequest&& req, sp<UAClient> c, bool keepAlive=false, SRCE )ι:TAwait<ReadResponse>{sl}, _request{move(req)}, _client{move(c)}, _keepAlive{keepAlive}{}//keepAlive:  AsyncRequest::Ping's - not user traffic.
+	struct ReadAwait final : UAAwait<ReadResponse>{
+		ReadAwait( ReadRequest&& req, sp<UAClient> c, bool keepAlive=false, SRCE )ι:UAAwait{ move(c), sl }, _request{move(req)}, _keepAlive{keepAlive}{}//keepAlive:  AsyncRequest::Ping's - not user traffic.
 		ReadAwait( NodeId nodeId, UA_AttributeId attrib, sp<UAClient> c, SRCE )ι:ReadAwait{{move(nodeId), attrib}, move(c), false, sl}{}
 		ReadAwait( Browse::Response&& browse, QL::TableQL&& ql, sp<UAClient> c, SRCE )ι:ReadAwait{{move(browse), move(ql)}, move(c), false, sl}{}
 
@@ -52,8 +51,6 @@ namespace Jde::Opc::Gateway{
 		α await_resume()ε->ReadResponse override;
 	private:
 		ReadRequest _request;
-		RequestId 	_requestId{};
-		sp<UAClient> _client;
 		bool _keepAlive;
 	};
 }

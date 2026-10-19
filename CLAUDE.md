@@ -92,6 +92,7 @@ A function a header declares at namespace scope is defined in its `.cpp` by its 
 | `$JDE_COMPILER` | Compiler subdirectory name under `$JDE_BUILD_DIR` (e.g. `clang++`) |
 
 ## Other Stuff
+- Don't stage changes (`git add`, `git rm --cached`, `git restore --staged`) unless asked — leave edits in the working tree; the user stages and commits. Need a baseline to diff against? Snapshot the tree without touching the index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`).
 - Don't create branches — work on whatever branch is checked out; the user creates branches and lands changes through their own PR flow. (A branch made with `git switch -c <name> origin/main` tracks `origin/main`, so a plain push from it goes straight to `main`.)
 - Never suggest enclosing single-line `if` statements with braces.
 - Never run an unscoped/filesystem-wide search (e.g. `find /`, or any search rooted above the repo). Always scope file searches to `C:\Users\duffyj\source\repos` or `$JDE_BUILD_DIR` (build outputs, e.g. `x:\build` on Windows) — or a narrower subdirectory of either. A full-drive search can run for tens of minutes burning CPU for no benefit. Prefer Glob/Grep over shelling out to `find`/`grep` in the first place.

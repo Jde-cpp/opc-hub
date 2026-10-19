@@ -1,6 +1,7 @@
 #pragma once
 #include <open62541/client.h>
 #include <jde/opc/uatypes/NodeId.h>
+#include "UAAwait.h"
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
@@ -32,26 +33,19 @@ namespace Jde::Opc::Gateway{
 	};
 	//The response:  results[i] answers the request's i-th node, its historyData decoded by the client to a HistoryData, or
 	//a HistoryModifiedData for a modified read.
-	struct HistoryReadResponse final : UA_HistoryReadResponse{
-		HistoryReadResponse()ι:UA_HistoryReadResponse{}{}
-		HistoryReadResponse( UA_HistoryReadResponse&& x, uint requested )ι;
-		HistoryReadResponse( HistoryReadResponse&& x )ι;
-		~HistoryReadResponse(){ UA_HistoryReadResponse_clear(this); }
-		α operator=( HistoryReadResponse&& x )ι->HistoryReadResponse&;
+	struct HistoryReadResponse final : Owned<UA_HistoryReadResponse, UA_TYPES_HISTORYREADRESPONSE>{
+		HistoryReadResponse()ι=default;
+		HistoryReadResponse( UA_HistoryReadResponse&& x, uint requested )ι:Owned{ move(x) }, Requested{ requested }{}
 		α Validate( Handle uahandle, SL sl )ε->void;//throws for a service result that is bad, or an answer that isn't one per node.
 		α Result( uint i )ι->UA_HistoryReadResult&{ return results[i]; }
 		uint Requested{};//the nodes the request named.
 	};
-	//Sends the request through open62541's generic asynchronous service on the client's strand:  the typed helpers,
-	//UA_Client_HistoryRead_raw and the rest, are synchronous and take one node, which would hold the strand.
-	struct HistoryReadAwait final : TAwait<HistoryReadResponse>{
-		HistoryReadAwait( HistoryReadRequest&& request, sp<UAClient> client, SRCE )ι:TAwait<HistoryReadResponse>{sl}, _request{move(request)}, _client{move(client)}{}
-		α Suspend()ι->void override;
-		Ω OnResponse( UA_Client* client, void* await, UA_UInt32 requestId, void* response )ι->void;
-		α OnComplete( UA_HistoryReadResponse* response )ι->void;
+	//Not UA_Client_HistoryRead_raw and the rest:  they are synchronous and take one node.
+	struct HistoryReadAwait final : UAServiceAwait<HistoryReadResponse, UA_HistoryReadResponse, UA_TYPES_HISTORYREADREQUEST, UA_TYPES_HISTORYREADRESPONSE>{
+		HistoryReadAwait( HistoryReadRequest&& request, sp<UAClient> client, SRCE )ι:UAServiceAwait{ move(client), "historyRead", sl }, _request{ move(request) }{}
 	private:
+		α Request()ι->void* override{ return &_request; }
+		α Convert( UA_HistoryReadResponse&& response )ε->HistoryReadResponse override;
 		HistoryReadRequest _request;
-		RequestId _requestId{};
-		sp<UAClient> _client;
 	};
 }

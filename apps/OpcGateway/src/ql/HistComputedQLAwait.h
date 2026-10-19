@@ -1,7 +1,5 @@
 #pragma once
-#include <jde/ql/types/TableQL.h>
-#include "HistQL.h"
-#include "../async/HistoryReadAwait.h"
+#include "HistPassThroughAwait.h"
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
@@ -16,18 +14,13 @@ namespace Jde::Opc::Gateway{
 	//server answered when those it refused leave the page short (Extend).  An aggregate Part 13 names goes by
 	//its standard NodeId, and any other by the one the server's AggregateFunctions folder lists under that name
 	//(AggregateFunctions).
-	struct HistComputedQLAwait final : TAwaitEx<jvalue,TAwait<HistoryReadResponse>::Task>{
-		using base = TAwaitEx<jvalue,TAwait<HistoryReadResponse>::Task>;
-		HistComputedQLAwait( QL::TableQL&& query, sp<UAClient> client, SRCE )ι:base{ sl }, _client{ move(client) }, _query{ move(query) }{}
-		α Execute()ι->TAwait<HistoryReadResponse>::Task override;
+	struct HistComputedQLAwait final : HistPassThroughAwait{
+		HistComputedQLAwait( QL::TableQL&& query, sp<UAClient> client, SRCE )ι:HistPassThroughAwait{ move(query), move(client), sl }{}
 	private:
-		struct Node final{
-			string Point;//the continuation point its last page returned.
-			bool More{};//the server has more:  Point is held.
+		struct Node final : NodeState{
 			bool Had{};//its value at the call's first point came on a page before.
 			bool Skip{};//its next value is the interval before the round's first (Back).
 			vector<HistQL::ReadValue> Values;//received this call, by point from the call's first.
-			StatusCode Status{ UA_STATUSCODE_GOOD };//the server's last answer for it.
 		};
 		//Where the merge stopped short:  the point, by its place among them all, and which of its nodes were answered.
 		struct Cut final{ uint64_t Point; vector<bool> Done; };
@@ -35,8 +28,15 @@ namespace Jde::Opc::Gateway{
 		//The request for a round, of the points [_from, _stop):  a fresh one, the first or one Extend makes, names the nodes
 		//Caught, then those the server has more for that hold the merge back, with their points, and for a release every
 		//node still holding one.
-		α Request( bool fresh, bool release )ι->HistoryReadRequest;
-		α Take( uint slot, UA_HistoryReadResult& result )ι->void;//a node's page into its Values.
+		α Begin()ι->void override;//the nodes, and the first round's points.
+		α Request( bool fresh, bool release )ι->HistoryReadRequest override;
+		α Take( uint slot, UA_HistoryReadResult& result )ι->void override;//a node's page into its Values.
+		//Until the page holds `limit` or the request's points are done;  a fresh round, Extend's, once the server has answered
+		//every point asked and a node it refused leaves the page short.
+		α Next()ι->optional<bool> override;
+		α Answer()ι->std::pair<vector<HistQL::ReadValue>,string> override;
+		α NodeCount()Ι->uint override{ return _nodes.size(); }
+		α State( uint slot )ι->NodeState& override{ return _nodes[slot]; }
 		//The merge, from the call's first point:  each point's values in the nodes' order, but those a page before answered,
 		//until the page holds `limit`, a node the server has more for hasn't reached the point, or the request's points are
 		//done.  Counts what it passes, moving it into `page` when given.
@@ -56,12 +56,7 @@ namespace Jde::Opc::Gateway{
 		//interval, not Part 13's Partial uneven last one.  A fresh request skips that value of each node it names.
 		α Back()Ι->bool;
 
-		sp<UAClient> _client;
-		QL::TableQL _query;
-		optional<HistQL::Args> _args;
-		optional<NodeId> _aggregate;//an aggregate read's function.
 		vector<Node> _nodes;//by Args::Nodes' slot.
-		vector<uint> _asked;//the slots the round's request names, in its order.
 		uint64_t _from{}, _stop{};//the points the round's request asks, by their places among them all.
 	};
 }

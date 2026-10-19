@@ -1,74 +1,30 @@
 #include "HistComputedQLAwait.h"
 #include <jde/fwk/str.h>
-#include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>
-#include "../AggregateFunctions.h"
-#include "../UAClient.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
-
-	α HistComputedQLAwait::Execute()ι->TAwait<HistoryReadResponse>::Task{
-		jvalue y;
-		std::exception_ptr failed;
-		try{
-			_args.emplace( _query, _sl );
-			_nodes.resize( _args->Nodes.size() );
-			for( uint i=0; i<_nodes.size(); ++i )
-				_nodes[i].Had = _args->Continuation && _args->Continuation->counts( i )!=0;
-			if( _args->Mode==HistQL::EMode::Processed ){
-				_aggregate = AggregateFunctions::Part13( _args->Aggregate );
-				if( !_aggregate ){//AnyAwait - legal from this TAwait<HistoryReadResponse>::Task.
-					auto folder = co_await _client->Aggregates().Get( _client, _sl );
-					let p = folder->find( _args->Aggregate );
-					if( p==folder->end() )
-						throw UAException{ UA_STATUSCODE_BADAGGREGATENOTSUPPORTED, Ƒ("The server lists no aggregate '{}'.", _args->Aggregate), {ELogLevel::Debug}, _sl };
-					_aggregate = p->second;
-				}
-			}
-			_from = _stop = First();
-			Extend( _args->Limit, (uint)std::ranges::count_if(_nodes, &Node::Had) );//every node is Caught at the call's first.
-			for( bool fresh=true;; ){
-				auto response = co_await HistoryReadAwait{ Request(fresh, false), _client, _sl };
-				for( uint i=0; i<_asked.size(); ++i )
-					Take( _asked[i], response.Result(i) );
-				let walked = Walk( nullptr );
-				if( walked.Values>=_args->Limit || !walked.At )
-					break;
-				fresh = !std::ranges::any_of( _nodes, &Node::More );
-				if( fresh && !Extend(_args->Limit-walked.Values) )
-					break;
-			}
-			vector<HistQL::ReadValue> page;
-			let walked = Walk( &page );
-			let continuation = Continuation( walked.At );
-			vector<StatusCode> statuses; statuses.reserve( _nodes.size() );
-			for( let& node : _nodes )
-				statuses.push_back( node.Status );
-			y = HistQL::ToJson( _query, _args->Nodes, move(page), continuation, statuses );
-		}
-		catch( runtime_error& ){//a round that fails leaves the points the rounds before took, which the release below frees.
-			failed = std::current_exception();
-		}
-		if( std::ranges::any_of(_nodes, &Node::More) ){
-			try{
-				co_await HistoryReadAwait{ Request(false, true), _client, _sl };
-			}
-			catch( const std::exception& e ){//the server's to drop with the session, then.
-				DBG( "[{}]Releasing the history continuation points failed:  {}", hex(_client->Handle()), e.what() );
-			}
-		}
-		if( failed ){
-			try{
-				std::rethrow_exception( failed );
-			}
-			catch( runtime_error& e ){
-				ResumeExp( move(e) );
-			}
-		}
-		else
-			Resume( move(y) );
+	α HistComputedQLAwait::Begin()ι->void{
+		_nodes.resize( _args->Nodes.size() );
+		for( uint i=0; i<_nodes.size(); ++i )
+			_nodes[i].Had = _args->Continuation && _args->Continuation->counts( i )!=0;
+		_from = _stop = First();
+		Extend( _args->Limit, (uint)std::ranges::count_if(_nodes, &Node::Had) );//every node is Caught at the call's first.
+	}
+	α HistComputedQLAwait::Next()ι->optional<bool>{
+		let walked = Walk( nullptr );
+		if( walked.Values>=_args->Limit || !walked.At )
+			return nullopt;
+		let fresh = !std::ranges::any_of( _nodes, &Node::More );
+		if( fresh && !Extend(_args->Limit-walked.Values) )
+			return nullopt;
+		return fresh;
+	}
+	α HistComputedQLAwait::Answer()ι->std::pair<vector<HistQL::ReadValue>,string>{
+		vector<HistQL::ReadValue> page;
+		let walked = Walk( &page );
+		auto continuation = Continuation( walked.At );
+		return { move(page), move(continuation) };
 	}
 
 	α HistComputedQLAwait::Request( bool fresh, bool release )ι->HistoryReadRequest{
@@ -107,13 +63,8 @@ namespace Jde::Opc::Gateway{
 
 	α HistComputedQLAwait::Take( uint slot, UA_HistoryReadResult& result )ι->void{
 		auto& node = _nodes[slot];
-		node.Status = result.statusCode;
-		node.Point.assign( (const char*)result.continuationPoint.data, result.continuationPoint.length );
-		node.More = node.Point.size() && !UA_StatusCode_isBad( result.statusCode );
-		if( UA_StatusCode_isBad(result.statusCode) ){//the node's answer, as the server gave it.
-			DBG( "[{}]history {} answered {}.", hex(_client->Handle()), _args->Nodes[slot].ToString(), UAException::Message(result.statusCode) );
+		if( !TakeHeader(slot, result) )
 			return;
-		}
 		let decoded = result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED || result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED_NODELETE;
 		if( !decoded || result.historyData.content.decoded.type!=&UA_TYPES[UA_TYPES_HISTORYDATA] )
 			return;

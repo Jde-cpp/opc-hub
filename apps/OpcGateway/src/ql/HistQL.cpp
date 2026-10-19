@@ -356,6 +356,29 @@ namespace HistQL{
 	α HistQL::ToJson( const QL::TableQL& ql, const vector<NodeId>& nodes, vector<ReadValue>&& values, sv continuation, const vector<StatusCode>& statuses )ι->jvalue{
 		return ToJson( ql, NodesJson(nodes), move(values), continuation, statuses );
 	}
+	α HistQL::EditRows( const EditArgs& args, const vector<std::span<const StatusCode>>& operations, const vector<StatusCode>& statuses )ι->vector<EditResult>{
+		let count = statuses.size();
+		vector<uint> expected( count, args.Times.size() );
+		for( let& v : args.Values )
+			++expected[v.Slot];
+		vector<EditResult> y;
+		let add = [&]( uint slot, uint k, optional<UA_DateTime> time ){
+			let& ops = operations[slot];
+			y.push_back( {slot, time, ops.size()==expected[slot] ? ops[k] : statuses[slot]} );
+		};
+		if( args.Edit<EEdit::Purge ){
+			vector<uint> at( count );
+			for( let& v : args.Values )
+				add( v.Slot, at[v.Slot]++, v.Source );
+		}
+		else if( args.Times.size() ){
+			for( uint i=0; i<count; ++i ){
+				for( uint k=0; k<args.Times.size(); ++k )
+					add( i, k, args.Times[k] );
+			}
+		}
+		return y;
+	}
 	α HistQL::ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue{
 		jobject y;
 		if( let valuesQL = ql.FindTable("values"); valuesQL ){

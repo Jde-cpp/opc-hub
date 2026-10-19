@@ -58,35 +58,17 @@ namespace Jde::Opc::Gateway{
 			vector<Hist::EditResult> results;
 			if( details.size() )
 				results = co_await group->Edit( move(details), hist.Writer(UserPK()), _sl );
-			//A node's k-th value or time takes the library's result for it, or the node's status where the entry carries none.
-			vector<uint> expected( count, args.Times.size() );
-			for( let& v : args.Values )
-				++expected[v.Slot];
-			vector<const vector<StatusCode>*> operations( count );
+			vector<std::span<const StatusCode>> operations( count );
 			for( uint i=0; i<count; ++i ){
 				if( !entries[i] ){
-					statuses[i] = UA_STATUSCODE_BADNODEIDUNKNOWN;
+					statuses[i] = UA_STATUSCODE_BADNODEIDUNKNOWN;//not a member.
 					continue;
 				}
 				let& result = results.at( *entries[i] );
 				statuses[i] = result.Status;
-				if( expected[i] && result.Results.size()==expected[i] )
-					operations[i] = &result.Results;
+				operations[i] = result.Results;
 			}
-			vector<HistQL::EditResult> rows;
-			let add = [&]( uint slot, uint k, optional<UA_DateTime> time ){ rows.push_back( {slot, time, operations[slot] ? (*operations[slot])[k] : statuses[slot]} ); };
-			if( edit<Purge ){
-				vector<uint> at( count );
-				for( let& v : args.Values )
-					add( v.Slot, at[v.Slot]++, v.Source );
-			}
-			else if( args.Times.size() ){
-				for( uint i=0; i<count; ++i ){
-					for( uint k=0; k<args.Times.size(); ++k )
-						add( i, k, args.Times[k] );
-				}
-			}
-			Resume( _query.ResultRequest ? HistQL::ToJson(*_query.ResultRequest, HistQL::NodesJson(args.Nodes), rows, statuses) : jvalue{} );
+			Resume( _query.ResultRequest ? HistQL::ToJson(*_query.ResultRequest, HistQL::NodesJson(args.Nodes), HistQL::EditRows(args, operations, statuses), statuses) : jvalue{} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

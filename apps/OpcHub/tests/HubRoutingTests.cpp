@@ -71,7 +71,7 @@ namespace Jde::Opc::Hub::Tests{
 	}
 
 	//one /graphql over the three schemas: the gateway's, the app's and access' tables, the merged custom queries and the
-	//merged status - and access tables stay off the gateway's ConnectAwait (GatewayQLAwait::IsApplicable).
+	//merged status - and access tables stay off the gateway's ConnectAwait (GatewayQLAwait::Test answers null for them).
 	TEST_F( HubRoutingTests, MergedGraphQL ){
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
 		let authorization = Ƒ( "{:x}", sessionId );
@@ -258,7 +258,7 @@ namespace Jde::Opc::Hub::Tests{
 	}
 
 	//install-issues #1 (b):  the login page's username with no DOMAIN\ posts an empty `opc`, which ServerCnnctnAwait reads as
-	//the default connection.  What follows the connect has to key on the slug it resolved to (AuthAwait::Execute) - the provider
+	//the default connection.  What follows the connect has to key on the slug it resolved to (PasswordAwait::Execute) - the provider
 	//lookup, and the credential cache GetCredential reads by slug - and the OpcServer's side of the login (UAAccess::ResolveUser)
 	//has to name the user the hub's AddSession did.  A wrong password is the server's BadUserAccessDenied, surfaced as 401.
 	TEST_F( HubRoutingTests, LoginDefaultConnection ){

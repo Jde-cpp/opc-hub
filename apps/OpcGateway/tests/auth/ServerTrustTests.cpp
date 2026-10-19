@@ -179,37 +179,19 @@ namespace Jde::Opc::Gateway::Tests{
 	class ServerTrustLiveTests : public Auth{
 	protected:
 		ServerTrustLiveTests()ι:Auth{ETokenType::IssuedToken}{}
-		Ω SetUpTestSuite()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
 		α TearDown()ι->void override{
 			ServerTrust::OverrideTrustedCertDirs( nullopt );//whatever the assertions did.
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
+			Auth::TearDown();
 		}
-		α Connect( atomic_flag& flag )ι->ConnectAwait::Task{
-			try{
-				_exception = nullptr;
-				_client = co_await UAClient::GetClient( Connection->Slug, Credential{_jwt->Payload()} );
-			}
-			catch( Exception& e ){
-				_exception = e.Move();
-			}
-			flag.test_and_set();
-			flag.notify_all();
-		}
-		static optional<Web::Jwt> _jwt;
-		up<Exception> _exception;
-		sp<UAClient> _client;
+		α Connect()ι->void{ Attempt( Connection->Slug, SessionCredential() ); }
 	};
-	optional<Web::Jwt> ServerTrustLiveTests::_jwt;
 
 	TEST_F( ServerTrustLiveTests, RejectsAServerOutsideTheTrustedDirs ){
-		if( auto cached = UAClient::Find(Connection->Slug, Credential{_jwt->Payload()}); cached )
+		if( auto cached = UAClient::Find(Connection->Slug, SessionCredential()); cached )
 			UAClient::RemoveClient( move(cached) );//a client another suite left cached would skip Configuration() - the next connect must build a fresh one.
 		ServerTrust::OverrideTrustedCertDirs( vector<fs::path>{ fs::temp_directory_path()/"jde-servertrust-no-anchors" } );
 
-		atomic_flag first;
-		Connect( first );
-		first.wait( false );
+		Connect();
 		ASSERT_TRUE( _exception ) << "connected through an empty trust list";
 		EXPECT_FALSE( _client );
 		let what = string{ _exception->what() };
@@ -218,9 +200,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( what.find("/gateway/verifyServerCertificate"), string::npos ) << what;
 
 		ServerTrust::OverrideTrustedCertDirs( nullopt );//the harness's trustedCertDirs hold the embedded server's cert.
-		atomic_flag second;
-		Connect( second );
-		second.wait( false );
+		Connect();
 		EXPECT_FALSE( _exception ) << _exception->what();
 		EXPECT_TRUE( _client );
 	}

@@ -232,6 +232,38 @@ namespace Jde::Opc{
 			y.emplace( row.Id, move(row) );
 		return y;
 	}
+	α Gateway::HistTemplateMembersAwait::await_ready()ι->bool{
+		if( _filter.Id || _filter.Template )
+			return false;
+		_result.emplace();
+		return true;
+	}
+	α Gateway::HistTemplateMembersAwait::Select()ι->VoidTask{
+		try{
+			auto select = SelectHistTemplateNodes( _filter, _sl );
+			Resume( HistTemplateNodesById(co_await Any(select)) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
+	α Gateway::NodeHolderAwait::Select()ι->VoidTask{
+		try{
+			auto select = SelectHistGroupNodes( {.Connection=_connection, .Node=_text}, _sl );
+			auto holders = co_await Any( select );
+			NodeHolder y;
+			if( holders.size() ){
+				auto& row = y.Row.emplace( move(holders.front()) );
+				y.Kind = row.Group!=_group ? NodeHolder::EKind::OtherGroup
+					: _member && row.TemplateNode==_member ? NodeHolder::EKind::SameMember
+					: NodeHolder::EKind::ThisGroup;
+			}
+			Resume( move(y) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
 	α Gateway::FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*{
 		auto p = id ? members.find( *id ) : members.end();
 		return p==members.end() ? nullptr : &p->second;

@@ -163,27 +163,6 @@ namespace Jde::Opc::Gateway{
 		return p==_attributeNames.end() ? _attributeNames.at( UA_ATTRIBUTEID_INVALID ) : p->second;
 	}
 
-	ReadResponse::ReadResponse( UA_ReadResponse&& x, ReadRequest&& request )ι:
-		UA_ReadResponse{ x },
-		Request{ move(request) }{
-		UA_ReadResponse_init( &x );
-	}
-	ReadResponse::ReadResponse( ReadResponse&& x )ι:
-		UA_ReadResponse{ x },
-		Request{ move(x.Request) }{
-		UA_ReadResponse_init( &x );
-	}
-
-	α ReadResponse::operator=( ReadResponse&& x )ι->ReadResponse&{
-		if( this != &x ){
-			UA_ReadResponse_clear( this );
-			*( UA_ReadResponse* )this = x;
-			Request = move( x.Request );
-			UA_ReadResponse_init( &x );
-		}
-		return *this;
-	}
-
 	α ReadResponse::Validate( Handle uahandle, SL sl )ε->void{
 		THROW_IFX( responseHeader.serviceResult, UAClientException(responseHeader.serviceResult, uahandle, "UA_Client_Service_read().", sl) );
 	}
@@ -216,22 +195,14 @@ namespace Jde::Opc::Gateway{
 
 
 	α ReadAwait::Suspend()ι->void{
-		_client->PostUA( [this]{//UA submissions must run on the client's strand; `this` outlives suspension (resume only via OnComplete).
-			try{
-				UACε( UA_Client_sendAsyncReadRequest(*_client, &_request, ReadAwait::OnResponse, this, &_requestId) );
-				_client->Process( _requestId, _keepAlive ? "keep-alive" : "read", _keepAlive );
-			}
-			catch( UAException& e ){
-				ResumeExp( move(e) );
-			}
-		});
+		Submit( _keepAlive ? "keep-alive" : "read", [this]{ return UA_Client_sendAsyncReadRequest(*_client, &_request, ReadAwait::OnResponse, this, &_requestId); }, _keepAlive );
 	}
 	α ReadAwait::OnResponse( UA_Client* /*client*/, void* await, UA_UInt32 /*requestId*/, UA_ReadResponse* rr )ι->void{
 		ASSERT( await );
 		( (ReadAwait*)await )->OnComplete( rr );
 	}
 	α ReadAwait::OnComplete( UA_ReadResponse* rr )ι->void{
-		_client->ClearRequest( _requestId );
+		ClearRequest();
 		ReadResponse response{ move(*rr), move(_request) };
 		try{
 			response.Validate( _client->Handle(), _sl );

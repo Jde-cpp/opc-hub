@@ -1,7 +1,7 @@
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
-#include "../utils/helpers.h"
+#include "../utils/ClientFixture.h"
 #include "../utils/TestUaServer.h"
 #include "../../src/UAClient.h"
 #include "../../src/GatewayAppClient.h"
@@ -10,67 +10,38 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	constexpr ELogTags _tags{ ELogTags::Test };
 	//security-matrix #4:  more than one secured policy.  The gateway and the OpcServer each carried Basic256Sha256 alone;  both now
 	//carry the three current RSA policies - Basic256Sha256, Aes128_Sha256_RsaOaep, Aes256_Sha256_RsaPss - and open62541 takes the
 	//endpoint with the highest securityLevel the two sides share, so between the Jde products that is the strongest, and against
 	//a server that offers Basic256Sha256 alone (External - ExternalServerTests) it is still that.  A server that shares none - the
 	//deprecated Basic256 here - used to fail as a bare BadIdentityTokenRejected;  the connection error now names what the server
 	//asked for and what the gateway carries.
-	class SecurityPolicyTests : public ::testing::Test{
+	class SecurityPolicyTests : public ClientFixture{
 	protected:
-		static constexpr uint16_t LegacyPort{ 4856 };//PlaintextPasswordTests holds 4855, RefusedCertificateTests 4857.
-		static constexpr uint16_t LyingPort{ 4860 }, DowngradePort{ 4861 };//HostNameTests holds 4858, ApplicationUriTests 4859.
-		Ω SetUpTestSuite()->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
+		static constexpr EThrowawayPort LegacyPort{ EThrowawayPort::SecurityPolicyLegacy }, LyingPort{ EThrowawayPort::SecurityPolicyLying }, DowngradePort{ EThrowawayPort::SecurityPolicyDowngrade };
 		Ω TearDownTestSuite()->void{
 			for( let& slug : {SharedSlug, LegacySlug, LyingSlug, DowngradeSlug} ){
-				if( auto row = SelectServerCnnctn(slug); row )
-					PurgeServerCnnctn( row->Id );
+				PurgeServerCnnctn( slug );
 			}
 		}
-		α TearDown()ι->void override{
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
+		α Attempt( str slug, Credential cred )ι->string{//what the connect failed with, "" when it connected.
+			let type = TokenTypeName( cred.Type() );
+			return ClientFixture::Attempt( slug, move(cred), Ƒ("secured|{}|{}", type, slug) );
 		}
-		α Connect( str slug, Credential cred )ι->ConnectAwait::Task;
-		α Attempt( str slug, Credential cred )ε->string;//what the connect failed with, "" when it connected.
 		inline static const string SharedSlug{ "opcTestsSharedPolicy" };
 		inline static const string LegacySlug{ "opcTestsLegacyPolicy" };
 		inline static const string LyingSlug{ "opcTestsLyingLevel" };
 		inline static const string DowngradeSlug{ "opcTestsDowngradeOnly" };
-		inline static optional<Web::Jwt> _jwt;
-		up<Exception> _exception;
-		sp<UAClient> _client;
-		atomic_flag _done;
 	};
 
-	α SecurityPolicyTests::Connect( str slug, Credential cred )ι->ConnectAwait::Task{
-		try{
-			_client = co_await UAClient::GetClient( slug, move(cred) );
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		_done.test_and_set();
-		_done.notify_all();
-	}
-	α SecurityPolicyTests::Attempt( str slug, Credential cred )ε->string{
-		let type = TokenTypeName( cred.Type() );
-		_exception = nullptr; _done.clear();
-		Connect( slug, move(cred) );
-		_done.wait( false );
-		let what = _exception ? string{_exception->what()} : string{};
-		INFO( "MATRIX|secured|{}|{}|{}", type, slug, what.empty() ? Negotiated(_client) : what );
-		return what;
-	}
 
 	TEST_F( SecurityPolicyTests, TheStrongestSharedPolicyIsNegotiated ){
-		let urn = string{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
-		let url = string{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
+		let urn = OpcUrn();
+		let url = OpcUrl();
 		let row = GetConnection( SharedSlug, url, urn );
 		EXPECT_EQ( row.CertificateUri, urn );//security-matrix #7:  the row read back through the helper keeps its certificateUri.
 		EXPECT_FALSE( row.IsDefault );
-		let what = Attempt( SharedSlug, Credential{_jwt->Payload()} );
+		let what = Attempt( SharedSlug, SessionCredential() );
 		ASSERT_TRUE( what.empty() ) << what;
 		ASSERT_TRUE( _client );
 		EXPECT_EQ( "ok (Aes256_Sha256_RsaPss/SignAndEncrypt)", Negotiated(_client) );
@@ -78,20 +49,16 @@ namespace Jde::Opc::Gateway::Tests{
 
 	TEST_F( SecurityPolicyTests, NoPolicyInCommonIsNamed ){
 		let& ssl = *AppClient()->SslSettings;//the server's certificate has to be one the gateway trusts, and its own web certificate sits in the harness's trusted directory.
-		auto certificate = ToUAByteString( Crypto::ReadCertificate(ssl.Certificate.Path) );
-		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(ssl.PrivateKey) );
 		let serverUri = ssl.Certificate.SanUri();
 		ASSERT_FALSE( serverUri.empty() );
-		TestUaServer legacy{ LegacyPort, [&]( UA_ServerConfig& config ){
-			UA_String_clear( &config.applicationDescription.applicationUri );
-			config.applicationDescription.applicationUri = UA_STRING_ALLOC( serverUri.c_str() );//open62541 holds the certificate's SAN uri against it at startup.
-			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate.get()) );//the discovery channel only - no None endpoint is added.
-			UAε( UA_ServerConfig_addSecurityPolicyBasic256(&config, certificate.get(), privateKey.get()) );
+		TestUaServer legacy{ LegacyPort, ssl, [&]( UA_ServerConfig& config, const UA_ByteString* certificate, const UA_ByteString* privateKey ){
+			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate) );//the discovery channel only - no None endpoint is added.
+			UAε( UA_ServerConfig_addSecurityPolicyBasic256(&config, certificate, privateKey) );
 			UA_UsernamePasswordLogin login{ UA_STRING_STATIC("legacy"), UA_STRING_STATIC("password") };
 			UAε( UA_AccessControl_default(&config, false, nullptr, 1, &login) );
 			UAε( UA_ServerConfig_addEndpoint(&config, UA_STRING((char*)"http://opcfoundation.org/UA/SecurityPolicy#Basic256"), UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) );
 		}};
-		GetConnection( LegacySlug, Ƒ("opc.tcp://127.0.0.1:{}", LegacyPort), serverUri );
+		GetConnection( LegacySlug, Url(LegacyPort), serverUri );
 		let what = Attempt( LegacySlug, Credential{User{"legacy", "password"}} );
 		EXPECT_FALSE( _client );
 		EXPECT_TRUE( what.contains("BadIdentityTokenRejected") ) << what;
@@ -105,15 +72,10 @@ namespace Jde::Opc::Gateway::Tests{
 	//Basic256Sha256, so open62541's cleartext guard has nothing to refuse.  `secured` adds the honest endpoint, claiming 0.
 	//The level is served as the config holds it (GetEndpoints copies the description), and it was all that chose the channel
 	//until Configuration() pinned Sign & Encrypt for a connection with a certificateUri.
-	Ω lyingServer( uint16_t port, const Crypto::CryptoSettings& ssl, bool secured )ε->up<TestUaServer>{
-		auto certificate = ToUAByteString( Crypto::ReadCertificate(ssl.Certificate.Path) );
-		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(ssl.PrivateKey) );
-		let serverUri = ssl.Certificate.SanUri();
-		return mu<TestUaServer>( port, [&]( UA_ServerConfig& config ){
-			UA_String_clear( &config.applicationDescription.applicationUri );
-			config.applicationDescription.applicationUri = UA_STRING_ALLOC( serverUri.c_str() );
-			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate.get()) );
-			UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(&config, certificate.get(), privateKey.get()) );//decrypts the token;  a channel policy only where `secured` gives it an endpoint.
+	Ω lyingServer( EThrowawayPort port, const Crypto::CryptoSettings& ssl, bool secured )ε->up<TestUaServer>{
+		return mu<TestUaServer>( port, ssl, [&]( UA_ServerConfig& config, const UA_ByteString* certificate, const UA_ByteString* privateKey ){
+			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate) );
+			UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(&config, certificate, privateKey) );//decrypts the token;  a channel policy only where `secured` gives it an endpoint.
 			let tokenPolicy = UA_STRING( (char*)"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" );
 			UA_UsernamePasswordLogin login{ UA_STRING_STATIC("level"), UA_STRING_STATIC("password") };
 			UAε( UA_AccessControl_default(&config, false, &tokenPolicy, 1, &login) );//Username@Basic256Sha256 on every endpoint, the None one included.
@@ -129,7 +91,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let& ssl = *AppClient()->SslSettings;
 		let serverUri = ssl.Certificate.SanUri(); ASSERT_FALSE( serverUri.empty() );
 		auto server = lyingServer( LyingPort, ssl, true );
-		GetConnection( LyingSlug, Ƒ("opc.tcp://127.0.0.1:{}", LyingPort), serverUri );
+		GetConnection( LyingSlug, Url(LyingPort), serverUri );
 		let what = Attempt( LyingSlug, Credential{User{"level", "password"}} );
 		ASSERT_TRUE( what.empty() ) << what;
 		ASSERT_TRUE( _client );
@@ -140,7 +102,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let& ssl = *AppClient()->SslSettings;
 		let serverUri = ssl.Certificate.SanUri(); ASSERT_FALSE( serverUri.empty() );
 		auto server = lyingServer( DowngradePort, ssl, false );//what an on-path answer to GetEndpoints looks like:  the None endpoint alone.
-		GetConnection( DowngradeSlug, Ƒ("opc.tcp://127.0.0.1:{}", DowngradePort), serverUri );
+		GetConnection( DowngradeSlug, Url(DowngradePort), serverUri );
 		let what = Attempt( DowngradeSlug, Credential{User{"level", "password"}} );
 		EXPECT_FALSE( _client ) << Negotiated( _client );
 		EXPECT_TRUE( what.contains("BadIdentityTokenRejected") ) << what;

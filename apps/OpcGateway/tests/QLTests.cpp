@@ -35,16 +35,23 @@ namespace Jde::Opc::Gateway::Tests{
 
 	struct QLTests : ::testing::Test{
 	protected:
-		Ω SetUpTestSuite()ε->void{ //ε: CreateServerCnnctn throws - under ι gtest never sees it and the whole binary terminates.
-			if( !SelectServerCnnctn( OpcServerSlug ) )
-				CreateServerCnnctn();
-		};
+		Ω SetUpTestSuite()ε->void{ GetConnection( OpcServerSlug ); }//ε: GetConnection throws - under ι gtest never sees it and the whole binary terminates.
+		//`typeName`'s introspected fields, each with its name and type.
+		Ω Fields( sv typeName )ε->jarray{
+			let type = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){{ fields{{ name type{{ name kind ofType{{ name kind }} }} }} }}", typeName) );
+			TRACE( "__type({}): {}.", typeName, serialize(type) );
+			return Json::AsArray( type.as_object(), "fields" );
+		}
+		//The row of `rows` whose `key` is `value`, or rows.end().
+		Ω FindRow( const jarray& rows, sv key, sv value )ι->jarray::const_iterator{
+			return std::ranges::find_if( rows, [&]( let& row ){ return Json::AsSV(row.as_object(), key)==value; } );
+		}
 	};
 
 	TEST_F( QLTests, ServerDescriptionTest ){
 		let q = "serverDescription( opc: $opc ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls }";
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(	Socket().Query(q, vars, true) );
+		let value = Socket().QuerySync( q, vars );
 		//{"applicationUri":"urn:open62541.server.application","productUri":"http://open62541.org","applicationName":"Jde-Cpp OpcServer","applicationType":"Server","gatewayServerUri":"","discoveryProfileUri":"","discoveryUrls":["opc.tcp://workstation25:4840","opc.tcp://127.0.0.1:4840"]}.
 		TRACE( "ServerDescription: {}.", serialize(value) );
 		let obj = value.as_object();
@@ -67,14 +74,14 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 	//#364:  and only so - the gateway's acl holds no app schema, so it has no `sessions` to refuse a caller of its own ql with.
 	TEST_F( QLTests, sessionsAreNotThisGatewaysQuery ){
-		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(Socket().Query("sessions{ endpoint }", {}, true))), std::exception );
-		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(Socket().Query("mutation purgeSession( id:\"1\" )", {}, true))), std::exception );
+		EXPECT_THROW( Socket().QuerySync( "sessions{ endpoint }" ), std::exception );
+		EXPECT_THROW( Socket().QuerySync( "mutation purgeSession( id:\"1\" )" ), std::exception );
 	}
 
 	TEST_F( QLTests, namespaces ){
 		let q = "namespaces( opc: $opc ){ index uri }";
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
+		let value = Socket().QuerySync( q, vars );
 		//[{"index":0,"uri":"http://opcfoundation.org/UA/"},{"index":1,"uri":"urn:open62541.server.application"},...].
 		TRACE( "namespaces: {}.", serialize(value) );
 		let& rows = value.as_array();
@@ -87,7 +94,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( QLTests, securityPolicyUri ){
 		let q = "securityPolicyUri( opc: $opc )";
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(	Socket().Query(q, vars, true) );
+		let value = Socket().QuerySync( q, vars );
 		TRACE( "securityPolicyUri: {}.", serialize(value) );
 		ASSERT_TRUE( serialize(value).size() );
 	}
@@ -95,16 +102,16 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( QLTests, securityMode ){
 		let q = "securityMode( opc: $opc )";
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(	Socket().Query(q, vars, true) );
+		let value = Socket().QuerySync( q, vars );
 		TRACE( "securityMode: {}.", serialize(value) );
 		ASSERT_TRUE( serialize(value).size() );
 	}
 	TEST_F( QLTests, opcSessions ){
 		let sessionId = addSession( "opcSessionsTestToken" );
 		let q = "opcSessions{ connection{slug} type user{id slug name} count }";
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, {}, true) );
+		let value = Socket().QuerySync( q );
 		TRACE( "opcSessions: {}.", serialize(value) );
-		let projected = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("opcSessions{ count }", {}, true) );
+		let projected = Socket().QuerySync( "opcSessions{ count }" );
 		removeSession( sessionId );
 
 		let& rows = value.as_array();
@@ -145,20 +152,18 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 
 		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x08'0000 };//no acl, no role, no group names it
-		let enforce = []( sv slug, bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"{}\", criteria:null )", on ? "restore" : "delete", slug), {} ); };
-		auto refused = [&]( sv slug, function<void()> query )->bool{//the gateway's authorizer hears of the switch over its subscription, so ask until it has.
-			enforce( slug, true );
-			absl::Cleanup _ = [enforce, slug]{ try{ enforce(slug, false); }catch( const std::exception& ){} };
-			for( let deadline = steady_clock::now()+5s; steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
+		auto refused = [&]( sv slug, function<void()> query )->bool{
+			EnforceResource( "gateway", slug, true );
+			absl::Cleanup _ = [slug]{ try{ EnforceResource("gateway", slug, false); }catch( const std::exception& ){} };
+			return WaitUntil( [&]{
 				try{
 					query();
 				}
 				catch( const Exception& e ){
-					if( e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden )
-						return true;
+					return e.HttpStatus()==EHttpStatus::Unauthorized || e.HttpStatus()==EHttpStatus::Forbidden;
 				}
-			}
-			return false;
+				return false;
+			}, 5s, 50ms );
 		};
 		EXPECT_TRUE( refused("sessions", [&]{
 			auto ql = QL::Parse( "opcSessions{ connection{slug} type user{id name} count }", {}, Schemas(), true );
@@ -169,14 +174,14 @@ namespace Jde::Opc::Gateway::Tests{
 			BlockAwait<SearchQLAwait,jvalue>( SearchQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
 		}) ) << "gateway/search is enforced and an ungranted user is still let through its gate";
 
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("opcSessions{ count }", {}, true) );//and unenforced again, the harness's own session still reads it.
+		let value = Socket().QuerySync( "opcSessions{ count }" );//and unenforced again, the harness's own session still reads it.
 		EXPECT_TRUE( value.is_array() ) << serialize( value );
 	}
 
 	TEST_F( QLTests, webSessionCounted ){ //no manual AddSession: a jwt-backed web session's connect must register itself (ConnectAwait::await_resume).
 		const jobject vars{ {"opc", OpcServerSlug} };
-		BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("serverDescription( opc: $opc ){ applicationUri }", vars, true) );//forces a ConnectAwait for this socket's session.
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("opcSessions{ connection{slug} type user{id} count }", {}, true) );
+		Socket().QuerySync( "serverDescription( opc: $opc ){ applicationUri }", vars );//forces a ConnectAwait for this socket's session.
+		let value = Socket().QuerySync( "opcSessions{ connection{slug} type user{id} count }" );
 		TRACE( "webSessionCounted: {}.", serialize(value) );
 		let userPK = AppClient()->UserPK().Value;
 		let& rows = value.as_array();
@@ -210,13 +215,13 @@ namespace Jde::Opc::Gateway::Tests{
 
 	TEST_F( QLTests, serverConnectionSessions ){
 		let sessionId = addSession( "serverConnectionSessionsTestToken" );
-		BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("serverDescription( opc: $opcSlug ){ applicationUri }", {{"opcSlug", OpcServerSlug}}, true) );//ensure a live UAClient so opcConnections has something to count.
+		Socket().QuerySync( "serverDescription( opc: $opcSlug ){ applicationUri }", {{"opcSlug", OpcServerSlug}} );//ensure a live UAClient so opcConnections has something to count.
 		//the exact shape View.query() emits for the Connections list - args must survive the graft's DB pass.
 		let listQL = "serverConnections(limit:25,orderBy:[{name:\"asc\"}],deleted:$deleted){ id connectionStatus{name} name certificateUri url opcSessions{count} opcConnections{count} description slug }";
-		let rows = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(listQL, {{"deleted",nullptr}}, true) );
+		let rows = Socket().QuerySync( listQL, {{"deleted",nullptr}} );
 		TRACE( "serverConnections: {}.", serialize(rows) );
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let single = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("serverConnection( slug: $opc ){ name opcSessions{count} }", vars, true) );
+		let single = Socket().QuerySync( "serverConnection( slug: $opc ){ name opcSessions{count} }", vars );
 		TRACE( "serverConnection: {}.", serialize(single) );
 		removeSession( sessionId );
 
@@ -311,93 +316,75 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( QLTests, searchIntrospection ){
-		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
 		for( sv typeName : {"Search"sv, "search"sv} ){ //both spellings are declared in config/introspection/search.jsonnet.
-			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
-			let& fields = Json::AsArray( value.as_object(), "fields" );
-			auto find = [&]( sv name ){ return find_if( fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; } ); };
+			let fields = Fields( typeName );
 			for( sv name : {"connection"sv, "id"sv, "path"sv, "name"sv, "browse"sv, "nodeClass"sv, "depth"sv} )
-				EXPECT_NE( find(name), fields.end() ) << name << ": " << serialize( value );
-			auto connection = find( "connection" );
+				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
+			auto connection = FindRow( fields, "name", "connection" );
 			ASSERT_NE( connection, fields.end() );
 			EXPECT_EQ( Json::AsSVPath(connection->as_object(), "type/name"), "SearchConnection" );
 		}
 	}
 
 	TEST_F( QLTests, historyIntrospection ){
-		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
 		for( sv typeName : {"History"sv, "history"sv} ){ //both spellings are declared in config/introspection/hist.jsonnet.
-			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
-			let& fields = Json::AsArray( value.as_object(), "fields" );
-			auto find = [&]( sv name ){ return find_if( fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; } ); };
+			let fields = Fields( typeName );
 			for( sv name : {"continuation"sv, "values"sv, "nodes"sv} )
-				EXPECT_NE( find(name), fields.end() ) << name << ": " << serialize( value );
-			auto values = find( "values" );
+				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
+			auto values = FindRow( fields, "name", "values" );
 			ASSERT_NE( values, fields.end() );
 			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/kind"), "LIST" );
 			EXPECT_EQ( Json::AsSVPath(values->as_object(), "type/ofType/name"), "HistoryValue" );
 		}
 		for( sv edit : {"createHistory"sv, "updateHistory"sv, "upsertHistory"sv, "purgeHistory"sv} ){
-			let answer = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", edit, fieldsQL), {} );
-			let& fields = Json::AsArray( answer.as_object(), "fields" );
+			let fields = Fields( edit );
 			for( sv name : {"values"sv, "nodes"sv} )
-				EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << edit << "." << name << ": " << serialize( answer );
+				EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << edit << "." << name << ": " << serialize( fields );
 		}
-		let value = Socket().QuerySync( Ƒ("__type( name: \"HistoryValue\" ){}", fieldsQL), {} );
-		let& fields = Json::AsArray( value.as_object(), "fields" );
+		let fields = Fields( "HistoryValue" );
 		for( sv name : {"node"sv, "source"sv, "server"sv, "status"sv, "value"sv, "bound"sv, "heartbeat"sv, "modification"sv} )
-			EXPECT_NE( find_if(fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), fields.end() ) << name << ": " << serialize( value );
+			EXPECT_NE( FindRow(fields, "name", name), fields.end() ) << name << ": " << serialize( fields );
 		//Historian 5b (#223):  resolveHistory, and the group tables the schema introspects itself.
-		let resolve = Socket().QuerySync( Ƒ("__type( name: \"resolveHistory\" ){}", fieldsQL), {} );
-		let& resolveFields = Json::AsArray( resolve.as_object(), "fields" );
-		auto nodes = find_if( resolveFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")=="nodes"; } );
-		ASSERT_NE( nodes, resolveFields.end() ) << serialize( resolve );
+		let resolveFields = Fields( "resolveHistory" );
+		auto nodes = FindRow( resolveFields, "name", "nodes" );
+		ASSERT_NE( nodes, resolveFields.end() ) << serialize( resolveFields );
 		EXPECT_EQ( Json::AsSVPath(nodes->as_object(), "type/ofType/name"), "HistoryResolvedNode" );
-		let resolved = Socket().QuerySync( Ƒ("__type( name: \"HistoryResolvedNode\" ){}", fieldsQL), {} );
-		let& resolvedFields = Json::AsArray( resolved.as_object(), "fields" );
+		let resolvedFields = Fields( "HistoryResolvedNode" );
 		for( sv name : {"templateNode"sv, "path"sv, "node"sv, "status"sv} )
-			EXPECT_NE( find_if(resolvedFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; }), resolvedFields.end() ) << name << ": " << serialize( resolved );
+			EXPECT_NE( FindRow(resolvedFields, "name", name), resolvedFields.end() ) << name << ": " << serialize( resolvedFields );
 		for( let& [typeName,column] : vector<std::pair<sv,sv>>{ {"histGroup", "guid"}, {"histGroupNode", "node"}, {"histTemplate", "slug"}, {"histTemplateNode", "path"} } ){
-			let table = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
-			let& tableFields = Json::AsArray( table.as_object(), "fields" );
-			EXPECT_NE( find_if(tableFields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==column; }), tableFields.end() ) << typeName << "." << column << ": " << serialize( table );
+			let tableFields = Fields( typeName );
+			EXPECT_NE( FindRow(tableFields, "name", column), tableFields.end() ) << typeName << "." << column << ": " << serialize( tableFields );
 		}
 	}
 
 	TEST_F( QLTests, serverConnectionIntrospection ){
-		constexpr sv fieldsQL{ "{ fields{ name type{ name kind ofType{ name kind } } } }" };
 		for( sv typeName : {"ServerConnection"sv, "serverConnections"sv} ){ //both spellings are declared in config/introspection/serverConnection.jsonnet.
-			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
-			TRACE( "__type({}): {}.", typeName, serialize(value) );
-			let& fields = Json::AsArray( value.as_object(), "fields" );
-			auto find = [&]( sv name ){ return find_if( fields, [&](let& f){ return Json::AsSV(f.as_object(), "name")==name; } ); };
-			ASSERT_NE( find("url"), fields.end() ) << serialize( value ); //extend:true keeps the DB columns.
-			auto opcSessions = find( "opcSessions" );
-			ASSERT_NE( opcSessions, fields.end() ) << serialize( value );
+			let fields = Fields( typeName );
+			ASSERT_NE( FindRow(fields, "name", "url"), fields.end() ) << serialize( fields ); //extend:true keeps the DB columns.
+			auto opcSessions = FindRow( fields, "name", "opcSessions" );
+			ASSERT_NE( opcSessions, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(opcSessions->as_object(), "type/kind"), "OBJECT" );
 			EXPECT_EQ( Json::AsSVPath(opcSessions->as_object(), "type/name"), "OpcSessions" );
-			auto opcConnections = find( "opcConnections" );
-			ASSERT_NE( opcConnections, fields.end() ) << serialize( value );
+			auto opcConnections = FindRow( fields, "name", "opcConnections" );
+			ASSERT_NE( opcConnections, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(opcConnections->as_object(), "type/name"), "OpcConnections" );
-			auto connectionStatus = find( "connectionStatus" );
-			ASSERT_NE( connectionStatus, fields.end() ) << serialize( value );
+			auto connectionStatus = FindRow( fields, "name", "connectionStatus" );
+			ASSERT_NE( connectionStatus, fields.end() ) << serialize( fields );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/kind"), "OBJECT" );
 			EXPECT_EQ( Json::AsSVPath(connectionStatus->as_object(), "type/name"), "ConnectionStatus" );
 		}
 		{ //the status type carries a name and the reason the last connect failed - the SPA's list selects only the name.
-			let value = Socket().QuerySync( Ƒ("__type( name: \"ConnectionStatus\" ){}", fieldsQL), {} );
-			let& fields = Json::AsArray( value.as_object(), "fields" );
-			ASSERT_EQ( fields.size(), 2u ) << serialize( value );
+			let fields = Fields( "ConnectionStatus" );
+			ASSERT_EQ( fields.size(), 2u ) << serialize( fields );
 			EXPECT_EQ( Json::AsSV(fields[0].as_object(), "name"), "name" );
 			EXPECT_EQ( Json::AsSVPath(fields[0].as_object(), "type/ofType/name"), "String" );
 			EXPECT_EQ( Json::AsSV(fields[1].as_object(), "name"), "error" );
 			EXPECT_EQ( Json::AsSVPath(fields[1].as_object(), "type/name"), "String" );
 		}
 		for( sv typeName : {"OpcSessions"sv, "OpcConnections"sv} ){ //config-only types - no view behind them.
-			let value = Socket().QuerySync( Ƒ("__type( name: \"{}\" ){}", typeName, fieldsQL), {} );
-			TRACE( "__type({}): {}.", typeName, serialize(value) );
-			let& fields = Json::AsArray( value.as_object(), "fields" );
-			ASSERT_EQ( fields.size(), 1u ) << serialize( value );
+			let fields = Fields( typeName );
+			ASSERT_EQ( fields.size(), 1u ) << serialize( fields );
 			let& count = fields[0].as_object();
 			EXPECT_EQ( Json::AsSV(count, "name"), "count" );
 			EXPECT_EQ( Json::AsSVPath(count, "type/kind"), "NON_NULL" );
@@ -442,8 +429,8 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( QLTests, testConnection ){
 		const string slug{ "qlTestsTestConnection" };//no such row:  the point is a connection that is not saved.
 		ASSERT_FALSE( SelectServerCnnctn({slug}) );
-		const string url{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
-		const string urn{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
+		let url = OpcUrl();
+		let urn = OpcUrn();
 		const string q{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls securityPolicyUri securityMode namespaces{ index uri } }" };
 		let value = Socket().QuerySync( string{q}, {{"opc", slug}, {"url", url}, {"certificateUri", urn}} );
 		TRACE( "testConnection: {}.", serialize(value) );
@@ -513,7 +500,7 @@ namespace Jde::Opc::Gateway::Tests{
 			"mode: securityMode( opc: $opc )"
 			"namespaces( opc: $opc ){ index uri }";//unaliased, as the ui sends it - the result is keyed by the query name.
 		const jobject vars{ {"opc", OpcServerSlug} };
-		let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>(	Socket().Query(q, vars, false) );
+		let value = Socket().QuerySync( q, vars, false );
 		TRACE( "multipleQueries: {}.", serialize(value) );
 		ASSERT_TRUE( serialize(value).size() );
 		let& namespaces = Json::AsArray( value.as_object(), "namespaces" );//keyed by the query name, the alias the others carry.
@@ -524,10 +511,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//plain Exception.  The soak's reconnect keys on the difference:  when CloseTasks stamped its transport failures as answers,
 	//every dropped socket reset the soak's failure count and it never reconnected (subscription-disconnect #1).
 	TEST_F( QLTests, errorsTypedByOrigin ){
-		optional<ssl::context> ctx;
-		auto session = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( session->RunSession("localhost", GatewayPort()) );
-		BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( session->Connect(AppClient()->SessionId()) );
+		auto session = GatewayClientSocket::Open( "localhost", GatewayPort(), AppClient()->SessionId() );
 		let q = "__type( opc: $opc, ns:2, i:6244 ){ enumValues{ id name } }";//answered with an error - enumTypes' no-such-connection case.
 		const jobject vars{ {"opc", "no-such-connection"} };
 		try{

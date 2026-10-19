@@ -1,28 +1,19 @@
 #include "utils/GatewayClientSocket.h"
 #include "utils/helpers.h"
-#include "../../OpcServer/src/globals.h"
-#include "../../OpcServer/src/UAServer.h"
+#include "utils/Pumps.h"
 
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
 	struct WriteTests : ::testing::Test{
-		Ω SetUpTestSuite()->void{
-			if( !SelectServerCnnctn( OpcServerSlug ) )
-				CreateServerCnnctn();
-		};
+		Ω SetUpTestSuite()->void{ GetConnection( OpcServerSlug ); }
 	protected:
 		α SetUp()->void override{
 			let server = Server::FindUAServer();
 			if( !server )
 				GTEST_SKIP() << "Needs the embedded OpcServer.";
 			_ua = server->Ptr();
-			_node = Rpm1( _ua );
-		}
-		Ω Rpm1( UA_Server* ua )ε->NodeId{//HistGroupTests groups it; no other test writes it.
-			size_t ns{};
-			UAε( UA_Server_getNamespaceByName(ua, UA_STRING((char*)"urn:jde:pumps"), &ns) );
-			return NodeId{ (NsIndex)ns, (UA_UInt32)6012 };
+			_node = NodeId{ PumpsNs(), Rpm1 };//HistGroupTests groups it; no other test writes it.
 		}
 		Ω Hold( UA_Server* ua, const NodeId& node, UA_Int32 held )ε->void{
 			UA_Variant v; UA_Variant_setScalar( &v, &held, &UA_TYPES[UA_TYPES_INT32] );
@@ -31,7 +22,7 @@ namespace Jde::Opc::Gateway::Tests{
 		//updateVariable's answer:  the value it reads back.
 		Ω Update( const NodeId& node, jvalue value )ε->jvalue{
 			const jobject vars{ {"opc", OpcServerSlug}, {"id", node.ToJson()}, {"value", move(value)} };
-			let written = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("updateVariable( opc: $opc, id: $id, value: $value ){ value }", vars, true) );
+			let written = Socket().QuerySync( "updateVariable( opc: $opc, id: $id, value: $value ){ value }", vars );
 			return written.as_object().at( "value" );
 		}
 		UA_Server* _ua{};

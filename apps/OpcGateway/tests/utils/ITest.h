@@ -1,6 +1,5 @@
 #pragma once
 
-namespace Jde::Web{ struct Jwt; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 namespace Tests{
@@ -8,7 +7,7 @@ namespace Tests{
 	protected:
 		Ω SetUpTestSuite()ε->void;
 		Ω TearDownTestSuite()ι->void;
-		static optional<Web::Jwt> _jwt;
+		Ω Reconnect()ε->void;//a new suite client, as SetUpTestSuite connects it, for a test that removed or lost the one the suite shares.
 		static sp<UAClient> _client;
 	};
 }}

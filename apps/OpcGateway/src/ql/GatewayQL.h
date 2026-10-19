@@ -11,6 +11,10 @@ namespace Jde::Opc::Gateway{
 	α SetQL( sp<QL::LocalQL> ql )ι->void;
 	α Schemas()ι->const vector<sp<DB::AppSchema>>&;
 	α AddStatusCounts( jobject& status )ι->void;//the gateway's `clients`/`monitoredItems`/`pendingItems` on a status document - GatewayQL's and HubQL's StatusQuery.
+	//The gateway's custom arms, which GatewayQL and a host's QL (HubQL) both run after their own.  A mutation asks the QL's own
+	//LogSettingsMutation first:  it gates on that QL's log schema.
+	α CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>;//opcSessions, search, the history groups, anything keyed by `opc`.
+	α CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>;//the history groups and their edits, testConnection, updateVariable, the server's history edits.
 
 	struct GatewayQL final: App::AppQL{
 		GatewayQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer )ι;

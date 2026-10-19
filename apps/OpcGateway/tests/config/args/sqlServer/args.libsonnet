@@ -3,10 +3,6 @@ common + {
 	local args = self,
 	instanceName: "debug-windows",
 	sqlType: "sqlServer",
-	opc:{
-		urn: "urn:open62541.server.application",
-		url: "opc.tcp://127.0.0.1:4940"
-	},
 	dbServers: {
 		localhost:{
 			driver: args.repoBuildDir+"/bin/Jde.DB.Odbc.dll",

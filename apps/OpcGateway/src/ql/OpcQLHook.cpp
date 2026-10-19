@@ -13,8 +13,7 @@ namespace Jde::Opc::Gateway{
 	struct HookAwait final: TAwaitEx<jvalue,ServerCnnctnAwait::Task>{
 		HookAwait( const QL::MutationQL& m, UserPK executer, Operation op, SL sl )ι: TAwaitEx{sl}, _mutation{m}, _executer{executer}, _op{op}{}
 	private:
-		α Execute()ι->ServerCnnctnAwait::Task override;
-		α Fix( DB::Key id )ι->TAwait<Access::ProviderPK>::Task;
+		α Execute()ι->ServerCnnctnAwait::Task override;//its own type is the select's;  the provider row goes through Any().
 		const QL::MutationQL& _mutation;
 		UserPK _executer;
 		Operation _op;
@@ -38,16 +37,8 @@ namespace Jde::Opc::Gateway{
 					co_return;
 				}
 			}
-			Fix( move(id) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α HookAwait::Fix( DB::Key id )ι->ProviderMAwait::Task{
-		try{
-			let insert = _op==(Operation::Insert | Operation::Before) || _op==(Operation::Purge | Operation::Failure);
-			co_await ProviderMAwait( move(id), insert );
+			ProviderMAwait provider{ move(id), _op==(Operation::Insert | Operation::Before) || _op==(Operation::Purge | Operation::Failure) };
+			co_await Any( provider );
 			ResumeScaler( {{"rowCount", 1}} );
 		}
 		catch( runtime_error& e ){

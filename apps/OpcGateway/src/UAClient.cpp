@@ -25,6 +25,27 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	absl::Mutex _clientsMutex;
 	flat_map<ServerCnnctnNK,flat_map<Credential,sp<UAClient>>> _clients ABSL_GUARDED_BY(_clientsMutex);
+	//Walks the registered clients under _clientsMutex until `f` answers false.  What the walk finds is the caller's to work on
+	//once it returns, outside the lock.
+	Ω walkClients( auto f )ι->void{
+		rl _{ _clientsMutex };
+		for( let& [_, creds] : _clients ){
+			for( let& [__, client] : creds ){
+				if( !f(client) )
+					return;
+			}
+		}
+	}
+	Ω registered( auto keep )ι->vector<sp<UAClient>>{
+		vector<sp<UAClient>> y;
+		walkClients( [&]( const sp<UAClient>& client ){
+			if( keep(*client) )
+				y.push_back( client );
+			return true;
+		} );
+		return y;
+	}
+	Ω all( const UAClient& )ι->bool{ return true; }
 	//Why the last connect attempt on a slug failed.  Keyed by slug, not by credential: the connection list is per slug and a
 	//failure that is credential-specific still leaves the slug unusable for that caller.  Its own mutex - the status query reads it
 	//without touching _clients, and StateCallback writes it while unlocked.
@@ -169,15 +190,7 @@ namespace Jde::Opc::Gateway{
 			ConnectionLost( sp<UAClient>{client} );
 	}
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
-		vector<sp<UAClient>> y;
-		rl _{ _clientsMutex };
-		for( let& [_, creds] : _clients ){
-			for( let& [__, client] : creds ){
-				if( client->Connected )
-					y.push_back( client );
-			}
-		}
-		return y;
+		return registered( []( const UAClient& client )->bool{ return client.Connected; } );
 	}
 	//A client copies its row once, at construction, and ConnectAwait hands back the registered client - so an edit reached no live
 	//client, and one holding a subscription never idles out:  a Certificate URI pasted in for Sign & Encrypt left the traffic on
@@ -187,16 +200,7 @@ namespace Jde::Opc::Gateway{
 	//keeps it from parking;  the server drops the session's items with the session.  Matched by the row's id when that is the
 	//key (a purge has no row left to read the slug from), else by slug.  Off the strand is fine:  both paths lock what they touch.
 	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
-		vector<sp<UAClient>> clients;
-		{
-			rl _{ _clientsMutex };
-			for( let& [slug, creds] : _clients ){
-				for( let& [_, client] : creds ){
-					if( connection.IsPK() ? client->_opcServer.Id==connection.PK() : slug==connection.NK() )
-						clients.push_back( client );
-				}
-			}
-		}
+		auto clients = registered( [&]( const UAClient& client ){ return connection.IsPK() ? client._opcServer.Id==connection.PK() : client.Slug()==connection.NK(); } );
 		for( auto& client : clients ){
 			INFO( "[{}]Connection '{}' was {} - {}.", hex(client->Handle()), client->Slug(), removed ? "removed" : "edited", removed ? "closing its client" : "reconnecting on its new settings" );
 			if( removed )
@@ -214,13 +218,7 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 	α UAClient::StatusCounts()ι->tuple<uint,uint,uint>{
-		vector<sp<UAClient>> clients;
-		{
-			rl _{ _clientsMutex };
-			for( let& [slug, creds] : _clients )
-				for( let& [cred, client] : creds )
-					clients.push_back( client );
-		}
+		let clients = registered( all );
 		uint monitored{};//count outside the lock - MonitoredNodes() lazily constructs and Count() takes the nodes mutex.
 		for( let& client : clients )
 			monitored += client->MonitoredNodes().Count();
@@ -284,13 +282,7 @@ namespace Jde::Opc::Gateway{
 		_testConnects.visit_all( [&tests](let& client){ tests.push_back(client); } );
 		for( let& client : tests )
 			client->PostUA( [p=client.get()]{ p->ExpireTest(UA_STATUSCODE_BADSHUTDOWN); } );
-		vector<sp<UAClient>> clients;
-		{
-			rl _1{ _clientsMutex };
-			for( auto&& [_,creds] : _clients )
-				for( auto&& [_,client] : creds )
-					clients.push_back( client );
-		}
+		auto clients = registered( all );
 		//Must not hold _clientsMutex across co_await: the awaitable resumes on another pool thread (UB to unlock a shared_mutex off-thread) and the resume path (RemoveClient, StateCallback insertion) needs the unique lock.
 		for( auto& client : clients ){
 			if( client->_monitoredNodes )
@@ -1417,15 +1409,7 @@ namespace Jde::Opc::Gateway{
 
 	α UAClient::Unsubscribe( const sp<IDataChange>& dataChange )ι->void{
 		PurgePending( dataChange );//a session that closed while its server was down must not be revived by the reconnect.
-		vector<sp<UAClient>> clients;
-		{
-			rl _{ _clientsMutex };
-			for( let& [_, credClients] : _clients ){
-				for( let& [_, client] : credClients )
-					clients.push_back( client );
-			}
-		}
-		for( let& client : clients ){//outside the lock, as StatusCounts does:  Unsubscribe takes the nodes mutex.
+		for( let& client : registered(all) ){//outside the lock, as StatusCounts does:  Unsubscribe takes the nodes mutex.
 			if( auto p = client->TryMonitoredNodes(); p )//a client that never subscribed has nothing to drop - no reason to build it one here.
 				p->Unsubscribe( dataChange );
 		}
@@ -1458,16 +1442,15 @@ namespace Jde::Opc::Gateway{
 	α UAClient::TryFind( UA_Client* ua, SL srce )ι->sp<UAClient>{
 		if( Process::ShuttingDown() ){
 			LOGSL( ELogLevel::Warning, srce, _tags, "Application is shutting down." );
-		}else{
-			rl _{ _clientsMutex };
-			for( auto&& [_, credClients] : _clients ){
-				for( auto&& [_, client] : credClients ){
-					if( client->_ptr == ua )
-						return client;
-				}
-			}
+			return {};
 		}
-		return {};
+		sp<UAClient> y;
+		walkClients( [&]( const sp<UAClient>& client ){
+			if( client->_ptr==ua )
+				y = client;
+			return !y;
+		} );
+		return y;
 	}
 
 	α UAClient::Find( str opcNK, const Gateway::Credential& cred )ι->sp<UAClient>{

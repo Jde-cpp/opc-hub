@@ -1,43 +1,24 @@
-#include <jde/web/Jwt.h>
 #include <absl/cleanup/cleanup.h>
-#include <jde/web/client/socket/ClientSocketAwait.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/UAClient.h"
 #include "../src/ql/GatewayQL.h"
 #include "../src/ql/NodeQLAwait.h"
 #include "../src/async/UAStrandAwait.h"
 #include "utils/helpers.h"
+#include "utils/ITest.h"
 #include "../src/types/UAClientException.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
-	struct BrowseTests : ::testing::Test{
+	struct BrowseTests : ITest{
 	protected:
-		Ω SetUpTestSuite()ε->void{
-			try{
-				_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-				auto sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
-				TRACE( "UserPK: {}, SessionId: {}", hex(_jwt->UserPK.Value), hex(sessionId) );
-				auto con = GetConnection( OpcServerSlug );
-				Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
-				_client = BlockAwait<TAwait<sp<UAClient>>,sp<UAClient>>( ConnectAwait{move(con.Slug), cred} );
-				AddSession( sessionId, OpcServerSlug, move(cred) );
-			}
-			catch( runtime_error& e ){
-				INFOT( ELogTags::Test, "Failed to connect to gateway: {}", e.what() );
-				THROW( "Failed to connect to gateway: {}", e.what() );
-			}
-		};
-		Ω TearDownTestSuite()ι->void{
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
+		//`query` through NodeQLAwait on the suite's client, as the node page asks it.
+		Ω NodeQL( string query, jobject vars )ε->jvalue{
+			auto ql = QL::Parse( move(query), move(vars), Schemas(), true );
+			return BlockAwait<NodeQLAwait,jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
 		}
-		static optional<Web::Jwt> _jwt;
-		static sp<UAClient> _client;
 	};
-	optional<Web::Jwt> BrowseTests::_jwt;
-	sp<UAClient> BrowseTests::_client;
 
 	//install-issues #24: a signed-out page is an anonymous web session - a real session id, no user, no stored credential - which
 	//resolves to an anonymous credential.  Anonymous access is allowed while gateway/serverConnections is unenforced (the default),
@@ -66,13 +47,12 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( BrowseTests, EnforcedConnectionResourceRefusesAnUngrantedSession ){
 		//`deleted` is the enforcement switch, so restore = enforce - the Resources page's toggle by another name.  The schemaName
 		//is named as well as the slug:  one slug can belong to more than one schema, and only the gateway's is this test's.
-		let enforce = []( bool on ){ AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"serverConnections\", criteria:null )", on ? "restore" : "delete"), {} ); };
-		enforce( true );
-		absl::Cleanup _ = [enforce]{ try{ enforce(false); }catch( const std::exception& ){} };
+		EnforceResource( "gateway", "serverConnections", true );
+		absl::Cleanup _ = []{ try{ EnforceResource("gateway", "serverConnections", false); }catch( const std::exception& ){} };
 
 		constexpr Jde::UserPK ungranted{ (Jde::UserPK::Type)0x39'0000 };//no acl, no role, no group names it
 		let sessionId = Web::Server::Sessions::Add( ungranted, "localhost", false )->SessionId;
-		Credential cred{ _jwt->Payload() }; cred.SetUserPK( ungranted );
+		auto cred = SessionCredential( ungranted );
 		ASSERT_NE( cred.Type(), ETokenType::Anonymous ) << "the probe must be authenticated or it tests the wrong branch";
 		AddSession( sessionId, OpcServerSlug, move(cred) );
 		try{
@@ -104,8 +84,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//back as the number the SPA's ENodeClass compares.
 	TEST_F( BrowseTests, APathQueryAnswersTheNodesClass ){
 		auto run = [&]( string query, jobject vars ){
-			auto ql = QL::Parse( move(query), move(vars), Schemas(), true );
-			let value = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+			let value = NodeQL( move(query), move(vars) );
 			TRACE( "{}", serialize(value) );
 			return value.as_object();
 		};
@@ -113,16 +92,12 @@ namespace Jde::Opc::Gateway::Tests{
 			return Json::FindNumber<uint>( run("node( opc: $opc, path:$path ){ id name nodeClass parents{id name path} }", {{"opc", OpcServerSlug}, {"path", path}}), "nodeClass" );
 		};
 		EXPECT_EQ( nodeClass("4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"), UA_NODECLASS_OBJECT );
-		const NodeId variable{ 4, 6017 };//the Variable SubscribeTests monitors - its page path, as the node-scoped resources' links find it
-		let path = string{ Json::AsSV(run("node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", variable.ToJson()}}), "path") };
+		let path = string{ Json::AsSV(run("node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", Intensity.ToJson()}}), "path") };//the Variable SubscribeTests monitors - its page path, as the node-scoped resources' links find it
 		EXPECT_EQ( nodeClass(path), UA_NODECLASS_VARIABLE ) << path;
 	}
 
 	TEST_F( BrowseTests, NodeId ){
-		auto query = "node( opc: $opc, path:$path ){ id name parents{id name path} }";
-		jobject variables{ {"opc", OpcServerSlug}, {"path", "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"} };
-		auto ql = QL::Parse( move(query), move(variables), Schemas(), true );
-		auto value = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+		let value = NodeQL( "node( opc: $opc, path:$path ){ id name parents{id name path} }", {{"opc", OpcServerSlug}, {"path", "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1"}} );
 		TRACE( "value: {}", serialize(value) );
 		auto result = ExNodeId{ value };
 		ASSERT_TRUE( *result.Numeric()>0 );
@@ -135,21 +110,17 @@ namespace Jde::Opc::Gateway::Tests{
 	//resource ("ns=4;i=…") with.  The Objects folder itself has an empty path; a node outside its tree (a type) has none.
 	TEST_F( BrowseTests, PathFromId ){
 		constexpr sv path{ "4~Examples/4~Stacklights/4~ExampleStacklight/4~Lamp1" };
-		auto byPath = QL::Parse( "node( opc: $opc, path:$path ){ id parents{ id } }", jobject{{"opc", OpcServerSlug}, {"path", path}}, Schemas(), true );//parents{}: the lamp hangs off a HasComponent, which the plain translate (Organizes only) cannot follow - the parents walk can, as NodeId above relies on.
-		let lamp = ExNodeId{ BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(byPath.Queries().front()), _client} ) };
-		auto byId = QL::Parse( "node( opc: $opc, id:$id ){ id name path }", jobject{{"opc", OpcServerSlug}, {"id", NodeId{lamp.nodeId}.ToJson()}}, Schemas(), true );
-		let value = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(byId.Queries().front()), _client} );
+		let lamp = ExNodeId{ NodeQL("node( opc: $opc, path:$path ){ id parents{ id } }", {{"opc", OpcServerSlug}, {"path", path}}) };//parents{}: the lamp hangs off a HasComponent, which the plain translate (Organizes only) cannot follow - the parents walk can, as NodeId above relies on.
+		let value = NodeQL( "node( opc: $opc, id:$id ){ id name path }", {{"opc", OpcServerSlug}, {"id", NodeId{lamp.nodeId}.ToJson()}} );
 		TRACE( "value: {}", serialize(value) );
 		EXPECT_EQ( Json::AsSV(value.as_object(), "path"), path );
 		EXPECT_EQ( Json::AsSV(value.as_object(), "name"), "Lamp1" ) << "the read still answers alongside";
 		EXPECT_TRUE( ExNodeId{value}.Numeric().has_value() );
 
-		auto objects = QL::Parse( "node( opc: $opc, id:$id ){ path }", jobject{{"opc", OpcServerSlug}, {"id", NodeId::ObjectsFolder().ToJson()}}, Schemas(), true );
-		let objectsValue = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(objects.Queries().front()), _client} );//locals:  the template comma is one argument too many for the gtest macros
+		let objectsValue = NodeQL( "node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", NodeId::ObjectsFolder().ToJson()}} );
 		EXPECT_EQ( Json::AsSV(objectsValue.as_object(), "path"), "" );
 
-		auto type = QL::Parse( "node( opc: $opc, id:$id ){ path }", jobject{{"opc", OpcServerSlug}, {"id", NodeId{0, UA_NS0ID_BASEOBJECTTYPE}.ToJson()}}, Schemas(), true );
-		let typeValue = BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(type.Queries().front()), _client} );
+		let typeValue = NodeQL( "node( opc: $opc, id:$id ){ path }", {{"opc", OpcServerSlug}, {"id", NodeId{0, UA_NS0ID_BASEOBJECTTYPE}.ToJson()}} );
 		EXPECT_TRUE( typeValue.as_object().at("path").is_null() ) << "the Types tree has no page";
 	}
 
@@ -185,9 +156,8 @@ namespace Jde::Opc::Gateway::Tests{
 	//server's BadNothingToDo.
 	TEST_F( BrowseTests, EmptyPath ){
 		for( let& [query, path] : vector<tuple<string,string>>{ {"node( opc: $opc, path:$path ){ id parents{ path } }", "/"}, {"node( opc: $opc, path:$path ){ id parents{ path } }", ""}, {"node( opc: $opc, path:$path ){ id }", "/"} } ){
-			auto ql = QL::Parse( string{query}, jobject{{"opc", OpcServerSlug}, {"path", path}}, Schemas(), true );
 			try{
-				BlockAwait<NodeQLAwait, jvalue>( NodeQLAwait{move(ql.Queries().front()), _client} );
+				NodeQL( query, {{"opc", OpcServerSlug}, {"path", path}} );
 				ADD_FAILURE() << query << " '" << path << "' answered";
 			}
 			catch( const Exception& e ){
@@ -257,8 +227,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//replacement B that had reconnected under the same key, leaving B connected but unreachable through Find, holding its
 	//monitored items, NodeIndex and EnumTypeCache (review3 #12).
 	TEST( RemoveClientTests, StaleRemoveKeepsTheReplacement ){
-		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-		Credential cred{ jwt.Payload() }; cred.SetUserPK( jwt.UserPK );//the only credential this server accepts - anonymous is BadIdentityTokenRejected.
+		let cred = SessionCredential( Jwt().UserPK );//the only credential this server accepts - anonymous is BadIdentityTokenRejected.
 		auto a = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, cred} );
 		ASSERT_TRUE( a );
 		ASSERT_TRUE( UAClient::RemoveClient(sp<UAClient>{a}) );

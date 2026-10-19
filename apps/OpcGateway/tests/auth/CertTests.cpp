@@ -161,34 +161,11 @@ namespace Jde::Opc::Gateway::Tests{
 	class TrustReloadTests : public Auth{
 	protected:
 		TrustReloadTests()ι:Auth{ETokenType::IssuedToken}{}
-		Ω SetUpTestSuite()ε->void{ _jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() ); }
-		α TearDown()ι->void override{
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
-		}
-		α Connect( atomic_flag& flag )ι->ConnectAwait::Task;
-		static optional<Web::Jwt> _jwt;
-		up<Exception> _exception;
-		sp<UAClient> _client;
+		α Connect()ι->void{ Attempt( Connection->Slug, SessionCredential() ); }//same credential as TokenTests.Authenticate.
 	};
-	optional<Web::Jwt> TrustReloadTests::_jwt;
-
-	α TrustReloadTests::Connect( atomic_flag& flag )ι->ConnectAwait::Task{
-		try{
-			_exception = nullptr;
-			_client = co_await UAClient::GetClient( Connection->Slug, Credential{_jwt->Payload()} );//same credential as TokenTests.Authenticate.
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		flag.test_and_set();
-		flag.notify_all();
-	}
 
 	TEST_F( TrustReloadTests, ServerReloadsReissuedCert ){
-		atomic_flag first;
-		Connect( first );
-		first.wait( false );
+		Connect();
 		ASSERT_FALSE( _exception ) << _exception->what();//startup snapshot trusts the pre-created cert (tests/main.cpp).
 		ASSERT_TRUE( _client );
 		UAClient::RemoveClient( move(_client) );//the next connect builds a fresh UAClient => full OPN handshake.
@@ -199,9 +176,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_FALSE( Connection->CertificateUri.empty() );//a secured connection:  the issued certificate goes on the channel.
 		Crypto::IssueCertificate( UAClient::CryptoSettings(Connection->Slug) );
 
-		atomic_flag second;
-		Connect( second );//no server restart - the verify shim must rescan trustedCertDirs and trust the new file.
-		second.wait( false );
+		Connect();//no server restart - the verify shim must rescan trustedCertDirs and trust the new file.
 		EXPECT_FALSE( _exception ) << _exception->what();
 		EXPECT_TRUE( _client );
 	}
@@ -209,42 +184,18 @@ namespace Jde::Opc::Gateway::Tests{
 	class CertTests : public Auth{
 	protected:
 		CertTests()ι:Auth{ETokenType::Certificate}{}
-		α TearDown()ι->void override{
-			if( _client ){
-				UAClient::RemoveClient( move(_client) );
-				_client = nullptr;
-			}
-		}
-		α Connect( atomic_flag& flag, char id )ι->ConnectAwait::Task;
-		optional<Credential> _cred;
-		up<Exception> _exception;
-		sp<UAClient> _client;
+		α Connect( atomic_flag& done )ι->void{ Tests::Connect( Connection->Slug, Credential{Crypto::PublicKey{}}, &_client, &_exception, &done ); }//detached:  the test runs several at once.
 	};
-
-	α CertTests::Connect( atomic_flag& flag, char id )ι->ConnectAwait::Task{
-		try{
-			TRACE( "Call {}", id );
-			_client = co_await UAClient::GetClient( Connection->Slug, Credential{Crypto::PublicKey{}} );
-			ASSERT( _client );
-			TRACE( "{} returned", id );
-		}
-		catch( Exception& e ){
-			TRACE( "{} failed", id );
-			_exception = e.Move();
-		}
-		flag.test_and_set();
-		flag.notify_all();
-	}
 
 	TEST_F( CertTests, Authenticate ){
 		string opcId{ Connection->Slug };
 		atomic_flag a,b,c,d;
-		Connect( a, 'a' );//test Connection.
-		Connect( b, 'b' );//test waiting for a.
+		Connect( a );//test Connection.
+		Connect( b );//test waiting for a.
 		a.wait( false );
 		b.wait( false );
-		Connect( c, 'c' );//test already have connection.
-		Connect( d, 'd' );
+		Connect( c );//test already have connection.
+		Connect( d );
 		c.wait( false );
 		d.wait( false );
 		EXPECT_FALSE( _exception );
@@ -275,9 +226,7 @@ namespace Jde::Opc::Gateway::Tests{
 		} restore{ ssl, ssl };
 		ssl = move( bad );
 
-		atomic_flag flag;
-		Connect( flag, 'a' );
-		flag.wait( false );
+		Attempt( Connection->Slug, Credential{Crypto::PublicKey{}} );
 
 		EXPECT_TRUE( _exception );
 		EXPECT_TRUE( _exception && string{_exception->what()}.contains("BadSecurityChecksFailed") );

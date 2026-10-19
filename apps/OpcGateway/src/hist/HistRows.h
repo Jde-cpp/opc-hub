@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/Key.h>
@@ -119,5 +120,35 @@ namespace Jde::Opc::Gateway{
 	//Template members by row, as a group node's TemplateNode names them, and the one a group node was resolved from:  null for a
 	//node added by hand, or one whose member isn't among them.
 	α HistTemplateNodesById( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>;
+	//A template's members, or one member, by id - empty without a select when the filter names neither:  a group with no
+	//template, a node no member made.  Not SelectHistTemplateNodes' "all".
+	struct HistTemplateMembersAwait final : AnyAwait<flat_map<HistTemplateNodePK,HistTemplateNodeRow>>{
+		HistTemplateMembersAwait( HistTemplateNodeFilter filter, SRCE )ι:AnyAwait{ sl }, _filter{ move(filter) }{}
+		α await_ready()ι->bool override;
+	protected:
+		α Suspend()ι->void override{ Select(); }
+	private:
+		α Select()ι->VoidTask;
+		HistTemplateNodeFilter _filter;
+	};
+	Ξ SelectHistTemplateMembers( HistTemplateNodeFilter filter, SRCE )ι->HistTemplateMembersAwait{ return HistTemplateMembersAwait{ move(filter), sl }; }
+	//The row of the unique (connection, node) index behind a hist_group_nodes create's 409, as `group` sees it.  None for a
+	//refusal no row explains - a foreign key, another constraint.  Else another group's, this group's `member` itself (a
+	//concurrent create made it), or this group's as another member or an ad hoc node.
+	struct NodeHolder final{
+		enum class EKind : uint8{ None, OtherGroup, SameMember, ThisGroup };
+		EKind Kind{};
+		optional<HistGroupNodeRow> Row;//all but None.
+	};
+	struct NodeHolderAwait final : AnyAwait<NodeHolder>{
+		NodeHolderAwait( const HistGroupRow& group, string text, optional<HistTemplateNodePK> member, SRCE )ι:
+			AnyAwait{ sl }, _group{ group.Id }, _connection{ group.Connection }, _text{ move(text) }, _member{ member }{}
+	protected:
+		α Suspend()ι->void override{ Select(); }
+	private:
+		α Select()ι->VoidTask;
+		HistGroupPK _group; ServerCnnctnPK _connection; string _text; optional<HistTemplateNodePK> _member;
+	};
+	Ξ SelectNodeHolder( const HistGroupRow& group, string text, optional<HistTemplateNodePK> member={}, SRCE )ι->NodeHolderAwait{ return NodeHolderAwait{ group, move(text), member, sl }; }
 	α FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*;
 }

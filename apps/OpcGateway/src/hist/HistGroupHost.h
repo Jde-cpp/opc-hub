@@ -120,6 +120,8 @@ namespace Jde::Opc::Gateway{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Reset()ι->void;//every member unsubscribed and its index forgotten, for a pass to resolve again.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Watch()ι->void;//arms the watch, every RetryInterval until Close.
 		α Check()ι->void;//the watch's:  members whose items are gone without a word, those lost past AbandonAfter, and Redescribe.
+		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>;//by the server's index:  a null node for one not (or no longer) in the group.
+		α Client()Ι->sp<UAClient>;//the collector's client, if it has one.
 
 		const HistGroupPK _id;
 		const string _guid;

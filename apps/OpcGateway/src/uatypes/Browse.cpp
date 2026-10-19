@@ -29,10 +29,10 @@ namespace Jde::Opc::Gateway{
 	{}
 
 	UABrowsePath::UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι:
-		UA_BrowsePath{
+		Owned{ UA_BrowsePath{
 			{},
 			{ segments.size(), (UA_RelativePathElement*)UA_Array_new(segments.size(), &UA_TYPES[UA_TYPES_RELATIVEPATHELEMENT]) }
-		}{
+		} }{
 		UA_NodeId_copy( &start, &startingNode );//deep copy - clear() owns it.
 		for( size_t i=0; i<segments.size(); ++i ){
 			auto elem = &relativePath.elements[i];
@@ -47,16 +47,10 @@ namespace Browse{
 	Ω onResponse( UA_Client* /*ua*/, void* userdata, RequestId /*requestId*/, UA_BrowseResponse* response )ι->void;
 	α FoldersAwait::Suspend()ι->void{
 		ASSERT( Promise() );
-		_client->PostUA( [this]{//UA submission must run on the client's strand.
-			try{
-				DBGT( BrowseTag, "[{}]SendBrowseRequest", hex(_client->Handle()) );
-				UACε( UA_Client_sendAsyncBrowseRequest(_client->UAPointer(), &_request, onResponse, this, &_requestId) );
-				TRACET( BrowseTag, "[{}.{}]SendBrowseRequest", hex(_client->Handle()), hex(_requestId) );
-				_client->Process( _requestId, "BrowseRequest" );
-			}
-			catch( UAException& e ){
-				ResumeExp( move(e) );
-			}
+		Submit( "BrowseRequest", [this]{
+			let sc = UA_Client_sendAsyncBrowseRequest( _client->UAPointer(), &_request, onResponse, this, &_requestId );
+			DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest", hex(_client->Handle()), hex(_requestId), hex(sc) );
+			return sc;
 		});
 	}
 	Ω onResponse( UA_Client* /*ua*/, void* userdata, RequestId /*requestId*/, UA_BrowseResponse* response )ι->void {
@@ -65,7 +59,7 @@ namespace Browse{
 	}
 	α FoldersAwait::OnComplete( UA_BrowseResponse* response )ι->void{
 		ASSERT( Promise() );
-		_client->ClearRequest( _requestId );
+		ClearRequest();
 		let sc = response->responseHeader.serviceResult;
 		DBGT( BrowseTag, "[{}.{}]({})SendBrowseRequest::Complete", hex(_client->Handle()), hex(_requestId), hex(sc) );
 		if( !UA_StatusCode_isBad(sc) ){//a Good_*/Uncertain_* informational code still carries the results.
@@ -89,12 +83,12 @@ namespace Browse{
 	};
 
 	Request::Request( NodeId&& id, UA_BrowseResultMask mask )ι:
-		UA_BrowseRequest{ .requestedMaxReferencesPerNode=0, .nodesToBrowseSize=1, .nodesToBrowse=UA_BrowseDescription_new() }{
+		Owned{ UA_BrowseRequest{ .requestedMaxReferencesPerNode=0, .nodesToBrowseSize=1, .nodesToBrowse=UA_BrowseDescription_new() } }{
 		nodesToBrowse[0].nodeId = id.Move(); //not move(id): that slices, and ~NodeId then frees the id the in-flight request points at.
 	 	nodesToBrowse[0].resultMask = mask;
 	}
 	Request::Request( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι:
-		UA_BrowseRequest{ .requestedMaxReferencesPerNode=0, .nodesToBrowseSize=ids.size(), .nodesToBrowse=(UA_BrowseDescription*)UA_Array_new(ids.size(), &UA_TYPES[UA_TYPES_BROWSEDESCRIPTION]) }{
+		Owned{ UA_BrowseRequest{ .requestedMaxReferencesPerNode=0, .nodesToBrowseSize=ids.size(), .nodesToBrowse=(UA_BrowseDescription*)UA_Array_new(ids.size(), &UA_TYPES[UA_TYPES_BROWSEDESCRIPTION]) } }{
 		for( uint i=0; i<ids.size(); ++i ){
 			nodesToBrowse[i].nodeId = ids[i].Move();//Move(), as above:  a slice would leave ~NodeId freeing the id the in-flight request points at.
 			nodesToBrowse[i].resultMask = mask;
@@ -145,22 +139,6 @@ namespace Browse{
 		d.includeSubtypes = false;
 		d.nodeClassMask = UA_NODECLASS_VARIABLE;
 		return y;
-	}
-
-	//A steal, like WriteResponse/ReadResponse.  This was a UA_BrowseResponse_copy followed by the _init:
-	//x's arrays deep-copied into *this, then x zeroed without a clear - so the originals, the buffers open62541 decoded
-	//off the wire, leaked.  IExpectedPromise::SetValue assigns into a variant that still holds the previous co_await's
-	//(moved-from) Response, so every browse after the first in one coroutine - NodeIndex::Crawl's second BFS level on -
-	//came through here.
-	α Response::operator=( Response&& x )ι->Response&{
-		if( this!=&x ){
-			UA_BrowseResponse_clear( this );
-			*(UA_BrowseResponse*)this = x;
-			Attribs = x.Attribs;
-			UA_BrowseResponse_init( &x );
-			x.Attribs = UA_BROWSERESULTMASK_NONE;
-		}
-		return *this;
 	}
 
 	α Response::VisitWhile( uint resultsIndex, function<bool(const UA_ReferenceDescription& ref)> f )Ι->bool{

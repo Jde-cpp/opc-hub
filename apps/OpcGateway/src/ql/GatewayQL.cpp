@@ -22,25 +22,30 @@ namespace Jde::Opc{
 		status["monitoredItems"] = monitoredItems;
 		status["pendingItems"] = pendingItems;//subscriptions a lost connection parked for its reconnect - monitoredItems counts only what is on a client.
 	}
+	α Gateway::CustomQuery( QL::TableQL& q, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
+		return GatewayQLAwait::Test( q, move(creds), sl );
+	}
+	α Gateway::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
+		if( auto await = HistGroupMAwait::Test(m, creds, sl); await )//the historian's group tables and resolveHistory.
+			return await;
+		if( auto await = HistGroupEditQLAwait::Test(m, creds, sl); await )//a group's history edits.
+			return await;
+		if( auto await = TestConnectionQLAwait::Test(m, creds, sl); await )
+			return await;
+		return GatewayQLMAwait::Test( m, move(creds), sl );
+	}
 }
 namespace Jde::Opc::Gateway{
 	GatewayQL::GatewayQL( sp<DB::AppSchema>&& schema, sp<Access::Authorize> authorizer )ι:
 		App::AppQL{ {move(schema)}, authorizer, {} }//no `logs` resource:  the hub mounts this schema too, and its log is `app/logs`.
 	{}
 	α GatewayQL::CustomQuery( QL::TableQL& q, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>>{
-		up<TAwait<jvalue>> await = GatewayQLAwait::Test( q, executer, sl );
-		return await;
+		return Gateway::CustomQuery( q, move(executer), sl );
 	}
 	α GatewayQL::CustomMutation( QL::MutationQL& m, QL::Creds executer, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = LogSettingsMutation(m, executer, AppClient(), sl); await )
 			return await;
-		if( auto await = HistGroupMAwait::Test(m, executer, sl); await )
-			return await;
-		if( auto await = HistGroupEditQLAwait::Test(m, executer, sl); await )
-			return await;
-		if( auto await = TestConnectionQLAwait::Test(m, executer, sl); await )
-			return await;
-		return GatewayQLMAwait::Test( m, executer, sl );
+		return Gateway::CustomMutation( m, move(executer), sl );
 	}
 	α GatewayQL::StatusQuery( QL::TableQL&& ql, QL::Creds executer, SL sl )ε->jobject{
 		auto y = App::AppQL::StatusQuery( move(ql), executer, sl ); //the base gates it.

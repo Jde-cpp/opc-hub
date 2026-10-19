@@ -318,24 +318,25 @@ namespace Jde::Opc::Gateway{
 						//A Conflict is the unique index, a foreign key - the group or member purged meanwhile - or another constraint, and the
 						//index can be this group's own:  another member, an ad hoc row, or a concurrent resolve of this one.
 						if( conflict ){
-							auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=text}) );
-							if( holders.empty() ){
+							using enum NodeHolder::EKind;
+							let holder = co_await SelectNodeHolder( group, text, result.TemplateNode );
+							if( holder.Kind==None ){
 								result.Status = UA_STATUSCODE_BADINTERNALERROR;
 								WARN( "[{}]Template member {} resolved to '{}', and createHistGroupNode failed:  {}", group.Guid, result.TemplateNode, node->ToString(), *conflict );
 							}
-							else if( let& holder = holders.front(); holder.Group!=group.Id ){
+							else if( holder.Kind==OtherGroup ){
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
-								result.Holder = holder.Group;
-								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Group );
+								result.Holder = holder.Row->Group;
+								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Row->Group );
 							}
-							else if( holder.TemplateNode==result.TemplateNode ){//a concurrent resolve made the row.
+							else if( holder.Kind==SameMember ){//a concurrent resolve made the row.
 								result.Node = move( *node );
 								result.Status = UA_STATUSCODE_GOOD;
 							}
 							else{
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
 								result.Holder = group.Id;
-								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.TemplateNode ? Ƒ("member {}", *holder.TemplateNode) : string{"an ad hoc node"} );
+								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.Row->TemplateNode ? Ƒ("member {}", *holder.Row->TemplateNode) : string{"an ad hoc node"} );
 							}
 						}
 					}
@@ -395,7 +396,7 @@ namespace Jde::Opc::Gateway{
 				host->SetName( row.Name );
 				host->SetColumns( row.Thresholds );
 				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = co_await SelectHistTemplateMembers( {.Template=row.Template} );
 				auto thresholds = Reserve<std::pair<HistGroupNodePK,Thresholds>>( nodes.size() );
 				for( let& node : nodes )
 					thresholds.emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds) );
@@ -427,7 +428,7 @@ namespace Jde::Opc::Gateway{
 			let& row = rows.front();
 			if( Enabled() ){
 				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = co_await SelectHistTemplateMembers( {.Template=row.Template} );
 				let slug = co_await SlugAwait{ row.Connection };
 				Load( row, nodes, members, slug, SRCE_CUR )->Subscribe();
 				INFO( "[{}]Group '{}' restored with {} nodes.", row.Guid, row.Name, nodes.size() );
@@ -478,7 +479,7 @@ namespace Jde::Opc::Gateway{
 			THROW_IF( rows.empty(), "hist_group_nodes row {} not found.", id );
 			let& row = rows.front();
 			if( auto host = Find(row.Group); host ){
-				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
 				host->Join( row, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns()), Writer(by), SRCE_CUR );
 			}
 			await.Done();
@@ -492,7 +493,7 @@ namespace Jde::Opc::Gateway{
 			auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
 			if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host ){
 				let& row = rows.front();
-				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
+				auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
 				host->SetNodeThresholds( {{row.Id, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns())}}, SRCE_CUR );
 			}
 			await.Done();
@@ -527,7 +528,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistHost::TemplateNodeEdited( HistTemplateNodePK id, HistWork& await )ι->VoidTask{
 		try{
-			auto members = HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=id})) );
+			auto members = co_await SelectHistTemplateMembers( {.Id=id} );
 			auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
 			flat_map<sp<HistGroupHost>,vector<std::pair<HistGroupNodePK,Thresholds>>> byHost;//one modify per group.
 			for( let& node : nodes ){

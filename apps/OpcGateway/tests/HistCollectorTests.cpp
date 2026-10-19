@@ -25,15 +25,13 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		ASSERT_NO_THROW( WaitDescribed(host, rpm) );//its band
-		//Each item's first value, the node's value now, is stored as the first after the join.
-		let joined = Clock::now()-24h*365;
-		ASSERT_NO_THROW( WaitStored(host, rpm, joined, 1) );
-		ASSERT_NO_THROW( WaitStored(host, status, joined, 1) );
+		ASSERT_NO_THROW( WaitStored(host, rpm, Joined, 1) );
+		ASSERT_NO_THROW( WaitStored(host, status, Joined, 1) );
 
 		//A jump off the value the node holds now, so both hosts' bands start from the same stored value, then changes inside
 		//the 10 rpm band and past it.  Status1 flips from its value now at every write:  an item reports a change of value or
 		//status, so a write that repeats the value reaches OpcServer's history and not the group's, which is sampling.
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		const vector<double> rpms{ base, base+4, base+11, base+15, base+30, base+35, base-100 };
 		let on = !*(const UA_Boolean*)Current( Status1 ).value.data;
 		let t0 = Since();
@@ -111,15 +109,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//member, and refuses a member named twice, a group the gateway doesn't host, an aggregate it doesn't serve, and a call that
 	//names both a group and a server, or neither.
 	TEST_F( HistCollectorTests, ReadsAGroupsHistory ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "reads" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, rpm, host, _] = OneNodeGroup{ "reads", RpmManual };
 		let t0 = Since();
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		for( uint i=0; i<5; ++i )
 			WriteRpm( base+i*100, t0+milliseconds{10*i} );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 5) );
@@ -165,27 +157,20 @@ namespace Jde::Opc::Gateway::Tests{
 	//resource enforced and granted, each answers Part 11's results, a value typed as the group stored its node, and a node
 	//that isn't a member Bad_NodeIdUnknown.  The modified read returns what each edit replaced, by the caller.
 	TEST_F( HistCollectorTests, EditsNeedAnEnforcedGrant ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "edits" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, rpm, host, _] = OneNodeGroup{ "edits", RpmManual };
 		let t0 = Since();
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		WriteRpm( base, t0 );
 		WriteRpm( base+100, t0+20ms );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 2) );
 
 		EnforceHistGroups( false );
 		EXPECT_THROW( Update("createHistory", group, {{RpmManual, t0+10ms, 1}}), GatewayErrorResponse ) << "an edit nothing enforces";
-		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };//before:  an EnforceHistGroups that throws can leave it restored.
-		EnforceHistGroups( true );
+		auto open = EnforcedHistGroups();
 
 		let inserted = Update( "createHistory", group, {{RpmManual, t0+10ms, 1}, {RpmManual, t0, 2}, {Rpm2, t0+10ms, 3}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS, UA_STATUSCODE_BADNODEIDUNKNOWN}) );
-		EXPECT_EQ( inserted.Statuses, (vector<StatusCode>{UA_STATUSCODE_GOOD, UA_STATUSCODE_BADNODEIDUNKNOWN}) );
+		EXPECT_EQ( Codes(inserted.Statuses), (vector<StatusCode>{UA_STATUSCODE_GOOD, UA_STATUSCODE_BADNODEIDUNKNOWN}) );
 		EXPECT_EQ( Update("updateHistory", group, {{RpmManual, t0+20ms, 250}, {RpmManual, t0+30ms, 9}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_BADNOENTRYEXISTS}) );
 		EXPECT_EQ( Update("upsertHistory", group, {{RpmManual, t0, 7}, {RpmManual, t0+40ms, 8}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_GOODENTRYINSERTED}) );
 		const Request range{ .Start=t0, .End=t0+50ms, .Limit=100 };
@@ -195,8 +180,8 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( values, (vector<jvalue>{7.0, 1.0, 250.0, 8.0}) ) << "a json integer takes the Double the group stored";
 
 		EXPECT_EQ( PurgeAt(group, RpmManual, {t0+10ms, t0+11ms}).Values, (vector<StatusCode>{UA_STATUSCODE_GOOD, UA_STATUSCODE_BADNOENTRYEXISTS}) );
-		EXPECT_EQ( PurgeRange(group, RpmManual, t0+20ms, t0+40ms).Statuses, (vector<StatusCode>{UA_STATUSCODE_GOOD}) ) << "a group's range holds both ends";
-		EXPECT_EQ( PurgeRange(group, RpmManual, t0+20ms, t0+40ms).Statuses, (vector<StatusCode>{UA_STATUSCODE_BADNODATA}) );
+		EXPECT_EQ( Codes(PurgeRange(group, RpmManual, t0+20ms, t0+40ms).Statuses), (vector<StatusCode>{UA_STATUSCODE_GOOD}) ) << "a group's range holds both ends";
+		EXPECT_EQ( Codes(PurgeRange(group, RpmManual, t0+20ms, t0+40ms).Statuses), (vector<StatusCode>{UA_STATUSCODE_BADNODATA}) );
 		values.clear();
 		for( let& row : ReadAll(Group(group), {Ex(RpmManual)}, range) )
 			values.push_back( row.Value );
@@ -217,19 +202,12 @@ namespace Jde::Opc::Gateway::Tests{
 	//after the Bad_DataLost a rejoin's break writes (spec *Gaps*), the first membership's value before them, since a read
 	//of the node joins its indexes (#326, spec *Reads*).
 	TEST_F( HistCollectorTests, ARejoinReadsTheItemsValue ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "rejoin" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let first = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		let joined = Clock::now()-24h*365;
-		ASSERT_NO_THROW( WaitStored(host, first, joined, 1) );
+		let [group, first, host, itemsBefore] = OneNodeGroup{ "rejoin", RpmManual };
 		Mutate( "purgeHistGroupNode( id:$id )", {{"id", first}} );
 		let again = AddNode( group, RpmManual );
 		ASSERT_NE( again, first ) << "a rejoin is a new row, and a new index";
 		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		let stored = WaitStored( host, again, joined, 3 );
+		let stored = WaitStored( host, again, Joined, 3 );
 		ASSERT_EQ( stored.size(), 3u );
 		EXPECT_TRUE( stored[0].Value.has_value() ) << "the first membership's value, under the current index";
 		EXPECT_EQ( stored[0].Value.node_index(), again );
@@ -237,7 +215,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( stored[1].Value.has_value() );
 		EXPECT_TRUE( stored[2].Value.has_value() );
 		std::this_thread::sleep_for( 1s );//a publishing interval or two:  the item's next value is a change, not its value now again.
-		EXPECT_EQ( Stored(host, again, joined).size(), 3u );
+		EXPECT_EQ( Stored(host, again, Joined).size(), 3u );
 		EXPECT_EQ( Items(), itemsBefore+1 ) << "the one item, joined, not a second";
 	}
 	//A namespace the server registers at the end moves no member's index:  neither the pass that sees it, here a member's join,
@@ -331,10 +309,9 @@ namespace Jde::Opc::Gateway::Tests{
 		let count = AddNode( group, Count );
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
-		let joined = Clock::now()-24h*365;
 		for( let [id, index] : {std::pair{Any, any}, std::pair{Count, count}} ){
 			ASSERT_NO_THROW( WaitDescribed(host, index) );
-			ASSERT_NO_THROW( WaitStored(host, index, joined, 1) );
+			ASSERT_NO_THROW( WaitStored(host, index, Joined, 1) );
 			let buffer = host->Group()->Buffer();
 			let join = std::ranges::find_if( buffer, [=]( let& r ){ let added = std::get_if<Opc::Hist::NodeAdded>( &r ); return added && added->Index==index; } );
 			ASSERT_NE( join, buffer.end() );
@@ -343,19 +320,18 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( host->Group()->DataType(index), &UA_TYPES[UA_TYPES_INT32] ) << "member " << index << ":  the type of the value it stored";
 			const UA_Double half{ 1.5 };
 			Write( id, &half, UA_TYPES[UA_TYPES_DOUBLE], Since() );
-			ASSERT_NO_THROW( WaitStored(host, index, joined, 2) );
+			ASSERT_NO_THROW( WaitStored(host, index, Joined, 2) );
 			EXPECT_EQ( host->Group()->DataType(index), &UA_TYPES[UA_TYPES_DOUBLE] ) << "member " << index;
 		}
 	}
 	//A percent-of-range band takes the InstrumentRange or EURange the server gives the node, read once its item is made, and
 	//a format edit takes the other;  a node without the range its format needs stores every change (spec *Compression*).
 	TEST_F( HistCollectorTests, RangesFromTheServer ){
-		constexpr UA_UInt32 Pump3Rpm{ 6032 }, Pump4Rpm{ 6042 };//pump3's InstrumentRange is 0-1500 and its EURange 0-3000;  pump4 has the EURange alone.
 		let itemsBefore = Items();
 		let group = CreateGroup( "ranges" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let pump3 = AddNode( group, Pump3Rpm, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
-		let pump4 = AddNode( group, Pump4Rpm, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
+		let pump3 = AddNode( group, Rpm3, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
+		let pump4 = AddNode( group, Rpm4, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		let thresholds = [&]( uint32 index ){ return host->Group()->FindThresholds( index ).value(); };
@@ -376,7 +352,6 @@ namespace Jde::Opc::Gateway::Tests{
 	//A description Describe lost, rather than was refused, the watch asks for again (Redescribe):  here a percent-of-range band
 	//waits while the server refuses the translate of a node's two range properties, and takes the InstrumentRange once asked again.
 	TEST_F( HistCollectorTests, ALostDescriptionIsAskedAgain ){
-		constexpr UA_UInt32 Pump3Rpm{ 6032 };//its InstrumentRange is 0-1500.
 		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
 		let limit = config.maxNodesPerTranslateBrowsePathsToNodeIds;
 		config.maxNodesPerTranslateBrowsePathsToNodeIds = 1;
@@ -384,7 +359,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let itemsBefore = Items();
 		let group = CreateGroup( "redescribe" );
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let pump3 = AddNode( group, Pump3Rpm, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
+		let pump3 = AddNode( group, Rpm3, {{"exceptionDeviation", 1}, {"exceptionDeviationFormat", 2}} );
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
 		Stopwatch sw;
@@ -462,7 +437,7 @@ namespace Jde::Opc::Gateway::Tests{
 		AddNode( twin, Status1 );
 		ASSERT_NO_THROW( WaitSubscribed(Host(group), 1) );//a node spelled by index resolves once the collector has the server's namespaces.
 		ASSERT_NO_THROW( WaitSubscribed(Host(twin), 1) );
-		let query = [&]( sv q, jobject vars ){ return BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(string{q}, move(vars), true) ); };
+		let query = [&]( sv q, jobject vars ){ return Socket().QuerySync( string{q}, move(vars) ); };
 
 		let groups = query( "historyGroups( opc:$opc, nodes:$nodes ){ groups{ id name nodes } }", {{"opc", OpcServerSlug}, {"nodes", jarray{Node(RpmManual).ToJson(), Ex(Rpm2), Node(Status1).ToJson()}}} );
 		let& rows = Json::AsArray( groups.as_object(), "groups" );
@@ -494,8 +469,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( Json::AsBool(open, "delete") );
 		let denials = Logging::Find( [&]( const Logging::Entry& e ){ let m = e.Message(); return m.contains( Ƒ("histGroups[{}]", Host(group)->Guid()) ) && m.contains( "nothing enforces it" ); } );//the row is keyed by the guid (#357).
 		EXPECT_TRUE( denials.empty() ) << "a capability the caller lacks is an answer, not a denial to log:  " << denials.front().Message();
-		absl::Cleanup reopen = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		EnforceHistGroups( true );
+		auto reopen = EnforcedHistGroups();
 		auto granted = capabilities( group );
 		EXPECT_TRUE( Json::AsBool(granted, "update") );
 		EXPECT_TRUE( Json::AsBool(granted, "delete") );
@@ -534,18 +508,12 @@ namespace Jde::Opc::Gateway::Tests{
 		};
 		ScopeHistGroup( twin, Access::ERights::None );
 		ScopeHistGroup( group, Access::ERights::Read | Access::ERights::Update );
-		let reached = [&]( function<bool()> f, sv what ){//the gateway's authorizer hears of it over its subscription.
-			for( uint i=0; !f(); ++i ){
-				THROW_IF( i==200, "{} didn't reach the gateway's authorizer.", what );
-				std::this_thread::sleep_for( 50ms );
-			}
-		};
-		ASSERT_NO_THROW( reached([&]{
+		ASSERT_TRUE( WaitUntil([&]{//the gateway's authorizer hears of it over its subscription.
 			auto allowed = acl->CheckEnforced( "gateway", "histGroups", Host(group)->Guid(), Access::ERights::Update, User(), SRCE_CUR );
 			if( !allowed )
 				allowed.error().SetLevel( ELogLevel::NoLog );
 			return allowed.has_value();
-		}, "The group's grant") );
+		}) ) << "the group's grant didn't reach the gateway's authorizer";
 
 		let listed = query( "historyGroups( opc:$opc, nodes:$nodes ){ groups{ id } }", {{"opc", OpcServerSlug}, {"nodes", jarray{Node(RpmManual).ToJson(), Node(Status1).ToJson()}}} );
 		vector<uint32> ids;

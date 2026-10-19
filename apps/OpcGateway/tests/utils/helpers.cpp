@@ -7,6 +7,7 @@
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/UAException.h>
 #include <jde/app/client/IAppClient.h>
+#include <jde/web/Jwt.h>
 #include "../../src/GatewayAppClient.h"
 #include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
@@ -19,8 +20,8 @@
 namespace Jde::Opc::Gateway::Tests{
 	α CreateServerCnnctnAwait::Execute()ι->QL::QLAwait<jobject>::Task{
 		try{
-			str certificateUri = _certificateUri ? *_certificateUri : string{ Settings::FindSV("/opc/urn").value_or("urn:open62541.server.application") };
-			str url = _url ? *_url : string{ Settings::FindSV("/opc/url").value_or("opc.tcp://127.0.0.1:4940") };
+			let certificateUri = _certificateUri ? *_certificateUri : OpcUrn();
+			let url = _url ? *_url : OpcUrl();
 			let create = Ƒ( "mutation createServerConnection( slug:'{}', name:'{}', certificateUri:'{}', description:'Test basic functionality', url:'{}', isDefault:false ){{id}}",
 				_slug.value_or( OpcServerSlug ),
 				_slug ? *_slug : "My Test Server",//name is unique too - a second row of the caller's shape cannot share the default's.
@@ -52,6 +53,10 @@ namespace Jde::Opc::Gateway{
 	α Tests::PurgeServerCnnctn( optional<ServerCnnctnPK> pk )ι->uint{
 		return BlockAwait<PurgeServerCnnctnAwait,uint>( PurgeServerCnnctnAwait{pk} );
 	}
+	α Tests::PurgeServerCnnctn( str slug )ι->void{
+		if( auto row = SelectServerCnnctn(slug); row )
+			PurgeServerCnnctn( row->Id );
+	}
 
 	α Tests::SelectServerCnnctn( DB::Key id )ι->optional<ServerCnnctn>{
 		let select = Ƒ( "serverConnection({}){{ id name attributes created updated deleted slug description certificateUri isDefault url }}", id.QLInput() );
@@ -80,38 +85,57 @@ namespace Jde::Opc::Gateway{
 
 	static sp<Tests::GatewayClientSocket> _session;
 	α Tests::Socket()ι->Tests::GatewayClientSocket&{
-		if( !_session ){
-			optional<ssl::context> ctx;
-			_session = ms<Tests::GatewayClientSocket>( Executor(), ctx );
-			BlockVoidAwait( _session->RunSession("localhost", GatewayPort(), "/opc") );//the gateway protocol's path on a hub; the standalone gateway ignores it.
-			BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( _session->Connect(AppClient()->SessionId()) );
-		}
+		if( !_session )
+			_session = Tests::GatewayClientSocket::Open( "localhost", GatewayPort(), AppClient()->SessionId() );
 		return *_session;
 	}
 
+	static optional<Web::Jwt> _jwt;
+	α Tests::Jwt()ε->const Web::Jwt&{
+		if( !_jwt )
+			_jwt = BlockAwait<Web::Client::ClientSocketAwait<Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
+		return *_jwt;
+	}
+	α Tests::SessionCredential( optional<UserPK> user )ε->Credential{
+		Credential y{ Jwt().Payload() };
+		if( user )
+			y.SetUserPK( *user );
+		return y;
+	}
+
+	α Tests::WaitUntil( function<bool()> pred, Duration timeout, Duration interval )ι->bool{
+		for( let deadline = steady_clock::now()+timeout; !pred(); std::this_thread::sleep_for(interval) ){
+			if( steady_clock::now()>deadline )
+				return false;
+		}
+		return true;
+	}
+	α Tests::EnforceResource( sv schema, sv slug, bool on, sv criteria )ε->void{
+		let app = AppClient();
+		EnforceResource( *app, *app->Acl(), schema, slug, on, criteria );
+	}
+	α Tests::EnforceResource( App::Client::IAppClient& app, Access::Authorize& authorizer, sv schema, sv slug, bool on, sv criteria )ε->void{
+		app.QuerySync<jvalue>( Ƒ("{}Resource( schemaName:$schema, slug:$slug, criteria:$criteria )", on ? "restore" : "delete"), {{"schema", schema}, {"slug", slug}, {"criteria", criteria.size() ? jvalue{criteria} : jvalue{}}} );
+		THROW_IF( !WaitUntil([&]{ return authorizer.FindActiveResourcePK(string{schema}, string{slug}, string{criteria}).has_value()==on; }), "{}/{}{}'s {} didn't reach the authorizer.", schema, slug, criteria.size() ? Ƒ("[{}]", criteria) : string{}, on ? "restore" : "delete" );
+	}
+	α Tests::GrantRole( App::Client::IAppClient& app, sv role, sv schema, sv slug, sv criteria, Access::ERights allowed, UserPK user )ε->void{
+		if( !app.QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", role}}).empty() )
+			return;
+		let roleId = Json::AsNumber<Access::RolePK::Type>( app.QuerySync<jobject>("createRole( slug:$slug, name:$slug ){id}", {{"slug", role}}).at("id") );
+		jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"schema", schema}, {"resource", slug} };
+		if( criteria.size() )
+			vars["criteria"] = criteria;
+		app.QuerySync<jvalue>( Ƒ("addRole( id:$roleId, permissionRight:{{allowed:$allowed, denied:0, resource:{{schemaName:$schema, slug:$resource{}}}}} )", criteria.size() ? ", criteria:$criteria" : ""), move(vars) );
+		app.QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", user.Value}, {"roleId", roleId}} );
+	}
+
 	α Tests::EnforceHistGroups( bool on )ε->void{
-		auto app = AppClient();
-		let slug = jobject{ {"slug", "histGroups"}, {"schema", "gateway"} };
-		let acl = app->Acl();
-		let reached = [&]( bool active, sv change ){
-			for( uint i=0; acl->FindActiveResourcePK("gateway", "histGroups", "").has_value()!=active; ++i ){
-				THROW_IF( i==200, "The histGroups resource's {} didn't reach the gateway's authorizer.", change );
-				std::this_thread::sleep_for( std::chrono::milliseconds{50} );
-			}
-		};
-		app->QuerySync<jvalue>( "deleteResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
-		reached( false, "delete" );
+		EnforceResource( "gateway", "histGroups", false );
 		if( !on )
 			return;
-		constexpr sv roleSlug{ "GatewayHistGroupEditor" };
-		if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
-			let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway group history editor"}} );
-			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-			app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}} );
-			app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
-		}
-		app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", slug );
-		reached( true, "restore" );
+		auto app = AppClient();
+		GrantRole( *app, "GatewayHistGroupEditor", "gateway", "histGroups", {}, Access::ERights::All, app->UserPK() );
+		EnforceResource( "gateway", "histGroups", true );
 	}
 	//The guid of a group's row, the criteria of its own access resource (spec *Authorization*):  the gateway's table, as the system.
 	Ω groupGuid( uint32 group )ε->string{
@@ -124,24 +148,11 @@ namespace Jde::Opc::Gateway{
 		THROW_IF( !app->Acl()->FindActiveResourcePK("gateway", "histGroups", ""), "Group {}'s resource would count for nothing:  histGroups' root isn't enforced (EnforceHistGroups).", group );
 		let criteria = groupGuid( group );
 		app->QuerySync<jvalue>( "createResource( schemaName:\"gateway\", name:$name, slug:\"histGroups\", criteria:$criteria, allowed:255 )", {{"name", Ƒ("histGroups[{}]", group)}, {"criteria", criteria}} );
-		let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", Ƒ("GatewayHistGroup{}", group)}, {"name", Ƒ("Gateway history group {}", group)}} );
-		let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-		app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria}} )", {{"roleId", roleId}, {"allowed", underlying(allowed | Access::ERights::Administer)}, {"criteria", criteria}} );
-		app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
-		app->QuerySync<jvalue>( "restoreResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );//a row is created unenforced.
-		for( uint i=0; !app->Acl()->FindActiveResourcePK("gateway", "histGroups", criteria); ++i ){//the gateway's authorizer hears of it over its subscription.
-			THROW_IF( i==200, "Group {}'s resource didn't reach the gateway's authorizer.", group );
-			std::this_thread::sleep_for( std::chrono::milliseconds{50} );
-		}
+		GrantRole( *app, Ƒ("GatewayHistGroup{}", group), "gateway", "histGroups", criteria, allowed | Access::ERights::Administer, app->UserPK() );
+		EnforceResource( "gateway", "histGroups", true, criteria );//a row is created unenforced.
 	}
 	α Tests::UnscopeHistGroup( uint32 group )ε->void{
-		let app = AppClient();
-		let criteria = groupGuid( group );
-		app->QuerySync<jvalue>( "deleteResource( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria )", {{"criteria", criteria}} );
-		for( uint i=0; app->Acl()->FindActiveResourcePK("gateway", "histGroups", criteria); ++i ){//until then it still refuses what it grants no one, a purge of the group included
-			THROW_IF( i==200, "Group {}'s resource deletion didn't reach the gateway's authorizer.", group );
-			std::this_thread::sleep_for( std::chrono::milliseconds{50} );
-		}
+		EnforceResource( "gateway", "histGroups", false, groupGuid(group) );//until then it still refuses what it grants no one, a purge of the group included
 	}
 
 	//the policy and mode the session was opened with, read on the client's strand - the only place UA_Client_* calls may run.
@@ -189,7 +200,10 @@ namespace Jde::Opc::Gateway{
 		return tokens->second;
 	}
 
-	Ω read( UA_Server* ua, const NodeId& node )ι->Value{
+	α Tests::ReadValue( const sp<UAClient>& client, const NodeId& node )ε->Value{
+		return BlockTAwait<flat_map<NodeId,Value>>( ReadValueAwait{{node}, client} ).at( node );
+	}
+	α Tests::ReadValue( UA_Server* ua, const NodeId& node )ι->Value{
 		UA_ReadValueId id; UA_ReadValueId_init( &id );
 		id.nodeId = node;
 		id.attributeId = UA_ATTRIBUTEID_VALUE;
@@ -206,7 +220,7 @@ namespace Jde::Opc::Gateway{
 	Tests::RetypedNode::RetypedNode( UA_Server* ua, NodeId node, UA_UInt32 dataType )ε:
 		_ua{ ua },
 		_node{ move(node) },
-		_value{ read(ua, _node) }{
+		_value{ ReadValue(ua, _node) }{
 		UAε( UA_Server_readDataType(ua, _node, &_dataType) );
 		if( let sc = retype(ua, _node, UA_NODEID_NUMERIC(0, dataType)); sc ){
 			retype( ua, _node, _dataType );

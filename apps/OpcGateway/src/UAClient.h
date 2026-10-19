@@ -20,8 +20,6 @@
 namespace Jde::Opc{ 	struct Value; }
 namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Request; }
-	namespace Read{ α OnResponse(UA_Client *client, void *userdata, RequestId requestId, StatusCode status, UA_DataValue *value)ι->void; }
-	namespace Write{ α OnResponse(UA_Client *ua, void *userdata, RequestId requestId, UA_WriteResponse *response)ι->void; }
 
 	struct CreateMonitoredItemsRequest;
 	//What a test connect (UAClient::ConnectForTest) reports:  the client with its session activated, or why the connect failed.
@@ -192,8 +190,6 @@ namespace Jde::Opc::Gateway{
 		Logger _logger; //after handle
 		UA_Client* _ptr{};//needs to be after _logger, _config, Password.
 		friend ConnectAwait;
-		friend α Read::OnResponse( UA_Client *client, void *userdata, RequestId requestId, StatusCode status, UA_DataValue *value )ι->void;
-		friend α Write::OnResponse( UA_Client *ua, void *userdata, RequestId requestId, UA_WriteResponse *response )ι->void;
 
 		NodeIndex _nodeIndex;
 		EnumTypeCache _enumTypes;

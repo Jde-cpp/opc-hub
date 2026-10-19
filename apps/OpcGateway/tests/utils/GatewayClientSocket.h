@@ -44,9 +44,12 @@ namespace Jde::Opc::Gateway::Tests{
 		//that wait was holding these sessions alive to the end of the process (emulator-review #11).
 		~GatewayClientSocket(){ Process::RemoveShutdown( this ); TRACET(ELogTags::Test, "GatewayClientSocket::~GatewayClientSocket"); }
 
+		//A socket to the gateway at host:port, bound to `session` when given.  `path` is the gateway protocol's on a hub, which a
+		//standalone gateway ignores, so a socket opened here runs against either.
+		Ω Open( string host, PortType port, optional<SessionPK> session, string path="/opc" )ε->sp<GatewayClientSocket>;
 		α Connect( SessionPK sessionId, SRCE )ι->await<uint32>;
 		α Query( string&& query, jobject variables, bool returnRaw, SRCE )ι->await<jvalue> override;
-		α QuerySync( string&& query, jobject variables={} )ε->jvalue;
+		α QuerySync( string&& query, jobject variables={}, bool returnRaw=true )ε->jvalue;
 		α Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SRCE )ε->await<FromServer::SubscriptionAck>;
 		α Subscribe( string&& /*query*/, jobject /*variables*/, sp<QL::IListener> /*listener*/, SL )ε->await<jarray> override{ ASSERT(false); throw "noimpl"; }
 		α Unsubscribe( vector<QL::SubscriptionId>&&, SL )ι->void override{ ASSERT(false); }
@@ -68,6 +71,7 @@ namespace Jde::Opc::Gateway::Tests{
 		//The await is the unsubscribe's, and the HistSubscribe's ack goes to the listener's OnAck, which hears on after it.
 		α HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SRCE )ι->await<bool>;
 	private:
+		α registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate=false )ι->void;//its listener, under the id that names the subscription, and the last one sent.
 		α CloseTasks( beast::error_code ec )ι->void override;
 		α OnRead( FromServer::Transmission&& transmission )ι->void override;
 		α OnAck( uint32 ack )ι->void;

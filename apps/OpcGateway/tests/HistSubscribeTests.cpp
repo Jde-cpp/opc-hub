@@ -1,7 +1,6 @@
 //Historian 5d (#225):  historian subscriptions (spec *Subscriptions*) over the gateway's socket - the history from a time to
 //the subscription in HistSnapshot pages, each node's bound first, then every record stored as it is stored and each edit once
 //durable, the ack's status per node, the refusals, and a HistUnsubscribe.
-#include <absl/cleanup/cleanup.h>
 #include <jde/fwk/process/execution.h>
 #include "utils/HistGroupFixture.h"
 #include "utils/GatewayClientSocket.h"
@@ -74,15 +73,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//The snapshot from a time:  the node's value before it as the bound, then the records from it, complete in one page here;
 	//then each value stored streams, and none after the Unsubscribe.
 	TEST_F( HistSubscribeTests, SnapshotThenStream ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "subscribe" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, rpm, host, _] = OneNodeGroup{ "subscribe", RpmManual };
 		let t0 = Since();
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		for( uint i=0; i<3; ++i )
 			WriteRpm( base+i*100, t0+milliseconds{10*i} );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 3) );
@@ -133,13 +126,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//leaves out;  a Subscribe without a time snapshots each node's value now, as its bound;  and the refusals - a group the
 	//gateway doesn't host, no nodes, a member named twice.
 	TEST_F( HistSubscribeTests, StatusesAndRefusals ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "statuses" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, _, _, _] = OneNodeGroup{ "statuses", RpmManual };
 		auto heard = ms<Heard>();
 		EXPECT_EQ( Subscribe(group, {Ex(Rpm2), Ex(RpmManual)}, nullopt, heard), (vector<StatusCode>{UA_STATUSCODE_BADNODEIDUNKNOWN, UA_STATUSCODE_GOOD}) );
 		ASSERT_NO_THROW( WaitComplete(*heard) );
@@ -159,9 +146,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_THROW( Subscribe(group, {}, nullopt, ms<Heard>()), GatewayErrorResponse ) << "no nodes";
 		EXPECT_THROW( Subscribe(group, {Ex(RpmManual), ExNodeId{Node(RpmManual)}}, nullopt, ms<Heard>()), GatewayErrorResponse ) << "one member by two spellings";
 		//A socket that bound no session may not subscribe.
-		optional<ssl::context> ctx;
-		auto unbound = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( unbound->RunSession("localhost", GatewayPort(), "/opc") );
+		auto unbound = GatewayClientSocket::Open( "localhost", GatewayPort(), nullopt );
 		auto unboundSubscribe = [&]{ return BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( unbound->HistSubscribe(group, {Ex(RpmManual)}, nullopt, ms<Heard>()) ); };
 		EXPECT_THROW( unboundSubscribe(), GatewayErrorResponse );
 		BlockVoidAwait( unbound->Close(false, SRCE_CUR) );
@@ -170,13 +155,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//Two HistSubscribe under one request id, back to back:  the one that claims the id streams, and the other is refused without
 	//touching it, however the two registrations finish.
 	TEST_F( HistSubscribeTests, ADuplicateIdIsRefusedAlone ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "duplicate" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, _, _, _] = OneNodeGroup{ "duplicate", RpmManual };
 		let refusals = Socket().HistRefusals();
 		auto heard = ms<Heard>();
 		EXPECT_EQ( (BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>(Socket().HistSubscribeTwice(group, {Ex(RpmManual)}, nullopt, heard))), vector<StatusCode>{UA_STATUSCODE_GOOD} );
@@ -189,7 +168,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( heard->Values().size(), 1u ) << "one snapshot:  the refused copy wrote no pages";
 
 		let t0 = Since();
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		WriteRpm( base, t0 );
 		ASSERT_NO_THROW( WaitPushed(*heard, 1) );
 		EXPECT_EQ( heard->Pushed().back().value().double_value(), base );
@@ -200,13 +179,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//still answered with its ack, and the group keeps no registration and pushes nothing.  The pages are left alone:  the
 	//rare registration that beats the unsubscribe writes one before it.
 	TEST_F( HistSubscribeTests, UnsubscribedWhileRegistering ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "unsubscribed" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, rpm, host, _] = OneNodeGroup{ "unsubscribed", RpmManual };
 		auto heard = ms<Heard>();
 		EXPECT_TRUE( (BlockAwait<ClientSocketAwait<bool>,bool>(Socket().HistSubscribeUnsubscribe(group, {Ex(RpmManual)}, nullopt, heard))) );
 		Stopwatch sw;
@@ -219,7 +192,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( host->Group()->Subscribers(), 0u ) << "the registration, made after the end, ended with it";
 
 		let t0 = Since();
-		WriteRpm( Current(RpmManual).AsNumber<double>()+1000, t0 );
+		WriteRpm( BaseRpm(), t0 );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 1) );
 		std::this_thread::sleep_for( 200ms );
 		EXPECT_TRUE( heard->Pushed().empty() );
@@ -229,15 +202,8 @@ namespace Jde::Opc::Gateway::Tests{
 	//values are two pages of readLimit, and the unsubscribe goes as the ack arrives, while the first page is read.  They are
 	//inserted a thousand an edit, under the socket's 1 MB message cap.
 	TEST_F( HistSubscribeTests, NothingFollowsTheUnsubscribe ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "paging" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
-		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		EnforceHistGroups( true );
+		let [group, _, _, _] = OneNodeGroup{ "paging", RpmManual };
+		auto open = EnforcedHistGroups();
 		let t0 = Since()-1h;
 		constexpr uint count{ Hist::Settings::DefaultReadLimit+1 };
 		for( uint i=0; i<count; ){
@@ -261,15 +227,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//Removing the group ends its subscription:  the client hears an exception under the subscription's id, and the id is
 	//free, so a HistUnsubscribe of it is refused.
 	TEST_F( HistSubscribeTests, ARemovedGroupEndsItsSubscription ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "removed" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		{
-			auto host = Host( group );
-			ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-			ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
-		}
+		let [group, _, _, _] = OneNodeGroup{ "removed", RpmManual };
 		auto heard = ms<Heard>();
 		EXPECT_EQ( Subscribe(group, {Ex(RpmManual)}, nullopt, heard), vector<StatusCode>{UA_STATUSCODE_GOOD} );
 		let subscription = Last();
@@ -286,15 +244,9 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//An edit's Modification records are pushed to a subscription of the node once they are durable, with the value put there.
 	TEST_F( HistSubscribeTests, ModificationsArePushed ){
-		let itemsBefore = Items();
-		let group = CreateGroup( "modifications" );
-		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
-		let rpm = AddNode( group, RpmManual );
-		auto host = Host( group );
-		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
-		ASSERT_NO_THROW( WaitStored(host, rpm, Clock::now()-24h*365, 1) );
+		let [group, rpm, host, _] = OneNodeGroup{ "modifications", RpmManual };
 		let t0 = Since();
-		let base = Current( RpmManual ).AsNumber<double>()+1000;
+		let base = BaseRpm();
 		WriteRpm( base, t0 );
 		WriteRpm( base+100, t0+20ms );
 		ASSERT_NO_THROW( WaitStored(host, rpm, t0, 2) );
@@ -303,8 +255,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WaitComplete(*heard) );
 		EXPECT_EQ( heard->Values().size(), 2u );
 
-		absl::Cleanup open = []{ try{ EnforceHistGroups(false); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		EnforceHistGroups( true );
+		auto open = EnforcedHistGroups();
 		EXPECT_EQ( Update("createHistory", group, {{RpmManual, t0+10ms, 7}}).Values, vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED} );
 		EXPECT_EQ( Update("updateHistory", group, {{RpmManual, t0+20ms, 8}}).Values, vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED} );
 		ASSERT_NO_THROW( WaitPushed(*heard, 0, 2) );

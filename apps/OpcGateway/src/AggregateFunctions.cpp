@@ -39,38 +39,22 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α AggregateFunctions::Start( sp<UAClient>&& client, GetAwait* waiter )ι->void{
-		bool launch{}; Ptr ready;
+		bool launch{};
 		{
 			ul _{ _mutex };
-			if( _folder )
-				ready = _folder;//a Finish raced in between await_ready and here.
-			else{
-				launch = !_fetching;//first request:  own the browse.
-				_fetching = true;
-				_waiters.push_back( waiter );//join the in-flight browse.
-			}
+			launch = _slot.Start( waiter );
 		}
 		if( launch )
 			Fetch( move(client) );//fire & forget:  the task keeps the client (and so this cache) alive until Finish.
-		else if( ready )
-			Post( [waiter, f=move(ready)]() mutable { waiter->Resume(move(f)); } );//never resume inside await_suspend.
 	}
 
 	α AggregateFunctions::Finish( Ptr folder, up<Exception> error )ι->void{
-		vector<GetAwait*> waiters;
+		LazySlot<Ptr>::Resumes resumes;
 		{
 			ul _{ _mutex };
-			waiters = move( _waiters );
-			_fetching = false;
-			if( !error )
-				_folder = folder;//a failed browse caches nothing:  the next request browses again.
+			resumes = _slot.Finish( move(folder), move(error), true );//a failed browse caches nothing:  the next request browses again.
 		}
-		for( auto* waiter : waiters ){//outside the lock:  Resume may run the awaiter to completion inline - it is the last use of the waiter.
-			if( error )
-				waiter->ResumeExp( Exception{*error} );
-			else
-				waiter->Resume( Ptr{folder} );
-		}
+		resumes.Run();
 	}
 
 	//The folder's objects, forward hierarchical references with the browse name of each:  Organizes in the standard
@@ -97,10 +81,7 @@ namespace Jde::Opc::Gateway{
 			folder = move( y );
 		}
 		catch( runtime_error& e ){
-			if( auto p = dynamic_cast<Exception*>(&e); p )
-				error = p->Move();
-			else
-				error = mu<Exception>( move(e) );
+			error = Exception::From( move(e) );
 		}
 		Finish( move(folder), move(error) );
 	}

@@ -181,11 +181,7 @@ namespace Jde::Opc::Gateway::Soak{
 	//request in flight and the read loop each hold their own reference, and the destructor takes back the shutdown registration
 	//its Connect made.
 	α SoakRunner::Connect()ε->void{
-		optional<ssl::context> ctx;
-		auto socket = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(_client->SessionId()) );
-		_socket = move( socket );
+		_socket = GatewayClientSocket::Open( _host, _port, _client->SessionId() );
 		for( auto& leg : _legs ){
 			if( leg.User.empty() ){
 				leg.Socket = _socket;
@@ -218,11 +214,7 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		let sessionId = Str::TryTo<SessionPK,16>( authorization );
 		THROW_IF( !sessionId || !*sessionId, "[{}]/login for user '{}' returned no session id in the Authorization header ('{}').", leg.Slug, leg.User, authorization );
-		optional<ssl::context> ctx;
-		auto socket = ms<GatewayClientSocket>( Executor(), ctx );//built aside and swapped in only once it is up, as in Connect (#8).
-		BlockVoidAwait( socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(*sessionId) );
-		leg.Socket = move( socket );
+		leg.Socket = GatewayClientSocket::Open( _host, _port, *sessionId );//built aside and swapped in only once it is up, as in Connect (#8).
 		leg.SessionId = *sessionId;
 		leg.Subscribed = false;//a new socket carries no subscription.
 		INFO( "[{}]Logged in as '{}' - session {}.", leg.Slug, leg.User, hex(leg.SessionId) );

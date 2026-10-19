@@ -15,7 +15,9 @@ namespace Jde::Opc::Gateway{
 	struct GatewayQLAwait final : QL::IQLTableAwaitExe, IGatewayQLAwait{
 		using base = QL::IQLTableAwaitExe;
 		GatewayQLAwait( QL::TableQL q, QL::Creds creds, SRCE )ι:base{move(q), move(creds), sl}{}
-		Ω IsApplicable( const QL::TableQL& q )ι->bool;//a gateway custom query: opcSessions, search, serverConnection{opcSessions|opcConnections}, or anything keyed by `opc` - the queries a server-bound await answers.  A host QL (OpcHub) asks before handing the query over, so app/access tables never reach ConnectAwait.
+		//A gateway custom query's await:  opcSessions, search, serverConnection{opcSessions|opcConnections}, the history groups, or
+		//anything keyed by `opc`.  Null for any other, so a host QL (OpcHub, through Gateway::CustomQuery) hands it every query
+		//and app/access tables never reach ConnectAwait.
 		Ω Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
 		α Suspend()ι->void override{ GetClient( this ); }
 		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers

@@ -35,7 +35,7 @@ namespace Jde::Opc::Gateway::Tests{
 	struct CollectorTests : ITest{};
 	//A collector connect beside the session's:  a second client on the connection, and each key finds only its own.
 	TEST_F( CollectorTests, TheCollectorGetsItsOwnClient ){
-		Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
+		let cred = SessionCredential( Jwt().UserPK );
 		ASSERT_EQ( UAClient::Find(OpcServerSlug, cred), _client ) << "the suite's client is the session's";
 		let sessionsBefore = SessionCounts().size();
 		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)} );

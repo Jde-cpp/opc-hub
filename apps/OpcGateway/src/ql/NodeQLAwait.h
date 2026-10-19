@@ -16,15 +16,7 @@ namespace Jde::Opc::Gateway{
 		{}
 		α Execute()ι->TAwait<BrowsePathResponse>::Task override;
 	private:
-		α AddAttributes( ExpectedNodeId nodeId, QL::TableQL* parentsQL, flat_map<NodeId, jobject> parents )ι->TAwait<ReadResponse>::Task;
-		α AddAttributes( Browse::Response&& br, QL::TableQL&& childrenQL, flat_map<NodeId, jobject> jChildren )ι->TAwait<ReadResponse>::Task;
-		α AddAttributes( vector<NodeId> nodeIds )ι->TAwait<ReadResponse>::Task;
-		α Browse( BrowsePathResponse pathNodes, str lastGoodParent, QL::TableQL* parents, flat_map<NodeId, jobject> jParents )ι->TAwait<Browse::Response>::Task;
-		α Browse( NodeId parentId, QL::TableQL children )ι->TAwait<Browse::Response>::Task;
-		α Path( vector<NodeId> nodeIds )ι->TAwait<Browse::Response>::Task;//`path` on the id form:  the browse path from the Objects folder, walked with inverse browses, then AddAttributes.
-
 		sp<UAClient> _client;
 		QL::TableQL _query;
-		flat_map<NodeId, jvalue> _paths;//Path's answer per requested id - a string, or null for a node outside the Objects tree or with an unroutable '/' in a browse name.
 	};
 }
