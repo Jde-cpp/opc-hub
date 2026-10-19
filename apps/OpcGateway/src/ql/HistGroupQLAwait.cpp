@@ -98,56 +98,56 @@ namespace Jde::Opc::Gateway{
 	}
 	//A purge's live side, which runs before the statement:  the row's children and its group's files go first.  guid:  a group's,
 	//read while its row is here, for after.
-	Ω before( const QL::MutationQL& m, UserPK by, string& guid, SL sl )ε->optional<HistWork::Work>{
+	Ω before( const QL::MutationQL& m, UserPK by, string& guid, SL sl )ε->optional<AnyVoidTask>{
 		if( m.Type!=EMutationQL::Purge )
 			return nullopt;
 		auto& host = HistHost::Instance();
 		let table = m.TableName();
 		let pk = rowId( m, sl );
 		if( table==Groups )
-			return HistWork::Work{ [pk, by, &guid, &host]( HistWork& w ){ return host.GroupPurging( pk, by, guid, w ); } };
+			return host.GroupPurging( pk, by, guid );
 		if( table==GroupNodes )
-			return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.NodePurging( pk, by, w ); } };
+			return host.NodePurging( pk, by );
 		if( table==TemplateNodes )
-			return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.TemplateNodePurging( pk, by, w ); } };
-		return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.TemplatePurging( pk, by, w ); } };
+			return host.TemplateNodePurging( pk, by );
+		return host.TemplatePurging( pk, by, sl );
 	}
 	//The live side of a row written:  result is the stock op's, an insert's new id among it;  guid, a purged group's (before).
-	Ω after( const QL::MutationQL& m, const jvalue& result, UserPK by, str guid, SL sl )ε->optional<HistWork::Work>{
+	Ω after( const QL::MutationQL& m, const jvalue& result, UserPK by, str guid, SL sl )ε->optional<AnyVoidTask>{
 		using enum EMutationQL;
 		auto& host = HistHost::Instance();
 		let table = m.TableName();
 		if( m.Type==Purge ){
 			if( table==Groups && guid.size() )
-				return HistWork::Work{ [guid, &host]( HistWork& w ){ return host.GroupPurged( guid, w ); } };
+				return host.GroupPurged( guid );
 		}
 		else if( m.Type==Create ){
 			let row = result.is_array() && result.get_array().size() ? result.get_array()[0].if_object() : nullptr;
 			let pk = row ? Json::FindNumber<uint32>( *row, "id" ).value_or( 0 ) : 0;
 			THROW_IFSL( !pk && table!=Templates, "'{}' answered no id:  {}", m.CommandName, serialize(result) );
 			if( table==Groups )
-				return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.GroupCreated( pk, by, w ); } };
+				return host.GroupCreated( pk, by );
 			if( table==GroupNodes )
-				return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.NodeCreated( pk, by, w ); } };
+				return host.NodeCreated( pk, by );
 			if( table==TemplateNodes )
-				return HistWork::Work{ [pk, by, &host]( HistWork& w ){ return host.TemplateNodeCreated( pk, by, w ); } };
+				return host.TemplateNodeCreated( pk, by );
 		}
 		else if( table==Groups ){
 			auto key = m.GetKey( sl );
 			if( m.Type==Update )
-				return HistWork::Work{ [key, &host]( HistWork& w ){ return host.GroupEdited( key, w ); } };
+				return host.GroupEdited( key );
 			if( m.Type==Delete )
-				return HistWork::Work{ [key, by, &host]( HistWork& w ){ return host.GroupDeleted( key, by, w ); } };
+				return host.GroupDeleted( key, by );
 			if( m.Type==Restore )
-				return HistWork::Work{ [key, by, &host]( HistWork& w ){ return host.GroupRestored( key, by, w ); } };
+				return host.GroupRestored( key, by );
 		}
 		else if( m.Type==Update && table==GroupNodes ){
 			let pk = rowId( m, sl );
-			return HistWork::Work{ [pk, &host]( HistWork& w ){ return host.NodeEdited( pk, w ); } };
+			return host.NodeEdited( pk );
 		}
 		else if( m.Type==Update && table==TemplateNodes ){
 			let pk = rowId( m, sl );
-			return HistWork::Work{ [pk, &host]( HistWork& w ){ return host.TemplateNodeEdited( pk, w ); } };
+			return host.TemplateNodeEdited( pk );
 		}
 		return nullopt;
 	}
@@ -264,7 +264,7 @@ namespace Jde::Opc::Gateway{
 
 				string purgedGuid;
 				if( auto work = before(_query, UserPK(), purgedGuid, _sl); work )
-					co_await HistWork{ std::move(*work), _sl };
+					co_await *work;
 				std::exception_ptr conflict;//a hist_group_nodes create's 409, for the row that holds the node to explain:  no co_await in a handler.
 				try{
 					y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
@@ -293,7 +293,7 @@ namespace Jde::Opc::Gateway{
 					throw Exception{ _sl, {EHttpStatus::Conflict}, "'{}' is already in group '{}' ({}) on this connection:  a node belongs to one group per server.{}", text, holderGroups.front().Name, holder.Group, holderGroups.front().Deleted ? "  That group is deleted:  restore it, or purge it to free its nodes." : "" };
 				}
 				if( auto work = after(_query, y, UserPK(), purgedGuid, _sl); work )
-					co_await HistWork{ std::move(*work), _sl };
+					co_await *work;
 				if( auto row = spelled.size() && y.is_array() && y.get_array().size() ? y.get_array()[0].if_object() : nullptr; row ){
 					for( let& [key,value] : spelled )
 						(*row)[key] = value;

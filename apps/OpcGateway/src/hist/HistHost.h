@@ -1,21 +1,9 @@
 #pragma once
-#include <absl/functional/any_invocable.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/access/usings.h>
 #include "HistGroupHost.h"
 
 namespace Jde::Opc::Gateway{
-	//The live side of a table edit, as HistGroupMAwait awaits it:  resumed once that side is done, or with its failure, which
-	//the mutation then reports.
-	struct HistWork final : AnyVoidAwait{
-		using Work = absl::AnyInvocable<VoidTask( HistWork& )>;
-		HistWork( Work work, SRCE )ι:AnyVoidAwait{ sl }, _work{ std::move(work) }{}
-		α Done()ι->void{ Resume(); }
-	protected:
-		α Suspend()ι->void override{ std::move(_work)( *this ); }
-	private:
-		Work _work;
-	};
 	//A connection's slug, deleted or not:  what the collector's client is keyed by.  NotFound for a connection that doesn't exist.
 	struct SlugAwait final : AnyAwait<string>{
 		SlugAwait( ServerCnnctnPK connection, SRCE )ι:AnyAwait<string>{ sl }, _connection{ connection }{}
@@ -75,20 +63,21 @@ namespace Jde::Opc::Gateway{
 		//failed otherwise Bad_InternalError.  A group with no template has no members to answer.  Throws for a group that doesn't exist.
 		α Resolve( HistGroupPK group, UserPK by, SRCE )ι->HistResolveAwait{ return { group, by, sl }; }
 
-		//HistGroupMAwait's:  the live side of each table edit, after the row is written, or before it goes.
-		α GroupCreated( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask;
-		α GroupEdited( DB::Key key, HistWork& await )ι->VoidTask;//its threshold columns:  every member's re-resolved.
-		α GroupDeleted( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//every member leaves, by the caller.
-		α GroupRestored( DB::Key key, UserPK by, HistWork& await )ι->VoidTask;//its rows join again, and the members its template gained meanwhile resolve.
-		α GroupPurging( HistGroupPK id, UserPK by, string& guid, HistWork& await )ι->VoidTask;//as deleted, then its hist_group_nodes rows go;  guid:  the row's, for GroupPurged.
-		α GroupPurged( string guid, HistWork& await )ι->VoidTask;//its access row and the grants on it, best effort.
-		α NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask;
-		α NodeEdited( HistGroupNodePK id, HistWork& await )ι->VoidTask;
-		α NodePurging( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask;
-		α TemplateNodeCreated( HistTemplateNodePK id, UserPK by, HistWork& await )ι->VoidTask;//resolved in each of the template's groups.
-		α TemplateNodeEdited( HistTemplateNodePK id, HistWork& await )ι->VoidTask;//its thresholds reach each group node made from it.
-		α TemplateNodePurging( HistTemplateNodePK id, UserPK by, HistWork& await )ι->VoidTask;//each group node made from it is purged first.
-		α TemplatePurging( HistTemplatePK id, UserPK by, HistWork& await )ι->VoidTask;//refused while a group uses it; else its members are purged first.
+		//HistGroupMAwait's:  the live side of each table edit, after the row is written, or before it goes - lazy, so the mutation
+		//picks one first and awaits it in its turn, the failure its own.
+		α GroupCreated( HistGroupPK id, UserPK by )ι->AnyVoidTask;
+		α GroupEdited( DB::Key key )ι->AnyVoidTask;//its threshold columns:  every member's re-resolved.
+		α GroupDeleted( DB::Key key, UserPK by )ι->AnyVoidTask;//every member leaves, by the caller.
+		α GroupRestored( DB::Key key, UserPK by )ι->AnyVoidTask;//its rows join again, and the members its template gained meanwhile resolve.
+		α GroupPurging( HistGroupPK id, UserPK by, string& guid )ι->AnyVoidTask;//as deleted, then its hist_group_nodes rows go;  guid:  the row's, for GroupPurged.
+		α GroupPurged( string guid )ι->AnyVoidTask;//its access row and the grants on it, best effort.
+		α NodeCreated( HistGroupNodePK id, UserPK by )ι->AnyVoidTask;
+		α NodeEdited( HistGroupNodePK id )ι->AnyVoidTask;
+		α NodePurging( HistGroupNodePK id, UserPK by )ι->AnyVoidTask;
+		α TemplateNodeCreated( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask;//resolved in each of the template's groups.
+		α TemplateNodeEdited( HistTemplateNodePK id )ι->AnyVoidTask;//its thresholds reach each group node made from it.
+		α TemplateNodePurging( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask;//each group node made from it is purged first.
+		α TemplatePurging( HistTemplatePK id, UserPK by, SRCE )ι->AnyVoidTask;//refused while a group uses it; else its members are purged first.
 	private:
 		friend struct HistResolveAwait;
 		α Resolving( HistResolveAwait& await )ι->VoidTask;

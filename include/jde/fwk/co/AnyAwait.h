@@ -149,5 +149,54 @@ namespace Jde{
 			a.ResumeExp( Exception{"Unknown exception from wrapped awaitable.", {ELogLevel::Critical}} );
 		}
 	}
+	//A coroutine any coroutine can co_await, which runs only once awaited:  co_await starts its body (symmetric transfer) and the
+	//body's end resumes the awaiter, rethrowing what escaped it as AnyVoidAwait does.  For work picked now and awaited later - a
+	//VoidTask starts at once, detached, and can answer only through a reference to its awaiter.  Its body co_awaits this family
+	//alone (Any() for the rest).  Move-only:  it owns the frame, destroyed with it, awaited or not.
+	struct AnyVoidTask final{
+		struct promise_type;
+		struct FinalAwait final{
+			α await_ready()noexcept->bool{ return false; }
+			α await_suspend( coroutine_handle<promise_type> h )noexcept->coroutine_handle<>;
+			α await_resume()noexcept->void{}
+		};
+		struct promise_type final{
+			α get_return_object()ι->AnyVoidTask{ return AnyVoidTask{ coroutine_handle<promise_type>::from_promise(*this) }; }
+			α initial_suspend()ι->std::suspend_always{ return {}; }
+			α final_suspend()noexcept->FinalAwait{ return {}; }
+			α return_void()ι->void{}
+			α unhandled_exception()ι->void;
+			coroutine_handle<> Awaiter;
+			up<Exception> Error;
+		};
+		AnyVoidTask( AnyVoidTask&& x )ι:_h{ std::exchange(x._h, {}) }{}
+		α operator=( AnyVoidTask&& x )ι->AnyVoidTask&{ if( this!=&x ){ destroy(); _h = std::exchange( x._h, {} ); } return *this; }
+		~AnyVoidTask(){ destroy(); }
+		α await_ready()Ι->bool{ return false; }
+		α await_suspend( coroutine_handle<> awaiter )ι->coroutine_handle<>{ ASSERT( _h && !_h.done() ); _h.promise().Awaiter = awaiter; return _h; }
+		α await_resume()ε->void{
+			if( auto e = move(_h.promise().Error); e )
+				e->Throw();
+		}
+	private:
+		explicit AnyVoidTask( coroutine_handle<promise_type> h )ι:_h{ h }{}
+		α destroy()ι->void{ if( _h ) _h.destroy(); }
+		coroutine_handle<promise_type> _h;
+	};
+	Ξ AnyVoidTask::FinalAwait::await_suspend( coroutine_handle<promise_type> h )noexcept->coroutine_handle<>{ return h.promise().Awaiter; }
+	Ξ AnyVoidTask::promise_type::unhandled_exception()ι->void{
+		try{
+			throw;
+		}
+		catch( Exception& e ){
+			Error = e.Move();
+		}
+		catch( std::runtime_error& e ){
+			Error = mu<Exception>( move(e) );
+		}
+		catch( ... ){
+			Error = Exception{ "Unknown exception from an AnyVoidTask.", {ELogLevel::Critical} }.Move();
+		}
+	}
 }
 #endif
