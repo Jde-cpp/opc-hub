@@ -292,7 +292,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let status = AddNode( group, Status1 );
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
-		let declared = [&]( uint32 index )->const UA_DataType*{
+		let declared = [&]( uint32 index )->const UA_DataType* {
 			for( let& r : host->Group()->Buffer() ){
 				if( let added = std::get_if<Opc::Hist::NodeAdded>(&r); added && added->Index==index )
 					return added->DataType;
@@ -311,7 +311,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//*Record format*).
 	TEST_F( HistCollectorTests, AnAbstractDataTypeDeclaresNone ){
 		constexpr UA_UInt32 Any{ 9024 }, Count{ 9026 };//added here, of BaseDataType and Number, each holding an Int32.
-		for( let [id, dataType, name] : {std::tuple{Any, UA_NS0ID_BASEDATATYPE, "Any"}, std::tuple{Count, UA_NS0ID_NUMBER, "Count"}} ){
+		for( let& [id, dataType, name] : {std::tuple{Any, UA_NS0ID_BASEDATATYPE, "Any"}, std::tuple{Count, UA_NS0ID_NUMBER, "Count"}} ){
 			auto attributes = UA_VariableAttributes_default;
 			UA_Int32 zero{};
 			UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
