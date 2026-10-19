@@ -6,7 +6,7 @@ namespace Jde::App{ struct IApp; }
 namespace Jde::QL{ struct MutationQL; struct RequestQL; }
 namespace Jde::Web::Server{
 	//session(id:…)/sessions{…} and purgeSession over this process's Sessions map.  No QL hook:  each application-server role routes
-	//them from its own CustomQuery/CustomMutation (AppQLAwait, AppServerQL, HubQL), so a binary hosting two roles - the hub, the
+	//them from its own CustomQuery/CustomMutation (App::Server's, which AppServerQL and HubQL call), so a binary hosting two roles - the hub, the
 	//suites that embed an AppServer - answers once, with the authorizer of the role whose QL was asked.  The gate is the app schema's
 	//`sessions` resource (app-meta.jsonnet), by (schema, slug) - the hub also holds the gateway's `sessions`:  Read lists, Administer
 	//purges another's (Purge).  An instance - an OpcServer, a stand-alone gateway - answers only the AppServer's socket (Forwarded).

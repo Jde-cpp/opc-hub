@@ -16,9 +16,6 @@
 namespace Jde::App::Server::Tests{
 
 	struct InstanceTagLevelTests : ::testing::Test{
-		Ω RunQL( string query, jobject vars={} )->jvalue{
-			return BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(query), move(vars), Jde::UserPK{Jde::UserPK::System}, Server::QLPtr()} );
-		}
 		Ω TagRows( ProgInstPK instanceId )->vector<DB::Row>{
 			let table = Server::AppSchema()->GetView( "instance_tag_levels" ).DBName;
 			return Server::AppSchema()->DS()->Select( {Ƒ("select type, tag, level_id from {} where instance_id=?", table), {DB::Value{instanceId}}} );
@@ -32,15 +29,8 @@ namespace Jde::App::Server::Tests{
 		Ω QueryRunning( str instanceName, function<void(RawClientSession&, RequestId)> end )->jvalue{
 			auto client = Connect();
 			let instanceId = RegisterInstance( *client, "Tests.TagLevels", instanceName, "taglevel-host", 0 ).Instance;
-			jvalue y; string failure;
 			let start = steady_clock::now();
-			std::thread query{ [&]{ try{ y = RunQL( Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId) ); }catch( const std::exception& e ){ failure = e.what(); } } };//RunQL blocks on what `end` does.
-			let asked = client->WaitFor( [](const FromServerMessage& m){ return m.value_case()==FromServerMessage::kClientQuery && m.client_query().query().contains("logSetting"); } );
-			if( asked )
-				end( *client, asked->request_id() );
-			query.join();//unconditional - the query times out on its own when nothing ended it.
-			EXPECT_TRUE( asked ) << "the instance was never asked";
-			EXPECT_TRUE( failure.empty() ) << failure;
+			let y = AskInstance( *client, Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId), "logSetting", [&](let& asked){ end(*client, asked.request_id()); } );
 			EXPECT_TRUE( steady_clock::now()-start<5s ) << "ended by the instance, not by the 10s deadline";
 			BlockVoidAwait( client->Close(true, SRCE_CUR) );
 			return y;
@@ -211,11 +201,7 @@ namespace Jde::App::Server::Tests{
 	//exception, or drops its socket with the query still pending, fails it at once - `running` is null well inside the deadline.
 	TEST_F( InstanceTagLevelTests, RunningIsNullWhenTheInstanceAnswersWithAnException ){
 		let y = QueryRunning( "throwsRunning", []( RawClientSession& client, RequestId requestId ){
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			m.mutable_exception()->set_what( "no levels here" );
-			client.Write( move(t) );
+			Send( client, requestId, [](auto& m){ m.mutable_exception()->set_what( "no levels here" ); } );
 		});
 		ASSERT_TRUE( y.is_object() && y.as_object().contains("running") );
 		EXPECT_TRUE( y.as_object().at("running").is_null() );

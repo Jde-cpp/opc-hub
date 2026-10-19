@@ -22,12 +22,14 @@ namespace Jde::App::Server{
 	α AppSchema()ι->sp<DB::AppSchema>;
 }
 namespace Jde::App{
+	//The pks AddConnection mints for one registration - one value, so a reader takes all three from the same publish.
+	struct ConnectionPks{ ProgramPK Program{}; ProgInstPK Instance{}; ConnectionPK Connection{}; };
 	//Inserts this process's/an instance's connection row and re-loads the `hosts` enum the row may have grown.  The re-load
 	//is synchronous (QL::LoadEnum) - fine from startup and the tests, which are off the executor pool.  reloadHosts=false
 	//for the request path, which awaits ReloadHosts instead:  a BlockAwait on an executor thread over a query that needs
 	//that pool is the wedge of emulator-review W1 / db-review3 #1.
 	//resourceSchema:  the instance's own access schema, kept on the instance row as given - see RegistrationSchema, InstanceLogSchema.
-	α AddConnection( str applicationName, str instanceName, str hostName, uint pid, str resourceSchema={}, bool reloadHosts=true )ε->tuple<ProgramPK, ProgInstPK, ConnectionPK>;
+	α AddConnection( str applicationName, str instanceName, str hostName, uint pid, str resourceSchema={}, bool reloadHosts=true )ε->ConnectionPks;
 	//The schema a socket registration leaves on its (program, name) instance:  `claimed` (its auth_resource) when `registrant`
 	//administers both it and the schema the instance already has - TestSchemaAdmin on each, so one with no active root passes -
 	//else the one it has.  Otherwise any registrant decides whose `logs` governs another process's lines and tag levels.

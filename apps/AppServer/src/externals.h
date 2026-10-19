@@ -1,4 +1,4 @@
-
+#pragma once
 DISABLE_WARNINGS
 #include <filesystem>
 #include <boost/beast.hpp>

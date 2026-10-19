@@ -21,46 +21,29 @@ namespace Jde::App::Server::Tests{
 		}
 		//sends kSessionId 0 and expects its exception reply - proves the socket still round-trips after a hostile frame.
 		α AssertAlive()->void{
-			let requestId = _session->NextRequestId();
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			m.set_session_id( 0 );
-			_session->Write( move(t) );
+			let requestId = Send( *_session, [](auto& m){ m.set_session_id( 0 ); } );
 			auto reply = _session->WaitForException( requestId );
 			ASSERT_TRUE( reply ) << "session no longer answers requests";
 			EXPECT_TRUE( reply->exception().what().contains("SessionId not set") ) << reply->exception().what();
 		}
-		Ω PollLog( function<bool(const Logging::Entry&)> pred, std::chrono::seconds timeout=std::chrono::seconds{5} )->vector<Logging::Entry>{
-			vector<Logging::Entry> y;
-			for( let expiration = steady_clock::now()+timeout; y.empty() && steady_clock::now()<expiration; std::this_thread::sleep_for(std::chrono::milliseconds{50}) )
-				y = Logging::Find( pred );
-			return y;
-		}
 		Ω ArgumentContains( const Logging::Entry& m, sv text )->bool{
 			return std::ranges::any_of( m.Arguments, [&](let& a){ return a.contains(text); } );
 		}
+		Ω Logged( sv text )->bool{ return WaitUntil( [=]{ return !Logging::Find([=](let& m){ return ArgumentContains(m, text); }).empty(); } ); }
 		//wraps inner in `levels` kExecuteAnonymous envelopes, all carrying requestId.
 		Ω Nest( FromClientTrans inner, uint levels, RequestId requestId )->FromClientTrans{
-			for( uint i=0; i<levels; ++i ){
-				FromClientTrans outer;
-				auto& m = *outer.add_messages();
-				m.set_request_id( requestId );
-				m.set_execute_anonymous( Protobuf::ToString(inner) );
-				inner = move( outer );
-			}
+			for( uint i=0; i<levels; ++i )
+				inner = OneMessage( requestId, [&](auto& m){ m.set_execute_anonymous( Protobuf::ToString(inner) ); } );
 			return inner;
 		}
 		//a kForwardExecution addressed at a registered instance; the payload is never parsed by the target here.
 		Ω Forward( const RegisteredInstance& target, RequestId requestId )->FromClientTrans{
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			auto& f = *m.mutable_forward_execution();
-			f.set_app_pk( target.Program );
-			f.set_app_instance_pk( target.Instance );
-			*f.mutable_execution_transmission() = string{"payload"};
-			return t;
+			return OneMessage( requestId, [&](auto& m){
+				auto& f = *m.mutable_forward_execution();
+				f.set_app_pk( target.Program );
+				f.set_app_instance_pk( target.Instance );
+				*f.mutable_execution_transmission() = string{"payload"};
+			});
 		}
 		sp<RawClientSession> _session;
 	};
@@ -69,11 +52,7 @@ namespace Jde::App::Server::Tests{
 	//the whole chain was processed.
 	TEST_F( ProcessTransmissionTests, ExecuteDepthAtCap ){
 		let requestId = _session->NextRequestId();
-		FromClientTrans inner;
-		auto& m = *inner.add_messages();
-		m.set_request_id( requestId );
-		m.set_session_id( 0 );
-		_session->Write( Nest(move(inner), 4, requestId) );
+		_session->Write( Nest(OneMessage(requestId, [](auto& m){ m.set_session_id( 0 ); }), 4, requestId) );
 		auto reply = _session->WaitForException( requestId );
 		ASSERT_TRUE( reply );
 		EXPECT_TRUE( reply->exception().what().contains("SessionId not set") ) << reply->exception().what();
@@ -83,11 +62,7 @@ namespace Jde::App::Server::Tests{
 	//the stack (each level is a fresh ParseFromString, so protobuf's own recursion limit never sees it).
 	TEST_F( ProcessTransmissionTests, ExecuteDepthOverCap ){
 		let requestId = _session->NextRequestId();
-		FromClientTrans inner;
-		auto& m = *inner.add_messages();
-		m.set_request_id( requestId );
-		m.set_session_id( 0 );
-		_session->Write( Nest(move(inner), 5, requestId) );
+		_session->Write( Nest(OneMessage(requestId, [](auto& m){ m.set_session_id( 0 ); }), 5, requestId) );
 		auto reply = _session->WaitForException( requestId );
 		ASSERT_TRUE( reply );
 		EXPECT_TRUE( reply->exception().what().contains("nesting depth") ) << reply->exception().what();
@@ -95,25 +70,17 @@ namespace Jde::App::Server::Tests{
 	}
 
 	TEST_F( ProcessTransmissionTests, MalformedExecutePayload ){
-		let requestId = _session->NextRequestId();
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		m.set_request_id( requestId );
-		m.set_execute_anonymous( "ABCDEFG" );//not a Transmission - Deserialize must throw, not crash.
-		_session->Write( move(t) );
+		let requestId = Send( *_session, [](auto& m){ m.set_execute_anonymous( "ABCDEFG" ); } );//not a Transmission - Deserialize must throw, not crash.
 		ASSERT_TRUE( _session->WaitForException(requestId) );
 		AssertAlive();
 	}
 
 	TEST_F( ProcessTransmissionTests, BadQueryVariables ){
-		let requestId = _session->NextRequestId();
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		m.set_request_id( requestId );
-		auto& query = *m.mutable_query();
-		query.set_text( "connections{ id }" );
-		query.set_variables( "not json" );
-		_session->Write( move(t) );
+		let requestId = Send( *_session, [](auto& m){
+			auto& query = *m.mutable_query();
+			query.set_text( "connections{ id }" );
+			query.set_variables( "not json" );
+		});
 		ASSERT_TRUE( _session->WaitForException(requestId) );
 		AssertAlive();
 	}
@@ -121,18 +88,14 @@ namespace Jde::App::Server::Tests{
 	TEST_F( ProcessTransmissionTests, EmptyTransmission ){
 		Logging::ClearMemory();
 		_session->Write( FromClientTrans{} );
-		let logs = PollLog( [](let& m){ return ArgumentContains(m, "No messages in transmission."); } );
-		EXPECT_FALSE( logs.empty() );
+		EXPECT_TRUE( Logged("No messages in transmission.") );
 		AssertAlive();
 	}
 
 	TEST_F( ProcessTransmissionTests, UnknownMessageIgnored ){
 		Logging::ClearMemory();
-		FromClientTrans t;
-		t.add_messages()->set_request_id( _session->NextRequestId() );//no value set - VALUE_NOT_SET reaches the default branch.
-		_session->Write( move(t) );
-		let logs = PollLog( [](let& m){ return ArgumentContains(m, "Unknown message type"); } );
-		EXPECT_FALSE( logs.empty() );
+		Send( *_session, [](auto&){} );//no value set - VALUE_NOT_SET reaches the default branch.
+		EXPECT_TRUE( Logged("Unknown message type") );
 		AssertAlive();
 	}
 
@@ -140,24 +103,15 @@ namespace Jde::App::Server::Tests{
 	//dropped on the floor.
 	TEST_F( ProcessTransmissionTests, UnmatchedExceptionLogged ){
 		Logging::ClearMemory();
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		m.set_request_id( 55 );
-		m.mutable_exception()->set_what( "boom" );
-		_session->Write( move(t) );
-		let logs = PollLog( [](let& m){ return ArgumentContains(m, "Exception not handled"); } );
-		EXPECT_FALSE( logs.empty() );
+		Send( *_session, 55, [](auto& m){ m.mutable_exception()->set_what( "boom" ); } );
+		EXPECT_TRUE( Logged("Exception not handled") );
 		AssertAlive();
 	}
 
 	//request_id 0 is fire-and-forget: logged at Debug, resolved against nothing.
 	TEST_F( ProcessTransmissionTests, ExceptionWithoutRequestIdIgnored ){
 		Logging::ClearMemory();
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		m.set_request_id( 0 );
-		m.mutable_exception()->set_what( "boom" );
-		_session->Write( move(t) );
+		Send( *_session, 0, [](auto& m){ m.mutable_exception()->set_what( "boom" ); } );
 		AssertAlive();
 		let logs = Logging::Find( [](let& m){ return ArgumentContains(m, "Exception not handled"); } );
 		EXPECT_TRUE( logs.empty() );
@@ -166,12 +120,7 @@ namespace Jde::App::Server::Tests{
 	//a 32-bit session id is brute-forceable; _maxFailedAdoptions==5 consecutive failures close an unauthenticated socket.
 	TEST_F( ProcessTransmissionTests, FailedAdoptionsCloseSocket ){
 		for( uint i=0; i<5; ++i ){
-			let requestId = _session->NextRequestId();
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			m.set_session_id( 0xBAD5E550+i );
-			_session->Write( move(t) );
+			let requestId = Send( *_session, [i](auto& m){ m.set_session_id( 0xBAD5E550+i ); } );
 			ASSERT_TRUE( _session->WaitForException(requestId) ) << "adoption " << i;
 		}
 		EXPECT_TRUE( _session->WaitForClose() ) << "5th failed adoption must close the socket";
@@ -185,12 +134,7 @@ namespace Jde::App::Server::Tests{
 	TEST_F( ProcessTransmissionTests, AuthenticatedSocketSurvivesFailedAdoptions ){
 		RegisterInstance( *_session, "Tests.Adoption", "survives", "adoption-host", 0 );
 		for( uint i=0; i<6; ++i ){
-			let requestId = _session->NextRequestId();
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			m.set_session_id( 0xBAD5E550+i );
-			_session->Write( move(t) );
+			let requestId = Send( *_session, [i](auto& m){ m.set_session_id( 0xBAD5E550+i ); } );
 			ASSERT_TRUE( _session->WaitForException(requestId) ) << "adoption " << i;
 		}
 		EXPECT_EQ( _session->CloseCount(), 0u );
@@ -202,23 +146,15 @@ namespace Jde::App::Server::Tests{
 		let none = RegisterInstance( *_session, "Tests.AuthResource", "plain", "auth-host", 0, 1234 );
 		EXPECT_FALSE( none.AuthResult ) << "an instance that asked to authorize nothing must not be registered";
 	}
-	Ω systemQL( string query, jobject vars={} )->jvalue{
-		return BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(query), move(vars), Jde::UserPK{Jde::UserPK::System}, Server::QLPtr()} );
-	}
-	Ω probeUser( sv slug )->Jde::UserPK{
-		auto existing = systemQL( Ƒ(R"(user( slug:"{0}", deleted:null ){{id}})", slug) );
-		let found = existing.is_object() && existing.get_object().contains( "id" );
-		return Jde::UserPK{ QL::AsId<Jde::UserPK::Type>( found ? existing : systemQL(Ƒ(R"(mutation createUser( slug:"{0}", name:"{0}" ){{id}})", slug)) ) };
-	}
 	//The positive half:  the schema's root resource is active and the registrant administers it.  The rows are made on the
 	//server's own QL, so the registration also proves the AppServer's cache takes another schema's events (appserver-review3 #13:
 	//its subscriptions were filtered to access/app, and neither the resource nor the acl would have reached it).
 	TEST_F( ProcessTransmissionTests, ASchemaAdminIsDelegated ){
 		constexpr sv schema{ "opc.probe" };
-		let admin = probeUser( "probe-admin" ), nobody = probeUser( "probe-nobody" );
-		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
-			systemQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"probe nodes", slug:"nodeIds", allowed:255 ))", schema) );
-		systemQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
+		let admin = User( "probe-admin" ), nobody = User( "probe-nobody" );
+		if( RunQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
+			RunQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"probe nodes", slug:"nodeIds", allowed:255 ))", schema) );
+		RunQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
 
 		let registered = RegisterInstance( *_session, "Tests.AuthResource", "authorizer", "auth-host", 0, 1234, string{schema}, admin );
 		EXPECT_TRUE( registered.AuthResult ) << "the registrant administers the schema's root resource";
@@ -228,38 +164,23 @@ namespace Jde::App::Server::Tests{
 		BlockVoidAwait( other->Close(true, SRCE_CUR) );
 	}
 
-	Ω probeRole( sv slug )->Access::RolePK{//find-or-create: roles.slug is uniquely indexed, so a persisted db would trip createRole on the second run.
-		auto existing = systemQL( Ƒ(R"(role( slug:"{0}", deleted:null ){{id}})", slug) );
-		let found = existing.is_object() && existing.get_object().contains( "id" );
-		return Access::RolePK{ QL::AsId<Access::RolePK::Type>( found ? existing : systemQL(Ƒ(R"(mutation createRole( slug:"{0}", name:"{0}" ){{id}})", slug)) ) };
-	}
 	//The delegated admin check end to end:  granting a role rights on ANOTHER schema's resource asks that schema's registered
 	//instance, over the socket, whether the executer may grant it (appserver-review3 #13).  The AppServer parses the `adminCheck`
 	//query HERE before writing it, so the name must be one of Configure's system tables - it owns no view, and without that
 	//registration the mutation died at its own parse with "Could not find view 'admin_checks'", never reaching the instance.
 	TEST_F( ProcessTransmissionTests, ADelegatedAdminCheckReachesTheInstance ){
 		constexpr sv schema{ "opc.delegate" };
-		let admin = probeUser( "delegate-admin" );
-		if( systemQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
-			systemQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"delegate nodes", slug:"nodeIds", allowed:255 ))", schema) );
-		systemQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
+		let admin = User( "delegate-admin" );
+		if( RunQL(Ƒ(R"(resources( schemaName:"{}", slug:"nodeIds", deleted:null ){{id}})", schema)).as_array().empty() )
+			RunQL( Ƒ(R"(mutation createResource( schemaName:"{}", name:"delegate nodes", slug:"nodeIds", allowed:255 ))", schema) );
+		RunQL( Ƒ(R"(mutation createAcl( identity:{{id:{}}}, permissionRight:{{ allowed:{}, denied:0, resource:{{schemaName:"{}", slug:"nodeIds"}} }} ))", admin.Value, underlying(Access::ERights::Administer), schema) );
 		let registered = RegisterInstance( *_session, "Tests.Delegate", "delegate", "auth-host", 0, 1234, string{schema}, admin );
 		ASSERT_TRUE( registered.AuthResult ) << "the registrant administers the schema's root resource";
 
-		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"nodeIds" }} }} ))", probeRole("delegate-role").Value, underlying(Access::ERights::Read), schema );
-		string failure;
-		std::thread mutation{ [&]{ try{ systemQL( grant ); }catch( const std::exception& e ){ failure = e.what(); } } };//systemQL blocks on the reply this thread has to send.
-		auto query = _session->WaitFor( [](let& m){ return m.value_case()==FromServerMessage::kClientQuery && m.client_query().query().contains("adminCheck"); } );
-		if( query ){
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( query->request_id() );
-			m.set_query_result( R"({"adminCheck":{"isAdmin":true}})" );
-			_session->Write( move(t) );
-		}
-		mutation.join();//unconditional - the mutation times out on its own when nothing answered.
-		ASSERT_TRUE( query ) << "the check never reached the instance:  " << failure;
-		EXPECT_TRUE( failure.empty() ) << failure;
+		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"nodeIds" }} }} ))", FindOrCreate("role", "delegate-role"), underlying(Access::ERights::Read), schema );
+		AskInstance( *_session, grant, "adminCheck", [this](let& asked){
+			Send( *_session, asked.request_id(), [](auto& m){ m.set_query_result( R"({"adminCheck":{"isAdmin":true}})" ); } );
+		});
 	}
 
 	//#16:  kSessionId recorded the session *id* and nothing else, so a socket that had adopted a session went on acting as
@@ -277,12 +198,7 @@ namespace Jde::App::Server::Tests{
 			EXPECT_TRUE( reply->exception().what().contains("requires an authenticated session") ) << reply->exception().what();
 		}
 		{//adopt a session minted for `user`; the reply is a bare Complete.
-			let requestId = _session->NextRequestId();
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( requestId );
-			m.set_session_id( MintSession(user) );
-			_session->Write( move(t) );
+			let requestId = Send( *_session, [=](auto& m){ m.set_session_id( MintSession(user) ); } );
 			auto reply = _session->WaitFor( [requestId](let& m){ return m.request_id()==requestId; } );
 			ASSERT_TRUE( reply );
 			ASSERT_NE( reply->value_case(), FromServerMessage::kException ) << reply->exception().what();

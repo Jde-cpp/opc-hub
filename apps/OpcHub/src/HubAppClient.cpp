@@ -10,6 +10,6 @@ namespace Jde::Opc::Hub{
 		return App::Server::AppClient()->PublicKey();
 	}
 	α HubAppClient::AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SL sl )ε->up<TAwait<Web::FromServer::SessionInfo>>{
-		return mu<App::Server::AddSessionAwait>( domain, loginName, providerPK, userEndPoint, isSocket, sl );
+		return mu<App::Server::AddSessionAwait>( domain, loginName, providerPK, userEndPoint, isSocket, Jde::UserPK{}, sl );
 	}
 }

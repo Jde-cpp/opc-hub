@@ -1,4 +1,5 @@
 #include "ConnectionQLAwait.h"
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/ql/QLAwait.h>
 #include "../LocalClient.h"
 #include "../WebServer.h"
@@ -11,22 +12,14 @@ namespace Jde::App::Server{
 		return q.JsonName.starts_with( "connection" ) && q.FindTable( "status" );
 	}
 
-	α ConnectionQLAwait::Execute()ι->TAwait<flat_map<ConnectionPK, jvalue>>::Task{
+	α ConnectionQLAwait::Execute()ι->TAwait<jvalue>::Task{
 		try{
 			flat_map<ConnectionPK, jvalue> conStatuses;
 			if( auto status = _query.ExtractTable("status"); status ){
-				conStatuses = co_await Server::QuerySessions( move(*status), _creds.UserPK(), _sl );
+				auto sessions = Server::QuerySessions( move(*status), _creds.UserPK(), _sl );//by reference:  its mutex makes it immovable.
+				conStatuses = co_await Any( sessions );
 				conStatuses.emplace( AppClient()->ConnectionPK(), IApp::Status() );
 			}
-
-			QueryDB( move(conStatuses) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α ConnectionQLAwait::QueryDB( flat_map<ConnectionPK, jvalue> conStatuses )ι->TAwait<jvalue>::Task{
-		try{
 			bool addedConId = _query.AddColumn( "id" );
 			_query.ReturnRaw = true;
 			auto connections = co_await QL::QLAwait{ move(_query), _creds, QLPtr(), _sl };

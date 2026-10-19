@@ -3,13 +3,12 @@
 #include <jde/ql/IQLSession.h>
 
 namespace Jde::App::Server{
-	struct ConnectionQLAwait final : TAwaitEx<jvalue, TAwait<flat_map<ConnectionPK, jvalue>>::Task>{
-		using base = TAwaitEx<jvalue, TAwait<flat_map<ConnectionPK, jvalue>>::Task>;
-		ConnectionQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι: base{sl}, _creds(creds),  _query(move(q)){}
+	struct ConnectionQLAwait final : TAwaitEx<jvalue, TAwait<jvalue>::Task>{
+		using base = TAwaitEx<jvalue, TAwait<jvalue>::Task>;
+		ConnectionQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι: base{sl}, _creds{move(creds)}, _query{move(q)}{}
 		Ω IsApplicable( QL::TableQL& q )ι->bool;
 	private:
-		α Execute()ι->TAwait<flat_map<ConnectionPK, jvalue>>::Task override;
-		α QueryDB( flat_map<ConnectionPK, jvalue> conStatuses )ι->TAwait<jvalue>::Task;
+		α Execute()ι->TAwait<jvalue>::Task override;
 		QL::Creds _creds;
 		QL::TableQL _query;
 	};

@@ -12,18 +12,6 @@
 //(InstanceSessionsAwait).
 namespace Jde::App::Server::Tests{
 	struct WebSessionTests : ::testing::Test{
-		Ω RunQL( string query, Jde::UserPK executer={Jde::UserPK::System} )->jvalue{
-			return BlockAwait<QL::QLAwait<jvalue>,jvalue>( QL::QLAwait<jvalue>{move(query), {}, executer, Server::QLPtr()} );
-		}
-		Ω Status( function<void()> f )->EHttpStatus{
-			try{
-				f();
-			}
-			catch( const Exception& e ){
-				return e.HttpStatus();
-			}
-			return EHttpStatus::None;
-		}
 		Ω Endpoints( const jvalue& sessions )->flat_set<string>{
 			flat_set<string> y;
 			for( let& s : sessions.as_array() )
@@ -70,7 +58,7 @@ namespace Jde::App::Server::Tests{
 	TEST_F( WebSessionTests, OwnSessionById ){
 		let session = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.2", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
-		let y = RunQL( Ƒ("session( id:\"{:x}\" ){{ endpoint }}", session->SessionId), Jde::UserPK{1} );
+		let y = RunQL( Ƒ("session( id:\"{:x}\" ){{ endpoint }}", session->SessionId), {}, Jde::UserPK{1} );
 		EXPECT_EQ( Json::AsString(y.as_object(), "endpoint"), "10.255.0.2" ) << serialize( y );
 	}
 
@@ -90,20 +78,10 @@ namespace Jde::App::Server::Tests{
 		auto client = Connect();
 		absl::Cleanup close{ [&]{ BlockVoidAwait( client->Close(true, SRCE_CUR) ); } };//an ASSERT below would leave the instance registered for later tests.
 		let instanceId = RegisterInstance( *client, "Tests.WebSessions", "forwarded", "websession-host", 0 ).Instance;
-		jvalue y; string failure;
-		std::thread query{ [&]{ try{ y = RunQL( Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId) ); }catch( const std::exception& e ){ failure = e.what(); } } };//RunQL blocks on the answer below.
-		let asked = client->WaitFor( [](const FromServerMessage& m){ return m.value_case()==FromServerMessage::kClientQuery && m.client_query().query().contains("sessions"); } );
-		if( asked ){
-			EXPECT_EQ( asked->client_query().query().find("instanceId"), string::npos ) << asked->client_query().query();
-			FromClientTrans t;
-			auto& m = *t.add_messages();
-			m.set_request_id( asked->request_id() );
-			m.set_query_result( serialize(jarray{ jobject{{"endpoint", "10.255.0.4"}} }) );
-			client->Write( move(t) );
-		}
-		query.join();//unconditional - the query times out on its own when nothing answered.
-		ASSERT_TRUE( asked ) << "the instance was never asked:  " << failure;
-		EXPECT_TRUE( failure.empty() ) << failure;
+		let y = AskInstance( *client, Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId), "sessions", [&](let& asked){
+			EXPECT_EQ( asked.client_query().query().find("instanceId"), string::npos ) << asked.client_query().query();
+			Send( *client, asked.request_id(), [](auto& m){ m.set_query_result( serialize(jarray{ jobject{{"endpoint", "10.255.0.4"}} }) ); } );
+		});
 		ASSERT_TRUE( y.is_array() ) << serialize( y );
 		EXPECT_TRUE( Endpoints(y).contains("10.255.0.4") ) << serialize( y );
 	}
@@ -124,15 +102,12 @@ namespace Jde::App::Server::Tests{
 		absl::Cleanup close{ [&]{ BlockVoidAwait( client->Close(true, SRCE_CUR) ); } };
 		const Jde::UserPK gateway{ 1 };
 		RegisterInstance( *client, "Tests.WebSessions", "minting", "websession-host", 0, 1234, "", gateway );//the socket adopts gateway's session
-		FromClientTrans t;
-		auto& m = *t.add_messages();
-		let requestId = client->NextRequestId();
-		m.set_request_id( requestId );
-		auto& add = *m.mutable_add_session();
-		add.set_login_name( "webSessionMinted" );
-		add.set_provider_pk( underlying(Access::EProviderType::Google) );
-		add.set_user_endpoint( "10.255.0.19" );
-		client->Write( move(t) );
+		let requestId = Send( *client, [](auto& m){
+			auto& add = *m.mutable_add_session();
+			add.set_login_name( "webSessionMinted" );
+			add.set_provider_pk( underlying(Access::EProviderType::Google) );
+			add.set_user_endpoint( "10.255.0.19" );
+		});
 		let reply = client->WaitFor( [requestId](const FromServerMessage& m){ return m.request_id()==requestId && m.value_case()==FromServerMessage::kSessionInfo; } );
 		ASSERT_TRUE( reply ) << "no SessionInfo for the AddSession";
 		let session = Web::Server::Sessions::Find( reply->session_info().session_id() );
@@ -161,13 +136,6 @@ namespace Jde::App::Server::Tests{
 	//was found and the suite's grants purged (364-sessions-resource review #9):  a persistent dev database keeps both.
 	struct WebSessionGateTests : WebSessionTests{
 		static constexpr sv OtherSchema{ "webSessionTests" };
-		Ω Id( const jvalue& v )->uint{ return Json::AsNumber<uint>( Json::AsObject(v), "id" ); }
-		Ω User( str slug )->Jde::UserPK{
-			auto user = RunQL( Ƒ("user( slug:\"{}\", deleted:null ){{ id }}", slug) );
-			if( user.is_null() || (user.is_object() && user.get_object().empty()) )
-				user = RunQL( Ƒ("createUser( slug:\"{0}\", name:\"{0}\" ){{ id }}", slug) );
-			return Jde::UserPK{ (Jde::UserPK::Type)Id(user) };
-		}
 		Ω Enforced( str schema )->bool{
 			let rows = Json::AsArray( RunQL(Ƒ("resources( schemaName:\"{}\", slug:\"sessions\", criteria:null ){{ deleted }}", schema)) );
 			return rows.size() && rows[0].as_object().at("deleted").is_null();
@@ -215,18 +183,18 @@ namespace Jde::App::Server::Tests{
 		let session = Web::Server::Sessions::Add( _stranger, "10.255.0.6", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		constexpr sv listing{ "sessions{ endpoint }" };
-		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _stranger); }), EHttpStatus::Forbidden ) << "a session of their own does not open the listing";
-		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}); }), EHttpStatus::Unauthorized );
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}, _stranger); }), EHttpStatus::Forbidden ) << "a session of their own does not open the listing";
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}, {}); }), EHttpStatus::Unauthorized );
 		jvalue y;
-		EXPECT_EQ( Status([&]{ y = RunQL(string{listing}, _reader); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ y = RunQL(string{listing}, {}, _reader); }), EHttpStatus::None );
 		ASSERT_TRUE( y.is_array() ) << serialize( y );
 		EXPECT_TRUE( Endpoints(y).contains("10.255.0.6") ) << serialize( y );
 
 		let instanceId = Server::AppClient()->InstancePK();
 		ASSERT_TRUE( instanceId );
 		let forwarded = Ƒ( "sessions( instanceId:{} ){{ endpoint }}", instanceId );//InstanceSessionsAwait's own gate, before the local leg runs as the system user.
-		EXPECT_EQ( Status([&]{ RunQL(forwarded, _stranger); }), EHttpStatus::Forbidden );
-		EXPECT_EQ( Status([&]{ RunQL(forwarded, _reader); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ RunQL(forwarded, {}, _stranger); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ RunQL(forwarded, {}, _reader); }), EHttpStatus::None );
 	}
 
 	TEST_F( WebSessionGateTests, OnlyTheirOwnSessionIsExempt ){
@@ -235,22 +203,22 @@ namespace Jde::App::Server::Tests{
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( own->SessionId ); Web::Server::Sessions::Remove( other->SessionId ); } };
 		let byId = []( SessionPK id ){ return Ƒ( "session( id:\"{:x}\" ){{ endpoint }}", id ); };
 		jvalue y;
-		EXPECT_EQ( Status([&]{ y = RunQL(byId(own->SessionId), _stranger); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ y = RunQL(byId(own->SessionId), {}, _stranger); }), EHttpStatus::None );
 		EXPECT_EQ( Json::AsString(y.as_object(), "endpoint"), "10.255.0.7" ) << serialize( y );
-		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), _stranger); }), EHttpStatus::Forbidden );
-		EXPECT_EQ( Status([&]{ RunQL(byId(0xdeadbeef), _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused alike";
-		EXPECT_EQ( Status([&]{ RunQL(byId(own->SessionId), {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
-		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), _reader); }), EHttpStatus::None ) << "another's takes the listing's Read";
+		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), {}, _stranger); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ RunQL(byId(0xdeadbeef), {}, _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused alike";
+		EXPECT_EQ( Status([&]{ RunQL(byId(own->SessionId), {}, {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
+		EXPECT_EQ( Status([&]{ RunQL(byId(other->SessionId), {}, _reader); }), EHttpStatus::None ) << "another's takes the listing's Read";
 	}
 
 	TEST_F( WebSessionGateTests, ThePurgeTakesAdminister ){
 		let session = Web::Server::Sessions::Add( _admin, "10.255.0.13", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		let purge = Ƒ( "purgeSession( id:\"{:x}\" )", session->SessionId );
-		EXPECT_EQ( Status([&]{ RunQL(purge, _stranger); }), EHttpStatus::Forbidden );
-		EXPECT_EQ( Status([&]{ RunQL(purge, _reader); }), EHttpStatus::Forbidden ) << "Read lists, it does not purge";
+		EXPECT_EQ( Status([&]{ RunQL(purge, {}, _stranger); }), EHttpStatus::Forbidden );
+		EXPECT_EQ( Status([&]{ RunQL(purge, {}, _reader); }), EHttpStatus::Forbidden ) << "Read lists, it does not purge";
 		EXPECT_TRUE( Web::Server::Sessions::Find(session->SessionId) );
-		EXPECT_EQ( Status([&]{ RunQL(purge, _admin); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ RunQL(purge, {}, _admin); }), EHttpStatus::None );
 		EXPECT_FALSE( Web::Server::Sessions::Find(session->SessionId) );
 	}
 
@@ -261,13 +229,13 @@ namespace Jde::App::Server::Tests{
 		let minted = Web::Server::Sessions::Add( _admin, "10.255.0.18", false, _stranger );//as AddSession records the gateway's account
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( own->SessionId ); Web::Server::Sessions::Remove( minted->SessionId ); } };
 		let purge = []( SessionPK id ){ return Ƒ( "purgeSession( id:\"{:x}\" )", id ); };
-		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), _reader); }), EHttpStatus::Forbidden ) << "neither theirs nor begun by them";
-		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
-		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), _stranger); }), EHttpStatus::None );
+		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), {}, _reader); }), EHttpStatus::Forbidden ) << "neither theirs nor begun by them";
+		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), {}, {}); }), EHttpStatus::Unauthorized ) << "the exemption is a signed-in caller's";
+		EXPECT_EQ( Status([&]{ RunQL(purge(own->SessionId), {}, _stranger); }), EHttpStatus::None );
 		EXPECT_FALSE( Web::Server::Sessions::Find(own->SessionId) );
-		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), _stranger); }), EHttpStatus::None ) << "the account that signed its user in";
+		EXPECT_EQ( Status([&]{ RunQL(purge(minted->SessionId), {}, _stranger); }), EHttpStatus::None ) << "the account that signed its user in";
 		EXPECT_FALSE( Web::Server::Sessions::Find(minted->SessionId) );
-		EXPECT_EQ( Status([&]{ RunQL(purge(0xdeadbeef), _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused as the listing refuses it";
+		EXPECT_EQ( Status([&]{ RunQL(purge(0xdeadbeef), {}, _stranger); }), EHttpStatus::Forbidden ) << "nobody's, refused as the listing refuses it";
 	}
 
 	//#364:  the hub holds the gateway's `sessions` beside the app schema's, and the gate that asked by slug alone answered with
@@ -279,11 +247,11 @@ namespace Jde::App::Server::Tests{
 		let session = Web::Server::Sessions::Add( _stranger, "10.255.0.15", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		constexpr sv listing{ "sessions{ endpoint }" };
-		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _reader); }), EHttpStatus::None ) << "the reader's grant is on app's, and app's answers";
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}, _reader); }), EHttpStatus::None ) << "the reader's grant is on app's, and app's answers";
 
 		let app = AppSchema()->Name;
 		Enforce( app, false );
 		absl::Cleanup enforce{ [&]{ Enforce( app, true ); } };
-		EXPECT_EQ( Status([&]{ RunQL(string{listing}, _stranger); }), EHttpStatus::None ) << "app's unenforced:  open, whatever the other schema enforces";
+		EXPECT_EQ( Status([&]{ RunQL(string{listing}, {}, _stranger); }), EHttpStatus::None ) << "app's unenforced:  open, whatever the other schema enforces";
 	}
 }

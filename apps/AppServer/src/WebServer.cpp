@@ -8,31 +8,40 @@
 #include "jde/fwk/usings.h"
 #include "ql/AppServerQL.h"
 #include "appStartup.h"
+#include "HttpRequestAwait.h"
 
 #define let const auto
-namespace Jde::App::Server{
-	α Schemas()ι->const vector<sp<DB::AppSchema>>&;
-}
 namespace Jde::App{
 	using QL::Filter;
-	concurrent_flat_map<uint32,sp<Server::ServerSocketSession>> _sessions; //Consider using main class+ql subscriptions
-
-	ProgramPK _appId;
-	ProgInstPK _instancePK;
+	concurrent_flat_map<Server::SocketId,sp<Server::ServerSocketSession>> _sessions;
 	sp<Server::RequestHandler> _requestHandler;
-	α Server::GetRequestHandler()ι->sp<RequestHandler>{ return _requestHandler; }
+	//_sessions is keyed by socket id:  a lookup by anything else is a scan.  Callers act on the result outside the map's bucket lock.
+	Ω findSession( auto&& pred )ι->sp<Server::ServerSocketSession>{
+		sp<Server::ServerSocketSession> y;
+		_sessions.cvisit_while( [&](let& kv){
+			if( pred(kv.second) )
+				y = kv.second;
+			return !y;
+		});
+		return y;
+	}
+	Ω sessions( auto&& pred )ι->vector<sp<Server::ServerSocketSession>>{
+		vector<sp<Server::ServerSocketSession>> y;
+		_sessions.cvisit_all( [&](let& kv){
+			if( pred(kv.second) )
+				y.push_back( kv.second );
+		});
+		return y;
+	}
 	α Server::Schemas()ι->const vector<sp<DB::AppSchema>>&{ return Server::QL().Schemas(); }
 
-	α Server::GetAppPK()ι->ProgramPK{ return _appId; }
-	α Server::SetAppPKs( std::tuple<ProgramPK, ProgInstPK, ConnectionPK> x )ι->void{
-		_appId=get<0>( x );
-		_instancePK=get<1>( x );
-		AppClient()->SetAppPKs( get<1>(x), get<2>(x) );
+	α Server::SetAppPKs( const ConnectionPks& pks )ι->void{
+		AppClient()->SetAppPKs( pks.Instance, pks.Connection );
 		//ProtoLog needs them for the same reason SubscribeLog is handed them at construction - to tell an entry a client
 		//forwarded to us from one of our own coming back.  It cannot take them at construction: Init() runs before the
 		//AddConnection round-trip that mints them.
 		if( auto log = Logging::FindLogger<App::ProtoLog>(); log )
-			log->SetAppPKs( get<0>(x), get<1>(x) );
+			log->SetAppPKs( pks.Program, pks.Instance );
 	}
 	α Server::StartWebServer( jobject&& settings )ε->void{
 		StartWebServer( ms<RequestHandler>(move(settings)) );
@@ -99,16 +108,16 @@ namespace Jde::App{
 	}
 	α Server::OnSessionDisconnect( sp<ServerSocketSession> session )ι->void{
 		_sessions.erase( session->Id() );
-		Authorizer()->RemoveAdminAuthorizer( std::dynamic_pointer_cast<Access::IAdminAcl>(session) );//else a restarted app's stale registration keeps answering admin checks on a dead stream.
+		Authorizer()->RemoveAdminAuthorizer( session );//else a restarted app's stale registration keeps answering admin checks on a dead stream.
 		let connectionPK = session->ConnectionPK();
 		ForwardExecutionAwait::OnCloseConnection( session->Id(), connectionPK );
 		EndConnection( connectionPK );
 	}
 
-	α Server::GetJwt( UserPK userPK, string name, string slug, string endpoint, SessionPK sessionId, TimePoint expires, string description )ε->Web::Jwt{
+	α Server::MintJwt( UserPK userPK, string name, string slug, string endpoint, SessionPK sessionId, TimePoint expires, string description )ε->Web::Jwt{
 		auto requestHandler = _requestHandler;
 		THROW_IF( !requestHandler, "No request Handler." );
-		return requestHandler->Jwt( userPK, move(name), move(slug), move(endpoint), sessionId, expires, move(description) );
+		return Web::Jwt{ AppClient()->PublicKey(), userPK, move(name), move(slug), sessionId, move(endpoint), expires, move(description), requestHandler->Settings().Crypto().PrivateKey };
 	}
 
 	α Server::StopWebServer( bool terminate, SL sl )ι->void{
@@ -130,84 +139,51 @@ namespace Jde::App{
 					y.push_back( instance );
 			}
 		}
-		_sessions.cvisit_all( [&](let& kv){
-			let& session = kv.second;
-			//A registration is only worth serving while the socket that made it is still up: /opcGateways hands its answer
-			//straight to the browser, which has no way to tell a live endpoint from one whose process is tearing down.
-			//OnSessionDisconnect normally erases first, but it runs on the session's strand - this closes the window.
-			if( !session->IsOpen() )
-				return;
-			if( let instance = session->Instance(); instance.application()==name )
-				y.push_back( instance );
-		} );
+		//A registration is only worth serving while the socket that made it is still up: /opcGateways hands its answer
+		//straight to the browser, which has no way to tell a live endpoint from one whose process is tearing down.
+		//OnSessionDisconnect normally erases first, but it runs on the session's strand - this closes the window.
+		for( let& session : sessions([](let& s){ return s->IsOpen(); }) ){
+			if( auto instance = session->Instance(); instance.application()==name )
+				y.push_back( move(instance) );
+		}
 		return y;
 	}
 
 	α Server::FindConnection( ConnectionPK connectionPK )ι->sp<ServerSocketSession>{
-		sp<ServerSocketSession> y;
-		if( connectionPK ){ //_sessions is keyed by socket Id, not ConnectionPK; 0=session not yet registered.
-			_sessions.cvisit_while( [&](let& kv){
-				if( kv.second->ConnectionPK()==connectionPK )
-					y = kv.second;
-				return !y;
-			});
-		}
-		return y;
+		if( !connectionPK )//0=session not yet registered.
+			return {};
+		return findSession( [=](let& s){ return s->ConnectionPK()==connectionPK; } );
 	}
 
 	α Server::FindInstance( ProgInstPK instancePK )ι->sp<ServerSocketSession>{
-		sp<ServerSocketSession> y;
-		if( instancePK ){ //as FindConnection above: _sessions is keyed by socket Id, not the instance pk, and 0 is what every not-yet-registered session reports.  Without this, instance 0 matched whichever socket was still connecting and pushRuntime handed it another instance's log levels (appserver-review3 #18).
-			_sessions.cvisit_while( [&](let& kv){
-				if( kv.second->InstancePK()==instancePK )
-					y = kv.second;
-				return !y;
-			});
-		}
-		return y;
+		if( !instancePK )//as FindConnection above:  0 is what every not-yet-registered session reports.  Without this, instance 0 matched whichever socket was still connecting and pushRuntime handed it another instance's log levels (appserver-review3 #18).
+			return {};
+		return findSession( [=](let& s){ return s->InstancePK()==instancePK; } );
 	}
 
 	α Server::QuerySessions( QL::TableQL ql, UserPK executer, SL sl )ι->QuerySessionsAwait{
-		vector<sp<ServerSocketSession>> sessions;
-		_sessions.visit_all( [&](auto&& kv){
-			if( kv.second->ConnectionPK() )//skip not-yet-registered sessions: no status to report and they share ConnectionPK 0.
-				sessions.push_back( kv.second );
-		});
-		return QuerySessionsAwait{ move(ql), executer, move(sessions), sl };
+		auto registered = sessions( [](let& s){ return s->ConnectionPK()!=0; } );//skip not-yet-registered sessions: no status to report and they share ConnectionPK 0.
+		return QuerySessionsAwait{ move(ql), executer, move(registered), sl };
 	}
-	//instancePK names an app instance (App.FromClient.proto app_instance_pk); nullopt = any instance of appPK.  Split out of
-	//Write so a caller that must register state keyed to the target can learn the connection *before* the request goes on
+	//instancePK names an app instance (App.FromClient.proto app_instance_pk); nullopt = any instance of appPK.  The session, not
+	//a write to it:  a caller that must register state keyed to the target learns the connection *before* the request goes on
 	//the wire - the reply can come back on another io thread the moment it does (finding #11).
 	α Server::FindApp( ProgramPK appPK, optional<ProgInstPK> instancePK )ε->sp<ServerSocketSession>{
-		sp<ServerSocketSession> y;
-		_sessions.cvisit_while( [&](let& kv){
-			let& session = kv.second;
-			let pks = session->Pks();//all three from one publish - matching on Program and then binding the forward to a separately-read Connection is #14's torn window.
-			if( appPK && pks.Program==appPK && pks.Connection && (!instancePK || pks.Instance==*instancePK) )//appPK guard: an unregistered session's ProgramPK is 0, so appPK:0 must not match it.  Connection guard: a forward is keyed by it and 0 is what every unregistered session shares, so a reply could never resolve one bound to it.
-				y = session;
-			return !y;
+		auto y = findSession( [=](let& s){
+			let pks = s->Pks();//all three from one publish - matching on Program and then binding the forward to a separately-read Connection is #14's torn window.
+			return appPK && pks.Program==appPK && pks.Connection && (!instancePK || pks.Instance==*instancePK);//appPK guard: an unregistered session's ProgramPK is 0, so appPK:0 must not match it.  Connection guard: a forward is keyed by it and 0 is what every unregistered session shares, so a reply could never resolve one bound to it.
 		});
 		THROW_IF( !y, "No session found for appPK:{}, instancePK:{}", appPK, instancePK ? *instancePK : 0 );
 		return y;
-	}
-	//Returns the connection actually delivered to, so a forward can bind its response to that one session (finding #5).
-	α Server::Write( ProgramPK appPK, optional<ProgInstPK> instancePK, Proto::FromServer::Transmission&& msg )ε->ConnectionPK{
-		auto session = FindApp( appPK, instancePK );//throws when nothing matches - outside the visit so the write does not run under the map's bucket lock.
-		let connectionPK = session->ConnectionPK();//a registration is published once and never cleared, so this is the non-zero pk FindApp matched.
-		session->Write( move(msg) );
-		return connectionPK;
 	}
 }
 namespace Jde::App::Server{
 	RequestHandler::RequestHandler( jobject&& settings )ι:
 		IRequestHandler{ move(settings), Server::AppClient() }
 	{}
-
-	α RequestHandler::Jwt( UserPK userPK, string&& name, string&& slug, string&& endpoint, SessionPK sessionId, TimePoint expires, string&& description )ε->Web::Jwt{
-		return Web::Jwt{ AppClient()->PublicKey(), userPK, move(name), move(slug), sessionId, move(endpoint), expires, move(description), Settings().Crypto().PrivateKey };
+	α RequestHandler::HandleRequest( HttpRequest&& req, SL sl )ι->up<IHttpRequestAwait>{
+		return mu<HttpRequestAwait>( move(req), sl );
 	}
-
-
 	α RequestHandler::WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession>{
 		auto session = ms<ServerSocketSession>( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
 		AddSocketSession( session );
