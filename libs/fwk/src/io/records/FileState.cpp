@@ -25,6 +25,12 @@ namespace Records{
 		Chain = chain;
 		std::ranges::move( runs, std::back_inserter(Runs) );
 	}
+	α FileState::Changed()Ι->bool{
+		if( !Generation && Refused.empty() )
+			return false;
+		let now = StampOf( Path );
+		return now && now!=Stamped;
+	}
 }
 	α Records::Verify( const FileState& file, bool rewrite, bool restart, SL sl )ε->Verified{
 		std::error_code ec;

@@ -129,18 +129,23 @@ namespace Jde::Opc::Hist{
 	//A day file's first open:  the record layer's scan and the map it builds, restore handed each record the scan keeps.  The
 	//flush feeds it a window at a time through the file awaitables (Wants, Feed, Next), outside the files lock; Open reads
 	//its windows now.  Nothing to read when the file isn't there.  Throws when it is there and can't be opened or read through.
+	//An archive's map is its head, which is all of it read unless through, as a restore must be:  damage past the head is
+	//then for its merge to find.
 	struct Opening final : noncopyable{
-		Opening( fs::path path, Ticks start, std::function<void( Proto::HistoryRecord& )> restore={}, SRCE )ε;
+		Opening( fs::path path, Ticks start, bool through, std::function<void( Proto::HistoryRecord& )> restore={}, SRCE )ε;
 		α Next()ε->ENext;//More:  Wants/Feed.  End:  Take.
 		α Wants()Ι->optional<Window>;
 		α Feed( string&& bytes )ι->void;
 		α File()Ι->const sp<IO::OpenFile>&{ return _file; }
 		α Take()ι->Opened{ return move( _opened ); }
 	private:
+		α Head()ι->ENext;
 		Opened _opened;
+		const Ticks _start;
 		sp<IO::OpenFile> _file;
 		Decoder _decoder;
 		optional<IO::Records::Scanner> _scanner;
+		optional<Reader> _head;//an archive's, once the scan has its FileStart.
 	};
 
 	//One group's files under hist.path.  Only its group's flush changes them, one flush at a time, under the group's
@@ -167,8 +172,8 @@ namespace Jde::Opc::Hist{
 		//Whether day holds a value file:  one the process knows of with anything in it, or one on disk.
 		α HasFile( Day day )Ι->bool;
 		//The flush's first opens, outside the files lock:  of days, each whose value file the process hasn't opened, or holds as
-		//refused or as an archive and that has changed since, with the file's path for an Opening.
-		α ToScan( const vector<Day>& days )Ι->vector<std::pair<Day,fs::path>>;
+		//refused or as an archive and that has changed since, with the file's path and whether an Opening reads it through.
+		α ToScan( const vector<Day>& days )Ι->vector<std::tuple<Day,fs::path,bool>>;
 		//What an Opening read, taken under the lock as Open would have:  nothing when the process opened the day meanwhile, or
 		//the file changed since the open, which Prepare then opens itself.
 		α Adopt( Day day, Opened&& opened )ι->void;
@@ -210,7 +215,7 @@ namespace Jde::Opc::Hist{
 		//while one still can't, which .flushed waits on, since it would claim the archive's records.
 		α SyncRenamed( SRCE )ι->bool;
 		//A rewrite that failed:  its temp file goes, and what is known of a file that no longer reads as it was scanned,
-		//so the next write scans it again.
+		//so the next write scans it again, an archive through.
 		α Abandon( const Rewrite& rewrite )ι->void;
 		//The days whose file a flush at now rewrites as its archive though it has no records for them:  each live file
 		//the process knows whose day ended `delay` ago, and each the start found.
@@ -299,6 +304,7 @@ namespace Jde::Opc::Hist{
 		std::map<Day,DayFile> _files;//an archive's only while _rewritten holds its day:  one merged into later is scanned again.
 		std::map<Day,DayFile> _mods;//each modifications file the process has opened.
 		std::map<Day,up<Exception>> _failedOpenings;//each the flush's Opening couldn't read, for the day's next Open to throw.
+		flat_set<Day> _readThrough;//each whose rewrite couldn't read its file through, which the next open does, to refuse an archive.
 		vector<std::pair<NodeIndex,Ticks>> _touched;//each record written since Corrections last looked, by node and time.
 		vector<Day> _edited;
 		//Each day whose live file is due at once, not at its midnight, until it is rewritten:  each before today the start

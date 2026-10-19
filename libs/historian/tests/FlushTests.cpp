@@ -1209,6 +1209,52 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( isValue(records[3], speed, 1, Time->Now()) );
 	}
 
+	//A value no frame holds is stored without it, as BadEncodingLimitsExceeded, so the value the group takes as stored is
+	//the one its file holds:  the next day's preamble takes it as its start.
+	TEST_F( GatewayFiles, TooLargeStoredWithoutIt ){
+		auto group = AddGroup();
+		let label = Join( *group, "Pump1.Label" );
+		let speed = Join( *group, "Pump1.Speed" );
+		EXPECT_TRUE( group->Enqueue(label, Text(string(IO::Records::MaxFrameBytes, 'x'), Time->Now())) );
+		EXPECT_TRUE( Flush(*group) );
+		auto records = readFile( File(*group, March7) );
+		ASSERT_EQ( records.size(), 6 );//its preambles, the NodeAddeds, and the value.
+		EXPECT_FALSE( records[5].value().has_value() );
+		EXPECT_EQ( records[5].value().status(), UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED );
+
+		Time->AdvanceTo( sys_days{March8}+30s );
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_TRUE( Flush(*group) );
+		records = readFile( File(*group, March8) );
+		ASSERT_EQ( records.size(), 4 );
+		ASSERT_TRUE( isPreamble(records[1], label, March8) );
+		EXPECT_FALSE( records[1].node_added().start().has_value() );
+		EXPECT_EQ( records[1].node_added().start().status(), UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED );
+	}
+
+	//A start value that fits as a record of its own, but not in a NodeAdded with its node's id, is left out of the
+	//preamble, which still maps the node.
+	TEST_F( GatewayFiles, StartTooLargeForItsNodeAdded ){
+		auto group = AddGroup();
+		let label = Join( *group, string(200, 'L') );
+		let speed = Join( *group, "Pump1.Speed" );
+		let probe = MaxMemberBytes-1024;
+		let overhead = ToProto( Text(string(probe, 'x'), Time->Now()), label ).ByteSizeLong()-probe;
+		EXPECT_TRUE( group->Enqueue(label, Text(string(MaxMemberBytes-overhead-16, 'x'), Time->Now())) );//16 for the server time Enqueue stamps.
+		EXPECT_TRUE( Flush(*group) );
+		auto records = readFile( File(*group, March7) );
+		ASSERT_EQ( records.size(), 6 );
+		EXPECT_TRUE( records[5].value().has_value() );
+
+		Time->AdvanceTo( sys_days{March8}+30s );
+		DataChange( *group, speed, 1, Time->Now() );
+		EXPECT_TRUE( Flush(*group) );
+		records = readFile( File(*group, March8) );
+		ASSERT_EQ( records.size(), 4 );
+		ASSERT_TRUE( isPreamble(records[1], label, March8) );
+		EXPECT_FALSE( records[1].node_added().has_start() );
+	}
+
 	//A removed group that has written all it buffered ends when the historian lets its name go:  neither the flush its
 	//Close asked for nor a host that kept its handle writes the files a new group of its name now owns.
 	TEST_F( GatewayFiles, RemovedGroupEndsWhenItsNameIsLetGo ){

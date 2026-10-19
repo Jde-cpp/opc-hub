@@ -50,17 +50,17 @@ namespace Jde::IO::Records{
 			WARN( "'{}' holds no valid slot, so its owner is taken as never flushed.", _file.string() );
 	}
 	α Flushed::Load( fs::path file, SL sl )ε->Flushed{
-		sp<OpenFile> open;
+		string bytes;
 		try{
-			open = ms<OpenFile>( file, sl );
+			bytes = FetchNow( ms<OpenFile>(file, sl), Window{0, 2*SlotSize}, sl );
 		}
 		catch( IOException& e ){
 			if( e.Error==EIOError::NotFound )
 				return Flushed{ move(file), nullopt };
-			e.SetLevel( ELogLevel::Error );
+			e.SetLevel( ELogLevel::Error );//its open or its read.
 			throw;
 		}
-		return Flushed{ move(file), FetchNow(open, Window{0, 2*SlotSize}, sl) };
+		return Flushed{ move(file), move(bytes) };
 	}
 
 	α Flushed::Next( int64_t time, Day recover )Ι->Slot{
