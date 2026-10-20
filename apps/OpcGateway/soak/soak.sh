@@ -13,7 +13,7 @@
 #     shells and CI runners start commands with Ctrl-C *disabled* for the whole process tree: the attach still succeeds, the
 #     servers silently ignore the event, every stop is a 60s wait and a hard kill, and the verdict is FAIL on "unclean stop"
 #     even when the client passed.  Such a launch is refused at startup; detach a console instead:
-#       Start-Process 'C:\Program Files\Gitinash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
+#       Start-Process 'C:\Program Files\Git\bin\bash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
 #   - no idle sleep.  The guest's AC standby timeout is 5h and a sleep ends the run; this script holds ES_SYSTEM_REQUIRED for
 #     its own lifetime and reads it back.  It cannot stop a VM *host* from suspending the guest (H3) - that is a host setting.
 #
@@ -93,6 +93,7 @@
 set -uo pipefail
 
 # ---------------------------------------------------------------- args / constants
+appServerPort=1967 opcServerPort=4840 gatewayPort=1968 externalPort=49320 # as config/Opc.Soak.jsonnet spells them
 duration="PT24H"
 runDir=""
 smoke=0
@@ -139,7 +140,7 @@ if [[ $external -eq 1 ]]; then
 	[[ -z "$externalUri" ]] || externalArgs+=( "-externalUri=$externalUri" )
 	[[ -z "$externalUser" ]] || externalArgs+=( "-externalUser=$externalUser" )
 	[[ -z "$externalPwd" ]] || externalArgs+=( "-externalPwd=$externalPwd" )
-	extUrl="${externalUrl:-opc.tcp://127.0.0.1:49320}" # default must match the flagged /soak/servers entry
+	extUrl="${externalUrl:-opc.tcp://127.0.0.1:$externalPort}" # default must match the flagged /soak/servers entry
 	extHostPort="${extUrl#*://}"; extHostPort="${extHostPort%%/*}"
 	extHost="${extHostPort%%:*}"; extPort="${extHostPort##*:}"
 	[[ "$extPort" =~ ^[0-9]+$ ]] || { echo "cannot parse port from --external-url '$extUrl'" >&2; exit 2; }
@@ -149,12 +150,27 @@ fi
 
 # A leftover AppServer/OpcServer/Gateway from another session answers waitPort/waitHttp instantly, silently routing
 # the whole run (and its db writes) to the wrong stack - every criterion then measures the wrong processes.
-for stale in "appserver:1967" "opcserver:4840" "gateway:1968"; do
+for stale in "appserver:$appServerPort" "opcserver:$opcServerPort" "gateway:$gatewayPort"; do
 	if (exec 3<>"/dev/tcp/127.0.0.1/${stale#*:}") 2>/dev/null; then
 		echo "FATAL: :${stale#*:} (${stale%:*}) is already in use - stop the stale stack before a soak run" >&2
 		exit 2
 	fi
 done
+
+ctrlC(){ # <winpid> - attach to its console and broadcast Ctrl-C to every process on it (windows).  The event is
+	# asynchronous, and reaches this script as well, so the caller masks INT around it and waits for it to land.
+	powershell.exe -NoProfile -Command "
+		Add-Type -Namespace W -Name K -MemberDefinition '
+			[DllImport(\"kernel32.dll\")] public static extern bool FreeConsole();
+			[DllImport(\"kernel32.dll\")] public static extern bool AttachConsole(uint p);
+			[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr h, bool a);
+			[DllImport(\"kernel32.dll\")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint p);';
+		[W.K]::FreeConsole() | Out-Null;
+		if( [W.K]::AttachConsole($1) ){
+			[W.K]::SetConsoleCtrlHandler([IntPtr]::Zero, \$true) | Out-Null;
+			[W.K]::GenerateConsoleCtrlEvent(0, 0) | Out-Null;
+		}" >/dev/null 2>&1
+}
 
 isoSeconds(){ # <PT#H#M#S | plain seconds> -> seconds ; the apps parse ISO-8601, awk/date here do not.
 	local v h=0 m=0 s=0
@@ -187,17 +203,7 @@ if [[ $isWindows -eq 1 ]]; then
 	"$consolePing" -t 127.0.0.1 >/dev/null 2>&1 & consoleProbe=$!
 	sleep 2 #let the fork settle: /proc/<pid>/winpid read at once can name MSYS's short-lived fork stub.
 	trap '' INT
-	powershell.exe -NoProfile -Command "
-		Add-Type -Namespace W -Name K -MemberDefinition '
-			[DllImport(\"kernel32.dll\")] public static extern bool FreeConsole();
-			[DllImport(\"kernel32.dll\")] public static extern bool AttachConsole(uint p);
-			[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr h, bool a);
-			[DllImport(\"kernel32.dll\")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint p);';
-		[W.K]::FreeConsole() | Out-Null;
-		if( [W.K]::AttachConsole( $(cat /proc/$consoleProbe/winpid) ) ){
-			[W.K]::SetConsoleCtrlHandler([IntPtr]::Zero, \$true) | Out-Null;
-			[W.K]::GenerateConsoleCtrlEvent(0, 0) | Out-Null;
-		}" >/dev/null 2>&1
+	ctrlC "$(cat /proc/$consoleProbe/winpid)"
 	sleep 3 #asynchronous, as in stopGraceful - stay masked until it lands.
 	trap - INT
 	if kill -0 $consoleProbe 2>/dev/null; then
@@ -272,10 +278,7 @@ fi
 
 export REPO_SOURCE_DIR="$(np "$repo")"
 export REPO_BUILD_DIR="$(np "$(dirname "$buildDir")")"
-if [[ -z "${UA_NODE_SETS:-}" ]]; then
-	if [[ $isWindows -eq 1 ]]; then export UA_NODE_SETS="C:/Users/duffyj/source/repos/libs/UA-Nodeset";
-	else export UA_NODE_SETS="$HOME/code/libs/UA-Nodeset"; fi
-fi
+[[ -n "${UA_NODE_SETS:-}" ]] || { echo "ERROR: UA_NODE_SETS is not set - the OpcServer loads the DI and IA nodesets from it (a UA-Nodeset checkout)." >&2; exit 1; }
 
 runRoot="${JDE_SOAK_DIR:-$HOME/soak-runs}"
 [[ -n "$runDir" ]] || runDir="$runRoot/$(date +%Y%m%d-%H%M%S)"
@@ -328,17 +331,7 @@ stopGraceful(){ # <pid> - SIGINT / console Ctrl-C; caller waits+escalates
 		# would sidestep the "ignore Ctrl-C" flag, and the servers do stop on it - but MSYS bash cannot survive one (the
 		# console's default handler ends it with STATUS_CONTROL_C_EXIT, no trap reaches it), so the verdict is never written.
 		trap '' INT
-		powershell.exe -NoProfile -Command "
-			Add-Type -Namespace W -Name K -MemberDefinition '
-				[DllImport(\"kernel32.dll\")] public static extern bool FreeConsole();
-				[DllImport(\"kernel32.dll\")] public static extern bool AttachConsole(uint p);
-				[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr h, bool a);
-				[DllImport(\"kernel32.dll\")] public static extern bool GenerateConsoleCtrlEvent(uint e, uint p);';
-			[W.K]::FreeConsole() | Out-Null;
-			if( [W.K]::AttachConsole($wp) ){
-				[W.K]::SetConsoleCtrlHandler([IntPtr]::Zero, \$true) | Out-Null;
-				[W.K]::GenerateConsoleCtrlEvent(0, 0) | Out-Null;
-			}" >/dev/null 2>&1
+		ctrlC "$wp"
 		sleep 2 #the event is asynchronous - stay masked until it lands, or the trap fires just after the restore.
 		trap 'failEarly "interrupted"' INT
 		stopBroadcast=1
@@ -382,32 +375,35 @@ failEarly(){
 }
 trap 'failEarly "interrupted"' INT TERM
 
-launch(){ # <name> <exe> <settings> <include> [extra args...]
+launch(){ # <name> <exe> <settings> <include, or "" for none> [extra args...]
 	local name=$1 exe=$2 settings=$3 include=$4; shift 4
 	local cwd="$runDir/$name"
-	( cd "$cwd" && exec "$exe" -c -tests "-settings=$(np "$settings")" "-include=$include" "$@" ) >"$runDir/$name/console.log" 2>&1 &
+	( cd "$cwd" && exec "$exe" -c -tests "-settings=$(np "$settings")" ${include:+"-include=$include"} "$@" ) >"$runDir/$name/console.log" 2>&1 &
 	pids[$name]=$!
 	echo "launched $name: pid ${pids[$name]}"
 }
 
-waitPort(){ # <name> <port>
-	local name=$1 port=$2 i
+waitFor(){ # <name> <what> <probe...> - until the probe succeeds, 120s at most, failing early once <name> has died
+	local name=$1 what=$2 i; shift 2
 	for i in $(seq 1 60); do
 		alive "${pids[$name]}" || failEarly "$name died during startup - see $runDir/$name/console.log"
-		(exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && { echo "$name ready on :$port"; return 0; }
+		"$@" && { echo "$name ready: $what"; return 0; }
 		sleep 2
 	done
-	failEarly "$name did not open :$port within 120s"
+	failEarly "$name did not answer $what within 120s"
 }
+portOpen(){ (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+httpOk(){ curl -fsS -m 5 "$1" >/dev/null 2>&1; }
+waitPort(){ waitFor "$1" ":$2" portOpen "$2"; } # <name> <port>
+gatewayUrl="http://localhost:$gatewayPort/ErrorCodes"
 
-waitHttp(){ # <name> <url>
-	local name=$1 url=$2 i
-	for i in $(seq 1 60); do
-		alive "${pids[$name]}" || failEarly "$name died during startup - see $runDir/$name/console.log"
-		curl -fsS -m 5 "$url" >/dev/null 2>&1 && { echo "$name ready: $url"; return 0; }
-		sleep 2
-	done
-	failEarly "$name did not answer $url within 120s"
+soakClient(){ # [args...] - the soak client in the foreground, as -createCert and -grant run it
+	"$soakExe" -c -tests "-settings=$(np "$scriptDir/config/Opc.Soak.jsonnet")" "$@"
+}
+launchOpcServer(){ # on its per-run sqlite db, which a restart reloads from disk
+	launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
+		-arg "path=$(np "$runDir/db/opc.db")"
+	waitPort opcserver $opcServerPort
 }
 
 nodeRightsState(){ # the last "Node rights assigned - OPEN|ENFORCING" the running OpcServer logged (empty = none yet)
@@ -427,7 +423,11 @@ waitEnforcing(){ # the client runs only against an ENFORCING OpcServer - a live 
 
 # ---------------------------------------------------------------- crash + rss verdict helpers
 crashEvents(){ # crash records since start touching our binaries -> stdout (empty = none)
-	local names='Jde.App.Server|Jde.Opc.Server|Jde.Opc.Gateway|Jde.Opc.Soak'
+	local e names=""
+	for e in "$appServerExe" "$opcServerExe" "$gatewayExe" "$soakExe"; do
+		e=${e##*/}
+		names+="${names:+|}${e%"$exeSuffix"}"
+	done
 	if [[ $isWindows -eq 1 ]]; then
 		local ageMs=$(( ($(date +%s)-startEpoch+60)*1000 ))
 		wevtutil qe Application "//q:*[System[(EventID=1000 or EventID=1001) and TimeCreated[timediff(@SystemTime) <= $ageMs]]]" //f:text 2>/dev/null | grep -E "$names"
@@ -481,7 +481,7 @@ writeVerdict(){ # <PASS|FAIL> <reason>
 
 # ---------------------------------------------------------------- cert bootstrap (before OpcServer starts!)
 # OpcServer snapshots trustedCertDirs at startup; the gateway creates its per-target OPC cert only at first connect.
-"$soakExe" -c -tests "-settings=$(np "$scriptDir/config/Opc.Soak.jsonnet")" -createCert ${externalArgs[@]+"${externalArgs[@]}"} >"$runDir/client/createCert.log" 2>&1 \
+soakClient -createCert ${externalArgs[@]+"${externalArgs[@]}"} >"$runDir/client/createCert.log" 2>&1 \
 	|| failEarly "cert bootstrap failed - see $runDir/client/createCert.log"
 echo "gateway certificate bootstrapped"
 
@@ -496,15 +496,13 @@ fi
 # ---------------------------------------------------------------- launch: AppServer -> OpcServer -> Gateway -> client
 launch appserver "$appServerExe" "$scriptDir/config/App.Server.Soak.jsonnet" "../../../AppServer/config/args/sqlite" \
 	-arg "path=$(np "$runDir/db/app.db")" -arg "sessionTimeout=$sessionTimeout"
-waitPort appserver 1967
+waitPort appserver $appServerPort
 
-launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
-	-arg "path=$(np "$runDir/db/opc.db")"
-waitPort opcserver 4840
+launchOpcServer
 
 launch gateway "$gatewayExe" "$scriptDir/config/Opc.Gateway.Soak.jsonnet" "../../config/args/sqlite" \
 	-arg "path=$(np "$runDir/db/gateway.db")"
-waitHttp gateway "http://localhost:1968/ErrorCodes"
+waitFor gateway "$gatewayUrl" httpOk "$gatewayUrl"
 
 # Node rights, after OpcServer's first boot declared its nodeIds resource - soft-deleted, as every resource ships
 # (ResourceSyncAwait), which is why the grant alone left every boot OPEN and no soak write was ever authorized (#236).
@@ -524,7 +522,7 @@ if [[ $emulator -eq 1 ]]; then
 		|| failEarly "emulator rights grant failed - see $runDir/emulator/grant.log"
 	echo "emulator user granted OPC node access (while nodeIds is still open)"
 fi
-"$soakExe" -c -tests "-settings=$(np "$scriptDir/config/Opc.Soak.jsonnet")" "-include=." -grant >"$runDir/client/grant.log" 2>&1 \
+soakClient -grant >"$runDir/client/grant.log" 2>&1 \
 	|| failEarly "rights grant failed - see $runDir/client/grant.log"
 if [[ $noGrantRestart -eq 1 ]]; then
 	# --no-grant-restart: the acl and the enforced row reach the running OpcServer only as events - the run that asks
@@ -541,9 +539,7 @@ else
 	alive "${pids[opcserver]}" && { hardKill "${pids[opcserver]}"; sleep 1; }
 	wait "${pids[opcserver]}" 2>/dev/null
 	mv "$runDir/opcserver/console.log" "$runDir/opcserver/console.boot1.log" 2>/dev/null
-	launch opcserver "$opcServerExe" "$scriptDir/config/Opc.Server.Soak.jsonnet" "../../../OpcServer/config/args/sqlite" \
-		-arg "path=$(np "$runDir/db/opc.db")"
-	waitPort opcserver 4840
+	launchOpcServer
 fi
 waitEnforcing
 
@@ -572,7 +568,7 @@ fi
 [[ -z "$quietPeriod" ]] || clientArgs+=( "-quietPeriod=$quietPeriod" )
 [[ $readBack -eq 0 ]] || clientArgs+=( "-readBack" )
 [[ $external -eq 0 ]] || clientArgs+=( "${externalArgs[@]}" )
-launch client "$soakExe" "$scriptDir/config/Opc.Soak.jsonnet" "." "${clientArgs[@]}"
+launch client "$soakExe" "$scriptDir/config/Opc.Soak.jsonnet" "" "${clientArgs[@]}"
 
 # ---------------------------------------------------------------- monitor until the client finishes
 sampleRss(){
@@ -594,7 +590,7 @@ while alive "${pids[client]}"; do
 			break 2
 		fi
 	done
-	curl -fsS -m 5 "http://localhost:1968/ErrorCodes" >/dev/null 2>&1 || echo "WARN: /ErrorCodes ping failed at $(date -u +%H:%M:%S)"
+	httpOk "$gatewayUrl" || echo "WARN: /ErrorCodes ping failed at $(date -u +%H:%M:%S)"
 	sampleRss
 	for f in "$runDir"/*/console.log "$runDir"/*/logs/*; do
 		[[ -f "$f" && $(stat -c%s "$f" 2>/dev/null || echo 0) -gt 2147483648 ]] && echo "WARN: $f exceeds 2GB"

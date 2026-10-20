@@ -4,24 +4,23 @@
 // (-external here - soak.sh --external), so Linux/CI runs are unchanged. For the flagged entry, -externalUrl=/
 // -externalUri=/-externalUser=/-externalPwd= override url/certificateUri/user/password (never commit a real password).
 local logsDir = std.extVar("logsDir");
+local paths = import '../../../../libs/db/config/paths-common.libsonnet'; //certsDir - the one spelling of the company root.
+local soakLogging = import 'soak-logging.libsonnet';
 local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductName - that is whose cert tree -createCert writes into.
 {
 	//-createCert pre-creates the gateway's per-leg client certs through UAClient's own helpers, so this block has to
 	//resolve to the same files the gateway process would: its product (not the soak exe's "Opc.Soak") and the CN
 	//Opc.Gateway.jsonnet configures, `args.instanceName` = <product>.<buildTarget>.  The passcode likewise matches - both
 	//sides read $(JDE_PASSCODE), so a key -createCert writes here is one the gateway can open, encrypted or not.
-	//getPath reads productName from each key's own sub-object; a block-level one is now inherited by all three
-	//(withDefaultProductName), so these lines are redundant rather than required - kept explicit because the point of
-	//the block is to write into another process's cert tree, which is worth stating on each key it moves.
+	//The block's productName is the tree all three keys move into (withDefaultProductName) - another process's.
 	gateway:{
 		issuedCerts:{
+			productName: gatewayProduct,
 			certificate:{
-				productName: gatewayProduct,
 				commonName: gatewayProduct+"."+std.extVar("buildTarget"),
 				subjectAltName: "URI:urn:$(HostName):Jde-Cpp:"+gatewayProduct //the gateway's own applicationUri, spelled as Opc.Gateway.jsonnet's resolves in the gateway process - $(PRODUCT_NAME) here would be the soak exe's.  A different SAN and the gateway re-issues at its first connect, voiding the trust set up before the run (security-matrix #8).
 			},
-			privateKey:{ productName: gatewayProduct, passcode: "$(JDE_PASSCODE)" },
-			publicKey:{ productName: gatewayProduct }
+			privateKey:{ passcode: "$(JDE_PASSCODE)" }
 		}
 	},
 	server:{
@@ -34,8 +33,8 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 	},
 	web:{
 		//the AppServer is its own root - without this anchor the client rejects the self-signed cert localhost:1967 presents on the /login call
-		//(the same entry Opc.Gateway.jsonnet carries; no args.libsonnet here, so the path is spelled out the way Opc.PlcEmulator.jsonnet does).
-		client:{ ssl:{ caFile: "$(ProgramData)/Jde-Cpp/AppServer/ssl/certs/AppServer.pem" } }
+		//(the same entry Opc.Gateway.jsonnet carries).
+		client:{ ssl:{ caFile: paths.certsDir("AppServer")+"/AppServer.pem" } }
 	},
 	soak:{
 		gatewayHost: "localhost",
@@ -75,13 +74,7 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 	},
 	logging:{
 		spd:{
-			tags:{
-				default: "Information",
-				uaNet: "Warning",
-				uaClient: "Warning",
-				uaSecure: "Warning",
-				uaSession: "Warning"
-			},
+			tags: soakLogging.ua,
 			sinks:{
 				console:{},
 				file:{ path: logsDir, md: false }

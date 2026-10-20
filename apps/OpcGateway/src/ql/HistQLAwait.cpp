@@ -1,54 +1,16 @@
 #include "HistQLAwait.h"
 #include <jde/fwk/str.h>
-#include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>
-#include "../UAClient.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
-
-	α HistQLAwait::Execute()ι->TAwait<HistoryReadResponse>::Task{
-		jvalue y;
-		std::exception_ptr failed;
-		try{
-			_args.emplace( _query, _sl );
-			_nodes.resize( _args->Nodes.size() );
-			for( bool first=true;; first=false ){
-				auto response = co_await HistoryReadAwait{ Request(first, false), _client, _sl };
-				for( uint i=0; i<_asked.size(); ++i )
-					Take( _asked[i], response.Result(i) );
-				if( Emittable()>=_args->Limit || !std::ranges::any_of(_nodes, &Node::More) )
-					break;
-			}
-			auto page = Page();
-			let continuation = Continuation( page );
-			vector<StatusCode> statuses; statuses.reserve( _nodes.size() );
-			for( let& node : _nodes )
-				statuses.push_back( node.Status );
-			y = HistQL::ToJson( _query, _args->Nodes, move(page), continuation, statuses );
-		}
-		catch( runtime_error& ){//a round that fails leaves the points the rounds before took, which the release below frees.
-			failed = std::current_exception();
-		}
-		if( std::ranges::any_of(_nodes, &Node::More) ){
-			try{
-				co_await HistoryReadAwait{ Request(false, true), _client, _sl };
-			}
-			catch( const std::exception& e ){//the server's to drop with the session, then.
-				DBG( "[{}]Releasing the history continuation points failed:  {}", hex(_client->Handle()), e.what() );
-			}
-		}
-		if( failed ){
-			try{
-				std::rethrow_exception( failed );
-			}
-			catch( runtime_error& e ){
-				ResumeExp( move(e) );
-			}
-		}
-		else
-			Resume( move(y) );
+	α HistQLAwait::Next()ι->optional<bool>{
+		return Emittable()>=_args->Limit || !std::ranges::any_of(_nodes, &Node::More) ? nullopt : optional<bool>{ false };
+	}
+	α HistQLAwait::Answer()ι->std::pair<vector<HistQL::ReadValue>,string>{
+		auto page = Page();
+		auto continuation = Continuation( page );
+		return { move(page), move(continuation) };
 	}
 
 	α HistQLAwait::Reach()Ι->Horizon{
@@ -99,14 +61,8 @@ namespace Jde::Opc::Gateway{
 
 	α HistQLAwait::Take( uint slot, UA_HistoryReadResult& result )ι->void{
 		auto& node = _nodes[slot];
-		if( result.statusCode!=UA_STATUSCODE_GOODNODATA || !node.Last )//Good_NoData is a node's that returned nothing this call:  not an empty last page's.
-			node.Status = result.statusCode;
-		node.Point.assign( (const char*)result.continuationPoint.data, result.continuationPoint.length );
-		node.More = node.Point.size() && !UA_StatusCode_isBad( result.statusCode );
-		if( UA_StatusCode_isBad(result.statusCode) ){//the node's answer, as the server gave it.
-			DBG( "[{}]hist {} answered {}.", hex(_client->Handle()), _args->Nodes[slot].ToString(), UAException::Message(result.statusCode) );
+		if( !TakeHeader(slot, result, result.statusCode!=UA_STATUSCODE_GOODNODATA || !node.Last) )//Good_NoData is a node's that returned nothing this call:  not an empty last page's.
 			return;
-		}
 		UA_DataValue* values{}; size_t count{};
 		const UA_ModificationInfo* modifications{}; size_t modificationCount{};
 		if( result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED || result.historyData.encoding==UA_EXTENSIONOBJECT_DECODED_NODELETE ){

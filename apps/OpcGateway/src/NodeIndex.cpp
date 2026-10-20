@@ -7,14 +7,7 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	//The session or channel went under the crawl:  nothing more in this crawl will browse.
-	Ω sessionLost( StatusCode sc )ι->bool{
-		switch( sc ){
-			case UA_STATUSCODE_BADSESSIONIDINVALID: case UA_STATUSCODE_BADSESSIONCLOSED: case UA_STATUSCODE_BADSERVERHALTED:
-			case UA_STATUSCODE_BADCONNECTIONCLOSED: case UA_STATUSCODE_BADSERVERNOTCONNECTED: case UA_STATUSCODE_BADSECURECHANNELCLOSED:
-				return true;
-			default: return false;
-		}
-	}
+	Ω sessionLost( StatusCode sc )ι->bool{ return UAClient::IsConnectionLoss(sc) || UAClient::IsSessionLoss(sc) || sc==UA_STATUSCODE_BADSERVERHALTED; }
 	//The server could not serve the node this time, not "cannot browse it".
 	Ω transient( StatusCode sc )ι->bool{
 		switch( sc ){
@@ -24,45 +17,23 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	constexpr std::chrono::seconds _failedHold{ 30 };
-	//A silent copy for each waiter - the original logs, once.  Keeps the type:  Exception{e} slices a UAException's status off,
-	//and that status is what the SPA's notice shows.  ExternalException's copy ctor is already NoLog.
-	Ω copy( const Exception& e )ι->up<Exception>{
-		if( auto ua = dynamic_cast<const UAException*>(&e); ua )
-			return mu<UAException>( *ua );
-		return mu<Exception>( e.What(), ExceptionArgs{ELogLevel::NoLog, e.Tags, e.Code(), e.HttpStatus()}, e.Source() );
-	}
 	α NodeIndex::ReadyAwait::await_ready()ι->bool{
 		rl _{ _index._mutex };
-		return _index._state==EState::Ready && !_refresh;
+		return _index._slot.State()==EState::Ready && !_refresh;
 	}
 	α NodeIndex::ReadyAwait::Suspend()ι->void{
 		_index.StartLocked( move(_client), _refresh, this );
 	}
 
 	α NodeIndex::StartLocked( sp<UAClient>&& client, bool refresh, AnyVoidAwait* waiter )ι->void{
-		bool launch{}, ready{};
-		sp<Exception> failed;
+		bool launch{};
 		{
 			ul _{ _mutex };
-			if( _state==EState::Crawling )
-				{}//join the in-flight crawl - a refresh included:  its result is fresh enough.
-			else if( _state==EState::Failed && !refresh && _error && steady_clock::now()-_failedAt<_failedHold )
-				failed = copy( *_error );//answer the recent failure - `refresh` bypasses it.
-			else if( _state!=EState::Ready || refresh ){
-				_state = EState::Crawling;
-				launch = true;
-			}
-			else
-				ready = true;
-			if( waiter && !ready && !failed )
-				_waiters.push_back( waiter );
+			let expired = _slot.State()==EState::Failed && steady_clock::now()-_failedAt>=_failedHold;//the first search after the hold crawls from scratch.
+			launch = _slot.Start( waiter, refresh || expired );//a crawl in flight is joined, a refresh included:  its result is fresh enough.
 		}
 		if( launch )
 			Crawl( move(client) );//fire & forget:  the task keeps the client (and so this index) alive until Finish.
-		if( waiter && ready )
-			Post( [waiter]{ waiter->Resume(); } );//a Finish raced in between await_ready and here - never resume inside await_suspend.
-		else if( waiter && failed )
-			Post( [waiter, failed]{ waiter->ResumeExp( move(*copy(*failed)) ); } );//never inside await_suspend, as above.
 	}
 
 	α NodeIndex::Crawl( sp<UAClient> client )ι->TAwait<Browse::Response>::Task{
@@ -199,38 +170,24 @@ namespace Jde::Opc::Gateway{
 		}
 		catch( runtime_error& e ){
 			WARNT( BrowseTag, "[{}]search index for '{}' failed: {}", hex(client->Handle()), client->Slug(), e.what() );
-			if( auto p = dynamic_cast<Exception*>(&e); p )
-				error = p->Move();
-			else
-				error = mu<Exception>( move(e) );
+			error = Exception::From( move(e) );
 		}
 		Finish( move(entries), truncated, move(error) );
 	}
 
 	α NodeIndex::Finish( vector<Entry>&& entries, bool truncated, up<Exception> error )ι->void{
-		vector<AnyVoidAwait*> waiters;
+		LazySlot<void>::Resumes resumes;
 		{
 			ul _{ _mutex };
-			if( error ){
-				_state = EState::Failed;//searches within _failedHold get this error;  the first after it crawls from scratch.
-				_error = copy( *error );
+			if( error )
 				_failedAt = steady_clock::now();
-			}
 			else{
-				_error.reset();
 				_entries = move( entries );
 				_truncated = truncated;
-				_state = EState::Ready;
 			}
-			waiters = move( _waiters );
-			_waiters.clear();
+			resumes = _slot.Finish( {}, move(error) );
 		}
-		for( auto* waiter : waiters ){//outside the lock:  Resume may run the awaiter to completion (and back into Search) inline - it is the last use of the waiter.
-			if( error )
-				waiter->ResumeExp( move(*copy(*error)) );
-			else
-				waiter->Resume();
-		}
+		resumes.Run();
 	}
 
 	α NodeIndex::Search( sv text, uint limit )Ι->vector<Entry>{

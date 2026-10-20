@@ -10,7 +10,6 @@
 
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ MonitoringTag };
-	//α UAMonitoringNodes::LogTag()ι->sp<Jde::LogTag>{ return _logTag; }
 
 	//until orphaned UAClient's go away.
 	α UAMonitoringNodes::Shutdown( SL sl )ι->UnsubscribeAwait{

@@ -585,6 +585,7 @@ Section "OPC Hub" SEC_HUB
 	File "${SRC_DIR}\apps\OpcGateway\config\Opc.Gateway.jsonnet"
 	SetOutPath "$ConfigDir\apps\OpcGateway\config\introspection"
 	File "${SRC_DIR}\apps\OpcGateway\config\introspection\*.jsonnet"
+	File "${SRC_DIR}\apps\OpcGateway\config\introspection\scalars.libsonnet" ;the type references the three import
 	SetOutPath "$ConfigDir\libs\db\config"
 	File "${SRC_DIR}\libs\db\config\paths-common.libsonnet"
 	;the product's data dir - meta/sql flat, where args/install points (common-meta from libs/db: the copies beside the

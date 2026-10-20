@@ -17,10 +17,7 @@ namespace Jde::Opc::Hub::Tests{
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, "127.0.0.1", true )->SessionId;
 		auto app = ms<RawClientSession>( Executor() );
 		BlockVoidAwait( app->RunSession("127.0.0.1", AppPort()) );
-		optional<ssl::context> ctx;
-		auto gateway = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( gateway->RunSession("127.0.0.1", GatewayPort(), "/opc") );
-		BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint32>( gateway->Connect(sessionId) );
+		auto gateway = GatewayClientSocket::Open( "127.0.0.1", GatewayPort(), sessionId );
 		{//bind the app socket to the session: kSessionId
 			App::Proto::FromClient::Transmission t;
 			auto& m = *t.add_messages();
@@ -41,10 +38,7 @@ namespace Jde::Opc::Hub::Tests{
 	//one as the gateway's historian does:  a group the hub doesn't host is refused by it, over the one listener (#225).
 	TEST( SocketTests, HistSubscribeReachesTheHistorian ){
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, "127.0.0.1", true )->SessionId;
-		optional<ssl::context> ctx;
-		auto gateway = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( gateway->RunSession("127.0.0.1", GatewayPort(), "/opc") );
-		BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint32>( gateway->Connect(sessionId) );
+		auto gateway = GatewayClientSocket::Open( "127.0.0.1", GatewayPort(), sessionId );
 		const vector<ExNodeId> nodes{ ExNodeId{jvalue{jobject{{"nsu", "urn:jde:pumps"}, {"i", 6054}}}} };
 		try{
 			BlockAwait<Web::Client::ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( gateway->HistSubscribe(999'999, nodes, nullopt, nullptr) );

@@ -1,9 +1,7 @@
 //Live fields the gateway grafts onto the DB-backed ServerConnection rows (ql/OpcSessionsQLAwait.cpp: ServerCnnctnSessionsQLAwait answers
 //`serverConnections{ … opcSessions{count} }`). `extend: true` appends these to the introspected server_connections columns instead of replacing them.
-local UInt = { kind: "SCALAR", name: "UInt" };
-local NonNullUInt = { kind: "NON_NULL", name: null, ofType: UInt };
-local String = { kind: "SCALAR", name: "String" };
-local NonNullString = { kind: "NON_NULL", name: null, ofType: String };
+local types = import 'scalars.libsonnet';
+local String = types.String, UInt = types.UInt, NonNull = types.NonNull;
 local serverConnection = {
 	extend: true,
 	fields: [
@@ -17,17 +15,17 @@ local serverConnection = {
 	serverConnections: serverConnection, //the query's name.
 	OpcSessions: { //config-only types: no view, so __type(name:...) is answered from here alone.
 		fields: [
-			{ name: "count", type: NonNullUInt }
+			{ name: "count", type: NonNull(UInt) }
 		]
 	},
 	OpcConnections: {
 		fields: [
-			{ name: "count", type: NonNullUInt }
+			{ name: "count", type: NonNull(UInt) }
 		]
 	},
 	ConnectionStatus: { //Connected|Idle|Error, from the live UAClients and UAClient::ConnectErrors() - `error` carries why the last attempt failed.
 		fields: [
-			{ name: "name", type: NonNullString },
+			{ name: "name", type: NonNull(String) },
 			{ name: "error", type: String }
 		]
 	}

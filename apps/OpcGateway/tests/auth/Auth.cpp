@@ -15,9 +15,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	}
 	α Auth::TearDownTestSuite()->void{
-		if( auto client = SelectServerCnnctn(OpcServerSlug); client ){
-			PurgeServerCnnctn( client->Id );
-			Connection = nullopt;
-		}
+		PurgeServerCnnctn( OpcServerSlug );
+		Connection = nullopt;
 	}
 }

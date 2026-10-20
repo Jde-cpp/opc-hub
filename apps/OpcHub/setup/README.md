@@ -118,7 +118,7 @@ C:\ProgramData\Jde-Cpp
     apps\OpcHub\config\args\install-user\args.libsonnet  the current-user mode's: args/install plus listenAddress 127.0.0.1
     apps\AppServer\config\App.Server.jsonnet
     apps\OpcGateway\config\Opc.Gateway.jsonnet
-    apps\OpcGateway\config\introspection\*.jsonnet
+    apps\OpcGateway\config\introspection\*.jsonnet + scalars.libsonnet
     apps\OpcServer\config\Opc.Server.jsonnet + Opc.Server.Install.jsonnet (the overlay the service loads)
     apps\OpcServer\config\args\install\args.libsonnet
     apps\OpcServer\config\args\install-user\args.libsonnet  as the hub's

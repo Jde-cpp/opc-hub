@@ -132,6 +132,10 @@ namespace Jde::Opc::Gateway::HistQL{
 	};
 	//An edited value's, or time's, result:  its node's place in EditArgs::Nodes, its source time, and its status.
 	struct EditResult final{ uint Slot; optional<UA_DateTime> Time; StatusCode Status; };
+	//An edit's rows, the server's or a group's:  each value or time takes the operation result its node's entry gave for it,
+	//where the entry gave one per value or time, else the node's status - the entry refused whole, or not sent.
+	//`operations[slot]` is the node's entry's results, empty for none.
+	α EditRows( const EditArgs& args, const vector<std::span<const StatusCode>>& operations, const vector<StatusCode>& statuses )ι->vector<EditResult>;
 	//values{ node source status } in the order the edit names them, a purge at times' node by node, and nodes{ node status }
 	//with each node's entry status.  Only the columns the request names.
 	α ToJson( const QL::TableQL& ql, const vector<jvalue>& nodes, const vector<EditResult>& values, const vector<StatusCode>& statuses )ι->jvalue;

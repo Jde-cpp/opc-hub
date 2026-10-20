@@ -4,12 +4,11 @@ local logsDir = args.logsDir;
 	local instance = self,
 	instanceName: args.instanceName,
 	testing:{
-		tests:: "QLTests.ServerDescriptionTest",
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedAppServer:: false,
 		embeddedOpcServer:: false
 	},
-	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
+	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
 		introspection: [ "../../config/introspection/serverConnection.jsonnet", "../../config/introspection/search.jsonnet", "../../config/introspection/hist.jsonnet" ] //relative to this file, as in Opc.Gateway.jsonnet: the extensions QLTests asserts on.
 	},
@@ -89,7 +88,7 @@ local logsDir = args.logsDir;
 		port: 4940,
 		ssl: instance.http.opcServer.ssl
 	},
-	credentials:{
+	credentials:{//the two embedded clients' AppServer logins, not the product's name (Tests.Opc):  distinct, so each signs in as itself.
 		gateway:{ name: "GatewayTests" },
 		opcServer:{ name: "OpcTests" }
 	},
@@ -144,11 +143,7 @@ local logsDir = args.logsDir;
 			path: logsDir + "/opc-tests",
 			timeZone: "America/New_York",
 			delay: "PT1M"
-		},
-		// subscribe:{},
-		// remote:{
-		// 	delay: "PT0.1S"
-		// }
+		}
 	},
 	workers:{
 		executor: {threads: 2},

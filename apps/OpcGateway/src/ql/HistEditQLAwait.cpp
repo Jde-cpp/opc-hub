@@ -44,34 +44,15 @@ namespace Jde::Opc::Gateway{
 				}
 			}
 			let response = co_await HistoryUpdateAwait{ move(request), _client, _sl };
-			//A node's k-th value or time takes the server's operation result for it, or the node's status where the entry
-			//carries none, refused whole, or wasn't sent.
-			vector<uint> expected( count, args.Times.size() );
-			for( let& v : args.Values )
-				++expected[v.Slot];
-			vector<const UA_StatusCode*> operations( count );
+			vector<std::span<const StatusCode>> operations( count );
 			for( uint i=0; i<count; ++i ){
-				if( !entries[i] )
+				if( !entries[i] )//refused before the request:  ValueTypesAwait's status stands.
 					continue;
 				let& result = response.Result( *entries[i] );
 				statuses[i] = result.statusCode;
-				if( expected[i] && result.operationResultsSize==expected[i] )
-					operations[i] = result.operationResults;
+				operations[i] = { result.operationResults, result.operationResultsSize };
 			}
-			vector<HistQL::EditResult> results;
-			let add = [&]( uint slot, uint k, optional<UA_DateTime> time ){ results.push_back( {slot, time, operations[slot] ? operations[slot][k] : statuses[slot]} ); };
-			if( _edit<Purge ){
-				vector<uint> at( count );
-				for( let& v : args.Values )
-					add( v.Slot, at[v.Slot]++, v.Source );
-			}
-			else if( args.Times.size() ){
-				for( uint i=0; i<count; ++i ){
-					for( uint k=0; k<args.Times.size(); ++k )
-						add( i, k, args.Times[k] );
-				}
-			}
-			Resume( _mutation.ResultRequest ? HistQL::ToJson(*_mutation.ResultRequest, HistQL::NodesJson(nodes), results, statuses) : jvalue{} );
+			Resume( _mutation.ResultRequest ? HistQL::ToJson(*_mutation.ResultRequest, HistQL::NodesJson(nodes), HistQL::EditRows(args, operations, statuses), statuses) : jvalue{} );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

@@ -2,7 +2,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/uatypes/opcHelpers.h>
-#include "../utils/helpers.h"
+#include "../utils/ClientFixture.h"
 #include "../../src/UAClient.h"
 #include "../../src/GatewayAppClient.h"
 #include "../../src/auth/OpcServerSession.h"
@@ -10,7 +10,6 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	constexpr ELogTags _tags{ ELogTags::Test };
 	//A third-party server's cells of reviews/security-matrix.md, on demand:  /testing/external names the server and the fixture
 	//is skipped without one, so the suite runs in CI against the embedded server alone.  What each cell answers is the server's
 	//configuration as much as the gateway's - which token policies it puts on its None endpoint, whether it trusts our
@@ -29,11 +28,11 @@ namespace Jde::Opc::Gateway::Tests{
 	//	} }
 	//The secured cells take the two-way trust the doc describes:  the server's certificate under /gateway/trustedCertDirs, and
 	//the gateway's issued certificate (<product>/ssl/certs/<instance>.opcTestsExternalSecure.pem) trusted by the server.
-	str ExternalNoneSlug{ "opcTestsExternalNone" };
-	str ExternalSecureSlug{ "opcTestsExternalSecure" };
-	str ExternalSecureOnlySlug{ "opcTestsExternalSecureOnly" };
-	str ExternalByNameSlug{ "opcTestsExternalByName" };
-	class ExternalServerTests : public ::testing::Test{
+	const string ExternalNoneSlug{ "opcTestsExternalNone" };
+	const string ExternalSecureSlug{ "opcTestsExternalSecure" };
+	const string ExternalSecureOnlySlug{ "opcTestsExternalSecureOnly" };
+	const string ExternalByNameSlug{ "opcTestsExternalByName" };
+	class ExternalServerTests : public ClientFixture{
 	protected:
 		α SetUp()ε->void override{
 			let external = Settings::FindObject( "/testing/external" );
@@ -47,44 +46,22 @@ namespace Jde::Opc::Gateway::Tests{
 			_nameUrl = Json::FindDefaultSV( *external, "nameUrl" );
 			_expect = Json::FindDefaultObject( *external, "expect" );
 		}
-		α TearDown()ι->void override{
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
-		}
 		Ω TearDownTestSuite()->void{
 			for( let& slug : {ExternalNoneSlug, ExternalSecureSlug, ExternalSecureOnlySlug, ExternalByNameSlug} ){
-				if( auto row = SelectServerCnnctn(slug); row )
-					PurgeServerCnnctn( row->Id );
+				PurgeServerCnnctn( slug );
 			}
 		}
-		α Connect( str slug, Credential cred )ι->ConnectAwait::Task;
 		α Cell( sv name, str slug, str certificateUri, Credential cred, optional<string> cellUrl={} )ε->void;
 		string _url, _certificateUri, _user, _password, _secureOnlyUrl, _nameUrl;
 		jobject _expect;
-		up<Exception> _exception;
-		sp<UAClient> _client;
-		atomic_flag _done;
 	};
 
-	α ExternalServerTests::Connect( str slug, Credential cred )ι->ConnectAwait::Task{
-		try{
-			_client = co_await UAClient::GetClient( slug, move(cred) );
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		_done.test_and_set();
-		_done.notify_all();
-	}
 	α ExternalServerTests::Cell( sv name, str slug, str certificateUri, Credential cred, optional<string> cellUrl )ε->void{
 		let& url = cellUrl ? *cellUrl : _url;
 		GetConnection( slug, url, certificateUri );//select or create - the rows outlive the test and go with the suite.
 		let type = TokenTypeName( cred.Type() );
-		_exception = nullptr; _done.clear();
-		Connect( slug, move(cred) );
-		_done.wait( false );
-		let outcome = _exception ? string{_exception->what()} : Negotiated( _client );
-		INFO( "MATRIX|{}|{}|{}|{}|{}", name, certificateUri.empty() ? "None" : "Basic256Sha256", type, url, outcome );
+		let what = Attempt( slug, move(cred), Ƒ("{}|{}|{}|{}", name, certificateUri.empty() ? "None" : "Basic256Sha256", type, url) );
+		let outcome = what.empty() ? Negotiated( _client ) : what;
 		if( let expect = Json::FindString(_expect, name); expect ){
 			if( *expect=="ok" )
 				EXPECT_FALSE( _exception ) << outcome;
@@ -132,13 +109,11 @@ namespace Jde::Opc::Gateway::Tests{
 			GTEST_SKIP() << Ƒ( "/testing/external/idle ({}) must be shorter than /gateway/ttl ({}) - the client retires during the wait.", Chrono::ToString(*idle), Chrono::ToString(ttl) );
 		let& slug = _certificateUri.empty() ? ExternalNoneSlug : ExternalSecureSlug;
 		GetConnection( slug, _url, _certificateUri );//not Cell():  idle is no security-matrix cell, so it writes no MATRIX row.
-		_exception = nullptr; _done.clear();
-		Connect( slug, Credential{User{_user, _password}} );
-		_done.wait( false );
+		Attempt( slug, Credential{User{_user, _password}} );
 		ASSERT_TRUE( _client ) << (_exception ? _exception->what() : "");
 		std::this_thread::sleep_for( *idle );
 		const NodeId nodeId{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_STATE) };
-		let value = BlockTAwait<flat_map<NodeId, Value>>( ReadValueAwait{{nodeId}, _client} ).at( nodeId );
+		let value = ReadValue( _client, nodeId );
 		EXPECT_FALSE( value.status ) << UAException::Message( value.status );
 	}
 }

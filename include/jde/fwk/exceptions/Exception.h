@@ -56,6 +56,7 @@ namespace Jde{
 		Exception( const Exception& e )ι;
 		Exception( runtime_error&& e, ExceptionArgs args={}, SRCE )ι;
 		Ω FromPtr( const std::exception_ptr& e, SRCE )ι->up<Exception>; //preserves dynamic type, unlike a ctor which would slice.
+		Ω From( runtime_error&& e )ι->up<Exception>;//a caught runtime_error with its type:  a Jde one moved, any other wrapped.
 
 		Exception( string value, ExceptionArgs args={}, SRCE )ι;
 		$ Exception( SL sl, ExceptionArgs args, std::exception&& inner, fmt::format_string<Args...> m="", Args&&... sargs )ι;
@@ -103,6 +104,10 @@ namespace Jde{
 		}
 	};
 
+	Ξ Exception::From( runtime_error&& e )ι->up<Exception>{
+		auto p = dynamic_cast<Exception*>( &e );
+		return p ? p->Move() : mu<Exception>( move(e) );
+	}
 	Ŧ ToExceptionPtr( T&& e )ι->up<T>{
 		auto p = dynamic_cast<Exception*>( &e );
 		return p ? p->Move() : up<T>{ mu<T>(e.what()) };

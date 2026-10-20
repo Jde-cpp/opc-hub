@@ -8,7 +8,7 @@ namespace Jde::Opc{
 	static sp<DB::AppSchema> _schema;
 	α Gateway::DS()ι->sp<DB::IDataSource>{ return _schema->DS(); }
 	α Gateway::SetSchema( sp<DB::AppSchema> schema )ι->void{ _schema = schema; }
-	α Gateway::GetViewPtr( str name )ι->sp<DB::Table>{
-		return _schema->GetViewPtr( name );
+	α Gateway::GetViewPtr( sv name )ι->sp<DB::Table>{
+		return _schema->GetViewPtr( string{name} );
 	}
 }

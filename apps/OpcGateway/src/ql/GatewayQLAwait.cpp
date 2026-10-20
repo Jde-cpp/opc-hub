@@ -4,11 +4,9 @@
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/Variant.h>
 #include "../GatewayAppClient.h"
-#include "../async/CallAwait.h"
 #include "../async/NamespacesAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
-#include "DataTypeQLAwait.h"
 #include "HistEditQLAwait.h"
 #include "HistQLAwait.h"
 #include "HistComputedQLAwait.h"
@@ -27,10 +25,75 @@ namespace Jde::Opc::Gateway{
 			throw UAClientException{ sc, client->Handle(), Ƒ("getConnectionAttribute('{}')", name) };
 		return v;
 	}
+	Ω dataTypeJson( const UA_DataType& dt, const QL::TableQL& q )ι->jobject{
+		jobject j;
+		if( q.FindColumn("typeId") )
+			j["typeId"] = NodeId{ dt.typeId }.ToJson();
+		if( q.FindColumn("binaryEncodingId") )
+			j["binaryEncodingId"] = NodeId{ dt.binaryEncodingId }.ToJson();
+		if( q.FindColumn("xmlEncodingId") )
+			j["xmlEncodingId"] = NodeId{ dt.xmlEncodingId }.ToJson();
+		if( q.FindColumn("memSize") )
+			j["memSize"] = dt.memSize;
+		if( q.FindColumn("typeKind") )
+			j["typeKind"] = dt.typeKind;
+		if( q.FindColumn("pointerFree") )
+			j["pointerFree"] = dt.pointerFree;
+		if( q.FindColumn("overlayable") )
+			j["overlayable"] = dt.overlayable;
+		if( auto memberQL = q.FindTable("members"); memberQL ){
+			jarray jMembers;
+			for( uint m=0; m<dt.membersSize; ++m ){
+				let member = &dt.members[m];
+				jobject jMember;
+				if( memberQL->FindColumn("padding") )
+					jMember["padding"] = member->padding;
+				if( memberQL->FindColumn("isArray") )
+					jMember["isArray"] = ( bool )member->isArray;
+				if( memberQL->FindColumn("isOptional") )
+					jMember["isOptional"] = ( bool )member->isOptional;
+				if( memberQL->FindColumn("type") )
+					jMember["type"] = dataTypeJson( *member->memberType, *memberQL );
+				jMembers.push_back( jMember );
+			}
+			j["members"] = jMembers;
+		}
+		return j;
+	}
+	//getRemoteDataTypes allocates the array with cleanup=true but does not add it to the client config, so the caller owns it. open62541's UA_cleanupDataTypeWithCustom is not exported; mirror it here.
+	//UA_DataType_clear is, and it also frees the typeId and encoding ids - a string or guid id leaked when this freed only the names and members.
+	Ω freeRemoteDataTypes( UA_DataTypeArray* a )ι->void{
+		while( a ){
+			auto next = a->next;
+			if( a->cleanup ){
+				for( size_t i=0; i<a->typesSize; ++i )
+					UA_DataType_clear( &a->types[i] );
+				UA_free( a->types );
+				UA_free( a );
+			}
+			a = next;
+		}
+	}
+	//`dataType`:  the server's definitions of the ids asked for (getRemoteDataTypes - a sync UA service, so strand-only).
+	Ω dataTypes( const sp<UAClient>& client, const QL::TableQL& ql, SL sl )ε->jvalue{
+		jarray y;
+		let nodeIds = NodeId::ParseQL( ql );
+		THROW_IF( nodeIds.empty(), "No nodeIds specified." );
+		vector<UA_NodeId> rawIds; rawIds.reserve( nodeIds.size() );
+		for( let& id : nodeIds )
+			rawIds.emplace_back( static_cast<const UA_NodeId&>(id) );
+		UA_DataTypeArray *customTypes;
+		if( auto sc = UA_Client_getRemoteDataTypes(*client, rawIds.size(), rawIds.data(), &customTypes); sc )
+			throw UAClientException{ sc, client->Handle(), Ƒ("Could not get data types: {}", NodeId::ToString(nodeIds)), sl };
+		for( uint i=0; i<customTypes->typesSize; ++i )
+			y.push_back( dataTypeJson(customTypes->types[i], ql) );
+		freeRemoteDataTypes( customTypes );
+		return ql.TransformResult( move(y) );
+	}
 
 	α IGatewayQLAwait::GetClient( QL::IQLAwaitExe* await )ι->TAwait<sp<UAClient>>::Task{
 		try{
-			auto session = await->Session(); THROW_IF( !session, "No Session for query" );
+			auto session = await->RequireSession();
 			auto opcId = await->Input().As<jstring>( "opc" );
 			_client = co_await ConnectAwait{ string{opcId}, *session };
 			await->Query();
@@ -42,14 +105,11 @@ namespace Jde::Opc::Gateway{
 
 	//Every server-bound query names its server with `opc` - GetClient reads that argument, so one without it could only ever
 	//fail there.  Keyed on it (rather than "everything not listed") so a host QL that also serves app/access tables (OpcHub's
-	//HubQL) can ask IsApplicable and keep `users`/`sessions`/`connections` off ConnectAwait.  __type(name:…) stays on the
+	//HubQL) can hand Test every query and keep `users`/`sessions`/`connections` off ConnectAwait.  __type(name:…) stays on the
 	//generic QueryType; __type(opc:…) is an OPC enum DataType whose definition lives on that server (EnumTypeCache).
 	Ω needsClient( const QL::Input& q )ι->bool{
 		let tableName = q.JTableName();
-		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!="search";//search must never ConnectAwait - it only reads clients already open.
-	}
-	α GatewayQLAwait::IsApplicable( const QL::TableQL& q )ι->bool{
-		return q.JsonName=="opcSessions" || q.JsonName=="search" || ServerCnnctnSessionsQLAwait::IsApplicable(q) || HistGroupReadQLAwait::IsApplicable(q) || HistGroupInfoQLAwait::IsApplicable(q) || needsClient(q);
+		return q.Args.contains( "opc" ) && !tableName.starts_with( "serverConnection" ) && tableName!="status" && tableName!="opcSessions" && tableName!=SearchQLAwait::Command;//search must never ConnectAwait - it only reads clients already open.
 	}
 	α GatewayQLAwait::Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
 		up<TAwait<jvalue>> await;
@@ -59,7 +119,7 @@ namespace Jde::Opc::Gateway{
 			await = mu<HistGroupInfoQLAwait>( move(q), move(executer), sl );
 		else if( q.JsonName=="opcSessions" )
 			await = mu<OpcSessionsQLAwait>( move(q), move(executer), sl );
-		else if( q.JsonName=="search" )
+		else if( q.JsonName==SearchQLAwait::Command )
 			await = mu<SearchQLAwait>( move(q), move(executer), sl );
 		else if( ServerCnnctnSessionsQLAwait::IsApplicable(q) )
 			await = mu<ServerCnnctnSessionsQLAwait>( move(q), move(executer), sl );
@@ -91,7 +151,7 @@ namespace Jde::Opc::Gateway{
 			if( _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") )
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
 			else if( _query.JsonName.starts_with("dataType") )
-				y = co_await DataTypeQLAwait{ move(_query), move(_client), _sl };
+				y = co_await UAStrandAwait<jvalue>{ _client, [this]{ return dataTypes( _client, _query, _sl ); }, _sl };
 			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here (HistGroupReadQLAwait).
 				if( HistQL::Mode(_query)==HistQL::EMode::Raw )
 					y = co_await HistQLAwait{ move(_query), move(_client), _sl };
@@ -126,15 +186,10 @@ namespace Jde::Opc::Gateway{
 	α GatewayQLMAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			jvalue y;
-			// if( m.Type==QL::EMutationQL::Execute )
-			// 	results.push_back( co_await JCallAwait(move(m), _request.SessionInfo, _sl) );
 			if( _query.DBTable && _query.TableName()=="server_connections" )
 				y = co_await QL::QLAwait<>( move(_query), UserPK(), _sl );
-			else if( _query.JsonTableName=="variable" ){
-				auto session = Session();
-				THROW_IF( !session, "No Session for mutation" );
-				y = co_await VariableQLAwait{ move(_query), session, _sl };
-			}
+			else if( _query.JsonTableName=="variable" )
+				y = co_await VariableQLAwait{ move(_query), RequireSession(), _sl };
 			else if( let edit = HistQL::FindEdit(_query.CommandName); edit )//the server's own history, over the caller's session (spec *Pass-through*).
 				y = co_await HistEditQLAwait{ move(_query), *edit, move(_client), _sl };
 			else
@@ -212,26 +267,8 @@ namespace Jde::Opc::Gateway{
 	}
 	α GatewayQLAwait::SecurityMode( const sp<UAClient>& client )ε->string{
 		UA_Variant uaAttrib = connectionAttribute( client, "securityMode" );
-		UA_MessageSecurityMode emode = *( UA_MessageSecurityMode* )uaAttrib.data;
-		sv mode;
-		switch( emode ){
-		case UA_MESSAGESECURITYMODE_INVALID:
-			mode = "Invalid";
-			break;
-		case UA_MESSAGESECURITYMODE_NONE:
-			mode = "None";
-			break;
-		case UA_MESSAGESECURITYMODE_SIGN:
-			mode = "Sign";
-			break;
-		case UA_MESSAGESECURITYMODE_SIGNANDENCRYPT:
-			mode = "SignAndEncrypt";
-			break;
-		case __UA_MESSAGESECURITYMODE_FORCE32BIT:
-			ASSERT( false );
-			break;
-		}
+		let mode = SecurityModeName( *(UA_MessageSecurityMode*)uaAttrib.data );
 		UA_Variant_clear( &uaAttrib );
-		return string{ mode };
+		return mode;
 	}
 }

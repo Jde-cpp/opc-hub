@@ -318,24 +318,25 @@ namespace Jde::Opc::Gateway{
 						//A Conflict is the unique index, a foreign key - the group or member purged meanwhile - or another constraint, and the
 						//index can be this group's own:  another member, an ad hoc row, or a concurrent resolve of this one.
 						if( conflict ){
-							auto holders = co_await Any( SelectHistGroupNodes({.Connection=group.Connection, .Node=text}) );
-							if( holders.empty() ){
+							using enum NodeHolder::EKind;
+							let holder = co_await SelectNodeHolder( group, text, result.TemplateNode );
+							if( holder.Kind==None ){
 								result.Status = UA_STATUSCODE_BADINTERNALERROR;
 								WARN( "[{}]Template member {} resolved to '{}', and createHistGroupNode failed:  {}", group.Guid, result.TemplateNode, node->ToString(), *conflict );
 							}
-							else if( let& holder = holders.front(); holder.Group!=group.Id ){
+							else if( holder.Kind==OtherGroup ){
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
-								result.Holder = holder.Group;
-								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Group );
+								result.Holder = holder.Row->Group;
+								WARN( "[{}]Template member {} resolved to '{}', which group {} holds.", group.Guid, result.TemplateNode, node->ToString(), holder.Row->Group );
 							}
-							else if( holder.TemplateNode==result.TemplateNode ){//a concurrent resolve made the row.
+							else if( holder.Kind==SameMember ){//a concurrent resolve made the row.
 								result.Node = move( *node );
 								result.Status = UA_STATUSCODE_GOOD;
 							}
 							else{
 								result.Status = UA_STATUSCODE_BADNODEIDEXISTS;
 								result.Holder = group.Id;
-								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.TemplateNode ? Ƒ("member {}", *holder.TemplateNode) : string{"an ad hoc node"} );
+								WARN( "[{}]Template member {} resolved to '{}', which this group holds as {}.", group.Guid, result.TemplateNode, node->ToString(), holder.Row->TemplateNode ? Ƒ("member {}", *holder.Row->TemplateNode) : string{"an ad hoc node"} );
 							}
 						}
 					}
@@ -367,95 +368,65 @@ namespace Jde::Opc::Gateway{
 		if( resolved.size() )
 			INFO( "[{}]{} of {} template members resolved.", guid, good, resolved.size() );
 	}
-	α HistHost::GroupCreated( HistGroupPK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			string guid;
-			if( Enabled() ){
-				auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}}) );
-				THROW_IF( rows.empty(), "hist_groups row {} not found.", id );
-				let& row = rows.front();
-				let slug = co_await SlugAwait{ row.Connection };
-				Load( row, {}, {}, slug, SRCE_CUR );
-				guid = row.Guid;
-				INFO( "[{}]Group '{}' created on '{}'.", row.Guid, row.Name, slug );
-			}
-			summarize( guid, co_await Resolve(id, by) );
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::GroupEdited( DB::Key key, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroups({.Key=key, .IncludeDeleted=true}) );
-			auto host = rows.size() ? Find( rows.front().Id ) : nullptr;
-			if( host ){
-				let& row = rows.front();
-				host->SetName( row.Name );
-				host->SetColumns( row.Thresholds );
-				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
-				auto thresholds = Reserve<std::pair<HistGroupNodePK,Thresholds>>( nodes.size() );
-				for( let& node : nodes )
-					thresholds.emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds) );
-				host->SetNodeThresholds( move(thresholds), SRCE_CUR );
-			}
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::GroupDeleted( DB::Key key, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroups({.Key=key, .IncludeDeleted=true}) );
-			if( auto host = rows.size() ? Remove( rows.front().Id, Writer(by), SRCE_CUR ) : nullptr; host ){
-				co_await host->Group()->Settled();//its last flush, so a restore can add the group again.
-				INFO( "[{}]Group '{}' deleted.", host->Guid(), rows.front().Name );
-			}
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::GroupRestored( DB::Key key, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroups({.Key=key}) );
-			THROW_IF( rows.empty(), "hist_groups row '{}' not found.", key.IsPK() ? std::to_string(key.PK()) : key.NK() );
+	α HistHost::GroupCreated( HistGroupPK id, UserPK by )ι->AnyVoidTask{
+		string guid;
+		if( Enabled() ){
+			auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}}) );
+			THROW_IF( rows.empty(), "hist_groups row {} not found.", id );
 			let& row = rows.front();
-			if( Enabled() ){
-				auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
-				auto members = row.Template ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Template=row.Template})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
-				let slug = co_await SlugAwait{ row.Connection };
-				Load( row, nodes, members, slug, SRCE_CUR )->Subscribe();
-				INFO( "[{}]Group '{}' restored with {} nodes.", row.Guid, row.Name, nodes.size() );
-			}
-			summarize( row.Guid, co_await Resolve(row.Id, by) );//members its template gained while it was deleted:  TemplateNodeCreated resolves live groups only.
-			await.Done();
+			let slug = co_await SlugAwait{ row.Connection };
+			Load( row, {}, {}, slug, SRCE_CUR );
+			guid = row.Guid;
+			INFO( "[{}]Group '{}' created on '{}'.", row.Guid, row.Name, slug );
 		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
+		summarize( guid, co_await Resolve(id, by) );
+	}
+	α HistHost::GroupEdited( DB::Key key )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroups({.Key=key, .IncludeDeleted=true}) );
+		auto host = rows.size() ? Find( rows.front().Id ) : nullptr;
+		if( host ){
+			let& row = rows.front();
+			host->SetName( row.Name );
+			host->SetColumns( row.Thresholds );
+			auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
+			auto members = co_await SelectHistTemplateMembers( {.Template=row.Template} );
+			auto thresholds = Reserve<std::pair<HistGroupNodePK,Thresholds>>( nodes.size() );
+			for( let& node : nodes )
+				thresholds.emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds) );
+			host->SetNodeThresholds( move(thresholds), SRCE_CUR );
 		}
 	}
-	α HistHost::GroupPurging( HistGroupPK id, UserPK by, string& guid, HistWork& await )ι->VoidTask{
-		try{
-			//The key of its access row, which GroupPurged purges once the row is gone.  A deleted group is purged too, so the row's, not a host's.
-			auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
-			if( rows.size() )
-				guid = rows.front().Guid;
-			if( auto host = Remove(id, Writer(by), SRCE_CUR); host )
-				co_await host->Group()->Settled();
-			let view = GetViewPtr( "hist_group_nodes" );
-			co_await Any( DS()->Execute(DB::Sql{Ƒ("delete from {} where hist_group_id=?", view->SqlName()), {DB::Value{(uint)id}}}) );
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
+	α HistHost::GroupDeleted( DB::Key key, UserPK by )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroups({.Key=key, .IncludeDeleted=true}) );
+		if( auto host = rows.size() ? Remove( rows.front().Id, Writer(by), SRCE_CUR ) : nullptr; host ){
+			co_await host->Group()->Settled();//its last flush, so a restore can add the group again.
+			INFO( "[{}]Group '{}' deleted.", host->Guid(), rows.front().Name );
 		}
 	}
-	α HistHost::GroupPurged( string guid, HistWork& await )ι->VoidTask{
+	α HistHost::GroupRestored( DB::Key key, UserPK by )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroups({.Key=key}) );
+		THROW_IF( rows.empty(), "hist_groups row '{}' not found.", key.IsPK() ? std::to_string(key.PK()) : key.NK() );
+		let& row = rows.front();
+		if( Enabled() ){
+			auto nodes = co_await Any( SelectHistGroupNodes({.Group=row.Id}) );
+			auto members = co_await SelectHistTemplateMembers( {.Template=row.Template} );
+			let slug = co_await SlugAwait{ row.Connection };
+			Load( row, nodes, members, slug, SRCE_CUR )->Subscribe();
+			INFO( "[{}]Group '{}' restored with {} nodes.", row.Guid, row.Name, nodes.size() );
+		}
+		summarize( row.Guid, co_await Resolve(row.Id, by) );//members its template gained while it was deleted:  TemplateNodeCreated resolves live groups only.
+	}
+	α HistHost::GroupPurging( HistGroupPK id, UserPK by, string& guid )ι->AnyVoidTask{
+		//The key of its access row, which GroupPurged purges once the row is gone.  A deleted group is purged too, so the row's, not a host's.
+		auto rows = co_await Any( SelectHistGroups({.Key=DB::Key{(uint)id}, .IncludeDeleted=true}) );
+		if( rows.size() )
+			guid = rows.front().Guid;
+		if( auto host = Remove(id, Writer(by), SRCE_CUR); host )
+			co_await host->Group()->Settled();
+		let view = GetViewPtr( HistTable::GroupNodes );
+		co_await Any( DS()->Execute(DB::Sql{Ƒ("delete from {} where hist_group_id=?", view->SqlName()), {DB::Value{(uint)id}}}) );
+	}
+	α HistHost::GroupPurged( string guid )ι->AnyVoidTask{
 		//Its own access row and the grants on it, through the AppServer as the resource sync writes its rows (#357):  keyed by the guid,
 		//nothing else would ever purge them - the Resources page lists no criteria row.  After the group's purge has landed, so a local
 		//failure leaves the group its row, and best effort:  a refusal - the gateway's login not administering an enforced `gateway`
@@ -470,105 +441,62 @@ namespace Jde::Opc::Gateway{
 			if( let p = dynamic_cast<const Exception*>(&e); !p || p->HttpStatus()!=EHttpStatus::NotFound )
 				WARN( "[{}]The group's access row wasn't purged with it, and stays, inert:  {}", guid, e.what() );
 		}
-		await.Done();
 	}
-	α HistHost::NodeCreated( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
-			THROW_IF( rows.empty(), "hist_group_nodes row {} not found.", id );
+	α HistHost::NodeCreated( HistGroupNodePK id, UserPK by )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
+		THROW_IF( rows.empty(), "hist_group_nodes row {} not found.", id );
+		let& row = rows.front();
+		if( auto host = Find(row.Group); host ){
+			auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
+			host->Join( row, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns()), Writer(by), SRCE_CUR );
+		}
+	}
+	α HistHost::NodeEdited( HistGroupNodePK id )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
+		if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host ){
 			let& row = rows.front();
-			if( auto host = Find(row.Group); host ){
-				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
-				host->Join( row, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns()), Writer(by), SRCE_CUR );
-			}
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
+			auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
+			host->SetNodeThresholds( {{row.Id, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns())}}, SRCE_CUR );
 		}
 	}
-	α HistHost::NodeEdited( HistGroupNodePK id, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
-			if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host ){
-				let& row = rows.front();
-				auto members = row.TemplateNode ? HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=row.TemplateNode})) ) : flat_map<HistTemplateNodePK,HistTemplateNodeRow>{};
-				host->SetNodeThresholds( {{row.Id, ResolveThresholds(row.Thresholds, memberOf(members, row.TemplateNode), host->Columns())}}, SRCE_CUR );
-			}
-			await.Done();
+	α HistHost::NodePurging( HistGroupNodePK id, UserPK by )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
+		if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host )
+			host->Leave( id, Writer(by), SRCE_CUR );
+	}
+	α HistHost::TemplateNodeCreated( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask{
+		auto rows = co_await Any( SelectHistTemplateNodes({.Id=id}) );
+		THROW_IF( rows.empty(), "hist_template_nodes row {} not found.", id );
+		auto groups = co_await Any( SelectHistGroups({.Template=rows.front().Template}) );
+		for( let& group : groups )
+			summarize( group.Guid, co_await Resolve(group.Id, by) );
+	}
+	α HistHost::TemplateNodeEdited( HistTemplateNodePK id )ι->AnyVoidTask{
+		auto members = co_await SelectHistTemplateMembers( {.Id=id} );
+		auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
+		flat_map<sp<HistGroupHost>,vector<std::pair<HistGroupNodePK,Thresholds>>> byHost;//one modify per group.
+		for( let& node : nodes ){
+			if( auto host = Find(node.Group); host )
+				byHost[host].emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), host->Columns()) );
 		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
+		for( auto&& [host,thresholds] : byHost )
+			host->SetNodeThresholds( move(thresholds), SRCE_CUR );
+	}
+	α HistHost::TemplateNodePurging( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask{
+		auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
+		for( let& node : nodes ){
+			auto purge = QL().Query( "purgeHistGroupNode( id:$id )", jobject{{"id", node.Id}}, by );
+			co_await Any( *purge );
 		}
 	}
-	α HistHost::NodePurging( HistGroupNodePK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
-			if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host )
-				host->Leave( id, Writer(by), SRCE_CUR );
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::TemplateNodeCreated( HistTemplateNodePK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto rows = co_await Any( SelectHistTemplateNodes({.Id=id}) );
-			THROW_IF( rows.empty(), "hist_template_nodes row {} not found.", id );
-			auto groups = co_await Any( SelectHistGroups({.Template=rows.front().Template}) );
-			for( let& group : groups )
-				summarize( group.Guid, co_await Resolve(group.Id, by) );
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::TemplateNodeEdited( HistTemplateNodePK id, HistWork& await )ι->VoidTask{
-		try{
-			auto members = HistTemplateNodesById( co_await Any(SelectHistTemplateNodes({.Id=id})) );
-			auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
-			flat_map<sp<HistGroupHost>,vector<std::pair<HistGroupNodePK,Thresholds>>> byHost;//one modify per group.
-			for( let& node : nodes ){
-				if( auto host = Find(node.Group); host )
-					byHost[host].emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), host->Columns()) );
-			}
-			for( auto&& [host,thresholds] : byHost )
-				host->SetNodeThresholds( move(thresholds), SRCE_CUR );
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::TemplateNodePurging( HistTemplateNodePK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto nodes = co_await Any( SelectHistGroupNodes({.TemplateNode=id}) );
-			for( let& node : nodes ){
-				auto purge = QL().Query( "purgeHistGroupNode( id:$id )", jobject{{"id", node.Id}}, by );
-				co_await Any( *purge );
-			}
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
-		}
-	}
-	α HistHost::TemplatePurging( HistTemplatePK id, UserPK by, HistWork& await )ι->VoidTask{
-		try{
-			auto groups = co_await Any( SelectHistGroups({.Template=id, .IncludeDeleted=true}) );
-			if( groups.size() )
-				throw Exception{ await.Source(), ExceptionArgs{EHttpStatus::Conflict}, "Template {} is used by {} group{} - purge them first.", id, groups.size(), groups.size()==1 ? "" : "s" };
-			auto members = co_await Any( SelectHistTemplateNodes({.Template=id}) );
-			for( let& member : members ){
-				auto purge = QL().Query( "purgeHistTemplateNode( id:$id )", jobject{{"id", member.Id}}, by );
-				co_await Any( *purge );
-			}
-			await.Done();
-		}
-		catch( runtime_error& e ){
-			await.ResumeExp( move(e) );
+	α HistHost::TemplatePurging( HistTemplatePK id, UserPK by, SL sl )ι->AnyVoidTask{
+		auto groups = co_await Any( SelectHistGroups({.Template=id, .IncludeDeleted=true}) );
+		if( groups.size() )
+			throw Exception{ sl, ExceptionArgs{EHttpStatus::Conflict}, "Template {} is used by {} group{} - purge them first.", id, groups.size(), groups.size()==1 ? "" : "s" };
+		auto members = co_await Any( SelectHistTemplateNodes({.Template=id}) );
+		for( let& member : members ){
+			auto purge = QL().Query( "purgeHistTemplateNode( id:$id )", jobject{{"id", member.Id}}, by );
+			co_await Any( *purge );
 		}
 	}
 }

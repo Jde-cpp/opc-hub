@@ -2,6 +2,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <absl/synchronization/mutex.h>
 #include <jde/opc/uatypes/NodeId.h>
+#include "LazySlot.h"
 
 namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
@@ -39,13 +40,7 @@ namespace Jde::Opc::Gateway{
 		α Size()Ι->size_t{ rl _{_mutex}; return _slots.size(); }
 		Ω SourceName( ESource s )ι->sv;
 	private:
-		enum class EState : uint8{ Fetching, Ready, Failed };
-		struct Slot{
-			EState State{ EState::Fetching };
-			Ptr Type;					//Ready.
-			up<Exception> Error;		//Failed:  a permanent answer (not an enum, no definition anywhere) - re-thrown to every later caller without another round trip.
-			vector<GetAwait*> Waiters;	//parked on the in-flight fetch;  resumed by Finish.
-		};
+		using Slot = LazySlot<Ptr>;//Failed:  a permanent answer (not an enum, no definition anywhere) - re-thrown to every later caller without another round trip.
 		α StartLocked( sp<UAClient>&& client, NodeId&& id, GetAwait* waiter )ι->void;
 		α Fetch( sp<UAClient> client, NodeId id )ι->VoidTask;	//every co_await is Any-wrapped, so the task type is free.
 		α Finish( const NodeId& id, Ptr type, up<Exception> error, bool retryable )ι->void;

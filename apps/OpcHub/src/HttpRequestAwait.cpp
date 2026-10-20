@@ -63,9 +63,9 @@ namespace Jde::Opc::Hub{
 		}
 		else if( _request.IsPost("/logout") )
 			HubLogout();
-		else if( _request.IsGet() && _request["opc"].empty() && Web::Server::Site() )
+		else if( _request.IsGet() && Web::Server::Site() )
 			ServeSite();//the page and its files, then the 404
 		else
-			base::Suspend();//?opc= and the 404.
+			base::Suspend();//the 404.
 	}
 }

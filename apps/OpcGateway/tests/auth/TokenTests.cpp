@@ -1,7 +1,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include "Auth.h"
-#include "../../src/auth/TokenAwait.h"
+#include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"
 #include "../../src/GatewayAppClient.h"
 
@@ -13,61 +13,31 @@ namespace Jde::Opc::Gateway::Tests{
 	class TokenTests : public Auth{
 	protected:
 		TokenTests()ι:Auth{ETokenType::IssuedToken}{}
-		~TokenTests()override{}
-		Ω SetUpTestCase()ε->void;
-		α TearDown()ι->void override{}
-		Ω TearDownTestSuite();
-		static optional<Web::Jwt> _jwt;
 	};
-	optional<Web::Jwt> TokenTests::_jwt;
 
-	α TokenTests::SetUpTestCase()ε->void{
-		_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-	}
-
-	α TokenTests::TearDownTestSuite(){
-		Auth::TearDownTestSuite();
-	}
-
-	up<Exception> _exception;
-	Ω authenticateTest( const Web::Jwt& jwt, ServerCnnctnNK opcId, atomic_flag& flag, bool bad=false )ι->TAwait<sp<UAClient>>::Task{
-		try{
-			auto text = jwt.Payload();
-			if( bad )
-				text[42] = text[42]-1;
-			auto client = co_await UAClient::GetClient( move(opcId), Credential{text} );
-			//co_await TokenAwait{ text, move(opcId), "localhost", true };
-			//_sessionIds.push_back( sessionInfo.session_id() );
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		flag.test_and_set();
-		flag.notify_all();
-		TRACE( "notify_all" );
+	Ω token( const Web::Jwt& jwt, bool bad=false )ι->Credential{
+		auto text = jwt.Payload();
+		if( bad )
+			text[42] = text[42]-1;
+		return Credential{ text };
 	}
 
 	TEST_F( TokenTests, Authenticate ){
 		let opcId{ Connection->Slug };
 		atomic_flag a,b,c;
-		authenticateTest( *_jwt, opcId, a );
+		sp<UAClient> clientA, clientB, clientC;//one each:  b and c run at once.
+		Connect( opcId, token(Jwt()), &clientA, &_exception, &a );
 		a.wait( false );
-		TRACE( "Call b" );
-		authenticateTest( *_jwt, opcId, b );
-		TRACE( "Call c" );
-		authenticateTest( *_jwt, opcId, c );
+		Connect( opcId, token(Jwt()), &clientB, &_exception, &b );//concurrent:  the detached form.
+		Connect( opcId, token(Jwt()), &clientC, &_exception, &c );
 		b.wait( false );
-		TRACE( "b returned" );
 		c.wait( false );
-		TRACE( "c returned" );
 		EXPECT_FALSE( _exception );
-		std::this_thread::sleep_for( 100ms );
+		std::this_thread::sleep_for( 100ms );//a wait returns once its flag is set, while the coroutine may still be in notify_all on these locals.
 	}
 
 	TEST_F( TokenTests, Authenticate_Bad ){
-		atomic_flag flag;
-		authenticateTest( *_jwt, Connection->Slug, flag, true );
-		flag.wait( false );
+		Attempt( Connection->Slug, token(Jwt(), true) );
 		EXPECT_TRUE( _exception );
 		EXPECT_TRUE( _exception && string{_exception->what()}.contains("BadIdentityTokenInvalid") );
 		DBG( "{}", _exception ? _exception->what() : "Error no exception." );

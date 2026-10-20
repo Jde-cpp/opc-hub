@@ -1,17 +1,13 @@
 #pragma once
 
-namespace Jde::Web{ struct Jwt; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 namespace Tests{
 	struct ITest : ::testing::Test{
 	protected:
-		Ω SetUpTestCase()ε->void;
-		Ω TearDownTestCase()ι->void;
-		β SetUp()ι->void{}
-		constexpr static ELogTags _tags{ ELogTags::Test };
-
-		static optional<Web::Jwt> _jwt;
+		Ω SetUpTestSuite()ε->void;
+		Ω TearDownTestSuite()ι->void;
+		Ω Reconnect()ε->void;//a new suite client, as SetUpTestSuite connects it, for a test that removed or lost the one the suite shares.
 		static sp<UAClient> _client;
 	};
 }}

@@ -26,27 +26,8 @@ namespace Jde::Opc::Gateway::Soak{
 	using Web::Client::ClientHttpAwait;
 	using Web::Client::ClientHttpRes;
 
-	//-<arg>=<value> beats the settings file so soak.sh can vary a run without another jsonnet.
-	Ω argDuration( sv arg, sv path, Duration dflt )ε->Duration{
-		if( auto a = Process::FindArg(string{arg}); a && a->size() )
-			return Chrono::ToDuration( string{*a} );
-		return Settings::FindDuration( path ).value_or( dflt );
-	}
-	Ω argString( sv arg, sv path, sv dflt )ι->string{
-		if( auto a = Process::FindArg(string{arg}); a && a->size() )
-			return *a;
-		return Settings::FindString( path ).value_or( string{dflt} );
-	}
-	Ω argNumber( sv arg, sv path, uint dflt )ε->uint{
-		if( auto a = Process::FindArg(string{arg}); a && a->size() ){
-			let n = Str::TryTo<uint>( *a );
-			THROW_IF( !n, "{} '{}' is not a number.", arg, *a );
-			return *n;
-		}
-		return Settings::FindNumber<uint>( path ).value_or( dflt );
-	}
-	//A bare presence flag - no '=value' - falling back to a settings bool.  argString/argNumber cannot serve: both
-	//require a value, and Process::FindArg on a bare flag yields an empty string that each discards as unset.
+	//A bare presence flag - no '=value' - falling back to a settings bool.  Settings::FindArgString cannot serve: it takes a
+	//value, and Process::FindArg on a bare flag yields an empty string that it discards as unset.
 	Ω argFlag( sv arg, sv path )ι->bool{
 		if( Process::FindArg(string{arg}) )
 			return true;
@@ -69,7 +50,7 @@ namespace Jde::Opc::Gateway::Soak{
 				leg.Url = Json::FindString( o, "url" ).value_or( "" );
 				leg.User = Json::FindString( o, "user" ).value_or( "" );
 				leg.Password = Json::FindString( o, "password" ).value_or( "" );
-				if( flag ){//-externalUrl= etc. beat the flagged entry's settings, mirroring argString.
+				if( flag ){//-externalUrl= etc. beat the flagged entry's settings, mirroring Settings::FindArgString.
 					let arg = [&flag]( sv suffix ){ return Process::FindArg( Ƒ("{}{}", *flag, suffix) ); };
 					if( let v = arg("Url"); v && v->size() )
 						leg.Url = *v;
@@ -86,19 +67,13 @@ namespace Jde::Opc::Gateway::Soak{
 				}
 			}
 		}
-		if( legs.empty() ){
-			auto& leg = legs.emplace_back();
-			leg.Slug = "OpcSoak"; leg.Name = "Soak test server"; leg.Description = "Soak test connection";
-			leg.CertificateUri = "urn:open62541.server.application"; leg.Url = "opc.tcp://127.0.0.1:4840";
-		}
-		if( legs.front().Nodes.empty() )
-			legs.front().Nodes.push_back( NodeId{4, 6017} );
+		THROW_IF( legs.empty(), "/soak/servers has no active leg - Opc.Soak.jsonnet lists them." );
+		for( let& leg : legs )
+			THROW_IF( leg.Nodes.empty(), "/soak/servers '{}' lists no nodes.", leg.Slug );
 		return legs;
 	}
 
-	//Where -createCert wrote the leg's client certificate - the file an external server has to trust.  Asks UAClient
-	//rather than re-deriving the layout; the SAN doesn't affect the path, so the uri is not needed here.
-	Ω CertPath( sv slug )ι->string{
+	α CertPath( sv slug )ι->string{
 		return UAClient::CryptoSettings( ServerCnnctnNK{slug} ).Certificate.Path.string();
 	}
 
@@ -131,13 +106,9 @@ namespace Jde::Opc::Gateway::Soak{
 	//session - the gateway is up and logged in by the time soak.sh runs -grant (it waited on its HTTP port first).
 	Ω gatewayHistorianUser( const sp<App::Client::IAppClient>& client )ι->optional<uint64_t>{
 		try{
-			let host = argString( "-gatewayHost", "/soak/gatewayHost", "localhost" );
-			let port = Settings::FindNumber<PortType>( "/soak/gatewayPort" ).value_or( 1968 );
-			optional<ssl::context> ctx;
-			auto socket = ms<GatewayClientSocket>( Executor(), ctx );
-			BlockVoidAwait( socket->RunSession(host, port) );
-			BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(client->SessionId()) );
-			let status = socket->QuerySync( "status{ historianUser }" );
+			let host = Settings::FindArgString( "-gatewayHost", "/soak/gatewayHost" ).value_or( "localhost" );
+			let port = (PortType)Settings::FindArgNumber( "-gatewayPort", "/soak/gatewayPort" ).value_or( 1968 );
+			let status = GatewayClientSocket::Open( host, port, client->SessionId() )->QuerySync( "status{ historianUser }" );
 			let user = status.is_object() ? Json::FindNumber<uint64_t>( status.as_object(), "historianUser" ) : nullopt;
 			return user && *user ? user : nullopt;
 		}
@@ -162,7 +133,7 @@ namespace Jde::Opc::Gateway::Soak{
 		α SampleStatus()ι->void;
 		α Reconnect( ServerLeg& leg )ε->void;
 		α FindLeg( sv slug )ι->ServerLeg*;
-		α Total( uint ServerLeg::* counter )Ι->uint;
+		α Totals()Ι->Counters;
 		α AllLatencies()Ι->vector<uint32>;
 		α WriteSummary( sv verdict )ι->void;
 		α SetupHistorian()ε->void;//a gateway group on the primary leg, over the node the soak writes, and a HistSubscribe to it.
@@ -171,11 +142,11 @@ namespace Jde::Opc::Gateway::Soak{
 
 		sp<App::Client::IAppClient> _client;
 		sp<GatewayClientSocket> _socket;//the main session's socket - User legs hold their own in ServerLeg::Socket.
-		vector<sp<GatewayClientSocket>> _retiredSockets;//dropped sockets stay alive - Connect() registered them with Process::AddShutdown.
 		vector<ServerLeg> _legs;
 		string _host;
 		PortType _port;
 		Duration _duration, _writePeriod, _pushTimeout, _statusPeriod, _quietInterval, _quietPeriod, _retryDelay;
+		Duration _startDelay;//a settle delay after the subscription ack, to see whether it avoids the first-write hang.
 		uint _writeRetries, _missRetries;//extra attempts per write / extra rounds per missed push before they count as a WriteFailure / Miss.
 		bool _readBack;//ask the mutation for { value } and check what it echoes - soak-findings #6, off by default.  See Write().
 		bool _passthrough;//-passthrough (soak.sh --emulator):  each quiet window, an aggregate read of the OpcServer's own pump history over a long span and a small history edit, through the gateway - the day-page round trips and edit-lock holds #210/#211/#220 deferred to the soak.  Measured, never fails the run.
@@ -214,21 +185,22 @@ namespace Jde::Opc::Gateway::Soak{
 	SoakRunner::SoakRunner( sp<App::Client::IAppClient> client )ε:
 		_client{ move(client) },
 		_legs{ ActiveServers() },
-		_host{ argString("-gatewayHost", "/soak/gatewayHost", "localhost") },
-		_port{ Settings::FindNumber<PortType>("/soak/gatewayPort").value_or(1968) },
-		_duration{ argDuration("-duration", "/soak/duration", std::chrono::hours{24}) },
-		_writePeriod{ argDuration("-writePeriod", "/soak/writePeriod", 1s) },
-		_pushTimeout{ argDuration("-pushTimeout", "/soak/pushTimeout", 5s) },
-		_statusPeriod{ argDuration("-statusPeriod", "/soak/statusPeriod", 1min) },
-		_quietInterval{ argDuration("-quietInterval", "/soak/quietInterval", std::chrono::hours{6}) },
-		_quietPeriod{ argDuration("-quietPeriod", "/soak/quietPeriod", 10min) },
-		_retryDelay{ argDuration("-retryDelay", "/soak/retryDelay", 1s) },
-		_writeRetries{ argNumber("-writeRetries", "/soak/writeRetries", 2) },
-		_missRetries{ argNumber("-missRetries", "/soak/missRetries", 2) },
+		_host{ Settings::FindArgString( "-gatewayHost", "/soak/gatewayHost" ).value_or( "localhost" ) },
+		_port{ (PortType)Settings::FindArgNumber( "-gatewayPort", "/soak/gatewayPort" ).value_or( 1968 ) },
+		_duration{ Settings::FindArgDuration( "-duration", "/soak/duration" ).value_or( std::chrono::hours{24} ) },
+		_writePeriod{ Settings::FindArgDuration( "-writePeriod", "/soak/writePeriod" ).value_or( 1s ) },
+		_pushTimeout{ Settings::FindArgDuration( "-pushTimeout", "/soak/pushTimeout" ).value_or( 5s ) },
+		_statusPeriod{ Settings::FindArgDuration( "-statusPeriod", "/soak/statusPeriod" ).value_or( 1min ) },
+		_quietInterval{ Settings::FindArgDuration( "-quietInterval", "/soak/quietInterval" ).value_or( std::chrono::hours{6} ) },
+		_quietPeriod{ Settings::FindArgDuration( "-quietPeriod", "/soak/quietPeriod" ).value_or( 10min ) },
+		_retryDelay{ Settings::FindArgDuration( "-retryDelay", "/soak/retryDelay" ).value_or( 1s ) },
+		_startDelay{ Settings::FindArgDuration( "-startDelay", "/soak/startDelay" ).value_or( 0s ) },
+		_writeRetries{ Settings::FindArgNumber( "-writeRetries", "/soak/writeRetries" ).value_or( 2 ) },
+		_missRetries{ Settings::FindArgNumber( "-missRetries", "/soak/missRetries" ).value_or( 2 ) },
 		_readBack{ argFlag("-readBack", "/soak/readBack") },
 		_passthrough{ argFlag("-passthrough", "/soak/passthrough") },
-		_csvPath{ argString("-csv", "/soak/csv", "soak.csv") },
-		_summaryPath{ argString("-summary", "/soak/summary", "summary.json") }
+		_csvPath{ Settings::FindArgString( "-csv", "/soak/csv" ).value_or( "soak.csv" ) },
+		_summaryPath{ Settings::FindArgString( "-summary", "/soak/summary" ).value_or( "summary.json" ) }
 	{
 		for( auto& leg : _legs )
 			leg.LatenciesMs.reserve( 1'000 );
@@ -241,12 +213,10 @@ namespace Jde::Opc::Gateway::Soak{
 	//a restart loads the same rows at startup.  Throws:  the db is fresh per run, so nothing is "already granted", and
 	//a run on an OPEN server measures nothing of authorization - soak.sh fails early on either.
 	α EnforceWriteRights( const sp<App::Client::IAppClient>& client )ε->void{
-		let schema = argString( "-opcSchema", "/soak/opcSchema", _debug ? "opc.debug" : "opc.release" );
+		let schema = Settings::FindArgString( "-opcSchema", "/soak/opcSchema" ).value_or( _debug ? "opc.debug" : "opc.release" );
 		//ERights, not the UA access byte the old 0x7F was labelled as:  OpcAuthorize translates (ToAccess), and All carries
 		//Administer, so this user can still grant on the row once it is enforced.
-		client->QuerySync<jvalue>(
-			"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
-			{{"userId", client->UserPK().Value}, {"allowed", underlying(Access::ERights::All)}, {"schemaName", schema}} );
+		client->GrantRights( client->UserPK(), Access::ERights::All, schema, "nodeIds" );
 		INFO( "Granted user {} every right on '{}' nodeIds.", client->UserPK().Value, schema );
 		client->QuerySync<jvalue>( "restoreResource( schemaName:$schemaName, slug:\"nodeIds\", criteria:null )", {{"schemaName", schema}} );
 		INFO( "Enforced '{}' nodeIds - the OpcServer re-maps its node rights on the event.", schema );
@@ -259,9 +229,7 @@ namespace Jde::Opc::Gateway::Soak{
 		try{
 			if( let collector = gatewayHistorianUser(client); collector && *collector!=(uint64_t)client->UserPK().Value ){
 				using enum Access::ERights;
-				client->QuerySync<jvalue>(
-					"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
-					{{"userId", *collector}, {"allowed", underlying(Read | Subscribe)}, {"schemaName", schema}} );
+				client->GrantRights( Jde::UserPK{(Jde::UserPK::Type)*collector}, Read | Subscribe, schema, "nodeIds" );
 				INFO( "Granted the gateway's collector (user {}) Read+Subscribe on '{}' nodeIds.", *collector, schema );
 			}
 			else
@@ -274,16 +242,11 @@ namespace Jde::Opc::Gateway::Soak{
 
 	//Built aside and swapped in only once it is up, so a failed attempt throws before it touches anything.  It used to replace _socket
 	//first:  a failure left _socket a never-handshaken socket - the next status query on it blocked for the full request timeout - and
-	//the legs on the retired one (subscription-disconnect #8).  A failed attempt's socket is simply released:  its destructor takes
-	//back the shutdown registration its Connect made, and a long outage would otherwise pile one up per attempt.
+	//the legs on the retired one (subscription-disconnect #8).  The replaced socket and a failed attempt's are simply released:  a
+	//request in flight and the read loop each hold their own reference, and the destructor takes back the shutdown registration
+	//its Connect made.
 	α SoakRunner::Connect()ε->void{
-		optional<ssl::context> ctx;
-		auto socket = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(_client->SessionId()) );
-		if( _socket )
-			_retiredSockets.push_back( move(_socket) );
-		_socket = move( socket );
+		_socket = GatewayClientSocket::Open( _host, _port, _client->SessionId() );
 		for( auto& leg : _legs ){
 			if( leg.User.empty() ){
 				leg.Socket = _socket;
@@ -316,16 +279,10 @@ namespace Jde::Opc::Gateway::Soak{
 		}
 		let sessionId = Str::TryTo<SessionPK,16>( authorization );
 		THROW_IF( !sessionId || !*sessionId, "[{}]/login for user '{}' returned no session id in the Authorization header ('{}').", leg.Slug, leg.User, authorization );
-		optional<ssl::context> ctx;
-		auto socket = ms<GatewayClientSocket>( Executor(), ctx );//built aside and swapped in only once it is up, as in Connect (#8).
-		BlockVoidAwait( socket->RunSession(_host, _port) );
-		BlockAwait<ClientSocketAwait<uint32>,uint>( socket->Connect(*sessionId) );
-		if( leg.Socket )
-			_retiredSockets.push_back( move(leg.Socket) );
-		leg.Socket = move( socket );
+		leg.Socket = GatewayClientSocket::Open( _host, _port, *sessionId );//built aside and swapped in only once it is up, as in Connect (#8).
 		leg.SessionId = *sessionId;
 		leg.Subscribed = false;//a new socket carries no subscription.
-		INFO( "[{}]Logged in as '{}' - session {:x}.", leg.Slug, leg.User, leg.SessionId );
+		INFO( "[{}]Logged in as '{}' - session {}.", leg.Slug, leg.User, hex(leg.SessionId) );
 	}
 
 	α SoakRunner::EnsureServerConnections()ε->void{
@@ -347,7 +304,7 @@ namespace Jde::Opc::Gateway::Soak{
 		let ack = BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( leg.Socket->Subscribe(leg.Slug, leg.Nodes, shared_from_this()) );
 		THROW_IF( (uint)ack.results_size()!=leg.Nodes.size(), "Subscription ack has {} results for {} nodes.", ack.results_size(), leg.Nodes.size() );
 		for( int i=0; i<ack.results_size(); ++i )
-			THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {:x}.", leg.Nodes[i].ToString(), ack.results(i).status_code() );
+			THROW_IF( ack.results(i).status_code(), "Subscription for node '{}' failed: {}.", leg.Nodes[i].ToString(), hex(ack.results(i).status_code()) );
 		leg.Subscribed = true;
 		INFO( "Subscribed to {} node(s) on '{}'.", leg.Nodes.size(), leg.Slug );
 	}
@@ -423,7 +380,7 @@ namespace Jde::Opc::Gateway::Soak{
 		//WriteRetries counts the extra attempts so a PASS still shows how often it leaned on them.  ConsecutiveFailures stays a
 		//per-cycle count, so the reconnect threshold is unchanged.
 		if( !leg.Socket ){//not reachable since Connect/Login swap a socket in only once it is up (#8); outside the loop so it could not burn the retries.
-			++leg.WriteFailures;
+			++leg.Count.WriteFailures;
 			WARN( "[{}]updateVariable for {} skipped - the leg has no socket.", leg.Slug, node.ToString() );
 			return false;
 		}
@@ -449,12 +406,12 @@ namespace Jde::Opc::Gateway::Soak{
 			}
 			catch( const std::exception& e ){
 				if( attempt<_writeRetries && !Process::ShuttingDown() ){
-					++leg.WriteRetries;
+					++leg.Count.WriteRetries;
 					WARN( "[{}]updateVariable failed for {} (attempt {} of {}) - retrying in {}: {}", leg.Slug, node.ToString(), attempt+1, _writeRetries+1, Chrono::ToString(_retryDelay), e.what() );
 					std::this_thread::sleep_for( _retryDelay );
 					continue;
 				}
-				++leg.WriteFailures;
+				++leg.Count.WriteFailures;
 				WARN( "[{}]updateVariable failed for {} after {} attempt(s): {}", leg.Slug, node.ToString(), attempt+1, e.what() );
 				//Only a dead socket is a reason to reconnect.  An error the gateway *answered* with came back over a working
 				//connection - an OPC server that is down, a rejected write - and reconnecting cannot fix it: the reconnect's
@@ -500,28 +457,58 @@ namespace Jde::Opc::Gateway::Soak{
 			if( !Write(leg, node, value) )
 				return;//counted as a WriteFailure (and reconnected if it was the third in a row); the push criterion does not apply.
 			if( attempt==0 )
-				++leg.Writes;
+				++leg.Count.Writes;
 			std::unique_lock lock{ _mutex };
 			if( _cv.wait_for(lock, _pushTimeout, [&]{ auto p = leg.Latest.find(node); return p!=leg.Latest.end() && p->second==value; }) ){
-				++leg.Pushes;
+				++leg.Count.Pushes;
 				leg.LatenciesMs.push_back( (uint32)duration_cast<milliseconds>(steady_clock::now()-start).count() );
 				return;
 			}
 			lock.unlock();
 			if( attempt<_missRetries && !Process::ShuttingDown() ){
-				++leg.MissRetries;
+				++leg.Count.MissRetries;
 				WARN( "[{}]No data-change push for {} value {} within {} (attempt {} of {}) - re-sending in {}.", leg.Slug, node.ToString(), value, Chrono::ToString(_pushTimeout), attempt+1, _missRetries+1, Chrono::ToString(_retryDelay) );
 				std::this_thread::sleep_for( _retryDelay );
 				continue;
 			}
-			++leg.Misses;
+			++leg.Count.Misses;
 			WARN( "[{}]No data-change push for {} value {} within {} after {} attempt(s).", leg.Slug, node.ToString(), value, Chrono::ToString(_pushTimeout), attempt+1 );
 			return;
 		}
 	}
 
-	α SoakRunner::Total( uint ServerLeg::* counter )Ι->uint{
-		return std::accumulate( _legs.begin(), _legs.end(), uint{}, [counter](uint sum, let& l){ return sum+l.*counter; } );
+	α Counters::operator+=( const Counters& x )ι->Counters&{
+		for( let& [_,member] : Names )
+			this->*member += x.*member;
+		return *this;
+	}
+	α Counters::CsvHeader( sv suffix )ι->string{
+		string y;
+		for( let& [name,_] : Names )
+			y += Ƒ( ",{}{}", name, suffix );
+		return y;
+	}
+	α Counters::Csv()Ι->string{
+		string y;
+		for( let& [_,member] : Names )
+			y += Ƒ( ",{}", this->*member );
+		return y;
+	}
+	α Counters::AddTo( jobject& o )Ι->void{
+		for( let& [name,member] : Names )
+			o[name] = this->*member;
+	}
+	α Counters::Log()Ι->string{
+		string y;
+		for( let& [name,member] : Names )
+			y += Ƒ( "{}{}={}", y.empty() ? "" : ", ", name, this->*member );
+		return y;
+	}
+	α SoakRunner::Totals()Ι->Counters{
+		Counters y;
+		for( let& l : _legs )
+			y += l.Count;
+		return y;
 	}
 
 	α SoakRunner::AllLatencies()Ι->vector<uint32>{
@@ -540,10 +527,10 @@ namespace Jde::Opc::Gateway::Soak{
 			let all = AllLatencies();
 			_csv << ToIsoString( Clock::now() )
 				<< ',' << num("memory") << ',' << num("uptimeSeconds") << ',' << num("clients") << ',' << num("monitoredItems") << ',' << num("pendingItems") << ',' << num("historianGroups") << ',' << num("historianBytes")
-				<< ',' << Total(&ServerLeg::Writes) << ',' << Total(&ServerLeg::Pushes) << ',' << Total(&ServerLeg::Misses) << ',' << Total(&ServerLeg::WriteFailures) << ',' << Total(&ServerLeg::WriteRetries) << ',' << Total(&ServerLeg::MissRetries) << ',' << _socketDrops << ',' << _statusFailures
+				<< Totals().Csv() << ',' << _socketDrops << ',' << _statusFailures
 				<< ',' << percentile(all, .5) << ',' << percentile(all, .99);
 			for( let& l : _legs )
-				_csv << ',' << l.Writes << ',' << l.Pushes << ',' << l.Misses << ',' << l.WriteFailures << ',' << l.WriteRetries << ',' << l.MissRetries << ',' << percentile(l.LatenciesMs, .5) << ',' << percentile(l.LatenciesMs, .99);
+				_csv << l.Count.Csv() << ',' << percentile(l.LatenciesMs, .5) << ',' << percentile(l.LatenciesMs, .99);
 			_csv << std::endl;
 		}
 		catch( const std::exception& e ){
@@ -557,24 +544,27 @@ namespace Jde::Opc::Gateway::Soak{
 			let all = AllLatencies();
 			jobject servers;
 			for( let& l : _legs ){
-				servers[l.Slug] = jobject{
-					{"writes", l.Writes}, {"pushes", l.Pushes}, {"misses", l.Misses}, {"writeFailures", l.WriteFailures}, {"writeRetries", l.WriteRetries}, {"missRetries", l.MissRetries},
-					{"p50Ms", percentile(l.LatenciesMs, .5)}, {"p99Ms", percentile(l.LatenciesMs, .99)},
-					{"maxMs", l.LatenciesMs.empty() ? 0 : *std::ranges::max_element(l.LatenciesMs)}
-				};
+				jobject leg;
+				l.Count.AddTo( leg );
+				leg["p50Ms"] = percentile( l.LatenciesMs, .5 );
+				leg["p99Ms"] = percentile( l.LatenciesMs, .99 );
+				leg["maxMs"] = l.LatenciesMs.empty() ? 0 : *std::ranges::max_element( l.LatenciesMs );
+				servers[l.Slug] = move( leg );
 			}
-			jobject y{
-				{"verdict", verdict}, {"completed", _completed}, {"writes", Total(&ServerLeg::Writes)}, {"pushes", Total(&ServerLeg::Pushes)}, {"misses", Total(&ServerLeg::Misses)},
-				{"writeFailures", Total(&ServerLeg::WriteFailures)}, {"writeRetries", Total(&ServerLeg::WriteRetries)}, {"missRetries", Total(&ServerLeg::MissRetries)}, {"socketDrops", _socketDrops}, {"statusFailures", _statusFailures},
-				{"quietWindows", _quietWindows}, {"p50Ms", percentile(all, .5)}, {"p99Ms", percentile(all, .99)},
-				{"maxMs", all.empty() ? 0 : *std::ranges::max_element(all)},
-				{"servers", servers}
-			};
+			jobject y{ {"verdict", verdict}, {"completed", _completed} };
+			Totals().AddTo( y );
+			y["socketDrops"] = _socketDrops;
+			y["statusFailures"] = _statusFailures;
+			y["quietWindows"] = _quietWindows;
+			y["p50Ms"] = percentile( all, .5 );
+			y["p99Ms"] = percentile( all, .99 );
+			y["maxMs"] = all.empty() ? 0 : *std::ranges::max_element( all );
+			y["servers"] = move( servers );
 			if( _histGroup ){//what collection stored against what the live stream carried - the counts a human weighs on the first runs.
 				y["historian"] = jobject{
 					{"group", *_histGroup}, {"leg", _histLeg ? _histLeg->Slug : string{}},
 					{"stored", _histStored}, {"snapshot", _histListener ? _histListener->Snapshot.load() : 0}, {"stream", _histListener ? _histListener->Records.load() : 0},
-					{"legPushes", _histLeg ? _histLeg->Pushes : 0}, {"ended", _histListener ? _histListener->Error() : string{}}
+					{"legPushes", _histLeg ? _histLeg->Count.Pushes : 0}, {"ended", _histListener ? _histListener->Error() : string{}}
 				};
 			}
 			if( _passthrough ){//the pass-through measurements (#210/#211/#220):  worst-case holds a human reads against the 100ms budget.
@@ -708,7 +698,7 @@ namespace Jde::Opc::Gateway::Soak{
 			}
 			if( !_pumpRead )
 				return;//resolution failed earlier this run.
-			let days = argNumber( "-passthroughDays", "/soak/passthroughDays", 1000 );//#220's realistic worst load: a day interval a page.
+			let days = Settings::FindArgNumber( "-passthroughDays", "/soak/passthroughDays" ).value_or( 1000 );//#220's realistic worst load: a day interval a page.
 			let end = Clock::now();
 			let start = end-std::chrono::hours{ 24*(int64_t)days };
 			let readStart = steady_clock::now();
@@ -748,9 +738,9 @@ namespace Jde::Opc::Gateway::Soak{
 		_csv.open( _csvPath, std::ios::app );
 		THROW_IF( !_csv.is_open(), "Could not open csv '{}'.", _csvPath.string() );
 		if( _csv.tellp()==0 ){
-			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,pendingItems,historianGroups,historianBytes,writes,pushes,misses,writeFailures,writeRetries,missRetries,socketDrops,statusFailures,p50Ms,p99Ms";
+			_csv << "time,memory,uptimeSeconds,clients,monitoredItems,pendingItems,historianGroups,historianBytes" << Counters::CsvHeader() << ",socketDrops,statusFailures,p50Ms,p99Ms";
 			for( let& l : _legs )
-				_csv << Ƒ( ",writes_{0},pushes_{0},misses_{0},writeFailures_{0},writeRetries_{0},missRetries_{0},p50Ms_{0},p99Ms_{0}", l.Slug );
+				_csv << Counters::CsvHeader( Ƒ("_{}", l.Slug) ) << Ƒ( ",p50Ms_{0},p99Ms_{0}", l.Slug );
 			_csv << std::endl;
 		}
 		Connect();
@@ -771,8 +761,8 @@ namespace Jde::Opc::Gateway::Soak{
 				throw;
 			}
 		}
-		if( let d = argDuration("-startDelay", "/soak/startDelay", 0s); d>Duration::zero() )
-			std::this_thread::sleep_for( d );//see if a settle delay after the subscription ack avoids the first-write hang.
+		if( _startDelay>Duration::zero() )
+			std::this_thread::sleep_for( _startDelay );
 		try{
 			SetupHistorian();
 		}
@@ -838,14 +828,14 @@ namespace Jde::Opc::Gateway::Soak{
 		//reported for a human to weigh, not asserted.
 		let histErr = _histListener ? _histListener->Error() : string{};
 		let histOk = !_histGroup || (_histListener && _histListener->Records.load()>0 && histErr.empty());
-		let pass = _completed && !_socketDrops && !_statusFailures && histOk && std::ranges::all_of( _legs, [](let& l){ return !l.Misses && !l.WriteFailures; } );
+		let pass = _completed && !_socketDrops && !_statusFailures && histOk && std::ranges::all_of( _legs, [](let& l){ return !l.Count.Misses && !l.Count.WriteFailures; } );
 		WriteSummary( pass ? "PASS" : "FAIL" );
-		INFO( "Soak {}: completed={}, writes={}, pushes={}, misses={}, writeFailures={}, writeRetries={}, missRetries={}, socketDrops={}, statusFailures={}, p50={}ms, p99={}ms.",
-			pass ? "PASS" : "FAIL", _completed, Total(&ServerLeg::Writes), Total(&ServerLeg::Pushes), Total(&ServerLeg::Misses), Total(&ServerLeg::WriteFailures), Total(&ServerLeg::WriteRetries), Total(&ServerLeg::MissRetries), _socketDrops, _statusFailures, percentile(AllLatencies(), .5), percentile(AllLatencies(), .99) );
+		INFO( "Soak {}: completed={}, {}, socketDrops={}, statusFailures={}, p50={}ms, p99={}ms.",
+			pass ? "PASS" : "FAIL", _completed, Totals().Log(), _socketDrops, _statusFailures, percentile(AllLatencies(), .5), percentile(AllLatencies(), .99) );
 		if( _histGroup )
 			INFO( "  [historian]group={}, stored={}, snapshot={}, stream={}{}.", *_histGroup, _histStored, _histListener->Snapshot.load(), _histListener->Records.load(), histErr.empty() ? string{} : Ƒ(", ended: {}", histErr) );
 		for( let& l : _legs )
-			INFO( "  [{}]writes={}, pushes={}, misses={}, writeFailures={}, writeRetries={}, missRetries={}, p50={}ms, p99={}ms.", l.Slug, l.Writes, l.Pushes, l.Misses, l.WriteFailures, l.WriteRetries, l.MissRetries, percentile(l.LatenciesMs, .5), percentile(l.LatenciesMs, .99) );
+			INFO( "  [{}]{}, p50={}ms, p99={}ms.", l.Slug, l.Count.Log(), percentile(l.LatenciesMs, .5), percentile(l.LatenciesMs, .99) );
 		return pass ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 

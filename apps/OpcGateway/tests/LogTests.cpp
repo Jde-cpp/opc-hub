@@ -5,8 +5,9 @@
 #include <jde/fwk/str.h>
 #include <jde/web/client/socket/ClientSocketAwait.h>
 #include <jde/app/client/RemoteLog.h>
-#include "../src/GatewayAppClient.h" //!important
-#include "utils/GatewayClientSocket.h"//!important
+#include "../src/GatewayAppClient.h"
+#include "utils/GatewayClientSocket.h"
+#include "utils/helpers.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{

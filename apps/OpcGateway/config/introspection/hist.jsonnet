@@ -18,13 +18,8 @@
 //historyThresholds( group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }:  the
 //group's member list - each member's thresholds as the group resolves them, with where each comes from, whether its deviation
 //band is in force, and whether the caller may override them (updateHistGroupNode).
-local String = { kind: "SCALAR", name: "String" };
-local UInt = { kind: "SCALAR", name: "UInt" };
-local Boolean = { kind: "SCALAR", name: "Boolean" };
-local DateTime = { kind: "SCALAR", name: "DateTime" };
-local Json = { kind: "SCALAR", name: "Json" }; //a value as /opc carries it:  a number, string, boolean, array or object.
-local NonNull(t) = { kind: "NON_NULL", name: null, ofType: t };
-local List(t) = { kind: "LIST", name: null, ofType: t };
+local types = import 'scalars.libsonnet';
+local String = types.String, UInt = types.UInt, Boolean = types.Boolean, DateTime = types.DateTime, Json = types.Json, NonNull = types.NonNull, List = types.List;
 local historyEdit = {
 	fields: [
 		{ name: "values", type: List({ kind: "OBJECT", name: "HistoryEditValue" }) }, //each value, or time, as the edit names it.

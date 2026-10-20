@@ -1,12 +1,13 @@
 #include "HistSubscriber.h"
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
-#include <jde/app/client/IAppClient.h> //!important
+#include <jde/app/client/IAppClient.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../GatewayAppClient.h"
 #include "../types/proto/opc.FromServer.h"
 #include "HistHost.h"
+#include "../async/ExecutorAwait.h"
 
 #define let const auto
 
@@ -87,44 +88,6 @@ namespace Jde::Opc::Gateway{
 		session->WriteHist( shared_from_this(), FromServer::HistRecordsTrans(move(y), _requestId) );
 	}
 
-	//The registration and its snapshot, taken on the executor:  the group's locks, and the files the snapshot opens under
-	//them, aren't the socket strand's to wait on.
-	struct HistSubscribeAwait final : AnyVoidAwait{
-		HistSubscribeAwait( sp<HistSubscriber> subscriber, SRCE )ι:AnyVoidAwait{ sl }, _subscriber{ move(subscriber) }{}
-	protected:
-		α Suspend()ι->void override{
-			Post( [this]{
-				try{
-					_subscriber->Register( _subscriber, _sl );
-					Resume();
-				}
-				catch( runtime_error& e ){
-					ResumeExp( move(e) );
-				}
-			} );
-		}
-	private:
-		sp<HistSubscriber> _subscriber;
-	};
-	//A page of the snapshot, read on the executor as a group's QL reads are:  the request's strand isn't held for the scan.
-	struct HistPageAwait final : AnyAwait<Hist::ReadResult>{
-		HistPageAwait( sp<HistSubscriber> subscriber, uint limit, SRCE )ι:AnyAwait<Hist::ReadResult>{ sl }, _subscriber{ move(subscriber) }, _limit{ limit }{}
-	protected:
-		α Suspend()ι->void override{
-			Post( [this]{
-				try{
-					Resume( _subscriber->Next(_limit, _sl) );
-				}
-				catch( runtime_error& e ){
-					ResumeExp( move(e) );
-				}
-			} );
-		}
-	private:
-		sp<HistSubscriber> _subscriber;
-		uint _limit;
-	};
-
 	α GatewaySocketSession::HistSubscribe( FromClient::HistSubscribe&& request, Jde::RequestId requestId )ι->void{
 		try{
 			LogRead( Ƒ("HistSubscribe: group: {}, nodeCount: {}", request.group(), request.nodes_size()), requestId );
@@ -172,11 +135,11 @@ namespace Jde::Opc::Gateway{
 		auto self = SharedFromThis();//keep alive
 		let requestId = subscriber->Request();
 		try{
-			if( subscriber->HasMembers() )
-				co_await HistSubscribeAwait{ subscriber, SRCE_CUR };
+			if( subscriber->HasMembers() )//the registration and its snapshot on the executor:  the group's locks, and the files the snapshot opens under them, aren't the socket strand's to wait on.
+				co_await ExecutorAwait<void>{ [&]{ subscriber->Register( subscriber, SRCE_CUR ); } };
 			Write( FromServer::HistSubscribeAckTrans(move(ack), requestId) );//answers the HistSubscribe even once it has ended:  nothing follows it then.
 			for( bool more{ true }; more && !subscriber->Ended(); ){
-				auto page = co_await HistPageAwait{ subscriber, limit, SRCE_CUR };
+				auto page = co_await ExecutorAwait<Hist::ReadResult>{ [&]{ return subscriber->Next( limit, SRCE_CUR ); } };//a page of the snapshot, read on the executor as a group's QL reads are.
 				more = !page.Continuation.empty();
 				WriteHist( subscriber, FromServer::HistSnapshotTrans(subscriber->Page(move(page), more), requestId) );
 			}

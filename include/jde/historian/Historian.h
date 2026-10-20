@@ -42,7 +42,7 @@ namespace Jde::Opc::Hist{
 		//Deleting a hist_groups row:  every member leaves, by the caller who deleted it.  The group's files are kept, as
 		//every archive is, and what it buffered is still written.
 		α RemoveGroup( sv name, optional<Writer> by={}, SRCE )ε->void;
-		α FindGroup( sv name )Ι->sp<Group>;
+		α FindGroup( sv name )Ι->sp<Group>;//for tests and diagnostics.
 		α Config()Ι->const Settings&;
 		α Time()Ι->IClock&;
 		α Buffered()Ι->uint;//the memory every group's buffer takes together, which maxBuffer caps.

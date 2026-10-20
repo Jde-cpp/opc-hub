@@ -17,6 +17,11 @@ namespace Jde::Settings{
 	Ξ FindArray( sv path )ι->const jarray*{ return Json::FindArray(Value(), path); }
 	Ξ FindBool( sv path )ι->optional<bool>{ return Json::FindBool(Value(), path); }
 	Φ FindDuration( sv path, SRCE )ι->optional<Duration>;
+	//-<arg>=<value> on the command line when it is given a value, else the setting at `path`:  so a tool's run can vary without
+	//another settings file.  The Duration and number forms throw on an argument that doesn't parse.
+	Φ FindArgString( sv arg, sv path )ι->optional<string>;
+	Φ FindArgDuration( sv arg, sv path, SRCE )ε->optional<Duration>;
+	Φ FindArgNumber( sv arg, sv path )ε->optional<uint>;
 	Ξ FindObject( sv path )ι->const jobject*{ return Json::FindObject(Value(), path); }
 	Ξ FindSV( sv path )ι->optional<sv>{ return Json::FindSV(Value(), path); }
 	Φ FindString( sv path )ι->optional<string>;

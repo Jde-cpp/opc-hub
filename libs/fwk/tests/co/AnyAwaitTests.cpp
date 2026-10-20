@@ -243,6 +243,100 @@ namespace Jde::Tests{
 		EXPECT_EQ( critical.size(), 1u ) << "the escaping exception must be logged Critical, not swallowed";
 	}
 
+	//AnyVoidTask - lazy:  nothing runs until a co_await starts it, and its end resumes the awaiter, of any return type.
+	Ω lazyBody( std::atomic<bool>& ran )->AnyVoidTask{
+		ran = true;
+		co_return;
+	}
+	Ω awaitLazy( AnyVoidTask task, const std::atomic<bool>& ran, std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+		ok = !ran;
+		co_await task;
+		ok = ok && ran;
+		++completed;
+	}
+	TEST_F( AnyAwaitTests, AnyVoidTaskRunsOnlyOnceAwaited ){
+		std::atomic<bool> ran{}, ok{}; std::atomic<uint> completed{};
+		auto task = lazyBody( ran );
+		EXPECT_FALSE( ran.load() ) << "the body ran before anything awaited it";
+		awaitLazy( move(task), ran, completed, ok );
+		ASSERT_TRUE( settle(completed, 1) ) << "the awaiter was never resumed";
+		EXPECT_TRUE( ok.load() );
+	}
+
+	Ω threadedBody( int& value )->AnyVoidTask{
+		value = co_await ThreadedAny<int>{ 5 };
+	}
+	Ω awaitThreaded( std::atomic<uint>& completed, std::atomic<bool>& ok )->TTask<uint32>{
+		int value{};
+		co_await threadedBody( value );//a prvalue:  the temporary lives across the suspension.
+		ok = value==5;
+		++completed;
+	}
+	TEST_F( AnyAwaitTests, AnyVoidTaskResumesAcrossThreads ){
+		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		awaitThreaded( completed, ok );
+		ASSERT_TRUE( settle(completed, 1) ) << "the task's end never resumed its typed awaiter";
+		EXPECT_TRUE( ok.load() );
+	}
+
+	Ω throwingBody()->AnyVoidTask{
+		co_await ThreadedAny<int>{ 1 };
+		throw TestException{ "task boom" };
+	}
+	Ω plainThrowingBody()->AnyVoidTask{
+		co_await InlineVoidAny{};
+		throw std::runtime_error{ "plain task runtime_error" };
+	}
+	Ω logicThrowingBody()->AnyVoidTask{
+		co_await InlineVoidAny{};
+		throw std::logic_error{ "a logic_error" };
+	}
+	Ω awaitThrowing( std::atomic<uint>& completed, std::atomic<bool>& typed, std::atomic<bool>& wrapped, std::atomic<bool>& unknown )->VoidTask{
+		try{
+			co_await throwingBody();
+		}
+		catch( const TestException& e ){ typed = string{e.what()}.contains("task boom"); }
+		catch( ... ){ typed = false; }
+		try{
+			co_await plainThrowingBody();
+		}
+		catch( const Exception& e ){ wrapped = string{e.what()}.contains("plain task runtime_error"); }
+		catch( ... ){ wrapped = false; }
+		try{
+			co_await logicThrowingBody();
+		}
+		catch( const Exception& e ){ unknown = string{e.what()}.contains("Unknown exception"); }
+		catch( ... ){ unknown = false; }
+		++completed;
+	}
+	TEST_F( AnyAwaitTests, AnyVoidTaskRethrowsInTheAwaiter ){
+		std::atomic<uint> completed{}; std::atomic<bool> typed{}, wrapped{}, unknown{};
+		awaitThrowing( completed, typed, wrapped, unknown );
+		ASSERT_TRUE( settle(completed, 1) ) << "an exception stranded the awaiter";
+		EXPECT_TRUE( typed.load() ) << "the thrown subclass must reach the awaiter's handler";
+		EXPECT_TRUE( wrapped.load() ) << "a runtime_error is wrapped, keeping its text";
+		EXPECT_TRUE( unknown.load() ) << "and anything else still resumes the awaiter";
+	}
+
+	Ω holdingBody( sp<int> held, std::atomic<bool>& ran )->AnyVoidTask{
+		ran = held!=nullptr;
+		co_return;
+	}
+	TEST_F( AnyAwaitTests, AnyVoidTaskDestroysItsFrameUnawaited ){
+		auto first = ms<int>( 1 ), second = ms<int>( 2 );
+		std::atomic<bool> ran{};
+		{
+			auto task = holdingBody( first, ran );
+			EXPECT_EQ( first.use_count(), 2 ) << "the frame holds its copy of the argument";
+			task = holdingBody( second, ran );
+			EXPECT_EQ( first.use_count(), 1 ) << "a move-assign destroys the frame it replaces";
+			auto moved = move( task );
+			EXPECT_EQ( second.use_count(), 2 );
+		}
+		EXPECT_EQ( second.use_count(), 1 ) << "the frame dies with its task";
+		EXPECT_FALSE( ran.load() );
+	}
+
 	//Several at once - All() (AllAwait.h):  slots of both families, unwrapped, from a void and from a typed coroutine;  a failure waits for
 	//the rest, and the first by slot order is what is thrown;  every slot is in flight before any finishes;  and the all-inline path, the
 	//awaiter running to completion inside Suspend - sqlite's selects complete in await_ready, so that is the gateway suite's production path.

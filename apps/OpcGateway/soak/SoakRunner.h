@@ -4,6 +4,18 @@
 
 namespace Jde::Opc::Gateway::Tests{ struct GatewayClientSocket; }
 namespace Jde::Opc::Gateway::Soak{
+	//What a leg counts, each written to the csv, the summary and the final log under its name, in this order.  WriteRetries/MissRetries:
+	//attempts beyond the first that a write / a push needed - a PASS shows how often it leaned on them.
+	struct Counters{
+		uint Writes{}, Pushes{}, Misses{}, WriteFailures{}, WriteRetries{}, MissRetries{};
+		static constexpr std::array<std::pair<sv, uint Counters::*>,6> Names{{ {"writes", &Counters::Writes}, {"pushes", &Counters::Pushes}, {"misses", &Counters::Misses},
+			{"writeFailures", &Counters::WriteFailures}, {"writeRetries", &Counters::WriteRetries}, {"missRetries", &Counters::MissRetries} }};
+		α operator+=( const Counters& x )ι->Counters&;
+		Ω CsvHeader( sv suffix={} )ι->string;//",writes<suffix>,pushes<suffix>,…"
+		α Csv()Ι->string;//",<writes>,<pushes>,…"
+		α AddTo( jobject& o )Ι->void;
+		α Log()Ι->string;//"writes=…, pushes=…, …"
+	};
 	//One gateway server-connection driven by the soak: the config row from /soak/servers plus per-leg runtime state.
 	struct ServerLeg{
 		string Slug, Name, Description, CertificateUri, Url, User, Password;
@@ -13,12 +25,15 @@ namespace Jde::Opc::Gateway::Soak{
 		bool Subscribed{};//the current Socket holds an acked subscription for every node.  False after a reconnect until a subscribe succeeds - WriteCycle retries it.
 		bool Reconnecting{};//a User leg's socket dropped and no reconnect has succeeded yet - one socketDrop per outage, not per attempt.  Main-session legs share SoakRunner::_mainReconnecting.
 		uint Counter{}, WriteIndex{}, ConsecutiveFailures{};
-		uint Writes{}, WriteFailures{}, WriteRetries{}, Pushes{}, Misses{}, MissRetries{};//WriteRetries/MissRetries: attempts beyond the first that a write / a push needed - a PASS shows how often it leaned on them.
+		Counters Count;
 		vector<uint32> LatenciesMs;
 		flat_map<NodeId,uint> Latest;//guarded by SoakRunner::_mutex.
 	};
 	//Legs from /soak/servers whose `flag` is absent or present on the command line; -<flag>Url/Uri/User/Pwd= args override flagged entries.
 	α ActiveServers()ε->vector<ServerLeg>;
+	//Where -createCert wrote the leg's client certificate - the file an external server has to trust.  Asks UAClient
+	//rather than re-deriving the layout; the SAN doesn't affect the path, so the uri is not needed here.
+	α CertPath( sv slug )ι->string;
 
 	α Run( sp<App::Client::IAppClient> client )ε->int;//blocks for the configured duration; returns the process exit code.
 	//Grants this user every right on the OpcServer's root nodeIds resource, then restores it - enforced.  The row ships

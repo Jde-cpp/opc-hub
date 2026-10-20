@@ -20,6 +20,7 @@ namespace Jde::Opc::Gateway{
 	constexpr static const array<sv,5> TokenTypeNames = { "None", "Anonymous", "Username", "Certificate", "IssuedToken" };
 	//not an overload of ToString: this namespace would then hide Opc::ToString( UA_String ) from every unqualified call.
 	Ξ TokenTypeName( ETokenType x )ι->string{ return FromEnumFlag<ETokenType>( TokenTypeNames, x ); }
+	Ξ SecurityModeName( UA_MessageSecurityMode x )ι->string{ constexpr array<sv,4> names{ "Invalid", "None", "Sign", "SignAndEncrypt" }; return FromEnum( names, x ); }
 	α ToTokenType( UA_UserTokenType ua )ι->ETokenType;
 	struct Credential{
 		Credential()ι{}

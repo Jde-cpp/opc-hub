@@ -54,62 +54,36 @@ namespace Jde::Opc::Gateway{
 	α EnumTypeCache::Find( const NodeId& id )Ι->Ptr{
 		rl _{ _mutex };
 		auto p = _slots.find( id );
-		return p!=_slots.end() && p->second.State==EState::Ready ? p->second.Type : Ptr{};
+		return p!=_slots.end() && p->second.State()==Slot::EState::Ready ? p->second.Value() : Ptr{};
 	}
 
 	α EnumTypeCache::Refused( const NodeId& id )Ι->bool{
 		rl _{ _mutex };
 		auto p = _slots.find( id );
-		return p!=_slots.end() && p->second.State==EState::Failed;
+		return p!=_slots.end() && p->second.State()==Slot::EState::Failed;
 	}
 
 	α EnumTypeCache::StartLocked( sp<UAClient>&& client, NodeId&& id, GetAwait* waiter )ι->void{
-		bool launch{}; Ptr ready; optional<Exception> failed;
+		bool launch{};
 		{
 			ul _{ _mutex };
-			auto [slot, inserted] = _slots.try_emplace( NodeId{id} );
-			auto& s = slot->second;
-			if( inserted )
-				launch = true;//first request:  own the fetch.
-			else if( s.State==EState::Ready )
-				ready = s.Type;//a Finish raced in between await_ready and here.
-			else if( s.State==EState::Failed )
-				failed.emplace( *s.Error );
-			if( launch || s.State==EState::Fetching )
-				s.Waiters.push_back( waiter );//join the in-flight fetch.
+			launch = _slots.try_emplace( NodeId{id} ).first->second.Start( waiter );//a new slot:  own the fetch.
 		}
 		if( launch )
 			Fetch( move(client), move(id) );//fire & forget:  the task keeps the client (and so this cache) alive until Finish.
-		else if( ready )
-			Post( [waiter, t=move(ready)]() mutable { waiter->Resume(move(t)); } );//never resume inside await_suspend.
-		else if( failed )
-			Post( [waiter, e=move(*failed)]() mutable { waiter->ResumeExp(move(e)); } );
 	}
 
 	α EnumTypeCache::Finish( const NodeId& id, Ptr type, up<Exception> error, bool retryable )ι->void{
-		vector<GetAwait*> waiters;
+		Slot::Resumes resumes;
 		{
 			ul _{ _mutex };
 			auto slot = _slots.find( id );
 			ASSERT( slot!=_slots.end() );
-			waiters = move( slot->second.Waiters );
-			if( !error ){
-				slot->second.State = EState::Ready;
-				slot->second.Type = type;
-			}
-			else if( retryable )
+			resumes = slot->second.Finish( move(type), move(error), retryable );
+			if( slot->second.State()==Slot::EState::Empty )
 				_slots.erase( slot );//a transport/session failure or an unknown id - the next request retries from scratch, and a mistyped id does not poison the connection.
-			else{
-				slot->second.State = EState::Failed;
-				slot->second.Error = mu<Exception>( *error );
-			}
 		}
-		for( auto* waiter : waiters ){//outside the lock:  Resume may run the awaiter to completion inline - it is the last use of the waiter.
-			if( error )
-				waiter->ResumeExp( Exception{*error} );
-			else
-				waiter->Resume( Ptr{type} );
-		}
+		resumes.Run();
 	}
 
 	Ω browseIs( const UA_ReferenceDescription& ref, sv name )ι->bool{ return ref.browseName.namespaceIndex==0 && ToSV(ref.browseName.name)==name; }
@@ -171,10 +145,7 @@ namespace Jde::Opc::Gateway{
 			error = e.Move();
 		}
 		catch( runtime_error& e ){
-			if( auto p = dynamic_cast<Exception*>(&e); p )
-				error = p->Move();
-			else
-				error = mu<Exception>( move(e) );
+			error = Exception::From( move(e) );
 		}
 		Finish( id, move(type), move(error), retryable );
 	}

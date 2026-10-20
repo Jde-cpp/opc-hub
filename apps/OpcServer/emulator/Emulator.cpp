@@ -15,17 +15,6 @@
 namespace Jde::Opc::Emulator{
 	constexpr ELogTags _tags{ ELogTags::App };
 
-	//-<arg>=<value> beats the settings file, as the soak driver's do.
-	Ω argDuration( sv arg, sv path, Duration dflt )ε->Duration{
-		if( auto a = Process::FindArg(string{arg}); a && a->size() )
-			return Chrono::ToDuration( string{*a} );
-		return Settings::FindDuration( path ).value_or( dflt );
-	}
-	Ω argString( sv arg, sv path, sv dflt )ι->string{
-		if( auto a = Process::FindArg(string{arg}); a && a->size() )
-			return *a;
-		return Settings::FindString( path ).value_or( string{dflt} );
-	}
 	//the UA channel cert: /emulator/ssl puts it under the PlcEmulator product dir with the applicationUri as its SAN.
 	Ω opcCertificate()ι->Crypto::CryptoSettings{ return Crypto::CryptoSettings{ Settings::FindDefaultObject("/emulator/ssl") }; }
 
@@ -66,18 +55,18 @@ namespace Jde::Opc::Emulator{
 	Emulator::Emulator( sp<App::Client::IAppClient> app )ε:
 		_app{ move(app) },
 		_transport{ ETransport::PubSub },
-		_url{ argString("-url", "/emulator/url", "opc.tcp://127.0.0.1:4840") },
+		_url{ Settings::FindArgString( "-url", "/emulator/url" ).value_or( "opc.tcp://127.0.0.1:4840" ) },
 		_applicationUri{ Settings::FindString("/emulator/applicationUri").value_or("urn:jde:plc-emulator") },
 		_serverApplicationUri{ Settings::FindString("/emulator/serverApplicationUri").value_or("urn:open62541.server.application") },
-		_period{ argDuration("-period", "/emulator/period", 1s) },
-		_statusPeriod{ argDuration("-statusPeriod", "/emulator/statusPeriod", 1min) },
-		_reconnectMin{ argDuration("-reconnectMin", "/emulator/reconnectMin", 1s) },
-		_reconnectMax{ argDuration("-reconnectMax", "/emulator/reconnectMax", 30s) },
+		_period{ Settings::FindArgDuration( "-period", "/emulator/period" ).value_or( 1s ) },
+		_statusPeriod{ Settings::FindArgDuration( "-statusPeriod", "/emulator/statusPeriod" ).value_or( 1min ) },
+		_reconnectMin{ Settings::FindArgDuration( "-reconnectMin", "/emulator/reconnectMin" ).value_or( 1s ) },
+		_reconnectMax{ Settings::FindArgDuration( "-reconnectMax", "/emulator/reconnectMax" ).value_or( 30s ) },
 		_reconnectDelay{ _reconnectMin }{
-		let transport = argString( "-transport", "/emulator/transport", "pubsub" );
+		let transport = Settings::FindArgString( "-transport", "/emulator/transport" ).value_or( "pubsub" );
 		THROW_IF( transport!="pubsub" && transport!="write", "transport '{}' must be pubsub or write.", transport );
 		_transport = transport=="write" ? ETransport::Write : ETransport::PubSub;
-		if( let d = argDuration("-duration", "/emulator/duration", Duration::zero()); d>Duration::zero() )
+		if( let d = Settings::FindArgDuration( "-duration", "/emulator/duration" ).value_or( Duration::zero() ); d>Duration::zero() )
 			_duration = d;
 		PubSub::Config contract{ Settings::AsObject("/emulator/pubsub") };
 		_nsUri = contract.Namespace;
@@ -337,17 +326,14 @@ namespace Jde::Opc::Emulator{
 
 	α GrantWriteRights( const sp<App::Client::IAppClient>& client )ι->void{
 		try{
-			let schema = argString( "-opcSchema", "/emulator/opcSchema", _debug ? "opc.debug" : "opc.release" );
+			let schema = Settings::FindArgString( "-opcSchema", "/emulator/opcSchema" ).value_or( _debug ? "opc.debug" : "opc.release" );
 			//`allowed` is the generic Access::ERights vocabulary - NOT the UA access-level byte (OpcAuthorize::ToAccess is
 			//what crosses to that, and the two share no bit positions).  A PLC reads, writes and subscribes; it has no
 			//business holding Administer (status/timestamp/semantic-change), Delete (history write) or Purge on `nodeIds`,
 			//the root resource every node inherits.  Read also covers the subscription (ToAccess: "a subscription needs
 			//Read"), and these same bits serve -transport=write, whose tags go over the session rather than PubSub.
 			using enum Access::ERights;
-			constexpr uint plcAccess{ underlying(Read | Update | Subscribe) };
-			client->QuerySync<jvalue>(
-				"createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:\"nodeIds\"}} )",
-				{{"userId", client->UserPK().Value}, {"allowed", plcAccess}, {"schemaName", schema}} );
+			client->GrantRights( client->UserPK(), Read | Update | Subscribe, schema, "nodeIds" );
 			INFO( "Granted OPC node access for user {} on '{}' - restart the OpcServer to load it.", client->UserPK().Value, schema );
 		}
 		catch( const std::exception& e ){

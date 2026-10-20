@@ -1,56 +1,21 @@
 //Historian 5b (#223):  the gateway's groups and templates (spec *Collection*, *Templates*) - the four tables, each edit's
 //live side (HistGroupMAwait), the collector's items on a client of its own, and resolveHistory - against the embedded
 //OpcServer's pumps nodeset:  pump1 to pump4 under the Objects folder, each with a status and a motorRpm, in urn:jde:pumps.
-#include <absl/cleanup/cleanup.h>
-#include <jde/fwk/utils/Stopwatch.h>
-#include <jde/ql/LocalQL.h>
-#include <jde/access/Authorize.h>
 #include <jde/opc/UAException.h>
-#include "utils/helpers.h"
-#include "../src/GatewayAppClient.h"
-#include "../src/hist/HistHost.h"
-#include "../src/ql/GatewayQL.h"
-#include "../src/UAClient.h"
+#include "utils/HistGroupFixture.h"
 #include "../src/async/ConnectAwait.h"
-#include "../src/async/DataChanges.h"
 #include "../src/async/Subscriptions.h"
-#include "../../OpcServer/src/globals.h"
-#include "../../OpcServer/src/UAServer.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	using namespace std::chrono;
-	namespace{
-		constexpr sv PumpsUri{ "urn:jde:pumps" };
-		constexpr UA_UInt32 Pump1{ 5001 }, Pump2{ 5002 }, Pump3{ 5003 }, Pump4{ 5004 }, Pump1Status{ 6011 }, Pump1Rpm{ 6012 }, Pump2Rpm{ 6022 }, Pump3Rpm{ 6032 }, Pump3Status{ 6031 }, Pump4Rpm{ 6042 };
-	}
-
-	struct HistGroupTests : ::testing::Test{
+	//HistGroupFixture's groups as the tables hold them:  templates, members and rows, and the histGroupNodes resource.  Its
+	//CreateGroup, Purge and Ex shadow the fixture's:  a group from a template and a root, a purge by table, a node as an ExNodeId.
+	struct HistGroupTests : HistGroupFixture{
 	protected:
-		Ω SetUpTestCase()ε->void{
-			if( !SelectServerCnnctn(OpcServerSlug) )
-				CreateServerCnnctn();
-			_connection = SelectServerCnnctn( OpcServerSlug )->Id;
-			if( let ua = Server::FindUAServer(); ua ){
-				size_t ns{};
-				UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)PumpsUri.data()), &ns) );
-				_ns = (NsIndex)ns;
-			}
-		}
-		α SetUp()->void override{
-			if( !Server::FindUAServer() )
-				GTEST_SKIP() << "HistGroupTests need the embedded OpcServer.";
-			if( !HistHost::Instance().Enabled() )
-				GTEST_SKIP() << "The gateway keeps no history:  /gateway/hist.";
-		}
-		Ω User()ι->UserPK{ return AppClient()->UserPK(); }
-		//A mutation's result:  the object its result request names, or, with none, the empty list the engine answers.
-		Ω Mutate( sv ql, jobject vars={} )ε->jvalue{ return BlockTAwait<jvalue>( QL::QLAwait<jvalue>{string{ql}, move(vars), User(), QLPtr()} ); }
 		Ω Rows( sv ql, jobject vars={} )ε->jarray{ return QL().QuerySync<jarray>( string{ql}, move(vars), User() ); }
-		Ω Id( const jvalue& v )ε->uint32{ return Json::AsNumber<uint32>( Json::AsObject(v), "id" ); }
 		//The spellings the columns hold:  a node by its namespace URI, and a one-segment path from the group's root.
-		Ω Node( UA_UInt32 i )ι->string{ return serialize( jobject{{"nsu", PumpsUri}, {"i", i}} ); }
-		Ω Ex( UA_UInt32 i )ι->ExNodeId{ return ExNodeId{ jvalue{jobject{{"nsu", PumpsUri}, {"i", i}}} }; }
+		Ω Column( UA_UInt32 i )ι->string{ return serialize( HistGroupFixture::Ex(i) ); }
+		Ω Ex( UA_UInt32 i )ι->ExNodeId{ return ExNodeId{ HistGroupFixture::Ex(i) }; }
 		Ω Path( sv name )ι->string{ return serialize( jarray{ jobject{{"nsu", PumpsUri}, {"name", name}} } ); }
 		Ω CreateTemplate( sv slug )ε->uint32{ return Id( Mutate("createHistTemplate( name:$name, slug:$slug ){ id }", {{"name", Ƒ("Template {}", slug)}, {"slug", slug}}) ); }
 		Ω CreateMember( uint32 templateId, sv name, jobject thresholds={} )ε->uint32{
@@ -64,7 +29,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω CreateGroup( sv slug, optional<uint32> templateId, optional<UA_UInt32> root, jobject thresholds={} )ε->jvalue{
 			string ql{ "createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection, histTemplateId:$template, root:$root" };
-			jobject vars{ {"name", Ƒ("Group {}", slug)}, {"slug", slug}, {"connection", _connection}, {"template", templateId ? jvalue{*templateId} : jvalue{}}, {"root", root ? jvalue{Node(*root)} : jvalue{}} };
+			jobject vars{ {"name", Ƒ("Group {}", slug)}, {"slug", slug}, {"connection", _connection}, {"template", templateId ? jvalue{*templateId} : jvalue{}}, {"root", root ? jvalue{Column(*root)} : jvalue{}} };
 			for( let& [key,value] : thresholds ){
 				ql += Ƒ( ", {}:${}", key, key );
 				vars[key] = value;
@@ -75,7 +40,7 @@ namespace Jde::Opc::Gateway::Tests{
 		//The row of the group that holds `node`, as the tables spell it.
 		Ω Row( uint32 group, UA_UInt32 node )ε->optional<jobject>{
 			for( let& row : GroupNodes(group) ){
-				if( Json::AsSV(row.as_object(), "node")==Node(node) )
+				if( Json::AsSV(row.as_object(), "node")==Column(node) )
 					return row.as_object();
 			}
 			return nullopt;
@@ -88,26 +53,13 @@ namespace Jde::Opc::Gateway::Tests{
 				WARNT( ELogTags::Test, "purge{}({}):  {}", table, id, e.what() );
 			}
 		}
-		Ω Collector()ι->sp<UAClient>{ return UAClient::Find( OpcServerSlug, HistHost::Instance().Collector(OpcServerSlug) ); }
-		Ω Items()ι->uint{ auto c = Collector(); return c && c->TryMonitoredNodes() ? c->TryMonitoredNodes()->Count() : 0; }
-		//The server's items follow the rows after the mutation returns, on the collector's client; a drop runs a second behind.
-		Ω WaitSubscribed( const sp<HistGroupHost>& host, uint count )ε->void{
-			Stopwatch sw;
-			while( host->Subscribed()!=count )
-				sw.CheckTimeout( 15s, 10ms );
-		}
-		Ω WaitItems( uint count )ε->void{
-			Stopwatch sw;
-			while( Items()!=count )
-				sw.CheckTimeout( 15s, 10ms );
-		}
 		//histGroupNodes enforced, as an admin may set it, with the suite's user granted nothing on it, until the cleanup returned runs
 		//or is invoked.  `deleted` is the enforcement switch, so restore = enforce, as BrowseTests'
 		//EnforcedConnectionResourceRefusesAnUngrantedSession has it.  Each way waits for the gateway's authorizer, which hears of the
 		//change after the mutation returns:  what follows is judged under it, the test's purges and the next suite's writes included.
 		Ω EnforceGroupNodes()ε{
-			enforceGroupNodes( true );
-			return absl::Cleanup{ []{ try{ enforceGroupNodes( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } } };
+			EnforceResource( "gateway", "histGroupNodes", true );
+			return absl::Cleanup{ []{ try{ EnforceResource( "gateway", "histGroupNodes", false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroupNodes wasn't opened again:  " << e.what(); } } };
 		}
 		Ŧ Records( const sp<HistGroupHost>& host )ε->vector<T>{
 			vector<T> y;
@@ -117,20 +69,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			return y;
 		}
-		static ServerCnnctnPK _connection;
-		static NsIndex _ns;
-	private:
-		Ω enforceGroupNodes( bool on )ε->void{
-			let change = on ? "restore" : "delete";
-			AppClient()->QuerySync<jvalue>( Ƒ("mutation {}Resource( schemaName:\"gateway\", slug:\"histGroupNodes\", criteria:null )", change), {} );
-			for( uint i=0; AppClient()->Acl()->FindActiveResourcePK("gateway", "histGroupNodes", "").has_value()!=on; ++i ){
-				THROW_IF( i==200, "histGroupNodes' {} didn't reach the gateway's authorizer.", change );
-				std::this_thread::sleep_for( 50ms );
-			}
-		}
 	};
-	ServerCnnctnPK HistGroupTests::_connection{};
-	NsIndex HistGroupTests::_ns{};
 
 	//A template applied to a root:  each member resolves to a hist_group_nodes row and a member of the library's group, with
 	//a NodeAdded by the caller, its thresholds from the member then the group, and an item on the collector's client.  A path
@@ -153,7 +92,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsNumber<uint32>(byGuid[0].as_object(), "id"), groupId );
 		EXPECT_EQ( Json::AsSV(byGuid[0].as_object(), "guid"), guid );
 
-		let rpm = Row( groupId, Pump1Rpm ), status = Row( groupId, Pump1Status );
+		let rpm = Row( groupId, Rpm1 ), status = Row( groupId, Status1 );
 		ASSERT_TRUE( rpm && status ) << serialize( GroupNodes(groupId) );
 		EXPECT_EQ( GroupNodes(groupId).size(), 2u ) << "the path that leads nowhere was left out";
 		EXPECT_EQ( Json::AsNumber<uint32>(*rpm, "histTemplateNodeId"), rpmMember );
@@ -164,8 +103,8 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( host );
 		EXPECT_EQ( host->Guid(), guid );
 		EXPECT_EQ( host->Members().size(), 2u );
-		EXPECT_EQ( host->Group()->Find(Ex(Pump1Rpm)), rpmIndex ) << "the row id is the node's index";
-		EXPECT_EQ( host->Group()->Find(Ex(Pump1Status)), statusIndex );
+		EXPECT_EQ( host->Group()->Find(Ex(Rpm1)), rpmIndex ) << "the row id is the node's index";
+		EXPECT_EQ( host->Group()->Find(Ex(Status1)), statusIndex );
 		EXPECT_EQ( host->FindThresholds(rpmIndex)->MinTimeInterval, 1s ) << "the member's";
 		EXPECT_EQ( host->FindThresholds(rpmIndex)->MaxTimeInterval, 1min ) << "the group's";
 		EXPECT_EQ( host->FindThresholds(statusIndex)->MinTimeInterval, Duration::zero() ) << "the default";
@@ -180,7 +119,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		auto collector = Collector();
 		ASSERT_TRUE( collector ) << "the collector connects under its own credential";
-		EXPECT_TRUE( collector->Credential.IsCollector() );
+		EXPECT_TRUE( collector->Credential().IsCollector() );
 		EXPECT_EQ( Items(), itemsBefore+2 );
 
 		let resolved = Mutate( "resolveHistory( group:$group ){ nodes{ templateNode path node status } }", {{"group", groupId}} );
@@ -197,7 +136,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			else{
 				EXPECT_EQ( statusCode, UA_STATUSCODE_GOOD ) << serialize( node );
-				EXPECT_EQ( ExNodeId{node.at("node")}, Ex(member==rpmMember ? Pump1Rpm : Pump1Status) );
+				EXPECT_EQ( ExNodeId{node.at("node")}, Ex(member==rpmMember ? Rpm1 : Status1) );
 			}
 		}
 		EXPECT_EQ( GroupNodes(groupId).size(), 2u ) << "resolveHistory adds nothing a row already holds";
@@ -223,8 +162,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let groupId = Id( created );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 		let guid = Json::AsString( Json::AsObject(created), "guid" );
-		absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		EnforceHistGroups( true );
+		auto reopen = EnforcedHistGroups();
 		ScopeHistGroup( groupId, Access::ERights::Read );
 		let app = AppClient();
 		let resources = [&]{ return app->QuerySync<jarray>( "resources( schemaName:\"gateway\", slug:\"histGroups\", criteria:$criteria ){ id }", {{"criteria", guid}} ); };
@@ -248,8 +186,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let groupId = Id( created );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 		let guid = Json::AsString( Json::AsObject(created), "guid" );
-		absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-		EnforceHistGroups( true );
+		auto reopen = EnforcedHistGroups();
 		ScopeHistGroup( groupId, Access::ERights::Read );
 		let app = AppClient();
 		absl::Cleanup purgeRow = [&]{//once histGroupNodes is open again, the gateway's login administers the schema.
@@ -309,7 +246,7 @@ namespace Jde::Opc::Gateway::Tests{
 		{
 			let holderId = Id( CreateGroup("holder", nullopt, nullopt) );
 			absl::Cleanup purgeHolder = [=]{ Purge( "HistGroup", holderId ); };
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", holderId}, {"node", Node(Pump3Rpm)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", holderId}, {"node", Column(Rpm3)}} );
 			let templateId = CreateTemplate( "held-template" );
 			absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
 			CreateMember( templateId, "motorRpm" );
@@ -325,7 +262,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsNumber<uint32>(*holder, "id"), holderId );
 			EXPECT_EQ( Json::AsSV(*holder, "name"), "Group holder" );
 			try{
-				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}} );
 				ADD_FAILURE() << "a node another group holds";
 			}
 			catch( const std::exception& e ){
@@ -335,8 +272,7 @@ namespace Jde::Opc::Gateway::Tests{
 			//historian-group-template-admin #3:  a group the caller may not read is named to them nowhere - its own resource enforced and
 			//granted nothing, under the root enforced and granted everything, which the held group inherits.  The answer keeps its id,
 			//and the refusal says it by id.
-			absl::Cleanup reopen = []{ try{ EnforceHistGroups( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "histGroups wasn't opened again:  " << e.what(); } };
-			EnforceHistGroups( true );
+			auto reopen = EnforcedHistGroups();
 			ScopeHistGroup( holderId, Access::ERights::None );
 			absl::Cleanup unscope = [=]{//before the purges, which the holder's resource would refuse
 				try{ UnscopeHistGroup( holderId ); }catch( const std::exception& e ){ ADD_FAILURE() << "the holder's resource wasn't deleted:  " << e.what(); }
@@ -348,7 +284,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsNumber<uint32>(*ref, "id"), holderId );
 			EXPECT_TRUE( ref->contains("name") && ref->at("name").is_null() ) << serialize( unnamed );
 			try{
-				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}} );
 				ADD_FAILURE() << "a node another group holds";
 			}
 			catch( const std::exception& e ){
@@ -371,7 +307,7 @@ namespace Jde::Opc::Gateway::Tests{
 			let [groupId, failure] = tryCreateGroup( "self", templateId, Pump3, _connection );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 			ASSERT_FALSE( failure ) << failure.value_or( "" );
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}} );
 			CreateMember( templateId, "motorRpm" );
 			let member = memberResolved( groupId );
 			EXPECT_EQ( Json::AsNumber<StatusCode>(member, "status"), UA_STATUSCODE_BADNODEIDEXISTS );
@@ -380,7 +316,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( Json::AsNumber<uint32>(*holder, "id"), groupId );
 			EXPECT_EQ( Json::AsSV(*holder, "name"), "Group self" );
 			try{
-				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump3Rpm)}} );
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}} );
 				ADD_FAILURE() << "a node the group holds";
 			}
 			catch( const std::exception& e ){
@@ -440,10 +376,10 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( host );
 		EXPECT_TRUE( host->Members().empty() );
 
-		let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:500 ){ id }", {{"g", groupId}, {"node", jobject{{"ns", _ns}, {"i", Pump2Rpm}}}}) );
+		let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:500 ){ id }", {{"g", groupId}, {"node", jobject{{"ns", _ns}, {"i", Rpm2}}}}) );
 		auto rows = GroupNodes( groupId );
 		ASSERT_EQ( rows.size(), 1u );
-		EXPECT_EQ( Json::AsSV(rows[0].as_object(), "node"), Node(Pump2Rpm) ) << "spelled by URI, not the index the caller gave";
+		EXPECT_EQ( Json::AsSV(rows[0].as_object(), "node"), Column(Rpm2) ) << "spelled by URI, not the index the caller gave";
 		EXPECT_EQ( host->Members().size(), 1u );
 		EXPECT_EQ( host->FindThresholds(nodeId)->MinTimeInterval, 500ms );
 		EXPECT_EQ( Records<Opc::Hist::NodeAdded>(host).size(), 1u );
@@ -453,8 +389,8 @@ namespace Jde::Opc::Gateway::Tests{
 		Mutate( "updateHistGroupNode( id:$id, minTimeInterval:250 )", {{"id", nodeId}} );
 		EXPECT_EQ( host->FindThresholds(nodeId)->MinTimeInterval, 250ms );
 		EXPECT_EQ( host->Group()->FindThresholds(nodeId)->MinTimeInterval, 250ms );
-		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, node:$node )", {{"id", nodeId}, {"node", Node(Pump4Rpm)}}), std::exception ) << "a node's node never changes";
-		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:$g, node:$node, exceptionDeviation:-1 ){ id }", {{"g", groupId}, {"node", Node(Pump4Rpm)}}), std::exception ) << "a threshold the library would refuse";
+		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, node:$node )", {{"id", nodeId}, {"node", Column(Rpm4)}}), std::exception ) << "a node's node never changes";
+		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:$g, node:$node, exceptionDeviation:-1 ){ id }", {{"g", groupId}, {"node", Column(Rpm4)}}), std::exception ) << "a threshold the library would refuse";
 		//historian-threshold-overrides #3:  an infinite deviation passed Check, so the row held it before the library refused it.
 		EXPECT_THROW( Mutate("updateHistGroupNode( id:$id, exceptionDeviation:$d )", {{"id", nodeId}, {"d", std::numeric_limits<double>::infinity()}}), std::exception );
 		for( let& row : Rows("histGroupNodes( histGroupId:$g ){ id exceptionDeviation }", {{"g", groupId}}) ){
@@ -466,7 +402,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let twinId = Id( CreateGroup("pump2-twin", nullopt, nullopt) );
 		absl::Cleanup purgeTwin = [=]{ Purge( "HistGroup", twinId ); };
 		try{//#337:  the refusal is a Conflict that names the group holding the node, not the database's word for the index.
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", twinId}, {"node", Node(Pump2Rpm)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", twinId}, {"node", Column(Rpm2)}} );
 			ADD_FAILURE() << "a node belongs to at most one group per server";
 		}
 		catch( const Exception& e ){
@@ -475,7 +411,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		EXPECT_TRUE( GroupNodes(twinId).empty() );
 		try{//the same node again in its own group names the group and the row that holds it.
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump2Rpm)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm2)}} );
 			ADD_FAILURE() << "a node joins a group once";
 		}
 		catch( const Exception& e ){
@@ -493,9 +429,9 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( removed[0].By->IdentityId, User() );
 		ASSERT_NO_THROW( WaitItems(itemsBefore) );
 
-		let rejoined = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", twinId}, {"node", Node(Pump2Rpm)}}) );
+		let rejoined = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", twinId}, {"node", Column(Rpm2)}}) );
 		EXPECT_GT( rejoined, nodeId ) << "a rejoin is a new row, and so a new node_index";
-		EXPECT_EQ( HistHost::Instance().Find(twinId)->Group()->Find(Ex(Pump2Rpm)), rejoined );
+		EXPECT_EQ( HistHost::Instance().Find(twinId)->Group()->Find(Ex(Rpm2)), rejoined );
 	}
 
 	//historian-groups-templates #7:  a threshold edit while the node's create is out.  The create had asked for the old
@@ -537,10 +473,10 @@ namespace Jde::Opc::Gateway::Tests{
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 			auto host = HistHost::Instance().Find( groupId );
 			ASSERT_TRUE( host );
-			const NodeId node{ _ns, Pump4Rpm };
+			const NodeId node{ _ns, Rpm4 };
 			auto state = ms<std::atomic<EHold>>( EHold::Waiting );
 			holdOnceTaken( collector, groupId, node, 1000.0, state, steady_clock::now()+10s );
-			let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:1000 ){ id }", {{"g", groupId}, {"node", Node(Pump4Rpm)}}) );
+			let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:1000 ){ id }", {{"g", groupId}, {"node", Column(Rpm4)}}) );
 			Stopwatch sw;
 			while( *state==EHold::Waiting )
 				ASSERT_NO_THROW( sw.CheckTimeout(10s, 1ms) ) << "the pass never took the node";
@@ -578,8 +514,8 @@ namespace Jde::Opc::Gateway::Tests{
 			let groupId = Id( CreateGroup("pump1-refused", nullopt, nullopt) );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 			constexpr UA_UInt32 missing{ 99999 };//no such node:  BadNodeIdUnknown.
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:1000 ){ id }", {{"g", groupId}, {"node", Node(missing)}} );
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump1Status)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:1000 ){ id }", {{"g", groupId}, {"node", Column(missing)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Status1)}} );
 			ASSERT_NO_THROW( WaitSubscribed(HistHost::Instance().Find(groupId), 1) );
 			Mutate( "deleteHistGroup( id:$id )", {{"id", groupId}} );
 			ASSERT_NO_THROW( WaitItems(0) );
@@ -596,7 +532,7 @@ namespace Jde::Opc::Gateway::Tests{
 			if( *state==EHold::Unstaged || host->Subscribed() )
 				GTEST_SKIP() << "the restore's create wasn't out when the strand was held";
 
-			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump1Rpm)}} );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm1)}} );
 			Stopwatch sw;
 			while( host->Subscribed()!=2 )
 				ASSERT_NO_THROW( sw.CheckTimeout(10s, 10ms) ) << "the member waited for the refused node's retry";
@@ -610,7 +546,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let created = CreateGroup( "pump4-delete", nullopt, nullopt );
 		let groupId = Id( created );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
-		let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(Pump4Rpm)}}) );
+		let nodeId = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm4)}}) );
 		auto host = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( host );
 		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
@@ -625,7 +561,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto restored = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( restored );
 		EXPECT_NE( restored, host );
-		EXPECT_EQ( restored->Group()->Find(Ex(Pump4Rpm)), nodeId ) << "the row keeps its index";
+		EXPECT_EQ( restored->Group()->Find(Ex(Rpm4)), nodeId ) << "the row keeps its index";
 		ASSERT_NO_THROW( WaitSubscribed(restored, 1) );
 		EXPECT_EQ( Items(), itemsBefore+1 );
 	}
@@ -647,7 +583,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( GroupNodes(groupId).size(), 1u ) << "a deleted group resolves nothing";
 			Mutate( "restoreHistGroup( id:$id )", {{"id", groupId}} );
 			EXPECT_EQ( GroupNodes(groupId).size(), 2u ) << serialize( GroupNodes(groupId) );
-			let rpm = Row( groupId, Pump4Rpm );
+			let rpm = Row( groupId, Rpm4 );
 			ASSERT_TRUE( rpm ) << "the restore didn't resolve the member added while the group was deleted";
 			EXPECT_EQ( Json::AsNumber<uint32>(*rpm, "histTemplateNodeId"), rpmMember );
 			auto host = HistHost::Instance().Find( groupId );
@@ -669,11 +605,11 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( host );
 		ASSERT_EQ( GroupNodes(groupId).size(), 1u );
-		let rpmRow = Id( *Row(groupId, Pump3Rpm) );
+		let rpmRow = Id( *Row(groupId, Rpm3) );
 
 		let statusMember = CreateMember( templateId, "status", {{"maxTimeInterval", 30000}} );
 		ASSERT_EQ( GroupNodes(groupId).size(), 2u ) << "a member added resolves in the template's groups";
-		let statusRow = Id( *Row(groupId, Pump3Status) );
+		let statusRow = Id( *Row(groupId, Status3) );
 		EXPECT_EQ( host->FindThresholds(statusRow)->MaxTimeInterval, 30s );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 
@@ -687,12 +623,12 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( host->FindThresholds(statusRow)->ExceptionDeviation, 2 );
 		EXPECT_EQ( host->FindThresholds(rpmRow)->MaxTimeInterval, 45s );
 		EXPECT_THROW( Mutate("updateHistTemplateNode( id:$id, path:$path )", {{"id", rpmMember}, {"path", Path("status")}}), std::exception ) << "a member's path never changes";
-		EXPECT_THROW( Mutate("updateHistGroup( id:$id, root:$root )", {{"id", groupId}, {"root", Node(Pump1)}}), std::exception ) << "a group's root never changes";
+		EXPECT_THROW( Mutate("updateHistGroup( id:$id, root:$root )", {{"id", groupId}, {"root", Column(Pump1)}}), std::exception ) << "a group's root never changes";
 
 		Mutate( "purgeHistTemplateNode( id:$id )", {{"id", statusMember}} );
 		EXPECT_EQ( GroupNodes(groupId).size(), 1u ) << "a member removed takes its node from the template's groups";
-		EXPECT_FALSE( Row(groupId, Pump3Status) );
-		EXPECT_FALSE( host->Group()->Find(Ex(Pump3Status)) );
+		EXPECT_FALSE( Row(groupId, Status3) );
+		EXPECT_FALSE( host->Group()->Find(Ex(Status3)) );
 		let removed = Records<Opc::Hist::NodeRemoved>( host );
 		ASSERT_EQ( removed.size(), 1u );
 		EXPECT_EQ( removed[0].Index, statusRow );
@@ -718,8 +654,8 @@ namespace Jde::Opc::Gateway::Tests{
 		{
 			let groupId = Id( CreateGroup("pumps-edit", nullopt, nullopt) );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
-			for( let node : {Pump1Rpm, Pump2Rpm, Pump3Rpm} )
-				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Node(node)}} );
+			for( let node : {Rpm1, Rpm2, Rpm3} )
+				Mutate( "createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(node)}} );
 			auto host = HistHost::Instance().Find( groupId );
 			ASSERT_TRUE( host );
 			ASSERT_NO_THROW( WaitSubscribed(host, 3) );
@@ -736,7 +672,7 @@ namespace Jde::Opc::Gateway::Tests{
 			std::this_thread::sleep_for( 300ms );//and no second request follows.
 			EXPECT_EQ( modifyRequests(), before+1 ) << "one request for the group's three items";
 			auto joiner = ms<Joiner>();
-			let ack = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{NodeId{_ns, Pump3Rpm}}, joiner, collector} );
+			let ack = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{NodeId{_ns, Rpm3}}, joiner, collector} );
 			UAClient::Unsubscribe( joiner );
 			ASSERT_EQ( ack.results_size(), 1 );
 			EXPECT_EQ( ack.results(0).revised_sampling_interval(), 250.0 ) << "the request's last item";
@@ -799,7 +735,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 		}
 		EXPECT_TRUE( Rows("histTemplateNodes( histTemplateId:$t ){ id }", {{"t", templateId}}).empty() );
-		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:999999, node:$node ){ id }", {{"node", Node(Pump1Rpm)}}), std::exception ) << "no such group";
+		EXPECT_THROW( Mutate("createHistGroupNode( histGroupId:999999, node:$node ){ id }", {{"node", Column(Rpm1)}}), std::exception ) << "no such group";
 	}
 
 	//A group's member list for the web (#338):  historyThresholds answers each member with its node by the server's index, its
@@ -816,7 +752,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( host );
 		ASSERT_EQ( GroupNodes(groupId).size(), 1u );
-		let rpmRow = Id( *Row(groupId, Pump2Rpm) );
+		let rpmRow = Id( *Row(groupId, Rpm2) );
 		Mutate( "updateHistGroupNode( id:$id, exceptionDeviation:5, exceptionDeviationFormat:1 )", {{"id", rpmRow}} );
 		let thresholds = []( uint32 group ){ return QL().QuerySync<jobject>( "historyThresholds( group:$group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }", {{"group", group}}, User() ); };
 		//A member's answer by its row, and a threshold's value and source by its name.
@@ -846,7 +782,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let& node = Json::AsObject( rpm, "node" );
 		EXPECT_EQ( Json::AsSV(node, "nsu"), PumpsUri );
 		EXPECT_EQ( Json::FindNumber<NsIndex>(node, "ns").value_or(0), _ns ) << "by the server's index, as a page keys its variables";
-		EXPECT_EQ( Json::AsNumber<UA_UInt32>(node, "i"), Pump2Rpm );
+		EXPECT_EQ( Json::AsNumber<UA_UInt32>(node, "i"), Rpm2 );
 		EXPECT_EQ( number(rpm, "exceptionDeviation"), 5 ); EXPECT_EQ( source(rpm, "exceptionDeviation"), "node" );
 		EXPECT_EQ( number(rpm, "exceptionDeviationFormat"), 1 ); EXPECT_EQ( source(rpm, "exceptionDeviationFormat"), "node" );
 		EXPECT_EQ( number(rpm, "minTimeInterval"), 1000 ); EXPECT_EQ( source(rpm, "minTimeInterval"), "template" );

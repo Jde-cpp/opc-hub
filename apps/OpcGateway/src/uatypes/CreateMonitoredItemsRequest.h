@@ -3,18 +3,14 @@
 
 namespace Jde::Opc::Gateway{
 
-	struct CreateMonitoredItemsRequest : UA_CreateMonitoredItemsRequest{
+	struct CreateMonitoredItemsRequest : Owned<UA_CreateMonitoredItemsRequest, UA_TYPES_CREATEMONITOREDITEMSREQUEST>{
 		//One item per node, in the map's order - the server answers by position, which is how UAMonitoringNodes reads the
 		//response.  `timestamps` is the request's:  BOTH by default - init is SOURCE alone, and NodeValues carries the server's too.
 		CreateMonitoredItemsRequest( const flat_map<NodeId,MonitoringParameters>& nodes, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ι;
-		CreateMonitoredItemsRequest( CreateMonitoredItemsRequest&& x )ι;
-		~CreateMonitoredItemsRequest(){ UA_CreateMonitoredItemsRequest_clear( this ); }
-		α operator=( CreateMonitoredItemsRequest&& x )ι->CreateMonitoredItemsRequest&;
 		α ToJson()ι->jarray;
 	};
 
 	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( const flat_map<NodeId,MonitoringParameters>& nodes, UA_TimestampsToReturn timestamps )ι{
-		UA_CreateMonitoredItemsRequest_init( this );
 		timestampsToReturn = timestamps;
 		itemsToCreateSize = nodes.size();
 		itemsToCreate = (UA_MonitoredItemCreateRequest*)UA_Array_new( itemsToCreateSize, &UA_TYPES[UA_TYPES_MONITOREDITEMCREATEREQUEST] );
@@ -29,20 +25,6 @@ namespace Jde::Opc::Gateway{
 			item.requestedParameters.discardOldest = parameters.DiscardOldest;
 		}
 	}
-	inline CreateMonitoredItemsRequest::CreateMonitoredItemsRequest( CreateMonitoredItemsRequest&& x )ι:
-		UA_CreateMonitoredItemsRequest{ x }{
-		UA_CreateMonitoredItemsRequest_init( &x );
-	}
-
-	Ξ CreateMonitoredItemsRequest::operator=( CreateMonitoredItemsRequest&& x )ι->CreateMonitoredItemsRequest&{
-		if( this!=&x ){
-			UA_CreateMonitoredItemsRequest_clear( this );//free our current contents before overwriting.
-			*(UA_CreateMonitoredItemsRequest*)this = x;//shallow-transfer ownership from x...
-			UA_CreateMonitoredItemsRequest_init( &x );//...then zero x so its dtor won't free what we now own.
-		}
-		return *this;
-	}
-
 	Ξ CreateMonitoredItemsRequest::ToJson()ι->jarray{
 		jarray values;
 		for( auto request : Iterable<UA_MonitoredItemCreateRequest>(itemsToCreate, itemsToCreateSize) ){

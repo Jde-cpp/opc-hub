@@ -166,7 +166,7 @@ install -D -m 644 -t "$etcDir/apps/OpcHub/config" "$repo/apps/OpcHub/config/Opc.
 install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install" "$repo/apps/OpcHub/config/args/install/args.libsonnet"
 install -D -m 644 -t "$etcDir/apps/AppServer/config" "$repo/apps/AppServer/config/App.Server.jsonnet"
 install -D -m 644 -t "$etcDir/apps/OpcGateway/config" "$repo/apps/OpcGateway/config/Opc.Gateway.jsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcGateway/config/introspection" "$repo"/apps/OpcGateway/config/introspection/*.jsonnet
+install -D -m 644 -t "$etcDir/apps/OpcGateway/config/introspection" "$repo"/apps/OpcGateway/config/introspection/*.jsonnet "$repo/apps/OpcGateway/config/introspection/scalars.libsonnet"
 install -D -m 644 -t "$etcDir/libs/db/config" "$repo/libs/db/config/paths-common.libsonnet"
 install -D -m 644 -t "$etcDir/apps/OpcServer/config" "$repo/apps/OpcServer/config/Opc.Server.jsonnet" "$repo/apps/OpcServer/config/Opc.Server.Install.jsonnet"
 install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install" "$repo/apps/OpcServer/config/args/install/args.libsonnet"

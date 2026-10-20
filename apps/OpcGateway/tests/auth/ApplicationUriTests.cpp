@@ -1,7 +1,7 @@
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
-#include "../utils/helpers.h"
+#include "../utils/ClientFixture.h"
 #include "../utils/TestUaServer.h"
 #include "../../src/UAClient.h"
 #include "../../src/GatewayAppClient.h"
@@ -34,65 +34,36 @@ namespace Jde::Opc::Gateway::Tests{
 			return sc;
 		}
 	}
-	class ApplicationUriTests : public ::testing::Test{
+	class ApplicationUriTests : public ClientFixture{
 	protected:
-		static constexpr uint16_t Port{ 4859 };//4855-4858 the other throwaway servers.
+		static constexpr EThrowawayPort Port{ EThrowawayPort::ApplicationUri };
 		Ω SetUpTestSuite()->void;
 		Ω TearDownTestSuite()->void{
 			_server = nullptr;
 			for( let& slug : {SecuredSlug, NoneSlug} ){
-				if( auto row = SelectServerCnnctn(slug); row )
-					PurgeServerCnnctn( row->Id );
+				PurgeServerCnnctn( slug );
 			}
 			lg _{ _sessionMutex };
 			UA_NodeId_clear( &_sessionId );
 		}
-		α TearDown()ι->void override{
-			if( _client )
-				UAClient::RemoveClient( move(_client) );
-		}
-		α Connect( str slug )ι->ConnectAwait::Task;
-		α Attempt( str slug )ι->void;
 		Ω HeardByTheServer()ε->string;//the applicationUri of the last activated session's clientDescription, as the server holds it.
 		inline static const string SecuredSlug{ "opcTestsApplicationUri" };
 		inline static const string NoneSlug{ "opcTestsApplicationUriNone" };
 		inline static up<TestUaServer> _server;
 		inline static string _serverUri;
-		up<Exception> _exception;
-		sp<UAClient> _client;
-		atomic_flag _done;
 	};
 	α ApplicationUriTests::SetUpTestSuite()->void{
 		let sslSettings = Settings::FindObject( "/opcServer/ssl" ); THROW_IF( !sslSettings, "no /opcServer/ssl" );
 		const Crypto::CryptoSettings ssl{ *sslSettings };//as UAConfig reads it.
 		Crypto::EnsureKeyCertificate( ssl );//there already when the OpcServer is embedded - this is what it starts with.
-		auto certificate = ToUAByteString( Crypto::ReadCertificate(ssl.Certificate.Path) );
-		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(ssl.PrivateKey) );
 		_serverUri = ssl.Certificate.SanUri();
-		_server = mu<TestUaServer>( Port, [&]( UA_ServerConfig& config ){
-			UA_String_clear( &config.applicationDescription.applicationUri );
-			config.applicationDescription.applicationUri = UA_STRING_ALLOC( _serverUri.c_str() );//open62541 holds the certificate's SAN uri against it at startup.
-			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate.get()) );
-			UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(&config, certificate.get(), privateKey.get()) );
-			UAε( UA_AccessControl_default(&config, true, nullptr, 0, nullptr) );//anonymous:  nothing here is about credentials.
+		_server = mu<TestUaServer>( Port, ssl, [&]( UA_ServerConfig& config, const UA_ByteString* certificate, const UA_ByteString* privateKey ){
+			UAε( UA_ServerConfig_addSecurityPolicyNone(&config, certificate) );
+			UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(&config, certificate, privateKey) );
+			TestUaServer::Anonymous( config );//nothing here is about credentials:  None, and Basic256Sha256 signed and encrypted, any client certificate taken (setBasics' AcceptAll).
 			_activateSession = config.accessControl.activateSession;
 			config.accessControl.activateSession = recordSession;
-			UAε( UA_ServerConfig_addAllEndpoints(&config) );//None, and Basic256Sha256 signed and encrypted;  any client certificate is taken (setBasics' AcceptAll).
 		});
-	}
-	α ApplicationUriTests::Connect( str slug )ι->ConnectAwait::Task{
-		try{
-			_client = co_await UAClient::GetClient( slug, Credential{} );
-		}
-		catch( Exception& e ){
-			_exception = e.Move();
-		}
-		_done.test_and_set();
-		_done.notify_all();
-	}
-	α ApplicationUriTests::Attempt( str slug )ι->void{
-		Connect( slug );
-		_done.wait( false );
 	}
 	α ApplicationUriTests::HeardByTheServer()ε->string{
 		UA_NodeId id;
@@ -116,8 +87,8 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NE( own, _serverUri ) << "the test means nothing when the two are the same uri.";
 		EXPECT_TRUE( own.starts_with("urn:") && own.contains(":Jde-Cpp:") ) << own;
 
-		GetConnection( SecuredSlug, Ƒ("opc.tcp://127.0.0.1:{}", Port), _serverUri );
-		Attempt( SecuredSlug );
+		GetConnection( SecuredSlug, Url(Port), _serverUri );
+		Attempt( SecuredSlug, Credential{} );
 		ASSERT_FALSE( _exception ) << _exception->what();
 		ASSERT_TRUE( _client );
 		let heard = HeardByTheServer();
@@ -131,8 +102,8 @@ namespace Jde::Opc::Gateway::Tests{
 
 	TEST_F( ApplicationUriTests, AndOnAnUnsecuredOne ){
 		let own = UAClient::CryptoSettings( NoneSlug ).Certificate.SanUri();
-		GetConnection( NoneSlug, Ƒ("opc.tcp://127.0.0.1:{}", Port), "" );
-		Attempt( NoneSlug );
+		GetConnection( NoneSlug, Url(Port), "" );
+		Attempt( NoneSlug, Credential{} );
 		ASSERT_FALSE( _exception ) << _exception->what();
 		ASSERT_TRUE( _client );
 		let heard = HeardByTheServer();

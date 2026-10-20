@@ -12,6 +12,7 @@ namespace Jde::Opc::Gateway{
 	struct SearchQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;
 		SearchQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι:base{ move(q), move(creds), sl }{}
+		static constexpr sv Command{ "search" };
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 		α Row( const UAClient& client, const NodeIndex::Entry& e )ι->jobject;

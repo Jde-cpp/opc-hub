@@ -9,6 +9,7 @@ namespace Jde::QL{
 		IQLAwaitExe( QL::Creds&& creds, SRCE )ι:base{sl}, _creds{move(creds)}{}
 		β Suspend()ι->void override{ Query(); }
 		α Session()ι->sp<Web::Server::SessionInfo>{ auto p = _creds.Session(); return p ? dynamic_pointer_cast<Web::Server::SessionInfo>(p) : nullptr; }
+		α RequireSession( SRCE )ε->sp<Web::Server::SessionInfo>{ auto p = Session(); THROW_IFSL( !p, "No Session for query" ); return p; }
 		β Input()ι->const QL::Input& = 0;
 		β Query()ι->TAwait<jvalue>::Task = 0;
 	protected:

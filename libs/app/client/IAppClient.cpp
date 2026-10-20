@@ -107,4 +107,13 @@ namespace Jde::App::Client{
 		session->Write( FromClient::LogEntries(move(entries)) );
 		return true;
 	}
+	α IAppClient::Enroll( const jobject& http, sv certInstance )ε->void{
+		Crypto::CryptoSettings ssl{ Json::FindDefaultObject(http, "ssl"), certInstance };
+		Crypto::EnsureKeyCertificate( ssl );
+		SslSettings = move( ssl );
+	}
+	α IAppClient::GrantRights( Jde::UserPK user, Access::ERights allowed, sv schema, sv slug )ε->void{
+		QuerySync<jvalue>( "createAcl( identity:{id:$userId}, permissionRight:{ allowed:$allowed, denied:0, resource:{schemaName:$schemaName, slug:$slug}} )",
+			{{"userId", user.Value}, {"allowed", underlying(allowed)}, {"schemaName", schema}, {"slug", slug}} );
+	}
 }

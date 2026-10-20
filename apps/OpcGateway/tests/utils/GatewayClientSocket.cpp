@@ -1,27 +1,15 @@
 #include "GatewayClientSocket.h"
 #include <absl/synchronization/mutex.h>
-#include <jde/fwk/process/execution.h>
 #include <jde/app/proto/common.h>
-#include "../../src/GatewayAppClient.h"
 #include <jde/opc/proto/opc.Common.h>
+#include <jde/opc/UAException.h>
 #include "../../src/types/proto/opc.FromClient.h"
-#include "helpers.h"
 #include "jde/fwk/process/process.h"
+#include <jde/fwk/process/execution.h>
 
 #define let const auto
 
-namespace Jde::Opc::Gateway{
-	sp<Tests::GatewayClientSocket> _session;
-	α Tests::Socket()ι->Tests::GatewayClientSocket&{
-		if( !_session ){
-			optional<ssl::context> ctx;
-			_session = ms<Tests::GatewayClientSocket>( Executor(), ctx );
-			BlockVoidAwait( _session->RunSession("localhost", GatewayPort(), "/opc") );//the gateway protocol's path on a hub; the standalone gateway ignores it.
-			BlockAwait<Web::Client::ClientSocketAwait<uint32>,uint>( _session->Connect(AppClient()->SessionId()) );
-		}
-		return *_session;
-	}
-namespace Tests{
+namespace Jde::Opc::Gateway::Tests{
 	GatewayClientSocket::GatewayClientSocket( sp<net::io_context> ioc, optional<ssl::context>& ctx )ι:
 		base{ ioc, ctx }
 	{}
@@ -31,18 +19,17 @@ namespace Tests{
 		INFOT( ELogTags::SocketClientRead, "[{}]{} GatewayClientSocket created: {}.", Id(), IsSsl() ? "Ssl" : "Plain", Host() );
 	}
 
-	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
-	α forgetRequest( RequestId requestId )ι->void;
-	α onUnsubscribeAck( RequestId requestId )ι->void;
-	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
+	α GatewayClientSocket::registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate )ι->void{
+		lg _{ _histMutex };
+		_histListeners.emplace( subscription, move(listener) );
+		if( duplicate )
+			_histDuplicates.emplace( subscription );
+		_lastHistSubscription = subscription;
+	}
 	α GatewayClientSocket::HistSubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
 		let requestId = NextRequestId();
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}.", hex(requestId), group );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( requestId, move(listener) );
-			_lastHistSubscription = requestId;
-		}
+		registerHist( requestId, move(listener) );
 		return await<vector<StatusCode>>{ FromClientUtils::HistSubscription(group, nodes, from, requestId), requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistSubscribeTwice( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<vector<StatusCode>>{
@@ -50,12 +37,7 @@ namespace Tests{
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe twice: group {}.", hex(requestId), group );
 		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, requestId) );
 		t.add_messages()->CopyFrom( t.messages(0) );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( requestId, move(listener) );
-			_histDuplicates.emplace( requestId );
-			_lastHistSubscription = requestId;
-		}
+		registerHist( requestId, move(listener), true );
 		return await<vector<StatusCode>>{ t, requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistSubscribeUnsubscribe( uint32 group, const vector<ExNodeId>& nodes, optional<TimePoint> from, sp<IHistListener> listener, SL sl )ι->await<bool>{
@@ -64,11 +46,7 @@ namespace Tests{
 		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]HistSubscribe: group {}, and [{}]HistUnsubscribe.", hex(subscription), group, hex(requestId) );
 		auto t = Protobuf::Deserialize<FromClient::Transmission>( FromClientUtils::HistSubscription(group, nodes, from, subscription) );
 		t.add_messages()->CopyFrom( Protobuf::Deserialize<FromClient::Transmission>(FromClientUtils::HistUnsubscription(subscription, requestId)).messages(0) );
-		{
-			lg _{ _histMutex };
-			_histListeners.emplace( subscription, move(listener) );
-			_lastHistSubscription = subscription;
-		}
+		registerHist( subscription, move(listener) );
 		return await<bool>{ t, requestId, shared_from_this(), sl };
 	}
 	α GatewayClientSocket::HistUnsubscribe( RequestId subscription, SL sl )ι->await<bool>{
@@ -213,68 +191,52 @@ namespace Tests{
 		return await<uint32>{ FromClientUtils::Connection(sessionId, requestId), requestId, shared_from_this(), sl };
 	}
 
-	absl::Mutex _subscriptionRequestMutex;
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>, sp<IListener>>> _subscriptionRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>>> _unsubscribeRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);//The ack prunes the nodes' listeners: they used to stay registered forever, so a later Subscribe on the same node through the same socket dispatched pushes to a listener whose fixture was long destroyed.
-	absl::Mutex _subscriptionsMutex;
-	flat_map<ServerCnnctnNK, flat_map<NodeId, flat_set<sp<IListener>>>> _subscriptions ABSL_GUARDED_BY(_subscriptionsMutex);
-	//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
-	//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the
-	//socket dead, a write on a closed stream, a timeout.  subscription-disconnect #7's per-cycle re-subscribe made that one
-	//per second for the length of an outage, in the harness that scores the soak (reviews/m2-closing.md #15).  Request ids
-	//are process-wide (IClientSocketSession::NextRequestId), so one file-scope map serves every socket.  Two ways out now
-	//besides the ack:  here, by id, for an error the gateway answered;  and CloseTasks' sweep, for everything a dead socket
-	//takes with it, where no id is handed over.
-	α forgetRequest( RequestId requestId )ι->void{
+	α GatewayClientSocket::forgetRequest( RequestId requestId )ι->void{
 		if( !requestId )
 			return;
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.erase( requestId );
 		_unsubscribeRequests.erase( requestId );
 	}
-	α GatewayClientSocket::PendingSubscriptionRecords()ι->uint{
+	α GatewayClientSocket::PendingSubscriptionRecords()Ι->uint{
 		rl _{ _subscriptionRequestMutex };
 		return _subscriptionRequests.size()+_unsubscribeRequests.size();
 	}
+	α GatewayClientSocket::Open( string host, PortType port, optional<SessionPK> session, string path )ε->sp<GatewayClientSocket>{
+		optional<ssl::context> ctx;
+		auto y = ms<GatewayClientSocket>( Executor(), ctx );
+		BlockVoidAwait( y->RunSession(move(host), port, move(path)) );
+		if( session )
+			BlockAwait<await<uint32>,uint32>( y->Connect(*session) );
+		return y;
+	}
 	α GatewayClientSocket::Query( string&& query, jobject variables, bool returnRaw, SL sl )ι->await<jvalue>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]'{}', variables: {}.", requestId, query, serialize(variables) );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]'{}', variables: {}.", hex(requestId), query, serialize(variables) );
 		return await<jvalue>{ FromClientUtils::Query(move(query), move(variables), returnRaw, requestId), requestId, shared_from_this(), sl };
 	}
-	α GatewayClientSocket::QuerySync( string&& query, jobject variables )ε->jvalue{
-		return BlockAwait<await<jvalue>,jvalue>( Query(move(query), move(variables), true) );
+	α GatewayClientSocket::QuerySync( string&& query, jobject variables, bool returnRaw )ε->jvalue{
+		return BlockAwait<await<jvalue>,jvalue>( Query(move(query), move(variables), returnRaw) );
 	}
 	α GatewayClientSocket::Subscribe( ServerCnnctnNK slug, const vector<NodeId>& nodes, sp<IListener> listener, SL sl )ε->await<FromServer::SubscriptionAck>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, slug );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]Subscribe: '{}'.", hex(requestId), slug );
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.emplace( requestId, make_tuple(slug, nodes, move(listener)) );
 		return await<FromServer::SubscriptionAck>{ FromClientUtils::Subscription(move(slug), nodes, requestId), requestId, shared_from_this(), sl };
 	}
 
-	absl::Mutex _logSubscriptionsMutex;
-	flat_map<SubscriptionId, sp<IListener>> _logSubscriptions ABSL_GUARDED_BY(_logSubscriptionsMutex);
-	α GatewayClientSocket::LogSubscribe( jobject&& ql, jobject vars, sp<IListener> listener, SL sl )ε->await<jarray>{
-		let requestId = NextRequestId();
-		ql["id"] = requestId;
-		ul _{ _logSubscriptionsMutex };
-		_logSubscriptions.emplace( (uint32)requestId, move(listener) );
-		auto query = serialize( ql );
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Subscribe: '{}'.", requestId, query.substr(0, Web::MaxLogLength()) );
-		return await<jarray>{ FromClientUtils::Query(move(query), move(vars), true, requestId), requestId, shared_from_this(), sl };
-	}
 	α GatewayClientSocket::Unsubscribe( ServerCnnctnNK slug, const vector<NodeId>& nodeIds, SL sl )ε->await<FromServer::UnsubscribeAck>{
 		let requestId = NextRequestId();
-		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{:x}]Unsubscribe: '{}'.", requestId, slug );
+		LOGSL( ELogLevel::Trace, sl, ELogTags::SocketClientWrite, "[{}]Unsubscribe: '{}'.", hex(requestId), slug );
 		{ ul _{ _subscriptionRequestMutex }; _unsubscribeRequests.emplace( requestId, make_tuple(slug, nodeIds) ); }
 		return await<FromServer::UnsubscribeAck>{ FromClientUtils::Unsubscription(move(slug), nodeIds, requestId), requestId, shared_from_this(), sl };
 	}
-	//the acked nodes' listeners go with the subscription - see _unsubscribeRequests.
-	α onUnsubscribeAck( RequestId requestId )ι->void{
+	α GatewayClientSocket::onUnsubscribeAck( RequestId requestId )ι->void{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _unsubscribeRequests.find( requestId );
 		if( it==_unsubscribeRequests.end() ){
-			CRITICALT( ELogTags::SocketClientRead, "[{:x}]No unsubscribe request found.", requestId );
+			CRITICALT( ELogTags::SocketClientRead, "[{}]No unsubscribe request found.", hex(requestId) );
 			return;
 		}
 		auto& [slug, nodes] = it->second;
@@ -288,11 +250,11 @@ namespace Tests{
 		_unsubscribeRequests.erase( it );
 	}
 
-	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode{
+	α GatewayClientSocket::onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _subscriptionRequests.find( requestId );
 		if( it==_subscriptionRequests.end() ){
-			CRITICALT( ELogTags::SocketClientRead, "[{:x}]No subscription request found.", requestId );
+			CRITICALT( ELogTags::SocketClientRead, "[{}]No subscription request found.", hex(requestId) );
 			return UA_STATUSCODE_BADINTERNALERROR;
 		}
 		auto& [slug, nodes, listener] = it->second;
@@ -307,7 +269,7 @@ namespace Tests{
 			auto& nodeId = nodes[i];
 			if( res.status_code() ){
 				sc = res.status_code();
-				DBGT( ELogTags::SocketClientRead, "[{:x}]Subscription for node '{}' failed with status code {}.", requestId, nodeId.ToString(), sc );
+				DBGT( ELogTags::SocketClientRead, "[{}]Subscription for node '{}' failed with status code {}.", hex(requestId), nodeId.ToString(), sc );
 			}
 			else{
 				slugNodes[nodeId].emplace( listener );
@@ -318,7 +280,7 @@ namespace Tests{
 		return added ? UA_STATUSCODE_GOOD : sc;
 	}
 
-	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void{
+	α GatewayClientSocket::onNodeValues( FromServer::NodeValues&& nodeValues )ι->void{
 		rl _{ _subscriptionsMutex };
 		let& opcId = nodeValues.opc_id();
 		auto slugNodes = _subscriptions.find( opcId );
@@ -343,15 +305,11 @@ namespace Tests{
 		//socket closing, a write on a closed stream, a request timing out (AddTimeout -> CloseOnError) - and the soak's reconnect
 		//keys on the difference.  Stamping these as answered made every dead socket reset the soak's failure count, so it never
 		//reconnected (subscription-disconnect #1).
-		{//the records of what this socket still has pending go with its tasks (#15).  Before the drain:  the drain hands over
-			//handles, not ids, and HasTask is only true of a request until it has run.  Another socket's records are not this one's to take.
+		{//what this socket still has pending goes with its tasks (#15):  no ack can come over a dead socket.
 			ul _{ _subscriptionRequestMutex };
-			erase_if( _subscriptionRequests, [this]( let& kv ){ return HasTask(kv.first); } );
-			erase_if( _unsubscribeRequests, [this]( let& kv ){ return HasTask(kv.first); } );
+			_subscriptionRequests.clear();
+			_unsubscribeRequests.clear();
 		}
 		base::CloseTasks( ec );
 	}
-	α GatewayClientSocket::OnClose( beast::error_code ec )ι->void{
-		base::OnClose( ec );
-	}
-}}
+}

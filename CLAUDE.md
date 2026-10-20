@@ -77,6 +77,8 @@ Awaitables inherit from `VoidAwait` or `IAwait<TResult, TTask>` in `co/Await.h`.
 
 **Several at once — `co/AllAwait.h`.** `All( a, b, … )` starts several awaitables of either family, unwrapped, and resumes once with a `tuple` of their results (`std::monostate` for a void slot) or the first failing slot's exception in slot order once every slot has settled — nothing here can be cancelled, so it always waits for all; rvalue slots are owned, lvalues referenced, and the source location is the first slot's. The caller's return type is free, as with `Any`.
 
+**Lazy work — `AnyVoidTask` (`co/AnyAwait.h`).** A coroutine returning `AnyVoidTask` runs only once some coroutine, of any return type, `co_await`s it; its end resumes that awaiter, rethrowing what escaped the body. Use it for work picked now and awaited later (`HistGroupMAwait`'s `before`/`after` pick a `HistHost` edit side), where a `VoidTask` would start at once, detached, and could answer only through a reference to its awaiter. Its body `co_await`s the Any family only (`Any()` for the rest). It owns its frame, so a task nobody awaits just destroys it.
+
 ### Free-function definitions
 
 A function a header declares at namespace scope is defined in its `.cpp` by its qualified name, from an enclosing namespace — `namespace Jde::Opc{ α Gateway::ResolveThresholds( … )ι->Hist::Thresholds{ … } }`, as `gatewayStartup.cpp` and `GatewayQL.cpp` do — not by reopening `namespace Jde::Opc::Gateway` and writing the bare name. A qualified definition has to match a declaration, so a parameter or return type that drifts from the header is a compile error; a bare one silently declares a new overload, and fails only at link, or not at all. File-local helpers (`Ω`, declared in no header) stay unqualified in the namespace they serve, and members are already qualified by their class.
@@ -92,6 +94,7 @@ A function a header declares at namespace scope is defined in its `.cpp` by its 
 | `$JDE_COMPILER` | Compiler subdirectory name under `$JDE_BUILD_DIR` (e.g. `clang++`) |
 
 ## Other Stuff
+- Don't stage changes (`git add`, `git rm --cached`, `git restore --staged`) unless asked — leave edits in the working tree; the user stages and commits. Need a baseline to diff against? Snapshot the tree without touching the index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`).
 - Don't create branches — work on whatever branch is checked out; the user creates branches and lands changes through their own PR flow. (A branch made with `git switch -c <name> origin/main` tracks `origin/main`, so a plain push from it goes straight to `main`.)
 - Never suggest enclosing single-line `if` statements with braces.
 - Never run an unscoped/filesystem-wide search (e.g. `find /`, or any search rooted above the repo). Always scope file searches to `C:\Users\duffyj\source\repos` or `$JDE_BUILD_DIR` (build outputs, e.g. `x:\build` on Windows) — or a narrower subdirectory of either. A full-drive search can run for tens of minutes burning CPU for no benefit. Prefer Glob/Grep over shelling out to `find`/`grep` in the first place.

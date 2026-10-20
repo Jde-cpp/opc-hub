@@ -66,7 +66,7 @@ namespace Jde::Opc::Gateway{
 		α Count()ι->uint{ rl _{_mutex}; return _subscriptions.size(); }
 	private:
 		struct Subscription{
-			Subscription( /*ServerCnnctnNK opcId,*/ NodeId node, MonitoredItemCreateResult result, sp<IDataChange> clientCall )ι: /*ServerCnnctnNK{move(opcId)},*/ Node{ move(node) }, Result{ move(result) }, ClientCalls{ move(clientCall) }{}
+			Subscription( NodeId node, MonitoredItemCreateResult result, sp<IDataChange> clientCall )ι: Node{ move(node) }, Result{ move(result) }, ClientCalls{ move(clientCall) }{}
 			NodeId Node;
 			MonitoredItemCreateResult Result;
 			flat_set<sp<IDataChange>> ClientCalls;

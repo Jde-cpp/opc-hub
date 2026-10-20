@@ -16,7 +16,7 @@ namespace Jde::Opc::Gateway{
 		try{
 			//Update, where ConnectAwait asks Read:  this connects the gateway to a url of the caller's choosing, which is editing a connection whether or not its row is saved yet.
 			QL().Authorizer().Test( "gateway", "serverConnections", Access::ERights::Update, UserPK(), _sl );
-			auto session = Session(); THROW_IF( !session, "No Session for query" );
+			auto session = RequireSession();
 			let slug = string{ Str::Trim(sv{_query.As<jstring>("opc")}) };
 			if( auto e = ServerCnnctn::SlugError(slug, _sl); e )//the slug names the certificate file - never a path.
 				e->Throw();

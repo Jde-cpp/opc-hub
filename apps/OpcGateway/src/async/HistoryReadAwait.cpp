@@ -87,52 +87,14 @@ namespace Jde::Opc::Gateway{
 		SetNodes();
 	}
 
-	HistoryReadResponse::HistoryReadResponse( UA_HistoryReadResponse&& x, uint requested )ι:
-		UA_HistoryReadResponse{ x }, Requested{ requested }{
-		UA_HistoryReadResponse_init( &x );
-	}
-	HistoryReadResponse::HistoryReadResponse( HistoryReadResponse&& x )ι:
-		UA_HistoryReadResponse{ x }, Requested{ x.Requested }{
-		UA_HistoryReadResponse_init( &x );
-	}
-	α HistoryReadResponse::operator=( HistoryReadResponse&& x )ι->HistoryReadResponse&{
-		if( this!=&x ){
-			UA_HistoryReadResponse_clear( this );
-			*( UA_HistoryReadResponse* )this = x;
-			Requested = x.Requested;
-			UA_HistoryReadResponse_init( &x );
-		}
-		return *this;
-	}
 	α HistoryReadResponse::Validate( Handle uahandle, SL sl )ε->void{
 		THROW_IFX( responseHeader.serviceResult, UAClientException(responseHeader.serviceResult, uahandle, "HistoryRead", sl) );
 		THROW_IFSL( resultsSize!=Requested, "HistoryRead answered {} of {} nodes.", resultsSize, Requested );
 	}
 
-	α HistoryReadAwait::Suspend()ι->void{
-		_client->PostUA( [this]{//UA submissions must run on the client's strand; `this` outlives suspension (resume only via OnComplete).
-			try{
-				UACε( __UA_Client_AsyncService(*_client, &_request, &UA_TYPES[UA_TYPES_HISTORYREADREQUEST], OnResponse, &UA_TYPES[UA_TYPES_HISTORYREADRESPONSE], this, &_requestId) );
-				_client->Process( _requestId, "historyRead" );
-			}
-			catch( UAException& e ){
-				ResumeExp( move(e) );
-			}
-		});
-	}
-	α HistoryReadAwait::OnResponse( UA_Client* /*client*/, void* await, UA_UInt32 /*requestId*/, void* response )ι->void{
-		ASSERT( await );
-		static_cast<HistoryReadAwait*>( await )->OnComplete( static_cast<UA_HistoryReadResponse*>(response) );
-	}
-	α HistoryReadAwait::OnComplete( UA_HistoryReadResponse* rr )ι->void{
-		_client->ClearRequest( _requestId );
-		HistoryReadResponse response{ move(*rr), _request.Size() };
-		try{
-			response.Validate( _client->Handle(), _sl );
-			Resume( move(response) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
+	α HistoryReadAwait::Convert( UA_HistoryReadResponse&& r )ε->HistoryReadResponse{
+		HistoryReadResponse response{ move(r), _request.Size() };
+		response.Validate( _client->Handle(), _sl );
+		return response;
 	}
 }

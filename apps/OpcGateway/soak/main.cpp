@@ -2,14 +2,12 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/str.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/opc/uatypes/Logger.h>
 #include "../src/UAClient.h"
-#include "SoakAppClient.h"
 #include "SoakRunner.h"
 #include <jde/fwk/process/cpu.h>
 
@@ -20,6 +18,8 @@
 
 namespace Jde::Opc::Gateway::Soak{
 	constexpr ELogTags _tags{ ELogTags::Test };
+	//The soak's AppServer client, a tool's:  it answers the AppServer's `status` and nothing else (IApp::ClientQuery).
+	Ω appClient()ι->sp<App::Client::IAppClient>{ static auto y = ms<App::Client::IAppClient>(); return y; }
 	//Creates the gateway's client certificate for each active soak leg. Recommended before OpcServer starts, no longer
 	//required for the Jde OpcServer (UATrust rescans trustedCertDirs on a failed verify) - still required for external
 	//servers that snapshot their trust list, and it prints the path they need to anchor. Goes through UAClient's own
@@ -32,10 +32,10 @@ namespace Jde::Opc::Gateway::Soak{
 				continue;
 			}
 			UAClient::EnsureCertificate( leg.Slug );//its SAN is the gateway's own applicationUri (/gateway/issuedCerts), not the leg's certificateUri - security-matrix #8.
-			let certificateFile = UAClient::CryptoSettings( leg.Slug ).Certificate.Path;
-			INFO( "Gateway certificate ready: {}.", certificateFile.string() );
+			let certificateFile = CertPath( leg.Slug );
+			INFO( "Gateway certificate ready: {}.", certificateFile );
 			if( leg.User.size() )
-				INFO( "External server '{}': trust {} in its server configuration before the run.", leg.Slug, certificateFile.string() );
+				INFO( "External server '{}': trust {} in its server configuration before the run.", leg.Slug, certificateFile );
 		}
 	}
 }
@@ -54,11 +54,9 @@ namespace Jde::Opc::Gateway::Soak{
 			exitCode = EXIT_SUCCESS;
 		}
 		else{
-			auto client = Soak::AppClient();
+			auto client = Soak::appClient();
 			client->InitLogging( client );
-			Crypto::CryptoSettings ssl{ Json::FindDefaultObject(Settings::AsObject("/http"), "ssl"), Process::ProductName() };//the file name doubles as the subject CN - the soak client's enrollment identity.
-			Crypto::EnsureKeyCertificate( ssl );
-			client->SslSettings = ssl;
+			client->Enroll( Settings::AsObject("/http"), Process::ProductName() );//the file name doubles as the subject CN - the soak client's enrollment identity.
 			client->SetUserName( jobject{Settings::AsObject("/credentials")} );
 			Execution::Run();//without proto/remote logging or a web server, nothing else starts the executor thread the socket/http awaitables need.
 			BlockVoidAwait( App::Client::ConnectAwait{client, false} );

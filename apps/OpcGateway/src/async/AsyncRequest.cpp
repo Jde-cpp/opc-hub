@@ -8,8 +8,8 @@
 
 namespace Jde::Opc::Gateway{
 	namespace asio = boost::asio;
-	Duration _pingInterval;//config, set once at startup - safe to share.
-	Duration _ttl;//config, set once at startup - safe to share.
+	Duration _pingInterval;
+	Duration _ttl;
 
 	AsyncRequest::AsyncRequest()ι:
 		_strand{ Executor()->get_executor() }
@@ -44,7 +44,7 @@ namespace Jde::Opc::Gateway{
 		catch( UAException& e ){
 			let stopping = _stopped.test() || _stopping;//FailPending's disconnect fails it BadSessionClosed.
 			let sc = (StatusCode)e.Code();
-			let lapsed = !stopping && ( sc==UA_STATUSCODE_BADSESSIONIDINVALID || sc==UA_STATUSCODE_BADSESSIONCLOSED );//the ping interval outlasts the server's session timeout.
+			let lapsed = !stopping && UAClient::IsSessionLoss( sc );//the ping interval outlasts the server's session timeout.
 			//A hung server or a silent network drop:  the keep-alive is the probe that sees the outage first.
 			let lost = !stopping && ( sc==UA_STATUSCODE_BADTIMEOUT || UAClient::IsConnectionLoss(sc) );
 			e.SetLevel( ELogLevel::NoLog );//~Exception logs the format string, never _what - so the hint is written here.
@@ -74,76 +74,70 @@ namespace Jde::Opc::Gateway{
 		StatusCode sc{};
 		optional<steady_clock::time_point> drainStart;//when our queue emptied with open62541's own read still outstanding - see below; steady: an NTP step must not stretch or truncate the drain window.
 		let drainLimit = std::chrono::milliseconds{ UA_Client_getConfig(*client)->timeout } + 1s;//open62541 abandons a request at `timeout`, and its housekeeping only sweeps timeouts once a second; past that, pumping cannot complete the read.
-		try{
-			while( _running.test() ){
-				let size = _requests.size();
-				if( size ){
-					drainStart.reset();//before the trace guard, so the iteration that picks up a mid-drain request keeps its queue snapshot; the drain window re-arms fresh if the queue empties again.
-					if( *_requests.begin()==PingRequestId )
-						_requests.erase( PingRequestId );
-				}
-				if( !drainStart )//tracing every drain poll buries the log.
-					TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
-				if( sc = UA_Client_run_iterate(*client, 0); sc ){
-					_running.clear();
-					//Warning, not Critical, with requests outstanding: a server that went away under a request is an operational event the
-					//loop handles - the requests are dropped here, the client deregistered below, the next request reconnects - and
-					//the walk's reader took the critical for the failure (install-issues, the 09-15 rerun's retry table).  Debug with none.
-					let level = _requests.size()>0 ? ELogLevel::Warning : ELogLevel::Debug;
-					string requests;
-					for_each( _requests, [&requests](auto r){requests += Ƒ("{:x}, ", r);} );
-					LOG( level, _tags, "{}UA_Client_run_iterate returned ({}){}, requests: [{}]", logPrefix(), hex(sc), UAException::Message(sc), requests );
-					_requests.clear();
-					break;
-				}
-				let newSize = _requests.size();
-				if( !newSize ){
-					//open62541 issues requests of its own that never reach _requests - the server namespace-array read it fires
-					//the moment the session activates is the one that bit us - and both their responses and their staleness
-					//sweep are only serviced from run_iterate.  Leaving the loop as soon as our own queue drained left that
-					//read unpumped until the ping woke us _pingInterval later, by which point open62541 had already given up
-					//on it ("No result in the read namespace array response") and then discarded the reply that had been
-					//sitting in the socket the whole time ("Request with unknown RequestId").  So while that read is
-					//outstanding (_drainNeeded: flagged at activation by StateCallback, cleared by OnServiceBegin when the
-					//reply is serviced) keep polling, bounded by drainLimit.
-					if( _drainNeeded ){
-						let now = steady_clock::now();
-						if( !drainStart )
-							drainStart = now;
-						if( *drainStart+drainLimit > now ){
-							//10ms, not the request path's 1ms: the drain only shepherds open62541's own read, which times out in
-							//multiple seconds - and a request landing mid-drain waits at most one coarse step before the loop
-							//re-enters the 1ms path (its submission already went out on the caller's strand post).
-							if( let result = co_await DurationTimer{ 10ms, _strand }; !result ){
-								CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
-								_running.clear();
-								break;
-							}
-							continue;
-						}
-						WARN( "{}Drained {} without open62541's own request completing - handing the client back to the ping timer.", logPrefix(), Chrono::ToString(now-*drainStart) );
-						_drainNeeded = false;
-					}
-					TRACE( "{}requestCount: {}", logPrefix(), newSize );
-					_running.clear();
-					if( let now = Clock::now(); _lastRequest + _ttl < now ){
-						DBG( "{}No requests for {}, shutting down client.", logPrefix(), Chrono::ToString(now-_lastRequest) );
-						_stopping = true;//teardown is committed: ShutdownIdle's delete-subscription pump restarts this loop (Subscriptions.cpp Process), and neither that instance's exit nor ours may arm a ping - it would race RemoveClient's Stop, and if the round trip outlives _pingInterval the fired ping restarts the loop on the half-torn-down client and the still-stale _lastRequest runs ShutdownIdle twice.
-						UAClient::ShutdownIdle( client );//per-client teardown: _lastRequest is per-client, so this client idling out must not tear down the others.
-					}
-					break;
-				}
-				let firstRequest = *_requests.begin();
-				TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
-				if( size==newSize ){
-					let sleep = size==1 && firstRequest==SubscriptionRequestId ? 500ms : 1ms; //UA_CreateSubscriptionRequest_default
-					(void)co_await DurationTimer{ sleep, _strand, SRCE_CUR };
-				}
+		while( _running.test() ){
+			let size = _requests.size();
+			if( size ){
+				drainStart.reset();//before the trace guard, so the iteration that picks up a mid-drain request keeps its queue snapshot; the drain window re-arms fresh if the queue empties again.
+				if( *_requests.begin()==PingRequestId )
+					_requests.erase( PingRequestId );
 			}
-		}
-		catch( Exception& e ){ //I don't see the use case here.
-			e.SetLevel(ELogLevel::Critical);
-			_running.clear();
+			if( !drainStart )//tracing every drain poll buries the log.
+				TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
+			if( sc = UA_Client_run_iterate(*client, 0); sc ){
+				_running.clear();
+				//Warning, not Critical, with requests outstanding: a server that went away under a request is an operational event the
+				//loop handles - the requests are dropped here, the client deregistered below, the next request reconnects - and
+				//the walk's reader took the critical for the failure (install-issues, the 09-15 rerun's retry table).  Debug with none.
+				let level = _requests.size()>0 ? ELogLevel::Warning : ELogLevel::Debug;
+				string requests;
+				for_each( _requests, [&requests](auto r){requests += Ƒ("{:x}, ", r);} );
+				LOG( level, _tags, "{}UA_Client_run_iterate returned ({}){}, requests: [{}]", logPrefix(), hex(sc), UAException::Message(sc), requests );
+				_requests.clear();
+				break;
+			}
+			let newSize = _requests.size();
+			if( !newSize ){
+				//open62541 issues requests of its own that never reach _requests - the server namespace-array read it fires
+				//the moment the session activates is the one that bit us - and both their responses and their staleness
+				//sweep are only serviced from run_iterate.  Leaving the loop as soon as our own queue drained left that
+				//read unpumped until the ping woke us _pingInterval later, by which point open62541 had already given up
+				//on it ("No result in the read namespace array response") and then discarded the reply that had been
+				//sitting in the socket the whole time ("Request with unknown RequestId").  So while that read is
+				//outstanding (_drainNeeded: flagged at activation by StateCallback, cleared by OnServiceBegin when the
+				//reply is serviced) keep polling, bounded by drainLimit.
+				if( _drainNeeded ){
+					let now = steady_clock::now();
+					if( !drainStart )
+						drainStart = now;
+					if( *drainStart+drainLimit > now ){
+						//10ms, not the request path's 1ms: the drain only shepherds open62541's own read, which times out in
+						//multiple seconds - and a request landing mid-drain waits at most one coarse step before the loop
+						//re-enters the 1ms path (its submission already went out on the caller's strand post).
+						if( let result = co_await DurationTimer{ 10ms, _strand }; !result ){
+							CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
+							_running.clear();
+							break;
+						}
+						continue;
+					}
+					WARN( "{}Drained {} without open62541's own request completing - handing the client back to the ping timer.", logPrefix(), Chrono::ToString(now-*drainStart) );
+					_drainNeeded = false;
+				}
+				TRACE( "{}requestCount: {}", logPrefix(), newSize );
+				_running.clear();
+				if( let now = Clock::now(); _lastRequest + _ttl < now ){
+					DBG( "{}No requests for {}, shutting down client.", logPrefix(), Chrono::ToString(now-_lastRequest) );
+					_stopping = true;//teardown is committed: ShutdownIdle's delete-subscription pump restarts this loop (Subscriptions.cpp Process), and neither that instance's exit nor ours may arm a ping - it would race RemoveClient's Stop, and if the round trip outlives _pingInterval the fired ping restarts the loop on the half-torn-down client and the still-stale _lastRequest runs ShutdownIdle twice.
+					UAClient::ShutdownIdle( client );//per-client teardown: _lastRequest is per-client, so this client idling out must not tear down the others.
+				}
+				break;
+			}
+			let firstRequest = *_requests.begin();
+			TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
+			if( size==newSize ){
+				let sleep = size==1 && firstRequest==SubscriptionRequestId ? 500ms : 1ms; //UA_CreateSubscriptionRequest_default
+				(void)co_await DurationTimer{ sleep, _strand, SRCE_CUR };
+			}
 		}
 		if( !sc && !_stopped.test() && !_stopping && _pingInterval.count()>0 ){
 			//post rather than call: a cancelled ping's resumption may still be queued on the strand (it resets _pingTimer);
@@ -155,7 +149,7 @@ namespace Jde::Opc::Gateway{
 		}
 		else if( sc && !_stopped.test() ){
 			//run_iterate failed on a client nothing else is tearing down (a connecting client's failure StateCallback and
-			//a request callback's Retry both Stop() inline before run_iterate returns, setting _stopped).  Skipping the
+			//a request callback's ConnectionLost both Stop() inline before run_iterate returns, setting _stopped).  Skipping the
 			//ping starter would leave the client in _clients with neither loop nor ping - a zombie every later request
 			//trips over - so deregister it and let the next request build a fresh connection.  No MonitoredNodes
 			//shutdown first: the transport is dead, so the delete-subscription round trip could never complete.
@@ -205,7 +199,7 @@ namespace Jde::Opc::Gateway{
 		_running.clear();
 		//move: breaks the UAClient<->AsyncRequest._client self-reference; the closure's copy keeps the UAClient (and so
 		//`this`) alive until FailPending has run, and its release is what finally lets ~UAClient run.  Posted, never
-		//called here: Stop runs inside UA_Client callbacks (a request callback's Retry, the connect-failure StateCallback
+		//called here: Stop runs inside UA_Client callbacks (a request callback's ConnectionLost, the connect-failure StateCallback
 		//mid-erase_if on _awaitingActivation), and FailPending's disconnect pumps the event loop and re-fires
 		//StateCallback.  _requests stays until then - the callbacks it fires Clear() their own ids.
 		if( auto client = move(_client); client )

@@ -2,22 +2,11 @@
 // dir) with sync=true baked in and log tags flattened for a 24h run.
 // Launch with -include=../../../OpcServer/config/args/sqlite (relative to this file) and -arg path=<run>/db/opc.db.
 local base = (import '../../../OpcServer/config/Opc.Server.jsonnet')(sync=true);
+local soakLogging = import 'soak-logging.libsonnet';
 base + {
 	logging+: {
 		spd+: {
-			tags: {
-				default: "Information",
-				io: "Warning",
-				threads: "Warning",
-				uaEvent: "Warning",
-				uaNet: "Warning",
-				uaSession: "Warning",
-				uaServer: "Warning",
-				uaUser: "Warning",
-				uaSecurity: "Warning",
-				uaClient: "Warning",
-				uaSecure: "Warning"
-			}
+			tags: soakLogging.ua + { io: "Warning", threads: "Warning" }
 		}
 	}
 }

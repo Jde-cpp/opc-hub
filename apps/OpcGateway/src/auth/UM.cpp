@@ -1,7 +1,6 @@
 #include "UM.h"
 #include <jde/ql/IQL.h>
 #include <jde/app/client/AppClientSocketSession.h>
-//#include <jde/app/client/appClient.h>
 #include <jde/app/client/IAppClient.h>
 #include "../GatewayAppClient.h"
 #include "../UAClient.h"
@@ -22,78 +21,33 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	α ProviderMAwait::Execute( ServerCnnctnPK opcPK )ι->TAwait<vector<ServerCnnctn>>::Task{
-		try{
-			auto server = co_await ServerCnnctnAwait{ opcPK, true };
-			THROW_IF( server.empty(), "[{}]Could not find OpcServer", opcPK );
-			if( _insert )
-				Check( move(server.front().Slug) );
-			else
-				Purge( move(server.front().Slug) );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
 	//An existing row is reused, not re-inserted:  the seed ships one for the bundled OpcServer (release-opcServer.mutation -
 	//applied inside the schema sync, before this hook is registered), and (type, slug) is the natural key, so a second
 	//createProvider would fail and take the connection insert down with it.
-	α ProviderMAwait::Check( string slug )ι->ProviderAwait::Task{
+	α ProviderMAwait::Execute()ι->VoidTask{
 		try{
-			let existing = co_await ProviderAwait{ slug };
-			if( existing )
-				ResumeScaler( existing );
+			string slug;
+			if( _opcKey.IsPK() ){
+				ServerCnnctnAwait select{ _opcKey, true };
+				auto servers = co_await Any( select );
+				THROW_IF( servers.empty(), "[{}]Could not find OpcServer", _opcKey.PK() );
+				slug = move( servers.front().Slug );
+			}
 			else
-				Insert( slug );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α ProviderMAwait::Insert( str slug )ι->TAwait<jobject>::Task{
-		let q = Ƒ( "createProvider( slug:\"{}\", providerType:\"OpcServer\" ){{id}}", slug );
-		try{
+				slug = _opcKey.NK();
+			ProviderAwait find{ slug };
+			auto providerPK = co_await Any( find );
 			auto appClient = AppClient();
-			let j = co_await *appClient->QLServer()->QueryObject( q, {}, appClient->UserPK() );
-			let newPK = QL::AsId<Access::ProviderPK>( j );
-			ResumeScaler( newPK );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-
-	α ProviderMAwait::Purge( str slug )ι->ProviderAwait::Task{
-		try{
-			let providerPK = co_await ProviderAwait{ slug };
-			if( !providerPK )
-				ResumeScaler( providerPK );
-			else
-				Purge( providerPK );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-	α ProviderMAwait::Purge( Access::ProviderPK providerPK )ι->TAwait<jvalue>::Task{
-		ASSERT( providerPK );
-		jobject vars{ {"id", providerPK} };
-		constexpr auto q = "purgeProvider( id:$id )";
-		try{
-			auto appClient = AppClient();
-			co_await *appClient->QLServer()->Query( q, move(vars), appClient->UserPK() );
+			if( _insert && !providerPK ){
+				let j = co_await Any( *appClient->QLServer()->QueryObject(Ƒ("createProvider( slug:\"{}\", providerType:\"OpcServer\" ){{id}}", slug), {}, appClient->UserPK()) );
+				providerPK = QL::AsId<Access::ProviderPK>( j );
+			}
+			else if( !_insert && providerPK )
+				co_await Any( *appClient->QLServer()->Query("purgeProvider( id:$id )", jobject{{"id", providerPK}}, appClient->UserPK()) );
 			ResumeScaler( providerPK );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 		}
-	}
-	α ProviderMAwait::Suspend()ι->void{
-		if( _opcKey.IsPK() )
-			Execute( _opcKey.PK() );
-		else if( _insert )
-			Check( _opcKey.NK() );
-		else
-			Purge( _opcKey.NK() );
 	}
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/Key.h>
@@ -17,11 +18,12 @@ namespace Jde::Opc::Gateway{
 	using HistGroupNodePK = Opc::Hist::NodeIndex;//the row id is the node's index in the group's files.
 	using HistTemplatePK = uint32;
 	using HistTemplateNodePK = uint32;
+	namespace HistTable{ constexpr sv Groups{ "hist_groups" }, GroupNodes{ "hist_group_nodes" }, Templates{ "hist_templates" }, TemplateNodes{ "hist_template_nodes" }; }
 
 	//The five threshold columns as a row holds them, null where it inherits:  a group node from its template member, then
 	//its group, then the library's defaults (Opc::Hist::Thresholds).  The intervals are milliseconds, as UA's Duration is.
 	struct HistThresholdColumns final{
-		Ω Names()ι->vector<string>{ return {"exception_deviation", "exception_deviation_format", "min_time_interval", "max_time_interval", "stepped"}; }
+		static constexpr array<sv,5> Names{ "exception_deviation", "exception_deviation_format", "min_time_interval", "max_time_interval", "stepped" };
 		Ω Read( const DB::Row& row, uint first )ι->HistThresholdColumns;//the five cells from `first`, in Names' order.
 		Ω FromJson( const jobject& args, SRCE )ε->HistThresholdColumns;//the QL names; a null is none.  A format that isn't a whole number from 0 to 255 is a BadRequest, as Check's.
 		α Over( const HistThresholdColumns& fallback )Ι->HistThresholdColumns;//this, with fallback where this is null.
@@ -85,13 +87,12 @@ namespace Jde::Opc::Gateway{
 
 	//A select's rows, each made by `make`.
 	template<class TRow>
-	struct HistRowsAwait final : TAwait<vector<TRow>>{
-		using base = TAwait<vector<TRow>>;
+	struct HistRowsAwait final : TAwaitEx<vector<TRow>,DB::SelectAwait::Task>{
+		using base = TAwaitEx<vector<TRow>,DB::SelectAwait::Task>;
 		using Make = TRow(*)( DB::Row&& );
 		HistRowsAwait( DB::Statement&& statement, Make make, SRCE )ι:base{ sl }, _statement{ move(statement) }, _make{ make }{}
-		α Suspend()ι->void override{ Select(); }
 	private:
-		α Select()ι->DB::SelectAwait::Task{
+		α Execute()ι->DB::SelectAwait::Task override{
 			try{
 				auto rows = co_await DS()->SelectAsync( _statement.Move() );
 				auto y = Reserve<TRow>( rows.size() );
@@ -119,5 +120,35 @@ namespace Jde::Opc::Gateway{
 	//Template members by row, as a group node's TemplateNode names them, and the one a group node was resolved from:  null for a
 	//node added by hand, or one whose member isn't among them.
 	α HistTemplateNodesById( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>;
+	//A template's members, or one member, by id - empty without a select when the filter names neither:  a group with no
+	//template, a node no member made.  Not SelectHistTemplateNodes' "all".
+	struct HistTemplateMembersAwait final : AnyAwait<flat_map<HistTemplateNodePK,HistTemplateNodeRow>>{
+		HistTemplateMembersAwait( HistTemplateNodeFilter filter, SRCE )ι:AnyAwait{ sl }, _filter{ move(filter) }{}
+		α await_ready()ι->bool override;
+	protected:
+		α Suspend()ι->void override{ Select(); }
+	private:
+		α Select()ι->VoidTask;
+		HistTemplateNodeFilter _filter;
+	};
+	Ξ SelectHistTemplateMembers( HistTemplateNodeFilter filter, SRCE )ι->HistTemplateMembersAwait{ return HistTemplateMembersAwait{ move(filter), sl }; }
+	//The row of the unique (connection, node) index behind a hist_group_nodes create's 409, as `group` sees it.  None for a
+	//refusal no row explains - a foreign key, another constraint.  Else another group's, this group's `member` itself (a
+	//concurrent create made it), or this group's as another member or an ad hoc node.
+	struct NodeHolder final{
+		enum class EKind : uint8{ None, OtherGroup, SameMember, ThisGroup };
+		EKind Kind{};
+		optional<HistGroupNodeRow> Row;//all but None.
+	};
+	struct NodeHolderAwait final : AnyAwait<NodeHolder>{
+		NodeHolderAwait( const HistGroupRow& group, string text, optional<HistTemplateNodePK> member, SRCE )ι:
+			AnyAwait{ sl }, _group{ group.Id }, _connection{ group.Connection }, _text{ move(text) }, _member{ member }{}
+	protected:
+		α Suspend()ι->void override{ Select(); }
+	private:
+		α Select()ι->VoidTask;
+		HistGroupPK _group; ServerCnnctnPK _connection; string _text; optional<HistTemplateNodePK> _member;
+	};
+	Ξ SelectNodeHolder( const HistGroupRow& group, string text, optional<HistTemplateNodePK> member={}, SRCE )ι->NodeHolderAwait{ return NodeHolderAwait{ group, move(text), member, sl }; }
 	α FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*;
 }

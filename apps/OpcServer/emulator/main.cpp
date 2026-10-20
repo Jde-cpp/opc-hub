@@ -43,9 +43,7 @@
 			QL::SetSystemTables( {"logSetting"} );
 			auto client = Emulator::AppClient();
 			client->InitLogging( client );
-			Crypto::CryptoSettings ssl{ Json::FindDefaultObject(Settings::AsObject("/http"), "ssl"), Process::ProductName() };//the AppServer login cert - the file name doubles as the subject CN.
-			Crypto::EnsureKeyCertificate( ssl );
-			client->SslSettings = ssl;//no SetUserName:  the login is by this key, and IAppClient::UserName() has no reader anyway.
+			client->Enroll( Settings::AsObject("/http"), Process::ProductName() );//the AppServer login cert - the file name doubles as the subject CN.  No SetUserName:  the login is by this key, and IAppClient::UserName() has no reader anyway.
 			Execution::Run();//nothing else starts the executor thread the AppServer socket needs.
 			BlockVoidAwait( App::Client::ConnectAwait{client, false} );
 			if( Process::FindArg("-grant") ){

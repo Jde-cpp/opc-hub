@@ -255,11 +255,10 @@ namespace Jde::Opc::Gateway{
 					for( let& result : ack.results() ){
 						NodeId node{ ProtoUtils::ToNodeId(result.node()) };
 						ul _{ _mutex };
-						let p = _byNode.find( node );
-						let n = p==_byNode.end() ? _nodes.end() : _nodes.find( p->second );
+						let n = FindNode( node ).second;
 						if( result.status_code() ){
 							retry = true;
-							if( n==_nodes.end() || !std::exchange(n->second.Warned, true) ){//braced:  the log macros expand to a bare `if`.
+							if( !n || !std::exchange(n->Warned, true) ){//braced:  the log macros expand to a bare `if`.
 								WARN( "[{}]'{}' refused an item for '{}':  {}.", _guid, _slug, node.ToString(), UAException::Message(result.status_code()) );
 							}
 							else{
@@ -267,10 +266,10 @@ namespace Jde::Opc::Gateway{
 							}
 							continue;
 						}
-						if( n!=_nodes.end() && !std::exchange(n->second.Subscribed, true) ){
-							n->second.Lost.reset();
-							if( std::exchange(n->second.Stale, false) )
-								stale.emplace( node, Parameters(n->second.Thresholds) );
+						if( n && !std::exchange(n->Subscribed, true) ){
+							n->Lost.reset();
+							if( std::exchange(n->Stale, false) )
+								stale.emplace( node, Parameters(n->Thresholds) );
 							if( existing.contains(node) )
 								joined.emplace( node );
 							created.emplace( move(node) );
@@ -308,14 +307,13 @@ namespace Jde::Opc::Gateway{
 			auto values = co_await Any( ReadValueAwait{move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH} );
 			ul _{ _mutex };
 			for( auto&& [node,value] : values ){
-				let p = _byNode.find( node );
-				let n = p==_byNode.end() || _closed ? _nodes.end() : _nodes.find( p->second );
-				if( n==_nodes.end() || std::exchange(n->second.Fed, true) )//a value came first:  the read would repeat it.
+				let [pk, n] = FindNode( node );
+				if( !n || _closed || std::exchange(n->Fed, true) )//a value came first:  the read would repeat it.
 					continue;
 				if( _verifying )
-					_held.emplace_back( p->second, move(value) );
+					_held.emplace_back( pk, move(value) );
 				else
-					_group->Enqueue( p->second, value );
+					_group->Enqueue( pk, value );
 			}
 		}
 		catch( const runtime_error& e ){
@@ -397,16 +395,15 @@ namespace Jde::Opc::Gateway{
 		}
 		ul _{ _mutex };
 		for( uint i=0; i<ids.size() && !_closed; ++i ){
-			let p = _byNode.find( ids[i] );
-			let n = p==_byNode.end() ? _nodes.end() : _nodes.find( p->second );
-			if( n==_nodes.end() )
+			let [pk, n] = FindNode( ids[i] );
+			if( !n )
 				continue;
-			auto& node = n->second;
+			auto& node = *n;
 			if( i<typed.Types.size() && !UA_StatusCode_isBad(typed.Statuses[i]) ){
 				let& dataType = typed.DataTypes[i];
 				//None for one of namespace 0 with no built-in type:  abstract, as Number is, or BaseDataType, its values may be any subtype's.
 				if( let abstract = dataType && !dataType->namespaceIndex && !ValueTypes::BuiltIn(&*dataType); abstract || typed.Types[i] )
-					_group->SetDataType( p->second, abstract ? nullptr : typed.Types[i] );
+					_group->SetDataType( pk, abstract ? nullptr : typed.Types[i] );
 			}
 			let& d = described[i];
 			let known = node.Described.Enumeration.has_value();
@@ -422,9 +419,9 @@ namespace Jde::Opc::Gateway{
 			if( !node.Thresholds.ExceptionDeviation )
 				continue;
 			if( d.Enumeration.value_or(false) && !known )
-				INFO( "[{}]Node {} '{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", _guid, p->second, node.Ex.ToString() );
+				INFO( "[{}]Node {} '{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", _guid, pk, node.Ex.ToString() );
 			try{
-				_group->SetThresholds( p->second, ForGroup(node.Thresholds, node.Described) );//one whose range is missing the library warns of, and stores every change.
+				_group->SetThresholds( pk, ForGroup(node.Thresholds, node.Described) );//one whose range is missing the library warns of, and stores every change.
 			}
 			catch( const Exception& e ){
 				e.Log();
@@ -455,15 +452,14 @@ namespace Jde::Opc::Gateway{
 
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
 		ul _{ _mutex };
-		let p = _byNode.find( node );
-		let n = p==_byNode.end() || _closed ? _nodes.end() : _nodes.find( p->second );
-		if( n==_nodes.end() )//one that left, still on its way.
+		let [pk, n] = FindNode( node );
+		if( !n || _closed )//one that left, still on its way.
 			return;
-		n->second.Fed = true;
+		n->Fed = true;
 		if( _verifying )
-			_held.emplace_back( p->second, value );
+			_held.emplace_back( pk, value );
 		else
-			_group->Enqueue( p->second, value );
+			_group->Enqueue( pk, value );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();
@@ -473,9 +469,8 @@ namespace Jde::Opc::Gateway{
 		if( std::exchange(_verifying, false) )//from the items this break took, before their namespaces were checked:  inside its gap.
 			_held.clear();
 		for( let& id : nodes ){
-			let p = _byNode.find( id );
-			if( let n = p==_byNode.end() ? _nodes.end() : _nodes.find(p->second); n!=_nodes.end() && !n->second.Lost )
-				n->second.Lost = now;
+			if( let n = FindNode(id).second; n && !n->Lost )
+				n->Lost = now;
 		}
 	}
 	α HistGroupHost::ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void{
@@ -485,9 +480,8 @@ namespace Jde::Opc::Gateway{
 			if( _closed )
 				return;
 			for( let& id : nodes ){
-				let p = _byNode.find( id );
-				if( let n = p==_byNode.end() ? _nodes.end() : _nodes.find(p->second); n!=_nodes.end() )
-					n->second.Lost.reset();
+				if( let n = FindNode(id).second; n )
+					n->Lost.reset();
 			}
 			epoch = ++_epoch;
 			_verifying = true;
@@ -498,7 +492,7 @@ namespace Jde::Opc::Gateway{
 		auto self = shared_from_this();
 		optional<Namespaces> read;
 		try{
-			auto client = UAClient::Find( _slug, _collector );
+			auto client = Client();
 			THROW_IF( !client, "The collector's client is gone." );
 			read = co_await Any( NamespacesAwait{client} );
 		}
@@ -545,7 +539,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistGroupHost::Check()ι->void{
 		let now = _clock.Now();
-		let client = UAClient::Find( _slug, _collector );
+		let client = Client();
 		let monitored = client ? client->TryMonitoredNodes() : nullptr;
 		flat_set<NodeId> live;//subscribed and not known lost:  each should have an item on the client.
 		{
@@ -594,7 +588,7 @@ namespace Jde::Opc::Gateway{
 		Redescribe();
 	}
 	α HistGroupHost::Redescribe()ι->void{
-		auto client = UAClient::Find( _slug, _collector );
+		auto client = Client();
 		if( !client )
 			return;
 		flat_set<NodeId> nodes;
@@ -613,7 +607,7 @@ namespace Jde::Opc::Gateway{
 	α HistGroupHost::Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask{
 		auto self = shared_from_this();
 		try{
-			auto client = UAClient::Find( _slug, _collector );
+			auto client = Client();
 			if( !client )//no client, no item:  the next create takes ItemParameters.
 				co_return;
 			ModifyMonitoredItemsAwait modify{ move(parameters), client };//an lvalue, as ConnectAwait above.
@@ -631,13 +625,20 @@ namespace Jde::Opc::Gateway{
 			WARN( "[{}]Could not modify items on '{}':  {}", _guid, _slug, e.what() );
 		}
 	}
+	α HistGroupHost::FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>{
+		let p = _byNode.find( node );
+		if( p==_byNode.end() )
+			return {};
+		let n = _nodes.find( p->second );
+		return { p->second, n==_nodes.end() ? nullptr : &n->second };
+	}
+	α HistGroupHost::Client()Ι->sp<UAClient>{
+		return UAClient::Find( _slug, _collector );
+	}
 	α HistGroupHost::ItemParameters( const NodeId& node )Ι->MonitoringParameters{
 		ul _{ _mutex };
-		if( auto p = _byNode.find(node); p!=_byNode.end() ){
-			if( auto n = _nodes.find(p->second); n!=_nodes.end() )
-				return Parameters( n->second.Thresholds );
-		}
-		return Parameters( {} );
+		let n = const_cast<HistGroupHost*>( this )->FindNode( node ).second;//a read:  nothing is written through it.
+		return Parameters( n ? n->Thresholds : Opc::Hist::Thresholds{} );
 	}
 	α HistGroupHost::ForGroup( Opc::Hist::Thresholds t, const HistDescription& described )ι->Opc::Hist::Thresholds{
 		if( described.Enumeration.value_or(true) )

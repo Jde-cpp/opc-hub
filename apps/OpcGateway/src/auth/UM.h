@@ -15,15 +15,12 @@ namespace Jde::Opc::Gateway{
 		α Execute()ι->TAwait<jobject>::Task;
 		ServerCnnctnNK _opcId;
 	};
-	struct ProviderMAwait : TAwait<Access::ProviderPK>{
-		ProviderMAwait( DB::Key opcKey, bool insert, SRCE )ι:TAwait<Access::ProviderPK>{sl},_insert{insert},_opcKey{move(opcKey)}{}
-		α Suspend()ι->void override;
+	//A connection's provider row, inserted (or the existing one reused) or purged.
+	struct ProviderMAwait : TAwaitEx<Access::ProviderPK, VoidTask>{
+		using base = TAwaitEx<Access::ProviderPK, VoidTask>;
+		ProviderMAwait( DB::Key opcKey, bool insert, SRCE )ι:base{sl},_insert{insert},_opcKey{move(opcKey)}{}
 	private:
-		α Execute( ServerCnnctnPK opcPK )ι->TAwait<vector<ServerCnnctn>>::Task;
-		α Check( string slug )ι->ProviderAwait::Task;//reuses an existing row, else Insert.  By value: Execute's frame is gone by the time this resumes.
-		α Insert( str slug )ι->TAwait<jobject>::Task;
-		α Purge( str slug )ι->ProviderAwait::Task;
-		α Purge( Access::ProviderPK pk )ι->TAwait<jvalue>::Task;
+		α Execute()ι->VoidTask override;//one frame, every await through Any():  the slug, the existing row, then the insert or the purge.
 
 		bool _insert;
 		DB::Key _opcKey;

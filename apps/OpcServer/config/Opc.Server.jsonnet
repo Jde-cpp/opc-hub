@@ -17,14 +17,7 @@ function( sync=false )
 		dataPaths: args.dbServers.dataPaths,
 		scriptPaths: args.dbServers.scriptPaths,
 		sync: sync,
-		localhost:{
-			driver: args.dbServers.localhost.driver,
-			connectionString: args.dbServers.localhost.connectionString,
-			username: args.dbServers.localhost.username,
-			password: args.dbServers.localhost.password,
-			schema: args.dbServers.localhost.schema,
-			catalogs: args.dbServers.localhost.catalogs
-		}
+		localhost: args.dbServers.localhost
 	},
 	logging:{
 		spd:{

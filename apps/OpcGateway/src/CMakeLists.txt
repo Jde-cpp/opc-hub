@@ -1,6 +1,5 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
 include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
-message( "Jde.Opc.GatewayLib" )
 project( Jde.Opc.GatewayLib VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
@@ -15,8 +14,8 @@ file( GLOB headers CONFIGURE_DEPENDS */*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.OpcGateway ) #config/args/sqlite + the 'Debug - Sqlite' launch config load these
+linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/OpcGateway/config/common-meta.libsonnet" ) #here, not in an exe:  the gateway's, the hub's and the superbuild all configure this dir.
 
-target_include_directories( ${targetName} PRIVATE ${jdeGeneratedIncludeDir}/jde/app/proto ) #the generated Opc.*.pb.h import Common.proto and include Jde.App.Shared's Common.pb.h by bare name.
 target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib ) #the historian:  today the pass-through's continuation (ql/HistQL.h), the gateway's groups with Phase 5.
 
 target_precompile_headers(${targetName}

@@ -13,25 +13,16 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 
 	struct ServerCnnctnDBTests : ::testing::Test{
-		atomic_flag Wait;
-		std::any Result;
-		std::any Id;
 	protected:
-		Ω SetUpTestCase()ι->void{};
-		α SetUp()ι->void{ Wait.clear(); }
-		static uint OpcProviderId;
-		α InsertFailedImpl()ε->Access::ProviderPK;
-		α PurgeFailedImpl()ε->Access::ProviderPK;
 		α CrudImpl()ε->Access::ProviderPK;
 		α CrudImpl2( ServerCnnctnPK id )ε->Access::ProviderPK;
 		α CrudPurge( ServerCnnctnPK id )ε->Access::ProviderPK;
 	};
-	uint ServerCnnctnDBTests::OpcProviderId{};
 
-	α GetProviderPK( string slug )ε->Access::ProviderPK{
+	Ω GetProviderPK( string slug )ε->Access::ProviderPK{
 		return BlockTAwait<Access::ProviderPK>( ProviderAwait{slug} );
 	}
-	α GetOpcServers( optional<DB::Key> key=nullopt, bool includeDeleted=false )->vector<ServerCnnctn>{
+	Ω GetOpcServers( optional<DB::Key> key=nullopt, bool includeDeleted=false )->vector<ServerCnnctn>{
 		return BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{key, includeDeleted} );
 	}
 
@@ -62,7 +53,6 @@ namespace Jde::Opc::Gateway::Tests{
 		auto opcPK = existingServer ? existingServer->Id : 0;
 		if( !opcPK )
 			opcPK = BlockAwait<CreateServerCnnctnAwait,ServerCnnctnPK>( CreateServerCnnctnAwait{} );
-		Id = opcPK;
 		BlockTAwait<Access::ProviderPK>( ProviderMAwait{OpcServerSlug, false} );//BeforePurge mock.
 
 		QL::MutationQL purge{ "purgeServerConnection", { {"id", opcPK} }, {}, nullopt, true, QL().Schemas(), false };
@@ -115,7 +105,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let del = Ƒ( "deleteServerConnection(\"id\":{})", id );
 		let deleteJson = QL().QuerySync<jvalue>( del, {}, {UserPK::System} );
 		TRACET( _tags, "deleted={}", serialize(deleteJson) );
-	 	conn = SelectServerCnnctn( id );
+		conn = SelectServerCnnctn( id );
 		THROW_IF( !conn->Deleted, "deleted failed" );
 
 		return CrudPurge( id );

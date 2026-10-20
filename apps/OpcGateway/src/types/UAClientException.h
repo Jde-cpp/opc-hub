@@ -28,11 +28,11 @@ namespace Jde::Opc::Gateway{
 	};
 
 	Ξ UAClientException::ThrowRest( UAClientException&& e, Web::Server::HttpRequest&& request )ε->void{
-		if( e.Code()==UA_STATUSCODE_BADIDENTITYTOKENREJECTED ){
-			throw Web::Server::RestException{ EHttpStatus::Unauthorized, move(e), move(request), "Bad identity token" };
-		}
-		else if( e.Code()==UA_STATUSCODE_BADCONNECTIONREJECTED )
-			throw Web::Server::RestException{ EHttpStatus::BadGateway, move(e), move(request), "Opc Server not reachable" };
-		throw Web::Server::RestException{ EHttpStatus::InternalServerError, move(e), move(request) };
+		const auto status = e.HttpStatus();//the constructor's, from the status code.
+		if( status==EHttpStatus::Forbidden )
+			throw Web::Server::RestException{ status, move(e), move(request), "Bad identity token" };
+		if( status==EHttpStatus::BadGateway )
+			throw Web::Server::RestException{ status, move(e), move(request), "Opc Server not reachable" };
+		throw Web::Server::RestException{ status, move(e), move(request) };
 	}
 }

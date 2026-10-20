@@ -1,14 +1,13 @@
 #include "WebServer.h"
 #include <jde/web/server/Server.h>
-#include <jde/app/client/IAppClient.h> //!important
+#include <jde/app/client/IAppClient.h>
 #include "GatewaySocketSession.h"
 #include "HttpRequestAwait.h"
 #include "GatewayAppClient.h"
 #include "ql/GatewayQL.h"
 
 namespace Jde::Opc{
-	optional<std::jthread> _serverThread;
-	concurrent_flat_map<uint,sp<Opc::Gateway::GatewaySocketSession>> _sessions; // Consider using server
+	static concurrent_flat_map<uint,sp<Opc::Gateway::GatewaySocketSession>> _sessions;
 	static sp<Gateway::RequestHandler> _requestHandler;
 	α Gateway::StartWebServer( jobject&& settings )ε->void{
 		_requestHandler = ms<RequestHandler>( move(settings), AppClient(), Gateway::QLPtr() );

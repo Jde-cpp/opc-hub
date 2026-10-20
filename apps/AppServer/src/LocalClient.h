@@ -13,7 +13,6 @@ namespace Jde::App::Server{
 		α SessionInfoAwait( SessionPK, SL )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return {}; }
 		α PublicKey()Ι->const Crypto::PublicKey& override{ return _publicKey; }
 		α SetPublicKey( Crypto::PublicKey publicKey )ι->void{ _publicKey = move(publicKey); }
-		α ClientQuery( QL::RequestQL&& q, UserPK executer, SRCE )ε->up<TAwait<jvalue>> override;
 		//Unreachable:  JwtLoginAwait logs a jwt in itself when IsLocal.  An answer rather than a throw, as the remote one fails.
 		α Login( Web::Jwt&&, SL sl )ε->up<TAwait<Web::FromServer::SessionInfo>> override{ return mu<ExceptionAwait<Web::FromServer::SessionInfo>>( mu<Exception>(Exception{sl, ELogLevel::Critical, "The AppServer does not log in to itself."}), sl ); }
 	private:

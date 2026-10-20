@@ -2,6 +2,7 @@
 #include <jde/fwk/co/AnyAwait.h>
 #include <absl/synchronization/mutex.h>
 #include <jde/opc/uatypes/NodeId.h>
+#include "LazySlot.h"
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
@@ -28,15 +29,13 @@ namespace Jde::Opc::Gateway{
 			AggregateFunctions& _cache; sp<UAClient> _client;
 		};
 		α Get( sp<UAClient> client, SRCE )ι->GetAwait{ return GetAwait{*this, move(client), sl}; }
-		α Find()Ι->Ptr{ rl _{_mutex}; return _folder; }//the folder once read, else null.
+		α Find()Ι->Ptr{ rl _{_mutex}; return _slot.Value(); }//the folder once read, else null.
 	private:
 		α Start( sp<UAClient>&& client, GetAwait* waiter )ι->void;
 		α Fetch( sp<UAClient> client )ι->VoidTask;//the one browse;  its co_await is Any-wrapped, so the task type is free.
 		α Finish( Ptr folder, up<Exception> error )ι->void;
 
 		mutable absl::Mutex _mutex;
-		Ptr _folder ABSL_GUARDED_BY(_mutex);
-		bool _fetching ABSL_GUARDED_BY(_mutex){};
-		vector<GetAwait*> _waiters ABSL_GUARDED_BY(_mutex);//parked on the in-flight browse;  resumed by Finish.
+		LazySlot<Ptr> _slot ABSL_GUARDED_BY(_mutex);
 	};
 }

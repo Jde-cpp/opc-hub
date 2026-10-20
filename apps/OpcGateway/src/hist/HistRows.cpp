@@ -69,7 +69,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	Ω select( sv table, vector<string> columns, DB::WhereClause&& where, SL sl )ε->DB::Statement{
-		let view = GetViewPtr( string{table} );
+		let view = GetViewPtr( table );
 		return DB::Statement{ {view->GetColumns(move(columns), sl)}, {view}, move(where) };
 	}
 	Ω groupRow( DB::Row&& r )->HistGroupRow{
@@ -180,7 +180,7 @@ namespace Jde::Opc{
 		return serialize( y );
 	}
 	α Gateway::SelectHistGroups( HistGroupFilter filter, SL sl )ι->HistRowsAwait<HistGroupRow>{
-		let view = GetViewPtr( "hist_groups" );
+		let view = GetViewPtr( HistTable::Groups );
 		DB::WhereClause where;
 		if( !filter.IncludeDeleted )
 			where.Add( view->GetColumnPtr("deleted"), nullptr );
@@ -189,14 +189,14 @@ namespace Jde::Opc{
 		if( filter.Template )
 			where.Add( view->GetColumnPtr("hist_template_id"), (uint)*filter.Template );
 		auto columns = vector<string>{ "hist_group_id", "guid", "server_connection_id", "hist_template_id", "root" };
-		for( auto& name : HistThresholdColumns::Names() )
-			columns.push_back( move(name) );
+		for( let name : HistThresholdColumns::Names )
+			columns.emplace_back( name );
 		columns.push_back( "name" ); columns.push_back( "deleted" );
-		return { select("hist_groups", move(columns), move(where), sl), groupRow, sl };
+		return { select(HistTable::Groups, move(columns), move(where), sl), groupRow, sl };
 	}
 
 	α Gateway::SelectHistGroupNodes( HistGroupNodeFilter filter, SL sl )ι->HistRowsAwait<HistGroupNodeRow>{
-		let view = GetViewPtr( "hist_group_nodes" );
+		let view = GetViewPtr( HistTable::GroupNodes );
 		DB::WhereClause where;
 		if( filter.Id )
 			where.Add( view->GetColumnPtr("hist_group_node_id"), (uint)*filter.Id );
@@ -209,28 +209,60 @@ namespace Jde::Opc{
 		if( filter.Node )
 			where.Add( view->GetColumnPtr("node"), DB::Value{*filter.Node} );
 		auto columns = vector<string>{ "hist_group_node_id", "hist_group_id", "server_connection_id", "node", "hist_template_node_id" };
-		for( auto& name : HistThresholdColumns::Names() )
-			columns.push_back( move(name) );
-		return { select("hist_group_nodes", move(columns), move(where), sl), groupNodeRow, sl };
+		for( let name : HistThresholdColumns::Names )
+			columns.emplace_back( name );
+		return { select(HistTable::GroupNodes, move(columns), move(where), sl), groupNodeRow, sl };
 	}
 
 	α Gateway::SelectHistTemplateNodes( HistTemplateNodeFilter filter, SL sl )ι->HistRowsAwait<HistTemplateNodeRow>{
-		let view = GetViewPtr( "hist_template_nodes" );
+		let view = GetViewPtr( HistTable::TemplateNodes );
 		DB::WhereClause where;
 		if( filter.Id )
 			where.Add( view->GetColumnPtr("hist_template_node_id"), (uint)*filter.Id );
 		if( filter.Template )
 			where.Add( view->GetColumnPtr("hist_template_id"), (uint)*filter.Template );
 		auto columns = vector<string>{ "hist_template_node_id", "hist_template_id", "path" };
-		for( auto& name : HistThresholdColumns::Names() )
-			columns.push_back( move(name) );
-		return { select("hist_template_nodes", move(columns), move(where), sl), templateNodeRow, sl };
+		for( let name : HistThresholdColumns::Names )
+			columns.emplace_back( name );
+		return { select(HistTable::TemplateNodes, move(columns), move(where), sl), templateNodeRow, sl };
 	}
 	α Gateway::HistTemplateNodesById( vector<HistTemplateNodeRow>&& rows )ι->flat_map<HistTemplateNodePK,HistTemplateNodeRow>{
 		flat_map<HistTemplateNodePK,HistTemplateNodeRow> y;
 		for( auto& row : rows )
 			y.emplace( row.Id, move(row) );
 		return y;
+	}
+	α Gateway::HistTemplateMembersAwait::await_ready()ι->bool{
+		if( _filter.Id || _filter.Template )
+			return false;
+		_result.emplace();
+		return true;
+	}
+	α Gateway::HistTemplateMembersAwait::Select()ι->VoidTask{
+		try{
+			auto select = SelectHistTemplateNodes( _filter, _sl );
+			Resume( HistTemplateNodesById(co_await Any(select)) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
+	α Gateway::NodeHolderAwait::Select()ι->VoidTask{
+		try{
+			auto select = SelectHistGroupNodes( {.Connection=_connection, .Node=_text}, _sl );
+			auto holders = co_await Any( select );
+			NodeHolder y;
+			if( holders.size() ){
+				auto& row = y.Row.emplace( move(holders.front()) );
+				y.Kind = row.Group!=_group ? NodeHolder::EKind::OtherGroup
+					: _member && row.TemplateNode==_member ? NodeHolder::EKind::SameMember
+					: NodeHolder::EKind::ThisGroup;
+			}
+			Resume( move(y) );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
 	}
 	α Gateway::FindHistTemplateNode( const flat_map<HistTemplateNodePK,HistTemplateNodeRow>& members, optional<HistTemplateNodePK> id )ι->const HistTemplateNodeRow*{
 		auto p = id ? members.find( *id ) : members.end();

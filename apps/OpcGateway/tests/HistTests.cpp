@@ -8,41 +8,26 @@
 #include <jde/fwk/settings.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/historian/Historian.h>
-#include <jde/opc/uatypes/DateTime.h>
-#include "utils/GatewayClientSocket.h"
-#include "utils/helpers.h"
+#include "utils/HistReadFixture.h"
 #include "../src/GatewayAppClient.h"
 #include "../src/UAClient.h"
-#include "../../OpcServer/src/globals.h"
-#include "../../OpcServer/src/UAServer.h"
 #include "../../OpcServer/src/access/OpcAuthorize.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
 	using namespace std::chrono;
 	namespace{
-		//pumps.NodeSet2.xml:  Rpm4 stores a change of 15 rpm, RpmManual one of 10, Rpm2 is a historized Double the reads'
-		//days hold nothing of, and Status2 isn't historized.
-		constexpr UA_UInt32 Rpm4{ 6042 }, RpmManual{ 6054 }, Rpm2{ 6022 }, Status2{ 6021 };
 		struct Written final{ UA_UInt32 Node; TimePoint Time; double Value; };
-		struct Row final{ NodeId Node; optional<TimePoint> Source; optional<TimePoint> Server; StatusCode Status; jvalue Value; bool Bound; };
-		struct Page final{ vector<Row> Values; string Continuation; flat_map<NodeId,StatusCode> Statuses; };
-		//A raw read's arguments, or with Times an at-time read's, or with Interval, in milliseconds, and Aggregate an aggregate read's.
-		struct Request final{ vector<UA_UInt32> Nodes; optional<TimePoint> Start; optional<TimePoint> End; uint Limit{}; bool Bounds{}; vector<TimePoint> Times; optional<double> Interval; string Aggregate; };
 	}
 
-	struct HistTests : ::testing::Test{
+	struct HistTests : HistReadFixture{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			let ua = Server::FindUAServer();
 			if( !ua )//SetUp skips each test.
 				return;
-			if( !SelectServerCnnctn(OpcServerSlug) )
-				CreateServerCnnctn();
+			HistReadFixture::SetUpTestSuite();
 			THROW_IF( !ua->History().Enabled(), "The embedded OpcServer keeps no history:  /opcServer/hist." );
-			size_t ns{};
-			UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) );
-			_ns = (NsIndex)ns;
 			//Three whole days before today:  before the value each node took at the start, which today's file holds, and
 			//days no midnight moves while the tests run.
 			_day = floor<days>( Clock::now() )-days{ 3 };
@@ -55,76 +40,14 @@ namespace Jde::Opc::Gateway::Tests{
 			Write( RpmManual, 70, At(2, 45) );
 			THROW_IF( !BlockAny(ua->History().Group()->Flush()), "The flush didn't write all it took." );
 		}
-		//The tests write to the server itself, so an external one (/testing/embeddedOpcServer false) can't serve them.
-		α SetUp()->void override{
-			if( !Server::FindUAServer() )
-				GTEST_SKIP() << "HistTests need the embedded OpcServer.";
-		}
-		Ω Node( UA_UInt32 id )ι->NodeId{ return NodeId{ _ns, id }; }
 		Ω At( uint day, uint second )ι->TimePoint{ return _day+days{ day }+seconds{ second }; }
-		//A write as a client's reaches the server, with the time the source gave it.
 		Ω Write( UA_UInt32 id, double value, TimePoint source )ε->void{
-			let node = Node( id );
-			UA_WriteValue write; UA_WriteValue_init( &write );
-			write.nodeId = node;
-			write.attributeId = UA_ATTRIBUTEID_VALUE;
-			UA_Variant_setScalar( &write.value.value, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
-			write.value.hasValue = true;
-			write.value.sourceTimestamp = UADateTime{ source }.UA();
-			write.value.hasSourceTimestamp = true;
-			UAε( UA_Server_write(Server::GetUAServer().Ptr(), &write) );
+			HistReadFixture::Write( id, &value, UA_TYPES[UA_TYPES_DOUBLE], source );
 			_written.push_back( {id, source, value} );
 		}
-		//One page through the gateway, the arguments as variables, as the web sends them.
-		Ω Read( const Request& request, sv continuation={} )ε->Page{
-			jarray nodes;
-			for( let id : request.Nodes )
-				nodes.push_back( Node(id).ToJson() );
-			let time = []( optional<TimePoint> t ){ return t ? jvalue{ UADateTime{*t}.ToJson() } : jvalue{}; };
-			jvalue times;//null, as the web sends an argument its mode doesn't take.
-			if( request.Times.size() ){
-				jarray j;
-				for( let t : request.Times )
-					j.push_back( UADateTime{t}.ToJson() );
-				times = move( j );
-			}
-			jobject vars{ {"opc", OpcServerSlug}, {"nodes", move(nodes)}, {"start", time(request.Start)}, {"end", time(request.End)}, {"limit", request.Limit}, {"bounds", request.Bounds},
-				{"times", move(times)}, {"interval", request.Interval ? jvalue{*request.Interval} : jvalue{}}, {"aggregate", request.Aggregate.size() ? jvalue{request.Aggregate} : jvalue{}},
-				{"continuation", continuation.size() ? jvalue{continuation} : jvalue{}} };
-			let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, limit: $limit, returnBounds: $bounds, times: $times, interval: $interval, aggregate: $aggregate, continuation: $continuation ){ continuation values{ node source server status value bound } nodes{ node status } }";
-			let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
-			TRACET( ELogTags::Test, "history: {}", serialize(value) );
-			let& o = value.as_object();
-			Page y;
-			if( let c = o.if_contains("continuation"); c && c->is_string() )
-				y.Continuation = c->get_string();
-			for( let& j : Json::AsArray(o, "values") ){
-				let& row = j.as_object();
-				let at = [&]( sv name ){ let p = row.if_contains( name ); return p && !p->is_null() ? optional<TimePoint>{ UADateTime{*p}.Time() } : nullopt; };
-				y.Values.push_back( {NodeId{Json::AsObject(row, "node")}, at("source"), at("server"), Json::AsNumber<StatusCode>(row, "status"), row.at("value"), Json::AsBool(row, "bound")} );
-			}
-			for( let& j : Json::AsArray(o, "nodes") )
-				y.Statuses.emplace( NodeId{Json::AsObject(j.as_object(), "node")}, Json::AsNumber<StatusCode>(j.as_object(), "status") );
-			return y;
-		}
-		//Every page, following the continuation to the last.  pages takes each page's size, and between runs between pages.
-		Ω ReadAll( const Request& request, vector<uint>* pages=nullptr, function<void()> between={} )ε->vector<Row>{
-			vector<Row> y;
-			string continuation;
-			for( uint i=0; i<100; ++i ){
-				auto page = Read( request, continuation );
-				if( pages )
-					pages->push_back( page.Values.size() );
-				for( auto& v : page.Values )
-					y.push_back( move(v) );
-				continuation = page.Continuation;
-				if( continuation.empty() )
-					return y;
-				if( between )
-					between();
-			}
-			THROW( "100 pages and still a continuation." );
-		}
+		//Through the gateway with `opc`, the nodes by index.
+		Ω Read( const Request& request, sv continuation={} )ε->Page{ return HistReadFixture::Read( Opc(), ByIndex(request.Nodes), request, continuation ); }
+		Ω ReadAll( const Request& request, vector<uint>* pages=nullptr, function<void()> between={} )ε->vector<Row>{ return HistReadFixture::ReadAll( Opc(), ByIndex(request.Nodes), request, pages, move(between) ); }
 		//What was written for the nodes inside the range, which holds its start and not its end whichever way it flows,
 		//in the read's order:  by time, then the request's order of nodes.
 		Ω Expected( const Request& request )ι->vector<Written>{
@@ -145,12 +68,11 @@ namespace Jde::Opc::Gateway::Tests{
 				return ::testing::AssertionFailure() << rows.size() << " values, expected " << expected.size();
 			for( uint i=0; i<rows.size(); ++i ){
 				let& r = rows[i]; let& e = expected[i];
-				if( !(r.Node==Node(e.Node)) || r.Source!=e.Time || !r.Value.is_double() || r.Value.as_double()!=e.Value || r.Status!=UA_STATUSCODE_GOOD || !r.Server )
-					return ::testing::AssertionFailure() << "value " << i << ":  " << r.Node.ToString() << " " << (r.Source ? ToIsoString(*r.Source) : "no source") << " " << serialize(r.Value) << " status " << r.Status << ", expected " << Node(e.Node).ToString() << " " << ToIsoString(e.Time) << " " << e.Value;
+				if( r.Node!=ByIndex(e.Node) || r.Source!=e.Time || !r.Value.is_double() || r.Value.as_double()!=e.Value || r.Status!=UA_STATUSCODE_GOOD || !r.Server )
+					return ::testing::AssertionFailure() << "value " << i << ":  " << serialize(r.Node) << " " << (r.Source ? ToIsoString(*r.Source) : "no source") << " " << serialize(r.Value) << " status " << r.Status << ", expected " << Node(e.Node).ToString() << " " << ToIsoString(e.Time) << " " << e.Value;
 			}
 			return ::testing::AssertionSuccess();
 		}
-		static inline NsIndex _ns{};
 		static inline TimePoint _day{};
 		static inline vector<Written> _written;
 	};
@@ -285,7 +207,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(2, 0), .Limit=4}, first.Continuation), GatewayErrorResponse );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=4}, "not-a-continuation"), GatewayErrorResponse );
 		jobject vars{ {"opc", OpcServerSlug}, {"node", Node(Rpm4).ToJson()}, {"start", UADateTime{At(0, 0)}.ToJson()}, {"end", UADateTime{At(3, 0)}.ToJson()} };
-		EXPECT_THROW( (BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("history( opc: $opc, group: 1, nodes: $node, start: $start, end: $end ){ values{ value } }", vars, true) )), GatewayErrorResponse );
+		EXPECT_THROW( Socket().QuerySync( "history( opc: $opc, group: 1, nodes: $node, start: $start, end: $end ){ values{ value } }", vars ), GatewayErrorResponse );
 	}
 
 	//A node the server refuses answers with the server's status beside the others' values, and a range with nothing in
@@ -295,23 +217,20 @@ namespace Jde::Opc::Gateway::Tests{
 		let page = Read( {.Nodes={Status2, Rpm4}, .Start=At(0, 0), .End=At(1, 0), .Limit=100} );
 		EXPECT_EQ( page.Values.size(), 6u );
 		for( let& v : page.Values )
-			EXPECT_EQ( v.Node, Node(Rpm4) );
+			EXPECT_EQ( v.Node, ByIndex(Rpm4) );
 		ASSERT_EQ( page.Statuses.size(), 2u );
-		EXPECT_EQ( page.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
-		EXPECT_EQ( page.Statuses.at(Node(Rpm4)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(page.Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( Status(page.Statuses, ByIndex(Rpm4)), UA_STATUSCODE_GOOD );
 
 		let nothing = Read( {.Nodes={RpmManual}, .Start=At(1, 0), .End=At(2, 0), .Limit=100} );
 		EXPECT_TRUE( nothing.Values.empty() );
 		EXPECT_TRUE( nothing.Continuation.empty() );
-		EXPECT_EQ( nothing.Statuses.at(Node(RpmManual)), UA_STATUSCODE_GOODNODATA );
+		EXPECT_EQ( Status(nothing.Statuses, ByIndex(RpmManual)), UA_STATUSCODE_GOODNODATA );
 
-		jobject vars{ {"opc", OpcServerSlug}, {"node", Node(Rpm4).ToJson()}, {"start", UADateTime{At(0, 0)}.ToJson()}, {"end", UADateTime{At(3, 0)}.ToJson()} };
-		let modified = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query("history( opc: $opc, nodes: $node, start: $start, end: $end, modified: true ){ values{ value } nodes{ node status } }", vars, true) );
-		let& o = modified.as_object();
-		EXPECT_TRUE( Json::AsArray(o, "values").empty() );
-		let& nodes = Json::AsArray( o, "nodes" );
-		ASSERT_EQ( nodes.size(), 1u );
-		EXPECT_EQ( Json::AsNumber<StatusCode>(nodes[0].as_object(), "status"), UA_STATUSCODE_GOODNODATA );
+		let modified = Read( {.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Modified=true} );
+		EXPECT_TRUE( modified.Values.empty() );
+		ASSERT_EQ( modified.Statuses.size(), 1u );
+		EXPECT_EQ( modified.Statuses[0].second, UA_STATUSCODE_GOODNODATA );
 	}
 
 	namespace{
@@ -366,7 +285,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( page.Values.size(), 4u );
 		EXPECT_FALSE( page.Values[0].Server );
 		EXPECT_TRUE( page.Values[1].Server );
-		EXPECT_EQ( page.Statuses.at(Node(Rpm4)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(page.Statuses, ByIndex(Rpm4)), UA_STATUSCODE_GOOD );
 
 		vector<uint> pages;
 		let paged = ReadAll( {.Nodes={Rpm4}, .Limit=3, .Times=request.Times}, &pages );
@@ -380,17 +299,17 @@ namespace Jde::Opc::Gateway::Tests{
 		let both = Read( two );
 		EXPECT_TRUE( nearly(values(both.Values), {100, 50, 600, 50}) );
 		ASSERT_EQ( both.Values.size(), 4u );
-		EXPECT_EQ( both.Values[1].Node, Node(RpmManual) );
+		EXPECT_EQ( both.Values[1].Node, ByIndex(RpmManual) );
 		EXPECT_EQ( both.Values[1].Status, UA_STATUSCODE_GOOD );//the record at the time, as it is.
 		EXPECT_EQ( both.Values[3].Status, Interpolated );
-		EXPECT_EQ( both.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
-		EXPECT_EQ( both.Statuses.at(Node(RpmManual)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(both.Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( Status(both.Statuses, ByIndex(RpmManual)), UA_STATUSCODE_GOOD );
 		pages.clear();
 		let cut = ReadAll( {.Nodes={Rpm4, RpmManual, Status2}, .Limit=3, .Times=two.Times}, &pages );
 		EXPECT_EQ( pages, (vector<uint>{3, 1}) );
 		EXPECT_TRUE( nearly(values(cut), {100, 50, 600, 50}) );
 		ASSERT_EQ( cut.size(), 4u );
-		EXPECT_EQ( cut[3].Node, Node(RpmManual) );
+		EXPECT_EQ( cut[3].Node, ByIndex(RpmManual) );
 		EXPECT_EQ( cut[3].Source, At(1, 0) );
 	}
 
@@ -415,7 +334,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( sources(page.Values), expected );
 			for( let& row : page.Values )
 				EXPECT_FALSE( UA_StatusCode_isBad(row.Status) ) << row.Status;
-			EXPECT_EQ( page.Statuses.at(Node(Rpm4)), UA_STATUSCODE_GOOD );
+			EXPECT_EQ( Status(page.Statuses, ByIndex(Rpm4)), UA_STATUSCODE_GOOD );
 		}
 		let average = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Average"} );
 		EXPECT_EQ( statuses(average.Values), (vector<StatusCode>{Calculated, Calculated}) );
@@ -438,7 +357,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( listed, 1u );
 		let range = Read( {.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="Range"} );
 		EXPECT_TRUE( range.Values.empty() );
-		EXPECT_EQ( range.Statuses.at(Node(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+		EXPECT_EQ( Status(range.Statuses, ByIndex(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
 		EXPECT_THROW( Read({.Nodes={Rpm4}, .Start=At(0, 10), .End=At(0, 60), .Limit=100, .Interval=25'000, .Aggregate="NoSuchAggregate"}), GatewayErrorResponse );
 	}
 
@@ -511,7 +430,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( pages, (vector<uint>{5, 5, 2}) );
 		ASSERT_EQ( rows.size(), 12u );
 		for( uint i=0; i<rows.size(); ++i ){
-			EXPECT_EQ( rows[i].Node, Node(i%2 ? RpmManual : Rpm4) ) << i;
+			EXPECT_EQ( rows[i].Node, ByIndex(i%2 ? RpmManual : Rpm4) ) << i;
 			EXPECT_EQ( rows[i].Source, At(0, 0)+hours{12*(i/2)} ) << i;
 		}
 		vector<Row> rpm4;
@@ -553,7 +472,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( values(filled.Values), values(whole.Values) );
 			EXPECT_EQ( sources(filled.Values), sources(whole.Values) );
 			EXPECT_EQ( statuses(filled.Values), statuses(whole.Values) );
-			EXPECT_EQ( filled.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+			EXPECT_EQ( Status(filled.Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
 		}
 	}
 
@@ -583,7 +502,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let refused = Read( {.Nodes={Rpm4}, .Start=At(0, 0), .End=At(3, 0), .Limit=1, .Interval=12*3600*1000.0, .Aggregate="Range"} );
 		EXPECT_TRUE( refused.Values.empty() );
 		EXPECT_TRUE( refused.Continuation.empty() );
-		EXPECT_EQ( refused.Statuses.at(Node(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
+		EXPECT_EQ( Status(refused.Statuses, ByIndex(Rpm4)), UA_STATUSCODE_BADAGGREGATENOTSUPPORTED );
 	}
 
 	//The nodes share a page's `limit`:  two at 2 ask the server for one point of each a page, so it computes no value the
@@ -620,7 +539,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let before = history.Reads().Count;
 		let first = Read( refused );
 		EXPECT_EQ( history.Reads().Count-before, 2u );//the first time, then the second, which Extend asks of Rpm4 alone.
-		EXPECT_EQ( first.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( Status(first.Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
 		pages.clear();
 		let paged = history.Reads().Count;
 		let filled = ReadAll( refused, &pages );
@@ -673,31 +592,23 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	namespace{
-		//pumps.NodeSet2.xml:  Rpm3 stores a change of 15 rpm, with no time intervals, and Status1 is a historized Boolean.
-		constexpr UA_UInt32 Rpm3{ 6032 }, Status1{ 6011 }, Unknown{ 999'999 };
-		struct Edited final{ vector<StatusCode> Values; flat_map<NodeId,StatusCode> Statuses; };
-		struct Sample final{ UA_UInt32 Node; TimePoint Source; jvalue Value; };
-		struct Modified final{ NodeId Node; TimePoint Source; jvalue Value; string Type; string User; TimePoint Time; };
+		constexpr UA_UInt32 Unknown{ 999'999 };
 	}
 	//The edits on a day of their own, two before the reads', through the gateway's QL as the web will send them.  OpcServer
 	//edits history only for a user granted Update, or Delete, on an enforced resource (spec *Authorization*), so the suite
 	//enforces nodeIds with the gateway's user granted everything on it, and opens it again after.
 	struct HistEditTests : HistTests{
 	protected:
-		Ω SetUpTestCase()ε->void{
+		Ω SetUpTestSuite()ε->void{
 			let ua = Server::FindUAServer();
 			if( !ua )
 				return;
-			if( !SelectServerCnnctn(OpcServerSlug) )
-				CreateServerCnnctn();
+			HistReadFixture::SetUpTestSuite();
 			THROW_IF( !ua->History().Enabled(), "The embedded OpcServer keeps no history:  /opcServer/hist." );
-			size_t ns{};
-			UAε( UA_Server_getNamespaceByName(ua->Ptr(), UA_STRING((char*)"urn:jde:pumps"), &ns) );
-			_ns = (NsIndex)ns;
 			_editDay = floor<days>( Clock::now() )-days{ 5 };
 			Enforce( true );
 		}
-		Ω TearDownTestCase()ι->void{
+		Ω TearDownTestSuite()ι->void{
 			try{
 				if( Server::FindUAServer() )
 					Enforce( false );
@@ -712,86 +623,27 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω Enforce( bool on )ε->void{
 			auto app = Server::AppClient();
 			let& schema = app->ResourceSchema;//"opc", or "opc.<resource>" with /opcServer/resource, as OpcServer's startup names it.
-			let nodeSlug = jobject{ {"slug","nodeIds"}, {"schema", schema} };
 			auto& authorizer = static_cast<Server::OpcAuthorize&>( *Server::GetSchema().Authorizer );
-			let reached = [&]( bool active, sv change ){
-				for( uint i=0; authorizer.FindActiveResourcePK(schema, "nodeIds", "").has_value()!=active; ++i ){
-					THROW_IF( i==200, "The nodeIds resource's {} didn't reach OpcServer's authorizer.", change );
-					std::this_thread::sleep_for( 50ms );
-				}
-			};
-			app->QuerySync<jvalue>( "deleteResource( schemaName:$schema, slug:$slug, criteria:null )", nodeSlug );
-			reached( false, "delete" );
+			EnforceResource( *app, authorizer, schema, "nodeIds", false );
 			if( !on )
 				return;
-			constexpr sv roleSlug{ "GatewayHistoryEditor" };
-			if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
-				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "Gateway history editor"}} );
-				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}, {"schema", schema}} );
-				app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", AppClient()->UserPK().Value}, {"roleId", roleId}} );
-			}
-			app->QuerySync<jvalue>( "restoreResource( schemaName:$schema, slug:$slug, criteria:null )", nodeSlug );
-			reached( true, "restore" );
+			GrantRole( *app, "GatewayHistoryEditor", schema, "nodeIds", {}, Access::ERights::All, AppClient()->UserPK() );
+			EnforceResource( *app, authorizer, schema, "nodeIds", true );
 			authorizer.AssignRights( Server::GetUAServer() );
 			THROW_IF( empty(authorizer.EditRights(Node(Rpm3), AppClient()->UserPK()) & Access::ERights::Update), "The gateway's user can't edit OpcServer's history." );
 		}
 		Ω When( uint second )ι->TimePoint{ return _editDay+seconds{ second }; }
 		Ω Time( TimePoint t )ι->jvalue{ return UADateTime{ t }.ToJson(); }
-		Ω Edit( string q, jobject vars )ε->Edited{
-			vars["opc"] = OpcServerSlug;
-			let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(move(q), move(vars), true) );
-			TRACET( ELogTags::Test, "edit: {}", serialize(value) );
-			let& o = value.as_object();
-			Edited y;
-			for( let& j : Json::FindDefaultArray(o, "values") )
-				y.Values.push_back( Json::AsNumber<StatusCode>(j.as_object(), "status") );
-			for( let& j : Json::AsArray(o, "nodes") )
-				y.Statuses.emplace( NodeId{Json::AsObject(j.as_object(), "node")}, Json::AsNumber<StatusCode>(j.as_object(), "status") );
-			return y;
-		}
-		//createHistory, updateHistory or upsertHistory.
-		Ω Update( sv command, const vector<Sample>& samples )ε->Edited{
-			jarray values;
-			for( let& sample : samples )
-				values.push_back( jobject{ {"node", Node(sample.Node).ToJson()}, {"source", Time(sample.Source)}, {"value", sample.Value} } );
-			return Edit( Ƒ("{}( opc: $opc, values: $values ){{ values{{ node source status }} nodes{{ node status }} }}", command), {{"values", move(values)}} );
-		}
-		Ω DeleteRaw( UA_UInt32 node, TimePoint start, TimePoint end )ε->Edited{
-			return Edit( "purgeHistory( opc: $opc, nodes: $nodes, start: $start, end: $end ){ nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}} );
-		}
-		Ω DeleteAtTime( UA_UInt32 node, const vector<TimePoint>& times )ε->Edited{
-			jarray j;
-			for( let t : times )
-				j.push_back( Time(t) );
-			return Edit( "purgeHistory( opc: $opc, nodes: $nodes, times: $times ){ values{ node source status } nodes{ node status } }", {{"nodes", Node(node).ToJson()}, {"times", move(j)}} );
-		}
+		//The edits with `opc`, the nodes by index.
+		Ω Edit( string q, jobject vars )ε->Edited{ vars["opc"] = OpcServerSlug; return HistReadFixture::Edit( move(q), move(vars) ); }
+		Ω Update( sv command, const vector<Sample>& samples )ε->Edited{ return HistReadFixture::Update( command, Opc(), samples ); }
+		Ω PurgeRange( UA_UInt32 node, TimePoint start, TimePoint end )ε->Edited{ return HistReadFixture::PurgeRange( Opc(), node, start, end ); }
+		Ω PurgeAt( UA_UInt32 node, const vector<TimePoint>& times )ε->Edited{ return HistReadFixture::PurgeAt( Opc(), node, times ); }
 		Ω Values( const vector<Row>& rows )ι->vector<jvalue>{
 			vector<jvalue> y;
 			for( let& row : rows )
 				y.push_back( row.Value );
 			return y;
-		}
-		//Every page of a modified read, `limit` a page.
-		Ω ReadModified( UA_UInt32 node, TimePoint start, TimePoint end, uint limit )ε->vector<Modified>{
-			vector<Modified> y;
-			jvalue continuation;
-			for( uint i=0; i<100; ++i ){
-				jobject vars{ {"opc", OpcServerSlug}, {"nodes", Node(node).ToJson()}, {"start", Time(start)}, {"end", Time(end)}, {"limit", limit}, {"continuation", continuation} };
-				let q = "history( opc: $opc, nodes: $nodes, start: $start, end: $end, modified: true, limit: $limit, continuation: $continuation ){ continuation values{ node source value modification{ time type user } } }";
-				let value = BlockAwait<Web::Client::ClientSocketAwait<jvalue>,jvalue>( Socket().Query(q, vars, true) );
-				TRACET( ELogTags::Test, "modified: {}", serialize(value) );
-				let& o = value.as_object();
-				for( let& j : Json::AsArray(o, "values") ){
-					let& row = j.as_object();
-					let& m = Json::AsObject( row, "modification" );
-					y.push_back( {NodeId{Json::AsObject(row, "node")}, UADateTime{row.at("source")}.Time(), row.at("value"), Json::AsString(m, "type"), Json::AsString(m, "user"), UADateTime{m.at("time")}.Time()} );
-				}
-				continuation = o.contains( "continuation" ) ? o.at( "continuation" ) : jvalue{};
-				if( !continuation.is_string() )
-					return y;
-			}
-			THROW( "100 pages and still a continuation." );
 		}
 		static inline TimePoint _editDay{};
 	};
@@ -804,24 +656,24 @@ namespace Jde::Opc::Gateway::Tests{
 		Write( Rpm3, 200, When(42) );
 		Write( Rpm3, 300, When(44) );
 		THROW_IF( !BlockAny(Server::GetUAServer().History().Group()->Flush()), "The flush didn't write all it took." );
-		let node = Node( Rpm3 );
+		let node = ByIndex( Rpm3 );
 		let inserted = Update( "createHistory", {{Rpm3, When(41), 150}, {Rpm3, When(40), 1}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS}) );
-		EXPECT_EQ( inserted.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(inserted.Statuses, node), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Update("updateHistory", {{Rpm3, When(42), 250}, {Rpm3, When(43), 9}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_BADNOENTRYEXISTS}) );
 		EXPECT_EQ( Update("upsertHistory", {{Rpm3, When(44), 350}, {Rpm3, When(46), 400}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED, UA_STATUSCODE_GOODENTRYINSERTED}) );
 		const Request range{ .Nodes={Rpm3}, .Start=When(40), .End=When(47), .Limit=100 };
 		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 150.0, 250.0, 350.0, 400.0}) );
 
-		let deleted = DeleteRaw( Rpm3, When(41), When(44) );//a UA range leaves out its end.
+		let deleted = PurgeRange( Rpm3, When(41), When(44) );//a UA range leaves out its end.
 		EXPECT_TRUE( deleted.Values.empty() );
-		EXPECT_EQ( deleted.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(deleted.Statuses, node), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 350.0, 400.0}) );
-		EXPECT_EQ( DeleteRaw(Rpm3, When(41), When(44)).Statuses.at(node), UA_STATUSCODE_BADNODATA );
+		EXPECT_EQ( Status(PurgeRange(Rpm3, When(41), When(44)).Statuses, node), UA_STATUSCODE_BADNODATA );
 
-		let atTime = DeleteAtTime( Rpm3, {When(46), When(44)} );
+		let atTime = PurgeAt( Rpm3, {When(46), When(44)} );
 		EXPECT_EQ( atTime.Values, (vector<StatusCode>{UA_STATUSCODE_BADNOTSUPPORTED, UA_STATUSCODE_BADNOTSUPPORTED}) );
-		EXPECT_EQ( atTime.Statuses.at(node), UA_STATUSCODE_BADNOTSUPPORTED );
+		EXPECT_EQ( Status(atTime.Statuses, node), UA_STATUSCODE_BADNOTSUPPORTED );
 		EXPECT_EQ( Values(Read(range).Values), (vector<jvalue>{100.0, 350.0, 400.0}) );
 
 		//An INSERT's modified value is the value inserted, the others' the one replaced or deleted, by time, and at one
@@ -830,22 +682,23 @@ namespace Jde::Opc::Gateway::Tests{
 		let earliest = Clock::now()-1min;
 		for( let limit : {100u, 2u} ){
 			SCOPED_TRACE( Ƒ("limit {}", limit) );
-			let modified = ReadModified( Rpm3, When(40), When(47), limit );
-			vector<jvalue> values; vector<string> types; vector<TimePoint> sources;
+			let modified = ReadAll( {.Nodes={Rpm3}, .Start=When(40), .End=When(47), .Limit=limit, .Modified=true} );
+			vector<jvalue> values; vector<string> types; vector<optional<TimePoint>> sources;
 			for( let& m : modified ){
 				values.push_back( m.Value );
-				types.push_back( m.Type );
 				sources.push_back( m.Source );
 				EXPECT_EQ( m.Node, node );
-				EXPECT_EQ( m.User, user );
-				EXPECT_GE( m.Time, earliest );
-				EXPECT_LE( m.Time, Clock::now() );
+				ASSERT_TRUE( m.Modified );
+				types.push_back( m.Modified->Type );
+				EXPECT_EQ( m.Modified->User, user );
+				EXPECT_GE( m.Modified->Time, earliest );
+				EXPECT_LE( m.Modified->Time, Clock::now() );
 			}
 			EXPECT_EQ( values, (vector<jvalue>{150.0, 150.0, 200.0, 250.0, 300.0, 400.0}) );
 			EXPECT_EQ( types, (vector<string>{"Insert", "Delete", "Replace", "Delete", "Update", "Update"}) );
-			EXPECT_EQ( sources, (vector<TimePoint>{When(41), When(41), When(42), When(42), When(44), When(46)}) );
+			EXPECT_EQ( sources, (vector<optional<TimePoint>>{When(41), When(41), When(42), When(42), When(44), When(46)}) );
 		}
-		let reversed = ReadModified( Rpm3, When(47), When(40), 2 );
+		let reversed = ReadAll( {.Nodes={Rpm3}, .Start=When(47), .End=When(40), .Limit=2, .Modified=true} );
 		ASSERT_EQ( reversed.size(), 6u );
 		EXPECT_EQ( reversed.front().Value, 400.0 );
 		EXPECT_EQ( reversed.back().Source, When(41) );
@@ -858,11 +711,11 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( HistEditTests, AnswersEachNodeWithTheServersStatus ){
 		let edited = Update( "createHistory", {{Status1, When(10), true}, {Status2, When(10), true}, {Unknown, When(10), 1}, {Status1, When(11), false}} );
 		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED, UA_STATUSCODE_BADNODEIDUNKNOWN, UA_STATUSCODE_GOODENTRYINSERTED}) );
-		EXPECT_EQ( edited.Statuses.at(Node(Status1)), UA_STATUSCODE_GOOD );
-		EXPECT_EQ( edited.Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
-		EXPECT_EQ( edited.Statuses.at(Node(Unknown)), UA_STATUSCODE_BADNODEIDUNKNOWN );
+		EXPECT_EQ( Status(edited.Statuses, ByIndex(Status1)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(edited.Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( Status(edited.Statuses, ByIndex(Unknown)), UA_STATUSCODE_BADNODEIDUNKNOWN );
 		EXPECT_EQ( Values(Read({.Nodes={Status1}, .Start=When(10), .End=When(12), .Limit=100}).Values), (vector<jvalue>{true, false}) );
-		EXPECT_EQ( DeleteRaw(Status2, When(10), When(12)).Statuses.at(Node(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
+		EXPECT_EQ( Status(PurgeRange(Status2, When(10), When(12)).Statuses, ByIndex(Status2)), UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );
 		//A value's status goes as given, a number as a read answers it.
 		let uncertain = jobject{ {"node", Node(Rpm3).ToJson()}, {"source", Time(When(22))}, {"status", UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE}, {"value", 2} };
 		EXPECT_EQ( Edit("createHistory( opc: $opc, values: $values ){ values{ status } nodes{ node status } }", {{"values", jarray{uncertain}}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
@@ -893,7 +746,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//`end` as the one value there, as a group does.
 	TEST_F( HistEditTests, PurgesOneValueWithStartEqualToEnd ){
 		EXPECT_EQ( Update("createHistory", {{Rpm3, When(70), 1}, {Rpm3, When(71), 2}}).Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_GOODENTRYINSERTED}) );
-		EXPECT_EQ( DeleteRaw(Rpm3, When(70), When(70)).Statuses.at(Node(Rpm3)), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(PurgeRange(Rpm3, When(70), When(70)).Statuses, ByIndex(Rpm3)), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Values(Read({.Nodes={Rpm3}, .Start=When(70), .End=When(72), .Limit=100}).Values), (vector<jvalue>{2.0}) );
 	}
 
@@ -932,12 +785,12 @@ namespace Jde::Opc::Gateway::Tests{
 		UAε( UA_Server_writeDataValue(ua, node, down) );
 		let typed = Update( "createHistory", {{Rpm2, When(60), 7}} );
 		EXPECT_EQ( typed.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
-		EXPECT_EQ( typed.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(typed.Statuses, ByIndex(Rpm2)), UA_STATUSCODE_GOOD );
 
 		UAε( UA_Server_writeDataValue(ua, node, Value{UA_STATUSCODE_BADWAITINGFORINITIALDATA}) );
 		let inferred = Update( "createHistory", {{Rpm2, When(61), 8.5}} );
 		EXPECT_EQ( inferred.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
-		EXPECT_EQ( inferred.Statuses.at(node), UA_STATUSCODE_GOOD );
+		EXPECT_EQ( Status(inferred.Statuses, ByIndex(Rpm2)), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(60), .End=When(62), .Limit=100}).Values), (vector<jvalue>{7.0, 8.5}) );
 	}
 
@@ -951,7 +804,7 @@ namespace Jde::Opc::Gateway::Tests{
 			const RetypedNode retyped{ ua, node, UA_NS0ID_SERVERSTATE };
 			let edited = Update( "createHistory", {{Rpm2, When(70), 2}} );
 			EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
-			EXPECT_EQ( edited.Statuses.at(node), UA_STATUSCODE_GOOD );
+			EXPECT_EQ( Status(edited.Statuses, ByIndex(Rpm2)), UA_STATUSCODE_GOOD );
 		}
 		{
 			const RetypedNode retyped{ ua, node, UA_NS0ID_BASEDATATYPE };
@@ -960,7 +813,7 @@ namespace Jde::Opc::Gateway::Tests{
 			UAε( UA_Server_writeValue(ua, node, v) );
 			let edited = Update( "createHistory", {{Rpm2, When(71), 2}} );
 			EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );
-			EXPECT_EQ( edited.Statuses.at(node), UA_STATUSCODE_GOOD );
+			EXPECT_EQ( Status(edited.Statuses, ByIndex(Rpm2)), UA_STATUSCODE_GOOD );
 		}
 		EXPECT_EQ( Values(Read({.Nodes={Rpm2}, .Start=When(70), .End=When(72), .Limit=100}).Values), (vector<jvalue>{2, 2}) );
 	}
@@ -972,7 +825,7 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup enforce = []{ try{ Enforce(true); }catch( const std::exception& e ){ ADD_FAILURE() << "nodeIds wasn't enforced again:  " << e.what(); } };
 		let edited = Update( "createHistory", {{Rpm3, When(30), 500}} );
 		EXPECT_EQ( edited.Values, (vector<StatusCode>{UA_STATUSCODE_BADUSERACCESSDENIED}) );
-		EXPECT_EQ( DeleteRaw(Rpm3, When(0), When(50)).Statuses.at(Node(Rpm3)), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( Status(PurgeRange(Rpm3, When(0), When(50)).Statuses, ByIndex(Rpm3)), UA_STATUSCODE_BADUSERACCESSDENIED );
 		EXPECT_TRUE( Read({.Nodes={Rpm3}, .Start=When(30), .End=When(31), .Limit=100}).Values.empty() );
 	}
 }

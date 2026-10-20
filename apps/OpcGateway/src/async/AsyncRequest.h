@@ -8,16 +8,9 @@ namespace Jde::Opc::Gateway{
 	constexpr RequestId PingRequestId = 0;
 	constexpr RequestId ConnectRequestId = std::numeric_limits<RequestId>::max();
 	constexpr RequestId SubscriptionRequestId = ConnectRequestId - 1;
+	extern Duration _pingInterval;//the keep-alive's period, /gateway/pingInterval:  set once by Configure, before the web server starts.
+	extern Duration _ttl;//an idle client's lifetime, /gateway/ttl:  likewise.
 	struct UAClient;
-	struct UARequest{
-		UARequest( std::any&& h )ι:CoHandle{ move(h) }{ h=nullptr; }
-		std::any CoHandle;
-	};
-	Τ struct UARequestMulti{
-		flat_map<UA_UInt32, NodeId> Requests;
-		sp<UAClient> ClientPtr;
-		flat_map<NodeId, T> Results;
-	};
 
 	//Serializes all UA_Client access for one client: open62541 clients are not thread-safe, so every UA_Client_* call
 	//(run_iterate here, submissions/sync services via UAClient::PostUA) runs on _strand. Process/Clear/Stop are

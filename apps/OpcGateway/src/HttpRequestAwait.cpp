@@ -1,8 +1,6 @@
 #include "HttpRequestAwait.h"
 #include <jde/ql/IQL.h>
 #include <jde/app/client/IAppClient.h>
-#include <jde/opc/uatypes/NodeId.h>
-#include <jde/opc/uatypes/Value.h>
 #include "GatewayAppClient.h"
 #include "UAClient.h"
 #include "auth/PasswordAwait.h"
@@ -31,43 +29,6 @@ namespace Jde::Opc::Gateway{
 		}
 		return _readyResult!=nullptr;
 	}
-	α HttpRequestAwait::ParseNodes()ε->tuple<flat_set<NodeId>,jarray>{
-		auto& nodeJson = _request["nodes"];
-		auto jNodes = Json::AsArray( Json::ParseValue(string{nodeJson}) );
-		flat_set<NodeId> nodes;
-		for( let& node : jNodes )
-			nodes.emplace( Json::AsObject(node) );
-		if( nodes.empty() )
-			throw RestException{ EHttpStatus::BadRequest, SRCE_CUR, move(_request), "empty nodes" };
-		return make_tuple( nodes, move(jNodes) );
-	}
-
-	α HttpRequestAwait::ResumeSnapshots( flat_map<NodeId, Value>&& results, jarray&& j )ι->void{
-		for( let& [nodeId, value] : results ){
-			jobject node = nodeId.ToJson();
-			node["value"] = value.ToJson();
-			j.push_back( node );
-		}
-		Resume( {jobject{{"snapshots", j}}, move(_request)} );
-	}
-
-
-	α HttpRequestAwait::CoHandleRequest( [[maybe_unused]] ServerCnnctnNK&& opcId )ι->void{
-		let& target = _request.Target();
-		try{
-			if( _request.IsGet() ){
-				throw RestException{ EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown get target '{}'", target };
-			}
-			else if( _request.IsPost() )
-				throw RestException{ EHttpStatus::NotFound, SRCE_CUR, move(_request), "Post not supported for target '{}'", target };
-			else
-				throw RestException{ EHttpStatus::Forbidden, SRCE_CUR, move(_request), "Only get/post verb is supported for target '{}'", target };
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-
 	α HttpRequestAwait::Login( str endpoint )ι->TAwait<optional<Web::FromServer::SessionInfo>>::Task{
 		try{
 			let& body = _request.Body();
@@ -113,14 +74,9 @@ namespace Jde::Opc::Gateway{
 		else if( _request.IsPost("/logout") )
 			Logout();
 		else{
-			auto opc = _request["opc"];
-			if( opc.size() )
-				CoHandleRequest( move(opc) );
-			else if( _request.Target().size() ){
-				_request.LogRead();
-				RestException e{ EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown target '{}'", _request.Target() };
-				ResumeExp( RestException{ EHttpStatus::NotFound, move(e), move(_request) } );
-			}
+			_request.LogRead();
+			let target = string{ _request.Target() };
+			ResumeExp( RestException{ EHttpStatus::NotFound, SRCE_CUR, move(_request), "Unknown target '{}'", target } );
 		}
 	}
 

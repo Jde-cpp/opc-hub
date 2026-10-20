@@ -25,6 +25,25 @@ namespace Jde{
 		return y;
 	}
 
+	α Settings::FindArgString( sv arg, sv path )ι->optional<string>{
+		if( auto a = Process::FindArg(string{arg}); a && a->size() )
+			return a;
+		return FindString( path );
+	}
+	α Settings::FindArgDuration( sv arg, sv path, SL sl )ε->optional<Duration>{
+		if( auto a = Process::FindArg(string{arg}); a && a->size() )
+			return Chrono::ToDuration( move(*a), sl );
+		return FindDuration( path, sl );
+	}
+	α Settings::FindArgNumber( sv arg, sv path )ε->optional<uint>{
+		if( auto a = Process::FindArg(string{arg}); a && a->size() ){
+			let n = Str::TryTo<uint>( *a );
+			THROW_IF( !n, "{} '{}' is not a number.", arg, *a );
+			return n;
+		}
+		return FindNumber<uint>( path );
+	}
+
 	consteval α buildTypeSubDir()->sv{
 		if constexpr( _debug )
 			return "Debug";

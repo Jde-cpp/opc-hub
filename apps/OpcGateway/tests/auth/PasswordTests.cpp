@@ -1,4 +1,4 @@
-﻿#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/server/Sessions.h>
 #include "../../src/auth/PasswordAwait.h"
 #include "Auth.h"
@@ -12,18 +12,7 @@ namespace Jde::Opc::Gateway::Tests{
 	class PasswordTests : public Auth{
 	protected:
 		PasswordTests()ι:Auth{ETokenType::Username}{}
-		~PasswordTests()override{}
-
-		//Ω SetUpTestCase()ε->void;
-		//Ω CheckPasswordsAllowed()ε->void;
-		//α SetUp()ι->void override;
-		α TearDown()ι->void override{}
-		Ω TearDownTestSuite();
 	};
-
-	α PasswordTests::TearDownTestSuite(){
-		Auth::TearDownTestSuite();
-	}
 	//A counter and a predicate, not a bare wait:  a login that hits the AuthCache completes synchronously
 	//(PasswordAwait::await_resume), so its notify landed before the test thread reached its wait and the suite hung there
 	//- unseen for as long as the fixture skipped these tests (the embedded server offered no username token until
@@ -31,7 +20,7 @@ namespace Jde::Opc::Gateway::Tests{
 	static std::condition_variable cv;
 	static std::mutex mtx;
 	static vector<SessionPK> _sessionIds;
-	static up<Exception> _exception;
+	static up<Exception> _failure;
 	static uint _completed{};
 	const string _password = "0123456789ABCD";
 	//sessionId: the web session the login is made from (HttpRequestAwait::Login's _request.SessionInfo) - a live one, minted
@@ -47,7 +36,7 @@ namespace Jde::Opc::Gateway::Tests{
 			if( sessionInfo )
 				_sessionIds.push_back( sessionInfo->session_id() );
 			if( exception )
-				_exception = move( exception );
+				_failure = move( exception );
 			++_completed;
 		}
 		cv.notify_all();
@@ -68,9 +57,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( PasswordTests, Authenticate ){
-		INFO( "PasswordTests.Authenticate" );
 		string opcId{ Connection->Slug };
-		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _failure = nullptr; }
 		AuthenticateTest( opcId, session() );//the UA login; AddSession mints the session the credential is stored under
 		waitFor( 1 );
 		AuthenticateTest( opcId, session() );//an anonymous session each:  the cache does not vouch, so each mints its own (install-issues #47)
@@ -91,21 +79,20 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( _sessionIds[0], _sessionIds[2] );
 		EXPECT_NE( _sessionIds[1], _sessionIds[2] );
 		EXPECT_TRUE( find(_sessionIds, 0)==_sessionIds.end() );
-		INFO( "~PasswordTests.Authenticate" );
 	}
 
 	//install-issues #47:  a login page with no session sends 0.  With user1's credential already cached, the AuthCache used to
 	//vouch for that 0 and hand it back as the session - the user signed in as nobody.  Each must get a session of its own.
 	TEST_F( PasswordTests, Authenticate_Sessionless ){
 		string opcId{ Connection->Slug };
-		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _failure = nullptr; }
 		AuthenticateTest( opcId, session() );//cached, whatever ran before
 		waitFor( 1 );
 		AuthenticateTest( opcId, 0 );
 		waitFor( 2 );
 		AuthenticateTest( opcId, 0 );
 		waitFor( 3 );
-		ASSERT_FALSE( _exception ) << _exception->what();
+		ASSERT_FALSE( _failure ) << _failure->what();
 		ASSERT_EQ( _sessionIds.size(), 3u );
 		EXPECT_NE( _sessionIds[1], 0u );
 		EXPECT_NE( _sessionIds[2], 0u );
@@ -123,13 +110,13 @@ namespace Jde::Opc::Gateway::Tests{
 	//page kept its anonymous session, and every request after it was (401).
 	TEST_F( PasswordTests, Authenticate_AnonymousSession ){
 		string opcId{ Connection->Slug };
-		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _failure = nullptr; }
 		AuthenticateTest( opcId, session() );//cached, whatever ran before
 		waitFor( 1 );
 		let anonymous = session();
 		AuthenticateTest( opcId, anonymous );
 		waitFor( 2 );
-		ASSERT_FALSE( _exception ) << _exception->what();
+		ASSERT_FALSE( _failure ) << _failure->what();
 		ASSERT_EQ( _sessionIds.size(), 2u );
 		let minted = _sessionIds[1];
 		EXPECT_NE( minted, 0u );
@@ -146,7 +133,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//A signed-in session's re-auth is what the cache is for:  it hits, and the session keeps its id.
 	TEST_F( PasswordTests, Authenticate_SignedInReauth ){
 		string opcId{ Connection->Slug };
-		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _exception = nullptr; }
+		{ std::lock_guard l{ mtx }; _completed = 0; _sessionIds.clear(); _failure = nullptr; }
 		AuthenticateTest( opcId, session() );
 		waitFor( 1 );
 		ASSERT_EQ( _sessionIds.size(), 1u );
@@ -155,7 +142,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let signedIn = Web::Server::Sessions::Add( user, "localhost", false )->SessionId;
 		AuthenticateTest( opcId, signedIn );
 		waitFor( 2 );
-		ASSERT_FALSE( _exception ) << _exception->what();
+		ASSERT_FALSE( _failure ) << _failure->what();
 		ASSERT_EQ( _sessionIds.size(), 2u );
 		EXPECT_EQ( _sessionIds[1], signedIn ) << "a signed-in re-auth should keep its session";
 		let creds = GetCredential( signedIn, opcId );
@@ -164,13 +151,11 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	TEST_F( PasswordTests, Authenticate_BadPassword ){
-		INFO( "PasswordTests.Authenticate_BadPassword" );
-		{ std::lock_guard l{ mtx }; _completed = 0; _exception = nullptr; }
+		{ std::lock_guard l{ mtx }; _completed = 0; _failure = nullptr; }
 		AuthenticateTest( Connection->Slug, session(), true );
 		waitFor( 1 );
-		EXPECT_TRUE( _exception );
-		EXPECT_TRUE( _exception && string{_exception->what()}.contains("BadUserAccessDenied") );
-		DBG( "{}", _exception ? _exception->what() : "Error no exception." );
-		INFO( "~PasswordTests.Authenticate_BadPassword" );
+		EXPECT_TRUE( _failure );
+		EXPECT_TRUE( _failure && string{_failure->what()}.contains("BadUserAccessDenied") );
+		DBG( "{}", _failure ? _failure->what() : "Error no exception." );
 	}
 }

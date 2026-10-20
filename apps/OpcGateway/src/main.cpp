@@ -18,7 +18,7 @@
 	Logging::AddTagParser( mu<Opc::UALogParser>() );
 	int exitCode{ EXIT_FAILURE };
 	try{
-		Process::Startup( argc, argv, "Jde.OpcGateway", "IOT Connection" );
+		Process::Startup( argc, argv, "Jde.OpcGateway", "Jde OPC gateway - the website's OPC UA client sessions." );
 		Opc::Gateway::AppClient()->InitLogging( Opc::Gateway::AppClient() );
 		let webServerSettings = Settings::FindObject( "/http" );
 		let userName = Settings::FindObject( "/credentials" );

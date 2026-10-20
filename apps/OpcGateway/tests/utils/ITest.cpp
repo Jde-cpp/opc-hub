@@ -7,20 +7,23 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	α ITest::SetUpTestCase()ε->void{
-		_jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-		let sessionId = *Str::TryTo<SessionPK,16>(_jwt->SessionId);
-		TRACE( "UserPK: {:x}, SessionId: {:x}", _jwt->UserPK.Value, sessionId );
+	constexpr ELogTags _tags{ ELogTags::Test };
+	α ITest::SetUpTestSuite()ε->void{
+		let& jwt = Jwt();
+		let sessionId = *Str::TryTo<SessionPK,16>( jwt.SessionId );
+		TRACE( "UserPK: {}, SessionId: {}", hex(jwt.UserPK.Value), hex(sessionId) );
 		auto con = GetConnection( OpcServerSlug );
-		Credential cred{ _jwt->Payload() }; cred.SetUserPK( _jwt->UserPK );
+		auto cred = SessionCredential( jwt.UserPK );
 		_client = BlockTAwait<sp<UAClient>>( ConnectAwait{move(con.Slug), cred} );
 		AddSession( sessionId, OpcServerSlug, move(cred) );
 	}
-	α ITest::TearDownTestCase()ι->void{
+	α ITest::Reconnect()ε->void{
+		_client = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, SessionCredential(Jwt().UserPK)} );
+	}
+	α ITest::TearDownTestSuite()ι->void{
 		if( _client )
 			UAClient::RemoveClient( move(_client) );
 	}
 
-	optional<Web::Jwt> ITest::_jwt;
 	sp<UAClient> ITest::_client;
 }

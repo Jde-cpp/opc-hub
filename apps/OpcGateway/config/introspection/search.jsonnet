@@ -1,9 +1,8 @@
 //search( opc?, text, limit?, refresh? ){ connection{slug name} id path name browse{ns name} nodeClass depth } (ql/SearchQLAwait.cpp):
 //node names matched against the gateway's per-connection NodeIndex.  Config-only types - no view behind them, so __type(name:...)
 //is answered from here alone.
-local String = { kind: "SCALAR", name: "String" };
-local UInt = { kind: "SCALAR", name: "UInt" };
-local NonNull(t) = { kind: "NON_NULL", name: null, ofType: t };
+local types = import 'scalars.libsonnet';
+local String = types.String, UInt = types.UInt, NonNull = types.NonNull;
 local search = {
 	fields: [
 		{ name: "connection", type: { kind: "OBJECT", name: "SearchConnection" } },

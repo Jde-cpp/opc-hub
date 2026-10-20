@@ -1,6 +1,4 @@
 ﻿#pragma once
-#ifndef OPC_CLIENT
-#define OPC_CLIENT
 #include <jde/fwk/co/Await.h>
 #include <jde/db/Row.h>
 #include <jde/db/Key.h>
@@ -28,14 +26,11 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctnNK Slug;
 	};
 
-	struct ServerCnnctnAwait final: TAwait<vector<ServerCnnctn>>{
-		using base=TAwait<vector<ServerCnnctn>>;
+	struct ServerCnnctnAwait final: TAwaitEx<vector<ServerCnnctn>,DB::SelectAwait::Task>{
 		ServerCnnctnAwait( optional<DB::Key> key=nullopt, bool includeDeleted=false):_key{key}, _includeDeleted{includeDeleted}{};
-		α Suspend()ι->void override{ Select(); }
-		α Select()ι->DB::SelectAwait::Task;
 	private:
+		α Execute()ι->DB::SelectAwait::Task override;
 		optional<DB::Key> _key;
 		bool _includeDeleted;
 	};
 }
-#endif

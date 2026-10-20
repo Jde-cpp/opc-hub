@@ -52,13 +52,12 @@ set( targetName Jde.Opc.Hub )
 
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
-file( GLOB sources CONFIGURE_DEPENDS *.cpp src/main.cpp )
-file( GLOB headers CONFIGURE_DEPENDS *.h )
-if( WIN32)
+set( sources src/main.cpp )
+if( WIN32 )
 	list( APPEND sources src/OpcHub.rc )
 	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
 endif()
-target_sources( ${targetName} PRIVATE ${sources} ${resources} ${headers} )
+target_sources( ${targetName} PRIVATE ${sources} )
 
 if( WIN32 )
 	target_link_libraries( ${targetName} Iphlpapi.lib )
@@ -77,9 +76,9 @@ if( TARGET Jde.App.Server )
 endif()
 
 #No meta of its own: Opc.Hub.jsonnet mounts the AppServer's and the gateway's meta files, each of which imports the
-#common-meta.libsonnet symlinked beside it.  Both links here so a standalone configure of the hub resolves them too.
+#common-meta.libsonnet symlinked beside it.  The AppServer's link here so a standalone configure of the hub resolves it
+#too;  apps/OpcGateway/src makes the gateway's.
 linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/AppServer/config/common-meta.libsonnet" )
-linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/OpcGateway/config/common-meta.libsonnet" )
 if( WIN32 )
 	set( appOutDir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${targetName}" )
 	set_target_properties( ${targetName} PROPERTIES
