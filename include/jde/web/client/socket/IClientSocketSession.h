@@ -87,7 +87,7 @@ namespace Jde::Web::Client{
 		sp<net::io_context> _ioContext;
 		optional<Web::FromServer::SessionInfo> _sessionInfo;
 		CreateClientSocketSessionAwait::Handle _connectHandle;
-		CloseClientSocketSessionAwait::Handle _closeHandle;
+		CloseClientSocketSessionAwait::Handle _closeHandle;//strand-confined:  set by the close await's hop onto the strand, resumed by OnClose.
 		boost::concurrent_flat_map<RequestId,PendingTask> _tasks;
 		//The deadline per in-flight request, so answering one can cancel it.  The server side has always kept its timers this
 		//way (IWebsocketSession::_pendingQueries, finding S3); the client kept only the handle and paid the full timeout.

@@ -13,7 +13,7 @@ namespace Jde::Opc::Hub{
 		α QLServer()Ε->sp<QL::IQL> override;
 		α UserPK()Ι->Jde::UserPK override{ return Jde::UserPK{Jde::UserPK::System}; }//as LocalClient: the hub is the AppServer.
 		α PublicKey()Ι->const Crypto::PublicKey& override;//the AppServer's - the key that signs the JWTs the gateway verifies.
-		α SessionInfoAwait( SessionPK, SL )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return {}; }//unreachable with IsLocal (Sessions::UpsertAwait answers from the shared map); LocalClient's shape.
+		α SessionInfoAwait( SessionPK id, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return App::IApp::SessionInfoAwait( id, sl ); }//IApp's local answer, not IAppClient's socket round trip.
 		α AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> override;
 	};
 }

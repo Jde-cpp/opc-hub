@@ -59,21 +59,34 @@ repo=$(cd "$setupDir/../../../.." && pwd) #apps/OpcHub/setup/linux -> the repo r
 [ -n "$outDir" ] || outDir="$buildDir/setup"
 
 #--- inputs ------------------------------------------------------------------------------------------------------------
-hubExe=$buildDir/apps/OpcHub/exe/Jde.Opc.Hub
-serverExe=$buildDir/apps/OpcServer/exe/Jde.Opc.Server
-jdeLib=$buildDir/libs/fwk/lib/libJde.so
-dbLib=$buildDir/libs/db/lib/libJde.DB.so
-sqliteLib=$buildDir/libs/db/drivers/sqlite/lib/libJde.DB.Sqlite.so
-appServerMod=$buildDir/apps/AppServer/config/sql/sqlite/libJde.DB.Sqlite.AppServer.so
-gatewayMod=$buildDir/apps/OpcGateway/config/sql/sqlite/libJde.DB.Sqlite.OpcGateway.so
-mysqlLib=$buildDir/libs/db/drivers/mysql/lib/libJde.DB.MySql.so #loaded only by a by-hand MySQL profile (README.md)
-for f in "$hubExe" "$serverExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib"; do
-	[ -f "$f" ] || die "missing $f - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer, Jde.DB.Sqlite.OpcGateway and Jde.DB.MySql in the release tree first, or pass --build-dir"
+#../files.txt, the list the Windows installer reads too:  `section ships to from [as]` a line.  Kept here are this platform's
+#lines - all, linux, and user, the current-user overlays, which go into the tarball alone.
+manifest=$(dirname "$setupDir")/files.txt
+mSection=(); mShips=(); mTo=(); mFrom=(); mAs=()
+while IFS= read -r line || [ -n "$line" ]; do #the last line has no newline
+	read -r section ships to from as rest <<< "${line%%#*}"
+	[ -n "$section" ] || continue
+	[ -n "$from" ] && [ -z "$rest" ] || die "$manifest: '$line' - want section ships to from [as]"
+	case "$section" in hub|opcserver) ;; *) die "$manifest: section '$section' is neither hub nor opcserver";; esac
+	case "$ships" in all|linux|user) ;; windows) continue;; *) die "$manifest: ships '$ships' is none of all, windows, linux, user";; esac
+	mSection+=( "$section" ); mShips+=( "$ships" ); mTo+=( "${to%!}" ); mFrom+=( "$from" ); mAs+=( "$as" )
+done < "$manifest"
+sources(){ #i - entry i's files:  a build: or nodesets: path under the build tree or the UA-Nodeset clone, else the repo's;  a * expands
+	local root=$repo from=${mFrom[$1]}
+	case "$from" in build:*) root=$buildDir; from=${from#build:};; nodesets:*) root=$uaNodeSets; from=${from#nodesets:};; esac
+	printf '%s\n' "$root"/$from
+}
+for i in "${!mFrom[@]}"; do
+	while read -r f; do
+		[ -f "$f" ] && continue
+		case "${mFrom[$i]}" in
+			build:*) die "missing $f - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer, Jde.DB.Sqlite.OpcGateway and Jde.DB.MySql in the release tree first, or pass --build-dir";;
+			nodesets:*) die "missing $f - clone https://github.com/OPCFoundation/UA-Nodeset or pass --ua-nodesets";;
+			*) die "missing $f, which $manifest names";;
+		esac
+	done < <(sources "$i")
 done
 [ $skipWeb = 1 ] || [ -f "$webDist/index.html" ] || die "no index.html under $webDist - run web/opc/scripts/setup.sh (ng build), pass --web-dist, or --skip-web"
-for f in DI/Opc.Ua.Di.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.xml IA/Opc.Ua.IA.NodeSet2.examples.xml; do
-	[ -f "$uaNodeSets/$f" ] || die "missing $f under $uaNodeSets - clone https://github.com/OPCFoundation/UA-Nodeset or pass --ua-nodesets"
-done
 for t in dpkg-deb dpkg ldd objdump; do command -v $t >/dev/null || die "$t not found (dpkg, binutils)"; done
 [ $strip = 0 ] || command -v strip >/dev/null || die "strip not found (binutils) - or --no-strip"
 command -v "$patchelf" >/dev/null || die "patchelf not found - apt install patchelf, or pip install patchelf and --patchelf <path>"
@@ -117,13 +130,32 @@ trap 'rm -rf "$stage"' EXIT
 optDir=$stage/opt/jde-cpp; etcDir=$stage/etc/jde-cpp; dataDir=$stage/var/lib/Jde-Cpp
 unitDir=$stage/usr/lib/systemd/system; docDir=$stage/usr/share/doc/jde-opchub
 
-#binaries - one dir per product carries everything it loads; the sqlite driver and the proc MODULEs beside the exe are
-#where args/install's $(ExeDir) looks
-install -d "$optDir/opchub" "$optDir/opcserver"
-install -m 755 "$hubExe" "$optDir/opchub/"
-install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib" "$optDir/opchub/"
-install -m 755 "$serverExe" "$optDir/opcserver/"
-install -m 644 "$jdeLib" "$dbLib" "$sqliteLib" "$optDir/opcserver/"
+#files.txt's files:  the binaries into each product's dir, the exe 755, and the settings mirror (dpkg conffiles, so edits
+#survive an upgrade) and the data dirs (package-owned:  replaced on an upgrade, removed with it) under etc and var/lib.  Each
+#binary's original goes on its product's list, for bundle.
+declare -A programDir=( [hub]=opchub [opcserver]=opcserver )
+hubBins=(); serverBins=()
+place(){ #ships... - stages the entries shipped as one of these
+	local i f dir mode
+	for i in "${!mFrom[@]}"; do
+		case " $* " in *" ${mShips[$i]} "*) ;; *) continue;; esac
+		case "${mTo[$i]}" in
+			program) dir=$optDir/${programDir[${mSection[$i]}]};;
+			config/*) dir=$etcDir/${mTo[$i]#config/};;
+			data/*) dir=$dataDir/${mTo[$i]#data/};;
+			*) die "$manifest: to '${mTo[$i]}' is none of program, config/<dir>, data/<dir>";;
+		esac
+		while read -r f; do
+			mode=644
+			if [ "${mTo[$i]}" = program ]; then
+				case "$f" in *.so|*.so.*) ;; *) mode=755;; esac
+				if [ "${mSection[$i]}" = hub ]; then hubBins+=( "$f" ); else serverBins+=( "$f" ); fi
+			fi
+			install -D -m $mode "$f" "$dir/${mAs[$i]:-$(basename "$f")}"
+		done < <(sources "$i")
+	done
+}
+place all linux
 
 #Every .so an exe or module resolves outside the system dirs comes along (the deps tree: fmt, abseil, boost, jsonnet), and of
 #the system ones LLVM's libc++/libc++abi (and libunwind, should libc++abi ever link it) plus libxml2 and the ICU pair it
@@ -153,46 +185,15 @@ bundle(){ #dir original...
 		if ldd "$f" | grep -q 'not found'; then die "$f: $(ldd "$f" | grep 'not found' | tr -s ' \t' ' ' | tr '\n' ';')"; fi
 	done
 }
-bundle "$optDir/opchub" "$hubExe" "$jdeLib" "$dbLib" "$sqliteLib" "$appServerMod" "$gatewayMod" "$mysqlLib"
-bundle "$optDir/opcserver" "$serverExe" "$jdeLib" "$dbLib" "$sqliteLib"
+bundle "$optDir/opchub" "${hubBins[@]}"
+bundle "$optDir/opcserver" "${serverBins[@]}"
 binaries=( "$optDir"/opchub/* "$optDir"/opcserver/* ) #every ELF in the package - not opt/jde-cpp/web
 if [ $strip = 1 ]; then
 	for f in "${binaries[@]}"; do strip --strip-debug "$f"; done
 fi
 
-#the settings mirror - the hub config imports the AppServer's and the gateway's by repo-relative path and the gateway's
-#introspection files by Settings::Directory()-relative path, so the repo layout is kept (dpkg conffiles: edits survive an upgrade)
-install -D -m 644 -t "$etcDir/apps/OpcHub/config" "$repo/apps/OpcHub/config/Opc.Hub.jsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install" "$repo/apps/OpcHub/config/args/install/args.libsonnet"
-install -D -m 644 -t "$etcDir/apps/AppServer/config" "$repo/apps/AppServer/config/App.Server.jsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcGateway/config" "$repo/apps/OpcGateway/config/Opc.Gateway.jsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcGateway/config/introspection" "$repo"/apps/OpcGateway/config/introspection/*.jsonnet "$repo/apps/OpcGateway/config/introspection/scalars.libsonnet"
-install -D -m 644 -t "$etcDir/libs/db/config" "$repo/libs/db/config/paths-common.libsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcServer/config" "$repo/apps/OpcServer/config/Opc.Server.jsonnet" "$repo/apps/OpcServer/config/Opc.Server.Install.jsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install" "$repo/apps/OpcServer/config/args/install/args.libsonnet"
-install -D -m 644 -t "$etcDir/apps/OpcServer/config/pubsub" "$repo/apps/OpcServer/config/pubsub/pumps.libsonnet"
 install -D -m 644 "$setupDir/env" "$stage/usr/share/jde-opchub/env" #the template postinst lays at /etc/jde-cpp/env when absent - not a conffile, which a purge deletes with the kept keys' passcode in it (reviews/m4-closing.md #6)
 [ $skipWeb = 1 ] || install -m 644 "$setupDir/nginx-opchub.conf" "$etcDir/nginx-opchub.conf"
-
-#the products' data dirs - meta/sql flat, where args/install points (common-meta from libs/db: the copies beside the app
-#metas in the repo are configure-time links).  sql/ and nodesets/ are package-owned: replaced on an upgrade, removed with it.
-install -D -m 644 -t "$dataDir/OpcHub" "$repo/libs/access/config/access-meta.jsonnet" "$repo/libs/access/config/access-ql.jsonnet" \
-	"$repo/apps/AppServer/config/app-meta.jsonnet" "$repo/apps/OpcGateway/config/opcGateway-meta.jsonnet" "$repo/libs/db/config/common-meta.libsonnet"
-install -D -m 644 "$repo/libs/access/config/release.mutation" "$dataDir/OpcHub/sql/access.mutation" #<schema>*.mutation - the release seed, not the dev one
-install -D -m 644 "$repo/libs/access/config/release.roles" "$dataDir/OpcHub/sql/access.roles" #<schema>*.roles - the roles (Viewer … Owner), applied after the access server is configured (appStartup.cpp), as the nsi's SEC_HUB does
-#the OPC UA server's seeds (reviews/install-issues.md #1): the Web UI's Google provider, the server as the hub's default connection
-#and its provider row.  The package ships the server, so always; the tarball's install.sh drops them without --opcserver.  The
-#underscore names sort after access.mutation, whose provider type 7 (OpcServer) they reference.
-install -m 644 "$repo/libs/access/config/release-google.mutation" "$dataDir/OpcHub/sql/access_google.mutation"
-install -m 644 "$repo/libs/access/config/release-opcServer.mutation" "$dataDir/OpcHub/sql/access_opcServer.mutation"
-install -m 644 "$repo/apps/OpcGateway/config/release-opcServer.mutation" "$dataDir/OpcHub/sql/gateway_opcServer.mutation"
-install -m 644 "$repo/libs/access/config/release-opcServer.roles" "$dataDir/OpcHub/sql/access_opcServer.roles" #reviews/install-issues.md #25: the OPC Server Instance role - Administer on opc.install nodeIds - so the machine grant is one tick.  A *.roles, applied after access server config.
-install -m 644 -t "$dataDir/OpcHub/sql" "$repo/apps/AppServer/config/app.mutation" \
-	"$repo"/libs/access/config/sql/sqlite/*.sql "$repo"/apps/AppServer/config/sql/sqlite/*.sql "$repo"/apps/OpcGateway/config/sql/sqlite/*.sql #the sqlite views; the procs are compiled into the MODULEs
-install -D -m 644 -t "$dataDir/OpcServer" "$repo/libs/access/config/access-meta.jsonnet" "$repo/libs/access/config/access-ql.jsonnet" \
-	"$repo/libs/db/config/common-meta.libsonnet" "$repo/apps/OpcServer/config/opcServer-meta.jsonnet"
-install -D -m 644 -t "$dataDir/OpcServer/nodesets" "$uaNodeSets/DI/Opc.Ua.Di.NodeSet2.xml" "$uaNodeSets/IA/Opc.Ua.IA.NodeSet2.xml" \
-	"$uaNodeSets/IA/Opc.Ua.IA.NodeSet2.examples.xml" "$repo/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml"
 
 if [ $skipWeb = 0 ]; then
 	install -d "$optDir/web"
@@ -257,12 +258,7 @@ if [ $tar = 1 ]; then
 	install -m 755 "$setupDir/install.sh" "$stage/install.sh"
 	install -m 644 "$setupDir/README.md" "$stage/README.md"
 	install -m 644 "$repo/LICENSE" "$repo/THIRD-PARTY-NOTICES.txt" "$stage/" #usr/share is excluded below, so the licenses ride at the top
-	#args/install-user, the loopback overlay install.sh's units run with:  an install that needs no root cannot open a
-	#port, so it must not publish one (reviews/install-issues.md #32) - the same reasoning that bound the Windows
-	#current-user mode (#16), and the same two files.  Added here and not above:  the .deb's units run args/install, where
-	#the machine's administrator decides the address, so the package has no use for it.
-	install -D -m 644 -t "$etcDir/apps/OpcHub/config/args/install-user" "$repo/apps/OpcHub/config/args/install-user/args.libsonnet"
-	install -D -m 644 -t "$etcDir/apps/OpcServer/config/args/install-user" "$repo/apps/OpcServer/config/args/install-user/args.libsonnet"
+	place user #files.txt's current-user overlays, args/install-user:  added here and not above, since the .deb's units run args/install
 	install -m 640 "$setupDir/env" "$etcDir/env" #install.sh's template for $dataRoot/env; the package's is under usr/share, which this archive leaves out
 	#The Depends: a system may lack ride along:  apt installs the .deb's, but nothing installs the tarball's - its install needs
 	#no root, and getting a package does.  liburing2 is optional, absent from a 24.04 that never had the .deb, and without it

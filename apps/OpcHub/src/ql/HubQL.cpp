@@ -17,7 +17,7 @@ namespace Jde::Opc::Hub{
 	α HubQL::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = LogSettingsMutation(m, creds, App::Server::AppClient(), sl); await )//covers the gateway's plural spelling too.
 			return await;
-		if( auto await = App::Server::CustomMutation(m, creds, sl); await )//its purgeSession never comes from the hub's own gateway - HubLogout removes from the one map.
+		if( auto await = App::Server::CustomMutation(m, creds, sl); await )//its purgeSession never comes from the hub's own gateway - the hub's /logout removes from the one map.
 			return await;
 		return Gateway::CustomMutation( m, move(creds), sl );
 	}

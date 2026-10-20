@@ -19,5 +19,6 @@ namespace Jde::Web::Client{
 		β IsSsl()Ι->bool=0;
 		//Close early-returns on an already-closing stream without completing anyone's await, so callers have to ask first.
 		β IsClosing()Ι->bool=0;
+		β Post( function<void()>&& f )ι->void=0;//f on the stream's strand, after what is queued there - where the session's OnClose runs.
 	};
 }

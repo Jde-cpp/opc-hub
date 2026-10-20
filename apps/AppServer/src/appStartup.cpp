@@ -214,7 +214,7 @@ namespace Jde::App::Server{
 		Web::Server::IRequestHandler::WebServerSettings listener{ webServerSettings };
 		Web::Server::ThrowIfPortTaken( listener.Address(), listener.Port() );
 		configureDS( options );
-		let instanceName{ Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") };
+		let instanceName = App::InstanceName();
 		let pks = AddConnection( Process::AppName(), instanceName, Process::HostName(), Process::ProcessId() );
 		Logging::Add<Web::Server::SubscribeLog>( "subscribe", pks.Program, pks.Instance, logGate(pks.Instance) );
 		SetAppPKs( pks );

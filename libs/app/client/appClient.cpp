@@ -18,10 +18,6 @@
 namespace Jde::App{
 	using Web::Client::ClientHttpAwait;
 	Ω reconnectWait()ι->Duration{ return Settings::FindDuration("/server/reconnectWait").value_or(5s); }
-	α Client::InstanceName()ι->string{
-		auto instanceName = Settings::FindString( "/instanceName" ).value_or( "" );
-		return instanceName.empty() ? _debug ? "Debug" : "Release" : instanceName;
-	}
 
 	Ω reloadAccess( sp<Client::IAppClient> appClient )ι->VoidTask{
 		try{

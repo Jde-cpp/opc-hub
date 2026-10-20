@@ -4,6 +4,7 @@
 #include <jde/db/db.h>
 #include <jde/access/Authorize.h>
 #include <jde/app/client/IAppClient.h>
+#include <jde/app/IApp.h>
 #include "../../AppServer/src/appStartup.h"
 #include "../../AppServer/src/LocalClient.h"
 #include "../../AppServer/src/WebServer.h"
@@ -31,7 +32,7 @@ namespace Jde::Opc::Hub{
 		auto gatewaySchema = DB::GetAppSchema( "gateway", authorizer );//the first GetAppSchema binds every schema to this Authorize - the AppServer's, as its own Configure would.
 		App::Server::Configure( httpSettings, {
 			.ExtraSchemas = { gatewaySchema },
-			.MakeQL = []( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> auth )->sp<QL::LocalQL>{
+			.MakeQL = []( vector<sp<DB::AppSchema>> schemas, sp<Access::Authorize> auth )->sp<QL::LocalQL> {
 				auto ql = ms<HubQL>( move(schemas), move(auth) );
 				Opc::Gateway::SetQL( ql );
 				return ql;
@@ -45,9 +46,10 @@ namespace Jde::Opc::Hub{
 		Opc::Gateway::Configure( httpSettings, move(gatewayCredentials), App::Server::QLPtr() );
 
 		//5. The one listener.  Its shutdown closes the app sockets; the gateway's registry needs its own close, as its listener's did.
-		let port = Json::FindNumber<PortType>( httpSettings, "port" ).value_or( 6809 );//IRequestHandler::WebServerSettings' default.
-		App::Server::StartWebServer( ms<Hub::RequestHandler>(move(httpSettings)) );
-		Process::AddShutdownFunction( [](bool terminate, SL sl){ Opc::Gateway::Server::Shutdown(terminate, sl); } );
+		auto handler = ms<Hub::RequestHandler>( move(httpSettings) );
+		let port = handler->Settings().Port();//the port the listener binds, its default included - what /opcGateways advertises below.
+		App::Server::StartWebServer( move(handler) );
+		Process::AddShutdownFunction( Opc::Gateway::Server::Shutdown );
 		appServer->LoadLogSettings();
 		if( afterWebServer )
 			afterWebServer();
@@ -59,7 +61,7 @@ namespace Jde::Opc::Hub{
 		//FromClient::Instance so the fields come from the listener's settings, not a client's.
 		App::Proto::FromClient::Instance instance;
 		instance.set_application( "Jde.OpcGateway" );
-		instance.set_instance_name( Settings::FindString("/instanceName").value_or(_debug ? "Debug" : "Release") );//Configure's AddConnection name - connections{} and /opcGateways agree.
+		instance.set_instance_name( App::InstanceName() );//the name Configure's AddConnection registers, so connections{} and /opcGateways agree.
 		instance.set_host( Settings::FindString("/http/host").value_or(Process::HostName()) );//as FromClient::Instance: the host the browser reaches us by.
 		instance.set_pid( Process::ProcessId() );
 		*instance.mutable_start_time() = Protobuf::ToTimestamp( Process::StartTime() );

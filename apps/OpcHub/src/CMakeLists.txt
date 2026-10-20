@@ -1,6 +1,5 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
 include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
-message( "Jde.Opc.HubLib" )
 project( Jde.Opc.HubLib VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
@@ -15,15 +14,10 @@ list( REMOVE_ITEM sources ${main_cpp} )
 file( GLOB headers CONFIGURE_DEPENDS *.h ql/*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
-add_dependencies( ${targetName} Jde.DB.MySql ) #built on every platform; odbc only exists on windows.
-if( WIN32 )
-	add_dependencies( ${targetName} Jde.DB.Odbc )
-endif()
-sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway ) #config/args/sqlite dlopens both - transitive through the two libs, stated for the record.
+dbDriverDependencies( ${targetName} ) #the sqlite procs come with the two app libs.
 
-target_include_directories( ${targetName} PRIVATE ${jdeRoot}/include/jde/app/proto )
 target_link_libraries( ${targetName} Jde.App.ServerLib Jde.Opc.GatewayLib )
 
-#The gateway lib's header set (open62541, the Opc protos) is what hubStartup/HubAppClient pull in through the gateway's
-#headers; its pc.h is private to that directory, so this one is a copy of the parts that are reachable from here.
-target_precompile_headers( ${targetName} PRIVATE pc.h )
+#The gateway lib's PCH (open62541, the Opc protos, its usings and exception type) is what the gateway headers included here
+#assume, and the two libs compile with the same defines and flags.  Unguarded: this lib links that one, so it always exists.
+target_precompile_headers( ${targetName} REUSE_FROM Jde.Opc.GatewayLib )

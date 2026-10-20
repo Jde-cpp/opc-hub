@@ -16,7 +16,7 @@ SetCompressor /SOLID lzma
 ; Inputs - each overridable with makensis /DNAME=value (build-setup.ps1 sets them all).
 ;--------------------------------------------------------------------------------------------------------------------------
 !ifndef BUILD_DIR
-	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree: bin\<Target>\<Target>.exe + dlls, bin\Jde.DB.Sqlite*.dll, bin\sqlite3.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll, bin\Jde.CheckCpu.exe
+	!define BUILD_DIR "R:\clang++\opc-hub\release" ;the release build tree:  files.txt's build: paths, and bin\Jde.CheckCpu.exe
 !endif
 !define SRC_DIR "${__FILEDIR__}\..\..\.." ;apps\OpcHub\setup -> the repo root
 !ifndef WEB_DIST
@@ -74,6 +74,12 @@ SetCompressor /SOLID lzma
 !include "x64.nsh"
 !include "FileFunc.nsh"
 !include "TextFunc.nsh"
+;What the hub and OPC UA Server sections install:  files.txt, the list linux/build-deb.sh reads too, as the OpcHubFiles and
+;OpcServerFiles macros files.ps1 writes from it.
+!tempfile FILES_NSH
+!system 'powershell -NoProfile -ExecutionPolicy Bypass -File "${__FILEDIR__}\files.ps1" -Nsh "${FILES_NSH}"' = 0
+!include "${FILES_NSH}"
+!delfile "${FILES_NSH}"
 
 Name "${PRODUCT}"
 OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
@@ -561,93 +567,11 @@ Section "OPC Hub" SEC_HUB
 		Call TakeDataDir ;before anything is written under it, and before the services stop - a refusal leaves them running (reviews/m4-closing.md #2)
 		Call StopRunningServices ;see the function (reviews/m2-closing.md #4)
 	${EndIf}
-	;binaries - the exe's dir carries its dlls; the sqlite driver and the proc MODULEs come from the bin root
-	SetOutPath "$INSTDIR\OpcHub"
-	File "${BIN}\Jde.Opc.Hub\Jde.Opc.Hub.exe"
-	File "${BIN}\Jde.Opc.Hub\*.dll"
-	File "${BIN}\Jde.DB.Sqlite.dll"
-	File "${BIN}\sqlite3.dll"
-	File "${BIN}\Jde.DB.Sqlite.AppServer.dll"
-	File "${BIN}\Jde.DB.Sqlite.OpcGateway.dll"
-	File "${BIN}\Jde.DB.Odbc.dll" ;SQL Server - loaded only by the by-hand args/install-sqlServer profile (README.md)
-	File "${BIN}\Jde.DB.MySql.dll" ;MySQL - loaded only by the by-hand args/install-mysql profile (README.md)
-	;settings mirror - the hub config imports the AppServer's and the gateway's by repo-relative path, and the gateway's
-	;introspection files by Settings::Directory()-relative path, so the repo layout is kept
-	SetOutPath "$ConfigDir\apps\OpcHub\config"
-	File "${SRC_DIR}\apps\OpcHub\config\Opc.Hub.jsonnet"
-	SetOutPath "$ConfigDir\apps\OpcHub\config\args\install"
-	File "${SRC_DIR}\apps\OpcHub\config\args\install\args.libsonnet"
-	SetOutPath "$ConfigDir\apps\OpcHub\config\args\install-user"
-	File "${SRC_DIR}\apps\OpcHub\config\args\install-user\args.libsonnet" ;the current-user mode's -include: args/install plus a loopback listen address (#16)
-	SetOutPath "$ConfigDir\apps\AppServer\config"
-	File "${SRC_DIR}\apps\AppServer\config\App.Server.jsonnet"
-	SetOutPath "$ConfigDir\apps\OpcGateway\config"
-	File "${SRC_DIR}\apps\OpcGateway\config\Opc.Gateway.jsonnet"
-	SetOutPath "$ConfigDir\apps\OpcGateway\config\introspection"
-	File "${SRC_DIR}\apps\OpcGateway\config\introspection\*.jsonnet"
-	File "${SRC_DIR}\apps\OpcGateway\config\introspection\scalars.libsonnet" ;the type references the three import
-	SetOutPath "$ConfigDir\libs\db\config"
-	File "${SRC_DIR}\libs\db\config\paths-common.libsonnet"
-	;the product's data dir - meta/sql flat, where args/install points (common-meta from libs/db: the copies beside the
-	;app metas in the repo are configure-time links)
-	SetOutPath "$DataDir\OpcHub"
-	File "${SRC_DIR}\libs\access\config\access-meta.jsonnet"
-	File "${SRC_DIR}\libs\access\config\access-ql.jsonnet"
-	File "${SRC_DIR}\apps\AppServer\config\app-meta.jsonnet"
-	File "${SRC_DIR}\apps\OpcGateway\config\opcGateway-meta.jsonnet"
-	File "${SRC_DIR}\libs\db\config\common-meta.libsonnet"
-	;sql\ is installer-owned - recreated, so a seed an older version shipped cannot linger.  Not the gateway's
-	;access-opcGateway.mutation: its createRole( permissionRights:[…] ) shape is not one the seed applies - the roles go in as
-	;access.roles below, the pass the hub runs once the access server is up (appStartup.cpp; the .mutation pass runs before it).
-	RMDir /r "$DataDir\OpcHub\sql"
-	SetOutPath "$DataDir\OpcHub\sql"
-	File /oname=access.mutation "${SRC_DIR}\libs\access\config\release.mutation" ;<schema>*.mutation - the release seed, not the dev one
-	File /oname=access.roles "${SRC_DIR}\libs\access\config\release.roles" ;<schema>*.roles - the roles (Viewer … Owner), applied after the access server is configured
-	File "${SRC_DIR}\apps\AppServer\config\app.mutation"
-	File "${SRC_DIR}\libs\access\config\sql\sqlite\*.sql" ;<schema>_*.sql - the sqlite views; the procs are compiled into the MODULEs
-	File "${SRC_DIR}\apps\AppServer\config\sql\sqlite\*.sql"
-	File "${SRC_DIR}\apps\OpcGateway\config\sql\sqlite\*.sql"
+	!insertmacro OpcHubFiles
 SectionEnd
 
 Section /o "OPC UA Server" SEC_OPCSERVER
-	SetOutPath "$INSTDIR\OpcServer"
-	File "${BIN}\Jde.Opc.Server\Jde.Opc.Server.exe"
-	File "${BIN}\Jde.Opc.Server\*.dll"
-	File "${BIN}\Jde.DB.Sqlite.dll"
-	File "${BIN}\sqlite3.dll"
-	SetOutPath "$ConfigDir\apps\OpcServer\config"
-	File "${SRC_DIR}\apps\OpcServer\config\Opc.Server.jsonnet"
-	File "${SRC_DIR}\apps\OpcServer\config\Opc.Server.Install.jsonnet"
-	SetOutPath "$ConfigDir\apps\OpcServer\config\args\install"
-	File "${SRC_DIR}\apps\OpcServer\config\args\install\args.libsonnet"
-	SetOutPath "$ConfigDir\apps\OpcServer\config\args\install-user"
-	File "${SRC_DIR}\apps\OpcServer\config\args\install-user\args.libsonnet" ;as the hub's: the current-user mode's -include (#16)
-	SetOutPath "$ConfigDir\apps\OpcServer\config\pubsub"
-	File "${SRC_DIR}\apps\OpcServer\config\pubsub\pumps.libsonnet"
-	SetOutPath "$DataDir\OpcServer"
-	File "${SRC_DIR}\libs\access\config\access-meta.jsonnet"
-	File "${SRC_DIR}\libs\access\config\access-ql.jsonnet"
-	File "${SRC_DIR}\libs\db\config\common-meta.libsonnet"
-	File "${SRC_DIR}\apps\OpcServer\config\opcServer-meta.jsonnet"
-	RMDir /r "$DataDir\OpcServer\nodesets" ;installer-owned, recreated
-	SetOutPath "$DataDir\OpcServer\nodesets"
-	File "${UA_NODE_SETS}\DI\Opc.Ua.Di.NodeSet2.xml"
-	File "${UA_NODE_SETS}\IA\Opc.Ua.IA.NodeSet2.xml"
-	File "${UA_NODE_SETS}\IA\Opc.Ua.IA.NodeSet2.examples.xml"
-	File "${SRC_DIR}\apps\OpcServer\config\nodesets\pumps.NodeSet2.xml"
-	;the hub's seeds for this component (reviews/install-issues.md #1): the Web UI's Google provider - the fresh install's login,
-	;by ruling no username is seeded - and this server as the default connection with its provider row.  <schema>*.mutation,
-	;applied by the hub's -sync inside the schema sync; the underscore names sort after access.mutation, whose provider type 7
-	;(OpcServer) they reference.  Only with this component - a hub without it has no *seeded* login (#36: it is not without a
-	;login path, since adding a server connection creates one; what it lacks is one that needs no setup).
-	SetOutPath "$DataDir\OpcHub\sql"
-	File /oname=access_google.mutation "${SRC_DIR}\libs\access\config\release-google.mutation"
-	File /oname=access_opcServer.mutation "${SRC_DIR}\libs\access\config\release-opcServer.mutation"
-	File /oname=gateway_opcServer.mutation "${SRC_DIR}\apps\OpcGateway\config\release-opcServer.mutation"
-	;the machine role for this server (reviews/install-issues.md #25): an "OPC Server Instance" role with Administer on
-	;opc.install nodeIds, so granting OpcServer.web is one tick on its Roles tab, not a hand-written mutation.  A *.roles file,
-	;applied by the same post-configure pass as access.roles above; only with this component, since only then does the server exist.
-	File /oname=access_opcServer.roles "${SRC_DIR}\libs\access\config\release-opcServer.roles"
+	!insertmacro OpcServerFiles
 SectionEnd
 
 !ifndef SKIP_WEB

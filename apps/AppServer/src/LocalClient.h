@@ -10,7 +10,6 @@ namespace Jde::App::Server{
 		α QueryArray( string&& q, jobject variables, bool raw, SRCE )ι->up<TAwait<jarray>> override{ return query<jarray>( move(q), move(variables), raw, sl ); }
 		α QueryObject( string&& q, jobject variables, bool returnRaw, SRCE )ι->up<TAwait<jobject>> override{ return query<jobject>( move(q), move(variables), returnRaw, sl ); }
 		α QueryValue( string&& q, jobject variables, bool returnRaw, SRCE )ι->up<TAwait<jvalue>> override{ return query<jvalue>( move(q), move(variables), returnRaw, sl ); }
-		α SessionInfoAwait( SessionPK, SL )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return {}; }
 		α PublicKey()Ι->const Crypto::PublicKey& override{ return _publicKey; }
 		α SetPublicKey( Crypto::PublicKey publicKey )ι->void{ _publicKey = move(publicKey); }
 		//Unreachable:  JwtLoginAwait logs a jwt in itself when IsLocal.  An answer rather than a throw, as the remote one fails.

@@ -199,6 +199,15 @@ endfunction()
 function( sqliteProcDependencies targetName )
 	add_dependencies( ${targetName} Jde.DB.Sqlite ${ARGN} )
 endfunction()
+#The db drivers a target loads at run time, built before it:  Jde.DB.MySql on every platform, Jde.DB.Odbc where it exists
+#(windows), and Jde.DB.Sqlite with the proc MODULEs named after the target - sqliteProcDependencies, above.
+function( dbDriverDependencies targetName )
+	add_dependencies( ${targetName} Jde.DB.MySql )
+	if( WIN32 )
+		add_dependencies( ${targetName} Jde.DB.Odbc )
+	endif()
+	sqliteProcDependencies( ${targetName} ${ARGN} )
+endfunction()
 
 #Native-proc MODULE for the sqlite driver - dlopen'd for sqlite_api.h's RegisterProcs( IProcs& ), never linked.
 #Globs *.cpp/*.h from the calling directory plus any extra source dirs passed after the target name.

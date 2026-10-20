@@ -4,15 +4,18 @@
 #include <jde/web/server/Sessions.h>
 #include "../../AppServer/src/LocalClient.h"
 #include "../../OpcGateway/src/GatewayAppClient.h"
+#include "helpers.h"
 #define let const auto
 
 //The in-process app client (src/HubAppClient.h): every socket round trip the gateway makes to an AppServer answered here.
 namespace Jde::Opc::Hub::Tests{
 	using Web::FromServer::SessionInfo;
-	constexpr sv Endpoint{ "127.0.0.1" };
 
 	struct HubClientTests : ::testing::Test{
-		Ω CreateProvider( str slug )ε->Access::ProviderPK{
+		//`slug`'s provider, created anew:  one an earlier run left behind is purged first.
+		Ω FreshProvider( str slug )ε->Access::ProviderPK{
+			if( let existing = FindProvider(slug); existing )
+				PurgeProvider( existing );
 			let j = Gateway::AppClient()->QuerySync<jobject>( Ƒ("createProvider( slug:\"{}\", providerType:\"OpcServer\" ){{id}}", slug), {} );
 			return QL::AsId<Access::ProviderPK>( j );
 		}
@@ -43,9 +46,7 @@ namespace Jde::Opc::Hub::Tests{
 	//GraphQL to the app db (the provider lookups the OPC login path makes) through the local QL, as System.
 	TEST_F( HubClientTests, ProviderRoundTrip ){
 		let slug = "hubTestsProvider";
-		if( let existing = FindProvider(slug); existing )
-			PurgeProvider( existing );
-		let pk = CreateProvider( slug );
+		let pk = FreshProvider( slug );
 		ASSERT_NE( pk, 0u );
 		EXPECT_EQ( FindProvider(slug), pk );
 		PurgeProvider( pk );
@@ -55,18 +56,16 @@ namespace Jde::Opc::Hub::Tests{
 	//OPC user/password login's AddSession: authenticate + mint a web session in-process (the kAddSession round trip).
 	TEST_F( HubClientTests, AddSession ){
 		let slug = "hubTestsAddSession";
-		if( let existing = FindProvider(slug); existing )
-			PurgeProvider( existing );
-		let providerPK = CreateProvider( slug );
+		let providerPK = FreshProvider( slug );
 		ASSERT_NE( providerPK, 0u );
-		auto await = Gateway::AppClient()->AddSession( slug, "hubTestsUser", providerPK, string{Endpoint}, false );
+		auto await = Gateway::AppClient()->AddSession( slug, "hubTestsUser", providerPK, string{Host}, false );
 		let info = BlockAwait<TAwait<SessionInfo>,SessionInfo>( move(*await) );
 		EXPECT_NE( info.session_id(), 0u );
 		EXPECT_NE( info.user_pk(), 0u );
 		auto session = Web::Server::Sessions::Find( info.session_id() );
 		ASSERT_TRUE( session );
 		EXPECT_EQ( session->UserPK.Value, info.user_pk() );
-		EXPECT_EQ( session->UserEndpoint, Endpoint );
+		EXPECT_EQ( session->UserEndpoint, Host );
 		Web::Server::Sessions::Remove( info.session_id() );
 		PurgeProvider( providerPK );
 	}
