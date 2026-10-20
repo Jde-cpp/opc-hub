@@ -13,7 +13,7 @@ local logsDir = args.logsDir;
 	dbServers:{
 		scriptPaths: [args.repoSourceDir+"/libs/access/config/sql/"+args.sqlType],
 		dataPaths: [args.repoSourceDir+"/libs/access/config"],
-		sync:: true,
+		sync:: false,
 		localhost:{
 			driver: args.dbServers.localhost.driver,
 			connectionString: args.dbServers.localhost.connectionString,

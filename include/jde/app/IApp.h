@@ -10,6 +10,7 @@
 
 namespace Jde::QL{ struct RequestQL; }
 namespace Jde::App{
+	α InstanceName()ι->string;//settings "/instanceName", else Debug/Release - the name the AppServer registers a process under, its own included.
 	struct IApp{
 		virtual ~IApp()=default;//msvc warning
 
@@ -18,7 +19,7 @@ namespace Jde::App{
 		α ConnectionPK()Ι->App::ConnectionPK{ return _connectionPK; }
 		β PublicKey()Ι->const Crypto::PublicKey& = 0;
 		α SetAppPKs( ProgInstPK instPK, App::ConnectionPK pk )ι->void{ _instancePK = instPK; _connectionPK = pk; }
-		β SessionInfoAwait( SessionPK sessionPK, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;
+		β SessionInfoAwait( SessionPK, SL=SRCE_CUR )ε->up<TAwait<Web::FromServer::SessionInfo>>{ return {}; }//a local app's:  unreachable, as Sessions::UpsertAwait answers IsLocal from the shared map.
 		α Verify( const Web::Jwt& jwt )Ε->void;
 		β Login( Web::Jwt&& jwt, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> = 0;//up<TAwait>, as SessionInfoAwait: the socket and the in-process implementations differ in type.
 		β ClientQuery( QL::RequestQL&& q, UserPK executer, SRCE )ε->up<TAwait<jvalue>>; //AppServer->[Gateway]|[OpcServer]:  `status` alone, unless an app serves more.

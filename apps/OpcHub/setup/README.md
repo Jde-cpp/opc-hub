@@ -32,6 +32,10 @@ Without `-Version`, the version is `git describe --tags --match '20*'`: the tag 
 
 Every input is a `/D` define of the script, so `makensis /DBUILD_DIR=… OpcHubSetup.nsi` works without the wrapper.
 
+What the components install is `files.txt`, beside the script: a line per file, the list `linux/build-deb.sh` reads too.
+The nsi runs `files.ps1` over it as it compiles, and `build-setup.ps1` checks and, with `-Sign`, signs what its `build:`
+lines name. A file added there reaches both installers.
+
 CI: the Win2025 workflow (`.github/workflows/win2025-build.yml`) runs `build-setup.ps1` after its release build.
 
 - The nodesets and `vc_redist.x64.exe` are downloaded.
@@ -101,6 +105,8 @@ machine by itself.
 | Start at logon | current-user only | HKCU Run entries for the selected products |
 
 ## Installed layout
+
+Each file the components install is a line of `files.txt`; this is the tree they make, with what the services create:
 
 ```
 <program dir>                                            C:\Program Files\Jde-Cpp  |  %LOCALAPPDATA%\Programs\Jde-Cpp

@@ -2,6 +2,8 @@
 #include <jde/web/server/Sessions.h>
 #include "../../AppServer/tests/helpers.h"
 #include "../../OpcGateway/tests/utils/GatewayClientSocket.h"
+#include "../../OpcGateway/tests/utils/helpers.h"
+#include "helpers.h"
 #define let const auto
 
 //One listener, two protocols by path (src/WebServer.cpp): an app socket on `/` and a gateway socket on `/opc`, bound to one
@@ -10,7 +12,6 @@
 namespace Jde::Opc::Hub::Tests{
 	using App::Server::Tests::RawClientSession;
 	using Gateway::Tests::GatewayClientSocket;
-	Ξ AppPort()ι->PortType{ return Settings::FindNumber<PortType>("/http/app/port").value_or(1973); }
 	using Gateway::Tests::GatewayPort;
 
 	TEST( SocketTests, SessionRevokeClosesBothListeners ){

@@ -17,11 +17,8 @@ namespace Jde::Opc::Hub{
 			target = target.substr( 0, query );
 		if( target.empty() || target=="/" )
 			return App::Server::RequestHandler::WebsocketSession( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
-		if( target==OpcSocketPath ){
-			auto session = ms<Gateway::GatewaySocketSession>( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
-			Gateway::Server::AddSession( session );
-			return session;
-		}
+		if( target==OpcSocketPath )
+			return Gateway::Server::Accept( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
 		WARN( "[{}]websocket upgrade on '{}' - not a protocol path ('/' app, '{}' opc); declined.", connectionIndex, target, OpcSocketPath );
 		return nullptr;
 	}

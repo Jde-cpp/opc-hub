@@ -1,23 +1,13 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
 
 include( ${CMAKE_CURRENT_LIST_DIR}/../../build/functions.cmake )
-message( "Jde.Opc.Hub" )
 project( Jde.Opc.Hub VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 #The AppServer and the OpcGateway in one process (apps/OpcHub/src/hubStartup.cpp) - the two existing app libs linked into one
 #exe, so Jde.App.Server and Jde.Opc.Gateway keep building for split deployments.  Dependency lines follow the gateway exe's:
-#linking Jde.Opc.GatewayLib needs open62541, OpenSSL, ZLIB and (non-Debug linux) jsonnet.
-find_package( OpenSSL REQUIRED )
+#linking Jde.Opc.GatewayLib needs open62541, ZLIB and (non-Debug linux) jsonnet; OpenSSL comes through Jde, which links it PUBLIC.
 find_package( open62541 REQUIRED )
-if( WIN32 )
-	add_definitions( -DZLIB_USE_STATIC_LIBS )
-	set( ZLIB_ROOT ${CMAKE_INSTALL_PREFIX}/zlib )
-else()
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		link_directories( ${JSONNET_DIR}/lib )
-	endif()
-endif()
-find_package( ZLIB REQUIRED )
+findZlibAndJsonnet()
 
 if( NOT jde_Superbuild )
 	set( libDir ${jdeRoot}/libs )
@@ -59,15 +49,8 @@ if( WIN32 )
 endif()
 target_sources( ${targetName} PRIVATE ${sources} )
 
-if( WIN32 )
-	target_link_libraries( ${targetName} Iphlpapi.lib )
-else()
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		target_link_libraries( ${targetName} libjsonnet++.so libjsonnet.so )
-	endif()
-endif()
-target_link_libraries( ${targetName} OpenSSL::SSL )
 target_link_libraries( ${targetName} Jde.Opc.HubLib )
+linkAppRuntime( ${targetName} ) #no NOMINMAX: the PCH reused below is Jde.App.Server's, built without it.
 
 #Single TU (src/main.cpp): reuse Jde.App.Server's PCH as the gateway exe does (same header set, defines and flags) rather
 #than building a third copy.  Guarded: a standalone configure of this app does not define Jde.App.Server.
@@ -86,7 +69,6 @@ if( WIN32 )
 		RUNTIME_OUTPUT_DIRECTORY "${appOutDir}"
 		PDB_OUTPUT_DIRECTORY "${appOutDir}"
 	)
-	copyCommonDlls()
 	#Jde.CheckCpu:  Process::CheckCpu as an exe of its own, which Setup runs before it installs anything (OpcHubSetup.nsi,
 	#.onInit).  No Jde library and the static CRT - Setup has not installed the Visual C++ runtime yet - so it imports
 	#kernel32 alone.

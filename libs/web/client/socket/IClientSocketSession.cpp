@@ -254,10 +254,24 @@ namespace Jde::Web::Client{
 		auto stream = _session->StreamPtr();
 		return !stream || stream->IsClosing();
 	}
+	//Decided on the stream's strand, where OnClose runs:  a stream still the session's and not closing is closed, and its OnClose
+	//resumes us;  otherwise a close ran or is running, as await_ready would now answer, and we resume from the strand.  Decided
+	//here instead, a server's close could reach OnClose between await_ready and this, and the handle was left where nothing
+	//resumes it - SessionMapTests.RemoveExistingEvicts' TearDown waited out the run.
 	α CloseClientSocketSessionAwait::Suspend()ι->void{
-		_session->_closeHandle = _h;
-		if( auto stream = _session->StreamPtr(); stream )
-			stream->Close( _session, _terminate );
+		auto stream = _session->StreamPtr();
+		if( !stream ){//OnClose ran since await_ready.
+			Post( move(_h) );
+			return;
+		}
+		stream->Post( [session=_session, stream, terminate=_terminate, h=_h]{
+			if( session->StreamPtr()==stream && !stream->IsClosing() ){
+				session->_closeHandle = h;
+				stream->Close( session, terminate );
+			}
+			else
+				h.resume();
+		} );
 	}
 	α IClientSocketSession::OnClose( beast::error_code ec )ι->void{
 		if( ec )

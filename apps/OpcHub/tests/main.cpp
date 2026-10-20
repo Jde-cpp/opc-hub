@@ -21,14 +21,15 @@ namespace Jde{
 		Logging::AddTagParser( mu<Opc::UALogParser>() );
 		Process::Startup( argc, argv, "Tests.OpcHub", "OpcHub tests", true );
 		App::Server::InitLogging();//as the hub: the AppServer's - the one Logging::Init in the process.
-		if( Settings::FindBool("/testing/embeddedOpcServer").value_or(true) ){
+		let embedded = Settings::FindBool( "/testing/embeddedOpcServer" ).value_or( true );
+		if( embedded ){
 			//the gateway role's OPC client cert before the OpcServer starts - spares the first connect a fail-rescan-retry cycle (Jde.Opc.Tests does the same).
 			Opc::Gateway::UAClient::EnsureCertificate( Opc::Gateway::Tests::OpcServerSlug );
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
 		}
 		//the OpcServer once the hub's listener is up - it logs in to the AppServer role over the socket.
-		auto opcServer = Settings::FindBool("/testing/embeddedOpcServer").value_or(true) ? function<void()>{ []{ Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") ); } } : function<void()>{};
+		auto opcServer = embedded ? function<void()>{ []{ Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") ); } } : function<void()>{};
 		Opc::Hub::Startup( Settings::AsObject("/http"), Settings::AsObject("/credentials"), move(opcServer) );
 	}
 }

@@ -4,8 +4,7 @@
 #include "utils/helpers.h"
 #include <jde/fwk/str.h>
 #include <jde/web/client/proto/Web.FromServer.pb.h>
-#include <jde/web/client/http/ClientHttpAwait.h>
-#include <jde/web/client/http/ClientHttpResException.h>
+#include <jde/tests/HttpTest.h>
 #include "../src/GatewayAppClient.h"
 #include "../src/auth/OpcServerSession.h"
 #include <jde/web/server/Sessions.h>
@@ -17,7 +16,7 @@
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	using Web::Client::ClientHttpAwait; using Web::Client::ClientHttpRes; using Web::Client::ClientHttpResException;
+	using Web::Client::ClientHttpResException;
 	constexpr ELogTags _tags{ ELogTags::Test };
 
 	//A real web session, not a fabricated id:  SessionCounts sweeps out entries whose session Web::Server no longer knows, so a
@@ -37,7 +36,7 @@ namespace Jde::Opc::Gateway::Tests{
 	struct UAClientState final{
 		Ω SetConnected( UAClient& client, bool connected )ι->void{ client._connected = connected; }
 	};
-	struct QLTests : ::testing::Test{
+	struct QLTests : HttpTest{
 	protected:
 		Ω SetUpTestSuite()ε->void{ GetConnection( OpcServerSlug ); }//ε: GetConnection throws - under ι gtest never sees it and the whole binary terminates.
 		//`typeName`'s introspected fields, each with its name and type.
@@ -472,7 +471,7 @@ namespace Jde::Opc::Gateway::Tests{
 			//over http, as the page sends it:  BadTimeout answers 500, whose body carried the status alone and not the reason.
 			jobject body{ {"query", q}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}}} };
 			try{
-				BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"localhost", "/graphql", serialize(body), GatewayPort(), {.Authorization=Ƒ("{:x}", AppClient()->SessionId()), .IsSsl=false}} );
+				Post( GatewayPort(), "/graphql", serialize(body), Ƒ("{:x}", AppClient()->SessionId()) );
 				ADD_FAILURE() << "a connect to a silent listener succeeded";
 			}
 			catch( const ClientHttpResException& e ){
@@ -487,7 +486,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );
 		EXPECT_THROW( Socket().QuerySync(string{q}, {{"opc", "../" + slug}, {"url", url}, {"certificateUri", urn}}), GatewayErrorResponse ) << "the slug names the certificate file.";
 		try{//a mutation:  a GET - a cross-site <img> - must not connect the gateway anywhere or issue a certificate.
-			BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{"localhost", "/graphql?query=testConnection(opc:%22qlTestsTestConnection%22,url:%22opc.tcp://127.0.0.1:1%22)%7BapplicationUri%7D", GatewayPort(), {.IsSsl=false}} );
+			Get( GatewayPort(), "/graphql?query=testConnection(opc:%22qlTestsTestConnection%22,url:%22opc.tcp://127.0.0.1:1%22)%7BapplicationUri%7D" );
 			ADD_FAILURE() << "testConnection ran over GET";
 		}
 		catch( const ClientHttpResException& e ){

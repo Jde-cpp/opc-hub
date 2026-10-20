@@ -68,6 +68,7 @@ if( jde_APPS )
 		add_subdirectory( libs/historian/tests libs/historian/tests )
 		add_subdirectory( apps/AppServer/tests apps/AppServer/tests )
 		add_subdirectory( apps/OpcServer/tests apps/OpcServer/tests )
+		add_subdirectory( apps/OpcGateway/tests/utils apps/OpcGateway/tests/utils ) #Jde.Opc.TestUtils:  the soak and both OPC suites link it.
 		add_subdirectory( apps/OpcGateway/tests apps/OpcGateway/tests )
 		add_subdirectory( apps/OpcGateway/soak apps/OpcGateway/soak )
 		add_subdirectory( apps/OpcHub/tests apps/OpcHub/tests )

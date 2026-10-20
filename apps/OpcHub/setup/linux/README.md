@@ -36,7 +36,8 @@ apps/OpcHub/setup/linux/build-deb.sh --no-strip                    # keep the dw
 
 What it does:
 
-It stages one dir per product with the exe, `libJde.so`, `libJde.DB.so`, the sqlite driver and the proc modules.
+It stages what `apps/OpcHub/setup/files.txt` lists, the list the Windows installer reads too: one dir per product with
+the exe, `libJde.so`, `libJde.DB.so`, the sqlite driver and the proc modules, the settings mirror and the data dirs.
 
 Beside them goes every `.so` those resolve outside the system dirs:
 
@@ -115,6 +116,9 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
 The log is the journal - `journalctl -u jde-opchub -f` - and the files under the product dir.
 
 ## Installed layout
+
+Each file the products install is a line of the source's `apps/OpcHub/setup/files.txt`; this is the tree they make,
+with what the services create:
 
 ```
 /opt/jde-cpp

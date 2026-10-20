@@ -7,7 +7,7 @@ namespace Jde::App::Server{
 	namespace Routes{
 		α Ready( Web::Server::HttpRequest& req )ι->up<jvalue>;//GET /GoogleAuthClientId, /opcGateways, /opcServers - null for any other request.
 		α LoginJwt( Web::Server::HttpRequest&& req, Web::Server::IHttpRequestAwait::Handle h )ι->void;//POST /login with a Bearer JWT - the session was minted by Server::HandleRequest.
-		α Logout( Web::Server::HttpRequest&& req, Web::Server::IHttpRequestAwait::Handle h )ι->void;//POST /logout - {removed}.
+		α Logout( Web::Server::HttpRequest&& req, Web::Server::IHttpRequestAwait::Handle h )ι->void;//POST /logout - {removed}, false for a request with no Authorization.
 	}
 	struct HttpRequestAwait final: Web::Server::IHttpRequestAwait{
 		using base = Web::Server::IHttpRequestAwait;

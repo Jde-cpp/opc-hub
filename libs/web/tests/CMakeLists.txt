@@ -4,14 +4,12 @@ include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
 project( Jde.Web.Tests VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
+findZlibAndJsonnet()
 if( WIN32 )
-	add_definitions( -DZLIB_USE_STATIC_LIBS )
-	set( ZLIB_ROOT ${CMAKE_INSTALL_PREFIX}/zlib )
 	#OpenSSL is the vcpkg `x64-windows` (dynamic) triplet now - libcrypto-3-x64.dll / libssl-3-x64.dll.  Asking for static
 	#here makes vcpkg-cmake-wrapper warn and FindOpenSSL restrict CMAKE_FIND_LIBRARY_SUFFIXES, which finds nothing.
 	find_package( OpenSSL REQUIRED )
 endif()
-find_package( ZLIB REQUIRED )
 
 set( targetName Jde.Web.Tests )
 add_executable( ${targetName} )

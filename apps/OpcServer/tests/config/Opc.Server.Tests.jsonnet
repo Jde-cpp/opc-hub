@@ -54,7 +54,7 @@ local appPort = 2067;
 			args.repoSourceDir + "/libs/access/config/sql/"+args.sqlType
 		],
 		dataPaths: [args.repoSourceDir + "/apps/AppServer/config", args.repoSourceDir + "/libs/access/config"],
-		sync:: true,
+		sync:: false,
 		localhost:{
 			driver: args.dbServers.localhost.driver,
 			connectionString: args.dbServers.localhost.connectionString,

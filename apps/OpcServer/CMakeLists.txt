@@ -29,15 +29,7 @@ endif()
 find_package( open62541 REQUIRED )
 #add_definitions( -DUA_ENABLE_ENCRYPTION_OPENSSL )
 
-if( WIN32 )
-	add_definitions( -DZLIB_USE_STATIC_LIBS )
-	set( ZLIB_ROOT ${CMAKE_INSTALL_PREFIX}/zlib )
-else()
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		link_directories( ${JSONNET_DIR}/lib )
-	endif()
-endif()
-find_package( ZLIB REQUIRED )
+findZlibAndJsonnet()
 
 include( ${jdeRoot}/build/dependencies.cmake )
 set( targetName Jde.Opc.Server )
@@ -53,15 +45,11 @@ endif()
 file( GLOB headers CONFIGURE_DEPENDS src/*/*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
-if( WIN32 )
-	target_link_libraries( ${targetName} Iphlpapi.lib )
-else()
+if( NOT WIN32 )
 	target_link_libraries( ${targetName} OpenSSL::SSL )
-	if( NOT CMAKE_BUILD_TYPE STREQUAL "Debug" )
-		target_link_libraries( ${targetName} libjsonnet++.so libjsonnet.so )
-	endif()
 endif()
 target_link_libraries( ${targetName} Jde Jde.DB Jde.QL Jde.Access Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.ServerLib )
+linkAppRuntime( ${targetName} LIBXML2 ) #no NOMINMAX: the PCH reused below is Jde.App.Server's, built without it.
 
 #Single TU (src/main.cpp), but the PUBLIC pc.h of Jde.Web.Client et al. propagates a ~116MB PCH into
 #this target - a PCH that costs more to build than the one file it serves.  Jde.App.Server inherits the
@@ -79,6 +67,4 @@ if( WIN32 )
 		RUNTIME_OUTPUT_DIRECTORY "${appOutDir}"
 		PDB_OUTPUT_DIRECTORY "${appOutDir}"
 	)
-	copyCommonDlls()
-	add_custom_command( TARGET ${targetName} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_INSTALL_PREFIX}/libxml2/bin/libxml2.dll" $<TARGET_FILE_DIR:${targetName}>  COMMENT "libxml2.dll" )
 endif()
