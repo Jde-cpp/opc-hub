@@ -41,7 +41,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)} );
 		ASSERT_TRUE( collector );
 		ASSERT_NE( collector, _client ) << "the collector was handed the session's client";//ASSERT:  the removal below would take the suite's client.
-		EXPECT_TRUE( collector->Credential.IsCollector() );
+		EXPECT_TRUE( collector->Credential().IsCollector() );
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, cred), _client ) << "the session's lookup found the collector's client";
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, Credential::Collector(cred)), collector );
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, Credential::Collector(cred)), BlockTAwait<sp<UAClient>>(ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)}) ) << "a second collector connect reuses its client";

@@ -18,6 +18,10 @@
 #include "UAClient.h"
 #include "WebServer.h"
 #include "ql/GatewayQL.h"
+#include "ql/GatewayQLAwait.h"
+#include "ql/HistGroupInfoQLAwait.h"
+#include "ql/OpcSessionsQLAwait.h"
+#include "ql/SearchQLAwait.h"
 #include "hist/HistHost.h"
 #include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
@@ -26,9 +30,6 @@
 
 #define let const auto
 namespace Jde::Opc{
-	//Defined in async/AsyncRequest.cpp as Jde::Opc::Gateway::_pingInterval/_ttl - the extern must sit in that same namespace or it
-	//declares a distinct Jde::Opc:: symbol that no TU defines (undefined at link).  27fe137b moved startup here and flattened it.
-	namespace Gateway{ extern Duration _pingInterval; extern Duration _ttl; }
 	α Gateway::Configure( const jobject& webServerSettings, jobject userName, sp<QL::LocalQL> ql )ε->sp<DB::AppSchema>{
 		if( userName.empty() )
 			userName = jobject{ {"name", Ƒ("OpcGateway-{}", Process::HostName())} };
@@ -41,7 +42,13 @@ namespace Jde::Opc{
 			ConfigureQL( {schema}, authorize );
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
-		QL::SetSystemTables( {"connectionStatus", "dataType", "dataTypes", "discoveryUrls", "history", "historyCapabilities", "historyGroups", "historyThresholds", "logSetting", "namespaces", "node", "nodes", "opcConnections", "opcSessions", "search", "securityMode", "securityPolicyUri", "serverDescription", "sessions", "variable", "variables"} );//sessions:  the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
+		//logSetting, the app client's;  sessions, the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
+		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command} };
+		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}} ){
+			for( let table : family )
+				tables.emplace( table );
+		}
+		QL::SetSystemTables( move(tables) );
 		flat_set<string> mutations{ string{HistGroupMAwait::ResolveCommand}, string{TestConnectionQLAwait::Command} };//resolveHistory, testConnection:  resolve and test are no verbs either.
 		for( let command : HistQL::EditCommands )
 			mutations.emplace( command );

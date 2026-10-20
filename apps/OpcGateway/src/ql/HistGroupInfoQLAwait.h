@@ -25,6 +25,7 @@ namespace Jde::Opc::Gateway{
 		HistGroupInfoQLAwait( QL::TableQL&& q, QL::Creds creds, SRCE )ι:base{ move(q), move(creds), sl }{}
 		Ω IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName==GroupsCommand || q.JsonName==CapabilitiesCommand || q.JsonName==ThresholdsCommand; }
 		static constexpr sv GroupsCommand{ "historyGroups" }, CapabilitiesCommand{ "historyCapabilities" }, ThresholdsCommand{ "historyThresholds" };
+		static constexpr array<sv,5> Tables{ GroupsCommand, CapabilitiesCommand, ThresholdsCommand, "nodes", "node" };//historyGroups{ nodes{ node } }.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 		α Groups()ε->jvalue;

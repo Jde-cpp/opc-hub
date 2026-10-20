@@ -68,7 +68,7 @@ VALUE "FileVersion", JDE_VERSION_STRING
 VALUE "InternalName", "Jde.Opc.Tests.exe"
 VALUE "LegalCopyright", JDE_COPYRIGHT
 VALUE "OriginalFilename", "Jde.Opc.Tests.exe"
-VALUE "ProductName", "OpcTests"
+VALUE "ProductName", "Tests.Opc"
 VALUE "ProductVersion", JDE_VERSION_STRING
 END
 END

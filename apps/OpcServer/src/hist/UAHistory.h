@@ -47,7 +47,7 @@ namespace Jde::Opc::Server{
 		//How long open62541's callbacks ran, which is how long each held the service lock.
 		struct Timing final{ uint Count{}; steady_clock::duration Total{}; steady_clock::duration Longest{}; };
 		α Reads()Ι->Timing{ return _reads.Get(); }
-		α Returned()Ι->uint{ return _returned.load(); }//the values the reads returned.
+		α Returned()Ι->uint{ return _returned.load(); }//the values the reads returned - for tests and diagnostics.
 		α Collections()Ι->Timing{ return _collections.Get(); }
 		α Edits()Ι->Timing{ return _edits.Get(); }
 

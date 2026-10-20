@@ -5,7 +5,7 @@
 namespace Jde::Opc::Gateway{
 	Ω httpStatus( StatusCode sc )ι->Jde::EHttpStatus{
 		switch( sc ){
-			case UA_STATUSCODE_BADIDENTITYTOKENREJECTED: return EHttpStatus::Forbidden;
+			case UA_STATUSCODE_BADIDENTITYTOKENREJECTED: return EHttpStatus::Forbidden;//the OPC server's refusal, not the hub's 401 - which signs the web user out (install-issues #24).
 			case UA_STATUSCODE_BADCONNECTIONREJECTED: return EHttpStatus::BadGateway;
 			default: return EHttpStatus::InternalServerError;
 		}

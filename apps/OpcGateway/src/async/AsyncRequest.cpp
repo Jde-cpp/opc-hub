@@ -8,8 +8,8 @@
 
 namespace Jde::Opc::Gateway{
 	namespace asio = boost::asio;
-	Duration _pingInterval;//config, set once at startup - safe to share.
-	Duration _ttl;//config, set once at startup - safe to share.
+	Duration _pingInterval;
+	Duration _ttl;
 
 	AsyncRequest::AsyncRequest()ι:
 		_strand{ Executor()->get_executor() }
@@ -44,7 +44,7 @@ namespace Jde::Opc::Gateway{
 		catch( UAException& e ){
 			let stopping = _stopped.test() || _stopping;//FailPending's disconnect fails it BadSessionClosed.
 			let sc = (StatusCode)e.Code();
-			let lapsed = !stopping && ( sc==UA_STATUSCODE_BADSESSIONIDINVALID || sc==UA_STATUSCODE_BADSESSIONCLOSED );//the ping interval outlasts the server's session timeout.
+			let lapsed = !stopping && UAClient::IsSessionLoss( sc );//the ping interval outlasts the server's session timeout.
 			//A hung server or a silent network drop:  the keep-alive is the probe that sees the outage first.
 			let lost = !stopping && ( sc==UA_STATUSCODE_BADTIMEOUT || UAClient::IsConnectionLoss(sc) );
 			e.SetLevel( ELogLevel::NoLog );//~Exception logs the format string, never _what - so the hint is written here.

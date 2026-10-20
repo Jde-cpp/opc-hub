@@ -338,7 +338,7 @@ namespace Jde::Opc::Hist{
 
 		//A copy, as a subscription's snapshot takes it:  what will be stored, a pending value not yet among it.  What a running
 		//flush took is no longer here, and not yet in its files.
-		α Buffer()Ι->vector<Record>;
+		α Buffer()Ι->vector<Record>;//for tests and diagnostics.
 		//Historian::RemoveGroup's:  every member leaves, each subscription ends (OnEnded), and Add throws after.  The buffer
 		//stays for the flush, which also rewrites each live file the group has, today's included, as its archive:  no
 		//midnight comes for a group that is gone, and no start adds it again.
@@ -411,7 +411,7 @@ namespace Jde::Opc::Hist{
 		//group's locks, so no record is in both or neither.  Throws for no nodes, a group that was removed or has stopped, or
 		//a file the snapshot opens that can't be read through.
 		α Subscribe( sp<ISubscriber> subscriber, vector<NodeIndex> nodes, UA_DateTime from, SRCE )ε->up<Subscription>;
-		α Subscribers()Ι->uint;//registered, each until its Subscription ends.
+		α Subscribers()Ι->uint;//registered, each until its Subscription ends - for tests and diagnostics.
 	private:
 		friend struct FlushAwait;
 		friend struct EditAwait;

@@ -60,7 +60,7 @@ namespace Jde::Opc::Gateway{
 		//Each node's, in order.  A member named twice, by two spellings, is refused, BadRequest:  the library would return its
 		//values once and its bounds twice.
 		α Indexes( const vector<ExNodeId>& nodes, SRCE )Ε->vector<optional<HistGroupNodePK>>;
-		α Subscribed()Ι->uint;//the members the server has given items.
+		α Subscribed()Ι->uint;//the members the server has given items - for tests and diagnostics.
 		//Every item goes and no retry runs:  after Historian::RemoveGroup, and at the gateway's end.
 		α Close()ι->void;
 		//Asks the server for an item for every member that has none, on the collector's client, each node by the index its URI

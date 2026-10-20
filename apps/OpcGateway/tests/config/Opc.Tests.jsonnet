@@ -88,7 +88,7 @@ local logsDir = args.logsDir;
 		port: 4940,
 		ssl: instance.http.opcServer.ssl
 	},
-	credentials:{
+	credentials:{//the two embedded clients' AppServer logins, not the product's name (Tests.Opc):  distinct, so each signs in as itself.
 		gateway:{ name: "GatewayTests" },
 		opcServer:{ name: "OpcTests" }
 	},

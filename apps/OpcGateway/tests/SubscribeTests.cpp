@@ -710,7 +710,7 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NO_THROW( SubscribeCounting(_client, listener, {Intensity}) );//the initial push - the item is live from here.
 
 			auto refuse = [client=_client]( StatusCode sc ){
-				return BlockTAwait<bool>( UAStrandAwait<bool>{client, [client, sc]{ UAClient::RemoveIfDisconnected( sc, client ); return client->Connected.load(); }} );
+				return BlockTAwait<bool>( UAStrandAwait<bool>{client, [client, sc]{ UAClient::RemoveIfDisconnected( sc, client ); return client->IsConnected(); }} );
 			};
 			EXPECT_TRUE( refuse(UA_STATUSCODE_BADTOOMANYSUBSCRIPTIONS) ) << "the server's refusal took the client down";
 			EXPECT_TRUE( refuse(UA_STATUSCODE_BADOUTOFMEMORY) ) << "a local refusal took the client down";
@@ -747,7 +747,7 @@ namespace Jde::Opc::Gateway::Tests{
 				uint parked{};
 				std::jthread unsubscriber{ [&, client=_client]{
 					spinning = true;
-					while( client->Connected ){}//step one:  not among the live clients...
+					while( client->IsConnected() ){}//step one:  not among the live clients...
 					parked = UAClient::UnsubscribePending( OpcServerSlug, listener, nodes ).size();//...so, step two, it is parked.
 				}};
 				while( !spinning )
@@ -1070,23 +1070,23 @@ namespace Jde::Opc::Gateway::Tests{
 	//subscription-disconnect #7's per-cycle re-subscribe makes that one a second for the length of an outage.  Both ways a
 	//request fails, and the unsubscribe's record with the subscribe's.
 	TEST_F( SubscribeTests, AFailedRequestLeavesNoRecord ){
-		let before = GatewayClientSocket::PendingSubscriptionRecords();
+		let before = Socket().PendingSubscriptionRecords();
 		//lambdas:  the awaits' template commas do not survive a gtest macro.
 		auto subscribe = [&]( GatewayClientSocket& socket, ServerCnnctnNK slug ){ BlockAwait<ClientSocketAwait<FromServer::SubscriptionAck>,FromServer::SubscriptionAck>( socket.Subscribe(move(slug), {Intensity}, _listener) ); };
 		auto unsubscribe = [&]( GatewayClientSocket& socket ){ BlockAwait<ClientSocketAwait<FromServer::UnsubscribeAck>,FromServer::UnsubscribeAck>( socket.Unsubscribe(OpcServerSlug, {Intensity}) ); };
 
 		//answered:  the gateway has no such connection, and says so over a working socket.
 		EXPECT_THROW( subscribe(Socket(), "m2Closing15NoSuchConnection"), GatewayErrorResponse );
-		EXPECT_EQ( GatewayClientSocket::PendingSubscriptionRecords(), before ) << "a subscribe the gateway answered with an error left its record";
+		EXPECT_EQ( Socket().PendingSubscriptionRecords(), before ) << "a subscribe the gateway answered with an error left its record";
 
 		//a dead socket:  the write finds the stream gone and every pending task is failed - CloseTasks, which is also where
 		//a timeout and a close mid-request end up.
 		auto session = GatewayClientSocket::Open( "localhost", GatewayPort(), AppClient()->SessionId() );
 		BlockVoidAwait( session->Close(false, SRCE_CUR) );
 		EXPECT_ANY_THROW( subscribe(*session, string{OpcServerSlug}) );
-		EXPECT_EQ( GatewayClientSocket::PendingSubscriptionRecords(), before ) << "a subscribe on a dead socket left its record";
+		EXPECT_EQ( session->PendingSubscriptionRecords(), 0u ) << "a subscribe on a dead socket left its record";
 		EXPECT_ANY_THROW( unsubscribe(*session) );
-		EXPECT_EQ( GatewayClientSocket::PendingSubscriptionRecords(), before ) << "an unsubscribe on a dead socket left its record";
+		EXPECT_EQ( session->PendingSubscriptionRecords(), 0u ) << "an unsubscribe on a dead socket left its record";
 	}
 
 	//Sessions racing to connect to the same slug coalesce in ConnectAwait::_requests, and a Create() failure fans the

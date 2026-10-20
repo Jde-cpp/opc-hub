@@ -119,7 +119,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		auto collector = Collector();
 		ASSERT_TRUE( collector ) << "the collector connects under its own credential";
-		EXPECT_TRUE( collector->Credential.IsCollector() );
+		EXPECT_TRUE( collector->Credential().IsCollector() );
 		EXPECT_EQ( Items(), itemsBefore+2 );
 
 		let resolved = Mutate( "resolveHistory( group:$group ){ nodes{ templateNode path node status } }", {{"group", groupId}} );

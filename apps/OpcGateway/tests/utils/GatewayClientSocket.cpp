@@ -19,10 +19,6 @@ namespace Jde::Opc::Gateway::Tests{
 		INFOT( ELogTags::SocketClientRead, "[{}]{} GatewayClientSocket created: {}.", Id(), IsSsl() ? "Ssl" : "Plain", Host() );
 	}
 
-	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void;
-	α forgetRequest( RequestId requestId )ι->void;
-	α onUnsubscribeAck( RequestId requestId )ι->void;
-	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode;
 	α GatewayClientSocket::registerHist( RequestId subscription, sp<IHistListener> listener, bool duplicate )ι->void{
 		lg _{ _histMutex };
 		_histListeners.emplace( subscription, move(listener) );
@@ -195,26 +191,14 @@ namespace Jde::Opc::Gateway::Tests{
 		return await<uint32>{ FromClientUtils::Connection(sessionId, requestId), requestId, shared_from_this(), sl };
 	}
 
-	absl::Mutex _subscriptionRequestMutex;
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>, sp<IListener>>> _subscriptionRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);
-	flat_map<RequestId, tuple<ServerCnnctnNK, vector<NodeId>>> _unsubscribeRequests ABSL_GUARDED_BY(_subscriptionRequestMutex);//The ack prunes the nodes' listeners: they used to stay registered forever, so a later Subscribe on the same node through the same socket dispatched pushes to a listener whose fixture was long destroyed.
-	absl::Mutex _subscriptionsMutex;
-	flat_map<ServerCnnctnNK, flat_map<NodeId, flat_set<sp<IListener>>>> _subscriptions ABSL_GUARDED_BY(_subscriptionsMutex);
-	//A Subscribe/Unsubscribe registers its record before it is written, and the ack was the only thing that took it out - so
-	//every request that *failed* left its record, listener and all, for the life of the process:  answered with an error, the
-	//socket dead, a write on a closed stream, a timeout.  subscription-disconnect #7's per-cycle re-subscribe made that one
-	//per second for the length of an outage, in the harness that scores the soak (reviews/m2-closing.md #15).  Request ids
-	//are process-wide (IClientSocketSession::NextRequestId), so one file-scope map serves every socket.  Two ways out now
-	//besides the ack:  here, by id, for an error the gateway answered;  and CloseTasks' sweep, for everything a dead socket
-	//takes with it, where no id is handed over.
-	α forgetRequest( RequestId requestId )ι->void{
+	α GatewayClientSocket::forgetRequest( RequestId requestId )ι->void{
 		if( !requestId )
 			return;
 		ul _{ _subscriptionRequestMutex };
 		_subscriptionRequests.erase( requestId );
 		_unsubscribeRequests.erase( requestId );
 	}
-	α GatewayClientSocket::PendingSubscriptionRecords()ι->uint{
+	α GatewayClientSocket::PendingSubscriptionRecords()Ι->uint{
 		rl _{ _subscriptionRequestMutex };
 		return _subscriptionRequests.size()+_unsubscribeRequests.size();
 	}
@@ -248,8 +232,7 @@ namespace Jde::Opc::Gateway::Tests{
 		{ ul _{ _subscriptionRequestMutex }; _unsubscribeRequests.emplace( requestId, make_tuple(slug, nodeIds) ); }
 		return await<FromServer::UnsubscribeAck>{ FromClientUtils::Unsubscription(move(slug), nodeIds, requestId), requestId, shared_from_this(), sl };
 	}
-	//the acked nodes' listeners go with the subscription - see _unsubscribeRequests.
-	α onUnsubscribeAck( RequestId requestId )ι->void{
+	α GatewayClientSocket::onUnsubscribeAck( RequestId requestId )ι->void{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _unsubscribeRequests.find( requestId );
 		if( it==_unsubscribeRequests.end() ){
@@ -267,7 +250,7 @@ namespace Jde::Opc::Gateway::Tests{
 		_unsubscribeRequests.erase( it );
 	}
 
-	α onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode{
+	α GatewayClientSocket::onSubscriptionAck( RequestId requestId, const FromServer::SubscriptionAck& result )ι->StatusCode{
 		ul _{ _subscriptionRequestMutex };
 		auto it = _subscriptionRequests.find( requestId );
 		if( it==_subscriptionRequests.end() ){
@@ -297,7 +280,7 @@ namespace Jde::Opc::Gateway::Tests{
 		return added ? UA_STATUSCODE_GOOD : sc;
 	}
 
-	α onNodeValues( FromServer::NodeValues&& nodeValues )ι->void{
+	α GatewayClientSocket::onNodeValues( FromServer::NodeValues&& nodeValues )ι->void{
 		rl _{ _subscriptionsMutex };
 		let& opcId = nodeValues.opc_id();
 		auto slugNodes = _subscriptions.find( opcId );
@@ -322,11 +305,10 @@ namespace Jde::Opc::Gateway::Tests{
 		//socket closing, a write on a closed stream, a request timing out (AddTimeout -> CloseOnError) - and the soak's reconnect
 		//keys on the difference.  Stamping these as answered made every dead socket reset the soak's failure count, so it never
 		//reconnected (subscription-disconnect #1).
-		{//the records of what this socket still has pending go with its tasks (#15).  Before the drain:  the drain hands over
-			//handles, not ids, and HasTask is only true of a request until it has run.  Another socket's records are not this one's to take.
+		{//what this socket still has pending goes with its tasks (#15):  no ack can come over a dead socket.
 			ul _{ _subscriptionRequestMutex };
-			erase_if( _subscriptionRequests, [this]( let& kv ){ return HasTask(kv.first); } );
-			erase_if( _unsubscribeRequests, [this]( let& kv ){ return HasTask(kv.first); } );
+			_subscriptionRequests.clear();
+			_unsubscribeRequests.clear();
 		}
 		base::CloseTasks( ec );
 	}

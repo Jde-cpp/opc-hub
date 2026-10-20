@@ -20,6 +20,7 @@
 namespace Jde::Opc{ 	struct Value; }
 namespace Jde::Opc::Gateway{
 	namespace Browse{ struct Request; }
+	namespace Tests{ struct UAClientState; }
 
 	struct CreateMonitoredItemsRequest;
 	//What a test connect (UAClient::ConnectForTest) reports:  the client with its session activated, or why the connect failed.
@@ -54,6 +55,26 @@ namespace Jde::Opc::Gateway{
 		//already down.  BadConnectionClosed:  it went under the submit - sendRequest hands back connectStatus, or the send failed.
 		//BadSecureChannelClosed:  the same, and what open62541 answers every call in flight with when the channel closes.
 		Ω IsConnectionLoss( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADSERVERNOTCONNECTED || sc==UA_STATUSCODE_BADCONNECTIONCLOSED || sc==UA_STATUSCODE_BADSECURECHANNELCLOSED; }
+		//The statuses that say the session went while the channel may stand:  the server timed it out or closed it.  The keep-alive's
+		//lapse, and with IsConnectionLoss the end of a search crawl.
+		Ω IsSessionLoss( StatusCode sc )ι->bool{ return sc==UA_STATUSCODE_BADSESSIONIDINVALID || sc==UA_STATUSCODE_BADSESSIONCLOSED; }
+		//The statuses a server turns a client certificate down with - the connect's hint, and every one a rejection that ends the
+		//reconnect chain.  The first is the one that matters:  the Jde OpcServer and Kepware answer an untrusted certificate with
+		//BadSecurityChecksFailed at the OPN, whatever their own logs call it.
+		Ω RefusesCertificate( StatusCode sc )ι->bool{
+			switch( sc ){
+			case UA_STATUSCODE_BADSECURITYCHECKSFAILED:
+			case UA_STATUSCODE_BADCERTIFICATEUNTRUSTED:
+			case UA_STATUSCODE_BADCERTIFICATEINVALID:
+			case UA_STATUSCODE_BADCERTIFICATEURIINVALID:
+			case UA_STATUSCODE_BADCERTIFICATETIMEINVALID:
+			case UA_STATUSCODE_BADCERTIFICATEUSENOTALLOWED:
+			case UA_STATUSCODE_BADCERTIFICATEREVOKED:
+				return true;
+			default:
+				return false;
+			}
+		}
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
 		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  OpcQLHook.
@@ -110,9 +131,8 @@ namespace Jde::Opc::Gateway{
 		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
 		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
 		//certificateUri, which is the server's and only filters its endpoints (reviews/security-matrix.md #8; ApplicationUriTests).
-		//`applicationUri` puts another uri in the SAN's place:  the re-issue tests' seam - nothing in production passes it.
-		Ω EnsureCertificate( const ServerCnnctnNK& slug, sv applicationUri={}, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
-		Ω CryptoSettings( const ServerCnnctnNK& slug, sv applicationUri={} )ι->Crypto::CryptoSettings; //for soak
+		Ω EnsureCertificate( const ServerCnnctnNK& slug, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
+		Ω CryptoSettings( const ServerCnnctnNK& slug )ι->Crypto::CryptoSettings;//the issued certificate's:  /gateway/issuedCerts with the slug's file names.
 		α Slug()Ι->const ServerCnnctnNK&{ return _opcServer.Slug; }
 		α Name()Ι->str{ return _opcServer.Name; }
 		α Index()ι->NodeIndex&{ return _nodeIndex; }//node names for `search`, crawled on first use;  dies with the client.
@@ -131,12 +151,11 @@ namespace Jde::Opc::Gateway{
 		//subtypes, so a path through HasComponent or HasProperty resolves as one through Organizes does.  `parents` asks for every
 		//prefix of the path as well.  Strand-only, as every sync service (UAStrandAwait).
 		α BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start=NodeId::ObjectsFolder() )Ε->flat_map<string,ExpectedNodeId>;
-		UA_ClientConfig _config{};//TODO move private.
-		Gateway::Credential Credential;
-
-		std::atomic<bool> Connected{};
-		std::atomic<bool> Discarded{};//set by RemoveClient just before it clears Connected:  a rebuild on this client drops what it has not restored instead of parking it.
+		α Credential()Ι->const Gateway::Credential&{ return _credential; }
+		α IsConnected()Ι->bool{ return _connected; }
+		α IsDiscarded()Ι->bool{ return _discarded; }//set by RemoveClient just before it clears connected:  a rebuild on this client drops what it has not restored instead of parking it.
 	private:
+		Ω StashPending( const sp<UAClient>& client )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
 		Ω StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void;
 		Ω SetConnectError( const ServerCnnctnNK& slug, string message )ι->void;
@@ -169,6 +188,10 @@ namespace Jde::Opc::Gateway{
 		α TakeTestResult()ι->ConnectCallback;//_onTestResult, once:  whichever of StateCallback, the deadline and Shutdown reports first.
 		α ExpireTest( StatusCode sc )ι->void;//reports `sc` for a test connect still unanswered, and stops the client.
 
+		UA_ClientConfig _config{};
+		Gateway::Credential _credential;
+		std::atomic<bool> _connected{};
+		std::atomic<bool> _discarded{};
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
 		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
@@ -190,6 +213,7 @@ namespace Jde::Opc::Gateway{
 		Logger _logger; //after handle
 		UA_Client* _ptr{};//needs to be after _logger, _config, Password.
 		friend ConnectAwait;
+		friend Tests::UAClientState;//QLTests' held-but-disconnected client.
 
 		NodeIndex _nodeIndex;
 		EnumTypeCache _enumTypes;

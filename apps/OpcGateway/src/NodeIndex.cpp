@@ -7,14 +7,7 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	//The session or channel went under the crawl:  nothing more in this crawl will browse.
-	Ω sessionLost( StatusCode sc )ι->bool{
-		switch( sc ){
-			case UA_STATUSCODE_BADSESSIONIDINVALID: case UA_STATUSCODE_BADSESSIONCLOSED: case UA_STATUSCODE_BADSERVERHALTED:
-			case UA_STATUSCODE_BADCONNECTIONCLOSED: case UA_STATUSCODE_BADSERVERNOTCONNECTED: case UA_STATUSCODE_BADSECURECHANNELCLOSED:
-				return true;
-			default: return false;
-		}
-	}
+	Ω sessionLost( StatusCode sc )ι->bool{ return UAClient::IsConnectionLoss(sc) || UAClient::IsSessionLoss(sc) || sc==UA_STATUSCODE_BADSERVERHALTED; }
 	//The server could not serve the node this time, not "cannot browse it".
 	Ω transient( StatusCode sc )ι->bool{
 		switch( sc ){

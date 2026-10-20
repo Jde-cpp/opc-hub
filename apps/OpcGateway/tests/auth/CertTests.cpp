@@ -13,6 +13,13 @@
 namespace Jde::Opc::Gateway::Tests{
 	constexpr ELogTags _tags{ ELogTags::Test };
 
+	//An operator's edit of the config's SAN uri, for the scope:  the block is restored on exit - every later client in the process reads it.
+	struct SanUri final{
+		SanUri( sv uri )ε:_saved{ Settings::FindDefaultObject("/gateway/issuedCerts") }{ Settings::Set( "/gateway/issuedCerts/certificate/subjectAltName", jstring{Ƒ("URI:{}", uri)} ); }
+		~SanUri(){ try{ Settings::Set( "/gateway/issuedCerts", _saved ); }catch( const std::exception& ){} }
+	private:
+		jobject _saved;
+	};
 	//no connection needed - EnsureCertificate is a static that only touches the cert tree.
 	struct CertFileTests : ::testing::Test{
 		inline static const string Slug{ "certUriChangeTest" };
@@ -22,23 +29,26 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 	};
 	//the cert file name keys on the slug, its SAN on the gateway's applicationUri (/gateway/issuedCerts - security-matrix #8;
-	//the second argument here stands in for an edited config) - a changed uri must re-issue, or the gateway presents a stale
+	//SanUri is the edited config) - a changed uri must re-issue, or the gateway presents a stale
 	//SAN forever and every session is refused BadCertificateUriInvalid.  It is also how the certificates issued before #8,
 	//their SAN the server's uri, replace themselves.
 	TEST_F( CertFileTests, ReissuesWhenApplicationUriChanges ){
 		let path = UAClient::CryptoSettings( Slug ).Certificate.Path;
 		let sanUri = [&]{ return Crypto::Certificate{ Crypto::ReadCertificate(path) }.SanUri(); };
 
-		UAClient::EnsureCertificate( Slug, "urn:first.application" );
-		ASSERT_TRUE( fs::exists(path) );
-		EXPECT_EQ( sanUri(), "urn:first.application" );
-
-		UAClient::EnsureCertificate( Slug, "urn:second.application" );//same file name, different uri.
+		{
+			SanUri first{ "urn:first.application" };
+			UAClient::EnsureCertificate( Slug );
+			ASSERT_TRUE( fs::exists(path) );
+			EXPECT_EQ( sanUri(), "urn:first.application" );
+		}
+		SanUri second{ "urn:second.application" };
+		UAClient::EnsureCertificate( Slug );//same file name, different uri.
 		EXPECT_EQ( sanUri(), "urn:second.application" );
 
 		//and it must NOT churn when nothing changed - re-issuing every connect would rotate a cert peers have trusted.
 		let before = Crypto::ReadCertificate( path );
-		UAClient::EnsureCertificate( Slug, "urn:second.application" );
+		UAClient::EnsureCertificate( Slug );
 		EXPECT_EQ( Crypto::ReadCertificate(path), before );
 	}
 
@@ -47,14 +57,15 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( CertFileTests, ReissuesWhenExpired ){
 		constexpr sv slug{ "certExpiryTest" };
 		constexpr sv uri{ "urn:expiry.application" };
-		let settings = UAClient::CryptoSettings( ServerCnnctnNK{slug}, uri );
+		SanUri san{ uri };
+		let settings = UAClient::CryptoSettings( ServerCnnctnNK{slug} );
 		let expiration = [&]{ return Crypto::Certificate{ Crypto::ReadCertificate(settings.Certificate.Path) }.Expiration; };
 
-		UAClient::EnsureCertificate( ServerCnnctnNK{slug}, uri );
+		UAClient::EnsureCertificate( ServerCnnctnNK{slug} );
 		Crypto::IssueCertificate( settings, std::chrono::hours{-24} );//what a year of uptime leaves on disk.
 		ASSERT_LT( expiration(), Clock::now() );
 
-		UAClient::EnsureCertificate( ServerCnnctnNK{slug}, uri );
+		UAClient::EnsureCertificate( ServerCnnctnNK{slug} );
 		EXPECT_GT( expiration(), Clock::now()+std::chrono::days{364} );
 		EXPECT_EQ( Crypto::Certificate{ Crypto::ReadCertificate(settings.Certificate.Path) }.SanUri(), uri );//re-issued for the same slug.
 
@@ -67,7 +78,8 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( CertFileTests, ConcurrentIssuesShareOneCertificate ){
 		constexpr sv slug{ "certRaceTest" };
 		constexpr sv uri{ "urn:race.application" };
-		let path = UAClient::CryptoSettings( ServerCnnctnNK{slug}, uri ).Certificate.Path;
+		SanUri san{ uri };
+		let path = UAClient::CryptoSettings( ServerCnnctnNK{slug} ).Certificate.Path;
 		std::error_code ec;
 		constexpr uint count{ 8 };
 		std::atomic<uint> failures{};
@@ -79,7 +91,7 @@ namespace Jde::Opc::Gateway::Tests{
 				threads.emplace_back( [&]{
 					start.arrive_and_wait();
 					try{
-						UAClient::EnsureCertificate( ServerCnnctnNK{slug}, uri );
+						UAClient::EnsureCertificate( ServerCnnctnNK{slug} );
 						if( Crypto::Certificate{Crypto::ReadCertificate(path)}.SanUri()!=uri )
 							++failures;
 					}
@@ -102,7 +114,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Settings::Set( "/gateway/issuedCerts/certificate/commonName", "passcodeTest" );//its own key pair:  the key file is per CN and shared by every slug, and the rest of the suite opens it without a passcode.
 		let settings = UAClient::CryptoSettings( ServerCnnctnNK{slug} );
 		try{
-			UAClient::EnsureCertificate( ServerCnnctnNK{slug}, "urn:passcode.test" );
+			UAClient::EnsureCertificate( ServerCnnctnNK{slug} );
 		}
 		catch( ... ){
 			Settings::Set( "/gateway/issuedCerts", saved );
@@ -127,7 +139,10 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( CertFileTests, AnUnmanagedPairIsLeftAsFound ){
 		constexpr sv missing{ "unmanagedMissingTest" };
 		let path = UAClient::CryptoSettings( Slug ).Certificate.Path;
-		UAClient::EnsureCertificate( Slug, "urn:operator.supplied" );//stands in for the pair the operator brought.
+		{
+			SanUri operatorSupplied{ "urn:operator.supplied" };
+			UAClient::EnsureCertificate( Slug );//stands in for the pair the operator brought.
+		}
 		let before = Crypto::ReadCertificate( path );
 
 		let saved = Settings::FindDefaultObject( "/gateway/issuedCerts" );
@@ -135,7 +150,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Settings::Set( "/gateway/issuedCerts/certificate/managed", false );
 		ASSERT_FALSE( UAClient::CryptoSettings(Slug).Certificate.Managed );
 
-		EXPECT_NO_THROW( UAClient::EnsureCertificate(Slug, "urn:what.the.config.says") );
+		EXPECT_NO_THROW( UAClient::EnsureCertificate(Slug) );//the config's SAN, not the pair's:  a managed certificate would re-issue.
 		EXPECT_EQ( Crypto::ReadCertificate(path), before ) << "the operator's certificate was replaced";
 		EXPECT_EQ( Crypto::Certificate{Crypto::ReadCertificate(path)}.SanUri(), "urn:operator.supplied" );
 
@@ -144,7 +159,7 @@ namespace Jde::Opc::Gateway::Tests{
 		fs::remove( absent, ec );//what a run without the guard leaves behind - in the directory the suite trusts.
 		absl::Cleanup remove = [&absent]{ std::error_code ec; fs::remove( absent, ec ); };
 		try{
-			UAClient::EnsureCertificate( ServerCnnctnNK{missing}, "urn:what.the.config.says" );
+			UAClient::EnsureCertificate( ServerCnnctnNK{missing} );
 			ADD_FAILURE() << "no pair for the connection, and nothing said so";
 		}
 		catch( const std::exception& e ){

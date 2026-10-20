@@ -16,7 +16,8 @@ namespace Jde::Opc::Gateway{
 	struct ServerCnnctnSessionsQLAwait final : QL::IQLTableAwaitExe{
 		using base = QL::IQLTableAwaitExe;
 		ServerCnnctnSessionsQLAwait( QL::TableQL&& q, QL::Creds&& creds, SRCE )ι:base{ move(q), move(creds), sl }{}
-		Ω IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName.starts_with("serverConnection") && (q.FindTable("opcSessions") || q.FindTable("opcConnections") || q.FindTable("connectionStatus")); }
+		Ω IsApplicable( const QL::TableQL& q )ι->bool{ return q.JsonName.starts_with("serverConnection") && std::ranges::any_of( Tables, [&q]( sv t ){ return q.FindTable(t)!=nullptr; } ); }
+		static constexpr array<sv,3> Tables{ "opcSessions", "opcConnections", "connectionStatus" };//opcSessions is OpcSessionsQLAwait's at the top level too.
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;
 	};

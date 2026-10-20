@@ -19,6 +19,8 @@ namespace Jde::Opc::Gateway{
 		//anything keyed by `opc`.  Null for any other, so a host QL (OpcHub, through Gateway::CustomQuery) hands it every query
 		//and app/access tables never reach ConnectAwait.
 		Ω Test( QL::TableQL& q, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
+		//The server-bound queries Query answers - node/variable/dataType singular and plural - and serverDescription{ discoveryUrls }.
+		static constexpr array<sv,12> Tables{ "dataType", "dataTypes", "discoveryUrls", "history", "namespaces", "node", "nodes", "securityMode", "securityPolicyUri", "serverDescription", "variable", "variables" };
 		α Suspend()ι->void override{ GetClient( this ); }
 		//The connection-attribute readers, untransformed - each builds what `q` asks for - shared with testConnection, which answers
 		//all of them in one object for a connection that is not saved.  Strand-only:  connection attributes are sync UA services.

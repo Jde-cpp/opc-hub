@@ -8,6 +8,8 @@ namespace Jde::Opc::Gateway{
 	constexpr RequestId PingRequestId = 0;
 	constexpr RequestId ConnectRequestId = std::numeric_limits<RequestId>::max();
 	constexpr RequestId SubscriptionRequestId = ConnectRequestId - 1;
+	extern Duration _pingInterval;//the keep-alive's period, /gateway/pingInterval:  set once by Configure, before the web server starts.
+	extern Duration _ttl;//an idle client's lifetime, /gateway/ttl:  likewise.
 	struct UAClient;
 
 	//Serializes all UA_Client access for one client: open62541 clients are not thread-safe, so every UA_Client_* call

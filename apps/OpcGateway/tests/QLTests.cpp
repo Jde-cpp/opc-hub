@@ -33,6 +33,10 @@ namespace Jde::Opc::Gateway::Tests{
 		Web::Server::Sessions::Remove( sessionId );
 	}
 
+	//What a test may set on a client that production sets only from its own callbacks - UAClient befriends it.
+	struct UAClientState final{
+		Ω SetConnected( UAClient& client, bool connected )ι->void{ client._connected = connected; }
+	};
 	struct QLTests : ::testing::Test{
 	protected:
 		Ω SetUpTestSuite()ε->void{ GetConnection( OpcServerSlug ); }//ε: GetConnection throws - under ι gtest never sees it and the whole binary terminates.
@@ -286,16 +290,16 @@ namespace Jde::Opc::Gateway::Tests{
 
 		let unknown = rows( "search( opc: \"noSuchConnection\", text: \"lamp1\" ){ path }" );//no live client ⇒ empty, and no ConnectAwait (which would throw 'not found').
 		EXPECT_TRUE( unknown.empty() ) << serialize( unknown );
-		{//a client that is held but not Connected - a lapsed session, a dropped socket - rejects rather than answering empty.
+		{//a client that is held but not connected - a lapsed session, a dropped socket - rejects rather than answering empty.
 			vector<sp<UAClient>> held;
 			for( auto& client : UAClient::LiveClients() ){
 				if( client->Slug()==OpcServerSlug )
 					held.push_back( client );
 			}
 			ASSERT_FALSE( held.empty() );
-			absl::Cleanup _ = [&held]{ for( auto& c : held ) c->Connected = true; };
+			absl::Cleanup _ = [&held]{ for( auto& c : held ) UAClientState::SetConnected( *c, true ); };
 			for( auto& c : held )
-				c->Connected = false;
+				UAClientState::SetConnected( *c, false );
 			try{
 				Socket().QuerySync( "search( opc: $opc, text: \"lamp1\" ){ path }", vars );
 				ADD_FAILURE() << "a search on a disconnected client answered";
