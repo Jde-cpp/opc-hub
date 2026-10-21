@@ -1,15 +1,8 @@
-@if( !isSelect() ){
-	<mat-chip-listbox>
-		@for( option of options; track option.value ){
-			<mat-chip (click)="onSelectionChange(option.value)" [selected]="level()==option.value">{{option.name}}</mat-chip>
-		}
-	</mat-chip-listbox>
-}
 <mat-form-field subscriptSizing="dynamic">
 	<!-- (selectionChange)="onSelectionChange($event.value)" -->
 	<mat-select [value]="level()" (valueChange)="onSelectionChange($event)"><!--not [(value)]: mat-select's value is a plain input/output pair, so the banana box would assign to the model signal-->
-		@for( o of options; track o.value ){
-			<mat-option [value]="o.value">{{o.name}}</mat-option>
+		@for( o of options; track o.level ){
+			<mat-option [value]="o.level">{{o.name}}</mat-option>
 		}
 	</mat-select>
 </mat-form-field>

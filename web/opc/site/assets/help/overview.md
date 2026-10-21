@@ -55,11 +55,7 @@ It lets you:
    - Engineer
    - System Administrator
    - Owner
-3. Only then turn on a resource's **Enforced** switch, on the [Resources](/access/resources) list.
-
-   Until a resource is enforced, the hub checks nothing on it and everyone gets through. The only limits are the OPC server's own, on what it lets the signed-in user read and write.
-
-   Once it is enforced, only users holding a grant get through. That includes you, so grant first and enforce second.
+3. Only then turn on a resource's **Enforced** switch, on the [Resources](/access/resources) list - what that changes is under [Access help](/help/access#resources).
 
 ## Getting around
 

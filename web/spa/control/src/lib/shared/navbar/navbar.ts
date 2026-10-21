@@ -9,17 +9,17 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import {ActivatedRoute, NavigationEnd, RouterLink, RouterLinkActive} from '@angular/router';
-import {Route, Router, Routes, UrlTree} from '@angular/router';
-import { Title } from '@angular/platform-browser';
+import {NavigationEnd, RouterLink, RouterLinkActive} from '@angular/router';
+import {Router, UrlTree} from '@angular/router';
 import { debounceTime, distinctUntilChanged, filter, map, of, switchMap } from 'rxjs';
-import {NavigationFocusService} from '../navigation-focus/navigation-focus-service';
 import {ThemePicker} from '../theme-picker/theme-picker';
 import { Authorization } from '../authorization/authorization';
 import { Breadcrumbs } from './breadcrumbs/breadcrumbs';
 import { Favorites } from './favorites/favorites-dialog';
+import { LocalPrefs } from '../../services/profile/local-prefs';
 import { ProfileStore } from '../../services/profile/profile-store';
 import { RouteStore } from '../../services/route-store';
+import { Latest } from '../../services/latest';
 import { RouteItem } from '../../pages/component-sidenav/route-item';
 import { isNotFound, matchConfig, segmentDisplay } from '../../services/route-utils';
 import { SearchService } from '../../services/search/search-service';
@@ -62,9 +62,6 @@ export type Folder = { folderName:string, items:LinkedFavorite[] };
 ]
 })
 export class NavBar implements OnInit {
-  skipLinkHref: string | null | undefined;
-  skipLinkHidden = true;
-  private navigationFocusService:NavigationFocusService = inject( NavigationFocusService );
   constructor() {
     this.defaultFavorites = this.router.config.filter( x=>
 			x.path!="login"
@@ -100,19 +97,16 @@ export class NavBar implements OnInit {
 		if( user===this.#loadingFor )
 			return;//already loading, or loaded, for this user
 		this.#loadingFor = user;
-		const generation = ++this.#favoritesGeneration;
+		const generation = this.#favoritesLoad.next();
 		this.favorites.set( null as any );//not the previous user's list while the next one loads
 		this.#favoritesLoading = this.#profileStore.load<Favorite[]>( "favorites", this.defaultFavorites ).then( list=>{
-			if( generation==this.#favoritesGeneration )//a later user's load has taken over
+			if( this.#favoritesLoad.is(generation) )
 				this.favorites.set( list );
 		});
 	}
 	asFolder(item:LinkedFavorite|Folder):Folder{
 		return item as Folder;
 	}
-  routerLinkOptions( route:Route ):{exact:boolean}{
-    return {exact:!route.path!.length};
-  }
 	async onFavoriteChange( change:Favorite ){
 		//Applied to the signed-in user's own list:  the effect may not have run yet for a user who just changed, and a load may be
 		//under way - a change made then was saved over their row on top of the previous user's list, or the defaults.
@@ -140,17 +134,17 @@ export class NavBar implements OnInit {
 	onToggleBreadcrumbs(){
 		const show = !this.showBreadcrumbs();
 		this.showBreadcrumbs.set( show );
-		this.#profileStore.set( "showBreadcrumbs", show );
+		this.#prefs.set( "navbar", "showBreadcrumbs", show );
 	}
 	#buildCrumbs( path:string ):RouteItem[]{
 		const segments = path.split('/').filter( s=>s.length );
 		const home = this.router.config.find( c=>c.path=='' );
 		const crumbs = [ new RouteItem({ path: '/', title: (home?.title as string) ?? 'Home' }) ];
 		for( let i=0; i<segments.length; i++ ){
-			const config = NavBar.matchConfig( this.router.config, segments.slice(0, i+1) );
+			const config = matchConfig( this.router.config, segments.slice(0, i+1) );
 			let title = config?.title as string|undefined, icon:string|undefined;
 			if( !title || title.startsWith(':') ){//no title, or the ':param' substitute-the-segment convention
-				const child = this.#segmentItem( segments, i, NavBar.paramIndexes(config, i) );
+				const child = this.#segmentItem( segments, i );
 				title = child?.title ?? this.#segmentName?.( segments, i ) ?? segmentDisplay( segments[i] );
 				icon = child?.icon;//the recently visited row draws it;  the crumb itself does not
 			}
@@ -159,23 +153,15 @@ export class NavBar implements OnInit {
 		return crumbs;
 	}
 	//The child RouteStore keeps for segments[i], under the nearest parent url holding it:  its path is the rest of the url from
-	//there, bare or parent-prefixed.  Writers key inconsistently: "gateways/gw1" (UrlSegments join), '/apps', bare "users".  A
-	//bare key is not tried for a ':param' value - in access/resources/access/roles, `access` is a schema, not the section.
-	#segmentItem( segments:string[], i:number, params:Set<number> ):RouteItem|undefined{
+	//there (RouteStore.key) - 'opc/nodeIds' under access/resources, a schema and a slug.
+	#segmentItem( segments:string[], i:number ):RouteItem|undefined{
 		for( let k=i-1; k>=0; --k ){
-			const parentUrl = segments.slice( 0, k+1 ).join( '/' ), rest = segments.slice( k+1, i+1 ).join( '/' );
-			for( const key of params.has(k) ? [parentUrl, '/'+parentUrl] : [parentUrl, '/'+parentUrl, segments[k]] ){
-				const child = this.#routeStore.getChildren( key ).find( c=>c.path==rest || c.path?.endsWith('/'+rest) );
-				if( child?.title )
-					return child;
-			}
+			const rest = segments.slice( k+1, i+1 ).join( '/' );
+			const child = this.#routeStore.getChildren( segments.slice(0, k+1) ).find( c=>c.path==rest );
+			if( child?.title )
+				return child;
 		}
 		return undefined;
-	}
-	//the url indexes a ':param' of `config` holds - config matched segments 0..i, so its path spells the url's tail
-	static paramIndexes( config:Route|undefined, i:number ):Set<number>{
-		const path = (config?.path ?? '').split( '/' ).filter( s=>s.length );
-		return new Set( path.flatMap( (s,j)=>s.startsWith(':') ? [i-path.length+1+j] : [] ) );
 	}
 	#endsOnNotFound():boolean{
 		let route = this.router.routerState.snapshot.root;
@@ -183,7 +169,6 @@ export class NavBar implements OnInit {
 			route = route.firstChild;
 		return !!route.routeConfig && isNotFound( route.routeConfig );
 	}
-	static matchConfig( routes:Routes, segments:string[] ):Route|undefined{ return matchConfig( routes, segments ); }//lives in services/route-utils now - RouteSearchProvider needs it without importing a component.
 
 	onKeydown( event:KeyboardEvent ){//'/' jumps to search, unless the keystroke belongs to whatever the user is already typing in
 		if( event.key!='/' || event.ctrlKey || event.metaKey || event.altKey || this.#isTyping(event.target) )
@@ -245,13 +230,14 @@ export class NavBar implements OnInit {
 	#profileStore = inject(ProfileStore);
 	#profile = inject( IPROFILE_SERVICE, {optional: true} );//whose favorites:  the signed-in user's key, undefined signed out
 	#loadingFor:string|undefined|null = null;//the user the favorites were last loaded for - null before the first load
-	#favoritesGeneration = 0;
+	#favoritesLoad = new Latest();
 	#favoritesLoading:Promise<void> = Promise.resolve();
 	#recentVisits = inject(RecentVisits);
 	#segmentName = inject( SEGMENT_NAME, {optional: true} );//a site's name for a segment no route or RouteStore child names (an opc node)
 	#routeStore = inject(RouteStore);
 	crumbs = signal<RouteItem[]>( [] );
-	showBreadcrumbs = signal<boolean>( ProfileStore.local<boolean>("showBreadcrumbs", true) );//sync static read — awaiting #profileStore.load here would delay isLoading
+	#prefs = inject( LocalPrefs );
+	showBreadcrumbs = signal<boolean>( this.#prefs.get("navbar", "showBreadcrumbs", true) );
 	defaultFavorites:Favorite[];
 	favorites = signal<Favorite[]>(null as any);
 	isLoading = signal<boolean>( true );

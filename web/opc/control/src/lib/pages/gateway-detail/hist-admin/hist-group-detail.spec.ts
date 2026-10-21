@@ -1,21 +1,8 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
-import { Component, input, model } from '@angular/core';
+import { Component, inject, InjectionToken, input } from '@angular/core';
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
-import { ActivatedRoute, Router } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
-import { vi } from 'vitest';
-import { ComponentPageTitle } from 'jde-spa';
-import { Mutation, Properties, SnackbarService } from 'jde-framework';
+import { Mutation, Properties } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { histThresholdBlank } from '../../../model/hist';
 import { HistGroup, HistPick } from '../../../model/hist-admin';
@@ -25,32 +12,26 @@ import { OpcStore } from '../../../services/opc-store';
 import { HistGroupAccess } from './hist-group-access';
 import { HistGroupDetail } from './hist-group-detail';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
+import { flush } from 'jde-spa/testing';
+import { configureDetailPage, dialogStub } from 'jde-framework/testing';
+import { Pumps, pumpsServer } from 'jde-opc/testing';
 
-const settle = async ()=>{ for( let i=0; i<3; ++i ) await new Promise( r=>setTimeout( r ) ); };
-const Pumps = 'urn:jde:pumps';
 const BadNodeIdExists = 0x805E0000;
-const server = { namespaces: [{index: 0, uri: 'http://opcfoundation.org/UA/'}, {index: 2, uri: Pumps}] };
 const row = { id: 5, name: 'Pumps', slug: 'pumps', guid: '0f8fad5b-d9cb-469f-a165-70867728950e', serverConnection: {id: 1, name: 'Local'}, histTemplate: {id: 2, name: 'Pump'}, root: '{"nsu":"urn:jde:pumps","i":5001}', maxTimeInterval: 60000 };
-//The form a rendered page draws on its first tab, which reads a whole schema
-@Component( {selector: 'properties', template: ''} )
-class PropertiesStub{
-	ctor = input<unknown>(); record = model<unknown>(); type = input<string>(); schema = input<unknown>(); order = input<unknown>();
-	displayNames = input<unknown>(); readonlyFields = input<unknown>(); excludedColumns = input<unknown>();
-}
-//The Access tab, counted:  each one made, which a tab kept alive behind another makes once
+//The Access tab, counted:  `made` is told of each one, which a tab kept alive behind another makes once
+const ACCESS_MADE = new InjectionToken<()=>void>( 'AccessMade' );
 @Component( {selector: 'hist-group-access', template: ''} )
 class AccessStub{
-	static made = 0;
 	group = input<unknown>();
-	constructor(){ ++AccessStub.made; }
+	constructor(){ inject( ACCESS_MADE )(); }
 }
-//The page over stubs:  the gateway records the mutations Save sends, the admin service what the tabs ask and send, and the dialog
-//answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the page,
-//where the rest drive the page by hand.
+//The page over stubs:  `mutations` reads what Save sent the gateway, the admin service records what the tabs ask and send, and the
+//dialog answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the
+//page, where the rest drive the page by hand.
 const create = async ( pageRow:any, render=false )=>{
-	const mutations:string[] = [];
-	const gateway = { slug: 'g', mutate: async ( m:Mutation[]|string )=>{ mutations.push( ...(Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m]) ); } };
-	const snackbar = { exception: vi.fn(), error: vi.fn(), info: vi.fn() };
+	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ) };
+	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );
+	const made = vi.fn();
 	const admin = {
 		connections: vi.fn( async ()=>[{id: 1, slug: 'local', name: 'Local'}, {id: 3, slug: 'plc', name: 'PLC'}] ),
 		templates: vi.fn( async ()=>[{id: 2, name: 'Pump'}] ),
@@ -63,30 +44,29 @@ const create = async ( pageRow:any, render=false )=>{
 		purgeGroupMember: vi.fn( async ()=>{} ),
 		resolve: vi.fn( async ()=>[{templateNode: 3, path: [{nsu: Pumps, name: 'motorRpm'}], node: new ExNodeId( {i: 6012, nsu: Pumps} ), status: 0}, {templateNode: 4, path: [{nsu: Pumps, name: 'status'}], status: BadNodeIdExists, holder: {id: 9, name: 'Other'}}] )
 	};
-	const dialog = { confirmed: true, picks: <HistPick[]|undefined>undefined, open: ( cmp:unknown )=>({ afterClosed: ()=>({ subscribe: ( f:( y:unknown )=>void )=>f( cmp===HistNodePickerDialog ? dialog.picks : dialog.confirmed ) }) }) };
-	const data = new BehaviorSubject<any>( {pageData: {row: pageRow, routing: {}, schema: {enums: new Map()}, gateway}} );//the route's data, the gateway with the row:  next() opens another row on the page, as the router reusing it does
-	TestBed.configureTestingModule({ providers: [
+	const dialog = dialogStub( true );//a confirmation's answer;  the picker's picks are its own, none until a test gives some
+	dialog.answers.set( HistNodePickerDialog, undefined );
+	const {data, snackbar} = configureDetailPage( pageRow, {gateway, providers: [
 		{ provide: ComponentFixtureAutoDetect, useValue: false },//the page is driven by hand:  the zoneless fixture's own first change detection would run ngOnInit a second time, onto the row #load nulled
-		{ provide: ActivatedRoute, useValue: {data} },
-		{ provide: Router, useValue: {navigate: vi.fn()} },
-		{ provide: ComponentPageTitle, useValue: {} },
-		{ provide: SnackbarService, useValue: snackbar },
 		{ provide: HistAdminService, useValue: admin },
 		{ provide: HistoryService, useValue: {} },
-		{ provide: OpcStore, useValue: {getConnection: async ()=>server} },
+		{ provide: OpcStore, useValue: {getConnection: async ()=>pumpsServer} },
 		{ provide: MatDialog, useValue: dialog },
-		{ provide: MAT_TABS_CONFIG, useValue: {animationDuration: '0ms'} }//a tab switch completes in its pass, not on a 100 ms fallback timer
-	]});
-	if( render )
-		TestBed.overrideComponent( HistGroupDetail, {remove: {imports: [Properties, HistGroupAccess]}, add: {imports: [PropertiesStub, AccessStub]}} );
+		{ provide: MAT_TABS_CONFIG, useValue: {animationDuration: '0ms'} },//a tab switch completes in its pass, not on a 100 ms fallback timer
+		{ provide: ACCESS_MADE, useValue: made }
+	]} );
+	if( render ){
+		TestBed.overrideComponent( Properties, {set: {template: '', imports: []}} );//the form reads a whole schema
+		TestBed.overrideComponent( HistGroupDetail, {remove: {imports: [HistGroupAccess]}, add: {imports: [AccessStub]}} );
+	}
 	const fixture = TestBed.createComponent( HistGroupDetail );
 	const page = fixture.componentInstance;
 	if( render )
 		fixture.detectChanges();
 	else
 		page.ngOnInit();
-	await settle();
-	return { page, fixture, mutations, admin, snackbar, dialog, data };
+	await flush( 3 );
+	return { page, fixture, mutations, made, admin, snackbar, dialog, data };
 };
 
 describe( 'HistGroupDetail', ()=>{
@@ -104,22 +84,21 @@ describe( 'HistGroupDetail', ()=>{
 	} );
 	//#6:  the Access tab was lazy content the tab group destroyed on leaving, and its unsaved ticks with it
 	it( 'keeps a tab alive behind another, so a switch away keeps its unsaved state', async ()=>{
-		AccessStub.made = 0;
 		const d = await create( row, true );
 		//through the page's tabIndex, which the group's selectedIndex is bound to;  false skips the fixture's no-changes pass, which reads
 		//the tab header the switch updates during the pass as a change made after the check
 		const show = async ( index:number )=>{
 			d.page.tabIndex.set( index );
 			d.fixture.detectChanges( false );
-			await settle();
+			await flush( 3 );
 			d.fixture.detectChanges( false );
 			expect( d.fixture.nativeElement.querySelector( '.mdc-tab--active' ).textContent.trim() ).toBe( ['Properties', 'Members', 'Access'][index] );
 		};
 		await show( 2 );
-		expect( AccessStub.made ).toBe( 1 );
+		expect( d.made ).toHaveBeenCalledTimes( 1 );
 		await show( 1 );
 		await show( 2 );
-		expect( AccessStub.made ).toBe( 1 );
+		expect( d.made ).toHaveBeenCalledTimes( 1 );
 	} );
 	//a new group:  the connection is the one field the form can't leave, the template and root are optional, and Save sends the
 	//source with the thresholds set
@@ -144,7 +123,7 @@ describe( 'HistGroupDetail', ()=>{
 		d.page.setThresholds( {...histThresholdBlank, minTimeInterval: '1000'} );
 		expect( d.page.group.canSave ).toBe( true );
 		await d.page.onSubmitClick();
-		expect( d.mutations ).toEqual( ['createHistGroup( slug:"pumps", name:"Pumps", serverConnectionId:1, histTemplateId:2, root:"ns=2;i=5001", minTimeInterval:1000 )'] );
+		expect( d.mutations() ).toEqual( ['createHistGroup( slug:"pumps", name:"Pumps", serverConnectionId:1, histTemplateId:2, root:"ns=2;i=5001", minTimeInterval:1000 )'] );
 	} );
 	//an existing group:  its nodes with their template member and own columns, the template's members against them, and an edit of
 	//the defaults sent as what changed
@@ -155,11 +134,11 @@ describe( 'HistGroupDetail', ()=>{
 		expect( d.page.excludedFields ).not.toContain( 'guid' );
 		expect( d.admin.groupMembers ).toHaveBeenCalledWith( expect.anything(), 5 );
 		expect( d.admin.templateMembers ).toHaveBeenCalledWith( expect.anything(), 2 );
-		expect( d.page.members() ).toHaveLength( 2 );
-		expect( d.page.nodeLabel( d.page.members()[0].node ) ).toBe( 'ns=2;i=6012' );
-		expect( d.page.memberText( d.page.members()[0] ) ).toBe( 'motorRpm' );
-		expect( d.page.memberText( d.page.members()[1] ) ).toBe( 'added by hand' );
-		expect( d.page.cellText( d.page.members()[0].thresholds, 'minTimeInterval' ) ).toBe( '1000' );
+		expect( d.page.members.rows() ).toHaveLength( 2 );
+		expect( d.page.nodeLabel( d.page.members.rows()[0].node ) ).toBe( 'ns=2;i=6012' );
+		expect( d.page.memberText( d.page.members.rows()[0] ) ).toBe( 'motorRpm' );
+		expect( d.page.memberText( d.page.members.rows()[1] ) ).toBe( 'added by hand' );
+		expect( d.page.cellText( d.page.members.rows()[0].thresholds, 'minTimeInterval' ) ).toBe( '1000' );
 		const rows = d.page.resolution();
 		expect( rows.map( r=>[r.path, r.status] ) ).toEqual( [['motorRpm', 0], ['status', undefined]] );
 		expect( d.page.unresolved() ).toBe( 1 );
@@ -167,13 +146,13 @@ describe( 'HistGroupDetail', ()=>{
 		expect( d.page.statusText( rows[1] ) ).toContain( 'Not resolved' );
 		d.page.setThresholds( {...d.page.group.thresholds, maxTimeInterval: '', exceptionDeviation: '2'} );
 		await d.page.onSubmitClick();
-		expect( d.mutations ).toEqual( ['updateHistGroup( id:5, exceptionDeviation:2, maxTimeInterval:null )'] );
+		expect( d.mutations() ).toEqual( ['updateHistGroup( id:5, exceptionDeviation:2, maxTimeInterval:null )'] );
 	} );
 	//Resolve:  every member answers, and one another group holds says which
 	it( 'resolves and names the group that holds a node', async ()=>{
 		const d = await create( row );
 		await d.page.resolve();
-		expect( d.admin.resolve ).toHaveBeenCalledWith( expect.anything(), 5, expect.any( Function ) );
+		expect( d.admin.resolve ).toHaveBeenCalledWith( expect.anything(), 5 );
 		const rows = d.page.resolution();
 		expect( rows[1].status ).toBe( BadNodeIdExists );
 		expect( d.page.statusText( rows[1] ) ).toContain( "group 'Other' holds the node" );
@@ -187,22 +166,22 @@ describe( 'HistGroupDetail', ()=>{
 		const d = await create( row );
 		await d.page.resolve();
 		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [0, BadNodeIdExists] );
-		d.admin.groupMembers.mockResolvedValue( <any>d.page.members().slice( 1 ) );//member 3's node removed, from another page say
+		d.admin.groupMembers.mockResolvedValue( <any>d.page.members.rows().slice( 1 ) );//member 3's node removed, from another page say
 		await d.page.refresh();
 		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [undefined, BadNodeIdExists] );
 		expect( d.page.statusText( d.page.resolution()[0] ) ).toContain( 'Not resolved' );
 		expect( d.page.unresolved() ).toBe( 2 );
-		await d.page.removeNode( d.page.members()[0] );
+		await d.page.removeNode( d.page.members.rows()[0] );
 		expect( d.page.resolution().map( r=>r.status ) ).toEqual( [undefined, undefined] );
 	} );
 	//Add nodes:  each pick is its own create, from the group's root on its connection;  one refused doesn't stop the rest, and the
 	//refusal - the gateway's, naming the holder - is said
 	it( 'adds the nodes picked, and says which were refused', async ()=>{
 		const d = await create( row );
-		d.dialog.picks = [
+		d.dialog.answers.set( HistNodePickerDialog, <HistPick[]>[
 			{ node: new ExNodeId( {ns: 2, i: 6022, nsu: Pumps} ), path: [], name: 'rpm2' },
 			{ node: new ExNodeId( {ns: 2, i: 6032, nsu: Pumps} ), path: [], name: 'rpm3' }
-		];
+		] );
 		const open = vi.spyOn( HistNodePickerDialog, 'open' );
 		await d.page.addNodes();
 		expect( open.mock.calls[0][1] ).toMatchObject( {mode: 'nodes', connection: 'local'} );
@@ -223,23 +202,23 @@ describe( 'HistGroupDetail', ()=>{
 		const refreshed = d.page.refresh();
 		const other = { slug: 'h', mutate: async ()=>{} };
 		d.data.next( {pageData: {row: {...row, slug: 'line1'}, routing: {}, schema: {enums: new Map()}, gateway: other}} );
-		await settle();
+		await flush( 3 );
 		expect( d.page.gateway ).toBe( other );
 		expect( d.admin.groupMembers ).toHaveBeenLastCalledWith( other, 5 );
 		expect( d.admin.connections ).toHaveBeenLastCalledWith( other );
 		late( [] );
 		await refreshed;
-		expect( d.page.members() ).toHaveLength( 2 );
+		expect( d.page.members.rows() ).toHaveLength( 2 );
 		await d.page.resolve();
-		expect( d.admin.resolve ).toHaveBeenCalledWith( other, 5, expect.any( Function ) );
+		expect( d.admin.resolve ).toHaveBeenCalledWith( other, 5 );
 	} );
 	it( 'removes a node once confirmed, and not otherwise', async ()=>{
 		const d = await create( row );
-		d.dialog.confirmed = false;
-		await d.page.removeNode( d.page.members()[0] );
+		d.dialog.answer = false;
+		await d.page.removeNode( d.page.members.rows()[0] );
 		expect( d.admin.purgeGroupMember ).not.toHaveBeenCalled();
-		d.dialog.confirmed = true;
-		await d.page.removeNode( d.page.members()[0] );
-		expect( d.admin.purgeGroupMember ).toHaveBeenCalledWith( expect.anything(), 7, expect.any( Function ) );
+		d.dialog.answer = true;
+		await d.page.removeNode( d.page.members.rows()[0] );
+		expect( d.admin.purgeGroupMember ).toHaveBeenCalledWith( expect.anything(), 7 );
 	} );
 } );

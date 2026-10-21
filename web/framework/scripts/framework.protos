@@ -1,0 +1,5 @@
+#the framework's protos for generate-protos.sh:  <dir under $JDE_BASH> <name>...
+libs/web/client/proto Web.FromServer
+libs/app/shared/proto Log App.FromClient App.FromServer App Common
+#Log.proto imports the record layer's framing for FileEntry.  The web reads none of it, but buf generates a file whole.
+libs/fwk/src/io/records/proto Jde.IO.Records

@@ -2,19 +2,7 @@
 	"folders": [
 		{
 			"path": "my-workspace"
-		},
-		// {
-		// 	"path": "../spa"
-		// },
-		// {
-		// 	"path": "../framework"
-		// },
-		// {
-		// 	"path": "../access"
-		// },
-		// {
-		// 	"path": "../opc"
-		// }
+		}
 	],
 	"settings": {
 		"window.title": "Web",
@@ -32,16 +20,8 @@
 				"name": "Debug",
 				"type": "chrome",
 				"request": "launch",
-				"preLaunchTaskx": "npm: start",
 				"url": "http://localhost:4200/",
 				"userDataDir": "${env:HOME}/.config/vscode-chrome-debug"
-			},
-			{
-				"name": "ng test",
-				"type": "chrome",
-				"request": "launch",
-				"preLaunchTask": "npm: test",
-				"url": "http://localhost:9876/debug.html"
 			}
 		]
 	},
@@ -57,18 +37,10 @@
 				"problemMatcher": { "owner": "typescript", "pattern": "$tsc", "background": { "activeOnStart": true, "beginsPattern": { "regexp": "Changes detected" }, "endsPattern": { "regexp": "bundle generation (complete|failed)" } } }
 			},
 			{
-				"label": "npm: test",
-				"type": "shell",
-				"command": "npm test",
-				"options": { "cwd": "${workspaceFolder:my-workspace}" },
-				"isBackground": true,
-				"problemMatcher": { "owner": "typescript", "pattern": "$tsc", "background": { "activeOnStart": true, "beginsPattern": { "regexp": "Changes detected" }, "endsPattern": { "regexp": "bundle generation (complete|failed)" } } }
-			},
-			{
 				"label": "build",
 				"type": "shell",
 				"command": "tput reset;ng build;",
-				"problemMatcher": { "owner": "typescript", "pattern": "$tsc", "background": { "activeOnStart": true, "beginsPattern": { "regexp": "(.*?)" }, "endsPattern": { "regexp": "bundle generation complete" } } },
+				"problemMatcher": "$tsc",
 				"group": { "kind": "build", "isDefault": true }
 			}
 		]

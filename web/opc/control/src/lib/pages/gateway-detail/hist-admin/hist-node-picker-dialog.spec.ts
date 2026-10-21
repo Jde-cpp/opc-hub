@@ -1,38 +1,36 @@
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { vi } from 'vitest';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { NodeKey } from '../../../model/node-id';
 import { OpcObject, UaNode, Variable } from '../../../model/node';
 import { ETypes } from '../../../model/types';
 import { OpcStore } from '../../../services/opc-store';
 import { HistNodePickerData, HistNodePickerDialog } from './hist-node-picker-dialog';
+import { flush } from 'jde-spa/testing';
+import { fakeGateway, Pumps, pumpsServer, variable } from 'jde-opc/testing';
 
-const settle = ()=>new Promise( r=>setTimeout( r ) );
-const Pumps = 'urn:jde:pumps';
-//the server:  namespace 2 is the pumps', 3 is listed by no URI
-const server = { connection: {name: 'Local'}, namespaces: [{index: 0, uri: 'http://opcfoundation.org/UA/'}, {index: 2, uri: Pumps}], uri( ns:number ){ return this.namespaces.find( n=>n.index==ns )?.uri; } };
+//the server is pumpsServer:  namespace 2 is the pumps', 3 is listed by no URI
 //Objects/pump1/{motorRpm, odd} and Objects/pump2/{box, motorRpm, status}:  odd and box are in the namespace with no URI, and
 //motorRpm is the one node under both pumps
 const pump1 = new OpcObject( <any>{ns: 2, i: 5001, name: 'pump1', browse: {ns: 2, name: 'pump1'}} );
 const pump2 = new OpcObject( <any>{ns: 2, i: 5002, name: 'pump2', browse: {ns: 2, name: 'pump2'}} );
-const rpm = new Variable( <any>{ns: 2, i: 6012, name: 'rpm', browse: {ns: 2, name: 'motorRpm'}, dataType: {i: ETypes.Double}} );
-const status = new Variable( <any>{ns: 2, i: 6013, name: 'status', browse: {ns: 2, name: 'status'}, dataType: {i: ETypes.Double}} );
+const rpm = variable( 6012, 'rpm', {browse: {ns: 2, name: 'motorRpm'}, dataType: {i: ETypes.Double}} );
+const status = variable( 6013, 'status', {dataType: {i: ETypes.Double}} );
 const odd = new Variable( <any>{ns: 3, i: 1, name: 'odd', browse: {ns: 3, name: 'odd'}, dataType: {i: ETypes.Double}} );
 const box = new OpcObject( <any>{ns: 3, i: 2, name: 'box', browse: {ns: 3, name: 'box'}} );
 const tree = new Map<NodeKey,UaNode[]>( [[OpcObject.rootNode.key, [pump1, pump2]], [pump1.key, [odd, rpm]], [pump2.key, [box, rpm, status]]] );
 
 const open = ( data:Partial<HistNodePickerData> )=>{
-	const closed:unknown[] = [];
-	const gateway = { browseObjectsFolder: vi.fn( async ( _c:string, parent:UaNode )=>tree.get( parent.key ) ?? [] ) };
+	const close = vi.fn( ( _y:unknown )=>{} );
+	const gateway = fakeGateway( 'g', {}, tree );
 	TestBed.configureTestingModule({ providers: [
-		{ provide: MatDialogRef, useValue: { close: ( y:unknown )=>closed.push( y ) } },
-		{ provide: OpcStore, useValue: { getConnection: async ()=>server } },
+		{ provide: MatDialogRef, useValue: { close } },
+		{ provide: OpcStore, useValue: { getConnection: async ()=>pumpsServer } },
 		{ provide: MAT_DIALOG_DATA, useValue: <HistNodePickerData>{ gateway: <any>gateway, title: 'Pick', mode: 'paths', connections: [{id: 1, slug: 'local', name: 'Local'}], ...data } }
 	]});
 	const fixture = TestBed.createComponent( HistNodePickerDialog );
 	fixture.detectChanges();
-	return { fixture, dialog: fixture.componentInstance, gateway, closed, settle: async ()=>{ await settle(); fixture.detectChanges(); await settle(); fixture.detectChanges(); } };
+	return { fixture, dialog: fixture.componentInstance, gateway, closed: ()=>close.mock.calls.map( ([y])=>y ), settle: async ()=>{ await flush(); fixture.detectChanges(); await flush(); fixture.detectChanges(); } };
 };
 
 describe( 'HistNodePickerDialog', ()=>{
@@ -55,8 +53,8 @@ describe( 'HistNodePickerDialog', ()=>{
 		expect( d.dialog.picks() ).toEqual( [] );
 		d.dialog.toggle( rpm );
 		d.dialog.done();
-		expect( d.closed ).toHaveLength( 1 );
-		expect( (<any[]>d.closed[0])[0].path ).toHaveLength( 2 );
+		expect( d.closed() ).toHaveLength( 1 );
+		expect( (<any[]>d.closed()[0])[0].path ).toHaveLength( 2 );
 		await d.dialog.up( 0 );
 		expect( d.dialog.trail().length ).toBe( 1 );
 		expect( d.dialog.children().map( n=>n.name ) ).toEqual( ['pump1', 'pump2'] );
@@ -111,7 +109,7 @@ describe( 'HistNodePickerDialog', ()=>{
 		expect( d.dialog.displayedColumns ).toContain( 'choose' );
 		await d.dialog.open( pump1 );
 		d.dialog.chooseCurrent();
-		expect( d.closed ).toEqual( [[{ node: new ExNodeId( {ns: 2, i: 5001, nsu: Pumps} ), path: [{nsu: Pumps, name: 'pump1'}], name: 'pump1' }]] );
+		expect( d.closed() ).toEqual( [[{ node: new ExNodeId( {ns: 2, i: 5001, nsu: Pumps} ), path: [{nsu: Pumps, name: 'pump1'}], name: 'pump1' }]] );
 	} );
 	//a template's picker lets the folder shown become the root:  the root text is its node by URI, and the trail starts over there
 	it( 'makes the folder shown the root', async ()=>{

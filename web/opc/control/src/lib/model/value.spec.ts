@@ -1,12 +1,3 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import Long from 'long';
 import { ExtensionObject, shortestFloat, toReading, valueJson, valueString } from './value';
 import { NodeId } from './node-id';

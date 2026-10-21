@@ -5,6 +5,6 @@ import {environment} from '../../environments/environment'
 @Injectable()
 export class EnvironmentService implements IEnvironment{
 	get<T>( key:string ): T{
-		return (environment as any)[key];
+		return (environment as Record<string,unknown>)[key] as T;
 	}
 }

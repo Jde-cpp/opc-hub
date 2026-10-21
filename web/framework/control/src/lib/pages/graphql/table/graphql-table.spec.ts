@@ -1,28 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { SelectionModel } from '@angular/cdk/collections';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
-import { TableSchema } from '../../../model/ql/schema/table-schema';
 import { Flex, Style, View } from '../../../model/ql/view';
 import { GraphQLTable } from './graphql-table';
+import { object, required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
+import { stable } from 'jde-spa/testing';
 
 //The gateway's Connections list: a text column, and the grafted count that reads as a number.
-const schema = new TableSchema( { name: "ServerConnection", enums: new Map(), fields: [
-	{ name: "name", type: {kind: "NON_NULL", ofType: {kind: "SCALAR", name: "String"}} },
-	{ name: "deleted", type: {kind: "SCALAR", name: "DateTime"} },
-	{ name: "opcSessions", type: {kind: "OBJECT", name: "OpcSessions"} }
-] } );
+const schema = schemaOf( "ServerConnection", required("name"), scalar("deleted", "DateTime"), object("opcSessions", "OpcSessions") );
 
-const create = ( columns:any[] )=>{
-	TestBed.resetTestingModule();
-	TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: {} }] });
+const build = ( columns:any[], rows:any[] = [] )=>{
+	TestBed.resetTestingModule();//a test may build two
+	TestBed.configureTestingModule({ providers: [{ provide: SnackbarService, useValue: snackbarStub() }] });
 	const fixture = TestBed.createComponent( GraphQLTable );
-	fixture.componentRef.setInput( 'dataSource', signal([]) );
-	fixture.componentRef.setInput( 'displayedFields', new View({columns, sort: "name"}, schema).fields );
+	fixture.componentRef.setInput( 'dataSource', rows );
+	fixture.componentRef.setInput( 'displayedFields', View.fromTable({columns, sort: "name"}, schema).fields );
 	fixture.componentRef.setInput( 'selections', new SelectionModel<any>(false, []) );
-	return fixture.componentInstance;
+	return fixture;
 };
+const create = ( columns:any[] )=>build( columns ).componentInstance;
 
 //A heading has to sit over its values.  Both cells are flex containers and the same columnStyle() output goes on each,
 //so an alignment that only set text-align would leave the content wherever justify-content had already put it.
@@ -66,6 +62,13 @@ describe( 'GraphQLTable chip columns', ()=>{
 		expect( table.chipClass("opcSessions", {} as any) ).toBe( "" );
 	} );
 
+	it( 'puts the tone class on the rendered chip', async ()=>{
+		const fixture = build( ["name", status], [{id: 1, name: "a", opcSessions: {name: "Connected"}}, {id: 2, name: "b", opcSessions: {name: "Draining"}}] );
+		await stable( fixture, 1 );
+		const chips = [...fixture.nativeElement.querySelectorAll( 'mat-chip' )] as HTMLElement[];
+		expect( chips.map( c=>[...c.classList].find( n=>n.startsWith('chip-') ) ) ).toEqual( ["chip-ok", undefined] );
+	} );
+
 	it( 'gives a column with no chip setting no tone', ()=>{
 		expect( create(["name"]).chipClass("name", {name:"Connected"} as any) ).toBe( "" );
 	} );
@@ -73,15 +76,15 @@ describe( 'GraphQLTable chip columns', ()=>{
 	//Both buckets feed matColumnDef, so a chip column left in its original one is declared twice and the table throws.
 	it( 'takes the column out of the bucket it would otherwise render in', ()=>{
 		const table = create( ["name", status] );
-		expect( table.chipColumnNames ).toEqual( ["opcSessions"] );
-		expect( table.objectColumnNames ).toEqual( [] );
-		expect( table.stringColumnNames ).toContain( "name" );
+		expect( table.columnNames().chip ).toEqual( ["opcSessions"] );
+		expect( table.columnNames().object ).toEqual( [] );
+		expect( table.columnNames().string ).toContain( "name" );
 	} );
 
 	it( 'leaves the buckets alone when nothing asks for a chip', ()=>{
 		const table = create( ["name", {name:"opcSessions", selection:"count"}] );
-		expect( table.chipColumnNames ).toEqual( [] );
-		expect( table.objectColumnNames ).toEqual( ["opcSessions"] );
+		expect( table.columnNames().chip ).toEqual( [] );
+		expect( table.columnNames().object ).toEqual( ["opcSessions"] );
 	} );
 } );
 
@@ -111,13 +114,37 @@ describe( 'GraphQLTable live-toggle columns', ()=>{
 	//As the chip bucket: both feed matColumnDef, so a switch column left among the dates is declared twice and mat-table throws.
 	it( 'takes the column out of the date bucket', ()=>{
 		const table = create( ["name", enforced] );
-		expect( table.liveToggleColumnNames ).toEqual( ["deleted"] );
-		expect( table.dateColumnNames ).toEqual( [] );
+		expect( table.columnNames().liveToggle ).toEqual( ["deleted"] );
+		expect( table.columnNames().date ).toEqual( [] );
 	} );
 
 	it( 'leaves deleted a date column when nothing asks for a switch', ()=>{
 		const table = create( ["name", "deleted"] );
-		expect( table.liveToggleColumnNames ).toEqual( [] );
-		expect( table.dateColumnNames ).toEqual( ["deleted"] );
+		expect( table.columnNames().liveToggle ).toEqual( [] );
+		expect( table.columnNames().date ).toEqual( ["deleted"] );
+	} );
+} );
+
+
+//A22:  the fields are classified once per change of displayedFields, not per change-detection pass and per cell - and each into
+//one matColumnDef list at most, since a column declared twice throws.
+describe( 'GraphQLTable columns', ()=>{
+	it( 'puts a field in one list, a chip or a switch ahead of its type', ()=>{
+		const table = create( ["name", {name:"deleted", chip:{x:"ok"}, liveToggle:{enable:"Enforce", disable:"Stop enforcing"}}, "opcSessions"] );
+		expect( table.columnNames().chip ).toEqual( ["deleted"] );
+		expect( Object.values(table.columnNames()).flat().sort() ).toEqual( ["deleted", "name", "opcSessions"] );
+	} );
+
+	it( 'hands a cell the same style each pass', ()=>{
+		const table = create( [{name:"name", style: new Style({align:"right"})}, "deleted"] );
+		expect( table.columnStyle("name") ).toBe( table.columnStyle("name") );
+		expect( table.columnStyle("deleted") ).toBe( table.columnStyle("opcSessions") );//one empty style for the unstyled and the unknown
+	} );
+
+	it( 'renders the rows it is given', async ()=>{
+		const fixture = build( ["name"], [{id: 1, name: "a"}, {id: 2, name: "b"}] );
+		await stable( fixture, 1 );
+		const cells = [...fixture.nativeElement.querySelectorAll( 'mat-cell' )].map( (c:Element)=>c.textContent!.trim() );
+		expect( cells ).toEqual( ["a", "b"] );
 	} );
 } );

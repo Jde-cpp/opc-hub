@@ -1,8 +1,8 @@
 import { inject, Injectable } from '@angular/core';
 import { NodeLink, NodeLinkResolver } from 'jde-access';
 import { NodeId } from '../model/node-id';
-import { Gateway, GATEWAY_SERVICE, GatewayService } from './gateway-service';
-import { OPC_STORE, OpcStore } from './opc-store';
+import { Gateway, GATEWAY_SERVICE } from './gateway-service';
+import { OPC_STORE } from './opc-store';
 
 //jde-access's NODE_LINK_RESOLVER:  "opc.<x>" + "ns=5;i=5005" -> ['/gateways', gateway, connection, ...browse path], the node
 //page's url (app.routes.ts: gateways/:gateway/:connection/**, the array form the search provider builds too).  <x> is the
@@ -11,8 +11,8 @@ import { OPC_STORE, OpcStore } from './opc-store';
 //own answer (`node( id ){ name path }`, NodeQLAwait::Path):  a null path is a node it cannot place, hence no link.
 @Injectable({providedIn: 'root'})
 export class OpcNodeLinkResolver implements NodeLinkResolver{
-	#gateways:GatewayService = inject( GATEWAY_SERVICE );
-	#store:OpcStore = inject( OPC_STORE );
+	#gateways = inject( GATEWAY_SERVICE );
+	#store = inject( OPC_STORE );
 	#connections = new Map<string, Promise<Placement|undefined>>();
 
 	async resolve( schema:string, criteria:string ):Promise<NodeLink|undefined>{

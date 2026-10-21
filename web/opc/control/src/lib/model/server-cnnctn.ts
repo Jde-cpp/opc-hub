@@ -1,8 +1,6 @@
-import { ISlugRow, Mutation, MutationType, PropertyNames, SlugRow, SlugRowProps  } from "jde-framework";
-import { toBrowse } from "./types";
+import { ISlugRow, Mutation, MutationType, SlugRow, SlugRowProps  } from "jde-framework";
 import { Server } from "./server";
 
-export type CnnctnPK = number;
 export type CnnctnSlug = string;
 export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	constructor( obj:ServerCnnctnProps ){
@@ -50,12 +48,6 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 			args["defaultBrowseNs"] = ns;
 		return Object.keys( args ).length ? [new Mutation(this.type, this.id, args, original?.id ? MutationType.Update : MutationType.Create)] : [];
 	}
-
-	getNs( segment:string ):number{
-		let browse = toBrowse( segment, this.defaultBrowseNs );
-		return browse.ns!;
-	}
-	removeNs( segment:string ):string{ return toBrowse( segment, this.defaultBrowseNs ).name.toString(); }
 
 	//The properties form writes the text input's string straight onto the record, so anything that reads the field goes
 	//through here:  the constructor keeps it a number (the mutation must send `defaultBrowseNs:2`, not `"2"`), and a

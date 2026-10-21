@@ -6,6 +6,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { HELP_TOPICS, IROUTE_SERVICE, RecentVisit, RecentVisits, RouteItem } from 'jde-spa';
 import { Cards } from './cards';
 import { CARD_STATUS, CardStatusValue, counted, countRows, HelpCardStatus, ICardStatus, statusFor } from './card-status';
+import { flush } from 'jde-spa/testing';
 
 const tiles = ()=>[
 	new RouteItem( {path: 'gateways', title: 'Gateways', summary: 'Available Gateways'} ),
@@ -19,13 +20,13 @@ const hero = { lead: 'Welcome to', name: 'OPC Hub', tilesHeading: 'Where do you 
 async function render( providers:ICardStatus[], landing = true, recent:RecentVisit[] = [], items:()=>RouteItem[] = tiles ){
 	TestBed.configureTestingModule( {providers: [
 		provideRouter( [{ path: '', component: Cards, data: landing ? {hero} : {summary: 'Welcome'},
-			providers: [{provide: IROUTE_SERVICE, useValue: {docItems: async ()=>items(), children: async ()=>[]}}] }] ),
+			providers: [{provide: IROUTE_SERVICE, useValue: {docItems: async ()=>items()}}] }] ),
 		...providers.map( p=>({provide: CARD_STATUS, useValue: p, multi: true}) ),
 		{provide: RecentVisits, useValue: {visits: signal(recent), load: async ()=>{}, clear: ()=>{}}}
 	]} );
 	const harness = await RouterTestingHarness.create();
 	await harness.navigateByUrl( '/' );
-	await new Promise( r=>setTimeout(r) );//docItems and the statuses settle after the navigation
+	await flush();//docItems and the statuses settle after the navigation
 	harness.detectChanges();
 	return harness.routeNativeElement!;
 }
@@ -120,12 +121,12 @@ describe( 'Cards when the items cannot be loaded', ()=>{
 	async function section( docItems:( segments:UrlSegment[] )=>Promise<RouteItem[]> ){
 		TestBed.configureTestingModule( {providers: [
 			provideRouter( [{ path: 'gateways/:gateway', component: Cards, data: {summary: 'Connections'},
-				providers: [{provide: IROUTE_SERVICE, useValue: {docItems, children: async ()=>[]}}] }] ),
+				providers: [{provide: IROUTE_SERVICE, useValue: {docItems}}] }] ),
 			{provide: RecentVisits, useValue: {visits: signal([]), load: async ()=>{}, clear: ()=>{}}}
 		]} );
 		return RouterTestingHarness.create();
 	}
-	const settle = async ( harness:RouterTestingHarness )=>{ await new Promise( r=>setTimeout(r) ); harness.detectChanges(); };
+	const settle = async ( harness:RouterTestingHarness )=>{ await flush(); harness.detectChanges(); };
 	const alert = ( harness:RouterTestingHarness )=>harness.routeNativeElement!.querySelector<HTMLElement>( '[role=alert]' );
 	const saysNothing = ( harness:RouterTestingHarness )=>harness.routeNativeElement!.textContent!.includes( "Nothing to show here." );
 	const titles = ( harness:RouterTestingHarness )=>[...harness.routeNativeElement!.querySelectorAll('.section-card-title')].map( t=>t.textContent!.trim() );

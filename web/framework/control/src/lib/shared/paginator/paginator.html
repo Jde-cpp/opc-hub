@@ -6,15 +6,15 @@
 	}
 	<div class="mat-mdc-paginator-range-actions">
 		@if( showFirstLastButtons() ){
-			<button mat-icon-button [disabled]="disabled || firstItemShowing()" aria-label="First page" (click)="onFirstPage()"><mat-icon class="iconButton">first_page</mat-icon></button>
+			<button mat-icon-button [disabled]="firstItemShowing()" aria-label="First page" (click)="onFirstPage()"><mat-icon class="iconButton">first_page</mat-icon></button>
 		}
-		<button mat-icon-button [disabled]="disabled || firstItemShowing()" aria-label="Previous page" (click)="onPreviousPage()"><mat-icon class="iconButton">chevron_left</mat-icon></button>
-		<button mat-icon-button [disabled]="disabled || firstItemShowing()" aria-label="Previous row" (click)="onPrevItem()"><mat-icon class="iconButton">arrow_left</mat-icon></button>
+		<button mat-icon-button [disabled]="firstItemShowing()" aria-label="Previous page" (click)="onPreviousPage()"><mat-icon class="iconButton">chevron_left</mat-icon></button>
+		<button mat-icon-button [disabled]="firstItemShowing()" aria-label="Previous row" (click)="onPrevItem()"><mat-icon class="iconButton">arrow_left</mat-icon></button>
 		<div class="mat-mdc-paginator-range-label" aria-live="polite">{{startNumber()}} – {{endNumber()}}{{lengthDescription}}</div>
-		<button mat-icon-button [disabled]="disabled || isLastPage()" aria-label="Next row" (click)="onNextItem()"><mat-icon class="iconButton">arrow_right</mat-icon></button>
-		<button mat-icon-button [disabled]="disabled || isLastPage()" aria-label="Next page" (click)="onNextPage()"><mat-icon class="iconButton">chevron_right</mat-icon></button>
+		<button mat-icon-button [disabled]="isLastPage()" aria-label="Next row" (click)="onNextItem()"><mat-icon class="iconButton">arrow_right</mat-icon></button>
+		<button mat-icon-button [disabled]="isLastPage()" aria-label="Next page" (click)="onNextPage()"><mat-icon class="iconButton">chevron_right</mat-icon></button>
 		@if( showFirstLastButtons() && length() ){
-			<button mat-icon-button [disabled]="disabled || isLastPage()" aria-label="Last page" (click)="onLastPage()"><mat-icon class="iconButton">last_page</mat-icon></button>
+			<button mat-icon-button [disabled]="isLastPage()" aria-label="Last page" (click)="onLastPage()"><mat-icon class="iconButton">last_page</mat-icon></button>
 		}
 	</div>
 </div>

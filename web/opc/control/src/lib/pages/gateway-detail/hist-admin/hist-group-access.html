@@ -10,7 +10,7 @@
 		</section>
 	}
 	<div class="tab-toolbar">
-		<button matButton="filled" type="button" (click)="save()" [disabled]="!mutations().length || !ready()">Save</button>
+		<button matButton="filled" type="button" (click)="save()" [disabled]="!grants.mutations().length || !ready()">Save</button>
 		@if( onScreen() ){
 			@if( own(); as o ){
 				<button matButton="outlined" type="button" (click)="setEnforced( !o.enforced )" [disabled]="!ready()" [matTooltip]="o.enforced ? 'The hist_groups table\'s resource governs the group again' : 'Only the roles granted here get through'">
@@ -23,11 +23,11 @@
 		}
 		<a matButton type="button" routerLink="/access/resources" matTooltip="The tables' resources, the hist_groups table's among them, each with its Enforced switch">Resources</a>
 		<button matIconButton type="button" (click)="load()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
-		<span class="count">{{ roles().length }} {{ roles().length==1 ? 'role' : 'roles' }}</span>
+		<span class="count">{{ grants.roles().length }} {{ grants.roles().length==1 ? 'role' : 'roles' }}</span>
 	</div>
 	<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the roles"></mat-progress-bar>
-	<node-rights [rights]="rights" [roles]="roles()" [disabled]="!ready()" (toggleEmitter)="onToggle($event)"></node-rights>
-	@if( !loading() && !roles().length && !error() ){
+	<node-rights [rights]="rights" [roles]="grants.roles()" [disabled]="!ready()" (toggleEmitter)="onToggle($event)"></node-rights>
+	@if( !loading() && !grants.roles().length && !error() ){
 		<p class="empty" role="status">No roles to grant on.  Make one on the Roles page.</p>
 	}
 	@if( error(); as e ){

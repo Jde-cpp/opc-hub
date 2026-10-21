@@ -1,36 +1,20 @@
 @use '@angular/material' as mat;
 @use '@angular/cdk';
-@use '../projects/jde-spa/src/styles/api';
 @use '../projects/jde-spa/src/styles/markdown';
 @use '../projects/jde-spa/src/styles/tables';
 @use '../projects/jde-spa/src/styles/general';
+@use '../projects/jde-spa/src/styles/theme';
 
-.rounded-input{
-  --mat-form-field-outlined-container-shape: 20px;
-}
-
+//azure-blue, the default until the theme picker loads another
 html {
-  background-color: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
+	background-color: var(--mat-sys-surface);
+	color: var(--mat-sys-on-surface);
 
-  @include mat.theme((
-    color: (
-      theme-type: light,
-      primary: mat.$azure-palette,
-      tertiary: mat.$blue-palette,
-    ),
-    typography: Roboto,
-    density: 0,
-  ));
-
+	@include theme.theme( light, mat.$azure-palette, mat.$blue-palette );
 	@include mat.system-classes();
-  @include cdk.a11y-visually-hidden();
+	@include cdk.a11y-visually-hidden();
 }
 
-.my-content
-{
-	width: 100%;
-}
 /* A link should read as a link BEFORE it is clicked, and stop changing colour after.  `inherit` made every link
 identical to plain text - in the opc node table an object (navigable) was indistinguishable from a variable (a leaf) -
 and the magenta only arrived once visited, which is backwards;  it also forced cards.scss/apps.scss to paint `inherit`
@@ -39,12 +23,4 @@ back onto their tile anchors to stop visited tiles going pink.  The underline st
 control rather than a link paint themselves and are unaffected. */
 a, a:visited {
 	color: var(--mat-sys-primary);
-}
-.mat-column-select{
-	flex: 0 0 60px;
-}
-.mat-column-id{
-	flex: 0 0 100px;
-	justify-content: flex-end;
-	text-align: right;
 }

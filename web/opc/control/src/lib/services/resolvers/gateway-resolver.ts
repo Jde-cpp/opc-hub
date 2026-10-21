@@ -1,21 +1,20 @@
 import { inject, Injectable } from '@angular/core';
-import {ActivatedRoute, ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot, UrlSegment} from '@angular/router';
-import { AppInstanceRoute, SnackbarService, PageProfile, PageSettings, QLListData, QLListResolver, View } from 'jde-framework';
-import { Gateway, GATEWAY_SERVICE, GatewayService } from '../gateway-service';
-import { RouteItem, ProfileStore, RouteStore } from 'jde-spa';
+import {ActivatedRouteSnapshot, Resolve, Router, RouterStateSnapshot, UrlSegment} from '@angular/router';
+import { AppInstanceRoute, SnackbarService, QLListData, QLListResolver, View, AppResolver } from 'jde-framework';
+import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
+import { LocalPrefs, RouteItem, ProfileStore, RouteStore } from 'jde-spa';
 
 export type GatewayData = Omit<QLListData, "routing"> & { routing:AppInstanceRoute };//the Connections tab is a QLList
 
 @Injectable()
 export class GatewayResolver implements Resolve<GatewayData> {
-	private route:ActivatedRoute = inject( ActivatedRoute );
-	private router:Router = inject( Router );
-	private cnsl:SnackbarService = inject( SnackbarService );
-	private gatewayService:GatewayService = inject( GATEWAY_SERVICE );
+	#router = inject( Router );
+	#cnsl = inject( SnackbarService );
+	#gatewayService = inject( GATEWAY_SERVICE );
 
 	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<GatewayData>{
 		const routing = new AppInstanceRoute( "gateways", route.params["instance"], route.data["tableSettings"] );
-		routing.siblings = this.routeStore.getChildren( route.parent!.url.slice(0, -1) );
+		routing.siblings = AppResolver.siblings( "gateways", this.routeStore );
 		routing.parent = new RouteItem( { path: "/apps", title:"Applications" } );
 		return this.load( route.params["instance"], routing, route.parent!.url );
 	}
@@ -29,25 +28,20 @@ export class GatewayResolver implements Resolve<GatewayData> {
 			return await this.#load( instanceName, routing, url );
 		}
 		catch( e ){
-			this.cnsl.exception( `Could not open ${instanceName}.`, e );
-			this.router.navigateByUrl( "/apps" );
+			this.#cnsl.exception( `Could not open ${instanceName}.`, e );
+			this.#router.navigateByUrl( "/apps" );
 			return null as unknown as GatewayData;
 		}
 	}
 	async #load( instanceName:string, routing:AppInstanceRoute, url:UrlSegment[] ):Promise<GatewayData>{
-		const gateway = await this.gatewayService.gateway( instanceName );
-		const pageSettings = new PageSettings( routing.tableSettings );
-		const schema = await gateway.schemaWithEnums( "ServerConnection", (m)=>console.log(m) );
-		var profile = new PageProfile();
-		const defaultView = new View( routing.tableSettings, schema );
-		profile.views.push( defaultView );
+		const gateway = await this.#gatewayService.gateway( instanceName );
+		const schema = await gateway.schemaWithEnums( "ServerConnection" );
+		const defaultView = View.fromTable( routing.tableSettings, schema );
 		const deleted = QLListResolver.deletedView( defaultView );
-		if( deleted )
-			profile.views.push( deleted );
-		await profile.loadViews( schema.collectionName, this.profileStore, schema, defaultView );
-		profile.currentViewIndex = ProfileStore.viewIndex( schema.collectionName );
+		const profile = QLListResolver.viewSet( schema.collectionName, this.profileStore, this.#prefs, routing.tableSettings );
+		await profile.load( deleted ? [defaultView, deleted] : [defaultView], schema );
 
-		return GatewayResolver.load( gateway, {columns: QLListResolver.columns(schema, [], []), pageSettings, profile, schema, results: undefined, routing}, this.routeStore, url );
+		return GatewayResolver.load( gateway, {columns: QLListResolver.columns(schema, [], []), profile, schema, results: undefined, routing}, this.routeStore, url );
 	}
 	//The tab's first page, loaded as a list page's is:  the page it was left on, and a refused or failed rows query as the
 	//tab's own state - no access, or could not load with Retry.  A user holding no role yet is the common case once
@@ -55,9 +49,10 @@ export class GatewayResolver implements Resolve<GatewayData> {
 	//go under the url (apps/gateways/<instance>):  routing.path, gateways/<instance>, is the browse tree's key
 	//(GatewayCnnctnRouteService).
 	static async load( gateway:Gateway, data:GatewayData, routeStore:RouteStore, url:string|UrlSegment[] ):Promise<GatewayData>{
-		const paged = { ...data, childrenKey: typeof url=="string" ? url : url.map( s=>s.path ).join("/") };
+		const paged = { ...data, childrenKey: RouteStore.key( url ) };
 		return QLListResolver.loadOrFail( gateway, {...paged, skip: QLListResolver.savedSkip(paged)}, routeStore );
 	}
 	routeStore = inject( RouteStore );
 	profileStore = inject( ProfileStore );
+	#prefs = inject( LocalPrefs );
 }

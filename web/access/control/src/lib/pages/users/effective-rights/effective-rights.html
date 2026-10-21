@@ -17,7 +17,7 @@
 		}
 	}
 	@else{
-		<mat-table [dataSource]="displayRows()" class="mat-elevation-z8">
+		<mat-table [dataSource]="displayRows()" class="mat-elevation-z8 jde-dense jde-rights-grid">
 			<ng-container matColumnDef="schema">
 				<mat-header-cell *matHeaderCellDef>Schema</mat-header-cell>
 				<mat-cell *matCellDef="let row">@if( !row.parent ){ {{row.resource.schema}} }</mat-cell><!--a child row's schema is its parent's - the indent already says so-->

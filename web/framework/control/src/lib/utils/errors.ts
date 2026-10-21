@@ -24,7 +24,7 @@ export function errorText( e:unknown ):string|undefined{
 		if( typeof message=="string" )//Error, and anything else carrying a message
 			return message;
 	}
-	if( typeof e=='string' )//plain-string throws are common in this codebase — must reach the user
+	if( typeof e=='string' )//this codebase throws Errors, but a library or a server's answer may still be a bare string - it must reach the user
 		return e;
 	let json:string|undefined;
 	try{ json = JSON.stringify( e ); }catch{ json = undefined; }//a cyclic throw must not replace the error with a TypeError of its own
@@ -41,4 +41,21 @@ export function httpStatus( e:unknown ):number|undefined{
 		return e.status;
 	const status = typeof e=='object' && e ? (<{status?:unknown}>e).status : undefined;
 	return typeof status=="number" ? status : undefined;
+}
+//Not signed in, or no right:  a state the page says in place, not a fault to toast.
+export function isRefusal( e:unknown ):boolean{
+	const status = httpStatus( e );
+	return status==401 || status==403;
+}
+export type Failure = { kind:"forbidden"|"failed", title:string, detail:string };
+//What a page says instead of what it could not load (FailureState renders it):  "No access" for a 403, with what to ask for,
+//else "Could not load" - each with the throw's own words.  `noun` names what was being read; `ask` replaces the
+//ask-an-administrator line where the right is a specific one.  undefined for no error, so a computed can pass its signal straight in.
+export function failureState( e:unknown, noun?:string, ask?:string ):Failure|undefined{
+	if( e===undefined )
+		return undefined;
+	const what = errorText( e )?.replace( /^\(\d+\)/, "" ) ?? "";//errorText prefixes the status; the title already says which
+	return httpStatus( e )==403
+		? { kind: "forbidden", title: noun ? `No access to ${noun}.` : "No access.", detail: `${what}  ${ask ?? (noun ? `Ask an administrator for a role that can read ${noun}.` : "Ask an administrator for a role that grants it.")}`.trim() }
+		: { kind: "failed", title: noun ? `Could not load ${noun}.` : "Could not load.", detail: what };
 }

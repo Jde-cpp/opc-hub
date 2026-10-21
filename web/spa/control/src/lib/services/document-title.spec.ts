@@ -1,12 +1,9 @@
-import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Title } from '@angular/platform-browser';
 import { provideRouter, TitleStrategy } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { APP_NAME, AppTitleStrategy, DocumentTitle } from './document-title';
-
-@Component( {template: ''} )
-class Blank {}
+import { Blank } from 'jde-spa/testing';
 
 describe( 'AppTitleStrategy', ()=>{
 	const setup = ( app?:string )=>TestBed.configureTestingModule( {providers: [

@@ -1,9 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { SnackbarService, TableSchema } from 'jde-framework';
 import { KeyProperties } from './key-properties';
+import { snackbarStub } from 'jde-framework/testing';
 
 const create = ( record:any )=>{
-	TestBed.configureTestingModule({ providers: [ { provide: SnackbarService, useValue: {info: ()=>{}, exception: ()=>{}} } ] });
+	TestBed.configureTestingModule({ providers: [ { provide: SnackbarService, useValue: snackbarStub() } ] });
 	const fixture = TestBed.createComponent( KeyProperties );
 	fixture.componentRef.setInput( 'record', record );
 	fixture.componentRef.setInput( 'schema', {enums: new Map()} as unknown as TableSchema );
@@ -46,5 +47,13 @@ describe( 'KeyProperties certificate fingerprint', ()=>{
 		const fixture = create( cert );
 		expect( facts(fixture, "Certificate")["Fingerprint"] ).toBe( "—" );
 		expect( fixture.nativeElement.querySelector('button[aria-label="Copy fingerprint"]') ).toBeNull();
+	} );
+} );
+
+//reviews/angular-refactor.md B17:  the expiry chip was a literal green and orange beside the theme's error token
+describe( 'KeyProperties expiry chip', ()=>{
+	const chip = ( days:number )=>create( {...cert, issuer: "CN=ca", expiration: new Date( Date.now()+days*86400000 ).toISOString()} ).nativeElement.querySelector( 'mat-chip.status-chip' ) as HTMLElement;//not self-signed:  that chip comes first
+	it.each( [[400, 'chip-ok'], [10, 'chip-warn'], [-2, 'chip-error']] )( 'expiring in %i days takes %s, keeping its own class', ( days, tone )=>{
+		expect( [...chip( days ).classList] ).toEqual( expect.arrayContaining([tone, 'status-chip']) );
 	} );
 } );

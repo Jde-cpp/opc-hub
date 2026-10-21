@@ -1,12 +1,12 @@
 import { inject, Injectable } from '@angular/core';
 import { catchError, from, map, mergeMap, Observable, of, scan, startWith } from 'rxjs';
-import { ISearchProvider, SEARCH_PROVIDERS, SearchResult } from './search-provider';
+import { SEARCH_PROVIDERS, SearchResult } from './search-provider';
 
 //Fans a query out to every registered ISearchProvider and streams the merged, ranked list - each provider's hits land as they
 //arrive, so route and access hits show while a first-time opc node crawl is still running.
 @Injectable({ providedIn: 'root' })
 export class SearchService{
-	#providers:ISearchProvider[] = inject( SEARCH_PROVIDERS, {optional: true} ) ?? [];
+	#providers = inject( SEARCH_PROVIDERS, {optional: true} ) ?? [];
 
 	get prefixes():string[]{ return this.#providers.flatMap( p=>p.prefixes ?? [] ); }
 

@@ -1,11 +1,10 @@
 import { Permission } from "./permission";
-import { cloneClassArray, Mutation, MutationType, SlugRow } from "jde-framework";
-import { User, UserPK } from "./user";
-import { Group, GroupPK } from "./group";
+import { cloneClassArray, Mutation, SlugRow } from "jde-framework";
+import { User } from "./user";
+import { Group } from "./group";
 import { Acl } from "./acl";
 
 export type RolePK = number;
-export type RoleNK = string;
 export class Role extends SlugRow<Role>{
 	constructor( obj:any ){
 		super( Role.typeName, obj );
@@ -37,22 +36,10 @@ export class Role extends SlugRow<Role>{
 		let propertyies = super.mutation( original );
 		const permissions = Permission.roleMutations( original.id, this.permissions, original.permissions );
 		const childRoles = super.childMutations( this, original.childRoles ?? [], this.childRoles, {role:{}} );
-		const groups = this.aclMutations<Group>( this.groups, original.groups ?? [] );
-		const users = this.aclMutations<User>( this.users, original.users ?? [] );
+		const member = ( id:number )=>({identity: {id}, role: {id: this.id}});
+		const groups = Acl.mutations( original.groups, this.groups, member );
+		const users = Acl.mutations( original.users, this.users, member );
 		return [...propertyies, ...permissions, ...childRoles, ...groups, ...users];
-	}
-
-	private aclMutations<T extends SlugRow<T>>( modified:SlugRow<T>[], original:SlugRow<T>[] ):Mutation[]{
-		let y = [];
-		for( let mod of modified ){
-			if( !original.find(x=>x.id==mod.id) )
-				y.push( new Mutation(Acl.typeName, undefined, {identity:{ id:mod.id },role:{id: this.id}}, MutationType.Create) );
-		}
-		for( let existing of original ){
-			if( !modified?.find(x=>x.id==existing.id) )
-				y.push( new Mutation(Acl.typeName, undefined, {identity:{ id:existing.id },role:{id: this.id}}, MutationType.Purge) );
-		}
-		return y;
 	}
 
 	childRoles!: Role[];

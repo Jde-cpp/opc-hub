@@ -2,20 +2,28 @@ import { Injectable } from "@angular/core";
 import { UrlSegment } from "@angular/router";
 import { RouteItem } from "../pages/component-sidenav/route-item";
 
+export type RouteKey = string | readonly (string|UrlSegment)[];
+
+//A url's children - a list's rows, a cards page's tiles - which the sidenav, the breadcrumb and the search box read back.
 @Injectable({ providedIn: 'root' })
 export class RouteStore{
-	getChildren( url:string | UrlSegment[] ):RouteItem[]{
-		if( Array.isArray(url) )
-			url = url.map( x=>x.path ).join("/");
-		return this.#children.get( url ) ?? this.loadChildren( url );
+	getChildren( url:RouteKey ):RouteItem[]{
+		const key = RouteStore.key( url );
+		return this.#children.get( key ) ?? this.loadChildren( key );
 	}
 
-	setChildren( url:string | UrlSegment[], children:readonly Partial<RouteItem>[] ){//copied into RouteItems:  a list's rows are passed as plain {title, path}
-		if( Array.isArray(url) )
-			url = url.map( x=>x.path ).join("/");
-		this.#children.set( url, children.map(s=>{return new RouteItem({title:s.title, path:s.path, icon:s.icon})}) );
-		localStorage.setItem( url, JSON.stringify(this.#children.get(url)) );
-		this.#rememberKey( url );
+	setChildren( url:RouteKey, children:readonly Partial<RouteItem>[] ){//copied into RouteItems:  a list's rows are passed as plain {title, path}
+		const key = RouteStore.key( url );
+		this.#children.set( key, children.map(s=>{return new RouteItem({title:s.title, path:s.path, icon:s.icon})}) );
+		localStorage.setItem( key, JSON.stringify(this.#children.get(key)) );
+		this.#rememberKey( key );
+	}
+	//The one spelling of a key:  the parent's absolute url with no leading or trailing slash - 'access/users',
+	//'apps/gateways/opchub'.  A writer passes whatever it holds, a url or a route's segments, and its children's paths are relative
+	//to it, so a reader joins the two.  A bare 'users' was the list's own segment, which the readers had to guess the section of.
+	static key( url:RouteKey ):string{
+		const path = typeof url=="string" ? url : url.map( s=>typeof s=="string" ? s : s.path ).join( '/' );
+		return path.split( '/' ).filter( s=>s.length ).join( '/' );
 	}
 
 	//Every parent url with cached children - the navbar search enumerates them.  localStorage has no prefix to list by, so the
@@ -68,5 +76,5 @@ export class RouteStore{
 			localStorage.setItem( RouteStore.keysKey, JSON.stringify([...keys, key]) );
 	}
 
-	#children:Map<string,RouteItem[]> = new Map<string,RouteItem[]>();//parent url, children relative to parent
+	#children:Map<string,RouteItem[]> = new Map<string,RouteItem[]>();//RouteStore.key, children relative to it
 }

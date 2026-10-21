@@ -1,3 +1,5 @@
+@use '../../status';
+
 mat-form-field{
 	display: block;
 	width: 100%;
@@ -22,18 +24,10 @@ mat-form-field{
 	display: block;
 	margin: .25rem 0 1.25rem;
 }
-/* the server's answer, with the Status cells' Bad icon */
+/* the server's answer */
 .refused, .results li{
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	color: var(--mat-sys-on-surface);
+	@include status.refused( 0 );
 	mat-icon{
-		flex: 0 0 auto;
-		font-size: 18px;
-		width: 18px;
-		height: 18px;
-		color: var(--mat-sys-error);
 		&.uncertain{ color: var(--mat-sys-tertiary); }
 		&.good{ color: var(--mat-sys-on-surface-variant); }
 	}

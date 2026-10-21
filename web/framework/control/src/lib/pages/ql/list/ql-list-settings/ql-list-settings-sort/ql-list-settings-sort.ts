@@ -1,5 +1,5 @@
-import { CommonModule } from "@angular/common";
-import { Component, input, OnInit, ViewChild } from "@angular/core";
+import { KeyValuePipe } from "@angular/common";
+import { Component, input, OnInit, viewChild } from "@angular/core";
 import { MatAutocompleteModule } from "@angular/material/autocomplete";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIcon } from "@angular/material/icon";
@@ -15,8 +15,7 @@ import { View } from '../../../../../model/ql/view';
 		selector: 'ql-list-settings-sort',
 		templateUrl: './ql-list-settings-sort.html',
 		styleUrls: ['./ql-list-settings-sort.scss'],
-		host: {class:'main-content.mat-drawer-container.my-content'},
-		imports: [CommonModule, MatAutocompleteModule, MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatTableModule]
+		imports: [KeyValuePipe, MatAutocompleteModule, MatButtonModule, MatIcon, MatInputModule, MatSelectModule, MatTableModule]
 })
 export class QLListSettingsSort implements OnInit{
 	ngOnInit(){
@@ -28,7 +27,7 @@ export class QLListSettingsSort implements OnInit{
 	onDelete(element:Sort){
 		const index = this.dataSource.indexOf(element);
 		this.dataSource.splice(index, 1);
-    this.table.renderRows();
+    this.table().renderRows();
 	}
 
 	dataSource:Sort[] = [];
@@ -41,7 +40,7 @@ export class QLListSettingsSort implements OnInit{
 		element.direction = 'asc';
 		if( isNew ){
 			this.dataSource.push( {...QLListSettingsSort.emptySort} );
-			this.table.renderRows();
+			this.table().renderRows();
 		}
 	}
 	selectableFields( sort:Sort ):any{
@@ -54,5 +53,5 @@ export class QLListSettingsSort implements OnInit{
 		);
 	}
 	static emptySort:Sort = {active: "", direction: 'asc'};
-	@ViewChild('table', {static: true}) table!: MatTable<Sort>;
+	table = viewChild.required<MatTable<Sort>>( 'table' );
 }

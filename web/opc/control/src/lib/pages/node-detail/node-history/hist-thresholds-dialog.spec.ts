@@ -1,12 +1,3 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { HistBand, HistMemberThresholds, HistThresholdOverride, histThresholdProblem, HistThresholds } from '../../../model/hist';
@@ -14,9 +5,10 @@ import { Variable } from '../../../model/node';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { EAccess, ETypes } from '../../../model/types';
 import { HistThresholdsDialog, HistThresholdsDialogData, ownFields, thresholdChanges } from './hist-thresholds-dialog';
+import { flush } from 'jde-spa/testing';
+import { variable } from 'jde-opc/testing';
 
-const settle = ()=>new Promise( r=>setTimeout(r) );
-const Rpm = new Variable( <any>{ns:2, i:6022, name: 'rpm', browse: {ns:2, name: 'rpm'}, dataType: {i: ETypes.Double}, historizing: true, userAccessLevel: EAccess.All} );
+const Rpm = variable( 6022, 'rpm', {dataType: {i: ETypes.Double}, historizing: true, userAccessLevel: EAccess.All} );
 //Pump2's rpm, from the template:  its own deviation and format, the template's min interval, the group's max interval, the
 //default stepped.  And the server's State, added by hand, an enumeration.
 const rpm = ():HistMemberThresholds=>({ id: 7, node: new ExNodeId( {ns: 2, i: 6022, nsu: 'urn:jde:pumps'} ), templateNode: 3, path: [{nsu: 'urn:jde:pumps', name: 'motorRpm'}], enumeration: false, thresholds: [
@@ -27,28 +19,26 @@ const state = ():HistMemberThresholds=>({ id: 8, node: new ExNodeId( {i: 2259, n
 	{ name: 'exceptionDeviation', value: 2, source: 'group' }, { name: 'exceptionDeviationFormat', value: 0, source: 'default' }, { name: 'minTimeInterval', value: 0, source: 'default' },
 	{ name: 'maxTimeInterval', value: 60000, source: 'group' }, { name: 'stepped', value: true, source: 'default' }
 ] });
-//The dialog over a stub gateway:  `lists` is what each load answered, `saves` what was sent, and the next load's or save's
+//The dialog over a stub gateway:  `list` is what each load answers, `save` takes what was sent, and the next load's or save's
 //refusal is `fail`.
 const open = ( list:HistThresholds, data:Partial<HistThresholdsDialogData>={} )=>{
-	const saves:{id:number; changes:HistThresholdOverride}[] = [];
-	let loads = 0;
 	const y = {
 		list, fail: <Error|undefined>undefined,
 		ref: { disableClose: <boolean|undefined>undefined, close: ()=>{} }
 	};
+	const refusal = ()=>{ if( y.fail ){ const e = y.fail; y.fail = undefined; throw e; } };
+	const load = vi.fn( async ()=>{ refusal(); return y.list; } );
+	const save = vi.fn( async ( _id:number, _changes:HistThresholdOverride )=>refusal() );
 	TestBed.configureTestingModule({ providers: [
 		{ provide: MatDialogRef, useValue: y.ref },
-		{ provide: MAT_DIALOG_DATA, useValue: <HistThresholdsDialogData>{ group: 3, name: 'Pumps', nodes: [Rpm],
-			load: async ()=>{ ++loads; if( y.fail ){ const e = y.fail; y.fail = undefined; throw e; } return y.list; },
-			save: async ( id:number, changes:HistThresholdOverride )=>{ saves.push( {id, changes} ); if( y.fail ){ const e = y.fail; y.fail = undefined; throw e; } },
-			...data } }
+		{ provide: MAT_DIALOG_DATA, useValue: <HistThresholdsDialogData>{ group: 3, name: 'Pumps', nodes: [Rpm], load, save, ...data } }
 	]});
 	const fixture = TestBed.createComponent( HistThresholdsDialog );
 	fixture.detectChanges();
-	return { fixture, dialog: fixture.componentInstance, saves, loads: ()=>loads, set list( l:HistThresholds ){ y.list = l; }, set fail( e:Error ){ y.fail = e; },
+	return { fixture, dialog: fixture.componentInstance, load, save, set list( l:HistThresholds ){ y.list = l; }, set fail( e:Error ){ y.fail = e; },
 		//each cell's spans - a threshold's value and its source - joined by a space
 		cells: ( row:number )=>[...fixture.nativeElement.querySelectorAll( 'mat-row' )[row].querySelectorAll( 'mat-cell' )].map( ( c:Element )=>[...c.querySelectorAll( 'span' )].map( s=>s.textContent!.trim() ).filter( t=>t.length ).join( ' ' ) ),
-		settle: async ()=>{ await settle(); fixture.detectChanges(); await settle(); fixture.detectChanges(); } };
+		settle: async ()=>{ await flush(); fixture.detectChanges(); await flush(); fixture.detectChanges(); } };
 };
 
 describe( 'threshold fields', ()=>{
@@ -78,7 +68,7 @@ describe( 'HistThresholdsDialog', ()=>{
 	it( 'lists the members with each threshold and its source', async ()=>{
 		const d = open( {update: true, nodes: [rpm(), state()]} );
 		await d.settle();
-		expect( d.loads() ).toBe( 1 );
+		expect( d.load ).toHaveBeenCalledTimes( 1 );
 		expect( d.dialog.canUpdate() ).toBe( true );
 		expect( d.cells( 0 ) ).toEqual( ['rpm', '5 node', 'PercentOfValue node', '1000 template', '60000 group', 'true default', ''] );
 		expect( d.cells( 1 ).slice( 1, 3 ) ).toEqual( ['n/a group', 'n/a default'] );
@@ -150,8 +140,8 @@ describe( 'HistThresholdsDialog', ()=>{
 		d.list = {update: true, nodes: [{...rpm(), thresholds: rpm().thresholds.map( t=>t.name=='maxTimeInterval' ? {...t, value: 30000, source: 'node'} : t.name=='exceptionDeviation' ? {...t, value: 2, source: 'group'} : t )}]};
 		await d.dialog.apply();
 		await d.settle();
-		expect( d.saves ).toEqual( [{id: 7, changes: {exceptionDeviation: null, maxTimeInterval: 30000}}] );
-		expect( d.loads() ).toBe( 2 );
+		expect( d.save.mock.calls ).toEqual( [[7, {exceptionDeviation: null, maxTimeInterval: 30000}]] );
+		expect( d.load ).toHaveBeenCalledTimes( 2 );
 		expect( d.dialog.editing() ).toBeUndefined();
 		expect( d.cells( 0 ).slice( 1, 5 ) ).toEqual( ['2 group', 'PercentOfValue node', '1000 template', '30000 node'] );
 	} );
@@ -164,7 +154,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		d.fixture.detectChanges();
 		const input = <HTMLInputElement>d.fixture.nativeElement.querySelector( 'section.editor input' );
 		expect( input.value ).toBe( '5' );
-		const type = async ( text:string )=>{ input.value = text; input.dispatchEvent( new Event('input') ); d.fixture.detectChanges(); await settle(); };
+		const type = async ( text:string )=>{ input.value = text; input.dispatchEvent( new Event('input') ); d.fixture.detectChanges(); await flush(); };
 		await type( '.' );
 		expect( input.value ).toBe( '.' );
 		expect( d.dialog.problem() ).toBe( 'Deviation is a number, 0 or more.' );
@@ -181,11 +171,11 @@ describe( 'HistThresholdsDialog', ()=>{
 		d.fail = new Error( 'minTimeInterval must be milliseconds, 0 or more, not -1.' );
 		await d.dialog.apply();
 		await d.settle();
-		expect( d.saves ).toHaveLength( 1 );
+		expect( d.save ).toHaveBeenCalledTimes( 1 );
 		expect( d.dialog.error() ).toContain( 'minTimeInterval must be' );
 		expect( d.dialog.editing()?.id ).toBe( 7 );
 		expect( d.dialog.fields().minTimeInterval ).toBe( '250' );
-		expect( d.loads() ).toBe( 1 );
+		expect( d.load ).toHaveBeenCalledTimes( 1 );
 	} );
 	it( 'shows why the list could not be read', async ()=>{
 		const d = open( {update: true, nodes: []}, { load: async ()=>{ throw new Error( "Group 3 isn't one this gateway historizes." ); } } );

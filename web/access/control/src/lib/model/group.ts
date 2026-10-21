@@ -9,17 +9,8 @@ export type GroupPK = number;
 export class Group extends SlugRow<Group>{
 	constructor( obj:any ){
 		super(Group.typeName, obj);
-		if( obj.acl ){
-			this.roles = [];
-			this.permissions = [];
-			for( let member of obj.acl ){
-				if( member.role ){
-					this.roles.push( new Role(member.role) );
-				}else if( member.permissionRight ){
-					this.permissions.push( new Permission(member.permissionRight) );
-				}
-			}
-		}
+		if( obj.acl )
+			({roles: this.roles, permissions: this.permissions} = Acl.split( obj.acl ));
 		else{
 			this.roles = cloneClassArray( obj.roles, Role );
 			this.permissions = cloneClassArray( obj.permissions, Permission );

@@ -3,70 +3,21 @@
 		<ql-list-settings [suggestions]={} [columns]=columns [view]=viewCopy [schema]=schema (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event)
 			(onCancel)="isSettings.set( false )"></ql-list-settings>
 	} @else {
-	<!-- <ng-container> -->
-		<mat-toolbar>
-			<div class="bar-left">
-				<mat-form-field subscriptSizing="dynamic" class="level-field">
-					<mat-label>Level</mat-label>
-					<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
-						@for( l of levels; track l.value ){
-							<mat-option [value]=l.value>{{l.name}}</mat-option>
-						}
-					</mat-select>
-				</mat-form-field>
-			</div>
-			<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
-				<button matIconButton aria-label="Refresh" matTooltip="Refresh" (click)="refresh()">
-					<mat-icon>refresh</mat-icon>
-				</button>
-				<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="viewIndex()" (change)="onViewChange($event.value)">
-					@for( view of views(); track view; let i=$index ){
-						<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
+		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" (viewChange)="onViewChange($event)" (edit)="isSettings.set(true)" (refresh)="refresh()">
+			<mat-form-field left subscriptSizing="dynamic" class="level-field">
+				<mat-label>Level</mat-label>
+				<mat-select [value]="level" (selectionChange)="onMinLevelChange($event.value)">
+					@for( l of levels; track l.level ){
+						<mat-option [value]=l.level>{{l.name}}</mat-option>
 					}
-				</mat-button-toggle-group>
-				<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="isSettings.set(true)">
-					<mat-icon>tune</mat-icon>
-				</button>
-			</div>
-			<div class="bar-right"></div>
-			<!--parked from the old toolbar - applications picker, pause, date range, filter and the hidden-message
-			buttons were never rebuilt, so the markup stays here rather than being lost to git history.  Their handlers
-			are GONE as of review3 C3:  subscribe()/unsubscribe() never subscribed to anything - `subscription` was never
-			assigned - so un-parking any of this means writing the live-log path, not just uncommenting.-->
-			<!-- <i class="material-icons" [innerHTML]="connected ? 'power' : 'power_off'"></i> -->
-			<!-- <button class="mdc-icon-button material-icons" (click)="settings()" >settings</button>  -->
-			<!--  [value]="application.Name" -->
-			<!-- <mat-form-field> -->
-				<!-- <mat-label>Applications</mat-label>
-				<mat-select placeholder="Applications" [(value)]="applicationId">
-					<ng-container *ngFor="let application of applications">
-						<mat-option (onSelectionChange)="onChangeApplication($event)" [value]="application.id">{{application.name}}</mat-option>
-					</ng-container>
-				</mat-select> -->
-				<!-- <mat-select name="applications" ngDefaultControl (selectionChange)="onChangeApplication($event.value)">
-					<mat-option *ngFor="let application of applications" [value]="application.id">{{application.name}}</mat-option>
-				</mat-select> -->
-			<!-- </mat-form-field> -->
-
-			<!-- <button mat-icon-button><mat-icon class="iconButton" (click)="paused=!paused">{{paused ? 'play_arrow' : 'pause'}}</mat-icon></button> -->
-			<!-- <div>|</div> -->
-			<!-- <severity-picker style="margin-left:15px;" (levelChange)="onLevelChange($event)" [level]="level"></severity-picker> -->
-			<!-- <div>|</div> -->
-			<!-- <mat-form-field>
-				<input matInput [matDatepicker]="dateId" placeholder="Date" [(formControl)]="start" (dateChange)="startChange($event)">
-				<mat-datepicker-toggle matSuffix [for]="dateId"></mat-datepicker-toggle>
-				<mat-datepicker #dateId></mat-datepicker>
-			</mat-form-field> -->
-			<!-- <mat-paginator (page)="pageChangeEvent($event)" [pageIndex]="pageIndex" [length]="data.length" [pageSize]="pageSize" [pageSizeOptions]="[14, 100, 500, 1000]" showFirstLastButtons></mat-paginator> -->
-			<!-- [startIndex]="pageInfo.startIndex" -->
-			<!-- <mat-form-field>
-				<input matInput (input)="applyFilter($event.target['value'])" placeholder="Filter">
-			</mat-form-field> -->
-			<!-- <button mat-icon-button [disabled]="profile.hiddenMessages.length==0"><mat-icon class="iconButton" (click)="clearHiddenMessages()">layers_clear</mat-icon></button>
-			<button mat-icon-button [disabled]="selectedIndex==null"><mat-icon class="iconButton" (click)="hideSelectedMessage()">clear</mat-icon></button>
-			<button mat-icon-button [disabled]="selectedIndex==null"><mat-icon class="iconButton" (click)="navigateNext()">navigate_next</mat-icon></button> -->
-		</mat-toolbar>
-		<mat-table #mainTable [dataSource]="data" class="mat-elevation-z8" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
+				</mat-select>
+			</mat-form-field>
+			<!--against the row selected:  every row of its message hidden, or the next one shown-->
+			<button right matIconButton type="button" aria-label="Hide this message" matTooltip="Hide every row of the selected message" [disabled]="!selectedEntry" (click)="hideSelectedMessage()"><mat-icon>visibility_off</mat-icon></button>
+			<button right matIconButton type="button" aria-label="Next of this message" matTooltip="The next row of the selected message" [disabled]="!selectedEntry" (click)="navigateNext()"><mat-icon>navigate_next</mat-icon></button>
+			<button right matIconButton type="button" aria-label="Show hidden messages" [matTooltip]="hiddenTooltip()" [disabled]="!profile.hiddenMessages.length" (click)="clearHiddenMessages()"><mat-icon>layers_clear</mat-icon></button>
+		</view-toolbar>
+		<mat-table [dataSource]="data" class="mat-elevation-z8" matSort (matSortChange)="onSort($event)" [matSortActive]="this.sort[0].active" [matSortDirection]="this.sort[0].direction">
 			<ng-container matColumnDef="time">
 				<mat-header-cell mat-sort-header *matHeaderCellDef> Time </mat-header-cell>
 				<mat-cell style="text-align: left" title="{{element.time | date }}" mat-cell *matCellDef="let element"> {{element.time | date: "HH:mm:ss.SSS"}} </mat-cell>
@@ -104,11 +55,10 @@
 				<mat-cell mat-cell *matCellDef="let entry" class="number"> {{entry.user}} </mat-cell>
 			</ng-container>
 			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
-			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" (click)="cellClick(row)"></mat-row>
+			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
 		</mat-table>
 		<div class="pager">
 			<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
 		</div>
-	<!-- </ng-container> -->
 	}
 }

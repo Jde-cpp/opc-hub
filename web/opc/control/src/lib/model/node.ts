@@ -1,20 +1,20 @@
 import { NodeId, NodeIdJson } from "./node-id";
-import { ETypes, Browse, ILocalizedText, Ns, toLocalizedText, EAccess, EWriteAccess, StatusCode } from "./types";
+import { ETypes, Browse, ILocalizedText, Ns, toLocalizedText, EAccess, StatusCode } from "./types";
 import { Reading, toReading, Value } from "./value";
 import { Enum } from "./enum";
 import { OpcError } from "./opc-error";
 import { isBad } from "./status-code";
 
 export enum ENodeClass{
-  Unspecified = 0,
-  Object = 1,
-  Variable = 2,
-  Method = 4,
-  ObjectType = 8,
-  VariableType = 16,
-  ReferenceType = 32,
-  DataType = 64,
-  nodeClassView = 128,
+	Unspecified = 0,
+	Object = 1,
+	Variable = 2,
+	Method = 4,
+	ObjectType = 8,
+	VariableType = 16,
+	ReferenceType = 32,
+	DataType = 64,
+	nodeClassView = 128,
 }
 
 export abstract class UaNode extends NodeId{
@@ -44,10 +44,7 @@ export abstract class UaNode extends NodeId{
 	abstract get nodeClass():ENodeClass;
 	parent?:UaNode;
 	refType?:NodeId;
-	specified!:number;
 	typeDef?:ObjectType;
-	userWriteMask!:EWriteAccess;
-	writeMask!:EWriteAccess;
 }
 
 export class ObjectType extends UaNode{

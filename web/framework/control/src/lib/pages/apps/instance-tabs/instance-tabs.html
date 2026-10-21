@@ -1,0 +1,50 @@
+<!--each tab's body is keyed on the instance - `@for( x of [key]; track x )`:  the router reuses the page from one instance to
+	the next, and a tab loads once, so without it a tab kept the previous instance's entries and a Log Settings Save diffed
+	against its snapshot and wrote to this one's id (reviews/m3-closing.md #31)-->
+<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start" [(selectedIndex)]="selectedIndex">
+	@for( tab of tabs(); track tab ){
+		<mat-tab>
+			<ng-template mat-tab-label>{{ tab.label() }}</ng-template>
+			<ng-template matTabContent><ng-container [ngTemplateOutlet]="tab.template"/></ng-template>
+		</mat-tab>
+	}
+	<mat-tab>
+		<ng-template mat-tab-label>Logs</ng-template>
+		<ng-template matTabContent>
+			@if( logs(); as service ){
+				@for( s of [service]; track s ){
+					<log-detail [service]=s></log-detail>
+				}
+			}
+			@else{
+				<p>No service for this {{ noun() }} — logs are unavailable.</p>
+			}
+		</ng-template>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Log Settings</ng-template>
+		<ng-template matTabContent>
+			@if( instanceId() !== undefined ){
+				@for( id of [instanceId()]; track id ){
+					<log-settings [service]=appService [instanceId]=id!></log-settings>
+				}
+			}
+			@else{
+				<p>No application instance registered for this {{ noun() }} — log settings are unavailable.</p>
+			}
+		</ng-template>
+	</mat-tab>
+	<mat-tab><!--asked of the application server, which answers for itself (and a hub) and forwards to a stand-alone gateway or server over its socket:  their own /graphql does not answer sessions-->
+		<ng-template mat-tab-label>Web Sessions</ng-template>
+		<ng-template matTabContent>
+			@if( instanceId() !== undefined ){
+				@for( id of [instanceId()]; track id ){
+					<web-sessions [service]=appService [instanceId]=id!></web-sessions>
+				}
+			}
+			@else{
+				<p>No application instance registered for this {{ noun() }} — web sessions are unavailable.</p>
+			}
+		</ng-template>
+	</mat-tab>
+</mat-tab-group>

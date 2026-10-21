@@ -578,7 +578,7 @@ SectionEnd
 Section "Web UI" SEC_WEB
 	SetOutPath "$INSTDIR\Web"
 	File /r /x *.map /x addons "${WEB_DIST}\*.*" ;not the source maps - ~7 MB a browser never asks for unless devtools are open (reviews/install-issues.md, "Shipped weight") - nor a site's own add-ons, the trend's Highcharts the install never carries (#302; the help's "Trend chart")
-	File "${SRC_DIR}\web\opc\scripts\web.config"
+	File "${SRC_DIR}\apps\OpcHub\setup\web.config"
 	${If} $KeptAddons != ""
 		ClearErrors
 		Rename "$KeptAddons" "$INSTDIR\Web\addons"

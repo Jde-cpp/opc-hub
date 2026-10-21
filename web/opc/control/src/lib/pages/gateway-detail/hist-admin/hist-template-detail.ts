@@ -6,13 +6,13 @@ import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { confirm, DetailPage, errorText, Properties } from 'jde-framework';
+import { confirm, DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
 import { histPathText, histThresholdArgs, histThresholdBlank, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames, histThresholdProblem } from '../../../model/hist';
 import { HistTemplate, HistTemplateGroup, HistTemplateMember, HistTemplateProps } from '../../../model/hist-admin';
 import { Gateway } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
-import { histAddEach } from './hist-add-each';
+import { HistMembers } from './hist-members';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
 import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 
@@ -26,7 +26,7 @@ import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content mat-drawer-container my-content hist-template-detail'},
-	imports: [MatButtonModule, MatIconModule, MatProgressBarModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, RouterLink, HistThresholdFieldsEditor]
+	imports: [DetailActions, MatButtonModule, MatIconModule, MatProgressBarModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, RouterLink, HistThresholdFieldsEditor]
 })
 export class HistTemplateDetail extends DetailPage<HistTemplate>{
 	constructor(){ super( 'hist-template-detail' ); }
@@ -34,10 +34,10 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 	protected override get ctor(){ return HistTemplate; }
 	protected override onRow(){
 		this.gateway = (<GatewayDetailData<HistTemplate>>this.pageData).gateway;
-		this.members.set( [] );
+		this.members.rows.set( [] );
 		this.groups.set( [] );
 		this.editing.set( undefined );
-		this.error.set( undefined );
+		this.members.error.set( undefined );
 		if( this.row.id )
 			this.refresh();
 	}
@@ -51,11 +51,8 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 	//what a blank column of a member means:  the group's value, else the default
 	readonly memberHints:Partial<Record<HistThresholdName,string>> = { exceptionDeviation: "Blank:  the group's deviation, else none.", exceptionDeviationFormat: "Blank:  the group's format, else AbsoluteValue.", minTimeInterval: "Blank:  the group's, else 0.", maxTimeInterval: "Blank:  the group's, else off.", stepped: "Blank:  the group's, else true." };
 	get template(){ return this.row; }
-	members = signal<HistTemplateMember[]>( [] );
+	members = new HistMembers<HistTemplateMember>( this.snackbar );//its error is also the gateway's refusal of an edit
 	groups = signal<HistTemplateGroup[]>( [] );
-	loading = signal( false );
-	busy = signal( false );
-	error = signal<string|undefined>( undefined );//the gateway's refusal of the list, or of an edit
 	editing = signal<HistTemplateMember|undefined>( undefined );
 	fields = signal<HistThresholdFields>( histThresholdBlank );
 	problem = computed( ()=>histThresholdProblem( this.fields() ) );
@@ -63,52 +60,38 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 	changed = computed( ()=>Object.keys( this.changes() ).length>0 );
 
 	async refresh():Promise<void>{
-		const id = this.row?.id;
-		if( !id )
-			return;
-		this.loading.set( true );
-		this.error.set( undefined );
-		const gateway = this.gateway;
-		try{
-			const [members, groups] = await Promise.all( [this.admin.templateMembers( gateway, id ), this.admin.templateGroups( gateway, id )] );
-			if( this.row?.id!=id || gateway!=this.gateway )//the router reused the page for another template meanwhile, maybe another gateway's with the same id
-				return;
-			this.members.set( members );
-			this.groups.set( groups );
-		}
-		catch( e ){
-			this.error.set( errorText( e ) ?? 'Unknown error' );
-		}
-		finally{
-			this.loading.set( false );
-		}
+		const id = this.row?.id, gateway = this.gateway;
+		if( id )
+			await this.members.read( ()=>Promise.all( [this.admin.templateMembers( gateway, id ), this.admin.templateGroups( gateway, id )] ),
+				( [members, groups] )=>{ this.members.rows.set( members ); this.groups.set( groups ); },
+				()=>this.row?.id==id && gateway==this.gateway );
 	}
 	pathText( m:HistTemplateMember ):string{ return histPathText( m.path ); }
 	readonly cellText = histThresholdFieldText;//blank where a member leaves its group nodes to inherit
 	edit( m:HistTemplateMember ):void{
 		this.editing.set( m );
 		this.fields.set( {...m.thresholds} );
-		this.error.set( undefined );
+		this.members.error.set( undefined );
 	}
 	cancelEdit():void{ this.editing.set( undefined ); }
 	//the member's own thresholds changed:  the gateway re-resolves each group node made from it before answering
 	async saveEdit():Promise<void>{
 		const m = this.editing();
 		const changes = this.changes();
-		if( !m || !Object.keys( changes ).length || this.busy() )
+		if( !m || !Object.keys( changes ).length || this.members.busy() )
 			return;
-		this.busy.set( true );
-		this.error.set( undefined );
+		this.members.busy.set( true );
+		this.members.error.set( undefined );
 		try{
-			await this.admin.updateTemplateMember( this.gateway, m.id, changes, msg=>console.log( msg ) );
+			await this.admin.updateTemplateMember( this.gateway, m.id, changes );
 			this.editing.set( undefined );
 			await this.refresh();
 		}
 		catch( e ){
-			this.error.set( errorText( e ) ?? 'Unknown error' );
+			this.members.error.set( errorMessage(e) );
 		}
 		finally{
-			this.busy.set( false );
+			this.members.busy.set( false );
 		}
 	}
 	async remove( m:HistTemplateMember ):Promise<void>{
@@ -118,19 +101,12 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 		const where = groups ? `, and its node leaves ${which}.  The history each kept of it stays on disk` : '';
 		if( !await confirm( this.dialog, {title: `Remove ${this.pathText( m )}?`, message: `The member leaves the template${where}.`, confirm: 'Remove', destructive: true} ) )
 			return;
-		this.busy.set( true );
-		try{
-			await this.admin.purgeTemplateMember( this.gateway, m.id, msg=>console.log( msg ) );
+		await this.members.mutate( async ()=>{
+			await this.admin.purgeTemplateMember( this.gateway, m.id );
 			if( this.editing()?.id==m.id )
 				this.editing.set( undefined );
 			await this.refresh();
-		}
-		catch( e ){
-			this.snackbar.exception( 'Could not remove the member.', e );
-		}
-		finally{
-			this.busy.set( false );
-		}
+		}, 'Could not remove the member.' );
 	}
 	//Members picked from a connection's tree, under a root of the user's choosing, since a template names no server:  each pick's path
 	//from that root becomes a member.
@@ -138,7 +114,7 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 		const gateway = this.gateway;
 		let connections;
 		try{
-			connections = await this.admin.connections( gateway, msg=>console.log( msg ) );
+			connections = await this.admin.connections( gateway );
 		}
 		catch( e ){
 			return this.snackbar.exception( 'Could not list the connections.', e );
@@ -146,8 +122,7 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 		const picks = await HistNodePickerDialog.open( this.dialog, { gateway, title: `Add members to ${this.row.name}`, mode: 'paths', connections, rootEditable: true } );
 		if( !picks?.length )
 			return;
-		await histAddEach( picks, { noun: 'member', label: p=>histPathText( p.path ), busy: this.busy, snackbar: this.snackbar,
-			add: p=>this.admin.createTemplateMember( gateway, this.row.id, p.path, {}, msg=>console.log( msg ) ) } );
+		await this.members.add( picks, 'member', p=>histPathText( p.path ), p=>this.admin.createTemplateMember( gateway, this.row.id, p.path ) );
 		await this.refresh();
 	}
 	groupLink( g:HistTemplateGroup ):string[]{ return ['/apps/gateways', this.gateway.slug, 'groups', g.slug]; }

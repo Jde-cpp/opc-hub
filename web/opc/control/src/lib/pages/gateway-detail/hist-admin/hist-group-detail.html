@@ -1,8 +1,7 @@
 <!--preserveContent:  a tab, once opened, stays alive behind another, so a switch away keeps what it holds unsaved - the Access tab's
 	ticks (reviews-issue/historian-group-access.md #6) - where a lazy tab was destroyed on leaving-->
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start" preserveContent
-	[selectedIndex]="tabIndex()"
-	(selectedIndexChange)="onTabIndexChanged($event)">
+	[(selectedIndex)]="tabIndex">
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template>
 		<ng-template matTabContent>
@@ -54,13 +53,13 @@
 				<div class="tab-body">
 					<p class="hint">The nodes the group historizes, each from its template member or added by hand, with the thresholds its own row sets;  a blank column inherits the member's, then the group's.  Thresholds shows what each resolves to, and overrides it.</p>
 					<div class="tab-toolbar">
-						<button matButton="tonal" type="button" (click)="addNodes()" [disabled]="busy()"><mat-icon>add</mat-icon>Add nodes</button>
-						<button matButton="outlined" type="button" (click)="openThresholds()" [disabled]="busy()" matTooltip="Each member's effective thresholds, where each comes from, and overrides"><mat-icon>tune</mat-icon>Thresholds</button>
-						<button matIconButton type="button" (click)="refresh()" [disabled]="loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
-						<span class="count">{{ members().length }} {{ members().length==1 ? 'node' : 'nodes' }}</span>
+						<button matButton="tonal" type="button" (click)="addNodes()" [disabled]="members.busy()"><mat-icon>add</mat-icon>Add nodes</button>
+						<button matButton="outlined" type="button" (click)="openThresholds()" [disabled]="members.busy()" matTooltip="Each member's effective thresholds, where each comes from, and overrides"><mat-icon>tune</mat-icon>Thresholds</button>
+						<button matIconButton type="button" (click)="refresh()" [disabled]="members.loading()" aria-label="Refresh" matTooltip="Refresh"><mat-icon>refresh</mat-icon></button>
+						<span class="count">{{ members.rows().length }} {{ members.rows().length==1 ? 'node' : 'nodes' }}</span>
 					</div>
-					<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
-					<mat-table [dataSource]="members()" class="mat-elevation-z2">
+					<mat-progress-bar class="refresh-bar" [mode]="members.loading() || members.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
+					<mat-table [dataSource]="members.rows()" class="mat-elevation-z2 jde-dense">
 						<ng-container matColumnDef="node">
 							<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
 							<mat-cell *matCellDef="let m" [matTooltip]="nodeDetail(m.node) + '.  Row ' + m.id + ', its index in the group\'s files.'"><span>{{ nodeLabel(m.node) }}</span></mat-cell>
@@ -78,16 +77,16 @@
 						<ng-container matColumnDef="actions">
 							<mat-header-cell *matHeaderCellDef></mat-header-cell>
 							<mat-cell *matCellDef="let m">
-								<button matIconButton type="button" (click)="removeNode(m)" [disabled]="busy()" aria-label="Remove this node" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
+								<button matIconButton type="button" (click)="removeNode(m)" [disabled]="members.busy()" aria-label="Remove this node" matTooltip="Remove"><mat-icon>delete</mat-icon></button>
 							</mat-cell>
 						</ng-container>
 						<mat-header-row *matHeaderRowDef="memberColumns"></mat-header-row>
 						<mat-row *matRowDef="let row; columns: memberColumns"></mat-row>
 					</mat-table>
-					@if( !loading() && !members().length && !error() ){
+					@if( !members.loading() && !members.rows().length && !members.error() ){
 						<p class="empty" role="status">The group has no nodes.  {{ row.histTemplateId ? "Its template's members resolve on the Resolution tab;  Add nodes adds others by hand." : "Use Add nodes to pick them on the connection." }}</p>
 					}
-					@if( error(); as e ){
+					@if( members.error(); as e ){
 						<p class="refused" role="alert"><mat-icon aria-hidden="true" fontIcon="error"></mat-icon>{{ e }}</p>
 					}
 				</div>
@@ -107,11 +106,11 @@
 					<div class="tab-body">
 						<p class="hint">Each of the template's members, resolved from the group's root on its connection to a node, or not.  Resolve retries the members with no node - a path the server doesn't have, a server that was down, a node another group holds - and says why each still has none.</p>
 						<div class="tab-toolbar">
-							<button matButton="tonal" type="button" (click)="resolve()" [disabled]="busy()" matTooltip="Retry the unresolved members (needs Update on the group)"><mat-icon>sync</mat-icon>Resolve</button>
+							<button matButton="tonal" type="button" (click)="resolve()" [disabled]="members.busy()" matTooltip="Retry the unresolved members (needs Update on the group)"><mat-icon>sync</mat-icon>Resolve</button>
 							<span class="count">{{ unresolved() ? unresolved() + ' of ' + resolution().length + ' unresolved' : resolution().length + ' resolved' }}</span>
 						</div>
-						<mat-progress-bar class="refresh-bar" [mode]="loading() || busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Resolving"></mat-progress-bar>
-						<mat-table [dataSource]="resolution()" class="mat-elevation-z2">
+						<mat-progress-bar class="refresh-bar" [mode]="members.loading() || members.busy() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Resolving"></mat-progress-bar>
+						<mat-table [dataSource]="resolution()" class="mat-elevation-z2 jde-dense">
 							<ng-container matColumnDef="path">
 								<mat-header-cell *matHeaderCellDef>Path</mat-header-cell>
 								<mat-cell *matCellDef="let r" [matTooltip]="'Template member ' + r.templateNode"><span>{{ r.path }}</span></mat-cell>
@@ -132,7 +131,7 @@
 							<mat-header-row *matHeaderRowDef="resolutionColumns"></mat-header-row>
 							<mat-row *matRowDef="let row; columns: resolutionColumns"></mat-row>
 						</mat-table>
-						@if( !loading() && !resolution().length ){
+						@if( !members.loading() && !resolution().length ){
 							<p class="empty" role="status">The template has no members yet.</p>
 						}
 					</div>
@@ -141,16 +140,4 @@
 		}
 	}
 </mat-tab-group>
-<div class="jde-detail-actions"><!--as client-detail's:  only Save filled, the trash can at the far side-->
-	<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-	<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
-	@if( isDeleted ){
-		<!--a deleted group keeps its rows and its nodes stay held (spec *Templates*):  purge frees them-->
-		<button matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
-			<mat-icon>delete_forever</mat-icon>Purge
-		</button>
-	}
-	<button matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
-		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
-	</button>
-</div>
+<detail-actions [page]="this"/><!--a deleted group keeps its rows and its nodes stay held (spec *Templates*):  Purge frees them-->

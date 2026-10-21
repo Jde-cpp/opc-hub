@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
-import { CardStatusValue, counted, countRows, httpStatus, ICardStatus, plural, queryRows } from 'jde-framework';
+import { CardStatusValue, counted, countRows, ICardStatus, isRefusal, queryRows } from 'jde-framework';
 import { GATEWAY_SERVICE } from './gateway-service';
+import { plural } from 'jde-spa';
 
 //the Gateways tile and page:  the registered gateways and the OPC server connections they hold between them - the same
 //serverConnections query the /gateways/<gateway> page lists.  A gateway that does not answer is counted and flagged
@@ -12,8 +13,7 @@ export class GatewayCardStatus implements ICardStatus{
 	async status():Promise<CardStatusValue>{
 		const gateways = await this.#gateways.gateways();
 		const results = await Promise.allSettled( gateways.map(g=>countRows(g, 'serverConnections', 'slug', 'deleted:null')) );
-		const isRefusal = ( r:PromiseSettledResult<number> )=>r.status=='rejected' && [401, 403].includes( httpStatus(r.reason) ?? 0 );
-		const refusals = results.filter( isRefusal );
+		const refusals = results.filter( r=>r.status=='rejected' && isRefusal(r.reason) );
 		if( refusals.length && refusals.length==results.length )
 			throw (<PromiseRejectedResult>refusals[0]).reason;
 		const connections = results.reduce( (n, r)=>n + (r.status=='fulfilled' ? r.value : 0), 0 );
@@ -37,7 +37,7 @@ export class GatewayConnectionsStatus implements ICardStatus{
 		const gateway = (await this.#gateways.gateways()).find( g=>g.slug==slug ) ?? await this.#gateways.gateway( slug );
 		const names = (await queryRows<{name:string}>( gateway, 'serverConnections', 'name', 'deleted:null' )).map( c=>c.name );
 		const detail = names.length>2 ? `${names.slice(0, 2).join(', ')} +${names.length-2}` : names.join( ', ' ) || undefined;
-		return { label: plural(names.length, 'connection'), figure: names.length, detail, summary: counted(names.length, 'OPC connection') + (detail ? ` · ${detail}` : '') };
+		return { label: plural('connection', names.length), figure: names.length, detail, summary: counted(names.length, 'OPC connection') + (detail ? ` · ${detail}` : '') };
 	}
 	#gateways = inject( GATEWAY_SERVICE );
 }

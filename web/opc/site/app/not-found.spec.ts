@@ -1,70 +1,43 @@
-//the vitest environment provides window/document but no localStorage - back the bare-global references with an
-//in-memory one BEFORE importing jde-spa (see google-relogin.spec.ts).
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
-import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { NavigationStart, provideRouter, Route, Router } from '@angular/router';
-import { RouterTestingHarness } from '@angular/router/testing';
+import { NavigationStart } from '@angular/router';
 import { filter } from 'rxjs';
-import { vi } from 'vitest';
 import { AccessService, AuthGuard } from 'jde-access';
-import { HomeRouteService, SnackbarService } from 'jde-framework';
-import { isNotFound, matchConfig, ProfileStore, RecentVisits, RouteStore } from 'jde-spa';
+import { HomeRouteService } from 'jde-framework';
+import { isNotFound, matchConfig, ProfileStore, RouteStore } from 'jde-spa';
 import { routes } from './app.routes';
+import { blankRoutes, flush, profileStoreStub } from 'jde-spa/testing';
+import { openRoute } from 'jde-framework/testing';
 
 //reviews/m3-closing.md #38, against the site's own route table:  #32's DetailResolver cell built a table of its own, so it
 //could not see that resources has no ':slug' route and that '/access/resources/$new' matched nothing at all.  Every page is
 //swapped for an empty one - what is under test is where a url lands and what its resolver does - bar the not-found page.
-@Component( {template: ''} ) class Dummy{}
-const stub = ( r:Route ):Route=>isNotFound( r ) ? r : { ...r, loadComponent: undefined, component: r.loadComponent || r.component ? Dummy : undefined, children: r.children?.map( stub ) };
-
 describe( 'the site routes for a url that names no page', ()=>{
 	const setup = async ()=>{
-		const error = vi.fn();
 		const schemaWithEnums = vi.fn( async ()=>{ throw new Error( 'no list in this test' ); } );
-		TestBed.configureTestingModule( {providers: [
-			provideRouter( routes.map(stub) ),
+		const { harness, router, error, leaf } = await openRoute( {routes: blankRoutes( routes ), providers: [
 			{ provide: AuthGuard, useValue: {canActivate: ()=>true, canActivateChild: ()=>true} },
 			{ provide: AccessService, useValue: {toCollectionName: ( s:string )=>s, schemaWithEnums} },
-			{ provide: SnackbarService, useValue: {error, exception: vi.fn()} },
-			{ provide: RecentVisits, useValue: {forget: vi.fn()} },
 			{ provide: RouteStore, useValue: {getChildren: ()=>[], setChildren: vi.fn()} },
-			{ provide: ProfileStore, useValue: {} }
+			{ provide: ProfileStore, useValue: profileStoreStub() }
 		]} );
-		const harness = await RouterTestingHarness.create();
-		const router = TestBed.inject( Router );
 		const starts:string[] = [];
 		router.events.pipe( filter((e):e is NavigationStart=>e instanceof NavigationStart) ).subscribe( e=>starts.push(e.url) );
-		const settle = ()=>new Promise( r=>setTimeout(r, 20) );
-		return { harness, router, error, schemaWithEnums, starts, settle };
-	};
-	const landedOn = ( router:Router )=>{
-		let route = router.routerState.snapshot.root;
-		while( route.firstChild )
-			route = route.firstChild;
-		return route.routeConfig;
+		const settle = ()=>flush();//the redirect is a second navigation
+		return { harness, router, error, schemaWithEnums, starts, settle, landedOn: ()=>leaf().routeConfig };
 	};
 
 	it( "shows the not-found page for resources' '$new', which has no detail route", async ()=>{
-		const { harness, router } = await setup();
+		const { harness, landedOn } = await setup();
 		await harness.navigateByUrl( '/access/resources/$new' );
-		expect( isNotFound(landedOn(router)!) ).toBe( true );
+		expect( isNotFound(landedOn()!) ).toBe( true );
 		expect( harness.routeNativeElement?.textContent ).toContain( 'Page not found' );
 		expect( harness.routeNativeElement?.textContent ).toContain( '/access/resources/$new' );
 	} );
 
 	it( 'shows the not-found page for a url outside every section', async ()=>{
-		const { harness, router } = await setup();
+		const { harness, router, landedOn } = await setup();
 		await harness.navigateByUrl( '/no/such/page' );
-		expect( isNotFound(landedOn(router)!) ).toBe( true );
+		expect( isNotFound(landedOn()!) ).toBe( true );
 		expect( router.url ).toBe( '/no/such/page' );
 	} );
 

@@ -1,4 +1,4 @@
-import {Component, ElementRef, Inject, Signal, ViewChild, computed, inject, input, model, output, resource, signal} from '@angular/core';
+import {Component, ElementRef, computed, inject, input, output, signal, viewChild} from '@angular/core';
 import {form, FormField} from '@angular/forms/signals';
 import {MatButtonModule} from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -22,7 +22,7 @@ type DialogData = { existing:Favorite, folderNames:string[], name:string };
 })
 export class Favorites {
 	onClick(){
-		const rect = this.iconElementRef.nativeElement.getBoundingClientRect();
+		const rect = this.iconElementRef().nativeElement.getBoundingClientRect();
 		const folderNames = [ ...new Set(this.favorites().filter(fav=>fav.folderName).map( fav=>fav.folderName )) ];
 		const dialogConfig: MatDialogConfig = {
 			position: {
@@ -38,7 +38,7 @@ export class Favorites {
 				this.onChange.emit( result );
 		});
 	}
-	@ViewChild('icon', { read: ElementRef }) iconElementRef!: ElementRef;
+	iconElementRef = viewChild.required( 'icon', {read: ElementRef} );
 	readonly dialog = inject(MatDialog);
 	existing = input.required<Favorite|undefined>();
 	favorites = input.required<Favorite[]>();
@@ -55,8 +55,8 @@ export class Favorites {
   imports: [MatButtonModule, MatDialogActions, MatDialogClose, MatDialogTitle, MatDialogContent, MatFormFieldModule, MatInputModule, MatAutocompleteModule, FormField],
 })
 export class FavoritesDialog {
-	public dialogRef:MatDialogRef<FavoritesDialog> = inject( MatDialogRef<FavoritesDialog> );
-	public data:DialogData = inject<DialogData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
+	dialogRef = inject( MatDialogRef<FavoritesDialog> );
+	data = inject<DialogData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
 	constructor(){
 		const data = this.data;
 		this.favoriteModel.set( {name: data.existing?.name || data.name || this.documentTitle.page(), folderName: data.existing?.folderName ?? ""} );//the page's name without the tab's app suffix; data.name is the resolved segment.

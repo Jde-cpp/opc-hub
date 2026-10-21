@@ -1,19 +1,8 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import Long from 'long';
-import { HistValue } from '../../../model/hist';
-import { NodeId } from '../../../model/node-id';
 import { toTrendPoints, trendY, uncertainColor } from './hist-trend-data';
+import { histValue, nodeA as A, nodeB as B } from 'jde-opc/testing';
 
-const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
-const at = ( ms:number|null, value:any, status=0, node=A ):HistValue=>({ node, source: ms==null ? null : new Date(ms), server: null, status, value, bound: false, heartbeat: false });
+const at = ( ms:number|null, value:any, status=0, node=A )=>histValue( node, ms, value, {status} );
 const Bad = 0x80000000, Uncertain = 0x40000000;
 
 describe( 'trendY', ()=>{

@@ -8,7 +8,7 @@ import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
 import { IGraphQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
-import { errorMessage, httpStatus } from '../../../utils/errors';
+import { errorMessage, isRefusal } from '../../../utils/errors';
 
 //A row of the instance's answer (libs/web/server/SessionGraphQL.cpp).  The user is resolved for a signed-in session only:  an
 //anonymous one - a request with no Authorization, which is every one a stand-alone OPC server sees - carries neither name, and a
@@ -30,7 +30,7 @@ export const refusedText = "You may not list this instance's web sessions.";
 	imports: [DatePipe, MatIcon, MatIconButton, MatProgressBar, MatTableModule, MatToolbar, MatTooltip]
 })
 export class WebSessions implements OnInit{
-	private snackBar:SnackbarService = inject( SnackbarService );
+	#snackBar = inject( SnackbarService );
 
 	async ngOnInit(){ await this.load(); }
 
@@ -38,17 +38,16 @@ export class WebSessions implements OnInit{
 		this.isLoading.set( true );
 		this.error.set( null );
 		try{
-			const y = await this.service().query<{sessions:WebSession[]}>( webSessionsQuery(this.instanceId()), null, (m)=>console.log(m) );
+			const y = await this.service().query<{sessions:WebSession[]}>( webSessionsQuery(this.instanceId()) );
 			this.rows.set( [...(y?.sessions ?? [])].sort(byLastUpdate) );
 		}
 		catch( e ){
 			this.rows.set( [] );//not a retry's stale rows under the failure it replaced
-			const status = httpStatus( e );
-			if( status==401 || status==403 )//a refusal is a state, not a failure - said in place, no toast.
+			if( isRefusal(e) )//a refusal is a state, not a failure - said in place, no toast.
 				this.error.set( refusedText );
 			else{
 				this.error.set( errorMessage(e, "Could not load the web sessions.") );//errorMessage, not `${e}`: an HttpErrorResponse and a {error:IError} rejection both render "[object Object]".
-				this.snackBar.exception( "Could not load the web sessions.", e );
+				this.#snackBar.exception( "Could not load the web sessions.", e );
 			}
 		}
 		this.isLoading.set( false );

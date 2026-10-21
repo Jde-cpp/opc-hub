@@ -1,29 +1,29 @@
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
 import { firstValueFrom } from 'rxjs';
-import { HttpClient, HttpErrorResponse, HttpEvent, HttpResponse, HttpSentEvent } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpEvent, HttpResponse } from '@angular/common/http';
 import { FieldKind } from '../model/ql/schema/field';
 import { fromIsoDuration, verify } from '../utils/utils';
 import { TableSchema } from '../model/ql/schema/table-schema';
-import { EnumValue, Log, IQueryResult, Query } from './graphql';
-import { MutationSchema } from '../model/ql/schema/mutation-schema';
+import { EnumValue, Query } from './graphql';
 import { Instance, resolveInstance } from './app/app-service-types';
-import { ELogLevel } from 'jde-proto/Log';
 import { Exception as IException } from 'jde-proto/Common';
 import { AuthStore } from './auth-store';
 import { errorText, httpStatus } from '../utils/errors';
 import { GoogleAuthService } from './google-auth-service';
 import { Mutation } from '../model/ql/mutation';
-import { computed, Signal } from '@angular/core';
+import { computed, isDevMode, Signal } from '@angular/core';
 import { EProvider, User } from 'jde-spa';
 import { StringUtils } from '../utils/string-utils';
 
 export interface IError{ requestId?:number; message: string; sc?:number; httpStatus?:number; }//sc is the proto `code`; httpStatus avoids the opc StatusCode collision.
 
-type TransformInput = (x:any)=>any;
 type Resolve = (x:any)=>void;
 type Reject = ( e:{error:IError} )=>void;
 export type RequestId = number;
-export enum ETransport{ Unsecure, Secure, Hybrid };
+export enum ETransport{ Unsecure, Secure };
+//A page reaches its servers the way it was browsed:  an https page may not call http or ws (mixed content), and the hub answers
+//TLS and plain alike on its one port (Web::Server detectSession), so the page's protocol is the whole decision.
+export function pageTransport():ETransport{ return typeof location!="undefined" && location.protocol=="https:" ? ETransport.Secure : ETransport.Unsecure; }
 
 //status-0/"Failed to fetch" errors are deliberately opaque - the browser hides whether CORS, DNS, or the connection failed.  A no-cors probe reaches the server regardless of its CORS headers, so reachable-but-blocked (a policy problem) can be told apart from unreachable.
 export async function describeFetchError( url:string, e:unknown ):Promise<string>{
@@ -43,7 +43,7 @@ export async function describeFetchError( url:string, e:unknown ):Promise<string
 }
 
 class RequestPromise<ResultMessage>{
-	constructor( public result:undefined|((arg:ResultMessage)=>any), public resolve:Resolve, public reject:Reject, public transformInput:TransformInput|null=null )
+	constructor( public resolve:Resolve, public reject:Reject )
 	{}
 }
 
@@ -61,20 +61,13 @@ export interface MessageCodec<T>{
 const redactCredentials = ( key:string, value:any ):any=>key=="sessionId" || key=="jwt" ? "<redacted>" : value;
 
 export abstract class ProtoService<Transmission,ResultMessage>{
-	constructor( private TCreator: MessageCodec<Transmission>, protected http: HttpClient, public readonly transport:ETransport, protected authStore:AuthStore, private isAppServer:boolean=false, protected googleAuth?:GoogleAuthService )
+	constructor( private TCreator: MessageCodec<Transmission>, protected http: HttpClient, public readonly transport:ETransport, protected authStore:AuthStore, protected googleAuth?:GoogleAuthService )
 	{}
 
 	connect():void{
 		this.#socket = webSocket<Uint8Array>( {url: this.socketUrl, deserializer: msg => this.onMessage(msg), serializer: msg=>msg, binaryType:"arraybuffer"} );
-		this.#socket.subscribe(
-			( msg ) => this.addMessage( msg ),
-			( err ) => this.error( err ),
-			() => this.socketComplete()
-		);
+		this.#socket.subscribe( {error: err=>this.socketDown( err ), complete: ()=>this.socketDown( "the server closed the connection" )} );//the deserializer handles each message;  a clean close strands pending requests exactly like an error does
 	}
-	//should deserialize put into a constant variable or process in deserialization?
-	addMessage( msg:any )
-	{}
 
 	toCollectionName( collectionDisplay:string ):string{ return collectionDisplay; }
 	subQueries( typeName: string, id: number ):string[]{ return []; }
@@ -96,17 +89,13 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return columns;
 	}
 
-	//
-	error( err:unknown ){
-		console.log( "No longer connected to Server.", err );
-		this.socketDown( err );
-	}
 	//a socket that is gone can never answer what was already sent or queued, so both teardown paths must settle everything: an unsettled promise is an await that never returns.
-	private socketDown( err:unknown ):void{
+	private socketDown( why:unknown ):void{
+		console.log( "No longer connected to Server.", why );
 		this.#socket = undefined;//drop the dead socket so the next send reconnects
 		this.#socketId = 0;//NOT setSocketId(0): that flushes the backlog, and with the socket already dropped every queued transmission would go to `#socket?.next` and vanish
 		this.rejectPending();
-		this.handleConnectionError( err );
+		this.handleConnectionError( why );
 	}
 	protected rejectPending():void{
 		const message = `Connection to '${this.socketUrl}' was lost.`;
@@ -120,7 +109,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	//session id on every socket open, past the log.sockRequests gate the rest of this class honours.
 	sendTransmission( t:Transmission ){
 		if( this.log.sockRequests ) console.log( JSON.stringify(t, redactCredentials).substring(0, this.log.maxLength) );
-		var toSend = this.TCreator.encode(t).finish();
+		const toSend = this.TCreator.encode(t).finish();
 		this.#socket?.next( toSend );
 	}
 	send( m:any, log:string ):RequestId{
@@ -169,7 +158,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	sendPromise<TResult>( m:any, log:string ):Promise<TResult>{
 		const requestId = this.send( m, log );
 		return new Promise<TResult>( ( resolve, reject )=>{
-			this._callbacks.set( requestId, new RequestPromise(undefined, resolve, reject, null) );
+			this._callbacks.set( requestId, new RequestPromise(resolve, reject) );
 		});
 	}
 
@@ -178,17 +167,17 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		await p;
 	}
 
-	async loginWait<Y>( target:string, log:Log=console.log ):Promise<Y>{
+	async loginWait<Y>( target:string ):Promise<Y>{
 		let p = new Promise<Y>( (resolve,reject)=>{
-			this.#loginCallbacks.push( {target: target, resolve:resolve, reject:reject, log:log} );
+			this.#loginCallbacks.push( {target: target, resolve:resolve, reject:reject} );
 		});
 		if( this.#loginCallbacks.length==1 ){
-			let url = this.urlWithTarget( "serverSettings", true );
-			if( this.log.restRequests ) log( `get: ${url}` );
+			let url = this.urlWithTarget( "serverSettings" );
+			if( this.log.restRequests ) console.log( `get: ${url}` );
 			try{
 				let args = this.user()?.authorization ? {headers:{"Authorization":this.user()!.authorization}} : {} as any;
 				const settings:any = await firstValueFrom( this.http.get<any>(url, args) );//`any`, deliberately: HttpClient picks its return type from the option LITERAL, and `args` above is already widened, so a typed body here resolves to HttpEvent<T>
-				if( this.log.restResults ) log( JSON.stringify(settings) );
+				if( this.log.restResults ) console.log( JSON.stringify(settings) );
 				this.timeoutSeconds = fromIsoDuration( settings["restSessionTimeout"] );
 				let active = settings["active"];
 				let timedout = this.lastRestCall && ( this.lastRestCall.getTime() < Date.now() - this.timeoutSeconds*1000 );
@@ -199,11 +188,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 				if( !active || timedout )
 					this.authStore.reset( this.user()?.jwt );
 				for( let callback of this.#loginCallbacks ){
-					let y = await this.authGet<any>(
-						callback.target,
-						this.user()!.authorization!,
-						callback.log
-					);
+					let y = await this.authGet<any>( callback.target, this.user()!.authorization! );
 					callback.resolve( y );
 				}
 			}
@@ -216,44 +201,38 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return p;
 	}
 
-	urlWithTarget( suffix:string, preferSecure:boolean=false ):string{
-		return preferSecure && this.transport==ETransport.Hybrid
-			? `${this.secureRestUrl}/${suffix}`
-			: `${this.restUrl}/${suffix}`;
-	}
+	urlWithTarget( suffix:string ):string{ return `${this.restUrl}/${suffix}`; }
 
-	private async authGet<Y>( target:string, authorization?:string, log:Log=console.log, renew:boolean=true ):Promise<Y>{
+	private async authGet<Y>( target:string, authorization?:string, renew:boolean=true ):Promise<Y>{
 		if( target.indexOf("undefined")>=0 )
 			console.error( `authGet - target contains 'undefined': ${target}` );
-		if( this.log.restRequests )	log( `get: ${decodeURIComponent(target).substring(0,this.log.maxLength)}` );
-		let url = this.urlWithTarget(target);
-		let y:Y;
+		if( this.log.restRequests )	console.log( `get: ${decodeURIComponent(target).substring(0,this.log.maxLength)}` );
+		const url = this.urlWithTarget(target);
 		let options:any = {};//`any`, deliberately: HttpClient's overloads key off the object LITERAL's `observe`, which a bag built up field by field cannot express
 		if( authorization )
 			options["headers"] = { "Authorization": authorization };
-		if( !authorization || authorization.startsWith("Bearer ") ){
+		const observe = !authorization || authorization.startsWith("Bearer ");//no session yet:  the answer's Authorization header carries the one the server opened
+		if( observe ){
 			options["observe"] = "response";
 			options["transferCache"] = { includeHeaders: ["Authorization"] };
-			try{
-				let response = <HttpResponse<Y>>await firstValueFrom( this.http.get<Y>(url, options) );
-				let newAuth = response.headers.get( "Authorization" );
+		}
+		let y:Y;
+		try{
+			const answer = await firstValueFrom( this.http.get<Y>(url, options) );
+			if( observe ){
+				const response = <HttpResponse<Y>>answer;
+				const newAuth = response.headers.get( "Authorization" );
 				if( newAuth )
 					this.authStore.append( {sessionId:newAuth} );
 				y = response.body as Y;
 			}
-			catch( e:unknown ){
-				y = await this.handle401<Y>( e, target, authorization, url, log, renew );
-			}
+			else
+				y = answer as Y;
 		}
-		else{
-			try{
-				y = await firstValueFrom( this.http.get<Y>(url, options) ) as Y;
-			}
-			catch( e:unknown ){
-				y = await this.handle401<Y>( e, target, authorization, url, log, renew );//authorization is always set here (sessionId branch), so a 401 always retries
-			}
+		catch( e:unknown ){
+			y = await this.handle401<Y>( e, target, authorization, url, renew );
 		}
-		if( this.log.restResults ) log( JSON.stringify(y).substring(0,this.log.maxLength) );
+		if( this.log.restResults ) console.log( JSON.stringify(y).substring(0,this.log.maxLength) );
 		this.lastRestCall = new Date();
 		return y;
 	}
@@ -261,21 +240,21 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	//A 401 with a credential means the session/jwt went stale. A Google user can mint a fresh credential without leaving
 	//the page, so try that first and retry authenticated; otherwise retry anonymously — an anonymous 401 must throw, or
 	//this recurses forever.
-	private async handle401<Y>( e:unknown, target:string, authorization:string|undefined, url:string, log:Log, renew:boolean ):Promise<Y>{
+	private async handle401<Y>( e:unknown, target:string, authorization:string|undefined, url:string, renew:boolean ):Promise<Y>{
 		const status = httpStatus( e );//`e["status"]` off an `any` compiled whatever it was spelled; this narrows once and names it
 		if( status!=401 || !authorization ){
 			if( status==0 )
-				describeFetchError( url, e ).then( m=>log(m) );//async probe; the rethrow keeps the original error for callers
+				describeFetchError( url, e ).then( m=>console.log(m) );//async probe; the rethrow keeps the original error for callers
 			throw e;
 		}
-		log( `(${status})${errorText(e)}` );
+		console.log( `(${status})${errorText(e)}` );
 		if( renew ){//false on the once-renewed retry: a second 401 against the fresh session must fall through to the anonymous retry, not loop into another prompt
-			const renewed = await this.renewGoogleSession( log );
+			const renewed = await this.renewGoogleSession();
 			if( renewed )
-				return await this.authGet<Y>( target, renewed, log, false );
+				return await this.authGet<Y>( target, renewed, false );
 		}
 		this.authStore.logout();
-		return await this.authGet<Y>( target, undefined, log );
+		return await this.authGet<Y>( target );
 	}
 
 	//handle401's policy for a mutation (reviews/m3-closing.md #22):  the session the POST carried is gone - a hub restart, an idle
@@ -283,17 +262,17 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	//repeated it until some unrelated GET renewed it.  A Google session is renewed and the POST retried once with it;  an
 	//anonymous one retries anonymously - it has no identity to lose;  a signed-in user who cannot be renewed is signed out and
 	//the 401 stands, so the navbar says so and the mutation is never re-run as somebody else.
-	async #post401<Y>( e:unknown, target:string, body:any, preferSecure:boolean, renew:boolean ):Promise<Y>{
+	async #post401<Y>( e:unknown, target:string, body:any, renew:boolean ):Promise<Y>{
 		console.log( `(401)${errorText(e)}` );
 		if( renew ){
-			const renewed = await this.renewGoogleSession( console.log );
+			const renewed = await this.renewGoogleSession();
 			if( renewed )
-				return await this.postRaw<Y>( target, body, preferSecure, undefined, false );//carries the renewed session, now stored
+				return await this.postRaw<Y>( target, body, undefined, false );//carries the renewed session, now stored
 		}
 		const anonymous = !this.isLoggedIn();
 		this.authStore.logout();
 		if( anonymous && renew )
-			return await this.postRaw<Y>( target, body, preferSecure, undefined, false );
+			return await this.postRaw<Y>( target, body, undefined, false );
 		throw e;
 	}
 
@@ -301,12 +280,12 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	//Resolves the fresh authorization, or null when the silent path has nothing to offer — password/OpcServer users have
 	//no silent-renewal primitive, and a prompt that produced no credential is a normal outcome (FedCM cooldown, multiple
 	//Google sessions, a dismissal), not an error. Concurrent 401s coalesce into one renewal round-trip.
-	protected async renewGoogleSession( log:Log ):Promise<string|null>{
+	protected async renewGoogleSession():Promise<string|null>{
 		if( this.user()?.provider!=EProvider.Google || !this.googleAuth )
 			return null;
-		return this.#renewal ??= this.renewGoogleSessionOnce( log ).finally( ()=>this.#renewal=null );
+		return this.#renewal ??= this.renewGoogleSessionOnce().finally( ()=>this.#renewal=null );
 	}
-	private async renewGoogleSessionOnce( log:Log ):Promise<string|null>{
+	private async renewGoogleSessionOnce():Promise<string|null>{
 		try{
 			const credential = await this.googleAuth!.renewCredential();
 			if( !credential )
@@ -316,7 +295,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			await this.loginJwt( user.authorization! );//"Bearer <jwt>", the same shape AppService.login sends; the fresh sessionId arrives in the response Authorization header and postRaw appends it
 			if( this.socketId )
 				this.sendAuthorization( this.socketId );//the socket authenticated with the stale session; move it to the fresh one (not awaited — it settles its handshake internally)
-			log( "silent Google re-login renewed the session." );
+			console.log( "silent Google re-login renewed the session." );
 			return this.user()?.authorization ?? null;
 		}
 		catch( e ){
@@ -326,13 +305,13 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	}
 	#renewal:Promise<string|null>|null = null;
 
-	async get<Y>( target:string, log?:Log ):Promise<Y>{
+	async get<Y>( target:string ):Promise<Y>{
 		if( !this.#instances )
 			await this.initWait();
 		let isActive = this.lastRestCall && (this.lastRestCall.getTime() > Date.now() - this.timeoutSeconds*1000);
 		let y = !this.user()?.authorization || !isActive
-			? await this.loginWait<Y>( target, log )
-			: await this.authGet<Y>( target, this.user()!.authorization!, log );
+			? await this.loginWait<Y>( target )
+			: await this.authGet<Y>( target, this.user()!.authorization! );
 		return y;
 	}
 
@@ -341,17 +320,13 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		options["headers"] = { "Authorization": `${credential}` };
 		options["observe"] = "response";
 		options["transferCache"] = { includeHeaders: ["Authorization"] };
-		return await this.postRaw<string>( 'login', null, true, options );
+		return await this.postRaw<string>( 'login', null, options );
 	}
 
-	async post<Y>( target:string, body:any, preferSecure:boolean=false ):Promise<Y>{
-		return await this.postRaw<Y>( target, body, preferSecure );
-	}
-
-	async postRaw<Y>( target:string, body:any, preferSecure:boolean=false, options?:any, renew:boolean=true ):Promise<Y>{
+	async postRaw<Y>( target:string, body:any, options?:any, renew:boolean=true ):Promise<Y>{
 		if( !this.#instances )
 			await this.initWait();
-		const url = this.urlWithTarget( target, preferSecure );
+		const url = this.urlWithTarget( target );
 		const sentAuth = options ? undefined : this.user()?.authorization;//only the stored session this call attached is renewable - a caller's own options (login, logout) are theirs to handle, and a wrong-password 401 must stay one
 		if( !options ){
 			if( !this.user()?.authorization )
@@ -372,7 +347,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		catch( e:unknown ){
 			if( httpStatus(e)!=401 || !sentAuth )
 				throw e;
-			return await this.#post401<Y>( e, target, body, preferSecure, renew );
+			return await this.#post401<Y>( e, target, body, renew );
 		}
 		let y:Y;
 		if( options.observe=="response" ){
@@ -391,26 +366,26 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return y;
 	}
 
-	async postQL<Y>( q:string, vars?:any, log:Log=console.log ):Promise<Y>{
+	async postQL<Y>( q:string, vars?:any ):Promise<Y>{
 		let args:any = {query: q};
 		if( vars )
 			args["variables"] = vars;
-		if( this.log.restRequests ) log( `post: graphql/${JSON.stringify(args).substring(0,this.log.maxLength)}` );
-		const y = await this.post<any>( `graphql`, args, false );
-		if( this.log.restResults ) log( JSON.stringify(y).substring(0,this.log.maxLength) );
+		if( this.log.restRequests ) console.log( `post: graphql/${JSON.stringify(args).substring(0,this.log.maxLength)}` );
+		const y = await this.postRaw<any>( `graphql`, args );
+		if( this.log.restResults ) console.log( JSON.stringify(y).substring(0,this.log.maxLength) );
 		return y ? y["data"] : null as unknown as Y;
 	}
-	async ql<Y>( q:Query, log:Log ):Promise<Y>{
-		var target = `graphql?query={${q.text}}`;
+	async ql<Y>( q:Query ):Promise<Y>{
+		let target = `graphql?query={${q.text}}`;
 		if( q.vars )
 			target += `&variables=${encodeURIComponent( JSON.stringify(q.vars))}`;
-		const y:any = await this.get( target, log );
+		const y:any = await this.get( target );
 		return y ? y["data"] as Y : null as unknown as Y;
 	}
 
-	async providers( log:Log ):Promise<EProvider[]>{
+	async providers():Promise<EProvider[]>{
 		const ql = `__type(name: "Provider") { enumValues { id name } }`;
-		const data:any = await this.query( ql, null, log );
+		const data:any = await this.query( ql );
 		//ql() hands back null when the request fails, and GraphQL introspection answers `__type:null` for a type the schema
 		//does not have - both used to TypeError here rather than say what went wrong.
 		const enumValues:EnumValue[]|undefined = data?.["__type"]?.["enumValues"];
@@ -418,63 +393,48 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			console.warn( `providers: no Provider enum in the schema (${JSON.stringify(data)}) - offering no login providers.` );
 		return enumValues?.map( (x:EnumValue)=>x.id ) ?? [];
 	}
-	async query<Y>( ql:string, vars?:any, log?:Log ):Promise<Y>{
-		return await this.ql( {text: ql, vars:vars}, log ?? console.log );
+	async query<Y>( ql:string, vars?:any ):Promise<Y>{
+		return await this.ql( {text: ql, vars:vars} );
 	}
-	async queryCount( ql:string, vars?:any, log?:Log ):Promise<number>{
-		const y = await this.queryArray<{count:number}>( ql, vars, log ?? console.log );
-		return y[0]["count"];
-	}
-	async querySingle<Y>( ql:string, vars?:any, log?:Log ):Promise<Y>{
-		const y = await this.query<any>( ql, vars, log );
+	async querySingle<Y>( ql:string, vars?:any ):Promise<Y>{
+		const y = await this.query<any>( ql, vars );
 		return y[Object.keys(y)[0]];
 	}
-	async queryObject<Y>( ql:string, cnstrctr: new(...args:any[]) => Y, vars?:any, log?:Log ):Promise<Y>{
-		const result = await this.query<any>( ql, vars, log );
-		return new cnstrctr( result[Object.keys(result)[0]] );
-	}
-	async queryArray<Y>( ql:string, vars?:any, log?:Log ):Promise<Y[]>{
+	async queryArray<Y>( ql:string, vars?:any ):Promise<Y[]>{
 		const inputIndex = ql.indexOf('(');
 		const fieldIndex = ql.indexOf('{');
 		const index = inputIndex<0 ? fieldIndex : fieldIndex<0 ? inputIndex : Math.min( inputIndex, fieldIndex );
 		const member = ql.substring( 0, index ).trim();
-		const result:any = await this.ql( {text: ql, vars:vars}, log ?? console.log );
+		const result:any = await this.ql( {text: ql, vars:vars} );
 		if( !result.hasOwnProperty(member) )
-			throw `'${member}' not found in ${JSON.stringify(result)}.`;
+			throw new Error( `'${member}' not found in ${JSON.stringify(result)}.` );
 		const y = result[member];
 		if( !Array.isArray(y) )
-			throw `'${member}' is not an array in ${JSON.stringify(y)}.`;
+			throw new Error( `'${member}' is not an array in ${JSON.stringify(y)}.` );
 		return y;
 	}
 
-	async querySetting( target:string, log:Log ):Promise<string>{
-		const queryResult = await this.querySingle<{value:string}>( `setting(target:$target){value}`, {target: target}, log );
+	async querySetting( target:string ):Promise<string>{
+		const queryResult = await this.querySingle<{value:string}>( `setting(target:$target){value}`, {target: target} );
 		return queryResult.value;
 	}
-	async querySettings(target:string[], log:Log):Promise<{[key:string]:string}>{
-		const queryResult = await this.query<{settings:{target:string, value:string}[]}>( `settings(target:${JSON.stringify(target)}){target value}`, undefined, log );
-		let y:{[key:string]:string} = {};
-		for( const setting of queryResult.settings )
-			y[setting.target] = setting.value;
-		return y;
-	}
 
-	async mutate<Y>( ql: string|Mutation|Mutation[], log?:Log ):Promise<Y>{
+	async mutate<Y>( ql: string|Mutation|Mutation[] ):Promise<Y>{
 		if( Array.isArray(ql) ){
 			let y = [];
 			for( let m of <Mutation[]>ql )
-				y.push( await this.mutate(m, log) );
+				y.push( await this.mutate(m) );
 			return <Y>y;
 		}
 		let query = ql instanceof Mutation ? ql.toString() : ql;
 		let vars = ql instanceof Mutation ? ql.variables : undefined;
 		verify( query );
-		return await this.postQL<Y>( `mutation ${query}`, vars, log );
+		return await this.postQL<Y>( `mutation ${query}`, vars );
 	}
 
-	async schemaWithEnums( type:string, log:Log ):Promise<TableSchema>{
+	async schemaWithEnums( type:string ):Promise<TableSchema>{
 		verify( type[0]==type[0].toUpperCase() );
-		let schema = ( await this.schema([type], log) )[0];
+		let schema = ( await this.schema([type]) )[0];
 		if( !schema.enums ){
 			schema.enums = new Map<string, EnumValue[]>();
 			for( const field of schema.fields.filter((x)=>x.type.underlyingKind==FieldKind.ENUM) ){
@@ -490,7 +450,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		}
 		return schema;
 	}
-	async schema( types:string[], log?:Log ):Promise<TableSchema[]>{
+	async schema( types:string[] ):Promise<TableSchema[]>{
 		let results = new Array<TableSchema>();
 		let queries =  new Array<string>();
 		for( let type of types ){
@@ -501,9 +461,9 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		};
 		for( let type of queries ){
 			const ql = `__type(name: $type) { fields { name type { name kind ofType{name kind} } } }`;
-			const data:any = await this.query( ql, {type:type}, log );
+			const data:any = await this.query( ql, {type:type} );
 			if( !data?.["__type"] )//`__type` is an object for a valid type, null for a missing one — `.length` threw on null (and was always undefined!=0 for the object)
-				throw `no such type: '${type}'`;
+				throw new Error( `no such type: '${type}'` );
 			const schema = new TableSchema( { ...data["__type"], name: type } );//keep the requested canonical type — the server may alias internal names (e.g. User → "UsersQl"), which broke collectionName/singular conventions downstream
 			this.#tables.set( type, schema );
 			results.push( schema );
@@ -511,25 +471,13 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		return results;
 	}
 
-	async mutations():Promise<MutationSchema[]>{
-		//NOTE: needs server-side `__schema{mutationType}` introspection, which the current backend rejects ("Query failed.") — callers must handle rejection.
-		if( !this.#mutations ){
-			const ql = `__schema{ mutationType{ name fields{ name args{ name defaultValue type{ name } } } } }`;//was missing a closing brace
-			const data:any = await this.query( ql );
-			this.#mutations = data.__schema.mutationType.fields;//was data.__schema.fields (always undefined)
-		}
-		return this.#mutations;
-	}
-
-	socketComplete(){ console.log( 'complete' ); this.socketDown( "the server closed the connection" ); }//a clean close strands pending requests exactly like an error does
-	//get nextRequestId():RequestId{ return this.#requestId+1; }  why?
 	getRequestId():RequestId{ return ++this.#requestId;} #requestId:RequestId=0;
 
 	protected setSocketId( id:number ){
 		this.#socketId = id;
 		if( !this.#socket )
 			return;//sendTransmission is `#socket?.next(...)`, so flushing without a socket would silently destroy the backlog rather than leave it for the next connect
-		for( var m of this.backlog )
+		for( const m of this.backlog )
 			this.sendTransmission( m );
 		this.backlog.length=0;
 	}
@@ -556,7 +504,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			else if( m["graphQl"] ){
 				this._callbacks.delete( requestId );
 				const json = m["graphQl"]["json"];//payload keyed by its field — Object.entries(m)[0][1] assumed decode order
-				c.resolve( c.transformInput ? c.transformInput(json) : json );
+				c.resolve( json );
 			}
 			else
 				handled = false;//payload is for a subclass handler (subscriptionAck etc.) — leave the callback for it
@@ -565,15 +513,6 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			handled = false;
 		return handled;
 	}
-/*	processCallback( id:number, resolution:any, log:string ){
-		if( !this._callbacks.has(id) )
-			throw `no callback for:  '${id}'`;
-		if( this.log.restResults ) console.log( `(${id})${log}` );
-		let p:RequestPromise<ResultMessage> = this._callbacks.get( id );
-		p.resolve( resolution );
-		this._callbacks.delete( id );
-	}
-*/
 	processError( e:IException, requestId:RequestId ):boolean{
 		const handled = this._callbacks.has( requestId );
 		if( e.statusCode==401 )
@@ -587,14 +526,22 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	}
 	protected abstract processMessage( bytearray:Uint8Array ):void;
 
-	protected abstract handleConnectionError( err:unknown ):void;
+	//what a subclass holds beyond _callbacks, which rejectPending has already settled when this runs
+	protected handleConnectionError( _err:unknown ):void{}
 
 	protected backlog:Transmission[] = [];
-	protected log = { sockRequests:true, sockResults:true, restRequests:true, restResults:false, subRequest:true, subResults:true, maxLength:255 };
+	//Each request in a dev build - ng serve, --configuration development - and none in a release one.  DevTools anchors the lines
+	//at this file;  ignore-list it (see snackbar-service.ts) to see the caller instead.
+	protected log = { sockRequests:isDevMode(), restRequests:isDevMode(), restResults:false, subRequest:isDevMode(), maxLength:255 };
 	//Informational purposes only to match with server logs.
 	protected get socketId():number{ return this.#socketId; } #socketId!:number;
+	protected get product():string{ return "Server"; }//what the host-mismatch warning calls it
 	get instances(){return this.#instances;} set instances(x){
 		this.#instances = x.map( instance=>resolveInstance(instance) );//an empty or loopback host is the page's - resolveInstanceHost (install-issues #2)
+		//what is left is a split deployment's own name, and a page served from another host fails the server's allowOrigin 'sameHost' check
+		for( const instance of this.#instances )
+			if( typeof location!="undefined" && instance.host!=location.hostname )
+				console.warn( `${this.product}${instance.instanceName ? ` '${instance.instanceName}'` : ""} is registered at host '${instance.host}' but the app is served from '${location.hostname}' - requests will be CORS-blocked unless http/accessControl/allowOrigin is pinned or the app is browsed via '${instance.host}'.` );
 		for( let callback of this.#initCallbacks ){
 			if( x.length )
 				callback.resolve();
@@ -603,22 +550,20 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 		}
 	} #instances!:Instance[];
 	#initCallbacks:{resolve:()=>void, reject:Reject}[]=[];
-	#loginCallbacks:{target:string, resolve:(result:any)=>void, reject:( e:unknown )=>void, log:Log}[]=[];
+	#loginCallbacks:{target:string, resolve:(result:any)=>void, reject:( e:unknown )=>void}[]=[];
 
 	//abstract get queryId():number;
 	#socket:WebSocketSubject<Uint8Array>|undefined;
 	protected _callbacks = new Map<number, RequestPromise<ResultMessage>>();
 	#tables = new Map<string,TableSchema>();
-	#mutations!:Array<MutationSchema>;//per-instance — a static cache shared one schema across AppService/AccessService/Gateway (different endpoints)
 	private get url(){
-		if( !this.instances?.length ) throw "no instances";
+		if( !this.instances?.length ) throw new Error( "no instances" );
 		return `${this.instances[0].host}:${this.instances[0].port}`;
 	}
 	//the websocket's request path: "" for the app server (its socket is the root), a service whose protocol a host routes by path overrides it (Gateway: "/opc" on an OpcHub; the standalone gateway ignores it).
 	protected get socketPath():string{ return ""; }
 	protected get socketUrl(){ return `${this.transport==ETransport.Secure ? "wss" : "ws"}://${this.url}${this.socketPath}`; }
-	private get restUrl(){return this.transport==ETransport.Secure ? this.secureRestUrl : `http://${this.url}`;}
-	private get secureRestUrl(){return `https://${this.url}`;}
+	private get restUrl(){ return `${this.transport==ETransport.Secure ? "https" : "http"}://${this.url}`; }
 
 	isLoggedIn = computed( () => { const u = this.user(); return !!(u && (u.jwt || u.id)); } );//not `!=null`: logout() keeps a serverInstances-only User, and anonymous REST gets a sessionId — only jwt (Google) or id (password/OpcServer) means logged in
 	get user():Signal<User|undefined>{return this.authStore.user; }

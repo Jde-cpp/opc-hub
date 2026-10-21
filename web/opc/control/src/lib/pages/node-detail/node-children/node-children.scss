@@ -1,68 +1,7 @@
+@use '../../status';
+
 :host {
 	width: 100%;
-}
-
-/* the toolbar mirrors ql-list's, so the node table presents the same control as a collection list:  refresh, the view
-group, then the view editor.  the zone rules are ql-list.scss's - kept in step by hand, as log-detail.scss does; the
-components share no stylesheet. */
-mat-toolbar{
-	position: relative;//containing block for the out-of-flow centre zone
-	display: flex;
-	justify-content: space-between;//only .bar-left and .bar-right are in flow
-	align-items: center;
-	gap: .5rem;
-	height: auto;
-	min-height: 56px;
-	padding-block: .25rem;
-	background: var(--mat-sys-surface-container);
-	color: var(--mat-sys-on-surface);
-}
-
-.bar-left, .bar-center, .bar-right{
-	display: flex;
-	align-items: center;
-	gap: .5rem;
-	min-width: 0;
-}
-
-//Centre the view group on the VIEWPORT (to line up with the navbar search) rather than on the
-//toolbar, whose left edge is inset by the shell's sidenav. Taken out of flow so its width cannot
-//push the left/right zones around. --jde-content-offset must match that inset; the shell should
-//set it if the sidenav is ever a width other than the 240px fallback.
-.bar-center{
-	position: absolute;
-	left: calc(50vw - var(--jde-content-offset, 240px));
-	top: 50%;
-	transform: translate(-50%, -50%);
-}
-
-@media (max-width: 1024px){//too narrow to centre against the viewport — fall back to a wrapping single row
-	mat-toolbar{
-		flex-wrap: wrap;
-		justify-content: flex-start;
-	}
-	.bar-center{
-		position: static;
-		transform: none;
-	}
-}
-
-.view-group{
-	max-width: 100%;
-}
-
-.adhoc{
-	color: var(--mat-sys-tertiary);
-}
-
-.row-count{
-	font: var(--mat-sys-label-large);
-	color: var(--mat-sys-on-surface-variant);
-	white-space: nowrap;
-}
-
-.refresh-bar{
-	flex: 0 0 100%;
 }
 
 /* the value editors that hold ordinal data line up on their right edge, as a numeric table column does - text (and the
@@ -70,12 +9,6 @@ uris in it) stays left.  For a date it also closes the gap between the value and
 is what a box far wider than "8/27/2026" leaves.  `end`, not `right`, so both flip under dir="rtl". */
 input[type="number"], input.mat-datepicker-input {
 	text-align: end;
-}
-
-/* the heading takes the alignment of the values under it - left, and the id column below right-aligns both.  It was
-centred on its own, which left every heading off from its column. */
-mat-header-cell{
-	justify-content: flex-start;
 }
 
 .mat-column-select{
@@ -140,15 +73,8 @@ rarer history flags wrap to a second line rather than widen a column every row p
 	padding-left: 5px;
 	padding-right: 5px;
 }
-/* the chip reads its size and colour from tokens on an ancestor, so the set carries them for the chips inside it.  The
-container colour is one of them:  the theme leaves it unset, and an unfilled chip is indistinguishable from the plain
-text this replaced. */
 mat-cell.mat-column-access mat-chip-set{
-	--mat-chip-container-height: 20px;
-	--mat-chip-label-text-size: 11px;
-	--mat-chip-label-text-line-height: 20px;
-	--mat-chip-elevated-container-color: var(--mat-sys-surface-container-highest);
-	--mat-chip-label-text-color: var(--mat-sys-on-surface-variant);
+	@include status.flag-chips;
 }
 //write access is the one worth spotting at a glance;  the read flags stay the neutral surface colour above
 .access-write{
@@ -166,45 +92,14 @@ be held wider by a long description. */
 	padding-right: 5px;
 }
 
-/* the same dense rows as ql-table (graphql-table.scss), so every list in the app reads at one rhythm;  the tallest thing in a
-   cell here is a 40px checkbox */
-mat-table{
-	--mat-table-row-item-container-height: 40px;
-	--mat-table-header-container-height: 44px;
-}
-
 //a variable the server will not let this user read:  muted, and titled with what to ask for
 .no-access{
 	color: var(--mat-sys-on-surface-variant);
 	font-style: italic;
 }
 
-/* the reading's quality (OPC 10000-4 7.38).  A status name is an open set and runs long with its flags
-("UncertainEngineeringUnitsExceeded+High"), so it is text that ends in an ellipsis, not a chip - its tooltip has it whole,
-code and name.  200px holds the common names whole, icon included; the long flagged ones lose their tail to the ellipsis,
-and the tooltip is where their flags are read. */
-.mat-column-status{
-	flex: 0 0 200px;
-	min-width: 0;
-	gap: 4px;
-	padding-left: 5px;
-	padding-right: 5px;
-}
-mat-cell.mat-column-status > .status-text{//the ellipsis box is the child, as under .mat-column-name
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-//the severity is the icon's shape first (error / warning / info) and its colour second.  System tokens only:  they hold
-//their contrast in every theme, which a literal red or amber would not.
-.quality-icon{
-	flex: 0 0 auto;
-	font-size: 18px;
-	width: 18px;
-	height: 18px;
-	color: var(--mat-sys-on-surface-variant);
-}
+//the reading's quality:  text, not a chip, for a status name - its tooltip has it whole, code and name
+@include status.quality;
 //why a value cell is locked (install-issues #35).  The same muted weight as the quality icon - it is an explanation sitting
 //next to a control, not a warning:  the lock shape carries the meaning and the tooltip carries the reason.
 .lock-icon{
@@ -213,15 +108,6 @@ mat-cell.mat-column-status > .status-text{//the ellipsis box is the child, as un
 	width: 16px;
 	height: 16px;
 	margin-left: 4px;
-	color: var(--mat-sys-on-surface-variant);
-}
-.quality-bad{
-	color: var(--mat-sys-error);
-}
-.quality-uncertain{
-	color: var(--mat-sys-tertiary);
-}
-.status-good{
 	color: var(--mat-sys-on-surface-variant);
 }
 //a value kept from before a Bad reading:  the last one known, not a current one.  Muted by colour, never opacity - this is

@@ -1,4 +1,5 @@
 import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Latest } from 'jde-spa';
 import { Router } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { CARD_STATUS, CardStatusValue, statusFor } from '../card-status';
@@ -17,10 +18,10 @@ export class SectionHeader{
 	heading = input<string>( '' );
 	constructor(){
 		effect( ()=>{
-			const url = this.url(), generation = ++this.#generation;
+			const url = this.url(), generation = this.#latest.next();
 			this.status.set( undefined );
 			statusFor( this.#providers, url )?.status( url ).then(
-				value=>{ if( generation==this.#generation ) this.status.set( value ); },
+				value=>{ if( this.#latest.is(generation) ) this.status.set( value ); },
 				()=>{} );//no rights, a service down:  the header goes without its line
 		});
 	}
@@ -31,7 +32,7 @@ export class SectionHeader{
 	name = computed( ()=>this.#section()?.title as string|undefined );
 	icon = computed( ()=>this.#section()?.data?.['icon'] as string|undefined );
 	status = signal<CardStatusValue|undefined>( undefined );
-	#generation = 0;
+	#latest = new Latest();
 	#providers = inject( CARD_STATUS, {optional: true} ) ?? [];
 	#router = inject( Router );
 }

@@ -17,16 +17,11 @@
 		}
 	</div>
 	@if( failure(); as f ){
-		<div class="jde-empty" role="alert">
-			<mat-icon aria-hidden="true">{{ f.forbidden ? 'lock' : 'error_outline' }}</mat-icon>
-			<p class="title">{{ f.title }}</p>
-			@if( f.detail ){ <p class="detail">{{ f.detail }}</p> }
-		</div>
+		<failure-state [failure]=f [retryable]=false/>
 	}
 	@else if( holders(); as holders ){
 		<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
-			[selectedIndex]="tabIndex()"
-			(selectedIndexChange)="onTabIndexChanged($event)">
+			[(selectedIndex)]="tabIndex">
 			<mat-tab>
 				<ng-template mat-tab-label>Roles ({{holders.roles.length}})</ng-template>
 				<ng-template matTabContent>

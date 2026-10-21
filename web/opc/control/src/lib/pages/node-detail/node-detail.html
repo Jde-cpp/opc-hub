@@ -1,6 +1,5 @@
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
-	[selectedIndex]="tabIndex"
-	(selectedIndexChange)="onTabIndexChanged($event)">
+	[(selectedIndex)]="tabIndex">
 	<mat-tab>
 		<ng-template mat-tab-label>Children</ng-template>
 		<ng-template matTabContent>
@@ -19,7 +18,7 @@
 		<mat-tab>
 			<ng-template mat-tab-label>Permissions</ng-template>
 			<ng-template matTabContent>
-				<node-access [route]=this.sideNav() [accessResource]=pageData().server.accessResource [node]=node()></node-access>
+				<node-access [accessResource]=pageData().server.accessResource [node]=node()></node-access>
 			</ng-template>
 		</mat-tab>
 	}

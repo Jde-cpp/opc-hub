@@ -9,7 +9,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { errorText } from 'jde-framework';
+import { errorMessage } from 'jde-framework';
 import { HistPathSegment } from '../../../model/hist';
 import { HistConnection, histNodeText, HistPick, parseHistNodeText } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
@@ -39,7 +39,7 @@ type Browse = { ns?:number; name:String };
 //the server's namespace array supplies (OpcStore.getConnection) - a namespace the server doesn't list by URI can't be picked.
 @Component({
 	templateUrl: './hist-node-picker-dialog.html',
-	styleUrls: ['./hist-node-picker-dialog.scss'],
+	styleUrls: ['./hist-admin-shared.scss', './hist-node-picker-dialog.scss'],
 	imports: [MatButtonModule, MatCheckboxModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTooltipModule]
 })
 export class HistNodePickerDialog{
@@ -82,7 +82,7 @@ export class HistNodePickerDialog{
 			await this.#browse( start );
 		}
 		catch( e ){
-			this.error.set( errorText( e ) ?? 'Unknown error' );
+			this.error.set( errorMessage(e) );
 			this.loading.set( false );
 		}
 	}
@@ -101,12 +101,12 @@ export class HistNodePickerDialog{
 		this.loading.set( true );
 		this.error.set( undefined );
 		try{
-			const refs = await this.data.gateway.browseObjectsFolder( this.connection()!, node, true, m=>console.log( m ) );
+			const refs = await this.data.gateway.browseObjectsFolder( this.connection()!, node, true );
 			this.children.set( refs.filter( r=>r.displayed ).sort( HistNodePickerDialog.order ) );
 		}
 		catch( e ){
 			this.children.set( [] );
-			this.error.set( errorText( e ) ?? 'Unknown error' );
+			this.error.set( errorMessage(e) );
 		}
 		finally{
 			this.loading.set( false );

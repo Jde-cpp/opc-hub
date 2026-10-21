@@ -5,7 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { errorText } from 'jde-framework';
+import { errorMessage } from 'jde-framework';
 import { histMemberIndexed, histPathText, HistMemberThresholds, HistThreshold, histThresholdArgs, histThresholdColumns, HistThresholdFields, HistThresholdName, histThresholdNames, HistThresholdOverride, histThresholdProblem, HistThresholds, histThresholdSources, histThresholdText } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { ExNodeId } from '../../../model/ex-node-id';
@@ -38,7 +38,7 @@ export function thresholdChanges( m:HistMemberThresholds, fields:HistThresholdFi
 //asked again after each override, so a cell shows what the gateway resolved, not what was typed.
 @Component({
 	templateUrl: './hist-thresholds-dialog.html',
-	styleUrls: ['./hist-thresholds-dialog.scss'],
+	styleUrls: ['../../gateway-detail/hist-admin/hist-admin-shared.scss', './hist-thresholds-dialog.scss'],
 	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle, MatIconModule, MatProgressBarModule, MatTableModule, MatTooltipModule, HistThresholdFieldsEditor]
 })
 export class HistThresholdsDialog{
@@ -67,7 +67,7 @@ export class HistThresholdsDialog{
 			this.canUpdate.set( list.update );
 		}
 		catch( e ){
-			this.error.set( errorText( e ) ?? "Unknown error" );
+			this.error.set( errorMessage(e) );
 		}
 		finally{
 			this.loading.set( false );
@@ -144,7 +144,7 @@ export class HistThresholdsDialog{
 			await this.reload();
 		}
 		catch( e ){
-			this.error.set( errorText( e ) ?? "Unknown error" );
+			this.error.set( errorMessage(e) );
 		}
 		finally{
 			this.busy.set( false );

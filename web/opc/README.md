@@ -6,7 +6,6 @@ This directory holds:
 
 - `control` - the `jde-opc` Angular library: gateways, servers, nodes and their history.
 - `site` - the application that hosts the four libraries.
-- `proto` - links to the `.proto` files the gateway speaks.
 - `scripts` - `setup.sh` and the other build helpers.
 
 ## Building

@@ -1,9 +1,8 @@
-import {Component, OnDestroy, OnInit, Inject, inject} from '@angular/core';
+import {Component, OnInit, inject} from '@angular/core';
 import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import {ActivatedRoute} from '@angular/router';
 import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
-import { RouteItem, RouteStore } from 'jde-spa';
 import { Connection } from '../../services/resolvers/app-resolver';
 import { pageHeading } from '../page-heading';
 import { SectionHeader } from '../cards/section-header/section-header';
@@ -15,14 +14,11 @@ import { SectionHeader } from '../cards/section-header/section-header';
     imports: [DatePipe, MatIconModule, NgTemplateOutlet, RouterLink, SectionHeader]
 })
 export class Apps implements OnInit{
-	private route:ActivatedRoute = inject( ActivatedRoute );
+	#route = inject( ActivatedRoute );
 
 	async ngOnInit(){
-		this.heading = pageHeading( this.route );
-		this.route.data.subscribe( (data)=>{
-			this.connections = data["connections"];
-			this.routeStore.setChildren( '/apps', this.connections.filter( c=>c.linked ).map( c=>new RouteItem({ path: c.urlSegments.join('/'), title: `${c.displayName}/${c.instanceName}` }) ) );//search offers these, so only the ones with a page
-    });
+		this.heading = pageHeading( this.#route );
+		this.#route.data.subscribe( (data)=>this.connections = data["connections"] );//AppResolver registers the linked instances with RouteStore, for the sidenav and the search
 	}
 	//the gateway tiles on /gateways use router too, so the same service reads the same in both places
 	icon( programName:string ):string{
@@ -52,5 +48,4 @@ export class Apps implements OnInit{
 
 	connections:Connection[]=[];
 	heading = "";
-	routeStore = inject( RouteStore );
 }

@@ -2,59 +2,6 @@ table {
 	width: 100%;
  }
 
-/* the toolbar mirrors ql-list's, so the Logs and Connections tabs of a gateway present the same control: refresh,
-the view group, then the view editor.  the zone rules are ql-list.scss's - kept in step by hand, the two components
-share no stylesheet. */
-mat-toolbar{
-	position: relative;//containing block for the out-of-flow centre zone
-	display: flex;
-	justify-content: space-between;//only .bar-left and .bar-right are in flow
-	align-items: center;
-	gap: .5rem;
-	height: auto;
-	min-height: 56px;
-	padding-block: .25rem;
-	background: var(--mat-sys-surface-container);
-	color: var(--mat-sys-on-surface);
-}
-
-.bar-left, .bar-center, .bar-right{
-	display: flex;
-	align-items: center;
-	gap: .5rem;
-	min-width: 0;
-}
-
-//Centre the view group on the VIEWPORT (to line up with the navbar search) rather than on the
-//toolbar, whose left edge is inset by the shell's sidenav. Taken out of flow so its width cannot
-//push the left/right zones around. --jde-content-offset must match that inset; the shell should
-//set it if the sidenav is ever a width other than the 240px fallback.
-.bar-center{
-	position: absolute;
-	left: calc(50vw - var(--jde-content-offset, 240px));
-	top: 50%;
-	transform: translate(-50%, -50%);
-}
-
-@media (max-width: 1024px){//too narrow to centre against the viewport — fall back to a wrapping single row
-	mat-toolbar{
-		flex-wrap: wrap;
-		justify-content: flex-start;
-	}
-	.bar-center{
-		position: static;
-		transform: none;
-	}
-}
-
-.view-group{
-	max-width: 100%;
-}
-
-.adhoc{
-	color: var(--mat-sys-tertiary);
-}
-
 .level-field{
 	width: 130px;
 }
@@ -75,15 +22,6 @@ div.table
 	overflow: auto;
 }
 
-/* A heading sits over its values, so the header cell takes the alignment the data cells already have.  Left here, and the
-   .number columns below right-align header and cell together - that class is on both, so it needs no header override.
-   (The headings used to be centred on their own, which left every one of them off from the column under it, and the
-   .number ones off by the full column width.) */
-mat-header-cell
-{
-	justify-content: flex-start;
-	text-align: left;
-}
 
 .level
 {
@@ -138,14 +76,6 @@ scrollWidth>clientWidth true exactly when the text is cut, which is what drives 
 {
 	background: color-mix( in srgb, var(--mat-sys-on-surface) 8%, transparent );
 }
-.highlight
-{
-	/* background-color: aqua;
-	color: black; */
-	border-color: orange;
-	border-width: 1px;
-	border-style: solid;
-}
 .mat-column-time {
 	flex: 0 0 110px;
 }
@@ -177,31 +107,4 @@ which the cell's title still lists. */
 .mat-column-level mat-chip,
 .mat-column-tags mat-chip {
 	flex: 0 0 auto;
-}
-
-
-/* these sit on the level chip now, so the colour has to go through the chip's tokens - a plain `color` would not
-reach the label, which MatChip paints from --mat-chip-label-text-color inside its own template.  trace keeps the
-theme default, so it stays the one level with no rule. */
-/*.log-trace{
-}*/
-.log-debug{
-	--mat-chip-label-text-color: aqua;
-	--mat-chip-outline-color: aqua;
-}
-.log-information{
-	--mat-chip-label-text-color: green;
-	--mat-chip-outline-color: green;
-}
-.log-warning{
-	--mat-chip-label-text-color: orange;
-	--mat-chip-outline-color: orange;
-}
-.log-error{
-	--mat-chip-label-text-color: red;
-	--mat-chip-outline-color: red;
-}
-.log-critical{
-	--mat-chip-label-text-color: darkred;
-	--mat-chip-outline-color: darkred;
 }

@@ -1,25 +1,20 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
 import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, signal } from '@angular/core';
-import {MatButtonModule} from '@angular/material/button';
-import {MatButtonToggleModule} from '@angular/material/button-toggle';
 import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
 import {MatIconModule} from '@angular/material/icon';
-import {MatProgressBarModule} from '@angular/material/progress-bar';
 import {MatSelectChange, MatSelectModule} from '@angular/material/select';
 import { MatSortModule, Sort } from "@angular/material/sort";
 import {MatTooltipModule} from '@angular/material/tooltip';
-import {RouterModule, ActivatedRoute, Router} from '@angular/router';
-import { Gateway, GATEWAY_SERVICE, GatewayService, SubscriptionResult } from '../../../services/gateway-service';
-import { ProfileStore } from 'jde-spa';
-import { DateUtils, QLListSettings, SnackbarService, ProtoUtils, Timestamp, View, ViewType} from 'jde-framework'
+import {RouterModule, ActivatedRoute} from '@angular/router';
+import { Gateway, SubscriptionResult } from '../../../services/gateway-service';
+import { LocalPrefs, ProfileStore } from 'jde-spa';
+import { DateUtils, QLListSettings, SnackbarService, ProtoUtils, Timestamp, View, ViewToolbar } from 'jde-framework'
 import { EAccess, ETypes } from '../../../model/types';
 import {  MatTableModule } from '@angular/material/table';
 import { Subscription } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
-import { MatToolbarModule } from '@angular/material/toolbar';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
-import { OpcNodeRouteService } from '../../../services/routes/opc-node-route-service';
 import { OpcStore } from '../../../services/opc-store';
 import { Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
@@ -33,17 +28,16 @@ import { Server } from '../../../model/server';
 import { NodeId } from '../../../model/node-id';
 
 @Component({
-  selector: 'node-children',
-  templateUrl: './node-children.html',
-  styleUrls: ['./node-children.scss'],
-  imports: [RouterModule,MatButtonModule,MatButtonToggleModule,MatCheckboxModule,MatChipsModule,MatDatepickerModule,MatFormFieldModule,MatIconModule,MatInputModule,MatProgressBarModule,MatSortModule,MatTableModule,MatToolbarModule,MatTooltipModule,MatSelectModule,QLListSettings]
+	selector: 'node-children',
+	templateUrl: './node-children.html',
+	styleUrls: ['./node-children.scss'],
+	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatDatepickerModule,MatFormFieldModule,MatIconModule,MatInputModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
-	private gatewayService:GatewayService = inject( GATEWAY_SERVICE );
-	private route = inject( ActivatedRoute );
-	private snackbar = inject( SnackbarService );
-	private componentPageTitle = inject( ComponentPageTitle );
-	private cdRef = inject( ChangeDetectorRef );
+	#route = inject( ActivatedRoute );
+	#snackbar = inject( SnackbarService );
+	#componentPageTitle = inject( ComponentPageTitle );
+	#cdRef = inject( ChangeDetectorRef );
 	constructor(){
 		//the sidenav siblings sort by the active view (OpcStore.setRoute), and a node switch is resolved before this component hears
 		//of it - so the store learns of every view change here, header sorts included, ahead of the next navigation.
@@ -53,10 +47,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 	async ngOnInit() {
 		//the views are the table's, not a node's:  loaded once, ahead of the first node.  route.data replays its current
 		//value on subscribe, so a navigation during the load is not missed.
-		const {views, index} = await NodeView.loadActive( this.#profileStore );
-		this.views.set( views );
-		this.viewIndex.set( index );
-		this.route.data.subscribe( async (data)=>{
+		await NodeView.loadViews( this.viewSet );
+		this.#route.data.subscribe( async (data)=>{
 			if( this.pageData )
 				//the previous node's settings, on the way to the next one:  warn rather than snackbar a page being navigated away from.
 				this.#profileStore.save<UserSettings>( this.pageData.route.profileKey, this.profile )
@@ -75,15 +67,15 @@ export class NodeChildren implements OnInit, OnDestroy {
 			this.profile.subscriptions = (this.profile.subscriptions ?? []).map( (s)=>new NodeId(s) );//revive persisted plain objects into NodeId instances (s.equals/s.key below would otherwise throw)
 			this.setNodes( this.pageData.nodes, true );
 			this.isLoading.set( false );
-			this.componentPageTitle.title = this.server.connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
+			this.#componentPageTitle.title = this.server.connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
 		});
 	}
 
-  ngOnDestroy() {
+	ngOnDestroy() {
 		this.selections.clear();
 		this.selections.changed.unsubscribe();
 		this.subscription = undefined;
-  }
+	}
 
 	//fresh UaNode objects - a navigation, or a re-browse of the same node.  The persisted subscriptions pick out the rows to
 	//show ticked.  On a navigation the live subscription was dropped above, so select() them and let `added` recreate it at
@@ -100,7 +92,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		if( !resubscribe && this.subscription ){
 			const orphaned = this.profile.subscriptions.filter( s=>!nodes.some(n=>n.key==s.key) );
 			if( orphaned.length )
-				this._iot.unsubscribe( this.cnnctnSlug, orphaned, this.Key ).catch( e=>this.snackbar.exception("Could not remove subscription.", e) );
+				this._iot.unsubscribe( this.cnnctnSlug, orphaned, this.Key ).catch( e=>this.#snackbar.exception("Could not remove subscription.", e) );
 		}
 		this.selections = new SelectionModel<UaNode>( true, resubscribe ? [] : persisted );
 		this.selections.changed.subscribe( this.onSubscriptionChange.bind(this) );
@@ -110,7 +102,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	async onRefresh(){
 		this.isRefreshing.set( true );
 		try{
-			const references = await this._iot.browseObjectsFolder( this.cnnctnSlug, this.node(), true, (m)=>console.log(m) );
+			const references = await this._iot.browseObjectsFolder( this.cnnctnSlug, this.node(), true );
 			//REST answers a Bad reading with the code alone, so a refresh in the middle of a fault would blank the value the row is
 			//holding:  the new row takes it over, as a push would have left it.
 			for( const fresh of <Variable[]>references.filter(r=>r.isVariable) ){
@@ -121,71 +113,31 @@ export class NodeChildren implements OnInit, OnDestroy {
 			this.refreshed.emit( this.pageData.nodes );
 		}
 		catch( e ){
-			this.snackbar.exception( "Could not refresh nodes.", e );
+			this.#snackbar.exception( "Could not refresh nodes.", e );
 		}
 		finally{
 			this.isRefreshing.set( false );
 		}
 	}
 
-	//The view group and settings panel, as ql-list/log-detail have them.  A header sort or the panel's Show makes an Adhoc
-	//twin of the current view (last in the group, "(edited)"), Save turns it into a User view and persists it;  the rows
-	//re-derive from view() on their own.  The views are always replaced, never edited in place, so rows() sees the change.
-	private setViews( views:NodeView[], index:number ){
-		this.views.set( views );
-		this.viewIndex.set( index );
-		ProfileStore.setViewIndex( NodeView.collectionName, index );
-	}
-	private saveViews( views:NodeView[] ){
-		this.#profileStore.save( `${NodeView.collectionName}/views`, views.filter(v=>v.isUser).map(v=>v.toJson(undefined)) )
-			.catch( e=>this.snackbar.exception("Could not save view.", e) );
-	}
-	private static upsert( views:NodeView[], view:NodeView ):number{
-		let index = views.findIndex( v=>v.name==view.name && v.type==view.type );
-		if( index==-1 )
-			index = views.push( view )-1;
-		else
-			views[index] = view;
-		return index;
-	}
+	//The view group and settings panel, as ql-list/log-detail have them;  the rows re-derive from view() on their own.
 	onSortChange( sort:Sort ){
-		const view = this.viewCopy();
-		view.sort = [sort, ...view.sort.filter( s=>s.active!=sort.active )];
-		this.onViewShow( view );
+		this.viewSet.sort( sort );
 	}
-	onViewShow( shown:View ){//ql-list-settings emits a base View - re-wrap it so apply() is there
+	onViewShow( view:View ){
 		this.isSettings.set( false );
-		if( shown.name?.endsWith("*") && shown.isAdhoc )
-			shown.name = shown.name.slice( 0, -1 );
-		shown.type = ViewType.Adhoc;
-		const views = [...this.views()];
-		this.setViews( views, NodeChildren.upsert(views, new NodeView(shown)) );
+		this.viewSet.show( view );
 	}
-	onViewSave( saved:View ){
-		const view = new NodeView( saved );
-		if( !(view.isSystem && this.views().find(v=>v.name==view.name && v.isSystem)) )
-			view.type = ViewType.User;
-		const views = this.views().filter( v=>!v.isAdhoc );
-		this.setViews( views, NodeChildren.upsert(views, view) );
-		if( view.isUser )
-			this.saveViews( views );
+	onViewSave( view:View ){
+		this.viewSet.save( view ).catch( e=>this.#snackbar.exception("Could not save view.", e) );
 		this.isSettings.set( false );
 	}
 	onViewDelete( view:View ){
-		if( view.isUser ){//the panel disables Delete for anything else;  this is the belt to those braces
-			const current = this.view();
-			const views = this.views().filter( v=>!(v.name==view.name && (v.isUser || v.isAdhoc)) );//and its unsaved twin
-			this.setViews( views, Math.max(views.indexOf(current), 0) );
-			this.saveViews( views );
-		}
+		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not delete view.", e) );
 		this.isSettings.set( false );
 	}
 	onChangeView( index:number ){
-		const selected = this.views()[index];
-		if( !selected )
-			return;
-		const views = this.views().filter( v=>!v.isAdhoc || v===selected );//switching away discards the unsaved edit
-		this.setViews( views, views.indexOf(selected) );
+		this.viewSet.select( index );
 	}
 	colSuggestions():Record<string,any[]>{
 		const suggestions:Record<string,any[]> = {};
@@ -218,7 +170,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	#repaint( n?:Variable ){
 		if( n )
 			this.#dates.delete( n );//a new reference, so the datepicker re-formats the box:  a failed write leaves the model as it was, but not the text in the box
-		this.cdRef.markForCheck();
+		this.#cdRef.markForCheck();
 	}
 	#dates = new WeakMap<Variable,Date|null>();
 	//every reading a row takes - a push, a write's echo, a re-read - so the quality travels with the value.  Only a CHANGE of
@@ -235,11 +187,11 @@ export class NodeChildren implements OnInit, OnDestroy {
 	dataType( n:UaNode ):string{ return NodeView.cellValue( n, "dataType" )?.toString() ?? ""; }
 	//the Access cell is a chip per flag, so it takes the list the cell text is joined from rather than the text
 	access( n:UaNode ):string[]{ return NodeView.accessList( n.isVariable ? n as Variable : undefined ); }
-  checkboxLabel(row?: UaNode): string {
+	checkboxLabel(row?: UaNode): string {
 		return row
 			? `${this.selections.isSelected(row) ? 'deselect' : 'select'} ${row.name}`
 			: `${this.isAllSelected() ? 'select' : 'deselect'} all`;
-  }
+	}
 	async onSubscriptionChange( r:SelectionChange<UaNode> ){
 		if( r.added.length>0 ){
 			try {
@@ -265,7 +217,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 							//was then dropped while the rows still showed as live, until the user navigated away and back.  Clearing
 							//it first (before anything that could throw) makes the next tick re-subscribe for real.
 							this.subscription = undefined;
-							this.snackbar.exception( "Subscription error.", e );
+							this.#snackbar.exception( "Subscription error.", e );
 						},
 						complete:()=>{ this.subscription = undefined; console.debug( "complete" );}
 					});
@@ -273,7 +225,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 				else
 					this._iot.addToSubscription( this.cnnctnSlug, nodes, this.Key );
 			} catch (e) {
-				this.snackbar.exception( "Could not add subscription.", e );
+				this.#snackbar.exception( "Could not add subscription.", e );
 			}
 		}
 		if( r.removed.length>0 ){
@@ -286,7 +238,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 					this._iot.unsubscribe( this.cnnctnSlug, nodes, this.Key );
 				}
 				catch( e ) {
-					this.snackbar.exception( "Could not remove subscription.", e );
+					this.#snackbar.exception( "Could not remove subscription.", e );
 				}
 			}
 		}
@@ -295,71 +247,49 @@ export class NodeChildren implements OnInit, OnDestroy {
 	//the header box covers the rows on screen that can be subscribed - an object has no value, and its own box is disabled
 	get selectableRows():UaNode[]{ return this.rows().filter( n=>n.isVariable ); }
 	isAllSelected():boolean{ const rows = this.selectableRows; return rows.length>0 && rows.every( n=>this.selections.isSelected(n) ); }//a plain method:  a computed() over the non-signal SelectionModel cached its first value forever
-  toggleAllRows() {
+	toggleAllRows() {
 		if( this.isAllSelected() )
 			this.selections.deselect( ...this.selectableRows );
 		else
 			this.selections.select( ...this.selectableRows );
-  }
+	}
 
-	async toggleValue( x:Variable, e:MatCheckboxChange ){
-		e.source.checked = !e.source.checked;
-		try {
-			this.#setReading( x, await this._iot.write(this.cnnctnSlug, x.nodeId, !x.value, (x)=>console.log(x)) );
-			this.cdRef.detectChanges();
-		}
-		catch (e) {
-			this.snackbar.exception( "Could not toggle value.", e );
-		}
+	toggleValue( n:Variable, e:MatCheckboxChange ){
+		return this.#write( n, e.checked, ()=>e.source.checked = !!n.value );
 	}
-	async changeDouble( x:Variable, e:Event ){
-		try {
-			this.#setReading( x, await this._iot.write(this.cnnctnSlug, x.nodeId, +(<HTMLInputElement>e.target).value, (x)=>console.log(x)) );
-		}
-		catch (e) {
-			this.snackbar.exception( "Could not change double value.", e );
-			this.#setReading( x, await this._iot.read(this.cnnctnSlug, x.nodeId) );
-		}
-		this.#repaint();
+	changeDouble( n:Variable, e:Event ){
+		const box = <HTMLInputElement>e.target;
+		return this.#write( n, +box.value, ()=>box.value = n.value?.toString() ?? "" );
 	}
-	async changeString( n:Variable, e:Event ){
-		try{
-			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, (<HTMLInputElement>e.target).value, (x)=>console.log(x)) );
-		}
-		catch(err){
-			(<HTMLInputElement>e.target).value = String( n.value );
-			this.snackbar.exception( "Could not change string value.", err );
-		}
-		this.#repaint();
+	changeString( n:Variable, e:Event ){
+		const box = <HTMLInputElement>e.target;
+		return this.#write( n, box.value, ()=>box.value = n.value?.toString() ?? "" );
 	}
-	async changeEnum( n:Variable, e:MatSelectChange<number> ){
-		try{
-			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, e.value, (x)=>console.log(x)) );
-		}
-		catch(err){
-			e.source.value = <number>n.value;
-			this.snackbar.exception( "Could not change enum value.", err );
-		}
-		this.#repaint();
+	changeEnum( n:Variable, e:MatSelectChange<number> ){
+		return this.#write( n, e.value, ()=>e.source.value = <number>n.value );
 	}
-	async changeDate( n:Variable, e:MatDatepickerInputEvent<Date, any> ){
+	changeDate( n:Variable, e:MatDatepickerInputEvent<Date, any> ){
 		if( !e.value )//unparseable text, or a cleared box:  beginningOfDay(null) is TODAY, and the old value would have been overwritten with it
 			return this.#repaint( n );
+		return this.#write( n, <Timestamp>ProtoUtils.fromDate(DateUtils.beginningOfDay(e.value)) );//#repaint(n) re-formats the box
+	}
+	//The editor ends showing the row's reading - the echo, or after a failure a re-read of the value - rather than what was
+	//typed:  a binding is re-applied only when its value changes, so a refused write, or an echo of the old value, kept the text.
+	async #write( row:Variable, value:Value, show?:()=>void ){
 		try{
-			this.#setReading( n, await this._iot.write(this.cnnctnSlug, n.nodeId, <Timestamp>ProtoUtils.fromDate(DateUtils.beginningOfDay(e.value)), (x)=>console.log(x)) );
-			this.#repaint();
+			this.#setReading( row, await this._iot.write(this.cnnctnSlug, row.nodeId, value) );
 		}
-		catch( err ){
-			this.snackbar.exception( "Could not change date value.", err );
-			this.#repaint( n );
+		catch( e ){
+			this.#snackbar.exception( `Could not write ${row.name}.`, e );
+			await this._iot.read( this.cnnctnSlug, row.nodeId ).then( r=>this.#setReading(row, r), x=>console.warn(`Could not re-read ${row.name}.`, x) );
 		}
+		show?.();
+		this.#repaint( row );
 	}
 
 	routerLink(n:UaNode):string[]{
 		return [ `./${n.browseFQ(this.server.connection.defaultBrowseNs)}` ];
 	}
-	test(r:UaNode){}
-	EAccess = EAccess;
 	ETypes = ETypes;
 	get _iot():Gateway{ return this.pageData.gateway; }
 	//the quality of a row's reading (OPC 10000-4 7.38) - the Status cell's text, and the icon that stands in beside the value where a view hides the column
@@ -403,24 +333,21 @@ export class NodeChildren implements OnInit, OnDestroy {
 	displayedColumns = computed<string[]>( ()=>this.view()?.displayedColumns ?? [] );
 	statusShown = computed<boolean>( ()=>this.displayedColumns().includes("status") );//the Snapshot cell's quality icon stands in for the Status column, so it shows only where the view hides that
 	get variables():Variable[]{ return <Variable[]>this.nodes().filter((x)=>x.nodeClass==ENodeClass.Variable); }
-	routerSubscription!:Subscription;
 	selections = new SelectionModel<UaNode>(true, []);
 	//sideNav = model.required<NodeRoute>();
 	get sort():Sort{ return this.view().sort[0] ?? {active: "name", direction: "asc"}; }
 	get subscription(){return this.#subscription;} #subscription:Subscription|undefined;
 	set subscription(x){ if(!x && this.subscription) this.subscription.unsubscribe(); this.#subscription=x; }
-	views = signal<NodeView[]>( [] );
-	viewIndex = signal<number>( 0 );
-	view = computed<NodeView>( ()=>this.views()[this.viewIndex()] );
-	viewCopy = computed<NodeView>( ()=>new NodeView(this.view()) );//the settings panel gets a copy to edit, never the one on screen - and one copy per view, not one per change-detection pass as a getter would hand it
+	viewSet = NodeView.viewSet( inject(ProfileStore), inject(LocalPrefs) );
+	view = this.viewSet.current;
+	viewCopy = computed<NodeView>( ()=>NodeView.copy(this.view()) );//the settings panel gets a copy to edit, never the one on screen - and one copy per view, not one per change-detection pass as a getter would hand it
 	columns = NodeView.columns;
 	schema = NodeView.schema;
 
-	#routeService = inject( OpcNodeRouteService );
 	#profileStore = inject( ProfileStore );
 	#opcStore = inject( OpcStore );
 }
-//per node (keyed by profileKey):  the subscriptions.  The tab index used to live here too, but is written only by ProfileStore.setTabIndex (localStorage);  the columns and sort are the view's now, shared by every node.
+//per node (keyed by profileKey):  the subscriptions.  The tab index used to live here too, but is LocalPrefs' now;  the columns and sort are the view's now, shared by every node.
 class UserSettings{
 	subscriptions:NodeId[] = [];
 //	access:NodeAccessProfile = new NodeAccessProfile();

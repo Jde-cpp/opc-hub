@@ -1,29 +1,26 @@
-import { Component, OnDestroy, OnInit, inject, model, signal } from '@angular/core';
-import { MatTabsModule } from '@angular/material/tabs';
+import { Component, OnInit, inject, model, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
-import { AppService, errorMessage, LogDetail, LogSettingsPanel, WebSessions } from 'jde-framework';
-import { ComponentPageTitle, ProfileStore, RouteItem, RouteStore } from 'jde-spa';
+import { AppService, errorMessage, InstanceTabs, instanceRouteItem } from 'jde-framework';
+import { ComponentPageTitle, persistedTabIndex, RouteItem, RouteStore } from 'jde-spa';
 import { OpcServer, OpcServerService } from '../../services/opc-server-service';
 
 @Component( {
 		templateUrl: './opc-server-detail.html',
-		//the trailing class is load-bearing:  Angular hashes a component's *shape* (selectors, host attrs, inputs,
-		//prototype members, template decls) into its style-encapsulation id and deliberately leaves the class name out,
-		//so this page and its app-server-detail twin - identical in every one of those - collided with NG0912.
+		//the trailing class is load-bearing (NG0912):  see app-server-detail.ts
 		host: {class:'main-content mat-drawer-container my-content opc-server-detail'},
-		imports: [MatTabsModule, LogDetail, LogSettingsPanel, WebSessions]
+		imports: [InstanceTabs]
 })
-export class OpcServerDetail implements OnInit, OnDestroy{
-	private route:ActivatedRoute = inject( ActivatedRoute );
-	private componentPageTitle:ComponentPageTitle = inject( ComponentPageTitle );
+export class OpcServerDetail implements OnInit{
+	#route = inject( ActivatedRoute );
+	#componentPageTitle = inject( ComponentPageTitle );
 
 	ngOnInit(): void {
 		//the ':instance' param sits on the parent route; this component is its path:'' child, which inherits it.
-		this.route.params.subscribe( async (params)=>{
+		this.#route.params.subscribe( async (params)=>{
 			const instanceName = params["instance"];
 			this.error.set( undefined );//the page is reused across instances:  a failed one's banner must not outlive the switch
-			this.componentPageTitle.title = `${instanceName} - OpcServer`;//the route carries no title, so nothing else sets the document title for this page
-			this.sideNav.set( this.routeItem(instanceName) );
+			this.#componentPageTitle.title = `${instanceName} - OpcServer`;//the route carries no title, so nothing else sets the document title for this page
+			this.sideNav.set( instanceRouteItem('opcServers', instanceName, this.routeStore) );
 			try{
 				this.server.set( await this.opcServerService.server(instanceName) );
 				this.instanceId.set( await this.appService.instancePK(instanceName, "OpcServer") );
@@ -34,23 +31,9 @@ export class OpcServerDetail implements OnInit, OnDestroy{
 			this.isLoading.set( false );
 		});
 	}
-	ngOnDestroy(): void {
-		ProfileStore.setTabIndex( 'opc-server-detail', this.tabIndex );
-	}
 
-	tabIndexChanged( index:number ){ this.tabIndex = index; }
 
-	//AppResolver keys the instance list under the url segment it built for the program ('opcServers'), and the sibling
-	//links are rendered as parent.path + '/' + sibling.path - so the parent must be set or they resolve against the
-	//route's own url instead.
-	private routeItem( instanceName:string ):RouteItem{
-		const y = new RouteItem( {path: `opcServers/${instanceName}`, title: `opcServers/${instanceName}`} );
-		y.parent = new RouteItem( {path: "/apps", title: "Applications"} );
-		y.siblings = this.routeStore.getChildren( "apps/opcServers" );
-		return y;
-	}
-
-	tabIndex:number = ProfileStore.tabIndex( 'opc-server-detail' );
+	tabIndex = persistedTabIndex( 'opc-server-detail' );
 	sideNav = model.required<RouteItem>();
 
 	server = signal<OpcServer|undefined>( undefined );

@@ -4,13 +4,13 @@ import { Snackbar } from './snackbar';
 import { errorMessage } from '../../utils/errors';
 
 enum Type{
-	Info = 'blue-snackbar',
-	Warning =  'yellow-snackbar',
-	Error = 'red-snackbar'
+	Info = 'info-snackbar',
+	Warning = 'warn-snackbar',
+	Error = 'error-snackbar'
 }
 @Injectable({ providedIn: 'root' })
 export class SnackbarService{
-	private snackbar:MatSnackBar = inject( MatSnackBar );
+	#snackbar = inject( MatSnackBar );
 
 	//DevTools anchors these console lines at this file, not at the caller.  To get the caller back, ignore-list it:  right-click the snackbar-service.ts frame in the console → "Add script to ignore list", or DevTools Settings → Ignore list → add a pattern.  Working around this is what the old `log:Log` parameter existed for.
 	private static write( type:Type, message:string, detail?:unknown ):void{
@@ -41,7 +41,7 @@ export class SnackbarService{
 			break;
 		}
 		SnackbarService.write( type, userMessage ?? "Unknown error", detail );
-		this.snackbar.openFromComponent( Snackbar, {panelClass: [type], data: {message: userMessage ?? "Unknown error", duration}} );
+		this.#snackbar.openFromComponent( Snackbar, {panelClass: [type], data: {message: userMessage ?? "Unknown error", duration}} );
 	}
 	private showError( userMessage:string|undefined, detail:unknown ){
 		this.show( userMessage ?? "Unknown error", Type.Error, detail );
@@ -50,7 +50,7 @@ export class SnackbarService{
 	assert( condition:boolean ):void{
 		if( !condition ) {
 			this.showError( "assert failed", "assert failed" );
-			throw "assert failed";
+			throw new Error( "assert failed" );
 		}
 	}
 	//`info` is the caller's context ("Save failed.", "Could not load 'readers'").  It used to be dropped for every shape but

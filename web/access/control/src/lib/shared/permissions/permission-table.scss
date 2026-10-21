@@ -7,17 +7,8 @@
 	padding: 16px 24px 0;
 }
 
-/* the same dense rows as ql-table (graphql-table.scss) - this table sits on the tab beside those selectors, and its cells are
-   the same 40px checkboxes */
-mat-table{
-	--mat-table-row-item-container-height: 40px;
-	--mat-table-header-container-height: 44px;
-}
-
-.mat-mdc-header-cell{
-	text-align: center;
-}
-
+/* the grid and its dense rows are .jde-rights-grid and .jde-dense's (_general.scss):  this table sits on the tab beside the
+   ql-table selectors, its cells the same 40px checkboxes */
 .mat-column-schema {
 	flex: 0 0 9em;
 }
@@ -28,24 +19,4 @@ mat-table{
 
 .mat-column-deleted {
 	flex: 0 0 7.5em;/* the header and its sort arrow:  5em clipped the checkbox too */
-}
-
-.mat-column-permission{
-  display: flex;
-	justify-content: center;
-}
-
-.mat-column-None {
-	background-color: var(--mat-sys-error-container);
-}
-
-.mat-column-alt {
-	background-color: var(--mat-sys-secondary-container);
-}
-
-.denied{
-	width:100%;
-	text-align: center;
-	vertical-align: middle;
-	cursor: pointer;
 }

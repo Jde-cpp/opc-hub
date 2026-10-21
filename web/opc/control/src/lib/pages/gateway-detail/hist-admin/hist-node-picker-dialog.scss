@@ -1,3 +1,6 @@
+@use '../../status';
+
+/* after hist-admin-shared.scss in styleUrls, which has the refresh bar, the table and the empty and refused states */
 :host{
 	display: block;
 }
@@ -36,15 +39,6 @@
 		flex: 1 1 auto;
 	}
 }
-.refresh-bar{
-	--mat-progress-bar-track-height: 2px;
-	--mat-progress-bar-active-indicator-height: 2px;
-}
-mat-table{
-	--mat-table-row-item-container-height: 40px;
-	--mat-table-header-container-height: 44px;
-	width: 100%;
-}
 .mat-column-pick, .mat-column-choose{
 	flex: 0 0 48px;
 	padding-inline: 0;
@@ -55,9 +49,7 @@ mat-table{
 	gap: 4px;
 	.kind{
 		flex: 0 0 auto;
-		font-size: 18px;
-		width: 18px;
-		height: 18px;
+		@include status.icon-size;
 		color: var(--mat-sys-on-surface-variant);
 	}
 	.open{
@@ -80,24 +72,6 @@ mat-table{
 }
 mat-row.picked{
 	background: var(--mat-sys-surface-container);
-}
-.empty{
-	margin: .75rem 0 0;
-	color: var(--mat-sys-on-surface-variant);
-}
-.refused{
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	margin: .75rem 0 0;
-	color: var(--mat-sys-on-surface);
-	mat-icon{
-		flex: 0 0 auto;
-		font-size: 18px;
-		width: 18px;
-		height: 18px;
-		color: var(--mat-sys-error);
-	}
 }
 mat-dialog-actions{
 	justify-content: flex-end;

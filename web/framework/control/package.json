@@ -1,6 +1,5 @@
 {
   "name": "jde-framework",
-  "version": "0.0.1",
   "license": "Apache-2.0",
   "peerDependencies": {
     "@angular/cdk": "^22.1.0",
@@ -12,9 +11,7 @@
     "@angular/router": "^22.1.0",
     "rxjs": "~7.8.0",
     "jde-spa": "0.0.1",
-    "jde-proto": "0.0.1"
-  },
-  "dependencies": {
-    "tslib": "^2.8.1"
+    "jde-proto": "0.0.1",
+    "long": "^5.3.2"
   }
 }

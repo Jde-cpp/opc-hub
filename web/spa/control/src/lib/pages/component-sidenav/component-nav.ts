@@ -1,7 +1,7 @@
 import {Component, effect, input, signal, inject } from '@angular/core';
 import {MatIconModule} from '@angular/material/icon';
 import {MatListModule} from '@angular/material/list';
-import {ActivatedRoute, Router, RouterLink, RouterLinkActive} from '@angular/router';
+import {ActivatedRoute, RouterLink, RouterLinkActive} from '@angular/router';
 
 import {RouteItem} from './route-item';
 
@@ -22,8 +22,7 @@ import {RouteItem} from './route-item';
   imports: [ MatIconModule, MatListModule, RouterLinkActive, RouterLink ],
 })
 export class ComponentNav {
-  private router:Router = inject( Router );
-  private route:ActivatedRoute = inject( ActivatedRoute );
+  #route = inject( ActivatedRoute );
   constructor(){
 		effect(() => {
 			let loaded = this.item()!=null;
@@ -42,16 +41,13 @@ export class ComponentNav {
 		});
 	}
   ngOnInit(){
-		this.route.url.subscribe( (urlSegments) => {
+		this.#route.url.subscribe( (urlSegments) => {
 			if( urlSegments.length==1 )
 				this.parentUrl = '/'+urlSegments[0].path; //access/users
 			else
 				this.parentUrl = '/'+urlSegments.slice(0, -1).map(segment => segment.path).join('/');
 		});
  	};
-  isRoot( url:string ){
-    return url==`/${this.parentUrl}` || url.substr( this.parentUrl.length+2 ).indexOf('/')!=-1;
-  }
 	item = input.required<RouteItem>();
 	parentUrl!: string;
 	isLoading = signal( true );

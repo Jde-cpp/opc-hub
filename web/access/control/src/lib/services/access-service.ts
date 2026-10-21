@@ -1,7 +1,5 @@
-import { Injectable, InjectionToken, signal, OnDestroy } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { IEnvironment } from 'jde-spa';
-import { AppService, AuthStore, IGraphQL, StringUtils, TableSchema } from 'jde-framework';
+import { Injectable, InjectionToken } from '@angular/core';
+import { AppService, StringUtils, TableSchema } from 'jde-framework';
 import { Resource } from '../model/resource';
 import { EffectiveRight, Names, PathLists, RightsAnswer, UserRightsRow } from '../model/effective-right';
 import { HolderLists, NamedRow, ResourceHolders, ResourceRightsRow } from '../model/resource-holder';
@@ -9,11 +7,7 @@ import { HolderLists, NamedRow, ResourceHolders, ResourceRightsRow } from '../mo
 
 
 @Injectable( {providedIn: 'root'} )
-export class AccessService extends AppService implements OnDestroy{
-	ngOnDestroy(): void {
-		console.log( 'AccessService.ngOnDestroy' );
-	}
-
+export class AccessService extends AppService{
 	//Cache the PROMISE, not the array.  The array was only assigned after the await, so two callers racing the first load
 	//(every permission tab builds its own PermissionTable) both saw an unset #resources and both queried.
 	//`refresh`, and every mutation (below), drop it:  each row carries its enforcement (`deleted`), and a list kept for the page's
@@ -26,8 +20,8 @@ export class AccessService extends AppService implements OnDestroy{
 	}
 	//Any mutation through this service may change a resource - the Enforced toggle's delete/restoreResource, a role grant that
 	//creates one (access_role_add) - so a landed one drops the list;  the next reader queries it again.
-	override async mutate<Y>( ql:Parameters<AppService["mutate"]>[0], log?:Parameters<AppService["mutate"]>[1] ):Promise<Y>{
-		const y = await super.mutate<Y>( ql, log );
+	override async mutate<Y>( ql:Parameters<AppService["mutate"]>[0] ):Promise<Y>{
+		const y = await super.mutate<Y>( ql );
 		this.#resources = undefined;
 		return y;
 	}
@@ -39,7 +33,6 @@ export class AccessService extends AppService implements OnDestroy{
 	}
 	async #queryResources():Promise<Resource[]>{
 		const resources = (await this.queryArray<Partial<Resource>>( `resources(criteria:null){ id schemaName allowed name deleted slug description }` )).map( (r)=>new Resource(r) );//criteria:null - the node resources are known only through effectiveRights' rows
-		this.#resourceSignal.set( resources );//the public `resources` signal was never written, so it read empty forever
 		return resources;
 	}
 	//What the user ends up with on each resource through every path - the server's answer (userRights, Authorize::UserRights),
@@ -150,8 +143,6 @@ export class AccessService extends AppService implements OnDestroy{
 
 
 	#resources:Promise<Resource[]>|undefined;
-	#resourceSignal = signal<Resource[]>(new Array<Resource>());
-  resources = this.#resourceSignal.asReadonly();
 };
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.
 export const ACCESS_SERVICE = new InjectionToken<AccessService>( 'AccessService' );

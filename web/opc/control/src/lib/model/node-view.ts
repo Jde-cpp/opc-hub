@@ -1,5 +1,5 @@
-import { Field, FieldKind, Operator, TableSchema, View, ViewType } from 'jde-framework';
-import { ProfileStore } from 'jde-spa';
+import { Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
@@ -14,7 +14,7 @@ export class NodeView extends View{
 	//every column a non-null String:  ids and values are of mixed types and are filtered on their cell text, and NON_NULL keeps the <null>/<not null> suggestions out of the filter tab
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():NodeView{
-		const view = new NodeView( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "access", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
+		const view = NodeView.fromConfig( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "access", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
 		view.showSelector = true;//the subscription checkboxes
 		view.type = ViewType.System;
 		return view;
@@ -42,12 +42,13 @@ export class NodeView extends View{
 		}
 		return rows;
 	}
-	//the view group as the profile has it - the default first, then the user's saved views - with the remembered selection.
-	//NodeChildren and NodeResolver both build the group from here, so the table and the sidenav start from the same view.
-	static async loadActive( profileStore:ProfileStore ):Promise<{views:NodeView[], index:number}>{
-		const saved = await profileStore.loadClassArray<NodeView>( `${NodeView.collectionName}/views`, NodeView, NodeView.schema );
-		const views = [NodeView.default(), ...saved];
-		return { views, index: Math.min(ProfileStore.viewIndex(NodeView.collectionName), views.length-1) };
+	//NodeChildren and NodeResolver both build the group from here, so the table and the sidenav start from the same view
+	static viewSet( profileStore:ProfileStore, prefs:LocalPrefs ):ViewSet<NodeView>{
+		return new ViewSet( {type: NodeView, key: NodeView.collectionName, profileStore, prefs} );
+	}
+	//the default first, then the user's saved views, with the remembered selection
+	static loadViews( views:ViewSet<NodeView> ):Promise<void>{
+		return views.load( [NodeView.default()], NodeView.schema );
 	}
 	//In/NotIn match the cell text exactly, as the SQL `in` a ql-list filter turns into;  the comparisons go numeric when both sides are numbers
 	matches( node:UaNode ):boolean{

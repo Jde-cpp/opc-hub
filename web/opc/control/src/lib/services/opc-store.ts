@@ -1,5 +1,5 @@
 import { Injectable, InjectionToken, signal } from "@angular/core";
-import { CnnctnSlug, ServerCnnctn } from "../model/server-cnnctn";
+import { CnnctnSlug } from "../model/server-cnnctn";
 import { browseEq, ETypes, Ns, toBrowse } from '../model/types';
 import { NodeRoute } from "../model/node-route";
 import { OpcObject, UaNode, ENodeClass } from "../model/node";
@@ -46,7 +46,7 @@ export class OpcStore{
 			policy: securityPolicyUri( opc: $opc )
 			mode: securityMode( opc: $opc )
 			namespaces( opc: $opc ){ ${namespaceColumns} }`;
-		let props = await gatewayService.query<ServerProps>(q, {opc:cnnctn}, (m)=>console.log(m));
+		let props = await gatewayService.query<ServerProps>(q, {opc:cnnctn});
 		let server = new Server( props );
 		gatewayConnections.set( cnnctn, server );
 		return server;
@@ -79,17 +79,9 @@ export class OpcStore{
 	private getStore( nodes:Map<NodeKey,StoreNode>, node:UaNode ):StoreNode{
 		let store = nodes.get( node.key );
 		if( !store ){
-			// if( OpcObject.rootNode.equals(node) )
-			// 	throw new EvalError( `Root node not set.`, {cause:"Internal Error"} );
-			// this.addChildren( nodes, node.parent, [node] );
 			nodes.set( node.key, store = new StoreNode(node) );
 		}
 		return store;
-	}
-	setServerCnnctns( clients: RouteItem[] ):void{
-		this.#serverCnnctnRoutes = [...clients];
-		for( let route of this.#serverCnnctnRoutes )
-			route.path = route.path.substring( route.path.lastIndexOf("/")+1 );
 	}
 	getParent( opcNodes:Map<NodeKey,StoreNode>, path:string, defaultNs:Ns ):UaNode|undefined{
 		let segments = path.split("/");
@@ -204,7 +196,6 @@ export class OpcStore{
 		return uaNode;
 	}
 
-	#serverCnnctnRoutes!: RouteItem[];
 	#nodes = new Map<GatewaySlug,Map<CnnctnSlug, Map<NodeKey,StoreNode>>>();
 	#connections = new Map<GatewaySlug,Map<CnnctnSlug, Server>>();
 }

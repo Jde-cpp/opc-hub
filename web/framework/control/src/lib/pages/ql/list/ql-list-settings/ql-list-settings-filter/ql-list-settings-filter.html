@@ -56,17 +56,17 @@
 									</mat-chip-row>
 								}
 							</mat-chip-grid>
-							<input matInput #dynamicInput
-								[formControl]="input(col)"
+							<input matInput #box
+								[formControl]="col.input"
 								[matChipInputFor]="chipGrid"
 								[type]=inputType(col.field)
 								class="filter-text"
 								[matAutocomplete]=auto
 								[matChipInputSeparatorKeyCodes]="separatorKeysCodes"
-								(matChipInputTokenEnd)="onAddValue($event.value, col)"/>
+								(matChipInputTokenEnd)="onAddValue($event.value, col, box)"/>
 								<!--  -->
-							<mat-autocomplete #auto=matAutocomplete (optionSelected)="onAddValue($event.option.value, col)">
-								@for( suggestion of (autoCompleteValues(col) | async); track suggestion) {
+							<mat-autocomplete #auto=matAutocomplete (optionSelected)="onAddValue($event.option.value, col, box)">
+								@for( suggestion of (col.suggestions | async); track suggestion) {
 									<mat-option [value]=suggestion>{{suggestion}}</mat-option>
 								}
 							</mat-autocomplete>
@@ -75,15 +75,15 @@
 					@else{
 						@if( !liveToggle(col) ){
 							<mat-form-field subscriptSizing="dynamic">
-								<mat-label>{{operatorSignal(col)()==MyOperator.Greater ? "Start Date" : "End Date"}}</mat-label>
-								<input matInput [matDatepicker]="picker" [disabled]="col.field.isNullable && nullSignal(col.field.name)() == NullCriteria.NonNull" (dateChange)="onChangeDate($event, col)" [value]="dateValue(col)">
+								<mat-label>{{col.operator()==MyOperator.Greater ? "Start Date" : "End Date"}}</mat-label>
+								<input matInput [matDatepicker]="picker" [disabled]="col.field.isNullable && col.nullCriteria() == NullCriteria.NonNull" (dateChange)="onChangeDate($event, col)" [value]="dateValue(col)">
 								<mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
 								<mat-datepicker #picker></mat-datepicker>
 							</mat-form-field>
 						}
 						@if( col.field.isNullable ){
-							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.Null" (change)="onNullToggle($event['checked'], col)">{{nullLabel(col)}}</mat-checkbox>
-							<mat-checkbox [checked]="nullSignal(col.field.name)() == NullCriteria.NonNull" (change)="onNonNullToggle($event['checked'], col)">{{nonNullLabel(col)}}</mat-checkbox>
+							<mat-checkbox [checked]="col.nullCriteria() == NullCriteria.Null" (change)="onNullToggle($event['checked'], col)">{{nullLabel(col)}}</mat-checkbox>
+							<mat-checkbox [checked]="col.nullCriteria() == NullCriteria.NonNull" (change)="onNonNullToggle($event['checked'], col)">{{nonNullLabel(col)}}</mat-checkbox>
 						}
 					}
 				}

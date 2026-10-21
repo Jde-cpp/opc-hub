@@ -1,21 +1,13 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type Highcharts from 'highcharts/esm/highstock';
-import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { OpcError } from '../../../model/opc-error';
 import { HistTrend } from './hist-trend';
 import { TrendPoint, trendPalette } from './hist-trend-data';
 import { HighchartsLoader } from './highcharts-loader';
+import { silence, stable } from 'jde-spa/testing';
+import { fetchAnswer, histValue, stubFetch, variable } from 'jde-opc/testing';
 
 //The add-on the installed site serves by URL, here the package itself:  bundled into the test alone
 class BundledHighcharts extends HighchartsLoader{
@@ -25,37 +17,37 @@ class BundledHighcharts extends HighchartsLoader{
 class UnloadedHighcharts extends HighchartsLoader{
 	protected override importFile():Promise<any>{ return Promise.reject( new TypeError( 'Failed to fetch dynamically imported module' ) ); }
 }
-const variable = ( i:number, name:string )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}} );
-const at = ( v:Variable, ms:number, value:number ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, status: 0, value, bound: false, heartbeat: false });
+//the router is the notice's link's
+const configure = ( loader:HighchartsLoader = new BundledHighcharts() )=>TestBed.configureTestingModule({ providers: [provideRouter( [] ), { provide: HighchartsLoader, useValue: loader }] });
 //A and B drawn, once Highcharts has loaded and made the chart
 const draw = async ()=>{
+	configure();
 	const A = variable( 1, 'A' ), B = variable( 2, 'B' );
 	const fixture = TestBed.createComponent( HistTrend );
-	fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), at(B, 2000, 4)] );
+	fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), histValue(A, 2000, 3), histValue(B, 2000, 4)] );
 	fixture.componentRef.setInput( 'series', [A, B] );
-	fixture.detectChanges();
 	const H = <typeof Highcharts>(await import('highcharts/esm/highstock')).default;
-	let plot!:HTMLElement, chart:Highcharts.Chart|undefined;
-	await vi.waitFor( ()=>{ fixture.detectChanges(); plot = fixture.nativeElement.querySelector( '.plot' ); chart = H.charts.find( c=>c && c.container.parentElement==plot ); expect( chart ).toBeDefined(); } );
+	await import( 'highcharts/esm/modules/accessibility' );//loaded here, so the loader's imports are a known number of turns
+	await stable( fixture );
+	const plot:HTMLElement = fixture.nativeElement.querySelector( '.plot' );
+	const chart = H.charts.find( c=>c && c.container.parentElement==plot );
+	expect( chart ).toBeDefined();
 	return { A, B, fixture, plot, chart: chart! };
 };
 //A trend whose loader finds no add-on to import, the fetch it makes then answering `status`, once its notice shows
 const unloaded = async ( status:number )=>{
-	TestBed.overrideProvider( HighchartsLoader, {useValue: new UnloadedHighcharts()} );
-	vi.stubGlobal( 'fetch', async ()=>({ status, ok: false, headers: {get: ()=>'text/plain'} }) );
-	vi.spyOn( console, 'info' ).mockImplementation( ()=>{} );
-	vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+	configure( new UnloadedHighcharts() );
+	stubFetch( fetchAnswer(status) );
+	silence( 'info' );
+	silence();
 	const fixture = TestBed.createComponent( HistTrend );
 	fixture.componentRef.setInput( 'values', [] );
 	fixture.componentRef.setInput( 'series', [] );
-	fixture.detectChanges();
-	await vi.waitFor( ()=>{ fixture.detectChanges(); expect( fixture.nativeElement.querySelector( 'p.absent' ) ).not.toBeNull(); } );
+	await stable( fixture );
 	return fixture;
 };
 
 describe( 'HistTrend', ()=>{
-	//the router is the notice's link's
-	beforeEach( ()=>TestBed.configureTestingModule({ providers: [provideRouter( [] ), { provide: HighchartsLoader, useClass: BundledHighcharts }] }) );
 	afterEach( ()=>{ vi.unstubAllGlobals(); vi.restoreAllMocks(); } );
 	//Removing a line destroys its navigator series, which Highcharts keeps last in chart.series:  a walk that removed as it
 	//went read the destroyed series' options and threw, before the legend update and the redraw (historian-web-trend #1).
@@ -78,11 +70,11 @@ describe( 'HistTrend', ()=>{
 	//A heartbeat's ring is drawn in its line's colour, which is the node's palette slot:  unticking the node before it moved the
 	//line to the next colour while setData, finding the points' x, y and status unchanged, left the rings in the old one
 	//(historian-group-history-web #2).
-	const beat = ( v:Variable, ms:number, value:number )=>({...at( v, ms, value ), heartbeat: true});
+	const beat = ( v:Variable, ms:number, value:number )=>({...histValue( v, ms, value ), heartbeat: true});
 	const rings = ( chart:Highcharts.Chart, v:Variable )=>(<TrendPoint[]>(<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( v.nodeId.uaString() )).options).data).map( p=>p.marker?.lineColor );
 	it( "redraws a heartbeat's ring when its line changes colour", async ()=>{
 		const { A, B, fixture, chart } = await draw();
-		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), beat(B, 2000, 2)] );
+		fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), histValue(A, 2000, 3), beat(B, 2000, 2)] );
 		fixture.detectChanges();
 		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[1]] );
 
@@ -95,11 +87,11 @@ describe( 'HistTrend', ()=>{
 	//The same check ignored the heartbeat flag, so a point whose flag alone changed kept or lacked its ring (#2 too).
 	it( "draws or drops a heartbeat's ring when its flag alone changes", async ()=>{
 		const { A, B, fixture, chart } = await draw();
-		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), beat(B, 2000, 4)] );
+		fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), histValue(A, 2000, 3), beat(B, 2000, 4)] );
 		fixture.detectChanges();
 		expect( rings(chart, B) ).toEqual( [undefined, trendPalette[1]] );
 
-		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), at(A, 2000, 3), at(B, 2000, 4)] );
+		fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), histValue(A, 2000, 3), histValue(B, 2000, 4)] );
 		fixture.detectChanges();
 		expect( rings(chart, B) ).toEqual( [undefined, undefined] );
 		fixture.destroy();
@@ -108,7 +100,7 @@ describe( 'HistTrend', ()=>{
 	//later never reached it (found fixing historian-web-trend #14).
 	it( 'renames a flag when its status name arrives', async ()=>{
 		const { A, B, fixture, chart } = await draw();
-		fixture.componentRef.setInput( 'values', [at(A, 1000, 1), at(B, 1000, 2), {...at(A, 2000, 3), status: 0x80EF0000}] );
+		fixture.componentRef.setInput( 'values', [histValue(A, 1000, 1), histValue(B, 1000, 2), {...histValue(A, 2000, 3), status: 0x80EF0000}] );
 		fixture.detectChanges();
 		const flag = ()=>(<any[]>(<Highcharts.SeriesFlagsOptions>(<Highcharts.Series>chart.get( `${A.nodeId.uaString()}/flags` )).options).data)[0]?.text;
 		expect( flag() ).toBe( "Bad 0x80EF0000" );
@@ -152,19 +144,18 @@ describe( 'HistTrend', ()=>{
 	//Highcharts asked Intl for the time zone of a NaN, a RangeError thrown from its redraw.
 	it( 'draws an empty chart when the values go while the series stay', async ()=>{
 		const { A, fixture, chart } = await draw();
-		const uncaught:unknown[] = [];
-		const onError = ( e:ErrorEvent )=>{ uncaught.push( e.error ?? e.message ); e.preventDefault(); };
+		const onError = vi.fn( ( e:ErrorEvent )=>e.preventDefault() );
 		window.addEventListener( 'error', onError );
-		try{
+		try{//timed waits:  Highcharts redraws on timers of its own, past a turn or two
 			fixture.componentRef.setInput( 'values', [] );
 			fixture.detectChanges();
 			await new Promise( r=>setTimeout( r, 50 ) );
-			expect( uncaught ).toEqual( [] );
+			expect( onError ).not.toHaveBeenCalled();
 			expect( (<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( A.nodeId.uaString() )).options).data ).toEqual( [] );
-			fixture.componentRef.setInput( 'values', [at(A, 3000, 5)] );
+			fixture.componentRef.setInput( 'values', [histValue(A, 3000, 5)] );
 			fixture.detectChanges();
 			await new Promise( r=>setTimeout( r, 50 ) );
-			expect( uncaught ).toEqual( [] );
+			expect( onError ).not.toHaveBeenCalled();
 			expect( (<any[]>(<Highcharts.SeriesLineOptions>(<Highcharts.Series>chart.get( A.nodeId.uaString() )).options).data).map( p=>p.y ) ).toEqual( [5] );
 		}
 		finally{
@@ -195,13 +186,11 @@ describe( 'HistTrend', ()=>{
 	//Until the load settles there is nothing to show:  a blank plot there would collapse into the notice on a site without the
 	//add-on, moving the table under it (highcharts-addon #6).
 	it( 'shows neither a plot nor a notice until the load settles', async ()=>{
-		TestBed.overrideProvider( HighchartsLoader, {useValue: new (class extends HighchartsLoader{ protected override importFile(){ return new Promise<any>( ()=>{} ); } })()} );
+		configure( new (class extends HighchartsLoader{ protected override importFile(){ return new Promise<any>( ()=>{} ); } })() );
 		const fixture = TestBed.createComponent( HistTrend );
 		fixture.componentRef.setInput( 'values', [] );
 		fixture.componentRef.setInput( 'series', [] );
-		fixture.detectChanges();
-		await new Promise( r=>setTimeout( r, 50 ) );
-		fixture.detectChanges();
+		await stable( fixture );
 		expect( fixture.nativeElement.querySelector( '.plot' ) ).toBeNull();
 		expect( fixture.nativeElement.querySelector( 'p.absent' ) ).toBeNull();
 		fixture.destroy();

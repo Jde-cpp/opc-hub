@@ -1,17 +1,16 @@
-import { ActivatedRoute } from "@angular/router";
 
 export function arraysEqual(a:readonly unknown[], b:readonly unknown[]) {
-  if (a == b) return true;
-  if (a == null || b == null) return false;
-  if (a.length !== b.length) return false;
+	if (a == b) return true;
+	if (a == null || b == null) return false;
+	if (a.length !== b.length) return false;
 	return a.every( (v,i)=>v==b[i] );
 }
 
+//No `debugger;` here:  it froze the page wherever DevTools or automation was attached, and DevTools' pause on exceptions
+//stops on the throw anyway.
 export function verify( expr:unknown, msg?:string ):asserts expr{
-	if( !expr ){
-		debugger;
+	if( !expr )
 		throw new Error( msg ?? "Assertion failed" );
-	}
 }
 
 export function clone<T>( obj:T ):T{//a JSON round trip, so the result really is the same shape - not `any`
@@ -36,7 +35,7 @@ export function fromIsoDuration( str:string ):number{
 	if( str.length==0 )
 		return 0;
 	if( str[0]!='P' )
-		throw `Expected 'P' as first character. ${str}`;
+		throw new Error( `Expected 'P' as first character. ${str}` );
 	let parsingTime = false;
 	let seconds = 0;
 	for( let i=1; i<str.length; i++ ){
@@ -51,10 +50,10 @@ export function fromIsoDuration( str:string ):number{
 		while( i<str.length && ((str[i]>='0' && str[i]<='9') || str[i]=='.') )
 			++i;
 		if( i==digits )
-			throw `Missing number before '${str[i]}' in duration. '${str}'`;
+			throw new Error( `Missing number before '${str[i]}' in duration. '${str}'` );
 		const value = +str.substring( start, i );
 		if( isNaN(value) )
-			throw `Bad number '${str.substring(start, i)}' in duration. '${str}'`;
+			throw new Error( `Bad number '${str.substring(start, i)}' in duration. '${str}'` );
 		let type = str[i];//the for's i++ advances past the designator
 		let multiplier;
 		if( type=='S' && parsingTime )
@@ -72,51 +71,19 @@ export function fromIsoDuration( str:string ):number{
 		else if( type=='Y' && !parsingTime )
 			multiplier = 86400*daysPerYear;
 		else
-			throw `Unknown type '${type}' in duration. '${str}'`;
+			throw new Error( `Unknown type '${type}' in duration. '${str}'` );
 		seconds += multiplier*value;
 	}
 	return seconds;
 }
 
 export function getEnumName(enumObj: Record<string, unknown>, enumValue: number | string): string {
-  return Object.keys(enumObj).find((key) => enumObj[key] === enumValue)!;
+	return Object.keys(enumObj).find((key) => enumObj[key] === enumValue)!;
 }
 
 export type PropertyNames<T> = {
-  [K in keyof T]: T[K] extends Function ? never : K;
+	[K in keyof T]: T[K] extends Function ? never : K;
 }[keyof T];
 
 
-export function subscribe( route: ActivatedRoute, who: string ){
-	route.title.subscribe( (x)=>{
-		console.log( `${who}.title: ${JSON.stringify(x)}` );
-	});
-	route.params.subscribe( (x)=>{
-		console.log( `${who}.params: ${JSON.stringify(x)}` );
-	});
-	route.queryParams.subscribe( (x)=>{
-		console.log( `${who}.queryParams: ${JSON.stringify(x)}` );
-	});
-	route.fragment.subscribe( (x)=>{
-		console.log( `${who}.fragment: ${JSON.stringify(x)}` );
-	});
-	route.data.subscribe( (x)=>{
-		console.log( `${who}.data: }` );
-	});
-	route.paramMap.subscribe( (x)=>{
-		console.log( `${who}.paramMap: ${JSON.stringify(x)}` );
-	});
-	route.queryParamMap.subscribe( (x)=>{
-		console.log( `${who}.queryParamMap: ${JSON.stringify(x)}` );
-	});
-	route.url.subscribe( (x)=>{
-		console.log( `${who}.url: ${JSON.stringify(x)}` );
-	});
-}
-
-export function toIdArray( from:number[] ):{id:number}[]{
-	let clone = [];
-	for( let id of from )
-		clone.push( {id:id} );
-	return clone;
-}
+export function toIdArray( from:number[] ):{id:number}[]{ return from.map( id=>({id}) ); }

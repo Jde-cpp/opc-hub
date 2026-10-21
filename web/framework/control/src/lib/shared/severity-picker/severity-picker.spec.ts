@@ -1,39 +1,27 @@
 import { TestBed } from '@angular/core/testing';
-import { vi } from 'vitest';
 import { ELogLevel } from 'jde-proto/Log';
 import { SeverityPicker } from './severity-picker';
+import { stable } from 'jde-spa/testing';
 
-//review3 C6: both loops in this template moved from *ngFor to @for.  A render test, because the conversion is only
-//compile-checked otherwise - a wrong `track` shows up as duplicated or missing rows, not as a type error.
+//review3 C6: the template's loop moved from *ngFor to @for.  A render test, because the conversion is only compile-checked
+//otherwise - a wrong `track` shows up as duplicated or missing rows, not as a type error.
 describe( 'SeverityPicker renders every level', ()=>{
-	const create = ( isSelect:boolean )=>{
-		TestBed.resetTestingModule();
+	it( 'lists one option per level', async ()=>{
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( SeverityPicker );
-		fixture.componentRef.setInput( 'isSelect', isSelect );
 		fixture.componentRef.setInput( 'level', ELogLevel.Warning );
 		fixture.detectChanges();
-		return fixture;
-	};
-
-	it( 'lists one chip per option', ()=>{
-		const fixture = create( false );
-		const chips = fixture.nativeElement.querySelectorAll( 'mat-chip' );
-		expect( chips.length ).toBe( fixture.componentInstance.options.length );
-		expect( [...chips].map( (c:Element)=>c.textContent!.trim() ) ).toEqual( ['Trace','Debug','Info','Warning','Error','Critical','None'] );
-	} );
-
-	it( 'renders no chips in select mode', ()=>{
-		expect( create(true).nativeElement.querySelectorAll('mat-chip').length ).toBe( 0 );//the @if around the listbox
+		fixture.nativeElement.querySelector( '.mat-mdc-select-trigger' ).click();
+		await stable( fixture, 1 );
+		const options = [...document.querySelectorAll( 'mat-option' )].map( o=>o.textContent!.trim() );//the panel is in the cdk overlay, outside the fixture
+		expect( options ).toEqual( ['Trace','Debug','Information','Warning','Error','Critical','None'] );
 	} );
 } );
 
 //review3 C7: `level` became a model().  The old @Input setter emitted levelChange on EVERY write after the first, so a
-//parent-driven update bounced straight back at the parent - and the chip path emitted twice, once from the setter and
-//once from onSelectionChange.
+//parent-driven update bounced straight back at the parent.
 describe( 'SeverityPicker.level emits once, and only for the user', ()=>{
 	const create = ()=>{
-		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( SeverityPicker );
 		fixture.componentRef.setInput( 'level', ELogLevel.Warning );

@@ -18,7 +18,7 @@ export class GoogleAuthService{
 
 	initialize( clientId:string ):void{
 		if( !this.available )
-			throw "google not defined";
+			throw new Error( "google not defined" );
 		localStorage.setItem( googleClientIdKey, clientId );//the silent-renewal path needs it on page loads that never visit /login
 		if( this.#initializedClientId==clientId )
 			return;//idempotent - the callback is always #onCredential, so nothing changes on a re-init
@@ -36,7 +36,7 @@ export class GoogleAuthService{
 
 	renderButton( parent:HTMLElement|null, options:object={theme:"outline", size:"large"} ):void{
 		if( !this.available )
-			throw "google not defined";
+			throw new Error( "google not defined" );
 		google.accounts.id.renderButton( parent, options );
 	}
 

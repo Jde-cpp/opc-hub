@@ -1,6 +1,5 @@
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { vi } from 'vitest';
 import { NavigationFocusService } from './navigation-focus-service';
 import { NavigationFocus } from './navigation-focus';
 
@@ -10,33 +9,24 @@ import { NavigationFocus } from './navigation-focus';
 class Host{}
 
 describe( 'NavigationFocus host bindings', ()=>{
-	let service:any;
 	const create = ()=>{
-		service = { requestFocusOnNavigation: vi.fn(), requestSkipLinkFocus: vi.fn(), relinquishFocusOnNavigation: vi.fn(), relinquishSkipLinkFocus: vi.fn() };
-		TestBed.resetTestingModule();
+		const service = { requestFocusOnNavigation: vi.fn(), relinquishFocusOnNavigation: vi.fn() };
 		TestBed.configureTestingModule({ providers: [ {provide: NavigationFocusService, useValue: service} ] });
 		const fixture = TestBed.createComponent( Host );
 		fixture.detectChanges();
-		return fixture;
+		return { fixture, service };
 	};
 
 	it( 'makes the host focusable and drops its focus ring', ()=>{
-		const el:HTMLElement = create().nativeElement.querySelector( '#already-set' );
+		const el:HTMLElement = create().fixture.nativeElement.querySelector( '#already-set' );
 		expect( el.tabIndex ).toBe( -1 );//the PROPERTY, which is what @HostBinding('tabindex') set
 		expect( el.style.outline ).toBe( 'none' );
 	} );
 
 	it( 'registers and unregisters with the focus service', ()=>{
-		const fixture = create();
+		const { fixture, service } = create();
 		expect( service.requestFocusOnNavigation ).toHaveBeenCalledTimes( 2 );
-		expect( service.requestSkipLinkFocus ).toHaveBeenCalledTimes( 2 );
 		fixture.destroy();
 		expect( service.relinquishFocusOnNavigation ).toHaveBeenCalledTimes( 2 );
-	} );
-
-	it( 'gives an id to a host that has none, and leaves one that has', ()=>{
-		const hosts = create().nativeElement.querySelectorAll( '[focusOnNavigation]' );
-		expect( hosts[0].id ).toBe( 'already-set' );
-		expect( hosts[1].id ).toMatch( /^skip-link-target-\d+$/ );
 	} );
 } );

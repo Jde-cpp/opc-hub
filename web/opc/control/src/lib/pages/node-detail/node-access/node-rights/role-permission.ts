@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { Mutation, MutationType } from 'jde-framework';
 import { Permission, Role } from 'jde-access';
 
@@ -17,6 +18,8 @@ export type RolePermission = {
 //A role as the pages' roles query answers it:  `permissionRight` only where it holds a permission on the resource asked for, its
 //allowed and denied [Right] name arrays (#14)
 export type RolePermissionRow = { id:number; name:string; permissionRight?:{ id:number; allowed:string[]; denied:string[]; resource?:{ id:number; criteria?:string|null } } };
+//every live role, with its permission on the resource $schemaName/$slug/$criteria where it holds one
+export const rolePermissionsQuery = 'roles( deleted:null ){ id name permissionRight{ id allowed denied resource( schemaName:$schemaName, criteria:$criteria, slug:$slug ){ id criteria } } }';
 //The grid's rows from that answer, by name;  `criteria` is the resource's where the row doesn't carry it
 export function toRolePermissions( rows:RolePermissionRow[], criteria:string ):RolePermission[]{
 	return rows.map( role=>{
@@ -71,4 +74,31 @@ export function withMutation( mutations:Mutation[], roleId:number, mutation:Muta
 	else
 		y.splice( index, 1 );
 	return y;
+}
+//What the two pages keep around the grid:  the roles as the server holds them, the grid's edited copy, and the batch that takes the
+//one to the other.  Each page reads the roles its own way and says, through `resource`, what row an Add grants on.
+export class RoleGrants{
+	constructor( private resource:( role:RolePermission )=>Record<string,unknown> ){}
+	//the server's rows:  the grid edits a copy, and every toggle diffs against these
+	reset( roles:RolePermission[] ):void{
+		this.#original = roles;
+		this.roles.set( roles.map( r=>({...r}) ) );
+		this.mutations.set( [] );
+	}
+	toggle( role:RolePermission, rights:number ):void{
+		toggleRights( role, rights );
+		const original = this.#original.find( r=>r.roleId==role.roleId )!;
+		this.mutations.set( withMutation( this.mutations(), role.roleId, roleMutation( role, original, ()=>this.resource( role ) ) ) );
+	}
+	//Sends the batch, and drops it once applied;  a failure throws and keeps it, so Save retries it.  The page then reads the roles
+	//again rather than taking the edits for the server's:  every later toggle has to diff against the saved state, and a newly added
+	//permission only gets its permissionId/resourceId from the server - without them the next Remove would send
+	//`permissionRight:{id:0}` and the next Add would recreate the resource instead of reusing it.
+	async send( service:{ mutate( m:Mutation[] ):Promise<unknown> } ):Promise<void>{
+		await service.mutate( this.mutations() );
+		this.mutations.set( [] );
+	}
+	roles = signal<RolePermission[]>( [] );
+	mutations = signal<Mutation[]>( [] );
+	#original:RolePermission[] = [];
 }

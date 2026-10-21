@@ -87,7 +87,7 @@
 			<dd>
 				@if( expiry(); as expiry ){
 					<span [title]="expiry.date | date:'medium'">{{ expiry.date | date:'mediumDate' }}</span>
-					<mat-chip class="status-chip" [class]="'expiry-'+expiry.status">{{expiry.relative}}</mat-chip>
+					<mat-chip class="status-chip" [class]="expiry.tone">{{expiry.relative}}</mat-chip>
 				}
 				@else { — }
 			</dd>

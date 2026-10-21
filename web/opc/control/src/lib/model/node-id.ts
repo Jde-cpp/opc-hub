@@ -95,9 +95,6 @@ export class NodeId implements INodeId{
 			y += `b:"${btoa( this.id.reduce((acc, current) => acc + String.fromCharCode(current), "") )}"`;
 		return y;
 	}
-	static qlArgsArray( nodes:NodeId[] ):string{
-		return nodes.map( n=>`{${n.qlArgs()}}` ).join( "," );
-	}
 
 	ns!:number;
 	get isNumericId(){ return typeof this.id === "number"; }

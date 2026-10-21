@@ -1,5 +1,5 @@
 import { inject, Injectable, InjectionToken } from '@angular/core';
-import { HELP_TOPICS, helpTopics } from 'jde-spa';
+import { HELP_TOPICS, helpTopics, plural } from 'jde-spa';
 
 //A page's live figure, for the card that opens it and for the page's own header:
 //	- a landing tile draws label "OPC connections", figure 5, detail "on 2 gateways";
@@ -29,8 +29,7 @@ export function statusFor( providers:readonly ICardStatus[], url:string ):ICardS
 	});
 }
 
-export function plural( n:number, noun:string ):string{ return n==1 ? noun : noun+'s'; }
-export function counted( n:number, noun:string ):string{ return `${n} ${plural(n, noun)}`; }
+export function counted( n:number, noun:string ):string{ return `${n} ${plural(noun, n)}`; }
 
 //The rows a plural query returns, counted.  Not queryArray:  a server-side custom select can answer a list with {} - the
 //access server's GroupAwait did for `groups{ id }` until 2026-09 - and queryArray rejects that as "not an array", which

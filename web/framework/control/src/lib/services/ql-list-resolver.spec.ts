@@ -1,26 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Component } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
 import { Sort } from '@angular/material/sort';
-import { provideRouter, Router } from '@angular/router';
-import { RouterTestingHarness } from '@angular/router/testing';
-import { ProfileStore, RouteStore } from 'jde-spa';
-import { SnackbarService } from '../shared/snackbar/snackbar-service';
+import { LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from './graphql';
 import { Operator, View } from '../model/ql/view';
-import { TableSchema } from '../model/ql/schema/table-schema';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from './ql-list-resolver';
-import { PageProfile } from '../pages/graphql/model/page-settings';
+import { Blank, fakeSessionStorage, profileStoreStub } from 'jde-spa/testing';
+import { openRoute, qlAnswering, scalar, slugRows, slugSchema } from 'jde-framework/testing';
 
-const fields = [
-	{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
-	{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-	{ name: "slug", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-	{ name: "kind", type: { kind: "SCALAR", name: "String" } },
-	{ name: "description", type: { kind: "SCALAR", name: "String" } }
-];
-const schema = new TableSchema( { name: "Thing", fields } );//no deleted column, so no Deleted view to step around
-const deletable = new TableSchema( { name: "Thing", fields: [...fields, { name: "deleted", type: { kind: "SCALAR", name: "DateTime" } }] } );
+const schema = slugSchema( "Thing", scalar("kind"), scalar("description") );//no deleted column, so no Deleted view to step around
+const deletable = slugSchema( "Thing", scalar("kind"), scalar("description"), scalar("deleted", "DateTime") );
 const displayed = ( v:View )=>v.fields.filter( f=>f.displayed ).map( f=>f.name );
 
 //A route declares its list page's system views in TableSettings:  the default one from columns/sort under `viewName`, and
@@ -98,9 +85,9 @@ describe( 'QLListResolver.systemViews', ()=>{
 		} );
 		it( "queries them in a saved view, which persists only what it shows", ()=>{
 			const [route] = QLListResolver.systemViews( schema, settings );
-			const saved = JSON.parse( JSON.stringify(new View(route).toJson(settings)) );
+			const saved = JSON.parse( JSON.stringify(View.copy(route).toJson(settings)) );
 			expect( saved.fields.map( (f:{name:string})=>f.name ) ).not.toContain( "kind" );
-			expect( selects(new View(saved, schema, route)) ).toContain( "kind" );
+			expect( selects(View.fromJson(saved, schema, route)) ).toContain( "kind" );
 		} );
 		it( 'leaves a hidden column out where no rowLink names it', ()=>{
 			const [route] = QLListResolver.systemViews( schema, {...settings, rowLink: undefined} );
@@ -169,9 +156,9 @@ describe( 'QLListResolver.loadOrFail', ()=>{
 	it( "turns a refused rows query into the page's error state with no rows", async ()=>{
 		const refused = new Error( "no" );
 		const ql = { query: async ()=>{ throw refused; } } as any;
-		const profile = new PageProfile();
-		profile.views = [ new View({columns: ["name"], sort: "name"}, schema) ];
-		const data = { schema, profile, routing: new ListRoute("things"), columns: {}, pageSettings: {} } as unknown as QLListData;
+		const profile = QLListResolver.viewSet( "things", {} as ProfileStore, new LocalPrefs(), {} );
+		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)] );
+		const data = { schema, profile, routing: new ListRoute("things"), columns: {} } as unknown as QLListData;
 		const y = await QLListResolver.loadOrFail( ql, data, null );
 		expect( y.error ).toBe( refused );
 		expect( y.results ).toEqual( {[schema.collectionName]: []} );
@@ -181,44 +168,33 @@ describe( 'QLListResolver.loadOrFail', ()=>{
 
 //reviews/m3-closing.md #38:  a list name the route does not declare - a typed or bookmarked /access/nonsense - opened the
 //first declared list (Users) under a "Nonsense" breadcrumb.  It is refused the way DetailResolver refuses '$new' where there is no Add.
-@Component( {template: ''} ) class Dummy{}
 describe( 'QLListResolver on a list name the route does not declare', ()=>{
 	it( 'refuses it and goes back to the section, querying nothing', async ()=>{
-		const error = vi.fn();
 		const schemaWithEnums = vi.fn();
-		TestBed.configureTestingModule( {providers: [
-			provideRouter( [
-				{ path: 'access', component: Dummy },
-				{ path: 'access', children: [
-					{ path: ':collectionDisplay', component: Dummy, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: ['users', 'resources']} }
-				]}
-			] ),
+		const { router, error } = await openRoute( {routes: [
+			{ path: 'access', component: Blank },
+			{ path: 'access', children: [
+				{ path: ':collectionDisplay', component: Blank, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: ['users', 'resources']} }
+			]}
+		], providers: [
 			{ provide: IGRAPHQL, useValue: {schemaWithEnums} },
-			{ provide: SnackbarService, useValue: {error, exception: vi.fn()} },
 			{ provide: RouteStore, useValue: {setChildren: vi.fn()} },
-			{ provide: ProfileStore, useValue: {} }
-		]} );
-		const harness = await RouterTestingHarness.create();
-		await harness.navigateByUrl( '/access/nonsense' );
-		await new Promise( r=>setTimeout(r, 20) );
+			{ provide: ProfileStore, useValue: profileStoreStub() }
+		], url: '/access/nonsense'} );
 		expect( error ).toHaveBeenCalledWith( 'There is no nonsense list.' );
 		expect( schemaWithEnums ).not.toHaveBeenCalled();
-		expect( TestBed.inject(Router).url ).toBe( '/access' );
+		expect( router.url ).toBe( '/access' );
 	} );
 } );
 
 //reviews-issue/231-paging.md #8:  QLList keeps the page it is on beside its sidenav children, and a list the router opens
 //starts there - so a record's breadcrumb, or Back, returns to the page the record was opened from.
 describe( 'QLListResolver remembers the page', ()=>{
-	let stored:Map<string,string>;
-	beforeEach( ()=>{
-		stored = new Map();
-		vi.stubGlobal( 'sessionStorage', { getItem: (k:string)=>stored.get(k) ?? null, setItem: (k:string, v:string)=>{ stored.set(k, v); }, removeItem: (k:string)=>{ stored.delete(k); } } );
-	} );
 	afterEach( ()=>vi.unstubAllGlobals() );
 	const listData = ( childrenKey?:string )=>({ routing: new ListRoute("users"), childrenKey } as unknown as QLListData);
 
 	it( 'under the key its children go under, and forgets the first page', ()=>{
+		const stored = fakeSessionStorage();
 		QLListResolver.saveSkip( listData(), 50 );
 		QLListResolver.saveSkip( listData("apps/gateways/opchub"), 25 );
 		expect( [...stored] ).toEqual( [["users/skip", "50"], ["apps/gateways/opchub/skip", "25"]] );
@@ -229,6 +205,7 @@ describe( 'QLListResolver remembers the page', ()=>{
 	} );
 
 	it( 'reads nothing it cannot make sense of', ()=>{
+		const stored = fakeSessionStorage();
 		stored.set( "users/skip", "x" );
 		expect( QLListResolver.savedSkip( listData() ) ).toBe( 0 );
 		vi.stubGlobal( 'sessionStorage', undefined );//storage off
@@ -237,21 +214,16 @@ describe( 'QLListResolver remembers the page', ()=>{
 	} );
 
 	it( 'opens a list on the page it was left on', async ()=>{
-		stored.set( "users/skip", "25" );
-		const things = Array.from( {length: 40}, (_, i)=>({id: i+1, name: `thing ${i+1}`, slug: `thing${i+1}`}) );
-		const query = vi.fn( async ( text:string )=>({things: things.slice( +(/skip:(\d+)/.exec(text)?.[1] ?? 0) )}) );
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule( {providers: [
-			provideRouter( [ { path: 'access', children: [
-				{ path: ':collectionDisplay', component: Dummy, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: [{path: 'users', data: {tableSettings: {columns: ["name"]}}}]} }
-			]} ] ),
+		const stored = fakeSessionStorage();
+		stored.set( "access/users/skip", "25" );//the list's absolute url, as its children are kept
+		const query = qlAnswering( {things: slugRows( 40, 0, "thing" )} );
+		await openRoute( {routes: [ { path: 'access', children: [
+			{ path: ':collectionDisplay', component: Blank, providers: [QLListResolver], resolve: {data: QLListResolver}, data: {collections: [{path: 'users', data: {tableSettings: {columns: ["name"]}}}]} }
+		]} ], providers: [
 			{ provide: IGRAPHQL, useValue: {schemaWithEnums: async ()=>schema, query} },
-			{ provide: SnackbarService, useValue: {error: vi.fn(), exception: vi.fn()} },
 			{ provide: RouteStore, useValue: {setChildren: vi.fn()} },
-			{ provide: ProfileStore, useValue: {loadClassArray: async ()=>[]} }
-		]} );
-		const harness = await RouterTestingHarness.create();
-		await harness.navigateByUrl( '/access/users' );
+			{ provide: ProfileStore, useValue: profileStoreStub() }
+		], url: '/access/users'} );
 		expect( query.mock.calls[0][0] ).toContain( "skip:25" );
 	} );
 } );
@@ -259,20 +231,16 @@ describe( 'QLListResolver remembers the page', ()=>{
 //#231:  a list loads its view's Page Size and nothing after it, and the page has no count to page by - the server offers none.
 //load() asks for one row past the page instead:  its presence is `more`, and the row itself never reaches the table.
 describe( 'QLListResolver.load pages', ()=>{
-	const rows = ( n:number, from=0 )=>Array.from( {length: n}, (_, i)=>({id: from+i+1, name: `thing ${from+i+1}`, slug: `thing${from+i+1}`}) );
+	const rows = ( n:number, from=0 )=>slugRows( n, from, "thing" );
 	const data = ( limit:number, skip?:number )=>{
-		const profile = new PageProfile();
-		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		const profile = QLListResolver.viewSet( "things", {} as ProfileStore, new LocalPrefs(), {} );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.limit = limit;
-		profile.views = [view];
-		return { schema, profile, routing: new ListRoute("things"), columns: {}, pageSettings: {}, skip } as unknown as QLListData;
+		profile.reset( [view] );
+		return { schema, profile, routing: new ListRoute("things"), columns: {}, skip } as unknown as QLListData;
 	};
 	const ql = ( available:any[] )=>{
-		const query = vi.fn( async ( text:string )=>{
-			const limit = +( /limit:(\d+)/.exec(text)?.[1] ?? available.length );
-			const skip = +( /skip:(\d+)/.exec(text)?.[1] ?? 0 );
-			return { things: available.slice(skip, skip+limit) };
-		} );
+		const query = qlAnswering( {things: available} );
 		return { ql: {query} as any, query };
 	};
 
@@ -355,9 +323,9 @@ describe( 'QLListResolver.load pages', ()=>{
 		const sent = async ( sort:Sort[] )=>{
 			const { ql: q, query } = ql( rows(40) );
 			const d = data( 25, 25 );
-			d.profile.view.sort = sort;
+			d.profile.current().sort = sort;
 			await QLListResolver.load( q, d, null );
-			return { text: query.mock.calls[0][0] as string, view: d.profile.view };
+			return { text: query.mock.calls[0][0] as string, view: d.profile.current() };
 		};
 
 		it( "breaks ties on id after the view's own sort, on a copy", async ()=>{

@@ -29,14 +29,12 @@ export class NodeRoute extends RouteItem{
 	}
 	override get title(): string{ return this.route.title!; }
 	override get queryParams():Params{ return this.route.queryParams; }
-	collectionName=null;
 	node: UaNode;
 	get nodeId():NodeId{ return this.node; }
 	get browsePath():string{
 		return this.route.url.map(seg=>seg.path).join("/");
 	}
 	get profileKey():string{ return this.nodeId?.toString(); }
-	children!: RouteItem[];
 	cnnctnSlug:string;
 	gatewaySlug:GatewaySlug;
 }

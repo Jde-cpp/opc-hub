@@ -1,14 +1,13 @@
 import { Service } from '@angular/core';
-import { Log } from 'jde-framework';
 import { aggregateFunctionsFolder, editValueJson, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, histEditCommands, HistGroup, HistPage, HistReadArgs, HistSource, histThresholdParams, HistThresholdOverride, HistThresholds, qlTime, toHistAggregates, toHistCapabilities, toHistEditResult, toHistGroups, toHistPage, toHistThresholds } from '../model/hist';
 import { NodeId } from '../model/node-id';
 import { CnnctnSlug } from '../model/server-cnnctn';
 
 //What a read is sent through:  a Gateway, or a stub in a spec.
-export type HistReader = { query<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
+export type HistReader = { query<T>( ql:string, vars?:any ):Promise<T> };
 //What an edit, or a question too long for a url, is sent through:  a POST, since the gateway takes a mutation on no GET, and a
 //GET's url counts against the 8 KB its parser takes for the request line and headers.
-export type HistPoster = { postQL<T>( ql:string, vars?:any, log?:Log ):Promise<T> };
+export type HistPoster = { postQL<T>( ql:string, vars?:any ):Promise<T> };
 
 //The one history service:  `history` with `opc` for a server's own history, `group` for a gateway group - the same arguments,
 //result and continuation either way (spec *Pass-through*), so the trend and table never ask which.  What differs is asked here:
@@ -16,9 +15,9 @@ export type HistPoster = { postQL<T>( ql:string, vars?:any, log?:Log ):Promise<T
 //carries both in its own attributes.
 @Service()
 export class HistoryService{
-	async read( reader:HistReader, source:HistSource, args:HistReadArgs, log:Log=()=>{} ):Promise<HistPage>{
+	async read( reader:HistReader, source:HistSource, args:HistReadArgs ):Promise<HistPage>{
 		const {ql, vars} = HistoryService.query( source, args );
-		const data = await reader.query<any>( ql, vars, log );
+		const data = await reader.query<any>( ql, vars );
 		return toHistPage( data?.["history"] );
 	}
 	//history( opc|group, nodes, start, end, interval, aggregate, limit, returnBounds, modified, continuation ){ continuation values{…}
@@ -47,19 +46,19 @@ export class HistoryService{
 	//historian's, Phase 6's.  A server without the folder refuses the browse, which is the caller's to take as none listed.
 	//Browsed once per gateway and connection - a reader is a gateway's one Gateway - since a History tab is made again on each
 	//return to it (historian-aggregate-picker #7).  A refusal isn't kept, so the next asks again, as the gateway's own cache does.
-	aggregates( reader:HistReader, opc:CnnctnSlug, log:Log=()=>{} ):Promise<HistAggregate[]>{
+	aggregates( reader:HistReader, opc:CnnctnSlug ):Promise<HistAggregate[]>{
 		const lists = this.#aggregates.get( reader ) ?? new Map<CnnctnSlug, Promise<HistAggregate[]>>();
 		this.#aggregates.set( reader, lists );
 		const cached = lists.get( opc );
 		if( cached )
 			return cached;
-		const list = this.#browseAggregates( reader, opc, log );
+		const list = this.#browseAggregates( reader, opc );
 		lists.set( opc, list );
 		list.catch( ()=>lists.delete(opc) );
 		return list;
 	}
-	async #browseAggregates( reader:HistReader, opc:CnnctnSlug, log:Log ):Promise<HistAggregate[]>{
-		const data = await reader.query<any>( HistoryService.aggregatesQuery, {opc, id: aggregateFunctionsFolder.toJson()}, log );
+	async #browseAggregates( reader:HistReader, opc:CnnctnSlug ):Promise<HistAggregate[]>{
+		const data = await reader.query<any>( HistoryService.aggregatesQuery, {opc, id: aggregateFunctionsFolder.toJson()} );
 		return toHistAggregates( data?.["node"] );
 	}
 	#aggregates = new WeakMap<HistReader, Map<CnnctnSlug, Promise<HistAggregate[]>>>();//by gateway, then connection
@@ -69,34 +68,34 @@ export class HistoryService{
 	//among the groups this user may read - where the gateway's own historian keeps a node's history, beside what its server keeps.
 	//A node page asks once, for its variables (NodeResolver), by POST:  a folder's worth in a GET's url passed the gateway's 8 KB,
 	//which drops the request unanswered (reviews-issue/historian-group-history-web.md #1).
-	async groups( poster:HistPoster, opc:CnnctnSlug, nodes:NodeId[], log:Log=()=>{} ):Promise<HistGroup[]>{
+	async groups( poster:HistPoster, opc:CnnctnSlug, nodes:NodeId[] ):Promise<HistGroup[]>{
 		if( !nodes.length )
 			return [];
-		const data = await poster.postQL<any>( HistoryService.groupsQuery, {opc, nodes: nodes.map( n=>n.toJson() )}, log );
+		const data = await poster.postQL<any>( HistoryService.groupsQuery, {opc, nodes: nodes.map( n=>n.toJson() )} );
 		return toHistGroups( data?.["historyGroups"] );
 	}
 	static readonly groupsQuery = "historyGroups( opc: $opc, nodes: $nodes ){ groups{ id name nodes } }";
 	//historyCapabilities( group ){ aggregates update delete }:  a group's aggregates and this user's edit rights on it.  Asked each
 	//time, not kept as a server's list is:  a grant can land between two visits.
-	async capabilities( reader:HistReader, group:number, log:Log=()=>{} ):Promise<HistCapabilities>{
-		const data = await reader.query<any>( HistoryService.capabilitiesQuery, {group}, log );
+	async capabilities( reader:HistReader, group:number ):Promise<HistCapabilities>{
+		const data = await reader.query<any>( HistoryService.capabilitiesQuery, {group} );
 		return toHistCapabilities( data?.["historyCapabilities"] );
 	}
 	static readonly capabilitiesQuery = "historyCapabilities( group: $group ){ aggregates update delete }";
 	//historyThresholds( group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } } (hist.jsonnet):
 	//a group's member list, each threshold's effective value with where it comes from, and whether this user may override them.
 	//Asked each time the dialog opens:  an override lands between two.
-	async thresholds( reader:HistReader, group:number, log:Log=()=>{} ):Promise<HistThresholds>{
-		const data = await reader.query<any>( HistoryService.thresholdsQuery, {group}, log );
+	async thresholds( reader:HistReader, group:number ):Promise<HistThresholds>{
+		const data = await reader.query<any>( HistoryService.thresholdsQuery, {group} );
 		return toHistThresholds( data?.["historyThresholds"] );
 	}
 	static readonly thresholdsQuery = "historyThresholds( group: $group ){ update nodes{ id node templateNode path enumeration band thresholds{ name value source } } }";
 	//A member's override (spec *Templates*):  updateHistGroupNode on its row with the columns given, null clearing one back to
 	//inheriting, which the gateway applies to the running group before it answers.  A throw is the gateway's refusal:  a value the
 	//library would refuse, or a right withheld.
-	async override( poster:HistPoster, id:number, changes:HistThresholdOverride, log:Log=()=>{} ):Promise<void>{
+	async override( poster:HistPoster, id:number, changes:HistThresholdOverride ):Promise<void>{
 		const {ql, vars} = HistoryService.overrideMutation( id, changes );
-		await poster.postQL<any>( ql, vars, log );
+		await poster.postQL<any>( ql, vars );
 	}
 	//`mutation` spelled out:  updateHistGroupNode is a table's verb, not a system mutation the gateway takes bare as createHistory is
 	static overrideMutation( id:number, changes:HistThresholdOverride ):{ql:string; vars:Record<string,unknown>}{
@@ -106,9 +105,9 @@ export class HistoryService{
 	//An edit (spec *Edits*), over the caller's own session, so the server's rules decide (spec *Pass-through*).  The result is
 	//the server's answer per value and per node;  a refusal is in those statuses, not a throw, which is the gateway's for an
 	//argument it can't take, a value of the wrong type among them.
-	async edit( editor:HistPoster, source:HistSource, args:HistEditArgs, log:Log=()=>{} ):Promise<HistEditResult>{
+	async edit( editor:HistPoster, source:HistSource, args:HistEditArgs ):Promise<HistEditResult>{
 		const {ql, vars, command} = HistoryService.mutation( source, args );
-		const data = await editor.postQL<any>( ql, vars, log );
+		const data = await editor.postQL<any>( ql, vars );
 		return toHistEditResult( data?.[command] );
 	}
 	//createHistory|updateHistory|upsertHistory( opc|group, values:[{ node source server status value }] ), purgeHistory( opc|group,

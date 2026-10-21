@@ -5,19 +5,19 @@ import {MatIconModule} from '@angular/material/icon';
 import { Router } from '@angular/router';
 
 @Component({
-  selector: 'component-page-header',
-  templateUrl: './component-page-header.html',
-  styleUrls: ['./component-page-header.scss'],
-  imports: [MatButtonModule, MatIconModule]
+	selector: 'component-page-header',
+	templateUrl: './component-page-header.html',
+	styleUrls: ['./component-page-header.scss'],
+	imports: [MatButtonModule, MatIconModule]
 })
 export class ComponentPageHeader {
-  private _componentPageTitle:ComponentPageTitle = inject( ComponentPageTitle );
-  private router:Router = inject( Router );//
-  toggleSidenav = output<void>();
+	#componentPageTitle = inject( ComponentPageTitle );
+	#router = inject( Router );//
+	toggleSidenav = output<void>();
 
-  getTitle() {//
-    return this._componentPageTitle.title;//
-  }//
-  backUrl = input<string>();
-  back(){ this.router.navigate([this.backUrl()] ); }
+	getTitle() {//
+		return this.#componentPageTitle.title;//
+	}//
+	backUrl = input<string>();
+	back(){ this.#router.navigate([this.backUrl()] ); }
 }

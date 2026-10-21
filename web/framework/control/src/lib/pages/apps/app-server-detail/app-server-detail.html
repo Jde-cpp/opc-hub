@@ -3,31 +3,6 @@
 		<p>{{error()}}</p>
 	}
 	@else{
-		<mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
-			[selectedIndex]="tabIndex"
-			(selectedIndexChange)="tabIndexChanged($event)">
-			<mat-tab>
-				<ng-template mat-tab-label>Logs</ng-template>
-				<ng-template matTabContent>
-					<log-detail [service]=appService></log-detail>
-				</ng-template>
-			</mat-tab>
-			<mat-tab>
-				<ng-template mat-tab-label>Log Settings</ng-template>
-				<ng-template matTabContent>
-					@for( id of [instanceId()]; track id ){<!--keyed on the instance, as the opc-server and gateway pages (reviews/m3-closing.md #31)-->
-						<log-settings [service]=appService [instanceId]=id!></log-settings>
-					}
-				</ng-template>
-			</mat-tab>
-			<mat-tab>
-				<ng-template mat-tab-label>Web Sessions</ng-template>
-				<ng-template matTabContent>
-					@for( id of [instanceId()]; track id ){<!--keyed on the instance, as Log Settings-->
-						<web-sessions [service]=appService [instanceId]=id!></web-sessions>
-					}
-				</ng-template>
-			</mat-tab>
-		</mat-tab-group>
+		<instance-tabs [logs]=appService [instanceId]=instanceId() [(selectedIndex)]="tabIndex"/>
 	}
 }

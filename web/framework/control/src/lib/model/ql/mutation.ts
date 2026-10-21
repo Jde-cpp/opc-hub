@@ -1,6 +1,7 @@
 import { verify, getEnumName } from '../../utils/utils';
 import { TypeName } from '../../services/graphql';
 import { StringUtils } from '../../utils/string-utils';
+import { capitalize } from 'jde-spa';
 
 export enum MutationType{
 	Create,
@@ -23,14 +24,14 @@ export class Mutation{
 		let query = null;
 		let addRemoveQuery = ()=>{
 			let addRemove = '';
-			for( let [key, keyItems] of this.#children ){
+			for( let keyItems of this.#children.values() ){
 				for( let item of keyItems )
 					addRemove += item.toString() ?? '';//a child with nothing to send - an Update with no args - adds nothing, not the text "null"
 			}
 			return addRemove;
 		};
 		const hasArgs = this.args && Object.keys(this.args).length;
-		const name = `${getEnumName(MutationType,this.type).toLowerCase()}${StringUtils.capitalize(this.typeName)}`;
+		const name = `${getEnumName(MutationType,this.type).toLowerCase()}${capitalize(this.typeName)}`;
 		const selection = this.result?.length ? `{${this.result.join(",")}}` : "";
 		//a row named by its id alone - deleteUser( id:3 ).  was Remove only, so a Delete or Purge by id came back null.
 		if( !hasArgs && this.id && [MutationType.Delete, MutationType.Purge, MutationType.Remove].includes(this.type) ){

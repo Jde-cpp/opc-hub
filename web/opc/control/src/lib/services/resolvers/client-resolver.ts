@@ -1,8 +1,8 @@
 import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
 import { inject, Injectable } from '@angular/core';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
-import { DetailResolver, DetailResolverData, DetailRoute, errorText, IGRAPHQL, SnackbarService, SlugNotFoundError} from 'jde-framework'
-import { Gateway, GatewayService } from '../gateway-service';
+import { DetailResolver, DetailResolverData, DetailRoute, errorMessage, SnackbarService, SlugNotFoundError } from 'jde-framework';
+import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
 import { ServerCnnctn } from '../../model/server-cnnctn';
 import { OpcStore } from '../opc-store';
 
@@ -12,8 +12,8 @@ export type GatewayDetailData<T> = DetailResolverData<T> & { gateway:Gateway };
 
 @Injectable()
 export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> {
-	private router:Router = inject( Router );
-	private gatewayService = inject( IGRAPHQL ) as GatewayService;//the gateway routes alias IGRAPHQL to the one GatewayService instance (app.routes.ts gatewayProvider)
+	#router = inject( Router );
+	#gatewayService = inject( GATEWAY_SERVICE );
 
 	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<GatewayDetailData<ServerCnnctn>>{
 		return this.loadProfile( route, state.url, route.paramMap.get("connection")! );
@@ -25,11 +25,11 @@ export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> 
 	private async loadProfile( route: ActivatedRouteSnapshot, url:string, slug:string ):Promise<GatewayDetailData<ServerCnnctn>>{
 		const parent = route.parent!;
 		let gatewaySlug = parent.url[parent.url.length-1].path;
-		const ql = await this.gatewayService.gateway( gatewaySlug );
+		const ql = await this.#gatewayService.gateway( gatewaySlug );
 		let siblings = this.routeStore.getChildren( parent.url ).map( s=>new RouteItem({path:`${s.path}`, title:s.title}) );
 		const routing = new DetailRoute(
 			slug,
-			siblings.find(s=>s.path==slug || s.path.endsWith('/'+slug))?.title,
+			siblings.find(s=>s.path==slug)?.title,
 			siblings,
 			new RouteItem({path:'.', title:parent.params["instance"]})
 		);
@@ -46,7 +46,7 @@ export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> 
 			}
 			else
 				this.snackbar.exception( `Could not load '${slug}'`, e );
-			this.router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
+			this.#router.navigateByUrl( createUrlTreeFromSnapshot(route, ['..']) );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
 			return null as unknown as GatewayDetailData<ServerCnnctn>;
 		}
 	}
@@ -61,13 +61,13 @@ export class ClientResolver implements Resolve<GatewayDetailData<ServerCnnctn>> 
 				y.row["server"] = await opcStore.getConnection( ql, slug, {fresh: true} );//the tab is where a user checks the connection:  never the page's memo of an earlier describe
 			}
 			catch( e ){ //can't connect, maybe bad settings.  The toast goes by; the row keeps the reason for the Connection tab's not-connected state.
-				y.row["serverError"] = errorText( e ) ?? "Unknown error";
+				y.row["serverError"] = errorMessage( e );
 				snackbar.exception( "Could not connect to server.", e );
 			}
 		}
 		return y;
 	}
-	opcStore:OpcStore = inject( OpcStore );
+	opcStore = inject( OpcStore );
 	recentVisits = inject( RecentVisits );
 	routeStore = inject( RouteStore );
 	snackbar = inject( SnackbarService );

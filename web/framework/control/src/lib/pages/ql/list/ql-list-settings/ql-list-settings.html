@@ -1,34 +1,33 @@
-<!-- @if( !isLoading() ) { -->
-	<mat-toolbar>
-		<mat-form-field>
-			<!--`name` is already the signal every consumer here reads (disableSave, getView), so it binds natively:  one text
-			field does not need a FormControl on top of it, and [(ngModel)] made this the only template-driven form left.-->
-			<input matInput [value]="name()" (input)="onNameInput($event)" placeholder="View Name" (focus)="onNameFocus($event)">
-			@if( reservedName() ){ <mat-hint>{{ name() }} is a built-in view</mat-hint> }
-		</mat-form-field>
-		<button matButton="tonal" (click)="onSave.emit(getView(false))" [disabled]=disableSave()>Save</button>
-		<button matButton="tonal" (click)="onShow.emit(getView(true))">Show</button>
-		<!--the only icon in the row, so the trash can still reads as a warning-->
-		<button matButton="outlined" (click)="onDelete.emit(view())" [disabled]=disableDelete()><mat-icon>delete</mat-icon>Delete</button>
-		<button matButton="outlined" (click)="onCancel.emit()">Cancel</button>
-	</mat-toolbar>
-	<mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false"  [selectedIndex]="tabIndex()" (selectedIndexChange)="onTabIndexChanged($event)">
-		<mat-tab>
-			<ng-template mat-tab-label>Filter</ng-template>
-			<div class="centered-content">
-				<ql-list-settings-filter [view]=view() [columns]=columns() [schema]=schema() [excludedColumns]=excludedColumns() [suggestions]=suggestions()></ql-list-settings-filter>
-			</div>
-		</mat-tab>
-		<mat-tab>
-			<ng-template mat-tab-label>Display</ng-template>
-			<div class="centered-content">
-				<ql-list-settings-display [view]=view() [columns]=columns() [schema]=schema() [paged]=paged()></ql-list-settings-display>
-			</div>
-		</mat-tab>
-		<mat-tab>
-			<ng-template mat-tab-label>Sort</ng-template>
-			<div class="centered-content">
-				<ql-list-settings-sort [view]=view() [schema]="schema()" [excludedColumns]="excludedColumns()"></ql-list-settings-sort>
-			</div>
-		</mat-tab>
+<mat-toolbar>
+	<mat-form-field>
+		<!--`name` is already the signal every consumer here reads (disableSave, getView), so it binds natively:  one text
+		field does not need a FormControl on top of it, and [(ngModel)] made this the only template-driven form left.-->
+		<input matInput [value]="name()" (input)="onNameInput($event)" placeholder="View Name" (focus)="onNameFocus($event)">
+		@if( reservedName() ){ <mat-hint>{{ name() }} is a built-in view</mat-hint> }
+	</mat-form-field>
+	<button matButton="tonal" (click)="onSave.emit(getView(false))" [disabled]=disableSave()>Save</button>
+	<button matButton="tonal" (click)="onShow.emit(getView(true))">Show</button>
+	<!--the only icon in the row, so the trash can still reads as a warning-->
+	<button matButton="outlined" (click)="onDelete.emit(view())" [disabled]=disableDelete()><mat-icon>delete</mat-icon>Delete</button>
+	<button matButton="outlined" (click)="onCancel.emit()">Cancel</button>
+</mat-toolbar>
+<mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false"  [(selectedIndex)]="tabIndex">
+	<mat-tab>
+		<ng-template mat-tab-label>Filter</ng-template>
+		<div class="centered-content">
+			<ql-list-settings-filter [view]=view() [columns]=columns() [schema]=schema() [excludedColumns]=excludedColumns() [suggestions]=suggestions()></ql-list-settings-filter>
+		</div>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Display</ng-template>
+		<div class="centered-content">
+			<ql-list-settings-display [view]=view() [columns]=columns() [schema]=schema() [paged]=paged()></ql-list-settings-display>
+		</div>
+	</mat-tab>
+	<mat-tab>
+		<ng-template mat-tab-label>Sort</ng-template>
+		<div class="centered-content">
+			<ql-list-settings-sort [view]=view() [schema]="schema()" [excludedColumns]="excludedColumns()"></ql-list-settings-sort>
+		</div>
+	</mat-tab>
 </mat-tab-group>

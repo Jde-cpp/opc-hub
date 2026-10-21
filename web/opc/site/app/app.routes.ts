@@ -3,12 +3,10 @@ import {Routes} from '@angular/router';
 import{ DetailResolver, IGRAPHQL, QLListResolver, QLListRouteService, HomeRouteService, AppResolver, loadApps, loadAppServerDetail, loadCards, loadLoginPage, loadQLList } from 'jde-framework';
 import { HelpRouteService, helpTopicResolver, IROUTE_SERVICE, loadComponentSidenav, loadHelpPage, loadNotFound } from 'jde-spa';
 import { AccessService, AuthGuard, Group, groupTableSettings, loadGroupDetail, loadResourceDetail, loadRoleDetail, loadUserDetail, ResourceResolver, resourceTableSettings, Role, roleTableSettings, User, userTableSettings } from 'jde-access';
-import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService,GatewayService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, OpcNodeRouteService, GatewayResolver } from 'jde-opc';
+import{ ClientResolver, GatewayRouteService, gatewayTableSettings, GatewayCnnctnRouteService, HistAdminResolver, loadClientDetail, loadGatewayDetail, loadHistGroupDetail, loadHistTemplateDetail, loadNodeDetail, loadOpcServerDetail, NodeResolver, GatewayResolver } from 'jde-opc';
 
 const accessProvider = { provide: IGRAPHQL, useExisting: AccessService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
-const gatewayProvider = { provide: IGRAPHQL, useExisting: GatewayService };//route-scoped token, but aliases the single providedIn:'root' instance instead of constructing a per-route one
 const qlListProvider = { provide: IROUTE_SERVICE, useClass: QLListRouteService };
-const opcNodeRouteProvider = { provide: IROUTE_SERVICE, useExisting: OpcNodeRouteService };//NodeChildren injects the class token, so the route binding must alias that instance rather than build a second one
 const helpProvider = { provide: IROUTE_SERVICE, useClass: HelpRouteService };
 
 //Pages load through each library's <lib>-pages.ts loaders, never `import('jde-…')`:  this file imports every barrel statically,
@@ -34,7 +32,7 @@ export const routes: Routes = [
 			{
 				path: '**',
 				loadComponent: loadNodeDetail,
-				providers: [ NodeResolver, opcNodeRouteProvider ],
+				providers: [ NodeResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "Opc Gateway Detail", collectionName: "serverConnections" },
 				resolve: { pageData: NodeResolver },
@@ -108,7 +106,7 @@ export const routes: Routes = [
 			{
 				path: '',
 				loadComponent: loadGatewayDetail,
-				providers:[ GatewayResolver, gatewayProvider],
+				providers:[ GatewayResolver ],
 				resolve: {data: GatewayResolver},
 				canActivate: [AuthGuard],
 				data: { tableSettings: gatewayTableSettings }
@@ -120,7 +118,7 @@ export const routes: Routes = [
 			{
 				path: 'templates/:slug',
 				loadComponent: loadHistTemplateDetail,
-				providers: [ HistAdminResolver, gatewayProvider ],
+				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "History template", kind: "templates" },
 				resolve: { pageData: HistAdminResolver },
@@ -129,7 +127,7 @@ export const routes: Routes = [
 			{
 				path: 'groups/:slug',
 				loadComponent: loadHistGroupDetail,
-				providers: [ HistAdminResolver, gatewayProvider ],
+				providers: [ HistAdminResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "History group", kind: "groups" },
 				resolve: { pageData: HistAdminResolver },
@@ -138,7 +136,7 @@ export const routes: Routes = [
 			{
 				path: ':connection',
 				loadComponent: loadClientDetail,
-				providers: [ ClientResolver, gatewayProvider ],
+				providers: [ ClientResolver ],
 				canActivate: [AuthGuard],
 				data: { summary: "Opc Connection", collectionName: "serverConnections" },
 				resolve: { pageData: ClientResolver }

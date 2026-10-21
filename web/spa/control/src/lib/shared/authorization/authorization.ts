@@ -1,7 +1,7 @@
 import { Component, Signal, computed, inject, resource } from '@angular/core';
 import {Router, RouterLink, RouterLinkActive} from '@angular/router';
 import {MatButtonModule} from '@angular/material/button';
-import { EProvider, IAUTH, IAuth, User } from '../../services/authorization/auth';
+import { EProvider, IAUTH, User } from '../../services/authorization/auth';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
@@ -10,13 +10,13 @@ declare const gapi: any;
 	selector: "authorization", templateUrl: "./authorization.html", styleUrls: ["./authorization.scss"],
 	imports: [MatButtonModule, MatIconModule, MatTooltipModule, RouterLink, RouterLinkActive]} )
 export class Authorization{
-	private authService:IAuth = inject( IAUTH );
+	#authService = inject( IAUTH );
 	constructor(){
-		this.user = this.authService.user;
+		this.user = this.#authService.user;
 	}
 	async onLogout() {
 		const isGoogle = this.user()?.provider == EProvider.Google;//`?.`: the signal can already be empty, and a throw here skips the logout itself
-		await this.authService.logout( (m)=>console.log(m) );
+		await this.#authService.logout();
 		if( isGoogle )
 			await this.#signOutGoogle();
 		this.router.navigate( ['/login'] );
@@ -41,7 +41,7 @@ export class Authorization{
 	providers = resource<EProvider[], {}>({
     loader: async () => {
 			try{
-				let providers = await this.authService.providers( (m)=>console.log(m) );
+				let providers = await this.#authService.providers();
 				return providers;
 			}
 			catch( e ){

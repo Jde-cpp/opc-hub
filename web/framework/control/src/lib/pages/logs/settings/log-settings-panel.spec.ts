@@ -1,4 +1,10 @@
-import { mergeSink, overridesOf, saveHint } from './log-settings-panel';
+import { TestBed } from '@angular/core/testing';
+import { IENVIRONMENT } from 'jde-spa';
+import { ELogLevel } from 'jde-proto/Log';
+import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
+import { LogSettingsPanel, mergeSink, overridesOf, saveHint } from './log-settings-panel';
+import { snackbarStub } from 'jde-framework/testing';
+import { stable } from 'jde-spa/testing';
 
 //install-issues #19: a sink's tab is the union of what the instance reports running (logSetting, tag->level) and what is
 //stored for it (instanceTagLevel's rows, flattened) - the stored set marks the overrides, the instance sets the level.
@@ -56,5 +62,46 @@ describe( 'LogSettingsPanel.overridesOf', ()=>{
 		const rows = mergeSink( {default: "Trace", sessions: "Trace", sql: "Warning"}, {sql: "Warning"} );
 		expect( overridesOf(rows) ).toEqual( {sql: "Warning"} );
 		expect( overridesOf(mergeSink({default: "Trace"}, {})) ).toEqual( {} );
+	} );
+} );
+
+
+//A14:  the three tabs come from one list, and Save reads every tab's editor - the two not shown included - by its place in it.
+describe( 'LogSettingsPanel', ()=>{
+	const create = async ()=>{
+		const querySingle = vi.fn( async ( q:string )=>q.startsWith( 'logSetting' )
+			? {tags: {sql: 1, app: 1}}
+			: {text: {Debug: ['sql']}, binary: {}, appServer: {}, running: {text: {default: 'Information', sql: 'Debug'}, binary: {default: 'Warning'}, appServer: {}}} );
+		const mutate = vi.fn( async ()=>({}) );
+		TestBed.configureTestingModule({ providers: [
+			{ provide: SnackbarService, useValue: snackbarStub() },
+			{ provide: IENVIRONMENT, useValue: {get: ()=>true} }
+		]});
+		const fixture = TestBed.createComponent( LogSettingsPanel );
+		fixture.componentRef.setInput( 'service', {querySingle, mutate} );
+		fixture.componentRef.setInput( 'instanceId', 7 );
+		await stable( fixture, 2 );
+		return { fixture, panel: fixture.componentInstance, querySingle, mutate };
+	};
+
+	it( 'gives each sink a tab, and says which one the instance does not run', async ()=>{
+		const { fixture, panel, querySingle } = await create();
+		expect( querySingle.mock.calls[1][0] ).toContain( '{ binary appServer text running }' );
+		const labels = [...fixture.nativeElement.querySelectorAll( '.mdc-tab__text-label' )].map( l=>(l as Element).textContent!.trim() );
+		expect( labels ).toEqual( ['Binary', 'Remote', 'Text'] );
+		expect( panel.sinks().map( s=>s.note ) ).toEqual( [null, 'This instance runs no remote log. The rows are overrides saved for it; they apply to nothing.', null] );
+	} );
+
+	it( 'saves the edits of every tab, not only the one shown', async ()=>{
+		const { panel, mutate } = await create();
+		const [binary, , text] = panel.editors();
+		binary.onLevelChange( binary.dataSource[0], ELogLevel.Error );
+		text.onDelete( text.dataSource.find( r=>r.tag=='sql' )! );
+		await panel.save();
+		expect( mutate ).toHaveBeenCalledTimes( 1 );
+		expect( (mutate.mock.calls[0] as any[])[0].args ).toEqual( {
+			binary: [{tags: ['default'], level: 'Error'}],
+			text: [{tags: ['sql'], level: null}]
+		} );
 	} );
 } );

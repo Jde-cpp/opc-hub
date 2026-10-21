@@ -1,25 +1,12 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
-import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter, Router } from '@angular/router';
-import { RouterTestingHarness } from '@angular/router/testing';
-import { vi } from 'vitest';
-import { ProfileStore, RecentVisits } from 'jde-spa';
-import { SnackbarService } from 'jde-framework';
+import { ProfileStore } from 'jde-spa';
 import { ENodeClass, OpcObject, UaNode, Variable } from '../../model/node';
 import { GATEWAY_SERVICE } from '../gateway-service';
 import { OPC_STORE, OpcStore } from '../opc-store';
 import { NodeResolver } from './node-resolver';
-
-@Component( {template: ''} ) class Dummy{}
+import { Blank, profileStoreStub } from 'jde-spa/testing';
+import { openRoute } from 'jde-framework/testing';
+import { fakeGateway } from 'jde-opc/testing';
 
 const pump1 = new OpcObject( {ns: 2, i: 10, name: "pump1", browse: {ns: 2, name: "pump1"}} as any );
 const serverDescription = { connection: {id: 1, slug: 'cn', name: 'Line 1', url: 'opc.tcp://plc:4840', certificateUri: '', defaultBrowseNs: 1}, desc: {}, policy: '', mode: 'None', namespaces: [] };
@@ -30,50 +17,38 @@ const nodes:Record<string, any> = {//the gateway's answer to node( path ){ … n
 const flow = ()=>new Variable( {ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}} as any, pump1 );
 //gatewayDown:  the gateway does not answer at all.  groups:  the gateway's answer to historyGroups, or an error it throws for it.
 async function open( url:string, browsed:boolean, gatewayDown = false, groups:any = undefined ){
-	const exception = vi.fn();
-	const forget = vi.fn();
 	const browseObjectsFolder = vi.fn( async ( _cnnctn:string, parent:UaNode )=>{
 		if( parent.isVariable )
 			throw new EvalError( "Cannot browse children of variable node." );
 		return groups ? [flow()] : [];
 	} );
-	const asked:any[] = [];
-	const gateway = { slug: 'gw', browseObjectsFolder, errorCodeText: async ()=>"", query: async ( ql:string, vars:any )=>{
-		if( ql.includes("serverDescription") )
-			return serverDescription;
-		return { node: nodes[vars.path] ?? {sc: 0x806f0000} };
-	}, postQL: async ( ql:string, vars:any )=>{
+	const postQL = vi.fn( async ( ql:string, _vars:any )=>{
 		if( !ql.startsWith("historyGroups") )
 			throw new Error( `unexpected post: ${ql}` );
-		asked.push( vars );
 		if( groups instanceof Error )
 			throw groups;
 		return { historyGroups: groups };
-	} };
-	TestBed.configureTestingModule( {providers: [
-		provideRouter( [{ path: 'gateways/:gateway', component: Dummy }, { path: 'gateways/:gateway/:connection', children: [
-			{ path: '**', component: Dummy, providers: [NodeResolver], resolve: {pageData: NodeResolver}, runGuardsAndResolvers: "pathParamsOrQueryParamsChange" }
-		]}] ),
+	} );
+	const gateway = Object.assign( fakeGateway( 'gw' ), { browseObjectsFolder, postQL, errorCodeText: async ()=>"", query: async ( ql:string, vars:any )=>{
+		if( ql.includes("serverDescription") )
+			return serverDescription;
+		return { node: nodes[vars.path] ?? {sc: 0x806f0000} };
+	} } );
+	const { router, snackbar, forget, leaf } = await openRoute( {routes: [{ path: 'gateways/:gateway', component: Blank }, { path: 'gateways/:gateway/:connection', children: [
+		{ path: '**', component: Blank, providers: [NodeResolver], resolve: {pageData: NodeResolver}, runGuardsAndResolvers: "pathParamsOrQueryParamsChange" }
+	]}], providers: [
 		{ provide: GATEWAY_SERVICE, useValue: {gateway: async ()=>{ if( gatewayDown ) throw new Error( "Failed to fetch" ); return gateway; }} },
 		{ provide: OPC_STORE, useExisting: OpcStore },
-		{ provide: SnackbarService, useValue: {exception, error: vi.fn()} },
-		{ provide: ProfileStore, useValue: {} },
-		{ provide: RecentVisits, useValue: {forget} }
-	]} );
-	const store = TestBed.inject( OpcStore );
-	store.nodeView.set( <any>{sortNodes: ( n:UaNode[] )=>n} );
-	if( browsed ){//the parent's page was open:  browseObjectsFolder stored its children, the Variable among them
-		store.setNodes( 'gw', 'cn', OpcObject.rootNode, [pump1] );
-		store.setNodes( 'gw', 'cn', pump1, [new Variable({ns: 2, i: 11, name: "flow", browse: {ns: 2, name: "flow"}} as any, pump1)] );
-	}
-	const harness = await RouterTestingHarness.create();
-	await harness.navigateByUrl( url );
-	await new Promise( r=>setTimeout(r, 20) );//the redirect is a second navigation
-	const router = TestBed.inject( Router );
-	let leaf = router.routerState.snapshot.root;
-	while( leaf.firstChild )
-		leaf = leaf.firstChild;
-	return { router, exception, browseObjectsFolder, forget, asked, pageData: leaf.data['pageData'] };
+		{ provide: ProfileStore, useValue: profileStoreStub() }
+	], url, before: ()=>{
+		const store = TestBed.inject( OpcStore );
+		store.nodeView.set( <any>{sortNodes: ( n:UaNode[] )=>n} );
+		if( browsed ){//the parent's page was open:  browseObjectsFolder stored its children, the Variable among them
+			store.setNodes( 'gw', 'cn', OpcObject.rootNode, [pump1] );
+			store.setNodes( 'gw', 'cn', pump1, [flow()] );
+		}
+	}} );
+	return { router, exception: snackbar.exception, browseObjectsFolder, forget, postQL, pageData: leaf().data['pageData'] };
 }
 
 //reviews/m3-closing.md #9:  a Variable has no page of its own - its value, status and subscribe box are a row on its parent's -
@@ -103,9 +78,9 @@ describe( 'NodeResolver on a Variable', ()=>{
 //gateway that can't say - one older than the field, or one that refuses - leaves the page with the server's history alone.
 describe( 'NodeResolver and the history groups', ()=>{
 	it( 'asks for the groups of the page\'s variables, and carries them', async ()=>{
-		const { exception, asked, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 11}]}]} );
+		const { exception, postQL, pageData } = await open( '/gateways/gw/cn/2~pump1', false, false, {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 11}]}]} );
 		expect( exception ).not.toHaveBeenCalled();
-		expect( asked ).toEqual( [{opc: 'cn', nodes: [{ns: 2, i: 11}]}] );
+		expect( postQL.mock.calls.map( ([, vars])=>vars ) ).toEqual( [{opc: 'cn', nodes: [{ns: 2, i: 11}]}] );
 		expect( pageData.groups.map( ( g:any )=>[g.id, g.name, g.nodes.length] ) ).toEqual( [[3, 'Pumps', 1]] );
 	} );
 	it( 'keeps the page, with no groups, when the gateway refuses the question', async ()=>{

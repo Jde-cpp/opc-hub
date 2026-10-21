@@ -1,0 +1,67 @@
+// What jde-opc's node and historian sheets share:  a reading's quality (OPC 10000-4 7.38) as the node tables show it, a cell's
+// flags as chips, and a server's refusal said in a line.  Mixins, so each rule takes the encapsulation of the sheet it is in.
+
+// An icon at the text's size, beside a status or in a line of one.
+@mixin icon-size( $size: 18px ){
+	font-size: $size;
+	width: $size;
+	height: $size;
+}
+
+// A Status column:  the code's name, an open set that runs long with its flags ("UncertainEngineeringUnitsExceeded+High"), as
+// text that ends in an ellipsis - its tooltip has it whole - beside an icon for the severity.  200px holds the common names whole.
+// The severity is the icon's shape first (error / warning / info) and its colour second;  system tokens only, which hold their
+// contrast in every theme where a literal red or amber would not.
+@mixin quality{
+	.mat-column-status{
+		flex: 0 0 200px;
+		min-width: 0;
+		gap: 4px;
+		padding-inline: 5px;
+	}
+	mat-cell.mat-column-status > .status-text{//the ellipsis box is the child
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.quality-icon{
+		flex: 0 0 auto;
+		@include icon-size;
+		color: var(--mat-sys-on-surface-variant);
+	}
+	.quality-bad{
+		color: var(--mat-sys-error);
+	}
+	.quality-uncertain{
+		color: var(--mat-sys-tertiary);
+	}
+	.status-good{
+		color: var(--mat-sys-on-surface-variant);
+	}
+}
+
+// A cell's flags as chips, @include'd in the chip set's rule:  a chip reads its size and colour from tokens on an ancestor, so
+// the set carries them.  The container colour is one of them:  the theme leaves it unset, and an unfilled chip is
+// indistinguishable from plain text.
+@mixin flag-chips{
+	--mat-chip-container-height: 20px;
+	--mat-chip-label-text-size: 11px;
+	--mat-chip-label-text-line-height: 20px;
+	--mat-chip-elevated-container-color: var(--mat-sys-surface-container-highest);
+	--mat-chip-label-text-color: var(--mat-sys-on-surface-variant);
+}
+
+// A node or an edit the server refused:  the reason in a line, with the Status cells' Bad icon.
+@mixin refused( $margin: .75rem 0 0, $color: var(--mat-sys-on-surface) ){
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: $margin;
+	color: $color;
+	mat-icon{
+		flex: 0 0 auto;
+		@include icon-size;
+		color: var(--mat-sys-error);
+	}
+}

@@ -1,0 +1,17 @@
+<!--Only Save is filled:  extended fabs gave Cancel, and the destructive Delete, the weight of the primary action, and the tonal
+	Delete had next was a grey pill that read as disabled even with a dirty form.  The trash can is the one icon kept, because
+	there it IS the warning - the done/cancel icons only restated their labels and drowned it out - and it carries the
+	delete/restore state.  Pushed to the far side:  it sat in the click path of the two safe actions.-->
+<button matButton="filled" (click)="page().onSubmitClick()" [disabled]="!page().isChanged()">Save</button>
+<button matButton="outlined" (click)="page().onCancelClick()">Cancel</button>
+<ng-content/>
+@let purge = canPurge() && page().isDeleted;
+@if( purge ){
+	<!--only on an already-deleted row, where Restore is the other half of the pair - a live row is never one click from a purge-->
+	<button matButton="outlined" class="purge far" (click)="page().onPurgeClick()" aria-label="Purge">
+		<mat-icon>delete_forever</mat-icon>Purge
+	</button>
+}
+<button matButton="outlined" [class.far]="!purge" (click)="page().onDeleteClick()" [disabled]="page().isNew" [attr.aria-label]="page().isDeleted ? 'Restore' : 'Delete'">
+	<mat-icon>{{page().isDeleted ? "restore" : "delete"}}</mat-icon>{{page().isDeleted ? "Restore" : "Delete"}}
+</button>

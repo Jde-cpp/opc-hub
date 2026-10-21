@@ -1,36 +1,22 @@
-import { describe, it, expect } from 'vitest';
 import { Flex, Operator, Style, View, ViewField, type ViewFieldSettings, type ViewSerializedArgs } from './view';
-import { TableSchema } from './schema/table-schema';
+import { scalar, schemaOf, serverConnectionSchema } from 'jde-framework/testing';
 
-//Mirrors the gateway's ServerConnection: introspected DB columns plus the grafted opcSessions OBJECT (config/introspection/serverConnection.jsonnet).
-const schema = new TableSchema( {
-	name: "ServerConnection",
-	fields: [
-		{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
-		{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "slug", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "url", type: { kind: "SCALAR", name: "String" } },
-		{ name: "deleted", type: { kind: "SCALAR", name: "DateTime" } },
-		{ name: "description", type: { kind: "SCALAR", name: "String" } },
-		{ name: "provider", type: { kind: "OBJECT", name: "Provider" } },
-		{ name: "opcSessions", type: { kind: "OBJECT", name: "OpcSessions" } }
-	]
-} );
+const schema = serverConnectionSchema();
 
 describe( "View.query", ()=>{
 	it( "emits an explicit sub-selection for an OBJECT column", ()=>{
-		const view = new View( {columns: ["name", "url", {name:"opcSessions", displayName:"Sessions", selection:"count"}], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name", "url", {name:"opcSessions", displayName:"Sessions", selection:"count"}], sort: "name"}, schema );
 		const query = view.query( 0 );
 		expect( query.text ).toContain( "opcSessions{count}" );
 		expect( query.text ).toContain( "serverConnections(" );
 		expect( query.text ).not.toContain( "opcSessions " );//never the bare name - the server rejects a selection-less object field.
 	} );
 	it( "defaults an OBJECT column to the {id name} convention", ()=>{
-		const view = new View( {columns: ["name", "provider"], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name", "provider"], sort: "name"}, schema );
 		expect( view.query( 0 ).text ).toContain( "provider{id name}" );
 	} );
 	it( "round-trips selection through toJson", ()=>{
-		const view = new View( {columns: [{name:"opcSessions", selection:"count"}], sort: "name"}, schema );
+		const view = View.fromTable( {columns: [{name:"opcSessions", selection:"count"}], sort: "name"}, schema );
 		const field = view.fields.find( f=>f.name=="opcSessions" )!;
 		expect( field.toJson().selection ).toBe( "count" );
 	} );
@@ -39,7 +25,7 @@ describe( "View.query", ()=>{
 //Deleted rows used to sit behind a Show deleted checkbox.  They are a filter now, like the Resources page's Enforced:  hidden
 //unless the view filters on `deleted`, and never hidden on a live-toggle page, where `deleted` is the switch.
 describe( "View.query on deleted rows", ()=>{
-	const query = ( deleted:string|object="deleted" )=>new View( {columns: ["name", deleted], sort: "name"}, schema ).query( 0 );
+	const query = ( deleted:string|object="deleted" )=>View.fromTable( {columns: ["name", deleted], sort: "name"}, schema ).query( 0 );
 	it( "leaves them out of a view that does not filter on deleted", ()=>{
 		const q = query();
 		expect( q.text ).toContain( "deleted:$deleted" );
@@ -49,20 +35,20 @@ describe( "View.query on deleted rows", ()=>{
 		expect( query({name: "deleted", liveToggle: {enable: "Enforce", disable: "Stop enforcing"}}).text ).not.toContain( "deleted:" );
 	} );
 	it( "adds no filter to a collection without the column", ()=>{
-		const bare = new TableSchema( {name: "Thing", fields: [{ name: "name", type: { kind: "SCALAR", name: "String" } }]} );
-		expect( new View( {columns: ["name"], sort: "name"}, bare ).query( 0 ).text ).not.toContain( "deleted" );
+		const bare = schemaOf( "Thing", scalar("name") );
+		expect( View.fromTable( {columns: ["name"], sort: "name"}, bare ).query( 0 ).text ).not.toContain( "deleted" );
 	} );
 	//reviews-issue/317-deleted-rows.md #1:  toJson drops a hidden Enforced column, so the saved view came back with a bare
 	//`deleted` and query() filtered every unenforced resource out.
 	describe( "on a saved view", ()=>{
 		const enforced:ViewFieldSettings = {name: "deleted", displayName: "Enforced", liveToggle: {enable: "Enforce", disable: "Stop enforcing"}};
 		const reload = ( columns:(string|ViewFieldSettings)[], hidden?:string )=>{
-			const route = new View( {configColumns: columns, sort: [{active: "name", direction: "asc"}]}, schema );
-			const mine = new View( route );
+			const route = View.fromConfig( {configColumns: columns, sort: [{active: "name", direction: "asc"}]}, schema );
+			const mine = View.copy( route );
 			mine.name = "Mine";
 			mine.fields = mine.fields.map( f=>{ const copy = new ViewField( f ); if( f.name==hidden ) copy.displayed = false; return copy; } );
 			const saved:ViewSerializedArgs = JSON.parse( JSON.stringify(mine.toJson({columns, sort: "name"})) );
-			return new View( saved, schema, route ).query( 0 );
+			return View.fromJson( saved, schema, route ).query( 0 );
 		};
 		it( "lists them on a live-toggle page with the column hidden", ()=>{
 			expect( reload(["name", enforced], "deleted").text ).not.toContain( "deleted:" );
@@ -83,7 +69,7 @@ describe( "View.query on deleted rows", ()=>{
 describe( "View.query on a live-toggle column's filter", ()=>{
 	const liveToggle = { enable: "Enforce", disable: "Stop enforcing" };
 	const view = ( settings:{liveToggle?:typeof liveToggle}, value:any[], operator=Operator.Greater, column="deleted" )=>{
-		const v = new View( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
+		const v = View.fromTable( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
 		v.fieldFilters.push( {field: schema.fields.find( f=>f.name==column )!, filter: {operator, value}} );
 		return v.query( 0 );
 	};
@@ -115,6 +101,15 @@ describe( "View.query on a live-toggle column's filter", ()=>{
 		expect( q.text ).toContain( "url:$url" );
 		expect( q.vars["url"] ).toEqual( [null] );
 	} );
+	//a saved view from before ql-list-settings-filter's fix can still hold what the dialog used to build
+	it( 'reads a doubled marker as the marker', ()=>{
+		expect( view({liveToggle}, ["<null>", "<null>"]).vars["deleted"] ).toEqual( [null] );
+		expect( view({liveToggle}, ["<not null>", "<not null>"]).text ).toContain( 'deleted:{"ne":null}' );
+	} );
+	it( 'never sends a comparison without a value', ()=>{
+		expect( view({liveToggle}, [undefined]).text ).not.toContain( "deleted:" );
+		expect( view({liveToggle}, [null]).text ).not.toContain( "deleted:" );
+	} );
 } );
 
 //A saved user view is JSON, so anything Style holds has to survive toJSON or the column reloads with the default
@@ -129,7 +124,7 @@ describe( "Style serialization", ()=>{
 		expect( JSON.parse(JSON.stringify(new Style({align: "right"}))) ).toEqual( {align: "right"} );
 	} );
 	it( "carries the alignment onto a view field", ()=>{
-		const view = new View( {columns: [{name:"opcSessions", selection:"count", style: new Style({align:"right"})}], sort: "name"}, schema );
+		const view = View.fromTable( {columns: [{name:"opcSessions", selection:"count", style: new Style({align:"right"})}], sort: "name"}, schema );
 		expect( view.fields.find(f=>f.name=="opcSessions")!.toJson().style ).toMatchObject( {align: "right"} );
 	} );
 } );
@@ -146,17 +141,17 @@ describe( "View revival against a changed schema", ()=>{
 		sort: [ {active: "name", direction: "asc"} ]
 	});
 	it( "drops a displayed column the schema no longer has", ()=>{
-		const view = new View( serialized(), schema );
+		const view = View.fromJson( serialized(), schema );
 		const names = view.fields.map( f=>f.name );
 		expect( names ).toContain( "name" );
 		expect( names ).not.toContain( "groupings" );
 	} );
 	it( "drops a filter on a column the schema no longer has", ()=>{
-		const view = new View( serialized(), schema );
+		const view = View.fromJson( serialized(), schema );
 		expect( view.fieldFilters ).toHaveLength( 0 );
 	} );
 	it( "still builds a query afterwards", ()=>{
-		const view = new View( serialized(), schema );
+		const view = View.fromJson( serialized(), schema );
 		const query = view.query( 0 );
 		expect( query.text ).toContain( "serverConnections(" );
 		expect( query.text ).not.toContain( "groupings" );
@@ -164,7 +159,30 @@ describe( "View revival against a changed schema", ()=>{
 	it( "keeps a filter whose column survives", ()=>{
 		const args = serialized();
 		args.filters = [ {name: "url", filter: {operator: Operator.In, value: ["a"]}} ];
-		const view = new View( args, schema );
+		const view = View.fromJson( args, schema );
 		expect( view.fieldFilters.map(ff=>ff.field.name) ).toEqual( ["url"] );
+	} );
+} );
+
+//reviews/angular-refactor.md B13:  one static per source in place of a constructor that told four apart by shape.  A static makes
+//the class it is called on, which is how a ViewSet of LogViews or NodeViews keeps their query() and apply().
+describe( "View statics", ()=>{
+	class ThingView extends View{}
+	const base = View.fromTable( {columns: ["name", "url"], sort: "name"}, schema );
+
+	it( "make the class they are called on", ()=>{
+		const copy = ThingView.copy( base );
+		expect( copy ).toBeInstanceOf( ThingView );
+		expect( copy.fields.map( f=>f.name ) ).toEqual( base.fields.map( f=>f.name ) );
+		const json = JSON.parse( JSON.stringify(base.toJson(undefined)) );
+		expect( ThingView.fromJson( json, schema, base ) ).toBeInstanceOf( ThingView );
+		expect( View.copy( copy ) ).not.toBeInstanceOf( ThingView );
+	} );
+
+	it( "copies the filters, not the copy's source's", ()=>{
+		const route = View.fromConfig( {configColumns: ["name"], sort: [], filters: [{name: "name", value: ["a"]}]}, schema );
+		const copy = View.copy( route );
+		copy.fieldFilters[0].filter.value.push( "b" );
+		expect( route.fieldFilters[0].filter.value ).toEqual( ["a"] );
 	} );
 } );

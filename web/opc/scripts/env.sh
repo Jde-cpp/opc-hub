@@ -1,8 +1,6 @@
 #!/bin/bash
 thisDir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )";
-baseDir=$thisDir;
-webDir=$(dirname $(readlink -e $baseDir/..));
-#jdeBash=$(dirname $(readlink -e $webDir));
+webDir=$(dirname $(readlink -e $thisDir/..));
 frameworkDir=$webDir/framework;
 source $JDE_BASH/build/common.sh;
 source $frameworkDir/scripts/common-proto.sh;

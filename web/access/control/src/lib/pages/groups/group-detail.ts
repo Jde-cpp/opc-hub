@@ -1,12 +1,9 @@
 import { Component, effect, signal, inject } from '@angular/core';
 import { SelectionModel } from '@angular/cdk/collections';
-import { CommonModule } from '@angular/common';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltip } from '@angular/material/tooltip';
 
-import { arraysEqual, cloneClassArray, DetailPage, Properties, IGraphQL, QLSelector, toIdArray, SlugRow} from 'jde-framework';
+import { arraysEqual, cloneClassArray, DetailActions, DetailPage, Properties, IGraphQL, QLSelector, toIdArray, SlugRow} from 'jde-framework';
 
 import { RolePK } from '../../model/role';
 import { Permission } from '../../model/permission';
@@ -18,11 +15,10 @@ import { groupTableSettings } from './group-table-settings';
 
 @Component( {
     templateUrl: './group-detail.html',
-		styleUrls: ['./group-detail.scss'],
 		//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
 		host: {class:'main-content mat-drawer-container my-content group-detail'},
-    imports: [CommonModule, MatButtonModule, MatIcon, MatTabsModule, MatTooltip, Properties, QLSelector, EffectiveRights]
+    imports: [DetailActions, MatTabsModule, MatTooltip, Properties, QLSelector, EffectiveRights]
 })
 export class GroupDetail extends DetailPage<Group>{
 	constructor(){

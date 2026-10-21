@@ -38,7 +38,7 @@
 	</nav>
 	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Browsing"></mat-progress-bar>
 	@if( connection() ){
-		<mat-table [dataSource]="children()" class="mat-elevation-z2">
+		<mat-table [dataSource]="children()" class="mat-elevation-z2 jde-dense">
 			<ng-container matColumnDef="pick">
 				<mat-header-cell *matHeaderCellDef></mat-header-cell>
 				<mat-cell *matCellDef="let node">

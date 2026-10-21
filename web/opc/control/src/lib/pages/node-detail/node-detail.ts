@@ -1,35 +1,30 @@
-import { Component, computed, Inject, model, OnDestroy, OnInit, signal, inject } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, computed, model, OnInit, signal, inject } from '@angular/core';
 import { MatTabsModule } from '@angular/material/tabs';
 import { NodePageData } from '../../services/resolvers/node-resolver';
 import { ActivatedRoute } from '@angular/router';
-import { ComponentPageTitle, RouteItem } from 'jde-spa';
+import { ComponentPageTitle } from 'jde-spa';
 import { NodeRoute } from '../../model/node-route';
 import { NodeChildren } from './node-children/node-children';
 import { UaNode, Variable } from '../../model/node';
 import { NodeAccess } from './node-access/node-access';
 import { NodeHistory } from './node-history/node-history';
-import { ProfileStore } from 'jde-spa';
+import { persistedTabIndex } from 'jde-spa';
 import { HistGroupMembers } from '../../model/hist';
 
 @Component( {
 	templateUrl: './node-detail.html',
-	styleUrls: ['./node-detail.scss'],
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, MatTabsModule, NodeChildren, NodeAccess, NodeHistory]
+	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeHistory]
 })
-export class NodeDetail implements OnDestroy, OnInit{
-	private activatedRoute:ActivatedRoute = inject( ActivatedRoute );
-	private componentPageTitle:ComponentPageTitle = inject( ComponentPageTitle );
-	ngOnDestroy(){
-		ProfileStore.setTabIndex( `nodeDetail/${JSON.stringify(this.node().toJson())}`, this.tabIndex );
-  }
+export class NodeDetail implements OnInit{
+	#activatedRoute = inject( ActivatedRoute );
+	#componentPageTitle = inject( ComponentPageTitle );
 	ngOnInit(){
-		this.activatedRoute.data.subscribe( (data)=>{
+		this.#activatedRoute.data.subscribe( (data)=>{
 			this.pageData.set( data["pageData"] );
 			this.nodes.set( this.pageData().nodes );
 			this.sideNav.set( this.pageData().route );
-			this.componentPageTitle.title = this.server().connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
+			this.#componentPageTitle.title = this.server().connection.name + (this.node().id==85 ? '' : `/${this.node().name}`);
 		});
 	}
 
@@ -48,6 +43,5 @@ export class NodeDetail implements OnDestroy, OnInit{
 	//get profile(){ return this.pageData().route.profile; }
 	server = computed( ()=>this.pageData().server );
 	sideNav = model.required<NodeRoute>();
-	tabIndex:number=0;
-	onTabIndexChanged( index:number ){ this.tabIndex = index; }
+	tabIndex = persistedTabIndex( 'nodeDetail' );//one for every node, as the router reuses the page across them:  the per-node key it replaced was written and never read
 }

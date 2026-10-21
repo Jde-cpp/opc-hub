@@ -46,7 +46,7 @@ export enum Operator{
 //its level.  The map is value -> tone, not value -> colour:  the palette belongs to the table (graphql-table.scss), so a
 //caller's own vocabulary ("Connected", "Idle") never reaches the framework's stylesheet.  A value the map does not name
 //falls back to the theme's default chip.
-export type ChipTone = "ok"|"neutral"|"error";
+export type ChipTone = "ok"|"neutral"|"warn"|"error"|"critical";
 export type ChipTones = Record<string,ChipTone>;
 //The `deleted` column rendered as a switch in the row rather than as a timestamp.  The switch is ON for a LIVE row, so the
 //column is named for what being live MEANS on that table - on `resources` a live row is an ENFORCED one, since the
@@ -186,22 +186,30 @@ export enum ViewType{
 	Adhoc,
 	User
 }
+//A view class - View, LogView, NodeView - as the statics below and ViewSet take it:  a static runs on the class it is called on,
+//so LogView.copy( view ) makes a LogView.
+export type ViewClass<V extends View> = { prototype:V } & Pick<typeof View, "copy"|"fromJson">;
 export class View{
-	constructor( value:ViewConfigArgs|ViewSerializedArgs|View|TableSettings, schema?:TableSchema, defaultView?:View ){
-		if( value instanceof View )
-			this.copyConstructor( value as View );
-		else if( (value as ViewConfigArgs).configColumns )
-			this.configConstructor( value as ViewConfigArgs, schema! );
-		else if( (value as ViewSerializedArgs).fields )
-			this.serializedConstructor( value as ViewSerializedArgs, schema!, defaultView );
-		else if( (value as TableSettings).columns )
-			this.tableConstructor( value as TableSettings, schema! );//the cast, as above: TableSettings.filters and ViewSerializedArgs.filters differ in shape, so the union no longer narrows by itself
+	//Made by the statics, one per source.  The constructor took the four sources as one union and told them apart by shape,
+	//which TypeScript could no longer narrow.  Protected, so LogView and NodeView extend it.
+	protected constructor(){}
+	static copy<V extends View>( this:{prototype:V}, view:View ):V{ return View.#make( this, y=>y.copyFrom(view) ); }
+	//a route's view:  its columns by name or settings, its sort and filters
+	static fromConfig<V extends View>( this:{prototype:V}, config:ViewConfigArgs, schema:TableSchema ):V{ return View.#make( this, y=>y.fromConfig(config, schema) ); }
+	//a saved view, as toJson wrote it;  `defaultView` is the route's, for what toJson leaves out
+	static fromJson<V extends View>( this:{prototype:V}, json:ViewSerializedArgs, schema:TableSchema, defaultView?:View ):V{ return View.#make( this, y=>y.fromJson(json, schema, defaultView) ); }
+	//a route's TableSettings, which carry no name
+	static fromTable<V extends View>( this:{prototype:V}, settings:TableSettings, schema:TableSchema ):V{ return View.#make( this, y=>y.fromTable(settings, schema) ); }
+	static #make<V extends View>( type:{prototype:V}, init:( view:V )=>void ):V{
+		const y = new ( type as unknown as new()=>V )();
+		init( y );
+		return y;
 	}
 	//The settings dialog edits filters in place, so Cancel is only honest if the dialog never holds the live view's Filter objects.  structuredClone is unusable: it flattens Days into a plain object and breaks the `instanceof` checks in the filter UI and query().
 	static copyFilter( filter:Filter ):Filter{
 		return { operator: filter.operator, value: (filter.value ?? []).map( v=>v instanceof Days ? Days.fromJson({days:v.days}) : v instanceof Date ? new Date(v) : v ) };//`?? []` so a stale persisted view without a value array can't turn a copy into a load-time crash
 	}
-	private copyConstructor( view:View ):void{
+	private copyFrom( view:View ):void{
 		this.name = view.name;
 		this.collectionName = view.collectionName;
 		this.limit = view.limit;
@@ -213,7 +221,7 @@ export class View{
 		this.type = view.type;
 		this.queried = view.queried;
 	}
-	private configConstructor( config:ViewConfigArgs, schema:TableSchema ):void{
+	private fromConfig( config:ViewConfigArgs, schema:TableSchema ):void{
 		this.name = config.name;
 		this.sort = config.sort;
 		this.queried = config.queried ?? [];
@@ -225,7 +233,7 @@ export class View{
 		}
 		this.appendAlwaysQueried( schema );
 	}
-	private serializedConstructor( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
+	private fromJson( config:ViewSerializedArgs, schema:TableSchema, defaultView:View|undefined ):void{
 		this.name = config.name;
 		this.collectionName = config.collectionName;
 		if( config.limit )
@@ -260,7 +268,7 @@ export class View{
 		for( const field of this.fields )
 			field.liveToggle = defaultView?.fields.find( f=>f.name==field.name )?.liveToggle;
 	}
-	private tableConstructor(config:TableSettings, schema:TableSchema){
+	private fromTable( config:TableSettings, schema:TableSchema ):void{
 		this.collectionName = schema.collectionName;
 		this.fields = this.columns( schema, config.columns!, config.excludedColumns ?? ["id", "attributes"] );
 		this.sort = View.toSort( config.sort ) ?? [];

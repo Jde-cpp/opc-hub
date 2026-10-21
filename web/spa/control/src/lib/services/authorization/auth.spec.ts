@@ -1,12 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import { User } from './auth';
+import { fakeJwt } from 'jde-spa/testing';
 
-//decodeJwt reaches for window.atob;  vitest's default environment is node, which has atob but no window.
-(<any>globalThis).window ??= globalThis;
-
-//base64url payload of {"email":"a@b.c","name":"A B","exp":2000000000,"iss":"https://accounts.google.com"}
-const payload = btoa( JSON.stringify({email:"a@b.c", name:"A B", exp:2000000000, iss:"https://accounts.google.com"}) ).replace(/\+/g,"-").replace(/\//g,"_");
-const jwt = `header.${payload}.signature`;
+const jwt = fakeJwt( {email:"a@b.c", name:"A B", exp:2000000000, iss:"https://accounts.google.com"} );
 
 describe( "User.decodeJwt", ()=>{
 	it( "decodes a well-formed token", ()=>{

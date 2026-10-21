@@ -1,17 +1,7 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { aggregateFunctionsFolder } from '../model/hist';
-import { NodeId } from '../model/node-id';
 import { HistoryService } from './history-service';
+import { nodeA as A, nodeB as B } from 'jde-opc/testing';
 
-const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 
 describe( 'HistoryService.query', ()=>{
 	it( 'reads a server\'s own history with opc, only the arguments given', ()=>{
@@ -37,14 +27,12 @@ describe( 'HistoryService.query', ()=>{
 
 describe( 'HistoryService.aggregates', ()=>{
 	it( 'browses the AggregateFunctions folder of the connection and lists its objects', async ()=>{
-		let sent:{ql:string, vars:any}|undefined;
-		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{node: {children: [
+		const query = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({node: {children: [
 			{ id: {i: 2342}, name: {locale: 'en', text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 },
 			{ id: {ns: 1, s: 'Median'}, name: {text: 'Median'}, browse: {ns: 1, name: 'Median'}, nodeClass: 1 }
-		]}}; } };
-		const list = await new HistoryService().aggregates( reader, 'local' );
-		expect( sent?.ql ).toBe( HistoryService.aggregatesQuery );
-		expect( sent?.vars ).toEqual( {opc: 'local', id: aggregateFunctionsFolder.toJson()} );
+		]}}) );
+		const list = await new HistoryService().aggregates( {query}, 'local' );
+		expect( query.mock.lastCall ).toEqual( [HistoryService.aggregatesQuery, {opc: 'local', id: aggregateFunctionsFolder.toJson()}] );
 		expect( list ).toEqual( [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}] );
 	} );
 	it( 'lists none when the gateway answers nothing', async ()=>{
@@ -52,59 +40,56 @@ describe( 'HistoryService.aggregates', ()=>{
 	} );
 	//a History tab is made again on each return to it, and asks again:  the service browses once per gateway and connection
 	it( 'browses once per gateway and connection, and again after a refusal', async ()=>{
-		const sent:string[] = [];
 		let refuse = true;
-		const reader = ( name:string )=>( {query: async <T>( _ql:string, vars?:any )=>{
-			sent.push( `${name}/${vars.opc}` );
+		const browse = vi.fn( async ( _name:string, vars:any ):Promise<any>=>{
 			if( vars.opc=='bare' && refuse )
 				throw new Error( 'BadNodeIdUnknown' );
-			return <T><unknown>{node: {children: [{ id: {i: 2342}, name: {text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 }]}};
-		} } );
+			return {node: {children: [{ id: {i: 2342}, name: {text: 'Average'}, browse: {ns: 0, name: 'Average'}, nodeClass: 1 }]}};
+		} );
+		const reader = ( name:string )=>( {query: ( _ql:string, vars?:any )=>browse( name, vars )} );
+		const sent = ()=>browse.mock.calls.map( ([name, vars])=>`${name}/${vars.opc}` );
 		const service = new HistoryService(), a = reader( 'a' ), b = reader( 'b' );
 		const [first, second] = await Promise.all( [service.aggregates( a, 'local' ), service.aggregates( a, 'local' )] );//one browse in flight, shared
 		expect( second ).toBe( first );
 		expect( await service.aggregates( a, 'local' ) ).toBe( first );
 		await service.aggregates( a, 'other' );
 		await service.aggregates( b, 'local' );//another gateway's connection of the same slug
-		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local'] );
+		expect( sent() ).toEqual( ['a/local', 'a/other', 'b/local'] );
 
 		await expect( service.aggregates( a, 'bare' ) ).rejects.toThrow( 'BadNodeIdUnknown' );
 		refuse = false;
 		expect( (await service.aggregates( a, 'bare' )).map( x=>x.browse ) ).toEqual( ['Average'] );
 		await service.aggregates( a, 'bare' );
-		expect( sent ).toEqual( ['a/local', 'a/other', 'b/local', 'a/bare', 'a/bare'] );
+		expect( sent() ).toEqual( ['a/local', 'a/other', 'b/local', 'a/bare', 'a/bare'] );
 	} );
 } );
 
 //historyGroups( opc, nodes ){ groups{ id name nodes } }:  which group holds each of a page's nodes (#335)
 describe( 'HistoryService.groups', ()=>{
 	it( 'asks the gateway by POST for the groups that hold the nodes, and parses each with its members', async ()=>{
-		let sent:{ql:string, vars:any}|undefined;
-		const poster = { postQL: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{historyGroups: {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 1}]}]}}; } };
-		const groups = await new HistoryService().groups( poster, 'local', [A, B] );
-		expect( sent?.ql ).toBe( HistoryService.groupsQuery );
-		expect( sent?.vars ).toEqual( {opc: 'local', nodes: [A.toJson(), B.toJson()]} );
+		const postQL = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({historyGroups: {groups: [{id: 3, name: 'Pumps', nodes: [{ns: 2, i: 1}]}]}}) );
+		const groups = await new HistoryService().groups( {postQL}, 'local', [A, B] );
+		expect( postQL.mock.lastCall ).toEqual( [HistoryService.groupsQuery, {opc: 'local', nodes: [A.toJson(), B.toJson()]}] );
 		expect( groups.map( g=>[g.id, g.name, g.nodes.map( n=>n.key )] ) ).toEqual( [[3, 'Pumps', [A.key]]] );
 	} );
 	it( 'asks nothing for no nodes, and lists none when the gateway answers nothing', async ()=>{
-		let asked = 0;
-		const poster = { postQL: async <T>()=>{ ++asked; return <T><unknown>null; } };
-		expect( await new HistoryService().groups( poster, 'local', [] ) ).toEqual( [] );
-		expect( asked ).toBe( 0 );
-		expect( await new HistoryService().groups( poster, 'local', [A] ) ).toEqual( [] );
+		const postQL = vi.fn( async ():Promise<any>=>null );
+		expect( await new HistoryService().groups( {postQL}, 'local', [] ) ).toEqual( [] );
+		expect( postQL ).not.toHaveBeenCalled();
+		expect( await new HistoryService().groups( {postQL}, 'local', [A] ) ).toEqual( [] );
 	} );
 } );
 
 //historyCapabilities( group ){ aggregates update delete }:  a group's aggregates, named alone, and this user's edit rights
 describe( 'HistoryService.capabilities', ()=>{
 	it( 'asks the gateway each time, and parses the aggregates as the picker lists them', async ()=>{
-		const sent:any[] = [];
-		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent.push( {ql, vars} ); return <T><unknown>{historyCapabilities: {aggregates: ['Average', 'Median'], update: true, delete: false}}; } };
+		const query = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({historyCapabilities: {aggregates: ['Average', 'Median'], update: true, delete: false}}) );
+		const reader = { query };
 		const service = new HistoryService();
 		const c = await service.capabilities( reader, 3 );
 		expect( c ).toEqual( {aggregates: [{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}], update: true, delete: false} );
 		await service.capabilities( reader, 3 );
-		expect( sent ).toEqual( [{ql: HistoryService.capabilitiesQuery, vars: {group: 3}}, {ql: HistoryService.capabilitiesQuery, vars: {group: 3}}] );
+		expect( query.mock.calls ).toEqual( [[HistoryService.capabilitiesQuery, {group: 3}], [HistoryService.capabilitiesQuery, {group: 3}]] );
 		expect( await service.capabilities( {query: async <T>()=><T><unknown>null}, 3 ) ).toEqual( {aggregates: [], update: false, delete: false} );
 	} );
 } );
@@ -134,10 +119,9 @@ describe( 'HistoryService.mutation', ()=>{
 
 describe( 'HistoryService.edit', ()=>{
 	it( 'posts the mutation and reads the result under the command\'s name', async ()=>{
-		let sent:{ql:string, vars:any}|undefined;
-		const editor = { postQL: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{purgeHistory: {values: [], nodes: [{node: {ns:2, i:1}, status: 0x80B00000}]}}; } };
-		const result = await new HistoryService().edit( editor, {opc: 'local'}, {kind: 'purgeRange', nodes: [A], start: new Date(1000), end: new Date(1000)} );
-		expect( sent?.ql ).toMatch( /^purgeHistory\( opc: \$opc, nodes: \$nodes, start: \$start, end: \$end \)/ );
+		const postQL = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({purgeHistory: {values: [], nodes: [{node: {ns:2, i:1}, status: 0x80B00000}]}}) );
+		const result = await new HistoryService().edit( {postQL}, {opc: 'local'}, {kind: 'purgeRange', nodes: [A], start: new Date(1000), end: new Date(1000)} );
+		expect( postQL.mock.lastCall![0] ).toMatch( /^purgeHistory\( opc: \$opc, nodes: \$nodes, start: \$start, end: \$end \)/ );
 		expect( result.values ).toEqual( [] );
 		expect( result.nodes.map( n=>[n.node.toString(), n.status] ) ).toEqual( [[A.toString(), 0x80B00000]] );
 	} );
@@ -149,10 +133,9 @@ describe( 'HistoryService.edit', ()=>{
 
 describe( 'HistoryService.read', ()=>{
 	it( 'sends the query through the reader and parses the page', async ()=>{
-		let sent:{ql:string, vars:any}|undefined;
-		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{history: {continuation: null, values: [{node: {ns:2, i:1}, source: {seconds: 1, nanos: 0}, status: 0, value: 4}], nodes: [{node: {ns:2, i:1}, status: 0}]}}; } };
-		const page = await new HistoryService().read( reader, {opc: 'local'}, {nodes: [A], end: new Date(5000)} );
-		expect( sent?.ql ).toContain( 'history( opc: $opc, nodes: $nodes, end: $end )' );
+		const query = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({history: {continuation: null, values: [{node: {ns:2, i:1}, source: {seconds: 1, nanos: 0}, status: 0, value: 4}], nodes: [{node: {ns:2, i:1}, status: 0}]}}) );
+		const page = await new HistoryService().read( {query}, {opc: 'local'}, {nodes: [A], end: new Date(5000)} );
+		expect( query.mock.lastCall![0] ).toContain( 'history( opc: $opc, nodes: $nodes, end: $end )' );
 		expect( page.continuation ).toBeNull();
 		expect( page.values ).toHaveLength( 1 );
 		expect( page.values[0].value ).toBe( 4 );
@@ -166,11 +149,9 @@ describe( 'HistoryService.read', ()=>{
 
 describe( 'HistoryService.thresholds', ()=>{
 	it( 'asks historyThresholds for the group, with each threshold\'s source', async ()=>{
-		let sent:{ql:string, vars:any}|undefined;
-		const reader = { query: async <T>( ql:string, vars?:any )=>{ sent = {ql, vars}; return <T><unknown>{historyThresholds: {update: true, nodes: [{id: 7, node: {ns: 2, i: 1}, thresholds: [{name: 'stepped', value: true, source: 'default'}]}]}}; } };
-		const t = await new HistoryService().thresholds( reader, 3 );
-		expect( sent?.ql ).toBe( HistoryService.thresholdsQuery );
-		expect( sent?.vars ).toEqual( {group: 3} );
+		const query = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({historyThresholds: {update: true, nodes: [{id: 7, node: {ns: 2, i: 1}, thresholds: [{name: 'stepped', value: true, source: 'default'}]}]}}) );
+		const t = await new HistoryService().thresholds( {query}, 3 );
+		expect( query.mock.lastCall ).toEqual( [HistoryService.thresholdsQuery, {group: 3}] );
 		expect( t.update ).toBe( true );
 		expect( t.nodes.map( n=>n.id ) ).toEqual( [7] );
 	} );
@@ -180,9 +161,8 @@ describe( 'HistoryService.thresholds', ()=>{
 		const {ql, vars} = HistoryService.overrideMutation( 7, {stepped: false, exceptionDeviation: null, minTimeInterval: 250} );
 		expect( ql ).toBe( "mutation updateHistGroupNode( id: $id, exceptionDeviation: $exceptionDeviation, minTimeInterval: $minTimeInterval, stepped: $stepped )" );
 		expect( vars ).toEqual( {id: 7, exceptionDeviation: null, minTimeInterval: 250, stepped: false} );
-		let posted:{ql:string, vars:any}|undefined;
-		const poster = { postQL: async <T>( ql:string, vars?:any )=>{ posted = {ql, vars}; return <T><unknown>{}; } };
-		await new HistoryService().override( poster, 7, {exceptionDeviationFormat: 2} );
-		expect( posted ).toEqual( {ql: "mutation updateHistGroupNode( id: $id, exceptionDeviationFormat: $exceptionDeviationFormat )", vars: {id: 7, exceptionDeviationFormat: 2}} );
+		const postQL = vi.fn( async ( _ql:string, _vars?:any ):Promise<any>=>({}) );
+		await new HistoryService().override( {postQL}, 7, {exceptionDeviationFormat: 2} );
+		expect( postQL.mock.lastCall ).toEqual( ["mutation updateHistGroupNode( id: $id, exceptionDeviationFormat: $exceptionDeviationFormat )", {id: 7, exceptionDeviationFormat: 2}] );
 	} );
 } );

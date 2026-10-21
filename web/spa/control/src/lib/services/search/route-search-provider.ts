@@ -2,6 +2,7 @@ import { inject, Injectable } from '@angular/core';
 import { Router, Routes } from '@angular/router';
 import { RouteStore } from '../route-store';
 import { matchLiterals } from '../route-utils';
+import { capitalize } from '../text';
 import { ISearchProvider, searchRank, SearchResult } from './search-provider';
 
 type CollectionItem = string | { path:string; title?:string; data?:{ icon?:string; summary?:string } };
@@ -44,7 +45,7 @@ export class RouteSearchProvider implements ISearchProvider{
 				if( segments.length==1 && collections ){
 					for( const c of collections ){
 						const item = typeof c=='string' ? { path: c } : c;
-						const title = item.title ?? item.path.charAt(0).toUpperCase()+item.path.slice(1);
+						const title = item.title ?? capitalize( item.path );
 						const cUrl = `${parentUrl}/${item.path}`;
 						if( !out.has(cUrl) )
 							out.set( cUrl, { title, route: cUrl, icon: item.data?.icon, summary: item.data?.summary ?? RouteSearchProvider.parentSummary(parentUrl), source: this.name } );
@@ -60,26 +61,15 @@ export class RouteSearchProvider implements ISearchProvider{
 		}
 	}
 
-	//RouteStore keys are whatever the writer had in hand - 'gateways/gw1', '/apps', 'apps/gateways', bare 'users' - and a child
-	//path may repeat the key's tail ('gateways/Debug' under 'apps/gateways').  Rebuild the absolute url from the candidates the
-	//router actually matches rather than fixing every writer.
+	//A RouteStore key is the parent's absolute url and a child's path is relative to it (RouteStore.key), so the child's url is
+	//the two joined.  One the router does not match - an entry cached before its page went - is not offered.
 	#dynamic( out:Map<string,SearchResult> ):void{
-		const topLevel = this.#router.config.map( r=>(r.path ?? '').split('/')[0] ).filter( p=>p.length && !p.startsWith(':') && p!='**' );
 		for( const [key, children] of this.#routeStore.entries() ){
-			const keySegments = key.split('/').filter( s=>s.length );
 			for( const child of children ){
 				if( !child?.title || !child.path )
 					continue;
-				const childSegments = child.path.split('/').filter( s=>s.length );
-				const base = keySegments.length && childSegments[0]==keySegments[keySegments.length-1] ? keySegments.slice(0, -1) : keySegments;
-				const direct = [ ...base, ...childSegments ];
-				let segments:string[]|undefined = matchLiterals( this.#router.config, direct )>=0 ? direct : undefined;
-				if( !segments ){//a bare key ('users'): try it under each top-level section.  The section and the key must both be spelled out by the route - a ':param' route accepts anything.
-					const scored = topLevel.map( t=>[t, ...direct] ).map( c=>({ c, literals: matchLiterals(this.#router.config, c) }) ).filter( x=>x.literals>=1+base.length );
-					if( scored.length )
-						segments = scored.reduce( (best, x)=>x.literals>best.literals ? x : best ).c;
-				}
-				if( !segments )
+				const segments = `${key}/${child.path}`.split( '/' ).filter( s=>s.length );
+				if( matchLiterals(this.#router.config, segments)<0 )
 					continue;
 				const url = '/'+segments.map( s=>encodeURIComponent(s) ).join('/');
 				if( !out.has(url) )

@@ -17,7 +17,6 @@ const props = ( overrides:Partial<ServerProps>={} ):ServerProps=>({
 	...overrides
 });
 const create = ( server:Server|undefined, error?:string )=>{
-	TestBed.resetTestingModule();
 	TestBed.configureTestingModule({});
 	const fixture = TestBed.createComponent( ServerProperties );
 	fixture.componentRef.setInput( 'server', server );
@@ -106,7 +105,6 @@ describe( 'ServerProperties without a server', ()=>{
 
 	//#250 review L1:  a new connection never tried was Not connected under the error icon, and read as a failure.
 	it( 'says a new connection is not tested yet, without the error state', ()=>{
-		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( ServerProperties );
 		fixture.componentRef.setInput( 'untested', true );
@@ -124,7 +122,7 @@ describe( 'ServerProperties without a server', ()=>{
 //#250 review #9:  a passing test of one url stayed under a form edited to another, and read as a check of the new one.
 describe( 'ServerProperties for settings the form no longer holds', ()=>{
 	const render = ( inputs:Record<string,unknown> )=>{
-		TestBed.resetTestingModule();
+		TestBed.resetTestingModule();//a test may render twice
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( ServerProperties );
 		for( const [name, value] of Object.entries(inputs) )

@@ -2,37 +2,33 @@ import { TestBed } from '@angular/core/testing';
 import { MAT_SNACK_BAR_DATA, MatSnackBarRef } from '@angular/material/snack-bar';
 import { Snackbar } from './snackbar';
 
-describe('Snackbar', () => {
-	const ref = { dismiss: vi.fn() };
+describe( 'Snackbar', ()=>{
+	const create = ()=>{
+		const ref = { dismiss: vi.fn() };
+		TestBed.configureTestingModule({ providers: [
+			{provide: MatSnackBarRef, useValue: ref},
+			{provide: MAT_SNACK_BAR_DATA, useValue: {message: 'boom', duration: 1000}}
+		]});
+		return { fixture: TestBed.createComponent( Snackbar ), ref };
+	};
+	beforeEach( ()=>vi.useFakeTimers() );//the component sets its own dismiss timer
+	afterEach( ()=>vi.useRealTimers() );
 
-	beforeEach( async () => {
-		vi.useFakeTimers();
-		ref.dismiss.mockClear();
-		await TestBed.configureTestingModule({
-			imports: [Snackbar],
-			providers: [
-				{provide: MatSnackBarRef, useValue: ref},
-				{provide: MAT_SNACK_BAR_DATA, useValue: {message: 'boom', duration: 1000}}
-			]
-		}).compileComponents();
-	});
-	afterEach( () => vi.useRealTimers() );
-
-	it('auto-dismisses after duration', () => {
-		TestBed.createComponent( Snackbar );
+	it( 'auto-dismisses after duration', ()=>{
+		const { ref } = create();
 		vi.advanceTimersByTime( 1001 );
 		expect( ref.dismiss ).toHaveBeenCalled();
 	});
 
-	it('pin cancels auto-dismiss', () => {
-		const fixture = TestBed.createComponent( Snackbar );
+	it( 'pin cancels auto-dismiss', ()=>{
+		const { fixture, ref } = create();
 		fixture.componentInstance.togglePin();
 		vi.advanceTimersByTime( 5000 );
 		expect( ref.dismiss ).not.toHaveBeenCalled();
 	});
 
-	it('unpin restarts the full countdown', () => {
-		const fixture = TestBed.createComponent( Snackbar );
+	it( 'unpin restarts the full countdown', ()=>{
+		const { fixture, ref } = create();
 		fixture.componentInstance.togglePin();
 		vi.advanceTimersByTime( 5000 );
 		fixture.componentInstance.togglePin();
@@ -42,14 +38,14 @@ describe('Snackbar', () => {
 		expect( ref.dismiss ).toHaveBeenCalled();
 	});
 
-	it('close dismisses immediately', () => {
-		const fixture = TestBed.createComponent( Snackbar );
+	it( 'close dismisses immediately', ()=>{
+		const { fixture, ref } = create();
 		fixture.componentInstance.ref.dismiss();
 		expect( ref.dismiss ).toHaveBeenCalled();
 	});
 
-	it('destroy clears the pending timer', () => {
-		const fixture = TestBed.createComponent( Snackbar );
+	it( 'destroy clears the pending timer', ()=>{
+		const { fixture, ref } = create();
 		fixture.destroy();
 		vi.advanceTimersByTime( 5000 );
 		expect( ref.dismiss ).not.toHaveBeenCalled();

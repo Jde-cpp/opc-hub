@@ -1,16 +1,6 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
-import { provideRouter, Router } from '@angular/router';
-import { Component, signal } from '@angular/core';
-import { vi } from 'vitest';
+import { provideRouter, Router, Routes } from '@angular/router';
+import { signal, Provider } from '@angular/core';
 import { NavigationFocusService } from '../navigation-focus/navigation-focus-service';
 import { SearchService } from '../../services/search/search-service';
 import { SearchResult } from '../../services/search/search-provider';
@@ -18,6 +8,17 @@ import { Favorite, NavBar } from './navbar';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
 import { RecentVisits } from '../../services/recent-visits';
 import { RouteStore } from '../../services/route-store';
+import { Blank, flush } from 'jde-spa/testing';
+
+//The bar over the router `routes` builds, with no search and nothing to focus.
+const configure = ( routes:Routes, ...providers:Provider[] )=>{
+	TestBed.configureTestingModule({ providers: [
+		provideRouter( routes ),
+		{ provide: NavigationFocusService, useValue: {} },
+		{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
+		...providers
+	]});
+};
 
 //review3 L9: onSearch called event.preventDefault() and THEN tested event.defaultPrevented - the flag it had just set - so
 //the Enter fallback below it was unreachable and Enter with nothing highlighted did nothing.
@@ -30,17 +31,12 @@ describe( 'NavBar.onSearch', ()=>{
 		override searchTrigger = signal<any>( undefined );
 		override searchResults = signal<SearchResult[]>( [first] );
 		override searchInput = signal<any>( {nativeElement: {blur: ()=>{}}} );
-		selected:SearchResult[] = [];
-		override onSearchSelected( result:SearchResult ){ this.selected.push( result ); }
+		selected = vi.fn<( result:SearchResult )=>void>();
+		override onSearchSelected( result:SearchResult ){ this.selected( result ); }
 	}
 
 	const create = ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			provideRouter( [{path: 'x', children: [], title: 'X'}] ),
-			{ provide: NavigationFocusService, useValue: {} },
-			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} }
-		]});
+		configure( [{path: 'x', children: [], title: 'X'}] );
 		return TestBed.runInInjectionContext( ()=>new TestNavBar() );//NavigationFocusService is inject()ed since C5
 	};
 
@@ -50,7 +46,7 @@ describe( 'NavBar.onSearch', ()=>{
 		const navbar = create();
 		const event = enter();
 		navbar.onSearch( event );
-		expect( navbar.selected ).toEqual( [first] );
+		expect( navbar.selected ).toHaveBeenCalledExactlyOnceWith( first );
 		expect( event.defaultPrevented ).toBe( true );//still swallowed - the input must never submit
 	} );
 
@@ -58,7 +54,7 @@ describe( 'NavBar.onSearch', ()=>{
 		const navbar = create();
 		navbar.searchTrigger.set( {panelOpen: true, activeOption: {}} );
 		navbar.onSearch( enter() );
-		expect( navbar.selected ).toEqual( [] );
+		expect( navbar.selected ).not.toHaveBeenCalled();
 	} );
 
 	it( 'honours an event another handler already consumed', ()=>{
@@ -66,14 +62,14 @@ describe( 'NavBar.onSearch', ()=>{
 		const event = enter();
 		event.preventDefault();//as the autocomplete trigger does once it has selected the active option
 		navbar.onSearch( event );
-		expect( navbar.selected ).toEqual( [] );
+		expect( navbar.selected ).not.toHaveBeenCalled();
 	} );
 
 	it( 'does nothing when there are no results', ()=>{
 		const navbar = create();
 		navbar.searchResults.set( [] );
 		navbar.onSearch( enter() );
-		expect( navbar.selected ).toEqual( [] );
+		expect( navbar.selected ).not.toHaveBeenCalled();
 	} );
 
 	//reviews/opc-server-search.md #11:  a disabled notice ("Search is unavailable for …") routes to [] - the app root - if picked.
@@ -82,14 +78,14 @@ describe( 'NavBar.onSearch', ()=>{
 		const navbar = create();
 		navbar.searchResults.set( [notice, first] );
 		navbar.onSearch( enter() );
-		expect( navbar.selected ).toEqual( [first] );
+		expect( navbar.selected ).toHaveBeenCalledExactlyOnceWith( first );
 	} );
 
 	it( 'does nothing when the only result is a disabled notice', ()=>{
 		const navbar = create();
 		navbar.searchResults.set( [notice] );
 		navbar.onSearch( enter() );
-		expect( navbar.selected ).toEqual( [] );
+		expect( navbar.selected ).not.toHaveBeenCalled();
 	} );
 } );
 
@@ -97,12 +93,7 @@ describe( 'NavBar.onSearch', ()=>{
 //routerLink encodes its '%' again, so a favorite saved on a node under a browse name with a space never reopened it.
 describe( 'NavBar.favoriteMenus', ()=>{
 	it( "links each favorite to the url it was saved on, encoded segments and all", ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			provideRouter( [{path: 'x', children: [], title: 'X'}] ),
-			{ provide: NavigationFocusService, useValue: {} },
-			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} }
-		]});
+		configure( [{path: 'x', children: [], title: 'X'}] );
 		const navbar = TestBed.runInInjectionContext( ()=>new NavBar() );
 		const route = '/gateways/gw/kep/Simulation%20Examples/Functions';
 		navbar.favorites.set( [{name: 'Functions', route}, {name: 'Lamp', folderName: 'Plant', route: '/gateways/gw/kep/A%2BB'}] );
@@ -121,17 +112,11 @@ describe( 'NavBar favorites follow the signed-in user', ()=>{
 	const create = ()=>{
 		const userKey = signal<string|undefined>( "alice" );
 		const save = vi.fn( async ()=>{} );
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			provideRouter( [{path: 'x', children: [], title: 'X'}] ),
-			{ provide: NavigationFocusService, useValue: {} },
-			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
-			{ provide: IPROFILE_SERVICE, useValue: {userKey, save, load: async ( key:string )=>key=="favorites" && userKey() ? JSON.stringify(lists[userKey()!]) : null} }
-		]});
+		configure( [{path: 'x', children: [], title: 'X'}], { provide: IPROFILE_SERVICE, useValue: {userKey, save, load: async ( key:string )=>key=="favorites" && userKey() ? JSON.stringify(lists[userKey()!]) : null} } );
 		const navbar = TestBed.runInInjectionContext( ()=>new NavBar() );
 		return { navbar, userKey, save };
 	};
-	const settle = async ()=>{ TestBed.tick(); for( let i=0; i<5; ++i ) await Promise.resolve(); };
+	const settle = async ()=>{ TestBed.tick(); await flush(); };
 
 	it( "loads the next user's list when the user changes", async ()=>{
 		const { navbar, userKey } = create();
@@ -157,21 +142,14 @@ describe( 'NavBar favorites follow the signed-in user', ()=>{
 
 //reviews/m3-closing.md #38:  the site's not-found catch-all is a titled top-level route with no children, so it passed every
 //filter the default favorites use;  and the url that reached it is a mistake, not a page to put on Recently visited.
-@Component( {template: ''} ) class Page{}
 describe( 'NavBar and the not-found route', ()=>{
 	const create = ()=>{
 		const visit = vi.fn( async ()=>{} );
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			provideRouter( [
-				{path: 'x', title: 'X', children: [{path: 'y', component: Page}]},
-				{path: 'z', title: 'Z', component: Page},
-				{path: '**', title: 'Page not found', component: Page, data: {notFound: true}}
-			] ),
-			{ provide: NavigationFocusService, useValue: {} },
-			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
-			{ provide: RecentVisits, useValue: {visit} }
-		]});
+		configure( [
+			{path: 'x', title: 'X', children: [{path: 'y', component: Blank}]},
+			{path: 'z', title: 'Z', component: Blank},
+			{path: '**', title: 'Page not found', component: Blank, data: {notFound: true}}
+		], { provide: RecentVisits, useValue: {visit} } );
 		return { navbar: TestBed.runInInjectionContext( ()=>new NavBar() ), visit };
 	};
 
@@ -193,23 +171,18 @@ describe( 'NavBar and the not-found route', ()=>{
 } );
 
 //reviews-issue/251-resource-page.md #13:  a crumb is named from the children RouteStore keeps under its parent url, and the bare
-//last segment was tried too - so the access schema's `roles` resource took the section's Roles list's name.
+//last segment was tried too - so the access schema's `roles` resource took the section's Roles list's name.  Every key is the
+//absolute url now (reviews/angular-refactor.md B12), so there is no bare one to try.
 describe( 'NavBar crumbs', ()=>{
 	const create = ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			provideRouter( [{path: 'access', children: [
-				{path: 'users/:slug', component: Page},
-				{path: 'resources/:schema/:slug', component: Page},
-				{path: ':collectionDisplay', component: Page}
-			]}] ),
-			{ provide: NavigationFocusService, useValue: {} },
-			{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },
-			{ provide: RecentVisits, useValue: {visit: vi.fn( async ()=>{} )} }
-		]});
+		configure( [{path: 'access', children: [
+			{path: 'users/:slug', component: Blank},
+			{path: 'resources/:schema/:slug', component: Blank},
+			{path: ':collectionDisplay', component: Blank}
+		]}], { provide: RecentVisits, useValue: {visit: vi.fn( async ()=>{} )} } );
 		const store = TestBed.inject( RouteStore );
 		store.setChildren( "access", [{path: "users", title: "Users"}, {path: "roles", title: "Roles"}] );
-		store.setChildren( "users", [{path: "alice", title: "Alice Ng"}] );
+		store.setChildren( "/access/users", [{path: "alice", title: "Alice Ng"}] );//a writer's leading slash is the same key
 		store.setChildren( "access/resources", [{path: "access/roles", title: "role table"}] );
 		const navbar = TestBed.runInInjectionContext( ()=>new NavBar() );
 		navbar.ngOnInit();
@@ -223,7 +196,7 @@ describe( 'NavBar crumbs', ()=>{
 		expect( titles(navbar).at(-1) ).toBe( "role table" );
 	} );
 
-	it( 'still names a row from its list kept under the bare key', async ()=>{
+	it( "names a row from its list's entry, under the list's url", async ()=>{
 		const navbar = create();
 		await TestBed.inject( Router ).navigateByUrl( '/access/users/alice' );
 		expect( titles(navbar).slice(-2) ).toEqual( ["Users", "Alice Ng"] );
