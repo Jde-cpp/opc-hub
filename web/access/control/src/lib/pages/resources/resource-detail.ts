@@ -1,9 +1,9 @@
-import { Component, computed, inject, model, OnDestroy, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, model, OnInit, signal } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { ComponentPageTitle, ProfileStore, RouteItem } from 'jde-spa';
-import { EnumKeysPipe, errorText, httpStatus } from 'jde-framework';
+import { ComponentPageTitle, Latest, persistedTabIndex, RouteItem } from 'jde-spa';
+import { EnumKeysPipe, Failure, failureState, FailureState } from 'jde-framework';
 import { Rights } from '../../model/permission';
 import { Resource } from '../../model/resource';
 import { HolderLists, ResourceHolders } from '../../model/resource-holder';
@@ -19,19 +19,17 @@ import { HolderTable } from './holder-table/holder-table';
 	templateUrl: './resource-detail.html',
 	styleUrls: ['./resource-detail.scss'],
 	host: {class:'main-content mat-drawer-container my-content resource-detail'},
-	imports: [MatIcon, MatTabsModule, RouterLink, HolderTable]
+	imports: [FailureState, MatIcon, MatTabsModule, RouterLink, HolderTable]
 })
-export class ResourceDetail implements OnInit, OnDestroy{
+export class ResourceDetail implements OnInit{
 	#route = inject( ActivatedRoute );
 	#access = inject( AccessService );
 	#componentPageTitle = inject( ComponentPageTitle );
 
 	ngOnInit(){ this.#route.data.subscribe( data=>this.#load(data["pageData"]) ); }
-	ngOnDestroy(){ ProfileStore.setTabIndex( 'resourceDetail', this.tabIndex() ); }
-	onTabIndexChanged( index:number ){ this.tabIndex.set( index ); }
 
 	async #load( data:ResourcePageData ):Promise<void>{
-		const load = ++this.#loadId;
+		const load = this.#latest.next();
 		this.resource.set( data.resource );
 		this.accessUrl.set( data.accessUrl );
 		this.sideNav.set( data.routing );
@@ -41,11 +39,11 @@ export class ResourceDetail implements OnInit, OnDestroy{
 		try{
 			const holders = await this.#access.resourceRights( data.resource.id, this.#lists );
 			this.#lists = holders.lists;
-			if( load==this.#loadId )//not overtaken by the next resource
+			if( this.#latest.is(load) )
 				this.holders.set( holders );
 		}
 		catch( e ){
-			if( load==this.#loadId )
+			if( this.#latest.is(load) )
 				this.error.set( e );
 		}
 	}
@@ -56,15 +54,7 @@ export class ResourceDetail implements OnInit, OnDestroy{
 	listUrl = computed<string>( ()=>`${this.accessUrl()}/resources` );
 	holders = signal<ResourceHolders|undefined>( undefined );
 	error = signal<unknown>( undefined );
-	failure = computed<{forbidden:boolean, title:string, detail:string}|undefined>( ()=>{
-		const e = this.error();
-		if( e===undefined )
-			return undefined;
-		const what = errorText( e )?.replace( /^\(\d+\)/, "" ) ?? "";
-		return httpStatus( e )==403
-			? { forbidden: true, title: "No access to who holds rights here.", detail: `${what}  Reading the grants takes Read on acl.`.trim() }
-			: { forbidden: false, title: "Could not load who holds rights here.", detail: what };
-	});
+	failure = computed<Failure|undefined>( ()=>failureState(this.error(), "who holds rights here", "Reading the grants takes Read on acl.") );
 	//the rights the resource offers - all of them for a row that does not say - and any other a listed grant holds:  the server
 	//enforces whatever a grant holds, and a QL mutation can grant what the checkboxes do not offer.
 	rights = computed( ()=>{
@@ -73,7 +63,7 @@ export class ResourceDetail implements OnInit, OnDestroy{
 		const shown = (this.resource()?.availableRights || Rights.All) | held;
 		return EnumKeysPipe.prototype.transform( Rights ).filter( kv=>kv.key!=Rights.None && kv.key!=Rights.All && (shown & kv.key) );
 	});
-	tabIndex = signal<number>( ProfileStore.tabIndex('resourceDetail') );
-	#loadId = 0;
+	tabIndex = persistedTabIndex( 'resourceDetail' );
+	#latest = new Latest();
 	#lists:HolderLists|undefined;//kept across the sidenav's resources - reviews-issue/251-resource-page.md #9
 }

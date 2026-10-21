@@ -1,12 +1,3 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { HistAggregation } from '../../../model/hist';
 import { fromMs, HistAggregatePicker } from './hist-aggregate-picker';

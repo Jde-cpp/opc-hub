@@ -1,69 +1,67 @@
 <!-- TODO: figure out if the <nav> should go inside of a <header> element. -->
-<!-- @if( !isLoading() ) { -->
-	<nav class="docs-navbar-header" aria-label="Top Toolbar">
-		<div style="flex: 1;justify-content: flex-start;">
-			@if( appName ){
-				<a class="brand" routerLink="/" [attr.aria-label]="appName + ' home'">
-					@if( appLogo ){
-						<span class="brand-logo" aria-hidden="true" [style.mask-image]="'url(' + appLogo + ')'"></span>
-					}
-					<span>{{appName}}</span>
-				</a>
-			}
-			@for( fav of favoriteMenus(); track fav) {
-				@if( fav["folderName"] ) {
-					<mat-menu #favMenu="matMenu">
-						@for( item of asFolder(fav).items; track item) {
-							<a mat-menu-item [routerLink]=item.link routerLinkActive="folder-item-selected">{{item.name}}</a>
-						}
-					</mat-menu>
-					<button mat-button [matMenuTriggerFor]="favMenu" class="docs-navbar-hide-small docs-button">
-						{{fav["folderName"]}}
-						<mat-icon>arrow_drop_down</mat-icon>
-					</button>
-				} @else {
-					<a mat-button class="docs-navbar-hide-small docs-button"
-						[routerLink]='$any(fav).link'
-						[routerLinkActiveOptions]="{exact: true}"
-						routerLinkActive="docs-navbar-header-item-selected">{{$any(fav).name}}</a>
+<nav class="docs-navbar-header" aria-label="Top Toolbar">
+	<div style="flex: 1;justify-content: flex-start;">
+		@if( appName ){
+			<a class="brand" routerLink="/" [attr.aria-label]="appName + ' home'">
+				@if( appLogo ){
+					<span class="brand-logo" aria-hidden="true" [style.mask-image]="'url(' + appLogo + ')'"></span>
 				}
-			}
-		</div>
-		<div class="search-wrapper"><!-- not a <form>: Enter must navigate, never submit -->
-  		<mat-form-field class="rounded-input search" appearance="outline" subscriptSizing="dynamic">
-				<input #searchInput matInput type=text class=search aria-label="Search" aria-keyshortcuts="/"
-					[formControl]=searchForm [matAutocomplete]=searchAC (keydown.enter)="onSearch($event)"/>
-				<mat-icon matPrefix>search</mat-icon>
-				<mat-autocomplete #searchAC=matAutocomplete class="search-panel" panelWidth="560px" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)">
-					@for( result of searchResults(); track trackResult(result) ){
-						<mat-option [value]=result [disabled]="result.disabled" class="search-option">
-							<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
-							<span class="search-title">@if( result.prefix ){<span class="search-prefix">{{result.prefix}}:</span>}{{result.title}}</span>
-							@if( result.summary ){
-								<span class="search-summary">{{result.summary}}</span>
-							}
-						</mat-option>
+				<span>{{appName}}</span>
+			</a>
+		}
+		@for( fav of favoriteMenus(); track fav) {
+			@if( fav["folderName"] ) {
+				<mat-menu #favMenu="matMenu">
+					@for( item of asFolder(fav).items; track item) {
+						<a mat-menu-item [routerLink]=item.link routerLinkActive="folder-item-selected">{{item.name}}</a>
 					}
-				</mat-autocomplete>
-			</mat-form-field>
-		</div>
-		<div style="flex: 1;justify-content: flex-end; display: flex;align-items: center;">
-			<authorization></authorization>
-			<theme-picker></theme-picker>
-			<favorites [favorites]="favorites() ?? []" [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>
-			<a matIconButton [routerLink]="helpRoute()" aria-label="Help" matTooltip="Help"><mat-icon>help_outline</mat-icon></a>
-			<button matIconButton aria-label="Toggle breadcrumb bar" [attr.aria-pressed]="showBreadcrumbs()"
-					[matTooltip]="showBreadcrumbs() ? 'Hide breadcrumbs' : 'Show breadcrumbs'"
-					(click)="onToggleBreadcrumbs()">
-				<svg class="breadcrumb-toggle-icon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-					<!-- a miniature of the breadcrumb chips: pointed block + interlocking chevron band -->
-					<path d="M3 5h6l4 7-4 7H3z"/>
-					<path d="M11 5h6.5l4.5 7-4.5 7H11l4.5-7z"/>
-				</svg>
-			</button>
-		</div>
-	</nav>
-	@if( showBreadcrumbs() ){
-		<breadcrumbs [crumbs]=crumbs()></breadcrumbs>
-	}
-<!-- } -->
+				</mat-menu>
+				<button mat-button [matMenuTriggerFor]="favMenu" class="docs-navbar-hide-small">
+					{{fav["folderName"]}}
+					<mat-icon>arrow_drop_down</mat-icon>
+				</button>
+			} @else {
+				<a mat-button class="docs-navbar-hide-small"
+					[routerLink]='$any(fav).link'
+					[routerLinkActiveOptions]="{exact: true}"
+					routerLinkActive="docs-navbar-header-item-selected">{{$any(fav).name}}</a>
+			}
+		}
+	</div>
+	<div class="search-wrapper"><!-- not a <form>: Enter must navigate, never submit -->
+  		<mat-form-field class="rounded-input search" appearance="outline" subscriptSizing="dynamic">
+			<input #searchInput matInput type=text class=search aria-label="Search" aria-keyshortcuts="/"
+				[formControl]=searchForm [matAutocomplete]=searchAC (keydown.enter)="onSearch($event)"/>
+			<mat-icon matPrefix>search</mat-icon>
+			<mat-autocomplete #searchAC=matAutocomplete class="search-panel" panelWidth="560px" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)">
+				@for( result of searchResults(); track trackResult(result) ){
+					<mat-option [value]=result [disabled]="result.disabled" class="search-option">
+						<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
+						<span class="search-title">@if( result.prefix ){<span class="search-prefix">{{result.prefix}}:</span>}{{result.title}}</span>
+						@if( result.summary ){
+							<span class="search-summary">{{result.summary}}</span>
+						}
+					</mat-option>
+				}
+			</mat-autocomplete>
+		</mat-form-field>
+	</div>
+	<div style="flex: 1;justify-content: flex-end; display: flex;align-items: center;">
+		<authorization></authorization>
+		<theme-picker></theme-picker>
+		<favorites [favorites]="favorites() ?? []" [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>
+		<a matIconButton [routerLink]="helpRoute()" aria-label="Help" matTooltip="Help"><mat-icon>help_outline</mat-icon></a>
+		<button matIconButton aria-label="Toggle breadcrumb bar" [attr.aria-pressed]="showBreadcrumbs()"
+				[matTooltip]="showBreadcrumbs() ? 'Hide breadcrumbs' : 'Show breadcrumbs'"
+				(click)="onToggleBreadcrumbs()">
+			<svg class="breadcrumb-toggle-icon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+				<!-- a miniature of the breadcrumb chips: pointed block + interlocking chevron band -->
+				<path d="M3 5h6l4 7-4 7H3z"/>
+				<path d="M11 5h6.5l4.5 7-4.5 7H11l4.5-7z"/>
+			</svg>
+		</button>
+	</div>
+</nav>
+@if( showBreadcrumbs() ){
+	<breadcrumbs [crumbs]=crumbs()></breadcrumbs>
+}

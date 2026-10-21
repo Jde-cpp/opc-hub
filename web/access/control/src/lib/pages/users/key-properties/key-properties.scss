@@ -88,20 +88,6 @@
 	--mat-chip-label-text-line-height: 22px;
 }
 
-// the colour has to go through the chip's tokens - MatChip paints its label from --mat-chip-label-text-color
-.expiry-valid {
-	--mat-chip-label-text-color: green;
-	--mat-chip-outline-color: green;
-}
-.expiry-expiring {
-	--mat-chip-label-text-color: orange;
-	--mat-chip-outline-color: orange;
-}
-.expiry-expired {
-	--mat-chip-label-text-color: var(--mat-sys-error);
-	--mat-chip-outline-color: var(--mat-sys-error);
-}
-
 .empty {
 	margin: 0;
 	padding: 0 16px;

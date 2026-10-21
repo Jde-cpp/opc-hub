@@ -1,43 +1,20 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { HttpClient } from '@angular/common/http';
-import * as FromClient from 'jde-proto/App.FromClient';
-import { AUTH_STORE, AuthStore } from '../auth-store';
+import { AUTH_STORE } from '../auth-store';
 import { IENVIRONMENT } from 'jde-spa';
-import { ETransport, RequestId } from '../proto-service';
+import { ETransport } from '../proto-service';
 import { AppService } from './app-service';
-
-//review3 L10: the send payloads are plain objects spread into a FromClient.Message, so a key the proto does not declare is
-//silently dropped by encode() and a requestId-only message goes on the wire - the server has nothing to answer and the
-//promise never settles.  `strings` was such a key; the field is `request_strings`.
-class TestAppService extends AppService{
-	sent:any[] = [];
-	//capture what send() hands the wire.  Going through the real path would open a socket: with none connected sendWithId
-	//backlogs and calls connect(), so the encode below is done here instead - it is the step the bug was lost in.
-	protected override sendWithId( m:any, requestId:RequestId, _log:string ):void{ this.sent.push( {requestId, ...m} ); }
-	wire( index=0 ):FromClient.Message{
-		return FromClient.Message.decode( FromClient.Message.encode(FromClient.Message.fromPartial(this.sent[index])).finish() );
-	}
-}
+import { anonymousAuthStore } from 'jde-framework/testing';
+import { silence } from 'jde-spa/testing';
 
 const create = ( env:Record<string,any> = {} )=>{
-	TestBed.resetTestingModule();
 	const values = { applicationServer: {host:'localhost', port:1967}, ...env };
 	TestBed.configureTestingModule({ providers: [
 		provideHttpClient(),
 		{ provide: IENVIRONMENT, useValue: { get: ( key:string )=>(<any>values)[key] } },
-		{ provide: AUTH_STORE, useValue: { user: ()=>undefined, logout: ()=>{} } as unknown as AuthStore }
+		{ provide: AUTH_STORE, useValue: anonymousAuthStore() }
 	]});
-	return TestBed.runInInjectionContext( ()=>new TestAppService() );
+	return TestBed.runInInjectionContext( ()=>new AppService() );
 };
 
 //install-issues #2: the production environment leaves the host empty, and the service reaches the app server by the host the
@@ -60,59 +37,38 @@ describe( 'AppService host', ()=>{
 	} );
 } );
 
-describe( 'AppService socket message field names', ()=>{
-
-	//review3 C11: `graphQl`/`graphQL` were not proto fields either, and `requestType:UnsubscribeLogs` is one the server answers
-	//with "not implemented".  The three now travel as the proto's subscription/unsubscription/query.
-	it( 'puts a log subscription on the wire as a Query', ()=>{
-		const service = create();
-		service.logs( 3, 2, new Date('2026-09-05T00:00:00Z'), 10 );
-		const message = service.wire();
-		expect( message.subscription?.text ).toContain( 'subscribe logs(applicationId:3' );
-		expect( message.subscription?.returnRaw ).toBe( false );
-		expect( message.requestType ).toBeUndefined();
-	} );
-
-	it( 'puts the unsubscription, carrying the subscription id, on the wire', ()=>{
-		const service = create();
-		service.logsUnsubscribe( 9 );
-		const message = service.wire();
-		expect( message.unsubscription?.requestIds ).toEqual( [9] );
-		expect( message.requestType ).toBeUndefined();
-	} );
-
-	it( 'puts the log-level mutation on the wire as a Query', ()=>{
-		const service = create();
-		service.updateLogLevel( 5, 2, 3 );
-		const message = service.wire();
-		expect( message.query?.text ).toContain( 'LogApplicationInstances( id:5' );
-	} );
-} );
-
 //review3 C12/L8: a logout whose round trip fails still has to drop the local session - the user was left logged in with
 //no feedback and no way out, and GatewayService.logout already swallowed the same failure.
 describe( 'AppService.logout', ()=>{
 	it( 'clears the local session even when the server round trip rejects', async ()=>{
 		const service = create();
-		let cleared = 0;
-		(service as any).authStore = { user: ()=>undefined, logout: ()=>{ ++cleared; } };
+		const logout = vi.fn();
+		(service as any).authStore = { user: ()=>undefined, logout };
 		(service as any).postRaw = ()=>Promise.reject( new Error('502') );
-		const logged:string[] = [];
-		await expect( service.logout( m=>logged.push(m) ) ).resolves.toBeUndefined();
-		expect( cleared ).toBe( 1 );
-		expect( logged.some( m=>m.includes('logout failed') && m.includes('502') ) ).toBe( true );
+		const spy = silence( 'log' );
+		await expect( service.logout() ).resolves.toBeUndefined();
+		expect( logout ).toHaveBeenCalledTimes( 1 );
+		expect( spy.mock.calls.some( ([m])=>String(m).includes('logout failed') && String(m).includes('502') ) ).toBe( true );
+		spy.mockRestore();
 	} );
 } );
 
-//review3 L11: neither environment file carried an `httpTransport` key, so this was constructed with `undefined`.  Every
-//test in ProtoService is `==Secure`/`==Hybrid`, which undefined fails, so it acted as Unsecure - but `==ETransport.Unsecure`
-//was false too, that enumerator being 0.
+//The environment's `httpTransport` was Unsecure in both builds, so a page browsed as https://<hub>:1967 loaded and then
+//called the hub over http and ws, which the browser blocks as mixed content.  The page's own protocol decides now.
 describe( 'AppService transport', ()=>{
-	it( 'is a real enumerator when the environment names none', ()=>{
-		expect( create().transport ).toBe( ETransport.Unsecure );
+	afterEach( ()=>vi.unstubAllGlobals() );
+
+	it( 'is plain for a page browsed over http', ()=>{
+		const service = create();
+		expect( service.transport ).toBe( ETransport.Unsecure );
+		expect( service.urlWithTarget('graphql') ).toBe( 'http://localhost:1967/graphql' );
 	} );
 
-	it( 'honours the environment key', ()=>{
-		expect( create({httpTransport: ETransport.Secure}).transport ).toBe( ETransport.Secure );
+	it( 'is TLS for a page browsed over https, the REST calls and the socket alike', ()=>{
+		vi.stubGlobal( 'location', {protocol: 'https:', hostname: 'localhost', host: 'localhost'} );
+		const service = create();
+		expect( service.transport ).toBe( ETransport.Secure );
+		expect( service.urlWithTarget('graphql') ).toBe( 'https://localhost:1967/graphql' );
+		expect( (service as any).socketUrl ).toBe( 'wss://localhost:1967' );
 	} );
 } );

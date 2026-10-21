@@ -1,18 +1,10 @@
 import { TestBed } from '@angular/core/testing';
-import { describe, it, expect } from 'vitest';
 import { Days, Operator, View } from '../../../../../model/ql/view';
-import { TableSchema } from '../../../../../model/ql/schema/table-schema';
 import { QLListSettingsFilter } from './ql-list-settings-filter';
+import { scalar, slugSchema } from 'jde-framework/testing';
+import { stable } from 'jde-spa/testing';
 
-const schema = new TableSchema( {
-	name: "Resource",
-	fields: [
-		{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
-		{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "slug", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-		{ name: "deleted", type: { kind: "SCALAR", name: "DateTime" } }
-	]
-} );
+const schema = slugSchema( "Resource", scalar("deleted", "DateTime") );
 const liveToggle = { enable: "Enforce", disable: "Stop enforcing" };
 
 //reviews/m3-closing.md #35:  #16's View.query cells passed on clean one-element arrays, but the dialog's date input and its two
@@ -20,7 +12,7 @@ const liveToggle = { enable: "Enforce", disable: "Stop enforcing" };
 //query went out as `{gt:"<null>"}` / an unbound $deleted ("Query failed.").  These drive the dialog's handlers into query().
 describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 	function open( value:any[], settings:{liveToggle?:typeof liveToggle} = {liveToggle} ){
-		const view = new View( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name", {name: "deleted", displayName: "Enforced", ...settings}], sort: "name"}, schema );
 		view.fieldFilters.push( {field: schema.fields.find( f=>f.name=="deleted" )!, filter: {operator: Operator.Greater, value}} );
 		const fixture = TestBed.createComponent( QLListSettingsFilter );
 		fixture.componentRef.setInput( "view", view );
@@ -31,10 +23,10 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 		const dialog = fixture.componentInstance;
 		dialog.ngOnInit();
 		const col = dialog.dataSource[0];
-		//what QLListSettings.getView does with the dialog's rows
+		//the view QLListSettings.getView builds from the dialog
 		const query = ()=>{
-			const v = new View( view );
-			v.fieldFilters = dialog.dataSource.filter( c=>c.field ).map( c=>({field: c.field, filter: View.copyFilter(c.filter)}) );
+			const v = View.copy( view );
+			v.fieldFilters = dialog.fieldFilters();
 			return v.query( 0 );
 		};
 		return { dialog, col, query };
@@ -44,7 +36,7 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 
 	it( 'shows a saved filter as ticked, so a toggle replaces it', ()=>{
 		const { dialog, col, query } = open( ["<null>"] );
-		expect( dialog.nullSignal("deleted")() ).not.toBe( dialog.NullCriteria.None );
+		expect( col.nullCriteria!() ).not.toBe( dialog.NullCriteria.None );
 		dialog.onNonNullToggle( true, col );
 		expect( isNotNull(query()) ).toBe( true );
 	} );
@@ -66,7 +58,7 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 		dialog.onChangeDate( {value: new Date()} as any, col );
 		expect( col.filter.value.length ).toBe( 1 );
 		expect( col.filter.value[0] ).toBeInstanceOf( Days );
-		expect( dialog.nullSignal("deleted")() ).toBe( dialog.NullCriteria.None );
+		expect( col.nullCriteria!() ).toBe( dialog.NullCriteria.None );
 		expect( query().text ).toContain( "deleted:{gt:$deleted}" );//on a trash-can column the filter replaces the implicit not-deleted
 	} );
 
@@ -80,19 +72,31 @@ describe( 'QLListSettingsFilter on a DateTime column', ()=>{
 	} );
 } );
 
-//A saved view from before the fix can still hold what the dialog used to build.
-describe( 'View.query on a DateTime filter the old dialog built', ()=>{
-	const query = ( value:any[] )=>{
-		const view = new View( {columns: ["name", {name: "deleted", liveToggle}], sort: "name"}, schema );
-		view.fieldFilters.push( {field: schema.fields.find( f=>f.name=="deleted" )!, filter: {operator: Operator.Greater, value}} );
-		return view.query( 0 );
-	};
-	it( 'reads a doubled marker as the marker', ()=>{
-		expect( query(["<null>", "<null>"]).vars["deleted"] ).toEqual( [null] );
-		expect( query(["<not null>", "<not null>"]).text ).toContain( 'deleted:{"ne":null}' );
-	} );
-	it( 'never sends a comparison without a value', ()=>{
-		expect( query([undefined]).text ).not.toContain( "deleted:" );
-		expect( query([null]).text ).not.toContain( "deleted:" );
+//A15:  each row keeps its own chip input, and Enter in a row's box adds the value and clears that box - the element used to be
+//found by counting map keys up to the row's field.
+describe( 'QLListSettingsFilter on a text column', ()=>{
+	it( 'clears the box a value was added from, and stops offering that value', async ()=>{
+		const view = View.fromTable( {columns: ["name", "slug"], sort: "name"}, schema );
+		for( const name of ["name", "slug"] )
+			view.fieldFilters.push( {field: schema.fields.find( f=>f.name==name )!, filter: {operator: Operator.In, value: []}} );
+		const fixture = TestBed.createComponent( QLListSettingsFilter );
+		fixture.componentRef.setInput( "view", view );
+		fixture.componentRef.setInput( "columns", {name: "Name", slug: "Slug"} );
+		fixture.componentRef.setInput( "schema", schema );
+		fixture.componentRef.setInput( "suggestions", {name: ["a", "b"], slug: ["x", "y"]} );
+		fixture.componentRef.setInput( "excludedColumns", [] );
+		await stable( fixture, 1 );
+		const dialog = fixture.componentInstance;
+		const slug = dialog.dataSource[1];
+		const box = fixture.nativeElement.querySelectorAll( 'input.filter-text' )[1] as HTMLInputElement;
+		box.value = "x";
+		box.dispatchEvent( new Event('input') );
+		expect( slug.input.value ).toBe( "x" );
+		box.dispatchEvent( new KeyboardEvent('keydown', {keyCode: 13, bubbles: true} as KeyboardEventInit) );//ENTER, a separator key
+		await stable( fixture, 1 );
+		expect( box.value ).toBe( "" );
+		expect( slug.filter.value ).toEqual( ["x"] );
+		expect( slug.suggestions.value ).toEqual( ["y"] );
+		expect( dialog.dataSource[0].suggestions.value ).toEqual( ["a", "b"] );
 	} );
 } );

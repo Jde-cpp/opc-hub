@@ -1,5 +1,6 @@
 import { inject, Injectable } from '@angular/core';
-import { CardStatusValue, counted, countRows, ICardStatus, plural } from 'jde-framework';
+import { CardStatusValue, counted, countRows, ICardStatus } from 'jde-framework';
+import { plural, singular } from 'jde-spa';
 import { AccessService } from './access-service';
 
 //the Access tile and page:  the users, groups and roles the signed-in user can see.  Without the rights the queries reject,
@@ -25,7 +26,7 @@ export class AccessCollectionStatus implements ICardStatus{
 	async status( url:string ):Promise<CardStatusValue>{
 		const collection = url.split( '/' ).filter( s=>s.length ).at( -1 )!;
 		const n = await countRows( this.#access, collection, 'id', collection=='resources' ? 'criteria:null, deleted:null' : 'deleted:null' );
-		const label = collection=='resources' ? 'enforced' : plural( n, collection.replace(/s$/, '') );
+		const label = collection=='resources' ? 'enforced' : plural( singular(collection), n );
 		return { label, figure: n, summary: `${n} ${label}` };
 	}
 	#access = inject( AccessService );

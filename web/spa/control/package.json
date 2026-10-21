@@ -1,6 +1,5 @@
 {
   "name": "jde-spa",
-  "version": "0.0.1",
   "license": "Apache-2.0",
   "peerDependencies": {
     "@angular/cdk": "^22.1.0",
@@ -12,8 +11,5 @@
     "@angular/router": "^22.1.0",
     "rxjs": "~7.8.0",
     "marked": "^18.0.0"
-  },
-  "dependencies": {
-    "tslib": "^2.8.1"
   }
 }

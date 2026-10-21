@@ -30,13 +30,9 @@ permissions:
   contents: read
 
 jobs:
-  # The Angular site the installer ships (its Web UI component). web/opc/scripts/setup.sh
-  # scaffolds the workspace (`ng new`, Material, ts-proto/buf for the generated proto
-  # package - all from npm), links the tracked sources in and runs `ng build`; nothing
-  # of the workspace is tracked, so this is a from-scratch scaffold every run (~5 min).
-  # Linux on purpose: the scaffold symlinks and hard-links, which a Windows runner
-  # would need Developer Mode for. Runs beside the Windows build, not ahead of it -
-  # the Installer step below waits for it.
+  # The Angular site the installer ships (its Web UI component):  .github/actions/build-web,
+  # on Linux, a from-scratch scaffold every run (~5 min). Runs beside the Windows build, not
+  # ahead of it - the Installer step below waits for it.
   web:
     name: Web UI
     runs-on: ubuntu-latest
@@ -44,30 +40,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Build and upload the site
+        uses: ./.github/actions/build-web
         with:
-          node-version: 26 # @angular/cli 22 takes ^22.22 || ^24.15 || >=26; the dev box is on 26
-
-      # The global cli decides which Angular `ng new` scaffolds (create-workspace.sh
-      # pins everything to it), so pin the major the libraries' peer ranges name
-      # (web/*/control/package.json: ^22.1.0) rather than let it install @latest.
-      - name: Build the site
-        env:
-          JDE_BASH: ${{ github.workspace }}
-        run: |
-          npm install -g @angular/cli@22
-          # a tag run is a release: hashed output names, which the hub serves as immutable; other runs keep main.js
-          release=""; if [ "$GITHUB_REF_TYPE" = tag ]; then release=--release; fi
-          bash web/opc/scripts/setup.sh $release
-
-      - name: Upload the site
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist-${{ github.run_id }}
-          path: web/opc/my-workspace/dist/my-workspace/browser
-          if-no-files-found: error
-          retention-days: 1 # only the build job below needs it
+          release: ${{ github.ref_type == 'tag' }} # a tag run is a release:  hashed output names
+          artifact: web-dist-${{ github.run_id }} # what the build job below packs
 
   build:
     # This becomes the check-run name on the commit the run was dispatched against,

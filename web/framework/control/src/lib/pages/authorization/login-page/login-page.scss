@@ -1,38 +1,4 @@
-
 input {
-	margin-left: 5px;
-}
-
-.form-control {
-	margin-bottom: 15px;
-	display: flex;
-	flex-direction: column;
-}
-
-.form-control input {
-	padding: 10px;
-	border: 1px solid #ccc;
-	border-radius: 5px;
-	font-size: 16px;
-}
-
-.form-control textarea {
-	padding: 10px;
-	border: 1px solid #ccc;
-	border-radius: 5px;
-	font-size: 16px;
-	min-height: 100px;
-}
-
-.form-control select {
-	padding: 10px;
-	border: 1px solid #ccc;
-	border-radius: 5px;
-	font-size: 16px;
-}
-
-.form-control label {
-	margin-bottom: 5px;
 	margin-left: 5px;
 }
 
@@ -49,16 +15,16 @@ input {
 
 
 .login-form {
-  display: flex;
-  flex-direction: column;
-  padding: 0 20px 20px 20px;
-  color: white;
-  border: 1px solid #2086fc;
-  border-radius: 10px;
+	display: flex;
+	flex-direction: column;
+	padding: 0 20px 20px 20px;
+	color: var(--mat-sys-on-surface);
+	border: 1px solid var(--mat-sys-primary);
+	border-radius: 10px;
 }
 
 .login {
-  max-width: 400px;
-  margin: 0 auto;
-  padding-top: 100px;
+	max-width: 400px;
+	margin: 0 auto;
+	padding-top: 100px;
 }

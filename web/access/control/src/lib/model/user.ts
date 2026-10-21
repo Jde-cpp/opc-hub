@@ -9,7 +9,6 @@ export type UserPK = number;
 export class User extends SlugRow<User>{
 	constructor( obj:any ){
 		super("User", obj);
-		let roles = obj.roles ?? obj.childRoles;
 
 		this.distinguished = obj.distinguished;
 		this.email = obj.email;
@@ -25,17 +24,8 @@ export class User extends SlugRow<User>{
 		this.provider = obj.provider;
 		this.subjectAlt = obj.subjectAlt;
 		//"acl":[{"role":{"id":33,"name":"Opc Gateway Permissions","deleted":null},"identity":{"id":1}}]}
-		if( obj.acl ){
-			this.roles = [];
-			this.permissions = [];
-			for( let member of obj.acl ){
-				if( member.role ){
-					this.roles.push( new Role(member.role) );
-				}else if( member.permissionRight ){
-					this.permissions.push( new Permission(member.permissionRight) );
-				}
-			}
-		}
+		if( obj.acl )
+			({roles: this.roles, permissions: this.permissions} = Acl.split( obj.acl ));
 		else
 			this.roles = cloneClassArray( obj.roles, Role ) ?? [];
 	}

@@ -10,33 +10,17 @@
 	@if( runningUnavailable() ){
 		<p class="sink-note">The instance did not report the levels it is running with. Only the overrides saved for it are shown.</p>
 	}
-	<mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false" [selectedIndex]="tabIndex()" (selectedIndexChange)="tabIndex.set($event)">
-		<mat-tab>
-			<ng-template mat-tab-label>Binary</ng-template>
-			@if( sinkNote['binary'] ){
-				<p class="sink-note">{{sinkNote['binary']}}</p>
-			}
-			<div class="centered-content">
-				<log-tags #binary [tags]="sinks['binary']" [catalogue]="catalogue()"></log-tags>
-			</div>
-		</mat-tab>
-		<mat-tab>
-			<ng-template mat-tab-label>Remote</ng-template>
-			@if( sinkNote['appServer'] ){
-				<p class="sink-note">{{sinkNote['appServer']}}</p>
-			}
-			<div class="centered-content">
-				<log-tags #remote [tags]="sinks['appServer']" [catalogue]="catalogue()"></log-tags>
-			</div>
-		</mat-tab>
-		<mat-tab>
-			<ng-template mat-tab-label>Text</ng-template>
-			@if( sinkNote['text'] ){
-				<p class="sink-note">{{sinkNote['text']}}</p>
-			}
-			<div class="centered-content">
-				<log-tags #text [tags]="sinks['text']" [catalogue]="textCatalogue()"></log-tags>
-			</div>
-		</mat-tab>
+	<mat-tab-group class="my-content" mat-align-tabs="center" mat-stretch-tabs="false" [(selectedIndex)]="tabIndex">
+		@for( sink of sinks(); track sink.type ){
+			<mat-tab>
+				<ng-template mat-tab-label>{{sink.label}}</ng-template>
+				@if( sink.note ){
+					<p class="sink-note">{{sink.note}}</p>
+				}
+				<div class="centered-content">
+					<log-tags [tags]="sink.rows" [catalogue]="sink.type=='text' ? textCatalogue() : catalogue()"></log-tags>
+				</div>
+			</mat-tab>
+		}
 	</mat-tab-group>
 }

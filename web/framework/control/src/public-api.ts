@@ -3,16 +3,13 @@ export * from './lib/model/ql/row';
 export * from './lib/model/ql/slug-row';
 export * from './lib/model/ql/mutation';
 export * from './lib/model/ql/view';
+export * from './lib/model/ql/view-set';
 export * from './lib/model/ql/schema/meta-object';
-export * from './lib/model/ql/schema/mutation-schema';
 export * from './lib/model/ql/schema/table-schema';
 export * from './lib/model/ql/schema/field';
 
-export * from './lib/pages/graphql/detail/graphql-detail';
 export * from './lib/pages/graphql/properties/properties';
-export * from './lib/pages/graphql/model/page-settings';
 export * from './lib/pages/graphql/table/graphql-table';
-export * from './lib/pages/home/home';
 export * from './lib/pages/cards/home-route-service';
 export * from './lib/pages/page-heading';
 export * from './lib/pages/framework-pages';
@@ -24,6 +21,8 @@ export * from './lib/pages/ql/selector/ql-selector';
 
 export * from './lib/utils/errors';
 export * from './lib/pages/detail-page';
+export * from './lib/pages/detail-actions/detail-actions';
+export * from './lib/pages/apps/instance-tabs/instance-tabs';
 export * from './lib/pages/apps/web-sessions/web-sessions';
 export * from './lib/pages/logs/detail/log-detail';
 export * from './lib/pages/logs/settings/log-settings-panel';
@@ -40,18 +39,14 @@ export * from './lib/services/ql-list-resolver';
 export * from './lib/services/detail-resolver';
 export * from './lib/services/resolvers/app-resolver';
 export * from './lib/shared/confirm/confirm-dialog';
-export * from './lib/shared/date-range/date-range'
-export * from './lib/shared/link-select/link-select'
 export * from './lib/shared/paginator/paginator'
 export * from './lib/shared/pipes/enum-keys-pipe';
 export * from './lib/shared/severity-picker/severity-picker'
+export * from './lib/shared/failure-state/failure-state';
 export * from './lib/shared/snackbar/snackbar';
-export * from './lib/utils/collections';
+export * from './lib/shared/view-toolbar/view-toolbar';
 export * from './lib/utils/date-utils';
-export * from './lib/utils/math-utils';
-export * from './lib/utils/progress-observable';
 export * from './lib/utils/proto-utils';
-export * from './lib/utils/stl';
 export * from './lib/utils/string-utils';
 export * from './lib/utils/utils';
 export * from './lib/services/app/app-service-types';

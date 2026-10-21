@@ -2,7 +2,7 @@
 	<p class="empty">{{empty()}}</p>
 }
 @else{
-	<mat-table [dataSource]="rows()" class="mat-elevation-z8">
+	<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense jde-rights-grid">
 		<ng-container matColumnDef="name">
 			<mat-header-cell *matHeaderCellDef>{{nameHeader()}}</mat-header-cell>
 			<mat-cell *matCellDef="let row">

@@ -1,23 +1,22 @@
-import { CommonModule } from "@angular/common";
-import { Component, effect, inject, model, OnDestroy, signal, untracked, ViewChild } from '@angular/core';
+import { Component, effect, inject, model, OnDestroy, signal, untracked, viewChild } from '@angular/core';
 import { MatCheckbox, MatCheckboxChange } from "@angular/material/checkbox";
 import { MatSortModule, Sort } from "@angular/material/sort";
 import { MatTable, MatTableModule } from "@angular/material/table";
-import { ProfileStore } from "jde-spa";
+import { Latest, ProfileStore } from "jde-spa";
 import { verify, EnumKeysPipe, SnackbarService } from "jde-framework";
 import { Permission, Rights } from "../../model/permission";
-import { ACCESS_SERVICE, AccessService } from "../../services/access-service";
+import { ACCESS_SERVICE } from "../../services/access-service";
 import { Resource } from "../../model/resource";
 
 @Component({
 		selector: 'permission-table',
 		templateUrl: 'permission-table.html',
 		styleUrls: ['permission-table.scss'],
-		imports: [CommonModule, MatTableModule, MatCheckbox, EnumKeysPipe, MatSortModule],
+		imports: [MatTableModule, MatCheckbox, EnumKeysPipe, MatSortModule],
 })
 export class PermissionTable implements OnDestroy{
-	private cnsle:SnackbarService = inject( SnackbarService );
-	private accessService:AccessService = inject( ACCESS_SERVICE );
+	#cnsle = inject( SnackbarService );
+	#accessService = inject( ACCESS_SERVICE );
 
 	//Built from an effect rather than ngOnInit because the HOST outlives the row:  user-detail and role-detail keep this
 	//table alive across ':slug', handing it the next row's permissions with no re-creation, and a one-shot ngOnInit left
@@ -32,16 +31,16 @@ export class PermissionTable implements OnDestroy{
 	}
 
 	async #build( permissions:Permission[] ):Promise<void>{
-		const build = ++this.#buildId;
+		const build = this.#latest.next();
 		this.isLoading.set( true );
 		try{
 			if( !this.profile ){//the sort is the user's, not the row's - loaded once and kept across rows
 				this.profile = await this.profileStore.load<Profile>( 'permissionTable', PermissionTable.defaultProfile );
 				this.#sort = {...(this.profile.sort ?? PermissionTable.defaultProfile.sort)};//copy: ProfileStore.load hands back the default OBJECT itself when nothing is stored, and that default is a static shared by every instance
 			}
-			const resources = await this.accessService.loadResources();
-			if( build!=this.#buildId )
-				return;//a newer row overtook this one
+			const resources = await this.#accessService.loadResources();
+			if( !this.#latest.is(build) )
+				return;
 			const rows:Permission[] = [];
 			for( const resource of resources ){ //.filter(x=>x.allowed!=Rights.None)
 				let permission = permissions.find( x=>x.resource?.id==resource.id );
@@ -60,13 +59,13 @@ export class PermissionTable implements OnDestroy{
 			this.isLoading.set( false );
 		}
 		catch( e ){
-			this.cnsle.exception( "Could not load the permissions.", e );//the load used to be an unawaited ngOnInit, so a failure left the spinner up with nothing said
+			this.#cnsle.exception( "Could not load the permissions.", e );//the load used to be an unawaited ngOnInit, so a failure left the spinner up with nothing said
 		}
 	}
 	ngOnDestroy(){
 		//the component is already going away, so a snackbar would follow the user to the next page:  warn, but never leave the
 		//rejection unhandled - save() reports failures now instead of swallowing them.
-		this.profileStore.save<Profile>( 'permissionTable', { sort: this.sort, showDeleted: this.profile?.showDeleted } )
+		this.profileStore.save<Profile>( 'permissionTable', { sort: this.sort } )
 			.catch( e=>console.warn("Could not save the permission table settings.", e) );
 	}
 	sortData($event:Sort){
@@ -86,8 +85,7 @@ export class PermissionTable implements OnDestroy{
 			}
 			return $event.direction=="asc" ? y : -y;
 		});
-		if( this.table )
-			this.table.renderRows();
+		this.table()?.renderRows();
 	}
 
 	toggle( $event:MatCheckboxChange|MouseEvent, permission: Permission, rights:Rights ):void{
@@ -112,13 +110,6 @@ export class PermissionTable implements OnDestroy{
 		this.permissions.set( this.#published );
 	}
 
-	removeUnavailable( permission: Permission, allowed:boolean ):void{
-		if( allowed )
-			permission.allowed &= permission.resource.availableRights;
-		else
-			permission.denied &= permission.resource.availableRights;
-	}
-
 	isAllowed( permission: Permission, rights:Rights ):boolean{
 		let allowed = (permission.allowed ?? 0);
 		if( rights==Rights.All )
@@ -140,13 +131,13 @@ export class PermissionTable implements OnDestroy{
 
 	profile!:Profile;
 	#published:Permission[]|undefined;
-	#buildId = 0;
+	#latest = new Latest();
 	static readonly defaultProfile:Profile = { sort: { active: "schema,resource", direction: "asc" } };
 	permissions=model.required<Permission[]>();
 	availablePermissions:Permission[] = [];
 	rights = Rights;
 	get sort():Sort{ return this.#sort; } #sort:Sort = {...PermissionTable.defaultProfile.sort};
-	@ViewChild('mainTable',{static: false}) table!:MatTable<Permission>;
+	table = viewChild<MatTable<Permission>>( 'mainTable' );
 	isLoading = signal<boolean>( true );
 	get displayedColumnNames():string[]{
 		let y = ["schema", "resource", "deleted"];
@@ -156,5 +147,4 @@ export class PermissionTable implements OnDestroy{
 	}
 	profileStore = inject(ProfileStore);
 }
-type Profile = { sort:Sort; showDeleted?:boolean; }
-
+type Profile = { sort:Sort; }

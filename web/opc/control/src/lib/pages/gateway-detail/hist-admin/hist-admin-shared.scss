@@ -1,5 +1,7 @@
-/* The two admin pages' tabs (hist-template-detail, hist-group-detail):  a hint line, a toolbar, a dense table as the history
-   table's (hist-table.scss), an inline editor, and the empty and refused states. */
+@use '../../status';
+
+/* The two admin pages' tabs (hist-template-detail, hist-group-detail) and the two dialogs (the node picker, the thresholds):
+   a hint line, a toolbar, a .jde-dense table, an inline editor, and the empty and refused states. */
 .tab-body{
 	box-sizing: border-box;
 	padding: 16px 24px 0;
@@ -25,16 +27,11 @@
 	--mat-progress-bar-active-indicator-height: 2px;
 }
 mat-table{
-	--mat-table-row-item-container-height: 40px;
-	--mat-table-header-container-height: 44px;
 	width: 100%;
 }
-mat-header-cell{
-	justify-content: flex-start;
-	.unit{
-		margin-left: .25rem;
-		color: var(--mat-sys-on-surface-variant);
-	}
+mat-header-cell .unit{
+	margin-left: .25rem;
+	color: var(--mat-sys-on-surface-variant);
 }
 .mat-column-path, .mat-column-node, .mat-column-member{
 	flex: 1 1 200px;
@@ -91,18 +88,7 @@ mat-row.editing{
 	margin-top: .25rem;
 }
 .refused{
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	margin: .75rem 0 0;
-	color: var(--mat-sys-on-surface);
-	mat-icon{
-		flex: 0 0 auto;
-		font-size: 18px;
-		width: 18px;
-		height: 18px;
-		color: var(--mat-sys-error);
-	}
+	@include status.refused;
 }
 /* the form sections under Properties:  the same inset as the properties form (properties.ts :host) */
 .form-section{

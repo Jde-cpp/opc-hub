@@ -1,3 +1,5 @@
+@use '../../status';
+
 .resolution-status{
 	display: flex;
 	align-items: center;
@@ -5,9 +7,7 @@
 	min-width: 0;
 	mat-icon{
 		flex: 0 0 auto;
-		font-size: 18px;
-		width: 18px;
-		height: 18px;
+		@include status.icon-size;
 	}
 	.ok{
 		color: var(--mat-sys-primary);

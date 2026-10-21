@@ -1,14 +1,6 @@
 @use '@angular/material' as mat;
-@use '../../highlightjs/material-dark';
+@use '../theme';
 
 html {
-  @include mat.theme((
-    color: (
-      theme-type: dark,
-      primary: mat.$magenta-palette,
-      tertiary: mat.$violet-palette,
-    ),
-    typography: Roboto,
-    density: 0,
-  ));
+  @include theme.theme( dark, mat.$magenta-palette, mat.$violet-palette );
 }

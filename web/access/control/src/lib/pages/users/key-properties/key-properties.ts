@@ -27,9 +27,9 @@ export class KeyProperties{
 	async copy( value:string, what:string ){
 		try{
 			await navigator.clipboard.writeText( value );
-			this.snackbar.info( `${what} copied` );
+			this.#snackbar.info( `${what} copied` );
 		}catch( e ){
-			this.snackbar.exception( `Copy ${what} failed.`, e );
+			this.#snackbar.exception( `Copy ${what} failed.`, e );
 		}
 	}
 
@@ -68,8 +68,9 @@ export class KeyProperties{
 		const days = Math.floor( (date.getTime()-Date.now())/86400000 );
 		const status:ExpiryStatus = days<0 ? 'expired' : days<30 ? 'expiring' : 'valid';
 		const relative = days<0 ? `expired ${-days} day${-days==1 ? '' : 's'} ago` : days==0 ? 'expires today' : `expires in ${days} day${days==1 ? '' : 's'}`;
-		return { date, status, relative };
+		return { date, status, relative, tone: KeyProperties.tones[status] };
 	});
 
-	private snackbar = inject( SnackbarService );
+	static readonly tones:Record<ExpiryStatus,string> = { valid: 'chip-ok', expiring: 'chip-warn', expired: 'chip-error' };//_general.scss
+	#snackbar = inject( SnackbarService );
 }

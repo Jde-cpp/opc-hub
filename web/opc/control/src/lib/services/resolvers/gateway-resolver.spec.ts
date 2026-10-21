@@ -1,35 +1,23 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, ActivatedRouteSnapshot, Router, RouterStateSnapshot } from '@angular/router';
+import { ActivatedRouteSnapshot, Router, RouterStateSnapshot } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
-import { vi } from 'vitest';
-import { ProfileStore, RouteStore } from 'jde-spa';
-import { AppInstanceRoute, PageProfile, SnackbarService, TableSchema, View } from 'jde-framework';
+import { LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
+import { AppInstanceRoute, QLListResolver, SnackbarService, View } from 'jde-framework';
 import { Gateway, GATEWAY_SERVICE } from '../gateway-service';
 import { gatewayTableSettings } from '../../pages/gateway-detail/gateway-table-settings';
 import { GatewayData, GatewayResolver } from './gateway-resolver';
+import { fakeSessionStorage, provideRoute, routerStub, profileStoreStub } from 'jde-spa/testing';
+import { qlAnswering, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
 
 //reviews/m3-closing.md #6:  the resolver never adopted QLListResolver.loadOrFail.  A refused or failed serverConnections query
 //rejected the resolve, the router turned it into a NavigationError nobody saw, and the Connections page - where the help says
 //a new user adds a server - was a dead click:  the url never changed and nothing was said.
 describe( 'GatewayResolver', ()=>{
-	const schema = new TableSchema( {name: "ServerConnection", fields: [
-		{name: "id", type: {name: "ID", kind: "SCALAR"}},
-		{name: "name", type: {name: "String", kind: "SCALAR"}},
-		{name: "slug", type: {name: "String", kind: "SCALAR"}}
-	]} as any );
+	const schema = schemaOf( "ServerConnection", scalar("id", "ID"), scalar("name"), scalar("slug") );
 	const data = ():GatewayData=>{
-		const profile = new PageProfile();
-		profile.views = [ new View({columns: ["name"], sort: "name"}, schema) ];
-		return { schema, profile, routing: new AppInstanceRoute("gateways", "opchub", gatewayTableSettings), columns: {}, pageSettings: {} as any, results: undefined };
+		const profile = QLListResolver.viewSet( "serverConnections", {} as ProfileStore, new LocalPrefs(), gatewayTableSettings );
+		profile.reset( [View.fromTable({columns: ["name"], sort: "name"}, schema)] );
+		return { schema, profile, routing: new AppInstanceRoute("gateways", "opchub", gatewayTableSettings), columns: {}, results: undefined };
 	};
 	const routeStore = ()=>({ setChildren: vi.fn(), getChildren: ()=>[] }) as unknown as RouteStore;
 
@@ -46,7 +34,7 @@ describe( 'GatewayResolver', ()=>{
 
 	it( 'loads the rows and the sidenav children otherwise', async ()=>{
 		const store = routeStore();
-		const ql = <unknown>{ query: async ()=>({serverConnections: [{name: "Line 1", slug: "line1"}]}) } as Gateway;
+		const ql = <unknown>{ query: qlAnswering( {serverConnections: [{name: "Line 1", slug: "line1"}]} ) } as Gateway;
 		const y:any = await GatewayResolver.load( ql, data(), store, "apps/gateways/opchub" );
 		expect( y.error ).toBeUndefined();
 		expect( y.results.serverConnections ).toHaveLength( 1 );
@@ -58,7 +46,7 @@ describe( 'GatewayResolver', ()=>{
 	//has to be cut the same way, or it would show 26 rows and then page to the 26th again
 	it( 'loads one page, and says whether there is another', async ()=>{
 		const all = Array.from( {length: 30}, (_, i)=>({name: `Line ${i+1}`, slug: `line${i+1}`}) );
-		const query = vi.fn( async ( text:string )=>({serverConnections: all.slice(0, +(/limit:(\d+)/.exec(text)![1]))}) );
+		const query = qlAnswering( {serverConnections: all} );
 		const y:any = await GatewayResolver.load( <unknown>{query} as Gateway, data(), routeStore(), "apps/gateways/opchub" );
 		expect( query.mock.calls[0][0] ).toContain( "limit:26" );
 		expect( y.results.serverConnections ).toHaveLength( 25 );
@@ -68,10 +56,10 @@ describe( 'GatewayResolver', ()=>{
 
 	//reviews-issue/231-paging.md #10:  the tab loads through QLListResolver.loadOrFail, so it opens on the page it was left on (#8)
 	it( 'opens the tab on the page it was left on', async ()=>{
-		vi.stubGlobal( 'sessionStorage', { getItem: (k:string)=>k=="apps/gateways/opchub/skip" ? "25" : null, setItem: vi.fn(), removeItem: vi.fn() } );
+		fakeSessionStorage().set( "apps/gateways/opchub/skip", "25" );
 		try{
 			const all = Array.from( {length: 30}, (_, i)=>({name: `Line ${i+1}`, slug: `line${i+1}`}) );
-			const query = vi.fn( async ( text:string )=>({serverConnections: all.slice( +(/skip:(\d+)/.exec(text)?.[1] ?? 0) )}) );
+			const query = qlAnswering( {serverConnections: all} );
 			const y:any = await GatewayResolver.load( <unknown>{query} as Gateway, data(), routeStore(), "apps/gateways/opchub" );
 			expect( query.mock.calls[0][0] ).toContain( "skip:25" );
 			expect( y.skip ).toBe( 25 );
@@ -84,20 +72,20 @@ describe( 'GatewayResolver', ()=>{
 
 	//no gateway of that name - a stale bookmark or Recently-visited tile - leaves no page to say it on
 	it( 'says so and lands on Applications when the instance cannot be opened', async ()=>{
-		const exception = vi.fn(), navigateByUrl = vi.fn();
+		const router = routerStub(), snackbar = snackbarStub();
 		TestBed.configureTestingModule({ providers: [
 			GatewayResolver,
-			{ provide: ActivatedRoute, useValue: {} },
-			{ provide: Router, useValue: {navigateByUrl} },
-			{ provide: SnackbarService, useValue: {exception, error: vi.fn()} },
+			provideRoute(),
+			{ provide: Router, useValue: router },
+			{ provide: SnackbarService, useValue: snackbar },
 			{ provide: GATEWAY_SERVICE, useValue: {gateway: async ( name:string )=>{ throw new Error(`Gateway '${name}' not found.`); }} },
 			{ provide: RouteStore, useValue: routeStore() },
-			{ provide: ProfileStore, useValue: {} }
+			{ provide: ProfileStore, useValue: profileStoreStub() }
 		]});
 		const route = <unknown>{ params: {instance: "gone"}, data: {tableSettings: gatewayTableSettings}, parent: {url: [{path: "apps"}, {path: "gateways"}, {path: "gone"}]} } as ActivatedRouteSnapshot;
 		await TestBed.inject( GatewayResolver ).resolve( route, {} as RouterStateSnapshot ).catch( ()=>{} );
-		expect( exception ).toHaveBeenCalledWith( "Could not open gone.", expect.any(Error) );
-		expect( navigateByUrl ).toHaveBeenCalledWith( "/apps" );
+		expect( snackbar.exception ).toHaveBeenCalledWith( "Could not open gone.", expect.any(Error) );
+		expect( router.navigateByUrl ).toHaveBeenCalledWith( "/apps" );
 	} );
 
 	//the state's words came from the route title - "No access to gateways/opchub." - which is not something to ask for

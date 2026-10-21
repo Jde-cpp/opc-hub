@@ -1,52 +1,19 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
-import { Component } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
-import { provideRouter, Router } from '@angular/router';
-import { RouterTestingHarness } from '@angular/router/testing';
-import { vi } from 'vitest';
-import { RecentVisits } from 'jde-spa';
-import { SnackbarService } from '../shared/snackbar/snackbar-service';
 import { IGRAPHQL } from './graphql';
 import { DetailResolver } from './detail-resolver';
-
-@Component( {template: ''} ) class Dummy{}
+import { Blank } from 'jde-spa/testing';
+import { openRoute, slugQl } from 'jde-framework/testing';
+import { TestBed } from '@angular/core/testing';
+import { RouteItem, RouteStore } from 'jde-spa';
 
 //reviews/m3-closing.md #25:  Recently visited drops a page that fails to open on NavigationError - but DetailResolver catches
 //the failure and redirects to the list, which the router reports as a NavigationCancel.  A deleted role's tile stayed, and
 //said "Slug not found" on every click.  The resolver forgets the page itself - for a missing row only:  a failed query is
 //transient, and the page is still there.
 describe( 'DetailResolver on a row that is gone', ()=>{
-	async function open( querySingle:()=>Promise<unknown> ){
-		const forget = vi.fn();
-		const ql = {
-			toCollectionName: ( s:string )=>s,
-			schemaWithEnums: async ()=>({collectionName: 'roles', type: 'Role', fields: []}),
-			slugQuery: ()=>'role(slug:"temp")',
-			subQueries: ()=>[],
-			querySingle
-		};
-		TestBed.configureTestingModule( {providers: [
-			provideRouter( [{ path: 'access', children: [
-				{ path: 'roles/:slug', component: Dummy, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
-				{ path: ':collectionDisplay', component: Dummy, data: {collections: ['roles']} }
-			]}] ),
-			{ provide: IGRAPHQL, useValue: ql },
-			{ provide: SnackbarService, useValue: {exception: vi.fn(), error: vi.fn()} },
-			{ provide: RecentVisits, useValue: {forget} }
-		]} );
-		const harness = await RouterTestingHarness.create();
-		await harness.navigateByUrl( '/access/roles/temp' );
-		await new Promise( r=>setTimeout(r, 20) );//the redirect is a second navigation
-		return { router: TestBed.inject(Router), forget };
-	}
+	const open = ( querySingle:()=>Promise<unknown> )=>openRoute( {routes: [{ path: 'access', children: [
+		{ path: 'roles/:slug', component: Blank, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
+		{ path: ':collectionDisplay', component: Blank, data: {collections: ['roles']} }
+	]}], providers: [{ provide: IGRAPHQL, useValue: slugQl( querySingle ) }], url: '/access/roles/temp'} );
 
 	it( "forgets a deleted row's page, and still goes back to the list", async ()=>{
 		const { router, forget } = await open( async ()=>null );
@@ -64,22 +31,31 @@ describe( 'DetailResolver on a row that is gone', ()=>{
 //reviews/m3-closing.md #32:  /access/users has no Add, but a typed or bookmarked 'users/$new' still opened a blank form.
 describe( 'DetailResolver on $new for a list with no Add', ()=>{
 	it( 'refuses it and goes back to the list', async ()=>{
-		const error = vi.fn();
 		const schemaWithEnums = vi.fn( async ()=>({collectionName: 'users', type: 'User', fields: []}) );
-		TestBed.configureTestingModule( {providers: [
-			provideRouter( [{ path: 'access', children: [
-				{ path: 'users/:slug', component: Dummy, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
-				{ path: ':collectionDisplay', component: Dummy, data: {collections: [{path: 'users', data: {tableSettings: {canAdd: false}}}]} }
-			]}] ),
-			{ provide: IGRAPHQL, useValue: {toCollectionName: ( s:string )=>s, schemaWithEnums} },
-			{ provide: SnackbarService, useValue: {exception: vi.fn(), error} },
-			{ provide: RecentVisits, useValue: {forget: vi.fn()} }
-		]} );
-		const harness = await RouterTestingHarness.create();
-		await harness.navigateByUrl( '/access/users/$new' );
-		await new Promise( r=>setTimeout(r, 20) );
+		const { router, error } = await openRoute( {routes: [{ path: 'access', children: [
+			{ path: 'users/:slug', component: Blank, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
+			{ path: ':collectionDisplay', component: Blank, data: {collections: [{path: 'users', data: {tableSettings: {canAdd: false}}}]} }
+		]}], providers: [{ provide: IGRAPHQL, useValue: {toCollectionName: ( s:string )=>s, schemaWithEnums} }], url: '/access/users/$new'} );
 		expect( error ).toHaveBeenCalled();
 		expect( schemaWithEnums ).not.toHaveBeenCalled();
-		expect( TestBed.inject(Router).url ).toBe( '/access/users' );
+		expect( router.url ).toBe( '/access/users' );
+	} );
+} );
+
+//reviews/angular-refactor.md B12:  the list keeps its rows under its absolute url, and the record's page reads them from there -
+//it read the bare collection name, a key spelled for this reader alone
+describe( 'DetailResolver siblings', ()=>{
+	afterEach( ()=>localStorage.clear() );
+
+	it( "reads the list's rows from under the list's url", async ()=>{
+		const { leaf } = await openRoute( {routes: [{ path: 'access', children: [
+			{ path: 'roles/:slug', component: Blank, providers: [DetailResolver], resolve: {pageData: DetailResolver} },
+			{ path: ':collectionDisplay', component: Blank, data: {collections: ['roles']} }
+		]}], providers: [{ provide: IGRAPHQL, useValue: slugQl( async ()=>({id: 1, name: 'Temp', slug: 'temp'}) ) }], url: '/access/roles/temp',
+			before: ()=>TestBed.inject( RouteStore ).setChildren( 'access/roles', [{path: 'temp', title: 'Temporary'}, {path: 'ops', title: 'Operators'}] )} );
+		const routing = leaf().data['pageData'].routing;
+		expect( routing.siblings.map( (s:RouteItem)=>s.path ) ).toEqual( ['temp', 'ops'] );
+		expect( routing.title ).toBe( 'Temporary' );
+		expect( routing.parent.path ).toBe( '/access/roles' );
 	} );
 } );

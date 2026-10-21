@@ -1,0 +1,62 @@
+name: Build the Web UI
+description: >-
+  The Angular site, on a GitHub-hosted Linux runner:  Node, the Angular cli at the major the libraries' peer ranges name, then
+  web/opc/scripts/setup.sh - which scaffolds the workspace (`ng new`, Material, ts-proto/buf for the generated proto package,
+  all from npm), links the tracked sources in and runs `ng build`.  Nothing of the workspace is tracked, so every run scaffolds
+  it from scratch (~5 min);  ~/.npm is cached between runs.  Linux on purpose:  the scaffold symlinks and hard-links, which a
+  Windows runner would need Developer Mode for.  Shared by web-tests.yml and the two release workflows' `web` jobs.
+
+inputs:
+  release:
+    description: >-
+      'true' for a release (a tag run):  hashed output names, which the hub serves as immutable.  Other builds keep main.js.
+    default: 'false'
+  artifact:
+    description: The name to upload dist/my-workspace/browser under, for a later job;  empty uploads nothing.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 26 # @angular/cli 22 takes ^22.22 || ^24.15 || >=26;  the dev box is on 26
+
+    # The global cli decides which Angular `ng new` scaffolds (create-workspace.sh pins everything to it), so it is the
+    # major of jde-spa's @angular/core peer - the range every library names - rather than @latest.
+    - name: Angular cli major
+      id: cli
+      shell: bash
+      run: |
+        major=$(jq -r '.peerDependencies["@angular/core"]' web/spa/control/package.json | grep -oE '[0-9]+' | head -1)
+        [ -n "$major" ] || { echo "no @angular/core peer in web/spa/control/package.json"; exit 1; }
+        echo "major=$major" >> "$GITHUB_OUTPUT"
+
+    # setup-node's own cache needs a lockfile, which the generated workspace does not commit.  Keyed on what decides the
+    # installs:  the libraries' package files and the scripts.  A stale entry only means more downloads.
+    - name: npm cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: web-npm-${{ runner.os }}-cli${{ steps.cli.outputs.major }}-${{ hashFiles('web/*/control/package.json', 'web/*/scripts/**') }}
+        restore-keys: web-npm-${{ runner.os }}-cli${{ steps.cli.outputs.major }}-
+
+    - name: Build the site
+      shell: bash
+      env:
+        JDE_BASH: ${{ github.workspace }}
+        RELEASE: ${{ inputs.release }}
+      run: |
+        npm install -g @angular/cli@${{ steps.cli.outputs.major }}
+        release=""; if [ "$RELEASE" = true ]; then release=--release; fi
+        bash web/opc/scripts/setup.sh $release
+
+    - name: Upload the site
+      if: inputs.artifact != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: web/opc/my-workspace/dist/my-workspace/browser
+        if-no-files-found: error
+        retention-days: 1 # only the job that packs it needs it

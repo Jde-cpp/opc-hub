@@ -1,6 +1,7 @@
 @use 'sass:map';
 @use '../../../styles/section-tints' as tints;
 @use '../../../styles/section-page' as section;
+@use './columns';
 
 .page {
 	display: flex;
@@ -66,8 +67,7 @@
 	grid-template-columns: repeat( 4, minmax(0, 1fr) );
 	gap: 16px;
 
-	@media (max-width: 1000px) { grid-template-columns: repeat( 2, minmax(0, 1fr) ); }
-	@media (max-width: 540px) { grid-template-columns: minmax(0, 1fr); }
+	@include columns.narrowing;
 }
 
 // --tint is the section's colour (set per section below);  every shade here is mixed from it and a theme token, so the

@@ -1,0 +1,15 @@
+@use '@angular/material' as mat;
+
+// A theme of the theme picker's:  Material's system tokens from a primary and a tertiary palette, light or dark.  The one place
+// the typography and the density are set.  @include it in `html`.
+@mixin theme( $type, $primary, $tertiary ) {
+	@include mat.theme((
+		color: (
+			theme-type: $type,
+			primary: $primary,
+			tertiary: $tertiary,
+		),
+		typography: Roboto,
+		density: 0,
+	));
+}

@@ -1,11 +1,8 @@
 import { Component, computed, effect, signal, inject } from '@angular/core';
 import { SelectionModel } from '@angular/cdk/collections';
-import { CommonModule } from '@angular/common';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 
-import { arraysEqual, cloneClassArray, DetailPage, IGraphQL, Properties, QLSelector, SlugRow, toIdArray } from 'jde-framework';
+import { arraysEqual, cloneClassArray, DetailActions, DetailPage, IGraphQL, Properties, QLSelector, SlugRow, toIdArray } from 'jde-framework';
 
 import { RolePK } from '../../model/role';
 import { Permission } from '../../model/permission';
@@ -18,11 +15,10 @@ import { userTableSettings } from './user-table-settings';
 
 @Component( {
     templateUrl: './user-detail.html',
-		styleUrls: ['./user-detail.scss'],
 		//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
 		host: {class:'main-content mat-drawer-container my-content user-detail'},
-    imports: [CommonModule, MatButtonModule, MatIcon, MatTabsModule, Properties, KeyProperties, QLSelector, EffectiveRights]
+    imports: [DetailActions, MatTabsModule, Properties, KeyProperties, QLSelector, EffectiveRights]
 })
 export class UserDetail extends DetailPage<User>{
 	constructor(){
@@ -45,10 +41,6 @@ export class UserDetail extends DetailPage<User>{
 	}
 	protected override upsert():User{
 		return new User( { ...this.properties(), permissions: this.permissions(), roles: this.roles().selected, groups: toIdArray(this.groups().selected) } );
-	}
-
-	public copy( existing:User ):User{
-		return new User( existing );
 	}
 
 	get user(){ return this.row; }//the template's name for it

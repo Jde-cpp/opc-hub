@@ -10,7 +10,7 @@ export class TableSchema extends MetaObject{
 		this.enums = j.enums;
 	}
 	get columns():string{
-		var result = '';
+		let result = '';
 		for( const column of this.nonListFields )
 			result += column.type.underlyingKind==FieldKind.OBJECT ? `${column.type.underlyingVariableName}{ id name } ` : `${column.name} `;
 

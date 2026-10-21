@@ -41,7 +41,7 @@ python3 .claude/skills/md-file-refs/linkify.py --dry-run <doc>.md
 - **Idempotent** — existing links are masked before substitution, so re-running after edits only picks up new refs. Run it again after any edit pass that adds refs.
 - **Shortens labels on links already in the doc**, so prose may cite full paths and still come out short. A label is only rewritten when it resolves to the link's own target; hand-written labels (`[the login catch](…)`) are left alone.
 - **Fenced code blocks are skipped**, so sample output containing paths is left alone.
-- **Ambiguous basenames are left untouched and reported** (e.g. `Common.proto` exists in both `libs/app/shared/proto/` and `web/opc/proto/`). Resolve those by hand — write the disambiguating path in the prose (`libs/app/shared/proto/Common.proto`) and re-run, or link that one manually.
+- **Ambiguous basenames are left untouched and reported** (e.g. `access_role_add.sql` exists in both `libs/access/config/sql/mysql/` and `libs/access/config/sql/sqlServer/`). Resolve those by hand — write the disambiguating path in the prose (`libs/access/config/sql/mysql/access_role_add.sql`) and re-run, or link that one manually.
 - `--check` also flags anchors past EOF, which is the cheap signal that a doc's line numbers went stale against the working tree.
 
 Refs that aren't in backticks (`the QL funnel at :102-106`) are invisible to the script — link those by hand if they matter.

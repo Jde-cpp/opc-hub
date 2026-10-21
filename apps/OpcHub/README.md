@@ -114,6 +114,9 @@ The settings they ship:
    Server) through Windows Firewall; a current-user install cannot open a port, so it listens on loopback only (no firewall
    prompt) and the products answer that machine alone - for another machine, install for all users, or set
    `listenAddress: null` in its `args/install-user` and have an administrator open the ports.
+   `https://<hub>:1967/` works too:  the hub answers TLS on the same port, and a page browsed that way calls it over https
+   and wss.  Its certificate is self-signed for `localhost`, the machine's name and `127.0.0.1` (or your own pair -
+   [`setup/README.md`](setup/README.md) "Notes"), so another machine's browser has to trust it first.
 3) Log in.  Which login you have depends on step 1's components - [`setup/README.md`](setup/README.md) "First login":
    - **With the OPC UA Server component**, it is **Google**, seeded ready to use along with the bundled server as the
      default connection.  The site's origin must be registered under the OAuth client id the hub serves, which the

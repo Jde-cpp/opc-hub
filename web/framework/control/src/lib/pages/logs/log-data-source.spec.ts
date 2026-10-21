@@ -6,7 +6,7 @@ import { Entry, LogEntries, LogView } from './log-entry';
 
 const guid = ( n:number )=>new Guid( n.toString(16).padStart(32, '0') );
 const entry = ( line:number, template:number ):Entry=>( {templateId: guid(template), argIds: [], level: ELogLevel.Information, tags: [], line, time: new Date(0), userId: 0, fileId: guid(1), functionId: guid(1), hidden: false} );
-const noFilter = { messageIds: [], message: undefined, level: ELogLevel.NoLog };
+const noFilter = { messageIds: [], level: ELogLevel.NoLog };
 
 //angular-review #44: filterData's selection-follow was dead code - it paged to 0 whatever was selected, so hiding a message
 //template scrolled the selected row out of view.  Six entries, two per page; the pages the source publishes are captured.
@@ -119,10 +119,50 @@ describe( 'LogDataSource.addLoadedEntries', ()=>{
 		}
 	} );
 
-	it( 'merges the page\'s strings before it filters the page', ()=>{
-		const ds = new LogDataSource( signal({limit: 10, sort: [{active: 'time', direction: 'desc'}]} as unknown as LogView) );
-		ds.filter = {...noFilter, message: "disk"};
-		ds.addLoadedEntries( read([[1,10]], [[guid(10).toString(), "disk full"]]) );
-		expect( ds.allEntries[0].hidden ).toBe( false );
+	//by message, a template not merged yet reads as "" - both rows would tie and keep the order they arrived in
+	it( 'merges the page\'s strings before it sorts the page', ()=>{
+		const ds = new LogDataSource( signal({limit: 10, sort: [{active: 'message', direction: 'asc'}]} as unknown as LogView) );
+		ds.addLoadedEntries( {entries: [entry(1, 10), entry(2, 11)], strings: new Map([[guid(10).toString(), "disk full"], [guid(11).toString(), "disk added"]])} as LogEntries );
+		expect( lines(ds) ).toEqual( [2, 1] );
+	} );
+} );
+
+//reviews/angular-refactor.md B7:  the Next button steps to the next row of the selected one's message.  A miss used to drop
+//the selection first, so LogDetail's read-on found nothing selected to look past.  Templates 10 11 10 11 10 12, two a page.
+describe( 'LogDataSource.selectNext', ()=>{
+	const create = ()=>{
+		const ds = new LogDataSource( signal({limit: 2} as unknown as LogView) );
+		[10, 11, 10, 11, 10, 12].forEach( (template, line)=>ds.allEntries.push(entry(line, template)) );
+		const pages:number[][] = [];
+		ds.connect( null as any ).subscribe( p=>pages.push(p.map(e=>e.line)) );
+		return { ds, pages, selected: ()=>ds.allEntries.filter( e=>e.selected ).map( e=>e.line ) };
+	};
+
+	it( 'selects the next row of the template and pages to it', ()=>{
+		const { ds, pages, selected } = create();
+		ds.allEntries[0].selected = true;
+		expect( ds.selectNext() ).toBe( true );
+		expect( selected() ).toEqual( [2] );
+		expect( pages.at(-1) ).toEqual( [2, 3] );
+	} );
+
+	it( 'passes over a hidden row of the template', ()=>{
+		const { ds, pages, selected } = create();
+		ds.allEntries[0].selected = true;
+		ds.allEntries[2].hidden = true;
+		expect( ds.selectNext() ).toBe( true );
+		expect( selected() ).toEqual( [4] );
+		expect( pages.at(-1) ).toEqual( [3, 4] );//visible index 3
+	} );
+
+	it( 'keeps the selection when no later row of the template is loaded', ()=>{
+		const { ds, selected } = create();
+		ds.allEntries[3].selected = true;
+		expect( ds.selectNext() ).toBe( false );
+		expect( selected() ).toEqual( [3] );
+	} );
+
+	it( 'does nothing with no row selected', ()=>{
+		expect( create().ds.selectNext() ).toBe( false );
 	} );
 } );

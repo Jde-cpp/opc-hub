@@ -1,5 +1,4 @@
-import { CommonModule } from '@angular/common';
-import { Component, OnInit, ViewChild, input } from '@angular/core';
+import { Component, OnInit, input, viewChild } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIcon } from '@angular/material/icon';
@@ -7,6 +6,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTable, MatTableModule } from '@angular/material/table';
 import { MatTooltip } from '@angular/material/tooltip';
 import { LogEntries } from '../log-entry';
+import { levelFromWire, levelToWire } from '../log-levels';
 import { SeverityPicker } from '../../../shared/severity-picker/severity-picker';
 
 import { ELogLevel } from 'jde-proto/Log';
@@ -24,7 +24,7 @@ export type TagRow = { tag:string, level:ELogLevel, override:boolean, configured
 	selector: 'log-tags',
 	templateUrl: './log-tags.html',
 	styleUrls: ['./log-tags.scss'],
-	imports: [CommonModule, MatButtonModule, MatFormFieldModule, MatIcon, MatSelectModule, MatTableModule, MatTooltip, SeverityPicker]
+	imports: [MatButtonModule, MatFormFieldModule, MatIcon, MatSelectModule, MatTableModule, MatTooltip, SeverityPicker]
 })
 export class LogTags implements OnInit{
 	ngOnInit(){
@@ -56,7 +56,7 @@ export class LogTags implements OnInit{
 		row.tag = tag;
 		if( isNew ){
 			this.dataSource.push( {...LogTags.emptyRow} );
-			this.table.renderRows();
+			this.table().renderRows();
 		}
 	}
 	//removing an override: a configured tag goes back to the level it came in with; a stored override's row goes, the
@@ -78,7 +78,7 @@ export class LogTags implements OnInit{
 			return;
 		}
 		this.dataSource.splice( this.dataSource.indexOf(row), 1 );
-		this.table.renderRows();
+		this.table().renderRows();
 	}
 	tagName( tag:string ):string{ return LogEntries.tagName(tag); }
 	selectableTags( row:TagRow ):string[]{
@@ -91,7 +91,7 @@ export class LogTags implements OnInit{
 	entries():Record<string,string>{
 		return Object.fromEntries( this.dataSource
 			.filter( r=>r.tag && r.override )
-			.map( r=>[r.tag, LogTags.toWire(r.level)] ) );
+			.map( r=>[r.tag, levelToWire(r.level)] ) );
 	}
 
 	tags = input.required<TagLevel[]>();
@@ -100,11 +100,9 @@ export class LogTags implements OnInit{
 	static emptyRow:TagRow = { tag: "", level: ELogLevel.Information, override: true };//a row the user adds is an override once it has a tag.
 	static defaultTag = "default";
 	static toRow( t:TagLevel ):TagRow{
-		const level = LogTags.fromWire( t.level );
+		const level = levelFromWire( t.level );
 		return { tag: t.tag, level, override: t.override, configured: t.override ? undefined : level };
 	}
-	static toWire( l:ELogLevel ):string{ return l==ELogLevel.NoLog || l==ELogLevel.LogLevelNone ? "None" : ELogLevel[l]; }
-	static fromWire( s:string ):ELogLevel{ return s=="None" ? ELogLevel.NoLog : (<any>ELogLevel)[s] ?? ELogLevel.Information; }
-	@ViewChild('table', {static: true}) table!: MatTable<TagRow>;
+	table = viewChild.required<MatTable<TagRow>>( 'table' );
 	#storedDefault = false;//the instance has a saved Default override - removing it is a `default: null` on save
 }

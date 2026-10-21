@@ -1,14 +1,3 @@
-//the vitest environment provides window/document but no localStorage - back the bare-global references with an
-//in-memory one BEFORE importing jde-spa/jde-framework (see the site specs).
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
 import { GatewayCardStatus } from './gateway-card-status';
@@ -26,7 +15,6 @@ const down = new HttpErrorResponse( {status: 0, statusText: 'Unknown Error'} );
 
 describe( 'GatewayCardStatus', ()=>{
 	const status = ( gateways:unknown[] )=>{
-		TestBed.resetTestingModule();
 		TestBed.configureTestingModule( {providers: [{provide: GATEWAY_SERVICE, useValue: {gateways: ()=>Promise.resolve(gateways)}}]} );
 		return TestBed.inject( GatewayCardStatus ).status();
 	};

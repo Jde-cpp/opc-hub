@@ -50,7 +50,6 @@ export class Permission{
 				y.push( new Mutation(Acl.typeName, undefined,
 					{identity:{ id:identityId },permissionRight:{allowed:mod.allowed ?? 0, denied:mod.denied ?? 0, resource:{id:mod.resource.id}}},
 					MutationType.Create/*,permissionRight{id}*/) );
-				console.log( y[0].toString() );
 			}
 		}
 		return y;

@@ -73,6 +73,6 @@ export const appConfig: ApplicationConfig = {
 		{provide: HELP_TOPICS, useValue: siteAbout, multi: true},
 		//and after them on /help, the cards that leave the site
 		{provide: HELP_LINKS, useValue: siteLinks, multi: true},
-		//OpcNodeRouteService/AuthGuard need no string token - every consumer injects the class, which providedIn:'root' already supplies
+		//AuthGuard needs no string token - every consumer injects the class, which providedIn:'root' already supplies
 	]
 };

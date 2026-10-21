@@ -1,41 +1,33 @@
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, Router } from '@angular/router';
-import { ComponentPageTitle } from 'jde-spa';
+import { Router } from '@angular/router';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGRAPHQL } from '../../../services/graphql';
 import { TableSchema } from '../../../model/ql/schema/table-schema';
 import { Properties } from './properties';
+import { pageTitleStub, provideRoute, routerStub } from 'jde-spa/testing';
+import { required, scalar, schemaOf, snackbarStub, Widget } from 'jde-framework/testing';
 
 //The fields listened on (keyup), so a right-click paste, a drag-drop or autofill changed the control without ever
 //reaching the record - Save stayed disabled and the edit was lost.  (input) fires for all of them; these dispatch only
 //that event, never a key, to pin it.
-class Widget{
-	constructor( o:any ){ Object.assign( this, o ); }
-	[key:string]:any;
-}
-const schema = new TableSchema( { name: "Widget", enums: new Map(), fields: [
-	{ name: "name", type: {kind: "NON_NULL", ofType: {kind: "SCALAR", name: "String"}} },
-	{ name: "description", type: {kind: "SCALAR", name: "String"} },
-	{ name: "url", type: {kind: "SCALAR", name: "String"} }
-] } );
+const schema = schemaOf( "Widget", required("name"), scalar("description"), scalar("url") );
 
-const create = ()=>{
-	TestBed.resetTestingModule();
+//The form over `on`, editing `record`, with the other `inputs` set.
+const render = ( on:TableSchema, record:Widget, inputs:Record<string,unknown>={} )=>{
 	TestBed.configureTestingModule({ providers: [
-		{ provide: ActivatedRoute, useValue: {} },
-		{ provide: Router, useValue: {} },
-		{ provide: ComponentPageTitle, useValue: {} },
-		{ provide: SnackbarService, useValue: {} },
+		provideRoute(),
+		{ provide: Router, useValue: routerStub() },
+		pageTitleStub,
+		{ provide: SnackbarService, useValue: snackbarStub() },
 		{ provide: IGRAPHQL, useValue: {} }
 	]});
 	const fixture = TestBed.createComponent( Properties );
-	fixture.componentRef.setInput( 'ctor', Widget );
-	fixture.componentRef.setInput( 'schema', schema );
-	fixture.componentRef.setInput( 'type', 'widget' );
-	fixture.componentRef.setInput( 'record', new Widget({name: "w", description: "d", url: "opc.tcp://old"}) );
+	for( const [name, value] of Object.entries({ctor: Widget, schema: on, type: 'widget', record, ...inputs}) )
+		fixture.componentRef.setInput( name, value );
 	fixture.detectChanges();
 	return fixture;
 };
+const create = ()=>render( schema, new Widget({name: "w", description: "d", url: "opc.tcp://old"}) );
 const paste = ( control:HTMLInputElement|HTMLTextAreaElement, value:string )=>{
 	control.value = value;
 	control.dispatchEvent( new Event('input', {bubbles: true}) );
@@ -66,30 +58,8 @@ describe( 'Properties picks up a pasted value', ()=>{
 //`order` input: listed fields first in that order, the rest alphabetical.  The old comparator ranked an unlisted field
 //equal to the last listed one, so where the alphabetical tail began was up to the sort.
 describe( 'Properties field order', ()=>{
-	const wide = new TableSchema( { name: "Widget", enums: new Map(), fields: [
-		{ name: "url", type: {kind: "SCALAR", name: "String"} },
-		{ name: "name", type: {kind: "NON_NULL", ofType: {kind: "SCALAR", name: "String"}} },
-		{ name: "certificateUri", type: {kind: "SCALAR", name: "String"} },
-		{ name: "slug", type: {kind: "NON_NULL", ofType: {kind: "SCALAR", name: "String"}} },
-		{ name: "description", type: {kind: "SCALAR", name: "String"} },
-		{ name: "defaultBrowseNs", type: {kind: "SCALAR", name: "Int"} }
-	] } );
-	const names = ( order?:string[] )=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {} }, { provide: Router, useValue: {} }, { provide: ComponentPageTitle, useValue: {} },
-			{ provide: SnackbarService, useValue: {} }, { provide: IGRAPHQL, useValue: {} }
-		]});
-		const fixture = TestBed.createComponent( Properties );
-		fixture.componentRef.setInput( 'ctor', Widget );
-		fixture.componentRef.setInput( 'schema', wide );
-		fixture.componentRef.setInput( 'type', 'widget' );
-		fixture.componentRef.setInput( 'record', new Widget({name: "w"}) );
-		if( order )
-			fixture.componentRef.setInput( 'order', order );
-		fixture.detectChanges();
-		return fixture.componentInstance.fields().map( f=>f.name );
-	};
+	const wide = schemaOf( "Widget", scalar("url"), required("name"), scalar("certificateUri"), required("slug"), scalar("description"), scalar("defaultBrowseNs", "Int") );
+	const names = ( order?:string[] )=>render( wide, new Widget({name: "w"}), order ? {order} : {} ).componentInstance.fields().map( f=>f.name );
 
 	it( 'defaults to Id, Name, then alphabetical', ()=>{
 		expect( names() ).toEqual( ["slug", "name", "certificateUri", "defaultBrowseNs", "description", "url"] );
@@ -104,22 +74,7 @@ describe( 'Properties field order', ()=>{
 //fields itself; everything unlisted keeps the split.
 describe( 'Properties field labels', ()=>{
 	it( 'use the override where given and the camelCase split elsewhere', ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {} }, { provide: Router, useValue: {} }, { provide: ComponentPageTitle, useValue: {} },
-			{ provide: SnackbarService, useValue: {} }, { provide: IGRAPHQL, useValue: {} }
-		]});
-		const fixture = TestBed.createComponent( Properties );
-		fixture.componentRef.setInput( 'ctor', Widget );
-		fixture.componentRef.setInput( 'schema', new TableSchema( { name: "Widget", enums: new Map(), fields: [
-			{ name: "slug", type: {kind: "NON_NULL", ofType: {kind: "SCALAR", name: "String"}} },
-			{ name: "certificateUri", type: {kind: "SCALAR", name: "String"} },
-			{ name: "url", type: {kind: "SCALAR", name: "String"} }
-		] } ) );
-		fixture.componentRef.setInput( 'type', 'widget' );
-		fixture.componentRef.setInput( 'record', new Widget({name: "w"}) );
-		fixture.componentRef.setInput( 'displayNames', {url: "URL"} );
-		fixture.detectChanges();
+		const fixture = render( schemaOf("Widget", required("slug"), scalar("certificateUri"), scalar("url")), new Widget({name: "w"}), {displayNames: {url: "URL"}} );
 		const labels = [...fixture.nativeElement.querySelectorAll('mat-label')].map( (l:Element)=>l.textContent!.trim() );
 		expect( labels ).toEqual( ["Slug", "Certificate Uri", "URL"] );
 	} );
@@ -140,18 +95,7 @@ describe( 'Properties required markers', ()=>{
 //`readonlyFields` input: a key the server will not update is shown but not editable.
 describe( 'Properties readonly fields', ()=>{
 	it( 'hold the listed field and leave the rest editable', ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {} }, { provide: Router, useValue: {} }, { provide: ComponentPageTitle, useValue: {} },
-			{ provide: SnackbarService, useValue: {} }, { provide: IGRAPHQL, useValue: {} }
-		]});
-		const fixture = TestBed.createComponent( Properties );
-		fixture.componentRef.setInput( 'ctor', Widget );
-		fixture.componentRef.setInput( 'schema', schema );
-		fixture.componentRef.setInput( 'type', 'widget' );
-		fixture.componentRef.setInput( 'record', new Widget({name: "w", description: "d", url: "opc.tcp://old"}) );
-		fixture.componentRef.setInput( 'readonlyFields', ['url'] );
-		fixture.detectChanges();
+		const fixture = render( schema, new Widget({name: "w", description: "d", url: "opc.tcp://old"}), {readonlyFields: ['url']} );
 		expect( fixture.nativeElement.querySelector('input[type=url]').readOnly ).toBe( true );
 		expect( fixture.nativeElement.querySelector('textarea').readOnly ).toBe( false );
 	} );

@@ -8,7 +8,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { errorText, ProtoUtils, Timestamp } from 'jde-framework';
+import { errorMessage, ProtoUtils, Timestamp } from 'jde-framework';
 import { editRefusedAll, HistEditArgs, HistEditKind, HistEditResult, HistTime, qlTime } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
@@ -172,7 +172,7 @@ export class HistEditDialog{
 			this.data.names?.( [...result.values.map( v=>v.status ), ...result.nodes.map( n=>n.status )] );
 		}
 		catch( e ){
-			this.error.set( errorText( e ) ?? "Unknown error" );
+			this.error.set( errorMessage(e) );
 		}
 		finally{
 			this.busy.set( false );

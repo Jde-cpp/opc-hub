@@ -1,9 +1,8 @@
-import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit, ViewChild, computed, input, output, signal, inject } from '@angular/core';
+import { Component, OnInit, computed, input, output, signal, inject, viewChildren } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatToolbar } from '@angular/material/toolbar';
-import { IENVIRONMENT, IEnvironment, ProfileStore } from 'jde-spa';
+import { IENVIRONMENT, persistedTabIndex } from 'jde-spa';
 import { LogEntries } from '../log-entry';
 import { LogTags, TagLevel } from '../tags/log-tags';
 import { IGraphQL } from '../../../services/graphql';
@@ -50,57 +49,58 @@ export const overridesOf = ( rows:TagLevel[] ):TagLevels=>Object.fromEntries( ro
 export const saveHint = ( instanceAnswered:boolean ):string=>instanceAnswered
 	? "Changes are pushed to the running instance at once and saved for its next start."
 	: "The instance did not answer. Changes are saved and take effect when it next starts.";
+//The three logs an instance writes, in tab order.  `type` is the field instanceTagLevel reads and writes each one under.
+const sinkTypes = [ {type: "binary", label: "Binary"}, {type: "appServer", label: "Remote"}, {type: "text", label: "Text"} ];
+//a tab:  the rows it shows, the line above them, and the overrides as loaded - what Save diffs the edited rows against
+type Sink = { type:string, label:string, rows:TagLevel[], note:string|null, snapshot:TagLevels };
 
 @Component({
 	selector: 'log-settings',
 	templateUrl: './log-settings-panel.html',
 	styleUrls: ['./log-settings-panel.scss'],
-	imports: [CommonModule, MatButtonModule, MatTabsModule, MatToolbar, LogTags]
+	imports: [MatButtonModule, MatTabsModule, MatToolbar, LogTags]
 })
-export class LogSettingsPanel implements OnInit, OnDestroy{
-	private snackBar:SnackbarService = inject( SnackbarService );
-	private environment:IEnvironment = inject( IENVIRONMENT );
+export class LogSettingsPanel implements OnInit{
+	#snackBar = inject( SnackbarService );
+	#environment = inject( IENVIRONMENT );
 
 	async ngOnInit(){ await this.load(); }
-	ngOnDestroy(){ ProfileStore.setTabIndex( 'log-settings', this.tabIndex() ); }
 
 	async load(){
 		this.isLoading.set( true );
 		this.error.set( null );
 		try{
-			const log = (m:string)=>console.log(m);
 			const [setting, levels] = await Promise.all( [
-				this.service().querySingle<{tags:Record<string,number>}>( "logSetting{tags}", null, log ),
-				this.service().querySingle<InstanceLevels>( `instanceTagLevel( id:${this.instanceId()} ){ text binary appServer running }`, null, log )
+				this.service().querySingle<{tags:Record<string,number>}>( "logSetting{tags}" ),
+				this.service().querySingle<InstanceLevels>( `instanceTagLevel( id:${this.instanceId()} ){ ${sinkTypes.map( s=>s.type ).join( ' ' )} running }` )
 			] );
 			this.catalogue.set( ["default", ...Object.keys(setting?.tags ?? {}).sort(byName)] );
 			const running = levels?.running ?? null;
 			this.runningUnavailable.set( running===null );
-			for( const type of LogSettingsPanel.sinks ){
-				const sink = mergeSink( running?.[type], flatten(<LevelTags|undefined>levels?.[type]) );
-				this.sinks[type] = sink;
-				this.snapshot[type] = overridesOf( sink );
+			this.sinks.set( sinkTypes.map( ({type, label})=>{
+				const rows = mergeSink( running?.[type], flatten(<LevelTags|undefined>levels?.[type]) );
 				//an answer with no `default` is a logger the instance does not have - neither the hub nor a bare app server runs a remote
 				//log.  An instance that leaves the column out (undefined) is unknown, not absent.
 				const reported = running?.[type];
-				this.sinkNote[type] = reported && !(LogTags.defaultTag in reported)
-					? `This instance runs no ${LogSettingsPanel.sinkNames[type]} log. The rows are overrides saved for it; they apply to nothing.`
+				const note = reported && !(LogTags.defaultTag in reported)
+					? `This instance runs no ${label.toLowerCase()} log. The rows are overrides saved for it; they apply to nothing.`
 					: null;
-			}
+				return { type, label, rows, note, snapshot: overridesOf(rows) };
+			}) );
 			this.isLoading.set( false );
 		}
 		catch( e ){
 			this.error.set( errorMessage(e, "Could not load log settings.") );//errorMessage, not `${e}`: an HttpErrorResponse and a {error:IError} rejection both render "[object Object]".  Without this the panel stays behind isLoading and renders blank
 			this.isLoading.set( false );
-			this.snackBar.exception( "Could not load log settings.", e );
+			this.#snackBar.exception( "Could not load log settings.", e );
 		}
 	}
 	async save(){
 		try{
 			const args:Record<string,unknown> = {};
-			for( const [type, child] of <[string,LogTags][]>[ ["text", this.text], ["binary", this.binary], ["appServer", this.remote] ] ){
-				const current = child.entries();
-				const previous = this.snapshot[type];
+			const editors = this.editors();//one per tab, in the order of sinks()
+			for( const [i, {type, snapshot: previous}] of this.sinks().entries() ){
+				const current = editors[i].entries();
 				const diff:Record<string,string|null> = {};
 				for( const [tag,level] of Object.entries(current) )
 					if( previous[tag]!=level )
@@ -113,7 +113,7 @@ export class LogSettingsPanel implements OnInit, OnDestroy{
 					args[type] = Object.entries(diff).map( ([tag,level])=>({ tags: tag.split(tagSeparator), level }) );
 			}
 			if( Object.keys(args).length ){
-				await this.service().mutate( new Mutation('instanceTagLevel', this.instanceId(), args, MutationType.Update), (m)=>console.log(m) );
+				await this.service().mutate( new Mutation('instanceTagLevel', this.instanceId(), args, MutationType.Update) );
 				//re-read rather than keep the edited rows: a removed override's tag is back at its configured level (install-issues
 				//#21), which only the instance can say, and an override it applied reads at the level it applied.
 				await this.load();
@@ -121,7 +121,7 @@ export class LogSettingsPanel implements OnInit, OnDestroy{
 			this.onSave.emit();
 		}
 		catch( e ){
-			this.snackBar.exception( "Could not save log settings.", e );
+			this.#snackBar.exception( "Could not save log settings.", e );
 		}
 	}
 	async cancel(){
@@ -134,11 +134,8 @@ export class LogSettingsPanel implements OnInit, OnDestroy{
 	onSave = output<void>();
 	onCancel = output<void>();
 
-	static sinks = ["text", "binary", "appServer"];
-	static sinkNames:Record<string,string> = { text: "text", binary: "binary", appServer: "remote" };//as the tabs are labelled.
-	sinks:{ [type:string]:TagLevel[] } = { text:[], binary:[], appServer:[] };
-	sinkNote:{ [type:string]:string|null } = { text:null, binary:null, appServer:null };
-	snapshot:{ [type:string]:TagLevels } = { text:{}, binary:{}, appServer:{} };
+	sinks = signal<Sink[]>( [] );
+	editors = viewChildren( LogTags );
 	runningUnavailable = signal<boolean>( false );
 	saveHint = computed<string>( ()=>saveHint(!this.runningUnavailable()) );
 	catalogue = signal<string[]>( [] );
@@ -146,16 +143,12 @@ export class LogSettingsPanel implements OnInit, OnDestroy{
 	//on the text sink alone - the one that shares the local process - and never on a production build.
 	textCatalogue = computed<string[]>( ()=>{
 		const y = this.catalogue();
-		if( this.environment.get<boolean>("production") || !y.length || y.includes(LogSettingsPanel.breakTag) )
+		if( this.#environment.get<boolean>("production") || !y.length || y.includes(LogSettingsPanel.breakTag) )
 			return y;
 		return [ y[0], ...y.slice(1).concat(LogSettingsPanel.breakTag).sort(byName) ];//load() heads the catalogue with 'default', which is not a tag and stays first
 	});
 	error = signal<string|null>( null );
 	isLoading = signal<boolean>( true );
-	tabIndex = signal<number>( ProfileStore.tabIndex('log-settings') );
+	tabIndex = persistedTabIndex( 'log-settings' );
 	static breakTag = "break";
-
-	@ViewChild('binary') binary!: LogTags;
-	@ViewChild('remote') remote!: LogTags;
-	@ViewChild('text') text!: LogTags;
 }

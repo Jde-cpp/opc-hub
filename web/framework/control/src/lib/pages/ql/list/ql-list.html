@@ -1,49 +1,20 @@
 @if( !isLoading() ) {
 	@if( isSettings() ){
-		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [reservedNames]=systemViewNames() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
+		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns() [view]=view() [schema]=schema() [excludedColumns]=excludedColumns() [reservedNames]=profile().systemNames() (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)=onViewCancel()></ql-list-settings>
 	} @else {
 		<ng-container>
-			<mat-toolbar>
-				<div class="bar-left">
-					@if( canAdd() && !selector() ){
-						<button [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
-					}
-				</div>
-				<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
-					<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="isRefreshing()" (click)="onRefresh()">
-						<mat-icon>refresh</mat-icon>
-					</button>
-					<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="resolvedData().profile.currentViewIndex" (change)="onChangeView($event.value)">
-						@for (view of resolvedData().profile.views; track view; let i=$index) {
-							<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
-						}
-					</mat-button-toggle-group>
-					<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="isSettings.set(true)">
-						<mat-icon>tune</mat-icon>
-					</button>
-				</div>
-				<div class="bar-right">
-					@if( !paged() ){<!--one page:  the count is exact.  on more, the pager under the table carries the range instead-->
-						<span class="row-count">{{ data().length }} {{ data().length==1 ? "row" : "rows" }}</span>
-					}
-				</div>
-			</mat-toolbar>
-			<mat-progress-bar class="refresh-bar" [mode]="isRefreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+			<view-toolbar [views]="profile()" [refreshing]="isRefreshing()" [count]="paged() ? undefined : data().length" (viewChange)="onChangeView($event)" (edit)="isSettings.set(true)" (refresh)="onRefresh()"><!--no count on more than a page:  the pager under the table carries the range instead-->
+				@if( canAdd() && !selector() ){
+					<button left [matButton]="addFilled() ? 'filled' : 'tonal'" (click)="onAdd()"><mat-icon>add</mat-icon>Add</button><!--filled only on a genuinely empty list, where Add is the one useful action (addFilled); showEmpty suppresses the flash while a reload has the rows cleared-->
+				}
+			</view-toolbar>
 			<div style="align-content: center; margin: auto;  text-align: center">
-				<ql-table [dataSource]=data [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+				<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
 			</div>
 			@if( failure(); as f ){
-				<div class="jde-empty" role="alert">
-					<mat-icon aria-hidden="true">{{ f.kind=='forbidden' ? 'lock' : 'error_outline' }}</mat-icon>
-					<p class="title">{{ f.title }}</p>
-					@if( f.detail ){ <p class="detail">{{ f.detail }}</p> }
-					<div class="actions">
-						@if( f.kind!='forbidden' ){
-							<button matButton="tonal" (click)="onRefresh()"><mat-icon>refresh</mat-icon>Retry</button>
-						}
-						@if( helpRoute(); as help ){ <a matButton [routerLink]="help">Help</a> }
-					</div>
-				</div>
+				<failure-state [failure]=f (retry)="onRefresh()">
+					@if( helpRoute(); as help ){ <a matButton [routerLink]="help">Help</a> }
+				</failure-state>
 			}
 			@else if( showEmpty() ){
 				<div class="jde-empty" role="status">

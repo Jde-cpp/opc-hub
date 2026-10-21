@@ -1,33 +1,18 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
-import { TableSchema } from '../../../../model/ql/schema/table-schema';
 import { View, ViewType } from '../../../../model/ql/view';
 import { QLListSettings } from './ql-list-settings';
 import { QLListSettingsDisplay } from './ql-list-settings-display/ql-list-settings-display';
+import { id, required, scalar, schemaOf } from 'jde-framework/testing';
+import { stable } from 'jde-spa/testing';
 
-const schema = new TableSchema( { name: "User", fields: [
-	{ name: "id", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "ID" } } },
-	{ name: "name", type: { kind: "NON_NULL", name: null, ofType: { kind: "SCALAR", name: "String" } } },
-	{ name: "slug", type: { kind: "SCALAR", name: "String" } },
-	{ name: "deleted", type: { kind: "SCALAR", name: "DateTime" } }
-] } );
+const schema = schemaOf( "User", id(), required("name"), scalar("slug"), scalar("deleted", "DateTime") );
 
 //review3 C10: the View Name field was the workspace's last [(ngModel)].  It binds [value]/(input) against the `name`
 //signal now - the same signal disableSave() and getView() already read - so this pins that the round trip still works.
 describe( 'QLListSettings view name', ()=>{
 	const create = ()=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( QLListSettings );
-		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.name = "Mine";//the settings-shaped ctor arg carries no name; onViewSave assigns it the same way
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
@@ -65,10 +50,8 @@ describe( 'QLListSettings view name', ()=>{
 //view for the session and was never persisted.  A host's system view names are reserved now.
 describe( 'QLListSettings reserved names', ()=>{
 	const create = ( name:string|undefined, type:ViewType )=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( QLListSettings );
-		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.name = name;
 		view.type = type;
 		fixture.componentRef.setInput( 'view', view );
@@ -106,10 +89,8 @@ describe( 'QLListSettings reserved names', ()=>{
 //reviews-issue/231-paging.md #15:  a node's Children are not read a page at a time, so their Display tab offers no Page Size
 describe( 'QLListSettingsDisplay Page Size', ()=>{
 	const create = ( paged?:boolean )=>{
-		TestBed.resetTestingModule();
-		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( QLListSettingsDisplay );
-		const view = new View( {columns: ["name"], sort: "name"}, schema );
+		const view = View.fromTable( {columns: ["name"], sort: "name"}, schema );
 		view.limit = 40;
 		fixture.componentRef.setInput( 'view', view );
 		fixture.componentRef.setInput( 'schema', schema );
@@ -129,5 +110,28 @@ describe( 'QLListSettingsDisplay Page Size', ()=>{
 		const fixture = create( false );
 		expect( pageSize(fixture) ).toBeNull();
 		expect( fixture.componentInstance.pageSize() ).toBe( 40 );//what QLListSettings.getView writes back
+	} );
+} );
+
+//A24:  the three tabs and their tables are signal queries - getView reads every tab, and a row added on one re-renders its table.
+describe( 'QLListSettings tabs', ()=>{
+	it( 'builds the view from all three tabs', async ()=>{
+		TestBed.configureTestingModule({});
+		const fixture = TestBed.createComponent( QLListSettings );
+		fixture.componentRef.setInput( 'view', View.fromTable( {columns: ["name", "slug"], sort: "name"}, schema ) );
+		fixture.componentRef.setInput( 'schema', schema );
+		fixture.componentRef.setInput( 'columns', {name: "Name", slug: "Slug"} );
+		fixture.componentRef.setInput( 'suggestions', {} );
+		const settings = fixture.componentInstance;
+		settings.ngOnInit();
+		await stable( fixture, 1 );
+		settings.filter().onAddFilter( "slug" );
+		const sort = settings.sort();
+		sort.updateSort( sort.dataSource.at(-1)!, "slug" );
+		fixture.detectChanges();
+		const built = settings.getView( true );
+		expect( built.fieldFilters.map( f=>f.field.name ) ).toEqual( ["slug"] );
+		expect( built.sort.map( s=>s.active ) ).toEqual( ["name", "slug"] );
+		expect( built.fields.map( f=>f.name ) ).toEqual( expect.arrayContaining(["name", "slug"]) );
 	} );
 } );

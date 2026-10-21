@@ -2,7 +2,7 @@
 <mat-dialog-content>
 	<p class="hint">Each member's effective thresholds, and where each comes from:  the member's own row, its template member, the group, or the default.{{ canUpdate() ? "  Edit a member to override a column, or to clear an override so it inherits again." : "" }}</p>
 	<mat-progress-bar class="refresh-bar" [mode]="loading() ? 'indeterminate' : 'determinate'" [value]="0" aria-label="Loading the members"></mat-progress-bar>
-	<mat-table [dataSource]="rows()" class="mat-elevation-z2">
+	<mat-table [dataSource]="rows()" class="mat-elevation-z2 jde-dense">
 		<ng-container matColumnDef="member">
 			<mat-header-cell *matHeaderCellDef>Member</mat-header-cell>
 			<mat-cell *matCellDef="let m" [matTooltip]="memberDetail(m)">

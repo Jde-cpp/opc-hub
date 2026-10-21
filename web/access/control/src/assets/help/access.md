@@ -21,7 +21,7 @@ Two lists have no **Add**:
 - [Users](/access/users) come into being by signing in. A Google or OPC server account is added the first time it signs in, and a certificate identity when the app server enrolls it.
 - [Resources](/access/resources) are registered by the services themselves.
 
-The resources list has no **Deleted** view: a resource that is not enforced is listed with the rest, and the **Enforced** switch in each row takes the place of Delete and Restore. A resource row opens a read-only page of who holds rights on it. See [Resources](#resources).
+The resources list is the one with no **Deleted** view, as [Lists](/help/lists#lists) says. A resource row opens a read-only page of who holds rights on it. See [Resources](#resources).
 
 Users, groups and roles are deleted and restored as any record is. A deleted group or role also offers **Purge**, which removes it for good.
 
@@ -51,7 +51,7 @@ Reading another user's **Effective rights** needs **Read** on `acl`; your own ne
 
 A group's page has **Properties**, its **Users**, the child **Groups** nested in it, the **Roles** granted to it, and **Effective rights**. A user in a group holds everything that group's roles carry, and everything carried by the groups it is nested in.
 
-**Effective rights** is what a member gets through the group: its own grants and those of the groups it is nested in, not its child groups'. It reads as a user's does - hover a mark to read the grants behind it: a role, a role via a parent group, or a direct grant. Only resources the group gives something on are listed; one it gives nothing on is not a lockout, since a member may hold it elsewhere. A deleted group passes nothing on, and neither does a grant that reaches it through a deleted parent group or a deleted role. Reading the tab needs **Read** on `acl`, and while `resources` is enforced, **Read** on that too.
+**Effective rights** is what a member gets through the group: its own grants and those of the groups it is nested in, not its child groups'. It reads as a user's does - hover a mark to read the grants behind it: a role, a role via a parent group, or a direct grant. Only resources the group gives something on are listed; one it gives nothing on is not a lockout, since a member may hold it elsewhere. A deleted group passes nothing on, and neither does a grant that reaches it through a deleted parent group or a deleted role. Reading the tab needs what reading another user's does, under [Users](#users).
 
 ## Roles
 
@@ -101,7 +101,7 @@ A new installation enforces nothing. While a resource is unenforced the hub chec
 
 One exception: the bundled OPC server refuses history edits and deletes on its nodes until a node resource is enforced.
 
-Once a resource is enforced, only a user holding a grant gets through.
+Once a resource is enforced, only a user holding a grant gets through - you as well. So grant first and enforce second: enforcing a resource you hold no permission on shuts you out of it as surely as anyone else, which is why the toggle asks before it changes either way.
 
 ### A resource's page
 
@@ -113,7 +113,7 @@ Clicking a row opens the resource's own page, which answers who can reach it. It
 
 A tick is an allowed right and a red mark a denied one. Each right the resource offers has a column, as does any other a listed grant holds. Hover a mark to read the grants behind it, as on a user's **Effective rights**. Each name links to its own page.
 
-A user not on the **Users** tab holds nothing on the resource: denied while it is enforced, unchecked while it is not. Reading the page needs **Read** on `acl`, as a user's **Effective rights** does for anyone but yourself. While `resources` is enforced, it needs **Read** on that too.
+A user not on the **Users** tab holds nothing on the resource: denied while it is enforced, unchecked while it is not. Reading the page needs what reading another user's **Effective rights** does, under [Users](#users).
 
 The page is the resource's own row. Rights granted on its individual OPC nodes are on each node's page.
 
@@ -145,5 +145,3 @@ The hub also gates the nodes of the **bundled** Jde OPC server, which enforces t
 The hub does **not** gate the nodes of a third-party OPC server. You sign in to such a server as one of *its* users (`slug\user`), the hub opens the session as that user, and what you may then read or write is that server's own decision, taken in its own configuration tool. No role here grants or withholds it, and the node page's **Permissions** tab is not offered for one.
 
 So a role's rights on an OPC node - the right-hand column above - describe the bundled server. Against a server of your own, a role still decides what a user may do *in the hub*; the values themselves are the server's to protect.
-
-So grant first and enforce second. Enforcing a resource you hold no permission on shuts you out of it as surely as anyone else, which is why the toggle asks before it changes either way.

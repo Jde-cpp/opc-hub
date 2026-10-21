@@ -18,35 +18,6 @@ export enum EAccess{
 	TimestampWrite = 0x40,
 	All = 0x7F
 }
-export enum EWriteAccess{
-	None = 0,
-	Access = 1,
-	ArrayDimensions = 2,
-	BrowseName = 4,
-	ContainsNoLoops = 8,
-	DataType = 0x10,
-	Description = 0x20,
-	DisplayName = 0x40,
-	EventNotifier = 0x80,
-	Executable = 0x100,
-	Historizing = 0x200,
-	InverseName = 0x400,
-	MinimumSamplingInterval = 0x800,
-	NodeClass = 0x1000,
-	Symmetric = 0x2000,
-	UserAccessLevel = 0x4000,
-	UserExecutable = 0x8000,
-	UserWriteMask = 0x10000,
-	ValueRank = 0x20000,
-	WriteMask = 0x40000,
-	ValueForVariableType = 0x80000,
-	DataTypeDefinition = 0x100000,
-	RolePermissions = 0x200000,
-	AccessRestrictions = 0x400000,
-	AccessLevelEx = 0x800000,
-	All = 0xFFFFFF
-}
-
 export const toLocalizedText = ( value:any ):ILocalizedText=>{
 	return typeof(value)=="string" ? { locale: undefined, text: value } : value;
 }
@@ -67,12 +38,6 @@ export function toBrowse( path:string, defaultNs:Ns|undefined ):Browse{
 }
 export function browseEq( a:Browse, b:Browse ):boolean{ return a.ns===b.ns && a.name===b.name; }
 
-export enum EReferenceType{
-  Organizes = 35,
-	HasModelingRule = 37,
-	HasSubType = 45,
-	HasComponent = 47
-}
 export enum ETypes{
 	None = 0,
 	Boolean = 1,

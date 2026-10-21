@@ -1,4 +1,3 @@
-import * as FromServer from 'jde-proto/App.FromServer';
 import { ELogLevel } from 'jde-proto/Log';
 
 export interface Instance{
@@ -18,7 +17,7 @@ export interface Instance{
 //its own machine, and the page's host reaches that same machine, so it is rewritten to the page's host:  a page at
 //http://hub:8071 then calls hub:1967 rather than the browser's own localhost, and the server's allowOrigin 'sameHost'
 //holds, Origin and Host naming the same host.  Any other name is one the registry vouches for - a split deployment - and
-//is kept; the Gateway constructor warns when it differs from the page's.
+//is kept;  ProtoService's instances setter warns when it differs from the page's.
 export const loopbackHosts:ReadonlySet<string> = new Set( ["localhost", "127.0.0.1", "::1", "[::1]"] );
 export function resolveInstanceHost( host:string|undefined, pageHost:string ):string{
 	if( !host )

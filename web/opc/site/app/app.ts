@@ -1,19 +1,8 @@
-import { CommonModule, DOCUMENT } from '@angular/common';
-import { Component, Inject, Renderer2, ViewEncapsulation } from '@angular/core';
+import { Component, ViewEncapsulation } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import {NavBar} from 'jde-spa';
 
 @Component( {selector: 'app-root', templateUrl: './app.html', styleUrls: ['./app.scss'], encapsulation: ViewEncapsulation.None,
-  imports: [CommonModule, NavBar, RouterOutlet],
+	imports: [NavBar, RouterOutlet],
 })
-export class App{
-	constructor (
-		@Inject(DOCUMENT) private document: Document,
-		private renderer: Renderer2,
-  ) { }
-
-  ngOnInit(){ this.renderer.addClass(this.document.body, 'docs-app-background'); }
-  ngOnDestroy(){ this.renderer.removeClass(this.document.body, 'docs-app-background'); }
-  title = 'my-workspace';
-}
-
+export class App{}

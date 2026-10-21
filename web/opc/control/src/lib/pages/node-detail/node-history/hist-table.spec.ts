@@ -1,21 +1,12 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { EAccess } from '../../../model/types';
 import { HistTable } from './hist-table';
+import { histTick, histValue, variable } from 'jde-opc/testing';
 
-const variable = ( i:number, name:string, level:EAccess )=>new Variable( <any>{ns:2, i, name, browse: {ns:2, name}, historizing: true, userAccessLevel: level} );
-const A = variable( 1, 'A', EAccess.Read|EAccess.HistoryRead|EAccess.HistoryWrite ), B = variable( 2, 'B', EAccess.Read|EAccess.HistoryRead );
-const at = ( v:Variable, ms:number, value:number, extra:Partial<HistValue>={} ):HistValue=>({ node: v.nodeId, source: new Date(ms), server: null, sourceTime: {seconds: Math.floor(ms/1000), nanos: ms%1000*1_000_000}, status: 0, value, bound: false, heartbeat: false, ...extra });
+const A = variable( 1, 'A', {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead|EAccess.HistoryWrite} ), B = variable( 2, 'B', {historizing: true, userAccessLevel: EAccess.Read|EAccess.HistoryRead} );
+const at = ( v:Variable, ms:number, value:number, extra:Partial<HistValue>={} )=>histValue( v, ms, value, {sourceTime: histTick(ms), ...extra} );
 const render = ( values:HistValue[], inputs:Record<string,unknown>={} )=>{
 	const fixture = TestBed.createComponent( HistTable );
 	fixture.componentRef.setInput( 'values', values );

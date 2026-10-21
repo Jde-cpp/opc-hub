@@ -1,24 +1,15 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ActivatedRoute, provideRouter } from '@angular/router';
-import { BehaviorSubject } from 'rxjs';
-import { vi } from 'vitest';
-import { ComponentPageTitle, RouteItem } from 'jde-spa';
+import { provideRouter, ActivatedRoute } from '@angular/router';
+import { RouteItem } from 'jde-spa';
 import { Rights } from '../../model/permission';
 import { Resource } from '../../model/resource';
 import { ResourceHolders } from '../../model/resource-holder';
 import { AccessService } from '../../services/access-service';
 import { ResourcePageData } from '../../services/resource-resolver';
 import { ResourceDetail } from './resource-detail';
+import { pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
+import { BehaviorSubject } from 'rxjs';
 
 //#251:  a resource's page - who holds rights on it, from the server.
 const resource = new Resource( {id: 4, schemaName: "access", slug: "resources", name: "resources", allowed: Rights.Read|Rights.Delete|Rights.Administer|Rights.Subscribe} );
@@ -31,18 +22,15 @@ const holders = new ResourceHolders( {
 const pageData:ResourcePageData = { resource, routing: new RouteItem({path: "access/resources", title: "resources"}), accessUrl: "/access" };
 
 const create = async ( answer:( id:number, lists?:unknown )=>Promise<ResourceHolders> )=>{
-	TestBed.resetTestingModule();
 	TestBed.configureTestingModule({ providers: [
 		provideRouter( [] ),
-		{ provide: ActivatedRoute, useValue: {data: new BehaviorSubject( {pageData} )} },
+		provideRoute( {data: {pageData}} ),
 		{ provide: AccessService, useValue: {resourceRights: answer} },
-		{ provide: ComponentPageTitle, useValue: {} }
+		pageTitleStub
 	]});
 	const fixture = TestBed.createComponent( ResourceDetail );
 	fixture.componentRef.setInput( 'sideNav', new RouteItem() );
-	fixture.detectChanges();
-	await fixture.whenStable();
-	fixture.detectChanges();
+	await stable( fixture, 2 );
 	return fixture;
 };
 
@@ -79,7 +67,7 @@ describe( 'ResourceDetail', ()=>{
 		const fixture = await create( answer );
 		const other = new Resource( {id: 5, schemaName: "access", slug: "roles", name: "roles", allowed: Rights.Read} );
 		(TestBed.inject( ActivatedRoute ).data as BehaviorSubject<unknown>).next( {pageData: {...pageData, resource: other}} );
-		await fixture.whenStable();
+		await stable( fixture, 1 );
 		expect( answer.mock.calls.map( c=>[c[0], c[1]] ) ).toEqual( [[4, undefined], [5, holders.lists]] );
 	} );
 

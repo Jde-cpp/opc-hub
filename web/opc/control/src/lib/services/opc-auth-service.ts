@@ -1,46 +1,46 @@
 import { Injectable, computed, signal, inject } from '@angular/core';
-import { AppService, Log } from 'jde-framework';
-import { GATEWAY_SERVICE, GatewayService } from './gateway-service';
+import { AppService } from 'jde-framework';
+import { GATEWAY_SERVICE, Gateway } from './gateway-service';
 import { EProvider, IAuth, User } from 'jde-spa';
 
 @Injectable()
 export class OpcAuthService implements IAuth{
-	private app:AppService = inject( AppService );
-	private gatewayService:GatewayService = inject( GATEWAY_SERVICE );
+	#app = inject( AppService );
+	#gatewayService = inject( GATEWAY_SERVICE );
 
 	googleAuthClientId(): Promise<string> {
-		return this.app.googleAuthClientId( (m)=>console.log(m) );
+		return this.#app.googleAuthClientId();
 	}
 
-	async login( user:User, log:Log ):Promise<void>{
-		let promise = await this.app.login( user, log );
+	async login( user:User ):Promise<void>{
+		let promise = await this.#app.login( user );
 		this.isOpc.set( false );
 		return promise;
 	}
-	providers( log:Log ):Promise<EProvider[]>{ return this.app.providers( log ); }
-	validateSessionId():void{ this.app.validateSessionId(); }
+	providers():Promise<EProvider[]>{ return this.#app.providers(); }
+	validateSessionId():void{ this.#app.validateSessionId(); }
 
-	async logout( log:Log ):Promise<void>{
+	async logout():Promise<void>{
 		let promise;
 		if( this.isOpc() )
-			promise = await (await this.gatewayService.defaultGatewayAsync()).logout( log );//await the resolver: the sync getter has nothing to return until gatewayInstances() lands
+			promise = await this.#signedInto?.logout();
 		else
-			promise = await this.app.logout( log );
+			promise = await this.#app.logout();
 		this.isOpc.set( undefined );
+		this.#signedInto = undefined;
 		return promise;
 	}
-	async loginPassword( username:string, password:string, authenticator:string|undefined, log:Log ):Promise<void>{
+	async loginPassword( username:string, password:string, authenticator:string|undefined ):Promise<void>{
 		// multiple gateways aren't implemented yet.  gateway/connection/user?
-		let gateways = await this.gatewayService.gateways();
+		let gateways = await this.#gatewayService.gateways();
 		if( !gateways.length )
-			throw "No gateways defined to authorize user.";
+			throw new Error( "No gateways defined to authorize user." );
 		let gateway = gateways[0];
-		let promise = await gateway.login( authenticator ?? "", username, password, log );
+		let promise = await gateway.login( authenticator ?? "", username, password );
 		this.isOpc.set( true );
+		this.#signedInto = gateway;
 		return promise;
-	}
-	user = computed( () => this.app?.user() );
-		//this.isOpc()==null ? null : this.isOpc() ? this.iot.user() : this.app.user() );
+	} #signedInto:Gateway|undefined;
+	user = computed( () => this.#app?.user() );
 	isOpc = signal<boolean|undefined>( undefined );
-//	iot = computed( () => this.isOpc() ? this.gatewayService.defaultGateway : null );
 }

@@ -1,0 +1,21 @@
+// The row runs the page's width:  a Groups/Roles/Effective rights tab holds a table that does too, and without it the row read as
+// the table's last line.  The buttons stay sized to the form:  Save under the field text (the form's 24px page inset plus the
+// fill field's 16px text inset), and the far-right Delete under the text's right edge, which the padding-right works out from
+// the row's own width (back to 40px once the window is no wider than the form).
+:host{
+	display: flex;
+	gap: 20px;
+	margin-top: 20px;
+	padding: 16px 40px 20px;
+	padding-right: max(40px, calc(100% - var(--jde-form-max-width) - 8px));
+	border-top: 1px solid var(--mat-sys-outline-variant);
+}
+
+.far{
+	margin-left: auto;
+}
+
+// the one destructive control in the row - the error colour is what separates it from Restore beside it
+.purge{
+	color: var(--mat-sys-error);
+}

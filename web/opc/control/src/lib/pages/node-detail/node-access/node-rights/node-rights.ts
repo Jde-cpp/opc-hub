@@ -1,5 +1,5 @@
-import { Component, ViewChild, input, output, effect } from '@angular/core';
-import { CommonModule, KeyValue } from '@angular/common';
+import { Component, input, output, effect, viewChild } from '@angular/core';
+import { KeyValue } from '@angular/common';
 import { MatCheckboxModule } from "@angular/material/checkbox";
 import { MatTable, MatTableModule } from "@angular/material/table";
 
@@ -10,9 +10,8 @@ import { isAllowed, isDenied, RolePermission } from './role-permission';
 @Component( {
 	selector: 'node-rights',
 	templateUrl: './node-rights.html',
-	styleUrls: ['./node-rights.scss'],
 	host: {class:'main-content mat-drawer-container my-content'},
-	imports: [CommonModule, MatSortModule, MatTableModule, MatCheckboxModule, MatTooltipModule]
+	imports: [MatSortModule, MatTableModule, MatCheckboxModule, MatTooltipModule]
 })
 export class NodeRights {
 	constructor(){
@@ -24,9 +23,6 @@ export class NodeRights {
 
 	static readonly isDenied = isDenied;//the template's, through `self`
 	static readonly isAllowed = isAllowed;
-	static isAvailable( role: RolePermission, rights:number ):boolean{
-		return true;
-	}
 	toggle( role: RolePermission, rights:number ):void{
 		if( this.disabled() )//the denied icon is a plain span, which nothing else stops
 			return;
@@ -46,8 +42,7 @@ export class NodeRights {
 			? ( a:RolePermission, b:RolePermission )=>a.roleName.localeCompare( b.roleName )
 			: ( a:RolePermission, b:RolePermission )=>rank(a)-rank(b) || a.roleName.localeCompare( b.roleName );
 		this.data = this.data.slice().sort( (a,b)=>$event.direction=="asc" ? compare(a,b) : -compare(a,b) );
-		if( this.table )
-			this.table.renderRows();
+		this.table()?.renderRows();
 	}
 	get available(): KeyValue<number,string>[] {
 		let y:KeyValue<number,string>[] = [];
@@ -69,9 +64,8 @@ export class NodeRights {
 	rights = input<any>();
 	disabled = input( false );//while the owner's rows are being read or sent:  a tick then would be dropped, or act on rows about to change
 	self = NodeRights;
-	get allRights(): number{ return this.available[this.available.length-1].key; }
 	roles = input.required<RolePermission[]>();
 	data:RolePermission[] = [];
 	get sort():Sort{ return {active: "roleName", direction: "asc"}; }
-	@ViewChild('mainTable',{static: false}) table!:MatTable<RolePermission>;
+	table = viewChild<MatTable<RolePermission>>( 'mainTable' );
 }

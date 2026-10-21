@@ -1,6 +1,5 @@
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
-	[selectedIndex]="tabIndex()"
-	(selectedIndexChange)="onTabIndexChanged($event)">
+	[(selectedIndex)]="tabIndex">
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template><!--was the record's name: the same word as the breadcrumb and the side nav, and it re-titled with every keystroke in Name-->
 		<ng-template matTabContent>
@@ -15,21 +14,8 @@
 		</ng-template>
 	</mat-tab>
 </mat-tab-group>
-<div class="jde-detail-actions"><!--only Save is filled: three extended fabs gave the destructive Delete the same weight as the primary action, and the tonal it had next was a grey pill that read as disabled even with a dirty form-->
-	<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-	<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
+<detail-actions [page]="this"><!--Purge too:  a deleted connection keeps its slug, and the create refusal says to restore or purge it (reviews/install-issues.md #51, #53)-->
 	<!--beside the two safe actions, outlined like Cancel:  it saves nothing - at most it issues the slug's certificate, as the saved connection's first connect would.
 		disabledInteractive, so pressing it keeps the focus there (WCAG 2.4.3) instead of dropping it to the body;  onTestClick checks canTest itself-->
 	<button matButton="outlined" (click)="onTestClick()" [disabled]="!canTest()" disabledInteractive>{{ testing() ? "Testing…" : "Test Connection" }}</button>
-	<!--the only icon in the row, so the trash can still reads as a warning; it also carries the delete/restore state.
-		Pushed to the far side of the row: it sat one gap from Cancel, in the click path of the two safe actions-->
-	@if( isDeleted ){
-		<!--group-detail's Purge:  only on an already-deleted row.  A deleted connection keeps its slug, and the create refusal says to restore or purge it (reviews/install-issues.md #51, #53)-->
-		<button matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
-			<mat-icon>delete_forever</mat-icon>Purge
-		</button>
-	}
-	<button matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
-		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
-	</button>
-</div>
+</detail-actions>

@@ -1,36 +1,27 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { Component, input, output } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { ActivatedRoute } from '@angular/router';
-import { of } from 'rxjs';
-import { ComponentPageTitle } from 'jde-spa';
-import { UaNode, Variable } from '../../model/node';
+import { UaNode } from '../../model/node';
 import { NodeId } from '../../model/node-id';
 import { NodeChildren } from './node-children/node-children';
 import { NodeDetail } from './node-detail';
+import { pageTitleStub, provideRoute } from 'jde-spa/testing';
+import { variable } from 'jde-opc/testing';
 
+//a stub, not a blanked NodeChildren:  its ngOnInit loads the views and subscribes to the route's data
 @Component({ selector: 'node-children', template: '' })
 class ChildrenStub{ node = input<UaNode>(); refreshed = output<UaNode[]>(); }
 
-const variable = ( historizing:boolean )=>new Variable( <any>{ns:2, i:1, name: 'a', browse: {ns:2, name: 'a'}, historizing} );
+const child = ( historizing:boolean )=>variable( 1, 'a', {historizing} );
 
 describe( 'NodeDetail', ()=>{
 	//A Children refresh assigned pageData.nodes, which the History tab's gate never saw (historian-web-trend #10).
 	it( 'shows the History tab when a Children refresh brings a historized node', ()=>{
 		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})} };
-		const pageData = { route, nodes: [variable( false )], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
+		const pageData = { route, nodes: [child( false )], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}} };
 		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {data: of({pageData})} },
-			{ provide: ComponentPageTitle, useValue: {} }
+			provideRoute( {data: {pageData}} ),
+			pageTitleStub
 		]});
 		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren]}, add: {imports: [ChildrenStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );
@@ -39,7 +30,7 @@ describe( 'NodeDetail', ()=>{
 		const tabs = ()=>[...fixture.nativeElement.querySelectorAll( '[role="tab"]' )].map( t=>t.textContent.trim() );
 		expect( tabs() ).toEqual( ['Children'] );
 
-		fixture.debugElement.query( By.directive(ChildrenStub) ).componentInstance.refreshed.emit( [variable( true )] );
+		fixture.debugElement.query( By.directive(ChildrenStub) ).componentInstance.refreshed.emit( [child( true )] );
 		fixture.detectChanges();
 		expect( tabs() ).toEqual( ['Children', 'History'] );
 		fixture.destroy();
@@ -48,12 +39,12 @@ describe( 'NodeDetail', ()=>{
 	//page's variables as a source, and a group none of the page's nodes are in is no source.
 	it( 'shows the History tab for a child a gateway group holds, with the group as a source', ()=>{
 		const route = { node: {id: 85, name: 'Objects', toJson: ()=>({ns: 0, i: 85})} };
-		const member = variable( false ), other = new Variable( <any>{ns:2, i:2, name: 'b', browse: {ns:2, name: 'b'}} );
+		const member = child( false ), other = variable( 2, 'b' );
 		const groups = [{id: 3, name: 'Pumps', nodes: [member.nodeId]}, {id: 4, name: 'Empty', nodes: [new NodeId( {ns: 2, i: 9} )]}];
 		const pageData = { route, nodes: [member, other], gateway: {}, server: {applicationName: 'Other', connection: {name: 'c'}}, groups };
 		TestBed.configureTestingModule({ providers: [
-			{ provide: ActivatedRoute, useValue: {data: of({pageData})} },
-			{ provide: ComponentPageTitle, useValue: {} }
+			provideRoute( {data: {pageData}} ),
+			pageTitleStub
 		]});
 		TestBed.overrideComponent( NodeDetail, {remove: {imports: [NodeChildren]}, add: {imports: [ChildrenStub]}} );
 		const fixture = TestBed.createComponent( NodeDetail );

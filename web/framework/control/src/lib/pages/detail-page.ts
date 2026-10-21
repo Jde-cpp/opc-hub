@@ -1,7 +1,7 @@
-import { Directive, effect, inject, model, OnDestroy, OnInit, signal } from '@angular/core';
+import { Directive, effect, inject, model, OnInit, signal, WritableSignal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatDialog } from '@angular/material/dialog';
-import { ComponentPageTitle, ProfileStore, RouteItem } from 'jde-spa';
+import { ComponentPageTitle, persistedTabIndex, RouteItem } from 'jde-spa';
 import { SnackbarService } from '../shared/snackbar/snackbar-service';
 import { DetailResolverData } from '../services/detail-resolver';
 import { IGraphQL } from '../services/graphql';
@@ -14,9 +14,9 @@ import { confirm } from '../shared/confirm/confirm-dialog';
 //differs - the child collections it owns, and the row it builds to save.
 //@Directive() rather than a bare class: Angular refuses to inherit `model()`/`input()` from an undecorated base.
 @Directive()
-export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}> implements OnInit, OnDestroy{
-	constructor( private readonly profileKey:string ){
-		this.tabIndex.set( ProfileStore.tabIndex(profileKey) );
+export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}> implements OnInit{
+	constructor( tabKey:string ){
+		this.tabIndex = persistedTabIndex( tabKey );
 		effect( ()=>{
 			const edited = this.properties();
 			if( !edited )
@@ -33,8 +33,6 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	ngOnInit(){
 		this.route.data.subscribe( (data)=>this.#load(data) );
 	}
-	ngOnDestroy(){ ProfileStore.setTabIndex( this.profileKey, this.tabIndex() ); }
-	onTabIndexChanged( index:number ){ this.tabIndex.set( index ); }
 
 	#load( data:any ):void{
 		this.pageData = data["pageData"];
@@ -54,7 +52,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 
 	async onSubmitClick(){
 		try{
-			await this.ql.mutate( this.upsert().mutation(this.row), (m)=>console.log(m) );
+			await this.ql.mutate( this.upsert().mutation(this.row) );
 			this.afterMutate();
 			this.router.navigate( ['..'], {relativeTo: this.route} );
 		}
@@ -71,7 +69,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	async onDeleteClick(){
 		const restore = this.isDeleted;
 		try{
-			await this.ql.mutate( `${restore ? "restore" : "delete"}${this.row.type}(id:${this.row.id})`, (m)=>console.log(m) );
+			await this.ql.mutate( `${restore ? "restore" : "delete"}${this.row.type}(id:${this.row.id})` );
 			this.afterMutate();
 			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
@@ -89,7 +87,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 		if( !await confirm(this.dialog, {title: `Purge ${name}?`, message: `${name} will be permanently removed. This cannot be undone - a purged row has no Restore.`, confirm: "Purge", destructive: true}) )
 			return;
 		try{
-			await this.ql.mutate( `purge${this.row.type}(id:${this.row.id})`, (m)=>console.log(m) );
+			await this.ql.mutate( `purge${this.row.type}(id:${this.row.id})` );
 			this.afterMutate();
 			this.router.navigate( ['..'], { relativeTo: this.route } );
 		}catch( e ){
@@ -117,7 +115,7 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	isLoading = signal<boolean>( true );
 	properties = signal<Partial<T>>( null as any );
 	sideNav = model.required<RouteItem>();
-	tabIndex = signal<number>( 0 );
+	readonly tabIndex:WritableSignal<number>;
 	abstract ql:IGraphQL;
 
 	protected route = inject( ActivatedRoute );

@@ -29,15 +29,15 @@ function isStale {
 	return 1;
 }
 
-#Symlink a set of .proto into the generation dir (the cwd).  Everything lands in one directory so cross-directory
-#imports resolve - App.FromServer.proto imports Web.FromServer.proto out of libs/web/client/proto, for instance.
+#Symlink $2... (names, no .proto) out of $1 into the generation dir (the cwd).  Everything lands in one directory so
+#cross-directory imports resolve - App.FromServer.proto imports Web.FromServer.proto out of libs/web/client/proto, for instance.
 function linkProtos {
 	local dir=$1;
-	local -n files=$2;
-	local i;
-	for i in "${!files[@]}"; do
-		if [ ! -f $i.proto ]; then
-			mklink $i.proto $dir;
+	shift;
+	local name;
+	for name in "$@"; do
+		if [ ! -f $name.proto ]; then
+			mklink $name.proto $dir;
 		fi;
 	done;
 }

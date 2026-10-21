@@ -62,14 +62,7 @@
 					}
 				</div>
 				@if( failure(); as f ){
-					<div class="jde-empty" role="alert">
-						<mat-icon aria-hidden="true">{{ f.kind=='forbidden' ? 'lock' : 'error_outline' }}</mat-icon>
-						<p class="title">{{ f.title }}</p>
-						@if( f.detail ){ <p class="detail">{{ f.detail }}</p> }
-						@if( f.kind!='forbidden' ){
-							<div class="actions"><button matButton="tonal" (click)="onRetry()"><mat-icon>refresh</mat-icon>Retry</button></div>
-						}
-					</div>
+					<failure-state [failure]=f (retry)="onRetry()"/>
 				}
 			</section>
 		</div>

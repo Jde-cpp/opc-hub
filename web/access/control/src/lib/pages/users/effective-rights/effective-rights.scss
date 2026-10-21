@@ -1,16 +1,8 @@
-/* permission-table.scss's inset and row heights - this grid sits on the same tab strip as the selectors and that table did */
+/* permission-table.scss's inset - this grid sits on the same tab strip as the selectors and that table did.  The grid and its
+   rows are .jde-rights-grid and .jde-dense's (_general.scss). */
 :host{
 	display: block;
 	padding: 16px 24px 0;
-}
-
-mat-table{
-	--mat-table-row-item-container-height: 40px;
-	--mat-table-header-container-height: 44px;
-}
-
-.mat-mdc-header-cell{
-	text-align: center;
 }
 
 .mat-column-schema{
@@ -51,20 +43,9 @@ a.node{ /* the node by name, linking to its page, when the app can place it; the
 	justify-content: center;
 }
 
-.mat-column-permission{
-	display: flex;
-	justify-content: center;
-}
-
-.mat-column-alt{
-	background-color: var(--mat-sys-secondary-container);
-}
-
-mat-icon{
-	cursor: help;
-	&.allowed{ color: var(--mat-sys-primary); }
-	&.denied{ color: var(--mat-sys-error); }
-	&.lockout{ color: var(--mat-sys-error); opacity: .6; }
+mat-icon.lockout{
+	color: var(--mat-sys-error);
+	opacity: .6;
 }
 
 .empty{

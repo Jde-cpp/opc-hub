@@ -1,13 +1,12 @@
 # CLAUDE.md — `web/`
 
-Guidance for the Angular side of the repo. Angular/TypeScript **style** rules come from the
-CLI-generated `opc/my-workspace/CLAUDE.md`; this file holds what is specific to *this* repo's
-layout. Put durable frontend guidance here — this file is tracked, that one is not.
+Guidance for the Angular side of the repo:  its style (Angular style, Conventions) and what is specific to its layout.  Put
+durable frontend guidance here - this file is tracked, and the workspace has no CLAUDE.md of its own.
 
 ## `my-workspace` is generated output, not source
 
 `web/opc/my-workspace/` is scaffolded by `web/framework/scripts/create-workspace.sh`
-(`ng new … --ai-config=claude-code`) and every file in it is untracked — `.gitignore` carries
+(`ng new … --ai-config=none`) and every file in it is untracked — `.gitignore` carries
 `**/my-workspace*/**`. It is recreated from scratch, so nothing authored directly inside it
 survives. The tracked sources are linked in:
 
@@ -104,6 +103,41 @@ must be an input of a lazy output, not of `main` or of a chunk `main` imports st
 "import-statement"`). A build that fails the budget writes no metafile - raise `maximumError` in the generated `angular.json`
 from a backup and restore it afterwards.
 
+## Shared styles
+
+A component sheet cannot `@use` another library's partial, so a rule two libraries share is a global class in
+`spa/control/src/styles/_general.scss` - `.jde-list-toolbar`, `mat-table.jde-dense`, `.jde-rights-grid`, `.jde-empty` - with
+the explanation there once;  qualify it with the element (`mat-toolbar.`) where Material's own rule would win the cascade.
+Within one library a partial does it (`opc/control/src/lib/pages/_status.scss`'s mixins, `_list-settings.scss`), and a
+sheet two components of a library share goes in both `styleUrls` (`hist-admin-shared.scss`).
+
+## Angular style
+
+The Angular CLI's own `--ai-config` template is not generated:  it changed with each CLI and overruled the repo's rulings.  These
+are the rules of it the repo holds, and where the repo differs.
+- Standalone components, and none sets `standalone: true` or `changeDetection` - OnPush is the default.
+- `input()`, `output()` and `model()` (for a two-way `[(x)]`), never the decorators;  signals for state, `computed()` for what
+  derives from it, and `set`/`update`, never `mutate`.
+- Native control flow (`@if`, `@for`, `@switch`);  `class` and `style` bindings, not `ngClass`/`ngStyle`;  a component imports
+  the directives and pipes its template uses, never `CommonModule`.
+- Host bindings and listeners go in the decorator's `host` object, not `@HostBinding`/`@HostListener`.
+- `inject()`, never constructor injection;  a new root singleton is `@Service()`.
+- Prefer Signal Forms (`@angular/forms/signals`) for a new form;  never template-driven.
+- It passes AXE and meets WCAG AA:  focus management, contrast, ARIA - and no positive `tabindex`.
+- Where the repo differs from the CLI:  type strictness stays off, and a value a page must load before it renders starts as
+  `null as any` (otherwise `unknown` over `any`).  Components keep their template and styles in files of their own
+  (`templateUrl`, `styleUrl`) as a rule, inline only when small.
+
+## Conventions
+
+- Throw an `Error`, never a bare string - `throw new Error( … )`:  a string carries no stack, and the `instanceof Error` tests
+  miss it.  `errorText` (`framework/control/src/lib/utils/errors.ts`) still reads a string, for what a library or the server
+  hands back.
+- A dependency is `#x = inject( T )`, with no type repeated - `inject` infers it from the class or the typed token.  One a
+  template, a spec or another class reads is a plain field, `x = inject( T )`, and one a subclass reads is `protected`.
+- Indent with tabs, in `.ts`, `.html` and `.scss` alike.
+- A resolver is a class implementing `Resolve<T>`, provided on its route;  `helpTopicResolver` is the one `ResolveFn`.
+
 ## Commands
 
 Run `ng` from `web/opc/my-workspace`.
@@ -113,6 +147,29 @@ Run `ng` from `web/opc/my-workspace`.
   library's test target is given `buildTarget: my-workspace:build` (by `create-workspace.sh`), which is how the unit-test
   builder inherits `preserveSymlinks`. Without it esbuild realpaths every spec out of the workspace and the target silently
   runs nothing. A library with no spec files errors with "No tests found" and fails bare `ng test`, so keep at least one.
+  The environment is jsdom (`ng new` adds it as a devDependency, and the builder picks it), so `window` and a working
+  `localStorage` are globals - a spec needs no polyfill for either.
+- **Spec helpers** live in each library's `control/src/testing/index.ts`, imported as `jde-spa/testing`, `jde-framework/testing`
+  and `jde-opc/testing` - one tsconfig path, `jde-*/testing`, that `create-workspace.sh` writes beside `jde-proto/*` and links
+  the folders for. They are never exported from a public-api, and the library builds exclude `src/testing/**`. A spec imports
+  its own library's helpers and those below it:  the route, router, title and profile stubs, `flush`/`stable` and `Blank` from
+  jde-spa;  the detail-page harness, `openRoute`, `snackbarStub`, `dialogStub`, `qlAnswering` and the schema builders from
+  jde-framework;  `TestGateway`, `fakeGateway` and the node and historian fixtures from jde-opc.
+- **A spec is written one way:**
+  - `describe`, `it`, `expect` and `vi` are vitest globals, so nothing imports from `'vitest'`.  A mock's type is
+    `ReturnType<typeof vi.fn>` or its helper's.
+  - Arrows are `()=>{` and `x=>x.y`, with no spaces around `=>`.
+  - TestBed is configured in a factory each `it` calls (`create`, `configure`, `open`), never in `beforeEach`, and the factory
+    returns what the test reads:  the subject, its fixture and the stubs it asserts on.  Nothing is a `let` at module or
+    `describe` level, or a `static` array or counter on a stub class;  a stub component is read off the fixture
+    (`By.directive`).  A `beforeEach`/`afterEach` pair is for the environment alone:  console silencers, `vi.stubGlobal`,
+    fake timers, `localStorage`.
+  - TestBed resets itself between tests, so `TestBed.resetTestingModule()` is only where one `it` builds twice, saying so.
+  - Waiting is `flush( turns )`, or `stable( fixture, passes )` for a page - not a `setTimeout` promise,
+    `fixture.whenStable()`, `await Promise.resolve()` chains or `vi.waitFor`.  Fake timers are for code that sets a timer of
+    its own, and `TestBed.tick()` runs effects where there is no fixture.
+  - A collaborator a test asserts on is a `vi.fn()` or `vi.spyOn`, read through `.mock.calls` or `toHaveBeenCalled…`, not a
+    hand-rolled `calls.push`/`++count`.  An output's or an observable's emissions may still be collected in an array.
 - `ng build <lib>` works, but only in dependency order — a library whose dependencies are not yet
   in `dist/` fails with `Cannot find module 'jde-spa'`. Build `jde-spa` first, or just build the
   application (`ng build my-workspace`), which compiles every library from the symlinked sources.

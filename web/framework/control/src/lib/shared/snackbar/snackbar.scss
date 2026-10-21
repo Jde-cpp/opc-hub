@@ -13,22 +13,16 @@
 // panelClass values passed by SnackbarService.showUser().  The container paints itself from
 // these tokens, so a plain background-color on the panel class has no effect.
 .mat-mdc-snack-bar-container {
-	&.red-snackbar {
+	&.error-snackbar {
 		--mat-snack-bar-container-color: var(--mat-sys-error);
 		--mat-snack-bar-supporting-text-color: var(--mat-sys-on-error);
 		--mat-snack-bar-button-color: var(--mat-sys-on-error);
 	}
 
-	&.yellow-snackbar {
-		--mat-snack-bar-container-color: #fdd835;
-		--mat-snack-bar-supporting-text-color: rgba(0, 0, 0, 0.87);
-		--mat-snack-bar-button-color: rgba(0, 0, 0, 0.87);
-	}
-
-	&.white-snackbar {
-		--mat-snack-bar-container-color: #fff;
-		--mat-snack-bar-supporting-text-color: rgba(0, 0, 0, 0.87);
-		--mat-snack-bar-button-color: rgba(0, 0, 0, 0.87);
+	&.warn-snackbar {
+		--mat-snack-bar-container-color: var(--mat-sys-tertiary-container);
+		--mat-snack-bar-supporting-text-color: var(--mat-sys-on-tertiary-container);
+		--mat-snack-bar-button-color: var(--mat-sys-on-tertiary-container);
 	}
 }
 

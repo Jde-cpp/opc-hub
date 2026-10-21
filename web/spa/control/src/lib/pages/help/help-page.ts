@@ -7,6 +7,7 @@ import { ComponentPageTitle } from '../component-page-title/component-page-title
 import { RouteItem } from '../component-sidenav/route-item';
 import { IENVIRONMENT } from '../../services/environment/environment';
 import { HELP_TOPICS, HelpTopic, helpTopics } from '../../services/help/help-topic';
+import { Latest } from '../../services/latest';
 
 //Renders one help topic's markdown.  The markdown is the app's own shipped asset - the same trust as the bundle - so the html
 //bypasses Angular's sanitizer, which would otherwise strip the heading ids the in-page anchors need.  marked is imported
@@ -19,8 +20,8 @@ import { HELP_TOPICS, HelpTopic, helpTopics } from '../../services/help/help-top
 })
 export class HelpPage implements OnInit, OnDestroy{
 	ngOnInit(){
-		this.#subscriptions.add( this.route.data.subscribe( data=>this.#load( <HelpTopic|undefined>data['topic'] ) ) );
-		this.#subscriptions.add( this.route.fragment.subscribe( fragment=>{
+		this.#subscriptions.add( this.#route.data.subscribe( data=>this.#load( <HelpTopic|undefined>data['topic'] ) ) );
+		this.#subscriptions.add( this.#route.fragment.subscribe( fragment=>{
 			this.#fragment = fragment;
 			if( this.html() )
 				this.#scrollTo( fragment );
@@ -29,19 +30,19 @@ export class HelpPage implements OnInit, OnDestroy{
 	ngOnDestroy(){ this.#subscriptions.unsubscribe(); }
 
 	async #load( topic:HelpTopic|undefined ){
-		const request = ++this.#request;
-		const id = this.route.snapshot.paramMap.get( 'topic' ) ?? '';
+		const request = this.#latest.next();
+		const id = this.#route.snapshot.paramMap.get( 'topic' ) ?? '';
 		this.#setSideNav( topic, id );
 		this.html.set( null );
 		this.error.set( null );
-		this.componentPageTitle.title = topic?.title ?? 'Help';
+		this.#componentPageTitle.title = topic?.title ?? 'Help';
 		if( !topic ){
 			this.error.set( `There is no help topic '${id}'.` );
 			return;
 		}
 		try{
-			const [source, {Marked}] = await Promise.all( [firstValueFrom( this.http.get(topic.url, {responseType: 'text'}) ), import('marked')] );
-			if( request!=this.#request )//navigated on while this one was loading
+			const [source, {Marked}] = await Promise.all( [firstValueFrom( this.#http.get(topic.url, {responseType: 'text'}) ), import('marked')] );
+			if( !this.#latest.is(request) )
 				return;
 			const ids = new Map<string,number>();
 			const md = new Marked({ renderer: {
@@ -55,18 +56,18 @@ export class HelpPage implements OnInit, OnDestroy{
 				}
 			}});
 			const html = await md.parse( this.#substitute(source) );
-			this.html.set( this.sanitizer.bypassSecurityTrustHtml(html) );
+			this.html.set( this.#sanitizer.bypassSecurityTrustHtml(html) );
 			setTimeout( ()=>this.#scrollTo( this.#fragment ) );//once the innerHTML binding has rendered
 		}
 		catch( e ){
-			if( request==this.#request )
+			if( this.#latest.is(request) )
 				this.error.set( `Could not load '${topic.url}': ${(<Error>e)?.message ?? e}` );
 		}
 	}
 	//{{version}} and any other string the site's environment carries;  anything unresolved is left as written.
 	#substitute( source:string ):string{
 		return source.replace( /\{\{(\w+)\}\}/g, (match, key)=>{
-			const value = this.environment?.get<unknown>( key );
+			const value = this.#environment?.get<unknown>( key );
 			return typeof value=='string' ? value : match;
 		});
 	}
@@ -92,7 +93,7 @@ export class HelpPage implements OnInit, OnDestroy{
 		}
 		else if( href.startsWith('/') ){
 			event.preventDefault();
-			this.router.navigateByUrl( href );
+			this.#router.navigateByUrl( href );
 		}
 		else if( /^https?:\/\//i.test(href) ){
 			event.preventDefault();
@@ -104,13 +105,13 @@ export class HelpPage implements OnInit, OnDestroy{
 	error = signal<string|null>( null );
 	sideNav = model<RouteItem>();//the sidenav hands its own model over on activation (ComponentSidenav.onRouterOutletActivate)
 	#fragment:string|null = null;
-	#request = 0;
+	#latest = new Latest();
 	#subscriptions = new Subscription();
 	#topics = helpTopics( inject(HELP_TOPICS, {optional: true}) );
-	private route = inject( ActivatedRoute );
-	private router = inject( Router );
-	private http = inject( HttpClient );
-	private sanitizer = inject( DomSanitizer );
-	private componentPageTitle = inject( ComponentPageTitle );
-	private environment = inject( IENVIRONMENT, {optional: true} );
+	#route = inject( ActivatedRoute );
+	#router = inject( Router );
+	#http = inject( HttpClient );
+	#sanitizer = inject( DomSanitizer );
+	#componentPageTitle = inject( ComponentPageTitle );
+	#environment = inject( IENVIRONMENT, {optional: true} );
 }

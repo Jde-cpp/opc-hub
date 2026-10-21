@@ -8,7 +8,7 @@ baseWebDir=$JDE_BASH/web;
 cd ..;
 cmd="../framework/scripts/create-workspace.sh my-workspace $baseWebDir/spa $baseWebDir/framework $baseWebDir/access $baseWebDir/opc";
 echo $cmd
-$cmd; if [ $? -ne 0 ]; then echo `pwd`; echo $cmd; exit 1; fi;
+$cmd || { echo `pwd`; echo $cmd; exit 1; };
 cd my-workspace/src;
 sitePath=`realpath $scriptDir/../site`;
 rm main.ts;
@@ -33,8 +33,6 @@ addHard app.ts $sitePath/app;
 rm -f app.config.ts;
 addHard app.config.ts $sitePath/app;
 #every site spec, by glob:  named one by one here, a new one never ran - under `ng test` or in CI - until someone added it.
-#(The jde-spa service specs among them are app-project specs from before create-workspace.sh's buildTarget fix let library
-#specs live beside the code.)
 for spec in $sitePath/app/*.spec.ts; do
 	if [ -f $spec ]; then addHard $(basename $spec) $sitePath/app; fi;
 done;
@@ -61,6 +59,8 @@ jqEdit angular.json ".projects.\"my-workspace\".architect.build.options.define =
 #create-workspace.sh writes angular.json, but only when the workspace is absent, so the swap is re-applied here on
 #every run.  Without it `ng serve` and `--configuration development` build against the production environment.ts.
 jqEdit angular.json '.projects."my-workspace".architect.build.configurations.development.fileReplacements = [{"replace":"src/environments/environment.ts","with":"src/environments/environment.development.ts"}]';
+#the initial bundle is 1.10 MB with the pages split off (#351):  low enough that a page sliding back into main fails the build
+jqEdit angular.json '.projects."my-workspace".architect.build.configurations.production.budgets[0] += {"maximumWarning":"1.2mb","maximumError":"1.4mb"}';
 #src/assets (linked above) ships as assets/site - the same shape create-workspace.sh writes for each library's assets dir.
 jqEdit angular.json '.projects."my-workspace".architect.build.options.assets |= ((. // []) | map(select((type=="object" and .input=="src/assets") | not)) + [{"glob":"**/*","input":"src/assets","output":"assets/site","followSymlinks":true}])';
 #Highcharts is an add-on the install never carries (#302 - web/CLAUDE.md, "Add-ons load by URL"):  the history trend imports it

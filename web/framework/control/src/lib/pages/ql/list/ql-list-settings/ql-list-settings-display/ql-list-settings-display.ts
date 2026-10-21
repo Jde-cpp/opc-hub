@@ -1,9 +1,5 @@
 import {CdkDragDrop, CdkDropList, CdkDrag, moveItemInArray} from '@angular/cdk/drag-drop';
-import { Component, OnInit, OnDestroy, Inject, ViewChild, input, signal, model, computed, Injectable, inject, output, effect } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import {ActivatedRoute, Route, Router, Routes, UrlSegment} from '@angular/router';
-import {Sort} from '@angular/material/sort';
-import {Field} from '../../../../../model/ql/schema/field';
+import { Component, OnInit, input, signal, viewChild } from '@angular/core';
 import {TableSchema}  from '../../../../../model/ql/schema/table-schema';
 
 import { MatIcon } from '@angular/material/icon';
@@ -11,19 +7,15 @@ import { MatInputModule } from '@angular/material/input';
 import { MatCheckbox } from '@angular/material/checkbox';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTable, MatTableModule } from '@angular/material/table';
-import { MatToolbar } from '@angular/material/toolbar';
-import { Operator, View, ViewField } from '../../../../../model/ql/view';
+import { View, ViewField } from '../../../../../model/ql/view';
 import { StringUtils } from '../../../../../utils/string-utils';
-import { MatInput } from "@angular/material/input";
-import { Schema } from '@angular/forms/signals';
 
 
 @Component( {
-		selector: 'ql-list-settings-display',//.main-content.mat-drawer-container.my-content
+		selector: 'ql-list-settings-display',
 		styleUrls: ['ql-list-settings-display.scss'],
 		templateUrl: './ql-list-settings-display.html',
-		host: {class:'main-content.mat-drawer-container.my-content'},
-		imports: [CommonModule, CdkDrag, CdkDropList, MatCheckbox, MatIcon, MatSelectModule, MatTableModule, MatInputModule]
+		imports: [CdkDrag, CdkDropList, MatCheckbox, MatIcon, MatSelectModule, MatTableModule, MatInputModule]
 })
 export class QLListSettingsDisplay implements OnInit{
 	ngOnInit(){
@@ -36,11 +28,9 @@ export class QLListSettingsDisplay implements OnInit{
 			let field = this.view().fields.find( f=>f.name==name );
 			if( field )
 				columns.push( new ViewField(field) );//edit a copy: the template toggles `col.displayed` in place, so holding the live view's ViewField meant show/hide edits survived Cancel (same defect as the filter tab — see View.copyFilter)
-			else //if( !this.excludedColumns().includes(name) )
+			else
 				columns.push( new ViewField({field:{name: name, hidden:true, displayName: available[name]}, schema:this.schema()}) );
 		}
-		//
-		//[{name:"Selector", displayed:this.view().showSelector}, ...this.view().fields.map( f => new ViewField(f) )]
 		this.dataSource = columns;
 		this.pageSize.set( this.view().limit );
 	}
@@ -55,7 +45,7 @@ export class QLListSettingsDisplay implements OnInit{
 	}
 	drop( event: CdkDragDrop<string> ){
 		moveItemInArray( this.dataSource, event.previousIndex, event.currentIndex || 1 );
-    this.table.renderRows();
+    this.table().renderRows();
 	}
 	columnName( col:SelectorField|ViewField|undefined ): string{
 		return col ? StringUtils.idToDisplay(col.name) : "Selector";
@@ -69,11 +59,8 @@ export class QLListSettingsDisplay implements OnInit{
 	view = input.required<View>();
 	paged = input<boolean>( true );//the host reads its rows a page at a time, so Page Size means something
 	columns = input.required<Record<string,string>>();
-	//excludedColumns = input.required<string[]>();
 	schema = input.required<TableSchema>();
 
-	Operator = Operator;
-	operatorList = Object.values(Operator);
-  @ViewChild('table', {static: true}) table!: MatTable<SelectorField|ViewField>;
+	table = viewChild.required<MatTable<SelectorField|ViewField>>( 'table' );
 }
 type SelectorField = {name:"Selector", displayed:boolean, sort?:number};

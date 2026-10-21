@@ -1,43 +1,43 @@
-import { Component, input, effect, model, Signal, output, inject } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, computed, input, model, output } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { SelectionModel } from '@angular/cdk/collections';
 import { MatTableModule } from '@angular/material/table';
 import { MatSortModule, Sort } from '@angular/material/sort';
-import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import {FieldKind} from '../../../model/ql/schema/field';
 import { MatCheckbox } from '@angular/material/checkbox';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIcon } from '@angular/material/icon';
 import { MatIconButton } from '@angular/material/button';
 import { MatTooltip } from '@angular/material/tooltip';
-import { StringUtils } from '../../../utils/string-utils';
-import { ViewField } from '../../../model/ql/view';
+import { Style, ViewField } from '../../../model/ql/view';
 import { QLRow } from '../../../model/ql/slug-row';
+import { capitalize } from 'jde-spa';
 
 @Component({
 	selector: 'ql-table',
 	styleUrls: ['./graphql-table.scss'],
 	templateUrl: './graphql-table.html',
-	imports: [CommonModule, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip]
+	imports: [DatePipe, MatCheckbox, MatChipsModule, MatIcon, MatIconButton, MatTableModule, MatSortModule, MatTooltip]
 })
 export class GraphQLTable{
-	private cnsle:SnackbarService = inject( SnackbarService );
 
 	checkboxLabel( row?: QLRow ): string{
 		return row
 			? `${this.selections().isSelected(row) ? 'deselect' : 'select'} row ${row.name}`
 			: `${this.isAllSelected() ? 'select' : 'deselect'} all`;
 	}
-	toggle( row: QLRow ){//rows, not ids - the row click path, the highlight and ql-list's selection() all key off the row object
-		const newSelections = this.selections().isSelected(row) ? this.selections().selected.filter( (x)=>x!=row ) : this.selections().selected.concat( row );
-		this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), newSelections) );
+	toggle( row: QLRow ){ this.selections.set( GraphQLTable.toggled(this.selections(), row) ); }
+	//`row` ticked or unticked in a new model:  rows, not ids - the row click path, the highlight and ql-list's selection() all key off the row object
+	static toggled( selections:SelectionModel<QLRow>, row:QLRow ):SelectionModel<QLRow>{
+		const rows = selections.isSelected(row) ? selections.selected.filter( (x)=>x!=row ) : selections.selected.concat( row );
+		return new SelectionModel<QLRow>( selections.isMultipleSelection(), rows );
 	}
 
 	toggleAll(){
 		if( this.isAllSelected() )
 			this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), []) );
 		else
-			this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), [...this.dataSource()()]) );
+			this.selections.set( new SelectionModel<QLRow>(this.selections().isMultipleSelection(), [...this.dataSource()]) );
 	}
 
 	cellClick( row:QLRow ){
@@ -52,38 +52,11 @@ export class GraphQLTable{
 		this.onRowActivate.emit( row );
 	}
 
-	edit( column:string, element: QLRow ): void{
-	}
-
-	delete( row?: QLRow ): string{
-		return row
-			? `${this.selections().isSelected(row) ? 'deselect' : 'select'} row ${row.name}`
-			: `${this.isAllSelected() ? 'select' : 'deselect'} all`;
-	}
-
-	isAllSelected(){ return this.selections().selected.length==this.dataSource()().length; }
+	isAllSelected(){ return this.selections().selected.length==this.dataSource().length; }
 	isSelected( row:QLRow ){ return this.selections().isSelected(row); }
-	columnName( colName:string ){ return this.displayedFields().find(f=>f.name===colName)?.displayName ?? StringUtils.capitalize(colName); }
-	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.  `align` is expanded
-	//rather than passed through: it is not a CSS property, and a mat-cell is a flex container - text-align on its own leaves
-	//the content wherever justify-content put it.
-	columnStyle( colName:string ):Record<string,string>{
-		const style = this.displayedFields().find( f=>f.name===colName )?.style;
-		if( !style )
-			return {};
-		const y:Record<string,string> = {};
-		for( const [key,value] of Object.entries(style) ){
-			if( value==null )
-				continue;
-			if( key=="align" ){
-				y["justifyContent"] = value=="right" ? "flex-end" : value=="center" ? "center" : "flex-start";
-				y["textAlign"] = `${value}`;
-			}
-			else
-				y[key] = `${value}`;
-		}
-		return y;
-	}
+	columnName( colName:string ){ return this.columns().get( colName )?.field.displayName ?? capitalize(colName); }
+	//Applied to the header cell and the data cell from the one setting, so the two cannot drift apart.
+	columnStyle( colName:string ):Record<string,string>{ return this.columns().get( colName )?.style ?? noStyle; }
 	objectValue( obj: unknown ): string{
 		if( obj==null )
 			return '';
@@ -97,7 +70,7 @@ export class GraphQLTable{
 		const values = Object.values( obj ).filter( v=>v!=null );//no `name` - a single remaining property is the display value, e.g. opcSessions{count}.
 		return values.length==1 ? `${values[0]}` : '';
 	}
-	sortable( colName:string ){ return this.displayedFields().find(f=>f.name===colName)?.type.underlyingKind!=FieldKind.OBJECT; }//orderBy on a grafted object field is a server error.
+	sortable( colName:string ){ return this.columns().get( colName )?.field.type.underlyingKind!=FieldKind.OBJECT; }//orderBy on a grafted object field is a server error.
 
 	//A live-toggle cell (ViewFieldSettings.liveToggle).  Deliberately an icon button and not a mat-slide-toggle:  a slide
 	//toggle keeps its own checked state, so a mutation that FAILS would leave the switch showing the state the row never
@@ -106,19 +79,19 @@ export class GraphQLTable{
 	isLive( column:string, row:QLRow ):boolean{ return row[column]==null; }
 	//The verb for the direction a click would take this row - what the tooltip, the aria-label and the confirmation all read.
 	liveToggleLabel( column:string, row:QLRow ):string{
-		const settings = this.displayedFields().find( f=>f.name===column )?.liveToggle;
+		const settings = this.columns().get( column )?.field.liveToggle;
 		return (this.isLive(column,row) ? settings?.disable : settings?.enable) ?? "";
 	}
 
-	//The tone class for a chip cell.  The column names the tones, the stylesheet owns the colours, so a value the column did
-	//not list simply gets the theme's default chip rather than the wrong colour.
+	//The tone class for a chip cell.  The column names the tones, the stylesheet owns the colours (_general.scss), so a value the
+	//column did not list simply gets the theme's default chip rather than the wrong colour.
 	chipClass( colName:string, row:QLRow ):string{
-		const tones = this.displayedFields().find( f=>f.name===colName )?.chip;
+		const tones = this.columns().get( colName )?.field.chip;
 		const tone = tones?.[ this.objectValue(row[colName]) ];
 		return tone ? `chip-${tone}` : "";
 	}
 
-	dataSource=input.required<Signal<QLRow[]>>();
+	dataSource=input.required<QLRow[]>();
 	displayedFields = input.required<ViewField[]>();
 	selections=model.required<SelectionModel<QLRow>>();
 	//showDeleted = input<boolean>( false );
@@ -128,17 +101,57 @@ export class GraphQLTable{
 	onRowActivate = output<QLRow>();
 	onToggleLive = output<QLRow>();
 
-	get displayedColumnNames(){ return (this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ); };
-	//A chip column is whatever kind it always was - it just renders as a chip, so it has to leave the bucket it would
-	//otherwise fall in or the same matColumnDef is declared twice and the table throws.
-	get chipColumnNames(){ return this.displayedFields().filter( (x)=>x.chip ).map( (x)=>x.name ); }
-	//As chipColumnNames: a switch column leaves the bucket it would otherwise fall in (`deleted` is a DateTime) or the same
-	//matColumnDef is declared twice and mat-table throws.
-	get liveToggleColumnNames(){ return this.displayedFields().filter( (x)=>x.liveToggle ).map( (x)=>x.name ); }
-	get stringColumnNames(){ return this.displayedFields().filter( (x)=>!x.chip && ((x.type.underlyingKind==FieldKind.SCALAR && x.type.underlyingName=="String") || x.type.underlyingKind==FieldKind.ENUM) ).map( (x)=>x.name ); }
-	get objectColumnNames(){ return this.displayedFields().filter( (x)=>!x.chip && x.type.underlyingKind==FieldKind.OBJECT ).map( (x)=>x.name ); }
-	get listColumnNames(){ return this.displayedFields().filter( (x)=>x.type.underlyingKind==FieldKind.LIST ).map( (x)=>x.name ); }
-	get dateColumnNames(){ return this.displayedFields().filter( (x)=>!x.liveToggle && x.type.underlyingName=="DateTime" ).map( (x)=>x.name ); }
-	get boolColumnNames(){ return this.displayedFields().filter( (x)=>x.type.underlyingName=="Boolean" ).map( (x)=>x.name ); }
-	get uintColumnNames(){ return this.displayedFields().filter( (x)=>["UInt", "ID"].includes(x.type.underlyingName) ).map( (x)=>x.name ); }
+	displayedColumnNames = computed( ()=>(this.selections().isMultipleSelection() ? ["select"] : []).concat( this.displayedFields().filter((x)=>x.displayed).map((x)=>x.name) ) );
+	//each field's cell, classified once per change of fields rather than once per change-detection pass and per cell
+	columns = computed( ()=>new Map( this.displayedFields().map( f=>[f.name, {field: f, kind: columnKind( f ), style: cellStyle( f.style )}] ) ) );
+	//the matColumnDef lists, one per kind:  a field is in one at most, or its column is declared twice and mat-table throws
+	columnNames = computed( ()=>{
+		const y:Record<ColumnKind,string[]> = { chip: [], liveToggle: [], string: [], object: [], list: [], date: [], bool: [], uint: [] };
+		for( const {field, kind} of this.columns().values() ){
+			if( kind )
+				y[kind].push( field.name );
+		}
+		return y;
+	} );
 }
+type ColumnKind = "chip"|"liveToggle"|"string"|"object"|"list"|"date"|"bool"|"uint";
+//A chip or a switch column is whatever type it always was - it just renders as a chip or a switch (`deleted` is a DateTime).
+function columnKind( x:ViewField ):ColumnKind|undefined{
+	const type = x.type;
+	if( x.chip )
+		return "chip";
+	if( x.liveToggle )
+		return "liveToggle";
+	if( type.underlyingKind==FieldKind.LIST )
+		return "list";
+	if( type.underlyingKind==FieldKind.OBJECT )
+		return "object";
+	if( type.underlyingKind==FieldKind.ENUM || (type.underlyingKind==FieldKind.SCALAR && type.underlyingName=="String") )
+		return "string";
+	if( type.underlyingName=="DateTime" )
+		return "date";
+	if( type.underlyingName=="Boolean" )
+		return "bool";
+	if( ["UInt", "ID"].includes(type.underlyingName) )
+		return "uint";
+	return undefined;
+}
+//`align` is expanded rather than passed through: it is not a CSS property, and a mat-cell is a flex container - text-align on
+//its own leaves the content wherever justify-content put it.
+function cellStyle( style:Style|undefined ):Record<string,string>{
+	if( !style )
+		return noStyle;
+	const y:Record<string,string> = {};
+	for( const [key,value] of Object.entries(style) ){
+		if( value==null )
+			continue;
+		if( key=="align" ){
+			y["justifyContent"] = value=="right" ? "flex-end" : value=="center" ? "center" : "flex-start";
+			y["textAlign"] = `${value}`;
+		}
+		else
+			y[key] = `${value}`;
+	}
+	return y;
+}
+const noStyle:Record<string,string> = {};

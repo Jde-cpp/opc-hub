@@ -26,8 +26,8 @@ export type ConfirmData = {
 	imports: [MatButtonModule, MatDialogActions, MatDialogContent, MatDialogTitle]
 })
 export class ConfirmDialog{
-	dialogRef:MatDialogRef<ConfirmDialog,boolean> = inject( MatDialogRef<ConfirmDialog,boolean> );
-	data:ConfirmData = inject<ConfirmData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
+	dialogRef = inject( MatDialogRef<ConfirmDialog,boolean> );
+	data = inject<ConfirmData>( MAT_DIALOG_DATA );//an InjectionToken, so inject() takes it - unlike the string tokens elsewhere
 }
 
 //Awaitable wrapper - the callers are all `async onSomethingClick()`, and afterClosed() as an observable would push the

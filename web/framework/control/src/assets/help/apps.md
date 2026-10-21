@@ -30,11 +30,11 @@ An application server instance's page has three tabs, [Logs](#logs), [Log Settin
 
 ### Gateways
 
-A gateway instance's page has the hub's six tabs: **Connections**, **Templates** and **Groups**, described under [Gateways](/help/gateways), then [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
+A gateway instance's page has the [hub's six tabs](#opchub).
 
 ### OPC servers
 
-An OPC server instance's page has [Logs](#logs), [Log Settings](#log-settings) and [Web Sessions](#web-sessions).
+An OPC server instance's page has the [application server's three tabs](#application-server).
 
 The installer can add an OPC server of its own. On Windows it is the optional **OPC UA Server** component, off by default. On Linux the `.deb` ships it but leaves it stopped until `sudo systemctl enable --now jde-opcserver`, and the tarball's `install.sh` starts it only with `--opcserver`. Once it runs, its card shows beside the hub's.
 
@@ -52,6 +52,12 @@ The toolbar holds:
 - the refresh button, which reloads from the top
 - the view buttons, which switch between saved views
 - the tune button, which chooses the columns shown and their sort, and saves that as a view
+- on the right, three buttons that act on the row you select by clicking it, or with Enter:
+  - the hide button hides every entry with the selected entry's message
+  - the next button goes to the next entry with that message, reading on through the log for one
+  - the show button brings back every message you hid
+
+The messages you hide stay hidden the next time you open a log, until you show them again.
 
 See [Views](/help/lists#views) for more on views.
 

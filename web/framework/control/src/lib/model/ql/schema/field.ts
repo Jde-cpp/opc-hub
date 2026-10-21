@@ -1,5 +1,5 @@
-import { of } from 'rxjs';
 import { QLSchema } from './ql-schema';
+import { uncapitalize } from 'jde-spa';
 //https://graphql.org/learn/introspection/
 export enum FieldKind{
 	SCALAR=0,
@@ -29,7 +29,7 @@ export class FieldType extends OfType{
 	}
 	get underlyingKind():FieldKind{ return this.ofType?.kind ?? this.kind; }
 	get underlyingName():string{ return this.ofType?.name ?? this.name; }
-	get underlyingVariableName():string{ return this.underlyingName.charAt(0).toLowerCase()+this.underlyingName.slice(1) ; }
+	get underlyingVariableName():string{ return uncapitalize( this.underlyingName ); }
 	ofType:OfType|undefined;
 }
 

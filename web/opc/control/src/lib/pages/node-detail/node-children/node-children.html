@@ -2,30 +2,10 @@
 	@if( isSettings() ){
 		<ql-list-settings [suggestions]=colSuggestions() [columns]=columns [view]=viewCopy() [schema]=schema [paged]=false (onSave)=onViewSave($event) (onShow)=onViewShow($event) (onDelete)=onViewDelete($event) (onCancel)="isSettings.set(false)"></ql-list-settings>
 	} @else {
-		<mat-toolbar>
-			<div class="bar-left"><!--empty: the browse carries every value, so Refresh is the only reader.  kept as the spacer `justify-content: space-between` needs to hold .bar-right at the right edge, as ql-list's is when Add is hidden-->
-			</div>
-			<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
-				<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="isRefreshing()" (click)="onRefresh()">
-					<mat-icon>refresh</mat-icon>
-				</button>
-				<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="viewIndex()" (change)="onChangeView($event.value)">
-					@for( view of views(); track view; let i=$index ){
-						<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
-					}
-				</mat-button-toggle-group>
-				<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="isSettings.set(true)">
-					<mat-icon>tune</mat-icon>
-				</button>
-			</div>
-			<div class="bar-right">
-				<span class="row-count">{{ rows().length }} {{ rows().length==1 ? "row" : "rows" }}</span>
-			</div>
-		</mat-toolbar>
-		<mat-progress-bar class="refresh-bar" [mode]="isRefreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+		<view-toolbar [views]="viewSet" [refreshing]="isRefreshing()" [count]="rows().length" (viewChange)="onChangeView($event)" (edit)="isSettings.set(true)" (refresh)="onRefresh()"/><!--nothing projected left:  the browse carries every value, so Refresh is the only reader-->
 		<div style="align-content: center; margin: auto; text-align: center">
 			<!--every column is defined and the view picks the ones to render;  the sort is the view's too, so a header click goes through onSortChange rather than sorting the table in place-->
-			<mat-table [dataSource]="rows()" class="mat-elevation-z8" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
+			<mat-table [dataSource]="rows()" class="mat-elevation-z8 jde-dense" matSort (matSortChange)="onSortChange($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction" matSortDisableClear>
 				<ng-container matColumnDef="select">
 					<mat-header-cell *matHeaderCellDef>
 						<mat-checkbox (change)="$event ? toggleAllRows() : null"
@@ -46,7 +26,7 @@
 				</ng-container>
 				<ng-container matColumnDef="id">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> ID </mat-header-cell>
-					<mat-cell mat-cell (click)="test(r)" *matCellDef="let r">{{r.nodeId.id}}</mat-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{r.nodeId.id}}</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="name">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Name </mat-header-cell>
@@ -103,9 +83,6 @@
 								}
 							</mat-select>
 						}
-						<!-- <span *ngIf="r.dataType==ETypes.None">{{toString(r.value)}}</span> -->
-						<!-- <span *ngIf="valueType(r.value)!='boolean'" [title]="toString(r.value)">{{valueType(r.value)}}</span> -->
-						<!--  -->
 						<!--install-issues #35:  a locked editor used to dim in silence - "a typed value writes it" is what the README and the
 								Gateways help promise, and against a server that reports the node read-only the box simply reverted.  A disabled control
 								takes no pointer events, so the reason cannot ride on the control itself;  it rides on a lock beside it, the same

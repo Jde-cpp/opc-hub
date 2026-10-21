@@ -1,11 +1,8 @@
-import {effect, EventEmitter, model, Signal, signal} from '@angular/core';
-import { MatTable } from '@angular/material/table';
-import {Sort} from '@angular/material/sort';
+import {Signal, signal} from '@angular/core';
 import { Guid } from '../../model/guid';
 //import { TraceEntry } from './TraceEntry';
-import { BehaviorSubject, Observable, Subject } from 'rxjs';
+import { BehaviorSubject, Observable } from 'rxjs';
 
-import * as FromServer from 'jde-proto/App.FromServer';
 import * as Log from 'jde-proto/Log';
 import { Entry, LogEntries, LogView } from './log-entry';
 import { verify } from '../../utils/utils';
@@ -14,7 +11,7 @@ import { CollectionViewer } from '@angular/cdk/collections';
 export type PageStats = { length?:number, startIndex?:number };
 
 type Filter = {
-	messageIds:Guid[], message:string|undefined, level:Log.ELogLevel
+	messageIds:Guid[], level:Log.ELogLevel
 }
 export class LogDataSource extends DataSource<Entry>{
 	constructor( view:Signal<LogView> ){
@@ -193,37 +190,30 @@ export class LogDataSource extends DataSource<Entry>{
 		}
 		return text;
 	}
-	selectNext(){
-		let templateId = null;
-		let visibleIndex = 0;
-		let found = false;
-		for( let entry of this.allEntries ){
-			if( entry.selected ){
-				entry.selected = false;
-				templateId = entry.templateId;
-			}
-			else if( templateId && entry.templateId.equals(templateId) ){
-				entry.selected = true;
-				found = true;
-				break;
-			}
-			if( !entry.hidden )
-				++visibleIndex;
-		}
-		if( found ){
-			let pageSize = this.view().limit;
-			let page = Math.floor( visibleIndex/pageSize );
-			let start = page*pageSize;
-			this.setPage( start );
-		}
-		return found;
+	/**
+	* Selects the next visible entry of the selected one's template and pages to it.  The selection stays put when none is
+	* loaded:  it used to be dropped first, so the read-on in LogDetail.navigateNext had nothing left to look past.
+	* @returns false when no later entry of the template is loaded
+	*/
+	selectNext():boolean{
+		const index = this.allEntries.findIndex( e=>e.selected );
+		if( index==-1 )
+			return false;
+		const current = this.allEntries[index];
+		const next = this.allEntries.findIndex( (e, i)=>i>index && !e.hidden && e.templateId.equals(current.templateId) );
+		if( next==-1 )
+			return false;
+		current.selected = false;
+		this.allEntries[next].selected = true;
+		const visibleIndex = this.allEntries.slice( 0, next ).filter( e=>!e.hidden ).length;
+		const pageSize = this.view().limit;
+		this.setPage( Math.floor(visibleIndex/pageSize)*pageSize );
+		return true;
 	}
 
 	isHidden( entry:Entry ):boolean{
 		let filter = this.filter;
-		return filter.messageIds.find( guid=>guid.equals(entry.templateId) )!=undefined
-			|| entry.level<filter.level
-			|| ( filter.message!=undefined && this.message(entry).toLowerCase().indexOf(filter.message)==-1 );
+		return filter.messageIds.some( guid=>guid.equals(entry.templateId) ) || entry.level<filter.level;
 	}
 	/**
 	* Re-applies the row filter and pages to wherever the selected entry landed - the first page when nothing visible is
@@ -250,16 +240,11 @@ export class LogDataSource extends DataSource<Entry>{
 		const start = selectedVisibleIndex==-1 || !pageSize ? 0 : Math.floor( selectedVisibleIndex/pageSize )*pageSize;
 		return this.setPage( start );
 	}
-	autoScroll:boolean=true;
-	get paused(){return this._paused;} set paused(value){this._paused=value;}_paused=false;
-	filter: Filter = { messageIds: [], message: undefined, level: Log.ELogLevel.NoLog };
-	// get page(){return this._page;} set page(value){this._page=value;this.onPageChange.emit(value);} _page:number;
-	// onPageChange= new EventEmitter<number>();
+	filter: Filter = { messageIds: [], level: Log.ELogLevel.NoLog };
 	get startIndex(){ return this.#startIndex.asReadonly(); }//the visible index the page starts at - the pager's too
 	#startIndex = signal<number>( 0 );
 	get length(){ return this.#length.asReadonly(); }//visible entries, once the end has been read - until then Next stays on
 	#length = signal<number|undefined>( undefined );
-	//get filter(){return _filter;} set filter( value){_filter=value; applyFilter(value);} string _filter;
 	get sort(){ return this.view().sort; }
   private subject = new BehaviorSubject<Entry[]>([]);
 

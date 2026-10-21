@@ -10,7 +10,8 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subscription } from 'rxjs';
-import { confirm, errorText, SnackbarService } from 'jde-framework';
+import { confirm, errorMessage, SnackbarService } from 'jde-framework';
+import { Latest } from 'jde-spa';
 import { alignUp, applyHistModifications, editRefused, HistAggregate, HistAggregation, HistCapabilities, HistEditArgs, HistEditKind, HistEditResult, HistGroupMembers, HistNodeStatus, HistPage, HistPushedModification, HistReadArgs, HistRights, HistSource, histSourceKey, HistValue, histResumeTime, isNoData, latestHistTimes, mergeHistValues, pushValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId, NodeKey } from '../../../model/node-id';
@@ -61,7 +62,7 @@ export class NodeHistory implements OnDestroy{
 		//what the source lists for the picker, and on a group what this user may edit:  once per source
 		effect( ()=>{ const key = this.sourceKey(), source = this.histSource(); untracked( ()=>this.#loadSource( key, source ) ); } );
 	}
-	ngOnDestroy(){ ++this.#generation; this.#unsubscribe(); }//a read still out is stale:  its page is for a tab that is gone
+	ngOnDestroy(){ this.#generation.next(); this.#unsubscribe(); }//a read still out is stale:  its page is for a tab that is gone
 
 	pageData = input.required<NodePageData>();
 	//the gateway and connection read through:  what the aggregates listed, and the one picked, belong to
@@ -140,7 +141,7 @@ export class NodeHistory implements OnDestroy{
 	aggregated = computed<HistAggregation|undefined>( ()=>this.mode()=='values' ? this.aggregation() : undefined );
 
 	async #reload( nodes:Variable[], mode:HistMode, aggregation:HistAggregation|undefined ){
-		const generation = ++this.#generation;
+		const generation = this.#generation.next();
 		this.#unsubscribe();
 		this.#next = undefined;
 		this.#pages = 0;
@@ -193,7 +194,7 @@ export class NodeHistory implements OnDestroy{
 	}
 	//the latest record of the nodes before an aggregate range, raw:  undefined at the start of their history
 	async #lastBefore( args:HistReadArgs ):Promise<number|undefined>{
-		const page = await this.#history.read( this.gateway, this.histSource(), {nodes: args.nodes, end: args.start, limit: 1}, m=>console.log(m) );
+		const page = await this.#history.read( this.gateway, this.histSource(), {nodes: args.nodes, end: args.start, limit: 1} );
 		return page.values.find( v=>v.source )?.source!.getTime();
 	}
 	//paged back by its continuation - the read's exact place, which neither the oldest value held (a live push can be older
@@ -233,7 +234,7 @@ export class NodeHistory implements OnDestroy{
 					next = this.#before( args );
 				else{
 					const last = await this.#lastBefore( args );
-					if( generation!=this.#generation )
+					if( !this.#generation.is(generation) )
 						return;
 					next = last==undefined || last<NodeHistory.floor ? undefined : this.#before( args, Math.min( alignUp(last+1, args.interval!), this.#earliest ) );
 				}
@@ -242,7 +243,7 @@ export class NodeHistory implements OnDestroy{
 			this.hasEarlier.set( next!=undefined );
 		}
 		catch( e ){
-			if( generation!=this.#generation )
+			if( !this.#generation.is(generation) )
 				return;
 			this.#next = undefined;
 			this.hasEarlier.set( false );
@@ -254,14 +255,14 @@ export class NodeHistory implements OnDestroy{
 			this.snackbar.exception( "Could not read the history.", e );
 		}
 		finally{
-			if( generation==this.#generation )
+			if( this.#generation.is(generation) )
 				this.loading.set( false );
 		}
 	}
 	//one page, or undefined for a selection since changed, whose page is dropped
 	async #page( args:HistReadArgs, generation:number ):Promise<HistPage|undefined>{
-		const page = await this.#history.read( this.gateway, this.histSource(), args, m=>console.log(m) );
-		if( generation!=this.#generation )
+		const page = await this.#history.read( this.gateway, this.histSource(), args );
+		if( !this.#generation.is(generation) )
 			return undefined;
 		this.#fetchNames( [...page.values.map( v=>v.status ), ...page.nodes.map( n=>n.status )] );
 		return page;
@@ -278,7 +279,7 @@ export class NodeHistory implements OnDestroy{
 	}
 	loadEarlier(){
 		if( this.#next && !this.loading() )
-			this.#read( this.#next, this.#generation );
+			this.#read( this.#next, this.#generation.current );
 	}
 	//what the tab holds, read again after an edit:  one read as long as the pages loaded, since `limit` is outside the
 	//continuation's hash, so Load earlier still pages before it - or as the values held, where a group's snapshot or the live
@@ -289,7 +290,7 @@ export class NodeHistory implements OnDestroy{
 		const nodes = this.selected();
 		if( !nodes.length )
 			return;
-		const generation = ++this.#generation;
+		const generation = this.#generation.next();
 		this.#next = undefined;
 		const pages = Math.max( this.#pages, Math.ceil( this.values().length/NodeHistory.pageSize ), 1 );
 		this.#pages = 0;
@@ -303,11 +304,11 @@ export class NodeHistory implements OnDestroy{
 		let list:HistAggregate[] = [], capabilities:HistCapabilities|undefined;
 		try{
 			if( source.group!=undefined ){
-				capabilities = await this.#history.capabilities( this.gateway, source.group, m=>console.log(m) );
+				capabilities = await this.#history.capabilities( this.gateway, source.group );
 				list = capabilities.aggregates;
 			}
 			else
-				list = await this.#history.aggregates( this.gateway, source.opc, m=>console.log(m) );
+				list = await this.#history.aggregates( this.gateway, source.opc );
 		}
 		catch( e ){
 			console.warn( `Could not describe the history of ${key}.`, e );
@@ -400,7 +401,7 @@ export class NodeHistory implements OnDestroy{
 				this.live.set( false );
 				this.#paging( false );
 				this.dropped.set( false );
-				this.ended.set( `The subscription ended:  ${errorText( e ) ?? "unknown error"}` );
+				this.ended.set( `The subscription ended:  ${errorMessage(e)}` );
 			},
 			complete: ()=>{ this.#subscription = undefined; }
 		});
@@ -496,7 +497,7 @@ export class NodeHistory implements OnDestroy{
 			this.snackbar.exception( "Could not delete the value.", e );
 		}
 	}
-	#edit( args:HistEditArgs ):Promise<HistEditResult>{ return this.#history.edit( this.gateway, this.histSource(), args, m=>console.log(m) ); }
+	#edit( args:HistEditArgs ):Promise<HistEditResult>{ return this.#history.edit( this.gateway, this.histSource(), args ); }
 	nodeName( id:NodeId ):string{ return this.nodes().find( c=>c.key==id.key )?.name ?? id.toString(); }
 	statusText( sc:StatusCode ):string{ return OpcError.text( sc ); }
 	//A group's member list with its thresholds (#338), each overridable where the gateway lets this user update the rows:  the
@@ -507,8 +508,8 @@ export class NodeHistory implements OnDestroy{
 			return;
 		const group = source.source.group;
 		HistThresholdsDialog.open( this.dialog, { group, name: source.label, nodes: source.nodes,
-			load: ()=>this.#history.thresholds( this.gateway, group, m=>console.log(m) ),
-			save: ( id, changes )=>this.#history.override( this.gateway, id, changes, m=>console.log(m) )
+			load: ()=>this.#history.thresholds( this.gateway, group ),
+			save: ( id, changes )=>this.#history.override( this.gateway, id, changes )
 		} );
 	}
 	get gateway():Gateway{ return this.pageData().gateway; }
@@ -528,7 +529,7 @@ export class NodeHistory implements OnDestroy{
 	dialog = inject( MatDialog );
 	#subscription:Subscription|undefined;
 	#snapshotting = false;//whether #paging holds `loading`
-	#generation = 0;//which selection the values belong to:  a read or push for an older one is dropped
+	#generation = new Latest();//which selection the values belong to:  a read or push for an older one is dropped
 	#next:HistReadArgs|undefined;//the opening read's arguments with the last page's continuation:  the page before, if any
 	#pages = 0;//pages read into `values`, so a refresh reads as far
 	#earliest:number|undefined;//the start of the earliest aggregate range loaded, so a refresh reads from it

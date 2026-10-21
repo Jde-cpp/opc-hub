@@ -8,7 +8,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { confirm, DetailPage, errorText, Properties } from 'jde-framework';
+import { confirm, DetailActions, DetailPage, Properties } from 'jde-framework';
 import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
 import { HistConnection, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
@@ -21,8 +21,8 @@ import { HistoryService } from '../../../services/history-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { OpcStore } from '../../../services/opc-store';
 import { HistThresholdsDialog } from '../../node-detail/node-history/hist-thresholds-dialog';
-import { histAddEach } from './hist-add-each';
 import { HistGroupAccess } from './hist-group-access';
+import { HistMembers } from './hist-members';
 import { HistNodePickerDialog } from './hist-node-picker-dialog';
 import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 
@@ -46,7 +46,7 @@ const excludedNew = [...excluded, 'guid'];
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content mat-drawer-container my-content hist-group-detail'},
-	imports: [MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
+	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
 })
 export class HistGroupDetail extends DetailPage<HistGroup>{
 	constructor(){ super( 'hist-group-detail' ); }
@@ -54,10 +54,10 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	protected override get ctor(){ return HistGroup; }
 	protected override onRow(){
 		this.gateway = (<GatewayDetailData<HistGroup>>this.pageData).gateway;
-		this.members.set( [] );
+		this.members.rows.set( [] );
 		this.templateMembers.set( [] );
 		this.resolved.set( undefined );
-		this.error.set( undefined );
+		this.members.error.set( undefined );
 		this.#loadLists();
 		if( this.row.id )
 			this.refresh();
@@ -78,12 +78,9 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	connections = signal<HistConnection[]>( [] );
 	templates = signal<HistRef[]>( [] );
 	server = signal<Server|undefined>( undefined );//the group's connection, for its namespaces:  a node shown by the server's index
-	members = signal<HistGroupMember[]>( [] );
+	members = new HistMembers<HistGroupMember>( this.snackbar );//its loading and busy are the Resolution tab's too
 	templateMembers = signal<HistTemplateMember[]>( [] );
 	resolved = signal<Map<number,HistResolvedMember>|undefined>( undefined );//the last resolve's answer, by template member
-	loading = signal( false );
-	busy = signal( false );
-	error = signal<string|undefined>( undefined );
 
 	//the selects' lists, and the server behind the group's connection
 	async #loadLists():Promise<void>{
@@ -119,26 +116,11 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		return this.connections().find( c=>c.id==id )?.slug;
 	}
 	async refresh():Promise<void>{
-		const id = this.row?.id;
-		if( !id )
-			return;
-		this.loading.set( true );
-		this.error.set( undefined );
-		const gateway = this.gateway;
-		try{
-			const templateId = this.row.histTemplateId;
-			const [members, templateMembers] = await Promise.all( [this.admin.groupMembers( gateway, id ), templateId ? this.admin.templateMembers( gateway, templateId ) : Promise.resolve( [] )] );
-			if( this.row?.id!=id || gateway!=this.gateway )//the router reused the page for another group meanwhile, maybe another gateway's with the same id
-				return;
-			this.members.set( members );
-			this.templateMembers.set( templateMembers );
-		}
-		catch( e ){
-			this.error.set( errorText( e ) ?? 'Unknown error' );
-		}
-		finally{
-			this.loading.set( false );
-		}
+		const id = this.row?.id, templateId = this.row?.histTemplateId, gateway = this.gateway;
+		if( id )
+			await this.members.read( ()=>Promise.all( [this.admin.groupMembers( gateway, id ), templateId ? this.admin.templateMembers( gateway, templateId ) : Promise.resolve( [] )] ),
+				( [members, templateMembers] )=>{ this.members.rows.set( members ); this.templateMembers.set( templateMembers ); },
+				()=>this.row?.id==id && gateway==this.gateway );
 	}
 
 	//Members
@@ -166,8 +148,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const picks = await HistNodePickerDialog.open( this.dialog, { gateway, title: `Add nodes to ${this.row.name}`, mode: 'nodes', connections: this.connections(), connection: slug, root: this.row.rootNode } );
 		if( !picks?.length )
 			return;
-		await histAddEach( picks, { noun: 'node', label: p=>p.name, busy: this.busy, snackbar: this.snackbar,
-			add: p=>this.admin.createGroupMember( gateway, this.row.id, p.node, {}, msg=>console.log( msg ) ) } );
+		await this.members.add( picks, 'node', p=>p.name, p=>this.admin.createGroupMember( gateway, this.row.id, p.node ) );
 		this.resolved.set( undefined );//the rows changed under it:  a member's reason may not hold now
 		await this.refresh();
 	}
@@ -176,26 +157,19 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const member = m.templateNodeId!=undefined ? '  Its template member stays, and Resolve would add the node again.' : '';
 		if( !await confirm( this.dialog, {title: `Remove ${name}?`, message: `The node leaves the group:  the history kept of it stays on disk, and another group on the connection may take it.${member}`, confirm: 'Remove', destructive: true} ) )
 			return;
-		this.busy.set( true );
-		try{
-			await this.admin.purgeGroupMember( this.gateway, m.id, msg=>console.log( msg ) );
+		await this.members.mutate( async ()=>{
+			await this.admin.purgeGroupMember( this.gateway, m.id );
 			this.resolved.set( undefined );
 			await this.refresh();
-		}
-		catch( e ){
-			this.snackbar.exception( 'Could not remove the node.', e );
-		}
-		finally{
-			this.busy.set( false );
-		}
+		}, 'Could not remove the node.' );
 	}
 	//each member's effective thresholds with where each comes from, and the overrides (#338):  the members read again after, since
 	//an override is a column of a row shown here
 	openThresholds():void{
 		const id = this.row.id;
 		HistThresholdsDialog.open( this.dialog, { group: id, name: this.row.name, nodes: [],
-			load: ()=>this.history.thresholds( this.gateway, id, m=>console.log( m ) ),
-			save: ( rowId, changes )=>this.history.override( this.gateway, rowId, changes, m=>console.log( m ) )
+			load: ()=>this.history.thresholds( this.gateway, id ),
+			save: ( rowId, changes )=>this.history.override( this.gateway, rowId, changes )
 		} ).then( ()=>this.refresh() );
 	}
 
@@ -203,7 +177,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	//only says why one without a row has none, so a success it reported for a row since removed can't outrank the rows.
 	resolution = computed<HistResolutionRow[]>( ()=>{
 		const byMember = new Map<number,HistGroupMember>();
-		for( const m of this.members() ){
+		for( const m of this.members.rows() ){
 			if( m.templateNodeId!=undefined )
 				byMember.set( m.templateNodeId, m );
 		}
@@ -229,21 +203,14 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	}
 	//resolveHistory:  the members with no row are tried again on the connection, and every member answers
 	async resolve():Promise<void>{
-		this.busy.set( true );
-		try{
-			const answer = await this.admin.resolve( this.gateway, this.row.id, m=>console.log( m ) );
+		await this.members.mutate( async ()=>{
+			const answer = await this.admin.resolve( this.gateway, this.row.id );
 			this.resolved.set( new Map( answer.map( a=>[a.templateNode, a] ) ) );
 			await this.refresh();
 			await this.gateway.updateErrorCodes?.();//the statuses' names, before the rows render:  a code the page hasn't met shows as hex until its name is fetched
 			const unresolved = answer.filter( a=>a.status!==0 ).length;
 			this.snackbar.info( unresolved ? `${answer.length-unresolved} of ${answer.length} members resolved.` : `All ${answer.length} members resolved.` );
-		}
-		catch( e ){
-			this.snackbar.exception( 'Could not resolve the members.', e );
-		}
-		finally{
-			this.busy.set( false );
-		}
+		}, 'Could not resolve the members.' );
 	}
 
 	//The source and the thresholds, edited onto the record as the properties form edits its fields:  a new row each change, so the

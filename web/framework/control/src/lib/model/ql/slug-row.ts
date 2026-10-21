@@ -19,46 +19,27 @@ export abstract class ISlugRow extends Row{
 		}
 	}
 
-	static idArray( from:ISlugRow[] ):number[]{
-		const clone:number[] = [];
-		for( let item of from ?? [] )
-			clone.push( item.id );
-		return clone;
-	}
+	static idArray( from:ISlugRow[] ):number[]{ return (from ?? []).map( item=>item.id ); }
 
 	override equals( row:Partial<ISlugRow> ):boolean{
 		return this.slug==row.slug && this.name==row.name && this.description==row.description;
 	}
 
-	protected addRemoveMutations<T extends SlugRow<T>>( parentType:string, originalChildren:SlugRow<T>[], modifiedChildren:SlugRow<T>[], input:any ):Mutation[]{
-		let y = new Array<Mutation>();
-		let getMutations = ( changes:SlugRow<T>[], type:MutationType )=>{
-			for( let change of changes )
-				y.push( new Mutation(parentType, change.id, input, type) );
-		}
-		getMutations( SlugRow.notSubset(originalChildren, modifiedChildren), MutationType.Remove );
-		getMutations( SlugRow.notSubset(modifiedChildren, originalChildren), MutationType.Add );
-
-		return y;
+	//one Remove or Add per child, on the child:  `parentType` is the child's type, `input` names this row
+	protected addRemoveMutations( parentType:string, originalChildren:ISlugRow[], modifiedChildren:ISlugRow[], input:any ):Mutation[]{
+		const {added, removed} = diffIds( originalChildren, modifiedChildren );
+		return [...removed.map( id=>new Mutation(parentType, id, input, MutationType.Remove) ), ...added.map( id=>new Mutation(parentType, id, input, MutationType.Add) )];
 	}
-
+	//one Remove and one Add on `parent`, each with its ids:  `input`'s first key (role:) holds them, else they are its id
 	protected childMutations( parent:ISlugRow, originalChildren:ISlugRow[]|undefined, modifiedChildren:ISlugRow[]|undefined, input:any={} ):Mutation[]{
-		let y = new Array<Mutation>();
-		let addMutations = ( changes:number[], type:MutationType )=>{
-			if( !changes.length )
-				return;
-			let mutationInput = clone( input );
-			let keys = Object.keys(input);
-			let inputObj = keys.length ? mutationInput[Object.keys(mutationInput)[0]] : mutationInput; // ? role:id : id:
-			inputObj.id = changes;
-			y.push( new Mutation(parent.type, parent.id, mutationInput, type) );
-		}
-		let original = originalChildren!.map( x=>x.id );
-		let current = modifiedChildren!.map( x=>x.id );
-		addMutations( original.filter((x)=>!current.includes(x)), MutationType.Remove );
-		addMutations( current.filter((x)=>!original.includes(x)), MutationType.Add );
-
-		return y;
+		const mutation = ( ids:number[], type:MutationType )=>{
+			const mutationInput = clone( input );
+			const keys = Object.keys( input );
+			(keys.length ? mutationInput[keys[0]] : mutationInput).id = ids;
+			return new Mutation( parent.type, parent.id, mutationInput, type );
+		};
+		const {added, removed} = diffIds( originalChildren, modifiedChildren );
+		return [...removed.length ? [mutation( removed, MutationType.Remove )] : [], ...added.length ? [mutation( added, MutationType.Add )] : []];
 	}
 
 	get canSave():boolean{ return this.name?.length>0 && this.slug?.length>0; }
@@ -98,12 +79,12 @@ export abstract class SlugRow<T extends SlugRow<T>> extends ISlugRow{
 		let args = this.mutationArgs( original );
 		return Object.keys(args).length ? [new Mutation( this.type, this.id, args, original.id ? MutationType.Update : MutationType.Create )] : [];
 	}
-
-	static notSubset<T extends SlugRow<T>>( a:T[], b:T[] ):T[]{
-		let y = [];
-		for( let item of a )
-			if( !b.find( x=>x.id==item.id ) )
-				y.push( item );
-		return y;
-	}
+}
+//The ids `modified` has that `original` does not, and the ones it dropped - each in its list's order.  No `modified` is a list
+//nobody edited, not an emptied one.
+export function diffIds( original:readonly {id:number}[]|undefined, modified:readonly {id:number}[]|undefined ):{added:number[], removed:number[]}{
+	if( !modified )
+		return { added: [], removed: [] };
+	const was = (original ?? []).map( x=>x.id ), now = modified.map( x=>x.id );
+	return { added: now.filter( id=>!was.includes(id) ), removed: was.filter( id=>!now.includes(id) ) };
 }

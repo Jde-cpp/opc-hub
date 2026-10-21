@@ -1,12 +1,8 @@
-import { Component } from '@angular/core';
 import { Location } from '@angular/common';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router, withNavigationErrorHandler } from '@angular/router';
-import { vi } from 'vitest';
 import { chunkReloadKey, isChunkLoadError, reloadOnChunkLoadError } from './chunk-load-error';
-
-@Component( {template: ''} )
-class Blank {}
+import { Blank } from 'jde-spa/testing';
 
 const chromeError = ()=>new TypeError( 'Failed to fetch dynamically imported module: http://localhost/chunk-AB12cd34.js' );
 
@@ -23,10 +19,8 @@ describe( 'isChunkLoadError', ()=>{
 
 //reviews-issue/lazy-routes.md #2
 describe( 'reloadOnChunkLoadError', ()=>{
-	let reload:ReturnType<typeof vi.fn<( url:string )=>void>>;
-	beforeEach( ()=>{
-		sessionStorage.removeItem( chunkReloadKey );
-		reload = vi.fn<( url:string )=>void>();
+	const create = ()=>{
+		const reload = vi.fn<( url:string )=>void>();
 		TestBed.configureTestingModule( {providers: [
 			provideRouter( [
 				{ path: 'unloaded', loadComponent: ()=>Promise.reject(chromeError()) },
@@ -34,26 +28,33 @@ describe( 'reloadOnChunkLoadError', ()=>{
 				{ path: 'broken', component: Blank, resolve: {x: ()=>{ throw new Error('deleted'); }} }
 			], withNavigationErrorHandler(reloadOnChunkLoadError(reload)) )
 		]} );
-	});
+		return {
+			reload,
+			open: ( url:string )=>TestBed.inject( Router ).navigateByUrl( url ).catch( ()=>{} ),
+			external: ( url:string )=>TestBed.inject( Location ).prepareExternalUrl( url )
+		};
+	};
+	beforeEach( ()=>sessionStorage.removeItem( chunkReloadKey ) );
 	afterEach( ()=>{
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		sessionStorage.removeItem( chunkReloadKey );
 	});
-	const open = ( url:string )=>TestBed.inject( Router ).navigateByUrl( url ).catch( ()=>{} );
-	const external = ( url:string )=>TestBed.inject( Location ).prepareExternalUrl( url );
 
 	it( 'reloads the page whose chunk failed, by its url under the base href', async ()=>{
+		const { reload, open, external } = create();
 		await open( '/unloaded?x=1' );
 		expect( reload ).toHaveBeenCalledExactlyOnceWith( external('/unloaded?x=1') );
 	});
 
 	it( 'leaves every other navigation error alone', async ()=>{
+		const { reload, open } = create();
 		await open( '/broken' );
 		expect( reload ).not.toHaveBeenCalled();
 	});
 
 	it( 'lets the same page fail again within a minute without reloading, but not another page, nor the same one after the minute', async ()=>{
+		const { reload, open, external } = create();
 		vi.useFakeTimers( {toFake: ['Date']} );
 		await open( '/unloaded' );
 		await open( '/unloaded' );
@@ -67,6 +68,7 @@ describe( 'reloadOnChunkLoadError', ()=>{
 	});
 
 	it( 'does not reload when sessionStorage cannot record it', async ()=>{
+		const { reload, open } = create();
 		vi.spyOn( Storage.prototype, 'setItem' ).mockImplementation( ()=>{ throw new DOMException('denied', 'SecurityError'); } );
 		await open( '/unloaded' );
 		expect( reload ).not.toHaveBeenCalled();

@@ -1,8 +1,8 @@
 import { inject, Injectable } from '@angular/core';
 import { ActivatedRouteSnapshot, createUrlTreeFromSnapshot, Resolve, Router, RouterStateSnapshot } from '@angular/router';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
-import { DetailResolver, DetailRoute, IGRAPHQL, SlugNotFoundError, SnackbarService } from 'jde-framework';
-import { GatewayService } from '../gateway-service';
+import { DetailResolver, DetailRoute, SlugNotFoundError, SnackbarService } from 'jde-framework';
+import { GATEWAY_SERVICE } from '../gateway-service';
 import { GatewayDetailData } from './client-resolver';
 import { HistAdminKind, histAdminListRoute } from '../../pages/gateway-detail/hist-admin/hist-admin-list-route';
 
@@ -13,7 +13,7 @@ import { HistAdminKind, histAdminListRoute } from '../../pages/gateway-detail/hi
 @Injectable()
 export class HistAdminResolver implements Resolve<GatewayDetailData<any>>{
 	#router = inject( Router );
-	#gatewayService = inject( IGRAPHQL ) as GatewayService;//the gateway routes alias IGRAPHQL to the one GatewayService (app.routes.ts gatewayProvider)
+	#gatewayService = inject( GATEWAY_SERVICE );
 	#routeStore = inject( RouteStore );
 	#snackbar = inject( SnackbarService );
 	#recentVisits = inject( RecentVisits );

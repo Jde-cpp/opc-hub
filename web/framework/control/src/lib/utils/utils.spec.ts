@@ -2,9 +2,9 @@ import { fromIsoDuration } from './utils';
 
 const day = 86400;
 const year = 365.2425*day;//std::chrono::years - what Chrono::ToString divides by
-const thrown = ( str:string ):unknown=>{
+const thrown = ( str:string ):string|undefined=>{
 	try{ fromIsoDuration( str ); }
-	catch( e ){ return e; }
+	catch( e ){ return e instanceof Error ? e.message : "not an Error"; }
 	return undefined;
 };
 

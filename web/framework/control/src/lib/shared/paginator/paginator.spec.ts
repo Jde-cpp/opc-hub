@@ -5,7 +5,6 @@ import { Paginator, PageEvent } from './paginator';
 //click to the button itself, so a keyboard user could not page - clicking the button element is that path.
 describe( 'Paginator buttons', ()=>{
 	const create = ()=>{
-		TestBed.resetTestingModule();
 		TestBed.configureTestingModule({});
 		const fixture = TestBed.createComponent( Paginator );
 		fixture.componentRef.setInput( 'pageSize', 25 );

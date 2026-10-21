@@ -1,6 +1,5 @@
 import { Injectable, Signal, inject, signal, InjectionToken } from '@angular/core';
 import { RouteStore, User, UserJson } from 'jde-spa';
-import { clone } from '../utils/utils'
 
 const userStorageKey = 'user';
 
@@ -15,7 +14,6 @@ export class AuthStore{
 		let userString:string|null = null;
 		try{
 			userString = localStorage.getItem( userStorageKey );//localStorage access itself throws where site data is blocked
-			if( this.log ) console.log( `AuthService User: ${userString}` );
 			if( userString )
 				this.#userSignal.set( new User(JSON.parse(userString)) );
 		}
@@ -31,7 +29,6 @@ export class AuthStore{
 		let current = this.user() ? new User(this.user() as UserJson) : new User();
 		current.append( user );
 		let stringify = JSON.stringify( current );
-		if( this.log ) console.log( `auth.append( ${stringify} )` );
 		localStorage.setItem( userStorageKey, stringify );
 		this.#userSignal.set( current );
 	}
@@ -42,7 +39,6 @@ export class AuthStore{
 	//upsert it drove went with it.
 	reset( jwt?:string ):void{
 		const user = new User( jwt );
-		if( this.log ) console.log( `auth.reset( ${user.toString()} )` );
 		localStorage.setItem( userStorageKey, JSON.stringify(user) );
 		this.#userSignal.set( user );
 	}
@@ -57,12 +53,10 @@ export class AuthStore{
 		}
 		else
 			localStorage.removeItem( userStorageKey );
-		if( this.log ) console.log( `logout(${JSON.stringify(newAuth)})` );
 		this.#userSignal.set( newAuth );
 	}
 
 	#routeStore = inject( RouteStore );
-	log:boolean = false;
 	#userSignal = signal<User | undefined>( undefined );
 	get user():Signal<User | undefined>{ return this.#userSignal.asReadonly(); }
 }

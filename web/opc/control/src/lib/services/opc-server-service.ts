@@ -10,12 +10,12 @@ import * as FromServer from 'jde-proto/Opc.FromServer';
 //answered out of the process's own archive (App::LogQLAwait), so the AppServer cannot serve it on the server's behalf.
 @Injectable( {providedIn: 'root'} )
 export class OpcServerService{
-	private authStore:AuthStore = inject( AUTH_STORE );
+	#authStore = inject( AUTH_STORE );
 
 	//the promise is the cache, so concurrent callers share one round trip instead of racing to build duplicate services.
 	servers():Promise<OpcServer[]>{
 		return this.#servers ??= this.appService.opcServerInstances().then(
-			instances=>instances.map( instance=>new OpcServer(instance, this.appService.transport, this.http, this.authStore, this.googleAuth) ) )
+			instances=>instances.map( instance=>new OpcServer(instance, this.appService.transport, this.http, this.#authStore, this.googleAuth) ) )
 			.catch( (e)=>{ this.#servers = undefined; throw e; } );
 	} #servers:Promise<OpcServer[]>|undefined;
 
@@ -35,11 +35,10 @@ export class OpcServerService{
 //IGraphQL entry point ProtoService offers reaches the server over http.
 export class OpcServer extends ProtoService<FromClient.Transmission,FromServer.Message>{
 	constructor( instance:Instance, transport:ETransport, http:HttpClient, authStore:AuthStore, googleAuth?:GoogleAuthService ){
-		super( FromClient.Transmission, http, transport, authStore, false, googleAuth );
+		super( FromClient.Transmission, http, transport, authStore, googleAuth );
 		super.instances = [instance];
-		if( typeof location!="undefined" && instance.host!=location.hostname )//the registry reports the machine hostname; a page served from another host fails the server's allowOrigin 'sameHost' check
-			console.warn( `OpcServer '${instance.instanceName}' is registered at host '${instance.host}' but the app is served from '${location.hostname}' - requests will be CORS-blocked unless http/accessControl/allowOrigin is pinned or the app is browsed via '${instance.host}'.` );
 	}
+	protected override get product(){ return "OpcServer"; }
 
 	protected override processMessage( bytearray:Uint8Array ):void{ console.error( `OpcServer '${this.name}' has no websocket transport; discarding ${bytearray.length} bytes.` ); }
 	protected override handleConnectionError( err:unknown ):void{ console.error( `OpcServer '${this.name}' has no websocket transport.`, err ); }

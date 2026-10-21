@@ -1,34 +1,29 @@
+@use './constants';
+
 html,
 body {
-  height: 100vh;
+	height: 100vh;
 }
 
 body {
-  font-family: "Roboto","Helvetica Neue Light","Helvetica Neue",Helvetica,Arial,"Lucida Grande",sans-serif;
-  margin: 0;
+	font-family: "Roboto","Helvetica Neue Light","Helvetica Neue",Helvetica,Arial,"Lucida Grande",sans-serif;
+	margin: 0;
 }
 
 // A property form and the action row under it stop growing here:  a 1900px input holding `1` is unreadable, and the
-// row's far-right Delete has to stay on the form's edge, not the window's.  Custom property rather than a scss
-// variable because the form (jde-framework) and the pages that put a button row under it (jde-opc, ...) are
-// different libraries.  Equals $extra-small-breakpoint-width, so anything narrower still gets the full width.
+// row's far-right Delete (DetailActions) has to stay on the form's edge, not the window's.  Custom properties rather
+// than scss variables because the sheets that read them are spread over jde-framework, jde-access and jde-opc - a media
+// query cannot read one, so the breakpoints stay scss (constants.scss).  The form width is the extra-small breakpoint, so
+// anything narrower still gets the full width;  the content offset is the shell's sidenav, which ViewToolbar centres past.
 :root {
-  --jde-form-max-width: 720px;
+	--jde-form-max-width: #{constants.$extra-small-breakpoint-width};
+	--jde-content-offset: #{constants.$sidenav-width};
 }
 
-// The Save/Cancel/Delete row under a record's tabs - user, group and role (jde-access) and the gateway client (jde-opc)
-// share it verbatim, hence global like the width above.  The rule runs the page's width: a Groups/Roles/Effective rights
-// tab holds a table that does too, and without it the row read as the table's last line.  The buttons stay sized to the
-// form:  Save under the field text (the form's 24px page inset plus the fill field's 16px text inset), and the far-right
-// Delete under the text's right edge, which the padding-right works out from the row's own width (back to 40px once the
-// window is no wider than the form).
-.jde-detail-actions {
-  display: flex;
-  gap: 20px;
-  margin-top: 20px;
-  padding: 16px 40px 20px;
-  padding-right: max(40px, calc(100% - var(--jde-form-max-width) - 8px));
-  border-top: 1px solid var(--mat-sys-outline-variant);
+// A routed page's content, and the tab group a detail page fills itself with.
+.my-content {
+	flex: 1 1 100%;
+	width: 100%;
 }
 
 // A select that cannot change (an existing user's provider) presents like a readonly input.  Material's 38% disabled
@@ -37,47 +32,27 @@ body {
 // where a selector would not.  Global because the generic `properties` form (jde-framework) and key-properties (jde-access)
 // both set the class.
 mat-form-field.readonly {
-  --mat-form-field-filled-disabled-container-color: var(--mat-form-field-filled-container-color, var(--mat-sys-surface-variant));
-  --mat-form-field-filled-disabled-label-text-color: var(--mat-form-field-filled-label-text-color, var(--mat-sys-on-surface-variant));
-  --mat-form-field-filled-disabled-active-indicator-color: var(--mat-form-field-filled-active-indicator-color, var(--mat-sys-on-surface-variant));
-  --mat-select-disabled-trigger-text-color: var(--mat-select-enabled-trigger-text-color, var(--mat-sys-on-surface));
-  --mat-select-disabled-arrow-color: transparent;
-}
-
-.docs-button[md-button], .docs-button[md-raised-button] {
-  text-transform: uppercase;
+	--mat-form-field-filled-disabled-container-color: var(--mat-form-field-filled-container-color, var(--mat-sys-surface-variant));
+	--mat-form-field-filled-disabled-label-text-color: var(--mat-form-field-filled-label-text-color, var(--mat-sys-on-surface-variant));
+	--mat-form-field-filled-disabled-active-indicator-color: var(--mat-form-field-filled-active-indicator-color, var(--mat-sys-on-surface-variant));
+	--mat-select-disabled-trigger-text-color: var(--mat-select-enabled-trigger-text-color, var(--mat-sys-on-surface));
+	--mat-select-disabled-arrow-color: transparent;
 }
 
 h1, h2 {
-  font-weight: 400;
-}
-
-// These styles are for controlling SVGs without using the ::ng-deep selector
-
-.docs-component-category-list-card-image svg {
-  width: 100%;
-}
-
-.docs-footer-angular-logo svg {
-  height: 50px;
-}
-
-.docs-angular-logo svg {
-  height: 26px;
-  margin: 0 4px 3px 0;
-  vertical-align: middle;
+	font-weight: 400;
 }
 
 code, pre {
-  font-family: 'Roboto Mono', monospace;
+	font-family: 'Roboto Mono', monospace;
 }
 
 code {
-  font-size: 90%;
+	font-size: 90%;
 }
 
 pre {
-  font-size: 14px;
+	font-size: 14px;
 }
 
 // What a page says instead of a bare table or an empty grid:  an icon, a one-line title, a line of what fills it or what to
@@ -85,24 +60,140 @@ pre {
 // apps page, the node browse (opc) - and the wording is theirs, the shape is one.  The muted colour is the same
 // on-surface-variant the row-count and the other component-local `.empty` classes settled on independently.
 .jde-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--mat-sys-on-surface-variant);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	padding: 40px 20px;
+	text-align: center;
+	color: var(--mat-sys-on-surface-variant);
 
-  mat-icon { font-size: 40px; width: 40px; height: 40px; opacity: .6; }
-  .title { margin: 4px 0 0; font: var(--mat-sys-title-medium); color: var(--mat-sys-on-surface); }
-  .detail { margin: 0; max-width: 48em; font: var(--mat-sys-body-medium); }
-  .actions { display: flex; gap: 12px; margin-top: 12px; }
+	mat-icon { font-size: 40px; width: 40px; height: 40px; opacity: .6; }
+	.title { margin: 4px 0 0; font: var(--mat-sys-title-medium); color: var(--mat-sys-on-surface); }
+	.detail { margin: 0; max-width: 48em; font: var(--mat-sys-body-medium); }
+	.actions { display: flex; gap: 12px; margin-top: 12px; }
 }
 
 // A tooltip of several lines - one per grant behind an Effective rights or resource page mark.  Global:  the tooltip renders in
 // the cdk overlay, outside any view, and a component's ::ng-deep rule exists only once that component has rendered.
 .jde-multiline-tooltip .mdc-tooltip__surface {
-  white-space: pre-line;
-  max-width: 36em;
-  text-align: left;
+	white-space: pre-line;
+	max-width: 36em;
+	text-align: left;
+}
+
+// A list's toolbar:  a left zone and a right one spread to the edges, on the container colour.  ViewToolbar's adds the view
+// group centred on the viewport;  a page with a toolbar of its own (the node history, a Web Sessions tab) sets the class too.
+// `mat-toolbar.` to outrank Material's .mat-toolbar-single-row height and its background, which come later in the cascade.
+mat-toolbar.jde-list-toolbar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: .5rem;
+	height: auto;
+	min-height: 56px;
+	padding-block: .25rem;
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+
+	.bar-left, .bar-center, .bar-right {
+		display: flex;
+		align-items: center;
+		gap: .5rem;
+		min-width: 0;
+	}
+	.row-count {
+		font: var(--mat-sys-label-large);
+		color: var(--mat-sys-on-surface-variant);
+		white-space: nowrap;
+	}
+}
+
+// Denser than Material's 52px rows and 56px header, for the admin lists read by scanning down a column:  four users filled a
+// quarter of the screen.  40px still clears a 22px chip and a row's 40px checkbox.  The two tokens are what
+// mat.table-overrides() would emit;  set on the table, they inherit into its rows.  The history table sets 36px itself.
+mat-table.jde-dense {
+	--mat-table-row-item-container-height: 40px;
+	--mat-table-header-container-height: 44px;
+}
+
+// A heading sits over its values:  at the left, where the data cells already are.  Both are flex containers - justify-content
+// moves the content, text-align only wraps it.  A column that wants another side sets it on both cells (graphql-table's
+// columnStyle, log-detail's .number, the rights grids below).
+mat-header-cell {
+	justify-content: flex-start;
+	text-align: left;
+}
+
+// The rights grids, a column per right, headed and centred, every other one shaded.  jde-access's permission table and
+// jde-opc's node rights edit one - a checkbox a cell, the deny glyph filling it so it centres on the axis mat-checkbox centres
+// its box on, in its own 40px target.  Effective rights and a resource's holders mark one - an icon a cell, whose tooltip is
+// the grants behind it.
+.jde-rights-grid {
+	.mat-mdc-header-cell { text-align: center; }
+	.mat-column-permission { display: flex; justify-content: center; }
+	.mat-column-alt { background-color: var(--mat-sys-secondary-container); }
+	.mat-column-None { background-color: var(--mat-sys-error-container); }
+	span.denied { width: 100%; text-align: center; vertical-align: middle; cursor: pointer; }
+	mat-icon {
+		cursor: help;
+		&.allowed { color: var(--mat-sys-primary); }
+		&.denied { color: var(--mat-sys-error); }
+	}
+}
+
+// The checkbox column of a list that selects rows, and the id column, right-aligned as a column of figures.
+.mat-column-select {
+	flex: 0 0 60px;
+}
+.mat-column-id {
+	flex: 0 0 100px;
+	justify-content: flex-end;
+	text-align: right;
+}
+
+.hidden {
+	display: none;
+}
+// a settings dialog's tab body
+.centered-content {
+	display: flex;
+	justify-content: center;
+}
+// a load that failed, said in place of what it would have shown
+.load-error {
+	margin: 16px;
+	color: var(--mat-sys-error);
+}
+// the row a list has selected
+.highlight {
+	border: 1px solid var(--mat-sys-primary);
+}
+// A chip's tone, from a resting state to a failure:  the log table's level chips, a list column's (GraphQLTable chipClass) and
+// a certificate's expiry.  The colour goes through the chip's own tokens - a plain `color` never reaches the label, which MatChip
+// paints from --mat-chip-label-text-color inside its template - and system tokens only, which hold their contrast in every theme
+// where a literal green or amber would not.  `neutral` is dimmed rather than coloured;  `warn` is tertiary, as jde-opc's
+// uncertain quality is;  `critical` is `error` filled.
+mat-chip {
+	&.chip-ok {
+		--mat-chip-label-text-color: var(--mat-sys-primary);
+		--mat-chip-outline-color: var(--mat-sys-primary);
+	}
+	&.chip-neutral {
+		--mat-chip-label-text-color: var(--mat-sys-on-surface-variant);
+		--mat-chip-outline-color: var(--mat-sys-outline);
+	}
+	&.chip-warn {
+		--mat-chip-label-text-color: var(--mat-sys-tertiary);
+		--mat-chip-outline-color: var(--mat-sys-tertiary);
+	}
+	&.chip-error {
+		--mat-chip-label-text-color: var(--mat-sys-error);
+		--mat-chip-outline-color: var(--mat-sys-error);
+	}
+	&.chip-critical {
+		--mat-chip-elevated-container-color: var(--mat-sys-error);
+		--mat-chip-label-text-color: var(--mat-sys-on-error);
+		--mat-chip-outline-color: var(--mat-sys-error);
+	}
 }

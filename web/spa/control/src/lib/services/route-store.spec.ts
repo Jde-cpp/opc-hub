@@ -1,12 +1,3 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { RouteItem } from '../pages/component-sidenav/route-item';
 import { RouteStore } from './route-store';
 
@@ -50,5 +41,27 @@ describe( 'RouteStore.clear', ()=>{
 			expect( localStorage.getItem(RouteStore.keysKey) ).toBeNull();
 		}
 		finally{ localStorage.removeItem = removeItem; }
+	} );
+} );
+
+//reviews/angular-refactor.md B12:  writers keyed by whatever they held - '/apps', joined UrlSegments, a bare 'users' - and the
+//readers tried each spelling in turn.  One key now, the absolute url with no slash at either end.
+describe( 'RouteStore.key', ()=>{
+	beforeEach( ()=>localStorage.clear() );
+
+	it( 'spells a url and its segments the same', ()=>{
+		expect( RouteStore.key('/apps') ).toBe( 'apps' );
+		expect( RouteStore.key('access/users/') ).toBe( 'access/users' );
+		expect( RouteStore.key(['/access', 'users']) ).toBe( 'access/users' );
+		expect( RouteStore.key([{path: 'apps'}, {path: 'gateways'}] as any) ).toBe( 'apps/gateways' );
+		expect( RouteStore.key('') ).toBe( '' );
+	} );
+
+	it( 'keeps one entry, whichever spelling wrote and reads it', ()=>{
+		const store = new RouteStore();
+		store.setChildren( '/access/users', [new RouteItem( {title: 'Alice', path: 'alice'} )] );
+		expect( store.getChildren(['access', 'users']).map( c=>c.title ) ).toEqual( ['Alice'] );
+		expect( new RouteStore().getChildren('access/users/').map( c=>c.title ) ).toEqual( ['Alice'] );//from localStorage
+		expect( [...store.entries().keys()] ).toEqual( ['access/users'] );
 	} );
 } );

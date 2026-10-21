@@ -1,0 +1,4 @@
+#jde-opc's protos for generate-protos.sh:  <dir under $JDE_BASH> <name>...  Common.proto is the framework's list's - one
+#generated Common serves both libraries.
+apps/OpcGateway/src/types/proto Opc.FromServer Opc.FromClient
+libs/opc/src/proto Opc.Common

@@ -7,7 +7,7 @@
 			</mat-form-field>
 		</div>
 	}
-	<mat-table #table [dataSource]=dataSource class="mat-elevation-z8" cdkDropList (cdkDropListDropped)="drop($event)" cdkDropListData=dataSource()>
+	<mat-table #table [dataSource]=dataSource class="mat-elevation-z8" cdkDropList (cdkDropListDropped)="drop($event)">
 		<ng-container matColumnDef="position" sticky>
 			<mat-header-cell *matHeaderCellDef></mat-header-cell>
 				<mat-cell *matCellDef="let element">
@@ -31,36 +31,6 @@
 				{{columnName(col)}}
 			</mat-cell>
 		</ng-container>
-		<!-- <ng-container matColumnDef="sort">
-			<mat-header-cell *matHeaderCellDef>Sort</mat-header-cell>
-			<mat-cell *matCellDef="let col">
-				<mat-form-field subscriptSizing="dynamic">
-					<input matInput type=number [value]="col.sort" (focus)="$event.target.select()" (blur)="updateSort(+$event.target.value, col)">
-				</mat-form-field>
-			</mat-cell>
-		</ng-container>
-		<ng-container matColumnDef="filter">
-			<mat-header-cell *matHeaderCellDef>Filter</mat-header-cell>
-			<mat-cell *matCellDef="let col">
-				<mat-form-field class="operation" subscriptSizing="dynamic">
-					<mat-select (selectionChange)="updateFilterOperator($event.value, col)" [value]="col.filter?.operator ?? ''">
-						<mat-option [value]="Operator.None"></mat-option>
-						<mat-option [value]="Operator.In">In</mat-option>
-						<mat-option [value]="Operator.NotIn">Not In</mat-option>
-						<mat-option [value]="Operator.Less">&lt;</mat-option>
-						<mat-option [value]="Operator.LessOrEqual">&lt;=</mat-option>
-						<mat-option [value]="Operator.Greater">&gt;</mat-option>
-						<mat-option [value]="Operator.GreaterOrEqual">&gt;=</mat-option>
-						< !-- <mat-option [value]="Operator.Regex">Regex</mat-option>
-						<mat-option [value]="Operator.ElementMatch">Element Match</mat-option>
-						<mat-option [value]="Operator.Between">Between</mat-option> -- >
-					</mat-select>
-				</mat-form-field>
-				<mat-form-field class="filter-text" subscriptSizing="dynamic">
-					<input matInput type="text" [value]="col.filter?.value ?? ''" (blur)="updateFilterValue($event.target.value, col)">
-				</mat-form-field>
-			</mat-cell>
-		</ng-container> -->
 		<mat-header-row *matHeaderRowDef="columnNames; sticky: true"></mat-header-row>
 		<mat-row mat-row *matRowDef="let element; columns: columnNames;" cdkDrag [cdkDragDisabled]="element.name == 'Selector'" [cdkDragData]="element" (click)="cellClick(element)" [class.highlight]="isSelected(element)"></mat-row>
 	</mat-table>

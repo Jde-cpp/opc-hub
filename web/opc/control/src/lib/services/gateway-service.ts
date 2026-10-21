@@ -1,10 +1,9 @@
 import { Injectable, InjectionToken, inject } from '@angular/core';
-import { Router } from '@angular/router';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Subject,Observable, finalize, Subscriber } from 'rxjs';
-import { AppService, AUTH_STORE, AuthStore, Duration, ETransport, GoogleAuthService, Guid, IGraphQL, Instance, Log, Mutation, MutationSchema, ProtoService, ProtoUtils, Query, StringUtils, TableSchema, Timestamp, Type } from 'jde-framework';
+import { AppService, AUTH_STORE, AuthStore, Duration, ETransport, GoogleAuthService, Guid, Instance, ProtoService, ProtoUtils, StringUtils, Type } from 'jde-framework';
 import { EProvider, User } from 'jde-spa';
-import { errorText } from 'jde-framework';
+import { errorMessage, errorText } from 'jde-framework';
 
 
 import { OpcError } from '../model/opc-error';
@@ -22,131 +21,44 @@ import { ExtensionObject, Reading, shortestFloat, toReading, Value, valueJson } 
 import { Enum } from '../model/enum';
 import { histResumeTime, HistPushedModification, HistPushKind, HistValue, isBoundNotFound } from '../model/hist';
 
-interface IError{ requestId:number; message: string; }
 type Owner = any;
 
 export type GatewaySlug = string;
-//app.routes.ts: 'gateways/:gateway[/:connection/**]' and 'apps/gateways/:instance[/:connection]'.  Both segments hold a
-//Gateway.slug (== instances[0].instanceName), so one pattern covers the lot.  Module scope, not a static #field:  a
-//decorated class cannot carry a static private identifier (TS18036).
-const gatewayUrl = /^\/(?:apps\/)?gateways\/([^/?#]+)/;
 @Injectable( {providedIn: 'root'} )
-export class GatewayService implements IGraphQL{
-	private router = inject( Router );
+export class GatewayService{
 	constructor(){
-		this.#lookup();
+		this.gateways().catch( ()=>{} );//looked up at once;  a failure is logged below, and the next call looks again
 	}
-	//After a failed lookup nothing settled a later gateway()/gateways() - /gateways awaited forever and a Retry could not help
-	//(reviews/m3-closing.md #7) - so a call made once one has failed looks the instances up again.
-	#lookup(){
-		this.#lookingUp = true;
-		this.appService.gatewayInstances().then(
-			(instances)=>{ this.#lookingUp = false; this.onGatewaySuccess( instances, this.appService.transport, this.http, this.#authStore, this.#opcStore ); },
-			(e)=>{ this.#lookingUp = false; this.onInstancesError( e ); }//wrap so `this` is bound (bare method reference would run with this===undefined)
-		);
-	}
-	#authStore:AuthStore = inject( AUTH_STORE );
-	#opcStore:OpcStore = inject( OPC_STORE );
-	#lookingUp = false;
-	private onGatewaySuccess(gateways:Instance[], transport:ETransport, http: HttpClient, authStore:AuthStore, opcStore:OpcStore){
-		if( gateways.length==0 )
-			console.error("No IotServies running");
-		this.#gateways = gateways.map( instance=>new Gateway(instance, transport, http, authStore, opcStore, this.googleAuth) );
-		this.#gatewaysCallbacks.forEach( cb=>cb.resolve(this.#gateways) );
-		this.#gatewaysCallbacks = [];
-		this.#gatewayCallbacks.forEach( cb=>{
-			const gateway = this.#gateways.find( gateway=>gateway.instances[0].instanceName==cb.instanceName );
-			if( gateway )
-				cb.resolve( gateway );
-			else
-				cb.reject( this.#unknownGateway(cb.instanceName) );
-		});
-		this.#gatewayCallbacks = [];
-	}
-	onInstancesError(e:HttpErrorResponse){
-		console.error( `Could not get IotServices.  (${e.status})${e.message}` );
-		this.#gatewaysCallbacks.forEach( x=>x.reject(e) );//reject BOTH lists so gateways() awaiters don't hang, not just gateway()
-		this.#gatewaysCallbacks = [];
-		this.#gatewayCallbacks.forEach( x=>x.reject(e) );
-		this.#gatewayCallbacks = [];
-	}
+	#authStore = inject( AUTH_STORE );
+	#opcStore = inject( OPC_STORE );
+	//The promise is the cache, so concurrent callers share one lookup.  A failed one is dropped, so a later call looks the
+	//instances up again - once nothing settled it, /gateways awaited forever and a Retry could not help (reviews/m3-closing.md #7).
+	gateways():Promise<Gateway[]>{
+		return this.#lookup ??= this.appService.gatewayInstances().then(
+			instances=>{
+				if( instances.length==0 )
+					console.error("No IotServies running");
+				return instances.map( instance=>new Gateway(instance, this.appService.transport, this.http, this.#authStore, this.#opcStore, this.googleAuth) );
+			} )
+			.catch( (e:HttpErrorResponse)=>{
+				console.error( `Could not get IotServices.  (${e.status})${e.message}` );
+				this.#lookup = undefined;
+				throw e;
+			} );
+	} #lookup:Promise<Gateway[]>|undefined;
 	//A url segment naming a gateway that is not registered - a stale bookmark, a renamed instance - used to come back as
 	//`undefined` behind a `!`, so the miss only surfaced as "cannot read properties of undefined" inside the resolver's
 	//first query, with nothing naming the gateway.  Reject, naming it:  a resolver route's caller says so (GatewayResolver's
 	//snackbar), and so does a Cards page (its could-not-load state) - a bare rejection reached neither (reviews/m3-closing.md #7).
 	async gateway( instanceName:string ):Promise<Gateway>{
-		if( !this.#gateways ){
-			const queued = new Promise<Gateway>( (resolve,reject)=>this.#gatewayCallbacks.push({instanceName, resolve, reject}) );
-			if( !this.#lookingUp )
-				this.#lookup();
-			return queued;
+		const gateways = await this.gateways();
+		const gateway = gateways.find( gateway=>gateway.instances[0].instanceName==instanceName );
+		if( !gateway ){
+			const known = gateways.map( gateway=>gateway.instances[0].instanceName );
+			throw new Error( `No gateway '${instanceName}' is registered.  ${known.length ? `Registered: '${known.join("', '")}'.` : "None are registered."}` );
 		}
-		const gateway = this.#gateways.find( gateway=>gateway.instances[0].instanceName==instanceName );
-		if( !gateway )
-			throw this.#unknownGateway( instanceName );
 		return gateway;
 	}
-	#unknownGateway( instanceName:string ):Error{
-		const known = this.#gateways?.map( gateway=>gateway.instances[0].instanceName ) ?? [];
-		return new Error( `No gateway '${instanceName}' is registered.  ${known.length ? `Registered: '${known.join("', '")}'.` : "None are registered."}` );
-	}
-	async gateways():Promise<Gateway[]>{
-		if( !this.#gateways ){
-			const queued = new Promise<Gateway[]>( (resolve,reject)=>this.#gatewaysCallbacks.push({resolve:resolve,reject:reject}) );
-			if( !this.#lookingUp )
-				this.#lookup();
-			return queued;
-		}
-		return Promise.resolve( this.#gateways );
-	}
-	//Every IGraphQL entry point goes through defaultGatewayAsync, not the synchronous getter: until gatewayInstances()
-	//resolves there is no Gateway to hand back, and the getter used to return undefined so the caller died on
-	//"cannot read properties of undefined" - even though gateway()/gateways() already queue for exactly this window.
-	//These are all async, so waiting instead of throwing costs the caller nothing.
-	async ql<Y>( q:Query, log:Log ):Promise<Y>{ return (await this.defaultGatewayAsync()).ql( q, log ); }
-	async query<T>( ql: string, args?:any, log?:Log ):Promise<T>{ return (await this.defaultGatewayAsync()).query<T>(ql, args, log); }
-	async querySingle<T>( ql: string ):Promise<T>{ return (await this.defaultGatewayAsync()).querySingle<T>( ql ); }
-	async schema( names:string[] ):Promise<TableSchema[]>{ return (await this.defaultGatewayAsync()).schema( names ); }
-	async schemaWithEnums( type:string, log:Log ):Promise<TableSchema>{ return (await this.defaultGatewayAsync()).schemaWithEnums( type, log ); }
-	async mutate<T>( ql: string|Mutation|Mutation[], log?:Log ):Promise<T>{
-		return (await this.defaultGatewayAsync()).mutate<T>( ql, log );
-	}
-	async mutations():Promise<MutationSchema[]>{ return (await this.defaultGatewayAsync()).mutations(); }
-
-	slugQuery( schema:TableSchema, slug: string ):string{ return null as any; }
-	subQueries( typeName: string, id: number ):string[]{ return []; }
-	excludedColumns( tableName:string ):string[]{ return []; }
-	toCollectionName( collectionDisplay:string ):string{ return collectionDisplay; }
-
-	//Same resolution as the getter, but waits for the instance lookup instead of failing during it.  Prefer this everywhere
-	//an await is already in hand; the getter stays for the synchronous callers.
-	async defaultGatewayAsync():Promise<Gateway>{
-		if( !this.#gateways )
-			await this.gateways();//queues on #gatewaysCallbacks, and rejects if gatewayInstances() failed
-		return this.defaultGateway;
-	}
-	//Resolved from the CURRENT url on every read, never cached.  This service is providedIn:'root', so its own ActivatedRoute
-	//is the ROOT route and its paramMap never carries the child ':gateway' - the old subscription therefore fired with nothing,
-	//#defaultGateway kept whatever the first url-suffix guess produced, and every IGraphQL call made on gateway B (reload,
-	//delete<Type>(id), restore, OpcAuthService.logout) went to gateway A against B's row ids.  Masked only by single-gateway
-	//deployments, where the find-miss and the [0] fallback happen to name the same instance.
-	#urlGateway():Gateway|undefined{
-		const navigation = this.router.getCurrentNavigation();//guards/resolvers run BEFORE activation, so routerState still holds the route being left
-		const url = navigation ? this.router.serializeUrl( navigation.finalUrl ?? navigation.extractedUrl ) : this.router.url;
-		const slug = gatewayUrl.exec( url )?.[1];
-		return slug ? this.#gateways?.find( gateway=>gateway.slug==decodeURIComponent(slug) ) : undefined;
-	}
-	get defaultGateway():Gateway{
-		//?? gateways[0]: 'default' means "when nothing names one" - loginPassword already treats gateways[0] as the one to use.
-		const gateway = this.#urlGateway() ?? this.#gateways?.[0];
-		if( !gateway )//was `undefined!`, so callers died on "cannot read properties of undefined" far from the cause
-			throw new Error( "No gateway is available: the gatewayInstances() lookup has not resolved yet, or returned none.  Await defaultGatewayAsync() instead." );
-		return gateway;
-	}
-	#gateways!:Gateway[];
-
-	#gatewaysCallbacks:{resolve: (value:Gateway[])=>void, reject:(e?:unknown)=>void}[]= [];
-	#gatewayCallbacks:{ instanceName:string, resolve: (value:Gateway)=>void, reject:(e?:unknown)=>void}[]= [];
 	appService = inject(AppService);
 	googleAuth = inject(GoogleAuthService);//Gateway is built by hand below, so the silent-renewal service is threaded through rather than injected there
 	http = inject(HttpClient);
@@ -156,54 +68,46 @@ export class GatewayService implements IGraphQL{
 export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Message>{
 	//an OpcHub serves the app-server and gateway protocols from one port and tells them apart by the upgrade path; a standalone gateway ignores it.
 	protected override get socketPath(){ return "/opc"; }
+	protected override get product(){ return "Gateway"; }
 	constructor( gateway:Instance, transport:ETransport, http: HttpClient, authStore:AuthStore, private store:OpcStore, googleAuth?:GoogleAuthService ){
-		super( FromClient.Transmission, http, transport, authStore, false, googleAuth );
+		super( FromClient.Transmission, http, transport, authStore, googleAuth );
 		super.instances = [gateway];
-		if( typeof location!="undefined" && gateway.host!=location.hostname )//a loopback advertisement was already rewritten to the page's host (resolveInstance); what remains is a split deployment's own name, and a page served from another host fails the server's allowOrigin 'sameHost' check
-			console.warn( `Gateway '${gateway.instanceName}' is registered at host '${gateway.host}' but the app is served from '${location.hostname}' - requests will be CORS-blocked unless http/accessControl/allowOrigin is pinned or the app is browsed via '${gateway.host}'.` );
 		//No connection warm-up here.  The navbar's search box injects SEARCH_PROVIDERS, which instantiates NodeSearchProvider,
 		//which injects GATEWAY_SERVICE - so a Gateway is built on EVERY page, and a `serverConnections{…}` in this constructor
 		//queried the gateway's whole connection list at bootstrap on /access/resources, /help, everywhere.  The list it cached
 		//had exactly one reader, a setRoute() nobody called.  OpcStore.getConnection is the real cache: one connection, on
 		//demand, memoized per gateway - which is what NodeResolver already uses.
 	}
-	async login( domain:string, username:string, password:string, log:Log ):Promise<void>{
-		let self = this;
+	async login( domain:string, username:string, password:string ):Promise<void>{
 		if( this.log.restRequests )	console.log( `Login( opc='${domain}', username='${username}' )` );
-		try{
-			await this.logout( log );
-			console.assert( !this.user()?.authorization );
-			await this.postRaw<any>( 'login', {opc:domain, user:username, password:password}, true, null );
-			if( this.log.restResults ) console.log( `authorization: '${this.user()?.authorization}'` );
-			let user = new User();
-			user.id = domain ? `${domain}\\${username}` : username;
-			user.domain = domain;
-			user.name = username;
-			user.provider = EProvider.OpcServer;
-			this.authStore.append( user );
-		}
-		catch( e ){
-			throw e;
-		}
+		await this.logout();
+		console.assert( !this.user()?.authorization );
+		await this.postRaw<any>( 'login', {opc:domain, user:username, password:password} );
+		if( this.log.restResults ) console.log( `authorization: '${this.user()?.authorization}'` );
+		let user = new User();
+		user.id = domain ? `${domain}\\${username}` : username;
+		user.domain = domain;
+		user.name = username;
+		user.provider = EProvider.OpcServer;
+		this.authStore.append( user );
 	}
 
-	async logout( log:Log ):Promise<void>{
-		let self = this;
+	async logout():Promise<void>{
 		if( this.log.restRequests )	console.log( `logout()` );
 		try{
 			//AppService.logout's header:  options of the caller's own attach no session, and a logout without one ended a session
 			//made for the request while the signed-in one lived on (reviews/install-issues.md #54)
-			await this.postRaw<string>( 'logout', {}, false, {observe: "response", headers:{"Authorization":this.user()?.authorization}} );
+			await this.postRaw<string>( 'logout', {}, {observe: "response", headers:{"Authorization":this.user()?.authorization}} );
 			if( this.log.restResults ) console.log( `logout` );
 		}
 		catch( e:unknown ){
-			log( `logout failed:  ${errorText(e) ?? "Unknown error"}` );
+			console.log( `logout failed:  ${errorMessage(e)}` );
 		}
 		this.authStore.logout();
 	}
 
 	//the socket carried every subscription, so the server has already forgotten them: drop the local bookkeeping directly rather than via clearOwner, whose unsubscribe sends would re-open the socket just to cancel subscriptions that no longer exist.
-	protected handleConnectionError(){
+	protected override handleConnectionError(){
 		const e = { message: "Connection to the gateway was lost." };
 		const subjects = [...this.#ownerSubscriptions.values()];
 		this.#ownerSubscriptions.clear();//clear before error() so a later addToSubscription starts a fresh Subject, same as the _subscribe failure path
@@ -248,7 +152,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 						throw e;
 				}
 				else
-					throw `unknown message:  ${JSON.stringify( message )}`;
+					throw new Error( `unknown message:  ${JSON.stringify( message )}` );
 			}
 		}
 		catch( e ){
@@ -325,15 +229,15 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		return `(${sc.toString(16)})${text}`;
 	}
 
-	public async browseObjectsFolder( cnnctn:CnnctnSlug, parent:UaNode, snapshot:boolean, log:Log ):Promise<UaNode[]>{
+	public async browseObjectsFolder( cnnctn:CnnctnSlug, parent:UaNode, snapshot:boolean ):Promise<UaNode[]>{
 		if( parent.isVariable )
 			throw new EvalError( `Cannot browse children of variable node.`, {cause:"Invalid Operation"} );
 		const vars = { opc: cnnctn, id: parent.nodeId.toJson() };
 		const commonColumns = "id name browse nodeClass refType typeDef description";
 		const variableColumns = "dataType value valueRank accessLevel userAccessLevel historizing";//historizing gates the History tab
 		const ql = `node(opc:$opc, id:$id){children{${commonColumns} ... on Variable{${variableColumns}} }}`;
-		const children = (await this.query<any>( ql, vars, (m)=>console.log(m) ))["node"]["children"];
-		var y = new Array<UaNode>();
+		const children = (await this.query<any>( ql, vars ))["node"]["children"];
+		const y = new Array<UaNode>();
 		for( const ref of children ){
 			let child:UaNode|undefined;
 			switch( <ENodeClass>ref.nodeClass ){
@@ -345,11 +249,11 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 					if( variable.customDataType )
 						try{
 							const nodeId = <NodeId>variable.customDataType
-							let x = await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(cnnctn)}, ${nodeId.qlArgs()}){ name enumValues{id name description}}`, null, log );
+							let x = await super.querySingle<Type>( `__type( opc: ${StringUtils.qlString(cnnctn)}, ${nodeId.qlArgs()}){ name enumValues{id name description}}` );
 							variable.customDataType = new Enum(nodeId, x);
 						}
 						catch( e:unknown ){
-							log( errorText(e) ?? "Unknown error" );
+							console.log( errorMessage(e) );
 						}
 					break;
 				default: console.error( `browseObjectsFolder - unhandled nodeClass ${ref.nodeClass} for '${ref.name}'` );//was `debugger;` — froze the app whenever a debugger (DevTools/automation) was attached
@@ -361,28 +265,20 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		await this.updateErrorCodes();//awaited:  the rows are plain objects, so a name that lands after the first paint repaints nothing
 		return y;
 	}
-	async snapshot( opcId:CnnctnSlug, nodes:NodeId[] ):Promise<Map<NodeId,Reading>>{
-		const results = await super.queryArray<{id:NodeId,value:any}>( `nodes( opc: ${StringUtils.qlString(opcId)}, id:[${NodeId.qlArgsArray(nodes)}]){id value}` );
-		var y = new Map<NodeId,Reading>();
-		for( const snapshot of results )
-			y.set( new NodeId(snapshot.id), toReading(snapshot.value) );
-		this.updateErrorCodes();
-		return y;
-	}
 	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
 	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{
 		//`id` has to be an OBJECT argument: NodeId::ParseQL (libs/opc/src/uatypes/NodeId.cpp) reads FindPtr<jvalue>("id")
 		//and accepts only an object or an array of them, so the flat `ns:…,i:…` qlArgs() form matched nothing, the server
-		//answered {"node":{}}, and read() returned undefined for every node - silently blanking the cell on changeDouble's
-		//failed-write restore.  snapshot() below already passes id:[{…}] and works, and write() already uses $id; this is
-		//the same shape via variables, which also avoids hand-escaping the literal.
+		//answered {"node":{}}, and read() returned undefined for every node - silently blanking the cell on a failed
+		//write's restore (NodeChildren.#write).  write() already uses $id;  this is the same shape via variables, which also
+		//avoids hand-escaping the literal.
 		const v = await super.querySingle<{value:any}>( `node( opc: $opc, id: $id ){value}`, {opc: opcId, id: n.toJson()} );
 		return toReading( v["value"] );
 	}
-	async write( opcId:CnnctnSlug, n:NodeId, v:Value, log:Log ):Promise<Reading>{
+	async write( opcId:CnnctnSlug, n:NodeId, v:Value ):Promise<Reading>{
 		const q = `updateVariable( opc: $opc, id: $id, value: $value ){ value }`;
 		const vars = { opc: opcId, id: n.toJson(), value: valueJson(v) };
-		const data:any = await super.postQL<any>( q, vars, log );
+		const data:any = await super.postQL<any>( q, vars );
 		this.updateErrorCodes();
 		//unwrap first, toValue last - mirroring read().  postQL returns the `data` object and the server keys a mutation payload by command name (QLAwait: `result[commandName]`, skipped only for `raw`, which this never requests), so toValue used to run on the wrapper and `["value"]` off its result was always undefined - blanking the cell.  `?? data` keeps the raw/unkeyed shape working too.
 		return toReading( (data?.["updateVariable"] ?? data)?.["value"] );
@@ -676,7 +572,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 		}
 		if( toDeleteNodes.size ){
 			for( const [opcId, nodes] of toDeleteNodes ){
-				var request:FromClient.Unsubscribe = { nodes:Gateway.toProto(nodes), opcId:opcId };
+				const request:FromClient.Unsubscribe = { nodes:Gateway.toProto(nodes), opcId:opcId };
 				this.sendPromise<void>( {"unsubscribe": request}, `unsubscribe opcId: ${opcId}, nodeCount: ${nodes.length}` );
 			}
 		}
@@ -695,7 +591,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 
 		this.clearUnusedNodes();
 		if( toDelete.length ){
-			var request:FromClient.Unsubscribe = { nodes:Gateway.toProto(toDelete), opcId:opcId };
+			const request:FromClient.Unsubscribe = { nodes:Gateway.toProto(toDelete), opcId:opcId };
 			return this.sendPromise<void>( {"unsubscribe": request}, `unsubscribe opcId: ${opcId}, nodeCount: ${toDelete.length}` );
 		}
 		else

@@ -47,7 +47,7 @@ export class ResourceResolver implements Resolve<ResourcePageData>{
 			return back();
 		}
 		const siblings = ResourceResolver.siblings( resources );
-		this.#routeStore.setChildren( listUrl.slice(1), siblings );//the crumb's name - the list's own entry holds only the page it showed
+		this.#routeStore.setChildren( listUrl, siblings );//the crumb's name - the list's own entry holds only the page it showed
 		const routing = new RouteItem( {path: ResourceResolver.path(resource), title: resource.name, siblings, parent: new RouteItem({path: listUrl, title: "Resources"})} );
 		return { resource, routing, accessUrl };
 	}

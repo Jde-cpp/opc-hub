@@ -1,6 +1,5 @@
 <mat-tab-group class="my-content" mat-stretch-tabs="false" mat-align-tabs="start"
-	[selectedIndex]="tabIndex()"
-	(selectedIndexChange)="onTabIndexChanged($event)">
+	[(selectedIndex)]="tabIndex">
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template>
 		<ng-template matTabContent>
@@ -38,19 +37,4 @@
 		</mat-tab>
 	}
 </mat-tab-group>
-<!--user-detail's row.  Two extended fabs gave Cancel the weight of a primary action and the done/cancel icons only
-	restated the labels, so the pair is a plain filled/outlined button row;  the trash can is the one icon kept, because
-	there it IS the warning.  Pushed to the far side: it sat in the click path of the two safe actions.-->
-<div class="jde-detail-actions">
-	<button matButton="filled" (click)="onSubmitClick()" [disabled]="!isChanged()">Save</button>
-	<button matButton="outlined" (click)="onCancelClick()">Cancel</button>
-	@if( isDeleted ){
-		<!--only on an already-deleted row, where Restore is the other half of the pair - a live row is never one click from a purge-->
-		<button matButton="outlined" class="purge" style="margin-left: auto;" (click)="onPurgeClick()" aria-label="Purge">
-			<mat-icon>delete_forever</mat-icon>Purge
-		</button>
-	}
-	<button matButton="outlined" [style.margin-left]="isDeleted ? null : 'auto'" (click)="onDeleteClick()" [disabled]="isNew" [attr.aria-label]="isDeleted ? 'Restore' : 'Delete'">
-		<mat-icon>{{isDeleted ? "restore" : "delete"}}</mat-icon>{{isDeleted ? "Restore" : "Delete"}}
-	</button>
-</div>
+<detail-actions [page]="this"/>

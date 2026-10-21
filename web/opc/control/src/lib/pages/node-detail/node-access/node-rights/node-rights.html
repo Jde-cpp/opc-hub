@@ -1,5 +1,5 @@
 
-<mat-table matSort #mainTable [dataSource]=data class="mat-elevation-z8" (matSortChange)="sortData($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction">
+<mat-table matSort #mainTable [dataSource]=data class="mat-elevation-z8 jde-rights-grid" (matSortChange)="sortData($event)" [matSortActive]="sort.active" [matSortDirection]="sort.direction">
 	<ng-container matColumnDef="roleName">
 		<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header>Role</mat-header-cell>
 		<mat-cell *matCellDef="let role"> {{role.roleName}} </mat-cell>
@@ -17,7 +17,7 @@
 					@if( self.isDenied(row, kv.key) ){
 						<span class="material-symbols-outlined denied" (click)="toggle(row, kv.key)">cancel</span>
 					}
-					@else if( self.isAvailable(row, kv.key) ){
+					@else{
 						<mat-checkbox
 							(change)="toggle(row, kv.key)"
 							[disabled]="disabled() || (kv.key==0 && self.isAllowed(row, kv.key))"

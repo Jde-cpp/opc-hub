@@ -2,7 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { GATEWAY_SERVICE } from './gateway-service';
 import { OPC_STORE } from './opc-store';
-import { NodeSearchProvider } from './node-search-provider';
+import { NodeSearchProvider, NodeSearchRow } from './node-search-provider';
+import { routerStub, silence } from 'jde-spa/testing';
 
 describe( 'NodeSearchProvider.displayPath', ()=>{
 	it( 'drops the namespace from every segment, as the breadcrumbs do', ()=>{
@@ -17,29 +18,24 @@ describe( 'NodeSearchProvider.displayPath', ()=>{
 
 //reviews/m3-closing.md #33:  a connection whose index failed answered the search with nothing, which read as "no such node".
 describe( 'NodeSearchProvider inside a connection', ()=>{
-	let fail:boolean;
-	let refuse:boolean;
-	let described:boolean;
-	const gateway = { slug: "gw", queryArray: async ()=>{ if( refuse ) throw Object.assign( new Error("(403)User does not have Read access to gateway/search."), {status: 403} ); if( fail ) throw new Error( "Query failed. (80340000)BadNodeIdUnknown" ); return [{ connection:{slug:"kep", name:"External 6"}, path:"Channel1/Device1/Tag1", name:"Tag1", nodeClass:2, depth:3 }]; } };
-	let provider:NodeSearchProvider;
-	beforeEach( ()=>{
-		fail = refuse = false; described = true;
-		vi.spyOn( console, 'warn' ).mockImplementation( ()=>{} );
+	//the provider over a gateway whose index fails, or refuses the user;  `described` is whether a node page has named the connection
+	const create = ( {fail=false, refuse=false, described=true}:{fail?:boolean, refuse?:boolean, described?:boolean} = {} )=>{
+		const gateway = { slug: "gw", queryArray: async ()=>{ if( refuse ) throw Object.assign( new Error("(403)User does not have Read access to gateway/search."), {status: 403} ); if( fail ) throw new Error( "Query failed. (80340000)BadNodeIdUnknown" ); return [{ connection:{slug:"kep", name:"External 6"}, path:"Channel1/Device1/Tag1", name:"Tag1", nodeClass:2, depth:3 }]; } };
 		TestBed.configureTestingModule({ providers: [
-			{ provide: Router, useValue: { url: "/gateways/gw/kep/Channel1" } },
+			{ provide: Router, useValue: routerStub( "/gateways/gw/kep/Channel1" ) },
 			{ provide: GATEWAY_SERVICE, useValue: { gateway: async ()=>gateway } },
 			{ provide: OPC_STORE, useValue: {
 				cnnctnName: ( g:string, c:string )=>described ? "External 6" : c,
 				getConnection: async ()=>{ throw new Error( "the notice must not describe the connection" ); }//opc-server-search.md #9
 			} }
 		]});
-		provider = TestBed.inject( NodeSearchProvider );
-	} );
+		return TestBed.inject( NodeSearchProvider );
+	};
+	beforeEach( ()=>silence() );
 	afterEach( ()=>vi.restoreAllMocks() );
 
 	it( 'says the search is unavailable, with the error, as a notice that cannot be picked', async ()=>{
-		fail = true;
-		const results = await provider.search( "tag", undefined, 20 );
+		const results = await create( {fail: true} ).search( "tag", undefined, 20 );
 		expect( results ).toHaveLength( 1 );
 		expect( results[0].title ).toBe( "Search is unavailable for External 6" );
 		expect( results[0].summary ).toContain( "BadNodeIdUnknown" );
@@ -47,19 +43,16 @@ describe( 'NodeSearchProvider inside a connection', ()=>{
 	} );
 
 	it( 'falls back to the slug when no node page has described the connection', async ()=>{
-		fail = true; described = false;
-		expect( (await provider.search("tag", undefined, 20))[0].title ).toBe( "Search is unavailable for kep" );
+		expect( (await create( {fail: true, described: false} ).search("tag", undefined, 20))[0].title ).toBe( "Search is unavailable for kep" );
 	} );
 
 	it( 'logs the raw error it turns into the notice', async ()=>{
-		fail = true;
-		await provider.search( "tag", undefined, 20 );
+		await create( {fail: true} ).search( "tag", undefined, 20 );
 		expect( console.warn ).toHaveBeenCalledWith( expect.stringContaining("'kep'"), expect.objectContaining({message: expect.stringContaining("BadNodeIdUnknown")}) );
 	} );
 
 	it( 'says not permitted, not unavailable, for a refusal', async ()=>{
-		refuse = true;
-		const [notice] = await provider.search( "tag", undefined, 20 );
+		const [notice] = await create( {refuse: true} ).search( "tag", undefined, 20 );
 		expect( notice.title ).toBe( "Search is not permitted for External 6" );
 		expect( notice.summary ).toContain( "Read access" );
 		expect( notice.icon ).toBe( "block" );
@@ -67,7 +60,62 @@ describe( 'NodeSearchProvider inside a connection', ()=>{
 	} );
 
 	it( 'answers hits, not a notice, when the index is fine', async ()=>{
-		const results = await provider.search( "tag", undefined, 20 );
+		const results = await create().search( "tag", undefined, 20 );
 		expect( results.map(r=>[r.title, r.disabled]) ).toEqual( [["Tag1", undefined]] );
 	} );
 } );
+
+function gateway( slug:string, rows:NodeSearchRow[]|Error ){
+	return { slug, queryArray: vi.fn( async ( _ql:string, _vars:any )=>{ if( rows instanceof Error ) throw rows; return rows; } ) };
+}
+const lamp:NodeSearchRow = { connection: {slug: 'cn1', name: 'Line 1'}, path: '4~Examples/4~Lamp 1', name: 'Lamp 1', nodeClass: 1, depth: 2 };
+const rpm:NodeSearchRow = { connection: {slug: 'cn2', name: 'Line 2'}, path: 'pump1/motorRpm', name: 'motorRpm', nodeClass: 2, depth: 2 };
+
+describe( 'NodeSearchProvider', ()=>{
+	function setup( url:string, gateways:ReturnType<typeof gateway>[] ){
+		TestBed.configureTestingModule({ providers: [
+			{ provide: Router, useValue: routerStub( url ) },
+			{ provide: GATEWAY_SERVICE, useValue: { gateway: async (t:string)=>gateways.find(g=>g.slug==t), gateways: async ()=>gateways } },
+			{ provide: OPC_STORE, useValue: { cnnctnName: ( g:string, c:string )=>c } },
+		]});
+		return TestBed.inject( NodeSearchProvider );
+	}
+
+	it( 'inside a connection searches only that connection, and builds an encodable commands array', async ()=>{
+		const gw = gateway( 'gw', [lamp] ), other = gateway( 'gw2', [rpm] );
+		const results = await setup( '/gateways/gw/cn1/4~Examples?x=1', [gw, other] ).search( 'lamp', undefined, 5 );
+		expect( gw.queryArray ).toHaveBeenCalledTimes( 1 );
+		expect( gw.queryArray.mock.calls[0][1] ).toEqual( {opc: 'cn1', text: 'lamp', limit: 5} );
+		expect( gw.queryArray.mock.calls[0][0] ).toContain( 'opc:$opc' );
+		expect( other.queryArray ).not.toHaveBeenCalled();
+		expect( results ).toHaveLength( 1 );
+		expect( results[0] ).toMatchObject( { title: 'Lamp 1', summary: 'Line 1/Examples/Lamp 1', icon: 'folder', rank: 0, route: ['/gateways', 'gw', 'cn1', '4~Examples', '4~Lamp 1'] } );//the summary names segments as the breadcrumbs do (3703ff0e)
+	});
+
+	it( 'elsewhere fans out over every gateway without an opc, ignoring one that fails', async ()=>{
+		const warn = silence();
+		const gw = gateway( 'gw', [rpm] ), dead = gateway( 'gw2', new Error('unreachable') );
+		const results = await setup( '/access/users', [gw, dead] ).search( 'rpm', undefined, 5 );
+		expect( gw.queryArray.mock.calls[0][1] ).toEqual( {text: 'rpm', limit: 5} );
+		expect( gw.queryArray.mock.calls[0][0] ).not.toContain( 'opc:' );
+		expect( results.map(r=>r.icon) ).toEqual( ['label'] );
+		expect( results[0].rank ).toBe( 1 );//'motorRpm' contains but does not start with 'rpm'
+		expect( warn ).toHaveBeenCalled();
+		warn.mockRestore();
+	});
+
+	//reviews/m3-closing.md #9:  a Variable (or a Method) has no page - it is a row on its parent's - so its hit opens the parent;
+	//the summary still names the node itself.  One directly under Objects opens the connection.
+	it( 'opens a variable\'s parent, naming the variable in the summary', async ()=>{
+		const top:NodeSearchRow = { connection: {slug: 'cn2', name: 'Line 2'}, path: 'status', name: 'status', nodeClass: 2, depth: 1 };
+		const results = await setup( '/access/users', [gateway( 'gw', [rpm, top] )] ).search( 'r', undefined, 5 );
+		expect( results[0] ).toMatchObject( { title: 'motorRpm', summary: 'Line 2/pump1/motorRpm', route: ['/gateways', 'gw', 'cn2', 'pump1'] } );
+		expect( results[1].route ).toEqual( ['/gateways', 'gw', 'cn2'] );
+	});
+
+	it( 'returns nothing for blank text without asking any gateway', async ()=>{
+		const gw = gateway( 'gw', [rpm] );
+		expect( await setup( '/', [gw] ).search( '', 'node', 5 ) ).toEqual( [] );
+		expect( gw.queryArray ).not.toHaveBeenCalled();
+	});
+});

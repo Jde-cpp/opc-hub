@@ -1,31 +1,23 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import { Component, input, output, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { MatDialog } from '@angular/material/dialog';
-import { Observable, of, Subscriber } from 'rxjs';
-import { vi } from 'vitest';
 import { ConfirmData, ConfirmDialog, SnackbarService } from 'jde-framework';
 import { alignUp, HistAggregate, HistCapabilities, HistEditArgs, HistEditResult, HistGroupMembers, HistPage, HistReadArgs, HistSource, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
-import { HistEvent, HistSubscribeArgs, SubscriptionResult } from '../../../services/gateway-service';
+import { HistEvent } from '../../../services/gateway-service';
 import { HistoryService } from '../../../services/history-service';
-import { HistEditDialog, HistEditDialogData, HistEditPreset } from './hist-edit-dialog';
+import { HistEditDialog, HistEditDialogData } from './hist-edit-dialog';
 import { HistThresholdsDialog, HistThresholdsDialogData } from './hist-thresholds-dialog';
 import { HistTable } from './hist-table';
 import { HistTrend } from './hist-trend';
 import { HighchartsLoader } from './highcharts-loader';
 import { NodeHistory } from './node-history';
+import { flush } from 'jde-spa/testing';
+import { dialogStub, snackbarStub } from 'jde-framework/testing';
+import { fakeGateway, histTick, histValue, variable } from 'jde-opc/testing';
 
 //The trend stands in for itself:  hist-trend.spec drives the real chart, and under jsdom, which lays nothing out, a chart's
 //axis has no length, so a redraw after a page lands throws a RangeError from Highcharts' time formatting of the NaN tick -
@@ -33,53 +25,44 @@ import { NodeHistory } from './node-history';
 @Component({ selector: 'hist-trend', template: '' })
 class TrendStub{ values = input<HistValue[]>(); series = input<Variable[]>(); stepped = input( true ); loading = input( false ); hasEarlier = input( true ); loadEarlier = output<void>(); }
 
-const settle = ()=>new Promise( r=>setTimeout(r) );
-const A = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true} );
+const A = variable( 1, 'A', {historizing: true} );
 //A History tab on one historized node, A, or on the `candidates` and `groups` given.  Each read is held until `answer` gives it a
 //page, and keeps the source it named;  `subscribed` counts the live tail's open subscriptions, and `push` sends the latest a value.
 //A group's subscription is `histSubscribed`, its arguments `histArgs`, and `emit` sends the latest an event, `histError` an end.
 //An edit sent directly lands in `edits.sent`, its source in `edits.sources`, and gets `edits.answer`;  the edit dialog is a stub
 //that closes at once with `dialogResult.answer`, and the confirmation with `confirmed`.  A group's capabilities are `capabilities`.
 const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]; highcharts?:'loaded'|'absent'|'failed'|'unsettled'}={} )=>{
-	const reads:{ source:HistSource; args:HistReadArgs; answer:( page:HistPage )=>void }[] = [];
-	const subscribers = new Set<Subscriber<SubscriptionResult>>();
-	const histSubscribers:{ args:HistSubscribeArgs; subscriber:Subscriber<HistEvent> }[] = [];
-	const gateway = {
-		subscribe: ()=>new Observable<SubscriptionResult>( s=>{ subscribers.add(s); return ()=>subscribers.delete(s); } ),
-		histSubscribe: ( args:HistSubscribeArgs )=>new Observable<HistEvent>( s=>{ const entry = {args, subscriber: s}; histSubscribers.push( entry ); return ()=>{ histSubscribers.splice( histSubscribers.indexOf(entry), 1 ); }; } ),
-		updateErrorCodes: async ()=>{}, slug: 'gw'
+	const answers:(( page:HistPage )=>void)[] = [];
+	const read = vi.fn( ( _reader:unknown, _source:HistSource, _args:HistReadArgs )=>new Promise<HistPage>( answer=>answers.push( answer ) ) );
+	const reads = ()=>read.mock.calls.map( ([, source, args], i)=>({source, args, answer: answers[i]}) );
+	const gateway = fakeGateway( 'gw' );
+	const edit = vi.fn( async ( _editor:unknown, _source:HistSource, _args:HistEditArgs )=>edits.answer );
+	const edits = {
+		get sent(){ return edit.mock.calls.map( ([, , args])=>args ); },
+		get sources(){ return edit.mock.calls.map( ([, source])=>source ); },
+		answer: <HistEditResult>{values: [], nodes: []}
 	};
-	const edits:{ sent:HistEditArgs[]; sources:HistSource[]; answer:HistEditResult } = { sent: [], sources: [], answer: {values: [], nodes: []} };
-	const dialogResult:{ answer:HistEditResult|undefined } = { answer: undefined };
-	const presets:(HistEditPreset|undefined)[] = [], confirmations:string[] = [], thresholds:HistThresholdsDialogData[] = [];
-	const errors:string[] = [], warnings:string[] = [];
-	const thresholdReads:{reader:unknown; group:number}[] = [], overrides:{poster:unknown; id:number; changes:unknown}[] = [];
+	const dialog = dialogStub();//a confirmation answers `confirmed`, the edit dialog `dialogResult.answer`, anything else nothing
+	dialog.answers.set( ConfirmDialog, true ).set( HistEditDialog, undefined );
+	const dialogResult = { get answer(){ return <HistEditResult|undefined>dialog.answers.get( HistEditDialog ); }, set answer( v:HistEditResult|undefined ){ dialog.answers.set( HistEditDialog, v ); } };
+	const opened = <T>( component:unknown )=>dialog.open.mock.calls.filter( c=>c[0]===component ).map( c=><T>c[1]?.data );
+	const snackbar = snackbarStub();
+	const thresholds = vi.fn( async ( _reader:unknown, _group:number )=>({update: false, nodes: []}) );
+	const override = vi.fn( async ( _poster:unknown, _id:number, _changes:unknown )=>{} );
 	const y = {
-		confirmed: true,
 		aggregates: <HistAggregate[]>[{name: 'Average', browse: 'Average'}, {name: 'Median', browse: 'Median'}],
-		capabilities: <HistCapabilities>{aggregates: [{name: 'Median', browse: 'Median'}], update: false, delete: false},
-		dialog: { open: ( component:unknown, config?:{data?:HistEditDialogData|ConfirmData|HistThresholdsDialogData} )=>{
-			if( component===HistEditDialog )
-				presets.push( (<HistEditDialogData|undefined>config?.data)?.preset );
-			else if( component===ConfirmDialog )
-				confirmations.push( (<ConfirmData>config!.data).message );
-			else if( component===HistThresholdsDialog )
-				thresholds.push( <HistThresholdsDialogData>config!.data );
-			return { afterClosed: ()=>of( component===ConfirmDialog ? y.confirmed : component===HistEditDialog ? dialogResult.answer : undefined ) };
-		} }
+		capabilities: <HistCapabilities>{aggregates: [{name: 'Median', browse: 'Median'}], update: false, delete: false}
 	};
 	const highcharts = signal<'loaded'|'absent'|'failed'|undefined>( options.highcharts=='unsettled' ? undefined : options.highcharts ?? 'loaded' ), loads = vi.fn();
 	TestBed.configureTestingModule({ providers: [
 		{ provide: HistoryService, useValue: {
-			read: ( _reader:unknown, source:HistSource, args:HistReadArgs )=>new Promise<HistPage>( answer=>reads.push({source, args, answer}) ),
-			edit: async ( _editor:unknown, source:HistSource, args:HistEditArgs )=>{ edits.sent.push( args ); edits.sources.push( source ); return edits.answer; },
-			aggregates: async ()=>{ await settle(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; },
-			capabilities: async ()=>{ await settle(); if( y.capabilities instanceof Error ) throw y.capabilities; return y.capabilities; },
-			thresholds: async ( reader:unknown, group:number )=>{ thresholdReads.push( {reader, group} ); return {update: false, nodes: []}; },
-			override: async ( poster:unknown, id:number, changes:unknown )=>{ overrides.push( {poster, id, changes} ); }
+			read, edit,
+			aggregates: async ()=>{ await flush(); if( y.aggregates instanceof Error ) throw y.aggregates; return y.aggregates; },
+			capabilities: async ()=>{ await flush(); if( y.capabilities instanceof Error ) throw y.capabilities; return y.capabilities; },
+			thresholds, override
 		} },
-		{ provide: SnackbarService, useValue: {exception: ()=>{}, info: ()=>{}, error: ( m:string )=>errors.push( m ), warn: ( m:string )=>warnings.push( m )} },
-		{ provide: MatDialog, useValue: y.dialog },
+		{ provide: SnackbarService, useValue: snackbar },
+		{ provide: MatDialog, useValue: dialog },
 		{ provide: HighchartsLoader, useValue: {state: highcharts, load: loads} }//the trend's add-on:  loaded, unless `highcharts` says otherwise
 	]});
 	TestBed.overrideComponent( NodeHistory, {remove: {imports: [HistTrend]}, add: {imports: [TrendStub]}} );
@@ -90,25 +73,33 @@ const open = ( options:{candidates?:Variable[]; groups?:HistGroupMembers[]; high
 	fixture.componentRef.setInput( 'groups', options.groups ?? [] );
 	fixture.detectChanges();
 	return {
-		highcharts, loads, fixture, node, gateway, reads, edits, dialogResult, presets, confirmations, errors, warnings, thresholds, thresholdReads, overrides,
+		highcharts, loads, fixture, node, gateway, edits, dialogResult,
+		get reads(){ return reads(); },
+		get thresholdReads(){ return thresholds.mock.calls.map( ([reader, group])=>({reader, group}) ); },
+		get overrides(){ return override.mock.calls.map( ([poster, id, changes])=>({poster, id, changes}) ); },
+		get presets(){ return opened<HistEditDialogData|undefined>( HistEditDialog ).map( d=>d?.preset ); },
+		get confirmations(){ return opened<ConfirmData>( ConfirmDialog ).map( d=>d.message ); },
+		get thresholds(){ return opened<HistThresholdsDialogData>( HistThresholdsDialog ); },
+		get errors(){ return snackbar.error.mock.calls.map( c=>c[0] ); },
+		get warnings(){ return snackbar.warn.mock.calls.map( c=>c[0] ); },
 		tab: fixture.componentInstance,
-		set confirmed( v:boolean ){ y.confirmed = v; },
+		set confirmed( v:boolean ){ dialog.answers.set( ConfirmDialog, v ); },
 		set aggregates( v:HistAggregate[]|Error ){ y.aggregates = <HistAggregate[]>v; },
 		set capabilities( v:HistCapabilities|Error ){ y.capabilities = <HistCapabilities>v; },
 		actions: ()=>[...fixture.nativeElement.querySelectorAll( '.row-action' )].map( ( b:Element )=>b.getAttribute( 'aria-label' ) ),
-		aggregate: async ( aggregate:string, interval:number )=>{ fixture.componentInstance.aggregation.set( {aggregate, interval} ); fixture.detectChanges(); await settle(); },
-		answer: async ( page:Partial<HistPage>={} )=>{ reads.at( -1 )!.answer( {values: [], continuation: null, nodes: [], ...page} ); await settle(); },
-		subscribed: ()=>subscribers.size,
-		push: ( source:Date )=>[...subscribers].at( -1 )!.next( {opcId: 'opc', node: node.nodeId, value: 1, sc: 0, source} ),
-		drop: ()=>[...subscribers].at( -1 )!.error( {message: "Connection to the gateway was lost."} ),//as Gateway.handleConnectionError does
-		histSubscribed: ()=>histSubscribers.length,
-		histArgs: ()=>histSubscribers.at( -1 )!.args,
-		emit: ( e:HistEvent )=>{ histSubscribers.at( -1 )!.subscriber.next( e ); fixture.detectChanges(); },
-		histError: ( e:unknown )=>{ histSubscribers.at( -1 )!.subscriber.error( e ); fixture.detectChanges(); }
+		aggregate: async ( aggregate:string, interval:number )=>{ fixture.componentInstance.aggregation.set( {aggregate, interval} ); fixture.detectChanges(); await flush(); },
+		answer: async ( page:Partial<HistPage>={} )=>{ reads().at( -1 )!.answer( {values: [], continuation: null, nodes: [], ...page} ); await flush(); },
+		subscribed: ()=>gateway.values.subscribers.length,
+		push: ( source:Date )=>gateway.values.next( {opcId: 'opc', node: node.nodeId, value: 1, sc: 0, source} ),
+		drop: ()=>gateway.values.error( {message: "Connection to the gateway was lost."} ),//as Gateway.handleConnectionError does
+		histSubscribed: ()=>gateway.histEvents.subscribers.length,
+		histArgs: ()=>gateway.histEvents.latest!.args,
+		emit: ( e:HistEvent )=>{ gateway.histEvents.next( e ); fixture.detectChanges(); },
+		histError: ( e:unknown )=>{ gateway.histEvents.error( e ); fixture.detectChanges(); }
 	};
 };
 const group = { id: 3, name: 'Pumps', nodes: [A] };
-const at = ( node:Variable, ms:number, nanos=ms%1000*1_000_000 ):HistValue=>({ node: node.nodeId, source: new Date(ms), server: null, sourceTime: {seconds: Math.floor(ms/1000), nanos}, status: 0, value: 1, bound: false, heartbeat: false });
+const at = ( node:Variable, ms:number, nanos?:number )=>histValue( node, ms, 1, {sourceTime: histTick(ms, nanos)} );
 
 describe( 'NodeHistory', ()=>{
 	//The tail subscribed once the read returned, and the read ended at the browser's now:  a value between the two was in
@@ -169,7 +160,7 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer();
 		tab.tab.mode.set( 'modified' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 2 );
 		expect( tab.reads[1].args.modified ).toBe( true );
 		expect( tab.reads[1].args.nodes.map( n=>n.key ) ).toEqual( [tab.node.key] );
@@ -181,7 +172,7 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.fixture.nativeElement.querySelector( 'mat-header-cell.mat-column-modType' ) ).not.toBeNull();
 		tab.tab.mode.set( 'values' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 3 );
 		expect( tab.reads[2].args.modified ).toBeUndefined();
 		expect( tab.subscribed() ).toBe( 1 );
@@ -191,7 +182,7 @@ describe( 'NodeHistory', ()=>{
 	//Stepped|Interpolated toggle goes with the chart;  the picker and the table stay.
 	it( 'hides the line-shape toggle when Highcharts is not installed', async ()=>{
 		const tab = open( {highcharts: 'absent'} );
-		await settle();
+		await flush();
 		tab.fixture.detectChanges();
 		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
 		expect( tab.fixture.nativeElement.querySelector( 'hist-aggregate-picker' ) ).not.toBeNull();
@@ -199,7 +190,7 @@ describe( 'NodeHistory', ()=>{
 	} );
 	it( 'hides the line-shape toggle when Highcharts failed to load', async ()=>{
 		const tab = open( {highcharts: 'failed'} );
-		await settle();
+		await flush();
 		tab.fixture.detectChanges();
 		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
 		expect( tab.fixture.nativeElement.querySelector( 'hist-table' ) ).not.toBeNull();
@@ -208,7 +199,7 @@ describe( 'NodeHistory', ()=>{
 	//tab never loads it itself - the trend does, so the Modifications mode, which has none, fetches nothing (#8).
 	it( 'shows the line-shape toggle once Highcharts has loaded', async ()=>{
 		const tab = open( {highcharts: 'unsettled'} );
-		await settle();
+		await flush();
 		tab.fixture.detectChanges();
 		expect( tab.fixture.nativeElement.querySelector( '.shape-group' ) ).toBeNull();
 		tab.highcharts.set( 'loaded' );
@@ -296,7 +287,7 @@ describe( 'NodeHistory', ()=>{
 	it( 'reads again after an edit the server took part of, and names what it refused', async ()=>{
 		const tab = open();
 		await tab.answer( {values: [at(tab.node, 5000)]} );
-		tab.gateway.updateErrorCodes = async ()=>{ await settle(); OpcError.setMessages( [{sc: 0x809B0000, message: 'BadNoData'}] ); };//a round trip
+		tab.gateway.updateErrorCodes.mockImplementation( async ()=>{ await flush(); OpcError.setMessages( [{sc: 0x809B0000, message: 'BadNoData'}] ); } );//a round trip
 		const other = new NodeId( {ns:2, i:9} );
 		tab.dialogResult.answer = { values: [], nodes: [{node: tab.node.nodeId, status: 0}, {node: other, status: 0x809B0000}] };
 		await tab.tab.openEdit( 'purgeRange' );
@@ -318,7 +309,7 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.confirmations[0] ).toContain( 'The bundled OPC server keeps the deleted value as a modification.  Another server may not.' );
 		tab.confirmed = true;
 		tab.edits.answer = { values: [], nodes: [{node: tab.node.nodeId, status: 0x801F0000}] };//Bad_UserAccessDenied
-		tab.gateway.updateErrorCodes = async ()=>{ await settle(); OpcError.setMessages( [{sc: 0x801F0000, message: 'BadUserAccessDenied'}] ); };//a round trip
+		tab.gateway.updateErrorCodes.mockImplementation( async ()=>{ await flush(); OpcError.setMessages( [{sc: 0x801F0000, message: 'BadUserAccessDenied'}] ); } );//a round trip
 		await tab.tab.deleteValue( tab.tab.values()[0] );
 		expect( tab.edits.sent.map( e=>({...e, nodes: (<{nodes:NodeId[]}>e).nodes.map( n=>n.toString() )}) ) ).toEqual( [{kind: 'purgeRange', nodes: [tab.node.nodeId.toString()], start: {seconds: 5, nanos: 123400}, end: {seconds: 5, nanos: 123400}}] );
 		expect( tab.errors ).toEqual( ['Could not delete the value:  the server answered BadUserAccessDenied.'] );
@@ -334,7 +325,7 @@ describe( 'NodeHistory', ()=>{
 		const tab = open();
 		await tab.answer( {values: [{...at(tab.node, 5000, 123400), status: 0x808C0000}]} );//Bad_SensorFailure
 		tab.tab.replaceValue( tab.tab.values()[0] );
-		await settle();
+		await flush();
 		expect( tab.presets[0]?.time ).toEqual( new Date(5000) );
 		expect( tab.presets[0]?.sourceTime ).toEqual( {seconds: 5, nanos: 123400} );
 		expect( 'status' in tab.presets[0]! ).toBe( false );
@@ -348,10 +339,10 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.tab.writable() ).toEqual( [tab.node] );//no level given:  unknown, not a denial
 		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).not.toBeNull();
 		expect( tab.fixture.nativeElement.querySelectorAll( '.row-action' ) ).toHaveLength( 2 );
-		const readOnly = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true, userAccessLevel: 5} );//Read|HistoryRead
+		const readOnly = variable( 1, 'A', {historizing: true, userAccessLevel: 5} );//Read|HistoryRead
 		tab.fixture.componentRef.setInput( 'candidates', [readOnly] );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.tab.writable() ).toEqual( [] );
 		expect( tab.fixture.nativeElement.querySelector( '[aria-haspopup="menu"]' ) ).toBeNull();
 		tab.fixture.destroy();
@@ -360,7 +351,7 @@ describe( 'NodeHistory', ()=>{
 	//never send (historian-web-edits #7).
 	it( 'offers no edits on an array node', async ()=>{
 		const tab = open();
-		const array = new Variable( <any>{ns:2, i:1, name: 'A', browse: {ns:2, name: 'A'}, historizing: true, valueRank: 1, value: [1, 2]} );
+		const array = variable( 1, 'A', {historizing: true, valueRank: 1, value: [1, 2]} );
 		tab.fixture.componentRef.setInput( 'candidates', [array] );
 		tab.fixture.detectChanges();
 		await tab.answer( {values: [at(tab.node, 5000)]} );
@@ -399,7 +390,7 @@ describe( 'NodeHistory', ()=>{
 		tab.emit( {kind: 'snapshot', values: [at(A, args.from!.getTime()+1000)], more: false} );
 		expect( tab.tab.loading() ).toBe( false );
 		expect( tab.tab.values().map( v=>v.source!.getTime() ) ).toEqual( [args.from!.getTime()-1000, args.from!.getTime()+1000] );
-		await settle();
+		await flush();
 		tab.fixture.detectChanges();
 		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
 		expect( tab.tab.writable() ).toEqual( [] );
@@ -521,12 +512,12 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer();
 		tab.tab.pick( 'group/3' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		tab.histError( {error: {requestId: 1, message: "The group was removed, which ends the subscription.", httpStatus: 404}} );
 		expect( tab.fixture.nativeElement.querySelector( '.live-state' )?.textContent ).toContain( '(404)The group was removed' );
 		tab.tab.pick( 'opc/opc' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads.at( -1 )!.source ).toEqual( {opc: 'opc'} );
 		expect( tab.fixture.nativeElement.querySelector( '.live-state' ) ).toBeNull();
 		tab.fixture.destroy();
@@ -547,7 +538,7 @@ describe( 'NodeHistory', ()=>{
 		tab.capabilities = {aggregates: [], update: true, delete: true};
 		tab.emit( {kind: 'ack', statuses: [0]} );
 		tab.emit( {kind: 'snapshot', values: [at(A, 5000)], more: false} );
-		await settle();
+		await flush();
 		tab.dialogResult.answer = { values: [{node: A.nodeId, source: new Date(5000), status: 0}], nodes: [] };
 		await tab.tab.openEdit( 'replace', {node: A, time: new Date(5000), value: 2} );
 		expect( tab.reads ).toHaveLength( 0 );//the stream pushes it
@@ -581,7 +572,7 @@ describe( 'NodeHistory', ()=>{
 	//Live on again resumes from the oldest of the nodes' latest values held, not the newest of all:  a node whose clock runs behind
 	//would get only its bound (historian-live-trend #5)
 	it( "resumes a group from the oldest of its nodes' latest values when Live goes on again", ()=>{
-		const b = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} );
+		const b = variable( 2, 'B', {historizing: true} );
 		const t = Date.now()-60_000;
 		const tab = open( {candidates: [], groups: [{...group, nodes: [A, b]}]} );
 		tab.emit( {kind: 'ack', statuses: [0, 0]} );
@@ -620,7 +611,7 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.histSubscribed() ).toBe( 0 );
 		tab.tab.toggle( A ); tab.tab.toggle( A );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 1 );
 		expect( tab.reads[0].source ).toEqual( {group: 3} );
 		await tab.answer( {values: [at(A, t)]} );
@@ -658,7 +649,7 @@ describe( 'NodeHistory', ()=>{
 		tab.capabilities = {aggregates: [], update: true, delete: false};
 		tab.emit( {kind: 'ack', statuses: [0]} );
 		tab.emit( {kind: 'snapshot', values: [{...at(A, 5000), sourceTime: undefined}], more: false} );
-		await settle();
+		await flush();
 		tab.fixture.detectChanges();
 		expect( tab.tab.rights() ).toEqual( {update: true, delete: false} );
 		expect( tab.tab.writable() ).toEqual( [A] );
@@ -680,7 +671,7 @@ describe( 'NodeHistory', ()=>{
 		purger.capabilities = {aggregates: [], update: false, delete: true};
 		purger.emit( {kind: 'ack', statuses: [0]} );
 		purger.emit( {kind: 'snapshot', values: [{...at(A, 5000), sourceTime: undefined}], more: false} );
-		await settle();
+		await flush();
 		purger.fixture.detectChanges();
 		expect( purger.actions() ).toEqual( [] );
 		purger.tab.loadEarlier();
@@ -712,7 +703,7 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer( {values: [at(A, tab.reads[1].args.start!.getTime())]} );
 		tab.tab.pick( 'group/3' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.tab.aggregation() ).toBeUndefined();
 		expect( tab.reads ).toHaveLength( 2 );
 		expect( tab.subscribed() ).toBe( 0 );
@@ -721,7 +712,7 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Median'] );
 		tab.tab.pick( 'opc/opc' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 3 );
 		expect( tab.reads[2].source ).toEqual( {opc: 'opc'} );
 		expect( tab.subscribed() ).toBe( 1 );
@@ -753,7 +744,7 @@ describe( 'NodeHistory', ()=>{
 		tab.aggregates = new Error( 'BadNodeIdUnknown' );//another connection, without the folder
 		tab.fixture.componentRef.setInput( 'pageData', {gateway: tab.gateway, server: {connection: {slug: 'other'}}, route: {profileKey: 'p'}, nodes: []} );
 		tab.fixture.detectChanges();
-		await settle(); await settle();
+		await flush(); await flush();
 		expect( tab.tab.aggregates() ).toEqual( [] );
 		tab.fixture.destroy();
 	} );
@@ -765,11 +756,11 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer();
 		await tab.aggregate( 'Median', 60_000 );
 		await tab.answer( {values: [at(tab.node, tab.reads[1].args.start!.getTime())]} );
-		const sibling = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} );
+		const sibling = variable( 2, 'B', {historizing: true} );
 		tab.fixture.componentRef.setInput( 'pageData', {gateway: tab.gateway, server: {connection: {slug: 'opc'}}, route: {profileKey: 'p'}, nodes: []} );
 		tab.fixture.componentRef.setInput( 'candidates', [sibling] );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 3 );
 		expect( tab.reads[2].args ).toMatchObject( {aggregate: 'Median', interval: 60_000} );
 		await tab.answer( {values: [at(sibling, tab.reads[2].args.start!.getTime())]} );
@@ -779,7 +770,7 @@ describe( 'NodeHistory', ()=>{
 		tab.fixture.detectChanges();
 		expect( tab.tab.aggregation() ).toBeUndefined();
 		expect( tab.tab.aggregates() ).toEqual( [] );
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 4 );
 		expect( tab.reads[3].args.aggregate ).toBeUndefined();
 		expect( tab.tab.aggregates().map( a=>a.browse ) ).toEqual( ['Average'] );
@@ -813,7 +804,7 @@ describe( 'NodeHistory', ()=>{
 		expect( tab.fixture.nativeElement.querySelector( 'hist-trend' ) ).not.toBeNull();
 		tab.tab.aggregation.set( undefined );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 3 );
 		expect( tab.reads[2].args.aggregate ).toBeUndefined();
 		expect( tab.subscribed() ).toBe( 1 );
@@ -827,14 +818,14 @@ describe( 'NodeHistory', ()=>{
 		await tab.answer( {values: [at(tab.node, tab.reads[1].args.start!.getTime())]} );//data:  no read for the record before
 		tab.tab.mode.set( 'modified' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 3 );
 		expect( tab.reads[2].args ).toMatchObject( {modified: true, limit: NodeHistory.pageSize} );
 		expect( tab.reads[2].args.aggregate ).toBeUndefined();
 		expect( tab.reads[2].args.start ).toBeUndefined();
 		tab.tab.mode.set( 'values' );
 		tab.fixture.detectChanges();
-		await settle();
+		await flush();
 		expect( tab.reads ).toHaveLength( 4 );
 		expect( tab.reads[3].args ).toMatchObject( {aggregate: 'Average', interval: 60_000} );
 		expect( tab.tab.aggregation() ).toEqual( {aggregate: 'Average', interval: 60_000} );
@@ -844,7 +835,7 @@ describe( 'NodeHistory', ()=>{
 	//the intervals a load holds share the page among the nodes, so every node's value for every interval comes in one page
 	it( 'shares the page among the nodes of an aggregate read', async ()=>{
 		const tab = open();
-		const b = new Variable( <any>{ns:2, i:2, name: 'B', browse: {ns:2, name: 'B'}, historizing: true} ), c = new Variable( <any>{ns:2, i:3, name: 'C', browse: {ns:2, name: 'C'}, historizing: true} );
+		const b = variable( 2, 'B', {historizing: true} ), c = variable( 3, 'C', {historizing: true} );
 		tab.fixture.componentRef.setInput( 'candidates', [tab.node, b, c] );
 		tab.fixture.detectChanges();
 		await tab.answer();

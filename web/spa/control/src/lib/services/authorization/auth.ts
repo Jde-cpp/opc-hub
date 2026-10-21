@@ -46,7 +46,7 @@ export class User extends UserJson {
 		for( let key in updated ){
 			const k = key as keyof UserJson;
 			if( updated[k] !== undefined )
-				(this as any)[k] = updated[k];
+				(this as Record<string,unknown>)[k] = updated[k];
 		}
 	}
 
@@ -70,14 +70,13 @@ export class User extends UserJson {
 	}
 	get authorization(){ return this.sessionId ?? (this.jwt ? `Bearer ${this.jwt}` : null); }
 }
-type Log = (m:string)=>void;
 export interface IAuth{
-	login( user:User, log:Log ):Promise<void>;
-	loginPassword( username:string, password:string, authenticator:string|undefined, log:Log ):Promise<void>;
-	logout( log:Log ):Promise<void>;
-	providers( log:Log ):Promise<EProvider[]>;
-	validateSessionId( log:Log ):void;
-	googleAuthClientId( log:Log ):Promise<string>;
+	login( user:User ):Promise<void>;
+	loginPassword( username:string, password:string, authenticator:string|undefined ):Promise<void>;
+	logout():Promise<void>;
+	providers():Promise<EProvider[]>;
+	validateSessionId():void;
+	googleAuthClientId():Promise<string>;
 	user:Signal<User | undefined>;
 }
 //angular-review3 C13: a typed token in place of the string one - a typo now fails the build instead of resolving to nothing at runtime, and inject() can take it.

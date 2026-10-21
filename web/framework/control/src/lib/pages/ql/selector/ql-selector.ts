@@ -1,7 +1,7 @@
 import { Component, input, signal, model, effect, computed, inject, untracked, viewChild } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { SelectionModel } from '@angular/cdk/collections';
-import { ProfileStore } from 'jde-spa';
+import { Latest, LocalPrefs, ProfileStore } from 'jde-spa';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGraphQL } from '../../../services/graphql';
 import { CollectionItem, ListRoute, QLListData, QLListResolver } from '../../../services/ql-list-resolver';
@@ -19,7 +19,7 @@ import { QLList } from '../list/ql-list';
 //selector is handed the next row's ids (and, for the self-excluding tabs, the next row's exclusions) with no re-creation.
 @Component( {
 	selector: 'ql-selector',
-	template: `@if( listData() ){ <ql-list [listData]=listData() [selector]=true [(selections)]=rowSelections></ql-list> }`,
+	template: `@if( listData() ){ <ql-list [listData]=listData() [ql]=ql() [selector]=true [(selections)]=rowSelections></ql-list> }`,
 	host: {class:'main-content mat-drawer-container my-content'},
 	//`properties`' inset (properties.ts :host), so a selector tab lines up with the Properties tab instead of sitting flush
 	//against the tab body.  border-box is load-bearing: .my-content is width:100%, and content-box would push the 48px of
@@ -71,28 +71,28 @@ export class QLSelector{
 	}
 
 	async #load( excludedIds:number[] ):Promise<void>{
-		const load = ++this.#loadId;
+		const load = this.#latest.next();
 		//dropped BEFORE the query, not after it:  ql-list reads [listData] once, in its own ngOnInit, so a RELOAD only takes
 		//effect if the @if tears the old one down first - and two sets in one turn would coalesce into no change at all.
 		this.listData.set( undefined );
 		try{
 			//the collection's columns/sort/exclusions sit on the sibling ':collectionDisplay' route, where DetailResolver finds them too
-			const collections:CollectionItem[] = this.route.snapshot.parent?.routeConfig?.children?.find( x=>x.path==":collectionDisplay" )?.data?.["collections"] ?? [];
+			const collections:CollectionItem[] = this.#route.snapshot.parent?.routeConfig?.children?.find( x=>x.path==":collectionDisplay" )?.data?.["collections"] ?? [];
 			const collectionName = this.collectionName();
-			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.profileStore );
-			const current = data.profile.view;//a deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted
-			data.profile.views = data.profile.views.filter( v=>!QLListResolver.isDeletedView(v) );
-			data.profile.currentViewIndex = Math.max( 0, data.profile.views.indexOf(current) );
+			let data = await QLListResolver.data( this.ql(), ListRoute.find(collectionName, collections), this.#profileStore, this.#prefs );
+			const current = data.profile.current();//a deleted identity is not something to add to a group, even where the collection's own list was last left on Deleted
+			const views = data.profile.views().filter( v=>!QLListResolver.isDeletedView(v) );
+			data.profile.reset( views, views.indexOf(current) );
 			if( excludedIds.length )
 				data.fixedFilters = [{ field: data.schema.fields.find(f=>f.name=="id")!, filter: {operator: Operator.NotIn, value: excludedIds} }];
 			data = await QLListResolver.load( this.ql(), data, null );
-			if( load!=this.#loadId )
-				return;//a newer row's exclusions overtook this query
+			if( !this.#latest.is(load) )
+				return;
 			this.#syncRows( data, this.selections().selected );
 			this.listData.set( data );
 		}
 		catch( e ){
-			this.snackbar.exception( "Could not load values", e );
+			this.#snackbar.exception( "Could not load values", e );
 		}
 	}
 
@@ -119,9 +119,10 @@ export class QLSelector{
 	rowSelections = signal<SelectionModel<QLRow>>( null as any );
 	list = viewChild( QLList );
 
-	#loadId = 0;
+	#latest = new Latest();
 	#shownData:QLRow[]|undefined;//the list's data array the rows→ids effect last saw - a different one is a re-query
-	private route = inject( ActivatedRoute );
-	private profileStore = inject( ProfileStore );
-	private snackbar = inject( SnackbarService );
+	#route = inject( ActivatedRoute );
+	#profileStore = inject( ProfileStore );
+	#prefs = inject( LocalPrefs );
+	#snackbar = inject( SnackbarService );
 }

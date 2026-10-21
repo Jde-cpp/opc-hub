@@ -5,8 +5,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { AppService, confirm, errorText, Mutation, MutationType, SnackbarService } from 'jde-framework';
-import { RolePermission, RolePermissionRow, roleMutation, toggleRights, toRolePermissions, withMutation } from '../../node-detail/node-access/node-rights/role-permission';
+import { AppService, confirm, errorMessage, Mutation, MutationType, SnackbarService } from 'jde-framework';
+import { Latest } from 'jde-spa';
+import { RoleGrants, RolePermission, RolePermissionRow, rolePermissionsQuery, toRolePermissions } from '../../node-detail/node-access/node-rights/role-permission';
 import { NodeRights } from '../../node-detail/node-access/node-rights/node-rights';
 
 //The group as the tab needs it:  its id, which the route keys it by;  its guid, the criteria of its own resource (#357) and what the tab
@@ -68,9 +69,9 @@ export class HistGroupAccess{
 	readonly rights = histGroupRights;
 	own = signal<HistGroupResource|undefined>( undefined );
 	table = signal<HistGroupResource|undefined>( undefined );
-	roles = signal<RolePermission[]>( [] );
-	original:RolePermission[] = [];
-	mutations = signal<Mutation[]>( [] );
+	//By key, never by id:  access_role_add finds the row by it whether or not the authorizer's cache holds the row, and makes it,
+	//enforced and named for the group, where there is none.
+	grants = new RoleGrants( role=>({ ...histGroupResourceKey, criteria: role.criteria, name: histGroupResourceName( this.group().name ) }) );
 	loading = signal( false );
 	busy = signal( false );
 	error = signal<string|undefined>( undefined );
@@ -82,34 +83,31 @@ export class HistGroupAccess{
 	//for it, so none acts on another group's rows (reviews-issue/historian-group-access.md #2), on rows a read is about to replace (#9),
 	//or on a baseline a failed read left behind (#4).
 	ready = computed( ()=>this.onScreen() && !this.loading() && !this.error() && !this.busy() );
-	#reads = 0;//numbers each read, so only the latest lands
+	#reads = new Latest();
 
 	static readonly resourcesQuery = 'resources( schemaName:$schemaName, slug:$slug ){ id criteria deleted }';
-	static readonly rolesQuery = 'roles( deleted:null ){ id name permissionRight{ id allowed denied resource( schemaName:$schemaName, criteria:$criteria, slug:$slug ){ id criteria } } }';
 	//each role's permission on the table's row, where it holds one:  what it holds on a group the table governs (#11)
 	static readonly tableRolesQuery = 'roles( deleted:null ){ id permissionRight{ allowed denied resource( schemaName:$schemaName, criteria:null, slug:$slug ){ id } } }';
 	//the table's rows, its own and the table's among them, and every live role with its permission on the group's own row where it has one,
 	//and on the table's
 	async load( group:HistGroupRef=this.group() ):Promise<void>{
-		const read = ++this.#reads;
+		const read = this.#reads.next();
 		if( group.guid!=this.shown() ){//another group:  nothing of the last one's stays on screen to act on while this one is read, or after it fails
 			this.shown.set( undefined );
 			this.own.set( undefined );
 			this.table.set( undefined );
-			this.original = [];
-			this.roles.set( [] );
-			this.mutations.set( [] );
+			this.grants.reset( [] );
 		}
 		this.loading.set( true );
 		this.error.set( undefined );
 		try{
 			const criteria = histGroupCriteria( group );
 			const [rows, roles, tableRoles] = await Promise.all( [
-				this.appService.queryArray<HistGroupResourceRow>( HistGroupAccess.resourcesQuery, histGroupResourceKey, m=>console.log( m ) ),
-				this.appService.queryArray<RolePermissionRow>( HistGroupAccess.rolesQuery, {...histGroupResourceKey, criteria}, m=>console.log( m ) ),
-				this.appService.queryArray<HistGroupHeldRow>( HistGroupAccess.tableRolesQuery, histGroupResourceKey, m=>console.log( m ) )
+				this.appService.queryArray<HistGroupResourceRow>( HistGroupAccess.resourcesQuery, histGroupResourceKey ),
+				this.appService.queryArray<RolePermissionRow>( rolePermissionsQuery, {...histGroupResourceKey, criteria} ),
+				this.appService.queryArray<HistGroupHeldRow>( HistGroupAccess.tableRolesQuery, histGroupResourceKey )
 			] );
-			if( read!=this.#reads )//a later read is on the wire, of this group or another, and its answer is the one to show
+			if( !this.#reads.is(read) )//of this group or another
 				return;
 			const toResource = ( r:HistGroupResourceRow|undefined ):HistGroupResource|undefined=>r ? { id: Number( r.id ), enforced: r.deleted==null } : undefined;
 			const own = toResource( rows.find( r=>r.criteria==criteria ) ), table = toResource( rows.find( r=>r.criteria==null ) );
@@ -118,17 +116,15 @@ export class HistGroupAccess{
 			//while the table's row governs the group, what each role holds there is what it holds on the group:  the grid's Inherited column
 			const inherited = new Map( table?.enforced && !own?.enforced ? tableRoles.flatMap( r=>r.permissionRight ? [[Number( r.id ), histGroupHeldText( r.permissionRight )] as const] : [] ) : [] );
 			const permissions:RolePermission[] = toRolePermissions( roles, criteria ).map( r=>({...r, inherited: inherited.get( Number( r.roleId ) )}) );//a permission only where the role holds one on this group's own row
-			this.original = permissions;
-			this.roles.set( permissions.map( r=>({...r}) ) );
-			this.mutations.set( [] );
+			this.grants.reset( permissions );
 			this.shown.set( criteria );
 		}
 		catch( e ){
-			if( read==this.#reads )
-				this.error.set( errorText( e ) ?? 'Unknown error' );
+			if( this.#reads.is(read) )
+				this.error.set( errorMessage(e) );
 		}
 		finally{
-			if( read==this.#reads )
+			if( this.#reads.is(read) )
 				this.loading.set( false );
 		}
 	}
@@ -152,25 +148,15 @@ export class HistGroupAccess{
 	} );
 
 	onToggle( event:{ role:RolePermission; rights:number } ):void{
-		if( !this.ready() )
-			return;
-		const role = event.role;
-		toggleRights( role, event.rights );
-		const original = this.original.find( r=>r.roleId==role.roleId )!;
-		//By key, never by id:  access_role_add finds the row by it whether or not the authorizer's cache holds the row, and makes it,
-		//enforced and named for the group, where there is none.
-		const mutation = roleMutation( role, original, ()=>({ ...histGroupResourceKey, criteria: role.criteria, name: histGroupResourceName( this.group().name ) }) );
-		this.mutations.set( withMutation( this.mutations(), role.roleId, mutation ) );
-		if( mutation )
-			console.log( mutation.toString() );
+		if( this.ready() )
+			this.grants.toggle( event.role, event.rights );
 	}
 	async save():Promise<void>{
-		const mutations = this.mutations();
-		if( !mutations.length || !this.ready() )
+		if( !this.grants.mutations().length || !this.ready() )
 			return;
 		this.busy.set( true );
 		try{
-			await this.appService.mutate( mutations, m=>console.log( m ) );
+			await this.grants.send( this.appService );
 		}
 		catch( e ){
 			this.snackbar.exception( "Could not save the group's access.", e );//the batch stays, so Save retries it
@@ -179,7 +165,6 @@ export class HistGroupAccess{
 		finally{
 			this.busy.set( false );
 		}
-		this.mutations.set( [] );//applied:  were the read below to fail, Save would resend it (#4)
 		await this.load();//the permission ids the server gave, and the row a first grant minted
 	}
 	//A resource of the group's own, made unenforced as a service's sync makes a table's (ResourceMAwait):  the table's row, or nothing,
@@ -190,7 +175,7 @@ export class HistGroupAccess{
 			return;
 		this.busy.set( true );
 		try{
-			await this.appService.mutate( new Mutation( 'Resource', 0, {...histGroupResourceKey, criteria: histGroupCriteria( group ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ), m=>console.log( m ) );
+			await this.appService.mutate( new Mutation( 'Resource', 0, {...histGroupResourceKey, criteria: histGroupCriteria( group ), name: histGroupResourceName( group.name )}, MutationType.Create, ['id'] ) );
 			this.snackbar.info( `${group.name} has a resource of its own, not enforced yet.` );
 		}
 		catch( e ){
@@ -217,7 +202,7 @@ export class HistGroupAccess{
 			return;//declined, or the group or its row changed while the dialog was open
 		this.busy.set( true );
 		try{
-			await this.appService.mutate( `${enforce ? 'restore' : 'delete'}Resource( id:${own.id} )`, m=>console.log( m ) );
+			await this.appService.mutate( `${enforce ? 'restore' : 'delete'}Resource( id:${own.id} )` );
 		}
 		catch( e ){
 			this.snackbar.exception( `${verb} failed.`, e );

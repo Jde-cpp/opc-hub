@@ -1,9 +1,9 @@
-import { Component, computed, effect, inject, OnDestroy, Resource, resource } from '@angular/core';
+import { Component, computed, effect, inject, OnDestroy, resource } from '@angular/core';
 import {Router, RouterLink} from "@angular/router";
 import { MatButtonModule } from '@angular/material/button'
 import { MatInputModule } from '@angular/material/input';
 import {MatFormFieldModule} from '@angular/material/form-field';
-import { EProvider, IAUTH, IENVIRONMENT, IAuth, IEnvironment, User } from 'jde-spa';
+import { EProvider, IAUTH, IENVIRONMENT, User } from 'jde-spa';
 import {FormBuilder, ReactiveFormsModule} from "@angular/forms";
 import {SnackbarService} from '../../../shared/snackbar/snackbar-service';
 import {GoogleAuthService, googleLoginHintKey} from '../../../services/google-auth-service';
@@ -13,9 +13,9 @@ import {GoogleAuthService, googleLoginHintKey} from '../../../services/google-au
     imports: [MatButtonModule,MatFormFieldModule,MatInputModule,RouterLink,ReactiveFormsModule],
 })
 export class LoginPage implements OnDestroy{
-	private snackbar:SnackbarService = inject( SnackbarService );
-	private authService:IAuth = inject( IAUTH );
-	private envService:IEnvironment = inject( IENVIRONMENT );
+	#snackbar = inject( SnackbarService );
+	#authService = inject( IAUTH );
+	#envService = inject( IENVIRONMENT );
 	constructor(){
 		effect( async ()=>{
 			if( this.providers?.value()?.includes(EProvider.Google) && !this.showedGoogleLogin ){
@@ -34,7 +34,7 @@ export class LoginPage implements OnDestroy{
   async onLogin() {
 		let {username, password} = this.form.value;
 		if (!username || !password) {
-			this.snackbar.error( "Enter an email and password." );
+			this.#snackbar.error( "Enter an email and password." );
 			return;
 		}
 		let domain = undefined;
@@ -44,28 +44,23 @@ export class LoginPage implements OnDestroy{
 			username = parts[1];
 		}
 		try{
-			await this.authService.loginPassword(
-				username,
-				password,
-				domain,
-				console.log
-			);
+			await this.#authService.loginPassword( username, password, domain );
 			this.router.navigate( [''] );
 		}
 		catch( e ){
-			this.snackbar.exception( "Login failed.", e );
+			this.#snackbar.exception( "Login failed.", e );
 		}
   }
 	async onGoogleLogin(credential: string){
 		let user = new User( credential );
 		try{
-			await this.authService.login( user, console.log );
+			await this.#authService.login( user );
 			if( user.email )
 				localStorage.setItem( googleLoginHintKey, user.email );
 			this.router.navigate( [''] );
 		}
 		catch( e ){
-			this.snackbar.exception( "Login failed.", e );
+			this.#snackbar.exception( "Login failed.", e );
 		};
 	}
 
@@ -82,7 +77,7 @@ export class LoginPage implements OnDestroy{
 		}
 		catch( e ){
 			console.assert( !(e instanceof ReferenceError), "ReferenceError" );
-			this.snackbar.exception( "Could not render Google login.", e );
+			this.#snackbar.exception( "Could not render Google login.", e );
 		}
 	}
 	ngOnDestroy():void{
@@ -92,7 +87,7 @@ export class LoginPage implements OnDestroy{
 	#onCredential = ( credential:string )=>{ this.onGoogleLogin( credential ); };
 
 	async getGoogleAuthClientId():Promise<string>{
-		const y = await this.authService.googleAuthClientId( console.log );
+		const y = await this.#authService.googleAuthClientId();
 		if( !y )
 			throw new Error( "googleAuthClientId is not defined" );
 		return y;
@@ -102,15 +97,15 @@ export class LoginPage implements OnDestroy{
 	//the form must show on a hub that has no OPC provider yet, because adding the first server connection is done signed
 	//out and this page is where the user lands afterwards.  What the form lacked was not a condition but an explanation,
 	//which is now the Username hint in the template.
-	providers = resource<EProvider[], {}>( {loader: async () =>await this.authService.providers( console.log )} );
+	providers = resource<EProvider[], {}>( {loader: async () =>await this.#authService.providers()} );
 
 	fb = inject(FormBuilder);
 	googleAuth = inject(GoogleAuthService);
-	private get googleCredential():string{return this.envService.get("googleCredential"); }
+	private get googleCredential():string{return this.#envService.get("googleCredential"); }
 	private showedGoogleLogin = false;
   form = this.fb.group({ username: [''], password: [''] });
 	router = inject(Router);
 	user = computed<User | undefined>( () => {
-		return this.authService.user();
+		return this.#authService.user();
 	});
 }

@@ -1,20 +1,11 @@
-if( typeof globalThis.localStorage=="undefined" ){
-	const backing = new Map<string,string>();
-	(globalThis as any).localStorage = {
-		getItem: ( k:string )=>backing.has(k) ? backing.get(k)! : null,
-		setItem: ( k:string, v:string )=>{ backing.set(k, String(v)); },
-		removeItem: ( k:string )=>{ backing.delete(k); },
-		clear: ()=>backing.clear()
-	};
-}
 import Long from 'long';
 import { NodeId } from './node-id';
 import { OpcError } from './opc-error';
 import { alignUp, applyHistModification, applyHistModifications, editRefused, editRefusedAll, editValueJson, histMemberIndexed, histPathText, HistPushedModification, histResumeReach, histResumeTime, histThresholdBlank, histThresholdFieldText, histThresholdText, HistValue, isNoData, latestHistTimes, mergeHistValues, parseHistPath, pushValue, qlTime, toHistAggregates, toHistEditResult, toHistPage, toHistThresholds } from './hist';
+import { histValue, nodeA as A, nodeB as B } from 'jde-opc/testing';
 
-const A = new NodeId( {ns:2, i:1} ), B = new NodeId( {ns:2, i:2} );
 const keyOf = ( v:HistValue )=>`${v.node.toString()}@${v.source?.getTime() ?? "none"}`;
-const at = ( node:NodeId, ms:number|null, status=0 ):HistValue=>({ node, source: ms==null ? null : new Date(ms), server: null, status, value: ms ?? undefined, bound: false, heartbeat: false });
+const at = ( node:NodeId, ms:number|null, status=0 )=>histValue( node, ms, ms ?? undefined, {status} );
 
 describe( 'toHistPage', ()=>{
 	it( 'reads times, status, value and the node list off a page', ()=>{

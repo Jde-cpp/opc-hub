@@ -1,13 +1,18 @@
+@use '../../../styles/constants';
+
 :host {
-  color: var(--mat-sys-primary);
-  background: var(--mat-sys-primary-container);
+	color: var(--mat-sys-primary);
+	background: var(--mat-sys-primary-container);
 }
 .mat-mdc-form-field {
-  --mat-form-field-container-height: 40px; /* Adjust to your preferred height */
-  --mat-form-field-container-vertical-padding: 8px;
+	--mat-form-field-container-height: 40px; /* Adjust to your preferred height */
+	--mat-form-field-container-vertical-padding: 8px;
 }
 .search{
 	width: 420px;
+}
+.rounded-input{
+	--mat-form-field-outlined-container-shape: 20px;
 }
 .search-option{
 	.search-icon{ font-size: 18px; width: 18px; height: 18px; margin-right: 8px; vertical-align: middle; }
@@ -15,49 +20,49 @@
 	.search-summary{ color: var(--mat-sys-on-surface-variant); font-size: 12px; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 .docs-navbar-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  padding: 8px 16px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	padding: 8px 16px;
 
-  > .mat-mdc-button {
-    &:last-child {
-      margin-left: auto;
-    }
-  }
+	> .mat-mdc-button {
+		&:last-child {
+			margin-left: auto;
+		}
+	}
 
-  .docs-navbar-header-item-selected {
-    background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
-  }
+	.docs-navbar-header-item-selected {
+		background: color-mix(in srgb, var(--mat-sys-primary) 10%, transparent);
+	}
 }
 
 // the site's name and mark (APP_NAME/APP_LOGO), leading the bar as its home link.  Sized to the 40px of the buttons beside it.
 .brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  margin-right: 8px;
-  padding: 0 12px 0 6px;
-  vertical-align: middle;
-  border-radius: var(--mat-sys-corner-full);
-  font: var(--mat-sys-title-medium);
-  font-weight: 600;
-  white-space: nowrap;
-  &, &:visited { color: var(--mat-sys-primary); text-decoration: none; }
-  &:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
-  &:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	height: 40px;
+	margin-right: 8px;
+	padding: 0 12px 0 6px;
+	vertical-align: middle;
+	border-radius: var(--mat-sys-corner-full);
+	font: var(--mat-sys-title-medium);
+	font-weight: 600;
+	white-space: nowrap;
+	&, &:visited { color: var(--mat-sys-primary); text-decoration: none; }
+	&:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
+	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
 }
 
 // the mark is a mask, so it paints in the link's colour and reads on every theme's navbar
 .brand-logo {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  background: currentColor;
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
+	flex: none;
+	width: 26px;
+	height: 26px;
+	background: currentColor;
+	mask-size: contain;
+	mask-repeat: no-repeat;
+	mask-position: center;
 }
 
 .folder-item-selected {
@@ -65,47 +70,30 @@
 }
 
 .mat-mdc-icon-button {
-  color: inherit;
+	color: inherit;
 }
 
 .breadcrumb-toggle-icon {
-  display: block; // avoid inline-svg baseline gap inside the icon button
+	display: block; // avoid inline-svg baseline gap inside the icon button
 }
 
-.github-logo,
 app-logo {
-  margin-right: 8px;
-  width: 24px;
-  height: 24px;
-}
-
-.flex-spacer {
-  flex-grow: 1;
-}
-
-.skip-link-wrapper {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 5px;
+	margin-right: 8px;
+	width: 24px;
+	height: 24px;
 }
 
 // Rules for when the device is detected to be a small screen.
-@media (max-width: 720px) {
-  .docs-navbar-hide-small {
-    display: none;
-  }
-
-  .github-logo {
-    margin: 0;
-  }
+@media (max-width: constants.$extra-small-breakpoint-width) {
+	.docs-navbar-hide-small {
+		display: none;
+	}
 }
 
 theme-picker {
-  display: none;
+	display: none;
 
-  @media (min-width: 328px) {
-    display: block;
-  }
+	@media (min-width: 328px) {
+		display: block;
+	}
 }

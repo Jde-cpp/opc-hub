@@ -1,0 +1,23 @@
+<mat-toolbar class="jde-list-toolbar">
+	<div class="bar-left"><ng-content select="[left]"/></div><!--kept when empty:  it is the spacer `justify-content: space-between` holds .bar-right at the right edge with-->
+	<div class="bar-center"><!--the two icon buttons are equal width, so they bracket the group symmetrically and it lands dead centre-->
+		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="refreshing()" (click)="refresh.emit()">
+			<mat-icon>refresh</mat-icon>
+		</button>
+		<mat-button-toggle-group class="view-group" aria-label="View" hideSingleSelectionIndicator [value]="views().index()" (change)="viewChange.emit($event.value)">
+			@for( view of views().views(); track view; let i=$index ){
+				<mat-button-toggle [value]=i [matTooltip]="view.isAdhoc ? 'Unsaved changes' : ''">{{ view.name ?? "Default" }}@if( view.isAdhoc ){<span class="adhoc">&nbsp;(edited)</span>}</mat-button-toggle>
+			}
+		</mat-button-toggle-group>
+		<button matIconButton aria-label="Edit view" matTooltip="Edit view" (click)="edit.emit()">
+			<mat-icon>tune</mat-icon>
+		</button>
+	</div>
+	<div class="bar-right">
+		<ng-content select="[right]"/>
+		@if( count()!==undefined ){
+			<span class="row-count">{{ count() }} {{ count()==1 ? "row" : "rows" }}</span>
+		}
+	</div>
+</mat-toolbar>
+<mat-progress-bar class="refresh-bar" [mode]="refreshing() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>

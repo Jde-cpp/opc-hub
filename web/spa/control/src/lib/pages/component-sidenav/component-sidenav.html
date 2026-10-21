@@ -5,7 +5,7 @@
 		<mat-sidenav #sidenav class="docs-component-viewer-sidenav"
 								[opened]="(isScreenSmall | async) === false"
 								[mode]="(isScreenSmall | async) ? 'over' : 'side'">
-			<app-component-nav [item]="item()"></app-component-nav> <!-- [params]="params" -->
+			<app-component-nav [item]="item()"></app-component-nav>
 		</mat-sidenav>
 	}
 	<div class="docs-component-sidenav-content">

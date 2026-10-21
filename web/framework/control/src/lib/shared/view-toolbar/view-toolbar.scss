@@ -1,0 +1,38 @@
+:host{
+	display: block;
+}
+
+//the zones are .jde-list-toolbar's (_general.scss);  this one adds the view group's centre zone
+.jde-list-toolbar{
+	position: relative;//containing block for the out-of-flow centre zone
+}
+
+//Centre the view group on the VIEWPORT (to line up with the navbar search) rather than on the
+//toolbar, whose left edge is inset by the shell's sidenav. Taken out of flow so its width cannot
+//push the left/right zones around. --jde-content-offset is that inset (_general.scss); the shell
+//should set it if the sidenav is ever another width.
+.bar-center{
+	position: absolute;
+	left: calc(50vw - var(--jde-content-offset));
+	top: 50%;
+	transform: translate(-50%, -50%);
+}
+
+@media (max-width: 1024px){//too narrow to centre against the viewport — fall back to a wrapping single row
+	.jde-list-toolbar{
+		flex-wrap: wrap;
+		justify-content: flex-start;
+	}
+	.bar-center{
+		position: static;
+		transform: none;
+	}
+}
+
+.view-group{
+	max-width: 100%;
+}
+
+.adhoc{
+	color: var(--mat-sys-tertiary);
+}

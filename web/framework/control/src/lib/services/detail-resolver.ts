@@ -7,10 +7,6 @@ import { ListRoute, QLListResolver, TableSettings } from './ql-list-resolver';
 import { MetaObject } from '../model/ql/schema/meta-object';
 import { RecentVisits, RouteItem, RouteStore } from 'jde-spa';
 
-export type DetailPageSettings = {
-	excludedColumns:string[];
-};
-
 export class DetailRoute extends RouteItem{
 	constructor( slug:string, title:string|undefined, siblings:RouteItem[], parent:RouteItem ){
 		super( {path:slug, title:title, siblings:siblings, parent:parent} );
@@ -38,10 +34,10 @@ export class SlugNotFoundError extends Error{
 
 @Injectable()
 export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
-	private router = inject( Router );
-	private snackbar = inject( SnackbarService );
-	private ql:IGraphQL = inject( IGRAPHQL );
-	private recentVisits = inject( RecentVisits );
+	#router = inject( Router );
+	#snackbar = inject( SnackbarService );
+	#ql = inject( IGRAPHQL );
+	#recentVisits = inject( RecentVisits );
 
 	resolve(route: ActivatedRouteSnapshot, state: RouterStateSnapshot):Promise<DetailResolverData<T>>{
 		let collectionDisplay = route.url.length>1 ? route.url[route.url.length-2].path : route.data["collectionName"]; //users
@@ -53,27 +49,26 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 		//ComponentNav renders each sibling as parent.path + '/' + sibling.path, so the parent must be the absolute list url
 		//('/access/users') and the siblings bare targets — the relative ListRoute path resolved against the sidenav route
 		//('/access/users/users/<slug>'), breaking sibling navigation and the routerLinkActive highlight.
-		let siblings = this.routeStore.getChildren( collectionDisplay ).map( s=>new RouteItem(
-			{path: s.path.startsWith(collectionDisplay+'/') ? s.path.substring(collectionDisplay.length+1) : s.path, title: s.title}) );//pre-fix localStorage entries are collection-prefixed
 		const parent = ListRoute.find( collectionDisplay, route.parent!.routeConfig!.children!.find(x=>x.path==":collectionDisplay")!.data!["collections"] );
 		parent.path = `/${[...route.parent!.url.map(s=>s.path), collectionDisplay].join('/')}`;
+		const siblings = this.routeStore.getChildren( parent.path ).map( s=>new RouteItem({path: s.path, title: s.title}) );//the list's rows, under its url
 		const routing = new DetailRoute( slug, siblings.find(s=>s.path==slug)?.title, siblings, parent );
 		if( slug=="$new" && routing.tableSettings.canAdd===false ){//a typed or bookmarked '$new' on a list with no Add
-			this.snackbar.error( `There is no Add for ${collectionDisplay}.` );
-			QLListResolver.redirectUp( this.router, route );
+			this.#snackbar.error( `There is no Add for ${collectionDisplay}.` );
+			QLListResolver.redirectUp( this.#router, route );
 			return null as unknown as DetailResolverData<T>;
 		}
 		try{
-			return await DetailResolver.load<T>( this.ql, this.ql.toCollectionName(collectionDisplay), slug, routing );//await inside try — without it, async failures skip the catch entirely
+			return await DetailResolver.load<T>( this.#ql, this.#ql.toCollectionName(collectionDisplay), slug, routing );//await inside try — without it, async failures skip the catch entirely
 		}
 		catch( e ){
 			if( e instanceof SlugNotFoundError ){
-				this.snackbar.error( e.message );
-				this.recentVisits.forget( RecentVisits.bare(url) );//the redirect below is a NavigationCancel, not the NavigationError RecentVisits drops a page on (reviews/m3-closing.md #25);  only a missing row - a failed query is transient
+				this.#snackbar.error( e.message );
+				this.#recentVisits.forget( RecentVisits.bare(url) );//the redirect below is a NavigationCancel, not the NavigationError RecentVisits drops a page on (reviews/m3-closing.md #25);  only a missing row - a failed query is transient
 			}
 			else
-				this.snackbar.exception( `Could not load '${slug}'`, e );//whatever actually failed - a 500 from a malformed query used to be indistinguishable from a missing row
-			QLListResolver.redirectUp( this.router, route );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
+				this.#snackbar.exception( `Could not load '${slug}'`, e );//whatever actually failed - a 500 from a malformed query used to be indistinguishable from a missing row
+			QLListResolver.redirectUp( this.#router, route );//an injected ActivatedRoute is the ROOT route inside a resolver, so relativeTo sent this to '/';  the snapshot is this route.
 			return null as unknown as DetailResolverData<T>;
 		}
 	}
@@ -82,14 +77,14 @@ export class DetailResolver<T> implements Resolve<DetailResolverData<T>> {
 	//ql() appends `&variables=` for any TRUTHY vars, so the {} the access pages have always sent is not the same request as
 	//the null the gateway has always had, and the two talk to different servers.  Neither behaviour is proven on the other.
 	static async load<T>( ql:IGraphQL, collectionName:string, slug:string, routing:DetailRoute, vars:any={} ):Promise<DetailResolverData<T>>{
-		const schema = await ql.schemaWithEnums( MetaObject.toTypeFromCollection(collectionName), (m)=>console.log(m) );
+		const schema = await ql.schemaWithEnums( MetaObject.toTypeFromCollection(collectionName) );
 		let obj:any = {};
 		if( slug && slug!="$new" ){//`slug &&`: a missing route param must not query for the row named 'undefined'
-			obj = await ql.querySingle( ql.slugQuery(schema, slug, routing.tableSettings.excludedColumns), vars, (m)=>console.log(m) );
+			obj = await ql.querySingle( ql.slugQuery(schema, slug, routing.tableSettings.excludedColumns), vars );
 			if( obj==null )//{"data":{"<singular>":null}} - the row is not there.  Checked before the subQueries loop, whose obj["id"] would otherwise TypeError and hide every other failure behind the same message.
 				throw new SlugNotFoundError( slug );
 			for( let query of ql.subQueries(schema.type, obj["id"]) ){
-				const subRows = await ql.query<any>( query, vars, (m)=>console.log(m) );
+				const subRows = await ql.query<any>( query, vars );
 				//"acl":[{"role":{"id":33,"name":"Opc Gateway Permissions","deleted":null},"identity":{"id":1}}]}
 				let [property, propValue] = Object.entries(subRows)[0];
 				if( !obj[property] )

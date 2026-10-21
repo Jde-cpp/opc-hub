@@ -15,8 +15,6 @@ const make = ( tags:TagLevel[] )=>{
 const row = ( tags:LogTags, tag:string )=>tags.dataSource.find( r=>r.tag==tag )!;
 
 describe( 'LogTags.entries', ()=>{
-	beforeEach( ()=>TestBed.configureTestingModule({}) );
-
 	//angular-review3 #10: the default row is SYNTHESIZED when nothing is stored (logTags.h falls back to Information).
 	//Reporting it as an override made LogSettingsPanel.save diff `undefined != 'Information'` and write a tag-0/Information
 	//row for all three sinks on every Save - pinning the instance's default over its configured level, across restarts.
@@ -56,8 +54,6 @@ describe( 'LogTags.entries', ()=>{
 //install-issues #19: the page showed the stored overrides - `Default: Info` on an install - not the levels the instance runs
 //with.  The panel now hands over both, and the editor has to show a configured level without reporting it as an override.
 describe( 'LogTags configured levels', ()=>{
-	beforeEach( ()=>TestBed.configureTestingModule({}) );
-
 	it( 'shows a configured tag at its running level and does not report it', ()=>{
 		const tags = make( [configured("default", "Trace"), configured("sessions", "Trace"), override("sql", "Debug")] );
 		expect( row(tags, "default").level ).toBe( ELogLevel.Trace );
@@ -115,7 +111,6 @@ describe( 'LogTags configured levels', ()=>{
 //`default: null` (install-issues #21, ClearDefaultLevel) was unreachable:  the override was re-applied at every start, masking
 //the configured default, with no way back but the database.
 describe( 'LogTags removing a Default override', ()=>{
-	beforeEach( ()=>TestBed.configureTestingModule({}) );
 	//pick:  a level chosen on the Default row's picker, as the page does it - its event, not a direct call, which marks no view dirty
 	const buttonOn = ( tags:TagLevel[], pick?:ELogLevel )=>{
 		const fixture = TestBed.createComponent( LogTags );

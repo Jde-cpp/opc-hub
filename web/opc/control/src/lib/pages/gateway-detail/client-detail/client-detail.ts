@@ -1,10 +1,10 @@
 import { LiveAnnouncer } from '@angular/cdk/a11y';
 import { Component, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatIcon } from '@angular/material/icon';
 import { MatTabsModule } from '@angular/material/tabs';
 
-import { DetailPage, errorText, httpStatus, Properties} from 'jde-framework';
+import { DetailActions, DetailPage, errorMessage, isRefusal, Properties} from 'jde-framework';
+import { Latest } from 'jde-spa';
 
 import { ServerProperties } from './server-properties/server-properties';
 import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
@@ -19,11 +19,10 @@ const connectSettings = ( p:Partial<ServerCnnctn> ):ConnectSettings=>({ slug: p.
 
 @Component( {
 	templateUrl: './client-detail.html',
-	styleUrls: ['./client-detail.scss'],
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
 		host: {class:'main-content mat-drawer-container my-content client-detail'},
-	imports: [MatButtonModule, MatIcon, MatTabsModule, Properties, ServerProperties],
+	imports: [DetailActions, MatButtonModule, MatTabsModule, Properties, ServerProperties],
 })
 export class ClientDetail extends DetailPage<ServerCnnctn>{
 	constructor(){ super( 'client-detail' ); }
@@ -35,7 +34,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.serverError.set( this.row.serverError );
 		this.#resultFor.set( this.row.server || this.row.serverError ? connectSettings(this.row) : undefined );
 		this.testing.set( undefined );
-		++this.#rowLoads;
+		this.#rowLoads.next();
 	}
 	protected override upsert():ServerCnnctn{
 		return new ServerCnnctn( {
@@ -44,7 +43,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	}
 	protected override afterMutate(){//the node pages answer from OpcStore's describe:  an edit has to reach them, a delete end them (reviews/m3-closing.md #5)
 		if( this.row.slug )
-			this.opcStore.forget( this.gateway.slug, this.row.slug );
+			this.#opcStore.forget( this.gateway.slug, this.row.slug );
 	}
 	protected override get title(){ return this.row.name ? `${this.row.name} - Connection` : "New Connection"; }
 	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - the row's, from ClientResolver
@@ -68,23 +67,23 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 			return;//disabledInteractive:  the disabled button still takes clicks.
 		const p = this.properties() as ServerCnnctn;
 		const settings = connectSettings( p );
-		const rowLoad = this.#rowLoads;
+		const rowLoad = this.#rowLoads.current;
 		this.testing.set( settings.url );
 		this.tabIndex.set( 1 );//the result lands on the Connection tab, and it shows the connect in flight
 		this.#announcer.announce( `Connecting to ${settings.url}.` );
 		let server:Server|undefined, error:string|undefined, refused:unknown;
 		try{
-			const data = await this.gateway.postQL<{testConnection:TestConnectionResult}>( ClientDetail.testMutation, {opc: settings.slug, url: settings.url, certificateUri: settings.certificateUri}, (m)=>console.log(m) );
+			const data = await this.gateway.postQL<{testConnection:TestConnectionResult}>( ClientDetail.testMutation, {opc: settings.slug, url: settings.url, certificateUri: settings.certificateUri} );
 			const result = data.testConnection;
 			server = new Server({ connection: {...p, ...settings} as ServerCnnctnProps, desc: result, policy: result.securityPolicyUri, mode: result.securityMode, namespaces: result.namespaces });
 		}
 		catch( e ){//the tab's not-connected state carries the reason - no toast over it
-			if( [401, 403].includes(httpStatus(e) ?? 0) )
+			if( isRefusal(e) )
 				refused = e;
 			else
-				error = errorText(e) ?? "Unknown error";
+				error = errorMessage(e);
 		}
-		if( rowLoad!=this.#rowLoads )
+		if( !this.#rowLoads.is(rowLoad) )
 			return;//the router reuses this page:  the answer is for a connection no longer shown.
 		this.testing.set( undefined );
 		//testConnection needs Update, which a viewer lacks:  a refusal says nothing about the server, so the tab keeps what it showed
@@ -120,8 +119,8 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		return changed.length ? changed.join( ", " ) : undefined;
 	} );
 	#resultFor = signal<ConnectSettings|undefined>( undefined );
-	#rowLoads = 0;//onRow's count:  a test answers only for the row it started on.
-	private opcStore = inject( OpcStore );
+	#rowLoads = new Latest();//onRow's:  a test answers only for the row it started on.
+	#opcStore = inject( OpcStore );
 	//the test's start and end, for a screen reader:  a region inserted with its text may go unannounced, and the tab's content -
 	//a live region there included - is created with its text when the press switches to it.
 	#announcer = inject( LiveAnnouncer );

@@ -57,17 +57,14 @@ The trend draws with Highcharts Stock, which the install does not include: its l
 
 ## Instances
 
-Under [Applications](/apps), a gateway instance's page has six tabs:
+Under [Applications](/apps), a gateway instance's page has the six tabs [Applications help](/help/apps#opchub) lists. Its own three:
 
 - **Connections** lists its server connections. The **Status** column reads *Connected*, *Idle* or *Error*. Press **Add** to connect the gateway to another OPC server, or open a row to edit one.
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](#historian-groups-and-templates).
-- **Logs** shows the running service's log.
-- **Log Settings** changes the running service's log levels.
-- **Web Sessions** lists the browsers and services signed in to the gateway. See [Web Sessions](/help/apps#web-sessions).
 
 A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
 
-An OPC server instance's page has **Logs**, **Log Settings** and **Web Sessions**.
+An OPC server instance's page is under [Applications help](/help/apps#opc-servers).
 
 ## Historian groups and templates
 
