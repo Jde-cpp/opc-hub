@@ -1,6 +1,7 @@
 #pragma once
 #include <open62541/server.h>
 #include <absl/cleanup/cleanup.h>
+#include <jde/tests/AccessHelpers.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/access/usings.h>
 #include <jde/db/db.h>
@@ -45,20 +46,9 @@ namespace Jde::Opc::Gateway::Tests{
 
 	α AvailableUserTokens( sv url )ε->ETokenType;
 	α ReadValue( const sp<UAClient>& client, const NodeId& node )ε->Value;//as the client reads it, its status unchecked.
-	α ReadValue( UA_Server* ua, const NodeId& node )ι->Value;//as the server holds it.
 	α Negotiated( const sp<UAClient>& client )ι->string;//"ok (<policy>/<mode>)" - what the client's session was opened with, read on its strand; "ok" when it cannot be read.
-	//`pred` polled every `interval` until it holds;  false once `timeout` passes, though it is always asked once.
-	α WaitUntil( function<bool()> pred, Duration timeout=std::chrono::seconds{10}, Duration interval=std::chrono::milliseconds{10} )ι->bool;
-	//`schema`'s `slug` resource - the row for `criteria`, or the root - enforced, or soft-deleted again as it ships:  `deleted` is
-	//the switch, so restore enforces.  Returns once `authorizer` has heard, which it does over its subscription after the mutation
-	//returns;  the first form is the gateway's own client and authorizer.
-	α EnforceResource( sv schema, sv slug, bool on, sv criteria={} )ε->void;
-	α EnforceResource( App::Client::IAppClient& app, Access::Authorize& authorizer, sv schema, sv slug, bool on, sv criteria={} )ε->void;
-	//`user` given `allowed` on `schema`'s `slug` resource (the row for `criteria`, or the root) through a role of its own, `role`,
-	//made with the grant the first time and kept after.  A role rather than a direct grant:  a direct grant's acl event reaches
-	//every app's authorizer, the embedded OpcServer's among them, which never saw the gateway's row and asserts (the acl
-	//subscriptions' schema filter, reviews/soak-findings.md).
-	α GrantRole( App::Client::IAppClient& app, sv role, sv schema, sv slug, sv criteria, Access::ERights allowed, UserPK user )ε->void;
+	using Jde::EnforceResource;
+	α EnforceResource( sv schema, sv slug, bool on, sv criteria={} )ε->void;//the shared one with the gateway's own client and authorizer.
 	//The hist_groups resource enforced, with the gateway's user granted everything on it through a role of its own, or
 	//soft-deleted again, as it ships:  a group's history edits need a grant on an enforced resource (spec *Authorization*).
 	α EnforceHistGroups( bool on )ε->void;

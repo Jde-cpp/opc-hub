@@ -7,6 +7,7 @@
 #include "../src/access/UAAccess.h"
 #include "../src/access/OpcAuthorize.h"
 #include "../src/ql/OpcQL.h"
+#include "helpers.h"
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>
@@ -39,38 +40,18 @@ namespace Jde::Opc::Server::Tests{
 		//the folder-listing browse rule is for.  The others hold them on the root, and ServerStatus withholds everything.
 		Ω addRole( const string& slug, ERights allowed, ERights denied, bool branch=false )ε->void{
 			let userSlug = Ƒ( "{}User", slug );
-
-			auto user = _app->QuerySync( "user(slug:$slug, deleted:null){id}", {{"slug", userSlug}} );
-			if( user.empty() )
-				user = _app->QuerySync<jobject>( "createUser( slug:$slug, name:$name ){id}", {{"slug", userSlug}, {"name", userSlug+" name"}} );
-			let userId = Json::AsNumber<uint>( user.at("id") );
-			_users.emplace( userSlug, userId );
-
-			let slug_ = roleSlug( slug );
-			//Find-or-create, as the user above already is:  createRole on a persisted db trips the roles.slug unique index
-			//and takes the whole suite with it, which is what a non-ctest re-run (recreateDB=false, the documented way to run
-			//beside live services) does every time (opcserver-review3 L30).
-			auto role = _app->QuerySync( "role(slug:$slug, deleted:null){id}", {{"slug", slug_}} );
-			let existed = !role.empty();
-			if( !existed )
-				role = _app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug",slug_}, {"name", slug_+" name"}} );
-			let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-			_roles.emplace( slug_, roleId );//keyed as the db names it - the same key SetUpTestCase's roles() load uses, which is what made every guard below always-true.
-			if( existed )
-				return;//its permissions and acl are in the db already; re-adding them trips their unique indexes too.
-
-			if( !branch ){
-				jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"schema", _resource} };
-				string query{ "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\"}} )" };
-				_app->QuerySync<jvalue>( move(query), move(vars) );
-			}
-			jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"denied", underlying(branch ? denied : _nodeDenied)}, {"schema", _resource}, {"criteria", NodeId{criteriaNode()}.ToString()}, {"resourceName", "ServerStatus"} };
-			string query = "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{schemaName:$schema, slug:\"nodeIds\", criteria:$criteria, name:$resourceName}} )";
-			_app->QuerySync<jvalue>( move(query), move(vars) );
-
-			_app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", userId}, {"roleId", roleId}} );
+			let user = FindOrCreateUser( *_app, userSlug );
+			_users.emplace( userSlug, user.Value );
+			let criteria = NodeId{ criteriaNode() }.ToString();
+			vector<RoleGrant> grants;
+			if( !branch )
+				grants.push_back( {_resource, "nodeIds", allowed, denied} );
+			grants.push_back( {_resource, "nodeIds", allowed, branch ? denied : _nodeDenied, criteria, "ServerStatus"} );
+			let role = roleSlug( slug );
+			_roles.emplace( role, GrantRole(*_app, role, user, grants).Value );//keyed as the db names it - the same key SetUpTestCase's roles() load uses.
 		}
 		Ω SetUpTestCase()ε->void{
+			_resource = InstanceSchema();//here, not at its definition:  static initialization runs before the settings load.
 			Server::Initialize( GetSchemaPtr() );
 			_ua = &Server::GetUAServer();
 			_app = AppClient();
@@ -102,14 +83,11 @@ namespace Jde::Opc::Server::Tests{
 	};
 	UAServer* AccessTests::_ua{ nullptr };
 	sp<App::Client::IAppClient> AccessTests::_app{ AppClient() };
-	string AccessTests::_resource{ "opc."+Settings::FindString("/opcServer/resource").value_or("test") };
+	string AccessTests::_resource;
 
 	TEST_F( AccessTests, UserAccess ){
 		let nodeId = UA_NODEID_NUMERIC( 4, 6020 );
-		let accessLevel = [&]( const string& user ){
-			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, {(UserPK::Type)_users.at(user)} };
-			return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
-		};
+		let accessLevel = [&]( const string& user ){ return AccessLevel( nodeId, UserPK{(UserPK::Type)_users.at(user)} ); };
 		EXPECT_EQ( accessLevel("readerUser"), ToAccess(_readerAllowed) ); //Read|HistoryRead...
 		EXPECT_EQ( underlying(accessLevel("readerUser")) & UA_ACCESSLEVELMASK_WRITE, 0u ); //...and not WRITE, which the cast handed a reader (ERights::Read is 0x2).
 		EXPECT_EQ( accessLevel("writerUser"), ToAccess(_writerAllowed) ); //+Write|HistoryWrite; cast raw, Read|Update=0x6 was WRITE|HISTORYREAD.
@@ -118,10 +96,7 @@ namespace Jde::Opc::Server::Tests{
 		//The criteria resource, on a node the browse actually reaches: it withholds everything, so these answer None while
 		//the root above answers the role's rights.  Identical rights on a node no nodeset loaded made this pass either way.
 		let statusNode = criteriaNode();
-		let statusAccess = [&]( const string& user ){
-			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, {(UserPK::Type)_users.at(user)} };
-			return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &statusNode, nullptr );
-		};
+		let statusAccess = [&]( const string& user ){ return AccessLevel( statusNode, UserPK{(UserPK::Type)_users.at(user)} ); };
 		EXPECT_EQ( statusAccess("readerUser"), EAccess::None ) << "its own resource's deny wins over the root's grant";
 		EXPECT_EQ( statusAccess("adminUser"), EAccess::None );
 	}
@@ -133,15 +108,12 @@ namespace Jde::Opc::Server::Tests{
 	//gates the Value write), browsed the whole tree, and could add references.  All three now read the node's own acl.
 	TEST_F( AccessTests, NodeRightsGateWriteMaskBrowseAndAddReference ){
 		let nodeId = UA_NODEID_NUMERIC( 4, 6020 );
-		let context = []( uint userPK ){ return UAAccess::SessionContext{ "", TimePoint::max(), 0, {(UserPK::Type)userPK} }; };
+		let context = []( uint userPK ){ return Session( UserPK{(UserPK::Type)userPK} ); };
 		let writeMask = [&]( uint userPK ){
 			auto ctx = context( userPK );
 			return UAAccess::GetUserRightsMask( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
 		};
-		let mayBrowse = [&]( uint userPK ){
-			auto ctx = context( userPK );
-			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
-		};
+		let mayBrowse = [&]( uint userPK ){ return MayBrowse( nodeId, UserPK{(UserPK::Type)userPK} ); };
 		let mayAddReference = [&]( uint userPK ){
 			auto ctx = context( userPK );
 			UA_AddReferencesItem item; UA_AddReferencesItem_init( &item );
@@ -170,10 +142,6 @@ namespace Jde::Opc::Server::Tests{
 	//on it or beneath it - namespace 0 included (open62541-1.5.9 review #1, #2).
 	TEST_F( AccessTests, TypeNodesStayBrowsableWithoutRead ){
 		let unknownUser = UserPK{ std::numeric_limits<UserPK::Type>::max() };//no acl row:  no Read anywhere.
-		let mayBrowse = [&]( const UA_NodeId& nodeId, UserPK user ){
-			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, user };
-			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
-		};
 		//outside namespace 0 and outside every configured branch, so both fall to the root resource.
 		let typeId = UA_NODEID_STRING( 1, (char*)"AccessTests.Type" );
 		let objectId = UA_NODEID_STRING( 1, (char*)"AccessTests.Object" );
@@ -185,19 +153,18 @@ namespace Jde::Opc::Server::Tests{
 		absl::Cleanup removeObject = [&]{ UA_Server_deleteNode( _ua->Ptr(), objectId, true ); };
 		//AssignRights collects the type nodes, so MayBrowse reads no node class per call (open62541-1.5.9 review #12) - a type
 		//added since it ran is not one yet.  Startup loads every nodeset before AssignRights.
-		EXPECT_FALSE( mayBrowse(typeId, unknownUser) ) << "added after AssignRights";
+		EXPECT_FALSE( MayBrowse(typeId, unknownUser) ) << "added after AssignRights";
 		static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( *_ua );
 
-		EXPECT_TRUE( mayBrowse(typeId, unknownUser) ) << "an ObjectType";
-		EXPECT_FALSE( mayBrowse(objectId, unknownUser) ) << "an instance";
-		EXPECT_TRUE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_SERVERSTATUSDATATYPE), unknownUser) );
-		EXPECT_TRUE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), unknownUser) ) << "namespace 0, outside the Objects tree";
-		EXPECT_FALSE( mayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), unknownUser) ) << "namespace 0, but the Objects tree's own root:  nothing beneath it is granted";
+		EXPECT_TRUE( MayBrowse(typeId, unknownUser) ) << "an ObjectType";
+		EXPECT_FALSE( MayBrowse(objectId, unknownUser) ) << "an instance";
+		EXPECT_TRUE( MayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_SERVERSTATUSDATATYPE), unknownUser) );
+		EXPECT_TRUE( MayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), unknownUser) ) << "namespace 0, outside the Objects tree";
+		EXPECT_FALSE( MayBrowse(UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), unknownUser) ) << "namespace 0, but the Objects tree's own root:  nothing beneath it is granted";
 		let statusNode = criteriaNode();
-		EXPECT_FALSE( mayBrowse(statusNode, unknownUser) ) << "namespace 0, but its own resource withholds everything";
-		EXPECT_FALSE( mayBrowse(statusNode, UserPK{(UserPK::Type)_users.at("readerUser")}) ) << "Read on the root does not reach past a configured resource";
-		UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, unknownUser };
-		EXPECT_EQ( (EAccess)UAAccess::GetUserAccessLevel(_ua->Ptr(), nullptr, nullptr, &ctx, &statusNode, nullptr), EAccess::None ) << "its value stays gated";
+		EXPECT_FALSE( MayBrowse(statusNode, unknownUser) ) << "namespace 0, but its own resource withholds everything";
+		EXPECT_FALSE( MayBrowse(statusNode, UserPK{(UserPK::Type)_users.at("readerUser")}) ) << "Read on the root does not reach past a configured resource";
+		EXPECT_EQ( AccessLevel(statusNode, unknownUser), EAccess::None ) << "its value stays gated";
 	}
 
 	//open62541-1.5.9 review #2, #4:  browse is a folder listing.  Read on a node lists it, and so does Read on anything
@@ -205,11 +172,7 @@ namespace Jde::Opc::Server::Tests{
 	//does - and 1.5.9's path translation, which asks on every hop, resolves it.  Nodes off that path stay closed, and a
 	//user granted nothing lists nothing.
 	TEST_F( AccessTests, BrowseFollowsThePathToAGrant ){
-		let mayBrowse = [&]( UA_UInt32 node, UserPK user ){
-			UAAccess::SessionContext ctx{ "", TimePoint::max(), 0, user };
-			let nodeId = UA_NODEID_NUMERIC( 0, node );
-			return UAAccess::AllowBrowseNode( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr );
-		};
+		let mayBrowse = [&]( UA_UInt32 node, UserPK user ){ return MayBrowse( UA_NODEID_NUMERIC(0, node), user ); };
 		let branch = UserPK{ (UserPK::Type)_users.at("branchUser") };//Read on ServerStatus, nothing on the root.
 		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER_SERVERSTATUS, branch) ) << "its grant";
 		EXPECT_TRUE( mayBrowse(UA_NS0ID_SERVER_SERVERSTATUS_STATE, branch) ) << "inside its grant";
@@ -562,27 +525,19 @@ namespace Jde::Opc::Server::Tests{
 	//nothing drives it twice on one session;  this does.
 	TEST_F( AccessTests, ReactivatingASessionReplacesItsContext ){
 		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-		let token = jwt.Payload();//the wire form the gateway sends (TokenTests does the same).
-		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
-		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
-		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
-		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
-
+		IssuedIdentity identity{ jwt.Payload() };//the wire form the gateway sends (TokenTests does the same).
 		void* slot{};
-		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;//ActivateSession reads ac->context before it branches.
-		let activate = [&]{ return UAAccess::ActivateSession( _ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot ); };
-		ASSERT_EQ( activate(), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( identity.Activate(slot), UA_STATUSCODE_GOOD );
 		let first = slot; ASSERT_TRUE( first );
 		EXPECT_EQ( static_cast<UAAccess::SessionContext*>(slot)->UserPK, AppClient()->UserPK() );
 
-		ASSERT_EQ( activate(), UA_STATUSCODE_GOOD ) << "re-activation is allowed and must not be refused";
+		ASSERT_EQ( identity.Activate(slot), UA_STATUSCODE_GOOD ) << "re-activation is allowed and must not be refused";
 		EXPECT_TRUE( slot );
 		EXPECT_EQ( static_cast<UAAccess::SessionContext*>(slot)->UserPK, AppClient()->UserPK() ) << "the replacement carries the same identity";
 		//`first` is freed by the second activation - the fix.  Not asserted: the free itself is not observable here, since
 		//Process::Shutdown ends in std::_Exit and LSan never runs, and a recoverable leak check would trip on the suite's
 		//pre-existing ones (opcserver-review #23).
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
-		UA_IssuedIdentityToken_clear( &issued );
 	}
 
 	//open62541 1.5.9 refuses an identity change on re-activation, but compares an issued token's user id, which it leaves
@@ -590,22 +545,15 @@ namespace Jde::Opc::Server::Tests{
 	//must refuse it and keep the session's context rather than swap in the new user.
 	TEST_F( AccessTests, ReactivatingAsAnotherUserIsRefused ){
 		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
-		let token = jwt.Payload();
-		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
-		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
-		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
-		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
-
+		IssuedIdentity identity{ jwt.Payload() };
 		let readerPK = UserPK{ (UserPK::Type)_users.at("readerUser") };
 		ASSERT_NE( readerPK, AppClient()->UserPK() );
-		void* slot = new UAAccess::SessionContext{ "", TimePoint::max(), 0, readerPK };//the session as first activated, by the reader.
+		void* slot = UAAccess::SessionContext::Unexpiring( readerPK ).release();//the session as first activated, by the reader.
 		let first = slot;
-		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
-		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED );
+		EXPECT_EQ( identity.Activate(slot), UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED );
 		EXPECT_EQ( slot, first ) << "the session keeps its context";
 		EXPECT_EQ( static_cast<UAAccess::SessionContext*>(slot)->UserPK, readerPK );
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
-		UA_IssuedIdentityToken_clear( &issued );
 	}
 
 	//security-review #1:  an issued token of 9+ bytes is parsed as a jwt, and a malformed n claim in it terminated the OpcServer.
@@ -613,16 +561,10 @@ namespace Jde::Opc::Server::Tests{
 		let head = jobject{ {"alg","RS256"}, {"typ","JWT"} };
 		let body = jobject{ {"iat", time(nullptr)}, {"n", "!!!"}, {"e", "AQAB"} };
 		let token = Str::Encode64( serialize(head), true )+"."+Str::Encode64( serialize(body), true )+"."+Str::Encode64( "notVerifiedHere"s, true );
-		UA_IssuedIdentityToken issued; UA_IssuedIdentityToken_init( &issued );
-		issued.tokenData = UA_BYTESTRING_ALLOC( token.c_str() );
-		UA_ExtensionObject identity; UA_ExtensionObject_init( &identity );
-		UA_ExtensionObject_setValueNoDelete( &identity, &issued, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
-
+		IssuedIdentity identity{ token };
 		void* slot{};
-		auto& accessControl = UA_Server_getConfig( _ua->Ptr() )->accessControl;
-		EXPECT_EQ( UAAccess::ActivateSession(_ua->Ptr(), &accessControl, nullptr, nullptr, nullptr, &identity, &slot), UA_STATUSCODE_BADIDENTITYTOKENINVALID );
+		EXPECT_EQ( identity.Activate(slot), UA_STATUSCODE_BADIDENTITYTOKENINVALID );
 		EXPECT_FALSE( slot );
-		UA_IssuedIdentityToken_clear( &issued );
 	}
 
 	//opcserver-review3 L20:  the session-expiry renewal was a BlockAwait made from inside the access-control callbacks -
@@ -632,19 +574,19 @@ namespace Jde::Opc::Server::Tests{
 	//including a failure - ends that grace.  These drive GetUserAccessLevel, which is what consults it.
 	TEST_F( AccessTests, ALapsedSessionIsServedWhileTheRenewalIsOutstandingThenDenied ){
 		let nodeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
-		let readerPK = (UserPK::Type)_users.at( "readerUser" );
-		let access = [&]( UAAccess::SessionContext& ctx ){ return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr ); };
+		const UserPK readerPK{ (UserPK::Type)_users.at("readerUser") };
+		let access = [&]( UAAccess::SessionContext& ctx ){ return AccessLevel( nodeId, ctx ); };
 
 		//No session id: nothing to ask the authority about, so a lapsed snapshot is simply expired.
-		UAAccess::SessionContext noId{ "", Clock::now()-1s, 0, {readerPK} };
+		auto noId = Session( readerPK, Clock::now()-1s );
 		EXPECT_EQ( access(noId), EAccess::None );
 
 		//Lapsed well past the renewal interval: outstanding or not, the snapshot is too old to serve.
-		UAAccess::SessionContext stale{ "", Clock::now()-10min, 4242, {readerPK} };
+		auto stale = Session( readerPK, Clock::now()-10min, 4242 );
 		EXPECT_EQ( access(stale), EAccess::None );
 
 		//Just lapsed, renewal outstanding: served rather than denied - and it returned, which is the whole point.
-		UAAccess::SessionContext lapsed{ "", Clock::now()-1s, 4243, {readerPK} };
+		auto lapsed = Session( readerPK, Clock::now()-1s, 4243 );
 		let start = Clock::now();
 		EXPECT_EQ( access(lapsed), ToAccess(_readerAllowed) );
 		EXPECT_LT( Clock::now()-start, 5s ) << "the callback must not wait on the AppServer";
@@ -661,16 +603,16 @@ namespace Jde::Opc::Server::Tests{
 	//asked ahead, at the snapshot's half-life, while the ask still slides the session.
 	TEST_F( AccessTests, ASessionIsRenewedAheadOfItsLapse ){
 		let nodeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVER );
-		let readerPK = (UserPK::Type)_users.at( "readerUser" );
-		let access = [&]( UAAccess::SessionContext& ctx ){ return (EAccess)UAAccess::GetUserAccessLevel( _ua->Ptr(), nullptr, nullptr, &ctx, &nodeId, nullptr ); };
+		const UserPK readerPK{ (UserPK::Type)_users.at("readerUser") };
+		let access = [&]( UAAccess::SessionContext& ctx ){ return AccessLevel( nodeId, ctx ); };
 
-		UAAccess::SessionContext fresh{ "", Clock::now()+1h, 4244, {readerPK} };
+		auto fresh = Session( readerPK, Clock::now()+1h, 4244 );
 		EXPECT_GT( fresh.RenewAt, Clock::now()+29min ) << "asked at half-life, not before";
 		EXPECT_LT( fresh.RenewAt, fresh.Expiration ) << "and not at the lapse, which is too late";
-		EXPECT_EQ( (UAAccess::SessionContext{"", TimePoint::max(), 0, {readerPK}}).RenewAt, TimePoint::max() ) << "no session, nothing to ask about";
+		EXPECT_EQ( Session(readerPK).RenewAt, TimePoint::max() ) << "no session, nothing to ask about";
 
 		//The suite's own app session - one the AppServer knows - a minute from lapsing here, its half-life reached.
-		UAAccess::SessionContext live{ "", Clock::now()+1min, AppClient()->SessionId(), {readerPK} };
+		auto live = Session( readerPK, Clock::now()+1min, AppClient()->SessionId() );
 		ASSERT_TRUE( live.SessionId );
 		live.RenewAt = Clock::now()-1s;
 		let snapshot = live.Expiration;
@@ -684,7 +626,7 @@ namespace Jde::Opc::Server::Tests{
 
 		//4245 is not a session the AppServer knows, so the ask fails.  At the lapse that is a verdict;  ahead of it the snapshot
 		//is still the authority's own word, and a failure - an AppServer restart would be one - must not cut it short.
-		UAAccess::SessionContext unknown{ "", Clock::now()+1min, 4245, {readerPK} };
+		auto unknown = Session( readerPK, Clock::now()+1min, 4245 );
 		unknown.RenewAt = Clock::now()-1s;
 		let good = unknown.Expiration;
 		for( uint i=0; i<100 && unknown.RenewAt<=Clock::now(); ++i ){
@@ -732,21 +674,9 @@ namespace Jde::Opc::Server::Tests{
 	TEST_F( AccessTests, ANodeGrantAddsToTheRoot ){
 		auto& auth = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
 		const NodeId node{ UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERCAPABILITIES) };
-		const string slug{ "additiveUser" };
-		auto user = _app->QuerySync( "user(slug:$slug, deleted:null){id}", {{"slug", slug}} );
-		if( user.empty() )
-			user = _app->QuerySync<jobject>( "createUser( slug:$slug, name:$name ){id}", {{"slug", slug}, {"name", slug+" name"}} );
-		const UserPK userPK{ Json::AsNumber<UserPK::Type>(user, "id") };
-		const string roleSlug_{ roleSlug("additive") };
-		if( _app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug_}}).empty() ){//find-or-create, as addRole is.
-			let role = _app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug_}, {"name", roleSlug_+" name"}} );
-			let roleId = Json::AsNumber<Access::RolePK::Type>( role, "id" );
-			_app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )",
-				{{"roleId", roleId}, {"allowed", underlying(ERights::Read)}, {"schema", _resource}} );
-			_app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\", criteria:$criteria, name:\"ServerCapabilities\"}} )",
-				{{"roleId", roleId}, {"allowed", underlying(ERights::Update)}, {"schema", _resource}, {"criteria", node.ToString()}} );
-			_app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", userPK.Value}, {"roleId", roleId}} );
-		}
+		let userPK = FindOrCreateUser( *_app, "additiveUser" );
+		let criteria = node.ToString();
+		GrantRole( *_app, roleSlug("additive"), userPK, {{_resource, "nodeIds", ERights::Read}, {_resource, "nodeIds", ERights::Update, {}, criteria, "ServerCapabilities"}} );
 		constexpr ERights both = ERights::Read | ERights::Update;
 		for( uint i=0; i<100 && auth.NodeRights(node, userPK)!=both; ++i )
 			std::this_thread::sleep_for( 50ms );

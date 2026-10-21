@@ -1,9 +1,8 @@
 #include <jde/access/server/accessServer.h>
 #include <mutex>
 #include <jde/db/meta/AppSchema.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/TrustDirs.h>
 #include <jde/fwk/crypto/TrustStore.h>
-#include <jde/fwk/settings.h>
 #include <jde/ql/LocalQL.h>
 #include <jde/ql/LocalSubscriptions.h>
 #include <jde/ql/ql.h>
@@ -26,53 +25,24 @@ namespace Jde::Access{
 	constexpr ELogTags _tags{ ELogTags::Access };
 	static sp<QL::LocalQL> _ql;
 	static std::mutex _anchorMutex;
-	static flat_map<fs::path, fs::file_time_type> _anchorFiles;//mtime at load - failed files are recorded too, retried only when they change.
-	static flat_set<fs::path> _missingDirs;//warned about once - every failed verification rescans, and a dir that is never created (a product not installed) would warn each time (reviews/install-issues.md, "Noise in a production log").
+	static Crypto::TrustDirs _anchorDirs{ "trust anchor", _tags };
 
 	Ω loadTrustAnchors( Crypto::TrustStore& trust )ι->bool{//loads new/changed certs from /access/trustedCertDirs; true if an anchor was added.
 		std::lock_guard _{ _anchorMutex };
 		bool added{};
-		uint skipped{};//files passed over for their extension - see the warning below (install-issues #33).
-		for( const string& sdir : Settings::FindStringArray("/access/trustedCertDirs") ){
-			try{
-				const fs::path dir{ sdir };
-				if( !fs::is_directory(dir) ){//normal pre-provisioning state - no client cert has been anchored yet.
-					const auto level = _missingDirs.emplace( dir ).second ? ELogLevel::Warning : ELogLevel::Debug;//not inline in LOG - the macro evaluates its level twice.
-					LOG( level, _tags, "Trusted certificate directory does not exist: '{}' - no client certificate is anchored from it until it does (rescanned on a failed verification).", sdir );
-					continue;
-				}
-				_missingDirs.erase( dir );
-				for( const auto& entry : fs::directory_iterator(dir) ){
-					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
-						++skipped;
-						const auto level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
-						LOG( level, _tags, "Passed over, not a certificate by its extension: '{}' - no client certificate is anchored from it.  {} are read.", entry.path().string(), Crypto::CertificateExtensions );
-						continue;
-					}
-					const auto mtime = entry.last_write_time();
-					if( auto it = _anchorFiles.find(entry.path()); it!=_anchorFiles.end() && it->second==mtime )
-						continue;
-					_anchorFiles[entry.path()] = mtime;
-					try{
-						trust.AddCertificate( Crypto::ReadCertificate(entry.path()) );
-						added = true;
-						INFO( "Added trust anchor: '{}'.", entry.path().string() );
-					}
-					catch( const std::exception& e ){
-						CRITICAL( "Could not load trust anchor '{}': {}", entry.path().string(), e.what() );
-					}
-				}
-			}
-			catch( const std::exception& e ){
-				CRITICAL( "Could not scan trusted certificate directory '{}': {}", sdir, e.what() );
-			}
-		}
+		_anchorDirs.Scan( "/access/trustedCertDirs", [&]( const fs::path& path, vector<byte>&& der ){
+			if( der.empty() )
+				return;//gone, or no longer reads:  a TrustStore only adds.
+			trust.AddCertificate( der );
+			added = true;
+			INFO( "Added trust anchor: '{}'.", path.string() );
+		});
 		//install-issues #33:  a directory holding only files this build would not read is indistinguishable, from the operator's
-		//side, from one they have not filled yet - the key login is refused either way and nothing says why.  _anchorFiles holds
-		//every file ever attempted, loaded or not, so empty-and-skipped is exactly "you copied something in and it was ignored".
+		//side, from one they have not filled yet - the key login is refused either way and nothing says why.  Known() counts
+		//every certificate file there, loaded or not, so none-and-skipped is exactly "you copied something in and it was ignored".
 		//Once per rescan that anchored nothing, not per file:  a failed verification rescans, so per-file would repeat under a flood.
-		if( _anchorFiles.empty() && skipped )
-			WARNT( _tags, "No trust anchors under /access/trustedCertDirs - {} file{} passed over for {} extension.  {} are read.", skipped, skipped==1 ? " was" : "s were", skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
+		if( !_anchorDirs.Known() && _anchorDirs.Skipped() )
+			WARNT( _tags, "No trust anchors under /access/trustedCertDirs:  {}.", _anchorDirs.SkippedNote() );
 		return added;
 	}
 	α Server::AccessSchema()ι->DB::AppSchema&{ return GetSchema(); }

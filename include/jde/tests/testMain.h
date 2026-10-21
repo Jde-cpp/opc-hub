@@ -10,6 +10,7 @@
 #include "jde/fwk/process/cpu.h" // IWYU pragma: keep - its linux start-up check, for every test exe:  only a test's main.cpp includes this header.
 #include "jde/fwk/process/process.h"
 #include "jde/fwk/settings.h"
+#include "jde/tests/SpdlogTestListener.h"
 #define let const auto
 
 namespace Jde{
@@ -47,6 +48,26 @@ namespace Jde{
 		}
 		std::cerr << e.what() << std::endl;
 		return EXIT_FAILURE;
+	}
+}
+namespace Jde::Tests{
+	//Every suite's main:  gtest's flags, `startup`, the '/testing/tests' filter and the run, a failed startup a failed run.
+	//`listener` sends gtest's console output through spdlog (SpdlogTestListener).
+	Ŧ Main( int argc, char** argv, T&& startup, bool listener=true )ι->int{
+		::testing::InitGoogleTest( &argc, argv );
+		int exitCode{ EXIT_FAILURE };
+		try{
+			startup( argc, argv );
+			ApplyTestsFilter();
+			if( listener )
+				SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
+			exitCode = CheckTestsRan( RUN_ALL_TESTS() );
+		}
+		catch( const std::exception& e ){
+			exitCode = StartupFailed( e );
+		}
+		Process::Shutdown( exitCode );
+		return exitCode;
 	}
 }
 #undef let

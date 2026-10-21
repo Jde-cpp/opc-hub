@@ -5,7 +5,6 @@
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/opc/uatypes/Logger.h>
-#include <jde/tests/SpdlogTestListener.h>
 #include <jde/tests/testMain.h>
 
 #define let const auto
@@ -21,19 +20,4 @@ namespace Jde{
 	}
 }
 
-α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int exitCode{ EXIT_FAILURE };
-	try{
-		startup( argc, argv );
-		ApplyTestsFilter();
-		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
-		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( runtime_error& e ){
-		exitCode = StartupFailed( e );
-	}
-	Process::Shutdown( exitCode );
-	return exitCode;
-}
+α main( int argc, char **argv )->int{ return Jde::Tests::Main( argc, argv, Jde::startup ); }

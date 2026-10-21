@@ -28,9 +28,6 @@ local gatewayProduct = "OpcGateway"; //must match the gateway process's ProductN
 		port: 1967,
 		isSsl: false
 	},
-	credentials:{
-		name: "OpcSoak"
-	},
 	web:{
 		//the AppServer is its own root - without this anchor the client rejects the self-signed cert localhost:1967 presents on the /login call
 		//(the same entry Opc.Gateway.jsonnet carries).

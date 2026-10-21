@@ -1,5 +1,4 @@
 #include "UAAccess.h"
-#include <open62541/plugin/accesscontrol_default.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/access/IAcl.h>
 #include "../UAConfig.h"
@@ -8,21 +7,6 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
 #define let const auto
-
-typedef struct {
-	UA_Boolean allowAnonymous;
-	size_t usernamePasswordLoginSize;
-	UA_UsernamePasswordLogin *usernamePasswordLogin;
-	UA_UsernamePasswordLoginCallback loginCallback;
-	void *loginContext;
-	UA_CertificateGroup verifyX509;
-
-	bool AllowCertificate;
-	bool AllowIssued;
-	bool AllowUsername;///opc/tokenTypes/username (default true) AND a non-empty login list - an empty one would advertise a token nobody can present.
-	UA_String UserTokenPolicyUri;
-} AccessControlContext;
-
 
 namespace Jde::Opc::Server{
 	ELogTags _tags = ( ELogTags )( (EOpcLogTags)ELogTags::Access | EOpcLogTags::Opc );
@@ -156,61 +140,109 @@ namespace Jde::Opc::Server::UAAccess{
 	}
 	//Startup installs it (opcServerStartup: SetAcl, then explicitly on the cached schema), so the cast is the schema's own type.
 	Ω authorizer()ι->OpcAuthorize&{ return static_cast<OpcAuthorize&>( *GetSchema().Authorizer ); }
-	//The username token's login list, matched by ActivateSession's username branch the way open62541's default plugin matches
-	//its static one:  /opc/users ([{name,password}]).  An opt-in - nothing shipped configures it (reviews/install-issues.md #1:
-	//a fresh install logs in with Google, by ruling no username is seeded); the test configs do, for the gateway's password
-	//login (PasswordTests).  Plain text, on purpose:  a hashed per-user store is the hub's job.  Nothing here throws -
-	//setContext is noexcept - a malformed entry is logged and skipped.
-	Ω loadUsers( AccessControlContext& cntxt )ι->void{
-		vector<std::pair<string,string>> users;
-		auto add = [&]( const jarray& a, sv source ){
-			for( let& v : a ){
-				let name = v.is_object() ? Json::FindDefaultSV( v.get_object(), "name" ) : sv{};
-				if( !name.empty() )
-					users.emplace_back( string{name}, string{Json::FindDefaultSV(v.get_object(), "password")} );
-				else
-					WARNT( (ELogTags)EOpcLogTags::Server, "{}: a user without a name is skipped.", source );
-			}
-		};
-		if( let a = Settings::FindArray("/opc/users"); a )
-			add( *a, "/opc/users" );
-		if( users.empty() )
+	//The plugin's state, at ac->context:  what Init read from /opc.
+	struct AccessControlContext final{
+		bool AllowAnonymous{};
+		bool AllowCertificate{};
+		bool AllowIssued{};
+		bool AllowUsername{};///opc/tokenTypes/username (default true) AND a non-empty login list - an empty one would advertise a token nobody can present.
+		vector<std::pair<string,string>> Users;//name, password.
+		string UserTokenPolicyUri;//"" names each security policy for itself.
+	};
+	//The username token's login list, matched by username() the way open62541's default plugin matches its static one:
+	///opc/users ([{name,password}]).  An opt-in - nothing shipped configures it (reviews/install-issues.md #1:  a fresh install
+	//logs in with Google, by ruling no username is seeded); the test configs do, for the gateway's password login
+	//(PasswordTests).  Plain text, on purpose:  a hashed per-user store is the hub's job.  Nothing here throws - setContext
+	//is noexcept - a malformed entry is logged and skipped.
+	Ω loadUsers( AccessControlContext& context )ι->void{
+		let users = Settings::FindArray( "/opc/users" );
+		if( !users )
 			return;
-		cntxt.usernamePasswordLogin = ( UA_UsernamePasswordLogin* )UA_calloc( users.size(), sizeof(UA_UsernamePasswordLogin) );
-		for( let& [name, password] : users ){
-			auto& login = cntxt.usernamePasswordLogin[cntxt.usernamePasswordLoginSize++];
-			login.username = UA_String_fromChars( name.c_str() );
-			login.password = UA_String_fromChars( password.c_str() );
+		for( let& v : *users ){
+			let name = v.is_object() ? Json::FindDefaultSV( v.get_object(), "name" ) : sv{};
+			if( !name.empty() )
+				context.Users.emplace_back( string{name}, string{Json::FindDefaultSV(v.get_object(), "password")} );
+			else
+				WARNT( (ELogTags)EOpcLogTags::Server, "/opc/users: a user without a name is skipped." );
 		}
 	}
 	Ω setContext( UA_AccessControl& ac )ι->AccessControlContext&{
-    auto cntxt = ( AccessControlContext* )UA_malloc( sizeof(AccessControlContext) );
-    memset( cntxt, 0, sizeof(AccessControlContext) );
-    cntxt->allowAnonymous = Settings::FindBool( "/opc/tokenTypes/anonymous" ).value_or( false );
-		cntxt->AllowCertificate = Settings::FindBool( "/opc/tokenTypes/certificate" ).value_or( true );
-		cntxt->AllowIssued = Settings::FindBool( "/opc/tokenTypes/issued" ).value_or( true );
+		auto context = new AccessControlContext{};
+		context->AllowAnonymous = Settings::FindBool( "/opc/tokenTypes/anonymous" ).value_or( false );
+		context->AllowCertificate = Settings::FindBool( "/opc/tokenTypes/certificate" ).value_or( true );
+		context->AllowIssued = Settings::FindBool( "/opc/tokenTypes/issued" ).value_or( true );
+		context->UserTokenPolicyUri = Settings::FindString( "/opc/userTokenPolicyUri" ).value_or( "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" );
 		if( Settings::FindBool("/opc/tokenTypes/username").value_or(true) )
-			loadUsers( *cntxt );
-		cntxt->AllowUsername = cntxt->usernamePasswordLoginSize>0;
-		cntxt->UserTokenPolicyUri = AllocUAString( Settings::FindString("/opc/userTokenPolicyUri").value_or("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256") );
-		ac.context = cntxt;
-		return *cntxt;
+			loadUsers( *context );
+		context->AllowUsername = !context->Users.empty();
+		ac.context = context;
+		return *context;
 	}
 
 	Ω clearAccessControl( UA_AccessControl* ac )ι->void{
-		if( auto context = (AccessControlContext*)ac->context ){
-			UA_String_clear( &context->UserTokenPolicyUri );
-			for( size_t i=0; i<context->usernamePasswordLoginSize; ++i ){
-				UA_String_clear( &context->usernamePasswordLogin[i].username );
-				UA_String_clear( &context->usernamePasswordLogin[i].password );
-			}
-			UA_free( context->usernamePasswordLogin );
-			UA_free( context );
-			ac->context = nullptr;
-		}
+		delete static_cast<AccessControlContext*>( ac->context );
+		ac->context = nullptr;
 		UA_Array_delete( ac->userTokenPolicies, ac->userTokenPoliciesSize, &UA_TYPES[UA_TYPES_USERTOKENPOLICY] );
 		ac->userTokenPolicies = nullptr;
 		ac->userTokenPoliciesSize = 0;
+	}
+
+	constexpr sv AnonymousPolicy{ "open62541-anonymous-policy" };
+	constexpr sv UsernamePolicy{ "open62541-username-policy" };
+	constexpr sv CertificatePolicy{ "open62541-certificate-policy" };
+	//The four token types, as Init offers them and ActivateSession matches them.  Credential names what a token of the type
+	//would carry in the clear under the None policy;  an anonymous one carries nothing.
+	struct TokenPolicy final{ bool AccessControlContext::*Allowed; UA_UserTokenType Type; sv PolicyId; sv Label; sv Credential; };
+	constexpr std::array<TokenPolicy,4> TokenPolicies{{
+		{ &AccessControlContext::AllowAnonymous, UA_USERTOKENTYPE_ANONYMOUS, AnonymousPolicy, "Anonymous", {} },
+		{ &AccessControlContext::AllowUsername, UA_USERTOKENTYPE_USERNAME, UsernamePolicy, "Username", "Username/Password" },
+		{ &AccessControlContext::AllowCertificate, UA_USERTOKENTYPE_CERTIFICATE, CertificatePolicy, "Certificate", "x509 Certificate" },
+		{ &AccessControlContext::AllowIssued, UA_USERTOKENTYPE_ISSUEDTOKEN, "open62541-issuedtoken-policy", "IssuedToken", "IssuedToken" }
+	}};
+	//The vendor's match:  a token's policyId begins with its policy's.
+	Ω hasPolicy( const UA_String& policyId, sv prefix )ι->bool{ return ToSV( policyId ).starts_with( prefix ); }
+
+	//No identity:  UserPK{}.  Siemens OPC Scout v10 sends an empty policyId, which is not compliant;  the vendor's plugin takes it
+	//as the anonymous policy, and so does this.
+	Ω anonymous( const UA_AnonymousIdentityToken& token, const AccessControlContext& context )ε->up<SessionContext>{
+		if( !context.AllowAnonymous || (token.policyId.data && !hasPolicy(token.policyId, AnonymousPolicy)) )
+			throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
+		return SessionContext::Unexpiring( UserPK{} );
+	}
+	//A name and password from the login list, decrypted by the server before it gets here.  Not offered - no list - means the
+	//endpoint carries no username policy, so this is a client ignoring the endpoint description.  The list carries no UserPK:
+	//the hub's row for the login name does (ResolveUser), or UserPK{}, no rights.
+	Ω username( const UA_UserNameIdentityToken& token, const AccessControlContext& context )ε->up<SessionContext>{
+		if( !context.AllowUsername || !hasPolicy(token.policyId, UsernamePolicy) || (!token.userName.length && !token.password.length) )
+			throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
+		let name = ToSV( token.userName );
+		let password = ToSV( token.password );
+		THROW_IFX( !std::ranges::any_of(context.Users, [&](let& user){ return user.first==name && user.second==password; }), UAException{UA_STATUSCODE_BADUSERACCESSDENIED} );
+		return SessionContext::Unexpiring( ResolveUser(name) );
+	}
+	//A certificate the session PKI trusts, whose key is a hub user's.
+	Ω certificate( const UA_X509IdentityToken& token, UA_ServerConfig& config )ε->up<SessionContext>{
+		if( !hasPolicy(token.policyId, CertificatePolicy) || !config.sessionPKI.verifyCertificate )
+			throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
+		UAε( config.sessionPKI.verifyCertificate(&config.sessionPKI, &token.certificateData) );
+		auto publicKey = Crypto::ExtractPublicKey( std::span<byte>{(byte*)token.certificateData.data, token.certificateData.length}, SRCE_CUR );
+		let exp = publicKey.ExponentInt();
+		let user = AppClient()->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id slug name}}", publicKey.ModulusHex(), exp), {} );
+		THROW_IF( user.empty(), "Certificate user not found: modulus: {}, exponent: {}", publicKey.ModulusHex(), exp );
+		return SessionContext::Unexpiring( UserPK{QL::AsId<UserPK::Type>(user)} );
+	}
+	//A hub session:  its id, under 9 bytes, or a jwt the hub signed.  The context carries the session's expiry.
+	Ω issued( const UA_IssuedIdentityToken& token )ε->up<SessionContext>{
+		THROW_IFX( !token.tokenData.length, Exception("Empty issued token", {_tags}) );
+		if( token.tokenData.length<9 ){
+			let sessionId = Str::TryTo<SessionPK,16>( ToSV(token.tokenData) );//attacker-chosen plaintext on the None endpoint.
+			THROW_IFX( !sessionId, UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );
+			let sessionInfo = BlockAwait<TAwait<Web::FromServer::SessionInfo>, Web::FromServer::SessionInfo>( move(*AppClient()->SessionInfoAwait(*sessionId)) );
+			return mu<SessionContext>( sessionInfo.user_endpoint(), Protobuf::ToTimePoint(sessionInfo.expiration()), (SessionPK)sessionInfo.session_id(), UserPK{sessionInfo.user_pk()} );
+		}
+		Web::Jwt jwt{ ToSV(token.tokenData) };
+		AppClient()->Verify( jwt );
+		return mu<SessionContext>( string{}, jwt.Expires(), Str::TryTo<SessionPK,16>(jwt.SessionId).value_or(0), jwt.UserPK );
 	}
 
 	Ω assignFunctions( UA_AccessControl& ac )ι{
@@ -236,230 +268,94 @@ namespace Jde::Opc::Server{
 		auto& ac = config.accessControl;
 		assignFunctions( ac );
 		auto& context = setContext( ac );
-    let numOfPolicies = context.UserTokenPolicyUri.length ? 1 : config.securityPoliciesSize;
-    uint policies{}; string log{};
-    if( context.allowAnonymous ){
-			log += "Anonymous,";
-      ++policies;
+		let numOfPolicies = context.UserTokenPolicyUri.size() ? 1 : config.securityPoliciesSize;
+		vector<string> tokenTypes;
+		for( let& policy : TokenPolicies ){
+			if( context.*policy.Allowed )
+				tokenTypes.push_back( policy.Type==UA_USERTOKENTYPE_USERNAME ? Ƒ("{}({} users)", policy.Label, context.Users.size()) : string{policy.Label} );
 		}
-    if( context.AllowUsername ){
-			log += Ƒ( "Username({} users),", context.usernamePasswordLoginSize );
-      ++policies;
-		}
-    if( context.AllowCertificate ){
-			log += "Certificate,";
-      ++policies;
-		}
-    if( context.AllowIssued ){
-			log += "IssuedToken,";
-      ++policies;
-		}
-		THROW_IF( !policies, "No allowed policies set." );
-		if( !log.empty() )
-			log.pop_back();//drop trailing comma
-		INFOT( (ELogTags)EOpcLogTags::Server, "UserToken Uris:  [{}]", move(log) );
-		log.clear();
+		THROW_IF( tokenTypes.empty(), "No allowed policies set." );
+		INFOT( (ELogTags)EOpcLogTags::Server, "UserToken Uris:  [{}]", Str::Join(tokenTypes) );
 		//An explicit /opc/userTokenPolicyUri is stamped on every token policy below whether or not the server offers that
 		//security policy;  a client then has no endpoint to present its token on and every ActivateSession fails.  (The
 		//unsecured config was where this bit - None alone, under a default of Basic256Sha256; it is gone, security-matrix #5 -
 		//but a policy named here and not carried, an Aes one say, still lands in this warning.)
-		if( context.UserTokenPolicyUri.length ){//otherwise each policy names itself, which always matches.
+		if( context.UserTokenPolicyUri.size() ){//otherwise each policy names itself, which always matches.
 			string offered; bool found{};
 			for( uint i=0; i<config.securityPoliciesSize; ++i ){
-				found = found || UA_String_equal( &context.UserTokenPolicyUri, &config.securityPolicies[i].policyUri );
+				found = found || ToSV( config.securityPolicies[i].policyUri )==context.UserTokenPolicyUri;
 				offered += ToString( config.securityPolicies[i].policyUri )+",";
 			}
 			if( !offered.empty() )
 				offered.pop_back();
 			if( !found )
-				WARNT( (ELogTags)EOpcLogTags::Server, "/opc/userTokenPolicyUri '{}' is not one of this server's security policies [{}] - no client can present a user token.", ToString(context.UserTokenPolicyUri), offered );
+				WARNT( (ELogTags)EOpcLogTags::Server, "/opc/userTokenPolicyUri '{}' is not one of this server's security policies [{}] - no client can present a user token.", context.UserTokenPolicyUri, offered );
 		}
 
-		ac.userTokenPoliciesSize = policies * numOfPolicies;
-    ac.userTokenPolicies = ( UA_UserTokenPolicy* )UA_Array_new( ac.userTokenPoliciesSize, &UA_TYPES[UA_TYPES_USERTOKENPOLICY] );
-    policies = 0;
-    for( uint i = 0; i < numOfPolicies; ++i ){
-			const UA_String utpUri = context.UserTokenPolicyUri.length ? context.UserTokenPolicyUri : config.securityPolicies[i].policyUri;
-			log += ToString( utpUri ) + ",";
-      if( context.allowAnonymous ){
-      	ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_ANONYMOUS;
-        ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-anonymous-policy" );// must be heap-owned: UA_Array_delete in clearAccessControl deep-frees policyId; a ToUV view would free a string literal.
-        UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
-        ++policies;
-      }
-      if( context.AllowUsername ){
-      	ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_USERNAME;
-        ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-username-policy" );// heap-owned, as the others: clearAccessControl deep-frees policyId.
-        if( UA_String_equal(&utpUri, &UA_SECURITY_POLICY_NONE_URI) )
-					DBGT( (ELogTags)EOpcLogTags::Server, "Username/Password Authentication configured, but no encrypting SecurityPolicy. This can leak credentials on the network." );
-        UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
-        ++policies;
-      }
-      if( context.AllowCertificate ){
-        ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_CERTIFICATE;
-        ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-certificate-policy" );// must be heap-owned: UA_Array_delete in clearAccessControl deep-frees policyId; a ToUV view would free a string literal.
-        if( UA_String_equal(&utpUri, &UA_SECURITY_POLICY_NONE_URI) )
-					DBGT( (ELogTags)EOpcLogTags::Server, "x509 Certificate Authentication configured, but no encrypting SecurityPolicy. This can leak credentials on the network." );
-        UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
-				++policies;
+		ac.userTokenPoliciesSize = tokenTypes.size() * numOfPolicies;
+		ac.userTokenPolicies = ( UA_UserTokenPolicy* )UA_Array_new( ac.userTokenPoliciesSize, &UA_TYPES[UA_TYPES_USERTOKENPOLICY] );
+		uint n{};
+		vector<string> uris;
+		for( uint i = 0; i < numOfPolicies; ++i ){
+			const UA_String utpUri = context.UserTokenPolicyUri.size() ? ToUV( context.UserTokenPolicyUri ) : config.securityPolicies[i].policyUri;
+			uris.push_back( ToString(utpUri) );
+			for( let& policy : TokenPolicies ){
+				if( !(context.*policy.Allowed) )
+					continue;
+				auto& offered = ac.userTokenPolicies[n++];
+				offered.tokenType = policy.Type;
+				offered.policyId = AllocUAString( policy.PolicyId );//heap-owned:  UA_Array_delete in clearAccessControl deep-frees policyId, and a ToUV view would free a string literal.
+				if( policy.Credential.size() && UA_String_equal(&utpUri, &UA_SECURITY_POLICY_NONE_URI) )
+					DBGT( (ELogTags)EOpcLogTags::Server, "{} Authentication configured, but no encrypting SecurityPolicy. This can leak credentials on the network.", policy.Credential );
+				UA_String_copy( &utpUri, &offered.securityPolicyUri );
 			}
-      if( context.AllowIssued ){
-        ac.userTokenPolicies[policies].tokenType = UA_USERTOKENTYPE_ISSUEDTOKEN;
-        ac.userTokenPolicies[policies].policyId = UA_STRING_ALLOC( "open62541-issuedtoken-policy" );
-        if( UA_String_equal(&utpUri, &UA_SECURITY_POLICY_NONE_URI) )
-					DBGT( (ELogTags)EOpcLogTags::Server, "IssuedToken Authentication configured, but no encrypting SecurityPolicy. This can leak credentials on the network." );
-				UA_String_copy( &utpUri, &ac.userTokenPolicies[policies].securityPolicyUri );
-				++policies;
-      }
-    }
-		if( !log.empty() )
-			log.pop_back();//drop trailing comma; loop may not have run when numOfPolicies==0, leaving log empty (pop_back on empty is UB).
-		INFOT( (ELogTags)EOpcLogTags::Server, "UserToken Uris:  [{}]", move(log) );
+		}
+		INFOT( (ELogTags)EOpcLogTags::Server, "UserToken Uris:  [{}]", Str::Join(uris) );
 	}
 	α UAAccess::ActivateSession( UA_Server *server, UA_AccessControl *ac, const UA_EndpointDescription *endpointDescription, const UA_ByteString *secureChannelRemoteCertificate, const UA_NodeId *sessionId, const UA_ExtensionObject *userIdentityToken, void **sessionContext )ι->UA_StatusCode{
-		const UA_String anonymous_policy = "open62541-anonymous-policy"_uv;
-		const UA_String certificate_policy = "open62541-certificate-policy"_uv;
-		const UA_String username_policy = "open62541-username-policy"_uv;
-
-    AccessControlContext *context = ( AccessControlContext* )ac->context;
-    UA_ServerConfig *config = UA_Server_getConfig( server );
-
-    /* The empty token is interpreted as anonymous */
-    UA_AnonymousIdentityToken anonToken;
-    UA_ExtensionObject tmpIdentity;
-    if( userIdentityToken->encoding == UA_EXTENSIONOBJECT_ENCODED_NOBODY ) {
-        UA_AnonymousIdentityToken_init( &anonToken );
-        UA_ExtensionObject_init( &tmpIdentity );
-        UA_ExtensionObject_setValueNoDelete( &tmpIdentity,
-                                            &anonToken,
-                                            &UA_TYPES[UA_TYPES_ANONYMOUSIDENTITYTOKEN]);
-        userIdentityToken = &tmpIdentity;
-    }
-
-		//Built here and installed at the single success point below.  open62541 passes &session->context on *every*
-		//ActivateSession and re-activation is explicitly allowed (accesscontrol.h: "can be called several times for a
-		//Session"), while closeSession only ever sees the last pointer - so assigning straight through leaked the previous
+		//The token's maker builds the context, installed at the single success point below.  open62541 passes &session->context
+		//on *every* ActivateSession and re-activation is explicitly allowed (accesscontrol.h: "can be called several times for
+		//a Session"), while closeSession only ever sees the last pointer - so assigning straight through leaked the previous
 		//context on every reconnect, which the vendor's own client does on a channel renew (opcserver-review3 L24).
-		//A local, not an early delete:  a branch that throws must leave the session's existing context untouched.
+		//A local, not an early delete:  a maker that throws must leave the session's existing context untouched.
 		//Re-activation must keep the user, though:  1.5.9 refuses an identity change itself, but compares an issued token's
 		//user id, which it leaves empty, so a different user's token still arrives here - the success point refuses it.
 		//Issued tokens only:  the stack holds a username or certificate to the same name or subject, and a username's UserPK
 		//may rightly move between activations - UserPK{} until the hub inserts the user (ResolveUser).
-		up<SessionContext> ctx;
 		try{
-			/* Could the token be decoded? */
-			if( userIdentityToken->encoding < UA_EXTENSIONOBJECT_DECODED )
-				throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-
-			const UA_DataType *tokenType = userIdentityToken->content.decoded.type;
-			if( tokenType == &UA_TYPES[UA_TYPES_ANONYMOUSIDENTITYTOKEN] ) {
-					/* Anonymous login */
-					if( !context->allowAnonymous )
-							throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-
-					const UA_AnonymousIdentityToken *token = ( UA_AnonymousIdentityToken* )
-							userIdentityToken->content.decoded.data;
-
-					/* Match the beginnig of the PolicyId.
-					* Compatibility notice: Siemens OPC Scout v10 provides an empty
-					* policyId. This is not compliant. For compatibility, assume that empty
-					* policyId == ANONYMOUS_POLICY */
-					if( token->policyId.data &&
-						( token->policyId.length < anonymous_policy.length ||
-							strncmp( (const char*)token->policyId.data,
-											( const char* )anonymous_policy.data,
-											anonymous_policy.length) != 0)) {
-							throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-					}
-					ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, UserPK{} );//UserPK{}==0: unauthenticated. Every later callback dereferences sessionContext, so it must be non-null on the GOOD path.
-			} else if( tokenType == &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN] ) {
-				/* Username and password */
-				if( !context->AllowUsername )//not offered (no login list) - the endpoint carries no username policy, so this is a client ignoring the endpoint description.
-					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-				const UA_UserNameIdentityToken *userToken = ( UA_UserNameIdentityToken* )
-						userIdentityToken->content.decoded.data;
-
-				/* Match the beginnig of the PolicyId */
-				if( userToken->policyId.length < username_policy.length ||
-						strncmp( (const char*)userToken->policyId.data,
-										( const char* )username_policy.data,
-										username_policy.length) != 0) {
-						throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-				}
-
-				/* The userToken has been decrypted by the server before forwarding
-					* it to the plugin. This information can be used here. */
-				/* if( userToken->encryptionAlgorithm.length > 0 ) {} */
-
-				/* Empty username and password */
-				if( userToken->userName.length == 0 && userToken->password.length == 0 )
-						throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-
-				/* Try to match username/pw */
-				UA_Boolean match = false;
-				if( context->loginCallback ) {
-						if( context->loginCallback(&userToken->userName, &userToken->password,
-								context->usernamePasswordLoginSize, context->usernamePasswordLogin,
-								sessionContext, context->loginContext) == UA_STATUSCODE_GOOD)
-								match = true;
-				} else {
-						for( size_t i = 0; i < context->usernamePasswordLoginSize; i++ ) {
-								if( UA_String_equal(&userToken->userName, &context->usernamePasswordLogin[i].username) &&
-										UA_ByteString_equal( &userToken->password, &context->usernamePasswordLogin[i].password )) {
-										match = true;
-										break;
-								}
-						}
-				}
-				if( !match )
-						throw UAException{ UA_STATUSCODE_BADUSERACCESSDENIED };
-				ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, ResolveUser(ToSV(userToken->userName)) );//the list carries no UserPK - the hub's row for the login name does (or UserPK{}: no rights).  Must be non-null so later callbacks don't deref null.
-			} else if( tokenType == &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN] ) {
-				const UA_X509IdentityToken *userToken = ( UA_X509IdentityToken* )userIdentityToken->content.decoded.data;
-				if( userToken->policyId.length < certificate_policy.length ||
-					strncmp( (const char*)userToken->policyId.data,
-									( const char* )certificate_policy.data,
-									certificate_policy.length) != 0) {
-						throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
-				}
-				THROW_IFX( !config->sessionPKI.verifyCertificate, UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );
-				UAε( config->sessionPKI.verifyCertificate(&config->sessionPKI, &userToken->certificateData) );
-				auto publicKey = Crypto::ExtractPublicKey( std::span<byte>{(byte*)userToken->certificateData.data, userToken->certificateData.length}, SRCE_CUR );
-				let exp = publicKey.ExponentInt();
-				let user = AppClient()->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id slug name}}", publicKey.ModulusHex(), exp), {} );
-				THROW_IF( user.empty(), "Certificate user not found: modulus: {}, exponent: {}", publicKey.ModulusHex(), exp );
-				ctx = mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, UserPK{QL::AsId<UserPK::Type>(user)} );
+			let& context = *static_cast<AccessControlContext*>( ac->context );
+			up<SessionContext> ctx;
+			const UA_DataType* type{ &UA_TYPES[UA_TYPES_ANONYMOUSIDENTITYTOKEN] };
+			if( userIdentityToken->encoding==UA_EXTENSIONOBJECT_ENCODED_NOBODY ){//the empty token is an anonymous one.
+				UA_AnonymousIdentityToken token; UA_AnonymousIdentityToken_init( &token );
+				ctx = anonymous( token, context );
 			}
-			else if( tokenType == &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] ) {
-				const UA_IssuedIdentityToken* userToken = ( UA_IssuedIdentityToken* )userIdentityToken->content.decoded.data;
-				THROW_IFX( !userToken->tokenData.length, Exception("Empty issued token", {_tags}) );
-				if( userToken->tokenData.length<9 ){
-					let sessionId = Str::TryTo<SessionPK,16>( ToSV(userToken->tokenData) );//attacker-chosen plaintext on the None endpoint.
-					THROW_IFX( !sessionId, UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );
-					let sessionInfo = BlockAwait<TAwait<Web::FromServer::SessionInfo>, Web::FromServer::SessionInfo>( 	move(*AppClient()->SessionInfoAwait(*sessionId)) );
-					ctx = mu<SessionContext>( sessionInfo.user_endpoint(), Protobuf::ToTimePoint(sessionInfo.expiration()), (SessionPK)sessionInfo.session_id(), UserPK{sessionInfo.user_pk()} );
-				}
-				else{
-					Web::Jwt jwt{ ToSV(userToken->tokenData) };
-					AppClient()->Verify( jwt );
-					ctx = mu<SessionContext>( string{}, jwt.Expires(), Str::TryTo<SessionPK,16>(jwt.SessionId).value_or(0), jwt.UserPK );
-				}
-			}
-			else {
-					/* Unsupported token type */
-					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };
+			else{
+				THROW_IFX( userIdentityToken->encoding<UA_EXTENSIONOBJECT_DECODED, UAException{UA_STATUSCODE_BADIDENTITYTOKENINVALID} );//not decodable.
+				type = userIdentityToken->content.decoded.type;
+				let data = userIdentityToken->content.decoded.data;
+				if( type==&UA_TYPES[UA_TYPES_ANONYMOUSIDENTITYTOKEN] )
+					ctx = anonymous( *static_cast<const UA_AnonymousIdentityToken*>(data), context );
+				else if( type==&UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN] )
+					ctx = username( *static_cast<const UA_UserNameIdentityToken*>(data), context );
+				else if( type==&UA_TYPES[UA_TYPES_X509IDENTITYTOKEN] )
+					ctx = certificate( *static_cast<const UA_X509IdentityToken*>(data), *UA_Server_getConfig(server) );
+				else if( type==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] )
+					ctx = issued( *static_cast<const UA_IssuedIdentityToken*>(data) );
+				else
+					throw UAException{ UA_STATUSCODE_BADIDENTITYTOKENINVALID };//a token type the server does not offer.
 			}
 			ASSERT( ctx );
-			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && tokenType==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] && existing->UserPK!=ctx->UserPK )
+			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && type==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] && existing->UserPK!=ctx->UserPK )
 				throw UAException{ UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED };
 			delete static_cast<SessionContext*>( *sessionContext );//the one this call replaces, if the session is re-activating.
 			*sessionContext = ctx.release();
-	    return UA_STATUSCODE_GOOD;
+			return UA_STATUSCODE_GOOD;
 		}
 		catch( const UAException& e ){
 			return e.Code();
 		}
-		catch( const runtime_error& e ){
+		catch( const runtime_error& ){
 			return UA_STATUSCODE_BADIDENTITYTOKENINVALID;
 		}
 	}

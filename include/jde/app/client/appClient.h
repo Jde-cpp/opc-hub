@@ -28,4 +28,7 @@ namespace Jde::App::Client{
 		bool _retry;
 	};
 	α Connect( sp<IAppClient> appClient )ι->ConnectAwait::Task;
+	//A startup's tail:  the access schema subscribed, the AppServer connected unless it is this process, this instance's log
+	//levels unless /logging/loadFromServer is false, then access configured over `localSchemas`.  `retry` as ConnectAwait's.
+	α ConnectAccess( sp<IAppClient> appClient, vector<sp<DB::AppSchema>> localSchemas, string resourceSchema, bool retry, SRCE )ε->void;
 }

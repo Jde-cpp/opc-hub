@@ -24,19 +24,13 @@
 #include <jde/opc/uatypes/Value.h>
 #include "../src/access/OpcAuthorize.h"
 #include "../src/access/UAAccess.h"
+#include "helpers.h"
 #define let const auto
 
 namespace Jde::Opc::Server::Tests{
 	using namespace std::chrono;
 	using Pages = vector<vector<Value>>;
 	namespace{
-		Ω nodeset()ε->fs::path{
-			for( let& p : Settings::FindPathArray("/opcServer/configFiles") ){
-				if( p.filename()=="pumps.NodeSet2.xml" )
-					return p;
-			}
-			THROW( "pumps.NodeSet2.xml is not in /opcServer/configFiles." );
-		}
 		Ω doubles( const vector<Value>& values )ι->vector<double>{
 			vector<double> y;
 			for( let& v : values )
@@ -163,28 +157,13 @@ namespace Jde::Opc::Server::Tests{
 		//which is when the delegated admin check passes a user that administers nothing yet.
 		Ω Enforce()ε->void{
 			auto app = AppClient();
-			let schema = "opc."+Settings::FindString( "/opcServer/resource" ).value_or( "test" );
-			let nodeSlug = jobject{ {"slug","nodeIds"} };
+			let schema = InstanceSchema();
 			//Each change reaches the authorizer as an event:  the delete's is waited for before the restore, or the wait for
 			//the restore could end on the state before the delete, and the delete's event reopen the nodes after it.
 			auto& authorizer = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
-			let reached = [&]( bool active, sv change ){
-				for( uint i=0; authorizer.FindActiveResourcePK(schema, "nodeIds", "").has_value()!=active; ++i ){
-					THROW_IF( i==200, "The nodeIds resource's {} didn't reach the authorizer.", change );
-					std::this_thread::sleep_for( 50ms );
-				}
-			};
-			app->QuerySync<jvalue>( "deleteResource( slug:$slug, criteria:null )", nodeSlug );
-			reached( false, "delete" );
-			constexpr sv roleSlug{ "HistoryEditor" };
-			if( app->QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", roleSlug}}).empty() ){
-				let role = app->QuerySync<jobject>( "createRole( slug:$slug, name:$name ){id}", {{"slug", roleSlug}, {"name", "History editor"}} );
-				let roleId = Json::AsNumber<Access::RolePK::Type>( role.at("id") );
-				app->QuerySync<jvalue>( "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:0, resource:{schemaName:$schema, slug:\"nodeIds\"}} )", {{"roleId", roleId}, {"allowed", underlying(Access::ERights::All)}, {"schema", schema}} );
-				app->QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", app->UserPK().Value}, {"roleId", roleId}} );
-			}
-			app->QuerySync<jvalue>( "restoreResource( slug:$slug, criteria:null )", nodeSlug );
-			reached( true, "restore" );//then map the nodes under the resource.
+			EnforceResource( *app, authorizer, schema, "nodeIds", false );
+			GrantRole( *app, "HistoryEditor", schema, "nodeIds", {}, Access::ERights::All, app->UserPK() );
+			EnforceResource( *app, authorizer, schema, "nodeIds", true );//then map the nodes under the resource.
 			authorizer.AssignRights( GetUAServer() );
 			THROW_IF( empty(authorizer.EditRights(Node(Rpm1), app->UserPK()) & Access::ERights::Update), "This program's user can't edit history." );
 		}
@@ -197,7 +176,7 @@ namespace Jde::Opc::Server::Tests{
 					fs::remove_all( entry.path() );
 			}
 			_base = floor<seconds>( Clock::now() )-1min;
-			Start( nodeset() );
+			Start( PumpsNodeset() );
 			Enforce();
 			Connect();
 		}
@@ -389,7 +368,7 @@ namespace Jde::Opc::Server::Tests{
 			details.startTime = ticks( start );
 			details.endTime = ticks( end );
 			return Callback( id, [&]( UAHistory& history, const UA_HistoryReadValueId& value, UA_HistoryReadResult& result, UA_HistoryData* const* data ){
-				history.ReadRaw( GetUAServer(), nullptr, session, details, UA_TIMESTAMPSTORETURN_BOTH, false, {&value, 1}, &result, data );
+				history.ReadRawModified( GetUAServer(), nullptr, session, details, UA_TIMESTAMPSTORETURN_BOTH, false, {&value, 1}, &result, data );
 			});
 		}
 		Ω AtTimeCallback( UA_UInt32 id, UAAccess::SessionContext* session, TimePoint time )ι->UA_StatusCode{
@@ -522,12 +501,7 @@ namespace Jde::Opc::Server::Tests{
 			THROW_IF( !good, "'{}' has no '{}'.", parent.ToString(), Str::Join(path, "/") );
 			return y;
 		}
-		Ω Variant( const NodeId& node )ι->Value{
-			UA_Variant v; UA_Variant_init( &v );
-			if( let sc = UA_Server_readValue(GetUAServer().Ptr(), node, &v) )
-				return Value{ (StatusCode)sc };
-			return Value{ move(v) };
-		}
+		Ω Variant( const NodeId& node )ι->Value{ return ReadValue( GetUAServer(), node ); }
 		template<class T> Ω Setting( UA_UInt32 variable, sv name )ε->T{ return Variant( Property(Node(variable), {"HA Configuration", name}) ).template AsNumber<T>(); }
 		//A property of the HA Configuration's AggregateConfiguration, a Boolean as 0 or 1:  none when it holds no value.
 		Ω Aggregate( UA_UInt32 variable, sv name )ε->optional<double>{
@@ -1106,13 +1080,13 @@ namespace Jde::Opc::Server::Tests{
 		auto& authorizer = static_cast<OpcAuthorize&>( *GetSchema().Authorizer );
 		let node = Node( Rpm1 );
 		const UserPK stranger{ 0x7FFF'FFF0 };
-		UAAccess::SessionContext session{ "", TimePoint::max(), 0, stranger };
+		auto session = Session( stranger );
 		EXPECT_EQ( UpdateCallback(Rpm1, &session, 1, At(50)).Status, UA_STATUSCODE_BADUSERACCESSDENIED );
 		EXPECT_EQ( DeleteCallback(Rpm1, &session, At(40), At(50)), UA_STATUSCODE_BADUSERACCESSDENIED );
 		EXPECT_EQ( UpdateCallback(Rpm1, nullptr, 1, At(50)).Status, UA_STATUSCODE_BADUSERACCESSDENIED );//no session.
-		EXPECT_FALSE( UAAccess::GetUserAccessLevel(GetUAServer().Ptr(), nullptr, nullptr, &session, &node, nullptr) & UA_ACCESSLEVELMASK_HISTORYWRITE );
-		UAAccess::SessionContext own{ "", TimePoint::max(), 0, AppClient()->UserPK() };
-		EXPECT_TRUE( UAAccess::GetUserAccessLevel(GetUAServer().Ptr(), nullptr, nullptr, &own, &node, nullptr) & UA_ACCESSLEVELMASK_HISTORYWRITE );
+		EXPECT_FALSE( underlying(AccessLevel(node, session)) & UA_ACCESSLEVELMASK_HISTORYWRITE );
+		auto own = Session( AppClient()->UserPK() );
+		EXPECT_TRUE( underlying(AccessLevel(node, own)) & UA_ACCESSLEVELMASK_HISTORYWRITE );
 		let inserted = UpdateCallback( Rpm1, &own, 1, At(50) );
 		EXPECT_EQ( inserted.Status, UA_STATUSCODE_GOOD );
 		EXPECT_EQ( inserted.Results, vector<UA_StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED} );//the value went through, not only the entry.
@@ -1157,7 +1131,7 @@ namespace Jde::Opc::Server::Tests{
 		let timeout = Settings::FindDuration( "/opcServer/hist/editTimeout" );
 		ASSERT_TRUE( timeout );
 		let threads = Settings::FindNumber<uint>( "/workers/executor/threads" ).value_or( std::thread::hardware_concurrency() );
-		UAAccess::SessionContext own{ "", TimePoint::max(), 0, AppClient()->UserPK() };
+		auto own = Session( AppClient()->UserPK() );
 		Updated updated;
 		steady_clock::duration waited;
 		{
@@ -1189,7 +1163,7 @@ namespace Jde::Opc::Server::Tests{
 	//Read on the node is the right, asked of the session's user for each node in every mode:  never the collector's.
 	TEST_F( HistoryTests, ReadNeedsReadOnTheNode ){
 		let status = []( UserPK user, bool atTime ){
-			UAAccess::SessionContext session{ "", TimePoint::max(), 0, user };
+			auto session = Session( user );
 			return atTime ? AtTimeCallback( Rpm4, &session, At(0) ) : Callback( Rpm4, &session, At(0), At(10) );
 		};
 		const UserPK stranger{ 0x7FFF'FFF0 };
@@ -1213,7 +1187,7 @@ namespace Jde::Opc::Server::Tests{
 		Write( Rpm4, 500, wrote );
 		Write( RpmManual, 77, wrote );
 
-		std::ifstream in{ nodeset(), std::ios::binary };
+		std::ifstream in{ PumpsNodeset(), std::ios::binary };
 		string xml{ std::istreambuf_iterator<char>{in}, {} };
 		let marked = "ParentNodeId=\"ns=1;i=5005\" DataType=\"Double\" AccessLevel=\"3\" Historizing=\"true\""sv;
 		let at = xml.find( marked );

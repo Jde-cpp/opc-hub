@@ -2,7 +2,6 @@
 #include <jde/fwk/io/crc.h>
 #include <absl/synchronization/mutex.h>
 
-#include <open62541/plugin/securitypolicy_default.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/collections.h>
@@ -12,6 +11,7 @@
 #include <open62541/types.h>
 #include <stdexcept>
 #include "GatewayAppClient.h"
+#include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
 #include "async/DataChanges.h"
 #include "jde/fwk/crypto/CryptoSettings.h"
@@ -189,7 +189,7 @@ namespace Jde::Opc::Gateway{
 			ConnectionLost( sp<UAClient>{client} );
 	}
 	α UAClient::LiveClients()ι->vector<sp<UAClient>>{
-		return registered( []( const UAClient& client )->bool{ return client.IsConnected(); } );
+		return registered( []( const UAClient& client )->bool { return client.IsConnected(); } );
 	}
 	//A client copies its row once, at construction, and ConnectAwait hands back the registered client - so an edit reached no live
 	//client, and one holding a subscription never idles out:  a Certificate URI pasted in for Sign & Encrypt left the traffic on
@@ -261,8 +261,7 @@ namespace Jde::Opc::Gateway{
 		_logger{ _handle },
 		_ptr{ Create() }{
 		try{
-			//Configuration() must run BEFORE setDefault: it installs the custom security policies (and asserts securityPoliciesSize==0 first). setDefault then only back-fills fields left unset — its own None-policy install is guarded by securityPoliciesSize==0, so it won't clobber ours (open62541 ua_config_default.c). Reversing the order would trip Configuration()'s assert and leak the default policy.
-			let sc = UA_ClientConfig_setDefault( Configuration() ); THROW_IFX( sc, UAClientException(sc, Handle()) );
+			Configuration();
 			INFO( "[{}]Creating UAClient slug: '{}' url: '{}' credential: '{}' )", hex(Handle()), Slug(), Url(), _credential.ToString() );
 			LogClientEndpoints();
 		}
@@ -334,29 +333,22 @@ namespace Jde::Opc::Gateway{
 		Crypto::IssueCertificate( settings, std::chrono::days{365}, sl );
 	}
 	//The secured policies Configuration() carries - for the channel with a certificateUri, for the user token always.
-	struct SecuredPolicy final{ UA_StatusCode(*Ctor)( UA_SecurityPolicy*, const UA_ByteString, const UA_ByteString, const UA_Logger* ); sv Uri; };
-	static const array<SecuredPolicy,3> _securedPolicies{{
-		{ &UA_SecurityPolicy_Basic256Sha256, "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" },
-		{ &UA_SecurityPolicy_Aes128Sha256RsaOaep, "http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep" },
-		{ &UA_SecurityPolicy_Aes256Sha256RsaPss, "http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss" }
-	}};
-	Ω carried( sv policyUri )ι->bool{ return std::ranges::any_of( _securedPolicies, [policyUri]( let& p ){ return p.Uri==policyUri; } ); }
+	Ω carried( sv policyUri )ι->bool{ return std::ranges::any_of( ClientSecurity::SecuredPolicyUris(), [policyUri]( sv uri ){ return uri==policyUri; } ); }
 	Ω policyName( sv uri )ι->string{ let i = uri.rfind( '#' ); return string{ i==sv::npos ? uri : uri.substr(i+1) }; }//"…/SecurityPolicy#Basic256Sha256" -> "Basic256Sha256": the fragment is the part that says anything.
 	Ω securedPolicyNames()ι->string{//"Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss"
+		let uris = ClientSecurity::SecuredPolicyUris();
 		string y;
-		for( uint i=0; i<_securedPolicies.size(); ++i )
-			y += Ƒ( "{}{}", i==0 ? "" : i+1==_securedPolicies.size() ? " and " : ", ", policyName(_securedPolicies[i].Uri) );
+		for( uint i=0; i<uris.size(); ++i )
+			y += Ƒ( "{}{}", i==0 ? "" : i+1==uris.size() ? " and " : ", ", policyName(uris[i]) );
 		return y;
 	}
-	α UAClient::Configuration()ε->UA_ClientConfig*{
+	α UAClient::Configuration()ε->void{
 		let serverUri = Str::Replace( _opcServer.CertificateUri, " ", "%20" );//the server's applicationUri:  the endpoint filter, and since security-matrix #8 nothing else.
-		bool addSecurity = !serverUri.empty();
+		let addSecurity = !serverUri.empty();
 		let certAuth = _credential.Type()==ETokenType::Certificate && AppClient()->SslSettings.has_value();//Create() already threw for a certificate credential with no ssl settings.
 		//One certificate, two jobs.  With a certificateUri it is the channel's identity, under whichever secured policy the server
-		//shares (_securedPolicies).  With or without one, it is what the *auth* policies - the ones that encrypt the user
-		//token - are built from:  open62541 builds an auth
-		//policy only from a local certificate, though the token itself is encrypted to the server's, which every endpoint
-		//description carries.  So a connection with no certificateUri stays on SecurityPolicy None - its data in the clear - and
+		//shares.  With or without one, it is what the auth policies that encrypt the user token are built from (ClientSecurity).
+		//So a connection with no certificateUri stays on SecurityPolicy None - its data in the clear - and
 		//still presents its credential encrypted wherever the server's token policy asks for that, as the Jde OpcServer and
 		//External both do on their None endpoints (reviews/security-matrix.md #1, ruled 09-18; NoSecurityTests).  The certificate
 		//is the per-connection issued one (its SAN the gateway's own applicationUri - /gateway/issuedCerts);  certificate
@@ -364,63 +356,18 @@ namespace Jde::Opc::Gateway{
 		//same certificate - which is also why that credential's transport and authentication certificates are equal.
 		if( !certAuth )
 			EnsureCertificate( Slug() );
-		auto config = UA_Client_getConfig( _ptr );
-		ServerTrust::Install( *config, "/gateway", Handle(), Url() );//before setDefault, which would otherwise install AcceptAll;  applies to every endpoint that carries a certificate, secured or not.
-		//The secured policies the gateway carries - for the channel with a certificateUri, for the user token always.  open62541
-		//takes the endpoint with the highest securityLevel among the policies it finds here, so a server that offers an Aes policy
-		//gets it, and one that offers Basic256Sha256 alone - External - gets that (reviews/security-matrix.md #4; SecurityPolicyTests).
-		//The deprecated ones (Basic128Rsa15, Basic256) are not carried, and a server that offers nothing else is told so (StateCallback).
-		//securityLevel is the *server's* claim, read off the unauthenticated discovery channel, so it only ever ranks endpoints
-		//that already meet the floor pinned below (config->securityMode) - it never chooses the mode (reviews/m2-closing.md #1).
-		const uint size = addSecurity ? 1+_securedPolicies.size() : 1; ASSERT( !config->securityPoliciesSize );
-		uint initialized = 0;//policies actually constructed; on an exception before ownership transfers to config, the deleter clears these — UA_free alone would leak each policy's internals (policyUri, contexts, ...).
-		auto clearPolicies = [&initialized]( UA_SecurityPolicy* p )ι{ for(uint i=0; i<initialized; ++i) p[i].clear(&p[i]); UA_free(p); };
-		up<UA_SecurityPolicy, decltype( clearPolicies )> securityPolicies{ (UA_SecurityPolicy*)UA_malloc(sizeof(UA_SecurityPolicy)*size), clearPolicies };
-		auto sc = UA_SecurityPolicy_None( &securityPolicies.get()[0], UA_BYTESTRING_NULL, &_logger ); THROW_IFX( sc, UAClientException(sc, Handle()) );
-		++initialized;
 		let& settings = certAuth ? *AppClient()->SslSettings : CryptoSettings(); //requires authentication[AppClient] & transport[OpcServer] security be equal.
-		auto certificate = ToUAByteString( Crypto::ReadCertificate(settings.Certificate.Path) );
-		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(settings.PrivateKey) );
-		//Two uris, two jobs (reviews/security-matrix.md #8; ApplicationUriTests).  config->applicationUri only FILTERS the server's
-		//endpoints (matchEndpoint) - it is the server's, the connection's certificateUri.  clientDescription's is who this client
-		//says it is, and a server holds it against the SAN of the certificate the client presents - against each other, never
-		//against its own uri - so it is the gateway's:  the uri in that certificate's SAN, read from the file itself.  The issued
-		//certificate takes it from /gateway/issuedCerts, the app client's own from its web ssl block, an operator's own pair
-		//(managed:false) from wherever it was made.  Until #8 both were the certificateUri, and the gateway introduced itself
-		//as the server it was calling.
+		//What the gateway advertises as itself (reviews/security-matrix.md #8; ApplicationUriTests):  the uri in its certificate's
+		//SAN, read from the file itself.  The issued certificate takes it from /gateway/issuedCerts, the app client's own from its
+		//web ssl block, an operator's own pair (managed:false) from wherever it was made.
 		let ownUri = Crypto::Certificate{ Crypto::ReadCertificate(settings.Certificate.Path) }.SanUri();
 		if( ownUri.empty() && addSecurity )
 			WARN( "[{}]'{}' carries no URI in its subjectAltName, so this gateway has no applicationUri of its own to advertise - advertising '{}', the server's.", hex(Handle()), settings.Certificate.Path.string(), serverUri );
-		if( let advertised = ownUri.empty() ? serverUri : ownUri; advertised.size() ){//in place of open62541's "unconfigured" placeholder.
-			UA_String_clear( &config->clientDescription.applicationUri );
-			config->clientDescription.applicationUri = UA_STRING_ALLOC( advertised.c_str() );
-		}
-		if( addSecurity ){
-			UA_String_clear( &config->applicationUri );//clear any existing value before overwriting so the default isn't leaked.
-			config->applicationUri = UA_STRING_ALLOC( serverUri.c_str() );
-			//The floor:  a certificateUri means Sign & Encrypt, and this is the only mode filter open62541 has (matchEndpoint:
-			//configuredSM > 0).  Unset, the None policy the discovery channel needs also matches a None *endpoint*, and whoever
-			//answers GetEndpoints - the server, or anything on-path - takes the channel to None/None by claiming securityLevel 255
-			//on it, with the real server's public certificate passing ServerTrust (reviews/m2-closing.md #1; SecurityPolicyTests).
-			//The discovery channel is untouched - it opens on None before any endpoint is matched (initSecurityPolicy).
-			config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+		if( addSecurity )
 			INFO( "[{}]Offering {}, Sign & Encrypt only, with certificate '{}'", hex(Handle()), securedPolicyNames(), settings.Certificate.Path.string() );
-			for( let& policy : _securedPolicies ){
-				sc = policy.Ctor( &securityPolicies.get()[initialized], *certificate, *privateKey, &_logger ); THROW_IFX( sc, UAClientException(sc, Handle()) );
-				++initialized;
-			}
-		}
-		else{
-			//No endpoint filter - there is no uri to hold the server's against.
+		if( !addSecurity )//not `else`: the log macros expand to their own `if`.  No endpoint filter - there is no uri to hold the server's against.
 			INFO( "[{}]Using SecurityPolicy None - '{}' has no certificateUri; user tokens are encrypted, under the policy the server names, with certificate '{}'", hex(Handle()), Slug(), settings.Certificate.Path.string() );
-		}
-		auto grown = ( UA_SecurityPolicy* )UA_realloc( config->authSecurityPolicies, sizeof(UA_SecurityPolicy) *(config->authSecurityPoliciesSize + _securedPolicies.size()) );
-		THROW_IFX( !grown, UAClientException(UA_STATUSCODE_BADOUTOFMEMORY, Handle()) );//realloc failure leaves the original block valid; don't overwrite the pointer with null (would leak it and null-deref below).
-		config->authSecurityPolicies = grown;
-		for( let& policy : _securedPolicies ){
-			sc = policy.Ctor( &config->authSecurityPolicies[config->authSecurityPoliciesSize], *certificate.get(), *privateKey.get(), config->logging ); THROW_IFX( sc, UAClientException(sc, Handle()) );
-			config->authSecurityPoliciesSize++;//one at a time:  what is constructed is the config's to clear, whatever throws next.
-		}
+		auto config = UA_Client_getConfig( _ptr );
 		//A secret in the clear - a password or an issued token under a token policy of None, on any channel that is not
 		//Sign & Encrypt - is refused by open62541 itself unless this is set (matchUserTokenPolicy), and the gateway sets it only
 		//on the operator's say-so:  /gateway/allowPlaintextPassword, default false (reviews/security-matrix.md #6, ruled 09-18;
@@ -430,11 +377,7 @@ namespace Jde::Opc::Gateway{
 		let secret = _credential.Type()==ETokenType::Username || _credential.Type()==ETokenType::IssuedToken;
 		if( config->allowNonePolicyPassword && secret )
 			WARN( "[{}]/gateway/allowPlaintextPassword is on - '{}' sends its {} credential unencrypted if '{}' offers it no encrypting token policy.", hex(Handle()), Slug(), TokenTypeName(_credential.Type()), Url() );
-		config->securityPolicies = securityPolicies.release();
-		config->securityPoliciesSize = size;
-		config->secureChannelLifeTime = 60 * 60 * 1000;
-
-		return config;
+		ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .AdvertisedUri=ownUri.empty() ? serverUri : ownUri, .TrustRoot="/gateway"}, Handle(), Url() );
 	}
 	α UAClient::PresentedCertificate()Ι->optional<Crypto::CryptoSettings>{
 		if( _credential.Type()==ETokenType::Certificate && AppClient()->SslSettings )

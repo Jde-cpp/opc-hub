@@ -1,9 +1,8 @@
 #include "EmulatorClient.h"
 #include <jde/fwk/str.h>
-#include <jde/fwk/crypto/OpenSsl.h>
-#include <open62541/plugin/securitypolicy_default.h>
 #include <jde/opc/uatypes/BrowsePath.h>
 #include <jde/opc/uatypes/opcHelpers.h>
+#include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
 
 #define let const auto
@@ -16,9 +15,6 @@ namespace Jde::Opc::Emulator{
 		_applicationUri{ Str::Replace(applicationUri, " ", "%20") },
 		_serverApplicationUri{ Str::Replace(serverApplicationUri, " ", "%20") },
 		_logger{ 0 }{
-		//credential material first: a throw here leaves nothing allocated.
-		auto cert = ToUAByteString( Crypto::ReadCertificate(certificate.Certificate.Path) );
-		auto key = ToUAByteString( Crypto::ReadPrivateKey(certificate.PrivateKey) );
 		_config.logging = &_logger;
 		_config.eventLoop = UA_EventLoop_new_POSIX( _config.logging );
 		auto tcp = UA_ConnectionManager_new_POSIX_TCP( "tcp connection manager"_uv );
@@ -32,7 +28,7 @@ namespace Jde::Opc::Emulator{
 		THROW_IFSL( !_ptr, "UA_Client_newWithConfig failed." );
 		UA_Client_getConfig( _ptr )->eventLoop->logger = _config.logging;
 		try{
-			Configure( *cert, *key, sl );
+			Configure( certificate, sl );//a throw, the certificate unreadable included, is caught below.
 		}
 		catch( ... ){
 			UA_Client_delete( _ptr );
@@ -47,54 +43,12 @@ namespace Jde::Opc::Emulator{
 		}
 	}
 
-	α EmulatorClient::Configure( const UA_ByteString& certificate, const UA_ByteString& privateKey, SL sl )ε->void{
+	α EmulatorClient::Configure( const Crypto::CryptoSettings& certificate, SL sl )ε->void{
 		auto config = UA_Client_getConfig( _ptr );
-		ASSERT( !config->securityPoliciesSize );
-		constexpr uint size{ 2 };
-		uint initialized{};//policies actually constructed; on a throw before ownership transfers to config, clear those and free the block.
-		auto policies = (UA_SecurityPolicy*)UA_malloc( sizeof(UA_SecurityPolicy)*size );
-		try{
-			check( UA_SecurityPolicy_None(&policies[0], UA_BYTESTRING_NULL, &_logger), "UA_SecurityPolicy_None", sl ); ++initialized;
-			check( UA_SecurityPolicy_Basic256Sha256(&policies[1], certificate, privateKey, &_logger), "UA_SecurityPolicy_Basic256Sha256", sl ); ++initialized;
-			//Two different uris (#15).  config->applicationUri only FILTERS the server's endpoints (matchEndpoint: keep those
-			//whose server advertises it; empty keeps all), so it is the server's.  clientDescription's is what we advertise
-			//as ourselves, and the server verifies it against the SAN of the certificate we present (validateCertificate) -
-			//against each other, never against its own - so it is this device's.  The gateway keeps the same two apart since
-			//security-matrix #8 (UAClient::Configuration);  until then it set both from one string and introduced itself as the
-			//server it was calling.
-			UA_String_clear( &config->applicationUri );
-			if( _serverApplicationUri.size() )
-				config->applicationUri = AllocUAString( _serverApplicationUri );
-			UA_String_clear( &config->clientDescription.applicationUri );
-			config->clientDescription.applicationUri = AllocUAString( _applicationUri );
-			//The floor (reviews/m2-closing.md #1):  None is carried for the discovery channel alone.  Without a configured mode
-			//matchEndpoint takes whichever endpoint claims the highest securityLevel - the server's word, read off that
-			//unauthenticated channel - so a None endpoint claiming 255 would carry our process values in the clear.
-			config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-			//the user token rides an encrypted policy (/opc/userTokenPolicyUri) - this is the policy that encrypts it.
-			auto grown = (UA_SecurityPolicy*)UA_realloc( config->authSecurityPolicies, sizeof(UA_SecurityPolicy)*(config->authSecurityPoliciesSize+1) );
-			check( grown ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADOUTOFMEMORY, "authSecurityPolicies", sl );
-			config->authSecurityPolicies = grown;
-			check( UA_SecurityPolicy_Basic256Sha256(&config->authSecurityPolicies[config->authSecurityPoliciesSize], certificate, privateKey, config->logging), "auth UA_SecurityPolicy_Basic256Sha256", sl );
-			++config->authSecurityPoliciesSize;
-		}
-		catch( ... ){
-			for( uint i=0; i<initialized; ++i )
-				policies[i].clear( &policies[i] );
-			UA_free( policies );
-			throw;
-		}
-		config->securityPolicies = policies;
-		config->securityPoliciesSize = size;
-		config->secureChannelLifeTime = 60*60*1000;
-		//A UA-enabled PLC checks who it is talking to: without this, setDefault's AcceptAll below would take any certificate
-		//the endpoint answers with, so anything that can occupy the OpcServer's address collects our issued token and our
-		//process values.  The gateway's verifier, anchored on this app's own list, /emulator/trustedCertDirs - see jde/opc/ServerTrust.h.
-		ServerTrust::Install( *config, "/emulator", (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
-		//after the policies: setDefault back-fills only what is unset (the verifier just installed, the UDP/interrupt event
-		//sources) and skips its own None policy because securityPoliciesSize!=0.  Before them it would install a
-		//default policy set this block then trips over.
-		check( UA_ClientConfig_setDefault(config), "UA_ClientConfig_setDefault", sl );
+		//A UA-enabled PLC checks who it is talking to: without the verifier, setDefault's AcceptAll would take any certificate the
+		//endpoint answers with, so anything that can occupy the OpcServer's address collects our issued token and our process
+		//values.  The gateway's, anchored on this app's own list, /emulator/trustedCertDirs - see jde/opc/ServerTrust.h.
+		ClientSecurity::Configure( *config, {.Certificate=certificate, .Secure=true, .ServerUri=_serverApplicationUri, .AdvertisedUri=_applicationUri, .TrustRoot="/emulator"}, (Jde::Handle)(uint)_ptr, _url, sl );//the client pointer is the id StateCallback logs, so the verifier's lines and the connect failure line up.
 		vector<string> policyUris;
 		for( size_t i=0; i<config->securityPoliciesSize; ++i )
 			policyUris.emplace_back( ToString(config->securityPolicies[i].policyUri) );

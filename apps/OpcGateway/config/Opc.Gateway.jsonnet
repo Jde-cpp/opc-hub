@@ -136,9 +136,6 @@ function( sync=false )
 			"introspection/hist.jsonnet"
 		]
 	},
-	credentials:{
-		name: "OpcGateway"
-	},
 	web:{
 		client:{ ssl:{ caFile: args.certsDir("AppServer")+"/AppServer.pem" } }//the AppServer is its own root - without an anchor the client rejects localhost:1967's self-signed cert.  The stem is App.Server.jsonnet's visible commonName; if that or its `path::` un-hides, this anchor must follow.
 	},

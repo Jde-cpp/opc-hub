@@ -1,8 +1,9 @@
 //PlcServer - the emulated PLC's own UA server:  the loopback bind (#5), the contract's field map, the local write the
-//publisher samples.  One server per suite on a test port; PubSubTests' Publisher is the same shape minus the class.
+//publisher samples.  One server per suite on a test port; PubSubTests publishes through one too.
 #include <thread>
 #include <jde/fwk/settings.h>
 #include <jde/opc/uatypes/UAString.h>
+#include <jde/opc/uatypes/Value.h>
 #include "../PlcServer.h"
 
 #define let const auto
@@ -25,19 +26,9 @@ namespace Jde::Opc::Emulator::Tests{
 				y.push_back( ToString(config.serverUrls[i]) );
 			return y;
 		}
-		Ω readDouble( const NodeId& node )ι->optional<double>{
-			optional<double> y;
-			UA_Variant v; UA_Variant_init( &v );
-			if( UA_Server_readValue(_plc->Ptr(), node, &v)==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&v, &UA_TYPES[UA_TYPES_DOUBLE]) )
-				y = *(UA_Double*)v.data;
-			UA_Variant_clear( &v );
-			return y;
-		}
-		Ω read( const NodeId& node )ι->UA_DataValue{//the whole DataValue, as the publisher samples it; the caller clears it.
-			UA_ReadValueId id; UA_ReadValueId_init( &id );
-			id.nodeId = node;
-			id.attributeId = UA_ATTRIBUTEID_VALUE;
-			return UA_Server_read( _plc->Ptr(), &id, UA_TIMESTAMPSTORETURN_NEITHER );
+		Ω readDouble( const NodeId& node )ι->optional<double>{//a Good one's.
+			let v = ReadValue( *_plc->Ptr(), node );
+			return v.status==UA_STATUSCODE_GOOD && v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? optional{ v.Get<UA_Double>(0) } : nullopt;
 		}
 		static up<PlcServer> _plc;
 	};
@@ -71,11 +62,10 @@ namespace Jde::Opc::Emulator::Tests{
 		constexpr UA_StatusCode pinnedHigh{ UA_STATUSCODE_UNCERTAINENGINEERINGUNITSEXCEEDED | 0x0400 | 0x0200 };//InfoType DataValue + LimitBits High
 		for( let status : {pinnedHigh, (UA_StatusCode)UA_STATUSCODE_BADSENSORFAILURE, (UA_StatusCode)UA_STATUSCODE_GOOD} ){
 			_plc->Write( 1, 777, status );
-			auto dv = read( node );
+			let dv = ReadValue( *_plc->Ptr(), node );//the whole DataValue, as the publisher samples it.
 			EXPECT_EQ( dv.status, status ) << UA_StatusCode_name( status );
 			ASSERT_TRUE( dv.hasValue && UA_Variant_hasScalarType(&dv.value, &UA_TYPES[UA_TYPES_DOUBLE]) ) << UA_StatusCode_name( status );
-			EXPECT_EQ( *(UA_Double*)dv.value.data, 777 );
-			UA_DataValue_clear( &dv );
+			EXPECT_EQ( dv.Get<UA_Double>(0), 777 );
 		}
 	}
 	TEST_F( PlcServerTests, WriteRefusesAnUnknownField ){

@@ -1,4 +1,6 @@
 #include "PlcServer.h"
+#include <open62541/server_config_default.h>
+#include <jde/opc/UAException.h>
 #include <NodesetLoader/backendOpen62541.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/fwk/exceptions/IOException.h>

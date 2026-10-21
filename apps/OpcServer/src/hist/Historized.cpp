@@ -1,5 +1,6 @@
 #include "Historized.h"
 #include <open62541/plugin/nodestore.h>
+#include <jde/opc/uatypes/opcHelpers.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
@@ -17,18 +18,12 @@ namespace Jde::Opc::Server{
 		UA_BrowsePathResult_clear( &found );
 		return y;
 	}
-	α Historized::Read( UA_Server& ua, const UA_NodeId& node, UA_TimestampsToReturn timestamps )ι->Value{
-		UA_ReadValueId id; UA_ReadValueId_init( &id );
-		id.nodeId = node;
-		id.attributeId = UA_ATTRIBUTEID_VALUE;
-		return Value{ UA_Server_read(&ua, &id, timestamps) };
-	}
 	//The property's number, a Boolean as 0 or 1:  none when it isn't there, or holds no value.
 	Ω number( UA_Server& ua, const UA_NodeId& parent, sv browseName, str owner )ε->optional<double>{
 		let property = child( ua, parent, browseName );
 		if( !property )
 			return nullopt;
-		auto value = Historized::Read( ua, *property );
+		auto value = ReadValue( ua, *property );
 		if( !value.hasValue || value.IsEmpty() )
 			return nullopt;
 		let kind = value.value.type->typeKind;
@@ -158,7 +153,7 @@ namespace Jde::Opc::Server{
 			let ranged = thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFRANGE ? "InstrumentRange"sv
 				: thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE ? "EURange"sv : sv{};
 			if( let property = ranged.empty() ? nullopt : child(ua, id, ranged) ){
-				if( let value = Historized::Read(ua, *property); value.hasValue && UA_Variant_hasScalarType(&value.value, &UA_TYPES[UA_TYPES_RANGE]) )
+				if( let value = ReadValue(ua, *property); value.hasValue && UA_Variant_hasScalarType(&value.value, &UA_TYPES[UA_TYPES_RANGE]) )
 					thresholds.Range = Hist::Range{ value.Get<UA_Range>(0).low, value.Get<UA_Range>(0).high };
 			}
 		}

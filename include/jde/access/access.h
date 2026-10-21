@@ -15,4 +15,6 @@ namespace Jde::Access{
 
 		variant<Jde::UserPK,Access::GroupPK> Value;
 	};
+	//The access schema an OpcServer instance's resources are kept under:  `<schemaName>.<instance>`, or schemaName with none.
+	α InstanceSchemaName( str schemaName, str opcServerInstance )ι->string;
 }

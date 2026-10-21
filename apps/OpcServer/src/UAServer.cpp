@@ -5,11 +5,9 @@
 #include <NodesetLoader/backendOpen62541.h>
 #include "UATrust.h"
 
-
 #define let const auto
 namespace Jde::Opc::Server {
 	UAServer::UAServer()ε:
-		ServerName{ Settings::FindString("/opcServer/name").value_or("OpcServer") },
 		_ua{ UA_Server_newWithConfig(&_config) }
 	{
 		if( _ua )
@@ -18,10 +16,6 @@ namespace Jde::Opc::Server {
 	UAServer::~UAServer(){
 		INFOT( ELogTags::App, "Stopping OPC UA server..." );
 		if( _thread.has_value() ){
-			_running = false;
-#ifdef _MSC_VER
-			std::this_thread::sleep_for( 1s );
-#endif
 			_thread->request_stop();
 			_thread->join();
 			_thread.reset();
@@ -38,11 +32,10 @@ namespace Jde::Opc::Server {
 			return;
 		PublishDataTypes();//the last nodeset is loaded and PubSub not yet started (opcServerStartup).
 		UAε( UA_Server_run_startup(_ua) );
-		_running = true;//set before spawning: otherwise a destructor racing an early Run() could clear it before the thread reads it, and join() would hang.
 		_thread = std::jthread{ [this](std::stop_token st){
 			Thread::SetName( "UAServer" );
-			//UA_Server_run(...) demands a volatile UA_Boolean*; run the loop manually against a std::atomic instead. This is what UA_Server_run does internally, and it also drops the original's double run_shutdown.
-			while( _running && !st.stop_requested() )
+			//UA_Server_run(...) demands a volatile UA_Boolean*; run the loop manually against the stop token instead. This is what UA_Server_run does internally, and it also drops the original's double run_shutdown.
+			while( !st.stop_requested() )
 				UA_Server_run_iterate( _ua, true );
 			UA_Server_run_shutdown( _ua );//the delete is the destructor's, after it joins this thread.
 			INFOT( ELogTags::App, "OPC UA server stopped." );
@@ -51,7 +44,6 @@ namespace Jde::Opc::Server {
 	α UAServer::Load( fs::path configFile, SL sl )ε->void{
 		INFOT( ELogTags::App, "Loading configuration from: '{}'", configFile.string() );
 		CHECK_PATH( configFile, sl );
-		//xmlSetGenericErrorFunc( nullptr, myXmlError );
 		auto success = NodesetLoader_loadFile( _ua, configFile.string().c_str(), nullptr );
 		THROW_IFSL( !success, "Failed to load nodeset file: '{}'", configFile.string() );
 	}

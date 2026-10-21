@@ -1,6 +1,5 @@
 // Microsoft Visual C++ generated resource script.
 //
-#include "resource.h"
 #include "version.rc.h" //JDE_VERSION_*, JDE_COPYRIGHT - written by the build (jdeVersionResource, build/functions.cmake; reviews/m4-closing.md #20)
 
 #define APSTUDIO_READONLY_SYMBOLS
@@ -24,11 +23,6 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 //
 // TEXTINCLUDE
 //
-
-1 TEXTINCLUDE
-BEGIN
-    "resource.h\0"
-END
 
 2 TEXTINCLUDE
 BEGIN
@@ -97,4 +91,3 @@ END
 
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
-

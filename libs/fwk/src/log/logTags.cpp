@@ -1,4 +1,5 @@
 #include <jde/fwk/log/logTags.h>
+#include <mutex>
 #include <jde/fwk/log/ILogger.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/str.h>
@@ -19,30 +20,42 @@ namespace Jde{
 		}
 	}
 
-	up<LogTags> _cumulative;
+	//The loggers' levels together, which ShouldLog asks of every line, from any thread, and UpdateCumulative replaces on a level
+	//change.  Read with one acquire load;  a replaced one is kept, not freed, as a reader may still be in it - one per level
+	//change, as log.cpp keeps its logger lists.  An up<> here freed it under the readers.
+	std::atomic<const LogTags*> _cumulative;
+	std::mutex _cumulativeMutex;
+	vector<up<LogTags>> _cumulatives;//every one published, the current last.
+	Ω cumulative()ι->const LogTags*{ return _cumulative.load( std::memory_order_acquire ); }
 	vector<up<Logging::ITagParser>> _tagParsers;
 	α Logging::AddTagParser( up<ITagParser>&& tagParser )ι->void{ _tagParsers.emplace_back(std::move(tagParser)); }
 
-	α Logging::UpdateCumulative( const vector<up<Logging::ILogger>>& loggers )ι->void{
-		up<LogTags> cumulative;
+	α Logging::UpdateCumulative( const vector<Logging::ILogger*>& loggers )ι->void{
+		up<LogTags> computed;
 		for( let& logger : loggers ){
-			if( !cumulative ){
-				cumulative = mu<LogTags>( *logger );
+			if( !computed ){
+				computed = mu<LogTags>( *logger );
 				continue;
 			}
-			*cumulative+=*logger;
+			*computed+=*logger;
 		}
-		if( cumulative ){
-			_cumulative = move( cumulative );
+		LogTags* published;
+		{
+			std::lock_guard _{ _cumulativeMutex };
+			if( !computed && !cumulative() )
+				computed = mu<LogTags>();
+			if( computed ){
+				_cumulatives.push_back( move(computed) );
+				_cumulative.store( _cumulatives.back().get(), std::memory_order_release );
+			}
+			published = _cumulatives.back().get();
 		}
-		else if( !_cumulative )
-			_cumulative = mu<LogTags>();
-		if( auto l = _cumulative->MinLevel(ELogTags::Settings); l>=ELogLevel::Trace )
-			Logging::Log( ELogLevel::Trace, (ELogTags)ELogTags::Settings, SRCE_CUR, "Cumulative: {}", _cumulative->ToString() );
+		if( auto l = published->MinLevel(ELogTags::Settings); l>=ELogLevel::Trace )
+			Logging::Log( ELogLevel::Trace, (ELogTags)ELogTags::Settings, SRCE_CUR, "Cumulative: {}", published->ToString() );
 	}
 
 	α Logging::ShouldLog( ELogLevel level, ELogTags tags )ι->bool{
-		return _cumulative->ShouldLog( level, tags );
+		return cumulative()->ShouldLog( level, tags );
 	}
 	α Logging::Tags( bool user )ι->flat_map<string,uint>{
 		flat_map<string,uint> y;
@@ -304,7 +317,7 @@ namespace Jde{
 		if( !level )
 			level = _defaultLevel;
 		ExtrapolatedTags.emplace( tags, *level );
-		if( auto l = tags==ELogTags::Settings ? *level : _cumulative->MinLevel(ELogTags::Settings); l>=ELogLevel::Trace ){
+		if( auto l = tags==ELogTags::Settings ? *level : cumulative()->MinLevel(ELogTags::Settings); l>=ELogLevel::Trace ){
 			let name = Name();
 			let tagString = Jde::ToString( tags );
 			Logging::Log( ELogLevel::Trace, ELogTags::Settings, SRCE_CUR, "[{}]tag: {}, minLevel: {}", name, tagString, levelString );
@@ -357,5 +370,5 @@ namespace Jde{
 }
 
 α Jde::ShouldTrace( ELogTags tags )ι->bool {
-	return _cumulative->MinLevel( tags ) == ELogLevel::Trace;
+	return cumulative()->MinLevel( tags ) == ELogLevel::Trace;
 }

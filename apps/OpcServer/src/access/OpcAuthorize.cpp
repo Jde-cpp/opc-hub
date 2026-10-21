@@ -8,8 +8,8 @@
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags{ ( ELogTags )( (EOpcLogTags)ELogTags::Access | EOpcLogTags::Opc ) };
 
-	α OpcAuthorize::AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited, vector<NodeId>& path, std::map<NodeId, vector<Access::ResourcePK>>& beneath, std::map<Access::ResourcePK, Access::ResourcePK>& enclosing )ι->void{
-		if( auto it = baseResources.find(nodeId); it!=baseResources.end() )
+	α OpcAuthorize::Walk::Descend( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK )ι->void{
+		if( auto it = Base.find(nodeId); it!=Base.end() )
 			resourcePK = it->second;
 		UA_BrowseDescription bd{
 			nodeId,
@@ -27,23 +27,23 @@ namespace Jde::Opc::Server{
 		for( uint i=0; i<br.referencesSize; ++i ){
 			auto ref = br.references[i];
 			NodeId childNodeId{ ref.nodeId.nodeId };
-			if( !visited.insert(childNodeId).second )
+			if( !Visited.insert(childNodeId).second )
 				continue;//already visited: shared component or reference cycle.
 			auto childResourcePK = resourcePK;//per-child: siblings must inherit this node's resource, not whatever a previous sibling overrode it to.
-			if( let it = baseResources.find(childNodeId); it!=baseResources.end() ){
+			if( let it = Base.find(childNodeId); it!=Base.end() ){
 				childResourcePK = it->second;
 				TRACE( "[{}]resource:{}", childNodeId.ToString(), it->second.Value );
 				if( resourcePK && resourcePK!=it->second )
-					enclosing.try_emplace( it->second, resourcePK );
-				for( let& ancestor : path )
-					beneath[ancestor].push_back( it->second );
+					Enclosing.try_emplace( it->second, resourcePK );
+				for( let& ancestor : Path )
+					Beneath[ancestor].push_back( it->second );
 			}
 			if( childResourcePK )
-				nodeResources.insert_or_assign( childNodeId, childResourcePK );
+				NodeResources.insert_or_assign( childNodeId, childResourcePK );
 			if( ref.nodeClass & (UA_NODECLASS_OBJECT|UA_NODECLASS_VARIABLE|UA_NODECLASS_METHOD) ){
-				path.push_back( childNodeId );
-				AssignRights( childNodeId, server, childResourcePK, baseResources, nodeResources, visited, path, beneath, enclosing );
-				path.pop_back();
+				Path.push_back( childNodeId );
+				Descend( childNodeId, server, childResourcePK );
+				Path.pop_back();
 			}
 		}
 		UA_BrowseResult_clear(&br);
@@ -53,23 +53,23 @@ namespace Jde::Opc::Server{
 	//access-control plugin *with* that mutex held - so a client Read on the UA thread lands in NodeRights, which needs
 	//_nodeResourcesMutex, while this thread holds it exclusively and waits for serviceMutex:  a permanent hang, and the
 	//shared `Mutex` was the same shape once a writer queued behind it (opcserver-review3 #10).  So: scan Resources under
-	//`Mutex`, browse into a local map with nothing held, publish under `_nodeResourcesMutex`.  Startup calls this before
+	//`Mutex`, walk into a local Walk with nothing held, publish under `_nodeResourcesMutex`.  Startup calls this before
 	//UAServer::Run() now, which closes the window on its own, but the swap is what makes a later re-run safe (L22).
 	α OpcAuthorize::AssignRights( UA_Server& server )ι->void{
 		Stopwatch sw{ "OpcAuthorize::AssignRights", _tags };
 		//Unenforced rows are mapped too:  their grants still count under an enforced resource above or below them - the root ships
 		//unenforced, and its grants hold under a node someone was granted on (reviews-issue/252-effective-rights-group.md #1).
-		std::map<NodeId, Access::ResourcePK> baseResources;
+		Walk walk;
 		const NodeId root=NodeId::ObjectsFolder();
-		bool enforcing{}, rootEnforced{};
+		bool rootEnforced{};
 		{
 			rl _{ Mutex };
 			for( let& [pk,resource] : Resources ){
 				if( resource.Slug!="nodeIds" || resource.Schema!=_app )
 					continue;
 				try{
-					baseResources.emplace( resource.Criteria.empty() ? root : NodeId::DecodeJson(resource.Criteria), pk );
-					enforcing |= !resource.IsDeleted;
+					walk.Base.emplace( resource.Criteria.empty() ? root : NodeId::DecodeJson(resource.Criteria), pk );
+					walk.Enforcing |= !resource.IsDeleted;
 					rootEnforced |= resource.Criteria.empty() && !resource.IsDeleted;
 				}
 				catch( runtime_error& e ){
@@ -79,23 +79,18 @@ namespace Jde::Opc::Server{
 				}
 			}
 		}
-		Access::ResourcePK rootResourcePK{};
-		std::map<NodeId, Access::ResourcePK> nodeResources;
-		std::map<NodeId, vector<Access::ResourcePK>> beneath;
-		std::map<Access::ResourcePK, Access::ResourcePK> enclosing;
 		//A scan with nothing enforced publishes the empty state anyway: on a re-run the operator has just deleted the last
 		//one, and a stale map would keep enforcing it.
-		if( enforcing ){
-			if( let it = baseResources.find(root); it!=baseResources.end() ){
-				rootResourcePK = it->second;
-				nodeResources.emplace( root, rootResourcePK );
-				TRACE( "[{}]resource: {}", root.ToString(), rootResourcePK.Value );
+		if( walk.Enforcing ){
+			if( let it = walk.Base.find(root); it!=walk.Base.end() ){
+				walk.RootResource = it->second;
+				walk.NodeResources.emplace( root, walk.RootResource );
+				TRACE( "[{}]resource: {}", root.ToString(), walk.RootResource.Value );
 			}
-			std::set<NodeId> visited{ root };
-			vector<NodeId> path{ root };
-			AssignRights( root, server, rootResourcePK, baseResources, nodeResources, visited, path, beneath, enclosing );
+			walk.Visited.insert( root );
+			walk.Path.push_back( root );
+			walk.Descend( root, server, walk.RootResource );
 		}
-		std::set<NodeId> typeNodes;
 		if( rootEnforced ){//MayBrowse opens the type nodes the root resource would refuse - known here, not read per call.
 			UA_BrowseDescription bd{ UA_NODEID_NUMERIC(0, UA_NS0ID_TYPESFOLDER), UA_BROWSEDIRECTION_FORWARD, UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES), UA_TRUE,
 				UA_NODECLASS_OBJECTTYPE | UA_NODECLASS_VARIABLETYPE | UA_NODECLASS_DATATYPE | UA_NODECLASS_REFERENCETYPE, 0 };
@@ -103,29 +98,33 @@ namespace Jde::Opc::Server{
 			if( let sc = UA_Server_browseRecursive(&server, &bd, &size, &found); !sc ){
 				for( size_t i=0; i<size; ++i ){
 					if( found[i].nodeId.namespaceIndex )
-						typeNodes.emplace( found[i].nodeId );
+						walk.TypeNodes.emplace( found[i].nodeId );
 				}
 				UA_Array_delete( found, size, &UA_TYPES[UA_TYPES_EXPANDEDNODEID] );
 			}
 			else
 				WARNT( _tags, "Could not collect the type nodes - every one outside namespace 0 is refused to a user without Read on the root:  {}", UAException::Message(sc) );
 		}
-		let nodeCount = nodeResources.size();
-		let typeNodeCount = typeNodes.size();
-		{
-			ul _{ _nodeResourcesMutex };//_enabled last of the three: it is what opens NodeRights' lookup of the other two.
-			_nodeResources = move( nodeResources );
-			_beneath = move( beneath );
-			_enclosing = move( enclosing );
-			_typeNodes = move( typeNodes );
-			_rootResourcePK = rootResourcePK;
-			_enabled = enforcing;
-		}
+		let baseCount = walk.Base.size();
+		let nodeCount = walk.NodeResources.size();
+		let typeNodeCount = walk.TypeNodes.size();
+		let enforcing = walk.Enforcing;
+		let rootResourcePK = walk.RootResource;
+		Publish( move(walk) );
 		_assigned = true;
 		//Which branch this took decides open-vs-enforcing for the process lifetime, and nothing said so: a run whose
 		//writes were authorized could not be told from one that was never enforcing (soak-findings #4).
 		INFOT( _tags, "[{}]Node rights assigned - {}: {} nodeIds resource(s), {} node(s) mapped, root resource {}, {} type node(s) outside namespace 0.", _app,
-			enforcing ? "ENFORCING" : "OPEN, every node unprotected, history edits refused until a nodeIds resource is enforced", baseResources.size(), nodeCount, rootResourcePK.Value, typeNodeCount );
+			enforcing ? "ENFORCING" : "OPEN, every node unprotected, history edits refused until a nodeIds resource is enforced", baseCount, nodeCount, rootResourcePK.Value, typeNodeCount );
+	}
+	α OpcAuthorize::Publish( Walk&& walk )ι->void{
+		ul _{ _nodeResourcesMutex };//_enabled last: it is what opens NodeRights' lookup of the rest.
+		_nodeResources = move( walk.NodeResources );
+		_beneath = move( walk.Beneath );
+		_enclosing = move( walk.Enclosing );
+		_typeNodes = move( walk.TypeNodes );
+		_rootResourcePK = walk.RootResource;
+		_enabled = walk.Enforcing;
 	}
 
 	α OpcAuthorize::CreateResource( Access::Resource&& resource )ε->void{

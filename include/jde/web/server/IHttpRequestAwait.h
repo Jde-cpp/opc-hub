@@ -20,14 +20,15 @@ namespace Jde::Web::Server{
 		string ContentType;
 	};
 
+	//As is, a server with no routes of its own:  every request suspends and answers 404.
 	struct IHttpRequestAwait : TAwait<HttpTaskResult> {
 		using base = TAwait<HttpTaskResult>;
 		IHttpRequestAwait( HttpRequest&& req, SRCE )ι:base{sl},_request{ move(req) }{}
-		virtual ~IHttpRequestAwait()=0;
+		α Suspend()ι->void override;//404 "Unknown target".
+		α await_resume()ε->HttpTaskResult override;//a RestException rethrown, any other wrapped with its HttpStatus;  else the ready result, the promise's value, or an empty one.
 		α Request()ι->HttpRequest&{ return _request; }//the await owns the request once HandleRequest takes it; error funnels need it back to build the response.  moved-from if the implementation forwarded it on (into the result or a RestException).
 	protected:
 		HttpRequest _request;
 		up<jvalue> _readyResult;
 	};
-	inline IHttpRequestAwait::~IHttpRequestAwait(){}
 }

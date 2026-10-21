@@ -19,7 +19,7 @@
 	try{
 		Process::Startup( argc, argv, "Jde.OpcHub", "Jde OPC hub - AppServer + OpcGateway in one process." );
 		App::Server::InitLogging();//the one Logging::Init: the AppServer's (ProtoLog, no RemoteLog - the process would forward its log to itself).
-		Opc::Hub::Startup( Settings::AsObject("/http"), Settings::FindDefaultObject("/credentials") );
+		Opc::Hub::Startup( Settings::AsObject("/http") );
 		exitCode = Process::Pause();
 	}
 	catch( runtime_error& e ){

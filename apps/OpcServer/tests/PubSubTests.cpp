@@ -1,57 +1,19 @@
-#include <open62541/server_config_default.h>
 #include <open62541/server_pubsub.h>
-#include <NodesetLoader/backendOpen62541.h>
 #include <jde/fwk/settings.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/pubsub/PubSub.h>
+#include <jde/opc/uatypes/Value.h>
 #include "../src/globals.h"
 #include "../src/UAServer.h"
 #include "../src/pubsub/PubSubReader.h"
+#include "../emulator/PlcServer.h"
+#include "helpers.h"
 
 #define let const auto
 namespace Jde::Opc::Server::Tests{
-	//The pumps nodeset the tests config lists under /opcServer/configFiles - the same file the emulator loads.
-	Ω pumpsNodeset()ε->fs::path{
-		for( let& p : Settings::FindPathArray("/opcServer/configFiles") ){
-			if( p.filename()=="pumps.NodeSet2.xml" )
-				return p;
-		}
-		THROW( "pumps.NodeSet2.xml is not in /opcServer/configFiles." );
-	}
-	//An in-process Part 14 publisher: its own headless UA_Server holding the pumps nodeset, publishing the contract the
-	//OpcServer reads - what the PLC emulator does, minus the emulator.  Port 4850 keeps it off the embedded OpcServer's 4940 and a live one's 4840.
-	struct Publisher final : noncopyable{
-		Publisher( const jobject& settings, const fs::path& nodeset )ε:
-			Contract{ settings }{
-			UA_ServerConfig config{};
-			UAε( UA_ServerConfig_setMinimal(&config, 4850, nullptr) );
-			_server = UA_Server_newWithConfig( &config );
-			THROW_IF( !_server, "UA_Server_newWithConfig failed." );
-			THROW_IF( !NodesetLoader_loadFile(_server, nodeset.string().c_str(), nullptr), "Publisher could not load '{}'.", nodeset.string() );
-			Contract.Resolve( *_server );
-			_writer = mu<PubSub::Writer>( *_server, Contract );
-			UAε( UA_Server_run_startup(_server) );
-		}
-		~Publisher(){
-			UA_Server_run_shutdown( _server );
-			UA_Server_delete( _server );
-		}
-		α Iterate()ι->void{ UA_Server_run_iterate( _server, false ); }
-		α Write( uint field, double value, UA_StatusCode status=UA_STATUSCODE_GOOD )ε->void{//the reading with its quality, as PlcServer::Write.
-			UA_WriteValue write; UA_WriteValue_init( &write );
-			write.nodeId = Contract.Fields[field].Node;
-			write.attributeId = UA_ATTRIBUTEID_VALUE;
-			UA_Variant_setScalar( &write.value.value, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
-			write.value.hasValue = true;
-			write.value.status = status;
-			write.value.hasStatus = true;
-			UAε( UA_Server_write(_server, &write) );
-		}
-		PubSub::Config Contract;
-	private:
-		UA_Server* _server{};
-		up<PubSub::Writer> _writer;
-	};
+	//An in-process Part 14 publisher - the PLC emulator's own UA server, minus the emulator - publishing the contract the OpcServer
+	//reads.  Port 4850 keeps it off the embedded OpcServer's 4940 and a live one's 4840.
+	Ω startPublisher()ε->Emulator::PlcServer{ return { 4850, "127.0.0.1", PumpsNodeset(), PubSub::Config{Settings::AsObject("/opcServer/pubsub")} }; }
 
 	struct PubSubTests : ::testing::Test{
 	protected:
@@ -60,29 +22,18 @@ namespace Jde::Opc::Server::Tests{
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			ua.Load( pumpsNodeset() );
+			ua.Load( PumpsNodeset() );
 			ua.Run();
 			StartPubSub( Settings::AsObject("/opcServer/pubsub") );
 		}
-		Ω ReadDouble( const NodeId& node )ι->optional<double>{
-			optional<double> y;
-			UA_Variant v; UA_Variant_init( &v );
-			if( UA_Server_readValue(GetUAServer().Ptr(), node, &v)==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&v, &UA_TYPES[UA_TYPES_DOUBLE]) )
-				y = *(UA_Double*)v.data;
-			UA_Variant_clear( &v );
-			return y;
-		}
-		//The target variable's whole DataValue - UA_Server_readValue returns any non-Good status instead of the value.
+		//The target variable's Double and its status - the whole DataValue, where UA_Server_readValue gives a non-Good status alone.
 		Ω Read( const NodeId& node )ι->std::pair<optional<double>,UA_StatusCode>{
-			UA_ReadValueId id; UA_ReadValueId_init( &id );
-			id.nodeId = node;
-			id.attributeId = UA_ATTRIBUTEID_VALUE;
-			auto dv = UA_Server_read( GetUAServer().Ptr(), &id, UA_TIMESTAMPSTORETURN_NEITHER );
-			std::pair<optional<double>,UA_StatusCode> y{ {}, dv.status };
-			if( dv.hasValue && UA_Variant_hasScalarType(&dv.value, &UA_TYPES[UA_TYPES_DOUBLE]) )
-				y.first = *(UA_Double*)dv.value.data;
-			UA_DataValue_clear( &dv );
-			return y;
+			let v = ReadValue( GetUAServer(), node );
+			return { v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? optional{ v.Get<UA_Double>(0) } : nullopt, v.status };
+		}
+		Ω ReadDouble( const NodeId& node )ι->optional<double>{//a Good one's.
+			let [value, status] = Read( node );
+			return status==UA_STATUSCODE_GOOD ? value : nullopt;
 		}
 	};
 
@@ -101,7 +52,7 @@ namespace Jde::Opc::Server::Tests{
 	//reader decode against the shared metadata, TargetVariables write.
 	TEST_F( PubSubTests, PublishedValueLandsInTargetVariable ){
 		let& contract = PubSub()->Config();
-		Publisher publisher{ Settings::AsObject("/opcServer/pubsub"), pumpsNodeset() };
+		auto publisher = startPublisher();
 		constexpr double expected{ 1234.5 };
 		publisher.Write( 0, expected );
 		publisher.Write( 4, expected*2 );
@@ -146,7 +97,7 @@ namespace Jde::Opc::Server::Tests{
 	//within a couple of publishing intervals.  Ends Good so the node is left as the other tests expect it.
 	TEST_F( PubSubTests, PublishedStatusLandsInTargetVariable ){
 		let& contract = PubSub()->Config();
-		Publisher publisher{ Settings::AsObject("/opcServer/pubsub"), pumpsNodeset() };
+		auto publisher = startPublisher();
 		let& node = contract.Fields[1].Node;
 		let limit = 2*contract.PublishingInterval + 500ms;
 		constexpr UA_StatusCode pinnedHigh{ UA_STATUSCODE_UNCERTAINENGINEERINGUNITSEXCEEDED | 0x0400 | 0x0200 };//InfoType DataValue + LimitBits High

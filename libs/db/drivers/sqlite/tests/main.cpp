@@ -36,23 +36,11 @@ namespace Jde{
 
 α main( int argc, char **argv )->int{
 	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int exitCode{ EXIT_FAILURE };
 	optional<string> fileDb;
-	try{
-		startup( argc, argv );
+	auto exitCode = Tests::Main( argc, argv, [&]( int c, char** v ){
+		startup( c, v );
 		fileDb = Settings::FindString( "/dbServers/file/catalogs/testDb/path" );
-		ApplyTestsFilter();
-		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( runtime_error& e ){
-		if( auto p = dynamic_cast<Exception*>(&e); p ){
-			p->Log();
-			exitCode = p->HasCode() ? (int)p->Code() : EXIT_FAILURE;
-		}
-		std::cerr << e.what() << std::endl;
-	}
-	Process::Shutdown( exitCode );
+	}, false );
 	if( fileDb && fs::exists(*fileDb+"-wal") ){//m4-closing #24: the finalize closes the clusters, and a clean close deletes the WAL.
 		std::cerr << *fileDb << "-wal outlived Shutdown - the clusters were not closed." << std::endl;
 		exitCode = EXIT_FAILURE;

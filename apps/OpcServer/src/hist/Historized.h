@@ -22,7 +22,5 @@ namespace Jde::Opc::Server{
 		//typeStepped says whether an HA Configuration's Stepped is the type's:  open62541 gives an object whose nodeset
 		//declares none the type's mandatory one, which holds false, so its presence doesn't say the nodeset set it.
 		Ω Load( UA_Server& ua, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->vector<Historized>;
-		//The node's Value attribute, with the timestamps asked for.
-		Ω Read( UA_Server& ua, const UA_NodeId& node, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_NEITHER )ι->Value;
 	};
 }

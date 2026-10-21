@@ -1,6 +1,5 @@
 #include "gtest/gtest.h"
 #include <jde/fwk/settings.h>
-#include <jde/tests/SpdlogTestListener.h>
 #include <jde/tests/testMain.h>
 #include "../src/appStartup.h"
 #define let const auto
@@ -16,22 +15,4 @@ namespace Jde{
 	}
 }
 
-α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int result{ EXIT_FAILURE };
-	try{
-		startup( argc, argv );
-		ApplyTestsFilter();
-		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
-		result = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( std::exception& e ){
-		if( auto p = dynamic_cast<Exception*>( &e ); p )
-			p->Log();
-		Process::ExitException( move(e) );
-	}
-	Process::Shutdown( result );
-
-	return result;
-}
+α main( int argc, char **argv )->int{ return Jde::Tests::Main( argc, argv, Jde::startup ); }

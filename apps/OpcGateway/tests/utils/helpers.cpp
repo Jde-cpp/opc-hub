@@ -103,32 +103,10 @@ namespace Jde::Opc::Gateway{
 		return y;
 	}
 
-	α Tests::WaitUntil( function<bool()> pred, Duration timeout, Duration interval )ι->bool{
-		for( let deadline = steady_clock::now()+timeout; !pred(); std::this_thread::sleep_for(interval) ){
-			if( steady_clock::now()>deadline )
-				return false;
-		}
-		return true;
-	}
 	α Tests::EnforceResource( sv schema, sv slug, bool on, sv criteria )ε->void{
 		let app = AppClient();
 		EnforceResource( *app, *app->Acl(), schema, slug, on, criteria );
 	}
-	α Tests::EnforceResource( App::Client::IAppClient& app, Access::Authorize& authorizer, sv schema, sv slug, bool on, sv criteria )ε->void{
-		app.QuerySync<jvalue>( Ƒ("{}Resource( schemaName:$schema, slug:$slug, criteria:$criteria )", on ? "restore" : "delete"), {{"schema", schema}, {"slug", slug}, {"criteria", criteria.size() ? jvalue{criteria} : jvalue{}}} );
-		THROW_IF( !WaitUntil([&]{ return authorizer.FindActiveResourcePK(string{schema}, string{slug}, string{criteria}).has_value()==on; }), "{}/{}{}'s {} didn't reach the authorizer.", schema, slug, criteria.size() ? Ƒ("[{}]", criteria) : string{}, on ? "restore" : "delete" );
-	}
-	α Tests::GrantRole( App::Client::IAppClient& app, sv role, sv schema, sv slug, sv criteria, Access::ERights allowed, UserPK user )ε->void{
-		if( !app.QuerySync("role(slug:$slug, deleted:null){id}", {{"slug", role}}).empty() )
-			return;
-		let roleId = Json::AsNumber<Access::RolePK::Type>( app.QuerySync<jobject>("createRole( slug:$slug, name:$slug ){id}", {{"slug", role}}).at("id") );
-		jobject vars{ {"roleId", roleId}, {"allowed", underlying(allowed)}, {"schema", schema}, {"resource", slug} };
-		if( criteria.size() )
-			vars["criteria"] = criteria;
-		app.QuerySync<jvalue>( Ƒ("addRole( id:$roleId, permissionRight:{{allowed:$allowed, denied:0, resource:{{schemaName:$schema, slug:$resource{}}}}} )", criteria.size() ? ", criteria:$criteria" : ""), move(vars) );
-		app.QuerySync<jvalue>( "createAcl( identity:{ id:$userId }, role:{id:$roleId} )", {{"userId", user.Value}, {"roleId", roleId}} );
-	}
-
 	α Tests::EnforceHistGroups( bool on )ε->void{
 		EnforceResource( "gateway", "histGroups", false );
 		if( !on )
@@ -203,12 +181,6 @@ namespace Jde::Opc::Gateway{
 	α Tests::ReadValue( const sp<UAClient>& client, const NodeId& node )ε->Value{
 		return BlockTAwait<flat_map<NodeId,Value>>( ReadValueAwait{{node}, client} ).at( node );
 	}
-	α Tests::ReadValue( UA_Server* ua, const NodeId& node )ι->Value{
-		UA_ReadValueId id; UA_ReadValueId_init( &id );
-		id.nodeId = node;
-		id.attributeId = UA_ATTRIBUTEID_VALUE;
-		return Value{ UA_Server_read(ua, &id, UA_TIMESTAMPSTORETURN_NEITHER) };
-	}
 	//By way of BaseDataType, which any value fits and which may hold none:  open62541 retypes a node only to a DataType its value
 	//fits, and clears the value of a nullable one alone.
 	Ω retype( UA_Server* ua, const NodeId& node, const UA_NodeId& dataType )ι->StatusCode{
@@ -220,7 +192,7 @@ namespace Jde::Opc::Gateway{
 	Tests::RetypedNode::RetypedNode( UA_Server* ua, NodeId node, UA_UInt32 dataType )ε:
 		_ua{ ua },
 		_node{ move(node) },
-		_value{ ReadValue(ua, _node) }{
+		_value{ Opc::ReadValue(*ua, _node) }{
 		UAε( UA_Server_readDataType(ua, _node, &_dataType) );
 		if( let sc = retype(ua, _node, UA_NODEID_NUMERIC(0, dataType)); sc ){
 			retype( ua, _node, _dataType );

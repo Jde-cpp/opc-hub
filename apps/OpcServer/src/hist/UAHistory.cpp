@@ -3,6 +3,7 @@
 #include <open62541/plugin/nodestore.h>
 #include <jde/fwk/process/process.h>
 #include <jde/opc/uatypes/DateTime.h>
+#include <jde/opc/uatypes/opcHelpers.h>
 #include "Historized.h"
 #include "../globals.h"
 #include "../access/UAAccess.h"
@@ -30,25 +31,12 @@ namespace Jde::Opc::Server{
 		response.responseHeader.serviceResult = UA_STATUSCODE_BADTIMESTAMPSTORETURNINVALID;
 		return true;
 	}
-	Ω readRaw( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadRawModifiedDetails* details,
-		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
-		if( !refused(*response, timestamps, false) )
-			static_cast<UAHistory*>( context )->ReadRaw( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
-	}
-	Ω readModified( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadRawModifiedDetails* details,
-		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryModifiedData* const* const data )ι->void{
-		if( !refused(*response, timestamps, false) )
-			static_cast<UAHistory*>( context )->ReadModified( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
-	}
-	Ω readAtTime( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadAtTimeDetails* details,
-		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
-		if( !refused(*response, timestamps, true) )
-			static_cast<UAHistory*>( context )->ReadAtTime( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
-	}
-	Ω readProcessed( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_ReadProcessedDetails* details,
-		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, UA_HistoryData* const* const data )ι->void{
-		if( !refused(*response, timestamps, true) )
-			static_cast<UAHistory*>( context )->ReadProcessed( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
+	//A read mode's callback:  its details and data types, the member that serves it, and whether its values are computed.
+	template<class TDetails, class TData, auto Member, bool Computed=false>
+	Ω historyRead( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const TDetails* details,
+		UA_TimestampsToReturn timestamps, UA_Boolean release, size_t count, const UA_HistoryReadValueId* nodes, UA_HistoryReadResponse* response, TData* const* const data )ι->void{
+		if( !refused(*response, timestamps, Computed) )
+			(static_cast<UAHistory*>( context )->*Member)( *server, sessionId, sessionContext, *details, timestamps, release, {nodes, count}, response->results, data );
 	}
 	Ω updateData( UA_Server* server, void* context, const UA_NodeId* sessionId, void* sessionContext, const UA_RequestHeader* /*header*/, const UA_UpdateDataDetails* details, UA_HistoryUpdateResult* result )ι->void{
 		static_cast<UAHistory*>( context )->UpdateData( *server, sessionId, sessionContext, *details, *result );
@@ -263,10 +251,10 @@ namespace Jde::Opc::Server{
 		UA_HistoryDatabase y{};
 		y.context = this;
 		y.setValue = setValue;
-		y.readRaw = readRaw;
-		y.readModified = readModified;
-		y.readAtTime = readAtTime;
-		y.readProcessed = readProcessed;
+		y.readRaw = historyRead<UA_ReadRawModifiedDetails, UA_HistoryData, &UAHistory::ReadRawModified<UA_HistoryData>>;
+		y.readModified = historyRead<UA_ReadRawModifiedDetails, UA_HistoryModifiedData, &UAHistory::ReadRawModified<UA_HistoryModifiedData>>;
+		y.readAtTime = historyRead<UA_ReadAtTimeDetails, UA_HistoryData, &UAHistory::ReadAtTime, true>;
+		y.readProcessed = historyRead<UA_ReadProcessedDetails, UA_HistoryData, &UAHistory::ReadProcessed, true>;
 		y.updateData = updateData;
 		y.deleteRawModified = deleteRawModified;
 		return y;
@@ -316,7 +304,7 @@ namespace Jde::Opc::Server{
 			THROW_IF( !index, "'{}' is not in the group made with it.", node.Id.ToString() );
 			//There is no subscription to break, so the stop was the break, and the node's value now is its first after it.
 			//Stamped as open62541 stamps a write that carries no source time.
-			auto value = Historized::Read( ua, node.Id, UA_TIMESTAMPSTORETURN_BOTH );
+			auto value = ReadValue( ua, node.Id, UA_TIMESTAMPSTORETURN_BOTH );
 			if( value.hasValue || !UA_StatusCode_isBad(value.status) ){
 				if( !value.hasSourceTimestamp ){
 					value.sourceTimestamp = UA_DateTime_now();
@@ -399,18 +387,14 @@ namespace Jde::Opc::Server{
 		_collections.Add( steady_clock::now()-start );
 	}
 
-	α UAHistory::ReadRaw( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
-		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
-		Serve( ua, sessionId, sessionContext, release, nodes, results, "raw",
+	Ŧ UAHistory::ReadRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
+		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, T* const* data )ι->void{
+		Serve( ua, sessionId, sessionContext, release, nodes, results, std::same_as<T,UA_HistoryModifiedData> ? "modified" : "raw",
 			[&]( uint, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( index, details, id, continuation, page ); },
 			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
 	}
-	α UAHistory::ReadModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
-		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryModifiedData* const* data )ι->void{
-		Serve( ua, sessionId, sessionContext, release, nodes, results, "modified",
-			[&]( uint, Hist::NodeIndex index, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( index, details, id, continuation, page ); },
-			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
-	}
+	template α UAHistory::ReadRawModified( UA_Server&, const UA_NodeId*, void*, const UA_ReadRawModifiedDetails&, UA_TimestampsToReturn, bool,
+		std::span<const UA_HistoryReadValueId>, UA_HistoryReadResult*, UA_HistoryData* const* )ι->void;//HistoryTests calls it.
 	α UAHistory::ReadAtTime( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadAtTimeDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
 		Serve( ua, sessionId, sessionContext, release, nodes, results, "at-time",
@@ -548,9 +532,22 @@ namespace Jde::Opc::Server{
 			result.statusCode = UA_STATUSCODE_BADINTERNALERROR;
 		return move( edited->Result );
 	}
+	struct UAHistory::EditTimer final{
+		EditTimer( Timer& edits, string what, const UA_HistoryUpdateResult& result )ι: _edits{edits}, _what{move(what)}, _result{result}{}
+		~EditTimer(){
+			let elapsed = steady_clock::now()-_start;
+			_edits.Add( elapsed );
+			DBG( "A history {} held the service lock for {} µs:  {}.", _what, duration_cast<microseconds>(elapsed).count(), UAException::Message(_result.statusCode) );
+		}
+	private:
+		Timer& _edits;
+		string _what;
+		const UA_HistoryUpdateResult& _result;
+		const steady_clock::time_point _start{ steady_clock::now() };
+	};
 	α UAHistory::UpdateData( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_UpdateDataDetails& details, UA_HistoryUpdateResult& result )ι->void{
-		let start = steady_clock::now();
 		const std::span<const UA_DataValue> values{ details.updateValues, details.updateValuesSize };
+		EditTimer timer{ _edits, Ƒ("update of {} values", values.size()), result };
 		vector<uint> allowed;//each value the session's user may write, by its position.
 		let make = [&]( Hist::NodeIndex index )->optional<Hist::EditDetails> {
 			result.operationResults = (UA_StatusCode*)UA_Array_new( values.size(), &UA_TYPES[UA_TYPES_STATUSCODE] );
@@ -589,12 +586,9 @@ namespace Jde::Opc::Server{
 			for( let i : allowed )
 				result.operationResults[i] = result.statusCode;
 		}
-		let elapsed = steady_clock::now()-start;
-		_edits.Add( elapsed );
-		DBG( "A history update of {} values held the service lock for {} µs:  {}.", values.size(), duration_cast<microseconds>(elapsed).count(), UAException::Message(result.statusCode) );
 	}
 	α UAHistory::DeleteRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_DeleteRawModifiedDetails& details, UA_HistoryUpdateResult& result )ι->void{
-		let start = steady_clock::now();
+		EditTimer timer{ _edits, "delete", result };
 		if( details.isDeleteModified ){//the modifications are the audit trail.
 			result.statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
 			return;
@@ -616,8 +610,5 @@ namespace Jde::Opc::Server{
 		};
 		if( let r = Edit(ua, sessionId, sessionContext, details.nodeId, result, make) )
 			result.statusCode = r->Status;
-		let elapsed = steady_clock::now()-start;
-		_edits.Add( elapsed );
-		DBG( "A history delete held the service lock for {} µs:  {}.", duration_cast<microseconds>(elapsed).count(), UAException::Message(result.statusCode) );
 	}
 }
