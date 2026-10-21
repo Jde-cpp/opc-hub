@@ -38,7 +38,7 @@ local cluster(path) = { //one backend; instantiated per-path as the 'memory' and
 			repoSourceDir+"/apps/AppServer/config",
 			repoSourceDir+"/libs/access/config"
 		],
-		sync:: true,
+		sync:: false,
 		memory: cluster(":memory:"),
 		file: cluster( std.extVar("cwd")+"/sqlite-tests.db" ),
 		//#45 only: two connections on one file, so a busy timeout has something to wait for.  Their own file, so nothing

@@ -5,8 +5,8 @@ local logsDir = args.logsDir;
 	instanceName: args.instanceName,
 	testing:{
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
-		embeddedAppServer:: false,
-		embeddedOpcServer:: false
+		embeddedAppServer:: true,
+		embeddedOpcServer:: true
 	},
 	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://127.0.0.1:4940", users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - PasswordTests' credential; without a list the server offers no username policy and the Auth fixture skips them.
 	ql:{
@@ -24,15 +24,8 @@ local logsDir = args.logsDir;
 			args.repoSourceDir + "/apps/OpcGateway/config/sql/"+args.sqlType
 		],
 		dataPaths: [args.repoSourceDir + "/apps/AppServer/config", args.repoSourceDir + "/libs/access/config"],
-		sync:: true,
-		localhost:{
-			driver: args.dbServers.localhost.driver,
-			connectionString: args.dbServers.localhost.connectionString,
-			username: args.dbServers.localhost.username,
-			password: args.dbServers.localhost.password,
-			schema: args.dbServers.localhost.schema,
-			catalogs: args.dbServers.localhost.catalogs
-		}
+		sync:: false,
+		localhost: args.dbServers.localhost
 	},
 	iot: {
 		slug: "Default"

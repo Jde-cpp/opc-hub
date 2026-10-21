@@ -10,10 +10,9 @@ set( targetName Jde.Opc.Soak )
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
 
-#GatewayClientSocket comes from the test tree - the wire-protocol driver is shared, but no GTest and no embedded servers here.
-target_sources( ${targetName} PRIVATE main.cpp SoakRunner.cpp ../tests/utils/GatewayClientSocket.cpp )
+target_sources( ${targetName} PRIVATE main.cpp SoakRunner.cpp )
 
-target_link_libraries( ${targetName} Jde.Opc.GatewayLib )
+target_link_libraries( ${targetName} Jde.Opc.GatewayLib Jde.Opc.TestUtils ) #the test tree's GatewayClientSocket - the wire-protocol driver is shared, but no GTest and no embedded servers here.
 linkAppRuntime( ${targetName} NOMINMAX LIBXML2 )
 target_precompile_headers( ${targetName} PRIVATE
 	pc.h

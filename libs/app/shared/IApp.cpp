@@ -1,4 +1,5 @@
 #include <jde/app/IApp.h>
+#include <jde/fwk/settings.h>
 #include <jde/ql/types/RequestQL.h>
 
 #define let const auto
@@ -23,5 +24,11 @@ namespace Jde::App{
 	};
 	α IApp::ClientQuery( QL::RequestQL&& q, UserPK, SL sl )ε->up<TAwait<jvalue>>{
 		return mu<StatusQLAwait>( move(q), sl );
+	}
+}
+namespace Jde{
+	α App::InstanceName()ι->string{
+		auto instanceName = Settings::FindString( "/instanceName" ).value_or( "" );
+		return instanceName.empty() ? _debug ? "Debug" : "Release" : instanceName;
 	}
 }

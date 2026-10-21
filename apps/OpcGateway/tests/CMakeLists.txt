@@ -11,13 +11,12 @@ add_executable( ${targetName} )
 compileOptions( ${targetName} )
 
 file( GLOB sources CONFIGURE_DEPENDS *.cpp */*.cpp )
-add_dependencies( ${targetName} Jde.DB.MySql ) #built on every platform; odbc only exists on windows.
+list( REMOVE_ITEM sources ${CMAKE_CURRENT_SOURCE_DIR}/utils/GatewayClientSocket.cpp ) #Jde.Opc.TestUtils'
 if( WIN32 )
 	list( APPEND sources OpcTests.rc )
 	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
-	add_dependencies( ${targetName} Jde.DB.Odbc )
 endif()
-sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway ) #the ctest run below dlopens these via config/args/sqlite
+dbDriverDependencies( ${targetName} Jde.DB.Sqlite.AppServer Jde.DB.Sqlite.OpcGateway ) #the ctest run below dlopens these via config/args/sqlite
 file( GLOB headers CONFIGURE_DEPENDS *.h */*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
@@ -26,13 +25,15 @@ if( NOT jde_Superbuild )
 		add_subdirectory( ${jdeRoot}/libs/historian/src ../../../libs/historian/lib )
 	endif()
 	add_subdirectory( ../../OpcServer/src ../../../apps/OpcServer/lib )
+	add_subdirectory( ../../AppServer/config/sql/sqlite ../../../apps/AppServer/config/sql/sqlite ) #the AppServer lib's sqlite procs, which it and this suite depend on.
 	add_subdirectory( ../../AppServer/src ../../../apps/AppServer/lib )
+	add_subdirectory( utils )
 endif()
 
 find_package( GTest REQUIRED )
 target_link_libraries( ${targetName} GTest::gtest )
 
-target_link_libraries( ${targetName} Jde.App.ServerLib Jde.Opc.GatewayLib Jde.Opc.ServerLib )
+target_link_libraries( ${targetName} Jde.App.ServerLib Jde.Opc.GatewayLib Jde.Opc.ServerLib Jde.Opc.TestUtils )
 linkAppRuntime( ${targetName} NOMINMAX LIBXML2 )
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Opc.Tests.jsonnet )

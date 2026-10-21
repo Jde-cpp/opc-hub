@@ -28,6 +28,7 @@ namespace Jde::Web::Client{
 		α ReadBuffer()ι->std::span<uint8_t> override{ return std::span<uint8_t>{(uint8_t*)_buffer.data().data(), _buffer.size()}; }
 		α IsSsl()Ι->bool override{ return _isSsl; }
 		α IsClosing()Ι->bool override{ return Core::IsClosing(); }
+		α Post( function<void()>&& f )ι->void override{ net::post( Core::_strand, [self=this->shared_from_this(), f=move(f)]{ f(); } ); }
 	private:
 		static constexpr bool _isSsl = std::is_same_v<TWs,SslSocketStream>;
 		α OnClosed( sp<IClientSocketSession> session, beast::error_code ec )ι->void override;

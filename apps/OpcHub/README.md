@@ -176,4 +176,5 @@ Roles are seeded, but the first grant is manual.  Every resource ships unenforce
 
 ## Not done here
 
-Soak support (`apps/OpcGateway/soak/soak.sh` is shaped around three exes), source consolidation under this directory.
+Soak support (`apps/OpcGateway/soak/soak.sh` launches the split deployment's three servers - the AppServer, the gateway and the
+OpcServer - not the hub), source consolidation under this directory.

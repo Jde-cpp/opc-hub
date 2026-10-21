@@ -1,4 +1,6 @@
 local common = import '../../../../../../libs/db/config/args-common.libsonnet';
+//The SQL Server args, Windows only:  the gateway suite's DSN and catalog (OpcTestsDebug, test_opc_debug) - the two suites share one
+//database, so run them one at a time against it.  ctest runs both on sqlite.
 common + {
 	local args = self,
 	instanceName: "debug-windows",
@@ -19,22 +21,22 @@ common + {
 					schemas:{
 						access:{
 							access:{
-								meta: "$(JDE_DIR)/libs/access/config/access-meta.jsonnet"
+								meta: args.repoSourceDir+"/libs/access/config/access-meta.jsonnet"
 							}
 						},
 						app:{
 							app:{
-								meta: "$(JDE_DIR)/apps/AppServer/config/app-meta.jsonnet",
+								meta: args.repoSourceDir+"/apps/AppServer/config/app-meta.jsonnet",
 							}
 						},
 						gateway:{
 							gateway:{
-								meta: "$(JDE_DIR)/apps/OpcGateway/config/opcGateway-meta.jsonnet",
+								meta: args.repoSourceDir+"/apps/OpcGateway/config/opcGateway-meta.jsonnet",
 							}
 						},
 						opc:{
 							opc:{
-								meta: "$(JDE_DIR)/apps/OpcServer/config/opcServer-meta.jsonnet",
+								meta: args.repoSourceDir+"/apps/OpcServer/config/opcServer-meta.jsonnet",
 							},
 						}
 					}

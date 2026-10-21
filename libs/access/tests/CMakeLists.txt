@@ -13,11 +13,7 @@ project( ${targetName} VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 
 add_executable( ${targetName} )
-add_dependencies( ${targetName} Jde.DB.MySql ) #built on every platform; odbc only exists on windows.
-if( WIN32 )
-	add_dependencies( ${targetName} Jde.DB.Odbc )
-endif()
-sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.AppServer ) #the ctest run below dlopens these via config/args/sqlite
+dbDriverDependencies( ${targetName} Jde.DB.Sqlite.AppServer ) #the ctest run below dlopens these via config/args/sqlite
 
 compileOptions( ${targetName} )
 file( GLOB sources CONFIGURE_DEPENDS *.cpp ) #CONFIGURE_DEPENDS: a new *Tests.cpp is referenced by nothing else, so a stale glob drops it with no link error and a green suite (access-review3 #30) - see the note in functions.cmake.

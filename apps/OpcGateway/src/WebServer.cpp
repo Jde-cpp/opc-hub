@@ -22,8 +22,10 @@ namespace Jde::Opc{
 		Web::Server::Stop( move(_requestHandler), terminate, sl );
 	}
 namespace Gateway{
-	α Server::AddSession( sp<GatewaySocketSession> session )ι->void{
-		_sessions.emplace( session->Id(), move(session) );
+	α Server::Accept( sp<Web::Server::IRestStream>&& stream, beast::flat_buffer&& buffer, Web::Server::TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<GatewaySocketSession>{
+		auto session = ms<GatewaySocketSession>( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
+		_sessions.emplace( session->Id(), session );
+		return session;
 	}
 	α Server::RemoveSession( uint socketSessionId )ι->void{
 		_sessions.erase( socketSessionId );
@@ -41,9 +43,7 @@ namespace Gateway{
 	}
 
 	α RequestHandler::WebsocketSession( sp<Web::Server::IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<Web::Server::IWebsocketSession>{
-		auto session = ms<Gateway::GatewaySocketSession>( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
-		Server::AddSession( session );
-		return session;
+		return Server::Accept( move(stream), move(buffer), move(req), move(userEndpoint), connectionIndex );
 	}
 	α RequestHandler::Schemas()ι->const vector<sp<DB::AppSchema>>&{ return Gateway::Schemas(); }
 }}

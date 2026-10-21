@@ -1,0 +1,93 @@
+#What the installers ship:  the one list OpcHubSetup.nsi (through files.ps1, as it compiles), build-setup.ps1 (what must
+#exist, what -Sign signs) and linux/build-deb.sh read.  Each script keeps its packaging's own files:  the Web UI, the units
+#and services, env, nginx-opchub.conf, web.config, the Visual C++ runtime, Jde.CheckCpu.exe and the docs.
+#
+#A file a line, its columns separated by spaces, and a # starts a comment:
+#  section  hub - always installed;  opcserver - the OPC UA Server:  an optional component on Windows, always in the .deb, and
+#           dropped by the tarball's install.sh without --opcserver
+#  ships    all, windows, linux, or user - a current-user overlay:  the Windows installer's in either mode, and the Linux
+#           tarball's but not the .deb's, whose units run args/install, where the machine's administrator decides the address
+#  to       program - the section's program dir:  <program dir>\OpcHub or \OpcServer, /opt/jde-cpp/opchub or /opcserver
+#           config/<dir> - under the settings mirror:  C:\ProgramData\Jde-Cpp\config, /etc/jde-cpp
+#           data/<dir> - under the data root:  C:\ProgramData\Jde-Cpp, /var/lib/Jde-Cpp
+#           A trailing ! marks a dir the installer owns:  recreated before the first file the list puts in it, so a file an
+#           older version shipped cannot linger.  The .deb's dpkg and the tarball's install.sh replace those dirs themselves.
+#  from     a path in the repo, build:<path> in the release build tree, or nodesets:<path> in the UA-Nodeset clone;  a *
+#           matches as in a shell
+#  as       the installed name, when it is not the source's
+
+#--- hub -------------------------------------------------------------------------------------------------------------------
+#the binaries:  the exe's dir carries everything it loads, and the sqlite driver and the proc MODULEs beside the exe are where
+#args/install's $(ExeDir) looks.  build-deb.sh adds the .so's they load from outside the system.
+hub        windows  program                                       build:bin/Jde.Opc.Hub/Jde.Opc.Hub.exe
+hub        windows  program                                       build:bin/Jde.Opc.Hub/*.dll  #Jde.dll, Jde.DB.dll and the third-party dlls the build copies beside the exe
+hub        windows  program                                       build:bin/Jde.DB.Sqlite.dll
+hub        windows  program                                       build:bin/sqlite3.dll
+hub        windows  program                                       build:bin/Jde.DB.Sqlite.AppServer.dll
+hub        windows  program                                       build:bin/Jde.DB.Sqlite.OpcGateway.dll
+hub        windows  program                                       build:bin/Jde.DB.Odbc.dll  #SQL Server - loaded only by the by-hand args/install-sqlServer profile (README.md)
+hub        windows  program                                       build:bin/Jde.DB.MySql.dll  #MySQL - loaded only by the by-hand args/install-mysql profile (README.md)
+hub        linux    program                                       build:apps/OpcHub/exe/Jde.Opc.Hub
+hub        linux    program                                       build:libs/fwk/lib/libJde.so
+hub        linux    program                                       build:libs/db/lib/libJde.DB.so
+hub        linux    program                                       build:libs/db/drivers/sqlite/lib/libJde.DB.Sqlite.so
+hub        linux    program                                       build:apps/AppServer/config/sql/sqlite/libJde.DB.Sqlite.AppServer.so
+hub        linux    program                                       build:apps/OpcGateway/config/sql/sqlite/libJde.DB.Sqlite.OpcGateway.so
+hub        linux    program                                       build:libs/db/drivers/mysql/lib/libJde.DB.MySql.so  #loaded only by a by-hand MySQL profile (linux/README.md)
+#the settings mirror:  the hub config imports the AppServer's and the gateway's by repo-relative path, and the gateway's
+#introspection files by Settings::Directory()-relative path, so the repo layout is kept
+hub        all      config/apps/OpcHub/config                     apps/OpcHub/config/Opc.Hub.jsonnet
+hub        all      config/apps/OpcHub/config/args/install        apps/OpcHub/config/args/install/args.libsonnet
+hub        user     config/apps/OpcHub/config/args/install-user   apps/OpcHub/config/args/install-user/args.libsonnet  #args/install plus a loopback listen address:  an install without administrator or root opens no port (reviews/install-issues.md #16, #32)
+hub        all      config/apps/AppServer/config                  apps/AppServer/config/App.Server.jsonnet
+hub        all      config/apps/OpcGateway/config                 apps/OpcGateway/config/Opc.Gateway.jsonnet
+hub        all      config/apps/OpcGateway/config/introspection   apps/OpcGateway/config/introspection/*.jsonnet
+hub        all      config/apps/OpcGateway/config/introspection   apps/OpcGateway/config/introspection/scalars.libsonnet  #the type references the three import
+hub        all      config/libs/db/config                         libs/db/config/paths-common.libsonnet
+#the product's data dir:  meta and sql flat, where args/install points.  common-meta comes from libs/db:  the copies beside
+#the app metas in the repo are configure-time links.
+hub        all      data/OpcHub                                   libs/access/config/access-meta.jsonnet
+hub        all      data/OpcHub                                   libs/access/config/access-ql.jsonnet
+hub        all      data/OpcHub                                   apps/AppServer/config/app-meta.jsonnet
+hub        all      data/OpcHub                                   apps/OpcGateway/config/opcGateway-meta.jsonnet
+hub        all      data/OpcHub                                   libs/db/config/common-meta.libsonnet
+#the seeds:  the <schema>*.mutation files, which -sync applies inside the schema sync, then the <schema>*.roles, applied once
+#the access server is configured (appStartup.cpp).  Not the gateway's access-opcGateway.mutation:  its
+#createRole( permissionRights:[…] ) shape is not one the seed applies, so the roles go in as access.roles.
+hub        all      data/OpcHub/sql!                              libs/access/config/release.mutation  access.mutation  #the release seed, not the dev one
+hub        all      data/OpcHub/sql!                              libs/access/config/release.roles  access.roles  #the roles, Viewer … Owner
+hub        all      data/OpcHub/sql!                              apps/AppServer/config/app.mutation
+hub        all      data/OpcHub/sql!                              libs/access/config/sql/sqlite/*.sql  #<schema>_*.sql - the sqlite views;  the procs are compiled into the MODULEs
+hub        all      data/OpcHub/sql!                              apps/AppServer/config/sql/sqlite/*.sql
+hub        all      data/OpcHub/sql!                              apps/OpcGateway/config/sql/sqlite/*.sql
+
+#--- opcserver -------------------------------------------------------------------------------------------------------------
+opcserver  windows  program                                       build:bin/Jde.Opc.Server/Jde.Opc.Server.exe
+opcserver  windows  program                                       build:bin/Jde.Opc.Server/*.dll
+opcserver  windows  program                                       build:bin/Jde.DB.Sqlite.dll
+opcserver  windows  program                                       build:bin/sqlite3.dll
+opcserver  linux    program                                       build:apps/OpcServer/exe/Jde.Opc.Server
+opcserver  linux    program                                       build:libs/fwk/lib/libJde.so
+opcserver  linux    program                                       build:libs/db/lib/libJde.DB.so
+opcserver  linux    program                                       build:libs/db/drivers/sqlite/lib/libJde.DB.Sqlite.so
+opcserver  all      config/apps/OpcServer/config                  apps/OpcServer/config/Opc.Server.jsonnet
+opcserver  all      config/apps/OpcServer/config                  apps/OpcServer/config/Opc.Server.Install.jsonnet  #the overlay the service loads
+opcserver  all      config/apps/OpcServer/config/args/install     apps/OpcServer/config/args/install/args.libsonnet
+opcserver  user     config/apps/OpcServer/config/args/install-user  apps/OpcServer/config/args/install-user/args.libsonnet  #as the hub's
+opcserver  all      config/apps/OpcServer/config/pubsub           apps/OpcServer/config/pubsub/pumps.libsonnet
+opcserver  all      data/OpcServer                                libs/access/config/access-meta.jsonnet
+opcserver  all      data/OpcServer                                libs/access/config/access-ql.jsonnet
+opcserver  all      data/OpcServer                                libs/db/config/common-meta.libsonnet
+opcserver  all      data/OpcServer                                apps/OpcServer/config/opcServer-meta.jsonnet
+opcserver  all      data/OpcServer/nodesets!                      nodesets:DI/Opc.Ua.Di.NodeSet2.xml
+opcserver  all      data/OpcServer/nodesets!                      nodesets:IA/Opc.Ua.IA.NodeSet2.xml
+opcserver  all      data/OpcServer/nodesets!                      nodesets:IA/Opc.Ua.IA.NodeSet2.examples.xml
+opcserver  all      data/OpcServer/nodesets!                      apps/OpcServer/config/nodesets/pumps.NodeSet2.xml
+#the hub's seeds for this server (reviews/install-issues.md #1):  the Web UI's Google provider - the fresh install's login,
+#since by ruling no username is seeded - and this server as the hub's default connection, with its provider row.  The
+#underscore names sort after access.mutation, whose provider type 7 (OpcServer) they reference.  Only with the server:  a hub
+#without it has no *seeded* login (#36:  adding a server connection creates one;  what it lacks is one that needs no setup).
+opcserver  all      data/OpcHub/sql!                              libs/access/config/release-google.mutation  access_google.mutation
+opcserver  all      data/OpcHub/sql!                              libs/access/config/release-opcServer.mutation  access_opcServer.mutation
+opcserver  all      data/OpcHub/sql!                              apps/OpcGateway/config/release-opcServer.mutation  gateway_opcServer.mutation
+opcserver  all      data/OpcHub/sql!                              libs/access/config/release-opcServer.roles  access_opcServer.roles  #the OPC Server Instance role - Administer on opc.install nodeIds - so granting the machine is one tick (#25)

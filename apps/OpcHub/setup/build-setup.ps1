@@ -14,7 +14,7 @@ uninstaller from inside it (!uninstfinalize) and the installer after - through s
 #>
 [CmdletBinding()]
 param(
-	[string]$BuildDir,                   # the release build tree: bin\Jde.Opc.Hub\, bin\Jde.Opc.Server\, bin\Jde.DB.Sqlite*.dll, bin\Jde.DB.Odbc.dll, bin\Jde.DB.MySql.dll, bin\Jde.CheckCpu.exe
+	[string]$BuildDir,                   # the release build tree:  files.txt's build: paths, and bin\Jde.CheckCpu.exe
 	[string]$WebDist,                    # ng build output - web\opc\my-workspace\dist\my-workspace\browser
 	[switch]$SkipWeb,                    # omit the Web UI component
 	[string]$UaNodeSets = $env:UA_NODE_SETS, # OPCFoundation/UA-Nodeset clone (DI/IA for the OpcServer)
@@ -48,11 +48,14 @@ $UaNodeSets = [IO.Path]::GetFullPath( $UaNodeSets )
 $OutDir = [IO.Path]::GetFullPath( $OutDir )
 if( $VcRedist ){ $VcRedist = [IO.Path]::GetFullPath( $VcRedist ) }
 
-foreach( $f in 'bin\Jde.Opc.Hub\Jde.Opc.Hub.exe', 'bin\Jde.Opc.Server\Jde.Opc.Server.exe', 'bin\Jde.DB.Sqlite.dll', 'bin\sqlite3.dll', 'bin\Jde.DB.Sqlite.AppServer.dll', 'bin\Jde.DB.Sqlite.OpcGateway.dll', 'bin\Jde.DB.Odbc.dll', 'bin\Jde.DB.MySql.dll', 'bin\Jde.CheckCpu.exe' ){
+. (Join-Path $setupDir 'files.ps1')
+$files = @( Get-SetupFiles ) #what the components install - files.txt
+$checkCpu = 'bin\Jde.CheckCpu.exe' #Setup's own CPU check, run from .onInit before anything installs
+foreach( $f in @( $files | Where-Object Root -eq 'build' | ForEach-Object Path ) + $checkCpu ){
 	if( -not (Test-Path (Join-Path $BuildDir $f)) ){ throw "missing $f under $BuildDir - build Jde.Opc.Hub, Jde.Opc.Server, Jde.DB.Sqlite, Jde.DB.Sqlite.AppServer, Jde.DB.Sqlite.OpcGateway, Jde.DB.Odbc, Jde.DB.MySql and Jde.CheckCpu in the release tree first, or pass -BuildDir" }
 }
 if( -not $SkipWeb -and -not (Test-Path (Join-Path $WebDist 'index.html')) ){ throw "no index.html under $WebDist - run web/opc/scripts/setup.sh (ng build), pass -WebDist, or -SkipWeb" }
-foreach( $f in 'DI\Opc.Ua.Di.NodeSet2.xml', 'IA\Opc.Ua.IA.NodeSet2.xml', 'IA\Opc.Ua.IA.NodeSet2.examples.xml' ){
+foreach( $f in $files | Where-Object Root -eq 'nodesets' | ForEach-Object Path ){
 	if( -not (Test-Path (Join-Path $UaNodeSets $f)) ){ throw "missing $f under $UaNodeSets - clone https://github.com/OPCFoundation/UA-Nodeset or pass -UaNodeSets" }
 }
 if( -not (Test-Path $MakeNsis) ){ throw "makensis not found at $MakeNsis - install NSIS 3.x or pass -MakeNsis" }
@@ -89,9 +92,9 @@ if( $Version -match '^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+)-g[0-9a-f]+)?$' ){
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
 if( $Sign ){
-	# the payload, in place, before makensis packs it - what the nsi's File lines take from bin\
-	$payload = @( Get-ChildItem -Path (Join-Path $BuildDir 'bin\Jde.Opc.Hub\*'), (Join-Path $BuildDir 'bin\Jde.Opc.Server\*') -Include *.exe, *.dll -File | ForEach-Object FullName )
-	$payload += 'Jde.DB.Sqlite.dll', 'sqlite3.dll', 'Jde.DB.Sqlite.AppServer.dll', 'Jde.DB.Sqlite.OpcGateway.dll', 'Jde.DB.Odbc.dll', 'Jde.DB.MySql.dll', 'Jde.CheckCpu.exe' | ForEach-Object { Join-Path $BuildDir "bin\$_" }
+	# the payload, in place, before makensis packs it:  the exes and dlls files.txt takes from the build tree, and the CPU check
+	$payload = @( $files | Where-Object Root -eq 'build' | ForEach-Object { Get-ChildItem (Join-Path $BuildDir $_.Path) -File } | Where-Object Extension -in '.exe', '.dll' | ForEach-Object FullName | Select-Object -Unique )
+	$payload += Join-Path $BuildDir $checkCpu
 	& $signScript @payload
 }
 

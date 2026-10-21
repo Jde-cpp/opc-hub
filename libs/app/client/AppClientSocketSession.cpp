@@ -33,7 +33,7 @@ namespace Client{
 			"[{}]AddSession domain: '{}', loginName: '{}', providerPK: {}, userEndPoint: '{}', isSocket: {}.", domain, loginName, providerPK, userEndPoint, isSocket );
 	}
 	α AppClientSocketSession::Connect( SessionPK sessionId, SL sl )ι->await<Proto::FromServer::ConnectionInfo>{
-		let instanceName = Client::InstanceName();
+		let instanceName = App::InstanceName();
 		//M10: ResourceSchema is what OpcServer sets to its `opc.*` schema (opcServerStartup, before this connect); the gateway leaves
 		//it empty and asks to authorize nothing.  Until this was passed, the AppServer's `if( instance.auth_resource().size() )` arm
 		//never ran and every delegated admin check fell back to the AppServer's own Authorize.

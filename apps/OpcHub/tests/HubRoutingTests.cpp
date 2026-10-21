@@ -1,40 +1,40 @@
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/crypto/OpenSsl.h>
-#include <jde/web/client/http/ClientHttpAwait.h>
-#include <jde/web/client/http/ClientHttpResException.h>
+#include <jde/tests/HttpTest.h>
 #include <jde/web/server/Sessions.h>
 #include "../../AppServer/src/appStartup.h"
 #include "../../AppServer/src/LocalClient.h"
 #include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/src/auth/OpcServerSession.h"
+#include "../../OpcGateway/tests/utils/helpers.h"
 #include "../../OpcServer/src/access/UAAccess.h"
 #include <jde/opc/uatypes/opcHelpers.h>
 #include "../../OpcServer/src/globals.h"
 #include "../../OpcServer/src/UAServer.h"
+#include "helpers.h"
 #define let const auto
 
 //One listener for both roles (src/HttpRequestAwait.cpp, src/ql/HubQL.cpp): the AppServer's and the gateway's REST routes, one
 ///graphql over access+app+gateway, one session table and one live logger.  AppPort()==GatewayPort() - the split names stay so
 //the two apps' helpers keep working.  Plain http - the server detects ssl per connection.
 namespace Jde::Opc::Hub::Tests{
-	using Web::Client::ClientHttpAwait; using Web::Client::ClientHttpRes; using Web::Client::ClientHttpResException;
+	using Web::Client::ClientHttpResException;
 	namespace http = boost::beast::http;
-	constexpr sv Host{ "127.0.0.1" };//sessions are endpoint-bound; connect by ip so the socket's remote address matches the endpoint sessions are minted with.
-	Ξ AppPort()ι->PortType{ return Settings::FindNumber<PortType>("/http/app/port").value_or(1973); }
 	using Gateway::Tests::GatewayPort;
 
-	struct HubRoutingTests : ::testing::Test{
-		Ω Get( PortType port, string target, string authorization={} )->ClientHttpRes{
-			return BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{string{Host}, move(target), port, {.Authorization=move(authorization), .IsSsl=false}} );
+	struct HubRoutingTests : HttpTest{
+		//`id` the default connection until the cleanup returned runs.
+		Ω DefaultConnection( Gateway::ServerCnnctnPK id, string authorization ){
+			auto set = [id, authorization=move(authorization)]( bool isDefault ){ QL( AppPort(), Ƒ("mutation updateServerConnection( id:{}, isDefault:{} )", id, isDefault), authorization ); };
+			set( true );
+			return absl::Cleanup{ [set]{ try{ set( false ); }catch( const std::exception& e ){ ADD_FAILURE() << "the connection is still the default:  " << e.what(); } } };
 		}
-		Ω Post( PortType port, string target, string body, string authorization={} )->ClientHttpRes{
-			return BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{string{Host}, move(target), move(body), port, {.Authorization=move(authorization), .ContentType="application/json", .IsSsl=false}} );
-		}
-		Ω QL( PortType port, string query, string authorization={} )->jvalue{//`data`: an object for a query, an array for a mutation.
-			let res = Post( port, "/graphql", serialize(jobject{{"query", move(query)}}), move(authorization) );
-			let json = res.Json();
-			return json.at( "data" );
+		Ω Allowed( const jobject& permissionRight )->flat_set<string>{//its `allowed`, by name.
+			flat_set<string> y;
+			for( let& r : Json::FindDefaultArray(permissionRight, "allowed") )
+				y.emplace( r.is_string() ? string{r.get_string()} : string{} );
+			return y;
 		}
 	};
 
@@ -73,26 +73,22 @@ namespace Jde::Opc::Hub::Tests{
 	//one /graphql over the three schemas: the gateway's, the app's and access' tables, the merged custom queries and the
 	//merged status - and access tables stay off the gateway's ConnectAwait (GatewayQLAwait::Test answers null for them).
 	TEST_F( HubRoutingTests, MergedGraphQL ){
-		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let authorization = Ƒ( "{:x}", sessionId );
+		WebSession session;
 		EXPECT_TRUE( QL(AppPort(), "serverConnections{ id slug url }").as_object().contains("serverConnections") );
 		EXPECT_TRUE( QL(AppPort(), "connections{ id programName }").as_object().contains("connections") );
-		EXPECT_TRUE( QL(AppPort(), "users{ id name }", authorization).as_object().contains("users") );
-		let status = Json::AsObject( QL(AppPort(), "status{ memory clients monitoredItems }", authorization).as_object(), "status" );
+		EXPECT_TRUE( QL(AppPort(), "users{ id name }", session.Authorization).as_object().contains("users") );
+		let status = Json::AsObject( QL(AppPort(), "status{ memory clients monitoredItems }", session.Authorization).as_object(), "status" );
 		EXPECT_TRUE( status.contains("memory") && status.contains("clients") && status.contains("monitoredItems") ) << serialize( status );
 		let type = QL( AppPort(), "__type(name:\"ServerConnection\"){ name fields{ name } }" ).as_object();
 		EXPECT_TRUE( type.contains("__type") ) << serialize( type );
-		Web::Server::Sessions::Remove( sessionId );
 	}
 
 	//#255:  the instance pages' Web Sessions tab - the hub's own instance lists this process's map, over the one /graphql.
 	TEST_F( HubRoutingTests, WebSessionsOfTheHub ){
-		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( sessionId ); } };
-		let authorization = Ƒ( "{:x}", sessionId );
+		WebSession session;
 		let instanceId = App::Server::AppClient()->InstancePK();
 		ASSERT_TRUE( instanceId );
-		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint lastUpdate expiration }}", instanceId), authorization).as_object(), "sessions" );
+		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint lastUpdate expiration }}", instanceId), session.Authorization).as_object(), "sessions" );
 		EXPECT_TRUE( std::ranges::any_of(sessions, [](let& s){ return Json::AsString(s.as_object(), "endpoint")==Host; }) ) << serialize( sessions );
 	}
 
@@ -106,50 +102,38 @@ namespace Jde::Opc::Hub::Tests{
 		if( !wasEnforced )
 			enforce( true );
 		absl::Cleanup restore{ [&]{ if( !wasEnforced ) enforce( false ); } };//as it was found (364-sessions-resource review #9).
-		let caller = Web::Server::Sessions::Add( Jde::UserPK{999'999}, string{Host}, false )->SessionId;//no user:  no grant anywhere.
-		let other = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.16", false )->SessionId;
-		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( caller ); Web::Server::Sessions::Remove( other ); } };
-		let authorization = Ƒ( "{:x}", caller );
+		WebSession caller{ Jde::UserPK{999'999} };//no user:  no grant anywhere.
+		WebSession other{ Jde::UserPK{1}, "10.255.0.16" };
 		let instanceId = App::Server::AppClient()->InstancePK();
 		ASSERT_TRUE( instanceId );
-		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId), authorization).as_object(), "sessions" );
+		let sessions = Json::AsArray( QL(AppPort(), Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId), caller.Authorization).as_object(), "sessions" );
 		EXPECT_TRUE( std::ranges::any_of(sessions, [](let& s){ return Json::AsString(s.as_object(), "endpoint")=="10.255.0.16"; }) ) << serialize( sessions );
-		QL( AppPort(), Ƒ("mutation purgeSession( id:\"{:x}\" )", other), authorization );
-		EXPECT_FALSE( Web::Server::Sessions::Find(other) );
+		QL( AppPort(), Ƒ("mutation purgeSession( id:\"{}\" )", other.Authorization), caller.Authorization );
+		EXPECT_FALSE( Web::Server::Sessions::Find(other.Id) );
 	}
 
 	//POST /login by shape: a Bearer JWT is the app's, a JSON body with `opc` the gateway's OPC login, neither is the app's 401.
 	TEST_F( HubRoutingTests, LoginByShape ){
-		auto failure = [&]( function<void()> call )->optional<http::status>{
-			try{ call(); }
-			catch( ClientHttpResException& e ){ return e.Status(); }
-			catch( const std::exception& ){}
-			return {};
-		};
-		EXPECT_EQ( failure([&]{ Post(AppPort(), "/login", "{}"); }), http::status::unauthorized );
-		EXPECT_NE( failure([&]{ Post(AppPort(), "/login", "{}", "Bearer not-a-jwt"); }), optional<http::status>{} );
-		let opc = failure( [&]{ Post(AppPort(), "/login", serialize(jobject{{"opc","noSuchServer"},{"user","u"},{"password","p"}})); } );
+		EXPECT_EQ( FailureStatus([&]{ Post(AppPort(), "/login", "{}"); }), http::status::unauthorized );
+		EXPECT_NE( FailureStatus([&]{ Post(AppPort(), "/login", "{}", "Bearer not-a-jwt"); }), optional<http::status>{} );
+		let opc = FailureStatus( [&]{ Post(AppPort(), "/login", serialize(jobject{{"opc","noSuchServer"},{"user","u"},{"password","p"}})); } );
 		EXPECT_TRUE( opc.has_value() && *opc!=http::status::not_found ) << "the opc login was not routed to the gateway.";
 	}
 
 	//POST /logout ends the web session (and so both protocols' sockets) - the gateway's and the app's logout in one.
 	TEST_F( HubRoutingTests, LogoutRemovesSession ){
-		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let authorization = Ƒ( "{:x}", sessionId );
-		let res = Post( AppPort(), "/logout", "{}", authorization );
+		WebSession session;
+		let res = Post( AppPort(), "/logout", "{}", session.Authorization );
 		EXPECT_TRUE( Json::AsBool(res.Json(), "removed") );
-		EXPECT_FALSE( Web::Server::Sessions::Find(sessionId) );
+		EXPECT_FALSE( Web::Server::Sessions::Find(session.Id) );
 	}
 
 	//install-issues #54:  the page's OPC sign-out sent no Authorization, so the hub removed the session made for the request,
 	//answered removed:true, and the signed-in session - with its cached OPC credential - lived on.  A header-less logout now
 	//answers false and leaves the signed-in session alone;  one naming the session ends it and its credential.
 	TEST_F( HubRoutingTests, OpcLogoutEndsItsSession ){
-		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let root = Ƒ( "{:x}", rootSession );
-		let opc = Gateway::Tests::GetConnection( Gateway::Tests::OpcServerSlug );
-		auto setDefault = [&]( bool isDefault ){ QL( AppPort(), Ƒ("mutation updateServerConnection( id:{}, isDefault:{} )", opc.Id, isDefault), root ); };
-		setDefault( true );
+		WebSession root;
+		auto isDefault = DefaultConnection( Gateway::Tests::GetConnection(Gateway::Tests::OpcServerSlug).Id, root.Authorization );
 		let res = Post( AppPort(), "/login", serialize(jobject{{"opc",""},{"user","user1"},{"password","0123456789ABCD"}}) );
 		let authorization = string{ res.Headers()[http::field::authorization] };
 		let sessionId = Str::TryTo<SessionPK,16>( authorization ).value_or( 0 );
@@ -165,8 +149,6 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_TRUE( Json::AsBool(named.Json(), "removed") );
 		EXPECT_FALSE( Web::Server::Sessions::Find(sessionId) );
 		EXPECT_FALSE( Gateway::GetCredential(sessionId, Gateway::Tests::OpcServerSlug) ) << "the OPC credential outlived the session";
-		setDefault( false );
-		Web::Server::Sessions::Remove( rootSession );
 	}
 
 	//install-issues #56:  a second copy of a running hub ran its whole startup against the first's database before its listener
@@ -188,12 +170,11 @@ namespace Jde::Opc::Hub::Tests{
 
 	//a session minted through the AppServer role is honoured by the gateway role without a lookup - one table, IsLocal.
 	TEST_F( HubRoutingTests, SessionShared ){
-		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let authorization = Ƒ( "{:x}", sessionId );
-		let data = QL( GatewayPort(), "status{ memory }", authorization ).as_object();
+		WebSession session;
+		let data = QL( GatewayPort(), "status{ memory }", session.Authorization ).as_object();
 		EXPECT_TRUE( Json::AsObject(data, "status").contains("memory") ) << serialize( data );
-		EXPECT_TRUE( Web::Server::Sessions::Remove(sessionId) );
-		EXPECT_THROW( QL(GatewayPort(), "status{ memory }", authorization), ClientHttpResException );//revoked on one surface, gone on the other.
+		EXPECT_TRUE( Web::Server::Sessions::Remove(session.Id) );
+		EXPECT_THROW( QL(GatewayPort(), "status{ memory }", session.Authorization), ClientHttpResException );//revoked on one surface, gone on the other.
 	}
 
 	//a level set through the AppServer role's mutation is read straight back from the live logger through the gateway role
@@ -201,18 +182,16 @@ namespace Jde::Opc::Hub::Tests{
 	TEST_F( HubRoutingTests, LogLevelRoundTrip ){
 		let instance = Gateway::AppClient()->InstancePK();
 		ASSERT_NE( instance, 0u );
-		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let authorization = Ƒ( "{:x}", sessionId );
+		WebSession session;
 		auto level = [&]()->string{
-			let data = QL( GatewayPort(), "logSetting{ text }", authorization ).as_object();
+			let data = QL( GatewayPort(), "logSetting{ text }", session.Authorization ).as_object();
 			let& text = Json::AsObject( Json::AsObject(data, "logSetting"), "text" );
 			return text.contains("test") ? string{ text.at("test").as_string() } : string{};
 		};
-		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:\"Critical\"}}] )", instance), authorization );
+		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:\"Critical\"}}] )", instance), session.Authorization );
 		EXPECT_EQ( level(), "Critical" );
-		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:null}}] )", instance), authorization );
+		QL( AppPort(), Ƒ("mutation updateInstanceTagLevel( \"id\":{}, \"text\":[{{tags:[\"test\"],level:null}}] )", instance), session.Authorization );
 		EXPECT_NE( level(), "Critical" );
-		Web::Server::Sessions::Remove( sessionId );
 	}
 
 	//install-issues #3/#4: the hub serves the site (/http/site) from the listener the api shares - the page (index.html, always
@@ -236,14 +215,8 @@ namespace Jde::Opc::Hub::Tests{
 		//user ends `.web` - so these routes have to reach the page too, not 404 as a missing `.com`/`.web` file.
 		for( let route : {"/login", "/apps/gateways", "/access/users", "/access/users/Google-johnmduffy@gmail.com", "/access/users/OpcServer.web"} )
 			EXPECT_EQ( Get(AppPort(), route).Body(), index.Body() ) << route;
-		auto status = [&]( string target )->optional<http::status>{
-			try{ return Get( AppPort(), move(target) ).Status(); }
-			catch( ClientHttpResException& e ){ return e.Status(); }
-			catch( const std::exception& ){ return {}; }
-		};
-		EXPECT_EQ( status("/missing.js"), optional{http::status::not_found} );
-		EXPECT_EQ( status("/assets/../Opc.Hub.Tests.jsonnet"), optional{http::status::not_found} );
-		EXPECT_EQ( status("/.git/config"), optional{http::status::not_found} );
+		for( let target : {"/missing.js", "/assets/../Opc.Hub.Tests.jsonnet", "/.git/config"} )
+			EXPECT_EQ( FailureStatus([&]{ Get(AppPort(), target); }), optional{http::status::not_found} ) << target;
 		EXPECT_TRUE( Get(AppPort(), "/opcGateways").Json().contains("servers") );//the api's own GET, ahead of the page
 	}
 
@@ -262,11 +235,8 @@ namespace Jde::Opc::Hub::Tests{
 	//lookup, and the credential cache GetCredential reads by slug - and the OpcServer's side of the login (UAAccess::ResolveUser)
 	//has to name the user the hub's AddSession did.  A wrong password is the server's BadUserAccessDenied, surfaced as 401.
 	TEST_F( HubRoutingTests, LoginDefaultConnection ){
-		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let root = Ƒ( "{:x}", rootSession );
-		let opc = Gateway::Tests::GetConnection( Gateway::Tests::OpcServerSlug );//the embedded OpcServer's row, with its provider row
-		auto setDefault = [&]( bool isDefault ){ QL( AppPort(), Ƒ("mutation updateServerConnection( id:{}, isDefault:{} )", opc.Id, isDefault), root ); };
-		setDefault( true );
+		WebSession root;
+		auto isDefault = DefaultConnection( Gateway::Tests::GetConnection(Gateway::Tests::OpcServerSlug).Id, root.Authorization );//the embedded OpcServer's row, with its provider row
 		auto body = []( sv password ){ return serialize( jobject{{"opc",""},{"user","user1"},{"password",password}} ); };
 		let res = Post( AppPort(), "/login", body("0123456789ABCD") );
 		let authorization = string{ res.Headers()[http::field::authorization] };
@@ -277,13 +247,8 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_EQ( cred->LoginName(), "user1" );
 		EXPECT_TRUE( cred->UserPK() ) << "AddSession resolved no user";
 		EXPECT_EQ( Opc::Server::UAAccess::ResolveUser("user1").Value, cred->UserPK().Value ) << "the OpcServer resolves the login to another user than the hub";
-		optional<http::status> bad;
-		try{ Post( AppPort(), "/login", body("nope") ); }
-		catch( ClientHttpResException& e ){ bad = e.Status(); }
-		EXPECT_EQ( bad, optional{http::status::unauthorized} );
+		EXPECT_EQ( FailureStatus([&]{ Post(AppPort(), "/login", body("nope")); }), optional{http::status::unauthorized} );
 		Post( AppPort(), "/logout", "{}", authorization );
-		setDefault( false );
-		Web::Server::Sessions::Remove( rootSession );
 	}
 
 	//open62541-1.5.9 review #3:  a username login's UserPK is not stable over a session's life - the first login on a fresh
@@ -315,8 +280,7 @@ namespace Jde::Opc::Hub::Tests{
 	//as the default connection.  Here the connection insert also meets the gateway's hook (registered by now, unlike on an
 	//install's first sync), which has to reuse the seeded provider row rather than insert a second one (ProviderMAwait::Check).
 	TEST_F( HubRoutingTests, OpcServerComponentSeeds ){
-		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let root = Ƒ( "{:x}", rootSession );
+		WebSession root;
 		let& scriptPaths = Settings::FindDefaultArray( "/dbServers/scriptPaths" );//<repo>/apps/AppServer/config/sql/<dialect>, libs/access/config/sql/<dialect>, apps/OpcGateway/config/sql/<dialect>
 		ASSERT_EQ( scriptPaths.size(), 3u );
 		auto configDir = [&]( uint i ){ return fs::path{ string{Json::AsSV(scriptPaths[i])} }.parent_path().parent_path(); };
@@ -325,7 +289,7 @@ namespace Jde::Opc::Hub::Tests{
 			for( let& file : {configDir(1)/"release-google.mutation", configDir(1)/"release-opcServer.mutation", configDir(2)/"release-opcServer.mutation", configDir(1)/"release-opcServer.roles"} )
 				ASSERT_NO_THROW( ql->Upsert(IO::Load(file), {}, {UserPK::System}) ) << file.string() << " pass " << pass;//Upsert is idempotent (LocalQL checks the slug first), so the .roles createRole survives the second pass.
 		}
-		auto one = [&]( string query, sv name )->jobject { let d = QL( AppPort(), move(query), root ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
+		auto one = [&]( string query, sv name )->jobject { let d = QL( AppPort(), move(query), root.Authorization ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(id:1){ id providerTypeId }", "provider"), "providerTypeId"), "Google" );//the ql spells the enum by name
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's hook created the row
 		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault }", "serverConnection" );
@@ -337,43 +301,32 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_EQ( Json::FindDefaultSV(role, "name"), "OPC Server Instance" ) << serialize( role );
 		let perm = Json::FindDefaultObject( role, "permissionRight" );
 		EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(perm, "resource"), "slug"), "nodeIds" ) << "grants on opc.install nodeIds";
-		bool administer = false;
-		for( let& r : Json::FindDefaultArray(perm, "allowed") )
-			administer |= r.is_string() && r.get_string()=="Administer";
-		EXPECT_TRUE( administer ) << "Administer - the delegation grant - " << serialize( perm );
+		EXPECT_TRUE( Allowed(perm).contains("Administer") ) << "Administer - the delegation grant - " << serialize( perm );
 		//...and on its logs:  Administer, as every enforced root of the schema must have for the delegation to hold, plus Read and
 		//Update for its own log levels - LoadLogSettings reads them over the socket as this account, and a change saves the same way.
 		let logsRole = one( "role(slug:\"opc-server-instance\"){ permissionRight{ allowed resource(schemaName:\"opc.install\", slug:\"logs\"){ slug } } }", "role" );
 		let logs = Json::FindDefaultObject( logsRole, "permissionRight" );
 		EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(logs, "resource"), "slug"), "logs" ) << serialize( logsRole );
-		flat_set<string> logRights;
-		for( let& r : Json::FindDefaultArray(logs, "allowed") )
-			logRights.emplace( r.is_string() ? string{r.get_string()} : string{} );
-		EXPECT_EQ( logRights, (flat_set<string>{"Administer", "Read", "Update"}) ) << serialize( logs );
+		EXPECT_EQ( Allowed(logs), (flat_set<string>{"Administer", "Read", "Update"}) ) << serialize( logs );
 		//...and Read on the access tables its access load and event subscriptions read as this account (ConfigureAwait):  each
 		//declares Read, so enforcing one would otherwise stop the server starting (325-logs-resource review #3).
 		for( let slug : {"acl", "groups", "resources", "roles", "users"} ){
 			let accessRole = one( Ƒ("role(slug:\"opc-server-instance\"){{ permissionRight{{ allowed resource(schemaName:\"access\", slug:\"{}\"){{ slug }} }} }}", slug), "role" );
 			let grant = Json::FindDefaultObject( accessRole, "permissionRight" );
 			EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(grant, "resource"), "slug"), slug ) << serialize( accessRole );
-			flat_set<string> rights;
-			for( let& r : Json::FindDefaultArray(grant, "allowed") )
-				rights.emplace( r.is_string() ? string{r.get_string()} : string{} );
-			EXPECT_EQ( rights, (flat_set<string>{"Read"}) ) << slug << ": " << serialize( grant );
+			EXPECT_EQ( Allowed(grant), (flat_set<string>{"Read"}) ) << slug << ": " << serialize( grant );
 		}
 		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
-		Web::Server::Sessions::Remove( rootSession );
 	}
 	//A group's history fields reach the gateway's historian through HubQL, not the pass-through or the engine:  a read of a
 	//group the hub doesn't host answers that it doesn't, and an edit, with nothing enforcing hist_groups, is refused before
 	//anything else is looked at (Authorize::TestEnforced).
 	TEST_F( HubRoutingTests, GroupHistoryReachesTheHistorian ){
-		let rootSession = Web::Server::Sessions::Add( Jde::UserPK{1}, string{Host}, false )->SessionId;
-		let root = Ƒ( "{:x}", rootSession );
+		WebSession root;
 		let answer = [&]( string query )->string{
 			try{
-				return Post( AppPort(), "/graphql", serialize(jobject{{"query", move(query)}}), root ).Body();
+				return Post( AppPort(), "/graphql", serialize(jobject{{"query", move(query)}}), root.Authorization ).Body();
 			}
 			catch( ClientHttpResException& e ){
 				return e.Res().Body();
@@ -386,6 +339,5 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_NE( edit.find("needs a grant on an enforced resource"), string::npos ) << edit;
 		let capabilities = answer( "historyCapabilities( group: 999999 ){ update }" );
 		EXPECT_NE( capabilities.find("isn't one this gateway historizes"), string::npos ) << capabilities;
-		Web::Server::Sessions::Remove( rootSession );
 	}
 }

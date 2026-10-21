@@ -20,7 +20,6 @@ namespace Jde::Web{
 		α GraphQL( string&&, UserPK, bool, SL )ι->up<TAwait<jvalue>>{ return {}; }
 		α Login( Web::Jwt&&, SL )ε->up<TAwait<Web::FromServer::SessionInfo>> override{ throw Exception{"noImpl"}; }
 		α ClientQuery( QL::RequestQL&&, UserPK, SL )ε->up<TAwait<jvalue>> override{ ASSERT(false); return {}; }
-		α SessionInfoAwait( SessionPK, SL )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return {}; }
 		α PublicKey()Ι->const Crypto::PublicKey& override{ return _publicKey; }
 
 		α QueryArray( string&&, jobject, bool, SL=SRCE_CUR )ε->up<TAwait<jarray>> override{ return {}; }

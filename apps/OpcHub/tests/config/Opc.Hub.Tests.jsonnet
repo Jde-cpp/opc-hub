@@ -10,7 +10,7 @@ local logsDir = args.logsDir;
 	testing:{
 		tests:: "*",
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
-		embeddedOpcServer:: false
+		embeddedOpcServer:: true
 	},
 	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
 	ql:{
@@ -28,15 +28,8 @@ local logsDir = args.logsDir;
 			args.repoSourceDir + "/apps/OpcGateway/config/sql/"+args.sqlType
 		],
 		dataPaths: [args.repoSourceDir + "/apps/AppServer/config", args.repoSourceDir + "/libs/access/config"],
-		sync:: true,
-		localhost:{
-			driver: args.dbServers.localhost.driver,
-			connectionString: args.dbServers.localhost.connectionString,
-			username: args.dbServers.localhost.username,
-			password: args.dbServers.localhost.password,
-			schema: args.dbServers.localhost.schema,
-			catalogs: args.dbServers.localhost.catalogs
-		}
+		sync:: false,
+		localhost: args.dbServers.localhost
 	},
 	http:{
 		host: "127.0.0.1", //what /opcGateways advertises; the test clients connect by ip (sessions are endpoint-bound).

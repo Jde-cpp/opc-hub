@@ -51,7 +51,12 @@ namespace Jde::App::Server{
 	α Routes::Logout( HttpRequest&& req, IHttpRequestAwait::Handle h )ι->void{
 		try{
 			req.LogRead();
-			jobject j{ {"removed", Sessions::Remove(req.SessionInfo->SessionId)} };
+			//A logout with no Authorization names no session:  the request is given one of its own (Sessions::UpsertAwait), and
+			//removing that ended nothing while the answer said it had - the page's OPC sign-out sent no header, and the signed-in
+			//session lived on (reviews/install-issues.md #54).  That session still goes, but the answer is false.
+			let named = !req.Header( "Authorization" ).empty();
+			let removed = Sessions::Remove( req.SessionInfo->SessionId );
+			jobject j{ {"removed", named && removed} };
 			h.promise().SetValue( {move(j), move(req)} );
 		}
 		catch( runtime_error& e ){

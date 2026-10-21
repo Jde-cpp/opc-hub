@@ -76,6 +76,14 @@
 			"name": "gateway"
 		},
 		{
+			"path": "../OpcServer/src",
+			"name": "opcServer"
+		},
+		{
+			"path": "../../libs/historian/src",
+			"name": "historian"
+		},
+		{
 			"path": "../../libs/opc/src",
 			"name": "shared"
 		},

@@ -1,5 +1,4 @@
 #include "HttpRequestAwait.h"
-#include <jde/web/server/Sessions.h>
 #include <jde/web/server/StaticSite.h>
 #include "../../AppServer/src/HttpRequestAwait.h"
 #include "../../AppServer/src/WebServer.h"
@@ -17,23 +16,6 @@ namespace Jde::Opc::Hub{
 		}
 		catch( const std::exception& ){//not json - the app's login carries no body.
 			return false;
-		}
-	}
-	α HttpRequestAwait::HubLogout()ι->void{
-		try{
-			_request.LogRead();
-			//A logout with no Authorization names no session:  the request is given one of its own (Sessions::UpsertAwait), and
-			//removing that ended nothing while the answer said it had - the page's OPC sign-out sent no header, and the signed-in
-			//session lived on (reviews/install-issues.md #54).  That session still goes, but the answer is false.
-			let named = !_request.Header( "Authorization" ).empty();
-			let sessionId = _request.SessionId();
-			Gateway::Logout( sessionId );//the OPC credentials cached for the session.
-			let removed = Web::Server::Sessions::Remove( sessionId );//and every socket bound to it, on either path.
-			jobject j{ {"removed", named && removed} };
-			Resume( {move(j), move(_request)} );
-		}
-		catch( runtime_error& e ){
-			ResumeExp( RestException{EHttpStatus::InternalServerError, move(e), move(_request)} );
 		}
 	}
 	//The site, after every route of the api - GET only, and not the gateway's ?opc= requests.  A miss is the gateway's 404, as before.
@@ -61,8 +43,10 @@ namespace Jde::Opc::Hub{
 			else
 				ResumeExp( RestException{EHttpStatus::Unauthorized, SRCE_CUR, move(_request), "Missing or invalid Authorization header"} );
 		}
-		else if( _request.IsPost("/logout") )
-			HubLogout();
+		else if( _request.IsPost("/logout") ){
+			Gateway::Logout( _request.SessionId() );//the OPC credentials cached for the session.
+			App::Server::Routes::Logout( move(_request), _h );
+		}
 		else if( _request.IsGet() && Web::Server::Site() )
 			ServeSite();//the page and its files, then the 404
 		else

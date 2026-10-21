@@ -8,7 +8,7 @@ namespace Jde::Opc::Gateway{
 	α StopWebServer( bool terminate, SL sl )ι->void;
 	struct GatewaySocketSession;
 	namespace Server{
-		α AddSession( sp<GatewaySocketSession> session )ι->void;//the opc-protocol socket registry - a host's handler (OpcHub) adds the sockets it accepts on the gateway's path.
+		α Accept( sp<Web::Server::IRestStream>&& stream, beast::flat_buffer&& buffer, Web::Server::TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<GatewaySocketSession>;//an opc-protocol socket, made and registered - the gateway's handler, and a host's (OpcHub) on the gateway's path.
 		α RemoveSession( uint socketSessionId )ι->void;
 		α Shutdown( bool terminate, SL sl )ι->void;//close every registered socket - what the gateway's own listener does before stopping; a host without that listener registers this.
 	}
