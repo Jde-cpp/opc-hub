@@ -26,4 +26,6 @@ namespace Jde::Opc{
 		//to hand a client - what() keeps those internals.  RestException::Response appends this to the body.
 		α ClientDetail()Ι->string override{ return format( "({:x}){}", Code(), Message((StatusCode)Code()) ); }
 	};
+	//UAε with what failed, the tags and the caller's location.
+	Ξ Check( StatusCode sc, sv what, EOpcLogTags tags, SRCE )ε->void{ THROW_IFX( sc, UAException(sc, string{what}, {.Tags=tags}, sl) ); }
 }

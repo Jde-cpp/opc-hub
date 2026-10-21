@@ -6,11 +6,15 @@
 #define let const auto
 namespace Jde::Crypto{
 	static std::mutex _missingMutex;
-	static flat_set<fs::path> _missingDirs;//per process, as FirstSkip:  a directory never created - a product not installed - would otherwise warn on each rescan (reviews/install-issues.md, "Noise in a production log").
+	//(noun, directory):  a directory never created - a product not installed - would otherwise warn on each rescan
+	//(reviews/install-issues.md, "Noise in a production log").  Not on the scanner, which ServerTrust makes per connect, and not by
+	//directory alone, which let the first list to find one missing hide it from the others (opcserver-refactor-review #4).
+	static flat_set<std::pair<string,fs::path>> _missingDirs;
 
-	TrustDirs::TrustDirs( string noun, ELogTags tags )ι:
+	TrustDirs::TrustDirs( string noun, ELogTags tags, ELogLevel unreadable )ι:
 		_noun{ move(noun) },
-		_tags{ tags }
+		_tags{ tags },
+		_unreadable{ unreadable }
 	{}
 
 	α TrustDirs::Scan( sv setting, const OnCertificate& onCertificate, SL sl )ι->bool{
@@ -28,12 +32,12 @@ namespace Jde::Crypto{
 			try{
 				if( !fs::is_directory(dir) ){//files under a vanished directory drop out below.
 					bool first;
-					{ std::lock_guard _{ _missingMutex }; first = _missingDirs.emplace( dir ).second; }
+					{ std::lock_guard _{ _missingMutex }; first = _missingDirs.emplace( _noun, dir ).second; }
 					let level = first ? ELogLevel::Warning : ELogLevel::Debug;//not inline in LOG - the macro evaluates its level twice.
 					LOG( level, _tags, "Trusted certificate directory does not exist: '{}' - no {} comes from it until it does.", dir.string(), _noun );
 					continue;
 				}
-				{ std::lock_guard _{ _missingMutex }; _missingDirs.erase( dir ); }
+				{ std::lock_guard _{ _missingMutex }; _missingDirs.erase( {_noun, dir} ); }
 				for( let& entry : fs::directory_iterator(dir) ){
 					let& path = entry.path();
 					if( !IsCertificateFile(path) ){//install-issues #33:  a UA peer publishes DER, and skipping it in silence made a copied-in certificate do nothing.
@@ -53,17 +57,17 @@ namespace Jde::Crypto{
 						continue;
 					}
 					catch( Exception& e ){//logs itself as it goes.
-						e.SetLevel( ELogLevel::Warning );
+						e.SetLevel( _unreadable );
 						e.PrependWhat( Ƒ("Could not load '{}' - no {} comes from it:  ", path.string(), _noun) );
 					}
 					catch( const std::exception& e ){
-						WARNT( _tags, "Could not load '{}' - no {} comes from it:  {}", path.string(), _noun, e.what() );
+						LOG( _unreadable, _tags, "Could not load '{}' - no {} comes from it:  {}", path.string(), _noun, e.what() );
 					}
 					onCertificate( path, {} );//a file that read before and no longer does is trusted no longer.
 				}
 			}
 			catch( const std::exception& e ){
-				ERRT( _tags, "Could not scan trusted certificate directory '{}': {}", dir.string(), e.what() );
+				LOG( _unreadable, _tags, "Could not scan trusted certificate directory '{}': {}", dir.string(), e.what() );
 				complete = false;//unlisted for being unreadable is not removed.
 			}
 		}

@@ -23,6 +23,13 @@ namespace Jde::Opc::Gateway{
 		_userMessage = description.size() ? Ƒ( "{} - {}", UAException::ClientDetail(), move(description) ) : string{};
 	}
 
+	UAClientException::UAClientException( UAException&& e, Handle uaHandle )ι:
+		UAException{ move(e) },
+		_handle{ uaHandle }{
+		SetHttpStatus( httpStatus((StatusCode)Code()) );
+		_what.clear();//what() rebuilds it with the handle.
+	}
+
 	α UAClientException::what()const noexcept->const char*{
 		if( _what.empty() ){
 			if( _requestId )

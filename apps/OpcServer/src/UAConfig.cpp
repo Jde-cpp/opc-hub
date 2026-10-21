@@ -129,8 +129,8 @@ namespace Jde::Opc::Server{
 			UAε( UA_CertificateUtils_decryptPrivateKey(localPrivateKey, keyPassword, &decryptedPrivateKey) );
 		UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(this, &localCertificate, &decryptedPrivateKey) );
 		//The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
-		//securityLevel - and one that carries Basic256Sha256 alone (the PLC emulator, most installed clients) still connects
-		//(reviews/security-matrix.md #4).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
+		//securityLevel - and one that carries Basic256Sha256 alone (most installed clients) still connects (reviews/security-matrix.md
+		//#4;  EndpointTests).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
 		UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
 		UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
 		UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );

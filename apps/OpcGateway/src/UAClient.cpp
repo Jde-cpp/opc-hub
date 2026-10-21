@@ -357,12 +357,6 @@ namespace Jde::Opc::Gateway{
 		if( !certAuth )
 			EnsureCertificate( Slug() );
 		let& settings = certAuth ? *AppClient()->SslSettings : CryptoSettings(); //requires authentication[AppClient] & transport[OpcServer] security be equal.
-		//What the gateway advertises as itself (reviews/security-matrix.md #8; ApplicationUriTests):  the uri in its certificate's
-		//SAN, read from the file itself.  The issued certificate takes it from /gateway/issuedCerts, the app client's own from its
-		//web ssl block, an operator's own pair (managed:false) from wherever it was made.
-		let ownUri = Crypto::Certificate{ Crypto::ReadCertificate(settings.Certificate.Path) }.SanUri();
-		if( ownUri.empty() && addSecurity )
-			WARN( "[{}]'{}' carries no URI in its subjectAltName, so this gateway has no applicationUri of its own to advertise - advertising '{}', the server's.", hex(Handle()), settings.Certificate.Path.string(), serverUri );
 		if( addSecurity )
 			INFO( "[{}]Offering {}, Sign & Encrypt only, with certificate '{}'", hex(Handle()), securedPolicyNames(), settings.Certificate.Path.string() );
 		if( !addSecurity )//not `else`: the log macros expand to their own `if`.  No endpoint filter - there is no uri to hold the server's against.
@@ -377,7 +371,15 @@ namespace Jde::Opc::Gateway{
 		let secret = _credential.Type()==ETokenType::Username || _credential.Type()==ETokenType::IssuedToken;
 		if( config->allowNonePolicyPassword && secret )
 			WARN( "[{}]/gateway/allowPlaintextPassword is on - '{}' sends its {} credential unencrypted if '{}' offers it no encrypting token policy.", hex(Handle()), Slug(), TokenTypeName(_credential.Type()), Url() );
-		ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .AdvertisedUri=ownUri.empty() ? serverUri : ownUri, .TrustRoot="/gateway"}, Handle(), Url() );
+		try{
+			//What the gateway advertises as itself (reviews/security-matrix.md #8; ApplicationUriTests):  with no AdvertisedUri, the uri
+			//in its certificate's SAN, from the file Configure reads anyway.  The issued certificate's comes from /gateway/issuedCerts,
+			//the app client's own from its web ssl block, an operator's own pair (managed:false) from wherever it was made.
+			ClientSecurity::Configure( *config, {.Certificate=settings, .Secure=addSecurity, .ServerUri=serverUri, .TrustRoot="/gateway"}, Handle(), Url() );
+		}
+		catch( UAException& e ){//ConnectAwait's per-waiter copy and HttpRequestAwait's ThrowRest keep only a UAClientException whole.
+			throw UAClientException{ move(e), Handle() };
+		}
 	}
 	α UAClient::PresentedCertificate()Ι->optional<Crypto::CryptoSettings>{
 		if( _credential.Type()==ETokenType::Certificate && AppClient()->SslSettings )

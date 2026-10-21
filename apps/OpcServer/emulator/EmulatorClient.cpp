@@ -8,7 +8,6 @@
 #define let const auto
 namespace Jde::Opc::Emulator{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Client };
-	Ω check( UA_StatusCode sc, string what, SL sl )ε->void{ THROW_IFX( sc, UAException(sc, move(what), {.Tags=EOpcLogTags::Client}, sl) ); }
 
 	EmulatorClient::EmulatorClient( string url, string applicationUri, string serverApplicationUri, const Crypto::CryptoSettings& certificate, SL sl )ε:
 		_url{ move(url) },
@@ -22,7 +21,7 @@ namespace Jde::Opc::Emulator{
 		_config.timeout = 10000;
 		_config.stateCallback = StateCallback;
 		//no noReconnect: open62541's initial connect must close the None discovery channel and reopen with the selected
-		//Basic256Sha256 endpoint (that reopen counts as a reconnect); blocking it aborts every connect with BadNotConnected.
+		//secured endpoint (that reopen counts as a reconnect); blocking it aborts every connect with BadNotConnected.
 		//A genuine session drop is caught by the loop's IsActivated() check, which Disconnect()s and Connect()s afresh.
 		_ptr = UA_Client_newWithConfig( &_config );
 		THROW_IFSL( !_ptr, "UA_Client_newWithConfig failed." );
@@ -82,7 +81,7 @@ namespace Jde::Opc::Emulator{
 		UA_ExtensionObject_clear( &config->userIdentityToken );
 		UA_ExtensionObject_setValue( &config->userIdentityToken, identityToken, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
 		DBG( "Connecting to '{}'.", _url );
-		check( UA_Client_connect(_ptr, _url.c_str()), Ƒ("connect '{}'", _url), sl );
+		Check( UA_Client_connect(_ptr, _url.c_str()), Ƒ("connect '{}'", _url), EOpcLogTags::Client, sl );
 		INFO( "Session activated on '{}'.", _url );
 	}
 	α EmulatorClient::Disconnect()ι->void{
@@ -105,7 +104,7 @@ namespace Jde::Opc::Emulator{
 	}
 	α EmulatorClient::Namespace( sv uri, SL sl )ε->NsIndex{
 		UA_UInt16 index{};
-		check( UA_Client_getNamespaceIndex(_ptr, ToUV(uri), &index), Ƒ("namespace '{}' is not on the server", uri), sl );
+		Check( UA_Client_getNamespaceIndex(_ptr, ToUV(uri), &index), Ƒ("namespace '{}' is not on the server", uri), EOpcLogTags::Client, sl );
 		return index;
 	}
 	α EmulatorClient::Resolve( sv path, NsIndex defaultNs, const flat_map<string,NsIndex>& nsAliases, SL sl )ε->NodeId{
@@ -122,7 +121,7 @@ namespace Jde::Opc::Emulator{
 		if( !sc && response.results[0].targetsSize )
 			y = NodeId{ response.results[0].targets[0].targetId.nodeId };
 		UA_TranslateBrowsePathsToNodeIdsResponse_clear( &response );
-		check( sc, Ƒ("browse path '{}'", browsePath.ToString()), sl );
+		Check( sc, Ƒ("browse path '{}'", browsePath.ToString()), EOpcLogTags::Client, sl );
 		THROW_IFSL( UA_NodeId_isNull(&y), "No target for browse path '{}'.", browsePath.ToString() );
 		return y;
 	}
@@ -148,7 +147,7 @@ namespace Jde::Opc::Emulator{
 		if( !sc )
 			sc = response.resultsSize ? response.results[0] : UA_STATUSCODE_BADUNEXPECTEDERROR;
 		UA_WriteResponse_clear( &response );
-		check( sc, Ƒ("write {}", node.ToString()), sl );
+		Check( sc, Ƒ("write {}", node.ToString()), EOpcLogTags::Client, sl );
 	}
 	α EmulatorClient::CreateSubscription( Duration publishingInterval, SL sl )ε->UA_UInt32{
 		auto request = UA_CreateSubscriptionRequest_default();
@@ -157,7 +156,7 @@ namespace Jde::Opc::Emulator{
 		let sc = response.responseHeader.serviceResult;
 		let id = response.subscriptionId;
 		UA_CreateSubscriptionResponse_clear( &response );
-		check( sc, "createSubscription", sl );
+		Check( sc, "createSubscription", EOpcLogTags::Client, sl );
 		return id;
 	}
 	α EmulatorClient::Monitor( UA_UInt32 subscription, const NodeId& node, Duration samplingInterval, void* context, UA_Client_DataChangeNotificationCallback callback, SL sl )ε->UA_UInt32{
@@ -167,7 +166,7 @@ namespace Jde::Opc::Emulator{
 		let sc = result.statusCode;
 		let id = result.monitoredItemId;
 		UA_MonitoredItemCreateResult_clear( &result );
-		check( sc, Ƒ("monitor {}", node.ToString()), sl );
+		Check( sc, Ƒ("monitor {}", node.ToString()), EOpcLogTags::Client, sl );
 		return id;
 	}
 }

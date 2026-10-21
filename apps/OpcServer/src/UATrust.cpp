@@ -8,7 +8,7 @@ namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::OpcCrypto;
 
 	static std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; serializes the scan and _ders against future threading changes.
-	static Crypto::TrustDirs _dirs{ "trusted client certificate", _tags };
+	static Crypto::TrustDirs _dirs{ "trusted client certificate", _tags, ELogLevel::Critical };
 	static flat_map<fs::path,vector<byte>> _ders;//the certificates that read, by file.
 	static std::array<UA_CertificateGroup*,2> _groups{};//secureChannelPKI, sessionPKI in the server-owned config; a change updates BOTH so the shared mtime cache stays honest.
 	static std::array<UA_StatusCode(*)( UA_CertificateGroup*, const UA_ByteString* ),2> _originals{};//per-group - no assumption both are memorystore.

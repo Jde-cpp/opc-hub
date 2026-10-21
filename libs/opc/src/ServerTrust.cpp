@@ -51,7 +51,7 @@ namespace Jde::Opc{
 			g->clear = nullptr;
 		}
 		Ω loadAnchors( Context& c, const vector<fs::path>& dirs, SL sl )ι->void{
-			Crypto::TrustDirs scan{ "trusted server certificate", _tags };//a new one per connect, so every file is read again.
+			Crypto::TrustDirs scan{ "trusted server certificate", _tags, ELogLevel::Warning };//a new one per connect, so every file is read again.
 			scan.Scan( dirs, [&]( const fs::path&, vector<byte>&& der ){
 				if( der.empty() )
 					return;//one unreadable file must not empty the trust list.

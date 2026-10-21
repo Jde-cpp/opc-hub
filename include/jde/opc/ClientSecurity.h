@@ -11,7 +11,7 @@ namespace Jde::Opc::ClientSecurity{
 		const Crypto::CryptoSettings& Certificate;//the channel's when Secure;  the user token is encrypted with it either way.
 		bool Secure;//Sign & Encrypt under a secured policy and nothing less;  false stays on SecurityPolicy None.
 		sv ServerUri;//the endpoint filter, the server's applicationUri;  empty takes any endpoint.
-		sv AdvertisedUri;//who this client says it is, the SAN uri of Certificate;  empty keeps open62541's placeholder.
+		sv AdvertisedUri;//who this client says it is;  empty takes Certificate's SAN uri, else ServerUri, else open62541's placeholder.
 		sv TrustRoot;//where ServerTrust reads trustedCertDirs and verifyServerCertificate:  "/gateway", "/emulator".
 	};
 	//Before the first connect, on a config with no policies yet:  the policies, both uris, the server-certificate verifier, and

@@ -10,6 +10,7 @@ namespace Jde::Opc::Gateway{
 	struct UAClientException : UAException{
 		UAClientException( StatusCode sc, Handle uaHandle, RequestId requestId=0, SRCE, ELogLevel level=ELogLevel::Debug )ι;
 		UAClientException( StatusCode sc, Handle uaHandle, string description, SRCE )ι;
+		UAClientException( UAException&& e, Handle uaHandle )ι;//libs/opc's (ClientSecurity), which cannot name this type.
 		UAClientException( UAClientException&& from )ι:UAException{ move(from) }, _handle{ from._handle }, _requestId{ from._requestId }, _userMessage{ move(from._userMessage) }{}
 		UAClientException( const UAClientException& from )ι:UAException{ from }, _handle{ from._handle }, _requestId{ from._requestId }, _userMessage{ from._userMessage }{}
 

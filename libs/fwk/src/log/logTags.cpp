@@ -22,7 +22,8 @@ namespace Jde{
 
 	//The loggers' levels together, which ShouldLog asks of every line, from any thread, and UpdateCumulative replaces on a level
 	//change.  Read with one acquire load;  a replaced one is kept, not freed, as a reader may still be in it - one per level
-	//change, as log.cpp keeps its logger lists.  An up<> here freed it under the readers.
+	//change, as log.cpp keeps its logger lists.  An up<> here freed it under the readers.  A recompute that changes nothing - an
+	//instanceTagLevels re-applied on reconnect - publishes nothing, so only a real change costs a copy (opcserver-refactor-review #5).
 	std::atomic<const LogTags*> _cumulative;
 	std::mutex _cumulativeMutex;
 	vector<up<LogTags>> _cumulatives;//every one published, the current last.
@@ -44,6 +45,8 @@ namespace Jde{
 			std::lock_guard _{ _cumulativeMutex };
 			if( !computed && !cumulative() )
 				computed = mu<LogTags>();
+			if( computed && cumulative() && *computed==*cumulative() )
+				computed.reset();
 			if( computed ){
 				_cumulatives.push_back( move(computed) );
 				_cumulative.store( _cumulatives.back().get(), std::memory_order_release );
@@ -269,6 +272,10 @@ namespace Jde{
 		} );
 		ExtrapolatedTags = _configuredTags;
 		return *this;
+	}
+	α LogTags::operator==( const LogTags& x )Ι->bool{
+		return _minLevel==x._minLevel && _defaultLevel==x._defaultLevel && _settingsDefault==x._settingsDefault
+			&& _configuredTags==x._configuredTags && _settingsTags==x._settingsTags;
 	}
 	α LogTags::SetLevels( const jobject& tagLevels, bool settings )ι->void{
 		auto parsedTags = parseTags<flat_map<ELogTags,ELogLevel>>( tagLevels );

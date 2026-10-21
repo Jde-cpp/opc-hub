@@ -25,7 +25,7 @@ namespace Jde::Access{
 	constexpr ELogTags _tags{ ELogTags::Access };
 	static sp<QL::LocalQL> _ql;
 	static std::mutex _anchorMutex;
-	static Crypto::TrustDirs _anchorDirs{ "trust anchor", _tags };
+	static Crypto::TrustDirs _anchorDirs{ "trust anchor", _tags, ELogLevel::Critical };
 
 	Ω loadTrustAnchors( Crypto::TrustStore& trust )ι->bool{//loads new/changed certs from /access/trustedCertDirs; true if an anchor was added.
 		std::lock_guard _{ _anchorMutex };

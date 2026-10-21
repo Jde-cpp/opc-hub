@@ -4,12 +4,14 @@
 namespace Jde::Crypto{
 	//The walk of an operator's certificate drop-dirs, for the three lists built from them:  the OpcServer's trusted clients
 	//(UATrust), the enrollment anchors (Access::Server::Trust) and a UA client's trusted servers (Opc::ServerTrust).  Each
-	//rescans - on a failed verify, on each connect - so the walk says things once:  a missing directory warns once per process
+	//rescans - on a failed verify, on each connect - so the walk says things once:  a missing directory warns once per list
 	//until it appears, and a file passed over for its extension warns the first time (FirstSkip), Debug after.  Not
 	//thread-safe:  the caller serializes Scan.
 	struct Γ TrustDirs final{
 		using OnCertificate = function<void( const fs::path& path, vector<byte>&& der )>;
-		TrustDirs( string noun, ELogTags tags )ι;//`noun` is what the log says a file would have been:  "trust anchor".
+		//`noun` is what the log says a file would have been:  "trust anchor".  `unreadable` is the level of a file or directory
+		//that will not read - Critical for a list that gates logins, where it refuses them, Warning for one among many servers.
+		TrustDirs( string noun, ELogTags tags, ELogLevel unreadable )ι;
 		//Hands onCertificate each certificate file new or changed since the last scan - every one, on the first - with its DER,
 		//or with none for one that no longer reads or has gone, which must not throw.  A throw on a DER is the file not loading.
 		//True when it handed it any.
@@ -21,6 +23,7 @@ namespace Jde::Crypto{
 	private:
 		string _noun;
 		ELogTags _tags;
+		ELogLevel _unreadable;
 		flat_map<fs::path,fs::file_time_type> _files;//failed files too:  retried only when they change.
 		uint _skipped{};
 	};

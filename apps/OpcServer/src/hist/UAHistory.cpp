@@ -588,11 +588,11 @@ namespace Jde::Opc::Server{
 		}
 	}
 	α UAHistory::DeleteRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_DeleteRawModifiedDetails& details, UA_HistoryUpdateResult& result )ι->void{
-		EditTimer timer{ _edits, "delete", result };
 		if( details.isDeleteModified ){//the modifications are the audit trail.
 			result.statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
 			return;
 		}
+		EditTimer timer{ _edits, "delete", result };
 		let make = [&]( Hist::NodeIndex index )->optional<Hist::EditDetails> {
 			//DateTime's MinValue, 0 on the wire, is a time that isn't given, as a read takes it, and a delete needs both:  the
 			//library would take 0 as 1601.

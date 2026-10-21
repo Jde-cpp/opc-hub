@@ -217,6 +217,21 @@ namespace Jde::Tests{
 		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
 	}
 
+	// opcserver-refactor-review #5:  UpdateCumulative keeps every copy it publishes, so it publishes only one that differs from
+	// the current - and what MinLevel memoizes is no difference, or a copy that had answered a lookup would never match.
+	TEST_F( LogGeneralTests, LogTagsEqualityIgnoresTheMemo ){
+		const jobject settings{{"tags", jobject{{"default","Warning"},{"sql","Trace"}}}};
+		LogTags a{ settings }, b{ settings };
+		ASSERT_EQ( a.MinLevel(ELogTags::SocketClientRead), ELogLevel::Warning );//memoized in a, not in b.
+		EXPECT_TRUE( a==b ) << "a memoized lookup made equal levels unequal";
+		b.SetLevel( ELogTags::Sql, ELogLevel::Error );
+		EXPECT_FALSE( a==b );
+		b.ClearLevel( ELogTags::Sql );
+		EXPECT_TRUE( a==b ) << "cleared back to the settings' level";
+		b.SetDefaultLevel( ELogLevel::Debug );
+		EXPECT_FALSE( a==b );
+	}
+
 	// fwk-max #16 was the UserPK-taking variadic ctor delegating to the overload without one, so every entry built
 	// for a user came out anonymous.  fwk-review2 cites a regression test named exactly this for it; the test was
 	// never written, and nothing else in the suite reads Entry::UserPK back off the variadic ctors.

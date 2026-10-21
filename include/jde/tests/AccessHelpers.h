@@ -1,19 +1,11 @@
 #pragma once
-#include <thread>
 #include <jde/access/Authorize.h>
 #include <jde/app/client/IAppClient.h>
+#include "WaitUntil.h"
 
 //What a suite needs to enforce resources and grant on them through the AppServer, for any app's suite:  the gateway's and the
 //OpcServer's use them.
 namespace Jde{
-	//`pred` polled every `interval` until it holds;  false once `timeout` passes, though it is always asked once.
-	Ξ WaitUntil( function<bool()> pred, Duration timeout=std::chrono::seconds{10}, Duration interval=std::chrono::milliseconds{10} )ι->bool{
-		for( const auto deadline = std::chrono::steady_clock::now()+timeout; !pred(); std::this_thread::sleep_for(interval) ){
-			if( std::chrono::steady_clock::now()>deadline )
-				return false;
-		}
-		return true;
-	}
 	//`schema`'s `slug` resource - the row for `criteria`, or the root - enforced, or soft-deleted again as it ships:  `on` is
 	//the switch, so restore enforces.  Returns once `authorizer` has heard, which it does over its subscription after the
 	//mutation returns.

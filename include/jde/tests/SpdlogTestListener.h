@@ -1,4 +1,4 @@
-
+#pragma once
 #include "jde/fwk/log/logTags.h"
 #include "jde/fwk/str.h"
 #include "jde/fwk/usings.h"

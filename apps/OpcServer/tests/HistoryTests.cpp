@@ -877,7 +877,9 @@ namespace Jde::Opc::Server::Tests{
 		modified.isDeleteModified = true;
 		modified.startTime = time;
 		modified.endTime = UADateTime{ At(10) }.UA();
+		let edits = History().Edits().Count;
 		EXPECT_EQ( HistoryUpdate(&modified, UA_TYPES_DELETERAWMODIFIEDDETAILS).Status, UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED );//the audit trail.
+		EXPECT_EQ( History().Edits().Count, edits ) << "a refused delete was timed as an edit";
 		auto v = Sample( 1, At(0) );
 		UA_UpdateDataDetails remove; UA_UpdateDataDetails_init( &remove );
 		remove.nodeId = node;
