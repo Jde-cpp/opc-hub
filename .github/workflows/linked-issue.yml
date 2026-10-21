@@ -1,0 +1,50 @@
+name: Linked Issue
+
+# Fails a pull request that closes no issue, so the PR ruleset on main can require it (the check is the job's name, "Linked
+# Issue"). An issue counts when the description says `Closes #N` (or Fixes/Resolves) or the PR's Development sidebar links one -
+# GitHub's closingIssuesReferences, which holds keyword links only for a PR into the default branch. Linking from the sidebar
+# fires no pull_request event, so re-run the job after it;  editing the description re-runs it on its own.
+#
+# A PR that has no issue to close - the release's JDE_VERSION bump - carries the `no-issue` label, and adding or removing that
+# label re-runs the check. GitHub-hosted with a read-only token, so a fork's PR is safe to run.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+concurrency:
+  group: linked-issue-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  linked-issue:
+    name: Linked Issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          EXEMPT: ${{ contains( github.event.pull_request.labels.*.name, 'no-issue' ) }}
+        run: |
+          if [ "$EXEMPT" = true ]; then
+            echo "::notice::Labelled no-issue:  no linked issue required."
+            exit 0
+          fi
+          count=$(gh api graphql \
+            -f query='query($owner:String!, $repo:String!, $number:Int!){ repository(owner:$owner, name:$repo){ pullRequest(number:$number){ closingIssuesReferences(first:1){ totalCount } } } }' \
+            -f owner="$OWNER" -f repo="$REPO" -F number="$NUMBER" \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.totalCount')
+          if [ "$count" -gt 0 ]; then
+            echo "Closes $count issue(s)."
+            exit 0
+          fi
+          echo "::error::No linked issue:  put 'Closes #N' in the description, or link one under Development and re-run this job.  A PR with nothing to close takes the no-issue label."
+          exit 1
