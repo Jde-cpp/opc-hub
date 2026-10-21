@@ -18,26 +18,27 @@ class SessionsStub{ service = input<unknown>(); instanceId = input<number>(); }
 
 @Component( {
 	imports: [InstanceTab, InstanceTabs],
-	template: `<instance-tabs [logs]="logs" [instanceId]="instanceId()" noun="gateway" [(selectedIndex)]="index">
+	template: `<instance-tabs [logs]="logs()" [instanceId]="instanceId()" noun="gateway" [(selectedIndex)]="index">
 		<ng-template instanceTab="Connections"><p class="mine">{{ name }}</p></ng-template>
 		<ng-template instanceTab="Templates">templates</ng-template>
 	</instance-tabs>`
 })
 class Host{
-	logs = {} as IGraphQL;
+	logs = signal<IGraphQL|undefined>( {} as IGraphQL );
 	name = "the page's own";
 	instanceId = signal<number|undefined>( 7 );
 	index = signal( 0 );
 }
 
 describe( 'InstanceTabs', ()=>{
-	const create = async ( index:number, instanceId?:number )=>{
+	const create = async ( index:number, instanceId?:number, service=true )=>{
 		TestBed.resetTestingModule();//a test builds two
 		TestBed.configureTestingModule({ providers: [{ provide: AppService, useValue: {} }] });
 		TestBed.overrideComponent( InstanceTabs, {remove: {imports: [LogDetail, LogSettingsPanel, WebSessions]}, add: {imports: [LogsStub, SettingsStub, SessionsStub]}} );
 		const fixture = TestBed.createComponent( Host );
 		fixture.componentInstance.index.set( index );
 		fixture.componentInstance.instanceId.set( instanceId );
+		fixture.componentInstance.logs.set( service ? {} as IGraphQL : undefined );
 		await stable( fixture );
 		return fixture.nativeElement as HTMLElement;
 	};
@@ -47,6 +48,13 @@ describe( 'InstanceTabs', ()=>{
 		const root = await create( 0, 7 );
 		expect( [...root.querySelectorAll('.mdc-tab__text-label')].map( l=>l.textContent!.trim() ) ).toEqual( ["Connections", "Templates", "Logs", "Log Settings", "Web Sessions"] );
 		expect( root.querySelector( '.mat-mdc-tab-body-active .mine' )?.textContent ).toBe( "the page's own" );//rendered in the page's context
+	} );
+
+	//reviews-issue/web-refactor-review.md #10:  `[logs()]` iterated once whatever the value, and `s!` handed LogDetail an undefined
+	//service, whose first read threw into the "Could not load log entries." snackbar
+	it( "renders Logs for the instance's service, and says so where there is none", async ()=>{
+		expect( body(await create( 2, 7 )) ).toBe( "logs" );
+		expect( body(await create( 2, 7, false )) ).toBe( "No service for this gateway — logs are unavailable." );
 	} );
 
 	it( 'hands the registration to Log Settings', async ()=>{

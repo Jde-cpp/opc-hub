@@ -128,6 +128,18 @@ describe( 'ViewSet', ()=>{
 			expect( localStorage.getItem("things/viewIndex") ).toBe( "2" );
 		} );
 
+		//reviews-issue/web-refactor-review.md #3:  the twin of a System view was promoted to a User view of the same name, beside the
+		//System one, and persisted - two `Users` after every reload
+		it( "leaves a System view's twin Adhoc, and persists nothing", async ()=>{
+			const { set, save } = create( [make( undefined ), make( "Users" )], 1 );
+			set.sort( {active: "kind", direction: "asc"} );
+			await set.save( View.copy(set.current()) );
+			expect( names(set) ).toEqual( ["Default:System", "Users:System", "Users:Adhoc"] );
+			expect( set.current().sort[0].active ).toBe( "kind" );
+			expect( save ).not.toHaveBeenCalled();
+			expect( localStorage.getItem("things/viewIndex") ).toBeNull();
+		} );
+
 		it( 'leaves a System view under a System name a System view, and persists nothing', async ()=>{
 			const { set, save } = create( [make( undefined ), make( "Users" )], 1 );
 			await set.save( View.copy(set.current()) );
@@ -164,6 +176,16 @@ describe( 'ViewSet', ()=>{
 			expect( set.index() ).toBe( 1 );
 			expect( localStorage.getItem("things/viewIndex") ).toBe( "1" );//a stale index would restore a different view after a reload
 			expect( persisted() ).toEqual( ["B"] );
+		} );
+
+		//reviews-issue/web-refactor-review.md #9:  the last view taken read views[0] of [], a throw out of remove() that no host's .catch saw
+		it( 'takes the last view without throwing', async ()=>{
+			localStorage.setItem( "things/viewIndex", "1" );
+			const { set, persisted } = create( [make( "A", ViewType.User )] );
+			await set.remove( set.current() );
+			expect( set.views() ).toEqual( [] );
+			expect( persisted() ).toEqual( [] );
+			expect( localStorage.getItem("things/viewIndex") ).toBe( "1" );
 		} );
 
 		it( 'ignores anything but a User view', async ()=>{

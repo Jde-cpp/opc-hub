@@ -86,6 +86,16 @@ export class LogEntries{
 	strings:Map<string,string> = new Map<string,string>();
 }
 export class LogView extends View{
+	//Time is always in the sort:  the table binds sort[0], and LogDataSource orders and dedups by it.  The settings panel's Sort tab can
+	//remove every row, so every LogView - a copy, a Show, a header sort, a Save, a saved view as it loads - is made through these two,
+	//which put time back, last, where it is missing (reviews-issue/web-refactor-review.md #2).
+	static override copy<V extends View>( this:{prototype:V}, view:View ):V{ return LogView.#timed( super.copy(view) as V ); }
+	static override fromJson<V extends View>( this:{prototype:V}, json:ViewSerializedArgs, schema:TableSchema, defaultView?:View ):V{ return LogView.#timed( super.fromJson(json, schema, defaultView) as V ); }
+	static #timed<V extends View>( view:V ):V{
+		if( !view.sort.some( s=>s.active=="time" ) )
+			view.sort = [...view.sort, { active: "time", direction: "desc" }];//the default view's
+		return view;
+	}
 	override query( skip:number, level?:ELogLevel ):Query{
 		const vars:Record<string,any> = {limit: this.limit!*3, skip: skip, orderBy: this.sort};//three pages a read;  a turn onto a page not all loaded reads on (LogDataSource.turnTo)
 		let args = "limit: $limit, skip: $skip, orderBy: $orderBy";

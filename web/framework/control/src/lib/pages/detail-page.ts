@@ -1,7 +1,7 @@
 import { Directive, effect, inject, model, OnInit, signal, WritableSignal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatDialog } from '@angular/material/dialog';
-import { ComponentPageTitle, persistedTabIndex, RouteItem } from 'jde-spa';
+import { ComponentPageTitle, LocalPrefs, RouteItem } from 'jde-spa';
 import { SnackbarService } from '../shared/snackbar/snackbar-service';
 import { DetailResolverData } from '../services/detail-resolver';
 import { IGraphQL } from '../services/graphql';
@@ -16,7 +16,15 @@ import { confirm } from '../shared/confirm/confirm-dialog';
 @Directive()
 export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}> implements OnInit{
 	constructor( tabKey:string ){
-		this.tabIndex = persistedTabIndex( tabKey );
+		this.#tabKey = tabKey;
+		this.tabIndex = signal( this.#prefs.tabIndex(tabKey) );
+		//persistedTabIndex's write-back, but never a new record's:  its only tab is Properties, and storing that 0 removed the tab an
+		//existing record was left on (reviews-issue/web-refactor-review.md #7)
+		effect( ()=>{
+			const index = this.tabIndex();
+			if( this.row && !this.onlyPropertiesTab )
+				this.#prefs.setTabIndex( tabKey, index );
+		} );
 		effect( ()=>{
 			const edited = this.properties();
 			if( !edited )
@@ -36,9 +44,12 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 
 	#load( data:any ):void{
 		this.pageData = data["pageData"];
+		const clamped = this.row && this.onlyPropertiesTab;//the last row was new, and its 0 was never stored
 		this.row = new (this.ctor)( this.pageData.row );
-		if( this.onlyPropertiesTab && this.tabIndex()>0 )
+		if( this.onlyPropertiesTab )
 			this.tabIndex.set( 0 );//review3 L2: every tab past Properties sits behind an @if a new record fails, and mat-tab-group hard-loops on an index it cannot resolve
+		else if( clamped )
+			this.tabIndex.set( this.#prefs.tabIndex(this.#tabKey) );
 		this.pageData.row = null;
 		this.properties.set( this.row.properties );
 		this.sideNav.set( this.pageData.routing );
@@ -116,6 +127,8 @@ export abstract class DetailPage<T extends SlugRow<T> & {properties:Partial<T>}>
 	properties = signal<Partial<T>>( null as any );
 	sideNav = model.required<RouteItem>();
 	readonly tabIndex:WritableSignal<number>;
+	readonly #tabKey:string;
+	#prefs = inject( LocalPrefs );
 	abstract ql:IGraphQL;
 
 	protected route = inject( ActivatedRoute );

@@ -133,7 +133,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.isSettings.set( false );
 	}
 	onViewDelete( view:View ){
-		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not save view.", e) );
+		this.viewSet.remove( view ).catch( e=>this.#snackbar.exception("Could not delete view.", e) );
 		this.isSettings.set( false );
 	}
 	onChangeView( index:number ){

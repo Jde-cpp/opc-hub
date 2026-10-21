@@ -5,7 +5,7 @@ import { HELP_TOPICS, LocalPrefs, ProfileStore, RouteStore } from 'jde-spa';
 import { IGRAPHQL } from '../../../services/graphql';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
-import { DbScalar, FieldFilter, Operator, View } from '../../../model/ql/view';
+import { DbScalar, FieldFilter, Operator, View, ViewType } from '../../../model/ql/view';
 import { Field } from '../../../model/ql/schema/field';
 import { QLList } from './ql-list';
 import { Provider } from '@angular/core';
@@ -130,6 +130,51 @@ describe( 'QLList re-query failures reach the user', ()=>{
 		const { page } = create();
 		await page.onChangeView( 0 );
 		expect( page.isRefreshing() ).toBe( false );
+	} );
+} );
+
+//reviews-issue/web-refactor-review.md #6:  Delete did not await the profile write, said "Could not save view." when it failed, and
+//re-queried whatever it was given - a System or Adhoc view, which remove() never takes, re-read the same rows.
+describe( 'QLList Delete', ()=>{
+	const schema = schemaOf( "User", id(), required("name"), scalar("slug") );
+	const create = ()=>{
+		const { snackbar: {exception} } = configure();
+		const page = TestBed.createComponent( QLList ).componentInstance;
+		const system = View.fromTable( {columns: ["name"], sort: "name"}, schema );
+		const mine = View.copy( system );
+		mine.name = "Mine";
+		mine.type = ViewType.User;
+		const profile = viewSet( [system, mine] );
+		profile.select( 1 );
+		page.resolvedData.set( {routing: new ListRoute({path:'users'}), schema, profile} as unknown as QLListData );
+		page.view.set( mine );
+		page.isSettings.set( true );
+		const load = vi.spyOn( QLListResolver, 'load' ).mockImplementation( async ( _ql:any, data:any )=>({...data, results: {users: []}}) );
+		return { page, profile, system, mine, load, exception };
+	};
+	afterEach( ()=>vi.restoreAllMocks() );
+
+	it( 'takes a saved view, and re-queries under the view left', async ()=>{
+		const { page, profile, mine, load, exception } = create();
+		await page.onViewDelete( mine );
+		expect( profile.views().map( v=>v.name ) ).toEqual( [undefined] );
+		expect( load ).toHaveBeenCalledTimes( 1 );
+		expect( page.isSettings() ).toBe( false );
+		expect( exception ).not.toHaveBeenCalled();
+	} );
+	it( 'leaves the rows alone for a view it does not take', async ()=>{
+		const { page, profile, system, load } = create();
+		profile.select( 0 );
+		await page.onViewDelete( system );
+		expect( profile.views() ).toHaveLength( 2 );
+		expect( load ).not.toHaveBeenCalled();
+		expect( page.isSettings() ).toBe( false );
+	} );
+	it( 'says the delete failed, not a save', async ()=>{
+		const { page, mine, exception } = create();
+		vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockRejectedValue( new Error( 'offline' ) );
+		await page.onViewDelete( mine );
+		expect( exception.mock.calls ).toEqual( [["Could not delete view.", expect.any( Error )]] );
 	} );
 } );
 
@@ -333,10 +378,12 @@ describe( 'QLList paging', ()=>{
 		await page.onPage( {startIndex: 50, pageSize: 25} );
 		await page.onRefresh();
 		expect( load.mock.calls[1][1].skip ).toBe( 50 );
-		await page.onViewSave( page.view() );
+		const mine = View.copy( page.view() );
+		mine.name = "Mine";
+		await page.onViewSave( mine );
 		expect( load.mock.calls[2][1].skip ).toBe( 0 );
 		await page.onPage( {startIndex: 25, pageSize: 25} );
-		await page.onViewDelete( page.view() );
+		await page.onViewDelete( page.profile().current() );//a saved view:  Delete leaves anything else where it is (#6)
 		expect( load.mock.calls[4][1].skip ).toBe( 0 );
 		expect( page.skip() ).toBe( 0 );
 	} );

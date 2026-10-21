@@ -80,6 +80,14 @@ describe( 'QLListSettings reserved names', ()=>{
 		expect( fixture.componentInstance.disableSave() ).toBe( false );
 		expect( hint(fixture) ).toBeUndefined();
 	} );
+	//reviews-issue/web-refactor-review.md #3:  Save on the twin of the System view Users, its name untouched, was live, and made a User view
+	//of the name
+	it( "will not save a system view's twin under its name, and says why", ()=>{
+		const fixture = create( "Users", ViewType.Adhoc );
+		expect( fixture.componentInstance.disableSave() ).toBe( true );
+		expect( hint(fixture) ).toBe( "Users is a built-in view" );
+		expect( rename( fixture, "Mine" ).componentInstance.disableSave() ).toBe( false );
+	} );
 	it( 'still saves a user view under the name it already has', ()=>{
 		const fixture = rename( create("Deleted", ViewType.User), "Deleted" );
 		expect( fixture.componentInstance.reservedName() ).toBe( false );

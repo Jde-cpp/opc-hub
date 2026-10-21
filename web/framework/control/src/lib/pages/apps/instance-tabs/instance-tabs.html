@@ -11,8 +11,13 @@
 	<mat-tab>
 		<ng-template mat-tab-label>Logs</ng-template>
 		<ng-template matTabContent>
-			@for( s of [logs()]; track s ){
-				<log-detail [service]=s!></log-detail>
+			@if( logs(); as service ){
+				@for( s of [service]; track s ){
+					<log-detail [service]=s></log-detail>
+				}
+			}
+			@else{
+				<p>No service for this {{ noun() }} — logs are unavailable.</p>
 			}
 		</ng-template>
 	</mat-tab>

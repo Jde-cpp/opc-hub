@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { config } from 'rxjs';
-import { SnackbarService } from 'jde-framework';
+import { SnackbarService, ViewType } from 'jde-framework';
+import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { NodeId } from '../../../model/node-id';
 import { UaNode, Variable } from '../../../model/node';
@@ -293,5 +294,27 @@ describe( 'NodeChildren refresh', ()=>{
 		page.refreshed.subscribe( nodes=>handed.push(nodes) );
 		await page.onRefresh();
 		expect( handed ).toEqual( [fresh] );
+	} );
+} );
+
+//reviews-issue/web-refactor-review.md #6:  a refused Delete said "Could not save view."
+describe( 'NodeChildren Delete', ()=>{
+	it( 'says the delete failed, not a save', async ()=>{
+		const snackbar = snackbarStub();
+		TestBed.configureTestingModule({ providers: [
+			provideRoute(),
+			{ provide: GATEWAY_SERVICE, useValue: {} },
+			{ provide: SnackbarService, useValue: snackbar },
+			pageTitleStub
+		]});
+		const page = TestBed.createComponent( NodeChildren ).componentInstance;
+		const mine = NodeView.copy( NodeView.default() );
+		mine.name = "Mine";
+		mine.type = ViewType.User;
+		page.viewSet.reset( [NodeView.default(), mine], 1 );
+		vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockRejectedValue( new Error( 'offline' ) );
+		page.onViewDelete( mine );
+		await flush();
+		expect( snackbar.exception.mock.calls ).toEqual( [["Could not delete view.", expect.any( Error )]] );
 	} );
 } );

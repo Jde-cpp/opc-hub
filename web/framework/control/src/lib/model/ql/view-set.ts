@@ -63,7 +63,7 @@ export class ViewSet<V extends View>{
 	//the returned promise is the profile write;  the views have changed when it is returned
 	save( view:View ):Promise<void>{
 		const saved = this.#type.copy( view );
-		if( !(saved.isSystem && this.#views().some(v=>v.isSystem && v.name==saved.name)) )
+		if( !this.#views().some(v=>v.isSystem && v.name==saved.name) )//a System view's twin stays Adhoc, as a Show leaves it:  as User it was a duplicate of the System view's name, persisted (reviews-issue/web-refactor-review.md #3)
 			saved.type = ViewType.User;
 		const views = this.#views().filter( v=>!v.isAdhoc );
 		this.#set( views, ViewSet.#upsert(views, saved) );
@@ -82,7 +82,7 @@ export class ViewSet<V extends View>{
 	#set( views:V[], index:number ){
 		this.#views.set( views );
 		this.#index.set( index );
-		if( !views[index].isAdhoc )
+		if( views[index] && !views[index].isAdhoc )//none left:  remove() took the last, which no host's System views allow today (reviews-issue/web-refactor-review.md #9)
 			this.#prefs.setViewIndex( this.#key, index );
 	}
 	#persist( views:V[] ):Promise<void>{

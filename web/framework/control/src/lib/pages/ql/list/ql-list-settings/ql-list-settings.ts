@@ -46,8 +46,9 @@ export class QLListSettings implements OnInit{
 			|| this.reservedName();
 	}
 	//A system view edited and saved under another system view's name stayed a System view (onViewSave), so it replaced that view
-	//for the session and was never persisted - with Deleted on every list, any list could hit it.
-	reservedName = computed( ()=>this.name()!=this.view().name && this.reservedNames().includes(this.name()) );
+	//for the session and was never persisted - with Deleted on every list, any list could hit it.  A System view's Adhoc twin keeps
+	//its name, and a Save leaves it Adhoc (ViewSet.save), so it is renamed or shown (reviews-issue/web-refactor-review.md #3).
+	reservedName = computed( ()=>(this.name()!=this.view().name || this.view().isAdhoc) && this.reservedNames().includes(this.name()) );
 	//Delete only ever removes a saved user view.  It used to share disableSave(), which left it ENABLED for an adhoc view —
 	//and logs' onViewDelete opens with an assertion on the type, so clicking it there threw (via a `debugger;` that freezes
 	//the page outright whenever DevTools/automation is attached).

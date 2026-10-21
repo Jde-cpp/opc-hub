@@ -4,7 +4,7 @@ import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGraphQL } from '../../../services/graphql';
 import { LogSettings } from '../log-settings';
 import { LogDetail } from './log-detail';
-import { Entry } from '../log-entry';
+import { Entry, LogView } from '../log-entry';
 import { flush, profileStoreStub } from 'jde-spa/testing';
 import { logEntry, snackbarStub } from 'jde-framework/testing';
 import { Guid } from '../../../model/guid';
@@ -201,6 +201,56 @@ describe( 'LogDetail message actions', ()=>{
 		expect( snackbar.warn ).not.toHaveBeenCalled();
 	} );
 
+	//reviews-issue/web-refactor-review.md #5:  Next read one more read's worth and then said there were no more, with dozens left
+	const once = ( count:number, ...lines:number[] )=>Array.from( {length: count}, (_, i)=>logEntry(i, lines.includes( i ) ? {templateId: other} : {}) );
+	const skips = ( ql:{ ql:ReturnType<typeof vi.fn> } )=>ql.ql.mock.calls.map( ([q])=>q.vars.skip );
+	it( 'reads on read after read to the next row of the message', async ()=>{
+		const { fixture, page, ql, snackbar } = await create( once(300, 1, 180) );
+		row( fixture, 1 ).click();
+		await page.navigateNext();
+		expect( skips(ql) ).toEqual( [0, 63, 126] );
+		expect( selected(page) ).toEqual( [180] );
+		expect( snackbar.warn ).not.toHaveBeenCalled();
+	} );
+	it( 'reads to the end of the log before it says there are no more', async ()=>{
+		const { fixture, page, ql, snackbar } = await create( once(100, 1) );
+		row( fixture, 1 ).click();
+		await page.navigateNext();
+		expect( skips(ql) ).toEqual( [0, 63] );
+		expect( snackbar.warn ).toHaveBeenCalledExactlyOnceWith( "No more rows of this message." );
+		expect( selected(page) ).toEqual( [1] );
+	} );
+	it( 'tells the end of a log its last read fills exactly by the empty read after it', async ()=>{
+		const { fixture, page, ql, snackbar } = await create( once(126, 1) );
+		row( fixture, 1 ).click();
+		await page.navigateNext();
+		expect( skips(ql) ).toEqual( [0, 63, 126] );
+		expect( snackbar.warn ).toHaveBeenCalledExactlyOnceWith( "No more rows of this message." );
+	} );
+	it( 'stops on a failed read, which says so itself', async ()=>{
+		const { fixture, page, ql, snackbar } = await create( once(300, 1) );
+		row( fixture, 1 ).click();
+		ql.ql.mockRejectedValueOnce( new Error( 'offline' ) );
+		await page.navigateNext();
+		expect( skips(ql) ).toEqual( [0, 63] );
+		expect( snackbar.exception ).toHaveBeenCalledTimes( 1 );
+		expect( snackbar.warn ).not.toHaveBeenCalled();
+	} );
+	it( 'stops reading on once a refresh has cleared the row', async ()=>{
+		const { fixture, page, ql, snackbar } = await create( once(300, 1) );
+		row( fixture, 1 ).click();
+		let land!:()=>void;
+		const serve = ql.ql.getMockImplementation()!;
+		ql.ql.mockImplementationOnce( ( q:any )=>new Promise( r=>land = ()=>r(serve(q)) ) );
+		const next = page.navigateNext();
+		page.refresh();
+		await tick();
+		land();
+		await next;
+		expect( skips(ql) ).toEqual( [0, 63, 0] );
+		expect( snackbar.warn ).not.toHaveBeenCalled();
+	} );
+
 	it( 'says so when no later row has the message, and reads no further', async ()=>{
 		const { fixture, page, ql, snackbar } = await create( alternating(10) );
 		row( fixture, 9 ).click();
@@ -208,5 +258,69 @@ describe( 'LogDetail message actions', ()=>{
 		expect( snackbar.warn ).toHaveBeenCalledWith( "No more rows of this message." );
 		expect( selected(page) ).toEqual( [9] );
 		expect( ql.ql ).toHaveBeenCalledTimes( 1 );
+	} );
+} );
+
+//reviews-issue/web-refactor-review.md #2:  the Sort tab could remove every row, and the table's [matSortActive]="sort[0].active" - and
+//LogDataSource's ordering, which reads sort[0] too - threw on the empty sort;  saved, it threw on every later open.
+describe( 'LogDetail sort', ()=>{
+	const tick = ()=>flush( 2 );
+	const create = async ( saved:object[]=[] )=>{
+		const ql = { ql: vi.fn( async ()=>({logs: {entries: [logEntry(1), logEntry(2)], strings: []}}) ) };
+		const snackbar = snackbarStub();
+		const profileStore = { ...profileStoreStub(), loadArray: async ( _key:string, revive:( json:any )=>unknown )=>saved.map( revive ) };
+		TestBed.configureTestingModule({ providers: [
+			{ provide: SnackbarService, useValue: snackbar },
+			{ provide: ProfileStore, useValue: profileStore }
+		]});
+		const fixture = TestBed.createComponent( LogDetail );
+		fixture.componentRef.setInput( 'service', <IGraphQL><unknown>ql );
+		fixture.detectChanges();
+		await tick();
+		fixture.detectChanges();
+		await tick();
+		return { fixture, page: fixture.componentInstance, snackbar, profileStore };
+	};
+	const unsorted = ( page:LogDetail )=>{
+		const view = page.viewCopy;
+		view.sort = [];
+		return view;
+	};
+	const time = { active: 'time', direction: 'desc' };
+
+	it( 'puts time back in a view shown with no sort', async ()=>{
+		const { fixture, page, snackbar } = await create();
+		page.onViewShow( unsorted(page) );
+		await tick();
+		expect( ()=>fixture.detectChanges() ).not.toThrow();
+		expect( page.sort ).toEqual( [time] );
+		expect( page.data.allEntries ).toHaveLength( 2 );
+		expect( snackbar.exception ).not.toHaveBeenCalled();
+	} );
+	it( 'saves a view with no sort sorted by time', async ()=>{
+		const { fixture, page, profileStore } = await create();
+		const view = unsorted( page );
+		view.name = 'mine';
+		page.onViewSave( view );
+		await tick();
+		expect( ()=>fixture.detectChanges() ).not.toThrow();
+		expect( profileStore.save.mock.calls.find( ([key])=>key=='logs/views' )![1][0].sort ).toEqual( [time] );
+	} );
+	it( 'repairs a view saved with no sort as it loads', async ()=>{
+		const { fixture, page, snackbar } = await create( [{...LogView.default().toJson( undefined ), name: 'mine', sort: []}] );
+		page.onViewChange( 1 );
+		await tick();
+		expect( ()=>fixture.detectChanges() ).not.toThrow();
+		expect( page.view().name ).toBe( 'mine' );
+		expect( page.sort ).toEqual( [time] );
+		expect( snackbar.exception ).not.toHaveBeenCalled();
+	} );
+	it( 'keeps time after the sort the panel left', async ()=>{
+		const { page } = await create();
+		const view = unsorted( page );
+		view.sort = [{active: 'level', direction: 'asc'}];
+		page.onViewShow( view );
+		await tick();
+		expect( page.sort ).toEqual( [{active: 'level', direction: 'asc'}, time] );
 	} );
 } );

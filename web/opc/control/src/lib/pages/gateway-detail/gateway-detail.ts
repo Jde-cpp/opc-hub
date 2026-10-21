@@ -1,7 +1,7 @@
 import { Component, OnInit, signal, model, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { ComponentPageTitle, persistedTabIndex } from 'jde-spa';
-import { AppService, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
+import { AppService, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData } from 'jde-framework';
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
@@ -23,11 +23,18 @@ export class GatewayDetail implements OnInit{
 			const instanceName = this.pageData.routing.path.split('/').slice(-1)[0];
 			this.#componentPageTitle.title = `${instanceName} - Gateway`;
 			const url = this.#route.parent!.snapshot.url.map( s=>s.path ).join( '/' );//now:  the snapshot moves on with the next navigation
-			const gateway = await this.gatewayService.gateway( instanceName );
-			this.url.set( url );//with the gateway, so a tab's list never pairs one gateway's key with the other's rows
-			this.gateway.set( gateway );
-			this.isLoading.set( false );
-			this.instanceId.set( await this.appService.instancePK(instanceName, "OpcGateway") ?? await this.appService.instancePK(instanceName, "OpcHub") );//a hub registers under its own program name
+			this.error.set( undefined );//the page is reused across gateways:  a failed one's message must not outlive the switch
+			try{
+				const gateway = await this.gatewayService.gateway( instanceName );
+				this.url.set( url );//with the gateway, so a tab's list never pairs one gateway's key with the other's rows
+				this.gateway.set( gateway );
+				this.isLoading.set( false );
+				this.instanceId.set( await this.appService.instancePK(instanceName, "OpcGateway") ?? await this.appService.instancePK(instanceName, "OpcHub") );//a hub registers under its own program name
+			}
+			catch( e ){//as OpcServerDetail:  unhandled, a rejection left the page blank behind isLoading (reviews-issue/web-refactor-review.md #4)
+				this.error.set( errorMessage(e, "Could not load the gateway.") );
+				this.isLoading.set( false );
+			}
 		});
 	}
 
@@ -43,5 +50,6 @@ export class GatewayDetail implements OnInit{
 	gatewayService = inject(GatewayService);
 	appService = inject(AppService);
 	instanceId = signal<number|undefined>( undefined );
+	error = signal<string|undefined>( undefined );
 	isLoading = signal<boolean>( true );
 }

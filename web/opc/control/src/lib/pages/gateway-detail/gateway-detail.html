@@ -1,17 +1,22 @@
 @if( !isLoading() ){
-	<instance-tabs [logs]=gateway() [instanceId]=instanceId() noun="gateway" [(selectedIndex)]="tabIndex">
-		<ng-template instanceTab="Connections">
-			<ql-list [(sideNav)]=sideNav [ql]=gateway()></ql-list>
-		</ng-template>
-		<ng-template instanceTab="Templates"><!--the historian's templates and groups (#337):  lists the tab resolves itself, each keyed on the gateway as Logs is-->
-			@for( g of [gateway()]; track g ){
-				<gateway-hist-list [gateway]=g! kind="templates" [url]=url()></gateway-hist-list>
-			}
-		</ng-template>
-		<ng-template instanceTab="Groups">
-			@for( g of [gateway()]; track g ){
-				<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
-			}
-		</ng-template>
-	</instance-tabs>
+	@if( error() ){
+		<p>{{error()}}</p>
+	}
+	@else{
+		<instance-tabs [logs]=gateway() [instanceId]=instanceId() noun="gateway" [(selectedIndex)]="tabIndex">
+			<ng-template instanceTab="Connections">
+				<ql-list [(sideNav)]=sideNav [ql]=gateway()></ql-list>
+			</ng-template>
+			<ng-template instanceTab="Templates"><!--the historian's templates and groups (#337):  lists the tab resolves itself, each keyed on the gateway as Logs is-->
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="templates" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
+			<ng-template instanceTab="Groups">
+				@for( g of [gateway()]; track g ){
+					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
+				}
+			</ng-template>
+		</instance-tabs>
+	}
 }

@@ -144,14 +144,23 @@ export class LogDetail implements OnInit, OnDestroy{
 		if( this.data.filterData({messageIds: this.profile.hiddenMessages, level: this.level}) && this.data.length()===undefined )
 			this.load( this.data.allEntries.length );
 	}
-	//the next row of the selected one's message, read on for while the log has more
+	//The next row of the selected one's message, read on for while the log has more.  It read one more read's worth and then said
+	//there were no more (reviews-issue/web-refactor-review.md #5).  A read that comes back empty is what tells the end of a log
+	//that fills its last read exactly, so the loop asks length() again rather than stopping on it.
 	async navigateNext(){
-		if( this.data.selectNext() )
-			return;
-		if( this.data.length()===undefined )
-			await this.load( this.data.allEntries.length );
-		if( !this.data.selectNext() )
-			this.#snackBar.warn( "No more rows of this message." );
+		const entry = this.selectedEntry;
+		while( entry && !this.data.selectNext() ){
+			if( this.data.length()!==undefined ){
+				this.#snackBar.warn( "No more rows of this message." );
+				return;
+			}
+			const loaded = this.data.allEntries.length;
+			await this.load( loaded );
+			if( this.selectedEntry!==entry )//a refresh, a sort or a click has moved on:  reading on would read to the end of the log
+				return;
+			if( this.data.allEntries.length==loaded && this.data.length()===undefined )//a failed read, which load() has reported
+				return;
+		}
 	}
 	hiddenTooltip():string{
 		const count = this.profile.hiddenMessages.length;

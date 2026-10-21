@@ -43,6 +43,33 @@ describe( 'DetailPage', ()=>{
 		expect( create({id: 3, name: 'w', slug: 'w'}, 3).page.tabIndex() ).toBe( 3 );
 	} );
 
+	//reviews-issue/web-refactor-review.md #7:  the clamp was stored, and a stored 0 is no entry, so Add then Cancel lost the tab every
+	//existing record opened on
+	it( 'stores nothing for a new record, and opens the next existing one on the stored tab', ()=>{
+		TestBed.resetTestingModule();
+		localStorage.setItem( 'testDetail/tabIndex', '3' );
+		const { data } = configureDetailPage( {id: 3, name: 'w', slug: 'w'} );
+		const fixture = TestBed.createComponent( TestPage );
+		const page = fixture.componentInstance;
+		const open = ( row:object )=>{
+			data.next( {pageData: {row, routing: {}, schema: {}}} );
+			fixture.detectChanges();
+		};
+		fixture.detectChanges();
+		expect( page.tabIndex() ).toBe( 3 );
+		open( {} );
+		expect( page.tabIndex() ).toBe( 0 );
+		expect( localStorage.getItem('testDetail/tabIndex') ).toBe( '3' );
+		page.tabIndex.set( 0 );//its only tab, clicked
+		fixture.detectChanges();
+		expect( localStorage.getItem('testDetail/tabIndex') ).toBe( '3' );
+		open( {id: 4, name: 'x', slug: 'x'} );
+		expect( page.tabIndex() ).toBe( 3 );
+		page.tabIndex.set( 1 );
+		fixture.detectChanges();
+		expect( localStorage.getItem('testDetail/tabIndex') ).toBe( '1' );
+	} );
+
 	it( 'persists the tab index as it changes', ()=>{
 		const { fixture, page } = create( {id: 3, name: 'w', slug: 'w'} );
 		page.tabIndex.set( 2 );

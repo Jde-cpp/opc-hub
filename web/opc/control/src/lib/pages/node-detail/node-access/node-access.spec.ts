@@ -4,7 +4,7 @@ import { Rights } from 'jde-access';
 import { NodeAccess } from './node-access';
 import { RolePermission } from './node-rights/role-permission';
 import { Variable } from '../../../model/node';
-import { stable } from 'jde-spa/testing';
+import { flush, stable } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
 
 const row = ( allowed:number, denied:number, permissionId=3 ):RolePermission=>
@@ -92,5 +92,62 @@ describe( 'NodeAccess load and save', ()=>{
 		fixture.componentRef.setInput( 'node', node(6021) );
 		await stable( fixture, 1 );
 		expect( asked()[2].criteria ).toBe( 'ns=4;i=6021' );
+	} );
+	//web-refactor-review.md #1:  node A's read, answering after B's, put A's rows - A's criteria in each - under B, and a refused read
+	//left A's rows on screen as B's, with Save live over them
+	const open = ( queryArray:ReturnType<typeof vi.fn> )=>{
+		const snackbar = snackbarStub();
+		TestBed.configureTestingModule({ providers: [
+			{ provide: AppService, useValue: { queryArray, mutate: vi.fn() } },
+			{ provide: SnackbarService, useValue: snackbar }
+		]});
+		const fixture = TestBed.createComponent( NodeAccess );
+		fixture.componentRef.setInput( 'accessResource', 'nodes' );
+		return { fixture, page: fixture.componentInstance, snackbar };
+	};
+	it( 'lands only the read of the node it holds now', async ()=>{
+		let late!:( rows:any[] )=>void;
+		const queryArray = vi.fn()
+			.mockImplementationOnce( ()=>new Promise<any[]>( r=>late = r ) )
+			.mockResolvedValue( [{id: 5, name: 'ops'}] );
+		const { fixture, page } = open( queryArray );
+		fixture.componentRef.setInput( 'node', node(6020) );
+		await stable( fixture, 1 );
+		fixture.componentRef.setInput( 'node', node(6021) );
+		await stable( fixture, 1 );
+		expect( page.grants.roles().map( r=>r.criteria ) ).toEqual( ['ns=4;i=6021'] );
+		late( [{id: 5, name: 'ops'}] );
+		await flush( 2 );
+		expect( page.grants.roles().map( r=>r.criteria ) ).toEqual( ['ns=4;i=6021'] );
+		expect( page.isLoading() ).toBe( false );
+	} );
+	it( "clears the last node's rows while the next is read, and leaves none when that read fails", async ()=>{
+		const queryArray = vi.fn().mockResolvedValueOnce( [{id: 5, name: 'ops'}] );
+		const { fixture, page, snackbar } = open( queryArray );
+		fixture.componentRef.setInput( 'node', node(6020) );
+		await stable( fixture, 1 );
+		page.onToggle( {role: page.grants.roles()[0], rights: Rights.Read} );
+		expect( page.grants.mutations() ).toHaveLength( 1 );
+		queryArray.mockRejectedValueOnce( new Error( 'Forbidden' ) );
+		fixture.componentRef.setInput( 'node', node(6021) );
+		fixture.detectChanges();
+		expect( page.grants.roles() ).toEqual( [] );
+		expect( page.grants.mutations() ).toEqual( [] );
+		expect( page.isLoading() ).toBe( true );
+		await flush( 2 );
+		expect( snackbar.exception ).toHaveBeenCalledTimes( 1 );
+		expect( page.grants.roles() ).toEqual( [] );
+		expect( page.isLoading() ).toBe( false );
+	} );
+	it( 'clears the rows when the read after a save fails', async ()=>{
+		const queryArray = vi.fn().mockResolvedValueOnce( [{id: 5, name: 'ops'}] ).mockRejectedValueOnce( new Error( 'offline' ) );
+		const { fixture, page, snackbar } = open( queryArray );
+		fixture.componentRef.setInput( 'node', node(6020) );
+		await stable( fixture, 1 );
+		page.onToggle( {role: page.grants.roles()[0], rights: Rights.Read} );
+		await page.save();
+		expect( snackbar.exception ).toHaveBeenCalledWith( "Could not load node access.", expect.any( Error ) );
+		expect( page.grants.roles() ).toEqual( [] );
+		expect( page.grants.mutations() ).toEqual( [] );
 	} );
 } );

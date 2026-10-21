@@ -210,9 +210,18 @@ export class QLList implements OnInit{
 				this.isRefreshing.set( false );
 		}
 	}
+	//As LogDetail:  awaited, said as a delete, and a re-query only where the view on screen went with it - remove() takes nothing but
+	//a User view (reviews-issue/web-refactor-review.md #6)
 	async onViewDelete( view:View ){
-		this.profile().remove( view ).catch( e=>this.#snackbar.exception("Could not save view.", e) );
-		await this.#refresh();
+		const current = this.profile().current();
+		try{
+			await this.profile().remove( view );
+		}
+		catch( e ){
+			this.#snackbar.exception( "Could not delete view.", e );
+		}
+		if( this.profile().current()!==current )
+			await this.#refresh();
 		this.isSettings.set( false );
 	}
 
