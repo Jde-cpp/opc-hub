@@ -54,11 +54,10 @@ namespace Jde::Opc::Server{
 		//open62541's callbacks, which a TimestampsToReturn of Neither never reaches:  the service answers it with
 		//Bad_TimestampsToReturnInvalid and no results, as Part 4 §5.11.3 says.
 		α Collect( UA_Server& ua, const UA_NodeId& node, const UA_DataValue& value )ι->void;
-		α ReadRaw( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
-			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void;
-		//The modified values with their ModificationInfo (spec *Reads*), over the range a raw read takes.
-		α ReadModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
-			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryModifiedData* const* data )ι->void;
+		//The raw values, or with UA_HistoryModifiedData the modified values with their ModificationInfo (spec *Reads*), over
+		//the range a raw read takes.
+		Ŧ ReadRawModified( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadRawModifiedDetails& details, UA_TimestampsToReturn timestamps, bool release,
+			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, T* const* data )ι->void;
 		//Part 11's ReadAtTime (spec *OpcServer*):  each node's value at each requested time, in the request's order.
 		α ReadAtTime( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadAtTimeDetails& details, UA_TimestampsToReturn timestamps, bool release,
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void;
@@ -84,6 +83,7 @@ namespace Jde::Opc::Server{
 			std::atomic<uint> _count{};
 			std::atomic<steady_clock::rep> _total{}, _longest{};
 		};
+		struct EditTimer;//an edit's time under the service lock, into _edits and the log, however it returns.
 		struct NodeHash final{
 			using is_transparent = void;
 			α operator()( const UA_NodeId& node )Ι->size_t{ return UA_NodeId_hash( &node ); }

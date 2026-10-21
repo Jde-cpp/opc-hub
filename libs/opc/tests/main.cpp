@@ -23,18 +23,4 @@ namespace Jde{
 	}
 }
 
-α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int exitCode{ EXIT_FAILURE };
-	try{
-		startup( argc, argv );
-		ApplyTestsFilter();
-		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( runtime_error& e ){
-		exitCode = StartupFailed( e );//never the exception's code:  main's status keeps only its low 8 bits.
-	}
-	Process::Shutdown( exitCode );
-	return exitCode;
-}
+α main( int argc, char **argv )->int{ return Jde::Tests::Main( argc, argv, Jde::startup, false ); }

@@ -7,7 +7,7 @@
 // space - slug, description, ssl), /opc (tokenTypes, the opt-in users list, userTokenPolicyUri),
 // /access/trustedCertDirs (the UA trust list - see the note at that key), /http (the 1970 listener, whose certificate
 // is the hub login), /web/client/ssl/caFile (that login's TLS anchor, what the Hub overlay swaps), /workers and
-// /logging.  /credentials is read at startup but is not the login identity (Opc.Server.Install.jsonnet says why).
+// /logging.
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 function( sync=false )
@@ -59,10 +59,6 @@ function( sync=false )
 				externalLogger: "None"
 			}
 		}
-	},
-	credentials:{
-		name: "OpcServer.Test."+args.buildTarget,
-		slug:: "OpcServer"
 	},
 	web:{
 		client:{ ssl:{ caFile: args.certsDir("AppServer")+"/AppServer.pem" } }//the AppServer is its own root - without an anchor the client rejects localhost:1967's self-signed cert.  The stem is App.Server.jsonnet's visible commonName; if that or its `path::` un-hides, this anchor must follow.

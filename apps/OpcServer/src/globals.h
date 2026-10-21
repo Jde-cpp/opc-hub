@@ -6,6 +6,8 @@ namespace Jde::Opc::Server {
 	struct UAServer; struct PubSubReader;
 
 	α Initialize( sp<DB::AppSchema> schema )ε->void;
+	α ResourceSuffix()ι->string;//`/opcServer/resource`, "" when unset:  the suffix of the access schema this server's nodes are resources of.
+	α InstanceSchema()ι->string;//that schema, Access::InstanceSchemaName's:  `opc.<suffix>`, or `opc` with none.
 	α AppClient()ι->sp<App::Client::IAppClient>;
 	α GetSchema()ι->DB::AppSchema&;
 	α GetSchemaPtr()ι->sp<DB::AppSchema>;

@@ -18,7 +18,7 @@
 #define let const auto
 namespace Jde::Opc::Hub{
 	constexpr ELogTags _tags{ ELogTags::App };
-	α Startup( jobject httpSettings, jobject gatewayCredentials, function<void()> afterWebServer )ε->void{
+	α Startup( jobject httpSettings, function<void()> afterWebServer )ε->void{
 		//1. The in-process client replaces the gateway's socket client before anything captures AppClient(), and shares the
 		//AppServer's Authorize: Gateway::Configure's Acl("gateway") returns it, so GatewayQL/HubQL, Table::Authorize and the listener's
 		//UserName all consult the one snapshot the AppServer maintains.
@@ -43,7 +43,7 @@ namespace Jde::Opc::Hub{
 		hub->SetAppPKs( appServer->InstancePK(), appServer->ConnectionPK() );
 
 		//4. The gateway role's schema, introspection, ping/ttl and certificate - its QL is the HubQL, its listener the hub's.
-		Opc::Gateway::Configure( httpSettings, move(gatewayCredentials), App::Server::QLPtr() );
+		Opc::Gateway::Configure( httpSettings, App::Server::QLPtr() );
 
 		//5. The one listener.  Its shutdown closes the app sockets; the gateway's registry needs its own close, as its listener's did.
 		auto handler = ms<Hub::RequestHandler>( move(httpSettings) );

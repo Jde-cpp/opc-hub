@@ -161,7 +161,7 @@ namespace Jde::Opc::Gateway{
 		Ω SetConnectError( const ServerCnnctnNK& slug, string message )ι->void;
 		Ω ClearConnectError( const ServerCnnctnNK& slug )ι->void;
 		Ω ServiceNotificationCallback( UA_Client* ua, UA_ApplicationNotificationType type, const UA_KeyValueMap payload )ι->void;
-		α Configuration()ε->UA_ClientConfig*;
+		α Configuration()ε->void;
 		α Create()ε->UA_Client*;
 		α Connect()ε->void;
 		//What GetEndpoints on `url` answers, for the connect-failure diagnostics:  the server's ApplicationUri (empty when the

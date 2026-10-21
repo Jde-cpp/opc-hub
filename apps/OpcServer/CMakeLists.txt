@@ -27,7 +27,6 @@ if( NOT jde_Superbuild )
 	endif()
 endif()
 find_package( open62541 REQUIRED )
-#add_definitions( -DUA_ENABLE_ENCRYPTION_OPENSSL )
 
 findZlibAndJsonnet()
 
@@ -48,7 +47,7 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 if( NOT WIN32 )
 	target_link_libraries( ${targetName} OpenSSL::SSL )
 endif()
-target_link_libraries( ${targetName} Jde Jde.DB Jde.QL Jde.Access Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.ServerLib )
+target_link_libraries( ${targetName} Jde.Opc.ServerLib ) #which carries the app, web, opc and historian libs, and the nodeset loader.
 linkAppRuntime( ${targetName} LIBXML2 ) #no NOMINMAX: the PCH reused below is Jde.App.Server's, built without it.
 
 #Single TU (src/main.cpp), but the PUBLIC pc.h of Jde.Web.Client et al. propagates a ~116MB PCH into

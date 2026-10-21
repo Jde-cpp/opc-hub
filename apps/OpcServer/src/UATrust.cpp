@@ -1,17 +1,15 @@
 #include "UATrust.h"
 #include <mutex>
-#include <jde/fwk/crypto/OpenSsl.h>
-#include <jde/fwk/settings.h>
+#include <jde/fwk/crypto/TrustDirs.h>
 #include <jde/opc/UAException.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::OpcCrypto;
 
-	static std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; kept for parity with access's _anchorMutex and against future threading changes.
-	struct Entry{ fs::file_time_type MTime; vector<byte> Der; };//empty Der = unreadable; retried only on mtime change (mirrors _anchorFiles).
-	static flat_map<fs::path, Entry> _files;
-	static flat_set<fs::path> _missingDirs;//warned about once - a failed verify rescans, and a dir that is never created (a product not installed) would warn on each (reviews/install-issues.md, "Noise in a production log").
+	static std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; serializes the scan and _ders against future threading changes.
+	static Crypto::TrustDirs _dirs{ "trusted client certificate", _tags, ELogLevel::Critical };
+	static flat_map<fs::path,vector<byte>> _ders;//the certificates that read, by file.
 	static std::array<UA_CertificateGroup*,2> _groups{};//secureChannelPKI, sessionPKI in the server-owned config; a change updates BOTH so the shared mtime cache stays honest.
 	static std::array<UA_StatusCode(*)( UA_CertificateGroup*, const UA_ByteString* ),2> _originals{};//per-group - no assumption both are memorystore.
 	//A failed verify is what an unauthenticated OPN with a junk senderCertificate produces - before any body decryption -
@@ -26,69 +24,24 @@ namespace Jde::Opc::Server{
 
 	α UATrust::LoadTrustList( UA_TrustListDataType& list )ι->bool{
 		std::lock_guard _{ _mutex };
-		bool changed{}, scanOk{ true };
-		uint skipped{};//files that carried no certificate extension - said out loud below when the scan anchored nothing (install-issues #33).
-		flat_set<fs::path> seen;
-		for( const string& sdir : Settings::FindStringArray("/access/trustedCertDirs") ){
-			try{
-				const fs::path dir{ sdir };
-				if( !fs::exists(dir) || !fs::is_directory(dir) ){//files under a vanished dir legitimately drop out of trust below.
-					let level = _missingDirs.emplace( dir ).second ? ELogLevel::Warning : ELogLevel::Debug;//not inline in LOG - the macro evaluates its level twice.
-					LOG( level, _tags, "Trusted certificate directory does not exist: '{}' - no client certificate is trusted from it until it does (rescanned on a failed verify).", dir.string() );
-					continue;
-				}
-				_missingDirs.erase( dir );
-				for( let& entry : fs::directory_iterator(dir) ){
-					if( !Crypto::IsCertificateFile(entry.path()) ){//install-issues #33:  a UA client publishes DER, and skipping it in silence made a copied-in certificate do nothing.
-						++skipped;
-						let level = Crypto::FirstSkip( entry.path() ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet - see FirstSkip (m2-closing #11).  Not inline in LOG - the macro evaluates its level twice.
-						LOG( level, _tags, "Passed over, not a certificate by its extension: '{}' - no client is trusted from it.  {} are read.", entry.path().string(), Crypto::CertificateExtensions );
-						continue;
-					}
-					seen.emplace( entry.path() );
-					let mtime = entry.last_write_time();
-					auto it = _files.find( entry.path() );
-					if( it!=_files.end() && it->second.MTime==mtime )
-						continue;
-					try{
-						auto der = Crypto::ReadCertificate( entry.path() );
-						INFO( "{} certificate:  {}", it==_files.end() ? "Added" : "Updated", entry.path().string() );
-						_files[entry.path()] = { mtime, move(der) };
-					}
-					catch( Exception& e ){
-						e.PrependWhat( Ƒ("Could not load trusted certificate '{}'", entry.path().string()) );
-						_files[entry.path()] = { mtime, {} };
-					}
-					changed = true;
-				}
+		let changed = _dirs.Scan( "/access/trustedCertDirs", []( const fs::path& path, vector<byte>&& der ){
+			if( der.size() ){
+				INFO( "{} certificate:  {}", _ders.contains(path) ? "Updated" : "Added", path.string() );
+				_ders[path] = move( der );
 			}
-			catch( const fs::filesystem_error& e ){
-				CRITICAL( "Could not scan trusted certificate directory '{}': {}", sdir, e.what() );
-				scanOk = false;//don't treat unlisted-because-unreadable as removed.
-			}
-		}
-		if( scanOk ){
-			erase_if( _files, [&]( const auto& kv ){
-				let vanished = !seen.contains( kv.first );
-				if( vanished ){
-					INFO( "Removed certificate:  {}", kv.first.string() );
-					changed = true;
-				}
-				return vanished;
-			});
-		}
+			else if( _ders.erase(path) )
+				INFO( "Removed certificate:  {}", path.string() );
+		});
 		vector<UA_ByteString> certs;//shallow views into the cache, only used to feed UA_Array_copy.
-		for( let& [_2,entry] : _files ){
-			if( entry.Der.size() )
-				certs.emplace_back( UA_ByteString{ entry.Der.size(), (UA_Byte*)entry.Der.data() } );
-		}
+		for( let& [_2,der] : _ders )
+			certs.emplace_back( UA_ByteString{ der.size(), (UA_Byte*)der.data() } );
 		//install-issues #33:  an empty trust list and a trust list of files this build would not read look identical from the
 		//outside - the client is refused either way, and the operator has just copied its certificate in.  Warned once per
 		//rescan that anchored nothing, not per file:  a failed verify rescans, so a per-file line would repeat under a flood.
 		//It is the *whole* list, though, and an installed server's is never empty (the hub's own certificate is in it) - the
 		//file beside that one is named by the scan's own once-only Warning, above.
-		if( certs.empty() && skipped )
-			WARN( "No trusted client certificates under /access/trustedCertDirs - {} file{} passed over for {} extension.  {} are read.", skipped, skipped==1 ? " was" : "s were", skipped==1 ? "its" : "their", Crypto::CertificateExtensions );
+		if( certs.empty() && _dirs.Skipped() )
+			WARN( "No trusted client certificates under /access/trustedCertDirs:  {}.", _dirs.SkippedNote() );
 		list.specifiedLists |= UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;//always, even empty - UA_TrustListDataType_set only replaces sections named here, so a shrink-to-empty must carry the mask.
 		if( certs.size() ){
 			if( UA_Array_copy(certs.data(), certs.size(), (void**)&list.trustedCertificates, &UA_TYPES[UA_TYPES_BYTESTRING]) ){

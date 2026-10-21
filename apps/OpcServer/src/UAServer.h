@@ -1,6 +1,5 @@
 #pragma once
 #include <open62541/server.h>
-#include <atomic>
 #include "UAConfig.h"
 #include "hist/UAHistory.h"
 #include "jde/fwk/process/process.h"
@@ -20,14 +19,12 @@ namespace Jde::Opc::Server {
 		α Namespaces()ι->flat_map<uint,string>;
 		α Ptr()ι->UA_Server*{ return _ua; }
 		α History()ι->UAHistory&{ return _history; }
-		string ServerName;
 	private:
 		α PublishDataTypes()ι->void;
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.
 		UAConfig _config{ &_history };
 		UA_Server* _ua{};
 		optional<std::jthread> _thread;
-		std::atomic<UA_Boolean> _running{};
 		vector<UA_DataTypeArray> _customTypes;
 	};
 }

@@ -11,6 +11,9 @@ namespace Jde::Web::Server{
 		_settings{settings}
 	{}
 
+	α IRequestHandler::WebsocketSession( sp<IRestStream>&&, beast::flat_buffer&&, TRequestType, tcp::endpoint, uint32 )ι->sp<IWebsocketSession>{
+		return {};
+	}
 	α IRequestHandler::BlockTillStarted()ε->void{
 		while( _started.load()==EStartState::None )
 			_started.wait( EStartState::None );

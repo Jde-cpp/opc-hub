@@ -9,6 +9,7 @@
 #include <jde/app/proto/App.FromClient.pb.h>
 #include <jde/app/proto/App.FromServer.pb.h>
 #include <jde/ql/QLAwait.h>
+#include <jde/tests/WaitUntil.h>
 #include "../src/appStartup.h"
 #include "../src/ql/AppServerQL.h"
 
@@ -120,15 +121,6 @@ namespace Jde::App::Server::Tests{
 	}
 	//under a fresh request id, returned.
 	Ξ Send( RawClientSession& session, function<void(FromClientMessage&)> fill )->RequestId{ return Send( session, session.NextRequestId(), move(fill) ); }
-	//polls pred every 50ms until it holds or timeout passes;  whether it held.
-	Ξ WaitUntil( function<bool()> pred, std::chrono::milliseconds timeout=std::chrono::seconds{5} )->bool{
-		for( const auto expiration = steady_clock::now()+timeout; !pred(); std::this_thread::sleep_for(std::chrono::milliseconds{50}) ){
-			if( steady_clock::now()>expiration )
-				return false;
-		}
-		return true;
-	}
-
 	Ξ Connect()ε->sp<RawClientSession>{
 		auto session = ms<RawClientSession>( Executor() );
 		BlockVoidAwait( session->RunSession( string{Host}, Port() ) );

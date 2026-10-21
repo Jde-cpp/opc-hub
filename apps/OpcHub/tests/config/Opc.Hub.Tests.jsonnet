@@ -76,10 +76,6 @@ local logsDir = args.logsDir;
 		address: "127.0.0.1", //as /http/address: the UA endpoint bound to loopback (UAConfig.cpp applyAddress), reached by HubRoutingTests.LoginDefaultConnection.
 		ssl: instance.http.opcServer.ssl
 	},
-	credentials:{
-		name: "HubTests",
-		opcServer:{ name: "OpcHubTests.OpcServer" }
-	},
 	logging:{
 		breakLevel: "Critical",
 		spd:{

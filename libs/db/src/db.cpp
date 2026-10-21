@@ -102,6 +102,17 @@ namespace Jde{
 	α DB::SeedFile( const AppSchema& schema, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool{
 		return SchemaDdl::SeedFile( schema, move(name), text, ql, skipUnchanged );
 	}
+	α DB::SyncOrRecreate( const vector<sp<AppSchema>>& schemas, sp<QL::IQL> ql )ε->bool{
+		let recreate = Settings::FindBool( "/testing/recreateDB" ).value_or( false );
+		let sync = recreate || Settings::FindBool( "/dbServers/sync" ).value_or( false ) || std::ranges::any_of( schemas, []( let& schema ){ return schema->DS()->RequiresSync(); } );//decided once:  RequiresSync answers differently once the tables exist.
+		for( let& schema : schemas ){
+			if( recreate )
+				NonProd::Recreate( *schema, ql );
+			else if( sync )
+				SyncSchema( *schema, ql );
+		}
+		return sync;
+	}
 }
 
 #ifndef PROD

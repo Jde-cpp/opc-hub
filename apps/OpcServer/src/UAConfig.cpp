@@ -1,4 +1,5 @@
 #include "UAConfig.h"
+#include "globals.h"
 #include <open62541/config.h>
 #include <open62541/server_config_default.h>
 #include <open62541/plugin/accesscontrol_default.h>
@@ -33,9 +34,9 @@ namespace Jde::Opc::Server{
 			UA_ServerConfig_clear( this );
 			throw;//rethrow original: `throw move(e)` slices to std::exception, losing the derived type and Jde::Exception state.
 		}
-		auto accessResource = Settings::FindString( "/opcServer/resource" ).value_or( "default" );
+		let resource = ResourceSuffix();
 		UA_LocalizedText_clear( &applicationDescription.applicationName );// setDefaultConfig/setBasics already allocated applicationName; clear before overwriting or it leaks.
-		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", Ƒ("Jde-Cpp OpcServer [{}]", accessResource).c_str() );
+		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", (resource.empty() ? string{"Jde-Cpp OpcServer"} : Ƒ("Jde-Cpp OpcServer [{}]", resource)).c_str() );
 		//The history backend, only with a historian:  open62541 answers every HistoryRead Bad_NotSupported while the
 		//database's context is null, which is the answer of a server with no hist block, or whose hist.path another
 		//process holds.  open62541 publishes HistoryServerCapabilities from these flags, each set only for what is
@@ -79,68 +80,61 @@ namespace Jde::Opc::Server{
 	}
 
 	α UAConfig::SetConfig( PortType port, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
-    UAε( UA_ServerConfig_setBasics_withPort(this, port) );
+		UAε( UA_ServerConfig_setBasics_withPort(this, port) );
 		applyAddress( *this, port );
 
-    UA_TrustListDataType list;
-    UA_TrustListDataType_init( &list );
+		UA_TrustListDataType list;
+		UA_TrustListDataType_init( &list );
 		UATrust::LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::VerifyCertificate) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
 
-    /* Set up the parameters */
-    UA_KeyValuePair params[2];
-    size_t paramsSize = 2;
+		//The certificate groups' parameters.
+		UA_KeyValuePair params[2];
+		params[0].key = UA_QualifiedName{ 0, "max-trust-listsize"_uv };
+		UA_Variant_setScalar( &params[0].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );
+		params[1].key = UA_QualifiedName{ 0, "max-rejected-listsize"_uv };
+		UA_Variant_setScalar( &params[1].value, &maxRejectedListSize, &UA_TYPES[UA_TYPES_UINT32] );
+		UA_KeyValueMap paramsMap;
+		paramsMap.map = params;
+		paramsMap.mapSize = 2;
 
-    params[0].key = UA_QualifiedName{ 0, "max-trust-listsize"_uv };
-    UA_Variant_setScalar( &params[0].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );
-    params[1].key = UA_QualifiedName{ 0, "max-rejected-listsize"_uv };
-    UA_Variant_setScalar( &params[1].value, &maxRejectedListSize, &UA_TYPES[UA_TYPES_UINT32] );
-
-    UA_KeyValueMap paramsMap;
-    paramsMap.map = params;
-    paramsMap.mapSize = paramsSize;
-
-    if( secureChannelPKI.clear )
-        secureChannelPKI.clear( &secureChannelPKI );
-    UA_NodeId defaultApplicationGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP );
+		if( secureChannelPKI.clear )
+			secureChannelPKI.clear( &secureChannelPKI );
+		UA_NodeId defaultApplicationGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP );
 		try{
-    	UAε( UA_CertificateGroup_Memorystore(&secureChannelPKI, &defaultApplicationGroup, &list, logging, &paramsMap) );
-		  if( sessionPKI.clear )
-        sessionPKI.clear( &sessionPKI );
-    	UA_NodeId defaultUserTokenGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP );
-    	UAε( UA_CertificateGroup_Memorystore(&sessionPKI, &defaultUserTokenGroup, &list, logging, &paramsMap) );
+			UAε( UA_CertificateGroup_Memorystore(&secureChannelPKI, &defaultApplicationGroup, &list, logging, &paramsMap) );
+			if( sessionPKI.clear )
+				sessionPKI.clear( &sessionPKI );
+			UA_NodeId defaultUserTokenGroup = UA_NODEID_NUMERIC( 0, UA_NS0ID_SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP );
+			UAε( UA_CertificateGroup_Memorystore(&sessionPKI, &defaultUserTokenGroup, &list, logging, &paramsMap) );
 		}
 		catch( std::exception& ){
 			UA_TrustListDataType_clear( &list );
 			throw;//rethrow original: `throw move(e)` slices to std::exception, losing the derived type and Jde::Exception state.
 		}
-    UA_TrustListDataType_clear( &list );
+		UA_TrustListDataType_clear( &list );
 		AddSecurityPolicies( move(certificate), move(privateKey) );
 
 		UAAccess::Init( *this );
 
-    UAε( UA_ServerConfig_addAllEndpoints(this) );
+		UAε( UA_ServerConfig_addAllEndpoints(this) );
 	}
 
 	α UAConfig::AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
-    UA_ByteString localCertificate = *certificate;
-    UA_ByteString localPrivateKey  = *privateKey;
-
-    // Load the private key and convert to the DER format. Use an empty password on the first try -- maybe the key does not require a password.
-    UA_ByteString decryptedPrivateKey = UA_BYTESTRING_NULL;
-    UA_ByteString keyPassword = UA_BYTESTRING_NULL;
-    if ( privateKey->length > 0 )
-        UAε( UA_CertificateUtils_decryptPrivateKey(localPrivateKey, keyPassword, &decryptedPrivateKey) );
-    /* Basic256Sha256 */
-    UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(this, &localCertificate,&decryptedPrivateKey) );
-
-    //The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
-    //securityLevel - and one that carries Basic256Sha256 alone (the PLC emulator, most installed clients) still connects
-    //(reviews/security-matrix.md #4).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
-    UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
-    UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
-    UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );
-    //UAε( UA_ServerConfig_addSecurityPolicyEccNistP256(this, &localCertificate, &decryptedPrivateKey);
-    UA_ByteString_memZero( &decryptedPrivateKey );
-    UA_ByteString_clear( &decryptedPrivateKey );
+		UA_ByteString localCertificate = *certificate;
+		UA_ByteString localPrivateKey = *privateKey;
+		//The private key in DER, decrypted with an empty password:  the key may need none.
+		UA_ByteString decryptedPrivateKey = UA_BYTESTRING_NULL;
+		UA_ByteString keyPassword = UA_BYTESTRING_NULL;
+		if( privateKey->length>0 )
+			UAε( UA_CertificateUtils_decryptPrivateKey(localPrivateKey, keyPassword, &decryptedPrivateKey) );
+		UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(this, &localCertificate, &decryptedPrivateKey) );
+		//The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
+		//securityLevel - and one that carries Basic256Sha256 alone (most installed clients) still connects (reviews/security-matrix.md
+		//#4;  EndpointTests).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
+		UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
+		UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
+		UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );
+		UA_ByteString_memZero( &decryptedPrivateKey );
+		UA_ByteString_clear( &decryptedPrivateKey );
 	}
 }

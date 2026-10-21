@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "jde/fwk/process/process.h"
 #include <jde/db/meta/AppSchema.h>
+#include <jde/access/access.h>
 #include <jde/app/client/IAppClient.h>
 #include "OpcServerAppClient.h"
 #include "UAServer.h"
@@ -17,12 +18,17 @@ namespace Jde::Opc {
 		_pubSub.reset();//a re-Initialize (test fixtures) replaces the server it was built on.
 		_ua.reset();//before the next is made:  its historian takes the lock on hist.path that this one's holds.
 		_ua = mu<UAServer>();//throws
-		Process::AddShutdownFunction( [](bool , SL){
-			_pubSub.reset();
-			_ua.reset();
+		static std::once_flag registered;//once, not per Initialize:  it resets whichever server is current.
+		std::call_once( registered, []{
+			Process::AddShutdownFunction( [](bool, SL){
+				_pubSub.reset();
+				_ua.reset();
+			} );
 		} );
 	}
 
+	α Server::ResourceSuffix()ι->string{ return Settings::FindString( "/opcServer/resource" ).value_or( "" ); }
+	α Server::InstanceSchema()ι->string{ return Access::InstanceSchemaName( "opc", ResourceSuffix() ); }
 	α Server::AppClient()ι->sp<App::Client::IAppClient>{ return _appClient; }
 
 	α Server::GetSchema()ι->DB::AppSchema&{ return *_appSchema; }

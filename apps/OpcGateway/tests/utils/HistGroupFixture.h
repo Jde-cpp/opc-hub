@@ -105,7 +105,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω WriteRpm( double value, TimePoint source )ε->void{ Write( RpmManual, &value, UA_TYPES[UA_TYPES_DOUBLE], source ); }
 		Ω WriteStatus( bool value, TimePoint source )ε->void{ UA_Boolean b = value; Write( Status1, &b, UA_TYPES[UA_TYPES_BOOLEAN], source ); }
-		Ω Current( UA_UInt32 id )ι->Value{ return ReadValue( Server::GetUAServer().Ptr(), Node(id) ); }
+		Ω Current( UA_UInt32 id )ι->Value{ return Opc::ReadValue( Server::GetUAServer(), Node(id) ); }
 		//A first write's value, off RpmManual's now by more than any band.
 		Ω BaseRpm()ι->double{ return Current( RpmManual ).AsNumber<double>()+1000; }
 		//A test's group of one member, subscribed, its first value stored:  purged as it goes, its items waited for, as

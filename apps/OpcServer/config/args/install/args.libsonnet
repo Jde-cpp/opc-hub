@@ -2,7 +2,7 @@ local paths = import '../../../../../libs/db/config/paths-common.libsonnet';
 //The installed layout (apps/OpcHub/setup, the "OPC UA Server" component): meta files flat in the product dir, the nodesets
 //beside them, one sqlite file.  paths-common only - the service starts without -tests, so no ext vars (which is why
 //sqlite-common is not imported: it binds buildTarget/logsDir/windows/path).  Loaded through Opc.Server.Install.jsonnet,
-//which replaces the base config's dev-shaped fields (nodeset paths, credentials, the login TLS anchor) from here.
+//which replaces the base config's dev-shaped fields (nodeset paths, the login TLS anchor) from here.
 paths + {
 	local args = self,
 	local serverDir = args.companyDir+"/OpcServer", //companyDir is the one spelling of the company root - see paths-common.

@@ -75,19 +75,7 @@ namespace Jde{
 }
 
 α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int exitCode{ EXIT_FAILURE };
-	try{
-		Startup( argc, argv );
-		ApplyTestsFilter();
-		exitCode = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( runtime_error& e ){
-		exitCode = StartupFailed( e );//never the exception's code:  main's status keeps only its low 8 bits.
-	}
-	INFOT( ELogTags::App, "Shutting down with exit code {}.", exitCode );
-	Process::Shutdown( exitCode );
+	let exitCode = Jde::Tests::Main( argc, argv, Jde::Startup, false );
 	std::cout << "Exited with code: " << exitCode << std::endl;
 	return exitCode;
 }

@@ -43,7 +43,6 @@ function( sync=false )
 	ql:{
 		introspection: [ "../../OpcGateway/config/" + p for p in gw.ql.introspection ] //Settings::Directory()-relative (gatewayStartup.cpp) - the gateway's extension types.
 	},
-	credentials: gw.credentials, //the gateway's user name "OpcGateway".  No seed gives it a group or role:  access-opcGateway.mutation is applied by nothing (apps/OpcGateway/README.md).
 	//no `web.client.ssl.caFile`: the gateway anchors the AppServer's cert for its login - there is none here.
 	http:{
 		address: if std.objectHas(args, 'listenAddress') then args.listenAddress else null, //null: every interface; args/install-user binds loopback - a current-user install raises no firewall prompt (install-issues #16).

@@ -91,7 +91,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_EQ( ServerTrust::AnchorCount(_config), 0u );
 		EXPECT_EQ( Verify(_trusted), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED );
 		let rejection = ServerTrust::Rejection( _config );
-		EXPECT_NE( rejection.find("1 file was skipped"), string::npos ) << rejection;
+		EXPECT_NE( rejection.find("1 file was passed over"), string::npos ) << rejection;
 		EXPECT_NE( rejection.find(".der"), string::npos ) << rejection;//and what it should have been called.
 	}
 

@@ -13,7 +13,7 @@ namespace Jde::Web::Server{
 		β HandleRequest( HttpRequest&& req, SRCE )ι->up<IHttpRequestAwait> =0;
 		β QLServer()ι->sp<QL::IQL> =0;
 		β Schemas()ι->const vector<sp<DB::AppSchema>>& =0;
-		β WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession> =0;
+		β WebsocketSession( sp<IRestStream>&& stream, beast::flat_buffer&& buffer, TRequestType req, tcp::endpoint userEndpoint, uint32 connectionIndex )ι->sp<IWebsocketSession>;//null as is:  the upgrade is declined and the connection closed (Internal::RunSocketSession).
 
 		α AppServer()ι->sp<App::IApp>{ return _appServer; }
 		α CancelSignal()ι->sp<net::cancellation_signal>{ return _cancelSignal; }

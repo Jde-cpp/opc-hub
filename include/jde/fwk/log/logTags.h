@@ -50,13 +50,14 @@ namespace Jde{
 
 	namespace Logging{
 		struct ILogger;
-		Φ UpdateCumulative( const vector<up<Logging::ILogger>>& loggers )ι->void;
+		Φ UpdateCumulative( const vector<Logging::ILogger*>& loggers )ι->void;
 	}
 	struct Γ LogTags{
 		LogTags( ELogLevel defaultLevel=ELogLevel::Information ):_minLevel{defaultLevel},_defaultLevel{defaultLevel},_settingsDefault{defaultLevel}{}
 		LogTags( const jobject& o )ι;
 		LogTags( const LogTags& x )ι;
 		α operator+=( const LogTags& other )ι->LogTags&;
+		α operator==( const LogTags& other )Ι->bool;//the levels and both maps - not ExtrapolatedTags, MinLevel's memo of them.
 		//settings: the map is the configuration (Logging::Init's /logging/memory/tags), remembered as what a cleared override
 		//falls back to.  Otherwise the map is overrides - the instance_tag_levels rows at start (IApp::LoadLogSettings) - which
 		//sit on top of the settings and can be cleared back off.
@@ -83,7 +84,7 @@ namespace Jde{
 		ELogLevel	_minLevel;
 		ELogLevel _defaultLevel;
 		ELogLevel _settingsDefault;
-		friend α Logging::UpdateCumulative( const vector<up<Logging::ILogger>>& loggers )ι->void;
+		friend α Logging::UpdateCumulative( const vector<Logging::ILogger*>& loggers )ι->void;
 	};
 
 	constexpr ELogTags DefaultTag=ELogTags::App;

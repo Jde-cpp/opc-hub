@@ -12,7 +12,6 @@
 #include "../../AppServer/src/appStartup.h"
 #include "../../OpcServer/src/opcServerStartup.h"
 #include "utils/helpers.h"
-#include <jde/tests/SpdlogTestListener.h>
 #include <jde/tests/testMain.h>
 #define let const auto
 
@@ -44,29 +43,11 @@ namespace Jde{
 			Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(Settings::AsObject("/http/gateway"), "ssl"), {} };
 			Crypto::EnsureKeyCertificate( sslSettings );
 			emptyHist( "/opcServer/hist/path" );//the server's history starts empty every run, so HistTests reads what it wrote and nothing an earlier run left.
-			Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") );
+			Opc::Server::Startup( Settings::AsObject("/http/opcServer") );
 		}
 		emptyHist( "/gateway/hist/path" );//the gateway's own groups' files (HistGroupTests):  a group is created afresh each run, so an older run's files are only clutter.
-		Opc::Gateway::Startup( Settings::AsObject("/http/gateway"), Settings::AsObject("/credentials/gateway") );
+		Opc::Gateway::Startup( Settings::AsObject("/http/gateway") );
 	}
 }
 
-α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int result{ EXIT_FAILURE };
-	try{
-		startup( argc, argv );
-		ApplyTestsFilter();
-		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
-		result = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( std::exception& e ){
-		if( auto p = dynamic_cast<Exception*>( &e ); p )
-			p->Log();
-		Process::ExitException( move(e) );
-	}
-	Process::Shutdown( result );
-
-	return result;
-}
+α main( int argc, char **argv )->int{ return Jde::Tests::Main( argc, argv, Jde::startup ); }

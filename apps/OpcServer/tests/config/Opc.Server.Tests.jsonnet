@@ -5,7 +5,7 @@ local embeddedAppServer = true; //false = run against a live AppServer on localh
 local appPort = 2067;
 {
 	testing:{
-		tests:: "AccessTests.UserAccess",
+		tests:: "*",
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedAppServer: embeddedAppServer,
 		UANodeSets: "$(UA_NODE_SETS)"
@@ -18,7 +18,10 @@ local appPort = 2067;
 	[if !embeddedAppServer then "web"]: {
 		client:{ ssl:{ caFile: args.certsDir("AppServer")+"/AppServer.pem" } }
 	},
-	opc: args.opc,
+	opc:{
+		urn: "urn:open62541.server.application",
+		url: "opc.tcp://127.0.0.1:4940"
+	},
 	access:{
 		trustedCertDirs: [
 			"$(ProgramData)/Jde-Cpp/$(PRODUCT_NAME)/ssl/certs",
@@ -55,21 +58,11 @@ local appPort = 2067;
 		],
 		dataPaths: [args.repoSourceDir + "/apps/AppServer/config", args.repoSourceDir + "/libs/access/config"],
 		sync:: false,
-		localhost:{
-			driver: args.dbServers.localhost.driver,
-			connectionString: args.dbServers.localhost.connectionString,
-			username: args.dbServers.localhost.username,
-			password: args.dbServers.localhost.password,
-			schema: args.dbServers.localhost.schema,
-			catalogs: args.dbServers.localhost.catalogs
-		}
+		localhost: args.dbServers.localhost
 	},
 	http:{
 		app:{ port: appPort, ssl:{productName: "AppServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} },//TLS clients match the SAN - without it host_name_verification rejects the generated cert.
 		opcServer:{ port: 2070, ssl:{productName: "OpcServer", certificate:{ subjectAltName: "DNS:localhost,IP:127.0.0.1" }} }
-	},
-	credentials:{
-		opcServer:{ name: "OpcTests" }
 	},
 	logging:{
 		breakLevel: "Critical",

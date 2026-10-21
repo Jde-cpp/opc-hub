@@ -4,7 +4,6 @@
 #include <absl/synchronization/mutex.h>
 
 namespace Jde::Opc::Server{
-//	struct Listener; struct Loader; struct Permission;
 	enum class EAccess : uint8{
 		None			= 0,
 		Read			= UA_ACCESSLEVELMASK_READ,
@@ -71,11 +70,21 @@ namespace Jde::Opc::Server{
 	private:
 		α ReassignRights( sv why )ι->void;
 		α IsNodeResource( Access::ResourcePK pk, sv schemaName, const jobject& args )ι->bool;
-		//Fills `nodeResources` - a local map the public overload swaps in afterwards, never the member, so no lock is held
-		//across UA_Server_browse (opcserver-review3 #10).
-		//`path` is nodeId's ancestors and nodeId itself;  each base node the walk meets adds its resource to `beneath` for all of them.
-		//`enclosing` gets each base resource met below the root, keyed to the resource governing the node above it.
-		α AssignRights( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK, const std::map<NodeId, Access::ResourcePK>& baseResources, std::map<NodeId, Access::ResourcePK>& nodeResources, std::set<NodeId>& visited, vector<NodeId>& path, std::map<NodeId, vector<Access::ResourcePK>>& beneath, std::map<Access::ResourcePK, Access::ResourcePK>& enclosing )ι->void;
+		//AssignRights' walk of the Objects tree, filled with no lock held - UA_Server_browse takes the serviceMutex the access-control
+		//callbacks run under - and published afterwards (opcserver-review3 #10).
+		struct Walk final{
+			α Descend( const NodeId& nodeId, UA_Server& server, Access::ResourcePK resourcePK )ι->void;
+			std::map<NodeId, Access::ResourcePK> Base;//the nodeIds resources, by the node each names - the root's by ObjectsFolder.
+			bool Enforcing{};//any of them enforced.
+			Access::ResourcePK RootResource{};//the root's, when there is one.
+			std::map<NodeId, Access::ResourcePK> NodeResources;//each node the walk met, to the resource governing it.
+			std::map<NodeId, vector<Access::ResourcePK>> Beneath;//each node, to the base resources met below it.
+			std::map<Access::ResourcePK, Access::ResourcePK> Enclosing;//each base resource met below the root, to the one governing the node above it.
+			std::set<NodeId> TypeNodes;//outside namespace 0, collected when the root is enforced.
+			std::set<NodeId> Visited;
+			vector<NodeId> Path;//the node being walked and its ancestors.
+		};
+		α Publish( Walk&& walk )ι->void;//the walk's maps swapped in under _nodeResourcesMutex.
 		struct NodeAccess final{ Access::ERights Rights; Access::ERights Edits; };//NodeRights and EditRights, from one look at the governing resources.
 		α Resolve( const NodeId& nodeId, UserPK executer )ι->NodeAccess;
 		//The user's rights under the chain:  the OR of what its resources allow, less the OR of what they deny, enforced or not.

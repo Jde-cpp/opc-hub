@@ -7,5 +7,5 @@ namespace Jde::Opc::Hub{
 	//gateway wired to the AppServer in-process.  Call from a thread that does not run the io pool (main, a test main).
 	//afterWebServer: runs once the listener is up, before the gateway's access step - where an embedding test starts a co-hosted
 	//OpcServer (it logs in to the AppServer role over the socket).
-	α Startup( jobject httpSettings, jobject gatewayCredentials, function<void()> afterWebServer={} )ε->void;
+	α Startup( jobject httpSettings, function<void()> afterWebServer={} )ε->void;
 }

@@ -13,6 +13,7 @@ compileOptions( ${targetName} )
 file( GLOB sources CONFIGURE_DEPENDS *.cpp */*.cpp )
 if( WIN32 )
 	list( APPEND sources Opc.Server.Tests.rc )
+	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
 endif()
 dbDriverDependencies( ${targetName} Jde.DB.Sqlite.AppServer ) #the ctest run below dlopens this via config/args/sqlite
 file( GLOB headers CONFIGURE_DEPENDS *.h */*.h )
@@ -24,13 +25,13 @@ endif()
 
 find_package( GTest REQUIRED )
 target_link_libraries( ${targetName} GTest::gtest )
-target_link_libraries( ${targetName} Jde.App.ServerLib Jde.Opc.ServerLib )
+target_link_libraries( ${targetName} Jde.App.ServerLib Jde.Opc.ServerLib Jde.Opc.PlcEmulatorLib ) #the last for PubSubTests' publisher, the emulator's PlcServer.
 linkAppRuntime( ${targetName} NOMINMAX LIBXML2 )
 
 addJdeTest( ${targetName} ${CMAKE_CURRENT_SOURCE_DIR}/config/Opc.Server.Tests.jsonnet )
 
-set( appOutDir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${targetName}" )
 if( WIN32 )
+	set( appOutDir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${targetName}" )
 	set_target_properties( ${targetName} PROPERTIES
 		VS_DEBUGGER_COMMAND_ARGUMENTS "-tests -settings=${CMAKE_CURRENT_SOURCE_DIR}/config/Opc.Server.Tests.jsonnet"
 		RUNTIME_OUTPUT_DIRECTORY "${appOutDir}"

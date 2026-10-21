@@ -21,8 +21,7 @@
 		Process::Startup( argc, argv, "Jde.OpcGateway", "Jde OPC gateway - the website's OPC UA client sessions." );
 		Opc::Gateway::AppClient()->InitLogging( Opc::Gateway::AppClient() );
 		let webServerSettings = Settings::FindObject( "/http" );
-		let userName = Settings::FindObject( "/credentials" );
-		Opc::Gateway::Startup( webServerSettings ? *webServerSettings : jobject{}, userName ? *userName : jobject{} );
+		Opc::Gateway::Startup( webServerSettings ? *webServerSettings : jobject{} );
 		exitCode = Process::Pause();
 	}
 	catch( runtime_error& e ){

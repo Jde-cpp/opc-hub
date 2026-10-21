@@ -1,9 +1,6 @@
 #include "opcServerStartup.h"
 #include <jde/db/db.h>
-#include <jde/db/IDataSource.h>//RequiresSync;  no longer in the pch - the app schema is the only db surface left.
 #include <jde/ql/ql.h>
-#include <jde/access/AccessListener.h>
-#include <jde/access/client/accessClient.h>
 #include <jde/app/client/appClient.h>
 #include "UAServer.h"
 #include "access/OpcAuthorize.h"
@@ -11,10 +8,10 @@
 
 #define let const auto
 namespace Jde::Opc{
-	α Server::Startup( jobject webServerSettings, jobject userName )ε->void{
+	α Server::Startup( jobject webServerSettings )ε->void{
 		auto appClient = AppClient();
-		let resourceSuffix = Settings::FindString( "/opcServer/resource" ).value_or( "" );
-		let instanceSchema = resourceSuffix.size() ? Ƒ( "opc.{}", resourceSuffix ) : string{ "opc" };//as Access::InstanceSchemaName - an empty suffix is `opc`, not `opc.`
+		let resourceSuffix = ResourceSuffix();
+		let instanceSchema = InstanceSchema();
 		auto opcAuthorize = ms<OpcAuthorize>( instanceSchema );
 		appClient->SetAcl( opcAuthorize );
 		auto remoteAcl = appClient->Acl();
@@ -22,29 +19,15 @@ namespace Jde::Opc{
 		uaSchema->Authorizer = opcAuthorize;// GetAppSchema returns a cached schema whose Authorizer is baked in when GetClusters first builds the cache. When another server (e.g. embedded AppServer) built it first with a base Access::Authorize, our SetAcl(OpcAuthorize) above is ignored here. Install it explicitly so UAAccess::GetUserAccessLevel's static_cast<OpcAuthorize&> is valid (and so UserRights reads the same _nodeResources that AssignRights populates).
 		ConfigureQL( uaSchema, remoteAcl, instanceSchema );
 		QL::SetSystemTables( {"logSetting", "adminCheck", "sessions"} );//sessions:  the AppServer's ask for this process's web sessions, answered only over its socket (OpcServerAppClient::ClientQuery).  adminCheck: the AppServer's delegated admin check (OpcServerQL) - a name no schema owns, so QL::Parse admits it without a view; `permissionRight` would shadow the real table for an embedded AppServer.
-		if( Settings::FindBool("/testing/recreateDB").value_or(false) )
-			DB::NonProd::Recreate( *uaSchema, QLPtr() );
-		else if( Settings::FindBool("/dbServers/sync").value_or(false) || uaSchema->DS()->RequiresSync() )
-			DB::SyncSchema( *uaSchema, QLPtr() );
+		DB::SyncOrRecreate( {uaSchema}, QLPtr() );
 		appClient->Enroll( webServerSettings );
-		StartWebServer( move(webServerSettings) ); //TODO take out.
-		auto accessSchema = DB::GetAppSchema( "access", remoteAcl );
-		appClient->SubscriptionSchemas.push_back( accessSchema );
-
+		StartWebServer( move(webServerSettings) );
 		appClient->ResourceSchema = instanceSchema;
-
-		appClient->SetUserName( move(userName) );
 		//retry: the hub is this process's registry, and a first start of the hub - schema sync, keys, then its certificate - can
 		//outlast the installer's head start or a logon's, so the login here used to fail its verify and end the process
 		//(install-issues #12).  Now it waits for the hub, a warning per attempt, for as long as it takes or until shutdown;
-		//the client TLS context picks the hub's certificate up when it appears (Web::Client::Ssl::Context).  The block's own
-		//stall line is capped at Information: it read like a hang - a warning at 30 s, criticals after - beside the retry
-		//warnings that say what the wait is for (the 09-15 rerun's retry table).
-		BlockVoidAwait( App::Client::ConnectAwait{appClient, true}, ELogLevel::Information );
-		appClient->LoadLogSettings();
-
-		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, {uaSchema}, UserPK{UserPK::System}, resourceSuffix) );
-		Process::AddShutdownFunction( [listener=appClient->Listener()](bool terminate, SL sl){ listener->Shutdown(terminate, sl); } ); //as the AppServer does - the subscriptions otherwise outlive everything they reference (access-review3 #25).
+		//the client TLS context picks the hub's certificate up when it appears (Web::Client::Ssl::Context).
+		App::Client::ConnectAccess( appClient, {uaSchema}, resourceSuffix, true );
 		Initialize( uaSchema );
 		auto& ua = GetUAServer();
 		for( let& config : Settings::FindPathArray("/opcServer/configFiles") )

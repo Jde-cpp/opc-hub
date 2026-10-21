@@ -8,7 +8,6 @@
 		"workspace": "${workspaceFolder:src}/..",
 		"cmake.sourceDirectory": "${config:workspace}/../..",
 		"cmake.buildDirectory": "${command:jde.repoBuildDir}",
-		"settingsx": "${workspaceFolder:config}/Opc.Server.Hub.jsonnet",
 		"settings": "${workspaceFolder:config}/Opc.Server.Emulator.Hub.jsonnet",
 		"testSettings": "${workspaceFolder:tests}/config/Opc.Server.Tests.jsonnet",
 		"program-linux": "${config:subDir}/exe/${config:target}",

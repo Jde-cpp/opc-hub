@@ -15,6 +15,7 @@ namespace Jde::DB{
 	Φ SyncSchema( const AppSchema& schema, sp<QL::IQL> ql )ε->void;
 	Φ SyncData( const AppSchema& schema, sp<QL::IQL> ql, sv extension, bool skipUnchanged=false )ε->void;//one more seed pass over /dbServers/dataPaths, files of `extension` - for what SyncSchema's ".mutation" pass runs too early for (the ".roles" files need the access server's role mutations).
 	Φ SeedFile( const AppSchema& schema, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool;//one seed file's text through `ql`;  skipUnchanged:  a schema with a `seeds` table skips a file whose text it last applied, and records one it applies (reviews/m3-closing.md #12).  False when skipped.
+	Φ SyncOrRecreate( const vector<sp<AppSchema>>& schemas, sp<QL::IQL> ql )ε->bool;//a startup's:  /testing/recreateDB recreates each of `schemas`, else /dbServers/sync or a data source that RequiresSync syncs them.  True when either ran.
 #ifndef PROD
 	namespace NonProd{
 		Φ Recreate( const AppSchema& schema, sp<QL::IQL> ql )ε->void;

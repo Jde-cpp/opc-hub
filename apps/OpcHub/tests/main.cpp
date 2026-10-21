@@ -8,7 +8,6 @@
 #include "../../OpcGateway/tests/utils/helpers.h"
 #include "../../OpcServer/src/opcServerStartup.h"
 #include "../src/hubStartup.h"
-#include <jde/tests/SpdlogTestListener.h>
 #include <jde/tests/testMain.h>
 #define let const auto
 
@@ -29,27 +28,9 @@ namespace Jde{
 			Crypto::EnsureKeyCertificate( sslSettings );
 		}
 		//the OpcServer once the hub's listener is up - it logs in to the AppServer role over the socket.
-		auto opcServer = embedded ? function<void()>{ []{ Opc::Server::Startup( Settings::AsObject("/http/opcServer"), Settings::AsObject("/credentials/opcServer") ); } } : function<void()>{};
-		Opc::Hub::Startup( Settings::AsObject("/http"), Settings::AsObject("/credentials"), move(opcServer) );
+		auto opcServer = embedded ? function<void()>{ []{ Opc::Server::Startup( Settings::AsObject("/http/opcServer") ); } } : function<void()>{};
+		Opc::Hub::Startup( Settings::AsObject("/http"), move(opcServer) );
 	}
 }
 
-α main( int argc, char **argv )->int{
-	using namespace Jde;
-	::testing::InitGoogleTest( &argc, argv );
-	int result{ EXIT_FAILURE };
-	try{
-		startup( argc, argv );
-		ApplyTestsFilter();
-		Jde::SpdlogTestListener::Config( ::testing::UnitTest::GetInstance()->listeners() );
-		result = CheckTestsRan( RUN_ALL_TESTS() );
-	}
-	catch( std::exception& e ){
-		if( auto p = dynamic_cast<Exception*>( &e ); p )
-			p->Log();
-		Process::ExitException( move(e) );
-	}
-	Process::Shutdown( result );
-
-	return result;
-}
+α main( int argc, char **argv )->int{ return Jde::Tests::Main( argc, argv, Jde::startup ); }

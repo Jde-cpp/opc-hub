@@ -11,8 +11,11 @@
 
 struct UA_Server;
 namespace Jde::Opc{
+	struct Value;
 	//`uri`'s index in the server's namespace array; throws when no loaded nodeset declares it.
 	α NamespaceIndex( UA_Server& server, sv uri, SRCE )ε->NsIndex;
+	//The node's Value attribute as the server holds it - its status unchecked - with the timestamps asked for.
+	α ReadValue( UA_Server& server, const UA_NodeId& node, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_NEITHER )ι->Value;
 	constexpr α operator ""_uv( const char* x, uint len )ι->UA_String{ return UA_String{ len, static_cast<UA_Byte*>((void*)x) }; } //(UA_Byte*) gcc error
 	//Calls f.template operator()<N>() with the C type N of a numeric kind - Boolean through Double, StatusCode included - and
 	//returns its result; otherwise() for any other kind.  On typeKind, not the descriptor's address, so an alias (Duration,

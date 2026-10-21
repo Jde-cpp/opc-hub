@@ -7,7 +7,7 @@
 namespace Jde::Logging{
 
 	Φ DestroyLoggers( bool terminate )->void;
-	Φ Loggers()->const vector<up<ILogger>>&;
+	Φ Loggers()->const vector<ILogger*>&;//the current list, safe to walk unlocked:  a change publishes a new one (log.cpp).
 	Ŧ GetLogger()ε->T&;
 	Ŧ FindLogger()ι->T*;
 	Φ AddLogger( up<ILogger>&& logger )ι->ILogger*;
@@ -47,8 +47,8 @@ namespace Jde::Logging{
 }
 namespace Jde{
 	Ŧ Logging::FindLogger()ι->T*{
-		for( auto& logger : Loggers() ){
-			if( auto log = dynamic_cast<T*>( logger.get() ) )
+		for( auto logger : Loggers() ){
+			if( auto log = dynamic_cast<T*>( logger ) )
 				return log;
 		}
 		return nullptr;

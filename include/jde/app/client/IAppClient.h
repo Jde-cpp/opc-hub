@@ -29,8 +29,6 @@ namespace Jde::App::Client{
 		α IsAccessConfigured()Ι->bool{ return _accessContext.has_value(); }//the reconnect path asks before reloading - not every app client has a snapshot to refresh.
 		α InitLogging( sp<App::Client::IAppClient> client )ι->void;
 		β Connected()Ι->bool{ return LoadSession()!=nullptr; }
-		α UserName()Ι->const jobject&{ return _userName; }
-		α SetUserName( jobject&& userName )ι->void{ _userName = move(userName); }
 		//Virtual with QLServer/AddSession so an embedded client (OpcHub: the gateway hosted beside the AppServer) can answer
 		//in-process - the socket bodies stay the default.
 		β UserPK()Ι->Jde::UserPK{ auto p=LoadSession(); return p ? p->UserPK() : Jde::UserPK{0}; }
@@ -64,7 +62,6 @@ namespace Jde::App::Client{
 		α LoadSession()Ι->sp<AppClientSocketSession>{ lg _{_sessionMutex}; return _session; }
 		α Session()Ε->sp<AppClientSocketSession>{ auto p = LoadSession(); THROW_IF( !p, "Not connected." ); THROW_IF( Process::ShuttingDown(), "Shutting down." ); return p; }
 
-		jobject _userName;
 		mutable mutex _sessionMutex;
 		sp<AppClientSocketSession> _session;
 		sp<Access::Authorize> _acl;
