@@ -37,7 +37,8 @@ jobs:
   build:
     name: Linux Release
     # `needs:` puts the ~5 min site build ahead of this one instead of beside it (what the Windows workflow's poll
-    # avoids) - the runner container has no `gh` to poll with, and the release build here is a fraction of the debug one.
+    # avoids) - the release build here is a fraction of the debug one.  The container has `gh` (the myoung34 base image's)
+    # should a poll ever pay.
     needs: web
     # Matches the LABELS set when the runner container was registered.
     runs-on: [self-hosted, clang23]
@@ -121,12 +122,22 @@ jobs:
           retention-days: 90
 
       # A tag run publishes the package on the tag's GitHub release - created here if the Windows workflow has not
-      # already, the files replaced when the run is repeated.
+      # already, the files replaced when the run is repeated. A new release's notes open with the code signing policy
+      # link SignPath wants on the download page, above GitHub's generated notes, as win2025-build.yml writes them. gh
+      # (the myoung34 base image's) rather than softprops/action-gh-release, which on a release that exists regenerates
+      # the notes and appends them to what is there - the Windows workflow's, or a hand edit.
       - name: Release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2 - the repo's Actions policy allows only this SHA
-        with:
-          files: |
-            ${{ runner.temp }}/setup/*.deb
-            ${{ runner.temp }}/setup/*.tar.gz
-          generate_release_notes: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          CODE_SIGNING_LINE: '[Code signing policy](${{ github.server_url }}/${{ github.repository }}/blob/main/CODE_SIGNING.md)'
+        run: |
+          files=( "$RUNNER_TEMP"/setup/*.deb "$RUNNER_TEMP"/setup/*.tar.gz )
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" --title "$TAG" --notes "$CODE_SIGNING_LINE" --generate-notes
+          fi

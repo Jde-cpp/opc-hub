@@ -68,7 +68,7 @@ VALUE "FileVersion", JDE_VERSION_STRING
 VALUE "InternalName", "Jde.Opc.Hub.exe"
 VALUE "LegalCopyright", JDE_COPYRIGHT
 VALUE "OriginalFilename", "Jde.Opc.Hub.exe"
-VALUE "ProductName", "OpcHub"
+VALUE "ProductName", "OPC Hub"
 VALUE "ProductVersion", JDE_VERSION_STRING
 END
 END

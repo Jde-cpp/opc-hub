@@ -67,7 +67,7 @@ BEGIN
             VALUE "InternalName", "Jde.Opc.Server.exe"
             VALUE "LegalCopyright", JDE_COPYRIGHT
             VALUE "OriginalFilename", "Jde.Opc.Server.exe"
-            VALUE "ProductName", "OpcServer"
+            VALUE "ProductName", "OPC Hub"
             VALUE "ProductVersion", JDE_VERSION_STRING
         END
     END
