@@ -29,6 +29,18 @@ namespace Jde::Opc::Gateway{
 	//subjectAltName URI:  empty when it carries none, nullopt when the file could not be read.
 	α RefusedCertificateDetail( StatusCode sc, sv url, const fs::path& certificate, const optional<string>& sanUri, sv advertisedUri )ι->string;
 
+	//How a slug's live clients changed, for the endpoint's `_Connection` object (server/GatewayServer.h, spec *Address space*):
+	//Activated, a client's session came up;  Lost, one went with its connection and is reconnecting;  Removed, one was closed or
+	//idled out;  Failed, a connect failed with `Error`.  `Connected` is whether the registry still holds a client of the slug.
+	//Delivered off the registry's lock, on the strand or io thread that made the change, so a listener posts what it does with it
+	//and never calls back into a client.
+	struct ConnectionChange final{
+		enum class EKind : uint8{ Activated, Lost, Removed, Failed };
+		ServerCnnctnNK Slug;
+		EKind Kind;
+		bool Connected;
+		string Error;
+	};
 	struct UAClient final : std::enable_shared_from_this<UAClient>{
 		UAClient( ServerCnnctn&& opcServer, Credential cred )ε;
 		UAClient( str address, Credential cred )ε;
@@ -36,6 +48,7 @@ namespace Jde::Opc::Gateway{
 
 		operator UA_Client* ()ι{ return _ptr; }
 		Ω Shutdown( bool terminate=false, SRCE )ι->VoidAwait::Task;
+		Ω SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void;//one at a time;  null clears it.
 		Ω ShutdownIdle( sp<UAClient> client )ι->VoidAwait::Task;//TTL expiry - tears down only this client (per-client _lastRequest).
 		Ω GetClient( string id, Credential cred, SRCE )ι{ return ConnectAwait{move(id), move(cred), sl}; }
 		Ω Find( str id, const Gateway::Credential& cred )ι->sp<UAClient>;

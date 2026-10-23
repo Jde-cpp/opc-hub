@@ -125,6 +125,27 @@ namespace Jde::Opc::Gateway{
 		lg _{ _connectErrorMutex };
 		return _connectErrors;
 	}
+	//The endpoint's listener (ConnectionChange).  Its own lock, held for the copy alone:  the listener runs off every lock here.
+	static function<void(const ConnectionChange&)> _connectionListener; static mutex _connectionListenerMutex;
+	α UAClient::SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void{
+		lg _{ _connectionListenerMutex };
+		_connectionListener = move( listener );
+	}
+	Ω notifyChange( const ServerCnnctnNK& slug, ConnectionChange::EKind kind, string error={} )ι->void{
+		function<void(const ConnectionChange&)> listener;
+		{
+			lg _{ _connectionListenerMutex };
+			listener = _connectionListener;
+		}
+		if( !listener )
+			return;
+		bool connected;
+		{
+			rl _{ _clientsMutex };
+			connected = _clients.contains( slug );
+		}
+		listener( ConnectionChange{slug, kind, connected, move(error)} );
+	}
 	α UAClient::SetConnectError( const ServerCnnctnNK& slug, string message )ι->void{
 		lg _{ _connectErrorMutex };
 		_connectErrors.insert_or_assign( slug, move(message) );
@@ -139,12 +160,20 @@ namespace Jde::Opc::Gateway{
 	//second after gtest had deleted the fixture its pushes wrote into (subscription-disconnect #10).
 	α UAClient::ConnectionLost( sp<UAClient>&& client )ι->bool{
 		StashPending( client );//before anything else drops it: whatever this client was monitoring has to outlive it, or the subscriptions die here.  Clears connected - there, not here:  see it.
-		return Deregister( move(client) );
+		let slug = client->Slug();
+		let erased = Deregister( move(client) );
+		if( erased )
+			notifyChange( slug, ConnectionChange::EKind::Lost );
+		return erased;
 	}
 	α UAClient::RemoveClient( sp<UAClient>&& client )ι->bool{
 		client->_discarded = true;//before connected:  a rebuild reads connected first, and must then see why it went - see resubscribe.
 		client->_connected = false;
-		return Deregister( move(client) );
+		let slug = client->Slug();
+		let erased = Deregister( move(client) );
+		if( erased )
+			notifyChange( slug, ConnectionChange::EKind::Removed );
+		return erased;
 	}
 	α UAClient::Deregister( sp<UAClient>&& client )ι->bool{
 		client->StopProcessing();//cancels the ping timer & processing loop; otherwise _pingTimer stays pending on the io_context (and the ping coroutine keeps a UAClient ref), blocking shutdown.
@@ -610,6 +639,7 @@ namespace Jde::Opc::Gateway{
 						let inserted = opcCreds.try_emplace( client->Credential(), client ).second;
 						ASSERT( inserted );//ConnectAwait::Start creates one client per slug and credential:  the first waiter, re-checked under its _requestMutex.
 					}
+					notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
 					Post( [client]()ι->void {
 						ConnectAwait::Resume( move(client) );
 					});
@@ -619,6 +649,7 @@ namespace Jde::Opc::Gateway{
 					//way to learn the slug is broken.  Named by status where there is no richer detail - the caller's exception
 					//carries the code separately, but a stored "Connection Failed" would say nothing about what went wrong.
 					SetConnectError( client->Slug(), detail.size() ? detail : string{UAException::Message(connectStatus)} );
+					notifyChange( client->Slug(), ConnectionChange::EKind::Failed, Ƒ("{} - {}", UAException::Message(connectStatus), detail.size() ? detail : string{"Connection Failed"}) );
 					string message{ detail.size() ? move(detail) : string{"Connection Failed"} };
 					client->StopProcessing();// Break the UAClient<->_asyncRequest._client self-reference; on the failure path the client never enters _clients, so Shutdown would never Stop() it and the UAClient (and its UA_Client) would leak.
 					Post(

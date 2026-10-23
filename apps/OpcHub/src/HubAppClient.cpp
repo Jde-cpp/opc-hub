@@ -1,8 +1,18 @@
 #include "HubAppClient.h"
+#include <jde/web/server/Sessions.h>
+#include <jde/web/server/Web.FromServer.h>
 #include "../../AppServer/src/LocalClient.h"
 #include "../../AppServer/src/awaits/AddSessionAwait.h"
 
 namespace Jde::Opc::Hub{
+	α HubAppClient::SessionInfoAwait( SessionPK id, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>>{
+		return mu<CompletedAwait<Web::FromServer::SessionInfo>>( [id, sl]{
+			auto info = Web::Server::Sessions::Extend( id );
+			if( !info )//NotFound, as the AppServer answers over the socket:  no such session, not could not ask.
+				throw Exception{ sl, ExceptionArgs{EHttpStatus::NotFound}, "[{:x}] Session not found.", id };
+			return Web::Server::ToProto( *info );
+		}, sl );
+	}
 	α HubAppClient::QLServer()Ε->sp<QL::IQL>{
 		return App::Server::QLPtr();
 	}

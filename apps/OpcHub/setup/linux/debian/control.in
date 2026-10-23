@@ -11,7 +11,8 @@ Suggests: nginx
 Homepage: https://github.com/Jde-cpp/opc-hub
 Description: Jde OpcHub - OPC UA gateway with a REST/WebSocket API
  The AppServer and the OPC gateway in one process (jde-opchub.service, port
- 1967), Jde's own OPC UA server (jde-opcserver.service - opc.tcp 4840, http
- 1970 - installed but not enabled) and the Angular Web UI under
- /opt/jde-cpp/web for an nginx site.  The database is sqlite, one file per
- product under /var/lib/Jde-Cpp, created on the first start.
+ 1967, its OPC UA endpoint on opc.tcp 4841), Jde's own OPC UA server
+ (jde-opcserver.service - opc.tcp 4840, http 1970 - installed but not
+ enabled) and the Angular Web UI under /opt/jde-cpp/web for an nginx site.
+ The database is sqlite, one file per product under /var/lib/Jde-Cpp,
+ created on the first start.

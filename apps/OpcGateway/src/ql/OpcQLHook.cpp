@@ -3,6 +3,7 @@
 #include "../auth/UM.h"
 #include "../types/ServerCnnctn.h"
 #include "../UAClient.h"
+#include "../server/GatewayServer.h"
 
 
 #define let const auto
@@ -60,6 +61,19 @@ namespace Jde::Opc::Gateway{
 			return mu<ExceptionAwait<jvalue>>( move(e) );
 		return mu<HookAwait>( m, userPK, Operation::Insert | Operation::Before, sl );
 	}
+	//The endpoint's folder for the row just written (spec *Address space*):  the row's slug and url are the insert's own args, so
+	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.
+	α OpcQLHook::InsertAfter( const QL::MutationQL& m, UserPK, uint id, SL )ι->HookResult{
+		if( m.TableName()=="server_connections" ){
+			if( auto server = GatewayServer::Instance(); server ){
+				ServerCnnctn row{ Json::AsString(m.Args, "url") };
+				row.Id = (ServerCnnctnPK)id;
+				row.Slug = Json::AsString( m.Args, "slug" );
+				server->ConnectionCreated( move(row) );
+			}
+		}
+		return nullptr;
+	}
 	α OpcQLHook::InsertFailure( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		return m.TableName()=="server_connections" ? mu<HookAwait>( m, userPK, Operation::Insert | Operation::Failure, sl ) : nullptr;
 	}
@@ -74,13 +88,22 @@ namespace Jde::Opc::Gateway{
 	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs - takes its clients off the registry, to
 	//reconnect on the new row;  a delete or purge closes them.  Name and description it only reports (search), and a rename is
 	//not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted row cannot connect.
+	//The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves it, and a url
+	//edit is the one column its `_Connection` shows.
 	Ω connectionEdited( const QL::MutationQL& m )ι->QL::IQLHook::HookResult{
 		using enum QL::EMutationQL;
 		let removed = m.Type==Delete || m.Type==Purge;
 		let edited = m.Type==Update && ( m.Args.contains("url") || m.Args.contains("certificateUri") || m.Args.contains("defaultBrowseNs") );
 		if( m.TableName()=="server_connections" && (removed || edited) ){
-			if( let key = m.FindKey(); key )
+			if( let key = m.FindKey(); key ){
 				UAClient::ConnectionEdited( *key, removed );
+				if( auto server = GatewayServer::Instance(); server ){
+					if( m.Type==Purge )
+						server->ConnectionPurged( *key );
+					else if( let url = Json::FindString(m.Args, "url"); url && m.Type==Update )
+						server->ConnectionUrlChanged( *key, *url );
+				}
+			}
 		}
 		return nullptr;
 	}

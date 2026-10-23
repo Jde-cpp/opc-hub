@@ -1,5 +1,6 @@
 #include <jde/opc/server/UATrust.h>
 #include <shared_mutex>
+#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/UAException.h>
 
 #define let const auto
@@ -19,8 +20,9 @@ namespace Jde::Opc::Server{
 	static std::shared_mutex _installedMutex;
 	static flat_map<const UA_CertificateGroup*,UATrust*> _installed;
 
-	UATrust::UATrust( vector<fs::path> dirs )ι:
+	UATrust::UATrust( vector<fs::path> dirs, fs::path rejectedDir )ι:
 		_dirPaths{ move(dirs) },
+		_rejectedDir{ move(rejectedDir) },
 		_dirs{ "trusted client certificate", _tags, ELogLevel::Critical }
 	{}
 	UATrust::~UATrust(){
@@ -105,7 +107,34 @@ namespace Jde::Opc::Server{
 			e.PrependWhat( "Trust rescan failed" );
 		}
 		UA_TrustListDataType_clear( &fresh );
+		if( y!=UA_STATUSCODE_GOOD && !_rejectedDir.empty() )
+			WriteRejected( *certificate );
 		return y;
+	}
+	//The refused certificate, as the memory store's rejected list holds it, written out for the admin (spec *Trust*):  named by
+	//its sha-256 thumbprint, once per certificate and run, so a client that keeps retrying costs one file.  Junk that is no
+	//certificate - an OPN with a garbage senderCertificate - is dropped:  the der ctor refuses it, and there is nothing to move.
+	α UATrust::WriteRejected( const UA_ByteString& certificate )ι->void{
+		try{
+			const std::span<const byte> der{ (const byte*)certificate.data, certificate.length };
+			const Crypto::Certificate parsed{ der };
+			string thumbprint{ parsed.Fingerprint };
+			std::erase( thumbprint, ':' );
+			let path = _rejectedDir/Ƒ( "{}.der", thumbprint );
+			{
+				std::lock_guard _{ _mutex };
+				if( !_rejected.emplace(thumbprint).second )
+					return;
+			}
+			if( fs::exists(path) )
+				return;
+			fs::create_directories( _rejectedDir );
+			Crypto::WriteCertificate( path, vector<byte>{der.begin(), der.end()}, SRCE_CUR );
+			INFO( "Rejected client certificate '{}' written to '{}' - move it into a trusted dir to admit the client.", parsed.DistinguishedName, path.string() );
+		}
+		catch( const std::exception& e ){
+			DBG( "A rejected certificate was not written to '{}':  {}", _rejectedDir.string(), e.what() );
+		}
 	}
 
 	α UATrust::Install( UA_Server& ua )ι->void{
