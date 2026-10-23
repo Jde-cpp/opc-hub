@@ -1,6 +1,5 @@
 #pragma once
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/historian/Historian.h>
 
 namespace Jde::Opc::Server{
 	//What the host reads from its config for a UA server, so the library reads no setting of its own:  the OpcServer's keys
@@ -16,7 +15,8 @@ namespace Jde::Opc::Server{
 		TokenTypes Tokens;
 		vector<std::pair<string,string>> Users;//the username token's logins, name and password;  none offers no username token.
 		string UserTokenPolicyUri{ "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" };//"" names each security policy for itself.
-		optional<Hist::Settings> Hist;//the server's own historian;  none keeps no history.
-		Duration EditTimeout{ 5s };//how long a HistoryUpdate waits for the flush that writes it:  open62541's client timeout, past which the client has given up.
+		//How long a HistoryUpdate waits for the flush that writes it:  open62541's client timeout, past which the client has
+		//given up.  The historian itself is the host's (IHistoryHost).
+		Duration EditTimeout{ 5s };
 	};
 }

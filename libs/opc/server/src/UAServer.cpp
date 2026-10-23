@@ -5,8 +5,8 @@
 
 #define let const auto
 namespace Jde::Opc::Server {
-	UAServer::UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε:
-		_history{ settings },
+	UAServer::UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sp<IHistoryHost> history )ε:
+		_history{ settings, move(history) },
 		_config{ settings, move(appClient), move(nodeAccess), &_history },
 		_ua{ UA_Server_newWithConfig(&_config) }
 	{

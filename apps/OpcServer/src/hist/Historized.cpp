@@ -1,4 +1,5 @@
 #include "Historized.h"
+#include "OpcServerHistoryHost.h"
 #include <open62541/plugin/nodestore.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/server/HAConfiguration.h>
@@ -174,7 +175,7 @@ namespace Jde::Opc{
 		for( let& node : nodes )
 			members.push_back( node.Member );
 		auto group = history.Historian().AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
-		UAHistory::Indexes indexes;
+		OpcServerHistoryHost::Indexes indexes;
 		vector<NodeId> archiveStarts;
 		for( auto& node : nodes ){
 			let index = group->Find( node.Member.Node );
@@ -193,6 +194,8 @@ namespace Jde::Opc{
 			archiveStarts.push_back( move(node.StartOfOnlineArchive) );
 			indexes.emplace_back( move(node.Id), *index );
 		}
-		history.Start( ua, move(group), move(indexes), move(archiveStarts) );
+		INFO( "Keeping the history of {} nodes under '{}'.", indexes.size(), history.Historian().Config().Path.string() );
+		HistoryHost().Serve( move(group), move(indexes), move(archiveStarts) );
+		history.Start( ua );
 	}
 }

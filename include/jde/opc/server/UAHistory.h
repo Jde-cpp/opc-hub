@@ -1,29 +1,27 @@
 #pragma once
 #include <span>
 #include <open62541/server.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <jde/historian/Historian.h>
-#include <jde/opc/uatypes/NodeId.h>
+#include "IHistoryHost.h"
 
 namespace Jde::Opc::Server{
 	struct UASettings;
-	//A UA server's historian (historian spec, *OpcServer* and *UA backend*):  the history of the host's variables in one
-	//group, the OpcServer's `server` of what its nodesets mark Historizing, collected through open62541's setValue, served
-	//through its HistoryRead, raw,
-	//modified, at times and aggregated, and edited through its HistoryUpdate.  open62541 calls the backend inside its
-	//service lock, on the server's one thread, so collecting only enqueues and a node's read ends at maxReturnDataValues
-	//values or one day, with a continuation point.  That point is the library's stateless
+	//A UA server's Part 11 backend (historian spec, *OpcServer* and *UA backend*):  the history of the host's variables in
+	//the host's groups, which it asks IHistoryHost for - the OpcServer's one `server` group of what its nodesets mark
+	//Historizing, collected through open62541's setValue, the gateway's one per served node, stored by its collector -
+	//served through HistoryRead, raw, modified, at times and aggregated, and edited through HistoryUpdate.  open62541
+	//calls the backend inside its service lock, on the server's one thread, so collecting only enqueues and a node's read
+	//ends at maxReturnDataValues values or one day, with a continuation point.  That point is the library's stateless
 	//continuation, so the server holds nothing between calls and has none to release.  An edit is acknowledged once its
 	//records are durable, so its callback waits for the flush that writes them, holding the lock for the write and its
 	//fsync, up to UASettings::EditTimeout.
 	struct UAHistory final : noncopyable{
-		//Takes the lock on the historian's path.  With no historian in the settings the server keeps no history, as when
-		//another process holds the lock:  no backend is installed and no node is changed.
-		UAHistory( const UASettings& settings )ε;
-		~UAHistory();//after the server is gone, while the executor still runs:  writes what is buffered.
+		//Over the host's historian, read here:  with none, or a null host, the server keeps no history, as when another
+		//process holds the lock on its path:  no backend is installed and no node is changed.
+		UAHistory( const UASettings& settings, sp<IHistoryHost> host )ε;
+		~UAHistory();//after the server is gone:  lets go of the host and its historian, whose end writes what is buffered.
 		α Enabled()Ι->bool{ return _historian && _historian->Enabled(); }
 		//UAConfig's:  the UA_HistoryDatabase, with its context set, and maxReturnDataValues, hist.readLimit.
 		α Database()ι->UA_HistoryDatabase;
@@ -35,14 +33,11 @@ namespace Jde::Opc::Server{
 		α Instantiated( const UA_NodeId& configuration )ι->void;
 		α TypeStepped( const UA_NodeId& configuration )Ι->bool;//whether the HA Configuration's Stepped is the type's, until Start.
 		α Historian()ι->Hist::Historian&{ return *_historian; }//while Enabled.
-		//After the last nodeset and before Run, the host's group:  each node's index in it, and the HA Configuration
-		//properties to write StartOfArchive to, now and after each midnight.  Lists the aggregates served in
-		//HistoryServerCapabilities' AggregateFunctions folder, Median among them.
-		using Indexes = vector<std::pair<NodeId,Hist::NodeIndex>>;
-		α Start( UA_Server& ua, sp<Hist::Group> group, Indexes indexes, vector<NodeId> archiveStarts )ε->void;
+		//After the host's nodes are historized and before Run, while Enabled:  writes StartOfArchive to the host's archive
+		//starts, now and after each midnight, and lists the aggregates served in HistoryServerCapabilities'
+		//AggregateFunctions folder, Median among them.
+		α Start( UA_Server& ua )ε->void;
 		α Stop()ι->void;//before the server is deleted:  the midnight timer writes to it.
-		α Group()Ι->sp<Hist::Group>{ return _group; }
-		α Find( const UA_NodeId& node )Ι->optional<Hist::NodeIndex>;
 		//The aggregate an AggregateFunction node asks for (spec *Reads*):  Part 13's nine in namespace 0, and Median,
 		//which Part 13 doesn't define, so it is an AggregateFunctionType object of the server's own namespace, ns=1;s=Median.
 		//None for a function that isn't served.
@@ -97,20 +92,21 @@ namespace Jde::Opc::Server{
 			using is_transparent = void;
 			α operator()( const UA_NodeId& a, const UA_NodeId& b )Ι->bool{ return UA_NodeId_equal( &a, &b ); }
 		};
+		using Node = IHistoryHost::Node;
 		//What every mode asks of a node first:  Read on the node for the session's user, the right as the node-access page
-		//grants it, and a history, which a node has when it is historized:  its index in the group.  None with the status
-		//that says why.  range is the node's index range, parsed, whose dimensions the caller frees.
-		α Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Hist::NodeIndex>;
+		//grants it, and a history, which a node has when it is historized:  its group and its index there, from the host.
+		//None with the status that says why.  range is the node's index range, parsed, whose dimensions the caller frees.
+		α Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Node>;
 		//Every node's page, each read by read, the mode's own, once Admit lets it, and put into its result by fill:  the
 		//node's position, its page and the part of an array its index range names.  what names the mode in the log.
 		α Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, bool release,
 			std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, sv what,
-			absl::FunctionRef<UA_StatusCode( uint, Hist::NodeIndex, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult& )> read,
+			absl::FunctionRef<UA_StatusCode( uint, const Node&, const UA_HistoryReadValueId&, UA_ByteString&, Hist::ReadResult& )> read,
 			absl::FunctionRef<UA_StatusCode( uint, const Hist::ReadResult&, const UA_NumericRange* )> fill )ι->void;
 		//One node's page and continuation point in each mode, Good_NoData for a read none of whose pages held a value.
-		α Read( Hist::NodeIndex index, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
-		α AtTime( Hist::NodeIndex index, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
-		α Processed( Hist::NodeIndex index, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
+		α Read( const Node& node, const UA_ReadRawModifiedDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
+		α AtTime( const Node& node, const UA_ReadAtTimeDetails& details, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
+		α Processed( const Node& node, const UA_ReadProcessedDetails& details, const UA_NodeId& function, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page )ι->UA_StatusCode;
 		//One entry's edit, once the session's user may write the node's history:  make builds the library's entry from the
 		//node's index, or none to leave result as it set it.  The edit runs in the group's next flush, which this waits for,
 		//up to _editTimeout:  then Bad_Timeout, the edit still queued.  None when result says why:  in its status, or, for
@@ -120,13 +116,13 @@ namespace Jde::Opc::Server{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
-		up<Hist::Historian> _historian;
+		//The host answers the callbacks under the service lock, so it takes no lock a UA_Server_* call is made under (spec
+		//*Threading*):  the OpcServer's host sets its map before the server runs and only reads it after.
+		sp<IHistoryHost> _host;
+		sp<Hist::Historian> _historian;//the host's, read once:  null keeps no history.
 		Duration _editTimeout;
-		//Set by Start, before the server runs, and only read after:  the callbacks take no lock of the host's.
-		sp<Hist::Group> _group;
-		absl::flat_hash_map<NodeId,Hist::NodeIndex,NodeHash,NodeEqual> _indexes;
+		bool _started{};
 		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Start:  open62541 adds a node under its service lock.
-		vector<NodeId> _archiveStarts;//each HA Configuration's StartOfArchive and StartOfOnlineArchive.
 		Timer _reads, _collections, _edits;
 		std::atomic<uint> _returned{};
 		//Held by the midnight timer's callback too, which the clock can start while Stop cancels it:  Stop nulls Ua under

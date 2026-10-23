@@ -26,6 +26,6 @@ namespace Jde::Opc::Server{
 	};
 	//After the last nodeset and before Run:  makes the group of the variables marked Historizing (Historized::Load), which
 	//keeps the indexes its files hold and removes a node the nodesets no longer historize, takes each one's current value as
-	//its first after the stop, and has the history serve it (UAHistory::Start).
+	//its first after the stop, registers it with the server's HistoryHost and has the history serve it (UAHistory::Start).
 	α StartHistory( UAServer& ua )ε->void;
 }
