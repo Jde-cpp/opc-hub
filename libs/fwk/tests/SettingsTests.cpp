@@ -1,5 +1,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/process.h>
+#include <jde/fwk/log/MemoryLog.h>
+#include <jde/fwk/log/SpdLog.h>
 #include <cstdlib>
 #ifdef _WIN32 //CommandLineToArgvW, to round-trip ServiceCommandLine through the parser that reads it back.
 	#ifndef NOMINMAX
@@ -183,6 +185,17 @@ namespace Jde::Tests{
 		EXPECT_EQ( Settings::FindString("/settingsTests/exeDir"), Process::ExePath().parent_path().string()+"/x.dll" );
 	}
 
+	//the rest of the table.  LibPrefix and LibExt are how the installed args files name the db driver on both platforms, and
+	//no suite reaches them:  every suite's driver comes from sqlite-common.libsonnet, which spells it out in jsonnet.
+	TEST_F( SettingsTests, PlatformBuiltInsExpand ){
+		Settings::Set( "/settingsTests/lib", "$(ExeDir)/$(LibPrefix)Jde.DB.Sqlite$(LibExt)" );
+		EXPECT_EQ( Settings::FindString("/settingsTests/lib"), Process::ExePath().parent_path().string()+(_windows ? "/Jde.DB.Sqlite.dll" : "/libJde.DB.Sqlite.so") ) << "the installed args' driver spelling";
+		Settings::Set( "/settingsTests/build", "$(JDE_BUILD_TYPE)" );
+		EXPECT_EQ( Settings::FindString("/settingsTests/build"), _debug ? "Debug" : "Release" );
+		Settings::Set( "/settingsTests/product", "$(PRODUCT_NAME)/$(ProgramData)" );
+		EXPECT_EQ( Settings::FindString("/settingsTests/product"), Ƒ("{}/{}", Process::ProductName(), Process::ProgramDataFolder().string()) );
+	}
+
 	//a value naming itself rescans forever without the 32-pass bound.  Note the failure mode this guards is a hang,
 	//so removing the bound would wedge this test rather than fail it.
 	TEST_F( SettingsTests, CyclicExpansionTerminates ){
@@ -209,5 +222,40 @@ namespace Jde::Tests{
 		Settings::Set( "/settingsTests/duration", "PT1M" );
 		EXPECT_EQ( Settings::FindDuration("/settingsTests/duration"), 1min );
 		EXPECT_FALSE( Settings::FindDuration("/settingsTests/notADuration").has_value() );
+	}
+
+	//A key present but no duration is nullopt, and an operator has to see it:  it logs at Error, from the exception's
+	//destructor, since one at Debug is silent at construction.  This suite takes the exception tag at Trace, which logs
+	//every exception at construction at its own level, so the tag is lowered on spd, which the cumulative follows, and
+	//restored however the test ends.
+	TEST_F( SettingsTests, FindDurationReportsABadStringAtError ){
+		Settings::Set( "/settingsTests/badDuration", "5M" );
+		auto& spd = Logging::GetLogger<Logging::SpdLog>();
+		struct Restore final{ Logging::SpdLog& Spd; ~Restore(){ Spd.ClearLevel( ELogTags::Exception ); } } restore{ spd };
+		spd.SetLevel( ELogTags::Exception, ELogLevel::Debug );
+		Logging::ClearMemory();
+		EXPECT_FALSE( Settings::FindDuration("/settingsTests/badDuration").has_value() );
+		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level==ELogLevel::Error && e.Message().contains("Expected 'P'"); } );
+		EXPECT_EQ( reported.size(), 1u ) << "a bad config duration must reach the log at Error, once";
+	}
+
+	//FindArg*:  a valued command-line arg outranks the setting, and an empty-valued flag is no value - the rule the soak
+	//runner's argFlag works around.  This process's own argv has both:  -settings=<path> and a bare -tests or -ctest.
+	TEST_F( SettingsTests, FindArgPrefersAValuedArg ){
+		let testFlag = Process::FindArg("-tests") ? "-tests" : "-ctest";
+		constexpr sv none{ "-noSuchArg12345" };
+		EXPECT_EQ( Settings::FindArgString("-settings", "/logging/spd/tags/default"), Process::FindArg("-settings") ) << "a valued arg outranks the setting";
+		EXPECT_EQ( Settings::FindArgString(testFlag, "/logging/spd/tags/default"), "Information" ) << "an empty-valued flag is not a value - the setting wins";
+		EXPECT_EQ( Settings::FindArgString(none, "/logging/spd/tags/default"), "Information" );
+		EXPECT_FALSE( Settings::FindArgString(none, "/settingsTests/notAKnob").has_value() );
+
+		Settings::Set( "/settingsTests/argDuration", "PT2S" );
+		EXPECT_EQ( Settings::FindArgDuration(none, "/settingsTests/argDuration"), 2s );
+		EXPECT_EQ( Settings::FindArgDuration(testFlag, "/settingsTests/argDuration"), 2s );
+		EXPECT_THROW( Settings::FindArgDuration("-settings", "/settingsTests/argDuration"), Exception ) << "a valued arg that is not a duration throws, it does not fall back";
+
+		Settings::Set( "/settingsTests/argNumber", 7 );
+		EXPECT_EQ( Settings::FindArgNumber(none, "/settingsTests/argNumber"), 7u );
+		EXPECT_THROW( Settings::FindArgNumber("-settings", "/settingsTests/argNumber"), Exception ) << "nor one that is not a number";
 	}
 }

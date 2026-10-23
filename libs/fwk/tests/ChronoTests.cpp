@@ -134,18 +134,20 @@ namespace Jde::Tests{
 		EXPECT_EQ( ToIsoString<days>(Chrono::ToTimePoint(2024, 2, 29)), "2024-02-29" );
 	}
 
-	//ToDuration is fed straight from config (Settings/json durations), so a mistyped one must throw, never parse as zero.
+	//ToDuration is fed straight from config (Settings/json durations), so a mistyped one must throw, never parse as zero - and
+	//say what it was given, which an operator reads at Error.
 	TEST( ChronoTests, ToDurationRequiresP ){
-		for( let iso : {"5M", "", "T5M", "p5M"} ){
+		for( let& [iso, message] : std::initializer_list<std::pair<sv,sv>>{
+			{"5M", "Expected 'P' as first character in '5M'."},
+			{"", "Expected 'P' as first character in ''."},
+			{"T5M", "Expected 'P' as first character in 'T5M'."},
+			{"p5M", "Expected 'P' as first character in 'p5M'."} } ){
 			try{
-				let d = Chrono::ToDuration( sv{iso} );
+				let d = Chrono::ToDuration( iso );
 				ADD_FAILURE() << "'" << iso << "' parsed as " << Chrono::ToString( d );
 			}
 			catch( const Exception& e ){
-				//only the stable half of the message: the rest of it is garbled and asserting on it would pin the bug
-				//in place.  `is.get()` returns int, so the "{}{}" renders the offending character as its code and then
-				//again as text - "5M" reports `in '535M'`, "T5M" reports `in '84T5M'`.  Reported, not fixed here.
-				EXPECT_NE( string{e.what()}.find("Expected 'P'"), string::npos ) << e.what();
+				EXPECT_EQ( string{e.what()}, message );
 			}
 		}
 		EXPECT_NO_THROW( Chrono::ToDuration(sv{"P5M"}) );
@@ -166,14 +168,53 @@ namespace Jde::Tests{
 		EXPECT_EQ( Chrono::ToDuration(sv{"P1W2D"}), duration_cast<Duration>(days{9}) );
 	}
 
+	//ISO's grammar, not a sum of whatever tokens are there:  each designator once and in order, a T followed by a time, and at
+	//least one component - so a bare P, which ToString wrote for zero, throws, and zero is PT0S both ways.
+	TEST( ChronoTests, ToDurationIsStrictIso ){
+		for( let iso : {"PT5M5H", "P1D1D", "P1D2W", "PT1H1H", "P1M1Y", "P", "PT", "P1DT", "PTT1H", "P1DTT1H"} ){
+			try{
+				let d = Chrono::ToDuration( sv{iso} );
+				ADD_FAILURE() << "'" << iso << "' parsed as " << Chrono::ToString( d );
+			}
+			catch( const Exception& ){}
+		}
+		EXPECT_EQ( Chrono::ToString(Duration::zero()), "PT0S" );
+		EXPECT_EQ( Chrono::ToDuration(sv{"PT0S"}), Duration::zero() );
+		EXPECT_EQ( Chrono::ToDuration(sv{"P1Y2M3W4DT5H6M7S"}), duration_cast<Duration>(years{1}+months{2}+weeks{3}+days{4})+hours{5}+minutes{6}+seconds{7} ) << "every designator, in order";
+		let negative = -( duration_cast<Duration>(days{1})+hours{2} );
+		EXPECT_EQ( Chrono::ToString(negative), "P-1DT-2H" );
+		EXPECT_EQ( Chrono::ToDuration(Chrono::ToString(negative)), negative ) << "a sign on each component, as ToString writes a negative";
+	}
+	//A fraction converts exactly in every unit:  hours rounded to whole minutes, minutes to whole seconds and seconds to
+	//milliseconds, so PT0.01H was a minute and PT0.001H nothing.
+	TEST( ChronoTests, ToDurationFractionsAreExact ){
+		EXPECT_EQ( Chrono::ToDuration(sv{"PT0.01H"}), seconds{36} );
+		EXPECT_EQ( Chrono::ToDuration(sv{"PT0.001H"}), milliseconds{3600} );
+		EXPECT_EQ( Chrono::ToDuration(sv{"PT0.01M"}), milliseconds{600} );
+		EXPECT_EQ( Chrono::ToDuration(sv{"PT0.0005S"}), microseconds{500} );
+		EXPECT_EQ( Chrono::ToDuration(sv{"P0.5D"}), hours{12} );
+	}
+	//Duration is the system clock's - microseconds on libc++, 100ns ticks on MSVC - so the bounds come from Duration itself:  a
+	//component past them, or a sum, throws rather than overflowing the conversion.
+	TEST( ChronoTests, ToDurationPastItsRangeThrows ){
+		let maxYears = duration_cast<years>( Duration::max() ).count();
+		EXPECT_NO_THROW( Chrono::ToDuration(Ƒ("P{}Y", maxYears)) );
+		EXPECT_THROW( Chrono::ToDuration(Ƒ("P{}Y", maxYears+1)), Exception ) << "one component";
+		EXPECT_THROW( Chrono::ToDuration(Ƒ("P-{}Y", maxYears+1)), Exception );
+		let spareDays = duration_cast<days>( Duration::max()-duration_cast<Duration>(years{maxYears}) ).count();
+		EXPECT_NO_THROW( Chrono::ToDuration(Ƒ("P{}Y{}D", maxYears, spareDays)) );
+		EXPECT_THROW( Chrono::ToDuration(Ƒ("P{}Y{}D", maxYears, spareDays+1)), Exception ) << "the sum";
+	}
+
 	//the nullopt contract is load-bearing: Settings and json durations call only through here, and a throw escaping
 	//would take down config parsing over one bad key rather than falling back to the caller's default.
 	TEST( ChronoTests, TryToDurationNullopt ){
 		EXPECT_FALSE( Chrono::TryToDuration(string{"5M"}).has_value() );
 		EXPECT_FALSE( Chrono::TryToDuration(string{""}).has_value() );
 		EXPECT_EQ( Chrono::TryToDuration(string{"P4D"}), duration_cast<Duration>(days{4}) );
-		//the level argument only re-levels the swallowed exception, which is already logged by then - it changes
-		//nothing observable here, so this asserts only that passing one is still a nullopt rather than a throw.
+		//the level argument re-levels the swallowed exception, which this suite's exception: Trace has already logged at
+		//construction, so here it changes nothing:  this asserts only that passing one is still a nullopt rather than a
+		//throw.  SettingsTests.FindDurationReportsABadStringAtError lowers the tag and sees the re-level reach the log.
 		EXPECT_FALSE( Chrono::TryToDuration(string{"5M"}, ELogLevel::Critical).has_value() );
 	}
 
@@ -181,13 +222,14 @@ namespace Jde::Tests{
 	//default has to come back instead.  The identity check is the point - returning some other valid zone would read
 	//as success at every call site.
 	TEST( ChronoTests, ToTimeZoneFallsBack ){
-		let& dflt = *std::chrono::current_zone();
+		let& dflt = *std::chrono::locate_zone( "Asia/Tokyo" );//not current_zone():  on a UTC host, CI's, it is the zone looked up below.
 		EXPECT_EQ( &Chrono::ToTimeZone("No/Such_Zone", dflt), &dflt );
 		EXPECT_EQ( &Chrono::ToTimeZone("", dflt), &dflt );
 		//by name, not by address: the spelling is canonicalized ("UTC" comes back as "Etc/UTC"), and the pointers are
 		//not comparable across the dll boundary either - Jde.dll and this exe each hold their own tzdb, so
 		//locate_zone("UTC") here and inside ToTimeZone return different objects for the same zone.
 		EXPECT_EQ( Chrono::ToTimeZone("UTC", dflt).name(), std::chrono::locate_zone("UTC")->name() ) << "a zone that does exist must not fall back";
+		EXPECT_NE( Chrono::ToTimeZone("UTC", dflt).name(), dflt.name() ) << "found, not the default";
 	}
 
 	//IsoStringRoundTrips only ever round-trips a whole second, so the fractional branch of the parse was never fed a

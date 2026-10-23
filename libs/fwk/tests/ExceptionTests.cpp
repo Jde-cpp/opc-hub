@@ -3,6 +3,7 @@
 #include <jde/fwk/exceptions/ExternalException.h>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/log/MemoryLog.h>
+#include <jde/fwk/log/SpdLog.h>
 
 #define let const auto
 
@@ -41,6 +42,24 @@ namespace Jde::Tests{
 	TEST( ExceptionTests, ExternalMessageBracesNoDescription ){
 		ExternalException e{ "near \"}\": syntax error", {}, {ELogLevel::Debug} };
 		EXPECT_EQ( string{e.what()}, "near \"}\": syntax error" );
+	}
+
+	//a copy is silent and keeps the state:  the gateway's LazySlot hands each waiter a copy of the one failure, which logged
+	//once, and each waiter's response reads the copy's code and status - UAException::ClientDetail, a UAClientException's
+	//mapped HttpStatus.
+	TEST( ExceptionTests, ExternalExceptionCopyIsSilentAndKeepsItsState ){
+		Logging::ClearMemory();
+		{
+			ExternalException e{ "near x", "select 1", {ELogLevel::Information, ELogTags::Exception, 2067u, EHttpStatus::Conflict} };
+			ExternalException copy{ e };
+			EXPECT_EQ( copy.Level(), ELogLevel::NoLog );
+			EXPECT_EQ( copy.HttpStatus(), EHttpStatus::Conflict );
+			EXPECT_EQ( copy.Code(), 2067u );
+			EXPECT_EQ( string{copy.what()}, string{e.what()} );
+		}
+		//by the template, not the message:  a copy that logged as it was built would log before its args were copied.
+		let lines = Logging::Find( [](const Logging::Entry& e){ return e.Text.starts_with("(813)near x"); } );
+		EXPECT_EQ( lines.size(), 1u ) << "the original logs once, the copy never";
 	}
 
 	TEST( ExceptionTests, HttpStatusDefaults ){
@@ -83,8 +102,21 @@ namespace Jde::Tests{
 		try{ throw 42; }catch( ... ){ unknown = std::current_exception(); }
 		let opaque = Exception::FromPtr( unknown );
 		ASSERT_NE( opaque, nullptr );
-		EXPECT_EQ( wrapped->Level(), ELogLevel::Critical );
+		EXPECT_EQ( opaque->Level(), ELogLevel::Critical );
 		EXPECT_EQ( string{opaque->what()}, "unknown exception" );
+	}
+
+	//From, for a catch( runtime_error& ):  a Jde exception moves with its type - the gateway's LazySlot copies each waiter's
+	//failure by that type, and a UAException's ClientDetail is what the client is shown - and anything else is wrapped.
+	TEST( ExceptionTests, FromMovesAJdeTypeAndWrapsTheRest ){
+		TypedException typed{ "typed" };
+		let kept = Exception::From( move(typed) );
+		ASSERT_NE( dynamic_cast<TypedException*>(kept.get()), nullptr ) << "arrived sliced: " << kept->what();
+		EXPECT_EQ( string{kept->what()}, "typed" );
+		std::runtime_error plain{ "plain" };
+		let wrapped = Exception::From( move(plain) );
+		EXPECT_EQ( string{wrapped->what()}, "plain" );
+		EXPECT_EQ( wrapped->Level(), DefaultExceptionLevel );
 	}
 
 	//the adopting ctor: a plain runtime_error contributes only its what(), while an Exception hands over its whole
@@ -100,6 +132,15 @@ namespace Jde::Tests{
 		EXPECT_EQ( adopted.HttpStatus(), EHttpStatus::Conflict ) << "the Exception branch adopts the source's state, not just its message";
 	}
 
+	//the inner-exception ctor with no format:  the inner's text is the message - the body of the gateway's and the hub's
+	//401/500 responses, whose RestException passes none.  A format wins, the inner kept but not shown.
+	TEST( ExceptionTests, InnerExceptionSuppliesWhatOnlyWithoutAFormat ){
+		Exception bare{ SRCE_CUR, {ELogLevel::Debug}, std::logic_error{"inner detail"} };
+		EXPECT_EQ( string{bare.what()}, "inner detail" ) << "no format:  the inner's text is the message";
+		Exception framed{ SRCE_CUR, {ELogLevel::Debug}, std::logic_error{"inner detail"}, "outer {}", 1 };
+		EXPECT_EQ( string{framed.what()}, "outer 1" ) << "a format wins;  the inner is kept but not shown";
+	}
+
 	//log once, wherever it happens: at construction when the level warrants it, otherwise at destruction.  Move
 	//hands the decision to the target - a double line at every Move()/Throw() would be a visible regression.
 	TEST( ExceptionTests, LogsOnce ){
@@ -112,6 +153,26 @@ namespace Jde::Tests{
 			let movedAgain = moved->Move();
 		}//all three destroyed here.
 		EXPECT_EQ( logger.Find(message).size(), 1u ) << "the message logged once per Move, not once per object";
+	}
+
+	//LogsOnce's other half, the path every shipped config takes:  an exception below BreakLevel, with the exception tag above
+	//Trace, is silent at construction and logs from its destructor.  This suite takes the tag at Trace, so it is lowered on
+	//the spd logger, which the cumulative follows, and restored however the test ends.
+	TEST( ExceptionTests, LogsAtDestructionWhenConstructionWasSilent ){
+		auto& spd = Logging::GetLogger<Logging::SpdLog>();
+		struct Restore final{ Logging::SpdLog& Spd; ~Restore(){ Spd.ClearLevel( ELogTags::Exception ); } } restore{ spd };
+		spd.SetLevel( ELogTags::Exception, ELogLevel::Debug );
+		ASSERT_FALSE( Logging::ShouldLog(ELogLevel::Trace, ELogTags::Exception) ) << "another logger still takes the exception tag at Trace";
+#ifndef NDEBUG
+		ASSERT_GT( Logging::BreakLevel(), ELogLevel::Information ) << "an Information exception would log at construction";
+#endif
+		auto& memory = Logging::GetLogger<Logging::MemoryLog>();
+		Logging::ClearMemory();
+		{
+			Exception e{ "deferred to the destructor", {ELogLevel::Information} };
+			EXPECT_TRUE( memory.Find("deferred to the destructor").empty() ) << "below BreakLevel and no Trace:  silent at construction";
+		}
+		EXPECT_EQ( memory.Find("deferred to the destructor").size(), 1u ) << "logged by the destructor";
 	}
 
 	//Code() is lazy: unset until asked, then memoized, and derived from the *format* so the same message shares one

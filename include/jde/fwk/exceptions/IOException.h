@@ -23,7 +23,14 @@ namespace Jde::IO{
 		IOException( fs::path path, uint32 code, string value, SRCE ):Exception{ move(value), {ELogLevel::Debug, ELogTags::IO, code}, sl }, Error{ ToIOError(code) }, _path{ move(path) }{ SetWhat(); }
 		IOException( fs::path path, string value, SRCE ): Exception{ move(value), {ELogLevel::Debug, ELogTags::IO}, sl }, _path{ move(path) }{ SetWhat(); }
 		IOException( fs::filesystem_error&& e, SRCE ):Exception{sl}, _underlying( mu<fs::filesystem_error>(move(e)) ){
-			if( const auto& code = _underlying->code(); code.category()==std::system_category() )//a generic code is an errno everywhere, which ToIOError would misread on windows.
+			//ToIOError reads the platform's native codes:  Win32 ones under MSVC's STL, which reports them as system, and where a
+			//generic code is an errno it would misread;  errnos elsewhere, where libc++ reports every filesystem_error as generic.
+			const auto& code = _underlying->code();
+#ifdef _MSC_VER
+			if( code.category()==std::system_category() )
+#else
+			if( code.category()==std::system_category() || code.category()==std::generic_category() )
+#endif
 				Error = ToIOError( (uint32)code.value() );
 			SetWhat();
 		}

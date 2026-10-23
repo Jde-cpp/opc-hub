@@ -94,19 +94,13 @@ namespace Jde::Crypto{
 		INFO( "fixture at {}", dir.string() );
 	}
 
-	TEST_F( OpenSslTests, Main ){
-		let signature = Crypto::RsaSign( HeaderPayload, PrivateKeyFile, passcode );
-		auto publicKey = Crypto::ReadPublicKey( PublicKeyFile );
-
-		Crypto::Verify( publicKey, HeaderPayload, signature );
-	}
-
 	//a mismatch is an expected auth outcome, not a malfunction, and EVP_VerifyFinal reports both through one return
 	//value - 0 for the first, negative for the second.  The rejected client only ever sees this message, so it has to
 	//name the reason rather than echo a bare openssl rc.
 	TEST_F( OpenSslTests, VerifyRejectsBadSignature ){
 		let signature = Crypto::RsaSign( HeaderPayload, PrivateKeyFile, passcode );
 		auto publicKey = Crypto::ReadPublicKey( PublicKeyFile );
+		EXPECT_NO_THROW( Crypto::Verify(publicKey, HeaderPayload, signature) );
 		try{
 			Crypto::Verify( publicKey, HeaderPayload+"!", signature );//right key, wrong payload.
 			FAIL() << "Verify should have thrown.";
@@ -181,21 +175,24 @@ namespace Jde::Crypto{
 			EXPECT_FALSE( Crypto::IsCertificateFile(fs::path{name}) ) << name;
 	}
 
+	//reviews/m2-closing.md #11 - the once-only half of the shared filter:  the first sighting of a passed-over file is the one a
+	//scan says out loud, however often it reruns;  another file is another first.  The set is process-wide with no reset,
+	//so each pass names its own files, or every --gtest_repeat pass after the first would find them seen already.
+	TEST_F( OpenSslTests, FirstSkipIsTrueOncePerFile ){
+		static uint pass{};
+		let dir = Tests::FixtureDir( "openSsl" )/"firstSkip";//never created:  FirstSkip only remembers the path.
+		let stem = Ƒ( "pass{}-", ++pass );
+		EXPECT_TRUE( FirstSkip(dir/(stem+"client.pfx")) );
+		EXPECT_FALSE( FirstSkip(dir/(stem+"client.pfx")) );
+		EXPECT_FALSE( FirstSkip(dir/(stem+"client.pfx")) );
+		EXPECT_TRUE( FirstSkip(dir/(stem+"SERVER.DER")) ) << "the filter is case-sensitive, so this is passed over too - and is its own first";
+		EXPECT_FALSE( IsCertificateFile(dir/(stem+"SERVER.DER")) );
+	}
+
 	//what made #26 latent: no test asserted the fixture's certificate and key pair belong together, so the split
 	//regeneration - keys re-created when either key was missing, the certificate kept whenever it existed - could leave
 	//a cert advertising a public key its private key cannot sign for, and every test still passed.  That is the same
 	//damaged install EnsureKeyCertificate_MissingKeyReissuesCert guards for a scratch dir; this guards the fixture.
-	//reviews/m2-closing.md #11 - the once-only half of the shared filter:  the first sighting of a passed-over file is the one a
-	//scan says out loud, however often it reruns;  another file is another first.
-	TEST_F( OpenSslTests, FirstSkipIsTrueOncePerFile ){
-		let dir = ScratchDir( "firstSkip" );
-		EXPECT_TRUE( FirstSkip(dir/"client.pfx") );
-		EXPECT_FALSE( FirstSkip(dir/"client.pfx") );
-		EXPECT_FALSE( FirstSkip(dir/"client.pfx") );
-		EXPECT_TRUE( FirstSkip(dir/"SERVER.DER") ) << "the filter is case-sensitive, so this is passed over too - and is its own first";
-		EXPECT_FALSE( IsCertificateFile(dir/"SERVER.DER") );
-	}
-
 	TEST_F( OpenSslTests, FixtureCertificateMatchesItsKey ){
 		auto der = ReadCertificate( CertificateFile );
 		auto certKey = Crypto::ExtractPublicKey( der, SRCE_CUR );
@@ -434,6 +431,42 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
+	//20b7d372:  a certificate that has to be re-issued but that this process cannot write - an elevated install's, under a
+	//service account - says so and how to fix it, not the generic "Delete it and restart", and leaves the key and the
+	//certificate as they were.  Root opens a read-only file for append, so this skips as root, which the Linux CI container runs as.
+	TEST_F( OpenSslTests, EnsureKeyCertificate_ReadOnlyCertificateSaysSo ){
+		let dir = ScratchDir( "readOnlyCert" );
+		let publicFile = (dir/"public.pem").string(), privateFile = (dir/"private.pem").string(), certFile = (dir/"cert.pem").string();
+		let settings = SslSettings( publicFile, privateFile, certFile, "read-only-cert", "DNS:localhost" );
+		settings.CreateDirectories();
+		Crypto::CreateKey( settings, SRCE_CUR );
+		Crypto::IssueCertificate( settings, std::chrono::hours{-24} );//expired, so EnsureKeyCertificate has to re-issue it.
+		ASSERT_EQ( Crypto::ReissueReason(settings).substr(0, 7), "expired" );
+		let expired = ReadCertificate( certFile );
+		let readOnly = fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read;
+		fs::permissions( certFile, readOnly, fs::perm_options::replace );
+		let restore = [&]{ fs::permissions( certFile, readOnly | fs::perms::owner_write, fs::perm_options::replace ); };
+		if( std::ofstream{certFile, std::ios::app}.is_open() ){
+			restore();
+			fs::remove_all( dir );
+			GTEST_SKIP() << "this user opens a read-only file for append - root, as the Linux CI container runs";
+		}
+		try{
+			Crypto::EnsureKeyCertificate( settings );
+			ADD_FAILURE() << "re-issued a certificate it cannot write";
+		}
+		catch( const Exception& e ){
+			let what = string{ e.what() };
+			EXPECT_TRUE( what.contains("cannot write it") ) << what;
+			EXPECT_TRUE( what.contains(certFile) ) << what;
+			EXPECT_EQ( what.find("Delete "), string::npos ) << "the generic remedy, which a read-only file defeats:  " << what;
+		}
+		restore();
+		EXPECT_TRUE( ReadCertificate(certFile)==expired ) << "nothing was re-issued";
+		EXPECT_TRUE( fs::exists(privateFile) ) << "the key is untouched";
+		fs::remove_all( dir );
+	}
+
 	//a certificate issued on another key - two checkouts sharing a certificate path, each with its own key - is unusable:  nothing
 	//encrypted to it can be decrypted (HistoryTests' issued token, 2026-10).  A managed one is re-issued on the key that is there.
 	TEST_F( OpenSslTests, EnsureKeyCertificate_ReissuesAMismatchedPair ){
@@ -576,6 +609,9 @@ namespace Jde::Crypto{
 		Crypto::Random( b.data(), b.size() );
 		EXPECT_NE( a, b );//2⁻¹²⁸ false-failure odds.
 		EXPECT_NE( a, (array<unsigned char,16>{}) );
-		Crypto::Random<uint32_t>();
+		//the typed template mints every web session id (Sessions::GetNewSessionId):  a T{} or a short fill would spin there.
+		let x = Crypto::Random<uint64_t>(), y = Crypto::Random<uint64_t>();
+		EXPECT_NE( x, y );//2⁻⁶⁴ false-failure odds.
+		EXPECT_TRUE( (x>>56) || (y>>56) ) << "the high byte is filled too";//2⁻¹⁶ false-failure odds.
 	}
 }
