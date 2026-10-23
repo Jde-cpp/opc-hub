@@ -38,6 +38,15 @@ SetCompressor /SOLID lzma
 	;sign.ps1 through the environment, the only channel this hook has (sign.ps1's header).
 	!uninstfinalize '"${SIGN_HOST}" -NoProfile -ExecutionPolicy Bypass -File "${SIGN_SCRIPT}" "%1"'
 !endif
+;A remote signer (SignPath - README.md, "Signing") cannot sit in that hook, so the uninstaller leaves one makensis run and
+;comes back signed into another with the same defines:  UNINSTALLER_ONLY copies it out, PRESIGNED_UNINSTALLER puts the signed
+;copy in place of the one this run generated, and WriteUninstaller writes that.
+!ifdef UNINSTALLER_ONLY
+	!uninstfinalize 'copy /Y "%1" "${UNINSTALLER_ONLY}"' = 0
+!endif
+!ifdef PRESIGNED_UNINSTALLER
+	!uninstfinalize 'copy /Y "${PRESIGNED_UNINSTALLER}" "%1"' = 0
+!endif
 !ifndef VERSION
 	!define VERSION "dev"
 !endif
@@ -83,7 +92,11 @@ SetCompressor /SOLID lzma
 !delfile "${FILES_NSH}"
 
 Name "${PRODUCT}"
-OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
+!ifdef UNINSTALLER_ONLY
+	OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}-uninstaller-only.exe" ;its uninstaller is unsigned - build-setup.ps1 deletes it
+!else
+	OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
+!endif
 BrandingText "${PRODUCT} ${VERSION}"
 VIProductVersion "${VI_VERSION}"
 VIFileVersion "${VI_VERSION}"

@@ -70,10 +70,11 @@ libs/app/shared/proto/Web.FromServer.proto
 !.github/
 !.github/**
 !/.gitattributes
-# Re-include the shared Claude Code skills; .claude/settings.local.json stays ignored.
+# Re-include the shared Claude Code skills and rules; .claude/settings.local.json stays ignored.
 !/.claude/
 /.claude/*
 !/.claude/skills/
+!/.claude/rules/
 **/__pycache__/
 apps/OpcGateway/config/common-meta.libsonnet
 apps/AppServer/config/common-meta.libsonnet
