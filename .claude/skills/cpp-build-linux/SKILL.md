@@ -1,6 +1,7 @@
 ---
 name: cpp-build-linux
-description: How to configure and build the Jde C++ tree on Linux — the clang 23/libc++ toolchain, the $REPO_DIR vs $JDE_DIR roles and the build-dir layout, the buildFunctions.sh helpers (reconfig/build/compile/clean) and their raw cmake equivalents, the mandatory -B, the OS-split presets with the -jde/-repos tables, the third-party superbuild, target names, and the stale-PCH and parallelism gotchas. Use when configuring, building, rebuilding, or cleaning C++ in this repo on Linux, or when a configure/build fails. (Windows: the cpp-build-win skill.)
+description: >-
+  How to configure and build the Jde C++ tree on Linux — the clang 23/libc++ toolchain, the $REPO_DIR vs $JDE_DIR roles and the build-dir layout, the buildFunctions.sh helpers (reconfig/build/compile/clean) and their raw cmake equivalents, the mandatory -B, the OS-split presets with the -jde/-repos tables, the third-party superbuild, target names, and the stale-PCH and parallelism gotchas. Use when configuring, building, rebuilding, or cleaning C++ in this repo on Linux, or when a configure/build fails. (Windows: the cpp-build-win skill.)
 ---
 
 # Building (C++) on Linux

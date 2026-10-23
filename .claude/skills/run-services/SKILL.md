@@ -25,7 +25,7 @@ instead - `opcserver-emulator-hub` against the hub - see *PLC emulator* below.
 
 ## Prerequisites
 
-- `$JDE_DIR`, `$JDE_BUILD_DIR`, `$JDE_COMPILER` exported (see CLAUDE.md).
+- `$JDE_DIR`, `$JDE_BUILD_DIR`, `$JDE_COMPILER` exported (see the `cpp-build-linux` skill's environment table).
 - **MySQL running** on 3306 with the `debug` schema — the services connect as
   `jde@localhost:3306/debug` at startup and abort if it is down. `ss -lnt | grep 3306`.
 - `python3` and `curl` (used by the driver for JSON and HTTP).
