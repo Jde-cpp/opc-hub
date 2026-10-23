@@ -54,8 +54,9 @@ catalog with the split apps' table prefixes, so the hub runs against the data a 
 The hub has no meta or sql of its own.  Its mounts point at `libs/access/config`, `apps/AppServer/config` and
 `apps/OpcGateway/config`.
 
-Certs: `ProductName` puts the hub's tree under `$(ProgramData)/Jde-Cpp/OpcHub`.  The OpcServer and the PLC emulator
-anchor the split AppServer's cert for their login TLS, so against a hub they need the overlays
+Certs: `Process::ProductName()` (on Windows the `.rc`'s `JdeProductName`) puts the hub's tree under
+`$(ProgramData)/Jde-Cpp/OpcHub`.  The OpcServer and the PLC emulator anchor the split AppServer's cert for their login
+TLS, so against a hub they need the overlays
 `apps/OpcServer/config/Opc.Server.Hub.jsonnet` / `apps/OpcServer/emulator/config/Opc.PlcEmulator.Hub.jsonnet`
 (`caFile` = the hub's `OpcHub.pem`); the OpcServer's args already trust `certsDir("OpcHub")` for the gateway role's
 OPC client certs.  The installed args (`config/args/install`, the OpcServer's too) trust only what the installer ships -
@@ -94,7 +95,8 @@ The settings they ship:
 
 ### Windows
 
-1) Run `OpcHubSetup-<version>.exe`.
+1) Run `OpcHubSetup-<version>.exe`.  It is unsigned ([`CODE_SIGNING.md`](../../CODE_SIGNING.md)), so SmartScreen stops
+   it on *Windows protected your PC*:  click **More info**, then **Run anyway**.
    - Install mode: **All users** registers the selected products as Windows services.  It needs administrator rights and
      installs the VC++ v14 x64 runtime when missing.
    - **Current user** installs under `%LOCALAPPDATA%\Programs` and runs the products from Start Menu shortcuts.  It

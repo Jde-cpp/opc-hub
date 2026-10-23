@@ -43,19 +43,43 @@ CI: the Win2025 workflow (`.github/workflows/win2025-build.yml`) runs `build-set
 - An install smoke test then installs it silently, checks the services and the Web UI, and uninstalls it.
 
 A dispatched run uploads `OpcHubSetup-<version>.exe` as an artifact. A push of a release tag (`20*`) publishes it as that
-tag's GitHub release instead, and only when the smoke test passed. The installer is unsigned: no certificate route yet
-(Signing, below).
+tag's GitHub release instead, and only when the smoke test passed. The installer is unsigned (Signing,
+below).
 
 ## Signing
 
-**Releases are not signed yet** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks it. The pipeline below
-is ready and CI does not use it: what is missing is a certificate.
+**Releases through 2026.10.31 are unsigned** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks signing.
+The plan from the next release on is to sign the installer by hand with a Certum
+[Open Source Code Signing](https://shop.certum.eu/open-source-code-signing-on-simplysign.html) certificate issued to the
+maintainer as an individual, so UAC would name the publisher *Open Source Developer* followed by the maintainer's name.
+Its key stays in Certum's cloud (SimplySign), and each session is unlocked with a code from the SimplySign phone app, so
+no CI run can sign with it.
+
+For a tag:
+
+1. The Win2025 run builds and smoke-tests the installer and puts it on the tag's draft release.
+2. On a Windows box with SimplySign Desktop connected, which puts the certificate in the user's certificate store:
+
+   ```powershell
+   gh release download <tag> --repo Jde-cpp/opc-hub --pattern 'OpcHubSetup-*.exe'
+   signtool sign /sha1 <thumbprint> /fd SHA256 /tr http://time.certum.pl /td SHA256 /d "OPC Hub" OpcHubSetup-<tag>.exe
+   gh release upload <tag> OpcHubSetup-<tag>.exe --repo Jde-cpp/opc-hub --clobber
+   ```
+
+3. Publish the release.
+
+The workflows don't create the release as a draft yet.  Only the installer is signed:  SmartScreen and UAC look at the
+file that was downloaded and run, and the exes, dlls and uninstaller inside it carry no signature.  A site whose AppLocker
+or WDAC rules allow software by publisher would need those signed too:  `build-setup.ps1 -Sign` below, run on CI's build
+tree, with `sign.ps1` taught to sign from the certificate store.
+
+### The local pipeline
 
 `build-setup.ps1 -Sign` Authenticode-signs the exes and dlls before makensis packs them, the uninstaller from inside
 makensis, and the installer after. The data-root probe Setup runs, `data-dir-probe.ps1`, ships unsigned.
 
-The uninstaller is generated at install time from a stub built in makensis, so `!uninstfinalize` in the `.nsi` is the
-only place it can be signed.
+The uninstaller is generated at install time from a stub built in makensis, so within one makensis run
+`!uninstfinalize` in the `.nsi` is the only place a local signer can reach it.
 
 All of it goes through [`sign.ps1`](sign.ps1), which takes its certificate from the environment. The hook's child
 process gets nothing else.
@@ -65,14 +89,21 @@ process gets nothing else.
 | Azure Artifact Signing | `JDE_SIGN_ENDPOINT` (the account's region, e.g. `https://eus.codesigning.azure.net`), `JDE_SIGN_ACCOUNT`, `JDE_SIGN_PROFILE` | public trust, the key in Microsoft's HSM; `Invoke-ArtifactSigning` (`Install-Module ArtifactSigning`, for the PowerShell that runs `build-setup.ps1`) with whatever Azure credential the process has - `az login` on a dev box, an azure/login OIDC session on a runner; timestamped by Microsoft |
 | a `.pfx` | `JDE_SIGN_PFX` (`-PfxPath`), `JDE_SIGN_PFX_PASSWORD` | signtool from the Windows SDK (`JDE_SIGN_TOOL` overrides the path); a self-signed certificate (`New-SelfSignedCertificate -Type CodeSigningCert`) proves the pipeline end to end and earns no trust anywhere |
 
-CI builds unsigned ([#230](https://github.com/Jde-cpp/opc-hub/issues/230)): no certificate route has been settled.  Azure Artifact Signing was tried on 2026-09-12 and is closed to
-this project - its individual identity validation runs through AU10TIX's Verified ID, which would not verify, and the
-organization route sends its representative through the same step.  Still open: SignPath Foundation (free for OSS; a "Code
-signing policy" page and an application they review; signs the installer on their servers, never the uninstaller), an
-individual OV certificate from a CA that validates individuals (SSL.com's eSigner has a hosted-runner GitHub Action; Certum's
-open-source certificate signs on a dev box or the self-hosted runner), or an EV certificate, which needs a registered
-business.  Until one is chosen, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type
+`build-setup.ps1 -UninstallerOnly` and `-Uninstaller <the signed Uninstall.exe>` are for a signer that can't sit in the
+`!uninstfinalize` hook, such as a remote service that approves each request:  the first writes `<OutDir>\Uninstall.exe` and no installer,
+and the second packs the signed copy in place of the one its makensis run generated.  Both runs take the same inputs and
+version.  Certum signs on the spot, so the current route doesn't need them.
+
+Until the certificate arrives, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type
 CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on your own machines.
+
+### Routes that closed
+
+- [SignPath Foundation](https://signpath.org), which signs open-source projects for free under its own certificate,
+  declined the project's application on 2026-10-23.
+- Azure Artifact Signing:  its individual identity validation runs through AU10TIX's Verified ID, which would not verify
+  on 2026-09-12 and refused outright on 2026-10-22 with the billing details corrected, and the organization route sends
+  its representative through the same step.
 
 SmartScreen: a public-trust certificate takes "Unknown publisher" off the UAC prompt at once; the "Windows protected your PC"
 interstitial fades as the certificate accrues download reputation, which a new one starts without.

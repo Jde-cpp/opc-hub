@@ -74,5 +74,6 @@ if( WIN32 )
 	#kernel32 alone.
 	add_executable( Jde.CheckCpu setup/checkCpu.cpp )
 	compileOptions( Jde.CheckCpu )
+	jdeVersionResource( Jde.CheckCpu DESCRIPTION "Jde CPU check - the instruction set test Setup runs first" )
 	set_target_properties( Jde.CheckCpu PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" )
 endif()

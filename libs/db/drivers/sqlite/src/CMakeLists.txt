@@ -11,6 +11,7 @@ find_package( Threads REQUIRED )
 set( targetName Jde.DB.Sqlite )
 add_library( ${targetName} MODULE ) #dlopen'd only - nothing links it; proc modules reach it through IProcs (sqlite_api.h).
 compileOptions( ${targetName} )
+jdeVersionResource( ${targetName} DESCRIPTION "Jde SQLite driver" )
 target_compile_definitions( ${targetName} PRIVATE JDE_SQLITE_EXPORTS )
 
 set_property( TARGET ${targetName} PROPERTY POSITION_INDEPENDENT_CODE ON )

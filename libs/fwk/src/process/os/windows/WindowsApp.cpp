@@ -201,7 +201,9 @@ namespace Jde{
 	string _productName;
 	α Process::ProductName()ι->sv{
 		if( _productName.empty() ){
-			_productName = loadResource( "ProductName" );
+			_productName = loadResource( "JdeProductName" );//not ProductName, which SignPath wants as the project's name on every signed file - the hub and the OpcServer would share a tree
+			if( _productName.empty() )
+				_productName = loadResource( "ProductName" );//an .rc with no JdeProductName:  the split servers' and the test exes'
 			if( _productName.empty() )//said, not just done:  this name is the data and certificate dir, and a silent one forked the tree with nothing to name the cause (#3).  stderr - perhaps before the logger, and the console mode is where that happened; not the event log - the test exes carry no .rc, so this is their name on every run.
 				std::cerr << "No ProductName in the exe's version resource - the product dir is '" << (_productName = "Jde-cpp") << "', which no installed setting names.\n";
 		}
