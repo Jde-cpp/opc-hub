@@ -42,7 +42,7 @@ local attributes( i ) = {
 				certificate_uri: common.types.varchar+{nullable:true, length:2048,i:103},
 				url: common.types.varchar+{length:2048, i:104}
 			}+common.slugColumns+{
-				slug: common.slugColumns.slug+{updateable:false, comment:"The connection's identity everywhere but this table:  the url segment, the key the live UAClient sits under (UM), the sessions join key.  The update path skips a non-updateable column, so a rename is dropped rather than leaving the running gateway keyed by a name the row no longer has.  Only here - users/roles/groups may rename."}
+				slug: common.slugColumns.slug+{updateable:false, comment:"The connection's identity everywhere but this table:  the url segment, the key the live UAClient sits under (UM), the sessions join key.  The QL refuses an update that names a non-updateable column, so a rename never leaves the running gateway keyed by a name the row no longer has.  Only here - users/roles/groups may rename."}
 			},
 			customInsertProc:true,
 			naturalKeys: common.slugNKs

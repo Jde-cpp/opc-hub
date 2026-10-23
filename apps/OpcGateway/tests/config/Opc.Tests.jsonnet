@@ -66,7 +66,16 @@ local logsDir = args.logsDir;
 		issuedCerts: instance.http.gateway.ssl,
 		allowPlaintextPassword: false, //the shipped default; PlaintextPasswordTests flips it for one test.
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
-		hist:{ path: logsDir + "/hist/opc-gateway-tests" } //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
+		hist:{ path: logsDir + "/hist/opc-gateway-tests" }, //the gateway's own groups (HistGroupTests), which main.cpp empties at the start as it does the server's.
+		//the gateway's own endpoint (GatewayServerTests), beside the embedded OpcServer's 4940:  two UA servers in one process.  No ssl:
+		//the process pair, http.gateway.ssl.  Its client certificates are the test product's one ssl/certs, where that pair is - the suite's
+		//client logs in by certificate with it - and user1 is the OpcServer's login too.
+		server:{
+			port: 4941,
+			trustedCertDirs: instance.access.trustedCertDirs,
+			rejectedCertDir: logsDir + "/rejected/opc-gateway-tests",
+			users: instance.opc.users
+		}
 	},
 	opcServer:{
 		slug: "TestServer",

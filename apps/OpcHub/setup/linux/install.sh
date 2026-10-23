@@ -92,7 +92,7 @@ chmod 700 "$dataRoot"
 #The --user counterparts of the package's units:  no User=/StateDirectory= (the data root is this account's $XDG_CONFIG_HOME,
 #pinned here so the manager's environment cannot move it), WantedBy=default.target.  `-c`: foreground, log on the journal.
 #`-include=args/install-user`, where the package's units take args/install:  that overlay binds the listeners to 127.0.0.1,
-#so an install that needed no root does not publish 1967, 1970 and 4840 to the network it cannot open a firewall port on
+#so an install that needed no root does not publish 1967, 1970, 4840 and 4841 to the network it cannot open a firewall port on
 #(reviews/install-issues.md #32; the Windows current-user mode is the same overlay, #16).  README.md, "Per-user install",
 #says how to reach it from another machine.
 unit(){ #name description exeDir exe settings
@@ -115,7 +115,7 @@ RestartSec=5
 WantedBy=default.target
 UNIT
 }
-unit jde-opchub "OpcHub - AppServer + OPC gateway (port 1967)" opchub Jde.Opc.Hub apps/OpcHub/config/Opc.Hub.jsonnet ""
+unit jde-opchub "OpcHub - AppServer + OPC gateway (port 1967, opc.tcp 4841)" opchub Jde.Opc.Hub apps/OpcHub/config/Opc.Hub.jsonnet ""
 unit jde-opcserver "OpcServer - OPC UA server (opc.tcp 4840, http 1970)" opcserver Jde.Opc.Server apps/OpcServer/config/Opc.Server.Install.jsonnet \
 	"$(printf 'Requires=jde-opchub.service\nAfter=jde-opchub.service')"
 systemctl --user daemon-reload

@@ -1,7 +1,8 @@
-// Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) - plus an embedded OpcServer (1975, opc.tcp 4975),
-// in one process.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service (1967/1968/1970),
-// the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940), and can run beside a live hub.  /http/app and /http/gateway
-// alias the one port for the two apps' test helpers (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
+// Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) and its OPC UA endpoint (opc.tcp 4976) - plus an
+// embedded OpcServer (1975, opc.tcp 4975), in one process.  Nothing else in the repo binds those ports, so this suite never hangs
+// on a live hub/service (1967/1968/1970/4841), the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940/4941), and can
+// run beside a live hub.  /http/app and /http/gateway alias the one port for the two apps' test helpers (App::Server::Tests::Port,
+// Gateway::Tests::GatewayPort).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 {
@@ -62,7 +63,15 @@ local logsDir = args.logsDir;
 		trustedCertDirs: instance.access.trustedCertDirs, //the embedded OpcServer's UA certificate is in the test product's one ssl/certs; the gateway role reads its own list, not the enrollment anchors (ServerTrust.h).
 		issuedCerts: instance.http.gateway.ssl,
 		search:{ maxDepth: 12, maxNodes: 25000, limit: 20, includeServer: false },
-		hist:{ path: logsDir + "/hist/opc-hub-tests" } //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.
+		hist:{ path: logsDir + "/hist/opc-hub-tests" }, //the gateway role's historian:  its own path, so a gateway test run beside this one never contends for the lock.
+		//the hub's own endpoint (EndpointTests):  loopback as the listener is, the process pair (no ssl), and a hub-shape login - a short
+		//issued token answered from this process's session map (HubAppClient::SessionInfoAwait).
+		server:{
+			port: 4976,
+			address: instance.http.address,
+			trustedCertDirs: instance.access.trustedCertDirs,
+			rejectedCertDir: logsDir + "/rejected/opc-hub-tests"
+		}
 	},
 	opcServer:{
 		slug: "TestServer",

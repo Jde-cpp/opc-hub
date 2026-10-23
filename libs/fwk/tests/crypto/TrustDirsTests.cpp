@@ -23,4 +23,19 @@ namespace Jde::Crypto{
 		EXPECT_EQ( warnings("test anchor"), 1u ) << "a list warned again for a directory it had already reported";
 		EXPECT_EQ( warnings("test server certificate"), 1u ) << "the first list to find the directory missing hid it from the second";
 	}
+
+	//reviews-issue/servers-2-endpoint.md #10:  a subdirectory - the gateway endpoint's clients/ and rejected/ in its ssl/servers - is
+	//no file passed over:  no Warning, and Skipped, which SkippedNote reports, does not count it.
+	TEST( TrustDirsTests, ASubdirectoryIsNoSkippedFile ){
+		let dir = fs::temp_directory_path()/"TrustDirsTests-subdirectory";
+		fs::remove_all( dir );
+		fs::create_directories( dir/"clients" );
+		Logging::ClearMemory();
+		TrustDirs trust{ "test anchor", ELogTags::Test, ELogLevel::Warning };
+		trust.Scan( vector<fs::path>{dir}, []( const fs::path&, vector<byte>&& ){} );
+		EXPECT_EQ( trust.Skipped(), 0u );
+		let lines = Logging::Find( [&]( const Logging::Entry& e ){ return e.Message().contains( (dir/"clients").string() ); } );
+		EXPECT_TRUE( lines.empty() ) << lines.front().Message();
+		fs::remove_all( dir );
+	}
 }

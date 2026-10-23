@@ -1,7 +1,7 @@
-# Jde OpcHub - the AppServer and the OPC gateway in one process (port 1967).  Installed by the jde-opchub package
-# (apps/OpcHub/setup/linux), enabled and started by its postinst; local changes go in `systemctl edit jde-opchub`.
+# Jde OpcHub - the AppServer and the OPC gateway in one process (port 1967, its OPC UA endpoint on opc.tcp 4841).  Installed by
+# the jde-opchub package (apps/OpcHub/setup/linux), enabled and started by its postinst; local changes go in `systemctl edit jde-opchub`.
 [Unit]
-Description=Jde OpcHub - AppServer + OPC gateway (port 1967)
+Description=Jde OpcHub - AppServer + OPC gateway (port 1967, opc.tcp 4841)
 Documentation=https://github.com/Jde-cpp/opc-hub
 After=network-online.target
 Wants=network-online.target

@@ -17,7 +17,7 @@ namespace Jde::Opc::Server{
 		UA_ServerConfig{
 			.logging = &_logger,
 		},
-		_trust{ settings.TrustedCertDirs }{
+		_trust{ settings.TrustedCertDirs, settings.RejectedCertDir }{
 		try{
 			//One shape:  secured.  Without a certificate this used to build a second one - a None endpoint with no certificate and
 			//no trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's
@@ -75,15 +75,40 @@ namespace Jde::Opc::Server{
 		applicationDescription.applicationUri = UA_STRING_ALLOC( uri.c_str() );
 	}
 
+	//The host's limits over open62541's own (spec *Limits*):  only what the host set, so a server whose host sets none - the
+	//OpcServer - runs on the defaults setBasics gave it, as it always has.
+	Ω applyLimits( UA_ServerConfig& config, const UASettings::Limits& limits )ε->void{
+		let ms = []( Duration d ){ return (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( d ).count(); };
+		if( limits.MaxSessions ){
+			config.maxSessions = *limits.MaxSessions;
+			config.maxSecureChannels = std::max( config.maxSecureChannels, config.maxSessions );//a session per channel:  past the 100 channels, maxSessions alone admits none more.
+		}
+		if( limits.MaxMonitoredItems )
+			config.maxMonitoredItems = *limits.MaxMonitoredItems;
+		if( limits.SessionTimeout ){
+			THROW_IF( *limits.SessionTimeout<=Duration::zero(), "limits.sessionTimeout must be positive, not {} ms.", duration_cast<milliseconds>(*limits.SessionTimeout).count() );
+			config.maxSessionTimeout = ms( *limits.SessionTimeout );
+		}
+		if( limits.MinSamplingInterval ){
+			THROW_IF( *limits.MinSamplingInterval<=Duration::zero(), "limits.minSamplingInterval must be positive, not {} ms.", duration_cast<milliseconds>(*limits.MinSamplingInterval).count() );
+			config.samplingIntervalLimits.min = ms( *limits.MinSamplingInterval );
+			config.samplingIntervalLimits.max = std::max( config.samplingIntervalLimits.max, config.samplingIntervalLimits.min );
+		}
+		if( limits.MaxAsyncOperations )
+			config.maxAsyncOperationQueueSize = *limits.MaxAsyncOperations;
+	}
+
 	α UAConfig::SetConfig( const UASettings& settings, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void{
 		UAε( UA_ServerConfig_setBasics_withPort(this, settings.Port) );
 		applyAddress( *this, settings.Address, settings.Port );
+		applyLimits( *this, settings.Limit );
 
 		UA_TrustListDataType list;
 		UA_TrustListDataType_init( &list );
 		_trust.LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::Verify) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
 
-		//The certificate groups' parameters.
+		//The certificate groups' parameters.  The rejected list capped:  setBasics leaves it 0, unbounded.
+		maxRejectedListSize = UATrust::MaxRejected;
 		UA_KeyValuePair params[2];
 		params[0].key = UA_QualifiedName{ 0, "max-trust-listsize"_uv };
 		UA_Variant_setScalar( &params[0].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );
@@ -112,7 +137,17 @@ namespace Jde::Opc::Server{
 
 		UAAccess::Init( *this, settings, move(appClient), move(nodeAccess) );
 
-		UAε( UA_ServerConfig_addAllEndpoints(this) );
+		//None=false keeps the None policy, which AddSecurityPolicies added, but offers no endpoint on it:  a None channel then
+		//answers GetEndpoints and FindServers and nothing else (securityPolicyNoneDiscoveryOnly, ua_services.c), so a hardened
+		//site offers the secured endpoints alone and is still discoverable (spec *Limits*).
+		if( settings.None ){
+			UAε( UA_ServerConfig_addAllEndpoints(this) );
+		}
+		else{
+			securityPolicyNoneDiscoveryOnly = true;
+			UAε( UA_ServerConfig_addAllSecureEndpoints(this) );
+			INFO( "No None endpoint:  the None policy answers discovery alone." );
+		}
 	}
 
 	α UAConfig::AddSecurityPolicies( ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
