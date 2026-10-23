@@ -38,6 +38,15 @@ SetCompressor /SOLID lzma
 	;sign.ps1 through the environment, the only channel this hook has (sign.ps1's header).
 	!uninstfinalize '"${SIGN_HOST}" -NoProfile -ExecutionPolicy Bypass -File "${SIGN_SCRIPT}" "%1"'
 !endif
+;A remote signer cannot sit in that hook, so the uninstaller leaves one makensis run and
+;comes back signed into another with the same defines:  UNINSTALLER_ONLY copies it out, PRESIGNED_UNINSTALLER puts the signed
+;copy in place of the one this run generated, and WriteUninstaller writes that.
+!ifdef UNINSTALLER_ONLY
+	!uninstfinalize 'copy /Y "%1" "${UNINSTALLER_ONLY}"' = 0
+!endif
+!ifdef PRESIGNED_UNINSTALLER
+	!uninstfinalize 'copy /Y "${PRESIGNED_UNINSTALLER}" "%1"' = 0
+!endif
 !ifndef VERSION
 	!define VERSION "dev"
 !endif
@@ -49,6 +58,7 @@ SetCompressor /SOLID lzma
 !endif
 !define BIN "${BUILD_DIR}\bin"
 !define PRODUCT "Jde OpcHub"
+!define PRODUCT_NAME "OPC Hub" ;one ProductName on every file - the .rc files carry the same
 !define COMPANY "Jde-Cpp" ;the install dir name and the data root's - matches Process::CompanyName().
 !define REG_UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\Jde-Cpp-OpcHub"
 !define REG_RUN "Software\Microsoft\Windows\CurrentVersion\Run"
@@ -82,11 +92,15 @@ SetCompressor /SOLID lzma
 !delfile "${FILES_NSH}"
 
 Name "${PRODUCT}"
-OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
+!ifdef UNINSTALLER_ONLY
+	OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}-uninstaller-only.exe" ;its uninstaller is unsigned - build-setup.ps1 deletes it
+!else
+	OutFile "${OUT_DIR}\OpcHubSetup-${VERSION}.exe"
+!endif
 BrandingText "${PRODUCT} ${VERSION}"
 VIProductVersion "${VI_VERSION}"
 VIFileVersion "${VI_VERSION}"
-VIAddVersionKey "ProductName" "${PRODUCT}"
+VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "CompanyName" "${COMPANY}"
 VIAddVersionKey "FileDescription" "${PRODUCT} setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
@@ -756,9 +770,10 @@ Section -Post
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub, port 1967): the REST/websocket API the Web UI talks to.  Required."
-	;the description box holds ~200 characters and has no scrollbar - this one lost its last sentence (reviews/install-issues.md #9)
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's OPC UA server (Jde.OpcServer, opc.tcp 4840): DI/IA nodesets and the pumps demo; seeded as the hub's default connection, with the Web UI's Google login.  Optional."
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub): the API the Web UI talks to.  For all users, opens TCP 1967 in the firewall on every network.  Required."
+	;the description box holds ~200 characters and has no scrollbar - this one lost its last sentence (reviews/install-issues.md #9).
+	;The firewall sentences warn before a system change:  Section -Services opens both ports.
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's OPC UA server (Jde.OpcServer): DI/IA nodesets, the pumps demo, the hub's default connection, Google login.  For all users, opens TCP 4840 in the firewall on every network.  Optional."
 !ifndef SKIP_WEB
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_WEB} "The Angular site under <install dir>\Web, served by the hub at http://<host>:1967/.  IIS is not needed; web.config is included for putting the site behind it (see the README)."
 !endif

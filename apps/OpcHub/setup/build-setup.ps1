@@ -5,12 +5,15 @@ Builds OpcHubSetup-<version>.exe from the release build tree - see README.md bes
 .DESCRIPTION
 Resolves the inputs the NSIS script takes as /D defines (build tree, Angular dist, UA-Nodeset clone, VC++ redistributable,
 version), checks they exist, and runs makensis.  -Sign signs what ships - the exes and dlls before makensis packs them, the
-uninstaller from inside it (!uninstfinalize) and the installer after - through sign.ps1 (README.md, "Signing").
+uninstaller from inside it (!uninstfinalize) and the installer after - through sign.ps1 (README.md, "Signing").  A remote
+signer instead takes the uninstaller from an -UninstallerOnly run and hands it back to -Uninstaller.
 
 .EXAMPLE
 .\build-setup.ps1                       # defaults: $env:JDE_RBUILD_DIR\clang++\<repo dir>\release, the repo's web dist, CMakePresets.common.json's JDE_VERSION
 .\build-setup.ps1 -SkipWeb -Version 1.0 # no Web UI component
 .\build-setup.ps1 -Sign -PfxPath C:\certs\test.pfx  # signed with a .pfx; -Sign alone signs with Azure Artifact Signing ($env:JDE_SIGN_*)
+.\build-setup.ps1 -UninstallerOnly      # <OutDir>\Uninstall.exe and no installer, to sign elsewhere
+.\build-setup.ps1 -Uninstaller C:\signed\Uninstall.exe  # the installer, with that signed copy as its uninstaller
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +26,9 @@ param(
 	[string]$OutDir,                     # default: <BuildDir>\setup - outside the repo
 	[string]$MakeNsis = 'C:\Program Files (x86)\NSIS\makensis.exe',
 	[switch]$Sign,                       # sign.ps1: Azure Artifact Signing ($env:JDE_SIGN_ENDPOINT/ACCOUNT/PROFILE) or a .pfx ($env:JDE_SIGN_PFX)
-	[string]$PfxPath                     # shorthand for $env:JDE_SIGN_PFX
+	[string]$PfxPath,                    # shorthand for $env:JDE_SIGN_PFX
+	[switch]$UninstallerOnly,            # <OutDir>\Uninstall.exe instead of the installer - a remote signer's first round
+	[string]$Uninstaller                 # a signed Uninstall.exe from an -UninstallerOnly run with the same inputs
 )
 $ErrorActionPreference = 'Stop'
 $setupDir = $PSScriptRoot
@@ -64,6 +69,11 @@ $signScript = Join-Path $setupDir 'sign.ps1'
 if( $Sign ){
 	if( $PfxPath ){ $env:JDE_SIGN_PFX = [IO.Path]::GetFullPath( $PfxPath ) }
 	if( -not $env:JDE_SIGN_ENDPOINT -and -not $env:JDE_SIGN_PFX ){ throw '-Sign needs a certificate: JDE_SIGN_ENDPOINT, JDE_SIGN_ACCOUNT and JDE_SIGN_PROFILE (Azure Artifact Signing), or -PfxPath / JDE_SIGN_PFX - see README.md, Signing' }
+}
+if( [int][bool]$Sign + [int][bool]$UninstallerOnly + [int][bool]$Uninstaller -gt 1 ){ throw '-Sign, -UninstallerOnly and -Uninstaller are three ways to sign the uninstaller - pass one' }
+if( $Uninstaller ){
+	$Uninstaller = [IO.Path]::GetFullPath( $Uninstaller )
+	if( -not (Test-Path $Uninstaller -PathType Leaf) ){ throw "-Uninstaller: no such file - $Uninstaller" }
 }
 
 # The product version is CMakePresets.common.json's JDE_VERSION - a yyyy.MM.dd date, zeros and all: the string the C++ targets
@@ -108,9 +118,17 @@ if( $VcRedist ){
 if( $SkipWeb ){ $defs += '/DSKIP_WEB' }
 # the uninstaller's signing hook: sign.ps1, run by the PowerShell this script runs under (the one the ArtifactSigning module is installed for)
 if( $Sign ){ $defs += "/DSIGN_SCRIPT=$signScript", "/DSIGN_HOST=$((Get-Process -Id $PID).Path)" }
+$uninstallerOut = Join-Path $OutDir 'Uninstall.exe'
+if( $UninstallerOnly ){ $defs += "/DUNINSTALLER_ONLY=$uninstallerOut" }
+if( $Uninstaller ){ $defs += "/DPRESIGNED_UNINSTALLER=$Uninstaller" }
 Write-Host "makensis $($defs -join ' ')"
 & $MakeNsis /V2 @defs (Join-Path $setupDir 'OpcHubSetup.nsi')
 if( $LASTEXITCODE -ne 0 ){ throw "makensis failed ($LASTEXITCODE)" }
+if( $UninstallerOnly ){
+	Remove-Item (Join-Path $OutDir "OpcHubSetup-$Version-uninstaller-only.exe") #the run's installer, with the unsigned uninstaller in it
+	Write-Host "built $uninstallerOut"
+	return
+}
 $out = Join-Path $OutDir "OpcHubSetup-$Version.exe"
 if( -not (Test-Path $out) ){ throw "makensis succeeded but $out is missing" }
 

@@ -1,6 +1,7 @@
 ---
 name: cpp-build-win
-description: How to configure and build the Jde C++ tree on Windows — LLVM clang/lld 23 on the VS 2026 runtime with Ninja, vcpkg (openssl, sqlite3) and Boost from source, the win-clang presets and the build dirs they set themselves, the Git Bash helpers in buildFunctions-win.sh (reconfig/compile/buildProject/clean) and their raw cmake equivalents, the bin\ output layout, the Windows-only targets, the third-party tree, the release build the installer packs, and the vcpkg-baseline, protobuf-ordering, PATH, symlink and Defender gotchas. Use when configuring, building, rebuilding, or cleaning C++ in this repo on Windows, or when a Windows configure/build fails. (Linux: the cpp-build-linux skill.)
+description: >-
+  How to configure and build the Jde C++ tree on Windows — LLVM clang/lld 23 on the VS 2026 runtime with Ninja, vcpkg (openssl, sqlite3) and Boost from source, the win-clang presets and the build dirs they set themselves, the Git Bash helpers in buildFunctions-win.sh (reconfig/compile/buildProject/clean) and their raw cmake equivalents, the bin\ output layout, the Windows-only targets, the third-party tree, the release build the installer packs, and the vcpkg-baseline, protobuf-ordering, PATH, symlink and Defender gotchas. Use when configuring, building, rebuilding, or cleaning C++ in this repo on Windows, or when a Windows configure/build fails. (Linux: the cpp-build-linux skill.)
 ---
 
 # Building (C++) on Windows

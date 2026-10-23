@@ -10,7 +10,7 @@ name: Win2025
 # branch to build - workflow_dispatch is gated to users with write access, so
 # no fork-PR fence is needed - or push a release tag (yyyy.MM.dd). Every run
 # also builds the Windows installer (apps/OpcHub/setup) -
-# unsigned, no certificate route yet (apps/OpcHub/setup/README.md, "Signing") -
+# unsigned (apps/OpcHub/setup/README.md, "Signing") -
 # and smoke-tests it with a silent install and uninstall (after checking that an
 # all-users install refuses another account's data root); a tag run whose smoke
 # test passes publishes it as that tag's GitHub release, any other run as an artifact.
@@ -277,14 +277,17 @@ jobs:
           retention-days: 7
 
       # A tag run publishes the installer as the tag's GitHub release - created
-      # here, or the file replaced when the run is repeated.
+      # here, or the file replaced when the run is repeated. A new release's notes
+      # open with the code signing policy link, above GitHub's generated notes;
+      # linux-release.yml writes the same line.
       - name: Release
         if: success() && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+          CODE_SIGNING_LINE: '[Code signing policy](${{ github.server_url }}/${{ github.repository }}/blob/main/CODE_SIGNING.md)'
         run: |
           $tag = '${{ github.ref_name }}'
           $exe = (Get-Item C:/jde/setup/OpcHubSetup-*.exe).FullName
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) { gh release upload $tag $exe --clobber } else { gh release create $tag $exe --title $tag --generate-notes }
+          if ($LASTEXITCODE -eq 0) { gh release upload $tag $exe --clobber } else { gh release create $tag $exe --title $tag --notes $env:CODE_SIGNING_LINE --generate-notes }
           if ($LASTEXITCODE -ne 0) { throw 'gh release failed' }

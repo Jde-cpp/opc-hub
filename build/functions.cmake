@@ -222,6 +222,7 @@ function( sqliteProcModule targetName )
 	#differing between the proc modules' command lines; pinning one shared DEFINE_SYMBOL makes them identical, which
 	#is what lets them share a single PCH below.
 	set_target_properties( ${targetName} PROPERTIES DEFINE_SYMBOL JDE_SQLITE_PROC_EXPORTS )
+	jdeVersionResource( ${targetName} DESCRIPTION "Jde native SQLite procs" )
 
 	#CONFIGURE_DEPENDS: the module is a MODULE, so a new proc twin that isn't in the glob still links (undefined
 	#symbols are legal) and only fails at dlopen - re-glob on build instead of making that a reconfigure-or-else.
@@ -256,7 +257,14 @@ endfunction()
 #and puts that dir on its include path, so the checked-in .rc stays as it is and #includes the values.  The numbers are
 #JDE_VERSION's without their leading zeros - 2026.09.02's "09" is an octal literal to rc - and the copyright year is its
 #first part, not the build's clock, so a rebuild of a tag stamps the same bytes (reviews/m4-closing.md #20).
+#A target with no .rc of its own - the dlls, Jde.CheckCpu - passes DESCRIPTION instead, and gets <target>.rc written
+#beside the header from build/version.rc.in, where its #include finds the header without the include path:  the sqlite
+#proc modules share one PCH, so their command lines must not differ.  Elsewhere than Windows it does nothing.
 function( jdeVersionResource targetName )
+	cmake_parse_arguments( PARSE_ARGV 1 arg "" "DESCRIPTION" "" )
+	if( NOT WIN32 )
+		return()
+	endif()
 	if( NOT JDE_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" )
 		message( FATAL_ERROR "JDE_VERSION '${JDE_VERSION}' is not yyyy.MM.dd - the version resource needs three numbers." )
 	endif()
@@ -264,7 +272,20 @@ function( jdeVersionResource targetName )
 	math( EXPR jdeRcMinor "${CMAKE_MATCH_2}" )
 	math( EXPR jdeRcPatch "${CMAKE_MATCH_3}" )
 	configure_file( ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/version.rc.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.rc.h @ONLY )
-	target_include_directories( ${targetName} PRIVATE ${CMAKE_CURRENT_BINARY_DIR} )
+	if( NOT arg_DESCRIPTION )
+		target_include_directories( ${targetName} PRIVATE ${CMAKE_CURRENT_BINARY_DIR} )
+		return()
+	endif()
+	get_target_property( type ${targetName} TYPE )
+	if( type STREQUAL "EXECUTABLE" )
+		set( jdeRcFileType 0x1L ) #VFT_APP
+		set( jdeRcFileName ${targetName}.exe )
+	else()
+		set( jdeRcFileType 0x2L ) #VFT_DLL
+		set( jdeRcFileName ${targetName}.dll )
+	endif()
+	configure_file( ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/version.rc.in ${CMAKE_CURRENT_BINARY_DIR}/${targetName}.rc @ONLY )
+	target_sources( ${targetName} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${targetName}.rc )
 endfunction()
 #The zlib/jsonnet prelude of an exe over the app libs.  A macro:  ZLIB_ROOT and find_package's ZLIB_* results stay in the
 #caller's scope, as they did inline.

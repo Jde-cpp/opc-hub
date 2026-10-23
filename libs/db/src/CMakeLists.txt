@@ -10,6 +10,7 @@ if( WIN32 )
 endif()
 add_library( ${targetName} SHARED )
 compileOptions( ${targetName} )
+jdeVersionResource( ${targetName} DESCRIPTION "Jde database layer - schema, queries and the driver interface" )
 
 file( GLOB sources CONFIGURE_DEPENDS awaits/*.cpp generators/*.cpp *.cpp meta/*.cpp meta/ddl/*.cpp )
 file( GLOB headers CONFIGURE_DEPENDS *.h ${jdeRoot}/include/jde/db/*.h ${jdeRoot}/include/jde/db/meta/*.h ${jdeRoot}/include/jde/db/syntax/*.h )

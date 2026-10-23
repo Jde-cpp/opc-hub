@@ -50,6 +50,9 @@ and ports, IIS or nginx in front, what each installer lays down and what an unin
 Then read [`apps/OpcHub/setup/README.md`](apps/OpcHub/setup/README.md) for Windows and
 [`apps/OpcHub/setup/linux/README.md`](apps/OpcHub/setup/linux/README.md) for the `.deb` and the tarball.
 
+The [Code signing policy](CODE_SIGNING.md) says which Windows files are signed, who signs them, and what the
+software sends over the network.
+
 ## What is here
 
 | | |

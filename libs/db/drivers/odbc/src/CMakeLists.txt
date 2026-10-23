@@ -5,6 +5,7 @@ project( ${targetName} VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 add_library( ${targetName} MODULE )
 compileOptions( ${targetName} )
+jdeVersionResource( ${targetName} DESCRIPTION "Jde ODBC driver - SQL Server" )
 
 file( GLOB sources CONFIGURE_DEPENDS *.cpp MsSql/*.cpp )
 file( GLOB headers CONFIGURE_DEPENDS *.h )

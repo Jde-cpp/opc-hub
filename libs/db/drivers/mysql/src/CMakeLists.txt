@@ -12,6 +12,7 @@ find_package( Threads REQUIRED )
 set( targetName Jde.DB.MySql )
 add_library( ${targetName} MODULE )
 compileOptions( ${targetName} )
+jdeVersionResource( ${targetName} DESCRIPTION "Jde MySQL driver" )
 target_compile_definitions( ${targetName} PRIVATE JDE_MYSQL_EXPORTS ) #exports.h guards on this, not CMake's auto Jde_DB_MySql_EXPORTS - without it ΓMY is dllimport on windows and GetDataSource never leaves the MODULE.
 
 set_property( TARGET ${targetName} PROPERTY POSITION_INDEPENDENT_CODE ON )
