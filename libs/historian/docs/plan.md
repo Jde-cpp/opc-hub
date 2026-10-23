@@ -60,7 +60,7 @@ Each item is its own PR, useful without the historian.
 
 ## Phase 2 — OpcServer host, step 1 ([#208])
 
-- **Backend.** [`UAConfig.cpp`](../../../apps/OpcServer/src/UAConfig.cpp) installs the `UA_HistoryDatabase` with `context` set. It sets the capability flags, and `maxReturnDataValues` from `hist.readLimit`. A flag is set only for what has merged (*Slices*).
+- **Backend.** [`UAConfig.cpp`](../../../libs/opc/server/src/UAConfig.cpp) installs the `UA_HistoryDatabase` with `context` set. It sets the capability flags, and `maxReturnDataValues` from `hist.readLimit`. A flag is set only for what has merged (*Slices*).
 - **Collection.** `setValue` records historizing nodes only, enqueues, and stamps a missing server timestamp.
 - **Load.**
   - `Historizing` from the nodeset, written with `UA_Server_writeHistorizing` if the loader drops it.
@@ -70,7 +70,7 @@ Each item is its own PR, useful without the historian.
   - `HistoryServerCapabilities` with its `AggregateFunctions` folder, and Median in OpcServer's own namespace.
   - `StartOfArchive`/`StartOfOnlineArchive`, at start and at each midnight.
 - **node\_index.** Carried forward in an `Issued` record after each value file's `FileStart`. A node the nodesets no longer historize gets a `NodeRemoved`.
-- **Access.** Read callbacks check each node's Read. The two history-update callbacks at [`UAAccess.cpp:575`](../../../apps/OpcServer/src/access/UAAccess.cpp#L575) answer Update and Delete on the node's enforced governing resource and refuse where none governs it, and `HistoryWrite` is left out of an unprotected node's `UserAccessLevel` (the spec's *Authorization*, [#237]).
+- **Access.** Read callbacks check each node's Read. The two history-update callbacks at [`UAAccess.cpp:475`](../../../libs/opc/server/src/UAAccess.cpp#L475) answer Update and Delete on the node's enforced governing resource and refuse where none governs it, and `HistoryWrite` is left out of an unprotected node's `UserAccessLevel` (the spec's *Authorization*, [#237]).
 - **Bounded callbacks.** Each node's read stops at `maxReturnDataValues` or one day file, then returns a continuation point. Measure how long a callback holds the service lock under emulator load.
 - **Config.** A `hist` block in [`Opc.Server.jsonnet`](../../../apps/OpcServer/config/Opc.Server.jsonnet); `path` defaults to `hist/opc-server`.
 - **Test data.** Mark a handful of variables in [`pumps.NodeSet2.xml`](../../../apps/OpcServer/config/nodesets/pumps.NodeSet2.xml) `Historizing`, with HA configurations that cover every deviation format, a `MinTimeInterval` and a heartbeat. The PLC emulator's signals (sine, ramp, random walk, toggle) then exercise compression live; soak with it.
@@ -83,7 +83,7 @@ Each item is its own PR, useful without the historian.
 
 The design is the spec's *Pass-through* section, whose five points were ruled and folded on 2026-10-07 ([#213]). The work:
 
-- **Awaits.** `HistoryReadAwait` and `HistoryUpdateAwait` go beside `ReadAwait`. They send through open62541's generic async service, [`__UA_Client_AsyncService`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel_async.h#L60), the gateway's first use of it; `ReadAwait` uses the typed `UA_Client_sendAsyncReadRequest` ([`ReadAwait.cpp:226`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L226)). The high-level helpers ([`UA_Client_HistoryRead_raw`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel.h#L166) and the rest) are synchronous and take one node, which would block the strand. The request and response wrappers are move-only and deep-copy their NodeIds, as `ReadRequest` does ([`ReadAwait.h:8`](../../../apps/OpcGateway/src/async/ReadAwait.h#L8)).
+- **Awaits.** `HistoryReadAwait` and `HistoryUpdateAwait` go beside `ReadAwait`. They send through open62541's generic async service, [`__UA_Client_AsyncService`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel_async.h#L60), the gateway's first use of it; `ReadAwait` uses the typed `UA_Client_sendAsyncReadRequest` ([`ReadAwait.cpp:198`](../../../apps/OpcGateway/src/async/ReadAwait.cpp#L198)). The high-level helpers ([`UA_Client_HistoryRead_raw`](https://github.com/open62541/open62541/blob/v1.5.9/include/open62541/client_highlevel.h#L166) and the rest) are synchronous and take one node, which would block the strand. The request and response wrappers are move-only and deep-copy their NodeIds, as `ReadRequest` does ([`ReadAwait.h:8`](../../../apps/OpcGateway/src/async/ReadAwait.h#L8)).
 - **Dispatch.** `GatewayQLAwait` routes `history`, and `GatewayQLMAwait` the edits, when they carry `opc`. `needsClient` already opens the caller's client for any query with `opc` ([`GatewayQLAwait.cpp:45`](../../../apps/OpcGateway/src/ql/GatewayQLAwait.cpp#L45)), the same way `updateVariable` gets it ([`VariableQLAwait.cpp:11`](../../../apps/OpcGateway/src/ql/VariableQLAwait.cpp#L11)).
 - **Shared code.** The continuation codec (time, per-node counts at that time, argument hash) and the QL result serializer live where Phase 5 reuses them, not in the pass-through.
 - **Tests.** The gateway tests already embed OpcServer in-process ([`OpcGateway/tests/main.cpp:29`](../../../apps/OpcGateway/tests/main.cpp#L29)), so they read Phase 2's historizing pump nodes:

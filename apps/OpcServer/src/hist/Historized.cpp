@@ -2,7 +2,7 @@
 #include <open62541/plugin/nodestore.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/server/HAConfiguration.h>
-#include <jde/opc/server/UAHistory.h>
+#include <jde/opc/server/UAServer.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
@@ -164,7 +164,8 @@ namespace Jde::Opc::Server{
 	}
 }
 namespace Jde::Opc{
-	α Server::Load( UAHistory& history, UA_Server& ua )ε->void{
+	α Server::StartHistory( UAServer& ua )ε->void{
+		auto& history = ua.History();
 		if( !history.Enabled() )
 			return;
 		auto nodes = Historized::Load( ua, [&history]( const UA_NodeId& configuration ){ return history.TypeStepped( configuration ); } );

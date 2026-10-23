@@ -257,6 +257,9 @@ namespace Jde::Opc::Server::UAAccess{
 }
 namespace Jde::Opc::Server{
 	α UAAccess::Init( UAConfig& config, const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void{
+		//here, not at the first session:  every callback below dereferences both on the UA thread.
+		THROW_IF( !appClient, "A UA server needs its host's appClient:  every session's login asks it." );
+		THROW_IF( !nodeAccess, "A UA server needs its host's nodeAccess:  every Browse, Read and Write asks it." );
 		auto& ac = config.accessControl;
 		assignFunctions( ac );
 		auto& context = setContext( ac, settings, move(appClient), move(nodeAccess) );

@@ -22,7 +22,7 @@ namespace Jde::Opc::Server::Tests{
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			Load( ua, PumpsNodeset() );
+			LoadNodeset( ua, PumpsNodeset() );
 			PublishDataTypes( ua );
 			ua.Run();
 			StartPubSub( Settings::AsObject("/opcServer/pubsub") );

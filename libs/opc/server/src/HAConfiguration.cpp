@@ -27,14 +27,14 @@ namespace Jde::Opc::Server{
 		attributes.valueRank = UA_VALUERANK_SCALAR;
 		attributes.value = value;
 		UA_NodeId id{};
-		UAε( UA_Server_addVariableNode(&ua, UA_NODEID_NUMERIC(1, 0), parent, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), name(browseName), UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attributes, nullptr, &id) );
+		UAε( UA_Server_addVariableNode(&ua, UA_NODEID_NUMERIC(OwnNamespace, 0), parent, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), name(browseName), UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attributes, nullptr, &id) );
 		return NodeId{ move(id) };
 	}
 	α HAConfiguration::Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId{
 		UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
 		attributes.displayName = UA_LocalizedText{ {}, {BrowseName.size(), (UA_Byte*)BrowseName.data()} };
 		UA_NodeId id{};
-		UAε( UA_Server_addObjectNode(&ua, UA_NODEID_NUMERIC(1, 0), variable, UA_NODEID_NUMERIC(0, UA_NS0ID_HASHISTORICALCONFIGURATION), name(BrowseName), UA_NODEID_NUMERIC(0, UA_NS0ID_HISTORICALDATACONFIGURATIONTYPE), attributes, nullptr, &id) );
+		UAε( UA_Server_addObjectNode(&ua, UA_NODEID_NUMERIC(OwnNamespace, 0), variable, UA_NODEID_NUMERIC(0, UA_NS0ID_HASHISTORICALCONFIGURATION), name(BrowseName), UA_NODEID_NUMERIC(0, UA_NS0ID_HISTORICALDATACONFIGURATIONTYPE), attributes, nullptr, &id) );
 		return NodeId{ move(id) };
 	}
 }

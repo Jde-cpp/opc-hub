@@ -87,11 +87,11 @@ namespace Jde::Opc::Server::Tests{
 		Ω Start( const fs::path& pumps )ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			Load( ua, pumps );
+			LoadNodeset( ua, pumps );
 			AddArray( ua );
 			AddReadOnly( ua );
 			AddType( ua );
-			Load( ua.History(), ua );
+			StartHistory( ua );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
 			PublishDataTypes( ua );
 			ua.Run();

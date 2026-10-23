@@ -5,7 +5,7 @@
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Server{
-	struct UAHistory;
+	struct UAServer;
 	//A variable a nodeset marks Historizing, as the address space holds it once the nodesets are loaded (historian spec,
 	//*OpcServer* and *UA backend*).
 	struct Historized final{
@@ -27,5 +27,5 @@ namespace Jde::Opc::Server{
 	//After the last nodeset and before Run:  makes the group of the variables marked Historizing (Historized::Load), which
 	//keeps the indexes its files hold and removes a node the nodesets no longer historize, takes each one's current value as
 	//its first after the stop, and has the history serve it (UAHistory::Start).
-	α Load( UAHistory& history, UA_Server& ua )ε->void;
+	α StartHistory( UAServer& ua )ε->void;
 }

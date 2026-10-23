@@ -475,7 +475,8 @@ namespace Jde::Opc::Server::Tests{
 
 	//security-matrix #5:  there is no unsecured shape.  A config with no /opcServer/ssl - a hidden `ssl::`, a mistyped key - used to
 	//build a None-only server with no certificate and no trust list;  now the server refuses to start, and names the setting.
-	TEST( UAConfigTests, NoSslIsRefused ){
+	//The host refuses, not UAConfig, which sees a CryptoSettings either way:  an empty block is the default paths.
+	TEST( ReadUASettingsTests, NoSslIsRefused ){
 		let ssl = Settings::FindObject( "/opcServer/ssl" );
 		ASSERT_TRUE( ssl ) << "the suite's own server runs secured";
 		const jobject original{ *ssl };
@@ -483,12 +484,29 @@ namespace Jde::Opc::Server::Tests{
 		Settings::Set( "/opcServer/ssl", jvalue{} );//null - FindObject answers nullptr for it, as for an absent key.
 		ASSERT_FALSE( Settings::FindObject("/opcServer/ssl") );
 		try{
-			UAConfig config{ ReadUASettings(), AppClient(), nullptr };
-			FAIL() << "a server config was built without /opcServer/ssl";
+			ReadUASettings();
+			FAIL() << "the UA server's settings were read without /opcServer/ssl";
 		}
 		catch( const std::exception& e ){
 			EXPECT_TRUE( string{e.what()}.contains("/opcServer/ssl") ) << e.what();
 		}
+	}
+
+	//A host's null appClient or nodeAccess is refused at construction, not dereferenced by the first session's callback.
+	TEST( UAConfigTests, NullHostInterfacesAreRefused ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		let refused = []( sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sv name ){
+			try{
+				UAConfig config{ ReadUASettings(), move(appClient), move(nodeAccess) };
+				ADD_FAILURE() << "a server config was built with a null " << name;
+			}
+			catch( const std::exception& e ){
+				EXPECT_TRUE( string{e.what()}.contains(name) ) << e.what();
+			}
+		};
+		refused( AppClient(), nullptr, "nodeAccess" );
+		refused( nullptr, nodeAccess, "appClient" );
 	}
 
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started

@@ -23,7 +23,8 @@ namespace Jde::Opc::Server{
 			//no trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's
 			//own core lets nobody but an anonymous session use:  a non-anonymous token on a None channel under a None token policy is
 			//skipped unless allowNonePolicyPassword, and then only a password (reviews/security-matrix.md #5, deleted 09-18).  The
-			//host refuses a config without one (UAConfigTests.NoSslIsRefused), so settings.Ssl always names a pair.
+			//host refuses a config without one (the OpcServer's ReadUASettingsTests.NoSslIsRefused);  here an empty block is the
+			//default paths, so settings.Ssl always names a pair, made when absent.
 			SetupSecurityPolicies( settings, move(appClient), move(nodeAccess) );
 		}
 		catch( std::exception& ){

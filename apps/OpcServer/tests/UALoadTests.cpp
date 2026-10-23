@@ -141,7 +141,7 @@ namespace Jde::Opc::Server::Tests{
 			flat_set<fs::path> seen; vector<fs::path> order;
 			loadOrder( file, modelFiles(Path()), seen, order );
 			for( let& f : order )
-				Load( ua, f );
+				LoadNodeset( ua, f );
 			let declared = declaredNodes( ua, file );
 			EXPECT_FALSE( declared.empty() ) << file.filename().string() << " declares no node outside namespace 0";
 			vector<string> missing;
@@ -158,14 +158,14 @@ namespace Jde::Opc::Server::Tests{
 
 	TEST_F( UALoadTests, LoadMyKitchen ){
 		LoadWithDependencies( "CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
-		Load( GetUAServer(), fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/kitchen.xml" );
+		LoadNodeset( GetUAServer(), fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/kitchen.xml" );
 	}
 
 	//config/nodesets/pumps.NodeSet2.xml - the PLC emulator's tags.  Instances are explicit in NodeSet2 (no type
 	//instantiation), so every pump must carry its own status/motorRpm; the values are the file's <Value> elements.
 	TEST_F( UALoadTests, Pumps ){
 		auto& ua = GetUAServer();
-		Load( ua, fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" );
+		LoadNodeset( ua, fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" );
 		let ns = NamespaceIndex( ua, "urn:jde:pumps" );
 		const flat_map<string,NsIndex> aliases{ {"pumps", ns} };
 		for( let& pump : {"pump1", "pump2", "pump3", "pump4", "pumpManual"} ){
@@ -195,9 +195,9 @@ namespace Jde::Opc::Server::Tests{
 	//(open62541-1.5.9 review #7, #11).
 	TEST_F( UALoadTests, WriteNodesetEnum ){
 		auto& ua = GetUAServer();
-		Load( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
-		Load( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
-		Load( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
+		LoadNodeset( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		LoadNodeset( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
+		LoadNodeset( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
 		ASSERT_FALSE( UA_Server_getConfig(ua.Ptr())->customDataTypes ) << "nothing published";
 		let ns = NamespaceIndex( ua, "http://opcfoundation.org/UA/IA/Examples/" );
 		let deviceHealth = NodeId{ ns, (uint32)6002 };//ExampleStacklight/DeviceHealth - DataType DeviceHealthEnumeration (DI).
@@ -214,13 +214,13 @@ namespace Jde::Opc::Server::Tests{
 		UA_Variant_clear( &read );
 	}
 
-	//open62541-1.5.9 review #11:  Load published after every file, so every lookup that missed in a later Load scanned each
+	//open62541-1.5.9 review #11:  the load published after every file, so every lookup that missed in a later one scanned each
 	//type twice.  Startup publishes once, after the last nodeset and before Run and PubSub, the one reader of the snapshot.
 	TEST_F( UALoadTests, StartupPublishesTheNodesetTypesOnce ){
 		auto& ua = GetUAServer();
-		Load( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		LoadNodeset( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
 		let config = UA_Server_getConfig( ua.Ptr() );
-		ASSERT_FALSE( config->customDataTypes ) << "Load publishes nothing";
+		ASSERT_FALSE( config->customDataTypes ) << "LoadNodeset publishes nothing";
 		PublishDataTypes( ua );
 		ua.Run();
 		let deviceHealthEnumeration = NodeId{ NamespaceIndex(ua, "http://opcfoundation.org/UA/DI/"), (uint32)6244 };
