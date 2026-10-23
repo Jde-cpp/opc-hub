@@ -21,6 +21,9 @@ namespace Jde::Opc::Server{
 		TokenTypes Tokens;
 		vector<std::pair<string,string>> Users;//the username token's logins, name and password;  none offers no username token.
 		string UserTokenPolicyUri{ "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" };//"" names each security policy for itself.
+		//Tokens, Users and UserTokenPolicyUri from tokenTypes, users and userTokenPolicyUri under the host's `root` - /opc for the
+		//OpcServer, /gateway/server for the gateway's endpoint - each absent its default above.
+		α ReadTokens( sv root )ε->void;
 		//How long a HistoryUpdate waits for the flush that writes it:  open62541's client timeout, past which the client has
 		//given up.  The historian itself is the host's (IHistoryHost).
 		Duration EditTimeout{ 5s };

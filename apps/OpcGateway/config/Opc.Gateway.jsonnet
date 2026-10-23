@@ -76,20 +76,20 @@ function( sync=false )
 		//HMI or a test client as one address space, with the hub's sessions behind it.  No `server` block, no endpoint.  A `::` key is
 		//its default, shown hidden.
 		server:{
-			port: 4841, //the OpcServer has 4840 on the same dev box;  the tests take 4941
+			port:: 4841, //the OpcServer has 4840 on the same dev box;  the tests take 4941
 			address: if std.objectHas(args, 'listenAddress') then args.listenAddress else null, //null:  every interface;  args/install-user binds loopback, as the OpcServer does
 			//absent:  the endpoint presents the process's own pair, /http/ssl, whose URI SAN already carries the gateway's applicationUri
 			ssl:: {},
-			trustedCertDirs: [ args.serversDir("$(PRODUCT_NAME)") + "/clients" ], //the UA clients this endpoint admits on a secured channel and as certificate tokens:  not /access/trustedCertDirs, the hub's enrollment anchors
-			rejectedCertDir: args.serversDir("$(PRODUCT_NAME)") + "/rejected", //where a refused client certificate is written, <thumbprint>.der, for the admin to move into clients/
-			none: true, //a None endpoint beside the secured ones;  false keeps the None policy for discovery alone (securityPolicyNoneDiscoveryOnly):  GetEndpoints answers, a session needs a secured endpoint
-			tokenTypes: { anonymous: false, certificate: true, issued: true, username: true },
+			trustedCertDirs:: [ args.serversDir("$(PRODUCT_NAME)") + "/clients" ], //the UA clients this endpoint admits on a secured channel and as certificate tokens:  not /access/trustedCertDirs, the hub's enrollment anchors
+			rejectedCertDir:: args.serversDir("$(PRODUCT_NAME)") + "/rejected", //where a refused client certificate is written, <thumbprint>.der, for the admin to move into clients/
+			none:: true, //a None endpoint beside the secured ones;  false keeps the None policy for discovery alone (securityPolicyNoneDiscoveryOnly):  GetEndpoints answers, a session needs a secured endpoint
+			tokenTypes:: { anonymous: false, certificate: true, issued: true, username: true },
 			//the user-name logins, as the OpcServer's /opc/users:  [ { name: "operator", password: "$(OPERATOR_PASSWORD)" } ].  Plain text at
 			//rest, so a secret goes through the $(ENV) expansion as the key passcodes do;  the login's hub user is the row of that name.
-			users: [],
+			users:: [],
 			userTokenPolicyUri:: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", //the policy the user tokens ride on;  "" names each security policy for itself
 			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  sessionTimeout and minSamplingInterval are ISO 8601.
-			limits:: { maxSessions: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.1S", maxAsyncOperations: 0 }
+			limits:: { maxSessions: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
 		}
 	},
 	logging:{

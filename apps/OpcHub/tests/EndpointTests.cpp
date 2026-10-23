@@ -3,6 +3,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/tests/WaitUntil.h>
 #include <jde/opc/tests/UATestClient.h>
+#include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/src/server/GatewayServer.h"
 #include "../../OpcGateway/tests/utils/helpers.h"
 #include "helpers.h"
@@ -31,5 +32,19 @@ namespace Jde::Opc::Hub::Tests{
 	TEST_F( EndpointTests, ASessionTheMapDoesNotHoldIsRefused ){
 		UATestClient client{ Url(), Ssl(), UATestClient::Issued("abcdef") };
 		EXPECT_NE( client.Connect(), UA_STATUSCODE_GOOD );
+	}
+
+	//The refusal underneath, as the AppServer answers over its socket:  NotFound, the id in hex.  It was `{:x}` on the exception's
+	//stored string arg - "bad format", and a CRITICAL when logged (reviews-issue/servers-2-endpoint.md #3).
+	TEST_F( EndpointTests, AnUnknownSessionIsNotFound ){
+		constexpr SessionPK id{ 0xabcdef };
+		try{
+			BlockAwait<TAwait<Web::FromServer::SessionInfo>, Web::FromServer::SessionInfo>( move(*Gateway::AppClient()->SessionInfoAwait(id)) );
+			FAIL() << "the map answered a session it does not hold";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound );
+			EXPECT_EQ( string{e.what()}, "[abcdef] Session not found." );
+		}
 	}
 }

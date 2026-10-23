@@ -50,6 +50,9 @@ namespace Jde::Opc::Gateway{
 	//failure that is credential-specific still leaves the slug unusable for that caller.  Its own mutex - the status query reads it
 	//without touching _clients, and StateCallback writes it while unlocked.
 	flat_map<ServerCnnctnNK,string> _connectErrors; mutex _connectErrorMutex;
+	//The endpoint's _Connection/LastError, the spec's "status name and text of the last failure":  "<status> - <detail>", kept through
+	//a recovery, which clears _connectErrors.  Under _connectErrorMutex.
+	flat_map<ServerCnnctnNK,string> _lastFailures;
 
 	//Subscriptions that outlived their client.  A connection failure destroys the UAClient (ProcessingLoop's deregister
 	//path) and takes every websocket session's monitored nodes with it, so a later write silently builds a fresh client
@@ -125,6 +128,10 @@ namespace Jde::Opc::Gateway{
 		lg _{ _connectErrorMutex };
 		return _connectErrors;
 	}
+	α UAClient::LastFailures()ι->flat_map<ServerCnnctnNK,string>{
+		lg _{ _connectErrorMutex };
+		return _lastFailures;
+	}
 	//The endpoint's listener (ConnectionChange).  Its own lock, held for the copy alone:  the listener runs off every lock here.
 	static function<void(const ConnectionChange&)> _connectionListener; static mutex _connectionListenerMutex;
 	α UAClient::SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void{
@@ -137,14 +144,8 @@ namespace Jde::Opc::Gateway{
 			lg _{ _connectionListenerMutex };
 			listener = _connectionListener;
 		}
-		if( !listener )
-			return;
-		bool connected;
-		{
-			rl _{ _clientsMutex };
-			connected = _clients.contains( slug );
-		}
-		listener( ConnectionChange{slug, kind, connected, move(error)} );
+		if( listener )
+			listener( ConnectionChange{slug, kind, !UAClient::HasSession(slug), move(error)} );
 	}
 	α UAClient::SetConnectError( const ServerCnnctnNK& slug, string message )ι->void{
 		lg _{ _connectErrorMutex };
@@ -244,6 +245,11 @@ namespace Jde::Opc::Gateway{
 		for( let& [slug, creds] : _clients )
 			y[slug] = (uint32)creds.size();
 		return y;
+	}
+	α UAClient::HasSession( const ServerCnnctnNK& slug )ι->bool{
+		rl _{ _clientsMutex };
+		let creds = _clients.find( slug );
+		return creds!=_clients.end() && std::ranges::any_of( creds->second, []( let& credClient ){ return credClient.second->_sessionUp.load(); } );
 	}
 	α UAClient::StatusCounts()ι->tuple<uint,uint,uint>{
 		let clients = registered( all );
@@ -519,9 +525,16 @@ namespace Jde::Opc::Gateway{
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
+			if( !client->_sessionUp.exchange(true) )//back after the break below - the endpoint's _Connection hears the reconnect.
+				notifyChange( client->Slug(), ConnectionChange::EKind::Activated );
 		}
-		else if( client )
+		else if( client ){
 			client->RecordBreak();
+			//its session went and open62541 reconnects it in place, which no ConnectionLost reports.  Not a removed client's own
+			//disconnect, which Deregister can run before the registry lets it go:  closed or idled out is Removed, not a loss.
+			if( client->_sessionUp.exchange(false) && !client->IsDiscarded() )
+				notifyChange( client->Slug(), ConnectionChange::EKind::Lost );
+		}
 
 		if( sessionState == UA_SESSIONSTATE_ACTIVATED || connectStatus ){
 			_awaitingActivation.erase_if( [ua, sessionState,connectStatus](sp<UAClient> client){
@@ -635,6 +648,7 @@ namespace Jde::Opc::Gateway{
 					{
 						ul _{ _clientsMutex };
 						client->_connected = true;
+						client->_sessionUp = true;
 						auto& opcCreds = _clients.try_emplace( client->Slug() ).first->second;
 						let inserted = opcCreds.try_emplace( client->Credential(), client ).second;
 						ASSERT( inserted );//ConnectAwait::Start creates one client per slug and credential:  the first waiter, re-checked under its _requestMutex.
@@ -649,7 +663,12 @@ namespace Jde::Opc::Gateway{
 					//way to learn the slug is broken.  Named by status where there is no richer detail - the caller's exception
 					//carries the code separately, but a stored "Connection Failed" would say nothing about what went wrong.
 					SetConnectError( client->Slug(), detail.size() ? detail : string{UAException::Message(connectStatus)} );
-					notifyChange( client->Slug(), ConnectionChange::EKind::Failed, Ƒ("{} - {}", UAException::Message(connectStatus), detail.size() ? detail : string{"Connection Failed"}) );
+					auto failure = Ƒ( "{} - {}", UAException::Message(connectStatus), detail.size() ? detail : string{"Connection Failed"} );
+					{
+						lg _{ _connectErrorMutex };
+						_lastFailures.insert_or_assign( client->Slug(), failure );
+					}
+					notifyChange( client->Slug(), ConnectionChange::EKind::Failed, move(failure) );
 					string message{ detail.size() ? move(detail) : string{"Connection Failed"} };
 					client->StopProcessing();// Break the UAClient<->_asyncRequest._client self-reference; on the failure path the client never enters _clients, so Shutdown would never Stop() it and the UAClient (and its UA_Client) would leak.
 					Post(

@@ -79,8 +79,10 @@ namespace Jde::Opc::Server{
 	//OpcServer - runs on the defaults setBasics gave it, as it always has.
 	Ω applyLimits( UA_ServerConfig& config, const UASettings::Limits& limits )ε->void{
 		let ms = []( Duration d ){ return (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( d ).count(); };
-		if( limits.MaxSessions )
+		if( limits.MaxSessions ){
 			config.maxSessions = *limits.MaxSessions;
+			config.maxSecureChannels = std::max( config.maxSecureChannels, config.maxSessions );//a session per channel:  past the 100 channels, maxSessions alone admits none more.
+		}
 		if( limits.MaxMonitoredItems )
 			config.maxMonitoredItems = *limits.MaxMonitoredItems;
 		if( limits.SessionTimeout ){
@@ -105,7 +107,8 @@ namespace Jde::Opc::Server{
 		UA_TrustListDataType_init( &list );
 		_trust.LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::Verify) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
 
-		//The certificate groups' parameters.
+		//The certificate groups' parameters.  The rejected list capped:  setBasics leaves it 0, unbounded.
+		maxRejectedListSize = UATrust::MaxRejected;
 		UA_KeyValuePair params[2];
 		params[0].key = UA_QualifiedName{ 0, "max-trust-listsize"_uv };
 		UA_Variant_setScalar( &params[0].value, &maxTrustListSize, &UA_TYPES[UA_TYPES_UINT32] );

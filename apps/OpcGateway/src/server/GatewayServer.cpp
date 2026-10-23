@@ -1,4 +1,5 @@
 #include "GatewayServer.h"
+#include <boost/asio/post.hpp>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/opc/UAException.h>
@@ -23,21 +24,6 @@ namespace Jde::Opc::Gateway{
 		return _instance;
 	}
 
-	//The username token's login list, as the OpcServer reads /opc/users:  plain text, on purpose, and a malformed entry skipped.
-	Ω readUsers()ι->vector<std::pair<string,string>>{
-		vector<std::pair<string,string>> y;
-		let users = Settings::FindArray( Ƒ("{}/users", _root) );
-		if( !users )
-			return y;
-		for( let& v : *users ){
-			let name = v.is_object() ? Json::FindDefaultSV( v.get_object(), "name" ) : sv{};
-			if( !name.empty() )
-				y.emplace_back( string{name}, string{Json::FindDefaultSV(v.get_object(), "password")} );
-			else
-				WARN( "{}/users:  a user without a name is skipped.", _root );
-		}
-		return y;
-	}
 	α GatewayServer::ReadSettings( const Crypto::CryptoSettings& processSsl )ε->optional<UASettings>{
 		let block = Settings::FindObject( _root );
 		if( !block )
@@ -57,13 +43,7 @@ namespace Jde::Opc::Gateway{
 			y.TrustedCertDirs.push_back( servers/"clients" );
 		y.RejectedCertDir = Settings::FindPath( key("rejectedCertDir") ).value_or( servers/"rejected" );
 		y.None = Settings::FindBool( key("none") ).value_or( y.None );
-		y.Tokens.Anonymous = Settings::FindBool( key("tokenTypes/anonymous") ).value_or( y.Tokens.Anonymous );
-		y.Tokens.Certificate = Settings::FindBool( key("tokenTypes/certificate") ).value_or( y.Tokens.Certificate );
-		y.Tokens.Issued = Settings::FindBool( key("tokenTypes/issued") ).value_or( y.Tokens.Issued );
-		if( Settings::FindBool(key("tokenTypes/username")).value_or(true) )
-			y.Users = readUsers();
-		if( let uri = Settings::FindString(key("userTokenPolicyUri")); uri )
-			y.UserTokenPolicyUri = *uri;
+		y.ReadTokens( _root );
 		y.Limit.MaxSessions = Settings::FindNumber<uint16>( key("limits/maxSessions") );
 		y.Limit.MaxMonitoredItems = Settings::FindNumber<uint32>( key("limits/maxMonitoredItems") );
 		y.Limit.SessionTimeout = Settings::FindDuration( key("limits/sessionTimeout") );
@@ -87,22 +67,8 @@ namespace Jde::Opc::Gateway{
 			fs::create_directories( dir, ec );
 		}
 		auto server = ms<GatewayServer>( move(*settings) );
-		//Connected as the registry is now, since the listener below hears only what changes from here on.
-		let counts = UAClient::ConnectionCounts();
-		let errors = UAClient::ConnectErrors();
-		for( auto& row : BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>(ServerCnnctnAwait{nullopt, true}) ){
-			Connection connection{ .Id = row.Id, .Url = move(row.Url), .Connected = counts.contains(row.Slug) };
-			if( auto p = errors.find(row.Slug); p!=errors.end() )
-				connection.LastError = p->second;
-			server->_connections.emplace( move(row.Slug), move(connection) );
-		}
-		{
-			lg _{ server->_mutex };
-			server->_ua = mu<UAServer>( server->_settings, AppClient(), ms<GatewayNodeAccess>(), nullptr );
-			for( let& [slug, connection] : server->_connections )
-				server->AddFolder( slug, connection );
-			server->_ua->Run();
-		}
+		//Heard before the rows are read:  a row the hooks write and a client the registry gains from here on post to the strand,
+		//and Serial holds them until the folders below exist.
 		{
 			lg _{ _instanceMutex };
 			_instance = server;
@@ -112,8 +78,35 @@ namespace Jde::Opc::Gateway{
 			if( auto p = weak.lock(); p )
 				p->OnChange( change );
 		} );
+		try{
+			auto rows = BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{nullopt, true} );
+			lg _{ server->_mutex };
+			server->_ua = mu<UAServer>( server->_settings, AppClient(), ms<GatewayNodeAccess>(), nullptr );
+			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
+			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
+			for( auto& row : rows ){
+				Connection connection{ .Id = row.Id, .Url = move(row.Url), .Connected = UAClient::HasSession(row.Slug) };
+				if( auto p = errors.find(row.Slug); p!=errors.end() )
+					connection.LastError = p->second;
+				server->_connections.emplace( move(row.Slug), move(connection) );
+			}
+			for( let& [slug, connection] : server->_connections )
+				server->AddFolder( slug, connection );
+			for( auto& f : server->_held )
+				f();
+			server->_held.clear();
+			server->_ua->Run();
+		}
+		catch( std::exception& ){
+			Stop();
+			throw;
+		}
 		INFOT( ELogTags::App, "OPC UA endpoint at {} - {} connection folder(s).", server->Url(), server->_connections.size() );
 	}
+	GatewayServer::GatewayServer( UASettings settings )ι:
+		_settings{ move(settings) },
+		_strand{ Executor()->get_executor() }
+	{}
 	α GatewayServer::Stop()ι->void{
 		sp<GatewayServer> server;
 		{
@@ -167,12 +160,9 @@ namespace Jde::Opc::Gateway{
 			ERR( "Could not add the folder for connection '{}':  {}", slug, e.what() );
 		}
 	}
+	//The folder alone:  open62541 deletes the hierarchical children nothing else references with it (buildDeleteNodeSet).
 	α GatewayServer::RemoveFolder( const ServerCnnctnNK& slug )ι->void{
-		auto& ua = *_ua->Ptr();
-		for( let name : Variables )
-			UA_Server_deleteNode( &ua, VariableId(slug, name), true );
-		UA_Server_deleteNode( &ua, ConnectionId(slug), true );
-		if( let sc = UA_Server_deleteNode(&ua, FolderId(slug), true); sc )
+		if( let sc = UA_Server_deleteNode(_ua->Ptr(), FolderId(slug), true); sc )
 			WARN( "Could not remove the folder for connection '{}':  {}", slug, UAException::Message(sc) );
 	}
 	α GatewayServer::Write( const ServerCnnctnNK& slug, sv name, const void* scalar, const UA_DataType& type )ι->void{
@@ -193,25 +183,39 @@ namespace Jde::Opc::Gateway{
 		Write( slug, "Reconnects", &reconnects, UA_TYPES[UA_TYPES_UINT32] );
 	}
 
+	//One strand, not the executor's many threads:  a slug's Lost and its next Activated, or a purge and the row made again under its
+	//slug, apply in the order they were posted.  After Stop, _ua is null, so the few still queued are held and go with the server.
+	α GatewayServer::Serial( absl::AnyInvocable<void()> f )ι->void{
+		boost::asio::post( _strand, [self=shared_from_this(), f=std::move(f)]() mutable {
+			lg _{ self->_mutex };
+			if( self->_ua )
+				f();
+			else
+				self->_held.push_back( std::move(f) );
+		} );
+	}
 	α GatewayServer::OnChange( const ConnectionChange& change )ι->void{
-		Post( [self=shared_from_this(), change]{ self->Apply( change ); } );
+		Serial( [this, change]{ Apply( change ); } );
 	}
 	α GatewayServer::Apply( const ConnectionChange& change )ι->void{
-		lg _{ _mutex };
 		auto p = _connections.find( change.Slug );
-		if( !_ua || p==_connections.end() )//stopped, or a slug with no row - a test connect's.
+		if( p==_connections.end() )//a slug with no row - a test connect's.
 			return;
 		auto& connection = p->second;
+		bool reconnected{};
 		if( change.Kind==EKind::Failed )
 			connection.LastError = change.Error;
-		else if( change.Kind==EKind::Lost )
-			connection.Lost = true;
-		else if( change.Kind==EKind::Activated && connection.Lost ){
-			connection.Lost = false;
+		else if( change.Kind==EKind::Lost && change.Down )//the slug's last session went:  another credential's still up is no outage.
+			connection.Outage = true;
+		else if( change.Kind==EKind::Activated && connection.Outage ){
+			connection.Outage = false;
 			++connection.Reconnects;
+			reconnected = true;
 		}
-		if( change.Connected!=connection.Connected ){
-			connection.Connected = change.Connected;
+		//As the registry is now:  a later change has its own Apply after this one.  A reconnect moves Since even when the outage was
+		//over before its Lost applied, and Connected never read false.
+		if( let connected = UAClient::HasSession(change.Slug); connected!=connection.Connected || reconnected ){
+			connection.Connected = connected;
 			connection.Since = Clock::now();
 		}
 		WriteAll( change.Slug, connection );
@@ -223,34 +227,31 @@ namespace Jde::Opc::Gateway{
 		return std::ranges::find_if( _connections, [&]( let& kv ){ return kv.second.Id==key.PK(); } );
 	}
 	α GatewayServer::ConnectionCreated( ServerCnnctn row )ι->void{
-		Post( [self=shared_from_this(), row=move(row)]() mutable {
-			lg _{ self->_mutex };
-			if( !self->_ua || self->_connections.contains(row.Slug) )
+		Serial( [this, row=move(row)]() mutable {
+			if( _connections.contains(row.Slug) )//Start's rows had it.
 				return;
 			Connection connection{ .Id = row.Id, .Url = move(row.Url) };
-			auto& added = self->_connections.emplace( row.Slug, move(connection) ).first->second;
-			self->AddFolder( row.Slug, added );
+			auto& added = _connections.emplace( row.Slug, move(connection) ).first->second;
+			AddFolder( row.Slug, added );
 		} );
 	}
 	α GatewayServer::ConnectionUrlChanged( const DB::Key& key, string url )ι->void{
-		Post( [self=shared_from_this(), key, url=move(url)]{
-			lg _{ self->_mutex };
-			auto p = self->Find( key );
-			if( !self->_ua || p==self->_connections.end() )
+		Serial( [this, key, url=move(url)]{
+			auto p = Find( key );
+			if( p==_connections.end() )
 				return;
 			p->second.Url = url;
 			let value = ToUV( p->second.Url );
-			self->Write( p->first, "Url", &value, UA_TYPES[UA_TYPES_STRING] );
+			Write( p->first, "Url", &value, UA_TYPES[UA_TYPES_STRING] );
 		} );
 	}
 	α GatewayServer::ConnectionPurged( const DB::Key& key )ι->void{
-		Post( [self=shared_from_this(), key]{
-			lg _{ self->_mutex };
-			auto p = self->Find( key );
-			if( !self->_ua || p==self->_connections.end() )
+		Serial( [this, key]{
+			auto p = Find( key );
+			if( p==_connections.end() )
 				return;
-			self->RemoveFolder( p->first );
-			self->_connections.erase( p );
+			RemoveFolder( p->first );
+			_connections.erase( p );
 		} );
 	}
 }

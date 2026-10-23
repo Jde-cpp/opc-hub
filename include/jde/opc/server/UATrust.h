@@ -10,6 +10,9 @@
 //Crypto::TrustDirs, as Access::Server::TrustVerify's is.  One per server, owned by its UAConfig.
 namespace Jde::Opc::Server{
 	struct UATrust final : noncopyable{
+		//The refused certificates kept, in each memory store's rejected list (UAConfig) and in rejectedDir, the newest:  an
+		//unauthenticated OPN apiece, so a flood of fresh certificates would otherwise grow both without end:  setBasics' 0 is unbounded.
+		static constexpr uint MaxRejected{ 10 };
 		//rejectedDir:  where a certificate that fails the verify, the rescan included, is written as <thumbprint>.der, once, for the
 		//admin to move into a trusted dir (UASettings::RejectedCertDir);  empty writes none.
 		UATrust( vector<fs::path> dirs, fs::path rejectedDir={} )ι;
@@ -21,9 +24,10 @@ namespace Jde::Opc::Server{
 		Ω VerifyCertificate( UA_CertificateGroup* group, const UA_ByteString* certificate )ι->UA_StatusCode;
 		α Verify( UA_CertificateGroup* group, const UA_ByteString* certificate )ι->UA_StatusCode;
 		α WriteRejected( const UA_ByteString& certificate )ι->void;
+		α PruneRejected()ι->void;//rejectedDir down to the newest MaxRejected .der files.
 		const vector<fs::path> _dirPaths;
 		const fs::path _rejectedDir;
-		flat_set<string> _rejected;//the thumbprints written this run, so a client that retries writes once;  under _mutex.
+		flat_set<string> _rejected;//the thumbprints written, or being written, this run, so a client that retries writes once;  under _mutex.
 		std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; serializes the scan and _ders against future threading changes.
 		Crypto::TrustDirs _dirs;
 		flat_map<fs::path,vector<byte>> _ders;//the certificates that read, by file.

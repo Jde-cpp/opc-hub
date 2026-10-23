@@ -112,29 +112,58 @@ namespace Jde::Opc::Server{
 		return y;
 	}
 	//The refused certificate, as the memory store's rejected list holds it, written out for the admin (spec *Trust*):  named by
-	//its sha-256 thumbprint, once per certificate and run, so a client that keeps retrying costs one file.  Junk that is no
-	//certificate - an OPN with a garbage senderCertificate - is dropped:  the der ctor refuses it, and there is nothing to move.
+	//its sha-256 thumbprint, once per certificate and run, so a client that keeps retrying costs one file;  a write that fails
+	//gives the thumbprint back, for the client's next refusal to try again.  Junk that is no certificate - an OPN with a garbage
+	//senderCertificate - is dropped:  the der ctor refuses it, and there is nothing to move.
 	α UATrust::WriteRejected( const UA_ByteString& certificate )ι->void{
+		string thumbprint;//set once this call holds the certificate's place in _rejected.
 		try{
 			const std::span<const byte> der{ (const byte*)certificate.data, certificate.length };
 			const Crypto::Certificate parsed{ der };
-			string thumbprint{ parsed.Fingerprint };
-			std::erase( thumbprint, ':' );
-			let path = _rejectedDir/Ƒ( "{}.der", thumbprint );
+			string fingerprint{ parsed.Fingerprint };
+			std::erase( fingerprint, ':' );
+			let path = _rejectedDir/Ƒ( "{}.der", fingerprint );
 			{
 				std::lock_guard _{ _mutex };
-				if( !_rejected.emplace(thumbprint).second )
+				if( !_rejected.emplace(fingerprint).second )
 					return;
 			}
+			thumbprint = move( fingerprint );
 			if( fs::exists(path) )
 				return;
 			fs::create_directories( _rejectedDir );
 			Crypto::WriteCertificate( path, vector<byte>{der.begin(), der.end()}, SRCE_CUR );
 			INFO( "Rejected client certificate '{}' written to '{}' - move it into a trusted dir to admit the client.", parsed.DistinguishedName, path.string() );
 		}
-		catch( const std::exception& e ){
+		catch( const runtime_error& e ){
+			if( thumbprint.size() ){
+				std::lock_guard _{ _mutex };
+				_rejected.erase( thumbprint );
+			}
 			DBG( "A rejected certificate was not written to '{}':  {}", _rejectedDir.string(), e.what() );
+			return;
 		}
+		PruneRejected();
+	}
+	//The oldest go, not the newest refused:  a client refused after a flood is written, and the admin finds it.  Their thumbprints
+	//leave _rejected with them, so one still refused is written again on its next try, and the set stays as small as the directory.
+	α UATrust::PruneRejected()ι->void{
+		vector<std::pair<fs::file_time_type,fs::path>> files;
+		std::error_code ec;
+		for( fs::directory_iterator it{_rejectedDir, ec}, end; !ec && it!=end; it.increment(ec) ){
+			if( it->path().extension()==".der" && it->is_regular_file(ec) )
+				files.emplace_back( it->last_write_time(ec), it->path() );
+		}
+		if( files.size()<=MaxRejected )
+			return;
+		std::ranges::sort( files );
+		let excess = files.size()-MaxRejected;
+		for( uint i=0; i<excess; ++i ){
+			fs::remove( files[i].second, ec );
+			std::lock_guard _{ _mutex };
+			_rejected.erase( files[i].second.stem().string() );
+		}
+		DBG( "Removed the {} oldest rejected certificate(s) from '{}' - it keeps the newest {}.", excess, _rejectedDir.string(), MaxRejected );
 	}
 
 	α UATrust::Install( UA_Server& ua )ι->void{

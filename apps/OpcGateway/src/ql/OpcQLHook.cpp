@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway{
 		try{
 			DB::Key id = (_op & Operation::Purge)==Operation::Purge
 				? DB::Key{ _mutation.Id<ServerCnnctnPK>() }
-				: DB::Key{ Json::AsString(_mutation.Args, "slug") };
+				: DB::Key{ string{_mutation.As<jstring>("slug")} };
 			//reviews/install-issues.md #51:  the insert failed on the slug's unique index - a delete is soft, so a deleted row keeps its
 			//slug, and its provider, which InsertBefore reused:  purging it would leave the deleted row nothing to restore to.  The
 			//engine's duplicate names the schema and is withheld from the client, so this refusal replaces it (InsertAwait).
@@ -49,10 +49,11 @@ namespace Jde::Opc::Gateway{
 
 	//reviews/install-issues.md #48:  " eng-test" was accepted as a slug, into the login prefix, the certificate file name and the
 	//url.  Not updateable (opcGateway-meta), so the insert is the one door;  the rule itself is ServerCnnctn::SlugError, which
-	//testConnection applies to a slug that is not saved yet.
+	//testConnection applies to a slug that is not saved yet.  The hooks here read the mutation through Input's Find/As, never Args:
+	//a value bound through a variable is its `\b$name` marker there (reviews-issue/servers-2-endpoint.md #7).
 	Ω slugError( const QL::MutationQL& m, SL sl )ι->up<Exception>{
-		let slug = Json::FindString( m.Args, "slug" );
-		return slug ? ServerCnnctn::SlugError( *slug, sl ) : nullptr;//the column is NOT NULL - the insert says so
+		let slug = m.FindPtr<jstring>( "slug" );
+		return slug ? ServerCnnctn::SlugError( sv{*slug}, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
 	α OpcQLHook::InsertBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		if( m.TableName()!="server_connections" )
@@ -65,10 +66,12 @@ namespace Jde::Opc::Gateway{
 	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.
 	α OpcQLHook::InsertAfter( const QL::MutationQL& m, UserPK, uint id, SL )ι->HookResult{
 		if( m.TableName()=="server_connections" ){
-			if( auto server = GatewayServer::Instance(); server ){
-				ServerCnnctn row{ Json::AsString(m.Args, "url") };
+			let slug = m.FindPtr<jstring>( "slug" );
+			if( auto server = GatewayServer::Instance(); server && slug ){
+				let url = m.FindPtr<jstring>( "url" );
+				ServerCnnctn row{ url ? string{*url} : string{} };
 				row.Id = (ServerCnnctnPK)id;
-				row.Slug = Json::AsString( m.Args, "slug" );
+				row.Slug = string{ *slug };
 				server->ConnectionCreated( move(row) );
 			}
 		}
@@ -100,8 +103,8 @@ namespace Jde::Opc::Gateway{
 				if( auto server = GatewayServer::Instance(); server ){
 					if( m.Type==Purge )
 						server->ConnectionPurged( *key );
-					else if( let url = Json::FindString(m.Args, "url"); url && m.Type==Update )
-						server->ConnectionUrlChanged( *key, *url );
+					else if( let url = m.FindPtr<jstring>("url"); url && m.Type==Update )
+						server->ConnectionUrlChanged( *key, string{*url} );
 				}
 			}
 		}

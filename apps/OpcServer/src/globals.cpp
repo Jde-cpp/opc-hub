@@ -38,24 +38,6 @@ namespace Jde::Opc {
 		} );
 	}
 
-	//The username token's login list:  /opc/users ([{name,password}]).  An opt-in - nothing shipped configures it
-	//(reviews/install-issues.md #1:  a fresh install logs in with Google, by ruling no username is seeded); the test configs
-	//do, for the gateway's password login (PasswordTests).  Plain text, on purpose:  a hashed per-user store is the hub's
-	//job.  A malformed entry is logged and skipped.
-	Ω readUsers()ι->vector<std::pair<string,string>>{
-		vector<std::pair<string,string>> y;
-		let users = Settings::FindArray( "/opc/users" );
-		if( !users )
-			return y;
-		for( let& v : *users ){
-			let name = v.is_object() ? Json::FindDefaultSV( v.get_object(), "name" ) : sv{};
-			if( !name.empty() )
-				y.emplace_back( string{name}, string{Json::FindDefaultSV(v.get_object(), "password")} );
-			else
-				WARNT( (ELogTags)EOpcLogTags::Server, "/opc/users: a user without a name is skipped." );
-		}
-		return y;
-	}
 	α Server::ReadUASettings()ε->UASettings{
 		//A missing block is far likelier a hidden `ssl::` or a mistyped key than a decision, so it reads as the configuration
 		//error it is, and the server does not start (ReadUASettingsTests.NoSslIsRefused, security-matrix #5).  Here, not in
@@ -69,13 +51,7 @@ namespace Jde::Opc {
 		y.Address = Settings::FindString( "/opcServer/address" ).value_or( y.Address );//absent or null:  every interface.
 		for( let& dir : Settings::FindStringArray("/access/trustedCertDirs") )
 			y.TrustedCertDirs.emplace_back( dir );
-		y.Tokens.Anonymous = Settings::FindBool( "/opc/tokenTypes/anonymous" ).value_or( y.Tokens.Anonymous );
-		y.Tokens.Certificate = Settings::FindBool( "/opc/tokenTypes/certificate" ).value_or( y.Tokens.Certificate );
-		y.Tokens.Issued = Settings::FindBool( "/opc/tokenTypes/issued" ).value_or( y.Tokens.Issued );
-		if( Settings::FindBool("/opc/tokenTypes/username").value_or(true) )
-			y.Users = readUsers();
-		if( let uri = Settings::FindString("/opc/userTokenPolicyUri"); uri )
-			y.UserTokenPolicyUri = *uri;
+		y.ReadTokens( "/opc" );//the test configs' /opc/users is the gateway's password login (PasswordTests).
 		if( let timeout = Settings::FindDuration("/opcServer/hist/editTimeout"); timeout ){
 			THROW_IF( *timeout<=Duration::zero(), "hist.editTimeout must be positive, not {} ms.", duration_cast<milliseconds>(*timeout).count() );
 			y.EditTimeout = *timeout;
