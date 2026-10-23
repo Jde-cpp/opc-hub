@@ -2,7 +2,7 @@ import { ISlugRow, Mutation, MutationType, SlugRow, SlugRowProps } from 'jde-fra
 import { ExNodeId } from './ex-node-id';
 import { NodeId } from './node-id';
 import { HistPathSegment, HistThresholdFields, histThresholdArgs, histThresholdBlank, histThresholdFields, histThresholdFieldsEqual, histThresholdProblem, parseHistPath } from './hist';
-import { StatusCode } from './types';
+import { ETypes, StatusCode } from './types';
 
 //The gateway historian's tables as the admin pages hold them (#337, spec *Templates*):  hist_templates and hist_groups as rows a
 //detail page saves whole, and their members, hist_template_nodes and hist_group_nodes, as rows edited one at a time, since each
@@ -128,12 +128,48 @@ export type HistTemplateMember = { id:number; templateId:number; path:HistPathSe
 export function toHistTemplateMember( json:any ):HistTemplateMember{
 	return { id: Number( json.id ), templateId: Number( json.histTemplateId ?? json.histTemplate?.id ?? 0 ), path: parseHistPath( json.path ) ?? [], thresholds: histThresholdFields( json ) };
 }
+//The EngineeringUnits property, Part 8's EUInformation, as the engineering_units column holds it.
+export type HistEngineeringUnits = { namespaceUri:string; unitId:number; displayName:string; description:string };
+//What a node's server said of it, as its row holds it (#379, servers spec *Address space*):  read once the collector has the node's
+//item and refreshed on each connect, each undefined until the server has described the node.  `dataType` is the type served, the
+//source's where that is a namespace-0 type, else the built-in its values encode as;  `path` is the node's browse path from the Objects
+//folder, undefined for a node outside that tree.
+export type HistNodeAttributes = { displayName?:string; description?:string; dataType?:ExNodeId; valueRank?:number; arrayDimensions?:number[]; accessLevel?:number; euRange?:{low:number; high:number}; engineeringUnits?:HistEngineeringUnits; path?:HistPathSegment[] };
+export function toHistNodeAttributes( json:any ):HistNodeAttributes{
+	const text = ( v:unknown )=>v==null ? undefined : String( v );
+	const number = ( v:unknown )=>v==null ? undefined : Number( v );
+	const parsed = ( v:unknown )=>{ if( v==null ) return undefined; try{ return JSON.parse( String( v ) ); }catch{ return undefined; } };
+	const range = parsed( json.euRange );
+	const units = parsed( json.engineeringUnits );
+	const dimensions = parsed( json.arrayDimensions );
+	return {
+		displayName: text( json.displayName ),
+		description: text( json.description ),
+		dataType: json.dataType==null ? undefined : parseHistNodeText( String( json.dataType ) ),
+		valueRank: number( json.valueRank ),
+		arrayDimensions: Array.isArray( dimensions ) ? dimensions.map( Number ) : undefined,
+		accessLevel: number( json.accessLevel ),
+		euRange: range && typeof range=='object' ? { low: Number( range.low ), high: Number( range.high ) } : undefined,
+		engineeringUnits: units && typeof units=='object' ? { namespaceUri: String( units.namespaceUri ?? '' ), unitId: Number( units.unitId ?? 0 ), displayName: String( units.displayName ?? '' ), description: String( units.description ?? '' ) } : undefined,
+		path: json.path==null ? undefined : parseHistPath( json.path )
+	};
+}
+//the QL columns of HistNodeAttributes, as histGroupNodes serves them
+export const histNodeAttributeColumns = ['displayName', 'description', 'dataType', 'valueRank', 'arrayDimensions', 'accessLevel', 'euRange', 'engineeringUnits', 'path'];
+//A served type as a page names it:  a namespace-0 type by its name, Double, else by its id.
+export function histDataTypeLabel( type:ExNodeId|undefined ):string{
+	if( !type )
+		return '';
+	const name = typeof type.id=='number' && type.id!=ETypes.None ? ETypes[type.id] : undefined;
+	return type.nsu=='http://opcfoundation.org/UA/' && name ? name : histNodeText( type );
+}
+
 //A group's node, as histGroupNodes answers it:  the row id is the node's index in the group's files, its node by URI, the template
-//member it was resolved from, none for one added by hand, and its own thresholds.
-export type HistGroupMember = { id:number; node:ExNodeId; templateNodeId?:number; thresholds:HistThresholdFields };
+//member it was resolved from, none for one added by hand, its own thresholds, and what its server said of it.
+export type HistGroupMember = { id:number; node:ExNodeId; templateNodeId?:number; thresholds:HistThresholdFields; attributes:HistNodeAttributes };
 export function toHistGroupMember( json:any ):HistGroupMember{
 	const node = parseHistNodeText( String( json.node ?? '' ) ) ?? new ExNodeId( {i: 0} );
-	return { id: Number( json.id ), node, templateNodeId: json.histTemplateNodeId==null ? undefined : Number( json.histTemplateNodeId ), thresholds: histThresholdFields( json ) };
+	return { id: Number( json.id ), node, templateNodeId: json.histTemplateNodeId==null ? undefined : Number( json.histTemplateNodeId ), thresholds: histThresholdFields( json ), attributes: toHistNodeAttributes( json ) };
 }
 //A template member as resolveHistory answers it:  its node and Good once it has a row, else why it hasn't - and for Bad_NodeIdExists
 //the group that holds the node, another or this one.

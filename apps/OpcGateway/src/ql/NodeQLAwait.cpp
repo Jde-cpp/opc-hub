@@ -5,6 +5,7 @@
 #include <jde/opc/uatypes/Variant.h>
 #include "../UAClient.h"
 #include "../async/ConnectAwait.h"
+#include "../async/ParentPathsAwait.h"
 #include "../async/ReadValueAwait.h"
 #include "../async/UAStrandAwait.h"
 
@@ -12,12 +13,12 @@
 namespace Jde::Opc::Gateway{
 	//A browse name as a path segment, spelled as the search index and BrowsePathsToNodeIds spell them:  the bare name in the
 	//connection's default namespace, `ns~name` otherwise.  None for a name holding a '/', the url's own separator.
-	Ω segment( const UA_QualifiedName& browse, NsIndex defaultNs )ι->optional<string>{
-		string name{ ToSV(browse.name) };
-		if( name.find('/')!=string::npos )
+	Ω segment( NsIndex ns, sv name, NsIndex defaultNs )ι->optional<string>{
+		if( name.find('/')!=sv::npos )
 			return {};
-		return browse.namespaceIndex==defaultNs ? name : Ƒ( "{}~{}", browse.namespaceIndex, name );
+		return ns==defaultNs ? string{ name } : Ƒ( "{}~{}", ns, name );
 	}
+	Ω segment( const UA_QualifiedName& browse, NsIndex defaultNs )ι->optional<string>{ return segment( browse.namespaceIndex, ToSV(browse.name), defaultNs ); }
 
 	//One frame:  its own type is the UAStrandAwait's, and every other await goes through Any().  Three forms - a browse path
 	//(with its parents), a node's children, or nodes by id (with their browse paths when `path` is asked for).
@@ -106,61 +107,51 @@ namespace Jde::Opc::Gateway{
 				key = "nodes";
 				let nodeIds = NodeId::ParseQL( _query );
 				//`path` on the id form - the reverse of the path form above, for a node known only by id:  the node-scoped resources
-				//access holds (`criteria` = "ns=5;i=5005") link to the node's page, which is addressed by browse path.  Walk up:
-				//each inverse HierarchicalReferences browse names the parent, until the Objects folder - a node outside that tree
-				//(types, views, the Root) has no page and answers null, as does one with an unroutable segment.  A node's own name
-				//is not in an inverse result (those carry the parents'), so it is one attribute read.  Several parents (an object
-				//Organized by a folder and a Component of another):  the Objects folder wins when it is one of them, else the
-				//first - the tree the crawl reaches the node by.
+				//access holds (`criteria` = "ns=5;i=5005") link to the node's page, which is addressed by browse path.  The walk up to
+				//the Objects folder is ParentPathsAwait's, for every node at once - a node outside that tree (types, views, the Root)
+				//has no page and answers null, as does one with an unroutable segment.  A node's own name is not in an inverse result
+				//(those carry the parents'), so it is one attribute read for them all.
 				flat_map<NodeId, jvalue> paths;
 				if( _query.FindColumn("path") ){
 					const NodeId objects = NodeId::ObjectsFolder();
 					let defaultNs = _client->DefaultBrowseNs();
-					for( let& requested : nodeIds ){
-						jvalue path{ nullptr };
-						vector<string> segments;
-						ReadAwait readOwn{ ReadRequest{requested, UA_ATTRIBUTEID_BROWSENAME}, _client };
-						auto own = co_await Any( readOwn );
+					ReadAwait readOwn{ ReadRequest{nodeIds, UA_ATTRIBUTEID_BROWSENAME}, _client };
+					auto own = co_await Any( readOwn );
+					vector<NodeId> walked; vector<string> owns;
+					for( uint i=0; i<nodeIds.size(); ++i ){
+						let& requested = nodeIds[i];
 						optional<string> ownSegment;
-						if( own.resultsSize && own.results[0].status==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&own.results[0].value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) )
-							ownSegment = segment( *(const UA_QualifiedName*)own.results[0].value.data, defaultNs );
-						if( ownSegment )
-							segments.push_back( *ownSegment );
-						NodeId current{ requested };
-						for( uint depth=0; ownSegment; ++depth ){
-							if( UA_NodeId_equal(&current, &objects) ){
-								segments.pop_back();//the walk started at Objects itself:  its own name is not a segment.
-								path = Str::Join( segments, "/" );
-								break;
-							}
-							if( depth>=64 ){//a reference cycle - the walk would never reach Objects.
-								WARNT( BrowseTag, "[{}]path: '{}' is deeper than 64 or cyclic - no path.", hex(_client->Handle()), requested.ToString() );
-								break;
-							}
-							Browse::FoldersAwait browse{ Browse::Request::Parents(NodeId{current}), _client, _sl };
-							auto response = co_await Any( browse );
-							optional<NodeId> parent; optional<string> parentSegment;
-							response.VisitWhile( 0, [&]( const UA_ReferenceDescription& ref ){
-								NodeId id{ ref.nodeId.nodeId };
-								let isObjects = UA_NodeId_equal( &id, &objects );
-								if( !parent || isObjects ){
-									parent = id;
-									parentSegment = segment( ref.browseName, defaultNs );
-								}
-								return !isObjects;
-							} );
-							if( !parent )
-								break;//no hierarchical parent, and not Objects - outside the tree the pages address.
-							if( UA_NodeId_equal(&*parent, &objects) ){
-								path = Str::Join( segments, "/" );
-								break;
-							}
-							if( !parentSegment )
-								break;//an unroutable parent name.
-							segments.insert( segments.begin(), *parentSegment );
-							current = *parent;
+						if( i<own.resultsSize && own.results[i].status==UA_STATUSCODE_GOOD && UA_Variant_hasScalarType(&own.results[i].value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) )
+							ownSegment = segment( *(const UA_QualifiedName*)own.results[i].value.data, defaultNs );
+						if( ownSegment && UA_NodeId_equal(&requested, &objects) )
+							paths.emplace( NodeId{requested}, jvalue{""} );//the folder itself:  its own name is not a segment.
+						else if( ownSegment ){
+							walked.push_back( requested );
+							owns.push_back( move(*ownSegment) );
 						}
-						paths.emplace( NodeId{requested}, move(path) );
+						else
+							paths.emplace( NodeId{requested}, jvalue{nullptr} );
+					}
+					PathParents parents;
+					let found = co_await ParentPathsAwait{ walked, parents, _client };
+					for( uint k=0; k<found.size(); ++k ){
+						jvalue path{ nullptr };
+						if( let& names = found[k].Parents; names ){
+							vector<string> segments;
+							for( let& parent : *names ){
+								if( auto routable = segment(parent.Ns, parent.Name, defaultNs); routable )
+									segments.push_back( move(*routable) );
+								else
+									break;
+							}
+							if( segments.size()==names->size() ){
+								segments.push_back( move(owns[k]) );
+								path = Str::Join( segments, "/" );
+							}
+						}
+						else if( found[k].Deep )
+							WARNT( BrowseTag, "[{}]path: '{}' is deeper than {} or cyclic - no path.", hex(_client->Handle()), walked[k].ToString(), ParentPathsAwait::MaxDepth );
+						paths.emplace( move(walked[k]), move(path) );
 					}
 				}
 				ReadRequest request{ nodeIds, _query };

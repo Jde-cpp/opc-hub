@@ -68,10 +68,10 @@
 						@else if( [ETypes.String, ETypes.LocalizedText].includes(r.dataType) && !r.isArray ){
 							<input type="text" [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeString(r,$event);">
 						}
-						@else if( r.dataType==ETypes.BaseData && !r.isArray ){
+						@else if( r.dataType==ETypes.BaseDataType && !r.isArray ){
 							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
-						@else if( [ETypes.DateTime, ETypes.UtcDateTime].includes(r.dataType) && !r.isArray ){
+						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){
 								<input matInput [matDatepicker]="picker" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" (dateChange)="changeDate(r, $event);">
 								<mat-datepicker-toggle matSuffix [for]="picker"></mat-datepicker-toggle>
 								<mat-datepicker #picker></mat-datepicker>
