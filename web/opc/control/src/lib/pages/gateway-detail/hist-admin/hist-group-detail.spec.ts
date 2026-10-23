@@ -36,8 +36,9 @@ const create = async ( pageRow:any, render=false )=>{
 		connections: vi.fn( async ()=>[{id: 1, slug: 'local', name: 'Local'}, {id: 3, slug: 'plc', name: 'PLC'}] ),
 		templates: vi.fn( async ()=>[{id: 2, name: 'Pump'}] ),
 		groupMembers: vi.fn( async ()=>[
-			{ id: 7, node: new ExNodeId( {i: 6012, nsu: Pumps} ), templateNodeId: 3, thresholds: {...histThresholdBlank, minTimeInterval: '1000'} },
-			{ id: 8, node: new ExNodeId( {i: 2259, nsu: 'http://opcfoundation.org/UA/'} ), templateNodeId: undefined, thresholds: {...histThresholdBlank} }
+			{ id: 7, node: new ExNodeId( {i: 6012, nsu: Pumps} ), templateNodeId: 3, thresholds: {...histThresholdBlank, minTimeInterval: '1000'},
+				attributes: { displayName: 'motorRpm', description: 'Measured motor speed, rpm.', dataType: new ExNodeId( {nsu: 'http://opcfoundation.org/UA/', i: 11} ), valueRank: -1, accessLevel: 15, euRange: {low: 0, high: 3000}, path: [{nsu: Pumps, name: 'pump1'}, {nsu: Pumps, name: 'motorRpm'}] } },
+			{ id: 8, node: new ExNodeId( {i: 2259, nsu: 'http://opcfoundation.org/UA/'} ), templateNodeId: undefined, thresholds: {...histThresholdBlank}, attributes: {} }
 		] ),
 		templateMembers: vi.fn( async ()=>[{id: 3, templateId: 2, path: [{nsu: Pumps, name: 'motorRpm'}], thresholds: histThresholdBlank}, {id: 4, templateId: 2, path: [{nsu: Pumps, name: 'status'}], thresholds: histThresholdBlank}] ),
 		createGroupMember: vi.fn( async ( _g:unknown, _id:number, node:ExNodeId )=>{ if( node.id==6032 ) throw new Error( "'{\"nsu\":\"urn:jde:pumps\",\"i\":6032}' is already in group 'Other' (9) on this connection:  a node belongs to one group per server." ); return 10; } ),
@@ -139,6 +140,17 @@ describe( 'HistGroupDetail', ()=>{
 		expect( d.page.memberText( d.page.members.rows()[0] ) ).toBe( 'motorRpm' );
 		expect( d.page.memberText( d.page.members.rows()[1] ) ).toBe( 'added by hand' );
 		expect( d.page.cellText( d.page.members.rows()[0].thresholds, 'minTimeInterval' ) ).toBe( '1000' );
+		//the server's word on each node (#379):  its name and the type served, with the path, description, rank and range behind them;  blank until read
+		const [rpm, state] = d.page.members.rows();
+		expect( d.page.nameText( rpm ) ).toBe( 'motorRpm' );
+		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Measured motor speed, rpm.' );
+		expect( d.page.typeText( rpm ) ).toBe( 'Double' );
+		expect( d.page.typeDetail( rpm ) ).toBe( '{"nsu":"http://opcfoundation.org/UA/","i":11}.  Scalar.  EURange 0 to 3000' );
+		expect( d.page.nameText( state ) ).toBe( '' );
+		expect( d.page.nameDetail( state ) ).toContain( 'Not yet read' );
+		expect( d.page.typeText( state ) ).toBe( '' );
+		expect( d.page.typeDetail( state ) ).toBe( '' );
+		expect( d.page.memberColumns.slice( 0, 4 ) ).toEqual( ['node', 'name', 'type', 'member'] );
 		const rows = d.page.resolution();
 		expect( rows.map( r=>[r.path, r.status] ) ).toEqual( [['motorRpm', 0], ['status', undefined]] );
 		expect( d.page.unresolved() ).toBe( 1 );

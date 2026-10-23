@@ -92,7 +92,58 @@ namespace Jde::Opc::Gateway{
 			.Connection = r.Get<uint32>( 2 ),
 			.Node = ParseHistNode( r.GetString(3), SRCE_CUR ),
 			.TemplateNode = r.GetOpt<uint32>( 4 ),
-			.Thresholds = HistThresholdColumns::Read( r, 5 )
+			.Thresholds = HistThresholdColumns::Read( r, 5 ),
+			.Attributes = HistNodeAttributes::Read( r, 10 )
+		};
+	}
+	Ω rangeJson( const Opc::Hist::Range& range )ι->string{ return serialize( jobject{ {"low", range.Low}, {"high", range.High} } ); }
+	Ω unitsJson( const HistEngineeringUnits& units )ι->string{
+		return serialize( jobject{ {"namespaceUri", units.NamespaceUri}, {"unitId", (int64_t)units.UnitId}, {"displayName", units.DisplayName}, {"description", units.Description} } );
+	}
+	Ω dimensionsJson( const vector<uint32>& dimensions )ι->string{
+		jarray y;
+		for( let d : dimensions )
+			y.emplace_back( (uint64_t)d );
+		return serialize( y );
+	}
+	α HistNodeAttributes::Read( const DB::Row& r, uint i )ε->HistNodeAttributes{
+		HistNodeAttributes y;
+		y.DisplayName = r.GetOpt<string>( i );
+		y.Description = r.GetOpt<string>( i+1 );
+		if( let text = r.GetOpt<string>(i+2); text )
+			y.DataType = ParseHistNode( *text, SRCE_CUR );
+		y.ValueRank = r.GetOpt<int32>( i+3 );
+		if( let text = r.GetOpt<string>(i+4); text ){
+			vector<uint32> dimensions;
+			for( let& d : Json::ParseValue(*text, SRCE_CUR).as_array() )
+				dimensions.push_back( d.to_number<uint32_t>() );
+			y.ArrayDimensions = move( dimensions );
+		}
+		y.AccessLevel = r.GetOpt<uint8>( i+5 );
+		if( let text = r.GetOpt<string>(i+6); text ){
+			let o = Json::Parse( *text, SRCE_CUR );
+			y.EURange = Opc::Hist::Range{ Json::AsNumber<double>(o, "low"), Json::AsNumber<double>(o, "high") };
+		}
+		if( let text = r.GetOpt<string>(i+7); text ){
+			let o = Json::Parse( *text, SRCE_CUR );
+			y.EngineeringUnits = HistEngineeringUnits{ string{Json::FindDefaultSV(o, "namespaceUri")}, Json::FindNumber<int32>(o, "unitId").value_or(0), string{Json::FindDefaultSV(o, "displayName")}, string{Json::FindDefaultSV(o, "description")} };
+		}
+		if( let text = r.GetOpt<string>(i+8); text )
+			y.Path = ParseHistPath( *text, SRCE_CUR );
+		return y;
+	}
+	α HistNodeAttributes::Values()Ι->vector<DB::Value>{
+		let text = []( optional<string> s )ι->DB::Value{ return s ? DB::Value{move(*s)} : DB::Value{}; };
+		return {
+			text( DisplayName ),
+			text( Description ),
+			text( DataType ? optional<string>{HistNodeText(*DataType)} : nullopt ),
+			ValueRank ? DB::Value{(int)*ValueRank} : DB::Value{},
+			text( ArrayDimensions ? optional<string>{dimensionsJson(*ArrayDimensions)} : nullopt ),
+			AccessLevel ? DB::Value{(uint32_t)*AccessLevel} : DB::Value{},
+			text( EURange ? optional<string>{rangeJson(*EURange)} : nullopt ),
+			text( EngineeringUnits ? optional<string>{unitsJson(*EngineeringUnits)} : nullopt ),
+			text( Path ? optional<string>{HistPathText(*Path)} : nullopt )
 		};
 	}
 	Ω templateNodeRow( DB::Row&& r )->HistTemplateNodeRow{
@@ -211,7 +262,17 @@ namespace Jde::Opc{
 		auto columns = vector<string>{ "hist_group_node_id", "hist_group_id", "server_connection_id", "node", "hist_template_node_id" };
 		for( let name : HistThresholdColumns::Names )
 			columns.emplace_back( name );
+		for( let name : HistNodeAttributes::Names )
+			columns.emplace_back( name );
 		return { select(HistTable::GroupNodes, move(columns), move(where), sl), groupNodeRow, sl };
+	}
+	α Gateway::UpdateHistNodeAttributesSql( HistGroupNodePK id, const HistNodeAttributes& attributes )ε->DB::Sql{
+		string set;
+		for( let name : HistNodeAttributes::Names )
+			set += Ƒ( "{}{}=?", set.empty() ? "" : ", ", name );
+		auto params = attributes.Values();
+		params.emplace_back( (uint)id );
+		return { Ƒ("update {} set {} where hist_group_node_id=?", GetViewPtr(HistTable::GroupNodes)->SqlName(), set), move(params) };
 	}
 
 	α Gateway::SelectHistTemplateNodes( HistTemplateNodeFilter filter, SL sl )ι->HistRowsAwait<HistTemplateNodeRow>{

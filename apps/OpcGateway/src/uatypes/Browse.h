@@ -35,6 +35,7 @@ namespace Browse{
 		Ω Hierarchical( vector<NodeId>&& ids, UA_BrowseResultMask mask )ι->Request;//the same, for a whole BFS level in one round trip.  PerNode.
 		Ω Properties( NodeId&& id )ι->Request;//forward HasProperty (no subtypes), variables only, browse names - a DataType's EnumValues/EnumStrings (EnumTypeCache).
 		Ω Parents( NodeId&& id )ι->Request;//INVERSE HierarchicalReferences (subtypes included), objects/variables, browse name + class - one step of the walk up to the Objects folder (NodeQLAwait::Path).
+		Ω Parents( vector<NodeId>&& ids )ι->Request;//the same, one step for every node still walking in one round trip (HistGroupHost::Describe).  PerNode.
 		bool PerNode{};//a bad results[i].statusCode is the caller's to read - one unbrowsable node does not fail the request.  Set by the request, so a caller cannot forget it.
 	};
 

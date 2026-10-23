@@ -61,6 +61,12 @@ namespace Jde::Opc::Gateway{
 		let table = m.TableName();
 		let args = m.ExtrapolateVariables();
 		HistThresholdColumns::FromJson( args, sl ).Check( sl );
+		if( table==GroupNodes ){//the server's word on the node (HistNodeAttributes), which the collector writes and no caller sets.
+			for( let name : {"displayName", "description", "dataType", "valueRank", "arrayDimensions", "accessLevel", "euRange", "engineeringUnits", "path"} ){
+				if( args.contains(name) )
+					refuse( Ƒ("{} is read from the node's server once the collector has its item:  nothing sets it.", name), sl );
+			}
+		}
 		if( m.Type==Create ){
 			let require = [&]( sv name ){
 				if( let p = args.if_contains(name); !p || p->is_null() )

@@ -5,6 +5,7 @@
 #include <jde/db/Key.h>
 #include <jde/db/Row.h>
 #include <jde/db/awaits/SelectAwait.h>
+#include <jde/db/generators/Sql.h>
 #include <jde/db/generators/Statement.h>
 #include <jde/historian/Group.h>
 #include <jde/opc/uatypes/ExNodeId.h>
@@ -60,6 +61,32 @@ namespace Jde::Opc::Gateway{
 	α ParseHistPath( sv json, SL sl )ε->vector<HistPathSegment>;//throws for an empty path or a segment without both, as a BadRequest.
 	α HistPathText( const vector<HistPathSegment>& path )ι->string;
 
+	//The EngineeringUnits property, Part 8's EUInformation, as hist_group_nodes.engineering_units holds it.
+	struct HistEngineeringUnits final{ string NamespaceUri; int32 UnitId{}; string DisplayName; string Description; };
+	//What a member's server says of its node, as its hist_group_nodes row stores it (docs/servers/spec.md *Address space*):  read
+	//once its item is made and written to the row by the host itself (HistGroupHost::Describe), never by the QL, so a restart serves
+	//the address space from the rows before any source is up.  Each none until the server has said;  a restart's rows carry the last
+	//answer.  DataType is the type served:  the source's where that is a namespace-0 type, abstract or not, else the built-in the
+	//historian stores the node's values by (Group::DataType), an enumeration Int32 and a structure Structure.  Path is the node's
+	//browse path from the Objects folder, in a template member's spelling;  none for a node outside that tree.
+	struct HistNodeAttributes final{
+		static constexpr array<sv,9> Names{ "display_name", "description", "data_type", "value_rank", "array_dimensions", "access_level", "eu_range", "engineering_units", "path" };
+		Ω Read( const DB::Row& row, uint first )ε->HistNodeAttributes;//the nine cells from `first`, in Names' order.
+		α Values()Ι->vector<DB::Value>;//the nine, in Names' order, as a statement binds them:  the json columns spelled.
+		optional<string> DisplayName;
+		optional<string> Description;
+		optional<ExNodeId> DataType;
+		optional<int32> ValueRank;
+		optional<vector<uint32>> ArrayDimensions;
+		optional<uint8> AccessLevel;
+		optional<Opc::Hist::Range> EURange;
+		optional<HistEngineeringUnits> EngineeringUnits;
+		optional<vector<HistPathSegment>> Path;
+	};
+	//The update that writes a row's attribute columns, every one of Names, for DS()->Execute:  the host's own write, which the QL
+	//never makes - the columns are neither insertable nor updateable.
+	α UpdateHistNodeAttributesSql( HistGroupNodePK id, const HistNodeAttributes& attributes )ε->DB::Sql;
+
 	struct HistGroupRow final{
 		HistGroupPK Id;
 		string Guid;//the column's 16 bytes as text, the stem of the group's files.
@@ -77,6 +104,7 @@ namespace Jde::Opc::Gateway{
 		ExNodeId Node;
 		optional<HistTemplateNodePK> TemplateNode;
 		HistThresholdColumns Thresholds;
+		HistNodeAttributes Attributes;
 	};
 	struct HistTemplateNodeRow final{
 		HistTemplateNodePK Id;
