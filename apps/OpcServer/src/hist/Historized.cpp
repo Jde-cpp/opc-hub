@@ -1,26 +1,18 @@
 #include "Historized.h"
 #include <open62541/plugin/nodestore.h>
 #include <jde/opc/uatypes/opcHelpers.h>
+#include <jde/opc/server/HAConfiguration.h>
+#include <jde/opc/server/UAHistory.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::Opc;
 
-	constexpr sv Configuration{ "HA Configuration" };
-	//A standard browse name:  namespace 0.
-	Ω name( sv text )ι->UA_QualifiedName{ return { 0, {text.size(), (UA_Byte*)text.data()} }; }
-	Ω child( UA_Server& ua, const UA_NodeId& parent, sv browseName )ι->optional<NodeId>{
-		let qualified = name( browseName );
-		auto found = UA_Server_browseSimplifiedBrowsePath( &ua, parent, 1, &qualified );
-		optional<NodeId> y;
-		if( found.statusCode==UA_STATUSCODE_GOOD && found.targetsSize )
-			y.emplace( found.targets[0].targetId.nodeId );
-		UA_BrowsePathResult_clear( &found );
-		return y;
-	}
+	using HAConfiguration::Child;
+	using HAConfiguration::Publish;
 	//The property's number, a Boolean as 0 or 1:  none when it isn't there, or holds no value.
 	Ω number( UA_Server& ua, const UA_NodeId& parent, sv browseName, str owner )ε->optional<double>{
-		let property = child( ua, parent, browseName );
+		let property = Child( ua, parent, browseName );
 		if( !property )
 			return nullopt;
 		auto value = ReadValue( ua, *property );
@@ -30,29 +22,6 @@ namespace Jde::Opc::Server{
 		let isNumber = UA_DataType_isNumeric( value.value.type ) || kind==UA_DATATYPEKIND_BOOLEAN || kind==UA_DATATYPEKIND_ENUM;
 		THROW_IF( !value.IsScalar() || !isNumber, "'{}' has a {} that is a '{}', not a number.", owner, browseName, value.value.type->typeName );
 		return kind==UA_DATATYPEKIND_ENUM ? (double)value.Get<UA_Int32>( 0 ) : value.AsNumber<double>();
-	}
-	//Writes the property, adding it in the server's own namespace when its nodeset has none.
-	Ω publish( UA_Server& ua, const UA_NodeId& parent, sv browseName, const UA_DataType& type, const void* scalar )ε->NodeId{
-		UA_Variant value; UA_Variant_setScalar( &value, const_cast<void*>(scalar), &type );
-		if( auto existing = child(ua, parent, browseName) ){
-			UAε( UA_Server_writeValue(&ua, *existing, value) );
-			return move( *existing );
-		}
-		UA_VariableAttributes attributes = UA_VariableAttributes_default;
-		attributes.displayName = UA_LocalizedText{ {}, {browseName.size(), (UA_Byte*)browseName.data()} };
-		attributes.dataType = type.typeId;
-		attributes.valueRank = UA_VALUERANK_SCALAR;
-		attributes.value = value;
-		UA_NodeId id{};
-		UAε( UA_Server_addVariableNode(&ua, UA_NODEID_NUMERIC(1, 0), parent, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), name(browseName), UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attributes, nullptr, &id) );
-		return NodeId{ move(id) };
-	}
-	Ω addConfiguration( UA_Server& ua, const UA_NodeId& variable )ε->NodeId{
-		UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
-		attributes.displayName = UA_LocalizedText{ {}, {Configuration.size(), (UA_Byte*)Configuration.data()} };
-		UA_NodeId id{};
-		UAε( UA_Server_addObjectNode(&ua, UA_NODEID_NUMERIC(1, 0), variable, UA_NODEID_NUMERIC(0, UA_NS0ID_HASHISTORICALCONFIGURATION), name(Configuration), UA_NODEID_NUMERIC(0, UA_NS0ID_HISTORICALDATACONFIGURATIONTYPE), attributes, nullptr, &id) );
-		return NodeId{ move(id) };
 	}
 	Ω expanded( UA_Server& ua, const UA_NodeId& id )ε->ExNodeId{
 		UA_ExpandedNodeId y; UA_ExpandedNodeId_init( &y );
@@ -113,11 +82,11 @@ namespace Jde::Opc::Server{
 		if( !(accessLevel & UA_ACCESSLEVELMASK_HISTORYREAD) )
 			UAε( UA_Server_writeAccessLevel(&ua, id, accessLevel | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE) );
 
-		auto found = child( ua, id, Configuration );
+		auto found = Child( ua, id, HAConfiguration::BrowseName );
 		let made = !found;
-		const NodeId configuration{ found ? move(*found) : addConfiguration(ua, id) };
+		const NodeId configuration{ found ? move(*found) : HAConfiguration::Add(ua, id) };
 		let setting = [&]( sv browseName ){ return number( ua, configuration, browseName, label ); };
-		let boolean = [&]( sv browseName, UA_Boolean value ){ return publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_BOOLEAN], &value ); };
+		let boolean = [&]( sv browseName, UA_Boolean value ){ return Publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_BOOLEAN], &value ); };
 
 		Hist::Thresholds thresholds;
 		if( let stepped = made || typeStepped(configuration) ? nullopt : setting("Stepped") )
@@ -128,7 +97,7 @@ namespace Jde::Opc::Server{
 			let ms = setting( browseName );
 			if( !ms ){
 				const UA_Duration off{};
-				publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_DURATION], &off );
+				Publish( ua, configuration, browseName, UA_TYPES[UA_TYPES_DURATION], &off );
 				return {};
 			}
 			let duration = Hist::ToDuration( *ms );
@@ -149,10 +118,10 @@ namespace Jde::Opc::Server{
 				thresholds.DeviationFormat = (UA_ExceptionDeviationFormat)(UA_Int32)*format;
 			}
 			else
-				publish( ua, configuration, "ExceptionDeviationFormat", UA_TYPES[UA_TYPES_EXCEPTIONDEVIATIONFORMAT], &thresholds.DeviationFormat );
+				Publish( ua, configuration, "ExceptionDeviationFormat", UA_TYPES[UA_TYPES_EXCEPTIONDEVIATIONFORMAT], &thresholds.DeviationFormat );
 			let ranged = thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFRANGE ? "InstrumentRange"sv
 				: thresholds.DeviationFormat==UA_EXCEPTIONDEVIATIONFORMAT_PERCENTOFEURANGE ? "EURange"sv : sv{};
-			if( let property = ranged.empty() ? nullopt : child(ua, id, ranged) ){
+			if( let property = ranged.empty() ? nullopt : Child(ua, id, ranged) ){
 				if( let value = ReadValue(ua, *property); value.hasValue && UA_Variant_hasScalarType(&value.value, &UA_TYPES[UA_TYPES_RANGE]) )
 					thresholds.Range = Hist::Range{ value.Get<UA_Range>(0).low, value.Get<UA_Range>(0).high };
 			}
@@ -162,17 +131,17 @@ namespace Jde::Opc::Server{
 		//read, over whatever is there:  open62541 fills a property the nodeset leaves out with false or 0, which can't be
 		//told from the nodeset's own.
 		const Hist::AggregateConfiguration aggregates;
-		if( let aggregate = child(ua, configuration, "AggregateConfiguration") ){
+		if( let aggregate = Child(ua, configuration, "AggregateConfiguration") ){
 			const UA_Boolean uncertainAsBad{ aggregates.TreatUncertainAsBad }, sloped{ aggregates.UseSlopedExtrapolation };
 			const UA_Byte bad{ aggregates.PercentDataBad }, good{ aggregates.PercentDataGood };
-			publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &uncertainAsBad );
-			publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &bad );
-			publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
-			publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
+			Publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &uncertainAsBad );
+			Publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &bad );
+			Publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
+			Publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
 		}
 		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
-		auto startOfArchive = publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
-		auto startOfOnlineArchive = publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
+		auto startOfArchive = Publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
+		auto startOfOnlineArchive = Publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		Hist::Member member{ expanded(ua, id), move(thresholds), {}, type };
 		return { move(id), move(member), move(startOfArchive), move(startOfOnlineArchive) };
 	}
@@ -192,5 +161,37 @@ namespace Jde::Opc::Server{
 		for( auto& id : ids )
 			y.push_back( load(ua, move(id), typeStepped) );
 		return y;
+	}
+}
+namespace Jde::Opc{
+	α Server::Load( UAHistory& history, UA_Server& ua )ε->void{
+		if( !history.Enabled() )
+			return;
+		auto nodes = Historized::Load( ua, [&history]( const UA_NodeId& configuration ){ return history.TypeStepped( configuration ); } );
+		vector<Hist::Member> members;
+		members.reserve( nodes.size() );
+		for( let& node : nodes )
+			members.push_back( node.Member );
+		auto group = history.Historian().AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
+		UAHistory::Indexes indexes;
+		vector<NodeId> archiveStarts;
+		for( auto& node : nodes ){
+			let index = group->Find( node.Member.Node );
+			THROW_IF( !index, "'{}' is not in the group made with it.", node.Id.ToString() );
+			//There is no subscription to break, so the stop was the break, and the node's value now is its first after it.
+			//Stamped as open62541 stamps a write that carries no source time.
+			auto value = ReadValue( ua, node.Id, UA_TIMESTAMPSTORETURN_BOTH );
+			if( value.hasValue || !UA_StatusCode_isBad(value.status) ){
+				if( !value.hasSourceTimestamp ){
+					value.sourceTimestamp = UA_DateTime_now();
+					value.hasSourceTimestamp = true;
+				}
+				group->Enqueue( *index, value );
+			}
+			archiveStarts.push_back( move(node.StartOfArchive) );
+			archiveStarts.push_back( move(node.StartOfOnlineArchive) );
+			indexes.emplace_back( move(node.Id), *index );
+		}
+		history.Start( ua, move(group), move(indexes), move(archiveStarts) );
 	}
 }

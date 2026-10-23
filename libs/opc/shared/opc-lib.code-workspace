@@ -4,9 +4,9 @@
 		"name": "opc",
 		"target": "Jde.Opc.Lib.Tests",
 		"testTarget": "${config:target}",
-		"subDir": "libs/${config:name}",
+		"subDir": "libs/${config:name}/shared",
 		"workspace": "${workspaceFolder:tests}/..",
-		"cmake.sourceDirectory": "${config:workspace}/../..",
+		"cmake.sourceDirectory": "${config:workspace}/../../..",
 		"cmake.buildDirectory": "${command:jde.repoBuildDir}",
 		"settings": "${workspaceFolder:tests}/config/Opc.Lib.Tests.jsonnet",
 		"program": "${config:subDir}/tests/${config:target}"
@@ -19,7 +19,7 @@
 			"path": "./tests"
 		},
 		{
-			"path": "../../include/jde",
+			"path": "../../../include/jde",
 			"name": "include"
 		}
 	]

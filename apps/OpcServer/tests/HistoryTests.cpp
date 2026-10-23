@@ -23,7 +23,8 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../src/access/OpcAuthorize.h"
-#include "../src/access/UAAccess.h"
+#include <jde/opc/server/UAAccess.h>
+#include "../src/hist/Historized.h"
 #include "helpers.h"
 #define let const auto
 
@@ -86,12 +87,13 @@ namespace Jde::Opc::Server::Tests{
 		Ω Start( const fs::path& pumps )ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			ua.Load( pumps );
+			Load( ua, pumps );
 			AddArray( ua );
 			AddReadOnly( ua );
 			AddType( ua );
-			ua.History().Load( ua );
+			Load( ua.History(), ua );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
+			PublishDataTypes( ua );
 			ua.Run();
 			_ns = NamespaceIndex( ua, "urn:jde:pumps" );
 		}

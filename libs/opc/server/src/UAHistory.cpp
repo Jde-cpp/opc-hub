@@ -1,12 +1,10 @@
-#include "UAHistory.h"
+#include <jde/opc/server/UAHistory.h>
 #include <absl/synchronization/notification.h>
 #include <open62541/plugin/nodestore.h>
-#include <jde/fwk/process/process.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/opcHelpers.h>
-#include "Historized.h"
-#include "../globals.h"
-#include "../access/UAAccess.h"
+#include <jde/opc/server/UAAccess.h>
+#include <jde/opc/server/UASettings.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
@@ -222,17 +220,10 @@ namespace Jde::Opc::Server{
 	}
 	α UAHistory::Timer::Get()Ι->Timing{ return { _count.load(), steady_clock::duration{_total.load()}, steady_clock::duration{_longest.load()} }; }
 
-	UAHistory::UAHistory()ε{
-		let hist = Settings::FindObject( "/opcServer/hist" );
-		if( !hist ){
-			INFO( "No '/opcServer/hist':  this server keeps no history." );
-			return;
-		}
-		if( let timeout = Settings::FindDuration("/opcServer/hist/editTimeout"); timeout ){
-			THROW_IF( *timeout<=Duration::zero(), "hist.editTimeout must be positive, not {} ms.", duration_cast<milliseconds>(*timeout).count() );
-			_editTimeout = *timeout;
-		}
-		_historian = mu<Hist::Historian>( Hist::Settings{*hist, Process::AppDataFolder()/"logs"/"hist"/"opc-server"}, Hist::SystemClock() );
+	UAHistory::UAHistory( const UASettings& settings )ε:
+		_editTimeout{ settings.EditTimeout }{
+		if( settings.Hist )
+			_historian = mu<Hist::Historian>( *settings.Hist, Hist::SystemClock() );
 	}
 	UAHistory::~UAHistory(){
 		Stop();
@@ -267,6 +258,7 @@ namespace Jde::Opc::Server{
 		if( !_group )
 			_typeStepped.emplace( configuration );
 	}
+	α UAHistory::TypeStepped( const UA_NodeId& configuration )Ι->bool{ return _typeStepped.contains( configuration ); }
 	α UAHistory::ReadLimit()Ι->UA_UInt32{
 		return _historian ? (UA_UInt32)std::min<uint>( _historian->Config().ReadLimit, std::numeric_limits<UA_UInt32>::max() ) : 0;
 	}
@@ -289,33 +281,11 @@ namespace Jde::Opc::Server{
 		return UA_NodeId_equal( &function, &median ) ? optional<Hist::EAggregate>{ Hist::EAggregate::Median } : optional<Hist::EAggregate>{};
 	}
 
-	α UAHistory::Load( UA_Server& ua )ε->void{
-		if( !Enabled() )
-			return;
-		auto nodes = Historized::Load( ua, [this]( const UA_NodeId& configuration ){ return _typeStepped.contains( configuration ); } );
+	α UAHistory::Start( UA_Server& ua, sp<Hist::Group> group, Indexes indexes, vector<NodeId> archiveStarts )ε->void{
 		_typeStepped.clear();
-		vector<Hist::Member> members;
-		members.reserve( nodes.size() );
-		for( let& node : nodes )
-			members.push_back( node.Member );
-		auto group = _historian->AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
-		for( auto& node : nodes ){
-			let index = group->Find( node.Member.Node );
-			THROW_IF( !index, "'{}' is not in the group made with it.", node.Id.ToString() );
-			//There is no subscription to break, so the stop was the break, and the node's value now is its first after it.
-			//Stamped as open62541 stamps a write that carries no source time.
-			auto value = ReadValue( ua, node.Id, UA_TIMESTAMPSTORETURN_BOTH );
-			if( value.hasValue || !UA_StatusCode_isBad(value.status) ){
-				if( !value.hasSourceTimestamp ){
-					value.sourceTimestamp = UA_DateTime_now();
-					value.hasSourceTimestamp = true;
-				}
-				group->Enqueue( *index, value );
-			}
-			_archiveStarts.push_back( move(node.StartOfArchive) );
-			_archiveStarts.push_back( move(node.StartOfOnlineArchive) );
-			_indexes.emplace( move(node.Id), *index );
-		}
+		for( auto& [node, index] : indexes )
+			_indexes.emplace( move(node), index );
+		_archiveStarts = move( archiveStarts );
 		_group = move( group );
 		publishAggregates( ua );
 		ul _{ _publishing->Mutex };
@@ -495,7 +465,7 @@ namespace Jde::Opc::Server{
 	}
 
 	α UAHistory::Edit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId& node, UA_HistoryUpdateResult& result, absl::FunctionRef<optional<Hist::EditDetails>( Hist::NodeIndex )> make )ι->optional<Hist::EditResult>{
-		//HistoryWrite is the edit rights' bit (OpcAuthorize::UserRights):  none for an unprotected node, or no session.
+		//HistoryWrite is the edit rights' bit (INodeAccess::UserRights):  none for an unprotected node, or no session.
 		if( !(UAAccess::GetUserAccessLevel(&ua, nullptr, sessionId, sessionContext, &node, nullptr) & UA_ACCESSLEVELMASK_HISTORYWRITE) ){
 			result.statusCode = UA_STATUSCODE_BADUSERACCESSDENIED;
 			return nullopt;
@@ -505,8 +475,8 @@ namespace Jde::Opc::Server{
 			result.statusCode = unhistorized( ua, node );
 			return nullopt;
 		}
-		//And the node's own, which a nodeset that gave it HistoryRead alone left out (Historized::load):  the default
-		//plugin masks the user's level by it.
+		//And the node's own, which a nodeset that gave it HistoryRead alone left out (the OpcServer's Historized::load):
+		//the default plugin masks the user's level by it.
 		UA_Byte accessLevel{};
 		if( UA_Server_readAccessLevel(&ua, node, &accessLevel) || !(accessLevel & UA_ACCESSLEVELMASK_HISTORYWRITE) ){
 			result.statusCode = UA_STATUSCODE_BADUSERACCESSDENIED;
@@ -515,10 +485,10 @@ namespace Jde::Opc::Server{
 		auto details = make( *index );
 		if( !details )
 			return nullopt;
-		//The session's user, by the lookup UAAccess made at activation, and the name OpcAuthorize holds for it:  no round trip.
+		//The session's user, by the lookup UAAccess made at activation, and the name the host's acl holds for it:  no round trip.
 		let& ctx = *static_cast<UAAccess::SessionContext*>( sessionContext );//the access check above refused a session without one.
 		auto edited = ms<Edited>();
-		edit( _group, move(*details), Hist::Writer{ctx.UserPK, GetSchema().Authorizer->UserName(ctx.UserPK)}, edited );
+		edit( _group, move(*details), Hist::Writer{ctx.UserPK, UAAccess::UserName(ua, ctx.UserPK)}, edited );
 		//Runs in the group's next flush and answers once its records are durable:  the server's thread waits, holding the
 		//service lock, since nothing else may answer the client before then.  The flush's writes resume on the executor,
 		//where the midnight StartOfArchive write and a re-mapping of node rights wait on that lock, so with every executor

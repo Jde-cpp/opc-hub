@@ -8,7 +8,7 @@
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include "../src/globals.h"
-#include "../src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #include "helpers.h"
 
 #define let const auto
@@ -20,6 +20,7 @@ namespace Jde::Opc::Server::Tests{
 	protected:
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );
+			PublishDataTypes( GetUAServer() );
 			GetUAServer().Run();
 		}
 	};

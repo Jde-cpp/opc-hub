@@ -6,8 +6,9 @@ project( Jde.Opc.Server VERSION ${JDE_VERSION} LANGUAGES CXX )
 if( NOT jde_Superbuild )
 	add_subdirectory( ${jdeRoot}/libs/fwk/src ../../libs/fwk/lib )
 	set( opcCommonDir ${jdeRoot}/libs/opc )
-	add_subdirectory( ${opcCommonDir}/src ../../libs/opc/lib )
+	add_subdirectory( ${opcCommonDir}/shared/src ../../libs/opc/shared/lib )
 	add_subdirectory( ${jdeRoot}/libs/historian/src ../../libs/historian/lib )
+	add_subdirectory( ${opcCommonDir}/server/src ../../libs/opc/server/lib )
 	add_subdirectory( ${jdeRoot}/libs/db/src ../../libs/db/lib )
 	add_subdirectory( ${jdeRoot}/libs/db/drivers/sqlite/src ../../libs/db/drivers/sqlite/lib )
 	add_subdirectory( ${jdeRoot}/libs/db/drivers/mysql/src ../../libs/db/drivers/mysql/lib )
@@ -47,7 +48,7 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 if( NOT WIN32 )
 	target_link_libraries( ${targetName} OpenSSL::SSL )
 endif()
-target_link_libraries( ${targetName} Jde.Opc.ServerLib ) #which carries the app, web, opc and historian libs, and the nodeset loader.
+target_link_libraries( ${targetName} Jde.Opc.ServerLib ) #which carries the app, web, opc, UA server and historian libs, and the nodeset loader.
 linkAppRuntime( ${targetName} LIBXML2 ) #no NOMINMAX: the PCH reused below is Jde.App.Server's, built without it.
 
 #Single TU (src/main.cpp), but the PUBLIC pc.h of Jde.Web.Client et al. propagates a ~116MB PCH into

@@ -37,7 +37,7 @@ protobuf_generate(
 	IMPORT_DIRS
 		"types/proto"
 		"${protoIncludeDir}"
-		"${jdeRoot}/libs/opc/src/proto"
+		"${jdeRoot}/libs/opc/shared/src/proto"
 	PROTOC_OUT_DIR ${protoOutDir})
 
 suppressProtoWarnings( "${protos}" ${protoOutDir} )

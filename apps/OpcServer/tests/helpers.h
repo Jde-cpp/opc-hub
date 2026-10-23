@@ -1,7 +1,7 @@
 #pragma once
 #include <jde/tests/AccessHelpers.h>
 #include "../src/access/OpcAuthorize.h"
-#include "../src/access/UAAccess.h"
+#include <jde/opc/server/UAAccess.h>
 
 //What the suites share:  a session as the access-control plugin sees one, the calls open62541 makes on it, an issued token
 //as a client presents one, and the nodeset they load.

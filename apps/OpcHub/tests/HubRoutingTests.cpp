@@ -8,10 +8,10 @@
 #include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/src/auth/OpcServerSession.h"
 #include "../../OpcGateway/tests/utils/helpers.h"
-#include "../../OpcServer/src/access/UAAccess.h"
+#include <jde/opc/server/UAAccess.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include "../../OpcServer/src/globals.h"
-#include "../../OpcServer/src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #include "helpers.h"
 #define let const auto
 
@@ -246,7 +246,7 @@ namespace Jde::Opc::Hub::Tests{
 		ASSERT_TRUE( cred ) << "the credential is not cached under the default connection's slug";
 		EXPECT_EQ( cred->LoginName(), "user1" );
 		EXPECT_TRUE( cred->UserPK() ) << "AddSession resolved no user";
-		EXPECT_EQ( Opc::Server::UAAccess::ResolveUser("user1").Value, cred->UserPK().Value ) << "the OpcServer resolves the login to another user than the hub";
+		EXPECT_EQ( Opc::Server::UAAccess::ResolveUser(*Opc::Server::AppClient(), "user1").Value, cred->UserPK().Value ) << "the OpcServer resolves the login to another user than the hub";
 		EXPECT_EQ( FailureStatus([&]{ Post(AppPort(), "/login", body("nope")); }), optional{http::status::unauthorized} );
 		Post( AppPort(), "/logout", "{}", authorization );
 	}
@@ -258,7 +258,7 @@ namespace Jde::Opc::Hub::Tests{
 	TEST_F( HubRoutingTests, ReactivatingAUsernameLoginResolvesItsUser ){
 		let login = Post( AppPort(), "/login", serialize(jobject{{"opc",Gateway::Tests::OpcServerSlug},{"user","user1"},{"password","0123456789ABCD"}}) );//the hub's row for user1, if no earlier test made it.
 		Post( AppPort(), "/logout", "{}", string{login.Headers()[http::field::authorization]} );
-		let resolved = Opc::Server::UAAccess::ResolveUser( "user1" );
+		let resolved = Opc::Server::UAAccess::ResolveUser( *Opc::Server::AppClient(), "user1" );
 		ASSERT_TRUE( resolved );
 
 		UA_UserNameIdentityToken token; UA_UserNameIdentityToken_init( &token );

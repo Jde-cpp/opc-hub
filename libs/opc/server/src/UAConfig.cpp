@@ -1,47 +1,42 @@
-#include "UAConfig.h"
-#include "globals.h"
+#include <jde/opc/server/UAConfig.h>
 #include <open62541/config.h>
 #include <open62541/server_config_default.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
-#include "access/UAAccess.h"
-#include "hist/UAHistory.h"
-#include "UATrust.h"
+#include <jde/opc/server/INodeAccess.h>
+#include <jde/opc/server/UAAccess.h>
+#include <jde/opc/server/UAHistory.h>
 #include "jde/fwk/crypto/CryptoSettings.h"
-#include "jde/fwk/settings.h"
 
 #define let const auto
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::Opc;
-	UAConfig::UAConfig( UAHistory* history )ε:
+	UAConfig::UAConfig( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, UAHistory* history )ε:
 		UA_ServerConfig{
 			.logging = &_logger,
-		}{
+		},
+		_trust{ settings.TrustedCertDirs }{
 		try{
-			//One shape:  secured.  Without /opcServer/ssl this used to build a second one - a None endpoint with no certificate and no
-			//trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's own
-			//core lets nobody but an anonymous session use:  a non-anonymous token on a None channel under a None token policy is
-			//skipped unless allowNonePolicyPassword, and then only a password (reviews/security-matrix.md #5, deleted 09-18).  It had
-			//no config, no test and no use, and a missing block is far likelier a hidden `ssl::` or a mistyped key than a decision -
-			//so it reads as the configuration error it is, and the server does not start (UAConfigTests.NoSslIsRefused).
-			let ssl = Settings::FindObject( "/opcServer/ssl" );
-			THROW_IF( !ssl, "No '/opcServer/ssl':  the OPC UA server runs only with a certificate - its secured policies, beside the None endpoint clients discover it through.  Every shipped config sets it; look for a hidden `ssl::` or a mistyped key." );
-			SetupSecurityPolicies( Crypto::CryptoSettings{*ssl} );
+			//One shape:  secured.  Without a certificate this used to build a second one - a None endpoint with no certificate and
+			//no trust list (SetupUnsecured), and before that open62541's allow-all default (opcserver-review3 #7) - which open62541's
+			//own core lets nobody but an anonymous session use:  a non-anonymous token on a None channel under a None token policy is
+			//skipped unless allowNonePolicyPassword, and then only a password (reviews/security-matrix.md #5, deleted 09-18).  The
+			//host refuses a config without one (UAConfigTests.NoSslIsRefused), so settings.Ssl always names a pair.
+			SetupSecurityPolicies( settings, move(appClient), move(nodeAccess) );
 		}
 		catch( std::exception& ){
 			UA_ServerConfig_clear( this );
 			throw;//rethrow original: `throw move(e)` slices to std::exception, losing the derived type and Jde::Exception state.
 		}
-		let resource = ResourceSuffix();
 		UA_LocalizedText_clear( &applicationDescription.applicationName );// setDefaultConfig/setBasics already allocated applicationName; clear before overwriting or it leaks.
-		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", (resource.empty() ? string{"Jde-Cpp OpcServer"} : Ƒ("Jde-Cpp OpcServer [{}]", resource)).c_str() );
+		applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC( "en-US", settings.ApplicationName.c_str() );
 		//The history backend, only with a historian:  open62541 answers every HistoryRead Bad_NotSupported while the
-		//database's context is null, which is the answer of a server with no hist block, or whose hist.path another
-		//process holds.  open62541 publishes HistoryServerCapabilities from these flags, each set only for what is
-		//served:  raw and modified reads, and the four edits the plugin has a callback for - it has none for
-		//DeleteAtTime, which stays QL-only (historian spec *UA backend*).
+		//database's context is null, which is the answer of a server with no historian, or whose path another process
+		//holds.  open62541 publishes HistoryServerCapabilities from these flags, each set only for what is served:  raw
+		//and modified reads, and the four edits the plugin has a callback for - it has none for DeleteAtTime, which stays
+		//QL-only (historian spec *UA backend*).
 		if( history && history->Enabled() ){
 			historyDatabase = history->Database();
 			nodeLifecycle = UAHistory::Lifecycle();
@@ -51,12 +46,11 @@ namespace Jde::Opc::Server{
 		}
 	}
 
-	//"/opcServer/address": the interface the endpoint listens on.  Absent or null: every interface - open62541's own default, an
-	//empty host in the url.  The current-user install binds loopback (args/install-user, install-issues #16), so Windows raises
-	//no firewall prompt for it.  setBasics writes serverUrls as opc.tcp://:port; this puts the host in, which the tcp layer then
-	//binds to alone and the discovery url carries.
-	Ω applyAddress( UA_ServerConfig& config, PortType port )ε->void{
-		let address = Settings::FindString( "/opcServer/address" ).value_or( "" );
+	//The interface the endpoint listens on.  Empty:  every interface - open62541's own default, an empty host in the url.  The
+	//OpcServer's current-user install binds loopback (args/install-user, install-issues #16), so Windows raises no firewall
+	//prompt for it.  setBasics writes serverUrls as opc.tcp://:port; this puts the host in, which the tcp layer then binds to
+	//alone and the discovery url carries.
+	Ω applyAddress( UA_ServerConfig& config, str address, PortType port )ε->void{
 		if( address.empty() )
 			return;
 		UA_Array_delete( config.serverUrls, config.serverUrlsSize, &UA_TYPES[UA_TYPES_STRING] );
@@ -64,28 +58,29 @@ namespace Jde::Opc::Server{
 		THROW_IF( !config.serverUrls, "Could not allocate the server url." );
 		config.serverUrlsSize = 1;
 		config.serverUrls[0] = UA_STRING_ALLOC( Ƒ("opc.tcp://{}:{}", address, port).c_str() );
-		INFO( "OPC UA endpoint bound to {}:{} only ('/opcServer/address').", address, port );
+		INFO( "OPC UA endpoint bound to {}:{} only.", address, port );
 	}
 
-	α UAConfig::SetupSecurityPolicies( const Crypto::CryptoSettings& settings, SL sl )ε->void{
-		Crypto::EnsureKeyCertificate( settings, sl );
-		auto certificate = ToUAByteString( Crypto::ReadCertificate(settings.Certificate.Path, sl) );
-		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(settings.PrivateKey) );
-		SetConfig( Settings::FindNumber<PortType>("/opcServer/port").value_or(4840), move(certificate), move(privateKey) );
+	α UAConfig::SetupSecurityPolicies( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, SL sl )ε->void{
+		let& ssl = settings.Ssl;
+		Crypto::EnsureKeyCertificate( ssl, sl );
+		auto certificate = ToUAByteString( Crypto::ReadCertificate(ssl.Certificate.Path, sl) );
+		auto privateKey = ToUAByteString( Crypto::ReadPrivateKey(ssl.PrivateKey) );
+		SetConfig( settings, move(certificate), move(privateKey), move(appClient), move(nodeAccess) );
 		UA_String_clear( &applicationDescription.applicationUri );
-		let uri = settings.Certificate.SanUri();
+		let uri = ssl.Certificate.SanUri();
 		if( uri.empty() )//clients compare their configured applicationUri against ours; an empty one rejects every endpoint.
-			WARN( "ssl certificate '{}' has no URI entry in its subjectAltName '{}' - applicationUri will be empty.", settings.Certificate.Path.string(), settings.Certificate.SubjectAltName );
+			WARN( "ssl certificate '{}' has no URI entry in its subjectAltName '{}' - applicationUri will be empty.", ssl.Certificate.Path.string(), ssl.Certificate.SubjectAltName );
 		applicationDescription.applicationUri = UA_STRING_ALLOC( uri.c_str() );
 	}
 
-	α UAConfig::SetConfig( PortType port, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey )ε->void{
-		UAε( UA_ServerConfig_setBasics_withPort(this, port) );
-		applyAddress( *this, port );
+	α UAConfig::SetConfig( const UASettings& settings, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void{
+		UAε( UA_ServerConfig_setBasics_withPort(this, settings.Port) );
+		applyAddress( *this, settings.Address, settings.Port );
 
 		UA_TrustListDataType list;
 		UA_TrustListDataType_init( &list );
-		UATrust::LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::VerifyCertificate) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
+		_trust.LoadTrustList( list );//also primes the mtime cache the runtime rescan (UATrust::Verify) diffs against. An unreadable cert now logs CRITICAL and is skipped rather than aborting startup - matches Access loadTrustAnchors.
 
 		//The certificate groups' parameters.
 		UA_KeyValuePair params[2];
@@ -114,7 +109,7 @@ namespace Jde::Opc::Server{
 		UA_TrustListDataType_clear( &list );
 		AddSecurityPolicies( move(certificate), move(privateKey) );
 
-		UAAccess::Init( *this );
+		UAAccess::Init( *this, settings, move(appClient), move(nodeAccess) );
 
 		UAε( UA_ServerConfig_addAllEndpoints(this) );
 	}
@@ -130,7 +125,7 @@ namespace Jde::Opc::Server{
 		UAε( UA_ServerConfig_addSecurityPolicyBasic256Sha256(this, &localCertificate, &decryptedPrivateKey) );
 		//The three current RSA policies, so a client takes the strongest it shares - open62541 orders endpoints by the policy's
 		//securityLevel - and one that carries Basic256Sha256 alone (most installed clients) still connects (reviews/security-matrix.md
-		//#4;  EndpointTests).  User tokens stay under /opc/userTokenPolicyUri, Basic256Sha256 by default.
+		//#4;  EndpointTests).  User tokens stay under UASettings::UserTokenPolicyUri, Basic256Sha256 by default.
 		UAε( UA_ServerConfig_addSecurityPolicyAes128Sha256RsaOaep(this, &localCertificate, &decryptedPrivateKey) );
 		UAε( UA_ServerConfig_addSecurityPolicyAes256Sha256RsaPss(this, &localCertificate, &decryptedPrivateKey) );
 		UAε( UA_ServerConfig_addSecurityPolicyNone(this, &localCertificate) );

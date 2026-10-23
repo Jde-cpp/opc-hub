@@ -2,7 +2,8 @@
 #include <open62541/server.h>
 #include <jde/access/Authorize.h>
 
-namespace Jde::Opc::Server{ struct UAConfig; }
+namespace Jde::App::Client{ struct IAppClient; }
+namespace Jde::Opc::Server{ struct INodeAccess; struct UAConfig; struct UASettings; }
 namespace Jde::Opc::Server::UAAccess{
 	//Halfway from now to an expiry:  when to re-ask the authority about a snapshot that is still good.  See renewAhead.
 	Ξ HalfLife( TimePoint expiration )ι->TimePoint{ const auto now = Clock::now(); return expiration>now ? now+( expiration-now )/2 : expiration; }
@@ -20,8 +21,11 @@ namespace Jde::Opc::Server::UAAccess{
 		Ω Unexpiring( Jde::UserPK user )ι->up<SessionContext>{ return mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, user ); }
 	};
 
-	α Init( UAConfig& config )ε->void;
-	α ResolveUser( sv loginName )ι->UserPK;//the hub's user for a username login the list matched, UserPK{} when there is none yet - see the definition.
+	//The plugin's state, at ac->context:  the token types and logins the host read, its appClient, the session authority, and
+	//its nodeAccess, the node rights.  A callback passed no ac, as UAHistory's and the tests' are, reads the server's.
+	α Init( UAConfig& config, const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void;
+	α ResolveUser( App::Client::IAppClient& appClient, sv loginName )ι->UserPK;//the hub's user for a username login the list matched, UserPK{} when there is none yet - see the definition.
+	α UserName( UA_Server& server, UserPK user )ι->string;//the user's name, as the host's acl holds it:  what a history edit records.
 
 	α ActivateSession( UA_Server *server, UA_AccessControl *ac, const UA_EndpointDescription *endpointDescription, const UA_ByteString *secureChannelRemoteCertificate, const UA_NodeId *sessionId, const UA_ExtensionObject *userIdentityToken, void **sessionContext )ι->UA_StatusCode;
 	α CloseSession(UA_Server *server, UA_AccessControl *ac,const UA_NodeId *sessionId, void *sessionContext)ι->void;

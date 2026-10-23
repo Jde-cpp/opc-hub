@@ -111,7 +111,7 @@ then the targets the installer packs: `--target Jde.Opc.Hub Jde.Opc.Server Jde.D
 
 | kind | targets |
 |------|---------|
-| libraries | `Jde` (= `libs/fwk`), `Jde.DB`, `Jde.DB.MySql`, `Jde.DB.Sqlite`, `Jde.QL`, `Jde.Access`, `Jde.Web.Client`, `Jde.Web.Server`, `Jde.App.Shared`, `Jde.App.Client`, `Jde.Opc`, `Jde.Opc.HistorianLib` |
+| libraries | `Jde` (= `libs/fwk`), `Jde.DB`, `Jde.DB.MySql`, `Jde.DB.Sqlite`, `Jde.QL`, `Jde.Access`, `Jde.Web.Client`, `Jde.Web.Server`, `Jde.App.Shared`, `Jde.App.Client`, `Jde.Opc` (= `libs/opc/shared`), `Jde.Opc.HistorianLib`, `Jde.Opc.UAServer` (= `libs/opc/server`) |
 | sqlite native-proc modules | `Jde.DB.Sqlite.AppServer` (access procs live here too), `Jde.DB.Sqlite.OpcGateway`, `Jde.DB.Sqlite.QLTests` (tests only: the `qlTests` schema's insert twins, under `libs/ql/tests/config/sql/sqlite`) |
 | app libraries | `Jde.App.ServerLib`, `Jde.Opc.ServerLib`, `Jde.Opc.GatewayLib`, `Jde.Opc.HubLib` |
 | executables | `Jde.App.Server`, `Jde.Opc.Server`, `Jde.Opc.Gateway`, `Jde.Opc.Hub`, `Jde.Opc.PlcEmulator`, `Jde.Opc.Soak` |

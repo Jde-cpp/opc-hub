@@ -1,7 +1,7 @@
 #include <fstream>
 #include <jde/fwk/settings.h>
 #include "../src/globals.h"
-#include "../src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #include <jde/opc/uatypes/BrowsePath.h>
 #define let const auto
 
@@ -141,7 +141,7 @@ namespace Jde::Opc::Server::Tests{
 			flat_set<fs::path> seen; vector<fs::path> order;
 			loadOrder( file, modelFiles(Path()), seen, order );
 			for( let& f : order )
-				ua.Load( f );
+				Load( ua, f );
 			let declared = declaredNodes( ua, file );
 			EXPECT_FALSE( declared.empty() ) << file.filename().string() << " declares no node outside namespace 0";
 			vector<string> missing;
@@ -158,14 +158,14 @@ namespace Jde::Opc::Server::Tests{
 
 	TEST_F( UALoadTests, LoadMyKitchen ){
 		LoadWithDependencies( "CommercialKitchenEquipment/Opc.Ua.CommercialKitchenEquipment.NodeSet2.xml" );
-		GetUAServer().Load( fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/kitchen.xml" );
+		Load( GetUAServer(), fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/kitchen.xml" );
 	}
 
 	//config/nodesets/pumps.NodeSet2.xml - the PLC emulator's tags.  Instances are explicit in NodeSet2 (no type
 	//instantiation), so every pump must carry its own status/motorRpm; the values are the file's <Value> elements.
 	TEST_F( UALoadTests, Pumps ){
 		auto& ua = GetUAServer();
-		ua.Load( fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" );
+		Load( ua, fs::path{*Process::GetEnv("JDE_DIR")}/"apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" );
 		let ns = NamespaceIndex( ua, "urn:jde:pumps" );
 		const flat_map<string,NsIndex> aliases{ {"pumps", ns} };
 		for( let& pump : {"pump1", "pump2", "pump3", "pump4", "pumpManual"} ){
@@ -189,15 +189,15 @@ namespace Jde::Opc::Server::Tests{
 
 	//A client can only ever put an Int32 on the wire for an enum, so the server has to widen it back to the node's
 	//DataType before the type check - and it can only do that when the enum has a UA_DataType registered where
-	//adjustValueType() looks.  Before 1.5.9 that was config.customDataTypes alone, so without UAServer::PublishDataTypes
-	//this write was BadTypeMismatch, which is what the SPA hit changing ExampleStacklight's DeviceHealth.  1.5.9 looks
-	//through the server's internal lists too, and only Run publishes, so this writes with nothing published
+	//adjustValueType() looks.  Before 1.5.9 that was config.customDataTypes alone, so without PublishDataTypes this write
+	//was BadTypeMismatch, which is what the SPA hit changing ExampleStacklight's DeviceHealth.  1.5.9 looks through the
+	//server's internal lists too, and only PublishDataTypes publishes, so this writes with nothing published
 	//(open62541-1.5.9 review #7, #11).
 	TEST_F( UALoadTests, WriteNodesetEnum ){
 		auto& ua = GetUAServer();
-		ua.Load( Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
-		ua.Load( Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
-		ua.Load( Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
+		Load( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		Load( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.xml" );
+		Load( ua, Path()/"IA/Opc.Ua.IA.NodeSet2.examples.xml" );
 		ASSERT_FALSE( UA_Server_getConfig(ua.Ptr())->customDataTypes ) << "nothing published";
 		let ns = NamespaceIndex( ua, "http://opcfoundation.org/UA/IA/Examples/" );
 		let deviceHealth = NodeId{ ns, (uint32)6002 };//ExampleStacklight/DeviceHealth - DataType DeviceHealthEnumeration (DI).
@@ -215,12 +215,13 @@ namespace Jde::Opc::Server::Tests{
 	}
 
 	//open62541-1.5.9 review #11:  Load published after every file, so every lookup that missed in a later Load scanned each
-	//type twice.  Run publishes once, after the last nodeset and before PubSub, the one reader of the snapshot.
-	TEST_F( UALoadTests, RunPublishesTheNodesetTypesOnce ){
+	//type twice.  Startup publishes once, after the last nodeset and before Run and PubSub, the one reader of the snapshot.
+	TEST_F( UALoadTests, StartupPublishesTheNodesetTypesOnce ){
 		auto& ua = GetUAServer();
-		ua.Load( Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
+		Load( ua, Path()/"DI/Opc.Ua.Di.NodeSet2.xml" );
 		let config = UA_Server_getConfig( ua.Ptr() );
 		ASSERT_FALSE( config->customDataTypes ) << "Load publishes nothing";
+		PublishDataTypes( ua );
 		ua.Run();
 		let deviceHealthEnumeration = NodeId{ NamespaceIndex(ua, "http://opcfoundation.org/UA/DI/"), (uint32)6244 };
 		EXPECT_TRUE( UA_findDataTypeWithCustom(&deviceHealthEnumeration, config->customDataTypes) ) << "DI's enum, published";
