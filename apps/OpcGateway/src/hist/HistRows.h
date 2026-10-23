@@ -60,6 +60,9 @@ namespace Jde::Opc::Gateway{
 	struct HistPathSegment final{ string Uri; string Name; };
 	α ParseHistPath( sv json, SL sl )ε->vector<HistPathSegment>;//throws for an empty path or a segment without both, as a BadRequest.
 	α HistPathText( const vector<HistPathSegment>& path )ι->string;
+	//A browse name as a segment:  none without both - no URI for its index, an empty one, or an empty name - which ParseHistPath
+	//refuses, so a path the host writes (HistGroupHost::Describe) reads back.
+	α ToHistPathSegment( optional<sv> uri, sv name )ι->optional<HistPathSegment>;
 
 	//The EngineeringUnits property, Part 8's EUInformation, as hist_group_nodes.engineering_units holds it.
 	struct HistEngineeringUnits final{ string NamespaceUri; int32 UnitId{}; string DisplayName; string Description; };
@@ -68,11 +71,17 @@ namespace Jde::Opc::Gateway{
 	//the address space from the rows before any source is up.  Each none until the server has said;  a restart's rows carry the last
 	//answer.  DataType is the type served:  the source's where that is a namespace-0 type, abstract or not, else the built-in the
 	//historian stores the node's values by (Group::DataType), an enumeration Int32 and a structure Structure.  Path is the node's
-	//browse path from the Objects folder, in a template member's spelling;  none for a node outside that tree.
+	//browse path from the Objects folder, in a template member's spelling;  none for a node outside that tree, or one with a browse
+	//name on the way that makes no segment (ToHistPathSegment).
 	struct HistNodeAttributes final{
 		static constexpr array<sv,9> Names{ "display_name", "description", "data_type", "value_rank", "array_dimensions", "access_level", "eu_range", "engineering_units", "path" };
-		Ω Read( const DB::Row& row, uint first )ε->HistNodeAttributes;//the nine cells from `first`, in Names' order.
+		Ω Read( const DB::Row& row, uint first, HistGroupNodePK id )ε->HistNodeAttributes;//the nine cells from `first`, in Names' order;  a json or node cell that doesn't parse is none, and logged as row `id`'s.
 		α Values()Ι->vector<DB::Value>;//the nine, in Names' order, as a statement binds them:  the json columns spelled.
+		//What the server said, as its columns hold it:  each text cut to its column's length in bytes, before a character - no dialect
+		//counts more than bytes - the units' description then name cut until their json fits, and dimensions, units or a path whose
+		//json still won't fit none.  One cell too long fails the row's whole update on mysql and SQL Server.  DataType, a type of
+		//namespace 0, and EURange's two numbers always fit.
+		α FitColumns()ι->void;
 		optional<string> DisplayName;
 		optional<string> Description;
 		optional<ExNodeId> DataType;

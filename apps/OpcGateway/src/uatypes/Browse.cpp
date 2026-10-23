@@ -122,12 +122,6 @@ namespace Browse{
 		}
 		return y;
 	}
-	α Request::Parents( NodeId&& id )ι->Request{
-		vector<NodeId> ids; ids.push_back( move(id) );//one description setup, shared, as Hierarchical's.
-		auto y = Parents( move(ids) );
-		y.PerNode = false;//one node:  its bad result fails the request, as it did before the batch overload.
-		return y;
-	}
 	α Request::Parents( vector<NodeId>&& ids )ι->Request{
 		Request y{ move(ids), (UA_BrowseResultMask)(UA_BROWSERESULTMASK_BROWSENAME | UA_BROWSERESULTMASK_NODECLASS) };
 		y.PerNode = true;

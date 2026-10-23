@@ -59,6 +59,8 @@ namespace Jde::QL::Tests{
 		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-nowidget", slug:"crud-nowidget", itemType:{ id:3, name:"Widget" } ){ id })").find("not a row to create"), string::npos );
 		EXPECT_EQ( Count("item_types", "where item_type_id=3"), 0u ) << "the nested enum row was written";
 		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-nodesc", slug:"crud-nodesc", itemType:"Gadget", description:{ x:1 } ){ id })").find("not an object"), string::npos );
+		//a column the meta marks insertable:false is the server's to set:  refused, where it was dropped without a word (servers-0.2 #11).
+		EXPECT_NE( WhatOf(R"(mutation createItem( name:"crud-nocreated", slug:"crud-nocreated", itemType:"Gadget", created:"2020-01-01T00:00:00Z" ){ id })").find("isn't insertable"), string::npos );
 		try{
 			Query( R"(mutation createItem( name:"crud-nofk", slug:"crud-nofk", itemType:99 ){ id })" );//an id the enum table lacks - the fk's, not ql's.
 			ADD_FAILURE() << "the foreign key was not enforced";
@@ -75,9 +77,9 @@ namespace Jde::QL::Tests{
 			EXPECT_EQ( e.Error, DB::EDbError::Duplicate ) << e.what();
 		}
 		vector<DB::Value> refused;//by name:  a pattern would also match other tests' rows, which a crashed run on a file db leaves behind.
-		for( sv slug : {"crud-noname", "crud-noenum", "crud-nowidget", "crud-nodesc", "crud-nofk", "crud-dup-2"} )
+		for( sv slug : {"crud-noname", "crud-noenum", "crud-nowidget", "crud-nodesc", "crud-nocreated", "crud-nofk", "crud-dup-2"} )
 			refused.emplace_back( string{slug} );
-		EXPECT_EQ( Count("items", "where slug in (?,?,?,?,?,?)", move(refused)), 0u ) << "a refused insert was written";
+		EXPECT_EQ( Count("items", "where slug in (?,?,?,?,?,?,?)", move(refused)), 0u ) << "a refused insert was written";
 		ASSERT_EQ( listener->Changes.size(), 1u ) << "a refused insert was published";//crud-dup's own, and no other.
 		EXPECT_EQ( AsNumber<uint>(listener->Body(0), "id"), id );
 	}
@@ -103,13 +105,15 @@ namespace Jde::QL::Tests{
 		EXPECT_EQ( FindNumber<uint>(listener->Body(1), "id"), optional{id} ) << "keyed by slug - the id has to be looked up";
 		EXPECT_EQ( AsSV(listener->Body(1), "description"), "by slug" );
 	}
-	//#46: a key column is not a settable one, nor is an updateable:false column - with nothing left to set the update is refused
-	//rather than run empty.
+	//#46: a key column is not a settable one - with nothing left to set the update is refused rather than run empty.  An
+	//updateable:false column a caller names is refused for itself (servers-0.2 #11), where it was dropped without a word.
 	TEST_F( CrudOpsTests, UpdateOfNothingSettableIsRefused ){
 		let id = Item( "crud-nothing" );
 		EXPECT_NE( WhatOf(Ƒ("mutation updateItem( id:{} )", id)).find("nothing to update"), string::npos );
 		EXPECT_NE( WhatOf(Ƒ("mutation updateItem( id:{}, itemId:999 )", id)).find("nothing to update"), string::npos );
-		EXPECT_NE( WhatOf(Ƒ(R"(mutation updateItem( id:{}, created:"2020-01-01T00:00:00Z" ))", id)).find("nothing to update"), string::npos );
+		EXPECT_NE( WhatOf(Ƒ(R"(mutation updateItem( id:{}, created:"2020-01-01T00:00:00Z" ))", id)).find("isn't updateable"), string::npos );
+		EXPECT_NE( WhatOf(Ƒ(R"(mutation updateItem( id:{}, description:"set", created:"2020-01-01T00:00:00Z" ))", id)).find("isn't updateable"), string::npos ) << "refused whole, not set without it";
+		EXPECT_TRUE( Select(id, "id description").at("description").is_null() );
 		EXPECT_EQ( AsNumber<uint>(Select(id), "id"), id );
 	}
 

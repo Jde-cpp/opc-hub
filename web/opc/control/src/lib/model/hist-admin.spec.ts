@@ -103,9 +103,12 @@ describe( 'hist admin rows', ()=>{
 		expect( described.engineeringUnits ).toEqual( {namespaceUri: 'http://www.opcfoundation.org/UA/units/un/cefact', unitId: 4404, displayName: 'rpm', description: 'revolutions per minute'} );
 		expect( described.path?.map( s=>s.name ) ).toEqual( ['pump3', 'motorRpm'] );
 		expect( toHistGroupMember( {id: 9, node: '{"nsu":"u","i":1}', euRange: 'not json'} ).attributes.euRange ).toBeUndefined();
+		//a non-finite bound as Part 6 spells it
+		expect( toHistGroupMember( {id: 10, node: '{"nsu":"u","i":1}', euRange: '{"low":"NaN","high":"-Infinity"}'} ).attributes.euRange ).toEqual( {low: NaN, high: -Infinity} );
 		//a served type by its namespace-0 name, else its spelling
 		expect( histDataTypeLabel( described.dataType ) ).toBe( 'Double' );
 		expect( histDataTypeLabel( new ExNodeId( {nsu: 'http://opcfoundation.org/UA/', i: 22} ) ) ).toBe( 'Structure' );
+		expect( histDataTypeLabel( new ExNodeId( {nsu: 'http://opcfoundation.org/UA/', i: 294} ) ) ).toBe( 'UtcTime' );//Part 6's name, as the node page's (ETypes)
 		expect( histDataTypeLabel( new ExNodeId( {nsu: 'urn:jde:pumps', i: 3001} ) ) ).toBe( '{"nsu":"urn:jde:pumps","i":3001}' );
 		expect( histDataTypeLabel( undefined ) ).toBe( '' );
 		const resolved = toHistResolved( {nodes: [{templateNode: 3, path: '[{"nsu":"u","name":"a"}]', node: {nsu: 'u', i: 1}, status: 0, holder: null}, {templateNode: 4, path: '[]', node: null, status: 2153775104, holder: {id: 9, name: 'Other'}}]} );

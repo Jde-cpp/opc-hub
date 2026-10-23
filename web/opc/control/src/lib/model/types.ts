@@ -38,6 +38,7 @@ export function toBrowse( path:string, defaultNs:Ns|undefined ):Browse{
 }
 export function browseEq( a:Browse, b:Browse ):boolean{ return a.ns===b.ns && a.name===b.name; }
 
+//Namespace 0's DataTypes by id, as Part 6 names them - the node page's and the Members tab's type names - and Folder, the FolderType.
 export enum ETypes{
 	None = 0,
 	Boolean = 1,
@@ -53,8 +54,24 @@ export enum ETypes{
 	Double = 11,
 	String = 12,
 	DateTime = 13,
+	Guid = 14,
+	ByteString = 15,
+	XmlElement = 16,
+	NodeId = 17,
+	ExpandedNodeId = 18,
+	StatusCode = 19,
+	QualifiedName = 20,
 	LocalizedText = 21,
-	BaseData = 24,
+	Structure = 22,
+	DataValue = 23,
+	BaseDataType = 24,
+	DiagnosticInfo = 25,
+	Number = 26,
+	Integer = 27,
+	UInteger = 28,
+	Enumeration = 29,
 	Folder = 61,
-	UtcDateTime = 294
+	Duration = 290,
+	UtcTime = 294,
+	ServerState = 852
 }

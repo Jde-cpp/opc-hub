@@ -132,12 +132,15 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	nodeDetail( node:ExNodeId ):string{ return histNodeText( node ); }
 	//What the node's server said of it (#379), once the collector has read it:  its name and its path from Objects, which the Node
 	//column's tooltip carries, and the type served - blank until the server has described the node.
-	nameText( m:HistGroupMember ):string{ return m.attributes.displayName ?? ''; }
+	nameText( m:HistGroupMember ):string{//an empty DisplayName is the server's answer, not none.
+		const name = m.attributes.displayName;
+		return name===undefined ? 'unread' : name || 'no name';
+	}
 	nameDetail( m:HistGroupMember ):string{
 		const a = m.attributes;
-		if( !a.displayName && !a.path )
+		if( a.displayName===undefined && !a.path )
 			return 'Not yet read from the server:  the collector reads a node once it has its item.';
-		return [a.path ? histPathText( a.path ) : '', a.description ?? ''].filter( s=>!!s ).join( '.  ' );
+		return [a.displayName==='' ? 'Its server gives it no DisplayName' : '', a.path ? histPathText( a.path ) : '', a.description ?? ''].filter( s=>!!s ).join( '.  ' );
 	}
 	typeText( m:HistGroupMember ):string{ return histDataTypeLabel( m.attributes.dataType ); }
 	typeDetail( m:HistGroupMember ):string{

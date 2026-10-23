@@ -17,19 +17,19 @@ local thresholds( i ) = {
 	stepped: common.types.bit+{ nullable:true, i:i+4, comment:"Part 11's Stepped.  Null inherits, and the default is true." }
 };
 //What a node's server says of it (docs/servers/spec.md *Address space*), from column order `i`:  read once the collector has the
-//node's item and written to the row by HistGroupHost::Describe directly, at every create, so a reconnect refreshes them and a
-//restart serves the address space from the rows before any source is up.  Neither insertable nor updateable:  the QL never writes
-//them.  Null until the server has described the node.
+//node's item and written to the row by HistGroupHost::Describe directly, at every create that changes them, so a reconnect
+//refreshes them and a restart serves the address space from the rows before any source is up.  Neither insertable nor updateable:
+//the QL never writes them.  Null until the server has described the node.
 local attributes( i ) = {
-	displayName: common.types.varchar+{ length:256, nullable:true, insertable:false, updateable:false, i:i, comment:"The node's DisplayName, its text alone." },
+	displayName: common.types.varchar+{ length:256, nullable:true, insertable:false, updateable:false, i:i, comment:"The node's DisplayName, its text alone:  empty where the server gives an empty one, null until it has been read." },
 	description: common.types.varchar+{ length:2048, nullable:true, insertable:false, updateable:false, i:i+1, comment:"The node's Description, its text alone;  null for none." },
 	dataType: common.types.varchar+{ length:672, nullable:true, insertable:false, updateable:false, i:i+2, comment:'The DataType served for the node, spelled as `node` is (HistNodeText):  the source\'s where that is a namespace-0 type, abstract or not, else the built-in its values encode as, the historian\'s rule - an enumeration Int32, a structure Structure.' },
 	valueRank: common.types.int+{ nullable:true, insertable:false, updateable:false, i:i+3, comment:"The node's ValueRank:  -1 a scalar, 1 a one-dimensional array, and the rest of Part 3's values." },
 	arrayDimensions: common.types.varchar+{ length:256, nullable:true, insertable:false, updateable:false, i:i+4, comment:"The node's ArrayDimensions as a json list, [4];  null for none." },
 	accessLevel: common.types.uint8+{ nullable:true, insertable:false, updateable:false, i:i+5, comment:"The source's AccessLevel bits:  1 CurrentRead, 2 CurrentWrite, 4 HistoryRead, …" },
-	euRange: common.types.varchar+{ length:128, nullable:true, insertable:false, updateable:false, i:i+6, comment:'The EURange property as json, {"low":0,"high":3000};  null where the node has none.' },
+	euRange: common.types.varchar+{ length:128, nullable:true, insertable:false, updateable:false, i:i+6, comment:'The EURange property as json, {"low":0,"high":3000}, a non-finite bound as Part 6 spells it, "NaN", "Infinity" or "-Infinity";  null where the node has none.' },
 	engineeringUnits: common.types.varchar+{ length:1024, nullable:true, insertable:false, updateable:false, i:i+7, comment:'The EngineeringUnits property, Part 8\'s EUInformation, as json:  {"namespaceUri":"http://www.opcfoundation.org/UA/units/un/cefact","unitId":4404,"displayName":"rpm","description":"revolutions per minute"};  null where the node has none.' },
-	path: common.types.varchar+{ length:4096, nullable:true, insertable:false, updateable:false, i:i+8, comment:"The node's browse path from the Objects folder over the inverse HierarchicalReferences, in a template member's spelling (HistPathText, hist_template_nodes.path);  null for a node outside that tree, or deeper than 32." }
+	path: common.types.varchar+{ length:4096, nullable:true, insertable:false, updateable:false, i:i+8, comment:"The node's browse path from the Objects folder over the inverse HierarchicalReferences, in a template member's spelling (HistPathText, hist_template_nodes.path);  null for a node outside that tree, deeper than 64 (ParentPathsAwait::MaxDepth), or with a browse name on the way whose name or namespace URI is empty." }
 };
 {
 	local tables = self.tables,

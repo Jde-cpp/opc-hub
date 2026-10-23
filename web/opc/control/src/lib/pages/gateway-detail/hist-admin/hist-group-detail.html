@@ -62,15 +62,15 @@
 					<mat-table [dataSource]="members.rows()" class="mat-elevation-z2 jde-dense">
 						<ng-container matColumnDef="node">
 							<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
-							<mat-cell *matCellDef="let m" [matTooltip]="nodeDetail(m.node) + '.  Row ' + m.id + ', its index in the group\'s files.'"><span>{{ nodeLabel(m.node) }}</span></mat-cell>
+							<mat-cell *matCellDef="let m"><span tabindex="0" [matTooltip]="nodeDetail(m.node) + '.  Row ' + m.id + ', its index in the group\'s files.'">{{ nodeLabel(m.node) }}</span></mat-cell>
 						</ng-container>
 						<ng-container matColumnDef="name">
-							<mat-header-cell *matHeaderCellDef matTooltip="The node's DisplayName on its server, read once the collector has its item.  Hover for its path and description.">Name</mat-header-cell>
-							<mat-cell *matCellDef="let m" [matTooltip]="nameDetail(m)"><span class="cell-value" [class.inherits]="!nameText(m)">{{ nameText(m) || 'unread' }}</span></mat-cell>
+							<mat-header-cell *matHeaderCellDef><span tabindex="0" matTooltip="The node's DisplayName on its server, read once the collector has its item.  Hover or focus a name for its path and description.">Name</span></mat-header-cell>
+							<mat-cell *matCellDef="let m"><span tabindex="0" class="cell-value" [class.inherits]="!m.attributes.displayName" [matTooltip]="nameDetail(m)">{{ nameText(m) }}</span></mat-cell>
 						</ng-container>
 						<ng-container matColumnDef="type">
-							<mat-header-cell *matHeaderCellDef matTooltip="The DataType the gateway serves the node with:  the server's where that is a namespace-0 type, else the built-in its values encode as.">Type</mat-header-cell>
-							<mat-cell *matCellDef="let m" [matTooltip]="typeDetail(m)"><span class="cell-value" [class.inherits]="!typeText(m)">{{ typeText(m) || 'unread' }}</span></mat-cell>
+							<mat-header-cell *matHeaderCellDef><span tabindex="0" matTooltip="The DataType the gateway serves the node with:  the server's where that is a namespace-0 type, else the built-in its values encode as.">Type</span></mat-header-cell>
+							<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!typeText(m)" [attr.tabindex]="typeDetail(m) ? 0 : null" [matTooltip]="typeDetail(m)">{{ typeText(m) || 'unread' }}</span></mat-cell>
 						</ng-container>
 						<ng-container matColumnDef="member">
 							<mat-header-cell *matHeaderCellDef>Template member</mat-header-cell>
@@ -78,7 +78,7 @@
 						</ng-container>
 						@for( column of columns; track column.name ){
 							<ng-container [matColumnDef]="column.name">
-								<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
+								<mat-header-cell *matHeaderCellDef><span tabindex="0" [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</span></mat-header-cell>
 								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m.thresholds, column.name)">{{ cellText(m.thresholds, column.name) || 'inherits' }}</span></mat-cell>
 							</ng-container>
 						}
@@ -121,11 +121,11 @@
 						<mat-table [dataSource]="resolution()" class="mat-elevation-z2 jde-dense">
 							<ng-container matColumnDef="path">
 								<mat-header-cell *matHeaderCellDef>Path</mat-header-cell>
-								<mat-cell *matCellDef="let r" [matTooltip]="'Template member ' + r.templateNode"><span>{{ r.path }}</span></mat-cell>
+								<mat-cell *matCellDef="let r"><span tabindex="0" [matTooltip]="'Template member ' + r.templateNode">{{ r.path }}</span></mat-cell>
 							</ng-container>
 							<ng-container matColumnDef="node">
 								<mat-header-cell *matHeaderCellDef>Node</mat-header-cell>
-								<mat-cell *matCellDef="let r" [matTooltip]="r.node ? nodeDetail(r.node) : ''"><span>{{ r.node ? nodeLabel(r.node) : '' }}</span></mat-cell>
+								<mat-cell *matCellDef="let r"><span [attr.tabindex]="r.node ? 0 : null" [matTooltip]="r.node ? nodeDetail(r.node) : ''">{{ r.node ? nodeLabel(r.node) : '' }}</span></mat-cell>
 							</ng-container>
 							<ng-container matColumnDef="status">
 								<mat-header-cell *matHeaderCellDef>Status</mat-header-cell>

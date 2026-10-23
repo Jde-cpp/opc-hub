@@ -2,7 +2,7 @@ import { ISlugRow, Mutation, MutationType, SlugRow, SlugRowProps } from 'jde-fra
 import { ExNodeId } from './ex-node-id';
 import { NodeId } from './node-id';
 import { HistPathSegment, HistThresholdFields, histThresholdArgs, histThresholdBlank, histThresholdFields, histThresholdFieldsEqual, histThresholdProblem, parseHistPath } from './hist';
-import { StatusCode } from './types';
+import { ETypes, StatusCode } from './types';
 
 //The gateway historian's tables as the admin pages hold them (#337, spec *Templates*):  hist_templates and hist_groups as rows a
 //detail page saves whole, and their members, hist_template_nodes and hist_group_nodes, as rows edited one at a time, since each
@@ -160,9 +160,9 @@ export const histNodeAttributeColumns = ['displayName', 'description', 'dataType
 export function histDataTypeLabel( type:ExNodeId|undefined ):string{
 	if( !type )
 		return '';
-	return type.nsu=='http://opcfoundation.org/UA/' && typeof type.id=='number' && ns0TypeNames[type.id] ? ns0TypeNames[type.id] : histNodeText( type );
+	const name = typeof type.id=='number' && type.id!=ETypes.None ? ETypes[type.id] : undefined;
+	return type.nsu=='http://opcfoundation.org/UA/' && name ? name : histNodeText( type );
 }
-const ns0TypeNames:Record<number,string> = { 1: 'Boolean', 2: 'SByte', 3: 'Byte', 4: 'Int16', 5: 'UInt16', 6: 'Int32', 7: 'UInt32', 8: 'Int64', 9: 'UInt64', 10: 'Float', 11: 'Double', 12: 'String', 13: 'DateTime', 14: 'Guid', 15: 'ByteString', 16: 'XmlElement', 17: 'NodeId', 18: 'ExpandedNodeId', 19: 'StatusCode', 20: 'QualifiedName', 21: 'LocalizedText', 22: 'Structure', 23: 'DataValue', 24: 'BaseDataType', 25: 'DiagnosticInfo', 26: 'Number', 27: 'Integer', 28: 'UInteger', 29: 'Enumeration', 290: 'Duration', 294: 'UtcTime', 852: 'ServerState' };
 
 //A group's node, as histGroupNodes answers it:  the row id is the node's index in the group's files, its node by URI, the template
 //member it was resolved from, none for one added by hand, its own thresholds, and what its server said of it.

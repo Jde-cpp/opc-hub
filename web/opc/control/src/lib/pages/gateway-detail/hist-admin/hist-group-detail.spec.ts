@@ -1,6 +1,8 @@
 import { Component, inject, InjectionToken, input } from '@angular/core';
 import { ComponentFixtureAutoDetect, TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
+import { MatTooltip } from '@angular/material/tooltip';
+import { By } from '@angular/platform-browser';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { Mutation, Properties } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
@@ -146,8 +148,11 @@ describe( 'HistGroupDetail', ()=>{
 		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Measured motor speed, rpm.' );
 		expect( d.page.typeText( rpm ) ).toBe( 'Double' );
 		expect( d.page.typeDetail( rpm ) ).toBe( '{"nsu":"http://opcfoundation.org/UA/","i":11}.  Scalar.  EURange 0 to 3000' );
-		expect( d.page.nameText( state ) ).toBe( '' );
+		expect( d.page.nameText( state ) ).toBe( 'unread' );
 		expect( d.page.nameDetail( state ) ).toContain( 'Not yet read' );
+		const unnamed = { ...rpm, attributes: {...rpm.attributes, displayName: ''} };//described, its DisplayName empty
+		expect( d.page.nameText( unnamed ) ).toBe( 'no name' );
+		expect( d.page.nameDetail( unnamed ) ).toBe( 'Its server gives it no DisplayName.  pump1/motorRpm.  Measured motor speed, rpm.' );
 		expect( d.page.typeText( state ) ).toBe( '' );
 		expect( d.page.typeDetail( state ) ).toBe( '' );
 		expect( d.page.memberColumns.slice( 0, 4 ) ).toEqual( ['node', 'name', 'type', 'member'] );
@@ -232,5 +237,22 @@ describe( 'HistGroupDetail', ()=>{
 		d.dialog.answer = true;
 		await d.page.removeNode( d.page.members.rows()[0] );
 		expect( d.admin.purgeGroupMember ).toHaveBeenCalledWith( expect.anything(), 7 );
+	} );
+	//reviews-issue/servers-0.2-node-columns.md #14:  each member's node, name and type, and each column's hint, is a tooltip on a span
+	//a keyboard reaches - which the tooltip then describes to a screen reader (aria-describedby) - not on a cell, which nothing focuses
+	it( 'puts the member tooltips on focusable elements', async ()=>{
+		const d = await create( row, true );
+		d.page.tabIndex.set( 1 );
+		d.fixture.detectChanges( false );
+		await flush( 3 );
+		d.fixture.detectChanges( false );
+		const tips = d.fixture.debugElement.queryAll( By.directive(MatTooltip) ).filter( e=>!!e.nativeElement.closest('mat-table') );
+		expect( tips.length ).toBeGreaterThan( 4 );
+		for( const tip of tips ){
+			const host:HTMLElement = tip.nativeElement;
+			expect( ['MAT-CELL', 'MAT-HEADER-CELL'] ).not.toContain( host.tagName );
+			if( tip.injector.get( MatTooltip ).message )
+				expect( host.tabIndex ).toBe( 0 );//a span of tabindex 0, or what is focusable already:  Remove's button.
+		}
 	} );
 } );
