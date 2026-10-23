@@ -74,7 +74,7 @@ namespace Jde::Opc::Emulator{
 			let nodeset = Settings::FindPath( "/emulator/plc/nodeset" ); THROW_IF( !nodeset, "/emulator/plc/nodeset is required - the nodeset the OpcServer loads." );
 			//loopback by default - nothing is meant to connect to the PLC's own endpoint, and it is anonymous-full.
 			let bind = Settings::FindString( "/emulator/plc/bind" ).value_or( "127.0.0.1" );
-			_plc = mu<PlcServer>( Settings::FindNumber<UA_UInt16>("/emulator/plc/port").value_or(4841), bind, *nodeset, move(contract) );
+			_plc = mu<PlcServer>( Settings::FindNumber<UA_UInt16>("/emulator/plc/port").value_or(4842), bind, *nodeset, move(contract) );
 		}
 		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.

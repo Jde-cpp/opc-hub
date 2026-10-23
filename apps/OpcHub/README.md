@@ -66,7 +66,7 @@ created is a warning in the log.
 
 ## Tests
 
-`Jde.Opc.Hub.Tests` (`tests/`) embeds the hub (1973) plus an OpcServer (1975, opc.tcp 4842) - ports nothing else binds,
+`Jde.Opc.Hub.Tests` (`tests/`) embeds the hub (1973) plus an OpcServer (1975, opc.tcp 4975) - ports nothing else binds,
 so it runs beside a live hub.  `ctest --timeout 300 -R Jde.Opc.Hub.Tests`.
 
 ## Frontend

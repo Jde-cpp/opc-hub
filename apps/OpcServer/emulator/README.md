@@ -25,7 +25,7 @@ The device clock keeps running while the OpcServer session is down.  A PLC does 
 |---|---|
 | exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 44 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
-| ports | none listening for HTTP; the PLC's UA endpoint on `127.0.0.1:4841`; UADP to the contract's url |
+| ports | none listening for HTTP; the PLC's UA endpoint on `127.0.0.1:4842`; UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator` |
 
 ## Run
@@ -54,7 +54,7 @@ $E -c -tests -settings=$C -transport=write      # every tag over the session, no
 ```
 
 `-c` is console mode (without it the process detaches); `-tests` binds the jsonnet ext vars (`buildTarget`, `logsDir`) -
-it is not a test mode.  Expect in the log: `PLC server up on opc.tcp://127.0.0.1:4841 … publishing dataSet 'pumps'`,
+it is not a test mode.  Expect in the log: `PLC server up on opc.tcp://127.0.0.1:4842 … publishing dataSet 'pumps'`,
 `Connected to 'opc.tcp://127.0.0.1:4840': 3 command tag(s) subscribed`, then every `statusPeriod` a
 `cycles=… published=… writes=… writeFailures=… externalChanges=… reconnects=… - pump1[motorRpm=… status=…] …` line.
 In the OpcServer's log, `PubSub reader on '…' is UNAUTHENTICATED` says the overlay is in force.
