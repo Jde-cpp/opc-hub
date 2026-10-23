@@ -95,7 +95,8 @@ The settings they ship:
 
 ### Windows
 
-1) Run `OpcHubSetup-<version>.exe`.
+1) Run `OpcHubSetup-<version>.exe`.  It is unsigned ([`CODE_SIGNING.md`](../../CODE_SIGNING.md)), so SmartScreen stops
+   it on *Windows protected your PC*:  click **More info**, then **Run anyway**.
    - Install mode: **All users** registers the selected products as Windows services.  It needs administrator rights and
      installs the VC++ v14 x64 runtime when missing.
    - **Current user** installs under `%LOCALAPPDATA%\Programs` and runs the products from Start Menu shortcuts.  It

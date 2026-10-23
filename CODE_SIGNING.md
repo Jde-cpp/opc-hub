@@ -1,25 +1,27 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Releases up to and including 2026.10.31 are unsigned.  The plan for later releases is to sign the Windows installer with
+a [Certum](https://www.certum.eu) Open Source Code Signing certificate issued to the maintainer, so UAC would name the
+publisher *Open Source Developer* followed by the maintainer's name.
 
 ## What is signed
 
-The Windows installer, `OpcHubSetup-<version>.exe`, its uninstaller, and the project's own binaries inside it:
-`Jde.Opc.Hub.exe`, `Jde.Opc.Server.exe`, `Jde.CheckCpu.exe` and the `Jde.*.dll` files.  Third-party DLLs ship
-unsigned inside the signed installer; `vc_redist.x64.exe` carries Microsoft's own signature.
+The Windows installer, `OpcHubSetup-<version>.exe`.  The files inside it ship unsigned:  the project's binaries, its
+uninstaller and the third-party DLLs.  `vc_redist.x64.exe` carries Microsoft's own signature.
 
-Every signed file is built by GitHub Actions from this repository's source, on a GitHub-hosted runner
-([`win2025-build.yml`](.github/workflows/win2025-build.yml)), when a release tag is pushed.  Each signing request is
-approved by hand.
+The installer is built by GitHub Actions from this repository's source, on a GitHub-hosted runner
+([`win2025-build.yml`](.github/workflows/win2025-build.yml)), when a release tag is pushed.  The maintainer downloads
+that build from the tag's draft release, signs it and uploads it in its place.  Nothing built anywhere else is signed.
 
 ## Team roles
 
 | Role | Members |
 | --- | --- |
 | Committers and reviewers | [Jde-cpp](https://github.com/Jde-cpp) |
-| Approvers | [Jde-cpp](https://github.com/Jde-cpp) |
+| Signer | [Jde-cpp](https://github.com/Jde-cpp) |
 
-Every member uses multi-factor authentication on GitHub and SignPath.
+Every member uses multi-factor authentication on GitHub.  The signing key stays in Certum's cloud, and each signing
+session needs a code from the maintainer's phone.
 
 ## Privacy
 

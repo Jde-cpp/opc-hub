@@ -1,5 +1,5 @@
 //Written by jdeVersionResource (build/functions.cmake) for a target with no .rc of its own - the dlls and Jde.CheckCpu.
-//ProductName is the one name SignPath wants on every file it signs (CODE_SIGNING.md); the exes' .rc files carry it too.
+//ProductName is the product's one name on every file; the exes' .rc files carry it too.
 #include "version.rc.h"
 #include "winres.h"
 

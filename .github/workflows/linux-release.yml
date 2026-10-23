@@ -123,7 +123,7 @@ jobs:
 
       # A tag run publishes the package on the tag's GitHub release - created here if the Windows workflow has not
       # already, the files replaced when the run is repeated. A new release's notes open with the code signing policy
-      # link SignPath wants on the download page, above GitHub's generated notes, as win2025-build.yml writes them. gh
+      # link, above GitHub's generated notes, as win2025-build.yml writes them. gh
       # (the myoung34 base image's) rather than softprops/action-gh-release, which on a release that exists regenerates
       # the notes and appends them to what is there - the Windows workflow's, or a hand edit.
       - name: Release
