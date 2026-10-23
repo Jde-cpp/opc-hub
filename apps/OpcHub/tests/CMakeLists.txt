@@ -7,7 +7,7 @@ find_package( open62541 REQUIRED )
 findZlibAndJsonnet()
 
 #The hub's composition (Jde.Opc.HubLib) embedded the way the exe runs it, plus an embedded OpcServer for the OPC path - as
-#Jde.Opc.Tests, on its own ports (1973-1975/4842) so it never waits on a live hub, service or the other suites.
+#Jde.Opc.Tests, on its own ports (1973-1975/4975) so it never waits on a live hub, service or the other suites.
 set( targetName Jde.Opc.Hub.Tests )
 add_executable( ${targetName} )
 compileOptions( ${targetName} )

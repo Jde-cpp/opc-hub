@@ -1,7 +1,7 @@
-// Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) - plus an embedded OpcServer (1975, opc.tcp 4842),
-// in one process.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service (1967/1968/1970)
-// or the other suites (1972, 2067-2070, 4940), and can run beside a live hub.  /http/app and /http/gateway alias the one port for the two
-// apps' test helpers (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
+// Jde.Opc.Hub.Tests: the hub - both roles behind ONE listener (/http, 1973) - plus an embedded OpcServer (1975, opc.tcp 4975),
+// in one process.  Nothing else in the repo binds those ports, so this suite never hangs on a live hub/service (1967/1968/1970),
+// the PLC emulator (4842) or the other suites (1972, 2067-2070, 4940), and can run beside a live hub.  /http/app and /http/gateway
+// alias the one port for the two apps' test helpers (App::Server::Tests::Port, Gateway::Tests::GatewayPort).
 local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 {
@@ -12,7 +12,7 @@ local logsDir = args.logsDir;
 		recreateDB: std.parseJson( std.extVar("recreateDB") ),
 		embeddedOpcServer:: true
 	},
-	opc: args.opc + { users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer's username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
+	opc: { urn: "urn:open62541.server.application", url: "opc.tcp://" + instance.opcServer.address + ":" + instance.opcServer.port, users: [ { name: "user1", password: "0123456789ABCD" } ] }, //the embedded OpcServer, and its username login (UAAccess::loadUsers) - HubRoutingTests.LoginDefaultConnection's credential; without a list the server offers no username policy.
 	ql:{
 		introspection: [ "../../../OpcGateway/config/introspection/serverConnection.jsonnet", "../../../OpcGateway/config/introspection/search.jsonnet", "../../../OpcGateway/config/introspection/hist.jsonnet" ] //relative to this file (gatewayStartup.cpp).
 	},
@@ -72,7 +72,7 @@ local logsDir = args.logsDir;
 			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.xml",
 			"$(UA_NODE_SETS)/IA/Opc.Ua.IA.NodeSet2.examples.xml"
 		],
-		port: 4842,
+		port: 4975,
 		address: "127.0.0.1", //as /http/address: the UA endpoint bound to loopback (UAConfig.cpp applyAddress), reached by HubRoutingTests.LoginDefaultConnection.
 		ssl: instance.http.opcServer.ssl
 	},
