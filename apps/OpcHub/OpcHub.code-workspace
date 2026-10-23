@@ -84,7 +84,7 @@
 			"name": "historian"
 		},
 		{
-			"path": "../../libs/opc/src",
+			"path": "../../libs/opc/shared/src",
 			"name": "shared"
 		},
 		{

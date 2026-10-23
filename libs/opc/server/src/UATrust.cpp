@@ -1,17 +1,11 @@
-#include "UATrust.h"
-#include <mutex>
-#include <jde/fwk/crypto/TrustDirs.h>
+#include <jde/opc/server/UATrust.h>
+#include <shared_mutex>
 #include <jde/opc/UAException.h>
 
 #define let const auto
 namespace Jde::Opc::Server{
 	constexpr ELogTags _tags = ( ELogTags )EOpcLogTags::OpcCrypto;
 
-	static std::mutex _mutex;//verifies all run on the UAServer jthread today - uncontended; serializes the scan and _ders against future threading changes.
-	static Crypto::TrustDirs _dirs{ "trusted client certificate", _tags, ELogLevel::Critical };
-	static flat_map<fs::path,vector<byte>> _ders;//the certificates that read, by file.
-	static std::array<UA_CertificateGroup*,2> _groups{};//secureChannelPKI, sessionPKI in the server-owned config; a change updates BOTH so the shared mtime cache stays honest.
-	static std::array<UA_StatusCode(*)( UA_CertificateGroup*, const UA_ByteString* ),2> _originals{};//per-group - no assumption both are memorystore.
 	//A failed verify is what an unauthenticated OPN with a junk senderCertificate produces - before any body decryption -
 	//and each one used to rescan every trusted dir and deep-copy every cached DER, on the UA thread under the server lock
 	//(opcserver-review3 L34).  Deliberately small:  the rescan exists so a certificate re-issued after startup heals on
@@ -20,11 +14,26 @@ namespace Jde::Opc::Server{
 	//~215ms, a 4x margin) while capping a junk-senderCertificate flood at 20 directory walks a second instead of one per
 	//OPN.  Raise it only with that test in hand.
 	constexpr auto _rescanInterval{ 50ms };
-	static std::atomic<int64_t> _lastRescanNs{};//steady_clock nanoseconds; 0 = never, so the first failure always rescans.
+	//The verify wrapper is a C function pointer in the group's vtable, and the group's context is the memorystore's own:  so
+	//a wrapped group finds its server's UATrust here, as the wrapper finds which of the two groups it is.
+	static std::shared_mutex _installedMutex;
+	static flat_map<const UA_CertificateGroup*,UATrust*> _installed;
+
+	UATrust::UATrust( vector<fs::path> dirs )ι:
+		_dirPaths{ move(dirs) },
+		_dirs{ "trusted client certificate", _tags, ELogLevel::Critical }
+	{}
+	UATrust::~UATrust(){
+		std::unique_lock _{ _installedMutex };
+		for( auto g : _groups ){
+			if( auto p = _installed.find(g); p!=_installed.end() && p->second==this )
+				_installed.erase( p );
+		}
+	}
 
 	α UATrust::LoadTrustList( UA_TrustListDataType& list )ι->bool{
 		std::lock_guard _{ _mutex };
-		let changed = _dirs.Scan( "/access/trustedCertDirs", []( const fs::path& path, vector<byte>&& der ){
+		let changed = _dirs.Scan( _dirPaths, [this]( const fs::path& path, vector<byte>&& der ){
 			if( der.size() ){
 				INFO( "{} certificate:  {}", _ders.contains(path) ? "Updated" : "Added", path.string() );
 				_ders[path] = move( der );
@@ -40,8 +49,12 @@ namespace Jde::Opc::Server{
 		//rescan that anchored nothing, not per file:  a failed verify rescans, so a per-file line would repeat under a flood.
 		//It is the *whole* list, though, and an installed server's is never empty (the hub's own certificate is in it) - the
 		//file beside that one is named by the scan's own once-only Warning, above.
-		if( certs.empty() && _dirs.Skipped() )
-			WARN( "No trusted client certificates under /access/trustedCertDirs:  {}.", _dirs.SkippedNote() );
+		if( certs.empty() && _dirs.Skipped() ){
+			vector<string> dirs;
+			for( let& dir : _dirPaths )
+				dirs.push_back( dir.string() );
+			WARN( "No trusted client certificates under [{}]:  {}.", Str::Join(dirs), _dirs.SkippedNote() );
+		}
 		list.specifiedLists |= UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;//always, even empty - UA_TrustListDataType_set only replaces sections named here, so a shrink-to-empty must carry the mask.
 		if( certs.size() ){
 			if( UA_Array_copy(certs.data(), certs.size(), (void**)&list.trustedCertificates, &UA_TYPES[UA_TYPES_BYTESTRING]) ){
@@ -54,8 +67,18 @@ namespace Jde::Opc::Server{
 	}
 
 	//C shim installed in the group vtable (UAServer::Constructor pattern: try/catch -> status).
-	Ω verifyCertificate( UA_CertificateGroup* group, const UA_ByteString* certificate )ι->UA_StatusCode{
-		let i = group==_groups[0] ? 0u : 1u;//only ever installed on the two wrapped groups.
+	α UATrust::VerifyCertificate( UA_CertificateGroup* group, const UA_ByteString* certificate )ι->UA_StatusCode{
+		UATrust* trust{};
+		{
+			std::shared_lock _{ _installedMutex };
+			if( auto p = _installed.find(group); p!=_installed.end() )
+				trust = p->second;
+		}
+		ASSERT( trust );//only ever installed on the two wrapped groups, which their UATrust outlives.
+		return trust ? trust->Verify( group, certificate ) : UA_STATUSCODE_BADINTERNALERROR;
+	}
+	α UATrust::Verify( UA_CertificateGroup* group, const UA_ByteString* certificate )ι->UA_StatusCode{
+		let i = group==_groups[0] ? 0u : 1u;
 		ASSERT( group==_groups[i] && _originals[i] );
 		let sc = _originals[i]( group, certificate );
 		if( sc==UA_STATUSCODE_GOOD )
@@ -69,7 +92,7 @@ namespace Jde::Opc::Server{
 		UA_TrustListDataType fresh;
 		UA_TrustListDataType_init( &fresh );
 		try{
-			if( UATrust::LoadTrustList(fresh) ){//a cert re-issued or copied in after startup shouldn't require a restart - rescan before failing.
+			if( LoadTrustList(fresh) ){//a cert re-issued or copied in after startup shouldn't require a restart - rescan before failing.
 				for( auto g : _groups ){
 					if( g && g->setTrustList )
 						UAε( g->setTrustList(g, &fresh) );//sets reloadRequired - the retry rebuilds lazily. Not UA_Server_setCertificates: that closes now-untrusted channels, re-entrant with the OPN handshake this runs inside.
@@ -88,11 +111,13 @@ namespace Jde::Opc::Server{
 	α UATrust::Install( UA_Server& ua )ι->void{
 		auto config = UA_Server_getConfig( &ua );//the server-owned copy - UA_Server_newWithConfig memsets the UAConfig it was built from.
 		_groups = { &config->secureChannelPKI, &config->sessionPKI };
+		std::unique_lock _{ _installedMutex };
 		for( uint i=0; i<_groups.size(); ++i ){
 			auto g = _groups[i];
-			if( g->verifyCertificate && g->verifyCertificate!=&verifyCertificate ){//null: a group with no verifier.  The unsecured config that built one is gone (security-matrix #5); the guard stays a guard.
+			if( g->verifyCertificate && g->verifyCertificate!=&VerifyCertificate ){//null: a group with no verifier.  The unsecured config that built one is gone (security-matrix #5); the guard stays a guard.
 				_originals[i] = g->verifyCertificate;
-				g->verifyCertificate = &verifyCertificate;
+				g->verifyCertificate = &VerifyCertificate;
+				_installed.insert_or_assign( g, this );
 			}
 		}
 	}

@@ -2,9 +2,9 @@
 #include <absl/cleanup/cleanup.h>
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
-#include "../src/UAConfig.h"
-#include "../src/UATrust.h"
-#include "../src/access/UAAccess.h"
+#include <jde/opc/server/UAConfig.h>
+#include <jde/opc/server/UATrust.h>
+#include <jde/opc/server/UAAccess.h>
 #include "../src/access/OpcAuthorize.h"
 #include "../src/ql/OpcQL.h"
 #include "helpers.h"
@@ -387,12 +387,12 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_FALSE( ec ) << "could not stage the dangling symlink: " << ec.message();
 
 		UA_TrustListDataType list; UA_TrustListDataType_init( &list );
-		EXPECT_NO_THROW( UATrust::LoadTrustList(list) );//it is ι - anything escaping is std::terminate, not a throw the test sees.
+		EXPECT_NO_THROW( GetUAServer().Trust().LoadTrustList(list) );//it is ι - anything escaping is std::terminate, not a throw the test sees.
 		UA_TrustListDataType_clear( &list );
 
 		fs::remove( dangling, ec );
 		UA_TrustListDataType after; UA_TrustListDataType_init( &after );
-		UATrust::LoadTrustList( after );//resync the mtime cache so the rest of the process sees the real trust list.
+		GetUAServer().Trust().LoadTrustList( after );//resync the mtime cache so the rest of the process sees the real trust list.
 		EXPECT_NE( after.trustedCertificatesSize, 0u ) << "the good certificates in that directory are still trusted";
 		UA_TrustListDataType_clear( &after );
 	}
@@ -408,7 +408,7 @@ namespace Jde::Opc::Server::Tests{
 		std::error_code ec; fs::create_directories( dir, ec );
 
 		UA_TrustListDataType before; UA_TrustListDataType_init( &before );
-		UATrust::LoadTrustList( before );
+		GetUAServer().Trust().LoadTrustList( before );
 		let baseline = before.trustedCertificatesSize;
 		UA_TrustListDataType_clear( &before );
 		ASSERT_NE( baseline, 0u ) << "the suite's own client certificate should already be anchored here";
@@ -430,14 +430,14 @@ namespace Jde::Opc::Server::Tests{
 		IO::SaveBinary<const byte>( staged, std::span{der} );
 
 		UA_TrustListDataType list; UA_TrustListDataType_init( &list );
-		UATrust::LoadTrustList( list );
+		GetUAServer().Trust().LoadTrustList( list );
 		EXPECT_EQ( list.trustedCertificatesSize, baseline+1 ) << "the .der was passed over";
 		UA_TrustListDataType_clear( &list );
 
 		fs::remove( staged, ec );
 		fs::remove_all( scratch, ec );
 		UA_TrustListDataType after; UA_TrustListDataType_init( &after );
-		UATrust::LoadTrustList( after );//resync the mtime cache - the rest of the process must see the real trust list.
+		GetUAServer().Trust().LoadTrustList( after );//resync the mtime cache - the rest of the process must see the real trust list.
 		EXPECT_EQ( after.trustedCertificatesSize, baseline );
 		UA_TrustListDataType_clear( &after );
 	}
@@ -459,7 +459,7 @@ namespace Jde::Opc::Server::Tests{
 		uint anchored{};
 		for( uint scan=0; scan<3; ++scan ){
 			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
-			UATrust::LoadTrustList( list );
+			GetUAServer().Trust().LoadTrustList( list );
 			anchored = list.trustedCertificatesSize;
 			UA_TrustListDataType_clear( &list );
 		}
@@ -475,7 +475,8 @@ namespace Jde::Opc::Server::Tests{
 
 	//security-matrix #5:  there is no unsecured shape.  A config with no /opcServer/ssl - a hidden `ssl::`, a mistyped key - used to
 	//build a None-only server with no certificate and no trust list;  now the server refuses to start, and names the setting.
-	TEST( UAConfigTests, NoSslIsRefused ){
+	//The host refuses, not UAConfig, which sees a CryptoSettings either way:  an empty block is the default paths.
+	TEST( ReadUASettingsTests, NoSslIsRefused ){
 		let ssl = Settings::FindObject( "/opcServer/ssl" );
 		ASSERT_TRUE( ssl ) << "the suite's own server runs secured";
 		const jobject original{ *ssl };
@@ -483,33 +484,48 @@ namespace Jde::Opc::Server::Tests{
 		Settings::Set( "/opcServer/ssl", jvalue{} );//null - FindObject answers nullptr for it, as for an absent key.
 		ASSERT_FALSE( Settings::FindObject("/opcServer/ssl") );
 		try{
-			UAConfig config;
-			FAIL() << "a server config was built without /opcServer/ssl";
+			ReadUASettings();
+			FAIL() << "the UA server's settings were read without /opcServer/ssl";
 		}
 		catch( const std::exception& e ){
 			EXPECT_TRUE( string{e.what()}.contains("/opcServer/ssl") ) << e.what();
 		}
 	}
 
+	//A host's null appClient or nodeAccess is refused at construction, not dereferenced by the first session's callback.
+	TEST( UAConfigTests, NullHostInterfacesAreRefused ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		let refused = []( sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sv name ){
+			try{
+				UAConfig config{ ReadUASettings(), move(appClient), move(nodeAccess) };
+				ADD_FAILURE() << "a server config was built with a null " << name;
+			}
+			catch( const std::exception& e ){
+				EXPECT_TRUE( string{e.what()}.contains(name) ) << e.what();
+			}
+		};
+		refused( AppClient(), nullptr, "nodeAccess" );
+		refused( nullptr, nodeAccess, "appClient" );
+	}
+
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
 	//yet - is one Warning, not one per scan; a failed verify rescans, so it used to repeat for the life of the process.
-	//Later sightings are Debug.  The dir is appended to the real list and the list restored, so the running server's trust
+	//Later sightings are Debug.  The dir is appended to the real list in a trust of the test's own, so the running server's
 	//is untouched.
 	TEST( TrustListTests, AMissingDirectoryWarnsOnce ){
 		let dirs = Settings::FindStringArray( "/access/trustedCertDirs" );
 		ASSERT_FALSE( dirs.empty() );
 		let missing = fs::path{ dirs.front() }.parent_path()/Ƒ( "missing-{}", Process::ProcessId() );//never created - and a name no earlier scan has seen.
-		jarray withMissing; for( let& d : dirs ) withMissing.push_back( jvalue{d} );
-		withMissing.push_back( jvalue{missing.string()} );
-		Settings::Set( "/access/trustedCertDirs", withMissing );
+		vector<fs::path> withMissing{ dirs.begin(), dirs.end() };
+		withMissing.push_back( missing );
+		UATrust trust{ move(withMissing) };
 		Logging::ClearMemory();
 		for( uint i=0; i<3; ++i ){
 			UA_TrustListDataType list; UA_TrustListDataType_init( &list );
-			UATrust::LoadTrustList( list );
+			trust.LoadTrustList( list );
 			UA_TrustListDataType_clear( &list );
 		}
-		jarray original; for( let& d : dirs ) original.push_back( jvalue{d} );
-		Settings::Set( "/access/trustedCertDirs", original );
 
 		let lines = Logging::Find( [&](const Logging::Entry& e){ return e.Text.contains("does not exist") && e.Message().contains(missing.string()); } );
 		ASSERT_EQ( lines.size(), 3u ) << "one line per scan";

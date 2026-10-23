@@ -147,7 +147,7 @@ export function histPathText( path:HistPathSegment[] ):string{ return path.map( 
 
 //ModificationInfo, with `modified: true`:  what an edit did, when and who (spec *Reads*).
 export type HistModification = { time:Date|null; type:string; user:string };
-//A time as the gateway's json carries it, UADateTime's (libs/opc/src/uatypes/DateTime.cpp):  to the 100 ns tick, which a Date
+//A time as the gateway's json carries it, UADateTime's (libs/opc/shared/src/uatypes/DateTime.cpp):  to the 100 ns tick, which a Date
 //cuts to the millisecond.  An edit names a stored record by it.
 export type HistTime = { seconds:number; nanos:number };
 //One value of a `history` page (apps/OpcGateway/config/introspection/hist.jsonnet), its times as Dates.
@@ -245,7 +245,7 @@ export function alignUp( ms:number, interval:number ):number{
 	const offset = new Date( ms ).getTimezoneOffset()*60_000;
 	return Math.ceil( (ms-offset)/interval )*interval+offset;
 }
-//A time as hist's DateTime arguments take it, UADateTime's json (libs/opc/src/uatypes/DateTime.cpp):  plain numbers, not the
+//A time as hist's DateTime arguments take it, UADateTime's json (libs/opc/shared/src/uatypes/DateTime.cpp):  plain numbers, not the
 //Long ProtoUtils.fromDate builds, which JSON would write as {low,high,unsigned}.
 export function qlTime( d:Date|HistTime ):HistTime{
 	if( !(d instanceof Date) )

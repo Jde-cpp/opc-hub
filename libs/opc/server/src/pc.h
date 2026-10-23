@@ -1,0 +1,14 @@
+#include <boost/uuid/uuid.hpp>
+#include <open62541/common.h>
+#include <open62541/types.h>
+#include <open62541/server.h>
+#include <jde/fwk.h>
+#include <jde/fwk/str.h>
+#include <jde/fwk/co/Await.h>
+#include <jde/fwk/chrono.h>
+#include <jde/app/client/IAppClient.h>
+#include <jde/historian/Historian.h>
+#include <jde/opc/usings.h>
+#include <jde/opc/uatypes/opcHelpers.h>
+#include <jde/opc/uatypes/NodeId.h>
+#include <jde/opc/UAException.h>

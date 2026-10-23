@@ -4,7 +4,7 @@
 #include <open62541/server.h>
 #include <jde/opc/UAException.h>
 #include "../../../OpcServer/src/globals.h"
-#include "../../../OpcServer/src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #ifndef let
 #define let const auto
 #endif
