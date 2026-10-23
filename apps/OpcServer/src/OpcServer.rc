@@ -68,7 +68,7 @@ BEGIN
             VALUE "LegalCopyright", JDE_COPYRIGHT
             VALUE "OriginalFilename", "Jde.Opc.Server.exe"
             VALUE "ProductName", "OPC Hub"
-            VALUE "JdeProductName", "OpcServer" //Process::ProductName() - the ProgramData/cert tree; ProductName is SignPath's
+            VALUE "JdeProductName", "OpcServer" //Process::ProductName() - the ProgramData/cert tree; ProductName is the display name
             VALUE "ProductVersion", JDE_VERSION_STRING
         END
     END
