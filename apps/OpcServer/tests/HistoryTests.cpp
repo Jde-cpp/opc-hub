@@ -92,7 +92,7 @@ namespace Jde::Opc::Server::Tests{
 			AddArray( ua );
 			AddReadOnly( ua );
 			AddType( ua );
-			StartHistory( ua );
+			StartHistory( ua, HistoryHost() );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
 			PublishDataTypes( ua );
 			ua.Run();

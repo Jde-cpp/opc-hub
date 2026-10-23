@@ -336,6 +336,7 @@ namespace Jde::Opc::Server{
 	α UAHistory::Collect( UA_Server& ua, const UA_NodeId& node, const UA_DataValue& value )ι->void{
 		let start = steady_clock::now();
 		if( let kept = _host->Find(node) ){//the group stamps a missing server time:  this is the server.
+			ASSERT( kept->Group );
 			//A write with an IndexRange passes only the part it wrote, which open62541 has already written into the node,
 			//in place:  the node holds the whole value.  A data source's value is behind its read callback.
 			auto nodestore = UA_Server_getConfig( &ua )->nodestore;
@@ -416,6 +417,7 @@ namespace Jde::Opc::Server{
 		if( status )
 			return nullopt;
 		auto kept = _host->Find( node.nodeId );
+		ASSERT( !kept || kept->Group );
 		if( !kept )
 			status = unhistorized( ua, node.nodeId );
 		return kept;
@@ -471,6 +473,7 @@ namespace Jde::Opc::Server{
 			result.statusCode = unhistorized( ua, node );
 			return nullopt;
 		}
+		ASSERT( kept->Group );
 		//And the node's own, which a nodeset that gave it HistoryRead alone left out (the OpcServer's Historized::load):
 		//the default plugin masks the user's level by it.
 		UA_Byte accessLevel{};

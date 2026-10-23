@@ -21,7 +21,9 @@ namespace Jde::Opc::Server{
 		//Over the host's historian, read here:  with none, or a null host, the server keeps no history, as when another
 		//process holds the lock on its path:  no backend is installed and no node is changed.
 		UAHistory( const UASettings& settings, sp<IHistoryHost> host )ε;
-		~UAHistory();//after the server is gone:  lets go of the host and its historian, whose end writes what is buffered.
+		//After the server is gone:  lets go of its shares of the host and its historian.  The historian writes what is
+		//buffered at its end, which is the host owner's to choose.
+		~UAHistory();
 		α Enabled()Ι->bool{ return _historian && _historian->Enabled(); }
 		//UAConfig's:  the UA_HistoryDatabase, with its context set, and maxReturnDataValues, hist.readLimit.
 		α Database()ι->UA_HistoryDatabase;
@@ -32,7 +34,6 @@ namespace Jde::Opc::Server{
 		Ω Lifecycle()ι->UA_GlobalNodeLifecycle*;
 		α Instantiated( const UA_NodeId& configuration )ι->void;
 		α TypeStepped( const UA_NodeId& configuration )Ι->bool;//whether the HA Configuration's Stepped is the type's, until Start.
-		α Historian()ι->Hist::Historian&{ return *_historian; }//while Enabled.
 		//After the host's nodes are historized and before Run, while Enabled:  writes StartOfArchive to the host's archive
 		//starts, now and after each midnight, and lists the aggregates served in HistoryServerCapabilities'
 		//AggregateFunctions folder, Median among them.
@@ -84,14 +85,6 @@ namespace Jde::Opc::Server{
 			std::atomic<steady_clock::rep> _total{}, _longest{};
 		};
 		struct EditTimer;//an edit's time under the service lock, into _edits and the log, however it returns.
-		struct NodeHash final{
-			using is_transparent = void;
-			α operator()( const UA_NodeId& node )Ι->size_t{ return UA_NodeId_hash( &node ); }
-		};
-		struct NodeEqual final{
-			using is_transparent = void;
-			α operator()( const UA_NodeId& a, const UA_NodeId& b )Ι->bool{ return UA_NodeId_equal( &a, &b ); }
-		};
 		using Node = IHistoryHost::Node;
 		//What every mode asks of a node first:  Read on the node for the session's user, the right as the node-access page
 		//grants it, and a history, which a node has when it is historized:  its group and its index there, from the host.

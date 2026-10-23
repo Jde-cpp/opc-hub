@@ -165,16 +165,17 @@ namespace Jde::Opc::Server{
 	}
 }
 namespace Jde::Opc{
-	α Server::StartHistory( UAServer& ua )ε->void{
+	α Server::StartHistory( UAServer& ua, OpcServerHistoryHost& host )ε->void{
 		auto& history = ua.History();
 		if( !history.Enabled() )
 			return;
+		auto& historian = *host.Historian();//history's, so set while it is Enabled.
 		auto nodes = Historized::Load( ua, [&history]( const UA_NodeId& configuration ){ return history.TypeStepped( configuration ); } );
 		vector<Hist::Member> members;
 		members.reserve( nodes.size() );
 		for( let& node : nodes )
 			members.push_back( node.Member );
-		auto group = history.Historian().AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
+		auto group = historian.AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
 		OpcServerHistoryHost::Indexes indexes;
 		vector<NodeId> archiveStarts;
 		for( auto& node : nodes ){
@@ -194,8 +195,9 @@ namespace Jde::Opc{
 			archiveStarts.push_back( move(node.StartOfOnlineArchive) );
 			indexes.emplace_back( move(node.Id), *index );
 		}
-		INFO( "Keeping the history of {} nodes under '{}'.", indexes.size(), history.Historian().Config().Path.string() );
-		HistoryHost().Serve( move(group), move(indexes), move(archiveStarts) );
+		let count = indexes.size();
+		host.Serve( move(group), move(indexes), move(archiveStarts) );
 		history.Start( ua );
+		INFO( "Keeping the history of {} nodes under '{}'.", count, historian.Config().Path.string() );
 	}
 }

@@ -11,7 +11,7 @@ namespace Jde::Opc::Server{
 		OpcServerHistoryHost( const optional<Hist::Settings>& settings )ε;
 		α Historian()Ι->sp<Hist::Historian> override{ return _historian; }
 		α Collects()Ι->bool override{ return true; }
-		α Find( const NodeId& node )Ι->optional<Node> override;
+		α Find( const UA_NodeId& node )Ι->optional<Node> override;
 		α ArchiveStarts()Ι->vector<ArchiveStart> override;
 		α Group()Ι->sp<Hist::Group>{ return _group; }//the one group, once StartHistory has made it.
 		//StartHistory's:  the group, each historized node's index in it, and the HA Configuration properties that take the
@@ -21,7 +21,7 @@ namespace Jde::Opc::Server{
 	private:
 		sp<Hist::Historian> _historian;
 		sp<Hist::Group> _group;
-		absl::flat_hash_map<NodeId,Hist::NodeIndex> _indexes;
+		absl::flat_hash_map<NodeId,Hist::NodeIndex,NodeHash,NodeEqual> _indexes;
 		vector<NodeId> _archiveStarts;
 	};
 }

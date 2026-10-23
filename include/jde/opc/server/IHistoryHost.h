@@ -17,9 +17,10 @@ namespace Jde::Opc::Server{
 		//Whether the values written to the server's variables are stored (UAHistory::Collect):  the OpcServer's are written
 		//by its clients and its PubSub reader, where the gateway's served values are the collector's, stored as they arrive.
 		β Collects()Ι->bool=0;
-		//A node as the host keeps its history:  the group that keeps it and its index there.
+		//A node as the host keeps its history:  the group that keeps it and its index there.  Group is never null, here or
+		//in an ArchiveStart:  UAHistory uses it unchecked.
 		struct Node final{ sp<Hist::Group> Group; Hist::NodeIndex Index; };
-		β Find( const NodeId& node )Ι->optional<Node> = 0;//none for a node that isn't historized.
+		β Find( const UA_NodeId& node )Ι->optional<Node> = 0;//none for a node that isn't historized.
 		//Each HA Configuration property that holds the archive's start, StartOfArchive and StartOfOnlineArchive, with the
 		//group whose earliest day it takes:  written at UAHistory::Start and after each midnight.
 		struct ArchiveStart final{ NodeId Property; sp<Hist::Group> Group; };

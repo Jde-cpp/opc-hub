@@ -25,8 +25,9 @@ namespace Jde::Opc {
 		auto nodeAccess = dynamic_pointer_cast<OpcAuthorize>( schema->Authorizer );//installed by Startup.
 		THROW_IF( !nodeAccess, "The opc schema's authorizer is not the OpcAuthorize Startup installs." );
 		let settings = ReadUASettings();//throws
-		_history = ms<OpcServerHistoryHost>( ReadHistSettings() );
-		_ua = mu<UAServer>( settings, _appClient, move(nodeAccess), _history );//throws
+		auto history = ms<OpcServerHistoryHost>( ReadHistSettings() );
+		_ua = mu<UAServer>( settings, _appClient, move(nodeAccess), history );//throws, and the historian and its lock end with history.
+		_history = move( history );
 		static std::once_flag registered;//once, not per Initialize:  it resets whichever server is current.
 		std::call_once( registered, []{
 			Process::AddShutdownFunction( [](bool, SL){

@@ -7,7 +7,7 @@ namespace Jde::Opc::Server{
 			_historian = ms<Hist::Historian>( *settings, Hist::SystemClock() );
 	}
 
-	α OpcServerHistoryHost::Find( const NodeId& node )Ι->optional<Node>{
+	α OpcServerHistoryHost::Find( const UA_NodeId& node )Ι->optional<Node>{
 		let p = _indexes.find( node );
 		return p==_indexes.end() ? optional<Node>{} : Node{ _group, p->second };
 	}
