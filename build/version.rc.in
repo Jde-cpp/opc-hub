@@ -1,0 +1,40 @@
+//Written by jdeVersionResource (build/functions.cmake) for a target with no .rc of its own - the dlls and Jde.CheckCpu.
+//ProductName is the one name SignPath wants on every file it signs (CODE_SIGNING.md); the exes' .rc files carry it too.
+#include "version.rc.h"
+#include "winres.h"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION JDE_VERSION_NUMBERS
+PRODUCTVERSION JDE_VERSION_NUMBERS
+FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+FILEFLAGS 0x1L
+#else
+FILEFLAGS 0x0L
+#endif
+FILEOS 0x40004L
+FILETYPE @jdeRcFileType@
+FILESUBTYPE 0x0L
+BEGIN
+BLOCK "StringFileInfo"
+BEGIN
+BLOCK "040904b0"
+BEGIN
+VALUE "CompanyName", "Jde-Cpp"
+VALUE "FileDescription", "@arg_DESCRIPTION@"
+VALUE "FileVersion", JDE_VERSION_STRING
+VALUE "InternalName", "@jdeRcFileName@"
+VALUE "LegalCopyright", JDE_COPYRIGHT
+VALUE "OriginalFilename", "@jdeRcFileName@"
+VALUE "ProductName", "OPC Hub"
+VALUE "ProductVersion", JDE_VERSION_STRING
+END
+END
+BLOCK "VarFileInfo"
+BEGIN
+VALUE "Translation", 0x409, 1200
+END
+END

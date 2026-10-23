@@ -7,7 +7,7 @@
 
 #define let const auto
 #ifndef _MSC_VER
-	α Jde::Process::ProductName()ι->sv{ return "OpcHub"; }//$(PRODUCT_NAME): the ProgramData/cert tree - on windows the .rc's ProductName.
+	α Jde::Process::ProductName()ι->sv{ return "OpcHub"; }//$(PRODUCT_NAME): the ProgramData/cert tree - on windows the .rc's JdeProductName.
 #endif
 
 α main( int argc, char **argv )->int{

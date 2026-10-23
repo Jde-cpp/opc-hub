@@ -48,14 +48,15 @@ tag's GitHub release instead, and only when the smoke test passed. The installer
 
 ## Signing
 
-**Releases are not signed yet** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks it. The pipeline below
-is ready and CI does not use it: what is missing is a certificate.
+**Releases are not signed yet** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks it.  The route is
+[SignPath Foundation](https://signpath.org), which signs open-source projects for free under its own certificate; the
+project has not applied yet.  The local pipeline below is ready, and CI does not use it.
 
 `build-setup.ps1 -Sign` Authenticode-signs the exes and dlls before makensis packs them, the uninstaller from inside
 makensis, and the installer after. The data-root probe Setup runs, `data-dir-probe.ps1`, ships unsigned.
 
-The uninstaller is generated at install time from a stub built in makensis, so `!uninstfinalize` in the `.nsi` is the
-only place it can be signed.
+The uninstaller is generated at install time from a stub built in makensis, so within one makensis run
+`!uninstfinalize` in the `.nsi` is the only place a local signer can reach it.
 
 All of it goes through [`sign.ps1`](sign.ps1), which takes its certificate from the environment. The hook's child
 process gets nothing else.
@@ -65,14 +66,30 @@ process gets nothing else.
 | Azure Artifact Signing | `JDE_SIGN_ENDPOINT` (the account's region, e.g. `https://eus.codesigning.azure.net`), `JDE_SIGN_ACCOUNT`, `JDE_SIGN_PROFILE` | public trust, the key in Microsoft's HSM; `Invoke-ArtifactSigning` (`Install-Module ArtifactSigning`, for the PowerShell that runs `build-setup.ps1`) with whatever Azure credential the process has - `az login` on a dev box, an azure/login OIDC session on a runner; timestamped by Microsoft |
 | a `.pfx` | `JDE_SIGN_PFX` (`-PfxPath`), `JDE_SIGN_PFX_PASSWORD` | signtool from the Windows SDK (`JDE_SIGN_TOOL` overrides the path); a self-signed certificate (`New-SelfSignedCertificate -Type CodeSigningCert`) proves the pipeline end to end and earns no trust anywhere |
 
-CI builds unsigned ([#230](https://github.com/Jde-cpp/opc-hub/issues/230)): no certificate route has been settled.  Azure Artifact Signing was tried on 2026-09-12 and is closed to
-this project - its individual identity validation runs through AU10TIX's Verified ID, which would not verify, and the
-organization route sends its representative through the same step.  Still open: SignPath Foundation (free for OSS; a "Code
-signing policy" page and an application they review; signs the installer on their servers, never the uninstaller), an
-individual OV certificate from a CA that validates individuals (SSL.com's eSigner has a hosted-runner GitHub Action; Certum's
-open-source certificate signs on a dev box or the self-hosted runner), or an EV certificate, which needs a registered
-business.  Until one is chosen, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type
-CodeSigningCert`, then `Export-PfxCertificate`) exercises the whole pipeline on your own machines.
+CI builds unsigned until SignPath approves the project.  SignPath signs on its own servers, from files a CI run uploads,
+and a person approves each release's request, so `sign.ps1` can't drive it.  The Win2025 workflow will sign in two
+rounds instead:
+
+1. Compile the `.nsi` in a mode that only writes `Uninstall.exe`, and run it - `!uninstfinalize` can't wait on a remote
+   signer.
+2. Send the `Jde.*` exes and dlls and `Uninstall.exe` to SignPath.  The third-party dlls ship unsigned: SignPath signs
+   the project's own binaries only.
+3. Run `build-setup.ps1` without `-Sign`, packing the signed files and the presigned uninstaller.
+4. Send `OpcHubSetup-<version>.exe` to SignPath.
+
+None of that is built.  SignPath's terms also want the project's name, `OPC Hub`, as the ProductName on every signed
+file, which the exes, the `Jde.*` dlls and Setup all carry, and a warning before a system change:  the hub's and the
+server's component descriptions say an all-users install opens their port in the firewall on every network.  The
+project's [Code signing policy](../../../CODE_SIGNING.md) is the page SignPath requires.  UAC will name *SignPath
+Foundation* as the publisher.
+
+Azure Artifact Signing is closed to this project: its individual identity validation runs through AU10TIX's Verified ID,
+which would not verify on 2026-09-12 and refused outright on 2026-10-22 with the billing details corrected, and the
+organization route sends its representative through the same step.  The fallbacks are an individual OV certificate from
+a CA that validates individuals (SSL.com's eSigner has a hosted-runner GitHub Action; Certum's open-source certificate
+signs on a dev box or the self-hosted runner) or an EV certificate, which needs a registered business.  Until a route
+lands, `-Sign -PfxPath` with a self-signed certificate (`New-SelfSignedCertificate -Type CodeSigningCert`, then
+`Export-PfxCertificate`) exercises the whole pipeline on your own machines.
 
 SmartScreen: a public-trust certificate takes "Unknown publisher" off the UAC prompt at once; the "Windows protected your PC"
 interstitial fades as the certificate accrues download reputation, which a new one starts without.
