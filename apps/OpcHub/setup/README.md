@@ -70,18 +70,19 @@ CI builds unsigned until SignPath approves the project.  SignPath signs on its o
 and a person approves each release's request, so `sign.ps1` can't drive it.  The Win2025 workflow will sign in two
 rounds instead:
 
-1. Compile the `.nsi` in a mode that only writes `Uninstall.exe`, and run it - `!uninstfinalize` can't wait on a remote
-   signer.
+1. `build-setup.ps1 -UninstallerOnly` writes `<OutDir>\Uninstall.exe` and no installer:  its makensis run's
+   `!uninstfinalize` copies the uninstaller out, since that hook can't wait on a remote signer.
 2. Send the `Jde.*` exes and dlls and `Uninstall.exe` to SignPath.  The third-party dlls ship unsigned: SignPath signs
    the project's own binaries only.
-3. Run `build-setup.ps1` without `-Sign`, packing the signed files and the presigned uninstaller.
+3. `build-setup.ps1 -Uninstaller <the signed Uninstall.exe>` packs the signed files, and its `!uninstfinalize` puts the
+   signed uninstaller in place of the one it generated.  Both runs take the same inputs and version.
 4. Send `OpcHubSetup-<version>.exe` to SignPath.
 
-None of that is built.  SignPath's terms also want the project's name, `OPC Hub`, as the ProductName on every signed
-file, which the exes, the `Jde.*` dlls and Setup all carry, and a warning before a system change:  the hub's and the
-server's component descriptions say an all-users install opens their port in the firewall on every network.  The
-project's [Code signing policy](../../../CODE_SIGNING.md) is the page SignPath requires.  UAC will name *SignPath
-Foundation* as the publisher.
+The workflow doesn't run these rounds yet.  SignPath's terms also want the project's name, `OPC Hub`, as the
+ProductName on every signed file, which the exes, the `Jde.*` dlls and Setup all carry, and a warning before a system
+change:  the hub's and the server's component descriptions say an all-users install opens their port in the firewall on
+every network.  The project's [Code signing policy](../../../CODE_SIGNING.md) is the page SignPath requires.  UAC will
+name *SignPath Foundation* as the publisher.
 
 Azure Artifact Signing is closed to this project: its individual identity validation runs through AU10TIX's Verified ID,
 which would not verify on 2026-09-12 and refused outright on 2026-10-22 with the billing details corrected, and the
