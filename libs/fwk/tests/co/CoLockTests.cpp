@@ -1,6 +1,7 @@
 #include <jde/fwk/co/CoLock.h>
 #include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/tests/WaitUntil.h>
 #include <atomic>
 
 #define let const auto
@@ -13,41 +14,33 @@ namespace Jde::Tests{
 		}
 	};
 
-	//deliberately not named waitFor: ExecutionTests.cpp already has a Jde::Tests::waitFor with a different deadline,
-	//and two differing definitions of one template in one namespace is an ODR violation nothing would report.
-	Ŧ untilTimeout( T predicate )ι->bool{
-		let deadline = steady_clock::now()+15s;
-		while( !predicate() && steady_clock::now()<deadline )
-			std::this_thread::sleep_for( 1ms );
-		return predicate();
-	}
+	//The lock and the tallies are co-owned by the frames, so a test that times out and returns leaves a late waiter
+	//writing to live memory rather than to its dead stack.
+	struct Tallies{ std::atomic<uint> Holders{}, Completed{}; std::atomic<bool> Overlapped{}; };
 
-	Ω single( CoLock& lock, std::atomic<uint>& completed )->LockAwait::Task{
-		auto guard = co_await lock.Lock();
+	Ω single( sp<CoLock> lock, sp<std::atomic<uint>> completed )->LockAwait::Task{
+		auto guard = co_await lock->Lock();
 		guard.unlock();//explicit unlock - the dtor must not release a second time.
-		++completed;
+		++*completed;
 	}
 
-	Ω hold( CoLock& lock, std::atomic<uint>& holders, std::atomic<bool>& overlapped, std::atomic<uint>& completed )->LockAwait::Task{
+	Ω hold( sp<CoLock> lock, sp<Tallies> t )->LockAwait::Task{
 		{
-			auto guard = co_await lock.Lock();
-			if( ++holders!=1 )
-				overlapped = true;
+			auto guard = co_await lock->Lock();
+			if( ++t->Holders!=1 )
+				t->Overlapped = true;
 			std::this_thread::sleep_for( 100us );//hold long enough for other threads to queue behind us.
-			--holders;
-		}//release before ++completed so the test can't tear down `lock` mid-Clear.
-		++completed;
+			--t->Holders;
+		}//release before ++Completed, so a finished count means a released lock.
+		++t->Completed;
 	}
 
 	TEST_F( CoLockTests, SequentialReacquire ){
-		CoLock lock;
-		std::atomic<uint> completed{};
+		auto lock = ms<CoLock>();
+		auto completed = ms<std::atomic<uint>>();
 		for( uint i=0; i<3; ++i ){
 			single( lock, completed );
-			let deadline = steady_clock::now()+5s;
-			while( completed!=i+1 && steady_clock::now()<deadline )
-				std::this_thread::sleep_for( 1ms );
-			ASSERT_EQ( completed, i+1 ) << "lock could not be reacquired after release " << i;
+			ASSERT_TRUE( WaitUntil([&]{ return completed->load()==i+1; }, 5s, 1ms) ) << "lock could not be reacquired after release " << i;
 		}
 	}
 
@@ -56,19 +49,16 @@ namespace Jde::Tests{
 	// thread. Any queue depth >=2 deadlocked. Contending from many threads forces queueing; every
 	// waiter must complete and no two may hold the lock at once.
 	TEST_F( CoLockTests, MutualExclusion ){
-		CoLock lock;
-		std::atomic<uint> holders{}; std::atomic<bool> overlapped{}; std::atomic<uint> completed{};
+		auto lock = ms<CoLock>();
+		auto t = ms<Tallies>();
 		constexpr uint total{ 64 };
 		{
 			vector<std::jthread> threads;
 			for( uint i=0; i<total; ++i )
-				threads.emplace_back( [&](){ hold(lock, holders, overlapped, completed); } );
+				threads.emplace_back( [lock, t](){ hold(lock, t); } );
 		}//launchers join here; suspended coroutines resume on the executor.
-		let deadline = steady_clock::now()+15s;
-		while( completed<total && steady_clock::now()<deadline )
-			std::this_thread::sleep_for( 1ms );
-		ASSERT_EQ( completed.load(), total ) << "waiter chain stalled - release deadlock or lost wakeup";
-		ASSERT_FALSE( overlapped.load() ) << "two coroutines held the lock simultaneously";
+		ASSERT_TRUE( WaitUntil([&]{ return t->Completed.load()==total; }, 15s, 1ms) ) << "waiter chain stalled at " << t->Completed.load() << " of " << total << " - release deadlock or lost wakeup";
+		ASSERT_FALSE( t->Overlapped.load() ) << "two coroutines held the lock simultaneously";
 	}
 
 	//TryLockKey: the non-blocking half of LockKeyAwait, for callers that cannot wait on a holder that may never resume -
@@ -96,15 +86,15 @@ namespace Jde::Tests{
 		EXPECT_TRUE( after ) << "the failed attempts left an entry queued behind the holder";
 	}
 
-	Ω holdKey( string key, std::atomic<uint>& holders, std::atomic<bool>& overlapped, std::atomic<uint>& completed )->LockKeyAwait::Task{
+	Ω holdKey( string key, sp<Tallies> t )->LockKeyAwait::Task{
 		{
 			auto guard = co_await LockKeyAwait{ key };
-			if( ++holders!=1 )
-				overlapped = true;
+			if( ++t->Holders!=1 )
+				t->Overlapped = true;
 			std::this_thread::sleep_for( 100us );//hold long enough for other threads to queue behind us.
-			--holders;
-		}//release before ++completed, so the count cannot run ahead of the queue state the test inspects afterwards.
-		++completed;
+			--t->Holders;
+		}//release before ++Completed, so the count cannot run ahead of the queue state the test inspects afterwards.
+		++t->Completed;
 	}
 
 	//MutualExclusion above covers CoLock; LockKeyAwait is the other, string-keyed lock - the one ProtoLog, the archive
@@ -114,15 +104,15 @@ namespace Jde::Tests{
 	//(the await_ready-then-Suspend window, which 64 threads contending on one key is what actually exercises).
 	TEST_F( CoLockTests, LockKeyMutualExclusion ){
 		let key = string{ "CoLockTests.LockKeyMutualExclusion" };
-		std::atomic<uint> holders{}; std::atomic<bool> overlapped{}; std::atomic<uint> completed{};
+		auto t = ms<Tallies>();
 		constexpr uint total{ 64 };
 		{
 			vector<std::jthread> threads;
 			for( uint i=0; i<total; ++i )
-				threads.emplace_back( [&](){ holdKey(key, holders, overlapped, completed); } );
+				threads.emplace_back( [&key, t](){ holdKey(key, t); } );
 		}//launchers join here; suspended coroutines resume on the executor.
-		ASSERT_TRUE( untilTimeout([&]{ return completed.load()==total; }) ) << "waiter chain stalled at " << completed.load() << " of " << total << " - lost wakeup in Release, or a placeholder nothing pops";
-		ASSERT_FALSE( overlapped.load() ) << "two coroutines held the key simultaneously";
+		ASSERT_TRUE( WaitUntil([&]{ return t->Completed.load()==total; }, 15s, 1ms) ) << "waiter chain stalled at " << t->Completed.load() << " of " << total << " - lost wakeup in Release, or a placeholder nothing pops";
+		ASSERT_FALSE( t->Overlapped.load() ) << "two coroutines held the key simultaneously";
 		//every holder released, so the key must be acquirable.  This is the observable end of the empty-deque erase at
 		//the bottom of Release - not that the map entry is gone (_coLocks is a file-static, and TryLockKey reads an
 		//empty deque and an absent one identically) but that no waiter left an entry behind it.
@@ -172,7 +162,9 @@ namespace Jde::Tests{
 		*done = true;
 	}
 	Ω holdOnce( CoLock& lock, sp<std::atomic<bool>> acquired )->LockAwait::Task{
-		auto guard = co_await lock.Lock();
+		{
+			auto guard = co_await lock.Lock();
+		}//release before the flag, as hold does:  the test returns on it and destroys `lock`, which must not be mid-Clear.
 		*acquired = true;
 	}
 
@@ -185,19 +177,19 @@ namespace Jde::Tests{
 		auto doneA = ms<std::atomic<bool>>(), doneB = ms<std::atomic<bool>>();
 		acquire( a, guardA, doneA );//both locks are free, so neither await suspends: these run inline on this thread.
 		acquire( b, guardB, doneB );
-		ASSERT_TRUE( untilTimeout([&]{ return doneA->load() && doneB->load(); }) );
+		ASSERT_TRUE( WaitUntil([&]{ return doneA->load() && doneB->load(); }, 15s, 1ms) );
 		ASSERT_TRUE( *guardA && *guardB );
 
 		**guardA = move( **guardB );
 		auto gotA = ms<std::atomic<bool>>(), gotB = ms<std::atomic<bool>>();
 		holdOnce( a, gotA );
 		holdOnce( b, gotB );
-		EXPECT_TRUE( untilTimeout([&]{ return gotA->load(); }) ) << "the overwritten lock was left held forever";
+		EXPECT_TRUE( WaitUntil([&]{ return gotA->load(); }, 15s, 1ms) ) << "the overwritten lock was left held forever";
 		guardB->reset();//disengaged by the assignment - releasing here would hand b away behind the guard that owns it.
 		std::this_thread::sleep_for( 250ms );//a wrongly-released lock resumes its waiter through the executor, so the negative needs settling time or it just reads the race.
 		EXPECT_FALSE( gotB->load() ) << "b was released by the moved-from guard, or never taken over";
 
 		guardA->reset();
-		EXPECT_TRUE( untilTimeout([&]{ return gotB->load(); }) ) << "the surviving guard did not release b on destruction";
+		EXPECT_TRUE( WaitUntil([&]{ return gotB->load(); }, 15s, 1ms) ) << "the surviving guard did not release b on destruction";
 	}
 }

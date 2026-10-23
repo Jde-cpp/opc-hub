@@ -5,7 +5,7 @@
 local logsDir = std.extVar("logsDir");
 {
 	testing:{
-		tests:: "ChronoTests.ToTimePointRejectsGarbage",
+		tests:: "*",
 		file: logsDir + "/tests/test.txt"
 	},
 	cryptoTests:{

@@ -1,6 +1,7 @@
 #include <semaphore>
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/process/execution.h>
+#include <jde/tests/WaitUntil.h>
 #include <atomic>
 #include <thread>
 
@@ -11,13 +12,6 @@ namespace Jde::Tests{
 	protected:
 		Ω SetUpTestCase()ι->void{ Execution::Run(); }
 	};
-
-	Ŧ waitFor( T predicate )ι->bool{
-		let deadline = steady_clock::now()+10s;
-		while( !predicate() && steady_clock::now()<deadline )
-			std::this_thread::sleep_for( 1ms );
-		return predicate();
-	}
 
 	//named apart from the other suites' test exceptions: they share this namespace, and two different classes
 	//under one name across TUs is an ODR violation nothing would report.
@@ -50,7 +44,7 @@ namespace Jde::Tests{
 						} );
 				} );
 		}//jthreads join here - every handler is queued.
-		ASSERT_TRUE( waitFor([&]{ return completed->load()==threadCount*perThread; }) ) << "only " << completed->load() << " of " << threadCount*perThread << " handlers ran";
+		ASSERT_TRUE( WaitUntil([&]{ return completed->load()==threadCount*perThread; }, 10s, 1ms) ) << "only " << completed->load() << " of " << threadCount*perThread << " handlers ran";
 		EXPECT_FALSE( overlapped->load() ) << "two PostIO handlers ran at once - not serialized by the strand";
 		EXPECT_EQ( *counter, threadCount*perThread ) << "a non-atomic increment lost a count, so the handlers overlapped";
 	}
