@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HistPathSegment, histThresholdNames, HistThresholdOverride, histThresholdParams } from '../model/hist';
-import { HistConnection, HistGroupMember, histNodeJson, HistRef, HistResolvedMember, HistTemplateGroup, HistTemplateMember, toHistGroupMember, toHistRef, toHistResolved, toHistTemplateMember } from '../model/hist-admin';
+import { HistConnection, HistGroupMember, histNodeAttributeColumns, histNodeJson, HistRef, HistResolvedMember, HistTemplateGroup, HistTemplateMember, toHistGroupMember, toHistRef, toHistResolved, toHistTemplateMember } from '../model/hist-admin';
 import { ExNodeId } from '../model/ex-node-id';
 import { HistPoster, HistReader } from './history-service';
 
@@ -37,7 +37,8 @@ export class HistAdminService{
 		const data = await reader.query<any>( HistAdminService.groupMembersQuery, {groupId} );
 		return ( <any[]>(data?.histGroupNodes ?? []) ).map( toHistGroupMember );
 	}
-	static readonly groupMembersQuery = `histGroupNodes( histGroupId: $groupId ){ id node histTemplateNodeId ${HistAdminService.thresholdColumns} }`;
+	//with what the node's server said of it (#379), which the tab shows beside the node once the collector has read it
+	static readonly groupMembersQuery = `histGroupNodes( histGroupId: $groupId ){ id node histTemplateNodeId ${HistAdminService.thresholdColumns} ${histNodeAttributeColumns.join( ' ' )} }`;
 
 	//A member added to a template:  its path from the group's root, and the thresholds it sets.  The gateway resolves it in each of
 	//the template's groups before it answers;  a throw is its refusal - a path in two spellings is one member, so the same path again

@@ -267,7 +267,7 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	}
 	//read and write answer with the Reading - toValue() alone dropped the quality, so a refresh or a write's echo quietly turned an Uncertain row Good
 	async read( opcId:CnnctnSlug, n:NodeId ):Promise<Reading>{
-		//`id` has to be an OBJECT argument: NodeId::ParseQL (libs/opc/src/uatypes/NodeId.cpp) reads FindPtr<jvalue>("id")
+		//`id` has to be an OBJECT argument: NodeId::ParseQL (libs/opc/shared/src/uatypes/NodeId.cpp) reads FindPtr<jvalue>("id")
 		//and accepts only an object or an array of them, so the flat `ns:…,i:…` qlArgs() form matched nothing, the server
 		//answered {"node":{}}, and read() returned undefined for every node - silently blanking the cell on a failed
 		//write's restore (NodeChildren.#write).  write() already uses $id;  this is the same shape via variables, which also

@@ -4,7 +4,7 @@
 #include <jde/opc/pubsub/PubSub.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../src/globals.h"
-#include "../src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #include "../src/pubsub/PubSubReader.h"
 #include "../emulator/PlcServer.h"
 #include "helpers.h"
@@ -22,7 +22,8 @@ namespace Jde::Opc::Server::Tests{
 		Ω SetUpTestCase()ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			ua.Load( PumpsNodeset() );
+			LoadNodeset( ua, PumpsNodeset() );
+			PublishDataTypes( ua );
 			ua.Run();
 			StartPubSub( Settings::AsObject("/opcServer/pubsub") );
 		}

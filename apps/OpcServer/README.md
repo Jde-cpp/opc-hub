@@ -16,6 +16,7 @@ values moving.  Without it every value in the shipped address space is static.
 | | value |
 |---|---|
 | exe / lib / tests | `Jde.Opc.Server` / `Jde.Opc.ServerLib` / `Jde.Opc.Server.Tests` |
+| UA server core | `Jde.Opc.UAServer`, [`libs/opc/server`](../../libs/opc/server) - the endpoint, trust list, session login and history backend, shared with the gateway ([`docs/servers/spec.md`](../../docs/servers/spec.md)) |
 | settings / log | `config/Opc.Server.jsonnet` / `Opc.Server.log` |
 | opc.tcp | 4840 (`/opcServer/port`) |
 | https | 1970 (`/http`): `/graphql` only, for the log settings and the `logs` query the web UI's Logs tab reads.  It is the entry `/opcServers` lists, and its certificate is the one the hub login uses |
@@ -37,15 +38,15 @@ values moving.  Without it every value in the shipped address space is static.
   - The access snapshot comes over that connection and re-syncs on change.  It holds the users, groups, roles and
     node acls.  Log levels are pushed the same way.
   - `src/access/OpcAuthorize.*` is the `Access::Authorize` that translates our rights into open62541's access-level
-    bits.
-- **Session login** (`src/access/UAAccess.*`), three token types:
-  - a certificate under `/access/trustedCertDirs`, matched to a hub user by its public key; `src/UATrust.*` rescans the
+    bits, and the UA server core's `INodeAccess`.
+- **Session login** (`UAAccess`, in the UA server core), three token types:
+  - a certificate under `/access/trustedCertDirs`, matched to a hub user by its public key; `UATrust` rescans the
     dirs without a restart;
   - an issued token carrying a hub session, its id or a hub JWT - how the gateway role opens sessions for its web users;
     such a session is renewed against the hub ahead of its lapse;
 
   Anonymous is off by default (`/opc/tokenTypes`).  A session's rights are the hub user's.
-- **History** (`src/hist/`): the server keeps the history of every variable a nodeset marks `Historizing="true"`.  It
+- **History** (`src/hist/`, over the core's `UAHistory`): the server keeps the history of every variable a nodeset marks `Historizing="true"`.  It
   serves HistoryRead's raw, modified, at-time and processed reads, and HistoryUpdate's edits
   ([`libs/historian/docs/spec.md`](../../libs/historian/docs/spec.md), *OpcServer*).
   - Each such variable is configured by its `HA Configuration` object.  Its keys are `ExceptionDeviation` and its

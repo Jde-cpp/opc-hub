@@ -1,26 +1,29 @@
 #include "jde/fwk/io/Cache.h"
 #include "jde/fwk/chrono.h"
+#include <jde/tests/WaitUntil.h>
 #include <string>
 #include <thread>
 
 #define let const auto
 namespace Jde::Tests{
-	//constexpr ELogTags _tags{ ELogTags::Test };
 	struct CacheTests : public ::testing::Test
 	{};
 
 	TEST_F( CacheTests, NegativeDuration ){
 		Cache::Set<string>( "negative", "prior" );//negative-duration Set must also drop an existing entry, not just skip caching.
 		auto p = Cache::Set<string>( "negative", "value", -1s );
-		//ASSERT_FALSE( Cache::Has("negative") );
 		ASSERT_EQ( Cache::Get<string>("negative"), nullptr );
 		ASSERT_TRUE( p );
 		ASSERT_EQ( *p, "value" );
 	}
+	//the hour-long entry gives the sweep a pending timer to cancel, so the 1ms Set has to re-arm it earlier - alone or
+	//shuffled first there is no timer yet, and only the start path runs.
 	TEST_F( CacheTests, Expires ){
+		Cache::Set<string>( "expires-long", "v", 1h );
 		auto p = Cache::Set<string>( "expired", "value", 1ms );
 		std::this_thread::sleep_for( 50ms );//expiry is sweep-driven; windows timers tick at ~15.6ms, so leave slack past the deadline.
 		ASSERT_EQ( Cache::Get<string>("expired"), nullptr );
+		EXPECT_TRUE( Cache::Clear("expires-long") );
 	}
 	// Internal::Set has to drop the old deadline before emplacing the new one, or the sweep evicts the freshly
 	// assigned value at the *previous* entry's due time.  Nothing re-Set a live key with a longer duration, so
@@ -65,9 +68,12 @@ namespace Jde::Tests{
 		EXPECT_EQ( Cache::DefaultDuration(), 1h );
 	}
 
+	//Get, Set and Clear from every core against five keys and the sweep, then every entry gone once its 10ms is up.  A
+	//quarter second is ~18k sets and hundreds of sweep re-arms on a 32-core box:  fewer interleavings a run than a second's,
+	//for a suite every build runs.
 	TEST_F( CacheTests, Stress ){
 		let threadCount = std::max( 2u, std::thread::hardware_concurrency() );
-		let end = steady_clock::now()+1s;
+		let end = steady_clock::now()+250ms;
 		vector<string> keys;
 		for( uint i=0; i<5; ++i )
 			keys.push_back( Ƒ("{}", i) );
@@ -75,7 +81,7 @@ namespace Jde::Tests{
 		{
 			vector<std::jthread> workers;
 			for( uint t=0; t<threadCount; ++t ){
-				workers.emplace_back( [&, t]()ι->void{
+				workers.emplace_back( [&, t]()ι->void {
 					uint localRetrieved{}, localMissed{}, localSets{};
 					for( uint i=t; steady_clock::now()<end; ++i ){
 						let& key = keys[i%keys.size()];
@@ -95,8 +101,7 @@ namespace Jde::Tests{
 			}
 		}//jthreads join here.
 		INFOT( ELogTags::Test, "threads: {}, retrieved: {}, missed: {}, sets: {}", threadCount, retrieved.load(), missed.load(), sets.load() );
-		std::this_thread::sleep_for( 60ms );//10ms max entry duration + ~15.6ms windows timer tick + slack.
-		for( let& key : keys )
-			ASSERT_EQ( Cache::Get<string>(key), nullptr );
+		let swept = [&keys]{ return std::ranges::all_of( keys, []( let& key ){ return !Cache::Get<string>(key); } ); };
+		EXPECT_TRUE( WaitUntil(swept, 1s, 1ms) ) << "an entry outlived its 10ms - the sweep stopped re-arming";
 	}
 }

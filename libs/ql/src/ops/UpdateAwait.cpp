@@ -84,8 +84,12 @@ namespace Jde::QL{
 			//shapes says otherwise, so `updateResource( id:6, resourceId:5006 )` emitted `set resource_id = 5006` and renumbered
 			//the row out from under Authorize's in-memory map;  only sqlite's FKs (created without ON UPDATE CASCADE) stopped
 			//the identities case, and then only where a child row happened to exist.
-			if( !c->Updateable || c->IsPK() || c->SKIndex )
+			if( !c->Updateable || c->IsPK() || c->SKIndex ){
+				//What the meta says no update sets, a caller naming it is refused:  it was dropped without a word.  A key selects the row.
+				if( let name = JsonColumn{c}.MemberName(); !c->Updateable && !c->IsPK() && !c->SKIndex && input.contains(name) )
+					throw Exception{ SRCE_CUR, ExceptionArgs{EHttpStatus::BadRequest}, "'{}' can't be updated:  {}.{} isn't updateable.", name, table.Name, c->Name };
 				continue;
+			}
 
 			const JsonColumn qlColumn{ c };
 			let jvalue = input.if_contains( qlColumn.MemberName() );

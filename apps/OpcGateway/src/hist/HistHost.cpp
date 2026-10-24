@@ -142,7 +142,7 @@ namespace Jde::Opc::Gateway{
 		for( let& node : nodes ){
 			let thresholds = ResolveThresholds( node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds );
 			initial.push_back( {node.Node, HistGroupHost::ForGroup(thresholds), node.Id} );
-			hostMembers.push_back( {node.Id, node.Node, thresholds} );
+			hostMembers.push_back( {node.Id, node.Node, thresholds, node.Attributes} );
 		}
 		auto group = historian->AddGroup( {.Name=row.Guid, .Indexes=Opc::Hist::EIndexes::Host, .PublishingInterval=HistGroupHost::PublishingInterval}, move(initial), sl );
 		auto host = ms<HistGroupHost>( row, slug, move(group), move(hostMembers), Collector(slug), historian->Time() );

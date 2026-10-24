@@ -7,8 +7,8 @@
 #include "HistRows.h"
 
 namespace Jde::Opc::Gateway{
-	//A member the library already holds, as the group's rows had it at start.
-	struct HistMember final{ HistGroupNodePK Index; ExNodeId Node; Opc::Hist::Thresholds Thresholds; };
+	//A member the library already holds, as the group's rows had it at start:  its attributes as the last connect left them.
+	struct HistMember final{ HistGroupNodePK Index; ExNodeId Node; Opc::Hist::Thresholds Thresholds; HistNodeAttributes Attributes; };
 	//What a member's server says of its node, read once its item is made (HistGroupHost::Describe):  whether its DataType is an
 	//enumeration, none until the server has said, and its InstrumentRange and EURange properties, each none where it has
 	//none, once Ranged.
@@ -50,6 +50,9 @@ namespace Jde::Opc::Gateway{
 		α SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SRCE )ε->void;
 		α FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>;
 		α Description( HistGroupNodePK index )Ι->optional<HistDescription>;
+		//A member's attributes as the mirror serves them (spec *Address space*):  its row's at start, then the server's once it has
+		//described the node (Describe), each written back to the row.  None for a node it doesn't hold.
+		α Attributes( HistGroupNodePK index )Ι->optional<HistNodeAttributes>;
 		α Band( HistGroupNodePK index )Ι->optional<EHistBand>;//as ForGroup and the library's range check leave it;  none for a node it doesn't hold.
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
@@ -97,8 +100,9 @@ namespace Jde::Opc::Gateway{
 		//was out, which asked for the old parameters, so the pass modifies the item.  Lost:  since when its item has been gone, a
 		//ConnectionLost's or one the watch found, until a ConnectionRestored brings it back.  Fed:  a value arrived since its
 		//create, which the read after joining an existing item would repeat.  Thresholds are the rows', which ForGroup applies
-		//Described to.  Undescribed:  an answer Describe asked for was lost, which Redescribe asks for again.
-		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; };
+		//Described to.  Undescribed:  an answer Describe asks for again was lost or refused (Redescribe).  Attributes:  the row's,
+		//then as Describe read them.  Unwritten:  the row's write of them failed, so the next describe writes them unchanged.
+		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
 		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;
@@ -109,8 +113,16 @@ namespace Jde::Opc::Gateway{
 		//pass-through types its edits, ValueTypesAwait, but none for an abstract one of namespace 0, as Number or BaseDataType,
 		//whose values may be any subtype's;  whether that is an enumeration, by its built-in kind for one of namespace 0 open62541
 		//has, else by the server's definition of it (EnumTypeCache);  and its InstrumentRange and EURange, which a percent-of-range
-		//band takes (ForGroup).  What it can't read keeps what the node had:  where an answer was lost, not refused, the watch asks
-		//again (Redescribe), its band waiting meanwhile.  `again`:  the watch's, whose losses were warned of once already.
+		//band takes (ForGroup).  With them, what the mirror serves (spec *Address space*, HistNodeAttributes):  the DisplayName,
+		//Description, ValueRank, ArrayDimensions and AccessLevel, the EngineeringUnits property, the DataType served, and the node's
+		//browse path from the Objects folder (ParentPathsAwait), each parent browsed once however many members it is the ancestor
+		//of - written to the node's row directly where they changed, so a reconnect refreshes them and a restart serves them before
+		//any source is up.  _describeBatch nodes at a time, and fewer after a request refused as too many.  One Describe at a time:
+		//one asked for while another is out waits for it, so two passes' writes of a node's row never land out of order.  What it
+		//can't read keeps what the node had, and the watch asks again (Redescribe), its band waiting meanwhile:  an answer lost, and a
+		//refused DisplayName, ValueRank, AccessLevel, BrowseName or parent, which a member naming a node its server describes never
+		//meets.  A refused DataType isn't asked again, nor a Description or ArrayDimensions, which Part 3 makes optional.  `again`:
+		//the watch's, whose losses were warned of once already.
 		α Describe( sp<UAClient> client, flat_set<NodeId> nodes, bool again=false )ι->VoidTask;
 		//The rebuild's check (ConnectionRestored):  the server's namespaces read again, and each member's URI looked up in them.
 		//Each at the index its item was made by:  the group is told the connection is back and takes what waited.  One moved, or
@@ -141,5 +153,9 @@ namespace Jde::Opc::Gateway{
 		Opc::Hist::IClock::TimerId _retry ABSL_GUARDED_BY(_mutex){};
 		Opc::Hist::IClock::TimerId _watch ABSL_GUARDED_BY(_mutex){};
 		bool _subscribing ABSL_GUARDED_BY(_mutex){}, _again ABSL_GUARDED_BY(_mutex){}, _closed ABSL_GUARDED_BY(_mutex){};//_again:  a member joined while a pass was out, which runs another.
+		bool _describing ABSL_GUARDED_BY(_mutex){};//a Describe is out:  another's nodes wait in _toDescribe, which it takes next.
+		flat_set<NodeId> _toDescribe ABSL_GUARDED_BY(_mutex);
+		bool _describeAgain ABSL_GUARDED_BY(_mutex){};//every one waiting is the watch's.
+		uint _describeBatch ABSL_GUARDED_BY(_mutex);//the nodes Describe asks of at once:  /gateway/hist/describeBatch, halved for good by each BadTooManyOperations.
 	};
 }

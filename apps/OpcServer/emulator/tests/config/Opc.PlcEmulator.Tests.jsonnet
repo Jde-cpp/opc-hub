@@ -9,7 +9,7 @@ local logsDir = std.extVar("logsDir");
 	instanceName: "PlcEmulatorTests",
 	emulator:{
 		//The contract the emulator publishes, on unicast test ports:  the PLC server on 4851 (PubSubTests' Publisher holds
-		//4850, the real emulator 4841), the writer to 4852/udp - nothing listens there, and a writer only sends.
+		//4850, the real emulator 4842), the writer to 4852/udp - nothing listens there, and a writer only sends.
 		pubsub: (import '../../../config/pubsub/pumps.libsonnet') + { url: "opc.udp://127.0.0.1:4852/" },
 		plc:{
 			port: 4851,

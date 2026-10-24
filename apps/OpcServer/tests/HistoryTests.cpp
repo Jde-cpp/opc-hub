@@ -24,7 +24,9 @@
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../src/access/OpcAuthorize.h"
-#include "../src/access/UAAccess.h"
+#include <jde/opc/server/UAAccess.h>
+#include "../src/hist/Historized.h"
+#include "../src/hist/OpcServerHistoryHost.h"
 #include "helpers.h"
 #define let const auto
 
@@ -87,12 +89,13 @@ namespace Jde::Opc::Server::Tests{
 		Ω Start( const fs::path& pumps )ε->void{
 			Server::Initialize( GetSchemaPtr() );
 			auto& ua = GetUAServer();
-			ua.Load( pumps );
+			LoadNodeset( ua, pumps );
 			AddArray( ua );
 			AddReadOnly( ua );
 			AddType( ua );
-			ua.History().Load( ua );
+			StartHistory( ua, HistoryHost() );
 			static_cast<OpcAuthorize&>( *GetSchema().Authorizer ).AssignRights( ua );
+			PublishDataTypes( ua );
 			ua.Run();
 			_ns = NamespaceIndex( ua, "urn:jde:pumps" );
 		}
@@ -219,11 +222,15 @@ namespace Jde::Opc::Server::Tests{
 
 		Ω Node( UA_UInt32 id )ι->NodeId{ return NodeId{ _ns, id }; }
 		Ω History()ι->UAHistory&{ return GetUAServer().History(); }
-		Ω Index( UA_UInt32 id )ι->optional<Hist::NodeIndex>{ return History().Find( Node(id) ); }
+		Ω Group()ι->sp<Hist::Group>{ return HistoryHost().Group(); }
+		Ω Index( UA_UInt32 id )ι->optional<Hist::NodeIndex>{
+			let node = HistoryHost().Find( Node(id) );
+			return node ? optional<Hist::NodeIndex>{ node->Index } : nullopt;
+		}
 		Ω Thresholds( UA_UInt32 id )ε->Hist::Thresholds{
 			let index = Index( id );
 			THROW_IF( !index, "{} is not historized.", id );
-			return *History().Group()->FindThresholds( *index );
+			return *Group()->FindThresholds( *index );
 		}
 		//A write as a client's or the PubSub reader's reaches the server, with the time the source gave it.
 		Ω Write( UA_UInt32 id, const void* scalar, uint type, TimePoint source )ε->void{
@@ -598,7 +605,7 @@ namespace Jde::Opc::Server::Tests{
 	TEST_F( HistoryTests, LeavesATypesMembersOut ){
 		auto ua = GetUAServer().Ptr();
 		for( let& member : {TypeMember(), PartMember()} ){
-			EXPECT_FALSE( History().Find(member) ) << member.ToString();
+			EXPECT_FALSE( HistoryHost().Find(member) ) << member.ToString();
 			UA_Byte accessLevel{};
 			UAε( UA_Server_readAccessLevel(ua, member, &accessLevel) );
 			EXPECT_FALSE( accessLevel & UA_ACCESSLEVELMASK_HISTORYREAD ) << member.ToString();
@@ -606,7 +613,7 @@ namespace Jde::Opc::Server::Tests{
 		}
 		for( let& path : {std::initializer_list<sv>{"member"}, std::initializer_list<sv>{"part", "member"}} ){
 			let member = Property( Instance(), path, 1 );
-			EXPECT_TRUE( History().Find(member) ) << member.ToString();
+			EXPECT_TRUE( HistoryHost().Find(member) ) << member.ToString();
 			EXPECT_NO_THROW( Property(member, {"HA Configuration"}) ) << member.ToString();
 		}
 	}
@@ -678,7 +685,7 @@ namespace Jde::Opc::Server::Tests{
 		for( let flushed : {false, true} ){
 			SCOPED_TRACE( flushed ? "from the file" : "from the buffer" );
 			if( flushed )
-				ASSERT_TRUE( BlockAwait(History().Group()->Flush()) );
+				ASSERT_TRUE( BlockAwait(Group()->Flush()) );
 			let forward = Read( Rpm4, {.Start=At(0), .End=At(10)} );
 			EXPECT_TRUE( UA_StatusCode_isGood(forward.Status) ) << UA_StatusCode_name( forward.Status );
 			let values = all( forward.Values );
@@ -748,7 +755,7 @@ namespace Jde::Opc::Server::Tests{
 
 		//Rpm1 has nothing after its start value on either day, each a file once flushed.  The helper hands over the first
 		//call's empty page, and stops at the second's Good_NoData.
-		ASSERT_TRUE( BlockAwait(History().Group()->Flush()) );
+		ASSERT_TRUE( BlockAwait(Group()->Flush()) );
 		for( let& request : {Request{.Start=At(100), .End=tomorrow+1min}, Request{.Start=tomorrow+1min, .End=At(100)}} ){
 			let nothing = Read( Rpm1, request );
 			EXPECT_EQ( nothing.Status, UA_STATUSCODE_GOODNODATA ) << UA_StatusCode_name( nothing.Status );
@@ -1107,7 +1114,7 @@ namespace Jde::Opc::Server::Tests{
 	//it so, a client sees it so, and an edit of it is refused whatever the user holds.  Its history still reads.
 	TEST_F( HistoryTests, KeepsANodesetsReadOnlyHistory ){
 		let node = ReadOnly();
-		ASSERT_TRUE( History().Find(node) );
+		ASSERT_TRUE( HistoryHost().Find(node) );
 		constexpr UA_Byte readOnly{ UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_HISTORYREAD };
 		UA_Byte level{};
 		ASSERT_EQ( UA_Server_readAccessLevel(GetUAServer().Ptr(), node, &level), UA_STATUSCODE_GOOD );
@@ -1204,13 +1211,13 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_EQ( Index(Rpm4), rpm4 );
 		EXPECT_FALSE( Index(RpmManual) );
 		bool removed{};
-		for( let& record : History().Group()->Buffer() ){
+		for( let& record : Group()->Buffer() ){
 			if( let p = get_if<Hist::NodeRemoved>(&record) )
 				removed = removed || p->Index==*manual;
 		}
 		EXPECT_TRUE( removed );
 		//What the stop wrote, then the gap it left, then the nodeset's value, which the server starts from.
-		let page = History().Group()->Read( {.Nodes={*rpm4}, .Start=UADateTime{wrote}.UA(), .End=UA_DateTime_now()} );
+		let page = Group()->Read( {.Nodes={*rpm4}, .Start=UADateTime{wrote}.UA(), .End=UA_DateTime_now()} );
 		ASSERT_GE( page.Values.size(), 3u );
 		EXPECT_EQ( page.Values[0].Value.value().double_value(), 500 );
 		EXPECT_EQ( page.Values[1].Value.status(), UA_STATUSCODE_BADDATALOST );

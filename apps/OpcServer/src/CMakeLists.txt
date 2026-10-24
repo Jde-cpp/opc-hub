@@ -16,7 +16,7 @@ list( REMOVE_ITEM sources ${main_cpp} )
 file(GLOB headers CONFIGURE_DEPENDS "*/*.h")
 target_sources( "${targetName}" PRIVATE "${sources}" "${headers}" )
 
-target_link_libraries( ${targetName} PUBLIC Jde.App.Client Jde.Web.Server Jde.Opc Jde.Opc.HistorianLib )
+target_link_libraries( ${targetName} PUBLIC Jde.App.Client Jde.Web.Server Jde.Opc.UAServer ) #which carries Jde.Opc and the historian.
 linkNodesetLoader( ${targetName} PUBLIC )
 target_precompile_headers( ${targetName}
 	PRIVATE

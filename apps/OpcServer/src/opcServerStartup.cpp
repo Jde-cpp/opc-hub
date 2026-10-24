@@ -2,9 +2,11 @@
 #include <jde/db/db.h>
 #include <jde/ql/ql.h>
 #include <jde/app/client/appClient.h>
-#include "UAServer.h"
+#include <jde/opc/server/UAServer.h>
 #include "access/OpcAuthorize.h"
+#include "hist/Historized.h"
 #include "web/WebServer.h"
+#include "nodesets.h"
 
 #define let const auto
 namespace Jde::Opc{
@@ -16,7 +18,7 @@ namespace Jde::Opc{
 		appClient->SetAcl( opcAuthorize );
 		auto remoteAcl = appClient->Acl();
 		auto uaSchema = DB::GetAppSchema( "opc", remoteAcl );
-		uaSchema->Authorizer = opcAuthorize;// GetAppSchema returns a cached schema whose Authorizer is baked in when GetClusters first builds the cache. When another server (e.g. embedded AppServer) built it first with a base Access::Authorize, our SetAcl(OpcAuthorize) above is ignored here. Install it explicitly so UAAccess::GetUserAccessLevel's static_cast<OpcAuthorize&> is valid (and so UserRights reads the same _nodeResources that AssignRights populates).
+		uaSchema->Authorizer = opcAuthorize;// GetAppSchema returns a cached schema whose Authorizer is baked in when GetClusters first builds the cache. When another server (e.g. embedded AppServer) built it first with a base Access::Authorize, our SetAcl(OpcAuthorize) above is ignored here. Install it explicitly so Initialize hands the UA server this OpcAuthorize as its INodeAccess (and so UserRights reads the same _nodeResources that AssignRights populates).
 		ConfigureQL( uaSchema, remoteAcl, instanceSchema );
 		QL::SetSystemTables( {"logSetting", "adminCheck", "sessions"} );//sessions:  the AppServer's ask for this process's web sessions, answered only over its socket (OpcServerAppClient::ClientQuery).  adminCheck: the AppServer's delegated admin check (OpcServerQL) - a name no schema owns, so QL::Parse admits it without a view; `permissionRight` would shadow the real table for an embedded AppServer.
 		DB::SyncOrRecreate( {uaSchema}, QLPtr() );
@@ -31,14 +33,15 @@ namespace Jde::Opc{
 		Initialize( uaSchema );
 		auto& ua = GetUAServer();
 		for( let& config : Settings::FindPathArray("/opcServer/configFiles") )
-			ua.Load( config );
-		ua.History().Load( ua );//after the nodesets, which say what is historized, and before AssignRights, which maps the nodes it adds.
+			LoadNodeset( ua, config );
+		StartHistory( ua, HistoryHost() );//after the nodesets, which say what is historized, and before AssignRights, which maps the nodes it adds.
 		//Both before Run(), which is what opens the listener.  AssignRights browses the address space, and the nodestore
 		//(ns0 included) is built by UA_Server_newWithConfig, so it needs the nodesets loaded, not the server started.
 		//Started first, the browse deadlocked against a client Read on the UA thread (opcserver-review3 #10) and, until it
 		//finished, every session that connected in the window got EAccess::All on every node because _enabled was still
 		//false (L21).
 		opcAuthorize->AssignRights( ua );
+		PublishDataTypes( ua );//the last nodeset is loaded and PubSub not yet started.
 		ua.Run();
 		if( let pubsub = Settings::FindObject("/opcServer/pubsub"); pubsub )//after the nodesets: the reader's targets are browse paths into them.
 			StartPubSub( *pubsub );

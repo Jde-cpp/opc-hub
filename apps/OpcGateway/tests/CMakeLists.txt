@@ -21,8 +21,11 @@ file( GLOB headers CONFIGURE_DEPENDS *.h */*.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
 if( NOT jde_Superbuild )
-	if( NOT TARGET Jde.Opc.HistorianLib ) #Jde.Opc.ServerLib links it.
+	if( NOT TARGET Jde.Opc.HistorianLib ) #Jde.Opc.UAServer links it.
 		add_subdirectory( ${jdeRoot}/libs/historian/src ../../../libs/historian/lib )
+	endif()
+	if( NOT TARGET Jde.Opc.UAServer ) #Jde.Opc.ServerLib links it.
+		add_subdirectory( ${jdeRoot}/libs/opc/server/src ../../../libs/opc/server/lib )
 	endif()
 	add_subdirectory( ../../OpcServer/src ../../../apps/OpcServer/lib )
 	add_subdirectory( ../../AppServer/config/sql/sqlite ../../../apps/AppServer/config/sql/sqlite ) #the AppServer lib's sqlite procs, which it and this suite depend on.

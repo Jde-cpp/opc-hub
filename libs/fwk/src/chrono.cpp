@@ -1,7 +1,6 @@
 #include <jde/fwk/chrono.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/time.h>
-#include <jde/fwk/utils/mathUtils.h>
 
 #define let const auto
 namespace Jde{
@@ -14,62 +13,65 @@ namespace Jde{
 			THROWSL( "Failed to convert time point to local time: {} - {}", ToIsoString(time), e.what() );
 		}
 	}
-	α Chrono::ToDuration( string&& iso, SL sl )ε->Duration{
-		auto y = TryToDuration( move(iso), ELogLevel::Debug, sl );
+	//ISO 8601:  P, the date designators in order, then T and the time ones, each at most once and a T followed by one;  a sign
+	//on a component, as ToString writes a negative.  Every component converts exactly, a month the ~730.5h ToString writes,
+	//and one past Duration's range fails rather than wrapping.
+	α Chrono::ToDuration( sv iso, SL sl )ε->Duration{
+		auto y = TryToDuration( iso, ELogLevel::Debug, sl );
 		if( !y )
 			y.error().Throw();
 		return *y;
 	}
-	α Chrono::TryToDuration( string&& iso, ELogLevel level, SL sl )ι->std::expected<Duration,Exception>{
-		std::istringstream is{ move(iso) };
-		if( is.peek()!='P' )
-			return std::unexpected{ Exception{sl, level, "Expected 'P' as first character in '{}'.", is.str()} };
-		is.get();
-		bool parsingTime = false;
-		Duration duration{ Duration::zero() };
-		while( true ){
-			let c = is.peek();
-			if( c==std::char_traits<char>::eof() )
-				break;
-			if( !parsingTime && c=='T' ){
-				parsingTime = true;
-				is.get();
+	α Chrono::TryToDuration( sv iso, ELogLevel level, SL sl )ι->std::expected<Duration,Exception>{
+		if( !iso.starts_with('P') )
+			return std::unexpected{ Exception{sl, level, "Expected 'P' as first character in '{}'.", iso} };
+		struct Unit final{ char Designator; bool Time; int64_t Seconds; };
+		constexpr std::array<Unit,7> units{ Unit{'Y', false, years::period::num}, Unit{'M', false, months::period::num}, Unit{'W', false, weeks::period::num},
+			Unit{'D', false, days::period::num}, Unit{'H', true, hours::period::num}, Unit{'M', true, minutes::period::num}, Unit{'S', true, seconds::period::num} };
+		constexpr double maxSeconds{ std::chrono::duration<double>(Duration::max()).count() };
+		Duration y{ Duration::zero() };
+		bool time{}, any{};
+		uint next{};//the first of units a component may still name.
+		for( uint i=1; i<iso.size(); ++i ){
+			if( iso[i]=='T' ){
+				if( time )
+					return std::unexpected{ Exception{sl, level, "'{}' - a second 'T' at {}.", iso, i} };
+				if( i+1==iso.size() )
+					return std::unexpected{ Exception{sl, level, "'{}' - a 'T' with no time after it.", iso} };
+				time = true;
 				continue;
 			}
-			//scan the number digit-by-digit: istream>>double treats a trailing 'D' (a hex digit) as part of the
-			//number candidate and then fails, silently swallowing the days token - so read only decimal chars.
-			string num;
-			if( c=='+' || c=='-' )
-				num += (char)is.get();
-			for( auto d=is.peek(); (d>='0'&&d<='9')||d=='.'; d=is.peek() )
-				num += (char)is.get();
-			let type = is.get();
-			//every token is a number and a designator:  one missing is a typo, not a zero - and so is an unknown designator (the final else).
-			if( num.empty() || type==std::char_traits<char>::eof() )
-				return std::unexpected{ Exception{sl, level, "ISO duration token missing its {}:  '{}'", num.empty() ? "number" : "designator", num.empty() ? string{(char)type} : num} };
+			let start = i;
+			if( iso[i]=='+' || iso[i]=='-' )
+				++i;
+			while( i<iso.size() && ((iso[i]>='0' && iso[i]<='9') || iso[i]=='.') )
+				++i;
+			let number = iso.substr( start, i-start );
+			if( i==iso.size() )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' has no designator.", iso, number} };
+			let designator = iso[i];
 			double value;
-			if( !absl::SimpleAtod(num, &value) )
-				return std::unexpected{ Exception{sl, level, "Could not parse ISO duration token:  {}{}", num, (char)type} };
-			//date units use the exact std::chrono period ratios so ToDuration is the inverse of ToString
-			//(which emits years/months/days) - a month is ~730.5h, not 720h; a year 365.2425d, not 365.25d.
-			if( type=='Y' )
-				duration += duration_cast<Duration>( std::chrono::duration<double,years::period>{value} );
-			else if( !parsingTime && type=='M' )
-				duration += duration_cast<Duration>( std::chrono::duration<double,months::period>{value} );
-			else if( !parsingTime && type=='W' )
-				duration += duration_cast<Duration>( std::chrono::duration<double,weeks::period>{value} );
-			else if( type=='D' )
-				duration += duration_cast<Duration>( std::chrono::duration<double,days::period>{value} );
-			else if( type=='H' )
-				duration += minutes( Round(value*60) );
-			else if( type=='M' )
-				duration += seconds( Round(value*60) );
-			else if( type=='S' )
-				duration += milliseconds( Round(value*1000) );
-			else
-				return std::unexpected{ Exception{sl, level, "Unknown ISO duration designator:  {}{}", num, (char)type} };
+			if( !absl::SimpleAtod(number, &value) )
+				return std::unexpected{ Exception{sl, level, "'{}' - no number before '{}' at {}.", iso, designator, i} };
+			let unit = std::ranges::find_if( units, [=]( const Unit& u ){ return u.Designator==designator && u.Time==time; } );
+			if( unit==units.end() )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' at {} is no {} designator.", iso, designator, i, time ? "time" : "date"} };
+			let index = (uint)( unit-units.begin() );
+			if( index<next )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' at {} is repeated or out of order:  Y M W D, then T and H M S.", iso, designator, i} };
+			next = index+1;
+			let seconds = value*(double)unit->Seconds;
+			if( std::abs(seconds)>=maxSeconds )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}{}' is longer than a duration holds.", iso, number, designator} };
+			let part = std::chrono::round<Duration>( std::chrono::duration<double>{seconds} );
+			if( (part>Duration::zero() && y>Duration::max()-part) || (part<Duration::zero() && y<Duration::min()-part) )
+				return std::unexpected{ Exception{sl, level, "'{}' is longer than a duration holds.", iso} };
+			y += part;
+			any = true;
 		}
-		return duration;
+		if( !any )
+			return std::unexpected{ Exception{sl, level, "'{}' has no component - zero is PT0S.", iso} };
+		return y;
 	}
 
 	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{

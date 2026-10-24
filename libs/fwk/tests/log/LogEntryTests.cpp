@@ -59,6 +59,8 @@ namespace Jde::Tests{
 		//and the per-logger check is the only thing that can keep it out.
 		Logging::ClearMemory();
 		Logging::Entry belowThisLogger{ SRCE_CUR, ELogLevel::Trace, ELogTags::Test, string{"entry below the memory logger"} };
+		ASSERT_TRUE( Logging::ShouldLog(ELogLevel::Trace, ELogTags::Test) ) << "the cumulative must admit it, or the per-logger pin proves nothing";
+		ASSERT_FALSE( logger().ShouldLog(ELogLevel::Trace, ELogTags::Test) ) << "the memory logger must refuse it, or a failure here is the config, not the library";
 		Logging::Log( belowThisLogger );
 		EXPECT_TRUE( Logging::Find(belowThisLogger.Id()).empty() ) << "Log(Entry) skipped the per-logger level and wrote a Trace into a Debug logger";
 	}
@@ -66,7 +68,7 @@ namespace Jde::Tests{
 	//LogOnce is `if( MarkLogged(GenerateId(text)) ) Log(...)`, and _loggedEntries is process-global with no clear - so
 	//a --gtest_repeat pass cannot re-arm a literal, and an "exactly one entry" assertion would hold only on the first.
 	//Split accordingly: this pins the predicate with an id made unique per pass, LogOnceRespectsAnAlreadyLoggedId pins
-	//that LogOnce honours a false answer, and the Log() call between them is the overload asserted above.
+	//that LogOnce honours a false answer, and LogOnceLogsAtMostOnce that it logs on the pass that claims the id.
 	TEST_F( LogEntryTests, MarkLoggedIsOncePerId ){
 		static uint32_t pass{};
 		++pass;
@@ -84,14 +86,16 @@ namespace Jde::Tests{
 		EXPECT_TRUE( logger().Find(string{text}).empty() ) << "LogOnce logged an id that was already marked";
 	}
 
-	//the finding's own case.  EXPECT_LE rather than EXPECT_EQ(...,1) for the reason above: on a repeat pass the id is
-	//already claimed and the count is legitimately 0.  The MarkLogged check is what gives it teeth on every pass - it
-	//fails unless LogOnce actually reached the de-dup set.
+	//the finding's own case.  One entry on the pass that claims the id, none on a repeat pass, where it is claimed already -
+	//an EXPECT_LE accepted a LogOnce that never logged at all.  The MarkLogged check fails unless LogOnce reached the
+	//de-dup set.
 	TEST_F( LogEntryTests, LogOnceLogsAtMostOnce ){
+		static uint32_t pass{};
+		++pass;
 		constexpr sv text{ "LogEntryTests LogOnce emitted" };
 		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
 		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
-		EXPECT_LE( logger().Find(string{text}).size(), 1u ) << "two identical LogOnce calls produced more than one entry";
+		EXPECT_EQ( logger().Find(string{text}).size(), pass==1 ? 1u : 0u ) << "one entry on the pass that claims the id, none after";
 		EXPECT_FALSE( Logging::MarkLogged(Logging::Entry::GenerateId(text)) ) << "LogOnce did not mark the id it logged";
 	}
 }

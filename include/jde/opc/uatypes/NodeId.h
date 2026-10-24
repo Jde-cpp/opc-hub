@@ -51,4 +51,13 @@ namespace Jde::Opc{
 	α ToJson( const UA_NodeId& nodeId )ι->jobject;
 	α AddNodeId( jobject& j, const UA_NodeId& nodeId, bool omitDefaultNs )ι->jobject&;
 	Ξ operator==( const NodeId& x, const NodeId& y )ι->bool{ return UA_NodeId_equal( &x, &y ); }
+	//Transparent, so a container keyed by NodeId finds a UA_NodeId without copying it.
+	struct NodeHash final{
+		using is_transparent = void;
+		α operator()( const UA_NodeId& node )Ι->size_t{ return UA_NodeId_hash( &node ); }
+	};
+	struct NodeEqual final{
+		using is_transparent = void;
+		α operator()( const UA_NodeId& a, const UA_NodeId& b )Ι->bool{ return UA_NodeId_equal( &a, &b ); }
+	};
 }

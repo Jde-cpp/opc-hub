@@ -4,7 +4,6 @@
 #include <boost/asio/strand.hpp>
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/fwk/utils/Stopwatch.h>
 #include <jde/fwk/utils/mathUtils.h>
 #ifdef _WIN32
 	#include <windows.h>
@@ -20,8 +19,8 @@ namespace Jde::Tests{
 	{};
 
 	// Windows' default timer/scheduler resolution is ~15.6ms, so every sub-millisecond timer/sleep in the
-	// loop below rounds up to a full tick — 8192 sequential iterations then take ~123s instead of ~1s. Raise
-	// the resolution to 1ms for the test's duration (no-op on Linux, which already honors µs-scale delays).
+	// loop below rounds up to a full tick — an iteration then costs ~15ms instead of ~0.1ms. Raise the
+	// resolution to 1ms for the test's duration (no-op on Linux, which already honors µs-scale delays).
 	struct TimerResolutionGuard{
 #ifdef _WIN32
 		TimerResolutionGuard()ι{ timeBeginPeriod( 1 ); }
@@ -55,15 +54,18 @@ namespace Jde::Tests{
 		let start = steady_clock::now();//before the co_await, where Suspend arms expires_after, so a fired timer can never resume earlier than start+delay.
 		auto result = co_await timer;
 		let elapsed = duration_cast<microseconds>( steady_clock::now()-start );
-		TRACE( "[{}]completed: {}, delay: {}, kill: {}, time: {}", hex(i), result.has_value() ? "true" : "canceled", delay, kill, elapsed.count() );
+		let early = result.has_value() && elapsed<microseconds(delay);
+		let wrongError = !result.has_value() && result.error()!=boost::asio::error::operation_aborted;//any error_code passed before - a timer that failed for another reason counted as a cancel.
+		if( early || wrongError )//only the timer a tally fails on, so a failed tally still names it.
+			TRACE( "[{}]completed: {}, delay: {}, kill: {}, time: {}", hex(i), result.has_value() ? "true" : "canceled", delay, kill, elapsed.count() );
 		if( result.has_value() ){
 			++outcomes->Success;
-			if( elapsed<microseconds(delay) )//tally rather than EXPECT: this resumes on an executor thread and GoogleTest assertions are main-thread only.
+			if( early )//tally rather than EXPECT: this resumes on an executor thread and GoogleTest assertions are main-thread only.
 				++outcomes->Early;
 		}
 		else{
 			++outcomes->Canceled;
-			if( result.error()!=boost::asio::error::operation_aborted )//any error_code passed before - a timer that failed for another reason counted as a cancel.
+			if( wrongError )
 				++outcomes->WrongError;
 		}
 
@@ -96,7 +98,7 @@ namespace Jde::Tests{
 #ifdef _WIN32
 		TimerResolutionGuard timerResolution;
 #endif
-		constexpr uint testCount = _windows ? 1024 : 4096*2;
+		constexpr uint testCount = _windows ? 1024 : 2048;//a stress of Cancel racing Suspend as well as the tallies:  enough that both outcomes stay plentiful on a loaded runner.
 		auto outcomes = ms<Outcomes>();
 		for( uint i=0; i<testCount; ++i ){
 			auto done = ms<std::binary_semaphore>( 0 );

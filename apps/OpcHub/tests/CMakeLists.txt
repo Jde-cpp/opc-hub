@@ -7,7 +7,7 @@ find_package( open62541 REQUIRED )
 findZlibAndJsonnet()
 
 #The hub's composition (Jde.Opc.HubLib) embedded the way the exe runs it, plus an embedded OpcServer for the OPC path - as
-#Jde.Opc.Tests, on its own ports (1973-1975/4842) so it never waits on a live hub, service or the other suites.
+#Jde.Opc.Tests, on its own ports (1973-1975/4975) so it never waits on a live hub, service or the other suites.
 set( targetName Jde.Opc.Hub.Tests )
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
@@ -23,8 +23,11 @@ file( GLOB headers CONFIGURE_DEPENDS *.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
 if( NOT jde_Superbuild ) #what ../CMakeLists.txt does not add:  it has the app libs and the hub lib.
-	if( NOT TARGET Jde.Opc.HistorianLib ) #Jde.Opc.ServerLib links it.
+	if( NOT TARGET Jde.Opc.HistorianLib ) #Jde.Opc.UAServer links it.
 		add_subdirectory( ${jdeRoot}/libs/historian/src ../../../libs/historian/lib )
+	endif()
+	if( NOT TARGET Jde.Opc.UAServer ) #Jde.Opc.ServerLib links it.
+		add_subdirectory( ${jdeRoot}/libs/opc/server/src ../../../libs/opc/server/lib )
 	endif()
 	add_subdirectory( ../../OpcServer/src ../../../apps/OpcServer/lib )
 	add_subdirectory( ../../OpcGateway/tests/utils ../../../apps/OpcGateway/tests/utils )

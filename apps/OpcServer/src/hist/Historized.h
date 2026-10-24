@@ -5,6 +5,7 @@
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Server{
+	struct UAServer; struct OpcServerHistoryHost;
 	//A variable a nodeset marks Historizing, as the address space holds it once the nodesets are loaded (historian spec,
 	//*OpcServer* and *UA backend*).
 	struct Historized final{
@@ -23,4 +24,9 @@ namespace Jde::Opc::Server{
 		//declares none the type's mandatory one, which holds false, so its presence doesn't say the nodeset set it.
 		Ω Load( UA_Server& ua, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->vector<Historized>;
 	};
+	//After the last nodeset and before Run:  makes the group of the variables marked Historizing (Historized::Load), which
+	//keeps the indexes its files hold and removes a node the nodesets no longer historize, takes each one's current value as
+	//its first after the stop, has host serve it and the history serve host's (UAHistory::Start).  host is the one ua was
+	//made over, whose historian keeps the group.
+	α StartHistory( UAServer& ua, OpcServerHistoryHost& host )ε->void;
 }

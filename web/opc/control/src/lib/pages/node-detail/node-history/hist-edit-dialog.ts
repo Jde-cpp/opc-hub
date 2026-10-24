@@ -109,7 +109,7 @@ export class HistEditDialog{
 			return 'enum';
 		if( n.isInteger || n.isUnsigned || n.isFloating )
 			return 'number';
-		if( n.dataType==ETypes.DateTime || n.dataType==ETypes.UtcDateTime )
+		if( n.dataType==ETypes.DateTime || n.dataType==ETypes.UtcTime )
 			return 'datetime';
 		return 'text';
 	} );

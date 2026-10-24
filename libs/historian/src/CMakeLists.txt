@@ -5,7 +5,7 @@ project( Jde.Opc.HistorianLib VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
 find_package( open62541 REQUIRED )
 
-#Linked into Jde.Opc.ServerLib and Jde.Opc.GatewayLib, the two hosts (spec *Placement*).
+#Linked into Jde.Opc.UAServer and Jde.Opc.GatewayLib, the two hosts (spec *Placement*).
 set( targetName Jde.Opc.HistorianLib )
 add_library( ${targetName} )
 compileOptions( ${targetName} )
@@ -26,7 +26,7 @@ set( protoOutDir ${jdeGeneratedIncludeDir}/jde/historian/proto )
 file( MAKE_DIRECTORY ${protoOutDir} )
 protobuf_generate(
 	TARGET ${targetName}
-	IMPORT_DIRS proto ${jdeRoot}/libs/opc/src/proto ${jdeRoot}/libs/fwk/src/io/records/proto
+	IMPORT_DIRS proto ${jdeRoot}/libs/opc/shared/src/proto ${jdeRoot}/libs/fwk/src/io/records/proto
 	PROTOC_OUT_DIR ${protoOutDir}
 )
 suppressProtoWarnings( "${protos}" ${protoOutDir} )

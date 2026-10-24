@@ -189,7 +189,7 @@ namespace Jde{
 		let v = o.if_contains( key );
 		if( !v || !v->is_string() )
 			return {};
-		let d = Chrono::TryToDuration( string{v->get_string()}, level, sl );
+		let d = Chrono::TryToDuration( v->get_string(), level, sl );
 		return d ? optional<Duration>{ *d } : nullopt;
 	}
 

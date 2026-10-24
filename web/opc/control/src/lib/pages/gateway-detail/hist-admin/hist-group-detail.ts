@@ -10,7 +10,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { confirm, DetailActions, DetailPage, Properties } from 'jde-framework';
 import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
-import { HistConnection, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
+import { HistConnection, histDataTypeLabel, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
 import { OpcError } from '../../../model/opc-error';
 import { Server } from '../../../model/server';
@@ -70,7 +70,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	readonly fieldLabels = { guid: 'Guid' };
 	get excludedFields():string[]{ return this.isNew ? excludedNew : excluded; }
 	readonly columns = histThresholdColumns;
-	readonly memberColumns = ['node', 'member', ...histThresholdNames, 'actions'];
+	readonly memberColumns = ['node', 'name', 'type', 'member', ...histThresholdNames, 'actions'];
 	readonly resolutionColumns = ['path', 'node', 'status'];
 	//what a blank default means:  the library's own (spec *Thresholds*)
 	readonly thresholdHints:Partial<Record<HistThresholdName,string>> = { exceptionDeviation: 'Blank:  none, every change is stored.', exceptionDeviationFormat: 'Blank:  AbsoluteValue.', minTimeInterval: 'Blank:  0, as fast as the server samples.', maxTimeInterval: 'Blank:  off, no heartbeat.', stepped: 'Blank:  true, a value holds until the next.' };
@@ -130,6 +130,32 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		return histNodeLabel( node, ns );
 	}
 	nodeDetail( node:ExNodeId ):string{ return histNodeText( node ); }
+	//What the node's server said of it (#379), once the collector has read it:  its name and its path from Objects, which the Node
+	//column's tooltip carries, and the type served - blank until the server has described the node.
+	nameText( m:HistGroupMember ):string{//an empty DisplayName is the server's answer, not none.
+		const name = m.attributes.displayName;
+		return name===undefined ? 'unread' : name || 'no name';
+	}
+	nameDetail( m:HistGroupMember ):string{
+		const a = m.attributes;
+		if( a.displayName===undefined && !a.path )
+			return 'Not yet read from the server:  the collector reads a node once it has its item.';
+		return [a.displayName==='' ? 'Its server gives it no DisplayName' : '', a.path ? histPathText( a.path ) : '', a.description ?? ''].filter( s=>!!s ).join( '.  ' );
+	}
+	typeText( m:HistGroupMember ):string{ return histDataTypeLabel( m.attributes.dataType ); }
+	typeDetail( m:HistGroupMember ):string{
+		const a = m.attributes;
+		const parts:string[] = [];
+		if( a.dataType )
+			parts.push( histNodeText( a.dataType ) );
+		if( a.valueRank!=undefined )
+			parts.push( a.valueRank==-1 ? 'Scalar' : a.arrayDimensions?.length ? `Array [${a.arrayDimensions.join( ', ' )}]` : `ValueRank ${a.valueRank}` );
+		if( a.engineeringUnits?.displayName )
+			parts.push( a.engineeringUnits.displayName );
+		if( a.euRange )
+			parts.push( `EURange ${a.euRange.low} to ${a.euRange.high}` );
+		return parts.join( '.  ' );
+	}
 	//the template member a node was resolved from, by its path, or that it was added by hand
 	memberText( m:HistGroupMember ):string{
 		if( m.templateNodeId==undefined )

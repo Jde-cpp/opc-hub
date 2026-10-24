@@ -1,5 +1,5 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
-include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
+include( ${CMAKE_CURRENT_LIST_DIR}/../../../../build/functions.cmake )
 message( Jde.Opc )
 project( Jde.Opc VERSION ${JDE_VERSION} LANGUAGES CXX )
 include( ${jdeRoot}/build/dependencies.cmake )
@@ -10,6 +10,7 @@ add_library( ${targetName} )
 compileOptions( ${targetName} )
 file( GLOB_RECURSE sources CONFIGURE_DEPENDS *.cpp )
 file( GLOB_RECURSE headers CONFIGURE_DEPENDS *.h ${jdeRoot}/include/jde/opc/*.h )
+list( FILTER headers EXCLUDE REGEX "/include/jde/opc/server/" ) #Jde.Opc.UAServer's
 file( GLOB protos CONFIGURE_DEPENDS proto/*.proto )
 
 target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )

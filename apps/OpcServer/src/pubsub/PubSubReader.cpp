@@ -1,5 +1,5 @@
 #include "PubSubReader.h"
-#include "../UAServer.h"
+#include <jde/opc/server/UAServer.h>
 
 #define let const auto
 namespace Jde::Opc::Server{

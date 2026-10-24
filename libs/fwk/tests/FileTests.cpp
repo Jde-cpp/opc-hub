@@ -10,6 +10,7 @@
 #include <jde/fwk/utils/Vector.h>
 #include <jde/fwk/process/thread.h>
 #include <jde/fwk/chrono.h>
+#include <jde/tests/WaitUntil.h>
 #include <stdexcept>
 //a private header under src/, the way OpenSslTests reaches OpenSslInternal.h - IDrive/NativeDrive are not part of the
 //installed surface, and the two platforms spell the concrete type differently.
@@ -31,15 +32,6 @@ namespace Jde::IO::Tests{
 		return path
 			? path->parent_path()/Ƒ( "{}{}{}", path->stem().string(), index, path->extension().string() )
 			: fs::temp_directory_path()/Ƒ( "test{}.txt", index );
-	}
-
-	//poll until the predicate holds or the 10s deadline passes; returns whether it did.  The ASSERT stays at
-	//the call site so a GoogleTest fatal failure returns from the test, not just from here.
-	Ŧ waitFor( T predicate )ι->bool{
-		let deadline = steady_clock::now()+10s;
-		while( !predicate() && steady_clock::now()<deadline )
-			std::this_thread::sleep_for( 5ms );
-		return predicate();
 	}
 
 	struct FileTests : public ::testing::Test{
@@ -109,11 +101,11 @@ namespace Jde::IO::Tests{
 
 		//deadlines, not unbounded polls: a throwing WriteAwait/ReadAwait never advances these, and with no
 		//ctest TIMEOUT an IO regression would hang the whole run instead of failing this test.
-		ASSERT_TRUE( waitFor([&]{ return written->size()>=guids.size(); }) ) << "only " << written->size() << " of " << guids.size() << " guids were written";
+		ASSERT_TRUE( WaitUntil([&]{ return written->size()>=guids.size(); }, 10s, 5ms) ) << "only " << written->size() << " of " << guids.size() << " guids were written";
 
 		auto readValues = ms<Vector<uuid>>();
 		read( file, readValues );
-		ASSERT_TRUE( waitFor([&]{ return !readValues->empty(); }) ) << "the read never completed";
+		ASSERT_TRUE( WaitUntil([&]{ return !readValues->empty(); }, 10s, 5ms) ) << "the read never completed";
 
 		ASSERT_EQ( readValues->size(), guids.size() );
 		readValues->visit( [&](const uuid& guid){
@@ -155,7 +147,7 @@ namespace Jde::IO::Tests{
 		*done = true;
 	}
 
-	Ω waitDone( const std::atomic<bool>& done )ι->bool{ return waitFor( [&done]{ return done.load(); } ); }
+	Ω waitDone( const std::atomic<bool>& done )ι->bool{ return WaitUntil( [&done]{ return done.load(); }, 10s, 5ms ); }
 
 	//"" when the operation finished cleanly, otherwise why not: the exception it captured, or that it never
 	//finished at all.  A failed io used to reach the call site as a content mismatch with the cause nowhere in
@@ -446,6 +438,7 @@ namespace Jde::IO::Tests{
 			let io = dynamic_cast<IOException*>( error->get() );
 			ASSERT_TRUE( io ) << (*error)->what();
 			EXPECT_EQ( io->Error, IO::EIOError::NotFound ) << io->what();
+			EXPECT_FALSE( io->Written ) << "a write that failed at its open wrote nothing";
 			EXPECT_FALSE( fs::exists(file) ) << "create=false created the file anyway";
 		}
 	}
@@ -492,7 +485,7 @@ namespace Jde::IO::Tests{
 		let parseFailure = [&]{ return !logger.Find( function<bool(const Logging::Entry&)>{[](const Logging::Entry& e){
 			return e.Message().contains( "Failed to parse GUID" );
 		}} ).empty(); };
-		ASSERT_TRUE( waitFor(parseFailure) ) << "the parse failure never reached the log";
+		ASSERT_TRUE( WaitUntil(parseFailure, 10s, 5ms) ) << "the parse failure never reached the log";
 		EXPECT_TRUE( logger.Find("unknown exception").empty() ) << "the exception was sliced on its way to the promise";
 		EXPECT_TRUE( readValues->empty() );
 	}
@@ -618,14 +611,6 @@ namespace Jde::IO::Tests{
 	TEST_F( FileTests, WriteAtMissingFile ){
 		let file = Tests::file( 1001 );
 		fs::remove( file );
-		auto error = ms<up<Exception>>();
-		auto done = ms<std::atomic<bool>>();
-		writeWith( file, "x", {.Mode=IO::EWriteMode::At, .Offset=4}, done, error );
-		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
-		ASSERT_TRUE( *error ) << "an At write to a missing file without Create did not throw";
-		EXPECT_TRUE( dynamic_cast<IOException*>(error->get()) ) << (*error)->what();
-		EXPECT_FALSE( fs::exists(file) ) << "Create=false created the file anyway";
-
 		ASSERT_EQ( writeNow(file, "x", {.Create=true, .Mode=IO::EWriteMode::At, .Offset=4}), "" );
 		EXPECT_EQ( IO::Load(file), string( 4, '\0' )+"x" ) << "a write past the end leaves zeros before it";
 	}
@@ -816,20 +801,21 @@ namespace Jde::IO::Tests{
 		ASSERT_EQ( writeNow(Tests::file(1005), "after", {.Create=true, .Mode=IO::EWriteMode::Truncate, .Sync=true}), "" ) << "the io after a failed sync";
 	}
 
+	//The directory syncs logged for a synced write to file, since ClearMemory.
+	Ω dirSyncs( const fs::path& file )->uint{
+		return Logging::GetLogger<Logging::MemoryLog>().Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
+			let message = e.Message();
+			return message.contains( "Syncing directory" ) && message.contains( file.string() );
+		}} ).size();
+	}
+
 	// A synced write that adds a name syncs its directory as well - the file's, and on linux the parent of each directory
 	// made for it - or a power loss could keep the data and lose the name.  The syncs aren't observable, so this counts
 	// the ones logged, and pins that a file already there adds none.
 	TEST_F( FileTests, SyncedCreateSyncsDirectories ){
 		let root = Tests::file( 1006 ).parent_path()/"syncDirs";
 		fs::remove_all( root );
-		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
-		let dirSyncs = [&logger]( const fs::path& file )->uint{
-			return logger.Find( function<bool(const Logging::Entry&)>{[&file](const Logging::Entry& e){
-				let message = e.Message();
-				return message.contains( "Syncing directory" ) && message.contains( file.string() );
-			}} ).size();
-		};
 
 		let nested = root/"a"/"b"/"nested.txt";
 #ifdef _MSC_VER
@@ -855,6 +841,30 @@ namespace Jde::IO::Tests{
 		ASSERT_EQ( writeNow(unsynced, "x", {.Create=true, .Tags=ELogTags::Test}), "" );
 		EXPECT_EQ( dirSyncs(unsynced), 0u ) << "a write that doesn't sync";
 	}
+
+#ifndef _WIN32
+	//Open's last resort, the plain open, is for a dangling symlink:  O_EXCL refuses the link and the open without O_CREAT
+	//finds no target, so the plain open makes the target through the link, and its name counts as new.  Not on windows,
+	//which syncs a name only when OPEN_ALWAYS creates the file, and where a link takes a privilege to make.
+	TEST_F( FileTests, SyncedCreateThroughADanglingSymlink ){
+		let root = Tests::file( 1014 ).parent_path()/"symlinkDirs";
+		fs::remove_all( root );
+		fs::create_directories( root );
+		let target = root/"target.txt";
+		let link = root/"link.txt";
+		std::error_code ec;
+		fs::create_symlink( target, link, ec );
+		if( ec )
+			GTEST_SKIP() << "no symlink here:  " << ec.message();
+		Logging::ClearMemory();
+		ASSERT_EQ( writeNow(link, "x", {.Create=true, .Sync=true, .Tags=ELogTags::Test}), "" );
+		EXPECT_EQ( IO::Load(target), "x" ) << "the write went through the link";
+		EXPECT_EQ( dirSyncs(link), 1u ) << "a name reached through a link counts as new";
+		ASSERT_EQ( writeNow(link, "x", {.Create=true, .Sync=true, .Tags=ELogTags::Test}), "" );
+		EXPECT_EQ( dirSyncs(link), 1u ) << "the second write added no name";
+		fs::remove_all( root );
+	}
+#endif
 
 	//Writes that make the same new directories at once, as the historian's groups do at a new day:  one whose
 	//create_directories finds them made by another a moment ago opens again, rather than failing with ENOENT.
@@ -897,28 +907,18 @@ namespace Jde::IO::Tests{
 	// IOException::Error names what went wrong without the native code, an errno here and a GetLastError value on
 	// windows.  Written is set only by a failed sync:  a write that fails may have left none or part of its data.
 	TEST_F( FileTests, FailuresAreClassified ){
-		let fail = []( const fs::path& file, IO::WriteOptions options )->sp<up<Exception>>{
-			auto error = ms<up<Exception>>(); auto done = ms<std::atomic<bool>>();
-			writeWith( file, "x", options, done, error );
-			waitDone( *done );
-			return error;
-		};
-		let missing = Tests::file( 1009 );
-		fs::remove( missing );
-		auto error = fail( missing, {.Mode=IO::EWriteMode::At} );
-		auto io = dynamic_cast<IOException*>( error->get() );
-		ASSERT_TRUE( io ) << "a write to a missing file without Create did not throw an IOException";
-		EXPECT_EQ( io->Error, IO::EIOError::NotFound ) << io->what();
-		EXPECT_FALSE( io->Written );
-
 		let full = fs::path{ "/dev/full" };//refuses every write with ENOSPC - no windows equivalent.
-		if( fs::exists(full) ){
-			error = fail( full, {} );
-			io = dynamic_cast<IOException*>( error->get() );
-			ASSERT_TRUE( io ) << "a write the device refuses did not throw an IOException";
-			EXPECT_EQ( io->Error, IO::EIOError::NoSpace ) << io->what();
-			EXPECT_FALSE( io->Written ) << "the write itself failed";
-		}
+		if( !fs::exists(full) )
+			GTEST_SKIP() << full.string() << " not available on this platform";
+		auto error = ms<up<Exception>>();
+		auto done = ms<std::atomic<bool>>();
+		writeWith( full, "x", {}, done, error );
+		ASSERT_TRUE( waitDone(*done) ) << "the failing write never completed";
+		ASSERT_TRUE( *error ) << "a write the device refuses did not throw";
+		let io = dynamic_cast<IOException*>( error->get() );
+		ASSERT_TRUE( io ) << (*error)->what();
+		EXPECT_EQ( io->Error, IO::EIOError::NoSpace ) << io->what();
+		EXPECT_FALSE( io->Written ) << "the write itself failed";
 	}
 
 	// The options reach the op through its constructor, and a read has no write mode:  nothing that asks whether an op
@@ -955,8 +955,34 @@ namespace Jde::IO::Tests{
 #endif
 		EXPECT_EQ( IO::ToIOError(0xFFFFFF), IO::EIOError::None );
 		EXPECT_EQ( (IOException{ "x", (uint32)notFound, "open" }.Error), IO::EIOError::NotFound );
-		EXPECT_EQ( (IOException{ fs::filesystem_error{"open", fs::path{"x"}, std::error_code{(int)notFound, std::system_category()}} }.Error), IO::EIOError::NotFound );
 		EXPECT_EQ( (IOException{ "x", "no code" }.Error), IO::EIOError::None );
+#ifdef _MSC_VER
+		//MSVC's STL reports a Win32 code under system_category, which this one mirrors.
+		EXPECT_EQ( (IOException{ fs::filesystem_error{"open", fs::path{"x"}, std::error_code{(int)notFound, std::system_category()}} }.Error), IO::EIOError::NotFound );
+#else
+		//libc++ reports an errno under generic_category, never system - so real failures, through the library's own wraps.
+		let dir = file( 1015 ).parent_path()/"mapsNativeCodes";
+		fs::remove_all( dir );
+		fs::create_directories( dir );
+		try{
+			(void)IO::Load( dir );
+			ADD_FAILURE() << "loaded a directory";
+		}
+		catch( const IOException& e ){
+			EXPECT_EQ( e.Error, IO::EIOError::Invalid ) << e.what();//file_size's EISDIR.
+		}
+		let plain = dir/"plain.txt";
+		let content = string{ "x" };
+		IO::SaveBinary<const char>( plain, std::span{content} );
+		try{
+			IO::CreateDirectories( plain/"child" );
+			ADD_FAILURE() << "made a directory under a file";
+		}
+		catch( const IOException& e ){
+			EXPECT_EQ( e.Error, IO::EIOError::NotFound ) << e.what();//ENOTDIR.
+		}
+		fs::remove_all( dir );
+#endif
 	}
 
 	// A read logs under ReadOptions.Tags, as a write does under WriteOptions.Tags.
@@ -983,7 +1009,7 @@ namespace Jde::IO::Tests{
 		let content = pattern( chunk*4+chunk/2 );
 		ASSERT_EQ( writeNow(file, content, {.Create=true, .Mode=IO::EWriteMode::Truncate}), "" );
 
-		let read = [&file]( IO::ReadOptions options )->string{
+		let read = [&file]( IO::ReadOptions options )->string {
 			auto y = ms<string>( "sentinel" );
 			auto done = ms<std::atomic<bool>>(); auto error = ms<up<Exception>>();
 			readRaw( file, y, done, error, options );
@@ -997,6 +1023,14 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( read({.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
 		EXPECT_EQ( read({.Offset=content.size()+7}), "" ) << "a range that starts past the end";
 		EXPECT_EQ( read({}), content ) << "no range is the whole file";
+
+		//a ranged read is uncached:  the entry is the whole file, so a range must neither take nor replace it.
+		Cache::Set<string>( file.string(), "stale" );
+		EXPECT_EQ( read({.Offset=1, .Cache=true}), content.substr(1) ) << "a ranged read took the path's cache entry";
+		let entry = Cache::Get<string>( file.string() );
+		ASSERT_TRUE( entry ) << "a ranged read cleared the path's cache entry";
+		EXPECT_EQ( *entry, "stale" ) << "a ranged read populated the path's cache entry";
+		Cache::Clear( file.string() );
 	}
 
 	//A read over an open file:  readRaw's shape, the handle in place of the path.
@@ -1034,7 +1068,13 @@ namespace Jde::IO::Tests{
 		EXPECT_EQ( readNow(open, {.Offset=content.size(), .Size=5}), "" ) << "a range that starts at the end";
 		EXPECT_EQ( readNow(open, {.Offset=content.size()+7}), "" ) << "a range that starts past the end";
 		EXPECT_EQ( readNow(open, {}), content ) << "no range is the whole file";
-		EXPECT_EQ( readNow(open, {.Cache=true}), content ) << "the cache is ignored";
+		//the cache is keyed by path, so a read over the handle must neither take nor replace the path's entry.
+		Cache::Set<string>( file.string(), "stale" );
+		EXPECT_EQ( readNow(open, {.Cache=true}), content ) << "an OpenFile read took the path's cache entry";
+		let entry = Cache::Get<string>( file.string() );
+		ASSERT_TRUE( entry ) << "an OpenFile read cleared the path's cache entry";
+		EXPECT_EQ( *entry, "stale" ) << "an OpenFile read populated the path's cache entry";
+		Cache::Clear( file.string() );
 	}
 	//The handle reads the file it opened after a rename over its path, where a read by path finds the new file.
 	TEST_F( FileTests, OpenFileOutlivesARename ){
@@ -1086,7 +1126,7 @@ namespace Jde::IO::Tests{
 			}
 			return false;
 		};
-		EXPECT_TRUE( waitFor([&]{ return !open(); }) ) << "the descriptor is still open";
+		EXPECT_TRUE( WaitUntil([&]{ return !open(); }, 10s, 5ms) ) << "the descriptor is still open";
 #endif
 	}
 	TEST_F( FileTests, OpenFileMissingThrows ){
@@ -1099,6 +1139,25 @@ namespace Jde::IO::Tests{
 		catch( const IOException& e ){
 			EXPECT_EQ( e.Error, IO::EIOError::NotFound );
 		}
+	}
+	//A directory at the path is refused at the open, and not as NotFound:  every owner of an OpenFile takes NotFound for a
+	//file not made yet, so a directory where a day file belongs has to arrive as something else.  On linux it opens and
+	//fstat refuses it, Invalid;  on windows CreateFile refuses a directory itself.
+	TEST_F( FileTests, OpenFileDirectoryThrows ){
+		let dir = Tests::file( 0 ).parent_path()/"openFileDir";
+		fs::create_directories( dir );
+		try{
+			IO::OpenFile open{ dir };
+			ADD_FAILURE() << "opened a directory";
+		}
+		catch( const IOException& e ){
+			EXPECT_NE( e.Error, IO::EIOError::NotFound ) << e.what();
+#ifndef _WIN32
+			EXPECT_EQ( e.Error, IO::EIOError::Invalid ) << e.what();
+			EXPECT_TRUE( string{e.what()}.contains("is not a regular file") ) << e.what();
+#endif
+		}
+		fs::remove_all( dir );
 	}
 	//The positioned read, on the calling thread:  the bytes at an offset, fewer at the end, none past it.
 	TEST_F( FileTests, OpenFileReadNow ){

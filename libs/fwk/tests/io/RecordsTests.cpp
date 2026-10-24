@@ -124,7 +124,7 @@ namespace Jde::IO::Records::Tests{
 
 	struct LayerTests : ::testing::Test{
 		Ω SetUpTestCase()ι->void{ Execution::Run(); }
-		α SetUp()->void override{ fs::create_directories( Dir ); }
+		α SetUp()->void override{ fs::remove_all( Dir ); fs::create_directories( Dir ); }//a killed run skips TearDown, so its leftovers must not feed this one.
 		α TearDown()->void override{
 			fs::remove_all( Dir );
 			std::error_code ec;
@@ -545,6 +545,25 @@ namespace Jde::IO::Records::Tests{
 		}
 	}
 
+	//The scan takes the open file's size before it reads:  a file cut in place before a window is read can't be read
+	//through, which is no torn append, so the scan throws at Error rather than judge bytes it never read.
+	TEST_F( ScanTests, ShrunkDuringScanThrows ){
+		Write( Bytes );
+		Decoder<TestRecord> decoder;
+		Scanner scanner{ ms<OpenFile>(File), StartField, CheckpointField, decoder };
+		Write( Bytes.substr(0, 10) );//the same inode, cut after the size was taken.
+		ASSERT_EQ( scanner.Next(), ENext::More );
+		FeedNow( scanner );
+		try{
+			(void)scanner.Next();
+			ADD_FAILURE() << "scanned a file it could not read through";
+		}
+		catch( const IOException& e ){
+			EXPECT_EQ( e.Level(), ELogLevel::Error ) << e.what();
+		}
+		EXPECT_EQ( OnDisk().size(), 10u );
+	}
+
 	//A scan that keeps less than the whole file logs it once, read or not:  at Warning for a torn flush, which the first
 	//append drops, and at Error for what must be kept.  A whole file logs nothing.
 	TEST_F( ScanTests, LogsWhatItLeavesOut ){
@@ -734,6 +753,90 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_EQ( scanned.SealedAfter, end2 );
 	}
 
+	//The search for a sealed append reads 64 KiB at a time from Size - Scan.cpp's SealedWindowBytes, file-local, so spelled
+	//here.  A span's CRC carries from one window to the next, and a window's last 6 bytes are kept for the next, so a
+	//checkpoint cut by its end is found whole there.  Every other damaged file here proves inside the first window, and a
+	//wrong carry would leave a sealed append unproved, for the first append's Truncate to drop.
+	TEST_F( ScanTests, SealedPastTheSearchWindow ){
+		constexpr uint sealedWindowBytes{ 64<<10 };
+		//FalseMarkInsideABody's shape:  run 0 kept, run 1 damaged, run 2 one sample of textSize bytes and its checkpoint.
+		struct Built{ string Bytes; uint End0; uint End2; uint CheckpointAt; };
+		let build = []( uint textSize )->Built {
+			Built y;
+			Appender<TestRecord> first{ y.Bytes, 0 };
+			first.Start( fileStart().file_start() );
+			first.Add( sample(DayStart, "p") );
+			auto chain = first.Seal();
+			y.End0 = y.Bytes.size();
+			Appender<TestRecord> second{ y.Bytes, chain };
+			let damagedAt = y.Bytes.size()+2;//the sample's time, past the frame's tag and length.
+			second.Add( sample(at(1000), "q") );
+			chain = second.Seal();
+			Appender<TestRecord> third{ y.Bytes, chain };
+			third.Add( sample(at(2000), string(textSize, 'x')) );
+			y.CheckpointAt = y.Bytes.size();
+			third.Seal();
+			y.End2 = y.Bytes.size();
+			y.Bytes[damagedAt] ^= 0x7F;
+			return y;
+		};
+		let expectSealed = [&]( const Built& b ){
+			let scanned = Damaged( b.Bytes );
+			EXPECT_EQ( scanned.Size, b.End0 );
+			EXPECT_EQ( scanned.SealedAfter, b.End2 ) << "the sealed append past the first window was not proved";
+			EXPECT_EQ( scanned.Runs.size(), 1u );
+		};
+		{
+			SCOPED_TRACE( "a checkpoint in the second window" );
+			let b = build( 70'000 );
+			ASSERT_GT( b.CheckpointAt, b.End0+sealedWindowBytes ) << "the checkpoint has to lie past the first window";
+			expectSealed( b );
+		}
+		let probe = build( 60'000 );
+		let overhead = probe.CheckpointAt-60'000;//what precedes the text, the same for every size here:  each length is a 3-byte varint.
+		for( uint k=1; k<CheckpointBytes; ++k ){
+			SCOPED_TRACE( Ƒ("a checkpoint starting {} bytes before the first window's end", k) );
+			let b = build( probe.End0+sealedWindowBytes-k-overhead );
+			ASSERT_EQ( b.CheckpointAt, b.End0+sealedWindowBytes-k );
+			expectSealed( b );
+		}
+	}
+
+	//The records phase reads WindowBytes at a time and lets go of what it scanned a window at a time:  a frame the first
+	//window's end cuts is read on from the next, and the append's CRC runs on over frames whose views the release re-based.
+	//Every other file here fits one window.
+	TEST_F( ScanTests, FramesAcrossTheScanWindow ){
+		vector<TestRecord> records{ fileStart(), sample(DayStart, string(WindowBytes-200, 'x')), sample(at(1000), string(400, 'y')), sample(at(2000), "b") };
+		string bytes;
+		Appender<TestRecord> first{ bytes, 0 };
+		first.Start( records[0].file_start() );
+		first.Add( TestRecord{records[1]} );
+		auto chain = first.Seal();
+		let end0 = bytes.size();
+		ASSERT_LT( end0, WindowBytes );
+		Appender<TestRecord> second{ bytes, chain };
+		second.Add( TestRecord{records[2]} );
+		ASSERT_GT( bytes.size(), WindowBytes ) << "the second run's first frame has to cross the first window's end";
+		second.Add( TestRecord{records[3]} );
+		second.Seal();
+		Write( bytes );
+		vector<string> sealed;
+		let scanned = scan( File, [&]( TestRecord& r ){ sealed.push_back( r.SerializeAsString() ); } );
+		EXPECT_EQ( scanned.FileSize, bytes.size() );
+		EXPECT_EQ( scanned.Size, scanned.FileSize );
+		EXPECT_EQ( scanned.Stop, EStop::End );
+		ASSERT_EQ( scanned.Runs.size(), 2u );
+		EXPECT_EQ( scanned.Runs[1].Offset, end0 );
+		vector<string> expected;
+		for( let& r : records )
+			expected.push_back( r.SerializeAsString() );
+		EXPECT_TRUE( sealed==expected ) << "the decoder saw " << sealed.size() << " records, not the " << expected.size() << " written";
+
+		let [torn, onDisk] = ScanFile( sv{bytes}.substr(0, WindowBytes+100) );//cut inside the frame that crosses.
+		EXPECT_EQ( torn.Size, end0 );
+		EXPECT_TRUE( onDisk==bytes.substr(0, end0) );
+	}
+
 	//The merge:  the runs' records in time order with late's, ties to the earlier run and to the file's before late's, each
 	//file record placed, and the file let go at the end.  FileStart and checkpoints are left out.
 	TEST_F( ScanTests, MergeOrders ){
@@ -917,6 +1020,89 @@ namespace Jde::IO::Records::Tests{
 		EXPECT_TRUE( StampOf(file.Path)==nullopt );
 	}
 
+	//A rewrite renames over the file, so a torn tail its scan found goes whole with it:  the scan's size counts as known, for
+	//a rewrite only - the historian's recovery of a past day torn mid-flush.  A restart counts nothing as written.
+	TEST_F( LayerTests, VerifyForARewriteAndARestart ){
+		FileState file{ .Path=Dir/"g.binpb", .Size=10 };
+		file.Unopened = Scanned{ .Size=10, .FileSize=14 };
+		save( file.Path, string(14, 'x') );
+		EXPECT_NO_THROW( Verify(file, true, false) ) << "a rewrite takes the scan's torn tail as known";
+		EXPECT_THROW( Verify(file, false, false), IOException ) << "an append does not";
+		EXPECT_THROW( Verify(file, true, true), IOException ) << "a restart:  14 bytes where none were written";
+		fs::remove( file.Path );
+		let gone = Verify( file, true, true );
+		EXPECT_FALSE( gone.Existed );
+		EXPECT_TRUE( gone.Restart );
+		file.Unopened->FileSize = 16;
+		save( file.Path, string(14, 'x') );
+		EXPECT_THROW( Verify(file, true, false), IOException ) << "the scan's own size, not any size past Size";
+	}
+
+	//Changed() is the rescan predicate:  a refused file or an archive the disk no longer holds as stamped - never a live file,
+	//which its own appends change, nor one that has gone.  Each save changes the size, so last_write_time's granularity
+	//can't hide one.
+	TEST_F( LayerTests, ChangedTellsARescan ){
+		let path = Dir/"g.binpb";
+		save( path, "abc" );
+		const FileState live{ .Path=path, .Stamped=StampOf(path) };
+		EXPECT_FALSE( live.Changed() );
+		save( path, "abcdef" );
+		EXPECT_FALSE( live.Changed() ) << "a live file's own appends change it";
+
+		const FileState archive{ .Path=path, .Generation=1, .Stamped=StampOf(path) };
+		EXPECT_FALSE( archive.Changed() );
+		save( path, "x" );
+		EXPECT_TRUE( archive.Changed() ) << "an archive replaced since";
+
+		const FileState refused{ .Path=path, .Refused="damaged", .Stamped=StampOf(path) };
+		EXPECT_FALSE( refused.Changed() );
+		save( path, "repaired" );
+		EXPECT_TRUE( refused.Changed() ) << "a refused file repaired since";
+		fs::remove( path );
+		EXPECT_FALSE( refused.Changed() ) << "gone:  Prepare's restart path, not a rescan";
+	}
+
+	//Head reads a file's first MaxStartFrame bytes for its FileStart, whose generation tells an archive from a live file
+	//without a scan - the historian's start picks the past days to recover by it.  Anything else at the head is none.
+	TEST_F( LayerTests, HeadTellsAnArchive ){
+		let file = Dir/"g.binpb";
+		let head = [&]( sv bytes ){ save( file, bytes ); return Head( ms<OpenFile>(file), StartField ); };
+		let opening = []( const Proto::FileStart& start )->string {
+			string y;
+			Appender<TestRecord> appender{ y, 0 };
+			appender.Start( start );
+			appender.Add( sample(at(1000), "a") );
+			return y;
+		};
+		let liveBytes = opening( fileStart().file_start() );
+		let live = head( liveBytes );
+		ASSERT_TRUE( live );
+		EXPECT_EQ( live->generation(), 0u );
+		EXPECT_EQ( live->ts(), DayStart );
+		let archive = head( opening(fileStart(1).file_start()) );
+		ASSERT_TRUE( archive );
+		EXPECT_EQ( archive->generation(), 1u );
+
+		Proto::FileStart widest;//every field at its widest, as Frames writes it:  the frame fills Head's window exactly.
+		widest.set_ts( std::numeric_limits<int64_t>::min() );
+		widest.set_generation( std::numeric_limits<uint32_t>::max() );
+		string wide;
+		EncodeStart( wide, StartField, widest );
+		ASSERT_EQ( wide.size(), MaxStartFrame );
+		let rest = raw( sample(at(1000), "a") );
+		let widestHead = head( wide+rest );
+		ASSERT_TRUE( widestHead ) << "the widest FileStart didn't fit Head's window";
+		EXPECT_EQ( widestHead->ts(), widest.ts() );
+		EXPECT_EQ( widestHead->generation(), widest.generation() );
+
+		auto noCrc = fileStart();
+		noCrc.mutable_file_start()->clear_crc();
+		EXPECT_FALSE( head(raw(noCrc)+rest) ) << "a FileStart whose crc doesn't match";
+		EXPECT_FALSE( head("") ) << "an empty file";
+		EXPECT_FALSE( head(raw(sample(DayStart, "a"))+rest) ) << "a first frame of another field";
+		EXPECT_FALSE( head(sv{liveBytes}.substr(0, 5)) ) << "a FileStart cut short";
+	}
+
 	struct FlushedTests : LayerTests{
 		Ω Slot( int64_t time, uint32_t sequence, Day recover=March6 )ι->string{
 			string y( Flushed::SlotSize, '\0' );
@@ -1078,7 +1264,11 @@ namespace Jde::IO::Records::Tests{
 
 		let day = Dir/DayDirectory( March6 );
 		MakeDirectories( day );
-		fs::create_directories( day );
+#ifdef _WIN32
+		ASSERT_TRUE( fs::is_directory(day) ) << "MakeDirectories made no directory";
+#else
+		fs::create_directories( day );//MakeDirectories is a no-op here:  the first write makes them.
+#endif
 		save( day/"g.binpb", "old" );
 		save( day/"g.binpb.tmp", "new" );
 		Replace( day/"g.binpb.tmp", day/"g.binpb" );
@@ -1093,5 +1283,12 @@ namespace Jde::IO::Records::Tests{
 		save( day/"file.tmp", "x" );
 		EXPECT_TRUE( RemoveTemp(day/"file.tmp") );
 		EXPECT_FALSE( RemoveTemp(day/"file.tmp") );
+#ifndef _WIN32//windows takes a privilege to make a link.
+		save( day/"target", "t" );//a link to a regular file, which only symlink_status tells from one.
+		fs::create_symlink( day/"target", day/"link.tmp" );
+		EXPECT_FALSE( RemoveTemp(day/"link.tmp") ) << "a link isn't a temp file, whatever it points at";
+		EXPECT_TRUE( fs::is_symlink(day/"link.tmp") );
+		EXPECT_TRUE( fs::exists(day/"target") );
+#endif
 	}
 }

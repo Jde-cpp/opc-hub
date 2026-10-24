@@ -2,8 +2,8 @@
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <fstream>
+#include "../testsDir.h"
 #define let const auto
-#pragma warning( disable: 4702 )
 
 namespace Jde::Tests{
 	struct LogGeneralTests : public ::testing::Test{
@@ -12,7 +12,6 @@ namespace Jde::Tests{
 		~LogGeneralTests() override{}
 
 		static constexpr ELogTags MutatedTags{ ELogTags::Scheduler };
-		Ω SetUpTestCase()ι->void{ }
 		α SetUp()->void override{ Logging::ClearMemory(); }
 		α TearDown()->void override{ Logging::GetLogger<Logging::MemoryLog>().ClearLevel( MutatedTags ); }
 
@@ -38,34 +37,44 @@ namespace Jde::Tests{
 		Settings::Set( "/logging/l6-probe", jobject{} );//a section, so Add gets as far as constructing.
 		Logging::ClearMemory();
 		EXPECT_EQ( Logging::Add<UnbuildableLogger>("l6-probe"), nullptr );
+		Settings::Set( "/logging/l6-probe", jvalue{} );//and gone again:  a null reads as no section.
 		let reported = Logging::Find( [](const Logging::Entry& e){ return e.Level>=ELogLevel::Error && e.Text.contains("could not be created"); } );
 		EXPECT_FALSE( reported.empty() ) << "a configured logger that did not start said nothing at Error";
+	}
+
+	//6df60754:  Log() walks the logger list unlocked from any thread, so AddLogger publishes a new list and keeps the one it
+	//replaces, unchanged, for a reader mid-walk.  A push_back into the one list moved it under such a walk - "vector iterators
+	//incompatible" in the gateway suite.  This logger takes nothing, so it stays inert for the rest of the run.
+	struct QuietLogger final : Logging::ILogger{
+		QuietLogger():ILogger{ jobject{{"tags", jobject{{"default", "None"}}}} }{}
+		α Write( const Logging::Entry& )ι->void override{}
+		α Write( const Logging::Entry&, uint32, uint32 )ι->void override{}
+		α Shutdown( bool, SL )ι->void override{}
+		α Name()Ι->sv override{ return "Quiet"; }
+	};
+	TEST_F( LogGeneralTests, AddLoggerPublishesANewListAndKeepsTheOld ){
+		const auto& before = Logging::Loggers();
+		let n = before.size();
+		auto* added = Logging::AddLogger( mu<QuietLogger>() );
+		const auto& after = Logging::Loggers();
+		EXPECT_NE( &before, &after ) << "a change publishes a new list";
+		ASSERT_EQ( after.size(), n+1 );
+		EXPECT_EQ( after.back(), added );
+		EXPECT_EQ( before.size(), n ) << "the replaced list is kept, unchanged, for a reader still walking it";
+		EXPECT_EQ( std::ranges::find(before, added), before.end() );
+		EXPECT_EQ( before.front(), after.front() );
 	}
 
 	//ELogTags is a 64-bit space that libraries extend above fwk's own 27 bits - Jde::Opc registers 32-45 through
 	//AddTagParser - so All has to span the whole underlying type.  Spelled ~0ul it stopped at bit 31 under the windows
 	//ABI, where unsigned long is 32-bit, and silently dropped every extension tag from an All-based subscription.
-	TEST_F( LogGeneralTests, AllCoversTheFullUnderlyingWidth ){
-		EXPECT_EQ( (uint)ELogTags::All, ~(std::underlying_type_t<ELogTags>)0 );
-		EXPECT_NE( (uint)ELogTags::All & (1ull<<32), 0ull );//the bit range that actually went missing.
-	}
+	static_assert( (uint)ELogTags::All==~std::underlying_type_t<ELogTags>{} );
+	static_assert( ((uint)ELogTags::All & (1ull<<32))!=0 );//the bit range that actually went missing.
 
 	//AddTagParser takes ownership as up<ITagParser>, so every parser is destroyed through a base pointer.  Without a
 	//virtual destructor on the base that is undefined behaviour, and in practice the derived destructor never runs - it
 	//goes unnoticed only because the one implementation, Jde::Opc::UALogParser, holds no state to leak.
-	TEST_F( LogGeneralTests, TagParserIsDestroyedThroughTheBase ){
-		static bool destroyed;//a local class may use a static local of its enclosing function, not an automatic one.
-		struct Counted : Logging::ITagParser{
-			~Counted(){ destroyed = true; }
-			α ToTag( str )Ι->ELogTags override{ return ELogTags::None; }
-			α ToString( ELogTags )Ι->string override{ return {}; }
-			α Tags()Ι->flat_map<string,uint> override{ return {}; }
-		};
-		destroyed = false;
-		up<Logging::ITagParser> parser = mu<Counted>();//the conversion AddTagParser performs.
-		parser.reset();
-		EXPECT_TRUE( destroyed );
-	}
+	static_assert( std::has_virtual_destructor_v<Logging::ITagParser> );
 
 	//config keys are split on TagSeparator and each part looked up in ELogTagStrings, so an unrecognised part is simply
 	//dropped and the key silently collapses onto a shorter one's mask - where parseTags' insert_or_assign overwrites it.
@@ -217,6 +226,19 @@ namespace Jde::Tests{
 		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Debug, ELogTags::Sql) );
 	}
 
+	//"None", the off value of every shipped config's externalLogger and of the UI, parses to 6, the wire's LogLevelNone - an
+	//index past Critical, not the -1 above, which no config produces.  It silences its tag by lying past Critical, and yields
+	//in the cumulative because the minimum of it and a real level is that level.
+	TEST_F( LogGeneralTests, ConfiguredNoneSilencesATagAndYieldsInTheCumulative ){
+		LogTags quiet{ jobject{{"tags", jobject{{"default","Debug"},{"externalLogger","None"}}}} };
+		EXPECT_FALSE( quiet.ShouldLog(ELogLevel::Critical, ELogTags::ExternalLogger) ) << "None is off, whatever it parses to";
+		EXPECT_EQ( Jde::ToString(quiet.MinLevel(ELogTags::ExternalLogger)), "None" );
+		EXPECT_TRUE( quiet.ShouldLog(ELogLevel::Debug, ELogTags::Sql) ) << "and the other tags are untouched";
+		LogTags loud{ jobject{{"tags", jobject{{"default","Debug"},{"externalLogger","Debug"}}}} };
+		quiet += loud;
+		EXPECT_EQ( quiet.MinLevel(ELogTags::ExternalLogger), ELogLevel::Debug ) << "a configured None yields to the other logger's level";
+	}
+
 	// opcserver-refactor-review #5:  UpdateCumulative keeps every copy it publishes, so it publishes only one that differs from
 	// the current - and what MinLevel memoizes is no difference, or a copy that had answered a lookup would never match.
 	TEST_F( LogGeneralTests, LogTagsEqualityIgnoresTheMemo ){
@@ -265,10 +287,8 @@ namespace Jde::Tests{
 	//overload (a key, not a path) never resolves - every config's flushOn was ignored and the default stood, Information in a
 	//release build, so a service's text log showed nothing below that until a flush.  The key reads it; the default holds without.
 	TEST_F( LogGeneralTests, SpdLogReadsFlushOnFromItsOwnSettings ){
-		let dir = fs::temp_directory_path()/"jde-spd-flush";
-		fs::create_directories( dir );
-		auto settings = [&]( optional<sv> flushOn )->jobject{
-			jobject o{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}}}}} };
+		auto settings = []( optional<sv> flushOn )->jobject{
+			jobject o{ {"tags", jobject{{"default", "Information"}}} };//no sinks:  the flush level is set before any sink matters.
 			if( flushOn )
 				o["flushOn"] = *flushOn;
 			return o;
@@ -276,13 +296,12 @@ namespace Jde::Tests{
 		EXPECT_EQ( Logging::SpdLog{settings("Trace")}.FlushLevel(), ELogLevel::Trace );
 		EXPECT_EQ( Logging::SpdLog{settings("Warning")}.FlushLevel(), ELogLevel::Warning );
 		EXPECT_EQ( Logging::SpdLog{settings(nullopt)}.FlushLevel(), _debug ? ELogLevel::Debug : ELogLevel::Information );
-		fs::remove_all( dir );
 	}
 
 	//install-issues #13: a start truncated the text log, so restarting a product after a failure erased the lines that said
 	//why.  With `keep`, the file sink rolls the previous run aside on open - <stem>.1.log - instead of erasing it.
 	TEST_F( LogGeneralTests, FileSinkKeepsPreviousRuns ){
-		let dir = fs::temp_directory_path()/"jde-spd-keep";
+		let dir = TestsDir( "spd/keep", true );//per process:  a concurrent run would remove this one's files between its two starts.
 		fs::remove_all( dir );
 		fs::create_directories( dir );
 		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}, {"keep", 2}}}}} };
@@ -315,7 +334,7 @@ namespace Jde::Tests{
 	//install-issues #52:  a second copy of a running product rolled the live log on open - windows refused the rename of the file
 	//the first copy held, and spdlog then truncated it under that copy.  A held log is appended to instead, and nothing rolls.
 	TEST_F( LogGeneralTests, FileSinkLeavesALiveLogAlone ){
-		let dir = fs::temp_directory_path()/"jde-spd-live";
+		let dir = TestsDir( "spd/live", true );
 		fs::remove_all( dir );
 		fs::create_directories( dir );
 		const jobject settings{ {"tags", jobject{{"default", "Information"}}}, {"sinks", jobject{{"file", jobject{{"path", dir.string()}, {"keep", 2}}}}} };
@@ -370,7 +389,6 @@ namespace Jde::Tests{
 		logger.SetLevel( unConfiguredTags, ELogLevel::Error );
 		auto arg = []()->string {
 			throw std::runtime_error("should not be called");
-			return "";
 		};
 		ASSERT_NO_THROW( TRACET(unConfiguredTags, "{}", arg()) );
 	}
@@ -402,10 +420,4 @@ namespace Jde::Tests{
 
 		EXPECT_TRUE( Logging::FormatSourceUri("").empty() ) << "a message with no source location contributes nothing to the pattern";
 	}
-
-	//TODO makesure cumulative is updated when some obscure tag is sent.
-	//How quick is md5 calculation.
-	//How quick is noop.
-	//How quick is memory.
-	//How quick is spdlog.
 }

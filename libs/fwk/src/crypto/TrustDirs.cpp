@@ -47,7 +47,10 @@ namespace Jde::Crypto{
 						continue;
 					}
 					seen.emplace( path );
-					let mtime = entry.last_write_time();
+					//not the throwing form:  a dangling link or a file gone mid-walk would end the directory's walk, its neighbours
+					//unhanded.  On error it reads min(), which is stored like any time, so the read below fails once and stays quiet.
+					std::error_code ec;
+					let mtime = entry.last_write_time( ec );
 					if( auto it = _files.find(path); it!=_files.end() && it->second==mtime )
 						continue;
 					_files[path] = mtime;

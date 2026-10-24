@@ -827,4 +827,459 @@ namespace Jde::Opc::Gateway::Tests{
 		std::move( open ).Invoke();
 		EXPECT_THROW( thresholds(999999), std::exception ) << "a group the gateway doesn't host";
 	}
+
+	constexpr sv Ns0Uri{ "http://opcfoundation.org/UA/" };
+	//A node of namespace 0, as a column spells it.
+	Ω ns0( UA_UInt32 i )ι->string{ return serialize( jobject{{"nsu", Ns0Uri}, {"i", i}} ); }
+	//A path's text, each segment's name in `uri`.
+	Ω pathText( sv uri, std::initializer_list<sv> names )ι->string{
+		vector<HistPathSegment> y;
+		for( let name : names )
+			y.push_back( {string{uri}, string{name}} );
+		return HistPathText( y );
+	}
+	//Servers 0.2 (#379):  what the server says of each member - the attributes a served variable carries, its EURange and
+	//EngineeringUnits properties, the DataType served and its browse path from the Objects folder - lands on its hist_group_nodes row
+	//once the collector has its item (HistGroupHost::Describe), which histGroupNodes serves and the QL never writes.
+	TEST_F( HistGroupTests, MembersAreDescribedOntoTheirRows ){
+		let templateId = CreateTemplate( "describe" );
+		absl::Cleanup purgeTemplate = [=]{ Purge( "HistTemplate", templateId ); };
+		CreateMember( templateId, "motorRpm" );
+		CreateMember( templateId, "status" );
+		let groupId = Id( CreateGroup("pump3-described", templateId, Pump3) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		let rpm3 = Row( groupId, Rpm3 ), status3 = Row( groupId, Status3 );
+		ASSERT_TRUE( rpm3 && status3 ) << serialize( GroupNodes(groupId) );
+		//Added by hand:  pump1's motorRpm, which has a Description, and ServerStatus.State, an enumeration of namespace 0, three deep under Objects.
+		let rpm1 = AddNode( groupId, Rpm1 );
+		let state = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", ns0(UA_NS0ID_SERVER_SERVERSTATUS_STATE)}}) );
+		ASSERT_NO_THROW( WaitSubscribed(host, 4) );
+		let rows = [&]()->flat_map<uint32,jobject>{
+			flat_map<uint32,jobject> y;
+			for( let& row : Rows("histGroupNodes( histGroupId:$g ){ id displayName description dataType valueRank arrayDimensions accessLevel euRange engineeringUnits path }", {{"g", groupId}}) )
+				y.emplace( Id(row.as_object()), row.as_object() );
+			return y;
+		};
+		//The columns land after the describe the create's ack starts:  waited for, every row.
+		flat_map<uint32,jobject> described;
+		let landed = WaitUntil( [&]{ described = rows(); return described.size()==4 && std::ranges::all_of( described, []( let& r ){ return !r.second.at("displayName").is_null() && !r.second.at("path").is_null(); } ); }, 15s );
+		jarray all;
+		for( let& r : described )
+			all.push_back( r.second );
+		ASSERT_TRUE( landed ) << serialize( all );
+		let number = []( const jobject& o, sv name )->optional<double>{ let& v = o.at( name ); return v.is_null() ? nullopt : optional<double>{ v.to_number<double>() }; };
+		let& r3 = described.at( Id(*rpm3) );
+		EXPECT_EQ( Json::AsSV(r3, "displayName"), "motorRpm" );
+		EXPECT_TRUE( r3.at("description").is_null() ) << serialize( r3 );
+		EXPECT_EQ( Json::AsSV(r3, "dataType"), ns0(UA_NS0ID_DOUBLE) );
+		EXPECT_EQ( number(r3, "valueRank"), -1 );
+		EXPECT_TRUE( r3.at("arrayDimensions").is_null() ) << "a scalar";
+		EXPECT_EQ( number(r3, "accessLevel"), 15 ) << "the nodeset's CurrentRead | CurrentWrite, with the HistoryRead | HistoryWrite the server adds to a historizing node";
+		ASSERT_FALSE( r3.at("euRange").is_null() ) << serialize( r3 );
+		let range = Json::Parse( Json::AsString(r3, "euRange"), SRCE_CUR );
+		EXPECT_EQ( Json::AsNumber<double>(range, "low"), 0 );
+		EXPECT_EQ( Json::AsNumber<double>(range, "high"), 3000 ) << "pump3's EURange, not its InstrumentRange";
+		EXPECT_TRUE( r3.at("engineeringUnits").is_null() ) << "the nodeset gives none";
+		EXPECT_EQ( Json::AsSV(r3, "path"), pathText(PumpsUri, {"pump3", "motorRpm"}) ) << "from Objects, not from the group's root";
+		let& s3 = described.at( Id(*status3) );
+		EXPECT_EQ( Json::AsSV(s3, "displayName"), "status" );
+		EXPECT_EQ( Json::AsSV(s3, "dataType"), ns0(UA_NS0ID_BOOLEAN) );
+		EXPECT_TRUE( s3.at("euRange").is_null() );
+		EXPECT_EQ( Json::AsSV(s3, "path"), pathText(PumpsUri, {"pump3", "status"}) );
+		let& r1 = described.at( rpm1 );
+		EXPECT_EQ( Json::AsSV(r1, "description"), "Measured motor speed, rpm." );
+		EXPECT_EQ( Json::AsSV(r1, "path"), pathText(PumpsUri, {"pump1", "motorRpm"}) );
+		let& st = described.at( state );
+		EXPECT_EQ( Json::AsSV(st, "displayName"), "State" );
+		EXPECT_EQ( Json::AsSV(st, "dataType"), ns0(UA_NS0ID_SERVERSTATE) ) << "an enumeration of namespace 0 is served as the source's type";
+		EXPECT_EQ( number(st, "accessLevel"), 1 ) << "CurrentRead";
+		EXPECT_EQ( Json::AsSV(st, "path"), pathText(Ns0Uri, {"Server", "ServerStatus", "State"}) );
+		//The host carries what it wrote, for the mirror.
+		let attributes = host->Attributes( Id(*rpm3) );
+		ASSERT_TRUE( attributes );
+		EXPECT_EQ( attributes->DisplayName, "motorRpm" );
+		ASSERT_TRUE( attributes->DataType && attributes->EURange && attributes->Path );
+		EXPECT_EQ( HistNodeText(*attributes->DataType), ns0(UA_NS0ID_DOUBLE) );
+		EXPECT_EQ( attributes->EURange->High, 3000 );
+		EXPECT_EQ( HistPathText(*attributes->Path), pathText(PumpsUri, {"pump3", "motorRpm"}) );
+		//The server's word, not a caller's:  a create or an update naming a column is refused, as the QL refuses any column its meta
+		//marks neither insertable nor updateable.
+		for( let ql : {"updateHistGroupNode( id:$id, displayName:\"x\" )", "updateHistGroupNode( id:$id, path:\"[]\" )"} ){
+			try{
+				Mutate( ql, {{"id", rpm1}} );
+				ADD_FAILURE() << ql;
+			}
+			catch( const Exception& e ){
+				EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest ) << e.what();
+				EXPECT_NE( string{e.what()}.find("isn't updateable"), string::npos ) << e.what();
+			}
+		}
+		try{
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node, accessLevel:3 ){ id }", {{"g", groupId}, {"node", Column(Rpm4)}} );
+			ADD_FAILURE() << "a create naming accessLevel";
+		}
+		catch( const Exception& e ){
+			EXPECT_EQ( e.HttpStatus(), EHttpStatus::BadRequest ) << e.what();
+			EXPECT_NE( string{e.what()}.find("isn't insertable"), string::npos ) << e.what();
+		}
+		EXPECT_EQ( Json::AsSV(rows().at(rpm1), "displayName"), "motorRpm" ) << "the refusals wrote nothing";
+	}
+
+	//A restart with the server down serves the attributes from the rows (spec *Open questions* #7):  a group on a connection nothing
+	//answers at, its member's columns written as the collector writes them, then the group deleted and restored - the load a restart
+	//makes - and the host carries them before, and without, any item;  histGroupNodes serves them the while.
+	TEST_F( HistGroupTests, ARestartWithTheServerDownReadsTheColumnsBack ){
+		let connection = GetConnection( "dead-0-2", "opc.tcp://127.0.0.1:4863", "urn:jde:dead-0-2" ).Id;//a port nothing listens on, beside the throwaway servers' 4855-4861.
+		absl::Cleanup purgeConnection = [=]{ PurgeServerCnnctn( connection ); };
+		let groupId = Id( Mutate("createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }", {{"name", "Dead 0.2"}, {"slug", "dead-0-2"}, {"connection", connection}}) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let index = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}}) );//by URI:  spelled without the server.
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_TRUE( host->Attributes(index) );
+		EXPECT_FALSE( host->Attributes(index)->DisplayName ) << "nothing has described it";
+		HistNodeAttributes written;
+		written.DisplayName = "motorRpm";
+		written.Description = "Measured motor speed, rpm.";
+		written.DataType = ExNodeId{ jvalue{jobject{{"nsu", Ns0Uri}, {"i", UA_NS0ID_DOUBLE}}} };
+		written.ValueRank = -1;
+		written.ArrayDimensions = vector<uint32>{ 4, 2 };
+		written.AccessLevel = 3;
+		written.EURange = Opc::Hist::Range{ 0, 3000 };
+		written.EngineeringUnits = HistEngineeringUnits{ "http://www.opcfoundation.org/UA/units/un/cefact", 4404, "rpm", "revolutions per minute" };
+		written.Path = vector<HistPathSegment>{ {string{PumpsUri}, "pump3"}, {string{PumpsUri}, "motorRpm"} };
+		DS()->ExecuteSync( UpdateHistNodeAttributesSql(index, written) );
+
+		Mutate( "deleteHistGroup( id:$id )", {{"id", groupId}} );
+		EXPECT_FALSE( HistHost::Instance().Find(groupId) );
+		Mutate( "restoreHistGroup( id:$id )", {{"id", groupId}} );
+		host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		EXPECT_EQ( host->Subscribed(), 0u ) << "the server is down";
+		let a = host->Attributes( index );
+		ASSERT_TRUE( a );
+		EXPECT_EQ( a->DisplayName, written.DisplayName );
+		EXPECT_EQ( a->Description, written.Description );
+		ASSERT_TRUE( a->DataType && a->ArrayDimensions && a->EURange && a->EngineeringUnits && a->Path );
+		EXPECT_EQ( *a->DataType, *written.DataType );
+		EXPECT_EQ( a->ValueRank, -1 );
+		EXPECT_EQ( *a->ArrayDimensions, (vector<uint32>{4, 2}) );
+		EXPECT_EQ( a->AccessLevel, 3 );
+		EXPECT_EQ( a->EURange->Low, 0 ); EXPECT_EQ( a->EURange->High, 3000 );
+		EXPECT_EQ( a->EngineeringUnits->NamespaceUri, written.EngineeringUnits->NamespaceUri );
+		EXPECT_EQ( a->EngineeringUnits->UnitId, 4404 );
+		EXPECT_EQ( a->EngineeringUnits->DisplayName, "rpm" );
+		EXPECT_EQ( a->EngineeringUnits->Description, "revolutions per minute" );
+		EXPECT_EQ( HistPathText(*a->Path), HistPathText(*written.Path) );
+		let rows = Rows( "histGroupNodes( histGroupId:$g ){ id displayName dataType valueRank arrayDimensions accessLevel euRange engineeringUnits path }", {{"g", groupId}} );
+		ASSERT_EQ( rows.size(), 1u );
+		let& row = rows[0].as_object();
+		EXPECT_EQ( Json::AsSV(row, "displayName"), "motorRpm" );
+		EXPECT_EQ( Json::AsSV(row, "dataType"), ns0(UA_NS0ID_DOUBLE) );
+		EXPECT_EQ( Json::AsSV(row, "arrayDimensions"), "[4,2]" );
+		EXPECT_EQ( Json::AsSV(row, "path"), pathText(PumpsUri, {"pump3", "motorRpm"}) );
+		EXPECT_EQ( Json::AsNumber<int>(Json::Parse(Json::AsString(row, "engineeringUnits"), SRCE_CUR), "unitId"), 4404 );
+	}
+	//A source's unknown range, {NaN, NaN}, reads back as written, in Part 6's spelling;  and a cell that doesn't parse is none,
+	//not a select that fails - the startup load's among them, which stopped the gateway (reviews-issue/servers-0.2-node-columns.md #1).
+	TEST_F( HistGroupTests, ANonFiniteRangeAndAnUnreadableCellReadBack ){
+		let connection = GetConnection( "dead-0-2-nan", "opc.tcp://127.0.0.1:4863", "urn:jde:dead-0-2-nan" ).Id;//nothing listens, as above.
+		absl::Cleanup purgeConnection = [=]{ PurgeServerCnnctn( connection ); };
+		let groupId = Id( Mutate("createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection ){ id }", {{"name", "Dead NaN"}, {"slug", "dead-0-2-nan"}, {"connection", connection}}) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let index = Id( Mutate("createHistGroupNode( histGroupId:$g, node:$node ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}}) );
+		let selected = [=]{//the row, as the host's load selects it.
+			auto rows = BlockAwait<HistRowsAwait<HistGroupNodeRow>,vector<HistGroupNodeRow>>( SelectHistGroupNodes({.Id=index}) );
+			THROW_IF( rows.size()!=1, "{} rows for {}.", rows.size(), index );
+			return move( rows.front().Attributes );
+		};
+		HistNodeAttributes written;
+		written.DisplayName = "motorRpm";
+		written.EURange = Opc::Hist::Range{ std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::infinity() };
+		DS()->ExecuteSync( UpdateHistNodeAttributesSql(index, written) );
+		let range = selected().EURange;
+		ASSERT_TRUE( range );
+		EXPECT_TRUE( std::isnan(range->Low) );
+		EXPECT_EQ( range->High, -std::numeric_limits<double>::infinity() );
+		let rows = Rows( "histGroupNodes( histGroupId:$g ){ id euRange }", {{"g", groupId}} );
+		ASSERT_EQ( rows.size(), 1u );
+		EXPECT_EQ( Json::AsSV(rows[0].as_object(), "euRange"), R"({"low":"NaN","high":"-Infinity"})" );
+
+		auto unreadable = UpdateHistNodeAttributesSql( index, written );
+		unreadable.Params[6] = DB::Value{ string{R"({"low":null,"high":1})"} };//eu_range, a NaN as Boost.JSON spells it.
+		unreadable.Params[8] = DB::Value{ string{R"([{"nsu":"urn:x","name":""}])"} };//path, a segment ParseHistPath refuses.
+		DS()->ExecuteSync( move(unreadable) );
+		HistNodeAttributes a;
+		ASSERT_NO_THROW( a = selected() ) << "the select holds";
+		EXPECT_FALSE( a.EURange );
+		EXPECT_FALSE( a.Path );
+		EXPECT_EQ( a.DisplayName, "motorRpm" ) << "the row's other cells still read";
+	}
+	//A browse name that makes no segment - an empty name, which a server may give outside namespace 0 - ends the walk with no path,
+	//since ParseHistPath would refuse the row (reviews-issue/servers-0.2-node-columns.md #2):  the node's own, and an ancestor's.
+	TEST_F( HistGroupTests, ABrowseNameWithoutANameEndsThePath ){
+		constexpr UA_UInt32 Unnamed{ 9030 }, Under{ 9031 }, Folder{ 9032 };//added here:  Objects/"" a variable, Objects/""/under a folder's.
+		auto& ua = *Server::GetUAServer().Ptr();
+		ASSERT_EQ( UA_Server_addObjectNode(&ua, Node(Folder), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+			UA_QUALIFIEDNAME(_ns, (char*)""), UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), UA_ObjectAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [=]{
+			for( let id : {Unnamed, Under, Folder} )
+				UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(id), true );
+		};
+		for( let& [id, parent, name, displayName] : {std::tuple{Unnamed, NodeId::ObjectsFolder(), "", "unnamed"}, std::tuple{Under, Node(Folder), "under", "under"}} ){
+			auto attributes = UA_VariableAttributes_default;
+			UA_Int32 zero{};
+			UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+			attributes.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+			attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)displayName );//one of its own:  an empty one is null, as unread.
+			ASSERT_EQ( UA_Server_addVariableNode(&ua, Node(id), parent, UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)name),
+				UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD ) << displayName;
+		}
+		let groupId = Id( CreateGroup("unnamed-paths", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		AddNode( groupId, Unnamed );
+		AddNode( groupId, Under );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		jarray rows;
+		let described = WaitUntil( [&]{
+			rows = Rows( "histGroupNodes( histGroupId:$g ){ id displayName path }", {{"g", groupId}} );
+			return rows.size()==2 && std::ranges::all_of( rows, []( let& r ){ return !r.as_object().at("displayName").is_null(); } );
+		}, 15s );
+		ASSERT_TRUE( described ) << serialize( rows );
+		for( let& row : rows ){
+			let& o = row.as_object();
+			EXPECT_TRUE( o.at("path").is_null() ) << serialize( o );
+			let attributes = host->Attributes( Id(o) );
+			ASSERT_TRUE( attributes );
+			EXPECT_FALSE( attributes->Path ) << HistPathText( *attributes->Path );
+		}
+	}
+	//A server whose operation limits refuse a whole group's requests (reviews-issue/servers-0.2-node-columns.md #3):  Describe asks of
+	//fewer nodes at a time until it takes them, and the members, which share their pumps, get their paths with each pump browsed
+	//once (#9).  Six members, 36 attribute reads, against limits that take three nodes' worth.
+	TEST_F( HistGroupTests, ALimitedServerIsDescribedInBatches ){
+		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
+		let limits = std::tuple{ config.maxNodesPerRead, config.maxNodesPerBrowse, config.maxNodesPerTranslateBrowsePathsToNodeIds };
+		config.maxNodesPerRead = 18; config.maxNodesPerBrowse = 3; config.maxNodesPerTranslateBrowsePathsToNodeIds = 9;
+		absl::Cleanup restore = [&]{ std::tie( config.maxNodesPerRead, config.maxNodesPerBrowse, config.maxNodesPerTranslateBrowsePathsToNodeIds ) = limits; };
+		let groupId = Id( CreateGroup("limited", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		vector<std::tuple<uint32,sv,sv>> expected;//row, pump, browse name.
+		for( let [node, pump, name] : {std::tuple{Status1, "pump1", "status"}, std::tuple{Rpm1, "pump1", "motorRpm"}, std::tuple{Status2, "pump2", "status"}, std::tuple{Rpm2, "pump2", "motorRpm"}, std::tuple{Status3, "pump3", "status"}, std::tuple{Rpm3, "pump3", "motorRpm"}} )
+			expected.emplace_back( AddNode(groupId, node), pump, name );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 6) );
+		jarray rows;
+		let described = WaitUntil( [&]{
+			rows = Rows( "histGroupNodes( histGroupId:$g ){ id displayName path euRange }", {{"g", groupId}} );
+			return rows.size()==6 && std::ranges::all_of( rows, []( let& r ){ return !r.as_object().at("displayName").is_null() && !r.as_object().at("path").is_null(); } );
+		}, 15s );
+		ASSERT_TRUE( described ) << serialize( rows );
+		flat_map<uint32,jobject> byId;
+		for( let& r : rows )
+			byId.emplace( Id(r), r.as_object() );
+		for( let& [id, pump, name] : expected ){
+			let row = byId.find( id );
+			ASSERT_NE( row, byId.end() ) << id;
+			EXPECT_EQ( Json::AsSV(row->second, "path"), pathText(PumpsUri, {pump, name}) ) << id;
+		}
+		EXPECT_FALSE( byId.at(std::get<0>(expected.back())).at("euRange").is_null() ) << "pump3's motorRpm:  the ranges were read under the limits too";
+	}
+	//A describe that finds a member's attributes as its row holds them writes nothing (reviews-issue/servers-0.2-node-columns.md #8):  a
+	//reconnect of a large group made a round trip a member that changed nothing.  Two statuses described with their ranges refused, so
+	//the watch asks again, one a batch;  meanwhile status1's row is marked, and status2 renamed on the server.  The second describe
+	//writes status2's row and not status1's, whose pass came first.
+	TEST_F( HistGroupTests, AnUnchangedRowIsNotWrittenAgain ){
+		auto& ua = *Server::GetUAServer().Ptr();
+		auto& config = *UA_Server_getConfig( &ua );
+		let limit = config.maxNodesPerTranslateBrowsePathsToNodeIds;
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = 1;//a node's three range paths too many:  each is Undescribed, and one a batch.
+		absl::Cleanup restore = [&]{ config.maxNodesPerTranslateBrowsePathsToNodeIds = limit; };
+		UA_LocalizedText name;
+		ASSERT_EQ( UA_Server_readDisplayName(&ua, Node(Status2), &name), UA_STATUSCODE_GOOD );
+		absl::Cleanup rename = [&]{ UA_Server_writeDisplayName( &ua, Node(Status2), name ); UA_LocalizedText_clear( &name ); };
+		let groupId = Id( CreateGroup("unchanged", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let status1 = AddNode( groupId, Status1 ), status2 = AddNode( groupId, Status2 );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		let displayName = [&]( uint32 index )->optional<string>{//the row's.
+			for( let& r : Rows("histGroupNodes( histGroupId:$g ){ id displayName }", {{"g", groupId}}) ){
+				if( Id(r)==index )
+					return r.as_object().at( "displayName" ).is_null() ? nullopt : optional<string>{ string{Json::AsSV(r.as_object(), "displayName")} };
+			}
+			return nullopt;
+		};
+		ASSERT_TRUE( WaitUntil([&]{ return displayName(status1) && displayName(status2); }, 15s) );
+		auto marked = *host->Attributes( status1 );
+		marked.DisplayName = "marked";
+		DS()->ExecuteSync( UpdateHistNodeAttributesSql(status1, marked) );
+		ASSERT_EQ( UA_Server_writeDisplayName(&ua, Node(Status2), UA_LocalizedText{name.locale, UA_STRING((char*)"renamed")}), UA_STATUSCODE_GOOD );//in its own locale:  another would be a second text, not this one renamed.
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = limit;
+		host->Redescribe();
+		ASSERT_TRUE( WaitUntil([&]{ return displayName(status2)=="renamed"; }, 15s) ) << displayName( status2 ).value_or( "null" );
+		EXPECT_EQ( displayName(status1), "marked" ) << "status1's describe found what its node had, and wrote nothing";
+		EXPECT_EQ( host->Attributes(status1)->DisplayName, "status" );
+	}
+	//One Describe at a time (reviews-issue/servers-0.2-node-columns.md #6), so two can't write a node's row out of order:  a member
+	//created while another's describe is out waits for it, and is described after.  Status1's ranges are refused, so the watch's
+	//Redescribe of it is a describe of several round trips, and status2 joins while it is out.
+	TEST_F( HistGroupTests, ADescribeAskedForWhileOneIsOutFollowsIt ){
+		auto& config = *UA_Server_getConfig( Server::GetUAServer().Ptr() );
+		let limit = config.maxNodesPerTranslateBrowsePathsToNodeIds;
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = 1;
+		absl::Cleanup restore = [&]{ config.maxNodesPerTranslateBrowsePathsToNodeIds = limit; };
+		let groupId = Id( CreateGroup("one-describe", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let status1 = AddNode( groupId, Status1 );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		let described = [&]( uint32 index ){
+			for( let& r : Rows("histGroupNodes( histGroupId:$g ){ id displayName path }", {{"g", groupId}}) ){
+				if( Id(r)==index )
+					return !r.as_object().at( "displayName" ).is_null() && !r.as_object().at( "path" ).is_null();
+			}
+			return false;
+		};
+		ASSERT_TRUE( WaitUntil([&]{ return described(status1); }, 15s) );
+		config.maxNodesPerTranslateBrowsePathsToNodeIds = limit;
+		host->Redescribe();
+		let status2 = AddNode( groupId, Status2 );
+		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
+		ASSERT_TRUE( WaitUntil([&]{ return described(status2); }, 15s) ) << "status2's describe waited, and ran";
+		ASSERT_NO_THROW( WaitDescribed(host, status1) ) << "the Redescribe's ranges";
+		ASSERT_NO_THROW( WaitDescribed(host, status2) );
+	}
+	//An empty DisplayName is the server's answer, stored as such, not as the null of a node never read
+	//(reviews-issue/servers-0.2-node-columns.md #7).
+	TEST_F( HistGroupTests, AnEmptyDisplayNameIsStored ){
+		constexpr UA_UInt32 Blank{ 9034 };//added here, its DisplayName written empty after the add, which fills one from the browse name.
+		auto& ua = *Server::GetUAServer().Ptr();
+		auto attributes = UA_VariableAttributes_default;
+		UA_Int32 zero{};
+		UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+		attributes.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+		attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+		ASSERT_EQ( UA_Server_addVariableNode(&ua, Node(Blank), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)"blank"),
+			UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [=]{ UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(Blank), true ); };
+		UA_LocalizedText name;
+		ASSERT_EQ( UA_Server_readDisplayName(&ua, Node(Blank), &name), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( UA_Server_writeDisplayName(&ua, Node(Blank), UA_LocalizedText{name.locale, UA_STRING_NULL}), UA_STATUSCODE_GOOD );
+		UA_LocalizedText_clear( &name );
+		ASSERT_EQ( UA_Server_readDisplayName(&ua, Node(Blank), &name), UA_STATUSCODE_GOOD );
+		let empty = !name.text.length;
+		UA_LocalizedText_clear( &name );
+		ASSERT_TRUE( empty ) << "the server keeps an empty DisplayName";
+		let groupId = Id( CreateGroup("blank-name", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let index = AddNode( groupId, Blank );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		jobject row;
+		ASSERT_TRUE( WaitUntil([&]{ row = Rows( "histGroupNodes( histGroupId:$g ){ id displayName path }", {{"g", groupId}} ).at( 0 ).as_object(); return !row.at("path").is_null(); }, 15s) ) << serialize( row );
+		ASSERT_FALSE( row.at("displayName").is_null() ) << "described:  its path is";
+		EXPECT_EQ( Json::AsSV(row, "displayName"), "" );
+		let carried = host->Attributes( index );
+		ASSERT_TRUE( carried );
+		EXPECT_EQ( carried->DisplayName, "" );
+	}
+	//One walk up to the Objects folder for a member's row and its node page (ParentPathsAwait, reviews-issue/servers-0.2-node-columns.md
+	//#10), to the page's depth:  a member 33 folders down has a path on its row, where the row's own walk stopped at 32.  A level a
+	//round trip, which on this suite's client is half a second;  BrowseTests.PathFromId has the page's side.
+	TEST_F( HistGroupTests, ADeepMemberHasItsPath ){
+		constexpr UA_UInt32 FirstFolder{ 9100 }, Depth{ 33 }, Deep{ FirstFolder+Depth };//added here:  Objects/d0/…/d32/deep.
+		auto& ua = *Server::GetUAServer().Ptr();
+		absl::Cleanup remove = [=]{
+			for( UA_UInt32 id=FirstFolder; id<=Deep; ++id )
+				UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(id), true );
+		};
+		vector<string> names;
+		for( UA_UInt32 d=0; d<Depth; ++d ){
+			names.push_back( Ƒ("d{}", d) );
+			ASSERT_EQ( UA_Server_addObjectNode(&ua, Node(FirstFolder+d), d ? Node(FirstFolder+d-1) : NodeId::ObjectsFolder(), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+				UA_QUALIFIEDNAME(_ns, names.back().data()), UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), UA_ObjectAttributes_default, nullptr, nullptr), UA_STATUSCODE_GOOD ) << d;
+		}
+		names.push_back( "deep" );
+		auto attributes = UA_VariableAttributes_default;
+		UA_Int32 zero{};
+		UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+		attributes.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+		attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+		ASSERT_EQ( UA_Server_addVariableNode(&ua, Node(Deep), Node(FirstFolder+Depth-1), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)"deep"),
+			UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		let groupId = Id( CreateGroup("deep", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		AddNode( groupId, Deep );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		jobject row;
+		ASSERT_TRUE( WaitUntil([&]{ row = Rows( "histGroupNodes( histGroupId:$g ){ id path }", {{"g", groupId}} ).at( 0 ).as_object(); return !row.at("path").is_null(); }, 45s) ) << serialize( row );
+		let path = ParseHistPath( Json::AsSV(row, "path"), SRCE_CUR );
+		ASSERT_EQ( path.size(), names.size() );
+		for( uint i=0; i<names.size(); ++i ){
+			EXPECT_EQ( path[i].Name, names[i] ) << i;
+			EXPECT_EQ( path[i].Uri, PumpsUri ) << i;
+		}
+	}
+	//A server's text longer than its column (reviews-issue/servers-0.2-node-columns.md #4) fails the row's whole update on mysql and
+	//SQL Server, while sqlite, these suites' database, takes any length:  so each written length is held to the meta's here.
+	TEST_F( HistGroupTests, OverLongTextsFitTheirColumns ){
+		let view = GetViewPtr( HistTable::GroupNodes );
+		let length = [&]( sv column )->uint { return view->GetColumnPtr( column )->MaxLength.value_or( 0 ); };
+		constexpr UA_UInt32 Long{ 9033 };//added here, its DisplayName and Description past their columns.
+		let displayName = string( length("display_name")+44, 'n' ), description = string( length("description")+952, 'd' );
+		auto& ua = *Server::GetUAServer().Ptr();
+		auto attributes = UA_VariableAttributes_default;
+		UA_Int32 zero{};
+		UA_Variant_setScalar( &attributes.value, &zero, &UA_TYPES[UA_TYPES_INT32] );
+		attributes.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
+		attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+		attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)displayName.c_str() );
+		attributes.description = UA_LOCALIZEDTEXT( (char*)"", (char*)description.c_str() );
+		ASSERT_EQ( UA_Server_addVariableNode(&ua, Node(Long), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)"long"),
+			UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr), UA_STATUSCODE_GOOD );
+		absl::Cleanup remove = [=]{ UA_Server_deleteNode( Server::GetUAServer().Ptr(), Node(Long), true ); };
+		let groupId = Id( CreateGroup("long-texts", nullopt, nullopt) );
+		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+		let index = AddNode( groupId, Long );
+		auto host = HistHost::Instance().Find( groupId );
+		ASSERT_TRUE( host );
+		ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+		let row = [&]{ return Rows( "histGroupNodes( histGroupId:$g ){ id displayName description arrayDimensions engineeringUnits path }", {{"g", groupId}} ).at( 0 ).as_object(); };
+		jobject described;
+		ASSERT_TRUE( WaitUntil([&]{ described = row(); return !described.at("displayName").is_null(); }, 15s) ) << serialize( described );
+		EXPECT_EQ( Json::AsSV(described, "displayName"), displayName.substr(0, length("display_name")) );
+		EXPECT_EQ( Json::AsSV(described, "description"), description.substr(0, length("description")) );
+		let carried = host->Attributes( index );
+		ASSERT_TRUE( carried && carried->Description );
+		EXPECT_EQ( carried->Description->size(), length("description") ) << "the host carries what its row holds";
+
+		//What no nodeset here gives:  a cut through a character, units, dimensions and a path past theirs.
+		HistNodeAttributes a;
+		a.DisplayName = string( length("display_name")-1, 'n' )+"é";//its two bytes straddle the length.
+		a.ArrayDimensions = vector<uint32>( 40, std::numeric_limits<uint32>::max() );
+		a.EngineeringUnits = HistEngineeringUnits{ "http://www.opcfoundation.org/UA/units/un/cefact", 4404, "rpm", string(length("engineering_units"), 'u') };
+		a.Path = vector<HistPathSegment>( 64, {string{PumpsUri}, string(100, 'p')} );
+		a.FitColumns();
+		EXPECT_EQ( a.DisplayName, string(length("display_name")-1, 'n') ) << "cut before the é, not through it";
+		EXPECT_FALSE( a.ArrayDimensions );
+		ASSERT_TRUE( a.EngineeringUnits );
+		EXPECT_EQ( a.EngineeringUnits->DisplayName, "rpm" ) << "the description gives way first";
+		EXPECT_FALSE( a.Path );
+		DS()->ExecuteSync( UpdateHistNodeAttributesSql(index, a) );
+		let fitted = row();
+		EXPECT_EQ( Json::AsSV(fitted, "engineeringUnits").size(), length("engineering_units") ) << "the description cut to fit, exactly";
+		EXPECT_TRUE( fitted.at("arrayDimensions").is_null() && fitted.at("path").is_null() ) << serialize( fitted );
+	}
 }

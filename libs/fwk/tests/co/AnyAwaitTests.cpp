@@ -3,6 +3,7 @@
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
+#include <jde/tests/WaitUntil.h>
 #include <atomic>
 #include <latch>
 #include <thread>
@@ -12,12 +13,9 @@
 namespace Jde::Tests{
 	struct AnyAwaitTests : public ::testing::Test{};
 
-	Ω settle( const std::atomic<uint>& completed, uint expected )->bool{
-		let deadline = steady_clock::now()+5s;
-		while( completed!=expected && steady_clock::now()<deadline )
-			std::this_thread::sleep_for( 1ms );
-		return completed==expected;
-	}
+	//A case resumed from another thread co-owns its tallies with the coroutine:  on a settle() timeout the test returns,
+	//and a resume landing after that writes them through the frame, not through the test's dead stack.
+	Ω settle( const std::atomic<uint>& completed, uint expected )->bool{ return WaitUntil( [&]{ return completed.load()==expected; }, 5s, 1ms ); }
 
 	struct TestException final : Exception{
 		TestException( string what, SRCE )ι:Exception{ move(what), {}, sl }{}
@@ -100,19 +98,19 @@ namespace Jde::Tests{
 		EXPECT_TRUE( okTyped.load() );
 	}
 
-	Ω adapterBridges( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω adapterBridges( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		let i = co_await Any( OldInt{7} );	//rvalue - the adapter owns the inner awaitable.
 		OldInt local{ 9 };
 		let j = co_await Any( local );	//lvalue - the adapter holds a reference.
 		co_await Any( OldVoid{} );
-		ok = i==7 && j==9;
-		++completed;
+		*ok = i==7 && j==9;
+		++*completed;
 	}
 	TEST_F( AnyAwaitTests, AdapterBridgesExistingAwaitables ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		adapterBridges( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "the adapter never resumed its awaiter";
-		EXPECT_TRUE( ok.load() );
+		ASSERT_TRUE( settle(*completed, 1) ) << "the adapter never resumed its awaiter";
+		EXPECT_TRUE( ok->load() );
 	}
 
 	//The relay is promise.SetExp -> glue catch -> adapter ResumeExp -> await_resume rethrow; every hop uses
@@ -132,17 +130,17 @@ namespace Jde::Tests{
 		EXPECT_TRUE( ok.load() ) << "TestException arrived sliced to a base type";
 	}
 
-	Ω crossThread( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω crossThread( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		let s = co_await ThreadedAny<string>{ "from another thread" };
 		let i = co_await Any( OldInt{3} );	//the old-style inner also resumes from its own thread.
-		ok = s=="from another thread" && i==3;
-		++completed;
+		*ok = s=="from another thread" && i==3;
+		++*completed;
 	}
 	TEST_F( AnyAwaitTests, CrossThreadResume ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		crossThread( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "a cross-thread resume was lost";
-		EXPECT_TRUE( ok.load() );
+		ASSERT_TRUE( settle(*completed, 1) ) << "a cross-thread resume was lost";
+		EXPECT_TRUE( ok->load() );
 	}
 
 	//await_ready()==true consumes the pre-set result/error without ever suspending - possible because the
@@ -267,17 +265,17 @@ namespace Jde::Tests{
 	Ω threadedBody( int& value )->AnyVoidTask{
 		value = co_await ThreadedAny<int>{ 5 };
 	}
-	Ω awaitThreaded( std::atomic<uint>& completed, std::atomic<bool>& ok )->TTask<uint32>{
+	Ω awaitThreaded( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->TTask<uint32>{
 		int value{};
 		co_await threadedBody( value );//a prvalue:  the temporary lives across the suspension.
-		ok = value==5;
-		++completed;
+		*ok = value==5;
+		++*completed;
 	}
 	TEST_F( AnyAwaitTests, AnyVoidTaskResumesAcrossThreads ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		awaitThreaded( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "the task's end never resumed its typed awaiter";
-		EXPECT_TRUE( ok.load() );
+		ASSERT_TRUE( settle(*completed, 1) ) << "the task's end never resumed its typed awaiter";
+		EXPECT_TRUE( ok->load() );
 	}
 
 	Ω throwingBody()->AnyVoidTask{
@@ -292,31 +290,32 @@ namespace Jde::Tests{
 		co_await InlineVoidAny{};
 		throw std::logic_error{ "a logic_error" };
 	}
-	Ω awaitThrowing( std::atomic<uint>& completed, std::atomic<bool>& typed, std::atomic<bool>& wrapped, std::atomic<bool>& unknown )->VoidTask{
+	struct Rethrown{ std::atomic<uint> Completed{}; std::atomic<bool> Typed{}, Wrapped{}, Unknown{}; };
+	Ω awaitThrowing( sp<Rethrown> r )->VoidTask{
 		try{
 			co_await throwingBody();
 		}
-		catch( const TestException& e ){ typed = string{e.what()}.contains("task boom"); }
-		catch( ... ){ typed = false; }
+		catch( const TestException& e ){ r->Typed = string{e.what()}.contains("task boom"); }
+		catch( ... ){ r->Typed = false; }
 		try{
 			co_await plainThrowingBody();
 		}
-		catch( const Exception& e ){ wrapped = string{e.what()}.contains("plain task runtime_error"); }
-		catch( ... ){ wrapped = false; }
+		catch( const Exception& e ){ r->Wrapped = string{e.what()}.contains("plain task runtime_error"); }
+		catch( ... ){ r->Wrapped = false; }
 		try{
 			co_await logicThrowingBody();
 		}
-		catch( const Exception& e ){ unknown = string{e.what()}.contains("Unknown exception"); }
-		catch( ... ){ unknown = false; }
-		++completed;
+		catch( const Exception& e ){ r->Unknown = string{e.what()}.contains("Unknown exception"); }
+		catch( ... ){ r->Unknown = false; }
+		++r->Completed;
 	}
 	TEST_F( AnyAwaitTests, AnyVoidTaskRethrowsInTheAwaiter ){
-		std::atomic<uint> completed{}; std::atomic<bool> typed{}, wrapped{}, unknown{};
-		awaitThrowing( completed, typed, wrapped, unknown );
-		ASSERT_TRUE( settle(completed, 1) ) << "an exception stranded the awaiter";
-		EXPECT_TRUE( typed.load() ) << "the thrown subclass must reach the awaiter's handler";
-		EXPECT_TRUE( wrapped.load() ) << "a runtime_error is wrapped, keeping its text";
-		EXPECT_TRUE( unknown.load() ) << "and anything else still resumes the awaiter";
+		auto r = ms<Rethrown>();
+		awaitThrowing( r );
+		ASSERT_TRUE( settle(r->Completed, 1) ) << "an exception stranded the awaiter";
+		EXPECT_TRUE( r->Typed.load() ) << "the thrown subclass must reach the awaiter's handler";
+		EXPECT_TRUE( r->Wrapped.load() ) << "a runtime_error is wrapped, keeping its text";
+		EXPECT_TRUE( r->Unknown.load() ) << "and anything else still resumes the awaiter";
 	}
 
 	Ω holdingBody( sp<int> held, std::atomic<bool>& ran )->AnyVoidTask{
@@ -362,69 +361,69 @@ namespace Jde::Tests{
 		int _v; sp<std::latch> _started;
 	};
 
-	Ω allMixedVoid( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω allMixedVoid( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		auto [i, s, _, j] = co_await All( ThreadedAny<int>{1}, InlineAny<string>{"abc"}, OldVoid{}, OldInt{7} );//Any and IAwait slots, a void one, none wrapped.
-		ok = i==1 && s=="abc" && j==7;
-		++completed;
+		*ok = i==1 && s=="abc" && j==7;
+		++*completed;
 	}
-	Ω allMixedTyped( std::atomic<uint>& completed, std::atomic<bool>& ok )->TTask<uint32>{
+	Ω allMixedTyped( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->TTask<uint32>{
 		auto [i, s] = co_await All( OldInt{3}, ThreadedAny<string>{"x"} );//neither slot's type is the task's result type.
-		ok = i==3 && s=="x";
-		++completed;
+		*ok = i==3 && s=="x";
+		++*completed;
 	}
 	TEST_F( AllAwaitTests, MixedFamiliesFromVoidAndTypedTasks ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{}, okTyped{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>(), okTyped = ms<std::atomic<bool>>();
 		allMixedVoid( completed, ok );
 		allMixedTyped( completed, okTyped );
-		ASSERT_TRUE( settle(completed, 2) ) << "a coroutine never completed";
-		EXPECT_TRUE( ok.load() );
-		EXPECT_TRUE( okTyped.load() );
+		ASSERT_TRUE( settle(*completed, 2) ) << "a coroutine never completed";
+		EXPECT_TRUE( ok->load() );
+		EXPECT_TRUE( okTyped->load() );
 	}
 
-	Ω allWaitsForTheSlower( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω allWaitsForTheSlower( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		std::atomic<bool> slowDone{};
 		try{
 			co_await All( DelayedThrowAny{"fast boom", 1ms}, ThreadedAny<int>{5, 50ms, &slowDone} );
-			ok = false;
+			*ok = false;
 		}
-		catch( TestException& e ){ ok = slowDone.load() && string{e.what()}.contains("fast boom"); }//resumed only once the slower slot had settled too.
-		catch( Exception& ){ ok = false; }//sliced.
-		++completed;
+		catch( TestException& e ){ *ok = slowDone.load() && string{e.what()}.contains("fast boom"); }//resumed only once the slower slot had settled too.
+		catch( Exception& ){ *ok = false; }//sliced.
+		++*completed;
 	}
 	TEST_F( AllAwaitTests, WaitsForTheSlowerSlotWhenOneFails ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		allWaitsForTheSlower( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "the awaiter never resumed";
-		EXPECT_TRUE( ok.load() ) << "a failure must wait for the other slots - nothing can be cancelled - and arrive as its own type";
+		ASSERT_TRUE( settle(*completed, 1) ) << "the awaiter never resumed";
+		EXPECT_TRUE( ok->load() ) << "a failure must wait for the other slots - nothing can be cancelled - and arrive as its own type";
 	}
 
-	Ω allThrowsFirstBySlot( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω allThrowsFirstBySlot( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		try{
 			co_await All( DelayedThrowAny{"slot0", 50ms}, DelayedThrowAny{"slot1", 1ms}, InlineAny<int>{1} );//slot1 fails first in time.
-			ok = false;
+			*ok = false;
 		}
-		catch( TestException& e ){ ok = string{e.what()}.contains("slot0"); }
-		catch( Exception& ){ ok = false; }
-		++completed;
+		catch( TestException& e ){ *ok = string{e.what()}.contains("slot0"); }
+		catch( Exception& ){ *ok = false; }
+		++*completed;
 	}
 	TEST_F( AllAwaitTests, ThrowsTheFirstFailingSlotBySlotOrder ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		allThrowsFirstBySlot( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "the awaiter never resumed";
-		EXPECT_TRUE( ok.load() ) << "the thrown failure must be the first by slot, not the first in time";
+		ASSERT_TRUE( settle(*completed, 1) ) << "the awaiter never resumed";
+		EXPECT_TRUE( ok->load() ) << "the thrown failure must be the first by slot, not the first in time";
 	}
 
-	Ω allGated( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω allGated( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		auto started = ms<std::latch>( 3 );
 		auto [a, b, c] = co_await All( GatedAny{1, started}, GatedAny{2, started}, GatedAny{3, started} );//none can finish until all three have started.
-		ok = a==1 && b==2 && c==3;
-		++completed;
+		*ok = a==1 && b==2 && c==3;
+		++*completed;
 	}
 	TEST_F( AllAwaitTests, StartsEverySlotBeforeAnyFinishes ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		allGated( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "a slot waited on an earlier one finishing - the slots did not all start first";
-		EXPECT_TRUE( ok.load() );
+		ASSERT_TRUE( settle(*completed, 1) ) << "a slot waited on an earlier one finishing - the slots did not all start first";
+		EXPECT_TRUE( ok->load() );
 	}
 
 	Ω allInline( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
@@ -446,20 +445,20 @@ namespace Jde::Tests{
 		EXPECT_THROW( BlockAwait(All(OldThrower{}, ThreadedAny<int>{1})), TestException );
 	}
 
-	Ω allLvalues( std::atomic<uint>& completed, std::atomic<bool>& ok )->VoidTask{
+	Ω allLvalues( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{
 		OldInt old{ 9 }; InlineAny<int> inl{ 3 };
 		auto all = All( old, inl, OldInt{1} );//the lvalues referenced, the rvalue owned.
 		static_assert( std::is_same_v<decltype(all), AllAwait<OldInt&,InlineAny<int>&,OldInt>> );
-		ok = all.Source().line()==old.Source().line();//the first slot's.
+		*ok = all.Source().line()==old.Source().line();//the first slot's.
 		auto [a, b, c] = co_await all;
-		ok = ok && a==9 && b==3 && c==1;
-		++completed;
+		*ok = *ok && a==9 && b==3 && c==1;
+		++*completed;
 	}
 	TEST_F( AllAwaitTests, ReferencesLvalueSlots ){
-		std::atomic<uint> completed{}; std::atomic<bool> ok{};
+		auto completed = ms<std::atomic<uint>>(); auto ok = ms<std::atomic<bool>>();
 		allLvalues( completed, ok );
-		ASSERT_TRUE( settle(completed, 1) ) << "the awaiter never resumed";
-		EXPECT_TRUE( ok.load() );
+		ASSERT_TRUE( settle(*completed, 1) ) << "the awaiter never resumed";
+		EXPECT_TRUE( ok->load() );
 	}
 
 	//the glue's own catch, not AnyAdapterExecute's:  raw IAwait slots whose await_resume throws a foreign exception.  A ResumeExp( runtime_error )

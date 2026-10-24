@@ -1,5 +1,5 @@
 cmake_minimum_required( VERSION ${MIN_REQ_CMAKE_VERSION} )
-include( ${CMAKE_CURRENT_LIST_DIR}/../../../build/functions.cmake )
+include( ${CMAKE_CURRENT_LIST_DIR}/../../../../build/functions.cmake )
 
 #Jde.Opc.Tests is already taken by apps/OpcGateway/tests - the gateway/server integration suite, which stands up an
 #embedded AppServer/OpcServer.  This is Jde.Opc's own unit suite: uatypes round trips, no server, no data source.
@@ -36,7 +36,7 @@ target_link_libraries( ${targetName} open62541::open62541 )
 target_link_libraries( ${targetName} fmt::fmt )
 
 #UADateTime returns google::protobuf::Timestamp/Duration, so the protobuf runtime is needed here and not only inside
-#Jde.Opc.  The imported target on both platforms, not the raw .lib path libs/opc/src uses: protobuf 35's generated code
+#Jde.Opc.  The imported target on both platforms, not the raw .lib path libs/opc/shared/src uses: protobuf 35's generated code
 #pulls absl, and only protobuf::libprotobuf carries that dependency chain (same reason apps/OpcServer/src names it).
 target_link_libraries( ${targetName} protobuf::libprotobuf )
 
