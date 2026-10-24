@@ -5,6 +5,7 @@
 //a subscription's snapshot and stream;  and an edit reaches the earlier index's records, an insert going under the index
 //whose start value it may move.
 #include "reads.h"
+#include <jde/fwk/co/BlockAwait.h>
 
 #define let const auto
 
@@ -88,7 +89,7 @@ namespace Jde::Opc::Hist::Tests{
 			Pump = Rejoin( name, {{Node("Pump1.Speed"), {}, Again}, {Node("Pump1.Temp"), {}, Temp}} );
 		}
 		α All( ReadRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{ return readAll( *Pump, move(request), pages ); }
-		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAny( Pump->Edit(move(details), Admin) ); }
+		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAwait( Pump->Edit(move(details), Admin) ); }
 		const TimePoint T0{ Time->Now() };
 		const TimePoint Eighth{ sys_days{March8} };
 		const TimePoint Tenth{ sys_days{March10} };

@@ -1,3 +1,4 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <absl/cleanup/cleanup.h>
 #include "utils/GatewayClientSocket.h"
@@ -71,7 +72,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//forwards it:  raw, over the AppServer socket.  The socket this test queries on holds one of them.
 	TEST_F( QLTests, sessions ){
 		auto q = QL::Parse( "sessions{ endpoint lastUpdate expiration }", {}, {}, true );
-		let value = BlockTAwait<jvalue>( move(*AppClient()->ClientQuery(move(q), AppClient()->UserPK())) );
+		let value = BlockAwait( move(*AppClient()->ClientQuery(move(q), AppClient()->UserPK())) );
 		ASSERT_TRUE( value.is_array() ) << serialize( value );
 		EXPECT_FALSE( value.as_array().empty() ) << "the querying socket's own session is one of them";
 	}
@@ -526,7 +527,7 @@ namespace Jde::Opc::Gateway::Tests{
 			ADD_FAILURE() << "the gateway's answer did not arrive as a GatewayErrorResponse: " << e.what();
 		}
 
-		BlockVoidAwait( session->Close(false, SRCE_CUR) );
+		BlockAwait( session->Close(false, SRCE_CUR) );
 		try{
 			session->QuerySync( q, vars );//no stream: Write fails the request through CloseTasks( not_connected ).
 			ADD_FAILURE() << "a query on a closed socket succeeded";

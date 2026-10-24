@@ -4,6 +4,7 @@
 //mutation, which is what lets these reach the stock crud ops; no data source is involved, and Resume/ResumeExp are synchronous,
 //so BlockAwait drives the coroutine on this thread.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ops/MutationAwait.h>
 #include "NullQL.h"
 

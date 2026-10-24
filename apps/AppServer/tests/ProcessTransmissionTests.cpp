@@ -1,3 +1,4 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/access/usings.h>
 #include <jde/ql/ql.h>
@@ -16,7 +17,7 @@ namespace Jde::App::Server::Tests{
 		α SetUp()->void override{ _session = Connect(); }
 		α TearDown()->void override{
 			if( _session )
-				BlockVoidAwait( _session->Close(true, SRCE_CUR) );
+				BlockAwait( _session->Close(true, SRCE_CUR) );
 			_session = nullptr;
 		}
 		//sends kSessionId 0 and expects its exception reply - proves the socket still round-trips after a hostile frame.
@@ -161,7 +162,7 @@ namespace Jde::App::Server::Tests{
 		auto other = Connect();
 		let denied = RegisterInstance( *other, "Tests.AuthResource", "pretender", "auth-host", 0, 1235, string{schema}, nobody );
 		EXPECT_FALSE( denied.AuthResult ) << "a user without Administer on the root may not stand in for the schema";
-		BlockVoidAwait( other->Close(true, SRCE_CUR) );
+		BlockAwait( other->Close(true, SRCE_CUR) );
 	}
 
 	//The delegated admin check end to end:  granting a role rights on ANOTHER schema's resource asks that schema's registered
@@ -210,6 +211,6 @@ namespace Jde::App::Server::Tests{
 			ASSERT_EQ( forwarded->value_case(), FromServerMessage::kExecute ) << "sent anonymously - the adopted session's user never reached the socket";
 			EXPECT_EQ( forwarded->execute().user_pk(), user.Value );
 		}
-		BlockVoidAwait( target->Close(true, SRCE_CUR) );//the forward is never answered; closing cancels it.
+		BlockAwait( target->Close(true, SRCE_CUR) );//the forward is never answered; closing cancels it.
 	}
 }

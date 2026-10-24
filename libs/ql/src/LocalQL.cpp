@@ -1,4 +1,5 @@
 #include <jde/ql/LocalQL.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/db/Row.h>
 #include <jde/db/generators/Functions.h>
 #include <jde/db/meta/AppSchema.h>
@@ -83,7 +84,7 @@ namespace Jde::QL{
 				if( auto name = m.Args.contains("name") ? nullptr : m.Args.if_contains("slug"); name )
 					m.Args["name"] = Json::AsString( *name );
 				if( auto t = key->IsPK() ? GetTablePtr(m.TableName()) : nullptr; t && t->SequenceColumn() )
-					y.push_back( BlockAny<InsertAwait>({t, move(m), executer, true}) );
+					y.push_back( BlockAwait<InsertAwait>({t, move(m), executer, true}) );
 				else
 					y.push_back( BlockAwait<QLAwait<jvalue>,jvalue>(QLAwait<jvalue>{move(m), executer}) );
 			}else

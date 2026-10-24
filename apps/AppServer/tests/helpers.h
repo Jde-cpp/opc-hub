@@ -1,6 +1,7 @@
 #pragma once
 #include <condition_variable>
 #include <thread>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/app/usings.h>
@@ -123,7 +124,7 @@ namespace Jde::App::Server::Tests{
 	Ξ Send( RawClientSession& session, function<void(FromClientMessage&)> fill )->RequestId{ return Send( session, session.NextRequestId(), move(fill) ); }
 	Ξ Connect()ε->sp<RawClientSession>{
 		auto session = ms<RawClientSession>( Executor() );
-		BlockVoidAwait( session->RunSession( string{Host}, Port() ) );
+		BlockAwait( session->RunSession( string{Host}, Port() ) );
 		return session;
 	}
 	//mints a server-side session bound to Host, the address raw client sockets connect from.

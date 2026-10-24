@@ -1,5 +1,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/QLAwait.h>
 #include "helpers.h"
 #include "../src/LocalClient.h"
@@ -76,7 +77,7 @@ namespace Jde::App::Server::Tests{
 	//another instance is asked over its socket - the same query less the instanceId - and its answer is the result.
 	TEST_F( WebSessionTests, ForwardsToTheInstance ){
 		auto client = Connect();
-		absl::Cleanup close{ [&]{ BlockVoidAwait( client->Close(true, SRCE_CUR) ); } };//an ASSERT below would leave the instance registered for later tests.
+		absl::Cleanup close{ [&]{ BlockAwait( client->Close(true, SRCE_CUR) ); } };//an ASSERT below would leave the instance registered for later tests.
 		let instanceId = RegisterInstance( *client, "Tests.WebSessions", "forwarded", "websession-host", 0 ).Instance;
 		let y = AskInstance( *client, Ƒ("sessions( instanceId:{} ){{ endpoint }}", instanceId), "sessions", [&](let& asked){
 			EXPECT_EQ( asked.client_query().query().find("instanceId"), string::npos ) << asked.client_query().query();
@@ -99,7 +100,7 @@ namespace Jde::App::Server::Tests{
 	//the socket's account, which may then end it without a grant (SessionGraphQL::Purge).
 	TEST_F( WebSessionTests, AddSessionRecordsWhoMintedIt ){
 		auto client = Connect();
-		absl::Cleanup close{ [&]{ BlockVoidAwait( client->Close(true, SRCE_CUR) ); } };
+		absl::Cleanup close{ [&]{ BlockAwait( client->Close(true, SRCE_CUR) ); } };
 		const Jde::UserPK gateway{ 1 };
 		RegisterInstance( *client, "Tests.WebSessions", "minting", "websession-host", 0, 1234, "", gateway );//the socket adopts gateway's session
 		let requestId = Send( *client, [](auto& m){

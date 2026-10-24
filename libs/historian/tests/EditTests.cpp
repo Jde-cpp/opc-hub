@@ -2,6 +2,7 @@
 //as Modification records to the day's modifications file once the buffer is flushed, fsynced before the caller is
 //answered, applied by raw reads and served by modified reads; and the start values that edits and late records keep
 //current:  each node's newest record, the walk back for a file made after its day, and the later files' preambles.
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/opc/UAException.h>
 #include "reads.h"
@@ -38,7 +39,7 @@ namespace Jde::Opc::Hist::Tests{
 			Time->AdvanceTo( Eighth+3min );
 			DataChange( *Pump, Speed, 4, Eighth+3min );
 		}
-		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAny( Pump->Edit(move(details), Admin) ); }
+		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAwait( Pump->Edit(move(details), Admin) ); }
 		α All( ReadRequest request, vector<uint>* pages=nullptr )ε->vector<ReadValue>{ return readAll( *Pump, move(request), pages ); }
 		α Mods( Day day )Ι->fs::path{ return Path()/DayDirectory( day )/( Pump->Name()+".mods.binpb" ); }
 		//The start value of index's last preamble record in day's file, as a reader takes it:  NoStart for a record with
@@ -638,10 +639,10 @@ namespace Jde::Opc::Hist::Tests{
 		auto other = AddGroup();
 		let flow = Join( *other, "Pump2.Flow" );
 		Library->RemoveGroup( other->Name() );
-		EXPECT_THROW( BlockAny(other->Edit({UpdateData{flow, UA_PERFORMUPDATETYPE_INSERT, {Reading(1, T0+5s)}}}, Admin)), Exception );
+		EXPECT_THROW( BlockAwait(other->Edit({UpdateData{flow, UA_PERFORMUPDATETYPE_INSERT, {Reading(1, T0+5s)}}}, Admin)), Exception );
 		auto group = Pump;
 		Library.reset();
-		EXPECT_THROW( BlockAny(group->Edit({UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(1, T0+5s)}}}, Admin)), Exception );
+		EXPECT_THROW( BlockAwait(group->Edit({UpdateData{Speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(1, T0+5s)}}}, Admin)), Exception );
 		Pump.reset();
 	}
 
@@ -652,7 +653,7 @@ namespace Jde::Opc::Hist::Tests{
 		SetValue( speed, 1 );
 		EXPECT_TRUE( Flush(*Server) );
 		const Writer operator1{ {{9}}, "operator" };
-		let results = BlockAny( Server->Edit({UpdateData{speed, UA_PERFORMUPDATETYPE_REPLACE, {Reading(1.5, first)}}, UpdateData{speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(2, first+1s)}}}, operator1) );
+		let results = BlockAwait( Server->Edit({UpdateData{speed, UA_PERFORMUPDATETYPE_REPLACE, {Reading(1.5, first)}}, UpdateData{speed, UA_PERFORMUPDATETYPE_INSERT, {Reading(2, first+1s)}}}, operator1) );
 		ASSERT_EQ( results.size(), 2 );
 		EXPECT_EQ( results[0].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYREPLACED}) );
 		EXPECT_EQ( results[1].Results, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED}) );

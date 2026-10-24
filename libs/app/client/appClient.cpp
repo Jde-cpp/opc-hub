@@ -1,5 +1,6 @@
 #include <jde/app/client/appClient.h>
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/ClientSsl.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
@@ -50,10 +51,10 @@ namespace Jde::App{
 		auto accessSchema = DB::GetAppSchema( "access", appClient->Acl() );
 		appClient->SubscriptionSchemas.push_back( accessSchema );
 		if( !appClient->IsLocal() )//OpcHub: the AppServer is this process - no login/socket; the hub set the pks and acl before calling.
-			BlockVoidAwait( ConnectAwait{appClient, retry, sl}, retry ? ELogLevel::Information : ELogLevel::Critical );//a retry's stall line capped at Information:  it read like a hang - a warning at 30 s, criticals after - beside the retry warnings that say what the wait is for (the 09-15 rerun's retry table).
+			BlockAwait( ConnectAwait{appClient, retry, sl}, retry ? ELogLevel::Information : ELogLevel::Critical );//a retry's stall line capped at Information:  it read like a hang - a warning at 30 s, criticals after - beside the retry warnings that say what the wait is for (the 09-15 rerun's retry table).
 		if( Settings::FindBool("/logging/loadFromServer").value_or(true) )
 			appClient->LoadLogSettings( sl );
-		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, move(localSchemas), UserPK{UserPK::System}, move(resourceSchema), sl) );
+		BlockAwait( appClient->ConfigureAccess(accessSchema, move(localSchemas), UserPK{UserPK::System}, move(resourceSchema), sl) );
 		Process::AddShutdownFunction( [listener=appClient->Listener()](bool terminate, SL sl){ listener->Shutdown(terminate, sl); } ); //as the AppServer does - the subscriptions otherwise outlive everything they reference (access-review3 #25).
 	}
 }

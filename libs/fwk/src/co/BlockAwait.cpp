@@ -1,12 +1,10 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <boost/asio/io_context.hpp>
-#include <jde/fwk/co/Await.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/fwk/process/process.h>
-#include <jde/fwk/settings.h>
 
 #define let const auto
-namespace Jde{
-	constexpr ELogTags _tags{ ELogTags::App | ELogTags::Threads };
+namespace Jde::Internal{
+	constexpr ELogTags _tags{ ELogTags::Threads };
 
 	//How long a blocked caller waits before it starts saying so; 0 disables the warning.  The wait itself is never bounded
 	//- see the note on BlockAwaitSync.

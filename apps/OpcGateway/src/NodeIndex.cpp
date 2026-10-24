@@ -92,7 +92,7 @@ namespace Jde::Opc::Gateway{
 					continue;
 				}
 				if( response->resultsSize<level.size() ){//the spec owes one result per description:  a short answer is a server fault.
-					Logging::LogOnce( SRCE_CUR, BrowseTag, "[{}]search index: a browse of {} nodes answered {} results.  Short answers log at Debug from here on.", hex(client->Handle()), level.size(), response->resultsSize );
+					Logging::LogOnce( SRCE_CUR, ELogLevel::Information, BrowseTag, "[{}]search index: a browse of {} nodes answered {} results.  Short answers log at Debug from here on.", hex(client->Handle()), level.size(), response->resultsSize );
 					DBGT( BrowseTag, "[{}]search index: a browse of {} nodes answered {} results.", hex(client->Handle()), level.size(), response->resultsSize );
 					batch = std::max<uint>( 1, batch/2 );
 					for( uint i=response->resultsSize; i<level.size(); ++i ){
@@ -122,7 +122,7 @@ namespace Jde::Opc::Gateway{
 						truncated = true;//the node and everything under it is missing.
 						if( !refused++ )
 							firstRefusal = rsc;
-						Logging::LogOnce( SRCE_CUR, BrowseTag, "[{}]search index: skipping '{}' ({}) - ({}){}.  Refusals log at Debug from here on.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
+						Logging::LogOnce( SRCE_CUR, ELogLevel::Information, BrowseTag, "[{}]search index: skipping '{}' ({}) - ({}){}.  Refusals log at Debug from here on.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
 						DBGT( BrowseTag, "[{}]search index: skipping '{}' ({}) - ({}){}.", hex(client->Handle()), parent.Path, parent.Id.ToString(), hex(rsc), UAException::Message(rsc) );
 						continue;
 					}

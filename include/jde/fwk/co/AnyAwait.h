@@ -73,8 +73,6 @@ namespace Jde{
 		optional<TResult> _result;
 	};
 
-	Τ using AwaitResult = decltype( std::declval<std::remove_reference_t<T>&>().await_resume() );//what a co_await of T gives;  T may be a reference.
-	Τ using AwaitValue = std::conditional_t<std::is_void_v<AwaitResult<T>>, std::monostate, AwaitResult<T>>;//storable:  void as std::monostate.
 	template<class R> using AnyAwaitFor = std::conditional_t<std::is_void_v<R>, AnyVoidAwait, AnyAwait<R>>;
 
 	Τ struct AnyAdapter;
@@ -91,41 +89,12 @@ namespace Jde{
 		AnyAdapter( T&& inner, SRCE )ι: base{sl}, _inner{ FWD(inner) }{}
 		α Inner()ι->TInner&{ return _inner; }
 	protected:
-		α Suspend()ι->void override{ AnyAdapterExecute( *this ); }	//discards the eager, self-destroying glue task - the BlockVoidAwaitExecute pattern.
+		α Suspend()ι->void override{ AnyAdapterExecute( *this ); }	//discards the eager, self-destroying glue task - the BlockAwaitExecute pattern.
 	private:
 		T _inner;
 	};
 
 	Ŧ Any( T&& inner, SRCE )ι->AnyAdapter<T>{ return AnyAdapter<T>{ FWD(inner), sl }; }
-
-	//The blocking bridge for this family:  BlockAwait (Await.h) launches its glue as the inner's ::Task, which these do not have, so
-	//the glue is a VoidTask.  Same contract otherwise - Wait() never gives up, but warns on an interval naming the awaitable's source.
-	template<class TAwait, class TResult>
-	α BlockAnyExecute( TAwait& a, BlockAwaitState<TResult>* s )ι->VoidTask{
-		try{
-			if constexpr( std::is_same_v<TResult,std::monostate> )
-				co_await a;
-			else
-				s->Result = co_await a;
-		}
-		catch( Exception& e ){
-			s->Error = e.Move();
-		}
-		s->Signal();
-	}
-	template<class TAwait>
-	α BlockAny( TAwait&& a )ε->AwaitResult<TAwait>{
-		using R = AwaitResult<TAwait>;
-		using S = AwaitValue<TAwait>;
-		BlockAwaitState<S> s;
-		const auto sl = a.Source();
-		BlockAnyExecute<std::remove_reference_t<TAwait>,S>( a, &s );
-		s.Wait( sl );
-		if( s.Error )
-			s.Error->Throw();
-		if constexpr( !std::is_void_v<R> )
-			return move( *s.Result );
-	}
 
 	Τ Ξ AnyAdapterExecute( AnyAdapter<T>& a )ι->typename std::remove_reference_t<T>::Task{
 		using R = typename AnyAdapter<T>::R;

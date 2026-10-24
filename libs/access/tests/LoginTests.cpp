@@ -2,6 +2,7 @@
 #include <openssl/x509_vfy.h>
 #include <jde/access/server/accessServer.h>
 #include <jde/access/server/awaits/LoginAwait.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/crypto/TrustStore.h>
 #include <jde/fwk/log/MemoryLog.h>
@@ -48,7 +49,7 @@ namespace Jde::Access::Tests{
 	}
 
 	α keyLogin( Crypto::PublicKey key, vector<byte> certificate )ε->UserPK{
-		return BlockTAwait<UserPK>( Server::LoginAwait{move(key), move(certificate), "login tests user"} );
+		return BlockAwait( Server::LoginAwait{move(key), move(certificate), "login tests user"} );
 	}
 
 	TEST_F( LoginTests, NoCert_Rejected ){

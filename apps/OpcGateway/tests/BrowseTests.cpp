@@ -7,6 +7,7 @@
 #include "utils/helpers.h"
 #include "utils/ITest.h"
 #include "../src/types/UAClientException.h"
+#include <jde/fwk/co/BlockAwait.h>
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
@@ -72,7 +73,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let stored = QL().QuerySync<jobject>( Ƒ(R"(serverConnection( slug:"{}" ){{ id defaultBrowseNs }})", OpcServerSlug), {}, {UserPK::System} );
 		let column = stored.if_contains( "defaultBrowseNs" );
 		ASSERT_TRUE( !column || column->is_null() ) << "the precondition, a NULL column:  " << serialize( stored );
-		let rows = BlockTAwait<vector<ServerCnnctn>>( ServerCnnctnAwait{DB::Key{string{OpcServerSlug}}} );
+		let rows = BlockAwait( ServerCnnctnAwait{DB::Key{string{OpcServerSlug}}} );
 		ASSERT_EQ( rows.size(), 1u );
 		EXPECT_EQ( rows.front().DefaultBrowseNs, 1 ) << "the row ctor - what ConnectAwait builds a client from";
 		EXPECT_EQ( ServerCnnctn{jobject{stored}}.DefaultBrowseNs, 1 ) << "the json ctor";
@@ -131,7 +132,7 @@ namespace Jde::Opc::Gateway::Tests{
 		constexpr sv stacklight{ "4~Examples/4~Stacklights/4~ExampleStacklight" };
 		const string lampPath{ string{stacklight}+"/4~Lamp1" };
 		auto translate = [&]( string path, bool parents, NodeId start=NodeId::ObjectsFolder() ){
-			return BlockTAwait<BrowsePathResponse>( UAStrandAwait<BrowsePathResponse>{_client, [path, parents, start=move(start), client=_client]{ return client->BrowsePathsToNodeIds(path, parents, start); }} );
+			return BlockAwait( UAStrandAwait<BrowsePathResponse>{_client, [path, parents, start=move(start), client=_client]{ return client->BrowsePathsToNodeIds(path, parents, start); }} );
 		};
 		let direct = translate( lampPath, false );
 		ASSERT_EQ( direct.size(), 1u );
@@ -228,11 +229,11 @@ namespace Jde::Opc::Gateway::Tests{
 	//monitored items, NodeIndex and EnumTypeCache (review3 #12).
 	TEST( RemoveClientTests, StaleRemoveKeepsTheReplacement ){
 		let cred = SessionCredential( Jwt().UserPK );//the only credential this server accepts - anonymous is BadIdentityTokenRejected.
-		auto a = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, cred} );
+		auto a = BlockAwait( ConnectAwait{string{OpcServerSlug}, cred} );
 		ASSERT_TRUE( a );
 		ASSERT_TRUE( UAClient::RemoveClient(sp<UAClient>{a}) );
 
-		auto b = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, cred} );
+		auto b = BlockAwait( ConnectAwait{string{OpcServerSlug}, cred} );
 		ASSERT_TRUE( b );
 		ASSERT_NE( a, b ) << "expected a fresh client at the same key";
 		ASSERT_EQ( UAClient::Find(OpcServerSlug, cred), b );

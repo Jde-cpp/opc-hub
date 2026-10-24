@@ -3,6 +3,7 @@
 #include <jde/db/IDataSource.h>
 #include <jde/db/DBException.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/process.h>
 
 #define let const auto

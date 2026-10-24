@@ -1,5 +1,6 @@
 #pragma once
 #include <boost/uuid/random_generator.hpp>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/str.h>
 #include <jde/historian/Historian.h>
 #include <jde/opc/uatypes/ExNodeId.h>
@@ -69,9 +70,9 @@ namespace Jde::Opc::Hist::Tests{
 			return Value{ move(dv) };
 		}
 		//A flush of what group buffered, waited for:  false when it didn't write all it took.
-		static bool Flush( Group& group )ε{ return BlockAny( group.Flush() ); }
+		static bool Flush( Group& group )ε{ return BlockAwait( group.Flush() ); }
 		//Waits out the flushes the clock started, which write on the executor's threads.
-		static bool Settle( Group& group )ε{ return BlockAny( group.Settled() ); }
+		static bool Settle( Group& group )ε{ return BlockAwait( group.Settled() ); }
 		Ŧ Records()Ι->vector<T>{
 			vector<T> y;
 			for( auto& r : _group->Buffer() ){

@@ -12,6 +12,7 @@
 #include <open62541/client_config_default.h>
 #include <open62541/client_highlevel.h>
 #include <open62541/plugin/certificategroup_default.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
@@ -677,7 +678,7 @@ namespace Jde::Opc::Server::Tests{
 		for( let flushed : {false, true} ){
 			SCOPED_TRACE( flushed ? "from the file" : "from the buffer" );
 			if( flushed )
-				ASSERT_TRUE( BlockAny(History().Group()->Flush()) );
+				ASSERT_TRUE( BlockAwait(History().Group()->Flush()) );
 			let forward = Read( Rpm4, {.Start=At(0), .End=At(10)} );
 			EXPECT_TRUE( UA_StatusCode_isGood(forward.Status) ) << UA_StatusCode_name( forward.Status );
 			let values = all( forward.Values );
@@ -747,7 +748,7 @@ namespace Jde::Opc::Server::Tests{
 
 		//Rpm1 has nothing after its start value on either day, each a file once flushed.  The helper hands over the first
 		//call's empty page, and stops at the second's Good_NoData.
-		ASSERT_TRUE( BlockAny(History().Group()->Flush()) );
+		ASSERT_TRUE( BlockAwait(History().Group()->Flush()) );
 		for( let& request : {Request{.Start=At(100), .End=tomorrow+1min}, Request{.Start=tomorrow+1min, .End=At(100)}} ){
 			let nothing = Read( Rpm1, request );
 			EXPECT_EQ( nothing.Status, UA_STATUSCODE_GOODNODATA ) << UA_StatusCode_name( nothing.Status );

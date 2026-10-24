@@ -1,6 +1,4 @@
 #pragma once
-#ifndef LOGGER
-#define LOGGER
 #ifdef __cpp_lib_stacktrace
 	#include <stacktrace>
 #else
@@ -78,9 +76,9 @@ namespace Jde::Logging{
 
 	Φ MarkLogged( StringMd5 id )ι->bool;
 	template<typename... Args>
-	α LogOnce( SL sl, ELogTags tags, FormatString&& m, ARGS... args )ι->void{
+	α LogOnce( SL sl, ELogLevel level, ELogTags tags, FormatString&& m, ARGS... args )ι->void{
 		if( MarkLogged(Entry::GenerateId(sv{m.get().data(), m.get().size()})) )
-			Log( ELogLevel::Information, tags, sl, FWD(m), FWD(args)... );
+			Log( level, tags, sl, FWD(m), FWD(args)... );
 	}
 }
 
@@ -109,4 +107,3 @@ namespace Jde{
 #undef ARGS
 #undef let
 #undef Φ
-#endif

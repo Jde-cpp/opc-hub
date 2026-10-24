@@ -5,6 +5,7 @@
 #include <jde/db/meta/Table.h> //complete type: SelectEnum takes const Table& and GetTablePtr yields sp<Table>.
 #include <jde/db/meta/Cluster.h>
 #include <jde/access/Authorize.h>
+#include <jde/fwk/co/BlockAwait.h>
 
 #define let const auto
 

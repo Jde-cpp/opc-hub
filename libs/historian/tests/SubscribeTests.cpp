@@ -3,6 +3,7 @@
 //value streamed as it is stored, a late record included, and a heartbeat once a flush takes it;  each edit's Modification
 //records once durable;
 //and the registration ended by the Subscription, or by the group's removal or stop, which tells the subscriber.
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/opc/UAException.h>
 #include "reads.h"
 
@@ -74,7 +75,7 @@ namespace Jde::Opc::Hist::Tests{
 			}
 			return y;
 		}
-		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAny( Pump->Edit(move(details), Admin) ); }
+		α Edit( vector<EditDetails> details )ε->vector<EditResult>{ return BlockAwait( Pump->Edit(move(details), Admin) ); }
 		const TimePoint T0{ Time->Now() };
 		const TimePoint Eighth{ sys_days{March8} };
 		sp<Group> Pump;

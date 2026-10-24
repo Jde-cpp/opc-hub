@@ -20,7 +20,7 @@
 
 namespace Jde{
 	sp<Access::AccessListener> _listener;
-	α configureAndProbe( VoidAwait&& a, sp<BlockAwaitState<std::monostate>> s )ι->VoidAwait::Task; //below Startup, where it is explained.
+	α configureAndProbe( VoidAwait&& a, sp<Internal::BlockAwaitState<std::monostate>> s )ι->VoidAwait::Task; //below Startup, where it is explained.
 #ifndef _WIN32
 	α Process::ProductName()ι->sv{ return "Tests.Access"; }
 #endif
@@ -41,18 +41,18 @@ namespace Jde{
 			DB::SyncSchema( *schema, ql );
 		auto await = Access::Server::Configure( {schema}, ql, UserPK{UserPK::System}, authorizer, _listener );
 		let sl = await.Source();
-		auto state = ms<BlockAwaitState<std::monostate>>();
+		auto state = ms<Internal::BlockAwaitState<std::monostate>>();
 		configureAndProbe( move(await), state );
 		state->Wait( sl );
 		if( state->Error )
 			state->Error->Throw();
 		Access::Tests::SetQL( ql );
 	}
-	//access-review3 #20:  BlockVoidAwait's glue, plus a probe.  On the local-QL path every awaitable in Configure's Subscribe stage
+	//access-review3 #20:  BlockAwait's glue, plus a probe.  On the local-QL path every awaitable in Configure's Subscribe stage
 	//completes in await_ready, so this continuation runs inline on the thread that finished it - the thread Loader::Acl used to
 	//leave holding the authorizer's unique lock across Subscribe.  An Authorize read here then self-deadlocked (shared_mutex is
 	//not recursive); the watchdog turns that into an abort with a message rather than a silent hang of the whole suite.
-	α configureAndProbe( VoidAwait&& a, sp<BlockAwaitState<std::monostate>> s )ι->VoidAwait::Task{
+	α configureAndProbe( VoidAwait&& a, sp<Internal::BlockAwaitState<std::monostate>> s )ι->VoidAwait::Task{
 		try{
 			co_await a;
 			std::atomic<bool> done{ false };

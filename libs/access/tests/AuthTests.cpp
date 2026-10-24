@@ -1,4 +1,5 @@
 #include "globals.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/QLAwait.h>
 #include <jde/access/server/awaits/AuthenticateAwait.h>
 
@@ -23,7 +24,7 @@ namespace Jde::Access::Tests{
 	}
 
 	α login( str loginName, ProviderPK providerId, string opcServer )ε->UserPK{
-		return BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, providerId, opcServer} );
+		return BlockAwait( Server::AuthenticateAwait{loginName, providerId, opcServer} );
 	}
 
 	TEST_F( AuthTests, Login_Existing ){

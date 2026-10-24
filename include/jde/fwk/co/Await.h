@@ -1,8 +1,5 @@
 #pragma once
-#ifndef AWAIT_H
-#define AWAIT_H
-#include <condition_variable>
-#include <absl/synchronization/notification.h>
+//#include <condition_variable>
 #include "Task.h"
 
 namespace Jde{
@@ -143,63 +140,7 @@ namespace Jde{
 		UInt32Await( SRCE )ι:TAwait<uint32>{ sl }{}
 	};
 
-
-	//The blocking half of the bridge.  Wait() never gives up - a bounded wait would turn every legitimately long sync call
-	//(schema sync, LocalQL::Upsert) into a spurious failure - but it warns on an interval naming the awaitable's source
-	//location, so a response that is dropped instead of delivered leaves a trail rather than 7 minutes of silence.
-	//reviews/gateway-review.md #36.
-	struct Γ BlockAwaitSync{
-		α Signal()ι->void;
-		//stallLevel caps the stall lines - Warning at the first interval, Critical from the second - for a wait the caller knows
-		//to be long: the OpcServer's startup blocked on a hub that is not up yet, whose retry warnings already say why (a
-		//hang would read the same way otherwise - install-issues, the 09-15 retry table).  The line still comes every interval.
-		α Wait( SL sl, ELogLevel stallLevel=ELogLevel::Critical )ι->void;
-	private:
-		absl::Notification _done;
-	};
-
-	//On the blocked thread's stack:  the waiter can wake & return while Signal is still inside Notify, and absl::Notification
-	//allows destroying it then.
-	template<class TResult>
-	struct BlockAwaitState : BlockAwaitSync{
-		optional<TResult> Result;
-		up<Exception> Error;
-	};
-
-	//One bridge for both kinds.  A void awaitable parks a monostate state - there is no value to store - and BlockVoidAwait
-	//is that instantiation; it used to be a second copy of these two functions.
-	template<class TAwait, class TResult>
-	α BlockAwaitExecute( TAwait& a, BlockAwaitState<TResult>* s )ι->TAwait::Task{
-		try{
-			if constexpr( std::is_same_v<TResult,std::monostate> )
-				co_await a;
-			else
-				s->Result = co_await a;
-		}
-		catch( Exception& e2 ){
-			s->Error = e2.Move();
-		}
-		s->Signal();
-	}
-
-	template<class TAwait, class TResult>
-	α BlockAwait( TAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->TResult{
-		BlockAwaitState<TResult> s;
-		const auto sl = a.Source();//copied before the co_await - the awaitable is the caller's only clue to what a stalled wait is waiting on.
-		BlockAwaitExecute<TAwait,TResult>( a, &s );
-		s.Wait( sl, stallLevel );
-		if( s.Error )
-			s.Error->Throw();
-		if constexpr( std::is_same_v<TResult,std::monostate> )
-			return {};
-		else
-			return move( *s.Result );
-	}
-
-	Ξ BlockVoidAwait( VoidAwait&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->void{ BlockAwait<VoidAwait,std::monostate>( move(a), stallLevel ); }
-
-	Ŧ BlockTAwait( TAwait<T>&& a, ELogLevel stallLevel=ELogLevel::Critical )ε->T{
-		return BlockAwait<TAwait<T>,T>( move(a), stallLevel );
-	}
+	//Either family - this one and AnyAwait.h's.
+	Τ using AwaitResult = decltype( std::declval<std::remove_reference_t<T>&>().await_resume() );//what a co_await of T gives;  T may be a reference.
+	Τ using AwaitValue = std::conditional_t<std::is_void_v<AwaitResult<T>>, std::monostate, AwaitResult<T>>;//storable:  void as std::monostate.
 }
-#endif

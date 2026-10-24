@@ -2,6 +2,7 @@
 #include <jde/db/db.h>
 #include <jde/db/meta/Column.h>
 #include <jde/db/generators/Statement.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include "../../../src/meta/IServerMeta.h"
 #include "../../../src/meta/ddl/TableDdl.h" //complete type for LoadTable's sp<TableDdl>.
 #include "../../../src/meta/ddl/ColumnDdl.h" //#241: the loaded default text.

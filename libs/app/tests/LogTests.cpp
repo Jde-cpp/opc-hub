@@ -9,6 +9,7 @@
 #include <thread>
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/records/Scan.h>
 #include <jde/fwk/co/LockKey.h>
@@ -31,7 +32,7 @@ namespace Jde::App::Tests{
 	using Log::EStop;
 
 	//A file's records as the record layer holds them (Log.proto's FileEntry):  an archive's, or a daily file's.
-	Ω records( const fs::path& file )ε->vector<FileEntry>{ return Log::ParseRecords( BlockTAwait<string>(IO::ReadAwait(file)), file ); }
+	Ω records( const fs::path& file )ε->vector<FileEntry>{ return Log::ParseRecords( BlockAwait(IO::ReadAwait(file)), file ); }
 	Ω contents( const fs::path& file )ι->string{
 		std::ifstream f{ file, std::ios::binary };
 		return string{ std::istreambuf_iterator<char>{f}, {} };
@@ -124,7 +125,7 @@ namespace Jde::App::Tests{
 		using enum Log::Proto::FileEntry::ValueCase;
 		bool found{};
 		//Query mode merges the unflushed buffer with the file, so this holds whether or not the write above happened to flush.
-		for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log()) ) )
+		for( let& fe : BlockAwait( App::DailyLoadAwait(Log()) ) )
 			found = found || (fe.value_case()==kEntry && Protobuf::ToGuid(fe.entry().template_id())==e.Id());
 		EXPECT_TRUE( found ) << "the entry just written is not in the merged buffer+file view";
 	}
@@ -448,7 +449,7 @@ namespace Jde::App::Tests{
 		auto write = [this,&run]( App::ProgramPK a, App::ProgInstPK i, sv what )ε->optional<Attribution>{
 			Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("ForwardedEntryAttribution {} {}", what, run) };
 			Log().Write( e, a, i );
-			for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log()) ) ){
+			for( let& fe : BlockAwait( App::DailyLoadAwait(Log()) ) ){
 				if( fe.has_entry() && Protobuf::ToGuid(fe.entry().template_id())==e.Id() )
 					return Attribution{ fe.entry().app_pk(), fe.entry().app_instance_pk() };
 			}
@@ -480,7 +481,7 @@ namespace Jde::App::Tests{
 		//What it has to be is the read of that file refusing it as no archive of the record layer's, which names the layer.
 		try{
 			//no limit, so IsComplete() is false and LogQLAwait walks every archive file, this one included.
-			BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(string{"logs{ entries{templateId time} }"}, {}, {}).Queries()[0])} );
+			BlockAwait( App::LogQLAwait{move(QL::Parse(string{"logs{ entries{templateId time} }"}, {}, {}).Queries()[0])} );
 			ADD_FAILURE() << "the corrupt archive was read without complaint";
 		}
 		catch( const Jde::Exception& e ){
@@ -503,7 +504,7 @@ namespace Jde::App::Tests{
 		Log().Write( eNow );
 		constexpr auto q = "logs( time: {gt: $start} ){ entries{templateId argIds level tags line time userId fileId functionId} strings{id value} }";
 		jobject vars{ {"start", start} };
-		let logs = BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
+		let logs = BlockAwait( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
 		optional<jobject> jNow;
 		for( let& log : logs.at("entries").as_array() ){
 			let id = ToUuid( log.at("templateId").as_string() );
@@ -526,7 +527,7 @@ namespace Jde::App::Tests{
 		//no time filter, so LogQLAwait reads the daily file (buffer included) - this is the ArchiveQuery(Filter&,...) path.
 		constexpr auto q = "logs( text: {eq: $text} ){ entries{templateId time} }";
 		jobject vars{ {"text", marker} };
-		let logs = BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
+		let logs = BlockAwait( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
 		uint matched{};
 		for( let& log : logs.at("entries").as_array() )
 			matched += ToUuid( log.at("templateId").as_string() )==e.Id();
@@ -588,7 +589,7 @@ namespace Jde::App::Tests{
 		EXPECT_TRUE( SelfContained(all) ) << "an entry names a string the file doesn't hold";
 		EXPECT_EQ( stringCount(all, a.Id()), 1u ) << "the second run wrote the template the first holds";
 		EXPECT_EQ( count(all, a.Id()), 2u );
-		let loaded = BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log) );
+		let loaded = BlockAwait( App::DailyLoadAwait(*log) );
 		EXPECT_EQ( count(loaded, a.Id()), 2u );
 		EXPECT_EQ( stringValue(loaded, a.Id()), "layer {}" ) << "a query doesn't resolve the second run's entry";
 	}
@@ -668,7 +669,7 @@ namespace Jde::App::Tests{
 		Logging::ClearMemory();
 
 		let log = Make( "PT0.2S" );
-		let loaded = BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log) );
+		let loaded = BlockAwait( App::DailyLoadAwait(*log) );
 		uint lines[4]{};
 		for( let& r : loaded ){
 			if( r.has_entry() && r.entry().line()<4 )
@@ -800,7 +801,7 @@ namespace Jde::App::Tests{
 	TEST_F( DailyFileLayerTests, ARefusedDailyFileRepairedInPlaceIsWrittenAgain ){
 		save( File(), "not a protobuf" );//another program's:  the scan refuses it.
 		let log = Make( "PT0.2S" );
-		EXPECT_TRUE( BlockTAwait<vector<FileEntry>>(App::DailyLoadAwait(*log)).empty() );//its open:  the process holds the file refused.
+		EXPECT_TRUE( BlockAwait(App::DailyLoadAwait(*log)).empty() );//its open:  the process holds the file refused.
 		fs::resize_file( File(), 0 );
 		let e = entry( Clock::now(), ELogLevel::Information, 1, "written once repaired" );
 		log->Write( e );

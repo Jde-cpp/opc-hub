@@ -1,5 +1,6 @@
 #include "appStartup.h"
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/io/Cache.h>
 #include <jde/db/db.h>
@@ -184,7 +185,7 @@ namespace Jde::App::Server{
 
 		let sync = DB::SyncOrRecreate( schemas, QLPtr() );
 		QL::LoadEnums( schemas );
-		BlockVoidAwait( Access::Server::Configure(vector<sp<DB::AppSchema>>{schemas}, QLPtr(), UserPK{UserPK::System}, authorizer, _listener) );//the access load is a coroutine chain; this is the sync api over it.
+		BlockAwait( Access::Server::Configure(vector<sp<DB::AppSchema>>{schemas}, QLPtr(), UserPK{UserPK::System}, authorizer, _listener) );//the access load is a coroutine chain; this is the sync api over it.
 		if( sync ){ //the role seeds (<schema>.roles):  createRole/addRole run through the access server's mutations and its acl gate, which Configure just installed - SyncSchema's .mutation pass ran before them, so a role there died with the process (setup/README.md).
 			for( let& schema : schemas ){
 				try{

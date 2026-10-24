@@ -2,6 +2,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
+#include <jde/fwk/co/BlockAwait.h>
 #include "../src/UAConfig.h"
 #include "../src/UATrust.h"
 #include "../src/access/UAAccess.h"
@@ -238,7 +239,7 @@ namespace Jde::Opc::Server::Tests{
 	//so the column was always null for an OpcServer.
 	TEST_F( AccessTests, LogSettingQueryFromTheAppServer ){
 		auto q = QL::Parse( "logSetting{ text }", {}, {}, true );//as instanceTagLevel's `running` sends it (QueryInstanceAwait):  raw.
-		let y = BlockTAwait<jvalue>( move(*_app->ClientQuery(move(q), Jde::UserPK{})) );
+		let y = BlockAwait( move(*_app->ClientQuery(move(q), Jde::UserPK{})) );
 		EXPECT_TRUE( Json::AsObject(y).contains("text") ) << serialize( y );
 	}
 
@@ -247,7 +248,7 @@ namespace Jde::Opc::Server::Tests{
 		let session = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.5", false );
 		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( session->SessionId ); } };
 		auto q = QL::Parse( "sessions{ endpoint }", {}, {}, true );
-		let y = BlockTAwait<jvalue>( move(*_app->ClientQuery(move(q), _app->UserPK())) );
+		let y = BlockAwait( move(*_app->ClientQuery(move(q), _app->UserPK())) );
 		ASSERT_TRUE( y.is_array() ) << serialize( y );
 		EXPECT_TRUE( std::ranges::any_of(y.as_array(), [](let& s){ return Json::AsString(s.as_object(), "endpoint")=="10.255.0.5"; }) ) << serialize( y );
 	}

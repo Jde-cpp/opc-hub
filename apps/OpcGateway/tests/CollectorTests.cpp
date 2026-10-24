@@ -4,6 +4,7 @@
 #include "../src/auth/OpcServerSession.h"
 #include "utils/ITest.h"
 #include "utils/helpers.h"
+#include <jde/fwk/co/BlockAwait.h>
 
 #define let const auto
 
@@ -38,13 +39,13 @@ namespace Jde::Opc::Gateway::Tests{
 		let cred = SessionCredential( Jwt().UserPK );
 		ASSERT_EQ( UAClient::Find(OpcServerSlug, cred), _client ) << "the suite's client is the session's";
 		let sessionsBefore = SessionCounts().size();
-		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)} );
+		auto collector = BlockAwait( ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)} );
 		ASSERT_TRUE( collector );
 		ASSERT_NE( collector, _client ) << "the collector was handed the session's client";//ASSERT:  the removal below would take the suite's client.
 		EXPECT_TRUE( collector->Credential().IsCollector() );
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, cred), _client ) << "the session's lookup found the collector's client";
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, Credential::Collector(cred)), collector );
-		EXPECT_EQ( UAClient::Find(OpcServerSlug, Credential::Collector(cred)), BlockTAwait<sp<UAClient>>(ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)}) ) << "a second collector connect reuses its client";
+		EXPECT_EQ( UAClient::Find(OpcServerSlug, Credential::Collector(cred)), BlockAwait(ConnectAwait{string{OpcServerSlug}, Credential::Collector(cred)}) ) << "a second collector connect reuses its client";
 		EXPECT_EQ( SessionCounts().size(), sessionsBefore ) << "the collector is no web session";
 		UAClient::RemoveClient( move(collector) );
 		EXPECT_EQ( UAClient::Find(OpcServerSlug, cred), _client ) << "removing the collector's client took the session's";

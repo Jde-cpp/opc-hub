@@ -1,4 +1,5 @@
 #include "UAAccess.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/access/IAcl.h>
 #include "../UAConfig.h"

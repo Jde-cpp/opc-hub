@@ -1,4 +1,5 @@
 #include "globals.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/str.h>
 #include <jde/db/names.h>
 #include <jde/db/meta/AppSchema.h>

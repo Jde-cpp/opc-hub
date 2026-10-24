@@ -3,6 +3,7 @@
 #include <jde/db/Row.h>
 #include <jde/db/DBException.h>
 #include <jde/db/IDataSource.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include "jde/fwk/settings.h"
 #include <jde/access/Authorize.h>
 

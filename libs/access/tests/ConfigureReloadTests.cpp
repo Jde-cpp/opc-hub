@@ -8,6 +8,7 @@
 #include <jde/access/AccessListener.h>
 #include <jde/access/Authorize.h>
 #include <jde/access/awaits/ConfigureAwait.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/LocalSubscriptions.h>
 #include "globals.h"
 #include "../src/awaits/ResourceLoadAwait.h"
@@ -17,7 +18,7 @@
 namespace Jde::Access::Tests{
 
 	Ω reload( sp<Access::Authorize> authorizer, sp<Access::AccessListener> listener )ε->void{
-		BlockVoidAwait( ConfigureAwait{QLPtr(), Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
+		BlockAwait( ConfigureAwait{QLPtr(), Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
 	}
 
 	TEST( ConfigureReloadTests, ReloadLoadsTheSnapshotWithoutSubscribing ){
@@ -64,7 +65,7 @@ namespace Jde::Access::Tests{
 
 		vector<ERights> seen; std::mutex seenMutex;//the loaders run at once (#345):  on a dialect that answers off-thread, so does the probe.
 		auto probing = ms<ProbingQL>( QLPtr(), [&]{ let rights = authorizer->Rights( "access", slug, user ); std::lock_guard _{seenMutex}; seen.push_back( rights ); } );
-		BlockVoidAwait( ConfigureAwait{probing, Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
+		BlockAwait( ConfigureAwait{probing, Schemas(), authorizer, UserPK{UserPK::System}, listener, {}, true} );
 		EXPECT_GE( seen.size(), 5u ) << "the probe did not see the loaders' queries";
 		EXPECT_TRUE( std::ranges::all_of(seen, [](ERights r){ return r==ERights::Read; }) ) << "a query ran while the authorizer held a half-loaded snapshot";
 		EXPECT_EQ( authorizer->Rights("access", slug, user), ERights::Read );

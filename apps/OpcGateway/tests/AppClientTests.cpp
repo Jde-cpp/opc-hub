@@ -1,4 +1,5 @@
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/app/client/AppClientSocketSession.h>
@@ -24,7 +25,7 @@ namespace Jde::Opc::Gateway::Tests{
 		};
 		auto q = "connections( programName: $programName, instanceName: $name, deleted: null ) { created }";
 		auto await = AppClient()->Query<jarray>( move(q), move(vars) );
-		let connections = BlockTAwait<jarray>( move(*await) );
+		let connections = BlockAwait( move(*await) );
 		ASSERT_EQ( connections.size(), 1 );
 		let startTime = string{ connections.at(0).as_object().at("created").get_string() };
 		TRACE( "Process::StartTime: '{}', startTime: '{}'.", ToIsoString(Process::StartTime()), startTime );
@@ -34,7 +35,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( AppClientTests, Status ){
 		auto q = "connections( deleted: null ){id programName instanceName hostName created status{ memory values } }";
 		auto await = AppClient()->Query<jarray>( move(q), {} );
-		let connections = BlockTAwait<jarray>( move(*await) );
+		let connections = BlockAwait( move(*await) );
 		TRACE( "Connections: {}", serialize(connections) );
 		int count = 1;
 		if( !Settings::FindBool("/testing/embeddedAppServer").value_or(true) )
@@ -57,7 +58,7 @@ namespace Jde::Opc::Gateway::Tests{
 				session = nullptr;
 			});
 		}
-		BlockVoidAwait( session->RunSession(App::Client::ServerSettings::Host(), App::Client::ServerSettings::Port()) );
+		BlockAwait( session->RunSession(App::Client::ServerSettings::Host(), App::Client::ServerSettings::Port()) );
 		using ConnectionInfo = App::Proto::FromServer::ConnectionInfo;
 		try{
 			BlockAwait<Web::Client::ClientSocketAwait<ConnectionInfo>, ConnectionInfo>( session->Connect(0xBAD5E55) );
@@ -92,7 +93,7 @@ namespace Jde::Opc::Gateway::Tests{
 		if( !payload || payload->empty() )
 			GTEST_SKIP() << "JDE_GOOGLE_JWT not set.";
 		else{
-			let value = BlockTAwait<SessionInfo>( move(*AppClient()->Login(Web::Jwt{*payload}, SL{})) );
+			let value = BlockAwait( move(*AppClient()->Login(Web::Jwt{*payload}, SL{})) );
 			ASSERT_TRUE( value.session_id()>0 );
 		}
 	}

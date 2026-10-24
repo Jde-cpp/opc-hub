@@ -10,6 +10,7 @@
 #include <numeric>
 #include <random>
 #include <absl/container/flat_hash_set.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/process.h>
 #include "reads.h"
 
@@ -743,7 +744,7 @@ namespace Jde::Opc::Hist::Tests{
 				for( let& d : details )
 					std::cout << "edit " << describe( d ) << "\n";
 			}
-			let actual = BlockAny( Pump->Edit(details, Admin) );
+			let actual = BlockAwait( Pump->Edit(details, Admin) );
 			Settle( *Pump );
 			_baseline = Pump->Buffer().size();
 			string described;

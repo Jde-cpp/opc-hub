@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/str.h>
 #include <jde/access/server/awaits/AclAwait.h>
@@ -40,7 +41,7 @@ namespace Jde::Access::Tests{
 	α SelectAcl( IdentityPK identityPK, string resourceSlug )ε->jobject{
 		jobject vars{ {"identityId", identityPK.Underlying()}, {"resource", resourceSlug} };
 		let q = "acl( identityId:$identityId ){ identityId permissionRight{ id allowed denied resource(slug:$resource){deleted}} }";
-		let acl = BlockTAwait<jvalue>( Server::AclQLSelectAwait{ QL::ParseQuery(q, vars, Schemas()), GetRoot()} ).as_array();
+		let acl = BlockAwait( Server::AclQLSelectAwait{ QL::ParseQuery(q, vars, Schemas()), GetRoot()} ).as_array();
 		return acl.empty() ? jobject{} : Json::AsObject(acl[0], "/permissionRight");
 	}
 	α SelectAcl( IdentityPK identityPK, RolePK rolePK )ε->jobject{
@@ -52,19 +53,19 @@ namespace Jde::Access::Tests{
 		let resourcePK = AsNumber<ResourcePK::Type>( SelectResource(resource, {UserPK::System}, true), "id" );
 		jobject vars{ {"id", identityPK.Underlying()}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"resource", resourcePK} };
 		let q = "createAcl( identity:{ id:$id }, permissionRight:{ allowed:$allowed, denied:$denied, resource:{id:$resource}} ){ permissionRight{id} }";
-		let y = BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} ).as_object();
+		let y = BlockAwait( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} ).as_object();
 		return PermissionPK{Json::AsNumber<PermissionPK::Type>( y, "permissionRight/id" )};
 	}
 	α PurgeAcl( IdentityPK identityPK, PermissionPK permissionPK, UserPK executer )ε->void{
 		let q = Ƒ( "purgeAcl( identity:{{ id:{} }}, permissionRight:{{ id:{} }} )", identityPK.Underlying(), permissionPK.Value );
-		BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, {}, Schemas()), executer} );
+		BlockAwait( Server::AclQLAwait{ QL::ParseM(q, {}, Schemas()), executer} );
 	}
 	α CreateAcl( IdentityPK identityPK, RolePK rolePK, UserPK executer )ε->void{
 		let existing = SelectAcl( identityPK, rolePK );
 		if( existing.empty() ){
 			jobject vars{ {"id", identityPK.Underlying()}, {"roleId", rolePK.Value} };
 			let q = "createAcl( identity:{ id:$id }, role:{ id:$roleId } )";
-			BlockTAwait<jvalue>( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} );
+			BlockAwait( Server::AclQLAwait{ QL::ParseM(q, vars, Schemas()), executer} );
 		}
 	}
 
@@ -338,7 +339,7 @@ namespace Jde::Access::Tests{
 		CreateAcl( victim, rolePK, GetRoot() ); //...and a role assignment, in the same pk space.
 		ASSERT_EQ( Authorizer()->Rights("access", "groups", victim), ERights::Read | ERights::Update );
 		auto purge = [&]( IdentityPK identity, sv key, uint pk, UserPK executer ){
-			BlockTAwait<jvalue>( Server::AclQLAwait{QL::ParseM(Ƒ("purgeAcl( identity:{{ id:{} }}, {}:{{ id:{} }} )", identity.Underlying(), key, pk), {}, Schemas()), executer} );
+			BlockAwait( Server::AclQLAwait{QL::ParseM(Ƒ("purgeAcl( identity:{{ id:{} }}, {}:{{ id:{} }} )", identity.Underlying(), key, pk), {}, Schemas()), executer} );
 		};
 
 		EXPECT_THROW( purge(victim, "role", grantPK, rolesAdmin), Exception ); //the finding:  a direct grant spelled as a role.
@@ -375,7 +376,7 @@ namespace Jde::Access::Tests{
 		const UserPK user{ GetId(GetUser("aclUpsertUser", root)) };
 		auto grant = [&]( ERights allowed )->PermissionPK{
 			let q = Ƒ( "createAcl( identity:{{ id:{} }}, permissionRight:{{ allowed:{}, denied:0, resource:{{ id:{} }} }} ){{ permissionRight{{id}} }}", user.Value, underlying(allowed), resourcePK.Value );
-			return PermissionPK{Json::AsNumber<PermissionPK::Type>( BlockTAwait<jvalue>( Server::AclQLAwait{QL::ParseM(q, {}, Schemas()), system} ).as_object(), "permissionRight/id" )};
+			return PermissionPK{Json::AsNumber<PermissionPK::Type>( BlockAwait( Server::AclQLAwait{QL::ParseM(q, {}, Schemas()), system} ).as_object(), "permissionRight/id" )};
 		};
 		auto aclRows = [&]{ return QL().QuerySync<jarray>( Ƒ("acl( identityId:{} ){{ identityId permissionRight{{ id }} }}", user.Value), {}, root ).size(); };
 
@@ -439,7 +440,7 @@ namespace Jde::Access::Tests{
 	Ω userRights( UserPK user, UserPK executer )ε->jarray{
 		jobject vars{ {"id", user.Value} };
 		let q = "userRights( id:$id ){ resource{id} allowed denied effective sources{ permissionId allowed denied path{id type} } }";
-		return BlockTAwait<jvalue>( Server::IdentityRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
+		return BlockAwait( Server::IdentityRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
 	}
 	Ω findResourceRights( const jarray& rows, ResourcePK resourcePK )ε->jobject{
 		auto p = find_if( rows, [=](const jvalue& row){ return ResourcePK{AsNumber<ResourcePK::Type>(Json::AsObject(row), "resource/id")}==resourcePK; } );
@@ -545,7 +546,7 @@ namespace Jde::Access::Tests{
 	Ω resourceRights( ResourcePK resourcePK, UserPK executer )ε->jobject{
 		jobject vars{ {"id", resourcePK.Value} };
 		let q = "resourceRights( id:$id ){ resource{id} roles{ id allowed denied sources{ permissionId allowed denied path{id type} } } groups{ id allowed denied sources{ permissionId allowed denied path{id type} } } users{ id allowed denied effective sources{ permissionId allowed denied path{id type} } } }";
-		return BlockTAwait<jvalue>( Server::ResourceRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
+		return BlockAwait( Server::ResourceRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
 	}
 	Ω findHolder( const jobject& rights, sv list, uint32 id )ε->jobject{
 		let rows = AsArray( rights, list );
@@ -669,7 +670,7 @@ namespace Jde::Access::Tests{
 	Ω groupRights( GroupPK group, UserPK executer )ε->jarray{
 		jobject vars{ {"id", group.Value} };
 		let q = "groupRights( id:$id ){ resource{id} allowed denied effective sources{ permissionId allowed denied path{id type} } }";
-		return BlockTAwait<jvalue>( Server::IdentityRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
+		return BlockAwait( Server::IdentityRightsAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_array();
 	}
 	TEST_F( AclTests, GroupRightsProvenance ){
 		let root = GetRoot();
@@ -839,10 +840,10 @@ namespace Jde::Access::Tests{
 		let intruder = _usersPKs["intruder"];
 		let q = "acl( identityId:$identityId ){ identityId permissionRight{id} }";
 		jobject vars{ {"identityId", intruder.Value} };
-		EXPECT_THROW( BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), intruder} ), Exception );
-		BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), GetRoot()} );
+		EXPECT_THROW( BlockAwait( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), intruder} ), Exception );
+		BlockAwait( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), GetRoot()} );
 		Delete( "resources", GetId(resource), GetRoot() );
-		BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), intruder} ); //fail-open when disabled.
+		BlockAwait( Server::AclQLSelectAwait{QL::ParseQuery(q, vars, Schemas()), intruder} ); //fail-open when disabled.
 		PurgeAcl( GetRoot(), permissionPK, GetRoot() );
 		//the row stays, disabled, as the sync left it - ResourceTests.CheckDefaults counts it now.
 	}
@@ -860,7 +861,7 @@ namespace Jde::Access::Tests{
 		let grant = CreateAcl( user, ERights::Read, ERights::Update, "groups", root );
 		CreateAcl( user, rolePK, root );
 		let groupsPK = ResourcePK{AsNumber<ResourcePK::Type>( SelectResource("groups", root, true), "id" )};
-		let select = [&]( string ql ){ return BlockTAwait<jvalue>( Server::AclQLSelectAwait{QL::ParseQuery(ql, {}, Schemas()), root} ); };
+		let select = [&]( string ql ){ return BlockAwait( Server::AclQLSelectAwait{QL::ParseQuery(ql, {}, Schemas()), root} ); };
 		let expect = [&]( string args, string children, string json ){ EXPECT_EQ( select(Ƒ("acl( {} ){{ {} }}", args, children)), parse(json) ) << children; };
 		let byUser = Ƒ( "identityId:{}", user.Value );
 		expect( byUser, "identityId permissionRight{ id allowed denied resource{ id slug deleted } }",

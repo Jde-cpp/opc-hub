@@ -12,6 +12,7 @@
 #include <jde/access/awaits/EventsSubscribeAwait.h>
 #include <jde/access/server/awaits/AuthenticateAwait.h>
 #include <jde/access/server/awaits/RoleAwait.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include "../src/accessInternal.h"
 #include "globals.h"
 #include <jde/fwk/log/MemoryLog.h>
@@ -34,7 +35,7 @@ namespace Jde::Access::Tests{
 	Ω listenTo( sv text )ε->sp<TestListener>{
 		auto y = ms<TestListener>();
 		auto await = QLPtr()->Subscribe( string{text}, jobject{{"id",7717}}, y, UserPK{UserPK::System} );
-		BlockTAwait<vector<QL::SubscriptionId>>( move(*await) );
+		BlockAwait( move(*await) );
 		return y;
 	}
 	Ω listen()ε->sp<TestListener>{ return listenTo( "subscription ResourcesDeleted{ resourcesDeleted(subscriptionId:$id){id slug} }" ); }
@@ -258,12 +259,12 @@ namespace Jde::Access::Tests{
 		if( let previous = SelectUser("Google-"+loginName, root, provider, true); !previous.empty() ) //user_insert_login's slug is <provider>-<login name>.
 			PurgeUser( UserPK{GetId(previous)}, root );
 		auto listener = listenTo( "subscription UserCreated{ userCreated(subscriptionId:$id){id name} }" );
-		let userPK = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
+		let userPK = BlockAwait( Server::AuthenticateAwait{loginName, provider, {}} );
 		ASSERT_EQ( listener->Changes.size(), 1u ) << "the login's insert published no userCreated event";
 		EXPECT_EQ( Json::AsNumber<UserPK::Type>(listener->Resource(0), "id"), userPK.Value );
 		EXPECT_EQ( Json::AsSV(listener->Resource(0), "name"), loginName ) << "#198: the clients' caches need the name the proc gave it";
 		EXPECT_EQ( Authorizer()->UserName(userPK), loginName );
-		let again = BlockTAwait<UserPK>( Server::AuthenticateAwait{loginName, provider, {}} );
+		let again = BlockAwait( Server::AuthenticateAwait{loginName, provider, {}} );
 		EXPECT_EQ( again.Value, userPK.Value );
 		EXPECT_EQ( listener->Changes.size(), 1u ) << "an existing identity's login is not a creation";
 		QL::Subscriptions::StopListen( listener, {} );
@@ -367,7 +368,7 @@ namespace Jde::Access::Tests{
 	//Configure subscribes the real one, so the startup listener the rest of this suite relies on is not the one shut down.
 	TEST( SubscriptionTests, ShutdownUnsubscribesTheListener ){
 		auto listener = ms<Access::AccessListener>( QLPtr() );
-		BlockVoidAwait( Access::EventsSubscribeAwait{QLPtr(), {"access"}, UserPK{UserPK::System}, listener} );
+		BlockAwait( Access::EventsSubscribeAwait{QLPtr(), {"access"}, UserPK{UserPK::System}, listener} );
 		listener->Shutdown( false, SRCE_CUR );
 		EXPECT_TRUE( QL::Subscriptions::StopListen(listener, {}).empty() ) << "Shutdown left subscriptions registered";
 	}
@@ -438,10 +439,10 @@ namespace Jde::Access::Tests{
 		QL().QuerySync<jvalue>( Ƒ("mutation createAcl( identity:{{id:{}}}, role:{{id:{}}} )", holder.Value, rolePK.Value), {}, root );
 		EXPECT_THROW( Authorizer()->TestAdminResource(resourcePK, holder), Exception ) << "no grant yet";
 		let grant = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:{}, denied:0, resource:{{ schemaName:"{}", slug:"{}" }} }} ))", rolePK.Value, underlying(ERights::Administer), Schema, slug );
-		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(grant, {}, Schemas()), UserPK{UserPK::System}} ).as_object();
+		let added = BlockAwait( Server::RoleMAwait{QL::ParseM(grant, {}, Schemas()), UserPK{UserPK::System}} ).as_object();
 		EXPECT_NO_THROW( Authorizer()->TestAdminResource(resourcePK, holder) ) << "roleAdded did not reach the cache - the holder's role does not carry the grant";
 
-		BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ("mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK.Value, Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")), {}, Schemas()), UserPK{UserPK::System}} );
+		BlockAwait( Server::RoleMAwait{QL::ParseM(Ƒ("mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK.Value, Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id")), {}, Schemas()), UserPK{UserPK::System}} );
 		QL().QuerySync<jvalue>( Ƒ("purgeAcl( identity:{{ id:{} }}, role:{{ id:{} }} )", holder.Value, rolePK.Value), {}, root );
 		Purge( "role", rolePK, root );
 		Purge( "resource", resourcePK, UserPK{UserPK::System} );
@@ -452,7 +453,7 @@ namespace Jde::Access::Tests{
 	TEST( SubscriptionTests, SubscribesEveryEventAskedFor ){
 		using enum ESubscription;
 		auto listener = ms<AccessListener>( QLPtr() );
-		BlockVoidAwait( EventsSubscribeAwait{QLPtr(), {}, UserPK{UserPK::System}, listener} );
+		BlockAwait( EventsSubscribeAwait{QLPtr(), {}, UserPK{UserPK::System}, listener} );
 		vector<uint> ids;
 		for( let& id : QL::Subscriptions::StopListen(listener) )
 			ids.push_back( id.to_number<uint>() );

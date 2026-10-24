@@ -1,4 +1,5 @@
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/process.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/fwk/io/protobuf.h>
@@ -85,7 +86,7 @@ namespace Jde::App::Client{
 			return;
 		let tags = ELogTags::Client | ELogTags::Socket;
 		LOGSL( ELogLevel::Trace, sl, tags, "ClosingSocketSession" );
-		BlockVoidAwait( session->Close(terminate, sl) );
+		BlockAwait( session->Close(terminate, sl) );
 		session = nullptr;
 
 		LOGSL( ELogLevel::Information, sl, tags, "ClosedSocketSession" );

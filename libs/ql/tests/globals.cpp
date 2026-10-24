@@ -1,6 +1,7 @@
 #include "globals.h"
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/AppSchema.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/LocalSubscriptions.h>
 #include <jde/ql/ql.h>
 
@@ -43,7 +44,7 @@ namespace Tests{
 	}
 	α OpsFixture::Listen( sv text )ε->sp<RecordingListener>{
 		auto listener = _listeners.emplace_back( ms<RecordingListener>(::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name()) );
-		BlockTAwait<vector<SubscriptionId>>( move(*QLPtr()->Subscribe(string{text}, jobject{{"id",7717}}, listener, System)) );
+		BlockAwait( move(*QLPtr()->Subscribe(string{text}, jobject{{"id",7717}}, listener, System)) );
 		return listener;
 	}
 	α OpsFixture::Item( sv slug, sv itemType, sv extra )ε->uint{

@@ -3,6 +3,7 @@
 #include "../../src/async/ConnectAwait.h"
 #include "../../src/UAClient.h"
 #include "helpers.h"
+#include <jde/fwk/co/BlockAwait.h>
 
 #define let const auto
 
@@ -14,11 +15,11 @@ namespace Jde::Opc::Gateway::Tests{
 		TRACE( "UserPK: {}, SessionId: {}", hex(jwt.UserPK.Value), hex(sessionId) );
 		auto con = GetConnection( OpcServerSlug );
 		auto cred = SessionCredential( jwt.UserPK );
-		_client = BlockTAwait<sp<UAClient>>( ConnectAwait{move(con.Slug), cred} );
+		_client = BlockAwait( ConnectAwait{move(con.Slug), cred} );
 		AddSession( sessionId, OpcServerSlug, move(cred) );
 	}
 	α ITest::Reconnect()ε->void{
-		_client = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, SessionCredential(Jwt().UserPK)} );
+		_client = BlockAwait( ConnectAwait{string{OpcServerSlug}, SessionCredential(Jwt().UserPK)} );
 	}
 	α ITest::TearDownTestSuite()ι->void{
 		if( _client )

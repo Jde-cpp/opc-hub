@@ -5,6 +5,7 @@
 //authorizer, and IAcl is a pure-virtual header, so the schema carries this instead.
 #include <gtest/gtest.h>
 #include <jde/access/IAcl.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/LocalQL.h>
 #include <jde/ql/LocalSubscriptions.h>
 #include "NullQL.h"
@@ -55,7 +56,7 @@ namespace Jde::QL::Tests{
 		α TearDown()->void override{ Subscriptions::StopListen( Listener ); }
 		α subscribe( sv text, UserPK executer )ε->vector<SubscriptionId>{
 			auto await = Ql->Subscribe( string{text}, {}, Listener, executer );
-			return BlockTAwait<vector<SubscriptionId>>( move(*await) );
+			return BlockAwait( move(*await) );
 		}
 		sp<AclStub> Acl;
 		sp<TestQL> Ql;

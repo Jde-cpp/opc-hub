@@ -1,4 +1,5 @@
 //#include <boost/beast/ssl.hpp>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/ClientSsl.h>
 #include <absl/synchronization/mutex.h>
 #include "jde/fwk/co/Await.h"
@@ -105,7 +106,7 @@ namespace Jde::Web{
 	}
 	Ω connectSocket( optional<ssl::context> ctx=nullopt )->void{
 		_clientSession = ms<Mock::ClientSocketSession>( Executor(), ctx );
-		BlockVoidAwait( _clientSession->RunSession( Host, Port ) );
+		BlockAwait( _clientSession->RunSession( Host, Port ) );
 		connect();
 	}
 	Ω createSession( optional<ssl::context> ctx=nullopt )->void{
@@ -430,10 +431,10 @@ namespace Jde::Web{
 		createSession();
 		Close();
 		Wait();
-		//BlockVoidAwait rather than the Close()/Wait() pair above: the second close completes synchronously now (await_ready sees a
+		//BlockAwait rather than the Close()/Wait() pair above: the second close completes synchronously now (await_ready sees a
 		//closed/closing stream), and Wait()'s condition_variable has no predicate - Notify() would fire before it blocks and the
 		//lost wakeup would hang the test rather than the code.  Before this, Suspend went straight at a nulled _stream.
-		BlockVoidAwait( _clientSession->Close(true, SRCE_CUR) );
+		BlockAwait( _clientSession->Close(true, SRCE_CUR) );
 		_clientSession = nullptr;//TearDown's Close()/Wait() would hit the same lost wakeup.
 	}
 
@@ -442,7 +443,7 @@ namespace Jde::Web{
 	TEST_F( SocketTests, CloseBeforeHandshake ){
 		optional<ssl::context> ctx;
 		_clientSession = ms<Mock::ClientSocketSession>( Executor(), ctx );
-		BlockVoidAwait( _clientSession->Close(false, SRCE_CUR) );
+		BlockAwait( _clientSession->Close(false, SRCE_CUR) );
 		EXPECT_EQ( _clientSession->OnCloseCount(), 1u );
 		_clientSession = nullptr;
 	}

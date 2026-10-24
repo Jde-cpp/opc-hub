@@ -5,6 +5,7 @@
 //history at times and aggregated, ReadAtTime and ReadProcessed over the caller's session, each aggregate by name.
 #include <thread>
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/historian/Historian.h>
@@ -38,7 +39,7 @@ namespace Jde::Opc::Gateway::Tests{
 			}
 			Write( RpmManual, 50, At(0, 15) );
 			Write( RpmManual, 70, At(2, 45) );
-			THROW_IF( !BlockAny(ua->History().Group()->Flush()), "The flush didn't write all it took." );
+			THROW_IF( !BlockAwait(ua->History().Group()->Flush()), "The flush didn't write all it took." );
 		}
 		Ω At( uint day, uint second )ι->TimePoint{ return _day+days{ day }+seconds{ second }; }
 		Ω Write( UA_UInt32 id, double value, TimePoint source )ε->void{
@@ -655,7 +656,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Write( Rpm3, 100, When(40) );
 		Write( Rpm3, 200, When(42) );
 		Write( Rpm3, 300, When(44) );
-		THROW_IF( !BlockAny(Server::GetUAServer().History().Group()->Flush()), "The flush didn't write all it took." );
+		THROW_IF( !BlockAwait(Server::GetUAServer().History().Group()->Flush()), "The flush didn't write all it took." );
 		let node = ByIndex( Rpm3 );
 		let inserted = Update( "createHistory", {{Rpm3, When(41), 150}, {Rpm3, When(40), 1}} );
 		EXPECT_EQ( inserted.Values, (vector<StatusCode>{UA_STATUSCODE_GOODENTRYINSERTED, UA_STATUSCODE_BADENTRYEXISTS}) );

@@ -3,6 +3,7 @@
 //trusted not to exist: it consumes the table and *still* returns null.  No data source is involved: the tables are `system`,
 //so TableQL leaves _dbTable null, and Resume/ResumeExp are synchronous, so BlockAwait drives the coroutine on this thread.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ops/TablesAwait.h>
 #include "NullQL.h"
 

@@ -4,6 +4,7 @@
 #include <boost/beast/websocket/error.hpp>
 #include <jde/fwk.h>
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/logTags.h>
 #include <jde/fwk/usings.h>
 #include <jde/app/client/clientSubscriptions.h>
@@ -69,7 +70,7 @@ namespace Jde::Web::Client{
 	α IClientSocketSession::Shutdown( bool terminate, SL sl )ι->void{
 		if( _ioContext ){
 			TRACET( _connectTag, "[{}]Client::Shutdown: {}", hex(Id()), Host() );
-			BlockVoidAwait( Close(terminate, sl) );
+			BlockAwait( Close(terminate, sl) );
 		}
 	}
 

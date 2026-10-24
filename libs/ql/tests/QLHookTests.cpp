@@ -4,6 +4,7 @@
 //mutations are system-shaped (no DBTable), and every awaitable here resolves in await_ready, so BlockAwait drives the coroutine
 //on this thread.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/QLHook.h>
 #include <jde/ql/types/Parser.h>
 #include <jde/ql/types/TableQL.h>
@@ -81,8 +82,8 @@ namespace Jde::QL::Tests{
 		}();
 		return y;
 	}
-	Ω run( MutationAwaits&& a )ε->optional<jarray>{ return BlockAny( move(a) ); }
-	Ω run( QueryHookAwaits&& a )ε->optional<jvalue>{ return BlockAny( move(a) ); } //a helper, not a local: the ',' in the template arguments would end an EXPECT_ macro's first argument.
+	Ω run( MutationAwaits&& a )ε->optional<jarray>{ return BlockAwait( move(a) ); }
+	Ω run( QueryHookAwaits&& a )ε->optional<jvalue>{ return BlockAwait( move(a) ); } //a helper, not a local: the ',' in the template arguments would end an EXPECT_ macro's first argument.
 
 	struct QLHookTests : ::testing::Test{
 		α SetUp()->void override{ hook().Reset(); }

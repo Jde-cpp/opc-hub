@@ -1,4 +1,5 @@
 ﻿#include <execution>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/client/http/ClientHttpResException.h>
 #include <jde/web/Jwt.h>

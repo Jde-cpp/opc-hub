@@ -3,6 +3,7 @@
 //primitives, over a test record with a delta-encoded time, as the historian's.
 #include <fstream>
 #include <ranges>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/records/Scan.h>
 #include <jde/fwk/io/records/Merge.h>
 #include <jde/fwk/io/records/Rewrite.h>
@@ -796,7 +797,7 @@ namespace Jde::IO::Records::Tests{
 				FeedNow( rewrite );
 			else{
 				++parts;
-				BlockVoidAwait( rewrite.Write() );
+				BlockAwait( rewrite.Write() );
 			}
 		}
 		EXPECT_GT( parts, 1u );
@@ -835,7 +836,7 @@ namespace Jde::IO::Records::Tests{
 		Rewrite<TestRecord> rewrite{ File, temp, nullptr, {}, move(late), start, {}, move(hooks) };
 		for( auto p = rewrite.Next(); p!=EPart::Done; p = rewrite.Next() ){
 			ASSERT_EQ( p, EPart::Ready );
-			BlockVoidAwait( rewrite.Write() );
+			BlockAwait( rewrite.Write() );
 		}
 		ASSERT_EQ( noted.size(), 1 );
 		expectEqual( noted[0], sample(DayStart, "Pump1.Speed") );
@@ -934,7 +935,7 @@ namespace Jde::IO::Records::Tests{
 		//As a flush writes it.
 		Ω Write( Flushed& flushed, int64_t time, Day recover=March6 )ε->void{
 			let slot = flushed.Next( time, recover );
-			BlockVoidAwait( slot.Write() );
+			BlockAwait( slot.Write() );
 			flushed.Wrote( slot );
 		}
 		static constexpr int64_t Time{ 1'700'000'000'000 };

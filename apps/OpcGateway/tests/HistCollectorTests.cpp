@@ -4,6 +4,7 @@
 //thresholds their HA Configurations give, read beside a pass-through read of the server's own history of the same range,
 //through a connection drop that the group marks as a gap and the server, which never lost a value, doesn't.
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include "utils/HistGroupFixture.h"
 #include "../src/ql/HistGroupInfoQLAwait.h"
