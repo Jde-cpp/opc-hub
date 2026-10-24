@@ -10,6 +10,7 @@
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
 #include "GatewayNodeAccess.h"
+#include "ServedValues.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -132,6 +133,7 @@ namespace Jde::Opc::Gateway{
 		INFOT( ELogTags::App, "OPC UA endpoint at {} - {} connection folder(s), {} served node(s).", server->Url(), connections, nodes );
 	}
 	GatewayServer::GatewayServer( UASettings settings )ι:
+		_values{ ms<ServedValues>() },
 		_settings{ move(settings) }
 	{}
 	GatewayServer::~GatewayServer(){ _work.reset(); }
@@ -340,6 +342,20 @@ namespace Jde::Opc::Gateway{
 				AddNode( g->second, move(member) );
 		} );
 	}
+	α GatewayServer::ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void{ _values->Store( group, index, value ); }
+	α GatewayServer::NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void{ _values->Lose( group, indexes ); }
+	//Every URI of the array gets its namespace, so each index a value can carry maps (spec *Namespaces*);  0's, and a source that lists
+	//it again, stay 0.
+	α GatewayServer::NamespacesRead( const ServerCnnctnNK& slug, vector<string> uris )ι->void{
+		Serial( [this, slug, uris=move(uris)]{
+			if( !_connections.contains(slug) )//a slug with no row - a test connect's.
+				return;
+			vector<UA_UInt16> table; table.reserve( uris.size() );
+			for( uint i=0; i<uris.size(); ++i )
+				table.push_back( i==0 || uris[i]==_ns0Uri ? 0 : Namespace(slug, uris[i]) );
+			_values->SetNamespaces( slug, move(table) );
+		} );
+	}
 	α GatewayServer::ThresholdsChanged( HistGroupPK group, vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> thresholds )ι->void{
 		Serial( [this, group, thresholds=move(thresholds)]{
 			auto g = _groups.find( group );
@@ -365,7 +381,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α GatewayServer::Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, vector<HistMember> members )ι->void{
-		auto& group = _groups.try_emplace( id, Group{move(guid), move(slug), {}} ).first->second;
+		auto& group = _groups.try_emplace( id, Group{id, move(guid), move(slug), {}} ).first->second;
 		for( auto& member : members ){
 			if( !group.Nodes.contains(member.Index) )
 				AddNode( group, move(member) );
@@ -436,7 +452,8 @@ namespace Jde::Opc::Gateway{
 	Ω name( const HistNodeAttributes& attributes, const NodeId& id )ι->string{ return attributes.Path && attributes.Path->size() ? attributes.Path->back().Name : identifier( id ); }
 	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD; }//HistoryWrite with Phase 4, Write kept for Phase 5.
 	//Mapped before it's added and unmapped only once it's gone (Unserve), so no session meets the node outside its group's rights;  a
-	//throw part way undoes what was added.
+	//throw part way undoes what was added.  Its value is in the mirror's cache before the variable is, seeded with the last its host
+	//delivered, so the first read answers it:  a value that comes between is stored, not missed.
 	α GatewayServer::AddNode( Group& group, HistMember member )ι->void{
 		if( !_connections.contains(group.Slug) ){
 			WARN( "[{}]Node {} '{}' isn't served:  connection '{}' has no folder.", group.Guid, member.Index, member.Node.ToString(), group.Slug );
@@ -448,6 +465,12 @@ namespace Jde::Opc::Gateway{
 		NodeId id{ Mapped(group.Slug, member.Node) };
 		if( !_access->Add(id, group.Guid) ){
 			ERR( "[{}]Node {} '{}' isn't served:  {} already is, for group {}.", group.Guid, member.Index, member.Node.ToString(), id.ToString(), _access->Guid(id).value_or("") );
+			return;
+		}
+		auto host = HistHost::Instance().Find( group.Id );
+		if( !_values->Add(id, group.Id, member.Index, group.Slug, host ? host->LastValue(member.Index) : nullopt) ){
+			ERR( "[{}]Node {} '{}' isn't served:  {} has a value source already.", group.Guid, member.Index, member.Node.ToString(), id.ToString() );
+			_access->Remove( id );
 			return;
 		}
 		//A folder standing in for this node, its children served first:  they come out, the folder going with the last, and back under the variable.
@@ -487,8 +510,9 @@ namespace Jde::Opc::Gateway{
 			variable.accessLevel = accessLevel( attributes );
 			variable.historizing = true;//every served node is a group member.
 			variable.minimumSamplingInterval = std::chrono::duration<double,std::milli>{ member.Thresholds.MinTimeInterval }.count();//the collector's rate is the ceiling (spec *Live values*).
-			UAε( UA_Server_addVariableNode(&ua, id, parent, reference(underVariable), browseName, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), variable, nullptr, nullptr) );
+			UAε( UA_Server_addVariableNode(&ua, id, parent, reference(underVariable), browseName, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), variable, _values.get(), nullptr) );
 			added = true;
+			UAε( UA_Server_setVariableNode_callbackValueSource(&ua, id, ServedValues::Source()) );//the context above is what its read finds the cache by.
 			configuration = Opc::Server::HAConfiguration::Add( ua, id );
 			Opc::Server::HAConfiguration::Publish( ua, configuration, member.Thresholds );
 			Opc::Server::HAConfiguration::PublishAggregates( ua, configuration );
@@ -526,6 +550,7 @@ namespace Jde::Opc::Gateway{
 		let deleted = !added || gone( served.Id, "variable" );
 		if( deleted ){
 			_access->Remove( served.Id );
+			_values->Remove( served.Id );
 			if( let& path = served.Member.Attributes.Path; prune && path && path->size()>1 )
 				Prune( group.Slug, std::span<const HistPathSegment>{*path}.first(path->size()-1) );
 		}

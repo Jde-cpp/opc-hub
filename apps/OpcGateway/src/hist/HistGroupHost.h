@@ -11,7 +11,9 @@ namespace Jde::Opc::Gateway{
 	struct HistMember final{ HistGroupNodePK Index; ExNodeId Node; Opc::Hist::Thresholds Thresholds; HistNodeAttributes Attributes; };
 	struct HistGroupHost;
 	//What hears a group's membership change, told where the host's state changes and after it has it, off its locks:  the
-	//endpoint's served nodes (GatewayServer, spec *Address space*), which post every call to a thread of their own.
+	//endpoint's served nodes (GatewayServer, spec *Address space*), which post every call to a thread of their own.  And its
+	//values (spec *Live values*), the tap:  told under the host's lock, as the group is, on the connection's strand, so it stores
+	//and returns - no UA_Server_* call, no wait on anything a strand may hold.
 	struct IHistListener{
 		virtual ~IHistListener()=default;
 		β GroupLoaded( const HistGroupHost& host )ι->void=0;//HistHost::Load:  at a restore, and a create, with no members yet.
@@ -20,6 +22,12 @@ namespace Jde::Opc::Gateway{
 		β NodeLeft( HistGroupPK group, HistGroupNodePK index )ι->void=0;
 		β NodeDescribed( HistGroupPK group, HistGroupNodePK index, HistNodeAttributes attributes )ι->void=0;
 		β ThresholdsChanged( HistGroupPK group, vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> thresholds )ι->void=0;
+		//The tap.  A member's value as the group takes it - every one its item delivers, held through a rebuild's check as the
+		//group's are - and the members whose items are lost, each once per loss:  the first value after says they're back.
+		β ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void=0;
+		β NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void=0;
+		//The connection's NamespaceArray as the collector read it, each time it does:  what a value's indices mean (spec *Namespaces*).  Off the lock.
+		β NamespacesRead( const ServerCnnctnNK& slug, vector<string> uris )ι->void=0;
 	};
 	//What a member's server says of its node, read once its item is made (HistGroupHost::Describe):  whether its DataType is an
 	//enumeration, none until the server has said, and its InstrumentRange and EURange properties, each none where it has
@@ -68,6 +76,9 @@ namespace Jde::Opc::Gateway{
 		α Band( HistGroupNodePK index )Ι->optional<EHistBand>;//as ForGroup and the library's range check leave it;  none for a node it doesn't hold.
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
+		//The last value the member's item delivered, as the group took it, Bad_NoCommunication while the item is lost:  what the
+		//endpoint serves for a variable added after it (GatewayServer::AddNode).  None before its first, or for a node it doesn't hold.
+		α LastValue( HistGroupNodePK index )Ι->optional<Value>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
 		//Each member as the endpoint serves it (GatewayServer::GroupLoaded):  its node, resolved thresholds and attributes, in one look.
 		α HistMembers()Ι->vector<HistMember>;
@@ -115,8 +126,9 @@ namespace Jde::Opc::Gateway{
 		//ConnectionLost's or one the watch found, until a ConnectionRestored brings it back.  Fed:  a value arrived since its
 		//create, which the read after joining an existing item would repeat.  Thresholds are the rows', which ForGroup applies
 		//Described to.  Undescribed:  an answer Describe asks for again was lost or refused (Redescribe).  Attributes:  the row's,
-		//then as Describe read them.  Unwritten:  the row's write of them failed, so the next describe writes them unchanged.
-		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; };
+		//then as Describe read them.  Unwritten:  the row's write of them failed, so the next describe writes them unchanged.  Last:
+		//the value Deliver last took, for LastValue.
+		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; optional<Value> Last; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
 		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;
@@ -147,6 +159,8 @@ namespace Jde::Opc::Gateway{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Watch()ι->void;//arms the watch, every RetryInterval until Close.
 		α Check()ι->void;//the watch's:  members whose items are gone without a word, those lost past AbandonAfter, and Redescribe.
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>;//by the server's index:  a null node for one not (or no longer) in the group.
+		//A value into the group, and to the listener - the tap - in that order, the node's Last kept:  every value that reaches the group goes this way.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Deliver( const sp<IHistListener>& listener, HistGroupNodePK index, Node& node, const Value& value )ι->void;
 		α Client()Ι->sp<UAClient>;//the collector's client, if it has one.
 
 		const HistGroupPK _id;

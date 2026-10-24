@@ -1,54 +1,16 @@
 //Servers phase 3a (#383, docs/servers/plan.md):  the endpoint's served address space - a group's members under Objects/<slug>/…
 //at their paths on the source, in a namespace per connection and remote URI, with the attributes their rows hold, Historizing and
 //an HA Configuration from their thresholds;  membership through HistHost's hooks;  and the group's rights on its nodes.
-#include <open62541/client_highlevel.h>
-#include <jde/tests/WaitUntil.h>
 #include <jde/fwk/process/execution.h>
-#include <jde/opc/tests/UATestClient.h>
 #include <jde/opc/server/HAConfiguration.h>
-#include <jde/opc/server/UAServer.h>
-#include "../src/server/GatewayServer.h"
 #include "../src/hist/HistRows.h"
-#include "utils/HistGroupFixture.h"
+#include "utils/EndpointFixture.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
-	using Opc::Tests::UATestClient;
-	constexpr UA_UInt16 _own{ 1 };//the endpoint's own namespace, the folders' (spec *Namespaces*).
 	constexpr sv _ns0Uri{ "http://opcfoundation.org/UA/" };
 
-	struct GatewayNodesTests : HistGroupFixture{
-		α SetUp()->void override{
-			HistGroupFixture::SetUp();
-			if( !IsSkipped() && !GatewayServer::Instance() )
-				GTEST_SKIP() << "The gateway serves no endpoint:  /gateway/server.";
-		}
-		Ω Ssl()ι->Crypto::CryptoSettings{ return Crypto::CryptoSettings{ Json::FindDefaultObject(Settings::AsObject("/http/gateway"), "ssl"), {} }; }
-		Ω Url()ι->string{ return Ƒ( "opc.tcp://127.0.0.1:{}", Settings::FindNumber<PortType>("/gateway/server/port").value_or(4841) ); }
-		Ω Issued()ι->UA_ExtensionObject{ return UATestClient::Issued( Ƒ("{:x}", AppClient()->SessionId()) ); }//this program's hub session:  the suite's user.
-		Ω Client()ε->up<UATestClient>{
-			auto y = mu<UATestClient>( Url(), Ssl(), Issued() );
-			y->ConnectOrThrow();
-			return y;
-		}
-		//The endpoint's index for a connection's remote URI, as its NamespaceArray has it;  none until a node of that namespace is served.
-		Ω Mapped( sv remote, const ServerCnnctnNK& slug=OpcServerSlug )ι->optional<UA_UInt16>{
-			let uri = GatewayServer::NamespaceUri( slug, remote );
-			for( let& [index, ns] : GatewayServer::Instance()->Server()->Namespaces() ){
-				if( ns==uri )
-					return (UA_UInt16)index;
-			}
-			return nullopt;
-		}
-		//A pump member's served node by its path, Objects/<slug>/<pump>/<name>, each segment in the pumps' mapped namespace.
-		Ω Served( UATestClient& client, sv pump, sv name, const ServerCnnctnNK& slug=OpcServerSlug, sv remote=PumpsUri )ε->optional<NodeId>{
-			let ns = Mapped( remote, slug );
-			return ns ? client.Translate( NodeId::ObjectsFolder(), {{_own, slug}, {*ns, string{pump}}, {*ns, string{name}}} ) : nullopt;
-		}
-		Ω Folder( UATestClient& client, sv pump, const ServerCnnctnNK& slug=OpcServerSlug )ε->optional<NodeId>{
-			let ns = Mapped( PumpsUri, slug );
-			return ns ? client.Translate( NodeId::ObjectsFolder(), {{_own, slug}, {*ns, string{pump}}} ) : nullopt;
-		}
+	struct GatewayNodesTests : EndpointFixture{
 		Ω DisplayName( UATestClient& client, const NodeId& node )ε->string{
 			UA_LocalizedText text; UA_LocalizedText_init( &text );
 			UAε( UA_Client_readDisplayNameAttribute(client, node, &text) );
@@ -98,12 +60,6 @@ namespace Jde::Opc::Gateway::Tests{
 			if( !v.hasValue || !v.IsScalar() )
 				return nullopt;
 			return v.value.type->typeKind==UA_DATATYPEKIND_BOOLEAN ? (double)v.Get<UA_Boolean>( 0 ) : v.AsNumber<double>();
-		}
-		//Until the collector has described the member - its path written - which Describe does once its item is made.
-		Ω WaitPath( const sp<HistGroupHost>& host, uint32 index )ε->void{
-			Stopwatch sw;
-			while( !host->Attributes(index) || !host->Attributes(index)->Path )
-				sw.CheckTimeout( 15s, 10ms );
 		}
 	};
 
