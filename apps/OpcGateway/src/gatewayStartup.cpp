@@ -56,6 +56,7 @@ namespace Jde::Opc{
 		//value_or defaults mirror config/Opc.Gateway.jsonnet - keep them in lockstep so a deployment missing a key runs what the shipped config documents.
 		_pingInterval = Settings::FindDuration("/gateway/pingInterval").value_or( 30s );
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
+		Process::RaiseTimerResolution();//AsyncRequest's 1 ms poll for a UA response took a 15.6 ms tick on windows:  every round trip's floor.
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		return schema;

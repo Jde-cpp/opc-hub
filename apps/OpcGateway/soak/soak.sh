@@ -14,6 +14,9 @@
 #     servers silently ignore the event, every stop is a 60s wait and a hard kill, and the verdict is FAIL on "unclean stop"
 #     even when the client passed.  Such a launch is refused at startup; detach a console instead:
 #       Start-Process 'C:\Program Files\Git\bin\bash.exe' -ArgumentList '<path>/soak.sh','--run-dir','<dir>' -WindowStyle Minimized
+#     The broadcasts (this check's and teardown's) reach everything on that console, the launching shell included.  To chain
+#     runs, loop in a bash script with `trap ':' INT` - a handler, as an ignored INT is inherited and fails this check - not in
+#     PowerShell, whose script stops at the first teardown.
 #   - no idle sleep.  The guest's AC standby timeout is 5h and a sleep ends the run; this script holds ES_SYSTEM_REQUIRED for
 #     its own lifetime and reads it back.  It cannot stop a VM *host* from suspending the guest (H3) - that is a host setting.
 #
