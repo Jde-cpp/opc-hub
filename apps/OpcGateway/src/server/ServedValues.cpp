@@ -42,13 +42,50 @@ namespace Jde::Opc::Gateway{
 		ul _{ _mutex };
 		_indexes[slug].insert_or_assign( move(remote), index );
 	}
-	α ServedValues::Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug )ι->bool{
+	α ServedValues::Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug, sp<Opc::Hist::Group> history )ι->bool{
 		ul _{ _mutex };
-		return _nodes.try_emplace( move(node), Served{group, index, move(slug)} ).second;
+		return _nodes.try_emplace( move(node), Served{group, index, move(slug), move(history)} ).second;
 	}
 	α ServedValues::Remove( const NodeId& node )ι->void{
 		ul _{ _mutex };
 		_nodes.erase( node );
+	}
+	α ServedValues::History( const UA_NodeId& node )Ι->optional<Opc::Server::IHistoryHost::Node>{
+		rl _{ _mutex };
+		let p = _nodes.find( node );
+		return p==_nodes.end() || !p->second.History ? nullopt : optional<Opc::Server::IHistoryHost::Node>{ {p->second.History, p->second.Index} };
+	}
+	α ServedValues::ArchiveStarts()Ι->vector<ArchiveStart>{
+		rl _{ _mutex };
+		vector<ArchiveStart> y;
+		for( let& [_, served] : _nodes ){
+			for( let& property : served.Starts )
+				y.push_back( {property, served.History} );
+		}
+		return y;
+	}
+	α ServedValues::AddStarts( const NodeId& node, vector<NodeId> properties )ι->vector<ArchiveStart>{
+		vector<ArchiveStart> y;
+		ul _{ _mutex };
+		auto p = _nodes.find( node );
+		if( p==_nodes.end() )
+			return y;
+		for( let& property : properties )
+			y.push_back( {property, p->second.History} );
+		p->second.Starts = move( properties );
+		return y;
+	}
+	α ServedValues::Regroup( HistGroupPK group, sp<Opc::Hist::Group> history )ι->vector<ArchiveStart>{
+		vector<ArchiveStart> y;
+		ul _{ _mutex };
+		for( auto& [_, served] : _nodes ){
+			if( served.Group!=group )
+				continue;
+			served.History = history;
+			for( let& property : served.Starts )
+				y.push_back( {property, history} );
+		}
+		return y;
 	}
 	α ServedValues::Store( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void{
 		ul _{ _mutex };
@@ -80,6 +117,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α ServedValues::Read( const UA_NodeId& node, const UA_NumericRange* range, UA_DataValue& value )ι->UA_StatusCode{
 		uint unmapped{};
+		bool warned{};
 		{
 			rl _{ _mutex };
 			auto p = _nodes.find( node );
@@ -99,28 +137,58 @@ namespace Jde::Opc::Gateway{
 			}
 			if( let sc = range ? UA_DataValue_copyRange( &last, &value, *range ) : UA_DataValue_copy( &last, &value ); sc )
 				return sc;
-			unmapped = Map( served, member->Namespaces.get(), value.value, false );
+			unmapped = Map( SlugIndexes(served.Slug), member->Namespaces.get(), value.value, false );
+			warned = served.Warned;
 		}
-		Warn( node, unmapped );
+		if( !warned )
+			Warn( node, unmapped );
 		return UA_STATUSCODE_GOOD;
 	}
-	α ServedValues::Remap( const UA_NodeId& node, UA_Variant& value )ι->void{ Map( node, value, false ); }
-	α ServedValues::Unmap( const UA_NodeId& node, UA_Variant& value )ι->void{ Map( node, value, true ); }
-	α ServedValues::Map( const UA_NodeId& node, UA_Variant& value, bool back )ι->void{
+	α ServedValues::Remap( const UA_NodeId& node, std::span<UA_DataValue> values )ι->void{
 		uint unmapped{};
+		bool warned{};
 		{
 			rl _{ _mutex };
 			auto p = _nodes.find( node );
 			if( p==_nodes.end() )
 				return;
-			let g = _groups.find( p->second.Group );
-			unmapped = Map( p->second, g==_groups.end() ? nullptr : g->second.Namespaces.get(), value, back );
+			let& served = p->second;
+			let uris = Namespaces( served.Group );
+			let indexes = SlugIndexes( served.Slug );
+			for( auto& value : values ){
+				if( value.hasValue )
+					unmapped += Map( indexes, uris, value.value, false );
+			}
+			warned = served.Warned;
 		}
-		Warn( node, unmapped );
+		if( !warned )
+			Warn( node, unmapped );
 	}
-	α ServedValues::Map( const Served& served, const vector<string>* uris, UA_Variant& value, bool back )Ι->uint{
-		let known = _indexes.find( served.Slug );
-		let indexes = known==_indexes.end() ? nullptr : &known->second;
+	α ServedValues::Unmap( const UA_NodeId& node, UA_Variant& value )ι->uint{
+		uint unmapped{};
+		bool warned{};
+		{
+			rl _{ _mutex };
+			auto p = _nodes.find( node );
+			if( p==_nodes.end() )
+				return 0;
+			let& served = p->second;
+			unmapped = Map( SlugIndexes(served.Slug), Namespaces(served.Group), value, true );
+			warned = served.Refused;
+		}
+		if( !warned )
+			Warn( node, unmapped, true );
+		return unmapped;
+	}
+	α ServedValues::Namespaces( HistGroupPK group )Ι->const vector<string>*{
+		let p = _groups.find( group );
+		return p==_groups.end() ? nullptr : p->second.Namespaces.get();
+	}
+	α ServedValues::SlugIndexes( const ServerCnnctnNK& slug )Ι->const Indexes*{
+		let p = _indexes.find( slug );
+		return p==_indexes.end() ? nullptr : &p->second;
+	}
+	α ServedValues::Map( const Indexes* indexes, const vector<string>* uris, UA_Variant& value, bool back )ι->uint{
 		return Remap( value, [&]( UA_UInt16 ns )->optional<UA_UInt16>{
 			if( !uris || !indexes )
 				return nullopt;
@@ -139,18 +207,19 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		} );
 	}
-	α ServedValues::Warn( const UA_NodeId& node, uint unmapped )ι->void{
+	α ServedValues::Warn( const UA_NodeId& node, uint unmapped, bool back )ι->void{
 		if( !unmapped )
 			return;
 		ServerCnnctnNK slug;
 		{
 			ul _{ _mutex };
 			auto p = _nodes.find( node );
-			if( p==_nodes.end() || std::exchange(p->second.Warned, true) )
+			if( p==_nodes.end() || std::exchange(back ? p->second.Refused : p->second.Warned, true) )
 				return;
 			slug = p->second.Slug;
 		}
-		WARN( "Node {}'s value names {} namespace index(es) the endpoint can't place from '{}''s NamespaceArray - served as the source gave them.", NodeId{node}.ToString(), unmapped, slug );
+		let outcome = back ? "a HistoryUpdate's, refused and not stored"sv : "served as the source gave them"sv;
+		WARN( "Node {}'s value names {} namespace index(es) the endpoint can't place from '{}''s NamespaceArray - {}.", NodeId{node}.ToString(), unmapped, slug, outcome );
 	}
 
 	using Mapping = absl::FunctionRef<optional<UA_UInt16>(UA_UInt16)>;
@@ -164,6 +233,33 @@ namespace Jde::Opc::Gateway{
 			++unmapped;
 	}
 	Ω remapData( void* data, const UA_DataType& type, size_t count, Mapping map, uint& unmapped )ι->void;
+	//An encoded structure of namespace 0's, decoded in place so its members are walked:  the historian keeps every structure encoded,
+	//and a history page's come back so.  False for a source's own type, which stays encoded, or a body that won't decode.
+	Ω decode( UA_ExtensionObject& o )ι->bool{
+		let& id = o.content.encoded.typeId;
+		if( o.encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING || id.namespaceIndex || id.identifierType!=UA_NODEIDTYPE_NUMERIC )
+			return false;
+		static const absl::flat_hash_map<UA_UInt32,const UA_DataType*> types = []{//by DefaultBinary id.
+			absl::flat_hash_map<UA_UInt32,const UA_DataType*> y;
+			for( size_t i=0; i<UA_TYPES_COUNT; ++i ){
+				if( let& encoding = UA_TYPES[i].binaryEncodingId; !encoding.namespaceIndex && encoding.identifierType==UA_NODEIDTYPE_NUMERIC && encoding.identifier.numeric )
+					y.emplace( encoding.identifier.numeric, &UA_TYPES[i] );
+			}
+			return y;
+		}();
+		let p = types.find( id.identifier.numeric );
+		if( p==types.end() )
+			return false;
+		let& type = *p->second;
+		void* data = UA_new( &type );
+		if( !data || UA_decodeBinary(&o.content.encoded.body, data, &type, nullptr) ){
+			UA_delete( data, &type );
+			return false;
+		}
+		UA_ExtensionObject_clear( &o );
+		UA_ExtensionObject_setValue( &o, data, &type );
+		return true;
+	}
 	//A structure's members as open62541 lays them out (ua_types.c's copyStructure and copyUnion):  each after its padding, an array,
 	//optional or not, as its size and pointer, an optional scalar by pointer, null when absent;  a union's selected member alone, at
 	//its padding from the start.
@@ -226,7 +322,7 @@ namespace Jde::Opc::Gateway{
 				break;
 			case UA_DATATYPEKIND_EXTENSIONOBJECT:{//encoded, its type id;  decoded, a type this build knows, namespace 0's, its members.
 				auto& o = *static_cast<UA_ExtensionObject*>( p );
-				if( o.encoding<=UA_EXTENSIONOBJECT_ENCODED_XML )
+				if( o.encoding<=UA_EXTENSIONOBJECT_ENCODED_XML && !decode(o) )
 					remapIndex( o.content.encoded.typeId.namespaceIndex, map, unmapped );
 				else if( o.content.decoded.type )
 					remapData( o.content.decoded.data, *o.content.decoded.type, 1, map, unmapped );

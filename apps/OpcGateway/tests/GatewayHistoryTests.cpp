@@ -2,8 +2,10 @@
 //GatewayHistoryHost.  A raw and a processed HistoryRead on a served node agree with the QL `history` with `group` over the same
 //range, the spec's differential, Median served from the endpoint's own namespace and the archive start written;  a structure-typed
 //member and a NodeId-typed one read from history in the gateway's namespaces, each page remapped by the table at read time;  a
-//HistoryUpdate under an enforced grant, then a modified read shows what it replaced, by the session's user, and the QL agrees;  and a
-//user without Update is refused, on the unenforced group as it ships and on an enforced one granted Read alone.
+//HistoryUpdate under an enforced grant, then a modified read shows what it replaced, by the session's user, and the QL agrees;  a
+//HistoryUpdate's NodeId stored in the source's namespace, and one the endpoint can't map back refused, a QualifiedName's and a
+//structure's member's the same way;  a DeleteRawModified's range gone from the history;  and a user without Update is refused, on
+//the unenforced group as it ships and on an enforced one granted Read alone.
 #include <absl/cleanup/cleanup.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/server/HAConfiguration.h>
@@ -123,15 +125,17 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		//A value as a HistoryUpdate carries it, keyed by its SourceTimestamp, and open62541's helpers:  the one value's result, or the
 		//entry's status when that isn't Good.
-		Ω Sample( double value, TimePoint source )ι->Value{
+		Ω Sample( const void* value, const UA_DataType& type, TimePoint source )ι->Value{
 			UA_Variant v; UA_Variant_init( &v );
-			UA_Variant_setScalarCopy( &v, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
+			UA_Variant_setScalarCopy( &v, value, &type );
 			Value y{ move(v) };
 			y.sourceTimestamp = Ticks( source );
 			y.hasSourceTimestamp = true;
 			return y;
 		}
-		Ω Insert( UATestClient& client, const NodeId& node, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); return UA_Client_HistoryUpdate_insert( client, &node, &v ); }
+		Ω Sample( double value, TimePoint source )ι->Value{ return Sample( &value, UA_TYPES[UA_TYPES_DOUBLE], source ); }
+		Ω Insert( UATestClient& client, const NodeId& node, Value v )ι->UA_StatusCode{ return UA_Client_HistoryUpdate_insert( client, &node, &v ); }
+		Ω Insert( UATestClient& client, const NodeId& node, double value, TimePoint source )ι->UA_StatusCode{ return Insert( client, node, Sample(value, source) ); }
 		Ω Replace( UATestClient& client, const NodeId& node, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); return UA_Client_HistoryUpdate_replace( client, &node, &v ); }
 		//One value's UpdateData as the service answers it:  the entry's status, which the helpers hide behind Bad_UnexpectedError for an
 		//entry refused whole, since that carries no value results.
@@ -167,6 +171,19 @@ namespace Jde::Opc::Gateway::Tests{
 						<< ", the QL's " << (q.Source ? ToIsoString(*q.Source) : "no source") << " " << serialize(q.Value) << " status " << q.Status;
 			}
 			return ::testing::AssertionSuccess();
+		}
+		//An Argument's dataType, decoded, or as the historian keeps a structure:  an ExtensionObject of its binary encoding.
+		Ω ArgumentDataType( const Value& v )ι->optional<NodeId>{
+			if( v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_ARGUMENT]) )
+				return NodeId{ v.Get<UA_Argument>(0).dataType };
+			if( !v.hasValue || !UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]) || v.Get<UA_ExtensionObject>(0).encoding!=UA_EXTENSIONOBJECT_ENCODED_BYTESTRING )
+				return nullopt;
+			UA_Argument a; UA_Argument_init( &a );
+			if( UA_decodeBinary(&v.Get<UA_ExtensionObject>(0).content.encoded.body, &a, &UA_TYPES[UA_TYPES_ARGUMENT], nullptr) )
+				return nullopt;
+			NodeId y{ a.dataType };
+			UA_Argument_clear( &a );
+			return y;
 		}
 		//A served variable's StartOfArchive, through the client.
 		Ω StartOfArchive( UATestClient& client, const NodeId& variable )ε->optional<UA_DateTime>{
@@ -209,6 +226,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( Agree(median.Values, ReadAll(Group(group.Id), {Ex(RpmManual)}, {.Start=t0, .End=t0+60ms, .Limit=100, .Interval=20, .Aggregate="Median"})) );
 		let functions = client->Browse( NodeId{0, UA_NS0ID_HISTORYSERVERCAPABILITIES_AGGREGATEFUNCTIONS} );
 		EXPECT_TRUE( std::ranges::any_of(functions, [](let& f){ return f.Id==Opc::Server::UAHistory::Median(); }) ) << functions.size() << " aggregate(s), none Median";
+		EXPECT_TRUE( ServerCnnctn::SlugError(ToSV(Opc::Server::UAHistory::Median().identifier.string), SRCE_CUR) ) << "no connection folder, ns=1;s=<slug>, can take Median's id";
 		EXPECT_TRUE( std::ranges::any_of(functions, [](let& f){ return f.BrowseName=="Average"; }) );
 		let start = StartOfArchive( *client, *node );
 		ASSERT_TRUE( start );
@@ -302,6 +320,116 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_GE( info.Time, before );
 			EXPECT_LE( info.Time, UA_DateTime_now() );
 		}
+	}
+
+	//A HistoryUpdate's NodeId goes back into the source's namespace (spec *History*):  one in the endpoint's index for the pumps' namespace
+	//is stored in the source's and read back in the endpoint's, and one in the endpoint's own namespace, which no source index names,
+	//is refused with Bad_NodeIdInvalid and not stored.
+	TEST_F( GatewayHistoryTests, AHistoryUpdateGoesBackToTheSourcesNamespaces ){
+		constexpr UA_UInt32 nodeId{ 9052 };//MembersReadFromHistoryInTheGatewaysNamespaces's.
+		UA_NodeId id = Node( RpmManual );
+		AddSourceVariable( nodeId, "historyNodeId", UA_NS0ID_NODEID, &id, UA_TYPES[UA_TYPES_NODEID] );
+		let itemsBefore = Items();
+		let groupId = CreateGroup( "gatewayHistoryUnmap" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		let index = AddNode( groupId, nodeId );
+		auto host = Host( groupId );
+		WaitSubscribed( host, 1 );
+		WaitPath( host, index );
+		ASSERT_NO_THROW( WaitStored(host, index, Joined, 1) );
+		auto client = Client();
+		optional<NodeId> node;
+		ASSERT_TRUE( WaitUntil([&]{ node = ServedRoot( *client, "historyNodeId" ); return node.has_value(); }) );
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitUntil([&]{ return UserAccessLevel( *client, *node ) & UA_ACCESSLEVELMASK_HISTORYWRITE; }) ) << "the grant reaches the gateway's authorizer";
+		let ns = Mapped( PumpsUri );
+		ASSERT_TRUE( ns );
+		let t0 = Since();
+		const UA_NodeId mapped = UA_NODEID_NUMERIC( *ns, 4321 ), own = UA_NODEID_NUMERIC( _own, 4322 );
+		EXPECT_EQ( Insert(*client, *node, Sample(&mapped, UA_TYPES[UA_TYPES_NODEID], t0)), UA_STATUSCODE_GOODENTRYINSERTED );
+		EXPECT_EQ( Insert(*client, *node, Sample(&own, UA_TYPES[UA_TYPES_NODEID], t0+10ms)), UA_STATUSCODE_BADNODEIDINVALID );
+		let stored = Stored( host, index, t0 );
+		ASSERT_EQ( stored.size(), 1u ) << "the refused value isn't stored";
+		EXPECT_EQ( NodeId{Opc::Hist::ToUA(stored[0].Value).Get<UA_NodeId>(0)}, NodeId(_ns, 4321) ) << "stored in the source's";
+		let raw = Raw( *client, *node, t0, t0+1s );
+		ASSERT_TRUE( UA_StatusCode_isGood(raw.Status) ) << UA_StatusCode_name( raw.Status );
+		ASSERT_EQ( raw.Values.size(), 1u );
+		let& v = raw.Values[0];
+		ASSERT_TRUE( v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_NODEID]) );
+		EXPECT_EQ( NodeId{*static_cast<const UA_NodeId*>(v.value.data)}, NodeId(*ns, 4321) ) << "read back in the endpoint's";
+	}
+
+	//The way back reaches what the way out does (spec *Namespaces*):  a QualifiedName, and a NodeId inside a structure - an Argument's
+	//dataType, namespace 0's structure, decoded - each stored in the source's index and read back in the endpoint's;  an Argument whose
+	//dataType is in the endpoint's own namespace is refused.
+	TEST_F( GatewayHistoryTests, AHistoryUpdateGoesBackInsideAStructure ){
+		constexpr UA_UInt32 qualifiedId{ 9053 }, argumentId{ 9054 };
+		UA_QualifiedName initial = UA_QUALIFIEDNAME( _ns, (char*)"initial" );
+		UA_Argument source; UA_Argument_init( &source );
+		source.name = UA_STRING( (char*)"rpm" );
+		source.dataType = Node( RpmManual );
+		source.valueRank = UA_VALUERANK_SCALAR;
+		AddSourceVariable( qualifiedId, "historyQualifiedName", UA_NS0ID_QUALIFIEDNAME, &initial, UA_TYPES[UA_TYPES_QUALIFIEDNAME] );
+		AddSourceVariable( argumentId, "historyArgument", UA_NS0ID_ARGUMENT, &source, UA_TYPES[UA_TYPES_ARGUMENT] );
+		const OneNodeGroup qualified{ "gatewayHistoryQualified", qualifiedId }, argument{ "gatewayHistoryArgument", argumentId };
+		WaitPath( qualified.Host, qualified.Index );
+		WaitPath( argument.Host, argument.Index );
+		auto client = Client();
+		optional<NodeId> qualifiedNode, argumentNode;
+		ASSERT_TRUE( WaitUntil([&]{ qualifiedNode = ServedRoot( *client, "historyQualifiedName" ); argumentNode = ServedRoot( *client, "historyArgument" ); return qualifiedNode && argumentNode; }) );
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitUntil([&]{ return (UserAccessLevel(*client, *qualifiedNode) & UserAccessLevel(*client, *argumentNode)) & UA_ACCESSLEVELMASK_HISTORYWRITE; }) ) << "the grant reaches the gateway's authorizer";
+		let ns = Mapped( PumpsUri );
+		ASSERT_TRUE( ns );
+		let t0 = Since();
+		const UA_QualifiedName name{ *ns, UA_STRING((char*)"edited") };
+		UA_Argument edited = source;//shallow:  its strings are literals.
+		edited.dataType = UA_NODEID_NUMERIC( *ns, 77 );
+		UA_Argument own = edited;
+		own.dataType = UA_NODEID_NUMERIC( _own, 77 );
+		EXPECT_EQ( Insert(*client, *qualifiedNode, Sample(&name, UA_TYPES[UA_TYPES_QUALIFIEDNAME], t0)), UA_STATUSCODE_GOODENTRYINSERTED );
+		EXPECT_EQ( Insert(*client, *argumentNode, Sample(&edited, UA_TYPES[UA_TYPES_ARGUMENT], t0)), UA_STATUSCODE_GOODENTRYINSERTED );
+		EXPECT_EQ( Insert(*client, *argumentNode, Sample(&own, UA_TYPES[UA_TYPES_ARGUMENT], t0+10ms)), UA_STATUSCODE_BADNODEIDINVALID );
+		let storedName = Stored( qualified.Host, qualified.Index, t0 );
+		ASSERT_EQ( storedName.size(), 1u );
+		let nameValue = Opc::Hist::ToUA( storedName[0].Value );
+		ASSERT_TRUE( UA_Variant_hasScalarType(&nameValue.value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) );
+		EXPECT_EQ( nameValue.Get<UA_QualifiedName>(0).namespaceIndex, _ns ) << "stored in the source's";
+		let storedArgument = Stored( argument.Host, argument.Index, t0 );
+		ASSERT_EQ( storedArgument.size(), 1u ) << "the refused one isn't stored";
+		EXPECT_EQ( ArgumentDataType(Opc::Hist::ToUA(storedArgument[0].Value)), NodeId(_ns, 77) ) << "stored in the source's, " << _ns << ", the endpoint's " << *ns;
+		let nameRead = Raw( *client, *qualifiedNode, t0, t0+1s );
+		ASSERT_TRUE( UA_StatusCode_isGood(nameRead.Status) ) << UA_StatusCode_name( nameRead.Status );
+		ASSERT_EQ( nameRead.Values.size(), 1u );
+		ASSERT_TRUE( nameRead.Values[0].hasValue && UA_Variant_hasScalarType(&nameRead.Values[0].value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) );
+		EXPECT_EQ( nameRead.Values[0].Get<UA_QualifiedName>(0).namespaceIndex, *ns ) << "read back in the endpoint's";
+		let argumentRead = Raw( *client, *argumentNode, t0, t0+1s );
+		ASSERT_TRUE( UA_StatusCode_isGood(argumentRead.Status) ) << UA_StatusCode_name( argumentRead.Status );
+		ASSERT_EQ( argumentRead.Values.size(), 1u );
+		EXPECT_EQ( ArgumentDataType(argumentRead.Values[0]), NodeId(*ns, 77) ) << "read back in the endpoint's";
+	}
+
+	//A DeleteRawModified through the endpoint (spec *History*):  its range, start held and end not, is gone from the raw read, the QL
+	//agrees, and the same range again finds nothing to delete.
+	TEST_F( GatewayHistoryTests, ADeleteRawThroughTheEndpoint ){
+		const OneNodeGroup group{ "gatewayHistoryDelete", RpmManual };
+		WaitPath( group.Host, group.Index );
+		let t0 = Since();
+		let base = BaseRpm();
+		for( uint i=0; i<3; ++i )
+			WriteRpm( base+i*100, t0+milliseconds{10*i} );
+		ASSERT_NO_THROW( WaitStored(group.Host, group.Index, t0, 3) );
+		auto client = Client();
+		optional<NodeId> node;
+		ASSERT_TRUE( WaitUntil([&]{ node = Served( *client, "pumpManual", "motorRpm" ); return node.has_value(); }) );
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitUntil([&]{ return UserAccessLevel( *client, *node ) & UA_ACCESSLEVELMASK_HISTORYWRITE; }) ) << "the grant reaches the gateway's authorizer";
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(*client, &*node, Ticks(t0+10ms), Ticks(t0+20ms)), UA_STATUSCODE_GOOD );
+		let raw = Raw( *client, *node, t0, t0+1s );
+		ASSERT_TRUE( UA_StatusCode_isGood(raw.Status) ) << UA_StatusCode_name( raw.Status );
+		EXPECT_EQ( Doubles(raw.Values), (vector<optional<double>>{base, base+200}) );
+		EXPECT_TRUE( Agree(raw.Values, ReadAll(Group(group.Id), {Ex(RpmManual)}, {.Start=t0, .End=t0+1s, .Limit=100})) );
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(*client, &*node, Ticks(t0+10ms), Ticks(t0+20ms)), UA_STATUSCODE_BADNODATA );
 	}
 
 	//An edit needs Update granted on a resource that is enforced:  refused on the unenforced group, as it ships, whatever the session may

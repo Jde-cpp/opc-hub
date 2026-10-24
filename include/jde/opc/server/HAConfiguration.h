@@ -22,5 +22,8 @@ namespace Jde::Opc::Server::HAConfiguration{
 	//at-time read, over whatever is there:  open62541 fills a property the nodeset leaves out with false or 0, which can't be told
 	//from the nodeset's own.
 	α PublishAggregates( UA_Server& ua, const UA_NodeId& configuration )ε->void;
+	//StartOfArchive and StartOfOnlineArchive, each written or added as 0 until UAHistory finds the archive's first day, which it
+	//writes at its Start, after each midnight, and for a node historized later (UAHistory::Publish):  their ids, in that order.
+	α PublishArchiveStarts( UA_Server& ua, const UA_NodeId& configuration )ε->vector<NodeId>;
 	α Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId;//the object, without properties.
 }

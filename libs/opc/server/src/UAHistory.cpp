@@ -90,8 +90,8 @@ namespace Jde::Opc::Server{
 			~IndexRange(){ UA_free( Value.dimensions ); }
 			UA_NumericRange Value{};
 		};
-		//A page's values into HistoryRead's result, as toUA has them, each in the server's namespaces by the host's remap:  the
-		//dataValues a raw and a modified read both have.
+		//A page's values into HistoryRead's result, as toUA has them, then in the server's namespaces by the host's remap of the
+		//page:  the dataValues a raw and a modified read both have.
 		struct Served final{ const UA_NodeId& Node; IHistoryHost& Host; };
 		Ω dataValues( UA_DataValue*& values, size_t& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
 			let size = page.Values.size();
@@ -101,11 +101,9 @@ namespace Jde::Opc::Server{
 			if( !values )
 				return UA_STATUSCODE_BADOUTOFMEMORY;
 			valuesSize = size;
-			for( uint i=0; i<size; ++i ){
+			for( uint i=0; i<size; ++i )
 				values[i] = toUA( page.Values[i].Value, timestamps, range );
-				if( values[i].hasValue )
-					served.Host.Remap( served.Node, values[i].value );
-			}
+			served.Host.Remap( served.Node, {values, size} );
 			return UA_STATUSCODE_GOOD;
 		}
 		Ω fill( UA_HistoryData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
@@ -268,7 +266,7 @@ namespace Jde::Opc::Server{
 		return _historian ? (UA_UInt32)std::min<uint>( _historian->Config().ReadLimit, std::numeric_limits<UA_UInt32>::max() ) : 0;
 	}
 	α UAHistory::Median()ι->NodeId{
-		static const NodeId median{ UA_NODEID_STRING_ALLOC(1, "Median") };
+		static const NodeId median{ UA_NODEID_STRING_ALLOC(1, "_Median") };//no slug starts with '_', so no gateway folder (FolderId) takes it.
 		return median;
 	}
 	α UAHistory::Aggregate( const UA_NodeId& function )ι->optional<Hist::EAggregate>{
@@ -551,8 +549,13 @@ namespace Jde::Opc::Server{
 					result.operationResults[i] = UA_STATUSCODE_BADTYPEMISMATCH;
 					continue;
 				}
+				Value value{ values[i] };
+				if( _host->Unmap(details.nodeId, value.value) ){//stored as the source's would be, or not at all (IHistoryHost::Unmap).
+					result.operationResults[i] = UA_STATUSCODE_BADNODEIDINVALID;
+					continue;
+				}
 				allowed.push_back( i );
-				_host->Unmap( details.nodeId, update.Values.emplace_back( values[i] ).value );//stored as the source's would be (IHistoryHost::Unmap).
+				update.Values.push_back( move(value) );
 			}
 			return allowed.empty() ? nullopt : optional<Hist::EditDetails>{ move(update) };
 		};

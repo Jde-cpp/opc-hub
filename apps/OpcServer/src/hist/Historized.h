@@ -11,7 +11,7 @@ namespace Jde::Opc::Server{
 	struct Historized final{
 		NodeId Id;//by the server's own namespace index.
 		Hist::Member Member;//by namespace URI, with the thresholds of its HA Configuration.
-		NodeId StartOfArchive, StartOfOnlineArchive;//its HA Configuration's, which the archive's first day is written to.
+		vector<NodeId> ArchiveStarts;//its HA Configuration's StartOfArchive and StartOfOnlineArchive, which the archive's first day is written to.
 
 		//Every such variable but a type's members, in NodeId order.  Each gets what a client needs to find its history and
 		//its nodeset left out:  HistoryRead and HistoryWrite in its AccessLevel when the nodeset set no HistoryRead, an HA

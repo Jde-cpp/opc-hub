@@ -52,10 +52,7 @@ namespace Jde::Opc {
 		for( let& dir : Settings::FindStringArray("/access/trustedCertDirs") )
 			y.TrustedCertDirs.emplace_back( dir );
 		y.ReadTokens( "/opc" );//the test configs' /opc/users is the gateway's password login (PasswordTests).
-		if( let timeout = Settings::FindDuration("/opcServer/hist/editTimeout"); timeout ){
-			THROW_IF( *timeout<=Duration::zero(), "hist.editTimeout must be positive, not {} ms.", duration_cast<milliseconds>(*timeout).count() );
-			y.EditTimeout = *timeout;
-		}
+		y.ReadEditTimeout( "/opcServer/hist/editTimeout" );
 		return y;
 	}
 	α Server::ReadHistSettings()ε->optional<Hist::Settings>{

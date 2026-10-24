@@ -25,11 +25,13 @@ namespace Jde::Opc::Server{
 		//group whose earliest day it takes:  written at UAHistory::Start and after each midnight.
 		struct ArchiveStart final{ NodeId Property; sp<Hist::Group> Group; };
 		β ArchiveStarts()Ι->vector<ArchiveStart> = 0;
-		//A page's value from the namespace indices its source gave it to the server's, and a HistoryUpdate's value back
-		//again, so it is stored as the source's would be:  for a host whose groups hold a source's values - the gateway's,
-		//by the table as it is at read time, since the library stores no URI inside a value (servers spec *Namespaces*,
-		//*History*).  The OpcServer's history is of its own address space, so both leave the value as it is.
-		β Remap( const UA_NodeId& /*node*/, UA_Variant& /*value*/ )ι->void{}
-		β Unmap( const UA_NodeId& /*node*/, UA_Variant& /*value*/ )ι->void{}
+		//A page's values from the namespace indices their source gave them to the server's, the page in one call, and a
+		//HistoryUpdate's value back again, so it is stored as the source's would be:  for a host whose groups hold a
+		//source's values - the gateway's, by the table as it is at read time, since the library stores no URI inside a
+		//value (servers spec *Namespaces*, *History*).  The OpcServer's history is of its own address space, so both leave
+		//the value as it is.  Unmap returns how many indices it couldn't place:  a value UAHistory refuses with
+		//Bad_NodeIdInvalid rather than store under the server's index.
+		β Remap( const UA_NodeId& /*node*/, std::span<UA_DataValue> /*values*/ )ι->void{}
+		β Unmap( const UA_NodeId& /*node*/, UA_Variant& /*value*/ )ι->uint{ return 0; }
 	};
 }

@@ -54,10 +54,7 @@ namespace Jde::Opc::Gateway{
 		y.Limit.SessionTimeout = Settings::FindDuration( key("limits/sessionTimeout") );
 		y.Limit.MinSamplingInterval = Settings::FindDuration( key("limits/minSamplingInterval") );
 		y.Limit.MaxAsyncOperations = Settings::FindNumber<uint>( key("limits/maxAsyncOperations") );
-		if( let timeout = Settings::FindDuration(key("editTimeout")); timeout ){
-			THROW_IF( *timeout<=Duration::zero(), "{} must be positive, not {} ms.", key("editTimeout"), duration_cast<milliseconds>(*timeout).count() );
-			y.EditTimeout = *timeout;
-		}
+		y.ReadEditTimeout( key("editTimeout") );
 		return y;
 	}
 
@@ -112,8 +109,8 @@ namespace Jde::Opc::Gateway{
 			std::ranges::sort( hosts, []( let& a, let& b ){ return a->Slug()!=b->Slug() ? a->Slug()<b->Slug() : a->Id()<b->Id(); } );//the namespaces in slug order (spec *Namespaces*).
 			lg _{ server->_mutex };
 			server->_access = ms<GatewayNodeAccess>( AppClient()->Acl() );
-			server->_history = ms<GatewayHistoryHost>( HistHost::Instance().Historian(), server->_values );//as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
-			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, server->_history );
+			//The historian as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
+			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, ms<GatewayHistoryHost>(HistHost::Instance().Historian(), server->_values) );
 			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
 			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
 			for( auto& row : rows ){
@@ -143,6 +140,7 @@ namespace Jde::Opc::Gateway{
 			//The nodes are historized:  the aggregates folder and every archive start, then the midnight timer (UAHistory::Start).
 			if( auto& history = server->_ua->History(); history.Enabled() )
 				history.Start( *server->_ua->Ptr() );
+			server->_starts.clear();//Start wrote every node's.
 			server->_ua->Run();
 		}
 		catch( std::exception& ){
@@ -253,8 +251,11 @@ namespace Jde::Opc::Gateway{
 	α GatewayServer::Serial( absl::AnyInvocable<void()> f )ι->void{
 		boost::asio::post( _context, [self=shared_from_this(), f=std::move(f)]() mutable {
 			lg _{ self->_mutex };
-			if( self->_ua )
+			if( self->_ua ){
 				f();
+				if( self->_starts.size() )
+					self->_ua->History().Publish( std::exchange(self->_starts, {}) );
+			}
 			else
 				self->_held.push_back( std::move(f) );
 		} );
@@ -419,7 +420,13 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α GatewayServer::Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, sp<Opc::Hist::Group> history, vector<HistMember> members )ι->void{
-		auto& group = _groups.try_emplace( id, Group{id, move(guid), move(slug), move(history), {}} ).first->second;
+		auto [p, added] = _groups.try_emplace( id, Group{id, move(guid), move(slug), history, {}} );
+		auto& group = p->second;
+		//Restored while a node its removal couldn't delete kept the entry:  the historian's new group keeps their history from here on.
+		if( !added && group.History!=history ){
+			group.History = move( history );
+			std::ranges::move( _values->Regroup(id, group.History), std::back_inserter(_starts) );
+		}
 		for( auto& member : members ){
 			if( !group.Nodes.contains(member.Index) )
 				AddNode( group, move(member) );
@@ -507,7 +514,7 @@ namespace Jde::Opc::Gateway{
 			ERR( "[{}]Node {} '{}' isn't served:  {} already is, for group {}.", group.Guid, member.Index, member.Node.ToString(), id.ToString(), _access->Guid(id).value_or("") );
 			return;
 		}
-		if( !_values->Add(id, group.Id, member.Index, group.Slug) ){
+		if( !_values->Add(id, group.Id, member.Index, group.Slug, group.History) ){
 			ERR( "[{}]Node {} '{}' isn't served:  {} has a value source already.", group.Guid, member.Index, member.Node.ToString(), id.ToString() );
 			_access->Remove( id );
 			return;
@@ -558,16 +565,14 @@ namespace Jde::Opc::Gateway{
 			configuration = Opc::Server::HAConfiguration::Add( ua, id );
 			Opc::Server::HAConfiguration::Publish( ua, configuration, member.Thresholds );
 			Opc::Server::HAConfiguration::PublishAggregates( ua, configuration );
-			//The archive's start, which the history writes:  with the rest at its Start, or now for a node served after (spec *History*).
-			const UA_UtcTime none{};
-			vector<NodeId> starts;
-			for( let property : {"StartOfArchive"sv, "StartOfOnlineArchive"sv} )
-				starts.push_back( Opc::Server::HAConfiguration::Publish(ua, configuration, property, UA_TYPES[UA_TYPES_UTCTIME], &none) );
+			//The archive's start, which the history writes:  with the rest at its Start, or at the end of the Serial op for a node served
+			//after (spec *History*).
+			auto starts = Opc::Server::HAConfiguration::PublishArchiveStarts( ua, configuration );
 			configured = subtree( ua, configuration );//its group's as soon as open62541 has given them ids, which it picks.
 			for( let& node : configured )
 				_access->Add( node, group.Guid );
 			let index = member.Index;
-			_ua->History().Publish( _history->Add(id, group.History, index, move(starts)) );
+			std::ranges::move( _values->AddStarts(id, move(starts)), std::back_inserter(_starts) );
 			group.Nodes.insert_or_assign( index, Served{move(member), move(id), move(configuration), move(configured)} );
 		}
 		catch( const std::exception& e ){
@@ -592,6 +597,7 @@ namespace Jde::Opc::Gateway{
 		if( !UA_NodeId_isNull(&served.Configuration) && gone(served.Configuration, "HA Configuration") ){
 			for( let& node : served.Configured )
 				_access->Remove( node );
+			std::erase_if( _starts, [&]( let& start ){ return std::ranges::contains(served.Configured, start.Property); } );//gone with it:  a lifted node's, served again by its Restore.
 		}
 		//Members under the variable - a property, a structure's component - come out with it, and back under a folder standing in for it.
 		auto lifted = added && children( *_ua->Ptr(), served.Id ).value_or( 0 ) ? Lift( group.Slug, served.Id ) : vector<std::pair<HistGroupPK,HistMember>>{};
@@ -599,7 +605,6 @@ namespace Jde::Opc::Gateway{
 		if( deleted ){
 			_access->Remove( served.Id );
 			_values->Remove( served.Id );
-			_history->Remove( served.Id );
 			if( let& path = served.Member.Attributes.Path; prune && path && path->size()>1 )
 				Prune( group.Slug, std::span<const HistPathSegment>{*path}.first(path->size()-1) );
 		}

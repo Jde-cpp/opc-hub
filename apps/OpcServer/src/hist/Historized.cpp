@@ -129,11 +129,8 @@ namespace Jde::Opc::Server{
 		}
 		boolean( "ServerTimestampSupported", true );//both timestamps are stored.
 		HAConfiguration::PublishAggregates( ua, configuration );
-		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
-		auto startOfArchive = Publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
-		auto startOfOnlineArchive = Publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		Hist::Member member{ expanded(ua, id), move(thresholds), {}, type };
-		return { move(id), move(member), move(startOfArchive), move(startOfOnlineArchive) };
+		return { move(id), move(member), HAConfiguration::PublishArchiveStarts(ua, configuration) };
 	}
 
 	α Historized::Load( UA_Server& ua, absl::FunctionRef<bool( const UA_NodeId& )> typeStepped )ε->vector<Historized>{
@@ -180,8 +177,7 @@ namespace Jde::Opc{
 				}
 				group->Enqueue( *index, value );
 			}
-			archiveStarts.push_back( move(node.StartOfArchive) );
-			archiveStarts.push_back( move(node.StartOfOnlineArchive) );
+			std::ranges::move( node.ArchiveStarts, std::back_inserter(archiveStarts) );
 			indexes.emplace_back( move(node.Id), *index );
 		}
 		let count = indexes.size();

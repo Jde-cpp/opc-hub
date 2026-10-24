@@ -43,7 +43,8 @@ namespace Jde::Opc::Server{
 		//starts written now, as Start wrote the rest's.  Nothing outside that span, which Start's own write covers.
 		α Publish( std::span<const IHistoryHost::ArchiveStart> starts )ι->void;
 		//The aggregate an AggregateFunction node asks for (spec *Reads*):  Part 13's nine in namespace 0, and Median,
-		//which Part 13 doesn't define, so it is an AggregateFunctionType object of the server's own namespace, ns=1;s=Median.
+		//which Part 13 doesn't define, so it is an AggregateFunctionType object of the server's own namespace, ns=1;s=_Median,
+		//named so no gateway connection folder, ns=1;s=<slug>, can take its id.
 		//None for a function that isn't served.
 		Ω Aggregate( const UA_NodeId& function )ι->optional<Hist::EAggregate>;
 		Ω Median()ι->NodeId;
@@ -73,7 +74,8 @@ namespace Jde::Opc::Server{
 		//node granted on a resource that is enforced (spec *Authorization*):  the entry is refused with Bad_UserAccessDenied
 		//where none governs the node, and where the node's own AccessLevel lacks HistoryWrite.  Each value of an UpdateData
 		//is asked for on its own, as the default plugin asks, and a refused one answers that in its place, as one a Write
-		//of the variable would refuse for its type or dimensions answers Bad_TypeMismatch.  A
+		//of the variable would refuse for its type or dimensions answers Bad_TypeMismatch, and one holding a namespace index
+		//the host can't map back answers Bad_NodeIdInvalid (IHistoryHost::Unmap).  A
 		//DeleteRawModified's range holds its start and not its end, as a read's does, startTime equal to endTime is that
 		//instant, and a time of 0 is one not given, which a delete needs both of; deleting the modified values is refused,
 		//since they are the audit trail.
