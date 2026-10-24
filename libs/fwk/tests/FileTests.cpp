@@ -12,8 +12,8 @@
 #include <jde/fwk/chrono.h>
 #include <jde/tests/WaitUntil.h>
 #include <stdexcept>
-//a private header under src/, the way OpenSslTests reaches OpenSslInternal.h - IDrive/NativeDrive are not part of the
-//installed surface, and the two platforms spell the concrete type differently.
+//a private header under src/ - IDrive/NativeDrive are not part of the installed surface, and the two platforms spell the
+//concrete type differently.
 #ifdef _MSC_VER
 	#include "../src/process/os/windows/WindowsDrive.h"
 	namespace Jde::IO{ using NativeDriveType = WindowsDrive; }

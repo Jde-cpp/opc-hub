@@ -3,12 +3,11 @@
 #include <open62541/server_config_default.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <open62541/plugin/certificategroup_default.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/server/INodeAccess.h>
 #include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAHistory.h>
-#include "jde/fwk/crypto/CryptoSettings.h"
 
 #define let const auto
 namespace Jde::Opc::Server{

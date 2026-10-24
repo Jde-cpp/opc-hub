@@ -1,5 +1,6 @@
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/process/process.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/fwk/io/protobuf.h>

@@ -6,7 +6,7 @@
 #include <open62541/client_config_default.h>
 #include <absl/cleanup/cleanup.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
 #include <jde/fwk/io/file.h>
 #include <jde/opc/uatypes/Logger.h>
 #include <jde/opc/ServerTrust.h>

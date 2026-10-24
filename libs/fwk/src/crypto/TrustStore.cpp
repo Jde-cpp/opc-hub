@@ -3,10 +3,9 @@
 	#include <windows.h>
 	#include <wincrypt.h>
 #endif
-#include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
-#include "OpenSslInternal.h"
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include "ossl.h"
 
 #define let const auto
 
@@ -14,16 +13,9 @@ namespace Jde::Crypto{
 	[[maybe_unused]] constexpr ELogTags _tags{ ELogTags::Crypto };//WARN only fires on the linux path.
 	using namespace Internal;
 
-	Ω parseDer( std::span<const byte> der, SL sl )ε->X509Ptr{
-		const unsigned char* p = (const unsigned char*)der.data();
-		X509Ptr cert{ ::d2i_X509(nullptr, &p, (long)der.size()), ::X509_free };
-		THROW_IFX( !cert, OpenSslException("d2i_X509", sl) );
-		return cert;
-	}
-
 	TrustStore::TrustStore( bool loadOsStore, SL sl )ε:
 		_store{ ::X509_STORE_new(), ::X509_STORE_free }{
-		CHECK_NULL( _store );
+		OSSL_CHECK( _store, sl );
 		if( !loadOsStore )
 			return;
 #ifdef _WIN32
@@ -37,7 +29,7 @@ namespace Jde::Crypto{
 		}
 		::CertCloseStore( winStore, 0 );
 #else
-		CALL( ::X509_STORE_set_default_paths(_store.get()) );
+		OSSL_CALL( ::X509_STORE_set_default_paths(_store.get()), sl );
 		if( CertCount()==0 && !std::getenv("SSL_CERT_FILE") && !std::getenv("SSL_CERT_DIR") ){
 			for( const char* bundle : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"} ){
 				if( fs::exists(bundle) && ::X509_STORE_load_locations(_store.get(), bundle, nullptr)==1 )
@@ -50,12 +42,12 @@ namespace Jde::Crypto{
 	}
 
 	α TrustStore::AddCertificate( std::span<const byte> der, SL sl )ε->void{
-		let cert = parseDer( der, sl );
-		CALLSL( ::X509_STORE_add_cert(_store.get(), cert.get()) );//up-refs the cert.
+		let cert = ParseDer( der, sl );
+		OSSL_CALL( ::X509_STORE_add_cert(_store.get(), cert.get()), sl );//up-refs the cert.
 	}
 
 	α TrustStore::Verify( std::span<const byte> der, SL sl )Ε->void{
-		let cert = parseDer( der, sl );
+		let cert = ParseDer( der, sl );
 		//OpenSSL resolves anchors by subject name and X509_likely_issued never checks signatures, so same-DN anchors (every CreateCertificate cert is CN=localhost) can bind the wrong "issuer" and fail depth-zero-self-signed. An exact anchor match is a depth-0 chain - check it first, keeping the time checks chain verification would have run.
 		auto anchors = ::X509_STORE_get1_all_certs( _store.get() );
 		bool anchored{};
@@ -71,8 +63,8 @@ namespace Jde::Crypto{
 			throw OpenSslException{ ::X509_verify_cert_error_string(err), "Certificate not trusted. depth: 0", {ELogLevel::Warning, ELogTags::Crypto, (uint32)err}, sl };
 		}
 		up<X509_STORE_CTX, decltype(&::X509_STORE_CTX_free)> ctx{ ::X509_STORE_CTX_new(), ::X509_STORE_CTX_free };
-		CHECK_NULL( ctx );
-		CALLSL( ::X509_STORE_CTX_init(ctx.get(), _store.get(), cert.get(), nullptr) );
+		OSSL_CHECK( ctx, sl );
+		OSSL_CALL( ::X509_STORE_CTX_init(ctx.get(), _store.get(), cert.get(), nullptr), sl );
 		if( ::X509_verify_cert(ctx.get())!=1 ){//verify error lives in the ctx, not the ERR queue.
 			let err = ::X509_STORE_CTX_get_error( ctx.get() );
 			Certificate{ der, sl }.Log( Ƒ("Certificate verification failed with error: {}", ::X509_verify_cert_error_string(err)) );

@@ -1,6 +1,6 @@
 #include <jde/opc/server/UATrust.h>
 #include <shared_mutex>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
 #include <jde/opc/UAException.h>
 
 #define let const auto
@@ -132,7 +132,7 @@ namespace Jde::Opc::Server{
 			if( fs::exists(path) )
 				return;
 			fs::create_directories( _rejectedDir );
-			Crypto::WriteCertificate( path, vector<byte>{der.begin(), der.end()}, SRCE_CUR );
+			Crypto::WriteCertificate( path, der, SRCE_CUR );
 			INFO( "Rejected client certificate '{}' written to '{}' - move it into a trusted dir to admit the client.", parsed.DistinguishedName, path.string() );
 		}
 		catch( const runtime_error& e ){

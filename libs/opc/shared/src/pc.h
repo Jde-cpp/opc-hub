@@ -7,6 +7,6 @@
 #include <jde/fwk/str.h>
 #include <jde/fwk/co/Task.h>
 #include <jde/fwk/io/json.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/opc/usings.h>
 #include <jde/opc/uatypes/opcHelpers.h>

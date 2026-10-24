@@ -3,7 +3,6 @@
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/process.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/crypto/TrustDirs.h>
 #include <jde/fwk/crypto/TrustStore.h>
 

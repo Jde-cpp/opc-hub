@@ -3,8 +3,7 @@
 #include <open62541/client_config_default.h>
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include "../src/globals.h"

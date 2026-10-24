@@ -1,7 +1,6 @@
 #include <jde/opc/ClientSecurity.h>
 #include <open62541/client_config_default.h>
 #include <open62541/plugin/securitypolicy_default.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/ServerTrust.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>

@@ -94,6 +94,11 @@ namespace Jde{
 			throw Exception{ sl, {}, "Error decoding base64" };
 		if constexpr( std::same_as<T,string> )
 			return y;
+		else if constexpr( std::same_as<std::ranges::range_value_t<T>,byte> ){//no conversion from char, so no range ctor.
+			T bytes( y.size() );
+			memcpy( bytes.data(), y.data(), y.size() );
+			return bytes;
+		}
 		else
 			return T( y.begin(), y.end() );
 	}

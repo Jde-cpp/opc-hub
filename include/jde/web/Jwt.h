@@ -1,6 +1,5 @@
 #pragma once
-#include <jde/fwk/crypto/OpenSsl.h>
-#include "jde/fwk/crypto/CryptoSettings.h"
+#include <jde/fwk/crypto/CryptoSettings.h>
 
 namespace Jde::Web{
 	struct Jwt{

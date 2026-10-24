@@ -148,7 +148,7 @@ namespace Jde::Opc::Gateway{
 		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
 		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
 		//certificateUri, which is the server's and only filters its endpoints (reviews/security-matrix.md #8; ApplicationUriTests).
-		Ω EnsureCertificate( const ServerCnnctnNK& slug, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
+		Ω EnsureCertificate( const ServerCnnctnNK& slug, SRCE )ε->void;//Crypto::EnsureKeyCertificate for the slug's block:  made when absent, re-issued for a ReissueReason, else left alone. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
 		Ω CryptoSettings( const ServerCnnctnNK& slug )ι->Crypto::CryptoSettings;//the issued certificate's:  /gateway/issuedCerts with the slug's file names.
 		α Slug()Ι->const ServerCnnctnNK&{ return _opcServer.Slug; }
 		α Name()Ι->str{ return _opcServer.Name; }

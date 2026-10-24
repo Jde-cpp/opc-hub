@@ -1,15 +1,18 @@
-﻿#include <jde/fwk/crypto/OpenSsl.h>
-#include "../../src/crypto/OpenSslInternal.h"
-#include "cryptoFixture.h"
+﻿#include <fstream>
+#include <openssl/err.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include <jde/fwk/crypto/OpenSslException.h>
+#include <jde/fwk/crypto/PrivateKey.h>
+#include <jde/fwk/crypto/TrustDirs.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/exceptions/IOException.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/settings.h>
-#include <fstream>
+#include "cryptoFixture.h"
 
 #define let const auto
 namespace Jde::Crypto{
 	constexpr ELogTags _tags = ELogTags::Test;
-	using namespace Crypto::Internal;
 
 	struct OpenSslTests : public ::testing::Test{
 	protected:
@@ -22,7 +25,6 @@ namespace Jde::Crypto{
 		α TearDown()->void override{}
 
 		Ω ScratchDir( sv name )->fs::path;
-		Ω GetModulusExponent( fs::path publicKey )ε->tuple<vector<unsigned char>,vector<unsigned char>>;
 		Ω SslSettings( str publicKeyFile, str privateKeyFile, str certificateFile, sv commonName, sv subjectAltName="URI:urn:my.server.application" )ε->CryptoSettings;
 
 		static flat_set<string> Scratch;
@@ -94,11 +96,11 @@ namespace Jde::Crypto{
 		INFO( "fixture at {}", dir.string() );
 	}
 
-	//a mismatch is an expected auth outcome, not a malfunction, and EVP_VerifyFinal reports both through one return
+	//a mismatch is an expected auth outcome, not a malfunction, and EVP_DigestVerify reports both through one return
 	//value - 0 for the first, negative for the second.  The rejected client only ever sees this message, so it has to
 	//name the reason rather than echo a bare openssl rc.
 	TEST_F( OpenSslTests, VerifyRejectsBadSignature ){
-		let signature = Crypto::RsaSign( HeaderPayload, PrivateKeyFile, passcode );
+		let signature = Crypto::PrivateKey{ PrivateKeyFile, passcode }.Sign( HeaderPayload );
 		auto publicKey = Crypto::ReadPublicKey( PublicKeyFile );
 		EXPECT_NO_THROW( Crypto::Verify(publicKey, HeaderPayload, signature) );
 		try{
@@ -198,7 +200,7 @@ namespace Jde::Crypto{
 		auto certKey = Crypto::ExtractPublicKey( der, SRCE_CUR );
 		EXPECT_TRUE( certKey==Crypto::ReadPublicKey(PublicKeyFile) ) << "the fixture certificate was issued for a different key pair than public.pem";
 		//and the private half really signs for the key the certificate carries - access_users is keyed by that modulus.
-		EXPECT_NO_THROW( Crypto::Verify(certKey, HeaderPayload, Crypto::RsaSign(HeaderPayload, PrivateKeyFile, passcode)) );
+		EXPECT_NO_THROW( Crypto::Verify(certKey, HeaderPayload, Crypto::PrivateKey{PrivateKeyFile, passcode}.Sign(HeaderPayload)) );
 	}
 	TEST_F( OpenSslTests, ExtractInfo ){
 		let dir = ScratchDir( "extractInfo" );
@@ -238,12 +240,9 @@ namespace Jde::Crypto{
 			folded = ( folded<<8 ) | (uint32_t)b;
 		EXPECT_EQ( key.Hash32(), folded );
 
-		//through PublicKeyPath::Value rather than PublicKey{path} directly: the ctor and the ToBytes member are
-		//declared but not exported (only the Φ members are), so Value is how an out-of-dll caller reaches them.
 		auto settings = SslSettings( PublicKeyFile, PrivateKeyFile, CertificateFile, "openSslTests" );
-		EXPECT_TRUE( settings.PublicKey.Value(SRCE_CUR)==key ) << "the configured path must resolve to the key ReadPublicKey returns";
-		EXPECT_EQ( &settings.PublicKey.Value(SRCE_CUR), &settings.PublicKey.Value(SRCE_CUR) ) << "Value caches rather than re-reading";
-		let bytes = Crypto::ToBytes( key );//modulus+exponent -> DER, which is what Fingerprint hashes.
+		EXPECT_TRUE( settings.PublicKey.Read()==key ) << "the configured path must resolve to the key ReadPublicKey returns";
+		let bytes = Crypto::ToDer( key );//modulus+exponent -> DER, which is what Fingerprint hashes.
 		EXPECT_EQ( Crypto::Fingerprint(key), Crypto::CalcMd5(bytes) );
 
 		//a second key must collide with the first on none of them.
@@ -259,13 +258,13 @@ namespace Jde::Crypto{
 		fs::remove_all( dir );
 	}
 
-	//fwk-max #12 made Value() Ε: a missing public key has to throw rather than hand back a default-constructed
+	//fwk-max #12 made the read Ε: a missing public key has to throw rather than hand back a default-constructed
 	//key, which would compare equal to every other empty one.
-	TEST_F( OpenSslTests, PublicKeyPathValueThrowsWhenMissing ){
+	TEST_F( OpenSslTests, PublicKeyPathReadThrowsWhenMissing ){
 		let missing = (fs::path{PublicKeyFile}.parent_path()/"no-such-public.pem").string();
 		ASSERT_FALSE( fs::exists(missing) );
 		auto settings = SslSettings( missing, PrivateKeyFile, CertificateFile, "missing-public-key" );
-		EXPECT_THROW( settings.PublicKey.Value(SRCE_CUR), IO::IOException );
+		EXPECT_THROW( settings.PublicKey.Read(), IO::IOException );
 	}
 
 	//the CN is the enrollment identity (access_identities.slug, a unique natural key) so it must stay per-host, but
@@ -348,14 +347,12 @@ namespace Jde::Crypto{
 		let settings = SslSettings( (dir/"public.pem").string(), (dir/"private.pem").string(), (dir/"cert.pem").string(), "ensure-key-cert" );
 		settings.CreateDirectories();
 		Crypto::CreateKeyCertificate( settings );
-		auto originalDer = ReadCertificate( settings.Certificate.Path );//lvalue - ExtractPublicKey takes a mutable span.
-		let original = Crypto::ExtractPublicKey( originalDer, SRCE_CUR );
+		let original = Crypto::ExtractPublicKey( ReadCertificate(settings.Certificate.Path) );
 
 		fs::remove( settings.PrivateKey.Path );//damaged install: the key is gone but the certificate survives.
 		Crypto::EnsureKeyCertificate( settings );
 
-		auto reissuedDer = ReadCertificate( settings.Certificate.Path );
-		let reissued = Crypto::ExtractPublicKey( reissuedDer, SRCE_CUR );
+		let reissued = Crypto::ExtractPublicKey( ReadCertificate(settings.Certificate.Path) );
 		EXPECT_FALSE( reissued==original );//the stale cert was replaced, not kept.
 		EXPECT_TRUE( reissued==Crypto::ReadPublicKey(settings.PublicKey.Path) );//and it matches the key actually on disk.
 		fs::remove_all( dir );
@@ -376,7 +373,7 @@ namespace Jde::Crypto{
 		Crypto::EnsureKeyCertificate( settings );
 
 		ASSERT_TRUE( fs::exists(settings.Certificate.Path) );
-		auto reissuedDer = ReadCertificate( settings.Certificate.Path );//lvalue - ExtractPublicKey takes a mutable span.
+		let reissuedDer = ReadCertificate( settings.Certificate.Path );
 		EXPECT_FALSE( reissuedDer==originalDer );//genuinely re-issued: IssueCertificate draws a random 128-bit serial.
 		EXPECT_TRUE( Crypto::ExtractPublicKey(reissuedDer, SRCE_CUR)==originalKey );//...but on the key that was already there.
 		EXPECT_TRUE( Crypto::ReadPublicKey(settings.PublicKey.Path)==originalKey );//and the pair itself was left alone.
@@ -604,11 +601,11 @@ namespace Jde::Crypto{
 		EXPECT_THROW( Crypto::ReadPrivateKey(PrivateKeySettings{PrivateKeyFile, string{}}), Exception );
 	}
 	TEST_F( OpenSslTests, Random ){
-		array<unsigned char,16> a{}, b{};
-		Crypto::Random( a.data(), a.size() );
-		Crypto::Random( b.data(), b.size() );
+		array<byte,16> a{}, b{};
+		Crypto::Random( a );
+		Crypto::Random( b );
 		EXPECT_NE( a, b );//2⁻¹²⁸ false-failure odds.
-		EXPECT_NE( a, (array<unsigned char,16>{}) );
+		EXPECT_NE( a, (array<byte,16>{}) );
 		//the typed template mints every web session id (Sessions::GetNewSessionId):  a T{} or a short fill would spin there.
 		let x = Crypto::Random<uint64_t>(), y = Crypto::Random<uint64_t>();
 		EXPECT_NE( x, y );//2⁻⁶⁴ false-failure odds.

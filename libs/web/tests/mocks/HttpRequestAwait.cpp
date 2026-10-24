@@ -2,7 +2,7 @@
 #include "ServerMock.h"//Mock::Port, for the redirect Location.
 #include <zlib.h>
 #include <jde/web/Jwt.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/PublicKey.h>
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/process/execution.h>

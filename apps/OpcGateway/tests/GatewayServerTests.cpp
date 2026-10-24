@@ -1,6 +1,7 @@
 //Servers phase 2 (#382, docs/servers/plan.md):  the gateway's own OPC UA endpoint on 4941, beside the embedded OpcServer's 4940 -
 //two UA servers in one process.  A UA client logs in by issued token, by certificate and by user name, browses
 //Objects/<slug>/_Connection, and sees Connected, Url and LastError follow the slug's clients and the folders follow the rows.
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/io/json.h>
 #include <jde/tests/WaitUntil.h>
