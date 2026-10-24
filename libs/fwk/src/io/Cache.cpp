@@ -14,17 +14,16 @@ namespace Jde{
 	α Cache::Init()ι->void{
 		_defaultDuration = Settings::FindDuration( "/cache/default/duration" ).value_or( 1h );
 	}
-	up<DurationTimer> _timer; absl::Mutex _timerMutex;//_timer guarded by _timerMutex. Requires _finalizing set before this is called - the sweep re-arms otherwise.
+	TimerCancel _timer; absl::Mutex _timerMutex;//_timer guarded by _timerMutex. Requires _finalizing set before this is called - the sweep re-arms otherwise.
 	α Cache::Shutdown( bool terminate, SL sl )ι->void{
 		{
 			ul _{ _timerMutex };
 			if( !_timer )
 				return;
 			LOGSL( ELogLevel::Information, sl, ELogTags::App, "Shutting down cache timer" );
+			_timer.Cancel();
 			if( terminate )
-				_timer = nullptr;
-			else
-				_timer->Cancel();
+				_timer = {};
 		}
 		for( uint i=0; i<100; ++i ){//wait for the sweep coroutine to finish - its frame leaks if the executor stops before the cancel handler runs.
 			{
@@ -47,16 +46,17 @@ namespace Jde{
 			}
 		}
 	}
-	ABSL_SHARED_LOCKS_REQUIRED(_timeoutsLock) Ω getTimer()ι->up<DurationTimer>{
+	ABSL_SHARED_LOCKS_REQUIRED(_timeoutsLock) Ω nextWait()ι->optional<steady_clock::duration>{
 		return _timeouts.empty() || Process::Finalizing()
-			? nullptr
-      : mu<DurationTimer>( std::max(_timeouts.begin()->first-steady_clock::now(), steady_clock::duration::zero()) );
+			? nullopt
+			: optional{ std::max(_timeouts.begin()->first-steady_clock::now(), steady_clock::duration::zero()) };
 	}
-	ABSL_UNLOCK_FUNCTION(_timerMutex) Ω startTimer( up<DurationTimer>&& timer )ι->DurationTimer::Task{//entered holding _timerMutex.
+	ABSL_UNLOCK_FUNCTION(_timerMutex) Ω startTimer( steady_clock::duration wait )ι->VoidTask{//entered holding _timerMutex.
 		ASSERT( !_timer );
-		_timer = move( timer );
+		DurationTimer timer{ wait };
+		_timer = timer.Canceller();
 		_timerMutex.unlock();
-		auto _ = co_await *_timer;
+		auto _ = co_await timer;
 		ul timeoutsLock{ _timeoutsLock };
 		for( auto p = _timeouts.begin(); p!=_timeouts.end() && p->first<=steady_clock::now(); ){
 			{
@@ -66,11 +66,11 @@ namespace Jde{
 			}
 			p = _timeouts.erase( p );
 		}
-		auto newTimer = getTimer();
+		let next = nextWait();
 		_timerMutex.lock();
-		_timer = nullptr;
-		if( newTimer && !Process::Finalizing() )//re-checked under _timerMutex - getTimer's read isn't ordered with Shutdown.
-			startTimer( move(newTimer) );
+		_timer = {};
+		if( next && !Process::Finalizing() )//re-checked under _timerMutex - nextWait's read isn't ordered with Shutdown.
+			startTimer( *next );
 		else
 		 	_timerMutex.unlock();
 	}
@@ -99,13 +99,12 @@ namespace Jde{
 				_timerMutex.lock();
 				if( _timer ){
 					if( isEarliest )
-						_timer->Cancel();//pending wait completes with operation_aborted; the sweep wakes, re-derives the earliest deadline from _timeouts and re-arms.
+						_timer.Cancel();//pending wait completes with operation_aborted; the sweep wakes, re-derives the earliest deadline from _timeouts and re-arms.
 					_timerMutex.unlock();
 				}
 				else{
-					auto newTimer = getTimer();
-					if( newTimer )
-						startTimer( move(newTimer) );
+					if( let wait = nextWait(); wait )
+						startTimer( *wait );
 					else
 					 	_timerMutex.unlock();
 				}

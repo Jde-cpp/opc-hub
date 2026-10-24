@@ -17,16 +17,17 @@ namespace Jde::Opc::Gateway{
 
 	α AsyncRequest::CancelPing()ι->void{//strand-only
 		if( _pingTimer )
-			_pingTimer->Cancel();
+			_pingTimer.Cancel();
 	}
-	α AsyncRequest::Ping( sp<UAClient> client )ι->DurationTimer::Task{//strand-confined; `client` keeps `this` (a UAClient member) alive across the await.
+	α AsyncRequest::Ping( sp<UAClient> client )ι->VoidTask{//strand-confined; `client` keeps `this` (a UAClient member) alive across the await.
 		ASSERT( !_pingTimer );
 		if( _pingTimer )
 			co_return;
-		_pingTimer.emplace( _pingInterval, _strand, SRCE_CUR );
+		DurationTimer timer{ _pingInterval, _strand, SRCE_CUR };
+		_pingTimer = timer.Canceller();
 		DBGT( EOpcLogTags::ProcessingLoop, "Pinging '{}' in '{}'", client->Slug(), Chrono::ToString(_pingInterval) );
-		auto result = co_await *_pingTimer;//resumes on _strand
-		_pingTimer.reset();
+		auto result = co_await timer;//resumes on _strand
+		_pingTimer = {};
 		if( !result ){
 			CodeException resultEx{ result.error(), (ELogTags)EOpcLogTags::ProcessingLoop };
 			co_return;
@@ -65,7 +66,7 @@ namespace Jde::Opc::Gateway{
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
 	// UA_Client_run_iterate never overlaps other UA_Client_* calls - submissions and sync services are dispatched
 	// to the same strand via UAClient::PostUA.
-	α AsyncRequest::ProcessingLoop()ι->DurationTimer::Task{
+	α AsyncRequest::ProcessingLoop()ι->VoidTask{
 		ASSERT( _strand.running_in_this_thread() );
 		sp<UAClient> client = _client;//keeps the owning UAClient (and thus `this`) alive across suspensions.
 		function<string()> logPrefix = [client](){ return Ƒ("[{:x}]", client ? client->Handle() : 0); };

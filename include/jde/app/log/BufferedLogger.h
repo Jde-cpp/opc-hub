@@ -34,13 +34,13 @@ namespace Jde::App{
 		mutable absl::Mutex _mutex;
 		static constexpr ELogTags _tags{ ELogTags::ExternalLogger };
 	private:
-		α Rounds( DurationTimer& first )ι->TimerAwait::Task;
+		α Rounds()ι->VoidTask;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Stopping()Ι->bool{ return _delay==Duration::min(); }
 
 		Duration _delay ABSL_GUARDED_BY(_mutex);
 		uint _dropped ABSL_GUARDED_BY(_mutex){};
 		const uint _maxSize;
 		atomic<uint> _running{};
-		up<DurationTimer> _timer ABSL_GUARDED_BY(_mutex);
+		TimerCancel _timer ABSL_GUARDED_BY(_mutex);
 	};
 }

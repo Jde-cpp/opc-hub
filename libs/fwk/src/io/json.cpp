@@ -187,7 +187,10 @@ namespace Jde{
 
 	α Json::FindDuration( const jobject& o, sv key, ELogLevel level, SL sl )ι->optional<Duration>{
 		let v = o.if_contains( key );
-		return v && v->is_string() ? Chrono::TryToDuration( string{v->get_string()}, level, sl ) : optional<Duration>{};
+		if( !v || !v->is_string() )
+			return {};
+		let d = Chrono::TryToDuration( string{v->get_string()}, level, sl );
+		return d ? optional<Duration>{ *d } : nullopt;
 	}
 
 	α Json::FindTimePoint( const jobject& o, sv key )ι->optional<TimePoint>{

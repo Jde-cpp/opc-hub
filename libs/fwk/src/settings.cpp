@@ -21,7 +21,8 @@ namespace Jde{
 	α Settings::FindDuration( sv path, SL sl )ι->optional<Duration>{
 		optional<Duration> y;
 		if( let setting = FindSV(path); setting.has_value() )
-			y = Chrono::TryToDuration( string{*setting}, ELogLevel::Error, sl );
+			if( let d = Chrono::TryToDuration(string{*setting}, ELogLevel::Error, sl); d )
+				y = *d;
 		return y;
 	}
 

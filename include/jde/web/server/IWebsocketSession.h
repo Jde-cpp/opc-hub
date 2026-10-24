@@ -58,7 +58,7 @@ namespace Jde::Web::Server{
 		α Dispatch( function<void()>&& f )ι->void;//on the strand, inline when already there:  dropped once the socket has closed.
 
 	private:
-		α AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SRCE )ι->TimerAwait::Task;
+		α AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SRCE )ι->VoidTask;
 		α TakePending( RequestId requestId, bool erase=false )ι->optional<QueryClientAwait::Handle>;
 		//#6: every read error other than websocket::error::closed comes here (Streams.cpp DoRead) - beast's idle timeout,
 		//connection_reset, message_too_big.  OnClose is the safe default: a `{}` base silently leaked the session, its
@@ -77,7 +77,7 @@ namespace Jde::Web::Server{
 		sp<ISocketStream> _stream;
 		TRequestType _initialRequest;
 		sp<QL::IListener> _listener;
-		flat_map<RequestId, std::pair<QueryClientAwait::Handle, sp<DurationTimer>>> _pendingQueries; mutex _pendingQueriesMutex;
+		flat_map<RequestId, std::pair<QueryClientAwait::Handle, TimerCancel>> _pendingQueries; mutex _pendingQueriesMutex;
 		atomic<RequestId> _requestId;
 		sp<SessionInfo> _sessionInfo;
 		template<class> friend struct SocketStream;

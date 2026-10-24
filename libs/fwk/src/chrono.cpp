@@ -15,13 +15,16 @@ namespace Jde{
 		}
 	}
 	α Chrono::ToDuration( string&& iso, SL sl )ε->Duration{
+		auto y = TryToDuration( move(iso), ELogLevel::Debug, sl );
+		if( !y )
+			y.error().Throw();
+		return *y;
+	}
+	α Chrono::TryToDuration( string&& iso, ELogLevel level, SL sl )ι->std::expected<Duration,Exception>{
 		std::istringstream is{ move(iso) };
-		if( let ch = is.get(); ch!='P' ){
-			string content{ (char)ch }; string line;
-			while( std::getline(is,line) )
-				content += line;
-			throw Exception{ sl, ELogLevel::Debug, "Expected 'P' as first character in '{}{}'.", ch, content };
-		}
+		if( is.peek()!='P' )
+			return std::unexpected{ Exception{sl, level, "Expected 'P' as first character in '{}'.", is.str()} };
+		is.get();
 		bool parsingTime = false;
 		Duration duration{ Duration::zero() };
 		while( true ){
@@ -42,10 +45,11 @@ namespace Jde{
 				num += (char)is.get();
 			let type = is.get();
 			//every token is a number and a designator:  one missing is a typo, not a zero - and so is an unknown designator (the final else).
-			THROW_IFSL( num.empty() || type==std::char_traits<char>::eof(), "ISO duration token missing its {}:  '{}'", num.empty() ? "number" : "designator", num.empty() ? string{(char)type} : num );
+			if( num.empty() || type==std::char_traits<char>::eof() )
+				return std::unexpected{ Exception{sl, level, "ISO duration token missing its {}:  '{}'", num.empty() ? "number" : "designator", num.empty() ? string{(char)type} : num} };
 			double value;
 			if( !absl::SimpleAtod(num, &value) )
-				throw Exception{ sl, ExceptionArgs{}, "Could not parse ISO duration token:  {}{}", num, (char)type };
+				return std::unexpected{ Exception{sl, level, "Could not parse ISO duration token:  {}{}", num, (char)type} };
 			//date units use the exact std::chrono period ratios so ToDuration is the inverse of ToString
 			//(which emits years/months/days) - a month is ~730.5h, not 720h; a year 365.2425d, not 365.25d.
 			if( type=='Y' )
@@ -63,18 +67,9 @@ namespace Jde{
 			else if( type=='S' )
 				duration += milliseconds( Round(value*1000) );
 			else
-				throw Exception{ sl, ExceptionArgs{}, "Unknown ISO duration designator:  {}{}", num, (char)type };
+				return std::unexpected{ Exception{sl, level, "Unknown ISO duration designator:  {}{}", num, (char)type} };
 		}
 		return duration;
-	}
-	α Chrono::TryToDuration( string&& iso, ELogLevel level, SL sl )ε->optional<Duration>{
-		try{
-			return ToDuration( move(iso), sl );
-		}
-		catch( Exception& e ){
-			e.SetLevel( level );
-		}
-		return {};
 	}
 
 	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{

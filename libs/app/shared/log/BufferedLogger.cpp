@@ -22,8 +22,7 @@ namespace Jde::App{
 	α BufferedLogger::ArmTimer()ι->void{
 		if( _timer || Stopping() )
 			return;
-		_timer = mu<DurationTimer>( _delay );
-		Rounds( *_timer );
+		Rounds();
 	}
 	//M5/#14: the one bound on a buffer that grows for as long as nothing drains it.  Drop keeps the newest - the entries describing
 	//whatever is going wrong.
@@ -37,13 +36,16 @@ namespace Jde::App{
 	}
 
 	//A loop, not a tail call.  Restarting itself meant the replacement frame was live while the one that spawned it was still
-	//finishing, so no single flag could say "nobody is running" - only a count could (#12).  _timer stays set for the whole round:
-	//dropping it early is what let ArmTimer - which starts a round only when _timer is null - spawn a second frame alongside this one.
+	//finishing, so no single flag could say "nobody is running" - only a count could (#12).  _timer is set before the first await and
+	//stays set for the whole round:  dropping it early is what let ArmTimer - which starts a round only when _timer is empty - spawn a
+	//second frame alongside this one.
 	//The first await runs under the caller's lock; every later one is armed under _mutex and awaited without it.  Not analyzed: a
 	//per-function analysis cannot follow the lock across the awaits.
-	ABSL_NO_THREAD_SAFETY_ANALYSIS α BufferedLogger::Rounds( DurationTimer& first )ι->TimerAwait::Task{
+	ABSL_NO_THREAD_SAFETY_ANALYSIS α BufferedLogger::Rounds()ι->VoidTask{
 		Running _{ *this };//M9: this frame resumes into `this` - Stop waits for it.
-		for( auto timer = &first;; ){
+		optional<DurationTimer> timer;
+		_timer = timer.emplace( _delay ).Canceller();
+		for( ;; ){
 			let fired = co_await *timer;
 			_mutex.lock();
 			if( fired && !Stopping() && Size() ){
@@ -51,22 +53,20 @@ namespace Jde::App{
 				_mutex.lock();
 			}
 			if( Stopping() || !Size() ){//Size also covers entries written during Flush.
-				_timer.reset();
+				_timer = {};
 				_mutex.unlock();
 				co_return;
 			}
-			timer = ( _timer = mu<DurationTimer>(_delay) ).get();
+			_timer = timer.emplace( _delay ).Canceller();
 			_mutex.unlock();
 		}
 	}
-	//Rounds resets _timer - destroying the DurationTimer - under this same lock, so an unguarded `if( _timer ) _timer->Cancel()` could
-	//pass the test on the shutdown thread and then call Cancel() on freed memory once the io thread ran the continuation.
-	//Safe to hold _mutex across Cancel(): it takes the DurationTimer's own lock and calls asio's cancel(), which *posts* the completion
-	//- the continuation that re-takes _mutex never runs on this stack, so there is no re-entry to deadlock on, and the lock order is
-	//only ever BufferedLogger -> DurationTimer.
+	//Safe to hold _mutex across Cancel(): it takes the timer's own lock and calls asio's cancel(), which *posts* the completion - the
+	//continuation that re-takes _mutex never runs on this stack, so there is no re-entry to deadlock on, and the lock order is only ever
+	//BufferedLogger -> DurationTimer.
 	α BufferedLogger::ResetTimerUnlocked()ι->void{
 		if( _timer )
-			_timer->Cancel();
+			_timer.Cancel();
 	}
 	//One locked operation, because it is two writes: Rounds reads _delay under _mutex, so setting it from the shutdown thread without
 	//the lock raced the very timer being cancelled.

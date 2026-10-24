@@ -88,10 +88,10 @@ namespace Jde::Web::Server{
 	}
 	//_pendingQueriesMutex held.  The entry stays, its timer cancelled, for AddTimeout's resumption to erase - so that does not then
 	//log "No pending query" against something another path removed.
-	Ω take( std::pair<QueryClientAwait::Handle,sp<DurationTimer>>& entry )ι->QueryClientAwait::Handle{
+	Ω take( std::pair<QueryClientAwait::Handle,TimerCancel>& entry )ι->QueryClientAwait::Handle{
 		auto h = entry.first;
 		entry.first = nullptr;
-		entry.second->Cancel();
+		entry.second.Cancel();
 		return h;
 	}
 	//Not under _pendingQueriesMutex: a resumed coroutine can come back through _pendingQueries.
@@ -179,17 +179,17 @@ namespace Jde::Web::Server{
 		}
 	}
 
-	α IWebsocketSession::AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SL sl )ι->TimerAwait::Task{
+	α IWebsocketSession::AddTimeout( RequestId requestId, QueryClientAwait::Handle h, Duration timeout, SL sl )ι->VoidTask{
 		//S3: the frame outlives the request.  QueryClientAwait keeps the session alive only until it resumes its caller, so once
 		//QueryClientResults has done that the last reference can drop while this coroutine's resumption is still queued - and it
 		//touches _pendingQueriesMutex below.  Hold a reference in the frame.
 		let self = shared_from_this();
-		auto timer = ms<DurationTimer>( timeout, sl );
+		DurationTimer timer{ timeout, sl };
 		{
 			lg l{ _pendingQueriesMutex };
-			_pendingQueries.emplace( requestId, make_pair(h, timer) );
+			_pendingQueries.emplace( requestId, make_pair(h, timer.Canceller()) );
 		}
-		auto _ = co_await *timer;
+		auto _ = co_await timer;
 		let pending = TakePending( requestId, true );
 		if( pending && *pending )//null: answered, failed or closed ahead of the deadline.
 			failPending( *pending, Exception{sl, {ELogTags::SocketServerWrite}, "Query {} timed out after {}", hex(requestId), Chrono::ToString(timeout)} );

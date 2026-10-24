@@ -63,7 +63,7 @@ namespace Jde::Opc::Gateway{
 	//merges into it rather than starting another - and nothing else may erase one, however empty it looks (see PurgePending).
 	struct PendingSubscription final{
 		Listeners Nodes;
-		sp<DurationTimer> Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
+		TimerCancel Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
 		uint Rejections{};//reconnect attempts refused outright in a row - see isRejection; the chain gives up at MaxRejections.
 		string LastFailure;//what the last attempt failed with; a repeat of it logs quietly.
 	};
@@ -797,7 +797,7 @@ namespace Jde::Opc::Gateway{
 		Connect();
 		PostUA( [this]{ TestDeadline(shared_from_this()); } );
 	}
-	α UAClient::TestDeadline( sp<UAClient> self )ι->DurationTimer::Task{
+	α UAClient::TestDeadline( sp<UAClient> self )ι->VoidTask{
 		if( !_onTestResult )
 			co_return;//answered before the deadline was armed.
 		_testConnects.emplace( self );//then the ShuttingDown check:  a Shutdown either finds it there or is found here.
@@ -805,16 +805,17 @@ namespace Jde::Opc::Gateway{
 			ExpireTest( UA_STATUSCODE_BADSHUTDOWN );
 			co_return;
 		}
-		_testDeadline.emplace( std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR );
-		(void)co_await *_testDeadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
-		_testDeadline.reset();
+		DurationTimer deadline{ std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR };
+		_testDeadline = deadline.Canceller();
+		(void)co_await deadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
+		_testDeadline = {};
 		ExpireTest( UA_STATUSCODE_BADTIMEOUT );
 	}
 	α UAClient::TakeTestResult()ι->ConnectCallback{
 		if( !_onTestResult )
 			return {};
 		if( _testDeadline )
-			_testDeadline->Cancel();
+			_testDeadline.Cancel();
 		_testConnects.erase( shared_from_this() );
 		auto onResult = std::move( _onTestResult );
 		_onTestResult = nullptr;//a moved-from AnyInvocable need not be empty.
@@ -1063,14 +1064,14 @@ namespace Jde::Opc::Gateway{
 
 	//ShuttingDown(), never Finalizing():  Finalizing is set after every shutdown function has run, so a chain gated on it could
 	//still reconnect while UAClient::Shutdown was tearing the clients down (subscription-disconnect #3).
-	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->DurationTimer::Task{
-		sp<DurationTimer> timer;
+	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->VoidTask{
+		optional<DurationTimer> timer;
 		{//registered under the same lock StopReconnects cancels under:  it either finds this wait or has already cleared the entry.
 			lg _{ _pendingMutex };
 			auto p = Process::ShuttingDown() ? nullptr : pendingFind( slug, credential );
 			if( !p )
 				co_return;
-			p->Wait = timer = ms<DurationTimer>( delay );
+			p->Wait = timer.emplace( delay ).Canceller();
 		}
 		++_reconnectsWaiting;
 		(void)co_await *timer;//a cancel resumes early with an error - not the signal; the checks below are.
@@ -1080,8 +1081,8 @@ namespace Jde::Opc::Gateway{
 		{//every subscriber gone (tabs closed while the server was down) - nothing left to restore.
 			lg _{ _pendingMutex };
 			auto p = pendingFind( slug, credential );
-			if( p && p->Wait==timer )
-				p->Wait = nullptr;
+			if( p && p->Wait==timer->Canceller() )
+				p->Wait = {};
 			if( !p || p->Nodes.empty() ){
 				if( p )
 					pendingErase( slug, credential );
@@ -1207,8 +1208,8 @@ namespace Jde::Opc::Gateway{
 		lg _{ _pendingMutex };
 		for( auto&& [_, creds] : _pending ){//auto&&: flat_map's iterator hands back a proxy pair.
 			for( auto&& [__, entry] : creds ){
-				if( entry.Wait ){//a Cancel before the wait starts is remembered - DurationTimer::Start re-issues it.
-					entry.Wait->Cancel();
+				if( entry.Wait ){//a Cancel before the wait starts is remembered - DurationTimer::Suspend re-issues it.
+					entry.Wait.Cancel();
 					++cancelled;
 				}
 			}

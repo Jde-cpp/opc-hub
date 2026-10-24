@@ -1097,7 +1097,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//NB this only bites when Create() actually suspends before it throws, i.e. when ServerCnnctnAwait's SelectAsync is
 	//async.  Under the ctest sqlite config it completes inline, Create runs to completion inside the first Suspend(), and
 	//the fan-out only ever sees one handle - so a green run here is not by itself evidence of coverage.  Verified against
-	//the bug by forcing a suspension into Create (a 200ms Any(DurationTimer)), which makes the fan-out see all three.
+	//the bug by forcing a suspension into Create (a 200ms DurationTimer), which makes the fan-out see all three.
 	TEST( ConnectCoalesceTests, EveryWaiterGetsTheMessage ){
 		constexpr uint count{ 3 };
 		struct Results{ atomic<uint> Done{}; std::array<string,count> What; };

@@ -1,32 +1,33 @@
 #pragma once
-#include <boost/asio.hpp>
-#include <absl/synchronization/mutex.h>
-#include <chrono>
-#include "Await.h"
-#include "jde/fwk/usings.h"
+#include <boost/asio/any_io_executor.hpp>
+#include "AnyAwait.h"
 
 namespace Jde{
-	using TimerAwait = TAwait<std::expected<void, boost::system::error_code>>;
-	struct Γ DurationTimer final : TimerAwait{
-		DurationTimer( steady_clock::duration duration, SRCE )ι;
-		DurationTimer( steady_clock::duration duration, boost::asio::any_io_executor executor, SRCE )ι;//resumes the awaiter on `executor` (e.g. a strand) instead of an arbitrary pool thread.
-		~DurationTimer();
-		α await_ready()ι->bool override{ return _duration<steady_clock::duration::zero(); }
-		α await_resume()ι->std::expected<void, boost::system::error_code> override{//ready path attaches no promise - complete successfully instead of the base's 'promise is null' throw.
-			return _h ? TimerAwait::await_resume() : std::expected<void, boost::system::error_code>{};
-		}
-		α Suspend()ι->void override;
-		α Cancel()ι->uint{ ul _{_mutex}; _cancelled = true; return _timer.cancel(); }//asio timers aren't safe for concurrent cancel vs Start's async_wait.
+	namespace Internal{ struct TimerState; }
+	//Cancels a DurationTimer from any thread:  before its wait starts, during it, or after (a no-op).  It shares the timer's state, not
+	//the awaitable, so it may outlive both.
+	struct Γ TimerCancel final{
+		TimerCancel()ι=default;
+		α Cancel()Ι->void;
+		explicit operator bool()Ι{ return _state!=nullptr; }
+		α operator==( const TimerCancel& )Ι->bool=default;
 	private:
-		α Start()ι->void;
-		sp<boost::asio::io_context> _ctx;
+		explicit TimerCancel( sp<Internal::TimerState> state )ι:_state{ move(state) }{}
+		sp<Internal::TimerState> _state;
+		friend struct DurationTimer;
+	};
+
+	//Any coroutine can co_await it (CLAUDE.md 'Coroutines').  Fails with operation_aborted when cancelled.
+	struct Γ DurationTimer final : AnyAwait<std::expected<void,boost::system::error_code>>{
+		using Result = std::expected<void,boost::system::error_code>;
+		DurationTimer( steady_clock::duration duration, SRCE )ι;
+		DurationTimer( steady_clock::duration duration, boost::asio::any_io_executor executor, SRCE )ι;//resumes on `executor`, e.g. a strand.
+		α await_ready()ι->bool override;
+		α Canceller()Ι->TimerCancel{ return TimerCancel{ _state }; }
+		α Cancel()Ι->void{ Canceller().Cancel(); }
+	private:
+		α Suspend()ι->void override;
 		steady_clock::duration _duration;
-		optional<boost::asio::any_io_executor> _executor;//when set, completion handlers are bound to it.
-		absl::Mutex _mutex;
-		//a Cancel that arrives before Start cancels nothing - `steady_timer::cancel()` with no pending wait has
-		//nothing to cancel and returns 0 - and the wait then runs its full duration.  Remembered here so Start can
-		//re-issue it.
-		bool _cancelled ABSL_GUARDED_BY(_mutex){};
-		boost::asio::steady_timer _timer ABSL_GUARDED_BY(_mutex);
+		sp<Internal::TimerState> _state;
 	};
 }

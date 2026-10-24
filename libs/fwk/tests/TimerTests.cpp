@@ -1,10 +1,11 @@
 #include <semaphore>
-#include <jde/fwk/co/Await.h>
+#include <thread>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/strand.hpp>
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include <jde/fwk/utils/mathUtils.h>
-#include <thread>
 #ifdef _WIN32
 	#include <windows.h>
 	#include <timeapi.h>          // timeBeginPeriod/timeEndPeriod (WIN32_LEAN_AND_MEAN excludes it from windows.h)
@@ -36,23 +37,23 @@ namespace Jde::Tests{
 		std::atomic<uint> Early{};//fired before its delay elapsed - a timer must never do that.
 		std::atomic<uint> WrongError{};//canceled with something other than operation_aborted.
 	};
-	Ω test( sp<std::binary_semaphore> done, uint i, sp<Outcomes> outcomes )ι->TimerAwait::Task{
+	Ω test( sp<std::binary_semaphore> done, uint i, sp<Outcomes> outcomes )ι->VoidTask{
 		let delay = Math::Random( _windows ? 4000 : 200 );
 		let kill = Math::Random( _windows ? 4000 : 100 );
 		atomic_flag threadDone;
 		atomic_flag threadStart;
-		auto timer = mu<DurationTimer>( microseconds(delay) );
-		std::jthread t{ [&timer, kill, &threadDone, &threadStart]()ι->void {
+		DurationTimer timer{ microseconds(delay) };
+		std::jthread t{ [cancel=timer.Canceller(), kill, &threadDone, &threadStart]()ι->void {
 			threadStart.test_and_set();
 			threadStart.notify_all();
 			std::this_thread::sleep_for( microseconds(kill) );
-			timer->Cancel();
+			cancel.Cancel();
 			threadDone.test_and_set();
 			threadDone.notify_all();
 		} };
 		threadStart.wait( false );
-		let start = steady_clock::now();//before the co_await, where Suspend->Start arms expires_after, so a fired timer can never resume earlier than start+delay.
-		auto result = co_await *timer;
+		let start = steady_clock::now();//before the co_await, where Suspend arms expires_after, so a fired timer can never resume earlier than start+delay.
+		auto result = co_await timer;
 		let elapsed = duration_cast<microseconds>( steady_clock::now()-start );
 		TRACE( "[{}]completed: {}, delay: {}, kill: {}, time: {}", hex(i), result.has_value() ? "true" : "canceled", delay, kill, elapsed.count() );
 		if( result.has_value() ){
@@ -69,7 +70,7 @@ namespace Jde::Tests{
 		threadDone.wait( false );
 		done->release();
 	}
-	Ω negativeTest( atomic_flag& done, std::expected<void, boost::system::error_code>& result, string& error )ι->TimerAwait::Task{
+	Ω negativeTest( atomic_flag& done, std::expected<void, boost::system::error_code>& result, string& error )ι->VoidTask{
 		try{
 			result = co_await DurationTimer{ microseconds(-1) };
 		}
@@ -79,8 +80,8 @@ namespace Jde::Tests{
 		done.test_and_set();
 		done.notify_all();
 	}
-	// Regression: a negative duration is ready immediately, so no promise is attached - await_resume
-	// must complete successfully instead of throwing 'promise is null'.
+	// Regression: a negative duration is ready immediately and never suspends - await_resume must complete
+	// successfully instead of throwing for a missing result.
 	TEST_F( TimerTests, NegativeDuration ){
 		atomic_flag done;
 		std::expected<void, boost::system::error_code> result{ std::unexpected{boost::system::error_code{}} };
@@ -114,28 +115,28 @@ namespace Jde::Tests{
 	//C10: Cancel() before anything awaits the timer found no pending async_wait, so it cancelled nothing and the wait
 	//then ran its full duration.  The live case is RemoteLog's destructor, which cancels in the window between
 	//RemoteLog::Run assigning _timer and the co_await reaching Suspend->Start - it then blocked for one _delay, and
-	//under a stopped io_context for the watchdog instead.  Cancel is remembered now and Start re-issues it.
-	Ω cancelBeforeStartTest( sp<std::binary_semaphore> done, sp<DurationTimer> timer, sp<std::atomic<bool>> aborted )ι->TimerAwait::Task{
-		let result = co_await *timer;
+	//under a stopped io_context for the watchdog instead.  Cancel is remembered now and Suspend re-issues it.
+	Ω cancelBeforeStartTest( sp<std::binary_semaphore> done, DurationTimer timer, sp<std::atomic<bool>> aborted )ι->VoidTask{
+		let result = co_await timer;
 		*aborted = !result.has_value() && result.error()==boost::asio::error::operation_aborted;//tallied, not EXPECTed: this is an executor thread.
 		done->release();
 	}
 	TEST_F( TimerTests, CancelBeforeStart ){
-		auto timer = ms<DurationTimer>( std::chrono::seconds(10) );//far longer than the deadline below, so only the cancel can meet it.
-		timer->Cancel();//no async_wait exists yet - this is the whole point.
+		DurationTimer timer{ std::chrono::seconds(10) };//far longer than the deadline below, so only the cancel can meet it.
+		timer.Cancel();//no async_wait exists yet - this is the whole point.
 		auto done = ms<std::binary_semaphore>( 0 );
 		auto aborted = ms<std::atomic<bool>>();
-		cancelBeforeStartTest( done, timer, aborted );
+		cancelBeforeStartTest( done, move(timer), aborted );
 		ASSERT_TRUE( done->try_acquire_for(5s) ) << "a cancel that arrived before the wait was started was lost - the timer is running out its full duration";
 		EXPECT_TRUE( aborted->load() ) << "it completed, but not with operation_aborted";
 	}
 
-	// The second ctor binds the completion handler to a caller-supplied executor.  Its only caller repo-wide is
+	// The second ctor builds the timer on a caller-supplied executor.  Its only caller repo-wide is
 	// OpcGateway's AsyncRequest, which relies on resuming back on its strand - a regression that resumed on an
 	// arbitrary pool thread would surface there as a data race rather than as a failure, and nothing constructed
 	// this overload in any test.
 	using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
-	Ω strandTest( sp<std::binary_semaphore> done, Strand strand, sp<std::atomic<bool>> onStrand, sp<std::atomic<bool>> fired )ι->TimerAwait::Task{
+	Ω strandTest( sp<std::binary_semaphore> done, Strand strand, sp<std::atomic<bool>> onStrand, sp<std::atomic<bool>> fired )ι->VoidTask{
 		*fired = (co_await DurationTimer{ microseconds(100), strand }).has_value();
 		*onStrand = strand.running_in_this_thread();//tallied, not EXPECTed: this is an executor thread.
 		done->release();
@@ -148,5 +149,24 @@ namespace Jde::Tests{
 		ASSERT_TRUE( done->try_acquire_for(10s) ) << "the strand-bound timer never resumed";
 		EXPECT_TRUE( fired->load() ) << "the strand-bound timer completed with an error";
 		EXPECT_TRUE( onStrand->load() ) << "the completion resumed off the strand it was bound to";
+	}
+
+	//A canceller shares the timer's state, not the awaitable:  holders such as IClientSocketSession::_timeouts cancel after the
+	//awaiting frame - and the DurationTimer in it - is gone.
+	Ω cancelAfterTest( sp<std::binary_semaphore> done, sp<TimerCancel> cancel, sp<std::atomic<bool>> fired )ι->VoidTask{
+		DurationTimer timer{ microseconds(100) };
+		*cancel = timer.Canceller();
+		*fired = (co_await timer).has_value();
+		done->release();
+	}
+	TEST_F( TimerTests, CancelOutlivesTimer ){
+		auto done = ms<std::binary_semaphore>( 0 );
+		auto cancel = ms<TimerCancel>();
+		auto fired = ms<std::atomic<bool>>();
+		cancelAfterTest( done, cancel, fired );
+		ASSERT_TRUE( done->try_acquire_for(10s) ) << "the timer never resumed";
+		EXPECT_TRUE( fired->load() ) << "the timer completed with an error";
+		std::this_thread::sleep_for( 10ms );//let the frame, and the DurationTimer in it, be destroyed.
+		cancel->Cancel();//clean under ASan:  a no-op on the state the canceller still holds.
 	}
 }

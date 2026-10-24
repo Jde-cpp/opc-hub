@@ -34,7 +34,7 @@ namespace Jde::Web::Client{
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		α AddTask( RequestId requestId, PendingTask&& task )ι->void;
 		//started per request alongside AddTask: if nothing has answered by the deadline the caller would otherwise wait forever.
-		α AddTimeout( RequestId requestId, SRCE )ι->TimerAwait::Task;
+		α AddTimeout( RequestId requestId, SRCE )ι->VoidTask;
 		α PopTask( RequestId requestId )ι->PendingTask;//empty if requestId is not pending:  answered, failed, or never a request.
 
 		α Run( string host, PortType port, string target, CreateClientSocketSessionAwait::Handle h )ι->void;// Start the asynchronous operation
@@ -91,7 +91,7 @@ namespace Jde::Web::Client{
 		boost::concurrent_flat_map<RequestId,PendingTask> _tasks;
 		//The deadline per in-flight request, so answering one can cancel it.  The server side has always kept its timers this
 		//way (IWebsocketSession::_pendingQueries, finding S3); the client kept only the handle and paid the full timeout.
-		boost::concurrent_flat_map<RequestId,sp<DurationTimer>> _timeouts;
+		boost::concurrent_flat_map<RequestId,TimerCancel> _timeouts;
 		atomic<uint32> _id;//_serverSocketIndex
 
 		template<class> friend struct ClientSocketStream; friend struct CloseClientSocketSessionAwait;

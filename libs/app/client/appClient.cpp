@@ -134,8 +134,7 @@ namespace Jde::App::Client{
 				wait = std::max( duration_cast<Duration>(reconnectWait()-(steady_clock::now()-attemptStart)), duration_cast<Duration>(500ms) );
 				WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", ServerSettings::Host(), ServerSettings::Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
 			}
-			DurationTimer timer{ wait };
-			(void)co_await Any( timer );
+			(void)co_await DurationTimer{ wait };
 		}
 	}
 }
