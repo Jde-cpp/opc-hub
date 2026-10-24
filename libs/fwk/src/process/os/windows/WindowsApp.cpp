@@ -4,6 +4,8 @@
 #include <shellapi.h>
 #include <strsafe.h>
 #include <io.h> //_isatty
+#include <timeapi.h> //timeBeginPeriod - WIN32_LEAN_AND_MEAN leaves it out of windows.h
+#pragma comment( lib, "winmm.lib" )
 //#include "WindowsDrive.h"
 #include "WindowsSvc.h"
 #include "WindowsWorker.h"
@@ -37,6 +39,13 @@ namespace Jde{
 			return false;
 		::SetConsoleOutputCP( CP_UTF8 );
 		return (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) || ::SetConsoleMode( out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING );
+	}
+	α Process::RaiseTimerResolution()ι->void{//never ended:  the process's exit restores the default.
+		if( ::timeBeginPeriod(1)!=TIMERR_NOERROR )
+			WARNT( ELogTags::App | ELogTags::Startup, "Could not raise the timer resolution to 1 ms:  a shorter wait lasts a 15.6 ms tick." );
+		//Windows 11 stops honoring it once the process's window is minimized or hidden - a soak's second quiet window, minutes in - unless told to.  Windows 10 refuses the flag and has no such throttling.
+		PROCESS_POWER_THROTTLING_STATE state{ .Version=PROCESS_POWER_THROTTLING_CURRENT_VERSION, .ControlMask=PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, .StateMask=0 };
+		::SetProcessInformation( ::GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state) );
 	}
 
 	Ω handlerRoutine( DWORD ctrlType )->BOOL{
