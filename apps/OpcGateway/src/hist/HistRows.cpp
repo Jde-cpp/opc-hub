@@ -277,6 +277,16 @@ namespace Jde::Opc{
 			auto each = o ? ToHistPathSegment( Json::FindSV(*o, "nsu"), Json::FindSV(*o, "name").value_or(sv{}) ) : nullopt;
 			if( !each )
 				refuse( Ƒ("segment {} needs a namespace URI (nsu) and a browse name (name).", serialize(segment)) );
+			if( let id = o->if_contains("id"); id ){//its URI the segment's where it gives none, as HistPathText spells it.
+				try{
+					each->Id = ExNodeId{ *id };
+				}
+				catch( const std::exception& e ){
+					refuse( Ƒ("segment {}'s id:  {}", serialize(segment), e.what()) );
+				}
+				if( !each->Id->namespaceUri.length )
+					each->Id->namespaceUri = AllocUAString( each->Uri );
+			}
 			y.push_back( move(*each) );
 		}
 		return y;
@@ -286,8 +296,18 @@ namespace Jde::Opc{
 	}
 	α Gateway::HistPathText( const vector<HistPathSegment>& path )ι->string{
 		jarray y;
-		for( let& segment : path )
-			y.push_back( jobject{ {"nsu", segment.Uri}, {"name", segment.Name} } );
+		for( let& segment : path ){
+			jobject o{ {"nsu", segment.Uri}, {"name", segment.Name} };
+			if( segment.Id ){
+				ExNodeId canonical{ *segment.Id };//as HistNodeText spells it:  by URI, the index 0.
+				canonical.nodeId.namespaceIndex = 0;
+				auto id = canonical.ToJson();
+				if( Json::FindSV(id, "nsu")==segment.Uri )//the browse name's, as it mostly is.
+					id.erase( "nsu" );
+				o["id"] = move( id );
+			}
+			y.push_back( move(o) );
+		}
 		return serialize( y );
 	}
 	α Gateway::SelectHistGroups( HistGroupFilter filter, SL sl )ι->HistRowsAwait<HistGroupRow>{

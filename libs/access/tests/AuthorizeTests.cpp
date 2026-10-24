@@ -387,6 +387,29 @@ namespace Jde::Access::Tests{
 		EXPECT_NO_THROW( auth->Test(_schema, _slug, criteria, Read, _user) ) << "a deleted criteria row falls back to the root";
 	}
 
+	//The gateway's served nodes (servers spec *Sessions and rights*):  ScopedRights resolves as Test's criteria overload does, and says
+	//whether the row it answered from is enforced, which CheckEnforced requires of an edit.
+	TEST( AuthorizeTests, ScopedRightsByCriteria ){
+		auto auth = createAuthorizer();
+		constexpr ResourcePK criteriaPK{ 2 };
+		const string criteria{ "7" };
+		auth->CreateResource( Resource{criteriaPK, jobject{{"schemaName",_schema},{"slug",_slug},{"criteria",criteria}}} );
+		auth->AddResource( criteriaPK, _schema, _slug, criteria );
+		auth->AddAcl( _user.Value, {PermissionPK{10}, _resourcePK, Read, None} );//Read on the root only.
+		using Scope = Authorize::ScopeRights;
+		let scoped = [&]( const string& slug, const string& c, UserPK user=_user ){ return auth->ScopedRights( _schema, slug, c, user ); };
+
+		EXPECT_EQ( scoped(_slug, "8"), (Scope{Read, true}) ) << "an unmapped criteria inherits the root";
+		EXPECT_EQ( scoped(_slug, criteria), (Scope{None, true}) ) << "a mapped criteria is its own resource - the root's grant holds nothing over it";
+		EXPECT_EQ( scoped("notEnabled", criteria), (Scope{All, false}) ) << "no active root:  open, as Test, but nothing enforces it";
+		EXPECT_EQ( scoped("notEnabled", criteria, UserPK{UserPK::System}), (Scope{All, true}) ) << "the system user passes, as CheckEnforced";
+
+		auth->AddAcl( _user.Value, {PermissionPK{11}, criteriaPK, Update, Read} );//the group's own row:  Update granted, Read denied.
+		EXPECT_EQ( scoped(_slug, criteria), (Scope{Update, true}) ) << "the row's grant, its denial out";
+		auth->UpdateResourceDeleted( criteriaPK, _schema, jobject{{"id",criteriaPK.Value}}, false );
+		EXPECT_EQ( scoped(_slug, criteria), (Scope{Read, true}) ) << "a deleted criteria row falls back to the root";
+	}
+
 	//access-refactor A2:  a delete unindexes its own row and nothing else, as a restart would load the cache.  The root still
 	//disables its slug (FindActiveResourcePKLocked), but deleting it used to erase the slug's criteria rows too, so restoring it
 	//left them unenforced until a restart;  and a deleted criteria row stayed indexed.

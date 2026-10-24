@@ -8,10 +8,10 @@ namespace Jde::Opc::Gateway{
 	α ParentPathsAwait::Walk()ι->VoidTask{
 		try{
 			vector<ParentPath> y( _nodes.size() );
-			struct Walker final{ uint Slot; NodeId Current; vector<BrowseSegment> Segments; };//Segments:  the parents', nearest first.
+			struct Walker final{ uint Slot; NodeId Current; vector<BrowseSegment> Segments; vector<NodeId> Ids; };//Segments and Ids:  the parents', nearest first.
 			vector<Walker> walking;
 			for( uint i=0; i<_nodes.size(); ++i )
-				walking.push_back( {i, _nodes[i], {}} );
+				walking.push_back( {i, _nodes[i], {}, {}} );
 			const NodeId objects = NodeId::ObjectsFolder();
 			while( walking.size() ){
 				vector<Walker> next; flat_set<NodeId> unknown;
@@ -23,6 +23,7 @@ namespace Jde::Opc::Gateway{
 						}
 						else if( let& parent = p->second; parent.Up && w.Segments.size()<MaxDepth ){
 							w.Segments.push_back( parent.Up->second );
+							w.Ids.push_back( parent.Up->first );
 							w.Current = parent.Up->first;
 							continue;
 						}
@@ -30,7 +31,9 @@ namespace Jde::Opc::Gateway{
 							y[w.Slot].Lost = true;
 						else if( parent.AtObjects ){
 							std::ranges::reverse( w.Segments );
+							std::ranges::reverse( w.Ids );
 							y[w.Slot].Parents = move( w.Segments );
+							y[w.Slot].Ids = move( w.Ids );
 						}
 						else
 							y[w.Slot].Deep = parent.Up.has_value();

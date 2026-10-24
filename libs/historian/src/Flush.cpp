@@ -50,7 +50,7 @@ namespace Jde::Opc::Hist{
 	α FlushAwait::Suspend()ι->void{ _group->Request( *this ); }
 	α Group::Waits( bool flush )Ι->bool{
 		ul _{ _mutex };
-		return !_ended && ( flush || _flushing );
+		return !_ended && ( flush || _flushing || (_pending && !Written()) );
 	}
 	α Group::Flush( SL sl )ι->FlushAwait{ return FlushAwait{ shared_from_this(), true, sl }; }
 	α Group::Settled( SL sl )ι->FlushAwait{ return FlushAwait{ shared_from_this(), false, sl }; }
@@ -59,7 +59,7 @@ namespace Jde::Opc::Hist{
 		bool waits{}, start{};
 		{
 			ul _{ _mutex };
-			if( (waits = !_ended && (waiter._flush || _flushing)) ){
+			if( (waits = !_ended && (waiter._flush || _flushing || (_pending && !Written()))) ){
 				( waiter._flush ? _waiters : _settling ).push_back( &waiter );
 				start = !std::exchange( _flushing, true );
 			}
@@ -73,7 +73,7 @@ namespace Jde::Opc::Hist{
 		bool start;
 		{
 			ul _{ _mutex };
-			if( _ended )
+			if( _ended || (_closed && Written()) )
 				return;
 			_again = true;
 			start = !std::exchange( _flushing, true );
@@ -227,6 +227,7 @@ namespace Jde::Opc::Hist{
 					waiters = std::exchange( _waiters, {} );
 					edits = std::exchange( _edits, {} );
 					_again = false;
+					_pending = false;//this pass takes what Close left.
 					taken = clock.Now();//with the buffer, so this flush holds every record that arrived before it and none after.
 					over = _store->Buffered()>_store->Config.MaxBuffer;
 					batch = Take( taken );
