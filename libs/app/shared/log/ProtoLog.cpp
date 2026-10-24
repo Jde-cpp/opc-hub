@@ -1,6 +1,5 @@
 #include <jde/app/log/ProtoLog.h>
 #include <jde/fwk/chrono.h>
-#include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/io/durable.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/io/FileAwait.h>
@@ -67,12 +66,12 @@ namespace Jde::App{
 	α ProtoLog::Shutdown( bool terminate, SL sl )ι->void{
 		if( terminate )
 			return;
-		//Every other writer of the daily file holds its LockKey; this one did not.  Appending into the middle of a flush's
+		//Every other writer of the daily file holds _fileLock; this one did not.  Appending into the middle of a flush's
 		//write would leave a run no checkpoint proves, and appending into one an archive round is about to fs::remove
 		//loses the entries silently.
 		//Try, never wait: loggers are destroyed *after* the executor is (Process::cleanup), so a flush or round suspended
-		//mid-flight will never resume to release this key - blocking here would hang the process instead of losing a buffer.
-		auto lock = TryLockKey( DailyFile().string() );
+		//mid-flight will never resume to release it - blocking here would hang the process instead of losing a buffer.
+		auto lock = _fileLock.TryLock();
 		vector<FileEntry> batch;
 		uint dropped{};
 		{
@@ -181,7 +180,7 @@ namespace Jde::App{
 		y.insert( y.end(), _toSave.begin(), _toSave.end() );
 		return y;
 	}
-	α ProtoLog::Save()ι->TAwait<CoLockGuard>::Task{
+	α ProtoLog::Save()ι->VoidAwait::Task{
 		Running _{ *this };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
 		auto toSave = move( _toSave );
 		let flushId = ++_flushId;
@@ -192,10 +191,7 @@ namespace Jde::App{
 		_toSaveBytes = 0;
 		_cache.Clear();//each batch carries its entries' strings:  the append leaves out those the file holds.
 		_mutex.unlock();
-		Save( move(toSave), flushId, co_await LockKeyAwait{DailyFile().string()} );
-	}
-	α ProtoLog::Save( vector<FileEntry> toSave, uint flushId, CoLockGuard )ι->VoidAwait::Task{
-		Running _{ *this };//M9: this frame resumes into `this` - ~ProtoLog waits for it.
+		auto lock = co_await _fileLock.Lock();
 		try{
 			TRACE( "Saving {} records to {}", toSave.size(), DailyFile().string() );
 			//NOT _dailyFileStart = max() here.  A flush moves entries from the buffer into the daily file - both of which are
@@ -245,7 +241,7 @@ namespace Jde::App{
 		//An archive round reads the daily file only, so anything written while this flush was in flight has to land in the file
 		//first or it is archived a round late.  It must not be archived out of the buffer instead: the round deletes the file but
 		//cannot trim the buffer, so those entries would be archived again as soon as the next flush wrote them to disk.
-		//Still holding the daily file's LockKey, so no other flush can interleave with the drain.
+		//Still holding _fileLock, so no other flush can interleave with the drain.
 		vector<FileEntry> pending;
 		{
 			ul _{ _mutex };

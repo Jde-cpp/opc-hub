@@ -12,7 +12,6 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/records/Scan.h>
-#include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/str.h>
@@ -296,7 +295,7 @@ namespace Jde::App::Tests{
 	}
 
 	//M5: with the daily file unwritable the flush fails and the whole batch is prepended, and nothing bounded what that grew to -
-	//an O(n) memmove per prepend, for as long as the disk stayed unwritable, with a fresh Save (coroutine, LockKeyAwait, failing
+	//an O(n) memmove per prepend, for as long as the disk stayed unwritable, with a fresh Save (coroutine, lock, failing
 	//IO::WriteAwait) started by *every* subsequent log line.
 	TEST_F( DailyFileDayTests, AnUnwritableDailyFileTrimsToTheNewest ){
 		fs::create_directories( _root/"log.binpb" );//a directory where the file belongs - every append fails, whatever the uid.
@@ -335,19 +334,19 @@ namespace Jde::App::Tests{
 		EXPECT_TRUE( cache.Touch(cache.Strings, id) ) << "a flush took the buffer, so the next run carries the string again";
 	}
 
-	//L1(a): Save moved the batch out of _toSave before it enqueued on the daily file's key, so for as long as another holder kept
-	//that key - a round, another query - the batch was in neither the buffer nor the file, and a query that snapshotted the buffer
-	//and then read the file found it in neither.  The window is the whole time the key is held, not a few instructions, so holding
+	//L1(a): Save moved the batch out of _toSave before it enqueued on the daily file's lock, so for as long as another holder kept
+	//that lock - a round, another query - the batch was in neither the buffer nor the file, and a query that snapshotted the buffer
+	//and then read the file found it in neither.  The window is the whole time the lock is held, not a few instructions, so holding
 	//it here is the finding rather than a contrivance.
-	TEST_F( DailyFileDayTests, AFlushWaitingOnTheDailyFileKeyIsStillVisible ){
+	TEST_F( DailyFileDayTests, AFlushWaitingOnTheDailyFileLockIsStillVisible ){
 		let log = mu<App::ProtoLog>( jobject{{"path", _root.string()}, {"delay", "PT24H"}, {"timeZone", "America/New_York"}} );
 		Logging::Entry marker{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"L1 in-flight probe"} };
 		{
-			auto key = TryLockKey( log->DailyFile().string() );//held for this scope: the flush below parks on LockKeyAwait.
-			ASSERT_TRUE( key );
+			auto lock = log->TryLockDailyFile();//held for this scope: the flush below parks on it.
+			ASSERT_TRUE( lock );
 			log->Write( marker );
 			//Past _delaySize, so the write triggers Save() - which runs inline to its first suspend, so by the time this loop ends
-			//the batch has left _toSave and is parked on the key.
+			//the batch has left _toSave and is parked on the lock.
 			for( uint i=0; i<400 && log->BufferSize(); ++i )
 				log->Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("L1 filler {}", i)} );
 			ASSERT_EQ( log->BufferSize(), 0u ) << "no flush was triggered, so there is nothing in flight to see";
@@ -355,7 +354,7 @@ namespace Jde::App::Tests{
 			bool found{};
 			for( let& fe : log->Entries() )
 				found = found || (fe.value_case()==Log::Proto::FileEntry::kEntry && Protobuf::ToGuid(fe.entry().template_id())==marker.Id());
-			EXPECT_TRUE( found ) << "a batch waiting on the daily file's key was in neither the buffer nor the file";
+			EXPECT_TRUE( found ) << "a batch waiting on the daily file's lock was in neither the buffer nor the file";
 		}
 	}
 
@@ -746,7 +745,7 @@ namespace Jde::App::Tests{
 		log->Write( e6 );
 		ASSERT_TRUE( waitUntil([&]{ return fs::exists(five); }) );
 		//the round ends at day 6:  it lets the daily file's lock go.
-		ASSERT_TRUE( waitUntil([&]{ return TryLockKey(log->DailyFile().string()).has_value(); }) );
+		ASSERT_TRUE( waitUntil([&]{ return (bool)log->TryLockDailyFile(); }) );
 		EXPECT_FALSE( fs::exists(six) );
 		EXPECT_TRUE( fs::exists(File()) ) << "the daily file was removed with a day unarchived";
 		EXPECT_EQ( count(records(five), e5.Id()), 1u );
@@ -786,7 +785,7 @@ namespace Jde::App::Tests{
 		log->Write( entry(Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five") );
 		fill( 1000 );
 		ASSERT_TRUE( waitUntil([&]{ return fs::exists(five); }) );
-		ASSERT_TRUE( waitUntil([&]{ return TryLockKey(log->DailyFile().string()).has_value(); }) );
+		ASSERT_TRUE( waitUntil([&]{ return (bool)log->TryLockDailyFile(); }) );
 		ASSERT_FALSE( fs::exists(six) );
 		fs::remove_all( obstruction );
 
@@ -805,7 +804,7 @@ namespace Jde::App::Tests{
 		fs::resize_file( File(), 0 );
 		let e = entry( Clock::now(), ELogLevel::Information, 1, "written once repaired" );
 		log->Write( e );
-		ASSERT_TRUE( waitUntil([&]{ return Size()>0 && TryLockKey(log->DailyFile().string()).has_value(); }) ) << "the repaired file is still refused";
+		ASSERT_TRUE( waitUntil([&]{ return Size()>0 && (bool)log->TryLockDailyFile(); }) ) << "the repaired file is still refused";
 		let all = records( File() );
 		EXPECT_EQ( count(all, e.Id()), 1u );
 		EXPECT_EQ( stringValue(all, e.Id()), "written once repaired" ) << "the rescan left the strings the refused file held";

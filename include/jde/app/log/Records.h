@@ -71,7 +71,7 @@ namespace Jde::App::Log{//after the traits, which the layer's templates are cons
 		α Write( SRCE )ι->IO::WriteAwait;
 	};
 	//The daily file as the process knows it:  the record layer's state of it, from its first-open scan and from its
-	//own appends since, under the file's LockKey, which every flush, round and query takes.
+	//own appends since, under ProtoLog::_fileLock, which every flush, round and query takes.
 	struct DailyFile final : IO::Records::FileState{
 		bool Opened{};//scanned, converted or made by this process:  until then nothing is known of it.
 		int64_t Identity{};//its FileStart's ts, which names it to the archives (Log.proto's Merged); 0 until it is made.

@@ -1,7 +1,7 @@
 #pragma once
 #include <chrono>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/co/LockKey.h>
+#include <jde/fwk/co/CoMutex.h>
 #include <jde/app/log/BufferedLogger.h>
 #include <jde/app/log/Records.h>
 #include <jde/app/usings.h>
@@ -25,6 +25,7 @@ namespace Jde::App{
 		α Archive()ι->VoidAwait::Task;
 		α Shutdown( bool terminate, SL sl )ι->void override;
 		α DailyFile()ι->fs::path{ return _root/"log.binpb"; }
+		α TryLockDailyFile()ι->CoGuard{ return _fileLock.TryLock(); }
 		α DailyFileStart()Ι->TimePoint{ ul _{_mutex}; return _dailyFileStart; }
 		α Entries()Ε->vector<App::Log::Proto::FileEntry>;//the buffer *and* whatever is in flight - see the definition (L1).
 		α BufferSize()Ι->uint{ ul _{_mutex}; return _toSaveBytes; }//what M5's cap bounds - the unflushed buffer alone, not _inFlight.
@@ -48,8 +49,7 @@ namespace Jde::App{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α AddArguments( const vector<string>& args, const ::google::protobuf::RepeatedPtrField<std::string>& ids )ι->void;//L2: by reference - it was copying the whole field per entry.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Drop()ι->uint override;//whole records, down to half the cap; returns the bytes dropped.
 		ABSL_UNLOCK_FUNCTION(_mutex) α Flush()ι->void override{ Save(); }
-		ABSL_UNLOCK_FUNCTION(_mutex) α Save()ι->TAwait<CoLockGuard>::Task;//releases _mutex before its first suspend.
-		α Save( vector<App::Log::FileEntry> toSave, uint flushId, CoLockGuard l )ι->VoidAwait::Task;
+		ABSL_UNLOCK_FUNCTION(_mutex) α Save()ι->VoidAwait::Task;//releases _mutex before its first suspend.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Return( vector<App::Log::FileEntry>&& batch )ι->void;//back into the buffer, ahead of what came since:  its strings precede its entries still.
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Size()Ι->uint override{ return _toSaveBytes; }
 
@@ -71,6 +71,7 @@ namespace Jde::App{
 		uint _toSaveBytes ABSL_GUARDED_BY(_mutex){};//what _toSave takes in the file, which the cap bounds.
 		flat_map<uint,vector<App::Log::FileEntry>> _inFlight ABSL_GUARDED_BY(_mutex);
 		uint _flushId ABSL_GUARDED_BY(_mutex){};
-		App::Log::DailyFile _file;//as the process knows it:  under the daily file's LockKey, not _mutex.
+		CoMutex _fileLock;//the daily file's:  every flush, round and query holds it.
+		App::Log::DailyFile _file;//as the process knows it:  under _fileLock, not _mutex.
 	};
 }

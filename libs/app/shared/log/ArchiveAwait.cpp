@@ -54,11 +54,11 @@ namespace Jde::App{
 			};
 		}
 	}
-	α ArchiveAwait::Execute()ι->TAwait<CoLockGuard>::Task{
-		optional<CoLockGuard> lock;
+	α ArchiveAwait::Execute()ι->VoidAwait::Task{
+		CoGuard lock;
 		try{
 			let dailyPath = _log.DailyFile();
-			lock = co_await LockKeyAwait{ dailyPath.string() };
+			lock = co_await _log._fileLock.Lock();
 			//the lock is ours & stays ours; the daily file is read, ProtoLog's buffer is not.
 			auto& file = _log._file;
 			if( !file.Current() )
@@ -156,11 +156,11 @@ namespace Jde::App{
 			file.Removed();
 		}
 		catch( runtime_error& e ){
-			lock.reset();//the daily file survives a failed round - drop the lock so the next flush & round can proceed.
+			lock.unlock();//the daily file survives a failed round - drop the lock so the next flush & round can proceed.
 			ResumeExp( move(e) );
 			co_return;
 		}
-		lock.reset();//before resuming: Resume() runs the continuation on this stack, which must not inherit the daily file's lock.
+		lock.unlock();//before resuming: Resume() runs the continuation on this stack, which must not inherit the daily file's lock.
 		Resume();
 	}
 	constexpr sv archiveFileName{ "archive.binpb" };

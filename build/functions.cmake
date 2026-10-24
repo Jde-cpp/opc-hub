@@ -172,7 +172,7 @@ endfunction()
 #db server): the db-backed suites need it as a pair, and fwk/web/sqlite-driver import no args dir and don't read
 #`path`, so it is inert for them.  Extra args in ARGN follow it.
 #app-review3 T9: seconds before ctest kills a test.  Nothing in the suites has a deadline of its own - BlockAwait waits
-#forever - so a lost LockKey or a timer that never fires wedges the run, and CI invokes plain `ctest` (linux-ci.yml),
+#forever - so a lost lock wakeup or a timer that never fires wedges the run, and CI invokes plain `ctest` (linux-ci.yml),
 #where the only backstop is ctest's own 1500s default: 25 minutes of a hung job per suite.  300s is over twenty times
 #the slowest suite on record (Jde.Opc.Tests, ~14s in Testing/Temporary/CTestCostData.txt) and matches the `--timeout`
 #the run-services skill passes.  Raise it for a slow machine with -DJDE_TEST_TIMEOUT=<seconds>.  Note the property wins
