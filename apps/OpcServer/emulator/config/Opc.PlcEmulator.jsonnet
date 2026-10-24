@@ -1,11 +1,13 @@
-// PLC emulator - no database.  Logs into the AppServer (:1967) for a session (its id is the OPC UA issued token), runs its
-// own headless UA server holding the pumps nodeset, PUBLISHES the pump process values over OPC UA PubSub into the
-// OpcServer (:4840 tcp / the contract's udp url), and keeps a client session on the OpcServer for the run commands the
-// UI writes (-transport=write routes every tag over that session instead and skips the PLC server).
+// PLC emulator - no database.  Logs into the AppServer (:1967) for a session (its id is the OPC UA issued token, and the
+// hub its own server's sessions log in through), runs its own UA server holding the pumps nodeset on :4842, PUBLISHES the
+// pump process values over OPC UA PubSub into the OpcServer (:4840 tcp / the contract's udp url), and keeps a client
+// session on the OpcServer for the run commands the UI writes (-transport=write routes every tag over that session
+// instead and skips the PLC server;  -transport=server keeps the PLC server alone, for a gateway group to collect from).
 //
 // The pubsub transport needs the OpcServer started with config/Opc.Server.Emulator.jsonnet (…Emulator.Hub.jsonnet against
 // a hub) - the stock config carries no /opcServer/pubsub, because a DataSetReader writes the address space with no session
 // and no access control.  -transport=write needs no overlay; it is an ordinary authenticated client session.
+// -transport=server needs no OpcServer at all:  the gateway connects to /emulator/plc as to a PLC.
 //
 // First run: -createCert, then -grant once OpcServer has booted, then restart OpcServer (it loads acls at startup).
 // Launch with -tests from $buildDir/runtime; -url= -transport= -period= -statusPeriod= -duration= -opcSchema= beat the settings.
@@ -32,7 +34,7 @@ local serverApplicationUri = "urn:open62541.server.application";
 	//the AppServer is its own root; without this anchor the login TLS handshake rejects its self-signed cert (as the OpcServer/gateway configs anchor it).
 	web:{ client:{ ssl:{ caFile: "$(ProgramData)/Jde-Cpp/AppServer/ssl/certs/AppServer.pem" } } },
 	emulator:{
-		transport: "pubsub", //pubsub | write
+		transport: "pubsub", //pubsub | write | server
 		//Verify the OpcServer's certificate against trustedCertDirs before opening the session (jde/opc/ServerTrust.h), as the
 		//gateway does with /gateway/verifyServerCertificate and /gateway/trustedCertDirs.
 		verifyServerCertificate: true,
@@ -45,13 +47,28 @@ local serverApplicationUri = "urn:open62541.server.application";
 		applicationUri: applicationUri,
 		serverApplicationUri: serverApplicationUri,
 		opcSchema: "opc."+buildTarget, ///opcServer/resource = args.buildTarget -> the acl schema.
+		//The PLC's own UA endpoint, on the UA server library's security - the OpcServer's policies, a trust list, and a login
+		//through the hub this process is logged into (docs/servers/spec.md *Emulator*):  what a gateway group collects from under
+		//-transport=server, and what the writer samples under pubsub.  4841 is the gateway's UA endpoint (hub or standalone),
+		//4840 the OpcServer's.  A `::` key is its default, shown hidden.
 		plc:{
-			port: 4842, //the emulated PLC's own UA endpoint - headless, but a UA_Server must bind something; 4841 is the gateway's UA endpoint (hub or standalone).
-			//Listen host.  open62541's setMinimal would bind every interface with anonymous full access over a writable
-			//nodeset, i.e. a second unauthenticated door onto the pump tags; nothing is meant to connect here, so loopback.
-			//"" = every interface, for a deliberately LAN-visible demo PLC - the emulator WARNs when it is set that way.
-			bind: "127.0.0.1",
-			nodeset: "$(JDE_DIR)/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml" //the same file the OpcServer loads.
+			port: 4842,
+			address:: null, //the interface it listens on;  null:  every interface, as the OpcServer and the gateway;  "127.0.0.1" for a PLC only this box's gateway dials
+			nodeset: "$(JDE_DIR)/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml", //the same file the OpcServer loads.
+			//absent:  the endpoint presents the device's own pair, /emulator/ssl below, whose URI SAN is the applicationUri - one identity, client or server
+			ssl:: $.emulator.ssl,
+			//the UA clients admitted on a secured channel and as certificate tokens:  the gateway's issued per-connection certificates
+			//(Opc.Gateway.jsonnet gateway.issuedCerts) land in its product dir - the standalone gateway's or the hub's.  The gateway
+			//trusts this device's pair in return (gateway.trustedCertDirs).  Not the login's anchors, which are the hub's (/access).
+			trustedCertDirs: [ "$(ProgramData)/Jde-Cpp/OpcGateway/ssl/certs", "$(ProgramData)/Jde-Cpp/OpcHub/ssl/certs" ],
+			rejectedCertDir:: "$(ProgramData)/Jde-Cpp/PlcEmulator/ssl/rejected", //where a refused client certificate is written, <thumbprint>.der, for the admin to move into a trusted dir
+			none:: true, //a None endpoint beside the secured ones;  false keeps the None policy for discovery alone (securityPolicyNoneDiscoveryOnly)
+			tokenTypes:: { anonymous: false, certificate: true, issued: true, username: true }, //a session is a hub user:  the gateway's collector presents its hub session as an issued token
+			users:: [], //the user-name logins, [ { name: "operator", password: "$(OPERATOR_PASSWORD)" } ], plain text at rest;  the login's hub user is the OpcServer-provider user of that name
+			userTokenPolicyUri:: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", //the policy the user tokens ride on;  "" names each security policy for itself
+			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  Every gateway user browsing this PLC holds a
+			//session of its own beside the collector's, so a busy demo raises the first two;  maxSecureChannels is never left below maxSessions.
+			limits:: { maxSessions: 100, maxSecureChannels: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
 		},
 		pubsub: pubsub,
 		period: "PT1S",

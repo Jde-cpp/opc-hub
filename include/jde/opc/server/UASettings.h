@@ -37,6 +37,7 @@ namespace Jde::Opc::Server{
 		//where open62541 reads it so (maxMonitoredItems, maxAsyncOperations).
 		struct Limits final{
 			optional<uint16> MaxSessions;
+			optional<uint16> MaxSecureChannels;//raised to MaxSessions where it is below:  a session per channel.
 			optional<uint32> MaxMonitoredItems;
 			optional<Duration> SessionTimeout;//maxSessionTimeout.
 			optional<Duration> MinSamplingInterval;//the floor of samplingIntervalLimits.

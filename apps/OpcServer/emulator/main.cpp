@@ -17,12 +17,15 @@
 	α Jde::Process::ProductName()ι->sv{ return "PlcEmulator"; }
 #endif
 
-//PLC emulator for the Jde OpcServer.  A real UA-enabled PLC: its own OPC UA server holding the pumps nodeset, which it
-//PUBLISHES over OPC UA PubSub (UADP/UDP) into the OpcServer's matching nodes, plus a client session to the OpcServer
-//for the run commands the UI writes (and, with -transport=write, for writing the process values directly).
+//PLC emulator for the Jde OpcServer and the gateway.  A real UA-enabled PLC: its own OPC UA server holding the pumps
+//nodeset, which it PUBLISHES over OPC UA PubSub (UADP/UDP) into the OpcServer's matching nodes, plus a client session to
+//the OpcServer for the run commands the UI writes (and, with -transport=write, for writing the process values directly);
+//or, with -transport=server, that server alone on the UA server library's secured endpoint, for a gateway group to
+//collect from as from a PLC, the commands arriving as writes to its own nodes.
 //
 //First run:  -createCert (both certs; the UA one must sit in a dir the OpcServer trusts - see /access/trustedCertDirs),
 //then -grant once OpcServer has booted (it registers the nodeIds resource), then RESTART OpcServer so it loads the acl.
+//-transport=server needs neither the grant nor the OpcServer:  its sessions log in through the hub.
 α main( int argc, char **argv )->int{
 	if( !Jde::Process::CheckCpu() )
 		return EXIT_FAILURE;

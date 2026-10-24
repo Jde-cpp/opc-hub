@@ -8,7 +8,7 @@ namespace Jde::Opc::Emulator{
 		TagSpec Spec;
 		up<IGenerator> Generator;//null for command tags.
 		optional<uint> Field;//index into the PubSub contract when published; else written over the client session.
-		NodeId Node;//on the OpcServer - command tags and session-written tags, resolved per session.
+		NodeId Node;//on the OpcServer - command tags and session-written tags, resolved per session;  on the PLC's own server under -transport=server, every tag, resolved once.
 		double Value{};//the last published reading - held through a quality window that holds.
 		TagQuality Quality;
 		UA_StatusCode Status{};//Value's quality (OPC 10000-4 7.38); published with the value, and written with it where the server lets a session.
