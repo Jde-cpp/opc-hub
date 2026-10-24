@@ -30,9 +30,10 @@ namespace Jde::Opc::Gateway{
 		//A served variable's member, whose value it serves, and the group that keeps its history;  false when the node is mapped already.
 		α Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug, sp<Opc::Hist::Group> history )ι->bool;
 		α Remove( const NodeId& node )ι->void;//the variable's mapping and its history's;  its member keeps its value.
-		//A served variable's member and connection, where a write to it goes (ServedWrites);  none for a node that isn't served.
-		struct Serving final{ HistGroupPK Group; HistGroupNodePK Index; ServerCnnctnNK Slug; };
-		α Served( const UA_NodeId& node )Ι->optional<Serving>;
+		//A served variable's member and connection, where a write to it goes (ServedWrites), with `value`, where there is one,
+		//unmapped as Unmap does it in the same lookup:  Unmapped is the count it couldn't place.  None for a node that isn't served.
+		struct Serving final{ HistGroupPK Group; HistGroupNodePK Index; ServerCnnctnNK Slug; uint Unmapped; };
+		α Served( const UA_NodeId& node, UA_Variant* value )ι->optional<Serving>;
 		//The history host's (GatewayHistoryHost), from the same map, so a node's history comes and goes with its value:  its group and
 		//index, none for a node that isn't served;  every served node's archive-start properties, with its group.
 		using ArchiveStart = Opc::Server::IHistoryHost::ArchiveStart;

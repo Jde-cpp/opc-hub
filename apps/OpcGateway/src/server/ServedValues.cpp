@@ -50,10 +50,21 @@ namespace Jde::Opc::Gateway{
 		ul _{ _mutex };
 		_nodes.erase( node );
 	}
-	α ServedValues::Served( const UA_NodeId& node )Ι->optional<Serving>{
-		rl _{ _mutex };
-		let p = _nodes.find( node );
-		return p==_nodes.end() ? nullopt : optional<Serving>{ {p->second.Group, p->second.Index, p->second.Slug} };
+	α ServedValues::Served( const UA_NodeId& node, UA_Variant* value )ι->optional<Serving>{
+		optional<Serving> y;
+		bool warned{};
+		{
+			rl _{ _mutex };
+			let p = _nodes.find( node );
+			if( p==_nodes.end() )
+				return nullopt;
+			let& served = p->second;
+			y = Serving{ served.Group, served.Index, served.Slug, value ? Map(SlugIndexes(served.Slug), Namespaces(served.Group), *value, true) : 0 };
+			warned = served.Refused;
+		}
+		if( !warned )
+			Warn( node, y->Unmapped, true );
+		return y;
 	}
 	α ServedValues::History( const UA_NodeId& node )Ι->optional<Opc::Server::IHistoryHost::Node>{
 		rl _{ _mutex };
@@ -170,20 +181,8 @@ namespace Jde::Opc::Gateway{
 			Warn( node, unmapped );
 	}
 	α ServedValues::Unmap( const UA_NodeId& node, UA_Variant& value )ι->uint{
-		uint unmapped{};
-		bool warned{};
-		{
-			rl _{ _mutex };
-			auto p = _nodes.find( node );
-			if( p==_nodes.end() )
-				return 0;
-			let& served = p->second;
-			unmapped = Map( SlugIndexes(served.Slug), Namespaces(served.Group), value, true );
-			warned = served.Refused;
-		}
-		if( !warned )
-			Warn( node, unmapped, true );
-		return unmapped;
+		let served = Served( node, &value );
+		return served ? served->Unmapped : 0;
 	}
 	α ServedValues::Namespaces( HistGroupPK group )Ι->const vector<string>*{
 		let p = _groups.find( group );

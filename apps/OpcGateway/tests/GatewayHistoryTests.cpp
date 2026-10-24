@@ -19,7 +19,6 @@ namespace Jde::Opc::Gateway::Tests{
 		struct Info final{ UA_DateTime Time; UA_HistoryUpdateType Type; string User; };
 		struct Modified final{ UA_StatusCode Status; vector<Value> Values; vector<Info> Infos; };
 		Ω Ticks( TimePoint t )ι->UA_DateTime{ return UADateTime{ t }.UA(); }
-		Ω Double( const Value& v )ι->optional<double>{ return v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? optional<double>{ *(UA_Double*)v.value.data } : nullopt; }
 		Ω Doubles( const vector<Value>& values )ι->vector<optional<double>>{
 			vector<optional<double>> y;
 			for( let& v : values )
@@ -27,28 +26,6 @@ namespace Jde::Opc::Gateway::Tests{
 			return y;
 		}
 		Ω SourceTime( const Value& v )ι->optional<TimePoint>{ return v.hasSourceTimestamp ? optional<TimePoint>{ UADateTime{v.sourceTimestamp}.Time() } : nullopt; }
-		Ω UserAccessLevel( UATestClient& client, const NodeId& node )ε->UA_Byte{
-			UA_Byte y{};
-			UAε( UA_Client_readUserAccessLevelAttribute(client, node, &y) );
-			return y;
-		}
-		//A served node under the connection folder by its name alone:  a member the source holds under Objects.
-		Ω ServedRoot( UATestClient& client, sv name )ε->optional<NodeId>{
-			let ns = Mapped( PumpsUri );
-			return ns ? client.Translate( NodeId::ObjectsFolder(), {{_own, OpcServerSlug}, {*ns, string{name}}} ) : nullopt;
-		}
-		//A variable of the embedded OpcServer under Objects, in the pumps' namespace, for a member of a type the pumps don't have.
-		Ω AddSourceVariable( UA_UInt32 node, const char* name, UA_UInt32 dataType, void* value, const UA_DataType& type )ε->void{
-			auto ua = Server::GetUAServer().Ptr();
-			if( UA_NodeClass c; !UA_Server_readNodeClass(ua, Node(node), &c) )//a repeat of this test.
-				return;
-			auto attributes = UA_VariableAttributes_default;
-			UA_Variant_setScalar( &attributes.value, value, &type );
-			attributes.dataType = UA_NODEID_NUMERIC( 0, dataType );
-			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)name );
-			attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-			UAε( UA_Server_addVariableNode(ua, Node(node), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)name), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
-		}
 		//UA_Client_HistoryRead_raw, every page.
 		Ω Raw( UATestClient& client, const NodeId& node, TimePoint start, TimePoint end )ι->Reading{
 			Reading y{};

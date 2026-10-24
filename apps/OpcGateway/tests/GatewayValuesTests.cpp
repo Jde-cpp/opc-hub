@@ -12,7 +12,6 @@
 
 namespace Jde::Opc::Gateway::Tests{
 	struct GatewayValuesTests : EndpointFixture{
-		Ω Double( const Value& v )ι->optional<double>{ return v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? optional<double>{ *(UA_Double*)v.value.data } : nullopt; }
 		Ω SourceTime( const Value& v )ι->optional<TimePoint>{ return v.hasSourceTimestamp ? optional<TimePoint>{ UADateTime{v.sourceTimestamp}.Time() } : nullopt; }
 		Ω NodeIdNamespace( const Value& v )ι->optional<UA_UInt16>{ return v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_NODEID]) ? optional<UA_UInt16>{ static_cast<const UA_NodeId*>(v.value.data)->namespaceIndex } : nullopt; }
 		//A NodeId in the source's namespace `ns` as the member's value, as the tap stores one.
@@ -28,11 +27,6 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω PumpsIndex( const vector<string>& uris )ι->optional<UA_UInt16>{
 			let p = std::ranges::find( uris, PumpsUri );
 			return p==uris.end() ? nullopt : optional<UA_UInt16>{ (UA_UInt16)std::distance(uris.begin(), p) };
-		}
-		//A served node under the connection folder by its name alone:  a member the source holds under Objects.
-		Ω ServedRoot( UATestClient& client, sv name )ε->optional<NodeId>{
-			let ns = Mapped( PumpsUri );
-			return ns ? client.Translate( NodeId::ObjectsFolder(), {{_own, OpcServerSlug}, {*ns, string{name}}} ) : nullopt;
 		}
 	};
 

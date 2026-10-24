@@ -28,7 +28,7 @@ namespace Jde::Opc::Gateway{
 	//mirror's alone, and the read callbacks copy it out remapped into the endpoint's namespaces (spec *Namespaces*), which every URI
 	//of a connection's NamespaceArray has once its collector has read it.  A client's Write of one is held for its source's answer
 	//(spec *Writes*):  the write callbacks queue it with ServedWrites, which forwards it under the collector's credential off this
-	//thread and sets the result here, through Serial.  Their history is the library's UAHistory over their groups through
+	//thread and sets the result on the server's own.  Their history is the library's UAHistory over their groups through
 	//GatewayHistoryHost (spec *History*):  HistoryRead in its four modes and HistoryUpdate's edits, as the OpcServer serves its one
 	//group, the capabilities, the aggregates and the archive starts from the library, each page remapped as a live value is.
 	struct GatewayServer final : std::enable_shared_from_this<GatewayServer>, IHistListener{
@@ -133,7 +133,8 @@ namespace Jde::Opc::Gateway{
 		α Prune( const ServerCnnctnNK& slug, std::span<const HistPathSegment> parents )ι->void;//the path folders left empty, from the deepest up to a served variable.
 		mutable std::mutex _mutex;
 		//From construction:  the tap reaches it from the listener's install on, before Start has a server.  Before _ua, whose thread's
-		//callbacks read it, so it outlives them;  the writes the same, answered through Serial.
+		//callbacks read it, so it outlives them;  the writes the same, whose timed callback holds them raw, answered on the server's
+		//thread until Stop stops them, since a forward can outlive the server.
 		sp<ServedValues> _values;
 		sp<ServedWrites> _writes;
 		up<Opc::Server::UAServer> _ua;

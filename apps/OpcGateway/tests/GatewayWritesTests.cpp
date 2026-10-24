@@ -1,10 +1,12 @@
 //Servers phase 5 (#386, docs/servers/plan.md):  the endpoint's write-through - a client's Write of a served variable held for the
 //source's answer (spec *Writes*).  A write under an enforced Update grant lands at the OpcServer before the client is answered and the
 //served value follows from the source;  a structure and a NodeId go back into the source's namespaces, and one the endpoint can't map
-//back is refused;  a client's status and source timestamp go to the source as given;  a Write with an IndexRange is refused;  a write
-//on the unenforced group as it ships, and on an enforced one granted Read alone, is refused;  and a write whose connection is down is
-//answered with the client's status, not Good.
+//back is refused;  a client's status and source timestamp go to the source as given;  a variable read-only at the source is read-only
+//here;  a Write with an IndexRange is refused;  a write cancelled before it's sent never is, and one out when the endpoint stops is
+//logged, not posted;  a write on the unenforced group as it ships, and on an enforced one granted Read alone, is refused;  and a write
+//whose connection is down, its source never having given the node's id, is answered Bad_NoCommunication, not Good.
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/log/MemoryLog.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include "../src/hist/HistRows.h"
 #include "utils/EndpointFixture.h"
@@ -14,33 +16,101 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr sv _ns0Uri{ "http://opcfoundation.org/UA/" };
 
 	struct GatewayWritesTests : EndpointFixture{
-		Ω Double( const Value& v )ι->optional<double>{ return v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_DOUBLE]) ? optional<double>{ *(UA_Double*)v.value.data } : nullopt; }
-		Ω UserAccessLevel( UATestClient& client, const NodeId& node )ε->UA_Byte{
-			UA_Byte y{};
-			UAε( UA_Client_readUserAccessLevelAttribute(client, node, &y) );
-			return y;
-		}
-		//A served node under the connection folder by its name alone:  a member the source holds under Objects.
-		Ω ServedRoot( UATestClient& client, sv name )ε->optional<NodeId>{
-			let ns = Mapped( PumpsUri );
-			return ns ? client.Translate( NodeId::ObjectsFolder(), {{_own, OpcServerSlug}, {*ns, string{name}}} ) : nullopt;
-		}
-		//A variable of the embedded OpcServer under Objects, in the pumps' namespace, with `accessLevel`:  writable, and with the status
-		//and timestamp bits where a test writes those.
-		Ω AddSourceVariable( UA_UInt32 node, const char* name, UA_UInt32 dataType, void* value, const UA_DataType& type, UA_Byte accessLevel=UA_ACCESSLEVELMASK_READ|UA_ACCESSLEVELMASK_WRITE )ε->void{
-			auto ua = Server::GetUAServer().Ptr();
-			if( UA_NodeClass c; !UA_Server_readNodeClass(ua, Node(node), &c) )//a repeat of this test.
-				return;
-			auto attributes = UA_VariableAttributes_default;
-			UA_Variant_setScalar( &attributes.value, value, &type );
-			attributes.dataType = UA_NODEID_NUMERIC( 0, dataType );
-			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)name );
-			attributes.accessLevel = accessLevel;
-			UAε( UA_Server_addVariableNode(ua, Node(node), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)name), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, nullptr, nullptr) );
-		}
 		Ω AtSource( UA_UInt32 node )ι->Value{ return Opc::ReadValue( Server::GetUAServer(), Node(node), UA_TIMESTAMPSTORETURN_BOTH ); }//the source's node, both timestamps.
 		//The suite's user may write the node:  the grant has reached the gateway's authorizer and the source lets writes.
 		Ω WaitWritable( UATestClient& client, const NodeId& node )ι->bool{ return WaitUntil( [&]{ return UserAccessLevel( client, node ) & UA_ACCESSLEVELMASK_WRITE; } ); }
+		//The source's variable whose writes it holds while `Hold`:  a callback value source, its context the one HeldSource, which a repeat
+		//of a test finds still there.  Release answers the held write, outside the source's lock:  the set takes the service lock, which
+		//the callbacks hold when they take it.
+		struct HeldSource final{ std::mutex Mutex; vector<double> Written; double Current{}; bool Hold{}; const UA_DataValue* Held{}; };
+		static constexpr UA_UInt32 HeldNode{ 9064 };
+		Ω Held()ι->HeldSource&{ static HeldSource y; return y; }
+		Ω AddHeldVariable()ε->HeldSource&{
+			auto& source = Held();
+			{
+				lg _{ source.Mutex };
+				source.Written.clear(); source.Current = 0; source.Hold = false; source.Held = nullptr;
+			}
+			auto ua = Server::GetUAServer().Ptr();
+			if( UA_NodeClass c; !UA_Server_readNodeClass(ua, Node(HeldNode), &c) )
+				return source;
+			double initial{};
+			auto attributes = UA_VariableAttributes_default;
+			UA_Variant_setScalar( &attributes.value, &initial, &UA_TYPES[UA_TYPES_DOUBLE] );
+			attributes.dataType = UA_NODEID_NUMERIC( 0, UA_NS0ID_DOUBLE );
+			attributes.displayName = UA_LOCALIZEDTEXT( (char*)"", (char*)"writeHeld" );
+			attributes.accessLevel = UA_ACCESSLEVELMASK_READ|UA_ACCESSLEVELMASK_WRITE;
+			UAε( UA_Server_addVariableNode(ua, Node(HeldNode), UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(_ns, (char*)"writeHeld"), UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attributes, &source, nullptr) );
+			UAε( UA_Server_setVariableNode_callbackValueSource(ua, Node(HeldNode), UA_CallbackValueSource{
+				.read=[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void* context, UA_Boolean, const UA_NumericRange*, UA_DataValue* value )->UA_StatusCode{
+					auto& s = *static_cast<HeldSource*>( context );
+					lg _{ s.Mutex };
+					value->hasValue = true;
+					return UA_Variant_setScalarCopy( &value->value, &s.Current, &UA_TYPES[UA_TYPES_DOUBLE] );
+				},
+				.write=[]( UA_Server*, const UA_NodeId*, void*, const UA_NodeId*, void* context, const UA_NumericRange*, const UA_DataValue* value )->UA_StatusCode{
+					if( !value->hasValue || !UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_DOUBLE]) )
+						return UA_STATUSCODE_BADTYPEMISMATCH;
+					auto& s = *static_cast<HeldSource*>( context );
+					lg _{ s.Mutex };
+					s.Current = *static_cast<const double*>( value->value.data );
+					s.Written.push_back( s.Current );
+					if( !s.Hold )
+						return UA_STATUSCODE_GOOD;
+					s.Held = value;
+					return UA_STATUSCODE_GOODCOMPLETESASYNCHRONOUSLY;
+				}
+			}) );
+			return source;
+		}
+		Ω Hold( bool hold=true )ι->void{ auto& s = Held(); lg _{ s.Mutex }; s.Hold = hold; }
+		Ω Holding()ι->bool{ auto& s = Held(); lg _{ s.Mutex }; return s.Held; }
+		Ω Release()ι->void{
+			const UA_DataValue* value{};
+			{
+				auto& s = Held();
+				lg _{ s.Mutex };
+				s.Hold = false;
+				value = std::exchange( s.Held, nullptr );
+			}
+			if( value )
+				UA_Server_setAsyncWriteResult( Server::GetUAServer().Ptr(), value, UA_STATUSCODE_GOOD );
+		}
+		//One request writing `values` to `node` in order, its answer into `answered`, which outlives the client:  a client's delete
+		//answers what's still out.
+		struct Answered final{ bool Done{}; UA_StatusCode Service{}; };
+		Ω SendWrites( UATestClient& client, const NodeId& node, std::initializer_list<double> values, Answered& answered )ε->UA_UInt32{
+			vector<UA_WriteValue> items( values.size() );
+			auto value = values.begin();
+			for( auto& item : items ){
+				UA_WriteValue_init( &item );
+				item.nodeId = node;//views:  not cleared.
+				item.attributeId = UA_ATTRIBUTEID_VALUE;
+				UA_Variant_setScalar( &item.value.value, const_cast<double*>(&*value++), &UA_TYPES[UA_TYPES_DOUBLE] );
+				item.value.hasValue = true;
+			}
+			UA_WriteRequest request; UA_WriteRequest_init( &request );
+			request.nodesToWrite = items.data();
+			request.nodesToWriteSize = items.size();
+			UA_UInt32 requestId{};
+			UAε( UA_Client_sendAsyncWriteRequest(client, &request, []( UA_Client*, void* userdata, UA_UInt32, UA_WriteResponse* response ){
+				auto& a = *static_cast<Answered*>( userdata );
+				a.Service = response->responseHeader.serviceResult;
+				a.Done = true;
+			}, &answered, &requestId) );
+			return requestId;
+		}
+		//A group serving HeldNode, its node writable for the suite's user once `open` enforces the groups.
+		Ω ServeHeld( UATestClient& client, sv slug )ε->std::tuple<uint32,NodeId>{
+			let groupId = CreateGroup( slug );
+			let index = AddNode( groupId, HeldNode );
+			auto host = Host( groupId );
+			WaitSubscribed( host, 1 );
+			WaitPath( host, index );
+			optional<NodeId> node;
+			THROW_IF( !WaitUntil([&]{ node = ServedRoot( client, "writeHeld" ); return node.has_value(); }), "writeHeld isn't served." );
+			return { groupId, *node };
+		}
 	};
 
 	//A write through a served node lands at the source before the client is answered (spec *Writes*), and the served value follows
@@ -131,6 +201,33 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( atSource.sourceTimestamp, given.sourceTimestamp ) << "the source timestamp as given";
 	}
 
+	//The source's AccessLevel is the endpoint's (spec *Writes*):  a variable the source won't let anyone write is read-only here, whatever
+	//the group grants - enforced, the suite's user Administer's - and its Write is refused before the callback, the source untouched.
+	TEST_F( GatewayWritesTests, ASourceReadOnlyVariableStaysReadOnly ){
+		constexpr UA_UInt32 readOnly{ 9065 };
+		double initial{ 5 };
+		AddSourceVariable( readOnly, "writeReadOnly", UA_NS0ID_DOUBLE, &initial, UA_TYPES[UA_TYPES_DOUBLE], UA_ACCESSLEVELMASK_READ );
+		let itemsBefore = Items();
+		let groupId = CreateGroup( "gatewayWritesReadOnly" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		let index = AddNode( groupId, readOnly );
+		auto host = Host( groupId );
+		WaitSubscribed( host, 1 );
+		WaitPath( host, index );
+		auto client = Client();
+		optional<NodeId> node;
+		ASSERT_TRUE( WaitUntil([&]{ node = ServedRoot( *client, "writeReadOnly" ); return node.has_value(); }) );
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitUntil([&]{ return UserAccessLevel( *client, *node ) & UA_ACCESSLEVELMASK_HISTORYWRITE; }) ) << "the grant reaches the gateway's authorizer:  the history's edits, the gateway's own";
+		UA_Byte access{};
+		ASSERT_EQ( UA_Client_readAccessLevelAttribute(*client, *node, &access), UA_STATUSCODE_GOOD );
+		EXPECT_FALSE( access & UA_ACCESSLEVELMASK_WRITE ) << "the source's AccessLevel";
+		EXPECT_FALSE( UserAccessLevel(*client, *node) & UA_ACCESSLEVELMASK_WRITE ) << "masked by it";
+		const double value{ 6 };
+		EXPECT_EQ( client->Write(*node, &value, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( Double(AtSource(readOnly)), initial ) << "the source untouched";
+	}
+
 	//A Write with an IndexRange is refused Bad_WriteNotSupported:  the forward carries a whole value.
 	TEST_F( GatewayWritesTests, AnIndexRangeIsRefused ){
 		const OneNodeGroup group{ "gatewayWritesRange", RpmManual };
@@ -144,6 +241,63 @@ namespace Jde::Opc::Gateway::Tests{
 		const double value = before+1;
 		EXPECT_EQ( client->Write(*node, &value, UA_TYPES[UA_TYPES_DOUBLE], "0"), UA_STATUSCODE_BADWRITENOTSUPPORTED );
 		EXPECT_EQ( Current(RpmManual).AsNumber<double>(), before ) << "never sent";
+	}
+
+	//A write open62541 cancels before its forward starts is dropped, never sent (spec *Writes*):  one request writes the node twice, the
+	//source holds the first, and the client cancels the request, which open62541 answers Bad_RequestCancelledByClient.  Once the
+	//source answers the first, its audit line says the operation was cancelled, and a third write reaches the source with only the
+	//first before it.
+	TEST_F( GatewayWritesTests, ACancelledWriteIsNeverSent ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		auto& source = AddHeldVariable();
+		let itemsBefore = Items();
+		Answered answered;
+		auto client = Client();
+		let [groupId, node] = ServeHeld( *client, "gatewayWritesCancelled" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitWritable(*client, node) ) << "the grant reaches the gateway's authorizer";
+		absl::Cleanup unhold = Release;
+		Hold();
+		const double first{ 11 }, second{ 12 }, third{ 13 };
+		let requestId = SendWrites( *client, node, {first, second}, answered );
+		ASSERT_TRUE( WaitUntil(Holding) ) << "the source holds the first";
+		EXPECT_EQ( UA_Client_cancelByRequestId(*client, requestId, nullptr), UA_STATUSCODE_GOOD );
+		ASSERT_TRUE( WaitUntil([&]{ UA_Client_run_iterate( *client, 10 ); return answered.Done; }) );
+		EXPECT_EQ( answered.Service, UA_STATUSCODE_BADREQUESTCANCELLEDBYCLIENT ) << UA_StatusCode_name( answered.Service );
+		let cancelled = [&]{ return Logging::Find( [&](const Logging::Entry& e){ let m = e.Message(); return m.contains( node.ToString() ) && m.contains( "answered after open62541 cancelled it" ); } ).size(); };
+		let before = cancelled();
+		Release();
+		EXPECT_TRUE( WaitUntil([&]{ return cancelled()>before; }) ) << "the first's answer, logged as cancelled:  no reason named, since the cancel gives none";
+		EXPECT_EQ( client->Write(node, &third, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_GOOD );
+		lg _{ source.Mutex };
+		EXPECT_EQ( source.Written, (vector<double>{first, third}) ) << "the second dropped:  cancelled before it was sent";
+	}
+
+	//A forward still out when the endpoint stops is answered after its server is gone (spec *Writes*):  the source holds the write
+	//while the endpoint stops, then answers it, and the answer is logged, never posted to the stopped server.  The endpoint restarts.
+	TEST_F( GatewayWritesTests, AWriteOutAtStopIsLoggedNotPosted ){
+		if( !Logging::FindLogger<Logging::MemoryLog>() )
+			Logging::AddLogger( mu<Logging::MemoryLog>() );
+		AddHeldVariable();
+		let itemsBefore = Items();
+		Answered answered;
+		auto client = Client();
+		let [groupId, node] = ServeHeld( *client, "gatewayWritesStopped" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		auto open = EnforcedHistGroups();
+		ASSERT_TRUE( WaitWritable(*client, node) ) << "the grant reaches the gateway's authorizer";
+		absl::Cleanup unhold = Release;
+		Hold();
+		SendWrites( *client, node, {21}, answered );
+		ASSERT_TRUE( WaitUntil(Holding) ) << "the source holds it";
+		GatewayServer::Stop();
+		Release();
+		let logged = []{ return Logging::Find( [](const Logging::Entry& e){ return e.Message().contains( "answered after the endpoint stopped" ); } ).size()>0; };
+		EXPECT_TRUE( WaitUntil(logged) ) << "the source's answer logged, not posted to the stopped server";
+		ASSERT_NO_THROW( GatewayServer::Listen(Ssl()) );
+		ASSERT_NO_THROW( GatewayServer::Start() );
 	}
 
 	//A write on an unenforced resource is refused, as #237 ruled for edits:  the UserAccessLevel carries no Write on the group as it
@@ -171,9 +325,9 @@ namespace Jde::Opc::Gateway::Tests{
 		refused( "enforced, Read alone" );
 	}
 
-	//A write while the connection is down answers the client's status, not Good:  the forward connects as the collector would and the
-	//connect's refusal is the answer.  The member serves from its row, as GatewayNodesTests' dead connection does, its AccessLevel the
-	//source's as the row has it.
+	//A write while the connection is down answers the client's status, not Good:  the source never gave the node's id, so the forward
+	//answers Bad_NoCommunication without a connect.  The member serves from its row, as GatewayNodesTests' dead connection does, its
+	//AccessLevel the source's as the row has it.
 	TEST_F( GatewayWritesTests, ADownConnectionAnswersTheClientsStatus ){
 		const string slug{ "gatewayWritesDead" };
 		PurgeServerCnnctn( slug );
@@ -201,10 +355,6 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( WaitWritable(*client, *node) ) << "the grant reaches the gateway's authorizer, and the row's AccessLevel lets writes";
 		const double value{ 1 };
 		let sc = client->Write( *node, &value, UA_TYPES[UA_TYPES_DOUBLE] );
-		EXPECT_TRUE( UA_StatusCode_isBad(sc) ) << UA_StatusCode_name( sc );
-		EXPECT_NE( sc, UA_STATUSCODE_BADUSERACCESSDENIED ) << "refused by the gate, not the connection";
-		EXPECT_NE( sc, UA_STATUSCODE_BADNOTWRITABLE );
-		EXPECT_NE( sc, UA_STATUSCODE_BADTIMEOUT ) << "the client timed out before the connect failed";
-		EXPECT_NE( sc, UA_STATUSCODE_BADWRITENOTSUPPORTED ) << "the write never reached the forward";
+		EXPECT_EQ( sc, UA_STATUSCODE_BADNOCOMMUNICATION ) << UA_StatusCode_name( sc );
 	}
 }

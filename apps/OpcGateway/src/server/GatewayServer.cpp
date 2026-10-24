@@ -116,6 +116,7 @@ namespace Jde::Opc::Gateway{
 			//The historian as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
 			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, ms<GatewayHistoryHost>(HistHost::Instance().Historian(), server->_values) );
 			server->_ua->OnAsyncCancel( [writes=server->_writes]( const void* value ){ writes->Cancelled( value ); } );//a Write timed out, or the shutdown's:  its answer isn't set.
+			server->_writes->Start( *server->_ua->Ptr() );//its answers set on the server's own thread.
 			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
 			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
 			for( auto& row : rows ){
@@ -163,7 +164,7 @@ namespace Jde::Opc::Gateway{
 	}
 	GatewayServer::GatewayServer( UASettings settings )ι:
 		_values{ ms<ServedValues>() },
-		_writes{ ms<ServedWrites>( _values, [this]( absl::AnyInvocable<void(UA_Server&)> f ){ Serial( [this, f=std::move(f)]() mutable { f( *_ua->Ptr() ); } ); } ) },
+		_writes{ ms<ServedWrites>( _values ) },
 		_settings{ move(settings) }
 	{}
 	GatewayServer::~GatewayServer(){ _work.reset(); }
@@ -177,6 +178,7 @@ namespace Jde::Opc::Gateway{
 			return;
 		UAClient::SetConnectionListener( nullptr );
 		HistHost::Instance().Listen( {} );
+		server->_writes->Stop();//a forward still out answers after this, when the server may be gone:  logged, never set.
 		up<UAServer> ua;
 		{
 			lg _{ server->_mutex };

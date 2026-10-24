@@ -28,11 +28,6 @@ namespace Jde::Opc::Gateway::Tests{
 			UAε( UA_Client_readAccessLevelAttribute(client, node, &y) );
 			return y;
 		}
-		Ω UserAccessLevel( UATestClient& client, const NodeId& node )ε->UA_Byte{
-			UA_Byte y{};
-			UAε( UA_Client_readUserAccessLevelAttribute(client, node, &y) );
-			return y;
-		}
 		Ω Historizing( UATestClient& client, const NodeId& node )ε->bool{
 			UA_Boolean y{};
 			UAε( UA_Client_readHistorizingAttribute(client, node, &y) );
