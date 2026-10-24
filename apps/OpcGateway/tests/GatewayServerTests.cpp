@@ -207,7 +207,8 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "connectionStatus's error clears on a success";
 		}
 		GatewayServer::Stop();
-		ASSERT_NO_THROW( GatewayServer::Start(Ssl()) );//its first values from the registry and the failures, after both.
+		ASSERT_NO_THROW( GatewayServer::Listen(Ssl()) );
+		ASSERT_NO_THROW( GatewayServer::Start() );//its first values from the registry and the failures, after both.
 		auto client = Client( Issued() );
 		EXPECT_EQ( lastError(*client), live ) << "the restarted endpoint lost the failure, or words it differently";
 	}

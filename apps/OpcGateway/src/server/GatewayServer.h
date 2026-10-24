@@ -11,8 +11,9 @@
 namespace Jde::Opc::Gateway{
 	struct GatewayNodeAccess; struct ServedValues;
 	//The gateway's opc.tcp endpoint (docs/servers/spec.md, plan Phases 2, 3a and 3b):  the UA server library over the /gateway/server block,
-	//in the hub and standalone alike.  Without the block there is none.  It starts at the end of Gateway::Connect, after HistHost
-	//has loaded the groups, and stops before the historian does:  its shutdown function is registered ahead of the historian's.
+	//in the hub and standalone alike.  Without the block there is none.  It listens before HistHost loads the groups, starts at the
+	//end of Gateway::Connect, after they are loaded, and stops before the historian does:  its shutdown function is registered ahead
+	//of the historian's.
 	//The address space:  one folder per server_connections row, named by its slug and there while the row is, each holding a
 	//`_Connection` object with Connected, Since, Url, LastError and Reconnects (spec *Address space*), which follow UAClient's
 	//registry through its ConnectionChange listener and the rows through OpcQLHook;  and under it the served nodes, the members of
@@ -20,7 +21,7 @@ namespace Jde::Opc::Gateway{
 	//(spec *Namespaces*), every node along the way its source node's id there:  a served member's variable, its children its
 	//components as on the source, else a FolderType object standing in for it.  Each with the attributes its row holds,
 	//Historizing, its HA Configuration from its resolved thresholds, and its group's rights through GatewayNodeAccess.  They follow
-	//the groups as the hosts' IHistListener, from Start to Stop.  Everything lands here off its callers' threads, on the endpoint's
+	//the groups as the hosts' IHistListener, from Listen to Stop.  Everything lands here off its callers' threads, on the endpoint's
 	//own thread in the order it was posted, and every UA_Server_* call runs there under _mutex, never on the executor, a client's
 	//strand or under a host's lock (spec *Threading*).  Each variable's value is a callback source over ServedValues, the mirror's
 	//cache (spec *Live values*):  the hosts' tap stores every value and loss there as it comes, under the host's lock and the
@@ -29,12 +30,15 @@ namespace Jde::Opc::Gateway{
 	struct GatewayServer final : std::enable_shared_from_this<GatewayServer>, IHistListener{
 		GatewayServer( Opc::Server::UASettings settings )ι;
 		~GatewayServer();//lets the thread go, for one Stop never joined:  a Start that threw before it ran.
-		//Reads the block and starts the endpoint, folders built from the rows first and the groups' nodes from HistHost;  nothing
-		//without a block.  The listener and Instance() come before the rows are read, so a change while they load is held, not
-		//missed.  Blocks on the rows:  Gateway::Connect's thread.  `processSsl`:  the process's own pair, the endpoint's when the block names none.
-		Ω Start( const Crypto::CryptoSettings& processSsl )ε->void;
+		//Reads the block and makes the endpoint, nothing without one;  Instance() and the listeners, the hosts' and the registry's,
+		//from here, before HistHost loads the groups, so a member's values are kept from its first and a change before Start is held,
+		//not missed.  `processSsl`:  the process's own pair, the endpoint's when the block names none.
+		Ω Listen( const Crypto::CryptoSettings& processSsl )ε->void;
+		//Starts the endpoint Listen made, folders built from the rows first and the groups' nodes from HistHost, then what was held.
+		//Blocks on the rows:  Gateway::Connect's thread.
+		Ω Start()ε->void;
 		Ω Stop()ι->void;//the server and its thread go;  the registry's listener first.
-		Ω Instance()ι->sp<GatewayServer>;//null without a block, before Start reads the rows and after Stop.
+		Ω Instance()ι->sp<GatewayServer>;//null without a block, before Listen and after Stop.
 		//The block as a UASettings, nullopt without one.  Its own function for the OpcServer's test of the None switch and the gateway's of the block.
 		Ω ReadSettings( const Crypto::CryptoSettings& processSsl )ε->optional<Opc::Server::UASettings>;
 		Ω FolderId( const ServerCnnctnNK& slug )ι->NodeId;//ns=1;s=<slug>
@@ -66,10 +70,11 @@ namespace Jde::Opc::Gateway{
 		α NodeDescribed( HistGroupPK group, HistGroupNodePK index, HistNodeAttributes attributes )ι->void override;
 		α ThresholdsChanged( HistGroupPK group, vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> thresholds )ι->void override;
 		//The tap's (spec *Live values*):  into the mirror's cache on the caller's thread, under its lock alone - no post, no UA_Server_*
-		//call - so a value is served as soon as the group has it.  The NamespaceArray is posted:  each URI gets its namespace here.
+		//call - so a value is served as soon as the group has it.  The NamespaceArray the same way, ahead of the values it brings, and
+		//each URI's namespace posted.
 		α ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void override;
 		α NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void override;
-		α NamespacesRead( const ServerCnnctnNK& slug, vector<string> uris )ι->void override;
+		α NamespacesRead( HistGroupPK group, const ServerCnnctnNK& slug, const vector<string>& uris )ι->void override;
 		α Values()Ι->const sp<ServedValues>&{ return _values; }//the mirror's cache:  Phase 4's history host reads a node's member and the remap through it.
 	private:
 		struct Connection final{
@@ -98,6 +103,7 @@ namespace Jde::Opc::Gateway{
 		//The served nodes, _mutex held, _ua set.  Serve:  every member not served yet.  Namespace:  the index of NamespaceUri(slug, remote), added when new.
 		α Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, vector<HistMember> members )ι->void;
 		α Namespace( const ServerCnnctnNK& slug, sv remote )ι->UA_UInt16;
+		α Register( const ServerCnnctnNK& slug, const vector<string>& uris )ι->void;//a namespace for each URI of a connection's NamespaceArray.
 		α Mapped( const ServerCnnctnNK& slug, const ExNodeId& source )ι->NodeId;//the source's identifier in its namespace here.
 		//The node at `path`'s end:  its source node's, Mapped, as a variable is (spec *Namespaces*);  ns=1;s=<slug>/<name>/… for a segment
 		//without an id - none Describe writes.

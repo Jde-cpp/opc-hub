@@ -144,6 +144,7 @@ namespace Jde::Opc::Gateway{
 			y.push_back( {index, node.Ex, node.Thresholds, node.Attributes} );
 		return y;
 	}
+	α HistGroupHost::NamespaceUris()Ι->vector<string>{ ul _{ _mutex }; return _namespaces.Uris; }
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		ul _{ _mutex };
 		auto y = Reserve<std::pair<HistGroupNodePK,ExNodeId>>( _nodes.size() );
@@ -174,9 +175,11 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistGroupHost::Close()ι->void{
 		Opc::Hist::IClock::TimerId retry, watch;
+		sp<IHistListener> listener;//released off the lock.
 		{
 			ul _{ _mutex };
 			_closed = true;
+			listener = move( _listener );
 			retry = std::exchange( _retry, 0 );
 			watch = std::exchange( _watch, 0 );
 			_verifying = false;
@@ -223,7 +226,6 @@ namespace Jde::Opc::Gateway{
 			auto namespaces = co_await Any( NamespacesAwait{client} );
 			flat_set<NodeId> nodes;
 			bool moved{};
-			let listener = HistHost::Instance().Listener();
 			{
 				ul _{ _mutex };
 				//The server came back with a member's namespace at another index:  the item's index is another node's now, so every
@@ -236,6 +238,8 @@ namespace Jde::Opc::Gateway{
 					_held.clear();
 				}
 				_namespaces = namespaces;
+				if( _listener )
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
 				for( auto&& [index,node] : _nodes ){
 					if( node.Subscribed || _closed )
 						continue;
@@ -254,8 +258,6 @@ namespace Jde::Opc::Gateway{
 					node.Fed = false;
 				}
 			}
-			if( listener )
-				listener->NamespacesRead( _slug, namespaces.Uris );
 			if( moved ){
 				WARN( "[{}]'{}''s namespaces moved - every item is made again, each node by its URI.", _guid, _slug );
 				UAClient::Unsubscribe( self );
@@ -336,7 +338,6 @@ namespace Jde::Opc::Gateway{
 		let count = nodes.size();
 		try{
 			auto values = co_await Any( ReadValueAwait{move(nodes), client, UA_TIMESTAMPSTORETURN_BOTH} );
-			let listener = HistHost::Instance().Listener();//before the lock:  HistHost's is never taken under it.
 			ul _{ _mutex };
 			for( auto&& [node,value] : values ){
 				let [pk, n] = FindNode( node );
@@ -345,7 +346,7 @@ namespace Jde::Opc::Gateway{
 				if( _verifying )
 					_held.emplace_back( pk, move(value) );
 				else
-					Deliver( listener, pk, *n, value );
+					Deliver( pk, value );
 			}
 		}
 		catch( const runtime_error& e ){
@@ -693,26 +694,16 @@ namespace Jde::Opc::Gateway{
 		UAClient::UnsubscribePending( _slug, self, nodes );
 	}
 
-	α HistGroupHost::Deliver( const sp<IHistListener>& listener, HistGroupNodePK index, Node& node, const Value& value )ι->void{
+	α HistGroupHost::Deliver( HistGroupNodePK index, const Value& value )ι->void{
 		_group->Enqueue( index, value );
-		node.Last = value;
-		if( listener )
-			listener->ValueChanged( _id, index, value );
+		if( _listener )
+			_listener->ValueChanged( _id, index, value );
 	}
-	α HistGroupHost::LastValue( HistGroupNodePK index )Ι->optional<Value>{
+	α HistGroupHost::Listen( sp<IHistListener> listener )ι->void{
 		ul _{ _mutex };
-		auto p = _nodes.find( index );
-		if( p==_nodes.end() || !p->second.Last )
-			return nullopt;
-		Value y{ *p->second.Last };
-		if( p->second.Lost ){
-			y.status = UA_STATUSCODE_BADNOCOMMUNICATION;
-			y.hasStatus = true;
-		}
-		return y;
+		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
 	}
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
-		let listener = HistHost::Instance().Listener();//before the lock:  HistHost's is never taken under it.
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );
 		if( !n || _closed )//one that left, still on its way.
@@ -721,11 +712,10 @@ namespace Jde::Opc::Gateway{
 		if( _verifying )
 			_held.emplace_back( pk, value );
 		else
-			Deliver( listener, pk, *n, value );
+			Deliver( pk, value );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();
-		let listener = HistHost::Instance().Listener();
 		ul _{ _mutex };
 		_group->Disconnected( when );
 		++_epoch;//a check still out decides nothing:  this break stands.
@@ -738,8 +728,8 @@ namespace Jde::Opc::Gateway{
 				lost.push_back( pk );
 			}
 		}
-		if( listener && lost.size() )
-			listener->NodesLost( _id, lost );
+		if( _listener && lost.size() )
+			_listener->NodesLost( _id, lost );
 	}
 	α HistGroupHost::ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void{
 		uint epoch;
@@ -768,8 +758,6 @@ namespace Jde::Opc::Gateway{
 			WARN( "[{}]Could not read '{}''s namespaces once its items came back - every item is made again:  {}", _guid, _slug, e.what() );
 		}
 		bool moved;
-		let listener = HistHost::Instance().Listener();
-		vector<string> uris;
 		{
 			ul _{ _mutex };
 			if( _closed || epoch!=_epoch )//a later break or return overtook it, and decides what waited.
@@ -778,7 +766,8 @@ namespace Jde::Opc::Gateway{
 			moved = !read || Moved( *read );
 			if( read ){
 				_namespaces = move( *read );
-				uris = _namespaces.Uris;
+				if( _listener )//before the held values, which came under it.
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
 			}
 			_group->Connected();
 			if( moved ){
@@ -786,15 +775,11 @@ namespace Jde::Opc::Gateway{
 				Reset();
 			}
 			else{
-				for( let& [index,value] : _held ){
-					if( auto n = _nodes.find(index); n!=_nodes.end() )
-						Deliver( listener, index, n->second, value );
-				}
+				for( let& [index,value] : _held )
+					Deliver( index, value );
 				_held.clear();
 			}
 		}
-		if( listener && read )
-			listener->NamespacesRead( _slug, move(uris) );
 		if( moved ){
 			if( read )
 				WARN( "[{}]'{}' came back with its namespaces moved - every item is made again, each node by its URI.", _guid, _slug );
@@ -833,7 +818,6 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		let handles = monitored && live.size() ? monitored->Handles( live ) : flat_map<NodeId,MonitorHandle>{};
-		let listener = HistHost::Instance().Listener();
 		flat_set<NodeId> abandoned;
 		vector<HistGroupNodePK> lost;
 		{
@@ -858,8 +842,8 @@ namespace Jde::Opc::Gateway{
 					node.Id.reset();//resolved again by URI.
 				}
 			}
-			if( listener && lost.size() )
-				listener->NodesLost( _id, lost );
+			if( _listener && lost.size() )
+				_listener->NodesLost( _id, lost );
 			Watch();
 		}
 		if( abandoned.size() ){

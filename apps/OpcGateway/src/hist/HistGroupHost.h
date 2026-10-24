@@ -26,8 +26,9 @@ namespace Jde::Opc::Gateway{
 		//group's are - and the members whose items are lost, each once per loss:  the first value after says they're back.
 		β ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void=0;
 		β NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void=0;
-		//The connection's NamespaceArray as the collector read it, each time it does:  what a value's indices mean (spec *Namespaces*).  Off the lock.
-		β NamespacesRead( const ServerCnnctnNK& slug, vector<string> uris )ι->void=0;
+		//The connection's NamespaceArray as the group's collector just read it, what its values' indices mean (spec *Namespaces*):  told
+		//under the host's lock where it takes the array, before any value under it, as the tap is.
+		β NamespacesRead( HistGroupPK group, const ServerCnnctnNK& slug, const vector<string>& uris )ι->void=0;
 	};
 	//What a member's server says of its node, read once its item is made (HistGroupHost::Describe):  whether its DataType is an
 	//enumeration, none until the server has said, and its InstrumentRange and EURange properties, each none where it has
@@ -76,12 +77,10 @@ namespace Jde::Opc::Gateway{
 		α Band( HistGroupNodePK index )Ι->optional<EHistBand>;//as ForGroup and the library's range check leave it;  none for a node it doesn't hold.
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
-		//The last value the member's item delivered, as the group took it, Bad_NoCommunication while the item is lost:  what the
-		//endpoint serves for a variable added after it (GatewayServer::AddNode).  None before its first, or for a node it doesn't hold.
-		α LastValue( HistGroupNodePK index )Ι->optional<Value>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
 		//Each member as the endpoint serves it (GatewayServer::GroupLoaded):  its node, resolved thresholds and attributes, in one look.
 		α HistMembers()Ι->vector<HistMember>;
+		α NamespaceUris()Ι->vector<string>;//the connection's NamespaceArray as the collector last read it, empty before its first read.
 		//The member a read or an edit names:  by URI, or by the index the server had for it when the collector last read the
 		//server's namespaces.  None for a node that isn't a member, or one by an index the collector hasn't seen.
 		α Index( const ExNodeId& node )Ι->optional<HistGroupNodePK>;
@@ -91,6 +90,8 @@ namespace Jde::Opc::Gateway{
 		α Subscribed()Ι->uint;//the members the server has given items - for tests and diagnostics.
 		//Every item goes and no retry runs:  after Historian::RemoveGroup, and at the gateway's end.
 		α Close()ι->void;
+		//The endpoint's, from HistHost, for the tap's calls made under this host's lock:  a value never takes HistHost's.
+		α Listen( sp<IHistListener> listener )ι->void;
 		//Asks the server for an item for every member that has none, on the collector's client, each node by the index its URI
 		//has there.  A connect or create that fails is logged and tried again after RetryInterval, until Close.  Also arms the
 		//watch that asks again for a member lost too long.
@@ -126,9 +127,8 @@ namespace Jde::Opc::Gateway{
 		//ConnectionLost's or one the watch found, until a ConnectionRestored brings it back.  Fed:  a value arrived since its
 		//create, which the read after joining an existing item would repeat.  Thresholds are the rows', which ForGroup applies
 		//Described to.  Undescribed:  an answer Describe asks for again was lost or refused (Redescribe).  Attributes:  the row's,
-		//then as Describe read them.  Unwritten:  the row's write of them failed, so the next describe writes them unchanged.  Last:
-		//the value Deliver last took, for LastValue.
-		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; optional<Value> Last; };
+		//then as Describe read them.  Unwritten:  the row's write of them failed, so the next describe writes them unchanged.
+		struct Node final{ ExNodeId Ex; optional<NodeId> Id; Opc::Hist::Thresholds Thresholds; bool Subscribed{}; bool Warned{}; bool Stale{}; optional<TimePoint> Lost; bool Fed{}; HistDescription Described; bool Undescribed{}; HistNodeAttributes Attributes; bool Unwritten{}; };
 		α Subscribing()ι->VoidTask;
 		α Unsubscribe( flat_set<NodeId>&& nodes )ι->void;
 		α Modifying( flat_map<NodeId,MonitoringParameters> parameters )ι->VoidTask;
@@ -159,8 +159,8 @@ namespace Jde::Opc::Gateway{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Watch()ι->void;//arms the watch, every RetryInterval until Close.
 		α Check()ι->void;//the watch's:  members whose items are gone without a word, those lost past AbandonAfter, and Redescribe.
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α FindNode( const NodeId& node )ι->std::pair<HistGroupNodePK,Node*>;//by the server's index:  a null node for one not (or no longer) in the group.
-		//A value into the group, and to the listener - the tap - in that order, the node's Last kept:  every value that reaches the group goes this way.
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Deliver( const sp<IHistListener>& listener, HistGroupNodePK index, Node& node, const Value& value )ι->void;
+		//A value into the group, and to the listener - the tap - in that order:  every value that reaches the group goes this way.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) α Deliver( HistGroupNodePK index, const Value& value )ι->void;
 		α Client()Ι->sp<UAClient>;//the collector's client, if it has one.
 
 		const HistGroupPK _id;
@@ -175,6 +175,7 @@ namespace Jde::Opc::Gateway{
 		flat_map<HistGroupNodePK,Node> _nodes ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<NodeId,HistGroupNodePK> _byNode ABSL_GUARDED_BY(_mutex);//by the server's index, once a connection gave it.
 		Namespaces _namespaces ABSL_GUARDED_BY(_mutex);//the NamespaceArray as last read, where each member's URI is at its item's index.
+		sp<IHistListener> _listener ABSL_GUARDED_BY(_mutex);//Listen's;  released by Close.
 		uint _epoch ABSL_GUARDED_BY(_mutex){};//one per break and return, so a check that a later one overtook does nothing.
 		bool _verifying ABSL_GUARDED_BY(_mutex){};//a rebuild's check is out:  values wait in _held.
 		vector<std::pair<HistGroupNodePK,Value>> _held ABSL_GUARDED_BY(_mutex);

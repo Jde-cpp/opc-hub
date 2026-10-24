@@ -72,7 +72,7 @@ namespace Jde::Opc::Gateway{
 		return remote.starts_with( prefix ) ? string{ remote } : prefix+string{ remote };
 	}
 
-	α GatewayServer::Start( const Crypto::CryptoSettings& processSsl )ε->void{
+	α GatewayServer::Listen( const Crypto::CryptoSettings& processSsl )ε->void{
 		auto settings = ReadSettings( processSsl );
 		if( !settings ){
 			INFO( "No '{}':  this gateway serves no OPC UA endpoint.", _root );
@@ -83,8 +83,9 @@ namespace Jde::Opc::Gateway{
 			fs::create_directories( dir, ec );
 		}
 		auto server = ms<GatewayServer>( move(*settings) );
-		//Heard before the rows are read:  a row the hooks write and a client the registry gains from here on post to the endpoint's thread,
-		//and Serial holds them until the folders below exist.
+		//Heard before the groups load and the rows are read:  a row the hooks write, a client the registry gains and a group's change
+		//from here on post to the endpoint's thread, and Serial holds them until Start has the folders.  A member's values are kept
+		//from its first, the hook that tells of it coming before its item.
 		{
 			lg _{ _instanceMutex };
 			_instance = server;
@@ -95,6 +96,11 @@ namespace Jde::Opc::Gateway{
 				p->OnChange( change );
 		} );
 		HistHost::Instance().Listen( server );
+	}
+	α GatewayServer::Start()ε->void{
+		auto server = Instance();
+		if( !server )
+			return;
 		try{
 			auto rows = BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{nullopt, true} );
 			auto hosts = HistHost::Instance().Groups();//as the historian is now:  a group loaded after this is held, and Serve skips what is served.
@@ -112,8 +118,19 @@ namespace Jde::Opc::Gateway{
 			}
 			for( let& [slug, connection] : server->_connections )
 				server->AddFolder( slug, connection );
-			for( let& host : hosts )
-				server->Serve( host->Id(), host->Guid(), host->Slug(), host->HistMembers() );
+			for( let& host : hosts ){
+				auto members = host->HistMembers();
+				for( let& member : members )//a restart's, of hosts loaded before it listened;  else GroupLoaded joined them.
+					server->_values->Join( host->Id(), member.Index );
+				server->Serve( host->Id(), host->Guid(), host->Slug(), move(members) );
+			}
+			//Each group's array as its collector last read it:  one read before a restart's Listen told no one, and a stable connection
+			//reads it again only on a return.  Seeded only where a read hasn't set it, which is the later.
+			for( let& host : hosts ){
+				auto uris = host->NamespaceUris();
+				server->Register( host->Slug(), uris );
+				server->_values->SeedUris( host->Id(), move(uris) );
+			}
 			for( auto& f : server->_held )
 				f();
 			server->_held.clear();
@@ -295,10 +312,15 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//The served nodes (spec *Address space*, *Namespaces*).
+	//A member is the cache's from the hook on, before its item exists, the tap storing its every value;  served or not.
 	α GatewayServer::GroupLoaded( const HistGroupHost& host )ι->void{
-		Serial( [this, id=host.Id(), guid=host.Guid(), slug=host.Slug(), nodes=host.HistMembers()]() mutable { Serve( id, move(guid), move(slug), move(nodes) ); } );
+		auto nodes = host.HistMembers();
+		for( let& node : nodes )
+			_values->Join( host.Id(), node.Index );
+		Serial( [this, id=host.Id(), guid=host.Guid(), slug=host.Slug(), nodes=move(nodes)]() mutable { Serve( id, move(guid), move(slug), move(nodes) ); } );
 	}
 	α GatewayServer::GroupRemoved( HistGroupPK group )ι->void{
+		_values->Forget( group );
 		Serial( [this, group]{
 			if( auto p = _groups.find(group); p!=_groups.end() )
 				RemoveGroup( p );
@@ -307,6 +329,7 @@ namespace Jde::Opc::Gateway{
 	//The attributes the host has when the add runs, not the hook's row's:  a describe that landed first stored them before its
 	//NodeDescribed, which found no node to update.
 	α GatewayServer::NodeJoined( const HistGroupHost& host, HistMember member )ι->void{
+		_values->Join( host.Id(), member.Index );
 		Serial( [this, host=host.shared_from_this(), member=move(member)]() mutable {
 			if( auto attributes = host->Attributes(member.Index) )
 				member.Attributes = move( *attributes );
@@ -314,6 +337,7 @@ namespace Jde::Opc::Gateway{
 		} );
 	}
 	α GatewayServer::NodeLeft( HistGroupPK group, HistGroupNodePK index )ι->void{
+		_values->Leave( group, index );
 		Serial( [this, group, index]{
 			auto g = _groups.find( group );
 			if( g==_groups.end() )
@@ -344,17 +368,22 @@ namespace Jde::Opc::Gateway{
 	}
 	α GatewayServer::ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void{ _values->Store( group, index, value ); }
 	α GatewayServer::NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void{ _values->Lose( group, indexes ); }
+	//The array to the cache now, under the host's lock, ahead of the values it brings;  its namespaces posted.
+	α GatewayServer::NamespacesRead( HistGroupPK group, const ServerCnnctnNK& slug, const vector<string>& uris )ι->void{
+		_values->SetUris( group, uris );
+		Serial( [this, slug, uris]{ Register( slug, uris ); } );
+	}
 	//Every URI of the array gets its namespace, so each index a value can carry maps (spec *Namespaces*);  0's, and a source that lists
 	//it again, stay 0.
-	α GatewayServer::NamespacesRead( const ServerCnnctnNK& slug, vector<string> uris )ι->void{
-		Serial( [this, slug, uris=move(uris)]{
-			if( !_connections.contains(slug) )//a slug with no row - a test connect's.
-				return;
-			vector<UA_UInt16> table; table.reserve( uris.size() );
-			for( uint i=0; i<uris.size(); ++i )
-				table.push_back( i==0 || uris[i]==_ns0Uri ? 0 : Namespace(slug, uris[i]) );
-			_values->SetNamespaces( slug, move(table) );
-		} );
+	α GatewayServer::Register( const ServerCnnctnNK& slug, const vector<string>& uris )ι->void{
+		if( !_connections.contains(slug) )//a slug with no row - a test connect's.
+			return;
+		for( uint i=1; i<uris.size(); ++i ){
+			if( uris[i]==_ns0Uri )
+				_values->Index( slug, uris[i], 0 );
+			else
+				Namespace( slug, uris[i] );
+		}
 	}
 	α GatewayServer::ThresholdsChanged( HistGroupPK group, vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> thresholds )ι->void{
 		Serial( [this, group, thresholds=move(thresholds)]{
@@ -393,6 +422,7 @@ namespace Jde::Opc::Gateway{
 			return p->second;
 		let index = UA_Server_addNamespace( _ua->Ptr(), NamespaceUri(slug, remote).c_str() );//the index it has, or a new one.
 		known.emplace( remote, index );
+		_values->Index( slug, string{remote}, index );
 		return index;
 	}
 	α GatewayServer::Mapped( const ServerCnnctnNK& slug, const ExNodeId& source )ι->NodeId{
@@ -452,8 +482,8 @@ namespace Jde::Opc::Gateway{
 	Ω name( const HistNodeAttributes& attributes, const NodeId& id )ι->string{ return attributes.Path && attributes.Path->size() ? attributes.Path->back().Name : identifier( id ); }
 	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD; }//HistoryWrite with Phase 4, Write kept for Phase 5.
 	//Mapped before it's added and unmapped only once it's gone (Unserve), so no session meets the node outside its group's rights;  a
-	//throw part way undoes what was added.  Its value is in the mirror's cache before the variable is, seeded with the last its host
-	//delivered, so the first read answers it:  a value that comes between is stored, not missed.
+	//throw part way undoes what was added.  Its value is its member's in the mirror's cache, kept there from the first, so the first
+	//read answers it.
 	α GatewayServer::AddNode( Group& group, HistMember member )ι->void{
 		if( !_connections.contains(group.Slug) ){
 			WARN( "[{}]Node {} '{}' isn't served:  connection '{}' has no folder.", group.Guid, member.Index, member.Node.ToString(), group.Slug );
@@ -467,8 +497,7 @@ namespace Jde::Opc::Gateway{
 			ERR( "[{}]Node {} '{}' isn't served:  {} already is, for group {}.", group.Guid, member.Index, member.Node.ToString(), id.ToString(), _access->Guid(id).value_or("") );
 			return;
 		}
-		auto host = HistHost::Instance().Find( group.Id );
-		if( !_values->Add(id, group.Id, member.Index, group.Slug, host ? host->LastValue(member.Index) : nullopt) ){
+		if( !_values->Add(id, group.Id, member.Index, group.Slug) ){
 			ERR( "[{}]Node {} '{}' isn't served:  {} has a value source already.", group.Guid, member.Index, member.Node.ToString(), id.ToString() );
 			_access->Remove( id );
 			return;
@@ -507,12 +536,15 @@ namespace Jde::Opc::Gateway{
 				variable.arrayDimensions = dimensions.data();
 				variable.arrayDimensionsSize = dimensions.size();
 			}
-			variable.accessLevel = accessLevel( attributes );
+			//Unreadable until its callback source is in:  the add stores the type's default as a Good value, and an add with the
+			//callback already in refuses a node with no value yet, whose read its type check makes.
+			variable.accessLevel = accessLevel( attributes ) & ~UA_ACCESSLEVELMASK_READ;
 			variable.historizing = true;//every served node is a group member.
 			variable.minimumSamplingInterval = std::chrono::duration<double,std::milli>{ member.Thresholds.MinTimeInterval }.count();//the collector's rate is the ceiling (spec *Live values*).
 			UAε( UA_Server_addVariableNode(&ua, id, parent, reference(underVariable), browseName, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), variable, _values.get(), nullptr) );
 			added = true;
 			UAε( UA_Server_setVariableNode_callbackValueSource(&ua, id, ServedValues::Source()) );//the context above is what its read finds the cache by.
+			UAε( UA_Server_writeAccessLevel(&ua, id, accessLevel(attributes)) );
 			configuration = Opc::Server::HAConfiguration::Add( ua, id );
 			Opc::Server::HAConfiguration::Publish( ua, configuration, member.Thresholds );
 			Opc::Server::HAConfiguration::PublishAggregates( ua, configuration );

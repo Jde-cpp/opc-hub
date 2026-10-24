@@ -62,7 +62,7 @@ Three things every configure needs, and why:
 - **`-Wno-dev`** — what `reconfig` and CI pass.
 
 Other cache knobs: `-Djde_TESTS=OFF` (the release workflow), `-Djde_APPS=OFF`, `-DJDE_TEST_TIMEOUT=<s>` (ctest
-per-suite kill, default 300). `compileOptions()` adds `-Wall -Wextra -pedantic -Werror -Wthread-safety` to every
+per-suite kill, default 450). `compileOptions()` adds `-Wall -Wextra -pedantic -Werror -Wthread-safety` to every
 target, so **warnings are errors**; an `OPTIMIZATION_LEVEL` env var (e.g. `O1`) adds `-O<level>` to every target.
 
 ## The helpers — `build/buildFunctions.sh`
