@@ -88,6 +88,7 @@ function( sync=false )
 			//rest, so a secret goes through the $(ENV) expansion as the key passcodes do;  the login's hub user is the row of that name.
 			users:: [],
 			userTokenPolicyUri:: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", //the policy the user tokens ride on;  "" names each security policy for itself
+			writeTimeout:: "PT10S", //how long a client's Write of a served node holds for the source's answer (asyncOperationTimeout):  past it the client is answered Bad_Timeout and the source's answer, when it comes, is logged and dropped
 			editTimeout:: "PT5S", //how long a HistoryUpdate holds for the flush that writes it, the OpcServer's hist.editTimeout:  past it the client is answered Bad_Timeout and the edit may still be written
 			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  sessionTimeout and minSamplingInterval are ISO 8601.
 			limits:: { maxSessions: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }

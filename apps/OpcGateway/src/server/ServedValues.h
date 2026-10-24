@@ -30,6 +30,9 @@ namespace Jde::Opc::Gateway{
 		//A served variable's member, whose value it serves, and the group that keeps its history;  false when the node is mapped already.
 		α Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug, sp<Opc::Hist::Group> history )ι->bool;
 		α Remove( const NodeId& node )ι->void;//the variable's mapping and its history's;  its member keeps its value.
+		//A served variable's member and connection, where a write to it goes (ServedWrites);  none for a node that isn't served.
+		struct Serving final{ HistGroupPK Group; HistGroupNodePK Index; ServerCnnctnNK Slug; };
+		α Served( const UA_NodeId& node )Ι->optional<Serving>;
 		//The history host's (GatewayHistoryHost), from the same map, so a node's history comes and goes with its value:  its group and
 		//index, none for a node that isn't served;  every served node's archive-start properties, with its group.
 		using ArchiveStart = Opc::Server::IHistoryHost::ArchiveStart;
@@ -54,21 +57,19 @@ namespace Jde::Opc::Gateway{
 		α Read( const UA_NodeId& node, const UA_NumericRange* range, UA_DataValue& value )ι->UA_StatusCode;
 		//A served variable's history page from the source's indices to the endpoint's, by its group's array as it is now, not the
 		//one each value came under, since the library stores no URI inside a value (spec *History*):  one lookup and one reader's
-		//lock for the page.  And a HistoryUpdate's value the other way, the endpoint's indices to the source's, so it is stored as
-		//the source's would be.  Nothing for a node that isn't served;  an index it can't place is left as it is and warned of once
-		//per node and way, Remap's as Read's are;  Unmap returns how many, a value its caller refuses.
+		//lock for the page.  And a HistoryUpdate's or a Write's value the other way, the endpoint's indices to the source's, so it is
+		//stored or written as the source's would be.  Nothing for a node that isn't served;  an index it can't place is left as it is
+		//and warned of once per node and way, Remap's as Read's are;  Unmap returns how many, a value its caller refuses.
 		α Remap( const UA_NodeId& node, std::span<UA_DataValue> values )ι->void;
 		α Unmap( const UA_NodeId& node, UA_Variant& value )ι->uint;
 		//A value's indices from the source's to the endpoint's by `map`, none for one it can't place;  the count left as they were.
 		//0 stays 0.  Structures are walked by their open62541 type descriptions.
 		Ω Remap( UA_Variant& value, absl::FunctionRef<optional<UA_UInt16>(UA_UInt16)> map )ι->uint;
-		//open62541's UA_CallbackValueSource over a node whose context is the ServedValues it is served from;  no write until Phase 5.
-		Ω Source()ι->UA_CallbackValueSource;
 	private:
 		using Uris = sp<const vector<string>>;
 		using Indexes = absl::flat_hash_map<string,UA_UInt16>;//a slug's, the endpoint's index by remote URI.
 		//Its member, the group keeping its history, and its archive starts;  warned of an index served as it came, and of one refused.
-		struct Served final{ HistGroupPK Group; HistGroupNodePK Index; ServerCnnctnNK Slug; sp<Opc::Hist::Group> History; vector<NodeId> Starts; bool Warned{}; bool Refused{}; };
+		struct Variable final{ HistGroupPK Group; HistGroupNodePK Index; ServerCnnctnNK Slug; sp<Opc::Hist::Group> History; vector<NodeId> Starts; bool Warned{}; bool Refused{}; };
 		struct Member final{ optional<Value> Last; Uris Namespaces; };//none before its first value;  the array it came under.
 		struct Group final{ Uris Namespaces; absl::flat_hash_map<HistGroupNodePK,Member> Members; };//its collector's last array.
 		ABSL_SHARED_LOCKS_REQUIRED(_mutex) α Find( HistGroupPK group, HistGroupNodePK index )Ι->const Member*;//null for a member it doesn't hold.
@@ -79,7 +80,7 @@ namespace Jde::Opc::Gateway{
 		//Once per node and way, under the writer's lock:  its callers skip it for a node their reader's lock saw warned already.
 		α Warn( const UA_NodeId& node, uint unmapped, bool back=false )ι->void;
 		mutable absl::Mutex _mutex;
-		absl::flat_hash_map<NodeId,Served,NodeHash,NodeEqual> _nodes ABSL_GUARDED_BY(_mutex);//found by the callback's UA_NodeId, uncopied.
+		absl::flat_hash_map<NodeId,Variable,NodeHash,NodeEqual> _nodes ABSL_GUARDED_BY(_mutex);//found by the callback's UA_NodeId, uncopied.
 		absl::flat_hash_map<HistGroupPK,Group> _groups ABSL_GUARDED_BY(_mutex);
 		absl::flat_hash_map<ServerCnnctnNK,Indexes> _indexes ABSL_GUARDED_BY(_mutex);//Index's, by slug and remote URI.
 	};

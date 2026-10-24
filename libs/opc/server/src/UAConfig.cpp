@@ -97,10 +97,23 @@ namespace Jde::Opc::Server{
 			config.maxAsyncOperationQueueSize = *limits.MaxAsyncOperations;
 	}
 
+	//The cancel of an async operation, to the host's handler when it set one (OnAsyncCancel):  under the service lock.
+	α UAConfig::AsyncCancelled( UA_Server* server, const void* out )ι->void{
+		let config = static_cast<const UAConfig*>( UA_Server_getConfig(server)->context );
+		if( config && config->_asyncCancel )
+			config->_asyncCancel( out );
+	}
+
 	α UAConfig::SetConfig( const UASettings& settings, ByteStringPtr&& certificate, const ByteStringPtr&& privateKey, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void{
 		UAε( UA_ServerConfig_setBasics_withPort(this, settings.Port) );
 		applyAddress( *this, settings.Address, settings.Port );
 		applyLimits( *this, settings.Limit );
+		//A client's Write of a callback value source holds this long for its answer (servers spec *Writes*);  the cancel past it, or at
+		//shutdown, reaches the host through this, the base open62541 copies into the server, so its `context` is this object.
+		if( settings.WriteTimeout )
+			asyncOperationTimeout = (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( *settings.WriteTimeout ).count();
+		context = this;
+		asyncOperationCancelCallback = AsyncCancelled;
 
 		UA_TrustListDataType list;
 		UA_TrustListDataType_init( &list );

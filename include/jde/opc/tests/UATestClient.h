@@ -98,6 +98,28 @@ namespace Jde::Opc::Tests{
 			UA_ReadResponse_clear( &response );
 			return y;
 		}
+		//A Write of the node's Value as `value` has it - its status and timestamps too, where set - under `indexRange` when one is given:
+		//the operation's status, or the service's when that failed.
+		α Write( const UA_NodeId& node, const UA_DataValue& value, sv indexRange={} )ι->UA_StatusCode{
+			UA_WriteValue item; UA_WriteValue_init( &item );
+			item.nodeId = node;//views:  not cleared.
+			item.attributeId = UA_ATTRIBUTEID_VALUE;
+			item.indexRange = ToUV( indexRange );
+			item.value = value;
+			UA_WriteRequest request; UA_WriteRequest_init( &request );
+			request.nodesToWrite = &item;
+			request.nodesToWriteSize = 1;
+			auto response = UA_Client_Service_write( _client, request );
+			const auto status = response.responseHeader.serviceResult ? response.responseHeader.serviceResult : response.resultsSize==1 ? response.results[0] : UA_STATUSCODE_BADUNEXPECTEDERROR;
+			UA_WriteResponse_clear( &response );
+			return status;
+		}
+		α Write( const UA_NodeId& node, const void* scalar, const UA_DataType& type, sv indexRange={} )ι->UA_StatusCode{//the scalar alone, no status or timestamp.
+			UA_DataValue value; UA_DataValue_init( &value );
+			UA_Variant_setScalar( &value.value, const_cast<void*>(scalar), &type );
+			value.hasValue = true;
+			return Write( node, value, indexRange );
+		}
 		//The node's children by its forward hierarchical references, a folder listing:  each browse name and target.
 		struct Child final{ string BrowseName; NodeId Id; };
 		α Browse( const UA_NodeId& node )ε->vector<Child>{

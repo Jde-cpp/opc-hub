@@ -22,6 +22,7 @@ namespace Jde::Opc::Server {
 		α Ptr()ι->UA_Server*{ return _ua; }
 		α History()ι->UAHistory&{ return _history; }
 		α Trust()ι->UATrust&{ return _config.Trust(); }
+		α OnAsyncCancel( UAConfig::AsyncCancel f )ι->void{ _config.OnAsyncCancel( move(f) ); }//a cancelled async operation's key (UAConfig::OnAsyncCancel);  before Run.
 		α CustomTypes()ι->vector<UA_DataTypeArray>&{ return _customTypes; }//the host's mirrors of the nodeset types, which config.customDataTypes points into.
 	private:
 		UAHistory _history;//before _config, which installs its backend, and so destroyed after the server it serves.

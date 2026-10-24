@@ -44,11 +44,16 @@ namespace Jde::Opc::Gateway{
 	}
 	α ServedValues::Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug, sp<Opc::Hist::Group> history )ι->bool{
 		ul _{ _mutex };
-		return _nodes.try_emplace( move(node), Served{group, index, move(slug), move(history)} ).second;
+		return _nodes.try_emplace( move(node), Variable{group, index, move(slug), move(history)} ).second;
 	}
 	α ServedValues::Remove( const NodeId& node )ι->void{
 		ul _{ _mutex };
 		_nodes.erase( node );
+	}
+	α ServedValues::Served( const UA_NodeId& node )Ι->optional<Serving>{
+		rl _{ _mutex };
+		let p = _nodes.find( node );
+		return p==_nodes.end() ? nullopt : optional<Serving>{ {p->second.Group, p->second.Index, p->second.Slug} };
 	}
 	α ServedValues::History( const UA_NodeId& node )Ι->optional<Opc::Server::IHistoryHost::Node>{
 		rl _{ _mutex };
@@ -346,10 +351,4 @@ namespace Jde::Opc::Gateway{
 		return unmapped;
 	}
 
-	Ω read( UA_Server*, const UA_NodeId*, void*, const UA_NodeId* nodeId, void* nodeContext, UA_Boolean, const UA_NumericRange* range, UA_DataValue* value )ι->UA_StatusCode{
-		if( !nodeContext || !nodeId || !value )
-			return UA_STATUSCODE_BADINTERNALERROR;
-		return static_cast<ServedValues*>( nodeContext )->Read( *nodeId, range, *value );
-	}
-	α ServedValues::Source()ι->UA_CallbackValueSource{ return UA_CallbackValueSource{ .read=read, .write=nullptr }; }
 }

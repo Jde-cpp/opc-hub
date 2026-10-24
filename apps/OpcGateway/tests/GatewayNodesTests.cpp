@@ -33,10 +33,6 @@ namespace Jde::Opc::Gateway::Tests{
 			UAε( UA_Client_readUserAccessLevelAttribute(client, node, &y) );
 			return y;
 		}
-		Ω WriteValue( UATestClient& client, const NodeId& node, double value )ι->UA_StatusCode{
-			UA_Variant v; UA_Variant_setScalar( &v, &value, &UA_TYPES[UA_TYPES_DOUBLE] );
-			return UA_Client_writeValueAttribute( client, node, &v );
-		}
 		Ω Historizing( UATestClient& client, const NodeId& node )ε->bool{
 			UA_Boolean y{};
 			UAε( UA_Client_readHistorizingAttribute(client, node, &y) );
@@ -94,27 +90,6 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Setting(*client, *node, "UseSlopedExtrapolation", "AggregateConfiguration"), optional<double>{(double)aggregates.UseSlopedExtrapolation} );
 		auto children = client->Browse( *client->Translate(NodeId::ObjectsFolder(), {{_own, OpcServerSlug}}) );
 		EXPECT_TRUE( std::ranges::any_of(children, [](let& c){ return c.BrowseName=="pumpManual"; }) ) << "the path folder under the connection's";
-	}
-
-	//The endpoint is read-only until Phase 5 forwards a write (plan milestone I):  a served node keeps the source's Write in its
-	//AccessLevel, but no session's UserAccessLevel has it - not on the unenforced group, as it ships, nor with Update granted on an
-	//enforced one - so a Value write is refused rather than stored as the served value.
-	TEST_F( GatewayNodesTests, AServedValueRefusesWrites ){
-		const OneNodeGroup group{ "gatewayNodesReadOnly", RpmManual };
-		WaitPath( group.Host, group.Index );
-		auto client = Client();
-		optional<NodeId> node;
-		ASSERT_TRUE( WaitUntil([&]{ node = Served( *client, "pumpManual", "motorRpm" ); return node.has_value(); }) );
-		EXPECT_TRUE( AccessLevel(*client, *node) & UA_ACCESSLEVELMASK_WRITE ) << "the source's, which the fixture writes";
-		let refused = [&]( sv when ){
-			let user = UserAccessLevel( *client, *node );
-			EXPECT_TRUE( user & UA_ACCESSLEVELMASK_READ ) << when;
-			EXPECT_FALSE( user & UA_ACCESSLEVELMASK_WRITE ) << when;
-			EXPECT_EQ( WriteValue(*client, *node, 0.0), UA_STATUSCODE_BADUSERACCESSDENIED ) << when;
-		};
-		refused( "unenforced" );
-		auto reopen = EnforcedHistGroups();
-		refused( "enforced, everything granted" );
 	}
 
 	//A threshold change rewrites the node's MinimumSamplingInterval and its HA Configuration (plan Phase 3a).
