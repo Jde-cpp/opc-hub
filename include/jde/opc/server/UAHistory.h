@@ -39,6 +39,9 @@ namespace Jde::Opc::Server{
 		//AggregateFunctions folder, Median among them.
 		α Start( UA_Server& ua )ε->void;
 		α Stop()ι->void;//before the server is deleted:  the midnight timer writes to it.
+		//A node historized between Start and Stop - the gateway's, joining a group while the endpoint runs:  its archive
+		//starts written now, as Start wrote the rest's.  Nothing outside that span, which Start's own write covers.
+		α Publish( std::span<const IHistoryHost::ArchiveStart> starts )ι->void;
 		//The aggregate an AggregateFunction node asks for (spec *Reads*):  Part 13's nine in namespace 0, and Median,
 		//which Part 13 doesn't define, so it is an AggregateFunctionType object of the server's own namespace, ns=1;s=Median.
 		//None for a function that isn't served.
@@ -106,7 +109,8 @@ namespace Jde::Opc::Server{
 		//an UpdateData whose every value make refused, in its operationResults, the status staying Good.
 		α Edit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_NodeId& node, UA_HistoryUpdateResult& result,
 			absl::FunctionRef<optional<Hist::EditDetails>( Hist::NodeIndex )> make )ι->optional<Hist::EditResult>;
-		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α PublishArchive()ι->void;//every archive start the host has.
+		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α Write( std::span<const IHistoryHost::ArchiveStart> starts )ι->void;
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
 		//The host answers the callbacks under the service lock, so it takes no lock a UA_Server_* call is made under (spec

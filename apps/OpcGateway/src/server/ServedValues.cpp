@@ -80,7 +80,6 @@ namespace Jde::Opc::Gateway{
 	}
 	α ServedValues::Read( const UA_NodeId& node, const UA_NumericRange* range, UA_DataValue& value )ι->UA_StatusCode{
 		uint unmapped{};
-		ServerCnnctnNK slug;
 		{
 			rl _{ _mutex };
 			auto p = _nodes.find( node );
@@ -100,31 +99,63 @@ namespace Jde::Opc::Gateway{
 			}
 			if( let sc = range ? UA_DataValue_copyRange( &last, &value, *range ) : UA_DataValue_copy( &last, &value ); sc )
 				return sc;
-			let uris = member->Namespaces.get();
-			let known = _indexes.find( served.Slug );
-			let indexes = known==_indexes.end() ? nullptr : &known->second;
-			unmapped = Remap( value.value, [&]( UA_UInt16 ns )->optional<UA_UInt16>{
-				if( !uris || !indexes || ns>=uris->size() )
+			unmapped = Map( served, member->Namespaces.get(), value.value, false );
+		}
+		Warn( node, unmapped );
+		return UA_STATUSCODE_GOOD;
+	}
+	α ServedValues::Remap( const UA_NodeId& node, UA_Variant& value )ι->void{ Map( node, value, false ); }
+	α ServedValues::Unmap( const UA_NodeId& node, UA_Variant& value )ι->void{ Map( node, value, true ); }
+	α ServedValues::Map( const UA_NodeId& node, UA_Variant& value, bool back )ι->void{
+		uint unmapped{};
+		{
+			rl _{ _mutex };
+			auto p = _nodes.find( node );
+			if( p==_nodes.end() )
+				return;
+			let g = _groups.find( p->second.Group );
+			unmapped = Map( p->second, g==_groups.end() ? nullptr : g->second.Namespaces.get(), value, back );
+		}
+		Warn( node, unmapped );
+	}
+	α ServedValues::Map( const Served& served, const vector<string>* uris, UA_Variant& value, bool back )Ι->uint{
+		let known = _indexes.find( served.Slug );
+		let indexes = known==_indexes.end() ? nullptr : &known->second;
+		return Remap( value, [&]( UA_UInt16 ns )->optional<UA_UInt16>{
+			if( !uris || !indexes )
+				return nullopt;
+			if( !back ){
+				if( ns>=uris->size() )
 					return nullopt;
 				auto p = indexes->find( (*uris)[ns] );
 				return p==indexes->end() ? nullopt : optional<UA_UInt16>{ p->second };
-			} );
-			if( !unmapped || served.Warned )
-				return UA_STATUSCODE_GOOD;
-			slug = served.Slug;
-		}
+			}
+			for( let& [uri, index] : *indexes ){//the endpoint's index to its URI, and that to its place in the source's array.
+				if( index!=ns )
+					continue;
+				let p = std::ranges::find( *uris, uri );
+				return p==uris->end() ? nullopt : optional<UA_UInt16>{ (UA_UInt16)std::distance(uris->begin(), p) };
+			}
+			return nullopt;
+		} );
+	}
+	α ServedValues::Warn( const UA_NodeId& node, uint unmapped )ι->void{
+		if( !unmapped )
+			return;
+		ServerCnnctnNK slug;
 		{
 			ul _{ _mutex };
-			if( auto p = _nodes.find(node); p==_nodes.end() || std::exchange(p->second.Warned, true) )
-				return UA_STATUSCODE_GOOD;
+			auto p = _nodes.find( node );
+			if( p==_nodes.end() || std::exchange(p->second.Warned, true) )
+				return;
+			slug = p->second.Slug;
 		}
 		WARN( "Node {}'s value names {} namespace index(es) the endpoint can't place from '{}''s NamespaceArray - served as the source gave them.", NodeId{node}.ToString(), unmapped, slug );
-		return UA_STATUSCODE_GOOD;
 	}
 
-	using Map = absl::FunctionRef<optional<UA_UInt16>(UA_UInt16)>;
+	using Mapping = absl::FunctionRef<optional<UA_UInt16>(UA_UInt16)>;
 	//Each index to the endpoint's, counting those it can't place.
-	Ω remapIndex( UA_UInt16& ns, Map map, uint& unmapped )ι->void{
+	Ω remapIndex( UA_UInt16& ns, Mapping map, uint& unmapped )ι->void{
 		if( !ns )//0 is 0 everywhere.
 			return;
 		if( let y = map(ns); y )
@@ -132,11 +163,11 @@ namespace Jde::Opc::Gateway{
 		else
 			++unmapped;
 	}
-	Ω remapData( void* data, const UA_DataType& type, size_t count, Map map, uint& unmapped )ι->void;
+	Ω remapData( void* data, const UA_DataType& type, size_t count, Mapping map, uint& unmapped )ι->void;
 	//A structure's members as open62541 lays them out (ua_types.c's copyStructure and copyUnion):  each after its padding, an array,
 	//optional or not, as its size and pointer, an optional scalar by pointer, null when absent;  a union's selected member alone, at
 	//its padding from the start.
-	Ω remapMembers( void* p, const UA_DataType& type, Map map, uint& unmapped )ι->void{
+	Ω remapMembers( void* p, const UA_DataType& type, Mapping map, uint& unmapped )ι->void{
 		auto ptr = reinterpret_cast<uintptr_t>( p );
 		let array = [&]( const UA_DataTypeMember& m ){ remapData( *reinterpret_cast<void**>(ptr+sizeof(size_t)), *m.memberType, *reinterpret_cast<size_t*>(ptr), map, unmapped ); };
 		if( type.typeKind==UA_DATATYPEKIND_UNION ){
@@ -169,7 +200,7 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 	//`count` values of `type` at `data`, walked only for a kind that can hold an index.
-	Ω remapData( void* data, const UA_DataType& type, size_t count, Map map, uint& unmapped )ι->void{
+	Ω remapData( void* data, const UA_DataType& type, size_t count, Mapping map, uint& unmapped )ι->void{
 		switch( type.typeKind ){
 		case UA_DATATYPEKIND_NODEID: case UA_DATATYPEKIND_EXPANDEDNODEID: case UA_DATATYPEKIND_QUALIFIEDNAME: case UA_DATATYPEKIND_EXTENSIONOBJECT:
 		case UA_DATATYPEKIND_VARIANT: case UA_DATATYPEKIND_DATAVALUE: case UA_DATATYPEKIND_STRUCTURE: case UA_DATATYPEKIND_OPTSTRUCT: case UA_DATATYPEKIND_UNION:
@@ -212,7 +243,7 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 	}
-	α ServedValues::Remap( UA_Variant& value, Map map )ι->uint{
+	α ServedValues::Remap( UA_Variant& value, Mapping map )ι->uint{
 		uint unmapped{};
 		if( value.type )
 			remapData( value.data, *value.type, UA_Variant_isScalar(&value) ? 1 : value.arrayLength, map, unmapped );

@@ -90,8 +90,10 @@ namespace Jde::Opc::Server{
 			~IndexRange(){ UA_free( Value.dimensions ); }
 			UA_NumericRange Value{};
 		};
-		//A page's values into HistoryRead's result, as toUA has them:  the dataValues a raw and a modified read both have.
-		Ω dataValues( UA_DataValue*& values, size_t& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
+		//A page's values into HistoryRead's result, as toUA has them, each in the server's namespaces by the host's remap:  the
+		//dataValues a raw and a modified read both have.
+		struct Served final{ const UA_NodeId& Node; IHistoryHost& Host; };
+		Ω dataValues( UA_DataValue*& values, size_t& valuesSize, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
 			let size = page.Values.size();
 			if( !size )
 				return UA_STATUSCODE_GOOD;
@@ -99,18 +101,21 @@ namespace Jde::Opc::Server{
 			if( !values )
 				return UA_STATUSCODE_BADOUTOFMEMORY;
 			valuesSize = size;
-			for( uint i=0; i<size; ++i )
+			for( uint i=0; i<size; ++i ){
 				values[i] = toUA( page.Values[i].Value, timestamps, range );
+				if( values[i].hasValue )
+					served.Host.Remap( served.Node, values[i].value );
+			}
 			return UA_STATUSCODE_GOOD;
 		}
-		Ω fill( UA_HistoryData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
-			return dataValues( data.dataValues, data.dataValuesSize, page, timestamps, range );
+		Ω fill( UA_HistoryData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
+			return dataValues( data.dataValues, data.dataValuesSize, page, timestamps, range, served );
 		}
 		//A modified read's, each value with its ModificationInfo:  the record's type is Part 11's HistoryUpdateType.
 		static_assert( (int)Hist::Proto::UPDATE_TYPE_INSERT==UA_HISTORYUPDATETYPE_INSERT && (int)Hist::Proto::UPDATE_TYPE_REPLACE==UA_HISTORYUPDATETYPE_REPLACE
 			&& (int)Hist::Proto::UPDATE_TYPE_UPDATE==UA_HISTORYUPDATETYPE_UPDATE && (int)Hist::Proto::UPDATE_TYPE_DELETE==UA_HISTORYUPDATETYPE_DELETE );
-		Ω fill( UA_HistoryModifiedData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range )ι->UA_StatusCode{
-			if( let sc = dataValues(data.dataValues, data.dataValuesSize, page, timestamps, range); sc || !data.dataValuesSize )
+		Ω fill( UA_HistoryModifiedData& data, const Hist::ReadResult& page, UA_TimestampsToReturn timestamps, const UA_NumericRange* range, const Served& served )ι->UA_StatusCode{
+			if( let sc = dataValues(data.dataValues, data.dataValuesSize, page, timestamps, range, served); sc || !data.dataValuesSize )
 				return sc;
 			let size = page.Values.size();
 			data.modificationInfos = (UA_ModificationInfo*)UA_Array_new( size, &UA_TYPES[UA_TYPES_MODIFICATIONINFO] );
@@ -297,15 +302,21 @@ namespace Jde::Opc::Server{
 		if( timer )
 			_historian->Time().Cancel( timer );
 	}
+	α UAHistory::Publish( std::span<const IHistoryHost::ArchiveStart> starts )ι->void{
+		ul _{ _publishing->Mutex };
+		if( _publishing->Ua )
+			Write( starts );
+	}
 
 	//Each historized node's StartOfArchive and StartOfOnlineArchive, the same since every file is online:  the start of
 	//the earliest day that holds a file of its group, so a client can tell a purged range from one with no data.  Before
 	//a group's first flush there is no file, and nothing is older than today.
-	α UAHistory::PublishArchive()ι->void{
+	α UAHistory::PublishArchive()ι->void{ Write( _host->ArchiveStarts() ); }
+	α UAHistory::Write( std::span<const IHistoryHost::ArchiveStart> archiveStarts )ι->void{
 		let& tz = *_historian->Config().TimeZone;
 		let today = Hist::DayStart( Hist::DayOf(_historian->Time().Now(), tz), tz );
 		flat_map<Hist::Group*,UA_UtcTime> starts;//each group's, asked once.
-		for( let& [property, group] : _host->ArchiveStarts() ){
+		for( let& [property, group] : archiveStarts ){
 			auto p = starts.find( group.get() );
 			if( p==starts.end() ){
 				optional<TimePoint> earliest;
@@ -360,7 +371,7 @@ namespace Jde::Opc::Server{
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, T* const* data )ι->void{
 		Serve( ua, sessionId, sessionContext, release, nodes, results, std::same_as<T,UA_HistoryModifiedData> ? "modified" : "raw",
 			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return Read( node, details, id, continuation, page ); },
-			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	template α UAHistory::ReadRawModified( UA_Server&, const UA_NodeId*, void*, const UA_ReadRawModifiedDetails&, UA_TimestampsToReturn, bool,
 		std::span<const UA_HistoryReadValueId>, UA_HistoryReadResult*, UA_HistoryData* const* )ι->void;//HistoryTests calls it.
@@ -368,7 +379,7 @@ namespace Jde::Opc::Server{
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
 		Serve( ua, sessionId, sessionContext, release, nodes, results, "at-time",
 			[&]( uint, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){ return AtTime( node, details, id, continuation, page ); },
-			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	α UAHistory::ReadProcessed( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_ReadProcessedDetails& details, UA_TimestampsToReturn timestamps, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, UA_HistoryData* const* data )ι->void{
@@ -377,7 +388,7 @@ namespace Jde::Opc::Server{
 			[&]( uint i, const Node& node, const UA_HistoryReadValueId& id, UA_ByteString& continuation, Hist::ReadResult& page ){
 				return mismatch ? UA_STATUSCODE_BADAGGREGATELISTMISMATCH : Processed( node, details, details.aggregateType[i], id, continuation, page );
 			},
-			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range ); } );
+			[&]( uint i, const Hist::ReadResult& page, const UA_NumericRange* range ){ return fill( *data[i], page, timestamps, range, {nodes[i].nodeId, *_host} ); } );
 	}
 	α UAHistory::Serve( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, bool release,
 		std::span<const UA_HistoryReadValueId> nodes, UA_HistoryReadResult* results, sv what,
@@ -541,7 +552,7 @@ namespace Jde::Opc::Server{
 					continue;
 				}
 				allowed.push_back( i );
-				update.Values.emplace_back( values[i] );
+				_host->Unmap( details.nodeId, update.Values.emplace_back( values[i] ).value );//stored as the source's would be (IHistoryHost::Unmap).
 			}
 			return allowed.empty() ? nullopt : optional<Hist::EditDetails>{ move(update) };
 		};

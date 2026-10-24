@@ -81,6 +81,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let access = AccessLevel( *client, *node );
 		EXPECT_TRUE( access & UA_ACCESSLEVELMASK_READ );
 		EXPECT_TRUE( access & UA_ACCESSLEVELMASK_HISTORYREAD );
+		EXPECT_TRUE( access & UA_ACCESSLEVELMASK_HISTORYWRITE ) << "the history is the gateway's own";
 		EXPECT_TRUE( Historizing(*client, *node) );
 		EXPECT_EQ( SamplingInterval(*client, *node), 1000.0 );
 		EXPECT_EQ( Setting(*client, *node, "MinTimeInterval"), optional<double>{1000} );
@@ -319,7 +320,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( *node, served );
 		EXPECT_EQ( DisplayName(*client, *node), "Motor speed" );
 		EXPECT_EQ( DataType(*client, *node), NodeId(0, UA_NS0ID_DOUBLE) );
-		EXPECT_EQ( AccessLevel(*client, *node), 3|UA_ACCESSLEVELMASK_HISTORYREAD );
+		EXPECT_EQ( AccessLevel(*client, *node), 3|UA_ACCESSLEVELMASK_HISTORYREAD|UA_ACCESSLEVELMASK_HISTORYWRITE );
 		EXPECT_FALSE( client->Translate(NodeId::ObjectsFolder(), {{_own, slug}, {*ns, Ƒ("i={}", Rpm2)}}) ) << "no longer under the connection folder";
 	}
 
