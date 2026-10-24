@@ -87,6 +87,7 @@ apps/AppServer/src/build/**
 **/out/**
 !extensions/jde/.vscode/
 !extensions/jde/.vscodeignore
+extensions/jde/syntaxes/
 **/node_modules/**
 **/*.vsix
 **/compile_commands.*
