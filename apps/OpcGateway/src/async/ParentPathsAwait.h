@@ -11,7 +11,7 @@ namespace Jde::Opc::Gateway{
 	//A node's ancestors' browse names from the Objects folder down to its parent, empty for a child of the folder, or none:  outside
 	//that tree (a type, a view, the folder itself), or Deep, more than MaxDepth, which a reference cycle looks like.  Lost:  a parent
 	//on the way the server refused.
-	struct ParentPath final{ optional<vector<BrowseSegment>> Parents; bool Lost{}; bool Deep{}; };
+	struct ParentPath final{ optional<vector<BrowseSegment>> Parents; vector<NodeId> Ids; bool Lost{}; bool Deep{}; };//Ids:  each parent's, as Parents, once it's set.
 	//Each node's path from the Objects folder, up the inverse HierarchicalReferences (Browse::Request::Parents) - the folder among
 	//several parents, else the first:  the tree the picker and the search index reach a node by.  A round browses every parent no
 	//walk knows yet, at most `batch` a request and fewer after one refused as too many;  `parents` keeps each, so a node whose

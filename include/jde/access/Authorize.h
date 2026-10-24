@@ -32,10 +32,12 @@ namespace Jde::Access{
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;
+		struct ScopeRights final{ ERights Rights; bool Enforced; α operator==( const ScopeRights& )Ι->bool=default; };
 		//The mask on the resource a criteria scopes, as Test's criteria overload resolves it (servers spec *Sessions and rights*):  the
-		//active (schema, slug, criteria) row when there is one, else the slug's root;  neither active, All, as Test passes.  A lookup,
-		//for a caller that may not throw or wait - the UA server's rights callbacks under its service lock.
-		α Rights( str schemaName, str resourceName, str criteria, UserPK executer )ι->ERights;
+		//active (schema, slug, criteria) row when there is one, else the slug's root, Enforced;  neither active, All, as Test passes, but
+		//not Enforced, which CheckEnforced refuses an edit for.  The system user, All and Enforced, passes both.  One lookup under one
+		//lock, for a caller that may not throw or wait - the UA server's rights callbacks under its service lock.
+		α ScopedRights( str schemaName, str resourceName, str criteria, UserPK executer )ι->ScopeRights;
 		α UserName( UserPK userPK )ι->string override;
 
 		α AddResource( ResourcePK resourcePK, string schema, string resourceSlug, string criteria )ι->void;

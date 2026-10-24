@@ -18,5 +18,9 @@ namespace Jde::Opc::Server::HAConfiguration{
 	//ServerTimestampSupported, since both timestamps are stored.  The gateway's served nodes (servers spec *Address space*), whose
 	//configuration the host resolves rather than reads as the OpcServer's Historized does.
 	α Publish( UA_Server& ua, const UA_NodeId& configuration, const Hist::Thresholds& thresholds )ε->void;
+	//Part 13's defaults, the library's, as its AggregateConfiguration, for a ReadProcessed with useServerCapabilitiesDefaults and an
+	//at-time read, over whatever is there:  open62541 fills a property the nodeset leaves out with false or 0, which can't be told
+	//from the nodeset's own.
+	α PublishAggregates( UA_Server& ua, const UA_NodeId& configuration )ε->void;
 	α Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId;//the object, without properties.
 }

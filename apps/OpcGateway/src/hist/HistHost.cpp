@@ -1,5 +1,4 @@
 #include "HistHost.h"
-#include <absl/functional/function_ref.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/access/Authorize.h>
@@ -12,7 +11,6 @@
 #include "../async/TranslateBrowsePathsAwait.h"
 #include "../GatewayAppClient.h"
 #include "../ql/GatewayQL.h"
-#include "../server/GatewayServer.h"
 #include "../types/ServerCnnctn.h"
 #include "../UAClient.h"
 
@@ -20,11 +18,6 @@
 namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 	using Opc::Hist::Thresholds;
-	//The endpoint, when there is one:  each hook's live side reaches its address space after the host has the change (spec *Address space*).
-	Ω served( const HistGroupHost* host, absl::FunctionRef<void( GatewayServer& )> f )ι->void{
-		if( auto server = host ? GatewayServer::Instance() : nullptr; server )
-			f( *server );
-	}
 
 	α HistResolveAwait::Suspend()ι->void{ HistHost::Instance().Resolving( *this ); }
 
@@ -152,9 +145,13 @@ namespace Jde::Opc::Gateway{
 		}
 		auto group = historian->AddGroup( {.Name=row.Guid, .Indexes=Opc::Hist::EIndexes::Host, .PublishingInterval=HistGroupHost::PublishingInterval}, move(initial), sl );
 		auto host = ms<HistGroupHost>( row, slug, move(group), move(hostMembers), Collector(slug), historian->Time() );
-		lg _{ _mutex };
-		THROW_IFSL( _stopped, "The historian has stopped." );//during AddGroup:  the group goes with the historian when this lets go of it.
-		_groups.insert_or_assign( row.Id, host );
+		{
+			lg _{ _mutex };
+			THROW_IFSL( _stopped, "The historian has stopped." );//during AddGroup:  the group goes with the historian when this lets go of it.
+			_groups.insert_or_assign( row.Id, host );
+		}
+		if( auto listener = Listener(); listener )
+			listener->GroupLoaded( *host );
 		return host;
 	}
 	α HistHost::Remove( HistGroupPK id, optional<Opc::Hist::Writer> by, SL sl )ι->sp<HistGroupHost>{
@@ -169,6 +166,8 @@ namespace Jde::Opc::Gateway{
 		}
 		if( !host )
 			return host;
+		if( auto listener = Listener(); listener )
+			listener->GroupRemoved( id );
 		try{
 			historian->RemoveGroup( host->Guid(), move(by), sl );
 		}
@@ -401,13 +400,11 @@ namespace Jde::Opc::Gateway{
 			for( let& node : nodes )
 				thresholds.emplace_back( node.Id, ResolveThresholds(node.Thresholds, memberOf(members, node.TemplateNode), row.Thresholds) );
 			host->SetNodeThresholds( thresholds, SRCE_CUR );
-			served( host.get(), [&]( GatewayServer& server ){ server.ThresholdsChanged( host->Id(), move(thresholds) ); } );
 		}
 	}
 	α HistHost::GroupDeleted( DB::Key key, UserPK by )ι->AnyVoidTask{
 		auto rows = co_await Any( SelectHistGroups({.Key=key, .IncludeDeleted=true}) );
 		if( auto host = rows.size() ? Remove( rows.front().Id, Writer(by), SRCE_CUR ) : nullptr; host ){
-			served( host.get(), [&]( GatewayServer& server ){ server.GroupRemoved( host->Id() ); } );
 			co_await host->Group()->Settled();//its last flush, so a restore can add the group again.
 			INFO( "[{}]Group '{}' deleted.", host->Guid(), rows.front().Name );
 		}
@@ -422,7 +419,6 @@ namespace Jde::Opc::Gateway{
 			let slug = co_await SlugAwait{ row.Connection };
 			auto host = Load( row, nodes, members, slug, SRCE_CUR );
 			host->Subscribe();
-			served( host.get(), [&]( GatewayServer& server ){ server.GroupLoaded( *host ); } );
 			INFO( "[{}]Group '{}' restored with {} nodes.", row.Guid, row.Name, nodes.size() );
 		}
 		summarize( row.Guid, co_await Resolve(row.Id, by) );//members its template gained while it was deleted:  TemplateNodeCreated resolves live groups only.
@@ -433,7 +429,6 @@ namespace Jde::Opc::Gateway{
 		if( rows.size() )
 			guid = rows.front().Guid;
 		if( auto host = Remove(id, Writer(by), SRCE_CUR); host ){
-			served( host.get(), [&]( GatewayServer& server ){ server.GroupRemoved( id ); } );
 			co_await host->Group()->Settled();
 		}
 		let view = GetViewPtr( HistTable::GroupNodes );
@@ -463,7 +458,6 @@ namespace Jde::Opc::Gateway{
 			auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
 			let thresholds = ResolveThresholds( row.Thresholds, memberOf(members, row.TemplateNode), host->Columns() );
 			host->Join( row, thresholds, Writer(by), SRCE_CUR );
-			served( host.get(), [&]( GatewayServer& server ){ server.NodeJoined( *host, {row.Id, row.Node, thresholds, row.Attributes} ); } );
 		}
 	}
 	α HistHost::NodeEdited( HistGroupNodePK id )ι->AnyVoidTask{
@@ -473,14 +467,12 @@ namespace Jde::Opc::Gateway{
 			auto members = co_await SelectHistTemplateMembers( {.Id=row.TemplateNode} );
 			let thresholds = ResolveThresholds( row.Thresholds, memberOf(members, row.TemplateNode), host->Columns() );
 			host->SetNodeThresholds( {{row.Id, thresholds}}, SRCE_CUR );
-			served( host.get(), [&]( GatewayServer& server ){ server.ThresholdsChanged( host->Id(), {{row.Id, thresholds}} ); } );
 		}
 	}
 	α HistHost::NodePurging( HistGroupNodePK id, UserPK by )ι->AnyVoidTask{
 		auto rows = co_await Any( SelectHistGroupNodes({.Id=id}) );
 		if( auto host = rows.size() ? Find( rows.front().Group ) : nullptr; host ){
 			host->Leave( id, Writer(by), SRCE_CUR );
-			served( host.get(), [&]( GatewayServer& server ){ server.NodeLeft( host->Id(), id ); } );
 		}
 	}
 	α HistHost::TemplateNodeCreated( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask{
@@ -500,7 +492,6 @@ namespace Jde::Opc::Gateway{
 		}
 		for( auto&& [host,thresholds] : byHost ){
 			host->SetNodeThresholds( thresholds, SRCE_CUR );
-			served( host.get(), [&]( GatewayServer& server ){ server.ThresholdsChanged( host->Id(), move(thresholds) ); } );
 		}
 	}
 	α HistHost::TemplateNodePurging( HistTemplateNodePK id, UserPK by )ι->AnyVoidTask{

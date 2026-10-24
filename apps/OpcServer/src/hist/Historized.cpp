@@ -128,18 +128,7 @@ namespace Jde::Opc::Server{
 			}
 		}
 		boolean( "ServerTimestampSupported", true );//both timestamps are stored.
-		//Part 13's defaults, which the library's are, for a ReadProcessed with useServerCapabilitiesDefaults and an at-time
-		//read, over whatever is there:  open62541 fills a property the nodeset leaves out with false or 0, which can't be
-		//told from the nodeset's own.
-		const Hist::AggregateConfiguration aggregates;
-		if( let aggregate = Child(ua, configuration, "AggregateConfiguration") ){
-			const UA_Boolean uncertainAsBad{ aggregates.TreatUncertainAsBad }, sloped{ aggregates.UseSlopedExtrapolation };
-			const UA_Byte bad{ aggregates.PercentDataBad }, good{ aggregates.PercentDataGood };
-			Publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &uncertainAsBad );
-			Publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &bad );
-			Publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
-			Publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
-		}
+		HAConfiguration::PublishAggregates( ua, configuration );
 		const UA_UtcTime none{};//until UAHistory finds the archive's first day.
 		auto startOfArchive = Publish( ua, configuration, "StartOfArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );
 		auto startOfOnlineArchive = Publish( ua, configuration, "StartOfOnlineArchive", UA_TYPES[UA_TYPES_UTCTIME], &none );

@@ -42,6 +42,18 @@ namespace Jde::Opc::Server{
 		Publish( ua, configuration, "ExceptionDeviationFormat", UA_TYPES[UA_TYPES_EXCEPTIONDEVIATIONFORMAT], &thresholds.DeviationFormat );
 		Publish( ua, configuration, "ServerTimestampSupported", UA_TYPES[UA_TYPES_BOOLEAN], &timestamps );
 	}
+	α HAConfiguration::PublishAggregates( UA_Server& ua, const UA_NodeId& configuration )ε->void{
+		let aggregate = Child( ua, configuration, "AggregateConfiguration" );
+		if( !aggregate )
+			return;
+		const Hist::AggregateConfiguration defaults;
+		const UA_Boolean uncertainAsBad{ defaults.TreatUncertainAsBad }, sloped{ defaults.UseSlopedExtrapolation };
+		const UA_Byte bad{ defaults.PercentDataBad }, good{ defaults.PercentDataGood };
+		Publish( ua, *aggregate, "TreatUncertainAsBad", UA_TYPES[UA_TYPES_BOOLEAN], &uncertainAsBad );
+		Publish( ua, *aggregate, "PercentDataBad", UA_TYPES[UA_TYPES_BYTE], &bad );
+		Publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
+		Publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
+	}
 	α HAConfiguration::Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId{
 		UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
 		attributes.displayName = UA_LocalizedText{ {}, {BrowseName.size(), (UA_Byte*)BrowseName.data()} };
