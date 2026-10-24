@@ -32,6 +32,10 @@ namespace Jde::Access{
 		α TestSystem( str schemaName, str resourceName, ERights rights, UserPK executer, SRCE )ε->void override;
 		α TestUser( UserPK executer, SRCE )Ε->void override;
 		α Rights( str schemaName, str resourceName, UserPK executer )ι->ERights override;
+		//The mask on the resource a criteria scopes, as Test's criteria overload resolves it (servers spec *Sessions and rights*):  the
+		//active (schema, slug, criteria) row when there is one, else the slug's root;  neither active, All, as Test passes.  A lookup,
+		//for a caller that may not throw or wait - the UA server's rights callbacks under its service lock.
+		α Rights( str schemaName, str resourceName, str criteria, UserPK executer )ι->ERights;
 		α UserName( UserPK userPK )ι->string override;
 
 		α AddResource( ResourcePK resourcePK, string schema, string resourceSlug, string criteria )ι->void;

@@ -30,6 +30,18 @@ namespace Jde::Opc::Server{
 		UAε( UA_Server_addVariableNode(&ua, UA_NODEID_NUMERIC(OwnNamespace, 0), parent, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), name(browseName), UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attributes, nullptr, &id) );
 		return NodeId{ move(id) };
 	}
+	α HAConfiguration::Publish( UA_Server& ua, const UA_NodeId& configuration, const Hist::Thresholds& thresholds )ε->void{
+		const UA_Boolean stepped{ thresholds.Stepped }, timestamps{ true };
+		Publish( ua, configuration, "Stepped", UA_TYPES[UA_TYPES_BOOLEAN], &stepped );
+		let ms = []( Duration d )->UA_Duration{ return std::chrono::duration<double,std::milli>{ d }.count(); };
+		const UA_Duration min{ ms(thresholds.MinTimeInterval) }, max{ ms(thresholds.MaxTimeInterval) };
+		Publish( ua, configuration, "MinTimeInterval", UA_TYPES[UA_TYPES_DURATION], &min );
+		Publish( ua, configuration, "MaxTimeInterval", UA_TYPES[UA_TYPES_DURATION], &max );
+		const UA_Double deviation{ thresholds.ExceptionDeviation.value_or(0) };
+		Publish( ua, configuration, "ExceptionDeviation", UA_TYPES[UA_TYPES_DOUBLE], &deviation );
+		Publish( ua, configuration, "ExceptionDeviationFormat", UA_TYPES[UA_TYPES_EXCEPTIONDEVIATIONFORMAT], &thresholds.DeviationFormat );
+		Publish( ua, configuration, "ServerTimestampSupported", UA_TYPES[UA_TYPES_BOOLEAN], &timestamps );
+	}
 	α HAConfiguration::Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId{
 		UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
 		attributes.displayName = UA_LocalizedText{ {}, {BrowseName.size(), (UA_Byte*)BrowseName.data()} };

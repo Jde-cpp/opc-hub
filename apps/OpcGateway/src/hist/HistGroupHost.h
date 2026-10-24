@@ -57,6 +57,8 @@ namespace Jde::Opc::Gateway{
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
+		//Each member as the endpoint serves it (GatewayServer::GroupLoaded):  its node, resolved thresholds and attributes, in one look.
+		α HistMembers()Ι->vector<HistMember>;
 		//The member a read or an edit names:  by URI, or by the index the server had for it when the collector last read the
 		//server's namespaces.  None for a node that isn't a member, or one by an index the collector hasn't seen.
 		α Index( const ExNodeId& node )Ι->optional<HistGroupNodePK>;

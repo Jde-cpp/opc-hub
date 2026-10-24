@@ -10,6 +10,7 @@
 #include "../async/TranslateBrowsePathsAwait.h"
 #include "../async/ValueTypesAwait.h"
 #include "../async/Subscriptions.h"
+#include "../server/GatewayServer.h"
 #include "../uatypes/Browse.h"
 #include "../UAClient.h"
 
@@ -125,6 +126,13 @@ namespace Jde::Opc::Gateway{
 		ul _{ _mutex };
 		auto p = _nodes.find( index );
 		return p==_nodes.end() ? nullopt : p->second.Id;
+	}
+	α HistGroupHost::HistMembers()Ι->vector<HistMember>{
+		ul _{ _mutex };
+		auto y = Reserve<HistMember>( _nodes.size() );
+		for( let& [index, node] : _nodes )
+			y.push_back( {index, node.Ex, node.Thresholds, node.Attributes} );
+		return y;
 	}
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		ul _{ _mutex };
@@ -606,6 +614,11 @@ namespace Jde::Opc::Gateway{
 							e.Log();
 						}
 					}
+				}
+				//The endpoint serves what the host now carries, the row's write aside (spec *Address space*).
+				if( auto server = rows.size() ? GatewayServer::Instance() : nullptr; server ){
+					for( let& [pk, attributes] : rows )
+						server->NodeDescribed( _id, pk, attributes );
 				}
 				//Each changed row's columns, written directly - the QL never does - so a restart serves them before any source is up.  A
 				//write that fails leaves the row its last answer, and the node Unwritten, which the next describe writes again.

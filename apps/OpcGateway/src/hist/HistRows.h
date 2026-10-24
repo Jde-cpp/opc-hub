@@ -57,7 +57,7 @@ namespace Jde::Opc::Gateway{
 
 	//A template member's path, hist_template_nodes.path:  `[{"nsu":"urn:…","name":"Motor"},…]`, each segment a browse name by
 	//its namespace URI, never an index, so one template applies across servers whose namespace tables differ.
-	struct HistPathSegment final{ string Uri; string Name; };
+	struct HistPathSegment final{ string Uri; string Name; α operator==( const HistPathSegment& )Ι->bool=default; };
 	α ParseHistPath( sv json, SL sl )ε->vector<HistPathSegment>;//throws for an empty path or a segment without both, as a BadRequest.
 	α HistPathText( const vector<HistPathSegment>& path )ι->string;
 	//A browse name as a segment:  none without both - no URI for its index, an empty one, or an empty name - which ParseHistPath
