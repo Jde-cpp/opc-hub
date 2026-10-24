@@ -10,6 +10,7 @@
 #include "../async/TranslateBrowsePathsAwait.h"
 #include "../async/ValueTypesAwait.h"
 #include "../async/Subscriptions.h"
+#include "HistHost.h"
 #include "../uatypes/Browse.h"
 #include "../UAClient.h"
 
@@ -44,6 +45,8 @@ namespace Jde::Opc::Gateway{
 			ul _{ _mutex };
 			_nodes.insert_or_assign( row.Id, Node{ .Ex=row.Node, .Thresholds=thresholds, .Attributes=row.Attributes } );
 		}
+		if( auto listener = HistHost::Instance().Listener(); listener )
+			listener->NodeJoined( *this, {row.Id, row.Node, thresholds, row.Attributes} );
 		INFO( "[{}]Node {} '{}' joined.", _guid, row.Id, row.Node.ToString() );
 		Subscribe();
 	}
@@ -59,12 +62,21 @@ namespace Jde::Opc::Gateway{
 			}
 		}
 		_group->Remove( index, move(by), sl );
+		if( auto listener = HistHost::Instance().Listener(); listener )
+			listener->NodeLeft( _id, index );
 		INFO( "[{}]Node {} left.", _guid, index );
 		if( id )
 			Unsubscribe( {*id} );
 	}
 	α HistGroupHost::SetNodeThresholds( vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> nodes, SL sl )ε->void{
 		flat_map<NodeId,MonitoringParameters> modify;
+		vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> set;//the members' the library has now, for the listener.
+		let finish = [&]{
+			if( modify.size() )
+				Modifying( move(modify) );
+			if( auto listener = set.size() ? HistHost::Instance().Listener() : nullptr; listener )
+				listener->ThresholdsChanged( _id, move(set) );
+		};
 		try{
 			for( auto& [index,thresholds] : nodes ){
 				ul _{ _mutex };//over the group's call, so a Describe can't give the group a range over the thresholds this replaces.
@@ -73,6 +85,7 @@ namespace Jde::Opc::Gateway{
 				if( p==_nodes.end() )
 					continue;
 				auto& node = p->second;
+				set.emplace_back( index, thresholds );
 				let parameters = Parameters( thresholds );
 				let changed = parameters!=Parameters( node.Thresholds );//a deviation, or Stepped, or MaxTimeInterval:  the item has nothing to change.
 				node.Thresholds = move( thresholds );
@@ -82,13 +95,11 @@ namespace Jde::Opc::Gateway{
 					node.Stale = true;
 			}
 		}
-		catch( const runtime_error& ){//the nodes before it are the library's already, so their items follow.
-			if( modify.size() )
-				Modifying( move(modify) );
+		catch( const runtime_error& ){//the nodes before it are the library's already, so their items and the endpoint follow.
+			finish();
 			throw;
 		}
-		if( modify.size() )
-			Modifying( move(modify) );
+		finish();
 	}
 	α HistGroupHost::FindThresholds( HistGroupNodePK index )Ι->optional<Opc::Hist::Thresholds>{
 		ul _{ _mutex };
@@ -126,6 +137,14 @@ namespace Jde::Opc::Gateway{
 		auto p = _nodes.find( index );
 		return p==_nodes.end() ? nullopt : p->second.Id;
 	}
+	α HistGroupHost::HistMembers()Ι->vector<HistMember>{
+		ul _{ _mutex };
+		auto y = Reserve<HistMember>( _nodes.size() );
+		for( let& [index, node] : _nodes )
+			y.push_back( {index, node.Ex, node.Thresholds, node.Attributes} );
+		return y;
+	}
+	α HistGroupHost::NamespaceUris()Ι->vector<string>{ ul _{ _mutex }; return _namespaces.Uris; }
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		ul _{ _mutex };
 		auto y = Reserve<std::pair<HistGroupNodePK,ExNodeId>>( _nodes.size() );
@@ -156,9 +175,11 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistGroupHost::Close()ι->void{
 		Opc::Hist::IClock::TimerId retry, watch;
+		sp<IHistListener> listener;//released off the lock.
 		{
 			ul _{ _mutex };
 			_closed = true;
+			listener = move( _listener );
 			retry = std::exchange( _retry, 0 );
 			watch = std::exchange( _watch, 0 );
 			_verifying = false;
@@ -217,6 +238,8 @@ namespace Jde::Opc::Gateway{
 					_held.clear();
 				}
 				_namespaces = namespaces;
+				if( _listener )
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
 				for( auto&& [index,node] : _nodes ){
 					if( node.Subscribed || _closed )
 						continue;
@@ -323,7 +346,7 @@ namespace Jde::Opc::Gateway{
 				if( _verifying )
 					_held.emplace_back( pk, move(value) );
 				else
-					_group->Enqueue( pk, value );
+					Deliver( pk, value );
 			}
 		}
 		catch( const runtime_error& e ){
@@ -451,9 +474,10 @@ namespace Jde::Opc::Gateway{
 						continue;
 					LOG( level, _tags, "[{}]Could not read the attributes of {} nodes on '{}' - each row keeps what it had:  {}", _guid, ids.size(), _slug, e.what() );
 				}
-				//The path from the Objects folder (ParentPathsAwait), as a node page's, each segment by its namespace URI.  A node outside that
-				//tree - a type, a view - has no path, as has one deeper than ParentPathsAwait::MaxDepth and one with a browse name on the way
-				//that makes no segment (ToHistPathSegment).  A parent the server refused is lost:  the row keeps its path, and the watch asks
+				//The path from the Objects folder (ParentPathsAwait), as a node page's, each segment by its namespace URI, each parent's with its
+				//node's id, which the endpoint's folder for it takes (servers spec *Namespaces*).  A node outside that tree - a type, a view - has
+				//no path, as has one deeper than ParentPathsAwait::MaxDepth and one with a browse name or an id on the way that makes no segment
+				//(ToHistPathSegment).  A parent the server refused is lost:  the row keeps its path, and the watch asks
 				//again.
 				try{
 					vector<NodeId> walked; vector<uint> slots;
@@ -476,11 +500,14 @@ namespace Jde::Opc::Gateway{
 						if( !found[k].Parents )
 							continue;
 						vector<HistPathSegment> path;
-						for( let& parent : *found[k].Parents ){
-							if( auto segment = ToHistPathSegment(namespaces.Uri(parent.Ns), parent.Name); segment )
-								path.push_back( move(*segment) );
-							else
+						for( uint j=0; j<found[k].Parents->size(); ++j ){
+							let& parent = (*found[k].Parents)[j];
+							auto segment = ToHistPathSegment( namespaces.Uri(parent.Ns), parent.Name );
+							if( segment )
+								segment->Id = namespaces.ToExNodeId( found[k].Ids[j] );
+							if( !segment || !segment->Id )
 								break;
+							path.push_back( move(*segment) );
 						}
 						if( path.size()==found[k].Parents->size() ){
 							path.push_back( move(*own[i]) );
@@ -607,6 +634,11 @@ namespace Jde::Opc::Gateway{
 						}
 					}
 				}
+				//The endpoint serves what the host now carries, the row's write aside (spec *Address space*).
+				if( auto listener = rows.size() ? HistHost::Instance().Listener() : nullptr; listener ){
+					for( let& [pk, attributes] : rows )
+						listener->NodeDescribed( _id, pk, attributes );
+				}
 				//Each changed row's columns, written directly - the QL never does - so a restart serves them before any source is up.  A
 				//write that fails leaves the row its last answer, and the node Unwritten, which the next describe writes again.
 				flat_set<HistGroupNodePK> unwritten;
@@ -662,6 +694,15 @@ namespace Jde::Opc::Gateway{
 		UAClient::UnsubscribePending( _slug, self, nodes );
 	}
 
+	α HistGroupHost::Deliver( HistGroupNodePK index, const Value& value )ι->void{
+		_group->Enqueue( index, value );
+		if( _listener )
+			_listener->ValueChanged( _id, index, value );
+	}
+	α HistGroupHost::Listen( sp<IHistListener> listener )ι->void{
+		ul _{ _mutex };
+		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
+	}
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );
@@ -671,7 +712,7 @@ namespace Jde::Opc::Gateway{
 		if( _verifying )
 			_held.emplace_back( pk, value );
 		else
-			_group->Enqueue( pk, value );
+			Deliver( pk, value );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();
@@ -680,10 +721,15 @@ namespace Jde::Opc::Gateway{
 		++_epoch;//a check still out decides nothing:  this break stands.
 		if( std::exchange(_verifying, false) )//from the items this break took, before their namespaces were checked:  inside its gap.
 			_held.clear();
+		vector<HistGroupNodePK> lost;
 		for( let& id : nodes ){
-			if( let n = FindNode(id).second; n && !n->Lost )
+			if( let [pk, n] = FindNode(id); n && !n->Lost ){
 				n->Lost = now;
+				lost.push_back( pk );
+			}
 		}
+		if( _listener && lost.size() )
+			_listener->NodesLost( _id, lost );
 	}
 	α HistGroupHost::ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void{
 		uint epoch;
@@ -718,8 +764,11 @@ namespace Jde::Opc::Gateway{
 				co_return;
 			_verifying = false;
 			moved = !read || Moved( *read );
-			if( read )
+			if( read ){
 				_namespaces = move( *read );
+				if( _listener )//before the held values, which came under it.
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
+			}
 			_group->Connected();
 			if( moved ){
 				_held.clear();
@@ -727,7 +776,7 @@ namespace Jde::Opc::Gateway{
 			}
 			else{
 				for( let& [index,value] : _held )
-					_group->Enqueue( index, value );
+					Deliver( index, value );
 				_held.clear();
 			}
 		}
@@ -770,6 +819,7 @@ namespace Jde::Opc::Gateway{
 		}
 		let handles = monitored && live.size() ? monitored->Handles( live ) : flat_map<NodeId,MonitorHandle>{};
 		flat_set<NodeId> abandoned;
+		vector<HistGroupNodePK> lost;
 		{
 			ul _{ _mutex };
 			if( _closed )
@@ -777,11 +827,13 @@ namespace Jde::Opc::Gateway{
 			//Gone without a ConnectionLost:  a client removed while it was up.  The connection's whole, so the group's break.
 			if( !client && live.size() )
 				_group->Disconnected( now );
-			for( auto&& [_,node] : _nodes ){
+			for( auto&& [index,node] : _nodes ){
 				if( !node.Subscribed )
 					continue;
-				if( !node.Lost && live.contains(*node.Id) && !handles.contains(*node.Id) )
+				if( !node.Lost && live.contains(*node.Id) && !handles.contains(*node.Id) ){
 					node.Lost = now;
+					lost.push_back( index );
+				}
 				if( node.Lost && now-*node.Lost>=AbandonAfter ){
 					abandoned.emplace( *node.Id );
 					_byNode.erase( *node.Id );
@@ -790,6 +842,8 @@ namespace Jde::Opc::Gateway{
 					node.Id.reset();//resolved again by URI.
 				}
 			}
+			if( _listener && lost.size() )
+				_listener->NodesLost( _id, lost );
 			Watch();
 		}
 		if( abandoned.size() ){

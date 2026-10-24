@@ -40,6 +40,8 @@ namespace Jde::Crypto{
 				{ std::lock_guard _{ _missingMutex }; _missingDirs.erase( {_noun, dir} ); }
 				for( let& entry : fs::directory_iterator(dir) ){
 					let& path = entry.path();
+					if( std::error_code ec; entry.is_directory(ec) )//not scanned, and no file passed over:  the gateway endpoint's clients/ and rejected/ sit in its ssl/servers.
+						continue;
 					if( !IsCertificateFile(path) ){//install-issues #33:  a UA peer publishes DER, and skipping it in silence made a copied-in certificate do nothing.
 						++_skipped;
 						let level = FirstSkip( path ) ? ELogLevel::Warning : ELogLevel::Debug;//once per file, then quiet (m2-closing #11).

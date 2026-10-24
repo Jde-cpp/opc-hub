@@ -29,6 +29,20 @@ namespace Jde::Opc::Gateway{
 	//subjectAltName URI:  empty when it carries none, nullopt when the file could not be read.
 	α RefusedCertificateDetail( StatusCode sc, sv url, const fs::path& certificate, const optional<string>& sanUri, sv advertisedUri )ι->string;
 
+	//How a slug's live clients changed, for the endpoint's `_Connection` object (server/GatewayServer.h, spec *Address space*):
+	//Activated, a client's session came up, a new client's or one open62541 re-activated in place;  Lost, one's session went with
+	//its connection, the client reconnecting in place or deregistered to be rebuilt;  Removed, one was closed or idled out;  Failed,
+	//a connect failed with `Error`.  `Down`, no client of the slug had its session up just after the change:  a Lost with it is an
+	//outage, and the next Activated ends it.  Whether the slug is connected is UAClient::HasSession's, asked when the change is
+	//applied:  a later change has overtaken the one in hand by then.  Delivered off the registry's lock, on the strand or io thread
+	//that made the change, so a listener posts what it does with it and never calls back into a client.
+	struct ConnectionChange final{
+		enum class EKind : uint8{ Activated, Lost, Removed, Failed };
+		ServerCnnctnNK Slug;
+		EKind Kind;
+		bool Down;
+		string Error;
+	};
 	struct UAClient final : std::enable_shared_from_this<UAClient>{
 		UAClient( ServerCnnctn&& opcServer, Credential cred )ε;
 		UAClient( str address, Credential cred )ε;
@@ -36,6 +50,7 @@ namespace Jde::Opc::Gateway{
 
 		operator UA_Client* ()ι{ return _ptr; }
 		Ω Shutdown( bool terminate=false, SRCE )ι->VoidAwait::Task;
+		Ω SetConnectionListener( function<void(const ConnectionChange&)> listener )ι->void;//one at a time;  null clears it.
 		Ω ShutdownIdle( sp<UAClient> client )ι->VoidAwait::Task;//TTL expiry - tears down only this client (per-client _lastRequest).
 		Ω GetClient( string id, Credential cred, SRCE )ι{ return ConnectAwait{move(id), move(cred), sl}; }
 		Ω Find( str id, const Gateway::Credential& cred )ι->sp<UAClient>;
@@ -43,9 +58,11 @@ namespace Jde::Opc::Gateway{
 		//reconnect (_pending/_rebuilds):  they are on no client, so the monitored count alone reads 0 for a server that is down.
 		Ω StatusCounts()ι->tuple<uint,uint,uint>;
 		Ω ConnectionCounts()ι->flat_map<ServerCnnctnNK,uint32>;
+		Ω HasSession( const ServerCnnctnNK& slug )ι->bool;//a registered client of the slug has its session activated.
 		//The reason the last connect attempt failed, per slug - cleared when one succeeds.  A slug with no live client and no
 		//entry here was never attempted (or was drained when idle), which is what separates `Idle` from `Error` in serverConnections{connectionStatus}.
 		Ω ConnectErrors()ι->flat_map<ServerCnnctnNK,string>;
+		Ω LastFailures()ι->flat_map<ServerCnnctnNK,string>;//per slug, "<status> - <detail>" of its last failed connect, a later success or not.
 		Ω Find( UA_Client* ua, SRCE )ε->sp<UAClient>;
 		Ω TryFind( UA_Client* ua, SRCE )ι->sp<UAClient>;
 		Ω RemoveClient( sp<UAClient>&& client )ι->bool;//forget the client:  it stops, and what it was monitoring ends with it.
@@ -191,6 +208,9 @@ namespace Jde::Opc::Gateway{
 		UA_ClientConfig _config{};
 		Gateway::Credential _credential;
 		std::atomic<bool> _connected{};
+		//Its session is activated:  set on each activation, cleared when a registered client's leaves it and open62541 reconnects it in
+		//place (StateCallback).  HasSession's alone - _connected keeps the meaning the rebuild and the request paths read.
+		std::atomic<bool> _sessionUp{};
 		std::atomic<bool> _discarded{};
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.

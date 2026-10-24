@@ -831,12 +831,29 @@ namespace Jde::Opc::Gateway::Tests{
 	constexpr sv Ns0Uri{ "http://opcfoundation.org/UA/" };
 	//A node of namespace 0, as a column spells it.
 	Ω ns0( UA_UInt32 i )ι->string{ return serialize( jobject{{"nsu", Ns0Uri}, {"i", i}} ); }
-	//A path's text, each segment's name in `uri`.
-	Ω pathText( sv uri, std::initializer_list<sv> names )ι->string{
+	//A path's text as Describe writes it, each segment's name in `uri`, each parent's with its node's id there.
+	Ω pathText( sv uri, std::initializer_list<std::pair<sv,UA_UInt32>> parents, sv name )ι->string{
 		vector<HistPathSegment> y;
-		for( let name : names )
-			y.push_back( {string{uri}, string{name}} );
+		for( let& [parent, id] : parents ){
+			ExNodeId node{ id };
+			node.namespaceUri = AllocUAString( uri );
+			y.push_back( {string{uri}, string{parent}, move(node)} );
+		}
+		y.push_back( {string{uri}, string{name}} );
 		return HistPathText( y );
+	}
+	//A served path's parents carry their node's id (servers spec *Namespaces*):  spelled without its URI where the browse name's is the
+	//same, and read back with it;  another URI is kept.
+	TEST( HistPathTests, AParentsIdRoundTrips ){
+		ExNodeId same{ Pump1 }; same.namespaceUri = AllocUAString( PumpsUri );
+		ExNodeId other{ UA_NS0ID_SERVER }; other.namespaceUri = AllocUAString( Ns0Uri );
+		const vector<HistPathSegment> path{ {string{PumpsUri}, "pump1", same}, {string{PumpsUri}, "server", other}, {string{PumpsUri}, "motorRpm"} };
+		let text = HistPathText( path );
+		let segments = Json::ParseValue( text ).as_array();
+		EXPECT_FALSE( segments[0].as_object().at("id").as_object().contains("nsu") ) << text;
+		EXPECT_EQ( Json::FindSV(segments[1].as_object().at("id").as_object(), "nsu"), Ns0Uri ) << text;
+		EXPECT_FALSE( segments[2].as_object().contains("id") ) << text;
+		EXPECT_EQ( ParseHistPath(text, SRCE_CUR), path ) << text;
 	}
 	//Servers 0.2 (#379):  what the server says of each member - the attributes a served variable carries, its EURange and
 	//EngineeringUnits properties, the DataType served and its browse path from the Objects folder - lands on its hist_group_nodes row
@@ -882,20 +899,20 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsNumber<double>(range, "low"), 0 );
 		EXPECT_EQ( Json::AsNumber<double>(range, "high"), 3000 ) << "pump3's EURange, not its InstrumentRange";
 		EXPECT_TRUE( r3.at("engineeringUnits").is_null() ) << "the nodeset gives none";
-		EXPECT_EQ( Json::AsSV(r3, "path"), pathText(PumpsUri, {"pump3", "motorRpm"}) ) << "from Objects, not from the group's root";
+		EXPECT_EQ( Json::AsSV(r3, "path"), pathText(PumpsUri, {{"pump3", Pump3}}, "motorRpm") ) << "from Objects, not from the group's root";
 		let& s3 = described.at( Id(*status3) );
 		EXPECT_EQ( Json::AsSV(s3, "displayName"), "status" );
 		EXPECT_EQ( Json::AsSV(s3, "dataType"), ns0(UA_NS0ID_BOOLEAN) );
 		EXPECT_TRUE( s3.at("euRange").is_null() );
-		EXPECT_EQ( Json::AsSV(s3, "path"), pathText(PumpsUri, {"pump3", "status"}) );
+		EXPECT_EQ( Json::AsSV(s3, "path"), pathText(PumpsUri, {{"pump3", Pump3}}, "status") );
 		let& r1 = described.at( rpm1 );
 		EXPECT_EQ( Json::AsSV(r1, "description"), "Measured motor speed, rpm." );
-		EXPECT_EQ( Json::AsSV(r1, "path"), pathText(PumpsUri, {"pump1", "motorRpm"}) );
+		EXPECT_EQ( Json::AsSV(r1, "path"), pathText(PumpsUri, {{"pump1", Pump1}}, "motorRpm") );
 		let& st = described.at( state );
 		EXPECT_EQ( Json::AsSV(st, "displayName"), "State" );
 		EXPECT_EQ( Json::AsSV(st, "dataType"), ns0(UA_NS0ID_SERVERSTATE) ) << "an enumeration of namespace 0 is served as the source's type";
 		EXPECT_EQ( number(st, "accessLevel"), 1 ) << "CurrentRead";
-		EXPECT_EQ( Json::AsSV(st, "path"), pathText(Ns0Uri, {"Server", "ServerStatus", "State"}) );
+		EXPECT_EQ( Json::AsSV(st, "path"), pathText(Ns0Uri, {{"Server", UA_NS0ID_SERVER}, {"ServerStatus", UA_NS0ID_SERVER_SERVERSTATUS}}, "State") );
 		//The host carries what it wrote, for the mirror.
 		let attributes = host->Attributes( Id(*rpm3) );
 		ASSERT_TRUE( attributes );
@@ -903,7 +920,7 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( attributes->DataType && attributes->EURange && attributes->Path );
 		EXPECT_EQ( HistNodeText(*attributes->DataType), ns0(UA_NS0ID_DOUBLE) );
 		EXPECT_EQ( attributes->EURange->High, 3000 );
-		EXPECT_EQ( HistPathText(*attributes->Path), pathText(PumpsUri, {"pump3", "motorRpm"}) );
+		EXPECT_EQ( HistPathText(*attributes->Path), pathText(PumpsUri, {{"pump3", Pump3}}, "motorRpm") );
 		//The server's word, not a caller's:  a create or an update naming a column is refused, as the QL refuses any column its meta
 		//marks neither insertable nor updateable.
 		for( let ql : {"updateHistGroupNode( id:$id, displayName:\"x\" )", "updateHistGroupNode( id:$id, path:\"[]\" )"} ){
@@ -979,7 +996,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( Json::AsSV(row, "displayName"), "motorRpm" );
 		EXPECT_EQ( Json::AsSV(row, "dataType"), ns0(UA_NS0ID_DOUBLE) );
 		EXPECT_EQ( Json::AsSV(row, "arrayDimensions"), "[4,2]" );
-		EXPECT_EQ( Json::AsSV(row, "path"), pathText(PumpsUri, {"pump3", "motorRpm"}) );
+		EXPECT_EQ( Json::AsSV(row, "path"), HistPathText(*written.Path) );
 		EXPECT_EQ( Json::AsNumber<int>(Json::Parse(Json::AsString(row, "engineeringUnits"), SRCE_CUR), "unitId"), 4404 );
 	}
 	//A source's unknown range, {NaN, NaN}, reads back as written, in Part 6's spelling;  and a cell that doesn't parse is none,
@@ -1069,9 +1086,9 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup restore = [&]{ std::tie( config.maxNodesPerRead, config.maxNodesPerBrowse, config.maxNodesPerTranslateBrowsePathsToNodeIds ) = limits; };
 		let groupId = Id( CreateGroup("limited", nullopt, nullopt) );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
-		vector<std::tuple<uint32,sv,sv>> expected;//row, pump, browse name.
-		for( let [node, pump, name] : {std::tuple{Status1, "pump1", "status"}, std::tuple{Rpm1, "pump1", "motorRpm"}, std::tuple{Status2, "pump2", "status"}, std::tuple{Rpm2, "pump2", "motorRpm"}, std::tuple{Status3, "pump3", "status"}, std::tuple{Rpm3, "pump3", "motorRpm"}} )
-			expected.emplace_back( AddNode(groupId, node), pump, name );
+		vector<std::tuple<uint32,sv,UA_UInt32,sv>> expected;//row, pump, its id, browse name.
+		for( let [node, pump, pumpId, name] : {std::tuple{Status1, "pump1", Pump1, "status"}, std::tuple{Rpm1, "pump1", Pump1, "motorRpm"}, std::tuple{Status2, "pump2", Pump2, "status"}, std::tuple{Rpm2, "pump2", Pump2, "motorRpm"}, std::tuple{Status3, "pump3", Pump3, "status"}, std::tuple{Rpm3, "pump3", Pump3, "motorRpm"}} )
+			expected.emplace_back( AddNode(groupId, node), pump, pumpId, name );
 		auto host = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( host );
 		ASSERT_NO_THROW( WaitSubscribed(host, 6) );
@@ -1084,10 +1101,10 @@ namespace Jde::Opc::Gateway::Tests{
 		flat_map<uint32,jobject> byId;
 		for( let& r : rows )
 			byId.emplace( Id(r), r.as_object() );
-		for( let& [id, pump, name] : expected ){
+		for( let& [id, pump, pumpId, name] : expected ){
 			let row = byId.find( id );
 			ASSERT_NE( row, byId.end() ) << id;
-			EXPECT_EQ( Json::AsSV(row->second, "path"), pathText(PumpsUri, {pump, name}) ) << id;
+			EXPECT_EQ( Json::AsSV(row->second, "path"), pathText(PumpsUri, {{pump, pumpId}}, name) ) << id;
 		}
 		EXPECT_FALSE( byId.at(std::get<0>(expected.back())).at("euRange").is_null() ) << "pump3's motorRpm:  the ranges were read under the limits too";
 	}

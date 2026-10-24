@@ -9,9 +9,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/notification.h>
 #include <open62541/client.h>
-#include <open62541/client_config_default.h>
 #include <open62541/client_highlevel.h>
-#include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/AnyAwait.h>
@@ -20,6 +18,7 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include <jde/opc/UAException.h>
+#include <jde/opc/tests/UATestClient.h>
 #include <jde/opc/uatypes/BrowsePath.h>
 #include <jde/opc/uatypes/DateTime.h>
 #include <jde/opc/uatypes/Value.h>
@@ -32,6 +31,7 @@
 
 namespace Jde::Opc::Server::Tests{
 	using namespace std::chrono;
+	using Opc::Tests::UATestClient;
 	using Pages = vector<vector<Value>>;
 	namespace{
 		Ω doubles( const vector<Value>& values )ι->vector<double>{
@@ -189,36 +189,11 @@ namespace Jde::Opc::Server::Tests{
 		//A session of this program's own user:  its session with the AppServer as an issued token, which the server takes
 		//under an encrypting token policy, so the client carries the policies, with the server's own certificate for one.
 		Ω Connect()ε->void{
-			UA_ClientConfig config{};
 			const Crypto::CryptoSettings ssl{ *Settings::FindObject("/opcServer/ssl") };
-			auto certificate = ToUAByteString( Crypto::ReadCertificate(ssl.Certificate.Path) );
-			auto pem = ToUAByteString( Crypto::ReadPrivateKey(ssl.PrivateKey) );
-			UA_ByteString key = UA_BYTESTRING_NULL;
-			UAε( UA_CertificateUtils_decryptPrivateKey(*pem, UA_BYTESTRING_NULL, &key) );
-			let configured = UA_ClientConfig_setDefaultEncryption( &config, *certificate, key, nullptr, 0, nullptr, 0 );
-			UA_ByteString_clear( &key );
-			UAε( configured );
-			config.certificateVerification.clear( &config.certificateVerification );
-			UA_CertificateGroup_AcceptAll( &config.certificateVerification );
-			config.securityMode = UA_MESSAGESECURITYMODE_NONE;
-			UA_String_clear( &config.securityPolicyUri );
-			UA_String_copy( &UA_SECURITY_POLICY_NONE_URI, &config.securityPolicyUri );
-			UA_String_clear( &config.clientDescription.applicationUri );
-			config.clientDescription.applicationUri = UA_STRING_ALLOC( ssl.Certificate.SanUri().c_str() );
-			auto token = UA_IssuedIdentityToken_new();
-			token->tokenData = UA_BYTESTRING_ALLOC( Ƒ("{:x}", AppClient()->SessionId()).c_str() );
-			UA_ExtensionObject_clear( &config.userIdentityToken );
-			UA_ExtensionObject_setValue( &config.userIdentityToken, token, &UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] );
-			_client = UA_Client_newWithConfig( &config );
-			THROW_IF( !_client, "UA_Client_newWithConfig failed." );
-			UAε( UA_Client_connect(_client, Ƒ("opc.tcp://127.0.0.1:{}", Settings::FindNumber<PortType>("/opcServer/port").value_or(4940)).c_str()) );
+			_client = mu<UATestClient>( Ƒ("opc.tcp://127.0.0.1:{}", Settings::FindNumber<PortType>("/opcServer/port").value_or(4940)), ssl, UATestClient::Issued(Ƒ("{:x}", AppClient()->SessionId())) );
+			_client->ConnectOrThrow();
 		}
-		Ω Disconnect()ι->void{
-			if( auto client = std::exchange(_client, nullptr) ){
-				UA_Client_disconnect( client );
-				UA_Client_delete( client );
-			}
-		}
+		Ω Disconnect()ι->void{ _client.reset(); }
 
 		Ω Node( UA_UInt32 id )ι->NodeId{ return NodeId{ _ns, id }; }
 		Ω History()ι->UAHistory&{ return GetUAServer().History(); }
@@ -262,7 +237,7 @@ namespace Jde::Opc::Server::Tests{
 				return y.Values.size()<y.MaxPages;
 			};
 			let ticks = []( optional<TimePoint> t ){ return t ? UADateTime{ *t }.UA() : UA_DateTime{}; };
-			let sc = UA_Client_HistoryRead_raw( _client, &node, onPage, ticks(request.Start), ticks(request.End), UA_STRING_NULL, request.Bounds, request.Limit, request.Timestamps, &context );
+			let sc = UA_Client_HistoryRead_raw( *_client, &node, onPage, ticks(request.Start), ticks(request.End), UA_STRING_NULL, request.Bounds, request.Limit, request.Timestamps, &context );
 			return { sc, move(context.Values) };
 		}
 		Ω Read( UA_UInt32 id, Request request )ι->Reading{ return Read( Node(id), move(request) ); }
@@ -282,7 +257,7 @@ namespace Jde::Opc::Server::Tests{
 				return true;
 			};
 			let ticks = []( optional<TimePoint> t ){ return t ? UADateTime{ *t }.UA() : UA_DateTime{}; };
-			y.Status = UA_Client_HistoryRead_modified( _client, &node, onPage, ticks(request.Start), ticks(request.End), UA_STRING_NULL, request.Bounds, request.Limit, request.Timestamps, &y );
+			y.Status = UA_Client_HistoryRead_modified( *_client, &node, onPage, ticks(request.Start), ticks(request.End), UA_STRING_NULL, request.Bounds, request.Limit, request.Timestamps, &y );
 			return y;
 		}
 		//A value as a HistoryUpdate carries it, keyed by its SourceTimestamp.
@@ -296,10 +271,10 @@ namespace Jde::Opc::Server::Tests{
 		}
 		//open62541's client helpers:  the one value's result, or the entry's status when that isn't Good - and Bad_UnexpectedError
 		//for an entry refused whole, which carries no value results, so those go through HistoryUpdate below.
-		Ω Insert( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_insert( _client, &node, &v ); }
-		Ω Replace( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_replace( _client, &node, &v ); }
-		Ω Update( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_update( _client, &node, &v ); }
-		Ω DeleteRaw( UA_UInt32 id, TimePoint start, TimePoint end )ι->UA_StatusCode{ let node = Node( id ); return UA_Client_HistoryUpdate_deleteRaw( _client, &node, UADateTime{start}.UA(), UADateTime{end}.UA() ); }
+		Ω Insert( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_insert( *_client, &node, &v ); }
+		Ω Replace( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_replace( *_client, &node, &v ); }
+		Ω Update( UA_UInt32 id, double value, TimePoint source )ι->UA_StatusCode{ auto v = Sample( value, source ); let node = Node( id ); return UA_Client_HistoryUpdate_update( *_client, &node, &v ); }
+		Ω DeleteRaw( UA_UInt32 id, TimePoint start, TimePoint end )ι->UA_StatusCode{ let node = Node( id ); return UA_Client_HistoryUpdate_deleteRaw( *_client, &node, UADateTime{start}.UA(), UADateTime{end}.UA() ); }
 		//A HistoryUpdate of one entry the helpers don't send:  its result's status, and each value's.
 		struct Updated final{ UA_StatusCode Status; vector<UA_StatusCode> Results; };
 		Ω HistoryUpdate( void* details, uint type )ι->Updated{
@@ -310,7 +285,7 @@ namespace Jde::Opc::Server::Tests{
 			entry.content.decoded.data = details;
 			request.historyUpdateDetailsSize = 1;
 			request.historyUpdateDetails = &entry;
-			auto response = UA_Client_Service_historyUpdate( _client, request );
+			auto response = UA_Client_Service_historyUpdate( *_client, request );
 			Updated y{ response.responseHeader.serviceResult, {} };
 			if( !y.Status && response.resultsSize==1 ){
 				y.Status = response.results[0].statusCode;
@@ -397,7 +372,7 @@ namespace Jde::Opc::Server::Tests{
 			request.timestampsToReturn = timestamps;
 			request.nodesToReadSize = ids.size();
 			request.nodesToRead = ids.data();
-			return UA_Client_Service_historyRead( _client, request );
+			return UA_Client_Service_historyRead( *_client, request );
 		}
 		//A HistoryRead of one node's service result, and how many results came with it.
 		Ω Service( void* details, uint type, const NodeId& node, UA_TimestampsToReturn timestamps )ι->std::pair<UA_StatusCode,size_t>{
@@ -520,7 +495,7 @@ namespace Jde::Opc::Server::Tests{
 		//Seconds into the minute before the server started:  before the value each node took at its start, and, unless the
 		//run crosses midnight, on its day.
 		Ω At( uint second )ι->TimePoint{ return _base+seconds{ second }; }
-		static inline UA_Client* _client{};
+		static inline up<UATestClient> _client;
 		static inline NsIndex _ns{};
 		static inline TimePoint _base{};
 		constexpr static UA_UInt32 Status1{ 6011 }, Rpm1{ 6012 }, Status2{ 6021 }, Rpm2{ 6022 }, Rpm3{ 6032 }, Rpm4{ 6042 }, RpmManual{ 6054 };
@@ -869,11 +844,11 @@ namespace Jde::Opc::Server::Tests{
 			UA_Variant_setScalarCopy( &v, &one, &UA_TYPES[UA_TYPES_DOUBLE] );
 			Value unstamped{ move(v) };
 			let node = Node( Rpm4 );
-			EXPECT_EQ( UA_Client_HistoryUpdate_insert(_client, &node, &unstamped), UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT );
+			EXPECT_EQ( UA_Client_HistoryUpdate_insert(*_client, &node, &unstamped), UA_STATUSCODE_BADINVALIDTIMESTAMPARGUMENT );
 		}
 		let node = Node( Rpm4 );
-		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, 0, UADateTime{At(10)}.UA()), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );//not from 1601.
-		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, UADateTime{At(0)}.UA(), 0), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(*_client, &node, 0, UADateTime{At(10)}.UA()), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );//not from 1601.
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(*_client, &node, UADateTime{At(0)}.UA(), 0), UA_STATUSCODE_BADHISTORYOPERATIONINVALID );
 		UA_DeleteAtTimeDetails atTime; UA_DeleteAtTimeDetails_init( &atTime );
 		atTime.nodeId = node;
 		UA_DateTime time{ UADateTime{At(0)}.UA() };
@@ -1120,7 +1095,7 @@ namespace Jde::Opc::Server::Tests{
 		ASSERT_EQ( UA_Server_readAccessLevel(GetUAServer().Ptr(), node, &level), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( level, readOnly );
 		UA_Byte userLevel{};
-		ASSERT_EQ( UA_Client_readUserAccessLevelAttribute(_client, node, &userLevel), UA_STATUSCODE_GOOD );
+		ASSERT_EQ( UA_Client_readUserAccessLevelAttribute(*_client, node, &userLevel), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( userLevel, readOnly );//this program's user holds All on the enforced root.
 		auto v = Sample( 1, At(30) );
 		UA_UpdateDataDetails insert; UA_UpdateDataDetails_init( &insert );
@@ -1129,7 +1104,7 @@ namespace Jde::Opc::Server::Tests{
 		insert.updateValuesSize = 1;
 		insert.updateValues = &v;
 		EXPECT_EQ( HistoryUpdate(&insert, UA_TYPES_UPDATEDATADETAILS).Status, UA_STATUSCODE_BADUSERACCESSDENIED );
-		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(_client, &node, UADateTime{At(0)}.UA(), UADateTime{At(60)}.UA()), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( UA_Client_HistoryUpdate_deleteRaw(*_client, &node, UADateTime{At(0)}.UA(), UADateTime{At(60)}.UA()), UA_STATUSCODE_BADUSERACCESSDENIED );
 		let read = Read( node, {.Start=At(0), .End=Clock::now()} ).Status;
 		EXPECT_TRUE( UA_StatusCode_isGood(read) ) << UA_StatusCode_name( read );
 	}

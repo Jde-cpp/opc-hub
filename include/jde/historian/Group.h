@@ -576,9 +576,10 @@ namespace Jde::Opc::Hist{
 		α Newest( Editing& edit, SL sl )ι->void;//each node's newest record as the edit leaves it.
 		α Failed( vector<up<Editing>>& edits, string why )ι->void;//what the historian's end leaves unwritten.
 		//The clock's flush, which no one waits on, unless one is running:  that one then runs another after.  Each I/O step
-		//of a flush logs against its own line, which a clock-driven one has no caller's to give.
+		//of a flush logs against its own line, which a clock-driven one has no caller's to give.  None for a removed group
+		//that's written:  a timer it armed would only hold its name a while longer.
 		α Request()ι->void;
-		α Waits( bool flush )Ι->bool;//what Request would wait for:  a flush, or one running, and the group not ended.
+		α Waits( bool flush )Ι->bool;//what Request would wait for:  a flush, one running or Close's not yet begun, and the group not ended.
 		//Flushes until no other was asked for meanwhile.  self keeps the group for as long as its writes are out.
 		α Flushing( sp<Group> self )ι->VoidTask;
 		//Arms `delay` and midnight, once the group is shared, and asks for a flush when its start found files that a
@@ -655,6 +656,7 @@ namespace Jde::Opc::Hist{
 		uint _fresh ABSL_GUARDED_BY(_mutex){};//what arrived since a flush last took the buffer, which the flush at 8 KB counts.
 		absl::btree_map<NodeIndex,Lost> _lost ABSL_GUARDED_BY(_mutex);
 		bool _requested ABSL_GUARDED_BY(_mutex){};//a flush for the buffer's size is on its way.
+		bool _pending ABSL_GUARDED_BY(_mutex){};//the flush Close asked for, on the clock and not begun:  a Settled waits for it, and starts it.
 		bool _dropping ABSL_GUARDED_BY(_mutex){};//values were dropped since the last flush that wrote all it took.
 		bool _failing ABSL_GUARDED_BY(_mutex){};//the last flush held records back and wrote none, so only `delay` tries again.
 		//The last flush wrote none, and held records only for an archive rewritten less than `delay` before:  `delay` tries

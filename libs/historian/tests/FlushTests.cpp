@@ -1297,6 +1297,21 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_FALSE( again->Find(Node("Pump1.Speed")) );
 	}
 
+	//Settled waits for the flush a removal's Close asked for even before the clock runs it, and starts it:  a host that waits on
+	//it - the gateway's delete hook - adds a group of the name straight after.  Once that flush has written it all, the clock's
+	//turn flushes nothing, which would hold the name a while longer.
+	TEST_F( GatewayFiles, SettledWaitsForTheFlushCloseAskedFor ){
+		auto group = AddGroup();
+		let name = group->Name();
+		let speed = Join( *group, "Pump1.Speed" );
+		DataChange( *group, speed, 1, Time->Now() );
+		Library->RemoveGroup( name, Admin );
+		EXPECT_TRUE( Settle(*group) );
+		EXPECT_TRUE( fs::exists(File(*group, March7)) ) << "written before the clock ran Close's flush";
+		EXPECT_NO_THROW( Library->AddGroup({.Name=name}) ) << "so the name is free";
+		EXPECT_EQ( Time->Advance(0s), 1 ) << "Close's timer, with nothing left to do";
+	}
+
 	//Until then it holds its files, which a new group of its name would write too.
 	TEST_F( GatewayFiles, RemovedGroupKeepsItsNameUntilWritten ){
 		auto group = AddGroup();

@@ -36,6 +36,13 @@ installed.
   The secure channel uses a certificate the gateway issues per connection (`/gateway/issuedCerts`).  Its SAN is the
   gateway's applicationUri.  Every server's certificate is checked against `/gateway/trustedCertDirs`, unless
   `/gateway/verifyServerCertificate` is off.
+- **The OPC UA endpoint** (`src/server/`, `/gateway/server`, [`docs/servers/spec.md`](../../docs/servers/spec.md)): the
+  gateway as a server, on 4841, over the shared UA server library (`libs/opc/server`).  Its sessions are hub sessions, by
+  certificate, issued token or user name; its address space is a folder per connection, each with a `_Connection` object
+  (`Connected`, `Since`, `Url`, `LastError`, `Reconnects`), and under it every historian group's members at their paths on the
+  source, in a namespace per connection and remote URI, each serving the last value the collector delivered with the source's
+  timestamps, `Bad_NoCommunication` through a connection's loss.  Their history follows ([plan](../../docs/servers/plan.md)).  No
+  block, no endpoint.
 - **GraphQL** (`src/ql/`): `serverConnections`, `opcSessions`, `node` and `nodes` for browse and read, `updateVariable`
   for a write, `search` over a per-connection name index crawled on the first search (`src/NodeIndex.*`), and
   `__type(opc, ns, i)` for a server's enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).

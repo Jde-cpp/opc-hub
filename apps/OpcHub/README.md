@@ -22,6 +22,13 @@ The one port serves:
 - `/opc` - the gateway's REST and OPC socket.
 - `/graphql` - one endpoint over access, app and gateway.
 
+Beside it, the gateway role's own OPC UA endpoint, `opc.tcp://<host>:4841` (`Opc.Gateway.jsonnet` `gateway.server`,
+[`docs/servers/spec.md`](../../docs/servers/spec.md)): a SCADA or a UA client browses what the hub collects, with the hub's
+sessions behind it.  It presents the hub's own certificate, trusts the client certificates under
+`<ProgramData>/Jde-Cpp/OpcHub/ssl/servers/clients`, and writes one it refuses to `ssl/servers/rejected` for you to move
+over.  Its `users` list, the user-name logins, is plain text at rest, as the collector's `hist.credentials` are: put a
+secret through the `$(ENV)` expansion the key passcodes use (`"$(OPERATOR_PASSWORD)"`), set in the service's environment.
+
 ## Run
 
 Stop any split AppServer first.  Both listen on 1967.

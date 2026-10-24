@@ -510,6 +510,54 @@ namespace Jde::Opc::Server::Tests{
 		refused( nullptr, nodeAccess, "appClient" );
 	}
 
+	//servers spec *Limits*:  none:false keeps the None policy, for discovery alone, and offers no endpoint on it - the flag
+	//set, every endpoint secured.  The suite's one server has none:true, so the config is built and never run.
+	TEST( UAConfigTests, NoneOffKeepsThePolicyForDiscoveryAlone ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		auto settings = ReadUASettings();
+		settings.None = false;
+		UAConfig config{ settings, AppClient(), nodeAccess };
+		EXPECT_TRUE( config.securityPolicyNoneDiscoveryOnly );
+		bool nonePolicy{};
+		for( uint i=0; i<config.securityPoliciesSize; ++i )
+			nonePolicy = nonePolicy || UA_String_equal( &config.securityPolicies[i].policyUri, &UA_SECURITY_POLICY_NONE_URI );
+		EXPECT_TRUE( nonePolicy ) << "the policy stays, for GetEndpoints";
+		ASSERT_GT( config.endpointsSize, 0u );
+		for( uint i=0; i<config.endpointsSize; ++i ){
+			EXPECT_FALSE( UA_String_equal(&config.endpoints[i].securityPolicyUri, &UA_SECURITY_POLICY_NONE_URI) );
+			EXPECT_NE( config.endpoints[i].securityMode, UA_MESSAGESECURITYMODE_NONE );
+		}
+		UA_ServerConfig_clear( &config );
+	}
+
+	//reviews-issue/servers-2-endpoint.md #8:  a session per channel, so a maxSessions past open62541's 100 channels raises them
+	//with it;  one under leaves them.
+	TEST( UAConfigTests, MaxSessionsRaisesTheChannelCap ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		let channels = [&]( uint16 maxSessions ){
+			auto settings = ReadUASettings();
+			settings.Limit.MaxSessions = maxSessions;
+			UAConfig config{ settings, AppClient(), nodeAccess };
+			EXPECT_EQ( config.maxSessions, maxSessions );
+			let y = config.maxSecureChannels;
+			UA_ServerConfig_clear( &config );
+			return y;
+		};
+		EXPECT_EQ( channels(250), 250 );
+		EXPECT_EQ( channels(10), 100 ) << "open62541's own, kept";
+	}
+
+	//reviews-issue/servers-2-endpoint.md #4:  the memory stores' rejected lists are capped, where setBasics' 0 left them unbounded.
+	TEST( UAConfigTests, TheRejectedListIsCapped ){
+		let nodeAccess = dynamic_pointer_cast<OpcAuthorize>( GetSchema().Authorizer );
+		ASSERT_TRUE( nodeAccess );
+		UAConfig config{ ReadUASettings(), AppClient(), nodeAccess };
+		EXPECT_EQ( config.maxRejectedListSize, UATrust::MaxRejected );
+		UA_ServerConfig_clear( &config );
+	}
+
 	//install-issues "Noise in a production log":  a trusted dir that is not there - a product not installed, or not started
 	//yet - is one Warning, not one per scan; a failed verify rescans, so it used to repeat for the life of the process.
 	//Later sightings are Debug.  The dir is appended to the real list in a trust of the test's own, so the running server's

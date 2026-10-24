@@ -177,4 +177,19 @@ namespace Jde::Crypto{
 		EXPECT_EQ( logged(ELogLevel::Critical), 0u );
 		fs::remove_all( dir );
 	}
+
+	//reviews-issue/servers-2-endpoint.md #10:  a subdirectory - the gateway endpoint's clients/ and rejected/ in its ssl/servers - is
+	//no file passed over:  no Warning, and Skipped, which SkippedNote reports, does not count it.
+	TEST( TrustDirsTests, ASubdirectoryIsNoSkippedFile ){
+		let dir = fs::temp_directory_path()/"TrustDirsTests-subdirectory";
+		fs::remove_all( dir );
+		fs::create_directories( dir/"clients" );
+		Logging::ClearMemory();
+		TrustDirs trust{ "test anchor", ELogTags::Test, ELogLevel::Warning };
+		trust.Scan( vector<fs::path>{dir}, []( const fs::path&, vector<byte>&& ){} );
+		EXPECT_EQ( trust.Skipped(), 0u );
+		let lines = Logging::Find( [&]( const Logging::Entry& e ){ return e.Message().contains( (dir/"clients").string() ); } );
+		EXPECT_TRUE( lines.empty() ) << lines.front().Message();
+		fs::remove_all( dir );
+	}
 }

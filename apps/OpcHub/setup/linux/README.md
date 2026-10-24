@@ -91,12 +91,12 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
   `movbe`, `abm`, `pclmulqdq`, `aes` in `/proc/cpuinfo`). In a VM, choose a CPU model that passes them through, such
   as `host`. The tarball's `install.sh` makes the same check;
 - creates the `jde-cpp` system account, owner of `/var/lib/Jde-Cpp`;
-- enables and starts `jde-opchub` (port 1967);
+- enables and starts `jde-opchub` (port 1967, and its OPC UA endpoint on opc.tcp 4841);
 - installs the OPC UA server but does not enable it, since the hub can connect to any OPC UA server. To run it:
   `sudo systemctl enable --now jde-opcserver` (opc.tcp 4840, http 1970). It requires the hub, as the Windows service's
   `depend=` does;
-- opens no firewall port (the Windows installer does). With ufw or firewalld on, allow 1967/tcp yourself, and 4840/tcp
-  for the OPC UA server;
+- opens no firewall port (the Windows installer does). With ufw or firewalld on, allow 1967/tcp and 4841/tcp yourself, and
+  4840/tcp for the OPC UA server;
 - the Web UI: the site file is installed, not enabled - `sudo ln -s /etc/jde-cpp/nginx-opchub.conf
   /etc/nginx/sites-enabled/jde-opchub && sudo systemctl reload nginx`, then http://127.0.0.1:8071 - optional: the hub serves the
   site itself at http://<host>:1967/ (`http.site` = `$(ExeDir)/../web`, the package's `/opt/jde-cpp/web`);
@@ -194,7 +194,7 @@ any change by hand), as the `.deb` does with its conffiles.
 | settings mirror | `~/.config/Jde-Cpp/config` - the same tree as `/etc/jde-cpp`; `.dist/` beside it is what the last `install.sh` laid, how a rerun tells your edits from its own copies |
 | data | `~/.config/Jde-Cpp/<Product>` (`$XDG_CONFIG_HOME`) - what `Process::ProgramDataFolder()` returns for a user process |
 | passcode | `~/.config/Jde-Cpp/env` (never overwritten) |
-| addresses | loopback only - the hub on `127.0.0.1:1967`, the server on `127.0.0.1:1970` and `opc.tcp://127.0.0.1:4840` (below) |
+| addresses | loopback only - the hub on `127.0.0.1:1967` and `opc.tcp://127.0.0.1:4841`, the server on `127.0.0.1:1970` and `opc.tcp://127.0.0.1:4840` (below) |
 | units | `~/.config/systemd/user/jde-opchub.service`, `jde-opcserver.service`; `journalctl --user -u jde-opchub` |
 
 The addresses are loopback only because the units run `-include=args/install-user`, whose `listenAddress` binds them.

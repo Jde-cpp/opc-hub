@@ -173,11 +173,12 @@ endfunction()
 #`path`, so it is inert for them.  Extra args in ARGN follow it.
 #app-review3 T9: seconds before ctest kills a test.  Nothing in the suites has a deadline of its own - BlockAwait waits
 #forever - so a lost lock wakeup or a timer that never fires wedges the run, and CI invokes plain `ctest` (linux-ci.yml),
-#where the only backstop is ctest's own 1500s default: 25 minutes of a hung job per suite.  300s is over twenty times
-#the slowest suite on record (Jde.Opc.Tests, ~14s in Testing/Temporary/CTestCostData.txt) and matches the `--timeout`
-#the run-services skill passes.  Raise it for a slow machine with -DJDE_TEST_TIMEOUT=<seconds>.  Note the property wins
-#over `ctest --timeout`, so that flag can no longer lower the bound for these targets - the cache variable is the knob.
-set( JDE_TEST_TIMEOUT 300 CACHE STRING "Seconds before ctest kills one of this repo's test targets" )
+#where the only backstop is ctest's own 1500s default: 25 minutes of a hung job per suite.  450s is half again the
+#slowest suite (Jde.Opc.Tests, ~310s on 2026-10-24 with the endpoint's suites, in Testing/Temporary/CTestCostData.txt);
+#it was 300s until the gateway suite reached that.  Raise it for a slow machine with -DJDE_TEST_TIMEOUT=<seconds>.  Note
+#the property wins over `ctest --timeout`, so that flag can no longer lower the bound for these targets - the cache
+#variable is the knob, and an existing build dir keeps its cached value until a -D or a reconfig.
+set( JDE_TEST_TIMEOUT 450 CACHE STRING "Seconds before ctest kills one of this repo's test targets" )
 
 function( addJdeTest targetName settingsFile )
 	add_test(

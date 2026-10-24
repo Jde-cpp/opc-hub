@@ -13,7 +13,10 @@ namespace Jde::Opc::Hub{
 		α QLServer()Ε->sp<QL::IQL> override;
 		α UserPK()Ι->Jde::UserPK override{ return Jde::UserPK{Jde::UserPK::System}; }//as LocalClient: the hub is the AppServer.
 		α PublicKey()Ι->const Crypto::PublicKey& override;//the AppServer's - the key that signs the JWTs the gateway verifies.
-		α SessionInfoAwait( SessionPK id, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>> override{ return App::IApp::SessionInfoAwait( id, sl ); }//IApp's local answer, not IAppClient's socket round trip.
+		//The session lookup a short issued token and a renewal make on the gateway's endpoint (UAAccess), answered from this
+		//process's one session map as the AppServer answers a registered instance's ask:  Extend, which slides a live session and
+		//revives no expired one.  Not IAppClient's socket round trip, and no longer IApp's empty pointer, which the endpoint dereferenced.
+		α SessionInfoAwait( SessionPK id, SL sl )ι->up<TAwait<Web::FromServer::SessionInfo>> override;
 		α AddSession( str domain, str loginName, Access::ProviderPK providerPK, str userEndPoint, bool isSocket, SRCE )ε->up<TAwait<Web::FromServer::SessionInfo>> override;
 	};
 }

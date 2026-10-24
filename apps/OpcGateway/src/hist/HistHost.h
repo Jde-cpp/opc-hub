@@ -44,6 +44,8 @@ namespace Jde::Opc::Gateway{
 		α Historian()Ι->sp<Opc::Hist::Historian>{ lg _{ _mutex }; return _historian; }
 		α Find( HistGroupPK id )Ι->sp<HistGroupHost>;
 		α Groups()Ι->vector<sp<HistGroupHost>>;
+		α Listen( wp<IHistListener> listener )ι->void;//the endpoint's, from its Listen to its Stop:  here for the hooks, and each host's for its tap.
+		α Listener()Ι->sp<IHistListener>{ lg _{ _mutex }; return _listener.lock(); }
 		//A group's host, past its gate (spec *Authorization*):  `rights` tested on the group's own access row, keyed by its guid, else the
 		//hist_groups table's, as Authorize::Test resolves a criteria - `enforced` asks TestEnforced, as a history edit does - then
 		//TestEnabled, and NotFound for a group the gateway doesn't host.  The guid, not the id (#357):  every gateway's schema is
@@ -90,6 +92,7 @@ namespace Jde::Opc::Gateway{
 		sp<Opc::Hist::Historian> _historian;//an sp read under _mutex:  a load or remove in flight keeps the one Stop let go of.
 		mutable std::mutex _mutex;
 		flat_map<HistGroupPK,sp<HistGroupHost>> _groups;
+		wp<IHistListener> _listener;
 		bool _stopped{};
 	};
 }

@@ -257,8 +257,12 @@ namespace Jde::Opc::Gateway{
 					spelled["node"] = node.namespaceUri.length ? HistNodeText( node ) : co_await SpellAwait{ move(node), group.Connection, _sl };
 					nodeGroup = group;
 				}
-				else if( _query.Type==EMutationQL::Create && _query.TableName()==TemplateNodes )//one spelling, so (hist_template_id, path) is the member's key.
-					spelled["path"] = HistPathText( ParseHistPath(_query.As<jstring>("path", _sl), _sl) );
+				else if( _query.Type==EMutationQL::Create && _query.TableName()==TemplateNodes ){//one spelling, so (hist_template_id, path) is the member's key.
+					auto path = ParseHistPath( _query.As<jstring>("path", _sl), _sl );
+					for( auto& segment : path )
+						segment.Id = nullopt;//browse names from the root:  no node's id.
+					spelled["path"] = HistPathText( path );
+				}
 				for( let& [key,value] : spelled )
 					_query.Args[key] = value;
 

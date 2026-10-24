@@ -205,7 +205,7 @@ side effect.
 `ctest` from the build dir, per the **cpp-tests** skill. **Stop the services first, and
 check they are actually down**: `Jde.Opc.Server.Tests` and `Jde.Opc.Tests` stand up their
 own AppServer *and* gateway on 1967 and 1968, and a leftover on either burns the full
-300s timeout on `(62)system - Address already in use`.
+450s timeout on `(62)system - Address already in use`.
 
 ```bash
 $D stop all && $D status      # every service must read down
@@ -284,7 +284,7 @@ cd $buildDir && ctest --timeout 300
 | `mysql::connect_params` then an abort | MySQL is down, or the `debug` schema is missing |
 | `$D ql` returns nothing | the service is not listening; `$D status` |
 | a gateway connect fails `BadCertificateUntrusted` and the log says `server certificate for 'opc.tcp://…' rejected` | the gateway verifies OPC server certificates (since 2026-09-04, `src/ServerTrust.cpp`): copy the server's `.pem` into a dir listed under `/access/trustedCertDirs` (`Opc.Gateway.jsonnet` seeds `certsDir("OpcServer")`, so a Jde OpcServer on this host is already trusted), or set `gateway.verifyServerCertificate: false`. The same status *without* that log line means the server rejected the gateway's certificate — the OpcServer's `/access/trustedCertDirs` side |
-| Opc test suites time out at 300s | something holds a test port — `Jde.Opc.Tests`/`Jde.Opc.Server.Tests` bind the live ports +100 (2067/2068/2070/4940) and `Jde.Opc.Hub.Tests` 1973/1975/4975, so a live service (1967/1968/1970, the emulator's 4842) is not the cause; look for an orphaned test binary (`ss -lntp \| grep -E '2067\|2068\|2070\|4940\|1973\|1975\|4975'`) |
+| Opc test suites time out at 450s | something holds a test port — `Jde.Opc.Tests`/`Jde.Opc.Server.Tests` bind the live ports +100 (2067/2068/2070/4940) and `Jde.Opc.Hub.Tests` 1973/1975/4975, so a live service (1967/1968/1970, the emulator's 4842) is not the cause; look for an orphaned test binary (`ss -lntp \| grep -E '2067\|2068\|2070\|4940\|1973\|1975\|4975'`) |
 | OpcServer log `certificate verify failed` / `(167772294) … unable to get local issuer certificate` logging in to 1967 | the hub is up and the OpcServer was started with the stock `Opc.Server.jsonnet` — `$D start opcserver-hub` |
 | the emulator logs `published=…` climbing but no pump value moves in the UI | the OpcServer has no DataSetReader — it was started as `opcserver` rather than `opcserver-emulator` (or `opcserver-emulator-hub`). Its log has no `PubSub reader:` line; the reader is an overlay because it is an unauthenticated write path |
 | `/opcGateways` returns `{"servers":[]}` with the hub up | the in-process gateway did not register its local instance (`hubStartup.cpp` → `App::Server::AddLocalInstance`); the SPA cannot find the gateway |
