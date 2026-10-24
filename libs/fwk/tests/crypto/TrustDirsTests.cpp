@@ -1,5 +1,6 @@
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/crypto/TrustDirs.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <fstream>

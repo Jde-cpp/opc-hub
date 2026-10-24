@@ -3,6 +3,7 @@
 #include <thread>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/opc/server/UAConfig.h>
 #include <jde/opc/server/UATrust.h>
 #include <jde/opc/server/UAAccess.h>

@@ -1,5 +1,4 @@
 #pragma once
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/web/Jwt.h>
 #include <jde/app/IApp.h>
 #include <jde/fwk/co/Await.h>

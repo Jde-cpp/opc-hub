@@ -1,7 +1,6 @@
-#include "jde/fwk/crypto/CryptoSettings.h"
-#include "jde/fwk/exceptions/Exception.h"
 #include <jde/web/Jwt.h>
 #include <boost/uuid/uuid_io.hpp>
+#include <jde/fwk/crypto/PrivateKey.h>
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/str.h>
 
@@ -34,7 +33,7 @@ namespace Jde::Web{
 
 		let head = jobject{ {"alg","RS256"}, {"typ","JWT"} };
 		HeaderBodyEncoded = Str::Encode64( serialize(head), true )+ "." + Str::Encode64( serialize(Body), true );
-		Signature = Crypto::RsaSign( HeaderBodyEncoded, privateKey.Path, privateKey.Passcode, sl );
+		Signature = Crypto::PrivateKey{ privateKey.Path, privateKey.Passcode, sl }.Sign( HeaderBodyEncoded, sl );
 	}
 	Jwt::Jwt( sv encoded, SL sl )ε{
 		let fpIndex = encoded.find_last_of( '.' );

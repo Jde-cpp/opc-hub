@@ -4,7 +4,6 @@
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/opc/uatypes/Logger.h>

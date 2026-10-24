@@ -4,7 +4,6 @@
 #include <open62541/server_config_default.h>
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/uatypes/Logger.h>

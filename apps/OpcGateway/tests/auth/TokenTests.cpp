@@ -1,5 +1,4 @@
 #include <jde/fwk/io/json.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include "Auth.h"
 #include "../../src/UAClient.h"
 #include "../../src/auth/OpcServerSession.h"

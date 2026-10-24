@@ -3,7 +3,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/Timer.h>
 #include <jde/fwk/io/json.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/opc/uatypes/Logger.h>
 #include "../src/GatewayAppClient.h"

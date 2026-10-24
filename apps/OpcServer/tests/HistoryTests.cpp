@@ -14,7 +14,6 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/db/meta/AppSchema.h>//GetSchema().Authorizer
 #include <jde/opc/UAException.h>

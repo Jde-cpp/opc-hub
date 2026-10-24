@@ -2,7 +2,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_replace.h>
 #include <jde/fwk/io/file.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/digest.h>
 #include <boost/uuid/uuid_io.hpp>
 #include "TableDdl.h"
 #include <jde/db/DBException.h>

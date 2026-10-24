@@ -109,10 +109,8 @@ namespace Jde::App::Client{
 				auto info = co_await Any( connect );
 				session->SetInfo( move(*info.mutable_session_info()) );
 				_appClient->SetSession( move(session) );
-				_appClient->ServerPublicKey = {
-					{ info.certificate_modulus().begin(), info.certificate_modulus().end() },
-					{ info.certificate_exponent().begin(), info.certificate_exponent().end() }
-				};
+				auto bytes = []( str s ){ const auto b = std::as_bytes( std::span{s} ); return vector<byte>{ b.begin(), b.end() }; };
+				_appClient->ServerPublicKey = { bytes(info.certificate_modulus()), bytes(info.certificate_exponent()) };
 				if( _appClient->ResourceSchema.size() && !info.auth_result() )//the AppServer's TestSchemaAdmin gate on the auth_resource we sent
 					WARNT( ELogTags::Access, "AppServer declined to delegate '{}' admin checks to this instance - grant its user Administer on the schema's root resources and reconnect;  until then the AppServer applies its flat rule.", _appClient->ResourceSchema );
 				_appClient->SetAppPKs( info.instance_pk(), info.connection_pk() );

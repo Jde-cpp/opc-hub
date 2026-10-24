@@ -1,6 +1,5 @@
 ﻿#include "appStartup.h"
 #include <jde/fwk/process/process.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/fwk/process/cpu.h>
 
 namespace Jde{

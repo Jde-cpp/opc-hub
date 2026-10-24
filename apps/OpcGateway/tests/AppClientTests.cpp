@@ -4,7 +4,7 @@
 #include <jde/fwk/process/execution.h>
 #include <jde/app/client/AppClientSocketSession.h>
 #include <jde/app/client/appClient.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
 #include <jde/web/Jwt.h>
 #include <jde/web/server/Sessions.h>
 #include "utils/helpers.h"

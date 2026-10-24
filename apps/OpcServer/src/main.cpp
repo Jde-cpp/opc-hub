@@ -1,5 +1,4 @@
 ﻿#include <jde/opc/uatypes/Logger.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
 #include "globals.h"
 #include "opcServerStartup.h"

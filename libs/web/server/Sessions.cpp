@@ -4,7 +4,7 @@
 #include <jde/web/server/HttpRequest.h>
 #include <jde/fwk/str.h>
 #include <jde/fwk/co/AnyAwait.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/digest.h>
 #include <jde/web/server/auth/JwtLoginAwait.h>
 #include <jde/app/IApp.h>
 #include "ServerImpl.h"

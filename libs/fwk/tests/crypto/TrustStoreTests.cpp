@@ -1,8 +1,10 @@
 #include <jde/fwk/crypto/TrustStore.h>
-#include <jde/fwk/crypto/OpenSsl.h>
-#include "cryptoFixture.h"
 #include <openssl/x509_vfy.h>
 #include <openssl/x509v3.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include <jde/fwk/crypto/OpenSslException.h>
+#include <jde/fwk/crypto/issue.h>
+#include "cryptoFixture.h"
 
 #define let const auto
 namespace Jde::Crypto{

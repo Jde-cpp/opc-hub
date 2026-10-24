@@ -1,7 +1,7 @@
 #include "appStartup.h"
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/io/Cache.h>
 #include <jde/db/db.h>
 #include <jde/db/IDataSource.h>
@@ -215,7 +215,7 @@ namespace Jde::App::Server{
 		auto appClient = AppClient();
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );//the listener used to create the key as a side effect, which is why SetPublicKey had to wait for it.
-		appClient->SetPublicKey( sslSettings.PublicKey.Value(SRCE_CUR) );
+		appClient->SetPublicKey( sslSettings.PublicKey.Read() );
 		QL::Hook::Add( mu<AppInstanceHook>(appClient) );
 	}
 

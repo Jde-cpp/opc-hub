@@ -1,7 +1,7 @@
 #include "gtest/gtest.h"
 #include <exception>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/opc/uatypes/Logger.h>
 #include "../../AppServer/src/appStartup.h"
 #include "../../OpcGateway/src/UAClient.h"

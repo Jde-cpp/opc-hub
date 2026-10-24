@@ -8,6 +8,7 @@
 #include <jde/web/client/http/ClientHttpAwait.h>
 #include <jde/web/Jwt.h>
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/crypto/issue.h>
 #include <jde/fwk/utils/mathUtils.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include <jde/fwk/log/MemoryLog.h>
