@@ -24,7 +24,7 @@ if( NOT jde_Superbuild )
 	add_subdirectory( ${libDir}/web/server ../../libs/web/server )
 	add_subdirectory( ${libDir}/app/shared ../../libs/app/shared )
 	add_subdirectory( ${libDir}/app/client ../../libs/app/client )
-	add_subdirectory( ${libDir}/opc/src ../../libs/opc )
+	add_subdirectory( ${libDir}/opc/shared/src ../../libs/opc/shared/lib )
 	add_subdirectory( ${libDir}/historian/src ../../libs/historian/lib ) #Jde.Opc.GatewayLib links it.
 	add_subdirectory( ${jdeRoot}/apps/AppServer/config/sql/sqlite ../../apps/AppServer/config/sql/sqlite )
 	add_subdirectory( ${jdeRoot}/apps/AppServer/src ../../apps/AppServer/lib )

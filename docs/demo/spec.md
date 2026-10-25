@@ -31,7 +31,7 @@ The hub has little today for a public site:
 
 The design closes each of these for the demo without changing what an install that sets nothing gets.
 
-Line numbers cite opc-hub2 at `af6ea641`, main with the web and OpcServer refactors merged, as the Open Protocol spec does.
+Line numbers cite opc-hub2 at `af6ea641`, main with the web and OpcServer refactors merged, as the Open Protocol spec does. Refs re-anchored on 2026-10-23, the UA server library's move among them, cite branch `servers-1a-ua-server-library`.
 
 ## Requirements
 
@@ -127,7 +127,7 @@ The pumps keep the OEE spec's role as the rig for the suite and the dev box (its
 - The five machines. Each has its group; its signals, State `status`, Total `totalCount`, Reject `rejectCount` and Reason `reasonCode`; its ideal cycle; `small_stop` of two minutes; the default interval; and the calendar.
 - The site and its two lines, each on the `plant` calendar: a line without one keeps the UTC day for its shift (OEE spec *Lines*), and the floor's header would show that day as the shift.
 - The floor (*The floor*).
-- The guest user and its role (*Guests*), and a `demo-plc` role with Read on `access.users` for the five PLC users: each PLC resolves the collector's certificate by a `users` query run as its own user ([`UAAccess.cpp:230`](../../apps/OpcServer/src/access/UAAccess.cpp#L230)), which an enforced table refuses without it. The users exist from each PLC's first login, so the seed waits for them.
+- The guest user and its role (*Guests*), and a `demo-plc` role with Read on `access.users` for the five PLC users: each PLC resolves the collector's certificate by a `users` query run as its own user ([`UAAccess.cpp:222`](../../libs/opc/server/src/UAAccess.cpp#L222)), which an enforced table refuses without it. The users exist from each PLC's first login, so the seed waits for them.
 - Last, every resource enforced.
 
 The gateway runs with its `hist` and `oee` blocks from an overlay, `Opc.Hub.Demo.jsonnet`, which imports the installed settings. The overlay, with an args dir of its own, `args/demo`, also sets the loopback address, `access.guest`, `http.trustedProxies` and an `http.timeout` of an hour (*The public origin*), and the five PLCs' certificate directories in `access.trustedCertDirs` and `gateway.trustedCertDirs` (*The PLCs*).

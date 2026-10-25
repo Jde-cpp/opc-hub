@@ -9,32 +9,37 @@
 #include <jde/opc/uatypes/NodeId.h>
 
 namespace Jde::Opc::Server{
-	//OpcServer's historian (historian spec, *OpcServer* and *UA backend*):  the history of the variables its nodesets mark
-	//Historizing, in one group, `server`, collected through open62541's setValue, served through its HistoryRead, raw,
+	struct UASettings;
+	//A UA server's historian (historian spec, *OpcServer* and *UA backend*):  the history of the host's variables in one
+	//group, the OpcServer's `server` of what its nodesets mark Historizing, collected through open62541's setValue, served
+	//through its HistoryRead, raw,
 	//modified, at times and aggregated, and edited through its HistoryUpdate.  open62541 calls the backend inside its
 	//service lock, on the server's one thread, so collecting only enqueues and a node's read ends at maxReturnDataValues
 	//values or one day, with a continuation point.  That point is the library's stateless
 	//continuation, so the server holds nothing between calls and has none to release.  An edit is acknowledged once its
 	//records are durable, so its callback waits for the flush that writes them, holding the lock for the write and its
-	//fsync, up to hist.editTimeout.
+	//fsync, up to UASettings::EditTimeout.
 	struct UAHistory final : noncopyable{
-		//Reads /opcServer/hist and takes the lock on its path.  With no such block OpcServer keeps no history, as when
+		//Takes the lock on the historian's path.  With no historian in the settings the server keeps no history, as when
 		//another process holds the lock:  no backend is installed and no node is changed.
-		UAHistory()ε;
+		UAHistory( const UASettings& settings )ε;
 		~UAHistory();//after the server is gone, while the executor still runs:  writes what is buffered.
 		α Enabled()Ι->bool{ return _historian && _historian->Enabled(); }
 		//UAConfig's:  the UA_HistoryDatabase, with its context set, and maxReturnDataValues, hist.readLimit.
 		α Database()ι->UA_HistoryDatabase;
 		α ReadLimit()Ι->UA_UInt32;
 		//UAConfig's too, the server's node lifecycle:  while the nodesets load it notes each HA Configuration that
-		//open62541 gives the type's Stepped, false, for want of one its nodeset declares, which Load makes the default, true.
+		//open62541 gives the type's Stepped, false, for want of one its nodeset declares, which the host's load makes the
+		//default, true.
 		Ω Lifecycle()ι->UA_GlobalNodeLifecycle*;
 		α Instantiated( const UA_NodeId& configuration )ι->void;
-		//After the last nodeset and before Run:  makes the group of the variables marked Historizing (Historized::Load),
-		//which keeps the indexes its files hold and removes a node the nodesets no longer historize, takes each one's
-		//current value as its first after the stop, writes StartOfArchive, now and after each midnight, and lists the
-		//aggregates served in HistoryServerCapabilities' AggregateFunctions folder, Median among them.
-		α Load( UA_Server& ua )ε->void;
+		α TypeStepped( const UA_NodeId& configuration )Ι->bool;//whether the HA Configuration's Stepped is the type's, until Start.
+		α Historian()ι->Hist::Historian&{ return *_historian; }//while Enabled.
+		//After the last nodeset and before Run, the host's group:  each node's index in it, and the HA Configuration
+		//properties to write StartOfArchive to, now and after each midnight.  Lists the aggregates served in
+		//HistoryServerCapabilities' AggregateFunctions folder, Median among them.
+		using Indexes = vector<std::pair<NodeId,Hist::NodeIndex>>;
+		α Start( UA_Server& ua, sp<Hist::Group> group, Indexes indexes, vector<NodeId> archiveStarts )ε->void;
 		α Stop()ι->void;//before the server is deleted:  the midnight timer writes to it.
 		α Group()Ι->sp<Hist::Group>{ return _group; }
 		α Find( const UA_NodeId& node )Ι->optional<Hist::NodeIndex>;
@@ -116,12 +121,11 @@ namespace Jde::Opc::Server{
 		ABSL_EXCLUSIVE_LOCKS_REQUIRED(_publishing->Mutex) α ScheduleMidnight()ι->void;
 
 		up<Hist::Historian> _historian;
-		//hist.editTimeout, an ISO 8601 duration:  the default is open62541's client timeout, past which the client has given up.
-		Duration _editTimeout{ 5s };
-		//Set by Load, before the server runs, and only read after:  the callbacks take no lock of the host's.
+		Duration _editTimeout;
+		//Set by Start, before the server runs, and only read after:  the callbacks take no lock of the host's.
 		sp<Hist::Group> _group;
 		absl::flat_hash_map<NodeId,Hist::NodeIndex,NodeHash,NodeEqual> _indexes;
-		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Load:  open62541 adds a node under its service lock.
+		absl::flat_hash_set<NodeId,NodeHash,NodeEqual> _typeStepped;//until Start:  open62541 adds a node under its service lock.
 		vector<NodeId> _archiveStarts;//each HA Configuration's StartOfArchive and StartOfOnlineArchive.
 		Timer _reads, _collections, _edits;
 		std::atomic<uint> _returned{};

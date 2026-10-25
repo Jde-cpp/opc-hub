@@ -1,7 +1,7 @@
 #include "OpcAuthorize.h"
 #include <set>
 #include <jde/fwk/utils/Stopwatch.h>
-#include "../UAServer.h"
+#include <jde/opc/server/UAServer.h>
 
 #define let const auto
 
@@ -292,7 +292,7 @@ namespace Jde::Opc::Server{
 		return false;
 	}
 
-	α OpcAuthorize::UserRights( NodeId nodeId, UserPK executer )ι->EAccess{
+	α OpcAuthorize::UserRights( const NodeId& nodeId, UserPK executer )ι->EAccess{
 		let [rights, edits] = Resolve( nodeId, executer );//generic rights in, UA access-level bits out - a cast put every right one bit off.
 		//HistoryWrite is an edit's bit, so it is the edit rights', and left out of an unprotected node's:  a client sees its
 		//history as read-only before it tries (historian spec *Authorization*).

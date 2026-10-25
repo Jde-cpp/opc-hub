@@ -1,11 +1,12 @@
 #pragma once
 namespace Jde::DB{ struct AppSchema; }
-
 namespace Jde::App::Client{ struct IAppClient; }
 namespace Jde::Opc::Server {
-	struct UAServer; struct PubSubReader;
+	struct UAServer; struct UASettings; struct PubSubReader;
 
-	α Initialize( sp<DB::AppSchema> schema )ε->void;
+	α Initialize( sp<DB::AppSchema> schema )ε->void;//the schema's Authorizer is the node rights the server asks:  Startup's OpcAuthorize.
+	//The UA server's settings, from /opcServer, /opc and /access/trustedCertDirs.  Throws without /opcServer/ssl.
+	α ReadUASettings()ε->UASettings;
 	α ResourceSuffix()ι->string;//`/opcServer/resource`, "" when unset:  the suffix of the access schema this server's nodes are resources of.
 	α InstanceSchema()ι->string;//that schema, Access::InstanceSchemaName's:  `opc.<suffix>`, or `opc` with none.
 	α AppClient()ι->sp<App::Client::IAppClient>;

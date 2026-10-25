@@ -34,7 +34,8 @@ function projectName() (
 	elif [[ $absoluteFile == *"web/tests"* ]]; then project="Jde.Web.Tests";
 	elif [[ $absoluteFile == *"app/shared"* ]]; then project="Jde.App.Shared";
 	elif [[ $absoluteFile == *"app/client"* ]]; then project="Jde.App.Client";
-	elif [[ $absoluteFile == *"opc/src"* ]]; then project="Jde.Opc";
+	elif [[ $absoluteFile == *"opc/shared/src"* ]]; then project="Jde.Opc";
+	elif [[ $absoluteFile == *"opc/server/src"* ]]; then project="Jde.Opc.UAServer";
 	elif [[ $absoluteFile == *"AppServer/src"* ]]; then project="Jde.App.ServerLib";
 	elif [[ $absoluteFile == *"OpcGateway/src"* ]]; then project="Jde.Opc.GatewayLib";
 	elif [[ $absoluteFile == *"OpcGateway/tests"* ]]; then project="Jde.Opc.Tests";

@@ -7,4 +7,5 @@
 #include <jde/opc/uatypes/NodeId.h>
 #include "../src/usings.h"
 #include "../src/globals.h"
-#include "../src/UAServer.h"
+#include <jde/opc/server/UAServer.h>
+#include "../src/nodesets.h"
