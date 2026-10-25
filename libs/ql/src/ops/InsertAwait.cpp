@@ -65,8 +65,13 @@ namespace Jde::QL{
 		DB::InsertClause statement;
 		vector<sp<DB::Column>> missingColumns;
 		for( let& c : table.Columns ){
-			if( !c->Insertable && (!_identityInsert || !c->IsPK()) )
+			if( !c->Insertable && (!_identityInsert || !c->IsPK()) ){
+				//What the meta says no create sets, a caller naming it is refused:  it was dropped without a word.  A key keeps its own
+				//rules - an extension's, sent, is ignored with a warning (#24, below).
+				if( let name = JsonColumn{c}.MemberName(); !c->IsPK() && input.contains(name) )
+					throw Exception{ _sl, ExceptionArgs{EHttpStatus::BadRequest}, "'{}' can't be set on a create:  {}.{} isn't insertable.", name, table.Name, c->Name };
 				continue;
+			}
 			const JsonColumn qlCol{ c };
 			Value value;
 			let memberName = qlCol.MemberName();

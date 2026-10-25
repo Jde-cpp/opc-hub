@@ -1,12 +1,16 @@
 #include "HistGroupHost.h"
+#include <jde/fwk/settings.h>
+#include <jde/opc/UAException.h>
 #include <jde/opc/proto/opc.Common.h>
 #include "../async/ConnectAwait.h"
 #include "../async/DataChanges.h"
 #include "../async/MonitoredItems.h"
+#include "../async/ParentPathsAwait.h"
 #include "../async/ReadValueAwait.h"
 #include "../async/TranslateBrowsePathsAwait.h"
 #include "../async/ValueTypesAwait.h"
 #include "../async/Subscriptions.h"
+#include "../uatypes/Browse.h"
 #include "../UAClient.h"
 
 #define let const auto
@@ -18,9 +22,10 @@ namespace Jde::Opc::Gateway{
 	}
 
 	HistGroupHost::HistGroupHost( const HistGroupRow& row, ServerCnnctnNK slug, sp<Opc::Hist::Group> group, vector<HistMember> members, Credential collector, Opc::Hist::IClock& clock )ι:
-		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _collector{ move(collector) }, _clock{ clock }, _name{ row.Name }, _columns{ row.Thresholds }{
+		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _collector{ move(collector) }, _clock{ clock }, _name{ row.Name }, _columns{ row.Thresholds },
+		_describeBatch{ std::max<uint>(1, Settings::FindNumber<uint>("/gateway/hist/describeBatch").value_or(64)) }{//value_or mirrors config/Opc.Gateway.jsonnet.
 		for( auto& member : members )
-			_nodes.emplace( member.Index, Node{move(member.Node), nullopt, member.Thresholds} );
+			_nodes.emplace( member.Index, Node{ .Ex=move(member.Node), .Thresholds=member.Thresholds, .Attributes=move(member.Attributes) } );
 	}
 	HistGroupHost::~HistGroupHost(){
 		for( let timer : {_retry, _watch} ){
@@ -37,7 +42,7 @@ namespace Jde::Opc::Gateway{
 		_group->Add( {row.Node, ForGroup(thresholds), row.Id}, move(by), sl );
 		{
 			ul _{ _mutex };
-			_nodes.insert_or_assign( row.Id, Node{row.Node, nullopt, thresholds} );
+			_nodes.insert_or_assign( row.Id, Node{ .Ex=row.Node, .Thresholds=thresholds, .Attributes=row.Attributes } );
 		}
 		INFO( "[{}]Node {} '{}' joined.", _guid, row.Id, row.Node.ToString() );
 		Subscribe();
@@ -94,6 +99,11 @@ namespace Jde::Opc::Gateway{
 		ul _{ _mutex };
 		auto p = _nodes.find( index );
 		return p==_nodes.end() ? nullopt : optional<HistDescription>{ p->second.Described };
+	}
+	α HistGroupHost::Attributes( HistGroupNodePK index )Ι->optional<HistNodeAttributes>{
+		ul _{ _mutex };
+		auto p = _nodes.find( index );
+		return p==_nodes.end() ? nullopt : optional<HistNodeAttributes>{ p->second.Attributes };
 	}
 	α HistGroupHost::Band( HistGroupNodePK index )Ι->optional<EHistBand>{
 		ul _{ _mutex };
@@ -320,112 +330,314 @@ namespace Jde::Opc::Gateway{
 			WARN( "[{}]Could not read the {} nodes whose items '{}' already had - each is stored from its next change:  {}", _guid, count, _slug, e.what() );
 		}
 	}
+	//A read's cell, when it answered with a value of `type`.
+	Ω answered( const UA_DataValue& v, uint type )ι->bool{ return v.hasValue && !UA_StatusCode_isBad( v.status ) && UA_Variant_hasScalarType( &v.value, &UA_TYPES[type] ); }
+	Ω text( const UA_DataValue& v )ι->optional<string>{//a LocalizedText's text;  none for an empty one, or no answer.
+		if( !answered(v, UA_TYPES_LOCALIZEDTEXT) )
+			return nullopt;
+		let& t = static_cast<const UA_LocalizedText*>( v.value.data )->text;
+		return t.length ? optional<string>{ ToString(t) } : nullopt;
+	}
+	Ŧ scalar( const UA_DataValue& v, uint type )ι->optional<T>{ return answered( v, type ) ? optional<T>{ *static_cast<const T*>(v.value.data) } : nullopt; }
+
 	α HistGroupHost::Describe( sp<UAClient> client, flat_set<NodeId> nodes, bool again )ι->VoidTask{
 		auto self = shared_from_this();
-		let level = again ? ELogLevel::Debug : ELogLevel::Warning;
-		vector<NodeId> ids{ nodes.begin(), nodes.end() };
-		vector<HistDescription> described( ids.size() );
-		ValueTypes typed;
-		try{
-			typed = co_await ValueTypesAwait{ ids, client };
-			flat_map<NodeId,optional<bool>> enumerations;//by DataType:  none where the server's answer was lost.
-			for( let& dataType : typed.DataTypes ){
-				if( !dataType || enumerations.contains(*dataType) )
-					continue;
-				optional<bool> enumeration;
-				if( let type = dataType->namespaceIndex ? nullptr : UA_findDataType(&*dataType); type )
-					enumeration = type->typeKind==UA_DATATYPEKIND_ENUM;
-				else{
+		{
+			ul _{ _mutex };
+			if( _describing ){//one at a time, so two passes can't write a node's row out of order:  the one out describes these next.
+				_describeAgain = _toDescribe.empty() ? again : _describeAgain && again;
+				_toDescribe.insert( nodes.begin(), nodes.end() );
+				TRACE( "[{}]A describe is out:  {} nodes wait for it.", _guid, nodes.size() );
+				co_return;
+			}
+			_describing = true;
+		}
+		for( ;; ){
+			let level = again ? ELogLevel::Debug : ELogLevel::Warning;
+			const vector<NodeId> all{ nodes.begin(), nodes.end() };
+			Namespaces namespaces;
+			uint batch;
+			{
+				ul _{ _mutex };
+				namespaces = _namespaces;
+				batch = _describeBatch;
+			}
+			PathParents parents;//each browsed on the way to Objects, once for every member whose path passes it.
+			//`batch` nodes a pass, so no request carries more than six operations a node:  a server refuses one past its limits
+			//(MaxNodesPerRead, MaxNodesPerBrowse, …) whole.  One refused as too many halves the batch, for the group, and the pass is
+			//made again.
+			for( uint start=0; start<all.size(); ){
+				{
+					ul _{ _mutex };
+					if( _closed ){
+						_describing = false;
+						co_return;
+					}
+				}
+				const vector<NodeId> ids{ all.begin()+start, all.begin()+std::min<uint>(start+batch, all.size()) };
+				let smaller = [&]( const runtime_error& e )ι->bool{
+					let ua = dynamic_cast<const UAException*>( &e );
+					if( !ua || ua->Code()!=UA_STATUSCODE_BADTOOMANYOPERATIONS || ids.size()==1 )//one node's are too many:  lost, as any refusal.
+						return false;
+					batch = std::max<uint>( 1, ids.size()/2 );
+					LOG( level, _tags, "[{}]'{}' refused a request for {} nodes as too many - asking of {} at a time.", _guid, _slug, ids.size(), batch );
+					ul _{ _mutex };
+					_describeBatch = std::min( _describeBatch, batch );
+					return true;
+				};
+				vector<HistDescription> described( ids.size() );
+				vector<HistNodeAttributes> read( ids.size() );//each one's attributes, EngineeringUnits and Path as the server gave them, which `attributed`, Ranged and `pathed` say answered;  its DataType and EURange the lock section takes from `typed` and `described`.
+				vector<bool> attributed( ids.size() ), pathed( ids.size() );
+				vector<optional<HistPathSegment>> own( ids.size() );//each node's own browse name, its path's last segment.
+				ValueTypes typed;
+				try{
+					typed = co_await ValueTypesAwait{ ids, client };
+					flat_map<NodeId,optional<bool>> enumerations;//by DataType:  none where the server's answer was lost.
+					for( let& dataType : typed.DataTypes ){
+						if( !dataType || enumerations.contains(*dataType) )
+							continue;
+						optional<bool> enumeration;
+						if( let type = dataType->namespaceIndex ? nullptr : UA_findDataType(&*dataType); type )
+							enumeration = type->typeKind==UA_DATATYPEKIND_ENUM;
+						else{
+							try{
+								co_await client->EnumTypes().Get( client, *dataType );
+								enumeration = true;
+							}
+							catch( const std::exception& ){
+								if( client->EnumTypes().Refused(*dataType) )
+									enumeration = false;
+							}
+						}
+						enumerations.emplace( *dataType, enumeration );
+					}
+					for( uint i=0; i<ids.size() && i<typed.DataTypes.size(); ++i ){
+						if( let& dataType = typed.DataTypes[i]; dataType )
+							described[i].Enumeration = enumerations.find( *dataType )->second;
+					}
+				}
+				catch( const runtime_error& e ){
+					if( smaller(e) )
+						continue;
+					LOG( level, _tags, "[{}]Could not read the DataType of {} nodes on '{}' - an edit of each takes the type of its stored values, and a band waits:  {}", _guid, ids.size(), _slug, e.what() );
+				}
+				//The attributes a served variable carries (spec *Address space*), and each node's own browse name, its path's last segment.  A
+				//node whose DisplayName, ValueRank, AccessLevel or BrowseName was refused keeps what it had, and is asked again;  a Description or
+				//ArrayDimensions refused is none, since Part 3 makes both optional.
+				try{
+					constexpr uint count{ 6 };//a node's cells are 6i to 6i+5, in the request's order.
+					ReadAwait attributes{ ReadRequest{ids, {UA_ATTRIBUTEID_DISPLAYNAME, UA_ATTRIBUTEID_DESCRIPTION, UA_ATTRIBUTEID_VALUERANK, UA_ATTRIBUTEID_ARRAYDIMENSIONS, UA_ATTRIBUTEID_ACCESSLEVEL, UA_ATTRIBUTEID_BROWSENAME}}, client };
+					let values = co_await Any( attributes );
+					for( uint i=0; (i+1)*count<=values.resultsSize; ++i ){
+						let* v = values.results+i*count;
+						if( !answered(v[0], UA_TYPES_LOCALIZEDTEXT) || !answered(v[2], UA_TYPES_INT32) || !answered(v[4], UA_TYPES_BYTE) || !answered(v[5], UA_TYPES_QUALIFIEDNAME) )
+							continue;
+						auto& a = read[i];
+						a.DisplayName = ToString( static_cast<const UA_LocalizedText*>(v[0].value.data)->text );//empty kept:  only none is unread.
+						a.Description = text( v[1] );
+						a.ValueRank = scalar<UA_Int32>( v[2], UA_TYPES_INT32 );
+						if( let& d = v[3]; d.hasValue && !UA_StatusCode_isBad(d.status) && UA_Variant_hasArrayType(&d.value, &UA_TYPES[UA_TYPES_UINT32]) && d.value.arrayLength ){
+							let* dimensions = static_cast<const UA_UInt32*>( d.value.data );
+							a.ArrayDimensions = vector<uint32>{ dimensions, dimensions+d.value.arrayLength };
+						}
+						a.AccessLevel = scalar<UA_Byte>( v[4], UA_TYPES_BYTE );
+						let& name = *static_cast<const UA_QualifiedName*>( v[5].value.data );
+						own[i] = ToHistPathSegment( namespaces.Uri(name.namespaceIndex), ToString(name.name) );
+						attributed[i] = true;
+					}
+				}
+				catch( const runtime_error& e ){
+					if( smaller(e) )
+						continue;
+					LOG( level, _tags, "[{}]Could not read the attributes of {} nodes on '{}' - each row keeps what it had:  {}", _guid, ids.size(), _slug, e.what() );
+				}
+				//The path from the Objects folder (ParentPathsAwait), as a node page's, each segment by its namespace URI.  A node outside that
+				//tree - a type, a view - has no path, as has one deeper than ParentPathsAwait::MaxDepth and one with a browse name on the way
+				//that makes no segment (ToHistPathSegment).  A parent the server refused is lost:  the row keeps its path, and the watch asks
+				//again.
+				try{
+					vector<NodeId> walked; vector<uint> slots;
+					for( uint i=0; i<ids.size(); ++i ){
+						if( own[i] ){
+							walked.push_back( ids[i] );
+							slots.push_back( i );
+						}
+						else if( attributed[i] )
+							pathed[i] = true;
+					}
+					let found = co_await ParentPathsAwait{ move(walked), parents, client, batch };
+					uint deep{};
+					for( uint k=0; k<found.size(); ++k ){
+						let i = slots[k];
+						if( found[k].Lost )
+							continue;
+						pathed[i] = true;
+						deep += found[k].Deep;
+						if( !found[k].Parents )
+							continue;
+						vector<HistPathSegment> path;
+						for( let& parent : *found[k].Parents ){
+							if( auto segment = ToHistPathSegment(namespaces.Uri(parent.Ns), parent.Name); segment )
+								path.push_back( move(*segment) );
+							else
+								break;
+						}
+						if( path.size()==found[k].Parents->size() ){
+							path.push_back( move(*own[i]) );
+							read[i].Path = move( path );
+						}
+					}
+					if( deep )
+						LOG( level, _tags, "[{}]{} nodes on '{}' are deeper than {} below Objects, or in a reference cycle - no path.", _guid, deep, _slug, ParentPathsAwait::MaxDepth );
+				}
+				catch( const runtime_error& e ){
+					if( smaller(e) )
+						continue;
+					LOG( level, _tags, "[{}]Could not browse the paths of {} nodes on '{}' - each row keeps its path:  {}", _guid, ids.size(), _slug, e.what() );
+				}
+				try{
+					constexpr sv properties[]{ "InstrumentRange", "EURange", "EngineeringUnits" };//a node's are paths 3i to 3i+2.
+					vector<UABrowsePath> paths; paths.reserve( ids.size()*std::size(properties) );
+					for( let& id : ids ){
+						for( let property : properties ){
+							const BrowseSegment segment{ 0, string{property} };
+							paths.emplace_back( std::span<const BrowseSegment>{&segment, 1}, id );
+						}
+					}
+					TranslateBrowsePathsAwait translate{ move(paths), client };
+					let found = co_await Any( translate );
+					vector<NodeId> held; vector<uint> slots;//the properties the nodes have, and each one's path.
+					for( uint k=0; k<found.size(); ++k ){
+						if( found[k] ){
+							held.emplace_back( found[k]->nodeId );
+							slots.push_back( k );
+						}
+					}
+					vector<optional<Opc::Hist::Range>> ranges( found.size() );
+					vector<optional<HistEngineeringUnits>> units( found.size() );
+					if( held.size() ){
+						ReadAwait values{ ReadRequest{held, UA_ATTRIBUTEID_VALUE}, client };
+						let response = co_await Any( values );
+						for( uint j=0; j<slots.size() && j<response.resultsSize; ++j ){
+							let& v = response.results[j];
+							if( answered(v, UA_TYPES_RANGE) ){
+								let& range = *static_cast<const UA_Range*>( v.value.data );
+								ranges[slots[j]] = Opc::Hist::Range{ range.low, range.high };
+							}
+							else if( answered(v, UA_TYPES_EUINFORMATION) ){
+								let& eu = *static_cast<const UA_EUInformation*>( v.value.data );
+								units[slots[j]] = HistEngineeringUnits{ ToString(eu.namespaceUri), eu.unitId, ToString(eu.displayName.text), ToString(eu.description.text) };
+							}
+						}
+					}
+					for( uint i=0; i<ids.size() && 3*i+2<ranges.size(); ++i ){
+						described[i].Instrument = ranges[3*i];
+						described[i].EU = ranges[3*i+1];
+						described[i].Ranged = true;
+						read[i].EngineeringUnits = move( units[3*i+2] );
+					}
+				}
+				catch( const runtime_error& e ){
+					if( smaller(e) )
+						continue;
+					LOG( level, _tags, "[{}]Could not read the InstrumentRange, EURange and EngineeringUnits of {} nodes on '{}' - a percent-of-range band waits for them:  {}", _guid, ids.size(), _slug, e.what() );
+				}
+				for( auto& a : read )
+					a.FitColumns();//so the host carries what its row holds, and a restart reads back.
+				vector<std::pair<HistGroupNodePK,HistNodeAttributes>> rows;//each node the server said anything of, written once the lock is let go.
+				{
+					ul _{ _mutex };
+					for( uint i=0; i<ids.size() && !_closed; ++i ){
+						let [pk, n] = FindNode( ids[i] );
+						if( !n )
+							continue;
+						auto& node = *n;
+						let before = node.Attributes.Values();//the columns as the row holds them, unless Unwritten.
+						optional<NodeId> served;//the DataType the node is served with (spec *Address space*).
+						if( i<typed.Types.size() && !UA_StatusCode_isBad(typed.Statuses[i]) ){
+							let& dataType = typed.DataTypes[i];
+							//None for one of namespace 0 with no built-in type:  abstract, as Number is, or BaseDataType, its values may be any subtype's.
+							if( let abstract = dataType && !dataType->namespaceIndex && !ValueTypes::BuiltIn(&*dataType); abstract || typed.Types[i] )
+								_group->SetDataType( pk, abstract ? nullptr : typed.Types[i] );
+							//The source's where that is a namespace-0 type, abstract or not, since every one exists on the mirror;  else the built-in the
+							//historian stores its values by, an enumeration Int32 and a structure Structure, since the source's type has no node there.
+							if( dataType && !dataType->namespaceIndex )
+								served = *dataType;
+							else if( let type = _group->DataType(pk); type )
+								served = NodeId{ type->typeId };
+						}
+						if( served ){
+							if( auto ex = namespaces.ToExNodeId(*served); ex )
+								node.Attributes.DataType = move( *ex );
+						}
+						let& d = described[i];
+						let known = node.Described.Enumeration.has_value();
+						if( d.Enumeration )
+							node.Described.Enumeration = d.Enumeration;
+						if( d.Ranged ){
+							node.Described.Instrument = d.Instrument;
+							node.Described.EU = d.EU;
+							node.Described.Ranged = true;
+							node.Attributes.EURange = d.EU;
+							node.Attributes.EngineeringUnits = move( read[i].EngineeringUnits );
+						}
+						if( attributed[i] ){
+							node.Attributes.DisplayName = move( read[i].DisplayName );
+							node.Attributes.Description = move( read[i].Description );
+							node.Attributes.ValueRank = read[i].ValueRank;
+							node.Attributes.ArrayDimensions = move( read[i].ArrayDimensions );
+							node.Attributes.AccessLevel = read[i].AccessLevel;
+						}
+						if( pathed[i] )
+							node.Attributes.Path = move( read[i].Path );
+						//Asked again:  the ranges or the DataType read lost, the attributes or the path lost or refused, or no answer on a DataType
+						//it read.  A DataType the server refused isn't.
+						node.Undescribed = !node.Described.Ranged || !attributed[i] || !pathed[i] || ( !node.Described.Enumeration && (i>=typed.DataTypes.size() || typed.DataTypes[i]) );
+						if( node.Unwritten || node.Attributes.Values()!=before )//a reconnect's describe mostly changes nothing.
+							rows.emplace_back( pk, node.Attributes );
+						if( !node.Thresholds.ExceptionDeviation )
+							continue;
+						if( d.Enumeration.value_or(false) && !known )
+							INFO( "[{}]Node {} '{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", _guid, pk, node.Ex.ToString() );
+						try{
+							_group->SetThresholds( pk, ForGroup(node.Thresholds, node.Described) );//one whose range is missing the library warns of, and stores every change.
+						}
+						catch( const Exception& e ){
+							e.Log();
+						}
+					}
+				}
+				//Each changed row's columns, written directly - the QL never does - so a restart serves them before any source is up.  A
+				//write that fails leaves the row its last answer, and the node Unwritten, which the next describe writes again.
+				flat_set<HistGroupNodePK> unwritten;
+				for( auto& [pk, attributes] : rows ){
 					try{
-						co_await client->EnumTypes().Get( client, *dataType );
-						enumeration = true;
+						co_await Any( DS()->Execute(UpdateHistNodeAttributesSql(pk, attributes)) );
 					}
-					catch( const std::exception& ){
-						if( client->EnumTypes().Refused(*dataType) )
-							enumeration = false;
-					}
-				}
-				enumerations.emplace( *dataType, enumeration );
-			}
-			for( uint i=0; i<ids.size() && i<typed.DataTypes.size(); ++i ){
-				if( let& dataType = typed.DataTypes[i]; dataType )
-					described[i].Enumeration = enumerations.find( *dataType )->second;
-			}
-		}
-		catch( const runtime_error& e ){
-			LOG( level, _tags, "[{}]Could not read the DataType of {} nodes on '{}' - an edit of each takes the type of its stored values, and a band waits:  {}", _guid, ids.size(), _slug, e.what() );
-		}
-		try{
-			constexpr sv properties[]{ "InstrumentRange", "EURange" };//a node's are paths 2i and 2i+1.
-			vector<UABrowsePath> paths; paths.reserve( ids.size()*std::size(properties) );
-			for( let& id : ids ){
-				for( let property : properties ){
-					const BrowseSegment segment{ 0, string{property} };
-					paths.emplace_back( std::span<const BrowseSegment>{&segment, 1}, id );
-				}
-			}
-			TranslateBrowsePathsAwait translate{ move(paths), client };
-			let found = co_await Any( translate );
-			vector<NodeId> held; vector<uint> slots;//the properties the nodes have, and each one's path.
-			for( uint k=0; k<found.size(); ++k ){
-				if( found[k] ){
-					held.emplace_back( found[k]->nodeId );
-					slots.push_back( k );
-				}
-			}
-			vector<optional<Opc::Hist::Range>> ranges( found.size() );
-			if( held.size() ){
-				ReadAwait read{ ReadRequest{held, UA_ATTRIBUTEID_VALUE}, client };
-				let values = co_await Any( read );
-				for( uint j=0; j<slots.size() && j<values.resultsSize; ++j ){
-					if( let& v = values.results[j]; v.hasValue && UA_Variant_hasScalarType(&v.value, &UA_TYPES[UA_TYPES_RANGE]) ){
-						let& range = *static_cast<const UA_Range*>( v.value.data );
-						ranges[slots[j]] = Opc::Hist::Range{ range.low, range.high };
+					catch( const runtime_error& e ){
+						WARN( "[{}]Node {}'s attributes weren't written to its row:  {}", _guid, pk, e.what() );
+						unwritten.emplace( pk );
 					}
 				}
+				if( rows.size() ){
+					ul _{ _mutex };
+					for( let& [pk, _] : rows ){
+						if( auto p = _nodes.find(pk); p!=_nodes.end() )
+							p->second.Unwritten = unwritten.contains( pk );
+					}
+				}
+				start += ids.size();
 			}
-			for( uint i=0; i<ids.size() && 2*i+1<ranges.size(); ++i ){
-				described[i].Instrument = ranges[2*i];
-				described[i].EU = ranges[2*i+1];
-				described[i].Ranged = true;
+			auto next = Client();
+			ul _{ _mutex };
+			if( _closed || !next || _toDescribe.empty() ){//no client:  its next connect's pass describes every member.
+				_describing = false;
+				_toDescribe.clear();
+				co_return;
 			}
-		}
-		catch( const runtime_error& e ){
-			LOG( level, _tags, "[{}]Could not read the InstrumentRange and EURange of {} nodes on '{}' - a percent-of-range band waits for them:  {}", _guid, ids.size(), _slug, e.what() );
-		}
-		ul _{ _mutex };
-		for( uint i=0; i<ids.size() && !_closed; ++i ){
-			let [pk, n] = FindNode( ids[i] );
-			if( !n )
-				continue;
-			auto& node = *n;
-			if( i<typed.Types.size() && !UA_StatusCode_isBad(typed.Statuses[i]) ){
-				let& dataType = typed.DataTypes[i];
-				//None for one of namespace 0 with no built-in type:  abstract, as Number is, or BaseDataType, its values may be any subtype's.
-				if( let abstract = dataType && !dataType->namespaceIndex && !ValueTypes::BuiltIn(&*dataType); abstract || typed.Types[i] )
-					_group->SetDataType( pk, abstract ? nullptr : typed.Types[i] );
-			}
-			let& d = described[i];
-			let known = node.Described.Enumeration.has_value();
-			if( d.Enumeration )
-				node.Described.Enumeration = d.Enumeration;
-			if( d.Ranged ){
-				node.Described.Instrument = d.Instrument;
-				node.Described.EU = d.EU;
-				node.Described.Ranged = true;
-			}
-			//Lost:  the ranges, the DataType read, or the answer on a DataType it read.  A DataType the server refused isn't asked again.
-			node.Undescribed = !node.Described.Ranged || ( !node.Described.Enumeration && (i>=typed.DataTypes.size() || typed.DataTypes[i]) );
-			if( !node.Thresholds.ExceptionDeviation )
-				continue;
-			if( d.Enumeration.value_or(false) && !known )
-				INFO( "[{}]Node {} '{}' is an enumeration, whose every change is stored:  its ExceptionDeviation isn't used.", _guid, pk, node.Ex.ToString() );
-			try{
-				_group->SetThresholds( pk, ForGroup(node.Thresholds, node.Described) );//one whose range is missing the library warns of, and stores every change.
-			}
-			catch( const Exception& e ){
-				e.Log();
-			}
+			client = move( next );
+			nodes = std::exchange( _toDescribe, {} );
+			again = _describeAgain;
 		}
 	}
 	α HistGroupHost::Retry()ι->void{

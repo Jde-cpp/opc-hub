@@ -1,6 +1,6 @@
 import { ExNodeId } from './ex-node-id';
 import { histThresholdBlank } from './hist';
-import { HistGroup, HistTemplate, histNodeJson, histNodeLabel, histNodeText, parseHistNodeText, toHistGroupMember, toHistResolved, toHistTemplateMember } from './hist-admin';
+import { histDataTypeLabel, HistGroup, HistTemplate, histNodeJson, histNodeLabel, histNodeText, parseHistNodeText, toHistGroupMember, toHistResolved, toHistTemplateMember } from './hist-admin';
 
 const row = { id: 5, name: 'Pumps', slug: 'pumps', guid: '0f8fad5b-d9cb-469f-a165-70867728950e', serverConnection: {id: 1, name: 'Local'}, histTemplate: {id: 2, name: 'Pump'}, root: '{"nsu":"urn:jde:pumps","i":5001}', exceptionDeviation: null, exceptionDeviationFormat: null, minTimeInterval: null, maxTimeInterval: 60000, stepped: null };
 
@@ -88,6 +88,29 @@ describe( 'hist admin rows', ()=>{
 		expect( node.templateNodeId ).toBe( 3 );
 		expect( node.thresholds.exceptionDeviation ).toBe( '5' );
 		expect( toHistGroupMember( {id: 8, node: '{"nsu":"u","i":1}', histTemplateNodeId: null} ).templateNodeId ).toBeUndefined();
+		//the server's word on the node (#379):  each column undefined until it has one, the json columns parsed
+		expect( node.attributes ).toEqual( {} );
+		const described = toHistGroupMember( {id: 7, node: '{"nsu":"urn:jde:pumps","i":6032}', histTemplateNodeId: null, displayName: 'motorRpm', description: null, dataType: '{"nsu":"http://opcfoundation.org/UA/","i":11}', valueRank: -1, arrayDimensions: '[4,2]', accessLevel: 15,
+			euRange: '{"low":0E0,"high":3E3}', engineeringUnits: '{"namespaceUri":"http://www.opcfoundation.org/UA/units/un/cefact","unitId":4404,"displayName":"rpm","description":"revolutions per minute"}', path: '[{"nsu":"urn:jde:pumps","name":"pump3"},{"nsu":"urn:jde:pumps","name":"motorRpm"}]'} ).attributes;
+		expect( described.displayName ).toBe( 'motorRpm' );
+		expect( described.description ).toBeUndefined();
+		expect( described.dataType?.id ).toBe( 11 );
+		expect( described.dataType?.nsu ).toBe( 'http://opcfoundation.org/UA/' );
+		expect( described.valueRank ).toBe( -1 );
+		expect( described.arrayDimensions ).toEqual( [4, 2] );
+		expect( described.accessLevel ).toBe( 15 );
+		expect( described.euRange ).toEqual( {low: 0, high: 3000} );
+		expect( described.engineeringUnits ).toEqual( {namespaceUri: 'http://www.opcfoundation.org/UA/units/un/cefact', unitId: 4404, displayName: 'rpm', description: 'revolutions per minute'} );
+		expect( described.path?.map( s=>s.name ) ).toEqual( ['pump3', 'motorRpm'] );
+		expect( toHistGroupMember( {id: 9, node: '{"nsu":"u","i":1}', euRange: 'not json'} ).attributes.euRange ).toBeUndefined();
+		//a non-finite bound as Part 6 spells it
+		expect( toHistGroupMember( {id: 10, node: '{"nsu":"u","i":1}', euRange: '{"low":"NaN","high":"-Infinity"}'} ).attributes.euRange ).toEqual( {low: NaN, high: -Infinity} );
+		//a served type by its namespace-0 name, else its spelling
+		expect( histDataTypeLabel( described.dataType ) ).toBe( 'Double' );
+		expect( histDataTypeLabel( new ExNodeId( {nsu: 'http://opcfoundation.org/UA/', i: 22} ) ) ).toBe( 'Structure' );
+		expect( histDataTypeLabel( new ExNodeId( {nsu: 'http://opcfoundation.org/UA/', i: 294} ) ) ).toBe( 'UtcTime' );//Part 6's name, as the node page's (ETypes)
+		expect( histDataTypeLabel( new ExNodeId( {nsu: 'urn:jde:pumps', i: 3001} ) ) ).toBe( '{"nsu":"urn:jde:pumps","i":3001}' );
+		expect( histDataTypeLabel( undefined ) ).toBe( '' );
 		const resolved = toHistResolved( {nodes: [{templateNode: 3, path: '[{"nsu":"u","name":"a"}]', node: {nsu: 'u', i: 1}, status: 0, holder: null}, {templateNode: 4, path: '[]', node: null, status: 2153775104, holder: {id: 9, name: 'Other'}}]} );
 		expect( resolved[0].node?.nsu ).toBe( 'u' );
 		expect( resolved[0].holder ).toBeUndefined();

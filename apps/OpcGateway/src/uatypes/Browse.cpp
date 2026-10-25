@@ -122,13 +122,16 @@ namespace Browse{
 		}
 		return y;
 	}
-	α Request::Parents( NodeId&& id )ι->Request{
-		Request y{ move(id), (UA_BrowseResultMask)(UA_BROWSERESULTMASK_BROWSENAME | UA_BROWSERESULTMASK_NODECLASS) };
-		auto& d = y.nodesToBrowse[0];
-		d.browseDirection = UA_BROWSEDIRECTION_INVERSE;
-		d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
-		d.includeSubtypes = true;
-		d.nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE;//DI/IA hang children under variables too, as the crawl allows.
+	α Request::Parents( vector<NodeId>&& ids )ι->Request{
+		Request y{ move(ids), (UA_BrowseResultMask)(UA_BROWSERESULTMASK_BROWSENAME | UA_BROWSERESULTMASK_NODECLASS) };
+		y.PerNode = true;
+		for( uint i=0; i<y.nodesToBrowseSize; ++i ){
+			auto& d = y.nodesToBrowse[i];
+			d.browseDirection = UA_BROWSEDIRECTION_INVERSE;
+			d.referenceTypeId = UA_NODEID_NUMERIC( 0, UA_NS0ID_HIERARCHICALREFERENCES );
+			d.includeSubtypes = true;
+			d.nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE;//DI/IA hang children under variables too, as the crawl allows.
+		}
 		return y;
 	}
 	α Request::Properties( NodeId&& id )ι->Request{

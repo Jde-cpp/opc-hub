@@ -21,11 +21,11 @@
 					<mat-table [dataSource]="members.rows()" class="mat-elevation-z2 jde-dense">
 						<ng-container matColumnDef="path">
 							<mat-header-cell *matHeaderCellDef>Path</mat-header-cell>
-							<mat-cell *matCellDef="let m" [matTooltip]="'Row ' + m.id"><span>{{ pathText(m) }}</span></mat-cell>
+							<mat-cell *matCellDef="let m"><span tabindex="0" [matTooltip]="'Row ' + m.id">{{ pathText(m) }}</span></mat-cell>
 						</ng-container>
 						@for( column of columns; track column.name ){
 							<ng-container [matColumnDef]="column.name">
-								<mat-header-cell *matHeaderCellDef [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</mat-header-cell>
+								<mat-header-cell *matHeaderCellDef><span tabindex="0" [matTooltip]="column.hint">{{ column.label }}@if( column.unit ){ <span class="unit">({{ column.unit }})</span>}</span></mat-header-cell>
 								<mat-cell *matCellDef="let m"><span class="cell-value" [class.inherits]="!cellText(m.thresholds, column.name)">{{ cellText(m.thresholds, column.name) || "group's" }}</span></mat-cell>
 							</ng-container>
 						}

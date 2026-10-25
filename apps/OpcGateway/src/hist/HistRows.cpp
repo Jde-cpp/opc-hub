@@ -7,6 +7,7 @@
 #define let const auto
 namespace Jde::Opc::Gateway{
 	using Opc::Hist::Thresholds;
+	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Opc };
 
 	α HistThresholdColumns::Read( const DB::Row& row, uint i )ι->HistThresholdColumns{
 		return {
@@ -92,8 +93,116 @@ namespace Jde::Opc::Gateway{
 			.Connection = r.Get<uint32>( 2 ),
 			.Node = ParseHistNode( r.GetString(3), SRCE_CUR ),
 			.TemplateNode = r.GetOpt<uint32>( 4 ),
-			.Thresholds = HistThresholdColumns::Read( r, 5 )
+			.Thresholds = HistThresholdColumns::Read( r, 5 ),
+			.Attributes = HistNodeAttributes::Read( r, 10, r.Get<uint32>(0) )
 		};
+	}
+	//A range's bound as Part 6 spells a double, as Variant.cpp's toJson does:  Boost.JSON writes a NaN as null, which no number reads
+	//back, so a source's unknown range, {NaN, NaN}, failed every select of the table.
+	Ω boundJson( double v )ι->jvalue{ return std::isnan( v ) ? jvalue{"NaN"} : std::isinf( v ) ? jvalue{ v<0 ? "-Infinity" : "Infinity" } : jvalue{v}; }
+	Ω bound( const jobject& o, sv name, SL sl )ε->double{
+		let& v = Json::AsValue( o, name, sl );
+		if( let s = v.if_string(); s ){
+			if( *s=="NaN" )
+				return std::numeric_limits<double>::quiet_NaN();
+			if( *s=="Infinity" || *s=="-Infinity" )
+				return *s=="Infinity" ? std::numeric_limits<double>::infinity() : -std::numeric_limits<double>::infinity();
+		}
+		return Json::AsNumber<double>( v, sl );
+	}
+	Ω rangeJson( const Opc::Hist::Range& range )ι->string{ return serialize( jobject{ {"low", boundJson(range.Low)}, {"high", boundJson(range.High)} } ); }
+	Ω unitsJson( const HistEngineeringUnits& units )ι->string{
+		return serialize( jobject{ {"namespaceUri", units.NamespaceUri}, {"unitId", (int64_t)units.UnitId}, {"displayName", units.DisplayName}, {"description", units.Description} } );
+	}
+	Ω dimensionsJson( const vector<uint32>& dimensions )ι->string{
+		jarray y;
+		for( let d : dimensions )
+			y.emplace_back( (uint64_t)d );
+		return serialize( y );
+	}
+	α HistNodeAttributes::Read( const DB::Row& r, uint i, HistGroupNodePK id )ε->HistNodeAttributes{
+		HistNodeAttributes y;
+		//A cell that doesn't parse is none until the node is described again:  one bad row mustn't fail every select of the table,
+		//the startup load's among them, which stops the gateway.
+		let parsed = [&]( uint column, auto&& parse )ι{
+			if( let text = r.GetOpt<string>(i+column); text ){
+				try{
+					parse( *text );
+				}
+				catch( const std::exception& e ){
+					WARN( "hist_group_nodes row {}'s {} isn't readable - none until its node is described again:  {}", id, Names[column], e.what() );
+				}
+			}
+		};
+		y.DisplayName = r.GetOpt<string>( i );
+		y.Description = r.GetOpt<string>( i+1 );
+		parsed( 2, [&]( str text ){ y.DataType = ParseHistNode( text, SRCE_CUR ); } );
+		y.ValueRank = r.GetOpt<int32>( i+3 );
+		parsed( 4, [&]( str text ){
+			vector<uint32> dimensions;
+			for( let& d : Json::ParseValue(text, SRCE_CUR).as_array() )
+				dimensions.push_back( d.to_number<uint32_t>() );
+			y.ArrayDimensions = move( dimensions );
+		} );
+		y.AccessLevel = r.GetOpt<uint8>( i+5 );
+		parsed( 6, [&]( str text ){
+			let o = Json::Parse( text, SRCE_CUR );
+			y.EURange = Opc::Hist::Range{ bound(o, "low", SRCE_CUR), bound(o, "high", SRCE_CUR) };
+		} );
+		parsed( 7, [&]( str text ){
+			let o = Json::Parse( text, SRCE_CUR );
+			y.EngineeringUnits = HistEngineeringUnits{ string{Json::FindDefaultSV(o, "namespaceUri")}, Json::FindNumber<int32>(o, "unitId").value_or(0), string{Json::FindDefaultSV(o, "displayName")}, string{Json::FindDefaultSV(o, "description")} };
+		} );
+		parsed( 8, [&]( str text ){ y.Path = ParseHistPath( text, SRCE_CUR ); } );
+		return y;
+	}
+	α HistNodeAttributes::Values()Ι->vector<DB::Value>{
+		let text = []( optional<string> s )ι->DB::Value{ return s ? DB::Value{move(*s)} : DB::Value{}; };
+		return {
+			text( DisplayName ),
+			text( Description ),
+			text( DataType ? optional<string>{HistNodeText(*DataType)} : nullopt ),
+			ValueRank ? DB::Value{(int)*ValueRank} : DB::Value{},
+			text( ArrayDimensions ? optional<string>{dimensionsJson(*ArrayDimensions)} : nullopt ),
+			AccessLevel ? DB::Value{(uint32_t)*AccessLevel} : DB::Value{},
+			text( EURange ? optional<string>{rangeJson(*EURange)} : nullopt ),
+			text( EngineeringUnits ? optional<string>{unitsJson(*EngineeringUnits)} : nullopt ),
+			text( Path ? optional<string>{HistPathText(*Path)} : nullopt )
+		};
+	}
+	//`s`'s first `bytes` at most, cut before a character that would straddle them.
+	Ω clamped( string s, uint bytes )ι->string{
+		if( s.size()>bytes ){
+			uint end = bytes;
+			while( end && ((unsigned char)s[end] & 0xC0)==0x80 )
+				--end;
+			s.resize( end );
+		}
+		return s;
+	}
+	α HistNodeAttributes::FitColumns()ι->void{
+		let view = GetViewPtr( HistTable::GroupNodes );
+		let length = [&]( sv column )ι->uint { return view->GetColumnPtr( column )->MaxLength.value_or( std::numeric_limits<uint>::max() ); };
+		if( DisplayName )
+			DisplayName = clamped( move(*DisplayName), length("display_name") );
+		if( Description )
+			Description = clamped( move(*Description), length("description") );
+		if( ArrayDimensions && dimensionsJson(*ArrayDimensions).size()>length("array_dimensions") )
+			ArrayDimensions = nullopt;
+		if( EngineeringUnits ){
+			let limit = length( "engineering_units" );
+			auto& units = *EngineeringUnits;
+			for( auto* text : {&units.Description, &units.DisplayName} ){//a byte less of either is a byte less of the json, at least.
+				if( let size = unitsJson(units).size(); size>limit ){
+					let keep = text->size()>size-limit ? text->size()-(size-limit) : 0;//before the move.
+					*text = clamped( move(*text), keep );
+				}
+			}
+			if( unitsJson(units).size()>limit )//its namespace URI alone too long.
+				EngineeringUnits = nullopt;
+		}
+		if( Path && HistPathText(*Path).size()>length("path") )
+			Path = nullopt;
 	}
 	Ω templateNodeRow( DB::Row&& r )->HistTemplateNodeRow{
 		return {
@@ -165,13 +274,15 @@ namespace Jde::Opc{
 		auto y = Reserve<HistPathSegment>( array->size() );
 		for( let& segment : *array ){
 			let o = segment.if_object();
-			let uri = o ? Json::FindSV( *o, "nsu" ) : nullopt;
-			let name = o ? Json::FindSV( *o, "name" ) : nullopt;
-			if( !uri || uri->empty() || !name || name->empty() )
+			auto each = o ? ToHistPathSegment( Json::FindSV(*o, "nsu"), Json::FindSV(*o, "name").value_or(sv{}) ) : nullopt;
+			if( !each )
 				refuse( Ƒ("segment {} needs a namespace URI (nsu) and a browse name (name).", serialize(segment)) );
-			y.push_back( {string{*uri}, string{*name}} );
+			y.push_back( move(*each) );
 		}
 		return y;
+	}
+	α Gateway::ToHistPathSegment( optional<sv> uri, sv name )ι->optional<HistPathSegment>{
+		return uri && uri->size() && name.size() ? optional<HistPathSegment>{ {string{*uri}, string{name}} } : nullopt;
 	}
 	α Gateway::HistPathText( const vector<HistPathSegment>& path )ι->string{
 		jarray y;
@@ -211,7 +322,17 @@ namespace Jde::Opc{
 		auto columns = vector<string>{ "hist_group_node_id", "hist_group_id", "server_connection_id", "node", "hist_template_node_id" };
 		for( let name : HistThresholdColumns::Names )
 			columns.emplace_back( name );
+		for( let name : HistNodeAttributes::Names )
+			columns.emplace_back( name );
 		return { select(HistTable::GroupNodes, move(columns), move(where), sl), groupNodeRow, sl };
+	}
+	α Gateway::UpdateHistNodeAttributesSql( HistGroupNodePK id, const HistNodeAttributes& attributes )ε->DB::Sql{
+		string set;
+		for( let name : HistNodeAttributes::Names )
+			set += Ƒ( "{}{}=?", set.empty() ? "" : ", ", name );
+		auto params = attributes.Values();
+		params.emplace_back( (uint)id );
+		return { Ƒ("update {} set {} where hist_group_node_id=?", GetViewPtr(HistTable::GroupNodes)->SqlName(), set), move(params) };
 	}
 
 	α Gateway::SelectHistTemplateNodes( HistTemplateNodeFilter filter, SL sl )ι->HistRowsAwait<HistTemplateNodeRow>{
