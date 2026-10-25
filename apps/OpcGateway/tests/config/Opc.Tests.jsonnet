@@ -74,7 +74,8 @@ local logsDir = args.logsDir;
 			port: 4941,
 			trustedCertDirs: instance.access.trustedCertDirs,
 			rejectedCertDir: logsDir + "/rejected/opc-gateway-tests",
-			users: instance.opc.users
+			users: instance.opc.users,
+			limits: { maxSecureChannels: 120 } //UASettings::ReadLimits, the emulator's reader too (GatewayServerTests.TheBlockIsReadAndTheEndpointRuns)
 		}
 	},
 	opcServer:{

@@ -73,8 +73,12 @@ namespace Jde::Opc::Emulator{
 		_transport = transport=="write" ? ETransport::Write : transport=="server" ? ETransport::Server : ETransport::PubSub;
 		if( let d = Settings::FindArgDuration( "-duration", "/emulator/duration" ).value_or( Duration::zero() ); d>Duration::zero() )
 			_duration = d;
-		PubSub::Config contract{ Settings::AsObject("/emulator/pubsub") };
-		_nsUri = contract.Namespace;//the device paths' default namespace under every transport - the nodeset's.
+		optional<PubSub::Config> contract;
+		if( _transport==ETransport::PubSub )
+			contract.emplace( Settings::AsObject("/emulator/pubsub") );
+		//The device paths' default namespace under every transport, the nodeset's:  /emulator/namespace, else the contract's - a
+		//block the write and server transports read for nothing else, and may leave out.
+		_nsUri = Settings::FindString( "/emulator/namespace" ).value_or( contract ? contract->Namespace : Settings::FindString("/emulator/pubsub/dataSet/namespace").value_or("") );
 		let opc = opcCertificate();
 		//On every start, not only -createCert:  the SAN must equal the applicationUri we advertise, and an edited uri would
 		//otherwise present the stale SAN forever, refused BadCertificateUriInvalid with nothing naming the file to delete
@@ -84,7 +88,7 @@ namespace Jde::Opc::Emulator{
 			let nodeset = Settings::FindPath( "/emulator/plc/nodeset" ); THROW_IF( !nodeset, "/emulator/plc/nodeset is required - the nodeset the OpcServer loads." );
 			//The server's sessions log in through the hub over this process's app client, as the OpcServer's do (UAAccess);  the
 			//pubsub transport's writer samples the contract's nodes, the server transport has no contract.
-			_plc = mu<PlcServer>( PlcServer::ReadSettings(opc), _app, *nodeset, _transport==ETransport::PubSub ? optional{move(contract)} : nullopt );
+			_plc = mu<PlcServer>( PlcServer::ReadSettings(opc), _app, *nodeset, move(contract) );
 		}
 		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.
@@ -92,19 +96,25 @@ namespace Jde::Opc::Emulator{
 				tag.Self = this;
 		}
 		if( _transport==ETransport::Server ){
-			//Every tag is a node of the PLC's own server, resolved once - the address space is this process's.  A command tag is
-			//watched:  a client's write of it, the gateway's write-through of what the web UI wrote, lands in OnCommand through
-			//Tick, where the OpcServer's data-change notification lands under the other transports.
+			//Every tag is a node of the PLC's own server, resolved once - the address space is this process's - and a generated one
+			//written as its node's type.  A command tag is watched:  a client's write of it, the gateway's write-through of what the
+			//web UI wrote, lands in OnCommand through Tick, where the OpcServer's data-change notification lands under the other
+			//transports, and the node's value now is the command's start, as their first notification is.
 			let ns = _nsUri.size() ? _plc->Namespace( _nsUri ) : NsIndex{};
 			for( auto& device : _devices ){
 				for( auto& tag : device.Tags ){
 					tag.Node = _plc->Resolve( Ƒ("{}/{}", device.Path, tag.Spec.Name), ns );
 					let command = tag.Spec.Mode==EMode::Command;
 					if( command ){
-						_plc->Watch( tag.Node, _commandTags.size() );
+						if( let p = std::ranges::find_if(_commandTags, [&](let t){ return t->Node==tag.Node; }); p!=_commandTags.end() )
+							THROW( "[{}]{} and [{}]{} are both {} - a command node has one tag.", (*p)->Owner->Name, (*p)->Spec.Name, device.Name, tag.Spec.Name, tag.Node.ToString() );
+						if( let value = _plc->Watch(tag.Node, _commandTags.size()); value )
+							device.Command = *value;
 						_commandTags.push_back( &tag );
 					}
-					DBG( "[{}]{} -> {} ({})", device.Name, tag.Spec.Name, tag.Node.ToString(), command ? "watched" : "written" );
+					else if( tag.Generator )
+						tag.Type = &_plc->ValueType( tag.Node );
+					DBG( "[{}]{} -> {} ({}{})", device.Name, tag.Spec.Name, tag.Node.ToString(), command ? "watched" : "written as ", command ? Ƒ(", {}", device.Command) : string{tag.Type ? tag.Type->typeName : "?"} );
 				}
 			}
 		}
@@ -202,15 +212,9 @@ namespace Jde::Opc::Emulator{
 					}
 					continue;
 				}
-				UA_Variant v;
-				UA_Boolean b = tag.Value!=0;
-				if( tag.Spec.IsBool() )
-					UA_Variant_setScalar( &v, &b, &UA_TYPES[UA_TYPES_BOOLEAN] );
-				else
-					UA_Variant_setScalar( &v, &tag.Value, &UA_TYPES[UA_TYPES_DOUBLE] );
 				if( _transport==ETransport::Server ){
 					try{
-						_plc->Write( tag.Node, v, tag.Status );//the whole DataValue:  the status needs no StatusWrite on its own server.
+						_plc->Write( tag.Node, *tag.Type, tag.Value, tag.Status );//the whole DataValue:  the status needs no StatusWrite on its own server.
 						++_writes;
 					}
 					catch( const std::exception& e ){
@@ -221,6 +225,12 @@ namespace Jde::Opc::Emulator{
 				}
 				if( !sessionUp )
 					continue;//nothing to write to; the value is current and goes out on the next cycle after recovery.
+				UA_Variant v;
+				UA_Boolean b = tag.Value!=0;
+				if( tag.Spec.IsBool() )
+					UA_Variant_setScalar( &v, &b, &UA_TYPES[UA_TYPES_BOOLEAN] );
+				else
+					UA_Variant_setScalar( &v, &tag.Value, &UA_TYPES[UA_TYPES_DOUBLE] );
 				try{
 					try{
 						_client->Write( tag.Node, v, tag.StatusRefused ? UA_STATUSCODE_GOOD : tag.Status );
@@ -289,9 +299,10 @@ namespace Jde::Opc::Emulator{
 			return;
 		_reconnectDelay = std::min( _reconnectDelay*2, _reconnectMax );
 		try{
-			//Synchronous: UA_Client_connect blocks this thread for up to /emulator's 10 s client timeout, and neither the
-			//PLC server nor the clock is iterated inside it, so one failed attempt is one stall of that length.  Tolerable
-			//against an async connect's state machine (UA_Client_connectAsync); Tick's catch-up guard absorbs the gap.
+			//Synchronous: UA_Client_connect blocks this thread for up to /emulator's 10 s client timeout, and the clock is not
+			//advanced inside it - the PLC server and its publisher run on their own thread - so one failed attempt is one stall
+			//of the generated values that long.  Tolerable against an async connect's state machine (UA_Client_connectAsync);
+			//Tick's catch-up guard absorbs the gap.
 			Connect();
 		}
 		catch( const std::exception& e ){

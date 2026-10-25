@@ -47,13 +47,14 @@ local serverApplicationUri = "urn:open62541.server.application";
 		applicationUri: applicationUri,
 		serverApplicationUri: serverApplicationUri,
 		opcSchema: "opc."+buildTarget, ///opcServer/resource = args.buildTarget -> the acl schema.
+		namespace:: pubsub.dataSet.namespace, //the device paths' default namespace (devices[].path);  absent:  the contract's, which the write and server transports read for nothing else
 		//The PLC's own UA endpoint, on the UA server library's security - the OpcServer's policies, a trust list, and a login
 		//through the hub this process is logged into (docs/servers/spec.md *Emulator*):  what a gateway group collects from under
 		//-transport=server, and what the writer samples under pubsub.  4841 is the gateway's UA endpoint (hub or standalone),
 		//4840 the OpcServer's.  A `::` key is its default, shown hidden.
 		plc:{
 			port: 4842,
-			address:: null, //the interface it listens on;  null:  every interface, as the OpcServer and the gateway;  "127.0.0.1" for a PLC only this box's gateway dials
+			address:: "127.0.0.1", //the interface it listens on:  loopback, a PLC only this box's gateway dials;  "" every interface, for a LAN-visible demo PLC (Windows asks its firewall on each run)
 			nodeset: "$(JDE_DIR)/apps/OpcServer/config/nodesets/pumps.NodeSet2.xml", //the same file the OpcServer loads.
 			//absent:  the endpoint presents the device's own pair, /emulator/ssl below, whose URI SAN is the applicationUri - one identity, client or server
 			ssl:: $.emulator.ssl,

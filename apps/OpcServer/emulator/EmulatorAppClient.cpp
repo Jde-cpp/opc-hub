@@ -26,8 +26,8 @@ namespace Jde::Opc::Emulator{
 	α EmulatorAppClient::ClientQuery( QL::RequestQL&& q, Jde::UserPK executer, SL sl )ε->up<TAwait<jvalue>>{
 		//No authenticated-executer guard here, deliberately - unlike OpcQL::CustomMutation, which needs one because the
 		//OpcServer serves /graphql to the world and an anonymous push there rewrote its live levels (opcserver-review3 #9).
-		//This process has no listener at all: ClientQuery is reachable only over the app-client socket, from the AppServer
-		//that already gated updateInstanceTagLevel.  Re-gating on `executer` here would refuse whatever that server chose
+		//No listener of this process reaches it - the PLC server's UA endpoint has no QL - so ClientQuery is reachable only over
+		//the app-client socket, from the AppServer that already gated updateInstanceTagLevel.  Re-gating on `executer` here would refuse whatever that server chose
 		//to accept - which it did: the push carries the caller's UserPK, 0 for an anonymous one, and the levels then never
 		//moved, which is the very defect this route exists to fix.
 		if( isLogSettingsPush(q) )

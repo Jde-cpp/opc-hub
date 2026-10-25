@@ -149,7 +149,7 @@ on a box without MySQL.
 The shippable doc is `apps/OpcServer/emulator/README.md`; this section is the agent's run path.
 `apps/OpcServer/emulator` → `Jde.Opc.PlcEmulator`: a stand-in for a UA-enabled PLC that
 drives the OpcServer's pump tags (`apps/OpcServer/config/nodesets/pumps.NodeSet2.xml`).
-It runs its own UA server (4842, the UA server library's secured endpoint, sessions
+It runs its own UA server (loopback 4842, the UA server library's secured endpoint, sessions
 logged in through the hub) holding that nodeset and **publishes** the
 pump process values over OPC UA PubSub (UADP/UDP, contract in
 `apps/OpcServer/config/pubsub/pumps.libsonnet` — the OpcServer's `/opcServer/pubsub`
@@ -190,7 +190,7 @@ $D stop opcserver-emulator && $D start opcserver-emulator # loads the acl
 $E -c -tests -settings=$C               # runs until Ctrl-C (or -duration=PT10M); -transport=write for session writes
 ```
 
-Expected in its log: `PLC server on every interface:4842 with 'pumps.NodeSet2.xml';  publishing dataSet 'pumps' @ opc.udp://…`,
+Expected in its log: `PLC server on 127.0.0.1:4842 with 'pumps.NodeSet2.xml';  publishing dataSet 'pumps' @ opc.udp://…`,
 `Client security policies: …None, …Basic256Sha256, applicationUri filter: 'urn:open62541.server.application'`,
 `Session activated`, `Connected … 3 command tag(s) subscribed`, then every `statusPeriod`
 a `cycles=… published=… writes=… externalChanges=… reconnects=…` line. In the OpcServer's

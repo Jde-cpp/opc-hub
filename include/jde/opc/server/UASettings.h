@@ -44,5 +44,6 @@ namespace Jde::Opc::Server{
 			optional<uint> MaxAsyncOperations;//maxAsyncOperationQueueSize.
 		};
 		Limits Limit;
+		α ReadLimits( sv root )ε->void;//Limit from `root`/limits - maxSessions, maxSecureChannels, maxMonitoredItems, sessionTimeout, minSamplingInterval, maxAsyncOperations.
 	};
 }

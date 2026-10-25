@@ -28,7 +28,7 @@ The device clock keeps running while the OpcServer session is down.  A PLC does 
 |---|---|
 | exe / tests | `Jde.Opc.PlcEmulator` / `Jde.Opc.PlcEmulator.Tests` (`tests/`, 50 units, no database or server) |
 | settings / log | [`Opc.PlcEmulator.jsonnet`](config/Opc.PlcEmulator.jsonnet) ([`Opc.PlcEmulator.Hub.jsonnet`](config/Opc.PlcEmulator.Hub.jsonnet) against a hub; `Opc.PlcEmulator.Quality[.Hub].jsonnet` adds scheduled status codes) / `Opc.PlcEmulator.log` |
-| ports | none listening for HTTP; the PLC's UA endpoint on 4842 (every interface; `plc.address` binds one); UADP to the contract's url |
+| ports | none listening for HTTP; the PLC's UA endpoint on loopback 4842 (`plc.address` `""` for every interface); UADP to the contract's url |
 | identity | AppServer user = the login cert's CN (`PlcEmulator.debug.webServer`); OPC `applicationUri` `urn:jde:plc-emulator`, the client's and the PLC server's alike |
 
 ## Run
@@ -58,7 +58,7 @@ $E -c -tests -settings=$C -transport=server     # the PLC server alone on 4842, 
 ```
 
 `-c` is console mode (without it the process detaches); `-tests` binds the jsonnet ext vars (`buildTarget`, `logsDir`) -
-it is not a test mode.  Expect in the log: `PLC server up on opc.tcp://127.0.0.1:4842 … publishing dataSet 'pumps'`,
+it is not a test mode.  Expect in the log: `PLC server on 127.0.0.1:4842 with 'pumps.NodeSet2.xml';  publishing dataSet 'pumps' …`,
 `Connected to 'opc.tcp://127.0.0.1:4840': 3 command tag(s) subscribed`, then every `statusPeriod` a
 `cycles=… published=… writes=… writeFailures=… externalChanges=… reconnects=… - pump1[motorRpm=… status=…] …` line.
 In the OpcServer's log, `PubSub reader on '…' is UNAUTHENTICATED` says the overlay is in force.
@@ -68,15 +68,16 @@ Reading a value back from outside: `$D login` (a web session on this device's lo
 
 ### Server transport
 
-The PLC server is the device.  Expect `PLC server on every interface:4842 with 'pumps.NodeSet2.xml'`, then the status
+The PLC server is the device.  Expect `PLC server on 127.0.0.1:4842 with 'pumps.NodeSet2.xml'`, then the status
 lines with `writes=` counting the local writes and `externalChanges=` the commands clients wrote.  To collect from it:
 
 1. Trust, both ways.  The gateway (hub or standalone) must trust the PLC's certificate - the dev
    `Opc.Gateway.jsonnet` lists `Jde-Cpp/PlcEmulator/ssl/certs` in `gateway.trustedCertDirs`; an installed one needs
    the dir added, or the `.pem` copied into its `ssl/servers`.  The PLC trusts the gateway's per-connection
    certificates through `plc.trustedCertDirs`, which names the gateway's and the hub's product dirs.
-2. A `server_connections` row: url `opc.tcp://<host>:4842`, `certificateUri` `urn:jde:plc-emulator` (the secured
-   channel; without it the channel is None and only the token is encrypted).  The collector presents its hub session
+2. A `server_connections` row: url `opc.tcp://127.0.0.1:4842`, `certificateUri` `urn:jde:plc-emulator` (the secured
+   channel; without it the channel is None and only the token is encrypted).  A gateway on another box needs
+   `plc.address` set: `""` for every interface, or the interface it dials.  The collector presents its hub session
    as the issued token; the PLC's app client asks the hub about it, so the hub must be the one this process logged
    into.
 3. A template over the pump variables and a group from it, as for any server.  The group's collector logs in with the
@@ -86,8 +87,11 @@ lines with `writes=` counting the local writes and `externalChanges=` the comman
    `:::`, a plain `:` over a `::` key stays hidden).  A `status` written on the gateway's served node goes through to
    the PLC (write-through) and the emulator logs `[pump1]status <- false (external, user N)`.
 
-Every node is open to every session - the login is the gate (`plc.tokenTypes`): anonymous is off by default, a
-`username` login needs a `plc.users` entry, and a certificate token must be a hub user's key.
+Every node's value is open to every session - the login is the gate (`plc.tokenTypes`): anonymous is off by default, a
+`username` login needs a `plc.users` entry, and a certificate token must be a hub user's key.  No session can add
+references or write other attributes.  The emulator writes each generated tag as its node's DataType: Boolean, an integer
+(rounded and held to its range), an enumeration, Float or Double, and Double for an abstract one; a tag on a node of
+any other type is refused at startup.  A command node's value at startup is where its command starts.
 
 ### First run
 
@@ -133,13 +137,14 @@ overrides that beat them.
 | `serverApplicationUri` | | the endpoint filter: only endpoints whose server advertises it; `""` takes any |
 | `verifyServerCertificate` | | verify the OpcServer's certificate against `trustedCertDirs` before opening the session (default `true`) |
 | `trustedCertDirs` | | the OPC servers this PLC trusts, one certificate per server (`.pem`, `.crt`, `.der` or `.cer`), read on every connect - the emulator's own list (`/emulator/trustedCertDirs`), not the enrollment anchors |
-| `plc.port` / `plc.address` / `plc.nodeset` | | the PLC server's endpoint (4842; `address` absent = every interface) and the NodeSet2 it loads |
+| `plc.port` / `plc.address` / `plc.nodeset` | | the PLC server's endpoint (4842; `address` absent = loopback, `""` = every interface) and the NodeSet2 it loads |
 | `plc.ssl` | | the PLC server's certificate; absent = the device's `ssl` pair below, one identity for client and server |
 | `plc.trustedCertDirs` / `plc.rejectedCertDir` | | the UA clients admitted (the gateway's and the hub's product dirs, where their per-connection certificates land); where a refused one is written as `<thumbprint>.der` |
 | `plc.none` / `plc.tokenTypes` / `plc.users` / `plc.userTokenPolicyUri` | | the UA server library's login settings, as the OpcServer's `/opc` and the gateway's `/gateway/server`: a None endpoint beside the secured ones, which tokens are offered (anonymous off), the username list |
 | `plc.limits` | | open62541's `maxSessions`, `maxSecureChannels` (never below `maxSessions`), `maxMonitoredItems`, `sessionTimeout`, `minSamplingInterval`, `maxAsyncOperations`; every gateway user browsing the PLC holds a session beside the collector's |
 | `pubsub` | | the contract - `import` the shared file, never a copy |
 | `ssl` | | the UA channel certificate's settings (SAN = `applicationUri`; re-issued on drift at start) |
+| `namespace` | | the device paths' default namespace; absent = the contract's (`pubsub.dataSet.namespace`), so the write and server transports need no `pubsub` block |
 | `devices[]` | | `path` (browse path under Objects, in the contract's namespace by default; `<index>~name` for another) and `tags[]` (`name`, `mode`, `min`/`max`/`step`/`period`/`tau`/`ratedRpm`) |
 
 Durations are ISO 8601 (`PT30S`).  `TagSpec` refuses `max<=min` where a range is used, non-positive `period`/`tau`,
@@ -274,7 +279,8 @@ in-process.
 ## Known limits
 
 - `UA_Client_connect` is synchronous: a failed attempt stalls the device clock for up to the 10 s client timeout.
-- Only the `Double`/`Float`/`Boolean` field types are published; the pumps contract is all `Double`.
+- A field or tag is written as a `Boolean`, an integer, an enumeration, a `Float` or a `Double`; the pumps contract is
+  all `Double`.  Over the session (`-transport=write`) every number goes as a `Double`.
 - Status codes reach the OpcServer over pubsub only - a session-written tag's non-Good status is refused (no
   `StatusWrite`) and its value is written alone.  A Bad reading always carries its last value: the OpcServer's reader
   skips a field without one.  The source timestamp is not held with a held reading, and the historian bits are not
