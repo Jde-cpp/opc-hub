@@ -3,6 +3,7 @@
 #include <jde/fwk/io/json.h>
 #include <jde/tests/WaitUntil.h>
 #include <jde/opc/tests/UATestClient.h>
+#include "../../AppServer/src/LocalClient.h"
 #include "../../OpcGateway/src/GatewayAppClient.h"
 #include "../../OpcGateway/src/server/GatewayServer.h"
 #include "../../OpcGateway/tests/utils/helpers.h"
@@ -46,5 +47,17 @@ namespace Jde::Opc::Hub::Tests{
 			EXPECT_EQ( e.HttpStatus(), EHttpStatus::NotFound );
 			EXPECT_EQ( string{e.what()}, "[abcdef] Session not found." );
 		}
+	}
+	//Phase 7 (#388):  the hub answers endpoint{…} from its own QL, the gateway's custom arm (HubQL::CustomQuery):  the session the
+	//short token opened, under its user.
+	TEST_F( EndpointTests, EndpointQueryListsTheSessionUnderItsUser ){
+		WebSession session;
+		UATestClient client{ Url(), Ssl(), UATestClient::Issued(session.Authorization) };
+		ASSERT_EQ( client.Connect(), UA_STATUSCODE_GOOD );
+		let answer = App::Server::AppClient()->QuerySync<jvalue>( "endpoint{ url sessions{ type user{ id } } }", {} );
+		let& endpoint = answer.is_object() && answer.get_object().contains("endpoint") ? Json::AsObject( answer.get_object(), "endpoint" ) : answer.as_object();
+		EXPECT_EQ( Json::AsString(endpoint, "url"), Gateway::GatewayServer::Instance()->Url() );
+		let& sessions = Json::AsArray( endpoint, "sessions" );
+		EXPECT_TRUE( std::ranges::any_of(sessions, []( let& row ){ let& o = row.as_object(); return Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==1; }) ) << serialize( answer );
 	}
 }

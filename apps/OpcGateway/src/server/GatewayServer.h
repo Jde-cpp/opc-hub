@@ -3,6 +3,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>
+#include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAServer.h>
 #include "../hist/HistGroupHost.h"
 #include "../types/ServerCnnctn.h"
@@ -53,6 +54,18 @@ namespace Jde::Opc::Gateway{
 
 		α Url()Ι->string{ return Ƒ( "opc.tcp://{}:{}", _settings.Address.empty() ? Process::HostName() : _settings.Address, _settings.Port ); }
 		α Settings()Ι->const Opc::Server::UASettings&{ return _settings; }
+		//The endpoint as the web's Endpoint tab shows it (spec *Web*, endpoint{…}):  its url, the policy and mode of each endpoint it
+		//offers, where it trusts a client certificate from and writes a refused one, and the sessions it holds now.  Off _mutex:  the
+		//policies are fixed at Start and the sessions are the plugin's list, read under its own lock - so a Serial op waiting on the
+		//service lock never holds a QL query up.  Empty policies and sessions before Start and after Stop;  the sessions only when asked.
+		struct Description final{ string Url; vector<std::pair<string,UA_MessageSecurityMode>> Policies; vector<fs::path> TrustedCertDirs; fs::path RejectedCertDir; vector<Opc::Server::UAAccess::Session> Sessions; };
+		α Describe( bool sessions )Ι->Description;
+		//A group as the endpoint serves it (endpoint{ served(group) }):  its guid, for the caller's right to it, and its members, each by
+		//its hist_group_nodes id, its variable's id here and its browse path from Objects;  nullopt for a group it doesn't serve -
+		//deleted, not loaded, or no historian.  Off _mutex, as Describe:  kept under _describeMutex where the served nodes change.
+		struct ServedNode final{ HistGroupNodePK Id; string NodeId; string Path; };
+		struct ServedGroup final{ string Guid; vector<ServedNode> Nodes; };
+		α ServedNodes( HistGroupPK group )Ι->optional<ServedGroup>;
 		α Server()ι->Opc::Server::UAServer*;//the tests read the address space through it;  null once stopped.
 
 		//OpcQLHook's, after the row is written:  the folder for a new row, the url of an edited one, the folder of a purged one gone.
@@ -131,6 +144,8 @@ namespace Jde::Opc::Gateway{
 		α RemoveGroup( flat_map<HistGroupPK,Group>::iterator group )ι->flat_map<HistGroupPK,Group>::iterator;//the next.
 		α Rewrite( Served& served, const HistNodeAttributes& attributes )ι->void;//the source's attributes in place, the path and shape unchanged;  one it dropped as AddNode's default.
 		α Prune( const ServerCnnctnNK& slug, std::span<const HistPathSegment> parents )ι->void;//the path folders left empty, from the deepest up to a served variable.
+		α Listed( const Group& group, const Served& served )ι->void;//_served's, as group.Nodes takes it.
+		α Unlisted( HistGroupPK group, optional<HistGroupNodePK> index )ι->void;//_served's, a node or, without one, the whole group, as _groups loses it.
 		mutable std::mutex _mutex;
 		//From construction:  the tap reaches it from the listener's install on, before Start has a server.  Before _ua, whose thread's
 		//callbacks read it, so it outlives them;  the writes the same, whose timed callback holds them raw, answered on the server's
@@ -147,6 +162,11 @@ namespace Jde::Opc::Gateway{
 		//AddNode's, written once at the end of the Serial op that served them, so a group's directory is walked once, not once a
 		//member;  Start's own write covers those before it.  Under _mutex.
 		vector<Opc::Server::IHistoryHost::ArchiveStart> _starts;
+		//Describe's, set at Start under _describeMutex, not _mutex, which a Serial op can hold through a wait on the service lock.
+		mutable std::mutex _describeMutex;
+		vector<std::pair<string,UA_MessageSecurityMode>> _policies;
+		sp<Opc::Server::UAAccess::SessionList> _sessions;
+		flat_map<HistGroupPK,std::pair<string,flat_map<HistGroupNodePK,ServedNode>>> _served;//ServedNodes':  _groups' nodes as their ids and paths, set under _mutex too.
 		//Serial's queue, run in order on a thread of the endpoint's own, not the executor's:  a UA_Server_* call waits for open62541's
 		//service lock, which ActivateSession holds while the hub's session lookup waits for an executor thread (UAAccess's issued).
 		//Last:  the thread is joined before what it runs goes.

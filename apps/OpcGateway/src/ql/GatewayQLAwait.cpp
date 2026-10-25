@@ -123,6 +123,8 @@ namespace Jde::Opc::Gateway{
 			await = mu<SearchQLAwait>( move(q), move(executer), sl );
 		else if( ServerCnnctnSessionsQLAwait::IsApplicable(q) )
 			await = mu<ServerCnnctnSessionsQLAwait>( move(q), move(executer), sl );
+		else if( q.JsonName==EndpointQLAwait::Command )//the gateway's own endpoint:  no `opc`, no client.
+			await = mu<EndpointQLAwait>( move(q), move(executer), sl );
 		else if( needsClient(q) )
 			await = mu<GatewayQLAwait>( move(q), move(executer), sl );
 		return await;

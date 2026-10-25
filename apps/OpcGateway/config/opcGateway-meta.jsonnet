@@ -98,6 +98,7 @@ local attributes( i ) = {
 	//for an admin to enforce on the Resources page.  Read is all either offers:  it is all either gate asks.
 	resources:{
 		sessions:{ ops:["Read"] }, //opcSessions{…}, and the opcSessions/opcConnections/connectionStatus grafts on serverConnections (OpcSessionsQLAwait)
-		search:{ ops:["Read"] } //search(…) - the navbar's node search (SearchQLAwait)
+		search:{ ops:["Read"] }, //search(…) - the navbar's node search (SearchQLAwait)
+		endpoint:{ ops:["Read"] } //endpoint{…} - the gateway's own OPC UA endpoint, its Endpoint tab and a group's served nodes (EndpointQLAwait)
 	}
 }

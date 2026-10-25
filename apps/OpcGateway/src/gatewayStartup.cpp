@@ -41,7 +41,7 @@ namespace Jde::Opc{
 		for( let& path : Settings::FindPathArray("/ql/introspection") )
 			QL::AddIntrospection( QL::Introspection{Json::ReadJsonNet(Settings::Directory()/path)} );
 		//logSetting, the app client's;  sessions, the AppServer's ask for this process's web sessions, answered only over its socket (GatewayAppClient::ClientQuery).
-		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command} };
+		flat_set<string> tables{ "logSetting", "sessions", string{SearchQLAwait::Command}, string{EndpointQLAwait::Command} };//endpoint:  the gateway's own (OpcSessionsQLAwait.h);  its sub-tables inherit.
 		for( let family : {std::span<const sv>{GatewayQLAwait::Tables}, std::span<const sv>{HistGroupInfoQLAwait::Tables}, std::span<const sv>{ServerCnnctnSessionsQLAwait::Tables}} ){
 			for( let table : family )
 				tables.emplace( table );

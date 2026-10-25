@@ -17,6 +17,11 @@
 					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
+			<ng-template instanceTab="Endpoint"><!--the gateway's own OPC UA endpoint and its sessions (#388), keyed on the gateway as the lists are-->
+				@for( g of [gateway()]; track g ){
+					<gateway-endpoint [gateway]=g!></gateway-endpoint>
+				}
+			</ng-template>
 		</instance-tabs>
 	}
 }

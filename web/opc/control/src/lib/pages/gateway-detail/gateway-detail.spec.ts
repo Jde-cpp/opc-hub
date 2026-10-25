@@ -1,10 +1,12 @@
 import { Component, inject, InjectionToken, input, model, OnInit } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { DefaultUrlSerializer, PRIMARY_OUTLET } from '@angular/router';
 import { BehaviorSubject } from 'rxjs';
 import { AppService, QLList } from 'jde-framework';
 import { GatewayService } from '../../services/gateway-service';
 import { GatewayDetail } from './gateway-detail';
+import { GatewayEndpoint } from './gateway-endpoint/gateway-endpoint';
 import { GatewayHistList } from './hist-admin/gateway-hist-list';
 import { pageTitleStub, provideRoute, stable } from 'jde-spa/testing';
 import { stubLogTabs } from 'jde-framework/testing';
@@ -21,6 +23,8 @@ class HistListStub implements OnInit{
 	#created = inject( HIST_LIST_CREATED );
 	ngOnInit(){ this.#created( {gateway: this.gateway(), kind: this.kind(), url: this.url()} ); }
 }
+@Component( {selector: 'gateway-endpoint', template: ''} )
+class EndpointStub{ gateway = input<unknown>(); }
 
 //reviews/m3-closing.md #31:  the router reuses this page from one gateway to the next, and the log tabs loaded once - after a
 //switch they kept A's levels and entries under B's title, and a Save sent the edits, diffed against A's, to B's id.
@@ -51,7 +55,7 @@ describe( 'GatewayDetail switching gateway', ()=>{
 			}} },
 			{ provide: HIST_LIST_CREATED, useValue: created }
 		]});
-		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [QLList, GatewayHistList]}, add: {imports: [ListStub, HistListStub]}} );
+		TestBed.overrideComponent( GatewayDetail, {remove: {imports: [QLList, GatewayHistList, GatewayEndpoint]}, add: {imports: [ListStub, HistListStub, EndpointStub]}} );
 		const logTabs = stubLogTabs();
 		const fixture = TestBed.createComponent( GatewayDetail );
 		fixture.componentInstance.tabIndex.set( tab );
@@ -60,17 +64,26 @@ describe( 'GatewayDetail switching gateway', ()=>{
 		return { fixture, go, logTabs, created: ()=>created.mock.calls.map( ([c])=>c ), fail: ( lookup:string )=>down.add( lookup ) };
 	};
 
-	//the tabs:  Connections, Templates, Groups, Logs, Log Settings (#337 put the two historian tabs beside Connections)
+	//the tabs:  Connections, Templates, Groups, Endpoint, Logs, Log Settings (#337 put the two historian tabs beside Connections, #388 the endpoint after them)
 	it( 'builds Log Settings again for the gateway it switched to', async ()=>{
-		const { go, logTabs } = await open( 4 );
+		const { go, logTabs } = await open( 5 );
 		await go( 'B' );
 		expect( logTabs.settings.mock.calls ).toEqual( [[1], [2]] );
 	} );
 
 	it( 'and Logs', async ()=>{
-		const { go, logTabs } = await open( 3 );
+		const { go, logTabs } = await open( 4 );
 		await go( 'B' );
 		expect( logTabs.logs.mock.calls ).toEqual( [[gateways['A']], [gateways['B']]] );
+	} );
+
+	//#388:  the Endpoint tab reads the gateway's own endpoint, so a switch builds it again on the other gateway
+	it( 'and the Endpoint tab', async ()=>{
+		const { fixture, go } = await open( 3 );
+		const endpoint = ()=>fixture.debugElement.queryAll( By.directive(EndpointStub) ).map( e=>e.componentInstance.gateway() );
+		expect( endpoint() ).toEqual( [gateways['A']] );
+		await go( 'B' );
+		expect( endpoint() ).toEqual( [gateways['B']] );
 	} );
 
 	//#337:  the Templates and Groups lists are the gateway's own tables, so a switch builds them again too, under the page's url

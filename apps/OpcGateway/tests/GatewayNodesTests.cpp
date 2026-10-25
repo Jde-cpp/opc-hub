@@ -253,6 +253,38 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( client->Translate(NodeId::ObjectsFolder(), {{_own, OpcServerSlug}}) ) << "the connection folder stays";
 		EXPECT_EQ( client->Read(*node).status, UA_STATUSCODE_BADNODEIDUNKNOWN );
 	}
+	//endpoint{ served(group) }, what a group's page shows (servers-7-web review #3, #4):  the members as the endpoint serves them, each
+	//by its row's id, its variable's id and its browse path from Objects, and null for a group it doesn't serve - deleted, or unknown.
+	TEST_F( GatewayNodesTests, TheEndpointQueryAnswersWhatItServes ){
+		let served = []( uint32 group )->jvalue{
+			let answer = Mutate( "endpoint{ served( group:$group ){ id nodeId path } }", {{"group", group}} );
+			let& endpoint = answer.is_object() && answer.get_object().contains("endpoint") ? Json::AsObject( answer.get_object(), "endpoint" ) : answer.as_object();
+			return endpoint.at( "served" );
+		};
+		let itemsBefore = Items();
+		let groupId = CreateGroup( "gatewayNodesServed" );
+		absl::Cleanup purge = [&]{ Purge( groupId, itemsBefore ); };
+		EXPECT_TRUE( WaitUntil([&]{ return served(groupId).is_array(); }) ) << "a loaded group is served before it has a member";
+		let index = AddNode( groupId, Rpm1 );
+		auto client = Client();
+		optional<NodeId> node;
+		ASSERT_TRUE( WaitUntil([&]{ node = Served( *client, "pump1", "motorRpm" ); return node.has_value(); }) );
+		let path = Ƒ( "Objects/{}/pump1/motorRpm", OpcServerSlug );
+		optional<jobject> row;
+		EXPECT_TRUE( WaitUntil([&]{
+			for( let& r : served(groupId).as_array() ){
+				if( Json::AsNumber<uint32>(r.as_object(), "id")==index && Json::AsSV(r.as_object(), "path")==path )
+					row = r.as_object();
+			}
+			return row.has_value();
+		}) ) << serialize( served(groupId) );
+		if( row )
+			EXPECT_EQ( Json::AsString(*row, "nodeId"), node->ToString() );
+
+		Mutate( "deleteHistGroup( id:$id )", {{"id", groupId}} );
+		EXPECT_TRUE( WaitUntil([&]{ return served(groupId).is_null(); }) ) << "a deleted group isn't served:  " << serialize( served(groupId) );
+		EXPECT_TRUE( served(0x7fff'fff0).is_null() ) << "nor one the gateway doesn't have";
+	}
 
 	//A connection nothing can reach:  its members serve from their rows while the connection fails (spec *Address space*, open
 	//question #7).  Undescribed, a member sits under the connection folder by its id;  with the columns a run with the server up left -

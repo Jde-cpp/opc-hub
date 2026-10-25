@@ -42,7 +42,8 @@ installed.
   (`Connected`, `Since`, `Url`, `LastError`, `Reconnects`), and under it every historian group's members at their paths on the
   source, in a namespace per connection and remote URI, each serving the last value the collector delivered with the source's
   timestamps, `Bad_NoCommunication` through a connection's loss.  Their history follows ([plan](../../docs/servers/plan.md)).  No
-  block, no endpoint.
+  block, no endpoint.  `endpoint{ url policies trustedCertDirs rejectedCertDir served sessions }` describes it for the web's
+  Endpoint tab and a group's page ([`src/ql/OpcSessionsQLAwait.h`](src/ql/OpcSessionsQLAwait.h)), null without one.
 - **GraphQL** (`src/ql/`): `serverConnections`, `opcSessions`, `node` and `nodes` for browse and read, `updateVariable`
   for a write, `search` over a per-connection name index crawled on the first search (`src/NodeIndex.*`), and
   `__type(opc, ns, i)` for a server's enumerations, read from its DataType nodes (`src/EnumTypeCache.*`).

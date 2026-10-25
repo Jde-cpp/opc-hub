@@ -39,6 +39,7 @@ namespace Jde::Opc::Server::UAAccess{
 		sp<App::Client::IAppClient> AppClient;//the hub, which the logins and renewals ask.
 		sp<INodeAccess> NodeAccess;
 		const sp<UAAccess::Renewals> Renewals{ ms<UAAccess::Renewals>() };
+		const sp<UAAccess::SessionList> Sessions{ ms<UAAccess::SessionList>() };//what the server holds now, for the host's listing.
 	};
 	//ac's, or the server's for a caller that passes none:  UAHistory's checks, and the tests'.
 	Ω context( UA_Server* server, UA_AccessControl* ac )ι->AccessControlContext&{
@@ -173,12 +174,16 @@ namespace Jde::Opc::Server::UAAccess{
 	}
 
 	Ω clearAccessControl( UA_AccessControl* ac )ι->void{
+		if( let c = static_cast<AccessControlContext*>(ac->context); c )
+			c->Sessions->Clear();//the server is going:  a host still holding the list sees none, whatever closeSession was called for.
 		delete static_cast<AccessControlContext*>( ac->context );
 		ac->context = nullptr;
 		UA_Array_delete( ac->userTokenPolicies, ac->userTokenPoliciesSize, &UA_TYPES[UA_TYPES_USERTOKENPOLICY] );
 		ac->userTokenPolicies = nullptr;
 		ac->userTokenPoliciesSize = 0;
 	}
+
+	Ω sessionKey( const UA_NodeId* sessionId )ι->string{ return sessionId ? NodeId{*sessionId}.ToString() : string{}; }//the list's key:  the session's own id, a guid the stack makes.
 
 	constexpr sv AnonymousPolicy{ "open62541-anonymous-policy" };
 	constexpr sv UsernamePolicy{ "open62541-username-policy" };
@@ -344,6 +349,8 @@ namespace Jde::Opc::Server{
 			ASSERT( ctx );
 			if( let existing = static_cast<SessionContext*>(*sessionContext); existing && type==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] && existing->UserPK!=ctx->UserPK )
 				throw UAException{ UA_STATUSCODE_BADIDENTITYCHANGENOTSUPPORTED };
+			let tokenType = type==&UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN] ? UA_USERTOKENTYPE_USERNAME : type==&UA_TYPES[UA_TYPES_X509IDENTITYTOKEN] ? UA_USERTOKENTYPE_CERTIFICATE : type==&UA_TYPES[UA_TYPES_ISSUEDIDENTITYTOKEN] ? UA_USERTOKENTYPE_ISSUEDTOKEN : UA_USERTOKENTYPE_ANONYMOUS;
+			context.Sessions->Activated( Session{ sessionKey(sessionId), ctx->UserPK, std::ranges::find(TokenPolicies, tokenType, &TokenPolicy::Type)->Label, endpointDescription ? ToString(endpointDescription->securityPolicyUri) : string{}, endpointDescription ? endpointDescription->securityMode : UA_MESSAGESECURITYMODE_INVALID, Clock::now()} );
 			delete static_cast<SessionContext*>( *sessionContext );//the one this call replaces, if the session is re-activating.
 			*sessionContext = ctx.release();
 			return UA_STATUSCODE_GOOD;
@@ -398,7 +405,34 @@ namespace Jde::Opc::Server{
 			std::scoped_lock _{ renewals.Mutex };
 			renewals.Answers.erase( ctx->SessionId );
 		}
+		if( ctx )//one ActivateSession listed;  a session closed before it activated was never in the list.
+			context( server, ac ).Sessions->Closed( sessionKey(sessionId) );
 		delete ctx;
+	}
+	α UAAccess::Sessions( UA_Server& server )ι->sp<SessionList>{ return context( &server, nullptr ).Sessions; }
+	α UAAccess::SessionList::Activated( Session session )ι->void{
+		lg _{ _mutex };
+		if( auto p = _sessions.find(session.Id); p!=_sessions.end() ){//a re-activation:  the channel may have changed, the first activation's time stands.
+			session.Since = p->second.Since;
+			p->second = move( session );
+		}
+		else
+			_sessions.emplace( session.Id, move(session) );
+	}
+	α UAAccess::SessionList::Closed( str id )ι->void{
+		lg _{ _mutex };
+		_sessions.erase( id );
+	}
+	α UAAccess::SessionList::Clear()ι->void{
+		lg _{ _mutex };
+		_sessions.clear();
+	}
+	α UAAccess::SessionList::List()Ι->vector<Session>{
+		lg _{ _mutex };
+		vector<Session> y; y.reserve( _sessions.size() );
+		for( let& [_, session] : _sessions )
+			y.push_back( session );
+		return y;
 	}
 	α UAAccess::GetUserRightsMask( UA_Server *server, UA_AccessControl *ac, const UA_NodeId *sessionId, void *sessionContext, const UA_NodeId *nodeId, void *nodeContext )ι->UA_UInt32{
 		ASSERT( nodeId );

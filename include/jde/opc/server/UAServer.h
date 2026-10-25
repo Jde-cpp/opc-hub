@@ -8,6 +8,7 @@
 namespace Jde::App::Client{ struct IAppClient; }
 namespace Jde::Opc::Server {
 	struct INodeAccess; struct IHistoryHost;
+	namespace UAAccess{ struct SessionList; }
 	//A UA server and its thread:  the endpoint and its policies, the trust list, the session login and node rights through
 	//the host's appClient and nodeAccess, and the history backend over its history, which may be null for a server that
 	//keeps none.  The address space is the host's:  the OpcServer's comes from its NodeSet2 files (LoadNodeset), added
@@ -19,6 +20,9 @@ namespace Jde::Opc::Server {
 		α Run()ε->void;
 
 		α Namespaces()ι->flat_map<uint,string>;
+		α Sessions()ι->sp<UAAccess::SessionList>;//the sessions held, kept by the plugin:  a host reads it off this server's thread, and after the server.
+		//The endpoints offered, each its security policy URI and mode, as the config holds them from construction:  no UA call, read any time.
+		α Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>;
 		α Ptr()ι->UA_Server*{ return _ua; }
 		α History()ι->UAHistory&{ return _history; }
 		α Trust()ι->UATrust&{ return _config.Trust(); }
