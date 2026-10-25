@@ -51,7 +51,7 @@ namespace Jde::Crypto{
 	Φ ReadPrivateKey( const PrivateKeySettings& settings )ε->vector<byte>;
 	Φ RsaSign( str content, const fs::path& privateKeyFile, str passcode={}, SRCE )ε->Signature;
 	Φ Verify( const PublicKey& certificate, str decrypted, const Signature& signature, SRCE )ε->void;
-	Φ WriteCertificate( const fs::path& path, vector<byte>&& certificate, SL sl )ε->void;
+	Φ WriteCertificate( const fs::path& path, vector<byte>&& certificate, SL sl )ε->void;//DER, the first certificate of `certificate` - a UA trust list's encoding.
 	Φ WritePrivateKey( const fs::path& path, vector<byte>&& privateKey, str passcode, SL sl )ε->void;
 
 	struct OpenSslException final : ExternalException{

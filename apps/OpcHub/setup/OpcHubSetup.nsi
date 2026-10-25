@@ -695,6 +695,8 @@ Section -Services
 		Pop $0
 		;the hub's port: the Web UI and the api, for a browser or a client on any other machine (#11)
 		!insertmacro OpenFirewallPort "Jde OpcHub (TCP 1967)" "1967" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe"
+		;the hub's own OPC UA endpoint (Opc.Gateway.jsonnet gateway.server), for a SCADA or an OPC client elsewhere (docs/servers/spec.md)
+		!insertmacro OpenFirewallPort "Jde OpcHub (TCP 4841)" "4841" "$INSTDIR\OpcHub\Jde.Opc.Hub.exe"
 		${If} ${SectionIsSelected} ${SEC_OPCSERVER}
 			DetailPrint "Registering the Jde.OpcServer service"
 			nsExec::ExecToLog '"$INSTDIR\OpcServer\Jde.Opc.Server.exe" -install -settings=$ConfigDir\${SERVER_SETTINGS} -include=args/install -sync'
@@ -770,7 +772,7 @@ Section -Post
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub): the API the Web UI talks to.  For all users, opens TCP 1967 in the firewall on every network.  Required."
+	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_HUB} "The AppServer and the OPC gateway in one process (service Jde.OpcHub): the API the Web UI talks to, and an OPC UA endpoint.  For all users, opens TCP 1967 and 4841 in the firewall on every network.  Required."
 	;the description box holds ~200 characters and has no scrollbar - this one lost its last sentence (reviews/install-issues.md #9).
 	;The firewall sentences warn before a system change:  Section -Services opens both ports.
 	!insertmacro MUI_DESCRIPTION_TEXT ${SEC_OPCSERVER} "Jde's OPC UA server (Jde.OpcServer): DI/IA nodesets, the pumps demo, the hub's default connection, Google login.  For all users, opens TCP 4840 in the firewall on every network.  Optional."
@@ -1049,6 +1051,7 @@ Section "Uninstall"
 		!insertmacro StopAndRemove "Jde.OpcHub" "OpcHub\Jde.Opc.Hub.exe" "$ConfigDir\${HUB_SETTINGS}"
 		!insertmacro WaitServiceGone "Jde.Opc.Hub.exe" "Jde.OpcHub" "removed" "the uninstaller"
 		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 1967)"
+		!insertmacro CloseFirewallPort "Jde OpcHub (TCP 4841)"
 		!insertmacro CloseFirewallPort "Jde OpcServer (TCP 4840)"
 	${Else}
 		;the installer's close (reviews/install-issues.md #42), not a bare /F:  that cut the logs, left the -wal and never looked to see the exes gone

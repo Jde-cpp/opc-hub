@@ -344,6 +344,13 @@ namespace Jde{
 		return skipped.emplace( p ).second;
 	}
 
+	Ω toDer( X509* cert )ε->vector<byte>{
+		auto len = i2d_X509( cert, nullptr ); THROW_IFX( len<=0, Crypto::OpenSslException("i2d_X509 failed") );
+		vector<byte> y( len );
+		unsigned char* p = ( unsigned char* )y.data();
+		len = i2d_X509( cert, &p ); THROW_IFX( len<=0, Crypto::OpenSslException("i2d_X509 failed") );
+		return y;
+	}
 	α Crypto::ReadCertificate( const fs::path& certificate, SL sl )ε->vector<byte>{
 		X509Ptr cert{ PEM_read_bio_X509(Internal::ReadFile(certificate, sl).get(), nullptr, 0, nullptr), ::X509_free };
 		if( !cert ){//not PEM - try DER, which is what an OPC UA server publishes its instance certificate as (install-issues #33).
@@ -356,12 +363,7 @@ namespace Jde{
 		//ERR queue - DER's ("wrong tag"), since PEM's was cleared - and the exception takes the rest of the queue with it
 		//(CurrentErrorCode):  the second parse doubled what a bad file left behind.
 		THROW_IFX( !cert, Crypto::OpenSslException(Ƒ("Could not parse certificate '{}' as PEM or DER", certificate.string()), sl) );
-
-		auto len = i2d_X509( cert.get(), nullptr ); THROW_IFX( len<=0, OpenSslException("i2d_X509 failed") );
-		vector<byte> y( len );
-		unsigned char* p = ( unsigned char* )y.data();
-		len = i2d_X509( cert.get(), &p ); THROW_IFX( len<=0, OpenSslException("i2d_X509 failed") );
-		return y;
+		return toDer( cert.get() );
 	}
 	α Crypto::ReadPrivateKey( const Crypto::PrivateKeySettings& settings )ε->vector<byte>{
 		auto pkey = Internal::ReadPrivateKey( settings.Path, settings.Passcode );
@@ -375,8 +377,8 @@ namespace Jde{
 	α Crypto::WriteCertificate( const fs::path& path, vector<byte>&& certificate, SL sl )ε->void{
 		BioPtr mem{ Internal::ToBio(certificate, sl) };
 		X509Ptr cert{ ::d2i_X509_bio(mem.get(), nullptr), ::X509_free };  CHECK_NULL( cert );
-		BioPtr file{ Internal::File(path, true, sl) };
-		CALL( ::PEM_write_bio_X509(file.get(), cert.get()) );
+		auto der = toDer( cert.get() );//the first certificate alone, re-encoded:  a UA peer may send its chain after it.
+		IO::SaveBinary( path, std::span{der}, false, sl );//not Internal::File:  its "w" is text mode on Windows, which mangles DER.
 	}
 
 	α Crypto::WritePrivateKey( const fs::path& path, vector<byte>&& privateKey, str passcode, SL sl )ε->void{

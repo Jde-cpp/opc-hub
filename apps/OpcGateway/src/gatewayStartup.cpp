@@ -24,9 +24,11 @@
 #include "ql/HistQL.h"
 #include "ql/OpcQLHook.h"
 #include "ql/TestConnectionQLAwait.h"
+#include "server/GatewayServer.h"
 
 #define let const auto
 namespace Jde::Opc{
+	static optional<Crypto::CryptoSettings> _processSsl;//the listener's pair, Configure's, which the endpoint presents when its block names none (spec *Startup and deploy*).
 	α Gateway::Configure( const jobject& webServerSettings, sp<QL::LocalQL> ql )ε->sp<DB::AppSchema>{
 		auto appClient = AppClient();
 		auto authorize = appClient->Acl( "gateway" );
@@ -59,14 +61,21 @@ namespace Jde::Opc{
 		Process::RaiseTimerResolution();//AsyncRequest's 1 ms poll for a UA response took a 15.6 ms tick on windows:  every round trip's floor.
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
+		_processSsl.emplace( Json::FindDefaultObject(webServerSettings, "ssl"), sv{} );
 		return schema;
 	}
 	α Gateway::Connect( sp<DB::AppSchema> schema )ε->void{
 		App::Client::ConnectAccess( AppClient(), {move(schema)}, {}, false );
-		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );//before the UA clients go:  the collectors' items are dropped on live clients, and the groups' last flushes run while the executor still does.
+		//Registration order is run order (process.cpp):  the endpoint first, so its sessions are gone before the historian and the UA
+		//clients it reports on;  then the historian, before the UA clients go:  the collectors' items are dropped on live clients, and
+		//the groups' last flushes run while the executor still does.
+		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
+		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		QL::Hook::Add( mu<OpcQLHook>() );
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
+		THROW_IF( !_processSsl, "Connect before Configure." );
+		GatewayServer::Start( *_processSsl );//last:  the hub and the standalone gateway both reach here, after the groups are loaded.
 	}
 	α Gateway::Startup( jobject webServerSettings )ε->void{
 		auto schema = Configure( webServerSettings );

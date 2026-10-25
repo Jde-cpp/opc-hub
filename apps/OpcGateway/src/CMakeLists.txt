@@ -6,7 +6,7 @@ include( ${jdeRoot}/build/dependencies.cmake )
 set( targetName Jde.Opc.GatewayLib )
 add_library( ${targetName} )
 compileOptions( ${targetName} )
-file( GLOB sources CONFIGURE_DEPENDS *.cpp async/*.cpp auth/*.cpp hist/*.cpp ql/*.cpp types/*.cpp types/proto/*.cpp uatypes/*.cpp )
+file( GLOB sources CONFIGURE_DEPENDS *.cpp async/*.cpp auth/*.cpp hist/*.cpp ql/*.cpp server/*.cpp types/*.cpp types/proto/*.cpp uatypes/*.cpp )
 file( GLOB protos CONFIGURE_DEPENDS types/proto/*.proto )
 get_filename_component( main_cpp ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp ABSOLUTE )
 list( REMOVE_ITEM sources ${main_cpp} )
@@ -16,7 +16,7 @@ target_sources( ${targetName} PRIVATE ${sources} ${headers} ${protos} )
 sqliteProcDependencies( ${targetName} Jde.DB.Sqlite.OpcGateway ) #config/args/sqlite + the 'Debug - Sqlite' launch config load these
 linkConfigFile( "${jdeRoot}/libs/db/config/common-meta.libsonnet" "${jdeRoot}/apps/OpcGateway/config/common-meta.libsonnet" ) #here, not in an exe:  the gateway's, the hub's and the superbuild all configure this dir.
 
-target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib ) #the historian:  today the pass-through's continuation (ql/HistQL.h), the gateway's groups with Phase 5.
+target_link_libraries( ${targetName} Jde.Web.Server Jde.App.Client Jde.Opc Jde.Opc.HistorianLib Jde.Opc.UAServer ) #the historian:  the pass-through's continuation (ql/HistQL.h) and the gateway's groups;  the UA server library:  the gateway's endpoint (server/GatewayServer.h), which is how the hub gets it.
 
 target_precompile_headers(${targetName}
 	PRIVATE
