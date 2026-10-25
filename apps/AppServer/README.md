@@ -99,5 +99,5 @@ Under ctest it runs on in-memory sqlite:
 ctest -R Jde.App.Server.Tests
 ```
 
-ctest kills it after 300 s. That limit is the `JDE_TEST_TIMEOUT` cache variable, which wins over `ctest --timeout`.
+ctest kills it after 450 s. That limit is the `JDE_TEST_TIMEOUT` cache variable, which wins over `ctest --timeout`.
 Raise it with `-DJDE_TEST_TIMEOUT=<seconds>`.

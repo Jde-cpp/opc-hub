@@ -149,10 +149,18 @@ namespace Jde::Opc::Gateway{
 			lg _{ _mutex };
 			THROW_IFSL( _stopped, "The historian has stopped." );//during AddGroup:  the group goes with the historian when this lets go of it.
 			_groups.insert_or_assign( row.Id, host );
+			host->Listen( _listener.lock() );
 		}
 		if( auto listener = Listener(); listener )
 			listener->GroupLoaded( *host );
 		return host;
+	}
+	α HistHost::Listen( wp<IHistListener> listener )ι->void{
+		lg _{ _mutex };
+		_listener = move( listener );
+		let strong = _listener.lock();
+		for( let& [_, host] : _groups )
+			host->Listen( strong );
 	}
 	α HistHost::Remove( HistGroupPK id, optional<Opc::Hist::Writer> by, SL sl )ι->sp<HistGroupHost>{
 		sp<HistGroupHost> host; sp<Opc::Hist::Historian> historian;

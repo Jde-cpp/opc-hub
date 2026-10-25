@@ -44,7 +44,7 @@ namespace Jde::Opc::Gateway{
 		α Historian()Ι->sp<Opc::Hist::Historian>{ lg _{ _mutex }; return _historian; }
 		α Find( HistGroupPK id )Ι->sp<HistGroupHost>;
 		α Groups()Ι->vector<sp<HistGroupHost>>;
-		α Listen( wp<IHistListener> listener )ι->void{ lg _{ _mutex }; _listener = move( listener ); }//the endpoint's, from its Start to its Stop.
+		α Listen( wp<IHistListener> listener )ι->void;//the endpoint's, from its Listen to its Stop:  here for the hooks, and each host's for its tap.
 		α Listener()Ι->sp<IHistListener>{ lg _{ _mutex }; return _listener.lock(); }
 		//A group's host, past its gate (spec *Authorization*):  `rights` tested on the group's own access row, keyed by its guid, else the
 		//hist_groups table's, as Authorize::Test resolves a criteria - `enforced` asks TestEnforced, as a history edit does - then

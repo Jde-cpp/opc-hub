@@ -144,6 +144,7 @@ namespace Jde::Opc::Gateway{
 			y.push_back( {index, node.Ex, node.Thresholds, node.Attributes} );
 		return y;
 	}
+	α HistGroupHost::NamespaceUris()Ι->vector<string>{ ul _{ _mutex }; return _namespaces.Uris; }
 	α HistGroupHost::Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>{
 		ul _{ _mutex };
 		auto y = Reserve<std::pair<HistGroupNodePK,ExNodeId>>( _nodes.size() );
@@ -174,9 +175,11 @@ namespace Jde::Opc::Gateway{
 	}
 	α HistGroupHost::Close()ι->void{
 		Opc::Hist::IClock::TimerId retry, watch;
+		sp<IHistListener> listener;//released off the lock.
 		{
 			ul _{ _mutex };
 			_closed = true;
+			listener = move( _listener );
 			retry = std::exchange( _retry, 0 );
 			watch = std::exchange( _watch, 0 );
 			_verifying = false;
@@ -235,6 +238,8 @@ namespace Jde::Opc::Gateway{
 					_held.clear();
 				}
 				_namespaces = namespaces;
+				if( _listener )
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
 				for( auto&& [index,node] : _nodes ){
 					if( node.Subscribed || _closed )
 						continue;
@@ -341,7 +346,7 @@ namespace Jde::Opc::Gateway{
 				if( _verifying )
 					_held.emplace_back( pk, move(value) );
 				else
-					_group->Enqueue( pk, value );
+					Deliver( pk, value );
 			}
 		}
 		catch( const runtime_error& e ){
@@ -689,6 +694,15 @@ namespace Jde::Opc::Gateway{
 		UAClient::UnsubscribePending( _slug, self, nodes );
 	}
 
+	α HistGroupHost::Deliver( HistGroupNodePK index, const Value& value )ι->void{
+		_group->Enqueue( index, value );
+		if( _listener )
+			_listener->ValueChanged( _id, index, value );
+	}
+	α HistGroupHost::Listen( sp<IHistListener> listener )ι->void{
+		ul _{ _mutex };
+		_listener.swap( listener );//the one it replaces goes with the argument, off the lock.
+	}
 	α HistGroupHost::SendDataChange( const ServerCnnctnNK&, const NodeId& node, const Value& value )ι->void{
 		ul _{ _mutex };
 		let [pk, n] = FindNode( node );
@@ -698,7 +712,7 @@ namespace Jde::Opc::Gateway{
 		if( _verifying )
 			_held.emplace_back( pk, value );
 		else
-			_group->Enqueue( pk, value );
+			Deliver( pk, value );
 	}
 	α HistGroupHost::ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void{
 		let now = _clock.Now();
@@ -707,10 +721,15 @@ namespace Jde::Opc::Gateway{
 		++_epoch;//a check still out decides nothing:  this break stands.
 		if( std::exchange(_verifying, false) )//from the items this break took, before their namespaces were checked:  inside its gap.
 			_held.clear();
+		vector<HistGroupNodePK> lost;
 		for( let& id : nodes ){
-			if( let n = FindNode(id).second; n && !n->Lost )
+			if( let [pk, n] = FindNode(id); n && !n->Lost ){
 				n->Lost = now;
+				lost.push_back( pk );
+			}
 		}
+		if( _listener && lost.size() )
+			_listener->NodesLost( _id, lost );
 	}
 	α HistGroupHost::ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void{
 		uint epoch;
@@ -745,8 +764,11 @@ namespace Jde::Opc::Gateway{
 				co_return;
 			_verifying = false;
 			moved = !read || Moved( *read );
-			if( read )
+			if( read ){
 				_namespaces = move( *read );
+				if( _listener )//before the held values, which came under it.
+					_listener->NamespacesRead( _id, _slug, _namespaces.Uris );
+			}
 			_group->Connected();
 			if( moved ){
 				_held.clear();
@@ -754,7 +776,7 @@ namespace Jde::Opc::Gateway{
 			}
 			else{
 				for( let& [index,value] : _held )
-					_group->Enqueue( index, value );
+					Deliver( index, value );
 				_held.clear();
 			}
 		}
@@ -797,6 +819,7 @@ namespace Jde::Opc::Gateway{
 		}
 		let handles = monitored && live.size() ? monitored->Handles( live ) : flat_map<NodeId,MonitorHandle>{};
 		flat_set<NodeId> abandoned;
+		vector<HistGroupNodePK> lost;
 		{
 			ul _{ _mutex };
 			if( _closed )
@@ -804,11 +827,13 @@ namespace Jde::Opc::Gateway{
 			//Gone without a ConnectionLost:  a client removed while it was up.  The connection's whole, so the group's break.
 			if( !client && live.size() )
 				_group->Disconnected( now );
-			for( auto&& [_,node] : _nodes ){
+			for( auto&& [index,node] : _nodes ){
 				if( !node.Subscribed )
 					continue;
-				if( !node.Lost && live.contains(*node.Id) && !handles.contains(*node.Id) )
+				if( !node.Lost && live.contains(*node.Id) && !handles.contains(*node.Id) ){
 					node.Lost = now;
+					lost.push_back( index );
+				}
 				if( node.Lost && now-*node.Lost>=AbandonAfter ){
 					abandoned.emplace( *node.Id );
 					_byNode.erase( *node.Id );
@@ -817,6 +842,8 @@ namespace Jde::Opc::Gateway{
 					node.Id.reset();//resolved again by URI.
 				}
 			}
+			if( _listener && lost.size() )
+				_listener->NodesLost( _id, lost );
 			Watch();
 		}
 		if( abandoned.size() ){

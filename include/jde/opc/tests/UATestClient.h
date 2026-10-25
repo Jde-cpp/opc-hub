@@ -2,6 +2,7 @@
 #include <open62541/client.h>
 #include <open62541/client_config_default.h>
 #include <open62541/client_highlevel.h>
+#include <open62541/client_subscriptions.h>
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
 #include <jde/fwk/crypto/OpenSsl.h>
@@ -84,6 +85,20 @@ namespace Jde::Opc::Tests{
 			const auto sc = UA_Client_readValueAttribute( _client, node, &v );
 			return sc ? Value{ sc } : Value{ move(v) };
 		}
+		//The node's DataValue with the timestamps asked for - Read asks for neither - or the read's status when the service failed.
+		α ReadValue( const UA_NodeId& node, UA_TimestampsToReturn timestamps=UA_TIMESTAMPSTORETURN_BOTH )ι->Value{
+			UA_ReadValueId id; UA_ReadValueId_init( &id );
+			id.nodeId = node;//a view:  not cleared.
+			id.attributeId = UA_ATTRIBUTEID_VALUE;
+			UA_ReadRequest request; UA_ReadRequest_init( &request );
+			request.nodesToRead = &id;
+			request.nodesToReadSize = 1;
+			request.timestampsToReturn = timestamps;
+			auto response = UA_Client_Service_read( _client, request );
+			Value y{ response.responseHeader.serviceResult ? Value{ response.responseHeader.serviceResult } : response.resultsSize==1 ? Value{ response.results[0] } : Value{ UA_STATUSCODE_BADUNEXPECTEDERROR } };
+			UA_ReadResponse_clear( &response );
+			return y;
+		}
 		//The node's children by its forward hierarchical references, a folder listing:  each browse name and target.
 		struct Child final{ string BrowseName; NodeId Id; };
 		α Browse( const UA_NodeId& node )ε->vector<Child>{
@@ -136,7 +151,34 @@ namespace Jde::Opc::Tests{
 			UAε( status );
 			return y;
 		}
+		//A subscription publishing every `publishingMs`, its id.
+		α Subscribe( double publishingMs=100 )ε->UA_UInt32{
+			auto request = UA_CreateSubscriptionRequest_default();
+			request.requestedPublishingInterval = publishingMs;
+			auto response = UA_Client_Subscriptions_create( _client, request, nullptr, nullptr, nullptr );
+			const auto status = response.responseHeader.serviceResult;
+			const auto id = response.subscriptionId;
+			UA_CreateSubscriptionResponse_clear( &response );
+			UAε( status );
+			return id;
+		}
+		//A data-change item on `node` sampled every `samplingMs`, both timestamps asked for:  each notification lands in `into` as the
+		//client is pumped - Iterate, or any synchronous call - on the caller's thread, so `into` outlives the client.  The server's
+		//revised sampling interval.
+		α Monitor( UA_UInt32 subscription, const UA_NodeId& node, double samplingMs, vector<Value>& into )ε->double{
+			auto item = UA_MonitoredItemCreateRequest_default( node );//a view of `node`:  not cleared.
+			item.requestedParameters.samplingInterval = samplingMs;
+			item.requestedParameters.queueSize = 10;
+			auto result = UA_Client_MonitoredItems_createDataChange( _client, subscription, UA_TIMESTAMPSTORETURN_BOTH, item, &into, notified, nullptr );
+			const auto status = result.statusCode;
+			const auto revised = result.revisedSamplingInterval;
+			UA_MonitoredItemCreateResult_clear( &result );
+			UAε( status );
+			return revised;
+		}
+		α Iterate( UA_UInt32 ms )ι->void{ UA_Client_run_iterate( _client, ms ); }//the client's loop for `ms`:  publish responses in, their notifications out.
 	private:
+		Ω notified( UA_Client*, UA_UInt32, void*, UA_UInt32, void* context, UA_DataValue* value )ι->void{ static_cast<vector<Value>*>( context )->emplace_back( *value ); }
 		Ω wrap( void* token, const UA_DataType& type )ι->UA_ExtensionObject{
 			UA_ExtensionObject y; UA_ExtensionObject_init( &y );
 			UA_ExtensionObject_setValue( &y, token, &type );

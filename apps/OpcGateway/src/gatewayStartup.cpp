@@ -73,9 +73,10 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		QL::Hook::Add( mu<OpcQLHook>() );
-		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
 		THROW_IF( !_processSsl, "Connect before Configure." );
-		GatewayServer::Start( *_processSsl );//last:  the hub and the standalone gateway both reach here, after the groups are loaded.
+		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
+		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
+		GatewayServer::Start();//last:  the hub and the standalone gateway both reach here, after the groups are loaded.
 	}
 	α Gateway::Startup( jobject webServerSettings )ε->void{
 		auto schema = Configure( webServerSettings );

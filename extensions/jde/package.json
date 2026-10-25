@@ -2,7 +2,7 @@
     "name": "utils",
     "displayName": "jde utils",
     "description": "",
-    "version": "2026.8.0",
+    "version": "2026.10.0",
     "publisher": "jde",
     "engines": {
         "vscode": "^1.105.0"
@@ -24,10 +24,19 @@
 							"command": "jde.repoBuildRelDir",
 							"title": "Appends the repository directory name to the release build directory path"
 					}
+			],
+			"grammars": [
+					{
+							"language": "cpp",
+							"scopeName": "source.cpp",
+							"path": "./syntaxes/cpp.tmLanguage.json"
+					}
 			]
     },
     "scripts": {
+        "vscode:prepublish": "npm run compile && npm run grammar",
         "compile": "tsc -p ./",
+        "grammar": "node out/scripts/grammar.js",
         "watch": "tsc -watch -p ./"
     },
     "devDependencies": {
