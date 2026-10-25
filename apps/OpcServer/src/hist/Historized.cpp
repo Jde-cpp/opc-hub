@@ -1,4 +1,5 @@
 #include "Historized.h"
+#include "OpcServerHistoryHost.h"
 #include <open62541/plugin/nodestore.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include <jde/opc/server/HAConfiguration.h>
@@ -164,17 +165,18 @@ namespace Jde::Opc::Server{
 	}
 }
 namespace Jde::Opc{
-	α Server::StartHistory( UAServer& ua )ε->void{
+	α Server::StartHistory( UAServer& ua, OpcServerHistoryHost& host )ε->void{
 		auto& history = ua.History();
 		if( !history.Enabled() )
 			return;
+		auto& historian = *host.Historian();//history's, so set while it is Enabled.
 		auto nodes = Historized::Load( ua, [&history]( const UA_NodeId& configuration ){ return history.TypeStepped( configuration ); } );
 		vector<Hist::Member> members;
 		members.reserve( nodes.size() );
 		for( let& node : nodes )
 			members.push_back( node.Member );
-		auto group = history.Historian().AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
-		UAHistory::Indexes indexes;
+		auto group = historian.AddGroup( {.Name="server", .Indexes=Hist::EIndexes::Issued}, move(members) );
+		OpcServerHistoryHost::Indexes indexes;
 		vector<NodeId> archiveStarts;
 		for( auto& node : nodes ){
 			let index = group->Find( node.Member.Node );
@@ -193,6 +195,9 @@ namespace Jde::Opc{
 			archiveStarts.push_back( move(node.StartOfOnlineArchive) );
 			indexes.emplace_back( move(node.Id), *index );
 		}
-		history.Start( ua, move(group), move(indexes), move(archiveStarts) );
+		let count = indexes.size();
+		host.Serve( move(group), move(indexes), move(archiveStarts) );
+		history.Start( ua );
+		INFO( "Keeping the history of {} nodes under '{}'.", count, historian.Config().Path.string() );
 	}
 }

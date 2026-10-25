@@ -7,12 +7,13 @@
 
 namespace Jde::App::Client{ struct IAppClient; }
 namespace Jde::Opc::Server {
-	struct INodeAccess;
+	struct INodeAccess; struct IHistoryHost;
 	//A UA server and its thread:  the endpoint and its policies, the trust list, the session login and node rights through
-	//the host's appClient and nodeAccess, and the history backend.  The address space is the host's:  the OpcServer's comes
-	//from its NodeSet2 files (LoadNodeset), added before Run.
+	//the host's appClient and nodeAccess, and the history backend over its history, which may be null for a server that
+	//keeps none.  The address space is the host's:  the OpcServer's comes from its NodeSet2 files (LoadNodeset), added
+	//before Run.
 	struct UAServer final{
-		UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε;
+		UAServer( const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess, sp<IHistoryHost> history )ε;
 		~UAServer();
 		operator UA_Server&()ι{ ASSERT(_ua); return *_ua; }
 		α Run()ε->void;
