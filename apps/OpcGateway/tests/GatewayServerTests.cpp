@@ -13,6 +13,7 @@
 #include "../src/ql/GatewayQL.h"
 #include "../src/server/GatewayServer.h"
 #include "utils/ClientFixture.h"
+#include "utils/GatewayClientSocket.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
@@ -324,5 +325,36 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( wrongPassword.Connect(), UA_STATUSCODE_BADUSERACCESSDENIED );
 		UATestClient noSession{ Url(), Ssl(), UATestClient::Issued("abc") };
 		EXPECT_NE( noSession.Connect(), UA_STATUSCODE_GOOD );
+	}
+	//Phase 7 (#388):  endpoint{…}, what the web's Endpoint tab reads - the url, the policies offered, the trust directories and the
+	//sessions held now, this client's among them while it is connected and gone once it isn't.
+	TEST_F( GatewayServerTests, EndpointQueryDescribesTheEndpointAndItsSessions ){
+		constexpr sv q{ "endpoint{ url policies{ uri mode } trustedCertDirs rejectedCertDir sessions{ id type policy mode since user{ id name } } }" };
+		let own = [&]( const jvalue& answer )->optional<jobject>{
+			for( let& row : Json::AsArray(answer.as_object(), "sessions") ){
+				let& o = row.as_object();
+				if( Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==AppClient()->UserPK().Value )
+					return o;
+			}
+			return nullopt;
+		};
+		string id;
+		{
+			auto client = Client( Issued() );
+			let answer = Socket().QuerySync( string{q} );
+			let& endpoint = answer.as_object();
+			EXPECT_TRUE( Json::AsSV(endpoint, "url").ends_with(Ƒ(":{}", Settings::FindNumber<PortType>("/gateway/server/port").value_or(4841))) ) << serialize( answer );
+			let& policies = Json::AsArray( endpoint, "policies" );
+			EXPECT_TRUE( std::ranges::any_of(policies, []( let& p ){ return Json::AsSV(p.as_object(), "uri").ends_with("#Basic256Sha256") && Json::AsSV(p.as_object(), "mode")=="SignAndEncrypt"; }) ) << serialize( policies );
+			EXPECT_EQ( Json::AsArray(endpoint, "trustedCertDirs").size(), GatewayServer::Instance()->Settings().TrustedCertDirs.size() );
+			let session = own( answer );
+			ASSERT_TRUE( session ) << serialize( answer );
+			EXPECT_EQ( Json::AsSV(*session, "policy"), ToSV(UA_SECURITY_POLICY_NONE_URI) );//UATestClient's channel is None unless asked otherwise.
+			EXPECT_EQ( Json::AsSV(*session, "mode"), "None" );
+			EXPECT_FALSE( Json::AsSV(*session, "since").empty() );
+			EXPECT_TRUE( Json::AsObject(*session, "user").contains("name") ) << serialize( *session );//from the AppServer's users table, as opcSessions.
+			id = Json::AsString( *session, "id" );
+		}
+		EXPECT_TRUE( WaitUntil([&]{ return !own( Socket().QuerySync(string{q}) ); }) ) << "session '" << id << "' is listed after its client disconnected";
 	}
 }

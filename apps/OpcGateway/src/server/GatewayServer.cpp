@@ -112,6 +112,11 @@ namespace Jde::Opc::Gateway{
 			//The historian as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
 			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, ms<GatewayHistoryHost>(HistHost::Instance().Historian(), server->_values) );
 			server->_ua->OnAsyncCancel( [writes=server->_writes]( const void* value ){ writes->Cancelled( value ); } );//a Write timed out, or the shutdown's:  its answer isn't set.
+			{
+				lg _{ server->_describeMutex };
+				server->_policies = server->_ua->Policies();
+				server->_sessions = server->_ua->Sessions();
+			}
 			server->_writes->Start( *server->_ua->Ptr() );//its answers set on the server's own thread.
 			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
 			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
@@ -183,8 +188,21 @@ namespace Jde::Opc::Gateway{
 		ua.reset();//outside the lock:  it joins the server's thread, and a posted change may be waiting on the lock to find no server.
 		server->_work.reset();
 		server->_thread.join();//what's still posted runs first, finds no server and is held, then dropped.
+		{
+			lg _{ server->_describeMutex };
+			server->_policies.clear();
+			server->_sessions.reset();
+		}
 		lg _{ server->_mutex };
 		server->_held.clear();
+	}
+	α GatewayServer::Describe()Ι->Description{
+		Description y{ .Url = Url(), .TrustedCertDirs = _settings.TrustedCertDirs, .RejectedCertDir = _settings.RejectedCertDir };
+		lg _{ _describeMutex };
+		y.Policies = _policies;
+		if( _sessions )
+			y.Sessions = _sessions->List();
+		return y;
 	}
 	α GatewayServer::Server()ι->UAServer*{
 		lg _{ _mutex };

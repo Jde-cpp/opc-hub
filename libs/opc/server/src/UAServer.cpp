@@ -50,6 +50,13 @@ namespace Jde::Opc::Server {
 		}};
 	}
 
+	α UAServer::Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>{
+		vector<std::pair<string,UA_MessageSecurityMode>> y;
+		let& config = *UA_Server_getConfig( _ua );
+		for( size_t i=0; i<config.endpointsSize; ++i )
+			y.emplace_back( Opc::ToString(config.endpoints[i].securityPolicyUri), config.endpoints[i].securityMode );
+		return y;
+	}
 	α UAServer::Namespaces()ι->flat_map<uint,string>{
 		flat_map<uint,string> y;
 		UA_String ns;

@@ -12,6 +12,7 @@ import { confirm, DetailActions, DetailPage, Properties } from 'jde-framework';
 import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
 import { HistConnection, histDataTypeLabel, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
+import { endpointQuery, GatewayEndpoint, servedPath } from '../../../model/gateway-endpoint';
 import { OpcError } from '../../../model/opc-error';
 import { Server } from '../../../model/server';
 import { StatusCode } from '../../../model/types';
@@ -59,6 +60,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		this.resolved.set( undefined );
 		this.members.error.set( undefined );
 		this.#loadLists();
+		this.#loadEndpoint();
 		if( this.row.id )
 			this.refresh();
 	}
@@ -78,6 +80,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	connections = signal<HistConnection[]>( [] );
 	templates = signal<HistRef[]>( [] );
 	server = signal<Server|undefined>( undefined );//the group's connection, for its namespaces:  a node shown by the server's index
+	endpoint = signal<GatewayEndpoint|null|undefined>( undefined );//the gateway's own, null for none;  undefined until it has answered
 	members = new HistMembers<HistGroupMember>( this.snackbar );//its loading and busy are the Resolution tab's too
 	templateMembers = signal<HistTemplateMember[]>( [] );
 	resolved = signal<Map<number,HistResolvedMember>|undefined>( undefined );//the last resolve's answer, by template member
@@ -111,9 +114,29 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 			console.warn( `Could not describe '${slug}'.`, e );
 		}
 	}
+	//the gateway's own endpoint (#388), for where it serves the group:  null for none, left unread when the gateway can't say
+	async #loadEndpoint():Promise<void>{
+		const gateway = this.gateway;
+		try{
+			const y = await gateway.query<{endpoint:GatewayEndpoint|null}>( endpointQuery );
+			if( gateway==this.gateway )
+				this.endpoint.set( y?.endpoint ?? null );
+		}
+		catch( e ){
+			console.warn( "Could not read the gateway's endpoint.", e );
+		}
+	}
 	connectionSlug():string|undefined{
 		const id = this.group?.serverConnectionId;
 		return this.connections().find( c=>c.id==id )?.slug;
+	}
+	//Where the endpoint serves the group's members (servers spec *Address space*):  under its connection's folder, each at its path on
+	//the source;  not at all without an endpoint.  Read once endpoint() is known.
+	servedText():string{
+		const e = this.endpoint();
+		if( !e )
+			return 'Not served:  the gateway has no OPC UA endpoint.';
+		return `${this.isNew ? "Once saved, its" : "Its"} members are served on ${e.url} under ${servedPath( this.connectionSlug() ?? '<connection>' )}, each at its path on the source, with the group's history.`;
 	}
 	async refresh():Promise<void>{
 		const id = this.row?.id, templateId = this.row?.histTemplateId, gateway = this.gateway;
@@ -140,7 +163,8 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const a = m.attributes;
 		if( a.displayName===undefined && !a.path )
 			return 'Not yet read from the server:  the collector reads a node once it has its item.';
-		return [a.displayName==='' ? 'Its server gives it no DisplayName' : '', a.path ? histPathText( a.path ) : '', a.description ?? ''].filter( s=>!!s ).join( '.  ' );
+		const served = this.endpoint() && a.path ? `Served at ${servedPath( this.connectionSlug() ?? '<connection>', a.path.map( s=>s.name ) )}` : '';
+		return [a.displayName==='' ? 'Its server gives it no DisplayName' : '', a.path ? histPathText( a.path ) : '', served, a.description ?? ''].filter( s=>!!s ).join( '.  ' );
 	}
 	typeText( m:HistGroupMember ):string{ return histDataTypeLabel( m.attributes.dataType ); }
 	typeDetail( m:HistGroupMember ):string{

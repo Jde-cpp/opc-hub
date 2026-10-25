@@ -1,0 +1,79 @@
+<mat-toolbar class="jde-list-toolbar"><!--outside the states below:  Refresh is the retry after a failure, and a refresh keeps what it replaces-->
+	<div class="bar-left"></div>
+	<div class="bar-right">
+		@if( endpoint() && !sessionsError() && !isLoading() ){
+			<span class="row-count">{{sessions().length}} {{sessions().length==1 ? 'session' : 'sessions'}}</span>
+		}
+		<button matIconButton aria-label="Refresh" matTooltip="Refresh" [disabled]="isLoading()" (click)="load()">
+			<mat-icon>refresh</mat-icon>
+		</button>
+	</div>
+</mat-toolbar>
+<mat-progress-bar [mode]="isLoading() ? 'indeterminate' : 'determinate'" [value]="0"></mat-progress-bar>
+@if( error() ){
+	<p class="load-error">{{error()}}</p>
+}
+@else if( endpoint()===null ){
+	<p class="empty">This gateway serves no OPC UA endpoint:  its settings have no <code>gateway/server</code> block.</p>
+}
+@else if( endpoint(); as e ){
+	<dl class="facts">
+		<dt>URL</dt>
+		<dd>
+			<code>{{e.url}}</code>
+			<span class="hint">What a UA client connects to.  Under its Objects folder, a folder per connection holds the historian's groups' members, each at its path on the source, with the group's history.</span>
+		</dd>
+		<dt>Policies</dt>
+		<dd>
+			@for( p of policies(); track p.name ){
+				<span class="policy"><code>{{p.name}}</code> {{p.modes.join( ', ' )}}</span>
+			}
+		</dd>
+		<dt>Trusted certificates</dt>
+		<dd>
+			@for( dir of e.trustedCertDirs; track dir ){
+				<code class="dir">{{dir}}</code>
+			}
+			<span class="hint">A client's certificate is trusted by file:  copy it into one of these directories.  One presented as the user token must also be a hub user's key.</span>
+		</dd>
+		<dt>Rejected certificates</dt>
+		<dd>
+			@if( e.rejectedCertDir ){
+				<code class="dir">{{e.rejectedCertDir}}</code>
+				<span class="hint">A certificate the endpoint refused is written here, named by its thumbprint, to move into a trusted directory.</span>
+			}
+			@else{
+				<span class="hint">Not kept.</span>
+			}
+		</dd>
+	</dl>
+	<h3>Sessions</h3>
+	@if( sessionsError() ){
+		<p class="load-error">{{sessionsError()}}</p>
+	}
+	@else if( sessions().length ){
+		<mat-table [dataSource]="sessions()">
+			<ng-container matColumnDef="user">
+				<mat-header-cell *matHeaderCellDef>User</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{user(s)}}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="type">
+				<mat-header-cell *matHeaderCellDef>Token</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{s.type}}</mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="channel">
+				<mat-header-cell *matHeaderCellDef>Channel</mat-header-cell>
+				<mat-cell *matCellDef="let s"><span tabindex="0" [matTooltip]="s.policy">{{channel(s)}}</span></mat-cell>
+			</ng-container>
+			<ng-container matColumnDef="since">
+				<mat-header-cell *matHeaderCellDef>Since</mat-header-cell>
+				<mat-cell *matCellDef="let s">{{s.since | date:'medium'}}</mat-cell>
+			</ng-container>
+			<mat-header-row *matHeaderRowDef="columns"></mat-header-row>
+			<mat-row *matRowDef="let row; columns: columns"></mat-row>
+		</mat-table>
+	}
+	@else if( !isLoading() ){
+		<p class="empty">No sessions.</p>
+	}
+}

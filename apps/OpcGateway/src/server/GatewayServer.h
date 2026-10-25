@@ -53,6 +53,12 @@ namespace Jde::Opc::Gateway{
 
 		α Url()Ι->string{ return Ƒ( "opc.tcp://{}:{}", _settings.Address.empty() ? Process::HostName() : _settings.Address, _settings.Port ); }
 		α Settings()Ι->const Opc::Server::UASettings&{ return _settings; }
+		//The endpoint as the web's Endpoint tab shows it (spec *Web*, endpoint{…}):  its url, the policy and mode of each endpoint it
+		//offers, where it trusts a client certificate from and writes a refused one, and the sessions it holds now.  Off _mutex:  the
+		//policies are fixed at Start and the sessions are the plugin's list, read under its own lock - so a Serial op waiting on the
+		//service lock never holds a QL query up.  Empty policies and sessions before Start and after Stop.
+		struct Description final{ string Url; vector<std::pair<string,UA_MessageSecurityMode>> Policies; vector<fs::path> TrustedCertDirs; fs::path RejectedCertDir; vector<Opc::Server::UAAccess::Session> Sessions; };
+		α Describe()Ι->Description;
 		α Server()ι->Opc::Server::UAServer*;//the tests read the address space through it;  null once stopped.
 
 		//OpcQLHook's, after the row is written:  the folder for a new row, the url of an edited one, the folder of a purged one gone.
@@ -147,6 +153,10 @@ namespace Jde::Opc::Gateway{
 		//AddNode's, written once at the end of the Serial op that served them, so a group's directory is walked once, not once a
 		//member;  Start's own write covers those before it.  Under _mutex.
 		vector<Opc::Server::IHistoryHost::ArchiveStart> _starts;
+		//Describe's, set at Start under _describeMutex, not _mutex, which a Serial op can hold through a wait on the service lock.
+		mutable std::mutex _describeMutex;
+		vector<std::pair<string,UA_MessageSecurityMode>> _policies;
+		sp<Opc::Server::UAAccess::SessionList> _sessions;
 		//Serial's queue, run in order on a thread of the endpoint's own, not the executor's:  a UA_Server_* call waits for open62541's
 		//service lock, which ActivateSession holds while the hub's session lookup waits for an executor thread (UAAccess's issued).
 		//Last:  the thread is joined before what it runs goes.

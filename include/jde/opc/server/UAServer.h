@@ -1,5 +1,6 @@
 #pragma once
 #include <open62541/server.h>
+#include "UAAccess.h"
 #include "UAConfig.h"
 #include "UAHistory.h"
 #include "jde/fwk/process/process.h"
@@ -19,6 +20,9 @@ namespace Jde::Opc::Server {
 		α Run()ε->void;
 
 		α Namespaces()ι->flat_map<uint,string>;
+		α Sessions()ι->sp<UAAccess::SessionList>{ return UAAccess::Sessions( *_ua ); }//the sessions held, kept by the plugin:  a host reads it off this server's thread, and after the server.
+		//The endpoints offered, each its security policy URI and mode, as the config holds them from construction:  no UA call, read any time.
+		α Policies()Ι->vector<std::pair<string,UA_MessageSecurityMode>>;
 		α Ptr()ι->UA_Server*{ return _ua; }
 		α History()ι->UAHistory&{ return _history; }
 		α Trust()ι->UATrust&{ return _config.Trust(); }

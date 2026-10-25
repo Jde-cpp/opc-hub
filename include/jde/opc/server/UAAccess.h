@@ -21,6 +21,23 @@ namespace Jde::Opc::Server::UAAccess{
 		Ω Unexpiring( Jde::UserPK user )ι->up<SessionContext>{ return mu<SessionContext>( string{}, TimePoint::max(), SessionPK{}, user ); }
 	};
 
+	//A session the server holds, ActivateSession to CloseSession, as a host lists them (the gateway's endpoint{ sessions }):  its UA
+	//session id, the user its token resolved to, the token type by its policy's label, the channel's policy and mode, and when it
+	//first activated - a re-activation keeps Since and takes the user, which a username login resolves late (ResolveUser).
+	struct Session final{ string Id; Jde::UserPK User; sv Type; string PolicyUri; UA_MessageSecurityMode Mode; TimePoint Since; };
+	//The sessions a server holds, kept by the plugin as they activate and close, under a lock of its own:  shared with the host,
+	//which reads it off the server's thread, and left empty when the server goes.
+	struct SessionList final{
+		α Activated( Session session )ι->void;
+		α Closed( str id )ι->void;
+		α Clear()ι->void;
+		α List()Ι->vector<Session>;
+	private:
+		mutable std::mutex _mutex;
+		flat_map<string,Session> _sessions;
+	};
+	α Sessions( UA_Server& server )ι->sp<SessionList>;//the server's, from its plugin's context.
+
 	//The plugin's state, at ac->context:  the token types and logins the host read, its appClient, the session authority, and
 	//its nodeAccess, the node rights.  A callback passed no ac, as UAHistory's and the tests' are, reads the server's.
 	α Init( UAConfig& config, const UASettings& settings, sp<App::Client::IAppClient> appClient, sp<INodeAccess> nodeAccess )ε->void;

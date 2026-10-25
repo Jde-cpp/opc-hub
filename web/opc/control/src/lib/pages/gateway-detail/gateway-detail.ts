@@ -5,12 +5,13 @@ import { AppService, errorMessage, InstanceTab, InstanceTabs, QLList, QLListData
 import { RouteItem } from 'jde-spa';
 import { GatewayService } from '../../services/gateway-service';
 import { Gateway } from '../../services/gateway-service';
+import { GatewayEndpoint } from './gateway-endpoint/gateway-endpoint';
 import { GatewayHistList } from './hist-admin/gateway-hist-list';
 
 @Component( {
 		templateUrl: './gateway-detail.html',
 		host: {class:'main-content mat-drawer-container my-content'},
-		imports: [InstanceTab, InstanceTabs, QLList, GatewayHistList]
+		imports: [InstanceTab, InstanceTabs, QLList, GatewayHistList, GatewayEndpoint]
 })
 export class GatewayDetail implements OnInit{
 	#route = inject( ActivatedRoute );

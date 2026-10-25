@@ -30,8 +30,8 @@ class AccessStub{
 //The page over stubs:  `mutations` reads what Save sent the gateway, the admin service records what the tabs ask and send, and the
 //dialog answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the
 //page, where the rest drive the page by hand.
-const create = async ( pageRow:any, render=false )=>{
-	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ) };
+const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', policies: [], trustedCertDirs: [], rejectedCertDir: null} )=>{
+	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( _ql:string )=>({endpoint}) ) };//query:  endpoint{…}, the one the page sends
 	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );
 	const made = vi.fn();
 	const admin = {
@@ -145,14 +145,14 @@ describe( 'HistGroupDetail', ()=>{
 		//the server's word on each node (#379):  its name and the type served, with the path, description, rank and range behind them;  blank until read
 		const [rpm, state] = d.page.members.rows();
 		expect( d.page.nameText( rpm ) ).toBe( 'motorRpm' );
-		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Measured motor speed, rpm.' );
+		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Served at Objects/local/pump1/motorRpm.  Measured motor speed, rpm.' );//its path on the source, where the endpoint serves it (#388), its description
 		expect( d.page.typeText( rpm ) ).toBe( 'Double' );
 		expect( d.page.typeDetail( rpm ) ).toBe( '{"nsu":"http://opcfoundation.org/UA/","i":11}.  Scalar.  EURange 0 to 3000' );
 		expect( d.page.nameText( state ) ).toBe( 'unread' );
 		expect( d.page.nameDetail( state ) ).toContain( 'Not yet read' );
 		const unnamed = { ...rpm, attributes: {...rpm.attributes, displayName: ''} };//described, its DisplayName empty
 		expect( d.page.nameText( unnamed ) ).toBe( 'no name' );
-		expect( d.page.nameDetail( unnamed ) ).toBe( 'Its server gives it no DisplayName.  pump1/motorRpm.  Measured motor speed, rpm.' );
+		expect( d.page.nameDetail( unnamed ) ).toBe( 'Its server gives it no DisplayName.  pump1/motorRpm.  Served at Objects/local/pump1/motorRpm.  Measured motor speed, rpm.' );
 		expect( d.page.typeText( state ) ).toBe( '' );
 		expect( d.page.typeDetail( state ) ).toBe( '' );
 		expect( d.page.memberColumns.slice( 0, 4 ) ).toEqual( ['node', 'name', 'type', 'member'] );
@@ -237,6 +237,30 @@ describe( 'HistGroupDetail', ()=>{
 		d.dialog.answer = true;
 		await d.page.removeNode( d.page.members.rows()[0] );
 		expect( d.admin.purgeGroupMember ).toHaveBeenCalledWith( expect.anything(), 7 );
+	} );
+	//#388:  Properties says where the gateway's own endpoint serves the group's members, and a member's name tooltip gives its path there
+	//the Properties tab's body:  the group draws a body on a switch to its tab, as the member tooltips' test draws Members, so
+	//Properties is left and come back to
+	const served = async ( endpoint:unknown )=>{
+		const d = await create( row, true, endpoint );
+		for( const index of [1, 0] ){
+			d.page.tabIndex.set( index );
+			d.fixture.detectChanges( false );
+			await flush( 3 );
+			d.fixture.detectChanges( false );
+		}
+		return { ...d, text: d.fixture.nativeElement.querySelector( 'section[aria-label=Endpoint] .hint' )?.textContent };
+	};
+	it( 'says where the group is served', async ()=>{
+		const d = await served( {url: 'opc.tcp://hub:4841', policies: [], trustedCertDirs: [], rejectedCertDir: null} );
+		expect( d.text ).toBe( "Its members are served on opc.tcp://hub:4841 under Objects/local/…, each at its path on the source, with the group's history." );
+		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).toContain( 'Served at Objects/local/pump1/motorRpm' );
+		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).not.toContain( 'Served' );//a node the server hasn't described has no path yet
+	} );
+	it( 'and that it is not, on a gateway with no endpoint', async ()=>{
+		const d = await served( null );
+		expect( d.text ).toBe( 'Not served:  the gateway has no OPC UA endpoint.' );
+		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).not.toContain( 'Served' );
 	} );
 	//reviews-issue/servers-0.2-node-columns.md #14:  each member's node, name and type, and each column's hint, is a tooltip on a span
 	//a keyboard reaches - which the tooltip then describes to a screen reader (aria-describedby) - not on a cell, which nothing focuses
