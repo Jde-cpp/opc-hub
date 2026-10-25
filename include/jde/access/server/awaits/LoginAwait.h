@@ -1,6 +1,7 @@
 #pragma once
 #include <jde/fwk/co/Await.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
+#include <jde/fwk/crypto/PublicKey.h>
 #include <jde/db/awaits/ScalerAwait.h>
 
 namespace Jde::Access::Server{

@@ -1,5 +1,6 @@
 #pragma once
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/QLAwait.h>
@@ -29,6 +30,6 @@ namespace Jde::QL{
 	};
 
 	Ŧ LocalQL::QuerySync( string query, jobject vars, UserPK executer, bool returnRaw, SL sl )ε->T{
-		return BlockTAwait<T>( QL::QLAwait<T>{move(query), vars, executer, shared_from_this(), returnRaw, sl} );
+		return BlockAwait( QL::QLAwait<T>{move(query), vars, executer, shared_from_this(), returnRaw, sl} );
 	}
 }

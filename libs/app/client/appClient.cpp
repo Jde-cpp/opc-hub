@@ -1,5 +1,6 @@
 #include <jde/app/client/appClient.h>
 #include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/web/client/ClientSsl.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
@@ -50,10 +51,10 @@ namespace Jde::App{
 		auto accessSchema = DB::GetAppSchema( "access", appClient->Acl() );
 		appClient->SubscriptionSchemas.push_back( accessSchema );
 		if( !appClient->IsLocal() )//OpcHub: the AppServer is this process - no login/socket; the hub set the pks and acl before calling.
-			BlockVoidAwait( ConnectAwait{appClient, retry, sl}, retry ? ELogLevel::Information : ELogLevel::Critical );//a retry's stall line capped at Information:  it read like a hang - a warning at 30 s, criticals after - beside the retry warnings that say what the wait is for (the 09-15 rerun's retry table).
+			BlockAwait( ConnectAwait{appClient, retry, sl}, retry ? ELogLevel::Information : ELogLevel::Critical );//a retry's stall line capped at Information:  it read like a hang - a warning at 30 s, criticals after - beside the retry warnings that say what the wait is for (the 09-15 rerun's retry table).
 		if( Settings::FindBool("/logging/loadFromServer").value_or(true) )
 			appClient->LoadLogSettings( sl );
-		BlockVoidAwait( appClient->ConfigureAccess(accessSchema, move(localSchemas), UserPK{UserPK::System}, move(resourceSchema), sl) );
+		BlockAwait( appClient->ConfigureAccess(accessSchema, move(localSchemas), UserPK{UserPK::System}, move(resourceSchema), sl) );
 		Process::AddShutdownFunction( [listener=appClient->Listener()](bool terminate, SL sl){ listener->Shutdown(terminate, sl); } ); //as the AppServer does - the subscriptions otherwise outlive everything they reference (access-review3 #25).
 	}
 }
@@ -108,10 +109,8 @@ namespace Jde::App::Client{
 				auto info = co_await Any( connect );
 				session->SetInfo( move(*info.mutable_session_info()) );
 				_appClient->SetSession( move(session) );
-				_appClient->ServerPublicKey = {
-					{ info.certificate_modulus().begin(), info.certificate_modulus().end() },
-					{ info.certificate_exponent().begin(), info.certificate_exponent().end() }
-				};
+				auto bytes = []( str s ){ const auto b = std::as_bytes( std::span{s} ); return vector<byte>{ b.begin(), b.end() }; };
+				_appClient->ServerPublicKey = { bytes(info.certificate_modulus()), bytes(info.certificate_exponent()) };
 				if( _appClient->ResourceSchema.size() && !info.auth_result() )//the AppServer's TestSchemaAdmin gate on the auth_resource we sent
 					WARNT( ELogTags::Access, "AppServer declined to delegate '{}' admin checks to this instance - grant its user Administer on the schema's root resources and reconnect;  until then the AppServer applies its flat rule.", _appClient->ResourceSchema );
 				_appClient->SetAppPKs( info.instance_pk(), info.connection_pk() );
@@ -133,8 +132,7 @@ namespace Jde::App::Client{
 				wait = std::max( duration_cast<Duration>(reconnectWait()-(steady_clock::now()-attemptStart)), duration_cast<Duration>(500ms) );
 				WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", ServerSettings::Host(), ServerSettings::Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
 			}
-			DurationTimer timer{ wait };
-			(void)co_await Any( timer );
+			(void)co_await DurationTimer{ wait };
 		}
 	}
 }

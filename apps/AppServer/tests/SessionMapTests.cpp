@@ -1,6 +1,7 @@
 #include "helpers.h"
 #include "../src/WebServer.h"
 #include "../src/ServerSocketSession.h"
+#include <jde/fwk/co/BlockAwait.h>
 #define let const auto
 
 //the _sessions registry in WebServer.cpp: FindApp targeting, FindConnection/FindApplications lookups, and the
@@ -11,7 +12,7 @@ namespace Jde::App::Server::Tests{
 		α TearDown()->void override{
 			for( auto& session : _sessions ){
 				if( session )
-					BlockVoidAwait( session->Close(true, SRCE_CUR) );
+					BlockAwait( session->Close(true, SRCE_CUR) );
 			}
 			_sessions.clear();
 		}

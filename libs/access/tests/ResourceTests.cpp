@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 #include "globals.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/QLAwait.h>
 #include <jde/db/meta/Table.h>
 #include <jde/access/types/Resource.h>
@@ -66,13 +67,13 @@ namespace Jde::Access::Tests{
 			auto p = find_if( loaded.Resources, [&](let& kv){ return kv.second.Slug==slug; } );
 			return p==loaded.Resources.end() ? optional<bool>{} : optional<bool>{ !p->second.IsDeleted };
 		};
-		EXPECT_THROW( BlockVoidAwait( ResourceSyncAwait{ms<DeleteRefusingQL>(QLPtr()), Schemas(), {}, system} ), Exception ); //the create lands, the disable is refused.
+		EXPECT_THROW( BlockAwait( ResourceSyncAwait{ms<DeleteRefusingQL>(QLPtr()), Schemas(), {}, system} ), Exception ); //the create lands, the disable is refused.
 		row = SelectResource( slug, root, true );
 		ASSERT_FALSE( row.empty() );
 		ASSERT_TRUE( row.at("deleted").is_null() ) << "left active - the interrupted install";
 		EXPECT_EQ( loadsActive(), optional<bool>{true} ) << "and a restart would enforce it:  deny-all, nobody holds a right on it";
 
-		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} ); //the next start's sync.
+		BlockAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} ); //the next start's sync.
 		row = SelectResource( slug, root, true );
 		EXPECT_FALSE( row.at("deleted").is_null() ) << "re-disabled by the sync";
 		EXPECT_EQ( loadsActive(), optional<bool>{false} ) << "and loads disabled - fail-open, as the installation meant";
@@ -100,7 +101,7 @@ namespace Jde::Access::Tests{
 		EXPECT_TRUE( bareAllowed(row) ) << "created bare - the permission table would show no checkboxes";
 		EXPECT_FALSE( row.at("deleted").is_null() ) << "and unenforced";
 
-		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );//the OpcServer's next start.
+		BlockAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );//the OpcServer's next start.
 		row = SelectResource( slug, root, true );
 		EXPECT_FALSE( bareAllowed(row) ) << "the sync filled the ops from the meta - the checkboxes are there now";
 		EXPECT_FALSE( row.at("deleted").is_null() ) << "and left it unenforced - updateResource cannot touch deleted";
@@ -109,7 +110,7 @@ namespace Jde::Access::Tests{
 		Purge( "role", rolePK, root );
 		if( auto r = SelectResource(slug, root, true); !r.empty() )
 			Purge( "resource", GetId(r), UserPK{UserPK::System} );
-		BlockVoidAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );
+		BlockAwait( ResourceSyncAwait{QLPtr(), Schemas(), {}, system} );
 		CreateAcl( root, ERights::All, ERights::None, slug, system );
 	}
 

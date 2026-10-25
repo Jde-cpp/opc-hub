@@ -5,15 +5,15 @@
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/io/FileAwait.h>
-#include <jde/fwk/co/LockKey.h>
+#include <jde/fwk/co/CoMutex.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/Vector.h>
 #include <jde/fwk/process/thread.h>
 #include <jde/fwk/chrono.h>
 #include <jde/tests/WaitUntil.h>
 #include <stdexcept>
-//a private header under src/, the way OpenSslTests reaches OpenSslInternal.h - IDrive/NativeDrive are not part of the
-//installed surface, and the two platforms spell the concrete type differently.
+//a private header under src/ - IDrive/NativeDrive are not part of the installed surface, and the two platforms spell the
+//concrete type differently.
 #ifdef _MSC_VER
 	#include "../src/process/os/windows/WindowsDrive.h"
 	namespace Jde::IO{ using NativeDriveType = WindowsDrive; }
@@ -49,21 +49,19 @@ namespace Jde::IO::Tests{
 		α TearDown()->void override{}
 	};
 
-	//path and values are co-owned, like writeRaw's 'done': on a timed-out wait testFile returns while a
+	//path, values and lock are co-owned, like writeRaw's 'done': on a timed-out wait testFile returns while a
 	//detached write is still queued, and a reference would dangle when it finally records its guids.
-	Ω write( fs::path file, uuid guid1, uuid guid2, sp<Vector<uuid>> written, bool createFile, SRCE )->LockKeyAwait::Task{
-		auto l = co_await LockKeyAwait{ file.string() };
-		[sl]( fs::path file, uuid guid1, uuid guid2, sp<Vector<uuid>> written, CoLockGuard, bool createFile )->VoidAwait::Task {
-			try{
-				co_await IO::WriteAwait{ file, Ƒ("{}\n{}\n", ToString(guid1), ToString(guid2)), createFile, IO::EWriteMode::Append, Jde::ELogTags::IO, sl };
-			}
-			catch( Exception& e ){
-				e.Log();
-				throw;
-			}
-			written->push_back( guid1 );
-			written->push_back( guid2 );
-		}( move(file), guid1, guid2, move(written), move(l), createFile );
+	Ω write( fs::path file, uuid guid1, uuid guid2, sp<Vector<uuid>> written, sp<CoMutex> fileLock, bool createFile, SRCE )->VoidAwait::Task{
+		auto l = co_await fileLock->Lock();
+		try{
+			co_await IO::WriteAwait{ file, Ƒ("{}\n{}\n", ToString(guid1), ToString(guid2)), createFile, IO::EWriteMode::Append, Jde::ELogTags::IO, sl };
+		}
+		catch( Exception& e ){
+			e.Log();
+			throw;
+		}
+		written->push_back( guid1 );
+		written->push_back( guid2 );
 	}
 
 	Ω read( fs::path file, sp<Vector<uuid>> readValues, SRCE )ι->TAwait<string>::Task{
@@ -97,8 +95,9 @@ namespace Jde::IO::Tests{
 			fs::remove( file );
 		}
 		Thread::SetName( file.filename().string() );
+		auto fileLock = ms<CoMutex>();
 		for( uint i=0; i<guids.size(); i+=2 )
-			write( file, guids[i], guids[i+1], written, i==0 );
+			write( file, guids[i], guids[i+1], written, fileLock, i==0 );
 
 		//deadlines, not unbounded polls: a throwing WriteAwait/ReadAwait never advances these, and with no
 		//ctest TIMEOUT an IO regression would hang the whole run instead of failing this test.
@@ -112,7 +111,7 @@ namespace Jde::IO::Tests{
 		readValues->visit( [&](const uuid& guid){
 			ASSERT_TRUE( find(guids, guid)!=guids.end() );
 		});
-		//each write appends 'guid1\nguid2\n' as one WriteAwait under the key lock, so the file is a sequence of
+		//each write appends 'guid1\nguid2\n' as one WriteAwait under fileLock, so the file is a sequence of
 		//whole pairs in order - chunk-order corruption (the bug this test guards) breaks that, and until now
 		//could only surface as the guid parse THROW above or a count mismatch.
 		let ordered = readValues->copy();
@@ -126,18 +125,15 @@ namespace Jde::IO::Tests{
 	//done is co-owned: on a timed-out wait the test returns while the detached coroutine is still running, so a
 	//reference would dangle when the completion finally stores true.  'error' takes the exception the failure
 	//tests assert on - dropping it left the call site with only a content mismatch or a timeout to report.
-	Ω writeRaw( fs::path file, string content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::EWriteMode mode=IO::EWriteMode::Append, bool create=true, SRCE )->LockKeyAwait::Task{
-		auto l = co_await LockKeyAwait{ file.string() };
-		[sl]( fs::path file, string content, sp<std::atomic<bool>> done, CoLockGuard, IO::EWriteMode mode, sp<up<Exception>> error, bool create )->VoidAwait::Task {
-			try{
-				co_await IO::WriteAwait{ move(file), move(content), create, mode, Jde::ELogTags::IO, sl };
-			}
-			catch( Exception& e ){
-				if( error )
-					*error = e.Move();//Move, not a copy: it keeps the dynamic type the tests check for.
-			}
-			*done = true;
-		}( move(file), move(content), move(done), move(l), mode, move(error), create );
+	Ω writeRaw( fs::path file, string content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::EWriteMode mode=IO::EWriteMode::Append, bool create=true, SRCE )->VoidAwait::Task{
+		try{
+			co_await IO::WriteAwait{ move(file), move(content), create, mode, Jde::ELogTags::IO, sl };
+		}
+		catch( Exception& e ){
+			if( error )
+				*error = e.Move();//Move, not a copy: it keeps the dynamic type the tests check for.
+		}
+		*done = true;
 	}
 
 	Ω readRaw( fs::path file, sp<string> content, sp<std::atomic<bool>> done, sp<up<Exception>> error={}, IO::ReadOptions options={}, SRCE )ι->TAwait<string>::Task{

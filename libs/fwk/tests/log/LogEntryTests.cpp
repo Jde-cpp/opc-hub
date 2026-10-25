@@ -82,7 +82,7 @@ namespace Jde::Tests{
 		constexpr sv text{ "LogEntryTests LogOnce suppressed" };
 		Logging::MarkLogged( Logging::Entry::GenerateId(text) );//claim it here, so the call below has to stay silent on every pass.
 		Logging::ClearMemory();
-		Logging::LogOnce( SRCE_CUR, ELogTags::Test, "LogEntryTests LogOnce suppressed" );
+		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce suppressed" );
 		EXPECT_TRUE( logger().Find(string{text}).empty() ) << "LogOnce logged an id that was already marked";
 	}
 
@@ -93,8 +93,8 @@ namespace Jde::Tests{
 		static uint32_t pass{};
 		++pass;
 		constexpr sv text{ "LogEntryTests LogOnce emitted" };
-		Logging::LogOnce( SRCE_CUR, ELogTags::Test, "LogEntryTests LogOnce emitted" );
-		Logging::LogOnce( SRCE_CUR, ELogTags::Test, "LogEntryTests LogOnce emitted" );
+		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
+		Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::Test, "LogEntryTests LogOnce emitted" );
 		EXPECT_EQ( logger().Find(string{text}).size(), pass==1 ? 1u : 0u ) << "one entry on the pass that claims the id, none after";
 		EXPECT_FALSE( Logging::MarkLogged(Logging::Entry::GenerateId(text)) ) << "LogOnce did not mark the id it logged";
 	}

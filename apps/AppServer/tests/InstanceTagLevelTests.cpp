@@ -3,6 +3,7 @@
 #include <jde/db/Row.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/QLAwait.h>
 #include "helpers.h"
 #include "../src/LocalClient.h"
@@ -32,7 +33,7 @@ namespace Jde::App::Server::Tests{
 			let start = steady_clock::now();
 			let y = AskInstance( *client, Ƒ("instanceTagLevels( id: {} ){{ text running }}", instanceId), "logSetting", [&](let& asked){ end(*client, asked.request_id()); } );
 			EXPECT_TRUE( steady_clock::now()-start<5s ) << "ended by the instance, not by the 10s deadline";
-			BlockVoidAwait( client->Close(true, SRCE_CUR) );
+			BlockAwait( client->Close(true, SRCE_CUR) );
 			return y;
 		}
 		Ω FindConfigured( ELogTags tags )->optional<ELogLevel>{
@@ -207,7 +208,7 @@ namespace Jde::App::Server::Tests{
 		EXPECT_TRUE( y.as_object().at("running").is_null() );
 	}
 	TEST_F( InstanceTagLevelTests, RunningIsNullWhenTheInstanceDropsMidQuery ){
-		let y = QueryRunning( "dropsRunning", []( RawClientSession& client, RequestId ){ BlockVoidAwait( client.Close(true, SRCE_CUR) ); } );
+		let y = QueryRunning( "dropsRunning", []( RawClientSession& client, RequestId ){ BlockAwait( client.Close(true, SRCE_CUR) ); } );
 		ASSERT_TRUE( y.is_object() && y.as_object().contains("running") );
 		EXPECT_TRUE( y.as_object().at("running").is_null() );
 	}

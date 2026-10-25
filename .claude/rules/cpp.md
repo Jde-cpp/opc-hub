@@ -68,3 +68,13 @@ Awaitables inherit from `VoidAwait` or `IAwait<TResult, TTask>` in `co/Await.h`.
 ## Free-function definitions
 
 A function a header declares at namespace scope is defined in its `.cpp` by its qualified name, from an enclosing namespace — `namespace Jde::Opc{ α Gateway::ResolveThresholds( … )ι->Hist::Thresholds{ … } }`, as `gatewayStartup.cpp` and `GatewayQL.cpp` do — not by reopening `namespace Jde::Opc::Gateway` and writing the bare name. A qualified definition has to match a declaration, so a parameter or return type that drifts from the header is a compile error; a bare one silently declares a new overload, and fails only at link, or not at all. File-local helpers (`Ω`, declared in no header) stay unqualified in the namespace they serve, and members are already qualified by their class.
+
+## Includes
+
+One block, in this order:
+1. In a `.cpp`, its own header — `Timer.cpp` opens with `<jde/fwk/co/Timer.h>`.
+2. C++ standard library headers.
+3. Third-party dependencies, alphabetical — `<absl/…>`, `<boost/…>`, `<fmt/…>`.
+4. Project headers in dependency order, lower level first — a header before one that builds on it, `jde/fwk` before `jde/db` before `jde/ql`.
+
+Keep it to the fewest entries: leave out anything already brought in by the file's own header, by another listed header — third-party ones included, so no `<boost/system/error_code.hpp>` beside `<boost/asio.hpp>` — or by `jde/fwk.h`, the precompiled header, so never include it or anything it includes: `<chrono>`, `<memory>`, the std containers, `<boost/json.hpp>`, `fwk/usings.h`, `fwk/log/log.h`, `fwk/exceptions/Exception.h` and the rest of its list. Relying on a third-party header's includes is safe because dependencies are upgraded only about every six months, on a branch of their own, where any include that goes missing gets fixed. Apply this to a file whose includes you change; don't sweep files you aren't otherwise touching.

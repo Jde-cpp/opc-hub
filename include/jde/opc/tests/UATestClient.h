@@ -5,7 +5,6 @@
 #include <open62541/client_subscriptions.h>
 #include <open62541/plugin/certificategroup_default.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/UAException.h>
 #include <jde/opc/uatypes/NodeId.h>
 #include <jde/opc/uatypes/Value.h>

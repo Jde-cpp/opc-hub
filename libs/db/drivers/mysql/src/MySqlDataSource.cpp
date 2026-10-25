@@ -33,10 +33,10 @@ namespace Jde::DB::MySql{
 	struct Session final{
 		Session( const mysql::connect_params& cs, SL sl )ε:
 			Conn{ _ctx }{
-			Logging::LogOnce( SRCE_CUR, ELogTags::DBDriver, "mysql::connect_params: {}", toString(cs) );
+			Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::DBDriver, "mysql::connect_params: {}", toString(cs) );
 			try{
 				Conn.connect( cs );
-				Logging::LogOnce( SRCE_CUR, ELogTags::DBDriver, "mysql: tls {}", Conn.uses_ssl() ? "on" : "off" );
+				Logging::LogOnce( SRCE_CUR, ELogLevel::Information, ELogTags::DBDriver, "mysql: tls {}", Conn.uses_ssl() ? "on" : "off" );
 				if( cs.ssl==mysql::ssl_mode::enable && !Conn.uses_ssl() && Logging::MarkLogged(Logging::GenerateId("mysql:plaintext")) )
 					WARNT( ELogTags::DBDriver, "mysql {}:{} offers no TLS - the user name, the SQL and the rows cross the network in the clear.  ssl:'require' refuses this, ssl:'disable' expects it.", cs.server_address.hostname(), cs.server_address.port() );
 				//Once per connection - a session variable survives, so a pooled session reused by AcquireSession keeps it.

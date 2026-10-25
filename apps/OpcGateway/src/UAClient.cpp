@@ -66,7 +66,7 @@ namespace Jde::Opc::Gateway{
 	//merges into it rather than starting another - and nothing else may erase one, however empty it looks (see PurgePending).
 	struct PendingSubscription final{
 		Listeners Nodes;
-		sp<DurationTimer> Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
+		TimerCancel Wait;//the chain's backoff wait while it is in one - here, not only in its frame, so StopReconnects can cancel it.
 		uint Rejections{};//reconnect attempts refused outright in a row - see isRejection; the chain gives up at MaxRejections.
 		string LastFailure;//what the last attempt failed with; a repeat of it logs quietly.
 	};
@@ -332,40 +332,19 @@ namespace Jde::Opc::Gateway{
 		return Crypto::CryptoSettings{ Settings::FindDefaultObject("/gateway/issuedCerts"), slug };//a copy - the file names are per-slug.
 	}
 
-	//the file name keys on the slug but the SAN on the gateway's applicationUri (the config block's), so an existing file is not proof it is the
-	//cert this config describes; a changed uri would otherwise be rejected as BadCertificateUriInvalid forever with
-	//nothing naming the file to delete.  ReissueReason compares only the SAN entry types that round-trip byte-for-byte
-	//through the der ctor (URI among them; otherName is excluded on both sides), so a lossy rendering cannot re-issue in a loop.
-	//a test and a connect, or two tests, for a slug with no certificate would both issue it, and IssueCertificate writes the PEM in
-	//place.  One lock for every slug:  only an issue is slow.
-	mutex _certificateMutex;
+	//The file name keys on the slug, the SAN on the gateway's applicationUri (the config block's - security-matrix #8), so an existing
+	//file is not proof it is the certificate this config describes.  Kept by the EnsureKeyCertificate the web certificates use:  this
+	//path had its own copy, and the managed guard (m2-closing #7), the re-issue predicate (web-certs3 #17) and the lock against two
+	//issuers for one slug (#250 review #13) each had to be carried across to it.  Debug for a certificate found in place:  this runs
+	//per connect, and the "Offering ... with certificate" line already names it.  The throw gains the connection, whose name the file carries.
 	α UAClient::EnsureCertificate( const ServerCnnctnNK& slug, SL sl )ε->void{
-		lg _{ _certificateMutex };
-		let& settings = CryptoSettings( slug );
-		//EnsureKeyCertificate's guard, which came across with neither of this path's rewrites:  certificate.managed:false is the
-		//operator's pair, used as found - the expiry and SAN checks below re-issue only what this product issued, and a
-		//certificate a CA vouched for must never be replaced by a self-signed one (web-certs3 (b)).  It was parsed on this block
-		//and ignored, so a CA-issued channel certificate whose SAN was not /gateway/issuedCerts' was overwritten in place behind
-		//one INFO line (reviews/m2-closing.md #7).  Both files are the operator's to supply, and the certificate's name carries
-		//the slug, so a missing one is named rather than left to fail as a file that could not be read.
-		if( !settings.Certificate.Managed ){
-			THROW_IFSL( !fs::exists(settings.PrivateKey.Path), "/gateway/issuedCerts/certificate/managed is false and the private key '{}' does not exist - supply the pair for connection '{}', or set managed:true to have one issued.", settings.PrivateKey.Path.string(), slug );
-			THROW_IFSL( !fs::exists(settings.Certificate.Path), "/gateway/issuedCerts/certificate/managed is false and connection '{}' has no certificate at '{}' - supply the pair, or set managed:true to have one issued.", slug, settings.Certificate.Path.string() );
-			return;
+		try{
+			Crypto::EnsureKeyCertificate( CryptoSettings(slug), ELogLevel::Debug, sl );
 		}
-		//the same predicate EnsureKeyCertificate uses for the web certificates - missing, expired or expiring, or the SAN (here the
-		//gateway's own applicationUri, which a server holds against what we advertise) drifted - which is also how a certificate
-		//issued before security-matrix #8, its SAN the server's uri, replaces itself - so the two paths cannot diverge again:  this
-		//one compared the SAN uri alone and let an issued certificate run until the peer rejected it as expired (web-certs3 #17).
-		Crypto::EncryptPrivateKey( settings, sl );//a per-target key issued before the passcode was set (reviews/m4-closing.md #11)
-		let reason = Crypto::ReissueReason( settings, sl );
-		if( reason.empty() )
-			return;
-		INFO( "Re-issuing '{}': {}.", settings.Certificate.Path.string(), reason );
-		settings.CreateDirectories();
-		if( !fs::exists(settings.PrivateKey.Path) )
-			Crypto::CreateKey( settings, sl );
-		Crypto::IssueCertificate( settings, std::chrono::days{365}, sl );
+		catch( Exception& e ){
+			e.PrependWhat( Ƒ("Connection '{}' (/gateway/issuedCerts):  ", slug) );
+			throw;
+		}
 	}
 	//The secured policies Configuration() carries - for the channel with a certificateUri, for the user token always.
 	Ω carried( sv policyUri )ι->bool{ return std::ranges::any_of( ClientSecurity::SecuredPolicyUris(), [policyUri]( sv uri ){ return uri==policyUri; } ); }
@@ -731,7 +710,7 @@ namespace Jde::Opc::Gateway{
 			UA_ClientConfig_setAuthenticationUsername( &_config, _credential.LoginName().c_str(), _credential.Password().c_str() );
 			INFO( "[{}]Using username/password authentication: '{}'", hex(Handle()), _credential.LoginName() );
 		}else if( _credential.Type()==ETokenType::Certificate ){
-			INFO( "[{}]Using certificate authentication: '{}'", hex(Handle()), AppClient()->SslSettings->Certificate.ToString() );
+			INFO( "[{}]Using certificate authentication: '{}'", hex(Handle()), AppClient()->SslSettings->Certificate.Path.string() );
 			UA_ClientConfig_setAuthenticationCert( &_config, *certificate, *privateKey );//read above, before anything was allocated.
 		}else if( _credential.Type()==ETokenType::IssuedToken ){
 			ASSERT( _credential.Token().size() );
@@ -847,7 +826,7 @@ namespace Jde::Opc::Gateway{
 		Connect();
 		PostUA( [this]{ TestDeadline(shared_from_this()); } );
 	}
-	α UAClient::TestDeadline( sp<UAClient> self )ι->DurationTimer::Task{
+	α UAClient::TestDeadline( sp<UAClient> self )ι->VoidTask{
 		if( !_onTestResult )
 			co_return;//answered before the deadline was armed.
 		_testConnects.emplace( self );//then the ShuttingDown check:  a Shutdown either finds it there or is found here.
@@ -855,16 +834,17 @@ namespace Jde::Opc::Gateway{
 			ExpireTest( UA_STATUSCODE_BADSHUTDOWN );
 			co_return;
 		}
-		_testDeadline.emplace( std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR );
-		(void)co_await *_testDeadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
-		_testDeadline.reset();
+		DurationTimer deadline{ std::chrono::milliseconds{UA_Client_getConfig(UAPointer())->timeout}, _asyncRequest.Strand(), SRCE_CUR };
+		_testDeadline = deadline.Canceller();
+		(void)co_await deadline;//resumes on the strand.  Cancelled by TakeTestResult, which leaves ExpireTest nothing to report.
+		_testDeadline = {};
 		ExpireTest( UA_STATUSCODE_BADTIMEOUT );
 	}
 	α UAClient::TakeTestResult()ι->ConnectCallback{
 		if( !_onTestResult )
 			return {};
 		if( _testDeadline )
-			_testDeadline->Cancel();
+			_testDeadline.Cancel();
 		_testConnects.erase( shared_from_this() );
 		auto onResult = std::move( _onTestResult );
 		_onTestResult = nullptr;//a moved-from AnyInvocable need not be empty.
@@ -1113,14 +1093,14 @@ namespace Jde::Opc::Gateway{
 
 	//ShuttingDown(), never Finalizing():  Finalizing is set after every shutdown function has run, so a chain gated on it could
 	//still reconnect while UAClient::Shutdown was tearing the clients down (subscription-disconnect #3).
-	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->DurationTimer::Task{
-		sp<DurationTimer> timer;
+	Ω waitThenConnect( ServerCnnctnNK slug, Credential credential, uint attempt, steady_clock::duration delay )ι->VoidTask{
+		optional<DurationTimer> timer;
 		{//registered under the same lock StopReconnects cancels under:  it either finds this wait or has already cleared the entry.
 			lg _{ _pendingMutex };
 			auto p = Process::ShuttingDown() ? nullptr : pendingFind( slug, credential );
 			if( !p )
 				co_return;
-			p->Wait = timer = ms<DurationTimer>( delay );
+			p->Wait = timer.emplace( delay ).Canceller();
 		}
 		++_reconnectsWaiting;
 		(void)co_await *timer;//a cancel resumes early with an error - not the signal; the checks below are.
@@ -1130,8 +1110,8 @@ namespace Jde::Opc::Gateway{
 		{//every subscriber gone (tabs closed while the server was down) - nothing left to restore.
 			lg _{ _pendingMutex };
 			auto p = pendingFind( slug, credential );
-			if( p && p->Wait==timer )
-				p->Wait = nullptr;
+			if( p && p->Wait==timer->Canceller() )
+				p->Wait = {};
 			if( !p || p->Nodes.empty() ){
 				if( p )
 					pendingErase( slug, credential );
@@ -1257,8 +1237,8 @@ namespace Jde::Opc::Gateway{
 		lg _{ _pendingMutex };
 		for( auto&& [_, creds] : _pending ){//auto&&: flat_map's iterator hands back a proxy pair.
 			for( auto&& [__, entry] : creds ){
-				if( entry.Wait ){//a Cancel before the wait starts is remembered - DurationTimer::Start re-issues it.
-					entry.Wait->Cancel();
+				if( entry.Wait ){//a Cancel before the wait starts is remembered - DurationTimer::Suspend re-issues it.
+					entry.Wait.Cancel();
 					++cancelled;
 				}
 			}

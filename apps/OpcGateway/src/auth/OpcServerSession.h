@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/PublicKey.h>
 
 namespace Jde::Opc::Gateway{
 	struct User{

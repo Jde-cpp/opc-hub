@@ -1,4 +1,5 @@
 #include "Edits.h"
+#include <absl/synchronization/notification.h>
 #include <boost/asio/io_context.hpp>
 #include <jde/fwk/process/execution.h>
 #include "Reads.h"
@@ -26,7 +27,7 @@ namespace Jde::Opc::Hist{
 		let ioc = ExecutorIoc();
 		return ioc && !ioc->stopped();
 	}
-	//BlockAny's, until deadline:  false when the group's flushes haven't settled by then, as when the io_context stopped
+	//BlockAwait's, until deadline:  false when the group's flushes haven't settled by then, as when the io_context stopped
 	//with a write out, which drops its resume.  The coroutine owns the awaitable, so a resume after that is harmless.
 	Ω settled( sp<FlushAwait> settling, steady_clock::time_point deadline )ι->bool{
 		auto done = ms<absl::Notification>();

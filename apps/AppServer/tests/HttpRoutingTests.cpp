@@ -1,3 +1,4 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/ql/QLAwait.h>
 #include <jde/web/Jwt.h>
@@ -52,7 +53,7 @@ namespace Jde::App::Server::Tests{
 		EXPECT_EQ( Json::AsString(identified, "application"), "Jde.OpcGateway" );
 		EXPECT_EQ( identified.at("pid").to_number<uint32>(), 4242u );
 		EXPECT_TRUE( identified.contains("startTime") );
-		BlockVoidAwait( client->Close(true, SRCE_CUR) );
+		BlockAwait( client->Close(true, SRCE_CUR) );
 	}
 
 	TEST_F( HttpRoutingTests, OpcServersListsInstances ){
@@ -61,7 +62,7 @@ namespace Jde::App::Server::Tests{
 		let res = Get( Port(), "/opcServers" );
 		let servers = Json::AsArray( res.Json(), "servers" );
 		EXPECT_TRUE( std::ranges::any_of(servers, [](let& s){ return Json::AsString(s.as_object(), "instanceName")=="http-opc"; }) );
-		BlockVoidAwait( client->Close(true, SRCE_CUR) );
+		BlockAwait( client->Close(true, SRCE_CUR) );
 	}
 
 	TEST_F( HttpRoutingTests, LoginRequiresBearer ){

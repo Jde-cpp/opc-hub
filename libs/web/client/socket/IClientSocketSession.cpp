@@ -4,6 +4,7 @@
 #include <boost/beast/websocket/error.hpp>
 #include <jde/fwk.h>
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/logTags.h>
 #include <jde/fwk/usings.h>
 #include <jde/app/client/clientSubscriptions.h>
@@ -69,7 +70,7 @@ namespace Jde::Web::Client{
 	α IClientSocketSession::Shutdown( bool terminate, SL sl )ι->void{
 		if( _ioContext ){
 			TRACET( _connectTag, "[{}]Client::Shutdown: {}", hex(Id()), Host() );
-			BlockVoidAwait( Close(terminate, sl) );
+			BlockAwait( Close(terminate, sl) );
 		}
 	}
 
@@ -84,10 +85,10 @@ namespace Jde::Web::Client{
 		return y;
 	}
 	α IClientSocketSession::CancelTimeout( RequestId requestId )ι->void{
-		_timeouts.visit( requestId, [](auto&& kv){ kv.second->Cancel(); } );//AddTimeout's own resumption erases the entry.
+		_timeouts.visit( requestId, [](auto&& kv){ kv.second.Cancel(); } );//AddTimeout's own resumption erases the entry.
 	}
 	α IClientSocketSession::CancelTimeouts()ι->void{
-		_timeouts.visit_all( [](auto&& kv){ kv.second->Cancel(); } );
+		_timeouts.visit_all( [](auto&& kv){ kv.second.Cancel(); } );
 	}
 	//60s: long enough that a slow query is not mistaken for a dead peer, short enough that a stranded caller does not wait out the
 	//process.  Whether it is right depends on the workload, hence the setting - a legitimate query that outlives it takes the
@@ -110,16 +111,16 @@ namespace Jde::Web::Client{
 			CloseTasks( net::error::not_connected );
 	}
 
-	α IClientSocketSession::AddTimeout( RequestId requestId, SL sl )ι->TimerAwait::Task{
+	α IClientSocketSession::AddTimeout( RequestId requestId, SL sl )ι->VoidTask{
 		const auto _ = shared_from_this();//the timer outlives the request; keep us alive so the check below is not on a freed session.
 		const auto timeout = requestTimeout();
-		auto timer = ms<DurationTimer>( timeout, sl );
+		DurationTimer timer{ timeout, sl };
 		//Registered before the first suspend, which is before Suspend() writes the request (ClientSocketAwait), so no reply can
 		//arrive ahead of the entry PopTask cancels through.  Waiting the timer out instead is not free: a pending asio timer is
 		//work, and io_context::run - hence Process::Shutdown - blocks on it.  A process that exited within the timeout of its
 		//last request therefore sat out the remainder and was killed by the shutdown watchdog (emulator-review #11).
-		_timeouts.emplace( requestId, timer );
-		auto _ = co_await *timer;
+		_timeouts.emplace( requestId, timer.Canceller() );
+		auto _ = co_await timer;
 		_timeouts.erase( requestId );
 		if( !HasTask(requestId) )
 			co_return;//answered, or already failed with the session.

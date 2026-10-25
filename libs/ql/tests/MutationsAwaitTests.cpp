@@ -3,6 +3,7 @@
 //answers every mutation itself, the way the app servers' custom mutations do.  No data source: `status` is a system name, so the
 //parser resolves no table and MutationAwait never reaches the crud ops.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ops/MutationsAwait.h>
 #include <jde/ql/ql.h>
 #include "NullQL.h"

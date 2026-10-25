@@ -1,4 +1,5 @@
 #include "gtest/gtest.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/QLAwait.h>
 #include <jde/ql/types/TableQL.h>
@@ -128,7 +129,7 @@ namespace Jde::Access::Tests{
 		const UserPK userA{ GetId(GetUser("profileLeakA", root)) };
 		const UserPK userB{ GetId(GetUser("profileLeakB", root)) };
 		auto listener = ms<ProfileListener>();
-		BlockTAwait<vector<QL::SubscriptionId>>( move(*QLPtr()->Subscribe("subscription ProfileUpdated{ profileUpdated(subscriptionId:$id){ url value } }", jobject{{"id",7716}}, listener, userB)) );
+		BlockAwait( move(*QLPtr()->Subscribe("subscription ProfileUpdated{ profileUpdated(subscriptionId:$id){ url value } }", jobject{{"id",7716}}, listener, userB)) );
 		upsertProfile( "secret", "\"userA-only\"", userA );
 		EXPECT_EQ( AsSV(selectProfile("secret", userA), "value"), "userA-only" ); //the write itself still lands.
 		QL::Subscriptions::StopListen( listener );

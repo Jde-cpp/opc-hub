@@ -2,6 +2,7 @@
 #ifndef CHRONO_H
 #define CHRONO_H
 #include <chrono>
+#include <expected>
 
 #define Φ Γ auto
 namespace Jde{
@@ -18,7 +19,7 @@ namespace Jde::Chrono{
 	Φ LocalTimeMilli( TimePoint time, SRCE )ε->string;
 	Ξ LocalYMD( TimePoint time, const time_zone& tz )ι->year_month_day{ return year_month_day{floor<days>(tz.to_local(time))}; };
 	Φ ToDuration( sv iso, SRCE )ε->Duration;//ISO 8601, as ToString writes it:  anything else throws.
-	Φ TryToDuration( sv iso, ELogLevel level=ELogLevel::Debug, SRCE )ε->optional<Duration>;
+	Φ TryToDuration( sv iso, ELogLevel level=ELogLevel::Debug, SRCE )ι->std::expected<Duration,Exception>;
 	Φ ToTimePoint( string iso, SRCE )ε->TimePoint;
 	Φ ToTimePoint( uint16_t year, uint8 month, uint8 day, uint8 hour=0, uint8 minute=0, uint8 second=0, Duration subseconds=Duration::zero(), SRCE )ε->TimePoint;
 	Φ ToTimeZone( sv name, const std::chrono::time_zone& dflt, ELogLevel level=ELogLevel::Debug, SRCE )ι->const std::chrono::time_zone&;

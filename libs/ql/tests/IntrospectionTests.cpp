@@ -4,6 +4,7 @@
 //Authorize, which is what made it reachable.  Schema-free:  with no AppSchema the parser leaves every DBTable null anyway,
 //and nothing here reaches a data source.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ops/TablesAwait.h>
 #include <jde/ql/ql.h>
 #include "NullQL.h"

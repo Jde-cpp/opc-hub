@@ -1,5 +1,4 @@
 #include <jde/fwk/io/json.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include "../utils/ClientFixture.h"
 #include "../utils/Subscribing.h"
 #include "../../src/UAClient.h"

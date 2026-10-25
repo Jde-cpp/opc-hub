@@ -1,4 +1,5 @@
 #include "Subscribing.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include "../../src/async/Subscriptions.h"
 #include "helpers.h"
@@ -7,8 +8,8 @@
 
 namespace Jde::Opc::Gateway{
 	α Tests::SubscribeOn( const sp<UAClient>& client, sp<IDataChange> listener, flat_set<NodeId> nodes )ε->FromServer::SubscriptionAck{
-		BlockVoidAwait( SubscribeAwait{client} );
-		return BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{move(nodes), move(listener), client} );
+		BlockAwait( SubscribeAwait{client} );
+		return BlockAwait( DataChangeAwait{move(nodes), move(listener), client} );
 	}
 	α Tests::SubscribeCounting( const sp<UAClient>& client, const sp<PushCount>& listener, flat_set<NodeId> nodes, Duration timeout )ε->FromServer::SubscriptionAck{
 		auto ack = SubscribeOn( client, listener, move(nodes) );

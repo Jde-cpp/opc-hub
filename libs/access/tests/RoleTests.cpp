@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include <jde/access/server/awaits/RoleAwait.h>
 #include <jde/access/Authorize.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/settings.h>
 #include <jde/db/meta/Column.h>
@@ -23,30 +24,30 @@ namespace Jde::Access::Tests{
 	}
 	α RemoveRolePermission( RolePK rolePK, PermissionPK permissionPK, UserPK userPK )ε->jvalue{
 		let remove = Ƒ( "mutation removeRole( id:{}, permissionRight:{{id:{}}} )", rolePK.Value, permissionPK.Value );
-		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(remove, {}, Schemas()), userPK} );
+		return BlockAwait( Server::RoleMAwait{QL::ParseM(remove, {}, Schemas()), userPK} );
 	}
 	α RemoveRoleMember( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jvalue{
 		jobject vars{ {"parent", parentRolePK.Value}, {"child", childRolePK.Value} };
 		let q = "mutation removeRole( id:$parent, role:{id:$child} )";
-		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
+		return BlockAwait( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 	}
 	α GetRolePermission( RolePK rolePK, sv resourceName, UserPK executer )ε->jobject{
 		jobject vars{ {"roleId", rolePK.Value}, {"resource", resourceName} };
 		let q = "role( id:$roleId ){permissionRight{id allowed denied resource(slug:$resource,criteria:null)} }";
-		let role = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object(); //{"role":{"member":{"id":1,"allowed":[],"denied":[]}}}
+		let role = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object(); //{"role":{"member":{"id":1,"allowed":[],"denied":[]}}}
 		return Json::FindDefaultObjectPath( role, "permissionRight" );
 	}
 	//as above, on one schema's resource - a slug like `logs` that several schemas carry.
 	α GetRolePermission( RolePK rolePK, sv schemaName, sv resourceName, UserPK executer )ε->jobject{
 		jobject vars{ {"roleId", rolePK.Value}, {"schema", schemaName}, {"resource", resourceName} };
 		let q = "role( id:$roleId ){permissionRight{id allowed denied resource(schemaName:$schema,slug:$resource,criteria:null)} }";
-		let role = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
+		let role = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), executer} ).as_object();
 		return Json::FindDefaultObjectPath( role, "permissionRight" );
 	}
 	α GetRoleChild( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jobject{
 		jobject vars = { {"parent", parentRolePK.Value}, {"child",childRolePK.Value} };
 		let q = "role( id:$parent ){role(id:$child){id slug deleted} }";
-		auto y = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), userPK} );
+		auto y = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, vars, Schemas()), userPK} );
 		return y.is_object() ? Json::FindDefaultObjectPath( y.get_object(), "role" ) : jobject{};
 	}
 
@@ -64,7 +65,7 @@ namespace Jde::Access::Tests{
 		else{
 			jobject vars{ {"roleId", rolePK.Value}, {"allowed", underlying(allowed)}, {"denied", underlying(denied)}, {"resource", resourceName} };
 			auto q = "addRole( id:$roleId, permissionRight:{allowed:$allowed, denied:$denied, resource:{slug:$resource}} )";
-			BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
+			BlockAwait( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 			permission = GetRolePermission( rolePK, resourceName, userPK );
 		}
 		return permission;
@@ -72,7 +73,7 @@ namespace Jde::Access::Tests{
 	α InsertRoleMember( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jvalue{ //the bare mutation - AddRoleMember's pre-read trips the roles read gate before the mutation's own gate is reached.
 		jobject vars{ {"parent", parentRolePK.Value}, {"child", childRolePK.Value} };
 		let q = "mutation addRole( id:$parent, role:{id:$child} )";
-		return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
+		return BlockAwait( Server::RoleMAwait{QL::ParseM(q, vars, Schemas()), userPK} );
 	}
 	α AddRoleMember( RolePK parentRolePK, RolePK childRolePK, UserPK userPK )ε->jobject{
 		auto y = GetRoleChild( parentRolePK, childRolePK, userPK );
@@ -98,7 +99,7 @@ namespace Jde::Access::Tests{
 		AddRolePermission( rolePK, "users", ERights::Read, ERights::None, GetRoot() );
 		QL().QuerySync<jvalue>( Ƒ("mutation deleteRole( id:{} )", rolePK.Value), {}, GetRoot() );
 		let q = "roles( deleted:null ){ id name permissionRight{ id resource(slug:\"users\", criteria:null){ id } } }";
-		let roles = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
+		let roles = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
 		EXPECT_FALSE( roles.empty() );
 		for( let& role : roles ){
 			EXPECT_NE( GetId(role.as_object()), rolePK.Value ) << serialize( role );
@@ -114,7 +115,7 @@ namespace Jde::Access::Tests{
 		const RolePK bare{ GetId( getRole("rolePermissionKeyBare", GetRoot()) ) };
 		let permission = AddRolePermission( granted, "users", ERights::Read, ERights::None, GetRoot() );
 		let q = Ƒ( "roles( id:[{},{}] ){{ id permissionRight{{ id resource(slug:\"users\", criteria:null){{ id }} }} }}", granted.Value, bare.Value );
-		let roles = BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
+		let roles = BlockAwait( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()} ).as_array();
 		ASSERT_EQ( roles.size(), 2 ) << serialize( roles );
 		for( let& role : roles ){
 			let& o = role.as_object();
@@ -135,7 +136,7 @@ namespace Jde::Access::Tests{
 			pks.push_back( GetId(getRole(slug, GetRoot())) );
 		let q = Ƒ( R"(roles( id:[{},{},{}], orderBy:[{{slug:"desc"}}] ){{ id slug permissionRights{{ id }} }})", pks[0], pks[1], pks[2] );
 		vector<string> slugs;
-		for( let& role : BlockTAwait<jvalue>(Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()}).as_array() )
+		for( let& role : BlockAwait(Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), GetRoot()}).as_array() )
 			slugs.push_back( string{Json::AsString(role.as_object(), "slug")} );
 		EXPECT_EQ( slugs, (vector<string>{"roleOrderC", "roleOrderB", "roleOrderA"}) );
 	}
@@ -150,7 +151,7 @@ namespace Jde::Access::Tests{
 		AddRoleMember( parent, child, root );
 		let query = [&]( sv args )->jvalue{
 			let q = Ƒ( R"(role( slug:"roleChildrenParent"{} ){{ id permissionRight{{ id resource(slug:"users", criteria:null){{ id }} }} roles{{ id }} }})", args );
-			return BlockTAwait<jvalue>( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), root} );
+			return BlockAwait( Server::RoleAwait{QL::ParseQuery(q, {}, Schemas()), root} );
 		};
 		let found = query( "" ).as_object();
 		EXPECT_EQ( GetId(Json::AsObject(found, "permissionRight")), GetId(permission) ) << serialize( found );
@@ -210,7 +211,7 @@ namespace Jde::Access::Tests{
 		let root = GetRoot();
 		const RolePK parent{ GetId(getRole("roleRemoveSlugParent", root)) };
 		const RolePK child{ GetId(getRole("roleRemoveSlugChild", root)) };
-		auto mutate = [&]( sv op ){ BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(Ƒ(R"(mutation {}Role( slug:"roleRemoveSlugParent", role:{{ slug:"roleRemoveSlugChild" }} ))", op), {}, Schemas()), root} ); };
+		auto mutate = [&]( sv op ){ BlockAwait( Server::RoleMAwait{QL::ParseM(Ƒ(R"(mutation {}Role( slug:"roleRemoveSlugParent", role:{{ slug:"roleRemoveSlugChild" }} ))", op), {}, Schemas()), root} ); };
 		mutate( "add" );
 		ASSERT_FALSE( GetRoleChild(parent, child, root).empty() );
 		ASSERT_TRUE( Authorizer()->IsRoleMember(parent, child) );
@@ -250,7 +251,7 @@ namespace Jde::Access::Tests{
 	//`role`/`permissionRight` from a client threw across the boundary into std::terminate - the whole AppServer, for one mutation.
 	//Refused with an exception now.
 	TEST_F( RoleTests, MalformedArgsAreRefusedNotFatal ){
-		auto mutate = []( sv ql ){ return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(string{ql}, {}, Schemas()), GetRoot()} ); };
+		auto mutate = []( sv ql ){ return BlockAwait( Server::RoleMAwait{QL::ParseM(string{ql}, {}, Schemas()), GetRoot()} ); };
 		EXPECT_THROW( mutate("mutation addRole( id:1, role:1 )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1, role:null )"), Exception );
 		EXPECT_THROW( mutate("mutation addRole( id:1, permissionRight:5 )"), Exception );
@@ -569,7 +570,7 @@ namespace Jde::Access::Tests{
 			Purge( "resource", GetId(Json::AsObject(v)), system );
 		const RolePK rolePK{ GetId(getRole("roleParityNew", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
-		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_EQ( Json::AsSV(Json::AsObject(resources[0]), "name"), slug ) << "name coalesced over the slug";
@@ -591,7 +592,7 @@ namespace Jde::Access::Tests{
 			Purge( "resource", GetId(Json::AsObject(v)), system );
 		const RolePK rolePK{ GetId(getRole("roleParityRoot", root)) };
 		let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}" }} }} ))", rolePK.Value, slug );
-		let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+		let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		let resources = QL().QuerySync<jarray>( select, {}, root );
 		ASSERT_EQ( resources.size(), 1u );
 		EXPECT_FALSE( Json::AsObject(resources[0]).at("deleted").is_null() ) << "a role-referenced root resource should ship unenforced";
@@ -615,7 +616,7 @@ namespace Jde::Access::Tests{
 		const UserPK nobody{ GetId(GetUser("revokeAsGrantedNobody", root)) };
 		let grant = [&]( UserPK executer ){
 			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ schemaName:"access", slug:"{}", criteria:"{}" }} }} ))", rolePK.Value, slug, criteria );
-			let added = BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), executer} ).as_object();
+			let added = BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), executer} ).as_object();
 			return PermissionPK{ Json::AsNumber<PermissionPK::Type>(added, "permissionRight/id") };
 		};
 		EXPECT_NO_THROW( RemoveRolePermission(rolePK, grant(nobody), nobody) ) << "no root:  the add passed nobody, so the remove does";
@@ -656,7 +657,7 @@ namespace Jde::Access::Tests{
 		CreateAcl( holder, granted, root );
 		let add = [&]( RolePK role, string resource ){
 			let q = Ƒ( R"(addRole( id:{}, permissionRight:{{ allowed:2, denied:0, resource:{{ {} }} }} ))", role.Value, resource );
-			return BlockTAwait<jvalue>( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
+			return BlockAwait( Server::RoleMAwait{QL::ParseM(q, {}, Schemas()), root} ).as_object();
 		};
 		add( seeded, Ƒ(R"(schemaName:"access", slug:"{}")", slug) );//the seed's spelling:  no row yet, so the grant makes one - unenforced
 		let resources = QL().QuerySync<jarray>( select, {}, root );

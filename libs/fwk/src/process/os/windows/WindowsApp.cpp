@@ -228,7 +228,7 @@ namespace Jde{
 		char buffer[32767];
 		optional<string> result;
 		if( !::GetEnvironmentVariable(variable.c_str(), buffer, sizeof(buffer)) )
-			Logging::LogOnce( sl, ELogTags::Settings, "GetEnvironmentVariable('{}') failed:  {}", variable,  Ƒ("{:x}", ::GetLastError()) );
+			Logging::LogOnce( sl, ELogLevel::Information, ELogTags::Settings, "GetEnvironmentVariable('{}') failed:  {}", variable,  Ƒ("{:x}", ::GetLastError()) );
 		else
 			result = buffer;
 

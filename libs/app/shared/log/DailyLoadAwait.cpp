@@ -1,14 +1,13 @@
 #include <jde/app/log/DailyLoadAwait.h>
-#include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/app/log/ProtoLog.h>
 
 #define let const auto
 namespace Jde::App{
 	constexpr ELogTags _tags = ELogTags::ExternalLogger;
-	α DailyLoadAwait::Execute()ι->TAwait<CoLockGuard>::Task{
+	α DailyLoadAwait::Execute()ι->VoidAwait::Task{
 		try{
-			auto lock = co_await LockKeyAwait{ _log.DailyFile().string() };//held to the end of the read.
+			auto lock = co_await _log._fileLock.Lock();//held to the end of the read.
 			auto y = _log.Entries();
 			TRACE( "Memory item count: {}", y.size() );
 			auto& file = _log._file;

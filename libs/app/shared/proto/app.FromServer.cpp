@@ -45,8 +45,8 @@ namespace Jde::App{
 			info.set_app_pk( appPK );
 			info.set_instance_pk( instancePK );
 			info.set_connection_pk( connectionPK );
-			info.set_certificate_modulus( {appServerPubKey.Modulus.begin(), appServerPubKey.Modulus.end()} );
-			info.set_certificate_exponent( {appServerPubKey.Exponent.begin(), appServerPubKey.Exponent.end()} );
+			info.set_certificate_modulus( (const char*)appServerPubKey.Modulus.data(), appServerPubKey.Modulus.size() );
+			info.set_certificate_exponent( (const char*)appServerPubKey.Exponent.data(), appServerPubKey.Exponent.size() );
 			if( authResult )
 				info.set_auth_result( *authResult );
 			*info.mutable_session_info() = move( session );

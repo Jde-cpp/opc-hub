@@ -51,7 +51,7 @@ namespace Jde::DB::Odbc{
 		SQLSMALLINT connectionStringLength;
 		CALL( _hConnection, SQL_HANDLE_DBC, ::SQLDriverConnect(_hConnection, nullptr, (SQLCHAR*)string(connectionString).c_str(), SQL_NTS, connectionStringResult, 8192, &connectionStringLength, SQL_DRIVER_NOPROMPT), "SQLDriverConnect" );
 		if( connectionStringLength>0 )
-			Logging::LogOnce( SRCE_CUR, _tags, "connectionString={}", (char*)connectionStringResult );
+			Logging::LogOnce( SRCE_CUR, ELogLevel::Information, _tags, "connectionString={}", (char*)connectionStringResult );
 		else
 			CRITICAL( "connectionString Length={}", connectionStringLength );
 	}

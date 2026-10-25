@@ -169,7 +169,7 @@ namespace Jde::App::Server{
 		Close();
 	}
 	//The remote admin check as an awaitable any coroutine can co_await. Suspend launches a glue coroutine of
-	//QueryClientAwait's task type; the strand stays free to deliver the reply. The BlockTAwait this replaces
+	//QueryClientAwait's task type; the strand stays free to deliver the reply. The BlockAwait this replaces
 	//deadlocked the self-registration case - the reply only arrives on the strand the block was holding
 	//(reviews/todo.md §12), recovered only by the QueryClient timeout as a wrongful denial.
 	//The answer comes from the OpcServer (OpcServerQL's adminCheck → OpcAuthorize::TestAdminNode) - it alone knows which

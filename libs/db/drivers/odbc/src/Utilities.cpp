@@ -56,7 +56,7 @@ namespace Jde::DB::Odbc{
 			if( pFirst && (iRec==1 || (pFirst->Error==EDbError::None && error!=EDbError::None)) )
 				*pFirst = DiagnosticRecord{ (int32)iError, error };
 			if( state=="01000" && iError!=3621 )//3621=The statement has been terminated.
-				Logging::LogOnce( SRCE_CUR, _tags, "{}", msg );
+				Logging::LogOnce( SRCE_CUR, ELogLevel::Information, _tags, "{}", msg );
 			else{
 				if( functionName=="SQLDriverConnect" && level==ELogLevel::Error )
 					throw DBException{ error, Sql{}, Ƒ("[{:<5}] {}", state, (char*)szMessage), {ELogLevel::Critical, ELogTags::Sql, (uint32)iError}, sl };

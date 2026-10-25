@@ -247,7 +247,7 @@ namespace Jde::Opc::Hist{
 		up<State> _state;
 	};
 
-	//What Group::Flush and Settled return, which any coroutine can co_await, and BlockAny waits on from a thread that
+	//What Group::Flush and Settled return, which any coroutine can co_await, and BlockAwait waits on from a thread that
 	//isn't the executor's.  It resumes on the thread that finished the flush.
 	struct FlushAwait final : AnyAwait<bool>{
 		FlushAwait( sp<Group> group, bool flush, SL sl )ι:AnyAwait<bool>{ sl }, _group{ move(group) }, _flush{ flush }{}

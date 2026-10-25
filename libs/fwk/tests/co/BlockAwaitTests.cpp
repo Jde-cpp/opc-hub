@@ -1,4 +1,4 @@
-#include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/tests/WaitUntil.h>
@@ -39,7 +39,7 @@ namespace Jde::Tests{
 
 	TEST_F( BlockAwaitTests, TAwaitReturnsTheValue ){
 		Logging::ClearMemory();
-		EXPECT_EQ( BlockTAwait(ThreadedInt{42}), 42 );
+		EXPECT_EQ( BlockAwait(ThreadedInt{42}), 42 );
 		EXPECT_TRUE( executorWarnings().empty() ) << "a block on the test's own thread, which runs no executor work, must not warn";
 	}
 
@@ -48,7 +48,7 @@ namespace Jde::Tests{
 	TEST_F( BlockAwaitTests, VoidAwaitRethrowsTheSubclass ){
 		bool caught{};
 		try{
-			BlockVoidAwait( ThreadedThrower{} );
+			BlockAwait( ThreadedThrower{} );
 		}
 		catch( BlockException& ){ caught = true; }
 		catch( Exception& ){ caught = false; }
@@ -64,8 +64,8 @@ namespace Jde::Tests{
 		for( uint i=0; i<2; ++i ){
 			auto done = ms<std::atomic<bool>>();
 			auto value = ms<std::atomic<int>>();
-			Post( [done, value]{ *value = BlockTAwait( ThreadedInt{7} ); *done = true; } );
-			ASSERT_TRUE( WaitUntil([&]{ return done->load(); }, 10s, 5ms) ) << "the executor thread never came back from BlockTAwait";
+			Post( [done, value]{ *value = BlockAwait( ThreadedInt{7} ); *done = true; } );
+			ASSERT_TRUE( WaitUntil([&]{ return done->load(); }, 10s, 5ms) ) << "the executor thread never came back from BlockAwait";
 			EXPECT_EQ( value->load(), 7 );
 		}
 		EXPECT_EQ( executorWarnings().size(), warnedBefore ? 0u : 1u ) << "an executor-thread block warns once per site";
@@ -76,7 +76,7 @@ namespace Jde::Tests{
 	//allows destroying it then.  Repeat enough to hit that window.
 	TEST_F( BlockAwaitTests, RepeatedBlocksDoNotRaceTheNotify ){
 		for( int i=0; i<300; ++i )
-			ASSERT_EQ( BlockTAwait(ThreadedInt{i}), i ) << "iteration " << i;
+			ASSERT_EQ( BlockAwait(ThreadedInt{i}), i ) << "iteration " << i;
 	}
 
 	struct SlowInt final : TAwait<int>{
@@ -91,7 +91,7 @@ namespace Jde::Tests{
 	TEST_F( BlockAwaitTests, WarnsWhileStalled ){
 		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
-		EXPECT_EQ( BlockTAwait(SlowInt{700ms}), 9 ) << "the warning must not disturb the result";
+		EXPECT_EQ( BlockAwait(SlowInt{700ms}), 9 ) << "the warning must not disturb the result";
 		let warnings = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
 		ASSERT_GE( warnings.size(), 2u ) << "700ms over a 200ms interval should say so more than once";
 		EXPECT_EQ( warnings[0].Level, ELogLevel::Warning ) << "the first interval warns";
@@ -104,7 +104,7 @@ namespace Jde::Tests{
 	TEST_F( BlockAwaitTests, StallLevelCapped ){
 		auto& logger = Logging::GetLogger<Logging::MemoryLog>();
 		Logging::ClearMemory();
-		EXPECT_EQ( BlockTAwait(SlowInt{700ms}, ELogLevel::Information), 9 );
+		EXPECT_EQ( BlockAwait(SlowInt{700ms}, ELogLevel::Information), 9 );
 		let lines = logger.Find( [](let& entry){ return entry.Message().starts_with("BlockAwait has been waiting"); } );
 		ASSERT_GE( lines.size(), 2u ) << "700ms over a 200ms interval should say so more than once";
 		for( let& line : lines )

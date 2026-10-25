@@ -289,7 +289,7 @@ namespace Jde::Opc::Gateway{
 	//sp, not wp:  the wait below is exactly the window in which the client can go away (a run_iterate failure calls
 	//RemoveClient), and the client owns the up<UAMonitoringNodes> that is `this` - so a weak handle left the resumed
 	//coroutine taking _mutex and walking _subscriptions on freed memory.  Both callers already hold a live sp.
-	α UAMonitoringNodes::DeleteMonitoring( sp<UAClient> ua, Handle uaHandle, flat_map<SubscriptionId,flat_set<MonitorId>> requested )ι->DurationTimer::Task{
+	α UAMonitoringNodes::DeleteMonitoring( sp<UAClient> ua, Handle uaHandle, flat_map<SubscriptionId,flat_set<MonitorId>> requested )ι->VoidTask{
 		auto wait = 1s;
 		TRACE( "[{}]DeleteMonitoring count={}, wait={}", hex(uaHandle), requested.size(), Chrono::ToString(wait) ); //duration_cast<std::chrono::seconds>(wait).count()
 		(void)co_await DurationTimer{ wait };

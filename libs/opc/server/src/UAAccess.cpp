@@ -1,4 +1,5 @@
 #include <jde/opc/server/UAAccess.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/access/IAcl.h>
 #include <jde/opc/server/INodeAccess.h>

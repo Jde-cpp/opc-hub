@@ -15,10 +15,16 @@ namespace Jde{
 	}
 	//ISO 8601:  P, the date designators in order, then T and the time ones, each at most once and a T followed by one;  a sign
 	//on a component, as ToString writes a negative.  Every component converts exactly, a month the ~730.5h ToString writes,
-	//and one past Duration's range throws rather than wrapping.
+	//and one past Duration's range fails rather than wrapping.
 	α Chrono::ToDuration( sv iso, SL sl )ε->Duration{
+		auto y = TryToDuration( iso, ELogLevel::Debug, sl );
+		if( !y )
+			y.error().Throw();
+		return *y;
+	}
+	α Chrono::TryToDuration( sv iso, ELogLevel level, SL sl )ι->std::expected<Duration,Exception>{
 		if( !iso.starts_with('P') )
-			throw Exception{ sl, ELogLevel::Debug, "Expected 'P' as first character in '{}'.", iso };
+			return std::unexpected{ Exception{sl, level, "Expected 'P' as first character in '{}'.", iso} };
 		struct Unit final{ char Designator; bool Time; int64_t Seconds; };
 		constexpr std::array<Unit,7> units{ Unit{'Y', false, years::period::num}, Unit{'M', false, months::period::num}, Unit{'W', false, weeks::period::num},
 			Unit{'D', false, days::period::num}, Unit{'H', true, hours::period::num}, Unit{'M', true, minutes::period::num}, Unit{'S', true, seconds::period::num} };
@@ -28,8 +34,10 @@ namespace Jde{
 		uint next{};//the first of units a component may still name.
 		for( uint i=1; i<iso.size(); ++i ){
 			if( iso[i]=='T' ){
-				THROW_IFSL( time, "'{}' - a second 'T' at {}.", iso, i );
-				THROW_IFSL( i+1==iso.size(), "'{}' - a 'T' with no time after it.", iso );
+				if( time )
+					return std::unexpected{ Exception{sl, level, "'{}' - a second 'T' at {}.", iso, i} };
+				if( i+1==iso.size() )
+					return std::unexpected{ Exception{sl, level, "'{}' - a 'T' with no time after it.", iso} };
 				time = true;
 				continue;
 			}
@@ -39,33 +47,31 @@ namespace Jde{
 			while( i<iso.size() && ((iso[i]>='0' && iso[i]<='9') || iso[i]=='.') )
 				++i;
 			let number = iso.substr( start, i-start );
-			THROW_IFSL( i==iso.size(), "'{}' - '{}' has no designator.", iso, number );
+			if( i==iso.size() )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' has no designator.", iso, number} };
 			let designator = iso[i];
 			double value;
-			THROW_IFSL( !absl::SimpleAtod(number, &value), "'{}' - no number before '{}' at {}.", iso, designator, i );
+			if( !absl::SimpleAtod(number, &value) )
+				return std::unexpected{ Exception{sl, level, "'{}' - no number before '{}' at {}.", iso, designator, i} };
 			let unit = std::ranges::find_if( units, [=]( const Unit& u ){ return u.Designator==designator && u.Time==time; } );
-			THROW_IFSL( unit==units.end(), "'{}' - '{}' at {} is no {} designator.", iso, designator, i, time ? "time" : "date" );
+			if( unit==units.end() )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' at {} is no {} designator.", iso, designator, i, time ? "time" : "date"} };
 			let index = (uint)( unit-units.begin() );
-			THROW_IFSL( index<next, "'{}' - '{}' at {} is repeated or out of order:  Y M W D, then T and H M S.", iso, designator, i );
+			if( index<next )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}' at {} is repeated or out of order:  Y M W D, then T and H M S.", iso, designator, i} };
 			next = index+1;
 			let seconds = value*(double)unit->Seconds;
-			THROW_IFSL( std::abs(seconds)>=maxSeconds, "'{}' - '{}{}' is longer than a duration holds.", iso, number, designator );
+			if( std::abs(seconds)>=maxSeconds )
+				return std::unexpected{ Exception{sl, level, "'{}' - '{}{}' is longer than a duration holds.", iso, number, designator} };
 			let part = std::chrono::round<Duration>( std::chrono::duration<double>{seconds} );
-			THROW_IFSL( (part>Duration::zero() && y>Duration::max()-part) || (part<Duration::zero() && y<Duration::min()-part), "'{}' is longer than a duration holds.", iso );
+			if( (part>Duration::zero() && y>Duration::max()-part) || (part<Duration::zero() && y<Duration::min()-part) )
+				return std::unexpected{ Exception{sl, level, "'{}' is longer than a duration holds.", iso} };
 			y += part;
 			any = true;
 		}
-		THROW_IFSL( !any, "'{}' has no component - zero is PT0S.", iso );
+		if( !any )
+			return std::unexpected{ Exception{sl, level, "'{}' has no component - zero is PT0S.", iso} };
 		return y;
-	}
-	α Chrono::TryToDuration( sv iso, ELogLevel level, SL sl )ε->optional<Duration>{
-		try{
-			return ToDuration( iso, sl );
-		}
-		catch( Exception& e ){
-			e.SetLevel( level );
-		}
-		return {};
 	}
 
 	α Chrono::ToTimePoint( string iso, SL sl )ε->TimePoint{

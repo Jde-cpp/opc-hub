@@ -28,8 +28,8 @@ namespace Jde::Opc::Gateway{
 		α Strand()Ι->const boost::asio::strand<boost::asio::io_context::executor_type>&{ return _strand; }
 	private:
 		α UAHandle()ι->Handle;
-		α ProcessingLoop()ι->DurationTimer::Task;
-		α Ping( sp<UAClient> client )ι->DurationTimer::Task;
+		α ProcessingLoop()ι->VoidTask;
+		α Ping( sp<UAClient> client )ι->VoidTask;
 		α CancelPing()ι->void;
 		α FailPending( sp<UAClient> client )ι->void;//strand-only, posted by Stop so it never runs inside a UA_Client callback:  fails every request still pending with open62541 so its awaitable's coroutine can finish and drop its sp<UAClient>.
 		boost::asio::strand<boost::asio::io_context::executor_type> _strand;
@@ -37,7 +37,7 @@ namespace Jde::Opc::Gateway{
 		sp<UAClient> _client;//set pre-concurrency, nulled on the strand by Stop
 		Handle _handle{};//the client's, kept past Stop for the log lines FailPending's callbacks still write.
 		TimePoint _lastRequest{};//strand-confined; per-client so one client's traffic doesn't mask another's TTL.
-		optional<DurationTimer> _pingTimer;//strand-confined
+		TimerCancel _pingTimer;//strand-confined
 		bool _drainNeeded{};//strand-confined; set by RequestDrain, cleared by OnServiceBegin or ProcessingLoop's give-up cap.
 		bool _stopping{};//strand-confined; set by ProcessingLoop's TTL branch: ShutdownIdle is in flight but its delete-subscription pump still needs Process/the loop, so only the ping starter keys off this - Stop() ends everything else.
 		atomic_flag _running;

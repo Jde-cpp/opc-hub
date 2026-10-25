@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <fstream>
 #include <numeric>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>

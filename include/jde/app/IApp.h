@@ -1,7 +1,8 @@
 #pragma once
 #include <jde/fwk/chrono.h>
 #include <jde/fwk/co/Await.h>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/co/BlockAwait.h>
+#include <jde/fwk/crypto/PublicKey.h>
 #include <jde/web/Jwt.h>
 #include <jde/app/usings.h>
 #include <jde/app/log/ProtoLog.h>

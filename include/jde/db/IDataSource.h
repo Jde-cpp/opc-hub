@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include "awaits/DBAwait.h"
 #include "awaits/ExecuteAwait.h"
 #include "awaits/QueryAwait.h"

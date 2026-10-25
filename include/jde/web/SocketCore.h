@@ -91,7 +91,7 @@ namespace Jde::Web{
 			_closeCode = code;
 			//A close frame is a write: a peer that stopped reading (TCP backpressure) would stall it - or the write it is queued
 			//behind - indefinitely, so OnClosed never fires: the server wedges shutdown at the executor drain and the client
-			//(#13) hangs IClientSocketSession::Shutdown's BlockVoidAwait.  On deadline, close the transport; the aborted op
+			//(#13) hangs IClientSocketSession::Shutdown's BlockAwait.  On deadline, close the transport; the aborted op
 			//completes on the strand and DoClose finishes without a handshake.
 			if( _open ){
 				_closeDeadline = ms<net::steady_timer>( _strand, CloseTimeout );

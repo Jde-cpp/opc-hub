@@ -1,6 +1,7 @@
 //Historian 5d (#225):  historian subscriptions (spec *Subscriptions*) over the gateway's socket - the history from a time to
 //the subscription in HistSnapshot pages, each node's bound first, then every record stored as it is stored and each edit once
 //durable, the ack's status per node, the refusals, and a HistUnsubscribe.
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include "utils/HistGroupFixture.h"
 #include "utils/GatewayClientSocket.h"
@@ -149,7 +150,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto unbound = GatewayClientSocket::Open( "localhost", GatewayPort(), nullopt );
 		auto unboundSubscribe = [&]{ return BlockAwait<ClientSocketAwait<vector<StatusCode>>,vector<StatusCode>>( unbound->HistSubscribe(group, {Ex(RpmManual)}, nullopt, ms<Heard>()) ); };
 		EXPECT_THROW( unboundSubscribe(), GatewayErrorResponse );
-		BlockVoidAwait( unbound->Close(false, SRCE_CUR) );
+		BlockAwait( unbound->Close(false, SRCE_CUR) );
 	}
 
 	//Two HistSubscribe under one request id, back to back:  the one that claims the id streams, and the other is refused without

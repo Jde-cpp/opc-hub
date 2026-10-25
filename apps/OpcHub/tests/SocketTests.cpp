@@ -1,3 +1,4 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/web/server/Sessions.h>
 #include "../../AppServer/tests/helpers.h"
@@ -17,7 +18,7 @@ namespace Jde::Opc::Hub::Tests{
 	TEST( SocketTests, SessionRevokeClosesBothListeners ){
 		let sessionId = Web::Server::Sessions::Add( Jde::UserPK{1}, "127.0.0.1", true )->SessionId;
 		auto app = ms<RawClientSession>( Executor() );
-		BlockVoidAwait( app->RunSession("127.0.0.1", AppPort()) );
+		BlockAwait( app->RunSession("127.0.0.1", AppPort()) );
 		auto gateway = GatewayClientSocket::Open( "127.0.0.1", GatewayPort(), sessionId );
 		{//bind the app socket to the session: kSessionId
 			App::Proto::FromClient::Transmission t;
@@ -58,7 +59,7 @@ namespace Jde::Opc::Hub::Tests{
 		auto app = ms<RawClientSession>( Executor() );
 		bool threw{};
 		try{
-			BlockVoidAwait( app->RunSession("127.0.0.1", AppPort(), "/nope") );
+			BlockAwait( app->RunSession("127.0.0.1", AppPort(), "/nope") );
 		}
 		catch( const std::exception& ){
 			threw = true;

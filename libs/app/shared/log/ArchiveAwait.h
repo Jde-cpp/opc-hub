@@ -1,9 +1,9 @@
 #pragma once
-#include <jde/fwk/co/LockKey.h>
+#include <jde/fwk/co/Await.h>
 
 namespace Jde::App{
 	struct ProtoLog;
-	//The archive round:  under the daily file's LockKey, each entry of the file's runs goes to its local day's archive
+	//The archive round:  under ProtoLog::_fileLock, each entry of the file's runs goes to its local day's archive
 	//with the strings it names, and the file is removed.  A day's archive is rewritten whole by the record layer, the
 	//entries it holds merged in time order with the day's new ones, under a FileStart one generation on and a Merged
 	//naming the daily file and how far into it the round read (Log.proto's FileEntry):  a round that failed at a later
@@ -18,7 +18,7 @@ namespace Jde::App{
 		ArchiveAwait( ProtoLog& log, SRCE )ι:VoidAwait{ sl }, _log{ log }{}
 		α Suspend()ι->void override{ Execute(); }
 	private:
-		α Execute()ι->TAwait<CoLockGuard>::Task;
+		α Execute()ι->VoidAwait::Task;
 		ProtoLog& _log;
 	};
 }

@@ -1,6 +1,7 @@
 #pragma once
 //The fixture HistCollectorTests was built on (#224), shared with the subscription suite, HistSubscribeTests (#225).
 #include <thread>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/utils/Stopwatch.h>
 #include <jde/ql/LocalQL.h>
 #include <jde/access/Authorize.h>
@@ -32,7 +33,7 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 		Ω User()ι->UserPK{ return AppClient()->UserPK(); }
 		//A mutation's result:  the object its result request names, or, with none, the empty list the engine answers.
-		Ω Mutate( sv ql, jobject vars={} )ε->jvalue{ return BlockTAwait<jvalue>( QL::QLAwait<jvalue>{string{ql}, move(vars), User(), QLPtr()} ); }
+		Ω Mutate( sv ql, jobject vars={} )ε->jvalue{ return BlockAwait( QL::QLAwait<jvalue>{string{ql}, move(vars), User(), QLPtr()} ); }
 		Ω Id( const jvalue& v )ε->uint32{ return Json::AsNumber<uint32>( Json::AsObject(v), "id" ); }
 		Ω Ms( TimePoint t )ι->TimePoint{ return floor<milliseconds>( t ); }//what a UA DateTime holds exactly.
 		//Before any member's first value:  an item's first is the node's value now, stored as the first after its join.

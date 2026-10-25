@@ -1,6 +1,7 @@
 #include "helpers.h"
 #include <thread>
 #include <open62541/client_config_default.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
@@ -47,7 +48,7 @@ namespace Jde::Opc::Gateway::Tests{
 
 namespace Jde::Opc::Gateway{
 	α Tests::CreateServerCnnctn()ε->ServerCnnctnPK{
-		return BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{} );
+		return BlockAwait( CreateServerCnnctnAwait{} );
 	}
 
 	α Tests::PurgeServerCnnctn( optional<ServerCnnctnPK> pk )ι->uint{
@@ -67,8 +68,8 @@ namespace Jde::Opc::Gateway{
 	α Tests::GetConnection( str slug )ε->ServerCnnctn{
 		auto con = SelectServerCnnctn( {slug} );
 		if( !con ){
-			BlockTAwait<Access::ProviderPK>( ProviderMAwait{slug, false} );
-			let id = BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{} );
+			BlockAwait( ProviderMAwait{slug, false} );
+			let id = BlockAwait( CreateServerCnnctnAwait{} );
 			con = SelectServerCnnctn( id );
 		}
 		return *con;
@@ -76,8 +77,8 @@ namespace Jde::Opc::Gateway{
 	α Tests::GetConnection( str slug, str url, str certificateUri )ε->ServerCnnctn{
 		auto con = SelectServerCnnctn( {slug} );
 		if( !con ){
-			BlockTAwait<Access::ProviderPK>( ProviderMAwait{slug, false} );//a stale provider row goes first, as above - the create's hook inserts the slug's own.
-			let id = BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{slug, url, certificateUri} );
+			BlockAwait( ProviderMAwait{slug, false} );//a stale provider row goes first, as above - the create's hook inserts the slug's own.
+			let id = BlockAwait( CreateServerCnnctnAwait{slug, url, certificateUri} );
 			con = SelectServerCnnctn( id );
 		}
 		return *con;
@@ -179,7 +180,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α Tests::ReadValue( const sp<UAClient>& client, const NodeId& node )ε->Value{
-		return BlockTAwait<flat_map<NodeId,Value>>( ReadValueAwait{{node}, client} ).at( node );
+		return BlockAwait( ReadValueAwait{{node}, client} ).at( node );
 	}
 	//By way of BaseDataType, which any value fits and which may hold none:  open62541 retypes a node only to a DataType its value
 	//fits, and clears the value of a nullable one alone.

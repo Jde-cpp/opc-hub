@@ -1,4 +1,5 @@
 #include "HistHost.h"
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/access/Authorize.h>
@@ -43,7 +44,7 @@ namespace Jde::Opc::Gateway{
 			α Suspend()ι->void override{ _host.Loading( *this ); }
 			HistHost& _host;
 		};
-		BlockAny( LoadAwait{*this} );
+		BlockAwait( LoadAwait{*this} );
 	}
 	α HistHost::Stop()ι->void{
 		vector<sp<HistGroupHost>> hosts;

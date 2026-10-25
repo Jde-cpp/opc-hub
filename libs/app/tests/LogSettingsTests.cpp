@@ -2,6 +2,7 @@
 //round trip, driven against the awaitables in Jde.App.Shared instead of a running gateway.  LogSettingsAwait's CompletedAwait resolves
 //in await_ready and LogSettingsMAwait's Resume/ResumeExp are synchronous, so BlockAwait runs both on this thread.
 #include <gtest/gtest.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/SpdLog.h>
 #include <jde/ql/types/RequestQL.h>
 #include <jde/app/IApp.h>
@@ -37,7 +38,7 @@ namespace Jde::App::Tests{
 	Ω logSettings( std::initializer_list<sv> columns={"text","binary","tags"} )ε->jobject{
 		auto ql = table( "logSetting" );
 		addColumns( ql, columns );
-		let y = BlockTAwait<jvalue>( move(*LogSettingsAwait(move(ql))) );
+		let y = BlockAwait( move(*LogSettingsAwait(move(ql))) );
 		return y.as_object();
 	}
 	Ω defaultLevel( sv logger )ε->ELogLevel{ return ToLogLevel( logSettings().at(logger).at("default").as_string() ); }
@@ -46,7 +47,7 @@ namespace Jde::App::Tests{
 	Ω updateLogSettings( sv args, jobject variables, sp<AppStub> app )ε->jvalue{
 		static const vector<sp<DB::AppSchema>> noSchemas;
 		QL::MutationQL m{ "updateLogSetting", QL::Parser::ParseArgs(string{args}), ms<jobject>(move(variables)), optional<QL::TableQL>{}, true, noSchemas, true };
-		return BlockTAwait<jvalue>( LogSettingsMAwait{move(m), app, UserPK{}} );
+		return BlockAwait( LogSettingsMAwait{move(m), app, UserPK{}} );
 	}
 
 	//T8: the per-tag overrides, which are as process-wide as the default level and were not being put back - `ql` at Critical

@@ -1,4 +1,5 @@
 #include <jde/access/Authorize.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/ql/ql.h>
 #include <jde/ql/IQL.h>
 #include <jde/web/server/Sessions.h>

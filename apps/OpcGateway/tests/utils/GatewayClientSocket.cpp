@@ -1,6 +1,7 @@
 #include "GatewayClientSocket.h"
 #include <absl/synchronization/mutex.h>
 #include <jde/app/proto/common.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/opc/proto/opc.Common.h>
 #include <jde/opc/UAException.h>
 #include "../../src/types/proto/opc.FromClient.h"
@@ -205,7 +206,7 @@ namespace Jde::Opc::Gateway::Tests{
 	α GatewayClientSocket::Open( string host, PortType port, optional<SessionPK> session, string path )ε->sp<GatewayClientSocket>{
 		optional<ssl::context> ctx;
 		auto y = ms<GatewayClientSocket>( Executor(), ctx );
-		BlockVoidAwait( y->RunSession(move(host), port, move(path)) );
+		BlockAwait( y->RunSession(move(host), port, move(path)) );
 		if( session )
 			BlockAwait<await<uint32>,uint32>( y->Connect(*session) );
 		return y;

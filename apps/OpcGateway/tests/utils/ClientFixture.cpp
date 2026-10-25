@@ -1,4 +1,5 @@
 #include "ClientFixture.h"
+#include <jde/fwk/co/BlockAwait.h>
 
 #define let const auto
 
@@ -7,7 +8,7 @@ namespace Jde::Opc::Gateway{
 
 	α Tests::TryConnect( const ServerCnnctnNK& slug, Credential cred )ι->std::expected<sp<UAClient>,up<Exception>>{
 		try{
-			return BlockTAwait<sp<UAClient>>( UAClient::GetClient(slug, move(cred)) );
+			return BlockAwait( UAClient::GetClient(slug, move(cred)) );
 		}
 		catch( Exception& e ){
 			return std::unexpected{ e.Move() };

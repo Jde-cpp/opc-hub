@@ -1,6 +1,5 @@
 #include <jde/fwk/io/json.h>
 #include <jde/fwk/settings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/opc/uatypes/opcHelpers.h>
 #include "../utils/ClientFixture.h"
 #include "../../src/UAClient.h"

@@ -1,6 +1,7 @@
 #include <jde/fwk/co/AllAwait.h>
 #include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/tests/WaitUntil.h>
 #include <atomic>
@@ -438,10 +439,10 @@ namespace Jde::Tests{
 	}
 
 	TEST_F( AllAwaitTests, BlockAnyBridgesAll ){
-		auto [i, j] = BlockAny( All(ThreadedAny<int>{1}, OldInt{2}) );
+		auto [i, j] = BlockAwait( All(ThreadedAny<int>{1}, OldInt{2}) );
 		EXPECT_EQ( i, 1 );
 		EXPECT_EQ( j, 2 );
-		EXPECT_THROW( BlockAny(All(OldThrower{}, ThreadedAny<int>{1})), TestException );
+		EXPECT_THROW( BlockAwait(All(OldThrower{}, ThreadedAny<int>{1})), TestException );
 	}
 
 	Ω allLvalues( sp<std::atomic<uint>> completed, sp<std::atomic<bool>> ok )->VoidTask{

@@ -1,6 +1,7 @@
 //Historian 5b (#223):  the gateway's groups and templates (spec *Collection*, *Templates*) - the four tables, each edit's
 //live side (HistGroupMAwait), the collector's items on a client of its own, and resolveHistory - against the embedded
 //OpcServer's pumps nodeset:  pump1 to pump4 under the Objects folder, each with a status and a motorRpm, in urn:jde:pumps.
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/opc/UAException.h>
 #include "utils/HistGroupFixture.h"
 #include "../src/async/ConnectAwait.h"
@@ -208,7 +209,7 @@ namespace Jde::Opc::Gateway::Tests{
 	Ω tryCreateGroup( sv slug, uint32 templateId, UA_UInt32 root, ServerCnnctnPK connection )ε->tuple<uint32,optional<string>>{
 		optional<string> failure;
 		try{
-			BlockTAwait<jvalue>( QL::QLAwait<jvalue>{"createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection, histTemplateId:$template, root:$root ){ id }",
+			BlockAwait( QL::QLAwait<jvalue>{"createHistGroup( name:$name, slug:$slug, serverConnectionId:$connection, histTemplateId:$template, root:$root ){ id }",
 				{{"name", Ƒ("Group {}", slug)}, {"slug", slug}, {"connection", connection}, {"template", templateId}, {"root", serialize(jobject{{"nsu", PumpsUri}, {"i", root}})}}, AppClient()->UserPK(), QLPtr()} );
 		}
 		catch( const std::exception& e ){
@@ -220,7 +221,7 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 	//The one member's answer:  its status, and the group that holds its node where that is why.
 	Ω memberResolved( uint32 groupId )ε->jobject{
-		let resolved = BlockTAwait<jvalue>( QL::QLAwait<jvalue>{"resolveHistory( group:$group ){ nodes{ status holder{ id name } } }", {{"group", groupId}}, AppClient()->UserPK(), QLPtr()} );
+		let resolved = BlockAwait( QL::QLAwait<jvalue>{"resolveHistory( group:$group ){ nodes{ status holder{ id name } } }", {{"group", groupId}}, AppClient()->UserPK(), QLPtr()} );
 		let& nodes = Json::AsArray( Json::AsObject(resolved), "nodes" );
 		THROW_IF( nodes.size()!=1, "{} members answered, not 1:  {}", nodes.size(), serialize(resolved) );
 		return nodes[0].as_object();
@@ -463,11 +464,11 @@ namespace Jde::Opc::Gateway::Tests{
 		});
 	}
 	TEST_F( HistGroupTests, AnEditDuringTheCreateReachesTheItem ){
-		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
+		auto collector = BlockAwait( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
 		//No group holds an item now, so an earlier test's last delete pass, which drops the subscription with its last item, is done;
 		//then a subscription for the pass to find, so it takes the node and submits the create in one turn.
 		ASSERT_NO_THROW( WaitItems(0) ) << "an earlier test's items are still going";
-		ASSERT_NO_THROW( BlockVoidAwait(SubscribeAwait{collector}) );
+		ASSERT_NO_THROW( BlockAwait(SubscribeAwait{collector}) );
 		{
 			let groupId = Id( CreateGroup("pump4-edit", nullopt, nullopt) );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
@@ -489,7 +490,7 @@ namespace Jde::Opc::Gateway::Tests{
 			Stopwatch modified;
 			for( ;; ){
 				auto joiner = ms<Joiner>();
-				let ack = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{node}, joiner, collector} );
+				let ack = BlockAwait( DataChangeAwait{{node}, joiner, collector} );
 				UAClient::Unsubscribe( joiner );
 				ASSERT_EQ( ack.results_size(), 1 );
 				if( ack.results(0).revised_sampling_interval()==100.0 ){
@@ -508,7 +509,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//AnEditDuringTheCreateReachesTheItem, and the member joins during the hold, after the pass took its nodes.  The good node
 	//still waiting says the pass was still out.
 	TEST_F( HistGroupTests, AJoinDuringARefusedPassIsNotHeldForTheRetry ){
-		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
+		auto collector = BlockAwait( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
 		ASSERT_NO_THROW( WaitItems(0) ) << "an earlier test's items are still going";
 		{
 			let groupId = Id( CreateGroup("pump1-refused", nullopt, nullopt) );
@@ -519,7 +520,7 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NO_THROW( WaitSubscribed(HistHost::Instance().Find(groupId), 1) );
 			Mutate( "deleteHistGroup( id:$id )", {{"id", groupId}} );
 			ASSERT_NO_THROW( WaitItems(0) );
-			ASSERT_NO_THROW( BlockVoidAwait(SubscribeAwait{collector}) );
+			ASSERT_NO_THROW( BlockAwait(SubscribeAwait{collector}) );
 
 			auto state = ms<std::atomic<EHold>>( EHold::Waiting );
 			holdOnceTaken( collector, groupId, NodeId{_ns, missing}, 1000.0, state, steady_clock::now()+10s );
@@ -650,7 +651,7 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 	TEST_F( HistGroupTests, AGroupEditModifiesItsItemsOnce ){
 		ASSERT_NO_THROW( WaitItems(0) ) << "an earlier test's items are still going";
-		auto collector = BlockTAwait<sp<UAClient>>( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
+		auto collector = BlockAwait( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
 		{
 			let groupId = Id( CreateGroup("pumps-edit", nullopt, nullopt) );
 			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
@@ -672,7 +673,7 @@ namespace Jde::Opc::Gateway::Tests{
 			std::this_thread::sleep_for( 300ms );//and no second request follows.
 			EXPECT_EQ( modifyRequests(), before+1 ) << "one request for the group's three items";
 			auto joiner = ms<Joiner>();
-			let ack = BlockTAwait<FromServer::SubscriptionAck>( DataChangeAwait{{NodeId{_ns, Rpm3}}, joiner, collector} );
+			let ack = BlockAwait( DataChangeAwait{{NodeId{_ns, Rpm3}}, joiner, collector} );
 			UAClient::Unsubscribe( joiner );
 			ASSERT_EQ( ack.results_size(), 1 );
 			EXPECT_EQ( ack.results(0).revised_sampling_interval(), 250.0 ) << "the request's last item";

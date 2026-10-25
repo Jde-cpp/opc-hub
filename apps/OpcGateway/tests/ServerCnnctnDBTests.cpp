@@ -1,3 +1,4 @@
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/json.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
@@ -20,7 +21,7 @@ namespace Jde::Opc::Gateway::Tests{
 	};
 
 	Ω GetProviderPK( string slug )ε->Access::ProviderPK{
-		return BlockTAwait<Access::ProviderPK>( ProviderAwait{slug} );
+		return BlockAwait( ProviderAwait{slug} );
 	}
 	Ω GetOpcServers( optional<DB::Key> key=nullopt, bool includeDeleted=false )->vector<ServerCnnctn>{
 		return BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{key, includeDeleted} );
@@ -53,7 +54,7 @@ namespace Jde::Opc::Gateway::Tests{
 		auto opcPK = existingServer ? existingServer->Id : 0;
 		if( !opcPK )
 			opcPK = BlockAwait<CreateServerCnnctnAwait,ServerCnnctnPK>( CreateServerCnnctnAwait{} );
-		BlockTAwait<Access::ProviderPK>( ProviderMAwait{OpcServerSlug, false} );//BeforePurge mock.
+		BlockAwait( ProviderMAwait{OpcServerSlug, false} );//BeforePurge mock.
 
 		QL::MutationQL purge{ "purgeServerConnection", { {"id", opcPK} }, {}, nullopt, true, QL().Schemas(), false };
 		BlockAwait<TAwait<jvalue>,jvalue>( move(*OpcQLHook{}.PurgeFailure(purge, {UserPK::System})) );
@@ -82,7 +83,7 @@ namespace Jde::Opc::Gateway::Tests{
 		THROW_IF( conn->Id!=id, "id={} readJson={}", id, serialize(conn->ToJson()) );
 		let slug = conn->Slug;
 
-		let providerId = BlockTAwait<Access::ProviderPK>( ProviderAwait{slug} );
+		let providerId = BlockAwait( ProviderAwait{slug} );
 		THROW_IF( providerId==0, "providerId==0" );
 
 		let description = "new description";
@@ -141,7 +142,7 @@ namespace Jde::Opc::Gateway::Tests{
 		if( auto stale = GetOpcServers( DB::Key{slug}, true ); stale.size() )
 			PurgeServerCnnctn( stale.front().Id );
 		let create = [&]()->optional<string>{
-			try{ BlockTAwait<ServerCnnctnPK>( CreateServerCnnctnAwait{slug, "opc.tcp://127.0.0.1:4840", "urn:reuse-test"} ); }
+			try{ BlockAwait( CreateServerCnnctnAwait{slug, "opc.tcp://127.0.0.1:4840", "urn:reuse-test"} ); }
 			catch( const std::exception& e ){ return e.what(); }
 			return nullopt;
 		};

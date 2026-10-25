@@ -1,16 +1,22 @@
 #include <jde/fwk/crypto/TrustDirs.h>
 #include <mutex>
-#include <jde/fwk/crypto/OpenSsl.h>
+#include <jde/fwk/crypto/Certificate.h>
 #include <jde/fwk/settings.h>
 
 #define let const auto
-namespace Jde::Crypto{
+namespace Jde{
 	static std::mutex _missingMutex;
 	//(noun, directory):  a directory never created - a product not installed - would otherwise warn on each rescan
 	//(reviews/install-issues.md, "Noise in a production log").  Not on the scanner, which ServerTrust makes per connect, and not by
 	//directory alone, which let the first list to find one missing hide it from the others (opcserver-refactor-review #4).
 	static flat_set<std::pair<string,fs::path>> _missingDirs;
+	static flat_set<fs::path> _skippedFiles;//only ever grows, by the files an operator has put in a certificate directory - a handful.
 
+	α Crypto::FirstSkip( const fs::path& p )ι->bool{
+		const std::lock_guard _{ _missingMutex };
+		return _skippedFiles.emplace( p ).second;
+	}
+namespace Crypto{
 	TrustDirs::TrustDirs( string noun, ELogTags tags, ELogLevel unreadable )ι:
 		_noun{ move(noun) },
 		_tags{ tags },
@@ -93,4 +99,4 @@ namespace Jde::Crypto{
 	α TrustDirs::SkippedNote()Ι->string{
 		return Ƒ( "{} file{} passed over for {} extension - {} are read", _skipped, _skipped==1 ? " was" : "s were", _skipped==1 ? "its" : "their", CertificateExtensions );
 	}
-}
+}}

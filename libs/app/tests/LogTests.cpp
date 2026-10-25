@@ -9,9 +9,9 @@
 #include <thread>
 #include <boost/uuid/uuid_io.hpp>
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/io/records/Scan.h>
-#include <jde/fwk/co/LockKey.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include <jde/fwk/str.h>
@@ -31,7 +31,7 @@ namespace Jde::App::Tests{
 	using Log::EStop;
 
 	//A file's records as the record layer holds them (Log.proto's FileEntry):  an archive's, or a daily file's.
-	Ω records( const fs::path& file )ε->vector<FileEntry>{ return Log::ParseRecords( BlockTAwait<string>(IO::ReadAwait(file)), file ); }
+	Ω records( const fs::path& file )ε->vector<FileEntry>{ return Log::ParseRecords( BlockAwait(IO::ReadAwait(file)), file ); }
 	Ω contents( const fs::path& file )ι->string{
 		std::ifstream f{ file, std::ios::binary };
 		return string{ std::istreambuf_iterator<char>{f}, {} };
@@ -124,7 +124,7 @@ namespace Jde::App::Tests{
 		using enum Log::Proto::FileEntry::ValueCase;
 		bool found{};
 		//Query mode merges the unflushed buffer with the file, so this holds whether or not the write above happened to flush.
-		for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log()) ) )
+		for( let& fe : BlockAwait( App::DailyLoadAwait(Log()) ) )
 			found = found || (fe.value_case()==kEntry && Protobuf::ToGuid(fe.entry().template_id())==e.Id());
 		EXPECT_TRUE( found ) << "the entry just written is not in the merged buffer+file view";
 	}
@@ -295,7 +295,7 @@ namespace Jde::App::Tests{
 	}
 
 	//M5: with the daily file unwritable the flush fails and the whole batch is prepended, and nothing bounded what that grew to -
-	//an O(n) memmove per prepend, for as long as the disk stayed unwritable, with a fresh Save (coroutine, LockKeyAwait, failing
+	//an O(n) memmove per prepend, for as long as the disk stayed unwritable, with a fresh Save (coroutine, lock, failing
 	//IO::WriteAwait) started by *every* subsequent log line.
 	TEST_F( DailyFileDayTests, AnUnwritableDailyFileTrimsToTheNewest ){
 		fs::create_directories( _root/"log.binpb" );//a directory where the file belongs - every append fails, whatever the uid.
@@ -334,19 +334,19 @@ namespace Jde::App::Tests{
 		EXPECT_TRUE( cache.Touch(cache.Strings, id) ) << "a flush took the buffer, so the next run carries the string again";
 	}
 
-	//L1(a): Save moved the batch out of _toSave before it enqueued on the daily file's key, so for as long as another holder kept
-	//that key - a round, another query - the batch was in neither the buffer nor the file, and a query that snapshotted the buffer
-	//and then read the file found it in neither.  The window is the whole time the key is held, not a few instructions, so holding
+	//L1(a): Save moved the batch out of _toSave before it enqueued on the daily file's lock, so for as long as another holder kept
+	//that lock - a round, another query - the batch was in neither the buffer nor the file, and a query that snapshotted the buffer
+	//and then read the file found it in neither.  The window is the whole time the lock is held, not a few instructions, so holding
 	//it here is the finding rather than a contrivance.
-	TEST_F( DailyFileDayTests, AFlushWaitingOnTheDailyFileKeyIsStillVisible ){
+	TEST_F( DailyFileDayTests, AFlushWaitingOnTheDailyFileLockIsStillVisible ){
 		let log = mu<App::ProtoLog>( jobject{{"path", _root.string()}, {"delay", "PT24H"}, {"timeZone", "America/New_York"}} );
 		Logging::Entry marker{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, string{"L1 in-flight probe"} };
 		{
-			auto key = TryLockKey( log->DailyFile().string() );//held for this scope: the flush below parks on LockKeyAwait.
-			ASSERT_TRUE( key );
+			auto lock = log->TryLockDailyFile();//held for this scope: the flush below parks on it.
+			ASSERT_TRUE( lock );
 			log->Write( marker );
 			//Past _delaySize, so the write triggers Save() - which runs inline to its first suspend, so by the time this loop ends
-			//the batch has left _toSave and is parked on the key.
+			//the batch has left _toSave and is parked on the lock.
 			for( uint i=0; i<400 && log->BufferSize(); ++i )
 				log->Write( {SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("L1 filler {}", i)} );
 			ASSERT_EQ( log->BufferSize(), 0u ) << "no flush was triggered, so there is nothing in flight to see";
@@ -354,7 +354,7 @@ namespace Jde::App::Tests{
 			bool found{};
 			for( let& fe : log->Entries() )
 				found = found || (fe.value_case()==Log::Proto::FileEntry::kEntry && Protobuf::ToGuid(fe.entry().template_id())==marker.Id());
-			EXPECT_TRUE( found ) << "a batch waiting on the daily file's key was in neither the buffer nor the file";
+			EXPECT_TRUE( found ) << "a batch waiting on the daily file's lock was in neither the buffer nor the file";
 		}
 	}
 
@@ -448,7 +448,7 @@ namespace Jde::App::Tests{
 		auto write = [this,&run]( App::ProgramPK a, App::ProgInstPK i, sv what )ε->optional<Attribution>{
 			Logging::Entry e{ SRCE_CUR, ELogLevel::Information, ELogTags::Test, Ƒ("ForwardedEntryAttribution {} {}", what, run) };
 			Log().Write( e, a, i );
-			for( let& fe : BlockTAwait<vector<Log::Proto::FileEntry>>( App::DailyLoadAwait(Log()) ) ){
+			for( let& fe : BlockAwait( App::DailyLoadAwait(Log()) ) ){
 				if( fe.has_entry() && Protobuf::ToGuid(fe.entry().template_id())==e.Id() )
 					return Attribution{ fe.entry().app_pk(), fe.entry().app_instance_pk() };
 			}
@@ -480,7 +480,7 @@ namespace Jde::App::Tests{
 		//What it has to be is the read of that file refusing it as no archive of the record layer's, which names the layer.
 		try{
 			//no limit, so IsComplete() is false and LogQLAwait walks every archive file, this one included.
-			BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(string{"logs{ entries{templateId time} }"}, {}, {}).Queries()[0])} );
+			BlockAwait( App::LogQLAwait{move(QL::Parse(string{"logs{ entries{templateId time} }"}, {}, {}).Queries()[0])} );
 			ADD_FAILURE() << "the corrupt archive was read without complaint";
 		}
 		catch( const Jde::Exception& e ){
@@ -503,7 +503,7 @@ namespace Jde::App::Tests{
 		Log().Write( eNow );
 		constexpr auto q = "logs( time: {gt: $start} ){ entries{templateId argIds level tags line time userId fileId functionId} strings{id value} }";
 		jobject vars{ {"start", start} };
-		let logs = BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
+		let logs = BlockAwait( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
 		optional<jobject> jNow;
 		for( let& log : logs.at("entries").as_array() ){
 			let id = ToUuid( log.at("templateId").as_string() );
@@ -526,7 +526,7 @@ namespace Jde::App::Tests{
 		//no time filter, so LogQLAwait reads the daily file (buffer included) - this is the ArchiveQuery(Filter&,...) path.
 		constexpr auto q = "logs( text: {eq: $text} ){ entries{templateId time} }";
 		jobject vars{ {"text", marker} };
-		let logs = BlockTAwait<jvalue>( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
+		let logs = BlockAwait( App::LogQLAwait{move(QL::Parse(q, vars, {}).Queries()[0])} );
 		uint matched{};
 		for( let& log : logs.at("entries").as_array() )
 			matched += ToUuid( log.at("templateId").as_string() )==e.Id();
@@ -588,7 +588,7 @@ namespace Jde::App::Tests{
 		EXPECT_TRUE( SelfContained(all) ) << "an entry names a string the file doesn't hold";
 		EXPECT_EQ( stringCount(all, a.Id()), 1u ) << "the second run wrote the template the first holds";
 		EXPECT_EQ( count(all, a.Id()), 2u );
-		let loaded = BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log) );
+		let loaded = BlockAwait( App::DailyLoadAwait(*log) );
 		EXPECT_EQ( count(loaded, a.Id()), 2u );
 		EXPECT_EQ( stringValue(loaded, a.Id()), "layer {}" ) << "a query doesn't resolve the second run's entry";
 	}
@@ -668,7 +668,7 @@ namespace Jde::App::Tests{
 		Logging::ClearMemory();
 
 		let log = Make( "PT0.2S" );
-		let loaded = BlockTAwait<vector<FileEntry>>( App::DailyLoadAwait(*log) );
+		let loaded = BlockAwait( App::DailyLoadAwait(*log) );
 		uint lines[4]{};
 		for( let& r : loaded ){
 			if( r.has_entry() && r.entry().line()<4 )
@@ -745,7 +745,7 @@ namespace Jde::App::Tests{
 		log->Write( e6 );
 		ASSERT_TRUE( waitUntil([&]{ return fs::exists(five); }) );
 		//the round ends at day 6:  it lets the daily file's lock go.
-		ASSERT_TRUE( waitUntil([&]{ return TryLockKey(log->DailyFile().string()).has_value(); }) );
+		ASSERT_TRUE( waitUntil([&]{ return (bool)log->TryLockDailyFile(); }) );
 		EXPECT_FALSE( fs::exists(six) );
 		EXPECT_TRUE( fs::exists(File()) ) << "the daily file was removed with a day unarchived";
 		EXPECT_EQ( count(records(five), e5.Id()), 1u );
@@ -785,7 +785,7 @@ namespace Jde::App::Tests{
 		log->Write( entry(Chrono::ToTimePoint(2025, 3, 5, 12), ELogLevel::Information, 5, "day five") );
 		fill( 1000 );
 		ASSERT_TRUE( waitUntil([&]{ return fs::exists(five); }) );
-		ASSERT_TRUE( waitUntil([&]{ return TryLockKey(log->DailyFile().string()).has_value(); }) );
+		ASSERT_TRUE( waitUntil([&]{ return (bool)log->TryLockDailyFile(); }) );
 		ASSERT_FALSE( fs::exists(six) );
 		fs::remove_all( obstruction );
 
@@ -800,11 +800,11 @@ namespace Jde::App::Tests{
 	TEST_F( DailyFileLayerTests, ARefusedDailyFileRepairedInPlaceIsWrittenAgain ){
 		save( File(), "not a protobuf" );//another program's:  the scan refuses it.
 		let log = Make( "PT0.2S" );
-		EXPECT_TRUE( BlockTAwait<vector<FileEntry>>(App::DailyLoadAwait(*log)).empty() );//its open:  the process holds the file refused.
+		EXPECT_TRUE( BlockAwait(App::DailyLoadAwait(*log)).empty() );//its open:  the process holds the file refused.
 		fs::resize_file( File(), 0 );
 		let e = entry( Clock::now(), ELogLevel::Information, 1, "written once repaired" );
 		log->Write( e );
-		ASSERT_TRUE( waitUntil([&]{ return Size()>0 && TryLockKey(log->DailyFile().string()).has_value(); }) ) << "the repaired file is still refused";
+		ASSERT_TRUE( waitUntil([&]{ return Size()>0 && (bool)log->TryLockDailyFile(); }) ) << "the repaired file is still refused";
 		let all = records( File() );
 		EXPECT_EQ( count(all, e.Id()), 1u );
 		EXPECT_EQ( stringValue(all, e.Id()), "written once repaired" ) << "the rescan left the strings the refused file held";

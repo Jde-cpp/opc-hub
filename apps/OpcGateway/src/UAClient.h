@@ -148,7 +148,7 @@ namespace Jde::Opc::Gateway{
 		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
 		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
 		//certificateUri, which is the server's and only filters its endpoints (reviews/security-matrix.md #8; ApplicationUriTests).
-		Ω EnsureCertificate( const ServerCnnctnNK& slug, SRCE )ε->void;//no-op if the cert exists. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
+		Ω EnsureCertificate( const ServerCnnctnNK& slug, SRCE )ε->void;//Crypto::EnsureKeyCertificate for the slug's block:  made when absent, re-issued for a ReissueReason, else left alone. Callable before any client - the Jde OpcServer rescans trustedCertDirs on a failed verify (UATrust), so pre-start creation only matters for third-party servers that snapshot their trust list.
 		Ω CryptoSettings( const ServerCnnctnNK& slug )ι->Crypto::CryptoSettings;//the issued certificate's:  /gateway/issuedCerts with the slug's file names.
 		α Slug()Ι->const ServerCnnctnNK&{ return _opcServer.Slug; }
 		α Name()Ι->str{ return _opcServer.Name; }
@@ -201,7 +201,7 @@ namespace Jde::Opc::Gateway{
 		α CryptoSettings()Ι->Crypto::CryptoSettings{ return CryptoSettings(Slug()); }
 		//The test connect's deadline, the client's request timeout:  open62541 gives an async connect none - a dropped SYN waits out
 		//the kernel's retries, and a server that closes after HEL is reconnected to forever.  Strand-only, as the three below.
-		α TestDeadline( sp<UAClient> self )ι->DurationTimer::Task;
+		α TestDeadline( sp<UAClient> self )ι->VoidTask;
 		α TakeTestResult()ι->ConnectCallback;//_onTestResult, once:  whichever of StateCallback, the deadline and Shutdown reports first.
 		α ExpireTest( StatusCode sc )ι->void;//reports `sc` for a test connect still unanswered, and stops the client.
 
@@ -215,7 +215,7 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctn _opcServer;
 		string _connectUrl;//set in Connect(), before the processing loop starts; read after it.
 		ConnectCallback _onTestResult;//set by ConnectForTest, before Connect;  strand-only after it - see TakeTestResult.
-		optional<DurationTimer> _testDeadline;//strand-confined.
+		TimerCancel _testDeadline;//strand-confined.
 
 		//The authentication token of the session last seen activated - see RecordSession.  Written from StateCallback (the loop
 		//thread) and read off it through SessionToken()/ReadSessionToken(), so the lock is what keeps a reader - a test, a status

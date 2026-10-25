@@ -1,9 +1,9 @@
 #include <jde/fwk.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/process/process.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
-#include <jde/fwk/crypto/OpenSsl.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/client/appClient.h>
 #include <jde/opc/uatypes/Logger.h>
@@ -45,7 +45,7 @@
 			client->InitLogging( client );
 			client->Enroll( Settings::AsObject("/http"), Process::ProductName() );//the AppServer login cert - the file name doubles as the subject CN.
 			Execution::Run();//nothing else starts the executor thread the AppServer socket needs.
-			BlockVoidAwait( App::Client::ConnectAwait{client, false} );
+			BlockAwait( App::Client::ConnectAwait{client, false} );
 			if( Process::FindArg("-grant") ){
 				Emulator::GrantWriteRights( client );
 				exitCode = EXIT_SUCCESS;
