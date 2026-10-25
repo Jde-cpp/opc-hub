@@ -2,11 +2,11 @@ import { TestBed } from '@angular/core/testing';
 import { SnackbarService } from 'jde-framework';
 import { snackbarStub } from 'jde-framework/testing';
 import { stable } from 'jde-spa/testing';
-import { endpointQuery, endpointSessionsQuery, EndpointSession, GatewayEndpoint as Endpoint } from '../../../model/gateway-endpoint';
-import { GatewayEndpoint, refusedText } from './gateway-endpoint';
+import { EndpointDescription, endpointQuery, endpointSessionsQuery, EndpointSession } from '../../../model/gateway-endpoint';
+import { GatewayEndpoint, refusedEndpointText, refusedText } from './gateway-endpoint';
 
 const policy = ( name:string )=>`http://opcfoundation.org/UA/SecurityPolicy#${name}`;
-const endpoint:Endpoint = { url: 'opc.tcp://hub:4841', policies: [{uri: policy('None'), mode: 'None'}, {uri: policy('Basic256Sha256'), mode: 'Sign'}, {uri: policy('Basic256Sha256'), mode: 'SignAndEncrypt'}], trustedCertDirs: ['/var/lib/jde/ssl/clients'], rejectedCertDir: '/var/lib/jde/ssl/rejected' };
+const endpoint:EndpointDescription = { url: 'opc.tcp://hub:4841', policies: [{uri: policy('None'), mode: 'None'}, {uri: policy('Basic256Sha256'), mode: 'Sign'}, {uri: policy('Basic256Sha256'), mode: 'SignAndEncrypt'}], trustedCertDirs: ['/var/lib/jde/ssl/clients'], rejectedCertDir: '/var/lib/jde/ssl/rejected' };
 const session = ( since:string, user:EndpointSession['user'], type='IssuedToken' ):EndpointSession=>({ id: `ns=1;g=${since}`, type, policy: policy('Basic256Sha256'), mode: 'SignAndEncrypt', since, user });
 
 //the tab over a gateway whose query answers `answer( ql )`:  the endpoint's description, or its sessions, by the query sent
@@ -18,7 +18,7 @@ const createWith = ( answer:( ql:string )=>Promise<unknown> )=>{
 	fixture.componentRef.setInput( "gateway", { query } );
 	return { fixture, query, snackbar };
 };
-const create = ( e:Endpoint|null, sessions:EndpointSession[]=[], refuseSessions=false )=>createWith( async ql=>{
+const create = ( e:EndpointDescription|null, sessions:EndpointSession[]=[], refuseSessions=false )=>createWith( async ql=>{
 	if( ql!=endpointSessionsQuery )
 		return { endpoint: e };
 	if( refuseSessions )
@@ -37,19 +37,18 @@ describe( 'GatewayEndpoint', ()=>{
 		const page = await render( fixture );
 		expect( query.mock.calls ).toEqual( [[endpointQuery], [endpointSessionsQuery]] );
 		expect( page.querySelector(".facts")?.textContent ).toContain( "opc.tcp://hub:4841" );
-		expect( [...page.querySelectorAll(".policy")].map( p=>p.textContent!.trim().replace(/\s+/g, ' ') ) ).toEqual( ["None None", "Basic256Sha256 Sign, SignAndEncrypt"] );
+		expect( [...page.querySelectorAll(".policy")].map( p=>p.textContent!.trim().replace(/\s+/g, ' ') ) ).toEqual( ["None None", "Basic256Sha256 Sign, Sign & Encrypt"] );
 		expect( [...page.querySelectorAll(".dir")].map( p=>p.textContent ) ).toEqual( ["/var/lib/jde/ssl/clients", "/var/lib/jde/ssl/rejected"] );
 		const rows = cells( page );
-		expect( rows.map( r=>r.slice(0, 3) ) ).toEqual( [["anonymous", "Anonymous", "Basic256Sha256 / SignAndEncrypt"], ["user 7", "Username", "Basic256Sha256 / SignAndEncrypt"], ["duffyj", "IssuedToken", "Basic256Sha256 / SignAndEncrypt"]] );
+		expect( rows.map( r=>r.slice(0, 3) ) ).toEqual( [["anonymous", "Anonymous", "Basic256Sha256 / Sign & Encrypt"], ["user 7", "Username", "Basic256Sha256 / Sign & Encrypt"], ["duffyj", "IssuedToken", "Basic256Sha256 / Sign & Encrypt"]] );
 		expect( rows[0][3] ).not.toBe( "" );//the date renders, in the viewer's locale
 		expect( page.querySelector(".row-count")?.textContent ).toContain( "3 sessions" );
 	} );
 
-	it( 'says so when the gateway has no endpoint, and asks for no sessions', async ()=>{
-		const { fixture, query } = create( null );
+	it( 'says so when the gateway has no endpoint, and lists no sessions', async ()=>{
+		const { fixture } = create( null );
 		const page = await render( fixture );
 		expect( page.querySelector(".empty")?.textContent ).toContain( "no OPC UA endpoint" );
-		expect( query ).toHaveBeenCalledTimes( 1 );
 		expect( page.querySelector("mat-table") ).toBeNull();
 	} );
 
@@ -74,6 +73,15 @@ describe( 'GatewayEndpoint', ()=>{
 		page.querySelector<HTMLButtonElement>( "button[aria-label=Refresh]" )!.click();
 		await stable( fixture, 2 );
 		expect( query ).toHaveBeenCalledTimes( 4 );
+	} );
+
+	//gateway/endpoint (servers-7-web review #2):  a refusal is said in place, as the sessions' is, with no toast
+	it( 'says so when the endpoint is refused', async ()=>{
+		const { fixture, snackbar } = createWith( async ()=>{ throw { status: 403, error: {detail: "Forbidden"} }; } );
+		const page = await render( fixture );
+		expect( page.querySelector(".load-error")?.textContent ).toBe( refusedEndpointText );
+		expect( page.querySelector(".facts") ).toBeNull();
+		expect( snackbar.exception ).not.toHaveBeenCalled();
 	} );
 
 	it( 'says why the endpoint could not be read, and keeps Refresh as the retry', async ()=>{

@@ -6,6 +6,7 @@ import { By } from '@angular/platform-browser';
 import { MAT_TABS_CONFIG } from '@angular/material/tabs';
 import { Mutation, Properties } from 'jde-framework';
 import { ExNodeId } from '../../../model/ex-node-id';
+import { endpointServedQuery } from '../../../model/gateway-endpoint';
 import { histThresholdBlank } from '../../../model/hist';
 import { HistGroup, HistPick } from '../../../model/hist-admin';
 import { HistAdminService } from '../../../services/hist-admin-service';
@@ -30,8 +31,9 @@ class AccessStub{
 //The page over stubs:  `mutations` reads what Save sent the gateway, the admin service records what the tabs ask and send, and the
 //dialog answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the
 //page, where the rest drive the page by hand.
-const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', policies: [], trustedCertDirs: [], rejectedCertDir: null} )=>{
-	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( _ql:string )=>({endpoint}) ) };//query:  endpoint{…}, the one the page sends
+const servedRpm = { id: 7, nodeId: 'ns=3;i=6012', path: 'Objects/local/pump1/motorRpm' };//member 7 as the endpoint serves it
+const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', served: [servedRpm]} )=>{
+	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( _ql:string, _vars?:unknown )=>({endpoint}) ) };//query:  endpoint{…}, the one the page sends
 	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );
 	const made = vi.fn();
 	const admin = {
@@ -69,7 +71,7 @@ const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tc
 	else
 		page.ngOnInit();
 	await flush( 3 );
-	return { page, fixture, mutations, made, admin, snackbar, dialog, data };
+	return { page, fixture, mutations, made, admin, snackbar, dialog, data, gateway };
 };
 
 describe( 'HistGroupDetail', ()=>{
@@ -145,14 +147,14 @@ describe( 'HistGroupDetail', ()=>{
 		//the server's word on each node (#379):  its name and the type served, with the path, description, rank and range behind them;  blank until read
 		const [rpm, state] = d.page.members.rows();
 		expect( d.page.nameText( rpm ) ).toBe( 'motorRpm' );
-		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Served at Objects/local/pump1/motorRpm.  Measured motor speed, rpm.' );//its path on the source, where the endpoint serves it (#388), its description
+		expect( d.page.nameDetail( rpm ) ).toBe( 'pump1/motorRpm.  Served at Objects/local/pump1/motorRpm as ns=3;i=6012.  Measured motor speed, rpm.' );//its path on the source, where the endpoint serves it (#388), its description
 		expect( d.page.typeText( rpm ) ).toBe( 'Double' );
 		expect( d.page.typeDetail( rpm ) ).toBe( '{"nsu":"http://opcfoundation.org/UA/","i":11}.  Scalar.  EURange 0 to 3000' );
 		expect( d.page.nameText( state ) ).toBe( 'unread' );
 		expect( d.page.nameDetail( state ) ).toContain( 'Not yet read' );
 		const unnamed = { ...rpm, attributes: {...rpm.attributes, displayName: ''} };//described, its DisplayName empty
 		expect( d.page.nameText( unnamed ) ).toBe( 'no name' );
-		expect( d.page.nameDetail( unnamed ) ).toBe( 'Its server gives it no DisplayName.  pump1/motorRpm.  Served at Objects/local/pump1/motorRpm.  Measured motor speed, rpm.' );
+		expect( d.page.nameDetail( unnamed ) ).toBe( 'Its server gives it no DisplayName.  pump1/motorRpm.  Served at Objects/local/pump1/motorRpm as ns=3;i=6012.  Measured motor speed, rpm.' );
 		expect( d.page.typeText( state ) ).toBe( '' );
 		expect( d.page.typeDetail( state ) ).toBe( '' );
 		expect( d.page.memberColumns.slice( 0, 4 ) ).toEqual( ['node', 'name', 'type', 'member'] );
@@ -251,16 +253,39 @@ describe( 'HistGroupDetail', ()=>{
 		}
 		return { ...d, text: d.fixture.nativeElement.querySelector( 'section[aria-label=Endpoint] .hint' )?.textContent };
 	};
+	//servers-7-web review #3, #4:  the paths are the endpoint's word, endpoint{ served(group) }, not built here
 	it( 'says where the group is served', async ()=>{
-		const d = await served( {url: 'opc.tcp://hub:4841', policies: [], trustedCertDirs: [], rejectedCertDir: null} );
+		const d = await served( {url: 'opc.tcp://hub:4841', served: [servedRpm]} );
 		expect( d.text ).toBe( "Its members are served on opc.tcp://hub:4841 under Objects/local/…, each at its path on the source, with the group's history." );
-		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).toContain( 'Served at Objects/local/pump1/motorRpm' );
-		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).not.toContain( 'Served' );//a node the server hasn't described has no path yet
+		expect( d.gateway.query ).toHaveBeenCalledWith( endpointServedQuery, {groupId: 5} );
+		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).toContain( 'Served at Objects/local/pump1/motorRpm as ns=3;i=6012' );
+		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).toContain( 'Not served by the endpoint' );//one it holds no node for
+	} );
+	it( 'gives the served path of a node with none on its source', async ()=>{
+		const d = await served( {url: 'opc.tcp://hub:4841', served: [servedRpm, {id: 8, nodeId: 'ns=4;i=2259', path: 'Objects/local/i=2259'}]} );
+		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).toBe( 'Not yet read from the server:  the collector reads a node once it has its item.  Served at Objects/local/i=2259 as ns=4;i=2259' );
 	} );
 	it( 'and that it is not, on a gateway with no endpoint', async ()=>{
 		const d = await served( null );
 		expect( d.text ).toBe( 'Not served:  the gateway has no OPC UA endpoint.' );
 		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).not.toContain( 'Served' );
+	} );
+	it( 'or for a group the endpoint does not hold', async ()=>{
+		const d = await served( {url: 'opc.tcp://hub:4841', served: null} );
+		expect( d.text ).toContain( "Not served:  the endpoint on opc.tcp://hub:4841 doesn't hold the group" );
+		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).not.toContain( 'Served' );
+	} );
+	it( 'or for a deleted group', async ()=>{
+		const d = await create( {...row, deleted: '2026-10-25T00:00:00Z'}, false, {url: 'opc.tcp://hub:4841', served: null} );
+		expect( d.page.servedText() ).toBe( 'Not served:  the group is deleted.' );
+	} );
+	//servers-7-web review #1:  the page reused for another gateway's group drops the last one's endpoint while the new one answers
+	it( "drops the last gateway's endpoint on a new row", async ()=>{
+		const d = await create( row );
+		expect( d.page.endpoint()?.url ).toBe( 'opc.tcp://hub:4841' );
+		d.gateway.query.mockImplementation( ()=>new Promise( ()=>{} ) );
+		( d.page as any ).onRow();
+		expect( d.page.endpoint() ).toBeUndefined();
 	} );
 	//reviews-issue/servers-0.2-node-columns.md #14:  each member's node, name and type, and each column's hint, is a tooltip on a span
 	//a keyboard reaches - which the tooltip then describes to a screen reader (aria-describedby) - not on a cell, which nothing focuses

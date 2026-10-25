@@ -1,17 +1,13 @@
 import { Component, computed, input } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
+import { modeName, policyName } from '../../../../model/gateway-endpoint';
 import { Server } from '../../../../model/server';
 
 /** A row of the description list:  a label and the server's value for it, empty when the server left the field blank;
  * `title` carries the full value when the one shown is an abbreviation of it. */
 export type ServerField = { label: string; value: string; title?: string };
 
-/** `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256` → `Basic256Sha256`:  every policy shares the prefix, so the
- * fragment is the part that says anything;  a uri without one (or an empty one) is shown as it came. */
-export const policyName = ( uri:string ):string=>uri.substring( uri.lastIndexOf('#')+1 );
-/** The wire name of the message security mode as words;  anything not listed is shown as it came. */
-export const modeName = ( mode:string ):string=>({ SignAndEncrypt: "Sign & Encrypt" } as Record<string,string>)[mode] ?? mode;
 //the abbreviated row keeps the full value in its title, so a hover still shows what the server actually sent
 const abbreviated = ( label:string, value:string, shown:string ):ServerField=>( shown==value ? {label, value} : {label, value: shown, title: value} );
 

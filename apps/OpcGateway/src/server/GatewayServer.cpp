@@ -192,17 +192,26 @@ namespace Jde::Opc::Gateway{
 			lg _{ server->_describeMutex };
 			server->_policies.clear();
 			server->_sessions.reset();
+			server->_served.clear();
 		}
 		lg _{ server->_mutex };
 		server->_held.clear();
 	}
-	α GatewayServer::Describe()Ι->Description{
+	α GatewayServer::Describe( bool sessions )Ι->Description{
 		Description y{ .Url = Url(), .TrustedCertDirs = _settings.TrustedCertDirs, .RejectedCertDir = _settings.RejectedCertDir };
 		lg _{ _describeMutex };
 		y.Policies = _policies;
-		if( _sessions )
+		if( sessions && _sessions )
 			y.Sessions = _sessions->List();
 		return y;
+	}
+	α GatewayServer::ServedNodes( HistGroupPK group )Ι->optional<ServedGroup>{
+		lg _{ _describeMutex };
+		let p = _served.find( group );
+		if( p==_served.end() )
+			return nullopt;
+		let& [guid, nodes] = p->second;
+		return ServedGroup{ guid, vector<ServedNode>{std::from_range, nodes | std::views::values} };
 	}
 	α GatewayServer::Server()ι->UAServer*{
 		lg _{ _mutex };
@@ -444,6 +453,10 @@ namespace Jde::Opc::Gateway{
 	α GatewayServer::Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, sp<Opc::Hist::Group> history, vector<HistMember> members )ι->void{
 		auto [p, added] = _groups.try_emplace( id, Group{id, move(guid), move(slug), history, {}} );
 		auto& group = p->second;
+		{
+			lg _{ _describeMutex };
+			_served.try_emplace( id, group.Guid, flat_map<HistGroupNodePK,ServedNode>{} );//served, if with no node yet.
+		}
 		//Restored while a node its removal couldn't delete kept the entry:  the historian's new group keeps their history from here on.
 		if( !added && group.History!=history ){
 			group.History = move( history );
@@ -518,6 +531,29 @@ namespace Jde::Opc::Gateway{
 		return UA_NODEID_NUMERIC( 0, UA_NS0ID_BASEDATATYPE );
 	}
 	Ω name( const HistNodeAttributes& attributes, const NodeId& id )ι->string{ return attributes.Path && attributes.Path->size() ? attributes.Path->back().Name : identifier( id ); }
+	//Objects/<slug>/<the path's browse names>, as AddNode hangs it:  the identifier alone under the folder until the path comes.
+	Ω servedPath( const ServerCnnctnNK& slug, const HistNodeAttributes& attributes, const NodeId& id )ι->string{
+		string y = Ƒ( "Objects/{}", slug );
+		if( attributes.Path && attributes.Path->size() ){
+			for( let& segment : *attributes.Path )
+				y += "/" + segment.Name;
+		}
+		else
+			y += "/" + identifier( id );
+		return y;
+	}
+	α GatewayServer::Listed( const Group& group, const Served& served )ι->void{
+		ServedNode node{ served.Member.Index, served.Id.ToString(), servedPath(group.Slug, served.Member.Attributes, served.Id) };
+		lg _{ _describeMutex };
+		_served.try_emplace( group.Id, group.Guid, flat_map<HistGroupNodePK,ServedNode>{} ).first->second.second.insert_or_assign( node.Id, move(node) );
+	}
+	α GatewayServer::Unlisted( HistGroupPK group, optional<HistGroupNodePK> index )ι->void{
+		lg _{ _describeMutex };
+		if( !index )
+			_served.erase( group );
+		else if( auto p = _served.find(group); p!=_served.end() )
+			p->second.second.erase( *index );
+	}
 	//The source's, with the history bits:  the history is the gateway's own, whatever the source lets of its.  Write, the status and
 	//timestamp bits are the source's, which a write goes to (ServedWrites):  a variable read-only there is read-only here.
 	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE; }
@@ -596,14 +632,14 @@ namespace Jde::Opc::Gateway{
 				_access->Add( node, group.Guid );
 			let index = member.Index;
 			std::ranges::move( _values->AddStarts(id, move(starts)), std::back_inserter(_starts) );
-			group.Nodes.insert_or_assign( index, Served{move(member), move(id), move(configuration), move(configured)} );
+			Listed( group, group.Nodes.insert_or_assign(index, Served{move(member), move(id), move(configuration), move(configured)}).first->second );
 		}
 		catch( const std::exception& e ){
 			ERR( "[{}]Could not serve node {} '{}':  {}", group.Guid, member.Index, member.Node.ToString(), e.what() );
 			let index = member.Index;
 			Served served{ move(member), move(id), move(configuration), move(configured) };
 			if( !Unserve(group, served, added) )
-				group.Nodes.insert_or_assign( index, move(served) );//still there, and mapped:  its removal tries again.
+				Listed( group, group.Nodes.insert_or_assign(index, move(served)).first->second );//still there, and mapped:  its removal tries again.
 		}
 		Restore( move(lifted) );
 	}
@@ -642,6 +678,7 @@ namespace Jde::Opc::Gateway{
 		if( !Unserve(group, served, true, prune) )
 			return false;
 		group.Nodes.erase( index );
+		Unlisted( group.Id, index );
 		return true;
 	}
 	Ω depth( const HistMember& member )ι->uint{ return member.Attributes.Path ? member.Attributes.Path->size() : 0; }
@@ -668,7 +705,10 @@ namespace Jde::Opc::Gateway{
 		std::ranges::sort( folders, std::greater{}, &vector<HistPathSegment>::size );//the deepest first:  its parent may empty with it.
 		for( let& folder : folders )
 			Prune( group->second.Slug, folder );
-		return nodes.empty() ? _groups.erase( group ) : std::next( group );//a node that stays keeps its group, for the next removal to try.
+		if( !nodes.empty() )
+			return std::next( group );//a node that stays keeps its group, for the next removal to try.
+		Unlisted( group->first, nullopt );
+		return _groups.erase( group );
 	}
 	α GatewayServer::Lift( const ServerCnnctnNK& slug, const NodeId& node )ι->vector<std::pair<HistGroupPK,HistMember>>{
 		vector<std::tuple<uint,HistGroupPK,HistGroupNodePK>> under;

@@ -4,7 +4,6 @@
 #include <jde/access/IAcl.h>
 #include <jde/opc/server/INodeAccess.h>
 #include <jde/opc/server/UAConfig.h>
-#include <jde/opc/uatypes/NodeId.h>
 
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 

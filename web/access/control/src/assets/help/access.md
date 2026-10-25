@@ -138,7 +138,7 @@ Web sessions have one resource, `app/sessions`, for every instance's **Web Sessi
 
 Signing out needs no grant. A user may end their own session, and a stand-alone gateway may end the sessions it signed users in to.
 
-`gateway/sessions` is another resource. It gates the gateway's OPC sessions.
+`gateway/sessions` is another resource. It gates the gateway's OPC sessions. `gateway/endpoint` gates the gateway's own OPC UA endpoint, its **Endpoint** tab and where a group's page says its members are served.
 
 The hub also gates the nodes of the **bundled** Jde OPC server, which enforces them itself. Delegation only lets that server answer who may grant rights on its nodes.
 

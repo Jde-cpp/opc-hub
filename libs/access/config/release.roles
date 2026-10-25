@@ -12,6 +12,7 @@ mutation{
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"serverConnections" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"sessions" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"search" } } )
+	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"gateway", slug:"endpoint" } } )
 	addRole( slug:"viewer", permissionRight:{ allowed:2, denied:0, resource:{ schemaName:"opc.install", slug:"nodeIds" } } )
 
 	createRole( slug:"sa", name:"System Administrator", description:"Users, roles, permissions, certificate trust and log settings. Grants access to everyone else." )
@@ -68,5 +69,6 @@ mutation{
 	addRole( slug:"gateway-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"gateway", slug:"histGroupNodes" } } )
 	addRole( slug:"gateway-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"gateway", slug:"sessions" } } )
 	addRole( slug:"gateway-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"gateway", slug:"search" } } )
+	addRole( slug:"gateway-instance", permissionRight:{ allowed:32, denied:0, resource:{ schemaName:"gateway", slug:"endpoint" } } )
 	addRole( slug:"gateway-instance", permissionRight:{ allowed:6, denied:0, resource:{ schemaName:"app", slug:"logs" } } )
 }

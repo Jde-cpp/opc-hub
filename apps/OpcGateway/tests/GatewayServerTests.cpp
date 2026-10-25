@@ -330,10 +330,17 @@ namespace Jde::Opc::Gateway::Tests{
 	//sessions held now, this client's among them while it is connected and gone once it isn't.
 	TEST_F( GatewayServerTests, EndpointQueryDescribesTheEndpointAndItsSessions ){
 		constexpr sv q{ "endpoint{ url policies{ uri mode } trustedCertDirs rejectedCertDir sessions{ id type policy mode since user{ id name } } }" };
+		let ids = []( const jvalue& answer ){
+			flat_set<string> y;
+			for( let& row : Json::AsArray(answer.as_object(), "sessions") )
+				y.emplace( Json::AsString(row.as_object(), "id") );
+			return y;
+		};
+		let before = ids( Socket().QuerySync(string{q}) );//another test's session of the same user isn't this client's (servers-7-web review #7).
 		let own = [&]( const jvalue& answer )->optional<jobject>{
 			for( let& row : Json::AsArray(answer.as_object(), "sessions") ){
 				let& o = row.as_object();
-				if( Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==AppClient()->UserPK().Value )
+				if( !before.contains(Json::AsString(o, "id")) && Json::AsSV(o, "type")=="IssuedToken" && Json::FindNumberPath<Jde::UserPK::Type>(o, "user/id")==AppClient()->UserPK().Value )
 					return o;
 			}
 			return nullopt;
@@ -355,6 +362,6 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_TRUE( Json::AsObject(*session, "user").contains("name") ) << serialize( *session );//from the AppServer's users table, as opcSessions.
 			id = Json::AsString( *session, "id" );
 		}
-		EXPECT_TRUE( WaitUntil([&]{ return !own( Socket().QuerySync(string{q}) ); }) ) << "session '" << id << "' is listed after its client disconnected";
+		EXPECT_TRUE( WaitUntil([&]{ return !ids( Socket().QuerySync(string{q}) ).contains( id ); }) ) << "session '" << id << "' is listed after its client disconnected";
 	}
 }

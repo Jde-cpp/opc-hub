@@ -456,8 +456,8 @@ namespace Jde::Access::Tests{
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(owner, "resources", root), "allowed")), ERights::Delete|ERights::Subscribe );
 		EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "resources", root), "allowed")), ERights::Read ) << "every page listing resources, once access.resources is enforced";
 		//reviews/m2-closing.md #8:  every resource the gateway gates on, not just the one with a table behind it - or enforcing
-		//gateway/sessions or gateway/search locks out every role this seed ships, the administrators included.
-		for( let slug : {"serverConnections", "sessions", "search"} )
+		//gateway/sessions, gateway/search or gateway/endpoint locks out every role this seed ships, the administrators included.
+		for( let slug : {"serverConnections", "sessions", "search", "endpoint"} )
 			EXPECT_EQ( ToRights(Json::AsArray(GetRolePermission(viewer, "gateway", slug, root), "allowed")), ERights::Read ) << slug;
 		//#364:  the web sessions, app/sessions - beside the gateway's, so by schema.  Viewer lists them and the administrator purges.  A
 		//stand-alone gateway's sign-out purges a session it began, which needs no grant (364-sessions-resource review #2).
@@ -478,7 +478,7 @@ namespace Jde::Access::Tests{
 		for( let slug : {"acl", "groups", "resources", "roles"} )
 			EXPECT_EQ( gatewayInstanceOn("access", slug), ERights::Read ) << slug;
 		EXPECT_EQ( gatewayInstanceOn("access", "users"), ERights::Read|ERights::Administer );
-		for( let slug : {"serverConnections", "histTemplates", "histTemplateNodes", "histGroups", "histGroupNodes", "sessions", "search"} )//opcGateway-meta.jsonnet's tables and resources
+		for( let slug : {"serverConnections", "histTemplates", "histTemplateNodes", "histGroups", "histGroupNodes", "sessions", "search", "endpoint"} )//opcGateway-meta.jsonnet's tables and resources
 			EXPECT_EQ( gatewayInstanceOn("gateway", slug), ERights::Administer ) << slug;
 		EXPECT_EQ( gatewayInstanceOn("app", "logs"), ERights::Read|ERights::Update );
 		EXPECT_TRUE( GetRoleChild(gatewayInstance, viewer, root).empty() ) << "a machine account, not a person:  no Viewer";

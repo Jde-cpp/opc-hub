@@ -12,7 +12,7 @@ import { confirm, DetailActions, DetailPage, Properties } from 'jde-framework';
 import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
 import { HistConnection, histDataTypeLabel, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
-import { endpointQuery, GatewayEndpoint, servedPath } from '../../../model/gateway-endpoint';
+import { EndpointServed, endpointServedQuery, endpointUrlQuery, servedFolder } from '../../../model/gateway-endpoint';
 import { OpcError } from '../../../model/opc-error';
 import { Server } from '../../../model/server';
 import { StatusCode } from '../../../model/types';
@@ -59,10 +59,12 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		this.templateMembers.set( [] );
 		this.resolved.set( undefined );
 		this.members.error.set( undefined );
+		this.endpoint.set( undefined );//not the last gateway's, while this one answers
 		this.#loadLists();
-		this.#loadEndpoint();
 		if( this.row.id )
 			this.refresh();
+		else
+			this.#loadEndpoint();
 	}
 	protected override upsert():HistGroup{ return new HistGroup( <HistGroupProps>this.properties() ); }
 	protected override get title(){ return this.row.name ? `${this.row.name} - Group` : 'New Group'; }
@@ -80,7 +82,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	connections = signal<HistConnection[]>( [] );
 	templates = signal<HistRef[]>( [] );
 	server = signal<Server|undefined>( undefined );//the group's connection, for its namespaces:  a node shown by the server's index
-	endpoint = signal<GatewayEndpoint|null|undefined>( undefined );//the gateway's own, null for none;  undefined until it has answered
+	endpoint = signal<EndpointServed|null|undefined>( undefined );//the gateway's own and what it serves of the group, null for none;  undefined until it has answered
 	members = new HistMembers<HistGroupMember>( this.snackbar );//its loading and busy are the Resolution tab's too
 	templateMembers = signal<HistTemplateMember[]>( [] );
 	resolved = signal<Map<number,HistResolvedMember>|undefined>( undefined );//the last resolve's answer, by template member
@@ -114,12 +116,13 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 			console.warn( `Could not describe '${slug}'.`, e );
 		}
 	}
-	//the gateway's own endpoint (#388), for where it serves the group:  null for none, left unread when the gateway can't say
+	//the gateway's own endpoint (#388), for where it serves the group, and its members as served - the server's word, not a path built
+	//here:  null for none, left unread when the gateway can't say.  A new group asks the url alone.
 	async #loadEndpoint():Promise<void>{
-		const gateway = this.gateway;
+		const gateway = this.gateway, groupId = this.row?.id;
 		try{
-			const y = await gateway.query<{endpoint:GatewayEndpoint|null}>( endpointQuery );
-			if( gateway==this.gateway )
+			const y = await gateway.query<{endpoint:EndpointServed|null}>( groupId ? endpointServedQuery : endpointUrlQuery, groupId ? {groupId} : undefined );
+			if( gateway==this.gateway && this.row?.id==groupId )
 				this.endpoint.set( y?.endpoint ?? null );
 		}
 		catch( e ){
@@ -131,19 +134,28 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		return this.connections().find( c=>c.id==id )?.slug;
 	}
 	//Where the endpoint serves the group's members (servers spec *Address space*):  under its connection's folder, each at its path on
-	//the source;  not at all without an endpoint.  Read once endpoint() is known.
+	//the source;  not at all without an endpoint, for a deleted group, or one the endpoint doesn't hold.  Read once endpoint() is known.
 	servedText():string{
 		const e = this.endpoint();
 		if( !e )
 			return 'Not served:  the gateway has no OPC UA endpoint.';
-		return `${this.isNew ? "Once saved, its" : "Its"} members are served on ${e.url} under ${servedPath( this.connectionSlug() ?? '<connection>' )}, each at its path on the source, with the group's history.`;
+		const where = `on ${e.url} under ${servedFolder( this.connectionSlug() ?? '<connection>' )}/…, each at its path on the source, with the group's history`;
+		if( this.isNew )
+			return `Once saved, its members are served ${where}.`;
+		if( this.isDeleted )
+			return 'Not served:  the group is deleted.';
+		if( !e.served )
+			return `Not served:  the endpoint on ${e.url} doesn't hold the group - the gateway's historian isn't running, or hasn't loaded it.`;
+		return `Its members are served ${where}.`;
 	}
 	async refresh():Promise<void>{
 		const id = this.row?.id, templateId = this.row?.histTemplateId, gateway = this.gateway;
-		if( id )
-			await this.members.read( ()=>Promise.all( [this.admin.groupMembers( gateway, id ), templateId ? this.admin.templateMembers( gateway, templateId ) : Promise.resolve( [] )] ),
-				( [members, templateMembers] )=>{ this.members.rows.set( members ); this.templateMembers.set( templateMembers ); },
-				()=>this.row?.id==id && gateway==this.gateway );
+		if( !id )
+			return;
+		this.#loadEndpoint();//the members as served, which follow the rows
+		await this.members.read( ()=>Promise.all( [this.admin.groupMembers( gateway, id ), templateId ? this.admin.templateMembers( gateway, templateId ) : Promise.resolve( [] )] ),
+			( [members, templateMembers] )=>{ this.members.rows.set( members ); this.templateMembers.set( templateMembers ); },
+			()=>this.row?.id==id && gateway==this.gateway );
 	}
 
 	//Members
@@ -161,10 +173,18 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	}
 	nameDetail( m:HistGroupMember ):string{
 		const a = m.attributes;
+		const served = this.#servedDetail( m );
 		if( a.displayName===undefined && !a.path )
-			return 'Not yet read from the server:  the collector reads a node once it has its item.';
-		const served = this.endpoint() && a.path ? `Served at ${servedPath( this.connectionSlug() ?? '<connection>', a.path.map( s=>s.name ) )}` : '';
+			return `Not yet read from the server:  the collector reads a node once it has its item.${served ? `  ${served}` : ''}`;
 		return [a.displayName==='' ? 'Its server gives it no DisplayName' : '', a.path ? histPathText( a.path ) : '', served, a.description ?? ''].filter( s=>!!s ).join( '.  ' );
+	}
+	//where the endpoint serves the member, as it says:  nothing where the group isn't served, which Properties explains
+	#servedDetail( m:HistGroupMember ):string{
+		const served = this.endpoint()?.served;
+		if( !served )
+			return '';
+		const node = served.find( n=>n.id==m.id );
+		return node ? `Served at ${node.path} as ${node.nodeId}` : "Not served by the endpoint:  not yet, or refused - the gateway's log says why";
 	}
 	typeText( m:HistGroupMember ):string{ return histDataTypeLabel( m.attributes.dataType ); }
 	typeDetail( m:HistGroupMember ):string{

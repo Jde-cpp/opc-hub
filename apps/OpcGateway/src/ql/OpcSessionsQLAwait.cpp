@@ -1,9 +1,7 @@
 #include "OpcSessionsQLAwait.h"
-#include <jde/access/Authorize.h>
 #include <jde/ql/QLAwait.h>
 #include "../auth/OpcServerSession.h"
 #include "../GatewayAppClient.h"
-#include "../UAClient.h"
 #include "../server/GatewayServer.h"
 #include "GatewayQL.h"
 #define let const auto
@@ -151,6 +149,7 @@ namespace Jde::Opc::Gateway{
 	}
 	α EndpointQLAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
+			QL().Authorizer().Test( "gateway", "endpoint", Access::ERights::Read, UserPK(), _sl );//gateway/endpoint - declared in opcGateway-meta.jsonnet's `resources`, shipped unenforced.
 			let server = GatewayServer::Instance();
 			if( !server ){//no block:  null, which the page reads as no endpoint.
 				Resume( jvalue{} );
@@ -159,7 +158,7 @@ namespace Jde::Opc::Gateway{
 			let sessionsQL = _query.FindTable( "sessions" );
 			if( sessionsQL )
 				QL().Authorizer().Test( "gateway", "sessions", Access::ERights::Read, UserPK(), _sl );
-			let description = server->Describe();
+			let description = server->Describe( sessionsQL!=nullptr );
 			jobject y;
 			if( _query.FindColumn("url") )
 				y["url"] = description.Url;
@@ -183,6 +182,25 @@ namespace Jde::Opc::Gateway{
 			}
 			if( _query.FindColumn("rejectedCertDir") )
 				y["rejectedCertDir"] = description.RejectedCertDir.empty() ? jvalue{} : jvalue{ description.RejectedCertDir.string() };
+			if( let servedQL = _query.FindTable("served"); servedQL ){
+				jvalue served;
+				if( let group = server->ServedNodes(servedQL->AsNumber<HistGroupPK>("group", _sl)); group ){
+					AppClient()->Acl()->Test( "gateway", "histGroups", group->Guid, Access::ERights::Read, UserPK(), _sl );//as the group's own rows are.
+					jarray rows;
+					for( let& node : group->Nodes ){
+						jobject row;
+						if( servedQL->FindColumn("id") )
+							row["id"] = node.Id;
+						if( servedQL->FindColumn("nodeId") )
+							row["nodeId"] = node.NodeId;
+						if( servedQL->FindColumn("path") )
+							row["path"] = node.Path;
+						rows.push_back( move(row) );
+					}
+					served = move( rows );
+				}
+				y["served"] = move( served );
+			}
 			if( sessionsQL ){
 				let userQL = sessionsQL->FindTable( "user" );
 				flat_set<Jde::UserPK::Type> pks;

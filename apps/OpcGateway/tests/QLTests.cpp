@@ -146,7 +146,7 @@ namespace Jde::Opc::Gateway::Tests{
 	TEST_F( QLTests, SessionsAndSearchAreResourcesAnAdminCanEnforce ){
 		let listed = AppClient()->QuerySync<jvalue>( "resources( schemaName:[\"gateway\"] ){ slug deleted allowed }", {} );
 		let& rows = listed.is_array() ? listed.get_array() : Json::AsArray( listed.as_object(), "resources" );
-		for( let slug : {"serverConnections"sv, "sessions"sv, "search"sv} ){
+		for( let slug : {"serverConnections"sv, "sessions"sv, "search"sv, "endpoint"sv} ){
 			auto row = find_if( rows, [&]( let& r ){ return Json::AsSV(r.as_object(), "slug")==slug; } );
 			ASSERT_NE( row, rows.end() ) << "gateway/" << slug << " has no resource row - its gate cannot be enforced: " << serialize( listed );
 			let deleted = row->as_object().if_contains( "deleted" );
@@ -177,6 +177,10 @@ namespace Jde::Opc::Gateway::Tests{
 			auto ql = QL::Parse( "search( text:\"lamp\" ){ name }", {}, Schemas(), true );
 			BlockAwait<SearchQLAwait,jvalue>( SearchQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
 		}) ) << "gateway/search is enforced and an ungranted user is still let through its gate";
+		EXPECT_TRUE( refused("endpoint", [&]{//servers-7-web review #2:  the description had no gate of its own.
+			auto ql = QL::Parse( "endpoint{ url policies{ uri mode } trustedCertDirs rejectedCertDir }", {}, Schemas(), true );
+			BlockAwait<EndpointQLAwait,jvalue>( EndpointQLAwait{move(ql.Queries().front()), QL::Creds{ungranted}} );
+		}) ) << "gateway/endpoint is enforced and an ungranted user still reads the endpoint's url, policies and certificate directories";
 
 		let value = Socket().QuerySync( "opcSessions{ count }" );//and unenforced again, the harness's own session still reads it.
 		EXPECT_TRUE( value.is_array() ) << serialize( value );
