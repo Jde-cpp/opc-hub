@@ -14,12 +14,16 @@
 namespace Jde::Opc::Emulator{
 	constexpr ELogTags _tags{ ELogTags::App };
 
-	//the UA channel cert: /emulator/ssl puts it under the PlcEmulator product dir with the applicationUri as its SAN.
+	//the device's UA pair: /emulator/ssl puts it under the PlcEmulator product dir with the applicationUri as its SAN - the
+	//client's channel certificate on the OpcServer, and the PLC server's own where /emulator/plc/ssl names none.
 	Ω opcCertificate()ι->Crypto::CryptoSettings{ return Crypto::CryptoSettings{ Settings::FindDefaultObject("/emulator/ssl") }; }
 
 	//pubsub: process values publish over Part 14 and anything the contract does not list is written over the session;
-	//write: everything over the session - the PLC server is not started.  Commands are always subscribed.
-	enum class ETransport : uint8{ PubSub, Write };
+	//write: everything over the session - the PLC server is not started.  Both subscribe the commands on the OpcServer.
+	//server: the PLC server alone, on the library's endpoint - every tag is written to its own nodes, no session on the
+	//OpcServer and no writer, and the commands arrive as clients' writes to those nodes (docs/servers/spec.md *Emulator*).
+	enum class ETransport : uint8{ PubSub, Write, Server };
+	Ω toString( ETransport t )ι->sv{ return t==ETransport::PubSub ? "pubsub" : t==ETransport::Write ? "write" : "server"; }
 	//Tag, Device and ParseDevices live in Devices.h - a unit the tests build without a session or a PLC server (T2).
 
 	struct Emulator final : noncopyable{
@@ -30,6 +34,7 @@ namespace Jde::Opc::Emulator{
 		α Reconnect()ε->void;
 		α Tick( bool sessionUp )ι->void;//one pass of the device clock; driven by BOTH loops - Run()'s and Reconnect()'s wait.
 		α Cycle( Duration dt, bool sessionUp )ι->void;
+		α OnCommand( const PlcServer::Command& command )ι->void;//a client's write to a command tag on the PLC's own server (-transport=server).
 		α LogStatus( bool onlyIfChanged=false )ι->void;//onlyIfChanged: the final line at exit, skipped when the timed one already said it (#12).
 		Ω OnDataChange( UA_Client*, UA_UInt32, void*, UA_UInt32, void* monContext, UA_DataValue* value )ι->void;
 
@@ -41,6 +46,7 @@ namespace Jde::Opc::Emulator{
 		up<PlcServer> _plc;
 		up<EmulatorClient> _client;
 		vector<Device> _devices;
+		vector<Tag*> _commandTags;//the command tags Watch keys, by index (-transport=server).
 		//The device clock.  Members rather than Run() locals because Reconnect()'s wait loop advances them too (#7).
 		steady_clock::time_point _lastCycle{}, _nextCycle{}, _nextStatus{};
 		UA_UInt32 _subscription{};//the command subscription this session holds, kept so a clean shutdown can delete it (#10).
@@ -63,29 +69,59 @@ namespace Jde::Opc::Emulator{
 		_reconnectMax{ Settings::FindArgDuration( "-reconnectMax", "/emulator/reconnectMax" ).value_or( 30s ) },
 		_reconnectDelay{ _reconnectMin }{
 		let transport = Settings::FindArgString( "-transport", "/emulator/transport" ).value_or( "pubsub" );
-		THROW_IF( transport!="pubsub" && transport!="write", "transport '{}' must be pubsub or write.", transport );
-		_transport = transport=="write" ? ETransport::Write : ETransport::PubSub;
+		THROW_IF( transport!="pubsub" && transport!="write" && transport!="server", "transport '{}' must be pubsub, write or server.", transport );
+		_transport = transport=="write" ? ETransport::Write : transport=="server" ? ETransport::Server : ETransport::PubSub;
 		if( let d = Settings::FindArgDuration( "-duration", "/emulator/duration" ).value_or( Duration::zero() ); d>Duration::zero() )
 			_duration = d;
-		PubSub::Config contract{ Settings::AsObject("/emulator/pubsub") };
-		_nsUri = contract.Namespace;
-		if( _transport==ETransport::PubSub ){
+		optional<PubSub::Config> contract;
+		if( _transport==ETransport::PubSub )
+			contract.emplace( Settings::AsObject("/emulator/pubsub") );
+		//The device paths' default namespace under every transport, the nodeset's:  /emulator/namespace, else the contract's - a
+		//block the write and server transports read for nothing else, and may leave out.
+		_nsUri = Settings::FindString( "/emulator/namespace" ).value_or( contract ? contract->Namespace : Settings::FindString("/emulator/pubsub/dataSet/namespace").value_or("") );
+		let opc = opcCertificate();
+		//On every start, not only -createCert:  the SAN must equal the applicationUri we advertise, and an edited uri would
+		//otherwise present the stale SAN forever, refused BadCertificateUriInvalid with nothing naming the file to delete
+		//(the gateway's CertTests lesson).  EnsureKeyCertificate re-issues on SAN drift and expiry as well as absence.
+		Crypto::EnsureKeyCertificate( opc );
+		if( _transport!=ETransport::Write ){
 			let nodeset = Settings::FindPath( "/emulator/plc/nodeset" ); THROW_IF( !nodeset, "/emulator/plc/nodeset is required - the nodeset the OpcServer loads." );
-			//loopback by default - nothing is meant to connect to the PLC's own endpoint, and it is anonymous-full.
-			let bind = Settings::FindString( "/emulator/plc/bind" ).value_or( "127.0.0.1" );
-			_plc = mu<PlcServer>( Settings::FindNumber<UA_UInt16>("/emulator/plc/port").value_or(4842), bind, *nodeset, move(contract) );
+			//The server's sessions log in through the hub over this process's app client, as the OpcServer's do (UAAccess);  the
+			//pubsub transport's writer samples the contract's nodes, the server transport has no contract.
+			_plc = mu<PlcServer>( PlcServer::ReadSettings(opc), _app, *nodeset, move(contract) );
 		}
 		_devices = ParseDevices( Settings::FindDefaultArray("/emulator/devices"), _plc ? FindField{[this](sv name){ return _plc->FindField(name); }} : FindField{}, SRCE_CUR );
 		for( auto& device : _devices ){//the vectors are final: ParseDevices returned them.
 			for( auto& tag : device.Tags )
 				tag.Self = this;
 		}
-		let opc = opcCertificate();
-		//On every start, not only -createCert:  the SAN must equal the applicationUri we advertise, and an edited uri would
-		//otherwise present the stale SAN forever, refused BadCertificateUriInvalid with nothing naming the file to delete
-		//(the gateway's CertTests lesson).  EnsureKeyCertificate re-issues on SAN drift and expiry as well as absence.
-		Crypto::EnsureKeyCertificate( opc );
-		_client = mu<EmulatorClient>( _url, _applicationUri, _serverApplicationUri, opc );
+		if( _transport==ETransport::Server ){
+			//Every tag is a node of the PLC's own server, resolved once - the address space is this process's - and a generated one
+			//written as its node's type.  A command tag is watched:  a client's write of it, the gateway's write-through of what the
+			//web UI wrote, lands in OnCommand through Tick, where the OpcServer's data-change notification lands under the other
+			//transports, and the node's value now is the command's start, as their first notification is.
+			let ns = _nsUri.size() ? _plc->Namespace( _nsUri ) : NsIndex{};
+			for( auto& device : _devices ){
+				for( auto& tag : device.Tags ){
+					tag.Node = _plc->Resolve( Ƒ("{}/{}", device.Path, tag.Spec.Name), ns );
+					let command = tag.Spec.Mode==EMode::Command;
+					if( command ){
+						if( let p = std::ranges::find_if(_commandTags, [&](let t){ return t->Node==tag.Node; }); p!=_commandTags.end() )
+							THROW( "[{}]{} and [{}]{} are both {} - a command node has one tag.", (*p)->Owner->Name, (*p)->Spec.Name, device.Name, tag.Spec.Name, tag.Node.ToString() );
+						if( let value = _plc->Watch(tag.Node, _commandTags.size()); value )
+							device.Command = *value;
+						_commandTags.push_back( &tag );
+					}
+					else if( tag.Generator )
+						tag.Type = &_plc->ValueType( tag.Node );
+					DBG( "[{}]{} -> {} ({}{})", device.Name, tag.Spec.Name, tag.Node.ToString(), command ? "watched" : "written as ", command ? Ƒ(", {}", device.Command) : string{tag.Type ? tag.Type->typeName : "?"} );
+				}
+			}
+		}
+		if( _plc )
+			_plc->Run();
+		if( _transport!=ETransport::Server )
+			_client = mu<EmulatorClient>( _url, _applicationUri, _serverApplicationUri, opc );
 	}
 
 	α Emulator::Connect()ε->void{
@@ -141,11 +177,24 @@ namespace Jde::Opc::Emulator{
 		}
 	}
 
+	α Emulator::OnCommand( const PlcServer::Command& command )ι->void{
+		if( command.Key>=_commandTags.size() )
+			return;
+		auto& tag = *_commandTags[command.Key];
+		auto& device = *tag.Owner;
+		if( device.Command==command.Value )
+			return;
+		device.Command = command.Value;
+		++_externalChanges;
+		INFO( "[{}]{} <- {} (external, user {})", device.Name, tag.Spec.Name, command.Value, command.User.Value );
+	}
+
 	//A real PLC's process values evolve whether or not anyone is connected, so every generator advances on every period
 	//regardless of `sessionUp` - what the session gates is only the *write* over it.  Published tags (tag.Field) go to the
 	//local PLC node, which the Part 14 writer samples on its own timer, so they keep flowing to the OpcServer through an
 	//outage of the client session.  A session-written tag keeps evolving in memory and lands on the first cycle after
-	//recovery, instead of the whole outage arriving as one `dt` (#7).
+	//recovery, instead of the whole outage arriving as one `dt` (#7).  Under the server transport every tag goes to the
+	//PLC's own node, and `sessionUp` gates nothing.
 	α Emulator::Cycle( Duration dt, bool sessionUp )ι->void{
 		for( auto& device : _devices ){
 			for( auto& tag : device.Tags ){
@@ -159,6 +208,17 @@ namespace Jde::Opc::Emulator{
 						++_published;
 					}
 					catch( const std::exception& e ){
+						WARN( "[{}]local write {} failed: {}", device.Name, tag.Spec.Name, e.what() );
+					}
+					continue;
+				}
+				if( _transport==ETransport::Server ){
+					try{
+						_plc->Write( tag.Node, *tag.Type, tag.Value, tag.Status );//the whole DataValue:  the status needs no StatusWrite on its own server.
+						++_writes;
+					}
+					catch( const std::exception& e ){
+						++_writeFailures;
 						WARN( "[{}]local write {} failed: {}", device.Name, tag.Spec.Name, e.what() );
 					}
 					continue;
@@ -202,6 +262,10 @@ namespace Jde::Opc::Emulator{
 
 	//The device clock, driven by both loops.  `sessionUp` false only suppresses the session writes - see Cycle.
 	α Emulator::Tick( bool sessionUp )ι->void{
+		if( _plc ){//the commands clients wrote since the last pass, on this thread as the notifications are - none under pubsub/write, which watch nothing.
+			for( let& command : _plc->Drain() )
+				OnCommand( command );
+		}
 		if( let now = steady_clock::now(); now>=_nextCycle ){
 			Cycle( duration_cast<Duration>(now-_lastCycle), sessionUp );
 			_lastCycle = now;
@@ -229,18 +293,16 @@ namespace Jde::Opc::Emulator{
 			INFO( "Not yet connected to '{}' - attempt #{} in {}.", _url, ++_attempts+1, Chrono::ToString(_reconnectDelay) );
 		_subscription = 0;//the session is already gone; there is nothing left to delete it on.
 		_client->Disconnect();
-		for( let until = steady_clock::now()+_reconnectDelay; steady_clock::now()<until && !Process::ShuttingDown(); std::this_thread::sleep_for(100ms) ){
-			if( _plc )
-				_plc->Iterate();//keep the PLC's own server and publisher alive while the session is down.
-			Tick( false );//...and its process values evolving.  A PLC does not freeze because a client left (#7).
-		}
+		for( let until = steady_clock::now()+_reconnectDelay; steady_clock::now()<until && !Process::ShuttingDown(); std::this_thread::sleep_for(100ms) )
+			Tick( false );//the process values keep evolving - the PLC's own server and publisher run on their thread.  A PLC does not freeze because a client left (#7).
 		if( Process::ShuttingDown() )
 			return;
 		_reconnectDelay = std::min( _reconnectDelay*2, _reconnectMax );
 		try{
-			//Synchronous: UA_Client_connect blocks this thread for up to /emulator's 10 s client timeout, and neither the
-			//PLC server nor the clock is iterated inside it, so one failed attempt is one stall of that length.  Tolerable
-			//against an async connect's state machine (UA_Client_connectAsync); Tick's catch-up guard absorbs the gap.
+			//Synchronous: UA_Client_connect blocks this thread for up to /emulator's 10 s client timeout, and the clock is not
+			//advanced inside it - the PLC server and its publisher run on their own thread - so one failed attempt is one stall
+			//of the generated values that long.  Tolerable against an async connect's state machine (UA_Client_connectAsync);
+			//Tick's catch-up guard absorbs the gap.
 			Connect();
 		}
 		catch( const std::exception& e ){
@@ -270,11 +332,13 @@ namespace Jde::Opc::Emulator{
 	}
 
 	α Emulator::Run()ε->int{
-		try{
-			Connect();
-		}
-		catch( const std::exception& e ){
-			WARN( "Initial connect to '{}' failed: {} - retrying.", _url, e.what() );
+		if( _client ){
+			try{
+				Connect();
+			}
+			catch( const std::exception& e ){
+				WARN( "Initial connect to '{}' failed: {} - retrying.", _url, e.what() );
+			}
 		}
 		let start = steady_clock::now();
 		_lastCycle = start;
@@ -283,10 +347,14 @@ namespace Jde::Opc::Emulator{
 		optional<steady_clock::time_point> deadline;
 		if( _duration )
 			deadline = start+*_duration;
-		INFO( "Emulator running: transport={}, period={}, devices={}{}.", _transport==ETransport::PubSub ? "pubsub" : "write", Chrono::ToString(_period), _devices.size(), _duration ? Ƒ(", duration={}", Chrono::ToString(*_duration)) : string{} );
+		INFO( "Emulator running: transport={}, period={}, devices={}{}.", toString(_transport), Chrono::ToString(_period), _devices.size(), _duration ? Ƒ(", duration={}", Chrono::ToString(*_duration)) : string{} );
 		while( !Process::ShuttingDown() && (!deadline || steady_clock::now()<*deadline) ){
-			if( _plc )
-				_plc->Iterate();//the publisher's timer fires in here.
+			let slice = std::clamp( duration_cast<milliseconds>(_nextCycle-steady_clock::now()), 0ms, 50ms );
+			if( !_client ){//the server transport:  the PLC server runs on its own thread, its clients' commands wait for Tick.
+				std::this_thread::sleep_for( slice );
+				Tick( true );
+				continue;
+			}
 			if( !_client->IsActivated() || _consecutiveFailures>=3 ){
 				Reconnect();
 				continue;
@@ -299,11 +367,12 @@ namespace Jde::Opc::Emulator{
 				Reconnect();
 				continue;
 			}
-			let slice = std::clamp( duration_cast<milliseconds>(_nextCycle-steady_clock::now()), 0ms, 50ms );
 			_client->Iterate( (uint32)slice.count() );//command notifications arrive in here.
 			Tick( true );
 		}
 		LogStatus( true );
+		if( !_client )
+			return EXIT_SUCCESS;//the PLC server stops with the emulator.
 		//Delete the subscription before disconnecting, and iterate once so the answers land.  The client keeps ten publish
 		//requests in flight (outStandingPublishRequests, ua_config_default.c);  disconnecting first drops its subscription
 		//table while those are unanswered, and each of the server's ten replies then fails findSubscriptionById at a

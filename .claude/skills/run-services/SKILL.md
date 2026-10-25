@@ -149,12 +149,23 @@ on a box without MySQL.
 The shippable doc is `apps/OpcServer/emulator/README.md`; this section is the agent's run path.
 `apps/OpcServer/emulator` → `Jde.Opc.PlcEmulator`: a stand-in for a UA-enabled PLC that
 drives the OpcServer's pump tags (`apps/OpcServer/config/nodesets/pumps.NodeSet2.xml`).
-It runs its own headless UA server (4842) holding that nodeset and **publishes** the
+It runs its own UA server (loopback 4842, the UA server library's secured endpoint, sessions
+logged in through the hub) holding that nodeset and **publishes** the
 pump process values over OPC UA PubSub (UADP/UDP, contract in
 `apps/OpcServer/config/pubsub/pumps.libsonnet` — the OpcServer's `/opcServer/pubsub`
 reader imports the same file), and holds a client session on the OpcServer for the
 `status` run commands the web UI writes. `-transport=write` routes every tag over that
 session instead (no PLC server) — the way to exercise plain client writes.
+`-transport=server` runs the PLC server alone, no OpcServer session and no writer: a
+gateway `server_connections` row on `opc.tcp://127.0.0.1:4842` with `certificateUri`
+`urn:jde:plc-emulator` collects from it as from a PLC (the dev gateway config trusts
+`Jde-Cpp/PlcEmulator/ssl/certs`; the emulator's `plc.trustedCertDirs` trusts the
+gateway's and the hub's), and a `status` written on the served node is a write-through
+the emulator logs `(external, user N)`. A *group* on that connection needs the hub's
+collector a login the PLC resolves: the default is the hub's own certificate, which is no
+hub user, so set `gateway.hist.credentials.<slug>: {user, password}` on the hub and the
+same `plc.users` entry on the emulator - both hidden defaults, so an overlay needs `:::`
+(a plain `:` over a `::` key stays hidden, and the setting silently never applies).
 
 **The OpcServer needs `opcserver-emulator`, not `opcserver`, for the pubsub transport.**
 A DataSetReader writes its targets server-internally — no session, no `OpcAuthorize` — so
@@ -179,7 +190,7 @@ $D stop opcserver-emulator && $D start opcserver-emulator # loads the acl
 $E -c -tests -settings=$C               # runs until Ctrl-C (or -duration=PT10M); -transport=write for session writes
 ```
 
-Expected in its log: `PLC server up on opc.tcp://127.0.0.1:4842 with 'pumps.NodeSet2.xml'; publishing dataSet 'pumps' @ opc.udp://…`,
+Expected in its log: `PLC server on 127.0.0.1:4842 with 'pumps.NodeSet2.xml';  publishing dataSet 'pumps' @ opc.udp://…`,
 `Client security policies: …None, …Basic256Sha256, applicationUri filter: 'urn:open62541.server.application'`,
 `Session activated`, `Connected … 3 command tag(s) subscribed`, then every `statusPeriod`
 a `cycles=… published=… writes=… externalChanges=… reconnects=…` line. In the OpcServer's

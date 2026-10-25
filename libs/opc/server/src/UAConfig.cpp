@@ -78,10 +78,12 @@ namespace Jde::Opc::Server{
 	//OpcServer - runs on the defaults setBasics gave it, as it always has.
 	Ω applyLimits( UA_ServerConfig& config, const UASettings::Limits& limits )ε->void{
 		let ms = []( Duration d ){ return (UA_Double)duration_cast<std::chrono::duration<double,std::milli>>( d ).count(); };
-		if( limits.MaxSessions ){
+		if( limits.MaxSessions )
 			config.maxSessions = *limits.MaxSessions;
+		if( limits.MaxSecureChannels )
+			config.maxSecureChannels = *limits.MaxSecureChannels;
+		if( limits.MaxSessions || limits.MaxSecureChannels )
 			config.maxSecureChannels = std::max( config.maxSecureChannels, config.maxSessions );//a session per channel:  past the 100 channels, maxSessions alone admits none more.
-		}
 		if( limits.MaxMonitoredItems )
 			config.maxMonitoredItems = *limits.MaxMonitoredItems;
 		if( limits.SessionTimeout ){

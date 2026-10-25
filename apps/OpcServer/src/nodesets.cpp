@@ -27,8 +27,6 @@ namespace Jde::Opc{
 	//first lookup that misses.  The mirrors borrow open62541's `types` arrays, hence cleanup=false - UA_ServerConfig_clean
 	//walks them and frees nothing, which is why they are kept on the server (UAServer::CustomTypes), not here.
 	α Server::PublishDataTypes( UAServer& ua )ι->void{
-		if( !ua.Ptr() )
-			return;
 		auto config = UA_Server_getConfig( ua.Ptr() );
 		config->customDataTypes = nullptr;//so a second call enumerates the internal lists alone, not last time's mirrors too.
 		vector<const UA_DataTypeArray*> internals;

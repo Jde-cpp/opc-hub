@@ -33,6 +33,15 @@ namespace Jde::Opc::Server{
 		if( let uri = Settings::FindString(key("userTokenPolicyUri")); uri )
 			UserTokenPolicyUri = *uri;
 	}
+	α UASettings::ReadLimits( sv root )ε->void{
+		let key = [&]( sv name ){ return Ƒ( "{}/limits/{}", root, name ); };
+		Limit.MaxSessions = Settings::FindNumber<uint16>( key("maxSessions") );
+		Limit.MaxSecureChannels = Settings::FindNumber<uint16>( key("maxSecureChannels") );
+		Limit.MaxMonitoredItems = Settings::FindNumber<uint32>( key("maxMonitoredItems") );
+		Limit.SessionTimeout = Settings::FindDuration( key("sessionTimeout") );
+		Limit.MinSamplingInterval = Settings::FindDuration( key("minSamplingInterval") );
+		Limit.MaxAsyncOperations = Settings::FindNumber<uint>( key("maxAsyncOperations") );
+	}
 	α UASettings::ReadEditTimeout( sv path )ε->void{
 		if( let timeout = Settings::FindDuration(path); timeout ){
 			THROW_IF( *timeout<=Duration::zero(), "{} must be positive, not {} ms.", path, duration_cast<milliseconds>(*timeout).count() );

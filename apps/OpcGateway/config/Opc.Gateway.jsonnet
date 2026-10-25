@@ -44,13 +44,14 @@ function( sync=false )
 		//server and what to do.  false accepts any certificate (the pre-2026-09 behaviour): a lab setting, never a deployment.
 		verifyServerCertificate: true,
 		//The OPC servers this gateway trusts, one certificate per server (.pem, .crt, .der or .cer - a UA server publishes DER),
-		//read on every connect.  A Jde OpcServer on this host
-		//publishes its own at certsDir("OpcServer"); any other server's certificate is copied into this product's own ssl/servers,
+		//read on every connect.  A Jde OpcServer on this host publishes its own at certsDir("OpcServer"), the PLC emulator's server
+		//(apps/OpcServer/emulator, -transport=server) the device's pair at certsDir("PlcEmulator"); any other server's certificate is
+		//copied into this product's own ssl/servers,
 		//which the gateway creates at startup.  Not the OS root store - OPC server certificates are self-signed.  And not
 		///access/trustedCertDirs, where this list lived until 2026-09-18:  in the hub that one is the AppServer role's enrollment
 		//anchors - every certificate under it may create a user - and a server the gateway talks to has no business among them
 		//(reviews/security-matrix.md #3).
-		trustedCertDirs: [ args.certsDir("OpcServer"), args.serversDir("$(PRODUCT_NAME)") ],
+		trustedCertDirs: [ args.certsDir("OpcServer"), args.certsDir("PlcEmulator"), args.serversDir("$(PRODUCT_NAME)") ],
 		//The gateway's historian (libs/historian/docs/spec.md, *Placement*):  the groups defined on it.  No `hist` block, or another
 		//process holding the lock under `path`, runs the gateway without its historian.  A `::` key is its default, shown hidden:
 		//un-hide it to change it.
@@ -90,8 +91,9 @@ function( sync=false )
 			userTokenPolicyUri:: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", //the policy the user tokens ride on;  "" names each security policy for itself
 			writeTimeout:: "PT10S", //how long a client's Write of a served node holds for the source's answer (asyncOperationTimeout):  past it the client is answered Bad_Timeout and the source's answer, when it comes, is logged and dropped
 			editTimeout:: "PT5S", //how long a HistoryUpdate holds for the flush that writes it, the OpcServer's hist.editTimeout:  past it the client is answered Bad_Timeout and the edit may still be written
-			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  sessionTimeout and minSamplingInterval are ISO 8601.
-			limits:: { maxSessions: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
+			//open62541's own limits (0 unlimited where it reads so);  absent keeps them.  sessionTimeout and minSamplingInterval are ISO 8601;
+			//maxSecureChannels is never left below maxSessions.
+			limits:: { maxSessions: 100, maxSecureChannels: 100, maxMonitoredItems: 0, sessionTimeout: "PT1H", minSamplingInterval: "PT0.05S", maxAsyncOperations: 0 }
 		}
 	},
 	logging:{

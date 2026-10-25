@@ -10,8 +10,8 @@ namespace Jde::Opc::Server {
 		_config{ settings, move(appClient), move(nodeAccess), &_history },
 		_ua{ UA_Server_newWithConfig(&_config) }
 	{
-		if( _ua )
-			_config.Trust().Install( *_ua );//must target the server-owned config - UA_Server_newWithConfig memset _config. Main thread, before Run() spawns the loop thread.
+		THROW_IF( !_ua, "UA_Server_newWithConfig failed." );//it has cleared or taken _config either way, so nothing is left to free.
+		_config.Trust().Install( *_ua );//must target the server-owned config - UA_Server_newWithConfig memset _config. Main thread, before Run() spawns the loop thread.
 	}
 	UAServer::~UAServer(){
 		INFOT( ELogTags::App, "Stopping OPC UA server..." );
@@ -30,7 +30,16 @@ namespace Jde::Opc::Server {
 	α UAServer::Run()ε->void{
 		if( _thread )
 			return;
-		UAε( UA_Server_run_startup(_ua) );
+		if( let sc = UA_Server_run_startup(_ua); sc ){
+			//A failed startup - the port taken - stops the components it started but leaves the event loop running, which the
+			//destructor's UA_Server_delete can't free:  stop it as UA_Server_run_shutdown does for a started server.
+			auto& el = *UA_Server_getConfig( _ua )->eventLoop;
+			if( el.state==UA_EVENTLOOPSTATE_STARTED ){
+				el.stop( &el );
+				while( el.state!=UA_EVENTLOOPSTATE_STOPPED && !el.run(&el, 100) ){}
+			}
+			throw UAException{ sc };
+		}
 		_thread = std::jthread{ [this](std::stop_token st){
 			Thread::SetName( "UAServer" );
 			//UA_Server_run(...) demands a volatile UA_Boolean*; run the loop manually against the stop token instead. This is what UA_Server_run does internally, and it also drops the original's double run_shutdown.

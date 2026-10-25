@@ -83,6 +83,8 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_TRUE( settings->None );
 		EXPECT_EQ( settings->Ssl.Certificate.Path, Ssl().Certificate.Path ) << "no ssl in the block:  the process pair";
 		EXPECT_EQ( settings->WriteTimeout, optional<Duration>{10s} ) << "writeTimeout's default:  how long a Write holds for the source";
+		EXPECT_EQ( settings->Limit.MaxSecureChannels, optional<uint16>{120} ) << "the block's limits";
+		EXPECT_FALSE( settings->Limit.MaxSessions );
 	}
 
 	//The suite's connection's folder, with its _Connection and the five variables typed as the spec has them.

@@ -51,11 +51,7 @@ namespace Jde::Opc::Gateway{
 		y.RejectedCertDir = Settings::FindPath( key("rejectedCertDir") ).value_or( servers/"rejected" );
 		y.None = Settings::FindBool( key("none") ).value_or( y.None );
 		y.ReadTokens( _root );
-		y.Limit.MaxSessions = Settings::FindNumber<uint16>( key("limits/maxSessions") );
-		y.Limit.MaxMonitoredItems = Settings::FindNumber<uint32>( key("limits/maxMonitoredItems") );
-		y.Limit.SessionTimeout = Settings::FindDuration( key("limits/sessionTimeout") );
-		y.Limit.MinSamplingInterval = Settings::FindDuration( key("limits/minSamplingInterval") );
-		y.Limit.MaxAsyncOperations = Settings::FindNumber<uint>( key("limits/maxAsyncOperations") );
+		y.ReadLimits( _root );
 		y.ReadEditTimeout( key("editTimeout") );
 		y.WriteTimeout = 10s;//how long a client's Write holds for the source's answer (spec *Writes*).
 		y.ReadWriteTimeout( key("writeTimeout") );

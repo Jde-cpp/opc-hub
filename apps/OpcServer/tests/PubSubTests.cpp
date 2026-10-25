@@ -12,8 +12,19 @@
 #define let const auto
 namespace Jde::Opc::Server::Tests{
 	//An in-process Part 14 publisher - the PLC emulator's own UA server, minus the emulator - publishing the contract the OpcServer
-	//reads.  Port 4850 keeps it off the embedded OpcServer's 4940 and a live one's 4840.
-	Ω startPublisher()ε->Emulator::PlcServer{ return { 4850, "127.0.0.1", PumpsNodeset(), PubSub::Config{Settings::AsObject("/opcServer/pubsub")} }; }
+	//reads, on the library's endpoint with this suite's pair and trust list (servers plan Phase 6), running on its own thread.
+	//Port 4850 keeps it off the embedded OpcServer's 4940 and a live one's 4840.
+	Ω startPublisher()ε->up<Emulator::PlcServer>{
+		UASettings settings{ .Ssl{Settings::FindDefaultObject("/opcServer/ssl")} };
+		settings.ApplicationName = "PubSubTests publisher";
+		settings.Port = 4850;
+		settings.Address = "127.0.0.1";
+		for( let& dir : Settings::FindStringArray("/access/trustedCertDirs") )
+			settings.TrustedCertDirs.emplace_back( dir );
+		auto y = mu<Emulator::PlcServer>( settings, AppClient(), PumpsNodeset(), PubSub::Config{Settings::AsObject("/opcServer/pubsub")} );
+		y->Run();
+		return y;
+	}
 
 	struct PubSubTests : ::testing::Test{
 	protected:
@@ -55,11 +66,10 @@ namespace Jde::Opc::Server::Tests{
 		let& contract = PubSub()->Config();
 		auto publisher = startPublisher();
 		constexpr double expected{ 1234.5 };
-		publisher.Write( 0, expected );
-		publisher.Write( 4, expected*2 );
+		publisher->Write( 0, expected );
+		publisher->Write( 4, expected*2 );
 		optional<double> got, gotManual;
 		for( let deadline = steady_clock::now()+10s; steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
-			publisher.Iterate();
 			got = ReadDouble( contract.Fields[0].Node );
 			gotManual = ReadDouble( contract.Fields[4].Node );
 			if( got && *got==expected && gotManual && *gotManual==expected*2 )
@@ -76,12 +86,11 @@ namespace Jde::Opc::Server::Tests{
 		//OpcServer dropped 90 % of what the emulator published (emulator-review #2/T1).  A second pair must land within a
 		//couple of publishing intervals:  with keyframes only it takes one;  at 10 the next keyframe is ten away.
 		constexpr double second{ 987.25 };
-		publisher.Write( 0, second );
-		publisher.Write( 4, second*2 );
+		publisher->Write( 0, second );
+		publisher->Write( 4, second*2 );
 		let limit = 2*contract.PublishingInterval + 500ms;//two intervals, plus slack for the 50 ms poll and the writer's timer phase.
 		let start = steady_clock::now();
 		for( ; steady_clock::now()<start+limit; std::this_thread::sleep_for(50ms) ){
-			publisher.Iterate();
 			got = ReadDouble( contract.Fields[0].Node );
 			gotManual = ReadDouble( contract.Fields[4].Node );
 			if( got && *got==second && gotManual && *gotManual==second*2 )
@@ -104,11 +113,10 @@ namespace Jde::Opc::Server::Tests{
 		constexpr UA_StatusCode pinnedHigh{ UA_STATUSCODE_UNCERTAINENGINEERINGUNITSEXCEEDED | 0x0400 | 0x0200 };//InfoType DataValue + LimitBits High
 		double value{ 1500 };
 		for( let status : {pinnedHigh, (UA_StatusCode)UA_STATUSCODE_BADSENSORFAILURE, (UA_StatusCode)UA_STATUSCODE_GOOD} ){
-			publisher.Write( 1, ++value, status );
+			publisher->Write( 1, ++value, status );
 			std::pair<optional<double>,UA_StatusCode> got;
 			//the first message of a fresh publisher may take longer than an interval to go out - the first act's 10 s covers it.
 			for( let deadline = steady_clock::now()+( status==pinnedHigh ? Duration{10s} : Duration{limit} ); steady_clock::now()<deadline; std::this_thread::sleep_for(50ms) ){
-				publisher.Iterate();
 				got = Read( node );
 				if( got.first==optional<double>{value} && got.second==status )
 					break;
