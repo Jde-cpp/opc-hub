@@ -270,6 +270,18 @@ namespace Jde::Access{
 		let configured = ConfiguredRightsLocked( executer, *resourcePK );
 		return configured ? configured->Effective() : ERights::None;
 	}
+	α Authorize::ScopedRights( str schemaName, str resourceName, str criteria, UserPK executer )ι->ScopeRights{
+		if( executer.Value==UserPK::System )
+			return { ERights::All, true };
+		rl _{ Mutex };
+		auto resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, criteria );
+		if( !resourcePK && criteria.size() )
+			resourcePK = FindActiveResourcePKLocked( schemaName, resourceName, {} );//an unmapped criteria inherits the slug's root, as Check.
+		if( !resourcePK )
+			return { ERights::All, false };
+		let configured = ConfiguredRightsLocked( executer, *resourcePK );
+		return { configured ? configured->Effective() : ERights::None, true };
+	}
 	α Authorize::UserName( UserPK userPK )ι->string{
 		rl _{ Mutex };
 		if( auto user = Users.find(userPK); user!=Users.end() && user->second.Name.size() ) //an empty name - a userCreated event that carried none - would leave a history edit unattributed.

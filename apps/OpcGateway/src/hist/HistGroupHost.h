@@ -9,6 +9,18 @@
 namespace Jde::Opc::Gateway{
 	//A member the library already holds, as the group's rows had it at start:  its attributes as the last connect left them.
 	struct HistMember final{ HistGroupNodePK Index; ExNodeId Node; Opc::Hist::Thresholds Thresholds; HistNodeAttributes Attributes; };
+	struct HistGroupHost;
+	//What hears a group's membership change, told where the host's state changes and after it has it, off its locks:  the
+	//endpoint's served nodes (GatewayServer, spec *Address space*), which post every call to a thread of their own.
+	struct IHistListener{
+		virtual ~IHistListener()=default;
+		β GroupLoaded( const HistGroupHost& host )ι->void=0;//HistHost::Load:  at a restore, and a create, with no members yet.
+		β GroupRemoved( HistGroupPK group )ι->void=0;//HistHost::Remove:  a delete or a purge.
+		β NodeJoined( const HistGroupHost& host, HistMember member )ι->void=0;
+		β NodeLeft( HistGroupPK group, HistGroupNodePK index )ι->void=0;
+		β NodeDescribed( HistGroupPK group, HistGroupNodePK index, HistNodeAttributes attributes )ι->void=0;
+		β ThresholdsChanged( HistGroupPK group, vector<std::pair<HistGroupNodePK,Opc::Hist::Thresholds>> thresholds )ι->void=0;
+	};
 	//What a member's server says of its node, read once its item is made (HistGroupHost::Describe):  whether its DataType is an
 	//enumeration, none until the server has said, and its InstrumentRange and EURange properties, each none where it has
 	//none, once Ranged.
@@ -57,6 +69,8 @@ namespace Jde::Opc::Gateway{
 		//A member's node by the server's index, once its connection gave it:  how a node page keys its variables.  None before that.
 		α ServerId( HistGroupNodePK index )Ι->optional<NodeId>;
 		α Members()Ι->vector<std::pair<HistGroupNodePK,ExNodeId>>;
+		//Each member as the endpoint serves it (GatewayServer::GroupLoaded):  its node, resolved thresholds and attributes, in one look.
+		α HistMembers()Ι->vector<HistMember>;
 		//The member a read or an edit names:  by URI, or by the index the server had for it when the collector last read the
 		//server's namespaces.  None for a node that isn't a member, or one by an index the collector hasn't seen.
 		α Index( const ExNodeId& node )Ι->optional<HistGroupNodePK>;

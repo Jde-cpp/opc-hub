@@ -727,6 +727,7 @@ namespace Jde::Opc::Hist{
 			_indexes.clear();
 			ended = std::exchange( _subscribers, {} );//nothing more is stored for them to hear of.
 			_closed = true;
+			_pending = true;
 			effects.Pushed = { .Flush=true, .Trim=(over || effects.Pushed.Trim) && _failing };//the flush asked for here takes the rest, if it can write.
 		}
 		Finish( move(effects) );
