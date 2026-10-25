@@ -17,9 +17,8 @@ namespace Jde::Chrono{
 	Ξ Epoch()ι->TimePoint{ return Clock::from_time_t(0); }
 	Φ LocalTimeMilli( TimePoint time, SRCE )ε->string;
 	Ξ LocalYMD( TimePoint time, const time_zone& tz )ι->year_month_day{ return year_month_day{floor<days>(tz.to_local(time))}; };
-	Φ ToDuration( string&& iso, SRCE )ε->Duration;
-	Ξ ToDuration( sv iso, SRCE )ε->Duration{ return ToDuration(string{iso}, sl); }
-	Φ TryToDuration( string&& iso, ELogLevel level=ELogLevel::Debug, SRCE )ε->optional<Duration>;
+	Φ ToDuration( sv iso, SRCE )ε->Duration;//ISO 8601, as ToString writes it:  anything else throws.
+	Φ TryToDuration( sv iso, ELogLevel level=ELogLevel::Debug, SRCE )ε->optional<Duration>;
 	Φ ToTimePoint( string iso, SRCE )ε->TimePoint;
 	Φ ToTimePoint( uint16_t year, uint8 month, uint8 day, uint8 hour=0, uint8 minute=0, uint8 second=0, Duration subseconds=Duration::zero(), SRCE )ε->TimePoint;
 	Φ ToTimeZone( sv name, const std::chrono::time_zone& dflt, ELogLevel level=ELogLevel::Debug, SRCE )ι->const std::chrono::time_zone&;
@@ -59,6 +58,8 @@ namespace Jde{
 		//seconds-or-finer only: for coarser T (minutes, hours…) `d %= years{1}` in the output() macro is ill-formed,
 		//since years/months aren't an exact multiple of T's period.  Every caller passes Duration/steady_clock ticks.
 		static_assert( T::period::num==1, "Chrono::ToString requires a seconds-or-finer duration (T::period::num==1)." );
+		if( d==T::zero() )
+			return "PT0S";//ISO's zero:  a bare P names no component, and ToDuration refuses it.
 		std::ostringstream os;
 		os << 'P';
 		//date units use the exact std::chrono period ratios so ToDuration is the inverse - a month is ~730.5h, not 720h.

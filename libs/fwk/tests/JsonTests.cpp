@@ -106,4 +106,22 @@ namespace Jde::Tests{
 		EXPECT_FALSE( Json::FindBool(v, "/a/b").has_value() ) << "wrong kind is nullopt, not a throw";
 		EXPECT_EQ( Json::FindObject(v, "/a"), &v.as_object().at("a").as_object() );
 	}
+
+	//The jobject overload is the tolerant one:  every path a product reads through a jobject is spelled without the leading
+	//'/', which the jvalue overload, Settings', refuses.  The pointer check comes first, so the spelling one can't pass on two
+	//nullptrs.
+	TEST_F( JsonTests, FindValueOnAnObjectToleratesBothSpellings ){
+		jobject o{ {"a", jobject{{"b", 7}}}, {"k", 1} };
+		EXPECT_EQ( Json::FindValue(o, "a/b"), &o.at("a").as_object().at("b") ) << "the legacy unrooted spelling resolves";
+		EXPECT_EQ( Json::FindValue(o, "/a/b"), Json::FindValue(o, "a/b") ) << "the rooted spelling strips its '/'";
+		EXPECT_EQ( Json::FindValue(o, "k"), &o.at("k") ) << "a bare key";
+		EXPECT_EQ( Json::FindValue(o, "missing/b"), nullptr );
+		EXPECT_EQ( Json::FindValue(o, "a/missing"), nullptr );
+		EXPECT_EQ( Json::FindValue(o, "a/"), nullptr ) << "a trailing slash addresses the empty key, not the parent";
+		EXPECT_EQ( Json::FindValue(o, ""), nullptr ) << "unlike the jvalue overload, for which an empty path is the value itself";
+		EXPECT_EQ( Json::FindNumberPath<int>(o, "a/b"), 7 ) << "what AclAwait's permissionRight/id goes through";
+		const jvalue v = o;
+		EXPECT_NE( Json::FindValue(v, "/a/b"), nullptr );
+		EXPECT_EQ( Json::FindValue(v, "a/b"), nullptr ) << "the jvalue overload stays strict - SettingsTests.UnrootedPathResolvesToNothing";
+	}
 }
