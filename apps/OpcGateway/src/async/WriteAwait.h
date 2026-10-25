@@ -7,6 +7,8 @@ namespace Jde::Opc::Gateway{
 	struct WriteResponse : Owned<UA_WriteResponse, UA_TYPES_WRITERESPONSE>{
 		WriteResponse( UA_WriteResponse&& x )ι:Owned{ move(x) }{}
 	};
+	//One node's Value written as the DataValue `value` has it:  its status and source timestamp go with it where set, which the server
+	//gates by the node's StatusWrite and TimestampWrite bits (servers spec *Writes*);  a Value made from json carries the value alone.
 	struct WriteAwait final : UAAwait<WriteResponse>{
 		WriteAwait( NodeId nodeId, Value&& value, sp<UAClient> c, SRCE )ι:UAAwait{ move(c), sl }, _nodeId{move(nodeId)}, _value{move(value)}{}
 		α Suspend()ι->void override;

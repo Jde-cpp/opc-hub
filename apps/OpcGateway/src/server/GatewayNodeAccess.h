@@ -8,8 +8,9 @@ namespace Jde::Opc::Gateway{
 	//The endpoint's INodeAccess (docs/servers/spec.md *Sessions and rights*, plan Phase 3a):  a served node's rights are its group's
 	//access row, keyed by the group's guid as HistHost::Gate resolves it - the row of its own when there is one, else the hist_groups
 	//table's, neither active open - through Authorize::ScopedRights, one lookup under the acl's lock, never Test, which throws, since
-	//UAAccess asks under open62541's service lock (spec *Threading*).  Edit rights, a history edit's, from the same lookup, as
-	//CheckEnforced has them:  a grant on an enforced row, None where nothing enforces the group (#237).  The mirror's map, node to
+	//UAAccess asks under open62541's service lock (spec *Threading*).  Edit rights, a history edit's and a write's, which goes to the
+	//source under the collector's credential (ServedWrites), from the same lookup, as CheckEnforced has them:  a grant on an enforced
+	//row, None where nothing enforces the group (#237).  The mirror's map, node to
 	//group guid, is written by GatewayServer as it adds and removes nodes, under this lock, the innermost:  a served variable and every
 	//node of its HA Configuration.  Every other node - the connection folders, `_Connection` and its variables, the path folders - is
 	//open to Read and browse by any session;  a served node a session may not read is not browsable to it:  open62541 refuses a
@@ -24,7 +25,7 @@ namespace Jde::Opc::Gateway{
 		α NodeRights( const NodeId& node, UserPK executer )ι->Access::ERights override;
 		α EditRights( const NodeId& node, UserPK executer )ι->Access::ERights override;
 		α MayBrowse( const NodeId& node, UserPK executer )ι->bool override;
-		α UserRights( const NodeId& node, UserPK executer )ι->Opc::Server::EAccess override;//NodeRights in access-level bits, HistoryWrite EditRights', no Write until Phase 5.
+		α UserRights( const NodeId& node, UserPK executer )ι->Opc::Server::EAccess override;//NodeRights in access-level bits, Write and HistoryWrite EditRights'.
 	private:
 		inline static const string Schema{ "gateway" }, Resource{ "histGroups" };//strings, which the acl's lookup takes:  none built per call.
 		α Rights( str guid, UserPK executer )Ι->Access::Authorize::ScopeRights;

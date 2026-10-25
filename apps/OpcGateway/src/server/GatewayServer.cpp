@@ -3,6 +3,7 @@
 #include <jde/fwk/settings.h>
 #include <jde/fwk/co/Await.h>
 #include <jde/opc/UAException.h>
+#include <jde/opc/server/UAAccess.h>
 #include <jde/opc/server/UAServer.h>
 #include <jde/opc/server/HAConfiguration.h>
 #include <jde/opc/uatypes/DateTime.h>
@@ -12,6 +13,7 @@
 #include "GatewayHistoryHost.h"
 #include "GatewayNodeAccess.h"
 #include "ServedValues.h"
+#include "ServedWrites.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
@@ -55,6 +57,8 @@ namespace Jde::Opc::Gateway{
 		y.Limit.MinSamplingInterval = Settings::FindDuration( key("limits/minSamplingInterval") );
 		y.Limit.MaxAsyncOperations = Settings::FindNumber<uint>( key("limits/maxAsyncOperations") );
 		y.ReadEditTimeout( key("editTimeout") );
+		y.WriteTimeout = 10s;//how long a client's Write holds for the source's answer (spec *Writes*).
+		y.ReadWriteTimeout( key("writeTimeout") );
 		return y;
 	}
 
@@ -111,6 +115,8 @@ namespace Jde::Opc::Gateway{
 			server->_access = ms<GatewayNodeAccess>( AppClient()->Acl() );
 			//The historian as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
 			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, ms<GatewayHistoryHost>(HistHost::Instance().Historian(), server->_values) );
+			server->_ua->OnAsyncCancel( [writes=server->_writes]( const void* value ){ writes->Cancelled( value ); } );//a Write timed out, or the shutdown's:  its answer isn't set.
+			server->_writes->Start( *server->_ua->Ptr() );//its answers set on the server's own thread.
 			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
 			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
 			for( auto& row : rows ){
@@ -158,6 +164,7 @@ namespace Jde::Opc::Gateway{
 	}
 	GatewayServer::GatewayServer( UASettings settings )ι:
 		_values{ ms<ServedValues>() },
+		_writes{ ms<ServedWrites>( _values ) },
 		_settings{ move(settings) }
 	{}
 	GatewayServer::~GatewayServer(){ _work.reset(); }
@@ -171,6 +178,7 @@ namespace Jde::Opc::Gateway{
 			return;
 		UAClient::SetConnectionListener( nullptr );
 		HistHost::Instance().Listen( {} );
+		server->_writes->Stop();//a forward still out answers after this, when the server may be gone:  logged, never set.
 		up<UAServer> ua;
 		{
 			lg _{ server->_mutex };
@@ -496,7 +504,8 @@ namespace Jde::Opc::Gateway{
 		return UA_NODEID_NUMERIC( 0, UA_NS0ID_BASEDATATYPE );
 	}
 	Ω name( const HistNodeAttributes& attributes, const NodeId& id )ι->string{ return attributes.Path && attributes.Path->size() ? attributes.Path->back().Name : identifier( id ); }
-	//The source's, with the history bits:  the history is the gateway's own, whatever the source lets of its.  Write is the source's, kept for Phase 5.
+	//The source's, with the history bits:  the history is the gateway's own, whatever the source lets of its.  Write, the status and
+	//timestamp bits are the source's, which a write goes to (ServedWrites):  a variable read-only there is read-only here.
 	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE; }
 	//Mapped before it's added and unmapped only once it's gone (Unserve), so no session meets the node outside its group's rights;  a
 	//throw part way undoes what was added.  Its value is its member's in the mirror's cache, kept there from the first, so the first
@@ -558,9 +567,9 @@ namespace Jde::Opc::Gateway{
 			variable.accessLevel = accessLevel( attributes ) & ~UA_ACCESSLEVELMASK_READ;
 			variable.historizing = true;//every served node is a group member.
 			variable.minimumSamplingInterval = std::chrono::duration<double,std::milli>{ member.Thresholds.MinTimeInterval }.count();//the collector's rate is the ceiling (spec *Live values*).
-			UAε( UA_Server_addVariableNode(&ua, id, parent, reference(underVariable), browseName, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), variable, _values.get(), nullptr) );
+			UAε( UA_Server_addVariableNode(&ua, id, parent, reference(underVariable), browseName, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), variable, this, nullptr) );
 			added = true;
-			UAε( UA_Server_setVariableNode_callbackValueSource(&ua, id, ServedValues::Source()) );//the context above is what its read finds the cache by.
+			UAε( UA_Server_setVariableNode_callbackValueSource(&ua, id, Source()) );//the context above is what its callbacks find the cache and the writes by.
 			UAε( UA_Server_writeAccessLevel(&ua, id, accessLevel(attributes)) );
 			configuration = Opc::Server::HAConfiguration::Add( ua, id );
 			Opc::Server::HAConfiguration::Publish( ua, configuration, member.Thresholds );
@@ -694,6 +703,23 @@ namespace Jde::Opc::Gateway{
 				WARN( "Could not remove the empty folder '{}/{}':  {}", slug, parents.back().Name, UAException::Message(sc) );
 		}
 	}
+	α GatewayServer::Read( UA_Server*, const UA_NodeId*, void*, const UA_NodeId* nodeId, void* nodeContext, UA_Boolean, const UA_NumericRange* range, UA_DataValue* value )ι->UA_StatusCode{
+		if( !nodeContext || !nodeId || !value )
+			return UA_STATUSCODE_BADINTERNALERROR;
+		return static_cast<GatewayServer*>( nodeContext )->_values->Read( *nodeId, range, *value );
+	}
+	//open62541 has gated the write by the node's AccessLevel and the session's UserAccessLevel (GatewayNodeAccess::UserRights) before
+	//this;  the session's hub user is the audit line's.
+	α GatewayServer::Written( UA_Server*, const UA_NodeId*, void* sessionContext, const UA_NodeId* nodeId, void* nodeContext, const UA_NumericRange* range, const UA_DataValue* value )ι->UA_StatusCode{
+		if( !nodeContext || !nodeId || !value )
+			return UA_STATUSCODE_BADINTERNALERROR;
+		let session = static_cast<const Opc::Server::UAAccess::SessionContext*>( sessionContext );
+		if( !session )
+			return UA_STATUSCODE_BADUSERACCESSDENIED;
+		return static_cast<GatewayServer*>( nodeContext )->_writes->Write( *nodeId, session->UserPK, range, *value );
+	}
+	α GatewayServer::Source()ι->UA_CallbackValueSource{ return UA_CallbackValueSource{ .read=Read, .write=Written }; }
+
 	α GatewayServer::Rewrite( Served& served, const HistNodeAttributes& attributes )ι->void{
 		auto& ua = *_ua->Ptr();
 		let& id = served.Id;

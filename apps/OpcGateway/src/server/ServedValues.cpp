@@ -44,11 +44,27 @@ namespace Jde::Opc::Gateway{
 	}
 	α ServedValues::Add( NodeId node, HistGroupPK group, HistGroupNodePK index, ServerCnnctnNK slug, sp<Opc::Hist::Group> history )ι->bool{
 		ul _{ _mutex };
-		return _nodes.try_emplace( move(node), Served{group, index, move(slug), move(history)} ).second;
+		return _nodes.try_emplace( move(node), Variable{group, index, move(slug), move(history)} ).second;
 	}
 	α ServedValues::Remove( const NodeId& node )ι->void{
 		ul _{ _mutex };
 		_nodes.erase( node );
+	}
+	α ServedValues::Served( const UA_NodeId& node, UA_Variant* value )ι->optional<Serving>{
+		optional<Serving> y;
+		bool warned{};
+		{
+			rl _{ _mutex };
+			let p = _nodes.find( node );
+			if( p==_nodes.end() )
+				return nullopt;
+			let& served = p->second;
+			y = Serving{ served.Group, served.Index, served.Slug, value ? Map(SlugIndexes(served.Slug), Namespaces(served.Group), *value, true) : 0 };
+			warned = served.Refused;
+		}
+		if( !warned )
+			Warn( node, y->Unmapped, true );
+		return y;
 	}
 	α ServedValues::History( const UA_NodeId& node )Ι->optional<Opc::Server::IHistoryHost::Node>{
 		rl _{ _mutex };
@@ -165,20 +181,8 @@ namespace Jde::Opc::Gateway{
 			Warn( node, unmapped );
 	}
 	α ServedValues::Unmap( const UA_NodeId& node, UA_Variant& value )ι->uint{
-		uint unmapped{};
-		bool warned{};
-		{
-			rl _{ _mutex };
-			auto p = _nodes.find( node );
-			if( p==_nodes.end() )
-				return 0;
-			let& served = p->second;
-			unmapped = Map( SlugIndexes(served.Slug), Namespaces(served.Group), value, true );
-			warned = served.Refused;
-		}
-		if( !warned )
-			Warn( node, unmapped, true );
-		return unmapped;
+		let served = Served( node, &value );
+		return served ? served->Unmapped : 0;
 	}
 	α ServedValues::Namespaces( HistGroupPK group )Ι->const vector<string>*{
 		let p = _groups.find( group );
@@ -346,10 +350,4 @@ namespace Jde::Opc::Gateway{
 		return unmapped;
 	}
 
-	Ω read( UA_Server*, const UA_NodeId*, void*, const UA_NodeId* nodeId, void* nodeContext, UA_Boolean, const UA_NumericRange* range, UA_DataValue* value )ι->UA_StatusCode{
-		if( !nodeContext || !nodeId || !value )
-			return UA_STATUSCODE_BADINTERNALERROR;
-		return static_cast<ServedValues*>( nodeContext )->Read( *nodeId, range, *value );
-	}
-	α ServedValues::Source()ι->UA_CallbackValueSource{ return UA_CallbackValueSource{ .read=read, .write=nullptr }; }
 }

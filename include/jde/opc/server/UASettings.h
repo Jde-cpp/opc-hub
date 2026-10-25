@@ -28,6 +28,11 @@ namespace Jde::Opc::Server{
 		//given up.  The historian itself is the host's (IHistoryHost).
 		Duration EditTimeout{ 5s };
 		α ReadEditTimeout( sv path )ε->void;//EditTimeout from the host's `path`, absent its default;  throws for one that isn't positive.
+		//How long a client's Write holds for a callback value source's answer, open62541's asyncOperationTimeout (servers spec
+		//*Writes*):  past it the client is answered Bad_Timeout and the operation is cancelled, so an answer after finds nothing to set.
+		//Absent keeps open62541's own;  the gateway reads /gateway/server/writeTimeout, the OpcServer, whose values are stored, sets none.
+		optional<Duration> WriteTimeout;
+		α ReadWriteTimeout( sv path )ε->void;//WriteTimeout from the host's `path`, absent left as it is;  throws for one that isn't positive.
 		//open62541's own limits (spec *Limits*):  each absent keeps its default, as the OpcServer always has.  0 is unlimited
 		//where open62541 reads it so (maxMonitoredItems, maxAsyncOperations).
 		struct Limits final{

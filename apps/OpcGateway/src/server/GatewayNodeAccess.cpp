@@ -42,10 +42,9 @@ namespace Jde::Opc::Gateway{
 		if( !guid )
 			return EAccess::Read;
 		let rights = Rights( *guid, executer );//once:  the mask and its enforcement from the same look, so a row enforced meanwhile can't pair them up wrong.
-		constexpr uint8 historyWrite{ underlying(EAccess::HistoryWrite) };//an edit's bit, as OpcAuthorize::UserRights has it.
-		//Never granted until Phase 5 forwards a write to the source (then an edit's bit, as HistoryWrite):  until then the variable would
-		//store it as the served value.  The AccessLevel keeps the source's.
-		constexpr uint8 write{ underlying(EAccess::Write) };
-		return (EAccess)( (underlying(Opc::Server::ToAccess(rights.Rights)) & ~(historyWrite | write)) | (underlying(Opc::Server::ToAccess(edits(rights))) & historyWrite) );
+		//An edit's bits, from the enforced mask alone:  HistoryWrite, as OpcAuthorize::UserRights has it, and Write, since a write goes
+		//to the source under the collector's credential (ServedWrites, #237).  The AccessLevel keeps the source's.
+		constexpr uint8 edit{ underlying(EAccess::HistoryWrite | EAccess::Write) };
+		return (EAccess)( (underlying(Opc::Server::ToAccess(rights.Rights)) & ~edit) | (underlying(Opc::Server::ToAccess(edits(rights))) & edit) );
 	}
 }
