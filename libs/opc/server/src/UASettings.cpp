@@ -33,4 +33,10 @@ namespace Jde::Opc::Server{
 		if( let uri = Settings::FindString(key("userTokenPolicyUri")); uri )
 			UserTokenPolicyUri = *uri;
 	}
+	α UASettings::ReadEditTimeout( sv path )ε->void{
+		if( let timeout = Settings::FindDuration(path); timeout ){
+			THROW_IF( *timeout<=Duration::zero(), "{} must be positive, not {} ms.", path, duration_cast<milliseconds>(*timeout).count() );
+			EditTimeout = *timeout;
+		}
+	}
 }

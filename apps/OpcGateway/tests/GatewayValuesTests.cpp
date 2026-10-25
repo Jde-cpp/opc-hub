@@ -195,7 +195,7 @@ namespace Jde::Opc::Gateway::Tests{
 		Value before{ UA_STATUSCODE_BADWAITINGFORINITIALDATA };
 		ASSERT_TRUE( WaitUntil([&]{ before = client->ReadValue( *node ); return before.status==UA_STATUSCODE_GOOD; }) ) << "the item's first value";
 		auto& values = *GatewayServer::Instance()->Values();
-		let readd = [&]{ values.Remove( *node ); return values.Add( *node, group.Id, group.Index, OpcServerSlug ); };
+		let readd = [&]{ values.Remove( *node ); return values.Add( *node, group.Id, group.Index, OpcServerSlug, group.Host->Group() ); };
 		ASSERT_TRUE( readd() );
 		let again = client->ReadValue( *node );
 		EXPECT_EQ( again.status, UA_STATUSCODE_GOOD );

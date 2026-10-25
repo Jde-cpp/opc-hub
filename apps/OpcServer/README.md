@@ -57,7 +57,7 @@ values moving.  Without it every value in the shipped address space is static.
     history.
   - Reading a node's history takes Read on the node.  Editing it takes Update or Delete on the node, granted on an
     enforced resource.
-  - The aggregates served are the ones the `AggregateFunctions` folder lists.  `Median` (`ns=1;s=Median`) is ours; the
+  - The aggregates served are the ones the `AggregateFunctions` folder lists.  `Median` (`ns=1;s=_Median`) is ours; the
     rest are Part 13's.
   - The pumps nodeset marks six variables.  They cover all four deviation formats, plus one variable with no HA
     Configuration and one with no format.

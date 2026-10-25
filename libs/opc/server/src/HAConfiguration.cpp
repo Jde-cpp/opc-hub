@@ -54,6 +54,13 @@ namespace Jde::Opc::Server{
 		Publish( ua, *aggregate, "PercentDataGood", UA_TYPES[UA_TYPES_BYTE], &good );
 		Publish( ua, *aggregate, "UseSlopedExtrapolation", UA_TYPES[UA_TYPES_BOOLEAN], &sloped );
 	}
+	α HAConfiguration::PublishArchiveStarts( UA_Server& ua, const UA_NodeId& configuration )ε->vector<NodeId>{
+		const UA_UtcTime none{};
+		vector<NodeId> y;
+		for( let property : {"StartOfArchive"sv, "StartOfOnlineArchive"sv} )
+			y.push_back( Publish(ua, configuration, property, UA_TYPES[UA_TYPES_UTCTIME], &none) );
+		return y;
+	}
 	α HAConfiguration::Add( UA_Server& ua, const UA_NodeId& variable )ε->NodeId{
 		UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
 		attributes.displayName = UA_LocalizedText{ {}, {BrowseName.size(), (UA_Byte*)BrowseName.data()} };

@@ -26,7 +26,9 @@ namespace Jde::Opc::Gateway{
 	//strand or under a host's lock (spec *Threading*).  Each variable's value is a callback source over ServedValues, the mirror's
 	//cache (spec *Live values*):  the hosts' tap stores every value and loss there as it comes, under the host's lock and the
 	//mirror's alone, and the read callbacks copy it out remapped into the endpoint's namespaces (spec *Namespaces*), which every URI
-	//of a connection's NamespaceArray has once its collector has read it.  Their history is Phase 4.
+	//of a connection's NamespaceArray has once its collector has read it.  Their history is the library's UAHistory over their groups
+	//through GatewayHistoryHost (spec *History*):  HistoryRead in its four modes and HistoryUpdate's edits, as the OpcServer serves its
+	//one group, the capabilities, the aggregates and the archive starts from the library, each page remapped as a live value is.
 	struct GatewayServer final : std::enable_shared_from_this<GatewayServer>, IHistListener{
 		GatewayServer( Opc::Server::UASettings settings )ι;
 		~GatewayServer();//lets the thread go, for one Stop never joined:  a Start that threw before it ran.
@@ -75,7 +77,7 @@ namespace Jde::Opc::Gateway{
 		α ValueChanged( HistGroupPK group, HistGroupNodePK index, const UA_DataValue& value )ι->void override;
 		α NodesLost( HistGroupPK group, const vector<HistGroupNodePK>& indexes )ι->void override;
 		α NamespacesRead( HistGroupPK group, const ServerCnnctnNK& slug, const vector<string>& uris )ι->void override;
-		α Values()Ι->const sp<ServedValues>&{ return _values; }//the mirror's cache:  Phase 4's history host reads a node's member and the remap through it.
+		α Values()Ι->const sp<ServedValues>&{ return _values; }//the mirror's cache:  the tests' way in (GatewayValuesTests).
 	private:
 		struct Connection final{
 			ServerCnnctnPK Id;
@@ -89,9 +91,11 @@ namespace Jde::Opc::Gateway{
 		//A served node:  the member as it is served, its variable's id - the source's identifier in the mapped namespace - its HA
 		//Configuration's, and every node of that configuration, which its group's rights cover as the variable's.
 		struct Served final{ HistMember Member; NodeId Id; NodeId Configuration; vector<NodeId> Configured; };
-		struct Group final{ HistGroupPK Id; string Guid; ServerCnnctnNK Slug; flat_map<HistGroupNodePK,Served> Nodes; };
-		//`f` on the endpoint's thread under _mutex with _ua set.  Until Start has built the folders it is held, and Start runs the held ones
-		//in order before it opens the endpoint:  nothing posted from the listener's install on is lost or applied out of order.
+		//A group's nodes, with the library's group that keeps their history, the host's, which the history host answers a read with.
+		struct Group final{ HistGroupPK Id; string Guid; ServerCnnctnNK Slug; sp<Opc::Hist::Group> History; flat_map<HistGroupNodePK,Served> Nodes; };
+		//`f` on the endpoint's thread under _mutex with _ua set, then the archive starts of the nodes it served (_starts).  Until Start
+		//has built the folders it is held, and Start runs the held ones in order before it opens the endpoint:  nothing posted from the
+		//listener's install on is lost or applied out of order.
 		α Serial( absl::AnyInvocable<void()> f )ι->void;
 		α OnChange( const ConnectionChange& change )ι->void;//the registry's listener.
 		α Apply( const ConnectionChange& change )ι->void;//Serial's.
@@ -100,8 +104,9 @@ namespace Jde::Opc::Gateway{
 		α Write( const ServerCnnctnNK& slug, sv name, const void* scalar, const UA_DataType& type )ι->void;
 		α WriteAll( const ServerCnnctnNK& slug, const Connection& connection )ι->void;
 		α Find( const DB::Key& key )ι->flat_map<ServerCnnctnNK,Connection>::iterator;//_mutex held
-		//The served nodes, _mutex held, _ua set.  Serve:  every member not served yet.  Namespace:  the index of NamespaceUri(slug, remote), added when new.
-		α Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, vector<HistMember> members )ι->void;
+		//The served nodes, _mutex held, _ua set.  Serve:  every member not served yet, and the nodes a kept entry holds moved to
+		//`history`, a restored group's.  Namespace:  the index of NamespaceUri(slug, remote), added when new.
+		α Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, sp<Opc::Hist::Group> history, vector<HistMember> members )ι->void;
 		α Namespace( const ServerCnnctnNK& slug, sv remote )ι->UA_UInt16;
 		α Register( const ServerCnnctnNK& slug, const vector<string>& uris )ι->void;//a namespace for each URI of a connection's NamespaceArray.
 		α Mapped( const ServerCnnctnNK& slug, const ExNodeId& source )ι->NodeId;//the source's identifier in its namespace here.
@@ -129,6 +134,9 @@ namespace Jde::Opc::Gateway{
 		flat_map<ServerCnnctnNK,absl::flat_hash_map<string,UA_UInt16>> _namespaces;//Namespace's, by slug and remote URI:  open62541 never drops one.
 		sp<GatewayNodeAccess> _access;//node to group guid, which the rights callbacks read.
 		vector<absl::AnyInvocable<void()>> _held;//Serial's before Start has the folders;  under _mutex.
+		//AddNode's, written once at the end of the Serial op that served them, so a group's directory is walked once, not once a
+		//member;  Start's own write covers those before it.  Under _mutex.
+		vector<Opc::Server::IHistoryHost::ArchiveStart> _starts;
 		//Serial's queue, run in order on a thread of the endpoint's own, not the executor's:  a UA_Server_* call waits for open62541's
 		//service lock, which ActivateSession holds while the hub's session lookup waits for an executor thread (UAAccess's issued).
 		//Last:  the thread is joined before what it runs goes.

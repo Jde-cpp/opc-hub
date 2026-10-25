@@ -7,8 +7,8 @@ namespace Jde::Opc::Server{
 	//which group keeps each node's history, which properties carry the archive's start, and whether open62541's setValue
 	//stores.  UAHistory keeps no group or index map of its own and asks these under open62541's service lock, but for the
 	//archive starts, which the midnight timer asks on the executor:  a lookup each, never a wait or a throw.  The
-	//OpcServer's is OpcServerHistoryHost, one group of what its nodesets mark Historizing;  the gateway's answers from its
-	//served nodes' groups, and its collector stores, not setValue (plan, Phase 4).
+	//OpcServer's is OpcServerHistoryHost, one group of what its nodesets mark Historizing;  the gateway's is
+	//GatewayHistoryHost, one group per served node, whose collector stores, not setValue (servers spec *History*).
 	struct IHistoryHost{
 		virtual ~IHistoryHost()=default;
 		//The historian whose groups the server serves, null for a server that keeps no history:  then no backend is
@@ -25,5 +25,13 @@ namespace Jde::Opc::Server{
 		//group whose earliest day it takes:  written at UAHistory::Start and after each midnight.
 		struct ArchiveStart final{ NodeId Property; sp<Hist::Group> Group; };
 		β ArchiveStarts()Ι->vector<ArchiveStart> = 0;
+		//A page's values from the namespace indices their source gave them to the server's, the page in one call, and a
+		//HistoryUpdate's value back again, so it is stored as the source's would be:  for a host whose groups hold a
+		//source's values - the gateway's, by the table as it is at read time, since the library stores no URI inside a
+		//value (servers spec *Namespaces*, *History*).  The OpcServer's history is of its own address space, so both leave
+		//the value as it is.  Unmap returns how many indices it couldn't place:  a value UAHistory refuses with
+		//Bad_NodeIdInvalid rather than store under the server's index.
+		β Remap( const UA_NodeId& /*node*/, std::span<UA_DataValue> /*values*/ )ι->void{}
+		β Unmap( const UA_NodeId& /*node*/, UA_Variant& /*value*/ )ι->uint{ return 0; }
 	};
 }

@@ -9,6 +9,7 @@
 #include <jde/opc/uatypes/UAString.h>
 #include "../GatewayAppClient.h"
 #include "../hist/HistHost.h"
+#include "GatewayHistoryHost.h"
 #include "GatewayNodeAccess.h"
 #include "ServedValues.h"
 
@@ -53,6 +54,7 @@ namespace Jde::Opc::Gateway{
 		y.Limit.SessionTimeout = Settings::FindDuration( key("limits/sessionTimeout") );
 		y.Limit.MinSamplingInterval = Settings::FindDuration( key("limits/minSamplingInterval") );
 		y.Limit.MaxAsyncOperations = Settings::FindNumber<uint>( key("limits/maxAsyncOperations") );
+		y.ReadEditTimeout( key("editTimeout") );
 		return y;
 	}
 
@@ -107,7 +109,8 @@ namespace Jde::Opc::Gateway{
 			std::ranges::sort( hosts, []( let& a, let& b ){ return a->Slug()!=b->Slug() ? a->Slug()<b->Slug() : a->Id()<b->Id(); } );//the namespaces in slug order (spec *Namespaces*).
 			lg _{ server->_mutex };
 			server->_access = ms<GatewayNodeAccess>( AppClient()->Acl() );
-			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, nullptr );
+			//The historian as it is now:  without one the endpoint keeps no history, as the gateway doesn't.
+			server->_ua = mu<UAServer>( server->_settings, AppClient(), server->_access, ms<GatewayHistoryHost>(HistHost::Instance().Historian(), server->_values) );
 			//The registry as it is now:  a change before this is in it, and one after is held or waits on _mutex.
 			let errors = UAClient::LastFailures();//as a live Failed words it, and still there after a recovery.
 			for( auto& row : rows ){
@@ -122,7 +125,7 @@ namespace Jde::Opc::Gateway{
 				auto members = host->HistMembers();
 				for( let& member : members )//a restart's, of hosts loaded before it listened;  else GroupLoaded joined them.
 					server->_values->Join( host->Id(), member.Index );
-				server->Serve( host->Id(), host->Guid(), host->Slug(), move(members) );
+				server->Serve( host->Id(), host->Guid(), host->Slug(), host->Group(), move(members) );
 			}
 			//Each group's array as its collector last read it:  one read before a restart's Listen told no one, and a stable connection
 			//reads it again only on a return.  Seeded only where a read hasn't set it, which is the later.
@@ -134,6 +137,10 @@ namespace Jde::Opc::Gateway{
 			for( auto& f : server->_held )
 				f();
 			server->_held.clear();
+			//The nodes are historized:  the aggregates folder and every archive start, then the midnight timer (UAHistory::Start).
+			if( auto& history = server->_ua->History(); history.Enabled() )
+				history.Start( *server->_ua->Ptr() );
+			server->_starts.clear();//Start wrote every node's.
 			server->_ua->Run();
 		}
 		catch( std::exception& ){
@@ -244,8 +251,11 @@ namespace Jde::Opc::Gateway{
 	α GatewayServer::Serial( absl::AnyInvocable<void()> f )ι->void{
 		boost::asio::post( _context, [self=shared_from_this(), f=std::move(f)]() mutable {
 			lg _{ self->_mutex };
-			if( self->_ua )
+			if( self->_ua ){
 				f();
+				if( self->_starts.size() )
+					self->_ua->History().Publish( std::exchange(self->_starts, {}) );
+			}
 			else
 				self->_held.push_back( std::move(f) );
 		} );
@@ -317,7 +327,7 @@ namespace Jde::Opc::Gateway{
 		auto nodes = host.HistMembers();
 		for( let& node : nodes )
 			_values->Join( host.Id(), node.Index );
-		Serial( [this, id=host.Id(), guid=host.Guid(), slug=host.Slug(), nodes=move(nodes)]() mutable { Serve( id, move(guid), move(slug), move(nodes) ); } );
+		Serial( [this, id=host.Id(), guid=host.Guid(), slug=host.Slug(), history=host.Group(), nodes=move(nodes)]() mutable { Serve( id, move(guid), move(slug), move(history), move(nodes) ); } );
 	}
 	α GatewayServer::GroupRemoved( HistGroupPK group )ι->void{
 		_values->Forget( group );
@@ -333,7 +343,7 @@ namespace Jde::Opc::Gateway{
 		Serial( [this, host=host.shared_from_this(), member=move(member)]() mutable {
 			if( auto attributes = host->Attributes(member.Index) )
 				member.Attributes = move( *attributes );
-			Serve( host->Id(), host->Guid(), host->Slug(), {move(member)} );
+			Serve( host->Id(), host->Guid(), host->Slug(), host->Group(), {move(member)} );
 		} );
 	}
 	α GatewayServer::NodeLeft( HistGroupPK group, HistGroupNodePK index )ι->void{
@@ -409,8 +419,14 @@ namespace Jde::Opc::Gateway{
 		} );
 	}
 
-	α GatewayServer::Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, vector<HistMember> members )ι->void{
-		auto& group = _groups.try_emplace( id, Group{id, move(guid), move(slug), {}} ).first->second;
+	α GatewayServer::Serve( HistGroupPK id, string guid, ServerCnnctnNK slug, sp<Opc::Hist::Group> history, vector<HistMember> members )ι->void{
+		auto [p, added] = _groups.try_emplace( id, Group{id, move(guid), move(slug), history, {}} );
+		auto& group = p->second;
+		//Restored while a node its removal couldn't delete kept the entry:  the historian's new group keeps their history from here on.
+		if( !added && group.History!=history ){
+			group.History = move( history );
+			std::ranges::move( _values->Regroup(id, group.History), std::back_inserter(_starts) );
+		}
 		for( auto& member : members ){
 			if( !group.Nodes.contains(member.Index) )
 				AddNode( group, move(member) );
@@ -480,7 +496,8 @@ namespace Jde::Opc::Gateway{
 		return UA_NODEID_NUMERIC( 0, UA_NS0ID_BASEDATATYPE );
 	}
 	Ω name( const HistNodeAttributes& attributes, const NodeId& id )ι->string{ return attributes.Path && attributes.Path->size() ? attributes.Path->back().Name : identifier( id ); }
-	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD; }//HistoryWrite with Phase 4, Write kept for Phase 5.
+	//The source's, with the history bits:  the history is the gateway's own, whatever the source lets of its.  Write is the source's, kept for Phase 5.
+	Ω accessLevel( const HistNodeAttributes& attributes )ι->UA_Byte{ return attributes.AccessLevel.value_or( UA_ACCESSLEVELMASK_READ ) | UA_ACCESSLEVELMASK_HISTORYREAD | UA_ACCESSLEVELMASK_HISTORYWRITE; }
 	//Mapped before it's added and unmapped only once it's gone (Unserve), so no session meets the node outside its group's rights;  a
 	//throw part way undoes what was added.  Its value is its member's in the mirror's cache, kept there from the first, so the first
 	//read answers it.
@@ -497,7 +514,7 @@ namespace Jde::Opc::Gateway{
 			ERR( "[{}]Node {} '{}' isn't served:  {} already is, for group {}.", group.Guid, member.Index, member.Node.ToString(), id.ToString(), _access->Guid(id).value_or("") );
 			return;
 		}
-		if( !_values->Add(id, group.Id, member.Index, group.Slug) ){
+		if( !_values->Add(id, group.Id, member.Index, group.Slug, group.History) ){
 			ERR( "[{}]Node {} '{}' isn't served:  {} has a value source already.", group.Guid, member.Index, member.Node.ToString(), id.ToString() );
 			_access->Remove( id );
 			return;
@@ -548,10 +565,14 @@ namespace Jde::Opc::Gateway{
 			configuration = Opc::Server::HAConfiguration::Add( ua, id );
 			Opc::Server::HAConfiguration::Publish( ua, configuration, member.Thresholds );
 			Opc::Server::HAConfiguration::PublishAggregates( ua, configuration );
+			//The archive's start, which the history writes:  with the rest at its Start, or at the end of the Serial op for a node served
+			//after (spec *History*).
+			auto starts = Opc::Server::HAConfiguration::PublishArchiveStarts( ua, configuration );
 			configured = subtree( ua, configuration );//its group's as soon as open62541 has given them ids, which it picks.
 			for( let& node : configured )
 				_access->Add( node, group.Guid );
 			let index = member.Index;
+			std::ranges::move( _values->AddStarts(id, move(starts)), std::back_inserter(_starts) );
 			group.Nodes.insert_or_assign( index, Served{move(member), move(id), move(configuration), move(configured)} );
 		}
 		catch( const std::exception& e ){
@@ -576,6 +597,7 @@ namespace Jde::Opc::Gateway{
 		if( !UA_NodeId_isNull(&served.Configuration) && gone(served.Configuration, "HA Configuration") ){
 			for( let& node : served.Configured )
 				_access->Remove( node );
+			std::erase_if( _starts, [&]( let& start ){ return std::ranges::contains(served.Configured, start.Property); } );//gone with it:  a lifted node's, served again by its Restore.
 		}
 		//Members under the variable - a property, a structure's component - come out with it, and back under a folder standing in for it.
 		auto lifted = added && children( *_ua->Ptr(), served.Id ).value_or( 0 ) ? Lift( group.Slug, served.Id ) : vector<std::pair<HistGroupPK,HistMember>>{};

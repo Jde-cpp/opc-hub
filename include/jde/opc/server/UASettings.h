@@ -27,6 +27,7 @@ namespace Jde::Opc::Server{
 		//How long a HistoryUpdate waits for the flush that writes it:  open62541's client timeout, past which the client has
 		//given up.  The historian itself is the host's (IHistoryHost).
 		Duration EditTimeout{ 5s };
+		α ReadEditTimeout( sv path )ε->void;//EditTimeout from the host's `path`, absent its default;  throws for one that isn't positive.
 		//open62541's own limits (spec *Limits*):  each absent keeps its default, as the OpcServer always has.  0 is unlimited
 		//where open62541 reads it so (maxMonitoredItems, maxAsyncOperations).
 		struct Limits final{
