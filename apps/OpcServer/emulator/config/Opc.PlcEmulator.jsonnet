@@ -46,7 +46,7 @@ local serverApplicationUri = "urn:open62541.server.application";
 		serverApplicationUri: serverApplicationUri,
 		opcSchema: "opc."+buildTarget, ///opcServer/resource = args.buildTarget -> the acl schema.
 		plc:{
-			port: 4841, //the emulated PLC's own UA endpoint - headless, but a UA_Server must bind something.
+			port: 4842, //the emulated PLC's own UA endpoint - headless, but a UA_Server must bind something; 4841 is the gateway's UA endpoint (hub or standalone).
 			//Listen host.  open62541's setMinimal would bind every interface with anonymous full access over a writable
 			//nodeset, i.e. a second unauthenticated door onto the pump tags; nothing is meant to connect here, so loopback.
 			//"" = every interface, for a deliberately LAN-visible demo PLC - the emulator WARNs when it is set that way.

@@ -2,10 +2,6 @@ local common = import '../../../../../../libs/db/config/args-common.libsonnet';
 common + {
 	local args = self,
 	sqlType: "mysql",
-	opc:{
-		urn: "urn:open62541.server.application",
-		url: "opc.tcp://127.0.0.1:4842"
-	},
 	dbServers: {
 		localhost:{
 			driver: args.repoBuildDir + "/libs/db/drivers/mysql/lib/libJde.DB.MySql.so",

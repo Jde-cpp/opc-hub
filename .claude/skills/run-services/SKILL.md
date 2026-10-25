@@ -149,7 +149,7 @@ on a box without MySQL.
 The shippable doc is `apps/OpcServer/emulator/README.md`; this section is the agent's run path.
 `apps/OpcServer/emulator` → `Jde.Opc.PlcEmulator`: a stand-in for a UA-enabled PLC that
 drives the OpcServer's pump tags (`apps/OpcServer/config/nodesets/pumps.NodeSet2.xml`).
-It runs its own headless UA server (4841) holding that nodeset and **publishes** the
+It runs its own headless UA server (4842) holding that nodeset and **publishes** the
 pump process values over OPC UA PubSub (UADP/UDP, contract in
 `apps/OpcServer/config/pubsub/pumps.libsonnet` — the OpcServer's `/opcServer/pubsub`
 reader imports the same file), and holds a client session on the OpcServer for the
@@ -179,7 +179,7 @@ $D stop opcserver-emulator && $D start opcserver-emulator # loads the acl
 $E -c -tests -settings=$C               # runs until Ctrl-C (or -duration=PT10M); -transport=write for session writes
 ```
 
-Expected in its log: `PLC server up on port 4841 … publishing dataSet 'pumps' @ opc.udp://…`,
+Expected in its log: `PLC server up on opc.tcp://127.0.0.1:4842 with 'pumps.NodeSet2.xml'; publishing dataSet 'pumps' @ opc.udp://…`,
 `Client security policies: …None, …Basic256Sha256, applicationUri filter: 'urn:open62541.server.application'`,
 `Session activated`, `Connected … 3 command tag(s) subscribed`, then every `statusPeriod`
 a `cycles=… published=… writes=… externalChanges=… reconnects=…` line. In the OpcServer's
@@ -280,10 +280,11 @@ cd $buildDir && ctest --timeout 300
 | `Failed to evaluate … couldn't open import 'args.libsonnet'` | add `-tests` (or `-include=args/mysql`) |
 | `cri … (62)system - Address already in use` then the process exits | something already holds the port: `$D status`, then `$D stop <service>` |
 | OpcServer/OpcGateway exits seconds after start, log ends in `Connection refused` | the AppServer is not up — `$D start appserver` first |
+| `<svc>: FAILED to bind <port> within 30s` while its log ends at `Web Server started` | the exe is stale against a rebuilt lib: `.run-services/<svc>.out` ends in `symbol lookup error: … undefined symbol`; rebuild that service's exe target, `driver.sh`'s second field: `cmake --build <dir> --target <exe> -j8`, `<exe>` one of `Jde.App.Server`, `Jde.Opc.Gateway`, `Jde.Opc.Server` (every `opcserver*`) or `Jde.Opc.Hub` |
 | `mysql::connect_params` then an abort | MySQL is down, or the `debug` schema is missing |
 | `$D ql` returns nothing | the service is not listening; `$D status` |
 | a gateway connect fails `BadCertificateUntrusted` and the log says `server certificate for 'opc.tcp://…' rejected` | the gateway verifies OPC server certificates (since 2026-09-04, `src/ServerTrust.cpp`): copy the server's `.pem` into a dir listed under `/access/trustedCertDirs` (`Opc.Gateway.jsonnet` seeds `certsDir("OpcServer")`, so a Jde OpcServer on this host is already trusted), or set `gateway.verifyServerCertificate: false`. The same status *without* that log line means the server rejected the gateway's certificate — the OpcServer's `/access/trustedCertDirs` side |
-| Opc test suites time out at 300s | something holds a test port — `Jde.Opc.Tests`/`Jde.Opc.Server.Tests` bind the live ports +100 (2067/2068/2070/4940), so a live service is not the cause; look for an orphaned test binary (`ss -lntp \| grep -E '2067\|2068\|2070\|4940'`) |
+| Opc test suites time out at 300s | something holds a test port — `Jde.Opc.Tests`/`Jde.Opc.Server.Tests` bind the live ports +100 (2067/2068/2070/4940) and `Jde.Opc.Hub.Tests` 1973/1975/4975, so a live service (1967/1968/1970, the emulator's 4842) is not the cause; look for an orphaned test binary (`ss -lntp \| grep -E '2067\|2068\|2070\|4940\|1973\|1975\|4975'`) |
 | OpcServer log `certificate verify failed` / `(167772294) … unable to get local issuer certificate` logging in to 1967 | the hub is up and the OpcServer was started with the stock `Opc.Server.jsonnet` — `$D start opcserver-hub` |
 | the emulator logs `published=…` climbing but no pump value moves in the UI | the OpcServer has no DataSetReader — it was started as `opcserver` rather than `opcserver-emulator` (or `opcserver-emulator-hub`). Its log has no `PubSub reader:` line; the reader is an overlay because it is an unauthenticated write path |
 | `/opcGateways` returns `{"servers":[]}` with the hub up | the in-process gateway did not register its local instance (`hubStartup.cpp` → `App::Server::AddLocalInstance`); the SPA cannot find the gateway |
