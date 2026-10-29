@@ -1087,7 +1087,7 @@ namespace Jde::Opc::Gateway::Tests{
 		let groupId = Id( CreateGroup("limited", nullopt, nullopt) );
 		absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
 		vector<std::tuple<uint32,sv,UA_UInt32,sv>> expected;//row, pump, its id, browse name.
-		for( let [node, pump, pumpId, name] : {std::tuple{Status1, "pump1", Pump1, "status"}, std::tuple{Rpm1, "pump1", Pump1, "motorRpm"}, std::tuple{Status2, "pump2", Pump2, "status"}, std::tuple{Rpm2, "pump2", Pump2, "motorRpm"}, std::tuple{Status3, "pump3", Pump3, "status"}, std::tuple{Rpm3, "pump3", Pump3, "motorRpm"}} )
+		for( let& [node, pump, pumpId, name] : {std::tuple{Status1, "pump1", Pump1, "status"}, std::tuple{Rpm1, "pump1", Pump1, "motorRpm"}, std::tuple{Status2, "pump2", Pump2, "status"}, std::tuple{Rpm2, "pump2", Pump2, "motorRpm"}, std::tuple{Status3, "pump3", Pump3, "status"}, std::tuple{Rpm3, "pump3", Pump3, "motorRpm"}} )
 			expected.emplace_back( AddNode(groupId, node), pump, pumpId, name );
 		auto host = HistHost::Instance().Find( groupId );
 		ASSERT_TRUE( host );

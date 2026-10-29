@@ -78,17 +78,23 @@ jobs:
         # tree any more.
         #
         # The serial retry stays as a CANARY, not a crutch: the race is
-        # intermittent, so "it stopped failing" is weak evidence. If the warning
-        # below ever fires again, out-of-source generation was not sufficient and
-        # the real fix is the cross-target ordering edges (todo.md §4 option 2) —
-        # moving the output does not by itself stop an unrelated target from
-        # reading a generated header while protoc writes it. Drop this fallback
-        # once enough clean parallel runs have gone green without it firing.
+        # intermittent, so "it stopped failing" is weak evidence. If the serial
+        # retry ever passes where the parallel pass failed, out-of-source
+        # generation was not sufficient and the real fix is the cross-target
+        # ordering edges (todo.md §4 option 2) — moving the output does not by
+        # itself stop an unrelated target from reading a generated header while
+        # protoc writes it. A genuine compile error fails both passes, which is
+        # no race. Drop this fallback once enough clean parallel runs have gone
+        # green without the canary firing. Both passes keep going past a failure
+        # (-k 0): the serial one retries only what failed and reports every error.
         run: |
-          cmake --build "$env:BUILD_DIR" -j $env:NUMBER_OF_PROCESSORS
+          cmake --build "$env:BUILD_DIR" -j $env:NUMBER_OF_PROCESSORS -- -k 0
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::Parallel build failed once after the out-of-source proto move; completing serially (-j 1). See reviews/todo.md §4 - this means ordering edges are still needed."
-            cmake --build "$env:BUILD_DIR" -j 1
+            Write-Host "Parallel build failed; retrying serially (-j 1)."
+            cmake --build "$env:BUILD_DIR" -j 1 -- -k 0
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "::warning::The parallel build failed and the serial retry passed: a build race, so ordering edges are still needed (reviews/todo.md §4)."
+            }
           }
 
       - name: Test
