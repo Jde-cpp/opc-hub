@@ -14,9 +14,9 @@
 #define Φ Γ auto
 
 namespace Jde::IO{
-	Φ Init()ι->void;
+	Φ Init()ε->void;
 #ifndef _MSC_VER
-	α LinuxInit()ι->void;
+	α LinuxInit()ε->void;
 #endif
 
 	Φ ChunkByteSize()ι->uint32;

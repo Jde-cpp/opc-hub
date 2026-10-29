@@ -9,7 +9,7 @@ namespace Jde{
 	α IO::ChunkByteSize()ι->uint32{ return _chunkSize; }
 	uint8 _threadSize;
 	α IO::ThreadSize()ι->uint8{ return _threadSize; }
-	α IO::Init()ι->void{
+	α IO::Init()ε->void{
 		_chunkSize = Settings::FindNumber<uint32>("/workers/io/chunkByteSize").value_or(1 << 19);
 		_threadSize = Settings::FindNumber<uint8>("/workers/io/threads").value_or(5);
 #ifndef _MSC_VER
