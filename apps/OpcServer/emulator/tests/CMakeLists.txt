@@ -16,6 +16,10 @@ findZlibAndJsonnet()
 add_executable( ${targetName} )
 compileOptions( ${targetName} )
 file( GLOB sources CONFIGURE_DEPENDS *.cpp )
+if( WIN32 )
+	list( APPEND sources Opc.PlcEmulator.Tests.rc ) #its ProductName is $(PRODUCT_NAME), the dir the config's trustedCertDirs names
+	jdeVersionResource( ${targetName} ) #the .rc's version values from JDE_VERSION (build/functions.cmake)
+endif()
 file( GLOB headers CONFIGURE_DEPENDS *.h )
 target_sources( ${targetName} PRIVATE ${sources} ${headers} )
 
