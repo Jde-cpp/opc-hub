@@ -24,7 +24,7 @@ import { RouteItem } from '../../pages/component-sidenav/route-item';
 import { isNotFound, matchConfig, segmentDisplay } from '../../services/route-utils';
 import { SearchService } from '../../services/search/search-service';
 import { SearchResult } from '../../services/search/search-provider';
-import { HELP_TOPICS, helpTopicFor, helpTopics } from '../../services/help/help-topic';
+import { HELP_TOPICS, HelpAnchor, helpTopicFor, helpTopicRoute, helpTopics } from '../../services/help/help-topic';
 import { APP_LOGO, APP_NAME } from '../../services/document-title';
 import { RecentVisits, SEGMENT_NAME } from '../../services/recent-visits';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
@@ -248,8 +248,10 @@ export class NavBar implements OnInit {
 	helpRoute = computed<string[]>( ()=>{
 		const segments = (this.route() ?? '').split( '/' ).filter( s=>s.length );
 		const topic = segments[0]=='help' ? undefined : helpTopicFor( this.#helpTopics, segments );
-		return topic ? ['/help', topic.id] : ['/help'];
+		return topic ? helpTopicRoute( topic ) : ['/help'];
 	});
+	#helpAnchor = inject( HelpAnchor );
+	helpFragment = computed<string|undefined>( ()=>this.helpRoute().length>1 ? this.#helpAnchor.fragment() : undefined );//a section of the topic only - the index has none
 	existing = computed<Favorite|undefined>( ()=>this.favorites()?.find( fav=>fav.route==this.route() ) );// the favorite corresponding to the current route, if any
 	router = inject(Router);
 	searchForm = new FormControl<string|SearchResult>( '', {nonNullable: true} );//the selected option lands here as the object;  displayWith renders it.

@@ -1,58 +1,18 @@
-/* Read-only rows, all three sections alike:  mat-sys tokens so they carry the same surface and type as the filled
-   form-fields on the Properties tab, and one row padding and rule so the list and the two tables read as one grid. */
+@use '../../../read-only-rows';
+
+/* the read-only rows (_read-only-rows) in the `properties` form's column on the sibling tab, so the page's action row (sized to
+   that width) keeps its far-right Delete on this tab's edge too */
 :host{
-	/* the same cap and inset as the `properties` form on the sibling tab, so the two tabs share a left and a right edge,
-	   and the page's action row (sized to that width) keeps its far-right Delete on this tab's edge too */
-	display: block;
-	box-sizing: content-box;
-	max-width: var(--jde-form-max-width);
-	padding: 16px 24px 0;
-	color: var(--mat-sys-on-surface);
-	font: var(--mat-sys-body-medium);
+	@include read-only-rows.column;
 }
+@include read-only-rows.rows;
 
-/* label | value, the label column as wide as its longest entry;  no column gap, so each row's rule is unbroken */
-dl.fields{
-	display: grid;
-	grid-template-columns: max-content minmax(0, 1fr);
-	margin: 0;
-}
-/* 1rem sides = the fill field's text inset, so the labels line up under the Properties tab's field text and the Save button */
-dl.fields dt, dl.fields dd, table.list td{
-	padding: .5rem 1rem;
-	border-block-end: 1px solid var(--mat-sys-outline-variant);
-}
-dl.fields dd{
-	margin: 0;
-	overflow-wrap: anywhere;
-}
-dl.fields dt, .ns-index, .empty{
-	color: var(--mat-sys-on-surface-variant);
-}
-
-table.list{
-	width: 100%;
-	border-collapse: collapse;
-	margin-block-start: 1.5rem;
-}
-table.list caption{
-	text-align: left;
-	padding: 0 1rem .25rem;
-	color: var(--mat-sys-on-surface-variant);
-	font: var(--mat-sys-body-small);
-}
-table.list td{
-	overflow-wrap: anywhere;
-}
-
+/* a namespace's index, the `ns` of its NodeIds:  a label, right-aligned so the digits line up */
 .ns-index{
 	width: 3rem;
 	text-align: right;
 	font-variant-numeric: tabular-nums;
-}
-
-.empty{
-	font-style: italic;
+	color: var(--mat-sys-on-surface-variant);
 }
 
 /* the states - connecting, not tested, not connected, and the stale notice above a result:  icon beside a title and the

@@ -1,8 +1,9 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { SelectionModel } from '@angular/cdk/collections';
 import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { Flex, Style, View } from '../../../model/ql/view';
-import { GraphQLTable } from './graphql-table';
+import { CellText, GraphQLTable } from './graphql-table';
 import { object, required, scalar, schemaOf, snackbarStub } from 'jde-framework/testing';
 import { stable } from 'jde-spa/testing';
 
@@ -146,5 +147,19 @@ describe( 'GraphQLTable columns', ()=>{
 		await stable( fixture, 1 );
 		const cells = [...fixture.nativeElement.querySelectorAll( 'mat-cell' )].map( (c:Element)=>c.textContent!.trim() );
 		expect( cells ).toEqual( ["a", "b"] );
+	} );
+
+	//a host's text for a cell, else the value:  one read from a signal redraws as the signal changes - a group's root, once placed
+	it( "shows a host's text in place of the value", async ()=>{
+		const placed = signal( new Map<string,string>() );
+		const text:CellText = ( column, row )=>column=="name" ? placed().get( <string>row.name ) : undefined;
+		const fixture = build( ["name"], [{id: 1, name: "a"}, {id: 2, name: "b"}] );
+		fixture.componentRef.setInput( 'cellText', text );
+		await stable( fixture, 1 );
+		const cells = ()=>[...fixture.nativeElement.querySelectorAll( 'mat-cell' )].map( (c:Element)=>c.textContent!.trim() );
+		expect( cells() ).toEqual( ["a", "b"] );
+		placed.set( new Map( [["b", "Objects/b"]] ) );
+		await stable( fixture, 1 );
+		expect( cells() ).toEqual( ["a", "Objects/b"] );
 	} );
 } );

@@ -33,6 +33,18 @@ namespace Jde::App::Server::Tests{
 		}
 	}
 
+	//an expired session stays in the map until UpdateExpiration's lazy trim, up to a RestSessionTimeout later - it is not listed.
+	TEST_F( WebSessionTests, ExpiredSessionsAreNotListed ){
+		let live = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.20", false );
+		let expired = Web::Server::Sessions::Add( Jde::UserPK{1}, "10.255.0.21", false );
+		absl::Cleanup remove{ [&]{ Web::Server::Sessions::Remove( live->SessionId ); Web::Server::Sessions::Remove( expired->SessionId ); } };
+		expired->Expiration = steady_clock::now()-1min;
+		let y = RunQL( "sessions{ endpoint }" );
+		ASSERT_TRUE( y.is_array() ) << serialize( y );
+		EXPECT_TRUE( Endpoints(y).contains("10.255.0.20") ) << serialize( y );
+		EXPECT_FALSE( Endpoints(y).contains("10.255.0.21") ) << serialize( y );
+	}
+
 	//#255 review #7:  the users lookup asks for the signed-in users only;  one it does not name answers loginName:null, so the tab
 	//can tell it from an anonymous session, which carries no loginName at all.
 	TEST_F( WebSessionTests, AnUnnamedUserIsNotAnonymous ){

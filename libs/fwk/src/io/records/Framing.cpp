@@ -28,19 +28,17 @@ namespace Jde::IO{
 		return "unknown";
 	}
 
-	namespace{
-		//body onto out as field's frame:  the tag, the length, the body.
-		Ω frame( string& out, uint32_t field, sv body )ι->void{
-			let tag = WireFormatLite::MakeTag( (int)field, WireFormatLite::WIRETYPE_LENGTH_DELIMITED );
-			let offset = out.size();
-			out.resize( offset+CodedOutputStream::VarintSize32(tag)+CodedOutputStream::VarintSize32((uint32_t)body.size())+body.size() );
-			auto p = reinterpret_cast<uint8_t*>( out.data()+offset );
-			p = CodedOutputStream::WriteVarint32ToArray( tag, p );
-			p = CodedOutputStream::WriteVarint32ToArray( (uint32_t)body.size(), p );
-			memcpy( p, body.data(), body.size() );
-		}
-		constexpr uint8_t CrcTag{ 0x0D };//Checkpoint.crc, fixed32.
+	//body onto out as field's frame:  the tag, the length, the body.
+	Ω frame( string& out, uint32_t field, sv body )ι->void{
+		let tag = WireFormatLite::MakeTag( (int)field, WireFormatLite::WIRETYPE_LENGTH_DELIMITED );
+		let offset = out.size();
+		out.resize( offset+CodedOutputStream::VarintSize32(tag)+CodedOutputStream::VarintSize32((uint32_t)body.size())+body.size() );
+		auto p = reinterpret_cast<uint8_t*>( out.data()+offset );
+		p = CodedOutputStream::WriteVarint32ToArray( tag, p );
+		p = CodedOutputStream::WriteVarint32ToArray( (uint32_t)body.size(), p );
+		memcpy( p, body.data(), body.size() );
 	}
+	constexpr uint8_t CrcTag{ 0x0D };//Checkpoint.crc, fixed32.
 
 	α Records::StartCrc( const Proto::FileStart& start )ι->uint32_t{
 		uint8_t bytes[12];

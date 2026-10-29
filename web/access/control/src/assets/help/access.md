@@ -95,7 +95,7 @@ A resource is what a permission names. When a service starts it registers one fo
 
 Granting a role on an OPC node mints a resource scoped to that node.
 
-The [Resources](/access/resources) list is the registered ones, a row each, with an **Enforced** toggle. Node-scoped resources and a historian group's are not listed here - they are granted from the node's own page and the group's **Access** tab, see [Gateways](/help/gateways), and appear under a user's **Effective rights**.
+The [Resources](/access/resources) list is the registered ones, a row each, with an **Enforced** toggle. Node-scoped resources and a historian group's are not listed here - they are granted from the node's own page and the group's **Access** tab, see [Gateways](/help/gateways) and [Historian groups](/help/gateways/groups#access), and appear under a user's **Effective rights**.
 
 A new installation enforces nothing. While a resource is unenforced the hub checks nothing on it, and everyone, signed in or not, has full access to it. The OPC server still applies its own limits on what the signed-in user may read and write.
 

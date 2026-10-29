@@ -284,6 +284,14 @@ namespace Jde::Web{
 		EXPECT_TRUE( j.contains("connectionId") ) << serialize(j);
 		EXPECT_FALSE( j.at("active").as_bool() ) << "no Authorization, so no session to be active";
 	}
+	//the answer carries no session back, so asking with no session id must not mint one - each page load left an orphan.
+	TEST_F( WebTests, ServerSettingsMintsNoSession ){
+		let before = Server::Sessions::Get().size();
+		BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port} );
+		let j = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, "/serverSettings", Port, {.Authorization="Bearer ey.token.sig"}} ).Json();
+		EXPECT_FALSE( j.at("active").as_bool() ) << serialize( j );
+		EXPECT_EQ( Server::Sessions::Get().size(), before );
+	}
 	//web-refactor B3: the server reads one request per connection, so a handled response must not advertise keep-alive - a
 	//browser would reuse a connection that is already closing.
 	TEST_F( WebTests, HandledResponseClosesTheConnection ){

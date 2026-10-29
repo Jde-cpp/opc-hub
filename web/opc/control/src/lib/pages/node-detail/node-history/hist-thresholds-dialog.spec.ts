@@ -70,7 +70,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		await d.settle();
 		expect( d.load ).toHaveBeenCalledTimes( 1 );
 		expect( d.dialog.canUpdate() ).toBe( true );
-		expect( d.cells( 0 ) ).toEqual( ['rpm', '5 node', 'PercentOfValue node', '1000 template', '60000 group', 'true default', ''] );
+		expect( d.cells( 0 ) ).toEqual( ['rpm', '5 node', 'Percent of value node', '1000 template', '60000 group', 'true default', ''] );
 		expect( d.cells( 1 ).slice( 1, 3 ) ).toEqual( ['n/a group', 'n/a default'] );
 		expect( d.dialog.memberName( state() ) ).toBe( state().node.toString() );
 		expect( d.dialog.cellTooltip( state(), 'exceptionDeviation' ) ).toContain( 'not applied' );
@@ -98,7 +98,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		expect( d.dialog.unapplied( eu, 'exceptionDeviationFormat' ) ).toBe( true );
 		expect( d.dialog.unapplied( eu, 'minTimeInterval' ) ).toBe( false );
 		expect( d.dialog.moot( eu, 'exceptionDeviation' ) ).toBe( false );//still editable:  a format or a deviation can put it right
-		expect( d.cells( 0 ).slice( 1, 3 ) ).toEqual( ['5 node', 'PercentOfEURange node'] );
+		expect( d.cells( 0 ).slice( 1, 3 ) ).toEqual( ['5 node', 'Percent of EU range node'] );
 		expect( d.fixture.nativeElement.querySelectorAll( 'mat-row' )[0].querySelectorAll( '.cell-value.moot' ) ).toHaveLength( 2 );
 		expect( d.fixture.nativeElement.querySelector( 'mat-icon.member-flag' )?.textContent ).toContain( 'warning' );
 		expect( d.dialog.cellTooltip( eu, 'exceptionDeviation' ) ).toBe( "From this member's own.  Not applied - the node has no usable EURange, so every change is stored." );
@@ -143,7 +143,7 @@ describe( 'HistThresholdsDialog', ()=>{
 		expect( d.save.mock.calls ).toEqual( [[7, {exceptionDeviation: null, maxTimeInterval: 30000}]] );
 		expect( d.load ).toHaveBeenCalledTimes( 2 );
 		expect( d.dialog.editing() ).toBeUndefined();
-		expect( d.cells( 0 ).slice( 1, 5 ) ).toEqual( ['2 group', 'PercentOfValue node', '1000 template', '30000 node'] );
+		expect( d.cells( 0 ).slice( 1, 5 ) ).toEqual( ['2 group', 'Percent of value node', '1000 template', '30000 node'] );
 	} );
 	//historian-threshold-overrides #6:  a number input reports text it can't parse as '', which the binding wrote back over what was
 	//typed - '.' on the way to '.5' wiped, and the column cleared meanwhile

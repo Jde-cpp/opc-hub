@@ -38,6 +38,8 @@ if [ ! -d $workspace ]; then
 	$cmd || { echo $cmd; exit 1; };
 	echo -------------------- create workspace complete --------------------;
 	cd $workspace;
+	#before `ng add`, the first ng command in the workspace:  with no local setting the cli asks the analytics question
+	jqEdit angular.json ".cli.analytics = false";
 	#claude code reads .mcp.json from the workspace root, so give the workspace its own angular cli mcp server
 	#(list_projects, get_best_practices, search_documentation, ai_tutor).  pinned for the same reason as the installs
 	#below - an unpinned npx fetches @latest and would answer for a cli the workspace was not built with.

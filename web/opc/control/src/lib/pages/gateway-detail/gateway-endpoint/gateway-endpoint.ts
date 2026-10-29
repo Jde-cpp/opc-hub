@@ -3,7 +3,6 @@ import { Component, OnInit, computed, inject, input, signal } from '@angular/cor
 import { MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressBar } from '@angular/material/progress-bar';
-import { MatTableModule } from '@angular/material/table';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
 import { IGraphQL, SnackbarService, errorMessage, isRefusal } from 'jde-framework';
@@ -24,7 +23,7 @@ export const bySince = ( a:EndpointSession, b:EndpointSession ):number=>a.since.
 	selector: 'gateway-endpoint',
 	templateUrl: './gateway-endpoint.html',
 	styleUrl: './gateway-endpoint.scss',
-	imports: [DatePipe, MatIcon, MatIconButton, MatProgressBar, MatTableModule, MatToolbar, MatTooltip]
+	imports: [DatePipe, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip]
 })
 export class GatewayEndpoint implements OnInit{
 	#snackBar = inject( SnackbarService );
@@ -79,7 +78,6 @@ export class GatewayEndpoint implements OnInit{
 			byName.set( policyName( p.uri ), [...(byName.get( policyName( p.uri ) ) ?? []), modeName( p.mode )] );
 		return [...byName].map( ([name, modes])=>({name, modes}) );
 	} );
-	readonly columns = ["user", "type", "channel", "since"];
 	user = sessionUser;
 	channel = ( s:EndpointSession ):string=>`${policyName( s.policy )} / ${modeName( s.mode )}`;
 }

@@ -2,6 +2,9 @@ import { Injectable } from '@angular/core';
 import { HistPathSegment, histThresholdNames, HistThresholdOverride, histThresholdParams } from '../model/hist';
 import { HistConnection, HistGroupMember, histNodeAttributeColumns, histNodeJson, HistRef, HistResolvedMember, HistTemplateGroup, HistTemplateMember, toHistGroupMember, toHistRef, toHistResolved, toHistTemplateMember } from '../model/hist-admin';
 import { ExNodeId } from '../model/ex-node-id';
+import { NodeId } from '../model/node-id';
+import { Server } from '../model/server';
+import { toBrowse } from '../model/types';
 import { HistPoster, HistReader } from './history-service';
 
 //The historian's tables for the admin pages (#337):  the lists a group's form picks from, each template's and group's members, and
@@ -81,6 +84,24 @@ export class HistAdminService{
 		return toHistResolved( data?.resolveHistory );
 	}
 	static readonly resolveMutation = 'mutation resolveHistory( group: $group ){ nodes{ templateNode path node status holder{ id name } } }';
+	//Groups' roots on one connection by their browse paths from Objects (NodeQLAwait's `path` on the id form), in one query:  names
+	//only, as a member's path shows, without a segment's `ns~`.  The gateway takes a node by the server's index, so a root by URI goes
+	//through the server's namespaces.  Undefined for a root in a namespace the server lacks, or one the gateway can't place.
+	async rootPaths( reader:HistReader, slug:string, server:Pick<Server,'namespaces'>, roots:ExNodeId[] ):Promise<(string|undefined)[]>{
+		const ids = roots.map( r=>{
+			const ns = r.nsu ? server.namespaces.find( n=>n.uri==r.nsu )?.index : r.ns;
+			return ns==undefined ? undefined : new NodeId( {...r.toJson(), ns} ).toJson();
+		} );
+		const known = ids.filter( id=>!!id );
+		const data = known.length ? await reader.query<any>( HistAdminService.rootPathsQuery, {opc: slug, id: known} ) : undefined;
+		const paths = <any[]>(data?.nodes ?? []);
+		let i = 0;
+		return ids.map( id=>{
+			const path = id ? paths[i++]?.path : undefined;
+			return typeof path=='string' ? ['Objects', ...(path ? path.split( '/' ).map( s=>toBrowse( s, undefined ).name ) : [])].join( '/' ) : undefined;
+		} );
+	}
+	static readonly rootPathsQuery = 'nodes( opc:$opc, id:$id ){ path }';
 
 	//a create's new id, from the row it answers - the stock op's list, or the object the hub answers
 	static createdId( data:any, command:string ):number{

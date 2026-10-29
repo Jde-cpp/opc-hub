@@ -1,5 +1,6 @@
 import { Component, input, signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { HelpAnchor } from 'jde-spa';
 import { AppService } from '../../../services/app/app-service';
 import { IGraphQL } from '../../../services/graphql';
 import { LogDetail } from '../../logs/detail/log-detail';
@@ -20,7 +21,7 @@ class SessionsStub{ service = input<unknown>(); instanceId = input<number>(); }
 	imports: [InstanceTab, InstanceTabs],
 	template: `<instance-tabs [logs]="logs()" [instanceId]="instanceId()" noun="gateway" [(selectedIndex)]="index">
 		<ng-template instanceTab="Connections"><p class="mine">{{ name }}</p></ng-template>
-		<ng-template instanceTab="Templates">templates</ng-template>
+		<ng-template instanceTab="Templates" instanceTabHelp="historian">templates</ng-template>
 	</instance-tabs>`
 })
 class Host{
@@ -31,11 +32,12 @@ class Host{
 }
 
 describe( 'InstanceTabs', ()=>{
+	let fixture:ComponentFixture<Host>;
 	const create = async ( index:number, instanceId?:number, service=true )=>{
 		TestBed.resetTestingModule();//a test builds two
 		TestBed.configureTestingModule({ providers: [{ provide: AppService, useValue: {} }] });
 		TestBed.overrideComponent( InstanceTabs, {remove: {imports: [LogDetail, LogSettingsPanel, WebSessions]}, add: {imports: [LogsStub, SettingsStub, SessionsStub]}} );
-		const fixture = TestBed.createComponent( Host );
+		fixture = TestBed.createComponent( Host );
 		fixture.componentInstance.index.set( index );
 		fixture.componentInstance.instanceId.set( instanceId );
 		fixture.componentInstance.logs.set( service ? {} as IGraphQL : undefined );
@@ -55,6 +57,20 @@ describe( 'InstanceTabs', ()=>{
 	it( "renders Logs for the instance's service, and says so where there is none", async ()=>{
 		expect( body(await create( 2, 7 )) ).toBe( "logs" );
 		expect( body(await create( 2, 7, false )) ).toBe( "No service for this gateway — logs are unavailable." );
+	} );
+
+	//the navbar's ? button opens the selected tab's section of the page's help topic
+	it( "names the selected tab's help section, and none for a tab without one", async ()=>{
+		await create( 1, 7 );
+		const anchor = TestBed.inject( HelpAnchor );
+		expect( anchor.fragment() ).toBe( "historian" );
+		fixture.componentInstance.index.set( 0 );
+		await stable( fixture );
+		expect( anchor.fragment() ).toBeUndefined();
+		fixture.componentInstance.index.set( 1 );
+		await stable( fixture );
+		fixture.destroy();
+		expect( anchor.fragment() ).toBeUndefined();//not left for the next page
 	} );
 
 	it( 'hands the registration to Log Settings', async ()=>{

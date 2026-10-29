@@ -4,5 +4,6 @@
 local args = import 'args.libsonnet';
 local base = import 'Opc.Server.jsonnet';
 function( sync=false ) base( sync ) + {
-	web+:{ client+:{ ssl+:{ caFile: args.certsDir("OpcHub")+"/OpcHub.pem" } } }
+	web+:{ client+:{ ssl+:{ caFile: args.certsDir("OpcHub")+"/OpcHub.pem" } } },
+	opcServer+:{ hist:: super.hist } //off:  against a hub the gateway's groups keep the history.  Un-hide it to have the server keep its own again.
 }

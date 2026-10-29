@@ -49,8 +49,10 @@ namespace Jde::Web::Server{
 				THROW_IF( !_authorizer, "No authorizer - refusing to list sessions." );
 				_authorizer->Test( _schema, "sessions", Access::ERights::Read, UserPK, _sl );
 			}
-			if( !sessionString )
+			if( !sessionString ){
 				sessions = Sessions::Get();//after the gate:  a refused caller copies no map.
+				std::erase_if( sessions, [now=steady_clock::now()]( let& s ){ return s->Expiration<now; } );//dead, but UpdateExpiration trims the map only lazily - at most once a RestSessionTimeout.
+			}
 			if( sessions.empty() )
 				co_return Resume( Query.DefaultResult() );//[] for the listing, {} for one - the shape the caller indexes.
 			flat_map<Jde::UserPK, tuple<string,string>> userDomainLoginNames;

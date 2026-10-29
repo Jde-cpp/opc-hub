@@ -1,4 +1,4 @@
-import { Component, Signal, computed, inject, resource } from '@angular/core';
+import { Component, Signal, computed, inject, resource, signal } from '@angular/core';
 import {Router, RouterLink, RouterLinkActive} from '@angular/router';
 import {MatButtonModule} from '@angular/material/button';
 import { EProvider, IAUTH, User } from '../../services/authorization/auth';
@@ -53,6 +53,13 @@ export class Authorization{
 
 	router = inject(Router);
 	user:Signal<User | undefined>;
+	//Google's avatar host answers 429 to a localhost referrer under repeated loads;  one that fails shows the icon until the url changes.
+	#failedPicture = signal<string|undefined>( undefined );
+	picture = computed( ()=>{
+		const picture = this.user()?.picture;
+		return picture==this.#failedPicture() ? undefined : picture;
+	});
+	onPictureError(){ this.#failedPicture.set( this.user()?.picture ); }
 	//the picture alone says nothing to a screen reader, nor who is signed in - the label and tooltip carry both.
 	signOutLabel = computed<string>( ()=>{
 		const who = this.user()?.name ?? this.user()?.email;

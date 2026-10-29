@@ -7,17 +7,17 @@
 			<ng-template instanceTab="Connections">
 				<ql-list [(sideNav)]=sideNav [ql]=gateway()></ql-list>
 			</ng-template>
-			<ng-template instanceTab="Templates"><!--the historian's templates and groups (#337):  lists the tab resolves itself, each keyed on the gateway as Logs is-->
+			<ng-template instanceTab="Templates" instanceTabHelp="historian-groups-and-templates"><!--the historian's templates and groups (#337):  lists the tab resolves itself, each keyed on the gateway as Logs is-->
 				@for( g of [gateway()]; track g ){
 					<gateway-hist-list [gateway]=g! kind="templates" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
-			<ng-template instanceTab="Groups">
+			<ng-template instanceTab="Groups" instanceTabHelp="historian-groups-and-templates">
 				@for( g of [gateway()]; track g ){
 					<gateway-hist-list [gateway]=g! kind="groups" [url]=url()></gateway-hist-list>
 				}
 			</ng-template>
-			<ng-template instanceTab="Endpoint"><!--the gateway's own OPC UA endpoint and its sessions (#388), keyed on the gateway as the lists are-->
+			<ng-template instanceTab="Endpoint" instanceTabHelp="endpoint"><!--the gateway's own OPC UA endpoint and its sessions (#388), keyed on the gateway as the lists are-->
 				@for( g of [gateway()]; track g ){
 					<gateway-endpoint [gateway]=g!></gateway-endpoint>
 				}

@@ -28,6 +28,8 @@ export class UserJson{
 export class User extends UserJson {
 	constructor( arg?:UserJson|string ){
 		super();
+		if( arg && typeof arg !== 'string' )
+			this.append( arg );//id/domain/provider/sessionId/serverInstances - dropping id broke isLoggedIn across reload & append-clone, and a jwt user kept only its jwt, so every page refresh signed in again with it and minted a session.
 		this.jwt = typeof arg === 'string' ? <string>arg : arg ? (<UserJson>arg).jwt : undefined;
 		if( this.jwt ){
 			const jwt = User.decodeJwt( this.jwt );
@@ -38,8 +40,6 @@ export class User extends UserJson {
 			if( jwt.iss=="https://accounts.google.com" )
 				this.provider = EProvider.Google;
 		}
-		if( arg && !this.jwt )
-			this.append( arg as UserJson );//faithfully preserve id/domain/provider/sessionId/serverInstances for password/OpcServer logins — dropping id broke isLoggedIn across reload & append-clone
 	}
 
 	append( updated:UserJson ):void{

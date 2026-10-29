@@ -99,6 +99,10 @@ describe( 'Properties readonly fields', ()=>{
 		expect( fixture.nativeElement.querySelector('input[type=url]').readOnly ).toBe( true );
 		expect( fixture.nativeElement.querySelector('textarea').readOnly ).toBe( false );
 	} );
+	it( 'mark no readonly field required, as the user cannot fill it', ()=>{
+		const fixture = render( schema, new Widget({name: "w"}), {readonlyFields: ['name']} );
+		expect( fixture.nativeElement.querySelector('.mat-mdc-form-field-required-marker') ).toBeNull();
+	} );
 } );
 
 //#250 review L2:  the fields carried tabindex 1..n, which axe fails and which put them ahead of everything else on the page -

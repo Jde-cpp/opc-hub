@@ -1,10 +1,10 @@
 <div>
 	@for( field of fields(); track field.name ){
-		<mat-form-field style="width: 100%;" appearance="fill" [class.readonly]="isReadonly(field)"><!--required = the schema's NON_NULL: it puts the asterisk on the label, which is the only hint the user gets for why Save stays disabled on a new record-->
+		<mat-form-field style="width: 100%;" appearance="fill" [class.readonly]="isReadonly(field)"><!--required = the schema's NON_NULL: it puts the asterisk on the label, which is the only hint the user gets for why Save stays disabled on a new record.  Not on a readonly field, which the user cannot fill-->
 			<mat-label>{{field.displayName}}</mat-label>
 			@if( field.type==InputTypes.Text ){
 				<textarea matInput
-					[required]="!field.nullable"
+					[required]="!field.nullable && !isReadonly(field)"
 					[readonly]="isReadonly(field)"
 					[value]="record()[field.name] ?? ''"
 					(input)="onChange( field.name, $any($event.target).value )">
@@ -12,7 +12,7 @@
 			}
 			@else if( field.type==InputTypes.Select ){
 				<mat-select
-					[required]="!field.nullable"
+					[required]="!field.nullable && !isReadonly(field)"
 					[disabled]="isReadonly(field)"
 					(selectionChange)="onChange( field.name, $event.value )"
 					[value]="getEnumId( field )">
@@ -23,7 +23,7 @@
 			}
 			@else {<!-- None, Bool, and any future type: a form field must never render without a control -->
 				<input #stringField matInput
-					[required]="!field.nullable"
+					[required]="!field.nullable && !isReadonly(field)"
 					[readonly]="isReadonly(field)"
 					[type]="field.name=='url' ? 'url' : 'text'"
 					[attr.cdkFocusInitial]="field.name=='slug' ? '' : null"

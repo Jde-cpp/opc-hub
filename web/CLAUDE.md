@@ -39,7 +39,9 @@ and the site keeps `overview.md`/`about.md` under `web/opc/site/assets/help/`. `
 for the site (`src/assets` → `assets/site`), so a file is served at `assets/<jde-lib|site>/help/<file>.md`. Topics are
 described by `HelpTopic` constants each library exports (`spaHelpTopics`, `frameworkHelpTopics`, …) and registered in
 `app.config.ts` under the `HELP_TOPICS` multi token, in display order; a topic's `routes` patterns are what the navbar's `?`
-button matches the current url against. `marked` renders the page and must only ever be imported dynamically
+button matches the current url against.  A page split out of another's has a two-segment id (`gateways/groups`, served at
+`/help/gateways/groups` by the `:topic/:subtopic` route), so a link to a topic is `helpTopicRoute( topic )`, never
+`['/help', topic.id]`, which would carry the `/` as `%2F`. `marked` renders the page and must only ever be imported dynamically
 (`await import('marked')`): a static import in a file `main` reaches would put it in the initial bundle, and even in
 `help-page.ts` it would join that page's chunk, which every tab preloads (`PreloadAllModules`) whether or not it opens help.
 `{{version}}` in the markdown is the `JDE_VERSION` constant setup.sh passes through the builder's `define` option, read via

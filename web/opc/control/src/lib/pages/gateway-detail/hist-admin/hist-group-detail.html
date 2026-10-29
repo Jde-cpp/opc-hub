@@ -5,21 +5,20 @@
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template>
 		<ng-template matTabContent>
-			<properties [ctor]=ctor [(record)]=properties type="histGroup" [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="isNew ? [] : ['slug', 'guid']" [excludedColumns]=excludedFields></properties>
+			<properties [ctor]=ctor [(record)]=properties type="histGroup" [schema]=schema [order]=fieldOrder [readonlyFields]="isNew ? [] : ['slug']" [excludedColumns]=excludedFields></properties>
 			<section class="form-section" aria-label="Source">
 				<h3>Source</h3>
-				<p class="hint">{{ isNew ? "Where the group's nodes are:  one connection, with a template applied from a root on it, or none for a node list of the group's own.  Fixed once the group is made." : "Fixed when the group was made:  purge the group and make it again to change them." }}</p>
+				@if( isNew ){ <p class="hint">Where the group's nodes are:  one connection, with a template applied from a root on it, or none for a node list of the group's own.  Fixed once the group is made.</p> }
 				<div class="fields">
-					<mat-form-field>
+					<mat-form-field [class.readonly]="!isNew">
 						<mat-label>Connection</mat-label>
-						<mat-select [value]="group.serverConnectionId" (selectionChange)="setConnection($event.value)" [disabled]="!isNew" required>
+						<mat-select [value]="group.serverConnectionId" (selectionChange)="setConnection($event.value)" [disabled]="!isNew" [required]="isNew">
 							@for( c of connections(); track c.id ){
 								<mat-option [value]="c.id">{{ c.name }}</mat-option>
 							}
 						</mat-select>
-						@if( !isNew && group.connection ){ <mat-hint>{{ group.connection.name }}</mat-hint> }
 					</mat-form-field>
-					<mat-form-field>
+					<mat-form-field [class.readonly]="!isNew">
 						<mat-label>Template</mat-label>
 						<mat-select [value]="group.histTemplateId ?? 0" (selectionChange)="setTemplate($event.value)" [disabled]="!isNew">
 							<mat-option [value]="0">None - a node list of its own</mat-option>
@@ -27,11 +26,11 @@
 								<mat-option [value]="t.id">{{ t.name }}</mat-option>
 							}
 						</mat-select>
-						@if( !isNew && group.template ){ <mat-hint>{{ group.template.name }}</mat-hint> }
 					</mat-form-field>
-					<mat-form-field class="root">
+					<!--dynamic:  its hint is two lines, and the default one-line subscript laid the second over the Endpoint heading-->
+					<mat-form-field class="root" subscriptSizing="dynamic">
 						<mat-label>Root</mat-label>
-						<input matInput [value]="group.root ?? ''" (input)="setRoot($any($event.target).value)" [readonly]="!isNew" placeholder="Objects folder">
+						<input matInput [value]="rootText()" (input)="setRoot($any($event.target).value)" [readonly]="!isNew" placeholder="Objects folder">
 						@if( isNew ){
 							<button matSuffix matIconButton type="button" (click)="browseRoot()" [disabled]="!group.serverConnectionId" aria-label="Browse for the root" matTooltip="Browse the connection for the root"><mat-icon>folder_open</mat-icon></button>
 						}
@@ -47,9 +46,16 @@
 			}
 			<section class="form-section" aria-label="Thresholds">
 				<h3>Thresholds</h3>
-				<p class="hint">The group's defaults:  what a member stores by where neither its own row nor its template member sets the column.</p>
-				<hist-threshold-fields [fields]="group.thresholds" (fieldsChange)="setThresholds($event)" blank="Default" [hints]=thresholdHints></hist-threshold-fields>
+				<p class="hint">Defaults for the group's members, used where neither a member's own row nor its template member sets a value.</p>
+				<hist-threshold-fields [fields]="group.thresholds" (fieldsChange)="setThresholds($event)" blank="Default"></hist-threshold-fields>
 			</section>
+			@if( !isNew ){<!--an id for the historian's files and the group's resource, never typed:  last, and copyable-->
+				<section class="form-section" aria-label="Guid">
+					<p class="hint guid">Guid <span class="value">{{ group.guid }}</span>
+						<button matIconButton type="button" [cdkCopyToClipboard]="group.guid ?? ''" (cdkCopyToClipboardCopied)="copied($event)" aria-label="Copy the guid" matTooltip="Copy"><mat-icon>content_copy</mat-icon></button>
+					</p>
+				</section>
+			}
 		</ng-template>
 	</mat-tab>
 	@if( !isNew ){<!--a node is a row under the group's id:  nothing to add until the group is saved-->

@@ -13,6 +13,10 @@ import { Style, ViewField } from '../../../model/ql/view';
 import { QLRow } from '../../../model/ql/slug-row';
 import { capitalize } from 'jde-spa';
 
+//A host's text for a text cell in place of the row's value, or undefined to show the value:  a group's root by its browse path.  One
+//that reads a signal redraws the cell when the signal changes.
+export type CellText = ( column:string, row:QLRow )=>string|undefined;
+
 @Component({
 	selector: 'ql-table',
 	styleUrls: ['./graphql-table.scss'],
@@ -70,6 +74,7 @@ export class GraphQLTable{
 		const values = Object.values( obj ).filter( v=>v!=null );//no `name` - a single remaining property is the display value, e.g. opcSessions{count}.
 		return values.length==1 ? `${values[0]}` : '';
 	}
+	stringValue( column:string, row:QLRow ):unknown{ return this.cellText()?.( column, row ) ?? row[column]; }
 	sortable( colName:string ){ return this.columns().get( colName )?.field.type.underlyingKind!=FieldKind.OBJECT; }//orderBy on a grafted object field is a server error.
 
 	//A live-toggle cell (ViewFieldSettings.liveToggle).  Deliberately an icon button and not a mat-slide-toggle:  a slide
@@ -97,6 +102,7 @@ export class GraphQLTable{
 	//showDeleted = input<boolean>( false );
 	sort = model<Sort>();
 	pendingLive = input<unknown[]>( [] );//row ids whose live-toggle mutation is in flight - the switch is disabled until the server answers
+	cellText = input<CellText>();
 	onSortChange = output<Sort>();
 	onRowActivate = output<QLRow>();
 	onToggleLive = output<QLRow>();

@@ -5,7 +5,7 @@ import { Injector, runInInjectionContext, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { IPROFILE_SERVICE, IProfileService } from './profile-service';
 import { ProfileStore } from './profile-store';
-import { MockProfileService, silence } from 'jde-spa/testing';
+import { flush, MockProfileService, silence } from 'jde-spa/testing';
 
 //ProfileStore reads its service through inject() (review3 C5/C13), so a bare `new` needs an injection context carrying the token.
 const createStore = ( service:IProfileService|null=null )=>runInInjectionContext( Injector.create({providers: [{provide: IPROFILE_SERVICE, useValue: service}]}), ()=>new ProfileStore() );
@@ -84,6 +84,32 @@ describe( 'ProfileStore', ()=>{
 		await expect( store.save('k', 'v') ).rejects.toThrow( 'down' );
 		await expect( store.save('k', 'v') ).rejects.toThrow( 'down' );//same value, but the failed write left nothing cached to compare against
 		expect( service.save ).toHaveBeenCalledTimes( 2 );
+	});
+
+	//two ticks in a row on a node's children were two writes in flight, and the server kept whichever landed last
+	it( "a key's saves reach the server in the order made", async ()=>{
+		const service = new MockProfileService();
+		let release!:()=>void;
+		service.save.mockImplementationOnce( async ( key:string, value:string|null )=>{ await new Promise<void>( r=>release=r ); service.rows.set( key, value! ); } );
+		const store = createStore( service );
+		const first = store.save( 'k', 'a' ), second = store.save( 'k', 'ab' );
+		await flush();
+		expect( service.save ).toHaveBeenCalledTimes( 1 );//the second waits on the first
+		release();
+		await Promise.all( [first, second] );
+		expect( service.rows.get('k') ).toBe( 'ab' );
+	});
+
+	it( 'a failed save holds up nothing, and drops no later value from the cache', async ()=>{
+		const service = new MockProfileService();
+		service.save.mockRejectedValueOnce( new Error('down') );
+		const store = createStore( service );
+		const first = store.save( 'k', 'a' ), second = store.save( 'k', 'ab' );
+		await expect( first ).rejects.toThrow( 'down' );
+		await second;
+		expect( service.rows.get('k') ).toBe( 'ab' );
+		await store.save( 'k', 'ab' );
+		expect( service.save ).toHaveBeenCalledTimes( 2 );//'ab' is still cached, so the repeat is deduped
 	});
 
 	it( 'a successful save resolves', async ()=>{

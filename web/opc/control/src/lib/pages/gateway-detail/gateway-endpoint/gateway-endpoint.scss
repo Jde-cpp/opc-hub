@@ -1,32 +1,25 @@
-mat-table{
-	width: 100%;
+@use '../../read-only-rows';
+
+.content{
+	@include read-only-rows.column;
 }
-.empty{
-	margin: 16px;
-	opacity: 0.7;
+@include read-only-rows.rows;
+
+table.list th{
+	padding: .25rem 1rem;
+	border-block-end: 1px solid var(--mat-sys-outline-variant);
+	text-align: start;
+	font: var(--mat-sys-body-small);
+	color: var(--mat-sys-on-surface-variant);
 }
-h3{
-	margin: 16px 16px 8px;
+table.policies td.name{//as wide as the longest name, so the modes start beside it
+	width: 1%;
+	white-space: nowrap;
 }
-.facts{
-	display: grid;
-	grid-template-columns: max-content 1fr;
-	gap: 8px 24px;
-	margin: 16px;
-	dt{
-		font-weight: 500;
-	}
-	dd{
-		margin: 0;
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-	.policy, .dir{
-		display: block;
-	}
-	.hint{
-		display: block;
-		opacity: 0.7;
-		font-size: 0.85em;
-	}
+.row-count{
+	margin-left: 0.4em;
+}
+p.load-error, p.empty{
+	padding: .5rem 1rem;
+	margin: 0;
 }

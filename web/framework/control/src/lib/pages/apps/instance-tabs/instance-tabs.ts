@@ -1,16 +1,19 @@
-import { Component, Directive, TemplateRef, contentChildren, inject, input, model } from '@angular/core';
+import { Component, DestroyRef, Directive, TemplateRef, contentChildren, effect, inject, input, model } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { MatTabsModule } from '@angular/material/tabs';
+import { HelpAnchor } from 'jde-spa';
 import { AppService } from '../../../services/app/app-service';
 import { IGraphQL } from '../../../services/graphql';
 import { LogDetail } from '../../logs/detail/log-detail';
 import { LogSettingsPanel } from '../../logs/settings/log-settings-panel';
 import { WebSessions } from '../web-sessions/web-sessions';
 
-//A page's own tab ahead of the shared ones:  `<ng-template instanceTab="Connections">…</ng-template>`.
+//A page's own tab ahead of the shared ones:  `<ng-template instanceTab="Connections">…</ng-template>`.  instanceTabHelp names its section
+//in the page's help topic, which the navbar's ? button opens while the tab is selected.
 @Directive( {selector: 'ng-template[instanceTab]'} )
 export class InstanceTab{
 	label = input.required<string>( {alias: 'instanceTab'} );
+	help = input<string>( undefined, {alias: 'instanceTabHelp'} );
 	template = inject( TemplateRef );
 }
 
@@ -30,4 +33,9 @@ export class InstanceTabs{
 	selectedIndex = model<number>( 0 );
 	tabs = contentChildren( InstanceTab );
 	appService = inject( AppService );
+	constructor(){
+		const anchor = inject( HelpAnchor );
+		effect( ()=>anchor.fragment.set( this.tabs()[this.selectedIndex()]?.help() ) );
+		inject( DestroyRef ).onDestroy( ()=>anchor.fragment.set( undefined ) );
+	}
 }

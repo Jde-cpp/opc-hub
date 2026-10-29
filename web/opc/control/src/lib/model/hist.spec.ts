@@ -339,7 +339,7 @@ describe( 'toHistThresholds', ()=>{
 	it( 'shows a threshold by its kind', ()=>{
 		expect( histThresholdText( {name: 'exceptionDeviation', value: null, source: 'default'} ) ).toBe( 'none' );
 		expect( histThresholdText( {name: 'exceptionDeviation', value: 2.5, source: 'group'} ) ).toBe( '2.5' );
-		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 3, source: 'node'} ) ).toBe( 'PercentOfEURange' );
+		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 3, source: 'node'} ) ).toBe( 'Percent of EU range' );
 		expect( histThresholdText( {name: 'exceptionDeviationFormat', value: 9, source: 'node'} ) ).toBe( '9' );
 		expect( histThresholdText( {name: 'minTimeInterval', value: 0, source: 'default'} ) ).toBe( '0' );
 		expect( histThresholdText( {name: 'stepped', value: false, source: 'node'} ) ).toBe( 'false' );
@@ -348,7 +348,7 @@ describe( 'toHistThresholds', ()=>{
 	it( "shows a row's own column", ()=>{
 		const fields = {...histThresholdBlank, exceptionDeviationFormat: '1', minTimeInterval: '1000'};
 		expect( histThresholdFieldText( fields, 'exceptionDeviation' ) ).toBe( '' );
-		expect( histThresholdFieldText( fields, 'exceptionDeviationFormat' ) ).toBe( 'PercentOfValue' );
+		expect( histThresholdFieldText( fields, 'exceptionDeviationFormat' ) ).toBe( 'Percent of value' );
 		expect( histThresholdFieldText( {...fields, exceptionDeviationFormat: '9'}, 'exceptionDeviationFormat' ) ).toBe( '9' );
 		expect( histThresholdFieldText( fields, 'minTimeInterval' ) ).toBe( '1000' );
 	} );

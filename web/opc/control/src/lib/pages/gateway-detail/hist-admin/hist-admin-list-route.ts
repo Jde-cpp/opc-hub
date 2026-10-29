@@ -11,10 +11,11 @@ export const histTemplateTableSettings:TableSettings = {
 	sort: 'name'
 };
 //Read left to right:  the group, where it is - the connection, the template it applies, the root it applies it from - then the description.
+//The connection's slug is for the root, which GatewayHistList shows by its browse path on the connection.
 export const histGroupTableSettings:TableSettings = {
 	noun: 'groups',
 	empty: { title: 'No groups yet.', detail: 'A group is the nodes the gateway historizes on one connection:  a template applied to a root, or a node list of its own.', add: 'Use Add to create one.' },
-	columns: [ {name: 'name', style: new Style( 240 )}, {name: 'serverConnection', displayName: 'Connection', selection: 'name', style: new Style( 200 )}, {name: 'histTemplate', displayName: 'Template', selection: 'name', style: new Style( 200 )}, {name: 'root', displayName: 'Root'}, 'slug', 'description' ],
+	columns: [ {name: 'name', style: new Style( 240 )}, {name: 'serverConnection', displayName: 'Connection', selection: 'name slug', style: new Style( 200 )}, {name: 'histTemplate', displayName: 'Template', selection: 'name', style: new Style( 200 )}, {name: 'root', displayName: 'Root'}, 'slug', 'description' ],
 	sort: 'name'
 };
 export function histAdminListRoute( kind:HistAdminKind ):ListRoute{

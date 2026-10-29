@@ -437,7 +437,10 @@ namespace Server{
 		j["restSessionTimeout"] = ServerSetting( "restSessionTimeout", *appClient );
 		j["connectionId"] = ServerSetting( "serverConnection", *appClient );
 		try{
-			let session = co_await Sessions::UpsertAwait( req.Header("authorization"), req.UserEndpoint.address().to_string(), false, appClient, false );
+			sp<SessionInfo> session;
+			//a session id only:  for an empty or Bearer header UpsertAwait mints a session, and this answer carries none back - one orphan per page load.
+			if( let authorization = req.Header("authorization"); authorization.size() && !authorization.starts_with("Bearer ") )
+				session = co_await Sessions::UpsertAwait( authorization, req.UserEndpoint.address().to_string(), false, appClient, false );
 			j["active"] = ( bool )session && session->UserPK;
 		}
 		catch( Exception& e ){
