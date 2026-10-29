@@ -63,9 +63,11 @@ jobs:
         with:
           clean: true
 
-      # The preset sets binaryDir, so no -B / reconfig needed.
+      # The preset sets binaryDir, so no -B / reconfig needed. The build dir
+      # persists between runs, and a CACHE default never replaces a value already
+      # cached: -U drops JDE_TEST_TIMEOUT so each run takes functions.cmake's.
       - name: Configure
-        run: cmake --preset $env:PRESET
+        run: cmake --preset $env:PRESET -U JDE_TEST_TIMEOUT
 
       - name: Build
         # protoc used to generate in-source (PROTOC_OUT_DIR = <lib>/proto), where a
