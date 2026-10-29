@@ -54,6 +54,8 @@ export function matchLiterals( routes:Routes, segments:string[] ):number{
 //Anything else - an instance name ("OpcHub.debug"), a slug with a dash, a number - is what the user typed and stays.
 export function segmentDisplay( segment:string ):string{
 	const decoded = decodeURIComponent( segment );
+	if( decoded=='$new' )//the unsaved row a list's Add opens (QLList)
+		return 'New';
 	if( !/^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*$/.test(decoded) )
 		return decoded;
 	return decoded.replace( /([A-Z])/g, ' $1' ).replace( /^[a-z]/, (c)=>c.toUpperCase() );

@@ -14,8 +14,15 @@
 namespace Jde::Access::Server{
 
 	LoginAwait::LoginAwait( Crypto::PublicKey publicKey, vector<byte> certificate, string&& description, SL sl )ι:
-		base{ sl }, _certificate{ move(certificate) }, _description{ move(description) }, _publicKey{ move(publicKey) }
+		LoginAwait{ move(publicKey), move(certificate), move(description), false, sl }
 	{}
+	LoginAwait::LoginAwait( Crypto::PublicKey publicKey, vector<byte> certificate, string&& description, bool own, SL sl )ι:
+		base{ sl }, _certificate{ move(certificate) }, _description{ move(description) }, _own{ own }, _publicKey{ move(publicKey) }
+	{}
+	α LoginAwait::Own( vector<byte> certificate, string&& description, SL sl )ε->LoginAwait{
+		auto publicKey = Crypto::ExtractPublicKey( certificate, sl );
+		return LoginAwait{ move(publicKey), move(certificate), move(description), true, sl };
+	}
 
 	α LoginAwait::LoginTask()ι->TAwait<optional<UserPK::Type>>::Task{
 		try{
@@ -34,7 +41,8 @@ namespace Jde::Access::Server{
 			let userPK = co_await DS().ScalerOpt<UserPK::Type>( move(sql) );
 			if( !userPK ){ //enrollment - the presented certificate must chain to a trust anchor and bind the jwt key; it is also the identity authority.
 				THROW_IF( _certificate.empty(), "Public key not enrolled and no certificate presented." );
-				TrustVerify( _certificate, _sl );
+				if( !_own )
+					TrustVerify( _certificate, _sl );
 				THROW_IF( Crypto::ExtractPublicKey(_certificate, _sl)!=_publicKey, "Certificate public key does not match jwt key." );
 				Crypto::Certificate info{ _certificate, _sl };
 				THROW_IF( info.CommonName.empty(), "Certificate subject CN is required for enrollment." );

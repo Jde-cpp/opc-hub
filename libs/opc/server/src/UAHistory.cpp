@@ -415,7 +415,7 @@ namespace Jde::Opc::Server{
 		let elapsed = steady_clock::now()-start;
 		_reads.Add( elapsed );
 		_returned.fetch_add( values, std::memory_order_relaxed );
-		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} µs, returning {} {} values.", nodes.size(), duration_cast<microseconds>(elapsed).count(), values, what );
+		LOG( elapsed>=SlowRead ? ELogLevel::Warning : ELogLevel::Trace, _tags, "A history read of {} nodes held the service lock for {} ms, returning {} {} values.", nodes.size(), duration_cast<milliseconds>(elapsed).count(), values, what );
 	}
 	α UAHistory::Admit( UA_Server& ua, const UA_NodeId* sessionId, void* sessionContext, const UA_HistoryReadValueId& node, UA_NumericRange& range, UA_StatusCode& status )Ι->optional<Node>{
 		status = UA_STATUSCODE_GOOD;

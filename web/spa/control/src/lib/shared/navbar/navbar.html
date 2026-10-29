@@ -50,7 +50,7 @@
 		<authorization></authorization>
 		<theme-picker></theme-picker>
 		<favorites [favorites]="favorites() ?? []" [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>
-		<a matIconButton [routerLink]="helpRoute()" aria-label="Help" matTooltip="Help"><mat-icon>help_outline</mat-icon></a>
+		<a matIconButton [routerLink]="helpRoute()" [fragment]="helpFragment()" aria-label="Help" matTooltip="Help"><mat-icon>help_outline</mat-icon></a>
 		<button matIconButton aria-label="Toggle breadcrumb bar" [attr.aria-pressed]="showBreadcrumbs()"
 				[matTooltip]="showBreadcrumbs() ? 'Hide breadcrumbs' : 'Show breadcrumbs'"
 				(click)="onToggleBreadcrumbs()">

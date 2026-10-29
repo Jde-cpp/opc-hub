@@ -1,4 +1,5 @@
-import { HelpTopic, helpTopicFor, helpTopics } from './help-topic';
+import { convertToParamMap } from '@angular/router';
+import { HelpTopic, helpTopicFor, helpTopicId, helpTopicRoute, helpTopics } from './help-topic';
 
 describe( 'helpTopicFor', ()=>{
 	const topic = ( id:string, routes:string[] ):HelpTopic=>({ id, title: id, url: `assets/x/help/${id}.md`, routes });
@@ -30,3 +31,11 @@ describe( 'helpTopics', ()=>{
 		expect( helpTopics(null) ).toEqual( [] );
 	});
 });
+
+//a page split out of another's:  its id is the two segments of its url
+describe( 'helpTopicRoute and helpTopicId', ()=>{
+	const groups:HelpTopic = { id: 'gateways/groups', title: 'Historian groups', url: 'groups.md' };
+	it( 'route each segment apart', ()=>expect( helpTopicRoute(groups) ).toEqual( ['/help', 'gateways', 'groups'] ) );
+	it( 'read a one-segment url', ()=>expect( helpTopicId(convertToParamMap({topic: 'gateways'})) ).toBe( 'gateways' ) );
+	it( 'read a two-segment url', ()=>expect( helpTopicId(convertToParamMap({topic: 'gateways', subtopic: 'groups'})) ).toBe( 'gateways/groups' ) );
+} );

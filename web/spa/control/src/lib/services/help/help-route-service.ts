@@ -3,7 +3,7 @@ import { ActivatedRouteSnapshot, ResolveFn, Routes, UrlSegment } from '@angular/
 import { RouteService } from '../route-service';
 import { RouteStore } from '../route-store';
 import { RouteItem } from '../../pages/component-sidenav/route-item';
-import { HELP_LINKS, HELP_TOPICS, HelpTopic, helpTopics } from './help-topic';
+import { HELP_LINKS, HELP_TOPICS, HelpTopic, helpTopicId, helpTopics } from './help-topic';
 
 //IRouteService for the /help cards page:  the topics as child routes, so the inherited docItems turns them into tiles, then
 //the HELP_LINKS as cards that open their page outside the site.
@@ -20,11 +20,12 @@ export class HelpRouteService extends RouteService{
 	}
 }
 
-//Resolves /help/:topic to its HelpTopic - undefined when unknown, which the page reports - and seeds the RouteStore with the
+//Resolves /help/:topic (or :topic/:subtopic) to its HelpTopic - undefined when unknown, which the page reports - and seeds the RouteStore with the
 //siblings first, so the breadcrumb reads the topic's title rather than the raw segment on the very first visit;  the
 //ql-list resolver does the same for ':collectionDisplay'.
 export const helpTopicResolver:ResolveFn<HelpTopic|undefined> = ( route:ActivatedRouteSnapshot )=>{
 	const topics = helpTopics( inject(HELP_TOPICS, {optional: true}) );
 	inject( RouteStore ).setChildren( 'help', topics.map( t=>new RouteItem({path: t.id, title: t.title, icon: t.icon}) ) );
-	return topics.find( t=>t.id==route.paramMap.get('topic') );
+	const id = helpTopicId( route.paramMap );
+	return topics.find( t=>t.id==id );
 };

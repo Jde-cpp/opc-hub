@@ -49,6 +49,9 @@ mat-header-cell .unit{
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
+.mat-column-exceptionDeviationFormat{
+	flex-basis: 150px;/* "Percent of EU range" */
+}
 .mat-column-actions{
 	flex: 0 0 96px;
 	padding-inline: 0;
@@ -100,9 +103,10 @@ mat-row.editing{
 		margin: 0 0 .25rem;
 		font: var(--mat-sys-title-small);
 	}
+	/* two columns at most, so Connection and Template split the row Root fills;  one below 452px */
 	.fields{
 		display: grid;
-		grid-template-columns: repeat( auto-fit, minmax(220px, 1fr) );
+		grid-template-columns: repeat( auto-fit, minmax( max(220px, calc((100% - .75rem) / 2)), 1fr ) );
 		gap: .5rem .75rem;
 		mat-form-field{
 			width: 100%;
@@ -113,5 +117,20 @@ mat-row.editing{
 	}
 	mat-hint.error{
 		color: var(--mat-sys-error);
+	}
+	.guid{
+		display: flex;
+		align-items: center;
+		gap: .5rem;
+		font: var(--mat-sys-body-small);
+		.value{
+			font-family: 'Roboto Mono', monospace;
+			user-select: all;
+		}
+		button{
+			--mat-icon-button-state-layer-size: 32px;
+			padding: 4px;
+			mat-icon{ font-size: 18px; width: 18px; height: 18px; }
+		}
 	}
 }

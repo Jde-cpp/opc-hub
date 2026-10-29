@@ -6,7 +6,7 @@ import { firstValueFrom, Subscription } from 'rxjs';
 import { ComponentPageTitle } from '../component-page-title/component-page-title';
 import { RouteItem } from '../component-sidenav/route-item';
 import { IENVIRONMENT } from '../../services/environment/environment';
-import { HELP_TOPICS, HelpTopic, helpTopics } from '../../services/help/help-topic';
+import { HELP_TOPICS, HelpTopic, helpTopicId, helpTopics } from '../../services/help/help-topic';
 import { Latest } from '../../services/latest';
 
 //Renders one help topic's markdown.  The markdown is the app's own shipped asset - the same trust as the bundle - so the html
@@ -31,7 +31,7 @@ export class HelpPage implements OnInit, OnDestroy{
 
 	async #load( topic:HelpTopic|undefined ){
 		const request = this.#latest.next();
-		const id = this.#route.snapshot.paramMap.get( 'topic' ) ?? '';
+		const id = helpTopicId( this.#route.snapshot.paramMap );
 		this.#setSideNav( topic, id );
 		this.html.set( null );
 		this.error.set( null );

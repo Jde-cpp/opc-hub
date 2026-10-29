@@ -7,7 +7,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { confirm, DetailActions, DetailPage, errorMessage, Properties } from 'jde-framework';
-import { histPathText, histThresholdArgs, histThresholdBlank, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames, histThresholdProblem } from '../../../model/hist';
+import { histPathText, histThresholdArgs, histThresholdBlank, histThresholdColumns, histThresholdFieldText, HistThresholdFields, histThresholdNames, histThresholdProblem } from '../../../model/hist';
 import { HistTemplate, HistTemplateGroup, HistTemplateMember, HistTemplateProps } from '../../../model/hist-admin';
 import { Gateway } from '../../../services/gateway-service';
 import { HistAdminService } from '../../../services/hist-admin-service';
@@ -48,8 +48,6 @@ export class HistTemplateDetail extends DetailPage<HistTemplate>{
 	readonly fieldOrder = ['slug', 'name', 'description'];
 	readonly columns = histThresholdColumns;
 	readonly displayedColumns = ['path', ...histThresholdNames, 'actions'];
-	//what a blank column of a member means:  the group's value, else the default
-	readonly memberHints:Partial<Record<HistThresholdName,string>> = { exceptionDeviation: "Blank:  the group's deviation, else none.", exceptionDeviationFormat: "Blank:  the group's format, else AbsoluteValue.", minTimeInterval: "Blank:  the group's, else 0.", maxTimeInterval: "Blank:  the group's, else off.", stepped: "Blank:  the group's, else true." };
 	get template(){ return this.row; }
 	members = new HistMembers<HistTemplateMember>( this.snackbar );//its error is also the gateway's refusal of an edit
 	groups = signal<HistTemplateGroup[]>( [] );

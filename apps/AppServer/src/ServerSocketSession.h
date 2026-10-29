@@ -56,6 +56,7 @@ namespace Jde::App::Server{
 		Proto::FromClient::Instance _instance;
 		App::ConnectionPks _pks;
 		mutable mutex _registrationMutex;//guards _instance and _pks together: AddInstance publishes both on this session's strand while _sessions visitors read them from other threads.
+		SessionPK _instanceSessionId{};//the web session kInstance adopted - removed in OnClose.
 		uint8 _failedAdoptions{};
 	};
 }

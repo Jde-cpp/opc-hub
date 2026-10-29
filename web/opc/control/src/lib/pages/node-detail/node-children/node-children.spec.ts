@@ -33,16 +33,58 @@ describe( 'NodeChildren subscription values', ()=>{
 			{ provide: SnackbarService, useValue: snackbar },
 			pageTitleStub
 		]});
-		const page = TestBed.createComponent( NodeChildren ).componentInstance;
+		const fixture = TestBed.createComponent( NodeChildren );
+		const page = fixture.componentInstance;
+		const save = vi.spyOn( TestBed.inject(ProfileStore), 'save' ).mockResolvedValue();
 		page.pageData = { gateway, route: {profileKey: 'k'}, server: {connection: {slug: 'local', defaultBrowseNs: 2}}, nodes: [] } as any;
 		page.profile = { subscriptions: [] } as any;
 		return {
-			page, gateway, snackbar,
+			page, fixture, gateway, snackbar, save,
 			setNodes: ( nodes:Variable[], resubscribe:boolean )=>(<any>page).setNodes( nodes, resubscribe ),
 			unsubscribed: ()=>gateway.unsubscribe.mock.calls.map( c=>c[1] ),
 			answer: ( reading:any )=>{ written = reading; }
 		};
 	};
+
+	//a tick was saved only on the way to the next node, and destroying the page unticked every row:  a switch to the History tab
+	//and back came to none ticked
+	describe( 'the ticks', ()=>{
+		it( 'are saved as they are made', ()=>{
+			const { page, setNodes, save } = create();
+			setNodes( [X, Y], true );
+			page.selections.select( X );
+			expect( save ).toHaveBeenCalledTimes( 1 );
+			expect( (save.mock.calls[0][1] as any).subscriptions.map( (s:NodeId)=>s.key ) ).toEqual( [X.key] );
+			page.selections.deselect( X );
+			expect( save ).toHaveBeenCalledTimes( 2 );
+			expect( (save.mock.calls[1][1] as any).subscriptions ).toEqual( [] );
+		} );
+		it( 'are not saved again when restored', ()=>{
+			const { page, setNodes, save } = create();
+			page.profile.subscriptions = [X.nodeId];
+			setNodes( [X, Y], true );
+			expect( page.selections.isSelected(X) ).toBe( true );
+			expect( save ).not.toHaveBeenCalled();
+		} );
+		it( 'outlive the tab', ()=>{
+			const { page, fixture, setNodes, save } = create();
+			setNodes( [X, Y], true );
+			page.selections.select( X );
+			fixture.destroy();
+			expect( save ).toHaveBeenCalledTimes( 1 );
+			expect( page.profile.subscriptions.map( s=>s.key ) ).toEqual( [X.key] );
+		} );
+		it( 'are named by what the header box does', ()=>{
+			const { page, setNodes } = create();
+			page.viewSet.reset( [NodeView.default()] );//the rows are the view's
+			setNodes( [X, Y], true );
+			expect( page.checkboxLabel() ).toBe( 'select all' );
+			page.selections.select( X );
+			expect( page.checkboxLabel() ).toBe( 'select all' );
+			page.selections.select( Y );
+			expect( page.checkboxLabel() ).toBe( 'deselect all' );
+		} );
+	} );
 
 	//angular-review3 #12: `variables.find(...)!.value = …` threw a TypeError inside the observer - and again on every publish
 	//tick - once a re-browse had dropped the row the value was for.  RxJS swallows an observer throw into its unhandled-error

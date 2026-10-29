@@ -1,4 +1,4 @@
-import { Injectable, Signal, inject, signal, InjectionToken } from '@angular/core';
+import { DestroyRef, Injectable, Signal, inject, signal, InjectionToken } from '@angular/core';
 import { RouteStore, User, UserJson } from 'jde-spa';
 
 const userStorageKey = 'user';
@@ -23,6 +23,20 @@ export class AuthStore{
 			catch( e2 ){ console.error( `Could not clear localStorage['${userStorageKey}']:`, e2 ); }
 			this.#userSignal.set( undefined );
 		}
+		//Every window shares the stored user but read it only above:  another window's login, renewal or logout left this one on
+		//the session it loaded with.  `storage` fires in every window but the writer;  a null key is a localStorage.clear().
+		const onStorage = ( e:StorageEvent )=>{
+			if( e.key!=userStorageKey && e.key!==null )
+				return;
+			try{
+				this.#userSignal.set( e.newValue ? new User(JSON.parse(e.newValue)) : undefined );
+			}
+			catch( err ){
+				console.error( `Ignoring another window's unreadable localStorage['${userStorageKey}'] (${e.newValue}):`, err );
+			}
+		};
+		window.addEventListener( 'storage', onStorage );
+		inject( DestroyRef ).onDestroy( ()=>window.removeEventListener('storage', onStorage) );
 	}
 
 	append( user:UserJson ):void{

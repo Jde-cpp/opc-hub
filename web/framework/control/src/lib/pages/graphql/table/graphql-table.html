@@ -39,7 +39,7 @@
 	@for( column of columnNames().string; track column ){
 		<ng-container [matColumnDef]="column">
 			<mat-header-cell mat-header-cell *matHeaderCellDef mat-sort-header [style]="columnStyle(column)"> {{columnName(column)}} </mat-header-cell>
-			<mat-cell *matCellDef="let row" [style]="columnStyle(column)"> {{row[column]}} </mat-cell>
+			<mat-cell *matCellDef="let row" [style]="columnStyle(column)"> {{stringValue(column,row)}} </mat-cell>
 		</ng-container>
 	}
 	@for( column of columnNames().object; track column ){

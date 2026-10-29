@@ -4,7 +4,12 @@
 @if( !providers.isLoading() ) {
 	@if( user()?.picture ){
 		<button type="button" class="account" (click)="onLogout()" [attr.aria-label]="signOutLabel()" [matTooltip]="signOutLabel()">
-			<img class="profile-picture" [src]="user()?.picture" alt="">
+			@if( picture() ){
+				<img class="profile-picture" [src]="picture()" alt="" referrerpolicy="no-referrer" (error)="onPictureError()">
+			}
+			@else {
+				<mat-icon>account_circle</mat-icon>
+			}
 		</button>
 	}
 	@else if( user()?.name ){

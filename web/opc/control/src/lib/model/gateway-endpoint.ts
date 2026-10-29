@@ -20,3 +20,14 @@ export const policyName = ( uri:string ):string=>uri.substring( uri.lastIndexOf(
 export const modeName = ( mode:string ):string=>({ SignAndEncrypt: "Sign & Encrypt" } as Record<string,string>)[mode] ?? mode;
 //The folder the endpoint serves a connection's groups' members under (servers spec *Address space*).
 export const servedFolder = ( slug:string ):string=>`Objects/${slug}`;
+//The deepest folder a group's served members share, from the endpoint's own paths:  undefined for none served.
+export function servedUnder( served:EndpointServedNode[] ):string|undefined{
+	let shared:string[]|undefined;
+	for( const folder of served.map( n=>n.path.split( '/' ).slice( 0, -1 ) ) ){
+		let i = 0;
+		while( shared && i<shared.length && shared[i]==folder[i] )
+			++i;
+		shared = shared ? shared.slice( 0, i ) : folder;
+	}
+	return shared?.join( '/' );
+}

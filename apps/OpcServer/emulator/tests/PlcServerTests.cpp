@@ -55,7 +55,7 @@ namespace Jde::Opc::Emulator::Tests{
 			return UATestClient{ Ƒ("opc.tcp://127.0.0.1:{}", _plc->Port()), ssl, identity, UA_MESSAGESECURITYMODE_SIGNANDENCRYPT };
 		}
 		Ω field( uint i )ε->const NodeId&{ return _plc->Contract()->Fields.at( i ).Node; }
-		template<class T> Ω readAs( const NodeId& node, const UA_DataType& type )ι->optional<T>{
+		Ṫ readAs( const NodeId& node, const UA_DataType& type )ι->optional<T>{
 			let v = ReadValue( *_plc->Ptr(), node );
 			return v.hasValue && UA_Variant_hasScalarType(&v.value, &type) ? optional{ v.Get<T>(0) } : nullopt;
 		}

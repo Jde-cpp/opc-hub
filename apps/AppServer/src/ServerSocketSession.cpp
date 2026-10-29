@@ -24,6 +24,7 @@ namespace Jde::App::Server{
 		try{
 			auto info = co_await Adopt( instance.session_id() );
 			SetSessionInfo( info );
+			_instanceSessionId = info->SessionId;
 			let claim = Server::ClaimInstance( Id(), instance );//held to the end of this block, past the publish below
 			let schema = App::RegistrationSchema( instance.application(), instance.instance_name(), instance.auth_resource(), UserPK() );
 			let [appPK,instancePK,connectionPK] = App::AddConnection( instance.application(), instance.instance_name(), instance.host(), instance.pid(), schema, false );
@@ -352,6 +353,11 @@ namespace Jde::App::Server{
 		LogRead( "OnClose", 0 );
 		Server::OnSessionDisconnect( SharedFromThis() );
 		base::OnClose();
+		//An instance's session is its own:  ConnectAwait's /login minted it for this connection, and a reconnect logs in again,
+		//so nothing holds it once the socket is gone.  Left in the map, each restart of an instance listed another session for
+		//a day.  After base::OnClose, which unlists this socket - Remove closes the sockets still bound to the id.
+		if( _instanceSessionId )
+			Web::Server::Sessions::Remove( _instanceSessionId );
 	}
 
 	α ServerSocketSession::WriteComplete( RequestId requestId )ι->void{

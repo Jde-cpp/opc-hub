@@ -1,4 +1,5 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { CdkCopyToClipboard } from '@angular/cdk/clipboard';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,10 +10,10 @@ import { MatTableModule } from '@angular/material/table';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { confirm, DetailActions, DetailPage, Properties } from 'jde-framework';
-import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, HistThresholdName, histThresholdNames } from '../../../model/hist';
+import { histPathText, histThresholdColumns, histThresholdFieldText, HistThresholdFields, histThresholdNames } from '../../../model/hist';
 import { HistConnection, histDataTypeLabel, HistGroup, HistGroupMember, HistGroupProps, histNodeLabel, histNodeText, HistRef, HistResolvedMember, HistTemplateMember } from '../../../model/hist-admin';
 import { ExNodeId } from '../../../model/ex-node-id';
-import { EndpointServed, endpointServedQuery, endpointUrlQuery, servedFolder } from '../../../model/gateway-endpoint';
+import { EndpointServed, endpointServedQuery, endpointUrlQuery, servedFolder, servedUnder } from '../../../model/gateway-endpoint';
 import { OpcError } from '../../../model/opc-error';
 import { Server } from '../../../model/server';
 import { StatusCode } from '../../../model/types';
@@ -30,9 +31,8 @@ import { HistThresholdFieldsEditor } from './hist-threshold-fields';
 //A template member's resolution as the page shows it:  resolved to a node, or not and why, from the rows and the last resolve
 export type HistResolutionRow = { templateNode:number; path:string; node?:ExNodeId; status?:StatusCode; holder?:HistRef };
 //The fields the form leaves out:  the source and the thresholds have controls of their own below it, and the guid is read, never
-//typed, so a new row hides it.  Constants, as the binding is read each check and a new array has Properties rebuild its fields.
-const excluded = ['root', ...histThresholdNames];
-const excludedNew = [...excluded, 'guid'];
+//typed, so the page shows it last.  A constant, as the binding is read each check and a new array has Properties rebuild its fields.
+const excluded = ['root', 'guid', ...histThresholdNames];
 
 //A group's page (#337, spec *Templates*):  on Properties its row - the name, slug and description, its source, one connection with a
 //template applied from a root or none for an ad hoc node list, fixed once created, and its thresholds, the defaults for members
@@ -47,7 +47,7 @@ const excludedNew = [...excluded, 'guid'];
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
 	host: {class: 'main-content mat-drawer-container my-content hist-group-detail'},
-	imports: [DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
+	imports: [CdkCopyToClipboard, DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
 })
 export class HistGroupDetail extends DetailPage<HistGroup>{
 	constructor(){ super( 'hist-group-detail' ); }
@@ -60,6 +60,7 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		this.resolved.set( undefined );
 		this.members.error.set( undefined );
 		this.endpoint.set( undefined );//not the last gateway's, while this one answers
+		this.rootPath.set( undefined );
 		this.#loadLists();
 		if( this.row.id )
 			this.refresh();
@@ -70,19 +71,18 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 	protected override get title(){ return this.row.name ? `${this.row.name} - Group` : 'New Group'; }
 	override get ql(){ return this.gateway; }//per-gateway, as ClientDetail's
 
-	readonly fieldOrder = ['slug', 'name', 'description', 'guid'];
-	readonly fieldLabels = { guid: 'Guid' };
-	get excludedFields():string[]{ return this.isNew ? excludedNew : excluded; }
+	readonly fieldOrder = ['slug', 'name', 'description'];
+	readonly excludedFields = excluded;
 	readonly columns = histThresholdColumns;
 	readonly memberColumns = ['node', 'name', 'type', 'member', ...histThresholdNames, 'actions'];
 	readonly resolutionColumns = ['path', 'node', 'status'];
 	//what a blank default means:  the library's own (spec *Thresholds*)
-	readonly thresholdHints:Partial<Record<HistThresholdName,string>> = { exceptionDeviation: 'Blank:  none, every change is stored.', exceptionDeviationFormat: 'Blank:  AbsoluteValue.', minTimeInterval: 'Blank:  0, as fast as the server samples.', maxTimeInterval: 'Blank:  off, no heartbeat.', stepped: 'Blank:  true, a value holds until the next.' };
 	get group():HistGroup{ return <HistGroup>this.properties(); }
 	connections = signal<HistConnection[]>( [] );
 	templates = signal<HistRef[]>( [] );
 	server = signal<Server|undefined>( undefined );//the group's connection, for its namespaces:  a node shown by the server's index
 	endpoint = signal<EndpointServed|null|undefined>( undefined );//the gateway's own and what it serves of the group, null for none;  undefined until it has answered
+	rootPath = signal<string|undefined>( undefined );//the saved root's browse path below Objects, once the gateway has placed it
 	members = new HistMembers<HistGroupMember>( this.snackbar );//its loading and busy are the Resolution tab's too
 	templateMembers = signal<HistTemplateMember[]>( [] );
 	resolved = signal<Map<number,HistResolvedMember>|undefined>( undefined );//the last resolve's answer, by template member
@@ -109,11 +109,29 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		const gateway = this.gateway;
 		try{
 			const server = await this.opcStore.getConnection( gateway, slug );
-			if( gateway==this.gateway )
-				this.server.set( server );
+			if( gateway!=this.gateway )
+				return;
+			this.server.set( server );
+			this.#loadRootPath( slug );
 		}
 		catch( e ){//the nodes show by URI then
 			console.warn( `Could not describe '${slug}'.`, e );
+		}
+	}
+	//The saved root by its browse path (HistAdminService.rootPaths), once the server's namespaces are known - the NodeId is the hint.
+	//None for a root the gateway can't place, which then shows as its column's text.
+	async #loadRootPath( slug:string ):Promise<void>{
+		const node = this.isNew ? undefined : this.group?.rootNode, server = this.server();
+		if( !node || !server )
+			return;
+		const gateway = this.gateway, id = this.row?.id;
+		try{
+			const [path] = await this.admin.rootPaths( gateway, slug, server, [node] );
+			if( gateway==this.gateway && this.row?.id==id && path!=undefined )
+				this.rootPath.set( path );
+		}
+		catch( e ){
+			console.warn( "Could not read the root's path.", e );
 		}
 	}
 	//the gateway's own endpoint (#388), for where it serves the group, and its members as served - the server's word, not a path built
@@ -134,19 +152,20 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		return this.connections().find( c=>c.id==id )?.slug;
 	}
 	//Where the endpoint serves the group's members (servers spec *Address space*):  under its connection's folder, each at its path on
-	//the source;  not at all without an endpoint, for a deleted group, or one the endpoint doesn't hold.  Read once endpoint() is known.
+	//the source, so shown as the deepest folder their served paths share;  not at all without an endpoint, for a deleted group, or one
+	//the endpoint doesn't hold.  Read once endpoint() is known.
 	servedText():string{
 		const e = this.endpoint();
 		if( !e )
 			return 'Not served:  the gateway has no OPC UA endpoint.';
-		const where = `on ${e.url} under ${servedFolder( this.connectionSlug() ?? '<connection>' )}/…, each at its path on the source, with the group's history`;
+		const folder = servedFolder( this.connectionSlug() ?? '<connection>' );
 		if( this.isNew )
-			return `Once saved, its members are served ${where}.`;
+			return `Once saved, its members are served on ${e.url} under ${folder}/…, each at its path on the source, with the group's history.`;
 		if( this.isDeleted )
 			return 'Not served:  the group is deleted.';
 		if( !e.served )
 			return `Not served:  the endpoint on ${e.url} doesn't hold the group - the gateway's historian isn't running, or hasn't loaded it.`;
-		return `Its members are served ${where}.`;
+		return `${e.url} under ${servedUnder( e.served ) ?? folder}`;
 	}
 	async refresh():Promise<void>{
 		const id = this.row?.id, templateId = this.row?.histTemplateId, gateway = this.gateway;
@@ -297,8 +316,17 @@ export class HistGroupDetail extends DetailPage<HistGroup>{
 		change( g );
 		this.properties.set( g );
 	}
+	copied( ok:boolean ):void{
+		if( ok )
+			this.snackbar.info( 'Guid copied.' );
+		else
+			this.snackbar.error( 'Could not copy the guid.' );
+	}
+	rootText():string{ return this.isNew ? this.group.root ?? '' : this.rootPath() ?? this.group.root ?? ''; }
+	//a saved root's NodeId under its path, by the server's index once the server is described
 	rootHint():string{
-		return this.group?.rootError ?? ( this.isNew ? 'Where the template\'s paths start:  a NodeId, ns=2;i=5001 or {"nsu":"urn:…","i":5001}, or browse for one.  Blank is the Objects folder.' : 'Fixed when the group was made.' );
+		const node = this.group?.rootNode;
+		return this.group?.rootError ?? ( this.isNew ? 'Where the template\'s paths start:  a NodeId, ns=2;i=5001 or {"nsu":"urn:…","i":5001}, or browse for one.  Blank is the Objects folder.' : node ? this.nodeLabel( node ) : '' );
 	}
 	//the root picked from the connection's tree:  an object, by its URI
 	async browseRoot():Promise<void>{

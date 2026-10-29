@@ -11,7 +11,7 @@ import { AuthStore } from './auth-store';
 import { errorText, httpStatus } from '../utils/errors';
 import { GoogleAuthService } from './google-auth-service';
 import { Mutation } from '../model/ql/mutation';
-import { computed, isDevMode, Signal } from '@angular/core';
+import { computed, Signal } from '@angular/core';
 import { EProvider, User } from 'jde-spa';
 import { StringUtils } from '../utils/string-utils';
 
@@ -180,15 +180,16 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 				if( this.log.restResults ) console.log( JSON.stringify(settings) );
 				this.timeoutSeconds = fromIsoDuration( settings["restSessionTimeout"] );
 				let active = settings["active"];
-				let timedout = this.lastRestCall && ( this.lastRestCall.getTime() < Date.now() - this.timeoutSeconds*1000 );
 				//The per-server "instance" comparison that used to gate this is gone: it read settings["serverInstance"],
 				//a key Server::SendServerSettings never emits (it sends restSessionTimeout, connectionId and active), so
 				//parseInt gave NaN, `NaN != previousInstance` was always true, and on the AppServer path reset() fired on
 				//EVERY load - wiping the stored user down to the jwt each time.  Instance tracking lives in AuthStore now.
-				if( !active || timedout )
+				//`active` is the server's answer for the session, expiry included.  A guess from this window's own last REST call also
+				//replaced it:  an idle window opened a session while another window kept the first alive.
+				if( !active && this.isLoggedIn() )//`active` is a signed-in session, so an anonymous one never is - dropping it opened another on every page load.  A dead anonymous one 401s, and handle401 replaces it.
 					this.authStore.reset( this.user()?.jwt );
 				for( let callback of this.#loginCallbacks ){
-					let y = await this.authGet<any>( callback.target, this.user()!.authorization! );
+					let y = await this.authGet<any>( callback.target, this.user()?.authorization ?? undefined );//no user at all on a first visit - the reset above no longer makes one
 					callback.resolve( y );
 				}
 			}
@@ -291,7 +292,7 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 			if( !credential )
 				return null;
 			const user = new User( credential );
-			this.authStore.append( user );//identity/jwt FIRST: appending a jwt-carrying user rebuilds via the User ctor, whose jwt branch drops an existing sessionId (the auth.store setServerInstance caveat) — so the sessionId must land last
+			this.authStore.append( user );//identity/jwt FIRST: it keeps the lapsed sessionId, so the fresh one loginJwt appends must land last
 			await this.loginJwt( user.authorization! );//"Bearer <jwt>", the same shape AppService.login sends; the fresh sessionId arrives in the response Authorization header and postRaw appends it
 			if( this.socketId )
 				this.sendAuthorization( this.socketId );//the socket authenticated with the stale session; move it to the fresh one (not awaited — it settles its handshake internally)
@@ -530,9 +531,9 @@ export abstract class ProtoService<Transmission,ResultMessage>{
 	protected handleConnectionError( _err:unknown ):void{}
 
 	protected backlog:Transmission[] = [];
-	//Each request in a dev build - ng serve, --configuration development - and none in a release one.  DevTools anchors the lines
-	//at this file;  ignore-list it (see snackbar-service.ts) to see the caller instead.
-	protected log = { sockRequests:isDevMode(), restRequests:isDevMode(), restResults:false, subRequest:isDevMode(), maxLength:255 };
+	//Off in every build:  turn one on here, or from the debugger, to log each request.  DevTools anchors the lines at this file;
+	//ignore-list it (see snackbar-service.ts) to see the caller instead.
+	protected log = { sockRequests:false, restRequests:false, restResults:false, subRequest:false, maxLength:255 };
 	//Informational purposes only to match with server logs.
 	protected get socketId():number{ return this.#socketId; } #socketId!:number;
 	protected get product():string{ return "Server"; }//what the host-mismatch warning calls it

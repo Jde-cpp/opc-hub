@@ -1,0 +1,55 @@
+// Read-only rows - a server's description on a connection's Connection tab, the gateway's own endpoint on its Endpoint tab:  label |
+// value rows (dl.fields) and captioned lists (table.list), with one row padding and rule so they read as one grid, in the mat-sys
+// tokens of the filled form-fields on a Properties tab.  Mixins, as _status's, so each rule takes the encapsulation of the sheet it is in.
+
+// The column the rows sit in:  the same cap and inset as the `properties` form on a record's Properties tab, so its tabs share a left
+// and a right edge.
+@mixin column{
+	display: block;
+	box-sizing: content-box;
+	max-width: var(--jde-form-max-width);
+	padding: 16px 24px 0;
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-body-medium);
+}
+
+@mixin rows{
+	/* label | value, the label column as wide as its longest entry;  no column gap, so each row's rule is unbroken */
+	dl.fields{
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		margin: 0;
+	}
+	/* 1rem sides = the fill field's text inset, so the labels line up under the Properties tab's field text and the Save button */
+	dl.fields dt, dl.fields dd, table.list td{
+		padding: .5rem 1rem;
+		border-block-end: 1px solid var(--mat-sys-outline-variant);
+	}
+	dl.fields dd{
+		margin: 0;
+		overflow-wrap: anywhere;
+	}
+	dl.fields dt, .empty{
+		color: var(--mat-sys-on-surface-variant);
+	}
+
+	table.list{
+		width: 100%;
+		border-collapse: collapse;
+		margin-block-start: 1.5rem;
+	}
+	/* a section's title:  the field labels' size at title weight, so it reads above them, not under */
+	table.list caption{
+		text-align: left;
+		padding: 0 1rem .25rem;
+		color: var(--mat-sys-on-surface-variant);
+		font: var(--mat-sys-title-small);
+	}
+	table.list td{
+		overflow-wrap: anywhere;
+	}
+
+	.empty{
+		font-style: italic;
+	}
+}

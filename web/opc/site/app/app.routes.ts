@@ -172,7 +172,8 @@ export const routes: Routes = [
 	{ path: 'help', title: "Help", loadComponent: loadCards, providers: [helpProvider], data: {summary: "Documentation", icon: "help_outline"} },
 	{ path: 'help', loadComponent: loadComponentSidenav,
 		children :[
-			{ path: ':topic', loadComponent: loadHelpPage, resolve: { topic: helpTopicResolver }, runGuardsAndResolvers: "paramsChange" }
+			{ path: ':topic', loadComponent: loadHelpPage, resolve: { topic: helpTopicResolver }, runGuardsAndResolvers: "paramsChange" },
+			{ path: ':topic/:subtopic', loadComponent: loadHelpPage, resolve: { topic: helpTopicResolver }, runGuardsAndResolvers: "paramsChange" }//a page split out of another's (HelpTopic.id)
 		]
 	},
 	//last:  a url nothing above matches (a mistyped or stale bookmark) was a blank page (reviews/m3-closing.md #38).  data.notFound

@@ -8,6 +8,7 @@ import { Favorite, NavBar } from './navbar';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
 import { RecentVisits } from '../../services/recent-visits';
 import { RouteStore } from '../../services/route-store';
+import { HELP_TOPICS, HelpAnchor } from '../../services/help/help-topic';
 import { Blank, flush } from 'jde-spa/testing';
 
 //The bar over the router `routes` builds, with no search and nothing to focus.
@@ -200,5 +201,35 @@ describe( 'NavBar crumbs', ()=>{
 		const navbar = create();
 		await TestBed.inject( Router ).navigateByUrl( '/access/users/alice' );
 		expect( titles(navbar).slice(-2) ).toEqual( ["Users", "Alice Ng"] );
+	} );
+} );
+
+//The ? button opens the section the page names (HelpAnchor) - a section of the url's own topic, never of the help index.
+describe( 'NavBar help', ()=>{
+	const create = ()=>{
+		configure( [], { provide: RecentVisits, useValue: {visit: vi.fn( async ()=>{} )} }, { provide: HELP_TOPICS, multi: true, useValue: [{id: 'gateways', title: 'Gateways', url: 'gateways.md', routes: ['apps/gateways/:instance']}, {id: 'gateways/groups', title: 'Historian groups', url: 'groups.md', routes: ['apps/gateways/:instance/groups']}] } );
+		const navbar = TestBed.runInInjectionContext( ()=>new NavBar() );
+		TestBed.inject( HelpAnchor ).fragment.set( 'endpoint' );
+		return navbar;
+	};
+
+	it( "opens the section the page names", ()=>{
+		const navbar = create();
+		navbar.route.set( '/apps/gateways/OpcHub.debug' );
+		expect( navbar.helpRoute() ).toEqual( ['/help', 'gateways'] );
+		expect( navbar.helpFragment() ).toBe( 'endpoint' );
+	} );
+
+	it( "opens a page split out of another's by its segments", ()=>{
+		const navbar = create();
+		navbar.route.set( '/apps/gateways/OpcHub.debug/groups/pump0' );
+		expect( navbar.helpRoute() ).toEqual( ['/help', 'gateways', 'groups'] );//not 'gateways/groups', which a link carries as %2F
+	} );
+
+	it( "names no section on the help index", ()=>{
+		const navbar = create();
+		navbar.route.set( '/help/gateways' );
+		expect( navbar.helpRoute() ).toEqual( ['/help'] );
+		expect( navbar.helpFragment() ).toBeUndefined();
 	} );
 } );

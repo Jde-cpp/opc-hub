@@ -19,3 +19,19 @@ describe( "User.decodeJwt", ()=>{
 		expect( ()=>new User("legacy-session-id") ).toThrowError( /is not a jwt/ );
 	} );
 } );
+
+//AuthStore loads the stored user through this constructor on every page refresh.  Its jwt branch kept only the jwt, so the
+//session went with the rest and the next request signed in again with the jwt - a new session per refresh.
+describe( "User from a stored user", ()=>{
+	it( "keeps a jwt user's session", ()=>{
+		const user = new User( JSON.parse(JSON.stringify(new User({jwt, sessionId:"92d9ab0b", serverInstances:[{url:"http://localhost:1967", instance:1}]}))) );
+		expect( user.sessionId ).toBe( "92d9ab0b" );
+		expect( user.authorization ).toBe( "92d9ab0b" );
+		expect( user.serverInstances ).toEqual( [{url:"http://localhost:1967", instance:1}] );
+		expect( user.email ).toBe( "a@b.c" );
+		expect( user.exp ).toEqual( new Date(2000000000*1000) );
+	} );
+	it( "signs in with the jwt when there is no session", ()=>{
+		expect( new User(jwt).authorization ).toBe( `Bearer ${jwt}` );
+	} );
+} );

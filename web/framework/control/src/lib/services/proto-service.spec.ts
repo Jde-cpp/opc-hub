@@ -1,6 +1,10 @@
+import { TestBed } from '@angular/core/testing';
+import { HttpClient, HttpHeaders, HttpResponse } from '@angular/common/http';
+import { of } from 'rxjs';
+import { User } from 'jde-spa';
 import { IError } from './proto-service';
 import { AuthStore } from './auth-store';
-import { silence } from 'jde-spa/testing';
+import { fakeJwt, silence } from 'jde-spa/testing';
 import { stubCodec, TestProtoService } from 'jde-framework/testing';
 
 class TestService extends TestProtoService{
@@ -97,7 +101,9 @@ describe( 'ProtoService.sendTransmission logging', ()=>{
 	afterEach( ()=>vi.restoreAllMocks() );
 
 	it( 'never puts the session id or the jwt on the console', ()=>{
-		new LogService().sendTransmission( handshake );
+		const service = new LogService();
+		service.setLog( true );//the redaction, whatever the build's default
+		service.sendTransmission( handshake );
 		expect( logged().join('\n') ).not.toContain( "deadbeefcafe" );
 		expect( logged().join('\n') ).not.toContain( "ey.token.sig" );
 		expect( logged().join('\n') ).toContain( "<redacted>" );
@@ -136,5 +142,63 @@ describe( 'ProtoService.instances', ()=>{
 		expect( warn ).toHaveBeenCalledTimes( 1 );
 		expect( warn.mock.calls[0][0] ).toMatch( /^Gateway 'far' is registered at host 'plc7\.example' but the app is served from / );
 		warn.mockRestore();
+	} );
+} );
+
+//A page load asks /serverSettings whether the stored session is `active` - a signed-in one.  An anonymous session never is, and
+//dropping it for that made every refresh of an anonymous page open another.
+describe( 'ProtoService.loginWait', ()=>{
+	const minted = "0badf00d";
+	const load = ( stored:object, active:boolean )=>{
+		localStorage.clear();
+		const authStore = TestBed.inject( AuthStore );
+		if( Object.keys(stored).length )
+			authStore.append( stored );
+		const get = vi.fn( (url:string, options:any)=>url.endsWith("serverSettings")
+			? of( {restSessionTimeout:"P1D", active} )
+			: of( options?.observe=="response" ? new HttpResponse({body:{}, headers:new HttpHeaders({Authorization:minted})}) : {} ) );
+		const service = new TestProtoService( authStore, {http: {get} as unknown as HttpClient} );
+		service.instances = [{host: location.hostname, port: 1967, instanceName: 'hub'} as any];
+		const sent = ()=>get.mock.calls.filter( ([url])=>!url.endsWith("serverSettings") ).map( ([,options])=>options?.headers?.Authorization );
+		return { authStore, service, sent };
+	};
+
+	it( "opens a session on a first visit", async ()=>{
+		const { authStore, service, sent } = load( {}, false );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( [undefined] );
+		expect( authStore.user()?.sessionId ).toBe( minted );
+	} );
+
+	it( "keeps an anonymous session", async ()=>{
+		const { authStore, service, sent } = load( {sessionId:"a1b2c3d4"}, false );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( ["a1b2c3d4"] );
+		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
+	} );
+
+	it( "signs a Google user in again when the session is not active", async ()=>{
+		const jwt = fakeJwt( {email:"a@b.c", name:"A B", exp:2000000000, iss:"https://accounts.google.com"} );
+		const { authStore, service, sent } = load( new User({jwt, sessionId:"a1b2c3d4"}), false );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( [`Bearer ${jwt}`] );
+		expect( authStore.user()?.sessionId ).toBe( minted );
+	} );
+
+	it( "keeps a signed-in user's active session", async ()=>{
+		const jwt = fakeJwt( {email:"a@b.c", name:"A B", exp:2000000000, iss:"https://accounts.google.com"} );
+		const { service, sent } = load( new User({jwt, sessionId:"a1b2c3d4"}), true );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( ["a1b2c3d4"] );
+	} );
+
+	//this window's last REST call says nothing of the session another window kept alive
+	it( "keeps an active session in a window idle past the timeout", async ()=>{
+		const jwt = fakeJwt( {email:"a@b.c", name:"A B", exp:2000000000, iss:"https://accounts.google.com"} );
+		const { authStore, service, sent } = load( new User({jwt, sessionId:"a1b2c3d4"}), true );
+		service.lastRestCall = new Date( Date.now()-2*86400*1000 );
+		await service.loginWait( "graphql?query=x" );
+		expect( sent() ).toEqual( ["a1b2c3d4"] );
+		expect( authStore.user()?.sessionId ).toBe( "a1b2c3d4" );
 	} );
 } );

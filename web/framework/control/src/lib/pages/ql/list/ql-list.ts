@@ -7,10 +7,10 @@ import {IGRAPHQL, IGraphQL, EnumValue } from '../../../services/graphql';
 import {TableSchema}  from '../../../model/ql/schema/table-schema';
 import {MetaObject}  from '../../../model/ql/schema/meta-object';
 
-import { ComponentPageTitle, Latest, RouteItem, RouteStore, HELP_TOPICS, helpTopics, helpTopicFor } from 'jde-spa';
+import { ComponentPageTitle, Latest, RouteItem, RouteStore, HELP_TOPICS, helpTopics, helpTopicFor, helpTopicRoute } from 'jde-spa';
 import { MatIcon } from '@angular/material/icon';
 import { MatButton } from '@angular/material/button';
-import { GraphQLTable } from '../../graphql/table/graphql-table';
+import { CellText, GraphQLTable } from '../../graphql/table/graphql-table';
 import { EmptyState, QLListData, QLListResolver, TableSettings } from '../../../services/ql-list-resolver';
 import { Failure, failureState } from '../../../utils/errors';
 import { FailureState } from '../../../shared/failure-state/failure-state';
@@ -263,6 +263,7 @@ export class QLList implements OnInit{
 	}
 	linkPrefix = input<string[]>( [] );//the segments between the host's route and a row's slug - a list in a page's tab whose detail route is `templates/:slug`, not `:slug` (gateway-detail's Templates and Groups tabs)
 	selector = input<boolean>( false );//pick-rows mode:  always multi-select, no Add, a row click selects instead of navigating
+	cellText = input<CellText>();//the host's text for a text cell (ql-table)
 
 	isLoading = signal<boolean>( true );
 	isRefreshing = signal<boolean>( false );
@@ -324,6 +325,6 @@ export class QLList implements OnInit{
 	helpRoute = computed<string[]|undefined>( ()=>{
 		const segments = (this.#router.url ?? "").split( "?" )[0].split( "/" ).filter( s=>s.length );
 		const topic = helpTopicFor( this.#helpTopics, segments );
-		return topic && topic.routes?.some( r=>r.length ) ? ['/help', topic.id] : undefined;
+		return topic && topic.routes?.some( r=>r.length ) ? helpTopicRoute( topic ) : undefined;
 	});
 }

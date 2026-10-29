@@ -45,7 +45,7 @@
 					@if( editing(); as m ){
 						<section class="editor" aria-label="Edit thresholds">
 							<h3>{{ pathText(m) }}</h3>
-							<hist-threshold-fields [(fields)]="fields" blank="Group's" [hints]=memberHints></hist-threshold-fields>
+							<hist-threshold-fields [(fields)]="fields" blank="Group's"></hist-threshold-fields>
 							<div class="editor-actions">
 								<button matButton="outlined" type="button" (click)="cancelEdit()" [disabled]="members.busy()">Cancel</button>
 								<button matButton="tonal" type="button" (click)="saveEdit()" [disabled]="members.busy() || !changed()">Save</button>

@@ -9,7 +9,7 @@
 				}
 			</view-toolbar>
 			<div style="align-content: center; margin: auto;  text-align: center">
-				<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
+				<ql-table [dataSource]=data() [displayedFields]=displayedFields() [sort]=sort [pendingLive]=pendingLive() [cellText]=cellText() (onSortChange)=onSortChange($event) (onRowActivate)=onRowActivate($event) (onToggleLive)=onToggleLive($event) [(selections)]=selections></ql-table>
 			</div>
 			@if( failure(); as f ){
 				<failure-state [failure]=f (retry)="onRefresh()">

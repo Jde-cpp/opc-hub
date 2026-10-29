@@ -1,8 +1,10 @@
 #include "hubStartup.h"
 #include <jde/fwk/co/Await.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/protobuf.h>
 #include <jde/db/db.h>
 #include <jde/access/Authorize.h>
+#include <jde/access/server/awaits/LoginAwait.h>
 #include <jde/app/client/IAppClient.h>
 #include <jde/app/IApp.h>
 #include "../../AppServer/src/appStartup.h"
@@ -44,6 +46,11 @@ namespace Jde::Opc::Hub{
 
 		//4. The gateway role's schema, introspection, ping/ttl and certificate - its QL is the HubQL, its listener the hub's.
 		Opc::Gateway::Configure( httpSettings, App::Server::QLPtr() );
+		//The certificate's user:  the collector presents it to an OPC server whose users are this process's, as the standalone
+		//gateway's login enrolls its own.
+		auto description = Ƒ( "{} '{}' on {}", Process::AppName(), App::InstanceName(), Process::HostName() );
+		let collector = BlockAwait( Access::Server::LoginAwait::Own(Crypto::ReadCertificate(hub->SslSettings->Certificate.Path), move(description)) );
+		DBG( "Collector user: {}.", collector.Value );
 
 		//5. The one listener.  Its shutdown closes the app sockets; the gateway's registry needs its own close, as its listener's did.
 		auto handler = ms<Hub::RequestHandler>( move(httpSettings) );

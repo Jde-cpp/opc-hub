@@ -17,6 +17,10 @@ describe( 'segmentDisplay', ()=>{
 	it( 'decodes before deciding', ()=>{
 		expect( segmentDisplay('a%20b') ).toBe( 'a b' );
 	} );
+	it( 'names the unsaved row', ()=>{
+		expect( segmentDisplay('$new') ).toBe( 'New' );
+		expect( segmentDisplay('%24new') ).toBe( 'New' );
+	} );
 } );
 
 //reviews/m3-closing.md #38:  the site's catch-all not-found route matches every url, so a reader of the route table that took it

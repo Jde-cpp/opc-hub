@@ -49,10 +49,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 		//value on subscribe, so a navigation during the load is not missed.
 		await NodeView.loadViews( this.viewSet );
 		this.#route.data.subscribe( async (data)=>{
-			if( this.pageData )
-				//the previous node's settings, on the way to the next one:  warn rather than snackbar a page being navigated away from.
-				this.#profileStore.save<UserSettings>( this.pageData.route.profileKey, this.profile )
-					.catch( e=>console.warn("Could not save the node settings.", e) );
 			this.pageData = data["pageData"];
 			//A node switch is a param change, so Angular reuses this component and ngOnDestroy never runs: without this the
 			//previous node's rows stayed selected, and since `nodes` is a fresh UaNode array per navigation, re-selecting the
@@ -71,8 +67,9 @@ export class NodeChildren implements OnInit, OnDestroy {
 		});
 	}
 
+	//No selections.clear():  it emits `removed`, which unticked every row in the profile - a switch to the History tab, which
+	//destroys this one, came back to none.
 	ngOnDestroy() {
-		this.selections.clear();
 		this.selections.changed.unsubscribe();
 		this.subscription = undefined;
 	}
@@ -190,7 +187,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 	checkboxLabel(row?: UaNode): string {
 		return row
 			? `${this.selections.isSelected(row) ? 'deselect' : 'select'} ${row.name}`
-			: `${this.isAllSelected() ? 'select' : 'deselect'} all`;
+			: `${this.isAllSelected() ? 'deselect' : 'select'} all`;
 	}
 	async onSubscriptionChange( r:SelectionChange<UaNode> ){
 		if( r.added.length>0 ){
@@ -202,6 +199,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 				//Compare by key like the removal branch below: these are fresh NodeId instances, so identity never matches.
 				const unsaved = nodes.filter( n=>!this.profile.subscriptions.some(s=>s.key==n.key) );
 				this.profile.subscriptions.push( ...unsaved );//`nodes` (not `unsaved`) still drives the gateway calls below - after a reload the live subscription does not exist yet even for persisted keys
+				if( unsaved.length )
+					this.#saveProfile();
 				if( !this.subscription){
 					this.subscription = this._iot.subscribe( this.cnnctnSlug, nodes, this.Key ).subscribe({
 						next:(value: SubscriptionResult) =>{
@@ -230,7 +229,11 @@ export class NodeChildren implements OnInit, OnDestroy {
 		}
 		if( r.removed.length>0 ){
 			let nodes = r.removed.map( r=>r.nodeId );
-			this.profile.subscriptions = this.profile.subscriptions.filter( s=>!nodes.some(n=>n.key==s.key) );//compare by value: r.removed nodeIds are fresh instances, so reference includes() never matched
+			const kept = this.profile.subscriptions.filter( s=>!nodes.some(n=>n.key==s.key) );//compare by value: r.removed nodeIds are fresh instances, so reference includes() never matched
+			if( kept.length!=this.profile.subscriptions.length ){
+				this.profile.subscriptions = kept;
+				this.#saveProfile();
+			}
 			if( !this.selections.selected.length )
 				this.subscription = undefined;
 			else{
@@ -242,6 +245,11 @@ export class NodeChildren implements OnInit, OnDestroy {
 				}
 			}
 		}
+	}
+
+	//As the tick is made:  the save used to wait for the next node, so a tab switch, a reload or leaving the page lost it.
+	#saveProfile(){
+		this.#profileStore.save<UserSettings>( this.Key, this.profile ).catch( e=>this.#snackbar.exception("Could not save the subscriptions.", e) );
 	}
 
 	//the header box covers the rows on screen that can be subscribed - an object has no value, and its own box is disabled

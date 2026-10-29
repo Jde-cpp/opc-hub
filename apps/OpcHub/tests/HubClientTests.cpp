@@ -44,6 +44,16 @@ namespace Jde::Opc::Hub::Tests{
 		EXPECT_TRUE( client->PublicKey()==appServer->PublicKey() );
 	}
 
+	//The hub's own certificate is a user, found as an OPC server's certificate login finds one (UAAccess):  the collector presents it.
+	TEST_F( HubClientTests, OwnCertificateIsAUser ){
+		auto client = Gateway::AppClient();
+		ASSERT_TRUE( client->SslSettings );
+		let key = Crypto::ExtractPublicKey( Crypto::ReadCertificate(client->SslSettings->Certificate.Path) );
+		let user = client->QuerySync( Ƒ("user( modulus: \"{}\", exponent: {}, deleted: null ){{id}}", key.ModulusHex(), key.ExponentInt()), {} );
+		ASSERT_FALSE( user.empty() );
+		EXPECT_TRUE( QL::AsId<Jde::UserPK::Type>(user)!=Jde::UserPK::System );
+	}
+
 	//GraphQL to the app db (the provider lookups the OPC login path makes) through the local QL, as System.
 	TEST_F( HubClientTests, ProviderRoundTrip ){
 		let slug = "hubTestsProvider";

@@ -1,3 +1,4 @@
+#include <absl/cleanup/cleanup.h>
 #include "helpers.h"
 #include "../src/WebServer.h"
 #include "../src/ServerSocketSession.h"
@@ -147,6 +148,37 @@ namespace Jde::App::Server::Tests{
 		ASSERT_TRUE( reply );
 		EXPECT_EQ( reply->value_case(), FromServerMessage::kSessionInfo );
 		EXPECT_EQ( info->Expiration, soon );
+	}
+
+	//An instance's session is minted by its /login for the one connection, so it ends with the socket - a restarted OpcServer
+	//left a `Key\<instance>.web` row on the Web Sessions tab for a day.
+	TEST_F( SessionMapTests, AnInstancesSessionEndsWithItsSocket ){
+		let id = MintSession();
+		auto client = Connect();
+		let requestId = Send( *client, [id](auto& m){
+			auto& instance = *m.mutable_instance();
+			instance.set_application( "Tests.SessionEnd" );
+			instance.set_instance_name( "session-end" );
+			instance.set_host( "session-end-host" );
+			instance.set_pid( 1234 );
+			instance.set_session_id( id );
+		});
+		AwaitInstance( *client, requestId, "session-end" );
+		ASSERT_TRUE( Web::Server::Sessions::Find(id) );
+		BlockAwait( client->Close(true, SRCE_CUR) );
+		EXPECT_TRUE( WaitUntil([id]{ return !Web::Server::Sessions::Find(id); }) );
+	}
+
+	//A browser's session (kSessionId) outlives its socket - a reload reconnects on it.
+	TEST_F( SessionMapTests, ABrowsersSessionOutlivesItsSocket ){
+		let id = MintSession();
+		absl::Cleanup remove{ [id]{ Web::Server::Sessions::Remove( id ); } };
+		auto client = Connect();
+		let requestId = Send( *client, [id](auto& m){ m.set_session_id( id ); } );
+		ASSERT_TRUE( client->WaitFor([requestId](const FromServerMessage& m){ return m.request_id()==requestId && m.value_case()==FromServerMessage::VALUE_NOT_SET; }) ) << "no Complete for the kSessionId";
+		BlockAwait( client->Close(true, SRCE_CUR) );
+		std::this_thread::sleep_for( std::chrono::milliseconds{250} );//give a wrongful removal time to land.
+		EXPECT_TRUE( Web::Server::Sessions::Find(id) );
 	}
 
 	TEST_F( SessionMapTests, SessionInfoDoesNotReviveExpired ){

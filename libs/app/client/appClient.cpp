@@ -130,7 +130,7 @@ namespace Jde::App::Client{
 				//connect costs ~2 s per address on Windows, and `localhost` is two addresses, so "retrying in 5s" used to run at 9
 				//(the 09-15 rerun's retry table).  A floor of half a second keeps an attempt that outlasts the setting from spinning.
 				wait = std::max( duration_cast<Duration>(reconnectWait()-(steady_clock::now()-attemptStart)), duration_cast<Duration>(500ms) );
-				WARNT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", ServerSettings::Host(), ServerSettings::Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
+				DBGT( ELogTags::App, "Could not connect to the AppServer at {}:{} - retrying in {}s: {}", ServerSettings::Host(), ServerSettings::Port(), Ƒ("{:.1f}", duration<double>(wait).count()), e.what() );
 			}
 			(void)co_await DurationTimer{ wait };
 		}

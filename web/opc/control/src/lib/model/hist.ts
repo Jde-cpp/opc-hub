@@ -55,7 +55,8 @@ export const histThresholdColumns:HistThresholdColumn[] = [
 	{ name: 'maxTimeInterval', label: 'Max interval', kind: 'number', unit: 'ms', hint: "The heartbeat:  the last value is stored again when this passes without a change.  0 turns it off." },
 	{ name: 'stepped', label: 'Stepped', kind: 'boolean', hint: "Whether a stored value holds until the next, or a value between two is interpolated." }
 ];
-export const deviationFormats = ['AbsoluteValue', 'PercentOfValue', 'PercentOfRange', 'PercentOfEURange'];
+//UA_ExceptionDeviationFormat's names, spelled out:  Range is the InstrumentRange, EU range the EURange
+export const deviationFormats = ['Absolute value', 'Percent of value', 'Percent of range', 'Percent of EU range'];
 export const histThresholdSources:Record<HistThresholdSource,string> = { node: "this member's own", template: "its template member's", group: "the group's", default: "the default" };
 //a threshold's effective value as a cell shows it
 export function histThresholdText( t:HistThreshold ):string{

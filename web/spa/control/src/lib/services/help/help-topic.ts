@@ -1,10 +1,11 @@
-import { InjectionToken } from '@angular/core';
+import { Injectable, InjectionToken, signal } from '@angular/core';
+import { ParamMap } from '@angular/router';
 
 //One entry in the help section.  `url` is the markdown asset, relative so it resolves against <base href>;  `routes` are the
 //route-path patterns the navbar's ? button maps onto the topic - ':x' matches any segment, and a pattern matches as a PREFIX
 //of the url, so 'access' covers everything under /access.  `routes: ['']` marks the fallback topic.
 export interface HelpTopic{
-	id:string;//the /help/:topic segment
+	id:string;//its url under /help:  one segment, or two for a page split out of another's ('gateways/groups', /help/:topic/:subtopic)
 	title:string;
 	summary?:string;
 	icon?:string;
@@ -16,6 +17,17 @@ export interface HelpTopic{
 export const HELP_TOPICS = new InjectionToken<HelpTopic[][]>( 'HelpTopics' );
 
 export function helpTopics( injected:HelpTopic[][]|null ):HelpTopic[]{ return (injected ?? []).flat(); }
+//A topic's page as a router link:  its id's segments apart, as one segment would carry its '/' as %2F
+export function helpTopicRoute( topic:HelpTopic ):string[]{ return ['/help', ...topic.id.split( '/' )]; }
+//The id a /help/:topic or /help/:topic/:subtopic url asks for
+export function helpTopicId( params:ParamMap ):string{ return [params.get( 'topic' ), params.get( 'subtopic' )].filter( s=>!!s ).join( '/' ); }
+
+//The section of the url's topic the navbar's ? button opens - a heading's '#slug' in the topic's markdown, set by whatever shows a
+//part of the page the topic has a section for (InstanceTabs, from its selected tab) and unset when that goes.
+@Injectable( {providedIn: 'root'} )
+export class HelpAnchor{
+	readonly fragment = signal<string|undefined>( undefined );
+}
 
 //A card on /help that leaves the site - the issue tracker - rather than opening a topic.  Its own token, not a HelpTopic:
 //the help page's side list, the navbar's ? button and search all expect a markdown page behind a topic's id.  Multi, in

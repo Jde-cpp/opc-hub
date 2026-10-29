@@ -32,8 +32,9 @@ class AccessStub{
 //dialog answers a confirmation or the picker's picks.  `render` lets the fixture's first change detection run ngOnInit and draw the
 //page, where the rest drive the page by hand.
 const servedRpm = { id: 7, nodeId: 'ns=3;i=6012', path: 'Objects/local/pump1/motorRpm' };//member 7 as the endpoint serves it
-const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', served: [servedRpm]} )=>{
-	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( _ql:string, _vars?:unknown )=>({endpoint}) ) };//query:  endpoint{…}, the one the page sends
+const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tcp://hub:4841', served: [servedRpm]}, root:unknown={path: 'pumps/5~pump1'} )=>{
+	//query:  endpoint{…}, and nodes( id ){ path }, the root's, which the admin service's own rootPaths sends
+	const gateway = { slug: 'g', mutate: vi.fn( async ( _m:Mutation[]|string )=>{} ), query: vi.fn( async ( ql:string, _vars?:unknown )=>ql==HistAdminService.rootPathsQuery ? {nodes: [root]} : {endpoint} ) };
 	const mutations = ()=>gateway.mutate.mock.calls.flatMap( ([m])=>Array.isArray( m ) ? m.map( x=>x.toString()! ) : [m] );
 	const made = vi.fn();
 	const admin = {
@@ -47,6 +48,7 @@ const create = async ( pageRow:any, render=false, endpoint:unknown={url: 'opc.tc
 		templateMembers: vi.fn( async ()=>[{id: 3, templateId: 2, path: [{nsu: Pumps, name: 'motorRpm'}], thresholds: histThresholdBlank}, {id: 4, templateId: 2, path: [{nsu: Pumps, name: 'status'}], thresholds: histThresholdBlank}] ),
 		createGroupMember: vi.fn( async ( _g:unknown, _id:number, node:ExNodeId )=>{ if( node.id==6032 ) throw new Error( "'{\"nsu\":\"urn:jde:pumps\",\"i\":6032}' is already in group 'Other' (9) on this connection:  a node belongs to one group per server." ); return 10; } ),
 		purgeGroupMember: vi.fn( async ()=>{} ),
+		rootPaths: vi.fn( HistAdminService.prototype.rootPaths ),
 		resolve: vi.fn( async ()=>[{templateNode: 3, path: [{nsu: Pumps, name: 'motorRpm'}], node: new ExNodeId( {i: 6012, nsu: Pumps} ), status: 0}, {templateNode: 4, path: [{nsu: Pumps, name: 'status'}], status: BadNodeIdExists, holder: {id: 9, name: 'Other'}}] )
 	};
 	const dialog = dialogStub( true );//a confirmation's answer;  the picker's picks are its own, none until a test gives some
@@ -136,7 +138,6 @@ describe( 'HistGroupDetail', ()=>{
 		const d = await create( row );
 		expect( d.page.isNew ).toBe( false );
 		expect( d.page.excludedFields ).toBe( d.page.excludedFields );
-		expect( d.page.excludedFields ).not.toContain( 'guid' );
 		expect( d.admin.groupMembers ).toHaveBeenCalledWith( expect.anything(), 5 );
 		expect( d.admin.templateMembers ).toHaveBeenCalledWith( expect.anything(), 2 );
 		expect( d.page.members.rows() ).toHaveLength( 2 );
@@ -256,14 +257,19 @@ describe( 'HistGroupDetail', ()=>{
 	//servers-7-web review #3, #4:  the paths are the endpoint's word, endpoint{ served(group) }, not built here
 	it( 'says where the group is served', async ()=>{
 		const d = await served( {url: 'opc.tcp://hub:4841', served: [servedRpm]} );
-		expect( d.text ).toBe( "Its members are served on opc.tcp://hub:4841 under Objects/local/…, each at its path on the source, with the group's history." );
+		expect( d.text ).toBe( 'opc.tcp://hub:4841 under Objects/local/pump1' );//the folder its members share
 		expect( d.gateway.query ).toHaveBeenCalledWith( endpointServedQuery, {groupId: 5} );
 		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).toContain( 'Served at Objects/local/pump1/motorRpm as ns=3;i=6012' );
 		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).toContain( 'Not served by the endpoint' );//one it holds no node for
 	} );
 	it( 'gives the served path of a node with none on its source', async ()=>{
 		const d = await served( {url: 'opc.tcp://hub:4841', served: [servedRpm, {id: 8, nodeId: 'ns=4;i=2259', path: 'Objects/local/i=2259'}]} );
+		expect( d.text ).toBe( 'opc.tcp://hub:4841 under Objects/local' );
 		expect( d.page.nameDetail( d.page.members.rows()[1] ) ).toBe( 'Not yet read from the server:  the collector reads a node once it has its item.  Served at Objects/local/i=2259 as ns=4;i=2259' );
+	} );
+	it( "and the connection's folder while it serves no member yet", async ()=>{
+		const d = await served( {url: 'opc.tcp://hub:4841', served: []} );
+		expect( d.text ).toBe( 'opc.tcp://hub:4841 under Objects/local' );
 	} );
 	it( 'and that it is not, on a gateway with no endpoint', async ()=>{
 		const d = await served( null );
@@ -274,6 +280,28 @@ describe( 'HistGroupDetail', ()=>{
 		const d = await served( {url: 'opc.tcp://hub:4841', served: null} );
 		expect( d.text ).toContain( "Not served:  the endpoint on opc.tcp://hub:4841 doesn't hold the group" );
 		expect( d.page.nameDetail( d.page.members.rows()[0] ) ).not.toContain( 'Served' );
+	} );
+	//the guid, never typed, is Properties' last line, not a field of the form
+	it( 'shows the guid last', async ()=>{
+		const d = await served( {url: 'opc.tcp://hub:4841', served: [servedRpm]} );
+		const sections = [...d.fixture.nativeElement.querySelectorAll( 'section.form-section' )].map( ( s:Element )=>s.getAttribute( 'aria-label' ) );
+		expect( sections ).toEqual( ['Source', 'Endpoint', 'Thresholds', 'Guid'] );
+		expect( d.fixture.nativeElement.querySelector( 'section[aria-label=Guid] .value' ).textContent ).toBe( row.guid );
+		expect( d.page.excludedFields ).toContain( 'guid' );
+		d.page.copied( true );
+		expect( d.snackbar.info ).toHaveBeenCalledWith( 'Guid copied.' );
+	} );
+	//the saved root by its browse path, as the gateway places it by the server's index, with its NodeId the hint
+	it( 'shows the root by its path', async ()=>{
+		const d = await create( row );
+		expect( d.gateway.query ).toHaveBeenCalledWith( HistAdminService.rootPathsQuery, {opc: 'local', id: [{ns: 2, i: 5001}]} );
+		expect( d.page.rootText() ).toBe( 'Objects/pumps/pump1' );//names only:  the NodeId is the hint
+		expect( d.page.rootHint() ).toBe( 'ns=2;i=5001' );
+	} );
+	it( "or by its column's text where the gateway can't place it", async ()=>{
+		const d = await create( row, false, undefined, {path: null} );
+		expect( d.page.rootText() ).toBe( row.root );
+		expect( d.page.rootHint() ).toBe( 'ns=2;i=5001' );
 	} );
 	it( 'or for a deleted group', async ()=>{
 		const d = await create( {...row, deleted: '2026-10-25T00:00:00Z'}, false, {url: 'opc.tcp://hub:4841', served: null} );
