@@ -11,11 +11,14 @@
 namespace Jde{
 	struct io_uring _ring;
 	int _eventFd{ -1 };//signaled by the kernel when a cqe posts; -1 → fall back to polling.
-	α IO::LinuxInit()ι->void{
-		io_uring_queue_init( 256, &_ring, 0 );
+	α IO::LinuxInit()ε->void{
+		//No file io works without the ring - the polling below replaces only the eventfd.  liburing returns -errno.
+		let ring = io_uring_queue_init( 256, &_ring, 0 );
+		THROW_IF( ring<0, "io_uring is unavailable: {} - file io needs it.  In a container, allow the io_uring syscalls (--security-opt seccomp=unconfined, or a profile that allows io_uring_setup, io_uring_enter and io_uring_register).  On the host, kernel.io_uring_disabled must be 0.", strerror(-ring) );
 		_eventFd = ::eventfd( 0, EFD_CLOEXEC | EFD_NONBLOCK );
-		if( _eventFd==-1 || io_uring_register_eventfd(&_ring, _eventFd)<0 ){
-			WARNT( ELogTags::IO, "eventfd registration failed - file io will poll for completions. errno: {}", errno );
+		let registered = _eventFd==-1 ? -errno : io_uring_register_eventfd( &_ring, _eventFd );
+		if( registered<0 ){
+			WARNT( ELogTags::IO, "eventfd registration failed - file io will poll for completions. errno: {}", -registered );
 			if( _eventFd!=-1 ){
 				::close( _eventFd );
 				_eventFd = -1;

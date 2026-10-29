@@ -90,6 +90,11 @@ sudo apt install ./jde-opchub_<version>_amd64.deb
 - refuses to install on a CPU without the x86-64-v3 set plus PCLMUL and AES (`avx2`, `bmi1`, `bmi2`, `fma`, `f16c`,
   `movbe`, `abm`, `pclmulqdq`, `aes` in `/proc/cpuinfo`). In a VM, choose a CPU model that passes them through, such
   as `host`. The tarball's `install.sh` makes the same check;
+- the products need io_uring for their file io. Without it they exit at start with `io_uring is unavailable`, and
+  systemd restarts them every 5 s. Docker 25+ and podman block io_uring in their default seccomp profiles, so in a
+  container run with `--security-opt seccomp=unconfined`, or a profile that allows `io_uring_setup`,
+  `io_uring_enter` and `io_uring_register`. On a host, `kernel.io_uring_disabled` must be 0, Ubuntu's default. The
+  tarball's products need it too (#515);
 - creates the `jde-cpp` system account, owner of `/var/lib/Jde-Cpp`;
 - enables and starts `jde-opchub` (port 1967, and its OPC UA endpoint on opc.tcp 4841);
 - installs the OPC UA server but does not enable it, since the hub can connect to any OPC UA server. To run it:
