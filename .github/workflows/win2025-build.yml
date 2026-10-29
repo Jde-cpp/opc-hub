@@ -92,17 +92,24 @@ jobs:
         run: cmake --preset win-clang-release-jde
 
       - name: Build
-        # protobuf generates in-source (PROTOC_OUT_DIR = <lib>/proto); under full
-        # parallelism a consumer compile can hold a *.pb.h open while protoc
-        # rewrites it, which Windows share-locks ("<file>: Invalid argument"). If
-        # the parallel pass fails, finish serially (-j 1, race-free) — a genuine
-        # compile error still fails the serial pass, so nothing is masked.
+        # protoc used to generate in-source (PROTOC_OUT_DIR = <lib>/proto), where a
+        # consumer compile could hold a *.pb.h open while protoc rewrote it, which
+        # Windows share-locks ("<file>: Invalid argument"). Generation moved to the
+        # build tree 2026-08-14 (reviews/todo.md §4 option 1); the serial retry
+        # (-j 1, race-free) stays as the canary win11-ci.yml's Build step explains.
+        # A genuine compile error fails both passes, so nothing is masked; only a
+        # serial pass that succeeds is a race, and only it raises the warning.
+        # Both passes keep going past a failure (-k 0): the parallel one leaves
+        # the serial one only what failed, and the serial one reports every error.
         run: |
           $buildDir = "C:/jde/build/clang++-jde/release"
-          cmake --build $buildDir -j $env:NUMBER_OF_PROCESSORS
+          cmake --build $buildDir -j $env:NUMBER_OF_PROCESSORS -- -k 0
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::Parallel build failed once (in-source protobuf codegen race); completing serially (-j 1)."
-            cmake --build $buildDir -j 1
+            Write-Host "Parallel build failed; retrying serially (-j 1)."
+            cmake --build $buildDir -j 1 -- -k 0
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "::warning::The parallel build failed and the serial retry passed: a build race, so ordering edges are still needed (reviews/todo.md §4)."
+            }
           }
 
       # Setup runs Jde.CheckCpu.exe before it installs anything, the VC++ runtime included
