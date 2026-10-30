@@ -216,6 +216,28 @@ namespace Jde::DB{
 		return true;
 	}
 
+	α SchemaDdl::StripHashComments( sv script )ι->string{
+		string y; y.reserve( script.size() );
+		for( uint i=0; i<script.size(); ++i ){
+			let c = script[i];
+			if( c=='\'' ){
+				let close = script.find( '\'', i+1 );
+				let next = close==sv::npos ? script.size() : close+1;//unclosed, the rest is the literal:  the dialect's error, not a comment.
+				y.append( script.substr(i, next-i) );
+				i = next-1;
+			}
+			else if( c=='#' || (c=='-' && script.substr(i, 2)=="--") ){
+				let next = std::min( script.find('\n', i), script.size() );//the newline stays:  it ends the comment, not the line.
+				if( c=='-' )
+					y.append( script.substr(i, next-i) );
+				i = next-1;
+			}
+			else
+				y.push_back( c );
+		}
+		return y;
+	}
+
 	α SchemaDdl::SyncScripts( const AppSchema& config, const jobject& initConfig )ε->void{
 		auto prefix = Json::FindString( initConfig, "prefix" ).value_or( "" );
 		let stdPrefix = config.Name+"_"; //access_
@@ -232,15 +254,7 @@ namespace Jde::DB{
 			for( let& text : queries ){
 				let query = absl::StrReplaceAll( text, {{"[dbo]", Ƒ("[{}]", config.DBSchema->Name)}, {stdPrefix, prefix}} );
 
-				std::ostringstream os;
-				for( uint i=0; i<query.size(); ++i ){
-					if( query[i]=='#' )
-						for( ; i<query.size() && query[i]!='\n'; ++i );
-					if( i<query.size() )
-						os.put( query[i] );
-				}
-				string sql{ os.str() };
-				config.DS()->ExecuteSync( {move(sql)} );
+				config.DS()->ExecuteSync( {StripHashComments(query)} );
 			}
 			INFO( "Finished '{}'", scriptFile.string() );
 		});

@@ -20,7 +20,7 @@ namespace Jde::DB{
 		Connection,
 		Permission,
 		Syntax,     //the statement is wrong: parse error, no such table/column.
-		App         //raised by a proc: mysql `signal`, sql server `throw`, the sqlite twins' THROW_IFSL.
+		App         //raised by a proc or trigger: mysql `signal`, sql server `throw`, sqlite's raise(abort) and the twins' THROW_IFSL.
 	};
 	ΓDB α ToString( EDbError x )ι->string;
 

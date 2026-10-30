@@ -10,6 +10,7 @@
 #include <jde/db/meta/Table.h>
 #include "../src/meta/ddl/ColumnDdl.h" //#39: the deleted-overload guard.
 #include "../src/meta/ServerMetaFold.h" //#241: StripParens.
+#include "../src/meta/ddl/SchemaDdl.h" //#520: StripHashComments.
 
 namespace Jde::DB::Tests{
 	//#10: SchemaDdl::Sync now delegates to ObjectPrefix (was a swapped-ternary duplicate that yielded "" for a "db.um_" prefix). Lock in ObjectPrefix.
@@ -129,6 +130,18 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( StripParens("(':)')"), "':)'" );               //a paren inside a string is the string's.
 		EXPECT_EQ( StripParens("('it''s )')"), "'it''s )'" );
 		EXPECT_EQ( StripParens("(')')+(')')"), "(')')+(')')" );
+	}
+
+	//#520: a `#` inside a quoted literal is text, not a comment - a security policy uri ends in `#None` - and a `--` comment's
+	//apostrophe opens no literal.  The newline that ends a `#` comment stays.
+	TEST( SchemaDdlTests, StripHashComments ){
+		EXPECT_EQ( SchemaDdl::StripHashComments("# a comment\nselect 1"), "\nselect 1" );
+		EXPECT_EQ( SchemaDdl::StripHashComments("select 1 # trailing\nselect 2"), "select 1 \nselect 2" );
+		EXPECT_EQ( SchemaDdl::StripHashComments("select 'a#b' # c\n"), "select 'a#b' \n" );
+		EXPECT_EQ( SchemaDdl::StripHashComments("select 'it''s #1'"), "select 'it''s #1'" );
+		EXPECT_EQ( SchemaDdl::StripHashComments("-- it's #1\nselect 1 # x"), "-- it's #1\nselect 1 " );
+		EXPECT_EQ( SchemaDdl::StripHashComments("select 'open # to the end"), "select 'open # to the end" );//an unclosed literal is the dialect's error, not a comment.
+		EXPECT_EQ( SchemaDdl::StripHashComments("#"), "" );
 	}
 
 	//#241: the compare SchemaDdl's syncDefault runs - true leaves the column alone.  #9: MySQL reports a decimal at its

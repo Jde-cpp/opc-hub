@@ -13,6 +13,7 @@ namespace Jde::DB::Sqlite{
 		case SQLITE_CONSTRAINT_FOREIGNKEY: return EDbError::ForeignKey;
 		case SQLITE_CONSTRAINT_NOTNULL: return EDbError::NotNull;
 		case SQLITE_CONSTRAINT_CHECK: return EDbError::Check;
+		case SQLITE_CONSTRAINT_TRIGGER: return EDbError::App;//raise(abort, …) in a trigger:  the app's own rule, as a proc's `signal` is on MySQL - a 400 that carries the message (#520).
 		}
 		switch( rc & 0xff ){
 		case SQLITE_OK: case SQLITE_ROW: case SQLITE_DONE: return EDbError::None;

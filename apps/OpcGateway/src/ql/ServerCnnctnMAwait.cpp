@@ -169,7 +169,9 @@ namespace Jde::Opc::Gateway{
 			else if( type==Update && namesAny(_query, _settingsColumns) ){
 				//The save rules on an update (spec *Connection settings*):  an update carries only its changed columns, and certificate_uri is
 				//updateable where slug is not, so a Sign row losing its uri, or a mode pinned on a row that has none, shows only with the saved
-				//row under the edit.  A delete or restore changes nothing the rules read.
+				//row under the edit.  A delete or restore changes nothing the rules read.  Two updates that each pass can still cross - the
+				//check is on what was read, the statement runs after - so the cross-column half is a before-update trigger too (#520), which
+				//refuses in the statement, as the app's own error.
 				ServerCnnctnAwait select{ _query.GetKey(_sl), true };
 				auto rows = co_await Any( select );
 				THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );

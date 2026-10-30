@@ -1,5 +1,6 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/json.h>
+#include <jde/db/DBException.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
@@ -307,5 +308,53 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
 		EXPECT_TRUE( SelectServerCnnctn(id)->SecurityMode.empty() );
 		ASSERT_FALSE( update("description:\"no settings named\"") );//a rule-free update asks no select
+	}
+
+	//#520:  the update's save rule is check-then-act - the merged row is judged on what was read, and the statement runs after - so
+	//two edits can each pass against the saved row and together store one it refuses.  The cross-column half is a before-update
+	//trigger per dialect too:  each raw UPDATE here is the race's second statement, what the engine writes after a check that saw the
+	//row as it was.  Refused as the app's own error, the row as it was;  a row the rule accepts goes through.
+	TEST_F( ServerCnnctnDBTests, SettingsRaceRefused ){
+		const string slug{ "settings-race" };
+		PurgeServerCnnctn( slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Settings race\", url:\"opc.tcp://127.0.0.1:4840\", certificateUri:\"urn:x\", isDefault:false, securityMode:\"Sign\" ){{id}}", slug), {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let& table = GetViewPtr( "server_connections" );
+		let raw = [&]( sv set )->optional<string>{//the engine's statement alone, past the hook's check
+			try{ DS()->ExecuteSync( {Ƒ("update {} set {} where server_connection_id={}", table->DBName, set, id)} ); }
+			catch( const DB::DBException& e ){ EXPECT_EQ( e.Error, DB::EDbError::App ) << e.what(); return e.what(); }
+			return nullopt;
+		};
+		let hook = [&]( sv args ){ QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, {} )", id, args), {}, {UserPK::System} ); };
+		let refused = [&]( sv set, sv expected ){
+			let before = GetOpcServers( DB::Key{id} ).front();
+			let error = raw( set );
+			ASSERT_TRUE( error ) << set;
+			EXPECT_NE( string::npos, error->find(expected) ) << set << " -> " << *error;
+			let after = GetOpcServers( DB::Key{id} ).front();
+			EXPECT_EQ( after.CertificateUri, before.CertificateUri ) << set;
+			EXPECT_EQ( after.SecurityMode, before.SecurityMode ) << set;
+			EXPECT_EQ( after.SecurityPolicy, before.SecurityPolicy ) << set;
+		};
+		//a uri and Sign:  the uri cannot leave, and a policy of None contradicts Sign.
+		refused( "certificate_uri=null", "certificate URI" );
+		refused( "certificate_uri=''", "certificate URI" );
+		refused( "security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'", "secured security mode" );
+		//a uri and a secured policy, the mode unpinned:  the uri cannot leave, and None contradicts the policy.
+		hook( "securityMode:null, securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"" );
+		refused( "certificate_uri=null", "certificate URI" );
+		refused( "security_mode='None'", "security mode None" );
+		//a uri alone:  the floor is Sign & Encrypt, which a policy of None contradicts.
+		hook( "securityPolicy:null" );
+		refused( "security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'", "secured security mode" );
+		//a uri and None:  each of the three edits leaves a row the rule accepts.
+		hook( "securityMode:\"None\"" );
+		EXPECT_FALSE( raw("security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'") );
+		EXPECT_FALSE( raw("certificate_uri=null") );
+		EXPECT_FALSE( raw("security_mode=null") );
+		let bare = GetOpcServers( DB::Key{id} ).front();
+		EXPECT_TRUE( bare.CertificateUri.empty() && bare.SecurityMode.empty() );
+		EXPECT_EQ( bare.SecurityPolicy, ServerCnnctn::PolicyNoneUri );
+		refused( "security_mode='Sign'", "certificate URI" );//pinned on a row with no uri
 	}
 }
