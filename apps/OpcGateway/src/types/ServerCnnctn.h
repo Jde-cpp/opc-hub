@@ -15,6 +15,17 @@ namespace Jde::Opc::Gateway{
 		//url segment - the one rule the insert (OpcQLHook) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
 		//Null for a valid slug.
 		Ω SlugError( sv slug, SL sl )ι->up<Exception>;
+		//docs/clients/spec.md *Connection settings*:  what the row says of the channel, checked at every save (OpcQLHook's InsertBefore
+		//and UpdateBefore, over the merged row) and by testConnection.  A mode or policy that is not one the gateway knows;  Sign or
+		//Sign & Encrypt, pinned by the mode or by a secured policy, without the certificate URI that puts the gateway's certificate on
+		//the channel;  a policy of None on a channel that is secured, or a secured one on a mode of None.  Null for a row that connects.
+		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
+		static constexpr sv ModeNone{ "None" }, ModeSign{ "Sign" }, ModeSignAndEncrypt{ "SignAndEncrypt" };//UA_MessageSecurityMode's names (SecurityModeName), what security_mode holds.
+		static constexpr sv PolicyNoneUri{ "http://opcfoundation.org/UA/SecurityPolicy#None" };
+		//The channel's mode as this row has the client ask for it:  the pinned one, else the floor - Sign & Encrypt with a certificate
+		//URI, None without (UAClient::Configuration).
+		α EffectiveMode()Ι->sv{ return SecurityMode.size() ? sv{SecurityMode} : CertificateUri.empty() ? ModeNone : ModeSignAndEncrypt; }
+		α Secured()Ι->bool{ return EffectiveMode()!=ModeNone; }//Sign or Sign & Encrypt:  the gateway's certificate goes on the channel.
 		ServerCnnctnPK Id{};//0 for a connection not saved - createHandle keys the log handle on the url then.
 		string Url;
 		string CertificateUri;
@@ -24,6 +35,14 @@ namespace Jde::Opc::Gateway{
 		string Name;
 		optional<TimePoint> Deleted;
 		ServerCnnctnNK Slug;
+		//The spec's *Connection settings*, null meaning the gateway's own rule or setting:  empty strings and nullopts here.
+		string SecurityMode;//ModeNone, ModeSign or ModeSignAndEncrypt;  empty keeps the floor.
+		string SecurityPolicy;//a policy uri the gateway carries (ClientSecurity::SecuredPolicyUris) or PolicyNoneUri;  empty takes the strongest shared.
+		optional<uint32> SessionTimeout;//milliseconds, requestedSessionTimeout.
+		optional<uint32> RequestTimeout;//milliseconds, UA_ClientConfig::timeout.
+		optional<uint32> PingInterval;//milliseconds, over /gateway/pingInterval;  0 turns the keep-alive off.
+		optional<uint32> Ttl;//milliseconds, over /gateway/ttl.
+		string Locale;//comma-separated locale ids, "en-US,de".
 	};
 
 	struct ServerCnnctnAwait final: TAwaitEx<vector<ServerCnnctn>,DB::SelectAwait::Task>{

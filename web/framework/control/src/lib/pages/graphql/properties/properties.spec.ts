@@ -115,3 +115,47 @@ describe( 'Properties tab order', ()=>{
 		expect( positive.map((e)=>e.outerHTML.slice(0, 60)) ).toEqual( [] );
 	} );
 } );
+
+//`picks`, `units` and `hints` inputs (#413):  a page's own select over a scalar the schema has no enum for, null an option like
+//any other;  a number input with its unit as the suffix;  and a hint under a field where there is no error to show.
+describe( 'Properties picks, units and hints', ()=>{
+	const settings = schemaOf( "Widget", required("name"), scalar("securityMode"), scalar("ttl", "UInt"), scalar("locale") );
+	const picks = { securityMode: [ {value: null, label: "Default (None)"}, {value: "Sign", label: "Sign"} ] };
+	const render = ( record:Widget )=>{
+		TestBed.configureTestingModule({ providers: [
+			provideRoute(),
+			{ provide: Router, useValue: routerStub() },
+			pageTitleStub,
+			{ provide: SnackbarService, useValue: snackbarStub() },
+			{ provide: IGRAPHQL, useValue: {} }
+		]});
+		const fixture = TestBed.createComponent( Properties );
+		for( const [name, value] of Object.entries({ctor: Widget, schema: settings, type: 'widget', record, picks, units: {ttl: "ms"}, hints: {ttl: "Empty:  the gateway's setting", locale: "Comma-separated"}}) )
+			fixture.componentRef.setInput( name, value );
+		fixture.detectChanges();
+		return fixture;
+	};
+	it( 'renders a pick as a select whose options carry the given values', ()=>{
+		const fixture = render( new Widget({name: "w", securityMode: null}) );
+		const root = fixture.nativeElement as HTMLElement;
+		expect( root.querySelectorAll('mat-select').length ).toBe( 1 );
+		const field = fixture.componentInstance.fields().find( f=>f.name=="securityMode" )!;
+		expect( field.pick!.map( o=>o.label ) ).toEqual( ["Default (None)", "Sign"] );
+		expect( root.querySelector('input[type=text]') ).not.toBeNull();//locale stays a text input
+	} );
+	it( 'renders a unit field as a number input with the unit as its suffix', ()=>{
+		const root = render( new Widget({name: "w", ttl: 120000}) ).nativeElement as HTMLElement;
+		const input = root.querySelector( 'input[type=number]' ) as HTMLInputElement;
+		expect( input.value ).toBe( "120000" );
+		expect( root.querySelector('[matTextSuffix]')!.textContent!.trim() ).toBe( "ms" );
+	} );
+	it( 'puts the typed number on the record as the input\'s string', ()=>{
+		const fixture = render( new Widget({name: "w"}) );
+		paste( fixture.nativeElement.querySelector('input[type=number]'), "30000" );
+		expect( fixture.componentInstance.record().ttl ).toBe( "30000" );
+	} );
+	it( 'shows the hint under a field without an error, and nothing under the rest', ()=>{
+		const root = render( new Widget({name: "w"}) ).nativeElement as HTMLElement;
+		expect( [...root.querySelectorAll('mat-hint')].map( (h:Element)=>h.textContent!.trim() ) ).toEqual( ["Comma-separated", "Empty:  the gateway's setting"] );//in field order:  locale, ttl
+	} );
+} );

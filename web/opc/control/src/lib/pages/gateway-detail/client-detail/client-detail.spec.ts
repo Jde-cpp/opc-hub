@@ -88,6 +88,7 @@ describe( 'ClientDetail test connection', ()=>{
 		return { page, snackbar, announced: ()=>announce.mock.calls.map( ([m])=>m ) };
 	};
 	const edit = ( page:ClientDetail, fields:Record<string,unknown> )=>page.properties.set( Properties.edited(ServerCnnctn, page.properties(), fields) );//the Properties form's keystrokes
+	const unset = { securityMode: null, securityPolicy: null, sessionTimeout: null, requestTimeout: null, pingInterval: null, ttl: null, locale: null };//the spec's settings as a form that leaves them sends them
 
 	it( 'needs a url and a valid slug', async ()=>{
 		const { page } = await create( {}, async ()=>({}) );
@@ -107,8 +108,8 @@ describe( 'ClientDetail test connection', ()=>{
 		expect( page.tabIndex() ).toBe( 0 );
 		await page.onTestClick();
 		expect( send ).toHaveBeenCalledTimes( 1 );
-		expect( send.mock.calls[0][0] ).toMatch( /^mutation testConnection\( opc: \$opc, url: \$url, certificateUri: \$certificateUri \)/ );//POSTed:  a GET must not connect the gateway anywhere
-		expect( send.mock.calls[0][1] ).toEqual( {opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc"} );//trimmed, as the save trims them
+		expect( send.mock.calls[0][0] ).toMatch( /^mutation testConnection\( opc: \$opc, url: \$url, certificateUri: \$certificateUri, securityMode: \$securityMode, securityPolicy: \$securityPolicy, sessionTimeout: \$sessionTimeout, requestTimeout: \$requestTimeout, pingInterval: \$pingInterval, ttl: \$ttl, locale: \$locale \)/ );//POSTed:  a GET must not connect the gateway anywhere
+		expect( send.mock.calls[0][1] ).toEqual( {opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc", ...unset} );//trimmed, as the save trims them;  the settings null, as the save leaves them
 		expect( page.tabIndex() ).toBe( 1 );
 		expect( page.server()?.applicationName ).toBe( "PLC 1" );
 		expect( page.server()?.policy ).toBe( described.securityPolicyUri );
@@ -134,7 +135,7 @@ describe( 'ClientDetail test connection', ()=>{
 		expect( page.serverError() ).toBe( "no route to host" );
 		edit( page, {url: "opc.tcp://plc:4840"} );//an unsaved edit is what gets tested
 		await page.onTestClick();
-		expect( send.mock.calls.map( ([, vars])=>vars ) ).toEqual( [{opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc"}] );
+		expect( send.mock.calls.map( ([, vars])=>vars ) ).toEqual( [{opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc", ...unset}] );
 		expect( page.serverError() ).toBeUndefined();
 		expect( page.server()?.connection.url ).toBe( "opc.tcp://plc:4840" );
 	} );
@@ -293,6 +294,37 @@ describe( 'ClientDetail test connection', ()=>{
 		await click;
 		expect( page.server() ).toBeUndefined();
 		expect( page.serverError() ).toBe( "plc2 is down" );
+	} );
+	//#413 (docs/clients/spec.md *Connection settings*):  the test sends the settings the form holds, as Save would save them, so it
+	//tests the connection Save would save - a pinned mode as its wire name, a duration as a whole number of milliseconds.
+	it( 'sends the connection settings the form holds, as the save would', async ()=>{
+		const send = vi.fn( async ( _ql:string, _vars:any )=>described );
+		const { page } = await create( {}, send );
+		edit( page, {slug: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc", securityMode: "Sign", securityPolicy: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", sessionTimeout: "60000", locale: " en-US,de "} );
+		await page.onTestClick();
+		expect( send.mock.calls[0][1] ).toEqual( {opc: "plc1", url: "opc.tcp://plc:4840", certificateUri: "urn:plc", ...unset, securityMode: "Sign", securityPolicy: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256", sessionTimeout: 60000, locale: "en-US,de"} );
+		expect( page.staleFor() ).toBeUndefined();
+		edit( page, {securityMode: null, sessionTimeout: "90000"} );
+		expect( page.staleFor() ).toBe( "Security Mode Sign, Session Timeout 60000" );
+	} );
+	it( 'cannot test settings the gateway would refuse at save', async ()=>{
+		const send = vi.fn( async ( _ql:string, _vars:any )=>described );
+		const { page } = await create( {}, send );
+		edit( page, {slug: "plc1", url: "opc.tcp://plc:4840", securityMode: "Sign"} );//Sign without a certificate URI
+		expect( page.canTest() ).toBe( false );
+		await page.onTestClick();
+		expect( send ).not.toHaveBeenCalled();
+		edit( page, {certificateUri: "urn:plc"} );
+		expect( page.canTest() ).toBe( true );
+	} );
+	it( "labels the unset mode with the floor the certificate URI sets", async ()=>{
+		const { page } = await create( {}, async ()=>described );
+		edit( page, {certificateUri: ""} );
+		expect( page.picks().securityMode[0] ).toEqual( {value: null, label: "Default (None)"} );
+		edit( page, {certificateUri: "urn:plc"} );
+		expect( page.picks().securityMode[0] ).toEqual( {value: null, label: "Default (Sign & Encrypt)"} );
+		expect( page.picks().securityMode.map( o=>o.value ) ).toEqual( [null, "None", "Sign", "SignAndEncrypt"] );
+		expect( page.picks().securityPolicy.map( o=>o.label ) ).toEqual( ["Default (strongest shared)", "None", "Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss"] );
 	} );
 	//#250 review #11:  the gateway was resolved once, in ngOnInit, and the router reuses this page - a connection opened on a second
 	//gateway was tested, saved and deleted on the first.

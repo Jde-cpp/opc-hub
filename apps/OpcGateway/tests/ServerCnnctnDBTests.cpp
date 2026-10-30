@@ -176,4 +176,86 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_DESC( false, e.what() );
 		}
 	}
+
+	//#413 (docs/clients/spec.md *Connection settings*):  the seven columns round-trip through the insert proc, the QL's select, the
+	//row ctor (ServerCnnctnAwait) and an update, null where unset;  an update clears one with null.
+	TEST_F( ServerCnnctnDBTests, SettingsRoundTrip ){
+		const string slug{ "settings-test" };
+		PurgeServerCnnctn( slug );
+		let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Settings test\", url:\"opc.tcp://127.0.0.1:4840\", certificateUri:\"urn:settings\", isDefault:false, securityMode:\"Sign\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\", sessionTimeout:60000, requestTimeout:2000, pingInterval:15000, ttl:120000, locale:\"en-US,de\" ){{id}}", slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(create, {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let check = [&]( const ServerCnnctn& row, sv where ){
+			EXPECT_EQ( row.SecurityMode, "Sign" ) << where;
+			EXPECT_EQ( row.SecurityPolicy, "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" ) << where;
+			EXPECT_EQ( row.SessionTimeout, optional<uint32>{60000} ) << where;
+			EXPECT_EQ( row.RequestTimeout, optional<uint32>{2000} ) << where;
+			EXPECT_EQ( row.PingInterval, optional<uint32>{15000} ) << where;
+			EXPECT_EQ( row.Ttl, optional<uint32>{120000} ) << where;
+			EXPECT_EQ( row.Locale, "en-US,de" ) << where;
+			EXPECT_EQ( row.EffectiveMode(), ServerCnnctn::ModeSign ) << where;
+		};
+		check( *SelectServerCnnctn(id), "ql" );//the json ctor
+		check( GetOpcServers(DB::Key{id}, false).front(), "row" );//the row ctor, what a client is built from
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, securityMode:\"SignAndEncrypt\", securityPolicy:null, sessionTimeout:null, ttl:30000 )", id), {}, {UserPK::System} );
+		let updated = GetOpcServers( DB::Key{id}, false ).front();
+		EXPECT_EQ( updated.SecurityMode, "SignAndEncrypt" );
+		EXPECT_TRUE( updated.SecurityPolicy.empty() );
+		EXPECT_FALSE( updated.SessionTimeout );
+		EXPECT_EQ( updated.RequestTimeout, optional<uint32>{2000} );
+		EXPECT_EQ( updated.Ttl, optional<uint32>{30000} );
+		let blank = GetOpcServers( DB::Key{OpcServerSlug}, false );
+		if( blank.size() ){//the suite's default row sets none of them
+			EXPECT_TRUE( blank.front().SecurityMode.empty() );
+			EXPECT_FALSE( blank.front().PingInterval );
+			EXPECT_EQ( blank.front().EffectiveMode(), ServerCnnctn::ModeSignAndEncrypt );//the floor its certificateUri sets
+		}
+	}
+
+	//The save rules (ServerCnnctn::SettingsError) at the insert, and at an update over the merged row:  Sign without a certificate
+	//URI, a mode pinned on a row with none, a row losing the uri its mode needs, an unknown mode or policy, and a contradiction
+	//between the two.  None reaches the table.
+	TEST_F( ServerCnnctnDBTests, SettingsRefused ){
+		const string slug{ "settings-refused" };
+		PurgeServerCnnctn( slug );
+		let create = [&]( sv args )->optional<string>{
+			try{ QL().QuerySync<jvalue>( Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Settings refused\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false{} ){{id}}", slug, args), {}, {UserPK::System} ); }
+			catch( const std::exception& e ){ return e.what(); }
+			return nullopt;
+		};
+		for( let [args, expected] : vector<std::pair<string,string>>{
+			{ ", securityMode:\"Sign\"", "certificate URI" },
+			{ ", securityMode:\"SignAndEncrypt\"", "certificate URI" },
+			{ ", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"", "certificate URI" },
+			{ ", securityMode:\"Encrypt\"", "not one of None, Sign or SignAndEncrypt" },
+			{ ", certificateUri:\"urn:x\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256\"", "not one the gateway carries" },
+			{ ", certificateUri:\"urn:x\", securityMode:\"None\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"", "security mode None" },
+			{ ", certificateUri:\"urn:x\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#None\"", "Security policy None" },
+			{ ", certificateUri:\"urn:x\", sessionTimeout:\"soon\"", "number" } } ){//the engine's own conversion refuses this one, ahead of the hook's (MergeSettings), which testConnection alone reaches.
+			let error = create( args );
+			ASSERT_TRUE( error ) << args;
+			EXPECT_NE( string::npos, error->find(expected) ) << args << " -> " << *error;
+			EXPECT_FALSE( SelectServerCnnctn(slug) ) << args;
+		}
+		//accepted, and then the update's half:  the uri the mode needs cannot leave, and a mode cannot be pinned on a row with no uri.
+		ASSERT_FALSE( create(", certificateUri:\"urn:x\", securityMode:\"Sign\"") );
+		let id = SelectServerCnnctn( slug )->Id;
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let update = [&]( sv args )->optional<string>{
+			try{ QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, {} )", id, args), {}, {UserPK::System} ); }
+			catch( const std::exception& e ){ return e.what(); }
+			return nullopt;
+		};
+		auto error = update( "certificateUri:\"\"" );
+		ASSERT_TRUE( error );
+		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
+		EXPECT_EQ( SelectServerCnnctn(id)->CertificateUri, "urn:x" );
+		ASSERT_FALSE( update("securityMode:null, certificateUri:\"\"") );//both at once is fine:  the merged row is None without a uri.
+		EXPECT_TRUE( SelectServerCnnctn(id)->CertificateUri.empty() );
+		error = update( "securityMode:\"Sign\"" );//pinned on a row that now has none
+		ASSERT_TRUE( error );
+		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
+		EXPECT_TRUE( SelectServerCnnctn(id)->SecurityMode.empty() );
+		ASSERT_FALSE( update("description:\"no settings named\"") );//a rule-free update asks no select
+	}
 }

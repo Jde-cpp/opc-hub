@@ -60,7 +60,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α Tests::SelectServerCnnctn( DB::Key id )ι->optional<ServerCnnctn>{
-		let select = Ƒ( "serverConnection({}){{ id name attributes created updated deleted slug description certificateUri isDefault url }}", id.QLInput() );
+		let select = Ƒ( "serverConnection({}){{ id name attributes created updated deleted slug description certificateUri isDefault url securityMode securityPolicy sessionTimeout requestTimeout pingInterval ttl locale }}", id.QLInput() );
 		auto o = QL().QuerySync<jobject>( select, id.QLVariables(), {UserPK::System} );
 		return o.empty() ? optional<ServerCnnctn>{} : ServerCnnctn( move(o) );
 	}

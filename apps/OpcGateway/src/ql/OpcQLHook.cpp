@@ -55,12 +55,53 @@ namespace Jde::Opc::Gateway{
 		let slug = m.FindPtr<jstring>( "slug" );
 		return slug ? ServerCnnctn::SlugError( sv{*slug}, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
+	//The columns the connection settings' save rules read (spec *Connection settings*), by their QL names, and with the url and the
+	//default namespace every column a live client was built from - an edit to any of these reconnects its clients (connectionEdited).
+	constexpr array<sv,8> _settingsColumns{ "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale" };
+	Ω namesAny( const QL::MutationQL& m, std::span<const sv> columns )ι->bool{ return std::ranges::any_of( columns, [&m]( sv c ){ return m.Args.contains(c); } ); }
+	//ServerCnnctn::SettingsError over the mutation merged onto `base`:  a refusal, MergeSettings' own included, else null.
+	Ω settingsError( const QL::MutationQL& m, ServerCnnctn base, SL sl )ι->up<Exception>{
+		try{
+			return ServerCnnctn::SettingsError( MergeSettings(m, move(base), sl), sl );
+		}
+		catch( Exception& e ){
+			return e.Move();
+		}
+	}
+	//The save rules on an update (spec *Connection settings*):  an update carries only its changed columns, and certificate_uri is
+	//updateable where slug is not, so a Sign row losing its uri, or a mode pinned on a row that has none, shows only with the saved
+	//row under the edit.  Its own await:  the select's task type, as HookAwait.
+	struct SettingsAwait final: TAwaitEx<jvalue,ServerCnnctnAwait::Task>{
+		SettingsAwait( const QL::MutationQL& m, SL sl )ι: TAwaitEx{sl}, _mutation{m}{}
+	private:
+		α Execute()ι->ServerCnnctnAwait::Task override;
+		const QL::MutationQL& _mutation;
+	};
+	α SettingsAwait::Execute()ι->ServerCnnctnAwait::Task{
+		try{
+			auto key = _mutation.GetKey( _sl );
+			auto rows = co_await ServerCnnctnAwait{ key, true };
+			THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _mutation.ToString()) );
+			if( auto e = settingsError(_mutation, move(rows.front()), _sl); e )
+				e->Throw();
+			ResumeScaler( {{"rowCount", 1}} );
+		}
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
+	}
 	α OpcQLHook::InsertBefore( const QL::MutationQL& m, UserPK userPK, SL sl )ι->HookResult{
 		if( m.TableName()!="server_connections" )
 			return nullptr;
 		if( auto e = slugError(m, sl); e )
 			return mu<ExceptionAwait<jvalue>>( move(e) );
+		if( auto e = settingsError(m, ServerCnnctn{string{}}, sl); e )//over a blank row:  an insert carries every column it sets.
+			return mu<ExceptionAwait<jvalue>>( move(e) );
 		return mu<HookAwait>( m, userPK, Operation::Insert | Operation::Before, sl );
+	}
+	α OpcQLHook::UpdateBefore( const QL::MutationQL& m, UserPK, SL sl )ι->HookResult{
+		let settings = m.TableName()=="server_connections" && m.Type==QL::EMutationQL::Update && namesAny( m, _settingsColumns );//a delete or restore changes nothing the rules read.
+		return settings ? mu<SettingsAwait>( m, sl ) : nullptr;
 	}
 	//The endpoint's folder for the row just written (spec *Address space*):  the row's slug and url are the insert's own args, so
 	//no select;  the id is the insert's.  Nothing to await - the server posts the add to the executor.
@@ -88,15 +129,16 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//reviews/m3-closing.md #4:  a live client holds the copy of its row it was built from.  What it reads from the copy that
-	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs - takes its clients off the registry, to
-	//reconnect on the new row;  a delete or purge closes them.  Name and description it only reports (search), and a rename is
-	//not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted row cannot connect.
-	//The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves it, and a url
-	//edit is the one column its `_Connection` shows.
+	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs, and the spec's connection settings - takes
+	//its clients off the registry, to reconnect on the new row;  a delete or purge closes them.  Name and description it only reports
+	//(search), and a rename is not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted
+	//row cannot connect.  The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves
+	//it, and a url edit is the one column its `_Connection` shows.
 	Ω connectionEdited( const QL::MutationQL& m )ι->QL::IQLHook::HookResult{
 		using enum QL::EMutationQL;
+		constexpr array<sv,2> pathColumns{ "url", "defaultBrowseNs" };
 		let removed = m.Type==Delete || m.Type==Purge;
-		let edited = m.Type==Update && ( m.Args.contains("url") || m.Args.contains("certificateUri") || m.Args.contains("defaultBrowseNs") );
+		let edited = m.Type==Update && ( namesAny(m, pathColumns) || namesAny(m, _settingsColumns) );
 		if( m.TableName()=="server_connections" && (removed || edited) ){
 			if( let key = m.FindKey(); key ){
 				UAClient::ConnectionEdited( *key, removed );
@@ -112,4 +154,33 @@ namespace Jde::Opc::Gateway{
 	}
 	α OpcQLHook::UpdateAfter( const QL::MutationQL& m, UserPK, SL )ι->HookResult{ return connectionEdited( m ); }
 	α OpcQLHook::PurgeAfter( const QL::MutationQL& m, UserPK, SL )ι->HookResult{ return connectionEdited( m ); }
+}
+namespace Jde::Opc{
+	α Gateway::MergeSettings( const QL::Input& input, ServerCnnctn base, SL sl )ε->ServerCnnctn{
+		let text = [&]( sv name, string& into ){
+			if( let v = input.FindPtr<jvalue>(name); v )
+				into = v->is_string() ? string{ Str::Trim(sv{v->get_string()}) } : string{};
+		};
+		let number = [&]( sv name, optional<uint32>& into ){
+			let v = input.FindPtr<jvalue>( name );
+			if( !v )
+				return;
+			if( v->is_null() ){
+				into.reset();
+				return;
+			}
+			let n = v->try_to_number<uint32>();
+			THROW_IFX( !n, Exception(sl, {EHttpStatus::BadRequest}, "'{}' takes a whole number of milliseconds, not {}.", name, serialize(*v)) );
+			into = *n;
+		};
+		text( "certificateUri", base.CertificateUri );
+		text( "securityMode", base.SecurityMode );
+		text( "securityPolicy", base.SecurityPolicy );
+		number( "sessionTimeout", base.SessionTimeout );
+		number( "requestTimeout", base.RequestTimeout );
+		number( "pingInterval", base.PingInterval );
+		number( "ttl", base.Ttl );
+		text( "locale", base.Locale );
+		return base;
+	}
 }

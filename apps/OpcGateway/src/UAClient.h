@@ -161,6 +161,12 @@ namespace Jde::Opc::Gateway{
 		α AdvertisedUri()Ι->string;//clientDescription's:  what this client calls itself - the uri SAN of the certificate it presents (Configuration(), security-matrix #8).
 		α IsDefault()Ι->bool{ return _opcServer.IsDefault; }
 		α DefaultBrowseNs()Ι->NsIndex{ return _opcServer.DefaultBrowseNs; }
+		//The row's settings over the gateway's (docs/clients/spec.md *Connection settings*).  The keep-alive's period:  the row's
+		//ping_interval, else half of a session_timeout set alone - a server may revise the timeout lower, and open62541 exposes no
+		//revised value, so half of what was asked - else /gateway/pingInterval.  0 turns the keep-alive off (AsyncRequest).
+		α PingInterval()Ι->Duration;
+		α Ttl()Ι->Duration;//an idle client's lifetime:  the row's ttl, else /gateway/ttl.
+		α Row()Ι->const ServerCnnctn&{ return _opcServer; }//the copy this client was built from - its mode and policy, for the Connection tab and the tests.
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
 		//TranslateBrowsePathsToNodeIds for `path` - a/b/c, each segment `ns~name` or a bare name in DefaultBrowseNs - from `start`,
