@@ -50,26 +50,31 @@ namespace Jde::Opc::Gateway{
 		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
 		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
 	}
-	Ω policyName( sv uri )ι->sv{ let i = uri.rfind( '#' ); return i==sv::npos ? uri : uri.substr( i+1 ); }
 	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
+		using ClientSecurity::PolicyName;
 		let refuse = [sl]( string what ){ return mu<Exception>( move(what), ExceptionArgs{EHttpStatus::BadRequest}, sl ); };
+		//0 is the default only to open62541, and not the one the help gives:  5 s for the request timeout, not the gateway's 10;  and a
+		//TTL of 0 closes the client after every request.  The ping interval's 0 turns the keep-alive off, which is the operator's to ask.
+		for( let& [name, value] : { std::pair{"sessionTimeout"sv, row.SessionTimeout}, std::pair{"requestTimeout"sv, row.RequestTimeout}, std::pair{"ttl"sv, row.Ttl} } ){
+			if( value==0u )
+				return refuse( Ƒ("'{}' of 0 is not allowed:  leave it empty for the default.", name) );
+		}
 		let& mode = row.SecurityMode;
 		if( mode.size() && mode!=ModeNone && mode!=ModeSign && mode!=ModeSignAndEncrypt )
 			return refuse( Ƒ("Security mode '{}' is not one of None, Sign or SignAndEncrypt.", mode) );
-		let carried = ClientSecurity::SecuredPolicyUris();
 		let& policy = row.SecurityPolicy;
-		let securedPolicy = std::ranges::find( carried, sv{policy} )!=carried.end();
+		let securedPolicy = ClientSecurity::Carries( policy );
 		if( policy.size() && !securedPolicy && policy!=PolicyNoneUri ){
-			string names{ policyName(PolicyNoneUri) };
-			for( let uri : carried )
-				names += Ƒ( ", {}", policyName(uri) );
+			string names{ PolicyName(PolicyNoneUri) };
+			for( let uri : ClientSecurity::SecuredPolicyUris() )
+				names += Ƒ( ", {}", PolicyName(uri) );
 			return refuse( Ƒ("Security policy '{}' is not one the gateway carries:  {} - as http://opcfoundation.org/UA/SecurityPolicy#<name>.", policy, names) );
 		}
 		let securedMode = mode==ModeSign || mode==ModeSignAndEncrypt;
 		if( (securedMode || securedPolicy) && row.CertificateUri.empty() )
-			return refuse( Ƒ("Security {} '{}' needs a certificate URI:  the server's applicationUri, which selects its secured endpoints and puts the gateway's certificate on the channel.", securedMode ? "mode" : "policy", securedMode ? mode : policyName(policy)) );
+			return refuse( Ƒ("Security {} '{}' needs a certificate URI:  the server's applicationUri, which selects its secured endpoints and puts the gateway's certificate on the channel.", securedMode ? "mode" : "policy", securedMode ? mode : PolicyName(policy)) );
 		if( securedPolicy && mode==ModeNone )
-			return refuse( Ƒ("Security policy '{}' secures the channel, which security mode None leaves open:  pick Sign or SignAndEncrypt, or a policy of None.", policyName(policy)) );
+			return refuse( Ƒ("Security policy '{}' secures the channel, which security mode None leaves open:  pick Sign or SignAndEncrypt, or a policy of None.", PolicyName(policy)) );
 		if( policy==PolicyNoneUri && row.Secured() )
 			return refuse( Ƒ("Security policy None leaves the channel open, which security mode {} secures:  {}.", row.EffectiveMode(), mode.size() ? "pick a secured policy, or security mode None" : "a certificate URI means Sign & Encrypt unless the mode is set to None") );
 		return nullptr;

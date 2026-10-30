@@ -18,4 +18,6 @@ namespace Jde::Opc::ClientSecurity{
 	//UA_ClientConfig_setDefault last.  `h` and `url` name the client in the verifier's log.
 	α Configure( UA_ClientConfig& config, const Recipe& recipe, Jde::Handle h, str url, SRCE )ε->void;
 	α SecuredPolicyUris()ι->std::span<const sv>;//the secured policies a client carries.
+	α Carries( sv policyUri )ι->bool;//one of SecuredPolicyUris.
+	α PolicyName( sv policyUri )ι->sv;//"…/SecurityPolicy#Basic256Sha256" -> "Basic256Sha256":  the fragment is the part that says anything.
 }

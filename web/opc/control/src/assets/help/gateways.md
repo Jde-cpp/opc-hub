@@ -107,11 +107,13 @@ The rest of the **Properties** tab pins what the Certificate URI leaves to the g
 - **Security Policy** pins the channel's policy to one the gateway carries - *Basic256Sha256*, *Aes128_Sha256_RsaOaep*, *Aes256_Sha256_RsaPss*, or *None* for an unsecured channel. Empty takes the strongest the two sides share. A secured policy needs the Certificate URI too, and a policy of None contradicts a secured mode; Save says which.
 - **Session Timeout** is how long the server keeps the session without a request, in milliseconds. Empty asks the client library's 20 minutes. A server may shorten what is asked.
 - **Request Timeout** is how long a request may take before the gateway fails it, in milliseconds, and how long Test Connection waits. Empty is the gateway's 10 seconds.
-- **Ping Interval** is the keep-alive's period, in milliseconds: the gateway reads the server's state this often so the session outlives an idle page. Empty is the gateway's `pingInterval` setting, or half the Session Timeout where that is set alone, so a session timeout set here cannot lapse by accident. 0 turns the keep-alive off.
+- **Ping Interval** is the keep-alive's period, in milliseconds: the gateway reads the server's state this often so the session outlives an idle page. Empty is the gateway's `pingInterval` setting, or half the Session Timeout where that is set alone and shorter, so a session timeout set here cannot lapse by accident. 0 turns the keep-alive off.
 - **Idle TTL** is how long the gateway keeps a session nobody has used, in milliseconds. Empty is the gateway's `ttl` setting.
 - **Locales** is the session's preferred locales, a comma-separated list such as `en-US,de`: a server that holds names and descriptions in several languages answers in the first it has. Empty sends none.
 
-Saving a change to any of these reconnects the connection's open sessions on the new settings, as a change to the URL or the Certificate URI does. The **Connection** tab shows the policy and mode the session was opened with, which is where a pinned mode or policy shows up.
+The four durations take whole milliseconds, up to 2147483647, about 24 days. Only Ping Interval takes 0.
+
+Saving a change to any of these reconnects the connection's open sessions on the new settings, as a change to the URL or the Certificate URI does - except Ping Interval and Idle TTL, which the open sessions take as they are, from their next ping and idle check. The **Connection** tab shows the policy and mode the session was opened with, which is where a pinned mode or policy shows up.
 
 The credential is the user's: the session's sign-in token for the bundled OPC server, or the name and password entered for the connection. A password travels encrypted on a secured session, and on an unsecured one wherever the server's sign-in policy asks for encryption. A server that would take it only in the clear is refused, and the connection's *Error* says so; the gateway's `allowPlaintextPassword` setting permits it, for a server that can do no better on a network you trust.
 

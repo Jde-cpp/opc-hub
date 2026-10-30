@@ -7,7 +7,7 @@ import { DetailActions, DetailPage, errorMessage, isRefusal, PickOption, Propert
 import { Latest } from 'jde-spa';
 
 import { ServerProperties } from './server-properties/server-properties';
-import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
+import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityModes, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
 import { modeName, policyName } from '../../../model/gateway-endpoint';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
@@ -58,20 +58,17 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	readonly fieldLabels = settingLabels;//the camelCase split gives "Url", "Certificate Uri", "Default Browse Ns", "Ttl"
 	//The mode and policy picks, the unset option labelled with what unset means to the gateway:  the floor the Certificate URI sets
 	//for the mode, and for the policy the strongest the two sides share.  The policies are the ones the gateway carries;  it refuses
-	//any other at save.
-	readonly picks = computed<{ securityMode:PickOption[]; securityPolicy:PickOption[] }>( ()=>{
-		const p = this.properties() as Partial<ServerCnnctn>|null;
-		const floor = p?.certificateUri?.trim() ? "SignAndEncrypt" : "None";
-		return {
-			securityMode: [ {value: null, label: `Default (${modeName(floor)})`}, ...["None", "Sign", "SignAndEncrypt"].map( m=>({value: m, label: modeName(m)}) ) ],
-			securityPolicy: [ {value: null, label: "Default (strongest shared)"}, {value: securityPolicyNone, label: "None"}, ...securedPolicies.map( uri=>({value: uri, label: policyName(uri)}) ) ]
-		};
-	} );
+	//any other at save.  Over the floor alone, whose string equality keeps a keystroke elsewhere from rebuilding the form's fields.
+	readonly #floor = computed( ()=>(this.properties() as Partial<ServerCnnctn>|null)?.certificateUri?.trim() ? "SignAndEncrypt" : "None" );
+	readonly picks = computed<{ securityMode:PickOption[]; securityPolicy:PickOption[] }>( ()=>({
+		securityMode: [ {value: null, label: `Default (${modeName(this.#floor())})`}, ...securityModes.map( m=>({value: m, label: modeName(m)}) ) ],
+		securityPolicy: [ {value: null, label: "Default (strongest shared)"}, {value: securityPolicyNone, label: "None"}, ...securedPolicies.map( uri=>({value: uri, label: policyName(uri)}) ) ]
+	}) );
 	readonly units = { sessionTimeout: "ms", requestTimeout: "ms", pingInterval: "ms", ttl: "ms" };
 	readonly hints = {
 		sessionTimeout: "Empty:  the client library's 20 minutes.  The server may shorten it.",
 		requestTimeout: "Empty:  the gateway's 10 seconds.  Also how long Test Connection waits.",
-		pingInterval: "Empty:  the gateway's pingInterval setting, or half the session timeout where that is set.  0 turns the keep-alive off.",
+		pingInterval: "Empty:  the gateway's pingInterval setting, or half the session timeout where that is shorter.  0 turns the keep-alive off.",
 		ttl: "Empty:  the gateway's ttl setting - how long an idle session is kept open.",
 		locale: "Comma-separated locale ids, en-US,de.  Empty sends none."
 	};
@@ -84,7 +81,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	//gateway presents and the credential this session holds, and settings the gateway would save - and never twice at once.
 	readonly canTest = computed( ()=>{
 		const p = this.properties() as ServerCnnctn|null;
-		return !this.testing() && !!p?.url?.trim() && !!p?.slug?.trim() && !p.fieldError( "slug" ) && !p.fieldError( "securityMode" ) && !p.fieldError( "securityPolicy" );
+		return !this.testing() && !!p?.url?.trim() && !!p?.slug?.trim() && !p.fieldError( "slug" ) && !connectionSettingNames.some( n=>p.fieldError(n) );
 	} );
 	async onTestClick(){
 		if( !this.canTest() )

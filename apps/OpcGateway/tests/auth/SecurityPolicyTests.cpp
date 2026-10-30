@@ -24,7 +24,7 @@ namespace Jde::Opc::Gateway::Tests{
 	protected:
 		static constexpr EThrowawayPort LegacyPort{ EThrowawayPort::SecurityPolicyLegacy }, LyingPort{ EThrowawayPort::SecurityPolicyLying }, DowngradePort{ EThrowawayPort::SecurityPolicyDowngrade };
 		Ω TearDownTestSuite()->void{
-			for( let& slug : {SharedSlug, LegacySlug, LyingSlug, DowngradeSlug, SignSlug, PolicySlug, TimeoutSlug} ){
+			for( let& slug : {SharedSlug, LegacySlug, LyingSlug, DowngradeSlug, SignSlug, PolicySlug, TimeoutSlug, OtherModeSlug} ){
 				PurgeServerCnnctn( slug );
 			}
 		}
@@ -32,13 +32,14 @@ namespace Jde::Opc::Gateway::Tests{
 			let type = TokenTypeName( cred.Type() );
 			return ClientFixture::Attempt( slug, move(cred), Ƒ("secured|{}|{}", type, slug) );
 		}
-		//A row against the embedded OpcServer, its urn as the certificateUri, with the spec's connection settings `args` set (#413):
-		//created through the QL, as the page saves one, when absent - the provider row first, as GetConnection makes it.
-		Ω PinnedConnection( str slug, sv args )ε->ServerCnnctn{
+		//A row against the embedded OpcServer, its urn as the certificateUri - or against `url`, `uri` its certificateUri - with the
+		//spec's connection settings `args` set (#413):  created through the QL, as the page saves one, when absent - the provider row
+		//first, as GetConnection makes it.
+		Ω PinnedConnection( str slug, sv args, string url={}, string uri={} )ε->ServerCnnctn{
 			if( auto existing = SelectServerCnnctn({slug}); existing )
 				return *existing;
 			BlockAwait( ProviderMAwait{slug, false} );
-			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"{}\", url:\"{}\", certificateUri:\"{}\", isDefault:false, {} ){{id}}", slug, slug, OpcUrl(), OpcUrn(), args );
+			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"{}\", url:\"{}\", certificateUri:\"{}\", isDefault:false, {} ){{id}}", slug, slug, url.size() ? url : OpcUrl(), uri.size() ? uri : OpcUrn(), args );
 			let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(create, {}, {UserPK::System}), "id" );
 			return *SelectServerCnnctn( id );
 		}
@@ -49,6 +50,7 @@ namespace Jde::Opc::Gateway::Tests{
 		inline static const string SignSlug{ "opcTestsPinnedSign" };
 		inline static const string PolicySlug{ "opcTestsPinnedPolicy" };
 		inline static const string TimeoutSlug{ "opcTestsPinnedTimeouts" };
+		inline static const string OtherModeSlug{ "opcTestsPinnedOtherMode" };
 		static constexpr sv Basic256Sha256{ "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" };
 	};
 
@@ -143,6 +145,21 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( _client->Row().SecurityMode, "Sign" );
 	}
 
+	//open62541 takes only the configured mode (matchEndpoint), so a row pinned to Sign reaches no Sign & Encrypt endpoint, and the
+	//connection error says the mode is why - where the diagnostics counted every endpoint at or above Sign as reachable and named
+	//nothing.  The lying server's endpoints are None and Sign & Encrypt:  no Sign.
+	TEST_F( SecurityPolicyTests, APinnedModeTheServerLacksIsNamed ){
+		let& ssl = *AppClient()->SslSettings;
+		let serverUri = ssl.Certificate.SanUri(); ASSERT_FALSE( serverUri.empty() );
+		auto server = lyingServer( LyingPort, ssl, true );
+		PinnedConnection( OtherModeSlug, "securityMode:\"Sign\"", Url(LyingPort), serverUri );
+		let what = Attempt( OtherModeSlug, Credential{User{"level", "password"}} );
+		EXPECT_FALSE( _client ) << Negotiated( _client );
+		EXPECT_TRUE( what.contains("BadIdentityTokenRejected") ) << what;
+		EXPECT_TRUE( what.contains("pins security mode Sign,") ) << what;
+		EXPECT_TRUE( what.contains("another mode (None or Sign & Encrypt)") ) << what;
+	}
+
 	//A policy pinned alone, one the embedded OpcServer offers but not its strongest:  the floor a certificateUri sets stays
 	//Sign & Encrypt, under the policy named rather than the strongest the two share.
 	TEST_F( SecurityPolicyTests, APinnedPolicyKeepsTheFloor ){
@@ -176,7 +193,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The timeouts, the keep-alive, the TTL and the locales reach the client:  the row's values in its open62541 config, the ping at
-	//half of a session timeout set alone, and the gateway's own values on a row that sets none.
+	//half of a session timeout set alone, a later ping and TTL edit on the live client, and the gateway's own values on a row that
+	//sets none.
 	TEST_F( SecurityPolicyTests, TimeoutsReachTheClient ){
 		PinnedConnection( TimeoutSlug, "sessionTimeout:60000, requestTimeout:2000, ttl:30000, locale:\"en-US, de\"" );
 		let what = Attempt( TimeoutSlug, SessionCredential() );
@@ -190,6 +208,15 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( ToString(config->sessionLocaleIds[1]), "de" );
 		EXPECT_EQ( _client->PingInterval(), Duration{30s} );//half the session timeout:  no ping_interval set.
 		EXPECT_EQ( _client->Ttl(), Duration{30s} );
+		//An edit to the ping interval and TTL alone reaches the live client, without the reconnect another setting's edit makes.
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, pingInterval:12000, ttl:null )", _client->Row().Id), {}, {UserPK::System} );
+		std::atomic_flag applied;
+		_client->PostUA( [&applied]{ applied.test_and_set(); applied.notify_one(); } );//behind the edit's, on the same strand
+		applied.wait( false );
+		EXPECT_EQ( _client->PingInterval(), Duration{12s} );
+		EXPECT_EQ( _client->Ttl(), Settings::FindDuration("/gateway/ttl").value_or(Duration{2min}) );
+		let live = UAClient::LiveClients();
+		EXPECT_NE( std::ranges::find(live, _client), live.end() );//still registered:  ConnectionEdited would have taken it off
 		UAClient::RemoveClient( move(_client) );
 
 		GetConnection( SharedSlug, OpcUrl(), OpcUrn() );//sets none of them
@@ -202,5 +229,24 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_EQ( defaults->sessionLocaleIdsSize, 0u );
 		EXPECT_EQ( _client->PingInterval(), Settings::FindDuration("/gateway/pingInterval").value_or(Duration{30s}) );
 		EXPECT_EQ( _client->Ttl(), Settings::FindDuration("/gateway/ttl").value_or(Duration{2min}) );
+	}
+
+	//The keep-alive's rule:  a session timeout set alone pings at half of it, halved as a Duration, so 1 ms does not round to 0 and
+	//turn the keep-alive off;  never less often than the gateway's, so a server that revises a long timeout down still sees a ping;
+	//and the gateway's 0, or the row's own, keeps it off.
+	TEST_F( SecurityPolicyTests, PingIntervalRule ){
+		ServerCnnctn row{ string{} };
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{30s} );
+		row.SessionTimeout = 1;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{500us} );
+		row.SessionTimeout = 40000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{20s} );
+		row.SessionTimeout = 3600000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{30s} );
+		EXPECT_EQ( UAClient::PingInterval(row, Duration::zero()), Duration::zero() );
+		row.PingInterval = 0;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration::zero() );
+		row.PingInterval = 45000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{45s} );
 	}
 }

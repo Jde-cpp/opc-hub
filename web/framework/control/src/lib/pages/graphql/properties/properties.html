@@ -21,8 +21,8 @@
 					}
 				</mat-select>
 			}
-			@else if( field.type==InputTypes.Pick ){<!-- a page's own list over a scalar:  null is an option like any other, so what unset means can be read off the control -->
-				<mat-select
+			@else if( field.type==InputTypes.Pick ){<!-- a page's own list over a scalar:  null is an option like any other, so what unset means can be read off the control - canSelectNullableOptions, or Material treats it as a reset and shows nothing -->
+				<mat-select canSelectNullableOptions
 					[required]="!field.nullable && !isReadonly(field)"
 					[disabled]="isReadonly(field)"
 					(selectionChange)="onChange( field.name, $event.value )"
@@ -32,12 +32,12 @@
 					}
 				</mat-select>
 			}
-			@else if( field.type==InputTypes.Number ){<!-- a measure with its unit as the suffix;  the control's string goes on the record, as the text input's does -->
+			@else if( field.type==InputTypes.Number ){<!-- a measure with its unit as the suffix;  the control's string goes on the record, as the text input's does - but not while it is half typed (1e on the way to 1e5), which reads "" and would write "" back over it -->
 				<input matInput type="number" min="0" step="1"
 					[required]="!field.nullable && !isReadonly(field)"
 					[readonly]="isReadonly(field)"
 					[value]="record()[field.name] ?? ''"
-					(input)="onChange( field.name, $any($event.target).value )" >
+					(input)="$any($event.target).validity.badInput || onChange( field.name, $any($event.target).value )" >
 			}
 			@else {<!-- None, Bool, and any future type: a form field must never render without a control -->
 				<input #stringField matInput

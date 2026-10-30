@@ -13,6 +13,8 @@ export const securedPolicies = ["Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes2
 export const connectionSettingNames = ["securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale"] as const;
 export type ConnectionSettingName = typeof connectionSettingNames[number];
 const durationNames = ["sessionTimeout", "requestTimeout", "pingInterval", "ttl"] as const;
+//the most a duration takes, in milliseconds:  SQL Server's int, about 24 days (ServerCnnctn::MaxDurationMs)
+export const maxDurationMs = 2147483647;
 
 export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	constructor( obj:ServerCnnctnProps ){
@@ -31,18 +33,24 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 		this.serverError = obj.serverError;
 	}
 
-	override get canSave():boolean{ return super.canSave && !!this.url?.trim() && !!this.slug.trim() && !this.fieldError("slug") && !this.fieldError("securityMode") && !this.fieldError("securityPolicy"); }//url is non-null in the gateway meta - the base only knows name/slug
+	override get canSave():boolean{ return super.canSave && !!this.url?.trim() && !!this.slug.trim() && !this.fieldError("slug") && !connectionSettingNames.some( n=>this.fieldError(n) ); }//url is non-null in the gateway meta - the base only knows name/slug
 	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
 	//url segment, and " eng-test" went into all three.  Trimmed on the way out (mutation); what is left must match the gateway's
 	//own rule, which refuses anything else (OpcQLHook::InsertBefore).
 	static slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 	//The gateway's save rules on the settings (ServerCnnctn::SettingsError), said under the field before Save tries them:  Sign or
 	//Sign & Encrypt, by the mode or by a secured policy, needs the certificate URI that puts the gateway's certificate on the channel;
-	//a policy of None and a secured channel, or a secured policy and a mode of None, contradict.
+	//a policy of None and a secured channel, or a secured policy and a mode of None, contradict;  0 is the default only for the ping
+	//interval, and no duration takes more than maxDurationMs.
 	override fieldError( field:string ):string|undefined{
 		const slug = this.slug?.trim();
 		if( field=="slug" )
 			return slug && !ServerCnnctn.slugPattern.test( slug ) ? "Letters, digits, '.', '_' and '-' only, starting with a letter or digit." : undefined;
+		if( (durationNames as readonly string[]).includes(field) ){
+			const ms = ServerCnnctn.toMs( this[field as ConnectionSettingName] );
+			return ms===0 && field!="pingInterval" ? "0 is not allowed:  leave it empty for the default."
+				: ms!==null && ms>maxDurationMs ? `At most ${maxDurationMs}, about 24 days.` : undefined;
+		}
 		const mode = ServerCnnctn.toText( this.securityMode ), policy = ServerCnnctn.toText( this.securityPolicy ), uri = this.certificateUri?.trim();
 		const securedPolicy = !!policy && policy!=securityPolicyNone;
 		if( field=="securityMode" ){

@@ -228,14 +228,30 @@ namespace Jde::Opc::Gateway{
 	//other sessions' subscriptions come back on the new settings.  Removed:  RemoveClient - nothing to reconnect to, and Discarded
 	//keeps it from parking;  the server drops the session's items with the session.  Matched by the row's id when that is the
 	//key (a purge has no row left to read the slug from), else by slug.  Off the strand is fine:  both paths lock what they touch.
+	α UAClient::BuiltFrom( const DB::Key& connection )ι->vector<sp<UAClient>>{
+		return registered( [&]( const UAClient& client ){ return connection.IsPK() ? client._opcServer.Id==connection.PK() : client.Slug()==connection.NK(); } );
+	}
 	α UAClient::ConnectionEdited( const DB::Key& connection, bool removed )ι->uint{
-		auto clients = registered( [&]( const UAClient& client ){ return connection.IsPK() ? client._opcServer.Id==connection.PK() : client.Slug()==connection.NK(); } );
+		auto clients = BuiltFrom( connection );
 		for( auto& client : clients ){
 			INFO( "[{}]Connection '{}' was {} - {}.", hex(client->Handle()), client->Slug(), removed ? "removed" : "edited", removed ? "closing its client" : "reconnecting on its new settings" );
 			if( removed )
 				RemoveClient( move(client) );
 			else
 				ConnectionLost( move(client) );
+		}
+		return clients.size();
+	}
+	α UAClient::KeepAliveEdited( const DB::Key& connection, optional<optional<uint32>> pingInterval, optional<optional<uint32>> ttl )ι->uint{
+		let clients = BuiltFrom( connection );
+		for( let& client : clients ){
+			INFO( "[{}]Connection '{}' was edited - its keep-alive and idle TTL take the new settings.", hex(client->Handle()), client->Slug() );
+			client->PostUA( [c=client.get(), pingInterval, ttl]{//the strand AsyncRequest reads them on;  PostUA holds the client.
+				if( pingInterval )
+					c->_opcServer.PingInterval = *pingInterval;
+				if( ttl )
+					c->_opcServer.Ttl = *ttl;
+			} );
 		}
 		return clients.size();
 	}
@@ -346,24 +362,23 @@ namespace Jde::Opc::Gateway{
 			throw;
 		}
 	}
-	//The secured policies Configuration() carries - for the channel with a certificateUri, for the user token always.
-	Ω carried( sv policyUri )ι->bool{ return std::ranges::any_of( ClientSecurity::SecuredPolicyUris(), [policyUri]( sv uri ){ return uri==policyUri; } ); }
-	Ω policyName( sv uri )ι->string{ let i = uri.rfind( '#' ); return string{ i==sv::npos ? uri : uri.substr(i+1) }; }//"…/SecurityPolicy#Basic256Sha256" -> "Basic256Sha256": the fragment is the part that says anything.
 	Ω securedPolicyNames()ι->string{//"Basic256Sha256, Aes128_Sha256_RsaOaep and Aes256_Sha256_RsaPss"
 		let uris = ClientSecurity::SecuredPolicyUris();
 		string y;
 		for( uint i=0; i<uris.size(); ++i )
-			y += Ƒ( "{}{}", i==0 ? "" : i+1==uris.size() ? " and " : ", ", policyName(uris[i]) );
+			y += Ƒ( "{}{}", i==0 ? "" : i+1==uris.size() ? " and " : ", ", ClientSecurity::PolicyName(uris[i]) );
 		return y;
 	}
 	Ω modeWords( sv mode )ι->sv{ return mode==ServerCnnctn::ModeSignAndEncrypt ? "Sign & Encrypt" : mode; }//the wire name as the help and the diagnostics spell it.
 	α UAClient::Configuration()ε->void{
-		let serverUri = Str::Replace( _opcServer.CertificateUri, " ", "%20" );//the server's applicationUri:  the endpoint filter, and since security-matrix #8 nothing else.
 		//The channel's mode (docs/clients/spec.md *Connection settings*):  the row's security_mode where it names one, else the floor
 		//a certificateUri sets - Sign & Encrypt with one, None without.  A secured mode needs the uri, which the save rule holds
 		//(ServerCnnctn::SettingsError);  a row that reaches here without it was written past the QL.
 		let mode = _opcServer.EffectiveMode();
 		let addSecurity = _opcServer.Secured();
+		//The server's applicationUri:  the endpoint filter, and since security-matrix #8 nothing else.  Only a secured channel's - a
+		//None channel holds no server certificate to hold a uri against, so a None-pinned row's certificateUri is left out.
+		let serverUri = addSecurity ? Str::Replace( _opcServer.CertificateUri, " ", "%20" ) : string{};
 		THROW_IF( addSecurity && serverUri.empty(), "Connection '{}' asks for security mode {} without a certificateUri.", Slug(), mode );
 		let certAuth = _credential.Type()==ETokenType::Certificate && AppClient()->SslSettings.has_value();//Create() already threw for a certificate credential with no ssl settings.
 		//One certificate, two jobs.  With a certificateUri it is the channel's identity, under whichever secured policy the server
@@ -379,8 +394,8 @@ namespace Jde::Opc::Gateway{
 		let& settings = certAuth ? *AppClient()->SslSettings : CryptoSettings(); //requires authentication[AppClient] & transport[OpcServer] security be equal.
 		let& policy = _opcServer.SecurityPolicy;//pinned, else the strongest the two sides share.
 		if( addSecurity )
-			INFO( "[{}]Offering {}, {} only, with certificate '{}'", hex(Handle()), policy.empty() ? securedPolicyNames() : policyName(policy), modeWords(mode), settings.Certificate.Path.string() );
-		if( !addSecurity )//not `else`: the log macros expand to their own `if`.  No endpoint filter - there is no uri to hold the server's against.
+			INFO( "[{}]Offering {}, {} only, with certificate '{}'", hex(Handle()), policy.empty() ? securedPolicyNames() : string{ ClientSecurity::PolicyName(policy) }, modeWords(mode), settings.Certificate.Path.string() );
+		if( !addSecurity )//not `else`: the log macros expand to their own `if`.  No endpoint filter - an unsecured channel has no uri to hold the server's against.
 			INFO( "[{}]Using SecurityPolicy None - '{}' {}; user tokens are encrypted, under the policy the server names, with certificate '{}'", hex(Handle()), Slug(), _opcServer.SecurityMode.empty() ? "has no certificateUri" : "pins security mode None", settings.Certificate.Path.string() );
 		auto config = UA_Client_getConfig( _ptr );
 		//A secret in the clear - a password or an issued token under a token policy of None, on any channel that is not
@@ -415,11 +430,12 @@ namespace Jde::Opc::Gateway{
 			return AppClient()->SslSettings;
 		return _opcServer.Secured() ? optional<Crypto::CryptoSettings>{ CryptoSettings() } : optional<Crypto::CryptoSettings>{};
 	}
-	α UAClient::PingInterval()Ι->Duration{
+	α UAClient::PingInterval( const ServerCnnctn& row, Duration gateway )ι->Duration{
 		using std::chrono::milliseconds;
-		return _opcServer.PingInterval ? Duration{ milliseconds{*_opcServer.PingInterval} }
-			: _opcServer.SessionTimeout ? Duration{ milliseconds{*_opcServer.SessionTimeout/2} }
-			: _pingInterval;
+		if( row.PingInterval )
+			return Duration{ milliseconds{*row.PingInterval} };
+		//Halved as a Duration, so a 1 ms timeout pings at 500 µs rather than never;  capped at the gateway's, whose 0 still turns it off.
+		return row.SessionTimeout ? std::min( Duration{milliseconds{*row.SessionTimeout}}/2, gateway ) : gateway;
 	}
 	α UAClient::Ttl()Ι->Duration{
 		return _opcServer.Ttl ? Duration{ std::chrono::milliseconds{*_opcServer.Ttl} } : _ttl;
@@ -502,11 +518,11 @@ namespace Jde::Opc::Gateway{
 				for( let& utp : Iterable<UA_UserTokenPolicy>(ep.userIdentityTokens, ep.userIdentityTokensSize) ){
 					let type = ToTokenType( utp.tokenType );
 					let tokenPolicyUri = utp.securityPolicyUri.length ? ToString( utp.securityPolicyUri ) : policyUri;//unset means the channel's own (open62541 matchUserTokenPolicy).
-					tokenPolicies.emplace_back( Ƒ("{}@{}", TokenTypeName(type), policyName(tokenPolicyUri)) );
+					tokenPolicies.emplace_back( Ƒ("{}@{}", TokenTypeName(type), ClientSecurity::PolicyName(tokenPolicyUri)) );
 					endpoints.Policies.push_back( EndpointSummary::TokenPolicy{ep.securityMode, policyUri, type, tokenPolicyUri} );
 				}
 				let applicationUri = ToString( ep.server.applicationUri );
-				INFO( "[{}]ServerEndpoint {}/{}=[{}], applicationUri: '{}'", hex(h), policyName(policyUri), securityMode, Str::Join(tokenPolicies), applicationUri );
+				INFO( "[{}]ServerEndpoint {}/{}=[{}], applicationUri: '{}'", hex(h), ClientSecurity::PolicyName(policyUri), securityMode, Str::Join(tokenPolicies), applicationUri );
 				if( endpoints.ServerUri.empty() )
 					endpoints.ServerUri = applicationUri;//every endpoint of one server carries the same uri; keep the first non-empty.
 			}
@@ -564,38 +580,40 @@ namespace Jde::Opc::Gateway{
 					let& row = client->_opcServer;
 					let noUri = row.CertificateUri.empty();
 					//The channel the row asks for (spec *Connection settings*):  secured - Sign or Sign & Encrypt, pinned or the floor a
-					//certificateUri sets - and then the least mode it takes;  and the policy it pins, which filters the endpoints to its own.
+					//certificateUri sets - and then the one mode it takes, as open62541's matchEndpoint takes only the configured mode;  and
+					//the policy it pins, which filters the endpoints to its own.
 					let secured = row.Secured();
 					let pinnedMode = row.SecurityMode.size();
-					let floor = row.EffectiveMode()==ServerCnnctn::ModeSign ? UA_MESSAGESECURITYMODE_SIGN : UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+					let mode = row.EffectiveMode()==ServerCnnctn::ModeSign ? UA_MESSAGESECURITYMODE_SIGN : UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
 					let& pinnedPolicy = row.SecurityPolicy;
 					let allowPlain = UA_Client_getConfig( ua )->allowNonePolicyPassword;
 					let secretType = type==ETokenType::Username || type==ETokenType::IssuedToken;
 					let noneUri = ToString( UA_SECURITY_POLICY_NONE_URI );
 					//What this client could have presented:  on an endpoint it can reach (None on an unsecured channel;  on a secured one,
-					//an endpoint at or above the floor under a secured policy it carries, the pinned one where there is one), a token under a
+					//an endpoint of the row's mode under a secured policy it carries, the pinned one where there is one), a token under a
 					//secured policy it carries - or under None where that puts no secret on the wire unencrypted:  an anonymous token, a
 					//Sign & Encrypt channel, or the operator's allowPlaintextPassword.
-					bool offered{}, presentable{}, refusedPlain{}, securedOffer{}, belowFloor{}, otherPolicy{};
+					bool offered{}, presentable{}, refusedPlain{}, securedOffer{}, otherPolicy{};
 					flat_set<string> foreign;//policies the server asks for and the gateway does not carry - Basic256, an ECC one.
+					flat_set<string> otherModes;//the modes of the endpoints out of reach for theirs.
 					for( let& p : endpoints.Policies ){
 						if( p.Type!=type )
 							continue;
 						offered = true;
-						if( secured && p.Mode<floor ){//under the floor (Configuration) - out of reach, whatever securityLevel it claims (m2-closing #1).
-							belowFloor = true;
+						if( secured && p.Mode!=mode ){//not the row's mode (Configuration) - out of reach, whatever securityLevel it claims (m2-closing #1).
+							otherModes.emplace( modeWords(SecurityModeName(p.Mode)) );
 							continue;
 						}
 						let inClear = secretType && p.Policy==noneUri && p.Mode!=UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-						let encryptable = type==ETokenType::Anonymous || carried( p.Policy ) || ( p.Policy==noneUri && type!=ETokenType::Certificate );
+						let encryptable = type==ETokenType::Anonymous || ClientSecurity::Carries( p.Policy ) || ( p.Policy==noneUri && type!=ETokenType::Certificate );
 						if( !encryptable && p.Policy!=noneUri )
-							foreign.emplace( policyName(p.Policy) );
-						if( carried(p.ChannelPolicy) && !secured ){//out of reach on an unsecured channel - but the way out, if it takes the credential encrypted.
+							foreign.emplace( ClientSecurity::PolicyName(p.Policy) );
+						if( ClientSecurity::Carries(p.ChannelPolicy) && !secured ){//out of reach on an unsecured channel - but the way out, if it takes the credential encrypted.
 							securedOffer = securedOffer || ( encryptable && !inClear );
 							continue;
 						}
-						if( !carried(p.ChannelPolicy) && p.ChannelPolicy!=noneUri ){//a channel policy the gateway does not carry.
-							foreign.emplace( policyName(p.ChannelPolicy) );
+						if( !ClientSecurity::Carries(p.ChannelPolicy) && p.ChannelPolicy!=noneUri ){//a channel policy the gateway does not carry.
+							foreign.emplace( ClientSecurity::PolicyName(p.ChannelPolicy) );
 							continue;
 						}
 						if( pinnedPolicy.size() && p.ChannelPolicy!=pinnedPolicy ){//filtered out by the pin (open62541 matchEndpoint).
@@ -622,9 +640,9 @@ namespace Jde::Opc::Gateway{
 					else if( foreign.size() )
 						detail = Ƒ( "'{}' offers {} authentication only under security policies the gateway does not carry ([{}]) - it carries {}", client->Url(), TokenTypeName(type), foreignNames, securedPolicyNames() );
 					else if( otherPolicy )
-						detail = Ƒ( "'{}' pins security policy {}, which '{}' does not offer {} authentication under at {} or above - pick a policy it offers, or clear the policy to take the strongest the two share", client->Slug(), policyName(pinnedPolicy), client->Url(), TokenTypeName(type), modeWords(row.EffectiveMode()) );
-					else if( belowFloor )
-						detail = Ƒ( "'{}' {}, and '{}' offers {} authentication only on endpoints that are not ({}) - refused rather than downgraded.  Enable a {} endpoint on the server, or {} to connect unsecured", client->Slug(), pinnedMode ? Ƒ("pins security mode {}", modeWords(row.SecurityMode)) : string{"has a certificateUri, which means Sign & Encrypt"}, client->Url(), TokenTypeName(type), floor==UA_MESSAGESECURITYMODE_SIGN ? "None" : "None or Sign", modeWords(row.EffectiveMode()), pinnedMode ? "set its security mode to None" : "clear the connection's certificateUri" );
+						detail = Ƒ( "'{}' pins security policy {}, under which '{}' offers {} authentication on no {} endpoint - pick a policy it offers, or clear the policy to take the strongest the two share", client->Slug(), ClientSecurity::PolicyName(pinnedPolicy), client->Url(), TokenTypeName(type), modeWords(row.EffectiveMode()) );
+					else if( otherModes.size() )
+						detail = Ƒ( "'{}' {}, and '{}' offers {} authentication only on endpoints of another mode ({}) - refused rather than {}.  Enable a {} endpoint on the server, or {}", client->Slug(), pinnedMode ? Ƒ("pins security mode {}", modeWords(row.SecurityMode)) : string{"has a certificateUri, which means Sign & Encrypt"}, client->Url(), TokenTypeName(type), Str::Join(otherModes, " or "), mode==UA_MESSAGESECURITYMODE_SIGNANDENCRYPT ? "downgraded" : "changed", modeWords(row.EffectiveMode()), pinnedMode ? "set the connection's security mode to one it offers" : "clear the connection's certificateUri to connect unsecured" );
 					if( let clientUri = client->ApplicationUri(); detail.empty() && clientUri.size() && !endpoints.ServerUri.empty() && clientUri!=endpoints.ServerUri )
 						detail = Ƒ( "the connection's certificateUri '{}' is not the applicationUri of the server at '{}', which is '{}' - every endpoint is filtered out; correct the certificateUri", clientUri, client->Url(), endpoints.ServerUri );
 					if( detail.size() )
@@ -737,6 +755,11 @@ namespace Jde::Opc::Gateway{
 			certificate = ToUAByteString( Crypto::ReadCertificate(ssl->Certificate.Path) );
 			privateKey = ToUAByteString( Crypto::ReadPrivateKey(ssl->PrivateKey) );
 		}
+		vector<sv> locales;//the session's, parsed here for the same reason:  Split and push_back can throw.
+		for( let id : Str::Split(sv{_opcServer.Locale}) ){
+			if( let trimmed = Str::Trim(id); trimmed.size() )
+				locales.push_back( trimmed );
+		}
 		_config.logging = &_logger;
 		_config.eventLoop = UA_EventLoop_new_POSIX( _config.logging );
 		UA_ConnectionManager *tcpCM = UA_ConnectionManager_new_POSIX_TCP( "tcp connection manager"_uv );
@@ -747,18 +770,11 @@ namespace Jde::Opc::Gateway{
 		//copies the struct - UA_Client_delete clears it, as it does the event loop.
 		_config.timeout = _opcServer.RequestTimeout.value_or( 10000 ); /*ms*/
 		_config.requestedSessionTimeout = _opcServer.SessionTimeout.value_or( 0 );
-		if( _opcServer.Locale.size() ){
-			vector<sv> locales;
-			for( let id : Str::Split(sv{_opcServer.Locale}) ){
-				if( let trimmed = Str::Trim(id); trimmed.size() )
-					locales.push_back( trimmed );
-			}
-			if( locales.size() ){
-				_config.sessionLocaleIds = (UA_LocaleId*)UA_Array_new( locales.size(), &UA_TYPES[UA_TYPES_LOCALEID] );
-				for( uint i=0; i<locales.size(); ++i )
-					_config.sessionLocaleIds[i] = AllocUAString( locales[i] );
-				_config.sessionLocaleIdsSize = locales.size();
-			}
+		if( locales.size() ){
+			_config.sessionLocaleIds = (UA_LocaleId*)UA_Array_new( locales.size(), &UA_TYPES[UA_TYPES_LOCALEID] );
+			for( uint i=0; i<locales.size(); ++i )
+				_config.sessionLocaleIds[i] = AllocUAString( locales[i] );
+			_config.sessionLocaleIdsSize = locales.size();
 		}
 		_config.stateCallback = StateCallback;
 		_config.serviceNotificationCallback = ServiceNotificationCallback;//SERVICE_BEGIN ends the post-activation drain - see AsyncRequest::OnServiceBegin.
@@ -915,9 +931,10 @@ namespace Jde::Opc::Gateway{
 		_awaitingActivation.erase( shared_from_this() );//before StopProcessing:  FailPending's disconnect fires StateCallback, which must not find it.
 		ClearRequest( ConnectRequestId );
 		StopProcessing();
+		let timeout = UA_Client_getConfig( UAPointer() )->timeout;//ms, the row's request_timeout:  under a second where it says so.
 		let reason = sc==UA_STATUSCODE_BADSHUTDOWN
 			? string{ "The gateway is shutting down." }
-			: Ƒ( "'{}' did not complete the connection within {} seconds.", ConnectUrl(), UA_Client_getConfig(UAPointer())->timeout/1000 );
+			: Ƒ( "'{}' did not complete the connection within {}.", ConnectUrl(), timeout%1000 ? Ƒ("{} ms", timeout) : Ƒ("{} seconds", timeout/1000) );
 		Post( [self=shared_from_this(), onResult=std::move(onResult), error=mu<UAClientException>(sc, Handle(), reason)]()mutable ι->void {
 			onResult( self, move(error) );
 		});

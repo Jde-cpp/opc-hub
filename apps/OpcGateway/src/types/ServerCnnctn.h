@@ -18,8 +18,10 @@ namespace Jde::Opc::Gateway{
 		//docs/clients/spec.md *Connection settings*:  what the row says of the channel, checked at every save (OpcQLHook's InsertBefore
 		//and UpdateBefore, over the merged row) and by testConnection.  A mode or policy that is not one the gateway knows;  Sign or
 		//Sign & Encrypt, pinned by the mode or by a secured policy, without the certificate URI that puts the gateway's certificate on
-		//the channel;  a policy of None on a channel that is secured, or a secured one on a mode of None.  Null for a row that connects.
+		//the channel;  a policy of None on a channel that is secured, or a secured one on a mode of None;  a session timeout, request
+		//timeout or TTL of 0.  Null for a row that connects.
 		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
+		static constexpr uint32 MaxDurationMs{ 2147483647 };//SQL Server's int, the proc's parameter type:  about 24 days.  MergeSettings refuses more.
 		static constexpr sv ModeNone{ "None" }, ModeSign{ "Sign" }, ModeSignAndEncrypt{ "SignAndEncrypt" };//UA_MessageSecurityMode's names (SecurityModeName), what security_mode holds.
 		static constexpr sv PolicyNoneUri{ "http://opcfoundation.org/UA/SecurityPolicy#None" };
 		//The channel's mode as this row has the client ask for it:  the pinned one, else the floor - Sign & Encrypt with a certificate

@@ -4,10 +4,11 @@
 namespace Jde::Opc::Gateway{
 	struct ServerCnnctn;
 	//`base` with every connection setting `input` names written over it (docs/clients/spec.md *Connection settings*):  the certificate
-	//URI, the mode, the policy, the four durations and the locale, a null clearing one, strings trimmed as the web trims them.  The
-	//merged row the save rules read (OpcQLHook's InsertBefore over a blank row, UpdateBefore over the saved one) and testConnection's
-	//throwaway row.  Read through Find/As, never Args:  a value bound through a variable is its `\b$name` marker there.  A duration
-	//that is not a whole number of milliseconds is refused here, BadRequest, before the engine's own conversion sees it.
+	//URI, the mode, the policy, the four durations and the locale, a null clearing one, strings as sent - the engine stores them
+	//untrimmed, so the rules judge them so.  The merged row the save rules read (OpcQLHook's InsertBefore over a blank row,
+	//UpdateBefore over the saved one) and testConnection's throwaway row.  Read through Find/As, never Args:  a value bound through a
+	//variable is its `\b$name` marker there.  A duration that is not a whole number of milliseconds, or is over
+	//ServerCnnctn::MaxDurationMs, is refused here, BadRequest.
 	α MergeSettings( const QL::Input& input, ServerCnnctn base, SL sl )ε->ServerCnnctn;
 	struct OpcQLHook : QL::IQLHook{
 		α InsertBefore( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;

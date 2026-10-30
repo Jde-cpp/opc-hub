@@ -213,8 +213,8 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 
 	//The save rules (ServerCnnctn::SettingsError) at the insert, and at an update over the merged row:  Sign without a certificate
-	//URI, a mode pinned on a row with none, a row losing the uri its mode needs, an unknown mode or policy, and a contradiction
-	//between the two.  None reaches the table.
+	//URI, a mode pinned on a row with none, a row losing the uri its mode needs, an unknown or padded mode or policy, a contradiction
+	//between the two, a duration of 0 where 0 is no default, and one over SQL Server's int.  None reaches the table.
 	TEST_F( ServerCnnctnDBTests, SettingsRefused ){
 		const string slug{ "settings-refused" };
 		PurgeServerCnnctn( slug );
@@ -231,6 +231,11 @@ namespace Jde::Opc::Gateway::Tests{
 			{ ", certificateUri:\"urn:x\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256\"", "not one the gateway carries" },
 			{ ", certificateUri:\"urn:x\", securityMode:\"None\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"", "security mode None" },
 			{ ", certificateUri:\"urn:x\", securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#None\"", "Security policy None" },
+			{ ", certificateUri:\"urn:x\", securityMode:\" Sign \"", "not one of None, Sign or SignAndEncrypt" },//judged as the engine stores it, untrimmed
+			{ ", sessionTimeout:0", "of 0" },
+			{ ", requestTimeout:0", "of 0" },
+			{ ", ttl:0", "of 0" },
+			{ ", ttl:2147483648", "at most" },//over SQL Server's int, and a uint32 on Windows alone
 			{ ", certificateUri:\"urn:x\", sessionTimeout:\"soon\"", "number" } } ){//the engine's own conversion refuses this one, ahead of the hook's (MergeSettings), which testConnection alone reaches.
 			let error = create( args );
 			ASSERT_TRUE( error ) << args;
@@ -238,7 +243,7 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_FALSE( SelectServerCnnctn(slug) ) << args;
 		}
 		//accepted, and then the update's half:  the uri the mode needs cannot leave, and a mode cannot be pinned on a row with no uri.
-		ASSERT_FALSE( create(", certificateUri:\"urn:x\", securityMode:\"Sign\"") );
+		ASSERT_FALSE( create(", certificateUri:\"urn:x\", securityMode:\"Sign\", pingInterval:0") );//the ping interval's 0 turns the keep-alive off
 		let id = SelectServerCnnctn( slug )->Id;
 		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
 		let update = [&]( sv args )->optional<string>{

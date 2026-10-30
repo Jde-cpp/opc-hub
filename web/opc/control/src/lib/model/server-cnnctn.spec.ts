@@ -181,6 +181,19 @@ describe( 'ServerCnnctn connection settings', ()=>{
 		expect( secured.fieldError("securityMode") ).toContain( "Sign or Sign & Encrypt" );
 		expect( secured.canSave ).toBe( false );
 	} );
+	//0 is the default only to the client library, which the help does not give, and a TTL of 0 closes the session after each request
+	it( 'refuse 0 for every duration but the ping interval, and more than 24 days for any', ()=>{
+		for( const name of ["sessionTimeout", "requestTimeout", "ttl"] ){
+			const row = new ServerCnnctn( props({[name]: "0"}) );
+			expect( row.fieldError(name) ).toContain( "leave it empty" );
+			expect( row.canSave ).toBe( false );
+		}
+		expect( new ServerCnnctn(props({pingInterval: 0})).fieldError("pingInterval") ).toBeUndefined();
+		const long = new ServerCnnctn( props({ttl: 2147483648}) );
+		expect( long.fieldError("ttl") ).toContain( "24 days" );
+		expect( long.canSave ).toBe( false );
+		expect( new ServerCnnctn(props({ttl: 2147483647})).fieldError("ttl") ).toBeUndefined();
+	} );
 	it( 'answer testConnection\'s arguments, null where unset', ()=>{
 		expect( ServerCnnctn.settings(new ServerCnnctn(props({securityMode: "Sign", requestTimeout: "2000" as any}))) ).toEqual( {securityMode: "Sign", securityPolicy: null, sessionTimeout: null, requestTimeout: 2000, pingInterval: null, ttl: null, locale: null} );
 	} );

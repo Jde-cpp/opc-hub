@@ -55,8 +55,7 @@ namespace Jde::Opc::Gateway{
 		let slug = m.FindPtr<jstring>( "slug" );
 		return slug ? ServerCnnctn::SlugError( sv{*slug}, sl ) : nullptr;//the column is NOT NULL - the insert says so
 	}
-	//The columns the connection settings' save rules read (spec *Connection settings*), by their QL names, and with the url and the
-	//default namespace every column a live client was built from - an edit to any of these reconnects its clients (connectionEdited).
+	//The columns the connection settings' save rules read (spec *Connection settings*), by their QL names.
 	constexpr array<sv,8> _settingsColumns{ "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "pingInterval", "ttl", "locale" };
 	Ω namesAny( const QL::MutationQL& m, std::span<const sv> columns )ι->bool{ return std::ranges::any_of( columns, [&m]( sv c ){ return m.Args.contains(c); } ); }
 	//ServerCnnctn::SettingsError over the mutation merged onto `base`:  a refusal, MergeSettings' own included, else null.
@@ -128,19 +127,37 @@ namespace Jde::Opc::Gateway{
 		return m.TableName()=="server_connections" ? mu<HookAwait>( m, userPK, Operation::Purge | Operation::Failure, sl ) : nullptr;
 	}
 
+	//A duration an update names:  its value, or an empty optional where it clears it;  nullopt where the update leaves it.  The save
+	//has checked it (MergeSettings).
+	Ω namedDuration( const QL::MutationQL& m, sv name )ι->optional<optional<uint32>>{
+		let v = m.FindPtr<jvalue>( name );
+		if( !v )
+			return nullopt;
+		optional<uint32> y;
+		if( let n = v->try_to_number<uint>(); n )
+			y = (uint32)*n;
+		return std::make_optional( y );
+	}
 	//reviews/m3-closing.md #4:  a live client holds the copy of its row it was built from.  What it reads from the copy that
 	//changes how it connects or translates a path - url, certificateUri, defaultBrowseNs, and the spec's connection settings - takes
-	//its clients off the registry, to reconnect on the new row;  a delete or purge closes them.  Name and description it only reports
-	//(search), and a rename is not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted
-	//row cannot connect.  The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves
-	//it, and a url edit is the one column its `_Connection` shows.
+	//its clients off the registry, to reconnect on the new row;  a delete or purge closes them.  The ping interval and TTL it reads
+	//live, so an edit to them alone is written over its copy instead.  Name and description it only reports (search), and a rename
+	//is not worth dropping every session's subscriptions for.  A restore has no clients to act on:  a deleted row cannot connect.
+	//The endpoint hears the same edits (server/GatewayServer.h):  a purge takes the row's folder, a delete leaves it, and a url
+	//edit is the one column its `_Connection` shows.
 	Ω connectionEdited( const QL::MutationQL& m )ι->QL::IQLHook::HookResult{
 		using enum QL::EMutationQL;
-		constexpr array<sv,2> pathColumns{ "url", "defaultBrowseNs" };
+		constexpr array<sv,8> builtColumns{ "url", "defaultBrowseNs", "certificateUri", "securityMode", "securityPolicy", "sessionTimeout", "requestTimeout", "locale" };
+		constexpr array<sv,2> liveColumns{ "pingInterval", "ttl" };
 		let removed = m.Type==Delete || m.Type==Purge;
-		let edited = m.Type==Update && ( namesAny(m, pathColumns) || namesAny(m, _settingsColumns) );
-		if( m.TableName()=="server_connections" && (removed || edited) ){
+		let edited = m.Type==Update && namesAny( m, builtColumns );
+		let live = m.Type==Update && !edited && namesAny( m, liveColumns );//with a reconnect, the new client reads them from the row.
+		if( m.TableName()=="server_connections" && (removed || edited || live) ){
 			if( let key = m.FindKey(); key ){
+				if( live ){
+					UAClient::KeepAliveEdited( *key, namedDuration(m, "pingInterval"), namedDuration(m, "ttl") );
+					return nullptr;
+				}
 				UAClient::ConnectionEdited( *key, removed );
 				if( auto server = GatewayServer::Instance(); server ){
 					if( m.Type==Purge )
@@ -159,7 +176,7 @@ namespace Jde::Opc{
 	α Gateway::MergeSettings( const QL::Input& input, ServerCnnctn base, SL sl )ε->ServerCnnctn{
 		let text = [&]( sv name, string& into ){
 			if( let v = input.FindPtr<jvalue>(name); v )
-				into = v->is_string() ? string{ Str::Trim(sv{v->get_string()}) } : string{};
+				into = v->is_string() ? string{ v->get_string() } : string{};//untrimmed:  the rules judge what the engine stores.
 		};
 		let number = [&]( sv name, optional<uint32>& into ){
 			let v = input.FindPtr<jvalue>( name );
@@ -169,9 +186,10 @@ namespace Jde::Opc{
 				into.reset();
 				return;
 			}
-			let n = v->try_to_number<uint32>();
+			let n = v->try_to_number<uint>();//uint32 is 64 bits on Linux and 32 on Windows:  the same input, the same answer.
 			THROW_IFX( !n, Exception(sl, {EHttpStatus::BadRequest}, "'{}' takes a whole number of milliseconds, not {}.", name, serialize(*v)) );
-			into = *n;
+			THROW_IFX( *n>ServerCnnctn::MaxDurationMs, Exception(sl, {EHttpStatus::BadRequest}, "'{}' takes at most {} milliseconds, about 24 days, not {}.", name, ServerCnnctn::MaxDurationMs, *n) );
+			into = (uint32)*n;
 		};
 		text( "certificateUri", base.CertificateUri );
 		text( "securityMode", base.SecurityMode );
