@@ -1,6 +1,5 @@
 #include "UpdateAwait.h"
 #include <jde/fwk/co/AnyAwait.h>
-#include <jde/ql/QLHook.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/names.h>
 #include <jde/db/generators/Functions.h>
@@ -9,6 +8,7 @@
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
 #include <jde/access/IAcl.h>
+#include <jde/ql/ops/MutationAwait.h>
 #include "../types/JsonColumn.h"
 #include "../qlInternal.h"
 
@@ -24,7 +24,7 @@ namespace Jde::QL{
 	α UpdateAwait::await_ready()ι->bool{
 		try{
 			THROW_IF( !_table, "Table not found for mutation '{}'.", _mutation.ToString() );
-			_table->Authorize( _mutation.Type==EMutationQL::Update ? Access::ERights::Update : Access::ERights::Delete, _userPK, _sl );
+			_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
 		}
 		catch( Exception& e ){
 			Refuse( move(e) );
@@ -136,9 +136,9 @@ namespace Jde::QL{
 		return update;
 	}
 
-	//One coroutine.  The enum prefetch is a CacheAwait, the hooks MutationAwaits, the statements ExecuteAwaits - three task types,
-	//which is what used to split this into Build → UpdateBefore → Execute → UpdateAfter with the clauses parked on members.  The
-	//hooks are AnyAwaits and Any() wraps the other two, so one frame awaits all three, and the clauses are locals again.
+	//One coroutine.  The enum prefetch is a CacheAwait and the statements ExecuteAwaits - two task types, which is what used to
+	//split this into Build → Execute with the clauses parked on members.  Any() wraps both, so one frame awaits them, and the
+	//clauses are locals.
 	α UpdateAwait::Execute()ι->TAwait<jvalue>::Task{
 		uint rowCount{};
 		try{
@@ -158,11 +158,9 @@ namespace Jde::QL{
 			}
 			else
 				updates.push_back( CreateDeleteRestore(*_table, input) );
-			co_await Hook::UpdateBefore( _mutation, _userPK );
 			auto& ds = *_table->Schema->DS();
 			for( auto& update : updates )
 				rowCount += co_await Any( ds.Execute(update.Move()) );
-			co_await Hook::UpdateAfter( _mutation, _userPK );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

@@ -19,10 +19,10 @@
 #include "ql/HistGroupInfoQLAwait.h"
 #include "ql/OpcSessionsQLAwait.h"
 #include "ql/SearchQLAwait.h"
+#include "ql/ServerCnnctnMAwait.h"
 #include "hist/HistHost.h"
 #include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
-#include "ql/OpcQLHook.h"
 #include "ql/TestConnectionQLAwait.h"
 #include "server/GatewayServer.h"
 
@@ -62,6 +62,7 @@ namespace Jde::Opc{
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		_processSsl.emplace( Json::FindDefaultObject(webServerSettings, "ssl"), sv{} );
+		ServerCnnctnMAwait::SetSynced();//the hub synced in its own Configure, before this.
 		return schema;
 	}
 	α Gateway::Connect( sp<DB::AppSchema> schema )ε->void{
@@ -72,7 +73,6 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
-		QL::Hook::Add( mu<OpcQLHook>() );
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.

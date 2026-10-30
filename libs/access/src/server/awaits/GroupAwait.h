@@ -1,6 +1,6 @@
 #pragma once
 #include <jde/ql/QLAwait.h>
-#include <jde/ql/QLHook.h>
+#include <jde/ql/types/MutationQL.h>
 #include <jde/access/access.h>
 
 namespace Jde::Access::Server{
@@ -18,9 +18,14 @@ namespace Jde::Access::Server{
 		α Select()ι->QL::QLAwait<>::Task;
 	};
 
-	struct GroupHook final : QL::IQLHook{
-		α AddBefore( const QL::MutationQL& m, UserPK executer, SRCE )ι->HookResult override;
+	//addGroup, routed here by Server::CustomMutation:  authorized, then Authorize::TestAddGroupMember over the members named, then
+	//the stock add.  An add that names no group or no member is left to the stock op, whose refusal names the column (GroupTests).
+	struct GroupAddMAwait final : TAwait<jvalue>, noncopyable{
+		GroupAddMAwait( QL::MutationQL m, UserPK executer, SRCE )ι:TAwait<jvalue>{ sl }, _mutation{ move(m) }, _executer{ executer }{}
+		α Suspend()ι->void override{ Execute(); }
 	private:
-		α AddRemoveArgs( const QL::MutationQL& m )ι->std::pair<optional<GroupPK>, flat_set<IdentityPK::Type>>;//nullopt: neither spelling of the parent id was sent - reported, not thrown, since this is ι.
+		α Execute()ι->TAwait<jvalue>::Task;
+		QL::MutationQL _mutation;
+		UserPK _executer;
 	};
 }

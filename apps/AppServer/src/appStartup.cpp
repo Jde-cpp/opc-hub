@@ -18,7 +18,6 @@
 #include <jde/web/server/SubscribeLog.h>
 #include "WebServer.h"
 #include "LocalClient.h"
-#include "ql/AppInstanceHook.h"
 #include "ql/AppServerQL.h"
 
 #define let const auto
@@ -216,7 +215,6 @@ namespace Jde::App::Server{
 		Crypto::CryptoSettings sslSettings{ Json::FindDefaultObject(webServerSettings, "ssl") };
 		Crypto::EnsureKeyCertificate( sslSettings );//the listener used to create the key as a side effect, which is why SetPublicKey had to wait for it.
 		appClient->SetPublicKey( sslSettings.PublicKey.Read() );
-		QL::Hook::Add( mu<AppInstanceHook>(appClient) );
 	}
 
 	α AppStartup( jobject webServerSettings )ε->void{

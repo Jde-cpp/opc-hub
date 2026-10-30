@@ -4,9 +4,10 @@
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
 #include "../src/opcInternal.h"
+#include "../src/GatewayAppClient.h"
 #include "../src/auth/UM.h"
 #include "../src/ql/GatewayQL.h"
-#include "../src/ql/OpcQLHook.h"
+#include "../src/ql/ServerCnnctnMAwait.h"
 #include "utils/helpers.h"
 
 #define let const auto
@@ -45,7 +46,7 @@ namespace Jde::Opc::Gateway::Tests{
 			if( existingOpcPK )
 				DS()->ExecuteSync( {Ƒ("delete from {} where server_connection_id='{}'", table->DBName, existingOpcPK)} ); //InsertFailed checks if failure occurs because exists.
 		}
-		BlockAwait<TAwait<jvalue>,jvalue>( move(*OpcQLHook{}.InsertFailure(insert, {UserPK::System})) );
+		BlockAwait<TAwait<jvalue>,jvalue>( move(*ServerCnnctnMAwait::ProviderStep(insert, EProviderStep::InsertFailure)) );
 		ASSERT_EQ( 0, GetProviderPK(slug) );
 	}
 
@@ -57,7 +58,7 @@ namespace Jde::Opc::Gateway::Tests{
 		BlockAwait( ProviderMAwait{OpcServerSlug, false} );//BeforePurge mock.
 
 		QL::MutationQL purge{ "purgeServerConnection", { {"id", opcPK} }, {}, nullopt, true, QL().Schemas(), false };
-		BlockAwait<TAwait<jvalue>,jvalue>( move(*OpcQLHook{}.PurgeFailure(purge, {UserPK::System})) );
+		BlockAwait<TAwait<jvalue>,jvalue>( move(*ServerCnnctnMAwait::ProviderStep(purge, EProviderStep::PurgeFailure)) );
 		let providerPK = GetProviderPK( OpcServerSlug );
 		ASSERT_NE( 0, providerPK );
 		PurgeServerCnnctn();
@@ -167,6 +168,50 @@ namespace Jde::Opc::Gateway::Tests{
 			PurgeServerCnnctn( recreated->Id );
 	}
 
+	//qlhook-removal #2:  the provider step reuses a provider with no row (the seed ships one), and ran before the engine's own
+	//checks - a create the engine refused then purged that provider on its way out.
+	TEST_F( ServerCnnctnDBTests, EngineRefusalKeepsProvider ){
+		const string slug{ "engine-refused" };
+		PurgeServerCnnctn( slug );
+		BlockAwait( ProviderMAwait{DB::Key{slug}, true} );
+		let providerPK = GetProviderPK( slug );
+		ASSERT_NE( 0, providerPK );
+		absl::Cleanup purge = [&]{ BlockAwait( ProviderMAwait{DB::Key{slug}, false} ); };
+		bool refused{};
+		try{ QL().QuerySync<jvalue>( Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Engine refused\", isDefault:false ){{id}}", slug), {}, {UserPK::System} ); }//no url
+		catch( const std::exception& e ){ refused = true; TRACET( _tags, "refused: {}", e.what() ); }
+		EXPECT_TRUE( refused );
+		EXPECT_FALSE( SelectServerCnnctn(slug) );
+		EXPECT_EQ( providerPK, GetProviderPK(slug) );
+	}
+
+	//qlhook-removal #5 (ql-review3 #25):  ServerCnnctnMAwait authorizes before its provider step.  A caller the enforced resource
+	//grants nothing is refused with the provider untouched:  a purge's step would have taken it first, and its failure step made it
+	//again under a new id;  a create's would have made one for a row never written.
+	TEST_F( ServerCnnctnDBTests, UnauthorizedLeavesTheProvider ){
+		const string slug{ "unauthorized-test" }, newSlug{ "unauthorized-new" };
+		PurgeServerCnnctn( slug );
+		BlockAwait( CreateServerCnnctnAwait{slug, "opc.tcp://127.0.0.1:4840", "urn:unauthorized-test"} );
+		let id = SelectServerCnnctn( slug )->Id;
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let providerPK = GetProviderPK( slug );
+		ASSERT_NE( 0, providerPK );
+
+		EnforceResource( "gateway", "serverConnections", true );
+		absl::Cleanup unenforce = []{ EnforceResource( "gateway", "serverConnections", false ); };
+		let caller = AppClient()->UserPK();//granted nothing on serverConnections
+		let refused = [&]( string mutation ){
+			try{ QL().QuerySync<jvalue>( move(mutation), {}, {caller} ); }
+			catch( const std::exception& e ){ TRACET( _tags, "refused: {}", e.what() ); return true; }
+			return false;
+		};
+		EXPECT_TRUE( refused(Ƒ("mutation purgeServerConnection( id:{} )", id)) );
+		EXPECT_TRUE( SelectServerCnnctn(id) ) << "the row was purged anyway";
+		EXPECT_EQ( providerPK, GetProviderPK(slug) ) << "the provider step ran before the refusal";
+		EXPECT_TRUE( refused(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Unauthorized\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", newSlug)) );
+		EXPECT_EQ( 0, GetProviderPK(newSlug) ) << "the provider step ran before the refusal";
+	}
+
 	TEST_F( ServerCnnctnDBTests, Crud ){
 		try{
 			auto providerPK = CrudImpl();
@@ -236,7 +281,7 @@ namespace Jde::Opc::Gateway::Tests{
 			{ ", requestTimeout:0", "of 0" },
 			{ ", ttl:0", "of 0" },
 			{ ", ttl:2147483648", "at most" },//over SQL Server's int, and a uint32 on Windows alone
-			{ ", certificateUri:\"urn:x\", sessionTimeout:\"soon\"", "number" } } ){//the engine's own conversion refuses this one, ahead of the hook's (MergeSettings), which testConnection alone reaches.
+			{ ", certificateUri:\"urn:x\", sessionTimeout:\"soon\"", "number" } } ){//the engine's own conversion refuses this one, ahead of the save rule's (MergeSettings), which testConnection alone reaches.
 			let error = create( args );
 			ASSERT_TRUE( error ) << args;
 			EXPECT_NE( string::npos, error->find(expected) ) << args << " -> " << *error;

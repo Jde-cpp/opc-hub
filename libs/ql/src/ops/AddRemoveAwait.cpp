@@ -6,12 +6,11 @@
 #include <jde/db/generators/Functions.h>
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
-#include <jde/ql/QLHook.h>
+#include <jde/ql/ops/MutationAwait.h>
 
 #define let const auto
 
 namespace Jde::QL{
-	constexpr ELogTags _tags{ ELogTags::QL };
 	struct ChildParentParams final{ sp<DB::Column> ParentCol; sp<DB::Column> ChildColumn; DB::Value ParentParam; vector<DB::Value> ChildParams; };
 
 	Ω getChildParentParams( sp<DB::Column> parentCol, sp<DB::Column> childCol, const jobject& input )ε->ChildParentParams{
@@ -56,57 +55,39 @@ namespace Jde::QL{
 		return Ƒ( "insert into {}({},{}{})values(?,?{})", table.SqlName(), parentId, childId, extraColumns, extraParamsString );
 	}
 
-	//One coroutine.  Seven used to share the work - AddBefore → Add → AddAfter, Remove → RemoveAfter, AddHook, RemoveHook - each a
-	//paste of its neighbour (ql-review3 #52: RemoveAfter awaited Hook::AddAfter), because the hooks and the statements were
-	//different task types.  The hooks are AnyAwaits and Any() wraps the statements, so one frame awaits both, and the params are a local again.
+	//One coroutine, the statements through Any().  A proc-backed table (access `roles`, its access_role_add/access_role_remove procs) has no map and is
+	//refused here:  its add and remove are its IQL's CustomMutation's (RoleMAwait).  A map table with a rule of its own (access
+	//`groups`) is wrapped there too (GroupAddMAwait), the stock add running as this.
 	α AddRemoveAwait::Execute()ι->TAwait<jvalue>::Task{
-		jvalue y;
+		uint rowCount{};
 		try{
-			_table->Authorize( Access::ERights::Update, _userPK, _sl );
+			_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
 			let isAdd = _mutation.Type==EMutationQL::Add;
 			ASSERT( isAdd || _mutation.Type==EMutationQL::Remove );
-			if( isAdd && _table->AddProc.size() ){//a proc-backed table's add/remove is the hook's alone.
-				auto result = co_await Hook::Add( _mutation, _userPK );
-				THROW_IF( !result, "Hook::Add returned null." );
-				TRACE( "Hook::Add returned '{}'", serialize(*result) );
-				y = move( *result );
-			}
-			else if( !isAdd && _table->RemoveProc.size() ){
-				auto result = co_await Hook::Remove( _mutation, _userPK );
-				THROW_IF( !result, "Hook::Remove returned null." );
-				y = move( *result );
+			THROW_IF( !_table->Map, "'{}' does not support add/remove.", _table->Name );
+			let& map = *_table->Map;
+			let input = _mutation.ExtrapolateVariables();
+			let params = getChildParentParams( map.Parent, map.Child, input );//a missing column is refused here, by name (access GroupTests).
+			auto& ds = *_table->Schema->DS();
+			if( isAdd ){
+				vector<DB::Value> extraParams;
+				let sql = addSql( *_table, input, extraParams );
+				for( let& p : params.ChildParams ){
+					vector<DB::Value> values{ params.ParentParam, p };
+					values.insert( end(values), begin(extraParams), end(extraParams) );
+					rowCount += co_await Any( ds.Execute({sql, move(values)}, _sl) );
+				}
 			}
 			else{
-				THROW_IF( !_table->Map, "'{}' does not support add/remove.", _table->Name );
-				let& map = *_table->Map;
-				let input = _mutation.ExtrapolateVariables();
-				let params = getChildParentParams( map.Parent, map.Child, input );//ahead of the hooks - when both would refuse, this is the message that arrives (access GroupTests).
-				auto& ds = *_table->Schema->DS();
-				uint rowCount{};
-				if( isAdd ){
-					co_await Hook::AddBefore( _mutation, _userPK );
-					vector<DB::Value> extraParams;
-					let sql = addSql( *_table, input, extraParams );
-					for( let& p : params.ChildParams ){
-						vector<DB::Value> values{ params.ParentParam, p };
-						values.insert( end(values), begin(extraParams), end(extraParams) );
-						rowCount += co_await Any( ds.Execute({sql, move(values)}, _sl) );
-					}
-					co_await Hook::AddAfter( _mutation, _userPK );
-				}
-				else{//no RemoveBefore: nothing has ever hooked one.
-					let sql = Ƒ( "delete from {} where {}=? and {}=?", _table->SqlName(), map.Parent->Name, map.Child->Name );
-					for( let& p : params.ChildParams )
-						rowCount += co_await Any( ds.Execute({sql, {params.ParentParam, p}}, _sl) );
-					co_await Hook::RemoveAfter( _mutation, _userPK );
-				}
-				y = rowCount;
+				let sql = Ƒ( "delete from {} where {}=? and {}=?", _table->SqlName(), map.Parent->Name, map.Child->Name );
+				for( let& p : params.ChildParams )
+					rowCount += co_await Any( ds.Execute({sql, {params.ParentParam, p}}, _sl) );
 			}
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 			co_return;
 		}
-		Resume( move(y) );
+		Resume( jvalue{rowCount} );
 	}
 }

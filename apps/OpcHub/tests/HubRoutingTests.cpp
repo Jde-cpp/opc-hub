@@ -277,8 +277,9 @@ namespace Jde::Opc::Hub::Tests{
 
 	//The "OPC UA Server" component's seeds (setup/OpcHubSetup.nsi SEC_OPCSERVER, setup/linux/build-deb.sh), applied the way the
 	//hub applies them - LocalQL::Upsert, twice:  the Google provider type and row, provider 7 for the bundled server, the server
-	//as the default connection.  Here the connection insert also meets the gateway's hook (registered by now, unlike on an
-	//install's first sync), which has to reuse the seeded provider row rather than insert a second one (ProviderMAwait::Check).
+	//as the default connection.  Here the connection insert also meets the gateway's ServerCnnctnMAwait (the gateway is configured
+	//and its client connected by now, unlike inside either build's first sync), which has to reuse the seeded provider row rather than insert a second
+	//one (ProviderMAwait::Check).
 	TEST_F( HubRoutingTests, OpcServerComponentSeeds ){
 		WebSession root;
 		let& scriptPaths = Settings::FindDefaultArray( "/dbServers/scriptPaths" );//<repo>/apps/AppServer/config/sql/<dialect>, libs/access/config/sql/<dialect>, apps/OpcGateway/config/sql/<dialect>
@@ -291,7 +292,7 @@ namespace Jde::Opc::Hub::Tests{
 		}
 		auto one = [&]( string query, sv name )->jobject { let d = QL( AppPort(), move(query), root.Authorization ); let& v = d.as_object().at( name ); return v.is_object() ? v.get_object() : jobject{}; };
 		EXPECT_EQ( Json::FindDefaultSV(one("provider(id:1){ id providerTypeId }", "provider"), "providerTypeId"), "Google" );//the ql spells the enum by name
-		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's hook created the row
+		EXPECT_EQ( Json::FindDefaultSV(one("provider(name:\"OpcServer\"){ id providerTypeId }", "provider"), "providerTypeId"), "OpcServer" );//id 7 on an install; here the test connection's provider took 7 first, so the seeded insert was skipped and the connection's create step made the row
 		let connection = one( "serverConnection(slug:\"OpcServer\"){ id url isDefault }", "serverConnection" );
 		EXPECT_EQ( Json::FindDefaultSV(connection, "url"), "opc.tcp://127.0.0.1:4840" );
 		EXPECT_TRUE( Json::FindBool(connection, "isDefault").value_or(false) );
@@ -316,7 +317,7 @@ namespace Jde::Opc::Hub::Tests{
 			EXPECT_EQ( Json::FindDefaultSV(Json::FindDefaultObject(grant, "resource"), "slug"), slug ) << serialize( accessRole );
 			EXPECT_EQ( Allowed(grant), (flat_set<string>{"Read"}) ) << slug << ": " << serialize( grant );
 		}
-		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the hook purges its provider with it
+		Gateway::Tests::PurgeServerCnnctn( Json::FindNumber<Gateway::ServerCnnctnPK>(connection, "id").value_or(0) );//the purge takes its provider with it
 		EXPECT_TRUE( one("provider(name:\"OpcServer\"){ id }", "provider").empty() );
 	}
 	//A group's history fields reach the gateway's historian through HubQL, not the pass-through or the engine:  a read of a

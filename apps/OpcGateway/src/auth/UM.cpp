@@ -22,8 +22,8 @@ namespace Jde::Opc::Gateway{
 	}
 
 	//An existing row is reused, not re-inserted:  the seed ships one for the bundled OpcServer (release-opcServer.mutation -
-	//applied inside the schema sync, before this hook is registered), and (type, slug) is the natural key, so a second
-	//createProvider would fail and take the connection insert down with it.
+	//applied inside the schema sync, before the gateway's login, which ServerCnnctnMAwait waits for), and (type, slug) is the
+	//natural key, so a second createProvider would fail and take the connection insert down with it.
 	α ProviderMAwait::Execute()ι->VoidTask{
 		try{
 			string slug;

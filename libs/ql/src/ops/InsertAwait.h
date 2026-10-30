@@ -9,6 +9,7 @@ namespace Jde::QL{
 		using base=IMutationAwait;
 		InsertAwait( sp<DB::Table> table, MutationQL m, UserPK executer, bool identityInsert=false, SRCE )ι;//identityInsert: true only from LocalQL::Upsert, which places a row at a caller-chosen pk.
 		α await_ready()ι->bool override;
+		α Check()ε->void;//the Create right and the statements, built but not run (QL::CheckCreate).
 		α Suspend()ι->void override{ Execute(); }
 	private:
 		α CreateQuery( const DB::Table& table, jobject input, bool nested=false )ε->void;

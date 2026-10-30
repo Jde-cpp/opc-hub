@@ -94,8 +94,8 @@ namespace Jde::Opc::Gateway{
 		}
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
-		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  OpcQLHook.
-		//A ping_interval or ttl edit alone (OpcQLHook):  the two the gateway reads live (PingInterval, Ttl), so every client built from
+		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  ServerCnnctnMAwait.
+		//A ping_interval or ttl edit alone (ServerCnnctnMAwait):  the two the gateway reads live (PingInterval, Ttl), so every client built from
 		//the row takes them on its strand, from its next ping and idle check, without the reconnect ConnectionEdited makes.  An unset
 		//outer optional leaves that one as it is;  an empty inner one clears it.  Returns how many.
 		Ω KeepAliveEdited( const DB::Key& connection, optional<optional<uint32>> pingInterval, optional<optional<uint32>> ttl )ι->uint;

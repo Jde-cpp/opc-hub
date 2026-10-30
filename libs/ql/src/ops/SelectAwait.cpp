@@ -4,7 +4,6 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
-#include <jde/ql/QLHook.h>
 #include "../qlInternal.h"
 
 #define let const auto
@@ -95,18 +94,6 @@ namespace Jde::QL{
 		catch( runtime_error& e ){ _error = mu<Exception>( move(e) ); }
 		return _result || _error;
 	}
-	α SelectAwait::Execute()ι->VoidTask{
-		try{
-			if( auto j = _statement ? optional<jvalue>{} : co_await QL::Hook::Select( _qlTable, _executer, _sl ); j.has_value() )
-			  Resume( move(*j) );
-			else
-				Query();
-		}
-		catch( runtime_error& e ){
-			ResumeExp( move(e) );
-		}
-	}
-
 	//The name guesses come first - they pick the right column when a table has two fks to the same parent, which FindFK
 	//(first match by pk table) can not.  But a guess is only an fk if the column it lands on has a pk table:  nesting a table
 	//under itself spells its own pk ("provider_types" -> provider_type_id), whose PKTable is null.  FindFK then covers the

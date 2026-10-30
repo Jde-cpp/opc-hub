@@ -37,24 +37,18 @@ namespace Jde::QL::Tests{
 	//the pre-existing UpdateAwait guard, unchanged:  the same message, from the other side of the switch.
 	TEST( MutationAwaitTests, UpdateWithNullTableStillThrows ){ expectNoTable( "updateStatus", jobject{{"id",1},{"name","x"}} ); }
 
-	//Start/Stop are hook-implemented and resolve no table by design, so they must not be caught by the guard:  with no hook
-	//registered the fan-out is empty and the mutation returns null instead of throwing.
-	TEST( MutationAwaitTests, StartAndStopWithNullTableDoNotThrow ){
+	//Start, Stop and Execute resolve no table by design and have nothing stock behind them:  only an IQL's CustomMutation answers
+	//one (stopApplicationInstance, App::Server).  So the guard lets them past, and the refusal names the verb, not a table (#33).
+	TEST( MutationAwaitTests, StartStopExecuteSayTheyHaveNoHandler ){
 		auto ql = ms<NullQL>();
-		EXPECT_TRUE( mutate("startStatus", jobject{}, ql).is_null() );
-		EXPECT_TRUE( mutate("stopStatus", jobject{}, ql).is_null() );
-	}
-
-	//#33:  Execute is the third type the guard has to let past - not because a hook answers it, but because it has its own
-	//message.  Nothing in any suite had ever sent one.
-	TEST( MutationAwaitTests, ExecuteSaysItIsNotImplemented ){
-		auto ql = ms<NullQL>();
-		try{
-			mutate( "executeStatus", jobject{}, ql );
-			FAIL() << "expected a throw";
-		}
-		catch( const Exception& e ){
-			EXPECT_NE( string{e.what()}.find("Execute mutation not implemented"), string::npos ) << e.what(); //not "Table not found".
+		for( let command : {"startStatus", "stopStatus", "executeStatus"} ){
+			try{
+				mutate( command, jobject{}, ql );
+				FAIL() << command << ":  expected a throw";
+			}
+			catch( const Exception& e ){
+				EXPECT_NE( string{e.what()}.find(Ƒ("'{}' has no handler", command)), string::npos ) << e.what(); //not "Table not found".
+			}
 		}
 	}
 }

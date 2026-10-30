@@ -63,10 +63,17 @@ namespace Jde::QL{
 		auto result = QL::Parse( move(query), variables, _schemas ); THROW_IF( !result.IsMutation(), "Query is not a mutation" );
 		jarray y;
 		for( auto&& m : result.Mutations() ){
-			if( m.Type==EMutationQL::Add ){//a membership or a permission, not a keyed row:  the key names the role it goes ON, which exists - so the create-if-missing rule below would skip every add.  It runs, as add-if-missing (RoleMAwait skips a member the role holds, and with AddIfMissing a permission on a resource the role already has one on) - and through this IQL, whose CustomMutation is what answers addRole; the create branch's QLAwait carries none and would fall to the stock add.
+			//Through this IQL, whose CustomMutation is what answers addRole and, after the gateway's Configure, a seeded connection row
+			//(ServerCnnctnMAwait).  The identity insert below is the one stock path:  a seed that names the id of a sequenced table's row
+			//goes straight to InsertAwait and skips that table's custom mutation - its rules and its live side.  No seed names one on a
+			//table whose create a custom mutation claims;  a seed that did would need routing here too (qlhook-removal #6).
+			let viaQL = [&]( MutationQL&& one_ ){
+				vector<MutationQL> one; one.push_back( move(one_) );
+				return BlockAwait<QLAwait<jvalue>,jvalue>( QLAwait<jvalue>{RequestQL{move(one)}, Creds{executer}, shared_from_this()} );
+			};
+			if( m.Type==EMutationQL::Add ){//a membership or a permission, not a keyed row:  the key names the role it goes ON, which exists - so the create-if-missing rule below would skip every add.  It runs, as add-if-missing (RoleMAwait skips a member the role holds, and with AddIfMissing a permission on a resource the role already has one on).
 				m.AddIfMissing = true;//a seed adds what is missing and rewrites nothing:  the admin's edit to a seeded grant wins (reviews/m3-closing.md #12)
-				vector<MutationQL> one; one.push_back( move(m) );
-				y.push_back( BlockAwait<QLAwait<jvalue>,jvalue>(QLAwait<jvalue>{RequestQL{move(one)}, Creds{executer}, shared_from_this()}) );
+				y.push_back( viaQL(move(m)) );
 				continue;
 			}
 			auto key = m.FindKey();
@@ -86,7 +93,7 @@ namespace Jde::QL{
 				if( auto t = key->IsPK() ? GetTablePtr(m.TableName()) : nullptr; t && t->SequenceColumn() )
 					y.push_back( BlockAwait<InsertAwait>({t, move(m), executer, true}) );
 				else
-					y.push_back( BlockAwait<QLAwait<jvalue>,jvalue>(QLAwait<jvalue>{move(m), executer}) );
+					y.push_back( viaQL(move(m)) );
 			}else
 				y.push_back( {} );
 		}

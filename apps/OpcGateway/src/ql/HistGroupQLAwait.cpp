@@ -35,18 +35,6 @@ namespace Jde::Opc::Gateway{
 		return AppClient()->Acl()->Check( "gateway", "histGroups", guid, Access::ERights::Read, by, sl ).has_value();
 	}
 
-	//The right the stock op asks, which this asks first:  a create spells its node through the server, and a purge's live side
-	//runs before the statement.
-	Ω rights( EMutationQL type )ι->Access::ERights{
-		using enum EMutationQL;
-		switch( type ){
-		case Create: return Access::ERights::Create;
-		case Update: return Access::ERights::Update;
-		case Delete: case Restore: return Access::ERights::Delete;
-		case Purge: return Access::ERights::Purge;
-		default: return Access::ERights::None;
-		}
-	}
 	Ω rowId( const QL::MutationQL& m, SL sl )ε->uint32{
 		let id = m.FindId<uint32>();
 		if( !id )
@@ -232,7 +220,7 @@ namespace Jde::Opc::Gateway{
 				y = toJson( _query.ResultRequest, resolved );
 			}
 			else{
-				_query.DBTable->Authorize( rights(_query.Type), UserPK(), _sl );
+				_query.DBTable->Authorize( QL::StockRights(_query.Type), UserPK(), _sl );//asked first:  a create spells its node through the server, and a purge's live side runs before the statement.
 				check( _query, _sl );
 				jobject spelled;//the columns spelled here, which the result carries over what the caller sent.
 				optional<HistGroupRow> nodeGroup;//a hist_group_nodes create's group, for a refusal to say which group holds the node.

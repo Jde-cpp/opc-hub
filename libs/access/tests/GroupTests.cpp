@@ -188,9 +188,9 @@ namespace Jde::Access::Tests{
 		PurgeUser( member, root );
 	}
 
-	//ql-review3 #13: QL::getChildParentParams accepts the map parent column's json name as well as "id", but GroupHook read
-	//only "id", with AsNumber, inside a ι hook - and QL::MutationAwaits::await_ready is a second noexcept frame above it, so
-	//`addGroup( identityId:N, memberId:[M] )` from anyone holding Update on groups terminated the server.
+	//ql-review3 #13: QL::getChildParentParams accepts the map parent column's json name as well as "id", but the group hook of
+	//the day read only "id", with AsNumber, inside a noexcept frame, so `addGroup( identityId:N, memberId:[M] )` from anyone
+	//holding Update on groups terminated the server.  GroupAddMAwait reads both spellings.
 	TEST_F( GroupTests, AddByParentColumnName ){
 		let root = GetRoot();
 		const GroupPK group{ GetId(GetGroup("review13-group", root)) };
@@ -205,9 +205,9 @@ namespace Jde::Access::Tests{
 		PurgeUser( member, root );
 	}
 
-	//and neither spelling present is an error the caller receives, not a noexcept frame going down with it.  The ql validator
-	//gets there first (getChildParentParams runs ahead of the hook), so its message is the one that arrives;  GroupHook's own
-	//guard is the backstop for a hook order that ever changes.
+	//and neither spelling present is an error the caller receives, not a noexcept frame going down with it.  GroupAddMAwait
+	//leaves an add that names no group to the stock op, so the ql validator's message (getChildParentParams) is the one that
+	//arrives.
 	TEST_F( GroupTests, AddWithNoParentIdThrows ){
 		let root = GetRoot();
 		const UserPK member{ GetId(GetUser("review13-orphan", root)) };
@@ -250,6 +250,10 @@ namespace Jde::Access::Tests{
 		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( identityId:{}, memberId:[{}] )", inner.Value, outer.Value), {}, root), Exception ); //outer into inner - its own ancestor.
 		EXPECT_FALSE( IsMember("review8-inner", outer, root) ) << "the cycle must not have been written";
 		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( identityId:{}, memberId:[{}] )", inner.Value, inner.Value), {}, root), Exception ); //itself.
+		//qlhook-removal #3:  both spellings, naming different groups.  The stock add writes identityId's, so that is the one judged -
+		//"id" first judged outer, and inner was written a member of itself.
+		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( id:{}, identityId:{}, memberId:[{}] )", outer.Value, inner.Value, inner.Value), {}, root), Exception );
+		EXPECT_FALSE( IsMember("review8-inner", inner, root) ) << "a group must not have been written a member of itself";
 		RemoveFromGroup( outer, {inner}, root );
 		PurgeGroup( inner, root );
 		PurgeGroup( outer, root );

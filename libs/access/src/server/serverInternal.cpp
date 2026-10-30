@@ -96,7 +96,6 @@ namespace Jde::Access{
 		THROW_IF( accessSchema==schemas.end(), "Access schema not found in schemas" );
 		SetSchema( *accessSchema );
 		_ql = localQL;
-		QL::Hook::Add( mu<GroupHook>() );//add before
 		QL::SetSystemTables( {"groupRights", "resourceRights", "userRights"} );//no view of their own - the parser admits the names and CustomQuery answers them (IdentityRightsAwait, ResourceRightsAwait); here so the AppServer, the hub and the tests all get them.
 		return ConfigureAwait{ localQL, move(schemas), authorizer, executer, move(listener), {}, false, true };//allSchemas: the server's cache is everyone's authority.
 	}
@@ -125,6 +124,8 @@ namespace Jde::Access{
 			y = mu<Access::Server::AclQLAwait>( move(m), creds.UserPK(), sl );
 		else if( (m.Type==Add || m.Type==Remove) && m.TableName()=="roles" )
 			y = mu<Access::Server::RoleMAwait>( move(m), creds.UserPK(), sl );
+		else if( m.Type==Add && m.TableName()=="groups" )//the members' check ahead of the stock add.
+			y = mu<Access::Server::GroupAddMAwait>( move(m), creds.UserPK(), sl );
 		else if( m.TableName()=="profiles" )//all types - stock UpdateAwait keys on id/name/slug, none of which profiles has - url is scoped to the executer here.
 			y = mu<Access::Server::ProfileAwait>( move(m), creds.UserPK(), sl );
 		else if( m.TableName()=="resources" && m.Type==Purge && m.Args.contains("schemaName") )//by its key - a gateway purging a hist group's own row with the group (#357), the hub's as the system too.  ResourceMAwait resolves the key to the id the stock purge takes, and reruns it so:  a purge by id alone is the system's.

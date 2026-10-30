@@ -14,9 +14,8 @@ namespace Jde::QL{
 		α await_ready()ι->bool override;//__type and __schema are answered here, from the introspection documents - no db, no suspension.
 		α await_resume()ε->jvalue;//the base's, plus the result trace when asked for.
 	private:
-		α Suspend()ι->void override{ Execute(); }
-		α Execute()ι->VoidTask;//Hook::Select is an AnyAwait, so any task type serves; Query() then hands off to the DB::SelectAwait chain.
-		α Query()ι->void;
+		α Suspend()ι->void override{ Query(); }
+		α Query()ι->void;//hands off to the DB::SelectAwait chain.
 		α Query( DB::Statement statement, SubTables subTables )ε->DB::SelectAwait::Task;
 		α SelectSubTables( DB::Statement parentSql, vector<TableQL> tables, sp<DB::Table> parentTable, DB::WhereClause where )ε->DB::SelectAwait::Task;
 
