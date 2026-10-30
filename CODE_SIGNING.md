@@ -1,6 +1,6 @@
 # Code signing policy
 
-Releases up to and including 2026.10.31 are unsigned.  The plan for later releases is to sign the Windows installer with
+Releases up to and including 2026.10.00 are unsigned.  The plan for later releases is to sign the Windows installer with
 a [Certum](https://www.certum.eu) Open Source Code Signing certificate issued to the maintainer, so UAC would name the
 publisher *Open Source Developer* followed by the maintainer's name.
 
