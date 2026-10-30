@@ -48,7 +48,7 @@ below).
 
 ## Signing
 
-**Releases through 2026.10.31 are unsigned** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks signing.
+**Releases through 2026.10.00 are unsigned** - [#230](https://github.com/Jde-cpp/opc-hub/issues/230) tracks signing.
 The plan from the next release on is to sign the installer by hand with a Certum
 [Open Source Code Signing](https://shop.certum.eu/open-source-code-signing-on-simplysign.html) certificate issued to the
 maintainer as an individual, so UAC would name the publisher *Open Source Developer* followed by the maintainer's name.
