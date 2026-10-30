@@ -6,6 +6,7 @@
 #include <jde/db/generators/Functions.h>
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
+#include <jde/ql/ops/MutationAwait.h>
 
 #define let const auto
 
@@ -54,13 +55,13 @@ namespace Jde::QL{
 		return Ƒ( "insert into {}({},{}{})values(?,?{})", table.SqlName(), parentId, childId, extraColumns, extraParamsString );
 	}
 
-	//One coroutine, the statements through Any().  A proc-backed table (access `roles`, its add_proc/remove_proc) has no map and is
+	//One coroutine, the statements through Any().  A proc-backed table (access `roles`, its access_role_add/access_role_remove procs) has no map and is
 	//refused here:  its add and remove are its IQL's CustomMutation's (RoleMAwait).  A map table with a rule of its own (access
 	//`groups`) is wrapped there too (GroupAddMAwait), the stock add running as this.
 	α AddRemoveAwait::Execute()ι->TAwait<jvalue>::Task{
 		uint rowCount{};
 		try{
-			_table->Authorize( Access::ERights::Update, _userPK, _sl );
+			_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
 			let isAdd = _mutation.Type==EMutationQL::Add;
 			ASSERT( isAdd || _mutation.Type==EMutationQL::Remove );
 			THROW_IF( !_table->Map, "'{}' does not support add/remove.", _table->Name );

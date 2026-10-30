@@ -1,5 +1,5 @@
 #pragma once
-#include "IQLSession.h"
+#include <jde/web/server/Sessions.h>//Session() casts to its SessionInfo.
 #include "types/MutationQL.h"
 #include "types/TableQL.h"
 

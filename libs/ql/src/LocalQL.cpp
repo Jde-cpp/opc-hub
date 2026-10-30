@@ -63,8 +63,10 @@ namespace Jde::QL{
 		auto result = QL::Parse( move(query), variables, _schemas ); THROW_IF( !result.IsMutation(), "Query is not a mutation" );
 		jarray y;
 		for( auto&& m : result.Mutations() ){
-			//Through this IQL, whose CustomMutation is what answers addRole and a seeded connection row (ServerCnnctnMAwait);  the identity
-			//insert below is the one stock path, a keyed row no custom mutation claims.
+			//Through this IQL, whose CustomMutation is what answers addRole and, after the gateway's Configure, a seeded connection row
+			//(ServerCnnctnMAwait).  The identity insert below is the one stock path:  a seed that names the id of a sequenced table's row
+			//goes straight to InsertAwait and skips that table's custom mutation - its rules and its live side.  No seed names one on a
+			//table whose create a custom mutation claims;  a seed that did would need routing here too (qlhook-removal #6).
 			let viaQL = [&]( MutationQL&& one_ ){
 				vector<MutationQL> one; one.push_back( move(one_) );
 				return BlockAwait<QLAwait<jvalue>,jvalue>( QLAwait<jvalue>{RequestQL{move(one)}, Creds{executer}, shared_from_this()} );

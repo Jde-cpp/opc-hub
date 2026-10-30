@@ -250,6 +250,10 @@ namespace Jde::Access::Tests{
 		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( identityId:{}, memberId:[{}] )", inner.Value, outer.Value), {}, root), Exception ); //outer into inner - its own ancestor.
 		EXPECT_FALSE( IsMember("review8-inner", outer, root) ) << "the cycle must not have been written";
 		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( identityId:{}, memberId:[{}] )", inner.Value, inner.Value), {}, root), Exception ); //itself.
+		//qlhook-removal #3:  both spellings, naming different groups.  The stock add writes identityId's, so that is the one judged -
+		//"id" first judged outer, and inner was written a member of itself.
+		EXPECT_THROW( QL().QuerySync<jvalue>(Ƒ("mutation addGroup( id:{}, identityId:{}, memberId:[{}] )", outer.Value, inner.Value, inner.Value), {}, root), Exception );
+		EXPECT_FALSE( IsMember("review8-inner", inner, root) ) << "a group must not have been written a member of itself";
 		RemoveFromGroup( outer, {inner}, root );
 		PurgeGroup( inner, root );
 		PurgeGroup( outer, root );

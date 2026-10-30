@@ -132,98 +132,84 @@ namespace Jde::Opc::Gateway{
 		}
 	}
 
-	//The right the stock op asks, which this asks first (ql-review3 #25):  the provider row's step runs before the statement.
-	Ω rights( EMutationQL type )ι->Access::ERights{
-		using enum EMutationQL;
-		switch( type ){
-		case Create: return Access::ERights::Create;
-		case Update: return Access::ERights::Update;
-		case Delete: case Restore: return Access::ERights::Delete;
-		case Purge: return Access::ERights::Purge;
-		default: return Access::ERights::None;
-		}
-	}
 	α ServerCnnctnMAwait::IsApplicable( const QL::MutationQL& m )ι->bool{
 		using enum EMutationQL;
 		return m.TableName()=="server_connections" && (m.Type==Create || m.Type==Update || m.Type==Delete || m.Type==Restore || m.Type==Purge);
 	}
-	//Not before the gateway's login:  the provider row lives on the AppServer, and the seed's row (release-opcServer.mutation)
-	//is applied inside the standalone gateway's first sync, before it - the access seed ships that row's provider, so the stock
-	//insert is enough there.  The hub's client is in-process and always connected.
+	//Not inside the schema's sync:  the seed's row (release-opcServer.mutation) is applied there, in the hub too, and the access
+	//seed ships that row's provider, so the stock insert is enough.  A provider step there would make the hub's start hang on the
+	//access seed running first (qlhook-removal #4).  Nor before the gateway's login:  the provider row lives on the AppServer.
+	//The hub's client is in-process and always connected.
+	static std::atomic<bool> _synced;
+	α ServerCnnctnMAwait::SetSynced()ι->void{ _synced = true; }
 	α ServerCnnctnMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
-		return IsApplicable( m ) && AppClient()->Connected() ? mu<ServerCnnctnMAwait>( move(m), move(executer), sl ) : nullptr;
+		return IsApplicable( m ) && _synced && AppClient()->Connected() ? mu<ServerCnnctnMAwait>( move(m), move(executer), sl ) : nullptr;
 	}
 	//One coroutine:  the provider steps and the row select are the select's task type and go through Any(), the stock op is this
-	//frame's own.  A db failure is parked, its step awaited *after* the handler - co_await is not allowed inside one - then rethrown
-	//through the up<runtime_error>, whose dynamic type ResumeExp keeps (ql-review3 #28:  a duplicate key stays a DBException, and a 409).
+	//frame's own.  A create's or a purge's stock op runs between its two provider steps:  a db failure is parked, the failure step
+	//awaited *after* the handler - co_await is not allowed inside one - then rethrown through the up<runtime_error>, whose dynamic
+	//type ResumeExp keeps (ql-review3 #28:  a duplicate key stays a DBException, and a 409).
 	α ServerCnnctnMAwait::Query()ι->TAwait<jvalue>::Task{
 		try{
 			using enum EMutationQL;
 			using enum EProviderStep;
 			let type = _query.Type;
-			_query.DBTable->Authorize( rights(type), UserPK(), _sl );
-			jvalue y; up<runtime_error> failure;
+			_query.DBTable->Authorize( QL::StockRights(type), UserPK(), _sl );//asked first (ql-review3 #25):  the provider step runs before the statement.
+			optional<std::pair<EProviderStep,EProviderStep>> steps;//before the stock op, and on its failure.
 			if( type==Create ){
+				QL::CheckCreate( _query, UserPK(), _sl );//the engine's refusals before the provider step, which would reuse a provider and then purge it.
 				if( auto e = slugError(_query, _sl); e )
 					e->Throw();
 				if( auto e = settingsError(_query, ServerCnnctn{string{}}, _sl); e )//over a blank row:  an insert carries every column it sets.
 					e->Throw();
-				auto before = ProviderStep( _query, InsertBefore, _sl );
-				co_await Any( *before );
-				try{
-					y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
-				}
-				catch( runtime_error& e ){
-					failure = ToExceptionPtr( move(e) );
-				}
-				if( failure ){
-					auto step = ProviderStep( _query, InsertFailure, _sl );
-					try{
-						co_await Any( *step );//the db error is the one reported;  a step that itself refuses replaces it.
-					}
-					catch( runtime_error& ){
-						if( auto p = dynamic_cast<Exception*>(failure.get()); p )
-							p->SetLevel( ELogLevel::Debug );//superseded - the step's refusal says what went wrong (install-issues #51).
-						throw;
-					}
-				}
-				else
-					connectionCreated( _query, y );
+				steps = { InsertBefore, InsertFailure };
 			}
-			else if( type==Purge ){
-				auto before = ProviderStep( _query, PurgeBefore, _sl );
-				co_await Any( *before );
-				try{
-					y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };
-				}
-				catch( runtime_error& e ){
-					failure = ToExceptionPtr( move(e) );
-				}
-				if( failure ){
-					auto step = ProviderStep( _query, PurgeFailure, _sl );
-					co_await Any( *step );
-				}
-				else
-					connectionEdited( _query );
-			}
-			else{//Update, Delete, Restore
+			else if( type==Purge )
+				steps = { PurgeBefore, PurgeFailure };
+			else if( type==Update && namesAny(_query, _settingsColumns) ){
 				//The save rules on an update (spec *Connection settings*):  an update carries only its changed columns, and certificate_uri is
 				//updateable where slug is not, so a Sign row losing its uri, or a mode pinned on a row that has none, shows only with the saved
 				//row under the edit.  A delete or restore changes nothing the rules read.
-				if( type==Update && namesAny(_query, _settingsColumns) ){
-					ServerCnnctnAwait select{ _query.GetKey(_sl), true };
-					auto rows = co_await Any( select );
-					THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );
-					if( auto e = settingsError(_query, move(rows.front()), _sl); e )
-						e->Throw();
-				}
-				y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };
-				connectionEdited( _query );
+				ServerCnnctnAwait select{ _query.GetKey(_sl), true };
+				auto rows = co_await Any( select );
+				THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );
+				if( auto e = settingsError(_query, move(rows.front()), _sl); e )
+					e->Throw();
 			}
-			if( failure )
+			if( steps ){
+				ProviderStepAwait before{ _query, steps->first, _sl };
+				co_await Any( before );
+			}
+			jvalue y; up<runtime_error> failure;
+			try{
+				y = co_await QL::MutationAwait{ QL::MutationQL{_query}, _creds, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
+			}
+			catch( runtime_error& e ){
+				if( !steps )
+					throw;
+				failure = ToExceptionPtr( move(e) );
+			}
+			if( failure ){
+				ProviderStepAwait step{ _query, steps->second, _sl };
+				try{
+					co_await Any( step );//the db error is the one reported;  a step that itself throws replaces it.
+				}
+				catch( runtime_error& ){
+					//superseded - a create's step refuses a used slug, which says what went wrong (install-issues #51).  A purge's step
+					//failing is a second fault, and its db error keeps its level.
+					if( auto p = type==Create ? dynamic_cast<Exception*>(failure.get()) : nullptr; p )
+						p->SetLevel( ELogLevel::Debug );
+					throw;
+				}
 				ResumeExp( move(*failure) );
-			else
+			}
+			else{
+				if( type==Create )
+					connectionCreated( _query, y );
+				else
+					connectionEdited( _query );
 				Resume( move(y) );
+			}
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );

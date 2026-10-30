@@ -162,8 +162,6 @@ local defaultOps = ["Create", "Read", "Update", "Delete", "Purge", "Administer"]
 			}+slugColumns,
 			customInsertProc: true,
 			purgeProc: "role_purge",
-			addProc: "role_add",
-			removeProc: "role_remove",
 			naturalKeys: slugNKs,
 			ops: ["Create", "Read", "Update", "Delete", "Purge", "Administer", "Subscribe"],
 		},

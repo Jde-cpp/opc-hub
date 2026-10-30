@@ -73,8 +73,6 @@ namespace Jde::DB{
 		Name{name},
 		Columns{ toColumns(o) },
 		HasCustomInsertProc{ Json::FindBool(o, "customInsertProc").value_or(false) },
-		AddProc{ string{Json::FindDefaultSV(o, "addProc")} },
-		RemoveProc{ string{Json::FindDefaultSV(o, "removeProc")} },
 		IsFlags{ Json::FindBool(o, "isFlags").value_or(false) },
 		SurrogateKeys{ getSurrogateKeys(name, Columns) },//before Map
 		Map{ getMap(o,*this) },

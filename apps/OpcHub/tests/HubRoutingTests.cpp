@@ -277,8 +277,8 @@ namespace Jde::Opc::Hub::Tests{
 
 	//The "OPC UA Server" component's seeds (setup/OpcHubSetup.nsi SEC_OPCSERVER, setup/linux/build-deb.sh), applied the way the
 	//hub applies them - LocalQL::Upsert, twice:  the Google provider type and row, provider 7 for the bundled server, the server
-	//as the default connection.  Here the connection insert also meets the gateway's ServerCnnctnMAwait (the client is connected
-	//by now, unlike on a standalone install's first sync), which has to reuse the seeded provider row rather than insert a second
+	//as the default connection.  Here the connection insert also meets the gateway's ServerCnnctnMAwait (the gateway is configured
+	//and its client connected by now, unlike inside either build's first sync), which has to reuse the seeded provider row rather than insert a second
 	//one (ProviderMAwait::Check).
 	TEST_F( HubRoutingTests, OpcServerComponentSeeds ){
 		WebSession root;

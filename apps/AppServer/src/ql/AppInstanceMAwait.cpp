@@ -1,5 +1,6 @@
 #include "AppInstanceMAwait.h"
 #include <jde/ql/types/TableQL.h>
+#include "../LocalClient.h"
 #include "../WebServer.h"
 #include "../ServerSocketSession.h"
 
@@ -41,12 +42,12 @@ namespace Jde::App::Server{
 	};
 }
 namespace Jde::App{
-	α Server::AppInstanceMutation( const QL::MutationQL& m, sp<IApp> appClient, SL sl )ι->up<TAwait<jvalue>>{
+	α Server::AppInstanceMutation( const QL::MutationQL& m, SL sl )ι->up<TAwait<jvalue>>{
 		using enum QL::EMutationQL;
 		if( m.JsonTableName!="applicationInstance" || (m.Type!=Start && m.Type!=Stop) )
 			return nullptr;
 		if( m.Type==Start )
 			return mu<ExceptionAwait<jvalue>>( mu<Exception>(Exception{sl, ELogLevel::Critical, "Start instance not implemented."}), sl );
-		return mu<Server::StopAwait>( m, move(appClient), sl );
+		return mu<Server::StopAwait>( m, AppClient(), sl );
 	}
 }

@@ -19,6 +19,7 @@
 #include "ql/HistGroupInfoQLAwait.h"
 #include "ql/OpcSessionsQLAwait.h"
 #include "ql/SearchQLAwait.h"
+#include "ql/ServerCnnctnMAwait.h"
 #include "hist/HistHost.h"
 #include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
@@ -61,6 +62,7 @@ namespace Jde::Opc{
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		_processSsl.emplace( Json::FindDefaultObject(webServerSettings, "ssl"), sv{} );
+		ServerCnnctnMAwait::SetSynced();//the hub synced in its own Configure, before this.
 		return schema;
 	}
 	α Gateway::Connect( sp<DB::AppSchema> schema )ε->void{

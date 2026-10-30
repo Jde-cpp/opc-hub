@@ -5,6 +5,7 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/names.h>
 #include <jde/db/meta/Table.h>
+#include <jde/ql/ops/MutationAwait.h>
 #include "../types/JsonColumn.h"
 #include "../qlInternal.h"
 
@@ -22,8 +23,7 @@ namespace Jde::QL{
 
 	α InsertAwait::await_ready()ι->bool{
 		try{
-			_table->Authorize( Access::ERights::Create, _userPK, _sl );
-			CreateQuery( *_table, _mutation.ExtrapolateVariables() );
+			Check();
 			if( _statements.empty() && !_table->HasCustomInsertProc )
 				_result = jvalue{};//nothing to insert - finished here, and nothing is published.
 		}
@@ -31,6 +31,10 @@ namespace Jde::QL{
 			Refuse( move(e) );
 		}
 		return Refused() || _result.has_value();
+	}
+	α InsertAwait::Check()ε->void{
+		_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
+		CreateQuery( *_table, _mutation.ExtrapolateVariables() );
 	}
 
 	α InsertAwait::CreateQuery( const DB::Table& table, jobject input, bool nested )ε->void{

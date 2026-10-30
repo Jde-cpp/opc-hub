@@ -41,7 +41,7 @@ namespace Jde::App{
 	α Server::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = Access::Server::CustomMutation(m, creds, sl); await )
 			return await;
-		if( auto await = AppInstanceMutation(m, AppClient(), sl); await )//start/stopApplicationInstance.
+		if( auto await = AppInstanceMutation(m, sl); await )//start/stopApplicationInstance.
 			return await;
 		if( InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );

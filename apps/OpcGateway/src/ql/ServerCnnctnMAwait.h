@@ -17,7 +17,7 @@ namespace Jde::Opc::Gateway{
 	enum class EProviderStep : uint8{ InsertBefore, InsertFailure, PurgeBefore, PurgeFailure };
 
 	//Every write to server_connections (opcGateway-meta.jsonnet), routed here by GatewayQL::CustomMutation, and HubQL's:
-	//authorized first, then the row's rules - the slug's (ServerCnnctn::SlugError) on a create, the connection settings' (spec
+	//authorized first, a create's engine refusals next (QL::CheckCreate), then the row's rules - the slug's (ServerCnnctn::SlugError) on a create, the connection settings' (spec
 	//*Connection settings*) on a create over a blank row and on an update over the saved one - the provider row's step, the stock
 	//op, and its live side:  the endpoint's folder for a new row (server/GatewayServer.h), and the clients an edit, a delete or a
 	//purge leaves stale (connectionEdited).  A failed insert or purge takes its provider step back before the engine's error is
@@ -27,6 +27,7 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctnMAwait( QL::MutationQL&& m, QL::Creds creds, SRCE )ι:base{ move(m), move(creds), sl }{}
 		Ω IsApplicable( const QL::MutationQL& m )ι->bool;
 		Ω Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>;
+		Ω SetSynced()ι->void;//Gateway::Configure, last:  the schema's sync, and the seed inside it, is done.
 		Ω ProviderStep( const QL::MutationQL& m, EProviderStep step, SRCE )ι->up<TAwait<jvalue>>;//one step on its own - the tests drive the two failure steps (ServerCnnctnDBTests).
 	private:
 		α Query()ι->TAwait<jvalue>::Task override;

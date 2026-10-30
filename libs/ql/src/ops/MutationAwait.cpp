@@ -64,3 +64,20 @@ namespace Jde::QL{
 		}
 	}
 }
+namespace Jde{
+	α QL::CheckCreate( const MutationQL& m, UserPK executer, SL sl )ε->void{
+		m.CheckVariables( sl );
+		THROW_IFSL( !m.DBTable, "Table not found for mutation '{}'.", m.ToString() );
+		InsertAwait{ m.DBTable, m, executer, false, sl }.Check();
+	}
+	α QL::StockRights( EMutationQL type )ι->Access::ERights{
+		using enum EMutationQL;
+		switch( type ){
+		case Create: return Access::ERights::Create;
+		case Update: case Add: case Remove: return Access::ERights::Update;
+		case Delete: case Restore: return Access::ERights::Delete;
+		case Purge: return Access::ERights::Purge;
+		default: return Access::ERights::None;
+		}
+	}
+}

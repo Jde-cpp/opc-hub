@@ -37,8 +37,6 @@ namespace Jde::DB{
 		vector<sp<Column>> Columns;
 		string DBName; //[schema.][um_]Name
 		bool HasCustomInsertProc{};
-		string AddProc;
-		string RemoveProc;
 		bool IsFlags{}; //e.g. read=1, update=2, purge=4, execute=8, rights=16
 		vector<sp<Column>> SurrogateKeys;//before Map
 		struct ParentChildMap{ sp<Column> Parent; sp<Column> Child; };

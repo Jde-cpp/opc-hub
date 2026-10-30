@@ -8,6 +8,7 @@
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/Table.h>
 #include <jde/access/IAcl.h>
+#include <jde/ql/ops/MutationAwait.h>
 #include "../types/JsonColumn.h"
 #include "../qlInternal.h"
 
@@ -23,7 +24,7 @@ namespace Jde::QL{
 	α UpdateAwait::await_ready()ι->bool{
 		try{
 			THROW_IF( !_table, "Table not found for mutation '{}'.", _mutation.ToString() );
-			_table->Authorize( _mutation.Type==EMutationQL::Update ? Access::ERights::Update : Access::ERights::Delete, _userPK, _sl );
+			_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
 		}
 		catch( Exception& e ){
 			Refuse( move(e) );

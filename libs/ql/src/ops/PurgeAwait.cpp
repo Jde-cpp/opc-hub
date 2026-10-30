@@ -5,7 +5,7 @@
 #include <jde/db/meta/Column.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
-#include <jde/ql/types/MutationQL.h>
+#include <jde/ql/ops/MutationAwait.h>
 
 #define let const auto
 
@@ -17,7 +17,7 @@ namespace Jde::QL{
 	α PurgeAwait::await_ready()ι->bool{
 		try{
 			THROW_IF( !_table, "Table not found for mutation '{}'.", _mutation.ToString() );
-			_table->Authorize( Access::ERights::Purge, _userPK, _sl );
+			_table->Authorize( StockRights(_mutation.Type), _userPK, _sl );
 		}
 		catch( Exception& e ){
 			Refuse( move(e) );
