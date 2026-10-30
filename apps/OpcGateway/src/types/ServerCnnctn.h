@@ -12,11 +12,11 @@ namespace Jde::Opc::Gateway{
 		ServerCnnctn( jobject&& o )ε;
 		α ToJson()Ι->jobject;
 		//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
-		//url segment - the one rule the insert (OpcQLHook) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
+		//url segment - the one rule the insert (ServerCnnctnMAwait) and testConnection apply;  the web form checks the same (ServerCnnctn.slugPattern).
 		//Null for a valid slug.
 		Ω SlugError( sv slug, SL sl )ι->up<Exception>;
-		//docs/clients/spec.md *Connection settings*:  what the row says of the channel, checked at every save (OpcQLHook's InsertBefore
-		//and UpdateBefore, over the merged row) and by testConnection.  A mode or policy that is not one the gateway knows;  Sign or
+		//docs/clients/spec.md *Connection settings*:  what the row says of the channel, checked at every save (ServerCnnctnMAwait, an
+		//update's over the merged row) and by testConnection.  A mode or policy that is not one the gateway knows;  Sign or
 		//Sign & Encrypt, pinned by the mode or by a secured policy, without the certificate URI that puts the gateway's certificate on
 		//the channel;  a policy of None on a channel that is secured, or a secured one on a mode of None;  a session timeout, request
 		//timeout or TTL of 0.  Null for a row that connects.

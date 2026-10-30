@@ -91,7 +91,7 @@ namespace Jde{
 		β Execute()ι->TExecuteResult=0;
 	};
 
-	//An already-failed typed awaitable:  co_await throws `e` without suspending - how a hook refuses (IQLHook returns one).  The
+	//An already-failed typed awaitable:  co_await throws `e` without suspending - how a custom mutation refuses before it starts (App::Server::AppInstanceMutation returns one).  The
 	//IAwait family cannot pre-complete with a *value*, the awaiting promise is the mailbox, but it can pre-fail; the Any-family
 	//equivalent is AnyCompletedAwait (AnyAwait.h).
 	template<class Result,class TTask=Jde::TTask<Result>>

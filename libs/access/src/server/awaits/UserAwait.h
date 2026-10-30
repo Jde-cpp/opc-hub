@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/ql/QLHook.h>
+#include <jde/ql/types/TableQL.h>
 #include <jde/db/generators/Statement.h>
 
 namespace Jde::Access::Server{

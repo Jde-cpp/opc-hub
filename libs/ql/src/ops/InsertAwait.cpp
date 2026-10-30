@@ -5,7 +5,6 @@
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/names.h>
 #include <jde/db/meta/Table.h>
-#include <jde/ql/QLHook.h>
 #include "../types/JsonColumn.h"
 #include "../qlInternal.h"
 
@@ -121,84 +120,49 @@ namespace Jde::QL{
 		}
 	}
 
-	//One coroutine.  The hooks are MutationAwaits and the data source a QueryAwait, and an awaitable dictates its caller's return
-	//type - which is what used to split this into InsertBefore → Execute → InsertAfter | InsertFailure, handing off through members
-	//(ql-review3 #50 bound a reference into the frame Execute had already left).  The hooks are AnyAwaits, awaitable from any frame,
-	//and Any() wraps the db awaitable, so one frame awaits both.  A db
-	//failure is parked and its hook awaited *after* the handler - co_await is not allowed inside one - then rethrown through the
-	//up<runtime_error>, whose dynamic type ResumeExp keeps (#28: a duplicate key stays a DBException, and a 409).
+	//One coroutine, the statements' QueryAwaits through Any().  A db failure goes out through ResumeExp, whose dynamic type survives
+	//(#28: a duplicate key stays a DBException, and a 409).  A table with rules or a live side of its own wraps this from its
+	//IQL's CustomMutation (the gateway's ServerCnnctnMAwait), which is where the hooks that used to run here went.
 	α InsertAwait::Execute()ι->TAwait<jvalue>::Task{
-		jarray y; up<runtime_error> failure;
+		jarray y;
 		try{
-			auto before = co_await Hook::InsertBefore( _mutation, _userPK );
-			auto result0 = before ? before->if_contains(0) : nullptr;
-			if( result0 && result0->is_object() && Json::FindDefaultBool(result0->get_object(), "complete") ){//the hook did the insert.
-				result0->get_object().erase( "complete" );
-				y.push_back( move(*result0) );
-			}
-			else{
-				try{
-					auto& ds = *_table->Schema->DS();
-					for( uint i=0; i<_statements.size(); ++i ){
-						auto& statement = _statements[i];
-						for( auto&& missingCol : _missingColumns[i] ){
-							if( auto missingValue = _nestedIds.find(missingCol->Name); missingValue!=_nestedIds.end() )
-								statement.SetValue( missingCol, move(missingValue->second) );
-						}
+			auto& ds = *_table->Schema->DS();
+			for( uint i=0; i<_statements.size(); ++i ){
+				auto& statement = _statements[i];
+				for( auto&& missingCol : _missingColumns[i] ){
+					if( auto missingValue = _nestedIds.find(missingCol->Name); missingValue!=_nestedIds.end() )
+						statement.SetValue( missingCol, move(missingValue->second) );
+				}
 
-						uint id{};
-						if( _identityInsert )
-							statement.IsStoredProc = false;
-						auto sql = statement.Move();
-						if( statement.IsStoredProc ){
-							let result = co_await Any( ds.Query(move(sql), true, _sl) );
-							for( let& row : result.Rows ){
-								ASSERT( row.Size() );
-								id = row.Size() ? row.Get<int32_t>( 0 ) : 0;
-							}
-							y.push_back( jobject{ {"id", id}, {"rowCount",result.RowsAffected} } );
-						}else{
-							if( _identityInsert && ds.Syntax().NeedsIdentityInsert() )
-								sql.Text = Ƒ("SET IDENTITY_INSERT {0} ON;{1};SET IDENTITY_INSERT {0} OFF;", _table->SqlName(), sql.Text );
-							let rowCount = ( co_await Any(ds.Query(move(sql), false, _sl)) ).RowsAffected;
-							y.push_back( jobject{ {"rowCount",rowCount} } );
-						}
+				uint id{};
+				if( _identityInsert )
+					statement.IsStoredProc = false;
+				auto sql = statement.Move();
+				if( statement.IsStoredProc ){
+					let result = co_await Any( ds.Query(move(sql), true, _sl) );
+					for( let& row : result.Rows ){
+						ASSERT( row.Size() );
+						id = row.Size() ? row.Get<int32_t>( 0 ) : 0;
+					}
+					y.push_back( jobject{ {"id", id}, {"rowCount",result.RowsAffected} } );
+				}else{
+					if( _identityInsert && ds.Syntax().NeedsIdentityInsert() )
+						sql.Text = Ƒ("SET IDENTITY_INSERT {0} ON;{1};SET IDENTITY_INSERT {0} OFF;", _table->SqlName(), sql.Text );
+					let rowCount = ( co_await Any(ds.Query(move(sql), false, _sl)) ).RowsAffected;
+					y.push_back( jobject{ {"rowCount",rowCount} } );
+				}
 
-						auto table = statement.Values.size() ? statement.Values.begin()->first->Table : nullptr;
-						if( auto sequence = statement.Values.size() && table->SurrogateKeys.size() ? table->SurrogateKeys[0] : nullptr; sequence )
-							_nestedIds.emplace( sequence->Name, id );
-					}
-					TRACE( "InsertAwait::Execute: {}", serialize(y) );
-				}
-				catch( runtime_error& e ){
-					failure = ToExceptionPtr( move(e) );
-				}
-				if( failure ){
-					try{
-						co_await Hook::InsertFailure( _mutation, _userPK );//the db error is the one reported; a failure hook that itself throws replaces it.
-					}
-					catch( runtime_error& ){
-						if( auto p = dynamic_cast<Exception*>(failure.get()); p )
-							p->SetLevel( ELogLevel::Debug );//superseded - the hook's refusal says what went wrong (install-issues #51).
-						throw;
-					}
-				}
-				else{
-					//The object overload:  the jvalue one takes a json pointer path, which "id" is not, so every InsertAfter hook was
-					//handed 0 (found building the historian's groups, #223).
-					let id = y.size() && y[0].is_object() ? Json::FindNumber<uint>(y[0].get_object(), "id").value_or(0) : 0;
-					co_await Hook::InsertAfter( id, _mutation, _userPK );
-				}
+				auto table = statement.Values.size() ? statement.Values.begin()->first->Table : nullptr;
+				if( auto sequence = statement.Values.size() && table->SurrogateKeys.size() ? table->SurrogateKeys[0] : nullptr; sequence )
+					_nestedIds.emplace( sequence->Name, id );
 			}
+			TRACE( "InsertAwait::Execute: {}", serialize(y) );
 		}
 		catch( runtime_error& e ){
 			ResumeExp( move(e) );
 			co_return;
 		}
-		if( failure )
-			ResumeExp( move(*failure) );
-		else
-			Resume( move(y) );
+		Resume( move(y) );
 	}
 	α getEnumValue( const DB::Column& c, const JsonColumn& qlCol, const jvalue& v )->Value{
 		Value y;

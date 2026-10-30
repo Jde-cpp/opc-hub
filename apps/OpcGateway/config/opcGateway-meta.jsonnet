@@ -42,7 +42,7 @@ local attributes( i ) = {
 				certificate_uri: common.types.varchar+{nullable:true, length:2048,i:103},
 				url: common.types.varchar+{length:2048, i:104},
 				//docs/clients/spec.md *Connection settings*:  how the gateway's client connects, null meaning the gateway's own rule or setting.
-				security_mode: common.types.varchar+{ nullable:true, length:16, i:105, comment:"The message security mode pinned for the channel, UA's name:  None, Sign or SignAndEncrypt.  Null keeps the floor:  SignAndEncrypt with a certificate_uri, None without.  Sign or SignAndEncrypt needs a certificate_uri (OpcQLHook)." },
+				security_mode: common.types.varchar+{ nullable:true, length:16, i:105, comment:"The message security mode pinned for the channel, UA's name:  None, Sign or SignAndEncrypt.  Null keeps the floor:  SignAndEncrypt with a certificate_uri, None without.  Sign or SignAndEncrypt needs a certificate_uri (ServerCnnctnMAwait)." },
 				security_policy: common.types.varchar+{ nullable:true, length:256, i:106, comment:"The security policy uri pinned for the channel, http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256;  one the gateway carries (ClientSecurity::SecuredPolicyUris), or None's.  Null takes the strongest the two sides share." },
 				session_timeout: common.types.uint+{ nullable:true, i:107, comment:"The session timeout requested at CreateSession, in milliseconds as UA's Duration is (UA_ClientConfig::requestedSessionTimeout).  Null is open62541's default." },
 				request_timeout: common.types.uint+{ nullable:true, i:108, comment:"How long a service call may take before the client fails it, in milliseconds (UA_ClientConfig::timeout), and the test connect's deadline.  Null is the gateway's 10 s." },

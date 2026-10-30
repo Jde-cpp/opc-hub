@@ -5,8 +5,9 @@
 #include <jde/ql/ql.h>
 #include "../src/opcInternal.h"
 #include "../src/auth/UM.h"
+#include <jde/web/server/Sessions.h>
 #include "../src/ql/GatewayQL.h"
-#include "../src/ql/OpcQLHook.h"
+#include "../src/ql/ServerCnnctnMAwait.h"//after Sessions.h:  IQLAwaitExe.h names Web::Server::SessionInfo.
 #include "utils/helpers.h"
 
 #define let const auto
@@ -45,7 +46,7 @@ namespace Jde::Opc::Gateway::Tests{
 			if( existingOpcPK )
 				DS()->ExecuteSync( {Ƒ("delete from {} where server_connection_id='{}'", table->DBName, existingOpcPK)} ); //InsertFailed checks if failure occurs because exists.
 		}
-		BlockAwait<TAwait<jvalue>,jvalue>( move(*OpcQLHook{}.InsertFailure(insert, {UserPK::System})) );
+		BlockAwait<TAwait<jvalue>,jvalue>( move(*ServerCnnctnMAwait::ProviderStep(insert, EProviderStep::InsertFailure)) );
 		ASSERT_EQ( 0, GetProviderPK(slug) );
 	}
 
@@ -57,7 +58,7 @@ namespace Jde::Opc::Gateway::Tests{
 		BlockAwait( ProviderMAwait{OpcServerSlug, false} );//BeforePurge mock.
 
 		QL::MutationQL purge{ "purgeServerConnection", { {"id", opcPK} }, {}, nullopt, true, QL().Schemas(), false };
-		BlockAwait<TAwait<jvalue>,jvalue>( move(*OpcQLHook{}.PurgeFailure(purge, {UserPK::System})) );
+		BlockAwait<TAwait<jvalue>,jvalue>( move(*ServerCnnctnMAwait::ProviderStep(purge, EProviderStep::PurgeFailure)) );
 		let providerPK = GetProviderPK( OpcServerSlug );
 		ASSERT_NE( 0, providerPK );
 		PurgeServerCnnctn();

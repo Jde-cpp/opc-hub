@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/ql/QLHook.h>
+#include <jde/ql/types/TableQL.h>
 #include "../uatypes/Browse.h"
 #include "../uatypes/ExpectedNodeId.h"
 #include "../async/ReadAwait.h"

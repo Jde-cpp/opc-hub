@@ -7,6 +7,7 @@
 #include <jde/web/server/SettingQL.h>
 #include "../LocalClient.h"
 #include "../appStartup.h"
+#include "AppInstanceMAwait.h"
 #include "ConnectionQLAwait.h"
 #include "InstanceSessionsAwait.h"
 #include "InstanceTagLevelAwait.h"
@@ -39,6 +40,8 @@ namespace Jde::App{
 	}
 	α Server::CustomMutation( QL::MutationQL& m, QL::Creds creds, SL sl )ι->up<TAwait<jvalue>>{
 		if( auto await = Access::Server::CustomMutation(m, creds, sl); await )
+			return await;
+		if( auto await = AppInstanceMutation(m, AppClient(), sl); await )//start/stopApplicationInstance.
 			return await;
 		if( InstanceTagLevelMAwait::IsApplicable(m) )
 			return mu<InstanceTagLevelMAwait>( move(m), creds.UserPK(), sl );

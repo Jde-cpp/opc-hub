@@ -188,9 +188,9 @@ namespace Jde::Access::Tests{
 		PurgeUser( member, root );
 	}
 
-	//ql-review3 #13: QL::getChildParentParams accepts the map parent column's json name as well as "id", but GroupHook read
-	//only "id", with AsNumber, inside a ι hook - and QL::MutationAwaits::await_ready is a second noexcept frame above it, so
-	//`addGroup( identityId:N, memberId:[M] )` from anyone holding Update on groups terminated the server.
+	//ql-review3 #13: QL::getChildParentParams accepts the map parent column's json name as well as "id", but the group hook of
+	//the day read only "id", with AsNumber, inside a noexcept frame, so `addGroup( identityId:N, memberId:[M] )` from anyone
+	//holding Update on groups terminated the server.  GroupAddMAwait reads both spellings.
 	TEST_F( GroupTests, AddByParentColumnName ){
 		let root = GetRoot();
 		const GroupPK group{ GetId(GetGroup("review13-group", root)) };
@@ -205,9 +205,9 @@ namespace Jde::Access::Tests{
 		PurgeUser( member, root );
 	}
 
-	//and neither spelling present is an error the caller receives, not a noexcept frame going down with it.  The ql validator
-	//gets there first (getChildParentParams runs ahead of the hook), so its message is the one that arrives;  GroupHook's own
-	//guard is the backstop for a hook order that ever changes.
+	//and neither spelling present is an error the caller receives, not a noexcept frame going down with it.  GroupAddMAwait
+	//leaves an add that names no group to the stock op, so the ql validator's message (getChildParentParams) is the one that
+	//arrives.
 	TEST_F( GroupTests, AddWithNoParentIdThrows ){
 		let root = GetRoot();
 		const UserPK member{ GetId(GetUser("review13-orphan", root)) };

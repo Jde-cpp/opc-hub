@@ -1,4 +1,4 @@
-#include "AppInstanceHook.h"
+#include "AppInstanceMAwait.h"
 #include <jde/ql/types/TableQL.h>
 #include "../WebServer.h"
 #include "../ServerSocketSession.h"
@@ -6,10 +6,6 @@
 #define let const auto
 
 namespace Jde::App::Server{
-	α AppInstanceHook::Start( const QL::MutationQL& m, UserPK, SL sl )ι->HookResult{
-		return m.JsonTableName=="applicationInstance" ? mu<ExceptionAwait<jvalue>>( mu<Exception>(Exception{sl, ELogLevel::Critical, "Start instance not implemented."}), sl ) : nullptr;
-	}
-
 	struct StopAwait : TAwait<jvalue>{
 		StopAwait( QL::MutationQL mutation, sp<IApp> appClient, SL sl )ι:
 			TAwait<jvalue>{ sl },
@@ -43,8 +39,14 @@ namespace Jde::App::Server{
 		QL::MutationQL _mutation;
 		sp<IApp> _appClient;
 	};
-
-	α AppInstanceHook::Stop( const QL::MutationQL& m, UserPK, SL sl )ι->HookResult{
-		return m.JsonTableName=="applicationInstance" ? mu<StopAwait>( m, _appClient, sl ) : nullptr;
+}
+namespace Jde::App{
+	α Server::AppInstanceMutation( const QL::MutationQL& m, sp<IApp> appClient, SL sl )ι->up<TAwait<jvalue>>{
+		using enum QL::EMutationQL;
+		if( m.JsonTableName!="applicationInstance" || (m.Type!=Start && m.Type!=Stop) )
+			return nullptr;
+		if( m.Type==Start )
+			return mu<ExceptionAwait<jvalue>>( mu<Exception>(Exception{sl, ELogLevel::Critical, "Start instance not implemented."}), sl );
+		return mu<Server::StopAwait>( m, move(appClient), sl );
 	}
 }

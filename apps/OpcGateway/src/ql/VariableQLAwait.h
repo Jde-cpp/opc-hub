@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/ql/QLHook.h>
+#include <jde/ql/types/MutationQL.h>
 #include "../uatypes/Browse.h"
 
 namespace Jde::Web::Server{ struct SessionInfo; }

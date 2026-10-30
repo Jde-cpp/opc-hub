@@ -1,7 +1,5 @@
 #include <jde/ql/ops/MutationAwait.h>
 #include <jde/ql/IQL.h>
-#include <jde/ql/QLHook.h>
-#include <jde/fwk/co/AnyAwait.h>
 #include <jde/fwk/io/Cache.h>
 #include <jde/db/meta/Table.h>
 #include "AddRemoveAwait.h"
@@ -30,8 +28,8 @@ namespace Jde::QL{
 				auto table = _mutation.DBTable;
 				using enum EMutationQL;
 				//MutationQL leaves DBTable null for system-shaped or empty names ("createStatus", "create"), and the crud ops read
-				//through it before they authorize - Table::Authorize dereferences `this`.  Start/Stop are hook-implemented and resolve
-				//no table, and Execute has its own message, so the guard can not go above the switch.  Mirrors UpdateAwait::await_ready.
+				//through it before they authorize - Table::Authorize dereferences `this`.  Start/Stop/Execute resolve no table and have
+				//their own message below, so the guard can not go above the switch.  Mirrors UpdateAwait::await_ready.
 				if( let type=_mutation.Type; type!=Start && type!=Stop && type!=Execute )
 					THROW_IF( !table, "Table not found for mutation '{}'.", _mutation.ToString() );
 				let enumCache = table && (table->IsEnum() || table->IsFlags) ? table->Name : string{};
@@ -52,14 +50,9 @@ namespace Jde::QL{
 					y = co_await PurgeAwait{ move(table), move(_mutation), _creds.UserPK(), _sl };
 					break;
 				case Start:
-				case Stop:{//hook-implemented, no table; the MutationAwaits is awaitable from this frame, so the two twin coroutines are a pointer pick.
-					auto ask = _mutation.Type==Start ? &Hook::Start : &Hook::Stop;
-					auto result = co_await ask( _mutation, _creds.UserPK(), _sl );
-					y = result ? jvalue{ move(*result) } : jvalue{};
-					break;
-				}
-				case Execute:
-					throw Exception{ "Execute mutation not implemented.", {ELogTags::QL}, _sl };
+				case Stop:
+				case Execute://no table, and nothing stock:  a verb only an IQL's CustomMutation answers (stopApplicationInstance, App::Server).
+					throw Exception{ Ƒ("'{}' has no handler:  a start, stop or execute is a custom mutation's.", _mutation.CommandName), {ELogTags::QL}, _sl };
 				}
 				if( enumCache.size() )
 					Cache::Clear( enumCache );

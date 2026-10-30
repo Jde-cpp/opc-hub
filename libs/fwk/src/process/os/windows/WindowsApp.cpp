@@ -260,7 +260,7 @@ namespace Jde{
 		const string serviceName{ Process::AppName() };
 		//The SCM launches this line verbatim, so it carries the caller's -settings/-include/-sync and quotes the exe - see ServiceCommandLine.
 		const auto commandLine = ServiceCommandLine( ExePath(), args );
-		auto service = ServiceHandle{ ::CreateService(schSCManager.get(), serviceName.c_str(), (serviceName).c_str(), SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, commandLine.c_str(), nullptr, nullptr, nullptr, "NT AUTHORITY\\LocalService", nullptr) };//Local Service, not the SCM's default LocalSystem:  nothing the service does needs SYSTEM, and the .deb runs it as an unprivileged account - one identity for every product, so the hub can still stop the OpcServer (AppInstanceHook's Process::Kill); the installer grants it its data dirs (reviews/m4-closing.md #10)
+		auto service = ServiceHandle{ ::CreateService(schSCManager.get(), serviceName.c_str(), (serviceName).c_str(), SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, commandLine.c_str(), nullptr, nullptr, nullptr, "NT AUTHORITY\\LocalService", nullptr) };//Local Service, not the SCM's default LocalSystem:  nothing the service does needs SYSTEM, and the .deb runs it as an unprivileged account - one identity for every product, so the hub can still stop the OpcServer (stopApplicationInstance's Process::Kill, AppInstanceMAwait); the installer grants it its data dirs (reviews/m4-closing.md #10)
 		if( !service.get() ){
 			if( ::GetLastError()==ERROR_SERVICE_EXISTS )
 				THROW( "Service already exists." );

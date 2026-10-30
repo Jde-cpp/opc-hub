@@ -8,7 +8,7 @@
 #include <jde/ql/ql.h>
 #include <jde/ql/IQL.h>
 #include <jde/ql/types/TableQL.h>
-#include <jde/ql/QLAwait.h>
+#include <jde/ql/ops/MutationAwait.h>
 #include <jde/access/Authorize.h>
 #include "../serverInternal.h"
 #include "../../accessInternal.h"
@@ -118,9 +118,8 @@ namespace Jde::Access::Server{
 	}
 
 	//{ mutation addGroup( "id":14, "memberId":[15,13] ) } - or "identityId":14, the map parent column's json name, which
-	//QL::getChildParentParams accepts just as readily.  Reading only "id" with AsNumber made the other spelling a terminate:
-	//this is ι, and QL::MutationAwaits::await_ready is a second noexcept frame above it (#13).
-	α GroupHook::AddRemoveArgs( const QL::MutationQL& m )ι->std::pair<optional<GroupPK>, flat_set<IdentityPK::Type>>{
+	//QL::getChildParentParams accepts just as readily (ql-review3 #13:  reading only "id" refused the other spelling).
+	Ω addRemoveArgs( const QL::MutationQL& m )ι->std::pair<optional<GroupPK>, flat_set<IdentityPK::Type>>{
 		let args = m.ExtrapolateVariables();
 		optional<GroupPK> groupPK;
 		if( let p = Json::FindNumber<GroupPK::Type>(args, "id"); p )
@@ -142,16 +141,16 @@ namespace Jde::Access::Server{
 		return {groupPK, memberPKs};
 	}
 
-	α GroupHook::AddBefore( const QL::MutationQL& m, UserPK /*executer*/, SL sl )ι->HookResult{
-		if( m.TableName()=="groups" ){
-			auto [groupPK, memberPKs] = AddRemoveArgs( m );
-			try{
-				THROW_IF( !groupPK, "Could not find the group id in '{}' - expected 'id' or the group's parent column.", serialize(m.Args) );
-				Authorizer().TestAddGroupMember( *groupPK, move(memberPKs), sl );
-			}catch( Exception& e ){
-				return mu<ExceptionAwait<jvalue>>( e.Move() );
-			}
+	α GroupAddMAwait::Execute()ι->TAwait<jvalue>::Task{
+		try{
+			_mutation.DBTable->Authorize( Access::ERights::Update, _executer, _sl );//the stock op's right, asked before the members are judged.
+			if( auto [groupPK, memberPKs] = addRemoveArgs( _mutation ); groupPK && memberPKs.size() )
+				Authorizer().TestAddGroupMember( *groupPK, move(memberPKs), _sl );
+			auto y = co_await QL::MutationAwait{ move(_mutation), QL::Creds{_executer}, nullptr, _sl };//the stock op:  no QL, so nothing routes it back here.
+			Resume( move(y) );
 		}
-		return {};
+		catch( runtime_error& e ){
+			ResumeExp( move(e) );
+		}
 	}
 }

@@ -17,7 +17,7 @@ namespace Jde::Opc::Gateway{
 	//of the historian's.
 	//The address space:  one folder per server_connections row, named by its slug and there while the row is, each holding a
 	//`_Connection` object with Connected, Since, Url, LastError and Reconnects (spec *Address space*), which follow UAClient's
-	//registry through its ConnectionChange listener and the rows through OpcQLHook;  and under it the served nodes, the members of
+	//registry through its ConnectionChange listener and the rows through ServerCnnctnMAwait;  and under it the served nodes, the members of
 	//the connection's groups, each at its path on its source, in a namespace of the endpoint's own per connection and remote URI
 	//(spec *Namespaces*), every node along the way its source node's id there:  a served member's variable, its children its
 	//components as on the source, else a FolderType object standing in for it.  Each with the attributes its row holds,
@@ -68,7 +68,7 @@ namespace Jde::Opc::Gateway{
 		α ServedNodes( HistGroupPK group )Ι->optional<ServedGroup>;
 		α Server()ι->Opc::Server::UAServer*;//the tests read the address space through it;  null once stopped.
 
-		//OpcQLHook's, after the row is written:  the folder for a new row, the url of an edited one, the folder of a purged one gone.
+		//ServerCnnctnMAwait's, after the row is written:  the folder for a new row, the url of an edited one, the folder of a purged one gone.
 		//A delete or restore changes nothing:  the folder stays with the row.  Keyed as the mutation was, by id or slug.
 		α ConnectionCreated( ServerCnnctn row )ι->void;
 		α ConnectionUrlChanged( const DB::Key& key, string url )ι->void;

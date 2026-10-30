@@ -36,7 +36,7 @@ export class ServerCnnctn extends SlugRow<ServerCnnctn>{
 	override get canSave():boolean{ return super.canSave && !!this.url?.trim() && !!this.slug.trim() && !this.fieldError("slug") && !connectionSettingNames.some( n=>this.fieldError(n) ); }//url is non-null in the gateway meta - the base only knows name/slug
 	//reviews/install-issues.md #48:  the slug is the `slug\user` login's prefix, a certificate's file name (OpcHub.<slug>.pem) and a
 	//url segment, and " eng-test" went into all three.  Trimmed on the way out (mutation); what is left must match the gateway's
-	//own rule, which refuses anything else (OpcQLHook::InsertBefore).
+	//own rule, which refuses anything else (ServerCnnctnMAwait, at the create).
 	static slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 	//The gateway's save rules on the settings (ServerCnnctn::SettingsError), said under the field before Save tries them:  Sign or
 	//Sign & Encrypt, by the mode or by a secured policy, needs the certificate URI that puts the gateway's certificate on the channel;

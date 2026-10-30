@@ -1,5 +1,5 @@
 #pragma once
-#include <jde/ql/QLHook.h>
+#include <jde/fwk/co/Await.h>
 
 namespace Jde::App{ struct IApp; }
 namespace Jde::QL{ struct TableQL; }

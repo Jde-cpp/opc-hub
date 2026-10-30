@@ -8,7 +8,7 @@
 #include "../UAClient.h"
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
-#include "OpcQLHook.h"
+#include "ServerCnnctnMAwait.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway{

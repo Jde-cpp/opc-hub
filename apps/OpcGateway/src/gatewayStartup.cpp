@@ -22,7 +22,6 @@
 #include "hist/HistHost.h"
 #include "ql/HistGroupQLAwait.h"
 #include "ql/HistQL.h"
-#include "ql/OpcQLHook.h"
 #include "ql/TestConnectionQLAwait.h"
 #include "server/GatewayServer.h"
 
@@ -72,7 +71,6 @@ namespace Jde::Opc{
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
-		QL::Hook::Add( mu<OpcQLHook>() );
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.
 		HistHost::Instance().Start();//after the access snapshot:  a change from here on carries its writer's name.
