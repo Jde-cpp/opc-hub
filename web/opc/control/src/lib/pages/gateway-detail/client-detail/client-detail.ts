@@ -3,19 +3,22 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTabsModule } from '@angular/material/tabs';
 
-import { DetailActions, DetailPage, errorMessage, isRefusal, Properties} from 'jde-framework';
+import { DetailActions, DetailPage, errorMessage, isRefusal, PickOption, Properties} from 'jde-framework';
 import { Latest } from 'jde-spa';
 
 import { ServerProperties } from './server-properties/server-properties';
-import { ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
+import { ConnectionSettingName, connectionSettingNames, securedPolicies, securityModes, securityPolicyNone, ServerCnnctn, ServerCnnctnProps } from '../../../model/server-cnnctn';
+import { modeName, policyName } from '../../../model/gateway-endpoint';
 import { Gateway } from '../../../services/gateway-service';
 import { GatewayDetailData } from '../../../services/resolvers/client-resolver';
 import { namespaceColumns, Server, serverDescColumns, TestConnectionResult } from '../../../model/server';
 import { OpcStore } from '../../../services/opc-store';
 
-//what a connect depends on, as the test and the save send it
-type ConnectSettings = { slug:string; url:string; certificateUri:string };
-const connectSettings = ( p:Partial<ServerCnnctn> ):ConnectSettings=>({ slug: p.slug?.trim() ?? "", url: p.url?.trim() ?? "", certificateUri: p.certificateUri?.trim() ?? "" });
+//what a connect depends on, as the test and the save send it:  the three the certificate and the credential key on, and the spec's
+//connection settings (docs/clients/spec.md *Connection settings*), null where the form leaves one to the gateway
+type ConnectSettings = { slug:string; url:string; certificateUri:string } & Record<ConnectionSettingName,string|number|null>;
+const connectSettings = ( p:Partial<ServerCnnctn> ):ConnectSettings=>({ slug: p.slug?.trim() ?? "", url: p.url?.trim() ?? "", certificateUri: p.certificateUri?.trim() ?? "", ...ServerCnnctn.settings(p) });
+const settingLabels:Record<string,string> = { url: "URL", certificateUri: "Certificate URI", defaultBrowseNs: "Default Namespace", securityMode: "Security Mode", securityPolicy: "Security Policy", sessionTimeout: "Session Timeout", requestTimeout: "Request Timeout", pingInterval: "Ping Interval", ttl: "Idle TTL", locale: "Locales" };
 
 @Component( {
 	templateUrl: './client-detail.html',
@@ -48,19 +51,37 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	protected override get title(){ return this.row.name ? `${this.row.name} - Connection` : "New Connection"; }
 	override get ql(){ return this.gateway; }//per-gateway, not a single injected service - the row's, from ClientResolver
 
-	//what a user reads first, then the connection, then the two technical fields - the alphabetical default buried Description between them and put Url last
-	readonly fieldOrder = ["slug", "name", "description", "url", "certificateUri", "defaultBrowseNs"];
-	readonly fieldLabels = { url: "URL", certificateUri: "Certificate URI", defaultBrowseNs: "Default Namespace" };//the camelCase split gives "Url", "Certificate Uri", "Default Browse Ns"
+	//what a user reads first, then the connection, then the two technical fields, then the spec's settings in the order the channel
+	//is built:  the mode and policy, the session's timeouts, the gateway's own keep-alive and TTL, the locales - the alphabetical
+	//default buried Description between them and put Url last
+	readonly fieldOrder = ["slug", "name", "description", "url", "certificateUri", "defaultBrowseNs", ...connectionSettingNames];
+	readonly fieldLabels = settingLabels;//the camelCase split gives "Url", "Certificate Uri", "Default Browse Ns", "Ttl"
+	//The mode and policy picks, the unset option labelled with what unset means to the gateway:  the floor the Certificate URI sets
+	//for the mode, and for the policy the strongest the two sides share.  The policies are the ones the gateway carries;  it refuses
+	//any other at save.  Over the floor alone, whose string equality keeps a keystroke elsewhere from rebuilding the form's fields.
+	readonly #floor = computed( ()=>(this.properties() as Partial<ServerCnnctn>|null)?.certificateUri?.trim() ? "SignAndEncrypt" : "None" );
+	readonly picks = computed<{ securityMode:PickOption[]; securityPolicy:PickOption[] }>( ()=>({
+		securityMode: [ {value: null, label: `Default (${modeName(this.#floor())})`}, ...securityModes.map( m=>({value: m, label: modeName(m)}) ) ],
+		securityPolicy: [ {value: null, label: "Default (strongest shared)"}, {value: securityPolicyNone, label: "None"}, ...securedPolicies.map( uri=>({value: uri, label: policyName(uri)}) ) ]
+	}) );
+	readonly units = { sessionTimeout: "ms", requestTimeout: "ms", pingInterval: "ms", ttl: "ms" };
+	readonly hints = {
+		sessionTimeout: "Empty:  the client library's 20 minutes.  The server may shorten it.",
+		requestTimeout: "Empty:  the gateway's 10 seconds.  Also how long Test Connection waits.",
+		pingInterval: "Empty:  the gateway's pingInterval setting, or half the session timeout where that is shorter.  0 turns the keep-alive off.",
+		ttl: "Empty:  the gateway's ttl setting - how long an idle session is kept open.",
+		locale: "Comma-separated locale ids, en-US,de.  Empty sends none."
+	};
 	get serverCnnctn(){ return this.row; }//the template's name for it
 
 	//Test Connection:  the form's values, saved or not, connected by the gateway as the saved row would be (testConnection) and
 	//shown in the Connection tab's states - a wrong url or an untrusted certificate says why there, and a saved connection whose
 	//page loaded Not connected is retried without a reload.  The base's `!id` clamp still lands a new row on Properties.
 	//Enabled on what the gateway needs - a url, and a slug that passes the insert's rule, since the slug names the certificate the
-	//gateway presents and the credential this session holds - and never twice at once.
+	//gateway presents and the credential this session holds, and settings the gateway would save - and never twice at once.
 	readonly canTest = computed( ()=>{
 		const p = this.properties() as ServerCnnctn|null;
-		return !this.testing() && !!p?.url?.trim() && !!p?.slug?.trim() && !p.fieldError( "slug" );
+		return !this.testing() && !!p?.url?.trim() && !!p?.slug?.trim() && !p.fieldError( "slug" ) && !connectionSettingNames.some( n=>p.fieldError(n) );
 	} );
 	async onTestClick(){
 		if( !this.canTest() )
@@ -73,7 +94,8 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.#announcer.announce( `Connecting to ${settings.url}.` );
 		let server:Server|undefined, error:string|undefined, refused:unknown;
 		try{
-			const data = await this.gateway.postQL<{testConnection:TestConnectionResult}>( ClientDetail.testMutation, {opc: settings.slug, url: settings.url, certificateUri: settings.certificateUri} );
+			const { slug, ...vars } = settings;
+			const data = await this.gateway.postQL<{testConnection:TestConnectionResult}>( ClientDetail.testMutation, {opc: slug, ...vars} );
 			const result = data.testConnection;
 			server = new Server({ connection: {...p, ...settings} as ServerCnnctnProps, desc: result, policy: result.securityPolicyUri, mode: result.securityMode, namespaces: result.namespaces });
 		}
@@ -97,8 +119,9 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		this.#resultFor.set( settings );
 		this.#announcer.announce( server ? `Connected to ${server.applicationName || settings.url}.` : `Not connected:  ${error}` );
 	}
-	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.
-	static readonly testMutation = `mutation testConnection( opc: $opc, url: $url, certificateUri: $certificateUri ){ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } }`;
+	//a mutation, POSTed:  it connects the gateway to the form's url and issues the slug's certificate, which a GET must not do.  The
+	//settings go as the save would send them, null where the form leaves one unset, so the test tests the connection Save would save.
+	static readonly testMutation = `mutation testConnection( opc: $opc, url: $url, certificateUri: $certificateUri, ${connectionSettingNames.map( n=>`${n}: $${n}` ).join( ", " )} ){ ${serverDescColumns} securityPolicyUri securityMode namespaces{ ${namespaceColumns} } }`;
 	//what the Connection tab shows:  the resolver's describe or its failure (onRow), then the last test's.  A new connection has
 	//neither until it is tested, and the tab says what the button does rather than why a session that was never tried is missing.
 	server = signal<Server|undefined>( undefined );
@@ -114,7 +137,8 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 		const changed = [
 			was.url==now.url ? "" : `URL ${was.url}`,
 			was.certificateUri==now.certificateUri ? "" : was.certificateUri ? `Certificate URI ${was.certificateUri}` : "an empty Certificate URI",
-			was.slug==now.slug ? "" : `slug ${was.slug}`
+			was.slug==now.slug ? "" : `slug ${was.slug}`,
+			...connectionSettingNames.map( n=>was[n]===now[n] ? "" : was[n]===null ? `an unset ${settingLabels[n]}` : `${settingLabels[n]} ${n=="securityMode" ? modeName(String(was[n])) : n=="securityPolicy" ? policyName(String(was[n])) : was[n]}` )
 		].filter( (x)=>x );
 		return changed.length ? changed.join( ", " ) : undefined;
 	} );

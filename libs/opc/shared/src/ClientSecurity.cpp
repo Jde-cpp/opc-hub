@@ -21,6 +21,8 @@ namespace Jde::Opc{
 		constexpr array<sv,3> _securedUris{ _securedPolicies[0].Uri, _securedPolicies[1].Uri, _securedPolicies[2].Uri };
 	}
 	α ClientSecurity::SecuredPolicyUris()ι->std::span<const sv>{ return _securedUris; }
+	α ClientSecurity::Carries( sv policyUri )ι->bool{ return std::ranges::find( _securedUris, policyUri )!=_securedUris.end(); }
+	α ClientSecurity::PolicyName( sv policyUri )ι->sv{ let i = policyUri.rfind( '#' ); return i==sv::npos ? policyUri : policyUri.substr( i+1 ); }
 
 	α ClientSecurity::Configure( UA_ClientConfig& config, const Recipe& recipe, Jde::Handle h, str url, SL sl )ε->void{
 		ASSERT( !config.securityPoliciesSize );

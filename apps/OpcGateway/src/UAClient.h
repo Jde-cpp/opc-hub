@@ -95,6 +95,10 @@ namespace Jde::Opc::Gateway{
 		Ω RemoveIfDisconnected( StatusCode sc, const sp<UAClient>& client )ι->void;//a submission was refused with sc (UACε):  ConnectionLost when that means the connection went.  Strand-only.
 		Ω LiveClients()ι->vector<sp<UAClient>>;//snapshot of the live clients - the `search` fan-out, which must never connect.
 		Ω ConnectionEdited( const DB::Key& connection, bool removed )ι->uint;//every client built from that server_connections row leaves the registry - parked and reconnected on the row as it now is, or, removed, closed.  Returns how many.  OpcQLHook.
+		//A ping_interval or ttl edit alone (OpcQLHook):  the two the gateway reads live (PingInterval, Ttl), so every client built from
+		//the row takes them on its strand, from its next ping and idle check, without the reconnect ConnectionEdited makes.  An unset
+		//outer optional leaves that one as it is;  an empty inner one clears it.  Returns how many.
+		Ω KeepAliveEdited( const DB::Key& connection, optional<optional<uint32>> pingInterval, optional<optional<uint32>> ttl )ι->uint;
 		Ω Unsubscribe( const sp<IDataChange>& dataChange )ι->void;//drop dataChange from every client's monitored items - a websocket session's OnClose, which is the only thing that ends its subscriptions.
 		//A connection failure destroys the client but not what it was monitoring: that is parked and reconnected (soak-findings
 		//#10), which puts those nodes in a second place an unsubscribe has to reach, or a closed session comes back to life.
@@ -161,6 +165,13 @@ namespace Jde::Opc::Gateway{
 		α AdvertisedUri()Ι->string;//clientDescription's:  what this client calls itself - the uri SAN of the certificate it presents (Configuration(), security-matrix #8).
 		α IsDefault()Ι->bool{ return _opcServer.IsDefault; }
 		α DefaultBrowseNs()Ι->NsIndex{ return _opcServer.DefaultBrowseNs; }
+		//The row's settings over the gateway's (docs/clients/spec.md *Connection settings*).  The keep-alive's period:  the row's
+		//ping_interval, else /gateway/pingInterval, or half of a session_timeout set alone where that is shorter - a server may revise
+		//the timeout lower, and open62541 exposes no revised value, so half of what was asked.  0 turns the keep-alive off (AsyncRequest).
+		α PingInterval()Ι->Duration{ return PingInterval( _opcServer, _pingInterval ); }
+		Ω PingInterval( const ServerCnnctn& row, Duration gateway )ι->Duration;//the rule, over `gateway`, /gateway/pingInterval.
+		α Ttl()Ι->Duration;//an idle client's lifetime:  the row's ttl, else /gateway/ttl.
+		α Row()Ι->const ServerCnnctn&{ return _opcServer; }//the copy this client was built from, with any later ping_interval and ttl edit (KeepAliveEdited) - its mode and policy, for the Connection tab and the tests.
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
 		//TranslateBrowsePathsToNodeIds for `path` - a/b/c, each segment `ns~name` or a bare name in DefaultBrowseNs - from `start`,
@@ -172,6 +183,7 @@ namespace Jde::Opc::Gateway{
 		α IsConnected()Ι->bool{ return _connected; }
 		α IsDiscarded()Ι->bool{ return _discarded; }//set by RemoveClient just before it clears connected:  a rebuild on this client drops what it has not restored instead of parking it.
 	private:
+		Ω BuiltFrom( const DB::Key& connection )ι->vector<sp<UAClient>>;//the registered clients of that server_connections row:  by its id when that is the key, else by slug.
 		Ω StashPending( const sp<UAClient>& client )ι->void;//ConnectionLost's:  parks what the client monitored, then clears connected - defined beside the rebuild it feeds.
 		Ω Deregister( sp<UAClient>&& client )ι->bool;//the stop-and-erase RemoveClient and ConnectionLost share.
 		Ω StateCallback( UA_Client *ua, UA_SecureChannelState channelState, UA_SessionState sessionState, StatusCode connectStatus )ι->void;

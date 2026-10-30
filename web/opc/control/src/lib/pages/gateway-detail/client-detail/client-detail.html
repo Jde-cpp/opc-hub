@@ -3,7 +3,7 @@
 	<mat-tab>
 		<ng-template mat-tab-label>Properties</ng-template><!--was the record's name: the same word as the breadcrumb and the side nav, and it re-titled with every keystroke in Name-->
 		<ng-template matTabContent>
-			<properties [ctor]=ctor [(record)]=properties type=role [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="isNew ? [] : ['slug']"></properties>
+			<properties [ctor]=ctor [(record)]=properties type=role [schema]=schema [order]=fieldOrder [displayNames]=fieldLabels [readonlyFields]="isNew ? [] : ['slug']" [picks]="picks()" [units]="units" [hints]="hints"></properties>
 		</ng-template>
 	</mat-tab>
 	<!--every connection, saved or not, live or not:  the tab says why one is not connected, and is where Test Connection answers-->

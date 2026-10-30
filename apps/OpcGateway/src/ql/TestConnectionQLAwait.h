@@ -3,11 +3,13 @@
 
 namespace Jde::Opc::Gateway{
 	struct UAClient; struct Namespaces;
-	//testConnection( opc, url, certificateUri ){ applicationUri productUri applicationName applicationType gatewayServerUri
-	//discoveryProfileUri discoveryUrls securityPolicyUri securityMode namespaces{ index uri } } - what serverDescription, the two
-	//security attributes and namespaces answer for a saved connection, for settings that are not saved:  `opc` is the slug the
-	//connection has or will have, which names its certificate and the session's credential;  `url` and `certificateUri` are the
-	//values to try.  The gateway connects as it would to the saved row, reads the attributes and lets the client go - no client is
+	//testConnection( opc, url, certificateUri, securityMode, securityPolicy, sessionTimeout, requestTimeout, pingInterval, ttl, locale ){
+	//applicationUri productUri applicationName applicationType gatewayServerUri discoveryProfileUri discoveryUrls securityPolicyUri
+	//securityMode namespaces{ index uri } } - what serverDescription, the two security attributes and namespaces answer for a saved
+	//connection, for settings that are not saved:  `opc` is the slug the connection has or will have, which names its certificate
+	//and the session's credential;  `url`, `certificateUri` and the spec's connection settings (optional, null the gateway's value as
+	//the row's null is) are the values to try, under the save's rules (ServerCnnctn::SettingsError).  The gateway connects as it
+	//would to the saved row, reads the attributes and lets the client go - no client is
 	//registered, and a failure is this mutation's error, never the slug's connectionStatus.  The connection page's Test Connection,
 	//before the first save and to retry a saved connection without a reload.  A mutation, not a query:  it connects to a url of the
 	//caller's choosing and issues the slug's certificate, which a GET - a cross-site <img> on an unenforced install - must not do.

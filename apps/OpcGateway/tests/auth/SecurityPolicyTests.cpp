@@ -1,11 +1,15 @@
 #include <open62541/plugin/accesscontrol_default.h>
 #include <jde/fwk/settings.h>
 #include <jde/fwk/crypto/CryptoSettings.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include "../utils/ClientFixture.h"
+#include "../utils/GatewayClientSocket.h"
 #include "../utils/TestUaServer.h"
 #include "../../src/UAClient.h"
 #include "../../src/GatewayAppClient.h"
 #include "../../src/auth/OpcServerSession.h"
+#include "../../src/auth/UM.h"
+#include "../../src/ql/GatewayQL.h"
 
 #define let const auto
 
@@ -20,7 +24,7 @@ namespace Jde::Opc::Gateway::Tests{
 	protected:
 		static constexpr EThrowawayPort LegacyPort{ EThrowawayPort::SecurityPolicyLegacy }, LyingPort{ EThrowawayPort::SecurityPolicyLying }, DowngradePort{ EThrowawayPort::SecurityPolicyDowngrade };
 		Ω TearDownTestSuite()->void{
-			for( let& slug : {SharedSlug, LegacySlug, LyingSlug, DowngradeSlug} ){
+			for( let& slug : {SharedSlug, LegacySlug, LyingSlug, DowngradeSlug, SignSlug, PolicySlug, TimeoutSlug, OtherModeSlug} ){
 				PurgeServerCnnctn( slug );
 			}
 		}
@@ -28,10 +32,26 @@ namespace Jde::Opc::Gateway::Tests{
 			let type = TokenTypeName( cred.Type() );
 			return ClientFixture::Attempt( slug, move(cred), Ƒ("secured|{}|{}", type, slug) );
 		}
+		//A row against the embedded OpcServer, its urn as the certificateUri - or against `url`, `uri` its certificateUri - with the
+		//spec's connection settings `args` set (#413):  created through the QL, as the page saves one, when absent - the provider row
+		//first, as GetConnection makes it.
+		Ω PinnedConnection( str slug, sv args, string url={}, string uri={} )ε->ServerCnnctn{
+			if( auto existing = SelectServerCnnctn({slug}); existing )
+				return *existing;
+			BlockAwait( ProviderMAwait{slug, false} );
+			let create = Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"{}\", url:\"{}\", certificateUri:\"{}\", isDefault:false, {} ){{id}}", slug, slug, url.size() ? url : OpcUrl(), uri.size() ? uri : OpcUrn(), args );
+			let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(create, {}, {UserPK::System}), "id" );
+			return *SelectServerCnnctn( id );
+		}
 		inline static const string SharedSlug{ "opcTestsSharedPolicy" };
 		inline static const string LegacySlug{ "opcTestsLegacyPolicy" };
 		inline static const string LyingSlug{ "opcTestsLyingLevel" };
 		inline static const string DowngradeSlug{ "opcTestsDowngradeOnly" };
+		inline static const string SignSlug{ "opcTestsPinnedSign" };
+		inline static const string PolicySlug{ "opcTestsPinnedPolicy" };
+		inline static const string TimeoutSlug{ "opcTestsPinnedTimeouts" };
+		inline static const string OtherModeSlug{ "opcTestsPinnedOtherMode" };
+		static constexpr sv Basic256Sha256{ "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" };
 	};
 
 
@@ -110,5 +130,123 @@ namespace Jde::Opc::Gateway::Tests{
 		let errors = UAClient::ConnectErrors();//serverConnections{connectionStatus} shows the same line.
 		auto error = errors.find( DowngradeSlug ); ASSERT_NE( error, errors.end() );
 		EXPECT_TRUE( error->second.contains("Sign & Encrypt") ) << error->second;
+	}
+
+	//#413 (docs/clients/spec.md *Connection settings*):  a row pinned to Sign under Basic256Sha256 connects on that endpoint of the
+	//embedded OpcServer, which offers Sign and Sign & Encrypt under each of its policies, and reads Sign back - where the floor alone
+	//took Aes256_Sha256_RsaPss/SignAndEncrypt (TheStrongestSharedPolicyIsNegotiated).  Open question #3:  Sign alone, where the row names it.
+	TEST_F( SecurityPolicyTests, APinnedModeAndPolicyAreTaken ){
+		let row = PinnedConnection( SignSlug, Ƒ("securityMode:\"Sign\", securityPolicy:\"{}\"", Basic256Sha256) );
+		EXPECT_EQ( row.EffectiveMode(), ServerCnnctn::ModeSign );
+		let what = Attempt( SignSlug, SessionCredential() );
+		ASSERT_TRUE( what.empty() ) << what;
+		ASSERT_TRUE( _client );
+		EXPECT_EQ( "ok (Basic256Sha256/Sign)", Negotiated(_client) );
+		EXPECT_EQ( _client->Row().SecurityMode, "Sign" );
+	}
+
+	//open62541 takes only the configured mode (matchEndpoint), so a row pinned to Sign reaches no Sign & Encrypt endpoint, and the
+	//connection error says the mode is why - where the diagnostics counted every endpoint at or above Sign as reachable and named
+	//nothing.  The lying server's endpoints are None and Sign & Encrypt:  no Sign.
+	TEST_F( SecurityPolicyTests, APinnedModeTheServerLacksIsNamed ){
+		let& ssl = *AppClient()->SslSettings;
+		let serverUri = ssl.Certificate.SanUri(); ASSERT_FALSE( serverUri.empty() );
+		auto server = lyingServer( LyingPort, ssl, true );
+		PinnedConnection( OtherModeSlug, "securityMode:\"Sign\"", Url(LyingPort), serverUri );
+		let what = Attempt( OtherModeSlug, Credential{User{"level", "password"}} );
+		EXPECT_FALSE( _client ) << Negotiated( _client );
+		EXPECT_TRUE( what.contains("BadIdentityTokenRejected") ) << what;
+		EXPECT_TRUE( what.contains("pins security mode Sign,") ) << what;
+		EXPECT_TRUE( what.contains("another mode (None or Sign & Encrypt)") ) << what;
+	}
+
+	//A policy pinned alone, one the embedded OpcServer offers but not its strongest:  the floor a certificateUri sets stays
+	//Sign & Encrypt, under the policy named rather than the strongest the two share.
+	TEST_F( SecurityPolicyTests, APinnedPolicyKeepsTheFloor ){
+		PinnedConnection( PolicySlug, "securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep\"" );
+		let what = Attempt( PolicySlug, SessionCredential() );
+		ASSERT_TRUE( what.empty() ) << what;
+		ASSERT_TRUE( _client );
+		EXPECT_EQ( "ok (Aes128_Sha256_RsaOaep/SignAndEncrypt)", Negotiated(_client) );
+	}
+
+	//testConnection builds its throwaway client as a saved row's is built:  the mode and the policy passed as arguments pin the
+	//channel as the row would, and the save's rule - Sign needs the certificate URI - refuses the test as it would the save.
+	TEST_F( SecurityPolicyTests, TestConnectionTakesTheSettings ){
+		const string slug{ "opcTestsPinnedTest" };//not saved:  the point of the mutation.
+		ASSERT_FALSE( SelectServerCnnctn({slug}) );
+		const string q{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri, securityMode: $securityMode, securityPolicy: $securityPolicy, sessionTimeout: $sessionTimeout ){ securityPolicyUri securityMode }" };
+		jobject vars{ {"opc", slug}, {"url", OpcUrl()}, {"certificateUri", OpcUrn()}, {"securityMode", "Sign"}, {"securityPolicy", Basic256Sha256}, {"sessionTimeout", nullptr} };
+		let value = Socket().QuerySync( string{q}, vars );
+		let& o = value.as_object();
+		EXPECT_EQ( Json::AsSV(o, "securityMode"), "Sign" ) << serialize( value );
+		EXPECT_EQ( Json::AsSV(o, "securityPolicyUri"), Basic256Sha256 ) << serialize( value );
+		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );
+		vars["certificateUri"] = "";
+		try{
+			Socket().QuerySync( string{q}, vars );
+			ADD_FAILURE() << "Sign without a certificateUri was tested";
+		}
+		catch( const GatewayErrorResponse& e ){
+			EXPECT_TRUE( sv{e.what()}.contains("certificate URI") ) << e.what();
+		}
+	}
+
+	//The timeouts, the keep-alive, the TTL and the locales reach the client:  the row's values in its open62541 config, the ping at
+	//half of a session timeout set alone, a later ping and TTL edit on the live client, and the gateway's own values on a row that
+	//sets none.
+	TEST_F( SecurityPolicyTests, TimeoutsReachTheClient ){
+		PinnedConnection( TimeoutSlug, "sessionTimeout:60000, requestTimeout:2000, ttl:30000, locale:\"en-US, de\"" );
+		let what = Attempt( TimeoutSlug, SessionCredential() );
+		ASSERT_TRUE( what.empty() ) << what;
+		ASSERT_TRUE( _client );
+		let config = UA_Client_getConfig( _client->UAPointer() );//written once, at construction;  read-only since.
+		EXPECT_EQ( config->requestedSessionTimeout, 60000u );
+		EXPECT_EQ( config->timeout, 2000u );
+		ASSERT_EQ( config->sessionLocaleIdsSize, 2u );
+		EXPECT_EQ( ToString(config->sessionLocaleIds[0]), "en-US" );
+		EXPECT_EQ( ToString(config->sessionLocaleIds[1]), "de" );
+		EXPECT_EQ( _client->PingInterval(), Duration{30s} );//half the session timeout:  no ping_interval set.
+		EXPECT_EQ( _client->Ttl(), Duration{30s} );
+		//An edit to the ping interval and TTL alone reaches the live client, without the reconnect another setting's edit makes.
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, pingInterval:12000, ttl:null )", _client->Row().Id), {}, {UserPK::System} );
+		std::atomic_flag applied;
+		_client->PostUA( [&applied]{ applied.test_and_set(); applied.notify_one(); } );//behind the edit's, on the same strand
+		applied.wait( false );
+		EXPECT_EQ( _client->PingInterval(), Duration{12s} );
+		EXPECT_EQ( _client->Ttl(), Settings::FindDuration("/gateway/ttl").value_or(Duration{2min}) );
+		let live = UAClient::LiveClients();
+		EXPECT_NE( std::ranges::find(live, _client), live.end() );//still registered:  ConnectionEdited would have taken it off
+		UAClient::RemoveClient( move(_client) );
+
+		GetConnection( SharedSlug, OpcUrl(), OpcUrn() );//sets none of them
+		let what2 = Attempt( SharedSlug, SessionCredential() );
+		ASSERT_TRUE( what2.empty() ) << what2;
+		ASSERT_TRUE( _client );
+		let defaults = UA_Client_getConfig( _client->UAPointer() );
+		EXPECT_EQ( defaults->timeout, 10000u );
+		EXPECT_EQ( defaults->requestedSessionTimeout, 1200000u );//open62541's, setDefault's back-fill of 0.
+		EXPECT_EQ( defaults->sessionLocaleIdsSize, 0u );
+		EXPECT_EQ( _client->PingInterval(), Settings::FindDuration("/gateway/pingInterval").value_or(Duration{30s}) );
+		EXPECT_EQ( _client->Ttl(), Settings::FindDuration("/gateway/ttl").value_or(Duration{2min}) );
+	}
+
+	//The keep-alive's rule:  a session timeout set alone pings at half of it, halved as a Duration, so 1 ms does not round to 0 and
+	//turn the keep-alive off;  never less often than the gateway's, so a server that revises a long timeout down still sees a ping;
+	//and the gateway's 0, or the row's own, keeps it off.
+	TEST_F( SecurityPolicyTests, PingIntervalRule ){
+		ServerCnnctn row{ string{} };
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{30s} );
+		row.SessionTimeout = 1;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{500us} );
+		row.SessionTimeout = 40000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{20s} );
+		row.SessionTimeout = 3600000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{30s} );
+		EXPECT_EQ( UAClient::PingInterval(row, Duration::zero()), Duration::zero() );
+		row.PingInterval = 0;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration::zero() );
+		row.PingInterval = 45000;
+		EXPECT_EQ( UAClient::PingInterval(row, 30s), Duration{45s} );
 	}
 }

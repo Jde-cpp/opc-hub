@@ -4,6 +4,7 @@
 #include <jde/db/generators/Functions.h>
 #include <jde/db/generators/Statement.h>
 #include <jde/db/generators/WhereClause.h>
+#include <jde/opc/ClientSecurity.h>
 #include "../opcInternal.h"
 
 #define let const auto
@@ -17,7 +18,14 @@ namespace Jde::Opc::Gateway{
 		IsDefault{ r.GetBit(3) },
 		Name{ r.TakeString(5) },
 		Deleted{ r.GetOpt<TimePoint>(7) },
-		Slug{ r.TakeString(6) }
+		Slug{ r.TakeString(6) },
+		SecurityMode{ r.TakeString(8) },
+		SecurityPolicy{ r.TakeString(9) },
+		SessionTimeout{ r.GetOpt<uint32>(10) },
+		RequestTimeout{ r.GetOpt<uint32>(11) },
+		PingInterval{ r.GetOpt<uint32>(12) },
+		Ttl{ r.GetOpt<uint32>(13) },
+		Locale{ r.TakeString(14) }
 	{}
 	ServerCnnctn::ServerCnnctn( jobject&& o )ε:
 		Id{ Json::FindNumber<uint32>(o, "id").value_or(0) },
@@ -28,12 +36,48 @@ namespace Jde::Opc::Gateway{
 		IsDefault{ Json::FindBool(o, "isDefault").value_or(false) },//the value, not the optional:  braces take an optional<bool> for "has one", which the old, never-matching key hid.
 		Name{ Json::FindDefaultSV(o, "name") },
 		Deleted{ Json::FindTimePoint(o, "deleted") },
-		Slug{ Json::FindDefaultSV(o, "slug") }
+		Slug{ Json::FindDefaultSV(o, "slug") },
+		SecurityMode{ Json::FindDefaultSV(o, "securityMode") },
+		SecurityPolicy{ Json::FindDefaultSV(o, "securityPolicy") },
+		SessionTimeout{ Json::FindNumber<uint32>(o, "sessionTimeout") },
+		RequestTimeout{ Json::FindNumber<uint32>(o, "requestTimeout") },
+		PingInterval{ Json::FindNumber<uint32>(o, "pingInterval") },
+		Ttl{ Json::FindNumber<uint32>(o, "ttl") },
+		Locale{ Json::FindDefaultSV(o, "locale") }
 	{}
 	α ServerCnnctn::SlugError( sv slug, SL sl )ι->up<Exception>{
 		let alnum = []( char c ){ return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9'); };
 		let valid = !slug.empty() && alnum( slug.front() ) && std::ranges::all_of( slug, [&]( char c ){ return alnum(c) || c=='.' || c=='_' || c=='-'; } );
 		return valid ? nullptr : mu<Exception>( Ƒ("Slug '{}' is not valid:  letters, digits, '.', '_' and '-' only, starting with a letter or digit.", slug), ExceptionArgs{EHttpStatus::BadRequest}, sl );
+	}
+	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
+		using ClientSecurity::PolicyName;
+		let refuse = [sl]( string what ){ return mu<Exception>( move(what), ExceptionArgs{EHttpStatus::BadRequest}, sl ); };
+		//0 is the default only to open62541, and not the one the help gives:  5 s for the request timeout, not the gateway's 10;  and a
+		//TTL of 0 closes the client after every request.  The ping interval's 0 turns the keep-alive off, which is the operator's to ask.
+		for( let& [name, value] : { std::pair{"sessionTimeout"sv, row.SessionTimeout}, std::pair{"requestTimeout"sv, row.RequestTimeout}, std::pair{"ttl"sv, row.Ttl} } ){
+			if( value==0u )
+				return refuse( Ƒ("'{}' of 0 is not allowed:  leave it empty for the default.", name) );
+		}
+		let& mode = row.SecurityMode;
+		if( mode.size() && mode!=ModeNone && mode!=ModeSign && mode!=ModeSignAndEncrypt )
+			return refuse( Ƒ("Security mode '{}' is not one of None, Sign or SignAndEncrypt.", mode) );
+		let& policy = row.SecurityPolicy;
+		let securedPolicy = ClientSecurity::Carries( policy );
+		if( policy.size() && !securedPolicy && policy!=PolicyNoneUri ){
+			string names{ PolicyName(PolicyNoneUri) };
+			for( let uri : ClientSecurity::SecuredPolicyUris() )
+				names += Ƒ( ", {}", PolicyName(uri) );
+			return refuse( Ƒ("Security policy '{}' is not one the gateway carries:  {} - as http://opcfoundation.org/UA/SecurityPolicy#<name>.", policy, names) );
+		}
+		let securedMode = mode==ModeSign || mode==ModeSignAndEncrypt;
+		if( (securedMode || securedPolicy) && row.CertificateUri.empty() )
+			return refuse( Ƒ("Security {} '{}' needs a certificate URI:  the server's applicationUri, which selects its secured endpoints and puts the gateway's certificate on the channel.", securedMode ? "mode" : "policy", securedMode ? mode : PolicyName(policy)) );
+		if( securedPolicy && mode==ModeNone )
+			return refuse( Ƒ("Security policy '{}' secures the channel, which security mode None leaves open:  pick Sign or SignAndEncrypt, or a policy of None.", PolicyName(policy)) );
+		if( policy==PolicyNoneUri && row.Secured() )
+			return refuse( Ƒ("Security policy None leaves the channel open, which security mode {} secures:  {}.", row.EffectiveMode(), mode.size() ? "pick a secured policy, or security mode None" : "a certificate URI means Sign & Encrypt unless the mode is set to None") );
+		return nullptr;
 	}
 	α ServerCnnctn::ToJson()Ι->jobject{
 		jobject o;
@@ -46,6 +90,15 @@ namespace Jde::Opc::Gateway{
 		o.emplace("slug", Slug);
 		o.emplace( "description", Description );
 		o.emplace( "deleted", Deleted ? jvalue{ToIsoString(*Deleted)} : jvalue{} );
+		let text = []( str s ){ return s.empty() ? jvalue{} : jvalue{s}; };
+		let number = []( optional<uint32> n ){ return n ? jvalue{*n} : jvalue{}; };
+		o.emplace( "securityMode", text(SecurityMode) );
+		o.emplace( "securityPolicy", text(SecurityPolicy) );
+		o.emplace( "sessionTimeout", number(SessionTimeout) );
+		o.emplace( "requestTimeout", number(RequestTimeout) );
+		o.emplace( "pingInterval", number(PingInterval) );
+		o.emplace( "ttl", number(Ttl) );
+		o.emplace( "locale", text(Locale) );
 		return o;
 	}
 
@@ -64,7 +117,7 @@ namespace Jde::Opc::Gateway{
 					where.Add( view->GetColumnPtr("is_default"), true );
 			}
 		}
-		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug", "deleted"})}, {view}, move(where) };
+		auto statement = DB::Statement{ {view->GetColumns({"server_connection_id", "url", "certificate_uri", "is_default", "default_browse_ns", "name", "slug", "deleted", "security_mode", "security_policy", "session_timeout", "request_timeout", "ping_interval", "ttl", "locale"})}, {view}, move(where) };
 		try{
 			vector<ServerCnnctn> y;
 			auto rows = co_await DS()->SelectAsync( statement.Move() );

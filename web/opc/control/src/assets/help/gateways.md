@@ -63,7 +63,7 @@ Under [Applications](/apps), a gateway instance's page has the seven tabs [Appli
 - **Templates** and **Groups** are the gateway historian's: what it stores, and by what rules. See [Historian groups and templates](/help/gateways/groups).
 - **Endpoint** is the gateway's own OPC UA endpoint, where a SCADA or any UA client reads what the gateway collects. See [Endpoint](#endpoint).
 
-A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
+A connection's page holds its **URL** and **Certificate URI** on the **Properties** tab, with the [connection settings](#connection-settings) under them, saved with **Save**. **Test Connection** has the gateway connect with the values on the form, saved or not, and the **Connection** tab shows the answer: the server's details, or *Not connected* and why - a wrong URL, a certificate the gateway does not trust, a server that does not trust the gateway's. On a saved connection it also retries one the page opened *Not connected*. The test saves nothing and opens no lasting session; a connection that passes still has to be saved. It does issue the certificate the gateway presents for the connection, if there is none yet - the one the saved connection then uses.
 
 An OPC server instance's page is under [Applications help](/help/apps#opc-servers).
 
@@ -98,6 +98,22 @@ The URI is the *Application URI* on the connection's **Connection** tab, or what
 1. Enter the slug and URL, leave the Certificate URI empty, and press **Test Connection**.
 2. Read the *Application URI* on the **Connection** tab - or, from a server with no unsecured endpoint, in the error the tab shows, which names it.
 3. Set the Certificate URI to it, test again, and save.
+
+### Connection settings
+
+The rest of the **Properties** tab pins what the Certificate URI leaves to the gateway. Each is empty by default, which means the gateway's own rule or setting, and **Test Connection** tries them as Save would save them.
+
+- **Security Mode** pins the channel's mode: *None*, *Sign* or *Sign & Encrypt*. Empty is the rule above - Sign & Encrypt with a Certificate URI, None without. *Sign* authenticates the channel and leaves the traffic readable, for a protocol analyser on a network you trust. Sign and Sign & Encrypt need the Certificate URI, and Save refuses them without it. A password or sign-in token on a Sign channel still goes encrypted, to the server's certificate, or not at all: a server that would take it only in the clear is refused, as on an unsecured channel, unless `allowPlaintextPassword` permits it.
+- **Security Policy** pins the channel's policy to one the gateway carries - *Basic256Sha256*, *Aes128_Sha256_RsaOaep*, *Aes256_Sha256_RsaPss*, or *None* for an unsecured channel. Empty takes the strongest the two sides share. A secured policy needs the Certificate URI too, and a policy of None contradicts a secured mode; Save says which.
+- **Session Timeout** is how long the server keeps the session without a request, in milliseconds. Empty asks the client library's 20 minutes. A server may shorten what is asked.
+- **Request Timeout** is how long a request may take before the gateway fails it, in milliseconds, and how long Test Connection waits. Empty is the gateway's 10 seconds.
+- **Ping Interval** is the keep-alive's period, in milliseconds: the gateway reads the server's state this often so the session outlives an idle page. Empty is the gateway's `pingInterval` setting, or half the Session Timeout where that is set alone and shorter, so a session timeout set here cannot lapse by accident. 0 turns the keep-alive off.
+- **Idle TTL** is how long the gateway keeps a session nobody has used, in milliseconds. Empty is the gateway's `ttl` setting.
+- **Locales** is the session's preferred locales, a comma-separated list such as `en-US,de`: a server that holds names and descriptions in several languages answers in the first it has. Empty sends none.
+
+The four durations take whole milliseconds, up to 2147483647, about 24 days. Only Ping Interval takes 0.
+
+Saving a change to any of these reconnects the connection's open sessions on the new settings, as a change to the URL or the Certificate URI does - except Ping Interval and Idle TTL, which the open sessions take as they are, from their next ping and idle check. The **Connection** tab shows the policy and mode the session was opened with, which is where a pinned mode or policy shows up.
 
 The credential is the user's: the session's sign-in token for the bundled OPC server, or the name and password entered for the connection. A password travels encrypted on a secured session, and on an unsecured one wherever the server's sign-in policy asks for encryption. A server that would take it only in the clear is refused, and the connection's *Error* says so; the gateway's `allowPlaintextPassword` setting permits it, for a server that can do no better on a network you trust.
 

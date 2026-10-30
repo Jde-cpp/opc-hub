@@ -115,3 +115,86 @@ describe( 'ServerCnnctn.url and certificateUri', ()=>{
 		expect( new ServerCnnctn(props({url: "   "})).canSave ).toBe( false );
 	} );
 } );
+
+//docs/clients/spec.md *Connection settings* (#413):  the mode, policy, four durations and locales, each null for the gateway's own
+//rule or setting.  The form writes the pick's value or the number input's string onto the record;  the mutation sends what the
+//gateway stores - a trimmed string or a whole number of milliseconds, null to clear - and a create leaves an unset one out.
+describe( 'ServerCnnctn connection settings', ()=>{
+	const blank = ()=>new ServerCnnctn( {} as ServerCnnctnProps );
+	it( 'default to null', ()=>{
+		const row = new ServerCnnctn( props() );
+		expect( [row.securityMode, row.securityPolicy, row.sessionTimeout, row.requestTimeout, row.pingInterval, row.ttl, row.locale] ).toEqual( [null, null, null, null, null, null, null] );
+		expect( row.effectiveMode ).toBe( "SignAndEncrypt" );//the floor a certificate URI sets
+		expect( new ServerCnnctn(props({certificateUri: ""})).effectiveMode ).toBe( "None" );
+	} );
+	it( 'are left out of a create when unset and sent when set', ()=>{
+		const created = new ServerCnnctn( props({id: undefined as any, securityMode: "Sign", sessionTimeout: 60000}) );
+		const [mutation] = created.mutation( blank() );
+		expect( mutation.args.securityMode ).toBe( "Sign" );
+		expect( mutation.args.sessionTimeout ).toBe( 60000 );
+		expect( "securityPolicy" in mutation.args ).toBe( false );
+		expect( "ttl" in mutation.args ).toBe( false );
+	} );
+	it( 'send a change and null to clear a saved value', ()=>{
+		const original = new ServerCnnctn( props({securityMode: "Sign", pingInterval: 15000}) );
+		const edited = new ServerCnnctn( props({securityMode: "Sign", pingInterval: null, locale: "en-US,de"}) );
+		expect( edited.equals(original) ).toBe( false );
+		const [mutation] = edited.mutation( original );
+		expect( mutation.args ).toEqual( {pingInterval: null, locale: "en-US,de"} );
+	} );
+	it( 'read the number input through toMs:  a blank is unset, a string a whole number of milliseconds', ()=>{
+		const original = new ServerCnnctn( props() );
+		const edited = new ServerCnnctn( props() );
+		(edited as any).sessionTimeout = "";
+		(edited as any).ttl = "120000";
+		expect( edited.equals(original) ).toBe( false );
+		expect( edited.mutation(original)[0].args ).toEqual( {ttl: 120000} );
+		expect( ServerCnnctn.toMs("abc") ).toBeNull();
+		expect( ServerCnnctn.toMs(-5) ).toBeNull();
+		expect( ServerCnnctn.toMs("1500.7") ).toBe( 1500 );
+	} );
+	it( 'treat whitespace and an empty pick as no change', ()=>{
+		const original = new ServerCnnctn( props({locale: "en-US"}) );
+		const edited = new ServerCnnctn( props({locale: " en-US ", securityMode: ""}) );
+		expect( edited.equals(original) ).toBe( true );
+		expect( edited.mutation(original) ).toEqual( [] );
+	} );
+	//the gateway's save rules (ServerCnnctn::SettingsError), said under the field so Save does not have to fail to say them
+	it( 'need a certificate URI for Sign, Sign & Encrypt and a secured policy', ()=>{
+		for( const mode of ["Sign", "SignAndEncrypt"] ){
+			const row = new ServerCnnctn( props({certificateUri: "", securityMode: mode}) );
+			expect( row.fieldError("securityMode") ).toContain( "Certificate URI" );
+			expect( row.canSave ).toBe( false );
+			expect( new ServerCnnctn(props({securityMode: mode})).fieldError("securityMode") ).toBeUndefined();
+		}
+		const policy = new ServerCnnctn( props({certificateUri: "", securityPolicy: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"}) );
+		expect( policy.fieldError("securityPolicy") ).toContain( "Certificate URI" );
+		expect( policy.canSave ).toBe( false );
+	} );
+	it( 'refuse a policy of None on a secured channel and a secured policy on mode None', ()=>{
+		const none = "http://opcfoundation.org/UA/SecurityPolicy#None";
+		expect( new ServerCnnctn(props({securityPolicy: none})).fieldError("securityPolicy") ).toContain( "Certificate URI means Sign & Encrypt" );
+		expect( new ServerCnnctn(props({securityPolicy: none, securityMode: "Sign"})).fieldError("securityPolicy") ).toBe( "Policy None takes mode None." );
+		expect( new ServerCnnctn(props({securityPolicy: none, securityMode: "None"})).fieldError("securityPolicy") ).toBeUndefined();
+		expect( new ServerCnnctn(props({certificateUri: "", securityPolicy: none})).fieldError("securityPolicy") ).toBeUndefined();
+		const secured = new ServerCnnctn( props({securityMode: "None", securityPolicy: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"}) );
+		expect( secured.fieldError("securityMode") ).toContain( "Sign or Sign & Encrypt" );
+		expect( secured.canSave ).toBe( false );
+	} );
+	//0 is the default only to the client library, which the help does not give, and a TTL of 0 closes the session after each request
+	it( 'refuse 0 for every duration but the ping interval, and more than 24 days for any', ()=>{
+		for( const name of ["sessionTimeout", "requestTimeout", "ttl"] ){
+			const row = new ServerCnnctn( props({[name]: "0"}) );
+			expect( row.fieldError(name) ).toContain( "leave it empty" );
+			expect( row.canSave ).toBe( false );
+		}
+		expect( new ServerCnnctn(props({pingInterval: 0})).fieldError("pingInterval") ).toBeUndefined();
+		const long = new ServerCnnctn( props({ttl: 2147483648}) );
+		expect( long.fieldError("ttl") ).toContain( "24 days" );
+		expect( long.canSave ).toBe( false );
+		expect( new ServerCnnctn(props({ttl: 2147483647})).fieldError("ttl") ).toBeUndefined();
+	} );
+	it( 'answer testConnection\'s arguments, null where unset', ()=>{
+		expect( ServerCnnctn.settings(new ServerCnnctn(props({securityMode: "Sign", requestTimeout: "2000" as any}))) ).toEqual( {securityMode: "Sign", securityPolicy: null, sessionTimeout: null, requestTimeout: 2000, pingInterval: null, ttl: null, locale: null} );
+	} );
+} );

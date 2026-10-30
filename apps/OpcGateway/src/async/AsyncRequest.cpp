@@ -23,9 +23,10 @@ namespace Jde::Opc::Gateway{
 		ASSERT( !_pingTimer );
 		if( _pingTimer )
 			co_return;
-		DurationTimer timer{ _pingInterval, _strand, SRCE_CUR };
+		let interval = client->PingInterval();//the row's, else the gateway's (spec *Connection settings*).
+		DurationTimer timer{ interval, _strand, SRCE_CUR };
 		_pingTimer = timer.Canceller();
-		DBGT( EOpcLogTags::ProcessingLoop, "Pinging '{}' in '{}'", client->Slug(), Chrono::ToString(_pingInterval) );
+		DBGT( EOpcLogTags::ProcessingLoop, "Pinging '{}' in '{}'", client->Slug(), Chrono::ToString(interval) );
 		auto result = co_await timer;//resumes on _strand
 		_pingTimer = {};
 		if( !result ){
@@ -50,7 +51,7 @@ namespace Jde::Opc::Gateway{
 			let lost = !stopping && ( sc==UA_STATUSCODE_BADTIMEOUT || UAClient::IsConnectionLoss(sc) );
 			e.SetLevel( ELogLevel::NoLog );//~Exception logs the format string, never _what - so the hint is written here.
 			LOG( lapsed || lost ? ELogLevel::Warning : ELogLevel::Debug, _tags, "[{}]keep-alive {}: {}", hex(UAHandle()),
-				lapsed ? Ƒ("found the session gone - set /gateway/pingInterval ({}) below the server's session timeout", Chrono::ToString(_pingInterval)) : string{lost ? "lost the server" : "failed"},
+				lapsed ? Ƒ("found the session gone - set the connection's ping interval, or /gateway/pingInterval, ({}) below the server's session timeout", Chrono::ToString(interval)) : string{lost ? "lost the server" : "failed"},
 				UAException::Message(sc) );
 			//Lapsed:  open62541 has already sent CreateSession, and ActivateSession follows its reply - round trips only run_iterate
 			//pumps.  ConnectRequestId holds the loop open until the re-activation's StateCallback clears it, so the next request
@@ -126,7 +127,7 @@ namespace Jde::Opc::Gateway{
 				}
 				TRACE( "{}requestCount: {}", logPrefix(), newSize );
 				_running.clear();
-				if( let now = Clock::now(); _lastRequest + _ttl < now ){
+				if( let now = Clock::now(); _lastRequest + client->Ttl() < now ){
 					DBG( "{}No requests for {}, shutting down client.", logPrefix(), Chrono::ToString(now-_lastRequest) );
 					_stopping = true;//teardown is committed: ShutdownIdle's delete-subscription pump restarts this loop (Subscriptions.cpp Process), and neither that instance's exit nor ours may arm a ping - it would race RemoveClient's Stop, and if the round trip outlives _pingInterval the fired ping restarts the loop on the half-torn-down client and the still-stale _lastRequest runs ShutdownIdle twice.
 					UAClient::ShutdownIdle( client );//per-client teardown: _lastRequest is per-client, so this client idling out must not tear down the others.
@@ -140,7 +141,7 @@ namespace Jde::Opc::Gateway{
 				(void)co_await DurationTimer{ sleep, _strand, SRCE_CUR };
 			}
 		}
-		if( !sc && !_stopped.test() && !_stopping && _pingInterval.count()>0 ){
+		if( !sc && !_stopped.test() && !_stopping && client->PingInterval().count()>0 ){
 			//post rather than call: a cancelled ping's resumption may still be queued on the strand (it resets _pingTimer);
 			//strand FIFO guarantees it runs before this starter, so Ping always sees a settled _pingTimer.
 			asio::post( _strand, [this, client]{

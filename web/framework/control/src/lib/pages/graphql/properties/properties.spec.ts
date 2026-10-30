@@ -4,7 +4,7 @@ import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGRAPHQL } from '../../../services/graphql';
 import { TableSchema } from '../../../model/ql/schema/table-schema';
 import { Properties } from './properties';
-import { pageTitleStub, provideRoute, routerStub } from 'jde-spa/testing';
+import { pageTitleStub, provideRoute, routerStub, stable } from 'jde-spa/testing';
 import { required, scalar, schemaOf, snackbarStub, Widget } from 'jde-framework/testing';
 
 //The fields listened on (keyup), so a right-click paste, a drag-drop or autofill changed the control without ever
@@ -113,5 +113,63 @@ describe( 'Properties tab order', ()=>{
 		expect( root.querySelectorAll('input, textarea').length ).toBeGreaterThan( 0 );
 		const positive = Array.from( root.querySelectorAll('[tabindex]') ).filter( (e)=>+e.getAttribute('tabindex')!>0 );
 		expect( positive.map((e)=>e.outerHTML.slice(0, 60)) ).toEqual( [] );
+	} );
+} );
+
+//`picks`, `units` and `hints` inputs (#413):  a page's own select over a scalar the schema has no enum for, null an option like
+//any other;  a number input with its unit as the suffix;  and a hint under a field where there is no error to show.
+describe( 'Properties picks, units and hints', ()=>{
+	const settings = schemaOf( "Widget", required("name"), scalar("securityMode"), scalar("ttl", "UInt"), scalar("locale") );
+	const picks = { securityMode: [ {value: null, label: "Default (None)"}, {value: "Sign", label: "Sign"} ] };
+	const render = ( record:Widget )=>{
+		TestBed.configureTestingModule({ providers: [
+			provideRoute(),
+			{ provide: Router, useValue: routerStub() },
+			pageTitleStub,
+			{ provide: SnackbarService, useValue: snackbarStub() },
+			{ provide: IGRAPHQL, useValue: {} }
+		]});
+		const fixture = TestBed.createComponent( Properties );
+		for( const [name, value] of Object.entries({ctor: Widget, schema: settings, type: 'widget', record, picks, units: {ttl: "ms"}, hints: {ttl: "Empty:  the gateway's setting", locale: "Comma-separated"}}) )
+			fixture.componentRef.setInput( name, value );
+		fixture.detectChanges();
+		return fixture;
+	};
+	it( 'renders a pick as a select whose options carry the given values', ()=>{
+		const fixture = render( new Widget({name: "w", securityMode: null}) );
+		const root = fixture.nativeElement as HTMLElement;
+		expect( root.querySelectorAll('mat-select').length ).toBe( 1 );
+		const field = fixture.componentInstance.fields().find( f=>f.name=="securityMode" )!;
+		expect( field.pick!.map( o=>o.label ) ).toEqual( ["Default (None)", "Sign"] );
+		expect( root.querySelector('input[type=text]') ).not.toBeNull();//locale stays a text input
+	} );
+	//Material treats a null option as a reset unless canSelectNullableOptions is set, and shows nothing for it
+	it( 'shows the null option\'s label on an unset field', async ()=>{
+		const fixture = render( new Widget({name: "w", securityMode: null}) );
+		await stable( fixture );//the select takes its value once its options are in, a microtask on
+		expect( (fixture.nativeElement as HTMLElement).querySelector('mat-select')!.textContent!.trim() ).toBe( "Default (None)" );
+	} );
+	it( 'renders a unit field as a number input with the unit as its suffix', ()=>{
+		const root = render( new Widget({name: "w", ttl: 120000}) ).nativeElement as HTMLElement;
+		const input = root.querySelector( 'input[type=number]' ) as HTMLInputElement;
+		expect( input.value ).toBe( "120000" );
+		expect( root.querySelector('[matTextSuffix]')!.textContent!.trim() ).toBe( "ms" );
+	} );
+	it( 'puts the typed number on the record as the input\'s string', ()=>{
+		const fixture = render( new Widget({name: "w"}) );
+		paste( fixture.nativeElement.querySelector('input[type=number]'), "30000" );
+		expect( fixture.componentInstance.record().ttl ).toBe( "30000" );
+	} );
+	//`1e` on the way to `1e5` reads "" off a number input:  written to the record, it would come back as "" and wipe the field
+	it( 'leaves the record alone while the number is half typed', ()=>{
+		const fixture = render( new Widget({name: "w", ttl: "1"}) );
+		const input = fixture.nativeElement.querySelector( 'input[type=number]' ) as HTMLInputElement;
+		Object.defineProperty( input, "validity", {value: {badInput: true}} );
+		paste( input, "" );
+		expect( fixture.componentInstance.record().ttl ).toBe( "1" );
+	} );
+	it( 'shows the hint under a field without an error, and nothing under the rest', ()=>{
+		const root = render( new Widget({name: "w"}) ).nativeElement as HTMLElement;
+		expect( [...root.querySelectorAll('mat-hint')].map( (h:Element)=>h.textContent!.trim() ) ).toEqual( ["Comma-separated", "Empty:  the gateway's setting"] );//in field order:  locale, ttl
 	} );
 } );

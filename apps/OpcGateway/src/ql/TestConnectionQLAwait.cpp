@@ -8,6 +8,7 @@
 #include "../UAClient.h"
 #include "GatewayQL.h"
 #include "GatewayQLAwait.h"
+#include "OpcQLHook.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway{
@@ -24,8 +25,11 @@ namespace Jde::Opc::Gateway{
 			THROW_IFX( cnnctn.Url.empty(), Exception(_sl, {EHttpStatus::BadRequest}, "A url is required.") );
 			cnnctn.Slug = slug;
 			cnnctn.Name = slug;
-			if( let p = _query.FindPtr<jstring>("certificateUri"); p )
-				cnnctn.CertificateUri = Str::Trim( sv{*p} );
+			//The certificateUri and the spec's connection settings, as the save merges them, under the save's rules:  the test connects
+			//as the row Save would save, and a row Save would refuse is refused here (spec *Connection settings*).
+			cnnctn = MergeSettings( _query, move(cnnctn), _sl );
+			if( auto e = ServerCnnctn::SettingsError(cnnctn, _sl); e )
+				e->Throw();
 			let cred = SessionCredential( session->SessionId, session->UserPK, slug ).value_or( Credential{} );//what a connect to the saved row would present (ConnectAwait).
 			client = co_await TestConnectAwait{ move(cnnctn), move(cred), _sl };
 			jvalue y = jobject{};//MutationsAwait keys it under the command name.

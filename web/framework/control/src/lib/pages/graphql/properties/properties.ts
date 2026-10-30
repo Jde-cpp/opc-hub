@@ -42,7 +42,7 @@ export class Properties{
 			&& !this.excludedColumns().includes(field.name);
 		for( const field of this.schema().fields.filter(filter) ){
 			let values = field.isEnum ? this.schema().enums.get(field.type.name) : undefined;
-			y.push( new PropertyField(field, values, this.displayNames()[field.name]) );
+			y.push( new PropertyField(field, values, this.displayNames()[field.name], this.picks()[field.name], this.units()[field.name], this.hints()[field.name]) );
 		}
 		//listed fields first, in the listed order; the rest alphabetical after them.  (The comparator this replaced ranked
 		//an unlisted field EQUAL to the last listed one, so the split between the two groups depended on the sort's whim.)
@@ -60,6 +60,14 @@ export class Properties{
 	order = input<string[]>( ["slug", "name"] );//field names to show first, in this order; anything unlisted follows alphabetically
 	displayNames = input<Record<string,string>>( {} );//label overrides by field name, for the ones the camelCase split gets wrong ("Url", "Certificate Uri")
 	readonlyFields = input<string[]>( [] );//shown but not editable - a key the server will not update (client-detail's slug on an existing connection)
+	//A pick list for a scalar field the schema has no enum for, by field name:  a select over the options, whose values go on the
+	//record as they are - a string, a number, or null for "unset", which an option may label with what unset means
+	//(client-detail's security mode, "Default (Sign & Encrypt)").
+	picks = input<Record<string,PickOption[]>>( {} );
+	//A unit by field name, "ms":  the field is a number input with the unit as its suffix (client-detail's durations).
+	units = input<Record<string,string>>( {} );
+	//A hint by field name, shown under the field where there is no error to show:  what an empty field means ("The gateway's setting").
+	hints = input<Record<string,string>>( {} );
 	isReadonly( field:PropertyField ){ return this.readonlyFields().includes( field.name ); }
 	fieldError( field:PropertyField ):string|undefined{ return this.record()?.fieldError?.( field.name ); }//ISlugRow.fieldError - a plain record has none
 	record = model.required<any>();
@@ -71,14 +79,18 @@ export class Properties{
 	get InputTypes(){ return InputTypes; }
 	static noShowFields = ["id", "created", "attributes", "updated", "deleted"];
 }
+/** An option of a `picks` list:  the value the record holds, and the label shown for it. */
+export type PickOption = { value:string|number|null; label:string };
 enum InputTypes{
+	Pick=-2,
 	Select=-1,
 	None=0,
 	Text=1,
-	Bool=2
+	Bool=2,
+	Number=3
 }
 class PropertyField{
-	constructor( private field:Field, public options?:Array<EnumValue>, private label?:string )
+	constructor( private field:Field, public options?:Array<EnumValue>, private label?:string, public pick?:PickOption[], public unit?:string, public hint?:string )
 	{}
 	get name(){ return this.field.name; }
 	get displayName(){ return this.label ?? StringUtils.idToDisplay( this.field.name ); }
@@ -87,6 +99,10 @@ class PropertyField{
 		let type = InputTypes.None;
 		if( this.options )
 			type = InputTypes.Select;
+		else if( this.pick )
+			type = InputTypes.Pick;
+		else if( this.unit )
+			type = InputTypes.Number;
 		else if( this.name=="description" )
 			type = InputTypes.Text;
 		else if( this.name.startsWith("is") )
