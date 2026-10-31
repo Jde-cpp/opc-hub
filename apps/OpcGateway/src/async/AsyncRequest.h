@@ -40,7 +40,8 @@ namespace Jde::Opc::Gateway{
 		Handle _handle{};//the client's, kept past Stop for the log lines FailPending's callbacks still write.
 		TimePoint _lastRequest{};//strand-confined; per-client so one client's traffic doesn't mask another's TTL.
 		TimerCancel _pingTimer;//strand-confined
-		TimerCancel _sleepTimer;//strand-confined; set while ProcessingLoop sleeps between polls:  Process ends the sleep for a request that landed mid-way (#505), Stop for the loop to exit.
+		DurationTimer _pollTimer;//strand-confined; ProcessingLoop's waits between polls, one timer re-armed for each rather than one allocated per poll.
+		bool _sleeping{};//strand-confined; set while ProcessingLoop sleeps between polls:  Process ends the sleep for a request that landed mid-way (#505), Clear for the subscription's end, Stop for the loop to exit.  The drain's waits are not ended.
 		bool _drainNeeded{};//strand-confined; set by RequestDrain, cleared by OnServiceBegin or ProcessingLoop's give-up cap.
 		bool _stopping{};//strand-confined; set by ProcessingLoop's TTL branch: ShutdownIdle is in flight but its delete-subscription pump still needs Process/the loop, so only the ping starter keys off this - Stop() ends everything else.
 		atomic_flag _running;

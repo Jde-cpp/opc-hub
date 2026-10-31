@@ -336,14 +336,15 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		let thresholds = [&]( uint32 index ){ return host->Group()->FindThresholds( index ).value(); };
-		let described = [&]( uint32 index ){ let d = host->Description( index ); return d && d->Ranged; };
-		//each node's ranges come with its own Describe, pump4's after pump3's, and the format edits below read what the Describe left;  a ranged
-		//node's thresholds are set in the same locked section, so no second wait for pump3's Range.
-		ASSERT_TRUE( WaitUntil([&]{ return described(pump3) && described(pump4); }, 15s) ) << "described: pump3 " << described(pump3) << ", pump4 " << described(pump4);
+		//each node's ranges come with its own Describe, pump4's after pump3's, and the format edits below read what the Describe left.
+		ASSERT_NO_THROW( WaitDescribed(host, pump3) );
+		ASSERT_NO_THROW( WaitDescribed(host, pump4) );
 		EXPECT_EQ( thresholds(pump3).ExceptionDeviation, 1 );
+		ASSERT_TRUE( thresholds(pump3).Range ) << "its InstrumentRange";
 		EXPECT_EQ( thresholds(pump3).Range->High, 1500 ) << "its InstrumentRange";
 		EXPECT_FALSE( thresholds(pump4).ExceptionDeviation ) << "no InstrumentRange:  every change is stored";
 		Mutate( "updateHistGroupNode( id:$id, exceptionDeviationFormat:3 )", {{"id", pump3}} );
+		ASSERT_TRUE( thresholds(pump3).Range ) << "its EURange";
 		EXPECT_EQ( thresholds(pump3).Range->High, 3000 ) << "its EURange";
 		Mutate( "updateHistGroupNode( id:$id, exceptionDeviationFormat:3 )", {{"id", pump4}} );
 		EXPECT_EQ( thresholds(pump4).ExceptionDeviation, 1 );
@@ -435,7 +436,7 @@ namespace Jde::Opc::Gateway::Tests{
 		absl::Cleanup purge = [=]{ Purge( group, itemsBefore ); };
 		AddNode( group, RpmManual );
 		let twin = CreateGroup( "gate-twin" );
-		absl::Cleanup purgeTwin = [=]{ Purge( twin, itemsBefore ); };
+		absl::Cleanup purgeTwin = [=]{ Purge( twin, itemsBefore+1 ); };//first:  the gate's item is still there, so the count never fell back to itemsBefore and the wait ran out its 15s.
 		AddNode( twin, Status1 );
 		ASSERT_NO_THROW( WaitSubscribed(Host(group), 1) );//a node spelled by index resolves once the collector has the server's namespaces.
 		ASSERT_NO_THROW( WaitSubscribed(Host(twin), 1) );

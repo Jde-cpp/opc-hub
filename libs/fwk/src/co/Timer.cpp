@@ -30,6 +30,15 @@ namespace Jde{
 		_state{ ms<Internal::TimerState>(Executor(), move(executor)) }
 	{}
 
+	α DurationTimer::Rearm( steady_clock::duration duration )ι->DurationTimer&{
+		ASSERT( !_h );
+		_duration = duration;
+		_result.reset();
+		ul _{ _state->Mutex };
+		_state->Cancelled = false;
+		return *this;
+	}
+
 	α DurationTimer::await_ready()ι->bool{
 		if( _duration>=steady_clock::duration::zero() )
 			return false;
