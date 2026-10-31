@@ -1,7 +1,5 @@
 import { SelectionModel, SelectionChange } from '@angular/cdk/collections';
 import { ChangeDetectorRef, Component, computed, effect, inject, model, OnDestroy, OnInit, output, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
-import Long from 'long';
 import {MatCheckboxChange, MatCheckboxModule} from '@angular/material/checkbox';
 import {MatChipsModule} from '@angular/material/chips';
 import {MatIconModule} from '@angular/material/icon';
@@ -18,7 +16,7 @@ import { Subscription } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
-import { Reading, Value, valueString } from '../../../model/value';
+import { numberValue, Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { ENodeClass, Variable, UaNode }  from '../../../model/node';
@@ -30,15 +28,13 @@ import { NodeId } from '../../../model/node-id';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar],
-	providers: [DatePipe]
+	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
 	#snackbar = inject( SnackbarService );
 	#componentPageTitle = inject( ComponentPageTitle );
 	#cdRef = inject( ChangeDetectorRef );
-	#datePipe = inject( DatePipe );
 	constructor(){
 		//the sidenav siblings sort by the active view (OpcStore.setRoute), and a node switch is resolved before this component hears
 		//of it - so the store learns of every view change here, header sorts included, ahead of the next navigation.
@@ -101,11 +97,10 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.isRefreshing.set( true );
 		try{
 			const references = await this._iot.browseObjectsFolder( this.cnnctnSlug, this.node(), true );
-			//REST answers a Bad reading with the code alone, so a refresh in the middle of a fault would blank the value the row is
-			//holding:  the new row takes it over, as a push would have left it.
 			for( const fresh of <Variable[]>references.filter(r=>r.isVariable) ){
-				if( fresh.stale && fresh.value===undefined )
-					fresh.value = this.variables.find( v=>v.key==fresh.key )?.value;
+				const previous = this.variables.find( v=>v.key==fresh.key );
+				if( previous )
+					fresh.takeOver( previous );
 			}
 			this.setNodes( references.filter( r=>r.displayed ), false );
 			this.refreshed.emit( this.pageData.nodes );
@@ -152,8 +147,6 @@ export class NodeChildren implements OnInit, OnDestroy {
 		const date = n.value ? ProtoUtils.toDate( <Timestamp>n.value ) : null;
 		return date ? DateUtils.toLocalInput( date ) : "";
 	}
-	//a reading's timestamp as the Source/Server Time cells show it, local time to the millisecond (the History tab's format)
-	time( d:Date|undefined ):string{ return d ? this.#datePipe.transform( d, 'yyyy-MM-dd HH:mm:ss.SSS' )! : ""; }
 	//the value cells bind to plain fields on the nodes, not signals, so an async write (or a subscription push) changes nothing
 	//Angular is watching:  zoneless runs no pass of its own, and the cell kept the old value until an unrelated event forced one.
 	#repaint(){
@@ -258,21 +251,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 	changeDouble( n:Variable, e:Event ){
 		const box = <HTMLInputElement>e.target;
 		const show = ()=>box.value = n.value?.toString() ?? "";
-		const value = NodeChildren.number( box.value, n );
+		const value = numberValue( box.value, n.dataType );//no value - a cleared box, text that is no number - and the box shows the row's again
 		return value===undefined ? show() : this.#write( n, value, show );
-	}
-	//what the number box holds, as the write sends it.  A 64-bit integer goes as a Long built from the text:  a JS number holds
-	//53 bits, so `+text` rounded anything past 2^53 before it was sent (clients spec, Gaps #9), and the number input hands
-	//the digits over whole.  Text that is not a whole number in range is no value, and the box shows the row's again.
-	static number( text:string, n:Variable ):number|Long|undefined{
-		if( n.dataType!=ETypes.Int64 && n.dataType!=ETypes.UInt64 )
-			return +text;
-		const digits = text.trim().replace( /^\+/, "" );
-		if( !/^-?\d+$/.test(digits) )
-			return undefined;
-		const unsigned = n.dataType==ETypes.UInt64;
-		const value = Long.fromString( digits, unsigned );
-		return value.toString()==digits.replace( /^(-?)0+(?=\d)/, "$1" ) ? value : undefined;//fromString wraps silently past the type's range, so what reads back has to be what was typed
 	}
 	changeString( n:Variable, e:Event ){
 		const box = <HTMLInputElement>e.target;
@@ -281,13 +261,18 @@ export class NodeChildren implements OnInit, OnDestroy {
 	changeEnum( n:Variable, e:MatSelectChange<number> ){
 		return this.#write( n, e.value, ()=>e.source.value = <number>n.value );
 	}
-	changeDate( n:Variable, e:Event ){
+	//on leaving the box (blur, or Enter), not its change event:  that fires on each part of the date edited once the whole is
+	//valid, and typing a year would write 0002, 0020 and 0202 on the way to 2026.
+	async changeDate( n:Variable, e:Event ){
 		const box = <HTMLInputElement>e.target;
-		const show = ()=>box.value = this.dateValue( n );
-		const date = DateUtils.fromLocalInput( box.value );
+		if( box.value==this.dateValue(n) )
+			return;
+		const show = ()=>{ box.value = this.dateValue( n ); };
+		const date = DateUtils.fromLocalInput( box.value, ProtoUtils.toDate( <Timestamp>n.value ) ?? undefined );//from the row's time, so an edit in the hour DST repeats stays in its half
 		if( !date )//a cleared box:  the row's value stays, and the box shows it again
-			return show();
-		return this.#write( n, <Timestamp>ProtoUtils.fromDate(date), show );
+			show();
+		else
+			await this.#write( n, <Timestamp>ProtoUtils.fromDate(date), show );
 	}
 	//The editor ends showing the row's reading - the echo, or after a failure a re-read of the value - rather than what was
 	//typed:  a binding is re-applied only when its value changes, so a refused write, or an echo of the old value, kept the text.

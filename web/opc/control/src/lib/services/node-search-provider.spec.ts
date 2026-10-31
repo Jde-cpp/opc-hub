@@ -139,6 +139,8 @@ describe( 'NodeSearchProvider by node id', ()=>{
 		]});
 		return { provider: TestBed.inject( NodeSearchProvider ), gateway };
 	};
+	beforeEach( ()=>silence() );//a failed lookup warns
+	afterEach( ()=>vi.restoreAllMocks() );
 
 	it( 'opens the page the gateway walks up to, and never asks the name search', async ()=>{
 		const { provider, gateway } = create( {name: 'Lamp 1', nodeClass: 1, path: '4~Examples/4~Lamp 1'} );
@@ -174,11 +176,9 @@ describe( 'NodeSearchProvider by node id', ()=>{
 	});
 
 	it( 'says the search is unavailable when the lookup fails', async ()=>{
-		silence();
 		const [notice] = await create( new Error('Query failed. (80340000)BadNodeIdUnknown') ).provider.search( 'ns=4;i=6020', undefined, 5 );
 		expect( notice ).toMatchObject( { title: 'Search is unavailable for Line 1', disabled: true } );
 		expect( notice.summary ).toContain( 'BadNodeIdUnknown' );
-		vi.restoreAllMocks();
 	});
 
 	it( 'asks for a connection\'s page outside one, asking no gateway', async ()=>{
@@ -194,5 +194,14 @@ describe( 'NodeSearchProvider by node id', ()=>{
 		await provider.search( 'lamp', undefined, 5 );
 		expect( gateway.querySingle ).not.toHaveBeenCalled();
 		expect( gateway.queryArray ).toHaveBeenCalledTimes( 1 );
+	});
+
+	//reviews-issue/412-clients-web-fixes.md #7:  `i=abc` went as {i:NaN}, which the gateway failed, and `i=` as i=0
+	it( 'leaves an id with no number after `i=` to the name search', async ()=>{
+		const { provider, gateway } = create( {path: 'x'} );
+		await provider.search( 'i=abc', undefined, 5 );
+		await provider.search( 'i=', undefined, 5 );
+		expect( gateway.querySingle ).not.toHaveBeenCalled();
+		expect( gateway.queryArray ).toHaveBeenCalledTimes( 2 );
 	});
 });

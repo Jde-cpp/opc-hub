@@ -11,10 +11,11 @@ import { OPC_STORE } from './opc-store';
 export type NodeSearchRow = { connection:{ slug:string; name:string }; path:string; name:string; nodeClass:number; depth:number };
 
 //OPC node names through the gateway's `search` query.  Inside a connection's node tree only that connection is searched;
-//anywhere else every gateway is asked without an `opc`, which answers from the clients this session already holds - a search
-//never opens an OPC session.  Hits render as name over `<connection>/<browse path>`.  A node id, `ns=2;i=1001`, is looked
-//up instead:  inside a connection the gateway walks up to the Objects folder for its page's path (NodeQLAwait's id form, the
-//node-scoped resources' link);  elsewhere there is no connection to look it up on, and a notice says so.
+//anywhere else every gateway is asked without an `opc`, which answers from the clients this session already holds - a name
+//search never opens an OPC session.  Hits render as name over `<connection>/<browse path>`.  A node id, `ns=2;i=1001`, is
+//looked up instead:  inside a connection the gateway walks up to the Objects folder for its page's path (NodeQLAwait's id
+//form, the node-scoped resources' link), which connects as that connection's own pages do;  elsewhere there is no connection
+//to look it up on, and a notice says so.
 @Injectable({ providedIn: 'root' })
 export class NodeSearchProvider implements ISearchProvider{
 	readonly name = 'nodes';

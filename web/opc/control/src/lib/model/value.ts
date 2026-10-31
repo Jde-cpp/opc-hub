@@ -3,7 +3,7 @@ import { Duration, Guid, ProtoUtils, Timestamp  } from "jde-framework";
 import { NodeId } from "./node-id";
 import { ExNodeId } from "./ex-node-id";
 import {OpcError} from "./opc-error";
-import { StatusCode } from "./types";
+import { ETypes, StatusCode } from "./types";
 
 export type Value = boolean | Duration | ExtensionObject | OpcError | ExNodeId | Guid | Long | NodeId | number | string | Timestamp | Uint8Array | Value[];
 
@@ -32,6 +32,20 @@ export function valueJson( value: Value ):any/*:NodeIdJson*/{
 
 //A Float reading at the fewest digits that are still that float.  The proto's float decodes widened to a double, 21.3 as
 //21.299999237060547, which every screen showed;  the gateway's json writes a Float this way already (Value::ToJson).
+//a number box's text as a write sends it.  A 64-bit integer goes as a Long built from the text, since a JS number holds 53
+//bits and the number input hands the digits over whole.  Blank text, text that is not a number, and for a 64-bit type text
+//that is not a whole number in its range, is no value.
+export function numberValue( text:string, dataType:ETypes|undefined ):number|Long|undefined{
+	const t = text.trim();
+	if( dataType!=ETypes.Int64 && dataType!=ETypes.UInt64 )
+		return t=="" || isNaN( +t ) ? undefined : +t;
+	const digits = t.replace( /^\+/, "" );
+	if( !/^-?\d+$/.test(digits) )
+		return undefined;
+	const value = Long.fromString( digits, dataType==ETypes.UInt64 );
+	return value.toString()==digits.replace( /^(-?)0+(?=\d)/, "$1" ) ? value : undefined;//fromString wraps silently past the type's range, so what reads back has to be what was typed
+}
+
 export function shortestFloat( x:number ):number{
 	if( !Number.isFinite(x) )
 		return x;

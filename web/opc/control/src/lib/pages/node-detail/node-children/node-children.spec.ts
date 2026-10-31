@@ -318,6 +318,16 @@ describe( 'NodeChildren subscription values', ()=>{
 			await page.changeDouble( row(ETypes.Double), {target: {value: "7.5"}} as any );
 			expect( gateway.write.mock.calls.map( c=>c[2] ) ).toEqual( [7, 7.5] );
 		} );
+		//reviews-issue/412-clients-web-fixes.md #2:  `+""` is 0, so a cleared box wrote 0 to the device
+		it( 'writes nothing for a cleared box of any numeric type, and shows the row\'s value again', async ()=>{
+			const { page, gateway } = create();
+			for( const type of [ETypes.Int32, ETypes.Double, ETypes.Byte, ETypes.Int64] ){
+				const box = {value: ""};
+				await page.changeDouble( row(type), {target: box} as any );
+				expect( box.value ).toBe( "5" );
+			}
+			expect( gateway.write ).not.toHaveBeenCalled();
+		} );
 	} );
 
 	//clients spec, Gaps #7:  the date picker wrote the start of the day, in UTC - a DateTime takes the date and time typed, to
@@ -342,6 +352,42 @@ describe( 'NodeChildren subscription values', ()=>{
 			await page.changeDate( row(typed), {target: box} as any );
 			expect( gateway.write ).not.toHaveBeenCalled();
 			expect( box.value ).toBe( "2026-10-09T13:04:05.006" );
+		} );
+		it( 'writes nothing for a box left as it was', async ()=>{
+			const { page, gateway } = create();
+			await page.changeDate( row(typed), {target: {value: "2026-10-09T13:04:05.006"}} as any );
+			expect( gateway.write ).not.toHaveBeenCalled();
+		} );
+		//reviews-issue/412-clients-web-fixes.md #1:  `change` fires on each part of the date edited, so typing a year wrote the
+		//years on the way to it.  The box writes on blur, and Enter blurs it.
+		it( 'writes when the box is left, not on its change event', ()=>{
+			const { page, fixture } = create();
+			const write = vi.spyOn( page, 'changeDate' ).mockResolvedValue( undefined );
+			const n = row( typed );
+			page.viewSet.reset( [NodeView.fromConfig( {name: "value", configColumns: ["name", "snapshot"], sort: []}, NodeView.schema )] );
+			page.nodes.set( [n] );
+			page.isLoading.set( false );
+			fixture.detectChanges();
+			const box = <HTMLInputElement>fixture.nativeElement.querySelector( 'input[type=datetime-local]' );
+			expect( box.getAttribute( 'aria-label' ) ).toBe( "when" );
+			box.value = "0002-10-09T13:04:05.006";
+			box.dispatchEvent( new Event('change') );
+			expect( write ).not.toHaveBeenCalled();
+			box.dispatchEvent( new KeyboardEvent('keydown', {key: 'Enter'}) );
+			box.dispatchEvent( new Event('blur') );
+			expect( write ).toHaveBeenCalledTimes( 1 );
+		} );
+		//reviews-issue/412-clients-web-fixes.md #9:  the text went through new Date, which takes the hour DST repeats as its earlier half
+		describe( 'in the hour DST repeats', ()=>{
+			beforeEach( ()=>vi.stubEnv( 'TZ', 'America/New_York' ) );
+			afterEach( ()=>vi.unstubAllEnvs() );
+			it( 'keeps an edit of a time in the later half there', async ()=>{
+				const { page, gateway, answer } = create();
+				const later = new Date( Date.UTC(2026, 10, 1, 6, 30) );//01:30 EST
+				answer( {value: ProtoUtils.fromDate( later ), sc: 0} );
+				await page.changeDate( row(later), {target: {value: "2026-11-01T01:30:00.500"}} as any );
+				expect( ProtoUtils.toDate( gateway.write.mock.calls[0][2] as Timestamp )?.getTime() ).toBe( later.getTime() + 500 );
+			} );
 		} );
 	} );
 

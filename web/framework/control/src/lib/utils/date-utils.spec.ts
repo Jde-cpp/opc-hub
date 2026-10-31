@@ -10,3 +10,18 @@ describe( 'DateUtils local time inputs', ()=>{
 		expect( DateUtils.fromLocalInput( 'not a time' ) ).toBeUndefined();
 	} );
 } );
+
+//reviews-issue/412-clients-web-fixes.md #9:  editing a time in the hour DST repeats moved it to the earlier of the two
+describe( 'DateUtils.fromLocalInput in the hour DST repeats', ()=>{
+	beforeEach( ()=>vi.stubEnv( 'TZ', 'America/New_York' ) );
+	afterEach( ()=>vi.unstubAllEnvs() );
+	const later = new Date( Date.UTC(2026, 10, 1, 6, 30) );//01:30 EST, the hour's second time
+	it( 'keeps an edit of a time in the later hour there', ()=>{
+		expect( DateUtils.toLocalInput( later ) ).toBe( '2026-11-01T01:30:00.000' );
+		expect( DateUtils.fromLocalInput( '2026-11-01T01:30:00.500', later )?.getTime() ).toBe( later.getTime() + 500 );
+		expect( DateUtils.fromLocalInput( '2026-11-01T01:30:00.500' )?.getTime() ).toBe( later.getTime() + 500 - 3600_000 );//alone, the earlier
+	} );
+	it( 'takes the text as typed where the edit leaves the hour', ()=>{
+		expect( DateUtils.fromLocalInput( '2026-11-01T00:30:00.000', later )?.getTime() ).toBe( Date.UTC(2026, 10, 1, 4, 30) );//00:30 EDT
+	} );
+} );

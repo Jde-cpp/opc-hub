@@ -15,7 +15,7 @@ import { NodeId } from '../../../model/node-id';
 import { OpcError } from '../../../model/opc-error';
 import { statusIcon } from '../../../model/status-code';
 import { ETypes, StatusCode } from '../../../model/types';
-import { Value, valueString } from '../../../model/value';
+import { numberValue, Value, valueString } from '../../../model/value';
 
 //what a dialog opens on:  a row's node, time and value for a Replace, a time for a purge.  Not the row's status:  a Replace
 //corrects a value, which a Bad status left in the field would store Bad again (historian-web-edits #9).  `sourceTime` is a
@@ -106,7 +106,7 @@ export class HistEditDialog{
 		switch( this.editor() ){
 		case 'boolean': return this.flag();
 		case 'enum': return this.choice();
-		case 'number': return this.text().trim()=="" || isNaN( Number(this.text()) ) ? undefined : Number( this.text() );
+		case 'number': return numberValue( this.text(), this.node()?.dataType );
 		case 'datetime':{ const d = DateUtils.fromLocalInput( this.text() ); return d ? <Timestamp>qlTime( d ) : undefined; }
 		default: return this.text();
 		}
@@ -116,7 +116,7 @@ export class HistEditDialog{
 		if( !this.nodes().length )
 			return this.purge ? "Pick the nodes." : "Pick a node.";
 		if( this.kind=='purgeTimes' )
-			return this.times().every( DateUtils.fromLocalInput ) ? undefined : "Enter each time.";
+			return this.times().every( t=>DateUtils.fromLocalInput( t ) ) ? undefined : "Enter each time.";
 		const start = DateUtils.fromLocalInput( this.time() );
 		if( !start )
 			return this.kind=='purgeRange' ? "Enter the start." : "Enter the source time.";

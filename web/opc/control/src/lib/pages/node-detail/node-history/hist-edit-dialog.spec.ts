@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import Long from 'long';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { DateUtils } from 'jde-framework';
 import { HistEditArgs, HistEditResult } from '../../../model/hist';
@@ -83,6 +84,17 @@ describe( 'HistEditDialog', ()=>{
 		d.dialog.time.set( '' );
 		expect( d.dialog.problem() ).toBe( 'Enter the source time.' );
 		expect( d.dialog.args() ).toBeUndefined();
+	} );
+	//reviews-issue/412-clients-web-fixes.md #3:  a 64-bit integer went as Number(text), which holds 53 bits
+	it( 'sends a 64-bit integer as a Long from the text, exact past 2^53', ()=>{
+		const big = historized( 3, 'count', ETypes.Int64 );
+		const d = open( {kind: 'replace', nodes: [big], preset: {node: big, time: new Date(1000)}} );
+		d.dialog.text.set( '9007199254740993' );
+		const value = d.dialog.value();
+		expect( value ).toBeInstanceOf( Long );
+		expect( value!.toString() ).toBe( '9007199254740993' );
+		d.dialog.text.set( '1.5' );
+		expect( d.dialog.problem() ).toBe( 'Enter a value.' );
 	} );
 	it( 'takes a Boolean as a toggle, false included', ()=>{
 		const d = open( {kind: 'update', preset: {node: Running, time: new Date(1000)}} );

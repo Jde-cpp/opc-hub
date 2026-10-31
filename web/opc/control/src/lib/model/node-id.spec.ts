@@ -22,5 +22,7 @@ describe( 'NodeId.fromUaString', ()=>{
 	} );
 	it( 'refuses anything else', ()=>{
 		expect( ()=>NodeId.fromUaString("pump1") ).toThrow( /not a NodeId/ );
+		for( const s of ["i=abc", "i=", "ns=2;i=1.5", "ns=2;s="] )
+			expect( ()=>NodeId.fromUaString(s) ).toThrow( /not a NodeId/ );
 	} );
 } );

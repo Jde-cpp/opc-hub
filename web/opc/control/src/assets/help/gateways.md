@@ -53,7 +53,7 @@ A value cell reads *no read access* when the server will not let the signed-in u
 
 The address of a node is in the page's url, so a node page can be bookmarked or made a favorite.
 
-The navbar search finds nodes by name in every connection this session has opened. The first search crawls a connection's tree once, to the depth and node limits under `gateway.search` in the gateway's settings. Later searches answer from memory. Inside a node tree only that connection is searched, and a node id - `ns=2;i=1001` - opens that node's page there: the gateway walks up from the node to the Objects folder for the path. A node outside that folder, a type for one, has no page, and the search says so.
+The navbar search finds nodes by name in every connection this session has opened. The first search crawls a connection's tree once, to the depth and node limits under `gateway.search` in the gateway's settings. Later searches answer from memory. Inside a node tree only that connection is searched, and a node id - `ns=2;i=1001` - opens the page that shows the node: an object's own, or for a variable or method the page of the object it sits on. The gateway walks up from the node to the Objects folder for the path. A node outside that folder, a type for one, has no page, and the search says so.
 
 ### Trend chart
 

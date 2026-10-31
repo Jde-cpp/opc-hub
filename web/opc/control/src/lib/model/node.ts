@@ -1,6 +1,6 @@
 import { NodeId, NodeIdJson } from "./node-id";
 import { ETypes, Browse, ILocalizedText, Ns, toLocalizedText, EAccess, StatusCode } from "./types";
-import { Reading, toReading, Value } from "./value";
+import { Reading, toReading, Value, valueString } from "./value";
 import { Enum } from "./enum";
 import { OpcError } from "./opc-error";
 import { isBad } from "./status-code";
@@ -24,8 +24,8 @@ export abstract class UaNode extends NodeId{
 		this.description = toLocalizedText( json.description );
 		this.#name = toLocalizedText( json.name ); //TODO switch to just name?
 		this.parent = parent;
-		this.refType = json.refType ? new NodeId( json.refType ) : undefined;//the keys the browse writes (Browse::Response::SetJson) - read as referenceType/typeDefinition, neither was ever filled (clients spec, Gaps #6)
-		this.typeDef = json.typeDef ? new ObjectType( json.typeDef ) : undefined;
+		this.refType = json.refType ? new NodeId( json.refType ) : undefined;//the keys the browse writes (Browse::Response::SetJson)
+		this.typeDef = json.typeDef ? new NodeId( json.typeDef ) : undefined;
 	}
 	browseFQ( defaultNS:Ns|undefined ):string{
 		const browse = this.browse!;
@@ -44,7 +44,7 @@ export abstract class UaNode extends NodeId{
 	abstract get nodeClass():ENodeClass;
 	parent?:UaNode;
 	refType?:NodeId;
-	typeDef?:ObjectType;
+	typeDef?:NodeId;
 }
 
 export class ObjectType extends UaNode{
@@ -115,21 +115,37 @@ export class Variable extends UaNode{
 	//The one way a reading reaches a row - the browse, a subscription push, a write's echo and a re-read all come through
 	//here, so the quality can't be dropped by one of them again.
 	setReading( r:Reading ){
+		const shown = this.#shown;
 		this.sc = r.sc ?? 0;
 		if( this.sc )
 			OpcError.statusCodeText( this.sc );//asks for the name:  an Uncertain {v,sc} never built an OpcError, so its name was never fetched
 		const usable = r.value instanceof OpcError ? undefined : r.value;//a failure is not a value:  bound into <input type=number> it rendered NaN
 		if( usable!==undefined || !isBad(this.sc) )//Bad with nothing usable keeps the last value the row had
 			this.value = usable;
-		//the reading's, so they always describe the reading the row shows:  a push carries both, REST (the browse, a write's
-		//echo, a re-read) carries neither, and the last push's would then date a value that is not the one it timed.
-		this.sourceTime = r.source;
-		this.serverTime = r.server;
+		//the reading's, so they describe the reading the row shows:  a push carries both, REST (the browse, a write's echo, a
+		//re-read) neither.  A REST reading of the value and quality the row already shows is that push's reading still, and keeps
+		//its times;  any other would be dated by a push that never timed it.
+		if( r.source || r.server || this.#shown!=shown ){
+			this.sourceTime = r.source;
+			this.serverTime = r.server;
+		}
 	}
+	//a Refresh's row in place of `previous`, the one on screen.  REST answers a Bad reading with the code alone, so in the middle
+	//of a fault it takes over the value the row was holding, as a push would have left it - and the push's times, where it reads
+	//what that push did.
+	takeOver( previous:Variable ){
+		if( this.stale && this.value===undefined )
+			this.value = previous.value;
+		if( !this.sourceTime && !this.serverTime && this.#shown==previous.#shown ){
+			this.sourceTime = previous.sourceTime;
+			this.serverTime = previous.serverTime;
+		}
+	}
+	get #shown():string{ return `${this.sc ?? ""}:${valueString( this.value )}`; }
 	get stale():boolean{ return isBad( this.sc ); }//`value` is the last one known, not a current reading:  shown dimmed and locked
 	value?:Value;
 	sc?:StatusCode;//the reading's quality (OPC 10000-4 7.38).  0 = Good;  undefined = no reading yet, which is not the same thing.
-	sourceTime?:Date;//the reading's timestamps as the server sent them (Opc.FromServer.proto NodeValues.source/server);  undefined where the reading came without
+	sourceTime?:Date;//the reading's timestamps as a push sent them (Opc.FromServer.proto NodeValues.source/server);  undefined for a reading only REST brought
 	serverTime?:Date;
 	valueRank?:number; // -1 scalar, 1 one-dimensional array, etc.
 }

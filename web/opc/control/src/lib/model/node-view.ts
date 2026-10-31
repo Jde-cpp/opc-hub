@@ -1,4 +1,4 @@
-import { Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { DateUtils, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -78,8 +78,8 @@ export class NodeView extends View{
 			case "dataType":    return NodeView.dataType( variable );
 			case "snapshot":    return typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value );
 			case "status":      return NodeView.status( variable );
-			case "sourceTime":  return variable?.sourceTime?.toISOString();//ISO, so the text sorts and compares in time order
-			case "serverTime":  return variable?.serverTime?.toISOString();
+			case "sourceTime":  return NodeView.time( variable?.sourceTime );
+			case "serverTime":  return NodeView.time( variable?.serverTime );
 			case "access":      return NodeView.access( variable );
 			case "refType":     return node.refType?.uaString();//the ids:  the names come with the References tab (clients plan, Phase 4)
 			case "typeDef":     return node.typeDef?.uaString();
@@ -87,6 +87,8 @@ export class NodeView extends View{
 		}
 		return undefined;
 	}
+	//local time to the millisecond, the History tab's format:  fixed width, so the text sorts and compares in time order
+	static time( d:Date|undefined ):string|undefined{ return d ? DateUtils.toLocalInput( d ).replace( "T", " " ) : undefined; }
 	static dataType( variable:Variable|undefined ):string|undefined{
 		if( !variable )
 			return undefined;
