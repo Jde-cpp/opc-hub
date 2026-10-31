@@ -135,6 +135,50 @@ namespace Jde::Opc::Gateway::Tests{
 			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
 	}
 
+	//With only the subscription outstanding, the processing loop sleeps the subscription's publishing interval (500ms here) between
+	//polls, and a request that landed mid-sleep got its first run_iterate when the sleep ended - a read, a write or a history page
+	//to a subscribed client waited up to 500ms (#505).  Process ends the sleep now.  Each read below lands in one:  the previous
+	//read's completion left the queue at the subscription alone, so without the cancel ten reads take about 5s.
+	TEST_F( SubscribeTests, ARequestEndsTheSubscriptionsSleep ){
+		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );
+		let start = steady_clock::now();
+		for( uint i=0; i<10; ++i ){
+			StatusCode sc{};
+			ASSERT_NO_THROW( sc = ReadValue(_client, Intensity).status ) << "read " << i;
+			ASSERT_EQ( sc, UA_STATUSCODE_GOOD ) << "read " << i;
+		}
+		let elapsed = duration_cast<Duration>( steady_clock::now()-start );
+		EXPECT_LT( elapsed, 1s ) << "10 reads took " << Chrono::ToString(elapsed) << " - each waited out the loop's sleep";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
+		Stopwatch sw;//as Basic: the monitored item must be gone before the test returns.
+		while( _client->Processing() )
+			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
+	}
+
+	//The sleep is the server's revised publishing interval, read from the stored create response each time the loop lies down, not
+	//the 500ms the request asks for:  a server that revises it is polled at its rate, and a setting for the request (#418) reaches
+	//the loop through the server's answer.  The OpcServer revises nothing, so the stored response is swapped for one that says 3s:
+	//the write ends the sleep it lands in, and the data change it raises waits out the one after.
+	TEST_F( SubscribeTests, TheSleepIsTheRevisedPublishingInterval ){
+		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );
+		auto original = _client->CreatedSubscriptionResponse();
+		ASSERT_TRUE( original );
+		auto slow = ms<UA_CreateSubscriptionResponse>();
+		UA_CreateSubscriptionResponse_init( slow.get() );
+		slow->subscriptionId = original->subscriptionId;//SubscriptionId() still names the live one - the unsubscribe's delete needs it.
+		slow->revisedPublishingInterval = 3000;
+		_client->SetCreatedSubscriptionResponse( slow );
+		let start = steady_clock::now();
+		ASSERT_NO_THROW( WriteAndPush(Intensity) );
+		let elapsed = duration_cast<Duration>( steady_clock::now()-start );
+		_client->SetCreatedSubscriptionResponse( original );
+		EXPECT_GE( elapsed, 2s ) << "the push came in " << Chrono::ToString(elapsed) << " - the loop polled at the request's 500ms, not the revised 3s";
+		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
+		Stopwatch sw;
+		while( _client->Processing() )
+			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
+	}
+
 	//Unsubscribe looked the client up by the credential cached at connect, so anything that emptied the cache between
 	//Subscribe and Unsubscribe - a logout, or an anonymous session, which is never cached - stranded the subscription as
 	//"Client not found" (soak-findings #5).  It now derives the credential the way Subscribe did (SessionCredential).

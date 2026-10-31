@@ -336,9 +336,10 @@ namespace Jde::Opc::Gateway::Tests{
 		auto host = Host( group );
 		ASSERT_NO_THROW( WaitSubscribed(host, 2) );
 		let thresholds = [&]( uint32 index ){ return host->Group()->FindThresholds( index ).value(); };
-		Stopwatch sw;
-		while( !thresholds(pump3).Range )
-			ASSERT_NO_THROW( sw.CheckTimeout(15s, 10ms) );
+		let described = [&]( uint32 index ){ let d = host->Description( index ); return d && d->Ranged; };
+		//each node's ranges come with its own Describe, pump4's after pump3's, and the format edits below read what the Describe left;  a ranged
+		//node's thresholds are set in the same locked section, so no second wait for pump3's Range.
+		ASSERT_TRUE( WaitUntil([&]{ return described(pump3) && described(pump4); }, 15s) ) << "described: pump3 " << described(pump3) << ", pump4 " << described(pump4);
 		EXPECT_EQ( thresholds(pump3).ExceptionDeviation, 1 );
 		EXPECT_EQ( thresholds(pump3).Range->High, 1500 ) << "its InstrumentRange";
 		EXPECT_FALSE( thresholds(pump4).ExceptionDeviation ) << "no InstrumentRange:  every change is stored";

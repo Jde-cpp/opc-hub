@@ -10,6 +10,8 @@ namespace Jde::Opc::Gateway{
 	constexpr RequestId SubscriptionRequestId = ConnectRequestId - 1;
 	extern Duration _pingInterval;//the keep-alive's period, /gateway/pingInterval:  set once by Configure, before the web server starts.  A row's ping_interval overrides it (UAClient::PingInterval).
 	extern Duration _ttl;//an idle client's lifetime, /gateway/ttl:  likewise, under a row's ttl (UAClient::Ttl).
+	extern Duration _pollInterval;//the loop's sleep between polls with a request outstanding, /gateway/pollInterval:  likewise.
+	extern Duration _requestTimeout;//a service call's deadline, /gateway/requestTimeout:  likewise, under a row's request_timeout (UAClient::Create).
 	struct UAClient;
 
 	//Serializes all UA_Client access for one client: open62541 clients are not thread-safe, so every UA_Client_* call
@@ -38,6 +40,7 @@ namespace Jde::Opc::Gateway{
 		Handle _handle{};//the client's, kept past Stop for the log lines FailPending's callbacks still write.
 		TimePoint _lastRequest{};//strand-confined; per-client so one client's traffic doesn't mask another's TTL.
 		TimerCancel _pingTimer;//strand-confined
+		TimerCancel _sleepTimer;//strand-confined; set while ProcessingLoop sleeps between polls:  Process ends the sleep for a request that landed mid-way (#505), Stop for the loop to exit.
 		bool _drainNeeded{};//strand-confined; set by RequestDrain, cleared by OnServiceBegin or ProcessingLoop's give-up cap.
 		bool _stopping{};//strand-confined; set by ProcessingLoop's TTL branch: ShutdownIdle is in flight but its delete-subscription pump still needs Process/the loop, so only the ping starter keys off this - Stop() ends everything else.
 		atomic_flag _running;

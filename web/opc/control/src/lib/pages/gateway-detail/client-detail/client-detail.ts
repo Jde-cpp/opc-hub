@@ -67,7 +67,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	readonly units = { sessionTimeout: "ms", requestTimeout: "ms", pingInterval: "ms", ttl: "ms" };
 	readonly hints = {
 		sessionTimeout: "Empty:  the client library's 20 minutes.  The server may shorten it.",
-		requestTimeout: "Empty:  the gateway's 10 seconds.  Also how long Test Connection waits.",
+		requestTimeout: "Empty:  the gateway's requestTimeout setting.  Also how long Test Connection waits.",
 		pingInterval: "Empty:  the gateway's pingInterval setting, or half the session timeout where that is shorter.  0 turns the keep-alive off.",
 		ttl: "Empty:  the gateway's ttl setting - how long an idle session is kept open.",
 		locale: "Comma-separated locale ids, en-US,de.  Empty sends none."

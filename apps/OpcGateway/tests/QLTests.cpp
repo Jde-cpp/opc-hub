@@ -485,7 +485,7 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_NE( e.Res().Body().find("(800a0000)BadTimeout - "), string::npos ) << e.Res().Body();
 				EXPECT_NE( e.Res().Body().find("did not complete the connection"), string::npos ) << e.Res().Body();
 			}
-			EXPECT_LT( steady_clock::now()-start, std::chrono::seconds{20} ) << "the client's request timeout, 10s, is the deadline.";
+			EXPECT_LT( steady_clock::now()-start, std::chrono::seconds{20} ) << "the gateway's requestTimeout, 10 s as shipped, is the deadline.";
 		}
 		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "a failed test is not the slug's connectionStatus.";
 		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );
