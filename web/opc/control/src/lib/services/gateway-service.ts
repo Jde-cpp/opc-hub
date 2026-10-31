@@ -601,9 +601,8 @@ export class Gateway extends ProtoService<FromClient.Transmission,FromServer.Mes
 	get slug():GatewaySlug{ return this.instances[0].instanceName!; }
 }
 //a pushed Reading - Bad keeps the value the server holds, and sc says so.  A subscribe that FAILED is the one OpcError `value`:  a
-//refused request, not a reading.  `source`/`server` are the reading's timestamps when the server sent them:  the history
-//trend places a push after its read by source time.
-export type SubscriptionResult = Reading & {opcId:string, node:NodeId, source?:Date, server?:Date};
+//refused request, not a reading.  The Reading's `source`/`server` are what the history trend places a push after its read by.
+export type SubscriptionResult = Reading & {opcId:string, node:NodeId};
 //A historian subscription's arguments (spec *Subscriptions*):  the group by its id, its nodes, and the time the snapshot starts
 //from - left out, it is now, and the snapshot is each node's value alone.
 export type HistSubscribeArgs = { group:number; nodes:NodeId[]; from?:Date };

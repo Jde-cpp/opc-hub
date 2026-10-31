@@ -71,10 +71,8 @@
 						@else if( r.dataType==ETypes.BaseDataType && !r.isArray ){
 							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
-						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){
-								<input matInput [matDatepicker]="picker" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" (dateChange)="changeDate(r, $event);">
-								<mat-datepicker-toggle matSuffix [for]="picker"></mat-datepicker-toggle>
-								<mat-datepicker #picker></mat-datepicker>
+						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){<!--date and time, local, to the millisecond:  the date picker this was wrote the start of the day (clients spec, Gaps #7)-->
+							<input type="datetime-local" step="0.001" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDate(r,$event);">
 						}
 						@else if( r.customDataType && !r.isArray ){
 							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale">
@@ -107,6 +105,14 @@
 						}
 					</mat-cell>
 				</ng-container>
+				<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as the last push sent them:  blank for a value REST brought-->
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Source Time </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{time(r.sourceTime)}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="serverTime">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Server Time </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{time(r.serverTime)}}</mat-cell>
+				</ng-container>
 				<ng-container matColumnDef="access">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Access </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
@@ -116,6 +122,14 @@
 							}
 						</mat-chip-set>
 					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="refType"><!--what the browse answered the node by, and its type - the ids until the References tab brings the names-->
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Reference Type </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "refType")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="typeDef">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Type Definition </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "typeDef")}}</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="description">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Description </mat-header-cell>

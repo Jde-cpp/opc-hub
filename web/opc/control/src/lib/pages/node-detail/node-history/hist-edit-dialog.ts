@@ -8,7 +8,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { errorMessage, ProtoUtils, Timestamp } from 'jde-framework';
+import { DateUtils, errorMessage, ProtoUtils, Timestamp } from 'jde-framework';
 import { editRefusedAll, HistEditArgs, HistEditKind, HistEditResult, HistTime, qlTime } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
@@ -29,18 +29,6 @@ export type HistEditDialogData = {
 	names?:( codes:StatusCode[] )=>void;//asks for the names of the statuses the server answered, so a refusal reads by name
 };
 
-//A Date as <input type="datetime-local" step="0.001"> shows it, local time to the millisecond, and back.  Not toISOString,
-//which is UTC and ends in Z, which the input refuses.
-export function toLocalInput( d:Date ):string{
-	const p = ( n:number, w=2 )=>String( n ).padStart( w, '0' );
-	return `${p(d.getFullYear(), 4)}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-}
-export function fromLocalInput( s:string ):Date|undefined{
-	if( !s )
-		return undefined;
-	const d = new Date( s );//no zone in the text, so local time, as the input means it
-	return isNaN( d.getTime() ) ? undefined : d;
-}
 //a status as typed - hex with 0x, or decimal;  blank is Good.  null for text that is neither.
 export function parseStatus( text:string ):StatusCode|undefined|null{
 	const t = text.trim();
@@ -64,13 +52,13 @@ export class HistEditDialog{
 		const preset = this.data.preset ?? {};
 		const now = new Date();
 		this.nodes.set( preset.node ? [preset.node] : this.data.nodes.length==1 ? [this.data.nodes[0]] : [] );
-		this.time.set( toLocalInput( preset.time ?? now ) );
-		this.end.set( toLocalInput( preset.end ?? preset.time ?? now ) );
-		this.times.set( [toLocalInput( preset.time ?? now )] );
+		this.time.set( DateUtils.toLocalInput( preset.time ?? now ) );
+		this.end.set( DateUtils.toLocalInput( preset.end ?? preset.time ?? now ) );
+		this.times.set( [DateUtils.toLocalInput( preset.time ?? now )] );
 		this.flag.set( preset.value===true );
 		this.choice.set( typeof preset.value=="number" ? preset.value : undefined );
 		const presetDate = preset.value!=null && typeof preset.value=="object" && "seconds" in preset.value ? ProtoUtils.toDate( <Timestamp>preset.value ) : null;
-		this.text.set( presetDate ? toLocalInput( presetDate ) : preset.value!=undefined ? valueString( preset.value ) : "" );
+		this.text.set( presetDate ? DateUtils.toLocalInput( presetDate ) : preset.value!=undefined ? valueString( preset.value ) : "" );
 	}
 	dialogRef = inject<MatDialogRef<HistEditDialog,HistEditResult|undefined>>( MatDialogRef );
 	data = inject<HistEditDialogData>( MAT_DIALOG_DATA );
@@ -95,7 +83,7 @@ export class HistEditDialog{
 
 	onNodes( picked:Variable|Variable[] ){ this.nodes.set( Array.isArray( picked ) ? picked : [picked] ); }
 	setTime( i:number, text:string ){ this.times.update( t=>t.map( (x, j)=>j==i ? text : x ) ); }
-	addTime(){ this.times.update( t=>[...t, t[t.length-1] ?? toLocalInput( new Date() )] ); }
+	addTime(){ this.times.update( t=>[...t, t[t.length-1] ?? DateUtils.toLocalInput( new Date() )] ); }
 	removeTime( i:number ){ this.times.update( t=>t.length>1 ? t.filter( (_, j)=>j!=i ) : t ); }
 
 	//the editor the value takes, by the node's DataType, as the Children tab's cells have it
@@ -119,7 +107,7 @@ export class HistEditDialog{
 		case 'boolean': return this.flag();
 		case 'enum': return this.choice();
 		case 'number': return this.text().trim()=="" || isNaN( Number(this.text()) ) ? undefined : Number( this.text() );
-		case 'datetime':{ const d = fromLocalInput( this.text() ); return d ? <Timestamp>qlTime( d ) : undefined; }
+		case 'datetime':{ const d = DateUtils.fromLocalInput( this.text() ); return d ? <Timestamp>qlTime( d ) : undefined; }
 		default: return this.text();
 		}
 	} );
@@ -128,12 +116,12 @@ export class HistEditDialog{
 		if( !this.nodes().length )
 			return this.purge ? "Pick the nodes." : "Pick a node.";
 		if( this.kind=='purgeTimes' )
-			return this.times().every( fromLocalInput ) ? undefined : "Enter each time.";
-		const start = fromLocalInput( this.time() );
+			return this.times().every( DateUtils.fromLocalInput ) ? undefined : "Enter each time.";
+		const start = DateUtils.fromLocalInput( this.time() );
 		if( !start )
 			return this.kind=='purgeRange' ? "Enter the start." : "Enter the source time.";
 		if( this.kind=='purgeRange' ){
-			const end = fromLocalInput( this.end() );
+			const end = DateUtils.fromLocalInput( this.end() );
 			return !end ? "Enter the end." : start>end ? "The start is after the end." : undefined;
 		}
 		if( this.value()===undefined )
@@ -145,16 +133,16 @@ export class HistEditDialog{
 			return undefined;
 		const nodes:NodeId[] = this.nodes().map( n=>n.nodeId );
 		if( this.kind=='purgeRange' )
-			return { kind: this.kind, nodes, start: fromLocalInput( this.time() )!, end: fromLocalInput( this.end() )! };
+			return { kind: this.kind, nodes, start: DateUtils.fromLocalInput( this.time() )!, end: DateUtils.fromLocalInput( this.end() )! };
 		if( this.kind=='purgeTimes' )
-			return { kind: this.kind, nodes, times: this.times().map( t=>fromLocalInput( t )! ) };
+			return { kind: this.kind, nodes, times: this.times().map( t=>DateUtils.fromLocalInput( t )! ) };
 		const status = parseStatus( this.status() );
 		return { kind: this.kind, values: [{ node: nodes[0], source: this.#source(), value: this.value()!, ...(status ? {status} : {}) }] };
 	}
 	//the row's stored time while the field shows it unchanged:  the field holds milliseconds, and in the hour DST repeats, the earlier one
 	#source():Date|HistTime{
 		const p = this.data.preset;
-		return p?.sourceTime && p.time && this.time()==toLocalInput( p.time ) ? p.sourceTime : fromLocalInput( this.time() )!;
+		return p?.sourceTime && p.time && this.time()==DateUtils.toLocalInput( p.time ) ? p.sourceTime : DateUtils.fromLocalInput( this.time() )!;
 	}
 	async apply(){
 		const args = this.args();

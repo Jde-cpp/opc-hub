@@ -94,6 +94,30 @@ describe( 'NodeView status column', ()=>{
 	} );
 } );
 
+//the columns hidden in the default view beside Status:  the reading's timestamps, and what the browse answered the node by
+describe( 'NodeView timestamp and browse columns', ()=>{
+	it( 'shows the timestamps as ISO text, so they sort in time order, and blank until a push brings them', ()=>{
+		const v = x( {value: 7} );
+		expect( NodeView.cellValue(v, "sourceTime") ).toBeUndefined();
+		v.setReading( {value: 8, sc: 0, source: new Date(Date.UTC(2026, 9, 9, 13, 4, 5, 6)), server: new Date(Date.UTC(2026, 9, 9, 13, 4, 5, 7))} );
+		expect( NodeView.cellValue(v, "sourceTime") ).toBe( "2026-10-09T13:04:05.006Z" );
+		expect( NodeView.cellValue(v, "serverTime") ).toBe( "2026-10-09T13:04:05.007Z" );
+	} );
+	it( 'shows the reference type and the type definition as node ids', ()=>{
+		const v = x( {refType: {ns: 0, i: 47}, typeDef: {ns: 2, i: 1002}} );
+		expect( NodeView.cellValue(v, "refType") ).toBe( "i=47" );
+		expect( NodeView.cellValue(v, "typeDef") ).toBe( "ns=2;i=1002" );
+		expect( NodeView.cellValue(x(), "refType") ).toBeUndefined();
+	} );
+	it( 'offers them in the default view, hidden', ()=>{
+		const view = NodeView.default();
+		for( const name of ["sourceTime", "serverTime", "refType", "typeDef"] ){
+			expect( view.fields.map(f=>f.name) ).toContain( name );
+			expect( view.displayedColumns ).not.toContain( name );
+		}
+	} );
+} );
+
 //MVP first-run:  an identity with no role gets userAccessLevel 0 on every node, and the Snapshot cell showed a blank that
 //read as a null value.  A row the browse never gave a level is not a denial.
 describe( 'NodeView.readDenied', ()=>{

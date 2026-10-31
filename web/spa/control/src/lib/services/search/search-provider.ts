@@ -25,7 +25,7 @@ export interface ISearchProvider{
 }
 export const SEARCH_PROVIDERS = new InjectionToken<ISearchProvider[]>( 'ISearchProvider' );
 
-export function searchRank( text:string, title:string, summary?:string ):number{//0 title starts with, 1 title contains, 2 summary contains, 3 miss.
-	const t = title.toLowerCase();
-	return t.startsWith( text ) ? 0 : t.includes( text ) ? 1 : summary?.toLowerCase().includes( text ) ? 2 : 3;
+export function searchRank( text:string, title:string, summary?:string ):number{//0 title starts with, 1 title contains, 2 summary contains, 3 miss - case-blind.
+	const t = title.toLowerCase(), x = text.toLowerCase();
+	return t.startsWith( x ) ? 0 : t.includes( x ) ? 1 : summary?.toLowerCase().includes( x ) ? 2 : 3;
 }

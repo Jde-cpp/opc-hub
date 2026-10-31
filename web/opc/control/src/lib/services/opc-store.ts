@@ -65,7 +65,7 @@ export class OpcStore{
 		let nodes = gatewayNodes.get( cnnctn );
 		if( !nodes ){
 			gatewayNodes.set( cnnctn, nodes = new Map<NodeKey,StoreNode>() );
-			nodes.set( OpcObject.rootNode.key, new StoreNode(new OpcObject({ns: OpcObject.rootNode.nodeId.ns, id: OpcObject.rootNode.nodeId.id, browse: '', name: cnnctn, nodeClass: ENodeClass.Object, typeDefinition: ETypes.Folder})) );
+			nodes.set( OpcObject.rootNode.key, new StoreNode(new OpcObject({ns: OpcObject.rootNode.nodeId.ns, id: OpcObject.rootNode.nodeId.id, browse: '', name: cnnctn, nodeClass: ENodeClass.Object, typeDef: {ns: 0, i: ETypes.Folder}})) );
 		}
 		return nodes;
 	}

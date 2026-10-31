@@ -1,9 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+import { DateUtils } from 'jde-framework';
 import { HistEditArgs, HistEditResult } from '../../../model/hist';
 import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes, StatusCode } from '../../../model/types';
-import { fromLocalInput, HistEditDialog, HistEditDialogData, parseStatus, toLocalInput } from './hist-edit-dialog';
+import { HistEditDialog, HistEditDialogData, parseStatus } from './hist-edit-dialog';
 import { variable } from 'jde-opc/testing';
 
 const historized = ( i:number, name:string, dataType:ETypes )=>variable( i, name, {dataType: {i: dataType}, historizing: true, userAccessLevel: EAccess.All} );
@@ -28,16 +29,6 @@ const open = ( data:Partial<HistEditDialogData>&{kind:HistEditDialogData["kind"]
 		answerWith: ( a:HistEditResult|Error )=>{ answer = a; } };
 };
 
-describe( 'local time inputs', ()=>{
-	it( 'round-trips a Date to the millisecond in local time', ()=>{
-		const d = new Date( 2026, 9, 9, 13, 4, 5, 6 );
-		expect( toLocalInput( d ) ).toBe( '2026-10-09T13:04:05.006' );
-		expect( fromLocalInput( toLocalInput( d ) )?.getTime() ).toBe( d.getTime() );
-		expect( fromLocalInput( '' ) ).toBeUndefined();
-		expect( fromLocalInput( 'not a time' ) ).toBeUndefined();
-	} );
-} );
-
 describe( 'parseStatus', ()=>{
 	it( 'takes hex or decimal, blank as Good, and nothing else', ()=>{
 		expect( parseStatus( '' ) ).toBeUndefined();
@@ -53,7 +44,7 @@ describe( 'HistEditDialog', ()=>{
 		const time = new Date( 2026, 9, 9, 10, 0, 0, 250 );
 		const d = open( {kind: 'replace', preset: {node: Rpm, time, value: 1500}} );
 		expect( d.dialog.node() ).toBe( Rpm );
-		expect( d.dialog.time() ).toBe( toLocalInput( time ) );
+		expect( d.dialog.time() ).toBe( DateUtils.toLocalInput( time ) );
 		expect( d.dialog.text() ).toBe( '1500' );
 		expect( d.dialog.status() ).toBe( '' );
 		expect( d.dialog.problem() ).toBeUndefined();
@@ -74,7 +65,7 @@ describe( 'HistEditDialog', ()=>{
 		await d.dialog.apply();
 		expect( d.edits()[0] ).toEqual( {kind: 'replace', values: [{node: Rpm.nodeId, source: sourceTime, value: 1600}]} );
 		const later = new Date( 1700000001000 );
-		d.dialog.time.set( toLocalInput( later ) );
+		d.dialog.time.set( DateUtils.toLocalInput( later ) );
 		await d.dialog.apply();
 		expect( d.edits()[1] ).toEqual( {kind: 'replace', values: [{node: Rpm.nodeId, source: later, value: 1600}]} );
 	} );
@@ -144,7 +135,7 @@ describe( 'HistEditDialog', ()=>{
 		expect( d.dialog.problem() ).toBe( 'Pick the nodes.' );
 		d.dialog.onNodes( [Rpm, Running] );
 		expect( d.dialog.problem() ).toBeUndefined();
-		d.dialog.end.set( toLocalInput( new Date(2025, 0, 1) ) );
+		d.dialog.end.set( DateUtils.toLocalInput( new Date(2025, 0, 1) ) );
 		expect( d.dialog.problem() ).toBe( 'The start is after the end.' );
 		d.dialog.end.set( d.dialog.time() );//start equal to end:  the one value there
 		expect( d.dialog.args() ).toEqual( {kind: 'purgeRange', nodes: [Rpm.nodeId, Running.nodeId], start: new Date(2026, 0, 1), end: new Date(2026, 0, 1)} );
@@ -174,11 +165,11 @@ describe( 'HistEditDialog', ()=>{
 	it( 'purges at the times listed, one at least', ()=>{
 		const d = open( {kind: 'purgeTimes', preset: {node: Rpm, time: new Date(2026, 0, 1)}} );
 		d.dialog.addTime();
-		d.dialog.setTime( 1, toLocalInput( new Date(2026, 0, 3) ) );
+		d.dialog.setTime( 1, DateUtils.toLocalInput( new Date(2026, 0, 3) ) );
 		expect( d.dialog.args() ).toEqual( {kind: 'purgeTimes', nodes: [Rpm.nodeId], times: [new Date(2026, 0, 1), new Date(2026, 0, 3)]} );
 		d.dialog.removeTime( 0 );
 		d.dialog.removeTime( 0 );//the last one stays
-		expect( d.dialog.times() ).toEqual( [toLocalInput( new Date(2026, 0, 3) )] );
+		expect( d.dialog.times() ).toEqual( [DateUtils.toLocalInput( new Date(2026, 0, 3) )] );
 		d.dialog.setTime( 0, '' );
 		expect( d.dialog.problem() ).toBe( 'Enter each time.' );
 	} );

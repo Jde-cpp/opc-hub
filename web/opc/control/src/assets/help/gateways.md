@@ -39,6 +39,10 @@ A status that is not plain Good shows as an icon beside the value. The icon is a
 
 The **Status** column is hidden in the default view. Switch it on in the view editor to read, sort or filter on it. The icon then moves into that column.
 
+Hidden the same way: **Source Time** and **Server Time**, the timestamps the server sent with a subscribed node's last value, blank until one arrives; **Reference Type**, the reference the parent holds the node by; and **Type Definition**, the node's type. The last two show as node ids.
+
+A DateTime value is edited as a date and time to the millisecond, in the browser's local time. A 64-bit integer takes any value of its type, past what a double holds exactly.
+
 A **Bad** value is not a reading: the row keeps the last value it had, dimmed and locked against editing, until the server sends one that is not Bad. An Uncertain value is a reading, and is shown and edited as usual.
 
 A value cell is also locked when the server reports the node read-only for the signed-in user - its access level carries no *CurrentWrite* right. A **lock** beside the cell says which it is, and its tooltip gives the reason and the rights the server did grant; switch on the **Access** column to see those rights for every row at once. Where the server reports no access level at all - some third-party servers do not - the cell stays editable and the server's own refusal, with its status code, is the answer.
@@ -49,7 +53,7 @@ A value cell reads *no read access* when the server will not let the signed-in u
 
 The address of a node is in the page's url, so a node page can be bookmarked or made a favorite.
 
-The navbar search finds nodes by name in every connection this session has opened. The first search crawls a connection's tree once, to the depth and node limits under `gateway.search` in the gateway's settings. Later searches answer from memory. Inside a node tree only that connection is searched.
+The navbar search finds nodes by name in every connection this session has opened. The first search crawls a connection's tree once, to the depth and node limits under `gateway.search` in the gateway's settings. Later searches answer from memory. Inside a node tree only that connection is searched, and a node id - `ns=2;i=1001` - opens that node's page there: the gateway walks up from the node to the Objects folder for the path. A node outside that folder, a type for one, has no page, and the search says so.
 
 ### Trend chart
 

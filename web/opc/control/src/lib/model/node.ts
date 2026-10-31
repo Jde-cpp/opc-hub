@@ -24,8 +24,8 @@ export abstract class UaNode extends NodeId{
 		this.description = toLocalizedText( json.description );
 		this.#name = toLocalizedText( json.name ); //TODO switch to just name?
 		this.parent = parent;
-		this.refType = json.referenceType ? new NodeId( json.referenceType ) : undefined;
-		this.typeDef = json.typeDefinition ? new ObjectType( json.typeDefinition ) : undefined;
+		this.refType = json.refType ? new NodeId( json.refType ) : undefined;//the keys the browse writes (Browse::Response::SetJson) - read as referenceType/typeDefinition, neither was ever filled (clients spec, Gaps #6)
+		this.typeDef = json.typeDef ? new ObjectType( json.typeDef ) : undefined;
 	}
 	browseFQ( defaultNS:Ns|undefined ):string{
 		const browse = this.browse!;
@@ -62,7 +62,7 @@ export class OpcObject extends UaNode{
 }
 
 export class Variable extends UaNode{
-	constructor( json:{browseName?:Browse, dataType?:NodeIdJson, displayName:ILocalizedText, node?:NodeIdJson, nodeClass?:number, referenceType?:NodeIdJson, typeDefinition?:NodeIdJson, value?:any, valueRank?:number, accessLevel?:EAccess, userAccessLevel?:EAccess, historizing?:boolean}, parent?:UaNode )	{
+	constructor( json:{browseName?:Browse, dataType?:NodeIdJson, displayName:ILocalizedText, node?:NodeIdJson, nodeClass?:number, refType?:NodeIdJson, typeDef?:NodeIdJson, value?:any, valueRank?:number, accessLevel?:EAccess, userAccessLevel?:EAccess, historizing?:boolean}, parent?:UaNode )	{
 		super( json, parent );
 		if( json.dataType?.ns ){
 			this.dataType = ETypes.None;
@@ -121,9 +121,15 @@ export class Variable extends UaNode{
 		const usable = r.value instanceof OpcError ? undefined : r.value;//a failure is not a value:  bound into <input type=number> it rendered NaN
 		if( usable!==undefined || !isBad(this.sc) )//Bad with nothing usable keeps the last value the row had
 			this.value = usable;
+		//the reading's, so they always describe the reading the row shows:  a push carries both, REST (the browse, a write's
+		//echo, a re-read) carries neither, and the last push's would then date a value that is not the one it timed.
+		this.sourceTime = r.source;
+		this.serverTime = r.server;
 	}
 	get stale():boolean{ return isBad( this.sc ); }//`value` is the last one known, not a current reading:  shown dimmed and locked
 	value?:Value;
 	sc?:StatusCode;//the reading's quality (OPC 10000-4 7.38).  0 = Good;  undefined = no reading yet, which is not the same thing.
+	sourceTime?:Date;//the reading's timestamps as the server sent them (Opc.FromServer.proto NodeValues.source/server);  undefined where the reading came without
+	serverTime?:Date;
 	valueRank?:number; // -1 scalar, 1 one-dimensional array, etc.
 }

@@ -1,13 +1,14 @@
 import { TestBed } from '@angular/core/testing';
+import Long from 'long';
 import { config } from 'rxjs';
-import { SnackbarService, ViewType } from 'jde-framework';
+import { DateUtils, ProtoUtils, SnackbarService, Timestamp, ViewType } from 'jde-framework';
 import { ProfileStore } from 'jde-spa';
 import { GATEWAY_SERVICE } from '../../../services/gateway-service';
 import { NodeId } from '../../../model/node-id';
 import { UaNode, Variable } from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
-import { EAccess } from '../../../model/types';
+import { EAccess, ETypes } from '../../../model/types';
 import { NodeChildren } from './node-children';
 import { flush, pageTitleStub, provideRoute, silence } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
@@ -276,6 +277,71 @@ describe( 'NodeChildren subscription values', ()=>{
 			await page.toggleValue( n, {checked: true, source} as any );
 			expect( n.value ).toBe( true );
 			expect( source.checked ).toBe( true );
+		} );
+	} );
+
+	//clients spec, Gaps #9:  a 64-bit integer went as a JS number, which holds 53 bits - `+text` rounded what was typed past
+	//2^53 before the gateway saw it.  It goes as a Long built from the text, the {low,high,unsigned} form Value::Set reads back.
+	describe( 'a 64-bit integer', ()=>{
+		const row = ( type:ETypes, value:any=5 )=>variable( 9, "big", {dataType: {i: type}, value} );
+		const sent = ( gateway:ReturnType<typeof create>["gateway"] )=>gateway.write.mock.calls[0][2];
+		it( 'goes as a Long built from the text, exact past 2^53', async ()=>{
+			const { page, gateway, answer } = create();
+			answer( {value: Long.fromString("9007199254740993"), sc: 0} );
+			await page.changeDouble( row(ETypes.Int64), {target: {value: "9007199254740993"}} as any );
+			expect( sent(gateway) ).toBeInstanceOf( Long );
+			expect( sent(gateway).toString() ).toBe( "9007199254740993" );
+			expect( (sent(gateway) as Long).unsigned ).toBe( false );
+		} );
+		it( 'takes a negative, and an unsigned one to the top of its range', async ()=>{
+			const { page, gateway, answer } = create();
+			answer( {value: Long.fromString("-9223372036854775808"), sc: 0} );
+			await page.changeDouble( row(ETypes.Int64), {target: {value: "-9223372036854775808"}} as any );
+			answer( {value: Long.fromString("18446744073709551615", true), sc: 0} );
+			await page.changeDouble( row(ETypes.UInt64), {target: {value: "18446744073709551615"}} as any );
+			expect( gateway.write.mock.calls.map( c=>[c[2].toString(), (c[2] as Long).unsigned] ) ).toEqual( [["-9223372036854775808", false], ["18446744073709551615", true]] );
+		} );
+		it( 'writes nothing for text that is not a whole number in range, and shows the row\'s value again', async ()=>{
+			const { page, gateway } = create();
+			for( const [type, text] of [[ETypes.Int64, "1.5"], [ETypes.Int64, "9223372036854775808"], [ETypes.UInt64, "-1"], [ETypes.UInt64, "18446744073709551616"], [ETypes.Int64, "abc"]] as [ETypes, string][] ){
+				const box = {value: text};
+				await page.changeDouble( row(type), {target: box} as any );
+				expect( box.value ).toBe( "5" );
+			}
+			expect( gateway.write ).not.toHaveBeenCalled();
+		} );
+		it( 'still sends a 32-bit integer and a double as numbers', async ()=>{
+			const { page, gateway, answer } = create();
+			answer( {value: 7, sc: 0} );
+			await page.changeDouble( row(ETypes.Int32), {target: {value: "7"}} as any );
+			answer( {value: 7.5, sc: 0} );
+			await page.changeDouble( row(ETypes.Double), {target: {value: "7.5"}} as any );
+			expect( gateway.write.mock.calls.map( c=>c[2] ) ).toEqual( [7, 7.5] );
+		} );
+	} );
+
+	//clients spec, Gaps #7:  the date picker wrote the start of the day, in UTC - a DateTime takes the date and time typed, to
+	//the millisecond, in the browser's local time, as the history edit dialog's times do.
+	describe( 'the DateTime editor', ()=>{
+		const typed = new Date( 2026, 9, 9, 13, 4, 5, 6 );//local time
+		const row = ( at?:Date )=>variable( 9, "when", {dataType: {i: ETypes.DateTime}, value: at ? ProtoUtils.fromDate( at ) : undefined} );
+		it( 'writes the date and time typed, to the millisecond', async ()=>{
+			const { page, gateway, answer } = create();
+			answer( {value: ProtoUtils.fromDate( typed ), sc: 0} );
+			await page.changeDate( row(new Date(2026, 9, 9)), {target: {value: DateUtils.toLocalInput( typed )}} as any );
+			expect( ProtoUtils.toDate( gateway.write.mock.calls[0][2] as Timestamp )?.getTime() ).toBe( typed.getTime() );
+		} );
+		it( 'shows the row\'s value in local time to the millisecond, and nothing for none', ()=>{
+			const { page } = create();
+			expect( page.dateValue( row(typed) ) ).toBe( "2026-10-09T13:04:05.006" );
+			expect( page.dateValue( row() ) ).toBe( "" );
+		} );
+		it( 'writes nothing for a cleared box, and shows the row\'s value again', async ()=>{
+			const { page, gateway } = create();
+			const box = {value: ""};
+			await page.changeDate( row(typed), {target: box} as any );
+			expect( gateway.write ).not.toHaveBeenCalled();
+			expect( box.value ).toBe( "2026-10-09T13:04:05.006" );
 		} );
 	} );
 
