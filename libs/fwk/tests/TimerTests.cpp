@@ -153,6 +153,29 @@ namespace Jde::Tests{
 		EXPECT_TRUE( onStrand->load() ) << "the completion resumed off the strand it was bound to";
 	}
 
+	//A timer awaited again, as AsyncRequest's poll sleep is:  each Rearm waits its own duration, and a Cancel - which a sleep cut short
+	//by a request leaves set - ends only the wait it was meant for, not the next.
+	Ω rearmTest( sp<std::binary_semaphore> done, sp<std::array<std::atomic<bool>,3>> outcomes )ι->VoidTask{
+		DurationTimer timer{ std::chrono::seconds(10) };
+		timer.Cancel();
+		let cancelled = co_await timer;
+		(*outcomes)[0] = !cancelled.has_value() && cancelled.error()==boost::asio::error::operation_aborted;
+		let start = steady_clock::now();
+		let rearmed = co_await timer.Rearm( 2ms );
+		(*outcomes)[1] = rearmed.has_value() && steady_clock::now()-start>=2ms;
+		(*outcomes)[2] = (co_await timer.Rearm( 1ms )).has_value();
+		done->release();
+	}
+	TEST_F( TimerTests, Rearm ){
+		auto done = ms<std::binary_semaphore>( 0 );
+		auto outcomes = ms<std::array<std::atomic<bool>,3>>();
+		rearmTest( done, outcomes );
+		ASSERT_TRUE( done->try_acquire_for(5s) ) << "the timer never resumed";
+		EXPECT_TRUE( (*outcomes)[0].load() ) << "the first wait was not cancelled";
+		EXPECT_TRUE( (*outcomes)[1].load() ) << "the rearmed wait failed - the earlier cancel stuck - or ended early";
+		EXPECT_TRUE( (*outcomes)[2].load() ) << "the second rearm failed";
+	}
+
 	//A canceller shares the timer's state, not the awaitable:  holders such as IClientSocketSession::_timeouts cancel after the
 	//awaiting frame - and the DurationTimer in it - is gone.
 	Ω cancelAfterTest( sp<std::binary_semaphore> done, sp<TimerCancel> cancel, sp<std::atomic<bool>> fired )ι->VoidTask{

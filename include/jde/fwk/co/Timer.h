@@ -23,6 +23,9 @@ namespace Jde{
 		DurationTimer( steady_clock::duration duration, SRCE )ι;
 		DurationTimer( steady_clock::duration duration, boost::asio::any_io_executor executor, SRCE )ι;//resumes on `executor`, e.g. a strand.
 		α await_ready()ι->bool override;
+		//For a timer awaited again, as a loop's sleep is:  the next co_await waits `duration`, and an earlier Cancel no longer applies.
+		//Not while a wait is pending.
+		α Rearm( steady_clock::duration duration )ι->DurationTimer&;
 		α Canceller()Ι->TimerCancel{ return TimerCancel{ _state }; }
 		α Cancel()Ι->void{ Canceller().Cancel(); }
 	private:

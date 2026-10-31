@@ -764,11 +764,11 @@ namespace Jde::Opc::Gateway{
 		_config.eventLoop = UA_EventLoop_new_POSIX( _config.logging );
 		UA_ConnectionManager *tcpCM = UA_ConnectionManager_new_POSIX_TCP( "tcp connection manager"_uv );
 		_config.eventLoop->registerEventSource( _config.eventLoop, (UA_EventSource*)tcpCM );
-		//The row's settings over the defaults (docs/clients/spec.md *Connection settings*):  the request timeout, 10 s where the row
-		//leaves it;  the session timeout the row asks for, 0 leaving setDefault its 20 minutes;  the session's locales, which a
+		//The row's settings over the defaults (docs/clients/spec.md *Connection settings*):  the request timeout, /gateway/requestTimeout
+		//where the row leaves it;  the session timeout the row asks for, 0 leaving setDefault its 20 minutes;  the session's locales, which a
 		//server with several answers DisplayName and Description in.  The client owns what is allocated here once newWithConfig
 		//copies the struct - UA_Client_delete clears it, as it does the event loop.
-		_config.timeout = _opcServer.RequestTimeout.value_or( 10000 ); /*ms*/
+		_config.timeout = _opcServer.RequestTimeout.value_or( (uint32)duration_cast<milliseconds>(_requestTimeout).count() ); /*ms*/
 		_config.requestedSessionTimeout = _opcServer.SessionTimeout.value_or( 0 );
 		if( locales.size() ){
 			_config.sessionLocaleIds = (UA_LocaleId*)UA_Array_new( locales.size(), &UA_TYPES[UA_TYPES_LOCALEID] );

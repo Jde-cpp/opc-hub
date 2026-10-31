@@ -29,6 +29,16 @@
 #define let const auto
 namespace Jde::Opc{
 	static optional<Crypto::CryptoSettings> _processSsl;//the listener's pair, Configure's, which the endpoint presents when its block names none (spec *Startup and deploy*).
+	//0 or less - TryToDuration takes a sign - would spin the processing loop or fail every request at once, so it takes the default
+	//instead;  `max` is what the value is stored in.
+	Ω positiveDuration( sv path, Duration dflt, Duration max=Duration::max() )ι->Duration{
+		let value = Settings::FindDuration( path ).value_or( dflt );
+		if( value>Duration::zero() && value<=max )
+			return value;
+		WARNT( ELogTags::Settings, "'{}' of {} is not allowed:  it must be positive{}.  Using {}.", path, Chrono::ToString(value),
+			max==Duration::max() ? string{} : Ƒ(" and at most {}", Chrono::ToString(max)), Chrono::ToString(dflt) );
+		return dflt;
+	}
 	α Gateway::Configure( const jobject& webServerSettings, sp<QL::LocalQL> ql )ε->sp<DB::AppSchema>{
 		auto appClient = AppClient();
 		auto authorize = appClient->Acl( "gateway" );
@@ -58,6 +68,9 @@ namespace Jde::Opc{
 		//value_or defaults mirror config/Opc.Gateway.jsonnet - keep them in lockstep so a deployment missing a key runs what the shipped config documents.
 		_pingInterval = Settings::FindDuration("/gateway/pingInterval").value_or( 30s );
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
+		_requestTimeout = positiveDuration( "/gateway/requestTimeout", 10s, milliseconds{std::numeric_limits<UA_UInt32>::max()} );//UA_ClientConfig::timeout
+		_pollInterval = positiveDuration( "/gateway/pollInterval", 1ms );
+		_publishingInterval = positiveDuration( "/gateway/subscription/publishingInterval", 500ms );
 		Process::RaiseTimerResolution();//AsyncRequest's 1 ms poll for a UA response took a 15.6 ms tick on windows:  every round trip's floor.
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.

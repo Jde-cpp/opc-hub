@@ -1,18 +1,19 @@
 #include "AsyncRequest.h"
+#include <jde/fwk/process/execution.h>
 #include "../UAClient.h"
 #include "ReadAwait.h"
-#include <jde/fwk/co/AnyAwait.h>
-#include <jde/fwk/process/execution.h>
-#include <stdexcept>
 #define let const auto
 
 namespace Jde::Opc::Gateway{
 	namespace asio = boost::asio;
 	Duration _pingInterval;
 	Duration _ttl;
+	Duration _pollInterval{ 1ms };
+	Duration _requestTimeout{ 10s };
 
 	AsyncRequest::AsyncRequest()ι:
-		_strand{ Executor()->get_executor() }
+		_strand{ Executor()->get_executor() },
+		_pollTimer{ steady_clock::duration::zero(), _strand }
 	{}
 
 	α AsyncRequest::CancelPing()ι->void{//strand-only
@@ -63,6 +64,18 @@ namespace Jde::Opc::Gateway{
 				Process( PingRequestId, "ping" );
 		}
 	}
+	//The sleep between polls with only the data subscription outstanding:  a Publish response comes at most once per publishing
+	//interval, so the server's revised one - read each time, so a rebuilt subscription's answer applies - and, before the server
+	//has answered, after it dropped the subscription or where its answer is no duration, the interval the create asks for.
+	//Never past maxSubscriptionSleep:  a server's 1e13 would overflow the cast, and a push would wait in the socket that long.
+	constexpr steady_clock::duration maxSubscriptionSleep{ 10s };
+	Ω subscriptionInterval( const UAClient& client )ι->steady_clock::duration{
+		using Milliseconds = std::chrono::duration<double,std::milli>;
+		let response = client.CreatedSubscriptionResponse();
+		let revised = response ? response->revisedPublishingInterval : 0.;
+		let interval = std::isfinite(revised) && revised>0 ? Milliseconds{ revised } : Milliseconds{ _publishingInterval };
+		return duration_cast<steady_clock::duration>( std::min(interval, Milliseconds{maxSubscriptionSleep}) );
+	}
 	// 1 per UAClient. Runs entirely on _strand: started there by Process, and every co_await below resumes there
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
 	// UA_Client_run_iterate never overlaps other UA_Client_* calls - submissions and sync services are dispatched
@@ -97,6 +110,8 @@ namespace Jde::Opc::Gateway{
 				_requests.clear();
 				break;
 			}
+			if( !_running.test() )//a callback inside run_iterate stopped the loop - a request's ConnectionLost runs Stop inline - and found no sleep to cancel.
+				break;
 			let newSize = _requests.size();
 			if( !newSize ){
 				//open62541 issues requests of its own that never reach _requests - the server namespace-array read it fires
@@ -115,7 +130,7 @@ namespace Jde::Opc::Gateway{
 						//10ms, not the request path's 1ms: the drain only shepherds open62541's own read, which times out in
 						//multiple seconds - and a request landing mid-drain waits at most one coarse step before the loop
 						//re-enters the 1ms path (its submission already went out on the caller's strand post).
-						if( let result = co_await DurationTimer{ 10ms, _strand }; !result ){
+						if( let result = co_await _pollTimer.Rearm( 10ms ); !result ){
 							CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
 							_running.clear();
 							break;
@@ -137,8 +152,10 @@ namespace Jde::Opc::Gateway{
 			let firstRequest = *_requests.begin();
 			TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
 			if( size==newSize ){
-				let sleep = size==1 && firstRequest==SubscriptionRequestId ? 500ms : 1ms; //UA_CreateSubscriptionRequest_default
-				(void)co_await DurationTimer{ sleep, _strand, SRCE_CUR };
+				let sleep = size==1 && firstRequest==SubscriptionRequestId ? subscriptionInterval( *client ) : duration_cast<steady_clock::duration>( _pollInterval );
+				_sleeping = true;
+				(void)co_await _pollTimer.Rearm( sleep );//cancelled by Process for a request that landed mid-sleep - it polls now, not when the subscription's interval ends (#505) - by Clear and by Stop.
+				_sleeping = false;
 			}
 		}
 		if( !sc && !_stopped.test() && !_stopping && client->PingInterval().count()>0 ){
@@ -173,6 +190,14 @@ namespace Jde::Opc::Gateway{
 			let level = _stopped.test() ? ELogLevel::Debug : ELogLevel::Critical;
 			LOG( level, _tags, "[{}.{}]Could not find request handle{}.", hex(UAHandle()), hex(requestId), _stopped.test() ? " - submitted after Stop" : "" );
 		}
+		//The unsubscribe, or the last item gone, is user traffic:  the idle clock starts here (KeepAliveTests).  Its delete is submitted in a
+		//later strand handler, and a loop that woke between the two, unstamped, ran the ttl check against the create's stamp.  The sleep
+		//ends too:  the subscription's interval was its reason.
+		if( requestId==SubscriptionRequestId ){
+			_lastRequest = Clock::now();
+			if( _sleeping )
+				_pollTimer.Cancel();
+		}
 	}
 
 	α AsyncRequest::OnServiceBegin( RequestId requestId )ι->void{//strand-only (fires inside run_iterate)
@@ -192,11 +217,15 @@ namespace Jde::Opc::Gateway{
 			_lastRequest = Clock::now();
 		if( !_running.test_and_set() )
 			ProcessingLoop();
+		else if( _sleeping && requestId!=SubscriptionRequestId )
+			_pollTimer.Cancel();//the loop sleeps the subscription's interval with only it outstanding; left to run out, this request's first run_iterate waited up to 500ms (#505).
 	}
 	α AsyncRequest::Stop()ι->void{//strand-only (cross-thread callers go through UAClient::StopProcessing)
 		ASSERT( _strand.running_in_this_thread() );
 		DBG( "[{}]Stopping ProcessingLoop", UAHandle() );
 		CancelPing();
+		if( _sleeping )
+			_pollTimer.Cancel();//a sleeping loop's frame holds the client until it wakes.
 		_stopped.test_and_set();
 		_running.clear();
 		//move: breaks the UAClient<->AsyncRequest._client self-reference; the closure's copy keeps the UAClient (and so
