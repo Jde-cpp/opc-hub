@@ -5,9 +5,8 @@
 }
 
 /* the value editors that hold ordinal data line up on their right edge, as a numeric table column does - text (and the
-uris in it) stays left.  For a date it also closes the gap between the value and the calendar toggle it belongs to, which
-is what a box far wider than "8/27/2026" leaves.  `end`, not `right`, so both flip under dir="rtl". */
-input[type="number"], input.mat-datepicker-input {
+uris in it) stays left.  `end`, not `right`, so both flip under dir="rtl". */
+input[type="number"], input[type="datetime-local"] {
 	text-align: end;
 }
 
@@ -48,8 +47,20 @@ mat-cell.mat-column-name > *{
 	padding-left: 5px;
 	padding-right: 5px;
 }
-/* 260px:  the widest editor (a date and its calendar toggle) and the quality icon beside it.  The editors may shrink to
-make room for that icon - min-width:0, as an input's automatic minimum is its intrinsic width. */
+/* a timestamp to the millisecond, "2026-10-09 13:04:05.006";  an id, "ns=2;i=1002" or a long string id, that ends in an ellipsis
+rather than running into the next cell */
+.mat-column-sourceTime, .mat-column-serverTime, .mat-column-refType, .mat-column-typeDef{
+	flex: 0 0 180px;
+	min-width: 0;
+	padding-left: 5px;
+	padding-right: 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* 260px:  the widest editor (a date and time to the millisecond, with the browser's picker button) and the quality icon
+beside it.  The editors may shrink to make room for that icon - min-width:0, as an input's automatic minimum is its intrinsic
+width. */
 .mat-column-snapshot{
 	flex: 0 0 260px;
 	gap: 4px;
@@ -59,7 +70,7 @@ make room for that icon - min-width:0, as an input's automatic minimum is its in
 mat-cell.mat-column-snapshot > input{
 	min-width: 0;
 }
-/* the cell itself stays flex-start:  it holds whatever editor the value type needs (number, text, datepicker, select),
+/* the cell itself stays flex-start:  it holds whatever editor the value type needs (number, text, date-time, select),
 and those keep their left edges lined up down the column.  A lone checkbox is the one that reads as adrift under the
 centred header - an auto inline margin centres just that flex item, the way .mat-column-select centres a checkbox-only
 cell.  (For the whole column, put `justify-content: center` on .mat-column-snapshot instead.) */

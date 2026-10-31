@@ -64,8 +64,8 @@ export class NodeId implements INodeId{
 	toString():string{ return JSON.stringify( this.toJson() ); }//stable + unique per node (was "[object Object]", collapsing every node onto one profile key)
 	//the inverse of uaString - a resource's `criteria` back to a NodeId (b= is base64, as uaString writes it)
 	static fromUaString( s:string ):NodeId{
-		const m = /^(?:ns=(\d+);)?([isgb])=(.*)$/.exec( s.trim() );
-		if( !m )
+		const m = /^(?:ns=(\d+);)?([isgb])=(.+)$/.exec( s.trim() );
+		if( !m || (m[2]=="i" && !/^\d+$/.test(m[3])) )//an `i=` takes digits alone:  `+` reads other text as NaN
 			throw new Error( `'${s}' is not a NodeId.` );
 		const ns = m[1] ? +m[1] : 0;
 		switch( m[2] ){

@@ -23,12 +23,14 @@ describe( 'SearchService', ()=>{
 		return { service: TestBed.inject( SearchService ), routes, access, broken };
 	};
 
-	it( 'parses a registered prefix into a scope and leaves other colons as text', ()=>{
+	//the text keeps its case:  the providers match case-blind (searchRank), and a node id's string identifier is exact
+	it( 'parses a registered prefix into a scope and leaves other colons, and the case, as typed', ()=>{
 		const { service } = create();
-		expect( service.parse('user:Al') ).toEqual( {scope: 'user', text: 'al'} );
+		expect( service.parse('user:Al') ).toEqual( {scope: 'user', text: 'Al'} );
 		expect( service.parse('  role:  ') ).toEqual( {scope: 'role', text: ''} );
 		expect( service.parse('foo:bar') ).toEqual( {text: 'foo:bar'} );
-		expect( service.parse('Pump') ).toEqual( {text: 'pump'} );
+		expect( service.parse('Pump') ).toEqual( {text: 'Pump'} );
+		expect( service.parse('ns=2;s=Tank1') ).toEqual( {text: 'ns=2;s=Tank1'} );
 	});
 
 	it( 'merges every provider, dedupes on route, ranks then keeps registration order, and survives a failing provider', async ()=>{

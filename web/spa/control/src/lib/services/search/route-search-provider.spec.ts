@@ -72,7 +72,7 @@ describe( 'RouteSearchProvider', ()=>{
 	it( 'ranks title starts-with ahead of contains, ignores scoped queries', async ()=>{
 		const { provider, stored } = create();
 		stored.set( 'gateways', [ new RouteItem({title: 'Plant gateway', path: 'plant'}) ] );
-		const results = await provider.search( 'gate', undefined, 10 );
+		const results = await provider.search( 'Gate', undefined, 10 );//as typed:  the rank is case-blind
 		expect( results.map(r=>r.title) ).toEqual( ['Gateways', 'Plant gateway'] );
 		expect( await provider.search('gate', 'user', 10) ).toEqual( [] );
 		expect( await provider.search('', undefined, 10) ).toEqual( [] );

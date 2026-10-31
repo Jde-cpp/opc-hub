@@ -118,4 +118,90 @@ describe( 'NodeSearchProvider', ()=>{
 		expect( await setup( '/', [gw] ).search( '', 'node', 5 ) ).toEqual( [] );
 		expect( gw.queryArray ).not.toHaveBeenCalled();
 	});
+
+	//the search service hands the text over as typed (a node id's string identifier keeps its case), so the rank is case-blind here
+	it( 'ranks a starts-with hit first whatever the case typed', async ()=>{
+		const results = await setup( '/access/users', [gateway( 'gw', [lamp] )] ).search( 'LAMP', undefined, 5 );
+		expect( results[0].rank ).toBe( 0 );
+	});
+});
+
+//clients spec, Gaps #6:  a node id typed into the search, `ns=2;i=1001`, opens its page by the path the gateway walks up
+//from the node to the Objects folder (NodeQLAwait's id form, what the node-scoped resources link with).
+describe( 'NodeSearchProvider by node id', ()=>{
+	//the provider on a connection's page, over a gateway that answers the id form with `node` - or throws it
+	const create = ( node:{name?:string, nodeClass?:number, path:string|null}|Error, url='/gateways/gw/cn1/4~Examples' )=>{
+		const gateway = { slug: 'gw', queryArray: vi.fn( async ()=>[lamp] ), querySingle: vi.fn( async ( _ql:string, _vars:any )=>{ if( node instanceof Error ) throw node; return node; } ) };
+		TestBed.configureTestingModule({ providers: [
+			{ provide: Router, useValue: routerStub( url ) },
+			{ provide: GATEWAY_SERVICE, useValue: { gateway: async ()=>gateway, gateways: async ()=>[gateway] } },
+			{ provide: OPC_STORE, useValue: { cnnctnName: ()=>'Line 1' } },
+		]});
+		return { provider: TestBed.inject( NodeSearchProvider ), gateway };
+	};
+	beforeEach( ()=>silence() );//a failed lookup warns
+	afterEach( ()=>vi.restoreAllMocks() );
+
+	it( 'opens the page the gateway walks up to, and never asks the name search', async ()=>{
+		const { provider, gateway } = create( {name: 'Lamp 1', nodeClass: 1, path: '4~Examples/4~Lamp 1'} );
+		const results = await provider.search( 'ns=4;i=6020', undefined, 5 );
+		expect( gateway.querySingle.mock.calls[0][0] ).toContain( 'id:$id' );
+		expect( gateway.querySingle.mock.calls[0][1] ).toEqual( {opc: 'cn1', id: {ns: 4, i: 6020}} );
+		expect( gateway.queryArray ).not.toHaveBeenCalled();
+		expect( results ).toHaveLength( 1 );
+		expect( results[0] ).toMatchObject( { title: 'Lamp 1', route: ['/gateways', 'gw', 'cn1', '4~Examples', '4~Lamp 1'], summary: 'Line 1/Examples/Lamp 1', icon: 'folder', rank: 0 } );
+		expect( results[0].disabled ).toBeUndefined();
+	});
+
+	it( 'opens a variable\'s parent', async ()=>{
+		const [hit] = await create( {name: 'motorRpm', nodeClass: 2, path: 'pump1/motorRpm'} ).provider.search( 'ns=2;i=1001', undefined, 5 );
+		expect( hit ).toMatchObject( { title: 'motorRpm', route: ['/gateways', 'gw', 'cn1', 'pump1'], summary: 'Line 1/pump1/motorRpm', icon: 'label' } );
+	});
+
+	it( 'opens the connection itself for the Objects folder, whose path is empty', async ()=>{
+		const [objects] = await create( {name: 'Objects', nodeClass: 1, path: ''} ).provider.search( 'i=85', undefined, 5 );
+		expect( objects ).toMatchObject( { title: 'Objects', route: ['/gateways', 'gw', 'cn1'], summary: 'Line 1' } );
+	});
+
+	it( 'keeps a string identifier\'s case, and the prefix form', async ()=>{
+		const { provider, gateway } = create( {name: 'Tank1', nodeClass: 1, path: 'Tank1'} );
+		await provider.search( 'ns=2;s=Tank1', 'node', 5 );
+		expect( gateway.querySingle.mock.calls[0][1] ).toEqual( {opc: 'cn1', id: {ns: 2, s: 'Tank1'}} );
+	});
+
+	it( 'says so, as a notice, for a node the gateway cannot place', async ()=>{
+		const [notice] = await create( {path: null} ).provider.search( 'i=58', undefined, 5 );
+		expect( notice ).toMatchObject( { title: 'No page for i=58', disabled: true, route: [] } );
+		expect( notice.summary ).toContain( 'Line 1' );
+	});
+
+	it( 'says the search is unavailable when the lookup fails', async ()=>{
+		const [notice] = await create( new Error('Query failed. (80340000)BadNodeIdUnknown') ).provider.search( 'ns=4;i=6020', undefined, 5 );
+		expect( notice ).toMatchObject( { title: 'Search is unavailable for Line 1', disabled: true } );
+		expect( notice.summary ).toContain( 'BadNodeIdUnknown' );
+	});
+
+	it( 'asks for a connection\'s page outside one, asking no gateway', async ()=>{
+		const { provider, gateway } = create( {path: 'x'}, '/access/users' );
+		const [notice] = await provider.search( 'ns=4;i=6020', undefined, 5 );
+		expect( notice ).toMatchObject( { title: 'Open a connection to look up ns=4;i=6020', disabled: true } );
+		expect( gateway.querySingle ).not.toHaveBeenCalled();
+		expect( gateway.queryArray ).not.toHaveBeenCalled();
+	});
+
+	it( 'leaves a name that is not an id to the name search', async ()=>{
+		const { provider, gateway } = create( {path: 'x'} );
+		await provider.search( 'lamp', undefined, 5 );
+		expect( gateway.querySingle ).not.toHaveBeenCalled();
+		expect( gateway.queryArray ).toHaveBeenCalledTimes( 1 );
+	});
+
+	//reviews-issue/412-clients-web-fixes.md #7:  `i=abc` went as {i:NaN}, which the gateway failed, and `i=` as i=0
+	it( 'leaves an id with no number after `i=` to the name search', async ()=>{
+		const { provider, gateway } = create( {path: 'x'} );
+		await provider.search( 'i=abc', undefined, 5 );
+		await provider.search( 'i=', undefined, 5 );
+		expect( gateway.querySingle ).not.toHaveBeenCalled();
+		expect( gateway.queryArray ).toHaveBeenCalledTimes( 2 );
+	});
 });

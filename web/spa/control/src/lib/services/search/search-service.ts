@@ -10,13 +10,14 @@ export class SearchService{
 
 	get prefixes():string[]{ return this.#providers.flatMap( p=>p.prefixes ?? [] ); }
 
-	//`user:al` -> {scope:'user', text:'al'} when some provider lists the prefix;  otherwise the colon is literal text.
+	//`user:al` -> {scope:'user', text:'al'} when some provider lists the prefix;  otherwise the colon is literal text.  The text
+	//keeps its case:  a match is case-blind (searchRank) but a node id's string identifier is not.
 	parse( raw:string ):{ scope?:string; text:string }{
 		const trimmed = raw.trim();
 		const m = /^([a-z]+):(.*)$/i.exec( trimmed );
 		if( m && this.prefixes.includes(m[1].toLowerCase()) )
-			return { scope: m[1].toLowerCase(), text: m[2].trim().toLowerCase() };
-		return { text: trimmed.toLowerCase() };
+			return { scope: m[1].toLowerCase(), text: m[2].trim() };
+		return { text: trimmed };
 	}
 
 	search( raw:string, limit=20 ):Observable<SearchResult[]>{

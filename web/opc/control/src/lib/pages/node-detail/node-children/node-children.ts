@@ -16,14 +16,11 @@ import { Subscription } from 'rxjs';
 import { ComponentPageTitle } from 'jde-spa';
 import { NodePageData } from '../../../services/resolvers/node-resolver';
 import { OpcStore } from '../../../services/opc-store';
-import { Reading, Value, valueString } from '../../../model/value';
+import { numberValue, Reading, Value, valueString } from '../../../model/value';
 import { OpcError } from '../../../model/opc-error';
 import { scHex, statusIcon } from '../../../model/status-code';
 import { ENodeClass, Variable, UaNode }  from '../../../model/node';
 import { NodeView } from '../../../model/node-view';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatDatepickerInputEvent, MatDatepickerModule } from '@angular/material/datepicker';
-import { MatInputModule } from '@angular/material/input';
 import { Server } from '../../../model/server';
 import { NodeId } from '../../../model/node-id';
 
@@ -31,7 +28,7 @@ import { NodeId } from '../../../model/node-id';
 	selector: 'node-children',
 	templateUrl: './node-children.html',
 	styleUrls: ['./node-children.scss'],
-	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatDatepickerModule,MatFormFieldModule,MatIconModule,MatInputModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
+	imports: [RouterModule,MatCheckboxModule,MatChipsModule,MatIconModule,MatSortModule,MatTableModule,MatTooltipModule,MatSelectModule,QLListSettings,ViewToolbar]
 })
 export class NodeChildren implements OnInit, OnDestroy {
 	#route = inject( ActivatedRoute );
@@ -100,11 +97,10 @@ export class NodeChildren implements OnInit, OnDestroy {
 		this.isRefreshing.set( true );
 		try{
 			const references = await this._iot.browseObjectsFolder( this.cnnctnSlug, this.node(), true );
-			//REST answers a Bad reading with the code alone, so a refresh in the middle of a fault would blank the value the row is
-			//holding:  the new row takes it over, as a push would have left it.
 			for( const fresh of <Variable[]>references.filter(r=>r.isVariable) ){
-				if( fresh.stale && fresh.value===undefined )
-					fresh.value = this.variables.find( v=>v.key==fresh.key )?.value;
+				const previous = this.variables.find( v=>v.key==fresh.key );
+				if( previous )
+					fresh.takeOver( previous );
 			}
 			this.setNodes( references.filter( r=>r.displayed ), false );
 			this.refreshed.emit( this.pageData.nodes );
@@ -145,31 +141,17 @@ export class NodeChildren implements OnInit, OnDestroy {
 		return suggestions;
 	}
 
-	toDate( value:Timestamp|undefined ):Date|null{
-		const date = value ? ProtoUtils.toDate( value ) : null;
-		return date ? DateUtils.asUtc( date ) : null;
-	}
-	//[value] on a MatDatepickerInput is dirty-checked by reference, and its setter reformats the input element - so binding a
-	//freshly-built Date ran that setter on EVERY change-detection pass and rewrote the box from the model.  Any pass during an
-	//edit (the click that closes the calendar, the keystrokes of a typed date) therefore wiped what was just entered and put
-	//the pre-write value back.  Hand out the same Date while the timestamp is unchanged so the binding goes quiet;  #repaint
-	//drops the entry where the box does have to be re-formatted from the model.
-	dateValue( n:Variable ):Date|null{
-		const date = this.toDate( <Timestamp|undefined>n.value );
-		const cached = this.#dates.get( n );
-		if( this.#dates.has(n) && (cached?.getTime() ?? null)==(date?.getTime() ?? null) )
-			return cached!;
-		this.#dates.set( n, date );
-		return date;
+	//a DateTime value as the datetime-local editor holds it - local time to the millisecond, blank for none.  A string, so the
+	//[value] binding re-applies only when the timestamp changes, and never over an edit in progress.
+	dateValue( n:Variable ):string{
+		const date = n.value ? ProtoUtils.toDate( <Timestamp>n.value ) : null;
+		return date ? DateUtils.toLocalInput( date ) : "";
 	}
 	//the value cells bind to plain fields on the nodes, not signals, so an async write (or a subscription push) changes nothing
 	//Angular is watching:  zoneless runs no pass of its own, and the cell kept the old value until an unrelated event forced one.
-	#repaint( n?:Variable ){
-		if( n )
-			this.#dates.delete( n );//a new reference, so the datepicker re-formats the box:  a failed write leaves the model as it was, but not the text in the box
+	#repaint(){
 		this.#cdRef.markForCheck();
 	}
-	#dates = new WeakMap<Variable,Date|null>();
 	//every reading a row takes - a push, a write's echo, a re-read - so the quality travels with the value.  Only a CHANGE of
 	//code asks for its name:  a fault holds its code on every tick it lasts, and the socket has no REST call behind it to bring one.
 	#setReading( row:Variable, r:Reading ){
@@ -181,7 +163,8 @@ export class NodeChildren implements OnInit, OnDestroy {
 
 	toObject( x:ENodeClass ):string{ return ENodeClass[x]; }
 	toString( value:Value|undefined ){ return valueString(value); }//Variable.value is optional - a node the read could not answer for has none
-	dataType( n:UaNode ):string{ return NodeView.cellValue( n, "dataType" )?.toString() ?? ""; }
+	dataType( n:UaNode ):string{ return this.cell( n, "dataType" ); }
+	cell( n:UaNode, column:string ):string{ return NodeView.cellValue( n, column )?.toString() ?? ""; }//a column's text, as the view sorts and filters it
 	//the Access cell is a chip per flag, so it takes the list the cell text is joined from rather than the text
 	access( n:UaNode ):string[]{ return NodeView.accessList( n.isVariable ? n as Variable : undefined ); }
 	checkboxLabel(row?: UaNode): string {
@@ -267,7 +250,9 @@ export class NodeChildren implements OnInit, OnDestroy {
 	}
 	changeDouble( n:Variable, e:Event ){
 		const box = <HTMLInputElement>e.target;
-		return this.#write( n, +box.value, ()=>box.value = n.value?.toString() ?? "" );
+		const show = ()=>box.value = n.value?.toString() ?? "";
+		const value = numberValue( box.value, n.dataType );//no value - a cleared box, text that is no number - and the box shows the row's again
+		return value===undefined ? show() : this.#write( n, value, show );
 	}
 	changeString( n:Variable, e:Event ){
 		const box = <HTMLInputElement>e.target;
@@ -276,10 +261,18 @@ export class NodeChildren implements OnInit, OnDestroy {
 	changeEnum( n:Variable, e:MatSelectChange<number> ){
 		return this.#write( n, e.value, ()=>e.source.value = <number>n.value );
 	}
-	changeDate( n:Variable, e:MatDatepickerInputEvent<Date, any> ){
-		if( !e.value )//unparseable text, or a cleared box:  beginningOfDay(null) is TODAY, and the old value would have been overwritten with it
-			return this.#repaint( n );
-		return this.#write( n, <Timestamp>ProtoUtils.fromDate(DateUtils.beginningOfDay(e.value)) );//#repaint(n) re-formats the box
+	//on leaving the box (blur, or Enter), not its change event:  that fires on each part of the date edited once the whole is
+	//valid, and typing a year would write 0002, 0020 and 0202 on the way to 2026.
+	async changeDate( n:Variable, e:Event ){
+		const box = <HTMLInputElement>e.target;
+		if( box.value==this.dateValue(n) )
+			return;
+		const show = ()=>{ box.value = this.dateValue( n ); };
+		const date = DateUtils.fromLocalInput( box.value, ProtoUtils.toDate( <Timestamp>n.value ) ?? undefined );//from the row's time, so an edit in the hour DST repeats stays in its half
+		if( !date )//a cleared box:  the row's value stays, and the box shows it again
+			show();
+		else
+			await this.#write( n, <Timestamp>ProtoUtils.fromDate(date), show );
 	}
 	//The editor ends showing the row's reading - the echo, or after a failure a re-read of the value - rather than what was
 	//typed:  a binding is re-applied only when its value changes, so a refused write, or an echo of the old value, kept the text.
@@ -292,7 +285,7 @@ export class NodeChildren implements OnInit, OnDestroy {
 			await this._iot.read( this.cnnctnSlug, row.nodeId ).then( r=>this.#setReading(row, r), x=>console.warn(`Could not re-read ${row.name}.`, x) );
 		}
 		show?.();
-		this.#repaint( row );
+		this.#repaint();
 	}
 
 	routerLink(n:UaNode):string[]{

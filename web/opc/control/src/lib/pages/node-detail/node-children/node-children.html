@@ -54,30 +54,28 @@
 							<span class="no-access" title="You have no right to read this node - ask an administrator for a role that can.">no read access</span>
 						}
 						@else if( r.dataType==ETypes.Boolean && !r.isArray ){
-							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale"></mat-checkbox>
+							<mat-checkbox [checked]="r.value" (change)="toggleValue(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name"></mat-checkbox>
 						}
 						@else if( r.isInteger && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
+							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
 						}
 						@else if( r.isUnsigned && !r.isArray ){
-							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
+							<input type=number [value]="r.value?.toString()" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
 						}
 						@else if( r.isFloating && !r.isArray ){
-							<input type=number [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeDouble(r,$event);">
+							<input type=number [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeDouble(r,$event);">
 						}
 						@else if( [ETypes.String, ETypes.LocalizedText].includes(r.dataType) && !r.isArray ){
-							<input type="text" [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" (change)="changeString(r,$event);">
+							<input type="text" [value]=r.value [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (change)="changeString(r,$event);">
 						}
 						@else if( r.dataType==ETypes.BaseDataType && !r.isArray ){
 							<span [class.stale]="r.stale">{{toString(r.value)}}</span>
 						}
-						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){
-								<input matInput [matDatepicker]="picker" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" (dateChange)="changeDate(r, $event);">
-								<mat-datepicker-toggle matSuffix [for]="picker"></mat-datepicker-toggle>
-								<mat-datepicker #picker></mat-datepicker>
+						@else if( [ETypes.DateTime, ETypes.UtcTime].includes(r.dataType) && !r.isArray ){<!--date and time, local, to the millisecond-->
+							<input #box type="datetime-local" step="0.001" [value]="dateValue(r)" [disabled]="readOnly(r)" [class.stale]="r.stale" [attr.aria-label]="r.name" (blur)="changeDate(r,$event);" (keydown.enter)="box.blur();">
 						}
 						@else if( r.customDataType && !r.isArray ){
-							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale">
+							<mat-select [value]=r.value (selectionChange)="changeEnum(r, $event);" [disabled]="readOnly(r)" [class.stale]="r.stale" [aria-label]="r.name">
 								@for( option of r.customDataType.enumValues; track option.id ){
 									<mat-option [value]=option.id>{{option.name}}</mat-option>
 								}
@@ -107,6 +105,14 @@
 						}
 					</mat-cell>
 				</ng-container>
+				<ng-container matColumnDef="sourceTime"><!--the reading's timestamps, as a push sent them:  blank for a reading only REST brought-->
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Source Time </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "sourceTime")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="serverTime">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Server Time </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "serverTime")}}</mat-cell>
+				</ng-container>
 				<ng-container matColumnDef="access">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Access </mat-header-cell>
 					<mat-cell mat-cell *matCellDef="let r">
@@ -116,6 +122,14 @@
 							}
 						</mat-chip-set>
 					</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="refType"><!--what the browse answered the node by, and its type - the ids until the References tab brings the names-->
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Reference Type </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "refType")}}</mat-cell>
+				</ng-container>
+				<ng-container matColumnDef="typeDef">
+					<mat-header-cell mat-sort-header *matHeaderCellDef> Type Definition </mat-header-cell>
+					<mat-cell mat-cell *matCellDef="let r">{{cell(r, "typeDef")}}</mat-cell>
 				</ng-container>
 				<ng-container matColumnDef="description">
 					<mat-header-cell mat-sort-header *matHeaderCellDef> Description </mat-header-cell>

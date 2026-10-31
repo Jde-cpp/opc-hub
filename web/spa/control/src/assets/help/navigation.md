@@ -21,7 +21,7 @@ The search covers the site's pages and the records the site knows about. A prefi
 | `resource:` | resources |
 | `node:` | nodes on gateway connections |
 
-Nodes on a gateway connection appear once that connection has been browsed in this session. On a connection's own pages, only that connection is searched.
+Nodes on a gateway connection appear once that connection has been browsed in this session. On a connection's own pages, only that connection is searched, and a node id typed there - `ns=2;i=1001`, or `ns=2;s=Tank1` with the identifier's own case - opens the page that shows the node: an object's own, or for a variable or method the page of the object it sits on.
 
 ## Favorites
 

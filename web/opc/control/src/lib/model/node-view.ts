@@ -1,4 +1,4 @@
-import { Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
+import { DateUtils, Field, FieldKind, Operator, TableSchema, View, ViewSet, ViewType } from 'jde-framework';
 import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { ENodeClass, UaNode, Variable } from './node';
 import { NodeId } from './node-id';
@@ -10,11 +10,11 @@ import { valueString } from './value';
 //hand-built schema and applies its filters and sort in the browser rather than through query().
 export class NodeView extends View{
 	static readonly collectionName = "opcNodes";//profile keys `opcNodes/views` and `opcNodes/viewIndex`:  one set of views for every node on every connection, the way a ql-list collection has one
-	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", status: "Status", access: "Access", description: "Description" };
+	static columns:Record<string,string> = { id: "ID", name: "Name", class: "Class", dataType: "Data Type", snapshot: "Snapshot", status: "Status", sourceTime: "Source Time", serverTime: "Server Time", access: "Access", refType: "Reference Type", typeDef: "Type Definition", description: "Description" };
 	//every column a non-null String:  ids and values are of mixed types and are filtered on their cell text, and NON_NULL keeps the <null>/<not null> suggestions out of the filter tab
 	static schema:TableSchema = new TableSchema( { name: "OpcNode", fields: Object.keys( NodeView.columns ).map( name=>new Field({name, ofType: {kind: FieldKind.SCALAR, name: "String"}}) ) } );
 	static default():NodeView{
-		const view = NodeView.fromConfig( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "access", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
+		const view = NodeView.fromConfig( {configColumns: ["id", "name", {name: "class", hidden: true}, {name: "dataType", hidden: true}, "snapshot", {name: "status", hidden: true}, {name: "sourceTime", hidden: true}, {name: "serverTime", hidden: true}, {name: "access", hidden: true}, {name: "refType", hidden: true}, {name: "typeDef", hidden: true}, "description"], sort: [{active: "name", direction: "asc"}]}, NodeView.schema );
 		view.showSelector = true;//the subscription checkboxes
 		view.type = ViewType.System;
 		return view;
@@ -78,11 +78,17 @@ export class NodeView extends View{
 			case "dataType":    return NodeView.dataType( variable );
 			case "snapshot":    return typeof variable?.value=="number" ? variable.value : variable?.value===undefined ? undefined : valueString( variable?.value );
 			case "status":      return NodeView.status( variable );
+			case "sourceTime":  return NodeView.time( variable?.sourceTime );
+			case "serverTime":  return NodeView.time( variable?.serverTime );
 			case "access":      return NodeView.access( variable );
+			case "refType":     return node.refType?.uaString();//the ids:  the names come with the References tab (clients plan, Phase 4)
+			case "typeDef":     return node.typeDef?.uaString();
 			case "description": return node.description?.text;
 		}
 		return undefined;
 	}
+	//local time to the millisecond, the History tab's format:  fixed width, so the text sorts and compares in time order
+	static time( d:Date|undefined ):string|undefined{ return d ? DateUtils.toLocalInput( d ).replace( "T", " " ) : undefined; }
 	static dataType( variable:Variable|undefined ):string|undefined{
 		if( !variable )
 			return undefined;
