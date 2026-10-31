@@ -24,7 +24,8 @@ namespace Jde::QL{
 		let o = isEnumKey(*Column) ? v.if_object() : nullptr;
 		THROW_IF( o && (o->size()!=1 || !o->contains("id")), "'{}' takes an existing {} row's key - {{ id:N }} - not a row to create.", MemberName(), Table().Name );
 		THROW_IF( !o && v.is_object(), "'{}' takes a value, not an object.", MemberName() );
-		return DB::Value{ Column->Type, o ? o->at("id") : v };
+		DB::Value y{ Column->Type, o ? o->at("id") : v };
+		return Column->IsNullable && y.is_string() && y.get_string().empty() ? DB::Value{} : y;
 	}
 	α JsonColumn::Table()Ι->const DB::Table&{ return Column->IsFlags() || Column->IsEnum() ? *Column->PKTable : *Column->Table; }
 }

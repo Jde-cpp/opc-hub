@@ -136,14 +136,14 @@ namespace Jde::Opc::Gateway{
 		using enum EMutationQL;
 		return m.TableName()=="server_connections" && (m.Type==Create || m.Type==Update || m.Type==Delete || m.Type==Restore || m.Type==Purge);
 	}
-	//Not inside the schema's sync:  the seed's row (release-opcServer.mutation) is applied there, in the hub too, and the access
-	//seed ships that row's provider, so the stock insert is enough.  A provider step there would make the hub's start hang on the
-	//access seed running first (qlhook-removal #4).  Nor before the gateway's login:  the provider row lives on the AppServer.
-	//The hub's client is in-process and always connected.
+	//No provider step inside the schema's sync:  the seed's row (release-opcServer.mutation) is applied there, in the hub too, and
+	//the access seed ships that row's provider.  A provider step there would make the hub's start hang on the access seed running
+	//first (qlhook-removal #4).  Nor before the gateway's login:  the provider row lives on the AppServer.  The hub's client is
+	//in-process and always connected.  The rest runs on every write, so no route stores a row the rules refuse (#520 review #4).
 	static std::atomic<bool> _synced;
-	α ServerCnnctnMAwait::SetSynced()ι->void{ _synced = true; }
+	α ServerCnnctnMAwait::SetSynced( bool synced )ι->void{ _synced = synced; }
 	α ServerCnnctnMAwait::Test( QL::MutationQL& m, QL::Creds executer, SL sl )->up<TAwait<jvalue>>{
-		return IsApplicable( m ) && _synced && AppClient()->Connected() ? mu<ServerCnnctnMAwait>( move(m), move(executer), sl ) : nullptr;
+		return IsApplicable( m ) ? mu<ServerCnnctnMAwait>( move(m), move(executer), sl ) : nullptr;
 	}
 	//One coroutine:  the provider steps and the row select are the select's task type and go through Any(), the stock op is this
 	//frame's own.  A create's or a purge's stock op runs between its two provider steps:  a db failure is parked, the failure step
@@ -155,6 +155,7 @@ namespace Jde::Opc::Gateway{
 			using enum EProviderStep;
 			let type = _query.Type;
 			_query.DBTable->Authorize( QL::StockRights(type), UserPK(), _sl );//asked first (ql-review3 #25):  the provider step runs before the statement.
+			let provider = _synced && AppClient()->Connected();
 			optional<std::pair<EProviderStep,EProviderStep>> steps;//before the stock op, and on its failure.
 			if( type==Create ){
 				QL::CheckCreate( _query, UserPK(), _sl );//the engine's refusals before the provider step, which would reuse a provider and then purge it.
@@ -162,14 +163,18 @@ namespace Jde::Opc::Gateway{
 					e->Throw();
 				if( auto e = settingsError(_query, ServerCnnctn{string{}}, _sl); e )//over a blank row:  an insert carries every column it sets.
 					e->Throw();
-				steps = { InsertBefore, InsertFailure };
+				if( provider )
+					steps = { InsertBefore, InsertFailure };
 			}
-			else if( type==Purge )
-				steps = { PurgeBefore, PurgeFailure };
+			else if( type==Purge ){
+				if( provider )
+					steps = { PurgeBefore, PurgeFailure };
+			}
 			else if( type==Update && namesAny(_query, _settingsColumns) ){
 				//The save rules on an update (spec *Connection settings*):  an update carries only its changed columns, and certificate_uri is
 				//updateable where slug is not, so a Sign row losing its uri, or a mode pinned on a row that has none, shows only with the saved
-				//row under the edit.  A delete or restore changes nothing the rules read.
+				//row under the edit.  A delete or restore changes nothing the rules read.  Two updates can still cross, so the cross-column
+				//half is a trigger too (#520, config/sql/mysql/gateway_server_connection_insert.sql).
 				ServerCnnctnAwait select{ _query.GetKey(_sl), true };
 				auto rows = co_await Any( select );
 				THROW_IFX( rows.empty(), Exception(_sl, {EHttpStatus::NotFound}, "The connection to update was not found:  {}.", _query.ToString()) );

@@ -125,6 +125,25 @@ namespace Jde::DB::Sqlite::Tests{
 		EXPECT_EQ( (uint)*error, (uint)EDbError::None );
 	}
 
+	//#520: a trigger's raise(abort) is the app's own rule refusing the row, as a proc's `signal` is on MySQL - EDbError::App, a
+	//BadRequest that carries the message - not the bare constraint class, a 409 that withholds it.
+	TEST_P( SchemaTests, TriggerRaiseIsAppError ){
+		_ds->ExecuteSync( DB::Sql{"drop table if exists zz_raise"} );
+		_ds->ExecuteSync( DB::Sql{"create table zz_raise( id integer primary key, x int )"} );
+		_ds->ExecuteSync( DB::Sql{"create trigger zz_raise_update before update of x on zz_raise for each row begin select raise( abort, 'x stays' ) where new.x>1; end"} );
+		_ds->ExecuteSync( DB::Sql{"insert into zz_raise( x ) values( 1 )"} );
+		optional<EDbError> error; uint32 code{}; string what, detail;
+		try{ _ds->ExecuteSync( DB::Sql{"update zz_raise set x=2"} ); }
+		catch( const DBException& e ){ error = e.Error; code = e.Code(); what = e.what(); detail = e.ClientDetail(); }
+		ASSERT_TRUE( error.has_value() );
+		EXPECT_EQ( (uint)*error, (uint)EDbError::App );
+		EXPECT_EQ( code, 1811u );//SQLITE_CONSTRAINT_TRIGGER
+		EXPECT_NE( what.find("x stays"), string::npos ) << what;
+		EXPECT_EQ( detail, "x stays" );//the client's 400 is the trigger's text alone, as MySQL's (#520 review #5).
+		EXPECT_EQ( _ds->ScalerSync<uint>(DB::Sql{"select x from zz_raise"}), 1u );
+		_ds->ExecuteSync( DB::Sql{"drop table zz_raise"} );
+	}
+
 	//#41: prepare_v2 compiles one statement and reports where it stopped; the tail was discarded, so everything after the
 	//first statement was dropped without a word - including text that is not SQL at all.  MySQL runs the whole string
 	//(multi_queries=true), so the two dialects disagreed silently.

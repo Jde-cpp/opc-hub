@@ -1,8 +1,10 @@
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/io/json.h>
+#include <jde/db/DBException.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/Table.h>
 #include <jde/ql/ql.h>
+#include <jde/tests/HttpTest.h>
 #include "../src/opcInternal.h"
 #include "../src/GatewayAppClient.h"
 #include "../src/auth/UM.h"
@@ -26,6 +28,11 @@ namespace Jde::Opc::Gateway::Tests{
 	}
 	Ω GetOpcServers( optional<DB::Key> key=nullopt, bool includeDeleted=false )->vector<ServerCnnctn>{
 		return BlockAwait<ServerCnnctnAwait,vector<ServerCnnctn>>( ServerCnnctnAwait{key, includeDeleted} );
+	}
+	Ω RawUpdate( ServerCnnctnPK id, sv set )->optional<string>{//the engine's statement alone, past the hook's check
+		try{ DS()->ExecuteSync( {Ƒ("update {} set {} where server_connection_id={}", GetViewPtr("server_connections")->DBName, set, id)} ); }
+		catch( const DB::DBException& e ){ EXPECT_EQ( e.Error, DB::EDbError::App ) << e.what(); return e.what(); }
+		return nullopt;
 	}
 
 	TEST_F( ServerCnnctnDBTests, InsertFailed ){
@@ -307,5 +314,140 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
 		EXPECT_TRUE( SelectServerCnnctn(id)->SecurityMode.empty() );
 		ASSERT_FALSE( update("description:\"no settings named\"") );//a rule-free update asks no select
+	}
+
+	//#520's triggers (config/sql/<dialect>):  each raw UPDATE here is the race's second statement, what the engine writes after a check
+	//that saw the row as it was.  Refused as the app's own error, the row as it was;  a row the rule accepts goes through.
+	TEST_F( ServerCnnctnDBTests, SettingsRaceRefused ){
+		const string slug{ "settings-race" };
+		PurgeServerCnnctn( slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Settings race\", url:\"opc.tcp://127.0.0.1:4840\", certificateUri:\"urn:x\", isDefault:false, securityMode:\"Sign\" ){{id}}", slug), {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let raw = [id]( sv set ){ return RawUpdate( id, set ); };
+		let hook = [&]( sv args ){ QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, {} )", id, args), {}, {UserPK::System} ); };
+		let refused = [&]( sv set, sv expected ){
+			let before = GetOpcServers( DB::Key{id} ).front();
+			let error = raw( set );
+			ASSERT_TRUE( error ) << set;
+			EXPECT_NE( string::npos, error->find(expected) ) << set << " -> " << *error;
+			let after = GetOpcServers( DB::Key{id} ).front();
+			EXPECT_EQ( after.CertificateUri, before.CertificateUri ) << set;
+			EXPECT_EQ( after.SecurityMode, before.SecurityMode ) << set;
+			EXPECT_EQ( after.SecurityPolicy, before.SecurityPolicy ) << set;
+		};
+		//a uri and Sign:  the uri cannot leave, and a policy of None contradicts Sign.
+		refused( "certificate_uri=null", "certificate URI" );
+		refused( "security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'", "secured security mode" );
+		//a uri and a secured policy, the mode unpinned:  the uri cannot leave, and None contradicts the policy.
+		hook( "securityMode:null, securityPolicy:\"http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256\"" );
+		refused( "certificate_uri=null", "certificate URI" );
+		refused( "security_mode='None'", "security mode None" );
+		//a uri alone:  the floor is Sign & Encrypt, which a policy of None contradicts.
+		hook( "securityPolicy:null" );
+		refused( "security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'", "secured security mode" );
+		//a uri and None:  each of the three edits leaves a row the rule accepts.
+		hook( "securityMode:\"None\"" );
+		EXPECT_FALSE( raw("security_policy='http://opcfoundation.org/UA/SecurityPolicy#None'") );
+		EXPECT_FALSE( raw("certificate_uri=null") );
+		EXPECT_FALSE( raw("security_mode=null") );
+		let bare = GetOpcServers( DB::Key{id} ).front();
+		EXPECT_TRUE( bare.CertificateUri.empty() && bare.SecurityMode.empty() );
+		EXPECT_EQ( bare.SecurityPolicy, ServerCnnctn::PolicyNoneUri );
+		refused( "security_mode='Sign'", "certificate URI" );//pinned on a row with no uri
+	}
+
+	//#520 review #2:  a row stored before the rule - a raw insert, which no trigger checks - takes a statement that leaves its three
+	//settings columns, as the insert proc's is_default reset does.  A change to one of them is still checked.
+	TEST_F( ServerCnnctnDBTests, SettingsUnchangedNotChecked ){
+		const string slug{ "settings-stored" };
+		PurgeServerCnnctn( slug );
+		let& table = GetViewPtr( "server_connections" );
+		DS()->ExecuteSync( {Ƒ("insert into {}( name, slug, url, security_mode ) values( 'Settings stored', '{}', 'opc.tcp://127.0.0.1:4840', 'Sign' )", table->DBName, slug)} );
+		let id = (ServerCnnctnPK)DS()->ScalerSync<uint>( {Ƒ("select server_connection_id from {} where slug='{}'", table->DBName, slug)} );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		EXPECT_FALSE( RawUpdate(id, "is_default=0") );
+		EXPECT_FALSE( RawUpdate(id, "description='stored before the rule'") );
+		let error = RawUpdate( id, "security_mode='SignAndEncrypt'" );
+		ASSERT_TRUE( error );
+		EXPECT_NE( string::npos, error->find("certificate URI") ) << *error;
+		EXPECT_FALSE( RawUpdate(id, "certificate_uri='urn:x'") );
+	}
+
+	//#520 review #4:  before the schema's sync is done, or while the AppServer is out of reach, a write skips the provider row's step
+	//alone:  the slug's and the settings' rules still refuse, at a create and at an update.
+	TEST_F( ServerCnnctnDBTests, RulesWithoutProviderStep ){
+		const string slug{ "rules-unsynced" };
+		PurgeServerCnnctn( slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Rules unsynced\", url:\"opc.tcp://127.0.0.1:4840\", certificateUri:\"urn:x\", isDefault:false, securityMode:\"Sign\" ){{id}}", slug), {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		ServerCnnctnMAwait::SetSynced( false );
+		absl::Cleanup synced = []{ ServerCnnctnMAwait::SetSynced(); };
+		let refused = [&]( string mutation, sv expected ){
+			try{ QL().QuerySync<jvalue>( mutation, {}, {UserPK::System} ); }
+			catch( const std::exception& e ){ EXPECT_NE( string::npos, string{e.what()}.find(expected) ) << mutation << " -> " << e.what(); return; }
+			ADD_FAILURE() << "accepted: " << mutation;
+		};
+		let create = [&]( sv newSlug, sv args ){ return Ƒ( "mutation createServerConnection( slug:\"{}\", name:\"Rules unsynced 2\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false{} ){{id}}", newSlug, args ); };
+		refused( create(" rules-unsynced-2", ""), "is not valid" );
+		refused( create("rules-unsynced-2", ", securityMode:\"Sign\""), "certificate URI" );
+		EXPECT_FALSE( SelectServerCnnctn(string{"rules-unsynced-2"}) );
+		refused( Ƒ("mutation updateServerConnection( id:{}, securityMode:\"Encrypt\" )", id), "not one of None, Sign or SignAndEncrypt" );
+		EXPECT_EQ( SelectServerCnnctn(id)->SecurityMode, "Sign" );
+	}
+
+	//#520 review #8:  the race's loser passes the check and is refused by its own statement.  A stand-in trigger refuses an update
+	//the same way, so the refusal travels the mutation's whole path:  ServerCnnctnMAwait rethrows it with its type, and the client
+	//gets a 400 carrying the message, not a bare 500.
+	TEST_F( ServerCnnctnDBTests, StatementRefusalIs400 ){
+		const string slug{ "statement-refused" };
+		PurgeServerCnnctn( slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Statement refused\", url:\"opc.tcp://127.0.0.1:4840\", isDefault:false ){{id}}", slug), {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let table = GetViewPtr( "server_connections" )->DBName;
+		constexpr sv message{ "Refused by the statement." };
+		let quote = DS()->Syntax().QuoteChars().first;//the dialect:  sqlite ", MySQL `, SQL Server [
+		DS()->ExecuteSync( {quote=='"'
+			? Ƒ( "create trigger zz_refuse before update of description on {} for each row when new.description='refuse' begin select raise( abort, '{}' ); end", table, message )
+			: quote=='`'
+				? Ƒ( "create trigger zz_refuse before update on {} for each row begin if NEW.description='refuse' then signal sqlstate '45000' set message_text='{}'; end if; end", table, message )
+				: Ƒ( "create trigger zz_refuse on {} for update as if exists( select 1 from inserted where description='refuse' ) begin rollback transaction; throw 50000, '{}', 1; end", table, message )} );
+		absl::Cleanup drop = []{ DS()->ExecuteSync( {"drop trigger zz_refuse"} ); };
+		let mutation = Ƒ( "mutation updateServerConnection( id:{}, description:\"refuse\" )", id );
+		try{
+			QL().QuerySync<jvalue>( mutation, {}, {UserPK::System} );
+			ADD_FAILURE() << "the update went through";
+		}
+		catch( const DB::DBException& e ){
+			EXPECT_EQ( e.Error, DB::EDbError::App ) << e.what();
+		}
+		catch( const std::exception& e ){
+			ADD_FAILURE() << "not a DBException, " << typeid(e).name() << ":  " << e.what();
+		}
+		let body = serialize( jobject{{"query", mutation}} );
+		try{
+			HttpTest::Post( GatewayPort(), "/graphql", body, Ƒ("{:x}", AppClient()->SessionId()) );
+			ADD_FAILURE() << "the update went through";
+		}
+		catch( const Web::Client::ClientHttpResException& e ){
+			EXPECT_EQ( e.Status(), boost::beast::http::status::bad_request ) << e.Res().Body();
+			EXPECT_TRUE( e.Res().Body().contains(message) ) << e.Res().Body();
+			EXPECT_FALSE( e.Res().Body().contains(table) ) << "the statement is the log's:  " << e.Res().Body();
+		}
+	}
+
+	//An empty certificate URI is saved as null - at a create, and at an update, a variable's too - so the triggers read no uri as
+	//`is null` alone (#520 review #3, .claude/rules/db.md).
+	TEST_F( ServerCnnctnDBTests, EmptyCertificateUriSavedNull ){
+		const string slug{ "empty-certificate-uri" };
+		PurgeServerCnnctn( slug );
+		let id = Json::AsNumber<ServerCnnctnPK>( QL().QuerySync<jobject>(Ƒ("mutation createServerConnection( slug:\"{}\", name:\"Empty certificate uri\", url:\"opc.tcp://127.0.0.1:4840\", certificateUri:\"\", isDefault:false ){{id}}", slug), {}, {UserPK::System}), "id" );
+		absl::Cleanup purge = [id]{ PurgeServerCnnctn( id ); };
+		let& table = GetViewPtr( "server_connections" );
+		let isNull = [&]{ return DS()->ScalerSync<uint>( {Ƒ("select count(*) from {} where server_connection_id={} and certificate_uri is null", table->DBName, id)} )==1; };
+		EXPECT_TRUE( isNull() );
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, certificateUri:\"urn:x\" )", id), {}, {UserPK::System} );
+		EXPECT_FALSE( isNull() );
+		QL().QuerySync<jvalue>( Ƒ("mutation updateServerConnection( id:{}, certificateUri:$uri )", id), {{"uri", ""}}, {UserPK::System} );
+		EXPECT_TRUE( isNull() );
 	}
 }

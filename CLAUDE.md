@@ -18,6 +18,10 @@ See `web/CLAUDE.md` — it loads automatically when working under `web/` (the ac
 
 A hidden key (`::`) in a settings file is a disabled option that shows its default: a new option goes in hidden, with its default, and none is ever removed as dead or inert config. The full convention is in `.claude/rules/jsonnet-settings.md`, which loads when you work with a `.jsonnet`/`.libsonnet` file.
 
+## Database
+
+The QL engine saves an empty string as null in a nullable text column, so SQL tests an unset text column with `is null` alone. The convention is in `.claude/rules/db.md`, which loads when you work with a `.sql` file or the db/ql libraries.
+
 ## Other Stuff
 - Don't stage changes (`git add`, `git rm --cached`, `git restore --staged`) unless asked — leave edits in the working tree; the user stages and commits. Need a baseline to diff against? Snapshot the tree without touching the index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`).
 - Don't create branches — work on whatever branch is checked out; the user creates branches and lands changes through their own PR flow. (A branch made with `git switch -c <name> origin/main` tracks `origin/main`, so a plain push from it goes straight to `main`.)

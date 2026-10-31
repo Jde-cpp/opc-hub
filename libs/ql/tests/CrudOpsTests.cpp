@@ -192,4 +192,15 @@ namespace Jde::QL::Tests{
 		Query( "mutation updateItem( id:$id, description:$d )", jobject{{"id",id},{"d","vars"}} );
 		EXPECT_EQ( AsSV(Select(id, "id description"), "description"), "vars" );
 	}
+	//An empty string is saved as null in a nullable text column, by a create and an update, a variable's too;  a NOT NULL one keeps
+	//it (.claude/rules/db.md).
+	TEST_F( CrudOpsTests, EmptyStringSavedAsNull ){
+		let id = Item( "crud-empty", Gadget, R"(, description:"")" );
+		EXPECT_TRUE( Select(id, "id description").at("description").is_null() ) << "create";
+		Query( Ƒ(R"(mutation updateItem( id:{}, description:"d" ))", id) );
+		Query( "mutation updateItem( id:$id, description:$d )", jobject{{"id",id},{"d",""}} );
+		EXPECT_TRUE( Select(id, "id description").at("description").is_null() ) << "update";
+		Query( Ƒ(R"(mutation updateItem( id:{}, name:"" ))", id) );
+		EXPECT_EQ( AsSV(Select(id), "name"), "" );
+	}
 }

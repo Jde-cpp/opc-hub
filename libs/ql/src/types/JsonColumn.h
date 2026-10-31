@@ -10,6 +10,7 @@ namespace Jde::QL{
 		α MemberName()Ι->string;
 		//The value a mutation sends for the column.  An enum fk's member is the enum table's singular (`itemType`), which is also the
 		//nested-key spelling's name, so `itemType:{ id:2 }` lands here and its id is the value (#238).  Any other object is refused.
+		//An empty string is null in a nullable text column (.claude/rules/db.md).
 		α ToValue( const jvalue& v )Ε->DB::Value;
 		sp<DB::Column> Column;
 	};

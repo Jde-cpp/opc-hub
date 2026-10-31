@@ -216,6 +216,38 @@ namespace Jde::DB{
 		return true;
 	}
 
+	//The index past the quote or block comment opened by `open` at `i`;  unclosed, the script's end:  the dialect's error, not a comment.
+	Ω pastClose( sv script, uint i, sv open, sv close, bool backslashEscapes )ι->uint{
+		for( uint j=i+open.size(); j<script.size(); ++j ){
+			if( backslashEscapes && script[j]=='\\' )
+				++j;
+			else if( script.substr(j, close.size())==close )
+				return j+close.size();
+		}
+		return script.size();
+	}
+	α SchemaDdl::StripHashComments( sv script, bool backslashEscapes )ι->string{
+		string y; y.reserve( script.size() );
+		for( uint i=0; i<script.size(); ){
+			let c = script[i];
+			uint next = i+1;
+			if( c=='\'' || c=='"' || c=='`' )
+				next = pastClose( script, i, script.substr(i, 1), script.substr(i, 1), backslashEscapes && c!='`' );
+			else if( script.substr(i, 2)=="/*" )
+				next = pastClose( script, i, "/*", "*/", false );
+			else if( c=='#' || script.substr(i, 2)=="--" ){
+				next = std::min( script.find('\n', i), script.size() );//the newline stays:  it ends the comment, not the line.
+				if( c=='#' ){
+					i = next;
+					continue;
+				}
+			}
+			y.append( script.substr(i, next-i) );
+			i = next;
+		}
+		return y;
+	}
+
 	α SchemaDdl::SyncScripts( const AppSchema& config, const jobject& initConfig )ε->void{
 		auto prefix = Json::FindString( initConfig, "prefix" ).value_or( "" );
 		let stdPrefix = config.Name+"_"; //access_
@@ -232,15 +264,7 @@ namespace Jde::DB{
 			for( let& text : queries ){
 				let query = absl::StrReplaceAll( text, {{"[dbo]", Ƒ("[{}]", config.DBSchema->Name)}, {stdPrefix, prefix}} );
 
-				std::ostringstream os;
-				for( uint i=0; i<query.size(); ++i ){
-					if( query[i]=='#' )
-						for( ; i<query.size() && query[i]!='\n'; ++i );
-					if( i<query.size() )
-						os.put( query[i] );
-				}
-				string sql{ os.str() };
-				config.DS()->ExecuteSync( {move(sql)} );
+				config.DS()->ExecuteSync( {StripHashComments(query, config.DS()->Syntax().BackslashEscapes())} );
 			}
 			INFO( "Finished '{}'", scriptFile.string() );
 		});
