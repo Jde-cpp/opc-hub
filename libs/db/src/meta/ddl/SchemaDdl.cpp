@@ -216,24 +216,34 @@ namespace Jde::DB{
 		return true;
 	}
 
-	α SchemaDdl::StripHashComments( sv script )ι->string{
+	//The index past the quote or block comment opened by `open` at `i`;  unclosed, the script's end:  the dialect's error, not a comment.
+	Ω pastClose( sv script, uint i, sv open, sv close, bool backslashEscapes )ι->uint{
+		for( uint j=i+open.size(); j<script.size(); ++j ){
+			if( backslashEscapes && script[j]=='\\' )
+				++j;
+			else if( script.substr(j, close.size())==close )
+				return j+close.size();
+		}
+		return script.size();
+	}
+	α SchemaDdl::StripHashComments( sv script, bool backslashEscapes )ι->string{
 		string y; y.reserve( script.size() );
-		for( uint i=0; i<script.size(); ++i ){
+		for( uint i=0; i<script.size(); ){
 			let c = script[i];
-			if( c=='\'' ){
-				let close = script.find( '\'', i+1 );
-				let next = close==sv::npos ? script.size() : close+1;//unclosed, the rest is the literal:  the dialect's error, not a comment.
-				y.append( script.substr(i, next-i) );
-				i = next-1;
+			uint next = i+1;
+			if( c=='\'' || c=='"' || c=='`' )
+				next = pastClose( script, i, script.substr(i, 1), script.substr(i, 1), backslashEscapes && c!='`' );
+			else if( script.substr(i, 2)=="/*" )
+				next = pastClose( script, i, "/*", "*/", false );
+			else if( c=='#' || script.substr(i, 2)=="--" ){
+				next = std::min( script.find('\n', i), script.size() );//the newline stays:  it ends the comment, not the line.
+				if( c=='#' ){
+					i = next;
+					continue;
+				}
 			}
-			else if( c=='#' || (c=='-' && script.substr(i, 2)=="--") ){
-				let next = std::min( script.find('\n', i), script.size() );//the newline stays:  it ends the comment, not the line.
-				if( c=='-' )
-					y.append( script.substr(i, next-i) );
-				i = next-1;
-			}
-			else
-				y.push_back( c );
+			y.append( script.substr(i, next-i) );
+			i = next;
 		}
 		return y;
 	}
@@ -254,7 +264,7 @@ namespace Jde::DB{
 			for( let& text : queries ){
 				let query = absl::StrReplaceAll( text, {{"[dbo]", Ƒ("[{}]", config.DBSchema->Name)}, {stdPrefix, prefix}} );
 
-				config.DS()->ExecuteSync( {StripHashComments(query)} );
+				config.DS()->ExecuteSync( {StripHashComments(query, config.DS()->Syntax().BackslashEscapes())} );
 			}
 			INFO( "Finished '{}'", scriptFile.string() );
 		});

@@ -20,8 +20,7 @@ namespace Jde::Opc::Gateway{
 		//Sign & Encrypt, pinned by the mode or by a secured policy, without the certificate URI that puts the gateway's certificate on
 		//the channel;  a policy of None on a channel that is secured, or a secured one on a mode of None;  a session timeout, request
 		//timeout or TTL of 0.  Null for a row that connects.  The cross-column half - a secured mode or policy without the URI, a mode and a
-		//policy that contradict - is a before-update trigger per dialect as well (#520, config/sql/<dialect>), so two updates that each
-		//passed against the saved row cannot together store a row it refuses.
+		//policy that contradict - is a trigger per dialect as well (#520, config/sql/<dialect>).
 		Ω SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>;
 		static constexpr uint32 MaxDurationMs{ 2147483647 };//SQL Server's int, the proc's parameter type:  about 24 days.  MergeSettings refuses more.
 		static constexpr sv ModeNone{ "None" }, ModeSign{ "Sign" }, ModeSignAndEncrypt{ "SignAndEncrypt" };//UA_MessageSecurityMode's names (SecurityModeName), what security_mode holds.

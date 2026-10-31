@@ -14,19 +14,23 @@ drop trigger if exists gateway_server_connection_update;
 GO
 # #520:  the save rule's cross-column half (ServerCnnctn::SettingsError) in the statement that writes the row:  two updates that each
 # passed against the saved row cannot together store one it refuses.  Signalled as the app's own error, a 400 carrying the message.
+# Only a row whose three columns change is checked, so a statement that leaves them - the insert proc's is_default reset - passes a
+# row stored before the rule.
 create trigger gateway_server_connection_update before update on gateway_server_connections for each row
 begin
-	declare no_certificate bool default NEW.certificate_uri is null or NEW.certificate_uri='';
+	declare no_certificate bool default NEW.certificate_uri is null;
 	declare secured_mode bool default ifnull( NEW.security_mode in ('Sign', 'SignAndEncrypt'), false );
-	declare secured_policy bool default ifnull( NEW.security_policy!='' and NEW.security_policy!='http://opcfoundation.org/UA/SecurityPolicy#None', false );
-	if( (secured_mode or secured_policy) and no_certificate ) then
-		signal sqlstate '45000' set message_text = 'Security mode Sign or SignAndEncrypt, or a secured policy, needs a certificate URI.';
-	end if;
-	if( secured_policy and NEW.security_mode='None' ) then
-		signal sqlstate '45000' set message_text = 'A secured security policy contradicts security mode None.';
-	end if;
-	if( NEW.security_policy='http://opcfoundation.org/UA/SecurityPolicy#None' and (secured_mode or (ifnull(NEW.security_mode, '')='' and not no_certificate)) ) then
-		signal sqlstate '45000' set message_text = 'Security policy None contradicts a secured security mode.';
+	declare secured_policy bool default ifnull( NEW.security_policy!='http://opcfoundation.org/UA/SecurityPolicy#None', false );
+	if( not (NEW.certificate_uri<=>OLD.certificate_uri and NEW.security_mode<=>OLD.security_mode and NEW.security_policy<=>OLD.security_policy) ) then
+		if( (secured_mode or secured_policy) and no_certificate ) then
+			signal sqlstate '45000' set message_text = 'Security mode Sign or SignAndEncrypt, or a secured policy, needs a certificate URI.';
+		end if;
+		if( secured_policy and NEW.security_mode='None' ) then
+			signal sqlstate '45000' set message_text = 'A secured security policy contradicts security mode None.';
+		end if;
+		if( NEW.security_policy='http://opcfoundation.org/UA/SecurityPolicy#None' and (secured_mode or (NEW.security_mode is null and not no_certificate)) ) then
+			signal sqlstate '45000' set message_text = 'Security policy None contradicts a secured security mode.';
+		end if;
 	end if;
 	if( NEW.is_default and (select count(*) from gateway_server_connections where server_connection_id!=NEW.server_connection_id and is_default)>0 ) then
 		set NEW.is_default = 0;

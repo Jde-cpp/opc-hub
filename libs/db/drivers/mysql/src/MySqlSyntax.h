@@ -15,6 +15,7 @@ namespace Jde::DB::MySql{
 		α BoolLiteral( bool v )Ι->sv override{ return v ? "true" : "false"; }
 		α DefaultConstraint( sv, sv )Ι->string override{ return {}; }
 		α QuoteLiteral( sv text )Ι->string override{ return Syntax::QuoteLiteral( Str::Replace(text, "\\", "\\\\") ); } //a backslash escapes unless sql_mode has NO_BACKSLASH_ESCAPES, which the driver never sets.
+		α BackslashEscapes()Ι->bool override{ return true; }
 		α CanSetDefaultSchema()Ι->bool override{ return true; }
 		α CatalogSelect()Ι->sv override{ return {}; }
 		α CreatePrimaryKey( str tableName, str columns )Ι->string override{ return Ƒ("CONSTRAINT {}_pk PRIMARY KEY( {} )", tableName, columns); } //columns: comma-separated for composite keys.

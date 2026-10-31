@@ -32,8 +32,16 @@ namespace Jde::DB::Sqlite{
 		SqliteException( SL sl, int rc, DB::Sql&& sql, fmt::format_string<Args...> m, Args&&... sargs )ι:
 			DBException{ ToDbError(rc), move(sql), Ƒ(FWD(m), FWD(sargs)...), {ELogLevel::Error, ELogTags::Sql, (uint32)rc}, sl }
 		{}
+		//A statement's failure, sqlite3_errmsg kept apart:  UserError answers it bare - a trigger's raise(abort, …) text - as
+		//MySqlException does its server's (#520 review #5).
+		SqliteException( SL sl, int rc, DB::Sql&& sql, sv step, sqlite3& db )ι:
+			SqliteException{ sl, rc, move(sql), "{} failed: {}", step, sqlite3_errmsg(&db) }
+		{ _engineMessage = sqlite3_errmsg( &db ); }
 
+		α UserError()Ι->string override{ return _engineMessage.size() ? _engineMessage : DBException::UserError(); }
 		α Move()ι->up<Exception> override{ return mu<SqliteException>(move(*this)); }
 		[[noreturn]] α Throw()ε->void override{ throw move(*this); }
+	private:
+		string _engineMessage;
 	};
 }

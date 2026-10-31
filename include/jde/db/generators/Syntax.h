@@ -38,6 +38,7 @@ namespace Jde::DB{
 		//of an existing table both spell through here, so what one writes the other recognises.
 		α DefaultLiteral( const Value& dflt )Ε->string;
 		β QuoteLiteral( sv text )Ι->string; //'text', its quotes doubled - MySQL also doubles its escape character, the backslash.
+		β BackslashEscapes()Ι->bool{ return false; } //true (MySQL): a backslash escapes the next character of a quoted string, so `\'` does not close it.
 		//#241: the one batch that makes `columnName`'s default `dflt` on an existing table - one, so a change of several
 		//statements commits or fails whole.  `constraintName` is the default it has now where the dialect names them
 		//(SQL Server), which has to go first; the one added is named DefaultConstraint, so the next change knows what to

@@ -15,10 +15,11 @@ namespace Jde::DB{
 		Ω SeedData( const AppSchema& config, sv extension, sp<QL::IQL> ql, bool skipUnchanged=false )ε->void;
 		Ω SeedFile( const AppSchema& config, string name, str text, sp<QL::IQL> ql, bool skipUnchanged )ε->bool;//DB::SeedFile//the /dbServers/dataPaths files of one extension, upserted through `ql` - Sync's ".mutation" pass, and the ".roles" pass the app runs once the access server is up (DB::SyncData).
 		Ω Create( const DBSchema& config )ε->void;
-		//A script's `#` comments stripped, so MySQL's own form reaches sqlite and SQL Server:  a `#` outside a quoted literal starts one, to
-		//the end of its line.  Inside '…' it is text - a security policy uri ends in `#None` (#520) - and a `--` comment is left for the
-		//dialect, its text untouched, so an apostrophe in one opens no literal.
-		Ω StripHashComments( sv script )ι->string;
+		//A script's `#` comments stripped, so MySQL's own form reaches sqlite and SQL Server:  a `#` outside a quote or a comment starts
+		//one, to the end of its line.  Inside '…', "…" or `…` it is text - a security policy uri ends in `#None` (#520) - and with
+		//`backslashEscapes` (Syntax::BackslashEscapes) a `\'` stays inside its string.  A `--` or `/* */` comment is left for the dialect,
+		//its text untouched, so an apostrophe in one opens no quote.
+		ΓDB Ω StripHashComments( sv script, bool backslashEscapes=false )ι->string;
 		α IsPhysical()Ι->bool { return true; }
 		α Tables()ι->flat_map<string,sp<Table>>&{ return Meta()->Tables; }
 		α Views()ι->flat_map<string,sp<Table>>&{ return Meta()->Views; }

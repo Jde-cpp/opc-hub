@@ -67,7 +67,7 @@ namespace Jde::DB::Sqlite{
 			sqlite3_stmt* stmt{};
 			//SqliteException rather than a bare Exception: the result code is what ToDbError maps, and it was dropped here.
 			if( let rc = sqlite3_prepare_v2(&db, text, (int)(end-text), &stmt, &tail); rc!=SQLITE_OK )
-				throw SqliteException{ sl, rc, Sql{string{sql}, params}, "prepare failed: {}", sqlite3_errmsg(&db) };
+				throw SqliteException{ sl, rc, Sql{string{sql}, params}, "prepare", db };
 			if( !stmt ){
 				if( tail<=text )
 					break; //prepare consumed nothing and produced nothing - belt and braces, this loop must always progress.
@@ -92,7 +92,7 @@ namespace Jde::DB::Sqlite{
 					(*onRow)( ToRow(*stmt) );
 			}
 			if( rc!=SQLITE_DONE )
-				throw SqliteException{ sl, rc, Sql{string{sql}, params}, "step failed: {}", sqlite3_errmsg(&db) };
+				throw SqliteException{ sl, rc, Sql{string{sql}, params}, "step", db };
 		}
 		return (uint)(sqlite3_total_changes(&db)-before);
 	}

@@ -132,13 +132,14 @@ namespace Jde::DB::Sqlite::Tests{
 		_ds->ExecuteSync( DB::Sql{"create table zz_raise( id integer primary key, x int )"} );
 		_ds->ExecuteSync( DB::Sql{"create trigger zz_raise_update before update of x on zz_raise for each row begin select raise( abort, 'x stays' ) where new.x>1; end"} );
 		_ds->ExecuteSync( DB::Sql{"insert into zz_raise( x ) values( 1 )"} );
-		optional<EDbError> error; uint32 code{}; string what;
+		optional<EDbError> error; uint32 code{}; string what, detail;
 		try{ _ds->ExecuteSync( DB::Sql{"update zz_raise set x=2"} ); }
-		catch( const DBException& e ){ error = e.Error; code = e.Code(); what = e.what(); }
+		catch( const DBException& e ){ error = e.Error; code = e.Code(); what = e.what(); detail = e.ClientDetail(); }
 		ASSERT_TRUE( error.has_value() );
 		EXPECT_EQ( (uint)*error, (uint)EDbError::App );
 		EXPECT_EQ( code, 1811u );//SQLITE_CONSTRAINT_TRIGGER
 		EXPECT_NE( what.find("x stays"), string::npos ) << what;
+		EXPECT_EQ( detail, "x stays" );//the client's 400 is the trigger's text alone, as MySQL's (#520 review #5).
 		EXPECT_EQ( _ds->ScalerSync<uint>(DB::Sql{"select x from zz_raise"}), 1u );
 		_ds->ExecuteSync( DB::Sql{"drop table zz_raise"} );
 	}
