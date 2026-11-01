@@ -1,4 +1,4 @@
-import {Component, effect, input, signal, inject } from '@angular/core';
+import {Component, effect, input, output, signal, inject } from '@angular/core';
 import {MatIconModule} from '@angular/material/icon';
 import {MatListModule} from '@angular/material/list';
 import {ActivatedRoute, RouterLink, RouterLinkActive} from '@angular/router';
@@ -48,6 +48,13 @@ export class ComponentNav {
 				this.parentUrl = '/'+urlSegments.slice(0, -1).map(segment => segment.path).join('/');
 		});
  	};
+	//a plain click on an item, the one routerLink navigates on - not a Ctrl/Cmd/Shift-click, which opens it elsewhere and leaves
+	//this page where it is
+	onItemClick( event:MouseEvent ){
+		if( event.button==0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey )
+			this.chosen.emit();
+	}
+	chosen = output<void>();
 	item = input.required<RouteItem>();
 	parentUrl!: string;
 	isLoading = signal( true );

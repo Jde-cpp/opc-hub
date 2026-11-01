@@ -113,6 +113,20 @@ the explanation there once;  qualify it with the element (`mat-toolbar.`) where 
 Within one library a partial does it (`opc/control/src/lib/pages/_status.scss`'s mixins, `_list-settings.scss`), and a
 sheet two components of a library share goes in both `styleUrls` (`hist-admin-shared.scss`).
 
+The breakpoints are named in `spa/control/src/styles/_constants.scss` alone (720 extra-small, 959 small, 1024 medium), so a
+rule that depends on the **viewport** lives in jde-spa, the one library whose sheets can `@use` it: in `_general.scss` for a
+global class (the list toolbar's wrap), else in a jde-spa component sheet (the navbar, the sidenav). TypeScript reads a breakpoint
+through the custom property `_general.scss` publishes (`--jde-breakpoint-small` and `-extra-small`, read by `ScreenSize.isSmall`
+and `isExtraSmall`), never from a number of its own. A zone that takes a row of its own at a breakpoint moves there in the
+template - an `ng-template` the `@if` on the signal places (the navbar's search, a list toolbar's view group) - never by CSS
+`order`, which leaves the tab order behind it (WCAG 2.4.3). A rule that depends on the **room a component has** is a `@container` query in the component's own sheet -
+`:host{ container-type: inline-size }` styling its descendants (`paginator.scss`, `hist-threshold-fields.ts`, the cards'
+`_columns.scss` on the section around the grid) - or fluid math
+(`min()`, `clamp()`) when it is the host itself that changes (`detail-actions.scss`). A `--jde-*` custom property carries a value
+for other sheets to compute with (`--jde-form-max-width`), never a condition: a media or container query cannot read one.
+`.main-content` is not made a container: inline-size containment brings layout containment, and #329 relies on a table wider
+than the pane overflowing its host to scroll the pane sideways.
+
 ## Angular style
 
 The Angular CLI's own `--ai-config` template is not generated:  it changed with each CLI and overruled the repo's rulings.  These
@@ -154,9 +168,9 @@ Run `ng` from `web/opc/my-workspace`.
 - **Spec helpers** live in each library's `control/src/testing/index.ts`, imported as `jde-spa/testing`, `jde-framework/testing`
   and `jde-opc/testing` - one tsconfig path, `jde-*/testing`, that `create-workspace.sh` writes beside `jde-proto/*` and links
   the folders for. They are never exported from a public-api, and the library builds exclude `src/testing/**`. A spec imports
-  its own library's helpers and those below it:  the route, router, title and profile stubs, `flush`/`stable` and `Blank` from
-  jde-spa;  the detail-page harness, `openRoute`, `snackbarStub`, `dialogStub`, `qlAnswering` and the schema builders from
-  jde-framework;  `TestGateway`, `fakeGateway` and the node and historian fixtures from jde-opc.
+  its own library's helpers and those below it:  the route, router, title, profile and `screenSize` stubs, `flush`/`stable`
+  and `Blank` from jde-spa;  the detail-page harness, `openRoute`, `snackbarStub`, `dialogStub`, `qlAnswering` and the schema
+  builders from jde-framework;  `TestGateway`, `fakeGateway` and the node and historian fixtures from jde-opc.
 - **A spec is written one way:**
   - `describe`, `it`, `expect` and `vi` are vitest globals, so nothing imports from `'vitest'`.  A mock's type is
     `ReturnType<typeof vi.fn>` or its helper's.

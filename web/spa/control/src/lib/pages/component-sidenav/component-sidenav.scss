@@ -101,6 +101,8 @@ div .mat-mdc-list-base {
 	.docs-component-viewer-sidenav-container .docs-component-viewer-sidenav {
 		// position right above the content
 		z-index: 4;
+		// the nav's width, not the pane's:  the backdrop beside the drawer stays in reach, and a tap on it closes the drawer
+		width: constants.$sidenav-width;
 	}
 
 	.docs-component-viewer-nav {
@@ -108,7 +110,6 @@ div .mat-mdc-list-base {
 		top: 0;
 
 		.docs-component-viewer-nav-content {
-			width: 100%;
 			border: none;
 			margin: 0;
 			max-height: initial;

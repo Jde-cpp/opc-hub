@@ -6,7 +6,7 @@ import { LogSettings } from '../log-settings';
 import { LogDetail } from './log-detail';
 import { Paginator } from '../../../shared/paginator/paginator';
 import { Entry, LogView } from '../log-entry';
-import { flush, profileStoreStub } from 'jde-spa/testing';
+import { flush, profileStoreStub, screenSize } from 'jde-spa/testing';
 import { logEntry, snackbarStub } from 'jde-framework/testing';
 import { Guid } from '../../../model/guid';
 
@@ -19,6 +19,7 @@ describe( 'LogDetail after the subscription cull', ()=>{
 		const snackbar = snackbarStub();
 		const ql = { ql: vi.fn().mockResolvedValue({logs: {entries: [logEntry(0), logEntry(1)], strings: []}}) };
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			{ provide: SnackbarService, useValue: snackbar },
 			{ provide: ProfileStore, useValue: store }
 		]});
@@ -75,6 +76,7 @@ describe( 'LogDetail paging', ()=>{
 		const serve = ( q:{vars:{limit:number, skip:number}} )=>({logs: {entries: available.slice(q.vars.skip, q.vars.skip+q.vars.limit).map( e=>({...e}) ), strings: []}});//copies:  LogEntries converts them in place
 		const ql = { ql: vi.fn( async ( q:{vars:{limit:number, skip:number}} )=>serve(q) ) };
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			{ provide: SnackbarService, useValue: snackbarStub() },
 			{ provide: ProfileStore, useValue: profileStoreStub() }
 		]});
@@ -160,6 +162,7 @@ describe( 'LogDetail message actions', ()=>{
 		const ql = { ql: vi.fn( async ( q:{vars:{limit:number, skip:number}} )=>({logs: {entries: available.slice(q.vars.skip, q.vars.skip+q.vars.limit).map( e=>({...e}) ), strings: []}}) ) };
 		const snackbar = snackbarStub();
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			{ provide: SnackbarService, useValue: snackbar },
 			{ provide: ProfileStore, useValue: profileStoreStub( profile ? {logs: profile} : {} ) }
 		]});
@@ -282,6 +285,7 @@ describe( 'LogDetail sort', ()=>{
 		const snackbar = snackbarStub();
 		const profileStore = { ...profileStoreStub(), loadArray: async ( _key:string, revive:( json:any )=>unknown )=>saved.map( revive ) };
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			{ provide: SnackbarService, useValue: snackbar },
 			{ provide: ProfileStore, useValue: profileStore }
 		]});

@@ -13,6 +13,7 @@ export * from './lib/services/help/spa-help-topics';
 export * from './lib/services/route-store';
 export * from './lib/services/route-utils';
 export * from './lib/services/latest';
+export * from './lib/services/screen-size';
 export * from './lib/services/text';
 export * from './lib/services/search/search-provider';
 export * from './lib/services/search/search-service';

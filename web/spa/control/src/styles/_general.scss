@@ -15,9 +15,13 @@ body {
 // than scss variables because the sheets that read them are spread over jde-framework, jde-access and jde-opc - a media
 // query cannot read one, so the breakpoints stay scss (constants.scss).  The form width is the extra-small breakpoint, so
 // anything narrower still gets the full width;  the content offset is the shell's sidenav, which ViewToolbar centres past.
+// The small and extra-small breakpoints are published for TypeScript (ScreenSize), which builds its media queries from them:
+// the numbers are written in constants.scss alone.
 :root {
 	--jde-form-max-width: #{constants.$extra-small-breakpoint-width};
 	--jde-content-offset: #{constants.$sidenav-width};
+	--jde-breakpoint-small: #{constants.$small-breakpoint-width};
+	--jde-breakpoint-extra-small: #{constants.$extra-small-breakpoint-width};
 }
 
 // A routed page's content, and the tab group a detail page fills itself with.
@@ -82,10 +86,20 @@ pre {
 	text-align: left;
 }
 
+// Material's button label and option text are flex items with their text's automatic minimum, so a long one cannot shrink and
+// runs past its row instead of clipping.  Released where an ellipsis is wanted:  a button marked .jde-clip-label (the navbar's
+// sign-in name on a phone) and the navbar's search results, whose summary clips beside the title.  Global for the same reason
+// as the tooltip's:  the label is Material's element, and the results render in the overlay.
+.jde-clip-label .mdc-button__label,
+.jde-search-panel .mdc-list-item__primary-text {
+	min-width: 0;
+}
+
 // A list's toolbar:  a left zone and a right one spread to the edges, on the container colour.  ViewToolbar's adds the view
 // group centred on the viewport;  a page with a toolbar of its own (the node history, a Web Sessions tab) sets the class too.
 // `mat-toolbar.` to outrank Material's .mat-toolbar-single-row height and its background, which come later in the cascade.
 mat-toolbar.jde-list-toolbar {
+	position: relative;// containing block for the centre zone
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -102,10 +116,43 @@ mat-toolbar.jde-list-toolbar {
 		gap: .5rem;
 		min-width: 0;
 	}
+	.bar-right {// at the right edge on a row of its own too, where space-between, with one item to place, puts it at the left
+		margin-left: auto;
+	}
 	.row-count {
 		font: var(--mat-sys-label-large);
 		color: var(--mat-sys-on-surface-variant);
 		white-space: nowrap;
+	}
+	// ViewToolbar's centre zone (Refresh, the view group, Edit view), centred on the VIEWPORT to line up with the navbar search
+	// rather than on the toolbar, whose left edge the shell's sidenav insets by --jde-content-offset;  out of flow so its width
+	// cannot push the other zones.  Here rather than in view-toolbar.scss because the fallbacks below read the breakpoints,
+	// which only a jde-spa sheet can.
+	.bar-center {
+		position: absolute;
+		left: calc(50vw - var(--jde-content-offset));
+		top: 50%;
+		transform: translate(-50%, -50%);
+	}
+}
+// Too narrow to centre against the viewport:  the centre zone is back in flow taking the slack, and the toolbar wraps if it
+// must.
+@media (max-width: constants.$medium-breakpoint-width) {
+	mat-toolbar.jde-list-toolbar {
+		flex-wrap: wrap;
+		.bar-center {
+			position: static;
+			transform: none;
+			flex: 1 1 auto;
+		}
+	}
+}
+// A phone:  the centre zone takes a row of its own under Add and the row count, so the view group has a width to scroll in.
+// ViewToolbar renders it after the right zone there (ScreenSize.isExtraSmall), so the tab order is the rows' order, which
+// `order` would not change (WCAG 2.4.3).
+@media (max-width: constants.$extra-small-breakpoint-width) {
+	mat-toolbar.jde-list-toolbar .bar-center {
+		flex-basis: 100%;
 	}
 }
 

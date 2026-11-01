@@ -10,7 +10,7 @@ import { NodeView } from '../../../model/node-view';
 import { OpcError } from '../../../model/opc-error';
 import { EAccess, ETypes } from '../../../model/types';
 import { NodeChildren } from './node-children';
-import { flush, pageTitleStub, provideRoute, silence } from 'jde-spa/testing';
+import { flush, pageTitleStub, provideRoute, silence, screenSize } from 'jde-spa/testing';
 import { snackbarStub } from 'jde-framework/testing';
 import { fakeGateway, variable } from 'jde-opc/testing';
 
@@ -29,6 +29,7 @@ describe( 'NodeChildren subscription values', ()=>{
 		} );
 		const snackbar = snackbarStub();
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			provideRoute(),//no ngOnInit load - the state is set by hand below
 			{ provide: GATEWAY_SERVICE, useValue: {} },
 			{ provide: SnackbarService, useValue: snackbar },
@@ -434,6 +435,7 @@ describe( 'NodeChildren refresh', ()=>{
 	it( 'hands the refreshed nodes up', async ()=>{
 		const fresh = [ variable( 3, "z" ) ];
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			provideRoute(),
 			{ provide: GATEWAY_SERVICE, useValue: {} },
 			{ provide: SnackbarService, useValue: snackbarStub() },
@@ -456,6 +458,7 @@ describe( 'NodeChildren Delete', ()=>{
 	it( 'says the delete failed, not a save', async ()=>{
 		const snackbar = snackbarStub();
 		TestBed.configureTestingModule({ providers: [
+			screenSize(),
 			provideRoute(),
 			{ provide: GATEWAY_SERVICE, useValue: {} },
 			{ provide: SnackbarService, useValue: snackbar },
