@@ -7,7 +7,7 @@ local args = import 'args.libsonnet';
 local logsDir = args.logsDir;
 {
 	testing:{
-		tests:: "RoleTests.Crud",
+		tests:: "*",
 		recreateDB: std.parseJson( std.extVar("recreateDB") )
 	},
 	dbServers:{

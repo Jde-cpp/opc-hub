@@ -5,18 +5,14 @@
 #define let const auto
 
 namespace Jde::DB::Tests{
-	//#22: Value::operator=(uint) must return Value& (was `auto` -> deduced Value, i.e. a by-value copy).
-	TEST( ValueTests, AssignUIntReturnsRef ){
-		static_assert( std::is_same_v<decltype(std::declval<Value&>() = uint{5}), Value&>, "operator=(uint) must return Value&, not a copy." );
-		Value v; v = uint{7};
-		EXPECT_EQ( v.ToUInt(), 7u );
-	}
+	//db-review2 #22: Value::operator=(uint) must return Value& (was `auto` -> deduced Value, i.e. a by-value copy).
+	static_assert( std::is_same_v<decltype(std::declval<Value&>() = uint{5}), Value&>, "operator=(uint) must return Value&, not a copy." );
 
-	//#34: every `type:` string common-meta.libsonnet exports has to resolve - an unmapped one silently becomes
+	//db-review3 #34: every `type:` string common-meta.libsonnet exports has to resolve - an unmapped one silently becomes
 	//EType::None, and ColumnDdl then emits a column with no type at all ("x  not null"): a syntax error on MySQL, a
 	//typeless BLOB-affinity column on sqlite.  int16/smallFloat/blob were the three that did not.
-	//#58: Value(EType, const jvalue&) is the path every QL insert/update/filter takes, and had no coverage at all - which
-	//is how #3 (DateTime arriving as a string) went unnoticed.  One case per branch of fromJson, keyed on the EValue the
+	//db-review3 #58: Value(EType, const jvalue&) is the path every QL insert/update/filter takes, and had no coverage at all - which
+	//is how db-review3 #3 (DateTime arriving as a string) went unnoticed.  One case per branch of fromJson, keyed on the EValue the
 	//alternative ends up as, since that is what the drivers bind on.
 	TEST( ValueTests, FromJsonEveryEType ){
 		using enum EType;
@@ -41,7 +37,7 @@ namespace Jde::DB::Tests{
 		for( let& type : {SmallFloat, Float, Decimal, Numeric, Money} )
 			EXPECT_EQ( alt(type, jvalue{1.5}), EValue::Double ) << (uint)type;
 
-		//#3: an ISO string must become a time point, not stay a string - the drivers bind Time as a datetime and a
+		//db-review3 #3: an ISO string must become a time point, not stay a string - the drivers bind Time as a datetime and a
 		//String as text, so this decides whether the column round-trips at all.
 		for( let& type : {DateTime, SmallDateTime} ){
 			EXPECT_EQ( alt(type, jvalue{"2026-08-01T00:00:00Z"}), EValue::Time ) << (uint)type;
@@ -69,7 +65,7 @@ namespace Jde::DB::Tests{
 			EXPECT_THROW( (Value{type, jvalue{"x"}, SRCE_CUR}), Exception ) << (uint)type;
 	}
 
-	TEST( ToTypeTests, CommonMetaNamesMap ){
+	TEST( ValueTests, ToTypeMapsCommonMetaNames ){
 		using enum EType;
 		const std::pair<sv,EType> exported[]{ //`types:` in libs/db/config/common-meta.libsonnet, in its own order.
 			{"Binary",Binary}, {"Bit",Bit}, {"Blob",Blob}, {"Char",Char}, {"DateTime",DateTime}, {"Decimal",Decimal},
@@ -79,6 +75,10 @@ namespace Jde::DB::Tests{
 			{"VarBinary",VarBinary}, {"Varchar",VarChar} };
 		for( const auto& [name,expected] : exported )
 			EXPECT_EQ( ToType(name), expected ) << name; //ToType is case-insensitive (Str::iv), so the exported casing is what matters.
+
+		const std::pair<sv,EType> aliases[]{ {"bool",Bit}, {"uint64",ULong}, {"uri",Uri} }; //ConfigTypeNames' own spellings, which common-meta does not export.
+		for( const auto& [name,expected] : aliases )
+			EXPECT_EQ( ToType(name), expected ) << name;
 
 		//The four common-meta also exports that deliberately stay unmapped: Cursor/RefCursor are proc constructs rather
 		//than column types, TimeSpan has no SQL spelling here, and TChar has no EType at all.  Mapping them would only
@@ -115,7 +115,7 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( Value{}.Get<string>(), "" );
 	}
 
-	//B8: the reference a mismatched get_string/get_bytes hands back was one process-wide static per type, so a caller that
+	//db-refactor B8: the reference a mismatched get_string/get_bytes hands back was one process-wide static per type, so a caller that
 	//wrote through it changed what every later mismatch read.  It is thread-local and cleared on every hand-out now.
 	TEST( ValueTests, HeapFallbackIsFresh ){
 		Value v{ 42 };
@@ -125,15 +125,18 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( Value{string{"x"}}.get_string(), "x" );      //a match is the cell itself, as before.
 	}
 
-	//#21: Value::ToUInt on a negative Double must not be UB - go through signed _int, matching the integer cases' modular wrap.
-	TEST( ValueTests, ToUIntNegativeDouble ){
+	//db-review2 #21: Value::ToUInt on a negative Double must not be UB - go through signed _int, matching the integer cases' modular wrap.
+	TEST( ValueTests, ToUInt ){
 		EXPECT_EQ( Value{-5.0}.ToUInt(), (uint)(_int)-5 ); //modular wrap, deterministic (was UB).
 		EXPECT_EQ( Value{-5.0}.ToInt(), -5 );              //ToInt = (_int)ToUInt round-trips.
 		EXPECT_EQ( Value{42.0}.ToUInt(), 42u );            //non-negative unchanged.
+		EXPECT_EQ( Value{string{"x"}}.ToUInt(), 0u ); //non-numeric: 0 (and a WARN); null: 0 silently.
+		EXPECT_EQ( Value{}.ToUInt(), 0u );
+		EXPECT_EQ( Value{true}.ToUInt(), 1u );
 	}
 
 	//db-refactor A2: ToString/ToJson/ToUInt/get_number are visits now, so an alternative missing from one is a compile
-	//error - this pins the *spelling* each one produces, which the visit cannot.
+	//error - this test and the next pin the *spelling* each produces, which the visit cannot.
 	TEST( ValueTests, ToStringCoversEveryAlternative ){
 		let now = DBTimePoint{ std::chrono::floor<std::chrono::seconds>(DBClock::now()) };
 		const vector<uint8_t> bytes{ 1, 2, 3 };
@@ -149,14 +152,11 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( Value{1.5}.ToString(), std::to_string(1.5) );
 		EXPECT_EQ( Value{now}.ToString(), ToIsoString(now) );
 		EXPECT_EQ( Value{bytes}.ToString(), Str::Encode64(bytes) );
-		EXPECT_EQ( Value{now}.ToJson().as_string(), ToIsoString(now) );
-		EXPECT_EQ( Value{bytes}.ToJson().as_string(), Str::Encode64(bytes) );
-		EXPECT_EQ( Value{string{"x"}}.ToUInt(), 0u ); //non-numeric: 0 (and a WARN); null: 0 silently.
-		EXPECT_EQ( Value{}.ToUInt(), 0u );
-		EXPECT_EQ( Value{true}.ToUInt(), 1u );
 	}
 
 	TEST( ValueTests, ToJsonCoversEveryAlternative ){
+		let now = DBTimePoint{ std::chrono::floor<std::chrono::seconds>(DBClock::now()) };
+		const vector<uint8_t> bytes{ 1, 2, 3 };
 		EXPECT_EQ( Value{uint32_t{7}}.ToJson().to_number<uint32_t>(), 7u );  //the gap.
 		EXPECT_FALSE( Value{uint32_t{7}}.ToJson().is_null() );
 		EXPECT_EQ( Value{uint32_t{0}}.ToJson().to_number<uint32_t>(), 0u );  //0 is not null either.
@@ -169,5 +169,7 @@ namespace Jde::DB::Tests{
 		EXPECT_EQ( Value{uint{9}}.ToJson().to_number<uint>(), 9u );
 		EXPECT_EQ( Value{_int{-9}}.ToJson().to_number<_int>(), -9 );
 		EXPECT_DOUBLE_EQ( Value{1.5}.ToJson().to_number<double>(), 1.5 );
+		EXPECT_EQ( Value{now}.ToJson().as_string(), ToIsoString(now) );
+		EXPECT_EQ( Value{bytes}.ToJson().as_string(), Str::Encode64(bytes) );
 	}
 }
