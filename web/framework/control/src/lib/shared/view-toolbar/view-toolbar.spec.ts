@@ -4,6 +4,7 @@ import { LocalPrefs, ProfileStore } from 'jde-spa';
 import { View, ViewType } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 import { ViewToolbar } from './view-toolbar';
+import { screenSize } from 'jde-spa/testing';
 import { schemaOf } from 'jde-framework/testing';
 
 //reviews/angular-refactor.md A2:  QLList, LogDetail and NodeChildren each carried a copy of this toolbar and its stylesheet.
@@ -26,8 +27,8 @@ class Host{
 }
 
 describe( 'ViewToolbar', ()=>{
-	const create = ()=>{
-		TestBed.configureTestingModule({});
+	const create = ( width:'wide'|'extra-small'='wide' )=>{
+		TestBed.configureTestingModule( {providers: [screenSize( width )]} );
 		const fixture = TestBed.createComponent( Host );
 		fixture.componentInstance.views.reset( [view( undefined ), view( "Users" ), view( "Users", ViewType.Adhoc )], 2 );
 		fixture.detectChanges();
@@ -82,5 +83,13 @@ describe( 'ViewToolbar', ()=>{
 		expect( element( fixture ).querySelector( '.bar-left #add' ) ).not.toBeNull();
 		const right = element( fixture ).querySelector( '.bar-right' )!;
 		expect( [...right.children].map( c=>c.id || c.className ) ).toEqual( ["extra", "row-count"] );
+	} );
+
+	//a phone's centre zone is the second row:  after the right zone in the document, so the tab order runs row by row (#330)
+	it( 'puts the centre zone between the others, and after them on a phone', ()=>{
+		const zones = ( fixture:{nativeElement:HTMLElement} )=>[...element( fixture ).querySelector( 'mat-toolbar' )!.children].map( c=>c.className );
+		expect( zones(create()) ).toEqual( ["bar-left", "bar-center", "bar-right"] );
+		TestBed.resetTestingModule();//a second toolbar, at a phone's width
+		expect( zones(create( 'extra-small' )) ).toEqual( ["bar-left", "bar-right", "bar-center"] );
 	} );
 } );

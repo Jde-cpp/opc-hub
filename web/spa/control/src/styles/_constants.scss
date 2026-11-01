@@ -1,9 +1,9 @@
 // The site's breakpoints, named here alone.  A sheet @uses this file - jde-spa's can, one in another library cannot, so a rule
-// that depends on the viewport lives in jde-spa:  _general.scss or a jde-spa component sheet.  TypeScript reads the one it
-// needs through the custom property _general.scss publishes (--jde-breakpoint-small, read by ScreenSize).  A rule that depends
+// that depends on the viewport lives in jde-spa:  _general.scss or a jde-spa component sheet.  TypeScript reads the ones it
+// needs through the custom properties _general.scss publishes (--jde-breakpoint-small and -extra-small, read by ScreenSize).  A rule that depends
 // on the room a component has rather than on the viewport is a container query in its own sheet (web/CLAUDE.md 'Shared styles').
-$extra-small-breakpoint-width: 720px;// a phone:  the navbar's favorites hide, a list toolbar's view group takes a row;  --jde-form-max-width
-$small-breakpoint-width: 959px;// the sidenav becomes a drawer (ComponentSidenav, through ScreenSize.isSmall), the page header shows Menu, the navbar's search takes a row of its own
+$extra-small-breakpoint-width: 720px;// a phone:  the navbar's favorites hide, a list toolbar's view group takes a row (ViewToolbar, through ScreenSize.isExtraSmall);  --jde-form-max-width
+$small-breakpoint-width: 959px;// the sidenav becomes a drawer (ComponentSidenav, through ScreenSize.isSmall), the page header shows Menu, the navbar's search takes a row of its own (NavBar, through ScreenSize.isSmall)
 $medium-breakpoint-width: 1024px;// a list toolbar stops centring its view group on the viewport and wraps instead
 
 $sidenav-width: 240px;

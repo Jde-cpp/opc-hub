@@ -1,8 +1,10 @@
 @use '../../../styles/constants';
 
 .profile-picture {max-height: 34px; max-width: 34px; border-radius: 50%;}
-//a phone's navbar row:  a long domain/name clips, the tooltip carrying it whole
+//a phone's navbar row:  a long domain/name clips, the tooltip carrying it whole - at 8em, and below it when the row is too narrow
+//for that beside the brand's mark (navbar.scss), the host and the button (.jde-clip-label, _general.scss) shrinking to the room
 @media (max-width: constants.$extra-small-breakpoint-width) {
+	:host {display: flex; align-items: center; min-width: 0;}
 	.name {display: block; max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
 }
 .selected {background: color-mix(in srgb, var(--mat-sys-primary) 40%, transparent);}

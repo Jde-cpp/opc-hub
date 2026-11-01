@@ -7,6 +7,7 @@ import {MatAutocompleteModule} from '@angular/material/autocomplete';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogActions, MatDialogClose, MatDialogConfig, MatDialogContent, MatDialogRef, MatDialogTitle } from '@angular/material/dialog';
+import { fromEvent } from 'rxjs';
 import { Favorite } from '../navbar';
 import { DocumentTitle } from '../../../services/document-title';
 
@@ -22,24 +23,28 @@ type DialogData = { existing:Favorite, folderNames:string[], name:string };
 })
 export class Favorites {
 	onClick(){
-		const rect = this.iconElementRef().nativeElement.getBoundingClientRect();
 		const folderNames = [ ...new Set(this.favorites().filter(fav=>fav.folderName).map( fav=>fav.folderName )) ];
-		const width = Math.min( 350, window.innerWidth-16 );//on a phone, what the viewport allows, 8px in from its edges
-		const left = Math.max( 8, Math.min(rect.left-370, window.innerWidth-width-8) );
 		const dialogConfig: MatDialogConfig = {
-			position: {
-				top: `${rect.bottom + 5}px`, // Position 5px below the button
-				left: `${left}px`,
-			},
-			width: `${width}px`,
+			...this.#placement(),
 			maxWidth: 'calc(100vw - 16px)',//Material's 80vw default would squeeze it under `width`
 			data:{existing: this.existing(), name: this.name(), folderNames: folderNames}
 		};
 		let ref = this.dialog.open( FavoritesDialog, dialogConfig );
+		const resize = fromEvent( window, 'resize' ).subscribe( ()=>{//a phone turned on its side
+			const { width, position } = this.#placement();
+			ref.updateSize( width ).updatePosition( position );
+		});
 		ref.afterClosed().subscribe( ( result:Favorite )=>{
+			resize.unsubscribe();
 			if( result || (result===null && this.isFavorite()) )
 				this.onChange.emit( result );
 		});
+	}
+	//5px below the star with its right edge 20px left of it, and on a phone what the viewport allows, 8px in from its edges
+	#placement(){
+		const rect = this.iconElementRef().nativeElement.getBoundingClientRect();
+		const width = Math.min( 350, window.innerWidth-16 );
+		return { width: `${width}px`, position: {top: `${rect.bottom+5}px`, left: `${Math.max( 8, rect.left-370 )}px`} };
 	}
 	iconElementRef = viewChild.required( 'icon', {read: ElementRef} );
 	readonly dialog = inject(MatDialog);

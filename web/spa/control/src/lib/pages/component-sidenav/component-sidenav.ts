@@ -35,10 +35,7 @@ export class ComponentSidenav implements OnInit, OnDestroy {
 
 	ngOnInit() {
 		this.subscriptions.add(
-			this.#navigationFocusService.navigationEndEvents.subscribe( ()=>{
-				if( this.isSmall() )
-					this.sidenav()?.close();
-			})
+			this.#navigationFocusService.navigationEndEvents.subscribe( ()=>this.sidenav()?.close() )//there is a drawer only when small
 		);
 	}
 	onRouterOutletActivate( event:object ){//the activated component; `in` narrows it to one carrying a sideNav slot

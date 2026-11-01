@@ -9,7 +9,7 @@
 	padding: 0 16px;
 	background: var(--mat-sys-primary-container);
 
-	h1 {//a long title (a node's browse name) clips rather than wrapping the bar;  a phone's bar takes Material's title size
+	h1 {//a long title (a node's browse name) clips rather than wrapping the bar, its tooltip carrying it whole;  a phone's bar takes Material's title size
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;

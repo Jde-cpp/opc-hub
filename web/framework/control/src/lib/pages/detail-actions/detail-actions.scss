@@ -1,15 +1,17 @@
 // The row runs the page's width:  a Groups/Roles/Effective rights tab holds a table that does too, and without it the row read as
 // the table's last line.  The buttons stay sized to the form:  Save under the field text (the form's 24px page inset plus the
 // fill field's 16px text inset), and the far-right Delete under the text's right edge, which the padding-right works out from
-// the row's own width (back to 40px once the window is no wider than the form).  On a phone the insets shrink to 5% of the row
-// and the buttons wrap - room, not the viewport, so no breakpoint (_constants.scss).
+// the row's own width (back to 40px once the window is no wider than the form).  Below a row of 720px the insets shrink, to 16px
+// at a phone's 344, and the buttons wrap - room, not the viewport, so no breakpoint (_constants.scss):  a desktop pane of 720px
+// or more keeps Save under the text.
+$inset: clamp(16px, calc((100% - 320px) / 10), 40px);
 :host{
 	display: flex;
 	flex-wrap: wrap;
 	gap: 12px 20px;
 	margin-top: 20px;
-	padding: 16px min(40px, 5%) 20px;
-	padding-right: max(min(40px, 5%), calc(100% - var(--jde-form-max-width) - 8px));
+	padding: 16px $inset 20px;
+	padding-right: max($inset, calc(100% - var(--jde-form-max-width) - 8px));
 	border-top: 1px solid var(--mat-sys-outline-variant);
 }
 

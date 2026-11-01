@@ -10,7 +10,7 @@ import { Field } from '../../../model/ql/schema/field';
 import { QLList } from './ql-list';
 import { Paginator } from '../../../shared/paginator/paginator';
 import { Provider } from '@angular/core';
-import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush } from 'jde-spa/testing';
+import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush, screenSize } from 'jde-spa/testing';
 import { id, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
 
 //A list with no route data behind it, the router at `url` and the snackbar recorded, `providers` after them.  Reset first:  a test
@@ -19,6 +19,7 @@ const configure = ( url?:string, ...providers:Provider[] )=>{
 	const router = routerStub( url ), snackbar = snackbarStub();
 	TestBed.resetTestingModule();
 	TestBed.configureTestingModule({ providers: [
+		screenSize(),
 		provideRoute(),
 		{ provide: Router, useValue: router },
 		pageTitleStub,

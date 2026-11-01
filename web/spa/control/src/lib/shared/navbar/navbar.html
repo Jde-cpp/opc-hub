@@ -28,24 +28,9 @@
 			}
 		}
 	</div>
-	<div class="search-wrapper"><!-- not a <form>: Enter must navigate, never submit -->
-  		<mat-form-field class="rounded-input search" appearance="outline" subscriptSizing="dynamic">
-			<input #searchInput matInput type=text aria-label="Search" aria-keyshortcuts="/"
-				[formControl]=searchForm [matAutocomplete]=searchAC (keydown.enter)="onSearch($event)"/>
-			<mat-icon matPrefix>search</mat-icon>
-			<mat-autocomplete #searchAC=matAutocomplete class="search-panel" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)"><!--no panelWidth:  the panel is the field's width, 360-720px-->
-				@for( result of searchResults(); track trackResult(result) ){
-					<mat-option [value]=result [disabled]="result.disabled" class="search-option">
-						<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
-						<span class="search-title">@if( result.prefix ){<span class="search-prefix">{{result.prefix}}:</span>}{{result.title}}</span>
-						@if( result.summary ){
-							<span class="search-summary">{{result.summary}}</span>
-						}
-					</mat-option>
-				}
-			</mat-autocomplete>
-		</mat-form-field>
-	</div>
+	@if( !isSmall() ){
+		<ng-container [ngTemplateOutlet]="search"/>
+	}
 	<div class="nav-right">
 		<authorization></authorization>
 		<theme-picker></theme-picker>
@@ -61,7 +46,32 @@
 			</svg>
 		</button>
 	</div>
+	@if( isSmall() ){<!--the search is the second row below the small breakpoint, so it follows the icons in the tab order too-->
+		<ng-container [ngTemplateOutlet]="search"/>
+	}
 </nav>
+<ng-template #search>
+	<div class="search-wrapper"><!-- not a <form>: Enter must navigate, never submit -->
+		<mat-form-field class="rounded-input search" appearance="outline" subscriptSizing="dynamic">
+			<input #searchInput matInput type=text aria-label="Search" aria-keyshortcuts="/"
+				[formControl]=searchForm [matAutocomplete]=searchAC (keydown.enter)="onSearch($event)"/>
+			<mat-icon matPrefix>search</mat-icon>
+			<mat-autocomplete #searchAC=matAutocomplete class="jde-search-panel" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)"><!--no panelWidth:  the panel is the field's width, where a long summary clips (.jde-search-panel, _general.scss)-->
+				@for( result of searchResults(); track trackResult(result) ){
+					<mat-option [value]=result [disabled]="result.disabled" class="search-option">
+						<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
+						<span class="search-text">
+							<span class="search-title">@if( result.prefix ){<span class="search-prefix">{{result.prefix}}:</span>}{{result.title}}</span>
+							@if( result.summary ){
+								<span class="search-summary">{{result.summary}}</span>
+							}
+						</span>
+					</mat-option>
+				}
+			</mat-autocomplete>
+		</mat-form-field>
+	</div>
+</ng-template>
 @if( showBreadcrumbs() ){
 	<breadcrumbs [crumbs]=crumbs()></breadcrumbs>
 }

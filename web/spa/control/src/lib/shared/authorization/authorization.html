@@ -13,7 +13,7 @@
 		</button>
 	}
 	@else if( user()?.name ){
-		<button mat-button type="button" (click)="onLogout()" [attr.aria-label]="signOutLabel()" [matTooltip]="signOutLabel()">
+		<button mat-button type="button" class="jde-clip-label" (click)="onLogout()" [attr.aria-label]="signOutLabel()" [matTooltip]="signOutLabel()">
 			<span class="name">{{`${user()?.domain}/${user()?.name}`}}</span>
 		</button>
 	}

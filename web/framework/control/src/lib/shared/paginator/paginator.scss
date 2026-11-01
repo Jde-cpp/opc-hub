@@ -12,14 +12,7 @@
 	letter-spacing: var(--mat-paginator-container-text-tracking, var(--mat-sys-body-small-tracking));
 	--mat-form-field-container-height: var(--mat-paginator-form-field-container-height, 40px);
 	--mat-form-field-container-vertical-padding: var(--mat-paginator-form-field-container-vertical-padding, 8px);
-	container-type: inline-size;//the rule below asks for the host's own width:  room, not the viewport, so no breakpoint
-}
-//six icon buttons and the range run ~350px, and a phone's pane gives 344:  the one-row steps go first, rather than the range
-//wrapping the sticky pager to two rows
-@container (width < 400px) {
-	.row-step {
-		display: none;
-	}
+	container-type: inline-size;//the query at the end asks for the host's own width:  room, not the viewport, so no breakpoint
 }
 .mat-mdc-paginator-range-label {
 	margin: 0 8px;
@@ -38,4 +31,16 @@
 	width: 100%;
 	box-sizing: border-box;//or the padding puts the last button 16px past the host - clipped once the host is the full page width
 	min-height: var(--mat-paginator-container-size, 56px);
+}
+//six icon buttons and the range run ~350px, and a phone's pane gives 344:  the buttons take Material's 32px density (a target
+//WCAG 2.5.8 still passes, so no 48px touch target overlapping its neighbours) rather than one going or the range wrapping the
+//sticky pager to two rows - every step stays (1.4.10)
+@container (width < 400px) {
+	.mat-mdc-paginator-range-actions {
+		--mat-icon-button-state-layer-size: 32px;
+		--mat-icon-button-touch-target-display: none;
+	}
+	.mat-mdc-paginator-range-label {
+		margin: 0 4px;
+	}
 }

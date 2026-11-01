@@ -4,7 +4,7 @@
 		<!--not fixedInViewport: the drawer sits inside the container, which already starts below the navbar, so there is no top gap to hard-code-->
 		<mat-sidenav #sidenav class="docs-component-viewer-sidenav" mode="over">
 			<!--a tap on a nav item closes the drawer - the current page's too, which navigates nowhere, so the close on NavigationEnd never comes-->
-			<app-component-nav [item]="item()" (click)="sidenav.close()"></app-component-nav>
+			<app-component-nav [item]="item()" (chosen)="sidenav.close()"></app-component-nav>
 		</mat-sidenav>
 	}
 	<div class="docs-component-sidenav-content">

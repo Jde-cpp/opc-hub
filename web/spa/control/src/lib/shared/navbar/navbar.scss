@@ -1,5 +1,7 @@
 @use '../../../styles/constants';
 
+$brand-mark: 6px + 26px + 8px + 12px + 8px;// the brand's padding, mark, gap and margin:  what is left of it once its name has clipped
+
 :host {
 	color: var(--mat-sys-primary);
 	background: var(--mat-sys-primary-container);
@@ -10,10 +12,14 @@
 }
 // Material's search bar:  360dp at least and 720dp at most, taking the width left between the groups, which are flex: 1 1 0 so
 // it sits centred when both have room.  A row that cannot hold the three wraps the search, and the icons after it, to a second.
+// The favorites keep to one line while the row can hold them, and wrap within the group once it cannot:  at least its line's
+// width, but never wider than the row.
 .nav-left{
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	flex: 1 1 0;
+	min-width: fit-content;
 }
 .nav-right{
 	display: flex;
@@ -35,7 +41,11 @@
 .search-option{
 	.search-icon{ font-size: 18px; width: 18px; height: 18px; margin-right: 8px; vertical-align: middle; }
 	.search-prefix{ color: var(--mat-sys-primary); }
-	.search-summary{ color: var(--mat-sys-on-surface-variant); font-size: 12px; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	// the summary clips beside the title, which wraps only when it alone is wider than the panel;  Material's text box around
+	// them shrinks by a global rule (.jde-search-panel)
+	.search-text{ display: flex; align-items: baseline; min-width: 0; }
+	.search-title{ flex: none; max-width: 100%; }
+	.search-summary{ flex: 0 1 auto; min-width: 0; color: var(--mat-sys-on-surface-variant); font-size: 12px; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 .docs-navbar-header {
 	display: flex;
@@ -111,23 +121,27 @@ app-logo {
 }
 
 // Below the small breakpoint the brand, the favorites and the icons share the first row and the search bar has the second,
-// centred:  with the favorites beside the brand, a 360px search wrapped the icons under them at 959.
+// centred:  with the favorites beside the brand, a 360px search wrapped the icons under them at 959.  The template renders it
+// after the icons there (NavBar.isSmall), so the tab order is the rows' order, which `order` would not change (WCAG 2.4.3).
 @media (max-width: constants.$small-breakpoint-width) {
 	.search-wrapper {
-		order: 1;
 		flex: 1 1 100%;
 		margin: 8px auto 0;
 	}
 }
-// A phone (Material's compact window):  the favorites hide, and the brand gives way before the icons.
+// A phone (Material's compact window):  the favorites hide, and the brand's name gives way before the icons, then the sign-in
+// name (Authorization) before the brand's mark.  The icons' width is capped rather than shrunk:  the row wraps, so a group
+// wider than what is left would go to a row of its own instead of shrinking.
 @media (max-width: constants.$extra-small-breakpoint-width) {
 	.docs-navbar-hide-small {
 		display: none;
 	}
 	.nav-left {
-		min-width: 0;
+		min-width: $brand-mark;
 	}
 	.nav-right {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
+		min-width: 0;
+		max-width: calc(100% - #{$brand-mark});
 	}
 }
