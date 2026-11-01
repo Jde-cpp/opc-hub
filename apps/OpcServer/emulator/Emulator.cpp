@@ -240,12 +240,14 @@ namespace Jde::Opc::Emulator{
 						//BadWriteNotSupported) and on the user's (else BadUserAccessDenied; open62541 copyAttributeIntoNode,
 						//OPC 10000-3 8.57).  The pumps nodeset is AccessLevel 3 and -grant stops at Read|Update|Subscribe (#6), so
 						//this transport carries the reading and PubSub carries its quality: say so once, then send the value alone.
+						//BadUserAccessDenied is also a user with no Write at all, so the value alone must land before the status is called
+						//refused; BadNotWritable, the node's own AccessLevel, refuses the value too.
 						let refused = e.Code()==UA_STATUSCODE_BADWRITENOTSUPPORTED || e.Code()==UA_STATUSCODE_BADUSERACCESSDENIED;
 						if( !refused || !tag.Status || tag.StatusRefused )
 							throw;
+						_client->Write( tag.Node, v );
 						tag.StatusRefused = true;
 						WARN( "[{}]{}: the server refused this reading's status ({}) over the session - {}.  Writing the value alone from here on; the pubsub transport carries the status.", device.Name, tag.Spec.Name, ToString(tag.Status), UAException::Message((StatusCode)e.Code()) );
-						_client->Write( tag.Node, v );
 					}
 					++_writes;
 					_consecutiveFailures = 0;

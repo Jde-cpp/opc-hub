@@ -73,6 +73,10 @@ boostLicense=$(ls -d "$libs"/boost_*/LICENSE_1_0.txt 2>/dev/null | sort -V | tai
 [ -n "$boostLicense" ] || die "no $libs/boost_*/LICENSE_1_0.txt"
 icuPackage=$(cd /usr/share/doc && ls -d libicu[0-9]* 2>/dev/null | sort -V | tail -1)
 [ -n "$icuPackage" ] || die "no /usr/share/doc/libicu<N>"
+#the libc++ the release image bundles is its LLVM major's (.github/docker/Dockerfile):  a box on another would rewrite that notice
+llvm=$(awk -F= '$1=="ARG LLVM_VERSION" { print $2; exit }' "$repo/.github/docker/Dockerfile")
+libcxx=$(dpkg-query -W -f='${Version}' libc++1 2>/dev/null || true); libcxx=${libcxx#*:}
+[[ -n $llvm && ${libcxx%%.*} == "$llvm" ]] || die "libc++1 is '${libcxx:-not installed}', not LLVM ${llvm:-?}, the release image's (.github/docker/Dockerfile)"
 ours="https://github.com/Jde-cpp/opc-hub (build/CMakeLists.txt)"
 
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
@@ -150,7 +154,7 @@ HEADER
 	debian "$icuPackage"
 	section "LLVM libc++ and libc++abi (Linux only, bundled)" https://libcxx.llvm.org "Apache-2.0 WITH LLVM-exception" \
 		"The Apache License 2.0 text is reproduced under Abseil above."
-	debian libc++1 "$(cd /usr/share/doc && ls -d libc++1-[0-9]* 2>/dev/null | sort -V | tail -1)"
+	debian libc++1
 	#the release runner builds libbacktrace static-only (.github/docker/Dockerfile) and the Linux presets link it for
 	#Boost.Stacktrace (-lbacktrace), so its object code is inside both exes - BSD-3-Clause, whose clause (2) asks for this
 	#notice (reviews/m4-closing.md #22).  Windows uses WinDbg for stack traces, not this.
@@ -161,6 +165,7 @@ HEADER
 	section "liburing (Linux only: the .deb depends on liburing2; the per-user tarball bundles liburing.so.2)" https://github.com/axboe/liburing "MIT (offered as LGPL-2.1 OR MIT)"
 	debian liburing2
 } > "$tmp"
+notices=$(<"$tmp"); printf '%s' "$notices" > "$tmp" #no final newline
 mv "$tmp" "$out"; trap - EXIT
 chmod 644 "$out"
 echo "wrote $out ($(wc -l < "$out") lines)"

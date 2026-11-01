@@ -30,7 +30,7 @@ package list — it builds the two from source for noble.
 | tree | path | contents |
 |------|------|----------|
 | this repo | `$JDE_BUILD_DIR/$JDE_COMPILER/<checkout-basename>/<debug\|release>` → `/mnt/ram/linux/clang++/opc-hub/debug` | mirrors the source tree with `src`→`lib` and an app's root→`exe`: `libs/fwk/lib/libJde.so`, `apps/OpcHub/exe/Jde.Opc.Hub`, `libs/fwk/tests/Jde.Fwk.Tests`. Also `runtime/` (direct-run cwd, made by `reconfig`), `Testing/` (ctest cwd), `compile_commands.json`, and the `*.output` build logs |
-| third-party superbuild | `$REPO_DIR/build/<debug\|relWithDebInfo>` | ExternalProject sources and builds under `repos/<dep>/src/<dep>`; the open62541 tree to grep is `$REPO_DIR/build/debug/repos/open62541/src/open62541` (v1.5.9), **not** `~/code/open62541` (1.4.10) |
+| third-party superbuild | `$REPO_DIR/build/<debug\|relWithDebInfo>` | ExternalProject sources and builds under `repos/<dep>/src/<dep>`; the open62541 tree to grep is `$REPO_DIR/build/debug/repos/open62541/src/open62541` (v1.5.10), **not** `~/code/open62541` (1.4.10) |
 | installed deps | `$REPO_DIR/install/clang++/<Debug\|RelWithDebInfo>/<dep>` | one subdir per dep (`absl boost fmt gtest jsonnet NodesetLoader open62541 protobuf ryml spdlog sqlite`). `CMAKE_PREFIX_PATH` is the `<Debug\|RelWithDebInfo>` dir; config-mode `find_package` searches `<prefix>/<name>*/lib/cmake` so the per-dep subdirs resolve on their own (the sqlite driver appends `/sqlite` itself) |
 
 Several checkouts coexist by basename (`opc-hub`, `opc-hub2`), each with its own build dir, all sharing one install tree.
@@ -125,7 +125,7 @@ odbc (`Jde.DB.Odbc*`) is Windows-only. The OpcServer, Gateway and Hub exes reuse
 `build/CMakeLists.txt` is an ExternalProject superbuild, reached through the root CMakeLists with `jde_REPOS=ON`
 (the `-repos` presets) — never configured directly. Pinned there: fmt 12.2.0, gtest 1.18.0, spdlog 1.17.0,
 abseil 20260526.0 (patched: one monolithic shared lib, `ABSL_OPTION_INLINE_HW_ACCEL_STRATEGY=2`), ryml 0.10.0,
-jsonnet 0.22.0 (patched), protobuf 35.1, open62541 1.5.9, open62541-nodeset-loader (patched `Nodeset.c`).
+jsonnet 0.22.0 (patched), protobuf 35.1, open62541 1.5.10, open62541-nodeset-loader (patched `Nodeset.c`).
 Each consumer echoes its deps' tags as `-Djde_DEP_TAG_<dep>`, so bumping a tag reconfigures the consumers.
 
 ```bash

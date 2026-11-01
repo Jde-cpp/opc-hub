@@ -64,7 +64,7 @@ set( abslTag 20260526.0 )
 #2 lets its inline hash use the CRC32 instruction cpuFlags enable.  Echoed like a tag:  protobuf inlines that hash too.
 set( abslHwAccel 2 )
 set( rymlTag v0.10.0 )
-set( open62541Tag v1.5.9 )
+set( open62541Tag v1.5.10 )
 
 ExternalProject_Add(fmt
 	GIT_REPOSITORY https://github.com/fmtlib/fmt.git

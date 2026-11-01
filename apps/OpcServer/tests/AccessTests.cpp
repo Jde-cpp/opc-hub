@@ -606,9 +606,10 @@ namespace Jde::Opc::Server::Tests{
 		UAAccess::CloseSession( _ua->Ptr(), nullptr, nullptr, slot );
 	}
 
-	//open62541 1.5.9 refuses an identity change on re-activation, but compares an issued token's user id, which it leaves
-	//empty - so a session activated as one user and re-activated with another user's token reaches ActivateSession, which
-	//must refuse it and keep the session's context rather than swap in the new user.
+	//open62541 1.5.10 refuses an identity change on re-activation - a username's name, an x509 token's certificate - but
+	//compares an issued token's user id, which it leaves empty - so a session activated as one user and re-activated with
+	//another user's token reaches ActivateSession, which must refuse it and keep the session's context rather than swap in
+	//the new user.  The stack's half goes through a client in EndpointTests.ReactivatingWithAnotherIssuedTokenReachesUAAccess.
 	TEST_F( AccessTests, ReactivatingAsAnotherUserIsRefused ){
 		let jwt = BlockAwait<Web::Client::ClientSocketAwait<Jde::Web::Jwt>,Web::Jwt>( AppClient()->Jwt() );
 		IssuedIdentity identity{ jwt.Payload() };
