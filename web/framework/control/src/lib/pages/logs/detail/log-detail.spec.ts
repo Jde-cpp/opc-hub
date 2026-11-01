@@ -4,6 +4,7 @@ import { SnackbarService } from '../../../shared/snackbar/snackbar-service';
 import { IGraphQL } from '../../../services/graphql';
 import { LogSettings } from '../log-settings';
 import { LogDetail } from './log-detail';
+import { Paginator } from '../../../shared/paginator/paginator';
 import { Entry, LogView } from '../log-entry';
 import { flush, profileStoreStub } from 'jde-spa/testing';
 import { logEntry, snackbarStub } from 'jde-framework/testing';
@@ -77,14 +78,16 @@ describe( 'LogDetail paging', ()=>{
 			{ provide: SnackbarService, useValue: snackbarStub() },
 			{ provide: ProfileStore, useValue: profileStoreStub() }
 		]});
+		const show = vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} );//the rows are real, and jsdom has no scrollIntoView
 		const fixture = TestBed.createComponent( LogDetail );
 		fixture.componentRef.setInput( 'service', <IGraphQL><unknown>ql );
 		fixture.detectChanges();//ngOnInit
 		await tick();
 		fixture.detectChanges();//the table and the pager
 		await tick();
-		return { fixture, page: fixture.componentInstance, ql, serve };
+		return { fixture, page: fixture.componentInstance, ql, serve, show };
 	};
+	afterEach( ()=>vi.restoreAllMocks() );
 	const shown = ( page:LogDetail )=>( (page.data as any).subject.value as Entry[] ).map( e=>e.line );//what the table was last handed
 	const range = ( fixture:ComponentFixture<LogDetail> )=>{
 		fixture.detectChanges();
@@ -134,6 +137,15 @@ describe( 'LogDetail paging', ()=>{
 		page.onViewChange( 0 );
 		await tick();
 		expect( range(fixture) ).toBe( '1 – 21' );
+	} );
+
+	//reviews-issue/329-sticky-table-header.md #6:  from the page shown to the one asked for, which showFirstRow tells from a row step
+	it( 'turns the page from the log\'s first row', async ()=>{
+		const { fixture, page, show } = await create( log(100) );
+		page.onPagerChange( {startIndex: 21, pageSize: 21} );
+		page.onPagerChange( {startIndex: 22, pageSize: 21} );
+		expect( show.mock.calls.map( c=>c.slice(1) ) ).toEqual( [[0, 21], [21, 22]] );
+		expect( show.mock.calls[0][0] ).toBe( fixture.nativeElement );
 	} );
 } );
 

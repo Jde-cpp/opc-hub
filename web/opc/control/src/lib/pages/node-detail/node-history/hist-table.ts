@@ -1,11 +1,12 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, effect, input, output, signal, untracked } from '@angular/core';
+import { Component, ElementRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { Paginator } from 'jde-framework';
 import { HistRights, HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { NodeId } from '../../../model/node-id';
@@ -25,6 +26,7 @@ import { valueString } from '../../../model/value';
 	imports: [DatePipe, MatButtonModule, MatChipsModule, MatIconModule, MatPaginatorModule, MatTableModule, MatTooltipModule]
 })
 export class HistTable{
+	#el = inject( ElementRef );
 	constructor(){
 		//a new read empties the values:  back to the first page.  A live push is not a reason to move the reader off the page they are on.
 		effect( ()=>{ if( !this.values().length ) untracked( ()=>this.pageIndex.set(0) ); } );
@@ -67,5 +69,9 @@ export class HistTable{
 	//a stored value of a node this user may edit:  not a bound, which stands for a record outside the range, and not one
 	//without its source time to the tick, which no edit could name - a push's, or one with no source time
 	canEdit( v:HistValue ):boolean{ return !this.modified() && !v.bound && !!v.sourceTime && this.editableKeys().has( v.node.key ); }
-	onPage( e:PageEvent ){ this.pageIndex.set( e.pageIndex ); this.pageSize.set( e.pageSize ); }
+	//from the start shown to the one asked for, as the lists' pinned pagers turn (#329)
+	onPage( e:PageEvent ){
+		Paginator.showFirstRow( this.#el.nativeElement, this.pageIndex()*this.pageSize(), e.pageIndex*e.pageSize );
+		this.pageIndex.set( e.pageIndex ); this.pageSize.set( e.pageSize );
+	}
 }

@@ -7,7 +7,7 @@ import { OpcServer, OpcServerService } from '../../services/opc-server-service';
 @Component( {
 		templateUrl: './opc-server-detail.html',
 		//the trailing class is load-bearing (NG0912):  see app-server-detail.ts
-		host: {class:'main-content mat-drawer-container my-content opc-server-detail'},
+		host: {class:'main-content my-content opc-server-detail'},
 		imports: [InstanceTabs]
 })
 export class OpcServerDetail implements OnInit{

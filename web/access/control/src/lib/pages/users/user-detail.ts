@@ -17,7 +17,7 @@ import { userTableSettings } from './user-table-settings';
     templateUrl: './user-detail.html',
 		//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
-		host: {class:'main-content mat-drawer-container my-content user-detail'},
+		host: {class:'main-content my-content user-detail'},
     imports: [DetailActions, MatTabsModule, Properties, KeyProperties, QLSelector, EffectiveRights]
 })
 export class UserDetail extends DetailPage<User>{

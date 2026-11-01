@@ -10,7 +10,7 @@ import { isAllowed, isDenied, RolePermission } from './role-permission';
 @Component( {
 	selector: 'node-rights',
 	templateUrl: './node-rights.html',
-	host: {class:'main-content mat-drawer-container my-content'},
+	host: {class:'main-content my-content'},
 	imports: [MatSortModule, MatTableModule, MatCheckboxModule, MatTooltipModule]
 })
 export class NodeRights {

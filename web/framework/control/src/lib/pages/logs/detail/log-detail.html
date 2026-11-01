@@ -57,7 +57,7 @@
 			<mat-header-row *matHeaderRowDef="displayedColumns(); sticky: true"></mat-header-row>
 			<mat-row mat-row class="table-row" *matRowDef="let row; columns: displayedColumns()" [class.highlight]="row.selected" tabindex="0" (click)="cellClick(row)" (keydown.enter)="cellClick(row)"></mat-row>
 		</mat-table>
-		<div class="pager">
+		<div class="jde-pager">
 			<paginator (onPageEvent)="onPagerChange($event)" [startIndex]="data.startIndex()" [length]="data.length()" [pageSize]="view().limit"></paginator>
 		</div>
 	}

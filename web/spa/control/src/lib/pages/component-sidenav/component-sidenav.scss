@@ -16,6 +16,12 @@ app-component-sidenav {
 	container-type: size;//lets the nav pane below ask for the visible height (100cqh) instead of re-deriving it from 100vh minus the chrome above
 }
 
+//the pane that scrolls:  what focus scrolls into view clears a sticky header row (56px, Material's) and a list's sticky pager (56px),
+//which would otherwise cover it - WCAG 2.4.11
+.docs-component-viewer-sidenav-container > .mat-sidenav-content {
+	scroll-padding-block: 56px;
+}
+
 .docs-component-viewer-sidenav {
 	overflow: auto;
 }

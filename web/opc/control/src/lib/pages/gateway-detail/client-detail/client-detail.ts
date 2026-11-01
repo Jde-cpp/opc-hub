@@ -24,7 +24,7 @@ const settingLabels:Record<string,string> = { url: "URL", certificateUri: "Certi
 	templateUrl: './client-detail.html',
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
-		host: {class:'main-content mat-drawer-container my-content client-detail'},
+		host: {class:'main-content my-content client-detail'},
 	imports: [DetailActions, MatButtonModule, MatTabsModule, Properties, ServerProperties],
 })
 export class ClientDetail extends DetailPage<ServerCnnctn>{

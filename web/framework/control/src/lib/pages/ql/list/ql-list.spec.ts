@@ -8,6 +8,7 @@ import { ListRoute, QLListData, QLListResolver, TableSettings } from '../../../s
 import { DbScalar, FieldFilter, Operator, View, ViewType } from '../../../model/ql/view';
 import { Field } from '../../../model/ql/schema/field';
 import { QLList } from './ql-list';
+import { Paginator } from '../../../shared/paginator/paginator';
 import { Provider } from '@angular/core';
 import { pageTitleStub, provideRoute, routerStub, fakeSessionStorage, flush } from 'jde-spa/testing';
 import { id, required, scalar, schemaOf, slugRows, snackbarStub } from 'jde-framework/testing';
@@ -340,6 +341,16 @@ describe( 'QLList paging', ()=>{
 		expect( page.more() ).toBe( false );
 		expect( page.length() ).toBe( 40 );
 		expect( page.paged() ).toBe( true );
+	} );
+
+	//reviews-issue/329-sticky-table-header.md #6
+	it( 'turns the page from the list\'s first row, from the page it was on', async ()=>{
+		const { page, fixture } = create( rows(40) );
+		const show = vi.spyOn( Paginator, 'showFirstRow' );
+		await page.onPage( {startIndex: 25, pageSize: 25} );
+		expect( show ).toHaveBeenCalledTimes( 1 );
+		expect( show.mock.calls[0][0] ).toBe( fixture.nativeElement );
+		expect( show.mock.calls[0].slice(1) ).toEqual( [0, 25] );
 	} );
 
 	//reviews/angular-refactor.md B3:  a gateway's Connections tab hands the list its Gateway, which a reload goes to - not a

@@ -1,9 +1,0 @@
-//pinned to the pane's bottom in the toolbar's colours, so a long page turns without a scroll to its end (#329;  _general.scss
-//lets sticky resolve to the pane)
-.pager{
-	position: sticky;
-	bottom: 0;
-	background: var(--mat-sys-surface-container);
-	color: var(--mat-sys-on-surface);
-	--mat-paginator-container-background-color: transparent;
-}
