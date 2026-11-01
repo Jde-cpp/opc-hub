@@ -1,7 +1,6 @@
 #pragma once
-#include <open62541/client.h>
 #include <jde/opc/uatypes/NodeId.h>
-#include "UAAwait.h"
+#include "ReadAwait.h"
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
@@ -19,7 +18,6 @@ namespace Jde::Opc::Gateway{
 		α Request()ι->void* override;
 		α Convert( UA_ReadResponse&& response )ε->DataTypeArrayPtr override;
 		vector<NodeId> _nodes;
-		vector<UA_ReadValueId> _toRead;//the definitions, then the names;  each borrows its node's id, so never cleared.
-		UA_ReadRequest _request{};
+		ReadRequest _request;//each node's definition, then its name:  results[i*2] and results[i*2+1].
 	};
 }

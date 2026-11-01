@@ -11,7 +11,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//security-matrix #10:  open62541's own tcp manager connected to the first address a name resolves to and never tried the next,
 	//so a name whose first address was dead failed BadConnectionRejected one address short of the server - found as
 	//`opc.tcp://JDE-CPP:49320`, IPv6 link-local ahead of IPv4 against External, which listens on IPv4 alone;  the asio manager (#526)
-	//tries each in turn, and the probe stays for an address that drops the SYN.  The hermetic form of it:  `localhost` resolves to ::1
+	//tries each in turn, and the probe stays for an address that drops the SYN, which it counts as dead after three seconds.  The hermetic form of it:  `localhost` resolves to ::1
 	//first on windows, and the server here is bound to 127.0.0.1.  UAClient::ReachableUrl probes the first address of a name with
 	//several and, only when it takes no connection, substitutes the first that does.  Where `localhost` resolves to 127.0.0.1
 	//first the url comes back as given and the connect works as it always did - the test passes either way, and says which.

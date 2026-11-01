@@ -105,7 +105,8 @@ namespace Jde::Opc::Gateway{
 		α ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void override;
 		//On the strand, before the new subscription's first value:  the check of the server's namespaces starts here.
 		α ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void override;
-		α ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;//keeps the interval for the other Parameters callers, and gives the group its heartbeat hold.
+		α ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;
+		α RunsAt( Duration publishingInterval )ι->void override;//keeps the interval for the other Parameters callers, and gives the group its heartbeat hold.
 		α to_string()Ι->string override{ return Ƒ( "HistGroup({})", _guid ); }
 		//What the collector asks of a node's item (spec *Collector contract*):  sampling at its MinTimeInterval, or at 0, the
 		//server's fastest, when it has none, and a publishing interval's samples queued - `publishing`, the interval the
@@ -167,9 +168,9 @@ namespace Jde::Opc::Gateway{
 		const string _guid;
 		const ServerCnnctnNK _slug;
 		const sp<Opc::Hist::Group> _group;
-		//The interval the subscription runs at, as ItemParameters last heard it from the client - the create's request until the
-		//server has answered - for the Parameters the edits and the stale re-creates build, and the group's heartbeat hold.
-		mutable Duration _publishingInterval ABSL_GUARDED_BY(_mutex);
+		//The interval the subscription runs at, as RunsAt last heard it from the client - the create's request until the server has
+		//answered - for the Parameters the edits and the stale re-creates build, and the group's heartbeat hold.
+		Duration _publishingInterval ABSL_GUARDED_BY(_mutex);
 		const Credential _collector;
 		Opc::Hist::IClock& _clock;
 		mutable absl::Mutex _mutex;//before the group's own:  Enqueue runs under it, so values reach the group in the order they came.

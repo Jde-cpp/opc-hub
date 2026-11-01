@@ -80,7 +80,7 @@ namespace Jde::Opc::Gateway{
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
 	// UA_Client_run_iterate never overlaps other UA_Client_* calls - submissions and sync services are dispatched
 	// to the same strand via UAClient::PostUA.  Between calls it waits (nextWait) rather than polls:  the connection
-	// manager's wake, Process, Clear and Stop end the wait.
+	// manager's wake, Clear and Stop end the wait.  Process needn't:  its request is sent by then, and the answer wakes it.
 	α AsyncRequest::ProcessingLoop()ι->VoidTask{
 		ASSERT( _strand.running_in_this_thread() );
 		sp<UAClient> client = _client;//keeps the owning UAClient (and thus `this`) alive across suspensions.
@@ -128,7 +128,7 @@ namespace Jde::Opc::Gateway{
 						drainStart = now;
 					if( *drainStart+drainLimit > now ){
 						_sleeping = true;
-						let result = co_await _pollTimer.Rearm( nextWait(*client) );//the read's reply ends it through the manager's wake, a request through Process.
+						let result = co_await _pollTimer.Rearm( nextWait(*client) );//the read's reply ends it through the manager's wake, as a request's answer does.
 						_sleeping = false;
 						if( !result && result.error()!=boost::asio::error::operation_aborted ){
 							CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
@@ -153,7 +153,7 @@ namespace Jde::Opc::Gateway{
 			TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
 			if( size==newSize ){
 				_sleeping = true;
-				(void)co_await _pollTimer.Rearm( nextWait(*client) );//ended by the manager's wake for what arrived, by Process for a request that landed mid-wait (#505), by Clear for the subscription's end and by Stop.
+				(void)co_await _pollTimer.Rearm( nextWait(*client) );//ended by the manager's wake for what arrived - a request's answer among it - by Clear for the subscription's end and by Stop.
 				_sleeping = false;
 			}
 		}
@@ -190,8 +190,8 @@ namespace Jde::Opc::Gateway{
 			LOG( level, _tags, "[{}.{}]Could not find request handle{}.", hex(UAHandle()), hex(requestId), _stopped.test() ? " - submitted after Stop" : "" );
 		}
 		//The unsubscribe, or the last item gone, is user traffic:  the idle clock starts here (KeepAliveTests).  Its delete is submitted in a
-		//later strand handler, and a loop that woke between the two, unstamped, ran the ttl check against the create's stamp.  The sleep
-		//ends too:  the subscription's interval was its reason.
+		//later strand handler, and a loop that woke between the two, unstamped, ran the ttl check against the create's stamp.  The wait
+		//ends too, so the emptied queue reaches the ttl check now rather than at the next housekeeping timer.
 		if( requestId==SubscriptionRequestId ){
 			_lastRequest = Clock::now();
 			if( _sleeping )
@@ -216,8 +216,6 @@ namespace Jde::Opc::Gateway{
 			_lastRequest = Clock::now();
 		if( !_running.test_and_set() )
 			ProcessingLoop();
-		else if( _sleeping && requestId!=SubscriptionRequestId )
-			_pollTimer.Cancel();//the loop sleeps the subscription's interval with only it outstanding; left to run out, this request's first run_iterate waited up to 500ms (#505).
 	}
 	α AsyncRequest::Stop()ι->void{//strand-only (cross-thread callers go through UAClient::StopProcessing)
 		ASSERT( _strand.running_in_this_thread() );
@@ -249,6 +247,7 @@ namespace Jde::Opc::Gateway{
 		//makes anyway, just before the cycle can form.
 		let pending = _requests.size();
 		UA_Client_disconnect( *client );
+		client->ReleaseParked();//refused now, so they fail:  each holds the client.
 		if( _requests.size() ){
 			string ids; for_each( _requests, [&ids](auto r){ ids += Ƒ("{:x}, ", r); } );
 			WARN( "[{}]{} request(s) still registered after the disconnect: [{}]", hex(client->Handle()), _requests.size(), ids );

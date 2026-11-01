@@ -108,31 +108,12 @@ namespace Jde::Opc::Gateway::Tests{
 		while( _client->MonitoredNodes().Count()!=remaining )
 			sw.CheckTimeout( timeout, 1ms );
 	}
-	//The OpcServer revises nothing, so the stored create response is swapped for one that says what a test needs (the historian's
-	//HistGroupTests).  The original goes back whatever happens:  the suite shares the client, and a later test would see the swap.
-	struct RevisedInterval final{
-		RevisedInterval( sp<UAClient> client, double revisedPublishingInterval )ε:
-			_client{ move(client) },
-			_original{ _client->CreatedSubscriptionResponse() }{
-			THROW_IF( !_original, "the subscribe stored no create response" );
-			auto revised = ms<UA_CreateSubscriptionResponse>();
-			UA_CreateSubscriptionResponse_init( revised.get() );
-			revised->subscriptionId = _original->subscriptionId;//SubscriptionId() still names the live one - the unsubscribe's delete needs it.
-			revised->revisedPublishingInterval = revisedPublishingInterval;
-			_client->SetCreatedSubscriptionResponse( move(revised) );
-		}
-		RevisedInterval( const RevisedInterval& )=delete;
-		~RevisedInterval(){ _client->SetCreatedSubscriptionResponse( _original ); }
-	private:
-		sp<UAClient> _client;
-		sp<UA_CreateSubscriptionResponse> _original;
-	};
 	TEST_F( SubscribeTests, Basic ){
 		ASSERT_NO_THROW( SubscribeAndPush(Intensity) );
 		ASSERT_NO_THROW( WriteAndPush(Intensity, 6s) );
 		ASSERT_NO_THROW( UnsubscribeAndDrain(Intensity) );
 		TRACE( "-------------------------------------------------------------" );
-		//teardown costs the gateway's 1s subscription wait + a publishing interval's poll tick, so poll rather than fixed-sleep.
+		//teardown costs the gateway's 1s DeleteMonitoring wait and the delete's round trip, so poll rather than fixed-sleep.
 		Stopwatch sw;
 		while( _client->Processing() )
 			ASSERT_NO_THROW( sw.CheckTimeout(6s, 1ms) );
@@ -168,9 +149,9 @@ namespace Jde::Opc::Gateway::Tests{
 			EXPECT_EQ( _client->PublishingInterval(), 2s );
 			EXPECT_EQ( HistGroupHost::Parameters(sampled, _client->PublishingInterval()).QueueSize, 21u );
 		}
-		{
-			RevisedInterval revised{ _client, std::numeric_limits<double>::infinity() };
-			EXPECT_EQ( _client->PublishingInterval(), _publishingInterval ) << "an answer that is no duration is not taken";
+		for( let ms : {std::numeric_limits<double>::infinity(), 1e300, 1e-7} ){
+			RevisedInterval revised{ _client, ms };
+			EXPECT_EQ( _client->PublishingInterval(), _publishingInterval ) << ms << " ms:  an answer no Duration holds, or one that rounds to none, is not taken";
 		}
 		EXPECT_EQ( HistGroupHost::Parameters(sampled, 24h).QueueSize, 864001u );
 		EXPECT_EQ( HistGroupHost::Parameters(sampled, Duration::max()).QueueSize, std::numeric_limits<UA_UInt32>::max() ) << "the request's deepest queue, not a wrapped one";
@@ -430,8 +411,10 @@ namespace Jde::Opc::Gateway::Tests{
 			lg _{ Mutex }; RestoredOpc = opcId; RestoredNodes = nodes; ++Restored;
 		}
 		α ItemParameters( const NodeId&, Duration )Ι->MonitoringParameters override{ return Parameters; }
+		α RunsAt( Duration publishingInterval )ι->void override{ RanAt = publishingInterval; }
 		α to_string()Ι->string override{ return "SubscribeTests.StateListener"; }
 		MonitoringParameters Parameters;
+		std::atomic<Duration> RanAt{};
 		atomic<uint> PushesWhileLost, PushesAfterRestore, Lost, Restored;
 		mutex Mutex; string LostOpc, RestoredOpc; flat_set<NodeId> LostNodes, RestoredNodes; TimePoint LostAt;
 	};
@@ -603,6 +586,21 @@ namespace Jde::Opc::Gateway::Tests{
 		drainListener( _client, listener, before );
 	}
 
+	//A listener whose nodes all join existing items hears the interval too, though it asks no ItemParameters:  a historian host
+	//restored within DeleteMonitoring's grace joins every item, and kept the request's interval for its heartbeat hold and its edits.
+	TEST_F( SubscribeTests, AJoiningListenerHearsTheRevisedInterval ){
+		let before = _client->MonitoredNodes().Count();
+		auto first = ms<StateListener>();
+		ASSERT_NO_THROW( SubscribeCounting(_client, first, {Intensity}) );
+		auto joiner = ms<StateListener>();
+		absl::Cleanup drain = [&]{ UAClient::Unsubscribe( joiner ); drainListener( _client, first, before ); };
+		EXPECT_EQ( first->RanAt.load(), _publishingInterval );
+		RevisedInterval revised{ _client, 2000 };
+		ASSERT_NO_THROW( BlockAwait(DataChangeAwait{{Intensity}, joiner, _client}) );
+		EXPECT_EQ( _client->MonitoredNodes().Count(), before+1 ) << "the joiner made no item";
+		EXPECT_EQ( joiner->RanAt.load(), 2s );
+	}
+
 	//subscription-disconnect #5: a client dying with a create in flight resumed that subscribe with an ack of zero results for its
 	//nodes - stashPending's TakeForResubscribe had wiped the request GetResult answers from.  The web client reads an empty list
 	//as success, the test client registers nothing and says so only in a log line, and the soak throws.  The request now survives
@@ -690,10 +688,9 @@ namespace Jde::Opc::Gateway::Tests{
 	//cleared the cache - by then a newer subscription - orphaning it on the server.  Two passes for one item give exactly that:  the
 	//first deletes the item and its subscription, a subscribe in between makes a new one, and the second finds nothing of its own
 	//left to delete.  It has to leave the new subscription alone.
-	//Timing, not a pinned window:  each pass waits exactly a second, and the new subscription's round trip can take over half a
-	//second (the processing loop polls every 500ms while only SubscriptionRequestId is queued).  So pass 2 is armed 0.85s after
-	//pass 1 - before pass 1 removes the item it needs, and late enough that the new subscription is in place first.  A run that
-	//misses either condition skips rather than passing on a scenario it did not stage.
+	//Timing, not a pinned window:  each pass waits exactly a second, so pass 2 is armed 0.85s after pass 1 - before pass 1 removes
+	//the item it needs, and late enough that the new subscription, a round trip of milliseconds since the loop stopped polling
+	//(#526), is in place first.  A run that misses either condition skips rather than passing on a scenario it did not stage.
 	TEST_F( SubscribeTests, EmptyDeletePassKeepsNewSubscription ){
 		auto listener = ms<PushCount>();
 		auto& nodes = _client->MonitoredNodes();

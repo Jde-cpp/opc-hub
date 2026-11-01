@@ -37,6 +37,9 @@ namespace Jde::Opc::Gateway{
 		//as SendDataChange is with it shared:  neither may call into UAClient or its monitored nodes, nor wait on a lock that is
 		//held across such a call - an unsubscribe under the listener's own lock would deadlock the strand.
 		β ItemParameters( const NodeId&, Duration /*publishingInterval*/ )Ι->MonitoringParameters{ return {}; }
+		//The interval the subscription runs at, told at every request this listener registers on one - before any ItemParameters, and
+		//also when every node joins an existing item, which asks none.  Called as ItemParameters is.
+		β RunsAt( Duration /*publishingInterval*/ )ι->void{}
 		β to_string()Ι->string=0;
 	};
 

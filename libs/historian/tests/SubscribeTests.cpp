@@ -236,6 +236,30 @@ namespace Jde::Opc::Hist::Tests{
 		}
 	}
 
+	//The hold is SetPublishingInterval's from then on - the server's revised interval, once the host hears it (#526):  at 2 s a
+	//heartbeat a second old stays buffered through a flush, where the create's 500 ms would have let it stream, and the next
+	//flush past 2 s takes it.
+	TEST_F( Subscriptions, TheHoldFollowsSetPublishingInterval ){
+		TwoDays();
+		Pump->SetThresholds( Speed, {.MaxTimeInterval=10s} );
+		Pump->SetPublishingInterval( 2s );
+		EXPECT_EQ( Pump->PublishingInterval(), 2s );
+		auto subscription = Pump->Subscribe( Listener, {Speed}, ticks(Time->Now()) );
+		All( *subscription );
+		DataChange( *Pump, Speed, 5, Time->Now() );
+		ASSERT_EQ( Listener->Count(), 1u );
+		Time->Advance( 10s );//its heartbeat.
+		Time->Advance( 1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		EXPECT_EQ( Listener->Count(), 1u ) << "a heartbeat younger than the hold waits for a later flush";
+		Time->Advance( 1s );
+		EXPECT_TRUE( Flush(*Pump) );
+		Time->Advance( 1ms );
+		ASSERT_EQ( Listener->Count(), 2u );
+		EXPECT_TRUE( Listener->Records()[1].value().has_heartbeat() );
+	}
+
 	//A heartbeat a failed write returns streamed as the flush took it:  the next flush doesn't stream it again, and a
 	//change sampled before it, too late to drop it, follows it into the file as into the stream.
 	TEST_F( Subscriptions, AReturnedHeartbeatStreamsOnce ){

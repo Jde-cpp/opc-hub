@@ -901,12 +901,15 @@ namespace Jde::Opc::Gateway{
 	α HistGroupHost::Client()Ι->sp<UAClient>{
 		return UAClient::Find( _slug, _collector );
 	}
+	α HistGroupHost::RunsAt( Duration publishingInterval )ι->void{
+		ul _{ _mutex };
+		if( publishingInterval==_publishingInterval )
+			return;
+		_publishingInterval = publishingInterval;
+		_group->SetPublishingInterval( publishingInterval );
+	}
 	α HistGroupHost::ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		ul _{ _mutex };
-		if( publishingInterval!=_publishingInterval ){
-			_publishingInterval = publishingInterval;
-			_group->SetPublishingInterval( publishingInterval );
-		}
 		let n = const_cast<HistGroupHost*>( this )->FindNode( node ).second;//a read:  nothing is written through it.
 		return Parameters( n ? n->Thresholds : Opc::Hist::Thresholds{}, publishingInterval );
 	}

@@ -286,6 +286,10 @@ namespace Jde::Opc::Hist{
 		ul _{ _mutex };
 		_publishingInterval = interval;
 	}
+	α Group::PublishingInterval()Ι->Duration{
+		ul _{ _mutex };
+		return _publishingInterval;
+	}
 	α Group::SetThresholds( NodeIndex index, Thresholds thresholds, SL sl )ε->void{
 		let now = _store->Time->Now();
 		Effects effects;

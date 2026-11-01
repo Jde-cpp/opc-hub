@@ -1,10 +1,12 @@
 #include <thread>
 #include <absl/cleanup/cleanup.h>
+#include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/log/MemoryLog.h>
 #include "utils/helpers.h"
 #include "utils/ITest.h"
 #include "utils/Subscribing.h"
 #include "../src/UAClient.h"
+#include "../src/async/ReadAwait.h"
 
 #define let const auto
 
@@ -68,5 +70,15 @@ namespace Jde::Opc::Gateway::Tests{
 		INFO( "{} run_iterate calls for a read", iterations );
 		EXPECT_LE( iterations, 6u );
 		EXPECT_GE( iterations, 1u );
+	}
+
+	//A request submitted while the session re-activates waits for the activation:  until its answer open62541 sends a request
+	//without the session's token, which the server refuses BadSessionIdInvalid - and that closes the session under every other
+	//call in flight.  activateCurrentSession re-activates it in place, as the keep-alive's rebuild and a reconnect do.
+	TEST_F( ProcessingLoopTests, ARequestWaitsOutAReactivation ){
+		ASSERT_NO_THROW( ReadValue(_client, Intensity) );//warm:  the first read may reconnect.
+		_client->PostUA( [c=_client.get()]{ UA_Client_activateCurrentSessionAsync( c->UAPointer() ); } );
+		EXPECT_NO_THROW( (BlockAwait<ReadAwait,ReadResponse>(ReadAwait{Intensity, UA_ATTRIBUTEID_VALUE, _client})) );
+		EXPECT_NO_THROW( ReadValue(_client, Intensity) ) << "the session is back";
 	}
 }

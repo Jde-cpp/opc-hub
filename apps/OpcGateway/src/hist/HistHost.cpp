@@ -145,7 +145,7 @@ namespace Jde::Opc::Gateway{
 			initial.push_back( {node.Node, HistGroupHost::ForGroup(thresholds), node.Id} );
 			hostMembers.push_back( {node.Id, node.Node, thresholds, node.Attributes} );
 		}
-		auto group = historian->AddGroup( {.Name=row.Guid, .Indexes=Opc::Hist::EIndexes::Host, .PublishingInterval=_publishingInterval}, move(initial), sl );//what the create asks for;  the host hears the server's revised one with its first item (ItemParameters).
+		auto group = historian->AddGroup( {.Name=row.Guid, .Indexes=Opc::Hist::EIndexes::Host, .PublishingInterval=_publishingInterval}, move(initial), sl );//what the create asks for;  the host hears the server's revised one with its first request (RunsAt).
 		auto host = ms<HistGroupHost>( row, slug, move(group), move(hostMembers), Collector(slug), historian->Time() );
 		{
 			lg _{ _mutex };

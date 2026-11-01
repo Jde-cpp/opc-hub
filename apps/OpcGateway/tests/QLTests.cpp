@@ -68,6 +68,19 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( obj.contains("discoveryUrls") );
 	}
 
+	//dataTypes:  the server's structure definitions, built over the asynchronous read (DataTypesAwait) - each node's definition
+	//and name read together, results[i*2] and [i*2+1];  a node that is no structure is left out.
+	TEST_F( QLTests, DataTypesBuildsTheStructures ){
+		const jobject vars{ {"opc", OpcServerSlug}, {"ids", jarray{NodeId{0, UA_NS0ID_RANGE}.ToJson(), NodeId{0, UA_NS0ID_DOUBLE}.ToJson(), NodeId{0, UA_NS0ID_EUINFORMATION}.ToJson()}} };
+		let value = Socket().QuerySync( "dataTypes( opc: $opc, id: $ids ){ typeId members{ isArray } }", vars );
+		let& types = value.as_array();
+		ASSERT_EQ( types.size(), 2u ) << serialize( value );
+		EXPECT_EQ( NodeId{types[0].at("typeId")}, (NodeId{0, UA_NS0ID_RANGE}) ) << serialize( types[0] );
+		EXPECT_EQ( types[0].at("members").as_array().size(), 2u ) << "low, high";
+		EXPECT_EQ( NodeId{types[1].at("typeId")}, (NodeId{0, UA_NS0ID_EUINFORMATION}) ) << serialize( types[1] );
+		EXPECT_EQ( types[1].at("members").as_array().size(), 4u ) << "namespaceUri, unitId, displayName, description";
+	}
+
 	//#255:  a stand-alone gateway's web sessions, for its page's Web Sessions tab - asked by the AppServer as InstanceSessionsAwait
 	//forwards it:  raw, over the AppServer socket.  The socket this test queries on holds one of them.
 	TEST_F( QLTests, sessions ){

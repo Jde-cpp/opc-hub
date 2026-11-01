@@ -10,6 +10,7 @@ namespace Jde::Opc::Gateway{
 	constexpr ELogTags _tags{ (ELogTags)EOpcLogTags::Net };
 	constexpr size_t rxSize{ 1<<16 };//the stock manager's recv-bufsize.
 	constexpr char tcpName[]{ "tcp" };
+	constexpr uint resolverThreads{ 4 };//getaddrinfo blocks:  a nameserver that never answers holds one for ~10 s.
 	constexpr sv esName{ "asio tcp connection manager" };
 
 	//The one thread every connection's socket runs on, made for the first manager and gone with the last:  a UA_Client_delete after
@@ -27,7 +28,7 @@ namespace Jde::Opc::Gateway{
 			return y;
 		}
 		NetThread()ε:
-			Ctx{ ms<asio::io_context>(1) },
+			Ctx{ Context() },
 			Guard{ mu<asio::executor_work_guard<asio::io_context::executor_type>>(Ctx->get_executor()) },
 			Worker{ [ctx=Ctx]{ Thread::SetName( "UANet" ); ctx->run(); } }
 		{}
@@ -37,6 +38,14 @@ namespace Jde::Opc::Gateway{
 				Worker.detach();
 			else
 				Worker.join();
+		}
+		//The first resolver starts the resolver threads and the first socket the reactor - its epoll and eventfd:  here, where a
+		//failure throws, not in Connection's ι constructor.
+		Ω Context()ε->sp<asio::io_context>{
+			auto y = ms<asio::io_context>( asio::config_from_string{Ƒ("scheduler.concurrency_hint=1\nresolver.threads={}", resolverThreads)} );
+			tcp::resolver{ *y };
+			tcp::socket{ *y };
+			return y;
 		}
 		const sp<asio::io_context> Ctx;
 		up<asio::executor_work_guard<asio::io_context::executor_type>> Guard;
@@ -49,18 +58,29 @@ namespace Jde::Opc::Gateway{
 	struct Connection final : std::enable_shared_from_this<Connection>{
 		enum class EState : uint8{ Resolving, Connecting, Established, Closing, Closed };
 		enum class EEvent : uint8{ None, Established, Data, Closing };
-		Connection( AsioConnectionManager& cm, uintptr_t id, string host, uint16 port, void* application, void* context, UA_ConnectionManager_connectionCallback callback, sp<NetThread> net )ι:
-			Id{ id }, ClientHandle{ cm._client }, El{ cm.eventSource.eventLoop }, Application{ application }, Callback{ callback }, Host{ move(host) }, Port{ port }, Net{ move(net) }, Wake{ cm._wake },
+		Connection( AsioConnectionManager& cm, uintptr_t id, string host, optional<asio::ip::address> address, uint16 port, void* application, void* context, UA_ConnectionManager_connectionCallback callback, sp<NetThread> net )ι:
+			Id{ id }, ClientHandle{ cm._client }, El{ cm.eventSource.eventLoop }, Application{ application }, Callback{ callback }, Host{ move(host) }, Address{ move(address) }, Port{ port }, Net{ move(net) }, Wake{ cm._wake },
 			Context{ context }, Resolver{ *Net->Ctx }, Socket{ *Net->Ctx }{
 			Dc.callback = &AsioConnectionManager::Deliver;
 			Dc.application = &cm;
 			Dc.context = (void*)Id;
 		}
+		~Connection(){//a failed write leaves what queued behind it, and Fail can't drain it:  the write's completion still reads Tx.front().
+			for( auto& buf : Tx )
+				UA_ByteString_clear( &buf );
+		}
 		α Post( auto&& f )ι->void{ asio::post( *Net->Ctx, [self=shared_from_this(), f=std::forward<decltype(f)>(f)]() mutable { (self.get()->*f)(); } ); }
 		α LogPrefix()Ι->string{ return Ƒ("[{:x}.{}]", ClientHandle, Id); }
 
-		//net thread
+		//net thread.  An IP address skips the resolver, as getaddrinfo answers one without DNS.
 		α Start()ι->void{
+			if( State!=EState::Resolving )//closed before it started.
+				return;
+			if( Address ){
+				State = EState::Connecting;
+				Connect( std::array{tcp::endpoint{*Address, (asio::ip::port_type)Port}} );
+				return;
+			}
 			++Inflight;
 			Resolver.async_resolve( Host, std::to_string(Port), [self=shared_from_this()]( const error_code& ec, tcp::resolver::results_type results ){
 				--self->Inflight;
@@ -69,24 +89,29 @@ namespace Jde::Opc::Gateway{
 					return;
 				}
 				self->State = EState::Connecting;
-				++self->Inflight;
-				asio::async_connect( self->Socket, results, [self]( const error_code& ec, const tcp::endpoint& endpoint ){
-					--self->Inflight;
-					if( self->State!=EState::Connecting || ec ){
-						self->Fail( ec, "connect" );
-						return;
-					}
-					error_code ignored;
-					self->Socket.set_option( tcp::no_delay{true}, ignored );
-					self->State = EState::Established;
-					self->Writable = true;
-					TRACE( "{}connected to {}", self->LogPrefix(), endpoint.address().to_string() );
-					self->Raise( EEvent::Established );
-				});
+				self->Connect( results );
+			});
+		}
+		α Connect( const auto& endpoints )ι->void{
+			++Inflight;
+			asio::async_connect( Socket, endpoints, [self=shared_from_this()]( const error_code& ec, const tcp::endpoint& endpoint ){
+				--self->Inflight;
+				if( self->State!=EState::Connecting || ec ){
+					self->Fail( ec, "connect" );
+					return;
+				}
+				error_code ignored;
+				self->Socket.set_option( tcp::no_delay{true}, ignored );
+				self->State = EState::Established;
+				self->Writable = true;
+				TRACE( "{}connected to {}", self->LogPrefix(), endpoint.address().to_string() );
+				self->Raise( EEvent::Established );
 			});
 		}
 		α ArmRead()ι->void{
 			if( State!=EState::Established || CloseRequested ){
+				if( State==EState::Established && (Writing || !Tx.empty()) )
+					return;//RequestClose's rule:  the last write's completion closes behind what is queued - the CLO.
 				if( State!=EState::Closed )
 					FinishClose();
 				return;
@@ -137,6 +162,7 @@ namespace Jde::Opc::Gateway{
 			CloseRequested = true;
 			Writable = false;
 			if( State<EState::Established ){
+				State = EState::Closing;//a lookup already in getaddrinfo can't be cancelled:  its success finds the state moved on, and fails.
 				Resolver.cancel();
 				error_code ignored;
 				Socket.close( ignored );
@@ -156,11 +182,13 @@ namespace Jde::Opc::Gateway{
 			MaybeRaiseClosing();
 		}
 		//A failed resolve, connect, read or write ends the connection:  a cancelled one (RequestClose, or Fail itself) is reported once.
+		//Before the connection is established it is a Warning, the only word on why:  open62541 logs the url alone, and reports any close
+		//of a CONNECTING channel as BadConnectionRejected - a name that doesn't resolve too.
 		α Fail( const error_code& ec, sv what )ι->void{
 			if( State==EState::Closed )
 				return;
 			if( State!=EState::Closing && ec!=asio::error::operation_aborted )
-				DBG( "{}{}: {}", LogPrefix(), what, ec==asio::error::eof ? "closed by the server" : ec.message() );
+				LOG( State<EState::Established ? ELogLevel::Warning : ELogLevel::Debug, _tags, "{}{} {}:{} failed:  {}", LogPrefix(), what, Host, Port, ec==asio::error::eof ? "closed by the server" : ec.message() );
 			Writable = false;
 			State = EState::Closing;
 			Resolver.cancel();
@@ -202,10 +230,12 @@ namespace Jde::Opc::Gateway{
 		void* const Application;
 		const UA_ConnectionManager_connectionCallback Callback;
 		const string Host;
+		const optional<asio::ip::address> Address;//Host, where it is one.
 		const uint16 Port;
 		const sp<NetThread> Net;
 		const ConnectionWake Wake;
 		void* Context;//loop thread
+		bool CloseCalled{};//loop thread:  closeConnection, or the manager's stop
 		bool ClosingDelivered{};//loop thread
 		tcp::resolver Resolver;//net thread, with the rest
 		tcp::socket Socket;
@@ -253,7 +283,7 @@ namespace Jde::Opc::Gateway{
 			if( es->eventSourceType!=UA_EVENTSOURCETYPE_CONNECTIONMANAGER || sv{(const char*)es->name.data, es->name.length}!=esName )
 				continue;
 			let& self = Self( es );
-			return Counts{ self._opened, self._established, self._closings };
+			return Counts{ self._opened, self._established, self._closings, self._resolves };
 		}
 		return nullopt;
 	}
@@ -284,8 +314,10 @@ namespace Jde::Opc::Gateway{
 		{
 			lg _{ self._mutex };
 			es->state = UA_EVENTSOURCESTATE_STOPPING;
-			for( let& [id, connection] : self._connections )
+			for( let& [id, connection] : self._connections ){
+				connection->CloseCalled = true;
 				connection->Post( &Connection::RequestClose );
+			}
 		}
 		self.CheckStopped();
 	}
@@ -310,14 +342,19 @@ namespace Jde::Opc::Gateway{
 		let validate = (const UA_Boolean*)UA_KeyValueMap_getScalar( params, UA_QUALIFIEDNAME(0, (char*)"validate"), &UA_TYPES[UA_TYPES_BOOLEAN] );
 		if( validate && *validate )
 			return UA_STATUSCODE_GOOD;
+		string host{ (const char*)address->data, address->length };
+		error_code notIp;
+		let ip = asio::ip::make_address( host, notIp );
 		sp<Connection> connection;
 		{
 			lg _{ self._mutex };
 			let id = self._nextId++;
-			connection = ms<Connection>( self, id, string{(const char*)address->data, address->length}, *port, application, context, callback, self._net );
+			connection = ms<Connection>( self, id, move(host), notIp ? nullopt : optional{ip}, *port, application, context, callback, self._net );
 			self._connections.emplace( id, connection );
 		}
 		++self._opened;
+		if( !connection->Address )
+			++self._resolves;
 		DBG( "{}opening {}:{}", connection->LogPrefix(), connection->Host, connection->Port );
 		callback( cm, connection->Id, application, &connection->Context, UA_CONNECTIONSTATE_OPENING, &UA_KEYVALUEMAP_NULL, UA_BYTESTRING_NULL );
 		connection->Post( &Connection::Start );
@@ -338,6 +375,7 @@ namespace Jde::Opc::Gateway{
 		auto connection = Self( cm ).Find( connectionId );
 		if( !connection )
 			return UA_STATUSCODE_BADNOTFOUND;
+		connection->CloseCalled = true;
 		connection->Post( &Connection::RequestClose );
 		return UA_STATUSCODE_GOOD;
 	}
@@ -350,6 +388,9 @@ namespace Jde::Opc::Gateway{
 	//Inside the loop's run, with its mutex held, as the stock manager's callbacks are.  Nothing of the manager's is held across the
 	//client's callback:  it reopens and closes connections from inside it.  A CLOSING erases the connection first, so a close the
 	//callback makes for the same id finds nothing, as the stock answers after its own removal, and checks the stop after.
+	//After closeConnection or the stop, only the CLOSING reaches the client, as the stock's poll skips a socket it shut down:  a
+	//chunk read before the close - the server's answers to the client's last Publishes - would land on a channel already CLOSING,
+	//which refuses it with BadInvalidState and makes that the connect status, so open62541 would not reconnect.
 	//The cancel at the end:  run processes delayed callbacks before its wait, and returns early from the wait for a socket event
 	//alone - the stock manager's events are those, ours are not - so a synchronous call spinning run would get its answer here and
 	//then sit out the wait, up to the housekeeping second.  Cancelling while run executes writes the self-pipe, and the wait returns.
@@ -369,13 +410,17 @@ namespace Jde::Opc::Gateway{
 		let cm = static_cast<UA_ConnectionManager*>( &self );
 		switch( event ){
 		case Connection::EEvent::Established:
-			++self._established;
-			connection->Callback( cm, id, connection->Application, &connection->Context, UA_CONNECTIONSTATE_ESTABLISHED, &UA_KEYVALUEMAP_NULL, UA_BYTESTRING_NULL );
+			if( !connection->CloseCalled ){
+				++self._established;
+				connection->Callback( cm, id, connection->Application, &connection->Context, UA_CONNECTIONSTATE_ESTABLISHED, &UA_KEYVALUEMAP_NULL, UA_BYTESTRING_NULL );
+			}
 			connection->Post( &Connection::ArmRead );
 			break;
 		case Connection::EEvent::Data:{
-			const UA_ByteString msg{ connection->RxLength, connection->Rx.data() };
-			connection->Callback( cm, id, connection->Application, &connection->Context, UA_CONNECTIONSTATE_ESTABLISHED, &UA_KEYVALUEMAP_NULL, msg );
+			if( !connection->CloseCalled ){
+				const UA_ByteString msg{ connection->RxLength, connection->Rx.data() };
+				connection->Callback( cm, id, connection->Application, &connection->Context, UA_CONNECTIONSTATE_ESTABLISHED, &UA_KEYVALUEMAP_NULL, msg );
+			}
 			connection->Post( &Connection::ArmRead );
 			break;
 		}

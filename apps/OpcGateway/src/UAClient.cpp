@@ -1,24 +1,16 @@
 #include "UAClient.h"
-#include <jde/fwk/io/crc.h>
+#include <stdexcept>
 #include <absl/synchronization/mutex.h>
-
-#include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/io/crc.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/app/client/IAppClient.h>
-#include <jde/opc/uatypes/NodeId.h>
-#include <jde/opc/uatypes/Value.h>
-#include <open62541/types.h>
-#include <stdexcept>
-#include "GatewayAppClient.h"
 #include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
+#include <jde/historian/Group.h>
+#include "GatewayAppClient.h"
 #include "async/ConnectionManager.h"
-#include "async/DataChanges.h"
 #include "async/Subscriptions.h"
-#include "jde/fwk/crypto/CryptoSettings.h"
-#include "jde/fwk/settings.h"
-#include "uatypes/Browse.h"
 
 #define let const auto
 
@@ -542,6 +534,7 @@ namespace Jde::Opc::Gateway{
 			//a fresh client (haveNamespaces), so flagging would leave the drain waiting out its full limit for a read
 			//that never fires.
 			client->ClearRequest( ConnectRequestId );
+			client->ReleaseParked();
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
@@ -550,6 +543,8 @@ namespace Jde::Opc::Gateway{
 		}
 		else if( client ){
 			client->RecordBreak();
+			if( connectStatus )
+				client->ReleaseParked();//to fail:  the connection is going.
 			//its session went and open62541 reconnects it in place, which no ConnectionLost reports.  Not a removed client's own
 			//disconnect, which Deregister can run before the registry lets it go:  closed or idled out is Removed, not a loss.
 			if( client->_sessionUp.exchange(false) && !client->IsDiscarded() )
@@ -840,6 +835,8 @@ namespace Jde::Opc::Gateway{
 					});
 				}
 				ctx.run_for( timeout );
+				for( auto& pending : connected | std::views::filter([]( let& c ){ return !c; }) )
+					pending = false;//still pending:  silent, as an address that drops the SYN is.
 				let first = settled();
 				for( auto& socket : sockets ){
 					boost::system::error_code ignored;
@@ -953,6 +950,20 @@ namespace Jde::Opc::Gateway{
 		//the strand (e.g. completion callbacks inside run_iterate) and posts otherwise. `self` keeps the client - and
 		//with it _asyncRequest and the raw UA_Client - alive until f runs.
 		boost::asio::dispatch( _asyncRequest.Strand(), [self=shared_from_this(), f=std::move(f)]()mutable{f();} );
+	}
+
+	α UAClient::Reactivating()Ι->bool{
+		UA_SecureChannelState channel{}; UA_SessionState session{}; StatusCode connectStatus{};
+		UA_Client_getState( _ptr, &channel, &session, &connectStatus );
+		return channel==UA_SECURECHANNELSTATE_OPEN && session!=UA_SESSIONSTATE_ACTIVATED && !connectStatus && !_asyncRequest.IsStopped();
+	}
+	α UAClient::Park( absl::AnyInvocable<void()> submit )ι->void{
+		_parked.push_back( std::move(submit) );
+		Process( ConnectRequestId, "parked for the session's activation", true );//pumps its round trips;  the activation's StateCallback clears it.
+	}
+	α UAClient::ReleaseParked()ι->void{
+		for( auto& submit : std::exchange(_parked, {}) )
+			PostStrand( std::move(submit) );
 	}
 
 	α UAClient::PostStrand( absl::AnyInvocable<void()> f )ι->void{
@@ -1450,10 +1461,9 @@ namespace Jde::Opc::Gateway{
 	}
 
 	α UAClient::PublishingInterval()Ι->Duration{
-		using Milliseconds = std::chrono::duration<double,std::milli>;
 		let response = CreatedSubscriptionResponse();
-		let revised = response ? response->revisedPublishingInterval : 0.;
-		return std::isfinite(revised) && revised>0 ? duration_cast<Duration>( Milliseconds{revised} ) : _publishingInterval;
+		let revised = response ? Opc::Hist::ToDuration( response->revisedPublishingInterval ) : nullopt;
+		return revised && *revised>Duration::zero() ? *revised : _publishingInterval;
 	}
 	α UAClient::Find( UA_Client* ua, SL srce )ε->sp<UAClient>{
 		sp<UAClient> y = TryFind( ua, srce );

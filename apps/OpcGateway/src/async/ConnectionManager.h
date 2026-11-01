@@ -22,12 +22,12 @@ namespace Jde::Opc::Gateway{
 	//strand handler on a pool thread, and with every pool thread in one - Shutdown stops every client at once - nothing could
 	//produce the close those loops wait for.
 	//The contract (eventloop.h, ua_client_connect.c):  openConnection delivers OPENING before it returns;  CLOSING comes from a later
-	//run, once, last, never from inside closeConnection (UA_SecureChannel_shutdown writes its state after that returns);  a
-	//connection id is never 0;  sendWithConnection owns its buffer, also when it fails;  a buffer is allocNetworkBuffer's.
+	//run, once, last, never from inside closeConnection (UA_SecureChannel_shutdown writes its state after that returns), and is all
+	//that follows closeConnection;  a connection id is never 0;  sendWithConnection owns its buffer, also when it fails;  a buffer is allocNetworkBuffer's.
 	struct AsioConnectionManager final : UA_ConnectionManager{
 		//Heap-allocated;  the loop frees it with the client (eventSource.free).
 		Ω Create( Jde::Handle client, ConnectionWake wake )ε->UA_ConnectionManager*;
-		struct Counts final{ uint Opened{}; uint Established{}; uint Closings{}; };
+		struct Counts final{ uint Opened{}; uint Established{}; uint Closings{}; uint Resolves{}; };
 		Ω Stats( UA_Client* ua )ι->optional<Counts>;//the client's manager's, where it is this one - for tests.
 	private:
 		AsioConnectionManager( Jde::Handle client, ConnectionWake wake )ε;
@@ -58,7 +58,7 @@ namespace Jde::Opc::Gateway{
 		std::mutex _mutex;
 		flat_map<uintptr_t,sp<Connection>> _connections;
 		uintptr_t _nextId{ 1 };
-		std::atomic<uint> _opened{}, _established{}, _closings{};
+		std::atomic<uint> _opened{}, _established{}, _closings{}, _resolves{};
 		friend struct Connection;
 		constexpr static ELogTags _tags{ (ELogTags)EOpcLogTags::Net };
 	};

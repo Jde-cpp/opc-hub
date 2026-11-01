@@ -135,6 +135,12 @@ namespace Jde::Opc::Gateway{
 		α PostStrand( absl::AnyInvocable<void()> f )ι->void;//like PostUA but always defers (asio::post, not dispatch): use when a strand callback must not run re-entrantly inside the current strand handler. Holds shared_from_this until f runs.
 		α Processing()ι->bool{ return _asyncRequest.IsRunning(); }
 		α OnStrand()Ι->bool{ return _asyncRequest.Strand().running_in_this_thread(); }//inside run_iterate or a PostUA - where UA_Client_* calls, and the ordering a strand callback relies on, are safe.
+		//The session is being created or activated on an open channel - a re-activation, the keep-alive's rebuild:  open62541 would send a
+		//request without the session's token, and the server's BadSessionIdInvalid closes the session under every other call.  SubmitUA
+		//parks its submit until StateCallback reports the activation, or the failure;  FailPending releases what a stop leaves.  Strand-only.
+		α Reactivating()Ι->bool;
+		α Park( absl::AnyInvocable<void()> submit )ι->void;
+		α ReleaseParked()ι->void;
 		α ProcessDataSubscriptions()ι->void;
 		α StopProcessDataSubscriptions()ι->void;
 		α Resubscribe()ι->void;//unconditional rebuild: re-create the subscription and the monitored items a dropped session took with it.  RecordSession is what decides when this is needed.
@@ -149,10 +155,11 @@ namespace Jde::Opc::Gateway{
 		//and never tried the next (eventloop_posix_tcp.c), so such a name failed BadConnectionRejected one address short of the server:
 		//IPv6 link-local ahead of IPv4 against a server that listens on IPv4 alone - External on a dual-stack box - or `localhost`, ::1
 		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  The asio manager
-		//(#526) tries each address in turn, but one that drops the SYN would hold the connect for the kernel's retries, where this
-		//races them all for three seconds.  An address, a name with one address, and a name whose first address answers all come
-		//back exactly as given, so nothing changes where a connect already works;  the substitution is made only where the first
-		//address fails.
+		//(#526) tries each address in turn, so a refused first address costs it only the refusal, but one that drops the SYN holds the
+		//connect for the kernel's retries, about 127 s on Linux:  this races them all for three seconds and counts one still silent
+		//then as dead.  LogServerEndpoints' discovery client is open62541's own, which needs the substitute for a refused one too.
+		//An address, a name with one address, and a name whose first address answers all come back exactly as given, so nothing
+		//changes where a connect already works;  the substitution is made only where the first address fails or stays silent.
 		Ω ReachableUrl( str url, Jde::Handle h )ι->string;
 		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
 		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
@@ -241,6 +248,7 @@ namespace Jde::Opc::Gateway{
 		mutable mutex _responseMutex;
 
 		AsyncRequest _asyncRequest;
+		vector<absl::AnyInvocable<void()>> _parked;//strand-only:  Park's.
 		Jde::Handle _handle;
 		Logger _logger; //after handle
 		UA_Client* _ptr{};//needs to be after _logger, _config, Password.

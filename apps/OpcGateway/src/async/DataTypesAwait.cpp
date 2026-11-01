@@ -22,16 +22,8 @@ namespace Jde::Opc{
 	DataTypesAwait::DataTypesAwait( vector<NodeId>&& nodes, sp<UAClient> client, SL sl )ι:
 		UAServiceAwait{ move(client), "read DataTypeDefinition", sl },
 		_nodes{ move(nodes) },
-		_toRead( _nodes.size()*2 ){
-		for( size_t i=0; i<_nodes.size(); ++i ){
-			UA_ReadValueId_init( &_toRead[i] );
-			_toRead[i].nodeId = _nodes[i];
-			_toRead[i].attributeId = UA_ATTRIBUTEID_DATATYPEDEFINITION;
-			UA_ReadValueId_init( &_toRead[i+_nodes.size()] );
-			_toRead[i+_nodes.size()].nodeId = _nodes[i];
-			_toRead[i+_nodes.size()].attributeId = UA_ATTRIBUTEID_BROWSENAME;
-		}
-	}
+		_request{ _nodes, {UA_ATTRIBUTEID_DATATYPEDEFINITION, UA_ATTRIBUTEID_BROWSENAME} }
+	{}
 	α DataTypesAwait::Suspend()ι->void{
 		if( _nodes.empty() )
 			Resume( DataTypeArrayPtr{nullptr, FreeDataTypeArray} );
@@ -39,15 +31,12 @@ namespace Jde::Opc{
 			UAServiceAwait::Suspend();
 	}
 	α DataTypesAwait::Request()ι->void*{
-		_request = {};
-		_request.nodesToReadSize = _toRead.size();
-		_request.nodesToRead = _toRead.data();
-		return &_request;
+		return static_cast<UA_ReadRequest*>( &_request );
 	}
 	//open62541 clears the response once the completion returns:  fromDescription copies what it keeps.
 	α DataTypesAwait::Convert( UA_ReadResponse&& response )ε->DataTypeArrayPtr{
 		THROW_IFX( response.responseHeader.serviceResult, UAClientException(response.responseHeader.serviceResult, _client->Handle(), "read DataTypeDefinition", _sl) );
-		THROW_IFX( response.resultsSize!=_toRead.size(), UAClientException(UA_STATUSCODE_BADUNEXPECTEDERROR, _client->Handle(), Ƒ("read answered {} results for {} attributes", response.resultsSize, _toRead.size()), _sl) );
+		THROW_IFX( response.resultsSize!=_request.nodesToReadSize, UAClientException(UA_STATUSCODE_BADUNEXPECTEDERROR, _client->Handle(), Ƒ("read answered {} results for {} attributes", response.resultsSize, _request.nodesToReadSize), _sl) );
 		let count = _nodes.size();
 		DataTypeArrayPtr y{ (UA_DataTypeArray*)UA_calloc(1, sizeof(UA_DataTypeArray)), FreeDataTypeArray };
 		THROW_IF( !y, "Could not allocate the DataTypeArray." );
@@ -55,15 +44,15 @@ namespace Jde::Opc{
 		y->types = (UA_DataType*)UA_calloc( count, sizeof(UA_DataType) );
 		THROW_IF( !y->types, "Could not allocate {} DataTypes.", count );
 		for( size_t i=0; i<count; ++i ){
-			let& definition = response.results[i];
-			let& name = response.results[i+count];
+			let& definition = response.results[i*2];
+			let& name = response.results[i*2+1];
 			if( (definition.hasStatus && definition.status) || !definition.hasValue || !UA_Variant_hasScalarType(&definition.value, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]) )
 				continue;
 			if( (name.hasStatus && name.status) || !name.hasValue || !UA_Variant_hasScalarType(&name.value, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) )
 				continue;
 			UA_StructureDescription description;
 			description.structureDefinition = *(UA_StructureDefinition*)definition.value.data;
-			description.dataTypeId = _toRead[i].nodeId;
+			description.dataTypeId = _request.nodesToRead[i*2].nodeId;
 			description.name = *(UA_QualifiedName*)name.value.data;
 			UA_ExtensionObject eo;
 			UA_ExtensionObject_setValue( &eo, &description, &UA_TYPES[UA_TYPES_STRUCTUREDESCRIPTION] );

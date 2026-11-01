@@ -295,6 +295,7 @@ namespace Jde::Opc::Hist{
 		α Remove( NodeIndex index, optional<Writer> by={}, SRCE )ε->void;
 		α SetThresholds( NodeIndex index, Thresholds thresholds, SRCE )ε->void;
 		α SetPublishingInterval( Duration interval )ι->void;//the heartbeat hold from here on:  the interval the collector's subscription runs at.
+		α PublishingInterval()Ι->Duration;//the heartbeat hold.
 		α FindThresholds( NodeIndex index )Ι->optional<Thresholds>;
 		α Find( const ExNodeId& node )Ι->optional<NodeIndex>;
 		//The type the node's DataType gives its values, as the host read it, which each file's NodeAdded of it carries
