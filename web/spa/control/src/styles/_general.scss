@@ -109,6 +109,27 @@ mat-toolbar.jde-list-toolbar {
 	}
 }
 
+// Sticky pins against the nearest scroll container - any box whose overflow is not visible or clip, whether or not it ever
+// scrolls.  The pane that scrolls is the shell's mat-sidenav-content, but a page host takes Material's mat-drawer-container
+// class for its colours and display, which is overflow:hidden, and a detail page's tab group clips its bodies three times over
+// for the slide between tabs - so a table's sticky header row and a list's sticky pager pinned to a box that grew with the
+// rows and never moved (#329).  Visible on the hosts and the tab body;  clip, not visible, on the tab wrapper, which still
+// cuts off the body sliding out and is no scroll container.  The clipping also held two flex items' automatic minimum width
+// at zero - the host, beside the shell's nav, and the active body in its wrapper - and visible, each would grow to its
+// content (a log message longer than the pane) and push the pane sideways, so both state the zero minimum themselves;  what
+// is wider than the pane then overflows visibly and scrolls the pane sideways, where it used to lose its last columns.  Global
+// because the hosts are in every library and the tab classes are Material's;  the element in each selector outranks
+// Material's rule, which is injected after this sheet.
+.main-content.mat-drawer-container {
+	overflow: visible;
+	min-width: 0;
+}
+mat-tab-group {
+	.mat-mdc-tab-body-wrapper { overflow: clip; }
+	.mat-mdc-tab-body.mat-mdc-tab-body-active { overflow: visible; min-width: 0; }
+	.mat-mdc-tab-body-content { overflow: visible; }
+}
+
 // Denser than Material's 52px rows and 56px header, for the admin lists read by scanning down a column:  four users filled a
 // quarter of the screen.  40px still clears a 22px chip and a row's 40px checkbox.  The two tokens are what
 // mat.table-overrides() would emit;  set on the table, they inherit into its rows.  The history table sets 36px itself.
