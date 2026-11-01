@@ -1,4 +1,10 @@
+@use '../../../styles/constants';
+
 .profile-picture {max-height: 34px; max-width: 34px; border-radius: 50%;}
+//a phone's navbar row:  a long domain/name clips, the tooltip carrying it whole
+@media (max-width: constants.$extra-small-breakpoint-width) {
+	.name {display: block; max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+}
 .selected {background: color-mix(in srgb, var(--mat-sys-primary) 40%, transparent);}
 //a plain button, not matIconButton:  that sizes any <img> inside it to the 24px icon.
 .account {display: inline-flex; align-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer;}

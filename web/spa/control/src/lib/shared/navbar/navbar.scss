@@ -8,8 +8,26 @@
 	--mat-form-field-container-height: 40px; /* Adjust to your preferred height */
 	--mat-form-field-container-vertical-padding: 8px;
 }
+// Material's search bar:  360dp at least and 720dp at most, taking the width left between the groups, which are flex: 1 1 0 so
+// it sits centred when both have room.  A row that cannot hold the three wraps the search, and the icons after it, to a second.
+.nav-left{
+	display: flex;
+	align-items: center;
+	flex: 1 1 0;
+}
+.nav-right{
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex: 1 1 0;
+}
+.search-wrapper{
+	flex: 1 1 360px;
+	max-width: 720px;
+	min-width: 0;
+}
 .search{
-	width: 420px;
+	width: 100%;
 }
 .rounded-input{
 	--mat-form-field-outlined-container-shape: 20px;
@@ -49,6 +67,7 @@
 	font: var(--mat-sys-title-medium);
 	font-weight: 600;
 	white-space: nowrap;
+	min-width: 0;
 	&, &:visited { color: var(--mat-sys-primary); text-decoration: none; }
 	&:hover { background: color-mix(in srgb, var(--mat-sys-primary) 8%, transparent); }
 	&:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: 2px; }
@@ -63,6 +82,14 @@
 	mask-size: contain;
 	mask-repeat: no-repeat;
 	mask-position: center;
+}
+
+// the name clips when the row squeezes the brand (a phone's), the link's aria-label still carrying it whole
+.brand-name {
+	display: block;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .folder-item-selected {
@@ -83,17 +110,24 @@ app-logo {
 	height: 24px;
 }
 
-// Rules for when the device is detected to be a small screen.
+// Below the small breakpoint the brand, the favorites and the icons share the first row and the search bar has the second,
+// centred:  with the favorites beside the brand, a 360px search wrapped the icons under them at 959.
+@media (max-width: constants.$small-breakpoint-width) {
+	.search-wrapper {
+		order: 1;
+		flex: 1 1 100%;
+		margin: 8px auto 0;
+	}
+}
+// A phone (Material's compact window):  the favorites hide, and the brand gives way before the icons.
 @media (max-width: constants.$extra-small-breakpoint-width) {
 	.docs-navbar-hide-small {
 		display: none;
 	}
-}
-
-theme-picker {
-	display: none;
-
-	@media (min-width: 328px) {
-		display: block;
+	.nav-left {
+		min-width: 0;
+	}
+	.nav-right {
+		flex: 0 0 auto;
 	}
 }

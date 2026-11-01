@@ -4,8 +4,20 @@
 	display: none;
 	justify-content: center;
 	align-items: center;
+	gap: 8px;
 	min-height: 60px;
+	padding: 0 16px;
 	background: var(--mat-sys-primary-container);
+
+	h1 {//a long title (a node's browse name) clips rather than wrapping the bar;  a phone's bar takes Material's title size
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		@media (max-width: constants.$extra-small-breakpoint-width) {
+			font: var(--mat-sys-title-large);
+		}
+	}
 
 	@media (max-width: constants.$small-breakpoint-width) {
 		display: flex;

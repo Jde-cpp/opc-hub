@@ -1,11 +1,10 @@
 <mat-sidenav-container class="docs-component-viewer-sidenav-container">
 	<!-- If on small screen, menu resides in drawer -->
-	@if (isScreenSmall | async) {
+	@if( isSmall() ){
 		<!--not fixedInViewport: the drawer sits inside the container, which already starts below the navbar, so there is no top gap to hard-code-->
-		<mat-sidenav #sidenav class="docs-component-viewer-sidenav"
-								[opened]="(isScreenSmall | async) === false"
-								[mode]="(isScreenSmall | async) ? 'over' : 'side'">
-			<app-component-nav [item]="item()"></app-component-nav>
+		<mat-sidenav #sidenav class="docs-component-viewer-sidenav" mode="over">
+			<!--a tap on a nav item closes the drawer - the current page's too, which navigates nowhere, so the close on NavigationEnd never comes-->
+			<app-component-nav [item]="item()" (click)="sidenav.close()"></app-component-nav>
 		</mat-sidenav>
 	}
 	<div class="docs-component-sidenav-content">
@@ -13,7 +12,7 @@
 		<div class="docs-component-sidenav-inner-content">
 			<main class="docs-component-sidenav-body-content">
 				<!-- If on large screen, menu resides to left of content -->
-				@if ((isScreenSmall | async) === false) {
+				@if( !isSmall() ){
 					<app-component-nav [item]="item()"/>
 				}
 				<router-outlet (activate)="onRouterOutletActivate($event)"></router-outlet>

@@ -12,6 +12,14 @@
 	letter-spacing: var(--mat-paginator-container-text-tracking, var(--mat-sys-body-small-tracking));
 	--mat-form-field-container-height: var(--mat-paginator-form-field-container-height, 40px);
 	--mat-form-field-container-vertical-padding: var(--mat-paginator-form-field-container-vertical-padding, 8px);
+	container-type: inline-size;//the rule below asks for the host's own width:  room, not the viewport, so no breakpoint
+}
+//six icon buttons and the range run ~350px, and a phone's pane gives 344:  the one-row steps go first, rather than the range
+//wrapping the sticky pager to two rows
+@container (width < 400px) {
+	.row-step {
+		display: none;
+	}
 }
 .mat-mdc-paginator-range-label {
 	margin: 0 8px;

@@ -24,12 +24,15 @@ export class Favorites {
 	onClick(){
 		const rect = this.iconElementRef().nativeElement.getBoundingClientRect();
 		const folderNames = [ ...new Set(this.favorites().filter(fav=>fav.folderName).map( fav=>fav.folderName )) ];
+		const width = Math.min( 350, window.innerWidth-16 );//on a phone, what the viewport allows, 8px in from its edges
+		const left = Math.max( 8, Math.min(rect.left-370, window.innerWidth-width-8) );
 		const dialogConfig: MatDialogConfig = {
 			position: {
 				top: `${rect.bottom + 5}px`, // Position 5px below the button
-				left: `${rect.left-370}px`,
+				left: `${left}px`,
 			},
-			width: '350px',
+			width: `${width}px`,
+			maxWidth: 'calc(100vw - 16px)',//Material's 80vw default would squeeze it under `width`
 			data:{existing: this.existing(), name: this.name(), folderNames: folderNames}
 		};
 		let ref = this.dialog.open( FavoritesDialog, dialogConfig );

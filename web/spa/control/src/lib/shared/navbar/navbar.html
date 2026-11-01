@@ -1,12 +1,12 @@
 <!-- TODO: figure out if the <nav> should go inside of a <header> element. -->
 <nav class="docs-navbar-header" aria-label="Top Toolbar">
-	<div style="flex: 1;justify-content: flex-start;">
+	<div class="nav-left">
 		@if( appName ){
 			<a class="brand" routerLink="/" [attr.aria-label]="appName + ' home'">
 				@if( appLogo ){
 					<span class="brand-logo" aria-hidden="true" [style.mask-image]="'url(' + appLogo + ')'"></span>
 				}
-				<span>{{appName}}</span>
+				<span class="brand-name">{{appName}}</span>
 			</a>
 		}
 		@for( fav of favoriteMenus(); track fav) {
@@ -30,10 +30,10 @@
 	</div>
 	<div class="search-wrapper"><!-- not a <form>: Enter must navigate, never submit -->
   		<mat-form-field class="rounded-input search" appearance="outline" subscriptSizing="dynamic">
-			<input #searchInput matInput type=text class=search aria-label="Search" aria-keyshortcuts="/"
+			<input #searchInput matInput type=text aria-label="Search" aria-keyshortcuts="/"
 				[formControl]=searchForm [matAutocomplete]=searchAC (keydown.enter)="onSearch($event)"/>
 			<mat-icon matPrefix>search</mat-icon>
-			<mat-autocomplete #searchAC=matAutocomplete class="search-panel" panelWidth="560px" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)">
+			<mat-autocomplete #searchAC=matAutocomplete class="search-panel" [displayWith]="displayWith" autoActiveFirstOption (optionSelected)="onSearchSelected($event.option.value)"><!--no panelWidth:  the panel is the field's width, 360-720px-->
 				@for( result of searchResults(); track trackResult(result) ){
 					<mat-option [value]=result [disabled]="result.disabled" class="search-option">
 						<mat-icon class="search-icon" aria-hidden="true">{{result.icon ?? 'link'}}</mat-icon>
@@ -46,7 +46,7 @@
 			</mat-autocomplete>
 		</mat-form-field>
 	</div>
-	<div style="flex: 1;justify-content: flex-end; display: flex;align-items: center;">
+	<div class="nav-right">
 		<authorization></authorization>
 		<theme-picker></theme-picker>
 		<favorites [favorites]="favorites() ?? []" [existing]=existing() [name]=name() (onChange)="onFavoriteChange($event)"></favorites>

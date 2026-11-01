@@ -113,6 +113,17 @@ the explanation there once;  qualify it with the element (`mat-toolbar.`) where 
 Within one library a partial does it (`opc/control/src/lib/pages/_status.scss`'s mixins, `_list-settings.scss`), and a
 sheet two components of a library share goes in both `styleUrls` (`hist-admin-shared.scss`).
 
+The breakpoints are named in `spa/control/src/styles/_constants.scss` alone (720 extra-small, 959 small, 1024 medium), so a
+rule that depends on the **viewport** lives in jde-spa, the one library whose sheets can `@use` it: in `_general.scss` for a
+global class (the list toolbar's wrap), else in a jde-spa component sheet (the navbar, the sidenav). TypeScript reads a breakpoint
+through the custom property `_general.scss` publishes (`--jde-breakpoint-small`, read by `ScreenSize.isSmall`), never from a
+number of its own. A rule that depends on the **room a component has** is a `@container` query in the component's own sheet -
+`:host{ container-type: inline-size }` styling its descendants (`paginator.scss`, `hist-threshold-fields.ts`) - or fluid math
+(`min()`, `clamp()`) when it is the host itself that changes (`detail-actions.scss`). A `--jde-*` custom property carries a value
+for other sheets to compute with (`--jde-form-max-width`), never a condition: a media or container query cannot read one.
+`.main-content` is not made a container: inline-size containment brings layout containment, and #329 relies on a table wider
+than the pane overflowing its host to scroll the pane sideways.
+
 ## Angular style
 
 The Angular CLI's own `--ai-config` template is not generated:  it changed with each CLI and overruled the repo's rulings.  These
