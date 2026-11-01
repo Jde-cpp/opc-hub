@@ -109,6 +109,49 @@ mat-toolbar.jde-list-toolbar {
 	}
 }
 
+// Sticky pins against the nearest scroll container - any box whose overflow is not visible or clip, whether or not it ever
+// scrolls.  The pane that scrolls is the shell's mat-sidenav-content, but the page hosts borrowed Material's
+// mat-drawer-container class for its colours and display, which is overflow:hidden, and a detail page's tab group clips its
+// bodies three times over for the slide between tabs - so a table's sticky header row and a list's sticky pager pinned to a
+// box that grew with the rows and never moved (#329).  A host's .main-content is now a rule of its own:  the drawer
+// container's colours, display and stacking context (a sticky header row's z-index stays within the page), without the clip.
+// A page's tab group (.my-content - one in a dialog may want its bodies to scroll) has its wrapper and active body visible:
+// the 0ms MAT_TABS_CONFIG leaves no slide to clip, and an inactive body keeps Material's hidden.  The clipping also held
+// two flex items' automatic minimum width at zero - the host, beside the shell's nav, and the active body in its wrapper -
+// and visible, each would grow to its content (a log message longer than the pane) and push the pane sideways, so both
+// state the zero minimum themselves;  what is wider than the pane then overflows visibly and scrolls the pane sideways,
+// where it used to lose its last columns.  Global because the hosts are in every library and the tab classes are Material's;
+// the element in the tab selector outranks Material's rules, which are injected after this sheet - and for dynamicHeight's
+// active body, (0,4,0), the group's dynamic-height class as well.
+.main-content {
+	position: relative;
+	z-index: 1;
+	display: block;
+	box-sizing: border-box;
+	min-width: 0;
+	color: var(--mat-sidenav-content-text-color, var(--mat-sys-on-background));
+	background-color: var(--mat-sidenav-content-background-color, var(--mat-sys-background));
+}
+mat-tab-group.my-content {
+	.mat-mdc-tab-body-wrapper { overflow: visible; }
+	.mat-mdc-tab-body.mat-mdc-tab-body-active,
+	&.mat-mdc-tab-group-dynamic-height .mat-mdc-tab-body.mat-mdc-tab-body-active { overflow: visible; min-width: 0; }
+	.mat-mdc-tab-body-content { overflow: visible; }
+}
+
+// A paged list's pager, pinned to the pane's bottom in the toolbar's colours, so a long page turns without a scroll to its end
+// (#329).  The wrapper paints, and the paginator in it - the framework's or Material's - goes transparent.  z-index 2:  over a
+// row's z-index:1 parts - a checkbox's invisible input took clicks through the pager - and under a sticky header row's 100.
+// Global because the lists are in two libraries:  ql-list and the log (jde-framework), and the node history (jde-opc).
+.jde-pager {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	--mat-paginator-container-background-color: transparent;
+}
+
 // Denser than Material's 52px rows and 56px header, for the admin lists read by scanning down a column:  four users filled a
 // quarter of the screen.  40px still clears a 22px chip and a row's 40px checkbox.  The two tokens are what
 // mat.table-overrides() would emit;  set on the table, they inherit into its rows.  The history table sets 36px itself.

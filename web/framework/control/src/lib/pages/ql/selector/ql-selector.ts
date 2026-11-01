@@ -20,7 +20,7 @@ import { QLList } from '../list/ql-list';
 @Component( {
 	selector: 'ql-selector',
 	template: `@if( listData() ){ <ql-list [listData]=listData() [ql]=ql() [selector]=true [(selections)]=rowSelections></ql-list> }`,
-	host: {class:'main-content mat-drawer-container my-content'},
+	host: {class:'main-content my-content'},
 	//`properties`' inset (properties.ts :host), so a selector tab lines up with the Properties tab instead of sitting flush
 	//against the tab body.  border-box is load-bearing: .my-content is width:100%, and content-box would push the 48px of
 	//padding outside it.
