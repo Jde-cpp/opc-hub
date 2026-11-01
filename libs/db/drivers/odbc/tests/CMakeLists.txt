@@ -14,7 +14,7 @@ compileOptions( ${targetName} )
 file( GLOB sources CONFIGURE_DEPENDS *.cpp )
 target_sources( ${targetName} PRIVATE ${sources} )
 target_compile_definitions( ${targetName} PRIVATE TESTS )
-#The SQL Server dialect is the base DB::Syntax in Jde.DB - no driver link, no connection, no DSN.
+#No driver link: ConnectTests loads Jde.DB.Odbc.dll from beside the exe, against a DSN that does not exist.
 target_link_libraries( ${targetName} GTest::gtest Threads::Threads )
 target_link_libraries( ${targetName} Jde.DB Jde )
 

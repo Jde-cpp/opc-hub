@@ -3,7 +3,7 @@
 local logsDir = std.extVar("logsDir");
 {
 	testing:{
-		tests:: "ObjectTests.*"
+		tests:: "*"
 	},
 	instanceName: "DBTests",
 	logging:{
