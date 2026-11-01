@@ -121,6 +121,9 @@ namespace Jde::Opc::Gateway{
 		//Responses are written on the strand but read by await_ready/await_resume on arbitrary threads - guard the shared_ptrs themselves.
 		α CreatedSubscriptionResponse()Ι->sp<UA_CreateSubscriptionResponse>{ lg _{_responseMutex}; return _createdSubscriptionResponse; }
 		α SetCreatedSubscriptionResponse( sp<UA_CreateSubscriptionResponse> p )ι->void{ lg _{_responseMutex}; _createdSubscriptionResponse = move(p); }
+		//The interval the data subscription runs at:  the server's revised one where it has answered the create and the answer is a
+		//duration, else what the create asks for (/gateway/subscription/publishingInterval).  A rebuilt subscription's answer applies.
+		α PublishingInterval()Ι->Duration;
 
 		Ω ClearRequest( UA_Client* ua, RequestId requestId )ι->void;
 		α ClearRequest( RequestId requestId )ι->void;
@@ -142,12 +145,14 @@ namespace Jde::Opc::Gateway{
 		α TakeBreak()ι->TimePoint;//when the connection broke, for IDataChange::ConnectionLost - RecordBreak's time, else now - and clears it, so the next loss is a new break.
 
 		//The url to hand open62541:  `url` itself, unless its host is a name whose first address takes no connection and a later one
-		//does - then that address in the name's place.  open62541 connects to the first address a name resolves to and never tries
-		//the next (eventloop_posix_tcp.c), so such a name fails BadConnectionRejected one address short of the server:  IPv6
-		//link-local ahead of IPv4 against a server that listens on IPv4 alone - External on a dual-stack box - or `localhost`, ::1
-		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  An address, a name
-		//with one address, and a name whose first address answers all come back exactly as given, so nothing changes where a connect
-		//already works;  the substitution is made only where open62541 would have failed.
+		//does - then that address in the name's place.  open62541's own tcp manager connected to the first address a name resolves to
+		//and never tried the next (eventloop_posix_tcp.c), so such a name failed BadConnectionRejected one address short of the server:
+		//IPv6 link-local ahead of IPv4 against a server that listens on IPv4 alone - External on a dual-stack box - or `localhost`, ::1
+		//first on windows, against a server bound to 127.0.0.1 (reviews/security-matrix.md #10; HostNameTests).  The asio manager
+		//(#526) tries each address in turn, but one that drops the SYN would hold the connect for the kernel's retries, where this
+		//races them all for three seconds.  An address, a name with one address, and a name whose first address answers all come
+		//back exactly as given, so nothing changes where a connect already works;  the substitution is made only where the first
+		//address fails.
 		Ω ReachableUrl( str url, Jde::Handle h )ι->string;
 		//The connection's issued certificate, <slug>.pem under /gateway/issuedCerts.  Its SAN uri is the GATEWAY's own applicationUri -
 		//the block's certificate/subjectAltName, urn:$(HostName):Jde-Cpp:$(PRODUCT_NAME) as shipped - and not the connection's
@@ -174,11 +179,6 @@ namespace Jde::Opc::Gateway{
 		α Row()Ι->const ServerCnnctn&{ return _opcServer; }//the copy this client was built from, with any later ping_interval and ttl edit (KeepAliveEdited) - its mode and policy, for the Connection tab and the tests.
 		α Handle()Ι->Jde::Handle{ return _handle; }
 		α UAPointer()Ι->UA_Client*{ return _ptr; }
-		//TranslateBrowsePathsToNodeIds for `path` - a/b/c, each segment `ns~name` or a bare name in DefaultBrowseNs - from `start`,
-		//the Objects folder unless a caller has a root (a template's, spec *Templates*), following HierarchicalReferences and their
-		//subtypes, so a path through HasComponent or HasProperty resolves as one through Organizes does.  `parents` asks for every
-		//prefix of the path as well.  Strand-only, as every sync service (UAStrandAwait).
-		α BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start=NodeId::ObjectsFolder() )Ε->flat_map<string,ExpectedNodeId>;
 		α Credential()Ι->const Gateway::Credential&{ return _credential; }
 		α IsConnected()Ι->bool{ return _connected; }
 		α IsDiscarded()Ι->bool{ return _discarded; }//set by RemoveClient just before it clears connected:  a rebuild on this client drops what it has not restored instead of parking it.

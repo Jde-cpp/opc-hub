@@ -7,11 +7,11 @@
 #include "../async/ConnectAwait.h"
 #include "../async/ParentPathsAwait.h"
 #include "../async/ReadValueAwait.h"
-#include "../async/UAStrandAwait.h"
+#include "../async/TranslateBrowsePathsAwait.h"
 
 #define let const auto
 namespace Jde::Opc::Gateway{
-	//A browse name as a path segment, spelled as the search index and BrowsePathsToNodeIds spell them:  the bare name in the
+	//A browse name as a path segment, spelled as the search index and PathPrefixes spell them:  the bare name in the
 	//connection's default namespace, `ns~name` otherwise.  None for a name holding a '/', the url's own separator.
 	Ω segment( NsIndex ns, sv name, NsIndex defaultNs )ι->optional<string>{
 		if( name.find('/')!=sv::npos )
@@ -20,15 +20,16 @@ namespace Jde::Opc::Gateway{
 	}
 	Ω segment( const UA_QualifiedName& browse, NsIndex defaultNs )ι->optional<string>{ return segment( browse.namespaceIndex, ToSV(browse.name), defaultNs ); }
 
-	//One frame:  its own type is the UAStrandAwait's, and every other await goes through Any().  Three forms - a browse path
-	//(with its parents), a node's children, or nodes by id (with their browse paths when `path` is asked for).
+	//One frame, every await through Any().  Three forms - a browse path (with its parents), a node's children, or nodes by id
+	//(with their browse paths when `path` is asked for).
 	α NodeQLAwait::Execute()ι->TAwait<BrowsePathResponse>::Task{
 		try{
 			jvalue y;
 			sv key{ "node" };
 			if( auto nodePath = _query.FindPtr<jstring>("path"); nodePath ){
 				auto parentsQL = _query.FindTable( "parents" );
-				auto pathNodes = co_await UAStrandAwait<BrowsePathResponse>{ _client, [this, nodePath, parentsQL]{ return _client->BrowsePathsToNodeIds(*nodePath, parentsQL!=nullptr); }, _sl };//sync UA service - must run on the client's strand.
+				auto prefixes = PathPrefixes( *nodePath, parentsQL!=nullptr, _client->DefaultBrowseNs() );
+				auto pathNodes = ByPath( prefixes.Paths, co_await Any(TranslateBrowsePathsAwait{move(prefixes.Requests), _client, _sl}) );
 				const bool savePath{ parentsQL && parentsQL->FindColumn("path") };
 				flat_map<NodeId, jobject> jParents;
 				auto node = pathNodes.begin();
@@ -39,7 +40,7 @@ namespace Jde::Opc::Gateway{
 				THROW_IFX( node==pathNodes.begin() && node!=pathNodes.end(), UAClientException(node->second.error(), _client->Handle(), {}, _sl) );
 				using Expected = ExpectedNodeId::Expected;
 				Expected target = node==pathNodes.begin() ? Expected{ ExNodeId{NodeId{}} } : Expected{ std::prev(node)->second };
-				//BrowsePathsToNodeIds stopped at `node`:  browse on from its parent a level at a time, by browse name.
+				//The translate stopped at `node`:  browse on from its parent a level at a time, by browse name.
 				for( auto parent = node==pathNodes.begin() ? node : std::prev(node); target && node!=pathNodes.end(); parent = node, ++node ){
 					Browse::FoldersAwait browse{ parent->second->nodeId, UA_BROWSERESULTMASK_BROWSENAME, _client, _sl };
 					let response = co_await Any( browse );

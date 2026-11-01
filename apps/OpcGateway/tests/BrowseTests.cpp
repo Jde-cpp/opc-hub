@@ -3,7 +3,7 @@
 #include "../src/UAClient.h"
 #include "../src/ql/GatewayQL.h"
 #include "../src/ql/NodeQLAwait.h"
-#include "../src/async/UAStrandAwait.h"
+#include "../src/async/TranslateBrowsePathsAwait.h"
 #include "utils/helpers.h"
 #include "utils/ITest.h"
 #include "../src/types/UAClientException.h"
@@ -132,7 +132,8 @@ namespace Jde::Opc::Gateway::Tests{
 		constexpr sv stacklight{ "4~Examples/4~Stacklights/4~ExampleStacklight" };
 		const string lampPath{ string{stacklight}+"/4~Lamp1" };
 		auto translate = [&]( string path, bool parents, NodeId start=NodeId::ObjectsFolder() ){
-			return BlockAwait( UAStrandAwait<BrowsePathResponse>{_client, [path, parents, start=move(start), client=_client]{ return client->BrowsePathsToNodeIds(path, parents, start); }} );
+			auto prefixes = PathPrefixes( path, parents, _client->DefaultBrowseNs(), start );
+			return ByPath( prefixes.Paths, BlockAwait(TranslateBrowsePathsAwait{move(prefixes.Requests), _client}) );
 		};
 		let direct = translate( lampPath, false );
 		ASSERT_EQ( direct.size(), 1u );

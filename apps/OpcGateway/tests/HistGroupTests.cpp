@@ -451,7 +451,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//turn that takes the node, ahead of the run_iterate that would read its create's answer.
 	Ω holdOnceTaken( sp<UAClient> client, HistGroupPK groupId, NodeId node, double sampling, sp<std::atomic<EHold>> state, steady_clock::time_point until )ι->void{
 		client->PostStrand( [=]()mutable{
-			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(node).SamplingInterval==sampling ){
+			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(node, client->PublishingInterval()).SamplingInterval==sampling ){
 				if( !client->CreatedSubscriptionResponse() )
 					*state = EHold::Unstaged;
 				else{
@@ -494,7 +494,8 @@ namespace Jde::Opc::Gateway::Tests{
 				UAClient::Unsubscribe( joiner );
 				ASSERT_EQ( ack.results_size(), 1 );
 				if( ack.results(0).revised_sampling_interval()==100.0 ){
-					EXPECT_EQ( ack.results(0).revised_queue_size(), 6u ) << "500ms of 100ms samples, plus one";
+					Opc::Hist::Thresholds sampled; sampled.MinTimeInterval = 100ms;
+					EXPECT_EQ( ack.results(0).revised_queue_size(), HistGroupHost::Parameters(sampled, collector->PublishingInterval()).QueueSize ) << "a publishing interval of 100ms samples, plus one";
 					break;
 				}
 				ASSERT_NO_THROW( modified.CheckTimeout(5s, 50ms) ) << "the item still samples at " << ack.results(0).revised_sampling_interval() << "ms";

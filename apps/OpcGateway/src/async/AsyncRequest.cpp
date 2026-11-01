@@ -8,7 +8,6 @@ namespace Jde::Opc::Gateway{
 	namespace asio = boost::asio;
 	Duration _pingInterval;
 	Duration _ttl;
-	Duration _pollInterval{ 1ms };
 	Duration _requestTimeout{ 10s };
 
 	AsyncRequest::AsyncRequest()ι:
@@ -64,22 +63,24 @@ namespace Jde::Opc::Gateway{
 				Process( PingRequestId, "ping" );
 		}
 	}
-	//The sleep between polls with only the data subscription outstanding:  a Publish response comes at most once per publishing
-	//interval, so the server's revised one - read each time, so a rebuilt subscription's answer applies - and, before the server
-	//has answered, after it dropped the subscription or where its answer is no duration, the interval the create asks for.
-	//Never past maxSubscriptionSleep:  a server's 1e13 would overflow the cast, and a push would wait in the socket that long.
-	constexpr steady_clock::duration maxSubscriptionSleep{ 10s };
-	Ω subscriptionInterval( const UAClient& client )ι->steady_clock::duration{
-		using Milliseconds = std::chrono::duration<double,std::milli>;
-		let response = client.CreatedSubscriptionResponse();
-		let revised = response ? response->revisedPublishingInterval : 0.;
-		let interval = std::isfinite(revised) && revised>0 ? Milliseconds{ revised } : Milliseconds{ _publishingInterval };
-		return duration_cast<steady_clock::duration>( std::min(interval, Milliseconds{maxSubscriptionSleep}) );
+	//The wait between run_iterate calls:  until the loop's next timer - open62541's housekeeping, every second - and never past
+	//maxWait, insurance against a timerless loop (UA_DATETIME_MAX) and the cast.  Everything else a run_iterate serves - a
+	//response, a Publish, a connection's close - comes through the connection manager (#526), whose wake ends the wait
+	//(Waker);  a delayed callback it queued during the last run_iterate makes nextTimer "now", and the wait 0.
+	constexpr steady_clock::duration maxWait{ 10s };
+	Ω nextWait( UAClient& client )ι->steady_clock::duration{
+		auto el = UA_Client_getConfig( client )->eventLoop;
+		let next = el->nextTimer( el );
+		let now = el->dateTime_nowMonotonic( el );
+		constexpr UA_DateTime maxTicks{ duration_cast<std::chrono::nanoseconds>(maxWait).count()/100 };//UA_DateTime counts 100 ns.
+		let ticks = next<=now ? UA_DateTime{0} : next>now+maxTicks ? maxTicks : next-now;
+		return duration_cast<steady_clock::duration>( std::chrono::nanoseconds{ticks*100} );
 	}
 	// 1 per UAClient. Runs entirely on _strand: started there by Process, and every co_await below resumes there
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
 	// UA_Client_run_iterate never overlaps other UA_Client_* calls - submissions and sync services are dispatched
-	// to the same strand via UAClient::PostUA.
+	// to the same strand via UAClient::PostUA.  Between calls it waits (nextWait) rather than polls:  the connection
+	// manager's wake, Process, Clear and Stop end the wait.
 	α AsyncRequest::ProcessingLoop()ι->VoidTask{
 		ASSERT( _strand.running_in_this_thread() );
 		sp<UAClient> client = _client;//keeps the owning UAClient (and thus `this`) alive across suspensions.
@@ -92,12 +93,11 @@ namespace Jde::Opc::Gateway{
 		while( _running.test() ){
 			let size = _requests.size();
 			if( size ){
-				drainStart.reset();//before the trace guard, so the iteration that picks up a mid-drain request keeps its queue snapshot; the drain window re-arms fresh if the queue empties again.
+				drainStart.reset();//the drain window re-arms fresh if the queue empties again.
 				if( *_requests.begin()==PingRequestId )
 					_requests.erase( PingRequestId );
 			}
-			if( !drainStart )//tracing every drain poll buries the log.
-				TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
+			TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
 			if( sc = UA_Client_run_iterate(*client, 0); sc ){
 				_running.clear();
 				//Warning, not Critical, with requests outstanding: a server that went away under a request is an operational event the
@@ -121,16 +121,16 @@ namespace Jde::Opc::Gateway{
 				//on it ("No result in the read namespace array response") and then discarded the reply that had been
 				//sitting in the socket the whole time ("Request with unknown RequestId").  So while that read is
 				//outstanding (_drainNeeded: flagged at activation by StateCallback, cleared by OnServiceBegin when the
-				//reply is serviced) keep polling, bounded by drainLimit.
+				//reply is serviced) keep waiting, bounded by drainLimit.
 				if( _drainNeeded ){
 					let now = steady_clock::now();
 					if( !drainStart )
 						drainStart = now;
 					if( *drainStart+drainLimit > now ){
-						//10ms, not the request path's 1ms: the drain only shepherds open62541's own read, which times out in
-						//multiple seconds - and a request landing mid-drain waits at most one coarse step before the loop
-						//re-enters the 1ms path (its submission already went out on the caller's strand post).
-						if( let result = co_await _pollTimer.Rearm( 10ms ); !result ){
+						_sleeping = true;
+						let result = co_await _pollTimer.Rearm( nextWait(*client) );//the read's reply ends it through the manager's wake, a request through Process.
+						_sleeping = false;
+						if( !result && result.error()!=boost::asio::error::operation_aborted ){
 							CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
 							_running.clear();
 							break;
@@ -152,9 +152,8 @@ namespace Jde::Opc::Gateway{
 			let firstRequest = *_requests.begin();
 			TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
 			if( size==newSize ){
-				let sleep = size==1 && firstRequest==SubscriptionRequestId ? subscriptionInterval( *client ) : duration_cast<steady_clock::duration>( _pollInterval );
 				_sleeping = true;
-				(void)co_await _pollTimer.Rearm( sleep );//cancelled by Process for a request that landed mid-sleep - it polls now, not when the subscription's interval ends (#505) - by Clear and by Stop.
+				(void)co_await _pollTimer.Rearm( nextWait(*client) );//ended by the manager's wake for what arrived, by Process for a request that landed mid-wait (#505), by Clear for the subscription's end and by Stop.
 				_sleeping = false;
 			}
 		}

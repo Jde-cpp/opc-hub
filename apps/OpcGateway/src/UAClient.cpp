@@ -13,11 +13,12 @@
 #include "GatewayAppClient.h"
 #include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
+#include "async/ConnectionManager.h"
 #include "async/DataChanges.h"
+#include "async/Subscriptions.h"
 #include "jde/fwk/crypto/CryptoSettings.h"
 #include "jde/fwk/settings.h"
 #include "uatypes/Browse.h"
-#include "uatypes/uaTypes.h"
 
 #define let const auto
 
@@ -761,8 +762,14 @@ namespace Jde::Opc::Gateway{
 				locales.push_back( trimmed );
 		}
 		_config.logging = &_logger;
+		//The asio tcp connection manager (#526) in place of open62541's, ahead of the loop:  its net thread is the one step here that
+		//can throw.  Its wake-up ends the processing loop's wait - posted, never dispatched, so it runs once the loop's own strand
+		//handler, which arms the wait, is through;  the io_context is held so the strand outlives whatever drops the client.
+		auto wake = ms<const function<void()>>( [ctx=Executor(), strand=_asyncRequest.Strand(), cancel=_asyncRequest.Waker()]{
+			boost::asio::post( strand, [cancel]{ cancel.Cancel(); } );
+		});
+		UA_ConnectionManager* tcpCM = AsioConnectionManager::Create( Handle(), move(wake) );
 		_config.eventLoop = UA_EventLoop_new_POSIX( _config.logging );
-		UA_ConnectionManager *tcpCM = UA_ConnectionManager_new_POSIX_TCP( "tcp connection manager"_uv );
 		_config.eventLoop->registerEventSource( _config.eventLoop, (UA_EventSource*)tcpCM );
 		//The row's settings over the defaults (docs/clients/spec.md *Connection settings*):  the request timeout, /gateway/requestTimeout
 		//where the row leaves it;  the session timeout the row asks for, 0 leaving setDefault its 20 minutes;  the session's locales, which a
@@ -1442,17 +1449,11 @@ namespace Jde::Opc::Gateway{
 		PurgePending( dataChange );
 	}
 
-	α UAClient::BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start )Ε->flat_map<string,ExpectedNodeId>{
-		ASSERT( OnStrand() );//sync UA service - must be serialized with run_iterate (route callers through PostUA/UAStrandAwait).
-		let segments = Str::Split( path, '/' );
-		auto args = Reserve<UABrowsePath>( parents ? segments.size() : 1 );//Split skips empty segments, so "" and "/" have none.
-		vector<string> paths;
-		for( uint i=0; i<(parents ? segments.size() : 1); ++i ){
-			std::span<const sv> nodePath{ segments.begin(), segments.end()-i };
-			paths.emplace_back( Str::Join(nodePath, "/") );
-			args.emplace_back( UABrowsePath{nodePath, _opcServer.DefaultBrowseNs, start} );
-		}
-		return BrowsePathsToNodeIdResponse{ UA_Client_Service_translateBrowsePathsToNodeIds(_ptr, {{}, args.size(), args.data()}), paths, Handle() };
+	α UAClient::PublishingInterval()Ι->Duration{
+		using Milliseconds = std::chrono::duration<double,std::milli>;
+		let response = CreatedSubscriptionResponse();
+		let revised = response ? response->revisedPublishingInterval : 0.;
+		return std::isfinite(revised) && revised>0 ? duration_cast<Duration>( Milliseconds{revised} ) : _publishingInterval;
 	}
 	α UAClient::Find( UA_Client* ua, SL srce )ε->sp<UAClient>{
 		sp<UAClient> y = TryFind( ua, srce );

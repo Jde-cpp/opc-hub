@@ -56,8 +56,8 @@ namespace Jde::Opc::Hist{
 	struct GroupConfig{
 		string Name;//the stem of the group's files: "server" on OpcServer, the group's guid on the gateway.
 		EIndexes Indexes{ EIndexes::Host };
-		//How long a flush holds back a fresh heartbeat: the collector's publishing interval, or 0 where values arrive as
-		//they are written (OpcServer).
+		//How long a flush holds back a fresh heartbeat: the collector's publishing interval - the one its create asks for,
+		//until the host hears the server's revised one (SetPublishingInterval) - or 0 where values arrive as they are written (OpcServer).
 		Duration PublishingInterval{};
 	};
 	//What a group holds until a flush writes it.  Each record's time is a source time:  Ts for a membership change.
@@ -294,6 +294,7 @@ namespace Jde::Opc::Hist{
 		α Add( Member member, optional<Writer> by={}, SRCE )ε->NodeIndex;
 		α Remove( NodeIndex index, optional<Writer> by={}, SRCE )ε->void;
 		α SetThresholds( NodeIndex index, Thresholds thresholds, SRCE )ε->void;
+		α SetPublishingInterval( Duration interval )ι->void;//the heartbeat hold from here on:  the interval the collector's subscription runs at.
 		α FindThresholds( NodeIndex index )Ι->optional<Thresholds>;
 		α Find( const ExNodeId& node )Ι->optional<NodeIndex>;
 		//The type the node's DataType gives its values, as the host read it, which each file's NodeAdded of it carries
@@ -607,6 +608,7 @@ namespace Jde::Opc::Hist{
 
 		const sp<Store> _store;
 		const GroupConfig _config;
+		Duration _publishingInterval ABSL_GUARDED_BY(_mutex);//_config's, until SetPublishingInterval.
 		//What the group knows of its files.  A flush takes it for each step between its writes, never across one, and
 		//before _mutex, never under it.
 		mutable absl::Mutex _filesMutex;

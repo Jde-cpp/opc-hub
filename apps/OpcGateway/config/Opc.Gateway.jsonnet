@@ -3,7 +3,7 @@
 // by the soak harness's Opc.Gateway.Soak.jsonnet overlay.  `sync` is the `-sync` flag (schema sync on start);
 // `args.libsonnet` is whichever config/args/<dialect> the `-include` names - there is no default.  An installed product
 // reaches this file through the hub's config, whose args/install supplies the paths.  The keys someone would touch:
-// /gateway (pingInterval, ttl, requestTimeout, pollInterval and subscription.publishingInterval for the OPC sessions,
+// /gateway (pingInterval, ttl, requestTimeout and subscription.publishingInterval for the OPC sessions,
 // search's crawl caps, issuedCerts, verifyServerCertificate and trustedCertDirs for the servers it connects to,
 // allowPlaintextPassword), /http address, host and port, /ql/introspection and /logging.
 local args = import 'args.libsonnet';
@@ -20,9 +20,8 @@ function( sync=false )
 		pingInterval: "PT30S",
 		ttl: "PT2M",
 		requestTimeout:: "PT10S", //a service call's deadline, and the test connect's, where the connection row sets no request_timeout (src/UAClient.cpp Create, UA_ClientConfig::timeout).
-		pollInterval:: "PT0.001S", //the processing loop's sleep between polls of a client with a request outstanding (src/async/AsyncRequest.cpp); on Windows RaiseTimerResolution lifts the 15.6 ms floor a tick would put under it.
 		subscription:: { //the one data subscription per client (src/async/Subscriptions.cpp CreateSubscriptionRequest), open62541's defaults.
-			publishingInterval: "PT0.5S" //what the create asks for; the loop polls the subscription at what the server revises it to.
+			publishingInterval: "PT0.5S" //what the create asks for; the historian sizes its item queues and heartbeat hold from what the server revises it to.
 		},
 		search:{ //the `search` query's per-connection node-name index (src/NodeIndex.cpp), crawled on the first search and dropped with the client at ttl.
 			maxDepth: 12, //levels under Objects

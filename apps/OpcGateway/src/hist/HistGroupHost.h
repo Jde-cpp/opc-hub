@@ -105,18 +105,18 @@ namespace Jde::Opc::Gateway{
 		α ConnectionLost( const ServerCnnctnNK&, const flat_set<NodeId>& nodes, TimePoint when )ι->void override;
 		//On the strand, before the new subscription's first value:  the check of the server's namespaces starts here.
 		α ConnectionRestored( const ServerCnnctnNK&, const flat_set<NodeId>& nodes )ι->void override;
-		α ItemParameters( const NodeId& node )Ι->MonitoringParameters override;
+		α ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters override;//keeps the interval for the other Parameters callers, and gives the group its heartbeat hold.
 		α to_string()Ι->string override{ return Ƒ( "HistGroup({})", _guid ); }
 		//What the collector asks of a node's item (spec *Collector contract*):  sampling at its MinTimeInterval, or at 0, the
-		//server's fastest, when it has none, and a publishing interval's samples queued - the publishing interval over the
-		//sampling interval, rounded up, plus one - or the deepest queue the server grants when sampling at 0.
-		Ω Parameters( const Opc::Hist::Thresholds& thresholds )ι->MonitoringParameters;
+		//server's fastest, when it has none, and a publishing interval's samples queued - `publishing`, the interval the
+		//subscription runs at, over the sampling interval, rounded up, plus one - or the deepest queue the server grants when
+		//sampling at 0.
+		Ω Parameters( const Opc::Hist::Thresholds& thresholds, Duration publishing )ι->MonitoringParameters;
 		//The thresholds the group takes from a member's resolved ones (spec *Compression*):  no ExceptionDeviation for an
 		//enumeration, whose Int32 values the library can't tell from a quantity, and a percent-of-range format's band a
 		//percentage of the InstrumentRange or EURange the server gives the node.  Until the server has described the node, the
 		//band waits and every change is stored:  a state is never dropped as noise, nor a range warned of before it is read.
 		Ω ForGroup( Opc::Hist::Thresholds thresholds, const HistDescription& described={} )ι->Opc::Hist::Thresholds;
-		static constexpr Duration PublishingInterval{ 500ms };//the subscription's default, which SubscribeAwait keeps.
 		static constexpr Duration RetryInterval{ 30s };
 		//How long a member may stay lost before it is asked for again:  past the reconnect chain's rejections, while it still
 		//retries a server that is down.
@@ -167,6 +167,9 @@ namespace Jde::Opc::Gateway{
 		const string _guid;
 		const ServerCnnctnNK _slug;
 		const sp<Opc::Hist::Group> _group;
+		//The interval the subscription runs at, as ItemParameters last heard it from the client - the create's request until the
+		//server has answered - for the Parameters the edits and the stale re-creates build, and the group's heartbeat hold.
+		mutable Duration _publishingInterval ABSL_GUARDED_BY(_mutex);
 		const Credential _collector;
 		Opc::Hist::IClock& _clock;
 		mutable absl::Mutex _mutex;//before the group's own:  Enqueue runs under it, so values reach the group in the order they came.

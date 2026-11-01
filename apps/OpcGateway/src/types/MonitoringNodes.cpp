@@ -69,8 +69,9 @@ namespace Jde::Opc::Gateway{
 		}
 		else{
 			flat_map<NodeId,MonitoringParameters> parameters;//the listener's, per node - the same order as newNodes, which the answer is read by.
+			let publishingInterval = client->PublishingInterval();//the subscription exists by here (subscriptionId above), so its revised interval is known.
 			for( let& n : newNodes )
-				parameters.emplace( n, dataChange->ItemParameters(n) );
+				parameters.emplace( n, dataChange->ItemParameters(n, publishingInterval) );
 			_calls.emplace( requestId, make_tuple(move(newNodes),move(dataChange),flat_set<NodeId>{}) );
 			lock.Release();
 			return CreateMonitoredItemsRequest{ parameters };

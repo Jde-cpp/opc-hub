@@ -23,7 +23,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	HistGroupHost::HistGroupHost( const HistGroupRow& row, ServerCnnctnNK slug, sp<Opc::Hist::Group> group, vector<HistMember> members, Credential collector, Opc::Hist::IClock& clock )ι:
-		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _collector{ move(collector) }, _clock{ clock }, _name{ row.Name }, _columns{ row.Thresholds },
+		_id{ row.Id }, _guid{ row.Guid }, _slug{ move(slug) }, _group{ move(group) }, _publishingInterval{ Gateway::_publishingInterval }, _collector{ move(collector) }, _clock{ clock }, _name{ row.Name }, _columns{ row.Thresholds },
 		_describeBatch{ std::max<uint>(1, Settings::FindNumber<uint>("/gateway/hist/describeBatch").value_or(64)) }{//value_or mirrors config/Opc.Gateway.jsonnet.
 		for( auto& member : members )
 			_nodes.emplace( member.Index, Node{ .Ex=move(member.Node), .Thresholds=member.Thresholds, .Attributes=move(member.Attributes) } );
@@ -86,8 +86,8 @@ namespace Jde::Opc::Gateway{
 					continue;
 				auto& node = p->second;
 				set.emplace_back( index, thresholds );
-				let parameters = Parameters( thresholds );
-				let changed = parameters!=Parameters( node.Thresholds );//a deviation, or Stepped, or MaxTimeInterval:  the item has nothing to change.
+				let parameters = Parameters( thresholds, _publishingInterval );
+				let changed = parameters!=Parameters( node.Thresholds, _publishingInterval );//a deviation, or Stepped, or MaxTimeInterval:  the item has nothing to change.
 				node.Thresholds = move( thresholds );
 				if( changed && node.Subscribed )
 					modify.emplace( *node.Id, parameters );
@@ -302,7 +302,7 @@ namespace Jde::Opc::Gateway{
 						if( n && !std::exchange(n->Subscribed, true) ){
 							n->Lost.reset();
 							if( std::exchange(n->Stale, false) )
-								stale.emplace( node, Parameters(n->Thresholds) );
+								stale.emplace( node, Parameters(n->Thresholds, _publishingInterval) );
 							if( existing.contains(node) )
 								joined.emplace( node );
 							created.emplace( move(node) );
@@ -901,10 +901,14 @@ namespace Jde::Opc::Gateway{
 	α HistGroupHost::Client()Ι->sp<UAClient>{
 		return UAClient::Find( _slug, _collector );
 	}
-	α HistGroupHost::ItemParameters( const NodeId& node )Ι->MonitoringParameters{
+	α HistGroupHost::ItemParameters( const NodeId& node, Duration publishingInterval )Ι->MonitoringParameters{
 		ul _{ _mutex };
+		if( publishingInterval!=_publishingInterval ){
+			_publishingInterval = publishingInterval;
+			_group->SetPublishingInterval( publishingInterval );
+		}
 		let n = const_cast<HistGroupHost*>( this )->FindNode( node ).second;//a read:  nothing is written through it.
-		return Parameters( n ? n->Thresholds : Opc::Hist::Thresholds{} );
+		return Parameters( n ? n->Thresholds : Opc::Hist::Thresholds{}, publishingInterval );
 	}
 	α HistGroupHost::ForGroup( Opc::Hist::Thresholds t, const HistDescription& described )ι->Opc::Hist::Thresholds{
 		if( described.Enumeration.value_or(true) )
@@ -917,12 +921,13 @@ namespace Jde::Opc::Gateway{
 		}
 		return t;
 	}
-	α HistGroupHost::Parameters( const Opc::Hist::Thresholds& thresholds )ι->MonitoringParameters{
+	α HistGroupHost::Parameters( const Opc::Hist::Thresholds& thresholds, Duration publishingInterval )ι->MonitoringParameters{
 		let sampling = duration<double,std::milli>( thresholds.MinTimeInterval ).count();
-		let publishing = duration<double,std::milli>( PublishingInterval ).count();
+		let publishing = duration<double,std::milli>( publishingInterval ).count();
+		constexpr double deepest{ std::numeric_limits<UA_UInt32>::max() };//the request's field:  a server's absurd interval over a fast sample would wrap it.
 		MonitoringParameters y;
 		y.SamplingInterval = sampling>0 ? sampling : 0.0;
-		y.QueueSize = sampling>0 ? (uint32)std::ceil( publishing/sampling )+1 : std::numeric_limits<uint32>::max();
+		y.QueueSize = sampling>0 ? (uint32)std::min( std::ceil(publishing/sampling)+1, deepest ) : std::numeric_limits<uint32>::max();
 		return y;
 	}
 }
