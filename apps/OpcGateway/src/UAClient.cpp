@@ -1,23 +1,16 @@
 #include "UAClient.h"
-#include <jde/fwk/io/crc.h>
+#include <stdexcept>
 #include <absl/synchronization/mutex.h>
-
-#include <jde/fwk/co/AnyAwait.h>
+#include <jde/fwk/io/crc.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/utils/collections.h>
 #include <jde/app/client/IAppClient.h>
-#include <jde/opc/uatypes/NodeId.h>
-#include <jde/opc/uatypes/Value.h>
-#include <open62541/types.h>
-#include <stdexcept>
-#include "GatewayAppClient.h"
 #include <jde/opc/ClientSecurity.h>
 #include <jde/opc/ServerTrust.h>
-#include "async/DataChanges.h"
-#include "jde/fwk/crypto/CryptoSettings.h"
-#include "jde/fwk/settings.h"
-#include "uatypes/Browse.h"
-#include "uatypes/uaTypes.h"
+#include <jde/historian/Group.h>
+#include "GatewayAppClient.h"
+#include "async/ConnectionManager.h"
+#include "async/Subscriptions.h"
 
 #define let const auto
 
@@ -541,6 +534,7 @@ namespace Jde::Opc::Gateway{
 			//a fresh client (haveNamespaces), so flagging would leave the drain waiting out its full limit for a read
 			//that never fires.
 			client->ClearRequest( ConnectRequestId );
+			client->ReleaseParked();
 			if( client->RecordSession() )
 				client->Resubscribe();//a different session than the one we were monitoring on: its subscriptions are gone, so rebuild them or nothing pushes again.
 			client->_brokeAt = TimePoint{};//the same session back, or the rebuild has taken it:  a later loss is a new break.
@@ -549,6 +543,8 @@ namespace Jde::Opc::Gateway{
 		}
 		else if( client ){
 			client->RecordBreak();
+			if( connectStatus )
+				client->ReleaseParked();//to fail:  the connection is going.
 			//its session went and open62541 reconnects it in place, which no ConnectionLost reports.  Not a removed client's own
 			//disconnect, which Deregister can run before the registry lets it go:  closed or idled out is Removed, not a loss.
 			if( client->_sessionUp.exchange(false) && !client->IsDiscarded() )
@@ -761,8 +757,14 @@ namespace Jde::Opc::Gateway{
 				locales.push_back( trimmed );
 		}
 		_config.logging = &_logger;
+		//The asio tcp connection manager (#526) in place of open62541's, ahead of the loop:  its net thread is the one step here that
+		//can throw.  Its wake-up ends the processing loop's wait - posted, never dispatched, so it runs once the loop's own strand
+		//handler, which arms the wait, is through;  the io_context is held so the strand outlives whatever drops the client.
+		auto wake = ms<const function<void()>>( [ctx=Executor(), strand=_asyncRequest.Strand(), cancel=_asyncRequest.Waker()]{
+			boost::asio::post( strand, [cancel]{ cancel.Cancel(); } );
+		});
+		UA_ConnectionManager* tcpCM = AsioConnectionManager::Create( Handle(), move(wake) );
 		_config.eventLoop = UA_EventLoop_new_POSIX( _config.logging );
-		UA_ConnectionManager *tcpCM = UA_ConnectionManager_new_POSIX_TCP( "tcp connection manager"_uv );
 		_config.eventLoop->registerEventSource( _config.eventLoop, (UA_EventSource*)tcpCM );
 		//The row's settings over the defaults (docs/clients/spec.md *Connection settings*):  the request timeout, /gateway/requestTimeout
 		//where the row leaves it;  the session timeout the row asks for, 0 leaving setDefault its 20 minutes;  the session's locales, which a
@@ -833,6 +835,8 @@ namespace Jde::Opc::Gateway{
 					});
 				}
 				ctx.run_for( timeout );
+				for( auto& pending : connected | std::views::filter([]( let& c ){ return !c; }) )
+					pending = false;//still pending:  silent, as an address that drops the SYN is.
 				let first = settled();
 				for( auto& socket : sockets ){
 					boost::system::error_code ignored;
@@ -946,6 +950,20 @@ namespace Jde::Opc::Gateway{
 		//the strand (e.g. completion callbacks inside run_iterate) and posts otherwise. `self` keeps the client - and
 		//with it _asyncRequest and the raw UA_Client - alive until f runs.
 		boost::asio::dispatch( _asyncRequest.Strand(), [self=shared_from_this(), f=std::move(f)]()mutable{f();} );
+	}
+
+	α UAClient::Reactivating()Ι->bool{
+		UA_SecureChannelState channel{}; UA_SessionState session{}; StatusCode connectStatus{};
+		UA_Client_getState( _ptr, &channel, &session, &connectStatus );
+		return channel==UA_SECURECHANNELSTATE_OPEN && session!=UA_SESSIONSTATE_ACTIVATED && !connectStatus && !_asyncRequest.IsStopped();
+	}
+	α UAClient::Park( absl::AnyInvocable<void()> submit )ι->void{
+		_parked.push_back( std::move(submit) );
+		Process( ConnectRequestId, "parked for the session's activation", true );//pumps its round trips;  the activation's StateCallback clears it.
+	}
+	α UAClient::ReleaseParked()ι->void{
+		for( auto& submit : std::exchange(_parked, {}) )
+			PostStrand( std::move(submit) );
 	}
 
 	α UAClient::PostStrand( absl::AnyInvocable<void()> f )ι->void{
@@ -1442,17 +1460,10 @@ namespace Jde::Opc::Gateway{
 		PurgePending( dataChange );
 	}
 
-	α UAClient::BrowsePathsToNodeIds( sv path, bool parents, const NodeId& start )Ε->flat_map<string,ExpectedNodeId>{
-		ASSERT( OnStrand() );//sync UA service - must be serialized with run_iterate (route callers through PostUA/UAStrandAwait).
-		let segments = Str::Split( path, '/' );
-		auto args = Reserve<UABrowsePath>( parents ? segments.size() : 1 );//Split skips empty segments, so "" and "/" have none.
-		vector<string> paths;
-		for( uint i=0; i<(parents ? segments.size() : 1); ++i ){
-			std::span<const sv> nodePath{ segments.begin(), segments.end()-i };
-			paths.emplace_back( Str::Join(nodePath, "/") );
-			args.emplace_back( UABrowsePath{nodePath, _opcServer.DefaultBrowseNs, start} );
-		}
-		return BrowsePathsToNodeIdResponse{ UA_Client_Service_translateBrowsePathsToNodeIds(_ptr, {{}, args.size(), args.data()}), paths, Handle() };
+	α UAClient::PublishingInterval()Ι->Duration{
+		let response = CreatedSubscriptionResponse();
+		let revised = response ? Opc::Hist::ToDuration( response->revisedPublishingInterval ) : nullopt;
+		return revised && *revised>Duration::zero() ? *revised : _publishingInterval;
 	}
 	α UAClient::Find( UA_Client* ua, SL srce )ε->sp<UAClient>{
 		sp<UAClient> y = TryFind( ua, srce );

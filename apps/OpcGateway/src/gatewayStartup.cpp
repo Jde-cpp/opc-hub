@@ -69,9 +69,7 @@ namespace Jde::Opc{
 		_pingInterval = Settings::FindDuration("/gateway/pingInterval").value_or( 30s );
 		_ttl = Settings::FindDuration("/gateway/ttl").value_or( 2min );
 		_requestTimeout = positiveDuration( "/gateway/requestTimeout", 10s, milliseconds{std::numeric_limits<UA_UInt32>::max()} );//UA_ClientConfig::timeout
-		_pollInterval = positiveDuration( "/gateway/pollInterval", 1ms );
 		_publishingInterval = positiveDuration( "/gateway/subscription/publishingInterval", 500ms );
-		Process::RaiseTimerResolution();//AsyncRequest's 1 ms poll for a UA response took a 15.6 ms tick on windows:  every round trip's floor.
 		ServerTrust::EnsureDirs( "/gateway" );//this product's ssl/servers - where a third-party OPC server's certificate goes - exists from the first start.
 		appClient->Enroll( webServerSettings );//the AppServer login's JWT and the OPC certificate authentication both sign with it.
 		_processSsl.emplace( Json::FindDefaultObject(webServerSettings, "ssl"), sv{} );

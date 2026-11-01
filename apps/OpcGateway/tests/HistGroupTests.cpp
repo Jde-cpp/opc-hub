@@ -6,6 +6,7 @@
 #include "utils/HistGroupFixture.h"
 #include "../src/async/ConnectAwait.h"
 #include "../src/async/Subscriptions.h"
+#include "utils/Subscribing.h"
 #define let const auto
 
 namespace Jde::Opc::Gateway::Tests{
@@ -451,7 +452,7 @@ namespace Jde::Opc::Gateway::Tests{
 	//turn that takes the node, ahead of the run_iterate that would read its create's answer.
 	Ω holdOnceTaken( sp<UAClient> client, HistGroupPK groupId, NodeId node, double sampling, sp<std::atomic<EHold>> state, steady_clock::time_point until )ι->void{
 		client->PostStrand( [=]()mutable{
-			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(node).SamplingInterval==sampling ){
+			if( auto host = HistHost::Instance().Find(groupId); host && host->ItemParameters(node, client->PublishingInterval()).SamplingInterval==sampling ){
 				if( !client->CreatedSubscriptionResponse() )
 					*state = EHold::Unstaged;
 				else{
@@ -494,11 +495,38 @@ namespace Jde::Opc::Gateway::Tests{
 				UAClient::Unsubscribe( joiner );
 				ASSERT_EQ( ack.results_size(), 1 );
 				if( ack.results(0).revised_sampling_interval()==100.0 ){
-					EXPECT_EQ( ack.results(0).revised_queue_size(), 6u ) << "500ms of 100ms samples, plus one";
+					Opc::Hist::Thresholds sampled; sampled.MinTimeInterval = 100ms;
+					EXPECT_EQ( ack.results(0).revised_queue_size(), HistGroupHost::Parameters(sampled, collector->PublishingInterval()).QueueSize ) << "a publishing interval of 100ms samples, plus one";
 					break;
 				}
 				ASSERT_NO_THROW( modified.CheckTimeout(5s, 50ms) ) << "the item still samples at " << ack.results(0).revised_sampling_interval() << "ms";
 			}
+		}
+		ASSERT_NO_THROW( WaitItems(0) );
+	}
+
+	//The server's revised publishing interval reaches a member's item and the group's heartbeat hold (#526):  the OpcServer
+	//revises nothing, so the collector's stored answer says 2 s.  A 100 ms member's queue holds 2 s of samples, plus one -
+	//6 at the requested interval - and the hold is 2 s.
+	TEST_F( HistGroupTests, TheRevisedIntervalSizesTheQueueAndTheHold ){
+		auto collector = BlockAwait( ConnectAwait{string{OpcServerSlug}, HistHost::Instance().Collector(OpcServerSlug)} );
+		ASSERT_NO_THROW( WaitItems(0) ) << "an earlier test's items are still going";
+		ASSERT_NO_THROW( BlockAwait(SubscribeAwait{collector}) );
+		{
+			RevisedInterval revised{ collector, 2000 };
+			let groupId = Id( CreateGroup("pump3-revised", nullopt, nullopt) );
+			absl::Cleanup purgeGroup = [=]{ Purge( "HistGroup", groupId ); };
+			auto host = HistHost::Instance().Find( groupId );
+			ASSERT_TRUE( host );
+			Mutate( "createHistGroupNode( histGroupId:$g, node:$node, minTimeInterval:100 ){ id }", {{"g", groupId}, {"node", Column(Rpm3)}} );
+			ASSERT_NO_THROW( WaitSubscribed(host, 1) );
+			auto joiner = ms<Joiner>();
+			let ack = BlockAwait( DataChangeAwait{{NodeId{_ns, Rpm3}}, joiner, collector} );
+			UAClient::Unsubscribe( joiner );
+			ASSERT_EQ( ack.results_size(), 1 );
+			EXPECT_EQ( ack.results(0).revised_sampling_interval(), 100.0 );
+			EXPECT_EQ( ack.results(0).revised_queue_size(), 21u ) << "ceil(2000/100)+1";
+			EXPECT_EQ( host->Group()->PublishingInterval(), 2s ) << "the heartbeat hold";
 		}
 		ASSERT_NO_THROW( WaitItems(0) );
 	}

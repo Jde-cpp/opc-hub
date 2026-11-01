@@ -60,6 +60,9 @@ namespace Jde::Opc::Gateway{
 			return nullopt;
 		}
 		requestId = MonitorHandle{ subscriptionId, ++_requestId };//never 0:  the low half counts from 1.
+		let publishingInterval = client->PublishingInterval();//the server's revised one, once a subscription exists.
+		if( subscriptionId )
+			dataChange->RunsAt( publishingInterval );
 		for( auto pSubscription : existing )
 			pSubscription->ClientCalls.emplace( dataChange );
 		_requests.emplace( requestId, move(nodes) );
@@ -70,7 +73,7 @@ namespace Jde::Opc::Gateway{
 		else{
 			flat_map<NodeId,MonitoringParameters> parameters;//the listener's, per node - the same order as newNodes, which the answer is read by.
 			for( let& n : newNodes )
-				parameters.emplace( n, dataChange->ItemParameters(n) );
+				parameters.emplace( n, dataChange->ItemParameters(n, publishingInterval) );
 			_calls.emplace( requestId, make_tuple(move(newNodes),move(dataChange),flat_set<NodeId>{}) );
 			lock.Release();
 			return CreateMonitoredItemsRequest{ parameters };

@@ -10,7 +10,6 @@ namespace Jde::Opc::Gateway{
 	constexpr RequestId SubscriptionRequestId = ConnectRequestId - 1;
 	extern Duration _pingInterval;//the keep-alive's period, /gateway/pingInterval:  set once by Configure, before the web server starts.  A row's ping_interval overrides it (UAClient::PingInterval).
 	extern Duration _ttl;//an idle client's lifetime, /gateway/ttl:  likewise, under a row's ttl (UAClient::Ttl).
-	extern Duration _pollInterval;//the loop's sleep between polls with a request outstanding, /gateway/pollInterval:  likewise.
 	extern Duration _requestTimeout;//a service call's deadline, /gateway/requestTimeout:  likewise, under a row's request_timeout (UAClient::Create).
 	struct UAClient;
 
@@ -28,6 +27,7 @@ namespace Jde::Opc::Gateway{
 		α IsRunning()Ι->bool{ return _running.test(); }
 		α IsStopped()Ι->bool{ return _stopped.test(); }
 		α Strand()Ι->const boost::asio::strand<boost::asio::io_context::executor_type>&{ return _strand; }
+		α Waker()Ι->TimerCancel{ return _pollTimer.Canceller(); }//ends the loop's wait from any thread - the connection manager's wake-up, posted onto the strand (UAClient::Create).  Safe past this object:  it shares the timer's state.
 	private:
 		α UAHandle()ι->Handle;
 		α ProcessingLoop()ι->VoidTask;
@@ -40,8 +40,8 @@ namespace Jde::Opc::Gateway{
 		Handle _handle{};//the client's, kept past Stop for the log lines FailPending's callbacks still write.
 		TimePoint _lastRequest{};//strand-confined; per-client so one client's traffic doesn't mask another's TTL.
 		TimerCancel _pingTimer;//strand-confined
-		DurationTimer _pollTimer;//strand-confined; ProcessingLoop's waits between polls, one timer re-armed for each rather than one allocated per poll.
-		bool _sleeping{};//strand-confined; set while ProcessingLoop sleeps between polls:  Process ends the sleep for a request that landed mid-way (#505), Clear for the subscription's end, Stop for the loop to exit.  The drain's waits are not ended.
+		DurationTimer _pollTimer;//strand-confined; ProcessingLoop's wait between run_iterate calls, one timer re-armed for each rather than one allocated per wait.
+		bool _sleeping{};//strand-confined; set while ProcessingLoop waits between run_iterate calls:  the connection manager's wake ends the wait for what arrived (Waker), Process for a request that landed mid-way (#505), Clear for the subscription's end, Stop for the loop to exit.
 		bool _drainNeeded{};//strand-confined; set by RequestDrain, cleared by OnServiceBegin or ProcessingLoop's give-up cap.
 		bool _stopping{};//strand-confined; set by ProcessingLoop's TTL branch: ShutdownIdle is in flight but its delete-subscription pump still needs Process/the loop, so only the ping starter keys off this - Stop() ends everything else.
 		atomic_flag _running;

@@ -27,7 +27,28 @@ namespace Jde::Opc::Gateway{
 	UABrowsePath::UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start )ι:
 		UABrowsePath{ toSegments(segments, defaultNS), start }
 	{}
-
+}
+namespace Jde::Opc{
+	α Gateway::PathPrefixes( sv path, bool parents, NsIndex defaultNs, const NodeId& start )ι->BrowsePathSet{
+		let segments = Str::Split( path, '/' );
+		let count = parents ? std::max<size_t>( segments.size(), 1 ) : 1;//Split skips empty segments, so "" and "/" have none:  one empty path, which the server refuses BadNothingToDo, as it refused none at all.
+		BrowsePathSet y;
+		y.Paths.reserve( count ); y.Requests.reserve( count );
+		for( uint i=0; i<count; ++i ){
+			std::span<const sv> nodePath{ segments.begin(), segments.end()-i };
+			y.Paths.emplace_back( Str::Join(nodePath, "/") );
+			y.Requests.emplace_back( nodePath, defaultNs, start );
+		}
+		return y;
+	}
+	α Gateway::ByPath( const vector<string>& paths, vector<ExpectedNodeId>&& nodes )ι->flat_map<string,ExpectedNodeId>{
+		ASSERT( paths.size()==nodes.size() );
+		auto y = ReserveMap<string,ExpectedNodeId>( paths.size() );
+		for( uint i=0; i<paths.size() && i<nodes.size(); ++i )
+			y.emplace( paths[i], move(nodes[i]) );
+		return y;
+	}
+namespace Gateway{
 	UABrowsePath::UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι:
 		Owned{ UA_BrowsePath{
 			{},
@@ -179,4 +200,4 @@ namespace Browse{
 			return true;
 		} );
 	}
-}}
+}}}

@@ -29,13 +29,17 @@ namespace Jde::Opc::Gateway{
 		//one the server refused:  the rebuild's log line says so, and the node stays lost.  A listener that has to keep its nodes
 		//asks for them again itself, as the historian's collector does once they have been lost too long (HistGroupHost::Check).
 		β ConnectionRestored( const ServerCnnctnNK& /*opcId*/, const flat_set<NodeId>& /*nodes*/ )ι->void{}
-		//What this listener's items are created with - per node, so the historian samples at each node's MinTimeInterval.  Asked
+		//What this listener's items are created with - per node, so the historian samples at each node's MinTimeInterval, and
+		//with the interval the client's subscription runs at (UAClient::PublishingInterval), which sizes a queue.  Asked
 		//at every create, a rebuild's included;  a change to an item that exists goes through ModifyMonitoredItemsAwait.  A node
 		//another listener already monitors keeps that item's parameters - the collector's clients are its own for that reason
 		//(Credential::Collector).  Called on the client's strand with the monitoring lock held exclusively (MonitoredItemsRequest),
 		//as SendDataChange is with it shared:  neither may call into UAClient or its monitored nodes, nor wait on a lock that is
 		//held across such a call - an unsubscribe under the listener's own lock would deadlock the strand.
-		β ItemParameters( const NodeId& )Ι->MonitoringParameters{ return {}; }
+		β ItemParameters( const NodeId&, Duration /*publishingInterval*/ )Ι->MonitoringParameters{ return {}; }
+		//The interval the subscription runs at, told at every request this listener registers on one - before any ItemParameters, and
+		//also when every node joins an existing item, which asks none.  Called as ItemParameters is.
+		β RunsAt( Duration /*publishingInterval*/ )ι->void{}
 		β to_string()Ι->string=0;
 	};
 
