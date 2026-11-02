@@ -205,4 +205,17 @@ namespace Jde::Opc::Gateway{
 		EXPECT_EQ( retype(_ua, _node, _dataType), UA_STATUSCODE_GOOD );
 		EXPECT_EQ( UA_Server_writeDataValue(_ua, _node, _value), UA_STATUSCODE_GOOD );
 	}
+
+	Tests::ExecutorHold::ExecutorHold()ι:
+		_threads{ Settings::FindNumber<uint>("/workers/executor/threads").value_or(std::thread::hardware_concurrency()) }{
+		for( uint i=0; i<_threads; ++i )
+			boost::asio::post( *Executor(), [state=_state]{ ++state->Holding; state->Release.wait( false ); } );
+	}
+	α Tests::ExecutorHold::Held( Duration timeout )Ι->bool{
+		return WaitUntil( [this]{ return _state->Holding==_threads; }, timeout );
+	}
+	α Tests::ExecutorHold::Release()ι->void{
+		_state->Release.test_and_set();
+		_state->Release.notify_all();
+	}
 }

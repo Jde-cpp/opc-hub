@@ -1,10 +1,9 @@
 ﻿#include "ConnectAwait.h"
 #include <absl/synchronization/mutex.h>
+#include <jde/access/Authorize.h>
 #include "../UAClient.h"
 #include "../GatewayAppClient.h"
-#include <jde/access/Authorize.h>
-#include "jde/fwk/exceptions/Exception.h"
-#include <stdexcept>
+#include "BlockingPool.h"
 
 #define let const auto
 
@@ -126,8 +125,9 @@ namespace Jde::Opc::Gateway{
 		try{
 			auto servers = co_await ServerCnnctnAwait{ _opcSlug };
 			THROW_IFX( servers.empty(), Exception( _sl, {EHttpStatus::NotFound}, "Could not find connection:  '{}'", _opcSlug) );
-			auto client = ms<UAClient>( move(servers.front()), _cred );
-			client->Connect();
+			//The build and the connect on the blocking pool (#353):  the certificate issue, the trust scan and the host probe held the
+			//executor thread this ran on.  The client lives on through its strand;  the waiters hear from StateCallback.
+			co_await BlockingAwait<>{ [this, server=move(servers.front())]()mutable{ ms<UAClient>( move(server), _cred )->Connect(); }, _sl };
 		}
 		catch( Exception& e ){
 			vector<ConnectAwait::Handle> handles;

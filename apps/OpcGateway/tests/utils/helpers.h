@@ -74,6 +74,24 @@ namespace Jde::Opc::Gateway::Tests{
 	α Socket()ι->GatewayClientSocket&;//the suites' shared socket to the gateway, connected on first use as the AppClient's session.
 	α Jwt()ε->const Web::Jwt&;//the AppClient's, fetched on first use:  its payload is the token the suites present, its user the session's.
 	α SessionCredential( optional<UserPK> user={} )ε->Credential;//Jwt()'s payload, with `user` set when given - Jwt().UserPK for the session's own.
+	//Every executor thread held until Release, or this goes:  what runs elsewhere - the endpoint's own thread, the blocking pool -
+	//still runs, and what needs the executor waits.  A thread busy elsewhere leaves fewer to hold, which Held can't tell from a pass;
+	//one busy for seconds right after startup has been seen (2026-11-02, twice in eight runs, both times in the process's first test),
+	//which is what Held's wait rides out.
+	struct ExecutorHold final{
+		ExecutorHold()ι;
+		~ExecutorHold(){ Release(); }
+		ExecutorHold( const ExecutorHold& )=delete;
+		ExecutorHold& operator=( const ExecutorHold& )=delete;
+		α Held( Duration timeout=std::chrono::seconds{10} )Ι->bool;//every thread is holding its wait.
+		α Holding()Ι->uint{ return _state->Holding; }
+		α Release()ι->void;
+		α Threads()Ι->uint{ return _threads; }
+	private:
+		struct State final{ std::atomic<uint> Holding; std::atomic_flag Release; };
+		sp<State> _state{ ms<State>() };//the posted waits' own:  one still queued when this goes has it.
+		uint _threads;
+	};
 	//A node of the embedded OpcServer given a DataType of namespace 0 for a test, holding no value, and given its own DataType
 	//and value back when this goes.
 	struct RetypedNode final{
