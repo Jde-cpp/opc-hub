@@ -1,5 +1,11 @@
-// The cards' grids narrowing with the page:  to two columns, then to one.
+// The cards' grids narrowing with the room they have:  to two columns, then to one.  A container query on the section around
+// the grid (`container` below), not a viewport one - a jde-framework sheet names no breakpoint (_constants.scss).  The widths
+// are the section's content box:  about the 1000px and 540px viewports the rule was first written for, less its 20px gutters
+// (and the pane's scrollbar, where it takes room).
+@mixin container{
+	container-type: inline-size;
+}
 @mixin narrowing{
-	@media (max-width: 1000px) { grid-template-columns: repeat( 2, minmax(0, 1fr) ); }
-	@media (max-width: 540px) { grid-template-columns: minmax(0, 1fr); }
+	@container (width <= 960px) { grid-template-columns: repeat( 2, minmax(0, 1fr) ); }
+	@container (width <= 500px) { grid-template-columns: minmax(0, 1fr); }
 }

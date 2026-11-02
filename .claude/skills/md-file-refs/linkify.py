@@ -16,7 +16,7 @@ Usage:
 """
 import argparse, collections, os, re, subprocess, sys
 
-EXT = r"cpp|cc|c|h|hpp|sql|jsonnet|proto|json|cmake|ts|py|sh|yml|yaml"
+EXT = r"cpp|cc|c|h|hpp|sql|jsonnet|proto|json|cmake|ts|py|sh|yml|yaml|scss|html|md"
 SPEC = r"(?::\d+(?:[-,/]\d+)*)"
 # one pass, left to right, so a continuation ref binds to the file that precedes it
 REF_RE = re.compile( r"`([A-Za-z0-9_./+-]+\.(?:" + EXT + r"))(" + SPEC + r"?)`"
@@ -69,7 +69,7 @@ class Index:
 			label = parts[-1]
 			for k in range( 1, len(parts)+1 ):
 				label = "/".join( parts[-k:] )
-				if len( self.resolve(label) )==1:
+				if self.resolve( label )==[f]:	# not just any one file:  `CLAUDE.md` names the root's, not web/'s
 					break
 			# a twin of the same stem in a sibling dir (config/sql/{mysql,sqlServer,sqlite})
 			# means the dir is the distinguishing part - keep it even though the name is unique

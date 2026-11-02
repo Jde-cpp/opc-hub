@@ -1,10 +1,12 @@
-import { Component, input, output } from '@angular/core';
+import { Component, inject, input, output } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { MatIconButton } from '@angular/material/button';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { MatIcon } from '@angular/material/icon';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatToolbar } from '@angular/material/toolbar';
 import { MatTooltip } from '@angular/material/tooltip';
+import { ScreenSize } from 'jde-spa';
 import { View } from '../../model/ql/view';
 import { ViewSet } from '../../model/ql/view-set';
 
@@ -15,9 +17,10 @@ import { ViewSet } from '../../model/ql/view-set';
 	selector: 'view-toolbar',
 	templateUrl: './view-toolbar.html',
 	styleUrl: './view-toolbar.scss',
-	imports: [MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip]
+	imports: [MatButtonToggle, MatButtonToggleGroup, MatIcon, MatIconButton, MatProgressBar, MatToolbar, MatTooltip, NgTemplateOutlet]
 })
 export class ViewToolbar{
+	isExtraSmall = inject( ScreenSize ).isExtraSmall;//a phone:  the centre zone is a row of its own, after the right zone
 	views = input.required<ViewSet<View>>();
 	refreshing = input<boolean>( false );
 	count = input<number>();//the rows shown, where that is the whole count - none while a pager carries the range

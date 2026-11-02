@@ -1,4 +1,4 @@
-import { Component, OnInit, input, signal, model, computed, inject } from '@angular/core';
+import { Component, ElementRef, OnInit, input, signal, model, computed, inject } from '@angular/core';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 import {Sort} from '@angular/material/sort';
 import { QLListSettings } from './ql-list-settings/ql-list-settings';
@@ -26,9 +26,8 @@ import { ViewToolbar } from '../../../shared/view-toolbar/view-toolbar';
 
 @Component({
 	selector: 'ql-list',
-	styleUrls: ['ql-list.scss'],
 	templateUrl: './ql-list.html',
-	host: {class:'main-content mat-drawer-container my-content'},
+	host: {class:'main-content my-content'},
 	imports: [FailureState, GraphQLTable, MatButton, MatIcon, Paginator, QLListSettings, RouterLink, ViewToolbar]
 })
 export class QLList implements OnInit{
@@ -37,6 +36,7 @@ export class QLList implements OnInit{
 	#componentPageTitle = inject( ComponentPageTitle );
 	#snackbar = inject( SnackbarService );
 	#dialog = inject( MatDialog );
+	#el = inject( ElementRef );
 
 	async ngOnInit(){
 		if( this.listData() )//embedded (QLSelector):  the host resolved the data itself, there is no route resolver to subscribe to
@@ -156,6 +156,7 @@ export class QLList implements OnInit{
 	}
 
 	async onPage( e:PageEvent ){
+		Paginator.showFirstRow( this.#el.nativeElement, this.skip(), e.startIndex );
 		this.skip.set( e.startIndex );
 		await this.#reload();
 	}

@@ -6,23 +6,6 @@ table {
 	width: 130px;
 }
 
-//as ql-list.scss's .pager
-.pager{
-	background: var(--mat-sys-surface-container);
-	color: var(--mat-sys-on-surface);
-	--mat-paginator-container-background-color: transparent;
-}
-
-div.table
-{
-	/* display: -webkit-box; */
-	flex-grow: 1;
-	flex-basis: 100vh;
-	/* height: 100px; */
-	overflow: auto;
-}
-
-
 .level
 {
 	flex: 0 0 85px;

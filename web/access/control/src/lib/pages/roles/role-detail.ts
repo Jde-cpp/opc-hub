@@ -14,7 +14,7 @@ import { UserPK } from '../../model/user';
     templateUrl: './role-detail.html',
 		//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
-		host: {class:'main-content mat-drawer-container my-content role-detail'},
+		host: {class:'main-content my-content role-detail'},
     imports: [DetailActions, MatTabsModule, Properties, PermissionTable, QLSelector]
 })
 export class RoleDetail extends DetailPage<Role>{

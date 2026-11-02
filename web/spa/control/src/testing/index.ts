@@ -6,6 +6,7 @@ import { BehaviorSubject, isObservable, NEVER, Observable } from 'rxjs';
 import { ComponentPageTitle } from '../lib/pages/component-page-title/component-page-title';
 import { IProfileService } from '../lib/services/profile/profile-service';
 import { isNotFound } from '../lib/services/route-utils';
+import { ScreenSize } from '../lib/services/screen-size';
 
 //ActivatedRoute.  `data` and `params` are streams:  a value is a BehaviorSubject's, an Observable is used as it is - pass a Subject
 //to move the route on from the test - and an absent one never emits.
@@ -20,6 +21,11 @@ export const provideRoute = ( shape?:RouteShape ):Provider=>({ provide: Activate
 export const routerStub = ( url='/' )=>({ url, navigate: vi.fn().mockResolvedValue( true ), navigateByUrl: vi.fn().mockResolvedValue( true ) });
 
 export const pageTitleStub:Provider = { provide: ComponentPageTitle, useValue: {} };
+
+//ScreenSize at a width:  a spec's document has no _general.scss, so the real service would warn in every test that renders a
+//navbar, a sidenav or a list toolbar.  A phone is small too.
+export const screenSize = ( width:'wide'|'small'|'extra-small'='wide' ):Provider=>
+	({ provide: ScreenSize, useValue: {isSmall: signal( width!='wide' ), isExtraSmall: signal( width=='extra-small' )} });
 
 //A route's page, for a router test about where a url lands rather than what the page draws.
 @Component( {template: ''} ) export class Blank{}

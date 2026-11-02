@@ -53,8 +53,8 @@ namespace Jde::Opc::Gateway{
 	α ServerCnnctn::SettingsError( const ServerCnnctn& row, SL sl )ι->up<Exception>{
 		using ClientSecurity::PolicyName;
 		let refuse = [sl]( string what ){ return mu<Exception>( move(what), ExceptionArgs{EHttpStatus::BadRequest}, sl ); };
-		//0 is the default only to open62541, and not the one the help gives:  5 s for the request timeout, not the gateway's 10;  and a
-		//TTL of 0 closes the client after every request.  The ping interval's 0 turns the keep-alive off, which is the operator's to ask.
+		//0 is the default only to open62541, and not the one the help gives:  5 s for the request timeout, not /gateway/requestTimeout;
+		//and a TTL of 0 closes the client after every request.  The ping interval's 0 turns the keep-alive off, which is the operator's to ask.
 		for( let& [name, value] : { std::pair{"sessionTimeout"sv, row.SessionTimeout}, std::pair{"requestTimeout"sv, row.RequestTimeout}, std::pair{"ttl"sv, row.Ttl} } ){
 			if( value==0u )
 				return refuse( Ƒ("'{}' of 0 is not allowed:  leave it empty for the default.", name) );

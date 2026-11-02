@@ -16,7 +16,7 @@ import { Latest } from '../../services/latest';
 	selector: 'help-page',
 	templateUrl: './help-page.html',
 	styleUrls: ['./help-page.scss'],
-	host: {class: 'main-content mat-drawer-container my-content'}
+	host: {class: 'main-content my-content'}
 })
 export class HelpPage implements OnInit, OnDestroy{
 	ngOnInit(){

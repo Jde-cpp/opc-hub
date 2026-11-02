@@ -16,6 +16,12 @@ app-component-sidenav {
 	container-type: size;//lets the nav pane below ask for the visible height (100cqh) instead of re-deriving it from 100vh minus the chrome above
 }
 
+//the pane that scrolls:  what focus scrolls into view clears a sticky header row (56px, Material's) and a list's sticky pager (56px),
+//which would otherwise cover it - WCAG 2.4.11
+.docs-component-viewer-sidenav-container > .mat-sidenav-content {
+	scroll-padding-block: 56px;
+}
+
 .docs-component-viewer-sidenav {
 	overflow: auto;
 }
@@ -95,6 +101,8 @@ div .mat-mdc-list-base {
 	.docs-component-viewer-sidenav-container .docs-component-viewer-sidenav {
 		// position right above the content
 		z-index: 4;
+		// the nav's width, not the pane's:  the backdrop beside the drawer stays in reach, and a tap on it closes the drawer
+		width: constants.$sidenav-width;
 	}
 
 	.docs-component-viewer-nav {
@@ -102,7 +110,6 @@ div .mat-mdc-list-base {
 		top: 0;
 
 		.docs-component-viewer-nav-content {
-			width: 100%;
 			border: none;
 			margin: 0;
 			max-height: initial;

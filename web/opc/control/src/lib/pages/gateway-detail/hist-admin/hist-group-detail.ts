@@ -46,7 +46,7 @@ const excluded = ['root', 'guid', ...histThresholdNames];
 	styleUrls: ['./hist-admin-shared.scss', './hist-group-detail.scss'],
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves the class
 	//name out, so the routed pages that share DetailPage and this host string could collide with NG0912.
-	host: {class: 'main-content mat-drawer-container my-content hist-group-detail'},
+	host: {class: 'main-content my-content hist-group-detail'},
 	imports: [CdkCopyToClipboard, DetailActions, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatProgressBarModule, MatSelectModule, MatTableModule, MatTabsModule, MatTooltipModule, Properties, HistGroupAccess, HistThresholdFieldsEditor]
 })
 export class HistGroupDetail extends DetailPage<HistGroup>{

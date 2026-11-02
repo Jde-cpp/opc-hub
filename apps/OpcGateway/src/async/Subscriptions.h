@@ -2,6 +2,8 @@
 
 namespace Jde::Opc::Gateway{
 	struct UAClient;
+	extern Duration _publishingInterval;//what the create asks for, /gateway/subscription/publishingInterval:  set once by Configure, before the web server starts.  The historian takes the server's revised one (UAClient::PublishingInterval), and this until that arrives.
+	α CreateSubscriptionRequest()ι->UA_CreateSubscriptionRequest;//the one data subscription per client:  open62541's defaults but the publishing interval.
 	struct SubscribeAwait final : VoidAwait{
 		SubscribeAwait( sp<UAClient> c, SRCE )ι:VoidAwait{sl}, _client{move(c)}{}
 		α await_ready()ι->bool override;

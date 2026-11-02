@@ -203,6 +203,8 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//The source's AccessLevel is the endpoint's (spec *Writes*):  a variable the source won't let anyone write is read-only here, whatever
 	//the group grants - enforced, the suite's user Administer's - and its Write is refused before the callback, the source untouched.
+	//Bad_NotWritable:  since open62541 1.5.10 a node whose own AccessLevel lacks Write is refused before the user's level is asked,
+	//where 1.5.9 masked the user's by it and answered Bad_UserAccessDenied.
 	TEST_F( GatewayWritesTests, ASourceReadOnlyVariableStaysReadOnly ){
 		constexpr UA_UInt32 readOnly{ 9065 };
 		double initial{ 5 };
@@ -224,7 +226,7 @@ namespace Jde::Opc::Gateway::Tests{
 		EXPECT_FALSE( access & UA_ACCESSLEVELMASK_WRITE ) << "the source's AccessLevel";
 		EXPECT_FALSE( UserAccessLevel(*client, *node) & UA_ACCESSLEVELMASK_WRITE ) << "masked by it";
 		const double value{ 6 };
-		EXPECT_EQ( client->Write(*node, &value, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_BADUSERACCESSDENIED );
+		EXPECT_EQ( client->Write(*node, &value, UA_TYPES[UA_TYPES_DOUBLE]), UA_STATUSCODE_BADNOTWRITABLE );
 		EXPECT_EQ( Double(AtSource(readOnly)), initial ) << "the source untouched";
 	}
 

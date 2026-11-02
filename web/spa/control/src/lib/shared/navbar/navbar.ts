@@ -1,6 +1,7 @@
 //https://github.com/angular/components/blob/a55b19797f0bccf467d5602f526eef236737498b/docs/src/app/shared/navbar/navbar.ts
 import {Component, computed, effect, ElementRef, inject, OnInit, signal, untracked, viewChild} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
+import { NgTemplateOutlet } from '@angular/common';
 import {FormControl, ReactiveFormsModule} from '@angular/forms';
 import {MatAutocompleteModule, MatAutocompleteTrigger} from '@angular/material/autocomplete';
 import {MatButtonModule} from '@angular/material/button';
@@ -28,6 +29,7 @@ import { HELP_TOPICS, HelpAnchor, helpTopicFor, helpTopicRoute, helpTopics } fro
 import { APP_LOGO, APP_NAME } from '../../services/document-title';
 import { RecentVisits, SEGMENT_NAME } from '../../services/recent-visits';
 import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
+import { ScreenSize } from '../../services/screen-size';
 
 export type Favorite={
 	folderName?:string;
@@ -55,6 +57,7 @@ export type Folder = { folderName:string, items:LinkedFavorite[] };
 		MatInputModule,
     MatMenuModule,
 		MatTooltipModule,
+		NgTemplateOutlet,
 		ReactiveFormsModule,
     RouterLink,
     RouterLinkActive,
@@ -254,6 +257,7 @@ export class NavBar implements OnInit {
 	helpFragment = computed<string|undefined>( ()=>this.helpRoute().length>1 ? this.#helpAnchor.fragment() : undefined );//a section of the topic only - the index has none
 	existing = computed<Favorite|undefined>( ()=>this.favorites()?.find( fav=>fav.route==this.route() ) );// the favorite corresponding to the current route, if any
 	router = inject(Router);
+	isSmall = inject( ScreenSize ).isSmall;//below the small breakpoint the search is a row of its own, after the icons
 	searchForm = new FormControl<string|SearchResult>( '', {nonNullable: true} );//the selected option lands here as the object;  displayWith renders it.
 	searchInput = viewChild<ElementRef<HTMLInputElement>>( 'searchInput' );
 	searchTrigger = viewChild( MatAutocompleteTrigger );

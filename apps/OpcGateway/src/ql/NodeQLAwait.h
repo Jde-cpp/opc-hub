@@ -9,7 +9,7 @@ namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
 	struct UAClient;
 	using BrowsePathResponse = flat_map<string,ExpectedNodeId>;
-	struct NodeQLAwait final: TAwaitEx<jvalue,TAwait<BrowsePathResponse>::Task>{//Execute's task type matches the UAStrandAwait<BrowsePathResponse> it co_awaits.
+	struct NodeQLAwait final: TAwaitEx<jvalue,TAwait<BrowsePathResponse>::Task>{//Execute's awaits all go through Any(), so its task type is free - this one from when the translate was a UAStrandAwait<BrowsePathResponse>.
 		using base = TAwaitEx<jvalue,TAwait<BrowsePathResponse>::Task>;
 		NodeQLAwait( QL::TableQL&& query, sp<UAClient> client, SRCE )ι:
 			base{ sl }, _client{client}, _query{move(query)}

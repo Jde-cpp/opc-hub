@@ -15,7 +15,7 @@ import { InstanceTabs } from '../instance-tabs/instance-tabs';
 		//the trailing class is load-bearing:  Angular hashes a component's *shape* (selectors, host attrs, inputs,
 		//prototype members, template decls) into its style-encapsulation id and deliberately leaves the class name out,
 		//so this page and its opc-server-detail twin - identical in every one of those - collided with NG0912.
-		host: {class:'main-content mat-drawer-container my-content app-server-detail'},
+		host: {class:'main-content my-content app-server-detail'},
 		imports: [InstanceTabs]
 })
 export class AppServerDetail implements OnInit{

@@ -3,6 +3,7 @@
 #include <jde/opc/uatypes/Owned.h>
 #include <jde/opc/uatypes/Value.h>
 #include "../async/UAAwait.h"
+#include "ExpectedNodeId.h"
 
 namespace Jde::QL{ struct TableQL; }
 namespace Jde::Opc::Gateway{
@@ -16,6 +17,12 @@ namespace Jde::Opc::Gateway{
 		UABrowsePath( std::span<const sv> segments, NsIndex defaultNS, const NodeId& start=NodeId::ObjectsFolder() )ι;
 		UABrowsePath( std::span<const BrowseSegment> segments, const NodeId& start )ι;
 	};
+	//What a `path` - a/b/c, each segment `ns~name` or a bare name in `defaultNs` - asks TranslateBrowsePathsAwait from `start`, the
+	//Objects folder unless a caller has a root (a template's, spec *Templates*):  the path, and with `parents` every prefix of it,
+	//longest first;  each with its string, the key its answer is filed under by ByPath.
+	struct BrowsePathSet final{ vector<string> Paths; vector<UABrowsePath> Requests; };
+	α PathPrefixes( sv path, bool parents, NsIndex defaultNs, const NodeId& start=NodeId::ObjectsFolder() )ι->BrowsePathSet;
+	α ByPath( const vector<string>& paths, vector<ExpectedNodeId>&& nodes )ι->flat_map<string,ExpectedNodeId>;//the i-th answer under the i-th path.
 namespace Browse{
 	struct Response : Owned<UA_BrowseResponse, UA_TYPES_BROWSERESPONSE>{
 		Response()ι{ ASSERT( false ); }

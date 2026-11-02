@@ -134,7 +134,10 @@ namespace Jde::Opc::Gateway::Tests{
 
 	//open62541 re-activating a registered client in place - its session went, and the client reconnects without a ConnectionLost - is
 	//a loss and a reconnect too (reviews-issue/servers-2-endpoint.md #6).  Re-activating the current session takes the same path
-	//through StateCallback:  out of Activated, then back.
+	//through StateCallback:  out of Activated, then back.  The asynchronous form:  it notifies ActivateRequested as it sends, where
+	//the synchronous one sets it silently and only a response processed meanwhile - the post-activation namespace read's, until #526
+	//pumped it before this could run - made the callback see it.  The loop is woken as a connect wakes it, under ConnectRequestId,
+	//which the activation's StateCallback clears.
 	TEST_F( GatewayServerTests, AnInPlaceReconnectCounts ){
 		const string slug{ "gatewayServerTestsInPlace" };
 		let connection = OwnConnection( slug );
@@ -147,7 +150,8 @@ namespace Jde::Opc::Gateway::Tests{
 		struct Activation final{ std::atomic<StatusCode> Status{ UA_STATUSCODE_BADINTERNALERROR }; std::atomic_flag Done; };
 		auto activation = ms<Activation>();//the post's own:  it may outlive a wait that timed out.
 		registered->PostUA( [activation, registered]{//UA_Client_* on the client's strand alone.
-			activation->Status = UA_Client_activateCurrentSession( *registered );
+			activation->Status = UA_Client_activateCurrentSessionAsync( *registered );
+			registered->Process( ConnectRequestId, "re-activation" );
 			activation->Done.test_and_set();
 		} );
 		ASSERT_TRUE( WaitUntil([&]{ return activation->Done.test(); }) );

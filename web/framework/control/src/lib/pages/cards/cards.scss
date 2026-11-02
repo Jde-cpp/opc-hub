@@ -49,6 +49,7 @@
 // the section icon drawn large and faint behind them.  Four across, two, then one - a count the four home tiles fill, so
 // none sits alone on a row.
 .tiles-section {
+	@include columns.container;
 	box-sizing: border-box;
 	width: 100%;
 	max-width: 1080px;

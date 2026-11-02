@@ -227,12 +227,12 @@ namespace Jde::Opc::Server::Tests{
 		EXPECT_TRUE( UA_findDataTypeWithCustom(&deviceHealthEnumeration, config->customDataTypes) ) << "DI's enum, published";
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, AdditiveManufacturing ){
 		LoadWithDependencies( "AdditiveManufacturing/Opc.Ua.AdditiveManufacturing.Nodeset2.xml", 2 );
 	}
 
-	//open62541 1.5.9 refuses 6 variables whose VariableType's attributes fail the type check, and their children.
+	//open62541 1.5.10 refuses 6 variables whose VariableType's attributes fail the type check, and their children.
 	TEST_F( UALoadTests, Server_loadADINodeset ){
 		LoadWithDependencies( "ADI/Opc.Ua.Adi.NodeSet2.xml", 36 );
 	}
@@ -245,12 +245,12 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "AML/Opc.Ua.AMLBaseTypes.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadAutoIDNodeset ){
 		LoadWithDependencies( "AutoID/Opc.Ua.AutoID.NodeSet2.xml", 3 );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadBACnetNodeset ){
 		LoadWithDependencies( "BACnet/Opc.Ua.BACnet.NodeSet2.xml", 59 );
 	}
@@ -271,13 +271,13 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "DEXPI/Opc.Ua.DEXPI.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses WarningValues (i=472):  ValueRank -3 with ArrayDimensions 0.
+	//open62541 1.5.10 refuses WarningValues (i=472):  ValueRank -3 with ArrayDimensions 0.
 	TEST_F( UALoadTests, LoadDINodeset ){
 		LoadWithDependencies( "DI/Opc.Ua.Di.NodeSet2.xml", 1 );
 	}
 
 
-	//open62541 1.5.9 refuses the UIPlugInType VariableType (ValueRank 1 with ArrayDimensions 0) and its 8 properties.
+	//open62541 1.5.10 refuses the UIPlugInType VariableType (ValueRank 1 with ArrayDimensions 0) and its 8 properties.
 	TEST_F( UALoadTests, LoadFDI5Nodeset ){
 		LoadWithDependencies( "FDI/Opc.Ua.Fdi5.NodeSet2.xml", 9 );
 	}
@@ -291,18 +291,18 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "FDT/Opc.Ua.FDT.NodeSet.xml" );
 	}
 
-	//open62541 1.5.9 refuses the well-known roles:  they hang off ns0's RoleSet (i=15606), which open62541's namespace 0 lacks.
+	//open62541 1.5.10 refuses the well-known roles:  they hang off ns0's RoleSet (i=15606), which open62541's namespace 0 lacks.
 	TEST_F( UALoadTests, LoadGDSNodeset ){
 		LoadWithDependencies( "GDS/Opc.Ua.Gds.NodeSet2.xml", 90 );
 	}
 
-	//The nodeset loader refuses it:  "Infinite loop in the references" (open62541-nodeset-loader src/Nodeset.c), open62541 1.5.9.
+	//The nodeset loader refuses it:  "Infinite loop in the references" (open62541-nodeset-loader src/Nodeset.c), open62541 1.5.10.
 	// TEST_F( UALoadTests, LoadServer_loadGlassNodeset ){
 	// 	LoadWithDependencies( "Glass/Flat/Opc.Ua.Glass.NodeSet2.xml" );
 	// }
 
 
-	//open62541 1.5.9 refuses variables whose values fail its type check.
+	//open62541 1.5.10 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadI4AASNodeset ){
 		LoadWithDependencies( "I4AAS/Opc.Ua.I4AAS.NodeSet2.xml", 27 );
 	}
@@ -322,7 +322,7 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "IOLink/Opc.Ua.IOLinkIODD.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses a variable whose ValueRank and ArrayDimensions disagree, and one whose value fails the type check.
+	//open62541 1.5.10 refuses a variable whose ValueRank and ArrayDimensions disagree, and one whose value fails the type check.
 	TEST_F( UALoadTests, LoadIOLinkNodeset ){
 		LoadWithDependencies( "IOLink/Opc.Ua.IOLink.NodeSet2.xml", 2 );
 	}
@@ -339,7 +339,7 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "Machinery/Opc.Ua.Machinery.Examples.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadMachineToolNodeset ){
 		LoadWithDependencies( "MachineTool/Opc.Ua.MachineTool.NodeSet2.xml", 2 );
 	}
@@ -371,12 +371,12 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "MTConnect/Opc.Ua.MTConnect.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadOPENSCSNodeset ){
 		LoadWithDependencies( "OpenSCS/Opc.Ua.OPENSCS.NodeSet2.xml", 1 );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPackMLNodeset ){
 		LoadWithDependencies( "PackML/Opc.Ua.PackML.NodeSet2.xml", 2 );
 	}
@@ -481,12 +481,12 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "PlasticsRubber/Extrusion_v2/Pelletizer/2.00/Opc.Ua.PlasticsRubber.Extrusion_v2.Pelletizer.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses variables whose values fail its type check.
+	//open62541 1.5.10 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadPlasticsRubberGeneralTypes_v1_0_2_Nodeset ){
 		LoadWithDependencies( "PlasticsRubber/GeneralTypes/1.02/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml", 3 );
 	}
 
-	//open62541 1.5.9 refuses variables whose values fail its type check.
+	//open62541 1.5.10 refuses variables whose values fail its type check.
 	TEST_F( UALoadTests, LoadPlasticsRubberGeneralTypes_v1_0_3_Nodeset ){
 		LoadWithDependencies( "PlasticsRubber/GeneralTypes/1.03/Opc.Ua.PlasticsRubber.GeneralTypes.NodeSet2.xml", 3 );
 	}
@@ -516,12 +516,12 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "PNEM/Opc.Ua.PnEm.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPnRioNodeset ){
 		LoadWithDependencies( "PNRIO/Opc.Ua.PnRio.Nodeset2.xml", 3 );
 	}
 
-	//open62541 1.5.9 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses structure-typed variables it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadPROFINETNodeset ){
 		LoadWithDependencies( "PROFINET/Opc.Ua.Pn.NodeSet2.xml", 3 );
 	}
@@ -530,7 +530,7 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "Robotics/Opc.Ua.Robotics.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
+	//open62541 1.5.10 refuses a structure-typed variable it cannot give a default value:  "Could not create a default value".
 	TEST_F( UALoadTests, LoadSafetyNodeset ){
 		LoadWithDependencies( "Safety/Opc.Ua.Safety.NodeSet2.xml", 1 );
 	}
@@ -539,7 +539,7 @@ namespace Jde::Opc::Server::Tests{
 		LoadWithDependencies( "Sercos/Sercos.NodeSet2.xml" );
 	}
 
-	//open62541 1.5.9 refuses the WSAnalogUnitType VariableType, whose value does not match its DataType, and its WSTagNumber property.
+	//open62541 1.5.10 refuses the WSAnalogUnitType VariableType, whose value does not match its DataType, and its WSTagNumber property.
 	TEST_F( UALoadTests, LoadWeihenstephanNodeset ){
 		LoadWithDependencies( "Weihenstephan/Opc.Ua.Weihenstephan.NodeSet2.xml", 2 );
 	}

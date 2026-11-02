@@ -48,3 +48,33 @@ describe( 'Paginator buttons', ()=>{
 		expect( range.textContent!.trim() ).toBe( '51 – 75 of 100' );
 	} );
 } );
+
+//reviews-issue/329-sticky-table-header.md #6:  the pinned pager turns pages from part-way down a list
+describe( 'Paginator.showFirstRow', ()=>{
+	//a list with a header row and two rows, the first one's scrollIntoView recorded (jsdom has none)
+	const list = ()=>{
+		const host = document.createElement( 'div' );
+		host.innerHTML = '<mat-header-row></mat-header-row><mat-row></mat-row><mat-row></mat-row>';
+		const first = host.querySelector( 'mat-row' ) as HTMLElement;
+		first.scrollIntoView = vi.fn();
+		return { host, scroll: first.scrollIntoView as ReturnType<typeof vi.fn> };
+	};
+
+	it( 'brings the first row into view on a page turn either way', ()=>{
+		const { host, scroll } = list();
+		Paginator.showFirstRow( host, 0, 25 );
+		Paginator.showFirstRow( host, 25, 0 );
+		expect( scroll.mock.calls ).toEqual( [[{block: 'nearest'}], [{block: 'nearest'}]] );
+	} );
+
+	it( 'keeps the scroll on a one-row step', ()=>{
+		const { host, scroll } = list();
+		Paginator.showFirstRow( host, 25, 26 );
+		Paginator.showFirstRow( host, 25, 24 );
+		expect( scroll ).not.toHaveBeenCalled();
+	} );
+
+	it( 'leaves a list with no rows alone', ()=>{
+		expect( ()=>Paginator.showFirstRow( document.createElement('div'), 0, 25 ) ).not.toThrow();
+	} );
+} );

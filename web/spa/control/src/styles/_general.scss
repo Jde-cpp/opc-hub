@@ -15,9 +15,13 @@ body {
 // than scss variables because the sheets that read them are spread over jde-framework, jde-access and jde-opc - a media
 // query cannot read one, so the breakpoints stay scss (constants.scss).  The form width is the extra-small breakpoint, so
 // anything narrower still gets the full width;  the content offset is the shell's sidenav, which ViewToolbar centres past.
+// The small and extra-small breakpoints are published for TypeScript (ScreenSize), which builds its media queries from them:
+// the numbers are written in constants.scss alone.
 :root {
 	--jde-form-max-width: #{constants.$extra-small-breakpoint-width};
 	--jde-content-offset: #{constants.$sidenav-width};
+	--jde-breakpoint-small: #{constants.$small-breakpoint-width};
+	--jde-breakpoint-extra-small: #{constants.$extra-small-breakpoint-width};
 }
 
 // A routed page's content, and the tab group a detail page fills itself with.
@@ -82,10 +86,20 @@ pre {
 	text-align: left;
 }
 
+// Material's button label and option text are flex items with their text's automatic minimum, so a long one cannot shrink and
+// runs past its row instead of clipping.  Released where an ellipsis is wanted:  a button marked .jde-clip-label (the navbar's
+// sign-in name on a phone) and the navbar's search results, whose summary clips beside the title.  Global for the same reason
+// as the tooltip's:  the label is Material's element, and the results render in the overlay.
+.jde-clip-label .mdc-button__label,
+.jde-search-panel .mdc-list-item__primary-text {
+	min-width: 0;
+}
+
 // A list's toolbar:  a left zone and a right one spread to the edges, on the container colour.  ViewToolbar's adds the view
 // group centred on the viewport;  a page with a toolbar of its own (the node history, a Web Sessions tab) sets the class too.
 // `mat-toolbar.` to outrank Material's .mat-toolbar-single-row height and its background, which come later in the cascade.
 mat-toolbar.jde-list-toolbar {
+	position: relative;// containing block for the centre zone
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -102,11 +116,87 @@ mat-toolbar.jde-list-toolbar {
 		gap: .5rem;
 		min-width: 0;
 	}
+	.bar-right {// at the right edge on a row of its own too, where space-between, with one item to place, puts it at the left
+		margin-left: auto;
+	}
 	.row-count {
 		font: var(--mat-sys-label-large);
 		color: var(--mat-sys-on-surface-variant);
 		white-space: nowrap;
 	}
+	// ViewToolbar's centre zone (Refresh, the view group, Edit view), centred on the VIEWPORT to line up with the navbar search
+	// rather than on the toolbar, whose left edge the shell's sidenav insets by --jde-content-offset;  out of flow so its width
+	// cannot push the other zones.  Here rather than in view-toolbar.scss because the fallbacks below read the breakpoints,
+	// which only a jde-spa sheet can.
+	.bar-center {
+		position: absolute;
+		left: calc(50vw - var(--jde-content-offset));
+		top: 50%;
+		transform: translate(-50%, -50%);
+	}
+}
+// Too narrow to centre against the viewport:  the centre zone is back in flow taking the slack, and the toolbar wraps if it
+// must.
+@media (max-width: constants.$medium-breakpoint-width) {
+	mat-toolbar.jde-list-toolbar {
+		flex-wrap: wrap;
+		.bar-center {
+			position: static;
+			transform: none;
+			flex: 1 1 auto;
+		}
+	}
+}
+// A phone:  the centre zone takes a row of its own under Add and the row count, so the view group has a width to scroll in.
+// ViewToolbar renders it after the right zone there (ScreenSize.isExtraSmall), so the tab order is the rows' order, which
+// `order` would not change (WCAG 2.4.3).
+@media (max-width: constants.$extra-small-breakpoint-width) {
+	mat-toolbar.jde-list-toolbar .bar-center {
+		flex-basis: 100%;
+	}
+}
+
+// Sticky pins against the nearest scroll container - any box whose overflow is not visible or clip, whether or not it ever
+// scrolls.  The pane that scrolls is the shell's mat-sidenav-content, but the page hosts borrowed Material's
+// mat-drawer-container class for its colours and display, which is overflow:hidden, and a detail page's tab group clips its
+// bodies three times over for the slide between tabs - so a table's sticky header row and a list's sticky pager pinned to a
+// box that grew with the rows and never moved (#329).  A host's .main-content is now a rule of its own:  the drawer
+// container's colours, display and stacking context (a sticky header row's z-index stays within the page), without the clip.
+// A page's tab group (.my-content - one in a dialog may want its bodies to scroll) has its wrapper and active body visible:
+// the 0ms MAT_TABS_CONFIG leaves no slide to clip, and an inactive body keeps Material's hidden.  The clipping also held
+// two flex items' automatic minimum width at zero - the host, beside the shell's nav, and the active body in its wrapper -
+// and visible, each would grow to its content (a log message longer than the pane) and push the pane sideways, so both
+// state the zero minimum themselves;  what is wider than the pane then overflows visibly and scrolls the pane sideways,
+// where it used to lose its last columns.  Global because the hosts are in every library and the tab classes are Material's;
+// the element in the tab selector outranks Material's rules, which are injected after this sheet - and for dynamicHeight's
+// active body, (0,4,0), the group's dynamic-height class as well.
+.main-content {
+	position: relative;
+	z-index: 1;
+	display: block;
+	box-sizing: border-box;
+	min-width: 0;
+	color: var(--mat-sidenav-content-text-color, var(--mat-sys-on-background));
+	background-color: var(--mat-sidenav-content-background-color, var(--mat-sys-background));
+}
+mat-tab-group.my-content {
+	.mat-mdc-tab-body-wrapper { overflow: visible; }
+	.mat-mdc-tab-body.mat-mdc-tab-body-active,
+	&.mat-mdc-tab-group-dynamic-height .mat-mdc-tab-body.mat-mdc-tab-body-active { overflow: visible; min-width: 0; }
+	.mat-mdc-tab-body-content { overflow: visible; }
+}
+
+// A paged list's pager, pinned to the pane's bottom in the toolbar's colours, so a long page turns without a scroll to its end
+// (#329).  The wrapper paints, and the paginator in it - the framework's or Material's - goes transparent.  z-index 2:  over a
+// row's z-index:1 parts - a checkbox's invisible input took clicks through the pager - and under a sticky header row's 100.
+// Global because the lists are in two libraries:  ql-list and the log (jde-framework), and the node history (jde-opc).
+.jde-pager {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	background: var(--mat-sys-surface-container);
+	color: var(--mat-sys-on-surface);
+	--mat-paginator-container-background-color: transparent;
 }
 
 // Denser than Material's 52px rows and 56px header, for the admin lists read by scanning down a column:  four users filled a

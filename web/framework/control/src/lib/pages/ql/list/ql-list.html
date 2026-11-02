@@ -25,7 +25,7 @@
 				</div>
 			}
 			@if( paged() ){
-				<div class="pager">
+				<div class="jde-pager">
 					<paginator [startIndex]="skip()" [pageSize]="view().limit" [length]="length()" (onPageEvent)="onPage($event)"></paginator>
 				</div>
 			}

@@ -14,7 +14,7 @@
 
 namespace Jde::Opc::Gateway::Tests{
 	//Each throwaway server's port, one a suite:  beside 4940 the embedded OpcServer and 4850-4852 the pubsub and emulator suites.
-	enum class EThrowawayPort : uint16_t{ PlaintextPassword=4855, SecurityPolicyLegacy, RefusedCertificate, HostName, ApplicationUri, SecurityPolicyLying, SecurityPolicyDowngrade };
+	enum class EThrowawayPort : uint16_t{ PlaintextPassword=4855, SecurityPolicyLegacy, RefusedCertificate, HostName, ApplicationUri, SecurityPolicyLying, SecurityPolicyDowngrade, ConnectionManager };
 	Ξ Url( EThrowawayPort port, sv host="127.0.0.1" )ι->string{ return Ƒ( "opc.tcp://{}:{}", host, underlying(port) ); }
 	//A throwaway open62541 server on loopback, for the shapes neither the embedded OpcServer nor External offers:  a password in
 	//the clear (PlaintextPasswordTests), a security policy the gateway does not carry (SecurityPolicyTests).  `configure` gets the

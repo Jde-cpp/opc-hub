@@ -2,11 +2,11 @@
 #include "../UAClient.h"
 
 namespace Jde::Opc::Gateway{
-	//Runs a synchronous UA_Client service on the client's strand and resumes the awaiter with the result.
-	//Sync services (translateBrowsePathsToNodeIds, getRemoteDataTypes, ...) internally drive the client's event
-	//loop until the response arrives, so while one runs that client's strand is held (its data-change
-	//notifications stall for the round-trip); other clients are unaffected. Convert the call to open62541's
-	//async machinery if that stall ever matters.
+	//Runs a synchronous UA_Client call on the client's strand and resumes the awaiter with the result:  the connection
+	//attributes, the config's own fields - local reads that only need serializing with run_iterate.  A synchronous
+	//service (the tests' activateCurrentSession and deleteSingle) drives the client's event loop until the answer and
+	//holds the strand for the round trip, which the connection manager's net thread serves (#526);  the gateway's own
+	//went asynchronous - TranslateBrowsePathsAwait, DataTypesAwait - so nothing of its stalls a client's data changes.
 	Τ struct UAStrandAwait final : TAwait<T>{
 		using base = TAwait<T>;
 		UAStrandAwait( sp<UAClient> client, function<T()> f, SRCE )ι: base{sl}, _client{move(client)}, _f{move(f)}{}

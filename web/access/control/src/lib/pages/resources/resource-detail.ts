@@ -18,7 +18,7 @@ import { HolderTable } from './holder-table/holder-table';
 @Component({
 	templateUrl: './resource-detail.html',
 	styleUrls: ['./resource-detail.scss'],
-	host: {class:'main-content mat-drawer-container my-content resource-detail'},
+	host: {class:'main-content my-content resource-detail'},
 	imports: [FailureState, MatIcon, MatTabsModule, RouterLink, HolderTable]
 })
 export class ResourceDetail implements OnInit{

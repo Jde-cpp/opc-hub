@@ -6,5 +6,5 @@
 	@if(backUrl()?.length){
 		<button mat-icon-button (click)="back()"><mat-icon class="iconButton">arrow_back</mat-icon></button>
 	}
-	<h1>{{getTitle()}} </h1>
+	<h1 [matTooltip]="getTitle()">{{getTitle()}} </h1><!--the tooltip gives back what the ellipsis clips:  on a hover, or a long press on a phone-->
 </header>

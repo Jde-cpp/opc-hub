@@ -68,6 +68,19 @@ namespace Jde::Opc::Gateway::Tests{
 		ASSERT_TRUE( obj.contains("discoveryUrls") );
 	}
 
+	//dataTypes:  the server's structure definitions, built over the asynchronous read (DataTypesAwait) - each node's definition
+	//and name read together, results[i*2] and [i*2+1];  a node that is no structure is left out.
+	TEST_F( QLTests, DataTypesBuildsTheStructures ){
+		const jobject vars{ {"opc", OpcServerSlug}, {"ids", jarray{NodeId{0, UA_NS0ID_RANGE}.ToJson(), NodeId{0, UA_NS0ID_DOUBLE}.ToJson(), NodeId{0, UA_NS0ID_EUINFORMATION}.ToJson()}} };
+		let value = Socket().QuerySync( "dataTypes( opc: $opc, id: $ids ){ typeId members{ isArray } }", vars );
+		let& types = value.as_array();
+		ASSERT_EQ( types.size(), 2u ) << serialize( value );
+		EXPECT_EQ( NodeId{types[0].at("typeId")}, (NodeId{0, UA_NS0ID_RANGE}) ) << serialize( types[0] );
+		EXPECT_EQ( types[0].at("members").as_array().size(), 2u ) << "low, high";
+		EXPECT_EQ( NodeId{types[1].at("typeId")}, (NodeId{0, UA_NS0ID_EUINFORMATION}) ) << serialize( types[1] );
+		EXPECT_EQ( types[1].at("members").as_array().size(), 4u ) << "namespaceUri, unitId, displayName, description";
+	}
+
 	//#255:  a stand-alone gateway's web sessions, for its page's Web Sessions tab - asked by the AppServer as InstanceSessionsAwait
 	//forwards it:  raw, over the AppServer socket.  The socket this test queries on holds one of them.
 	TEST_F( QLTests, sessions ){
@@ -473,8 +486,10 @@ namespace Jde::Opc::Gateway::Tests{
 			boost::asio::io_context ctx;
 			boost::asio::ip::tcp::acceptor silent{ ctx, {boost::asio::ip::make_address("127.0.0.1"), 0} };
 			let start = steady_clock::now();
-			//over http, as the page sends it:  BadTimeout answers 500, whose body carried the status alone and not the reason.
-			jobject body{ {"query", q}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}}} };
+			//over http, as the page sends it:  BadTimeout answers 500, whose body carried the status alone and not the reason.  The row's
+			//requestTimeout is the deadline, short here - the gateway's 10 s fallback was nearly all of QLTests' time.
+			const string timed{ "testConnection( opc: $opc, url: $url, certificateUri: $certificateUri, requestTimeout: $requestTimeout ){ applicationUri }" };
+			jobject body{ {"query", timed}, {"variables", jobject{{"opc", slug}, {"url", Ƒ("opc.tcp://127.0.0.1:{}", silent.local_endpoint().port())}, {"certificateUri", urn}, {"requestTimeout", 2000}}} };
 			try{
 				Post( GatewayPort(), "/graphql", serialize(body), Ƒ("{:x}", AppClient()->SessionId()) );
 				ADD_FAILURE() << "a connect to a silent listener succeeded";
@@ -485,7 +500,9 @@ namespace Jde::Opc::Gateway::Tests{
 				EXPECT_NE( e.Res().Body().find("(800a0000)BadTimeout - "), string::npos ) << e.Res().Body();
 				EXPECT_NE( e.Res().Body().find("did not complete the connection"), string::npos ) << e.Res().Body();
 			}
-			EXPECT_LT( steady_clock::now()-start, std::chrono::seconds{20} ) << "the client's request timeout, 10s, is the deadline.";
+			let elapsed = steady_clock::now()-start;
+			EXPECT_GE( elapsed, 2s ) << "the requestTimeout is the deadline";
+			EXPECT_LT( elapsed, 8s ) << "the row's requestTimeout, 2 s, is the deadline - not the gateway's 10 s.";
 		}
 		EXPECT_FALSE( UAClient::ConnectErrors().contains(slug) ) << "a failed test is not the slug's connectionStatus.";
 		EXPECT_FALSE( UAClient::ConnectionCounts().contains(slug) );

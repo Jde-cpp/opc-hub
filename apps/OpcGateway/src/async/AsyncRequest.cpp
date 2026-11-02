@@ -1,18 +1,18 @@
 #include "AsyncRequest.h"
+#include <jde/fwk/process/execution.h>
 #include "../UAClient.h"
 #include "ReadAwait.h"
-#include <jde/fwk/co/AnyAwait.h>
-#include <jde/fwk/process/execution.h>
-#include <stdexcept>
 #define let const auto
 
 namespace Jde::Opc::Gateway{
 	namespace asio = boost::asio;
 	Duration _pingInterval;
 	Duration _ttl;
+	Duration _requestTimeout{ 10s };
 
 	AsyncRequest::AsyncRequest()ι:
-		_strand{ Executor()->get_executor() }
+		_strand{ Executor()->get_executor() },
+		_pollTimer{ steady_clock::duration::zero(), _strand }
 	{}
 
 	α AsyncRequest::CancelPing()ι->void{//strand-only
@@ -63,10 +63,24 @@ namespace Jde::Opc::Gateway{
 				Process( PingRequestId, "ping" );
 		}
 	}
+	//The wait between run_iterate calls:  until the loop's next timer - open62541's housekeeping, every second - and never past
+	//maxWait, insurance against a timerless loop (UA_DATETIME_MAX) and the cast.  Everything else a run_iterate serves - a
+	//response, a Publish, a connection's close - comes through the connection manager (#526), whose wake ends the wait
+	//(Waker);  a delayed callback it queued during the last run_iterate makes nextTimer "now", and the wait 0.
+	constexpr steady_clock::duration maxWait{ 10s };
+	Ω nextWait( UAClient& client )ι->steady_clock::duration{
+		auto el = UA_Client_getConfig( client )->eventLoop;
+		let next = el->nextTimer( el );
+		let now = el->dateTime_nowMonotonic( el );
+		constexpr UA_DateTime maxTicks{ duration_cast<std::chrono::nanoseconds>(maxWait).count()/100 };//UA_DateTime counts 100 ns.
+		let ticks = next<=now ? UA_DateTime{0} : next>now+maxTicks ? maxTicks : next-now;
+		return duration_cast<steady_clock::duration>( std::chrono::nanoseconds{ticks*100} );
+	}
 	// 1 per UAClient. Runs entirely on _strand: started there by Process, and every co_await below resumes there
 	// (executor-bound DurationTimer), so _requests/_client/_lastRequest/_pingTimer need no locks and
 	// UA_Client_run_iterate never overlaps other UA_Client_* calls - submissions and sync services are dispatched
-	// to the same strand via UAClient::PostUA.
+	// to the same strand via UAClient::PostUA.  Between calls it waits (nextWait) rather than polls:  the connection
+	// manager's wake, Clear and Stop end the wait.  Process needn't:  its request is sent by then, and the answer wakes it.
 	α AsyncRequest::ProcessingLoop()ι->VoidTask{
 		ASSERT( _strand.running_in_this_thread() );
 		sp<UAClient> client = _client;//keeps the owning UAClient (and thus `this`) alive across suspensions.
@@ -79,12 +93,11 @@ namespace Jde::Opc::Gateway{
 		while( _running.test() ){
 			let size = _requests.size();
 			if( size ){
-				drainStart.reset();//before the trace guard, so the iteration that picks up a mid-drain request keeps its queue snapshot; the drain window re-arms fresh if the queue empties again.
+				drainStart.reset();//the drain window re-arms fresh if the queue empties again.
 				if( *_requests.begin()==PingRequestId )
 					_requests.erase( PingRequestId );
 			}
-			if( !drainStart )//tracing every drain poll buries the log.
-				TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
+			TRACE( "{}run_iterate: requestCount: {}", logPrefix(), size );
 			if( sc = UA_Client_run_iterate(*client, 0); sc ){
 				_running.clear();
 				//Warning, not Critical, with requests outstanding: a server that went away under a request is an operational event the
@@ -97,6 +110,8 @@ namespace Jde::Opc::Gateway{
 				_requests.clear();
 				break;
 			}
+			if( !_running.test() )//a callback inside run_iterate stopped the loop - a request's ConnectionLost runs Stop inline - and found no sleep to cancel.
+				break;
 			let newSize = _requests.size();
 			if( !newSize ){
 				//open62541 issues requests of its own that never reach _requests - the server namespace-array read it fires
@@ -106,16 +121,16 @@ namespace Jde::Opc::Gateway{
 				//on it ("No result in the read namespace array response") and then discarded the reply that had been
 				//sitting in the socket the whole time ("Request with unknown RequestId").  So while that read is
 				//outstanding (_drainNeeded: flagged at activation by StateCallback, cleared by OnServiceBegin when the
-				//reply is serviced) keep polling, bounded by drainLimit.
+				//reply is serviced) keep waiting, bounded by drainLimit.
 				if( _drainNeeded ){
 					let now = steady_clock::now();
 					if( !drainStart )
 						drainStart = now;
 					if( *drainStart+drainLimit > now ){
-						//10ms, not the request path's 1ms: the drain only shepherds open62541's own read, which times out in
-						//multiple seconds - and a request landing mid-drain waits at most one coarse step before the loop
-						//re-enters the 1ms path (its submission already went out on the caller's strand post).
-						if( let result = co_await DurationTimer{ 10ms, _strand }; !result ){
+						_sleeping = true;
+						let result = co_await _pollTimer.Rearm( nextWait(*client) );//the read's reply ends it through the manager's wake, as a request's answer does.
+						_sleeping = false;
+						if( !result && result.error()!=boost::asio::error::operation_aborted ){
 							CodeException{ result.error(), _tags };//an error-completing timer resumes instantly - continuing would busy-spin run_iterate for the rest of the window; log like the ping path and hand off to its timer.
 							_running.clear();
 							break;
@@ -137,8 +152,9 @@ namespace Jde::Opc::Gateway{
 			let firstRequest = *_requests.begin();
 			TRACE( "{}requestCount: {}, [0]={}", logPrefix(), newSize, hex(firstRequest) );
 			if( size==newSize ){
-				let sleep = size==1 && firstRequest==SubscriptionRequestId ? 500ms : 1ms; //UA_CreateSubscriptionRequest_default
-				(void)co_await DurationTimer{ sleep, _strand, SRCE_CUR };
+				_sleeping = true;
+				(void)co_await _pollTimer.Rearm( nextWait(*client) );//ended by the manager's wake for what arrived - a request's answer among it - by Clear for the subscription's end and by Stop.
+				_sleeping = false;
 			}
 		}
 		if( !sc && !_stopped.test() && !_stopping && client->PingInterval().count()>0 ){
@@ -173,6 +189,14 @@ namespace Jde::Opc::Gateway{
 			let level = _stopped.test() ? ELogLevel::Debug : ELogLevel::Critical;
 			LOG( level, _tags, "[{}.{}]Could not find request handle{}.", hex(UAHandle()), hex(requestId), _stopped.test() ? " - submitted after Stop" : "" );
 		}
+		//The unsubscribe, or the last item gone, is user traffic:  the idle clock starts here (KeepAliveTests).  Its delete is submitted in a
+		//later strand handler, and a loop that woke between the two, unstamped, ran the ttl check against the create's stamp.  The wait
+		//ends too, so the emptied queue reaches the ttl check now rather than at the next housekeeping timer.
+		if( requestId==SubscriptionRequestId ){
+			_lastRequest = Clock::now();
+			if( _sleeping )
+				_pollTimer.Cancel();
+		}
 	}
 
 	α AsyncRequest::OnServiceBegin( RequestId requestId )ι->void{//strand-only (fires inside run_iterate)
@@ -197,6 +221,8 @@ namespace Jde::Opc::Gateway{
 		ASSERT( _strand.running_in_this_thread() );
 		DBG( "[{}]Stopping ProcessingLoop", UAHandle() );
 		CancelPing();
+		if( _sleeping )
+			_pollTimer.Cancel();//a sleeping loop's frame holds the client until it wakes.
 		_stopped.test_and_set();
 		_running.clear();
 		//move: breaks the UAClient<->AsyncRequest._client self-reference; the closure's copy keeps the UAClient (and so
@@ -221,6 +247,7 @@ namespace Jde::Opc::Gateway{
 		//makes anyway, just before the cycle can form.
 		let pending = _requests.size();
 		UA_Client_disconnect( *client );
+		client->ReleaseParked();//refused now, so they fail:  each holds the client.
 		if( _requests.size() ){
 			string ids; for_each( _requests, [&ids](auto r){ ids += Ƒ("{:x}, ", r); } );
 			WARN( "[{}]{} request(s) still registered after the disconnect: [{}]", hex(client->Handle()), _requests.size(), ids );

@@ -6,8 +6,16 @@
 
 #define let const auto
 
+namespace Jde::Opc{
+	α Gateway::CreateSubscriptionRequest()ι->UA_CreateSubscriptionRequest{
+		auto request = UA_CreateSubscriptionRequest_default();
+		request.requestedPublishingInterval = std::chrono::duration<double,std::milli>{ _publishingInterval }.count();
+		return request;
+	}
+}
 namespace Jde::Opc::Gateway{
 	static ELogTags _tags{ (ELogTags)(EOpcLogTags::Monitoring) };
+	Duration _publishingInterval{ 500ms };
 	//Bad_Timeout:  the server let the subscription's lifetime run out - no Publish reached it, as in an outage its session
 	//outlived.  Good_SubscriptionTransferred:  another session took it.  Either way its items push nothing more here, and nothing
 	//else notices - the session is the same one, so RecordSession sees no change - so it is rebuilt as a session loss is.
@@ -77,7 +85,7 @@ namespace Jde::Opc::Gateway{
 					first = clientRequests.size()==1;
 				}
 				if( first ){
-					UACε( UA_Client_Subscriptions_create_async(_client->UAPointer(), UA_CreateSubscriptionRequest_default(), nullptr, statusChangeNotificationCallback, deleteSubscriptionCallback, createSubscriptionCallback, this, &_requestId) );
+					UACε( UA_Client_Subscriptions_create_async(_client->UAPointer(), CreateSubscriptionRequest(), nullptr, statusChangeNotificationCallback, deleteSubscriptionCallback, createSubscriptionCallback, this, &_requestId) );
 					TRACE( "[{}.{}]CreateSubscription", hex(_client->Handle()), hex(_requestId) );
 					_client->Process( _requestId, "Subscriptions_create" );
 				}

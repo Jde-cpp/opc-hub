@@ -9,11 +9,12 @@ import { IPROFILE_SERVICE } from '../../services/profile/profile-service';
 import { RecentVisits } from '../../services/recent-visits';
 import { RouteStore } from '../../services/route-store';
 import { HELP_TOPICS, HelpAnchor } from '../../services/help/help-topic';
-import { Blank, flush } from 'jde-spa/testing';
+import { Blank, flush, screenSize } from 'jde-spa/testing';
 
 //The bar over the router `routes` builds, with no search and nothing to focus.
 const configure = ( routes:Routes, ...providers:Provider[] )=>{
 	TestBed.configureTestingModule({ providers: [
+		screenSize(),
 		provideRouter( routes ),
 		{ provide: NavigationFocusService, useValue: {} },
 		{ provide: SearchService, useValue: {search: ()=>Promise.resolve([])} },

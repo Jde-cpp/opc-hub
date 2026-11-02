@@ -13,7 +13,7 @@ import { HistGroupMembers } from '../../model/hist';
 
 @Component( {
 	templateUrl: './node-detail.html',
-	host: {class:'main-content mat-drawer-container my-content'},
+	host: {class:'main-content my-content'},
 	imports: [MatTabsModule, NodeChildren, NodeAccess, NodeHistory]
 })
 export class NodeDetail implements OnInit{

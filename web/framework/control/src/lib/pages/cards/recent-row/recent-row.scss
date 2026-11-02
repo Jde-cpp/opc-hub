@@ -6,6 +6,7 @@
 // A landing page's Recently visited row (RecentVisits):  small cards three across, each with its section's tint on the icon
 // chip, so a page reads as belonging to the tile above it.
 .recent-section {
+	@include columns.container;
 	box-sizing: border-box;
 	width: 100%;
 	max-width: 1080px;

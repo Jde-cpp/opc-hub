@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { Paginator } from 'jde-framework';
 import { HistValue } from '../../../model/hist';
 import { Variable } from '../../../model/node';
 import { EAccess } from '../../../model/types';
@@ -61,5 +62,26 @@ describe( 'HistTable', ()=>{
 		const actions = ( t:ReturnType<typeof render> )=>[...t.fixture.nativeElement.querySelectorAll( '.row-action' )].map( b=>b.getAttribute( 'aria-label' ) );
 		expect( actions( render( [at(A, 1000, 1)], {editable: [A], rights: {update: true, delete: false}} ) ) ).toEqual( ['Replace this value'] );
 		expect( actions( render( [at(A, 1000, 1)], {editable: [A], rights: {update: false, delete: true}} ) ) ).toEqual( ['Delete this value'] );
+	} );
+} );
+
+//reviews-issue/329-sticky-table-header.md #11:  the pager is pinned, as the lists' are, so a page turns from part-way down
+describe( 'HistTable paging', ()=>{
+	afterEach( ()=>vi.restoreAllMocks() );
+	const values = Array.from( {length: 250}, (_, i)=>at(A, i*1000, i) );
+	const open = ()=>({ ...render( values ), show: vi.spyOn( Paginator, 'showFirstRow' ).mockImplementation( ()=>{} ) });//the rows are real, and jsdom has no scrollIntoView
+
+	it( 'turns the page from the table\'s first row, from the start it showed', ()=>{
+		const t = open();
+		t.table.onPage( {pageIndex: 1, pageSize: 100, previousPageIndex: 0, length: 250} );
+		t.table.onPage( {pageIndex: 0, pageSize: 500, previousPageIndex: 1, length: 250} );
+		expect( t.show.mock.calls.map( c=>c.slice(1) ) ).toEqual( [[0, 100], [100, 0]] );
+		expect( t.show.mock.calls[0][0] ).toBe( t.fixture.nativeElement );
+		expect( [t.table.pageIndex(), t.table.pageSize()] ).toEqual( [0, 500] );
+	} );
+
+	it( 'pins the header row', ()=>{
+		const t = open();
+		expect( t.fixture.nativeElement.querySelector( 'mat-header-row' ).classList ).toContain( 'mat-mdc-table-sticky' );
 	} );
 } );

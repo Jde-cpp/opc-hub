@@ -13,6 +13,10 @@ the controls at the right edge */
 .bar-left{
 	flex: 1 1 300px;
 }
+.bar-right{/* the controls wrap within the zone rather than run past a phone's pane (#330) */
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
 .node-chips{
 	--mat-chip-container-height: 28px;
 }

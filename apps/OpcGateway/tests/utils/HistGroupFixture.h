@@ -23,6 +23,19 @@ namespace Jde::Opc::Gateway::Tests{
 		Ω SetUpTestSuite()ε->void{
 			HistReadFixture::SetUpTestSuite();
 			_connection = SelectServerCnnctn( OpcServerSlug )->Id;
+			_suiteItems = Items();
+		}
+		//A purge takes its group's items a second on (DeleteMonitoring).  HistGroupTests' purges don't wait for them, and they fell during the
+		//next suite's first test, under the count it started from:  its Purge waited out 15s for a count the drop had passed.
+		Ω TearDownTestSuite()ι->void{
+			try{
+				Stopwatch sw;
+				while( Items()>_suiteItems )
+					sw.CheckTimeout( 15s, 10ms );
+			}
+			catch( const std::exception& e ){
+				WARNT( ELogTags::Test, "items outlived the suite, {} of them:  {}", Items(), e.what() );
+			}
 		}
 		α SetUp()->void override{
 			HistReadFixture::SetUp();
@@ -151,5 +164,6 @@ namespace Jde::Opc::Gateway::Tests{
 		}
 
 		inline static ServerCnnctnPK _connection{};
+		inline static uint _suiteItems{};//the collector's items when the suite started.
 	};
 }

@@ -12,7 +12,7 @@ import { RoleGrants, RolePermission, RolePermissionRow, rolePermissionsQuery, to
 @Component( {
 	selector: 'node-access',
 	templateUrl: './node-access.html',
-	host: {class:'main-content mat-drawer-container my-content'},
+	host: {class:'main-content my-content'},
 	imports: [MatTabsModule, MatToolbarModule, MatButtonModule, NodeRights]
 })
 export class NodeAccess{

@@ -73,7 +73,8 @@ namespace Jde::Opc::Hist{
 
 	Group::Group( GroupConfig config, sp<Store> store, vector<Member> members, SL sl )ε:
 		_store{ move(store) },
-		_config{ move(config) }{
+		_config{ move(config) },
+		_publishingInterval{ _config.PublishingInterval }{
 		let now = _store->Time->Now();
 		let& tz = *_store->Config.TimeZone;
 		_files = mu<GroupFiles>( _store->Config.Path, _config.Name, tz, _store->Config.Delay, DayOf(now, tz), sl );
@@ -281,6 +282,14 @@ namespace Jde::Opc::Hist{
 		Finish( move(effects) );
 	}
 
+	α Group::SetPublishingInterval( Duration interval )ι->void{
+		ul _{ _mutex };
+		_publishingInterval = interval;
+	}
+	α Group::PublishingInterval()Ι->Duration{
+		ul _{ _mutex };
+		return _publishingInterval;
+	}
 	α Group::SetThresholds( NodeIndex index, Thresholds thresholds, SL sl )ε->void{
 		let now = _store->Time->Now();
 		Effects effects;
@@ -803,7 +812,7 @@ namespace Jde::Opc::Hist{
 		y.reserve( 2*_lost.size()+_changes.size()+_values.size() );
 		MarkLost( y );
 		auto kept = _values.end();
-		if( let interval = _config.PublishingInterval; interval>Duration::zero() && !_stopped && !_closed ){
+		if( let interval = _publishingInterval; interval>Duration::zero() && !_stopped && !_closed ){
 			let now = ticks( taken ), from = ticks( taken-interval );
 			kept = std::stable_partition( _values.begin(), _values.end(), [=]( const Buffered& b ){
 				let& value = get<DataValue>( b.Item );

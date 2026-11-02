@@ -24,7 +24,7 @@ const settingLabels:Record<string,string> = { url: "URL", certificateUri: "Certi
 	templateUrl: './client-detail.html',
 	//the trailing class is load-bearing:  Angular hashes a component's *shape* into its style-encapsulation id and leaves
 		//the class name out, so four routed pages that now share DetailPage and this host string could collide with NG0912.
-		host: {class:'main-content mat-drawer-container my-content client-detail'},
+		host: {class:'main-content my-content client-detail'},
 	imports: [DetailActions, MatButtonModule, MatTabsModule, Properties, ServerProperties],
 })
 export class ClientDetail extends DetailPage<ServerCnnctn>{
@@ -67,7 +67,7 @@ export class ClientDetail extends DetailPage<ServerCnnctn>{
 	readonly units = { sessionTimeout: "ms", requestTimeout: "ms", pingInterval: "ms", ttl: "ms" };
 	readonly hints = {
 		sessionTimeout: "Empty:  the client library's 20 minutes.  The server may shorten it.",
-		requestTimeout: "Empty:  the gateway's 10 seconds.  Also how long Test Connection waits.",
+		requestTimeout: "Empty:  the gateway's requestTimeout setting.  Also how long Test Connection waits.",
 		pingInterval: "Empty:  the gateway's pingInterval setting, or half the session timeout where that is shorter.  0 turns the keep-alive off.",
 		ttl: "Empty:  the gateway's ttl setting - how long an idle session is kept open.",
 		locale: "Comma-separated locale ids, en-US,de.  Empty sends none."

@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, input, signal, inject, computed } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, input, signal, inject, computed } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { MatTableModule } from '@angular/material/table';
 import {MatSortModule, Sort} from '@angular/material/sort';
@@ -33,6 +33,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 })
 export class LogDetail implements OnInit, OnDestroy{
 	#snackBar = inject( SnackbarService );
+	#el = inject( ElementRef );
 
 	async ngOnInit(){
 		this.data = new LogDataSource( this.view );
@@ -97,6 +98,7 @@ export class LogDetail implements OnInit, OnDestroy{
 		this.refresh();
 	}
 	onPagerChange( event:PageEvent ){
+		Paginator.showFirstRow( this.#el.nativeElement, this.data.startIndex(), event.startIndex );
 		if( this.data.turnTo(event.startIndex) )
 			this.load( this.data.allEntries.length );
 	}

@@ -4,6 +4,7 @@
 #include <jde/opc/uatypes/BrowseName.h>
 #include <jde/opc/uatypes/Variant.h>
 #include "../GatewayAppClient.h"
+#include "../async/DataTypesAwait.h"
 #include "../async/NamespacesAwait.h"
 #include "../async/UAStrandAwait.h"
 #include "../types/UAClientException.h"
@@ -60,34 +61,11 @@ namespace Jde::Opc::Gateway{
 		}
 		return j;
 	}
-	//getRemoteDataTypes allocates the array with cleanup=true but does not add it to the client config, so the caller owns it. open62541's UA_cleanupDataTypeWithCustom is not exported; mirror it here.
-	//UA_DataType_clear is, and it also frees the typeId and encoding ids - a string or guid id leaked when this freed only the names and members.
-	Ω freeRemoteDataTypes( UA_DataTypeArray* a )ι->void{
-		while( a ){
-			auto next = a->next;
-			if( a->cleanup ){
-				for( size_t i=0; i<a->typesSize; ++i )
-					UA_DataType_clear( &a->types[i] );
-				UA_free( a->types );
-				UA_free( a );
-			}
-			a = next;
-		}
-	}
-	//`dataType`:  the server's definitions of the ids asked for (getRemoteDataTypes - a sync UA service, so strand-only).
-	Ω dataTypes( const sp<UAClient>& client, const QL::TableQL& ql, SL sl )ε->jvalue{
+	//`dataType`:  the server's definitions of the ids asked for.
+	Ω dataTypesJson( const UA_DataTypeArray* types, const QL::TableQL& ql )ι->jvalue{
 		jarray y;
-		let nodeIds = NodeId::ParseQL( ql );
-		THROW_IF( nodeIds.empty(), "No nodeIds specified." );
-		vector<UA_NodeId> rawIds; rawIds.reserve( nodeIds.size() );
-		for( let& id : nodeIds )
-			rawIds.emplace_back( static_cast<const UA_NodeId&>(id) );
-		UA_DataTypeArray *customTypes;
-		if( auto sc = UA_Client_getRemoteDataTypes(*client, rawIds.size(), rawIds.data(), &customTypes); sc )
-			throw UAClientException{ sc, client->Handle(), Ƒ("Could not get data types: {}", NodeId::ToString(nodeIds)), sl };
-		for( uint i=0; i<customTypes->typesSize; ++i )
-			y.push_back( dataTypeJson(customTypes->types[i], ql) );
-		freeRemoteDataTypes( customTypes );
+		for( uint i=0; types && i<types->typesSize; ++i )
+			y.push_back( dataTypeJson(types->types[i], ql) );
 		return ql.TransformResult( move(y) );
 	}
 
@@ -152,8 +130,12 @@ namespace Jde::Opc::Gateway{
 			_query.ReturnRaw = true;
 			if( _query.JsonName.starts_with("node") || _query.JsonName.starts_with("variable") )
 				y = co_await NodeQLAwait{ move(_query), move(_client), _sl };
-			else if( _query.JsonName.starts_with("dataType") )
-				y = co_await UAStrandAwait<jvalue>{ _client, [this]{ return dataTypes( _client, _query, _sl ); }, _sl };
+			else if( _query.JsonName.starts_with("dataType") ){
+				auto nodeIds = NodeId::ParseQL( _query );
+				THROW_IF( nodeIds.empty(), "No nodeIds specified." );
+				let types = co_await Any( DataTypesAwait{move(nodeIds), _client, _sl} );
+				y = dataTypesJson( types.get(), _query );
+			}
 			else if( _query.JsonName=="history" ){//the server's own history, over the caller's session (spec *Pass-through*);  with `group` it never gets here (HistGroupReadQLAwait).
 				if( HistQL::Mode(_query)==HistQL::EMode::Raw )
 					y = co_await HistQLAwait{ move(_query), move(_client), _sl };

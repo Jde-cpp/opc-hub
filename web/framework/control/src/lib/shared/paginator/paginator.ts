@@ -24,6 +24,13 @@ export class Paginator{
 			this.previousPageIndex.set( this.pageIndex() );
 		} );
 	}
+	//A page turn from part-way down a list brings its first row back to just under the sticky header (the pane's scroll-padding),
+	//now the pinned pager makes that the usual way to turn (#329).  `nearest` leaves a first row in view where it is, and a one-row
+	//step keeps the scroll.
+	static showFirstRow( list:HTMLElement, from:number, to:number ){
+		if( Math.abs(to-from)>1 )
+			list.querySelector( 'mat-row' )?.scrollIntoView( {block: 'nearest'} );
+	}
 	onFirstPage(){
 		this.startIndex.set( 0 );
 		this.onPageEvent.emit( new PageEvent(this) );
