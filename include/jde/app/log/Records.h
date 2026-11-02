@@ -49,7 +49,7 @@ namespace Jde::App::Log{//after the traits, which the layer's templates are cons
 		α Add( uuid id )ι->void;
 		α Clear()ι->void{ _ids.clear(); }
 		α Size()Ι->uint{ return _ids.size(); }
-		static constexpr uint Cap{ 1<<17 };
+		static constexpr uint Cap{ 1<<17 };//131,072 ids.
 	private:
 		absl::flat_hash_map<uuid,uint,std::hash<uuid>> _ids;//each one's last use.
 		uint _sequence{};

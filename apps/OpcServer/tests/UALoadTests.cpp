@@ -42,7 +42,7 @@ namespace Jde::Opc::Server::Tests{
 		}
 		//The <Models> block:  the models the file defines and the ones each requires.  It precedes the nodes, so the head is enough.
 		Ω models( const fs::path& file )ε->vector<Model>{
-			let xml = read( file, 1<<20 );
+			let xml = read( file, 1<<20 );//1 MB.
 			let block = section( xml, "Models" );
 			vector<Model> y;
 			for( auto at = block.find("<Model"); at!=sv::npos; at = block.find("<Model", at+1) ){

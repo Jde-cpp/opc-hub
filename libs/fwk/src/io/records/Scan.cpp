@@ -9,7 +9,7 @@ ENABLE_WARNINGS
 namespace Jde::IO{
 	constexpr ELogTags _tags{ ELogTags::IO };
 namespace Records{
-	constexpr uint SealedWindowBytes{ 64<<10 };
+	constexpr uint SealedWindowBytes{ 64<<10 };//64 KB.
 	//What a scan that stopped short of the file's end found there, for the log and Truncate's refusal.
 	Ω stopped( const Scanned& y )ι->string{
 		let sealed = y.SealedAfter ? Ƒ( " since an append its owner sealed follows it, ending at byte {}", *y.SealedAfter ) : string{};

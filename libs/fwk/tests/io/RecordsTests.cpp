@@ -758,7 +758,7 @@ namespace Jde::IO::Records::Tests{
 	//checkpoint cut by its end is found whole there.  Every other damaged file here proves inside the first window, and a
 	//wrong carry would leave a sealed append unproved, for the first append's Truncate to drop.
 	TEST_F( ScanTests, SealedPastTheSearchWindow ){
-		constexpr uint sealedWindowBytes{ 64<<10 };
+		constexpr uint sealedWindowBytes{ 64<<10 };//64 KB.
 		//FalseMarkInsideABody's shape:  run 0 kept, run 1 damaged, run 2 one sample of textSize bytes and its checkpoint.
 		struct Built{ string Bytes; uint End0; uint End2; uint CheckpointAt; };
 		let build = []( uint textSize )->Built {
@@ -1104,10 +1104,11 @@ namespace Jde::IO::Records::Tests{
 	}
 
 	struct FlushedTests : LayerTests{
-		Ω Slot( int64_t time, uint32_t sequence, Day recover=March6 )ι->string{
+		Ω Slot( TimePoint time, uint32_t sequence, Day recover=March6 )ι->string{
 			string y( Flushed::SlotSize, '\0' );
+			let ns = (uint64_t)duration_cast<std::chrono::nanoseconds>( time.time_since_epoch() ).count();
 			for( uint i=0; i<8; ++i )
-				y[i] = (char)( (uint64_t)time>>(8*i) );
+				y[i] = (char)( ns>>(8*i) );
 			for( uint i=0; i<4; ++i )
 				y[8+i] = (char)( sequence>>(8*i) );
 			let day = (uint32_t)sys_days{ recover }.time_since_epoch().count();
@@ -1119,18 +1120,18 @@ namespace Jde::IO::Records::Tests{
 			return y;
 		}
 		//As a flush writes it.
-		Ω Write( Flushed& flushed, int64_t time, Day recover=March6 )ε->void{
+		Ω Write( Flushed& flushed, TimePoint time, Day recover=March6 )ε->void{
 			let slot = flushed.Next( time, recover );
 			BlockAwait( slot.Write() );
 			flushed.Wrote( slot );
 		}
-		static constexpr int64_t Time{ 1'700'000'000'000 };
-		static constexpr int64_t Minute{ 60'000 };
+		static constexpr TimePoint Time{ std::chrono::seconds{1'700'000'000} };
+		static constexpr Duration Minute{ std::chrono::minutes{1} };
 		const fs::path File{ Dir/"group.flushed" };
 	};
 
-	//Two 20-byte slots, written alternately in place:  the time, a sequence, the day a start looks for live files from, in
-	//days since 1970-01-01, and a CRC-32C, little-endian.
+	//Two 20-byte slots, written alternately in place:  the time in ns since 1970-01-01, a sequence, the day a start looks
+	//for live files from, in days since then, and a CRC-32C, little-endian.
 	TEST_F( FlushedTests, AlternatesSlots ){
 		{
 			auto flushed = Flushed::Load( File );

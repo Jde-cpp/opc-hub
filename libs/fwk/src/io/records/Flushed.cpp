@@ -15,7 +15,7 @@ namespace Jde::IO::Records{
 		constexpr uint Covered{ 16 };//the time, the sequence and the day, which the crc is of.
 		static_assert( Crc::Calc32c(sv{"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", Covered})!=0, "A zero-filled slot must not read as a flush." );
 
-		struct Stored{ int64_t Time; uint32_t Sequence; Day Recover; };
+		struct Stored{ TimePoint Time; uint32_t Sequence; Day Recover; };
 		Ω parse( sv bytes )ι->optional<Stored>{
 			if( bytes.size()<Flushed::SlotSize )
 				return nullopt;
@@ -28,7 +28,7 @@ namespace Jde::IO::Records{
 			(void)CodedInputStream::ReadLittleEndian32FromArray( p, &crc );
 			if( crc!=Crc::Calc32c(bytes.substr(0, Covered)) )
 				return nullopt;
-			return Stored{ (int64_t)time, sequence, Day{std::chrono::sys_days{std::chrono::days{(int32_t)day}}} };
+			return Stored{ TimePoint{duration_cast<Duration>(std::chrono::nanoseconds{(int64_t)time})}, sequence, Day{std::chrono::sys_days{std::chrono::days{(int32_t)day}}} };
 		}
 	}
 
@@ -63,11 +63,12 @@ namespace Jde::IO::Records{
 		return Flushed{ move(file), move(bytes) };
 	}
 
-	α Flushed::Next( int64_t time, Day recover )Ι->Slot{
+	α Flushed::Next( TimePoint time, Day recover )Ι->Slot{
 		if( _time )
 			time = std::max( time, *_time );//a clock set back claims less than the last flush did, which still holds.
 		Slot y{ .File=_file, .Index=(uint8)(1-_slot), .Sequence=_sequence+1, .Time=time, .Recover=recover, .Bytes=string(SlotSize, '\0') };
-		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)time, reinterpret_cast<uint8_t*>(y.Bytes.data()) );
+		let ns = duration_cast<std::chrono::nanoseconds>( time.time_since_epoch() ).count();
+		auto p = CodedOutputStream::WriteLittleEndian64ToArray( (uint64_t)ns, reinterpret_cast<uint8_t*>(y.Bytes.data()) );
 		p = CodedOutputStream::WriteLittleEndian32ToArray( y.Sequence, p );
 		p = CodedOutputStream::WriteLittleEndian32ToArray( (uint32_t)(int32_t)std::chrono::sys_days{recover}.time_since_epoch().count(), p );
 		(void)CodedOutputStream::WriteLittleEndian32ToArray( Crc::Calc32c(sv{y.Bytes}.substr(0, Covered)), p );

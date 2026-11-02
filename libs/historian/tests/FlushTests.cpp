@@ -118,9 +118,7 @@ namespace Jde::Opc::Hist::Tests{
 		EXPECT_TRUE( group->Buffer().empty() );
 		EXPECT_EQ( Library->Buffered(), 0 );
 		EXPECT_EQ( group->Flushed(), joined+1min );
-		let flushed = IO::Records::Flushed::Load( Path()/(group->Name()+".flushed") ).Time();
-		ASSERT_TRUE( flushed );
-		EXPECT_EQ( UADateTime{(UA_DateTime)*flushed}.Time(), joined+1min );
+		EXPECT_EQ( IO::Records::Flushed::Load(Path()/(group->Name()+".flushed")).Time(), joined+1min );
 		let records = readFile( file );
 		ASSERT_EQ( records.size(), 4 );
 		ASSERT_TRUE( records[0].has_file_start() );

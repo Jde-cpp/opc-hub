@@ -40,11 +40,11 @@ namespace Jde::IO::Records{
 	};
 	Φ ToString( EStop stop )ι->sv;
 
-	constexpr uint WindowBytes{ 1<<20 };//what a scan reads at a time.
+	constexpr uint WindowBytes{ 1<<20 };//1 MB, what a scan reads at a time.
 	//The longest frame the layer writes or reads:  a length past it is damage, so a garbled one is never read for.
-	constexpr uint MaxFrameBytes{ 16<<20 };
-	constexpr uint MergeWindowBytes{ 64<<10 };//what a read of a run reads at a time:  one window for a small run.
-	constexpr uint PartBytes{ 1<<20 };//what a rewrite writes at a time.
+	constexpr uint MaxFrameBytes{ 16<<20 };//16 MB.
+	constexpr uint MergeWindowBytes{ 64<<10 };//64 KB, what a read of a run reads at a time:  one window for a small run.
+	constexpr uint PartBytes{ 1<<20 };//1 MB, what a rewrite writes at a time.
 	//The widest FileStart body, every field at its widest:  a first frame past it is no torn FileStart.
 	constexpr uint32_t MaxStartBody{ 22 };
 	constexpr uint MaxStartFrame{ 2+MaxStartBody };
