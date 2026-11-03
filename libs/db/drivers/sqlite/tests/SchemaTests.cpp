@@ -460,7 +460,7 @@ namespace Jde::DB::Sqlite::Tests{
 		classify( [&]{ BlockAwait<ScalerAwait<uint>,uint>( _ds->Scaler<uint>(DB::Sql{bad}) ); } ); //ScalerExecute -> RunQuery
 		//TSelectAwait's fold projection through RunQuery (SelectMap/CacheAwait) - SelectAsync's SelectAwait talks to the driver directly.
 		using EnumMap = flat_map<uint,string>;
-		classify( [&]{ BlockAwait<CacheAwait<EnumMap>,EnumMap>( _ds->SelectMap<uint,string>(DB::Sql{bad}, "zz_no_such_table") ); } );
+		classify( [&]{ BlockAwait<CacheAwait<EnumMap>,EnumMap>( _ds->SelectMap<uint,string>(DB::Sql{bad}, DB::EnumCache::Instance(), "zz_no_such_table") ); } );
 		EXPECT_EQ( kept, 2u );
 		EXPECT_EQ( sliced, 0u );
 	}

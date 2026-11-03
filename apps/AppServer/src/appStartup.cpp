@@ -2,7 +2,6 @@
 #include <jde/fwk/co/Await.h>
 #include <jde/fwk/co/BlockAwait.h>
 #include <jde/fwk/crypto/issue.h>
-#include <jde/fwk/io/Cache.h>
 #include <jde/db/db.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/Row.h>
@@ -96,9 +95,7 @@ namespace Jde{
 		}
 	}
 	α App::ReloadHosts( SL sl )ε->DB::CacheAwait<flat_map<uint,string>>{
-		let& hosts = _appSchema->GetTable( "hosts" );
-		Cache::Clear( hosts.Name );//SelectEnum answers from the cache when it can - clear first so the select actually runs.
-		return ds().SelectEnum<uint,string>( hosts, nullopt, sl );//nullopt: no expiry, as LoadEnum caches it.
+		return ds().ReloadEnum( _appSchema->GetTable("hosts"), {}, sl );
 	}
 	α App::EndConnection( ConnectionPK connectionId, SL sl )ι->DB::ExecuteAwait::Task{
 		try{

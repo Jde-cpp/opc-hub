@@ -51,7 +51,7 @@ namespace Jde::QL{
 		auto p = enums.find( enumTable.Name );
 		if( p==enums.end() ){
 			WARNT( ELogTags::QL, "[{}]enum values were not prefetched - falling back to a blocking lookup.", enumTable.Name );
-			p = enums.emplace( enumTable.Name, GetEnumValues(enumTable) ).first;
+			p = enums.emplace( enumTable.Name, *GetEnumValues(enumTable) ).first;
 		}
 		return p->second;
 	}
@@ -150,7 +150,7 @@ namespace Jde::QL{
 				for( let& enumTable : enumTables ){
 					if( enums.contains(enumTable->Name) )
 						continue;
-					auto values = enumTable->Schema->DS()->SelectEnum<uint,string>( *enumTable, Cache::DefaultDuration(), _sl );//an lvalue: CacheAwait is not movable, so Any() references it.
+					auto values = enumTable->Schema->DS()->SelectEnum( *enumTable, {}, _sl );//an lvalue: CacheAwait is not movable, so Any() references it.
 					enums.emplace( enumTable->Name, co_await Any(values) );
 				}
 				createUpdate( *_table, input, enums, updates );

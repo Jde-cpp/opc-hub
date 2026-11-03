@@ -6,14 +6,11 @@
 #include "helpers.h"
 #include "../src/appStartup.h"
 #include "../src/WebServer.h"
-#include <jde/fwk/io/Cache.h>
 #include <thread>
 #define let const auto
 
 //the connections bookkeeping in appStartup.cpp: AddConnection's proc-minted pks and EndConnection's deleted stamp.
 namespace Jde::App::Server::Tests{
-	using EnumMap = flat_map<uint,string>;//aliased: the comma in the template args would split the EXPECT_ macro's arguments.
-
 	struct ConnectionTests : ::testing::Test{
 		Ω ConnectionsTable()->string{ return Server::AppSchema()->GetView("connections").DBName; }
 		Ω LiveCount( App::ConnectionPK connectionId )->uint{
@@ -31,7 +28,7 @@ namespace Jde::App::Server::Tests{
 				if( !table->IsEnum() && !table->IsFlags )
 					continue;
 				++checked;
-				EXPECT_TRUE( Cache::Get<EnumMap>(table->Name) ) << table->Name << " was not loaded - its next render blocks the caller";
+				EXPECT_TRUE( DB::EnumCache::Instance().Get(table->Name) ) << table->Name << " was not loaded - its next render blocks the caller";
 			}
 		}
 		EXPECT_GT( checked, 0u ) << "no lookup tables found - the walk no longer matches what SelectAwait renders from";
@@ -41,7 +38,7 @@ namespace Jde::App::Server::Tests{
 	TEST_F( ConnectionTests, ANewHostReachesTheLoadedMap ){
 		let host = Ƒ( "load-host-{}", steady_clock::now().time_since_epoch().count() );
 		App::AddConnection( "Tests.Connections", "loads-host", host, 116 );
-		auto hosts = Cache::Get<EnumMap>( "hosts" );
+		auto hosts = DB::EnumCache::Instance().Get( "hosts" );
 		ASSERT_TRUE( hosts );
 		EXPECT_TRUE( std::ranges::any_of(*hosts, [&](let& kv){ return kv.second==host; }) ) << "a host added after startup never reaches the map the renderer reads";
 	}

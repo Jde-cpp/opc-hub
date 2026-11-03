@@ -299,7 +299,8 @@ namespace Jde{
 		if( let s = v.if_string(); s && column.PKTable ){
 			let pkTable = column.PKTable->QLView ? column.PKTable->QLView : column.PKTable;
 			if( pkTable->FindColumn("name") ){
-				for( let& [id,name] : QL::GetEnumValues(*pkTable, sl) ){
+				let values = QL::GetEnumValues( *pkTable, sl );
+				for( let& [id,name] : *values ){
 					if( name==*s )
 						return DB::Value{ column.Type, id };
 				}

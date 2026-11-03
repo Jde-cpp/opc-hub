@@ -71,8 +71,7 @@ namespace Jde::Opc::Hist{
 		_delay{ delay },
 		_flushed{ IO::Records::Flushed::Load( _root/(_name+".flushed"), sl ) },
 		_present{ today }{
-		if( let t = _flushed.Time(); t )
-			_restored.Flushed = UADateTime{ (UA_DateTime)*t }.Time();
+		_restored.Flushed = _flushed.Time();
 		//The midnight before the last flush may have had its rewrite cut short, in the `delay` after it, and none since has
 		//had one, and an older one's rewrite may have kept failing:  so each file still live from the day .flushed names
 		//on is rewritten, but for today's.

@@ -98,13 +98,35 @@ namespace Jde::DB::Sqlite::Tests{
 		auto table = schema->GetTablePtr( "provider_types" ); //Names::FromJson converts the meta key, so it is not "providerTypes" here.
 		ASSERT_TRUE( table );
 
-		let load = [&]{ return BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>( _ds->SelectEnum<uint,string>(*table) ); };
+		EXPECT_EQ( EnumCache::Instance().DefaultTtl(), EnumCache::Forever ) << "a render's miss would cache its map with an expiry";
+		let load = [&]{ return BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>( _ds->SelectEnum(*table) ); };
+		EnumCache::Clear( *table );               //EnumCache is process-wide and keyed by name:  without this, the second backend's miss is the first's hit.
 		let first = load();                       //miss: reads the table and caches it.
 		EXPECT_GT( first.size(), 0u );            //access.mutation seeds seven provider types.
+		let cached = EnumCache::Instance().Get( table->Name );
+		ASSERT_TRUE( cached ) << "the miss did not cache what it read";
+		EXPECT_EQ( *cached, first );
 		EXPECT_EQ( load().size(), first.size() ); //hit: the same answer from cache.
 
 		//a table that does not exist must surface as an exception at the BlockAwait, not end the process.
 		EXPECT_THROW( (BlockAwait<CacheAwait<flat_map<uint,string>>,flat_map<uint,string>>(
-			_ds->SelectMap<uint,string>(DB::Sql{"select id, name from zz_62_no_such_table"}, "zz_62_no_such_table") )), Exception );
+			_ds->SelectMap<uint,string>(DB::Sql{"select id, name from zz_62_no_such_table"}, DB::EnumCache::Instance(), "zz_62_no_such_table") )), Exception );
+	}
+
+	//ReloadEnum reads the table although its map is cached, and replaces the entry rather than clearing it first.
+	TEST_P( AwaitTests, ReloadEnumReplacesTheCachedMap ){
+		auto schema = DB::GetCluster( GetParam(), ms<Access::Authorize>("SqliteTests") )->GetAppSchema( "access" );
+		auto table = schema->GetTablePtr( "provider_types" );
+		ASSERT_TRUE( table );
+		constexpr uint stale = 999'999;
+		EnumCache::Instance().Set( table->Name, EnumMap{{stale, "stale"}}, EnumCache::Forever );
+		EXPECT_TRUE( (BlockAwait<CacheAwait<EnumMap>,EnumMap>(_ds->SelectEnum(*table))).contains(stale) ); //a hit never reads the table.
+
+		let reloaded = BlockAwait<CacheAwait<EnumMap>,EnumMap>( _ds->ReloadEnum(*table) );
+		EXPECT_GT( reloaded.size(), 0u );
+		EXPECT_FALSE( reloaded.contains(stale) );
+		let cached = EnumCache::Instance().Get( table->Name );
+		ASSERT_TRUE( cached );
+		EXPECT_EQ( *cached, reloaded );
 	}
 }

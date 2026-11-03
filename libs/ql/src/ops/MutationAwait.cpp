@@ -1,7 +1,7 @@
 #include <jde/ql/ops/MutationAwait.h>
-#include <jde/ql/IQL.h>
-#include <jde/fwk/io/Cache.h>
+#include <jde/db/EnumCache.h>
 #include <jde/db/meta/Table.h>
+#include <jde/ql/IQL.h>
 #include "AddRemoveAwait.h"
 #include "InsertAwait.h"
 #include "PurgeAwait.h"
@@ -32,7 +32,7 @@ namespace Jde::QL{
 				//their own message below, so the guard can not go above the switch.  Mirrors UpdateAwait::await_ready.
 				if( let type=_mutation.Type; type!=Start && type!=Stop && type!=Execute )
 					THROW_IF( !table, "Table not found for mutation '{}'.", _mutation.ToString() );
-				let enumCache = table && (table->IsEnum() || table->IsFlags) ? table->Name : string{};
+				let enumTable = table && (table->IsEnum() || table->IsFlags) ? table : nullptr;//the awaits below take `table`.
 				switch( _mutation.Type ){
 				case Update:
 				case Delete:
@@ -54,8 +54,8 @@ namespace Jde::QL{
 				case Execute://no table, and nothing stock:  a verb only an IQL's CustomMutation answers (stopApplicationInstance, App::Server).
 					throw Exception{ Ƒ("'{}' has no handler:  a start, stop or execute is a custom mutation's.", _mutation.CommandName), {ELogTags::QL}, _sl };
 				}
-				if( enumCache.size() )
-					Cache::Clear( enumCache );
+				if( enumTable )
+					DB::EnumCache::Clear( *enumTable );
 			}
 			Resume( move(y) );
 		}

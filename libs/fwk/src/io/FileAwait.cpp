@@ -1,7 +1,6 @@
 ﻿#include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/fwk/exceptions/IOException.h>
-#include <jde/fwk/io/Cache.h>
 
 #define let const auto
 namespace Jde{
@@ -10,7 +9,7 @@ namespace Jde{
 	uint8 _threadSize;
 	α IO::ThreadSize()ι->uint8{ return _threadSize; }
 	α IO::Init()ε->void{
-		_chunkSize = Settings::FindNumber<uint32>("/workers/io/chunkByteSize").value_or(1 << 19);
+		_chunkSize = Settings::FindNumber<uint32>("/workers/io/chunkByteSize").value_or(1 << 19);//512 KB.
 		_threadSize = Settings::FindNumber<uint8>("/workers/io/threads").value_or(5);
 #ifndef _MSC_VER
 		LinuxInit();
@@ -108,18 +107,11 @@ namespace IO{
 	}
 
 	α ReadAwait::await_ready()ι->bool{
-		if( auto p = _cache ? Cache::Get<string>(_arg->Path.string()) : nullptr; p ){
-			_arg->Buffer = *p;
-			_fromCache = true;
-			return true;
+		try{
+			_arg->Open( false );
 		}
-		else{
-			try{
-				_arg->Open( false );
-			}
-			catch( IOException& e ){
-				ExceptionPtr = e.Move();
-			}
+		catch( IOException& e ){
+			ExceptionPtr = e.Move();
 		}
 		return ExceptionPtr!=nullptr;
 	}
@@ -155,17 +147,12 @@ namespace IO{
 		//The failure of a suspended read lives in the promise - PostExp/ResumeExp put it there - and Open sized Buffer to the
 		//file *before* the io ran, so a read that failed still has a full-length buffer the io never filled.  Testing r.size()
 		//first therefore reported every such failure as a successful read of that many zero bytes; reading a directory
-		//returned 200 of them instead of throwing EISDIR.  CheckException keeps the concrete IOException type, and the null
-		//check is for the ready paths (cache hit, or Open threw): they never suspend, so there is no promise at all.
-		if( auto promise = Promise(); promise && promise->Exp() )
+		//returned 200 of them instead of throwing EISDIR.  CheckException keeps the concrete IOException type.
+		if( Promise()->Exp() )
 			CheckException();
-		auto& r = get<string>(_arg->Buffer);
-		if( _fromCache || r.size() )//an empty cache hit must not fall through - StringAwait has no promise on the ready path.
+		if( auto& r = get<string>(_arg->Buffer); r.size() )
 			return move(r);
-		auto y = StringAwait::await_resume();
-		if( _cache )
-			Cache::Set<string>( _arg->Path.string(), y );
-		return y;
+		return StringAwait::await_resume();
 	}
 	α WriteAwait::await_resume()ε->void{
 		if( ExceptionPtr )

@@ -1,5 +1,6 @@
 #include "SelectAwait.h"
 #include <jde/fwk/chrono.h>
+#include <jde/fwk/utils/collections.h>
 #include <jde/db/IDataSource.h>
 #include <jde/db/meta/AppSchema.h>
 #include <jde/db/meta/Table.h>
@@ -23,8 +24,10 @@ namespace Jde::QL{
 		}
 		return y;
 	}
-	α GetEnumValues( const DB::Table& table, SL sl )ε->flat_map<uint,string>{
-		return table.Schema->DS()->SelectEnumSync<uint,string>( table, Cache::DefaultDuration(), sl );
+	α GetEnumValues( const DB::Table& table, SL sl )ε->sp<const DB::EnumMap>{
+		if( auto p = DB::EnumCache::Instance().Get(table.Name) )
+			return p;
+		return ms<const DB::EnumMap>( table.Schema->DS()->SelectEnumSync(table, {}, sl) );
 	}
 	α numberToJson( const DB::Value& dbValue, const DB::Column& c )ι->jvalue{
 		jvalue y;
@@ -33,13 +36,15 @@ namespace Jde::QL{
 			y = ToIsoString( TimePoint{std::chrono::seconds(v)} );//ToIsoString already ends in 'Z'.
 		}
 		else if( c.PKTable && (c.IsEnum() || c.IsFlags()) ){
-			flat_map<uint,string> values;
+			sp<const DB::EnumMap> pValues;
 			try{
-				values = GetEnumValues( *c.PKTable );
+				pValues = GetEnumValues( *c.PKTable );
 			}
 			catch( const runtime_error& e ){
 				WARNT( ELogTags::QL, "[{}]enum values could not be loaded - rendering the numeric id: {}", c.PKTable->Name, e.what() );
+				pValues = ms<const DB::EnumMap>();
 			}
+			let& values = *pValues;
 			let value = dbValue.Get<uint>();
 			if( c.IsFlags() ){
 				jarray flags;

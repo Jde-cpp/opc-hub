@@ -179,8 +179,7 @@ namespace Jde::Opc::Hist{
 	}
 	α Group::Flushed()Ι->optional<TimePoint>{
 		ul _{ _filesMutex };
-		let t = _files->LastFlush().Time();
-		return t ? optional<TimePoint>{ UADateTime{(UA_DateTime)*t}.Time() } : nullopt;
+		return _files->LastFlush().Time();
 	}
 	α Group::Runs( year_month_day day )Ι->vector<Run>{
 		ul _{ _filesMutex };
@@ -473,7 +472,7 @@ namespace Jde::Opc::Hist{
 						IO::Records::Flushed::Slot slot;
 						{
 							ul _{ _filesMutex };
-							slot = _files->LastFlush().Next( ticks(taken), _files->RecoverFrom(taken) );
+							slot = _files->LastFlush().Next( taken, _files->RecoverFrom(taken) );
 						}
 						co_await slot.Write();
 						{

@@ -5,24 +5,22 @@
 #define let const auto
 namespace Jde::IO{
 	using namespace std::chrono;
-	namespace{
-		//dir's subdirectories named as DayDirectory names them, a number from min to max with no padding, largest first:  so
-		//the path the walk rebuilds from one is the directory's, and the number fits chrono's year, month or day.
-		Ω numbered( const fs::path& dir, unsigned min, unsigned max, SL sl )ε->vector<unsigned>{
-			vector<unsigned> y;
-			std::error_code ec;
-			for( fs::directory_iterator p{dir, ec}, end; !ec && p!=end; p.increment(ec) ){
-				let name = p->path().filename().string();
-				unsigned n{};
-				let [last, error] = std::from_chars( name.data(), name.data()+name.size(), n );
-				if( error==std::errc{} && last==name.data()+name.size() && n>=min && n<=max && std::to_string(n)==name && p->is_directory(ec) )
-					y.push_back( n );
-			}
-			if( ec )
-				throw Failed( dir, ec, sl );
-			std::ranges::sort( y, std::greater{} );
-			return y;
+	//dir's subdirectories named as DayDirectory names them, a number from min to max with no padding, largest first:  so
+	//the path the walk rebuilds from one is the directory's, and the number fits chrono's year, month or day.
+	Ω numbered( const fs::path& dir, unsigned min, unsigned max, SL sl )ε->vector<unsigned>{
+		vector<unsigned> y;
+		std::error_code ec;
+		for( fs::directory_iterator p{dir, ec}, end; !ec && p!=end; p.increment(ec) ){
+			let name = p->path().filename().string();
+			unsigned n{};
+			let [last, error] = std::from_chars( name.data(), name.data()+name.size(), n );
+			if( error==std::errc{} && last==name.data()+name.size() && n>=min && n<=max && std::to_string(n)==name && p->is_directory(ec) )
+				y.push_back( n );
 		}
+		if( ec )
+			throw Failed( dir, ec, sl );
+		std::ranges::sort( y, std::greater{} );
+		return y;
 	}
 	α Records::DayDirectory( Day day )ι->fs::path{
 		return fs::path{ std::to_string((int)day.year()) }/std::to_string( (unsigned)day.month() )/std::to_string( (unsigned)day.day() );

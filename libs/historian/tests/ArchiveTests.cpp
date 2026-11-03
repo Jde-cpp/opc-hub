@@ -357,7 +357,7 @@ namespace Jde::Opc::Hist::Tests{
 		Time->AdvanceTo( sys_days{March8}+1min );
 		Settle( *group );
 
-		EXPECT_GT( fs::file_size(file), 1u<<20 );
+		EXPECT_GT( fs::file_size(file), 1u<<20 );//1 MB.
 		let records = archived( file, 1, March7 );
 		ASSERT_EQ( records.size(), count+2 );
 		for( uint k=0; k<count; ++k ){

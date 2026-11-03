@@ -107,7 +107,7 @@ namespace Jde::Web{
 	//#247: the mock gzips only when asked, so this covers the client's Accept-Encoding and its inflate.  64k of one byte deflates
 	//to about a hundred bytes, so the inflate buffer - sized from the compressed body, 512 at least - has to grow several times.
 	TEST_F( WebTests, GZip ){
-		constexpr uint size{ 1<<16 };
+		constexpr uint size{ 1<<16 };//64 KB.
 		let res = BlockAwait<ClientHttpAwait,ClientHttpRes>( ClientHttpAwait{Host, Ƒ("/gzip?size={}", size), Port} );
 		ASSERT_EQ( "gzip", res[http::field::content_encoding] );
 		EXPECT_EQ( size, res.Body().size() );

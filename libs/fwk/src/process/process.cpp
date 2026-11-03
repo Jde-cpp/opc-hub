@@ -11,7 +11,6 @@
 #endif
 
 #include <jde/fwk/settings.h>
-#include <jde/fwk/io/Cache.h>
 #include <jde/fwk/io/file.h>
 #include <jde/fwk/io/FileAwait.h>
 #include <jde/fwk/process/thread.h>
@@ -170,7 +169,6 @@ namespace Jde{
 		Thread::SetName( appName );
 		installFailureHandler( argc ? argv[0] : nullptr );
 		Process::AddSignals();
-		Cache::Init();
 		return values;
 	}
 
@@ -292,7 +290,6 @@ namespace Jde{
 		INFOT( ELogTags::App, "Clearing Logger" );
 		std::this_thread::sleep_for( 100ms );
 		_finalizing = true;
-		Cache::Shutdown( terminate );
 		auto ioc = ExecutorIoc();//keep the io_context alive across teardown so it is destroyed last — after sessions, loggers and timers release their asio objects.
 		if( _executor ){
 			_executor->Shutdown( terminate );

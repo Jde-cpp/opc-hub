@@ -34,8 +34,8 @@ namespace Jde::App{
 	//administers both it and the schema the instance already has - TestSchemaAdmin on each, so one with no active root passes -
 	//else the one it has.  Otherwise any registrant decides whose `logs` governs another process's lines and tag levels.
 	α RegistrationSchema( str applicationName, str instanceName, str claimed, UserPK registrant )ε->string;
-	//The `hosts` re-load as an awaitable:  clears the cached map and returns the select that refills it.  co_await it through
-	//Any() from any coroutine on the pool - the thread goes back to the pool while the query runs.
+	//The `hosts` re-load as an awaitable:  the select that replaces the cached map, which keeps answering until then.  co_await
+	//it through Any() from any coroutine on the pool - the thread goes back to the pool while the query runs.
 	α ReloadHosts( SRCE )ε->DB::CacheAwait<flat_map<uint,string>>;
 	//ends a *connection*, not a program instance - it stamps connections.deleted for one connection_id.
 	α EndConnection( ConnectionPK connectionId, SRCE )ι->DB::ExecuteAwait::Task;
