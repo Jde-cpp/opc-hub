@@ -23,16 +23,14 @@ namespace Jde::Opc::Gateway::Tests{
 
 	TEST_F( TokenTests, Authenticate ){
 		let opcId{ Connection->Slug };
-		atomic_flag a,b,c;
-		sp<UAClient> clientA, clientB, clientC;//one each:  b and c run at once.
-		Connect( opcId, token(Jwt()), &clientA, &_exception, &a );
-		a.wait( false );
-		Connect( opcId, token(Jwt()), &clientB, &_exception, &b );//concurrent:  the detached form.
-		Connect( opcId, token(Jwt()), &clientC, &_exception, &c );
-		b.wait( false );
-		c.wait( false );
-		EXPECT_FALSE( _exception );
-		std::this_thread::sleep_for( 100ms );//a wait returns once its flag is set, while the coroutine may still be in notify_all on these locals.
+		let a = Connect( opcId, token(Jwt()) );
+		ASSERT_TRUE( a->Wait() );
+		let b = Connect( opcId, token(Jwt()) );//concurrent:  the detached form.
+		let c = Connect( opcId, token(Jwt()) );
+		ASSERT_TRUE( b->Wait() );
+		ASSERT_TRUE( c->Wait() );
+		for( let& connect : {a, b, c} )
+			EXPECT_FALSE( connect->Error ) << connect->Error->what();
 	}
 
 	TEST_F( TokenTests, Authenticate_Bad ){

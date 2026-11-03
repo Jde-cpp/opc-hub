@@ -84,7 +84,7 @@ namespace Jde::Opc{
 		//the groups' last flushes run while the executor still does.
 		Process::AddShutdownFunction( [](bool, SL){ GatewayServer::Stop(); } );
 		Process::AddShutdownFunction( [](bool, SL){ HistHost::Instance().Stop(); } );
-		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, and none is built after the registry's snapshot.
+		Process::AddShutdownFunction( [](bool, SL){ BlockingPool::Stop(); } );//then the pool, before the clients:  a connect still building finishes, for UAClient::Shutdown's AbandonConnects to stop, and none is built after.
 		Process::AddShutdownFunction( [](bool terminate, SL sl){UAClient::Shutdown(terminate, sl);} );
 		THROW_IF( !_processSsl, "Connect before Configure." );
 		GatewayServer::Listen( *_processSsl );//before the groups load:  the endpoint hears each member from its first value.

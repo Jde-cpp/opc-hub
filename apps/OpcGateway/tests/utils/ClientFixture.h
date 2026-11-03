@@ -5,9 +5,9 @@
 namespace Jde::Opc::Gateway::Tests{
 	//A connect a test looks at either way:  the client, or what it failed with.
 	α TryConnect( const ServerCnnctnNK& slug, Credential cred )ι->std::expected<sp<UAClient>,up<Exception>>;
-	//The detached form, for a test that launches several connects at once:  `client` or `error` set, then `done` raised.  Pointers,
-	//not a capturing lambda:  its captures would die with the temporary at the first suspension.
-	α Connect( ServerCnnctnNK slug, Credential cred, sp<UAClient>* client, up<Exception>* error, atomic_flag* done )ι->ConnectAwait::Task;
+	//The detached form, for a test that launches several connects at once.
+	using Connecting = Awaited<sp<UAClient>>;
+	α Connect( ServerCnnctnNK slug, Credential cred )ι->sp<Connecting>;
 
 	//A fixture whose tests connect:  the client one made or what it failed with, and the client removed after each test.
 	struct ClientFixture : ::testing::Test{

@@ -5,20 +5,14 @@
 
 namespace Jde::Opc::Gateway{
 	α TestConnectAwait::Suspend()ι->void{
-		BlockingPool::Post( [this]{//the build and the connect - the certificate issue, the trust scan, the host probe - off the executor (#353).
-			try{
-				BlockingPool::ThrowIfShuttingDown( _sl );
-				auto client = ms<UAClient>( move(_cnnctn), _cred );
-				client->ConnectForTest( [this]( sp<UAClient> client, up<UAClientException> error ){//on the executor;  the last use of `this`:  Resume may destroy it.
-					if( error )
-						ResumeExp( move(*error) );
-					else
-						Resume( move(client) );
-				});
-			}
-			catch( runtime_error& e ){//the certificate could not be issued or read, or open62541 refused the url before connecting.
-				Jde::Post( [this, error=Exception::From(move(e))]()mutable{ ResumeExp( move(*error) ); } );//on the executor, where a connect's answer lands too.
-			}
-		});
+		BlockingPool::Run( [this]{//the build and the connect - the certificate issue, the trust scan, the host probe - off the executor (#353).
+			auto client = ms<UAClient>( move(_cnnctn), _cred );
+			client->ConnectForTest( [this]( sp<UAClient> client, up<UAClientException> error ){//on the executor;  the last use of `this`:  Resume may destroy it.
+				if( error )
+					ResumeExp( move(error) );
+				else
+					Resume( move(client) );
+			});
+		}, [this]( up<Exception> e ){ ResumeExp( move(e) ); }, _sl );//the certificate could not be issued or read, or open62541 refused the url before connecting.
 	}
 }

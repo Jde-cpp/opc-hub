@@ -11,7 +11,6 @@
 namespace Jde{
 	constexpr ELogTags _tags{ ELogTags::App };
 	namespace asio = boost::asio;
-	α ThreadCount()ι->unsigned{ return std::max(1u, Settings::FindNumber<unsigned>("/workers/executor/threads").value_or(std::thread::hardware_concurrency())); }
 	sp<asio::io_context> _ioc;
 	struct IoStrand{
 		IoStrand( sp<asio::io_context> ioc )ι: Ioc{ move(ioc) }, Strand{ *Ioc }{}
@@ -22,6 +21,7 @@ namespace Jde{
 	mutex _executorMutex;//guards _ioc/_ioStrand creation & teardown - PostIO races the executor thread's shutdown reset.
 	up<asio::executor_work_guard<asio::io_context::executor_type>> _keepAlive;
 }
+α Jde::ThreadCount()ι->unsigned{ return std::max(1u, Settings::FindNumber<unsigned>("/workers/executor/threads").value_or(std::thread::hardware_concurrency())); }
 α Jde::Executor()ι->sp<asio::io_context>{
 	lg _{ _executorMutex };
 	if( !_ioc && !Process::Finalizing() ){//never resurrect after cleanup - a stray Post would otherwise re-create the io_context (and Run a new executor thread) with nothing left to tear them down.

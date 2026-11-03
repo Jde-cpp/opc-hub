@@ -119,21 +119,32 @@ namespace Jde::Opc::Gateway{
 		if( client )
 			base::Resume( move(client) );
 		else if( create )
-			Create();
+			Create( _opcSlug, _cred, _sl );
 	}
-	α ConnectAwait::Create()ι->TAwait<vector<ServerCnnctn>>::Task{
+	α ConnectAwait::Create( ServerCnnctnNK slug, Credential cred, SL sl )ι->TAwait<vector<ServerCnnctn>>::Task{
 		try{
-			auto servers = co_await ServerCnnctnAwait{ _opcSlug };
-			THROW_IFX( servers.empty(), Exception( _sl, {EHttpStatus::NotFound}, "Could not find connection:  '{}'", _opcSlug) );
-			//The build and the connect on the blocking pool (#353):  the certificate issue, the trust scan and the host probe held the
-			//executor thread this ran on.  The client lives on through its strand;  the waiters hear from StateCallback.
-			co_await BlockingAwait<>{ [this, server=move(servers.front())]()mutable{ ms<UAClient>( move(server), _cred )->Connect(); }, _sl };
+			for( bool built{}; !built; ){
+				let edits = UAClient::Edits();//before the read:  an edit after it makes what is read stale (#353 review #5).
+				auto servers = co_await ServerCnnctnAwait{ slug };
+				THROW_IFX( servers.empty(), Exception( sl, {EHttpStatus::NotFound}, "Could not find connection:  '{}'", slug) );
+				//The build and the connect on the blocking pool (#353):  the certificate issue, the trust scan and the host probe held the
+				//executor thread this ran on.  The client lives on through its strand;  the waiters hear from StateCallback.  The job can
+				//wait in the pool's queue, and an edit meanwhile has the row read again.
+				built = co_await BlockingAwait<bool>{ [cred, edits, server=move(servers.front())]()mutable{
+					if( UAClient::EditedSince(server, edits) )
+						return false;
+					auto client = ms<UAClient>( move(server), cred );
+					client->_editsAtRead = edits;
+					client->Connect();
+					return true;
+				}, sl };
+			}
 		}
 		catch( Exception& e ){
 			vector<ConnectAwait::Handle> handles;
 			{
 				ul _{ _requestMutex };
-				handles = eraseRequests( _opcSlug, _cred );
+				handles = eraseRequests( slug, cred );
 			}
 			//Copy per waiter, never Move:  Move() moves the payload *out of* e, so the first "clone" hollowed it and every
 			//waiter after it - the last, which takes e itself, included - got the format string with its _args gone

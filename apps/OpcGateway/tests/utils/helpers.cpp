@@ -1,8 +1,6 @@
 #include "helpers.h"
-#include <thread>
 #include <open62541/client_config_default.h>
 #include <jde/fwk/co/BlockAwait.h>
-#include <jde/fwk/settings.h>
 #include <jde/fwk/process/execution.h>
 #include <jde/access/Authorize.h>
 #include <jde/opc/uatypes/opcHelpers.h>
@@ -207,7 +205,7 @@ namespace Jde::Opc::Gateway{
 	}
 
 	Tests::ExecutorHold::ExecutorHold()ι:
-		_threads{ Settings::FindNumber<uint>("/workers/executor/threads").value_or(std::thread::hardware_concurrency()) }{
+		_threads{ ThreadCount() }{
 		for( uint i=0; i<_threads; ++i )
 			boost::asio::post( *Executor(), [state=_state]{ ++state->Holding; state->Release.wait( false ); } );
 	}
